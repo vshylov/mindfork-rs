@@ -9,8 +9,10 @@
 
 pub mod introspection;
 pub mod notes;
+pub mod python;
 pub mod rag;
 pub mod subagent;
+pub mod web;
 
 use std::collections::BTreeMap;
 use std::sync::Arc;
@@ -98,8 +100,14 @@ pub trait Tool: Send + Sync {
     }
 }
 
-/// Идентификаторы базовых инструментов M5 (интроспекция + заметки + RAG).
-/// Web/Python добавятся на M7. Используется для дефолтного набора профиля.
+/// Имя web-инструмента (гейтится глобальным выключателем `tools.web_enabled`).
+pub const WEB_SEARCH_ID: &str = "web_search";
+/// Имя Python-инструмента (гейтится `tools.python_enabled`).
+pub const PYTHON_EXEC_ID: &str = "python_exec";
+
+/// Идентификаторы инструментов, включаемых в профиле по умолчанию (M5–M7).
+/// Внешние (`web_search`/`python_exec`) дополнительно гейтятся глобальными
+/// выключателями — см. [`effective_tool_ids`].
 pub fn default_tool_ids() -> Vec<ToolId> {
     [
         "get_sampling",
@@ -112,14 +120,36 @@ pub fn default_tool_ids() -> Vec<ToolId> {
         "rag_add",
         "rag_search",
         "call_subagent",
+        WEB_SEARCH_ID,
+        PYTHON_EXEC_ID,
     ]
     .into_iter()
     .map(String::from)
     .collect()
 }
 
-/// Реестр со всеми базовыми инструментами M5.
-pub fn standard_registry() -> ToolRegistry {
+/// Эффективный набор инструментов: `enabled` минус внешние, отключённые
+/// глобальными выключателями (spec §9.4). Порядок `enabled` сохраняется.
+pub fn effective_tool_ids(
+    enabled: &[ToolId],
+    web_enabled: bool,
+    python_enabled: bool,
+) -> Vec<ToolId> {
+    enabled
+        .iter()
+        .filter(|id| match id.as_str() {
+            WEB_SEARCH_ID => web_enabled,
+            PYTHON_EXEC_ID => python_enabled,
+            _ => true,
+        })
+        .cloned()
+        .collect()
+}
+
+/// Реестр со всеми инструментами (M5–M7). `python_path` — путь к интерпретатору
+/// для `python_exec` (`None` → системный). Глобальные выключатели применяются
+/// не здесь, а при отборе эффективного набора (см. [`effective_tool_ids`]).
+pub fn standard_registry(python_path: Option<String>) -> ToolRegistry {
     let mut reg = ToolRegistry::new();
     reg.register(Arc::new(introspection::GetSampling));
     reg.register(Arc::new(introspection::SetSampling));
@@ -131,6 +161,8 @@ pub fn standard_registry() -> ToolRegistry {
     reg.register(Arc::new(rag::RagAdd));
     reg.register(Arc::new(rag::RagSearch));
     reg.register(Arc::new(subagent::CallSubagent));
+    reg.register(Arc::new(web::WebSearch::new()));
+    reg.register(Arc::new(python::PythonExec::new(python_path)));
     reg
 }
 
@@ -265,7 +297,7 @@ mod tests {
 
     #[test]
     fn standard_registry_has_all_default_tools() {
-        let reg = standard_registry();
+        let reg = standard_registry(None);
         for id in default_tool_ids() {
             assert!(reg.get(&id).is_some(), "инструмент {id} не зарегистрирован");
         }
@@ -274,6 +306,22 @@ mod tests {
             reg.schemas_for(&default_tool_ids()).len(),
             default_tool_ids().len()
         );
+    }
+
+    #[test]
+    fn effective_tool_ids_gates_external_tools() {
+        let enabled = default_tool_ids();
+        // web on, python off → есть web_search, нет python_exec.
+        let eff = effective_tool_ids(&enabled, true, false);
+        assert!(eff.iter().any(|t| t == WEB_SEARCH_ID));
+        assert!(!eff.iter().any(|t| t == PYTHON_EXEC_ID));
+        // оба off → ни одного внешнего, но внутренние остаются.
+        let eff = effective_tool_ids(&enabled, false, false);
+        assert!(
+            !eff.iter()
+                .any(|t| t == WEB_SEARCH_ID || t == PYTHON_EXEC_ID)
+        );
+        assert!(eff.iter().any(|t| t == "note_save"));
     }
 
     #[test]

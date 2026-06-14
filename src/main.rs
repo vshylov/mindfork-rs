@@ -61,7 +61,7 @@ fn main() -> anyhow::Result<()> {
     let config = storage.json().load_config().unwrap_or_default();
 
     // Реестр инструментов (общий) и источник эмбеддингов (выделенный сервер, ADR 0002).
-    let registry = Arc::new(standard_registry());
+    let registry = Arc::new(standard_registry(config.tools.python_path.clone()));
     let (embedder, embed_server) = resolve_embedder();
     if let Some(server) = &embed_server {
         tracing::info!(
@@ -80,6 +80,8 @@ fn main() -> anyhow::Result<()> {
         registry,
         embedder,
         max_tool_rounds: config.max_tool_rounds,
+        web_enabled: config.tools.web_enabled,
+        python_enabled: config.tools.python_enabled,
     }));
 
     // Фоновая загрузка словарей спелл-чека (парсинг .dic тяжёлый — не блокируем UI).

@@ -67,9 +67,9 @@ Env для выбора бэкенда: `MINDFORK_XINFER_URL` (external) ИЛИ 
 (+ `MINDFORK_MODEL`, `MINDFORK_XINFER_PORT`, `MINDFORK_ISQ`) для managed.
 
 ## Статус (на 2026-06-14)
-Сделано **M0, M1, M2, M3, M4, M5** (в `main`) и **весь M6** (в ветке `m6-subagent`).
-**175 тестов зелёные, 2 `#[ignore]`.** Чат-цикл, профили с изоляцией, инструменты
-с клиентским agentic-loop, саб-агент для альтернативного мнения.
+Сделано **M0, M1, M2, M3, M4, M5, M6** (в `main`) и **весь M7** (в ветке `m7-web-python`).
+**184 теста зелёные, 4 `#[ignore]`.** Чат-цикл, профили с изоляцией, инструменты
+с клиентским agentic-loop, саб-агент, web-поиск и Python под выключателями.
 - **M0** — каркас FSD, TUI-петля с восстановлением терминала, single-instance, логирование.
 - **M1** — `shared/api` (xinfer-клиент со стримингом/отменой, супервайзер, парсер
   мыслей, mock), оркестратор (автомат + generation_id), мост tokio↔TUI, минимальный
@@ -156,6 +156,20 @@ Env для выбора бэкенда: `MINDFORK_XINFER_URL` (external) ИЛИ 
   рекурсии). Лимит токенов (≤1024) и таймаут (60с, отмена по `CancellationToken`).
 - Зарегистрирован в `standard_registry`/`default_tool_ids`; в UI — обычный
   tool-блок (имя/аргументы/результат). Подчиняется `max_tool_rounds` (один раунд).
+
+### M7 (web + Python) — что уже сделано
+- **`[R]` Эндпоинт DDG закрыт**: `lite.duckduckgo.com/lite` (POST `q=`) — простой
+  стабильный HTML. `reqwest` теперь с `rustls`+`form`; добавлен `scraper`.
+- **`features/tools/web.rs`**: `web_search` — запрос к DDG lite, парсинг
+  `a.result-link`/`td.result-snippet`, декодирование реального URL из `uddg=`.
+  Извлечение контента страниц/реранкинг — на будущее.
+- **`features/tools/python.rs`**: `python_exec` — отдельный процесс (`python -c`),
+  таймаут 10с (kill_on_drop), обрезка вывода. Путь к интерпретатору из конфига.
+- **Глобальные выключатели** (`config.tools`: `web_enabled=true`, `python_enabled=
+  false`, `python_path`). Эффективный набор = профиль ∩ выключатели
+  (`effective_tool_ids`); agentic-loop **гейтит и вызов** (выключенный инструмент
+  отклоняется, не исполняется). На Windows Python по умолчанию выключен.
+- Реальные сетевой/Python прогоны — `#[ignore]` (нужны сеть/интерпретатор).
 
 ### Отложено за пределы M3
 - **Сворачивание/выделение per-message** и tool-блоки в ленте — сейчас «мысли»
