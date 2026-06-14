@@ -684,7 +684,7 @@ impl SettingsScreen {
 
     // ---------- отрисовка ----------
 
-    pub fn render(&self, frame: &mut Frame) {
+    pub fn render(&mut self, frame: &mut Frame) {
         let area = frame.area();
         let block = Block::default()
             .borders(Borders::ALL)
@@ -705,8 +705,13 @@ impl SettingsScreen {
         self.render_menu(frame, menu_area);
         self.render_fields(frame, fields_area);
 
-        if let Some(editor) = &self.editor {
-            self.render_editor(frame, editor);
+        // Редактор поверх — с реальным курсором (InputBox::render требует &mut).
+        let popup = centered_rect(60, 30, 3, frame.area());
+        if let Some(editor) = self.editor.as_mut() {
+            frame.render_widget(Clear, popup);
+            editor
+                .input
+                .render(frame, popup, "правка · Enter ок · Esc отмена", true);
         }
     }
 
@@ -753,15 +758,6 @@ impl SettingsScreen {
             state.select(Some(self.field_idx.min(fields.len() - 1)));
         }
         frame.render_stateful_widget(list, area, &mut state);
-    }
-
-    fn render_editor(&self, frame: &mut Frame, editor: &Editor) {
-        let area = centered_rect(60, 30, 3, frame.area());
-        frame.render_widget(Clear, area);
-        // InputBox::render требует &mut self; рисуем копию (значение неизменно).
-        let mut input = InputBox::new();
-        input.set_text(&editor.input.text());
-        input.render(frame, area, "правка · Enter ок · Esc отмена", true);
     }
 }
 
@@ -1050,7 +1046,7 @@ mod tests {
     fn render_does_not_panic() {
         use ratatui::Terminal;
         use ratatui::backend::TestBackend;
-        let s = screen();
+        let mut s = screen();
         for (w, h) in [(80u16, 24u16), (40, 12)] {
             let mut term = Terminal::new(TestBackend::new(w, h)).unwrap();
             term.draw(|f| s.render(f)).unwrap();

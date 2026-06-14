@@ -57,7 +57,7 @@ fn run_loop(
         if let Ok(checker) = spell_rx.try_recv() {
             screen.set_spellchecker(checker);
         }
-        if let Some(settings_screen) = &settings {
+        if let Some(settings_screen) = &mut settings {
             terminal.draw(|frame| settings_screen.render(frame))?;
         } else {
             terminal.draw(|frame| screen.render(frame))?;
