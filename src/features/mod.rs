@@ -6,3 +6,4 @@
 
 pub mod chat_search_sort;
 pub mod rename_chat;
+pub mod spellcheck;
