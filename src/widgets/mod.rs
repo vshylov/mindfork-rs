@@ -4,3 +4,4 @@
 //! Наполняется на M3.
 
 pub mod chat_list;
+pub mod input_box;

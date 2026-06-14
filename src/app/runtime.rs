@@ -24,6 +24,7 @@ use crate::entities::chat::ChatSummary;
 use crate::entities::message::{Message, MessageRole};
 use crate::shared::api::FinishReason;
 use crate::widgets::chat_list::{ChatListAction, ChatListState};
+use crate::widgets::input_box::InputBox;
 
 /// Период опроса ввода (тик перерисовки).
 const TICK: Duration = Duration::from_millis(50);
@@ -74,7 +75,7 @@ struct UiState {
     chats: Vec<ChatSummary>,
     /// Открытый оверлей списка чатов (если есть).
     overlay: Option<ChatListState>,
-    input: String,
+    input: InputBox,
     status: ServerStatus,
     current_gen: Option<Uuid>,
     generating: bool,
@@ -89,7 +90,7 @@ impl UiState {
             title: String::new(),
             chats: Vec::new(),
             overlay: None,
-            input: String::new(),
+            input: InputBox::new(),
             status: ServerStatus::Connecting,
             current_gen: None,
             generating: false,
@@ -207,7 +208,7 @@ fn run_loop(
         while let Ok(event) = evt_rx.try_recv() {
             ui.apply(event);
         }
-        terminal.draw(|frame| draw(frame, &ui))?;
+        terminal.draw(|frame| draw(frame, &mut ui))?;
         if event::poll(TICK)?
             && let Event::Key(key) = event::read()?
         {
@@ -241,20 +242,18 @@ fn handle_key(key: KeyEvent, ui: &mut UiState, cmd_tx: &UnboundedSender<AppComma
                 ui.should_quit = true;
             }
         }
+        // Shift+Enter — перенос строки; Enter — отправка (spec §11.7).
+        (KeyCode::Enter, KeyModifiers::SHIFT) => ui.input.insert_newline(),
         (KeyCode::Enter, _) => {
-            let text = ui.input.trim().to_string();
-            if !text.is_empty() && !ui.generating {
+            let text = ui.input.text();
+            if !text.trim().is_empty() && !ui.generating {
                 let _ = cmd_tx.send(AppCommand::SendMessage(text));
                 ui.input.clear();
             }
         }
-        (KeyCode::Backspace, _) => {
-            ui.input.pop();
+        _ => {
+            ui.input.on_key(key);
         }
-        (KeyCode::Char(c), m) if m == KeyModifiers::NONE || m == KeyModifiers::SHIFT => {
-            ui.input.push(c);
-        }
-        _ => {}
     }
 }
 
@@ -289,10 +288,12 @@ fn handle_overlay_key(key: KeyEvent, ui: &mut UiState, cmd_tx: &UnboundedSender<
     }
 }
 
-fn draw(frame: &mut Frame, ui: &UiState) {
+fn draw(frame: &mut Frame, ui: &mut UiState) {
+    // Высота ввода растёт под содержимое (1–6 строк + рамка).
+    let input_h = (ui.input.line_count().clamp(1, 6) + 2) as u16;
     let [feed_area, input_area, status_area] = Layout::vertical([
         Constraint::Min(3),
-        Constraint::Length(3),
+        Constraint::Length(input_h),
         Constraint::Length(1),
     ])
     .areas(frame.area());
@@ -313,19 +314,17 @@ fn draw(frame: &mut Frame, ui: &UiState) {
         .wrap(Wrap { trim: false });
     frame.render_widget(feed, feed_area);
 
-    // --- поле ввода ---
-    let input_title = if ui.generating {
-        " ввод (генерация… Esc — отмена) "
-    } else {
-        " ввод (Enter — отправить, Esc — выход) "
-    };
-    let input = Paragraph::new(ui.input.as_str())
-        .block(Block::default().borders(Borders::ALL).title(input_title))
-        .wrap(Wrap { trim: false });
-    frame.render_widget(input, input_area);
-
     // --- статус-бар ---
     frame.render_widget(Line::from(status_spans(ui)), status_area);
+
+    // --- поле ввода (фокус снимается, когда открыт оверлей) ---
+    let input_title = if ui.generating {
+        "ввод · генерация… Esc отмена"
+    } else {
+        "ввод · Enter отправить · Shift+Enter перенос"
+    };
+    let focused = ui.overlay.is_none();
+    ui.input.render(frame, input_area, input_title, focused);
 
     // --- оверлей списка чатов (поверх всего) ---
     if let Some(overlay) = &ui.overlay {
