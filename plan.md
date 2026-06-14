@@ -282,8 +282,8 @@
 | ~~API `xinfer`~~ ✅ | M1 | **закрыто** → [docs/xinfer-contract.md](docs/xinfer-contract.md); остался M1-smoke (порт/готовность/отмена) | строение `shared/api` |
 | HTTP-клиент | M1 | `async-openai` vs `reqwest`+свои типы | реализация движка |
 | sqlite-vec | M2 | сборка/линковка на Windows и Linux | хранилище RAG |
-| UI-крейты | M3 | `tui-textarea`/`ratatui-textarea`; `ratatui-markdown` vs `tui-markdown` | виджеты |
-| Спелл-чек в textarea | M3 | способ отрисовки ошибок/подсказок | UX ввода |
+| ~~UI-крейты~~ ✅ | M3 | **закрыто** → [ADR 0001](docs/decisions/0001-ui-crates-ratatui-030.md): `tui-markdown`+`tui-scrollview`, ввод — свой виджет | виджеты |
+| ~~Спелл-чек в textarea~~ ✅ | M3 | **закрыто** тем же ADR: свой виджет → рисуем подчёркивания сами | UX ввода |
 | Качество `spellbook` ru_RU | M3 | аффиксные правила | спелл-чек |
 | Эмбеддинги `xinfer` | M5 | вторичный сервер по требованию; модель/размерность | RAG |
 | Эндпоинт DuckDuckGo | M7 | HTML/lite/Instant Answer | web-инструмент |

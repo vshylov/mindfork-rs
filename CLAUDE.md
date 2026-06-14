@@ -67,7 +67,8 @@ Env для выбора бэкенда: `MINDFORK_XINFER_URL` (external) ИЛИ 
 (+ `MINDFORK_MODEL`, `MINDFORK_XINFER_PORT`, `MINDFORK_ISQ`) для managed.
 
 ## Статус (на 2026-06-14)
-Ветка `main` содержит всё. Сделано **M0, M1, M2**. **53 теста зелёные, 2 `#[ignore]`.**
+Ветка `main` содержит всё. Сделано **M0, M1, M2** и **бо́льшая часть M3**.
+**84 теста зелёные, 2 `#[ignore]`.**
 - **M0** — каркас FSD, TUI-петля с восстановлением терминала, single-instance, логирование.
 - **M1** — `shared/api` (xinfer-клиент со стримингом/отменой, супервайзер, парсер
   мыслей, mock), оркестратор (автомат + generation_id), мост tokio↔TUI, минимальный
@@ -76,25 +77,38 @@ Env для выбора бэкенда: `MINDFORK_XINFER_URL` (external) ИЛИ 
   (JSON атомарно + SQLite/sqlite-vec, изоляция по профилю, мягкое удаление + каскад).
   Storage пока НЕ подключён к оркестратору/UI.
 
-### Следующий этап — M3 (UI чата), см. plan.md §M3
-Крупный UI-этап. Основные задачи:
-- Подключить `Storage` к оркестратору: мульти-чат, загрузка/сохранение, дебаунс.
-- `widgets/`: список чатов (поиск, 2 сортировки, переименование, `Ctrl+L`), лента
-  (markdown, сворачиваемые CoT и tool-блоки, скролл), ввод на `tui-textarea`, статус-бар.
-- `shared/markdown.rs`: рендер markdown + unicode-аппроксимация LaTeX.
-- `features/spellcheck/`: `spellbook` (en_US/en_GB/ru_RU) + сегментация + подсказки.
-- Снять `#![allow(dead_code)]` из `main.rs`, когда слои свяжутся.
+### M3 (UI чата) — что уже сделано
+- **`[R]` UI-крейты закрыт** → [ADR 0001](docs/decisions/0001-ui-crates-ratatui-030.md):
+  `tui-textarea`/`ratatui-markdown` лочат ratatui 0.29 → берём `tui-markdown` +
+  `tui-scrollview`, а ввод — **собственный виджет** (это же снимает `[R]` отрисовки
+  спелл-чека: рисуем подчёркивания сами).
+- **`Storage` подключён к оркестратору**: мульти-чат, bootstrap (дефолтный профиль+чат),
+  загрузка/сохранение с дебаунсом (800мс), новые `AppCommand`/`AppEvent`
+  (`NewChat/SwitchChat/RenameChat/CloneChat/DeleteChat`, `ChatList/ChatActivated`).
+  `ChatSummary` живёт в `entities/chat.rs` (нужен и `app`, и `widgets`).
+- **`shared/markdown.rs`**: рендер через `tui-markdown` + unicode-аппроксимация LaTeX.
+- **`features/chat_search_sort.rs`, `features/rename_chat.rs`**: чистая логика.
+- **`widgets/chat_list.rs`**: оверлей `Ctrl+L` (поиск, 2 сортировки `Tab`, `F2`-переименование,
+  `Ctrl+N` новый, `Ctrl+D` копия, `Del` удалить). Интегрирован в `runtime.rs`.
 
-**Открытые `[R]` для M3** (решить ранним прототипом, зафиксировать ADR в коде/доке):
-- `tui-textarea` vs `ratatui-textarea` (совместимость с ratatui 0.30).
-- Покрытие `ratatui-markdown` (таблицы/подсветка/сворачивание) vs `tui-markdown`.
-- Способ отрисовки спелл-чека в TUI (нет API подчёркивания произвольных диапазонов).
-- Качество `spellbook` на ru_RU.
+### M3 — что осталось
+- `widgets/message_feed.rs`: лента с markdown-рендером (`shared::markdown::render`),
+  сворачиваемые CoT/tool-блоки, скролл (`tui-scrollview`), выделение сообщений.
+- `widgets/input_box.rs`: **собственный** multiline-ввод (`Shift+Enter` перенос,
+  `Enter` отправка), пока в `runtime.rs` строковый ввод-заглушка.
+- `widgets/status_bar.rs`, `screens/chat.rs` (вынести компоновку из `runtime.rs`).
+- `features/spellcheck/`: `spellbook` (en_US/en_GB/ru_RU) + сегментация + подсказки +
+  отрисовка подчёркиваний в своём `input_box`.
+- Снять `#![allow(dead_code)]` из `main.rs` — **после M5** (часть API: notes/RAG/db,
+  ещё не имеет потребителей; сейчас снятие сломает `clippy -D warnings`).
+
+**Открытые `[R]` для M3** (оставшиеся):
+- Качество `spellbook` на ru_RU (проверить аффиксные правила при интеграции).
 
 ## Подводные камни
 - **TUI «висит» при headless-запуске** (без TTY) — это нормально; чистый выход
   по `q`/`Esc`/`Ctrl+C` проверяется юнит-тестами `map_key`. Для живой проверки нужен
   настоящий терминал.
-- `#![allow(dead_code)]` в `main.rs` — временный (часть API опережает потребителей),
-  убрать на M3.
+- `#![allow(dead_code)]` в `main.rs` — временный (часть API опережает потребителей:
+  notes/RAG/db появятся на M5), убрать после M5.
 - Данные приложения портативны: лежат рядом с бинарником (в dev — `target/debug/`).
