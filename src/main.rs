@@ -60,16 +60,12 @@ fn main() -> anyhow::Result<()> {
         supervisor: Arc::new(XinferSupervisor),
     }));
 
-    // Фоновая загрузка словарей спелл-чека (парсинг .dic тяжёлый — не блокируем UI).
-    let (spell_tx, spell_rx) = std::sync::mpsc::channel();
+    // Словари спелл-чека грузит сам `runtime` в фоне по настройкам интерфейса
+    // (вкл/выкл + выбор словарей) и перегружает при их изменении.
     let dict_dir = paths.dictionaries_dir();
     let personal = paths.personal_dictionary();
-    std::thread::spawn(move || {
-        let checker = features::spellcheck::dict::load(&dict_dir, &personal);
-        let _ = spell_tx.send(checker);
-    });
 
-    let result = app::runtime::run(cmd_tx.clone(), evt_rx, spell_rx);
+    let result = app::runtime::run(cmd_tx.clone(), evt_rx, dict_dir, personal);
 
     // Останавливаем оркестратор; managed-серверы он гасит сам (kill_on_drop при
     // завершении его задачи). Даём фоновым задачам завершиться.

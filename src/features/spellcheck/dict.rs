@@ -14,37 +14,57 @@ use spellbook::Dictionary;
 
 use super::check::SpellChecker;
 
-/// Загружает все словари из `dict_dir` и персональный словарь из `personal_path`.
-/// Отсутствие каталога/файлов — не ошибка (вернётся отключённый/пустой чекер).
-pub fn load(dict_dir: &Path, personal_path: &Path) -> SpellChecker {
+/// Загружает словари из `dict_dir` и персональный словарь из `personal_path`
+/// согласно настройкам интерфейса (spec §11.6):
+/// - `enabled = false` → словари не грузятся (вернётся отключённый чекер);
+/// - `selected` непуст → грузятся только пары с базовым именем из списка
+///   (`en_US`/`ru_RU`/…); пустой `selected` → все найденные.
+///
+/// Отсутствие каталога/файлов — не ошибка (отключённый чекер). Загрузка тяжёлая
+/// (парсинг `.dic`) — вызывается в фоновом потоке (см. `app/runtime.rs`).
+pub fn load(
+    dict_dir: &Path,
+    personal_path: &Path,
+    enabled: bool,
+    selected: &[String],
+) -> SpellChecker {
     let mut dicts = Vec::new();
-    match fs::read_dir(dict_dir) {
-        Ok(entries) => {
-            for entry in entries.flatten() {
-                let aff = entry.path();
-                if aff.extension().and_then(|e| e.to_str()) != Some("aff") {
-                    continue;
-                }
-                let dic = aff.with_extension("dic");
-                if !dic.exists() {
-                    continue;
-                }
-                match load_pair(&aff, &dic) {
-                    Ok(dict) => {
-                        tracing::info!(dict = %aff.display(), "словарь загружен");
-                        dicts.push(dict);
+    if !enabled {
+        tracing::info!("спелл-чек выключен в настройках — словари не загружаются");
+    } else {
+        match fs::read_dir(dict_dir) {
+            Ok(entries) => {
+                for entry in entries.flatten() {
+                    let aff = entry.path();
+                    if aff.extension().and_then(|e| e.to_str()) != Some("aff") {
+                        continue;
                     }
-                    Err(err) => {
-                        tracing::warn!(dict = %aff.display(), error = %err, "словарь пропущен");
+                    // Фильтр по выбранным словарям (по базовому имени файла).
+                    let stem = aff.file_stem().and_then(|s| s.to_str()).unwrap_or_default();
+                    if !selected.is_empty() && !selected.iter().any(|s| s == stem) {
+                        continue;
+                    }
+                    let dic = aff.with_extension("dic");
+                    if !dic.exists() {
+                        continue;
+                    }
+                    match load_pair(&aff, &dic) {
+                        Ok(dict) => {
+                            tracing::info!(dict = %aff.display(), "словарь загружен");
+                            dicts.push(dict);
+                        }
+                        Err(err) => {
+                            tracing::warn!(dict = %aff.display(), error = %err, "словарь пропущен");
+                        }
                     }
                 }
             }
-        }
-        Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
-            tracing::info!(dir = %dict_dir.display(), "каталог словарей отсутствует — спелл-чек выключен");
-        }
-        Err(err) => {
-            tracing::warn!(dir = %dict_dir.display(), error = %err, "не удалось прочитать каталог словарей");
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
+                tracing::info!(dir = %dict_dir.display(), "каталог словарей отсутствует — спелл-чек выключен");
+            }
+            Err(err) => {
+                tracing::warn!(dir = %dict_dir.display(), error = %err, "не удалось прочитать каталог словарей");
+            }
         }
     }
 
@@ -99,12 +119,16 @@ mod tests {
         fs::write(dir.join(name), content).unwrap();
     }
 
+    fn load_all(dir: &Path) -> SpellChecker {
+        load(dir, &dir.join("personal.txt"), true, &[])
+    }
+
     #[test]
     fn loads_aff_dic_pair() {
         let dir = tempfile::tempdir().unwrap();
         write(dir.path(), "en.aff", AFF);
         write(dir.path(), "en.dic", DIC);
-        let checker = load(dir.path(), &dir.path().join("personal.txt"));
+        let checker = load_all(dir.path());
         assert!(checker.is_enabled());
         assert!(checker.check_word("hello"));
         assert!(!checker.check_word("zxcvb"));
@@ -113,7 +137,7 @@ mod tests {
     #[test]
     fn missing_dir_disables_checker() {
         let dir = tempfile::tempdir().unwrap();
-        let checker = load(&dir.path().join("nope"), &dir.path().join("personal.txt"));
+        let checker = load_all(&dir.path().join("nope"));
         assert!(!checker.is_enabled());
     }
 
@@ -121,8 +145,36 @@ mod tests {
     fn aff_without_dic_is_skipped() {
         let dir = tempfile::tempdir().unwrap();
         write(dir.path(), "en.aff", AFF); // нет en.dic
-        let checker = load(dir.path(), &dir.path().join("personal.txt"));
+        let checker = load_all(dir.path());
         assert!(!checker.is_enabled());
+    }
+
+    #[test]
+    fn disabled_skips_loading() {
+        let dir = tempfile::tempdir().unwrap();
+        write(dir.path(), "en.aff", AFF);
+        write(dir.path(), "en.dic", DIC);
+        // enabled = false → словари не грузятся, чекер выключен.
+        let checker = load(dir.path(), &dir.path().join("personal.txt"), false, &[]);
+        assert!(!checker.is_enabled());
+    }
+
+    #[test]
+    fn selection_filters_dictionaries() {
+        let dir = tempfile::tempdir().unwrap();
+        write(dir.path(), "en_US.aff", AFF);
+        write(dir.path(), "en_US.dic", DIC);
+        write(dir.path(), "ru_RU.aff", AFF);
+        write(dir.path(), "ru_RU.dic", "1\nпривет\n");
+        // Выбран только en_US → ru_RU не загружается.
+        let checker = load(
+            dir.path(),
+            &dir.path().join("personal.txt"),
+            true,
+            &["en_US".to_string()],
+        );
+        assert!(checker.check_word("hello")); // из en_US
+        assert!(!checker.check_word("привет")); // ru_RU не загружен
     }
 
     #[test]
