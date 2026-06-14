@@ -1,10 +1,11 @@
-//! Петля рендеринга TUI и мост к оркестратору. См. spec §4.4.1 и plan M1.
+//! Петля рендеринга TUI и мост к оркестратору. См. spec §4.4.1, §11.
 //!
 //! Петля синхронная (на главном потоке): опрашивает ввод с таймаутом,
 //! неблокирующе дренирует события оркестратора и перерисовывает экран.
-//! Команды уходят оркестратору через `mpsc` (send синхронный). M1 — минимальный
-//! чат (одно строковое поле ввода); полноценный UI (`tui-textarea`, список
-//! чатов, markdown, сворачиваемые блоки) приходит на M3.
+//! Команды уходят оркестратору через `mpsc` (send синхронный). Компоновка:
+//! лента ([`MessageFeed`], markdown + сворачиваемые мысли + скролл), ввод
+//! ([`InputBox`]), статус-бар и оверлей списка чатов ([`ChatListState`]).
+//! TODO(M3): вынести компоновку в `screens/chat.rs`; добавить спелл-чек.
 
 use std::time::Duration;
 
@@ -15,59 +16,27 @@ use ratatui::crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind, Ke
 use ratatui::layout::{Constraint, Layout};
 use ratatui::style::{Style, Stylize};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, Borders, Paragraph, Wrap};
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
 use uuid::Uuid;
 
 use crate::app::events::{AppCommand, AppEvent, ServerStatus};
 use crate::entities::chat::ChatSummary;
-use crate::entities::message::{Message, MessageRole};
 use crate::shared::api::FinishReason;
 use crate::widgets::chat_list::{ChatListAction, ChatListState};
 use crate::widgets::input_box::InputBox;
+use crate::widgets::message_feed::{FeedMessage, FeedRole, MessageFeed};
 
 /// Период опроса ввода (тик перерисовки).
 const TICK: Duration = Duration::from_millis(50);
 
-/// Роль элемента ленты.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Role {
-    User,
-    Assistant,
-    Note,
-}
-
-/// Элемент ленты сообщений (UI-проекция).
-#[derive(Debug, Clone)]
-struct FeedItem {
-    role: Role,
-    text: String,
-    thoughts: String,
-    streaming: bool,
-}
-
-impl FeedItem {
-    /// Проекция доменного сообщения в элемент ленты (для перестроения при
-    /// активации чата). Системные сообщения в ленте не показываются.
-    fn from_message(msg: &Message) -> Option<Self> {
-        let role = match msg.role {
-            MessageRole::User => Role::User,
-            MessageRole::Assistant => Role::Assistant,
-            MessageRole::Tool => Role::Note,
-            MessageRole::System => return None,
-        };
-        Some(Self {
-            role,
-            text: msg.text.clone(),
-            thoughts: msg.thoughts.clone().unwrap_or_default(),
-            streaming: false,
-        })
-    }
-}
+/// Высота прокрутки ленты на одно нажатие PageUp/PageDown (строк).
+const PAGE_SCROLL: usize = 8;
 
 /// Состояние UI (read-only-проекция, обновляется только событиями).
 struct UiState {
-    feed: Vec<FeedItem>,
+    feed: Vec<FeedMessage>,
+    /// Состояние просмотра ленты (скролл, показ мыслей).
+    feed_view: MessageFeed,
     /// Активный чат и его заголовок.
     active_chat: Option<Uuid>,
     title: String,
@@ -86,6 +55,7 @@ impl UiState {
     fn new() -> Self {
         Self {
             feed: Vec::new(),
+            feed_view: MessageFeed::new(),
             active_chat: None,
             title: String::new(),
             chats: Vec::new(),
@@ -120,23 +90,31 @@ impl UiState {
                 self.title = title;
                 self.current_gen = None;
                 self.generating = false;
-                self.feed = messages.iter().filter_map(FeedItem::from_message).collect();
+                self.feed = messages
+                    .iter()
+                    .filter_map(FeedMessage::from_message)
+                    .collect();
+                self.feed_view.scroll_to_bottom();
             }
-            AppEvent::UserMessage(text) => self.feed.push(FeedItem {
-                role: Role::User,
-                text,
-                thoughts: String::new(),
-                streaming: false,
-            }),
+            AppEvent::UserMessage(text) => {
+                self.feed.push(FeedMessage {
+                    role: FeedRole::User,
+                    text,
+                    thoughts: String::new(),
+                    streaming: false,
+                });
+                self.feed_view.scroll_to_bottom();
+            }
             AppEvent::GenerationStarted { generation_id } => {
                 self.current_gen = Some(generation_id);
                 self.generating = true;
-                self.feed.push(FeedItem {
-                    role: Role::Assistant,
+                self.feed.push(FeedMessage {
+                    role: FeedRole::Assistant,
                     text: String::new(),
                     thoughts: String::new(),
                     streaming: true,
                 });
+                self.feed_view.scroll_to_bottom();
             }
             AppEvent::Chunk {
                 generation_id,
@@ -178,12 +156,8 @@ impl UiState {
     }
 
     fn push_note(&mut self, text: &str) {
-        self.feed.push(FeedItem {
-            role: Role::Note,
-            text: text.to_string(),
-            thoughts: String::new(),
-            streaming: false,
-        });
+        self.feed.push(FeedMessage::note(text));
+        self.feed_view.scroll_to_bottom();
     }
 }
 
@@ -235,6 +209,10 @@ fn handle_key(key: KeyEvent, ui: &mut UiState, cmd_tx: &UnboundedSender<AppComma
         (KeyCode::Char('l'), KeyModifiers::CONTROL) => {
             ui.overlay = Some(ChatListState::new(ui.chats.clone(), ui.active_chat));
         }
+        // Прокрутка ленты и сворачивание «мыслей» (spec §11.3).
+        (KeyCode::PageUp, _) => ui.feed_view.scroll_up(PAGE_SCROLL),
+        (KeyCode::PageDown, _) => ui.feed_view.scroll_down(PAGE_SCROLL),
+        (KeyCode::Char('t'), KeyModifiers::CONTROL) => ui.feed_view.toggle_thoughts(),
         (KeyCode::Esc, _) => {
             if ui.generating {
                 let _ = cmd_tx.send(AppCommand::Cancel);
@@ -298,21 +276,13 @@ fn draw(frame: &mut Frame, ui: &mut UiState) {
     ])
     .areas(frame.area());
 
-    // --- лента (показываем хвост, помещающийся в область) ---
-    let mut lines = feed_lines(ui);
-    let height = feed_area.height.saturating_sub(2) as usize; // минус рамка
-    if lines.len() > height {
-        lines.drain(..lines.len() - height);
-    }
+    // --- лента сообщений (markdown, сворачиваемые мысли, скролл) ---
     let title = if ui.title.is_empty() {
-        " mindfork-rs ".to_string()
+        "mindfork-rs".to_string()
     } else {
-        format!(" {} ", ui.title)
+        ui.title.clone()
     };
-    let feed = Paragraph::new(lines)
-        .block(Block::default().borders(Borders::ALL).title(title))
-        .wrap(Wrap { trim: false });
-    frame.render_widget(feed, feed_area);
+    ui.feed_view.render(frame, feed_area, &title, &ui.feed);
 
     // --- статус-бар ---
     frame.render_widget(Line::from(status_spans(ui)), status_area);
@@ -332,41 +302,6 @@ fn draw(frame: &mut Frame, ui: &mut UiState) {
     }
 }
 
-fn feed_lines(ui: &UiState) -> Vec<Line<'static>> {
-    let mut lines = Vec::new();
-    if ui.feed.is_empty() {
-        lines.push(Line::from("Начните диалог — введите сообщение ниже.").dim());
-        return lines;
-    }
-    for item in &ui.feed {
-        match item.role {
-            Role::User => lines.push(Line::from("Вы:".to_string()).bold().cyan()),
-            Role::Assistant => lines.push(Line::from("Ассистент:".to_string()).bold().green()),
-            Role::Note => {}
-        }
-        if !item.thoughts.is_empty() {
-            for t in item.thoughts.lines() {
-                lines.push(Line::from(format!("  💭 {t}")).dim().italic());
-            }
-        }
-        let body = if item.text.is_empty() && item.streaming {
-            "…".to_string()
-        } else {
-            item.text.clone()
-        };
-        for line in body.split('\n') {
-            let span = if item.role == Role::Note {
-                Span::from(line.to_string()).dim()
-            } else {
-                Span::from(line.to_string())
-            };
-            lines.push(Line::from(span));
-        }
-        lines.push(Line::from(""));
-    }
-    lines
-}
-
 fn status_spans(ui: &UiState) -> Vec<Span<'static>> {
     let (label, style) = match &ui.status {
         ServerStatus::NotConfigured => ("сервер не настроен".to_string(), Style::new().yellow()),
@@ -379,7 +314,7 @@ fn status_spans(ui: &UiState) -> Vec<Span<'static>> {
         spans.push(Span::from("  •  ").dim());
         spans.push(Span::from("генерация…").magenta());
     }
-    spans.push(Span::from("  •  Ctrl+L чаты · Ctrl+N новый · Ctrl+C выход").dim());
+    spans.push(Span::from("  •  Ctrl+L чаты · Ctrl+N новый · Ctrl+T мысли · Ctrl+C выход").dim());
     spans
 }
 
@@ -415,8 +350,8 @@ mod tests {
         });
 
         assert_eq!(ui.feed.len(), 2);
-        assert_eq!(ui.feed[0].role, Role::User);
-        assert_eq!(ui.feed[1].role, Role::Assistant);
+        assert_eq!(ui.feed[0].role, FeedRole::User);
+        assert_eq!(ui.feed[1].role, FeedRole::Assistant);
         assert_eq!(ui.feed[1].text, "Hello");
         assert_eq!(ui.feed[1].thoughts, "hmm");
         assert!(!ui.feed[1].streaming);
@@ -451,7 +386,7 @@ mod tests {
             generation_id: id,
             reason: FinishReason::Cancelled,
         });
-        assert!(ui.feed.iter().any(|i| i.role == Role::Note));
+        assert!(ui.feed.iter().any(|i| i.role == FeedRole::Note));
         assert!(!ui.generating);
     }
 }
