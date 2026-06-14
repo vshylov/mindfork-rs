@@ -898,7 +898,7 @@ fn finalize_message(out: &RoundOutput, ctx: &ToolContext) -> Option<Message> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::features::tools::standard_registry;
+    use crate::features::tools::{ToolConfig, standard_registry};
     use crate::shared::api::mock::{MockBackend, MockEmbedder};
     use crate::shared::paths::Paths;
 
@@ -926,7 +926,7 @@ mod tests {
             storage,
             default_sampling: SamplingConfig::default(),
             status: ServerStatus::Ready,
-            registry: Arc::new(standard_registry(None)),
+            registry: Arc::new(standard_registry(&ToolConfig::default())),
             embedder: test_embedder(),
             max_tool_rounds: 8,
             web_enabled: true,
@@ -963,7 +963,7 @@ mod tests {
                 temperature: Some(0.1),
                 ..Default::default()
             },
-            registry: Arc::new(standard_registry(None)),
+            registry: Arc::new(standard_registry(&ToolConfig::default())),
             embedder: test_embedder(),
             max_tool_rounds: 8,
             web_enabled: true,
@@ -1069,7 +1069,7 @@ mod tests {
             storage,
             default_sampling: SamplingConfig::default(),
             status: ServerStatus::Ready,
-            registry: Arc::new(standard_registry(None)),
+            registry: Arc::new(standard_registry(&ToolConfig::default())),
             embedder: test_embedder(),
             max_tool_rounds: 8,
             web_enabled: true,
@@ -1352,7 +1352,7 @@ mod tests {
             storage,
             default_sampling: SamplingConfig::default(),
             status: ServerStatus::Ready,
-            registry: Arc::new(standard_registry(None)),
+            registry: Arc::new(standard_registry(&ToolConfig::default())),
             embedder: test_embedder(),
             max_tool_rounds: 2,
             web_enabled: true,

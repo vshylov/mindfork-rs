@@ -22,7 +22,7 @@ use tokio::sync::mpsc::unbounded_channel;
 
 use crate::app::events::{AppCommand, AppEvent, ServerStatus};
 use crate::app::orchestrator::{self, OrchestratorDeps};
-use crate::features::tools::standard_registry;
+use crate::features::tools::{ToolConfig, standard_registry};
 use crate::shared::api::{
     Embedder, EngineBackend, ManagedConfig, ServerHandle, UnavailableEmbedder, XinferClient,
     wait_until_ready,
@@ -61,7 +61,11 @@ fn main() -> anyhow::Result<()> {
     let config = storage.json().load_config().unwrap_or_default();
 
     // Реестр инструментов (общий) и источник эмбеддингов (выделенный сервер, ADR 0002).
-    let registry = Arc::new(standard_registry(config.tools.python_path.clone()));
+    let registry = Arc::new(standard_registry(&ToolConfig {
+        python_path: config.tools.python_path.clone(),
+        subagent_max_tokens: config.tools.subagent_max_tokens,
+        subagent_timeout: Duration::from_secs(config.tools.subagent_timeout_secs),
+    }));
     let (embedder, embed_server) = resolve_embedder();
     if let Some(server) = &embed_server {
         tracing::info!(

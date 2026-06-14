@@ -16,6 +16,7 @@ pub mod web;
 
 use std::collections::BTreeMap;
 use std::sync::Arc;
+use std::time::Duration;
 
 use anyhow::Result;
 use chrono::{DateTime, Utc};
@@ -146,10 +147,34 @@ pub fn effective_tool_ids(
         .collect()
 }
 
-/// Реестр со всеми инструментами (M5–M7). `python_path` — путь к интерпретатору
-/// для `python_exec` (`None` → системный). Глобальные выключатели применяются
-/// не здесь, а при отборе эффективного набора (см. [`effective_tool_ids`]).
-pub fn standard_registry(python_path: Option<String>) -> ToolRegistry {
+/// Параметры построения реестра инструментов из конфигурации (`config.tools`,
+/// spec §11.6). Позволяют пересобирать реестр при правках настроек (live).
+#[derive(Debug, Clone)]
+pub struct ToolConfig {
+    /// Путь к интерпретатору Python для `python_exec` (`None` → системный).
+    pub python_path: Option<String>,
+    /// Лимит токенов ответа `call_subagent`.
+    pub subagent_max_tokens: usize,
+    /// Лимит времени на вызов `call_subagent`.
+    pub subagent_timeout: Duration,
+}
+
+impl Default for ToolConfig {
+    fn default() -> Self {
+        Self {
+            python_path: None,
+            subagent_max_tokens: crate::shared::config::DEFAULT_SUBAGENT_MAX_TOKENS,
+            subagent_timeout: Duration::from_secs(
+                crate::shared::config::DEFAULT_SUBAGENT_TIMEOUT_SECS,
+            ),
+        }
+    }
+}
+
+/// Реестр со всеми инструментами (M5–M7) по параметрам [`ToolConfig`]. Глобальные
+/// выключатели применяются не здесь, а при отборе эффективного набора (см.
+/// [`effective_tool_ids`]).
+pub fn standard_registry(cfg: &ToolConfig) -> ToolRegistry {
     let mut reg = ToolRegistry::new();
     reg.register(Arc::new(introspection::GetSampling));
     reg.register(Arc::new(introspection::SetSampling));
@@ -160,9 +185,12 @@ pub fn standard_registry(python_path: Option<String>) -> ToolRegistry {
     reg.register(Arc::new(notes::NoteRecall));
     reg.register(Arc::new(rag::RagAdd));
     reg.register(Arc::new(rag::RagSearch));
-    reg.register(Arc::new(subagent::CallSubagent));
+    reg.register(Arc::new(subagent::CallSubagent::new(
+        cfg.subagent_max_tokens,
+        cfg.subagent_timeout,
+    )));
     reg.register(Arc::new(web::WebSearch::new()));
-    reg.register(Arc::new(python::PythonExec::new(python_path)));
+    reg.register(Arc::new(python::PythonExec::new(cfg.python_path.clone())));
     reg
 }
 
@@ -297,7 +325,7 @@ mod tests {
 
     #[test]
     fn standard_registry_has_all_default_tools() {
-        let reg = standard_registry(None);
+        let reg = standard_registry(&ToolConfig::default());
         for id in default_tool_ids() {
             assert!(reg.get(&id).is_some(), "инструмент {id} не зарегистрирован");
         }

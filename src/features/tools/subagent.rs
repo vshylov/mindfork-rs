@@ -18,13 +18,36 @@ use crate::shared::api::{ApiMessage, ChatChunk, ChatRequest};
 
 use super::{Tool, ToolContext, ToolOutcome};
 
-/// Лимит токенов ответа саб-агента (защита от длинных/зацикленных ответов).
-const SUBAGENT_MAX_TOKENS: usize = 1024;
-/// Лимит времени на один вызов саб-агента.
-const SUBAGENT_TIMEOUT: Duration = Duration::from_secs(60);
+/// Лимит токенов ответа саб-агента по умолчанию (защита от длинных/зацикленных).
+const DEFAULT_SUBAGENT_MAX_TOKENS: usize = 1024;
+/// Лимит времени на один вызов саб-агента по умолчанию.
+const DEFAULT_SUBAGENT_TIMEOUT: Duration = Duration::from_secs(60);
 
 /// `call_subagent` — независимый одно-ходовый запрос для альтернативного мнения.
-pub struct CallSubagent;
+/// Лимиты токенов/времени настраиваются (`config.tools`, spec §11.6).
+pub struct CallSubagent {
+    max_tokens: usize,
+    timeout: Duration,
+}
+
+impl Default for CallSubagent {
+    fn default() -> Self {
+        Self {
+            max_tokens: DEFAULT_SUBAGENT_MAX_TOKENS,
+            timeout: DEFAULT_SUBAGENT_TIMEOUT,
+        }
+    }
+}
+
+impl CallSubagent {
+    /// Создаёт инструмент с заданными лимитами токенов/времени.
+    pub fn new(max_tokens: usize, timeout: Duration) -> Self {
+        Self {
+            max_tokens,
+            timeout,
+        }
+    }
+}
 
 #[async_trait::async_trait]
 impl Tool for CallSubagent {
@@ -70,7 +93,7 @@ impl Tool for CallSubagent {
             max_tokens: Some(
                 ctx.effective_sampling
                     .max_tokens
-                    .map_or(SUBAGENT_MAX_TOKENS, |m| m.min(SUBAGENT_MAX_TOKENS)),
+                    .map_or(self.max_tokens, |m| m.min(self.max_tokens)),
             ),
             ..ctx.effective_sampling.clone()
         };
@@ -97,7 +120,7 @@ impl Tool for CallSubagent {
             Ok::<String, anyhow::Error>(text)
         };
 
-        match tokio::time::timeout(SUBAGENT_TIMEOUT, collect).await {
+        match tokio::time::timeout(self.timeout, collect).await {
             Ok(Ok(text)) if !text.trim().is_empty() => Ok(ToolOutcome::text(text)),
             Ok(Ok(_)) => Ok(ToolOutcome::text("(саб-агент вернул пустой ответ)")),
             Ok(Err(err)) => Ok(ToolOutcome::text(format!("Ошибка саб-агента: {err}"))),
@@ -167,7 +190,7 @@ mod tests {
         });
         let (_d, ctx) = ctx_with_engine(backend.clone());
 
-        let out = CallSubagent
+        let out = CallSubagent::default()
             .invoke(
                 &ctx,
                 serde_json::json!({
@@ -188,7 +211,7 @@ mod tests {
             req.tools.is_empty(),
             "саб-агенту нельзя передавать инструменты"
         );
-        assert!(req.sampling.max_tokens.unwrap() <= SUBAGENT_MAX_TOKENS);
+        assert!(req.sampling.max_tokens.unwrap() <= DEFAULT_SUBAGENT_MAX_TOKENS);
     }
 
     #[tokio::test]
@@ -199,7 +222,7 @@ mod tests {
         });
         let (_d, ctx) = ctx_with_engine(backend);
         assert!(
-            CallSubagent
+            CallSubagent::default()
                 .invoke(
                     &ctx,
                     serde_json::json!({"system_message": "x", "message": "  "})
