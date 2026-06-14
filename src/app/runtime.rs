@@ -20,7 +20,10 @@ use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
 use uuid::Uuid;
 
 use crate::app::events::{AppCommand, AppEvent, ServerStatus};
+use crate::entities::chat::ChatSummary;
+use crate::entities::message::{Message, MessageRole};
 use crate::shared::api::FinishReason;
+use crate::widgets::chat_list::{ChatListAction, ChatListState};
 
 /// Период опроса ввода (тик перерисовки).
 const TICK: Duration = Duration::from_millis(50);
@@ -42,9 +45,35 @@ struct FeedItem {
     streaming: bool,
 }
 
+impl FeedItem {
+    /// Проекция доменного сообщения в элемент ленты (для перестроения при
+    /// активации чата). Системные сообщения в ленте не показываются.
+    fn from_message(msg: &Message) -> Option<Self> {
+        let role = match msg.role {
+            MessageRole::User => Role::User,
+            MessageRole::Assistant => Role::Assistant,
+            MessageRole::Tool => Role::Note,
+            MessageRole::System => return None,
+        };
+        Some(Self {
+            role,
+            text: msg.text.clone(),
+            thoughts: msg.thoughts.clone().unwrap_or_default(),
+            streaming: false,
+        })
+    }
+}
+
 /// Состояние UI (read-only-проекция, обновляется только событиями).
 struct UiState {
     feed: Vec<FeedItem>,
+    /// Активный чат и его заголовок.
+    active_chat: Option<Uuid>,
+    title: String,
+    /// Список чатов (для оверлея).
+    chats: Vec<ChatSummary>,
+    /// Открытый оверлей списка чатов (если есть).
+    overlay: Option<ChatListState>,
     input: String,
     status: ServerStatus,
     current_gen: Option<Uuid>,
@@ -56,6 +85,10 @@ impl UiState {
     fn new() -> Self {
         Self {
             feed: Vec::new(),
+            active_chat: None,
+            title: String::new(),
+            chats: Vec::new(),
+            overlay: None,
             input: String::new(),
             status: ServerStatus::Connecting,
             current_gen: None,
@@ -67,6 +100,27 @@ impl UiState {
     fn apply(&mut self, event: AppEvent) {
         match event {
             AppEvent::ServerStatus(s) => self.status = s,
+            AppEvent::ChatList(chats) => {
+                // Если оверлей открыт — синхронизируем его снимок (после
+                // переименования/удаления/клонирования).
+                if let Some(overlay) = &mut self.overlay {
+                    overlay.set_chats(chats.clone());
+                }
+                self.chats = chats;
+            }
+            AppEvent::ChatActivated {
+                id,
+                title,
+                messages,
+            } => {
+                // Смена чата сбрасывает состояние генерации: «осиротевшие» чанки
+                // прежней генерации не должны попадать в ленту нового чата.
+                self.active_chat = Some(id);
+                self.title = title;
+                self.current_gen = None;
+                self.generating = false;
+                self.feed = messages.iter().filter_map(FeedItem::from_message).collect();
+            }
             AppEvent::UserMessage(text) => self.feed.push(FeedItem {
                 role: Role::User,
                 text,
@@ -167,8 +221,19 @@ fn handle_key(key: KeyEvent, ui: &mut UiState, cmd_tx: &UnboundedSender<AppComma
     if key.kind != KeyEventKind::Press {
         return;
     }
+    // Открытый оверлей перехватывает все клавиши.
+    if ui.overlay.is_some() {
+        handle_overlay_key(key, ui, cmd_tx);
+        return;
+    }
     match (key.code, key.modifiers) {
         (KeyCode::Char('c'), KeyModifiers::CONTROL) => ui.should_quit = true,
+        (KeyCode::Char('n'), KeyModifiers::CONTROL) => {
+            let _ = cmd_tx.send(AppCommand::NewChat);
+        }
+        (KeyCode::Char('l'), KeyModifiers::CONTROL) => {
+            ui.overlay = Some(ChatListState::new(ui.chats.clone(), ui.active_chat));
+        }
         (KeyCode::Esc, _) => {
             if ui.generating {
                 let _ = cmd_tx.send(AppCommand::Cancel);
@@ -193,6 +258,37 @@ fn handle_key(key: KeyEvent, ui: &mut UiState, cmd_tx: &UnboundedSender<AppComma
     }
 }
 
+/// Маршрутизирует клавишу в открытый оверлей списка чатов и исполняет действие.
+fn handle_overlay_key(key: KeyEvent, ui: &mut UiState, cmd_tx: &UnboundedSender<AppCommand>) {
+    let Some(overlay) = ui.overlay.as_mut() else {
+        return;
+    };
+    match overlay.on_key(key) {
+        ChatListAction::None => {}
+        ChatListAction::Close => ui.overlay = None,
+        ChatListAction::Switch(id) => {
+            let _ = cmd_tx.send(AppCommand::SwitchChat(id));
+            ui.overlay = None;
+        }
+        ChatListAction::New => {
+            let _ = cmd_tx.send(AppCommand::NewChat);
+            ui.overlay = None;
+        }
+        ChatListAction::Clone(id) => {
+            let _ = cmd_tx.send(AppCommand::CloneChat(id));
+            ui.overlay = None;
+        }
+        // Удаление/переименование не закрывают оверлей: обновлённый список
+        // прилетит событием `ChatList` и синхронизирует снимок.
+        ChatListAction::Delete(id) => {
+            let _ = cmd_tx.send(AppCommand::DeleteChat(id));
+        }
+        ChatListAction::Rename { id, title } => {
+            let _ = cmd_tx.send(AppCommand::RenameChat { id, title });
+        }
+    }
+}
+
 fn draw(frame: &mut Frame, ui: &UiState) {
     let [feed_area, input_area, status_area] = Layout::vertical([
         Constraint::Min(3),
@@ -207,12 +303,13 @@ fn draw(frame: &mut Frame, ui: &UiState) {
     if lines.len() > height {
         lines.drain(..lines.len() - height);
     }
+    let title = if ui.title.is_empty() {
+        " mindfork-rs ".to_string()
+    } else {
+        format!(" {} ", ui.title)
+    };
     let feed = Paragraph::new(lines)
-        .block(
-            Block::default()
-                .borders(Borders::ALL)
-                .title(" mindfork-rs "),
-        )
+        .block(Block::default().borders(Borders::ALL).title(title))
         .wrap(Wrap { trim: false });
     frame.render_widget(feed, feed_area);
 
@@ -229,6 +326,11 @@ fn draw(frame: &mut Frame, ui: &UiState) {
 
     // --- статус-бар ---
     frame.render_widget(Line::from(status_spans(ui)), status_area);
+
+    // --- оверлей списка чатов (поверх всего) ---
+    if let Some(overlay) = &ui.overlay {
+        overlay.render(frame, frame.area(), ui.active_chat);
+    }
 }
 
 fn feed_lines(ui: &UiState) -> Vec<Line<'static>> {
@@ -278,7 +380,7 @@ fn status_spans(ui: &UiState) -> Vec<Span<'static>> {
         spans.push(Span::from("  •  ").dim());
         spans.push(Span::from("генерация…").magenta());
     }
-    spans.push(Span::from("  •  Ctrl+C — выход").dim());
+    spans.push(Span::from("  •  Ctrl+L чаты · Ctrl+N новый · Ctrl+C выход").dim());
     spans
 }
 

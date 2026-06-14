@@ -2,4 +2,7 @@
 //! delete_last, edit_message, chat_search_sort, spellcheck, tools, …).
 //! См. spec §4.2.
 //!
-//! Наполняется на M3+.
+//! Наполняется на M3+. Логика фич — чистые, тестируемые без UI функции.
+
+pub mod chat_search_sort;
+pub mod rename_chat;

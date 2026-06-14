@@ -2,3 +2,5 @@
 //! status_bar, dialogs). См. spec §4.2, §11.
 //!
 //! Наполняется на M3.
+
+pub mod chat_list;

@@ -26,6 +26,7 @@ use crate::entities::sampling::SamplingConfig;
 use crate::shared::api::{
     EngineBackend, ManagedConfig, ServerHandle, XinferClient, wait_until_ready,
 };
+use crate::shared::storage::Storage;
 use crate::shared::{instance, logging, paths::Paths};
 
 fn main() -> anyhow::Result<()> {
@@ -39,10 +40,14 @@ fn main() -> anyhow::Result<()> {
         .build()
         .context("building tokio runtime")?;
 
+    // Хранилище (JSON + SQLite) рядом с бинарником. Единственный писатель —
+    // оркестратор (spec §4.4.2).
+    let storage = Storage::open(paths.clone()).context("opening storage")?;
+
     let (cmd_tx, cmd_rx) = unbounded_channel::<AppCommand>();
     let (evt_tx, evt_rx) = unbounded_channel::<AppEvent>();
 
-    // Подключение к серверу инференса (по переменным окружения; настройки — M2/M8).
+    // Подключение к серверу инференса (по переменным окружения; настройки — M8).
     let (backend, status, server) = resolve_backend(runtime.handle(), &evt_tx);
     if let Some(server) = &server {
         tracing::info!(
@@ -51,18 +56,23 @@ fn main() -> anyhow::Result<()> {
         );
     }
 
-    // Дефолтный семплинг для M1 (настройки приходят на M2/M8).
-    let sampling = SamplingConfig {
-        max_tokens: Some(2048),
-        thinking: Some(true),
-        ..Default::default()
-    };
+    // Глобальный семплинг по умолчанию (читается из конфига; чат может переопределить).
+    let default_sampling = storage
+        .json()
+        .load_config()
+        .map(|c| c.default_sampling)
+        .unwrap_or_else(|_| SamplingConfig {
+            max_tokens: Some(2048),
+            thinking: Some(true),
+            ..Default::default()
+        });
 
     runtime.spawn(orchestrator::run(OrchestratorDeps {
         cmd_rx,
         evt_tx: evt_tx.clone(),
         backend,
-        sampling,
+        storage,
+        default_sampling,
         status,
     }));
 
