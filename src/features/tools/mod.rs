@@ -10,6 +10,7 @@
 pub mod introspection;
 pub mod notes;
 pub mod rag;
+pub mod subagent;
 
 use std::collections::BTreeMap;
 use std::sync::Arc;
@@ -110,6 +111,7 @@ pub fn default_tool_ids() -> Vec<ToolId> {
         "note_recall",
         "rag_add",
         "rag_search",
+        "call_subagent",
     ]
     .into_iter()
     .map(String::from)
@@ -128,6 +130,7 @@ pub fn standard_registry() -> ToolRegistry {
     reg.register(Arc::new(notes::NoteRecall));
     reg.register(Arc::new(rag::RagAdd));
     reg.register(Arc::new(rag::RagSearch));
+    reg.register(Arc::new(subagent::CallSubagent));
     reg
 }
 
