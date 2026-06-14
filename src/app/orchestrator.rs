@@ -583,6 +583,8 @@ fn build_request(chat: &Chat, sampling: SamplingConfig) -> ChatRequest {
         system,
         messages: chat.messages.iter().filter_map(message_to_api).collect(),
         sampling,
+        // Схемы инструментов подключаются agentic-loop'ом (M5, отдельный коммит).
+        tools: Vec::new(),
     }
 }
 
@@ -618,6 +620,10 @@ fn spawn_generation(
                                 text: t,
                             });
                         }
+                        // Полноценная обработка tool-call'ов — в agentic-loop (M5,
+                        // отдельный коммит); пока инструменты не передаются и не
+                        // возникают.
+                        ChatChunk::ToolCall(_) => {}
                         ChatChunk::Finished(r) => {
                             reason = r;
                             let _ = evt_tx.send(AppEvent::Finished {

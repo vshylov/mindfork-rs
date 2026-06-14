@@ -8,7 +8,9 @@ use eventsource_stream::Eventsource;
 use futures_util::StreamExt;
 use tokio_util::sync::CancellationToken;
 
-use super::backend::{ChatChunk, ChatRequest, ChatStream, EngineBackend, FinishReason};
+use super::backend::{
+    ChatChunk, ChatRequest, ChatStream, EngineBackend, FinishReason, ToolCallDelta,
+};
 use super::thoughts::{Piece, ThoughtsParser};
 use super::wire;
 
@@ -100,6 +102,20 @@ impl EngineBackend for XinferClient {
                                         {
                                             for piece in parser.push(&c) { yield piece_to_chunk(piece); }
                                         }
+                                        if let Some(tool_calls) = choice.delta.tool_calls {
+                                            for tc in tool_calls {
+                                                let (name, arguments) = match tc.function {
+                                                    Some(f) => (f.name, f.arguments.unwrap_or_default()),
+                                                    None => (None, String::new()),
+                                                };
+                                                yield ChatChunk::ToolCall(ToolCallDelta {
+                                                    index: tc.index,
+                                                    id: tc.id,
+                                                    name,
+                                                    arguments,
+                                                });
+                                            }
+                                        }
                                         if let Some(reason) = choice.finish_reason {
                                             for piece in parser.finish() { yield piece_to_chunk(piece); }
                                             yield ChatChunk::Finished(FinishReason::from_wire(&reason));
@@ -172,6 +188,7 @@ mod ignored_smoke {
             match chunk {
                 ChatChunk::Text(t) => text.push_str(&t),
                 ChatChunk::Thoughts(t) => thoughts.push_str(&t),
+                ChatChunk::ToolCall(_) => {}
                 ChatChunk::Finished(r) => {
                     finish = Some(r);
                     break;
@@ -195,6 +212,7 @@ mod ignored_smoke {
                 max_tokens: Some(64),
                 ..Default::default()
             },
+            tools: vec![],
         };
         let (text, _thoughts, finish) =
             collect(client.chat_stream(req, Default::default()).await.unwrap()).await;
@@ -223,6 +241,7 @@ mod ignored_smoke {
                 max_tokens: Some(128),
                 ..Default::default()
             },
+            tools: vec![],
         };
         let (text, _t, finish) =
             collect(client.chat_stream(req, Default::default()).await.unwrap()).await;
