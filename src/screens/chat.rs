@@ -153,6 +153,17 @@ impl ChatScreen {
         self.settings_snapshot.clone()
     }
 
+    /// Текущие настройки спелл-чека `(включён, выбранные словари)` из последнего
+    /// снимка настроек — для (пере)загрузки словарей в `app/runtime.rs`. См. spec §11.6.
+    pub fn spell_config(&self) -> Option<(bool, &[String])> {
+        self.settings_snapshot.as_ref().map(|(c, _)| {
+            (
+                c.interface.spellcheck_enabled,
+                c.interface.selected_dictionaries.as_slice(),
+            )
+        })
+    }
+
     /// Устанавливает спелл-чекер (после фоновой загрузки словарей) и планирует
     /// перепроверку текущего ввода.
     pub fn set_spellchecker(&mut self, checker: SpellChecker) {
