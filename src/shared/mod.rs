@@ -2,7 +2,9 @@
 //! См. spec §4.2.
 
 pub mod api;
+pub mod config;
 pub mod error;
 pub mod instance;
 pub mod logging;
 pub mod paths;
+pub mod storage;

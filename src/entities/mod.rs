@@ -1,6 +1,8 @@
-//! Слой `entities` (FSD): доменные типы без I/O (`Profile`, `Chat`, `Message`,
-//! `Note`, `RagDocument`, `SamplingConfig`, …). См. spec §4.2, §5.1.
-//!
-//! На M1 объявлён `sampling`; остальные сущности — на M2.
+//! Слой `entities` (FSD): доменные типы без I/O. См. spec §4.2, §5.1.
 
+pub mod chat;
+pub mod message;
+pub mod note;
+pub mod profile;
+pub mod rag;
 pub mod sampling;
