@@ -23,7 +23,7 @@ use crate::shared::config::Theme;
 
 /// Пространство имён для детерминированных id профилей (UUIDv5 от имени конфигурации).
 /// Фиксированное — чтобы повторный импорт давал те же id (идемпотентность).
-const PROFILE_NAMESPACE: Uuid = Uuid::from_u128(0x6d696e64_666f_726b_5f6c_6c6d696772_8u128);
+const PROFILE_NAMESPACE: Uuid = Uuid::from_u128(0x6d696e64_666f726b_6d696772_00000001u128);
 
 /// Результат импорта: профили, чаты и (опционально) перенесённые глобальные
 /// настройки (семплинг/интерфейс) для применения к `AppConfig`.
@@ -176,7 +176,9 @@ pub fn parse_settings(json: &str) -> Result<ImportResult> {
         let spell = s.spell_checker_config.as_ref();
         ImportedInterface {
             spellcheck_enabled: spell.and_then(|s| s.is_enabled).unwrap_or(true),
-            dictionaries: spell.map(|s| s.enabled_dictionaries.clone()).unwrap_or_default(),
+            dictionaries: spell
+                .map(|s| s.enabled_dictionaries.clone())
+                .unwrap_or_default(),
             theme: parse_theme(ui.window_color_theme.as_deref()),
         }
     });
@@ -253,12 +255,13 @@ pub fn import_dir(dir: &Path) -> Result<ImportResult> {
 
     // Если профилей нет — создаём детерминированный профиль-приёмник для чатов.
     if result.profiles.is_empty() {
-        result
-            .profiles
-            .push(configuration_to_profile("Импортировано", &LlConfiguration {
+        result.profiles.push(configuration_to_profile(
+            "Импортировано",
+            &LlConfiguration {
                 characters_config: None,
                 message_history: Vec::new(),
-            }));
+            },
+        ));
     }
     let target_profile = result.profiles[0].id;
 
@@ -274,7 +277,9 @@ pub fn import_dir(dir: &Path) -> Result<ImportResult> {
         for path in entries {
             let bytes = fs::read(&path).with_context(|| format!("reading {}", path.display()))?;
             match serde_json::from_slice::<LlConversation>(strip_bom(&bytes)) {
-                Ok(conv) => result.chats.push(conversation_to_chat(&conv, target_profile)),
+                Ok(conv) => result
+                    .chats
+                    .push(conversation_to_chat(&conv, target_profile)),
                 Err(err) => {
                     tracing::warn!(file = %path.display(), error = %err, "пропуск нечитаемой конверсации");
                 }
@@ -291,7 +296,11 @@ pub fn import_dir(dir: &Path) -> Result<ImportResult> {
 fn first_text(history: &[LlMessage], role: &str) -> Option<String> {
     history
         .iter()
-        .find(|m| m.role.as_deref().is_some_and(|r| r.eq_ignore_ascii_case(role)))
+        .find(|m| {
+            m.role
+                .as_deref()
+                .is_some_and(|r| r.eq_ignore_ascii_case(role))
+        })
         .map(|m| m.text.clone())
 }
 
@@ -451,10 +460,7 @@ mod tests {
         let conv: LlConversation = serde_json::from_str(CONVERSATION).unwrap();
         let pid = Uuid::new_v4();
         let chat = conversation_to_chat(&conv, pid);
-        assert_eq!(
-            chat.id.to_string(),
-            "663184f6-c49d-4da6-a0f3-0e757f7e9f3c"
-        );
+        assert_eq!(chat.id.to_string(), "663184f6-c49d-4da6-a0f3-0e757f7e9f3c");
         assert_eq!(chat.profile_id, pid);
         assert_eq!(chat.title, "New Chat 154");
         assert_eq!(chat.system_message, "You are Assistant.");

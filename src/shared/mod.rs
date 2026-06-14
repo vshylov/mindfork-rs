@@ -3,7 +3,6 @@
 
 pub mod api;
 pub mod config;
-pub mod error;
 pub mod instance;
 pub mod logging;
 pub mod markdown;
