@@ -15,15 +15,20 @@ use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
 use crate::app::events::{AppCommand, AppEvent, ServerStatus};
+use crate::app::supervisor::ServerSupervisor;
 use crate::entities::chat::{Chat, ChatSummary};
 use crate::entities::message::{Message, MessageMetadata, MessageRole, ToolCallRecord};
 use crate::entities::profile::{Profile, ToolId};
 use crate::entities::sampling::SamplingConfig;
-use crate::features::tools::{ChatEffect, ToolContext, ToolRegistry, effective_tool_ids};
+use crate::features::profiles::ProfileEdit;
+use crate::features::tools::{
+    ChatEffect, ToolConfig, ToolContext, ToolRegistry, effective_tool_ids, standard_registry,
+};
 use crate::shared::api::{
     ApiMessage, ApiToolCall, ChatChunk, ChatRequest, Embedder, EngineBackend, FinishReason,
-    ToolCallAccumulator,
+    ServerHandle, ToolCallAccumulator,
 };
+use crate::shared::config::AppConfig;
 use crate::shared::storage::Storage;
 
 /// Системное сообщение профиля по умолчанию (создаётся при пустом хранилище).
@@ -33,25 +38,17 @@ const DEFAULT_SYSTEM_MESSAGE: &str =
 /// Дебаунс сохранения изменённых чатов на диск.
 const SAVE_DEBOUNCE: Duration = Duration::from_millis(800);
 
-/// Параметры запуска оркестратора.
+/// Параметры запуска оркестратора. Серверы (chat/embedding) и реестр инструментов
+/// оркестратор настраивает сам из [`AppConfig`] через [`ServerSupervisor`] — это
+/// позволяет перезапускать их при правках настроек (spec §11.6).
 pub struct OrchestratorDeps {
     pub cmd_rx: UnboundedReceiver<AppCommand>,
     pub evt_tx: UnboundedSender<AppEvent>,
-    pub backend: Option<Arc<dyn EngineBackend>>,
     pub storage: Arc<Storage>,
-    /// Глобальный семплинг по умолчанию (низший уровень приоритета: переопределяется
-    /// дефолтом профиля и override чата — см. `effective_sampling`, spec §8.3).
-    pub default_sampling: SamplingConfig,
-    pub status: ServerStatus,
-    /// Реестр инструментов (общий, read-only).
-    pub registry: Arc<ToolRegistry>,
-    /// Источник эмбеддингов для RAG (выделенный сервер — ADR 0002).
-    pub embedder: Arc<dyn Embedder>,
-    /// Лимит раундов agentic-loop (spec §6.3).
-    pub max_tool_rounds: u32,
-    /// Глобальные выключатели внешних инструментов (spec §9.4).
-    pub web_enabled: bool,
-    pub python_enabled: bool,
+    /// Полная конфигурация приложения (оркестратор — её единственный писатель).
+    pub config: AppConfig,
+    /// Супервайзер серверов инференса/эмбеддингов (real или mock в тестах).
+    pub supervisor: Arc<dyn ServerSupervisor>,
 }
 
 /// Состояние генерации (автомат на активный чат).
@@ -95,30 +92,27 @@ pub async fn run(deps: OrchestratorDeps) {
     let OrchestratorDeps {
         mut cmd_rx,
         evt_tx,
-        backend,
         storage,
-        default_sampling,
-        status,
-        registry,
-        embedder,
-        max_tool_rounds,
-        web_enabled,
-        python_enabled,
+        config,
+        supervisor,
     } = deps;
 
-    let _ = evt_tx.send(AppEvent::ServerStatus(status));
-
     let (done_tx, mut done_rx) = unbounded_channel::<GenResult>();
+    // Внутренний канал статуса сервера: фоновый probe супервайзера досылает в него
+    // готовность (Ready/Disconnected), петля транслирует в AppEvent::ServerStatus.
+    let (status_tx, mut status_rx) = unbounded_channel::<ServerStatus>();
+    let registry = Arc::new(build_registry(&config));
     let mut orch = Orchestrator {
         evt_tx,
-        backend,
+        supervisor,
+        backend: None,
+        chat_handle: None,
+        embed_handle: None,
+        embedder: Arc::new(crate::shared::api::UnavailableEmbedder),
         storage,
-        default_sampling,
+        config,
         registry,
-        embedder,
-        max_tool_rounds,
-        web_enabled,
-        python_enabled,
+        status_tx,
         profiles: Vec::new(),
         chats: Vec::new(),
         active_id: None,
@@ -128,11 +122,15 @@ pub async fn run(deps: OrchestratorDeps) {
         save_deadline: None,
     };
 
+    // Поднимаем серверы по конфигу и эмитим стартовые события/настройки.
+    orch.apply_chat_settings();
+    orch.apply_embed_settings();
     if let Err(err) = orch.bootstrap() {
         let _ = orch
             .evt_tx
             .send(AppEvent::Error(format!("Ошибка загрузки данных: {err}")));
     }
+    orch.emit_settings();
 
     loop {
         let deadline = orch.save_deadline;
@@ -148,10 +146,24 @@ pub async fn run(deps: OrchestratorDeps) {
                     orch.handle_done(res);
                 }
             }
+            status = status_rx.recv() => {
+                if let Some(s) = status {
+                    let _ = orch.evt_tx.send(AppEvent::ServerStatus(s));
+                }
+            }
             _ = sleep_until_opt(deadline) => orch.flush_saves(),
         }
     }
     orch.flush_saves();
+}
+
+/// Строит реестр инструментов из конфигурации (`config.tools`).
+fn build_registry(config: &AppConfig) -> ToolRegistry {
+    standard_registry(&ToolConfig {
+        python_path: config.tools.python_path.clone(),
+        subagent_max_tokens: config.tools.subagent_max_tokens,
+        subagent_timeout: Duration::from_secs(config.tools.subagent_timeout_secs),
+    })
 }
 
 /// Спит до `deadline`, либо «висит вечно», если дедлайна нет (нет грязных чатов).
@@ -164,14 +176,22 @@ async fn sleep_until_opt(deadline: Option<Instant>) {
 
 struct Orchestrator {
     evt_tx: UnboundedSender<AppEvent>,
+    /// Супервайзер серверов (для перезапуска при смене модели/сервера).
+    supervisor: Arc<dyn ServerSupervisor>,
     backend: Option<Arc<dyn EngineBackend>>,
-    storage: Arc<Storage>,
-    default_sampling: SamplingConfig,
-    registry: Arc<ToolRegistry>,
+    /// Опора на managed chat-процесс (drop → kill). `None` — external/не настроен.
+    chat_handle: Option<ServerHandle>,
+    /// Опора на managed embedding-процесс.
+    embed_handle: Option<ServerHandle>,
+    /// Источник эмбеддингов для RAG (выделенный сервер — ADR 0002).
     embedder: Arc<dyn Embedder>,
-    max_tool_rounds: u32,
-    web_enabled: bool,
-    python_enabled: bool,
+    storage: Arc<Storage>,
+    /// Полная конфигурация (оркестратор — единственный писатель в `settings.json`).
+    config: AppConfig,
+    /// Реестр инструментов (пересобирается при правках `config.tools`).
+    registry: Arc<ToolRegistry>,
+    /// Канал статуса сервера для фонового probe супервайзера.
+    status_tx: UnboundedSender<ServerStatus>,
     profiles: Vec<Profile>,
     /// Видимые чаты, целиком в памяти (оркестратор — единственный писатель).
     chats: Vec<Chat>,
@@ -259,6 +279,8 @@ impl Orchestrator {
                 system_message,
             } => self.handle_create_profile(name, system_message),
             AppCommand::DeleteProfile(id) => self.handle_delete_profile(id),
+            AppCommand::UpdateConfig(config) => self.handle_update_config(*config),
+            AppCommand::UpdateProfile { id, edit } => self.handle_update_profile(id, *edit),
         }
         false
     }
@@ -297,7 +319,11 @@ impl Orchestrator {
             .map(|p| p.enabled_tools.clone())
             .unwrap_or_default();
         // Эффективный набор = профиль ∩ глобальные выключатели (spec §9.4).
-        let allowed = effective_tool_ids(&enabled, self.web_enabled, self.python_enabled);
+        let allowed = effective_tool_ids(
+            &enabled,
+            self.config.tools.web_enabled,
+            self.config.tools.python_enabled,
+        );
         let schemas = self.registry.schemas_for(&allowed);
 
         // Добавляем сообщение пользователя и строим запрос/контекст инструмента.
@@ -341,7 +367,7 @@ impl Orchestrator {
             cancel,
             id,
             chat_id: active_id,
-            max_rounds: self.max_tool_rounds,
+            max_rounds: self.config.max_tool_rounds,
             allowed,
             evt_tx: self.evt_tx.clone(),
             done_tx: self.done_tx.clone(),
@@ -540,6 +566,89 @@ impl Orchestrator {
         }
     }
 
+    /// Применяет правки конфигурации: сохраняет, перезапускает сервер/реестр при
+    /// необходимости и переэмитит настройки. Единственный писатель в `settings.json`.
+    fn handle_update_config(&mut self, config: AppConfig) {
+        let old = std::mem::replace(&mut self.config, config);
+        if let Err(err) = self.storage.json().save_config(&self.config) {
+            let _ = self.evt_tx.send(AppEvent::Error(format!(
+                "Не удалось сохранить настройки: {err}"
+            )));
+            self.config = old; // откат к прежнему состоянию
+            return;
+        }
+        // Смена настроек chat-сервера (модель/режим/порт/…) — перезапуск (spec §11.6).
+        if self.config.xinfer != old.xinfer {
+            self.apply_chat_settings();
+        }
+        // Смена настроек embedding-сервера — пере-подключение/перезапуск.
+        if self.config.embed != old.embed {
+            self.apply_embed_settings();
+        }
+        // Смена параметров инструментов — пересборка реестра (python_path, лимиты).
+        if self.config.tools != old.tools {
+            self.registry = Arc::new(build_registry(&self.config));
+        }
+        self.emit_settings();
+    }
+
+    /// Применяет правки профиля (не затрагивает уже созданные чаты — у них свои
+    /// копии, spec §10). Сохраняет и переэмитит список профилей/настройки.
+    fn handle_update_profile(&mut self, id: Uuid, edit: ProfileEdit) {
+        let Some(profile) = self.profiles.iter_mut().find(|p| p.id == id) else {
+            return;
+        };
+        if !crate::features::profiles::apply_edit(profile, edit) {
+            let _ = self
+                .evt_tx
+                .send(AppEvent::Error("Имя профиля не может быть пустым".into()));
+            return;
+        }
+        let profile = profile.clone();
+        if let Err(err) = self.storage.json().upsert_profile(&profile) {
+            let _ = self.evt_tx.send(AppEvent::Error(format!(
+                "Не удалось сохранить профиль: {err}"
+            )));
+            return;
+        }
+        self.emit_profile_list();
+        self.emit_settings();
+    }
+
+    /// (Пере)поднимает chat-сервер по `config.xinfer`: гасит прежний процесс,
+    /// просит супервайзер настроить новый, эмитит немедленный статус.
+    fn apply_chat_settings(&mut self) {
+        self.chat_handle = None; // drop старого managed-процесса (kill_on_drop)
+        let setup = self
+            .supervisor
+            .apply_chat(&self.config.xinfer, self.status_tx.clone());
+        self.backend = setup.backend;
+        self.chat_handle = setup.handle;
+        let _ = self.evt_tx.send(AppEvent::ServerStatus(setup.status));
+    }
+
+    /// (Пере)поднимает embedding-сервер по `config.embed`.
+    fn apply_embed_settings(&mut self) {
+        self.embed_handle = None;
+        let setup = self.supervisor.apply_embed(&self.config.embed);
+        self.embedder = setup.embedder;
+        self.embed_handle = setup.handle;
+    }
+
+    /// Эмитит полный снимок настроек (конфиг + полные профили) для экрана настроек.
+    fn emit_settings(&self) {
+        let visible: Vec<Profile> = self
+            .profiles
+            .iter()
+            .filter(|p| !p.is_hidden)
+            .cloned()
+            .collect();
+        let _ = self.evt_tx.send(AppEvent::Settings {
+            config: Box::new(self.config.clone()),
+            profiles: visible,
+        });
+    }
+
     // ---------- вспомогательное ----------
 
     /// Создаёт новый чат из профиля (по `id` или первого) с приветствием.
@@ -570,7 +679,11 @@ impl Orchestrator {
         let profile_default = chat
             .and_then(|c| self.profiles.iter().find(|p| p.id == c.profile_id))
             .and_then(|p| p.default_sampling.as_ref());
-        crate::entities::sampling::resolve(chat_override, profile_default, &self.default_sampling)
+        crate::entities::sampling::resolve(
+            chat_override,
+            profile_default,
+            &self.config.default_sampling,
+        )
     }
 
     /// Делает чат активным и шлёт его сообщения в UI.
@@ -898,7 +1011,7 @@ fn finalize_message(out: &RoundOutput, ctx: &ToolContext) -> Option<Message> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::features::tools::{ToolConfig, standard_registry};
+    use crate::app::supervisor::MockSupervisor;
     use crate::shared::api::mock::{MockBackend, MockEmbedder};
     use crate::shared::paths::Paths;
 
@@ -915,6 +1028,19 @@ mod tests {
         UnboundedReceiver<AppEvent>,
         tokio::task::JoinHandle<()>,
     ) {
+        spawn_orch_cfg(backend, AppConfig::default())
+    }
+
+    /// Как [`spawn_orch`], но с заданной конфигурацией (max_tool_rounds и т.п.).
+    fn spawn_orch_cfg(
+        backend: Option<Arc<dyn EngineBackend>>,
+        config: AppConfig,
+    ) -> (
+        tempfile::TempDir,
+        UnboundedSender<AppCommand>,
+        UnboundedReceiver<AppEvent>,
+        tokio::task::JoinHandle<()>,
+    ) {
         let dir = tempfile::tempdir().unwrap();
         let storage = Arc::new(Storage::open(Paths::with_root(dir.path())).unwrap());
         let (cmd_tx, cmd_rx) = unbounded_channel();
@@ -922,15 +1048,9 @@ mod tests {
         let deps = OrchestratorDeps {
             cmd_rx,
             evt_tx,
-            backend,
             storage,
-            default_sampling: SamplingConfig::default(),
-            status: ServerStatus::Ready,
-            registry: Arc::new(standard_registry(&ToolConfig::default())),
-            embedder: test_embedder(),
-            max_tool_rounds: 8,
-            web_enabled: true,
-            python_enabled: false,
+            config,
+            supervisor: Arc::new(MockSupervisor::with_backend(backend)),
         };
         let handle = tokio::spawn(run(deps));
         (dir, cmd_tx, evt_rx, handle)
@@ -955,19 +1075,26 @@ mod tests {
         let storage = Arc::new(Storage::open(Paths::with_root(dir.path())).unwrap());
         let (evt_tx, _evt_rx) = unbounded_channel();
         let (done_tx, _done_rx) = unbounded_channel();
-        let orch = Orchestrator {
-            evt_tx,
-            backend: None,
-            storage,
+        let (status_tx, _status_rx) = unbounded_channel();
+        let config = AppConfig {
             default_sampling: SamplingConfig {
                 temperature: Some(0.1),
                 ..Default::default()
             },
-            registry: Arc::new(standard_registry(&ToolConfig::default())),
+            ..Default::default()
+        };
+        let registry = Arc::new(build_registry(&config));
+        let orch = Orchestrator {
+            evt_tx,
+            supervisor: Arc::new(MockSupervisor::with_backend(None)),
+            backend: None,
+            chat_handle: None,
+            embed_handle: None,
             embedder: test_embedder(),
-            max_tool_rounds: 8,
-            web_enabled: true,
-            python_enabled: false,
+            storage,
+            config,
+            registry,
+            status_tx,
             profiles: Vec::new(),
             chats: Vec::new(),
             active_id: None,
@@ -1057,24 +1184,8 @@ mod tests {
             ChatChunk::Text("Привет".into()),
             ChatChunk::Finished(FinishReason::Stop),
         ])) as Arc<dyn EngineBackend>;
-        let dir = tempfile::tempdir().unwrap();
-        let root = dir.path().to_path_buf();
-        let storage = Arc::new(Storage::open(Paths::with_root(&root)).unwrap());
-        let (cmd_tx, cmd_rx) = unbounded_channel();
-        let (evt_tx, mut evt_rx) = unbounded_channel();
-        let handle = tokio::spawn(run(OrchestratorDeps {
-            cmd_rx,
-            evt_tx,
-            backend: Some(backend),
-            storage,
-            default_sampling: SamplingConfig::default(),
-            status: ServerStatus::Ready,
-            registry: Arc::new(standard_registry(&ToolConfig::default())),
-            embedder: test_embedder(),
-            max_tool_rounds: 8,
-            web_enabled: true,
-            python_enabled: false,
-        }));
+        let (_d, cmd_tx, mut evt_rx, handle) = spawn_orch(Some(backend));
+        let root = _d.path().to_path_buf();
 
         // Ждём активации и узнаём id активного чата.
         let active = wait_for(&mut evt_rx, |e| matches!(e, AppEvent::ChatActivated { .. }))
@@ -1341,23 +1452,11 @@ mod tests {
             ChatChunk::Finished(FinishReason::ToolCalls),
         ])) as Arc<dyn EngineBackend>;
 
-        let dir = tempfile::tempdir().unwrap();
-        let storage = Arc::new(Storage::open(Paths::with_root(dir.path())).unwrap());
-        let (cmd_tx, cmd_rx) = unbounded_channel();
-        let (evt_tx, mut evt_rx) = unbounded_channel();
-        let handle = tokio::spawn(run(OrchestratorDeps {
-            cmd_rx,
-            evt_tx,
-            backend: Some(backend),
-            storage,
-            default_sampling: SamplingConfig::default(),
-            status: ServerStatus::Ready,
-            registry: Arc::new(standard_registry(&ToolConfig::default())),
-            embedder: test_embedder(),
+        let config = AppConfig {
             max_tool_rounds: 2,
-            web_enabled: true,
-            python_enabled: false,
-        }));
+            ..Default::default()
+        };
+        let (_d, cmd_tx, mut evt_rx, handle) = spawn_orch_cfg(Some(backend), config);
         wait_for(&mut evt_rx, |e| matches!(e, AppEvent::ChatActivated { .. }))
             .await
             .unwrap();
@@ -1498,6 +1597,131 @@ mod tests {
         assert!(matches!(err, AppEvent::Error(_)));
 
         drop(cmd_tx);
+        handle.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn bootstrap_emits_settings_snapshot() {
+        let (_d, cmd_tx, mut evt_rx, handle) = spawn_orch(None);
+        let ev = wait_for(&mut evt_rx, |e| matches!(e, AppEvent::Settings { .. }))
+            .await
+            .unwrap();
+        if let AppEvent::Settings { config, profiles } = ev {
+            assert_eq!(config.schema_version, AppConfig::default().schema_version);
+            assert_eq!(profiles.len(), 1, "дефолтный профиль в снимке");
+        }
+        drop(cmd_tx);
+        handle.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn update_config_persists_and_reemits_settings() {
+        let (_d, cmd_tx, mut evt_rx, handle) = spawn_orch(None);
+        let root = _d.path().to_path_buf();
+        wait_for(&mut evt_rx, |e| matches!(e, AppEvent::Settings { .. }))
+            .await
+            .unwrap();
+
+        let config = AppConfig {
+            max_tool_rounds: 3,
+            ..Default::default()
+        };
+        cmd_tx
+            .send(AppCommand::UpdateConfig(Box::new(config)))
+            .unwrap();
+        wait_for(
+            &mut evt_rx,
+            |e| matches!(e, AppEvent::Settings { config, .. } if config.max_tool_rounds == 3),
+        )
+        .await
+        .unwrap();
+
+        cmd_tx.send(AppCommand::Quit).unwrap();
+        handle.await.unwrap();
+
+        // Конфиг сохранён на диск.
+        let reopened = Storage::open(Paths::with_root(&root)).unwrap();
+        assert_eq!(reopened.json().load_config().unwrap().max_tool_rounds, 3);
+    }
+
+    #[tokio::test]
+    async fn update_profile_persists_edit() {
+        let (_d, cmd_tx, mut evt_rx, handle) = spawn_orch(None);
+        let ev = wait_for(&mut evt_rx, |e| matches!(e, AppEvent::Settings { .. }))
+            .await
+            .unwrap();
+        let id = match ev {
+            AppEvent::Settings { profiles, .. } => profiles[0].id,
+            _ => unreachable!(),
+        };
+
+        cmd_tx
+            .send(AppCommand::UpdateProfile {
+                id,
+                edit: Box::new(ProfileEdit {
+                    system_message: Some("новое sys".into()),
+                    ..Default::default()
+                }),
+            })
+            .unwrap();
+        wait_for(&mut evt_rx, |e| {
+            matches!(e, AppEvent::Settings { profiles, .. }
+                if profiles.iter().any(|p| p.default_system_message == "новое sys"))
+        })
+        .await
+        .unwrap();
+
+        cmd_tx.send(AppCommand::Quit).unwrap();
+        handle.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn model_change_restarts_chat_server() {
+        let backend = Arc::new(MockBackend::scripted(vec![ChatChunk::Finished(
+            FinishReason::Stop,
+        )])) as Arc<dyn EngineBackend>;
+        let sup = Arc::new(MockSupervisor::with_backend(Some(backend)));
+        let dir = tempfile::tempdir().unwrap();
+        let storage = Arc::new(Storage::open(Paths::with_root(dir.path())).unwrap());
+        let (cmd_tx, cmd_rx) = unbounded_channel();
+        let (evt_tx, mut evt_rx) = unbounded_channel();
+        let handle = tokio::spawn(run(OrchestratorDeps {
+            cmd_rx,
+            evt_tx,
+            storage,
+            config: AppConfig::default(),
+            supervisor: sup.clone(),
+        }));
+        wait_for(&mut evt_rx, |e| matches!(e, AppEvent::Settings { .. }))
+            .await
+            .unwrap();
+        // Бутстрап поднял сервер один раз.
+        assert_eq!(sup.chat_call_count(), 1);
+
+        // Смена модели → перезапуск (повторный apply_chat, spec §11.6 DoD).
+        let config = AppConfig {
+            xinfer: crate::shared::config::XinferSettings {
+                model_id: Some("Other/Model".into()),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        cmd_tx
+            .send(AppCommand::UpdateConfig(Box::new(config)))
+            .unwrap();
+        wait_for(
+            &mut evt_rx,
+            |e| matches!(e, AppEvent::Settings { config, .. } if config.xinfer.model_id.as_deref() == Some("Other/Model")),
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            sup.chat_call_count(),
+            2,
+            "смена модели должна перезапустить сервер"
+        );
+
+        cmd_tx.send(AppCommand::Quit).unwrap();
         handle.await.unwrap();
     }
 

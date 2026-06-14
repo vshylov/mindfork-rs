@@ -19,9 +19,10 @@ use uuid::Uuid;
 
 use crate::entities::chat::ChatSummary;
 use crate::entities::message::Message;
-use crate::entities::profile::ProfileSummary;
+use crate::entities::profile::{Profile, ProfileSummary};
 use crate::features::spellcheck::SpellChecker;
 use crate::shared::api::FinishReason;
+use crate::shared::config::AppConfig;
 use crate::shared::server::ServerStatus;
 use crate::widgets::chat_list::{ChatListAction, ChatListState};
 use crate::widgets::input_box::InputBox;
@@ -97,6 +98,9 @@ pub struct ChatScreen {
     last_edit: Option<Instant>,
     /// Открытый попап подсказок орфографии.
     suggest: Option<SuggestPopup>,
+    /// Последний снимок настроек (конфиг + полные профили) — для открытия экрана
+    /// настроек по `Ctrl+,`. Заполняется событием `Settings`. См. spec §11.6.
+    settings_snapshot: Option<(AppConfig, Vec<Profile>)>,
 }
 
 impl Default for ChatScreen {
@@ -124,7 +128,13 @@ impl ChatScreen {
             spell_dirty: false,
             last_edit: None,
             suggest: None,
+            settings_snapshot: None,
         }
+    }
+
+    /// Сохраняет снимок настроек (для открытия экрана настроек по `Ctrl+,`).
+    pub fn set_settings(&mut self, config: AppConfig, profiles: Vec<Profile>) {
+        self.settings_snapshot = Some((config, profiles));
     }
 
     /// Устанавливает спелл-чекер (после фоновой загрузки словарей) и планирует

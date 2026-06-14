@@ -184,6 +184,64 @@ fn spawn_probe(
     });
 }
 
+/// Mock-супервайзер для тестов оркестратора: отдаёт заданный chat-backend и
+/// детерминированный эмбеддер, считает вызовы `apply_chat` (проверка перезапуска
+/// при смене модели, DoD M8). Без реальных процессов.
+#[cfg(test)]
+pub struct MockSupervisor {
+    backend: Option<Arc<dyn EngineBackend>>,
+    chat_calls: std::sync::atomic::AtomicUsize,
+    embed_dim: usize,
+}
+
+#[cfg(test)]
+impl MockSupervisor {
+    /// Супервайзер, возвращающий `backend` для chat (статус сразу `Ready`).
+    pub fn with_backend(backend: Option<Arc<dyn EngineBackend>>) -> Self {
+        Self {
+            backend,
+            chat_calls: std::sync::atomic::AtomicUsize::new(0),
+            embed_dim: 16,
+        }
+    }
+
+    /// Сколько раз вызывали `apply_chat` (≥2 после перезапуска по смене модели).
+    pub fn chat_call_count(&self) -> usize {
+        self.chat_calls.load(std::sync::atomic::Ordering::SeqCst)
+    }
+}
+
+#[cfg(test)]
+impl ServerSupervisor for MockSupervisor {
+    fn apply_chat(
+        &self,
+        _settings: &XinferSettings,
+        status_tx: UnboundedSender<ServerStatus>,
+    ) -> ChatSetup {
+        self.chat_calls
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        let backend = self.backend.clone();
+        let status = if backend.is_some() {
+            let _ = status_tx.send(ServerStatus::Ready);
+            ServerStatus::Connecting
+        } else {
+            ServerStatus::NotConfigured
+        };
+        ChatSetup {
+            backend,
+            handle: None,
+            status,
+        }
+    }
+
+    fn apply_embed(&self, _settings: &EmbedSettings) -> EmbedSetup {
+        EmbedSetup {
+            embedder: Arc::new(crate::shared::api::mock::MockEmbedder::new(self.embed_dim)),
+            handle: None,
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

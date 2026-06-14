@@ -70,6 +70,8 @@ fn apply_event(screen: &mut ChatScreen, event: AppEvent) {
         AppEvent::ServerStatus(status) => screen.set_server_status(status),
         AppEvent::ChatList(chats) => screen.set_chat_list(chats),
         AppEvent::ProfileList(profiles) => screen.set_profile_list(profiles),
+        // Снимок настроек применяется экраном настроек (проводка — ниже в M8).
+        AppEvent::Settings { config, profiles } => screen.set_settings(*config, profiles),
         AppEvent::ChatActivated {
             id,
             title,
