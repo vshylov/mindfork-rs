@@ -5,14 +5,20 @@ edition = "2024"
 
 [dependencies]
 anyhow = "1.0.102"
+async-stream = "0.3.6"
+async-trait = "0.1.89"
 chrono = { version = "0.4.45", features = ["serde"] }
 crossterm = "0.29.0"
+eventsource-stream = "0.2.3"
+futures-util = "0.3.32"
 ratatui = "0.30.1"
+reqwest = { version = "0.13.4", default-features = false, features = ["json", "stream"] }
 serde = { version = "1.0.228", features = ["derive"] }
 serde_json = "1.0.150"
 single-instance = "0.3.3"
 thiserror = "2.0.18"
-tokio = { version = "1.52.3", features = ["rt-multi-thread", "macros", "sync", "process", "time"] }
+tokio = { version = "1.52.3", features = ["rt-multi-thread", "macros", "sync", "process", "time", "io-util", "rt"] }
+tokio-util = "0.7.18"
 tracing = "0.1.44"
 tracing-appender = "0.2.5"
 tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
