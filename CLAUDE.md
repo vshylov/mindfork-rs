@@ -67,9 +67,10 @@ Env для выбора бэкенда: `MINDFORK_XINFER_URL` (external) ИЛИ 
 (+ `MINDFORK_MODEL`, `MINDFORK_XINFER_PORT`, `MINDFORK_ISQ`) для managed.
 
 ## Статус (на 2026-06-14)
-Сделано **M0, M1, M2, M3, M4, M5, M6** (в `main`) и **весь M7** (в ветке `m7-web-python`).
-**184 теста зелёные, 4 `#[ignore]`.** Чат-цикл, профили с изоляцией, инструменты
-с клиентским agentic-loop, саб-агент, web-поиск и Python под выключателями.
+Сделано **M0–M7** (в `main`) и **весь M8** (в ветке `m8-settings`).
+**208 тестов зелёные, 4 `#[ignore]`.** Чат-цикл, профили с изоляцией, инструменты
+с клиентским agentic-loop, саб-агент, web-поиск и Python под выключателями, экран
+настроек со всеми секциями и перезапуском managed-сервера при смене модели.
 - **M0** — каркас FSD, TUI-петля с восстановлением терминала, single-instance, логирование.
 - **M1** — `shared/api` (xinfer-клиент со стримингом/отменой, супервайзер, парсер
   мыслей, mock), оркестратор (автомат + generation_id), мост tokio↔TUI, минимальный
@@ -171,6 +172,40 @@ Env для выбора бэкенда: `MINDFORK_XINFER_URL` (external) ИЛИ 
   отклоняется, не исполняется). На Windows Python по умолчанию выключен.
 - Реальные сетевой/Python прогоны — `#[ignore]` (нужны сеть/интерпретатор).
 
+### M8 (экран настроек) — что уже сделано
+- **`AppConfig` расширен** (`shared/config.rs`): `EmbedSettings` (выделенный
+  embedding-сервер, ADR 0002), `ToolSettings.subagent_max_tokens/_timeout_secs`,
+  `InterfaceSettings` (`Theme` auto/dark/light, `spellcheck_enabled`,
+  `selected_dictionaries`). Всё через `#[serde(default)]` — старые `settings.json`
+  читаются без миграции.
+- **`ToolConfig`** (`features/tools`): реестр строится из конфига
+  (`standard_registry(&ToolConfig)`); `CallSubagent::new(max_tokens, timeout)` —
+  лимиты не захардкожены; пересобирается при правках `config.tools`.
+- **Оркестратор владеет всем `AppConfig`** и серверами через
+  **`ServerSupervisor`** (`app/supervisor.rs`, real `XinferSupervisor` + mock):
+  `apply_chat`/`apply_embed` поднимают серверы из конфига; `ServerHandle` живут в
+  оркестраторе (`kill_on_drop`). `main.rs` больше не резолвит бэкенд — грузит
+  конфиг и сеет его env-переменными (`apply_env_overrides`, dev-workflow).
+- **Команды/событие настроек**: `AppEvent::Settings { config, profiles }` (полный
+  снимок); `AppCommand::UpdateConfig`/`UpdateProfile` — правки сохраняются
+  (`save_config`/`upsert_profile`), **смена `xinfer` перезапускает сервер**, смена
+  `tools` пересобирает реестр, смена `embed` пере-поднимает embedding-сервер.
+  Внутренний канал `ServerStatus` (фоновый probe супервайзера → `AppEvent`).
+- **`screens/settings.rs`** (`SettingsScreen` + `SettingsIntent`, вход `Ctrl+,`):
+  левое меню секций (Модель/Инференс/Семплинг/Профили/Инструменты/Интерфейс) +
+  правый список полей. `Tab` секция, `↑↓` поля, `Space` тумблер, `←→` enum,
+  `Enter` редактор текста/числа. Правка применяется **сразу при коммите**
+  (`SettingsIntent → AppCommand`). Профили: выбор `←→`, правка полей, тумблеры
+  инструментов, `Ctrl+N`/`Ctrl+D` создать/удалить. **FSD строгий**: `screens` не
+  импортирует `app`.
+- **`runtime`**: экран настроек поверх чата; события продолжают применяться к чату
+  (генерация не прерывается); переэмит `Settings` обновляет рабочую копию (create/
+  delete профилей видны сразу).
+- Тема/раскладка клавиш в «Интерфейсе» — пока **поля** (значения сохраняются);
+  реальное применение темы (`shared/theme.rs`) и кастом-раскладки — на **M9** по плану.
+  Спелл-чек вкл/выкл и выбор словарей тоже редактируются, но фактическое
+  применение к загрузке словарей — M9.
+
 ### Отложено за пределы M3
 - **Сворачивание/выделение per-message** и tool-блоки в ленте — сейчас «мысли»
   сворачиваются глобально (`Ctrl+T`); выделение сообщений и tool-блоки — на M5.
@@ -179,13 +214,14 @@ Env для выбора бэкенда: `MINDFORK_XINFER_URL` (external) ИЛИ 
   `en_GB.*`, `ru_RU.*`) в `dictionaries/` корня проекта. `build.rs` сам копирует
   их рядом с бинарником (`target/<profile>/dictionaries/`) при сборке. Открытый
   `[R]`: качество ru_RU на реальном словаре (по факту — работает).
-- Снять `#![allow(dead_code)]` из `main.rs` — **после M5** (часть API: notes/RAG/db,
-  ещё не имеет потребителей; сейчас снятие сломает `clippy -D warnings`).
+- Снять `#![allow(dead_code)]` из `main.rs` — **на M9** (часть API: notes/RAG/db и
+  др., ~10 элементов без потребителей; проверено на M8 — снятие пока ломает
+  `clippy -D warnings`).
 
 ## Подводные камни
 - **TUI «висит» при headless-запуске** (без TTY) — это нормально; чистый выход
   по `q`/`Esc`/`Ctrl+C` проверяется юнит-тестами `map_key`. Для живой проверки нужен
   настоящий терминал.
 - `#![allow(dead_code)]` в `main.rs` — временный (часть API опережает потребителей:
-  notes/RAG/db появятся на M5), убрать после M5.
+  notes/RAG/db и пр.), убрать на M9 (на M8 ещё ~10 элементов без потребителей).
 - Данные приложения портативны: лежат рядом с бинарником (в dev — `target/debug/`).

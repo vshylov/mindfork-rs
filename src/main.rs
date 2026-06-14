@@ -20,13 +20,10 @@ use std::time::Duration;
 use anyhow::Context;
 use tokio::sync::mpsc::unbounded_channel;
 
-use crate::app::events::{AppCommand, AppEvent, ServerStatus};
+use crate::app::events::{AppCommand, AppEvent};
 use crate::app::orchestrator::{self, OrchestratorDeps};
-use crate::features::tools::standard_registry;
-use crate::shared::api::{
-    Embedder, EngineBackend, ManagedConfig, ServerHandle, UnavailableEmbedder, XinferClient,
-    wait_until_ready,
-};
+use crate::app::supervisor::XinferSupervisor;
+use crate::shared::config::{AppConfig, ServerMode};
 use crate::shared::storage::Storage;
 use crate::shared::{instance, logging, paths::Paths};
 
@@ -48,40 +45,17 @@ fn main() -> anyhow::Result<()> {
     let (cmd_tx, cmd_rx) = unbounded_channel::<AppCommand>();
     let (evt_tx, evt_rx) = unbounded_channel::<AppEvent>();
 
-    // Подключение к серверу инференса (по переменным окружения; настройки — M8).
-    let (backend, status, server) = resolve_backend(runtime.handle(), &evt_tx);
-    if let Some(server) = &server {
-        tracing::info!(
-            base_url = server.base_url(),
-            "managed xinfer server launched"
-        );
-    }
-
-    // Конфиг: глобальный семплинг (низший приоритет) и лимит раундов инструментов.
-    let config = storage.json().load_config().unwrap_or_default();
-
-    // Реестр инструментов (общий) и источник эмбеддингов (выделенный сервер, ADR 0002).
-    let registry = Arc::new(standard_registry(config.tools.python_path.clone()));
-    let (embedder, embed_server) = resolve_embedder();
-    if let Some(server) = &embed_server {
-        tracing::info!(
-            base_url = server.base_url(),
-            "managed embedding server launched"
-        );
-    }
+    // Конфиг из settings.json + посев переменными окружения (dev-workflow contract §9).
+    // Серверы инференса/эмбеддингов оркестратор поднимает сам через супервайзер.
+    let mut config = storage.json().load_config().unwrap_or_default();
+    apply_env_overrides(&mut config);
 
     runtime.spawn(orchestrator::run(OrchestratorDeps {
         cmd_rx,
         evt_tx: evt_tx.clone(),
-        backend,
         storage,
-        default_sampling: config.default_sampling,
-        status,
-        registry,
-        embedder,
-        max_tool_rounds: config.max_tool_rounds,
-        web_enabled: config.tools.web_enabled,
-        python_enabled: config.tools.python_enabled,
+        config,
+        supervisor: Arc::new(XinferSupervisor),
     }));
 
     // Фоновая загрузка словарей спелл-чека (парсинг .dic тяжёлый — не блокируем UI).
@@ -95,11 +69,10 @@ fn main() -> anyhow::Result<()> {
 
     let result = app::runtime::run(cmd_tx.clone(), evt_rx, spell_rx);
 
-    // Останавливаем оркестратор и даём фоновым задачам завершиться.
+    // Останавливаем оркестратор; managed-серверы он гасит сам (kill_on_drop при
+    // завершении его задачи). Даём фоновым задачам завершиться.
     let _ = cmd_tx.send(AppCommand::Quit);
     runtime.shutdown_timeout(Duration::from_secs(2));
-    drop(server); // kill managed xinfer (kill_on_drop)
-    drop(embed_server); // kill managed embedding server
 
     match &result {
         Ok(()) => tracing::info!("mindfork-rs exited cleanly"),
@@ -108,105 +81,44 @@ fn main() -> anyhow::Result<()> {
     result
 }
 
-/// Определяет бэкенд инференса по переменным окружения (временно, до настроек):
-/// - `MINDFORK_XINFER_URL` — подключение к запущенному серверу (external);
-/// - `MINDFORK_XINFER_BIN` (+ `MINDFORK_MODEL`, `MINDFORK_XINFER_PORT`, `MINDFORK_ISQ`)
-///   — managed-запуск дочернего процесса;
-/// - иначе сервер не настроен.
-///
-/// Готовность проверяется в фоне; статус доставляется событием `ServerStatus`.
-fn resolve_backend(
-    rt: &tokio::runtime::Handle,
-    evt_tx: &tokio::sync::mpsc::UnboundedSender<AppEvent>,
-) -> (
-    Option<Arc<dyn EngineBackend>>,
-    ServerStatus,
-    Option<ServerHandle>,
-) {
+/// Посев конфигурации переменными окружения (dev/смоук-workflow, contract §9).
+/// Env имеет приоритет над `settings.json`, чтобы быстрый запуск против реального
+/// xinfer не требовал правки файла. Затрагивает только chat/embedding-серверы.
+fn apply_env_overrides(config: &mut AppConfig) {
     if let Ok(url) = std::env::var("MINDFORK_XINFER_URL") {
-        let client = Arc::new(XinferClient::new(url));
-        spawn_readiness_probe(rt, evt_tx, client.clone(), Duration::from_secs(15));
-        return (Some(client), ServerStatus::Connecting, None);
-    }
-
-    if let Ok(bin) = std::env::var("MINDFORK_XINFER_BIN") {
-        let cfg = ManagedConfig {
-            binary: bin.into(),
-            model_id: std::env::var("MINDFORK_MODEL").ok(),
-            weight_path: None,
-            weight_file: None,
-            isq: std::env::var("MINDFORK_ISQ").ok(),
-            device_ids: vec![0],
-            cpu: false,
-            port: std::env::var("MINDFORK_XINFER_PORT")
-                .ok()
-                .and_then(|p| p.parse().ok())
-                .unwrap_or(8000),
-            extra_args: vec![],
-        };
-        match ServerHandle::launch(&cfg) {
-            Ok(handle) => {
-                let client = Arc::new(XinferClient::new(handle.base_url()));
-                // Загрузка модели может занять минуты — даём щедрый таймаут.
-                spawn_readiness_probe(rt, evt_tx, client.clone(), Duration::from_secs(600));
-                (Some(client), ServerStatus::Connecting, Some(handle))
-            }
-            Err(err) => (None, ServerStatus::Disconnected(err.to_string()), None),
+        config.xinfer.mode = ServerMode::External;
+        config.xinfer.url = Some(url);
+    } else if let Ok(bin) = std::env::var("MINDFORK_XINFER_BIN") {
+        config.xinfer.mode = ServerMode::Managed;
+        config.xinfer.binary = Some(bin);
+        if let Ok(m) = std::env::var("MINDFORK_MODEL") {
+            config.xinfer.model_id = Some(m);
         }
-    } else {
-        (None, ServerStatus::NotConfigured, None)
+        if let Ok(isq) = std::env::var("MINDFORK_ISQ") {
+            config.xinfer.isq = Some(isq);
+        }
+        if let Some(port) = std::env::var("MINDFORK_XINFER_PORT")
+            .ok()
+            .and_then(|p| p.parse().ok())
+        {
+            config.xinfer.port = port;
+        }
     }
-}
 
-/// Определяет источник эмбеддингов (ADR 0002, выделенный сервер) по env:
-/// - `MINDFORK_EMBED_URL` — внешний embedding-сервер;
-/// - `MINDFORK_EMBED_BIN` (+ `MINDFORK_EMBED_MODEL`, `MINDFORK_EMBED_PORT`) — managed;
-/// - иначе RAG недоступен ([`UnavailableEmbedder`]). Настройки UI — на M8.
-fn resolve_embedder() -> (Arc<dyn Embedder>, Option<ServerHandle>) {
     if let Ok(url) = std::env::var("MINDFORK_EMBED_URL") {
-        let client: Arc<dyn Embedder> = Arc::new(XinferClient::new(url));
-        return (client, None);
-    }
-    if let Ok(bin) = std::env::var("MINDFORK_EMBED_BIN") {
-        let cfg = ManagedConfig {
-            binary: bin.into(),
-            model_id: std::env::var("MINDFORK_EMBED_MODEL").ok(),
-            weight_path: None,
-            weight_file: None,
-            isq: None,
-            device_ids: vec![0],
-            cpu: false,
-            port: std::env::var("MINDFORK_EMBED_PORT")
-                .ok()
-                .and_then(|p| p.parse().ok())
-                .unwrap_or(8001),
-            extra_args: vec![],
-        };
-        match ServerHandle::launch(&cfg) {
-            Ok(handle) => {
-                let client: Arc<dyn Embedder> = Arc::new(XinferClient::new(handle.base_url()));
-                return (client, Some(handle));
-            }
-            Err(err) => {
-                tracing::warn!(error = %err, "не удалось запустить embedding-сервер; RAG недоступен");
-            }
+        config.embed.mode = ServerMode::External;
+        config.embed.url = Some(url);
+    } else if let Ok(bin) = std::env::var("MINDFORK_EMBED_BIN") {
+        config.embed.mode = ServerMode::Managed;
+        config.embed.binary = Some(bin);
+        if let Ok(m) = std::env::var("MINDFORK_EMBED_MODEL") {
+            config.embed.model_id = Some(m);
+        }
+        if let Some(port) = std::env::var("MINDFORK_EMBED_PORT")
+            .ok()
+            .and_then(|p| p.parse().ok())
+        {
+            config.embed.port = port;
         }
     }
-    (Arc::new(UnavailableEmbedder), None)
-}
-
-fn spawn_readiness_probe(
-    rt: &tokio::runtime::Handle,
-    evt_tx: &tokio::sync::mpsc::UnboundedSender<AppEvent>,
-    client: Arc<XinferClient>,
-    timeout: Duration,
-) {
-    let evt_tx = evt_tx.clone();
-    rt.spawn(async move {
-        let status = match wait_until_ready(&client, timeout).await {
-            Ok(()) => ServerStatus::Ready,
-            Err(err) => ServerStatus::Disconnected(err.to_string()),
-        };
-        let _ = evt_tx.send(AppEvent::ServerStatus(status));
-    });
 }

@@ -17,6 +17,7 @@ use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
 use crate::app::events::{AppCommand, AppEvent};
 use crate::features::spellcheck::SpellChecker;
 use crate::screens::chat::{ChatIntent, ChatScreen};
+use crate::screens::settings::{SettingsIntent, SettingsScreen};
 
 /// Период опроса ввода (тик перерисовки).
 const TICK: Duration = Duration::from_millis(50);
@@ -44,32 +45,52 @@ fn run_loop(
     spell_rx: Receiver<SpellChecker>,
 ) -> Result<()> {
     let mut screen = ChatScreen::new();
+    // Экран настроек открывается поверх чата (Ctrl+,). События продолжают
+    // применяться к чату (генерация не прерывается).
+    let mut settings: Option<SettingsScreen> = None;
     let mut quit = false;
     while !quit {
         while let Ok(event) = evt_rx.try_recv() {
-            apply_event(&mut screen, event);
+            apply_event(&mut screen, &mut settings, event);
         }
         // Словари загрузились в фоне — подключаем спелл-чек.
         if let Ok(checker) = spell_rx.try_recv() {
             screen.set_spellchecker(checker);
         }
-        terminal.draw(|frame| screen.render(frame))?;
+        if let Some(settings_screen) = &mut settings {
+            terminal.draw(|frame| settings_screen.render(frame))?;
+        } else {
+            terminal.draw(|frame| screen.render(frame))?;
+        }
         if event::poll(TICK)?
             && let Event::Key(key) = event::read()?
-            && let Some(intent) = screen.handle_key(key)
         {
-            quit = dispatch(intent, cmd_tx);
+            if let Some(settings_screen) = &mut settings {
+                if let Some(intent) = settings_screen.handle_key(key) {
+                    dispatch_settings(intent, cmd_tx, &mut settings);
+                }
+            } else if let Some(intent) = screen.handle_key(key) {
+                quit = dispatch(intent, cmd_tx, &screen, &mut settings);
+            }
         }
     }
     Ok(())
 }
 
-/// Применяет событие оркестратора к экрану (read-only-проекция).
-fn apply_event(screen: &mut ChatScreen, event: AppEvent) {
+/// Применяет событие оркестратора к экрану чата (read-only-проекция). Снимок
+/// настроек при открытом экране настроек дополнительно обновляет его рабочую
+/// копию (отражает создание/удаление профилей).
+fn apply_event(screen: &mut ChatScreen, settings: &mut Option<SettingsScreen>, event: AppEvent) {
     match event {
         AppEvent::ServerStatus(status) => screen.set_server_status(status),
         AppEvent::ChatList(chats) => screen.set_chat_list(chats),
         AppEvent::ProfileList(profiles) => screen.set_profile_list(profiles),
+        AppEvent::Settings { config, profiles } => {
+            if let Some(settings_screen) = settings {
+                settings_screen.refresh((*config).clone(), profiles.clone());
+            }
+            screen.set_settings(*config, profiles);
+        }
         AppEvent::ChatActivated {
             id,
             title,
@@ -99,9 +120,14 @@ fn apply_event(screen: &mut ChatScreen, event: AppEvent) {
     }
 }
 
-/// Транслирует намерение экрана в команду оркестратору. Возвращает `true` для
-/// [`ChatIntent::Quit`] (петля завершается).
-fn dispatch(intent: ChatIntent, cmd_tx: &UnboundedSender<AppCommand>) -> bool {
+/// Транслирует намерение чата в команду оркестратору (или открывает настройки).
+/// Возвращает `true` для [`ChatIntent::Quit`] (петля завершается).
+fn dispatch(
+    intent: ChatIntent,
+    cmd_tx: &UnboundedSender<AppCommand>,
+    screen: &ChatScreen,
+    settings: &mut Option<SettingsScreen>,
+) -> bool {
     let command = match intent {
         ChatIntent::Quit => return true,
         ChatIntent::Send(text) => AppCommand::SendMessage(text),
@@ -111,7 +137,38 @@ fn dispatch(intent: ChatIntent, cmd_tx: &UnboundedSender<AppCommand>) -> bool {
         ChatIntent::CloneChat(id) => AppCommand::CloneChat(id),
         ChatIntent::DeleteChat(id) => AppCommand::DeleteChat(id),
         ChatIntent::RenameChat { id, title } => AppCommand::RenameChat { id, title },
+        ChatIntent::OpenSettings => {
+            if let Some((config, profiles)) = screen.settings_snapshot() {
+                *settings = Some(SettingsScreen::new(config, profiles));
+            }
+            return false;
+        }
     };
     let _ = cmd_tx.send(command);
     false
+}
+
+/// Транслирует намерение экрана настроек в команду (или закрывает его).
+fn dispatch_settings(
+    intent: SettingsIntent,
+    cmd_tx: &UnboundedSender<AppCommand>,
+    settings: &mut Option<SettingsScreen>,
+) {
+    let command = match intent {
+        SettingsIntent::Close => {
+            *settings = None;
+            return;
+        }
+        SettingsIntent::SaveConfig(config) => AppCommand::UpdateConfig(config),
+        SettingsIntent::SaveProfile { id, edit } => AppCommand::UpdateProfile { id, edit },
+        SettingsIntent::CreateProfile {
+            name,
+            system_message,
+        } => AppCommand::CreateProfile {
+            name,
+            system_message,
+        },
+        SettingsIntent::DeleteProfile(id) => AppCommand::DeleteProfile(id),
+    };
+    let _ = cmd_tx.send(command);
 }

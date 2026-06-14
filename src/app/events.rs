@@ -5,8 +5,10 @@ use uuid::Uuid;
 
 use crate::entities::chat::ChatSummary;
 use crate::entities::message::Message;
-use crate::entities::profile::ProfileSummary;
+use crate::entities::profile::{Profile, ProfileSummary};
+use crate::features::profiles::ProfileEdit;
 use crate::shared::api::FinishReason;
+use crate::shared::config::AppConfig;
 pub use crate::shared::server::ServerStatus;
 
 /// Команда от UI к оркестратору.
@@ -33,6 +35,13 @@ pub enum AppCommand {
     },
     /// Мягко удалить профиль с каскадом на его чаты (notes/RAG исключаются).
     DeleteProfile(Uuid),
+    /// Заменить конфигурацию целиком (экран настроек). Оркестратор сохраняет её,
+    /// перезапускает сервер/реестр при необходимости и переэмитит. См. spec §11.6.
+    /// `Box` — `AppConfig` крупный, не раздуваем enum.
+    UpdateConfig(Box<AppConfig>),
+    /// Применить правки профиля (экран настроек). `Box` — `ProfileEdit` несёт
+    /// крупные поля (системное сообщение).
+    UpdateProfile { id: Uuid, edit: Box<ProfileEdit> },
     /// Завершить работу (оркестратор останавливается).
     Quit,
 }
@@ -46,6 +55,12 @@ pub enum AppEvent {
     ChatList(Vec<ChatSummary>),
     /// Полный список видимых профилей (для оверлея выбора при создании чата).
     ProfileList(Vec<ProfileSummary>),
+    /// Полный снимок настроек для экрана настроек (конфиг + полные профили).
+    /// Шлётся при старте и после любой правки конфига/профилей. См. spec §11.6.
+    Settings {
+        config: Box<AppConfig>,
+        profiles: Vec<Profile>,
+    },
     /// Активный чат сменился — UI перестраивает ленту из его сообщений.
     ChatActivated {
         id: Uuid,
