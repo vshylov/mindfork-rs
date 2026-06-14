@@ -69,6 +69,7 @@ fn apply_event(screen: &mut ChatScreen, event: AppEvent) {
     match event {
         AppEvent::ServerStatus(status) => screen.set_server_status(status),
         AppEvent::ChatList(chats) => screen.set_chat_list(chats),
+        AppEvent::ProfileList(profiles) => screen.set_profile_list(profiles),
         AppEvent::ChatActivated {
             id,
             title,
@@ -99,7 +100,7 @@ fn dispatch(intent: ChatIntent, cmd_tx: &UnboundedSender<AppCommand>) -> bool {
         ChatIntent::Quit => return true,
         ChatIntent::Send(text) => AppCommand::SendMessage(text),
         ChatIntent::Cancel => AppCommand::Cancel,
-        ChatIntent::NewChat => AppCommand::NewChat,
+        ChatIntent::NewChat { profile_id } => AppCommand::NewChat { profile_id },
         ChatIntent::SwitchChat(id) => AppCommand::SwitchChat(id),
         ChatIntent::CloneChat(id) => AppCommand::CloneChat(id),
         ChatIntent::DeleteChat(id) => AppCommand::DeleteChat(id),

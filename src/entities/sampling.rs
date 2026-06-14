@@ -42,6 +42,22 @@ pub struct SamplingConfig {
     pub reasoning_effort: Option<ReasoningEffort>,
 }
 
+/// Разрешает фактический семплинг по приоритету (spec §8.3):
+/// `Chat.sampling_override` → `Profile.default_sampling` → глобальный.
+///
+/// Разрешение — **целиком по конфигу** (а не пофайлово): берётся первый
+/// заданный уровень. Снимок результата сохраняется в `Message.metadata`.
+pub fn resolve(
+    chat_override: Option<&SamplingConfig>,
+    profile_default: Option<&SamplingConfig>,
+    global: &SamplingConfig,
+) -> SamplingConfig {
+    chat_override
+        .or(profile_default)
+        .cloned()
+        .unwrap_or_else(|| global.clone())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -72,5 +88,28 @@ mod tests {
         let json = serde_json::to_string(&s).unwrap();
         let back: SamplingConfig = serde_json::from_str(&json).unwrap();
         assert_eq!(s, back);
+    }
+
+    #[test]
+    fn resolve_follows_priority() {
+        let global = SamplingConfig {
+            temperature: Some(0.1),
+            ..Default::default()
+        };
+        let profile = SamplingConfig {
+            temperature: Some(0.5),
+            ..Default::default()
+        };
+        let chat = SamplingConfig {
+            temperature: Some(0.9),
+            ..Default::default()
+        };
+
+        // Все комбинации переопределений (spec §8.3).
+        assert_eq!(resolve(Some(&chat), Some(&profile), &global), chat);
+        assert_eq!(resolve(None, Some(&profile), &global), profile);
+        assert_eq!(resolve(None, None, &global), global);
+        // Chat имеет приоритет над профилем, профиль — над глобальным.
+        assert_eq!(resolve(Some(&chat), None, &global), chat);
     }
 }

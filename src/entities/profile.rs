@@ -60,6 +60,24 @@ impl Profile {
             is_hidden: false,
         }
     }
+
+    /// Краткая карточка профиля (для оверлея выбора без копирования системного
+    /// сообщения и набора инструментов).
+    pub fn summary(&self) -> ProfileSummary {
+        ProfileSummary {
+            id: self.id,
+            name: self.name.clone(),
+        }
+    }
+}
+
+/// Краткая карточка профиля для оверлея выбора при создании чата. См. spec §11.2.
+/// View-проекция домена в `entities`, чтобы её могли использовать и `app`
+/// (события), и `widgets` (рендер) — зависимость строго вниз.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ProfileSummary {
+    pub id: Uuid,
+    pub name: String,
 }
 
 #[cfg(test)]

@@ -35,7 +35,8 @@ pub struct OrchestratorDeps {
     pub evt_tx: UnboundedSender<AppEvent>,
     pub backend: Option<Arc<dyn EngineBackend>>,
     pub storage: Storage,
-    /// Глобальный семплинг по умолчанию (переопределяется чатом; профиль — M4).
+    /// Глобальный семплинг по умолчанию (низший уровень приоритета: переопределяется
+    /// дефолтом профиля и override чата — см. `effective_sampling`, spec §8.3).
     pub default_sampling: SamplingConfig,
     pub status: ServerStatus,
 }
@@ -176,13 +177,14 @@ impl Orchestrator {
             .filter(|c| !c.is_hidden)
             .collect();
         if self.chats.is_empty() {
-            let chat = self.new_chat_value();
+            let chat = self.new_chat_value(None);
             self.storage.json().save_chat(&chat)?;
             self.chats.push(chat);
         }
         self.chats.sort_by_key(|c| std::cmp::Reverse(c.modified_at));
 
         let active = self.chats.first().map(|c| c.id);
+        self.emit_profile_list();
         self.emit_chat_list();
         if let Some(id) = active {
             self.activate(id);
@@ -214,11 +216,16 @@ impl Orchestrator {
                 }
             }
             AppCommand::SendMessage(text) => self.handle_send(text),
-            AppCommand::NewChat => self.handle_new_chat(),
+            AppCommand::NewChat { profile_id } => self.handle_new_chat(profile_id),
             AppCommand::SwitchChat(id) => self.handle_switch(id),
             AppCommand::RenameChat { id, title } => self.handle_rename(id, title),
             AppCommand::CloneChat(id) => self.handle_clone(id),
             AppCommand::DeleteChat(id) => self.handle_delete(id),
+            AppCommand::CreateProfile {
+                name,
+                system_message,
+            } => self.handle_create_profile(name, system_message),
+            AppCommand::DeleteProfile(id) => self.handle_delete_profile(id),
         }
         false
     }
@@ -304,8 +311,8 @@ impl Orchestrator {
         }
     }
 
-    fn handle_new_chat(&mut self) {
-        let chat = self.new_chat_value();
+    fn handle_new_chat(&mut self, profile_id: Option<Uuid>) {
+        let chat = self.new_chat_value(profile_id);
         let id = chat.id;
         if let Err(err) = self.storage.json().save_chat(&chat) {
             let _ = self
@@ -396,7 +403,74 @@ impl Orchestrator {
                 self.emit_chat_list();
                 self.activate(next);
             } else {
-                self.handle_new_chat();
+                self.handle_new_chat(None);
+            }
+        } else {
+            self.emit_chat_list();
+        }
+    }
+
+    /// Создаёт новый профиль (валидирует имя), сохраняет и обновляет список.
+    fn handle_create_profile(&mut self, name: String, system_message: String) {
+        let Some(profile) = crate::features::profiles::create(&name, system_message) else {
+            let _ = self
+                .evt_tx
+                .send(AppEvent::Error("Имя профиля не может быть пустым".into()));
+            return;
+        };
+        if let Err(err) = self.storage.json().upsert_profile(&profile) {
+            let _ = self.evt_tx.send(AppEvent::Error(format!(
+                "Не удалось создать профиль: {err}"
+            )));
+            return;
+        }
+        self.profiles.push(profile);
+        self.emit_profile_list();
+    }
+
+    /// Мягко удаляет профиль с каскадом: скрываются его чаты, а заметки/RAG
+    /// становятся недостижимы (профиль скрыт). См. spec §10, §12.3.
+    fn handle_delete_profile(&mut self, id: Uuid) {
+        // Нельзя удалить последний профиль — иначе не из чего создавать чаты.
+        if self.profiles.len() <= 1 {
+            let _ = self
+                .evt_tx
+                .send(AppEvent::Error("Нельзя удалить последний профиль".into()));
+            return;
+        }
+        match self.storage.hide_profile_cascade(id) {
+            Ok(false) => return,
+            Err(err) => {
+                let _ = self.evt_tx.send(AppEvent::Error(format!(
+                    "Не удалось удалить профиль: {err}"
+                )));
+                return;
+            }
+            Ok(true) => {}
+        }
+        self.profiles.retain(|p| p.id != id);
+        // Убираем из памяти чаты удалённого профиля.
+        let removed: Vec<Uuid> = self
+            .chats
+            .iter()
+            .filter(|c| c.profile_id == id)
+            .map(|c| c.id)
+            .collect();
+        self.chats.retain(|c| c.profile_id != id);
+        for cid in &removed {
+            self.dirty.remove(cid);
+        }
+        self.emit_profile_list();
+
+        // Если активный чат принадлежал удалённому профилю — переключаемся.
+        let active_removed = self.active_id.is_some_and(|a| removed.contains(&a));
+        if active_removed {
+            self.active_id = None;
+            if let Some(next) = self.chats.first().map(|c| c.id) {
+                self.emit_chat_list();
+                self.activate(next);
+            } else {
+                self.handle_new_chat(None);
             }
         } else {
             self.emit_chat_list();
@@ -405,11 +479,11 @@ impl Orchestrator {
 
     // ---------- вспомогательное ----------
 
-    /// Создаёт новый чат из профиля по умолчанию (+ приветствие, если задано).
-    fn new_chat_value(&self) -> Chat {
-        let profile = self
-            .profiles
-            .first()
+    /// Создаёт новый чат из профиля (по `id` или первого) с приветствием.
+    fn new_chat_value(&self, profile_id: Option<Uuid>) -> Chat {
+        let profile = profile_id
+            .and_then(|id| self.profiles.iter().find(|p| p.id == id))
+            .or_else(|| self.profiles.first())
             .cloned()
             .unwrap_or_else(|| Profile::new("Ассистент", DEFAULT_SYSTEM_MESSAGE));
         let mut chat = Chat::from_profile(&profile, "Новый чат");
@@ -425,12 +499,15 @@ impl Orchestrator {
         self.chats.iter_mut().find(|c| c.id == id)
     }
 
+    /// Разрешает фактический семплинг для чата: `Chat.sampling_override` →
+    /// `Profile.default_sampling` → глобальный (spec §8.3).
     fn effective_sampling(&self, chat_id: Uuid) -> SamplingConfig {
-        self.chats
-            .iter()
-            .find(|c| c.id == chat_id)
-            .and_then(|c| c.sampling_override.clone())
-            .unwrap_or_else(|| self.default_sampling.clone())
+        let chat = self.chats.iter().find(|c| c.id == chat_id);
+        let chat_override = chat.and_then(|c| c.sampling_override.as_ref());
+        let profile_default = chat
+            .and_then(|c| self.profiles.iter().find(|p| p.id == c.profile_id))
+            .and_then(|p| p.default_sampling.as_ref());
+        crate::entities::sampling::resolve(chat_override, profile_default, &self.default_sampling)
     }
 
     /// Делает чат активным и шлёт его сообщения в UI.
@@ -450,6 +527,12 @@ impl Orchestrator {
         let mut summaries: Vec<ChatSummary> = self.chats.iter().map(|c| c.summary()).collect();
         summaries.sort_by_key(|s| std::cmp::Reverse(s.modified_at));
         let _ = self.evt_tx.send(AppEvent::ChatList(summaries));
+    }
+
+    fn emit_profile_list(&self) {
+        let _ = self.evt_tx.send(AppEvent::ProfileList(
+            self.profiles.iter().map(|p| p.summary()).collect(),
+        ));
     }
 
     /// Помечает чат для отложенного сохранения (дебаунс).
@@ -609,6 +692,83 @@ mod tests {
         None
     }
 
+    /// Собирает «голый» оркестратор для юнит-тестов чистых методов (без петли).
+    fn bare_orch() -> (tempfile::TempDir, Orchestrator) {
+        let dir = tempfile::tempdir().unwrap();
+        let storage = Storage::open(Paths::with_root(dir.path())).unwrap();
+        let (evt_tx, _evt_rx) = unbounded_channel();
+        let (done_tx, _done_rx) = unbounded_channel();
+        let orch = Orchestrator {
+            evt_tx,
+            backend: None,
+            storage,
+            default_sampling: SamplingConfig {
+                temperature: Some(0.1),
+                ..Default::default()
+            },
+            profiles: Vec::new(),
+            chats: Vec::new(),
+            active_id: None,
+            state: State::Idle,
+            done_tx,
+            dirty: HashSet::new(),
+            save_deadline: None,
+        };
+        (dir, orch)
+    }
+
+    #[test]
+    fn effective_sampling_resolves_three_tiers() {
+        let (_d, mut orch) = bare_orch();
+        let mut profile = Profile::new("P", "sys");
+        profile.default_sampling = Some(SamplingConfig {
+            temperature: Some(0.5),
+            ..Default::default()
+        });
+        let chat = Chat::from_profile(&profile, "c");
+        let chat_id = chat.id;
+        orch.profiles.push(profile);
+        orch.chats.push(chat);
+
+        // override = None → берётся дефолт профиля.
+        assert_eq!(orch.effective_sampling(chat_id).temperature, Some(0.5));
+
+        // override = Some → берётся он (приоритет чата).
+        orch.chats[0].sampling_override = Some(SamplingConfig {
+            temperature: Some(0.9),
+            ..Default::default()
+        });
+        assert_eq!(orch.effective_sampling(chat_id).temperature, Some(0.9));
+
+        // нет ни override, ни дефолта профиля → глобальный.
+        orch.chats[0].sampling_override = None;
+        orch.profiles[0].default_sampling = None;
+        assert_eq!(orch.effective_sampling(chat_id).temperature, Some(0.1));
+    }
+
+    #[test]
+    fn new_chat_value_uses_chosen_profile_with_greeting() {
+        let (_d, mut orch) = bare_orch();
+        let p1 = Profile::new("A", "sys A");
+        let mut p2 = Profile::new("B", "sys B");
+        p2.greeting = Some("Здравствуйте!".into());
+        let (id1, id2) = (p1.id, p2.id);
+        orch.profiles.push(p1);
+        orch.profiles.push(p2);
+
+        let chat = orch.new_chat_value(Some(id2));
+        assert_eq!(chat.profile_id, id2);
+        assert_eq!(chat.system_message, "sys B");
+        assert_eq!(chat.messages.len(), 1);
+        assert_eq!(chat.messages[0].role, MessageRole::Assistant);
+        assert_eq!(chat.messages[0].text, "Здравствуйте!");
+
+        // None → первый профиль, без приветствия.
+        let chat = orch.new_chat_value(None);
+        assert_eq!(chat.profile_id, id1);
+        assert!(chat.messages.is_empty());
+    }
+
     #[tokio::test]
     async fn bootstrap_emits_chat_list_and_active_chat() {
         let (_d, cmd_tx, mut evt_rx, handle) = spawn_orch(None);
@@ -685,7 +845,9 @@ mod tests {
             .await
             .unwrap();
 
-        cmd_tx.send(AppCommand::NewChat).unwrap();
+        cmd_tx
+            .send(AppCommand::NewChat { profile_id: None })
+            .unwrap();
         let list = wait_for(
             &mut evt_rx,
             |e| matches!(e, AppEvent::ChatList(c) if c.len() == 2),
@@ -794,6 +956,117 @@ mod tests {
             .unwrap();
         cmd_tx.send(AppCommand::SendMessage("hi".into())).unwrap();
 
+        let err = wait_for(&mut evt_rx, |e| matches!(e, AppEvent::Error(_)))
+            .await
+            .unwrap();
+        assert!(matches!(err, AppEvent::Error(_)));
+
+        drop(cmd_tx);
+        handle.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn create_profile_appears_in_profile_list() {
+        let (_d, cmd_tx, mut evt_rx, handle) = spawn_orch(None);
+        // Бутстрап создаёт один профиль по умолчанию.
+        wait_for(
+            &mut evt_rx,
+            |e| matches!(e, AppEvent::ProfileList(p) if p.len() == 1),
+        )
+        .await
+        .unwrap();
+
+        cmd_tx
+            .send(AppCommand::CreateProfile {
+                name: "  Второй  ".into(),
+                system_message: "sys".into(),
+            })
+            .unwrap();
+        let list = wait_for(
+            &mut evt_rx,
+            |e| matches!(e, AppEvent::ProfileList(p) if p.len() == 2),
+        )
+        .await
+        .unwrap();
+        if let AppEvent::ProfileList(profiles) = list {
+            assert!(profiles.iter().any(|p| p.name == "Второй")); // имя нормализовано
+        }
+
+        drop(cmd_tx);
+        handle.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn delete_profile_cascades_to_its_chats() {
+        let (_d, cmd_tx, mut evt_rx, handle) = spawn_orch(None);
+        wait_for(&mut evt_rx, |e| matches!(e, AppEvent::ChatActivated { .. }))
+            .await
+            .unwrap();
+
+        // Создаём второй профиль и узнаём его id.
+        cmd_tx
+            .send(AppCommand::CreateProfile {
+                name: "Второй".into(),
+                system_message: "sys".into(),
+            })
+            .unwrap();
+        let list = wait_for(
+            &mut evt_rx,
+            |e| matches!(e, AppEvent::ProfileList(p) if p.len() == 2),
+        )
+        .await
+        .unwrap();
+        let second_id = match list {
+            AppEvent::ProfileList(profiles) => {
+                profiles.iter().find(|p| p.name == "Второй").unwrap().id
+            }
+            _ => unreachable!(),
+        };
+
+        // Создаём чат из второго профиля → всего два чата.
+        cmd_tx
+            .send(AppCommand::NewChat {
+                profile_id: Some(second_id),
+            })
+            .unwrap();
+        wait_for(
+            &mut evt_rx,
+            |e| matches!(e, AppEvent::ChatList(c) if c.len() == 2),
+        )
+        .await
+        .unwrap();
+
+        // Удаляем второй профиль: его чат каскадно скрывается → остаётся один.
+        cmd_tx.send(AppCommand::DeleteProfile(second_id)).unwrap();
+        wait_for(
+            &mut evt_rx,
+            |e| matches!(e, AppEvent::ProfileList(p) if p.len() == 1),
+        )
+        .await
+        .unwrap();
+        wait_for(
+            &mut evt_rx,
+            |e| matches!(e, AppEvent::ChatList(c) if c.len() == 1),
+        )
+        .await
+        .unwrap();
+
+        drop(cmd_tx);
+        handle.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn cannot_delete_last_profile() {
+        let (_d, cmd_tx, mut evt_rx, handle) = spawn_orch(None);
+        let list = wait_for(&mut evt_rx, |e| matches!(e, AppEvent::ProfileList(_)))
+            .await
+            .unwrap();
+        let only_id = match list {
+            AppEvent::ProfileList(p) => p[0].id,
+            _ => unreachable!(),
+        };
+
+        cmd_tx.send(AppCommand::DeleteProfile(only_id)).unwrap();
         let err = wait_for(&mut evt_rx, |e| matches!(e, AppEvent::Error(_)))
             .await
             .unwrap();
