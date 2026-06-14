@@ -22,9 +22,10 @@ use tokio::sync::mpsc::unbounded_channel;
 
 use crate::app::events::{AppCommand, AppEvent, ServerStatus};
 use crate::app::orchestrator::{self, OrchestratorDeps};
-use crate::entities::sampling::SamplingConfig;
+use crate::features::tools::standard_registry;
 use crate::shared::api::{
-    EngineBackend, ManagedConfig, ServerHandle, XinferClient, wait_until_ready,
+    Embedder, EngineBackend, ManagedConfig, ServerHandle, UnavailableEmbedder, XinferClient,
+    wait_until_ready,
 };
 use crate::shared::storage::Storage;
 use crate::shared::{instance, logging, paths::Paths};
@@ -41,8 +42,8 @@ fn main() -> anyhow::Result<()> {
         .context("building tokio runtime")?;
 
     // Хранилище (JSON + SQLite) рядом с бинарником. Единственный писатель —
-    // оркестратор (spec §4.4.2).
-    let storage = Storage::open(paths.clone()).context("opening storage")?;
+    // оркестратор (spec §4.4.2). Arc — нужен инструментам в ToolContext.
+    let storage = Arc::new(Storage::open(paths.clone()).context("opening storage")?);
 
     let (cmd_tx, cmd_rx) = unbounded_channel::<AppCommand>();
     let (evt_tx, evt_rx) = unbounded_channel::<AppEvent>();
@@ -56,24 +57,29 @@ fn main() -> anyhow::Result<()> {
         );
     }
 
-    // Глобальный семплинг по умолчанию (читается из конфига; чат может переопределить).
-    let default_sampling = storage
-        .json()
-        .load_config()
-        .map(|c| c.default_sampling)
-        .unwrap_or_else(|_| SamplingConfig {
-            max_tokens: Some(2048),
-            thinking: Some(true),
-            ..Default::default()
-        });
+    // Конфиг: глобальный семплинг (низший приоритет) и лимит раундов инструментов.
+    let config = storage.json().load_config().unwrap_or_default();
+
+    // Реестр инструментов (общий) и источник эмбеддингов (выделенный сервер, ADR 0002).
+    let registry = Arc::new(standard_registry());
+    let (embedder, embed_server) = resolve_embedder();
+    if let Some(server) = &embed_server {
+        tracing::info!(
+            base_url = server.base_url(),
+            "managed embedding server launched"
+        );
+    }
 
     runtime.spawn(orchestrator::run(OrchestratorDeps {
         cmd_rx,
         evt_tx: evt_tx.clone(),
         backend,
         storage,
-        default_sampling,
+        default_sampling: config.default_sampling,
         status,
+        registry,
+        embedder,
+        max_tool_rounds: config.max_tool_rounds,
     }));
 
     // Фоновая загрузка словарей спелл-чека (парсинг .dic тяжёлый — не блокируем UI).
@@ -91,6 +97,7 @@ fn main() -> anyhow::Result<()> {
     let _ = cmd_tx.send(AppCommand::Quit);
     runtime.shutdown_timeout(Duration::from_secs(2));
     drop(server); // kill managed xinfer (kill_on_drop)
+    drop(embed_server); // kill managed embedding server
 
     match &result {
         Ok(()) => tracing::info!("mindfork-rs exited cleanly"),
@@ -147,6 +154,43 @@ fn resolve_backend(
     } else {
         (None, ServerStatus::NotConfigured, None)
     }
+}
+
+/// Определяет источник эмбеддингов (ADR 0002, выделенный сервер) по env:
+/// - `MINDFORK_EMBED_URL` — внешний embedding-сервер;
+/// - `MINDFORK_EMBED_BIN` (+ `MINDFORK_EMBED_MODEL`, `MINDFORK_EMBED_PORT`) — managed;
+/// - иначе RAG недоступен ([`UnavailableEmbedder`]). Настройки UI — на M8.
+fn resolve_embedder() -> (Arc<dyn Embedder>, Option<ServerHandle>) {
+    if let Ok(url) = std::env::var("MINDFORK_EMBED_URL") {
+        let client: Arc<dyn Embedder> = Arc::new(XinferClient::new(url));
+        return (client, None);
+    }
+    if let Ok(bin) = std::env::var("MINDFORK_EMBED_BIN") {
+        let cfg = ManagedConfig {
+            binary: bin.into(),
+            model_id: std::env::var("MINDFORK_EMBED_MODEL").ok(),
+            weight_path: None,
+            weight_file: None,
+            isq: None,
+            device_ids: vec![0],
+            cpu: false,
+            port: std::env::var("MINDFORK_EMBED_PORT")
+                .ok()
+                .and_then(|p| p.parse().ok())
+                .unwrap_or(8001),
+            extra_args: vec![],
+        };
+        match ServerHandle::launch(&cfg) {
+            Ok(handle) => {
+                let client: Arc<dyn Embedder> = Arc::new(XinferClient::new(handle.base_url()));
+                return (client, Some(handle));
+            }
+            Err(err) => {
+                tracing::warn!(error = %err, "не удалось запустить embedding-сервер; RAG недоступен");
+            }
+        }
+    }
+    (Arc::new(UnavailableEmbedder), None)
 }
 
 fn spawn_readiness_probe(

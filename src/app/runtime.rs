@@ -85,6 +85,12 @@ fn apply_event(screen: &mut ChatScreen, event: AppEvent) {
             generation_id,
             text,
         } => screen.push_thoughts(generation_id, &text),
+        AppEvent::ToolCall {
+            generation_id,
+            name,
+            arguments,
+            result,
+        } => screen.push_tool_call(generation_id, name, arguments, result),
         AppEvent::Finished {
             generation_id,
             reason,

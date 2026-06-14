@@ -67,8 +67,9 @@ Env для выбора бэкенда: `MINDFORK_XINFER_URL` (external) ИЛИ 
 (+ `MINDFORK_MODEL`, `MINDFORK_XINFER_PORT`, `MINDFORK_ISQ`) для managed.
 
 ## Статус (на 2026-06-14)
-Сделано **M0, M1, M2, M3** (в `main`) и **весь M4** (в ветке `m4-profiles`).
-**150 тестов зелёные, 2 `#[ignore]`.** Полный чат-цикл в TUI готов; профили с изоляцией.
+Сделано **M0, M1, M2, M3, M4** (в `main`) и **весь M5** (в ветке `m5-tools`).
+**173 теста зелёные, 2 `#[ignore]`.** Чат-цикл, профили с изоляцией, инструменты
+с клиентским agentic-loop.
 - **M0** — каркас FSD, TUI-петля с восстановлением терминала, single-instance, логирование.
 - **M1** — `shared/api` (xinfer-клиент со стримингом/отменой, супервайзер, парсер
   мыслей, mock), оркестратор (автомат + generation_id), мост tokio↔TUI, минимальный
@@ -125,6 +126,28 @@ Env для выбора бэкенда: `MINDFORK_XINFER_URL` (external) ИЛИ 
   >1 профиле, иначе создаёт сразу. Проводка в `screens/chat.rs` + `runtime.rs`.
 - **Изоляция** notes/RAG по `profile_id` подтверждена тестами (db + фасад `Storage`).
   Реальный `ToolContext` — deliverable M5 (здесь `profile_id` уже доступен из чата).
+
+### M5 (инструменты + agentic-loop) — что уже сделано
+- **`[R]` Эмбеддинги закрыты** → [ADR 0002](docs/decisions/0002-embeddings-dedicated-server.md):
+  **выделенный** embedding-сервер (трейт `Embedder` отделён от `EngineBackend`);
+  `XinferClient: Embedder`; env `MINDFORK_EMBED_URL`/`_BIN`/`_MODEL`/`_PORT`;
+  если не настроен — `UnavailableEmbedder` (RAG отдаёт ошибку, не падает).
+- **Движок: tool-calls** — `ChatChunk::ToolCall(ToolCallDelta)` + `ToolCallAccumulator`,
+  `ChatRequest.tools`/`tool_choice=auto`, сериализация `assistant.tool_calls` в
+  истории и парсинг `delta.tool_calls` (wire/client).
+- **`features/tools/`**: трейт `Tool`, `ToolContext` (снимок), `ToolOutcome`+`ChatEffect`,
+  `ToolRegistry` (`schemas_for` = профиль ∩ реестр, `invoke`). `standard_registry`/
+  `default_tool_ids`. Инструменты: интроспекция (`get/set_sampling` с merge,
+  `get/set_system_message`, `get_last_user_message_time`), заметки (`note_save`/
+  `note_recall`), RAG (`rag_add`/`rag_search`: чанкинг+эмбеддинг+kNN). Всё с
+  изоляцией по `profile_id`.
+- **Оркестратор: клиентский agentic-loop** (spec §6.3): стрим → `ToolCalls` →
+  исполнение → новый запрос, до `max_tool_rounds`; эффекты применяет оркестратор
+  (владелец `Chat`) со следующего хода (§6.6). `Storage` → `Arc<Storage>`.
+- **UI**: `AppEvent::ToolCall` → tool-блоки (🔧 имя/аргументы/результат) в ленте;
+  tool-сообщения не дублируются (показываются как блоки внутри ответа ассистента).
+- Остаётся ручная проверка `#[ignore]` полного agentic-цикла на реальной модели
+  (нужен xinfer с tool-calling) и качество эмбеддингов выделенной модели.
 
 ### Отложено за пределы M3
 - **Сворачивание/выделение per-message** и tool-блоки в ленте — сейчас «мысли»

@@ -173,6 +173,7 @@ impl ChatScreen {
             role: FeedRole::User,
             text,
             thoughts: String::new(),
+            tools: Vec::new(),
             streaming: false,
         });
         self.feed_view.scroll_to_bottom();
@@ -185,9 +186,30 @@ impl ChatScreen {
             role: FeedRole::Assistant,
             text: String::new(),
             thoughts: String::new(),
+            tools: Vec::new(),
             streaming: true,
         });
         self.feed_view.scroll_to_bottom();
+    }
+
+    /// Добавляет tool-блок к текущему сообщению ассистента (live во время хода).
+    pub fn push_tool_call(
+        &mut self,
+        generation_id: Uuid,
+        name: String,
+        arguments: String,
+        result: String,
+    ) {
+        if self.current_gen == Some(generation_id)
+            && let Some(last) = self.feed.last_mut()
+        {
+            last.tools.push(crate::widgets::message_feed::FeedToolCall {
+                name,
+                arguments,
+                result,
+            });
+            self.feed_view.scroll_to_bottom();
+        }
     }
 
     pub fn push_chunk(&mut self, generation_id: Uuid, text: &str) {

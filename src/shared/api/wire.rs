@@ -30,6 +30,11 @@ pub struct ChatCompletionRequest {
     pub thinking: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub reasoning_effort: Option<&'static str>,
+    /// Схемы инструментов (отсутствуют, если tool-calling не используется).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tools: Option<Vec<WireTool>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tool_choice: Option<&'static str>,
 }
 
 #[derive(Debug, Serialize)]
@@ -39,6 +44,38 @@ pub struct WireMessage {
     pub content: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub tool_call_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tool_calls: Option<Vec<WireToolCall>>,
+}
+
+/// OpenAI-обёртка схемы инструмента (`{type:"function", function:{...}}`).
+#[derive(Debug, Serialize)]
+pub struct WireTool {
+    #[serde(rename = "type")]
+    pub kind: &'static str,
+    pub function: WireFunction,
+}
+
+#[derive(Debug, Serialize)]
+pub struct WireFunction {
+    pub name: String,
+    pub description: String,
+    pub parameters: serde_json::Value,
+}
+
+/// Вызов инструмента в assistant-сообщении истории.
+#[derive(Debug, Serialize)]
+pub struct WireToolCall {
+    pub id: String,
+    #[serde(rename = "type")]
+    pub kind: &'static str,
+    pub function: WireFunctionCall,
+}
+
+#[derive(Debug, Serialize)]
+pub struct WireFunctionCall {
+    pub name: String,
+    pub arguments: String,
 }
 
 /// Строит тело запроса чата из доменного [`ChatRequest`].
@@ -49,15 +86,54 @@ pub fn build_chat_request(req: &ChatRequest, stream: bool) -> ChatCompletionRequ
             role: "system",
             content: Some(system.clone()),
             tool_call_id: None,
+            tool_calls: None,
         });
     }
     for m in &req.messages {
+        let tool_calls = if m.tool_calls.is_empty() {
+            None
+        } else {
+            Some(
+                m.tool_calls
+                    .iter()
+                    .map(|tc| WireToolCall {
+                        id: tc.id.clone(),
+                        kind: "function",
+                        function: WireFunctionCall {
+                            name: tc.name.clone(),
+                            arguments: tc.arguments.clone(),
+                        },
+                    })
+                    .collect(),
+            )
+        };
         messages.push(WireMessage {
             role: m.role.as_wire(),
+            // Для assistant с tool_calls контент может быть пустым.
             content: Some(m.content.clone()),
             tool_call_id: m.tool_call_id.clone(),
+            tool_calls,
         });
     }
+
+    let tools = if req.tools.is_empty() {
+        None
+    } else {
+        Some(
+            req.tools
+                .iter()
+                .map(|t| WireTool {
+                    kind: "function",
+                    function: WireFunction {
+                        name: t.name.clone(),
+                        description: t.description.clone(),
+                        parameters: t.parameters.clone(),
+                    },
+                })
+                .collect(),
+        )
+    };
+    let tool_choice = tools.as_ref().map(|_| "auto");
 
     let s = &req.sampling;
     ChatCompletionRequest {
@@ -71,6 +147,8 @@ pub fn build_chat_request(req: &ChatRequest, stream: bool) -> ChatCompletionRequ
         presence_penalty: s.presence_penalty,
         thinking: s.thinking,
         reasoning_effort: s.reasoning_effort.map(|r| r.as_wire()),
+        tools,
+        tool_choice,
     }
 }
 
@@ -96,7 +174,26 @@ pub struct Delta {
     pub content: Option<String>,
     #[serde(default)]
     pub reasoning_content: Option<String>,
-    // tool_calls — на M5.
+    #[serde(default)]
+    pub tool_calls: Option<Vec<DeltaToolCall>>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct DeltaToolCall {
+    #[serde(default)]
+    pub index: usize,
+    #[serde(default)]
+    pub id: Option<String>,
+    #[serde(default)]
+    pub function: Option<DeltaFunction>,
+}
+
+#[derive(Debug, Default, Deserialize)]
+pub struct DeltaFunction {
+    #[serde(default)]
+    pub name: Option<String>,
+    #[serde(default)]
+    pub arguments: Option<String>,
 }
 
 // ---------- эмбеддинги ----------
@@ -129,6 +226,7 @@ mod tests {
             system: Some("sys".into()),
             messages: vec![ApiMessage::user("hi")],
             sampling: SamplingConfig::default(),
+            tools: vec![],
         };
         let body = build_chat_request(&req, true);
         let json = serde_json::to_value(&body).unwrap();
@@ -156,6 +254,7 @@ mod tests {
                 thinking: Some(true),
                 reasoning_effort: Some(ReasoningEffort::High),
             },
+            tools: vec![],
         };
         let json = serde_json::to_value(build_chat_request(&req, false)).unwrap();
         // f32→f64 расширение делает точное сравнение ненадёжным — сравниваем приближённо.
@@ -189,5 +288,67 @@ mod tests {
             chunk.choices[0].finish_reason.as_deref(),
             Some("tool_calls")
         );
+    }
+
+    #[test]
+    fn parses_tool_call_delta() {
+        let raw = r#"{"choices":[{"delta":{"tool_calls":[{"index":0,"id":"c1","type":"function","function":{"name":"note_save","arguments":"{\"x\":1}"}}]},"finish_reason":null}]}"#;
+        let chunk: ChatCompletionChunk = serde_json::from_str(raw).unwrap();
+        let tc = chunk.choices[0].delta.tool_calls.as_ref().unwrap();
+        assert_eq!(tc[0].index, 0);
+        assert_eq!(tc[0].id.as_deref(), Some("c1"));
+        let f = tc[0].function.as_ref().unwrap();
+        assert_eq!(f.name.as_deref(), Some("note_save"));
+        assert_eq!(f.arguments.as_deref(), Some("{\"x\":1}"));
+    }
+
+    #[test]
+    fn builds_tools_and_tool_choice() {
+        use crate::shared::api::backend::ToolSchema;
+        let req = ChatRequest {
+            system: None,
+            messages: vec![ApiMessage::user("hi")],
+            sampling: SamplingConfig::default(),
+            tools: vec![ToolSchema {
+                name: "note_save".into(),
+                description: "Сохранить заметку".into(),
+                parameters: serde_json::json!({"type":"object"}),
+            }],
+        };
+        let json = serde_json::to_value(build_chat_request(&req, true)).unwrap();
+        assert_eq!(json["tool_choice"], "auto");
+        assert_eq!(json["tools"][0]["type"], "function");
+        assert_eq!(json["tools"][0]["function"]["name"], "note_save");
+    }
+
+    #[test]
+    fn serializes_assistant_tool_calls_in_history() {
+        use crate::shared::api::backend::ApiToolCall;
+        let req = ChatRequest {
+            system: None,
+            messages: vec![
+                ApiMessage::assistant_tool_calls(
+                    "",
+                    vec![ApiToolCall {
+                        id: "c1".into(),
+                        name: "f".into(),
+                        arguments: "{}".into(),
+                    }],
+                ),
+                ApiMessage::tool("c1", "result"),
+            ],
+            sampling: SamplingConfig::default(),
+            tools: vec![],
+        };
+        let json = serde_json::to_value(build_chat_request(&req, true)).unwrap();
+        assert_eq!(json["messages"][0]["tool_calls"][0]["id"], "c1");
+        assert_eq!(
+            json["messages"][0]["tool_calls"][0]["function"]["name"],
+            "f"
+        );
+        assert_eq!(json["messages"][1]["role"], "tool");
+        assert_eq!(json["messages"][1]["tool_call_id"], "c1");
+        // Запрос без tools не должен содержать tool_choice.
+        assert!(json.get("tool_choice").is_none());
     }
 }

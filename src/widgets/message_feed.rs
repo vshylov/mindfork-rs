@@ -1,10 +1,11 @@
 //! Лента сообщений: markdown-рендер тел (через [`crate::shared::markdown`]),
 //! сворачиваемый блок «мыслей» (CoT) и вертикальный скролл. См. spec §11.3–11.4.
 //!
-//! «Мысли» сворачиваются глобальным переключателем (`show_thoughts`); выделение
-//! отдельных сообщений/блоков и tool-блоки придут позже (M5). Виджет хранит
-//! только состояние просмотра (скролл, «следовать за хвостом», показ мыслей);
-//! сами сообщения принадлежат UI-состоянию и передаются на отрисовку.
+//! «Мысли» сворачиваются глобальным переключателем (`show_thoughts`); tool-блоки
+//! (имя/аргументы/результат) показываются внутри сообщения ассистента (M5).
+//! Выделение отдельных сообщений/блоков — позже. Виджет хранит только состояние
+//! просмотра (скролл, «следовать за хвостом», показ мыслей); сами сообщения
+//! принадлежат UI-состоянию и передаются на отрисовку.
 
 use ratatui::Frame;
 use ratatui::layout::Rect;
@@ -24,12 +25,22 @@ pub enum FeedRole {
     Note,
 }
 
+/// Tool-блок в ленте: имя инструмента, аргументы и результат (сворачиваемо). См. spec §11.3.
+#[derive(Debug, Clone)]
+pub struct FeedToolCall {
+    pub name: String,
+    pub arguments: String,
+    pub result: String,
+}
+
 /// Элемент ленты сообщений.
 #[derive(Debug, Clone)]
 pub struct FeedMessage {
     pub role: FeedRole,
     pub text: String,
     pub thoughts: String,
+    /// Вызовы инструментов этого сообщения ассистента (tool-блоки).
+    pub tools: Vec<FeedToolCall>,
     /// Идёт ли стриминг этого сообщения (показываем «…» вместо пустого тела).
     pub streaming: bool,
 }
@@ -41,23 +52,34 @@ impl FeedMessage {
             role: FeedRole::Note,
             text: text.into(),
             thoughts: String::new(),
+            tools: Vec::new(),
             streaming: false,
         }
     }
 
     /// Проекция доменного сообщения (для перестроения ленты при активации чата).
-    /// Системные сообщения отбрасываются (`None`).
+    /// Системные и tool-сообщения отбрасываются (`None`): tool-вызовы показываются
+    /// как блоки внутри сообщения ассистента (`tool_calls`), а не отдельно.
     pub fn from_message(msg: &Message) -> Option<Self> {
         let role = match msg.role {
             MessageRole::User => FeedRole::User,
             MessageRole::Assistant => FeedRole::Assistant,
-            MessageRole::Tool => FeedRole::Note,
-            MessageRole::System => return None,
+            MessageRole::Tool | MessageRole::System => return None,
         };
+        let tools = msg
+            .tool_calls
+            .iter()
+            .map(|tc| FeedToolCall {
+                name: tc.name.clone(),
+                arguments: tc.arguments.to_string(),
+                result: tc.result.clone().unwrap_or_default(),
+            })
+            .collect();
         Some(Self {
             role,
             text: msg.text.clone(),
             thoughts: msg.thoughts.clone().unwrap_or_default(),
+            tools,
             streaming: false,
         })
     }
@@ -150,6 +172,7 @@ impl MessageFeed {
                 FeedRole::Note => {}
             }
             push_thoughts(&mut lines, &item.thoughts, self.show_thoughts);
+            push_tools(&mut lines, &item.tools);
             push_body(&mut lines, item);
             lines.push(Line::from(""));
         }
@@ -174,6 +197,37 @@ fn push_thoughts(lines: &mut Vec<Line<'static>>, thoughts: &str, expanded: bool)
     lines.push(Line::from("  ▾ мысли:").dim().italic());
     for t in thoughts.lines() {
         lines.push(Line::from(format!("  │ {t}")).dim().italic());
+    }
+}
+
+/// Добавляет tool-блоки сообщения: имя + аргументы + результат (кратко, dim).
+fn push_tools(lines: &mut Vec<Line<'static>>, tools: &[FeedToolCall]) {
+    for tool in tools {
+        lines.push(
+            Line::from(format!(
+                "  🔧 {}({})",
+                tool.name,
+                truncate(&tool.arguments, 80)
+            ))
+            .dim()
+            .yellow(),
+        );
+        if !tool.result.is_empty() {
+            for line in tool.result.lines().take(6) {
+                lines.push(Line::from(format!("  │ {}", truncate(line, 100))).dim());
+            }
+        }
+    }
+}
+
+/// Обрезает строку до `max` символов с многоточием.
+fn truncate(s: &str, max: usize) -> String {
+    if s.chars().count() <= max {
+        s.to_string()
+    } else {
+        let mut out: String = s.chars().take(max).collect();
+        out.push('…');
+        out
     }
 }
 
@@ -210,8 +264,27 @@ mod tests {
             role,
             text: text.to_string(),
             thoughts: thoughts.to_string(),
+            tools: Vec::new(),
             streaming: false,
         }
+    }
+
+    #[test]
+    fn tool_blocks_render() {
+        let feed = MessageFeed::new();
+        let mut m = msg(FeedRole::Assistant, "готово", "");
+        m.tools.push(FeedToolCall {
+            name: "note_save".into(),
+            arguments: "{\"content\":\"x\"}".into(),
+            result: "Заметка сохранена".into(),
+        });
+        let lines = feed.build_lines(&[m]);
+        let joined: String = lines
+            .iter()
+            .flat_map(|l| l.spans.iter().map(|s| s.content.as_ref()))
+            .collect();
+        assert!(joined.contains("🔧 note_save"));
+        assert!(joined.contains("Заметка сохранена"));
     }
 
     #[test]
