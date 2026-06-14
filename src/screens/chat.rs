@@ -53,6 +53,8 @@ pub enum ChatIntent {
         id: Uuid,
         title: String,
     },
+    /// Открыть экран настроек (`Ctrl+,`). `app` создаёт его из снимка настроек.
+    OpenSettings,
 }
 
 /// Пункт попапа подсказок орфографии.
@@ -135,6 +137,11 @@ impl ChatScreen {
     /// Сохраняет снимок настроек (для открытия экрана настроек по `Ctrl+,`).
     pub fn set_settings(&mut self, config: AppConfig, profiles: Vec<Profile>) {
         self.settings_snapshot = Some((config, profiles));
+    }
+
+    /// Снимок настроек для создания экрана настроек (`None`, пока не получен).
+    pub fn settings_snapshot(&self) -> Option<(AppConfig, Vec<Profile>)> {
+        self.settings_snapshot.clone()
     }
 
     /// Устанавливает спелл-чекер (после фоновой загрузки словарей) и планирует
@@ -281,6 +288,14 @@ impl ChatScreen {
         }
         match (key.code, key.modifiers) {
             (KeyCode::Char('c'), KeyModifiers::CONTROL) => Some(ChatIntent::Quit),
+            // Экран настроек (Ctrl+,) — открывается, если снимок настроек получен.
+            (KeyCode::Char(','), KeyModifiers::CONTROL) => {
+                if self.settings_snapshot.is_some() {
+                    Some(ChatIntent::OpenSettings)
+                } else {
+                    None
+                }
+            }
             (KeyCode::Char('n'), KeyModifiers::CONTROL) => self.request_new_chat(),
             (KeyCode::Char('l'), KeyModifiers::CONTROL) => {
                 self.overlay = Some(ChatListState::new(self.chats.clone(), self.active_chat));
@@ -662,6 +677,21 @@ mod tests {
         assert_eq!(
             s.handle_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE)),
             Some(ChatIntent::Cancel)
+        );
+    }
+
+    #[test]
+    fn ctrl_comma_opens_settings_only_with_snapshot() {
+        let mut s = ChatScreen::new();
+        // Без снимка настроек — Ctrl+, ничего не делает.
+        assert_eq!(
+            s.handle_key(KeyEvent::new(KeyCode::Char(','), KeyModifiers::CONTROL)),
+            None
+        );
+        s.set_settings(AppConfig::default(), vec![Profile::new("P", "sys")]);
+        assert_eq!(
+            s.handle_key(KeyEvent::new(KeyCode::Char(','), KeyModifiers::CONTROL)),
+            Some(ChatIntent::OpenSettings)
         );
     }
 
