@@ -1,5 +1,5 @@
-//! Спелл-чек (features/spellcheck): Hunspell-словари (`spellbook`) + сегментация
-//! + персональный словарь. Слово корректно, если принято хотя бы одним активным
+//! Спелл-чек (features/spellcheck): Hunspell-словари (`spellbook`), сегментация
+//! и персональный словарь. Слово корректно, если принято хотя бы одним активным
 //! словарём. См. spec §11.5.
 //!
 //! - [`segment`] — разбиение строки на слова (учёт апострофов/дефисов, ru/en).
@@ -11,4 +11,3 @@ pub mod dict;
 pub mod segment;
 
 pub use check::SpellChecker;
-pub use segment::Word;

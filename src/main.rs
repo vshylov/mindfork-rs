@@ -76,7 +76,16 @@ fn main() -> anyhow::Result<()> {
         status,
     }));
 
-    let result = app::runtime::run(cmd_tx.clone(), evt_rx);
+    // Фоновая загрузка словарей спелл-чека (парсинг .dic тяжёлый — не блокируем UI).
+    let (spell_tx, spell_rx) = std::sync::mpsc::channel();
+    let dict_dir = paths.dictionaries_dir();
+    let personal = paths.personal_dictionary();
+    std::thread::spawn(move || {
+        let checker = features::spellcheck::dict::load(&dict_dir, &personal);
+        let _ = spell_tx.send(checker);
+    });
+
+    let result = app::runtime::run(cmd_tx.clone(), evt_rx, spell_rx);
 
     // Останавливаем оркестратор и даём фоновым задачам завершиться.
     let _ = cmd_tx.send(AppCommand::Quit);

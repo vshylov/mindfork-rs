@@ -9,8 +9,8 @@
 use ratatui::Frame;
 use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyEventKind};
 use ratatui::layout::Rect;
-use ratatui::style::Stylize;
-use ratatui::text::{Line, Text};
+use ratatui::style::{Style, Stylize};
+use ratatui::text::{Line, Span, Text};
 use ratatui::widgets::{Block, Borders, Paragraph};
 
 /// Многострочное поле ввода с курсором.
@@ -23,6 +23,10 @@ pub struct InputBox {
     col: usize,
     /// Первая видимая строка (вертикальный скролл).
     scroll: usize,
+    /// Диапазоны слов с ошибками орфографии по логическим строкам (индекс строки
+    /// → отсортированные непересекающиеся `[start, end)` в символах). Заполняет
+    /// экран из спелл-чекера; виджет лишь подчёркивает. См. spec §11.5.
+    misspelled: Vec<Vec<(usize, usize)>>,
 }
 
 impl Default for InputBox {
@@ -38,6 +42,7 @@ impl InputBox {
             row: 0,
             col: 0,
             scroll: 0,
+            misspelled: Vec::new(),
         }
     }
 
@@ -66,6 +71,37 @@ impl InputBox {
         self.row = 0;
         self.col = 0;
         self.scroll = 0;
+        self.misspelled.clear();
+    }
+
+    /// Текст по логическим строкам (для спелл-чека построчно).
+    pub fn line_strings(&self) -> Vec<String> {
+        self.lines.iter().map(|l| l.iter().collect()).collect()
+    }
+
+    /// Позиция курсора `(строка, столбец)` в индексах символов.
+    pub fn cursor(&self) -> (usize, usize) {
+        (self.row, self.col)
+    }
+
+    /// Устанавливает диапазоны ошибок орфографии (по строкам). См. [`Self::misspelled`].
+    pub fn set_misspelled(&mut self, ranges: Vec<Vec<(usize, usize)>>) {
+        self.misspelled = ranges;
+    }
+
+    /// Заменяет диапазон символов `[start, end)` в строке `row` на `replacement`
+    /// и ставит курсор за вставленным текстом (для применения подсказки).
+    pub fn replace_range(&mut self, row: usize, start: usize, end: usize, replacement: &str) {
+        let Some(line) = self.lines.get_mut(row) else {
+            return;
+        };
+        let end = end.min(line.len());
+        let start = start.min(end);
+        let repl: Vec<char> = replacement.chars().collect();
+        let repl_len = repl.len();
+        line.splice(start..end, repl);
+        self.row = row;
+        self.col = start + repl_len;
     }
 
     /// Заполняет поле текстом, ставит курсор в конец (для правки по месту, M3+).
@@ -212,9 +248,10 @@ impl InputBox {
         let lines: Vec<Line> = self
             .lines
             .iter()
+            .enumerate()
             .skip(self.scroll)
             .take(visible_rows)
-            .map(|l| Line::from(l.iter().collect::<String>()))
+            .map(|(idx, chars)| styled_line(chars, self.misspelled.get(idx).map(|v| v.as_slice())))
             .collect();
         let placeholder = self.is_empty() && !focused;
         let text = if placeholder {
@@ -242,6 +279,36 @@ impl InputBox {
             self.scroll = self.row + 1 - visible_rows;
         }
     }
+}
+
+/// Строит строку, подчёркивая (`UNDERLINED`, красным) диапазоны ошибок.
+/// `ranges` — отсортированные непересекающиеся `[start, end)` в символах.
+fn styled_line(chars: &[char], ranges: Option<&[(usize, usize)]>) -> Line<'static> {
+    let ranges = match ranges {
+        Some(r) if !r.is_empty() => r,
+        _ => return Line::from(chars.iter().collect::<String>()),
+    };
+    let bad = Style::new().underlined().red();
+    let mut spans: Vec<Span<'static>> = Vec::new();
+    let mut pos = 0;
+    for &(start, end) in ranges {
+        let start = start.min(chars.len());
+        let end = end.min(chars.len());
+        if start > pos {
+            spans.push(Span::raw(chars[pos..start].iter().collect::<String>()));
+        }
+        if end > start {
+            spans.push(Span::styled(
+                chars[start..end].iter().collect::<String>(),
+                bad,
+            ));
+        }
+        pos = end.max(pos);
+    }
+    if pos < chars.len() {
+        spans.push(Span::raw(chars[pos..].iter().collect::<String>()));
+    }
+    Line::from(spans)
 }
 
 #[cfg(test)]
@@ -335,6 +402,42 @@ mod tests {
         assert!(ib.on_key(k(KeyCode::Backspace)));
         assert!(!ib.on_key(k(KeyCode::Enter)));
         assert!(ib.is_empty());
+    }
+
+    #[test]
+    fn line_strings_and_cursor() {
+        let mut ib = InputBox::new();
+        ib.set_text("abc\nde");
+        assert_eq!(ib.line_strings(), vec!["abc".to_string(), "de".to_string()]);
+        assert_eq!(ib.cursor(), (1, 2)); // курсор в конце последней строки
+    }
+
+    #[test]
+    fn replace_range_swaps_word_and_moves_cursor() {
+        let mut ib = InputBox::new();
+        ib.set_text("helo world");
+        ib.replace_range(0, 0, 4, "hello");
+        assert_eq!(ib.text(), "hello world");
+        assert_eq!(ib.cursor(), (0, 5));
+    }
+
+    #[test]
+    fn replace_range_unicode() {
+        let mut ib = InputBox::new();
+        ib.set_text("превед мир");
+        ib.replace_range(0, 0, 6, "привет");
+        assert_eq!(ib.text(), "привет мир");
+    }
+
+    #[test]
+    fn render_with_misspelled_does_not_panic() {
+        use ratatui::Terminal;
+        use ratatui::backend::TestBackend;
+        let mut ib = InputBox::new();
+        ib.set_text("helo world\nпревед");
+        ib.set_misspelled(vec![vec![(0, 4)], vec![(0, 6)]]);
+        let mut term = Terminal::new(TestBackend::new(20, 4)).unwrap();
+        term.draw(|f| ib.render(f, f.area(), "ввод", true)).unwrap();
     }
 
     #[test]

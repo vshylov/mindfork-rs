@@ -6,13 +6,20 @@
 //! `AppCommand`. События оркестратора `app` применяет, вызывая мутаторы экрана
 //! (`set_*`, `push_*`, …) — экрану не нужен тип `AppEvent`.
 
+use std::time::{Duration, Instant};
+
 use ratatui::Frame;
 use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
-use ratatui::layout::{Constraint, Layout};
+use ratatui::layout::{Constraint, Flex, Layout, Rect};
+use ratatui::style::Style;
+use ratatui::style::Stylize;
+use ratatui::text::Line;
+use ratatui::widgets::{Block, Borders, Clear, List, ListItem, ListState};
 use uuid::Uuid;
 
 use crate::entities::chat::ChatSummary;
 use crate::entities::message::Message;
+use crate::features::spellcheck::SpellChecker;
 use crate::shared::api::FinishReason;
 use crate::shared::server::ServerStatus;
 use crate::widgets::chat_list::{ChatListAction, ChatListState};
@@ -22,6 +29,9 @@ use crate::widgets::status_bar;
 
 /// Высота прокрутки ленты на одно нажатие PageUp/PageDown (строк).
 const PAGE_SCROLL: usize = 8;
+
+/// Задержка дебаунса спелл-чека: слово не флагуется, пока пользователь печатает.
+const SPELL_DEBOUNCE: Duration = Duration::from_millis(300);
 
 /// Намерение пользователя, которое исполняет `app` (транслирует в `AppCommand`).
 #[derive(Debug, Clone, PartialEq)]
@@ -36,6 +46,25 @@ pub enum ChatIntent {
     RenameChat { id: Uuid, title: String },
 }
 
+/// Пункт попапа подсказок орфографии.
+#[derive(Debug, Clone, PartialEq)]
+enum SuggestItem {
+    /// Заменить слово на вариант.
+    Replace(String),
+    /// Добавить слово в персональный словарь.
+    AddToDictionary,
+}
+
+/// Попап подсказок орфографии для слова под курсором. См. spec §11.5.
+struct SuggestPopup {
+    word: String,
+    row: usize,
+    start: usize,
+    end: usize,
+    items: Vec<SuggestItem>,
+    selected: usize,
+}
+
 /// Экран чата: всё состояние UI и его отрисовка.
 pub struct ChatScreen {
     feed: Vec<FeedMessage>,
@@ -48,6 +77,14 @@ pub struct ChatScreen {
     status: ServerStatus,
     current_gen: Option<Uuid>,
     generating: bool,
+    /// Спелл-чекер (загружается в фоне; `None`, пока не готов/нет словарей).
+    spell: Option<SpellChecker>,
+    /// Текст ввода изменился — нужна перепроверка орфографии (с дебаунсом).
+    spell_dirty: bool,
+    /// Момент последнего изменения ввода (для дебаунса).
+    last_edit: Option<Instant>,
+    /// Открытый попап подсказок орфографии.
+    suggest: Option<SuggestPopup>,
 }
 
 impl Default for ChatScreen {
@@ -69,7 +106,19 @@ impl ChatScreen {
             status: ServerStatus::Connecting,
             current_gen: None,
             generating: false,
+            spell: None,
+            spell_dirty: false,
+            last_edit: None,
+            suggest: None,
         }
+    }
+
+    /// Устанавливает спелл-чекер (после фоновой загрузки словарей) и планирует
+    /// перепроверку текущего ввода.
+    pub fn set_spellchecker(&mut self, checker: SpellChecker) {
+        self.spell = Some(checker);
+        self.spell_dirty = true;
+        self.last_edit = None; // перепроверить немедленно
     }
 
     // ---------- проекция событий оркестратора (вызывается слоем `app`) ----------
@@ -170,6 +219,10 @@ impl ChatScreen {
         if key.kind != KeyEventKind::Press {
             return None;
         }
+        if self.suggest.is_some() {
+            self.handle_suggest_key(key);
+            return None;
+        }
         if self.overlay.is_some() {
             return self.handle_overlay_key(key);
         }
@@ -178,6 +231,11 @@ impl ChatScreen {
             (KeyCode::Char('n'), KeyModifiers::CONTROL) => Some(ChatIntent::NewChat),
             (KeyCode::Char('l'), KeyModifiers::CONTROL) => {
                 self.overlay = Some(ChatListState::new(self.chats.clone(), self.active_chat));
+                None
+            }
+            // Подсказки орфографии для слова под курсором (spec §11.5).
+            (KeyCode::Char('g'), KeyModifiers::CONTROL) => {
+                self.open_suggestions();
                 None
             }
             // Прокрутка ленты и сворачивание «мыслей» (spec §11.3).
@@ -203,22 +261,115 @@ impl ChatScreen {
             // Shift+Enter — перенос строки; Enter — отправка (spec §11.7).
             (KeyCode::Enter, KeyModifiers::SHIFT) => {
                 self.input.insert_newline();
+                self.mark_input_changed();
                 None
             }
             (KeyCode::Enter, _) => {
                 let text = self.input.text();
                 if !text.trim().is_empty() && !self.generating {
                     self.input.clear();
+                    self.mark_input_changed();
                     Some(ChatIntent::Send(text))
                 } else {
                     None
                 }
             }
             _ => {
-                self.input.on_key(key);
+                if self.input.on_key(key) {
+                    self.mark_input_changed();
+                }
                 None
             }
         }
+    }
+
+    /// Помечает ввод изменённым (запускает дебаунс перепроверки орфографии).
+    fn mark_input_changed(&mut self) {
+        self.spell_dirty = true;
+        self.last_edit = Some(Instant::now());
+    }
+
+    /// Перепроверяет орфографию ввода, если истёк дебаунс. Вызывается из `render`.
+    fn maybe_recheck_spelling(&mut self) {
+        let Some(spell) = &self.spell else { return };
+        if !self.spell_dirty {
+            return;
+        }
+        if let Some(t) = self.last_edit
+            && t.elapsed() < SPELL_DEBOUNCE
+        {
+            return; // ещё печатает — не флагуем текущее слово
+        }
+        let ranges = self
+            .input
+            .line_strings()
+            .iter()
+            .map(|line| spell.misspellings(line))
+            .collect();
+        self.input.set_misspelled(ranges);
+        self.spell_dirty = false;
+    }
+
+    /// Открывает попап подсказок для слова с ошибкой под курсором (если есть).
+    fn open_suggestions(&mut self) {
+        let Some(spell) = &self.spell else { return };
+        let (row, col) = self.input.cursor();
+        let lines = self.input.line_strings();
+        let Some(line) = lines.get(row) else { return };
+        let Some(word) = spell.misspelled_word_at(line, col) else {
+            return;
+        };
+        let mut items: Vec<SuggestItem> = spell
+            .suggest(&word.text)
+            .into_iter()
+            .map(SuggestItem::Replace)
+            .collect();
+        items.push(SuggestItem::AddToDictionary);
+        self.suggest = Some(SuggestPopup {
+            word: word.text,
+            row,
+            start: word.start,
+            end: word.end,
+            items,
+            selected: 0,
+        });
+    }
+
+    fn handle_suggest_key(&mut self, key: KeyEvent) {
+        let Some(popup) = &mut self.suggest else {
+            return;
+        };
+        match key.code {
+            KeyCode::Esc => self.suggest = None,
+            KeyCode::Up => popup.selected = popup.selected.saturating_sub(1),
+            KeyCode::Down => {
+                popup.selected = (popup.selected + 1).min(popup.items.len().saturating_sub(1));
+            }
+            KeyCode::Enter => self.apply_suggestion(),
+            _ => {}
+        }
+    }
+
+    /// Применяет выбранный пункт попапа подсказок и закрывает его.
+    fn apply_suggestion(&mut self) {
+        let Some(popup) = self.suggest.take() else {
+            return;
+        };
+        match popup.items.get(popup.selected) {
+            Some(SuggestItem::Replace(word)) => {
+                self.input
+                    .replace_range(popup.row, popup.start, popup.end, word);
+            }
+            Some(SuggestItem::AddToDictionary) => {
+                if let Some(spell) = &mut self.spell
+                    && let Err(err) = spell.add_to_personal(&popup.word)
+                {
+                    tracing::warn!(error = %err, "не удалось дописать персональный словарь");
+                }
+            }
+            None => {}
+        }
+        self.mark_input_changed();
     }
 
     fn handle_overlay_key(&mut self, key: KeyEvent) -> Option<ChatIntent> {
@@ -251,6 +402,8 @@ impl ChatScreen {
     // ---------- отрисовка ----------
 
     pub fn render(&mut self, frame: &mut Frame) {
+        self.maybe_recheck_spelling();
+
         // Высота ввода растёт под содержимое (1–6 строк + рамка).
         let input_h = (self.input.line_count().clamp(1, 6) + 2) as u16;
         let [feed_area, input_area, status_area] = Layout::vertical([
@@ -274,13 +427,57 @@ impl ChatScreen {
         } else {
             "ввод · Enter отправить · Shift+Enter перенос"
         };
-        let focused = self.overlay.is_none();
+        let focused = self.overlay.is_none() && self.suggest.is_none();
         self.input.render(frame, input_area, input_title, focused);
 
         if let Some(overlay) = &self.overlay {
             overlay.render(frame, frame.area(), self.active_chat);
         }
+        if let Some(popup) = &self.suggest {
+            render_suggest(frame, popup);
+        }
     }
+}
+
+/// Рисует попап подсказок орфографии по центру экрана.
+fn render_suggest(frame: &mut Frame, popup: &SuggestPopup) {
+    let rows = (popup.items.len() as u16 + 2).min(frame.area().height);
+    let area = centered_rect(40, rows, frame.area());
+    frame.render_widget(Clear, area);
+
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .title(format!(" {} ", popup.word))
+        .title_bottom(Line::from(" Enter — применить · Esc — отмена ").dim());
+    let items: Vec<ListItem> = popup
+        .items
+        .iter()
+        .map(|item| {
+            ListItem::new(match item {
+                SuggestItem::Replace(word) => Line::from(word.clone()),
+                SuggestItem::AddToDictionary => Line::from("➕ Добавить в словарь").italic(),
+            })
+        })
+        .collect();
+    let list = List::new(items)
+        .block(block)
+        .highlight_style(Style::new().reversed());
+    let mut state = ListState::default();
+    state.select(Some(
+        popup.selected.min(popup.items.len().saturating_sub(1)),
+    ));
+    frame.render_stateful_widget(list, area, &mut state);
+}
+
+/// Прямоугольник по центру `area` фиксированной ширины/высоты (с клампом).
+fn centered_rect(width: u16, height: u16, area: Rect) -> Rect {
+    let [h] = Layout::horizontal([Constraint::Length(width.min(area.width))])
+        .flex(Flex::Center)
+        .areas(area);
+    let [v] = Layout::vertical([Constraint::Length(height.min(area.height))])
+        .flex(Flex::Center)
+        .areas(h);
+    v
 }
 
 #[cfg(test)]
@@ -398,6 +595,92 @@ mod tests {
         let intent = s.handle_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
         assert_eq!(intent, None);
         assert!(s.overlay.is_none());
+    }
+
+    fn mk_checker() -> SpellChecker {
+        let dict = spellbook::Dictionary::new("SET UTF-8\n", "2\nhello\nworld\n").unwrap();
+        SpellChecker::new(vec![dict], std::collections::HashSet::new(), None)
+    }
+
+    fn type_str(s: &mut ChatScreen, text: &str) {
+        for c in text.chars() {
+            s.handle_key(KeyEvent::new(KeyCode::Char(c), KeyModifiers::NONE));
+        }
+    }
+
+    #[test]
+    fn ctrl_g_opens_suggestions_for_misspelled_word() {
+        let mut s = ChatScreen::new();
+        s.set_spellchecker(mk_checker());
+        type_str(&mut s, "helo"); // курсор в конце слова с ошибкой
+        s.handle_key(KeyEvent::new(KeyCode::Char('g'), KeyModifiers::CONTROL));
+        assert!(s.suggest.is_some());
+        // последний пункт — «добавить в словарь»
+        let items = &s.suggest.as_ref().unwrap().items;
+        assert_eq!(items.last(), Some(&SuggestItem::AddToDictionary));
+    }
+
+    #[test]
+    fn applying_suggestion_replaces_word() {
+        let mut s = ChatScreen::new();
+        s.set_spellchecker(mk_checker());
+        type_str(&mut s, "helo");
+        s.open_suggestions();
+        // первый пункт — подсказка «hello»; Enter применяет
+        assert_eq!(
+            s.suggest.as_ref().unwrap().items.first(),
+            Some(&SuggestItem::Replace("hello".into()))
+        );
+        s.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+        assert!(s.suggest.is_none());
+        assert_eq!(s.input.text(), "hello");
+    }
+
+    #[test]
+    fn add_to_dictionary_clears_the_error() {
+        let mut s = ChatScreen::new();
+        s.set_spellchecker(mk_checker());
+        type_str(&mut s, "helo");
+        s.open_suggestions();
+        let last = s.suggest.as_ref().unwrap().items.len() - 1;
+        // переходим на «добавить в словарь» и применяем
+        for _ in 0..last {
+            s.handle_key(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE));
+        }
+        s.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+        assert!(s.suggest.is_none());
+        // слово теперь в персональном словаре — больше не ошибка
+        assert!(
+            s.spell
+                .as_ref()
+                .unwrap()
+                .misspelled_word_at("helo", 2)
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn esc_closes_suggestions_without_quitting() {
+        let mut s = ChatScreen::new();
+        s.set_spellchecker(mk_checker());
+        type_str(&mut s, "helo");
+        s.open_suggestions();
+        assert!(s.suggest.is_some());
+        let intent = s.handle_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
+        assert_eq!(intent, None);
+        assert!(s.suggest.is_none());
+    }
+
+    #[test]
+    fn render_with_suggestions_does_not_panic() {
+        use ratatui::Terminal;
+        use ratatui::backend::TestBackend;
+        let mut s = ChatScreen::new();
+        s.set_spellchecker(mk_checker());
+        type_str(&mut s, "helo");
+        s.open_suggestions();
+        let mut term = Terminal::new(TestBackend::new(50, 16)).unwrap();
+        term.draw(|f| s.render(f)).unwrap();
     }
 
     #[test]

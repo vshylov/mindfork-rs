@@ -6,6 +6,7 @@
 //! применяются к экрану мутаторами, исходящие [`ChatIntent`] транслируются в
 //! [`AppCommand`]. Сам экран про `app`/каналы не знает (FSD, зависимости вниз).
 
+use std::sync::mpsc::Receiver;
 use std::time::Duration;
 
 use anyhow::Result;
@@ -14,16 +15,22 @@ use ratatui::crossterm::event::{self, Event};
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
 
 use crate::app::events::{AppCommand, AppEvent};
+use crate::features::spellcheck::SpellChecker;
 use crate::screens::chat::{ChatIntent, ChatScreen};
 
 /// Период опроса ввода (тик перерисовки).
 const TICK: Duration = Duration::from_millis(50);
 
 /// Инициализирует терминал, запускает петлю и восстанавливает терминал на выходе
-/// (в т.ч. при панике — `ratatui::init` ставит panic hook).
-pub fn run(cmd_tx: UnboundedSender<AppCommand>, evt_rx: UnboundedReceiver<AppEvent>) -> Result<()> {
+/// (в т.ч. при панике — `ratatui::init` ставит panic hook). `spell_rx` доставляет
+/// спелл-чекер по готовности фоновой загрузки словарей.
+pub fn run(
+    cmd_tx: UnboundedSender<AppCommand>,
+    evt_rx: UnboundedReceiver<AppEvent>,
+    spell_rx: Receiver<SpellChecker>,
+) -> Result<()> {
     let mut terminal = ratatui::init();
-    let result = run_loop(&mut terminal, &cmd_tx, evt_rx);
+    let result = run_loop(&mut terminal, &cmd_tx, evt_rx, spell_rx);
     ratatui::restore();
     // Просим оркестратор остановиться (на случай выхода не по Quit-команде).
     let _ = cmd_tx.send(AppCommand::Quit);
@@ -34,12 +41,17 @@ fn run_loop(
     terminal: &mut DefaultTerminal,
     cmd_tx: &UnboundedSender<AppCommand>,
     mut evt_rx: UnboundedReceiver<AppEvent>,
+    spell_rx: Receiver<SpellChecker>,
 ) -> Result<()> {
     let mut screen = ChatScreen::new();
     let mut quit = false;
     while !quit {
         while let Ok(event) = evt_rx.try_recv() {
             apply_event(&mut screen, event);
+        }
+        // Словари загрузились в фоне — подключаем спелл-чек.
+        if let Ok(checker) = spell_rx.try_recv() {
+            screen.set_spellchecker(checker);
         }
         terminal.draw(|frame| screen.render(frame))?;
         if event::poll(TICK)?

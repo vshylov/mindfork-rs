@@ -67,8 +67,8 @@ Env для выбора бэкенда: `MINDFORK_XINFER_URL` (external) ИЛИ 
 (+ `MINDFORK_MODEL`, `MINDFORK_XINFER_PORT`, `MINDFORK_ISQ`) для managed.
 
 ## Статус (на 2026-06-14)
-Сделано **M0, M1, M2** (в `main`) и **почти весь M3** (в ветке `m3-ui`).
-**107 тестов зелёные, 2 `#[ignore]`.** Осталось по M3: только спелл-чек (см. ниже).
+Сделано **M0, M1, M2** (в `main`) и **весь M3** (в ветке `m3-ui`).
+**133 теста зелёные, 2 `#[ignore]`.** Полный чат-цикл в TUI готов.
 - **M0** — каркас FSD, TUI-петля с восстановлением терминала, single-instance, логирование.
 - **M1** — `shared/api` (xinfer-клиент со стримингом/отменой, супервайзер, парсер
   мыслей, mock), оркестратор (автомат + generation_id), мост tokio↔TUI, минимальный
@@ -100,18 +100,21 @@ Env для выбора бэкенда: `MINDFORK_XINFER_URL` (external) ИЛИ 
   `AppEvent` мутаторами, транслирует `ChatIntent → AppCommand`. **FSD соблюдён**:
   `screens`/`widgets` не импортируют `app` (экран отдаёт `ChatIntent`, не `AppCommand`).
 
-### M3 — что осталось
+- **`features/spellcheck/`**: `spellbook` (Hunspell) + свой сегментатор слов +
+  персональный словарь. `SpellChecker`: `check`/`misspellings`/`suggest`/
+  `add_to_personal`. Слово верно, если принято хотя бы одним словарём. Словари
+  грузятся **в фоне** из `dictionaries/` (нет каталога → чек выключен, не падает).
+  В UI: подчёркивание ошибок (`UNDERLINED`/red) с дебаунсом 300мс; попап подсказок
+  `Ctrl+G` (замена слова / «добавить в словарь» → `personal_dictionary.txt`).
+
+### Отложено за пределы M3
 - **Сворачивание/выделение per-message** и tool-блоки в ленте — сейчас «мысли»
   сворачиваются глобально (`Ctrl+T`); выделение сообщений и tool-блоки — на M5.
-- `features/spellcheck/`: `spellbook` (en_US/en_GB/ru_RU) + сегментация
-  (`unicode-segmentation`) + фоновая проверка (дебаунс ~300мс) + подсказки; отрисовка
-  подчёркиваний — стилем `UNDERLINED` per-span в `input_box` (механизм уже наш).
-  Нужны словари в `dictionaries/` и новые зависимости (`spellbook`, `unicode-segmentation`).
+- **Словари спелл-чека не входят в репозиторий**: положить Hunspell-пары
+  `*.aff`+`*.dic` (`en_US.aff/en_US.dic`, `ru_RU.*`, …) в `dictionaries/` рядом с
+  бинарником. Открытый `[R]`: качество ru_RU на реальном словаре.
 - Снять `#![allow(dead_code)]` из `main.rs` — **после M5** (часть API: notes/RAG/db,
   ещё не имеет потребителей; сейчас снятие сломает `clippy -D warnings`).
-
-**Открытые `[R]` для M3** (оставшиеся):
-- Качество `spellbook` на ru_RU (проверить аффиксные правила при интеграции).
 
 ## Подводные камни
 - **TUI «висит» при headless-запуске** (без TTY) — это нормально; чистый выход
