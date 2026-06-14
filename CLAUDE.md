@@ -67,8 +67,8 @@ Env для выбора бэкенда: `MINDFORK_XINFER_URL` (external) ИЛИ 
 (+ `MINDFORK_MODEL`, `MINDFORK_XINFER_PORT`, `MINDFORK_ISQ`) для managed.
 
 ## Статус (на 2026-06-14)
-Сделано **M0, M1, M2** (в `main`) и **весь M3** (в ветке `m3-ui`).
-**133 теста зелёные, 2 `#[ignore]`.** Полный чат-цикл в TUI готов.
+Сделано **M0, M1, M2, M3** (в `main`) и **весь M4** (в ветке `m4-profiles`).
+**150 тестов зелёные, 2 `#[ignore]`.** Полный чат-цикл в TUI готов; профили с изоляцией.
 - **M0** — каркас FSD, TUI-петля с восстановлением терминала, single-instance, логирование.
 - **M1** — `shared/api` (xinfer-клиент со стримингом/отменой, супервайзер, парсер
   мыслей, mock), оркестратор (автомат + generation_id), мост tokio↔TUI, минимальный
@@ -106,6 +106,25 @@ Env для выбора бэкенда: `MINDFORK_XINFER_URL` (external) ИЛИ 
   грузятся **в фоне** из `dictionaries/` (нет каталога → чек выключен, не падает).
   В UI: подчёркивание ошибок (`UNDERLINED`/red) с дебаунсом 300мс; попап подсказок
   `Ctrl+G` (замена слова / «добавить в словарь» → `personal_dictionary.txt`).
+
+### M4 (профили + изоляция) — что уже сделано
+- **`features/profiles.rs`**: чистые операции над профилями (создание/правка/
+  валидация имени `sanitize_name`, `ProfileEdit`/`apply_edit`). UI-секция — на M8.
+- **`Chat::from_profile` копирует** `system_message`/`character_names` (у чата своя
+  копия — правки профиля их не меняют), но **НЕ копирует** `default_sampling`.
+- **Трёхуровневый семплинг** ([`sampling::resolve`], spec §8.3): разрешение
+  `Chat.sampling_override → Profile.default_sampling → глобальный` **во время запроса**
+  (а не снимком при создании); снимок применённого — в `Message.metadata`.
+  `sampling_override` остаётся `None` до явного `set_sampling` (M5).
+- **Контракт**: `AppCommand::NewChat{profile_id}`, `CreateProfile`/`DeleteProfile`;
+  `AppEvent::ProfileList`. `ProfileSummary` — в `entities/profile.rs`.
+- **Оркестратор**: ведёт профили, эмитит `ProfileList`, создаёт чат из выбранного
+  профиля (+ приветствие), каскад `DeleteProfile → чаты` (`hide_profile_cascade`),
+  защита «нельзя удалить последний профиль».
+- **`widgets/profile_list.rs`**: оверлей выбора профиля. `Ctrl+N` открывает его при
+  >1 профиле, иначе создаёт сразу. Проводка в `screens/chat.rs` + `runtime.rs`.
+- **Изоляция** notes/RAG по `profile_id` подтверждена тестами (db + фасад `Storage`).
+  Реальный `ToolContext` — deliverable M5 (здесь `profile_id` уже доступен из чата).
 
 ### Отложено за пределы M3
 - **Сворачивание/выделение per-message** и tool-блоки в ленте — сейчас «мысли»
