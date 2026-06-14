@@ -203,14 +203,20 @@ impl ToolCallAccumulator {
 /// Поток фрагментов ответа.
 pub type ChatStream = Pin<Box<dyn Stream<Item = ChatChunk> + Send>>;
 
-/// Движок инференса. Реализации: HTTP-клиент к xinfer ([`super::client::XinferClient`])
-/// и mock для тестов.
+/// Движок инференса (chat). Реализации: HTTP-клиент к xinfer
+/// ([`super::client::XinferClient`]) и mock для тестов.
 #[async_trait::async_trait]
 pub trait EngineBackend: Send + Sync {
     /// Стриминговый одноходовый запрос. Отмена — через `cancel`.
     async fn chat_stream(&self, req: ChatRequest, cancel: CancellationToken) -> Result<ChatStream>;
+}
 
-    /// Эмбеддинги (RAG). На M1 может быть не реализован.
+/// Источник эмбеддингов для RAG. По решению M5 — **выделенный** embedding-сервер
+/// (отдельный процесс/порт), поэтому он отделён от [`EngineBackend`] (chat).
+/// См. docs/decisions/0002-embeddings-dedicated-server.md.
+#[async_trait::async_trait]
+pub trait Embedder: Send + Sync {
+    /// Возвращает эмбеддинги для каждого входного текста (в том же порядке).
     async fn embed(&self, texts: Vec<String>) -> Result<Vec<Vec<f32>>>;
 }
 

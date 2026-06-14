@@ -8,3 +8,4 @@ pub mod chat_search_sort;
 pub mod profiles;
 pub mod rename_chat;
 pub mod spellcheck;
+pub mod tools;

@@ -342,7 +342,10 @@ mod tests {
         };
         let json = serde_json::to_value(build_chat_request(&req, true)).unwrap();
         assert_eq!(json["messages"][0]["tool_calls"][0]["id"], "c1");
-        assert_eq!(json["messages"][0]["tool_calls"][0]["function"]["name"], "f");
+        assert_eq!(
+            json["messages"][0]["tool_calls"][0]["function"]["name"],
+            "f"
+        );
         assert_eq!(json["messages"][1]["role"], "tool");
         assert_eq!(json["messages"][1]["tool_call_id"], "c1");
         // Запрос без tools не должен содержать tool_choice.

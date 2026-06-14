@@ -3,7 +3,7 @@
 use anyhow::Result;
 use tokio_util::sync::CancellationToken;
 
-use super::backend::{ChatChunk, ChatRequest, ChatStream, EngineBackend, FinishReason};
+use super::backend::{ChatChunk, ChatRequest, ChatStream, Embedder, EngineBackend, FinishReason};
 
 /// Скриптованный движок: проигрывает заранее заданные фрагменты.
 pub struct MockBackend {
@@ -56,8 +56,37 @@ impl EngineBackend for MockBackend {
         };
         Ok(Box::pin(s))
     }
+}
 
-    async fn embed(&self, texts: Vec<String>) -> Result<Vec<Vec<f32>>> {
-        Ok(texts.into_iter().map(|_| vec![0.0_f32; 4]).collect())
+/// Детерминированный in-process эмбеддер для тестов: bag-of-chars в `dim`
+/// измерений с L2-нормализацией (близкие тексты дают близкие векторы).
+pub struct MockEmbedder {
+    dim: usize,
+}
+
+impl MockEmbedder {
+    pub fn new(dim: usize) -> Self {
+        Self { dim }
     }
+}
+
+#[async_trait::async_trait]
+impl Embedder for MockEmbedder {
+    async fn embed(&self, texts: Vec<String>) -> Result<Vec<Vec<f32>>> {
+        Ok(texts.iter().map(|t| embed_text(t, self.dim)).collect())
+    }
+}
+
+fn embed_text(text: &str, dim: usize) -> Vec<f32> {
+    let mut v = vec![0.0_f32; dim];
+    for ch in text.to_lowercase().chars().filter(|c| c.is_alphanumeric()) {
+        v[(ch as usize) % dim] += 1.0;
+    }
+    let norm = v.iter().map(|x| x * x).sum::<f32>().sqrt();
+    if norm > 0.0 {
+        for x in &mut v {
+            *x /= norm;
+        }
+    }
+    v
 }

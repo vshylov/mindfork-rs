@@ -9,7 +9,7 @@ use futures_util::StreamExt;
 use tokio_util::sync::CancellationToken;
 
 use super::backend::{
-    ChatChunk, ChatRequest, ChatStream, EngineBackend, FinishReason, ToolCallDelta,
+    ChatChunk, ChatRequest, ChatStream, Embedder, EngineBackend, FinishReason, ToolCallDelta,
 };
 use super::thoughts::{Piece, ThoughtsParser};
 use super::wire;
@@ -135,7 +135,10 @@ impl EngineBackend for XinferClient {
 
         Ok(Box::pin(s))
     }
+}
 
+#[async_trait::async_trait]
+impl Embedder for XinferClient {
     async fn embed(&self, texts: Vec<String>) -> Result<Vec<Vec<f32>>> {
         let url = format!("{}/embeddings", self.base_url);
         let body = wire::EmbeddingRequest { input: texts };

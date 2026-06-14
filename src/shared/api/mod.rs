@@ -10,6 +10,8 @@ mod wire;
 #[cfg(test)]
 pub mod mock;
 
-pub use backend::{ApiMessage, ChatChunk, ChatRequest, EngineBackend, FinishReason};
+pub use backend::{
+    ApiMessage, ChatChunk, ChatRequest, Embedder, EngineBackend, FinishReason, ToolSchema,
+};
 pub use client::XinferClient;
 pub use server::{ManagedConfig, ServerHandle, wait_until_ready};
