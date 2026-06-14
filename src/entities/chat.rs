@@ -55,6 +55,29 @@ impl Chat {
         self.messages.push(message);
         self.modified_at = Utc::now();
     }
+
+    /// Краткая карточка чата (для списка/оверлея без копирования сообщений).
+    pub fn summary(&self) -> ChatSummary {
+        ChatSummary {
+            id: self.id,
+            title: self.title.clone(),
+            created_at: self.created_at,
+            modified_at: self.modified_at,
+            message_count: self.messages.len(),
+        }
+    }
+}
+
+/// Краткая карточка чата для списка/оверлея (без сообщений). См. spec §11.2.
+/// Это view-проекция домена, живёт в `entities`, чтобы её могли использовать и
+/// `app` (события), и `widgets` (рендер) — зависимость строго вниз.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ChatSummary {
+    pub id: Uuid,
+    pub title: String,
+    pub created_at: DateTime<Utc>,
+    pub modified_at: DateTime<Utc>,
+    pub message_count: usize,
 }
 
 #[cfg(test)]
