@@ -1,1 +1,7 @@
 /target
+
+# Словари спелл-чека (Hunspell .aff/.dic) — большие, не версионируются.
+# Кладутся вручную в dictionaries/; build.rs копирует их рядом с бинарником.
+# Сама директория сохраняется через .gitkeep.
+/dictionaries/*
+!/dictionaries/.gitkeep
