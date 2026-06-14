@@ -9,3 +9,4 @@ pub mod markdown;
 pub mod paths;
 pub mod server;
 pub mod storage;
+pub mod theme;

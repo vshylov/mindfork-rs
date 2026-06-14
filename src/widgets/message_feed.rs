@@ -15,6 +15,7 @@ use ratatui::widgets::{Block, Borders, Paragraph};
 
 use crate::entities::message::{Message, MessageRole};
 use crate::shared::markdown;
+use crate::shared::theme::Palette;
 
 /// Роль элемента ленты (UI-проекция; системные сообщения не показываются).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -133,14 +134,21 @@ impl MessageFeed {
     }
 
     /// Рисует ленту. `messages` — текущее содержимое активного чата.
-    pub fn render(&mut self, frame: &mut Frame, area: Rect, title: &str, messages: &[FeedMessage]) {
+    pub fn render(
+        &mut self,
+        frame: &mut Frame,
+        area: Rect,
+        title: &str,
+        messages: &[FeedMessage],
+        palette: &Palette,
+    ) {
         let block = Block::default()
             .borders(Borders::ALL)
             .title(format!(" {title} "));
         let inner = block.inner(area);
         frame.render_widget(&block, area);
 
-        let lines = self.build_lines(messages);
+        let lines = self.build_lines(messages, palette);
         let total = lines.len();
         let view_h = inner.height.max(1) as usize;
         let max_scroll = total.saturating_sub(view_h);
@@ -159,7 +167,7 @@ impl MessageFeed {
 
     /// Собирает строки ленты: заголовки ролей, свёрнутые/развёрнутые «мысли»,
     /// markdown-рендер тела, разделители.
-    fn build_lines(&self, messages: &[FeedMessage]) -> Vec<Line<'static>> {
+    fn build_lines(&self, messages: &[FeedMessage], palette: &Palette) -> Vec<Line<'static>> {
         let mut lines: Vec<Line<'static>> = Vec::new();
         if messages.is_empty() {
             lines.push(Line::from("Начните диалог — введите сообщение ниже.").dim());
@@ -167,12 +175,14 @@ impl MessageFeed {
         }
         for item in messages {
             match item.role {
-                FeedRole::User => lines.push(Line::from("Вы:").bold().cyan()),
-                FeedRole::Assistant => lines.push(Line::from("Ассистент:").bold().green()),
+                FeedRole::User => lines.push(Line::from("Вы:").bold().fg(palette.user)),
+                FeedRole::Assistant => {
+                    lines.push(Line::from("Ассистент:").bold().fg(palette.assistant))
+                }
                 FeedRole::Note => {}
             }
             push_thoughts(&mut lines, &item.thoughts, self.show_thoughts);
-            push_tools(&mut lines, &item.tools);
+            push_tools(&mut lines, &item.tools, palette);
             push_body(&mut lines, item);
             lines.push(Line::from(""));
         }
@@ -201,7 +211,7 @@ fn push_thoughts(lines: &mut Vec<Line<'static>>, thoughts: &str, expanded: bool)
 }
 
 /// Добавляет tool-блоки сообщения: имя + аргументы + результат (кратко, dim).
-fn push_tools(lines: &mut Vec<Line<'static>>, tools: &[FeedToolCall]) {
+fn push_tools(lines: &mut Vec<Line<'static>>, tools: &[FeedToolCall], palette: &Palette) {
     for tool in tools {
         lines.push(
             Line::from(format!(
@@ -210,7 +220,7 @@ fn push_tools(lines: &mut Vec<Line<'static>>, tools: &[FeedToolCall]) {
                 truncate(&tool.arguments, 80)
             ))
             .dim()
-            .yellow(),
+            .fg(palette.tool),
         );
         if !tool.result.is_empty() {
             for line in tool.result.lines().take(6) {
@@ -278,7 +288,7 @@ mod tests {
             arguments: "{\"content\":\"x\"}".into(),
             result: "Заметка сохранена".into(),
         });
-        let lines = feed.build_lines(&[m]);
+        let lines = feed.build_lines(&[m], &Palette::default());
         let joined: String = lines
             .iter()
             .flat_map(|l| l.spans.iter().map(|s| s.content.as_ref()))
@@ -301,7 +311,10 @@ mod tests {
     #[test]
     fn collapsed_thoughts_show_indicator_not_content() {
         let feed = MessageFeed::new(); // show_thoughts = false
-        let lines = feed.build_lines(&[msg(FeedRole::Assistant, "ответ", "секрет\nмысль")]);
+        let lines = feed.build_lines(
+            &[msg(FeedRole::Assistant, "ответ", "секрет\nмысль")],
+            &Palette::default(),
+        );
         let joined: String = lines
             .iter()
             .flat_map(|l| l.spans.iter().map(|s| s.content.as_ref()))
@@ -314,7 +327,10 @@ mod tests {
     fn expanded_thoughts_show_content() {
         let mut feed = MessageFeed::new();
         feed.toggle_thoughts();
-        let lines = feed.build_lines(&[msg(FeedRole::Assistant, "ответ", "секрет")]);
+        let lines = feed.build_lines(
+            &[msg(FeedRole::Assistant, "ответ", "секрет")],
+            &Palette::default(),
+        );
         let joined: String = lines
             .iter()
             .flat_map(|l| l.spans.iter().map(|s| s.content.as_ref()))
@@ -325,7 +341,10 @@ mod tests {
     #[test]
     fn markdown_is_applied_to_body() {
         let feed = MessageFeed::new();
-        let lines = feed.build_lines(&[msg(FeedRole::Assistant, "формула x^2", "")]);
+        let lines = feed.build_lines(
+            &[msg(FeedRole::Assistant, "формула x^2", "")],
+            &Palette::default(),
+        );
         let joined: String = lines
             .iter()
             .flat_map(|l| l.spans.iter().map(|s| s.content.as_ref()))
@@ -354,7 +373,7 @@ mod tests {
             FeedMessage::note("(генерация отменена)"),
         ];
         let mut term = Terminal::new(TestBackend::new(40, 10)).unwrap();
-        term.draw(|f| feed.render(f, f.area(), "Чат", &messages))
+        term.draw(|f| feed.render(f, f.area(), "Чат", &messages, &Palette::default()))
             .unwrap();
     }
 }

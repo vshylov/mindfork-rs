@@ -21,6 +21,7 @@ use crate::entities::sampling::ReasoningEffort;
 use crate::features::profiles::ProfileEdit;
 use crate::features::tools::default_tool_ids;
 use crate::shared::config::{AppConfig, ServerMode, Theme};
+use crate::shared::theme::Palette;
 use crate::widgets::input_box::InputBox;
 
 /// Намерение, которое исполняет `app` (транслирует в `AppCommand`).
@@ -707,11 +708,16 @@ impl SettingsScreen {
 
         // Редактор поверх — с реальным курсором (InputBox::render требует &mut).
         let popup = centered_rect(60, 30, 3, frame.area());
+        let palette = Palette::for_theme(self.config.interface.theme);
         if let Some(editor) = self.editor.as_mut() {
             frame.render_widget(Clear, popup);
-            editor
-                .input
-                .render(frame, popup, "правка · Enter ок · Esc отмена", true);
+            editor.input.render(
+                frame,
+                popup,
+                "правка · Enter ок · Esc отмена",
+                true,
+                &palette,
+            );
         }
     }
 

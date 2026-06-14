@@ -67,12 +67,12 @@ Env для выбора бэкенда: `MINDFORK_XINFER_URL` (external) ИЛИ 
 (+ `MINDFORK_MODEL`, `MINDFORK_XINFER_PORT`, `MINDFORK_ISQ`) для managed.
 
 ## Статус (на 2026-06-15)
-Сделано **M0–M8** (в `main`) и **бóльшая часть M9** (в ветке `m9-polish`).
-**218 тестов зелёные, 4 `#[ignore]`.** Чат-цикл, профили с изоляцией, инструменты
+Сделано **M0–M8** (в `main`) и **бóльшая часть M9** (в ветках `m9-polish`+`m9-themes`).
+**222 теста зелёные, 4 `#[ignore]`.** Чат-цикл, профили с изоляцией, инструменты
 с клиентским agentic-loop, саб-агент, web-поиск и Python под выключателями, экран
 настроек со всеми секциями и перезапуском managed-сервера при смене модели, импорт
-из LameLLaMA (.NET), оверлей помощи, релизный профиль. **Темы и ручная проверка
-Gemma — отложены** (см. ниже).
+из LameLLaMA (.NET), оверлей помощи, релизный профиль, **темы (auto/dark/light)**.
+**Отложена только ручная проверка Gemma** (нужен живой xinfer).
 - **M0** — каркас FSD, TUI-петля с восстановлением терминала, single-instance, логирование.
 - **M1** — `shared/api` (xinfer-клиент со стримингом/отменой, супервайзер, парсер
   мыслей, mock), оркестратор (автомат + generation_id), мост tokio↔TUI, минимальный
@@ -223,12 +223,16 @@ Gemma — отложены** (см. ниже).
 - **Релиз**: `[profile.release]` (LTO/strip, `panic=unwind`); `docs/install.md`
   (сборка Win/Linux, портативные данные, xinfer managed/external + env, словари,
   импорт, запуск). `cargo build --release` собирается.
+- **Темы** (`shared/theme.rs`, ветка `m9-themes`): семантическая палитра `Palette`
+  (роли user/assistant/tool/success/warning/error/accent) из
+  `config.interface.theme` (auto = именованные ANSI; dark = яркие; light = Rgb-
+  затемнённые). Протянута в виджеты с реальными цветами (`message_feed`,
+  `status_bar`, `input_box`, `chat_list`); модификаторы (dim/bold/reversed)
+  тема-независимы. `ChatScreen` обновляет палитру из события `Settings`.
 
 ### M9 — отложено
-- **Темы** (`shared/theme.rs`): не делались по решению этапа (цвета пока
-  хардкод-Stylize в виджетах). Поле `config.interface.theme` сохраняется, но не
-  применяется. Туда же — фактическое применение `spellcheck_enabled`/выбора
-  словарей (поля есть с M8).
+- **Фактическое применение `spellcheck_enabled`/выбора словарей** (поля есть с M8;
+  загрузка словарей пока безусловная).
 - **Ручная проверка Gemma 3/4** (шаблоны/EOS/tool-calling/«мысли») и прогон
   `#[ignore]`-смоуков на реальной модели — требуют живого xinfer, выполняются
   вручную (тот же набор сценариев, что и для Qwen; см. `cargo test -- --ignored`).

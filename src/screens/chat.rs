@@ -24,6 +24,7 @@ use crate::features::spellcheck::SpellChecker;
 use crate::shared::api::FinishReason;
 use crate::shared::config::AppConfig;
 use crate::shared::server::ServerStatus;
+use crate::shared::theme::Palette;
 use crate::widgets::chat_list::{ChatListAction, ChatListState};
 use crate::widgets::input_box::InputBox;
 use crate::widgets::message_feed::{FeedMessage, FeedRole, MessageFeed};
@@ -105,6 +106,8 @@ pub struct ChatScreen {
     settings_snapshot: Option<(AppConfig, Vec<Profile>)>,
     /// Показан ли оверлей помощи по клавишам (`F1`/`?`). См. spec §11.7.
     show_help: bool,
+    /// Активная палитра темы (из `config.interface.theme`). См. spec §11.6.
+    palette: Palette,
 }
 
 impl Default for ChatScreen {
@@ -134,11 +137,14 @@ impl ChatScreen {
             suggest: None,
             settings_snapshot: None,
             show_help: false,
+            palette: Palette::default(),
         }
     }
 
-    /// Сохраняет снимок настроек (для открытия экрана настроек по `Ctrl+,`).
+    /// Сохраняет снимок настроек (для открытия экрана настроек по `Ctrl+,`) и
+    /// обновляет палитру темы.
     pub fn set_settings(&mut self, config: AppConfig, profiles: Vec<Profile>) {
+        self.palette = Palette::for_theme(config.interface.theme);
         self.settings_snapshot = Some((config, profiles));
     }
 
@@ -534,9 +540,16 @@ impl ChatScreen {
         } else {
             self.title.clone()
         };
-        self.feed_view.render(frame, feed_area, &title, &self.feed);
+        self.feed_view
+            .render(frame, feed_area, &title, &self.feed, &self.palette);
 
-        status_bar::render(frame, status_area, &self.status, self.generating);
+        status_bar::render(
+            frame,
+            status_area,
+            &self.status,
+            self.generating,
+            &self.palette,
+        );
 
         let input_title = if self.generating {
             "ввод · генерация… Esc отмена"
@@ -545,10 +558,11 @@ impl ChatScreen {
         };
         let focused =
             self.overlay.is_none() && self.profile_overlay.is_none() && self.suggest.is_none();
-        self.input.render(frame, input_area, input_title, focused);
+        self.input
+            .render(frame, input_area, input_title, focused, &self.palette);
 
         if let Some(overlay) = &self.overlay {
-            overlay.render(frame, frame.area(), self.active_chat);
+            overlay.render(frame, frame.area(), self.active_chat, &self.palette);
         }
         if let Some(overlay) = &self.profile_overlay {
             overlay.render(frame, frame.area());
@@ -757,6 +771,17 @@ mod tests {
         s.handle_key(KeyEvent::new(KeyCode::Char('?'), KeyModifiers::NONE));
         assert!(!s.show_help);
         assert_eq!(s.input.text(), "abc?");
+    }
+
+    #[test]
+    fn settings_event_updates_theme_palette() {
+        use crate::shared::config::Theme;
+        let mut s = ChatScreen::new();
+        assert_eq!(s.palette, Palette::for_theme(Theme::Auto));
+        let mut cfg = AppConfig::default();
+        cfg.interface.theme = Theme::Dark;
+        s.set_settings(cfg, vec![]);
+        assert_eq!(s.palette, Palette::for_theme(Theme::Dark));
     }
 
     #[test]

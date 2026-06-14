@@ -13,6 +13,8 @@ use ratatui::style::{Style, Stylize};
 use ratatui::text::{Line, Span, Text};
 use ratatui::widgets::{Block, Borders, Paragraph};
 
+use crate::shared::theme::Palette;
+
 /// Многострочное поле ввода с курсором.
 pub struct InputBox {
     /// Логические строки (символы). Всегда непусто (минимум одна строка).
@@ -235,7 +237,14 @@ impl InputBox {
     }
 
     /// Рисует поле в `area` с рамкой и заголовком. При `focused` ставит курсор.
-    pub fn render(&mut self, frame: &mut Frame, area: Rect, title: &str, focused: bool) {
+    pub fn render(
+        &mut self,
+        frame: &mut Frame,
+        area: Rect,
+        title: &str,
+        focused: bool,
+        palette: &Palette,
+    ) {
         let block = Block::default()
             .borders(Borders::ALL)
             .title(format!(" {title} "));
@@ -251,7 +260,13 @@ impl InputBox {
             .enumerate()
             .skip(self.scroll)
             .take(visible_rows)
-            .map(|(idx, chars)| styled_line(chars, self.misspelled.get(idx).map(|v| v.as_slice())))
+            .map(|(idx, chars)| {
+                styled_line(
+                    chars,
+                    self.misspelled.get(idx).map(|v| v.as_slice()),
+                    palette,
+                )
+            })
             .collect();
         let placeholder = self.is_empty() && !focused;
         let text = if placeholder {
@@ -281,14 +296,18 @@ impl InputBox {
     }
 }
 
-/// Строит строку, подчёркивая (`UNDERLINED`, красным) диапазоны ошибок.
+/// Строит строку, подчёркивая (`UNDERLINED`, цветом ошибки темы) диапазоны ошибок.
 /// `ranges` — отсортированные непересекающиеся `[start, end)` в символах.
-fn styled_line(chars: &[char], ranges: Option<&[(usize, usize)]>) -> Line<'static> {
+fn styled_line(
+    chars: &[char],
+    ranges: Option<&[(usize, usize)]>,
+    palette: &Palette,
+) -> Line<'static> {
     let ranges = match ranges {
         Some(r) if !r.is_empty() => r,
         _ => return Line::from(chars.iter().collect::<String>()),
     };
-    let bad = Style::new().underlined().red();
+    let bad = Style::new().underlined().fg(palette.error);
     let mut spans: Vec<Span<'static>> = Vec::new();
     let mut pos = 0;
     for &(start, end) in ranges {
@@ -437,7 +456,8 @@ mod tests {
         ib.set_text("helo world\nпревед");
         ib.set_misspelled(vec![vec![(0, 4)], vec![(0, 6)]]);
         let mut term = Terminal::new(TestBackend::new(20, 4)).unwrap();
-        term.draw(|f| ib.render(f, f.area(), "ввод", true)).unwrap();
+        term.draw(|f| ib.render(f, f.area(), "ввод", true, &Palette::default()))
+            .unwrap();
     }
 
     #[test]
@@ -447,6 +467,7 @@ mod tests {
         let mut ib = InputBox::new();
         ib.set_text("строка 1\nстрока 2\nстрока 3");
         let mut term = Terminal::new(TestBackend::new(20, 4)).unwrap();
-        term.draw(|f| ib.render(f, f.area(), "ввод", true)).unwrap();
+        term.draw(|f| ib.render(f, f.area(), "ввод", true, &Palette::default()))
+            .unwrap();
     }
 }

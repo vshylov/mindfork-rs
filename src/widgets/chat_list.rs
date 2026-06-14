@@ -15,6 +15,7 @@ use uuid::Uuid;
 use crate::entities::chat::ChatSummary;
 use crate::features::chat_search_sort::{SortMode, filter_and_sort};
 use crate::features::rename_chat::sanitize_title;
+use crate::shared::theme::Palette;
 
 /// Действие, которое оверлей просит выполнить вышестоящий слой.
 #[derive(Debug, Clone, PartialEq)]
@@ -204,7 +205,7 @@ impl ChatListState {
     }
 
     /// Рисует оверлей по центру `area`. `active` — текущий активный чат (метка).
-    pub fn render(&self, frame: &mut Frame, area: Rect, active: Option<Uuid>) {
+    pub fn render(&self, frame: &mut Frame, area: Rect, active: Option<Uuid>, palette: &Palette) {
         let popup = centered_rect(60, 36, 70, area);
         frame.render_widget(Clear, popup);
 
@@ -219,13 +220,13 @@ impl ChatListState {
             Layout::vertical([Constraint::Length(1), Constraint::Min(1)]).areas(inner);
 
         // --- строка поиска / переименования ---
-        frame.render_widget(self.header_line(), search_area);
+        frame.render_widget(self.header_line(palette), search_area);
 
         // --- список ---
         let visible = self.visible();
         let items: Vec<ListItem> = visible
             .iter()
-            .map(|c| ListItem::new(self.item_line(c, active)))
+            .map(|c| ListItem::new(self.item_line(c, active, palette)))
             .collect();
         let list = List::new(items).highlight_style(Style::new().reversed());
         let mut list_state = ListState::default();
@@ -235,7 +236,7 @@ impl ChatListState {
         frame.render_stateful_widget(list, list_area, &mut list_state);
     }
 
-    fn header_line(&self) -> Paragraph<'static> {
+    fn header_line(&self, palette: &Palette) -> Paragraph<'static> {
         match &self.mode {
             Mode::Search => Paragraph::new(Line::from(vec![
                 Span::from("🔎 ").dim(),
@@ -243,21 +244,26 @@ impl ChatListState {
                 Span::from("▏").dim(),
             ])),
             Mode::Rename { buffer, .. } => Paragraph::new(Line::from(vec![
-                Span::from("✎ ").yellow(),
+                Span::from("✎ ").fg(palette.warning),
                 Span::from(buffer.clone()),
                 Span::from("▏").dim(),
             ])),
         }
     }
 
-    fn item_line(&self, chat: &ChatSummary, active: Option<Uuid>) -> Line<'static> {
+    fn item_line(
+        &self,
+        chat: &ChatSummary,
+        active: Option<Uuid>,
+        palette: &Palette,
+    ) -> Line<'static> {
         let marker = if active == Some(chat.id) {
             "● "
         } else {
             "  "
         };
         Line::from(vec![
-            Span::from(marker).green(),
+            Span::from(marker).fg(palette.success),
             Span::from(chat.title.clone()),
             Span::from(format!("  · {} сообщ.", chat.message_count)).dim(),
         ])
@@ -400,7 +406,8 @@ mod tests {
         let state = ChatListState::new(vec![chat("Альфа"), chat("Бета")], None);
         for (w, h) in [(80u16, 24u16), (20, 6)] {
             let mut term = Terminal::new(TestBackend::new(w, h)).unwrap();
-            term.draw(|f| state.render(f, f.area(), None)).unwrap();
+            term.draw(|f| state.render(f, f.area(), None, &Palette::default()))
+                .unwrap();
         }
     }
 
