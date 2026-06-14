@@ -16,10 +16,14 @@ use uuid::Uuid;
 
 use crate::app::events::{AppCommand, AppEvent, ServerStatus};
 use crate::entities::chat::{Chat, ChatSummary};
-use crate::entities::message::{Message, MessageMetadata, MessageRole};
+use crate::entities::message::{Message, MessageMetadata, MessageRole, ToolCallRecord};
 use crate::entities::profile::Profile;
 use crate::entities::sampling::SamplingConfig;
-use crate::shared::api::{ApiMessage, ChatChunk, ChatRequest, EngineBackend, FinishReason};
+use crate::features::tools::{ChatEffect, ToolContext, ToolRegistry};
+use crate::shared::api::{
+    ApiMessage, ApiToolCall, ChatChunk, ChatRequest, Embedder, EngineBackend, FinishReason,
+    ToolCallAccumulator,
+};
 use crate::shared::storage::Storage;
 
 /// Системное сообщение профиля по умолчанию (создаётся при пустом хранилище).
@@ -34,11 +38,17 @@ pub struct OrchestratorDeps {
     pub cmd_rx: UnboundedReceiver<AppCommand>,
     pub evt_tx: UnboundedSender<AppEvent>,
     pub backend: Option<Arc<dyn EngineBackend>>,
-    pub storage: Storage,
+    pub storage: Arc<Storage>,
     /// Глобальный семплинг по умолчанию (низший уровень приоритета: переопределяется
     /// дефолтом профиля и override чата — см. `effective_sampling`, spec §8.3).
     pub default_sampling: SamplingConfig,
     pub status: ServerStatus,
+    /// Реестр инструментов (общий, read-only).
+    pub registry: Arc<ToolRegistry>,
+    /// Источник эмбеддингов для RAG (выделенный сервер — ADR 0002).
+    pub embedder: Arc<dyn Embedder>,
+    /// Лимит раундов agentic-loop (spec §6.3).
+    pub max_tool_rounds: u32,
 }
 
 /// Состояние генерации (автомат на активный чат).
@@ -68,8 +78,11 @@ impl State {
 struct GenResult {
     id: Uuid,
     chat_id: Uuid,
-    text: String,
-    thoughts: String,
+    /// Новые доменные сообщения (assistant с tool_calls, tool-результаты, финал) —
+    /// в порядке появления; оркестратор дописывает их в `Chat`.
+    messages: Vec<Message>,
+    /// Эффекты инструментов (применяются оркестратором — владельцем `Chat`).
+    effects: Vec<ChatEffect>,
     reason: FinishReason,
 }
 
@@ -83,6 +96,9 @@ pub async fn run(deps: OrchestratorDeps) {
         storage,
         default_sampling,
         status,
+        registry,
+        embedder,
+        max_tool_rounds,
     } = deps;
 
     let _ = evt_tx.send(AppEvent::ServerStatus(status));
@@ -93,6 +109,9 @@ pub async fn run(deps: OrchestratorDeps) {
         backend,
         storage,
         default_sampling,
+        registry,
+        embedder,
+        max_tool_rounds,
         profiles: Vec::new(),
         chats: Vec::new(),
         active_id: None,
@@ -139,8 +158,11 @@ async fn sleep_until_opt(deadline: Option<Instant>) {
 struct Orchestrator {
     evt_tx: UnboundedSender<AppEvent>,
     backend: Option<Arc<dyn EngineBackend>>,
-    storage: Storage,
+    storage: Arc<Storage>,
     default_sampling: SamplingConfig,
+    registry: Arc<ToolRegistry>,
+    embedder: Arc<dyn Embedder>,
+    max_tool_rounds: u32,
     profiles: Vec<Profile>,
     /// Видимые чаты, целиком в памяти (оркестратор — единственный писатель).
     chats: Vec<Chat>,
@@ -164,7 +186,9 @@ impl Orchestrator {
             .filter(|p| !p.is_hidden)
             .collect();
         if self.profiles.is_empty() {
-            let profile = Profile::new("Ассистент", DEFAULT_SYSTEM_MESSAGE);
+            let mut profile = Profile::new("Ассистент", DEFAULT_SYSTEM_MESSAGE);
+            // Включаем базовые инструменты M5 в дефолтном профиле.
+            profile.enabled_tools = crate::features::tools::default_tool_ids();
             self.storage.json().upsert_profile(&profile)?;
             self.profiles.push(profile);
         }
@@ -251,15 +275,39 @@ impl Orchestrator {
             return;
         };
 
-        // Добавляем сообщение пользователя в активный чат.
+        // Снимок на начало хода: семплинг, доступные инструменты, контекст.
         let sampling = self.effective_sampling(active_id);
+        let Some(chat_ref) = self.chats.iter().find(|c| c.id == active_id) else {
+            return;
+        };
+        let profile_id = chat_ref.profile_id;
+        let enabled = self
+            .profiles
+            .iter()
+            .find(|p| p.id == profile_id)
+            .map(|p| p.enabled_tools.clone())
+            .unwrap_or_default();
+        let schemas = self.registry.schemas_for(&enabled);
+
+        // Добавляем сообщение пользователя и строим запрос/контекст инструмента.
         let request;
+        let ctx;
         {
             let Some(chat) = self.chat_mut(active_id) else {
                 return;
             };
             chat.push_message(Message::user(&text));
-            request = build_request(chat, sampling.clone());
+            request = build_request(chat, sampling.clone(), schemas);
+            ctx = ToolContext {
+                profile_id,
+                chat_id: active_id,
+                system_message: chat.system_message.clone(),
+                effective_sampling: sampling,
+                last_user_message_at: last_user_message_at(chat),
+                storage: self.storage.clone(),
+                engine: backend.clone(),
+                embedder: self.embedder.clone(),
+            };
         }
         self.mark_dirty(active_id);
         let _ = self.evt_tx.send(AppEvent::UserMessage(text));
@@ -274,15 +322,18 @@ impl Orchestrator {
             chat_id: active_id,
             cancel: cancel.clone(),
         };
-        spawn_generation(
+        spawn_generation(GenSpawn {
             backend,
+            registry: self.registry.clone(),
+            ctx,
             request,
             cancel,
             id,
-            active_id,
-            self.evt_tx.clone(),
-            self.done_tx.clone(),
-        );
+            chat_id: active_id,
+            max_rounds: self.max_tool_rounds,
+            evt_tx: self.evt_tx.clone(),
+            done_tx: self.done_tx.clone(),
+        });
     }
 
     fn handle_done(&mut self, res: GenResult) {
@@ -292,20 +343,20 @@ impl Orchestrator {
         }
         self.state = State::Idle;
 
-        if res.text.is_empty() && res.thoughts.is_empty() {
+        if res.messages.is_empty() && res.effects.is_empty() {
             return;
         }
-        let sampling = self.effective_sampling(res.chat_id);
         if let Some(chat) = self.chat_mut(res.chat_id) {
-            let mut msg = Message::assistant(res.text);
-            if !res.thoughts.is_empty() {
-                msg.thoughts = Some(res.thoughts);
+            for msg in res.messages {
+                chat.push_message(msg);
             }
-            msg.metadata = Some(MessageMetadata {
-                sampling,
-                model: None,
-            });
-            chat.push_message(msg);
+            // Эффекты инструментов применяет оркестратор (владелец Chat, §4.4.2).
+            for effect in res.effects {
+                match effect {
+                    ChatEffect::SetSystemMessage(s) => chat.system_message = s,
+                    ChatEffect::SetSamplingOverride(s) => chat.sampling_override = Some(s),
+                }
+            }
             self.mark_dirty(res.chat_id);
             self.emit_chat_list();
         }
@@ -559,12 +610,21 @@ impl Orchestrator {
 }
 
 /// Конвертирует доменное сообщение в сообщение для модели. Системные сообщения
-/// передаются через [`ChatRequest::system`] (здесь — `None`).
+/// передаются через [`ChatRequest::system`] (здесь — `None`). Assistant с
+/// tool-вызовами и tool-результаты восстанавливаются для корректной истории
+/// (строгая валидация порядка сервером, contract §3.2).
 fn message_to_api(message: &Message) -> Option<ApiMessage> {
     match message.role {
         MessageRole::System => None,
         MessageRole::User => Some(ApiMessage::user(&message.text)),
-        MessageRole::Assistant => Some(ApiMessage::assistant(&message.text)),
+        MessageRole::Assistant => {
+            if message.tool_calls.is_empty() {
+                Some(ApiMessage::assistant(&message.text))
+            } else {
+                let calls = message.tool_calls.iter().map(record_to_api).collect();
+                Some(ApiMessage::assistant_tool_calls(&message.text, calls))
+            }
+        }
         MessageRole::Tool => message
             .tool_call_id
             .as_ref()
@@ -572,8 +632,30 @@ fn message_to_api(message: &Message) -> Option<ApiMessage> {
     }
 }
 
-/// Строит запрос генерации из текущего состояния чата.
-fn build_request(chat: &Chat, sampling: SamplingConfig) -> ChatRequest {
+/// Доменная запись tool-вызова → форма для запроса (аргументы как JSON-строка).
+fn record_to_api(rec: &ToolCallRecord) -> ApiToolCall {
+    ApiToolCall {
+        id: rec.id.clone(),
+        name: rec.name.clone(),
+        arguments: rec.arguments.to_string(),
+    }
+}
+
+/// Время последнего user-сообщения чата (для `ToolContext`).
+fn last_user_message_at(chat: &Chat) -> Option<chrono::DateTime<chrono::Utc>> {
+    chat.messages
+        .iter()
+        .rev()
+        .find(|m| m.role == MessageRole::User)
+        .map(|m| m.timestamp)
+}
+
+/// Строит запрос генерации из текущего состояния чата с набором схем инструментов.
+fn build_request(
+    chat: &Chat,
+    sampling: SamplingConfig,
+    tools: Vec<crate::shared::api::ToolSchema>,
+) -> ChatRequest {
     let system = if chat.system_message.trim().is_empty() {
         None
     } else {
@@ -583,82 +665,226 @@ fn build_request(chat: &Chat, sampling: SamplingConfig) -> ChatRequest {
         system,
         messages: chat.messages.iter().filter_map(message_to_api).collect(),
         sampling,
-        // Схемы инструментов подключаются agentic-loop'ом (M5, отдельный коммит).
-        tools: Vec::new(),
+        tools,
     }
 }
 
-#[allow(clippy::too_many_arguments)]
-fn spawn_generation(
+/// Параметры запуска задачи генерации (agentic-loop).
+struct GenSpawn {
     backend: Arc<dyn EngineBackend>,
-    req: ChatRequest,
+    registry: Arc<ToolRegistry>,
+    ctx: ToolContext,
+    request: ChatRequest,
     cancel: CancellationToken,
     id: Uuid,
     chat_id: Uuid,
+    max_rounds: u32,
     evt_tx: UnboundedSender<AppEvent>,
     done_tx: UnboundedSender<GenResult>,
-) {
+}
+
+/// Накопитель одного раунда стрима.
+struct RoundOutput {
+    text: String,
+    thoughts: String,
+    calls: Vec<ApiToolCall>,
+    reason: FinishReason,
+}
+
+/// Запускает задачу клиентского agentic-loop (spec §6.3): стрим → при
+/// `finish_reason=ToolCalls` исполнение инструментов → новый запрос, до
+/// `max_rounds`. Эффекты и новые сообщения возвращаются оркестратору.
+fn spawn_generation(spawn: GenSpawn) {
+    let GenSpawn {
+        backend,
+        registry,
+        ctx,
+        mut request,
+        cancel,
+        id,
+        chat_id,
+        max_rounds,
+        evt_tx,
+        done_tx,
+    } = spawn;
+
     tokio::spawn(async move {
-        let mut text = String::new();
-        let mut thoughts = String::new();
-        let mut reason = FinishReason::Stop;
-        match backend.chat_stream(req, cancel).await {
-            Ok(mut stream) => {
-                while let Some(chunk) = stream.next().await {
-                    match chunk {
-                        ChatChunk::Text(t) => {
-                            text.push_str(&t);
-                            let _ = evt_tx.send(AppEvent::Chunk {
-                                generation_id: id,
-                                text: t,
-                            });
-                        }
-                        ChatChunk::Thoughts(t) => {
-                            thoughts.push_str(&t);
-                            let _ = evt_tx.send(AppEvent::Thoughts {
-                                generation_id: id,
-                                text: t,
-                            });
-                        }
-                        // Полноценная обработка tool-call'ов — в agentic-loop (M5,
-                        // отдельный коммит); пока инструменты не передаются и не
-                        // возникают.
-                        ChatChunk::ToolCall(_) => {}
-                        ChatChunk::Finished(r) => {
-                            reason = r;
-                            let _ = evt_tx.send(AppEvent::Finished {
-                                generation_id: id,
-                                reason: r,
-                            });
-                            break;
-                        }
+        let mut messages: Vec<Message> = Vec::new();
+        let mut effects: Vec<ChatEffect> = Vec::new();
+        let mut round: u32 = 0;
+        let reason;
+
+        loop {
+            let out = stream_round(&backend, request.clone(), &cancel, id, &evt_tx).await;
+
+            // Раунд с вызовами инструментов — исполняем и продолжаем цикл.
+            if out.reason == FinishReason::ToolCalls && !out.calls.is_empty() {
+                if round >= max_rounds {
+                    let _ = evt_tx.send(AppEvent::Error(format!(
+                        "Достигнут лимит раундов инструментов ({max_rounds})."
+                    )));
+                    reason = FinishReason::Stop;
+                    if let Some(m) = finalize_message(&out, &ctx) {
+                        messages.push(m);
                     }
+                    break;
                 }
+                round += 1;
+
+                // assistant-ход с вызовами — в историю запроса и в домен.
+                request.messages.push(ApiMessage::assistant_tool_calls(
+                    out.text.clone(),
+                    out.calls.clone(),
+                ));
+                let mut records: Vec<ToolCallRecord> = Vec::new();
+                for call in &out.calls {
+                    let args: serde_json::Value =
+                        serde_json::from_str(&call.arguments).unwrap_or(serde_json::Value::Null);
+                    let result = match registry.invoke(&call.name, &ctx, args.clone()).await {
+                        Ok(outcome) => {
+                            effects.extend(outcome.effects);
+                            outcome.result
+                        }
+                        Err(err) => format!("Ошибка инструмента {}: {err}", call.name),
+                    };
+                    let _ = evt_tx.send(AppEvent::ToolCall {
+                        generation_id: id,
+                        name: call.name.clone(),
+                        arguments: call.arguments.clone(),
+                        result: result.clone(),
+                    });
+                    request.messages.push(ApiMessage::tool(&call.id, &result));
+                    records.push(ToolCallRecord {
+                        id: call.id.clone(),
+                        name: call.name.clone(),
+                        arguments: args,
+                        result: Some(result.clone()),
+                    });
+                    messages.push(tool_message(call, result));
+                }
+                // Доменное assistant-сообщение с tool-блоками (текст раунда + мысли).
+                let mut am = Message::assistant(out.text.clone());
+                if !out.thoughts.is_empty() {
+                    am.thoughts = Some(out.thoughts.clone());
+                }
+                am.tool_calls = records;
+                // Вставляем assistant ПЕРЕД tool-сообщениями этого раунда.
+                let tool_msgs: Vec<Message> = messages.split_off(messages.len() - out.calls.len());
+                messages.push(am);
+                messages.extend(tool_msgs);
+                continue;
             }
-            Err(err) => {
-                reason = FinishReason::Error;
-                let _ = evt_tx.send(AppEvent::Error(format!("Ошибка генерации: {err}")));
-                let _ = evt_tx.send(AppEvent::Finished {
-                    generation_id: id,
-                    reason: FinishReason::Error,
-                });
+
+            // Финальный раунд (Stop/Length/Cancelled/Error или без вызовов).
+            if let Some(m) = finalize_message(&out, &ctx) {
+                messages.push(m);
             }
+            reason = out.reason;
+            break;
         }
+
+        let _ = evt_tx.send(AppEvent::Finished {
+            generation_id: id,
+            reason,
+        });
         let _ = done_tx.send(GenResult {
             id,
             chat_id,
-            text,
-            thoughts,
+            messages,
+            effects,
             reason,
         });
     });
 }
 
+/// Стримит один запрос, ретранслируя `Text`/`Thoughts` в UI и накапливая
+/// tool-вызовы. Возвращает накопленный раунд.
+async fn stream_round(
+    backend: &Arc<dyn EngineBackend>,
+    request: ChatRequest,
+    cancel: &CancellationToken,
+    id: Uuid,
+    evt_tx: &UnboundedSender<AppEvent>,
+) -> RoundOutput {
+    let mut text = String::new();
+    let mut thoughts = String::new();
+    let mut acc = ToolCallAccumulator::default();
+    let mut reason = FinishReason::Stop;
+
+    match backend.chat_stream(request, cancel.clone()).await {
+        Ok(mut stream) => {
+            while let Some(chunk) = stream.next().await {
+                match chunk {
+                    ChatChunk::Text(t) => {
+                        text.push_str(&t);
+                        let _ = evt_tx.send(AppEvent::Chunk {
+                            generation_id: id,
+                            text: t,
+                        });
+                    }
+                    ChatChunk::Thoughts(t) => {
+                        thoughts.push_str(&t);
+                        let _ = evt_tx.send(AppEvent::Thoughts {
+                            generation_id: id,
+                            text: t,
+                        });
+                    }
+                    ChatChunk::ToolCall(delta) => acc.push(delta),
+                    ChatChunk::Finished(r) => {
+                        reason = r;
+                        break;
+                    }
+                }
+            }
+        }
+        Err(err) => {
+            let _ = evt_tx.send(AppEvent::Error(format!("Ошибка генерации: {err}")));
+            reason = FinishReason::Error;
+        }
+    }
+
+    RoundOutput {
+        text,
+        thoughts,
+        calls: acc.finish(),
+        reason,
+    }
+}
+
+/// Доменное tool-сообщение (роль `Tool`) с привязкой к вызову.
+fn tool_message(call: &ApiToolCall, result: String) -> Message {
+    let mut m = Message::new(MessageRole::Tool, result);
+    m.tool_call_id = Some(call.id.clone());
+    m.tool_name = Some(call.name.clone());
+    m
+}
+
+/// Финальное assistant-сообщение хода (если есть текст/мысли) со снимком семплинга.
+fn finalize_message(out: &RoundOutput, ctx: &ToolContext) -> Option<Message> {
+    if out.text.is_empty() && out.thoughts.is_empty() {
+        return None;
+    }
+    let mut m = Message::assistant(out.text.clone());
+    if !out.thoughts.is_empty() {
+        m.thoughts = Some(out.thoughts.clone());
+    }
+    m.metadata = Some(MessageMetadata {
+        sampling: ctx.effective_sampling.clone(),
+        model: None,
+    });
+    Some(m)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::shared::api::mock::MockBackend;
+    use crate::features::tools::standard_registry;
+    use crate::shared::api::mock::{MockBackend, MockEmbedder};
     use crate::shared::paths::Paths;
+
+    fn test_embedder() -> Arc<dyn Embedder> {
+        Arc::new(MockEmbedder::new(16))
+    }
 
     /// Поднимает оркестратор на временном хранилище. Возвращает каналы и handle.
     fn spawn_orch(
@@ -670,7 +896,7 @@ mod tests {
         tokio::task::JoinHandle<()>,
     ) {
         let dir = tempfile::tempdir().unwrap();
-        let storage = Storage::open(Paths::with_root(dir.path())).unwrap();
+        let storage = Arc::new(Storage::open(Paths::with_root(dir.path())).unwrap());
         let (cmd_tx, cmd_rx) = unbounded_channel();
         let (evt_tx, evt_rx) = unbounded_channel();
         let deps = OrchestratorDeps {
@@ -680,6 +906,9 @@ mod tests {
             storage,
             default_sampling: SamplingConfig::default(),
             status: ServerStatus::Ready,
+            registry: Arc::new(standard_registry()),
+            embedder: test_embedder(),
+            max_tool_rounds: 8,
         };
         let handle = tokio::spawn(run(deps));
         (dir, cmd_tx, evt_rx, handle)
@@ -701,7 +930,7 @@ mod tests {
     /// Собирает «голый» оркестратор для юнит-тестов чистых методов (без петли).
     fn bare_orch() -> (tempfile::TempDir, Orchestrator) {
         let dir = tempfile::tempdir().unwrap();
-        let storage = Storage::open(Paths::with_root(dir.path())).unwrap();
+        let storage = Arc::new(Storage::open(Paths::with_root(dir.path())).unwrap());
         let (evt_tx, _evt_rx) = unbounded_channel();
         let (done_tx, _done_rx) = unbounded_channel();
         let orch = Orchestrator {
@@ -712,6 +941,9 @@ mod tests {
                 temperature: Some(0.1),
                 ..Default::default()
             },
+            registry: Arc::new(standard_registry()),
+            embedder: test_embedder(),
+            max_tool_rounds: 8,
             profiles: Vec::new(),
             chats: Vec::new(),
             active_id: None,
@@ -803,7 +1035,7 @@ mod tests {
         ])) as Arc<dyn EngineBackend>;
         let dir = tempfile::tempdir().unwrap();
         let root = dir.path().to_path_buf();
-        let storage = Storage::open(Paths::with_root(&root)).unwrap();
+        let storage = Arc::new(Storage::open(Paths::with_root(&root)).unwrap());
         let (cmd_tx, cmd_rx) = unbounded_channel();
         let (evt_tx, mut evt_rx) = unbounded_channel();
         let handle = tokio::spawn(run(OrchestratorDeps {
@@ -813,6 +1045,9 @@ mod tests {
             storage,
             default_sampling: SamplingConfig::default(),
             status: ServerStatus::Ready,
+            registry: Arc::new(standard_registry()),
+            embedder: test_embedder(),
+            max_tool_rounds: 8,
         }));
 
         // Ждём активации и узнаём id активного чата.
@@ -955,6 +1190,116 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn agentic_loop_executes_tool_then_finalizes() {
+        use crate::shared::api::backend::ToolCallDelta;
+        // Раунд 1: вызов note_save → раунд 2: финальный текст.
+        let backend = Arc::new(MockBackend::sequence(vec![
+            vec![
+                ChatChunk::ToolCall(ToolCallDelta {
+                    index: 0,
+                    id: Some("c1".into()),
+                    name: Some("note_save".into()),
+                    arguments: "{\"content\":\"любит чай\"}".into(),
+                }),
+                ChatChunk::Finished(FinishReason::ToolCalls),
+            ],
+            vec![
+                ChatChunk::Text("Запомнил.".into()),
+                ChatChunk::Finished(FinishReason::Stop),
+            ],
+        ])) as Arc<dyn EngineBackend>;
+
+        let (_d, cmd_tx, mut evt_rx, handle) = spawn_orch(Some(backend));
+        let root = _d.path().to_path_buf();
+        let active = wait_for(&mut evt_rx, |e| matches!(e, AppEvent::ChatActivated { .. }))
+            .await
+            .unwrap();
+        let chat_id = match active {
+            AppEvent::ChatActivated { id, .. } => id,
+            _ => unreachable!(),
+        };
+
+        cmd_tx
+            .send(AppCommand::SendMessage("запомни про чай".into()))
+            .unwrap();
+
+        // Событие исполнения инструмента доходит до UI.
+        let tool_ev = wait_for(&mut evt_rx, |e| matches!(e, AppEvent::ToolCall { .. }))
+            .await
+            .unwrap();
+        assert!(matches!(tool_ev, AppEvent::ToolCall { name, .. } if name == "note_save"));
+        wait_for(&mut evt_rx, |e| matches!(e, AppEvent::Finished { .. }))
+            .await
+            .unwrap();
+
+        cmd_tx.send(AppCommand::Quit).unwrap();
+        handle.await.unwrap();
+
+        // История: user → assistant(tool_calls) → tool → assistant(финал).
+        let reopened = Storage::open(Paths::with_root(&root)).unwrap();
+        let chat = reopened.json().load_chat(chat_id).unwrap().unwrap();
+        assert_eq!(chat.messages.len(), 4, "{:?}", chat.messages);
+        assert_eq!(chat.messages[0].role, MessageRole::User);
+        assert_eq!(chat.messages[1].role, MessageRole::Assistant);
+        assert_eq!(chat.messages[1].tool_calls.len(), 1);
+        assert_eq!(chat.messages[1].tool_calls[0].name, "note_save");
+        assert_eq!(chat.messages[2].role, MessageRole::Tool);
+        assert_eq!(chat.messages[3].text, "Запомнил.");
+
+        // Заметка действительно сохранена инструментом (изоляция по профилю).
+        let notes = reopened
+            .db()
+            .note_list(chat.profile_id, None, &[], None)
+            .unwrap();
+        assert_eq!(notes.len(), 1);
+        assert!(notes[0].content.contains("любит чай"));
+    }
+
+    #[tokio::test]
+    async fn tool_round_limit_is_respected() {
+        use crate::shared::api::backend::ToolCallDelta;
+        // Движок всегда просит инструмент — должен сработать лимит раундов.
+        let backend = Arc::new(MockBackend::scripted(vec![
+            ChatChunk::ToolCall(ToolCallDelta {
+                index: 0,
+                id: Some("c1".into()),
+                name: Some("get_sampling".into()),
+                arguments: "{}".into(),
+            }),
+            ChatChunk::Finished(FinishReason::ToolCalls),
+        ])) as Arc<dyn EngineBackend>;
+
+        let dir = tempfile::tempdir().unwrap();
+        let storage = Arc::new(Storage::open(Paths::with_root(dir.path())).unwrap());
+        let (cmd_tx, cmd_rx) = unbounded_channel();
+        let (evt_tx, mut evt_rx) = unbounded_channel();
+        let handle = tokio::spawn(run(OrchestratorDeps {
+            cmd_rx,
+            evt_tx,
+            backend: Some(backend),
+            storage,
+            default_sampling: SamplingConfig::default(),
+            status: ServerStatus::Ready,
+            registry: Arc::new(standard_registry()),
+            embedder: test_embedder(),
+            max_tool_rounds: 2,
+        }));
+        wait_for(&mut evt_rx, |e| matches!(e, AppEvent::ChatActivated { .. }))
+            .await
+            .unwrap();
+        cmd_tx
+            .send(AppCommand::SendMessage("зациклись".into()))
+            .unwrap();
+
+        // Дойдём до Finished; лимит породит ошибку-пометку, но генерация завершится.
+        wait_for(&mut evt_rx, |e| matches!(e, AppEvent::Finished { .. }))
+            .await
+            .unwrap();
+        drop(cmd_tx);
+        handle.await.unwrap();
+    }
+
+    #[tokio::test]
     async fn send_without_backend_emits_error() {
         let (_d, cmd_tx, mut evt_rx, handle) = spawn_orch(None);
         wait_for(&mut evt_rx, |e| matches!(e, AppEvent::ChatActivated { .. }))
@@ -1090,7 +1435,7 @@ mod tests {
         chat.push_message(Message::assistant("Здравствуйте!"));
         chat.push_message(Message::user("привет"));
 
-        let req = build_request(&chat, SamplingConfig::default());
+        let req = build_request(&chat, SamplingConfig::default(), vec![]);
         assert_eq!(req.system.as_deref(), Some("Ты — X."));
         assert_eq!(req.messages.len(), 2);
     }

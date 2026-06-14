@@ -11,7 +11,8 @@ mod wire;
 pub mod mock;
 
 pub use backend::{
-    ApiMessage, ChatChunk, ChatRequest, Embedder, EngineBackend, FinishReason, ToolSchema,
+    ApiMessage, ApiToolCall, ChatChunk, ChatRequest, Embedder, EngineBackend, FinishReason,
+    ToolCallAccumulator, ToolSchema, UnavailableEmbedder,
 };
 pub use client::XinferClient;
 pub use server::{ManagedConfig, ServerHandle, wait_until_ready};

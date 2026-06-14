@@ -220,6 +220,17 @@ pub trait Embedder: Send + Sync {
     async fn embed(&self, texts: Vec<String>) -> Result<Vec<Vec<f32>>>;
 }
 
+/// Эмбеддер-заглушка: возвращает ошибку (embedding-сервер не настроен). RAG в
+/// этом режиме недоступен, но инструмент не «падает» — ошибка уходит модели.
+pub struct UnavailableEmbedder;
+
+#[async_trait::async_trait]
+impl Embedder for UnavailableEmbedder {
+    async fn embed(&self, _texts: Vec<String>) -> Result<Vec<Vec<f32>>> {
+        anyhow::bail!("embedding-сервер не настроен — RAG недоступен")
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

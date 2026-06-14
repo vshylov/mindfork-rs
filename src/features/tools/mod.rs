@@ -97,6 +97,40 @@ pub trait Tool: Send + Sync {
     }
 }
 
+/// Идентификаторы базовых инструментов M5 (интроспекция + заметки + RAG).
+/// Web/Python добавятся на M7. Используется для дефолтного набора профиля.
+pub fn default_tool_ids() -> Vec<ToolId> {
+    [
+        "get_sampling",
+        "set_sampling",
+        "get_system_message",
+        "set_system_message",
+        "get_last_user_message_time",
+        "note_save",
+        "note_recall",
+        "rag_add",
+        "rag_search",
+    ]
+    .into_iter()
+    .map(String::from)
+    .collect()
+}
+
+/// Реестр со всеми базовыми инструментами M5.
+pub fn standard_registry() -> ToolRegistry {
+    let mut reg = ToolRegistry::new();
+    reg.register(Arc::new(introspection::GetSampling));
+    reg.register(Arc::new(introspection::SetSampling));
+    reg.register(Arc::new(introspection::GetSystemMessage));
+    reg.register(Arc::new(introspection::SetSystemMessage));
+    reg.register(Arc::new(introspection::GetLastUserMessageTime));
+    reg.register(Arc::new(notes::NoteSave));
+    reg.register(Arc::new(notes::NoteRecall));
+    reg.register(Arc::new(rag::RagAdd));
+    reg.register(Arc::new(rag::RagSearch));
+    reg
+}
+
 /// Реестр инструментов: связывает имена с реализациями, отдаёт схемы движку.
 #[derive(Default)]
 pub struct ToolRegistry {
@@ -223,6 +257,19 @@ mod tests {
             reg.invoke("nope", &ctx, serde_json::json!({}))
                 .await
                 .is_err()
+        );
+    }
+
+    #[test]
+    fn standard_registry_has_all_default_tools() {
+        let reg = standard_registry();
+        for id in default_tool_ids() {
+            assert!(reg.get(&id).is_some(), "инструмент {id} не зарегистрирован");
+        }
+        // Схемы для дефолтного набора покрывают все id.
+        assert_eq!(
+            reg.schemas_for(&default_tool_ids()).len(),
+            default_tool_ids().len()
         );
     }
 

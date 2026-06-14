@@ -60,6 +60,13 @@ pub enum AppEvent {
     Chunk { generation_id: Uuid, text: String },
     /// Дельта «мыслей» (CoT).
     Thoughts { generation_id: Uuid, text: String },
+    /// Инструмент вызван и исполнен (для tool-блока в ленте). См. spec §6.3, §11.3.
+    ToolCall {
+        generation_id: Uuid,
+        name: String,
+        arguments: String,
+        result: String,
+    },
     /// Генерация завершена.
     Finished {
         generation_id: Uuid,
