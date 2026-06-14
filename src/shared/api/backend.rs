@@ -13,6 +13,9 @@ use crate::entities::sampling::SamplingConfig;
 /// Роль сообщения в запросе к модели.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ApiRole {
+    /// Системная роль. Системное сообщение передаётся через [`ChatRequest::system`],
+    /// поэтому как роль сообщения не конструируется — оставлена для полноты enum.
+    #[allow(dead_code)]
     System,
     User,
     Assistant,
@@ -185,10 +188,6 @@ impl ToolCallAccumulator {
             call.name = name;
         }
         call.arguments.push_str(&delta.arguments);
-    }
-
-    pub fn is_empty(&self) -> bool {
-        self.calls.is_empty()
     }
 
     /// Возвращает собранные вызовы (отбрасывая безымянные «дыры»).

@@ -47,6 +47,7 @@ impl Db {
     }
 
     /// Открывает БД в памяти (для тестов).
+    #[cfg(test)]
     pub fn open_in_memory() -> Result<Self> {
         register_sqlite_vec();
         Self::from_conn(Connection::open_in_memory()?)
@@ -117,6 +118,8 @@ impl Db {
         Ok(notes)
     }
 
+    /// Жёсткое удаление заметки по id (репозиторная операция; UI-потребитель — позже).
+    #[allow(dead_code)]
     pub fn note_delete(&self, id: Uuid) -> Result<bool> {
         let conn = self.conn.lock().unwrap();
         let n = conn.execute("DELETE FROM notes WHERE id = ?1", params![id.to_string()])?;
@@ -184,6 +187,8 @@ impl Db {
         Ok(hits)
     }
 
+    /// Число RAG-документов профиля (репозиторная операция; UI-потребитель — позже).
+    #[allow(dead_code)]
     pub fn rag_count(&self, profile_id: Uuid) -> Result<usize> {
         let conn = self.conn.lock().unwrap();
         let n: i64 = conn.query_row(

@@ -31,6 +31,8 @@ use crate::shared::storage::Storage;
 #[derive(Clone)]
 pub struct ToolContext {
     pub profile_id: Uuid,
+    /// Id текущего чата (часть снимка хода; доступен инструментам).
+    #[allow(dead_code)]
     pub chat_id: Uuid,
     /// Снимок `Chat.system_message` на начало хода.
     pub system_message: String,
@@ -210,12 +212,10 @@ impl ToolRegistry {
         self.tools.insert(tool.id(), tool);
     }
 
+    /// Инструмент по имени (используется тестами реестра).
+    #[allow(dead_code)]
     pub fn get(&self, id: &str) -> Option<&Arc<dyn Tool>> {
         self.tools.get(id)
-    }
-
-    pub fn is_empty(&self) -> bool {
-        self.tools.is_empty()
     }
 
     /// Схемы для подмножества включённых инструментов (профиль ∩ глобально), с

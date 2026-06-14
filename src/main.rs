@@ -2,11 +2,6 @@
 //! Точка входа: single-instance → логирование → tokio-рантайм → оркестратор → TUI.
 //! См. spec §4.2, §4.4 и plan M1.
 
-// На этапе каркаса часть публичного API слоёв опережает своих потребителей
-// (paths, error, …) — это нормально для FSD-скелета. TODO(M3): убрать, когда
-// все слои будут связаны.
-#![allow(dead_code)]
-
 mod app;
 mod entities;
 mod features;
@@ -29,8 +24,15 @@ use crate::shared::{instance, logging, paths::Paths};
 
 fn main() -> anyhow::Result<()> {
     let paths = Paths::discover().context("resolving data paths")?;
-    let _instance = instance::acquire().context("single-instance check")?;
     let _logging = logging::init(&paths).context("initializing logging")?;
+
+    // Одноразовый импорт из LameLLaMA (.NET): `mindfork --import-lamellama <dir>`.
+    // Выполняется без TUI/инстанс-гарда и завершает процесс. См. spec §12.2.
+    if let Some(dir) = parse_import_arg() {
+        return run_import(&paths, &dir);
+    }
+
+    let _instance = instance::acquire().context("single-instance check")?;
     tracing::info!(root = %paths.root().display(), "mindfork-rs starting");
 
     let runtime = tokio::runtime::Builder::new_multi_thread()
@@ -79,6 +81,52 @@ fn main() -> anyhow::Result<()> {
         Err(err) => tracing::error!(error = %err, "mindfork-rs exited with error"),
     }
     result
+}
+
+/// Возвращает каталог из аргумента `--import-lamellama <dir>` (если задан).
+fn parse_import_arg() -> Option<std::path::PathBuf> {
+    let mut args = std::env::args().skip(1);
+    while let Some(arg) = args.next() {
+        if arg == "--import-lamellama" {
+            return args.next().map(std::path::PathBuf::from);
+        }
+    }
+    None
+}
+
+/// Одноразовый импорт данных LameLLaMA (.NET) в хранилище mindfork (spec §12.2).
+/// Идемпотентно (детерминированные id), исходные файлы только читаются. Вывод —
+/// в stdout (TUI не запущен), не в лог.
+fn run_import(paths: &Paths, dir: &std::path::Path) -> anyhow::Result<()> {
+    let storage = Storage::open(paths.clone()).context("opening storage")?;
+    let result = features::migration::import_dir(dir)
+        .with_context(|| format!("importing LameLLaMA data from {}", dir.display()))?;
+
+    for profile in &result.profiles {
+        storage.json().upsert_profile(profile)?;
+    }
+    for chat in &result.chats {
+        storage.json().save_chat(chat)?;
+    }
+
+    // Переносим глобальный семплинг и настройки интерфейса источника.
+    let mut config = storage.json().load_config().unwrap_or_default();
+    if let Some(sampling) = result.sampling {
+        config.default_sampling = sampling;
+    }
+    if let Some(interface) = result.interface {
+        config.interface.spellcheck_enabled = interface.spellcheck_enabled;
+        config.interface.selected_dictionaries = interface.dictionaries;
+        config.interface.theme = interface.theme;
+    }
+    storage.json().save_config(&config)?;
+
+    println!(
+        "Импорт LameLLaMA завершён: профилей {}, чатов {}.",
+        result.profiles.len(),
+        result.chats.len()
+    );
+    Ok(())
 }
 
 /// Посев конфигурации переменными окружения (dev/смоук-workflow, contract §9).

@@ -151,6 +151,7 @@ fn write_json<T: serde::Serialize>(path: &Path, value: &T) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::entities::message::Message;
 
     fn store() -> (tempfile::TempDir, JsonStore) {
         let dir = tempfile::tempdir().unwrap();
@@ -231,5 +232,24 @@ mod tests {
         };
         s.save_config(&c).unwrap();
         assert!(d.path().join("settings.bak").exists());
+    }
+
+    #[test]
+    fn chat_save_backs_up_previous_version() {
+        let (_d, s) = store();
+        let p = Profile::new("X", "s");
+        let mut chat = Chat::from_profile(&p, "Чат");
+        s.save_chat(&chat).unwrap();
+        // Повторное сохранение создаёт .bak с прежней версией (spec §12.3).
+        chat.push_message(Message::user("привет"));
+        s.save_chat(&chat).unwrap();
+        let bak = s
+            .paths
+            .chat_file(&chat.id.to_string())
+            .with_extension("bak");
+        assert!(bak.exists(), "ожидался бэкап файла чата");
+        // Бэкап содержит прежнюю (пустую) версию, а не текущую.
+        let backed: Chat = serde_json::from_slice(&fs::read(&bak).unwrap()).unwrap();
+        assert!(backed.messages.is_empty());
     }
 }

@@ -54,15 +54,8 @@ pub struct OrchestratorDeps {
 /// Состояние генерации (автомат на активный чат).
 enum State {
     Idle,
-    Generating {
-        id: Uuid,
-        chat_id: Uuid,
-        cancel: CancellationToken,
-    },
-    Cancelling {
-        id: Uuid,
-        chat_id: Uuid,
-    },
+    Generating { id: Uuid, cancel: CancellationToken },
+    Cancelling { id: Uuid },
 }
 
 impl State {
@@ -83,7 +76,6 @@ struct GenResult {
     messages: Vec<Message>,
     /// Эффекты инструментов (применяются оркестратором — владельцем `Chat`).
     effects: Vec<ChatEffect>,
-    reason: FinishReason,
 }
 
 /// Главный цикл оркестратора. Завершается при закрытии канала команд или
@@ -255,17 +247,9 @@ impl Orchestrator {
                 return true;
             }
             AppCommand::Cancel => {
-                if let State::Generating {
-                    id,
-                    chat_id,
-                    cancel,
-                } = &self.state
-                {
+                if let State::Generating { id, cancel, .. } = &self.state {
                     cancel.cancel();
-                    self.state = State::Cancelling {
-                        id: *id,
-                        chat_id: *chat_id,
-                    };
+                    self.state = State::Cancelling { id: *id };
                 }
             }
             AppCommand::SendMessage(text) => self.handle_send(text),
@@ -356,7 +340,6 @@ impl Orchestrator {
             .send(AppEvent::GenerationStarted { generation_id: id });
         self.state = State::Generating {
             id,
-            chat_id: active_id,
             cancel: cancel.clone(),
         };
         spawn_generation(GenSpawn {
@@ -421,16 +404,11 @@ impl Orchestrator {
         // Если идёт генерация — отменяем её (частичный ответ сохранится для
         // исходного чата по приходу GenResult).
         if let State::Generating {
-            id: gid,
-            chat_id,
-            cancel,
+            id: gid, cancel, ..
         } = &self.state
         {
             cancel.cancel();
-            self.state = State::Cancelling {
-                id: *gid,
-                chat_id: *chat_id,
-            };
+            self.state = State::Cancelling { id: *gid };
         }
         if self.chats.iter().any(|c| c.id == id) {
             self.activate(id);
@@ -925,7 +903,6 @@ fn spawn_generation(spawn: GenSpawn) {
             chat_id,
             messages,
             effects,
-            reason,
         });
     });
 }

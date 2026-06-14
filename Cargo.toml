@@ -29,7 +29,16 @@ tracing-appender = "0.2.5"
 tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
 tui-markdown = "0.3.7"
 tui-scrollview = "0.6.5"
-uuid = { version = "1.23.3", features = ["v4", "serde"] }
+uuid = { version = "1.23.3", features = ["v4", "v5", "serde"] }
 
 [dev-dependencies]
 tempfile = "3.27.0"
+
+# Релизный профиль (Windows + Linux): оптимизация размера/скорости.
+# panic=unwind сохранён намеренно — нужны drop-guard/panic-hook для восстановления
+# терминала при панике (ratatui::init ставит hook; M0).
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1
+strip = true
