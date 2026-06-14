@@ -103,6 +103,8 @@ pub struct ChatScreen {
     /// Последний снимок настроек (конфиг + полные профили) — для открытия экрана
     /// настроек по `Ctrl+,`. Заполняется событием `Settings`. См. spec §11.6.
     settings_snapshot: Option<(AppConfig, Vec<Profile>)>,
+    /// Показан ли оверлей помощи по клавишам (`F1`/`?`). См. spec §11.7.
+    show_help: bool,
 }
 
 impl Default for ChatScreen {
@@ -131,6 +133,7 @@ impl ChatScreen {
             last_edit: None,
             suggest: None,
             settings_snapshot: None,
+            show_help: false,
         }
     }
 
@@ -276,6 +279,11 @@ impl ChatScreen {
         if key.kind != KeyEventKind::Press {
             return None;
         }
+        // Оверлей помощи перехватывает ввод: любая клавиша закрывает его.
+        if self.show_help {
+            self.show_help = false;
+            return None;
+        }
         if self.suggest.is_some() {
             self.handle_suggest_key(key);
             return None;
@@ -288,6 +296,16 @@ impl ChatScreen {
         }
         match (key.code, key.modifiers) {
             (KeyCode::Char('c'), KeyModifiers::CONTROL) => Some(ChatIntent::Quit),
+            // Помощь по клавишам: F1 всегда; `?` — только при пустом вводе (иначе
+            // символ печатается). См. spec §11.7.
+            (KeyCode::F(1), _) => {
+                self.show_help = true;
+                None
+            }
+            (KeyCode::Char('?'), KeyModifiers::NONE) if self.input.is_empty() => {
+                self.show_help = true;
+                None
+            }
             // Экран настроек (Ctrl+,) — открывается, если снимок настроек получен.
             (KeyCode::Char(','), KeyModifiers::CONTROL) => {
                 if self.settings_snapshot.is_some() {
@@ -538,7 +556,41 @@ impl ChatScreen {
         if let Some(popup) = &self.suggest {
             render_suggest(frame, popup);
         }
+        if self.show_help {
+            render_help(frame);
+        }
     }
+}
+
+/// Список горячих клавиш для оверлея помощи (`F1`/`?`). См. spec §11.7.
+const HELP_KEYS: &[(&str, &str)] = &[
+    ("Enter", "отправить сообщение"),
+    ("Shift+Enter", "перенос строки"),
+    ("Esc", "отмена генерации / закрыть"),
+    ("Ctrl+L", "список чатов"),
+    ("Ctrl+N", "новый чат (выбор профиля)"),
+    ("Ctrl+,", "экран настроек"),
+    ("Ctrl+T", "свернуть/развернуть «мысли»"),
+    ("Ctrl+G", "подсказки орфографии"),
+    ("PageUp/PageDown", "прокрутка ленты"),
+    ("F1 / ?", "эта справка"),
+    ("Ctrl+C", "выход"),
+];
+
+/// Рисует оверлей помощи по центру экрана.
+fn render_help(frame: &mut Frame) {
+    let rows = (HELP_KEYS.len() as u16 + 2).min(frame.area().height);
+    let area = centered_rect(54, rows, frame.area());
+    frame.render_widget(Clear, area);
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .title(" Горячие клавиши ")
+        .title_bottom(Line::from(" любая клавиша — закрыть ").dim());
+    let items: Vec<ListItem> = HELP_KEYS
+        .iter()
+        .map(|(k, d)| ListItem::new(Line::from(format!("  {k:<16} {d}"))))
+        .collect();
+    frame.render_widget(List::new(items).block(block), area);
 }
 
 /// Рисует попап подсказок орфографии по центру экрана.
@@ -678,6 +730,33 @@ mod tests {
             s.handle_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE)),
             Some(ChatIntent::Cancel)
         );
+    }
+
+    #[test]
+    fn f1_opens_and_any_key_closes_help() {
+        let mut s = ChatScreen::new();
+        assert!(!s.show_help);
+        s.handle_key(KeyEvent::new(KeyCode::F(1), KeyModifiers::NONE));
+        assert!(s.show_help);
+        // Любая клавиша закрывает справку и не делает ничего другого.
+        let intent = s.handle_key(KeyEvent::new(KeyCode::Char('x'), KeyModifiers::NONE));
+        assert_eq!(intent, None);
+        assert!(!s.show_help);
+        assert!(s.input.is_empty(), "ввод не печатался при закрытии справки");
+    }
+
+    #[test]
+    fn question_mark_opens_help_only_when_input_empty() {
+        let mut s = ChatScreen::new();
+        // Пустой ввод → `?` открывает справку.
+        s.handle_key(KeyEvent::new(KeyCode::Char('?'), KeyModifiers::NONE));
+        assert!(s.show_help);
+        s.handle_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE)); // закрыть
+        // Непустой ввод → `?` печатается, справка не открывается.
+        type_str(&mut s, "abc");
+        s.handle_key(KeyEvent::new(KeyCode::Char('?'), KeyModifiers::NONE));
+        assert!(!s.show_help);
+        assert_eq!(s.input.text(), "abc?");
     }
 
     #[test]

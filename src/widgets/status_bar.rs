@@ -27,8 +27,10 @@ fn spans(status: &ServerStatus, generating: bool) -> Vec<Span<'static>> {
         spans.push(Span::from("генерация…").magenta());
     }
     spans.push(
-        Span::from("  •  Ctrl+L чаты · Ctrl+N новый · Ctrl+T мысли · Ctrl+G орф. · Ctrl+C выход")
-            .dim(),
+        Span::from(
+            "  •  F1 справка · Ctrl+L чаты · Ctrl+N новый · Ctrl+, настройки · Ctrl+C выход",
+        )
+        .dim(),
     );
     spans
 }
