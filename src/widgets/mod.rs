@@ -6,4 +6,5 @@
 pub mod chat_list;
 pub mod input_box;
 pub mod message_feed;
+pub mod profile_list;
 pub mod status_bar;

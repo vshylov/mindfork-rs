@@ -19,12 +19,14 @@ use uuid::Uuid;
 
 use crate::entities::chat::ChatSummary;
 use crate::entities::message::Message;
+use crate::entities::profile::ProfileSummary;
 use crate::features::spellcheck::SpellChecker;
 use crate::shared::api::FinishReason;
 use crate::shared::server::ServerStatus;
 use crate::widgets::chat_list::{ChatListAction, ChatListState};
 use crate::widgets::input_box::InputBox;
 use crate::widgets::message_feed::{FeedMessage, FeedRole, MessageFeed};
+use crate::widgets::profile_list::{ProfileListAction, ProfileListState};
 use crate::widgets::status_bar;
 
 /// Высота прокрутки ленты на одно нажатие PageUp/PageDown (строк).
@@ -39,11 +41,17 @@ pub enum ChatIntent {
     Quit,
     Send(String),
     Cancel,
-    NewChat,
+    /// Создать чат из профиля (`None` — профиль по умолчанию).
+    NewChat {
+        profile_id: Option<Uuid>,
+    },
     SwitchChat(Uuid),
     CloneChat(Uuid),
     DeleteChat(Uuid),
-    RenameChat { id: Uuid, title: String },
+    RenameChat {
+        id: Uuid,
+        title: String,
+    },
 }
 
 /// Пункт попапа подсказок орфографии.
@@ -73,6 +81,10 @@ pub struct ChatScreen {
     title: String,
     chats: Vec<ChatSummary>,
     overlay: Option<ChatListState>,
+    /// Снимок профилей (для оверлея выбора при создании чата).
+    profiles: Vec<ProfileSummary>,
+    /// Открытый оверлей выбора профиля.
+    profile_overlay: Option<ProfileListState>,
     input: InputBox,
     status: ServerStatus,
     current_gen: Option<Uuid>,
@@ -102,6 +114,8 @@ impl ChatScreen {
             title: String::new(),
             chats: Vec::new(),
             overlay: None,
+            profiles: Vec::new(),
+            profile_overlay: None,
             input: InputBox::new(),
             status: ServerStatus::Connecting,
             current_gen: None,
@@ -134,6 +148,10 @@ impl ChatScreen {
             overlay.set_chats(chats.clone());
         }
         self.chats = chats;
+    }
+
+    pub fn set_profile_list(&mut self, profiles: Vec<ProfileSummary>) {
+        self.profiles = profiles;
     }
 
     pub fn activate_chat(&mut self, id: Uuid, title: String, messages: &[Message]) {
@@ -223,12 +241,15 @@ impl ChatScreen {
             self.handle_suggest_key(key);
             return None;
         }
+        if self.profile_overlay.is_some() {
+            return self.handle_profile_overlay_key(key);
+        }
         if self.overlay.is_some() {
             return self.handle_overlay_key(key);
         }
         match (key.code, key.modifiers) {
             (KeyCode::Char('c'), KeyModifiers::CONTROL) => Some(ChatIntent::Quit),
-            (KeyCode::Char('n'), KeyModifiers::CONTROL) => Some(ChatIntent::NewChat),
+            (KeyCode::Char('n'), KeyModifiers::CONTROL) => self.request_new_chat(),
             (KeyCode::Char('l'), KeyModifiers::CONTROL) => {
                 self.overlay = Some(ChatListState::new(self.chats.clone(), self.active_chat));
                 None
@@ -372,6 +393,36 @@ impl ChatScreen {
         self.mark_input_changed();
     }
 
+    /// Запрашивает создание чата: при >1 профиле открывает оверлей выбора,
+    /// иначе сразу создаёт из единственного/дефолтного профиля (spec §10).
+    fn request_new_chat(&mut self) -> Option<ChatIntent> {
+        if self.profiles.len() > 1 {
+            self.profile_overlay = Some(ProfileListState::new(self.profiles.clone()));
+            None
+        } else {
+            Some(ChatIntent::NewChat {
+                profile_id: self.profiles.first().map(|p| p.id),
+            })
+        }
+    }
+
+    fn handle_profile_overlay_key(&mut self, key: KeyEvent) -> Option<ChatIntent> {
+        let overlay = self.profile_overlay.as_mut()?;
+        match overlay.on_key(key) {
+            ProfileListAction::None => None,
+            ProfileListAction::Cancel => {
+                self.profile_overlay = None;
+                None
+            }
+            ProfileListAction::Pick(id) => {
+                self.profile_overlay = None;
+                Some(ChatIntent::NewChat {
+                    profile_id: Some(id),
+                })
+            }
+        }
+    }
+
     fn handle_overlay_key(&mut self, key: KeyEvent) -> Option<ChatIntent> {
         let overlay = self.overlay.as_mut()?;
         match overlay.on_key(key) {
@@ -386,7 +437,7 @@ impl ChatScreen {
             }
             ChatListAction::New => {
                 self.overlay = None;
-                Some(ChatIntent::NewChat)
+                self.request_new_chat()
             }
             ChatListAction::Clone(id) => {
                 self.overlay = None;
@@ -427,11 +478,15 @@ impl ChatScreen {
         } else {
             "ввод · Enter отправить · Shift+Enter перенос"
         };
-        let focused = self.overlay.is_none() && self.suggest.is_none();
+        let focused =
+            self.overlay.is_none() && self.profile_overlay.is_none() && self.suggest.is_none();
         self.input.render(frame, input_area, input_title, focused);
 
         if let Some(overlay) = &self.overlay {
             overlay.render(frame, frame.area(), self.active_chat);
+        }
+        if let Some(overlay) = &self.profile_overlay {
+            overlay.render(frame, frame.area());
         }
         if let Some(popup) = &self.suggest {
             render_suggest(frame, popup);

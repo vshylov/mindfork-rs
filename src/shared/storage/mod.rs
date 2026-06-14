@@ -56,6 +56,42 @@ mod tests {
     use crate::entities::profile::Profile;
 
     #[test]
+    fn notes_and_rag_isolated_by_profile_via_facade() {
+        use crate::entities::note::Note;
+        use crate::entities::rag::RagDocument;
+
+        let dir = tempfile::tempdir().unwrap();
+        let storage = Storage::open(Paths::with_root(dir.path())).unwrap();
+        let a = Uuid::new_v4();
+        let b = Uuid::new_v4();
+
+        storage
+            .db()
+            .note_insert(&Note::new(a, "секрет A", vec![]))
+            .unwrap();
+        storage
+            .db()
+            .note_insert(&Note::new(b, "секрет B", vec![]))
+            .unwrap();
+        storage
+            .db()
+            .rag_insert(&RagDocument::new(b, "b", "док B", vec![1.0, 0.0]))
+            .unwrap();
+        storage
+            .db()
+            .rag_insert(&RagDocument::new(a, "a", "док A", vec![1.0, 0.0]))
+            .unwrap();
+
+        // Чат профиля A видит только данные A — ничего из B не «утекает».
+        let a_notes = storage.db().note_list(a, None, &[], None).unwrap();
+        assert_eq!(a_notes.len(), 1);
+        assert!(a_notes.iter().all(|n| n.profile_id == a));
+        let a_hits = storage.db().rag_search(a, &[1.0, 0.0], 5).unwrap();
+        assert_eq!(a_hits.len(), 1);
+        assert_eq!(a_hits[0].chunk_text, "док A");
+    }
+
+    #[test]
     fn hide_profile_cascades_to_chats() {
         let dir = tempfile::tempdir().unwrap();
         let storage = Storage::open(Paths::with_root(dir.path())).unwrap();

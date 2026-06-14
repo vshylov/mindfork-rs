@@ -31,9 +31,15 @@ pub struct Chat {
 }
 
 impl Chat {
-    /// Создаёт чат, привязанный к профилю, копируя из него системное сообщение,
-    /// имена ролей и дефолты семплинга. Приветствие (`greeting`) добавляется
-    /// вызывающей стороной как первое сообщение ассистента (use-case, M4).
+    /// Создаёт чат, привязанный к профилю, копируя из него системное сообщение
+    /// и имена ролей (у чата своя копия — правки профиля их не меняют, spec §10).
+    /// Приветствие (`greeting`) добавляется вызывающей стороной как первое
+    /// сообщение ассистента (use-case, M4).
+    ///
+    /// Семплинг профиля **не копируется** в `sampling_override`: разрешение
+    /// трёхуровневое во время запроса (`Chat → Profile → global`, spec §8.3),
+    /// поэтому `sampling_override` остаётся `None` до явного переопределения
+    /// пользователем или ассистентом (`set_sampling`, M5).
     pub fn from_profile(profile: &Profile, title: impl Into<String>) -> Self {
         let now = Utc::now();
         Self {
@@ -45,7 +51,7 @@ impl Chat {
             system_message: profile.default_system_message.clone(),
             character_names: profile.character_names.clone(),
             messages: Vec::new(),
-            sampling_override: profile.default_sampling.clone(),
+            sampling_override: None,
             is_hidden: false,
         }
     }
@@ -86,7 +92,7 @@ mod tests {
     use crate::entities::message::Message;
 
     #[test]
-    fn from_profile_copies_fields() {
+    fn from_profile_copies_fields_but_not_sampling() {
         let mut p = Profile::new("Carlos", "Ты — Карлос.");
         p.default_sampling = Some(SamplingConfig {
             temperature: Some(0.9),
@@ -96,7 +102,9 @@ mod tests {
         assert_eq!(chat.profile_id, p.id);
         assert_eq!(chat.system_message, "Ты — Карлос.");
         assert_eq!(chat.character_names, p.character_names);
-        assert_eq!(chat.sampling_override, p.default_sampling);
+        // Семплинг профиля НЕ копируется в override — разрешается трёхуровнево
+        // во время запроса (spec §8.3).
+        assert_eq!(chat.sampling_override, None);
         assert!(chat.messages.is_empty());
     }
 

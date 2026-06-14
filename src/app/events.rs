@@ -5,6 +5,7 @@ use uuid::Uuid;
 
 use crate::entities::chat::ChatSummary;
 use crate::entities::message::Message;
+use crate::entities::profile::ProfileSummary;
 use crate::shared::api::FinishReason;
 pub use crate::shared::server::ServerStatus;
 
@@ -15,8 +16,8 @@ pub enum AppCommand {
     SendMessage(String),
     /// Отменить текущую генерацию.
     Cancel,
-    /// Создать новый чат (по профилю по умолчанию; выбор профиля — M4).
-    NewChat,
+    /// Создать новый чат из профиля (по `id`; `None` — профиль по умолчанию).
+    NewChat { profile_id: Option<Uuid> },
     /// Сделать чат активным (загрузить его в ленту).
     SwitchChat(Uuid),
     /// Переименовать чат.
@@ -25,6 +26,13 @@ pub enum AppCommand {
     CloneChat(Uuid),
     /// Мягко удалить чат.
     DeleteChat(Uuid),
+    /// Создать новый профиль (UI-секция — M8; команда нужна для операций/тестов).
+    CreateProfile {
+        name: String,
+        system_message: String,
+    },
+    /// Мягко удалить профиль с каскадом на его чаты (notes/RAG исключаются).
+    DeleteProfile(Uuid),
     /// Завершить работу (оркестратор останавливается).
     Quit,
 }
@@ -36,6 +44,8 @@ pub enum AppEvent {
     ServerStatus(ServerStatus),
     /// Полный список видимых чатов (для оверлея). Шлётся при изменениях набора.
     ChatList(Vec<ChatSummary>),
+    /// Полный список видимых профилей (для оверлея выбора при создании чата).
+    ProfileList(Vec<ProfileSummary>),
     /// Активный чат сменился — UI перестраивает ленту из его сообщений.
     ChatActivated {
         id: Uuid,
