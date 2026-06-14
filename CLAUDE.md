@@ -67,8 +67,9 @@ Env для выбора бэкенда: `MINDFORK_XINFER_URL` (external) ИЛИ 
 (+ `MINDFORK_MODEL`, `MINDFORK_XINFER_PORT`, `MINDFORK_ISQ`) для managed.
 
 ## Статус (на 2026-06-14)
-Ветка `main` содержит всё. Сделано **M0, M1, M2** и **бо́льшая часть M3**.
-**84 теста зелёные, 2 `#[ignore]`.**
+Сделано **M0, M1, M2** (в `main`) и **бо́льшая часть M3** (в ветке `m3-ui`).
+**99 тестов зелёные, 2 `#[ignore]`.** Осталось по M3: `screens/chat.rs`+статус-бар
+(рефактор) и спелл-чек (см. ниже).
 - **M0** — каркас FSD, TUI-петля с восстановлением терминала, single-instance, логирование.
 - **M1** — `shared/api` (xinfer-клиент со стримингом/отменой, супервайзер, парсер
   мыслей, mock), оркестратор (автомат + generation_id), мост tokio↔TUI, минимальный
@@ -90,15 +91,20 @@ Env для выбора бэкенда: `MINDFORK_XINFER_URL` (external) ИЛИ 
 - **`features/chat_search_sort.rs`, `features/rename_chat.rs`**: чистая логика.
 - **`widgets/chat_list.rs`**: оверлей `Ctrl+L` (поиск, 2 сортировки `Tab`, `F2`-переименование,
   `Ctrl+N` новый, `Ctrl+D` копия, `Del` удалить). Интегрирован в `runtime.rs`.
+- **`widgets/input_box.rs`**: собственный multiline-ввод (`Vec<Vec<char>>`, курсор по
+  символам, скролл; `Shift+Enter` перенос, `Enter` отправка). Заменил строку-заглушку.
+- **`widgets/message_feed.rs`**: лента с markdown-рендером, сворачиваемый блок «мыслей»
+  (`Ctrl+T`), скролл `PageUp/PageDown` со «следованием за хвостом».
 
 ### M3 — что осталось
-- `widgets/message_feed.rs`: лента с markdown-рендером (`shared::markdown::render`),
-  сворачиваемые CoT/tool-блоки, скролл (`tui-scrollview`), выделение сообщений.
-- `widgets/input_box.rs`: **собственный** multiline-ввод (`Shift+Enter` перенос,
-  `Enter` отправка), пока в `runtime.rs` строковый ввод-заглушка.
-- `widgets/status_bar.rs`, `screens/chat.rs` (вынести компоновку из `runtime.rs`).
-- `features/spellcheck/`: `spellbook` (en_US/en_GB/ru_RU) + сегментация + подсказки +
-  отрисовка подчёркиваний в своём `input_box`.
+- `widgets/status_bar.rs` + `screens/chat.rs` — вынести компоновку/статус из `runtime.rs`
+  (сейчас всё в `runtime.rs::draw`; статус-бар — функция `status_spans`). Чистый рефактор.
+- **Сворачивание/выделение per-message** и tool-блоки в ленте — сейчас «мысли»
+  сворачиваются глобально (`Ctrl+T`); выделение сообщений и tool-блоки — на M5.
+- `features/spellcheck/`: `spellbook` (en_US/en_GB/ru_RU) + сегментация
+  (`unicode-segmentation`) + фоновая проверка (дебаунс ~300мс) + подсказки; отрисовка
+  подчёркиваний — стилем `UNDERLINED` per-span в `input_box` (механизм уже наш).
+  Нужны словари в `dictionaries/` и новые зависимости (`spellbook`, `unicode-segmentation`).
 - Снять `#![allow(dead_code)]` из `main.rs` — **после M5** (часть API: notes/RAG/db,
   ещё не имеет потребителей; сейчас снятие сломает `clippy -D warnings`).
 
