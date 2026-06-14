@@ -67,9 +67,8 @@ Env для выбора бэкенда: `MINDFORK_XINFER_URL` (external) ИЛИ 
 (+ `MINDFORK_MODEL`, `MINDFORK_XINFER_PORT`, `MINDFORK_ISQ`) для managed.
 
 ## Статус (на 2026-06-14)
-Сделано **M0, M1, M2** (в `main`) и **бо́льшая часть M3** (в ветке `m3-ui`).
-**99 тестов зелёные, 2 `#[ignore]`.** Осталось по M3: `screens/chat.rs`+статус-бар
-(рефактор) и спелл-чек (см. ниже).
+Сделано **M0, M1, M2** (в `main`) и **почти весь M3** (в ветке `m3-ui`).
+**107 тестов зелёные, 2 `#[ignore]`.** Осталось по M3: только спелл-чек (см. ниже).
 - **M0** — каркас FSD, TUI-петля с восстановлением терминала, single-instance, логирование.
 - **M1** — `shared/api` (xinfer-клиент со стримингом/отменой, супервайзер, парсер
   мыслей, mock), оркестратор (автомат + generation_id), мост tokio↔TUI, минимальный
@@ -95,10 +94,13 @@ Env для выбора бэкенда: `MINDFORK_XINFER_URL` (external) ИЛИ 
   символам, скролл; `Shift+Enter` перенос, `Enter` отправка). Заменил строку-заглушку.
 - **`widgets/message_feed.rs`**: лента с markdown-рендером, сворачиваемый блок «мыслей»
   (`Ctrl+T`), скролл `PageUp/PageDown` со «следованием за хвостом».
+- **`widgets/status_bar.rs`**: чистый виджет статуса (`ServerStatus` переехал в `shared`).
+- **`screens/chat.rs`**: `ChatScreen` — всё состояние UI, мутаторы-проекция событий,
+  `handle_key → ChatIntent`, `render`. `runtime.rs` теперь тонкая петля: применяет
+  `AppEvent` мутаторами, транслирует `ChatIntent → AppCommand`. **FSD соблюдён**:
+  `screens`/`widgets` не импортируют `app` (экран отдаёт `ChatIntent`, не `AppCommand`).
 
 ### M3 — что осталось
-- `widgets/status_bar.rs` + `screens/chat.rs` — вынести компоновку/статус из `runtime.rs`
-  (сейчас всё в `runtime.rs::draw`; статус-бар — функция `status_spans`). Чистый рефактор.
 - **Сворачивание/выделение per-message** и tool-блоки в ленте — сейчас «мысли»
   сворачиваются глобально (`Ctrl+T`); выделение сообщений и tool-блоки — на M5.
 - `features/spellcheck/`: `spellbook` (en_US/en_GB/ru_RU) + сегментация

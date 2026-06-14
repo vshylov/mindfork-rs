@@ -6,6 +6,7 @@ use uuid::Uuid;
 use crate::entities::chat::ChatSummary;
 use crate::entities::message::Message;
 use crate::shared::api::FinishReason;
+pub use crate::shared::server::ServerStatus;
 
 /// Команда от UI к оркестратору.
 #[derive(Debug, Clone)]
@@ -26,19 +27,6 @@ pub enum AppCommand {
     DeleteChat(Uuid),
     /// Завершить работу (оркестратор останавливается).
     Quit,
-}
-
-/// Статус соединения с сервером инференса.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum ServerStatus {
-    /// Сервер не настроен (нет URL/бинарника).
-    NotConfigured,
-    /// Идёт подключение/запуск.
-    Connecting,
-    /// Готов к работе.
-    Ready,
-    /// Недоступен (с описанием причины).
-    Disconnected(String),
 }
 
 /// Событие от оркестратора к UI. UI обновляет read-only-проекцию только так.
