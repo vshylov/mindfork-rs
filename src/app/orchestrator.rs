@@ -17,9 +17,9 @@ use uuid::Uuid;
 use crate::app::events::{AppCommand, AppEvent, ServerStatus};
 use crate::entities::chat::{Chat, ChatSummary};
 use crate::entities::message::{Message, MessageMetadata, MessageRole, ToolCallRecord};
-use crate::entities::profile::Profile;
+use crate::entities::profile::{Profile, ToolId};
 use crate::entities::sampling::SamplingConfig;
-use crate::features::tools::{ChatEffect, ToolContext, ToolRegistry};
+use crate::features::tools::{ChatEffect, ToolContext, ToolRegistry, effective_tool_ids};
 use crate::shared::api::{
     ApiMessage, ApiToolCall, ChatChunk, ChatRequest, Embedder, EngineBackend, FinishReason,
     ToolCallAccumulator,
@@ -49,6 +49,9 @@ pub struct OrchestratorDeps {
     pub embedder: Arc<dyn Embedder>,
     /// Лимит раундов agentic-loop (spec §6.3).
     pub max_tool_rounds: u32,
+    /// Глобальные выключатели внешних инструментов (spec §9.4).
+    pub web_enabled: bool,
+    pub python_enabled: bool,
 }
 
 /// Состояние генерации (автомат на активный чат).
@@ -99,6 +102,8 @@ pub async fn run(deps: OrchestratorDeps) {
         registry,
         embedder,
         max_tool_rounds,
+        web_enabled,
+        python_enabled,
     } = deps;
 
     let _ = evt_tx.send(AppEvent::ServerStatus(status));
@@ -112,6 +117,8 @@ pub async fn run(deps: OrchestratorDeps) {
         registry,
         embedder,
         max_tool_rounds,
+        web_enabled,
+        python_enabled,
         profiles: Vec::new(),
         chats: Vec::new(),
         active_id: None,
@@ -163,6 +170,8 @@ struct Orchestrator {
     registry: Arc<ToolRegistry>,
     embedder: Arc<dyn Embedder>,
     max_tool_rounds: u32,
+    web_enabled: bool,
+    python_enabled: bool,
     profiles: Vec<Profile>,
     /// Видимые чаты, целиком в памяти (оркестратор — единственный писатель).
     chats: Vec<Chat>,
@@ -287,7 +296,9 @@ impl Orchestrator {
             .find(|p| p.id == profile_id)
             .map(|p| p.enabled_tools.clone())
             .unwrap_or_default();
-        let schemas = self.registry.schemas_for(&enabled);
+        // Эффективный набор = профиль ∩ глобальные выключатели (spec §9.4).
+        let allowed = effective_tool_ids(&enabled, self.web_enabled, self.python_enabled);
+        let schemas = self.registry.schemas_for(&allowed);
 
         // Добавляем сообщение пользователя и строим запрос/контекст инструмента.
         let request;
@@ -331,6 +342,7 @@ impl Orchestrator {
             id,
             chat_id: active_id,
             max_rounds: self.max_tool_rounds,
+            allowed,
             evt_tx: self.evt_tx.clone(),
             done_tx: self.done_tx.clone(),
         });
@@ -679,6 +691,8 @@ struct GenSpawn {
     id: Uuid,
     chat_id: Uuid,
     max_rounds: u32,
+    /// Эффективно разрешённые инструменты (защита от вызова отключённых).
+    allowed: Vec<ToolId>,
     evt_tx: UnboundedSender<AppEvent>,
     done_tx: UnboundedSender<GenResult>,
 }
@@ -704,6 +718,7 @@ fn spawn_generation(spawn: GenSpawn) {
         id,
         chat_id,
         max_rounds,
+        allowed,
         evt_tx,
         done_tx,
     } = spawn;
@@ -740,12 +755,17 @@ fn spawn_generation(spawn: GenSpawn) {
                 for call in &out.calls {
                     let args: serde_json::Value =
                         serde_json::from_str(&call.arguments).unwrap_or(serde_json::Value::Null);
-                    let result = match registry.invoke(&call.name, &ctx, args.clone()).await {
-                        Ok(outcome) => {
-                            effects.extend(outcome.effects);
-                            outcome.result
+                    let result = if !allowed.iter().any(|t| t == &call.name) {
+                        // Защита: инструмент выключен глобально/в профиле.
+                        format!("Инструмент {} недоступен (выключен).", call.name)
+                    } else {
+                        match registry.invoke(&call.name, &ctx, args.clone()).await {
+                            Ok(outcome) => {
+                                effects.extend(outcome.effects);
+                                outcome.result
+                            }
+                            Err(err) => format!("Ошибка инструмента {}: {err}", call.name),
                         }
-                        Err(err) => format!("Ошибка инструмента {}: {err}", call.name),
                     };
                     let _ = evt_tx.send(AppEvent::ToolCall {
                         generation_id: id,
@@ -906,9 +926,11 @@ mod tests {
             storage,
             default_sampling: SamplingConfig::default(),
             status: ServerStatus::Ready,
-            registry: Arc::new(standard_registry()),
+            registry: Arc::new(standard_registry(None)),
             embedder: test_embedder(),
             max_tool_rounds: 8,
+            web_enabled: true,
+            python_enabled: false,
         };
         let handle = tokio::spawn(run(deps));
         (dir, cmd_tx, evt_rx, handle)
@@ -941,9 +963,11 @@ mod tests {
                 temperature: Some(0.1),
                 ..Default::default()
             },
-            registry: Arc::new(standard_registry()),
+            registry: Arc::new(standard_registry(None)),
             embedder: test_embedder(),
             max_tool_rounds: 8,
+            web_enabled: true,
+            python_enabled: false,
             profiles: Vec::new(),
             chats: Vec::new(),
             active_id: None,
@@ -1045,9 +1069,11 @@ mod tests {
             storage,
             default_sampling: SamplingConfig::default(),
             status: ServerStatus::Ready,
-            registry: Arc::new(standard_registry()),
+            registry: Arc::new(standard_registry(None)),
             embedder: test_embedder(),
             max_tool_rounds: 8,
+            web_enabled: true,
+            python_enabled: false,
         }));
 
         // Ждём активации и узнаём id активного чата.
@@ -1256,6 +1282,52 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn disabled_tool_is_refused_by_loop() {
+        use crate::shared::api::backend::ToolCallDelta;
+        // python_exec выключен глобально (spawn_orch: python_enabled = false) —
+        // даже если модель его вызовет, loop откажет, не исполняя.
+        let backend = Arc::new(MockBackend::sequence(vec![
+            vec![
+                ChatChunk::ToolCall(ToolCallDelta {
+                    index: 0,
+                    id: Some("c1".into()),
+                    name: Some("python_exec".into()),
+                    arguments: "{\"code\":\"print(1)\"}".into(),
+                }),
+                ChatChunk::Finished(FinishReason::ToolCalls),
+            ],
+            vec![
+                ChatChunk::Text("ок".into()),
+                ChatChunk::Finished(FinishReason::Stop),
+            ],
+        ])) as Arc<dyn EngineBackend>;
+
+        let (_d, cmd_tx, mut evt_rx, handle) = spawn_orch(Some(backend));
+        wait_for(&mut evt_rx, |e| matches!(e, AppEvent::ChatActivated { .. }))
+            .await
+            .unwrap();
+        cmd_tx
+            .send(AppCommand::SendMessage("посчитай".into()))
+            .unwrap();
+
+        let tool_ev = wait_for(&mut evt_rx, |e| matches!(e, AppEvent::ToolCall { .. }))
+            .await
+            .unwrap();
+        match tool_ev {
+            AppEvent::ToolCall { name, result, .. } => {
+                assert_eq!(name, "python_exec");
+                assert!(result.contains("недоступен"), "got: {result}");
+            }
+            _ => unreachable!(),
+        }
+        wait_for(&mut evt_rx, |e| matches!(e, AppEvent::Finished { .. }))
+            .await
+            .unwrap();
+        drop(cmd_tx);
+        handle.await.unwrap();
+    }
+
+    #[tokio::test]
     async fn tool_round_limit_is_respected() {
         use crate::shared::api::backend::ToolCallDelta;
         // Движок всегда просит инструмент — должен сработать лимит раундов.
@@ -1280,9 +1352,11 @@ mod tests {
             storage,
             default_sampling: SamplingConfig::default(),
             status: ServerStatus::Ready,
-            registry: Arc::new(standard_registry()),
+            registry: Arc::new(standard_registry(None)),
             embedder: test_embedder(),
             max_tool_rounds: 2,
+            web_enabled: true,
+            python_enabled: false,
         }));
         wait_for(&mut evt_rx, |e| matches!(e, AppEvent::ChatActivated { .. }))
             .await

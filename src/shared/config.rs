@@ -54,6 +54,29 @@ impl Default for XinferSettings {
     }
 }
 
+/// Глобальные «мастер-выключатели» внешних инструментов (безопасность/приватность,
+/// spec §9.4, §13.2). Эффективный набор = `Profile.enabled_tools ∩ глобально вкл.`
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct ToolSettings {
+    /// Web-поиск (DuckDuckGo). Включён по умолчанию (read-only).
+    pub web_enabled: bool,
+    /// Исполнение Python. Выключено по умолчанию (нет OS-песочницы, spec §13.2).
+    pub python_enabled: bool,
+    /// Путь к интерпретатору Python (`None` → системный `python3`/`python`).
+    pub python_path: Option<String>,
+}
+
+impl Default for ToolSettings {
+    fn default() -> Self {
+        Self {
+            web_enabled: true,
+            python_enabled: false,
+            python_path: None,
+        }
+    }
+}
+
 /// Глобальная конфигурация приложения.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
@@ -63,6 +86,8 @@ pub struct AppConfig {
     pub xinfer: XinferSettings,
     /// Лимит раундов клиентского agentic-loop (spec §6.3).
     pub max_tool_rounds: u32,
+    /// Глобальные выключатели внешних инструментов.
+    pub tools: ToolSettings,
 }
 
 impl Default for AppConfig {
@@ -76,6 +101,7 @@ impl Default for AppConfig {
             },
             xinfer: XinferSettings::default(),
             max_tool_rounds: 8,
+            tools: ToolSettings::default(),
         }
     }
 }
