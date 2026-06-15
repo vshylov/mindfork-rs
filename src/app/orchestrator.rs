@@ -556,7 +556,7 @@ impl Orchestrator {
             return;
         }
         // Смена настроек chat-сервера (модель/режим/порт/…) — перезапуск (spec §11.6).
-        if self.config.xinfer != old.xinfer {
+        if self.config.engine != old.engine {
             self.apply_chat_settings();
         }
         // Смена настроек embedding-сервера — пере-подключение/перезапуск.
@@ -593,13 +593,13 @@ impl Orchestrator {
         self.emit_settings();
     }
 
-    /// (Пере)поднимает chat-сервер по `config.xinfer`: гасит прежний процесс,
+    /// (Пере)поднимает chat-сервер по `config.engine`: гасит прежний процесс,
     /// просит супервайзер настроить новый, эмитит немедленный статус.
     fn apply_chat_settings(&mut self) {
         self.chat_handle = None; // drop старого managed-процесса (kill_on_drop)
         let setup = self
             .supervisor
-            .apply_chat(&self.config.xinfer, self.status_tx.clone());
+            .apply_chat(&self.config.engine, self.status_tx.clone());
         self.backend = setup.backend;
         self.chat_handle = setup.handle;
         let _ = self.evt_tx.send(AppEvent::ServerStatus(setup.status));
@@ -1677,8 +1677,8 @@ mod tests {
 
         // Смена модели → перезапуск (повторный apply_chat, spec §11.6 DoD).
         let config = AppConfig {
-            xinfer: crate::shared::config::XinferSettings {
-                model_id: Some("Other/Model".into()),
+            engine: crate::shared::config::EngineSettings {
+                model_path: Some("other.gguf".into()),
                 ..Default::default()
             },
             ..Default::default()
@@ -1688,7 +1688,7 @@ mod tests {
             .unwrap();
         wait_for(
             &mut evt_rx,
-            |e| matches!(e, AppEvent::Settings { config, .. } if config.xinfer.model_id.as_deref() == Some("Other/Model")),
+            |e| matches!(e, AppEvent::Settings { config, .. } if config.engine.model_path.as_deref() == Some("other.gguf")),
         )
         .await
         .unwrap();

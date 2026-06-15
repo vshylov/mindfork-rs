@@ -203,7 +203,7 @@ impl ToolCallAccumulator {
 pub type ChatStream = Pin<Box<dyn Stream<Item = ChatChunk> + Send>>;
 
 /// Движок инференса (chat). Реализации: HTTP-клиент к xinfer
-/// ([`super::client::XinferClient`]) и mock для тестов.
+/// ([`super::client::OpenAiClient`]) и mock для тестов.
 #[async_trait::async_trait]
 pub trait EngineBackend: Send + Sync {
     /// Стриминговый одноходовый запрос. Отмена — через `cancel`.

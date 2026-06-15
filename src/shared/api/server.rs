@@ -1,6 +1,5 @@
-//! Супервайзер локального сервера xinfer (managed-режим): запуск дочернего
-//! процесса, ожидание готовности, остановка при завершении. См. spec §3.4 и
-//! docs/xinfer-contract.md §2.
+//! Запуск локального `llama-server` (llama.cpp, managed-режим): дочерний процесс,
+//! ожидание готовности, остановка при завершении (`kill_on_drop`). См. spec §3.4.
 
 use std::path::PathBuf;
 use std::process::Stdio;
@@ -10,74 +9,70 @@ use anyhow::{Context, Result, bail};
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::process::{Child, Command};
 
-use super::client::XinferClient;
+use super::client::OpenAiClient;
 
-/// Переменная окружения, включающая раздельную отдачу reasoning в
-/// `delta.reasoning_content`. См. docs/xinfer-contract.md §2.
-const STREAM_AS_REASONING_ENV: &str = "XINFER_STREAM_AS_REASONING_CONTENT";
-
-/// Конфигурация запуска managed-сервера xinfer.
+/// Конфигурация запуска managed-сервера `llama-server` (llama.cpp).
 #[derive(Debug, Clone)]
 pub struct ManagedConfig {
     pub binary: PathBuf,
-    pub model_id: Option<String>,
-    pub weight_path: Option<String>,
-    pub weight_file: Option<String>,
-    pub isq: Option<String>,
-    pub device_ids: Vec<usize>,
-    pub cpu: bool,
+    /// Путь к GGUF-модели (`-m`).
+    pub model_path: Option<String>,
+    /// Слои на GPU (`-ngl`).
+    pub gpu_layers: i32,
+    /// Размер контекста (`-c`).
+    pub context_size: u32,
+    /// Использовать встроенный chat-template модели (`--jinja`).
+    pub jinja: bool,
+    /// Формат reasoning (`--reasoning-format`); `None` — не задавать.
+    pub reasoning_format: Option<String>,
+    /// Режим эмбеддингов (`--embeddings`) — для embedding-сервера.
+    pub embeddings: bool,
+    /// Интерфейс bind (`--host`).
+    pub host: String,
     pub port: u16,
-    /// Дополнительные сырые аргументы (например `--kvcache_dtype turbo4`).
+    /// Дополнительные сырые аргументы.
     pub extra_args: Vec<String>,
 }
 
 impl ManagedConfig {
+    /// URL для подключения к локальному дочернему процессу (всегда `127.0.0.1`,
+    /// независимо от `--host`, который управляет лишь интерфейсом bind).
     pub fn base_url(&self) -> String {
         format!("http://127.0.0.1:{}/v1", self.port)
     }
 }
 
-/// Аргументы командной строки xinfer из конфигурации (чистая функция).
-/// Флаги — по docs/xinfer-contract.md §2.
+/// Аргументы командной строки `llama-server` из конфигурации (чистая функция).
 pub fn build_args(cfg: &ManagedConfig) -> Vec<String> {
     let mut args = vec![
-        "--server".to_string(),
+        "--host".to_string(),
+        cfg.host.clone(),
         "--port".to_string(),
         cfg.port.to_string(),
+        "-ngl".to_string(),
+        cfg.gpu_layers.to_string(),
+        "-c".to_string(),
+        cfg.context_size.to_string(),
     ];
-    if let Some(m) = &cfg.model_id {
-        args.push("--m".into());
+    if let Some(m) = &cfg.model_path {
+        args.push("-m".into());
         args.push(m.clone());
     }
-    if let Some(w) = &cfg.weight_path {
-        args.push("--w".into());
-        args.push(w.clone());
+    if cfg.jinja {
+        args.push("--jinja".into());
     }
-    if let Some(f) = &cfg.weight_file {
-        args.push("--f".into());
-        args.push(f.clone());
+    if let Some(rf) = &cfg.reasoning_format {
+        args.push("--reasoning-format".into());
+        args.push(rf.clone());
     }
-    if let Some(isq) = &cfg.isq {
-        args.push("--isq".into());
-        args.push(isq.clone());
-    }
-    if cfg.cpu {
-        args.push("--cpu".into());
-    } else if !cfg.device_ids.is_empty() {
-        args.push("--d".into());
-        args.push(
-            cfg.device_ids
-                .iter()
-                .map(|d| d.to_string())
-                .collect::<Vec<_>>()
-                .join(","),
-        );
+    if cfg.embeddings {
+        args.push("--embeddings".into());
     }
     args.extend(cfg.extra_args.iter().cloned());
     args
 }
 
-/// Владелец дочернего процесса xinfer. При `drop` процесс убивается
+/// Владелец дочернего процесса `llama-server`. При `drop` процесс убивается
 /// (`kill_on_drop`).
 pub struct ServerHandle {
     _child: Child,
@@ -89,19 +84,18 @@ impl ServerHandle {
         &self.base_url
     }
 
-    /// Запускает дочерний процесс xinfer (без ожидания готовности).
+    /// Запускает дочерний процесс `llama-server` (без ожидания готовности).
     pub fn launch(cfg: &ManagedConfig) -> Result<Self> {
         let args = build_args(cfg);
-        tracing::info!(binary = %cfg.binary.display(), ?args, "launching managed xinfer server");
+        tracing::info!(binary = %cfg.binary.display(), ?args, "launching managed llama-server");
 
         let mut child = Command::new(&cfg.binary)
             .args(&args)
-            .env(STREAM_AS_REASONING_ENV, "1")
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .kill_on_drop(true)
             .spawn()
-            .with_context(|| format!("spawning xinfer at {}", cfg.binary.display()))?;
+            .with_context(|| format!("spawning llama-server at {}", cfg.binary.display()))?;
 
         // Читаем вывод процесса, чтобы (а) не переполнить пайп, (б) видеть прогресс загрузки.
         if let Some(out) = child.stdout.take() {
@@ -120,14 +114,14 @@ impl ServerHandle {
 
 /// Ждёт готовности сервера, поллингом `probe` до таймаута. Свободная функция,
 /// чтобы пробу можно было выполнять в фоне, не удерживая [`ServerHandle`].
-pub async fn wait_until_ready(client: &XinferClient, timeout: Duration) -> Result<()> {
+pub async fn wait_until_ready(client: &OpenAiClient, timeout: Duration) -> Result<()> {
     let deadline = tokio::time::Instant::now() + timeout;
     loop {
         if client.probe().await.is_ok() {
             return Ok(());
         }
         if tokio::time::Instant::now() >= deadline {
-            bail!("xinfer server did not become ready within {timeout:?}");
+            bail!("llama-server did not become ready within {timeout:?}");
         }
         tokio::time::sleep(Duration::from_millis(500)).await;
     }
@@ -140,9 +134,9 @@ where
     let mut lines = BufReader::new(reader).lines();
     while let Ok(Some(line)) = lines.next_line().await {
         if is_err {
-            tracing::warn!(target: "xinfer", "{line}");
+            tracing::warn!(target: "llama-server", "{line}");
         } else {
-            tracing::info!(target: "xinfer", "{line}");
+            tracing::info!(target: "llama-server", "{line}");
         }
     }
 }
@@ -153,53 +147,58 @@ mod tests {
 
     fn base_cfg() -> ManagedConfig {
         ManagedConfig {
-            binary: PathBuf::from("xinfer"),
-            model_id: None,
-            weight_path: None,
-            weight_file: None,
-            isq: None,
-            device_ids: vec![],
-            cpu: false,
+            binary: PathBuf::from("llama-server"),
+            model_path: None,
+            gpu_layers: 99,
+            context_size: 8192,
+            jinja: true,
+            reasoning_format: None,
+            embeddings: false,
+            host: "127.0.0.1".into(),
             port: 8000,
             extra_args: vec![],
         }
     }
 
     #[test]
-    fn args_include_server_and_port() {
+    fn args_include_host_port_ngl_ctx_jinja() {
         let args = build_args(&base_cfg());
-        assert!(args.contains(&"--server".to_string()));
+        let host = args.iter().position(|a| a == "--host").unwrap();
+        assert_eq!(args[host + 1], "127.0.0.1");
         let p = args.iter().position(|a| a == "--port").unwrap();
         assert_eq!(args[p + 1], "8000");
+        let ngl = args.iter().position(|a| a == "-ngl").unwrap();
+        assert_eq!(args[ngl + 1], "99");
+        let c = args.iter().position(|a| a == "-c").unwrap();
+        assert_eq!(args[c + 1], "8192");
+        assert!(args.contains(&"--jinja".to_string()));
     }
 
     #[test]
-    fn args_for_gguf_model_with_gpu() {
+    fn args_for_model_with_reasoning() {
         let cfg = ManagedConfig {
-            model_id: Some("Qwen/Qwen3-8B".into()),
-            isq: Some("q4k".into()),
-            device_ids: vec![0, 1],
+            model_path: Some("gemma.gguf".into()),
+            reasoning_format: Some("auto".into()),
             ..base_cfg()
         };
         let args = build_args(&cfg);
-        let m = args.iter().position(|a| a == "--m").unwrap();
-        assert_eq!(args[m + 1], "Qwen/Qwen3-8B");
-        let d = args.iter().position(|a| a == "--d").unwrap();
-        assert_eq!(args[d + 1], "0,1");
-        let isq = args.iter().position(|a| a == "--isq").unwrap();
-        assert_eq!(args[isq + 1], "q4k");
+        let m = args.iter().position(|a| a == "-m").unwrap();
+        assert_eq!(args[m + 1], "gemma.gguf");
+        let rf = args.iter().position(|a| a == "--reasoning-format").unwrap();
+        assert_eq!(args[rf + 1], "auto");
+        assert!(!args.contains(&"--embeddings".to_string()));
     }
 
     #[test]
-    fn cpu_flag_excludes_device_ids() {
+    fn embeddings_flag_and_no_jinja() {
         let cfg = ManagedConfig {
-            cpu: true,
-            device_ids: vec![0],
+            embeddings: true,
+            jinja: false,
             ..base_cfg()
         };
         let args = build_args(&cfg);
-        assert!(args.contains(&"--cpu".to_string()));
-        assert!(!args.contains(&"--d".to_string()));
+        assert!(args.contains(&"--embeddings".to_string()));
+        assert!(!args.contains(&"--jinja".to_string()));
     }
 
     #[test]

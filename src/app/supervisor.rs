@@ -1,5 +1,5 @@
 //! Супервайзер серверов инференса/эмбеддингов для оркестратора: (пере)запуск
-//! managed-процесса или подключение к external по настройкам [`XinferSettings`]/
+//! managed-процесса или подключение к external по настройкам [`EngineSettings`]/
 //! [`EmbedSettings`]. Спрятан за трейтом [`ServerSupervisor`] ради mock в тестах —
 //! смена модели в настройках перезапускает сервер (spec §11.6, DoD M8).
 //!
@@ -12,10 +12,10 @@ use std::time::Duration;
 use tokio::sync::mpsc::UnboundedSender;
 
 use crate::shared::api::{
-    Embedder, EngineBackend, ManagedConfig, ServerHandle, UnavailableEmbedder, XinferClient,
+    Embedder, EngineBackend, ManagedConfig, OpenAiClient, ServerHandle, UnavailableEmbedder,
     wait_until_ready,
 };
-use crate::shared::config::{EmbedSettings, ServerMode, XinferSettings};
+use crate::shared::config::{EmbedSettings, EngineSettings, ServerMode};
 use crate::shared::server::ServerStatus;
 
 /// Щедрый таймаут готовности managed-сервера: загрузка модели может занять минуты.
@@ -45,7 +45,7 @@ pub trait ServerSupervisor: Send + Sync {
     /// досылает в `status_tx` фоновым probe.
     fn apply_chat(
         &self,
-        settings: &XinferSettings,
+        settings: &EngineSettings,
         status_tx: UnboundedSender<ServerStatus>,
     ) -> ChatSetup;
 
@@ -53,19 +53,20 @@ pub trait ServerSupervisor: Send + Sync {
     fn apply_embed(&self, settings: &EmbedSettings) -> EmbedSetup;
 }
 
-/// Боевой супервайзер xinfer: external — по URL, managed — дочерний процесс.
-pub struct XinferSupervisor;
+/// Боевой супервайзер: external — по URL (любой OpenAI-сервер), managed —
+/// дочерний процесс `llama-server` (llama.cpp).
+pub struct LlamaSupervisor;
 
-impl ServerSupervisor for XinferSupervisor {
+impl ServerSupervisor for LlamaSupervisor {
     fn apply_chat(
         &self,
-        settings: &XinferSettings,
+        settings: &EngineSettings,
         status_tx: UnboundedSender<ServerStatus>,
     ) -> ChatSetup {
         match settings.mode {
             ServerMode::External => match settings.url.as_deref() {
                 Some(url) if !url.is_empty() => {
-                    let client = Arc::new(XinferClient::new(url));
+                    let client = Arc::new(OpenAiClient::new(url));
                     spawn_probe(client.clone(), EXTERNAL_READY_TIMEOUT, status_tx);
                     ChatSetup {
                         backend: Some(client),
@@ -80,7 +81,7 @@ impl ServerSupervisor for XinferSupervisor {
                     let cfg = managed_config(settings);
                     match ServerHandle::launch(&cfg) {
                         Ok(handle) => {
-                            let client = Arc::new(XinferClient::new(handle.base_url()));
+                            let client = Arc::new(OpenAiClient::new(handle.base_url()));
                             spawn_probe(client.clone(), MANAGED_READY_TIMEOUT, status_tx);
                             ChatSetup {
                                 backend: Some(client),
@@ -104,7 +105,7 @@ impl ServerSupervisor for XinferSupervisor {
         match settings.mode {
             ServerMode::External => match settings.url.as_deref() {
                 Some(url) if !url.is_empty() => EmbedSetup {
-                    embedder: Arc::new(XinferClient::new(url)),
+                    embedder: Arc::new(OpenAiClient::new(url)),
                     handle: None,
                 },
                 _ => unavailable_embed(),
@@ -113,18 +114,19 @@ impl ServerSupervisor for XinferSupervisor {
                 Some(bin) if !bin.is_empty() => {
                     let cfg = ManagedConfig {
                         binary: bin.into(),
-                        model_id: settings.model_id.clone(),
-                        weight_path: None,
-                        weight_file: None,
-                        isq: None,
-                        device_ids: vec![0],
-                        cpu: false,
+                        model_path: settings.model_path.clone(),
+                        gpu_layers: settings.gpu_layers,
+                        context_size: crate::shared::config::DEFAULT_CONTEXT_SIZE,
+                        jinja: false, // embedding-серверу chat-template не нужен
+                        reasoning_format: None,
+                        embeddings: true,
+                        host: "127.0.0.1".into(),
                         port: settings.port,
                         extra_args: vec![],
                     };
                     match ServerHandle::launch(&cfg) {
                         Ok(handle) => EmbedSetup {
-                            embedder: Arc::new(XinferClient::new(handle.base_url())),
+                            embedder: Arc::new(OpenAiClient::new(handle.base_url())),
                             handle: Some(handle),
                         },
                         Err(err) => {
@@ -139,16 +141,17 @@ impl ServerSupervisor for XinferSupervisor {
     }
 }
 
-/// Строит [`ManagedConfig`] из настроек chat-сервера.
-fn managed_config(s: &XinferSettings) -> ManagedConfig {
+/// Строит [`ManagedConfig`] (`llama-server`) из настроек chat-сервера.
+fn managed_config(s: &EngineSettings) -> ManagedConfig {
     ManagedConfig {
         binary: s.binary.clone().unwrap_or_default().into(),
-        model_id: s.model_id.clone(),
-        weight_path: s.weight_path.clone(),
-        weight_file: s.weight_file.clone(),
-        isq: s.isq.clone(),
-        device_ids: s.device_ids.clone(),
-        cpu: s.cpu,
+        model_path: s.model_path.clone(),
+        gpu_layers: s.gpu_layers,
+        context_size: s.context_size,
+        jinja: s.jinja,
+        reasoning_format: s.reasoning_format.clone(),
+        embeddings: false,
+        host: s.host.clone(),
         port: s.port,
         extra_args: vec![],
     }
@@ -171,7 +174,7 @@ fn unavailable_embed() -> EmbedSetup {
 
 /// Фоновый probe готовности: по завершении шлёт `Ready`/`Disconnected`.
 fn spawn_probe(
-    client: Arc<XinferClient>,
+    client: Arc<OpenAiClient>,
     timeout: Duration,
     status_tx: UnboundedSender<ServerStatus>,
 ) {
@@ -215,7 +218,7 @@ impl MockSupervisor {
 impl ServerSupervisor for MockSupervisor {
     fn apply_chat(
         &self,
-        _settings: &XinferSettings,
+        _settings: &EngineSettings,
         status_tx: UnboundedSender<ServerStatus>,
     ) -> ChatSetup {
         self.chat_calls
@@ -247,8 +250,8 @@ mod tests {
     use super::*;
     use tokio::sync::mpsc::unbounded_channel;
 
-    fn external(url: Option<&str>) -> XinferSettings {
-        XinferSettings {
+    fn external(url: Option<&str>) -> EngineSettings {
+        EngineSettings {
             mode: ServerMode::External,
             url: url.map(String::from),
             ..Default::default()
@@ -258,7 +261,7 @@ mod tests {
     #[tokio::test]
     async fn external_with_url_yields_backend_connecting() {
         let (tx, _rx) = unbounded_channel();
-        let setup = XinferSupervisor.apply_chat(&external(Some("http://127.0.0.1:9/v1")), tx);
+        let setup = LlamaSupervisor.apply_chat(&external(Some("http://127.0.0.1:9/v1")), tx);
         assert!(setup.backend.is_some());
         assert!(setup.handle.is_none());
         assert_eq!(setup.status, ServerStatus::Connecting);
@@ -267,7 +270,7 @@ mod tests {
     #[tokio::test]
     async fn external_without_url_is_not_configured() {
         let (tx, _rx) = unbounded_channel();
-        let setup = XinferSupervisor.apply_chat(&external(None), tx);
+        let setup = LlamaSupervisor.apply_chat(&external(None), tx);
         assert!(setup.backend.is_none());
         assert_eq!(setup.status, ServerStatus::NotConfigured);
     }
@@ -275,24 +278,24 @@ mod tests {
     #[tokio::test]
     async fn managed_without_binary_is_not_configured() {
         let (tx, _rx) = unbounded_channel();
-        let s = XinferSettings {
+        let s = EngineSettings {
             mode: ServerMode::Managed,
             binary: None,
             ..Default::default()
         };
-        let setup = XinferSupervisor.apply_chat(&s, tx);
+        let setup = LlamaSupervisor.apply_chat(&s, tx);
         assert_eq!(setup.status, ServerStatus::NotConfigured);
     }
 
     #[tokio::test]
     async fn managed_with_bogus_binary_is_disconnected() {
         let (tx, _rx) = unbounded_channel();
-        let s = XinferSettings {
+        let s = EngineSettings {
             mode: ServerMode::Managed,
             binary: Some("definitely-not-a-real-binary-xyz".into()),
             ..Default::default()
         };
-        let setup = XinferSupervisor.apply_chat(&s, tx);
+        let setup = LlamaSupervisor.apply_chat(&s, tx);
         assert!(setup.backend.is_none());
         assert!(matches!(setup.status, ServerStatus::Disconnected(_)));
     }
@@ -304,7 +307,7 @@ mod tests {
             url: Some("http://127.0.0.1:9/v1".into()),
             ..Default::default()
         };
-        let setup = XinferSupervisor.apply_embed(&s);
+        let setup = LlamaSupervisor.apply_embed(&s);
         assert!(setup.handle.is_none());
         // Источник эмбеддингов сконфигурирован (не UnavailableEmbedder).
         // Проверяем косвенно: embed на «мёртвый» URL вернёт ошибку соединения,
@@ -315,7 +318,7 @@ mod tests {
 
     #[tokio::test]
     async fn embed_unconfigured_is_unavailable() {
-        let setup = XinferSupervisor.apply_embed(&EmbedSettings::default());
+        let setup = LlamaSupervisor.apply_embed(&EmbedSettings::default());
         let err = setup.embedder.embed(vec!["x".into()]).await.unwrap_err();
         assert!(err.to_string().contains("не настроен"));
     }
