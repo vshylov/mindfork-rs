@@ -214,7 +214,7 @@ web-поиск и Python под выключателями, экран наст�
   (`save_config`/`upsert_profile`), **смена `xinfer` перезапускает сервер**, смена
   `tools` пересобирает реестр, смена `embed` пере-поднимает embedding-сервер.
   Внутренний канал `ServerStatus` (фоновый probe супервайзера → `AppEvent`).
-- **`screens/settings.rs`** (`SettingsScreen` + `SettingsIntent`, вход `Ctrl+,`):
+- **`screens/settings.rs`** (`SettingsScreen` + `SettingsIntent`, вход `Ctrl+P`):
   левое меню секций (Модель/Инференс/Семплинг/Профили/Инструменты/Интерфейс) +
   правый список полей. `Tab` секция, `↑↓` поля, `Space` тумблер, `←→` enum,
   `Enter` редактор текста/числа. Правка применяется **сразу при коммите**
@@ -255,6 +255,12 @@ web-поиск и Python под выключателями, экран наст�
   загрузкой — `SpellLoader` перегружает словари в фоне при изменении
   `interface.spellcheck_enabled`/`selected_dictionaries` (generation-guard), так что
   тумблер и выбор словарей применяются на лету.
+- **Раскладко-независимые Ctrl-шорткаты** (`shared/keys.rs`): символ нормализуется
+  в «физическую» латинскую клавишу (таблица русской ЙЦУКЕН), поэтому `Ctrl+L/N/G/T/C/P`
+  срабатывают и при кириллической раскладке (где crossterm отдаёт `Ctrl+д` и т.п.).
+  Применено в `screens/chat.rs`, `screens/settings.rs`, `widgets/chat_list.rs`.
+  **Экран настроек перенесён с `Ctrl+,` на `Ctrl+P`** (`Ctrl+,` под Windows
+  перехватывает Windows Terminal).
 
 ### M9 — проверка Gemma (сделано)
 - **Gemma 4 E4B-it проверена** на живом `llama-server` (llama.cpp). Добавлены/

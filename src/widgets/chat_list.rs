@@ -15,6 +15,7 @@ use uuid::Uuid;
 use crate::entities::chat::ChatSummary;
 use crate::features::chat_search_sort::{SortMode, filter_and_sort};
 use crate::features::rename_chat::sanitize_title;
+use crate::shared::keys;
 use crate::shared::theme::Palette;
 
 /// Действие, которое оверлей просит выполнить вышестоящий слой.
@@ -118,6 +119,19 @@ impl ChatListState {
 
     fn on_key_search(&mut self, key: KeyEvent) -> ChatListAction {
         let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
+        // Ctrl-шорткаты матчим по «физической» латинской клавише — работают при
+        // любой раскладке (см. shared::keys). Любой другой Ctrl+символ глотаем,
+        // чтобы он не попал в строку поиска.
+        if ctrl && let KeyCode::Char(c) = key.code {
+            return match keys::physical_char(c) {
+                'n' => ChatListAction::New,
+                'd' => match self.selected_id() {
+                    Some(id) => ChatListAction::Clone(id),
+                    None => ChatListAction::None,
+                },
+                _ => ChatListAction::None,
+            };
+        }
         match key.code {
             KeyCode::Esc => ChatListAction::Close,
             KeyCode::Enter => match self.selected_id() {
@@ -153,18 +167,12 @@ impl ChatListState {
                 Some(id) => ChatListAction::Delete(id),
                 None => ChatListAction::None,
             },
-            // Ctrl+N — новый чат, Ctrl+D — клонировать выделенный.
-            KeyCode::Char('n') if ctrl => ChatListAction::New,
-            KeyCode::Char('d') if ctrl => match self.selected_id() {
-                Some(id) => ChatListAction::Clone(id),
-                None => ChatListAction::None,
-            },
             KeyCode::Backspace => {
                 self.query.pop();
                 self.selected = 0;
                 ChatListAction::None
             }
-            KeyCode::Char(c) if !ctrl => {
+            KeyCode::Char(c) => {
                 self.query.push(c);
                 self.selected = 0;
                 ChatListAction::None
@@ -354,6 +362,22 @@ mod tests {
             ChatListAction::Clone(id)
         );
         assert_eq!(s.on_key(key(KeyCode::Delete)), ChatListAction::Delete(id));
+    }
+
+    #[test]
+    fn ctrl_shortcuts_work_under_cyrillic_layout() {
+        // Русская раскладка: Ctrl+т (физ. N) — новый, Ctrl+в (физ. D) — копия.
+        let chats = vec![chat("A")];
+        let id = chats[0].id;
+        let mut s = ChatListState::new(chats, None);
+        assert_eq!(s.on_key(ctrl(KeyCode::Char('т'))), ChatListAction::New);
+        assert_eq!(
+            s.on_key(ctrl(KeyCode::Char('в'))),
+            ChatListAction::Clone(id)
+        );
+        // Текст поиска кириллицей по-прежнему набирается (без Ctrl).
+        s.on_key(key(KeyCode::Char('я')));
+        assert_eq!(s.query, "я");
     }
 
     #[test]

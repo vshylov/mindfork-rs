@@ -4,6 +4,7 @@
 pub mod api;
 pub mod config;
 pub mod instance;
+pub mod keys;
 pub mod logging;
 pub mod markdown;
 pub mod paths;

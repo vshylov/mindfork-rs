@@ -35,7 +35,7 @@ fn spans(status: &ServerStatus, generating: bool, palette: &Palette) -> Vec<Span
     }
     spans.push(
         Span::from(
-            "  •  F1 справка · Ctrl+L чаты · Ctrl+N новый · Ctrl+, настройки · Ctrl+C выход",
+            "  •  F1 справка · Ctrl+L чаты · Ctrl+N новый · Ctrl+P настройки · Ctrl+C выход",
         )
         .dim(),
     );
