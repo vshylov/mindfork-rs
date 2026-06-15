@@ -67,13 +67,17 @@ Env для выбора бэкенда: `MINDFORK_XINFER_URL` (external) ИЛИ 
 (+ `MINDFORK_MODEL`, `MINDFORK_XINFER_PORT`, `MINDFORK_ISQ`) для managed.
 
 ## Статус (на 2026-06-15)
-Сделано **M0–M8** (в `main`) и **бóльшая часть M9** (в ветках `m9-polish`+`m9-themes`).
-**225 тестов зелёные, 4 `#[ignore]`.** Чат-цикл, профили с изоляцией, инструменты
-с клиентским agentic-loop, саб-агент, web-поиск и Python под выключателями, экран
-настроек со всеми секциями и перезапуском managed-сервера при смене модели, импорт
-из LameLLaMA (.NET), оверлей помощи, релизный профиль, **темы (auto/dark/light)**,
-**спелл-чек на лету по настройкам**. **Отложена только ручная проверка Gemma**
-(нужен живой xinfer).
+Сделан весь план **M0–M9** (в `main`). **225 тестов зелёные, 6 `#[ignore]`.**
+Чат-цикл, профили с изоляцией, инструменты с клиентским agentic-loop, саб-агент,
+web-поиск и Python под выключателями, экран настроек со всеми секциями и
+перезапуском managed-сервера при смене модели, импорт из LameLLaMA (.NET), оверлей
+помощи, релизный профиль, **темы (auto/dark/light)**, **спелл-чек на лету по
+настройкам**. **Gemma 4 проверена** на живом `llama-server` (стриминг, EOS-анти-
+самообрыв, tool-calling, «мысли» — `#[ignore]`-смоуки зелёные).
+
+> **Движок инференса:** `xinfer` оказался сырым по Gemma 4 (бессвязный вывод,
+> плохо собирается под Windows). Рабочий бэкенд — **llama.cpp `llama-server`**
+> (external, OpenAI-протокол, `--jinja`). См. [docs/install.md](docs/install.md) §3.
 - **M0** — каркас FSD, TUI-петля с восстановлением терминала, single-instance, логирование.
 - **M1** — `shared/api` (xinfer-клиент со стримингом/отменой, супервайзер, парсер
   мыслей, mock), оркестратор (автомат + generation_id), мост tokio↔TUI, минимальный
@@ -236,10 +240,14 @@ Env для выбора бэкенда: `MINDFORK_XINFER_URL` (external) ИЛИ 
   `interface.spellcheck_enabled`/`selected_dictionaries` (generation-guard), так что
   тумблер и выбор словарей применяются на лету.
 
-### M9 — отложено
-- **Ручная проверка Gemma 3/4** (шаблоны/EOS/tool-calling/«мысли») и прогон
-  `#[ignore]`-смоуков на реальной модели — требуют живого xinfer, выполняются
-  вручную (тот же набор сценариев, что и для Qwen; см. `cargo test -- --ignored`).
+### M9 — проверка Gemma (сделано)
+- **Gemma 4 E4B-it проверена** на живом `llama-server` (llama.cpp). Добавлены/
+  расширены `#[ignore]`-смоуки в [client.rs](src/shared/api/client.rs):
+  анти-самообрыв для обоих семейств (`<|im_end|>` + `<end_of_turn>`), tool-calling
+  (`finish_reason=tool_calls` + разбор `delta.tool_calls`), «мысли»
+  (`reasoning_content` → `Thoughts`). Все зелёные. Нюанс: Gemma-reasoning «думает»
+  перед вызовом инструмента — в смоуках `max_tokens` щедрый (512).
+- **`xinfer` для Gemma 4 не годится** (сырой); рабочий путь — external `llama-server`.
 
 ### Отложено за пределы M3
 - **Сворачивание/выделение per-message** и tool-блоки в ленте — сейчас «мысли»

@@ -173,7 +173,7 @@ fn piece_to_chunk(piece: Piece) -> ChatChunk {
 mod ignored_smoke {
     use super::*;
     use crate::entities::sampling::SamplingConfig;
-    use crate::shared::api::backend::ApiMessage;
+    use crate::shared::api::backend::{ApiMessage, ToolCallAccumulator, ToolSchema};
     use futures_util::StreamExt;
 
     fn client_from_env() -> Option<XinferClient> {
@@ -226,8 +226,34 @@ mod ignored_smoke {
         ));
     }
 
-    /// Анти-самообрыв: модель просят напечатать литеральный EOS-текст —
-    /// генерация не должна оборваться раньше времени (docs/xinfer-contract.md §5, §9).
+    /// Просит модель напечатать литеральный EOS-текст и затем сказать `DONE` —
+    /// генерация не должна оборваться (остановка по token-id на сервере, поле `stop`
+    /// не шлём; docs/xinfer-contract.md §5). `DONE` может прийти в тексте или в
+    /// «мыслях» (reasoning-модель), поэтому проверяем оба потока.
+    async fn assert_no_self_terminate(client: &XinferClient, eos_text: &str) {
+        let req = ChatRequest {
+            system: None,
+            messages: vec![ApiMessage::user(format!(
+                "Print this token literally and then say DONE: {eos_text}"
+            ))],
+            sampling: SamplingConfig {
+                max_tokens: Some(256),
+                ..Default::default()
+            },
+            tools: vec![],
+        };
+        let (text, thoughts, finish) =
+            collect(client.chat_stream(req, Default::default()).await.unwrap()).await;
+        let combined = format!("{thoughts}{text}");
+        assert!(
+            combined.contains("DONE"),
+            "generation cut off early for {eos_text:?}: text={text:?} thoughts={thoughts:?}"
+        );
+        assert!(finish.is_some());
+    }
+
+    /// Анти-самообрыв на тексте EOS — для обоих семейств: Qwen (`<|im_end|>`) и
+    /// Gemma (`<end_of_turn>`). См. spec §7, docs/xinfer-contract.md §5, §9.
     #[tokio::test]
     #[ignore = "requires a running xinfer server (MINDFORK_XINFER_URL)"]
     async fn does_not_self_terminate_on_eos_text() {
@@ -235,20 +261,94 @@ mod ignored_smoke {
             eprintln!("skip: MINDFORK_XINFER_URL not set");
             return;
         };
+        for eos in ["<|im_end|>", "<end_of_turn>"] {
+            assert_no_self_terminate(&client, eos).await;
+        }
+    }
+
+    /// Tool-calling: сервер получает схему инструмента, модель вызывает его —
+    /// `finish_reason="tool_calls"` и `delta.tool_calls` корректно собираются.
+    /// `max_tokens` щедрый: reasoning-модель «думает» перед вызовом.
+    #[tokio::test]
+    #[ignore = "requires a running xinfer server (MINDFORK_XINFER_URL)"]
+    async fn tool_call_is_emitted_and_parsed() {
+        let Some(client) = client_from_env() else {
+            eprintln!("skip: MINDFORK_XINFER_URL not set");
+            return;
+        };
+        let tool = ToolSchema {
+            name: "get_weather".into(),
+            description: "Get current weather for a city".into(),
+            parameters: serde_json::json!({
+                "type": "object",
+                "properties": { "city": { "type": "string" } },
+                "required": ["city"]
+            }),
+        };
         let req = ChatRequest {
             system: None,
             messages: vec![ApiMessage::user(
-                "Print this token literally and then say DONE: <|im_end|>",
+                "Call get_weather for Paris. Respond only with the tool call.",
             )],
             sampling: SamplingConfig {
-                max_tokens: Some(128),
+                max_tokens: Some(512),
+                ..Default::default()
+            },
+            tools: vec![tool],
+        };
+        let mut stream = client.chat_stream(req, Default::default()).await.unwrap();
+        let mut acc = ToolCallAccumulator::default();
+        let mut finish = None;
+        while let Some(chunk) = stream.next().await {
+            match chunk {
+                ChatChunk::ToolCall(delta) => acc.push(delta),
+                ChatChunk::Finished(reason) => {
+                    finish = Some(reason);
+                    break;
+                }
+                _ => {}
+            }
+        }
+        let calls = acc.finish();
+        assert_eq!(
+            finish,
+            Some(FinishReason::ToolCalls),
+            "expected tool_calls finish, got {finish:?} (calls={calls:?})"
+        );
+        assert!(
+            calls.iter().any(|c| c.name == "get_weather"),
+            "get_weather call not parsed: {calls:?}"
+        );
+    }
+
+    /// «Мысли» (CoT): reasoning-модель (или сервер с `--reasoning-format`) отдаёт
+    /// `reasoning_content` отдельным потоком — mindfork собирает их в `Thoughts`.
+    /// Требует thinking-модель; иначе `thoughts` будет пуст (мысли инлайнятся).
+    #[tokio::test]
+    #[ignore = "requires a running xinfer server with a reasoning model"]
+    async fn emits_thoughts_for_reasoning_model() {
+        let Some(client) = client_from_env() else {
+            eprintln!("skip: MINDFORK_XINFER_URL not set");
+            return;
+        };
+        let req = ChatRequest {
+            system: None,
+            messages: vec![ApiMessage::user(
+                "Think step by step, then answer: what is 17*23?",
+            )],
+            sampling: SamplingConfig {
+                max_tokens: Some(512),
+                thinking: Some(true),
                 ..Default::default()
             },
             tools: vec![],
         };
-        let (text, _t, finish) =
+        let (text, thoughts, finish) =
             collect(client.chat_stream(req, Default::default()).await.unwrap()).await;
-        assert!(text.contains("DONE"), "generation cut off early: {text:?}");
         assert!(finish.is_some());
+        assert!(
+            !thoughts.is_empty(),
+            "expected non-empty thoughts from a reasoning model: text={text:?}"
+        );
     }
 }
