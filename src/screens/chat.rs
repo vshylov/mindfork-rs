@@ -43,6 +43,10 @@ const SPELL_DEBOUNCE: Duration = Duration::from_millis(300);
 pub enum ChatIntent {
     Quit,
     Send(String),
+    /// Перегенерировать последний ответ ассистента (`Ctrl+R`).
+    RegenerateLast,
+    /// Удалить последний обмен; текст пользователя вернётся в поле ввода (`Ctrl+E`).
+    DeleteLastExchange,
     Cancel,
     /// Создать чат из профиля (`None` — профиль по умолчанию).
     NewChat {
@@ -206,6 +210,20 @@ impl ChatScreen {
         self.feed_view.scroll_to_bottom();
     }
 
+    /// Возвращает текст в поле ввода после удаления последнего обмена. Если поле
+    /// непустое — текст добавляется в его начало (существующий ввод не теряется).
+    /// См. spec §11.7.
+    pub fn restore_input(&mut self, text: String) {
+        let existing = self.input.text();
+        let combined = if existing.is_empty() {
+            text
+        } else {
+            format!("{text}{existing}")
+        };
+        self.input.set_text(&combined);
+        self.mark_input_changed();
+    }
+
     pub fn push_user_message(&mut self, text: String) {
         self.feed.push(FeedMessage {
             role: FeedRole::User,
@@ -328,6 +346,14 @@ impl ChatScreen {
                         .then_some(ChatIntent::OpenSettings);
                 }
                 'n' => return self.request_new_chat(),
+                // Перегенерация / удаление последнего обмена (только когда не идёт
+                // генерация). См. spec §11.7.
+                'r' => {
+                    return (!self.generating).then_some(ChatIntent::RegenerateLast);
+                }
+                'e' => {
+                    return (!self.generating).then_some(ChatIntent::DeleteLastExchange);
+                }
                 'l' => {
                     self.overlay = Some(ChatListState::new(self.chats.clone(), self.active_chat));
                     return None;
@@ -607,6 +633,8 @@ const HELP_KEYS: &[(&str, &str)] = &[
     ("Esc", "отмена генерации / закрыть"),
     ("Ctrl+L", "список чатов"),
     ("Ctrl+N", "новый чат (выбор профиля)"),
+    ("Ctrl+R", "перегенерировать ответ"),
+    ("Ctrl+E", "удалить последний обмен (правка)"),
     ("Ctrl+P", "экран настроек"),
     ("Ctrl+T", "свернуть/развернуть «мысли»"),
     ("Ctrl+G", "подсказки орфографии"),
@@ -753,6 +781,46 @@ mod tests {
         assert!(
             s.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE))
                 .is_none()
+        );
+    }
+
+    #[test]
+    fn restore_input_sets_when_empty_and_prepends_when_not() {
+        let mut s = ChatScreen::new();
+        // Пустое поле — просто заполняется.
+        s.restore_input("вопрос".into());
+        assert_eq!(s.input.text(), "вопрос");
+        // Непустое — текст добавляется в начало, существующий ввод сохраняется.
+        s.input.clear();
+        type_str(&mut s, "хвост");
+        s.restore_input("голова ".into());
+        assert_eq!(s.input.text(), "голова хвост");
+    }
+
+    #[test]
+    fn ctrl_r_and_e_emit_intents_when_idle() {
+        let mut s = ChatScreen::new();
+        assert_eq!(
+            s.handle_key(KeyEvent::new(KeyCode::Char('r'), KeyModifiers::CONTROL)),
+            Some(ChatIntent::RegenerateLast)
+        );
+        assert_eq!(
+            s.handle_key(KeyEvent::new(KeyCode::Char('e'), KeyModifiers::CONTROL)),
+            Some(ChatIntent::DeleteLastExchange)
+        );
+    }
+
+    #[test]
+    fn ctrl_r_and_e_suppressed_while_generating() {
+        let mut s = ChatScreen::new();
+        s.begin_generation(gen_id());
+        assert_eq!(
+            s.handle_key(KeyEvent::new(KeyCode::Char('r'), KeyModifiers::CONTROL)),
+            None
+        );
+        assert_eq!(
+            s.handle_key(KeyEvent::new(KeyCode::Char('e'), KeyModifiers::CONTROL)),
+            None
         );
     }
 

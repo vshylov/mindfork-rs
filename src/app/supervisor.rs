@@ -199,7 +199,8 @@ pub struct MockSupervisor {
 
 #[cfg(test)]
 impl MockSupervisor {
-    /// Супервайзер, возвращающий `backend` для chat (статус сразу `Ready`).
+    /// Супервайзер, возвращающий `backend` для chat (in-process mock готов сразу —
+    /// статус `Ready` синхронно, без фонового probe, чтобы тесты не зависели от гонки).
     pub fn with_backend(backend: Option<Arc<dyn EngineBackend>>) -> Self {
         Self {
             backend,
@@ -219,14 +220,16 @@ impl ServerSupervisor for MockSupervisor {
     fn apply_chat(
         &self,
         _settings: &EngineSettings,
-        status_tx: UnboundedSender<ServerStatus>,
+        _status_tx: UnboundedSender<ServerStatus>,
     ) -> ChatSetup {
         self.chat_calls
             .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         let backend = self.backend.clone();
+        // Mock-движок готов мгновенно: отдаём `Ready` как немедленный статус (а не
+        // `Connecting` + async-probe), иначе оркестратор мог бы обработать команду
+        // генерации раньше события готовности и отклонить её (гонка в тестах).
         let status = if backend.is_some() {
-            let _ = status_tx.send(ServerStatus::Ready);
-            ServerStatus::Connecting
+            ServerStatus::Ready
         } else {
             ServerStatus::NotConfigured
         };

@@ -170,6 +170,7 @@ fn apply_event(screen: &mut ChatScreen, settings: &mut Option<SettingsScreen>, e
             messages,
         } => screen.activate_chat(id, title, &messages),
         AppEvent::UserMessage(text) => screen.push_user_message(text),
+        AppEvent::RestoreInput(text) => screen.restore_input(text),
         AppEvent::GenerationStarted { generation_id } => screen.begin_generation(generation_id),
         AppEvent::Chunk {
             generation_id,
@@ -204,6 +205,8 @@ fn dispatch(
     let command = match intent {
         ChatIntent::Quit => return true,
         ChatIntent::Send(text) => AppCommand::SendMessage(text),
+        ChatIntent::RegenerateLast => AppCommand::RegenerateLast,
+        ChatIntent::DeleteLastExchange => AppCommand::DeleteLastExchange,
         ChatIntent::Cancel => AppCommand::Cancel,
         ChatIntent::NewChat { profile_id } => AppCommand::NewChat { profile_id },
         ChatIntent::SwitchChat(id) => AppCommand::SwitchChat(id),
