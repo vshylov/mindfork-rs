@@ -16,6 +16,7 @@ use ratatui::widgets::{Block, Borders, Paragraph};
 use crate::entities::message::{Message, MessageRole};
 use crate::shared::markdown;
 use crate::shared::theme::Palette;
+use crate::shared::wrap;
 
 /// Роль элемента ленты (UI-проекция; системные сообщения не показываются).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -148,7 +149,15 @@ impl MessageFeed {
         let inner = block.inner(area);
         frame.render_widget(&block, area);
 
-        let lines = self.build_lines(messages, palette);
+        // Переносим строки по ширине ленты заранее: так число визуальных рядов
+        // совпадает с `lines.len()`, и математика скролла/«следования за хвостом»
+        // ниже остаётся row-based (см. shared::wrap, ADR 0001).
+        let view_w = inner.width.max(1) as usize;
+        let lines: Vec<Line> = self
+            .build_lines(messages, palette)
+            .iter()
+            .flat_map(|l| wrap::wrap_line(l, view_w))
+            .collect();
         let total = lines.len();
         let view_h = inner.height.max(1) as usize;
         let max_scroll = total.saturating_sub(view_h);
