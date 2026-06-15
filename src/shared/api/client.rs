@@ -3,7 +3,7 @@
 //! (`/v1/chat/completions`), эмбеддинги (`/v1/embeddings`). Протокол — OpenAI
 //! (исходно сверялся с docs/xinfer-contract.md; llama.cpp говорит на том же).
 
-use anyhow::{Context, Result};
+use anyhow::{Context, Result, bail};
 use async_stream::stream;
 use eventsource_stream::Eventsource;
 use futures_util::StreamExt;
@@ -31,15 +31,25 @@ impl OpenAiClient {
         }
     }
 
-    /// Лёгкая проверка доступности сервера (нет `/health` — пробуем `/usage`).
-    /// См. docs/xinfer-contract.md §2.
+    /// Проверка **готовности** сервера к инференсу (не просто «порт открыт»).
+    ///
+    /// llama.cpp биндит HTTP-порт сразу, но на время загрузки модели (~секунды для
+    /// крупных GGUF) отвечает `503 Loading model` на эндпоинты инференса. Поэтому
+    /// проверять только факт ответа нельзя — иначе статус «Ready» выставится раньше
+    /// готовности, и первый же запрос упадёт с 503 (см. §7). Пробуем `/health`
+    /// (в корне, вне `/v1`): `503` — ещё грузится (не готов), `200` — готов, `404`
+    /// (сервер без `/health`) — считаем «жив и не грузится» (готов).
     pub async fn probe(&self) -> Result<()> {
-        let url = format!("{}/usage", self.base_url);
-        self.http
+        let url = health_url(&self.base_url);
+        let resp = self
+            .http
             .get(&url)
             .send()
             .await
             .with_context(|| format!("probing {url}"))?;
+        if resp.status() == reqwest::StatusCode::SERVICE_UNAVAILABLE {
+            bail!("сервер ещё загружает модель (503)");
+        }
         Ok(())
     }
 }
@@ -56,9 +66,20 @@ impl EngineBackend for OpenAiClient {
             .json(&body)
             .send()
             .await
-            .with_context(|| format!("POST {url}"))?
-            .error_for_status()
-            .context("engine returned an error status")?;
+            .with_context(|| format!("POST {url}"))?;
+        // Не глотаем тело ошибки: llama.cpp/OpenAI-серверы кладут причину в JSON
+        // (`{"error":{"message":...}}`); без неё «error status» бесполезен. Логируем
+        // в файл и пробрасываем в текст ошибки (обрезая длинные тела). См. §7.
+        let status = response.status();
+        if !status.is_success() {
+            let body = response.text().await.unwrap_or_default();
+            let detail: String = body.trim().chars().take(500).collect();
+            tracing::warn!(%status, body = %detail, "engine returned an error status");
+            if detail.is_empty() {
+                anyhow::bail!("движок вернул статус {status}");
+            }
+            anyhow::bail!("движок вернул статус {status}: {detail}");
+        }
 
         let mut events = response.bytes_stream().eventsource();
 
@@ -156,6 +177,31 @@ impl Embedder for OpenAiClient {
             .await
             .context("decoding embeddings response")?;
         Ok(resp.data.into_iter().map(|d| d.embedding).collect())
+    }
+}
+
+/// URL эндпоинта готовности `/health` из базового URL. `/health` живёт в корне
+/// сервера (вне `/v1`), поэтому суффикс `/v1` отбрасывается.
+fn health_url(base_url: &str) -> String {
+    let trimmed = base_url.trim_end_matches('/');
+    let root = trimmed.strip_suffix("/v1").unwrap_or(trimmed);
+    format!("{root}/health")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn health_url_strips_v1_suffix() {
+        assert_eq!(
+            health_url("http://127.0.0.1:8000/v1"),
+            "http://127.0.0.1:8000/health"
+        );
+        // Без /v1 — просто дописываем /health.
+        assert_eq!(health_url("http://host:9"), "http://host:9/health");
+        // Лишний слэш не задваивается.
+        assert_eq!(health_url("http://host:9/v1/"), "http://host:9/health");
     }
 }
 

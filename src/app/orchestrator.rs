@@ -105,6 +105,7 @@ pub async fn run(deps: OrchestratorDeps) {
         config,
         registry,
         status_tx,
+        server_status: ServerStatus::NotConfigured,
         profiles: Vec::new(),
         chats: Vec::new(),
         active_id: None,
@@ -140,6 +141,7 @@ pub async fn run(deps: OrchestratorDeps) {
             }
             status = status_rx.recv() => {
                 if let Some(s) = status {
+                    orch.server_status = s.clone();
                     let _ = orch.evt_tx.send(AppEvent::ServerStatus(s));
                 }
             }
@@ -184,6 +186,10 @@ struct Orchestrator {
     registry: Arc<ToolRegistry>,
     /// Канал статуса сервера для фонового probe супервайзера.
     status_tx: UnboundedSender<ServerStatus>,
+    /// Текущий статус chat-сервера. Генерация стартует только в `Ready`: запрос к
+    /// ещё загружающемуся (`Connecting`) managed-серверу вернул бы 503 («error
+    /// status»), а для перегенерации — ещё и снёс бы прежний ответ впустую.
+    server_status: ServerStatus,
     profiles: Vec<Profile>,
     /// Видимые чаты, целиком в памяти (оркестратор — единственный писатель).
     chats: Vec<Chat>,
@@ -253,6 +259,8 @@ impl Orchestrator {
                 }
             }
             AppCommand::SendMessage(text) => self.handle_send(text),
+            AppCommand::RegenerateLast => self.handle_regenerate(),
+            AppCommand::DeleteLastExchange => self.handle_delete_last(),
             AppCommand::NewChat { profile_id } => self.handle_new_chat(profile_id),
             AppCommand::SwitchChat(id) => self.handle_switch(id),
             AppCommand::RenameChat { id, title } => self.handle_rename(id, title),
@@ -283,13 +291,136 @@ impl Orchestrator {
                 .send(AppEvent::Error("Нет активного чата".into()));
             return;
         };
-        let Some(backend) = self.backend.clone() else {
-            let _ = self
-                .evt_tx
-                .send(AppEvent::Error("LLM-сервер не настроен".into()));
+        let Some(backend) = self.ready_backend() else {
+            // Сервер не готов: поле ввода уже очищено экраном — возвращаем текст,
+            // чтобы пользователь не потерял сообщение (ошибка показана отдельно).
+            let _ = self.evt_tx.send(AppEvent::RestoreInput(text));
             return;
         };
 
+        // Добавляем сообщение пользователя в историю и эхо в ленту.
+        {
+            let Some(chat) = self.chat_mut(active_id) else {
+                return;
+            };
+            chat.push_message(Message::user(&text));
+        }
+        self.mark_dirty(active_id);
+        let _ = self.evt_tx.send(AppEvent::UserMessage(text));
+
+        self.start_generation(active_id, backend);
+    }
+
+    /// Перегенерирует последний ответ ассистента (spec §11.7): удаляет всё после
+    /// последнего сообщения пользователя (старый ответ + tool-сообщения) и
+    /// запускает генерацию заново из того же запроса. Лента перестраивается через
+    /// переэмит `ChatActivated`. Во время генерации — игнорируется.
+    fn handle_regenerate(&mut self) {
+        if !matches!(self.state, State::Idle) {
+            return;
+        }
+        let Some(active_id) = self.active_id else {
+            return;
+        };
+        // Готовность сервера проверяем ДО усечения истории: иначе на не-готовом
+        // сервере (загрузка модели) старый ответ был бы снесён, а новый не пришёл бы.
+        let Some(backend) = self.ready_backend() else {
+            return;
+        };
+        {
+            let Some(chat) = self.chat_mut(active_id) else {
+                return;
+            };
+            let Some(idx) = chat
+                .messages
+                .iter()
+                .rposition(|m| m.role == MessageRole::User)
+            else {
+                return; // нет запроса пользователя — нечего перегенерировать
+            };
+            chat.messages.truncate(idx + 1);
+            chat.modified_at = chrono::Utc::now();
+        }
+        self.mark_dirty(active_id);
+        self.activate(active_id); // перестроить ленту без старого ответа
+        self.emit_chat_list();
+        self.start_generation(active_id, backend);
+    }
+
+    /// Удаляет последний обмен: ответ ассистента вместе с вызвавшим его сообщением
+    /// пользователя (spec §11.7). Текст пользователя возвращается в поле ввода
+    /// (`RestoreInput`), чтобы его можно было отредактировать и отправить заново.
+    /// Во время генерации — игнорируется.
+    fn handle_delete_last(&mut self) {
+        if !matches!(self.state, State::Idle) {
+            return;
+        }
+        let Some(active_id) = self.active_id else {
+            return;
+        };
+        let user_text;
+        {
+            let Some(chat) = self.chat_mut(active_id) else {
+                return;
+            };
+            let Some(idx) = chat
+                .messages
+                .iter()
+                .rposition(|m| m.role == MessageRole::User)
+            else {
+                return; // нет сообщения пользователя — удалять нечего
+            };
+            user_text = chat.messages[idx].text.clone();
+            chat.messages.truncate(idx);
+            chat.modified_at = chrono::Utc::now();
+        }
+        self.mark_dirty(active_id);
+        self.activate(active_id); // перестроить ленту без удалённого обмена
+        self.emit_chat_list();
+        let _ = self.evt_tx.send(AppEvent::RestoreInput(user_text));
+    }
+
+    /// Возвращает движок, если chat-сервер готов к генерации (`Ready`); иначе
+    /// эмитит понятную ошибку (не настроен / ещё подключается / недоступен) и
+    /// возвращает `None`. Гейтит и отправку, и перегенерацию — чтобы запрос не
+    /// уходил на ещё загружающийся сервер (иначе 503 → «engine returned an error
+    /// status»). См. spec §7.
+    fn ready_backend(&self) -> Option<Arc<dyn EngineBackend>> {
+        match &self.server_status {
+            ServerStatus::Ready => match self.backend.clone() {
+                Some(backend) => Some(backend),
+                None => {
+                    let _ = self
+                        .evt_tx
+                        .send(AppEvent::Error("LLM-сервер не настроен".into()));
+                    None
+                }
+            },
+            ServerStatus::Connecting => {
+                let _ = self.evt_tx.send(AppEvent::Error(
+                    "Сервер ещё подключается — дождитесь готовности и повторите".into(),
+                ));
+                None
+            }
+            ServerStatus::NotConfigured => {
+                let _ = self
+                    .evt_tx
+                    .send(AppEvent::Error("LLM-сервер не настроен".into()));
+                None
+            }
+            ServerStatus::Disconnected(reason) => {
+                let _ = self
+                    .evt_tx
+                    .send(AppEvent::Error(format!("Сервер недоступен: {reason}")));
+                None
+            }
+        }
+    }
+
+    /// Запускает генерацию из текущего состояния чата (история уже подготовлена:
+    /// добавлено сообщение пользователя или усечён старый ответ). Общая часть для
+    /// отправки нового сообщения и перегенерации.
+    fn start_generation(&mut self, active_id: Uuid, backend: Arc<dyn EngineBackend>) {
         // Снимок на начало хода: семплинг, доступные инструменты, контекст.
         let sampling = self.effective_sampling(active_id);
         let Some(chat_ref) = self.chats.iter().find(|c| c.id == active_id) else {
@@ -310,14 +441,13 @@ impl Orchestrator {
         );
         let schemas = self.registry.schemas_for(&allowed);
 
-        // Добавляем сообщение пользователя и строим запрос/контекст инструмента.
+        // Строим запрос/контекст инструмента из текущей истории чата.
         let request;
         let ctx;
         {
             let Some(chat) = self.chat_mut(active_id) else {
                 return;
             };
-            chat.push_message(Message::user(&text));
             request = build_request(chat, sampling.clone(), schemas);
             ctx = ToolContext {
                 profile_id,
@@ -330,8 +460,6 @@ impl Orchestrator {
                 embedder: self.embedder.clone(),
             };
         }
-        self.mark_dirty(active_id);
-        let _ = self.evt_tx.send(AppEvent::UserMessage(text));
 
         let id = Uuid::new_v4();
         let cancel = CancellationToken::new();
@@ -602,6 +730,7 @@ impl Orchestrator {
             .apply_chat(&self.config.engine, self.status_tx.clone());
         self.backend = setup.backend;
         self.chat_handle = setup.handle;
+        self.server_status = setup.status.clone();
         let _ = self.evt_tx.send(AppEvent::ServerStatus(setup.status));
     }
 
@@ -1046,11 +1175,18 @@ mod tests {
         None
     }
 
-    /// Собирает «голый» оркестратор для юнит-тестов чистых методов (без петли).
+    /// Собирает «голый» оркестратор для юнит-тестов чистых методов (без петли),
+    /// отбрасывая поток событий.
     fn bare_orch() -> (tempfile::TempDir, Orchestrator) {
+        let (dir, orch, _rx) = bare_orch_rx();
+        (dir, orch)
+    }
+
+    /// Как [`bare_orch`], но возвращает и приёмник событий (для проверки эмиссии).
+    fn bare_orch_rx() -> (tempfile::TempDir, Orchestrator, UnboundedReceiver<AppEvent>) {
         let dir = tempfile::tempdir().unwrap();
         let storage = Arc::new(Storage::open(Paths::with_root(dir.path())).unwrap());
-        let (evt_tx, _evt_rx) = unbounded_channel();
+        let (evt_tx, evt_rx) = unbounded_channel();
         let (done_tx, _done_rx) = unbounded_channel();
         let (status_tx, _status_rx) = unbounded_channel();
         let config = AppConfig {
@@ -1072,6 +1208,7 @@ mod tests {
             config,
             registry,
             status_tx,
+            server_status: ServerStatus::Ready,
             profiles: Vec::new(),
             chats: Vec::new(),
             active_id: None,
@@ -1080,7 +1217,7 @@ mod tests {
             dirty: HashSet::new(),
             save_deadline: None,
         };
-        (dir, orch)
+        (dir, orch, evt_rx)
     }
 
     #[test]
@@ -1191,6 +1328,209 @@ mod tests {
         assert_eq!(chat.messages[1].role, MessageRole::Assistant);
         assert_eq!(chat.messages[1].text, "Привет");
         assert_eq!(chat.messages[1].thoughts.as_deref(), Some("думаю"));
+    }
+
+    #[tokio::test]
+    async fn regenerate_replaces_last_assistant_message() {
+        // Два разных ответа по очереди: исходный ход → «первый», перегенерация → «второй».
+        let backend = Arc::new(MockBackend::sequence(vec![
+            vec![
+                ChatChunk::Text("первый".into()),
+                ChatChunk::Finished(FinishReason::Stop),
+            ],
+            vec![
+                ChatChunk::Text("второй".into()),
+                ChatChunk::Finished(FinishReason::Stop),
+            ],
+        ])) as Arc<dyn EngineBackend>;
+        let (_d, cmd_tx, mut evt_rx, handle) = spawn_orch(Some(backend));
+        let root = _d.path().to_path_buf();
+        let active = wait_for(&mut evt_rx, |e| matches!(e, AppEvent::ChatActivated { .. }))
+            .await
+            .unwrap();
+        let chat_id = match active {
+            AppEvent::ChatActivated { id, .. } => id,
+            _ => unreachable!(),
+        };
+
+        cmd_tx
+            .send(AppCommand::SendMessage("вопрос".into()))
+            .unwrap();
+        wait_for(&mut evt_rx, |e| matches!(e, AppEvent::Finished { .. }))
+            .await
+            .unwrap();
+        // ChatList после Finished — признак, что handle_done применил ответ (state Idle).
+        wait_for(&mut evt_rx, |e| matches!(e, AppEvent::ChatList(_)))
+            .await
+            .unwrap();
+
+        cmd_tx.send(AppCommand::RegenerateLast).unwrap();
+        wait_for(&mut evt_rx, |e| matches!(e, AppEvent::Finished { .. }))
+            .await
+            .unwrap();
+        wait_for(&mut evt_rx, |e| matches!(e, AppEvent::ChatList(_)))
+            .await
+            .unwrap();
+
+        cmd_tx.send(AppCommand::Quit).unwrap();
+        handle.await.unwrap();
+
+        // Старый ответ заменён новым; сообщение пользователя не дублируется.
+        let reopened = Storage::open(Paths::with_root(&root)).unwrap();
+        let chat = reopened.json().load_chat(chat_id).unwrap().unwrap();
+        assert_eq!(chat.messages.len(), 2, "{:?}", chat.messages);
+        assert_eq!(chat.messages[0].role, MessageRole::User);
+        assert_eq!(chat.messages[0].text, "вопрос");
+        assert_eq!(chat.messages[1].role, MessageRole::Assistant);
+        assert_eq!(chat.messages[1].text, "второй");
+    }
+
+    #[tokio::test]
+    async fn delete_last_exchange_restores_user_text() {
+        let backend = Arc::new(MockBackend::scripted(vec![
+            ChatChunk::Text("ответ".into()),
+            ChatChunk::Finished(FinishReason::Stop),
+        ])) as Arc<dyn EngineBackend>;
+        let (_d, cmd_tx, mut evt_rx, handle) = spawn_orch(Some(backend));
+        let root = _d.path().to_path_buf();
+        let active = wait_for(&mut evt_rx, |e| matches!(e, AppEvent::ChatActivated { .. }))
+            .await
+            .unwrap();
+        let chat_id = match active {
+            AppEvent::ChatActivated { id, .. } => id,
+            _ => unreachable!(),
+        };
+
+        cmd_tx
+            .send(AppCommand::SendMessage("забудь это".into()))
+            .unwrap();
+        wait_for(&mut evt_rx, |e| matches!(e, AppEvent::Finished { .. }))
+            .await
+            .unwrap();
+        wait_for(&mut evt_rx, |e| matches!(e, AppEvent::ChatList(_)))
+            .await
+            .unwrap();
+
+        cmd_tx.send(AppCommand::DeleteLastExchange).unwrap();
+        let restore = wait_for(&mut evt_rx, |e| matches!(e, AppEvent::RestoreInput(_)))
+            .await
+            .unwrap();
+        assert!(matches!(restore, AppEvent::RestoreInput(t) if t == "забудь это"));
+
+        cmd_tx.send(AppCommand::Quit).unwrap();
+        handle.await.unwrap();
+
+        // Обмен удалён полностью (дефолтный чат без приветствия → пусто).
+        let reopened = Storage::open(Paths::with_root(&root)).unwrap();
+        let chat = reopened.json().load_chat(chat_id).unwrap().unwrap();
+        assert!(chat.messages.is_empty(), "{:?}", chat.messages);
+    }
+
+    #[tokio::test]
+    async fn regenerate_without_user_message_is_noop() {
+        // Чат с приветствием-ассистентом, но без сообщения пользователя — нечего
+        // перегенерировать; команда не должна стартовать генерацию.
+        let backend = Arc::new(MockBackend::scripted(vec![ChatChunk::Finished(
+            FinishReason::Stop,
+        )])) as Arc<dyn EngineBackend>;
+        let (_d, mut orch) = bare_orch();
+        orch.backend = Some(backend);
+        let mut profile = Profile::new("P", "sys");
+        profile.greeting = Some("Привет!".into());
+        let mut chat = Chat::from_profile(&profile, "c");
+        chat.push_message(Message::assistant("Привет!"));
+        let chat_id = chat.id;
+        orch.profiles.push(profile);
+        orch.chats.push(chat);
+        orch.active_id = Some(chat_id);
+
+        orch.handle_regenerate();
+        // Состояние осталось Idle (генерация не запущена), история не тронута.
+        assert!(matches!(orch.state, State::Idle));
+        assert_eq!(orch.chats[0].messages.len(), 1);
+    }
+
+    #[test]
+    fn regenerate_on_not_ready_server_keeps_reply() {
+        // Сервер ещё подключается (managed грузит модель) — перегенерация не должна
+        // ни сносить прежний ответ, ни уходить запросом на не-готовый сервер (иначе
+        // 503 «engine returned an error status» и потеря ответа). Регресс-тест.
+        let backend = Arc::new(MockBackend::scripted(vec![ChatChunk::Finished(
+            FinishReason::Stop,
+        )])) as Arc<dyn EngineBackend>;
+        let (_d, mut orch) = bare_orch();
+        orch.backend = Some(backend);
+        orch.server_status = ServerStatus::Connecting; // ещё не готов
+        let profile = Profile::new("P", "sys");
+        let mut chat = Chat::from_profile(&profile, "c");
+        chat.push_message(Message::user("вопрос"));
+        chat.push_message(Message::assistant("старый ответ"));
+        let chat_id = chat.id;
+        orch.profiles.push(profile);
+        orch.chats.push(chat);
+        orch.active_id = Some(chat_id);
+
+        orch.handle_regenerate();
+
+        // Ответ сохранён, генерация не стартовала (история не усечена).
+        assert!(matches!(orch.state, State::Idle));
+        assert_eq!(
+            orch.chats[0].messages.len(),
+            2,
+            "прежний ответ не должен быть снесён на не-готовом сервере"
+        );
+        assert_eq!(orch.chats[0].messages[1].text, "старый ответ");
+    }
+
+    #[test]
+    fn send_on_not_ready_server_restores_input() {
+        // Сервер ещё подключается — отправка отклоняется, но текст возвращается в
+        // поле ввода (RestoreInput), а в чат сообщение не добавляется.
+        let backend = Arc::new(MockBackend::scripted(vec![])) as Arc<dyn EngineBackend>;
+        let (_d, mut orch, mut rx) = bare_orch_rx();
+        orch.backend = Some(backend);
+        orch.server_status = ServerStatus::Connecting;
+        let profile = Profile::new("P", "sys");
+        let chat = Chat::from_profile(&profile, "c");
+        let chat_id = chat.id;
+        orch.profiles.push(profile);
+        orch.chats.push(chat);
+        orch.active_id = Some(chat_id);
+
+        orch.handle_send("привет".into());
+
+        assert!(matches!(orch.state, State::Idle));
+        assert!(orch.chats[0].messages.is_empty(), "сообщение не добавлено");
+        // Среди эмитнутых событий — ошибка и возврат текста в поле ввода.
+        let mut got_error = false;
+        let mut restored = None;
+        while let Ok(ev) = rx.try_recv() {
+            match ev {
+                AppEvent::Error(_) => got_error = true,
+                AppEvent::RestoreInput(t) => restored = Some(t),
+                _ => {}
+            }
+        }
+        assert!(got_error, "должна быть эмитнута ошибка о неготовности");
+        assert_eq!(restored.as_deref(), Some("привет"));
+    }
+
+    #[test]
+    fn ready_backend_gates_by_status() {
+        let (_d, mut orch) = bare_orch();
+        orch.backend = Some(Arc::new(MockBackend::scripted(vec![])) as Arc<dyn EngineBackend>);
+
+        orch.server_status = ServerStatus::Ready;
+        assert!(orch.ready_backend().is_some());
+
+        for status in [
+            ServerStatus::Connecting,
+            ServerStatus::NotConfigured,
+            ServerStatus::Disconnected("боль".into()),
+        ] {
+            orch.server_status = status;
+            assert!(orch.ready_backend().is_none());
+        }
     }
 
     #[tokio::test]
