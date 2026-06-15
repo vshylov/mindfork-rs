@@ -134,6 +134,12 @@ impl MessageFeed {
         self.follow = true;
     }
 
+    /// Тест-аксессор: следует ли лента за хвостом (прокрутка к низу).
+    #[cfg(test)]
+    pub(crate) fn is_following(&self) -> bool {
+        self.follow
+    }
+
     /// Рисует ленту. `messages` — текущее содержимое активного чата.
     pub fn render(
         &mut self,
