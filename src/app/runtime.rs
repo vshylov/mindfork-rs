@@ -113,7 +113,7 @@ fn run_loop(
     personal: PathBuf,
 ) -> Result<()> {
     let mut screen = ChatScreen::new();
-    // Экран настроек открывается поверх чата (Ctrl+,). События продолжают
+    // Экран настроек открывается поверх чата (Ctrl+P). События продолжают
     // применяться к чату (генерация не прерывается).
     let mut settings: Option<SettingsScreen> = None;
     let mut spell = SpellLoader::new(dict_dir, personal);

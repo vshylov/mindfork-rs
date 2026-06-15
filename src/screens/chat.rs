@@ -23,6 +23,7 @@ use crate::entities::profile::{Profile, ProfileSummary};
 use crate::features::spellcheck::SpellChecker;
 use crate::shared::api::FinishReason;
 use crate::shared::config::AppConfig;
+use crate::shared::keys;
 use crate::shared::server::ServerStatus;
 use crate::shared::theme::Palette;
 use crate::widgets::chat_list::{ChatListAction, ChatListState};
@@ -54,7 +55,7 @@ pub enum ChatIntent {
         id: Uuid,
         title: String,
     },
-    /// Открыть экран настроек (`Ctrl+,`). `app` создаёт его из снимка настроек.
+    /// Открыть экран настроек (`Ctrl+P`). `app` создаёт его из снимка настроек.
     OpenSettings,
 }
 
@@ -102,7 +103,7 @@ pub struct ChatScreen {
     /// Открытый попап подсказок орфографии.
     suggest: Option<SuggestPopup>,
     /// Последний снимок настроек (конфиг + полные профили) — для открытия экрана
-    /// настроек по `Ctrl+,`. Заполняется событием `Settings`. См. spec §11.6.
+    /// настроек по `Ctrl+P`. Заполняется событием `Settings`. См. spec §11.6.
     settings_snapshot: Option<(AppConfig, Vec<Profile>)>,
     /// Показан ли оверлей помощи по клавишам (`F1`/`?`). См. spec §11.7.
     show_help: bool,
@@ -141,7 +142,7 @@ impl ChatScreen {
         }
     }
 
-    /// Сохраняет снимок настроек (для открытия экрана настроек по `Ctrl+,`) и
+    /// Сохраняет снимок настроек (для открытия экрана настроек по `Ctrl+P`) и
     /// обновляет палитру темы.
     pub fn set_settings(&mut self, config: AppConfig, profiles: Vec<Profile>) {
         self.palette = Palette::for_theme(config.interface.theme);
@@ -311,8 +312,40 @@ impl ChatScreen {
         if self.overlay.is_some() {
             return self.handle_overlay_key(key);
         }
+        // Шорткаты с Ctrl матчим по «физической» латинской клавише — чтобы они
+        // срабатывали при любой раскладке (русская ЙЦУКЕН даёт `Ctrl+д` вместо
+        // `Ctrl+l`). См. shared::keys, spec §11.7.
+        if key.modifiers.contains(KeyModifiers::CONTROL)
+            && let KeyCode::Char(c) = key.code
+        {
+            match keys::physical_char(c) {
+                'c' => return Some(ChatIntent::Quit),
+                // Экран настроек (Ctrl+P) — открывается, если снимок настроек получен.
+                'p' => {
+                    return self
+                        .settings_snapshot
+                        .is_some()
+                        .then_some(ChatIntent::OpenSettings);
+                }
+                'n' => return self.request_new_chat(),
+                'l' => {
+                    self.overlay = Some(ChatListState::new(self.chats.clone(), self.active_chat));
+                    return None;
+                }
+                // Подсказки орфографии для слова под курсором (spec §11.5).
+                'g' => {
+                    self.open_suggestions();
+                    return None;
+                }
+                // Сворачивание «мыслей» (spec §11.3).
+                't' => {
+                    self.feed_view.toggle_thoughts();
+                    return None;
+                }
+                _ => {}
+            }
+        }
         match (key.code, key.modifiers) {
-            (KeyCode::Char('c'), KeyModifiers::CONTROL) => Some(ChatIntent::Quit),
             // Помощь по клавишам: F1 всегда; `?` — только при пустом вводе (иначе
             // символ печатается). См. spec §11.7.
             (KeyCode::F(1), _) => {
@@ -323,35 +356,13 @@ impl ChatScreen {
                 self.show_help = true;
                 None
             }
-            // Экран настроек (Ctrl+,) — открывается, если снимок настроек получен.
-            (KeyCode::Char(','), KeyModifiers::CONTROL) => {
-                if self.settings_snapshot.is_some() {
-                    Some(ChatIntent::OpenSettings)
-                } else {
-                    None
-                }
-            }
-            (KeyCode::Char('n'), KeyModifiers::CONTROL) => self.request_new_chat(),
-            (KeyCode::Char('l'), KeyModifiers::CONTROL) => {
-                self.overlay = Some(ChatListState::new(self.chats.clone(), self.active_chat));
-                None
-            }
-            // Подсказки орфографии для слова под курсором (spec §11.5).
-            (KeyCode::Char('g'), KeyModifiers::CONTROL) => {
-                self.open_suggestions();
-                None
-            }
-            // Прокрутка ленты и сворачивание «мыслей» (spec §11.3).
+            // Прокрутка ленты (spec §11.3).
             (KeyCode::PageUp, _) => {
                 self.feed_view.scroll_up(PAGE_SCROLL);
                 None
             }
             (KeyCode::PageDown, _) => {
                 self.feed_view.scroll_down(PAGE_SCROLL);
-                None
-            }
-            (KeyCode::Char('t'), KeyModifiers::CONTROL) => {
-                self.feed_view.toggle_thoughts();
                 None
             }
             (KeyCode::Esc, _) => {
@@ -596,7 +607,7 @@ const HELP_KEYS: &[(&str, &str)] = &[
     ("Esc", "отмена генерации / закрыть"),
     ("Ctrl+L", "список чатов"),
     ("Ctrl+N", "новый чат (выбор профиля)"),
-    ("Ctrl+,", "экран настроек"),
+    ("Ctrl+P", "экран настроек"),
     ("Ctrl+T", "свернуть/развернуть «мысли»"),
     ("Ctrl+G", "подсказки орфографии"),
     ("PageUp/PageDown", "прокрутка ленты"),
@@ -798,18 +809,43 @@ mod tests {
     }
 
     #[test]
-    fn ctrl_comma_opens_settings_only_with_snapshot() {
+    fn ctrl_p_opens_settings_only_with_snapshot() {
         let mut s = ChatScreen::new();
-        // Без снимка настроек — Ctrl+, ничего не делает.
+        // Без снимка настроек — Ctrl+P ничего не делает.
         assert_eq!(
-            s.handle_key(KeyEvent::new(KeyCode::Char(','), KeyModifiers::CONTROL)),
+            s.handle_key(KeyEvent::new(KeyCode::Char('p'), KeyModifiers::CONTROL)),
             None
         );
         s.set_settings(AppConfig::default(), vec![Profile::new("P", "sys")]);
         assert_eq!(
-            s.handle_key(KeyEvent::new(KeyCode::Char(','), KeyModifiers::CONTROL)),
+            s.handle_key(KeyEvent::new(KeyCode::Char('p'), KeyModifiers::CONTROL)),
             Some(ChatIntent::OpenSettings)
         );
+    }
+
+    #[test]
+    fn ctrl_shortcuts_work_under_cyrillic_layout() {
+        // При русской раскладке физические клавиши дают кириллицу: Ctrl+з (физ. P),
+        // Ctrl+с (физ. C), Ctrl+д (физ. L) — шорткаты обязаны срабатывать.
+        let mut s = ChatScreen::new();
+        s.set_settings(AppConfig::default(), vec![Profile::new("P", "sys")]);
+        assert_eq!(
+            s.handle_key(KeyEvent::new(KeyCode::Char('з'), KeyModifiers::CONTROL)),
+            Some(ChatIntent::OpenSettings),
+            "Ctrl+з (физ. P) открывает настройки"
+        );
+        assert_eq!(
+            s.handle_key(KeyEvent::new(KeyCode::Char('с'), KeyModifiers::CONTROL)),
+            Some(ChatIntent::Quit),
+            "Ctrl+с (физ. C) — выход"
+        );
+        // Ctrl+д (физ. L) открывает оверлей списка чатов (внутреннее действие).
+        assert!(s.overlay.is_none());
+        assert_eq!(
+            s.handle_key(KeyEvent::new(KeyCode::Char('д'), KeyModifiers::CONTROL)),
+            None
+        );
+        assert!(s.overlay.is_some(), "Ctrl+д (физ. L) открыл список чатов");
     }
 
     #[test]

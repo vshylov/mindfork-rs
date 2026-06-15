@@ -1,5 +1,5 @@
 //! Экран настроек (FSD "page"): секции, навигация и редактирование полей.
-//! Вход по `Ctrl+,` из чата. См. spec §11.6.
+//! Вход по `Ctrl+P` из чата. См. spec §11.6.
 //!
 //! Как и [`super::chat::ChatScreen`], экран не знает про `app`/каналы: на правки
 //! он возвращает [`SettingsIntent`], который `app` транслирует в `AppCommand`
@@ -21,6 +21,7 @@ use crate::entities::sampling::ReasoningEffort;
 use crate::features::profiles::ProfileEdit;
 use crate::features::tools::default_tool_ids;
 use crate::shared::config::{AppConfig, ServerMode, Theme};
+use crate::shared::keys;
 use crate::shared::theme::Palette;
 use crate::widgets::input_box::InputBox;
 
@@ -377,20 +378,30 @@ impl SettingsScreen {
         if self.editor.is_some() {
             return self.handle_editor_key(key);
         }
+        // Создать/удалить профиль (в секции «Профили»). Матчим по «физической»
+        // латинской клавише — шорткаты работают при любой раскладке (см. shared::keys).
+        if key.modifiers.contains(KeyModifiers::CONTROL)
+            && self.section() == Section::Profiles
+            && let KeyCode::Char(c) = key.code
+        {
+            match keys::physical_char(c) {
+                'n' => {
+                    return Some(SettingsIntent::CreateProfile {
+                        name: "Новый профиль".into(),
+                        system_message: String::new(),
+                    });
+                }
+                'd' => {
+                    return self
+                        .profiles
+                        .get(self.profile_idx)
+                        .map(|p| SettingsIntent::DeleteProfile(p.id));
+                }
+                _ => {}
+            }
+        }
         match (key.code, key.modifiers) {
             (KeyCode::Esc, _) => Some(SettingsIntent::Close),
-            // Создать/удалить профиль (в секции «Профили»).
-            (KeyCode::Char('n'), KeyModifiers::CONTROL) if self.section() == Section::Profiles => {
-                Some(SettingsIntent::CreateProfile {
-                    name: "Новый профиль".into(),
-                    system_message: String::new(),
-                })
-            }
-            (KeyCode::Char('d'), KeyModifiers::CONTROL) if self.section() == Section::Profiles => {
-                self.profiles
-                    .get(self.profile_idx)
-                    .map(|p| SettingsIntent::DeleteProfile(p.id))
-            }
             (KeyCode::Tab, _) => {
                 self.move_section(1);
                 None
