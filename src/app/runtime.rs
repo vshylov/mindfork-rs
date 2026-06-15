@@ -157,6 +157,8 @@ fn apply_event(screen: &mut ChatScreen, settings: &mut Option<SettingsScreen>, e
     match event {
         AppEvent::ServerStatus(status) => screen.set_server_status(status),
         AppEvent::ChatList(chats) => screen.set_chat_list(chats),
+        AppEvent::ChatRenamed { id, title } => screen.rename_chat(id, title),
+        AppEvent::ChatListError(message) => screen.set_overlay_error(message),
         AppEvent::ProfileList(profiles) => screen.set_profile_list(profiles),
         AppEvent::Settings { config, profiles } => {
             if let Some(settings_screen) = settings {
@@ -213,6 +215,7 @@ fn dispatch(
         ChatIntent::CloneChat(id) => AppCommand::CloneChat(id),
         ChatIntent::DeleteChat(id) => AppCommand::DeleteChat(id),
         ChatIntent::RenameChat { id, title } => AppCommand::RenameChat { id, title },
+        ChatIntent::AutoRenameChat(id) => AppCommand::AutoRenameChat(id),
         ChatIntent::OpenSettings => {
             if let Some((config, profiles)) = screen.settings_snapshot() {
                 *settings = Some(SettingsScreen::new(config, profiles));

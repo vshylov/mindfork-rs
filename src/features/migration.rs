@@ -345,6 +345,7 @@ fn map_sampling(s: &LlSampling, include_thoughts: Option<bool>) -> SamplingConfi
         max_tokens: s.max_tokens,
         thinking: include_thoughts,
         reasoning_effort: None,
+        reasoning_budget: None,
     }
 }
 

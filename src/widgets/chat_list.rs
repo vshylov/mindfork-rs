@@ -6,7 +6,7 @@
 
 use ratatui::Frame;
 use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
-use ratatui::layout::{Constraint, Flex, Layout, Rect};
+use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::style::{Style, Stylize};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Clear, List, ListItem, ListState, Paragraph};
@@ -35,6 +35,8 @@ pub enum ChatListAction {
     Delete(Uuid),
     /// Переименовать чат.
     Rename { id: Uuid, title: String },
+    /// Авто-название: модель читает переписку и придумывает заголовок.
+    AutoRename(Uuid),
 }
 
 /// Режим ввода внутри оверлея.
@@ -54,6 +56,9 @@ pub struct ChatListState {
     /// Индекс выделения в текущем отфильтрованном списке.
     selected: usize,
     mode: Mode,
+    /// Текущая ошибка операции (авто-название/удаление/клон) для отдельной области.
+    /// Сбрасывается при следующем нажатии клавиши.
+    error: Option<String>,
 }
 
 impl ChatListState {
@@ -65,6 +70,7 @@ impl ChatListState {
             sort: SortMode::default(),
             selected: 0,
             mode: Mode::Search,
+            error: None,
         };
         if let Some(active) = active {
             let visible = state.visible();
@@ -106,11 +112,19 @@ impl ChatListState {
         }
     }
 
+    /// Устанавливает текст ошибки для отдельной области оверлея. Сбрасывается
+    /// при следующем нажатии клавиши, так что не «висит» постоянно.
+    pub fn set_error(&mut self, message: String) {
+        self.error = Some(message);
+    }
+
     /// Обрабатывает нажатие клавиши, возвращая действие для исполнения.
     pub fn on_key(&mut self, key: KeyEvent) -> ChatListAction {
         if key.kind != KeyEventKind::Press {
             return ChatListAction::None;
         }
+        // Любое нажатие убирает показанную ранее ошибку (она не должна «висеть»).
+        self.error = None;
         match &mut self.mode {
             Mode::Rename { .. } => self.on_key_rename(key),
             Mode::Search => self.on_key_search(key),
@@ -127,6 +141,11 @@ impl ChatListState {
                 'n' => ChatListAction::New,
                 'd' => match self.selected_id() {
                     Some(id) => ChatListAction::Clone(id),
+                    None => ChatListAction::None,
+                },
+                // Авто-название выделенного чата силами модели.
+                'r' => match self.selected_id() {
+                    Some(id) => ChatListAction::AutoRename(id),
                     None => ChatListAction::None,
                 },
                 _ => ChatListAction::None,
@@ -212,9 +231,10 @@ impl ChatListState {
         }
     }
 
-    /// Рисует оверлей по центру `area`. `active` — текущий активный чат (метка).
+    /// Рисует окно списка чатов на весь экран (`area`). `active` — текущий
+    /// активный чат (метка). См. spec §11.2.
     pub fn render(&self, frame: &mut Frame, area: Rect, active: Option<Uuid>, palette: &Palette) {
-        let popup = centered_rect(60, 36, 70, area);
+        let popup = area;
         frame.render_widget(Clear, popup);
 
         let block = Block::default()
@@ -224,8 +244,13 @@ impl ChatListState {
         let inner = block.inner(popup);
         frame.render_widget(block, popup);
 
-        let [search_area, list_area] =
-            Layout::vertical([Constraint::Length(1), Constraint::Min(1)]).areas(inner);
+        // Под список отдаём всё, кроме строки поиска и (если есть) строки ошибки.
+        let mut constraints = vec![Constraint::Length(1), Constraint::Min(1)];
+        if self.error.is_some() {
+            constraints.push(Constraint::Length(1));
+        }
+        let chunks = Layout::vertical(constraints).split(inner);
+        let (search_area, list_area) = (chunks[0], chunks[1]);
 
         // --- строка поиска / переименования ---
         frame.render_widget(self.header_line(palette), search_area);
@@ -242,6 +267,15 @@ impl ChatListState {
             list_state.select(Some(self.selected.min(visible.len() - 1)));
         }
         frame.render_stateful_widget(list, list_area, &mut list_state);
+
+        // --- область ошибки (если есть) ---
+        if let Some(err) = &self.error {
+            let line = Line::from(vec![
+                Span::from("⚠ ").fg(palette.error),
+                Span::from(err.clone()).fg(palette.error),
+            ]);
+            frame.render_widget(Paragraph::new(line), chunks[2]);
+        }
     }
 
     fn header_line(&self, palette: &Palette) -> Paragraph<'static> {
@@ -280,7 +314,7 @@ impl ChatListState {
     fn help_line(&self) -> Line<'static> {
         match self.mode {
             Mode::Search => Line::from(format!(
-                " ↑↓ выбор · Enter открыть · F2 ⮞ · Ctrl+N новый · Ctrl+D копия · Del удалить · Tab сорт.: {} ",
+                " ↑↓ выбор · Enter открыть · F2 ⮞ · Ctrl+R авто-назв. · Ctrl+N новый · Ctrl+D копия · Del удалить · Tab сорт.: {} ",
                 self.sort.label()
             ))
             .dim(),
@@ -289,20 +323,6 @@ impl ChatListState {
             }
         }
     }
-}
-
-/// Прямоугольник по центру `area`: `pct_x`/`pct_y` процентов, но не уже/ниже
-/// минимумов (чтобы оверлей не схлопывался на маленьком терминале).
-fn centered_rect(pct_x: u16, min_w: u16, pct_y: u16, area: Rect) -> Rect {
-    let w = area.width.saturating_mul(pct_x) / 100;
-    let h = area.height.saturating_mul(pct_y) / 100;
-    let [h_area] = Layout::horizontal([Constraint::Length(w.max(min_w).min(area.width))])
-        .flex(Flex::Center)
-        .areas(area);
-    let [v_area] = Layout::vertical([Constraint::Length(h.max(5).min(area.height))])
-        .flex(Flex::Center)
-        .areas(h_area);
-    v_area
 }
 
 #[cfg(test)]
@@ -381,6 +401,22 @@ mod tests {
     }
 
     #[test]
+    fn ctrl_r_requests_auto_rename_of_selected() {
+        let chats = vec![chat("A")];
+        let id = chats[0].id;
+        let mut s = ChatListState::new(chats, None);
+        assert_eq!(
+            s.on_key(ctrl(KeyCode::Char('r'))),
+            ChatListAction::AutoRename(id)
+        );
+        // И при кириллической раскладке (физ. R = Ctrl+к).
+        assert_eq!(
+            s.on_key(ctrl(KeyCode::Char('к'))),
+            ChatListAction::AutoRename(id)
+        );
+    }
+
+    #[test]
     fn f2_enters_rename_and_enter_commits() {
         let chats = vec![chat("Старое")];
         let id = chats[0].id;
@@ -420,6 +456,29 @@ mod tests {
         let before = s.sort;
         s.on_key(key(KeyCode::Tab));
         assert_ne!(s.sort, before);
+    }
+
+    #[test]
+    fn error_is_set_and_cleared_on_next_key() {
+        let mut s = ChatListState::new(vec![chat("A")], None);
+        s.set_error("боль".into());
+        assert_eq!(s.error.as_deref(), Some("боль"));
+        // Любое нажатие убирает ошибку.
+        s.on_key(key(KeyCode::Down));
+        assert!(s.error.is_none());
+    }
+
+    #[test]
+    fn render_with_error_does_not_panic() {
+        use ratatui::Terminal;
+        use ratatui::backend::TestBackend;
+        let mut state = ChatListState::new(vec![chat("Альфа")], None);
+        state.set_error("Недостаточно сообщений для авто-названия".into());
+        for (w, h) in [(80u16, 24u16), (20, 6)] {
+            let mut term = Terminal::new(TestBackend::new(w, h)).unwrap();
+            term.draw(|f| state.render(f, f.area(), None, &Palette::default()))
+                .unwrap();
+        }
     }
 
     #[test]
