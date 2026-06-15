@@ -40,51 +40,38 @@ cargo test
 
 В dev-сборке это `target/debug/` рядом с бинарником.
 
-## 3. Движок инференса xinfer
+## 3. Движок инференса (llama.cpp `llama-server`)
 
-Приложение — **HTTP-клиент** к локальному OpenAI-совместимому серверу
-**xinfer**. Два режима (настраиваются на экране настроек, `Ctrl+,`, секция
-«Модель/сервер»):
+Приложение — **HTTP-клиент** к локальному **OpenAI-совместимому** серверу. Протокол
+универсален, поэтому в external-режиме подойдёт любой такой сервер (llama.cpp
+`llama-server`, vLLM, LM Studio, Ollama …). Рекомендуемый и проверенный бэкенд —
+**llama.cpp `llama-server`** (готовые сборки под Windows/CUDA). Вся цепочка
+(стриминг, остановка по EOS, tool-calling, «мысли») проверена на Gemma 4 E4B-it.
 
-- **managed** — приложение само запускает дочерний процесс `xinfer` (нужен путь к
-  бинарнику и модель: `--m` HF-id / `--w` локальные веса / `--f` GGUF, квантизация
-  `--isq`, порт). Смена модели в настройках **перезапускает** сервер.
+> Исходно проектировался под `xinfer`, но он оказался слишком сырым (бессвязный
+> вывод на Gemma 4, плохо собирается под Windows). Контракт протокола (он же
+> OpenAI, на котором говорит и llama.cpp) — в [docs/xinfer-contract.md](xinfer-contract.md).
+
+Два режима (настраиваются на экране настроек, `Ctrl+,`, секция «Модель/сервер»):
+
+- **managed** — приложение само запускает дочерний `llama-server` (путь к бинарнику
+  + GGUF-модель `-m`, `-ngl`, `-c`, `--jinja`, host/порт). Смена модели в настройках
+  **перезапускает** сервер.
 - **external** — подключение к уже запущенному серверу по URL.
 
-Поставка самого `xinfer` — отдельно (см. [docs/xinfer-contract.md](xinfer-contract.md)).
-Пример ручного запуска managed-сервера для смоук-тестов:
-
-```bash
-xinfer --m Qwen/Qwen3-0.6B --server --port 8000
-```
-
-### Рекомендуемый external-бэкенд: `llama-server` (llama.cpp)
-
-Протокол — обычный OpenAI, поэтому mindfork работает с **любым** OpenAI-совместимым
-сервером. На практике `xinfer` оказался сырым по **Gemma 4** (выдаёт бессвязный
-вывод и плохо собирается под Windows), поэтому для Gemma рекомендуется **llama.cpp
-`llama-server`** (есть готовые сборки под Windows/CUDA). Проверено: вся цепочка
-(стриминг, остановка по EOS, tool-calling, «мысли») работает на Gemma 4 E4B-it.
+Пример ручного запуска (external):
 
 ```bash
 llama-server -m google_gemma-4-E4B-it-Q4_1.gguf \
   --host 0.0.0.0 --port 8000 \
   -ngl 99 -c 8192 \
-  --jinja          # использовать встроенный chat-template модели — обязателен для
-                   # корректного формата Gemma и для tool-calling
-```
-
-Подключение — **external** по URL (managed-режим mindfork собирает аргументы под
-`xinfer`, поэтому `llama-server` запускайте сами):
-
-```powershell
-$env:MINDFORK_XINFER_URL = "http://127.0.0.1:8000/v1"
-cargo run --release
+  --jinja          # встроенный chat-template модели — обязателен для корректного
+                   # формата Gemma и для tool-calling
 ```
 
 «Мысли» (`reasoning_content`) у `llama-server` включаются флагом `--reasoning-format`
-для thinking-моделей; иначе mindfork подхватывает `<think>…</think>` из текста
-фолбэком.
+(например `auto`) для thinking-моделей; иначе mindfork подхватывает `<think>…</think>`
+из текста фолбэком.
 
 ### Быстрый старт через переменные окружения (dev)
 
@@ -92,13 +79,14 @@ Env имеет приоритет над `settings.json` (удобно для с
 только серверы инференса/эмбеддингов:
 
 ```powershell
-# external chat-сервер
-$env:MINDFORK_XINFER_URL = "http://127.0.0.1:8000/v1"
-# или managed:
-$env:MINDFORK_XINFER_BIN = "C:\path\to\xinfer.exe"
-$env:MINDFORK_MODEL      = "Qwen/Qwen3-0.6B"
-$env:MINDFORK_XINFER_PORT= "8000"
-$env:MINDFORK_ISQ        = "q4k"   # опционально
+# external chat-сервер (любой OpenAI-совместимый)
+$env:MINDFORK_ENGINE_URL = "http://127.0.0.1:8000/v1"
+# или managed llama-server:
+$env:MINDFORK_LLAMA_BIN = "C:\path\to\llama-server.exe"
+$env:MINDFORK_MODEL     = "C:\GGUF\google_gemma-4-E4B-it-Q4_1.gguf"
+$env:MINDFORK_NGL       = "99"     # GPU-слои (опц.)
+$env:MINDFORK_CTX       = "8192"   # контекст (опц.)
+$env:MINDFORK_PORT      = "8000"   # опц.
 ```
 
 Эмбеддинги для RAG — **выделенный** сервер (ADR 0002):
@@ -141,10 +129,10 @@ cargo run            # dev
 ## 7. Смоук-тесты на живой модели
 
 Юнит-тесты сервер не требуют. Сценарии против реального сервера помечены
-`#[ignore]` и запускаются вручную с заданным `MINDFORK_XINFER_URL`:
+`#[ignore]` и запускаются вручную с заданным `MINDFORK_ENGINE_URL`:
 
 ```powershell
-$env:MINDFORK_XINFER_URL = "http://127.0.0.1:8000/v1"
+$env:MINDFORK_ENGINE_URL = "http://127.0.0.1:8000/v1"
 cargo test ignored_smoke -- --ignored --nocapture --test-threads=1
 ```
 

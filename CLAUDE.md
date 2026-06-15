@@ -1,28 +1,37 @@
 # CLAUDE.md — ориентир по проекту mindfork-rs
 
 Консольное (TUI) приложение ИИ-чата на Rust. Локальные модели **Gemma 3/4** и
-**Qwen 3.5/3.6** через **xinfer** (OpenAI-совместимый сервер). UI на **ratatui**.
+**Qwen 3.5/3.6** через **llama.cpp `llama-server`** (OpenAI-совместимый сервер; в
+external подойдёт любой такой — vLLM/LM Studio/Ollama). UI на **ratatui**.
 Платформы: Windows + Linux. Архитектура — **Feature-Sliced Design (FSD)**.
+
+> **Движок:** изначально проектировался под `xinfer`, но он оказался слишком сырым
+> (бессвязный вывод на Gemma 4, плохо собирается под Windows) — переведён на
+> llama.cpp. Клиент generic-OpenAI (`OpenAiClient`), managed-лаунчер — `llama-server`
+> (`LlamaSupervisor`). См. [docs/install.md §3](docs/install.md).
 
 ## Главные документы (читать перед работой)
 - **[spec.md](spec.md)** — полная инженерная спецификация (доменная модель, движок,
   инструменты, профили, UI, тестирование). Источник истины по «что» и «почему».
 - **[plan.md](plan.md)** — пошаговый план по этапам M0–M9 (задачи, тесты, DoD).
-- **[docs/xinfer-contract.md](docs/xinfer-contract.md)** — зафиксированный по
-  исходникам контракт xinfer (эндпоинты, поля запроса/стрима, семплинг, EOS,
-  эмбеддинги). Сверяться при любой работе со слоем движка.
+- **[docs/install.md](docs/install.md)** — установка/запуск (llama.cpp `llama-server`
+  managed/external, env, словари, импорт). **Актуально по движку.**
+- **[docs/xinfer-contract.md](docs/xinfer-contract.md)** — описание OpenAI-совместимого
+  протокола (эндпоинты, поля запроса/стрима, EOS, эмбеддинги). Исходно сверялся с
+  xinfer; llama.cpp говорит на том же протоколе.
 
 ## Ключевые архитектурные решения
-- **xinfer = локальный HTTP-сервер** (managed-подпроцесс или external), приложение —
-  HTTP-клиент. Встраивание (rlib) сознательно НЕ используется (тянет candle/CUDA).
+- **Движок = локальный OpenAI-совместимый HTTP-сервер** (managed `llama-server` или
+  external любой), приложение — HTTP-клиент (`OpenAiClient`). Встраивание (rlib)
+  сознательно НЕ используется (тянет candle/CUDA).
 - **Agentic-loop клиентский** (в оркестраторе). Инструменты возвращают результат +
   эффекты; оркестратор (единственный владелец `Chat`) их применяет — без локов.
-- **Семплинг ограничен тем, что есть в xinfer**: temperature, top_k, top_p,
-  frequency/presence_penalty, max_tokens, thinking, reasoning_effort. НЕТ min_p,
-  repetition_penalty, seed-на-запрос, DRY/mirostat. (См. contract §7.)
+- **Семплинг**: temperature, top_k, top_p, frequency/presence_penalty, max_tokens,
+  thinking, reasoning_effort (поля `SamplingConfig`). Неподдержанное сервером
+  (min_p/seed/mirostat/…) просто игнорируется.
 - **EOS**: остановка по token-id на сервере; поле `stop` НЕ отправляем (анти-самообрыв).
-- **«Мысли» (CoT)**: `delta.reasoning_content` (managed-сервер запускается с
-  `XINFER_STREAM_AS_REASONING_CONTENT=1`); fallback — парсинг `<think>` из content.
+- **«Мысли» (CoT)**: `delta.reasoning_content` (`llama-server --reasoning-format`);
+  fallback — парсинг `<think>` из content.
 - **Хранение**: JSON (конфиг/профили/чаты, атомарная запись + .bak) + SQLite
   (заметки/RAG, sqlite-vec, изоляция по `profile_id` через partition key).
 - **Мягкое удаление** везде (`is_hidden`, каскад профиль→чаты).
@@ -34,7 +43,7 @@
 `app → screens → widgets → features → entities → shared`. Бинарный крейт.
 - `src/app/` — оркестратор, события, TUI-петля, мост tokio↔UI.
 - `src/entities/` — доменные типы (`chat`, `message`, `profile`, `note`, `rag`, `sampling`).
-- `src/shared/api/` — движок за трейтом `EngineBackend` (xinfer-клиент, супервайзер, парсер мыслей, mock).
+- `src/shared/api/` — движок за трейтом `EngineBackend` (OpenAI-клиент `OpenAiClient`, лаунчер `llama-server`, парсер мыслей, mock).
 - `src/shared/storage/` — `json` + `db` (SQLite) + фасад `Storage`.
 - `src/shared/` — `config`, `paths` (портативные, рядом с бинарником), `logging`, `instance`, `error`.
 - `src/{screens,widgets,features}/` — пока заглушки (наполняются с M3).
@@ -56,15 +65,16 @@ cargo clippy --all-targets -- -D warnings
 cargo fmt --check
 cargo run                          # TUI (нужен НАСТОЯЩИЙ терминал — см. ниже)
 ```
-Запуск против реального xinfer (M1-smoke, contract §9):
+Запуск против реального сервера (смоук, llama.cpp):
 ```
-xinfer --m Qwen/Qwen3-0.6B --server --port 8000      # терминал 1
-$env:MINDFORK_XINFER_URL="http://127.0.0.1:8000/v1"  # терминал 2 (PowerShell)
+llama-server -m gemma-4-E4B-it.gguf --host 0.0.0.0 --port 8000 -ngl 99 -c 8192 --jinja  # терм. 1
+$env:MINDFORK_ENGINE_URL="http://127.0.0.1:8000/v1"  # терминал 2 (PowerShell)
 cargo run
-cargo test -- --ignored                              # смоук-тесты
+cargo test ignored_smoke -- --ignored --test-threads=1   # смоук-тесты
 ```
-Env для выбора бэкенда: `MINDFORK_XINFER_URL` (external) ИЛИ `MINDFORK_XINFER_BIN`
-(+ `MINDFORK_MODEL`, `MINDFORK_XINFER_PORT`, `MINDFORK_ISQ`) для managed.
+Env для выбора бэкенда: `MINDFORK_ENGINE_URL` (external, любой OpenAI-сервер) ИЛИ
+`MINDFORK_LLAMA_BIN` (+ `MINDFORK_MODEL` GGUF, `MINDFORK_NGL`, `MINDFORK_CTX`,
+`MINDFORK_PORT`) для managed `llama-server`.
 
 ## Статус (на 2026-06-15)
 Сделан весь план **M0–M9** (в `main`). **225 тестов зелёные, 6 `#[ignore]`.**
