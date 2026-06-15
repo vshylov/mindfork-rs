@@ -78,15 +78,15 @@ impl Section {
 /// Идентификатор редактируемого поля (стабильный порядок = порядок в секции).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum FieldId {
-    // Модель/сервер
+    // Модель/сервер (llama-server)
     XMode,
+    XUrl,
     XBinary,
     XModel,
-    XWeightPath,
-    XWeightFile,
-    XIsq,
-    XCpu,
-    XUrl,
+    XNgl,
+    XCtx,
+    XJinja,
+    XHost,
     XPort,
     // Инференс
     MaxToolRounds,
@@ -212,20 +212,28 @@ impl SettingsScreen {
     }
 
     fn model_fields(&self) -> Vec<FieldRow> {
-        let x = &self.config.xinfer;
+        let x = &self.config.engine;
         vec![
             row(
                 FieldId::XMode,
                 "Режим",
                 FieldKind::Choice(mode_label(x.mode)),
             ),
-            text_row(FieldId::XBinary, "Бинарник xinfer", &x.binary),
-            text_row(FieldId::XModel, "Модель (--m)", &x.model_id),
-            text_row(FieldId::XWeightPath, "Веса (--w)", &x.weight_path),
-            text_row(FieldId::XWeightFile, "GGUF (--f)", &x.weight_file),
-            text_row(FieldId::XIsq, "Квантизация (--isq)", &x.isq),
-            row(FieldId::XCpu, "CPU", FieldKind::Toggle(x.cpu)),
             text_row(FieldId::XUrl, "URL (external)", &x.url),
+            text_row(FieldId::XBinary, "Бинарник llama-server", &x.binary),
+            text_row(FieldId::XModel, "GGUF-модель (-m)", &x.model_path),
+            row(
+                FieldId::XNgl,
+                "GPU-слои (-ngl)",
+                FieldKind::Text(x.gpu_layers.to_string()),
+            ),
+            row(
+                FieldId::XCtx,
+                "Контекст (-c)",
+                FieldKind::Text(x.context_size.to_string()),
+            ),
+            row(FieldId::XJinja, "--jinja", FieldKind::Toggle(x.jinja)),
+            row(FieldId::XHost, "Host", FieldKind::Text(x.host.clone())),
             row(FieldId::XPort, "Порт", FieldKind::Text(x.port.to_string())),
         ]
     }
@@ -288,7 +296,7 @@ impl SettingsScreen {
             ),
             text_row(FieldId::EUrl, "Эмбеддинги: URL", &e.url),
             text_row(FieldId::EBinary, "Эмбеддинги: бинарник", &e.binary),
-            text_row(FieldId::EModel, "Эмбеддинги: модель", &e.model_id),
+            text_row(FieldId::EModel, "Эмбеддинги: GGUF (-m)", &e.model_path),
             row(
                 FieldId::EPort,
                 "Эмбеддинги: порт",
@@ -519,7 +527,7 @@ impl SettingsScreen {
     /// Переключает булев тумблер и возвращает соответствующее намерение.
     fn toggle_field(&mut self, id: FieldId) -> Option<SettingsIntent> {
         match id {
-            FieldId::XCpu => self.config.xinfer.cpu = !self.config.xinfer.cpu,
+            FieldId::XJinja => self.config.engine.jinja = !self.config.engine.jinja,
             FieldId::TWeb => self.config.tools.web_enabled = !self.config.tools.web_enabled,
             FieldId::TPython => {
                 self.config.tools.python_enabled = !self.config.tools.python_enabled
@@ -549,7 +557,7 @@ impl SettingsScreen {
     fn cycle_field(&mut self, id: FieldId, dir: i32) -> Option<SettingsIntent> {
         match id {
             FieldId::XMode => {
-                self.config.xinfer.mode = cycle_mode(self.config.xinfer.mode);
+                self.config.engine.mode = cycle_mode(self.config.engine.mode);
                 Some(self.save_config())
             }
             FieldId::EMode => {
@@ -587,15 +595,27 @@ impl SettingsScreen {
         let opt = |s: &str| (!s.is_empty()).then(|| s.to_string());
         let s = &mut self.config;
         match id {
-            FieldId::XBinary => s.xinfer.binary = opt(trimmed),
-            FieldId::XModel => s.xinfer.model_id = opt(trimmed),
-            FieldId::XWeightPath => s.xinfer.weight_path = opt(trimmed),
-            FieldId::XWeightFile => s.xinfer.weight_file = opt(trimmed),
-            FieldId::XIsq => s.xinfer.isq = opt(trimmed),
-            FieldId::XUrl => s.xinfer.url = opt(trimmed),
+            FieldId::XUrl => s.engine.url = opt(trimmed),
+            FieldId::XBinary => s.engine.binary = opt(trimmed),
+            FieldId::XModel => s.engine.model_path = opt(trimmed),
+            FieldId::XHost => {
+                if !trimmed.is_empty() {
+                    s.engine.host = trimmed.to_string();
+                }
+            }
+            FieldId::XNgl => {
+                if let Ok(v) = trimmed.parse() {
+                    s.engine.gpu_layers = v;
+                }
+            }
+            FieldId::XCtx => {
+                if let Ok(v) = trimmed.parse() {
+                    s.engine.context_size = v;
+                }
+            }
             FieldId::XPort => {
                 if let Ok(p) = trimmed.parse() {
-                    s.xinfer.port = p;
+                    s.engine.port = p;
                 }
             }
             FieldId::MaxToolRounds => {
@@ -622,7 +642,7 @@ impl SettingsScreen {
             }
             FieldId::EUrl => s.embed.url = opt(trimmed),
             FieldId::EBinary => s.embed.binary = opt(trimmed),
-            FieldId::EModel => s.embed.model_id = opt(trimmed),
+            FieldId::EModel => s.embed.model_path = opt(trimmed),
             FieldId::EPort => {
                 if let Ok(p) = trimmed.parse() {
                     s.embed.port = p;
@@ -953,26 +973,28 @@ mod tests {
         // Первое поле — режим (Choice). →
         let intent = s.handle_key(key(KeyCode::Right));
         match intent {
-            Some(SettingsIntent::SaveConfig(c)) => assert_eq!(c.xinfer.mode, ServerMode::External),
+            Some(SettingsIntent::SaveConfig(c)) => assert_eq!(c.engine.mode, ServerMode::External),
             other => panic!("ожидался SaveConfig, получено {other:?}"),
         }
     }
 
     #[test]
-    fn editing_model_id_commits_text() {
+    fn editing_model_commits_text() {
         let mut s = screen();
-        s.handle_key(key(KeyCode::Enter)); // фокус на поля
-        s.handle_key(key(KeyCode::Down)); // XBinary
-        s.handle_key(key(KeyCode::Down)); // XModel
-        s.handle_key(key(KeyCode::Enter)); // открыть редактор
+        s.handle_key(key(KeyCode::Enter)); // фокус на поля (XMode)
+        // XMode → XUrl → XBinary → XModel.
+        for _ in 0..3 {
+            s.handle_key(key(KeyCode::Down));
+        }
+        s.handle_key(key(KeyCode::Enter)); // открыть редактор XModel
         assert!(s.editor.is_some());
-        for c in "Qwen/Qwen3-8B".chars() {
+        for c in "gemma.gguf".chars() {
             s.handle_key(key(KeyCode::Char(c)));
         }
         let intent = s.handle_key(key(KeyCode::Enter));
         match intent {
             Some(SettingsIntent::SaveConfig(c)) => {
-                assert_eq!(c.xinfer.model_id.as_deref(), Some("Qwen/Qwen3-8B"))
+                assert_eq!(c.engine.model_path.as_deref(), Some("gemma.gguf"))
             }
             other => panic!("ожидался SaveConfig, получено {other:?}"),
         }
@@ -982,16 +1004,16 @@ mod tests {
     #[test]
     fn editor_esc_discards() {
         let mut s = screen();
-        s.handle_key(key(KeyCode::Enter));
-        s.handle_key(key(KeyCode::Down));
-        s.handle_key(key(KeyCode::Down));
-        s.handle_key(key(KeyCode::Enter)); // редактор XModel
+        s.handle_key(key(KeyCode::Enter)); // XMode
+        s.handle_key(key(KeyCode::Down)); // XUrl
+        s.handle_key(key(KeyCode::Down)); // XBinary
+        s.handle_key(key(KeyCode::Enter)); // редактор XBinary
         s.handle_key(key(KeyCode::Char('x')));
         let intent = s.handle_key(key(KeyCode::Esc));
         assert_eq!(intent, None);
         assert!(s.editor.is_none());
         // значение не изменилось
-        assert!(s.config.xinfer.model_id.is_none());
+        assert!(s.config.engine.binary.is_none());
     }
 
     #[test]

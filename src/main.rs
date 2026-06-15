@@ -17,7 +17,7 @@ use tokio::sync::mpsc::unbounded_channel;
 
 use crate::app::events::{AppCommand, AppEvent};
 use crate::app::orchestrator::{self, OrchestratorDeps};
-use crate::app::supervisor::XinferSupervisor;
+use crate::app::supervisor::LlamaSupervisor;
 use crate::shared::config::{AppConfig, ServerMode};
 use crate::shared::storage::Storage;
 use crate::shared::{instance, logging, paths::Paths};
@@ -57,7 +57,7 @@ fn main() -> anyhow::Result<()> {
         evt_tx: evt_tx.clone(),
         storage,
         config,
-        supervisor: Arc::new(XinferSupervisor),
+        supervisor: Arc::new(LlamaSupervisor),
     }));
 
     // Словари спелл-чека грузит сам `runtime` в фоне по настройкам интерфейса
@@ -125,27 +125,41 @@ fn run_import(paths: &Paths, dir: &std::path::Path) -> anyhow::Result<()> {
     Ok(())
 }
 
-/// Посев конфигурации переменными окружения (dev/смоук-workflow, contract §9).
-/// Env имеет приоритет над `settings.json`, чтобы быстрый запуск против реального
-/// xinfer не требовал правки файла. Затрагивает только chat/embedding-серверы.
+/// Посев конфигурации переменными окружения (dev/смоук-workflow). Env имеет
+/// приоритет над `settings.json`, чтобы быстрый запуск против сервера не требовал
+/// правки файла. Затрагивает только chat/embedding-серверы:
+/// - `MINDFORK_ENGINE_URL` — external chat-сервер (любой OpenAI-совместимый);
+/// - `MINDFORK_LLAMA_BIN` (+ `MINDFORK_MODEL` GGUF, `MINDFORK_NGL`, `MINDFORK_CTX`,
+///   `MINDFORK_PORT`) — managed `llama-server`;
+/// - `MINDFORK_EMBED_URL` / `MINDFORK_EMBED_BIN` (+ `MINDFORK_EMBED_MODEL`,
+///   `MINDFORK_EMBED_PORT`) — embedding-сервер.
 fn apply_env_overrides(config: &mut AppConfig) {
-    if let Ok(url) = std::env::var("MINDFORK_XINFER_URL") {
-        config.xinfer.mode = ServerMode::External;
-        config.xinfer.url = Some(url);
-    } else if let Ok(bin) = std::env::var("MINDFORK_XINFER_BIN") {
-        config.xinfer.mode = ServerMode::Managed;
-        config.xinfer.binary = Some(bin);
+    if let Ok(url) = std::env::var("MINDFORK_ENGINE_URL") {
+        config.engine.mode = ServerMode::External;
+        config.engine.url = Some(url);
+    } else if let Ok(bin) = std::env::var("MINDFORK_LLAMA_BIN") {
+        config.engine.mode = ServerMode::Managed;
+        config.engine.binary = Some(bin);
         if let Ok(m) = std::env::var("MINDFORK_MODEL") {
-            config.xinfer.model_id = Some(m);
+            config.engine.model_path = Some(m);
         }
-        if let Ok(isq) = std::env::var("MINDFORK_ISQ") {
-            config.xinfer.isq = Some(isq);
+        if let Some(ngl) = std::env::var("MINDFORK_NGL")
+            .ok()
+            .and_then(|v| v.parse().ok())
+        {
+            config.engine.gpu_layers = ngl;
         }
-        if let Some(port) = std::env::var("MINDFORK_XINFER_PORT")
+        if let Some(ctx) = std::env::var("MINDFORK_CTX")
+            .ok()
+            .and_then(|v| v.parse().ok())
+        {
+            config.engine.context_size = ctx;
+        }
+        if let Some(port) = std::env::var("MINDFORK_PORT")
             .ok()
             .and_then(|p| p.parse().ok())
         {
-            config.xinfer.port = port;
+            config.engine.port = port;
         }
     }
 
@@ -156,7 +170,7 @@ fn apply_env_overrides(config: &mut AppConfig) {
         config.embed.mode = ServerMode::Managed;
         config.embed.binary = Some(bin);
         if let Ok(m) = std::env::var("MINDFORK_EMBED_MODEL") {
-            config.embed.model_id = Some(m);
+            config.embed.model_path = Some(m);
         }
         if let Some(port) = std::env::var("MINDFORK_EMBED_PORT")
             .ok()

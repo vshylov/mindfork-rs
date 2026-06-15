@@ -12,43 +12,58 @@ pub const SCHEMA_VERSION: u32 = 1;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum ServerMode {
-    /// Приложение само запускает дочерний процесс xinfer.
+    /// Приложение само запускает дочерний процесс `llama-server`.
     #[default]
     Managed,
     /// Подключение к уже запущенному серверу.
     External,
 }
 
-/// Настройки сервера/модели xinfer (расширяются на M8).
+/// Число GPU-слоёв по умолчанию (`-ngl`): всё на GPU.
+pub const DEFAULT_GPU_LAYERS: i32 = 99;
+/// Размер контекста по умолчанию (`-c`).
+pub const DEFAULT_CONTEXT_SIZE: u32 = 8192;
+
+/// Настройки chat-сервера инференса. Транспорт — OpenAI-совместимый HTTP, поэтому
+/// в external-режиме подойдёт любой такой сервер (llama.cpp `llama-server`, vLLM,
+/// LM Studio, …). В managed-режиме mindfork запускает **`llama-server`** (llama.cpp)
+/// дочерним процессом. См. docs/install.md §3.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
-pub struct XinferSettings {
+pub struct EngineSettings {
     pub mode: ServerMode,
     /// URL для external-режима (например `http://127.0.0.1:8000/v1`).
     pub url: Option<String>,
-    /// Путь к бинарнику xinfer для managed-режима.
+    /// Путь к бинарнику `llama-server` для managed-режима.
     pub binary: Option<String>,
-    pub model_id: Option<String>,
-    pub weight_path: Option<String>,
-    pub weight_file: Option<String>,
-    pub isq: Option<String>,
-    pub device_ids: Vec<usize>,
-    pub cpu: bool,
+    /// Путь к GGUF-модели (`-m`).
+    pub model_path: Option<String>,
+    /// Слои на GPU (`-ngl`).
+    pub gpu_layers: i32,
+    /// Размер контекста (`-c`).
+    pub context_size: u32,
+    /// Использовать встроенный chat-template модели (`--jinja`) — нужен для
+    /// корректного формата и tool-calling.
+    pub jinja: bool,
+    /// Формат reasoning (`--reasoning-format`, например `auto`); `None` — не задавать.
+    pub reasoning_format: Option<String>,
+    /// Интерфейс bind (`--host`), например `127.0.0.1` или `0.0.0.0`.
+    pub host: String,
     pub port: u16,
 }
 
-impl Default for XinferSettings {
+impl Default for EngineSettings {
     fn default() -> Self {
         Self {
             mode: ServerMode::Managed,
             url: None,
             binary: None,
-            model_id: None,
-            weight_path: None,
-            weight_file: None,
-            isq: None,
-            device_ids: vec![0],
-            cpu: false,
+            model_path: None,
+            gpu_layers: DEFAULT_GPU_LAYERS,
+            context_size: DEFAULT_CONTEXT_SIZE,
+            jinja: true,
+            reasoning_format: None,
+            host: "127.0.0.1".to_string(),
             port: 8000,
         }
     }
@@ -56,15 +71,19 @@ impl Default for XinferSettings {
 
 /// Настройки выделенного embedding-сервера для RAG (ADR 0002). Отдельный
 /// процесс/порт; если не настроен (`UnavailableEmbedder`) — RAG отдаёт ошибку.
+/// В managed-режиме — тот же `llama-server` с `--embeddings`.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct EmbedSettings {
     pub mode: ServerMode,
     /// URL для external-режима (например `http://127.0.0.1:8001/v1`).
     pub url: Option<String>,
-    /// Путь к бинарнику xinfer для managed-режима.
+    /// Путь к бинарнику `llama-server` для managed-режима.
     pub binary: Option<String>,
-    pub model_id: Option<String>,
+    /// Путь к GGUF embedding-модели (`-m`).
+    pub model_path: Option<String>,
+    /// Слои на GPU (`-ngl`).
+    pub gpu_layers: i32,
     pub port: u16,
 }
 
@@ -74,7 +93,8 @@ impl Default for EmbedSettings {
             mode: ServerMode::Managed,
             url: None,
             binary: None,
-            model_id: None,
+            model_path: None,
+            gpu_layers: DEFAULT_GPU_LAYERS,
             port: 8001,
         }
     }
@@ -154,7 +174,8 @@ impl Default for InterfaceSettings {
 pub struct AppConfig {
     pub schema_version: u32,
     pub default_sampling: SamplingConfig,
-    pub xinfer: XinferSettings,
+    /// Настройки chat-сервера инференса (llama.cpp managed или любой OpenAI external).
+    pub engine: EngineSettings,
     /// Настройки выделенного embedding-сервера (RAG, ADR 0002).
     pub embed: EmbedSettings,
     /// Лимит раундов клиентского agentic-loop (spec §6.3).
@@ -174,7 +195,7 @@ impl Default for AppConfig {
                 thinking: Some(true),
                 ..Default::default()
             },
-            xinfer: XinferSettings::default(),
+            engine: EngineSettings::default(),
             embed: EmbedSettings::default(),
             max_tool_rounds: 8,
             tools: ToolSettings::default(),
@@ -206,7 +227,9 @@ mod tests {
         let c: AppConfig = serde_json::from_str(r#"{"max_tool_rounds":4}"#).unwrap();
         assert_eq!(c.max_tool_rounds, 4);
         assert_eq!(c.schema_version, SCHEMA_VERSION);
-        assert_eq!(c.xinfer.port, 8000);
+        assert_eq!(c.engine.port, 8000);
+        assert_eq!(c.engine.gpu_layers, DEFAULT_GPU_LAYERS);
+        assert!(c.engine.jinja);
         // Новые секции наполняются дефолтами при их отсутствии в файле.
         assert_eq!(c.embed.port, 8001);
         assert_eq!(c.tools.subagent_max_tokens, DEFAULT_SUBAGENT_MAX_TOKENS);
@@ -218,10 +241,20 @@ mod tests {
     #[test]
     fn extended_sections_roundtrip() {
         let c = AppConfig {
+            engine: EngineSettings {
+                mode: ServerMode::Managed,
+                binary: Some("llama-server".into()),
+                model_path: Some("gemma.gguf".into()),
+                gpu_layers: 50,
+                context_size: 4096,
+                jinja: true,
+                reasoning_format: Some("auto".into()),
+                ..Default::default()
+            },
             embed: EmbedSettings {
                 mode: ServerMode::External,
                 url: Some("http://127.0.0.1:8001/v1".into()),
-                model_id: Some("Qwen/Qwen3-Embedding-0.6B".into()),
+                model_path: Some("embed.gguf".into()),
                 ..Default::default()
             },
             tools: ToolSettings {

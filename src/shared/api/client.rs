@@ -1,6 +1,7 @@
-//! HTTP-клиент к серверу xinfer, реализующий [`EngineBackend`].
-//! Стриминг через SSE (`/v1/chat/completions`), эмбеддинги (`/v1/embeddings`).
-//! См. docs/xinfer-contract.md §3, §6, §8.
+//! HTTP-клиент к **OpenAI-совместимому** серверу (llama.cpp `llama-server`, vLLM,
+//! LM Studio, …), реализующий [`EngineBackend`]. Стриминг через SSE
+//! (`/v1/chat/completions`), эмбеддинги (`/v1/embeddings`). Протокол — OpenAI
+//! (исходно сверялся с docs/xinfer-contract.md; llama.cpp говорит на том же).
 
 use anyhow::{Context, Result};
 use async_stream::stream;
@@ -14,14 +15,14 @@ use super::backend::{
 use super::thoughts::{Piece, ThoughtsParser};
 use super::wire;
 
-/// Клиент к OpenAI-совместимому серверу xinfer.
-pub struct XinferClient {
+/// Клиент к OpenAI-совместимому серверу инференса.
+pub struct OpenAiClient {
     http: reqwest::Client,
     /// Базовый URL с суффиксом `/v1`, например `http://127.0.0.1:8000/v1`.
     base_url: String,
 }
 
-impl XinferClient {
+impl OpenAiClient {
     pub fn new(base_url: impl Into<String>) -> Self {
         let base_url = base_url.into().trim_end_matches('/').to_string();
         Self {
@@ -44,7 +45,7 @@ impl XinferClient {
 }
 
 #[async_trait::async_trait]
-impl EngineBackend for XinferClient {
+impl EngineBackend for OpenAiClient {
     async fn chat_stream(&self, req: ChatRequest, cancel: CancellationToken) -> Result<ChatStream> {
         let body = wire::build_chat_request(&req, true);
         let url = format!("{}/chat/completions", self.base_url);
@@ -57,7 +58,7 @@ impl EngineBackend for XinferClient {
             .await
             .with_context(|| format!("POST {url}"))?
             .error_for_status()
-            .context("xinfer returned an error status")?;
+            .context("engine returned an error status")?;
 
         let mut events = response.bytes_stream().eventsource();
 
@@ -138,7 +139,7 @@ impl EngineBackend for XinferClient {
 }
 
 #[async_trait::async_trait]
-impl Embedder for XinferClient {
+impl Embedder for OpenAiClient {
     async fn embed(&self, texts: Vec<String>) -> Result<Vec<Vec<f32>>> {
         let url = format!("{}/embeddings", self.base_url);
         let body = wire::EmbeddingRequest { input: texts };
@@ -150,7 +151,7 @@ impl Embedder for XinferClient {
             .await
             .with_context(|| format!("POST {url}"))?
             .error_for_status()
-            .context("xinfer embeddings returned an error status")?
+            .context("embeddings request returned an error status")?
             .json()
             .await
             .context("decoding embeddings response")?;
@@ -165,9 +166,9 @@ fn piece_to_chunk(piece: Piece) -> ChatChunk {
     }
 }
 
-/// Ручной смоук-набор против реального сервера xinfer (M1-smoke,
-/// docs/xinfer-contract.md §9). Помечен `#[ignore]` — не идёт в CI.
-/// Запуск: задать `MINDFORK_XINFER_URL=http://127.0.0.1:8000/v1` и
+/// Ручной смоук-набор против реального OpenAI-совместимого сервера (llama.cpp
+/// `llama-server` и т.п.). Помечен `#[ignore]` — не идёт в CI.
+/// Запуск: задать `MINDFORK_ENGINE_URL=http://127.0.0.1:8000/v1` и
 /// `cargo test -- --ignored`.
 #[cfg(test)]
 mod ignored_smoke {
@@ -176,10 +177,10 @@ mod ignored_smoke {
     use crate::shared::api::backend::{ApiMessage, ToolCallAccumulator, ToolSchema};
     use futures_util::StreamExt;
 
-    fn client_from_env() -> Option<XinferClient> {
-        std::env::var("MINDFORK_XINFER_URL")
+    fn client_from_env() -> Option<OpenAiClient> {
+        std::env::var("MINDFORK_ENGINE_URL")
             .ok()
-            .map(XinferClient::new)
+            .map(OpenAiClient::new)
     }
 
     async fn collect(stream: ChatStream) -> (String, String, Option<FinishReason>) {
@@ -202,10 +203,10 @@ mod ignored_smoke {
     }
 
     #[tokio::test]
-    #[ignore = "requires a running xinfer server (MINDFORK_XINFER_URL)"]
+    #[ignore = "requires a running OpenAI-compatible server (MINDFORK_ENGINE_URL)"]
     async fn simple_generation() {
         let Some(client) = client_from_env() else {
-            eprintln!("skip: MINDFORK_XINFER_URL not set");
+            eprintln!("skip: MINDFORK_ENGINE_URL not set");
             return;
         };
         let req = ChatRequest {
@@ -230,7 +231,7 @@ mod ignored_smoke {
     /// генерация не должна оборваться (остановка по token-id на сервере, поле `stop`
     /// не шлём; docs/xinfer-contract.md §5). `DONE` может прийти в тексте или в
     /// «мыслях» (reasoning-модель), поэтому проверяем оба потока.
-    async fn assert_no_self_terminate(client: &XinferClient, eos_text: &str) {
+    async fn assert_no_self_terminate(client: &OpenAiClient, eos_text: &str) {
         let req = ChatRequest {
             system: None,
             messages: vec![ApiMessage::user(format!(
@@ -255,10 +256,10 @@ mod ignored_smoke {
     /// Анти-самообрыв на тексте EOS — для обоих семейств: Qwen (`<|im_end|>`) и
     /// Gemma (`<end_of_turn>`). См. spec §7, docs/xinfer-contract.md §5, §9.
     #[tokio::test]
-    #[ignore = "requires a running xinfer server (MINDFORK_XINFER_URL)"]
+    #[ignore = "requires a running OpenAI-compatible server (MINDFORK_ENGINE_URL)"]
     async fn does_not_self_terminate_on_eos_text() {
         let Some(client) = client_from_env() else {
-            eprintln!("skip: MINDFORK_XINFER_URL not set");
+            eprintln!("skip: MINDFORK_ENGINE_URL not set");
             return;
         };
         for eos in ["<|im_end|>", "<end_of_turn>"] {
@@ -270,10 +271,10 @@ mod ignored_smoke {
     /// `finish_reason="tool_calls"` и `delta.tool_calls` корректно собираются.
     /// `max_tokens` щедрый: reasoning-модель «думает» перед вызовом.
     #[tokio::test]
-    #[ignore = "requires a running xinfer server (MINDFORK_XINFER_URL)"]
+    #[ignore = "requires a running OpenAI-compatible server (MINDFORK_ENGINE_URL)"]
     async fn tool_call_is_emitted_and_parsed() {
         let Some(client) = client_from_env() else {
-            eprintln!("skip: MINDFORK_XINFER_URL not set");
+            eprintln!("skip: MINDFORK_ENGINE_URL not set");
             return;
         };
         let tool = ToolSchema {
@@ -325,10 +326,10 @@ mod ignored_smoke {
     /// `reasoning_content` отдельным потоком — mindfork собирает их в `Thoughts`.
     /// Требует thinking-модель; иначе `thoughts` будет пуст (мысли инлайнятся).
     #[tokio::test]
-    #[ignore = "requires a running xinfer server with a reasoning model"]
+    #[ignore = "requires a running OpenAI-compatible server with a reasoning model"]
     async fn emits_thoughts_for_reasoning_model() {
         let Some(client) = client_from_env() else {
-            eprintln!("skip: MINDFORK_XINFER_URL not set");
+            eprintln!("skip: MINDFORK_ENGINE_URL not set");
             return;
         };
         let req = ChatRequest {
