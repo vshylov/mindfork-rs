@@ -212,8 +212,8 @@ src/
 │  └─ settings.rs           #   экран настроек
 ├─ widgets/                 # (FSD "widgets") составные UI-блоки
 │  ├─ chat_list.rs          #   список чатов: поиск, сортировка, переименование
-│  ├─ message_feed.rs       #   лента сообщений: markdown, мысли, tool-блоки, скролл
-│  ├─ input_box.rs          #   tui-textarea + индикация спелл-чека
+│  ├─ message_feed.rs       #   лента сообщений: markdown, мысли, tool-блоки, скролл, перенос слов
+│  ├─ input_box.rs          #   свой multiline-ввод (ADR 0001): перенос слов, курсор, индикация спелл-чека
 │  ├─ status_bar.rs         #   модель/токены/профиль/состояние сервера
 │  └─ dialogs.rs            #   модалки: подтверждения, выбор профиля, попап подсказок орфографии
 ├─ features/                # (FSD "features") пользовательские сценарии (по одному действию)
@@ -230,6 +230,7 @@ src/
    ├─ storage/              #   репозитории: JSON (конфиг/чаты/профили) + SQLite (заметки/RAG)
    ├─ config.rs             #   settings.json, версионирование схемы
    ├─ markdown.rs           #   рендер markdown + unicode-LaTeX-аппроксимация
+   ├─ wrap.rs               #   перенос слов по колонкам (unicode-width) для ленты/ввода
    ├─ keymap.rs  │ theme.rs │ paths.rs │ error.rs
 ```
 

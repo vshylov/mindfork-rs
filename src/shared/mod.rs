@@ -10,3 +10,4 @@ pub mod paths;
 pub mod server;
 pub mod storage;
 pub mod theme;
+pub mod wrap;

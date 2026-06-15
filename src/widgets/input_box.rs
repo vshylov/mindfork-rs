@@ -14,6 +14,7 @@ use ratatui::text::{Line, Span, Text};
 use ratatui::widgets::{Block, Borders, Paragraph};
 
 use crate::shared::theme::Palette;
+use crate::shared::wrap;
 
 /// Многострочное поле ввода с курсором.
 pub struct InputBox {
@@ -62,9 +63,17 @@ impl InputBox {
         self.lines.len() == 1 && self.lines[0].is_empty()
     }
 
-    /// Число логических строк.
+    /// Число логических строк. Высоту поля теперь считает [`Self::visual_line_count`]
+    /// (учитывает перенос); метод оставлен как естественный аккомпанемент и для тестов.
+    #[allow(dead_code)]
     pub fn line_count(&self) -> usize {
         self.lines.len()
+    }
+
+    /// Число визуальных рядов при ширине `width` (с учётом переноса). Нужно слою
+    /// выше, чтобы высота поля росла под перенос, а не только под `Shift+Enter`.
+    pub fn visual_line_count(&self, width: usize) -> usize {
+        self.visual_rows(width).len()
     }
 
     /// Очищает поле.
@@ -251,21 +260,26 @@ impl InputBox {
         let inner = block.inner(area);
         frame.render_widget(&block, area);
 
+        let view_w = inner.width.max(1) as usize;
         let visible_rows = inner.height.max(1) as usize;
-        self.adjust_scroll(visible_rows);
 
-        let lines: Vec<Line> = self
-            .lines
+        // Визуальные ряды с учётом переноса; позиция курсора — через тот же перенос
+        // (единый источник истины, иначе курсор разъедется с текстом).
+        let vrows = self.visual_rows(view_w);
+        let (cursor_row, cursor_col) = self.cursor_visual(&vrows);
+        self.adjust_scroll(cursor_row, vrows.len(), visible_rows);
+
+        let lines: Vec<Line> = vrows
             .iter()
-            .enumerate()
             .skip(self.scroll)
             .take(visible_rows)
-            .map(|(idx, chars)| {
-                styled_line(
-                    chars,
-                    self.misspelled.get(idx).map(|v| v.as_slice()),
-                    palette,
-                )
+            .map(|&(li, start, end)| {
+                let sub = &self.lines[li][start..end];
+                let ranges = self
+                    .misspelled
+                    .get(li)
+                    .map(|rs| clip_ranges(rs, start, end));
+                styled_line(sub, ranges.as_deref(), palette)
             })
             .collect();
         let placeholder = self.is_empty() && !focused;
@@ -277,8 +291,8 @@ impl InputBox {
         frame.render_widget(Paragraph::new(text), inner);
 
         if focused {
-            let cursor_y = inner.y + (self.row.saturating_sub(self.scroll)) as u16;
-            let cursor_x = inner.x + self.col as u16;
+            let cursor_y = inner.y + (cursor_row.saturating_sub(self.scroll)) as u16;
+            let cursor_x = inner.x + cursor_col as u16;
             // не выходим за пределы внутренней области
             let x = cursor_x.min(inner.x + inner.width.saturating_sub(1));
             let y = cursor_y.min(inner.y + inner.height.saturating_sub(1));
@@ -286,14 +300,69 @@ impl InputBox {
         }
     }
 
-    /// Держит курсор в видимой области (вертикальный скролл).
-    fn adjust_scroll(&mut self, visible_rows: usize) {
-        if self.row < self.scroll {
-            self.scroll = self.row;
-        } else if visible_rows > 0 && self.row >= self.scroll + visible_rows {
-            self.scroll = self.row + 1 - visible_rows;
+    /// Визуальные ряды: для каждого — `(логическая строка, начало, конец)` в
+    /// индексах символов этой строки (с учётом переноса по ширине `width`).
+    fn visual_rows(&self, width: usize) -> Vec<(usize, usize, usize)> {
+        let mut rows = Vec::new();
+        for (li, chars) in self.lines.iter().enumerate() {
+            for (start, end) in wrap::wrap_ranges(chars, width) {
+                rows.push((li, start, end));
+            }
+        }
+        rows
+    }
+
+    /// Позиция курсора в визуальных координатах `(индекс ряда, столбец-колонки)`.
+    /// На мягком переносе (курсор в конце ряда, но не в конце логической строки)
+    /// курсор уходит на начало следующего ряда.
+    fn cursor_visual(&self, vrows: &[(usize, usize, usize)]) -> (usize, usize) {
+        let mut last: Option<(usize, usize)> = None; // (индекс ряда, начало)
+        for (idx, &(li, start, end)) in vrows.iter().enumerate() {
+            if li != self.row {
+                continue;
+            }
+            last = Some((idx, start));
+            if self.col < end {
+                let col = wrap::display_width(&self.lines[li][start..self.col]);
+                return (idx, col);
+            }
+        }
+        // курсор в самом конце логической строки — последний её ряд
+        match last {
+            Some((idx, start)) => (
+                idx,
+                wrap::display_width(&self.lines[self.row][start..self.col]),
+            ),
+            None => (0, 0),
         }
     }
+
+    /// Держит курсор в видимой области (вертикальный скролл по визуальным рядам).
+    fn adjust_scroll(&mut self, cursor_row: usize, total: usize, visible_rows: usize) {
+        if cursor_row < self.scroll {
+            self.scroll = cursor_row;
+        } else if visible_rows > 0 && cursor_row >= self.scroll + visible_rows {
+            self.scroll = cursor_row + 1 - visible_rows;
+        }
+        // не оставляем пустоту снизу, если рядов стало меньше (удаление/перенос)
+        let max_scroll = total.saturating_sub(visible_rows);
+        if self.scroll > max_scroll {
+            self.scroll = max_scroll;
+        }
+    }
+}
+
+/// Пересекает диапазоны ошибок `[s, e)` логической строки с визуальным рядом
+/// `[start, end)` и сдвигает в координаты ряда (для подчёркивания в [`styled_line`]).
+fn clip_ranges(ranges: &[(usize, usize)], start: usize, end: usize) -> Vec<(usize, usize)> {
+    ranges
+        .iter()
+        .filter_map(|&(s, e)| {
+            let s = s.clamp(start, end);
+            let e = e.clamp(start, end);
+            (e > s).then_some((s - start, e - start))
+        })
+        .collect()
 }
 
 /// Строит строку, подчёркивая (`UNDERLINED`, цветом ошибки темы) диапазоны ошибок.
@@ -467,6 +536,49 @@ mod tests {
         let mut ib = InputBox::new();
         ib.set_text("строка 1\nстрока 2\nстрока 3");
         let mut term = Terminal::new(TestBackend::new(20, 4)).unwrap();
+        term.draw(|f| ib.render(f, f.area(), "ввод", true, &Palette::default()))
+            .unwrap();
+    }
+
+    #[test]
+    fn long_line_counts_as_multiple_visual_rows() {
+        let mut ib = InputBox::new();
+        // одна логическая строка длиннее ширины → несколько визуальных рядов
+        type_str(&mut ib, "один два три четыре");
+        assert_eq!(ib.line_count(), 1);
+        assert!(ib.visual_line_count(8) > 1);
+    }
+
+    #[test]
+    fn cursor_maps_onto_wrapped_row() {
+        let mut ib = InputBox::new();
+        type_str(&mut ib, "один два три"); // курсор в конце (col=12)
+        let vrows = ib.visual_rows(8);
+        // "один два" | "три" → курсор на втором ряду, столбец 3 ("три")
+        let (row, col) = ib.cursor_visual(&vrows);
+        assert_eq!((row, col), (1, 3));
+    }
+
+    #[test]
+    fn cursor_at_soft_break_moves_to_next_row_start() {
+        let mut ib = InputBox::new();
+        ib.set_text("один два три");
+        // курсор сразу после "один два " (индекс 9) — начало слова "три"
+        ib.row = 0;
+        ib.col = 9;
+        let vrows = ib.visual_rows(8);
+        let (row, col) = ib.cursor_visual(&vrows);
+        assert_eq!((row, col), (1, 0));
+    }
+
+    #[test]
+    fn render_wrapped_does_not_panic() {
+        use ratatui::Terminal;
+        use ratatui::backend::TestBackend;
+        let mut ib = InputBox::new();
+        ib.set_text("очень длинная строка которая точно не влезает в узкое поле ввода");
+        ib.set_misspelled(vec![vec![(0, 5)]]);
+        let mut term = Terminal::new(TestBackend::new(12, 4)).unwrap();
         term.draw(|f| ib.render(f, f.area(), "ввод", true, &Palette::default()))
             .unwrap();
     }

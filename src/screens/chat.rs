@@ -537,8 +537,10 @@ impl ChatScreen {
     pub fn render(&mut self, frame: &mut Frame) {
         self.maybe_recheck_spelling();
 
-        // Высота ввода растёт под содержимое (1–6 строк + рамка).
-        let input_h = (self.input.line_count().clamp(1, 6) + 2) as u16;
+        // Высота ввода растёт под содержимое с учётом переноса (1–6 рядов + рамка).
+        // Ширина внутренней области = ширина экрана минус вертикальные рамки.
+        let input_inner_w = frame.area().width.saturating_sub(2).max(1) as usize;
+        let input_h = (self.input.visual_line_count(input_inner_w).clamp(1, 6) + 2) as u16;
         let [feed_area, input_area, status_area] = Layout::vertical([
             Constraint::Min(3),
             Constraint::Length(input_h),
