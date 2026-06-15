@@ -69,12 +69,12 @@ cargo run                          # TUI (нужен НАСТОЯЩИЙ терм
 ```
 llama-server -m gemma-4-E4B-it.gguf --host 0.0.0.0 --port 8000 -ngl 99 -c 8192 --jinja  # терм. 1
 $env:MINDFORK_ENGINE_URL="http://127.0.0.1:8000/v1"  # терминал 2 (PowerShell)
-cargo run
 cargo test ignored_smoke -- --ignored --test-threads=1   # смоук-тесты
 ```
-Env для выбора бэкенда: `MINDFORK_ENGINE_URL` (external, любой OpenAI-сервер) ИЛИ
-`MINDFORK_LLAMA_BIN` (+ `MINDFORK_MODEL` GGUF, `MINDFORK_NGL`, `MINDFORK_CTX`,
-`MINDFORK_PORT`) для managed `llama-server`.
+Сервер/режим для `cargo run` задаётся **только** в `settings.json` (экран настроек
+`Ctrl+,`). `MINDFORK_ENGINE_URL` и прочие `MINDFORK_*` приложением при запуске **не**
+читаются — их использует лишь `OpenAiClient::from_env` в `#[ignore]`-смоук-тестах
+(иначе залётный env молча перебивал бы сохранённый режим на external при каждом старте).
 
 ## Статус (на 2026-06-15)
 Сделан весь план **M0–M9** (в `main`). **225 тестов зелёные, 6 `#[ignore]`.**
@@ -208,7 +208,9 @@ web-поиск и Python под выключателями, экран наст�
   **`ServerSupervisor`** (`app/supervisor.rs`, real `XinferSupervisor` + mock):
   `apply_chat`/`apply_embed` поднимают серверы из конфига; `ServerHandle` живут в
   оркестраторе (`kill_on_drop`). `main.rs` больше не резолвит бэкенд — грузит
-  конфиг и сеет его env-переменными (`apply_env_overrides`, dev-workflow).
+  конфиг из `settings.json` и передаёт его оркестратору как есть (env-переменные
+  при запуске НЕ применяются: иначе залётный `MINDFORK_ENGINE_URL` молча перебивал
+  бы сохранённый режим на external при каждом старте; env читают лишь смоук-тесты).
 - **Команды/событие настроек**: `AppEvent::Settings { config, profiles }` (полный
   снимок); `AppCommand::UpdateConfig`/`UpdateProfile` — правки сохраняются
   (`save_config`/`upsert_profile`), **смена `xinfer` перезапускает сервер**, смена
