@@ -6,13 +6,15 @@
 //! применяются к экрану мутаторами, исходящие [`ChatIntent`] транслируются в
 //! [`AppCommand`]. Сам экран про `app`/каналы не знает (FSD, зависимости вниз).
 
+use std::io::stdout;
 use std::path::PathBuf;
 use std::sync::mpsc::{Receiver, Sender, channel};
 use std::time::Duration;
 
 use anyhow::Result;
 use ratatui::DefaultTerminal;
-use ratatui::crossterm::event::{self, Event};
+use ratatui::crossterm::event::{self, DisableMouseCapture, EnableMouseCapture, Event};
+use ratatui::crossterm::execute;
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
 
 use crate::app::events::{AppCommand, AppEvent};
@@ -34,7 +36,19 @@ pub fn run(
     personal: PathBuf,
 ) -> Result<()> {
     let mut terminal = ratatui::init();
+    // Захват мыши по умолчанию ВЫКЛЮЧЕН: тогда работает нативное выделение текста
+    // мышью. Прокрутка ленты колесом включается тумблером (`Ctrl+W`) — он шлёт
+    // `EnableMouseCapture`/`DisableMouseCapture` (см. `dispatch`). Дополняем
+    // panic-hook ratatui выключением мыши: иначе после паники с включённым
+    // захватом терминал продолжит слать escape-коды колеса/кликов в шелл.
+    let prev_hook = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |info| {
+        let _ = execute!(stdout(), DisableMouseCapture);
+        prev_hook(info);
+    }));
     let result = run_loop(&mut terminal, &cmd_tx, evt_rx, dict_dir, personal);
+    // Снимаем захват на выходе (безвреден, если уже выключен).
+    let _ = execute!(stdout(), DisableMouseCapture);
     ratatui::restore();
     // Просим оркестратор остановиться (на случай выхода не по Quit-команде).
     let _ = cmd_tx.send(AppCommand::Quit);
@@ -135,15 +149,21 @@ fn run_loop(
         } else {
             terminal.draw(|frame| screen.render(frame))?;
         }
-        if event::poll(TICK)?
-            && let Event::Key(key) = event::read()?
-        {
-            if let Some(settings_screen) = &mut settings {
-                if let Some(intent) = settings_screen.handle_key(key) {
-                    dispatch_settings(intent, cmd_tx, &mut settings);
+        if event::poll(TICK)? {
+            match event::read()? {
+                Event::Key(key) => {
+                    if let Some(settings_screen) = &mut settings {
+                        if let Some(intent) = settings_screen.handle_key(key) {
+                            dispatch_settings(intent, cmd_tx, &mut settings);
+                        }
+                    } else if let Some(intent) = screen.handle_key(key) {
+                        quit = dispatch(intent, cmd_tx, &screen, &mut settings);
+                    }
                 }
-            } else if let Some(intent) = screen.handle_key(key) {
-                quit = dispatch(intent, cmd_tx, &screen, &mut settings);
+                // Колесо мыши прокручивает ленту чата. На экране настроек
+                // (своя навигация) прокрутку игнорируем.
+                Event::Mouse(mouse) if settings.is_none() => screen.handle_mouse(mouse),
+                _ => {}
             }
         }
     }
@@ -220,6 +240,18 @@ fn dispatch(
             if let Some((config, profiles)) = screen.settings_snapshot() {
                 *settings = Some(SettingsScreen::new(config, profiles));
             }
+            return false;
+        }
+        // Тумблер прокрутки колесом: включаем/выключаем захват мыши терминала.
+        // Это чисто терминальный side-effect (FSD: экран про терминал не знает,
+        // только сообщает желаемое состояние). При включённом захвате выделение
+        // текста доступно с зажатым Shift.
+        ChatIntent::SetMouseCapture(on) => {
+            let _ = if on {
+                execute!(stdout(), EnableMouseCapture)
+            } else {
+                execute!(stdout(), DisableMouseCapture)
+            };
             return false;
         }
     };

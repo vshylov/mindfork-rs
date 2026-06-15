@@ -9,7 +9,9 @@
 use std::time::{Duration, Instant};
 
 use ratatui::Frame;
-use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
+use ratatui::crossterm::event::{
+    KeyCode, KeyEvent, KeyEventKind, KeyModifiers, MouseEvent, MouseEventKind,
+};
 use ratatui::layout::{Constraint, Flex, Layout, Rect};
 use ratatui::style::Style;
 use ratatui::style::Stylize;
@@ -34,6 +36,9 @@ use crate::widgets::status_bar;
 
 /// Высота прокрутки ленты на одно нажатие PageUp/PageDown (строк).
 const PAGE_SCROLL: usize = 8;
+
+/// Высота прокрутки ленты на одну «зарубку» колеса мыши (строк).
+const WHEEL_SCROLL: usize = 3;
 
 /// Задержка дебаунса спелл-чека: слово не флагуется, пока пользователь печатает.
 const SPELL_DEBOUNCE: Duration = Duration::from_millis(300);
@@ -63,6 +68,10 @@ pub enum ChatIntent {
     AutoRenameChat(Uuid),
     /// Открыть экран настроек (`Ctrl+P`). `app` создаёт его из снимка настроек.
     OpenSettings,
+    /// Включить/выключить захват мыши терминала для прокрутки колесом (`Ctrl+W`).
+    /// `true` — колесо прокручивает ленту (выделение текста — с Shift); `false` —
+    /// нативное выделение мышью. См. spec §11.3.
+    SetMouseCapture(bool),
 }
 
 /// Пункт попапа подсказок орфографии.
@@ -115,6 +124,9 @@ pub struct ChatScreen {
     show_help: bool,
     /// Активная палитра темы (из `config.interface.theme`). См. spec §11.6.
     palette: Palette,
+    /// Включён ли захват мыши для прокрутки колесом (тумблер `Ctrl+W`). По
+    /// умолчанию выключен — работает нативное выделение текста мышью. См. spec §11.3.
+    mouse_scroll: bool,
 }
 
 impl Default for ChatScreen {
@@ -145,6 +157,7 @@ impl ChatScreen {
             settings_snapshot: None,
             show_help: false,
             palette: Palette::default(),
+            mouse_scroll: false,
         }
     }
 
@@ -392,6 +405,12 @@ impl ChatScreen {
                     self.feed_view.toggle_thoughts();
                     return None;
                 }
+                // Тумблер прокрутки колесом ↔ выделения текста мышью (spec §11.3).
+                // `Ctrl+M` для этого непригоден: терминал отдаёт его как Enter.
+                'w' => {
+                    self.mouse_scroll = !self.mouse_scroll;
+                    return Some(ChatIntent::SetMouseCapture(self.mouse_scroll));
+                }
                 _ => {}
             }
         }
@@ -444,6 +463,24 @@ impl ChatScreen {
                 }
                 None
             }
+        }
+    }
+
+    /// Обрабатывает событие мыши: колесо прокручивает ленту чата. Работает только
+    /// в основном виде — при открытом оверлее/попапе/справке прокрутка ленты под
+    /// ними была бы неожиданной, поэтому это no-op. См. spec §11.3.
+    pub fn handle_mouse(&mut self, mouse: MouseEvent) {
+        if self.show_help
+            || self.suggest.is_some()
+            || self.overlay.is_some()
+            || self.profile_overlay.is_some()
+        {
+            return;
+        }
+        match mouse.kind {
+            MouseEventKind::ScrollUp => self.feed_view.scroll_up(WHEEL_SCROLL),
+            MouseEventKind::ScrollDown => self.feed_view.scroll_down(WHEEL_SCROLL),
+            _ => {}
         }
     }
 
@@ -623,6 +660,7 @@ impl ChatScreen {
             status_area,
             &self.status,
             self.generating,
+            self.mouse_scroll,
             &self.palette,
         );
 
@@ -663,6 +701,7 @@ const HELP_KEYS: &[(&str, &str)] = &[
     ("Ctrl+P", "экран настроек"),
     ("Ctrl+T", "свернуть/развернуть «мысли»"),
     ("Ctrl+G", "подсказки орфографии"),
+    ("Ctrl+W", "колесо мыши ↔ выделение текста"),
     ("PageUp/PageDown", "прокрутка ленты"),
     ("F1 / ?", "эта справка"),
     ("Ctrl+C", "выход"),
@@ -1012,6 +1051,57 @@ mod tests {
             s.feed.len(),
             feed_before,
             "лента не пополняется при открытом оверлее"
+        );
+    }
+
+    fn wheel(kind: MouseEventKind) -> MouseEvent {
+        MouseEvent {
+            kind,
+            column: 0,
+            row: 0,
+            modifiers: KeyModifiers::NONE,
+        }
+    }
+
+    #[test]
+    fn mouse_wheel_up_scrolls_feed_and_disables_follow() {
+        let mut s = ChatScreen::new();
+        assert!(s.feed_view.is_following());
+        s.handle_mouse(wheel(MouseEventKind::ScrollUp));
+        assert!(
+            !s.feed_view.is_following(),
+            "прокрутка вверх отключает следование за хвостом"
+        );
+    }
+
+    #[test]
+    fn ctrl_w_toggles_mouse_capture_intent() {
+        let mut s = ChatScreen::new();
+        // По умолчанию захват выключен → первое нажатие включает (true).
+        assert_eq!(
+            s.handle_key(KeyEvent::new(KeyCode::Char('w'), KeyModifiers::CONTROL)),
+            Some(ChatIntent::SetMouseCapture(true))
+        );
+        // Второе — выключает (false).
+        assert_eq!(
+            s.handle_key(KeyEvent::new(KeyCode::Char('w'), KeyModifiers::CONTROL)),
+            Some(ChatIntent::SetMouseCapture(false))
+        );
+        // Работает и при русской раскладке: Ctrl+ц (физ. W).
+        assert_eq!(
+            s.handle_key(KeyEvent::new(KeyCode::Char('ц'), KeyModifiers::CONTROL)),
+            Some(ChatIntent::SetMouseCapture(true))
+        );
+    }
+
+    #[test]
+    fn mouse_wheel_ignored_while_overlay_open() {
+        let mut s = ChatScreen::new();
+        s.show_help = true;
+        s.handle_mouse(wheel(MouseEventKind::ScrollUp));
+        assert!(
+            s.feed_view.is_following(),
+            "при открытой справке колесо не трогает ленту"
         );
     }
 
