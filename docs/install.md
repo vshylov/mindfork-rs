@@ -58,6 +58,34 @@ cargo test
 xinfer --m Qwen/Qwen3-0.6B --server --port 8000
 ```
 
+### Рекомендуемый external-бэкенд: `llama-server` (llama.cpp)
+
+Протокол — обычный OpenAI, поэтому mindfork работает с **любым** OpenAI-совместимым
+сервером. На практике `xinfer` оказался сырым по **Gemma 4** (выдаёт бессвязный
+вывод и плохо собирается под Windows), поэтому для Gemma рекомендуется **llama.cpp
+`llama-server`** (есть готовые сборки под Windows/CUDA). Проверено: вся цепочка
+(стриминг, остановка по EOS, tool-calling, «мысли») работает на Gemma 4 E4B-it.
+
+```bash
+llama-server -m google_gemma-4-E4B-it-Q4_1.gguf \
+  --host 0.0.0.0 --port 8000 \
+  -ngl 99 -c 8192 \
+  --jinja          # использовать встроенный chat-template модели — обязателен для
+                   # корректного формата Gemma и для tool-calling
+```
+
+Подключение — **external** по URL (managed-режим mindfork собирает аргументы под
+`xinfer`, поэтому `llama-server` запускайте сами):
+
+```powershell
+$env:MINDFORK_XINFER_URL = "http://127.0.0.1:8000/v1"
+cargo run --release
+```
+
+«Мысли» (`reasoning_content`) у `llama-server` включаются флагом `--reasoning-format`
+для thinking-моделей; иначе mindfork подхватывает `<think>…</think>` из текста
+фолбэком.
+
 ### Быстрый старт через переменные окружения (dev)
 
 Env имеет приоритет над `settings.json` (удобно для смоук-прогонов), затрагивает
@@ -109,3 +137,18 @@ cargo run            # dev
 Нужен **настоящий терминал** (TUI). В headless-окружении приложение «висит» —
 это нормально. Базовые клавиши: `F1` — справка, `Ctrl+,` — настройки, `Ctrl+L` —
 список чатов, `Ctrl+N` — новый чат, `Esc` — отмена/закрыть, `Ctrl+C` — выход.
+
+## 7. Смоук-тесты на живой модели
+
+Юнит-тесты сервер не требуют. Сценарии против реального сервера помечены
+`#[ignore]` и запускаются вручную с заданным `MINDFORK_XINFER_URL`:
+
+```powershell
+$env:MINDFORK_XINFER_URL = "http://127.0.0.1:8000/v1"
+cargo test ignored_smoke -- --ignored --nocapture --test-threads=1
+```
+
+Покрывают: стриминг/финиш, **анти-самообрыв на тексте EOS** (`<|im_end|>` Qwen и
+`<end_of_turn>` Gemma), **tool-calling** (`finish_reason=tool_calls` + разбор
+`delta.tool_calls`) и **«мысли»** (`reasoning_content` → `Thoughts`). Проверено
+зелёным на `google_gemma-4-E4B-it-Q4_1.gguf` через `llama-server`.
