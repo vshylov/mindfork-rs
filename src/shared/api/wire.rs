@@ -30,6 +30,15 @@ pub struct ChatCompletionRequest {
     pub thinking: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub reasoning_effort: Option<&'static str>,
+    /// Бюджет «мыслей» (llama.cpp): `0` выключает thinking. См. [`SamplingConfig`].
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reasoning_budget: Option<i64>,
+    /// Доп. переменные для Jinja chat-template (llama.cpp `chat_template_kwargs`).
+    /// Используем для `{"enable_thinking": false}` — разные шаблоны выключают
+    /// «мысли» по-разному (built-in форматы читают `reasoning_budget`, многие
+    /// Jinja-шаблоны — `enable_thinking`), поэтому шлём оба сигнала.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub chat_template_kwargs: Option<serde_json::Value>,
     /// Схемы инструментов (отсутствуют, если tool-calling не используется).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub tools: Option<Vec<WireTool>>,
@@ -136,6 +145,11 @@ pub fn build_chat_request(req: &ChatRequest, stream: bool) -> ChatCompletionRequ
     let tool_choice = tools.as_ref().map(|_| "auto");
 
     let s = &req.sampling;
+    // Просьбу выключить «мысли» (reasoning_budget=0) дублируем через
+    // chat_template_kwargs.enable_thinking=false: built-in форматы llama.cpp читают
+    // reasoning_budget, а Jinja-шаблоны моделей — enable_thinking; шлём оба.
+    let chat_template_kwargs =
+        (s.reasoning_budget == Some(0)).then(|| serde_json::json!({ "enable_thinking": false }));
     ChatCompletionRequest {
         messages,
         stream,
@@ -147,6 +161,8 @@ pub fn build_chat_request(req: &ChatRequest, stream: bool) -> ChatCompletionRequ
         presence_penalty: s.presence_penalty,
         thinking: s.thinking,
         reasoning_effort: s.reasoning_effort.map(|r| r.as_wire()),
+        reasoning_budget: s.reasoning_budget,
+        chat_template_kwargs,
         tools,
         tool_choice,
     }
@@ -253,6 +269,7 @@ mod tests {
                 max_tokens: Some(256),
                 thinking: Some(true),
                 reasoning_effort: Some(ReasoningEffort::High),
+                reasoning_budget: Some(0),
             },
             tools: vec![],
         };
@@ -267,6 +284,9 @@ mod tests {
         assert_eq!(json["max_tokens"], 256);
         assert_eq!(json["thinking"], true);
         assert_eq!(json["reasoning_effort"], "high");
+        assert_eq!(json["reasoning_budget"], 0);
+        // reasoning_budget=0 дублируется сигналом для Jinja-шаблонов.
+        assert_eq!(json["chat_template_kwargs"]["enable_thinking"], false);
         assert_eq!(json["stream"], false);
     }
 

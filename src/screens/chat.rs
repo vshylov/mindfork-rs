@@ -59,6 +59,8 @@ pub enum ChatIntent {
         id: Uuid,
         title: String,
     },
+    /// Авто-название чата силами модели (читает переписку, придумывает заголовок).
+    AutoRenameChat(Uuid),
     /// Открыть экран настроек (`Ctrl+P`). `app` создаёт его из снимка настроек.
     OpenSettings,
 }
@@ -194,6 +196,28 @@ impl ChatScreen {
 
     pub fn set_profile_list(&mut self, profiles: Vec<ProfileSummary>) {
         self.profiles = profiles;
+    }
+
+    /// Показывает ошибку операции списка чатов. Если оверлей открыт — в его
+    /// отдельной области (исчезает по нажатию клавиши, не засоряет ленту); иначе
+    /// (оверлей уже закрыт, напр. поздний ответ авто-названия) — заметкой в ленте.
+    pub fn set_overlay_error(&mut self, message: String) {
+        match &mut self.overlay {
+            Some(overlay) => overlay.set_error(message),
+            None => self.push_error(&message),
+        }
+    }
+
+    /// Обновляет заголовок чата в проекции (после ручного/авто-переименования).
+    /// Меняет заголовок в шапке ленты, если это активный чат. Список и оверлей
+    /// дополнительно обновляются событием `ChatList` (`set_chat_list`).
+    pub fn rename_chat(&mut self, id: Uuid, title: String) {
+        if self.active_chat == Some(id) {
+            self.title = title.clone();
+        }
+        if let Some(c) = self.chats.iter_mut().find(|c| c.id == id) {
+            c.title = title;
+        }
     }
 
     pub fn activate_chat(&mut self, id: Uuid, title: String, messages: &[Message]) {
@@ -562,10 +586,11 @@ impl ChatScreen {
                 self.overlay = None;
                 Some(ChatIntent::CloneChat(id))
             }
-            // Удаление/переименование не закрывают оверлей: обновлённый список
-            // прилетит как `set_chat_list` и синхронизирует снимок.
+            // Удаление/переименование/авто-название не закрывают оверлей:
+            // обновлённый список прилетит как `set_chat_list` и синхронизирует снимок.
             ChatListAction::Delete(id) => Some(ChatIntent::DeleteChat(id)),
             ChatListAction::Rename { id, title } => Some(ChatIntent::RenameChat { id, title }),
+            ChatListAction::AutoRename(id) => Some(ChatIntent::AutoRenameChat(id)),
         }
     }
 
@@ -933,6 +958,61 @@ mod tests {
         let intent = s.handle_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
         assert_eq!(intent, None);
         assert!(s.overlay.is_none());
+    }
+
+    #[test]
+    fn rename_chat_updates_title_bar_of_active_chat() {
+        let mut s = ChatScreen::new();
+        let id = gen_id();
+        s.activate_chat(id, "Старое".into(), &[]);
+        s.rename_chat(id, "Новое".into());
+        assert_eq!(s.title, "Новое");
+        // Чужой чат не трогает шапку активного.
+        s.rename_chat(gen_id(), "Постороннее".into());
+        assert_eq!(s.title, "Новое");
+    }
+
+    #[test]
+    fn overlay_ctrl_r_routes_auto_rename_intent() {
+        let mut s = ChatScreen::new();
+        let id = gen_id();
+        s.set_chat_list(vec![ChatSummary {
+            id,
+            title: "A".into(),
+            created_at: chrono::Utc::now(),
+            modified_at: chrono::Utc::now(),
+            message_count: 2,
+        }]);
+        s.handle_key(KeyEvent::new(KeyCode::Char('l'), KeyModifiers::CONTROL));
+        assert!(s.overlay.is_some());
+        let intent = s.handle_key(KeyEvent::new(KeyCode::Char('r'), KeyModifiers::CONTROL));
+        assert_eq!(intent, Some(ChatIntent::AutoRenameChat(id)));
+        // Оверлей остаётся открытым — список обновится событием ChatList.
+        assert!(s.overlay.is_some());
+    }
+
+    #[test]
+    fn overlay_error_goes_to_overlay_when_open_else_feed() {
+        let mut s = ChatScreen::new();
+        // Оверлей закрыт — ошибка падает заметкой в ленту.
+        s.set_overlay_error("упс".into());
+        assert!(s.feed.iter().any(|m| m.role == FeedRole::Note));
+        let feed_before = s.feed.len();
+        // Оверлей открыт — ошибка идёт в его область, лента не растёт.
+        s.set_chat_list(vec![ChatSummary {
+            id: gen_id(),
+            title: "A".into(),
+            created_at: chrono::Utc::now(),
+            modified_at: chrono::Utc::now(),
+            message_count: 0,
+        }]);
+        s.handle_key(KeyEvent::new(KeyCode::Char('l'), KeyModifiers::CONTROL));
+        s.set_overlay_error("в оверлей".into());
+        assert_eq!(
+            s.feed.len(),
+            feed_before,
+            "лента не пополняется при открытом оверлее"
+        );
     }
 
     fn mk_checker() -> SpellChecker {

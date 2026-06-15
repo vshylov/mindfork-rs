@@ -19,7 +19,7 @@ use crate::app::supervisor::ServerSupervisor;
 use crate::entities::chat::{Chat, ChatSummary};
 use crate::entities::message::{Message, MessageMetadata, MessageRole, ToolCallRecord};
 use crate::entities::profile::{Profile, ToolId};
-use crate::entities::sampling::SamplingConfig;
+use crate::entities::sampling::{ReasoningEffort, SamplingConfig};
 use crate::features::profiles::ProfileEdit;
 use crate::features::tools::{
     ChatEffect, ToolConfig, ToolContext, ToolRegistry, effective_tool_ids, standard_registry,
@@ -37,6 +37,16 @@ const DEFAULT_SYSTEM_MESSAGE: &str =
 
 /// Дебаунс сохранения изменённых чатов на диск.
 const SAVE_DEBOUNCE: Duration = Duration::from_millis(800);
+
+/// Потолок токенов ответа при генерации авто-названия. Пытаемся выключить «мысли»
+/// (`reasoning_budget=0` + `chat_template_kwargs.enable_thinking=false`), но
+/// некоторые модели (вшитый в GGUF thinking, напр. Gemma `peg-gemma4`) их
+/// игнорируют и всё равно «рассуждают» сотни токенов перед ответом — поэтому
+/// бюджет щедрый, чтобы модель успела завершить «мысли» и выдать заголовок.
+const TITLE_MAX_TOKENS: usize = 2048;
+
+/// Лимит времени на генерацию авто-названия чата (с запасом на «думающие» модели).
+const TITLE_TIMEOUT: Duration = Duration::from_secs(60);
 
 /// Параметры запуска оркестратора. Серверы (chat/embedding) и реестр инструментов
 /// оркестратор настраивает сам из [`AppConfig`] через [`ServerSupervisor`] — это
@@ -78,6 +88,13 @@ struct GenResult {
     effects: Vec<ChatEffect>,
 }
 
+/// Результат фоновой задачи авто-названия чата (внутренний канал).
+struct TitleResult {
+    chat_id: Uuid,
+    /// Сырой текст ответа модели (или сообщение об ошибке для показа в UI).
+    text: Result<String, String>,
+}
+
 /// Главный цикл оркестратора. Завершается при закрытии канала команд или
 /// получении [`AppCommand::Quit`].
 pub async fn run(deps: OrchestratorDeps) {
@@ -93,6 +110,9 @@ pub async fn run(deps: OrchestratorDeps) {
     // Внутренний канал статуса сервера: фоновый probe супервайзера досылает в него
     // готовность (Ready/Disconnected), петля транслирует в AppEvent::ServerStatus.
     let (status_tx, mut status_rx) = unbounded_channel::<ServerStatus>();
+    // Внутренний канал авто-названий: фоновая задача присылает сгенерированный
+    // заголовок (или ошибку), петля применяет его к чату.
+    let (title_tx, mut title_rx) = unbounded_channel::<TitleResult>();
     let registry = Arc::new(build_registry(&config));
     let mut orch = Orchestrator {
         evt_tx,
@@ -105,6 +125,7 @@ pub async fn run(deps: OrchestratorDeps) {
         config,
         registry,
         status_tx,
+        title_tx,
         server_status: ServerStatus::NotConfigured,
         profiles: Vec::new(),
         chats: Vec::new(),
@@ -143,6 +164,11 @@ pub async fn run(deps: OrchestratorDeps) {
                 if let Some(s) = status {
                     orch.server_status = s.clone();
                     let _ = orch.evt_tx.send(AppEvent::ServerStatus(s));
+                }
+            }
+            title = title_rx.recv() => {
+                if let Some(res) = title {
+                    orch.handle_title_result(res);
                 }
             }
             _ = sleep_until_opt(deadline) => orch.flush_saves(),
@@ -186,6 +212,8 @@ struct Orchestrator {
     registry: Arc<ToolRegistry>,
     /// Канал статуса сервера для фонового probe супервайзера.
     status_tx: UnboundedSender<ServerStatus>,
+    /// Канал результатов фоновой генерации авто-названий чатов.
+    title_tx: UnboundedSender<TitleResult>,
     /// Текущий статус chat-сервера. Генерация стартует только в `Ready`: запрос к
     /// ещё загружающемуся (`Connecting`) managed-серверу вернул бы 503 («error
     /// status»), а для перегенерации — ещё и снёс бы прежний ответ впустую.
@@ -264,6 +292,7 @@ impl Orchestrator {
             AppCommand::NewChat { profile_id } => self.handle_new_chat(profile_id),
             AppCommand::SwitchChat(id) => self.handle_switch(id),
             AppCommand::RenameChat { id, title } => self.handle_rename(id, title),
+            AppCommand::AutoRenameChat(id) => self.handle_auto_rename(id),
             AppCommand::CloneChat(id) => self.handle_clone(id),
             AppCommand::DeleteChat(id) => self.handle_delete(id),
             AppCommand::CreateProfile {
@@ -549,9 +578,79 @@ impl Orchestrator {
             return;
         }
         if let Some(chat) = self.chat_mut(id) {
-            chat.title = title;
+            chat.title = title.clone();
             self.mark_dirty(id);
             self.emit_chat_list();
+            let _ = self.evt_tx.send(AppEvent::ChatRenamed { id, title });
+        }
+    }
+
+    /// Авто-название чата (spec §11.2): модель читает переписку (или её начало и
+    /// конец, если она длинная) и придумывает короткий заголовок. Запрос идёт
+    /// фоновой задачей; результат прилетает в [`Orchestrator::handle_title_result`].
+    /// Чат-сервер должен быть готов (`Ready`) — иначе понятная ошибка.
+    fn handle_auto_rename(&mut self, id: Uuid) {
+        let Some(chat) = self.chats.iter().find(|c| c.id == id) else {
+            return;
+        };
+        let Some(digest) = crate::features::rename_chat::build_conversation_digest(&chat.messages)
+        else {
+            let _ = self.evt_tx.send(AppEvent::ChatListError(
+                "Недостаточно сообщений для авто-названия".into(),
+            ));
+            return;
+        };
+        let Some(backend) = self.ready_backend() else {
+            return;
+        };
+        // Свежий компактный семплинг (не наследуем override чата): короткий ответ,
+        // умеренная температура, reasoning выключен (заголовку «мысли» не нужны и
+        // только съедают бюджет токенов), без инструментов. Ключевое — `reasoning_
+        // budget=0`: для моделей со «вшитым» в шаблон thinking (Gemma `peg-gemma4`,
+        // Qwen) только он реально гасит «мысли»; поля `thinking`/`reasoning_effort`
+        // сервер для таких шаблонов игнорирует (иначе модель тратила весь бюджет на
+        // «мысли» и ответный текст приходил пустым).
+        let sampling = SamplingConfig {
+            max_tokens: Some(TITLE_MAX_TOKENS),
+            temperature: Some(0.3),
+            thinking: Some(false),
+            reasoning_effort: Some(ReasoningEffort::None),
+            reasoning_budget: Some(0),
+            ..Default::default()
+        };
+        let request = ChatRequest {
+            system: Some(crate::features::rename_chat::TITLE_SYSTEM_MESSAGE.to_string()),
+            messages: vec![ApiMessage::user(digest)],
+            sampling,
+            tools: Vec::new(),
+        };
+        spawn_title(backend, request, id, self.title_tx.clone());
+    }
+
+    /// Применяет результат фоновой генерации авто-названия: чистит/нормализует
+    /// заголовок и переименовывает чат (или показывает ошибку).
+    fn handle_title_result(&mut self, res: TitleResult) {
+        match res.text {
+            Ok(raw) => {
+                let Some(title) = crate::features::rename_chat::clean_generated_title(&raw) else {
+                    let _ = self.evt_tx.send(AppEvent::ChatListError(
+                        "Модель не вернула название чата".into(),
+                    ));
+                    return;
+                };
+                if let Some(chat) = self.chat_mut(res.chat_id) {
+                    chat.title = title.clone();
+                    self.mark_dirty(res.chat_id);
+                    self.emit_chat_list();
+                    let _ = self.evt_tx.send(AppEvent::ChatRenamed {
+                        id: res.chat_id,
+                        title,
+                    });
+                }
+            }
+            Err(msg) => {
+                let _ = self.evt_tx.send(AppEvent::ChatListError(msg));
+            }
         }
     }
 
@@ -567,7 +666,7 @@ impl Orchestrator {
         clone.modified_at = now;
         let new_id = clone.id;
         if let Err(err) = self.storage.json().save_chat(&clone) {
-            let _ = self.evt_tx.send(AppEvent::Error(format!(
+            let _ = self.evt_tx.send(AppEvent::ChatListError(format!(
                 "Не удалось клонировать чат: {err}"
             )));
             return;
@@ -581,9 +680,9 @@ impl Orchestrator {
         match self.storage.json().hide_chat(id) {
             Ok(false) => return,
             Err(err) => {
-                let _ = self
-                    .evt_tx
-                    .send(AppEvent::Error(format!("Не удалось удалить чат: {err}")));
+                let _ = self.evt_tx.send(AppEvent::ChatListError(format!(
+                    "Не удалось удалить чат: {err}"
+                )));
                 return;
             }
             Ok(true) => {}
@@ -901,6 +1000,62 @@ fn build_request(
     }
 }
 
+/// Запускает фоновую задачу авто-названия чата: один независимый запрос к модели
+/// (без истории/инструментов), сбор текста, отправка результата в `title_tx`.
+/// Лимит времени — [`TITLE_TIMEOUT`].
+fn spawn_title(
+    backend: Arc<dyn EngineBackend>,
+    request: ChatRequest,
+    chat_id: Uuid,
+    title_tx: UnboundedSender<TitleResult>,
+) {
+    tokio::spawn(async move {
+        let cancel = CancellationToken::new();
+        let collect = async {
+            let mut stream = backend.chat_stream(request, cancel.clone()).await?;
+            let mut text = String::new();
+            let mut thoughts = String::new();
+            while let Some(chunk) = stream.next().await {
+                match chunk {
+                    ChatChunk::Text(t) => text.push_str(&t),
+                    // Копим «мысли» как запасной источник: если модель так и не
+                    // «завершила мысль» (выдала только reasoning), вытащим заголовок
+                    // из последней содержательной строки рассуждений.
+                    ChatChunk::Thoughts(t) => thoughts.push_str(&t),
+                    ChatChunk::Finished(_) => break,
+                    ChatChunk::ToolCall(_) => {}
+                }
+            }
+            Ok::<(String, String), anyhow::Error>((text, thoughts))
+        };
+        let text = match tokio::time::timeout(TITLE_TIMEOUT, collect).await {
+            Ok(Ok((text, thoughts))) => Ok(salvage_title_source(text, thoughts)),
+            Ok(Err(err)) => Err(format!("Ошибка генерации названия: {err}")),
+            Err(_) => {
+                cancel.cancel();
+                Err("Генерация названия превысила лимит времени".to_string())
+            }
+        };
+        let _ = title_tx.send(TitleResult { chat_id, text });
+    });
+}
+
+/// Выбирает сырой источник заголовка: основной ответ модели, а если он пуст
+/// (модель не «завершила мысль» в рамках бюджета) — последнюю содержательную
+/// строку рассуждений. Финальную нормализацию делает `clean_generated_title`.
+fn salvage_title_source(text: String, thoughts: String) -> String {
+    if !text.trim().is_empty() {
+        return text;
+    }
+    thoughts
+        .lines()
+        .rev()
+        .map(str::trim)
+        .find(|l| !l.is_empty())
+        .unwrap_or("")
+        .to_string()
+}
+
 /// Параметры запуска задачи генерации (agentic-loop).
 struct GenSpawn {
     backend: Arc<dyn EngineBackend>,
@@ -1189,6 +1344,7 @@ mod tests {
         let (evt_tx, evt_rx) = unbounded_channel();
         let (done_tx, _done_rx) = unbounded_channel();
         let (status_tx, _status_rx) = unbounded_channel();
+        let (title_tx, _title_rx) = unbounded_channel();
         let config = AppConfig {
             default_sampling: SamplingConfig {
                 temperature: Some(0.1),
@@ -1208,6 +1364,7 @@ mod tests {
             config,
             registry,
             status_tx,
+            title_tx,
             server_status: ServerStatus::Ready,
             profiles: Vec::new(),
             chats: Vec::new(),
@@ -1424,6 +1581,86 @@ mod tests {
         let reopened = Storage::open(Paths::with_root(&root)).unwrap();
         let chat = reopened.json().load_chat(chat_id).unwrap().unwrap();
         assert!(chat.messages.is_empty(), "{:?}", chat.messages);
+    }
+
+    #[tokio::test]
+    async fn auto_rename_sets_title_from_model() {
+        // Первый запрос (отправка) → «ответ»; второй (авто-название) → заголовок.
+        let backend = Arc::new(MockBackend::sequence(vec![
+            vec![
+                ChatChunk::Text("ответ".into()),
+                ChatChunk::Finished(FinishReason::Stop),
+            ],
+            vec![
+                ChatChunk::Text("«Тема разговора»".into()),
+                ChatChunk::Finished(FinishReason::Stop),
+            ],
+        ])) as Arc<dyn EngineBackend>;
+        let (_d, cmd_tx, mut evt_rx, handle) = spawn_orch(Some(backend));
+        let active = wait_for(&mut evt_rx, |e| matches!(e, AppEvent::ChatActivated { .. }))
+            .await
+            .unwrap();
+        let chat_id = match active {
+            AppEvent::ChatActivated { id, .. } => id,
+            _ => unreachable!(),
+        };
+
+        // Нужна хотя бы одна реплика, иначе нечего озаглавливать.
+        cmd_tx
+            .send(AppCommand::SendMessage("привет".into()))
+            .unwrap();
+        wait_for(&mut evt_rx, |e| matches!(e, AppEvent::Finished { .. }))
+            .await
+            .unwrap();
+        wait_for(&mut evt_rx, |e| matches!(e, AppEvent::ChatList(_)))
+            .await
+            .unwrap();
+
+        cmd_tx.send(AppCommand::AutoRenameChat(chat_id)).unwrap();
+        let renamed = wait_for(&mut evt_rx, |e| matches!(e, AppEvent::ChatRenamed { .. }))
+            .await
+            .unwrap();
+        match renamed {
+            AppEvent::ChatRenamed { id, title } => {
+                assert_eq!(id, chat_id);
+                assert_eq!(title, "Тема разговора", "кавычки модели сняты");
+            }
+            _ => unreachable!(),
+        }
+
+        cmd_tx.send(AppCommand::Quit).unwrap();
+        handle.await.unwrap();
+    }
+
+    #[test]
+    fn salvage_prefers_text_else_last_thought_line() {
+        // Есть основной ответ — берём его.
+        assert_eq!(
+            salvage_title_source("Заголовок".into(), "мысли".into()),
+            "Заголовок"
+        );
+        // Ответ пуст — спасаем последнюю содержательную строку рассуждений.
+        assert_eq!(
+            salvage_title_source("  ".into(), "рассуждаю\nитог: Планы\n\n".into()),
+            "итог: Планы"
+        );
+        // Совсем пусто — пустая строка (clean_generated_title вернёт None → ошибка).
+        assert_eq!(salvage_title_source(String::new(), String::new()), "");
+    }
+
+    #[test]
+    fn auto_rename_without_messages_emits_error() {
+        let (_d, mut orch, mut rx) = bare_orch_rx();
+        let profile = Profile::new("P", "sys");
+        let chat = Chat::from_profile(&profile, "Новый чат"); // без сообщений
+        let chat_id = chat.id;
+        orch.profiles.push(profile);
+        orch.chats.push(chat);
+
+        orch.handle_auto_rename(chat_id);
+        // Пустой чат → ошибка в область списка чатов, фоновая задача не запускается.
+        let ev = rx.try_recv().unwrap();
+        assert!(matches!(ev, AppEvent::ChatListError(_)));
     }
 
     #[tokio::test]

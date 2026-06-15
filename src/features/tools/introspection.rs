@@ -167,6 +167,7 @@ fn merge_sampling(base: &SamplingConfig, patch: &SamplingConfig) -> SamplingConf
         max_tokens: patch.max_tokens.or(base.max_tokens),
         thinking: patch.thinking.or(base.thinking),
         reasoning_effort: patch.reasoning_effort.or(base.reasoning_effort),
+        reasoning_budget: patch.reasoning_budget.or(base.reasoning_budget),
     }
 }
 

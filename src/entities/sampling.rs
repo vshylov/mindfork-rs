@@ -40,6 +40,11 @@ pub struct SamplingConfig {
     /// Включить reasoning («мысли», `<think>`/`reasoning_content`).
     pub thinking: Option<bool>,
     pub reasoning_effort: Option<ReasoningEffort>,
+    /// Бюджет «мыслей» в токенах (llama.cpp `reasoning_budget`): `0` —
+    /// **полностью выключить** thinking даже для моделей со «вшитым» в шаблон
+    /// reasoning (Gemma `peg-gemma4`, Qwen), `-1` — без ограничения. `None` —
+    /// поле не отправляется (поведение сервера по умолчанию). См. spec §8.
+    pub reasoning_budget: Option<i64>,
 }
 
 /// Разрешает фактический семплинг по приоритету (spec §8.3):
