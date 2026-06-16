@@ -93,8 +93,6 @@ struct TableBuilder {
     current_row: Vec<Vec<Span<'static>>>,
     /// Текущая собираемая ячейка (между `Start/End(TableCell)`).
     current_cell: Option<Vec<Span<'static>>>,
-    /// Идёт ли сбор заголовка.
-    in_head: bool,
 }
 
 /// Накопитель строк: разворачивает поток событий pulldown-cmark в `Vec<Line>`.
@@ -181,7 +179,6 @@ impl Writer {
             Tag::Table(alignments) => self.start_table(alignments),
             Tag::TableHead => {
                 if let Some(tb) = &mut self.table {
-                    tb.in_head = true;
                     tb.current_row.clear();
                 }
             }
@@ -219,7 +216,6 @@ impl Writer {
             TagEnd::TableHead => {
                 if let Some(tb) = &mut self.table {
                     tb.head = std::mem::take(&mut tb.current_row);
-                    tb.in_head = false;
                 }
             }
             TagEnd::TableRow => {
@@ -412,7 +408,6 @@ impl Writer {
             rows: Vec::new(),
             current_row: Vec::new(),
             current_cell: None,
-            in_head: false,
         });
         self.needs_newline = false;
     }
@@ -898,6 +893,14 @@ fn apply_brace_commands(input: &str) -> String {
                     out.push(')');
                     i = after_a;
                     continue;
+                } else if name == "pmod"
+                    && let Some((a, after_a)) = read_group(&chars, j)
+                {
+                    out.push_str("(mod ");
+                    out.push_str(&apply_brace_commands(&a));
+                    out.push(')');
+                    i = after_a;
+                    continue;
                 } else if is_text_command(&name)
                     && let Some((a, after_a)) = read_group(&chars, j)
                 {
@@ -963,6 +966,62 @@ fn is_text_command(name: &str) -> bool {
             | "mathtt"
             | "operatorname"
             | "boldsymbol"
+            // акценты/обёртки: показываем содержимое (диакритику опускаем)
+            | "overline"
+            | "underline"
+            | "hat"
+            | "widehat"
+            | "bar"
+            | "vec"
+            | "tilde"
+            | "widetilde"
+            | "dot"
+            | "ddot"
+            | "mathring"
+            | "breve"
+            | "acute"
+            | "grave"
+            | "check"
+    )
+}
+
+/// Операторные имена (`\log`, `\sin`, `\lim`, …) — печатаются словом без `\`.
+fn is_function_name(name: &str) -> bool {
+    matches!(
+        name,
+        "log"
+            | "ln"
+            | "lg"
+            | "exp"
+            | "sin"
+            | "cos"
+            | "tan"
+            | "cot"
+            | "sec"
+            | "csc"
+            | "sinh"
+            | "cosh"
+            | "tanh"
+            | "coth"
+            | "arcsin"
+            | "arccos"
+            | "arctan"
+            | "lim"
+            | "limsup"
+            | "liminf"
+            | "sup"
+            | "inf"
+            | "min"
+            | "max"
+            | "gcd"
+            | "det"
+            | "deg"
+            | "dim"
+            | "ker"
+            | "hom"
+            | "arg"
+            | "Pr"
+            | "mod"
     )
 }
 
@@ -1012,6 +1071,10 @@ fn replace_commands(input: &str) -> String {
             // Пробел после команды НЕ съедаем (в отличие от настоящего LaTeX):
             // это аппроксимация для чтения, и пользовательские пробелы — значимый
             // визуальный разделитель (`\alpha + \beta` → «α + β», не «α+ β»).
+        } else if is_function_name(name) {
+            // Операторное имя (`\log`, `\sin`, `\lim`, …) — печатаем словом.
+            out.push_str(name);
+            i = j;
         } else {
             // неизвестная команда — оставляем как есть (вместе с '\')
             out.push('\\');
@@ -1139,6 +1202,10 @@ fn command_symbol(name: &str) -> Option<&'static str> {
         // пробельные команды (читаемость): сводим к пробелу
         "quad" => " ",
         "qquad" => "  ",
+        "bmod" => "mod",
+        // модификаторы размера скобок — снимаем, скобку-делимитер оставляем
+        "left" | "right" | "big" | "Big" | "bigg" | "Bigg" | "bigl" | "bigr" | "Bigl" | "Bigr"
+        | "biggl" | "biggr" => "",
         _ => return None,
     };
     Some(s)
@@ -1334,6 +1401,33 @@ mod tests {
         assert_eq!(latex_to_unicode(r"a \therefore b"), "a ∴ b");
         assert_eq!(latex_to_unicode(r"x \longrightarrow y"), "x ⟶ y");
         assert_eq!(latex_to_unicode(r"p \ll q"), "p ≪ q");
+    }
+
+    #[test]
+    fn function_names_render_as_words() {
+        assert_eq!(latex_to_unicode(r"O(n \log n)"), "O(n log n)");
+        assert_eq!(latex_to_unicode(r"\sin x + \cos x"), "sin x + cos x");
+        assert_eq!(latex_to_unicode(r"\lim f"), "lim f");
+        assert_eq!(latex_to_unicode(r"\ln(x) \exp(y)"), "ln(x) exp(y)");
+    }
+
+    #[test]
+    fn bracket_size_modifiers_stripped() {
+        assert_eq!(latex_to_unicode(r"\left( x \right)"), "( x )");
+        assert_eq!(latex_to_unicode(r"\bigl[ a \bigr]"), "[ a ]");
+    }
+
+    #[test]
+    fn accents_show_content() {
+        assert_eq!(latex_to_unicode(r"\vec{v}"), "v");
+        assert_eq!(latex_to_unicode(r"\overline{AB}"), "AB");
+        assert_eq!(latex_to_unicode(r"\hat{x} + \bar{y}"), "x + y");
+    }
+
+    #[test]
+    fn pmod_and_bmod() {
+        assert_eq!(latex_to_unicode(r"a \bmod n"), "a mod n");
+        assert_eq!(latex_to_unicode(r"x \pmod{7}"), "x (mod 7)");
     }
 
     #[test]
