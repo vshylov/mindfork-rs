@@ -132,9 +132,17 @@ fn run_loop(
     let mut settings: Option<SettingsScreen> = None;
     let mut spell = SpellLoader::new(dict_dir, personal);
     let mut quit = false;
+    // Перерисовываем ТОЛЬКО при изменениях (флаг `dirty`), а не на каждый тик.
+    // Иначе `terminal.draw` зовётся ~20 раз/сек и каждый раз переставляет курсор
+    // (`frame.set_cursor_position`), а терминал (особенно Windows Terminal)
+    // сбрасывает фазу мигания на каждое перемещение курсора → курсор мигает чаще
+    // и неровно, хотя CPU ~0% (diff буфера пустой). Анимаций по таймеру в рендере
+    // нет, поэтому простаивающие тики перерисовки не нужны. См. spec §11.
+    let mut dirty = true;
     while !quit {
         while let Ok(event) = evt_rx.try_recv() {
             apply_event(&mut screen, &mut settings, event);
+            dirty = true;
         }
         // Настройки спелл-чека получены/изменились — (пере)грузим словари в фоне.
         if let Some((enabled, selected)) = screen.spell_config() {
@@ -143,13 +151,26 @@ fn run_loop(
         // Готовая (пере)загрузка — подключаем чекер (отключённый ничего не флагует).
         if let Some(checker) = spell.poll() {
             screen.set_spellchecker(checker);
+            dirty = true;
         }
-        if let Some(settings_screen) = &mut settings {
-            terminal.draw(|frame| settings_screen.render(frame))?;
-        } else {
-            terminal.draw(|frame| screen.render(frame))?;
+        // Дебаунс-перепроверка орфографии: петля крутится каждый тик (таймаут
+        // `poll`), даже когда не рисует, поэтому здесь и обеспечивается пробуждение
+        // по истечении дебаунса. Перерисовываем только когда подсветка реально
+        // пересчитана. На экране настроек ввод чата не активен — пропускаем.
+        if settings.is_none() && screen.maybe_recheck_spelling() {
+            dirty = true;
+        }
+        if dirty {
+            if let Some(settings_screen) = &mut settings {
+                terminal.draw(|frame| settings_screen.render(frame))?;
+            } else {
+                terminal.draw(|frame| screen.render(frame))?;
+            }
+            dirty = false;
         }
         if event::poll(TICK)? {
+            // Любое терминальное событие (ввод, скролл, ресайз) может изменить вид.
+            dirty = true;
             match event::read()? {
                 Event::Key(key) => {
                     if let Some(settings_screen) = &mut settings {
