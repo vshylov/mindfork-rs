@@ -86,6 +86,18 @@ impl ServerHandle {
 
     /// Запускает дочерний процесс `llama-server` (без ожидания готовности).
     pub fn launch(cfg: &ManagedConfig) -> Result<Self> {
+        // Предполётная проверка файла модели. `spawn` ниже успешен даже при
+        // отсутствующем GGUF — `llama-server` лишь потом падает на загрузке и
+        // выходит, а фоновый probe (`wait_until_ready`) этого не замечает и
+        // впустую ждёт до таймаута (минуты), держа UI в «подключение…». Поэтому
+        // ловим самую частую причину здесь и сразу возвращаем понятную ошибку
+        // (супервайзер превратит её в `ServerStatus::Disconnected`).
+        if let Some(model) = &cfg.model_path
+            && !std::path::Path::new(model).is_file()
+        {
+            bail!("файл модели не найден или недоступен: {model}");
+        }
+
         let args = build_args(cfg);
         tracing::info!(binary = %cfg.binary.display(), ?args, "launching managed llama-server");
 
@@ -204,5 +216,20 @@ mod tests {
     #[test]
     fn base_url_uses_port() {
         assert_eq!(base_cfg().base_url(), "http://127.0.0.1:8000/v1");
+    }
+
+    #[test]
+    fn launch_missing_model_file_errors_before_spawn() {
+        // Несуществующий GGUF → понятная ошибка ещё до spawn (без рантайма tokio),
+        // вместо немого зависания probe в «подключение…» до таймаута.
+        let cfg = ManagedConfig {
+            model_path: Some("definitely/missing/model-xyz.gguf".into()),
+            ..base_cfg()
+        };
+        let err = match ServerHandle::launch(&cfg) {
+            Err(e) => e,
+            Ok(_) => panic!("ожидалась ошибка отсутствующего файла модели"),
+        };
+        assert!(err.to_string().contains("файл модели"), "{err}");
     }
 }

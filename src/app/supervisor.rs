@@ -304,6 +304,26 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn managed_with_missing_model_is_disconnected() {
+        // Бинарник есть (spawn бы прошёл), но файл модели отсутствует: раньше это
+        // вешало UI в «подключение…» до таймаута; теперь — сразу `Disconnected`
+        // с понятным сообщением.
+        let (tx, _rx) = unbounded_channel();
+        let s = EngineSettings {
+            mode: ServerMode::Managed,
+            binary: Some("llama-server".into()),
+            model_path: Some("no/such/model.gguf".into()),
+            ..Default::default()
+        };
+        let setup = LlamaSupervisor.apply_chat(&s, tx);
+        assert!(setup.backend.is_none());
+        match setup.status {
+            ServerStatus::Disconnected(msg) => assert!(msg.contains("файл модели"), "{msg}"),
+            other => panic!("ожидался Disconnected, получили {other:?}"),
+        }
+    }
+
+    #[tokio::test]
     async fn embed_external_url_is_available() {
         let s = EmbedSettings {
             mode: ServerMode::External,
