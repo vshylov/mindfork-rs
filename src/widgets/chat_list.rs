@@ -31,6 +31,8 @@ pub enum ChatListAction {
     New,
     /// Клонировать чат.
     Clone(Uuid),
+    /// Скопировать всю переписку чата в буфер обмена.
+    Copy(Uuid),
     /// Мягко удалить чат.
     Delete(Uuid),
     /// Переименовать чат.
@@ -59,6 +61,9 @@ pub struct ChatListState {
     /// Текущая ошибка операции (авто-название/удаление/клон) для отдельной области.
     /// Сбрасывается при следующем нажатии клавиши.
     error: Option<String>,
+    /// Подтверждение операции (напр. «скопировано») для той же области, но как
+    /// успех. Сбрасывается при следующем нажатии клавиши. Взаимоисключимо с `error`.
+    notice: Option<String>,
 }
 
 impl ChatListState {
@@ -71,6 +76,7 @@ impl ChatListState {
             selected: 0,
             mode: Mode::Search,
             error: None,
+            notice: None,
         };
         if let Some(active) = active {
             let visible = state.visible();
@@ -116,6 +122,14 @@ impl ChatListState {
     /// при следующем нажатии клавиши, так что не «висит» постоянно.
     pub fn set_error(&mut self, message: String) {
         self.error = Some(message);
+        self.notice = None;
+    }
+
+    /// Устанавливает подтверждение операции (успех) для той же области. Сбрасывается
+    /// при следующем нажатии клавиши.
+    pub fn set_notice(&mut self, message: String) {
+        self.notice = Some(message);
+        self.error = None;
     }
 
     /// Обрабатывает нажатие клавиши, возвращая действие для исполнения.
@@ -123,8 +137,9 @@ impl ChatListState {
         if key.kind != KeyEventKind::Press {
             return ChatListAction::None;
         }
-        // Любое нажатие убирает показанную ранее ошибку (она не должна «висеть»).
+        // Любое нажатие убирает показанные ранее ошибку/подтверждение (не «висят»).
         self.error = None;
+        self.notice = None;
         match &mut self.mode {
             Mode::Rename { .. } => self.on_key_rename(key),
             Mode::Search => self.on_key_search(key),
@@ -182,6 +197,11 @@ impl ChatListState {
                 }
                 ChatListAction::None
             }
+            // Копирование всей переписки выделенного чата в буфер обмена.
+            KeyCode::F(5) => match self.selected_id() {
+                Some(id) => ChatListAction::Copy(id),
+                None => ChatListAction::None,
+            },
             KeyCode::Delete => match self.selected_id() {
                 Some(id) => ChatListAction::Delete(id),
                 None => ChatListAction::None,
@@ -244,9 +264,10 @@ impl ChatListState {
         let inner = block.inner(popup);
         frame.render_widget(block, popup);
 
-        // Под список отдаём всё, кроме строки поиска и (если есть) строки ошибки.
+        // Под список отдаём всё, кроме строки поиска и (если есть) строки статуса
+        // (ошибка/подтверждение).
         let mut constraints = vec![Constraint::Length(1), Constraint::Min(1)];
-        if self.error.is_some() {
+        if self.error.is_some() || self.notice.is_some() {
             constraints.push(Constraint::Length(1));
         }
         let chunks = Layout::vertical(constraints).split(inner);
@@ -268,11 +289,17 @@ impl ChatListState {
         }
         frame.render_stateful_widget(list, list_area, &mut list_state);
 
-        // --- область ошибки (если есть) ---
+        // --- область статуса: ошибка (красным) или подтверждение (успехом) ---
         if let Some(err) = &self.error {
             let line = Line::from(vec![
                 Span::from("⚠ ").fg(palette.error),
                 Span::from(err.clone()).fg(palette.error),
+            ]);
+            frame.render_widget(Paragraph::new(line), chunks[2]);
+        } else if let Some(notice) = &self.notice {
+            let line = Line::from(vec![
+                Span::from("✓ ").fg(palette.success),
+                Span::from(notice.clone()).fg(palette.success),
             ]);
             frame.render_widget(Paragraph::new(line), chunks[2]);
         }
@@ -314,7 +341,7 @@ impl ChatListState {
     fn help_line(&self) -> Line<'static> {
         match self.mode {
             Mode::Search => Line::from(format!(
-                " ↑↓ выбор · Enter открыть · F2 ⮞ · Ctrl+R авто-назв. · Ctrl+N новый · Ctrl+D копия · Del удалить · Tab сорт.: {} ",
+                " ↑↓ выбор · Enter открыть · F2 ⮞ · Ctrl+R авто-назв. · Ctrl+N новый · Ctrl+D копия · F5 в буфер · Del удалить · Tab сорт.: {} ",
                 self.sort.label()
             ))
             .dim(),
@@ -398,6 +425,29 @@ mod tests {
         // Текст поиска кириллицей по-прежнему набирается (без Ctrl).
         s.on_key(key(KeyCode::Char('я')));
         assert_eq!(s.query, "я");
+    }
+
+    #[test]
+    fn f5_requests_copy_of_selected() {
+        let chats = vec![chat("A")];
+        let id = chats[0].id;
+        let mut s = ChatListState::new(chats, None);
+        assert_eq!(s.on_key(key(KeyCode::F(5))), ChatListAction::Copy(id));
+    }
+
+    #[test]
+    fn notice_is_set_and_cleared_on_next_key() {
+        let mut s = ChatListState::new(vec![chat("A")], None);
+        s.set_notice("скопировано".into());
+        assert_eq!(s.notice.as_deref(), Some("скопировано"));
+        // Установка ошибки гасит подтверждение и наоборот (взаимоисключимы).
+        s.set_error("боль".into());
+        assert!(s.notice.is_none());
+        s.set_notice("ок".into());
+        assert!(s.error.is_none());
+        // Любое нажатие убирает подтверждение.
+        s.on_key(key(KeyCode::Down));
+        assert!(s.notice.is_none());
     }
 
     #[test]

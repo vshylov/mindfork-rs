@@ -130,6 +130,9 @@ fn run_loop(
     // Экран настроек открывается поверх чата (Ctrl+P). События продолжают
     // применяться к чату (генерация не прерывается).
     let mut settings: Option<SettingsScreen> = None;
+    // Буфер обмена создаётся лениво при первом копировании (на headless-Linux без
+    // X11/Wayland конструктор может упасть — тогда показываем ошибку, не паникуем).
+    let mut clipboard: Option<arboard::Clipboard> = None;
     let mut spell = SpellLoader::new(dict_dir, personal);
     let mut quit = false;
     // Перерисовываем ТОЛЬКО при изменениях (флаг `dirty`), а не на каждый тик.
@@ -141,7 +144,7 @@ fn run_loop(
     let mut dirty = true;
     while !quit {
         while let Ok(event) = evt_rx.try_recv() {
-            apply_event(&mut screen, &mut settings, event);
+            apply_event(&mut screen, &mut settings, &mut clipboard, event);
             dirty = true;
         }
         // Настройки спелл-чека получены/изменились — (пере)грузим словари в фоне.
@@ -194,12 +197,25 @@ fn run_loop(
 /// Применяет событие оркестратора к экрану чата (read-only-проекция). Снимок
 /// настроек при открытом экране настроек дополнительно обновляет его рабочую
 /// копию (отражает создание/удаление профилей).
-fn apply_event(screen: &mut ChatScreen, settings: &mut Option<SettingsScreen>, event: AppEvent) {
+fn apply_event(
+    screen: &mut ChatScreen,
+    settings: &mut Option<SettingsScreen>,
+    clipboard: &mut Option<arboard::Clipboard>,
+    event: AppEvent,
+) {
     match event {
         AppEvent::ServerStatus(status) => screen.set_server_status(status),
         AppEvent::ChatList(chats) => screen.set_chat_list(chats),
         AppEvent::ChatRenamed { id, title } => screen.rename_chat(id, title),
         AppEvent::ChatListError(message) => screen.set_overlay_error(message),
+        // Запись в буфер обмена — side-effect UI-слоя; подтверждение/ошибку шлём в
+        // область статуса оверлея списка чатов (его и открывали для копирования).
+        AppEvent::CopyToClipboard(text) => match write_clipboard(clipboard, &text) {
+            Ok(()) => screen.set_overlay_notice("Переписка скопирована в буфер обмена".into()),
+            Err(err) => {
+                screen.set_overlay_error(format!("Не удалось скопировать в буфер обмена: {err}"))
+            }
+        },
         AppEvent::ProfileList(profiles) => screen.set_profile_list(profiles),
         AppEvent::Settings { config, profiles } => {
             if let Some(settings_screen) = settings {
@@ -237,6 +253,20 @@ fn apply_event(screen: &mut ChatScreen, settings: &mut Option<SettingsScreen>, e
     }
 }
 
+/// Пишет текст в системный буфер обмена, создавая клиент лениво и переиспользуя
+/// его. Возвращает текст ошибки (вместо паники), если буфер недоступен — на
+/// headless-Linux без X11/Wayland конструктор `arboard` может упасть.
+fn write_clipboard(slot: &mut Option<arboard::Clipboard>, text: &str) -> Result<(), String> {
+    if slot.is_none() {
+        *slot = Some(arboard::Clipboard::new().map_err(|e| e.to_string())?);
+    }
+    // `unwrap` безопасен: только что гарантировали `Some`.
+    slot.as_mut()
+        .unwrap()
+        .set_text(text.to_string())
+        .map_err(|e| e.to_string())
+}
+
 /// Транслирует намерение чата в команду оркестратору (или открывает настройки).
 /// Возвращает `true` для [`ChatIntent::Quit`] (петля завершается).
 fn dispatch(
@@ -254,6 +284,7 @@ fn dispatch(
         ChatIntent::NewChat { profile_id } => AppCommand::NewChat { profile_id },
         ChatIntent::SwitchChat(id) => AppCommand::SwitchChat(id),
         ChatIntent::CloneChat(id) => AppCommand::CloneChat(id),
+        ChatIntent::CopyChat(id) => AppCommand::CopyChat(id),
         ChatIntent::DeleteChat(id) => AppCommand::DeleteChat(id),
         ChatIntent::RenameChat { id, title } => AppCommand::RenameChat { id, title },
         ChatIntent::AutoRenameChat(id) => AppCommand::AutoRenameChat(id),

@@ -59,6 +59,8 @@ pub enum ChatIntent {
     },
     SwitchChat(Uuid),
     CloneChat(Uuid),
+    /// Скопировать всю переписку чата в буфер обмена.
+    CopyChat(Uuid),
     DeleteChat(Uuid),
     RenameChat {
         id: Uuid,
@@ -218,6 +220,15 @@ impl ChatScreen {
         match &mut self.overlay {
             Some(overlay) => overlay.set_error(message),
             None => self.push_error(&message),
+        }
+    }
+
+    /// Показывает подтверждение операции списка чатов (напр. «скопировано»). Если
+    /// оверлей открыт — в его области статуса (успехом); иначе — заметкой в ленте.
+    pub fn set_overlay_notice(&mut self, message: String) {
+        match &mut self.overlay {
+            Some(overlay) => overlay.set_notice(message),
+            None => self.push_note(&message),
         }
     }
 
@@ -425,6 +436,9 @@ impl ChatScreen {
                 self.show_help = true;
                 None
             }
+            // Копирование переписки активного чата в буфер обмена (как F5 в списке
+            // чатов). Подтверждение/ошибка приходят заметкой в ленту (оверлея нет).
+            (KeyCode::F(5), _) => self.active_chat.map(ChatIntent::CopyChat),
             // Прокрутка ленты (spec §11.3).
             (KeyCode::PageUp, _) => {
                 self.feed_view.scroll_up(PAGE_SCROLL);
@@ -629,6 +643,9 @@ impl ChatScreen {
                 self.overlay = None;
                 Some(ChatIntent::CloneChat(id))
             }
+            // Копирование не закрывает оверлей: подтверждение/ошибка прилетят в его
+            // область статуса (`ChatListNotice`/`ChatListError`).
+            ChatListAction::Copy(id) => Some(ChatIntent::CopyChat(id)),
             // Удаление/переименование/авто-название не закрывают оверлей:
             // обновлённый список прилетит как `set_chat_list` и синхронизирует снимок.
             ChatListAction::Delete(id) => Some(ChatIntent::DeleteChat(id)),
@@ -702,6 +719,7 @@ const HELP_KEYS: &[(&str, &str)] = &[
     ("Esc", "отмена генерации / закрыть"),
     ("Ctrl+L", "список чатов"),
     ("Ctrl+N", "новый чат (выбор профиля)"),
+    ("F5", "копировать переписку чата"),
     ("Ctrl+R", "перегенерировать ответ"),
     ("Ctrl+E", "удалить последний обмен (правка)"),
     ("Ctrl+P", "экран настроек"),
@@ -1034,6 +1052,66 @@ mod tests {
         assert_eq!(intent, Some(ChatIntent::AutoRenameChat(id)));
         // Оверлей остаётся открытым — список обновится событием ChatList.
         assert!(s.overlay.is_some());
+    }
+
+    #[test]
+    fn f5_copies_active_chat_in_main_window() {
+        let mut s = ChatScreen::new();
+        // Без активного чата F5 — no-op.
+        assert_eq!(
+            s.handle_key(KeyEvent::new(KeyCode::F(5), KeyModifiers::NONE)),
+            None
+        );
+        let id = gen_id();
+        s.activate_chat(id, "Чат".into(), &[]);
+        assert_eq!(
+            s.handle_key(KeyEvent::new(KeyCode::F(5), KeyModifiers::NONE)),
+            Some(ChatIntent::CopyChat(id))
+        );
+    }
+
+    #[test]
+    fn overlay_f5_routes_copy_intent_and_keeps_overlay_open() {
+        let mut s = ChatScreen::new();
+        let id = gen_id();
+        s.set_chat_list(vec![ChatSummary {
+            id,
+            title: "A".into(),
+            created_at: chrono::Utc::now(),
+            modified_at: chrono::Utc::now(),
+            message_count: 2,
+        }]);
+        s.handle_key(KeyEvent::new(KeyCode::Char('l'), KeyModifiers::CONTROL));
+        let intent = s.handle_key(KeyEvent::new(KeyCode::F(5), KeyModifiers::NONE));
+        assert_eq!(intent, Some(ChatIntent::CopyChat(id)));
+        assert!(
+            s.overlay.is_some(),
+            "оверлей остаётся открытым после копирования"
+        );
+    }
+
+    #[test]
+    fn overlay_notice_goes_to_overlay_when_open_else_feed() {
+        let mut s = ChatScreen::new();
+        // Оверлей закрыт — подтверждение падает заметкой в ленту.
+        s.set_overlay_notice("скопировано".into());
+        assert!(s.feed.iter().any(|m| m.role == FeedRole::Note));
+        let feed_before = s.feed.len();
+        // Оверлей открыт — подтверждение идёт в его область, лента не растёт.
+        s.set_chat_list(vec![ChatSummary {
+            id: gen_id(),
+            title: "A".into(),
+            created_at: chrono::Utc::now(),
+            modified_at: chrono::Utc::now(),
+            message_count: 0,
+        }]);
+        s.handle_key(KeyEvent::new(KeyCode::Char('l'), KeyModifiers::CONTROL));
+        s.set_overlay_notice("в оверлей".into());
+        assert_eq!(
+            s.feed.len(),
+            feed_before,
+            "лента не пополняется при открытом оверлее"
+        );
     }
 
     #[test]
