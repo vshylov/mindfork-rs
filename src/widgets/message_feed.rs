@@ -363,8 +363,9 @@ mod tests {
     #[test]
     fn markdown_is_applied_to_body() {
         let feed = MessageFeed::new();
+        // LaTeX действует внутри $…$ (delimiter-scoped, см. shared::markdown)
         let lines = feed.build_lines(
-            &[msg(FeedRole::Assistant, "формула x^2", "")],
+            &[msg(FeedRole::Assistant, "формула $x^2$", "")],
             &Palette::default(),
             80,
         );
