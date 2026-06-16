@@ -160,7 +160,7 @@ impl MessageFeed {
         // ниже остаётся row-based (см. shared::wrap, ADR 0001).
         let view_w = inner.width.max(1) as usize;
         let lines: Vec<Line> = self
-            .build_lines(messages, palette)
+            .build_lines(messages, palette, view_w)
             .iter()
             .flat_map(|l| wrap::wrap_line(l, view_w))
             .collect();
@@ -182,7 +182,12 @@ impl MessageFeed {
 
     /// Собирает строки ленты: заголовки ролей, свёрнутые/развёрнутые «мысли»,
     /// markdown-рендер тела, разделители.
-    fn build_lines(&self, messages: &[FeedMessage], palette: &Palette) -> Vec<Line<'static>> {
+    fn build_lines(
+        &self,
+        messages: &[FeedMessage],
+        palette: &Palette,
+        width: usize,
+    ) -> Vec<Line<'static>> {
         let mut lines: Vec<Line<'static>> = Vec::new();
         if messages.is_empty() {
             lines.push(Line::from("Начните диалог — введите сообщение ниже.").dim());
@@ -198,7 +203,7 @@ impl MessageFeed {
             }
             push_thoughts(&mut lines, &item.thoughts, self.show_thoughts);
             push_tools(&mut lines, &item.tools, palette);
-            push_body(&mut lines, item);
+            push_body(&mut lines, item, palette, width);
             lines.push(Line::from(""));
         }
         lines
@@ -257,7 +262,7 @@ fn truncate(s: &str, max: usize) -> String {
 }
 
 /// Добавляет тело сообщения: markdown для user/assistant, dim-текст для заметок.
-fn push_body(lines: &mut Vec<Line<'static>>, item: &FeedMessage) {
+fn push_body(lines: &mut Vec<Line<'static>>, item: &FeedMessage, palette: &Palette, width: usize) {
     if item.text.is_empty() {
         if item.streaming {
             lines.push(Line::from("…").dim());
@@ -272,7 +277,7 @@ fn push_body(lines: &mut Vec<Line<'static>>, item: &FeedMessage) {
         }
         _ => {
             // markdown → Text; переносим строки в общий буфер
-            let rendered = markdown::render(&item.text);
+            let rendered = markdown::render(&item.text, width, palette);
             lines.extend(rendered.lines);
         }
     }
@@ -303,7 +308,7 @@ mod tests {
             arguments: "{\"content\":\"x\"}".into(),
             result: "Заметка сохранена".into(),
         });
-        let lines = feed.build_lines(&[m], &Palette::default());
+        let lines = feed.build_lines(&[m], &Palette::default(), 80);
         let joined: String = lines
             .iter()
             .flat_map(|l| l.spans.iter().map(|s| s.content.as_ref()))
@@ -329,6 +334,7 @@ mod tests {
         let lines = feed.build_lines(
             &[msg(FeedRole::Assistant, "ответ", "секрет\nмысль")],
             &Palette::default(),
+            80,
         );
         let joined: String = lines
             .iter()
@@ -345,6 +351,7 @@ mod tests {
         let lines = feed.build_lines(
             &[msg(FeedRole::Assistant, "ответ", "секрет")],
             &Palette::default(),
+            80,
         );
         let joined: String = lines
             .iter()
@@ -359,6 +366,7 @@ mod tests {
         let lines = feed.build_lines(
             &[msg(FeedRole::Assistant, "формула x^2", "")],
             &Palette::default(),
+            80,
         );
         let joined: String = lines
             .iter()
