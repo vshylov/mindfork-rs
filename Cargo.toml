@@ -6,6 +6,9 @@ edition = "2024"
 [dependencies]
 ansi-to-tui = "8.0.1"
 anyhow = "1.0.102"
+# Буфер обмена (Windows + Linux). `default-features = false` отключает image-data
+# (тянет крейт `image`): нам нужен только текст. См. копирование переписки чата.
+arboard = { version = "3.4.1", default-features = false }
 async-stream = "0.3.6"
 async-trait = "0.1.89"
 bytemuck = "1.25.0"

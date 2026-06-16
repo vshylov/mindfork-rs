@@ -294,6 +294,7 @@ impl Orchestrator {
             AppCommand::RenameChat { id, title } => self.handle_rename(id, title),
             AppCommand::AutoRenameChat(id) => self.handle_auto_rename(id),
             AppCommand::CloneChat(id) => self.handle_clone(id),
+            AppCommand::CopyChat(id) => self.handle_copy_chat(id),
             AppCommand::DeleteChat(id) => self.handle_delete(id),
             AppCommand::CreateProfile {
                 name,
@@ -674,6 +675,25 @@ impl Orchestrator {
         self.chats.insert(0, clone);
         self.emit_chat_list();
         self.activate(new_id);
+    }
+
+    /// Копирование всей переписки чата в буфер обмена (spec §11.2): оркестратор
+    /// (владелец `Chat`) формирует текст и эмитит `CopyToClipboard` — запись в буфер
+    /// и подтверждение делает UI-слой (`runtime`). Пустой чат → понятная ошибка.
+    fn handle_copy_chat(&mut self, id: Uuid) {
+        let Some(chat) = self.chats.iter().find(|c| c.id == id) else {
+            return;
+        };
+        match crate::features::chat_export::format_conversation(&chat.title, &chat.messages) {
+            Some(text) => {
+                let _ = self.evt_tx.send(AppEvent::CopyToClipboard(text));
+            }
+            None => {
+                let _ = self.evt_tx.send(AppEvent::ChatListError(
+                    "Нечего копировать — в чате нет сообщений".into(),
+                ));
+            }
+        }
     }
 
     fn handle_delete(&mut self, id: Uuid) {
@@ -1427,6 +1447,34 @@ mod tests {
         let chat = orch.new_chat_value(None);
         assert_eq!(chat.profile_id, id1);
         assert!(chat.messages.is_empty());
+    }
+
+    #[test]
+    fn copy_chat_emits_clipboard_text_or_error_when_empty() {
+        let (_d, mut orch, mut rx) = bare_orch_rx();
+        let profile = Profile::new("P", "sys");
+
+        // Чат с перепиской → событие CopyToClipboard с текстом ролей.
+        let mut chat = Chat::from_profile(&profile, "Чат");
+        let id = chat.id;
+        chat.push_message(Message::user("привет"));
+        chat.push_message(Message::assistant("здравствуйте"));
+        orch.chats.push(chat);
+        orch.handle_copy_chat(id);
+        match rx.try_recv().unwrap() {
+            AppEvent::CopyToClipboard(text) => {
+                assert!(text.contains("Пользователь:\nпривет"));
+                assert!(text.contains("Ассистент:\nздравствуйте"));
+            }
+            other => panic!("ожидался CopyToClipboard, получено {other:?}"),
+        }
+
+        // Пустой чат (нет сообщений) → ошибка списка, не текст.
+        let empty = Chat::from_profile(&profile, "Пустой");
+        let empty_id = empty.id;
+        orch.chats.push(empty);
+        orch.handle_copy_chat(empty_id);
+        assert!(matches!(rx.try_recv().unwrap(), AppEvent::ChatListError(_)));
     }
 
     #[tokio::test]
