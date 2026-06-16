@@ -10,15 +10,19 @@
 use std::sync::LazyLock;
 
 use ansi_to_tui::IntoText;
-use pulldown_cmark::{CodeBlockKind, CowStr, Event, HeadingLevel, Options, Parser, Tag, TagEnd};
+use pulldown_cmark::{
+    Alignment, CodeBlockKind, CowStr, Event, HeadingLevel, Options, Parser, Tag, TagEnd,
+};
 use ratatui::style::{Modifier, Style, Stylize};
 use ratatui::text::{Line, Span, Text};
+
 use syntect::easy::HighlightLines;
 use syntect::highlighting::ThemeSet;
 use syntect::parsing::SyntaxSet;
 use syntect::util::{LinesWithEndings, as_24_bit_terminal_escaped};
 
 use crate::shared::theme::Palette;
+use crate::shared::wrap;
 
 /// Рендерит markdown-строку в владеющий [`Text`] (готовый к показу/кэшированию).
 ///
@@ -31,15 +35,14 @@ use crate::shared::theme::Palette;
 /// дроби, индексы, символы), а сами разделители снимает парсер. «Голые» команды
 /// вне разделителей (`\alpha` без `$`) НЕ трогаются. Возвращается `'static`-`Text`.
 pub fn render(input: &str, width: usize, palette: &Palette) -> Text<'static> {
-    // Ширина пригодится для раскладки таблиц (следующий этап); сейчас не нужна.
-    let _ = width;
     let normalized = normalize_delimiters(input);
     let mut parse_opts = Options::empty();
     parse_opts.insert(Options::ENABLE_STRIKETHROUGH);
     parse_opts.insert(Options::ENABLE_TASKLISTS);
     parse_opts.insert(Options::ENABLE_MATH);
+    parse_opts.insert(Options::ENABLE_TABLES);
     let parser = Parser::new_ext(&normalized, parse_opts);
-    let mut writer = Writer::new(*palette);
+    let mut writer = Writer::new(*palette, width);
     writer.run(parser);
     Text::from(writer.lines)
 }
@@ -78,9 +81,27 @@ fn blockquote_style() -> Style {
 static SYNTAX_SET: LazyLock<SyntaxSet> = LazyLock::new(SyntaxSet::load_defaults_newlines);
 static THEME_SET: LazyLock<ThemeSet> = LazyLock::new(ThemeSet::load_defaults);
 
+/// Накопитель ячеек таблицы между событиями `Table…`.
+struct TableBuilder {
+    /// Выравнивание по столбцам (из разметки `:---:`).
+    alignments: Vec<Alignment>,
+    /// Ячейки заголовка.
+    head: Vec<Vec<Span<'static>>>,
+    /// Строки тела (каждая — вектор ячеек-спанов).
+    rows: Vec<Vec<Vec<Span<'static>>>>,
+    /// Текущая собираемая строка.
+    current_row: Vec<Vec<Span<'static>>>,
+    /// Текущая собираемая ячейка (между `Start/End(TableCell)`).
+    current_cell: Option<Vec<Span<'static>>>,
+    /// Идёт ли сбор заголовка.
+    in_head: bool,
+}
+
 /// Накопитель строк: разворачивает поток событий pulldown-cmark в `Vec<Line>`.
 struct Writer {
     palette: Palette,
+    /// Ширина панели в колонках (раскладка таблиц).
+    width: usize,
     lines: Vec<Line<'static>>,
     /// Стек инлайн-стилей (вершина — текущий).
     inline_styles: Vec<Style>,
@@ -94,14 +115,17 @@ struct Writer {
     link: Option<String>,
     /// Подсветчик активного блока кода.
     code_highlighter: Option<HighlightLines<'static>>,
+    /// Активный сбор таблицы (вне таблицы — `None`).
+    table: Option<TableBuilder>,
     /// Нужен ли пустой разделитель перед следующим блоком.
     needs_newline: bool,
 }
 
 impl Writer {
-    fn new(palette: Palette) -> Self {
+    fn new(palette: Palette, width: usize) -> Self {
         Self {
             palette,
+            width,
             lines: Vec::new(),
             inline_styles: Vec::new(),
             line_prefixes: Vec::new(),
@@ -109,6 +133,7 @@ impl Writer {
             list_indices: Vec::new(),
             link: None,
             code_highlighter: None,
+            table: None,
             needs_newline: false,
         }
     }
@@ -126,6 +151,8 @@ impl Writer {
             Event::Text(text) => self.text(text),
             Event::Code(code) => self.code(code),
             Event::SoftBreak => self.push_span(Span::raw(" ")),
+            // В ячейке перенос строки не делаем — продолжаем пробелом.
+            Event::HardBreak if self.in_table_cell() => self.push_span(Span::raw(" ")),
             Event::HardBreak => self.push_line(Line::default()),
             Event::Rule => self.rule(),
             Event::TaskListMarker(checked) => self.task_list_marker(checked),
@@ -151,6 +178,23 @@ impl Writer {
             Tag::Strong => self.push_inline_style(Style::new().bold()),
             Tag::Strikethrough => self.push_inline_style(Style::new().crossed_out()),
             Tag::Link { dest_url, .. } => self.link = Some(dest_url.into_string()),
+            Tag::Table(alignments) => self.start_table(alignments),
+            Tag::TableHead => {
+                if let Some(tb) = &mut self.table {
+                    tb.in_head = true;
+                    tb.current_row.clear();
+                }
+            }
+            Tag::TableRow => {
+                if let Some(tb) = &mut self.table {
+                    tb.current_row.clear();
+                }
+            }
+            Tag::TableCell => {
+                if let Some(tb) = &mut self.table {
+                    tb.current_cell = Some(Vec::new());
+                }
+            }
             _ => {}
         }
     }
@@ -166,6 +210,25 @@ impl Writer {
                 self.inline_styles.pop();
             }
             TagEnd::Link => self.end_link(),
+            TagEnd::TableCell => {
+                if let Some(tb) = &mut self.table {
+                    let cell = tb.current_cell.take().unwrap_or_default();
+                    tb.current_row.push(cell);
+                }
+            }
+            TagEnd::TableHead => {
+                if let Some(tb) = &mut self.table {
+                    tb.head = std::mem::take(&mut tb.current_row);
+                    tb.in_head = false;
+                }
+            }
+            TagEnd::TableRow => {
+                if let Some(tb) = &mut self.table {
+                    let row = std::mem::take(&mut tb.current_row);
+                    tb.rows.push(row);
+                }
+            }
+            TagEnd::Table => self.end_table(),
             _ => {}
         }
     }
@@ -299,6 +362,12 @@ impl Writer {
             return;
         }
         let style = self.current_style();
+        // В ячейке таблицы переносов нет — кладём как один спан (переносы строк
+        // схлопываем в пробел; реальный перенос по ширине делает раскладка).
+        if self.in_table_cell() {
+            self.push_span(Span::styled(text.replace('\n', " "), style));
+            return;
+        }
         for (i, line) in text.lines().enumerate() {
             if self.needs_newline {
                 self.push_line(Line::default());
@@ -333,6 +402,37 @@ impl Writer {
         }
     }
 
+    fn start_table(&mut self, alignments: Vec<Alignment>) {
+        if self.needs_newline {
+            self.push_line(Line::default());
+        }
+        self.table = Some(TableBuilder {
+            alignments,
+            head: Vec::new(),
+            rows: Vec::new(),
+            current_row: Vec::new(),
+            current_cell: None,
+            in_head: false,
+        });
+        self.needs_newline = false;
+    }
+
+    fn end_table(&mut self) {
+        if let Some(tb) = self.table.take() {
+            for line in render_table(&tb, self.width, &self.palette) {
+                self.lines.push(line);
+            }
+        }
+        self.needs_newline = true;
+    }
+
+    /// Идёт ли сейчас сбор содержимого ячейки таблицы.
+    fn in_table_cell(&self) -> bool {
+        self.table
+            .as_ref()
+            .is_some_and(|tb| tb.current_cell.is_some())
+    }
+
     fn current_style(&self) -> Style {
         self.inline_styles.last().copied().unwrap_or_default()
     }
@@ -353,6 +453,13 @@ impl Writer {
     }
 
     fn push_span(&mut self, span: Span<'static>) {
+        // Внутри ячейки таблицы спаны накапливаются в ячейку, а не в ленту.
+        if let Some(tb) = &mut self.table
+            && let Some(cell) = &mut tb.current_cell
+        {
+            cell.push(span);
+            return;
+        }
         if let Some(line) = self.lines.last_mut() {
             line.spans.push(span);
         } else {
@@ -370,6 +477,266 @@ fn heading_number(level: HeadingLevel) -> u8 {
         HeadingLevel::H5 => 5,
         HeadingLevel::H6 => 6,
     }
+}
+
+// ---------- раскладка таблиц ----------
+
+/// Минимальная «читаемая» ширина столбца (колонок).
+const MIN_COL: usize = 5;
+/// Верхняя граница минимума: длинное слово допускаем разрывать, не раздувая min.
+const MAX_MIN: usize = 12;
+
+/// Рендерит таблицу в строки ленты. Ширина столбцов подбирается под `width`
+/// (см. [`fit_columns`]); содержимое ячеек переносится по словам. Если столбцам
+/// не хватает даже читаемого минимума — таблица рисуется в естественной ширине и
+/// **обрезается** по правому краю панели (горизонтальный клип).
+fn render_table(tb: &TableBuilder, width: usize, palette: &Palette) -> Vec<Line<'static>> {
+    let ncols = tb
+        .alignments
+        .len()
+        .max(tb.head.len())
+        .max(tb.rows.iter().map(Vec::len).max().unwrap_or(0));
+    if ncols == 0 {
+        return Vec::new();
+    }
+    let aligns: Vec<Alignment> = (0..ncols)
+        .map(|j| tb.alignments.get(j).copied().unwrap_or(Alignment::None))
+        .collect();
+
+    // Натуральная и минимальная ширина по столбцам.
+    let mut desired = vec![0usize; ncols];
+    let mut minw = vec![0usize; ncols];
+    let mut visit = |cell: &[Span<'static>], j: usize| {
+        let w = cell_width(cell);
+        desired[j] = desired[j].max(w);
+        let word = longest_word(cell).clamp(MIN_COL, MAX_MIN).min(w.max(1));
+        minw[j] = minw[j].max(word);
+    };
+    for (j, cell) in tb.head.iter().enumerate() {
+        visit(cell, j);
+    }
+    for row in &tb.rows {
+        for (j, cell) in row.iter().enumerate() {
+            visit(cell, j);
+        }
+    }
+    // Пустой столбец всё равно получает читаемый минимум.
+    for j in 0..ncols {
+        minw[j] = minw[j].max(MIN_COL.min(desired[j].max(1)));
+    }
+
+    // Доступная ширина под содержимое = ширина минус рамки/паддинги:
+    // `│` слева + на столбец (паддинг-пробел + содержимое + паддинг-пробел + `│`).
+    let chrome = 3 * ncols + 1;
+    let avail = width.saturating_sub(chrome).max(ncols);
+    let (widths, clip) = match fit_columns(&desired, &minw, avail) {
+        Some(w) => (w, false),
+        None => (desired.clone(), true),
+    };
+
+    let mut out = Vec::new();
+    out.push(border_line(&widths, Border::Top));
+    out.extend(render_row(&tb.head, &widths, &aligns, palette, true));
+    out.push(border_line(&widths, Border::Mid));
+    for row in &tb.rows {
+        out.extend(render_row(row, &widths, &aligns, palette, false));
+    }
+    out.push(border_line(&widths, Border::Bottom));
+    if clip {
+        for line in &mut out {
+            clip_line(line, width);
+        }
+    }
+    out
+}
+
+/// Подбирает ширины столбцов «водоналивом»: при нехватке места узкие столбцы
+/// получают свою натуральную ширину, остаток равномерно делится между широкими
+/// (с полом `minw`). `None` — даже минимумы не вмещаются (нужен клип).
+fn fit_columns(desired: &[usize], minw: &[usize], avail: usize) -> Option<Vec<usize>> {
+    let total_desired: usize = desired.iter().sum();
+    if total_desired <= avail {
+        return Some(desired.to_vec());
+    }
+    let total_min: usize = minw.iter().sum();
+    if total_min > avail {
+        return None;
+    }
+    let n = desired.len();
+    let mut w = minw.to_vec();
+    let mut extra = avail - total_min;
+    while extra > 0 {
+        let wanting: Vec<usize> = (0..n).filter(|&j| w[j] < desired[j]).collect();
+        if wanting.is_empty() {
+            break;
+        }
+        for j in wanting {
+            if extra == 0 {
+                break;
+            }
+            w[j] += 1;
+            extra -= 1;
+        }
+    }
+    Some(w)
+}
+
+/// Ширина ячейки в колонках (сумма ширин спанов).
+fn cell_width(cell: &[Span<'static>]) -> usize {
+    cell.iter()
+        .map(|s| wrap::display_width(&s.content.chars().collect::<Vec<_>>()))
+        .sum()
+}
+
+/// Ширина самого длинного «слова» (непробельной последовательности) в ячейке.
+fn longest_word(cell: &[Span<'static>]) -> usize {
+    let text: String = cell.iter().map(|s| s.content.as_ref()).collect();
+    text.split_whitespace()
+        .map(|w| wrap::display_width(&w.chars().collect::<Vec<_>>()))
+        .max()
+        .unwrap_or(0)
+}
+
+/// Вид горизонтальной границы таблицы.
+#[derive(Clone, Copy)]
+enum Border {
+    Top,
+    Mid,
+    Bottom,
+}
+
+/// Строит строку-границу по ширинам столбцов.
+fn border_line(widths: &[usize], kind: Border) -> Line<'static> {
+    let (left, junction, right) = match kind {
+        Border::Top => ('┌', '┬', '┐'),
+        Border::Mid => ('├', '┼', '┤'),
+        Border::Bottom => ('└', '┴', '┘'),
+    };
+    let mut s = String::new();
+    s.push(left);
+    for (j, w) in widths.iter().enumerate() {
+        for _ in 0..(w + 2) {
+            s.push('─');
+        }
+        s.push(if j + 1 == widths.len() {
+            right
+        } else {
+            junction
+        });
+    }
+    Line::from(s).add_modifier(Modifier::DIM)
+}
+
+/// Рендерит строку таблицы (с переносом ячеек по ширинам столбцов) в визуальные
+/// ряды. Заголовок — жирным.
+fn render_row(
+    cells: &[Vec<Span<'static>>],
+    widths: &[usize],
+    aligns: &[Alignment],
+    palette: &Palette,
+    header: bool,
+) -> Vec<Line<'static>> {
+    let ncols = widths.len();
+    // Переносим каждую ячейку по её ширине → ряды спанов.
+    let wrapped: Vec<Vec<Line<'static>>> = (0..ncols)
+        .map(|j| {
+            let empty: Vec<Span<'static>> = Vec::new();
+            let cell = cells.get(j).unwrap_or(&empty);
+            let styled: Vec<Span<'static>> = if header {
+                cell.iter()
+                    .map(|s| {
+                        Span::styled(
+                            s.content.to_string(),
+                            s.style.add_modifier(Modifier::BOLD).fg(palette.accent),
+                        )
+                    })
+                    .collect()
+            } else {
+                cell.clone()
+            };
+            wrap::wrap_line(&Line::from(styled), widths[j])
+        })
+        .collect();
+    let height = wrapped.iter().map(Vec::len).max().unwrap_or(1).max(1);
+
+    let mut rows = Vec::with_capacity(height);
+    for r in 0..height {
+        let mut spans: Vec<Span<'static>> = vec![Span::styled("│", Style::new().dim())];
+        for j in 0..ncols {
+            spans.push(Span::raw(" "));
+            let empty = Line::default();
+            let cell_row = wrapped[j].get(r).unwrap_or(&empty);
+            spans.extend(pad_cell(cell_row, widths[j], aligns[j]));
+            spans.push(Span::raw(" "));
+            spans.push(Span::styled("│", Style::new().dim()));
+        }
+        rows.push(Line::from(spans));
+    }
+    rows
+}
+
+/// Дополняет ряд ячейки пробелами до ширины `width` с учётом выравнивания.
+fn pad_cell(line: &Line<'static>, width: usize, align: Alignment) -> Vec<Span<'static>> {
+    let content: usize = line
+        .spans
+        .iter()
+        .map(|s| wrap::display_width(&s.content.chars().collect::<Vec<_>>()))
+        .sum();
+    let pad = width.saturating_sub(content);
+    let (left, right) = match align {
+        Alignment::Right => (pad, 0),
+        Alignment::Center => (pad / 2, pad - pad / 2),
+        _ => (0, pad),
+    };
+    let mut spans = Vec::new();
+    if left > 0 {
+        spans.push(Span::raw(" ".repeat(left)));
+    }
+    spans.extend(line.spans.iter().cloned());
+    if right > 0 {
+        spans.push(Span::raw(" ".repeat(right)));
+    }
+    spans
+}
+
+/// Обрезает строку по `width` колонкам (клип широкой таблицы), добавляя «…».
+fn clip_line(line: &mut Line<'static>, width: usize) {
+    let total: usize = line
+        .spans
+        .iter()
+        .map(|s| wrap::display_width(&s.content.chars().collect::<Vec<_>>()))
+        .sum();
+    if total <= width {
+        return;
+    }
+    let budget = width.saturating_sub(1); // место под «…»
+    let mut acc = 0usize;
+    let mut new_spans: Vec<Span<'static>> = Vec::new();
+    for span in &line.spans {
+        let chars: Vec<char> = span.content.chars().collect();
+        let w = wrap::display_width(&chars);
+        if acc + w <= budget {
+            acc += w;
+            new_spans.push(span.clone());
+            continue;
+        }
+        // частично влезает — режем по символам
+        let mut buf = String::new();
+        for c in chars {
+            let cw = wrap::char_width(c);
+            if acc + cw > budget {
+                break;
+            }
+            acc += cw;
+            buf.push(c);
+        }
+        if !buf.is_empty() {
+            new_spans.push(Span::styled(buf, span.style));
+        }
+        break;
+    }
+    new_spans.push(Span::styled("…", Style::new().dim()));
+    *line = Line::from(new_spans);
 }
 
 // ---------- нормализация разделителей формул ----------
@@ -1014,6 +1381,87 @@ mod tests {
         let collected = rendered_text(r"путь \(\alpha \to \beta\) готов");
         assert!(collected.contains("α → β"));
         assert!(!collected.contains('$'));
+    }
+
+    /// Максимальная ширина (в колонках) среди строк рендера.
+    fn max_line_width(input: &str, width: usize) -> usize {
+        let text = render(input, width, &Palette::default());
+        text.lines
+            .iter()
+            .map(|l| {
+                l.spans
+                    .iter()
+                    .map(|s| wrap::display_width(&s.content.chars().collect::<Vec<_>>()))
+                    .sum::<usize>()
+            })
+            .max()
+            .unwrap_or(0)
+    }
+
+    const TABLE_MD: &str = "\
+| Алгоритм | Время | Память |
+| :--- | :--- | :--- |
+| QuickSort | O(n log n) | O(log n) |
+| MergeSort | O(n log n) | O(n) |";
+
+    #[test]
+    fn table_wraps_cell_content() {
+        // длинная ячейка переносится в несколько рядов, не вылезая за ширину
+        let long = "\
+| A | Особенности |
+| :--- | :--- |
+| x | Самая высокая скорость на практике сортировки |";
+        let w = 40;
+        assert!(max_line_width(long, w) <= w);
+        // несколько строк тела → перенос произошёл
+        let lines = render(long, w, &Palette::default()).lines.len();
+        assert!(lines >= 6, "ожидался перенос ячейки в несколько рядов");
+    }
+
+    #[test]
+    fn table_renders_box_and_content() {
+        let collected = rendered_text(TABLE_MD);
+        assert!(collected.contains('┌') && collected.contains('┼') && collected.contains('└'));
+        assert!(collected.contains("Алгоритм"));
+        assert!(collected.contains("QuickSort"));
+        assert!(collected.contains("MergeSort"));
+    }
+
+    #[test]
+    fn table_fits_panel_width() {
+        // при достаточной ширине таблица не превышает её
+        for w in [40usize, 60, 80, 120] {
+            let max = max_line_width(TABLE_MD, w);
+            assert!(max <= w, "ширина {max} превысила панель {w}");
+        }
+    }
+
+    #[test]
+    fn wide_table_is_clipped_to_width() {
+        // узкая панель: таблица обрезается, но не вылезает за край
+        let narrow = 24;
+        let max = max_line_width(TABLE_MD, narrow);
+        assert!(
+            max <= narrow,
+            "ширина {max} превысила узкую панель {narrow}"
+        );
+        let collected = rendered_text_w(TABLE_MD, narrow);
+        assert!(collected.contains('…'), "ожидался маркер обрезки");
+    }
+
+    /// Как [`rendered_text`], но с заданной шириной.
+    fn rendered_text_w(input: &str, width: usize) -> String {
+        render(input, width, &Palette::default())
+            .lines
+            .iter()
+            .map(|l| {
+                l.spans
+                    .iter()
+                    .map(|s| s.content.as_ref())
+                    .collect::<String>()
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
     }
 
     #[test]
