@@ -490,16 +490,21 @@ impl ChatScreen {
         self.last_edit = Some(Instant::now());
     }
 
-    /// Перепроверяет орфографию ввода, если истёк дебаунс. Вызывается из `render`.
-    fn maybe_recheck_spelling(&mut self) {
-        let Some(spell) = &self.spell else { return };
+    /// Перепроверяет орфографию ввода, если истёк дебаунс. Возвращает `true`, если
+    /// подсветка ошибок была пересчитана (нужна перерисовка). Вызывается из петли
+    /// каждый тик (она и обеспечивает пробуждение по истечении дебаунса — рендер
+    /// сам по тикам уже не запускается). См. spec §11.5.
+    pub fn maybe_recheck_spelling(&mut self) -> bool {
+        let Some(spell) = &self.spell else {
+            return false;
+        };
         if !self.spell_dirty {
-            return;
+            return false;
         }
         if let Some(t) = self.last_edit
             && t.elapsed() < SPELL_DEBOUNCE
         {
-            return; // ещё печатает — не флагуем текущее слово
+            return false; // ещё печатает — не флагуем текущее слово
         }
         let ranges = self
             .input
@@ -509,6 +514,7 @@ impl ChatScreen {
             .collect();
         self.input.set_misspelled(ranges);
         self.spell_dirty = false;
+        true
     }
 
     /// Открывает попап подсказок для слова с ошибкой под курсором (если есть).
@@ -634,7 +640,7 @@ impl ChatScreen {
     // ---------- отрисовка ----------
 
     pub fn render(&mut self, frame: &mut Frame) {
-        self.maybe_recheck_spelling();
+        let _ = self.maybe_recheck_spelling();
 
         // Высота ввода растёт под содержимое с учётом переноса (1–6 рядов + рамка).
         // Ширина внутренней области = ширина экрана минус вертикальные рамки.
