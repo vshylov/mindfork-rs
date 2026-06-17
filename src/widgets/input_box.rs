@@ -100,6 +100,12 @@ impl InputBox {
         self.misspelled = ranges;
     }
 
+    /// Нет ли отмеченных ошибок орфографии (для тестов вышестоящего слоя).
+    #[cfg(test)]
+    pub fn misspelled_is_empty(&self) -> bool {
+        self.misspelled.iter().all(|r| r.is_empty())
+    }
+
     /// Заменяет диапазон символов `[start, end)` в строке `row` на `replacement`
     /// и ставит курсор за вставленным текстом (для применения подсказки).
     pub fn replace_range(&mut self, row: usize, start: usize, end: usize, replacement: &str) {
@@ -246,6 +252,8 @@ impl InputBox {
     }
 
     /// Рисует поле в `area` с рамкой и заголовком. При `focused` ставит курсор.
+    /// При `command` весь текст подсвечивается цветом `warning` (это команда вроде
+    /// `/rag …`), а подчёркивания орфографии не рисуются. См. spec §11.5.
     pub fn render(
         &mut self,
         frame: &mut Frame,
@@ -253,6 +261,7 @@ impl InputBox {
         title: &str,
         focused: bool,
         palette: &Palette,
+        command: bool,
     ) {
         let block = Block::default()
             .borders(Borders::ALL)
@@ -269,17 +278,23 @@ impl InputBox {
         let (cursor_row, cursor_col) = self.cursor_visual(&vrows);
         self.adjust_scroll(cursor_row, vrows.len(), visible_rows);
 
+        // В режиме команды весь текст красим в `warning` и не подчёркиваем ошибки.
+        let cmd_style = command.then(|| Style::new().fg(palette.warning));
         let lines: Vec<Line> = vrows
             .iter()
             .skip(self.scroll)
             .take(visible_rows)
             .map(|&(li, start, end)| {
                 let sub = &self.lines[li][start..end];
-                let ranges = self
-                    .misspelled
-                    .get(li)
-                    .map(|rs| clip_ranges(rs, start, end));
-                styled_line(sub, ranges.as_deref(), palette)
+                if let Some(style) = cmd_style {
+                    Line::styled(sub.iter().collect::<String>(), style)
+                } else {
+                    let ranges = self
+                        .misspelled
+                        .get(li)
+                        .map(|rs| clip_ranges(rs, start, end));
+                    styled_line(sub, ranges.as_deref(), palette)
+                }
             })
             .collect();
         let placeholder = self.is_empty() && !focused;
@@ -525,7 +540,7 @@ mod tests {
         ib.set_text("helo world\nпревед");
         ib.set_misspelled(vec![vec![(0, 4)], vec![(0, 6)]]);
         let mut term = Terminal::new(TestBackend::new(20, 4)).unwrap();
-        term.draw(|f| ib.render(f, f.area(), "ввод", true, &Palette::default()))
+        term.draw(|f| ib.render(f, f.area(), "ввод", true, &Palette::default(), false))
             .unwrap();
     }
 
@@ -536,7 +551,20 @@ mod tests {
         let mut ib = InputBox::new();
         ib.set_text("строка 1\nстрока 2\nстрока 3");
         let mut term = Terminal::new(TestBackend::new(20, 4)).unwrap();
-        term.draw(|f| ib.render(f, f.area(), "ввод", true, &Palette::default()))
+        term.draw(|f| ib.render(f, f.area(), "ввод", true, &Palette::default(), false))
+            .unwrap();
+    }
+
+    #[test]
+    fn render_command_mode_does_not_panic() {
+        use ratatui::Terminal;
+        use ratatui::backend::TestBackend;
+        let mut ib = InputBox::new();
+        ib.set_text("/rag add d:\\dir -r");
+        // даже при наличии «ошибок» в режиме команды подчёркивания не рисуются
+        ib.set_misspelled(vec![vec![(0, 4)]]);
+        let mut term = Terminal::new(TestBackend::new(24, 3)).unwrap();
+        term.draw(|f| ib.render(f, f.area(), "ввод", true, &Palette::default(), true))
             .unwrap();
     }
 
@@ -579,7 +607,7 @@ mod tests {
         ib.set_text("очень длинная строка которая точно не влезает в узкое поле ввода");
         ib.set_misspelled(vec![vec![(0, 5)]]);
         let mut term = Terminal::new(TestBackend::new(12, 4)).unwrap();
-        term.draw(|f| ib.render(f, f.area(), "ввод", true, &Palette::default()))
+        term.draw(|f| ib.render(f, f.area(), "ввод", true, &Palette::default(), false))
             .unwrap();
     }
 }

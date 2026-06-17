@@ -759,6 +759,7 @@ impl SettingsScreen {
                 "правка · Enter ок · Esc отмена",
                 true,
                 &palette,
+                false,
             );
         }
     }

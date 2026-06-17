@@ -15,13 +15,14 @@ use ratatui::crossterm::event::{
 use ratatui::layout::{Constraint, Flex, Layout, Rect};
 use ratatui::style::Style;
 use ratatui::style::Stylize;
-use ratatui::text::Line;
+use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Clear, List, ListItem, ListState};
 use uuid::Uuid;
 
 use crate::entities::chat::ChatSummary;
 use crate::entities::message::Message;
 use crate::entities::profile::{Profile, ProfileSummary};
+use crate::features::rag_ingest::RagProgress;
 use crate::features::spellcheck::SpellChecker;
 use crate::shared::api::FinishReason;
 use crate::shared::config::AppConfig;
@@ -42,6 +43,9 @@ const WHEEL_SCROLL: usize = 3;
 
 /// Задержка дебаунса спелл-чека: слово не флагуется, пока пользователь печатает.
 const SPELL_DEBOUNCE: Duration = Duration::from_millis(300);
+
+/// Кадры спиннера индикатора фоновой индексации RAG.
+const SPINNER: &[char] = &['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
 
 /// Намерение пользователя, которое исполняет `app` (транслирует в `AppCommand`).
 #[derive(Debug, Clone, PartialEq)]
@@ -68,6 +72,15 @@ pub enum ChatIntent {
     },
     /// Авто-название чата силами модели (читает переписку, придумывает заголовок).
     AutoRenameChat(Uuid),
+    /// Индексировать файл/директорию в RAG (команда `/rag add <path> [-r]`).
+    RagAdd {
+        path: String,
+        recursive: bool,
+    },
+    /// Удалить файл/директорию из RAG (команда `/rag delete <path>`).
+    RagDelete {
+        path: String,
+    },
     /// Открыть экран настроек (`Ctrl+P`). `app` создаёт его из снимка настроек.
     OpenSettings,
     /// Включить/выключить захват мыши терминала для прокрутки колесом (`Ctrl+W`).
@@ -93,6 +106,15 @@ struct SuggestPopup {
     end: usize,
     items: Vec<SuggestItem>,
     selected: usize,
+}
+
+/// Баннер прогресса фоновой индексации RAG (`/rag add`). Живёт, пока идёт
+/// индексация; завершение/ошибка гасят баннер и оставляют заметку в ленте.
+struct RagBanner {
+    /// Текущий текст индикатора (без спиннера).
+    text: String,
+    /// Счётчик тиков перерисовки для анимации спиннера.
+    tick: usize,
 }
 
 /// Экран чата: всё состояние UI и его отрисовка.
@@ -129,6 +151,8 @@ pub struct ChatScreen {
     /// Включён ли захват мыши для прокрутки колесом (тумблер `Ctrl+W`). По
     /// умолчанию выключен — работает нативное выделение текста мышью. См. spec §11.3.
     mouse_scroll: bool,
+    /// Индикатор фоновой индексации RAG (`/rag add`); `None` — индексация не идёт.
+    rag: Option<RagBanner>,
 }
 
 impl Default for ChatScreen {
@@ -160,6 +184,7 @@ impl ChatScreen {
             show_help: false,
             palette: Palette::default(),
             mouse_scroll: false,
+            rag: None,
         }
     }
 
@@ -350,6 +375,72 @@ impl ChatScreen {
         self.push_note(&format!("⚠ {message}"));
     }
 
+    /// Обновляет индикатор фоновой индексации RAG (`/rag add`). Старт/прогресс
+    /// показывают баннер со спиннером; завершение/ошибка гасят его и оставляют
+    /// итоговую заметку в ленте. См. spec §9.3.
+    pub fn set_rag_progress(&mut self, progress: RagProgress) {
+        match progress {
+            RagProgress::Started { total } => {
+                self.rag = Some(RagBanner {
+                    text: format!("найдено файлов: {total}, начинаю индексацию…"),
+                    tick: 0,
+                });
+            }
+            RagProgress::Indexing {
+                index,
+                total,
+                name,
+                dir,
+            } => {
+                let location = if dir.is_empty() {
+                    String::new()
+                } else {
+                    format!(" из {dir}")
+                };
+                let text = format!("индексация {name}{location} ({index}/{total})");
+                match &mut self.rag {
+                    Some(banner) => banner.text = text,
+                    None => self.rag = Some(RagBanner { text, tick: 0 }),
+                }
+            }
+            RagProgress::Finished {
+                files,
+                chunks,
+                errors,
+                cancelled,
+            } => {
+                self.rag = None;
+                let mut msg = if cancelled {
+                    format!("RAG: индексация прервана — фрагментов добавлено: {chunks}")
+                } else {
+                    format!("RAG: индексация завершена — файлов: {files}, фрагментов: {chunks}")
+                };
+                if errors > 0 {
+                    msg.push_str(&format!(", с ошибками: {errors}"));
+                }
+                self.push_note(&msg);
+            }
+            RagProgress::Removed { chunks } => {
+                let msg = if chunks == 0 {
+                    "RAG: по указанному пути ничего не найдено в базе".to_string()
+                } else {
+                    format!("RAG: удалено фрагментов: {chunks}")
+                };
+                self.push_note(&msg);
+            }
+            RagProgress::Failed(err) => {
+                self.rag = None;
+                self.push_error(&format!("RAG: {err}"));
+            }
+        }
+    }
+
+    /// Идёт ли фоновая индексация RAG (петля перерисовывает кадры для анимации
+    /// спиннера, пока это `true`).
+    pub fn is_rag_active(&self) -> bool {
+        self.rag.is_some()
+    }
+
     fn push_note(&mut self, text: &str) {
         self.feed.push(FeedMessage::note(text));
         self.feed_view.scroll_to_bottom();
@@ -463,7 +554,27 @@ impl ChatScreen {
             }
             (KeyCode::Enter, _) => {
                 let text = self.input.text();
-                if !text.trim().is_empty() && !self.generating {
+                if text.trim().is_empty() {
+                    return None;
+                }
+                // Slash-команда RAG (`/rag add …`) — не отправляется как сообщение и
+                // работает независимо от генерации (фоновая индексация).
+                if let Some(parsed) = crate::features::rag_command::parse(&text) {
+                    use crate::features::rag_command::RagCommand;
+                    self.input.clear();
+                    self.mark_input_changed();
+                    return match parsed {
+                        Ok(RagCommand::Add { path, recursive }) => {
+                            Some(ChatIntent::RagAdd { path, recursive })
+                        }
+                        Ok(RagCommand::Delete { path }) => Some(ChatIntent::RagDelete { path }),
+                        Err(msg) => {
+                            self.push_note(&format!("RAG: {msg}"));
+                            None
+                        }
+                    };
+                }
+                if !self.generating {
                     self.input.clear();
                     self.mark_input_changed();
                     Some(ChatIntent::Send(text))
@@ -515,6 +626,13 @@ impl ChatScreen {
         if !self.spell_dirty {
             return false;
         }
+        // Команды (`/rag …`) и пути файлов орфографией не проверяем — снимаем
+        // возможные подчёркивания (они подсвечиваются жёлтым целиком при рендере).
+        if self.input_is_command() {
+            self.input.set_misspelled(Vec::new());
+            self.spell_dirty = false;
+            return true;
+        }
         if let Some(t) = self.last_edit
             && t.elapsed() < SPELL_DEBOUNCE
         {
@@ -529,6 +647,12 @@ impl ChatScreen {
         self.input.set_misspelled(ranges);
         self.spell_dirty = false;
         true
+    }
+
+    /// Является ли текущий ввод командой (`/rag …`). Такой текст подсвечивается
+    /// жёлтым и не проверяется орфографией. См. spec §11.5.
+    fn input_is_command(&self) -> bool {
+        crate::features::rag_command::parse(&self.input.text()).is_some()
     }
 
     /// Открывает попап подсказок для слова с ошибкой под курсором (если есть).
@@ -659,12 +783,22 @@ impl ChatScreen {
     pub fn render(&mut self, frame: &mut Frame) {
         let _ = self.maybe_recheck_spelling();
 
+        // Анимация спиннера индикатора индексации (петля рисует каждый тик, пока
+        // `is_rag_active()`); делитель замедляет смену кадров до приятного темпа.
+        if let Some(banner) = &mut self.rag {
+            banner.tick = banner.tick.wrapping_add(1);
+        }
+
         // Высота ввода растёт под содержимое с учётом переноса (1–6 рядов + рамка).
         // Ширина внутренней области = ширина экрана минус вертикальные рамки.
         let input_inner_w = frame.area().width.saturating_sub(2).max(1) as usize;
         let input_h = (self.input.visual_line_count(input_inner_w).clamp(1, 6) + 2) as u16;
-        let [feed_area, input_area, status_area] = Layout::vertical([
+        // Баннер индексации RAG занимает строку только когда активен (иначе 0 —
+        // пустой прямоугольник, рендер в него безвреден).
+        let banner_h: u16 = if self.rag.is_some() { 1 } else { 0 };
+        let [feed_area, banner_area, input_area, status_area] = Layout::vertical([
             Constraint::Min(3),
+            Constraint::Length(banner_h),
             Constraint::Length(input_h),
             Constraint::Length(1),
         ])
@@ -677,6 +811,15 @@ impl ChatScreen {
         };
         self.feed_view
             .render(frame, feed_area, &title, &self.feed, &self.palette);
+
+        if let Some(banner) = &self.rag {
+            let spinner = SPINNER[(banner.tick / 2) % SPINNER.len()];
+            let line = Line::from(vec![
+                Span::styled(format!("{spinner} RAG: "), self.palette.accent_style()),
+                Span::from(banner.text.clone()),
+            ]);
+            frame.render_widget(line, banner_area);
+        }
 
         status_bar::render(
             frame,
@@ -694,8 +837,15 @@ impl ChatScreen {
         };
         let focused =
             self.overlay.is_none() && self.profile_overlay.is_none() && self.suggest.is_none();
-        self.input
-            .render(frame, input_area, input_title, focused, &self.palette);
+        let command = self.input_is_command();
+        self.input.render(
+            frame,
+            input_area,
+            input_title,
+            focused,
+            &self.palette,
+            command,
+        );
 
         if let Some(overlay) = &self.overlay {
             overlay.render(frame, frame.area(), self.active_chat, &self.palette);
@@ -726,6 +876,8 @@ const HELP_KEYS: &[(&str, &str)] = &[
     ("Ctrl+T", "свернуть/развернуть «мысли»"),
     ("Ctrl+G", "подсказки орфографии"),
     ("Ctrl+W", "колесо мыши ↔ выделение текста"),
+    ("/rag add <путь> [-r]", "индексировать файлы в RAG"),
+    ("/rag delete <путь>", "удалить файлы из RAG"),
     ("PageUp/PageDown", "прокрутка ленты"),
     ("F1 / ?", "эта справка"),
     ("Ctrl+C", "выход"),
@@ -1273,6 +1425,127 @@ mod tests {
         s.open_suggestions();
         let mut term = Terminal::new(TestBackend::new(50, 16)).unwrap();
         term.draw(|f| s.render(f)).unwrap();
+    }
+
+    #[test]
+    fn rag_command_intercepted_on_enter() {
+        let mut s = ChatScreen::new();
+        s.set_server_status(ServerStatus::Ready);
+        type_str(&mut s, "/rag add d:\\docs -r");
+        let intent = s.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+        assert_eq!(
+            intent,
+            Some(ChatIntent::RagAdd {
+                path: "d:\\docs".into(),
+                recursive: true,
+            })
+        );
+        assert!(s.input.is_empty(), "поле очищено после команды");
+    }
+
+    #[test]
+    fn invalid_rag_command_shows_note_and_does_not_send() {
+        let mut s = ChatScreen::new();
+        s.set_server_status(ServerStatus::Ready);
+        type_str(&mut s, "/rag");
+        let intent = s.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+        assert_eq!(intent, None, "ошибочная команда не отправляется");
+        assert!(s.feed.iter().any(|m| m.role == FeedRole::Note));
+    }
+
+    #[test]
+    fn rag_progress_banner_lifecycle() {
+        let mut s = ChatScreen::new();
+        assert!(!s.is_rag_active());
+        s.set_rag_progress(RagProgress::Started { total: 3 });
+        assert!(s.is_rag_active());
+        s.set_rag_progress(RagProgress::Indexing {
+            index: 1,
+            total: 3,
+            name: "a.txt".into(),
+            dir: "d:\\docs".into(),
+        });
+        assert!(s.is_rag_active());
+        s.set_rag_progress(RagProgress::Finished {
+            files: 3,
+            chunks: 9,
+            errors: 0,
+            cancelled: false,
+        });
+        assert!(!s.is_rag_active(), "по завершении баннер гаснет");
+        assert!(
+            s.feed
+                .iter()
+                .any(|m| m.role == FeedRole::Note && m.text.contains("завершена"))
+        );
+    }
+
+    #[test]
+    fn command_input_is_not_spellchecked() {
+        let mut s = ChatScreen::new();
+        s.set_spellchecker(mk_checker());
+        // Обычный текст с ошибкой → проверяется (есть подчёркивания).
+        type_str(&mut s, "helo");
+        s.last_edit = None; // снять дебаунс, чтобы перепроверка прошла сразу
+        assert!(s.maybe_recheck_spelling());
+        assert!(
+            !s.input.misspelled_is_empty(),
+            "обычный текст проверяется орфографией"
+        );
+        // Делаем из строки команду — орфография снимается.
+        s.input.clear();
+        type_str(&mut s, "/rag add helo");
+        s.last_edit = None;
+        assert!(s.input_is_command());
+        assert!(s.maybe_recheck_spelling());
+        assert!(
+            s.input.misspelled_is_empty(),
+            "команда не проверяется орфографией"
+        );
+    }
+
+    #[test]
+    fn rag_delete_command_intercepted_on_enter() {
+        let mut s = ChatScreen::new();
+        type_str(&mut s, "/rag delete d:\\dir\\file.txt");
+        let intent = s.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+        assert_eq!(
+            intent,
+            Some(ChatIntent::RagDelete {
+                path: "d:\\dir\\file.txt".into(),
+            })
+        );
+        assert!(s.input.is_empty());
+    }
+
+    #[test]
+    fn rag_removed_progress_pushes_note() {
+        let mut s = ChatScreen::new();
+        s.set_rag_progress(RagProgress::Removed { chunks: 5 });
+        assert!(
+            s.feed
+                .iter()
+                .any(|m| m.role == FeedRole::Note && m.text.contains("удалено фрагментов: 5"))
+        );
+        // Ноль — понятная заметка «ничего не найдено».
+        s.set_rag_progress(RagProgress::Removed { chunks: 0 });
+        assert!(
+            s.feed
+                .iter()
+                .any(|m| m.role == FeedRole::Note && m.text.contains("ничего не найдено"))
+        );
+    }
+
+    #[test]
+    fn rag_failure_pushes_error_note() {
+        let mut s = ChatScreen::new();
+        s.set_rag_progress(RagProgress::Failed("эмбеддер недоступен".into()));
+        assert!(!s.is_rag_active());
+        assert!(
+            s.feed
+                .iter()
+                .any(|m| m.role == FeedRole::Note && m.text.contains("эмбеддер недоступен"))
+        );
     }
 
     #[test]

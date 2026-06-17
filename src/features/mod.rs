@@ -8,6 +8,8 @@ pub mod chat_export;
 pub mod chat_search_sort;
 pub mod migration;
 pub mod profiles;
+pub mod rag_command;
+pub mod rag_ingest;
 pub mod rename_chat;
 pub mod spellcheck;
 pub mod tools;
