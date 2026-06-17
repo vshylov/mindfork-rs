@@ -27,6 +27,9 @@ pub struct ManagedConfig {
     pub reasoning_format: Option<String>,
     /// Режим эмбеддингов (`--embeddings`) — для embedding-сервера.
     pub embeddings: bool,
+    /// Не использовать mmap при загрузке модели (`--no-mmap`): грузит веса в RAM
+    /// целиком. Полезно на сетевых/медленных дисках и при нехватке файлового кэша.
+    pub no_mmap: bool,
     /// Интерфейс bind (`--host`).
     pub host: String,
     pub port: u16,
@@ -67,6 +70,9 @@ pub fn build_args(cfg: &ManagedConfig) -> Vec<String> {
     }
     if cfg.embeddings {
         args.push("--embeddings".into());
+    }
+    if cfg.no_mmap {
+        args.push("--no-mmap".into());
     }
     args.extend(cfg.extra_args.iter().cloned());
     args
@@ -166,6 +172,7 @@ mod tests {
             jinja: true,
             reasoning_format: None,
             embeddings: false,
+            no_mmap: false,
             host: "127.0.0.1".into(),
             port: 8000,
             extra_args: vec![],
@@ -211,6 +218,16 @@ mod tests {
         let args = build_args(&cfg);
         assert!(args.contains(&"--embeddings".to_string()));
         assert!(!args.contains(&"--jinja".to_string()));
+    }
+
+    #[test]
+    fn no_mmap_flag_present_only_when_enabled() {
+        assert!(!build_args(&base_cfg()).contains(&"--no-mmap".to_string()));
+        let cfg = ManagedConfig {
+            no_mmap: true,
+            ..base_cfg()
+        };
+        assert!(build_args(&cfg).contains(&"--no-mmap".to_string()));
     }
 
     #[test]

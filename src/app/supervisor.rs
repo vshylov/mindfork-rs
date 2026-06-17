@@ -120,6 +120,7 @@ impl ServerSupervisor for LlamaSupervisor {
                         jinja: false, // embedding-серверу chat-template не нужен
                         reasoning_format: None,
                         embeddings: true,
+                        no_mmap: false,
                         host: "127.0.0.1".into(),
                         port: settings.port,
                         extra_args: vec![],
@@ -151,6 +152,7 @@ fn managed_config(s: &EngineSettings) -> ManagedConfig {
         jinja: s.jinja,
         reasoning_format: s.reasoning_format.clone(),
         embeddings: false,
+        no_mmap: s.no_mmap,
         host: s.host.clone(),
         port: s.port,
         extra_args: vec![],
