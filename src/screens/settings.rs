@@ -777,9 +777,18 @@ impl SettingsScreen {
     fn render_fields(&self, frame: &mut Frame, area: Rect) {
         let fields = self.fields();
         let focused = self.focus == Focus::Fields;
+        // Колонку со значениями (в т.ч. чекбоксы [x]) выравниваем по самой длинной
+        // подписи — иначе при разной длине имён инструментов [x] «гуляют». Минимум 28,
+        // чтобы короткие секции выглядели как раньше.
+        let label_col = fields
+            .iter()
+            .map(|f| label_width(&f.label))
+            .max()
+            .unwrap_or(0)
+            .max(28);
         let items: Vec<ListItem> = fields
             .iter()
-            .map(|f| ListItem::new(render_field_line(f)))
+            .map(|f| ListItem::new(render_field_line(f, label_col)))
             .collect();
         let block = Block::default()
             .borders(Borders::NONE)
@@ -830,7 +839,12 @@ fn num_row<T: ToString>(id: FieldId, label: &str, value: Option<T>) -> FieldRow 
     )
 }
 
-fn render_field_line(f: &FieldRow) -> Line<'static> {
+/// Ширина подписи в терминальных колонках (кириллица/латиница = 1, CJK/эмодзи = 2).
+fn label_width(label: &str) -> usize {
+    crate::shared::wrap::display_width(&label.chars().collect::<Vec<_>>())
+}
+
+fn render_field_line(f: &FieldRow, label_col: usize) -> Line<'static> {
     let value = match &f.kind {
         FieldKind::Toggle(on) => {
             if *on {
@@ -842,7 +856,10 @@ fn render_field_line(f: &FieldRow) -> Line<'static> {
         FieldKind::Choice(v) => format!("‹ {v} ›"),
         FieldKind::Text(v) => v.clone(),
     };
-    Line::from(format!("{:<28} {}", f.label, value))
+    // Дополняем подпись пробелами до ширины колонки по реальной ширине в колонках
+    // (Rust `{:<N}` считает символы, а не колонки — для CJK/эмодзи это разъезжается).
+    let pad = label_col.saturating_sub(label_width(&f.label));
+    Line::from(format!("{}{} {}", f.label, " ".repeat(pad), value))
 }
 
 fn mode_label(m: ServerMode) -> String {
