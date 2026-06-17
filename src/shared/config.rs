@@ -47,6 +47,9 @@ pub struct EngineSettings {
     pub jinja: bool,
     /// Формат reasoning (`--reasoning-format`, например `auto`); `None` — не задавать.
     pub reasoning_format: Option<String>,
+    /// Не использовать mmap при загрузке модели (`--no-mmap`): веса грузятся в RAM
+    /// целиком. Помогает на сетевых/медленных дисках. По умолчанию выключено.
+    pub no_mmap: bool,
     /// Интерфейс bind (`--host`), например `127.0.0.1` или `0.0.0.0`.
     pub host: String,
     pub port: u16,
@@ -63,6 +66,7 @@ impl Default for EngineSettings {
             context_size: DEFAULT_CONTEXT_SIZE,
             jinja: true,
             reasoning_format: None,
+            no_mmap: false,
             host: "127.0.0.1".to_string(),
             port: 8000,
         }

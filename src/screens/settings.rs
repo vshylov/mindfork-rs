@@ -13,7 +13,7 @@ use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 use ratatui::layout::{Constraint, Flex, Layout, Rect};
 use ratatui::style::{Style, Stylize};
 use ratatui::text::Line;
-use ratatui::widgets::{Block, Borders, Clear, List, ListItem, ListState};
+use ratatui::widgets::{Block, Borders, Clear, List, ListItem, ListState, Paragraph, Wrap};
 use uuid::Uuid;
 
 use crate::entities::profile::Profile;
@@ -87,6 +87,7 @@ enum FieldId {
     XNgl,
     XCtx,
     XJinja,
+    XNoMmap,
     XHost,
     XPort,
     // Инференс
@@ -233,7 +234,16 @@ impl SettingsScreen {
                 "Контекст (-c)",
                 FieldKind::Text(x.context_size.to_string()),
             ),
-            row(FieldId::XJinja, "--jinja", FieldKind::Toggle(x.jinja)),
+            row(
+                FieldId::XJinja,
+                "Шаблон (--jinja)",
+                FieldKind::Toggle(x.jinja),
+            ),
+            row(
+                FieldId::XNoMmap,
+                "No-mmap (--no-mmap)",
+                FieldKind::Toggle(x.no_mmap),
+            ),
             row(FieldId::XHost, "Host", FieldKind::Text(x.host.clone())),
             row(FieldId::XPort, "Порт", FieldKind::Text(x.port.to_string())),
         ]
@@ -539,6 +549,7 @@ impl SettingsScreen {
     fn toggle_field(&mut self, id: FieldId) -> Option<SettingsIntent> {
         match id {
             FieldId::XJinja => self.config.engine.jinja = !self.config.engine.jinja,
+            FieldId::XNoMmap => self.config.engine.no_mmap = !self.config.engine.no_mmap,
             FieldId::TWeb => self.config.tools.web_enabled = !self.config.tools.web_enabled,
             FieldId::TPython => {
                 self.config.tools.python_enabled = !self.config.tools.python_enabled
@@ -777,6 +788,21 @@ impl SettingsScreen {
     fn render_fields(&self, frame: &mut Frame, area: Rect) {
         let fields = self.fields();
         let focused = self.focus == Focus::Fields;
+        // Подсказка-описание сфокусированного поля (если оно есть) — отдельной
+        // строкой внизу секции. Резервируем место только когда описание есть,
+        // чтобы прочие секции выглядели как раньше.
+        let description = focused
+            .then(|| {
+                fields
+                    .get(self.field_idx)
+                    .and_then(|f| field_description(f.id))
+            })
+            .flatten();
+        let [list_area, desc_area] = Layout::vertical([
+            Constraint::Min(1),
+            Constraint::Length(if description.is_some() { 4 } else { 0 }),
+        ])
+        .areas(area);
         // Колонку со значениями (в т.ч. чекбоксы [x]) выравниваем по самой длинной
         // подписи — иначе при разной длине имён инструментов [x] «гуляют». Минимум 28,
         // чтобы короткие секции выглядели как раньше.
@@ -803,11 +829,40 @@ impl SettingsScreen {
         if focused && !fields.is_empty() {
             state.select(Some(self.field_idx.min(fields.len() - 1)));
         }
-        frame.render_stateful_widget(list, area, &mut state);
+        frame.render_stateful_widget(list, list_area, &mut state);
+
+        if let Some(text) = description {
+            let para = Paragraph::new(text)
+                .block(Block::default().borders(Borders::TOP))
+                .style(Style::new().dim())
+                .wrap(Wrap { trim: true });
+            frame.render_widget(para, desc_area);
+        }
     }
 }
 
 // ---------- свободные функции ----------
+
+/// Человекопонятное описание поля для подсказки внизу секции (`None` — без подсказки).
+fn field_description(id: FieldId) -> Option<&'static str> {
+    match id {
+        FieldId::XNgl => Some(
+            "Сколько слоёв модели выгрузить на видеокарту (GPU). Больше слоёв — \
+             быстрее, но нужна видеопамять; 0 — считать только на процессоре, \
+             99 — вся модель на GPU.",
+        ),
+        FieldId::XJinja => Some(
+            "Использовать встроенный chat-шаблон модели (Jinja). Нужен для \
+             правильного формата сообщений и вызова инструментов — обычно держат включённым.",
+        ),
+        FieldId::XNoMmap => Some(
+            "Грузить веса модели целиком в оперативную память вместо отображения \
+             файла с диска (mmap). Помогает на сетевых и медленных дисках, но требует \
+             больше свободной RAM.",
+        ),
+        _ => None,
+    }
+}
 
 fn row(id: FieldId, label: &str, kind: FieldKind) -> FieldRow {
     FieldRow {
@@ -1120,5 +1175,30 @@ mod tests {
         s.handle_key(key(KeyCode::Enter)); // редактор
         let mut term = Terminal::new(TestBackend::new(80, 24)).unwrap();
         term.draw(|f| s.render(f)).unwrap();
+    }
+
+    #[test]
+    fn flag_fields_have_descriptions() {
+        // -ngl, --jinja и --no-mmap снабжены человекопонятной подсказкой; обычное поле — нет.
+        assert!(field_description(FieldId::XNgl).is_some());
+        assert!(field_description(FieldId::XJinja).is_some());
+        assert!(field_description(FieldId::XNoMmap).is_some());
+        assert!(field_description(FieldId::XPort).is_none());
+    }
+
+    #[test]
+    fn render_with_focused_description_does_not_panic() {
+        use ratatui::Terminal;
+        use ratatui::backend::TestBackend;
+        let mut s = screen();
+        s.handle_key(key(KeyCode::Enter)); // фокус на поля (XMode)
+        // Дойти до тумблера --no-mmap (есть описание-подсказка внизу).
+        while s.fields().get(s.field_idx).map(|f| f.id) != Some(FieldId::XNoMmap) {
+            s.handle_key(key(KeyCode::Down));
+        }
+        for (w, h) in [(80u16, 24u16), (40, 12)] {
+            let mut term = Terminal::new(TestBackend::new(w, h)).unwrap();
+            term.draw(|f| s.render(f)).unwrap();
+        }
     }
 }
