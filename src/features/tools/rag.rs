@@ -117,7 +117,8 @@ impl Tool for RagSearch {
 
 /// Нарезает текст на чанки: по абзацам (двойной перевод строки), длинные абзацы
 /// дробятся окнами по `MAX_CHUNK_CHARS` символов. Пустые отбрасываются.
-fn chunk_text(text: &str) -> Vec<String> {
+/// `pub(crate)` — переиспользуется фоновой индексацией файлов (`/rag add`).
+pub(crate) fn chunk_text(text: &str) -> Vec<String> {
     let mut chunks = Vec::new();
     for paragraph in text.split("\n\n") {
         let trimmed = paragraph.trim();

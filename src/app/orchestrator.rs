@@ -14,7 +14,7 @@ use tokio::time::Instant;
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
-use crate::app::events::{AppCommand, AppEvent, ServerStatus};
+use crate::app::events::{AppCommand, AppEvent, RagProgress, ServerStatus};
 use crate::app::supervisor::ServerSupervisor;
 use crate::entities::chat::{Chat, ChatSummary};
 use crate::entities::message::{Message, MessageMetadata, MessageRole, ToolCallRecord};
@@ -132,6 +132,7 @@ pub async fn run(deps: OrchestratorDeps) {
         active_id: None,
         state: State::Idle,
         done_tx,
+        rag_cancel: None,
         dirty: HashSet::new(),
         save_deadline: None,
     };
@@ -224,6 +225,9 @@ struct Orchestrator {
     active_id: Option<Uuid>,
     state: State,
     done_tx: UnboundedSender<GenResult>,
+    /// Токен отмены текущей фоновой индексации RAG (`/rag add`); `None` — не идёт.
+    /// Снимается/отменяется при новой индексации и при завершении работы.
+    rag_cancel: Option<CancellationToken>,
     /// Чаты, ожидающие записи на диск (дебаунс).
     dirty: HashSet<Uuid>,
     save_deadline: Option<Instant>,
@@ -278,6 +282,9 @@ impl Orchestrator {
                 if let State::Generating { cancel, .. } = &self.state {
                     cancel.cancel();
                 }
+                if let Some(token) = &self.rag_cancel {
+                    token.cancel();
+                }
                 return true;
             }
             AppCommand::Cancel => {
@@ -303,6 +310,8 @@ impl Orchestrator {
             AppCommand::DeleteProfile(id) => self.handle_delete_profile(id),
             AppCommand::UpdateConfig(config) => self.handle_update_config(*config),
             AppCommand::UpdateProfile { id, edit } => self.handle_update_profile(id, *edit),
+            AppCommand::RagAdd { path, recursive } => self.handle_rag_add(path, recursive),
+            AppCommand::RagDelete { path } => self.handle_rag_delete(path),
         }
         false
     }
@@ -696,6 +705,79 @@ impl Orchestrator {
         }
     }
 
+    /// Запускает фоновую индексацию файла/директории в RAG активного профиля
+    /// (команда `/rag add`, spec §9.3). Сканирование, чтение, эмбеддинг и запись
+    /// идут в отдельной задаче; прогресс — событиями [`RagProgress`]. Предыдущая
+    /// незавершённая индексация отменяется (одна за раз).
+    fn handle_rag_add(&mut self, path: String, recursive: bool) {
+        let path = path.trim().to_string();
+        if path.is_empty() {
+            return;
+        }
+        // Профиль берём из активного чата (RAG изолирован по `profile_id`, §9.5).
+        let Some(profile_id) = self
+            .active_id
+            .and_then(|id| self.chats.iter().find(|c| c.id == id))
+            .map(|c| c.profile_id)
+        else {
+            let _ = self.evt_tx.send(AppEvent::RagProgress(RagProgress::Failed(
+                "нет активного чата".into(),
+            )));
+            return;
+        };
+
+        // Отменяем предыдущую индексацию, если шла, и заводим новый токен.
+        if let Some(token) = self.rag_cancel.take() {
+            token.cancel();
+        }
+        let cancel = CancellationToken::new();
+        self.rag_cancel = Some(cancel.clone());
+
+        spawn_rag_ingest(RagIngest {
+            embedder: self.embedder.clone(),
+            storage: self.storage.clone(),
+            profile_id,
+            root: std::path::PathBuf::from(path),
+            recursive,
+            cancel,
+            evt_tx: self.evt_tx.clone(),
+        });
+    }
+
+    /// Удаляет из RAG активного профиля файл или директорию (со всем, что под ней)
+    /// по пути (команда `/rag delete`, spec §9.3). Операция быстрая (только БД, без
+    /// эмбеддинга), поэтому выполняется на месте. Если путь есть на диске — берём его
+    /// канонический ключ (как при добавлении); иначе сопоставляем по введённой строке
+    /// (БД сама нормализует разделители/регистр), что позволяет чистить записи уже
+    /// удалённых с диска файлов.
+    fn handle_rag_delete(&mut self, path: String) {
+        let path = path.trim().to_string();
+        if path.is_empty() {
+            return;
+        }
+        let Some(profile_id) = self
+            .active_id
+            .and_then(|id| self.chats.iter().find(|c| c.id == id))
+            .map(|c| c.profile_id)
+        else {
+            let _ = self.evt_tx.send(AppEvent::RagProgress(RagProgress::Failed(
+                "нет активного чата".into(),
+            )));
+            return;
+        };
+        let p = std::path::Path::new(&path);
+        let needle = if p.exists() {
+            crate::features::rag_ingest::canonical_source(p)
+        } else {
+            path.clone()
+        };
+        let progress = match self.storage.db().rag_delete_under(profile_id, &needle) {
+            Ok(chunks) => RagProgress::Removed { chunks },
+            Err(err) => RagProgress::Failed(format!("удаление не удалось: {err}")),
+        };
+        let _ = self.evt_tx.send(AppEvent::RagProgress(progress));
+    }
+
     fn handle_delete(&mut self, id: Uuid) {
         match self.storage.json().hide_chat(id) {
             Ok(false) => return,
@@ -1076,6 +1158,133 @@ fn salvage_title_source(text: String, thoughts: String) -> String {
         .to_string()
 }
 
+/// Параметры фоновой задачи индексации файлов в RAG (`/rag add`).
+struct RagIngest {
+    embedder: Arc<dyn Embedder>,
+    storage: Arc<Storage>,
+    profile_id: Uuid,
+    root: std::path::PathBuf,
+    recursive: bool,
+    cancel: CancellationToken,
+    evt_tx: UnboundedSender<AppEvent>,
+}
+
+/// Запускает фоновую индексацию (spec §9.3): сканирует путь, проверяет доступность
+/// эмбеддера, затем по очереди читает/чанкует/эмбеддит/пишет каждый файл, эмитя
+/// [`RagProgress`]. Отменяемо по `cancel` (между файлами). Storage потокобезопасен
+/// (внутренний мьютекс), эмбеддинг асинхронен — задача не блокирует оркестратор.
+fn spawn_rag_ingest(task: RagIngest) {
+    let RagIngest {
+        embedder,
+        storage,
+        profile_id,
+        root,
+        recursive,
+        cancel,
+        evt_tx,
+    } = task;
+
+    tokio::spawn(async move {
+        let send = |p: RagProgress| {
+            let _ = evt_tx.send(AppEvent::RagProgress(p));
+        };
+
+        // 1. Сканируем файлы (txt/md). Ошибка пути / пустой результат — понятный отказ.
+        let files = match crate::features::rag_ingest::scan(&root, recursive) {
+            Ok(files) => files,
+            Err(err) => {
+                send(RagProgress::Failed(format!("путь недоступен: {err}")));
+                return;
+            }
+        };
+        if files.is_empty() {
+            send(RagProgress::Failed(
+                "не найдено файлов .txt/.md для индексации".into(),
+            ));
+            return;
+        }
+
+        // 2. Предпроверка эмбеддера — быстрый понятный отказ, если RAG не настроен.
+        if let Err(err) = embedder.embed(vec!["ping".into()]).await {
+            send(RagProgress::Failed(format!("эмбеддер недоступен: {err}")));
+            return;
+        }
+
+        let total = files.len();
+        send(RagProgress::Started { total });
+
+        let mut chunks_total = 0usize;
+        let mut errors = 0usize;
+        for (i, file) in files.iter().enumerate() {
+            if cancel.is_cancelled() {
+                break;
+            }
+            let (name, dir) = display_parts(file);
+            send(RagProgress::Indexing {
+                index: i + 1,
+                total,
+                name,
+                dir,
+            });
+            match index_file(&embedder, &storage, profile_id, file).await {
+                Ok(n) => chunks_total += n,
+                Err(err) => {
+                    errors += 1;
+                    tracing::warn!(file = %file.display(), error = %err, "RAG: не удалось проиндексировать файл");
+                }
+            }
+        }
+
+        send(RagProgress::Finished {
+            files: total,
+            chunks: chunks_total,
+            errors,
+            cancelled: cancel.is_cancelled(),
+        });
+    });
+}
+
+/// Индексирует один файл: читает текст, чанкует, эмбеддит и пишет документы в
+/// хранилище (изоляция по `profile_id`). Возвращает число записанных чанков.
+async fn index_file(
+    embedder: &Arc<dyn Embedder>,
+    storage: &Arc<Storage>,
+    profile_id: Uuid,
+    path: &std::path::Path,
+) -> anyhow::Result<usize> {
+    let content = crate::features::rag_ingest::read_text(path)?;
+    let chunks = crate::features::tools::rag::chunk_text(&content);
+    if chunks.is_empty() {
+        return Ok(0);
+    }
+    let embeddings = embedder.embed(chunks.clone()).await?;
+    if embeddings.len() != chunks.len() {
+        anyhow::bail!("эмбеддер вернул неверное число векторов");
+    }
+    // Каноничный ключ источника + идемпотентность: при повторном добавлении того же
+    // файла заменяем его прежние чанки, а не плодим дубликаты.
+    let source = crate::features::rag_ingest::canonical_source(path);
+    storage.db().rag_delete_by_source(profile_id, &source)?;
+    for (chunk, embedding) in chunks.iter().zip(embeddings) {
+        let doc = crate::entities::rag::RagDocument::new(profile_id, &source, chunk, embedding);
+        storage.db().rag_insert(&doc)?;
+    }
+    Ok(chunks.len())
+}
+
+/// Имя файла и его родительская папка (для индикации прогресса индексации).
+fn display_parts(path: &std::path::Path) -> (String, String) {
+    let name = path
+        .file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_else(|| path.display().to_string());
+    let dir = path
+        .parent()
+        .map(|p| p.display().to_string())
+        .unwrap_or_default();
+    (name, dir)
+}
+
 /// Параметры запуска задачи генерации (agentic-loop).
 struct GenSpawn {
     backend: Arc<dyn EngineBackend>,
@@ -1391,6 +1600,7 @@ mod tests {
             active_id: None,
             state: State::Idle,
             done_tx,
+            rag_cancel: None,
             dirty: HashSet::new(),
             save_deadline: None,
         };
@@ -2325,6 +2535,169 @@ mod tests {
 
         cmd_tx.send(AppCommand::Quit).unwrap();
         handle.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn rag_add_indexes_files_and_reports_progress() {
+        // Без chat-движка (RAG не зависит от него); эмбеддер даёт MockSupervisor.
+        let (_d, cmd_tx, mut evt_rx, handle) = spawn_orch(None);
+        let root = _d.path().to_path_buf();
+        let active = wait_for(&mut evt_rx, |e| matches!(e, AppEvent::ChatActivated { .. }))
+            .await
+            .unwrap();
+        let chat_id = match active {
+            AppEvent::ChatActivated { id, .. } => id,
+            _ => unreachable!(),
+        };
+
+        // Папка с двумя поддерживаемыми файлами и одним неподдерживаемым.
+        let docs = root.join("docs");
+        std::fs::create_dir_all(&docs).unwrap();
+        std::fs::write(docs.join("a.txt"), "кошки любят рыбу").unwrap();
+        std::fs::write(docs.join("b.md"), "собаки любят кости").unwrap();
+        std::fs::write(docs.join("c.bin"), "пропустить").unwrap();
+
+        cmd_tx
+            .send(AppCommand::RagAdd {
+                path: docs.display().to_string(),
+                recursive: false,
+            })
+            .unwrap();
+
+        let started = wait_for(&mut evt_rx, |e| {
+            matches!(e, AppEvent::RagProgress(RagProgress::Started { .. }))
+        })
+        .await
+        .unwrap();
+        assert!(matches!(
+            started,
+            AppEvent::RagProgress(RagProgress::Started { total: 2 })
+        ));
+
+        let finished = wait_for(&mut evt_rx, |e| {
+            matches!(e, AppEvent::RagProgress(RagProgress::Finished { .. }))
+        })
+        .await
+        .unwrap();
+        match finished {
+            AppEvent::RagProgress(RagProgress::Finished {
+                files,
+                chunks,
+                errors,
+                cancelled,
+            }) => {
+                assert_eq!(files, 2);
+                assert_eq!(chunks, 2, "по одному чанку на файл");
+                assert_eq!(errors, 0);
+                assert!(!cancelled);
+            }
+            _ => unreachable!(),
+        }
+
+        cmd_tx.send(AppCommand::Quit).unwrap();
+        handle.await.unwrap();
+
+        // Документы записаны под профилем активного чата (изоляция).
+        let reopened = Storage::open(Paths::with_root(&root)).unwrap();
+        let chat = reopened.json().load_chat(chat_id).unwrap().unwrap();
+        assert_eq!(reopened.db().rag_count(chat.profile_id).unwrap(), 2);
+    }
+
+    #[tokio::test]
+    async fn rag_add_is_idempotent_on_reindex() {
+        let (_d, cmd_tx, mut evt_rx, handle) = spawn_orch(None);
+        let root = _d.path().to_path_buf();
+        let active = wait_for(&mut evt_rx, |e| matches!(e, AppEvent::ChatActivated { .. }))
+            .await
+            .unwrap();
+        let chat_id = match active {
+            AppEvent::ChatActivated { id, .. } => id,
+            _ => unreachable!(),
+        };
+
+        let docs = root.join("docs");
+        std::fs::create_dir_all(&docs).unwrap();
+        std::fs::write(docs.join("a.txt"), "кошки любят рыбу").unwrap();
+        std::fs::write(docs.join("b.md"), "собаки любят кости").unwrap();
+
+        // Дважды индексируем ту же папку.
+        for _ in 0..2 {
+            cmd_tx
+                .send(AppCommand::RagAdd {
+                    path: docs.display().to_string(),
+                    recursive: false,
+                })
+                .unwrap();
+            wait_for(&mut evt_rx, |e| {
+                matches!(e, AppEvent::RagProgress(RagProgress::Finished { .. }))
+            })
+            .await
+            .unwrap();
+        }
+
+        cmd_tx.send(AppCommand::Quit).unwrap();
+        handle.await.unwrap();
+
+        let reopened = Storage::open(Paths::with_root(&root)).unwrap();
+        let chat = reopened.json().load_chat(chat_id).unwrap().unwrap();
+        assert_eq!(
+            reopened.db().rag_count(chat.profile_id).unwrap(),
+            2,
+            "повторное добавление заменяет, а не дублирует"
+        );
+    }
+
+    #[tokio::test]
+    async fn rag_delete_removes_indexed_documents() {
+        let (_d, cmd_tx, mut evt_rx, handle) = spawn_orch(None);
+        let root = _d.path().to_path_buf();
+        let active = wait_for(&mut evt_rx, |e| matches!(e, AppEvent::ChatActivated { .. }))
+            .await
+            .unwrap();
+        let chat_id = match active {
+            AppEvent::ChatActivated { id, .. } => id,
+            _ => unreachable!(),
+        };
+
+        let docs = root.join("docs");
+        std::fs::create_dir_all(&docs).unwrap();
+        std::fs::write(docs.join("a.txt"), "кошки").unwrap();
+        std::fs::write(docs.join("b.md"), "собаки").unwrap();
+
+        cmd_tx
+            .send(AppCommand::RagAdd {
+                path: docs.display().to_string(),
+                recursive: false,
+            })
+            .unwrap();
+        wait_for(&mut evt_rx, |e| {
+            matches!(e, AppEvent::RagProgress(RagProgress::Finished { .. }))
+        })
+        .await
+        .unwrap();
+
+        // Удаляем всю папку — оба файла уходят из базы.
+        cmd_tx
+            .send(AppCommand::RagDelete {
+                path: docs.display().to_string(),
+            })
+            .unwrap();
+        let removed = wait_for(&mut evt_rx, |e| {
+            matches!(e, AppEvent::RagProgress(RagProgress::Removed { .. }))
+        })
+        .await
+        .unwrap();
+        assert!(matches!(
+            removed,
+            AppEvent::RagProgress(RagProgress::Removed { chunks: 2 })
+        ));
+
+        cmd_tx.send(AppCommand::Quit).unwrap();
+        handle.await.unwrap();
+
+        let reopened = Storage::open(Paths::with_root(&root)).unwrap();
+        let chat = reopened.json().load_chat(chat_id).unwrap().unwrap();
+        assert_eq!(reopened.db().rag_count(chat.profile_id).unwrap(), 0);
     }
 
     #[test]

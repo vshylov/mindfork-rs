@@ -7,6 +7,7 @@ use crate::entities::chat::ChatSummary;
 use crate::entities::message::Message;
 use crate::entities::profile::{Profile, ProfileSummary};
 use crate::features::profiles::ProfileEdit;
+pub use crate::features::rag_ingest::RagProgress;
 use crate::shared::api::FinishReason;
 use crate::shared::config::AppConfig;
 pub use crate::shared::server::ServerStatus;
@@ -54,6 +55,13 @@ pub enum AppCommand {
     /// Применить правки профиля (экран настроек). `Box` — `ProfileEdit` несёт
     /// крупные поля (системное сообщение).
     UpdateProfile { id: Uuid, edit: Box<ProfileEdit> },
+    /// Индексировать файл или директорию в базу знаний (RAG) активного профиля
+    /// (команда `/rag add <path> [-r]`). Выполняется фоновой задачей; прогресс
+    /// приходит событиями `RagProgress`. См. spec §9.3.
+    RagAdd { path: String, recursive: bool },
+    /// Удалить из базы знаний файл или директорию (со всем, что под ней) активного
+    /// профиля (команда `/rag delete <path>`). Результат — событие `RagProgress`.
+    RagDelete { path: String },
     /// Завершить работу (оркестратор останавливается).
     Quit,
 }
@@ -111,6 +119,8 @@ pub enum AppEvent {
         generation_id: Uuid,
         reason: FinishReason,
     },
+    /// Прогресс фоновой индексации файлов в RAG (команда `/rag add`). См. spec §9.3.
+    RagProgress(RagProgress),
     /// Ошибка (для показа в UI).
     Error(String),
 }

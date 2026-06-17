@@ -163,6 +163,11 @@ fn run_loop(
         if settings.is_none() && screen.maybe_recheck_spelling() {
             dirty = true;
         }
+        // Пока идёт фоновая индексация RAG — перерисовываем каждый тик для анимации
+        // спиннера (вне индексации простаивающие тики не рисуют — см. `dirty`).
+        if settings.is_none() && screen.is_rag_active() {
+            dirty = true;
+        }
         if dirty {
             if let Some(settings_screen) = &mut settings {
                 terminal.draw(|frame| settings_screen.render(frame))?;
@@ -249,6 +254,7 @@ fn apply_event(
             generation_id,
             reason,
         } => screen.finish_generation(generation_id, reason),
+        AppEvent::RagProgress(progress) => screen.set_rag_progress(progress),
         AppEvent::Error(message) => screen.push_error(&message),
     }
 }
@@ -286,6 +292,8 @@ fn dispatch(
         ChatIntent::CloneChat(id) => AppCommand::CloneChat(id),
         ChatIntent::CopyChat(id) => AppCommand::CopyChat(id),
         ChatIntent::DeleteChat(id) => AppCommand::DeleteChat(id),
+        ChatIntent::RagAdd { path, recursive } => AppCommand::RagAdd { path, recursive },
+        ChatIntent::RagDelete { path } => AppCommand::RagDelete { path },
         ChatIntent::RenameChat { id, title } => AppCommand::RenameChat { id, title },
         ChatIntent::AutoRenameChat(id) => AppCommand::AutoRenameChat(id),
         ChatIntent::OpenSettings => {

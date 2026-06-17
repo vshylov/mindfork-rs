@@ -198,6 +198,73 @@ impl Db {
         )?;
         Ok(n as usize)
     }
+
+    /// Удаляет все документы (чанки) с точным совпадением `source` у профиля.
+    /// Возвращает число удалённых. Используется идемпотентной переиндексацией файла
+    /// (`/rag add` — заменяем прежние чанки источника, а не плодим дубликаты).
+    pub fn rag_delete_by_source(&self, profile_id: Uuid, source: &str) -> Result<usize> {
+        let conn = self.conn.lock().unwrap();
+        delete_matching(&conn, profile_id, |s| s == source)
+    }
+
+    /// Удаляет документы по пути: сам путь (файл) и всё, что под ним (директория).
+    /// Сравнение устойчиво к разделителям (`/` ↔ `\`) и регистру (Windows) и **не
+    /// требует наличия файла на диске** (`/rag delete`). Возвращает число удалённых.
+    pub fn rag_delete_under(&self, profile_id: Uuid, path: &str) -> Result<usize> {
+        let needle = norm_path(path);
+        let prefix = format!("{needle}/");
+        let conn = self.conn.lock().unwrap();
+        delete_matching(&conn, profile_id, |s| {
+            let s = norm_path(s);
+            s == needle || s.starts_with(&prefix)
+        })
+    }
+}
+
+/// Удаляет документы профиля, чьи `source` проходят предикат (вместе с их
+/// векторами в `vec0`). Возвращает число удалённых документов.
+fn delete_matching(
+    conn: &Connection,
+    profile_id: Uuid,
+    pred: impl Fn(&str) -> bool,
+) -> Result<usize> {
+    let rows: Vec<(i64, String)> = {
+        let mut stmt =
+            conn.prepare("SELECT rowid, source FROM rag_documents WHERE profile_id = ?1")?;
+        stmt.query_map(params![profile_id.to_string()], |r| {
+            Ok((r.get::<_, i64>(0)?, r.get::<_, String>(1)?))
+        })?
+        .collect::<rusqlite::Result<Vec<_>>>()?
+    };
+    let victims: Vec<i64> = rows
+        .into_iter()
+        .filter(|(_, s)| pred(s))
+        .map(|(rowid, _)| rowid)
+        .collect();
+    if victims.is_empty() {
+        return Ok(0);
+    }
+    // Таблица векторов есть только после первой вставки; вне неё удалять нечего.
+    let has_vectors = vec_dim(conn)?.is_some();
+    for rowid in &victims {
+        if has_vectors {
+            conn.execute("DELETE FROM rag_vectors WHERE rowid = ?1", params![rowid])?;
+        }
+        conn.execute("DELETE FROM rag_documents WHERE rowid = ?1", params![rowid])?;
+    }
+    Ok(victims.len())
+}
+
+/// Нормализует путь для устойчивого сравнения: разделители к `/`, без хвостового
+/// слэша, на Windows — нижний регистр (NTFS регистронезависим).
+fn norm_path(p: &str) -> String {
+    let unified = p.replace('\\', "/");
+    let trimmed = unified.trim_end_matches('/');
+    if cfg!(windows) {
+        trimmed.to_lowercase()
+    } else {
+        trimmed.to_string()
+    }
 }
 
 fn migrate(conn: &Connection) -> Result<()> {
@@ -379,6 +446,68 @@ mod tests {
         let db = db();
         let hits = db.rag_search(Uuid::new_v4(), &[1.0, 0.0], 5).unwrap();
         assert!(hits.is_empty());
+    }
+
+    #[test]
+    fn rag_delete_by_source_removes_exact_only() {
+        let db = db();
+        let p = Uuid::new_v4();
+        db.rag_insert(&RagDocument::new(p, "/data/a.txt", "c1", vec![1.0, 0.0]))
+            .unwrap();
+        db.rag_insert(&RagDocument::new(p, "/data/a.txt", "c2", vec![0.0, 1.0]))
+            .unwrap();
+        db.rag_insert(&RagDocument::new(p, "/data/b.txt", "c3", vec![1.0, 1.0]))
+            .unwrap();
+
+        // Удаляются оба чанка источника a.txt, b.txt остаётся.
+        assert_eq!(db.rag_delete_by_source(p, "/data/a.txt").unwrap(), 2);
+        assert_eq!(db.rag_count(p).unwrap(), 1);
+        // Поиск тоже больше их не находит (векторы удалены).
+        let hits = db.rag_search(p, &[1.0, 0.0], 5).unwrap();
+        assert!(hits.iter().all(|h| h.source == "/data/b.txt"));
+    }
+
+    #[test]
+    fn rag_delete_under_removes_path_and_descendants() {
+        let db = db();
+        let p = Uuid::new_v4();
+        let other = Uuid::new_v4();
+        db.rag_insert(&RagDocument::new(p, "/data/a.txt", "a", vec![1.0, 0.0]))
+            .unwrap();
+        db.rag_insert(&RagDocument::new(p, "/data/sub/b.txt", "b", vec![0.0, 1.0]))
+            .unwrap();
+        db.rag_insert(&RagDocument::new(p, "/other/c.txt", "c", vec![1.0, 1.0]))
+            .unwrap();
+        // Чужой профиль с тем же путём не должен затрагиваться (изоляция).
+        db.rag_insert(&RagDocument::new(other, "/data/a.txt", "x", vec![1.0, 0.0]))
+            .unwrap();
+
+        // Удаление директории сносит файл и вложенные, но не «/other» и не чужой профиль.
+        assert_eq!(db.rag_delete_under(p, "/data").unwrap(), 2);
+        assert_eq!(db.rag_count(p).unwrap(), 1);
+        assert_eq!(db.rag_count(other).unwrap(), 1);
+
+        // Префикс не цепляет соседнюю директорию с общим началом имени.
+        db.rag_insert(&RagDocument::new(p, "/x/file.txt", "f", vec![1.0, 0.0]))
+            .unwrap();
+        db.rag_insert(&RagDocument::new(
+            p,
+            "/x-extra/file.txt",
+            "g",
+            vec![0.0, 1.0],
+        ))
+        .unwrap();
+        assert_eq!(db.rag_delete_under(p, "/x").unwrap(), 1);
+    }
+
+    #[test]
+    fn rag_delete_under_tolerates_separators_and_trailing_slash() {
+        let db = db();
+        let p = Uuid::new_v4();
+        db.rag_insert(&RagDocument::new(p, "/data/a.txt", "a", vec![1.0, 0.0]))
+            .unwrap();
+        // Обратные слэши и хвостовой слэш в запросе матчат сохранённый «/»-источник.
+        assert_eq!(db.rag_delete_under(p, "\\data\\").unwrap(), 1);
     }
 
     #[test]
