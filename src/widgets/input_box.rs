@@ -26,6 +26,15 @@ pub struct InputBox {
     col: usize,
     /// Первая видимая строка (вертикальный скролл).
     scroll: usize,
+    /// Однострочный режим: значение не переносится по словам, а **скроллится
+    /// горизонтально**; `↑/↓` и перевод строки отключены; `Home/End` — к началу/
+    /// концу логической строки. Для редактируемых полей настроек, где значение
+    /// логически одна строка (URL, путь, число). По умолчанию выключен —
+    /// чат-ввод многострочный. См. spec §11.6.
+    single_line: bool,
+    /// Горизонтальный скролл в колонках (только однострочный режим): первая видимая
+    /// колонка. Держит курсор в видимой области по аналогии с вертикальным `scroll`.
+    hscroll: usize,
     /// Ширина внутренней области последней отрисовки (в колонках). Нужна навигации
     /// `↑/↓`, чтобы ходить по **визуальным** рядам перенесённой строки, а не по
     /// логическим строкам (перенос считается только при рендере). `0` — рендера ещё
@@ -55,10 +64,19 @@ impl InputBox {
             row: 0,
             col: 0,
             scroll: 0,
+            single_line: false,
+            hscroll: 0,
             last_width: 0,
             goal_col: None,
             misspelled: Vec::new(),
         }
+    }
+
+    /// Включает однострочный режим (горизонтальный скролл вместо переноса; `↑/↓` и
+    /// перевод строки отключены). Вызывать **до** [`Self::set_text`]. См. поле
+    /// [`Self::single_line`].
+    pub fn set_single_line(&mut self, on: bool) {
+        self.single_line = on;
     }
 
     /// Текст поля (строки через `\n`).
@@ -94,6 +112,7 @@ impl InputBox {
         self.row = 0;
         self.col = 0;
         self.scroll = 0;
+        self.hscroll = 0;
         self.goal_col = None;
         self.misspelled.clear();
     }
@@ -137,6 +156,15 @@ impl InputBox {
 
     /// Заполняет поле текстом, ставит курсор в конец (для правки по месту, M3+).
     pub fn set_text(&mut self, text: &str) {
+        // В однострочном режиме сохраняем инвариант «одна логическая строка»:
+        // переводы строк схлопываем в пробел.
+        let owned;
+        let text = if self.single_line && text.contains('\n') {
+            owned = text.replace('\n', " ");
+            owned.as_str()
+        } else {
+            text
+        };
         self.lines = if text.is_empty() {
             vec![Vec::new()]
         } else {
@@ -145,6 +173,7 @@ impl InputBox {
         self.row = self.lines.len() - 1;
         self.col = self.lines[self.row].len();
         self.scroll = 0;
+        self.hscroll = 0;
         self.goal_col = None;
     }
 
@@ -157,6 +186,9 @@ impl InputBox {
     }
 
     pub fn insert_newline(&mut self) {
+        if self.single_line {
+            return; // в однострочном режиме перевод строки запрещён
+        }
         let tail = self.lines[self.row].split_off(self.col);
         self.lines.insert(self.row + 1, tail);
         self.row += 1;
@@ -172,8 +204,15 @@ impl InputBox {
     pub fn insert_str(&mut self, text: &str) {
         // Хвост текущей строки после курсора — приклеим к последней вставленной.
         let tail: Vec<char> = self.lines[self.row].split_off(self.col);
+        // В однострочном режиме переводы строк превращаем в пробелы (одна строка).
+        let normalized = normalize_paste(text);
+        let normalized = if self.single_line {
+            normalized.replace('\n', " ")
+        } else {
+            normalized
+        };
         let mut first = true;
-        for segment in normalize_paste(text).split('\n') {
+        for segment in normalized.split('\n') {
             if first {
                 first = false;
             } else {
@@ -238,6 +277,9 @@ impl InputBox {
     /// предыдущий визуальный ряд той же строки, сохраняя колонку. Использует ширину
     /// последней отрисовки; до первого рендера (`last_width == 0`) — логический переход.
     fn move_up(&mut self) {
+        if self.single_line {
+            return; // однострочное поле — `↑` не двигает курсор
+        }
         if self.last_width == 0 {
             self.goal_col = None;
             self.move_up_logical();
@@ -258,6 +300,9 @@ impl InputBox {
 
     /// Вниз по **визуальному** ряду (зеркально [`Self::move_up`]).
     fn move_down(&mut self) {
+        if self.single_line {
+            return; // однострочное поле — `↓` не двигает курсор
+        }
         if self.last_width == 0 {
             self.goal_col = None;
             self.move_down_logical();
@@ -279,6 +324,10 @@ impl InputBox {
     /// До первого рендера — в начало логической строки.
     fn move_home(&mut self) {
         self.goal_col = None;
+        if self.single_line {
+            self.col = 0; // однострочное поле — к началу значения
+            return;
+        }
         if self.last_width == 0 {
             self.col = 0;
             return;
@@ -293,6 +342,10 @@ impl InputBox {
     /// До первого рендера — в конец логической строки.
     fn move_end(&mut self) {
         self.goal_col = None;
+        if self.single_line {
+            self.col = self.lines[self.row].len(); // однострочное поле — к концу значения
+            return;
+        }
         if self.last_width == 0 {
             self.col = self.lines[self.row].len();
             return;
@@ -391,6 +444,11 @@ impl InputBox {
         let inner = block.inner(area);
         frame.render_widget(&block, area);
 
+        if self.single_line {
+            self.render_single_line(frame, inner, focused, palette, command);
+            return;
+        }
+
         let view_w = inner.width.max(1) as usize;
         let visible_rows = inner.height.max(1) as usize;
         // Запоминаем ширину для навигации `↑/↓` по визуальным рядам (см. `move_up`).
@@ -436,6 +494,64 @@ impl InputBox {
             let x = cursor_x.min(inner.x + inner.width.saturating_sub(1));
             let y = cursor_y.min(inner.y + inner.height.saturating_sub(1));
             frame.set_cursor_position((x, y));
+        }
+    }
+
+    /// Рисует значение в однострочном режиме: без переноса, с горизонтальным
+    /// скроллом — курсор всегда виден, длинное значение «уезжает» влево, а не
+    /// заворачивается на невидимый ряд. `inner` — внутренняя область (уже без рамки).
+    fn render_single_line(
+        &mut self,
+        frame: &mut Frame,
+        inner: Rect,
+        focused: bool,
+        palette: &Palette,
+        command: bool,
+    ) {
+        let view_w = inner.width.max(1) as usize;
+        self.last_width = view_w;
+        let line = &self.lines[0];
+        let cursor_vw = wrap::display_width(&line[..self.col]);
+
+        // Горизонтальный скролл держит курсор в видимой области.
+        if cursor_vw < self.hscroll {
+            self.hscroll = cursor_vw;
+        } else if cursor_vw >= self.hscroll + view_w {
+            self.hscroll = cursor_vw + 1 - view_w;
+        }
+
+        // Видимый срез [start, end) — от колонки `hscroll` на ширину `view_w`.
+        let start = col_at_width(line, self.hscroll);
+        let mut end = start;
+        let mut w = 0;
+        while end < line.len() {
+            let cw = wrap::char_width(line[end]);
+            if w + cw > view_w {
+                break;
+            }
+            w += cw;
+            end += 1;
+        }
+        let sub = &line[start..end];
+
+        let placeholder = self.is_empty() && !focused;
+        let text = if placeholder {
+            Text::from(Line::from("введите сообщение…").dim())
+        } else if let Some(style) = command.then(|| Style::new().fg(palette.warning)) {
+            Text::from(Line::styled(sub.iter().collect::<String>(), style))
+        } else {
+            let ranges = self
+                .misspelled
+                .first()
+                .map(|rs| clip_ranges(rs, start, end));
+            Text::from(styled_line(sub, ranges.as_deref(), palette))
+        };
+        frame.render_widget(Paragraph::new(text), inner);
+
+        if focused {
+            let cursor_x = inner.x + (cursor_vw - self.hscroll) as u16;
+            let x = cursor_x.min(inner.x + inner.width.saturating_sub(1));
+            frame.set_cursor_position((x, inner.y));
         }
     }
 
@@ -498,6 +614,19 @@ fn normalize_paste(text: &str) -> String {
     text.replace("\r\n", "\n")
         .replace('\r', "\n")
         .replace('\t', "    ")
+}
+
+/// Индекс символа, на котором накопленная ширина строки достигает `target` колонок
+/// (для горизонтального скролла однострочного поля). Значения `target` приходят из
+/// префиксных ширин — границы символов совпадают, дробления широкого символа нет.
+fn col_at_width(line: &[char], target: usize) -> usize {
+    let mut w = 0;
+    let mut i = 0;
+    while i < line.len() && w < target {
+        w += wrap::char_width(line[i]);
+        i += 1;
+    }
+    i
 }
 
 /// Визуальный ряд `idx` — мягкий перенос (не последний ряд своей логической строки),
@@ -923,6 +1052,65 @@ mod tests {
         ib.col = 2;
         assert!(ib.on_key(k(KeyCode::Up)));
         assert_eq!(ib.cursor(), (0, 2));
+    }
+
+    #[test]
+    fn single_line_disables_newline_and_collapses_paste() {
+        let mut ib = InputBox::new();
+        ib.set_single_line(true);
+        ib.set_text("ab\ncd"); // перевод строки схлопывается в пробел
+        assert_eq!(ib.text(), "ab cd");
+        assert_eq!(ib.line_count(), 1);
+        ib.insert_newline(); // no-op
+        assert_eq!(ib.line_count(), 1);
+        ib.insert_str("x\ny"); // вставка тоже одной строкой
+        assert_eq!(ib.line_count(), 1);
+        assert!(ib.text().contains("x y"));
+    }
+
+    #[test]
+    fn single_line_arrows_up_down_are_noop() {
+        let mut ib = InputBox::new();
+        ib.set_single_line(true);
+        ib.set_text("hello");
+        ib.col = 2;
+        assert!(ib.on_key(k(KeyCode::Up)));
+        assert_eq!(ib.cursor(), (0, 2));
+        assert!(ib.on_key(k(KeyCode::Down)));
+        assert_eq!(ib.cursor(), (0, 2));
+    }
+
+    #[test]
+    fn single_line_home_end_span_whole_value() {
+        let mut ib = InputBox::new();
+        ib.set_single_line(true);
+        ib.set_text("a long value");
+        render_at(&mut ib, 4); // узкое поле — значение длиннее ширины
+        ib.col = 5;
+        assert!(ib.on_key(k(KeyCode::Home)));
+        assert_eq!(ib.cursor(), (0, 0));
+        assert!(ib.on_key(k(KeyCode::End)));
+        assert_eq!(ib.cursor(), (0, 12)); // конец всего значения, не визуального ряда
+    }
+
+    #[test]
+    fn single_line_renders_long_value_without_panic() {
+        use ratatui::Terminal;
+        use ratatui::backend::TestBackend;
+        let mut ib = InputBox::new();
+        ib.set_single_line(true);
+        ib.set_text("/very/long/path/to/a/gguf/model/that/does/not/fit.gguf");
+        let mut term = Terminal::new(TestBackend::new(20, 3)).unwrap();
+        term.draw(|f| ib.render(f, f.area(), "ввод", true, &Palette::default(), false))
+            .unwrap();
+    }
+
+    #[test]
+    fn col_at_width_lands_on_char_boundary() {
+        let line: Vec<char> = "abcdef".chars().collect();
+        assert_eq!(col_at_width(&line, 0), 0);
+        assert_eq!(col_at_width(&line, 3), 3);
+        assert_eq!(col_at_width(&line, 100), 6); // за концом — вся строка
     }
 
     #[test]

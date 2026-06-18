@@ -146,6 +146,9 @@ struct FieldRow {
 struct Editor {
     field: FieldId,
     input: InputBox,
+    /// Многострочный редактор (системное сообщение): перенос длинных строк, ввод
+    /// перевода строки по `Shift+Enter`, крупный попап. Прочие поля — однострочные.
+    multiline: bool,
 }
 
 /// Фокус: левое меню секций или список полей справа.
@@ -493,11 +496,20 @@ impl SettingsScreen {
                         if f.id == FieldId::PSelect {
                             None
                         } else {
+                            // Системное сообщение — многострочное (перенос + переводы
+                            // строк); прочие поля — однострочные (горизонтальный скролл,
+                            // без переноса на невидимый ряд). См. spec §11.6.
+                            let multiline = f.id == FieldId::PSystem;
                             let mut input = InputBox::new();
+                            input.set_single_line(!multiline);
                             // Не показываем плейсхолдеры «(все)»/«—» как значение.
                             let seed = self.field_seed(f.id, value);
                             input.set_text(&seed);
-                            self.editor = Some(Editor { field: f.id, input });
+                            self.editor = Some(Editor {
+                                field: f.id,
+                                input,
+                                multiline,
+                            });
                             None
                         }
                     }
@@ -509,12 +521,18 @@ impl SettingsScreen {
 
     fn handle_editor_key(&mut self, key: KeyEvent) -> Option<SettingsIntent> {
         let editor = self.editor.as_mut()?;
-        match key.code {
-            KeyCode::Esc => {
+        match (key.code, key.modifiers) {
+            (KeyCode::Esc, _) => {
                 self.editor = None;
                 None
             }
-            KeyCode::Enter => {
+            // Многострочный редактор (системное сообщение): Shift+Enter — перевод
+            // строки, Enter — коммит (как в чат-вводе, spec §11.7).
+            (KeyCode::Enter, KeyModifiers::SHIFT) if editor.multiline => {
+                editor.input.insert_newline();
+                None
+            }
+            (KeyCode::Enter, _) => {
                 let editor = self.editor.take().unwrap();
                 let text = editor.input.text();
                 self.apply_text(editor.field, &text)
@@ -757,18 +775,26 @@ impl SettingsScreen {
         self.render_fields(frame, fields_area);
 
         // Редактор поверх — с реальным курсором (InputBox::render требует &mut).
-        let popup = centered_rect(60, 30, 3, frame.area());
         let palette = Palette::for_theme(self.config.interface.theme);
+        let area = frame.area();
         if let Some(editor) = self.editor.as_mut() {
+            // Системное сообщение — крупный многострочный попап с переносом; прочие
+            // поля — компактная однострочная полоса.
+            let (popup, title) = if editor.multiline {
+                (
+                    centered_rect(80, 40, multiline_popup_height(area), area),
+                    "правка · Shift+Enter перенос · Enter ок · Esc отмена",
+                )
+            } else {
+                (
+                    centered_rect(60, 30, 3, area),
+                    "правка · Enter ок · Esc отмена",
+                )
+            };
             frame.render_widget(Clear, popup);
-            editor.input.render(
-                frame,
-                popup,
-                "правка · Enter ок · Esc отмена",
-                true,
-                &palette,
-                false,
-            );
+            editor
+                .input
+                .render(frame, popup, title, true, &palette, false);
         }
     }
 
@@ -997,6 +1023,14 @@ fn parse_opt_f32(s: &str) -> Option<f32> {
     parse_opt(s)
 }
 
+/// Высота крупного попапа редактора системного сообщения: ~60% высоты экрана,
+/// но не меньше 8 строк и не выше самого экрана.
+fn multiline_popup_height(area: Rect) -> u16 {
+    (area.height.saturating_mul(60) / 100)
+        .max(8)
+        .min(area.height)
+}
+
 /// Прямоугольник по центру `area`: `pct_x`% ширины (≥`min_w`), фикс. высота.
 fn centered_rect(pct_x: u16, min_w: u16, height: u16, area: Rect) -> Rect {
     let w = area.width.saturating_mul(pct_x) / 100;
@@ -1160,6 +1194,45 @@ mod tests {
         assert_eq!(s.profile_idx, 0);
         s.handle_key(key(KeyCode::Right));
         assert_eq!(s.profile_idx, 1);
+    }
+
+    #[test]
+    fn system_message_editor_is_multiline_and_keeps_newlines() {
+        let mut s = screen();
+        for _ in 0..3 {
+            s.handle_key(key(KeyCode::Tab)); // → Profiles
+        }
+        s.handle_key(key(KeyCode::Enter)); // фокус на поля; PSelect
+        s.handle_key(key(KeyCode::Down)); // PName
+        s.handle_key(key(KeyCode::Down)); // PSystem
+        s.handle_key(key(KeyCode::Enter)); // открыть редактор
+        let editor = s.editor.as_ref().expect("редактор открыт");
+        assert!(
+            editor.multiline,
+            "системное сообщение редактируется многострочно"
+        );
+        // Shift+Enter вставляет перевод строки, а не коммитит.
+        s.handle_key(key(KeyCode::Char('A')));
+        s.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::SHIFT));
+        s.handle_key(key(KeyCode::Char('B')));
+        assert!(s.editor.is_some(), "Shift+Enter не закрывает редактор");
+        let intent = s.handle_key(key(KeyCode::Enter)); // коммит
+        match intent {
+            Some(SettingsIntent::SaveProfile { edit, .. }) => {
+                assert_eq!(edit.system_message.unwrap(), "Ты — ассистент.A\nB");
+            }
+            other => panic!("ожидался SaveProfile, получено {other:?}"),
+        }
+    }
+
+    #[test]
+    fn other_fields_edit_single_line() {
+        let mut s = screen();
+        s.handle_key(key(KeyCode::Enter)); // поля (XMode)
+        s.handle_key(key(KeyCode::Down)); // XUrl
+        s.handle_key(key(KeyCode::Enter)); // редактор
+        let editor = s.editor.as_ref().expect("редактор открыт");
+        assert!(!editor.multiline, "URL редактируется однострочно");
     }
 
     #[test]
