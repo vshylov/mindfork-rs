@@ -886,7 +886,20 @@ const HELP_KEYS: &[(&str, &str)] = &[
 /// Рисует оверлей помощи по центру экрана.
 fn render_help(frame: &mut Frame) {
     let rows = (HELP_KEYS.len() as u16 + 2).min(frame.area().height);
-    let area = centered_rect(65, rows, frame.area());
+    let key_width = HELP_KEYS
+        .iter()
+        .map(|(k, _)| k.chars().count())
+        .max()
+        .unwrap_or(0)
+        + 2;
+    let desc_width = HELP_KEYS
+        .iter()
+        .map(|(_, d)| d.chars().count())
+        .max()
+        .unwrap_or(0);
+    // Ширина строки: "  " слева + поле клавиш + " " + описание + "  " справа + рамка (2).
+    let width = (2 + key_width + 1 + desc_width + 2 + 2) as u16;
+    let area = centered_rect(width, rows, frame.area());
     frame.render_widget(Clear, area);
     let block = Block::default()
         .borders(Borders::ALL)
@@ -894,7 +907,7 @@ fn render_help(frame: &mut Frame) {
         .title_bottom(Line::from(" любая клавиша — закрыть ").dim());
     let items: Vec<ListItem> = HELP_KEYS
         .iter()
-        .map(|(k, d)| ListItem::new(Line::from(format!("  {k:<27} {d}"))))
+        .map(|(k, d)| ListItem::new(Line::from(format!("  {k:<key_width$} {d}"))))
         .collect();
     frame.render_widget(List::new(items).block(block), area);
 }
