@@ -32,6 +32,11 @@ pub struct Profile {
     pub id: Uuid,
     pub name: String,
     pub default_system_message: String,
+    /// Системное сообщение для режима имперсонации: описывает персону пользователя,
+    /// от лица которого модель пишет реплику (`Ctrl+U`). Пусто — используется
+    /// общий дефолт. Инструментов в этом режиме нет. См. spec §11.8.
+    #[serde(default)]
+    pub impersonation_system_message: String,
     #[serde(default)]
     pub character_names: CharacterNames,
     /// Приветственное сообщение ассистента (первое сообщение в новом чате).
@@ -53,6 +58,7 @@ impl Profile {
             id: Uuid::new_v4(),
             name: name.into(),
             default_system_message: system_message.into(),
+            impersonation_system_message: String::new(),
             character_names: CharacterNames::default(),
             greeting: None,
             enabled_tools: Vec::new(),

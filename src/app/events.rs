@@ -28,6 +28,12 @@ pub enum AppCommand {
     DeleteLastExchange,
     /// Отменить текущую генерацию.
     Cancel,
+    /// Написать сообщение от имени пользователя (имперсонация, `Ctrl+U`). `seed` —
+    /// уже введённый в поле текст (модель продолжит его; пусто — пишет с нуля).
+    /// Результат стримится событиями `Impersonation*`. См. spec §11.8.
+    Impersonate { seed: String },
+    /// Отменить текущую имперсонацию.
+    CancelImpersonation,
     /// Создать новый чат из профиля (по `id`; `None` — профиль по умолчанию).
     NewChat { profile_id: Option<Uuid> },
     /// Сделать чат активным (загрузить его в ленту).
@@ -121,6 +127,17 @@ pub enum AppEvent {
     },
     /// Генерация завершена.
     Finished {
+        generation_id: Uuid,
+        reason: FinishReason,
+    },
+    /// Имперсонация началась: UI прячет поле ввода и показывает потоковый предпросмотр
+    /// реплики (заполняется уже введённым текстом). См. spec §11.8.
+    ImpersonationStarted { generation_id: Uuid },
+    /// Дельта текста имперсонируемой реплики (в предпросмотр).
+    ImpersonationChunk { generation_id: Uuid, text: String },
+    /// Имперсонация завершена. При `Stop`/`Length` UI вставляет накопленный текст в
+    /// поле ввода; при `Cancelled`/`Error` — отбрасывает (поле ввода не меняется).
+    ImpersonationFinished {
         generation_id: Uuid,
         reason: FinishReason,
     },

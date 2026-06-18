@@ -30,6 +30,7 @@ use crate::shared::keys;
 use crate::shared::server::ServerStatus;
 use crate::shared::theme::Palette;
 use crate::widgets::chat_list::{ChatListAction, ChatListState};
+use crate::widgets::impersonation_preview;
 use crate::widgets::input_box::InputBox;
 use crate::widgets::message_feed::{FeedMessage, FeedRole, MessageFeed};
 use crate::widgets::profile_list::{ProfileListAction, ProfileListState};
@@ -57,6 +58,13 @@ pub enum ChatIntent {
     /// Удалить последний обмен; текст пользователя вернётся в поле ввода (`Ctrl+E`).
     DeleteLastExchange,
     Cancel,
+    /// Написать сообщение от имени пользователя (имперсонация, `Ctrl+U`). `seed` —
+    /// уже введённый текст (модель продолжит его). См. spec §11.8.
+    Impersonate {
+        seed: String,
+    },
+    /// Отменить текущую имперсонацию (`Esc` в предпросмотре).
+    CancelImpersonation,
     /// Создать чат из профиля (`None` — профиль по умолчанию).
     NewChat {
         profile_id: Option<Uuid>,
@@ -108,6 +116,18 @@ struct SuggestPopup {
     selected: usize,
 }
 
+/// Состояние имперсонации (`Ctrl+U`): пока идёт написание реплики «за пользователя»,
+/// поле ввода скрыто и показывается потоковый предпросмотр. См. spec §11.8.
+struct ImpersonationState {
+    generation_id: Uuid,
+    /// Накопленный текст реплики (начинается с уже введённого текста-затравки).
+    text: String,
+    /// Счётчик тиков перерисовки для анимации спиннера.
+    tick: usize,
+    /// Генерация завершена (спиннер гаснет до применения/сброса).
+    done: bool,
+}
+
 /// Баннер прогресса фоновой индексации RAG (`/rag add`). Живёт, пока идёт
 /// индексация; завершение/ошибка гасят баннер и оставляют заметку в ленте.
 struct RagBanner {
@@ -156,6 +176,8 @@ pub struct ChatScreen {
     mouse_scroll: bool,
     /// Индикатор фоновой индексации RAG (`/rag add`); `None` — индексация не идёт.
     rag: Option<RagBanner>,
+    /// Состояние имперсонации (`Ctrl+U`); `None` — не идёт. См. spec §11.8.
+    impersonation: Option<ImpersonationState>,
 }
 
 impl Default for ChatScreen {
@@ -189,6 +211,7 @@ impl ChatScreen {
             palette: Palette::default(),
             mouse_scroll: false,
             rag: None,
+            impersonation: None,
         }
     }
 
@@ -385,6 +408,52 @@ impl ChatScreen {
         self.push_note(&format!("⚠ {message}"));
     }
 
+    // ---------- имперсонация (Ctrl+U, spec §11.8) ----------
+
+    /// Начинает имперсонацию: прячет поле ввода и показывает потоковый предпросмотр,
+    /// затравленный уже введённым текстом (модель продолжит его).
+    pub fn begin_impersonation(&mut self, generation_id: Uuid) {
+        self.impersonation = Some(ImpersonationState {
+            generation_id,
+            text: self.input.text(),
+            tick: 0,
+            done: false,
+        });
+    }
+
+    /// Дописывает дельту текста имперсонации в предпросмотр.
+    pub fn push_impersonation_chunk(&mut self, generation_id: Uuid, text: &str) {
+        if let Some(imp) = &mut self.impersonation
+            && imp.generation_id == generation_id
+        {
+            imp.text.push_str(text);
+        }
+    }
+
+    /// Завершает имперсонацию. При `Stop`/`Length` накопленный текст вставляется в
+    /// поле ввода; при `Cancelled`/`Error` отбрасывается (поле ввода сохраняет
+    /// исходный текст-затравку). См. spec §11.8.
+    pub fn finish_impersonation(&mut self, generation_id: Uuid, reason: FinishReason) {
+        match &self.impersonation {
+            Some(imp) if imp.generation_id == generation_id => {}
+            _ => return,
+        }
+        let imp = self.impersonation.take().unwrap();
+        match reason {
+            FinishReason::Stop | FinishReason::Length => {
+                // set_text ставит курсор в конец вставленного текста.
+                self.input.set_text(&imp.text);
+                self.mark_input_changed();
+            }
+            _ => {}
+        }
+    }
+
+    /// Идёт ли имперсонация (петля перерисовывает кадры для анимации спиннера).
+    pub fn is_impersonating(&self) -> bool {
+        self.impersonation.is_some()
+    }
+
     /// Обновляет индикатор фоновой индексации RAG (`/rag add`). Старт/прогресс
     /// показывают баннер со спиннером; завершение/ошибка гасят его и оставляют
     /// итоговую заметку в ленте. См. spec §9.3.
@@ -469,6 +538,20 @@ impl ChatScreen {
             self.show_help = false;
             return None;
         }
+        // Во время имперсонации поле ввода скрыто (показан предпросмотр): реагируем
+        // только на отмену (`Esc`) и выход (`Ctrl+C`); прочие клавиши игнорируем.
+        if self.impersonation.is_some() {
+            if key.modifiers.contains(KeyModifiers::CONTROL)
+                && let KeyCode::Char(c) = key.code
+                && keys::physical_char(c) == 'c'
+            {
+                return Some(ChatIntent::Quit);
+            }
+            if key.code == KeyCode::Esc {
+                return Some(ChatIntent::CancelImpersonation);
+            }
+            return None;
+        }
         if self.suggest.is_some() {
             self.handle_suggest_key(key);
             return None;
@@ -502,6 +585,13 @@ impl ChatScreen {
                 }
                 'e' => {
                     return (!self.generating).then_some(ChatIntent::DeleteLastExchange);
+                }
+                // Имперсонация: написать сообщение от лица пользователя (spec §11.8).
+                // `seed` — уже введённый текст (модель продолжит его).
+                'u' => {
+                    return (!self.generating).then(|| ChatIntent::Impersonate {
+                        seed: self.input.text(),
+                    });
                 }
                 // Подсказки орфографии для слова под курсором (spec §11.5).
                 'g' => {
@@ -833,11 +923,19 @@ impl ChatScreen {
         if let Some(banner) = &mut self.rag {
             banner.tick = banner.tick.wrapping_add(1);
         }
+        // Анимация спиннера предпросмотра имперсонации (пока `is_impersonating()`).
+        if let Some(imp) = &mut self.impersonation {
+            imp.tick = imp.tick.wrapping_add(1);
+        }
 
-        // Высота ввода растёт под содержимое с учётом переноса (1–6 рядов + рамка).
-        // Ширина внутренней области = ширина экрана минус вертикальные рамки.
+        // Высота ввода/предпросмотра растёт под содержимое с учётом переноса (1–6
+        // рядов + рамка). Ширина внутренней области = ширина экрана минус рамки.
         let input_inner_w = frame.area().width.saturating_sub(2).max(1) as usize;
-        let input_h = (self.input.visual_line_count(input_inner_w).clamp(1, 6) + 2) as u16;
+        let content_lines = match &self.impersonation {
+            Some(imp) => visual_line_count(&imp.text, input_inner_w),
+            None => self.input.visual_line_count(input_inner_w),
+        };
+        let input_h = (content_lines.clamp(1, 6) + 2) as u16;
         // Баннер индексации RAG занимает строку только когда активен (иначе 0 —
         // пустой прямоугольник, рендер в него безвреден).
         let banner_h: u16 = if self.rag.is_some() { 1 } else { 0 };
@@ -875,22 +973,35 @@ impl ChatScreen {
             &self.palette,
         );
 
-        let input_title = if self.generating {
-            "ввод · генерация… Esc отмена"
+        // Во время имперсонации поле ввода скрыто — на его месте потоковый
+        // предпросмотр реплики. См. spec §11.8.
+        if let Some(imp) = &self.impersonation {
+            impersonation_preview::render(
+                frame,
+                input_area,
+                &imp.text,
+                imp.tick,
+                imp.done,
+                &self.palette,
+            );
         } else {
-            "ввод · Enter отправить · Shift+Enter перенос"
-        };
-        let focused =
-            self.overlay.is_none() && self.profile_overlay.is_none() && self.suggest.is_none();
-        let command = self.input_is_command();
-        self.input.render(
-            frame,
-            input_area,
-            input_title,
-            focused,
-            &self.palette,
-            command,
-        );
+            let input_title = if self.generating {
+                "ввод · генерация… Esc отмена"
+            } else {
+                "ввод · Enter отправить · Shift+Enter перенос"
+            };
+            let focused =
+                self.overlay.is_none() && self.profile_overlay.is_none() && self.suggest.is_none();
+            let command = self.input_is_command();
+            self.input.render(
+                frame,
+                input_area,
+                input_title,
+                focused,
+                &self.palette,
+                command,
+            );
+        }
 
         if let Some(overlay) = &self.overlay {
             overlay.render(frame, frame.area(), self.active_chat, &self.palette);
@@ -917,6 +1028,7 @@ const HELP_KEYS: &[(&str, &str)] = &[
     ("F5", "копировать переписку чата"),
     ("Ctrl+R", "перегенерировать ответ"),
     ("Ctrl+E", "удалить последний обмен (правка)"),
+    ("Ctrl+U", "написать сообщение за пользователя"),
     ("Ctrl+P", "экран настроек"),
     ("Ctrl+T", "свернуть/развернуть «мысли»"),
     ("Ctrl+G", "подсказки орфографии"),
@@ -985,6 +1097,21 @@ fn render_suggest(frame: &mut Frame, popup: &SuggestPopup) {
         popup.selected.min(popup.items.len().saturating_sub(1)),
     ));
     frame.render_stateful_widget(list, area, &mut state);
+}
+
+/// Число визуальных рядов, которые займёт `text` при переносе по ширине `width`
+/// (для расчёта высоты предпросмотра имперсонации). Минимум 1.
+fn visual_line_count(text: &str, width: usize) -> usize {
+    if width == 0 {
+        return 1;
+    }
+    text.split('\n')
+        .map(|line| {
+            let chars: Vec<char> = line.chars().collect();
+            crate::shared::wrap::wrap_ranges(&chars, width).len().max(1)
+        })
+        .sum::<usize>()
+        .max(1)
 }
 
 /// Прямоугольник по центру `area` фиксированной ширины/высоты (с клампом).
@@ -1129,6 +1256,84 @@ mod tests {
         type_str(&mut s, "хвост");
         s.restore_input("голова ".into());
         assert_eq!(s.input.text(), "голова хвост");
+    }
+
+    #[test]
+    fn ctrl_u_emits_impersonate_with_input_seed() {
+        let mut s = ChatScreen::new();
+        type_str(&mut s, "начало");
+        assert_eq!(
+            s.handle_key(KeyEvent::new(KeyCode::Char('u'), KeyModifiers::CONTROL)),
+            Some(ChatIntent::Impersonate {
+                seed: "начало".into()
+            })
+        );
+        // Во время генерации — подавляется.
+        s.begin_generation(gen_id());
+        assert_eq!(
+            s.handle_key(KeyEvent::new(KeyCode::Char('u'), KeyModifiers::CONTROL)),
+            None
+        );
+    }
+
+    #[test]
+    fn impersonation_stream_then_stop_commits_text_to_input() {
+        let mut s = ChatScreen::new();
+        type_str(&mut s, "Я "); // затравка
+        let id = gen_id();
+        s.begin_impersonation(id);
+        assert!(s.is_impersonating());
+        s.push_impersonation_chunk(id, "хочу узнать про Rust");
+        s.finish_impersonation(id, FinishReason::Stop);
+        assert!(!s.is_impersonating());
+        // Текст реплики (затравка + сгенерированное) — в поле ввода.
+        assert_eq!(s.input.text(), "Я хочу узнать про Rust");
+    }
+
+    #[test]
+    fn impersonation_cancel_keeps_seed_and_discards_generated() {
+        let mut s = ChatScreen::new();
+        type_str(&mut s, "черновик");
+        let id = gen_id();
+        s.begin_impersonation(id);
+        s.push_impersonation_chunk(id, " дополнение");
+        // Esc во время имперсонации — намерение отмены.
+        assert_eq!(
+            s.handle_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE)),
+            Some(ChatIntent::CancelImpersonation)
+        );
+        // Отмена (Cancelled) отбрасывает сгенерированное — поле сохраняет затравку.
+        s.finish_impersonation(id, FinishReason::Cancelled);
+        assert!(!s.is_impersonating());
+        assert_eq!(s.input.text(), "черновик");
+    }
+
+    #[test]
+    fn keys_ignored_during_impersonation_except_cancel_quit() {
+        let mut s = ChatScreen::new();
+        s.begin_impersonation(gen_id());
+        // Обычная клавиша не печатается в поле (поле скрыто).
+        assert_eq!(
+            s.handle_key(KeyEvent::new(KeyCode::Char('x'), KeyModifiers::NONE)),
+            None
+        );
+        // Ctrl+C всё ещё выходит.
+        assert_eq!(
+            s.handle_key(KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL)),
+            Some(ChatIntent::Quit)
+        );
+    }
+
+    #[test]
+    fn render_during_impersonation_does_not_panic() {
+        use ratatui::Terminal;
+        use ratatui::backend::TestBackend;
+        let mut s = ChatScreen::new();
+        let id = gen_id();
+        s.begin_impersonation(id);
+        s.push_impersonation_chunk(id, "текст реплики");
+        let mut term = Terminal::new(TestBackend::new(50, 16)).unwrap();
+        term.draw(|f| s.render(f)).unwrap();
     }
 
     #[test]

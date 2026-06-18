@@ -15,7 +15,9 @@ use crate::shared::api::{
     Embedder, EngineBackend, ManagedConfig, OpenAiClient, ServerHandle, UnavailableEmbedder,
     wait_until_ready,
 };
-use crate::shared::config::{EmbedSettings, EngineSettings, ServerMode};
+use crate::shared::config::{
+    EmbedSettings, EngineSettings, ImpersonationEngineSettings, ImpersonationMode, ServerMode,
+};
 use crate::shared::server::ServerStatus;
 
 /// Щедрый таймаут готовности managed-сервера: загрузка модели может занять минуты.
@@ -51,6 +53,15 @@ pub trait ServerSupervisor: Send + Sync {
 
     /// (Пере)подключается к embedding-серверу (RAG ленив — без probe).
     fn apply_embed(&self, settings: &EmbedSettings) -> EmbedSetup;
+
+    /// (Пере)подключается/запускает сервер имперсонации для режимов `managed`/
+    /// `external`. Для `shared` НЕ вызывается оркестратором (он переиспользует
+    /// chat-сервер ассистента); если всё же вызван — `NotConfigured`. См. spec §11.8.
+    fn apply_impersonation(
+        &self,
+        settings: &ImpersonationEngineSettings,
+        status_tx: UnboundedSender<ServerStatus>,
+    ) -> ChatSetup;
 }
 
 /// Боевой супервайзер: external — по URL (любой OpenAI-сервер), managed —
@@ -79,6 +90,51 @@ impl ServerSupervisor for LlamaSupervisor {
             ServerMode::Managed => match settings.binary.as_deref() {
                 Some(bin) if !bin.is_empty() => {
                     let cfg = managed_config(settings);
+                    match ServerHandle::launch(&cfg) {
+                        Ok(handle) => {
+                            let client = Arc::new(OpenAiClient::new(handle.base_url()));
+                            spawn_probe(client.clone(), MANAGED_READY_TIMEOUT, status_tx);
+                            ChatSetup {
+                                backend: Some(client),
+                                handle: Some(handle),
+                                status: ServerStatus::Connecting,
+                            }
+                        }
+                        Err(err) => ChatSetup {
+                            backend: None,
+                            handle: None,
+                            status: ServerStatus::Disconnected(err.to_string()),
+                        },
+                    }
+                }
+                _ => not_configured(),
+            },
+        }
+    }
+
+    fn apply_impersonation(
+        &self,
+        settings: &ImpersonationEngineSettings,
+        status_tx: UnboundedSender<ServerStatus>,
+    ) -> ChatSetup {
+        match settings.mode {
+            // `shared` обслуживается оркестратором (chat-сервер ассистента).
+            ImpersonationMode::Shared => not_configured(),
+            ImpersonationMode::External => match settings.url.as_deref() {
+                Some(url) if !url.is_empty() => {
+                    let client = Arc::new(OpenAiClient::new(url));
+                    spawn_probe(client.clone(), EXTERNAL_READY_TIMEOUT, status_tx);
+                    ChatSetup {
+                        backend: Some(client),
+                        handle: None,
+                        status: ServerStatus::Connecting,
+                    }
+                }
+                _ => not_configured(),
+            },
+            ImpersonationMode::Managed => match settings.binary.as_deref() {
+                Some(bin) if !bin.is_empty() => {
+                    let cfg = impersonation_managed_config(settings, bin);
                     match ServerHandle::launch(&cfg) {
                         Ok(handle) => {
                             let client = Arc::new(OpenAiClient::new(handle.base_url()));
@@ -146,6 +202,23 @@ impl ServerSupervisor for LlamaSupervisor {
 fn managed_config(s: &EngineSettings) -> ManagedConfig {
     ManagedConfig {
         binary: s.binary.clone().unwrap_or_default().into(),
+        model_path: s.model_path.clone(),
+        gpu_layers: s.gpu_layers,
+        context_size: s.context_size,
+        jinja: s.jinja,
+        reasoning_format: s.reasoning_format.clone(),
+        embeddings: false,
+        no_mmap: s.no_mmap,
+        host: s.host.clone(),
+        port: s.port,
+        extra_args: vec![],
+    }
+}
+
+/// Строит [`ManagedConfig`] (`llama-server`) из настроек сервера имперсонации.
+fn impersonation_managed_config(s: &ImpersonationEngineSettings, bin: &str) -> ManagedConfig {
+    ManagedConfig {
+        binary: bin.into(),
         model_path: s.model_path.clone(),
         gpu_layers: s.gpu_layers,
         context_size: s.context_size,
@@ -230,6 +303,26 @@ impl ServerSupervisor for MockSupervisor {
         // Mock-движок готов мгновенно: отдаём `Ready` как немедленный статус (а не
         // `Connecting` + async-probe), иначе оркестратор мог бы обработать команду
         // генерации раньше события готовности и отклонить её (гонка в тестах).
+        let status = if backend.is_some() {
+            ServerStatus::Ready
+        } else {
+            ServerStatus::NotConfigured
+        };
+        ChatSetup {
+            backend,
+            handle: None,
+            status,
+        }
+    }
+
+    fn apply_impersonation(
+        &self,
+        _settings: &ImpersonationEngineSettings,
+        _status_tx: UnboundedSender<ServerStatus>,
+    ) -> ChatSetup {
+        // Mock отдаёт тот же backend готовым сразу (как apply_chat) — для тестов
+        // managed/external режимов имперсонации.
+        let backend = self.backend.clone();
         let status = if backend.is_some() {
             ServerStatus::Ready
         } else {

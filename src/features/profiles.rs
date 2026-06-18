@@ -44,6 +44,8 @@ pub fn create(name: &str, system_message: impl Into<String>) -> Option<Profile> 
 pub struct ProfileEdit {
     pub name: Option<String>,
     pub system_message: Option<String>,
+    /// Системное сообщение режима имперсонации (см. [`Profile::impersonation_system_message`]).
+    pub impersonation_system_message: Option<String>,
     /// `Some(None)` — снять приветствие; `Some(Some(..))` — задать.
     pub greeting: Option<Option<String>>,
     pub character_names: Option<CharacterNames>,
@@ -68,6 +70,9 @@ pub fn apply_edit(profile: &mut Profile, edit: ProfileEdit) -> bool {
     }
     if let Some(system) = edit.system_message {
         profile.default_system_message = system;
+    }
+    if let Some(system) = edit.impersonation_system_message {
+        profile.impersonation_system_message = system;
     }
     if let Some(greeting) = edit.greeting {
         profile.greeting = greeting.filter(|g| !g.is_empty());

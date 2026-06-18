@@ -187,9 +187,9 @@ fn run_loop(
         if settings.is_none() && screen.maybe_recheck_spelling() {
             dirty = true;
         }
-        // Пока идёт фоновая индексация RAG — перерисовываем каждый тик для анимации
-        // спиннера (вне индексации простаивающие тики не рисуют — см. `dirty`).
-        if settings.is_none() && screen.is_rag_active() {
+        // Пока идёт фоновая индексация RAG или имперсонация — перерисовываем каждый
+        // тик для анимации спиннера (вне них простаивающие тики не рисуют — `dirty`).
+        if settings.is_none() && (screen.is_rag_active() || screen.is_impersonating()) {
             dirty = true;
         }
         // Черновик поля ввода изменился — сохраняем его в активном чате (оркестратор
@@ -290,6 +290,17 @@ fn apply_event(
             generation_id,
             reason,
         } => screen.finish_generation(generation_id, reason),
+        AppEvent::ImpersonationStarted { generation_id } => {
+            screen.begin_impersonation(generation_id)
+        }
+        AppEvent::ImpersonationChunk {
+            generation_id,
+            text,
+        } => screen.push_impersonation_chunk(generation_id, &text),
+        AppEvent::ImpersonationFinished {
+            generation_id,
+            reason,
+        } => screen.finish_impersonation(generation_id, reason),
         AppEvent::RagProgress(progress) => screen.set_rag_progress(progress),
         AppEvent::Error(message) => screen.push_error(&message),
     }
@@ -441,6 +452,8 @@ fn dispatch(
         ChatIntent::RegenerateLast => AppCommand::RegenerateLast,
         ChatIntent::DeleteLastExchange => AppCommand::DeleteLastExchange,
         ChatIntent::Cancel => AppCommand::Cancel,
+        ChatIntent::Impersonate { seed } => AppCommand::Impersonate { seed },
+        ChatIntent::CancelImpersonation => AppCommand::CancelImpersonation,
         ChatIntent::NewChat { profile_id } => AppCommand::NewChat { profile_id },
         ChatIntent::SwitchChat(id) => AppCommand::SwitchChat(id),
         ChatIntent::CloneChat(id) => AppCommand::CloneChat(id),
