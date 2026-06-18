@@ -438,38 +438,35 @@ impl Orchestrator {
         let _ = self.evt_tx.send(AppEvent::RestoreInput(user_text));
     }
 
-    /// Возвращает движок, если chat-сервер готов к генерации (`Ready`); иначе
-    /// эмитит понятную ошибку (не настроен / ещё подключается / недоступен) и
-    /// возвращает `None`. Гейтит и отправку, и перегенерацию — чтобы запрос не
-    /// уходил на ещё загружающийся сервер (иначе 503 → «engine returned an error
-    /// status»). См. spec §7.
-    fn ready_backend(&self) -> Option<Arc<dyn EngineBackend>> {
+    /// Возвращает движок, если chat-сервер готов к генерации (`Ready`); иначе —
+    /// `Err` с понятным текстом (не настроен / ещё подключается / недоступен).
+    /// Сам ничего не эмитит — вызывающий решает, куда направить ошибку (в ленту
+    /// чата или в оверлей списка). См. spec §7.
+    fn backend_if_ready(&self) -> Result<Arc<dyn EngineBackend>, String> {
         match &self.server_status {
-            ServerStatus::Ready => match self.backend.clone() {
-                Some(backend) => Some(backend),
-                None => {
-                    let _ = self
-                        .evt_tx
-                        .send(AppEvent::Error("LLM-сервер не настроен".into()));
-                    None
-                }
-            },
+            ServerStatus::Ready => self
+                .backend
+                .clone()
+                .ok_or_else(|| "LLM-сервер не настроен".to_string()),
             ServerStatus::Connecting => {
-                let _ = self.evt_tx.send(AppEvent::Error(
-                    "Сервер ещё подключается — дождитесь готовности и повторите".into(),
-                ));
-                None
+                Err("Сервер ещё подключается — дождитесь готовности и повторите".into())
             }
-            ServerStatus::NotConfigured => {
-                let _ = self
-                    .evt_tx
-                    .send(AppEvent::Error("LLM-сервер не настроен".into()));
-                None
-            }
-            ServerStatus::Disconnected(reason) => {
-                let _ = self
-                    .evt_tx
-                    .send(AppEvent::Error(format!("Сервер недоступен: {reason}")));
+            ServerStatus::NotConfigured => Err("LLM-сервер не настроен".into()),
+            ServerStatus::Disconnected(reason) => Err(format!("Сервер недоступен: {reason}")),
+        }
+    }
+
+    /// Возвращает движок, если chat-сервер готов; иначе эмитит понятную ошибку в
+    /// ленту чата (`AppEvent::Error`) и возвращает `None`. Гейтит и отправку, и
+    /// перегенерацию — чтобы запрос не уходил на ещё загружающийся сервер (иначе
+    /// 503 → «engine returned an error status»). Для операций списка чатов
+    /// (авто-название) ошибка должна идти в оверлей — там используется
+    /// [`Self::backend_if_ready`] напрямую.
+    fn ready_backend(&self) -> Option<Arc<dyn EngineBackend>> {
+        match self.backend_if_ready() {
+            Ok(backend) => Some(backend),
+            Err(msg) => {
+                let _ = self.evt_tx.send(AppEvent::Error(msg));
                 None
             }
         }
@@ -629,8 +626,15 @@ impl Orchestrator {
             ));
             return;
         };
-        let Some(backend) = self.ready_backend() else {
-            return;
+        let backend = match self.backend_if_ready() {
+            Ok(backend) => backend,
+            Err(msg) => {
+                // Авто-название — операция списка чатов: ошибку готовности сервера
+                // показываем в оверлее списка, а не в ленте чата (где её скрыл бы
+                // полноэкранный оверлей).
+                let _ = self.evt_tx.send(AppEvent::ChatListError(msg));
+                return;
+            }
         };
         // Свежий компактный семплинг (не наследуем override чата): короткий ответ,
         // умеренная температура, reasoning выключен (заголовку «мысли» не нужны и
@@ -2034,6 +2038,29 @@ mod tests {
         // Пустой чат → ошибка в область списка чатов, фоновая задача не запускается.
         let ev = rx.try_recv().unwrap();
         assert!(matches!(ev, AppEvent::ChatListError(_)));
+    }
+
+    #[test]
+    fn auto_rename_when_server_not_ready_errors_into_chat_list() {
+        // Сервер ещё подключается: ошибка готовности должна идти в оверлей списка
+        // чатов (`ChatListError`), а не в ленту чата (`Error`) — иначе её скрыл бы
+        // полноэкранный оверлей списка.
+        let (_d, mut orch, mut rx) = bare_orch_rx();
+        orch.server_status = ServerStatus::Connecting;
+        let profile = Profile::new("P", "sys");
+        let mut chat = Chat::from_profile(&profile, "Новый чат");
+        chat.push_message(Message::user("привет"));
+        chat.push_message(Message::assistant("здравствуйте"));
+        let chat_id = chat.id;
+        orch.profiles.push(profile);
+        orch.chats.push(chat);
+
+        orch.handle_auto_rename(chat_id);
+        let ev = rx.try_recv().unwrap();
+        assert!(
+            matches!(ev, AppEvent::ChatListError(_)),
+            "ошибка неготовности при авто-названии должна идти в список чатов, было: {ev:?}"
+        );
     }
 
     #[tokio::test]
