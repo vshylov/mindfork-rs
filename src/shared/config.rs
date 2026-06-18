@@ -73,6 +73,71 @@ impl Default for EngineSettings {
     }
 }
 
+/// Режим сервера имперсонации (написание сообщения от имени пользователя).
+/// Отличается от [`ServerMode`] третьим вариантом `Shared`. См. spec §11.8.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ImpersonationMode {
+    /// Использовать тот же сервер, что и для ответов ассистента (managed или
+    /// external), но с семплингом из подсекции «Имперсонация».
+    #[default]
+    Shared,
+    /// Поднять отдельный дочерний процесс `llama-server`.
+    Managed,
+    /// Подключиться к отдельному удалённому серверу.
+    External,
+}
+
+/// Порт по умолчанию для managed-сервера имперсонации (отдельный инстанс).
+pub const DEFAULT_IMPERSONATION_PORT: u16 = 8002;
+
+/// Настройки сервера имперсонации. Поля идентичны [`EngineSettings`], но режим —
+/// [`ImpersonationMode`] (добавлен `shared`). В режиме `shared` остальные поля
+/// (url/binary/model/…) не используются — берётся chat-сервер ассистента. См.
+/// spec §11.8.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct ImpersonationEngineSettings {
+    pub mode: ImpersonationMode,
+    /// URL для external-режима (например `http://127.0.0.1:8002/v1`).
+    pub url: Option<String>,
+    /// Путь к бинарнику `llama-server` для managed-режима.
+    pub binary: Option<String>,
+    /// Путь к GGUF-модели (`-m`).
+    pub model_path: Option<String>,
+    /// Слои на GPU (`-ngl`).
+    pub gpu_layers: i32,
+    /// Размер контекста (`-c`).
+    pub context_size: u32,
+    /// Использовать встроенный chat-template модели (`--jinja`).
+    pub jinja: bool,
+    /// Формат reasoning (`--reasoning-format`); `None` — не задавать.
+    pub reasoning_format: Option<String>,
+    /// Не использовать mmap при загрузке модели (`--no-mmap`).
+    pub no_mmap: bool,
+    /// Интерфейс bind (`--host`).
+    pub host: String,
+    pub port: u16,
+}
+
+impl Default for ImpersonationEngineSettings {
+    fn default() -> Self {
+        Self {
+            mode: ImpersonationMode::Shared,
+            url: None,
+            binary: None,
+            model_path: None,
+            gpu_layers: DEFAULT_GPU_LAYERS,
+            context_size: DEFAULT_CONTEXT_SIZE,
+            jinja: true,
+            reasoning_format: None,
+            no_mmap: false,
+            host: "127.0.0.1".to_string(),
+            port: DEFAULT_IMPERSONATION_PORT,
+        }
+    }
+}
+
 /// Настройки выделенного embedding-сервера для RAG (ADR 0002). Отдельный
 /// процесс/порт; если не настроен (`UnavailableEmbedder`) — RAG отдаёт ошибку.
 /// В managed-режиме — тот же `llama-server` с `--embeddings`.
@@ -178,8 +243,13 @@ impl Default for InterfaceSettings {
 pub struct AppConfig {
     pub schema_version: u32,
     pub default_sampling: SamplingConfig,
+    /// Семплинг для режима имперсонации (написание сообщения от имени пользователя).
+    /// Применяется во всех режимах сервера имперсонации (в т.ч. `shared`). См. spec §11.8.
+    pub impersonation_sampling: SamplingConfig,
     /// Настройки chat-сервера инференса (llama.cpp managed или любой OpenAI external).
     pub engine: EngineSettings,
+    /// Настройки сервера имперсонации (shared/managed/external). См. spec §11.8.
+    pub impersonation_engine: ImpersonationEngineSettings,
     /// Настройки выделенного embedding-сервера (RAG, ADR 0002).
     pub embed: EmbedSettings,
     /// Лимит раундов клиентского agentic-loop (spec §6.3).
@@ -199,7 +269,15 @@ impl Default for AppConfig {
                 thinking: Some(true),
                 ..Default::default()
             },
+            // Имперсонация пишет короткую реплику от лица пользователя — «мысли»
+            // ей не нужны (только съели бы бюджет), лимит токенов скромный.
+            impersonation_sampling: SamplingConfig {
+                max_tokens: Some(1024),
+                thinking: Some(false),
+                ..Default::default()
+            },
             engine: EngineSettings::default(),
+            impersonation_engine: ImpersonationEngineSettings::default(),
             embed: EmbedSettings::default(),
             max_tool_rounds: 8,
             tools: ToolSettings::default(),
@@ -240,6 +318,44 @@ mod tests {
         assert_eq!(c.tools.subagent_timeout_secs, DEFAULT_SUBAGENT_TIMEOUT_SECS);
         assert!(c.interface.spellcheck_enabled);
         assert_eq!(c.interface.theme, Theme::Auto);
+        // Имперсонация наполняется дефолтами при отсутствии в файле.
+        assert_eq!(c.impersonation_engine.mode, ImpersonationMode::Shared);
+        assert_eq!(c.impersonation_engine.port, DEFAULT_IMPERSONATION_PORT);
+        assert_eq!(c.impersonation_sampling.thinking, Some(false));
+    }
+
+    #[test]
+    fn impersonation_sections_roundtrip() {
+        let c = AppConfig {
+            impersonation_engine: ImpersonationEngineSettings {
+                mode: ImpersonationMode::Managed,
+                binary: Some("llama-server".into()),
+                model_path: Some("persona.gguf".into()),
+                port: 8002,
+                ..Default::default()
+            },
+            impersonation_sampling: SamplingConfig {
+                temperature: Some(0.8),
+                max_tokens: Some(256),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let json = serde_json::to_string_pretty(&c).unwrap();
+        let back: AppConfig = serde_json::from_str(&json).unwrap();
+        assert_eq!(c, back);
+    }
+
+    #[test]
+    fn impersonation_mode_serializes_lowercase() {
+        assert_eq!(
+            serde_json::to_string(&ImpersonationMode::External).unwrap(),
+            "\"external\""
+        );
+        assert_eq!(
+            serde_json::to_string(&ImpersonationMode::Shared).unwrap(),
+            "\"shared\""
+        );
     }
 
     #[test]

@@ -28,7 +28,7 @@ use crate::shared::api::{
     ApiMessage, ApiToolCall, ChatChunk, ChatRequest, Embedder, EngineBackend, FinishReason,
     ServerHandle, ToolCallAccumulator,
 };
-use crate::shared::config::AppConfig;
+use crate::shared::config::{AppConfig, ImpersonationMode};
 use crate::shared::storage::Storage;
 
 /// Системное сообщение профиля по умолчанию (создаётся при пустом хранилище).
@@ -47,6 +47,15 @@ const TITLE_MAX_TOKENS: usize = 2048;
 
 /// Лимит времени на генерацию авто-названия чата (с запасом на «думающие» модели).
 const TITLE_TIMEOUT: Duration = Duration::from_secs(60);
+
+/// Дефолтное системное сообщение режима имперсонации (когда у профиля поле пустое):
+/// модель пишет короткую естественную реплику от лица пользователя.
+const DEFAULT_IMPERSONATION_SYSTEM_MESSAGE: &str = "Ты — пользователь в этом диалоге. Напиши следующее сообщение от лица \
+     пользователя: естественное, по теме разговора, без пояснений и кавычек. \
+     Выведи только текст сообщения.";
+
+/// Лимит времени на одну имперсонацию.
+const IMPERSONATION_TIMEOUT: Duration = Duration::from_secs(120);
 
 /// Параметры запуска оркестратора. Серверы (chat/embedding) и реестр инструментов
 /// оркестратор настраивает сам из [`AppConfig`] через [`ServerSupervisor`] — это
@@ -113,6 +122,10 @@ pub async fn run(deps: OrchestratorDeps) {
     // Внутренний канал авто-названий: фоновая задача присылает сгенерированный
     // заголовок (или ошибку), петля применяет его к чату.
     let (title_tx, mut title_rx) = unbounded_channel::<TitleResult>();
+    // Внутренний канал статуса сервера имперсонации (фоновый probe).
+    let (imp_status_tx, mut imp_status_rx) = unbounded_channel::<ServerStatus>();
+    // Внутренний канал «имперсонация завершена» (фоновая задача → петля).
+    let (imp_done_tx, mut imp_done_rx) = unbounded_channel::<(Uuid, FinishReason)>();
     let registry = Arc::new(build_registry(&config));
     let mut orch = Orchestrator {
         evt_tx,
@@ -120,6 +133,13 @@ pub async fn run(deps: OrchestratorDeps) {
         backend: None,
         chat_handle: None,
         embed_handle: None,
+        imp_backend: None,
+        imp_handle: None,
+        imp_status: ServerStatus::NotConfigured,
+        imp_status_tx,
+        imp_cancel: None,
+        imp_gen: None,
+        imp_done_tx,
         embedder: Arc::new(crate::shared::api::UnavailableEmbedder),
         storage,
         config,
@@ -139,6 +159,7 @@ pub async fn run(deps: OrchestratorDeps) {
 
     // Поднимаем серверы по конфигу и эмитим стартовые события/настройки.
     orch.apply_chat_settings();
+    orch.apply_impersonation_settings();
     orch.apply_embed_settings();
     if let Err(err) = orch.bootstrap() {
         let _ = orch
@@ -170,6 +191,16 @@ pub async fn run(deps: OrchestratorDeps) {
             title = title_rx.recv() => {
                 if let Some(res) = title {
                     orch.handle_title_result(res);
+                }
+            }
+            status = imp_status_rx.recv() => {
+                if let Some(s) = status {
+                    orch.imp_status = s;
+                }
+            }
+            done = imp_done_rx.recv() => {
+                if let Some((id, reason)) = done {
+                    orch.handle_imp_done(id, reason);
                 }
             }
             _ = sleep_until_opt(deadline) => orch.flush_saves(),
@@ -204,6 +235,20 @@ struct Orchestrator {
     chat_handle: Option<ServerHandle>,
     /// Опора на managed embedding-процесс.
     embed_handle: Option<ServerHandle>,
+    /// Движок имперсонации для режимов managed/external (`None` в режиме `shared` —
+    /// тогда используется `backend` ассистента). См. spec §11.8.
+    imp_backend: Option<Arc<dyn EngineBackend>>,
+    /// Опора на managed-процесс сервера имперсонации.
+    imp_handle: Option<ServerHandle>,
+    /// Статус сервера имперсонации (для managed/external; в `shared` не используется).
+    imp_status: ServerStatus,
+    /// Канал статуса сервера имперсонации (фоновый probe).
+    imp_status_tx: UnboundedSender<ServerStatus>,
+    /// Токен отмены текущей имперсонации и её generation_id (`None` — не идёт).
+    imp_cancel: Option<CancellationToken>,
+    imp_gen: Option<Uuid>,
+    /// Канал «имперсонация завершена» (фоновая задача → петля).
+    imp_done_tx: UnboundedSender<(Uuid, FinishReason)>,
     /// Источник эмбеддингов для RAG (выделенный сервер — ADR 0002).
     embedder: Arc<dyn Embedder>,
     storage: Arc<Storage>,
@@ -285,6 +330,9 @@ impl Orchestrator {
                 if let Some(token) = &self.rag_cancel {
                     token.cancel();
                 }
+                if let Some(token) = &self.imp_cancel {
+                    token.cancel();
+                }
                 return true;
             }
             AppCommand::Cancel => {
@@ -294,6 +342,8 @@ impl Orchestrator {
                 }
             }
             AppCommand::SendMessage(text) => self.handle_send(text),
+            AppCommand::Impersonate { seed } => self.handle_impersonate(seed),
+            AppCommand::CancelImpersonation => self.handle_cancel_impersonation(),
             AppCommand::SetDraft(text) => self.handle_set_draft(text),
             AppCommand::RegenerateLast => self.handle_regenerate(),
             AppCommand::DeleteLastExchange => self.handle_delete_last(),
@@ -911,6 +961,10 @@ impl Orchestrator {
         if self.config.engine != old.engine {
             self.apply_chat_settings();
         }
+        // Смена настроек сервера имперсонации — пере-подключение/перезапуск.
+        if self.config.impersonation_engine != old.impersonation_engine {
+            self.apply_impersonation_settings();
+        }
         // Смена настроек embedding-сервера — пере-подключение/перезапуск.
         if self.config.embed != old.embed {
             self.apply_embed_settings();
@@ -964,6 +1018,125 @@ impl Orchestrator {
         let setup = self.supervisor.apply_embed(&self.config.embed);
         self.embedder = setup.embedder;
         self.embed_handle = setup.handle;
+    }
+
+    /// (Пере)поднимает сервер имперсонации по `config.impersonation_engine`. В режиме
+    /// `shared` отдельный сервер не нужен — переиспользуется chat-сервер ассистента.
+    fn apply_impersonation_settings(&mut self) {
+        self.imp_handle = None; // drop прежнего managed-процесса (kill_on_drop)
+        match self.config.impersonation_engine.mode {
+            ImpersonationMode::Shared => {
+                self.imp_backend = None;
+                self.imp_status = ServerStatus::NotConfigured;
+            }
+            _ => {
+                let setup = self.supervisor.apply_impersonation(
+                    &self.config.impersonation_engine,
+                    self.imp_status_tx.clone(),
+                );
+                self.imp_backend = setup.backend;
+                self.imp_handle = setup.handle;
+                self.imp_status = setup.status;
+            }
+        }
+    }
+
+    /// Возвращает движок имперсонации, если он готов; иначе — `Err` с понятным
+    /// текстом. В режиме `shared` используется chat-сервер ассистента.
+    fn impersonation_backend_if_ready(&self) -> Result<Arc<dyn EngineBackend>, String> {
+        if self.config.impersonation_engine.mode == ImpersonationMode::Shared {
+            return self.backend_if_ready();
+        }
+        match &self.imp_status {
+            ServerStatus::Ready => self
+                .imp_backend
+                .clone()
+                .ok_or_else(|| "Сервер имперсонации не настроен".to_string()),
+            ServerStatus::Connecting => {
+                Err("Сервер имперсонации ещё подключается — повторите позже".into())
+            }
+            ServerStatus::NotConfigured => Err("Сервер имперсонации не настроен".into()),
+            ServerStatus::Disconnected(reason) => {
+                Err(format!("Сервер имперсонации недоступен: {reason}"))
+            }
+        }
+    }
+
+    /// Пишет сообщение от лица пользователя (имперсонация, `Ctrl+U`, spec §11.8):
+    /// системное сообщение ассистента заменяется на имперсонационное из профиля, а
+    /// роли user/assistant в истории меняются местами — модель продолжает диалог
+    /// «за пользователя». Текст стримится в предпросмотр поля ввода. Игнорируется
+    /// во время генерации/другой имперсонации.
+    fn handle_impersonate(&mut self, seed: String) {
+        if !matches!(self.state, State::Idle) || self.imp_gen.is_some() {
+            return;
+        }
+        let Some(active_id) = self.active_id else {
+            let _ = self
+                .evt_tx
+                .send(AppEvent::Error("Нет активного чата".into()));
+            return;
+        };
+        let backend = match self.impersonation_backend_if_ready() {
+            Ok(backend) => backend,
+            Err(msg) => {
+                let _ = self.evt_tx.send(AppEvent::Error(msg));
+                return;
+            }
+        };
+        let Some(chat) = self.chats.iter().find(|c| c.id == active_id) else {
+            return;
+        };
+        let imp_system = self
+            .profiles
+            .iter()
+            .find(|p| p.id == chat.profile_id)
+            .map(|p| p.impersonation_system_message.trim().to_string())
+            .filter(|s| !s.is_empty())
+            .unwrap_or_else(|| DEFAULT_IMPERSONATION_SYSTEM_MESSAGE.to_string());
+        let request = build_impersonation_request(
+            chat,
+            imp_system,
+            &seed,
+            self.config.impersonation_sampling.clone(),
+        );
+
+        let id = Uuid::new_v4();
+        let cancel = CancellationToken::new();
+        self.imp_gen = Some(id);
+        self.imp_cancel = Some(cancel.clone());
+        let _ = self
+            .evt_tx
+            .send(AppEvent::ImpersonationStarted { generation_id: id });
+        spawn_impersonation(
+            backend,
+            request,
+            id,
+            cancel,
+            self.evt_tx.clone(),
+            self.imp_done_tx.clone(),
+        );
+    }
+
+    /// Отменяет текущую имперсонацию (`Esc` в предпросмотре). Завершение придёт
+    /// через `imp_done` и эмитит `ImpersonationFinished{Cancelled}`.
+    fn handle_cancel_impersonation(&mut self) {
+        if let Some(token) = &self.imp_cancel {
+            token.cancel();
+        }
+    }
+
+    /// Завершение фоновой задачи имперсонации: чистит состояние и эмитит финал.
+    fn handle_imp_done(&mut self, id: Uuid, reason: FinishReason) {
+        if self.imp_gen != Some(id) {
+            return;
+        }
+        self.imp_gen = None;
+        self.imp_cancel = None;
+        let _ = self.evt_tx.send(AppEvent::ImpersonationFinished {
+            generation_id: id,
+            reason,
+        });
     }
 
     /// Эмитит полный снимок настроек (конфиг + полные профили) для экрана настроек.
@@ -1180,6 +1353,99 @@ fn salvage_title_source(text: String, thoughts: String) -> String {
         .find(|l| !l.is_empty())
         .unwrap_or("")
         .to_string()
+}
+
+/// Строит запрос имперсонации (spec §11.8): системное сообщение — имперсонационное
+/// (персона пользователя), роли user/assistant в истории меняются местами (модель
+/// продолжает диалог «за пользователя»). Инструментов нет. Если `seed` не пуст,
+/// модель просят продолжить уже начатый текст.
+fn build_impersonation_request(
+    chat: &Chat,
+    mut system: String,
+    seed: &str,
+    sampling: SamplingConfig,
+) -> ChatRequest {
+    let messages = chat.messages.iter().filter_map(swap_role_message).collect();
+    let seed = seed.trim();
+    if !seed.is_empty() {
+        system.push_str(&format!(
+            "\n\nПользователь уже начал писать своё сообщение: «{seed}». \
+             Продолжи эту реплику естественно и выведи ТОЛЬКО продолжение, \
+             без повтора уже написанного начала."
+        ));
+    }
+    ChatRequest {
+        system: Some(system),
+        messages,
+        sampling,
+        tools: Vec::new(),
+    }
+}
+
+/// Меняет роль сообщения местами для имперсонации (user↔assistant). System/Tool и
+/// пустые сообщения отбрасываются (в режиме имперсонации инструментов нет).
+fn swap_role_message(message: &Message) -> Option<ApiMessage> {
+    if message.text.trim().is_empty() {
+        return None;
+    }
+    match message.role {
+        MessageRole::User => Some(ApiMessage::assistant(&message.text)),
+        MessageRole::Assistant => Some(ApiMessage::user(&message.text)),
+        MessageRole::System | MessageRole::Tool => None,
+    }
+}
+
+/// Запускает фоновую задачу имперсонации: стримит текст реплики в предпросмотр
+/// (`ImpersonationChunk`), по завершении/таймауту/отмене шлёт `(id, reason)` в
+/// `done_tx`. «Мысли» и tool-вызовы игнорируются (в поле ввода идёт только текст).
+fn spawn_impersonation(
+    backend: Arc<dyn EngineBackend>,
+    request: ChatRequest,
+    id: Uuid,
+    cancel: CancellationToken,
+    evt_tx: UnboundedSender<AppEvent>,
+    done_tx: UnboundedSender<(Uuid, FinishReason)>,
+) {
+    tokio::spawn(async move {
+        let run = async {
+            let mut reason = FinishReason::Stop;
+            let mut stream = backend.chat_stream(request, cancel.clone()).await?;
+            while let Some(chunk) = stream.next().await {
+                match chunk {
+                    ChatChunk::Text(t) => {
+                        let _ = evt_tx.send(AppEvent::ImpersonationChunk {
+                            generation_id: id,
+                            text: t,
+                        });
+                    }
+                    ChatChunk::Thoughts(_) | ChatChunk::ToolCall(_) => {}
+                    ChatChunk::Finished(r) => {
+                        reason = r;
+                        break;
+                    }
+                }
+            }
+            Ok::<FinishReason, anyhow::Error>(reason)
+        };
+        let reason = match tokio::time::timeout(IMPERSONATION_TIMEOUT, run).await {
+            Ok(Ok(r)) => r,
+            Ok(Err(err)) => {
+                let _ = evt_tx.send(AppEvent::Error(format!("Ошибка имперсонации: {err}")));
+                FinishReason::Error
+            }
+            Err(_) => {
+                cancel.cancel();
+                FinishReason::Cancelled
+            }
+        };
+        // Отмена пользователем перекрывает причину завершения сервера.
+        let reason = if cancel.is_cancelled() {
+            FinishReason::Cancelled
+        } else {
+            reason
+        };
+        let _ = done_tx.send((id, reason));
+    });
 }
 
 /// Параметры фоновой задачи индексации файлов в RAG (`/rag add`).
@@ -1607,6 +1873,8 @@ mod tests {
         let (done_tx, _done_rx) = unbounded_channel();
         let (status_tx, _status_rx) = unbounded_channel();
         let (title_tx, _title_rx) = unbounded_channel();
+        let (imp_status_tx, _imp_status_rx) = unbounded_channel();
+        let (imp_done_tx, _imp_done_rx) = unbounded_channel();
         let config = AppConfig {
             default_sampling: SamplingConfig {
                 temperature: Some(0.1),
@@ -1621,6 +1889,13 @@ mod tests {
             backend: None,
             chat_handle: None,
             embed_handle: None,
+            imp_backend: None,
+            imp_handle: None,
+            imp_status: ServerStatus::NotConfigured,
+            imp_status_tx,
+            imp_cancel: None,
+            imp_gen: None,
+            imp_done_tx,
             embedder: test_embedder(),
             storage,
             config,
@@ -2004,6 +2279,127 @@ mod tests {
             }
             _ => unreachable!(),
         }
+
+        cmd_tx.send(AppCommand::Quit).unwrap();
+        handle.await.unwrap();
+    }
+
+    #[test]
+    fn impersonation_request_swaps_roles_and_sets_system() {
+        let profile = Profile::new("P", "sys ассистента");
+        let mut chat = Chat::from_profile(&profile, "c");
+        chat.push_message(Message::assistant("Привет! Чем помочь?"));
+        chat.push_message(Message::user("Расскажи о Rust"));
+        chat.push_message(Message::assistant("Rust — системный язык…"));
+
+        let req = build_impersonation_request(
+            &chat,
+            "Ты — пользователь".into(),
+            "",
+            SamplingConfig::default(),
+        );
+
+        assert_eq!(req.system.as_deref(), Some("Ты — пользователь"));
+        assert!(req.tools.is_empty());
+        // Роли поменялись местами: assistant↔user.
+        assert_eq!(req.messages.len(), 3);
+        assert_eq!(
+            req.messages[0].role,
+            crate::shared::api::backend::ApiRole::User
+        );
+        assert_eq!(req.messages[0].content, "Привет! Чем помочь?");
+        assert_eq!(
+            req.messages[1].role,
+            crate::shared::api::backend::ApiRole::Assistant
+        );
+        assert_eq!(req.messages[1].content, "Расскажи о Rust");
+        assert_eq!(
+            req.messages[2].role,
+            crate::shared::api::backend::ApiRole::User
+        );
+    }
+
+    #[test]
+    fn impersonation_request_with_seed_adds_continuation_hint() {
+        let profile = Profile::new("P", "sys");
+        let chat = Chat::from_profile(&profile, "c");
+        let req = build_impersonation_request(
+            &chat,
+            "Ты — пользователь".into(),
+            "Мне нужно ",
+            SamplingConfig::default(),
+        );
+        let system = req.system.unwrap();
+        assert!(system.contains("Ты — пользователь"));
+        assert!(system.contains("Мне нужно"), "затравка попала в инструкцию");
+    }
+
+    #[test]
+    fn swap_role_skips_system_tool_and_empty() {
+        assert!(swap_role_message(&Message::new(MessageRole::System, "x")).is_none());
+        assert!(swap_role_message(&Message::new(MessageRole::Tool, "x")).is_none());
+        assert!(swap_role_message(&Message::user("   ")).is_none());
+    }
+
+    #[tokio::test]
+    async fn impersonate_streams_into_preview_and_finishes() {
+        // Первый запрос (отправка) → «ответ»; второй (имперсонация) → реплика.
+        let backend = Arc::new(MockBackend::sequence(vec![
+            vec![
+                ChatChunk::Text("ответ".into()),
+                ChatChunk::Finished(FinishReason::Stop),
+            ],
+            vec![
+                ChatChunk::Text("моя реплика".into()),
+                ChatChunk::Finished(FinishReason::Stop),
+            ],
+        ])) as Arc<dyn EngineBackend>;
+        let (_d, cmd_tx, mut evt_rx, handle) = spawn_orch(Some(backend));
+        wait_for(&mut evt_rx, |e| matches!(e, AppEvent::ChatActivated { .. }))
+            .await
+            .unwrap();
+
+        // Нужна хотя бы одна реплика в истории.
+        cmd_tx
+            .send(AppCommand::SendMessage("привет".into()))
+            .unwrap();
+        wait_for(&mut evt_rx, |e| matches!(e, AppEvent::Finished { .. }))
+            .await
+            .unwrap();
+
+        cmd_tx
+            .send(AppCommand::Impersonate {
+                seed: String::new(),
+            })
+            .unwrap();
+        // Старт имперсонации.
+        wait_for(&mut evt_rx, |e| {
+            matches!(e, AppEvent::ImpersonationStarted { .. })
+        })
+        .await
+        .unwrap();
+        // Текст реплики приходит дельтами.
+        let chunk = wait_for(&mut evt_rx, |e| {
+            matches!(e, AppEvent::ImpersonationChunk { .. })
+        })
+        .await
+        .unwrap();
+        assert!(
+            matches!(chunk, AppEvent::ImpersonationChunk { text, .. } if text == "моя реплика")
+        );
+        // Завершение со Stop.
+        let fin = wait_for(&mut evt_rx, |e| {
+            matches!(e, AppEvent::ImpersonationFinished { .. })
+        })
+        .await
+        .unwrap();
+        assert!(matches!(
+            fin,
+            AppEvent::ImpersonationFinished {
+                reason: FinishReason::Stop,
+                ..
+            }
+        ));
 
         cmd_tx.send(AppCommand::Quit).unwrap();
         handle.await.unwrap();

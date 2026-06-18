@@ -20,7 +20,7 @@ use crate::entities::profile::Profile;
 use crate::entities::sampling::ReasoningEffort;
 use crate::features::profiles::ProfileEdit;
 use crate::features::tools::default_tool_ids;
-use crate::shared::config::{AppConfig, ServerMode, Theme};
+use crate::shared::config::{AppConfig, ImpersonationMode, ServerMode, Theme};
 use crate::shared::keys;
 use crate::shared::theme::Palette;
 use crate::widgets::input_box::InputBox;
@@ -63,6 +63,30 @@ const SECTIONS: [Section; 6] = [
     Section::Interface,
 ];
 
+/// Подсекция «Ассистент» / «Имперсонация» внутри секций Модель/Семплинг/Профили.
+/// См. spec §11.8.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Subsection {
+    Assistant,
+    Impersonation,
+}
+
+impl Subsection {
+    fn label(self) -> String {
+        match self {
+            Subsection::Assistant => "Ассистент".into(),
+            Subsection::Impersonation => "Имперсонация".into(),
+        }
+    }
+
+    fn toggled(self) -> Self {
+        match self {
+            Subsection::Assistant => Subsection::Impersonation,
+            Subsection::Impersonation => Subsection::Assistant,
+        }
+    }
+}
+
 impl Section {
     fn title(self) -> &'static str {
         match self {
@@ -79,7 +103,11 @@ impl Section {
 /// Идентификатор редактируемого поля (стабильный порядок = порядок в секции).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum FieldId {
-    // Модель/сервер (llama-server)
+    // Селекторы подсекций «Ассистент»/«Имперсонация»
+    ModelSub,
+    SamplingSub,
+    ProfileSub,
+    // Модель/сервер — Ассистент (llama-server)
     XMode,
     XUrl,
     XBinary,
@@ -90,9 +118,20 @@ enum FieldId {
     XNoMmap,
     XHost,
     XPort,
+    // Модель/сервер — Имперсонация
+    IxMode,
+    IxUrl,
+    IxBinary,
+    IxModel,
+    IxNgl,
+    IxCtx,
+    IxJinja,
+    IxNoMmap,
+    IxHost,
+    IxPort,
     // Инференс
     MaxToolRounds,
-    // Семплинг
+    // Семплинг — Ассистент
     STemp,
     STopK,
     STopP,
@@ -101,6 +140,15 @@ enum FieldId {
     SMaxTokens,
     SThinking,
     SReasoning,
+    // Семплинг — Имперсонация
+    ISTemp,
+    ISTopK,
+    ISTopP,
+    ISFreqPen,
+    ISPresPen,
+    ISMaxTokens,
+    ISThinking,
+    ISReasoning,
     // Инструменты
     TWeb,
     TPython,
@@ -121,6 +169,8 @@ enum FieldId {
     PName,
     PSystem,
     PGreeting,
+    /// Системное сообщение профиля для имперсонации.
+    PImpSystem,
     /// Переключатель инструмента профиля по индексу в каталоге.
     PTool(usize),
 }
@@ -168,6 +218,10 @@ pub struct SettingsScreen {
     focus: Focus,
     /// Выбранный профиль в секции «Профили».
     profile_idx: usize,
+    /// Активные подсекции «Ассистент»/«Имперсонация» (Модель/Семплинг/Профили).
+    model_sub: Subsection,
+    sampling_sub: Subsection,
+    profile_sub: Subsection,
     editor: Option<Editor>,
 }
 
@@ -181,6 +235,9 @@ impl SettingsScreen {
             field_idx: 0,
             focus: Focus::Menu,
             profile_idx: 0,
+            model_sub: Subsection::Assistant,
+            sampling_sub: Subsection::Assistant,
+            profile_sub: Subsection::Assistant,
             editor: None,
         }
     }
@@ -218,39 +275,84 @@ impl SettingsScreen {
     }
 
     fn model_fields(&self) -> Vec<FieldRow> {
-        let x = &self.config.engine;
-        vec![
-            row(
-                FieldId::XMode,
-                "Режим",
-                FieldKind::Choice(mode_label(x.mode)),
-            ),
-            text_row(FieldId::XUrl, "URL (external)", &x.url),
-            text_row(FieldId::XBinary, "Бинарник llama-server", &x.binary),
-            text_row(FieldId::XModel, "GGUF-модель (-m)", &x.model_path),
-            row(
-                FieldId::XNgl,
-                "GPU-слои (-ngl)",
-                FieldKind::Text(x.gpu_layers.to_string()),
-            ),
-            row(
-                FieldId::XCtx,
-                "Контекст (-c)",
-                FieldKind::Text(x.context_size.to_string()),
-            ),
-            row(
-                FieldId::XJinja,
-                "Шаблон (--jinja)",
-                FieldKind::Toggle(x.jinja),
-            ),
-            row(
-                FieldId::XNoMmap,
-                "No-mmap (--no-mmap)",
-                FieldKind::Toggle(x.no_mmap),
-            ),
-            row(FieldId::XHost, "Host", FieldKind::Text(x.host.clone())),
-            row(FieldId::XPort, "Порт", FieldKind::Text(x.port.to_string())),
-        ]
+        let mut rows = vec![row(
+            FieldId::ModelSub,
+            "Подсекция",
+            FieldKind::Choice(self.model_sub.label()),
+        )];
+        match self.model_sub {
+            Subsection::Assistant => {
+                let x = &self.config.engine;
+                rows.extend([
+                    row(
+                        FieldId::XMode,
+                        "Режим",
+                        FieldKind::Choice(mode_label(x.mode)),
+                    ),
+                    text_row(FieldId::XUrl, "URL (external)", &x.url),
+                    text_row(FieldId::XBinary, "Бинарник llama-server", &x.binary),
+                    text_row(FieldId::XModel, "GGUF-модель (-m)", &x.model_path),
+                    row(
+                        FieldId::XNgl,
+                        "GPU-слои (-ngl)",
+                        FieldKind::Text(x.gpu_layers.to_string()),
+                    ),
+                    row(
+                        FieldId::XCtx,
+                        "Контекст (-c)",
+                        FieldKind::Text(x.context_size.to_string()),
+                    ),
+                    row(
+                        FieldId::XJinja,
+                        "Шаблон (--jinja)",
+                        FieldKind::Toggle(x.jinja),
+                    ),
+                    row(
+                        FieldId::XNoMmap,
+                        "No-mmap (--no-mmap)",
+                        FieldKind::Toggle(x.no_mmap),
+                    ),
+                    row(FieldId::XHost, "Host", FieldKind::Text(x.host.clone())),
+                    row(FieldId::XPort, "Порт", FieldKind::Text(x.port.to_string())),
+                ]);
+            }
+            Subsection::Impersonation => {
+                let x = &self.config.impersonation_engine;
+                rows.extend([
+                    row(
+                        FieldId::IxMode,
+                        "Режим",
+                        FieldKind::Choice(imp_mode_label(x.mode)),
+                    ),
+                    text_row(FieldId::IxUrl, "URL (external)", &x.url),
+                    text_row(FieldId::IxBinary, "Бинарник llama-server", &x.binary),
+                    text_row(FieldId::IxModel, "GGUF-модель (-m)", &x.model_path),
+                    row(
+                        FieldId::IxNgl,
+                        "GPU-слои (-ngl)",
+                        FieldKind::Text(x.gpu_layers.to_string()),
+                    ),
+                    row(
+                        FieldId::IxCtx,
+                        "Контекст (-c)",
+                        FieldKind::Text(x.context_size.to_string()),
+                    ),
+                    row(
+                        FieldId::IxJinja,
+                        "Шаблон (--jinja)",
+                        FieldKind::Toggle(x.jinja),
+                    ),
+                    row(
+                        FieldId::IxNoMmap,
+                        "No-mmap (--no-mmap)",
+                        FieldKind::Toggle(x.no_mmap),
+                    ),
+                    row(FieldId::IxHost, "Host", FieldKind::Text(x.host.clone())),
+                    row(FieldId::IxPort, "Порт", FieldKind::Text(x.port.to_string())),
+                ]);
+            }
+        }
+        rows
     }
 
     fn inference_fields(&self) -> Vec<FieldRow> {
@@ -262,25 +364,58 @@ impl SettingsScreen {
     }
 
     fn sampling_fields(&self) -> Vec<FieldRow> {
-        let s = &self.config.default_sampling;
-        vec![
-            num_row(FieldId::STemp, "Температура", s.temperature),
-            num_row(FieldId::STopK, "top_k", s.top_k),
-            num_row(FieldId::STopP, "top_p", s.top_p),
-            num_row(FieldId::SFreqPen, "frequency_penalty", s.frequency_penalty),
-            num_row(FieldId::SPresPen, "presence_penalty", s.presence_penalty),
-            num_row(FieldId::SMaxTokens, "max_tokens", s.max_tokens),
+        let mut rows = vec![row(
+            FieldId::SamplingSub,
+            "Подсекция",
+            FieldKind::Choice(self.sampling_sub.label()),
+        )];
+        let (s, ids) = match self.sampling_sub {
+            Subsection::Assistant => (
+                &self.config.default_sampling,
+                [
+                    FieldId::STemp,
+                    FieldId::STopK,
+                    FieldId::STopP,
+                    FieldId::SFreqPen,
+                    FieldId::SPresPen,
+                    FieldId::SMaxTokens,
+                    FieldId::SThinking,
+                    FieldId::SReasoning,
+                ],
+            ),
+            Subsection::Impersonation => (
+                &self.config.impersonation_sampling,
+                [
+                    FieldId::ISTemp,
+                    FieldId::ISTopK,
+                    FieldId::ISTopP,
+                    FieldId::ISFreqPen,
+                    FieldId::ISPresPen,
+                    FieldId::ISMaxTokens,
+                    FieldId::ISThinking,
+                    FieldId::ISReasoning,
+                ],
+            ),
+        };
+        rows.extend([
+            num_row(ids[0], "Температура", s.temperature),
+            num_row(ids[1], "top_k", s.top_k),
+            num_row(ids[2], "top_p", s.top_p),
+            num_row(ids[3], "frequency_penalty", s.frequency_penalty),
+            num_row(ids[4], "presence_penalty", s.presence_penalty),
+            num_row(ids[5], "max_tokens", s.max_tokens),
             row(
-                FieldId::SThinking,
+                ids[6],
                 "Мысли (thinking)",
                 FieldKind::Choice(opt_bool_label(s.thinking)),
             ),
             row(
-                FieldId::SReasoning,
+                ids[7],
                 "reasoning_effort",
                 FieldKind::Choice(reasoning_label(s.reasoning_effort)),
             ),
-        ]
+        ]);
+        rows
     }
 
     fn tool_fields(&self) -> Vec<FieldRow> {
@@ -361,23 +496,40 @@ impl SettingsScreen {
             ),
             row(FieldId::PName, "Имя", FieldKind::Text(p.name.clone())),
             row(
-                FieldId::PSystem,
-                "Системное сообщение",
-                FieldKind::Text(p.default_system_message.clone()),
-            ),
-            row(
-                FieldId::PGreeting,
-                "Приветствие",
-                FieldKind::Text(p.greeting.clone().unwrap_or_default()),
+                FieldId::ProfileSub,
+                "Подсекция",
+                FieldKind::Choice(self.profile_sub.label()),
             ),
         ];
-        for (idx, tool) in Self::tool_catalog().into_iter().enumerate() {
-            let on = p.enabled_tools.iter().any(|t| t == &tool);
-            rows.push(row(
-                FieldId::PTool(idx),
-                &format!("инструмент: {tool}"),
-                FieldKind::Toggle(on),
-            ));
+        match self.profile_sub {
+            Subsection::Assistant => {
+                rows.push(row(
+                    FieldId::PSystem,
+                    "Системное сообщение",
+                    FieldKind::Text(p.default_system_message.clone()),
+                ));
+                rows.push(row(
+                    FieldId::PGreeting,
+                    "Приветствие",
+                    FieldKind::Text(p.greeting.clone().unwrap_or_default()),
+                ));
+                for (idx, tool) in Self::tool_catalog().into_iter().enumerate() {
+                    let on = p.enabled_tools.iter().any(|t| t == &tool);
+                    rows.push(row(
+                        FieldId::PTool(idx),
+                        &format!("инструмент: {tool}"),
+                        FieldKind::Toggle(on),
+                    ));
+                }
+            }
+            // В имперсонации инструментов нет (spec §11.8) — только сис. сообщение.
+            Subsection::Impersonation => {
+                rows.push(row(
+                    FieldId::PImpSystem,
+                    "Системное сообщение",
+                    FieldKind::Text(p.impersonation_system_message.clone()),
+                ));
+            }
         }
         rows
     }
@@ -501,7 +653,10 @@ impl SettingsScreen {
                             // (перенос + переводы строк); прочие поля — однострочные
                             // (горизонтальный скролл, без переноса на невидимый ряд).
                             // См. spec §11.6.
-                            let multiline = matches!(f.id, FieldId::PSystem | FieldId::PGreeting);
+                            let multiline = matches!(
+                                f.id,
+                                FieldId::PSystem | FieldId::PGreeting | FieldId::PImpSystem
+                            );
                             let mut input = InputBox::new();
                             input.set_single_line(!multiline);
                             // Не показываем плейсхолдеры «(все)»/«—» как значение.
@@ -578,6 +733,12 @@ impl SettingsScreen {
         match id {
             FieldId::XJinja => self.config.engine.jinja = !self.config.engine.jinja,
             FieldId::XNoMmap => self.config.engine.no_mmap = !self.config.engine.no_mmap,
+            FieldId::IxJinja => {
+                self.config.impersonation_engine.jinja = !self.config.impersonation_engine.jinja
+            }
+            FieldId::IxNoMmap => {
+                self.config.impersonation_engine.no_mmap = !self.config.impersonation_engine.no_mmap
+            }
             FieldId::TWeb => self.config.tools.web_enabled = !self.config.tools.web_enabled,
             FieldId::TPython => {
                 self.config.tools.python_enabled = !self.config.tools.python_enabled
@@ -606,8 +767,27 @@ impl SettingsScreen {
     /// Циклически меняет значение Choice-поля.
     fn cycle_field(&mut self, id: FieldId, dir: i32) -> Option<SettingsIntent> {
         match id {
+            // Переключение подсекций «Ассистент»/«Имперсонация» — чисто навигация
+            // (без сохранения). Сбрасываем курсор на селектор подсекции.
+            FieldId::ModelSub => {
+                self.model_sub = self.model_sub.toggled();
+                None
+            }
+            FieldId::SamplingSub => {
+                self.sampling_sub = self.sampling_sub.toggled();
+                None
+            }
+            FieldId::ProfileSub => {
+                self.profile_sub = self.profile_sub.toggled();
+                None
+            }
             FieldId::XMode => {
                 self.config.engine.mode = cycle_mode(self.config.engine.mode);
+                Some(self.save_config())
+            }
+            FieldId::IxMode => {
+                self.config.impersonation_engine.mode =
+                    cycle_imp_mode(self.config.impersonation_engine.mode, dir);
                 Some(self.save_config())
             }
             FieldId::EMode => {
@@ -626,6 +806,16 @@ impl SettingsScreen {
             FieldId::SReasoning => {
                 self.config.default_sampling.reasoning_effort =
                     cycle_reasoning(self.config.default_sampling.reasoning_effort);
+                Some(self.save_config())
+            }
+            FieldId::ISThinking => {
+                self.config.impersonation_sampling.thinking =
+                    cycle_opt_bool(self.config.impersonation_sampling.thinking);
+                Some(self.save_config())
+            }
+            FieldId::ISReasoning => {
+                self.config.impersonation_sampling.reasoning_effort =
+                    cycle_reasoning(self.config.impersonation_sampling.reasoning_effort);
                 Some(self.save_config())
             }
             FieldId::PSelect => {
@@ -668,6 +858,30 @@ impl SettingsScreen {
                     s.engine.port = p;
                 }
             }
+            // Имперсонация — сервер.
+            FieldId::IxUrl => s.impersonation_engine.url = opt(trimmed),
+            FieldId::IxBinary => s.impersonation_engine.binary = opt(trimmed),
+            FieldId::IxModel => s.impersonation_engine.model_path = opt(trimmed),
+            FieldId::IxHost => {
+                if !trimmed.is_empty() {
+                    s.impersonation_engine.host = trimmed.to_string();
+                }
+            }
+            FieldId::IxNgl => {
+                if let Ok(v) = trimmed.parse() {
+                    s.impersonation_engine.gpu_layers = v;
+                }
+            }
+            FieldId::IxCtx => {
+                if let Ok(v) = trimmed.parse() {
+                    s.impersonation_engine.context_size = v;
+                }
+            }
+            FieldId::IxPort => {
+                if let Ok(p) = trimmed.parse() {
+                    s.impersonation_engine.port = p;
+                }
+            }
             FieldId::MaxToolRounds => {
                 if let Ok(v) = trimmed.parse() {
                     s.max_tool_rounds = v;
@@ -679,6 +893,17 @@ impl SettingsScreen {
             FieldId::SFreqPen => s.default_sampling.frequency_penalty = parse_opt_f32(trimmed),
             FieldId::SPresPen => s.default_sampling.presence_penalty = parse_opt_f32(trimmed),
             FieldId::SMaxTokens => s.default_sampling.max_tokens = parse_opt(trimmed),
+            // Имперсонация — семплинг.
+            FieldId::ISTemp => s.impersonation_sampling.temperature = parse_opt_f32(trimmed),
+            FieldId::ISTopK => s.impersonation_sampling.top_k = parse_opt(trimmed),
+            FieldId::ISTopP => s.impersonation_sampling.top_p = parse_opt_f32(trimmed),
+            FieldId::ISFreqPen => {
+                s.impersonation_sampling.frequency_penalty = parse_opt_f32(trimmed)
+            }
+            FieldId::ISPresPen => {
+                s.impersonation_sampling.presence_penalty = parse_opt_f32(trimmed)
+            }
+            FieldId::ISMaxTokens => s.impersonation_sampling.max_tokens = parse_opt(trimmed),
             FieldId::TPythonPath => s.tools.python_path = opt(trimmed),
             FieldId::TSubMaxTokens => {
                 if let Ok(v) = trimmed.parse() {
@@ -706,7 +931,7 @@ impl SettingsScreen {
                     .collect();
             }
             // Поля профиля.
-            FieldId::PName | FieldId::PSystem | FieldId::PGreeting => {
+            FieldId::PName | FieldId::PSystem | FieldId::PGreeting | FieldId::PImpSystem => {
                 return self.apply_profile_text(id, trimmed);
             }
             _ => return None,
@@ -724,6 +949,7 @@ impl SettingsScreen {
                 p.name = text.to_string();
             }
             FieldId::PSystem => p.default_system_message = text.to_string(),
+            FieldId::PImpSystem => p.impersonation_system_message = text.to_string(),
             FieldId::PGreeting => {
                 p.greeting = (!text.is_empty()).then(|| text.to_string());
             }
@@ -745,6 +971,7 @@ impl SettingsScreen {
             edit: Box::new(ProfileEdit {
                 name: Some(p.name.clone()),
                 system_message: Some(p.default_system_message.clone()),
+                impersonation_system_message: Some(p.impersonation_system_message.clone()),
                 greeting: Some(p.greeting.clone()),
                 character_names: Some(p.character_names.clone()),
                 default_sampling: Some(p.default_sampling.clone()),
@@ -892,10 +1119,27 @@ fn field_description(id: FieldId) -> Option<&'static str> {
             "Использовать встроенный chat-шаблон модели (Jinja). Нужен для \
              правильного формата сообщений и вызова инструментов — обычно держат включённым.",
         ),
-        FieldId::XNoMmap => Some(
+        FieldId::XNoMmap | FieldId::IxNoMmap => Some(
             "Грузить веса модели целиком в оперативную память вместо отображения \
              файла с диска (mmap). Помогает на сетевых и медленных дисках, но требует \
              больше свободной RAM.",
+        ),
+        FieldId::IxMode => Some(
+            "shared — использовать тот же сервер, что и для ассистента (с семплингом \
+             имперсонации); managed — поднять отдельный llama-server; external — \
+             подключиться к отдельному удалённому серверу.",
+        ),
+        FieldId::ModelSub | FieldId::SamplingSub | FieldId::ProfileSub => Some(
+            "Переключение между настройками ассистента и имперсонации (написание \
+             сообщения от лица пользователя, Ctrl+U). ←/→ или Enter.",
+        ),
+        FieldId::IxJinja => Some(
+            "Использовать встроенный chat-шаблон модели (Jinja) для сервера \
+             имперсонации.",
+        ),
+        FieldId::IxNgl => Some(
+            "Сколько слоёв модели имперсонации выгрузить на видеокарту (GPU). \
+             0 — только процессор, 99 — вся модель на GPU.",
         ),
         _ => None,
     }
@@ -966,6 +1210,23 @@ fn cycle_mode(m: ServerMode) -> ServerMode {
         ServerMode::Managed => ServerMode::External,
         ServerMode::External => ServerMode::Managed,
     }
+}
+
+fn imp_mode_label(m: ImpersonationMode) -> String {
+    match m {
+        ImpersonationMode::Shared => "shared".into(),
+        ImpersonationMode::Managed => "managed".into(),
+        ImpersonationMode::External => "external".into(),
+    }
+}
+
+/// Циклически меняет режим имперсонации (три значения, с учётом направления).
+fn cycle_imp_mode(m: ImpersonationMode, dir: i32) -> ImpersonationMode {
+    use ImpersonationMode::*;
+    let order = [Shared, Managed, External];
+    let idx = order.iter().position(|x| *x == m).unwrap_or(0) as i32;
+    let n = order.len() as i32;
+    order[(((idx + dir) % n + n) % n) as usize]
 }
 
 fn theme_label(t: Theme) -> String {
@@ -1097,8 +1358,8 @@ mod tests {
     #[test]
     fn cycle_mode_changes_server_mode() {
         let mut s = screen();
-        s.handle_key(key(KeyCode::Enter)); // фокус на поля (Модель)
-        // Первое поле — режим (Choice). →
+        s.handle_key(key(KeyCode::Enter)); // фокус на поля (ModelSub)
+        s.handle_key(key(KeyCode::Down)); // XMode (режим, Choice)
         let intent = s.handle_key(key(KeyCode::Right));
         match intent {
             Some(SettingsIntent::SaveConfig(c)) => assert_eq!(c.engine.mode, ServerMode::External),
@@ -1107,11 +1368,49 @@ mod tests {
     }
 
     #[test]
+    fn model_subsection_switches_to_impersonation_fields() {
+        let mut s = screen();
+        s.handle_key(key(KeyCode::Enter)); // фокус на поля (ModelSub)
+        // → переключает подсекцию на «Имперсонация» (без сохранения).
+        assert_eq!(s.handle_key(key(KeyCode::Right)), None);
+        assert_eq!(s.model_sub, Subsection::Impersonation);
+        // Первое поле подсекции — режим имперсонации (3 значения).
+        s.handle_key(key(KeyCode::Down)); // IxMode
+        // Цикл shared → managed.
+        let intent = s.handle_key(key(KeyCode::Right));
+        match intent {
+            Some(SettingsIntent::SaveConfig(c)) => {
+                assert_eq!(c.impersonation_engine.mode, ImpersonationMode::Managed)
+            }
+            other => panic!("ожидался SaveConfig, получено {other:?}"),
+        }
+    }
+
+    #[test]
+    fn impersonation_profile_subsection_has_no_tools() {
+        let mut s = screen();
+        for _ in 0..3 {
+            s.handle_key(key(KeyCode::Tab)); // → Profiles
+        }
+        s.handle_key(key(KeyCode::Enter)); // фокус на поля; PSelect
+        s.handle_key(key(KeyCode::Down)); // PName
+        s.handle_key(key(KeyCode::Down)); // ProfileSub
+        s.handle_key(key(KeyCode::Right)); // → Имперсонация
+        assert_eq!(s.profile_sub, Subsection::Impersonation);
+        let fields = s.fields();
+        assert!(
+            !fields.iter().any(|f| matches!(f.id, FieldId::PTool(_))),
+            "в подсекции имперсонации нет тумблеров инструментов"
+        );
+        assert!(fields.iter().any(|f| f.id == FieldId::PImpSystem));
+    }
+
+    #[test]
     fn editing_model_commits_text() {
         let mut s = screen();
-        s.handle_key(key(KeyCode::Enter)); // фокус на поля (XMode)
-        // XMode → XUrl → XBinary → XModel.
-        for _ in 0..3 {
+        s.handle_key(key(KeyCode::Enter)); // фокус на поля (ModelSub)
+        // ModelSub → XMode → XUrl → XBinary → XModel.
+        for _ in 0..4 {
             s.handle_key(key(KeyCode::Down));
         }
         s.handle_key(key(KeyCode::Enter)); // открыть редактор XModel
@@ -1132,7 +1431,8 @@ mod tests {
     #[test]
     fn editor_esc_discards() {
         let mut s = screen();
-        s.handle_key(key(KeyCode::Enter)); // XMode
+        s.handle_key(key(KeyCode::Enter)); // ModelSub
+        s.handle_key(key(KeyCode::Down)); // XMode
         s.handle_key(key(KeyCode::Down)); // XUrl
         s.handle_key(key(KeyCode::Down)); // XBinary
         s.handle_key(key(KeyCode::Enter)); // редактор XBinary
@@ -1165,8 +1465,8 @@ mod tests {
             s.handle_key(key(KeyCode::Tab));
         }
         s.handle_key(key(KeyCode::Enter)); // фокус на поля
-        // Перейти к первому тумблеру инструмента (после PSelect/PName/PSystem/PGreeting).
-        for _ in 0..4 {
+        // Перейти к первому тумблеру (после PSelect/PName/ProfileSub/PSystem/PGreeting).
+        for _ in 0..5 {
             s.handle_key(key(KeyCode::Down));
         }
         let before = s.profiles[0].enabled_tools.len();
@@ -1206,6 +1506,7 @@ mod tests {
         }
         s.handle_key(key(KeyCode::Enter)); // фокус на поля; PSelect
         s.handle_key(key(KeyCode::Down)); // PName
+        s.handle_key(key(KeyCode::Down)); // ProfileSub
         s.handle_key(key(KeyCode::Down)); // PSystem
         s.handle_key(key(KeyCode::Enter)); // открыть редактор
         let editor = s.editor.as_ref().expect("редактор открыт");
@@ -1235,6 +1536,7 @@ mod tests {
         }
         s.handle_key(key(KeyCode::Enter)); // фокус на поля; PSelect
         s.handle_key(key(KeyCode::Down)); // PName
+        s.handle_key(key(KeyCode::Down)); // ProfileSub
         s.handle_key(key(KeyCode::Down)); // PSystem
         s.handle_key(key(KeyCode::Down)); // PGreeting
         s.handle_key(key(KeyCode::Enter)); // открыть редактор
@@ -1257,7 +1559,8 @@ mod tests {
     #[test]
     fn other_fields_edit_single_line() {
         let mut s = screen();
-        s.handle_key(key(KeyCode::Enter)); // поля (XMode)
+        s.handle_key(key(KeyCode::Enter)); // поля (ModelSub)
+        s.handle_key(key(KeyCode::Down)); // XMode
         s.handle_key(key(KeyCode::Down)); // XUrl
         s.handle_key(key(KeyCode::Enter)); // редактор
         let editor = s.editor.as_ref().expect("редактор открыт");

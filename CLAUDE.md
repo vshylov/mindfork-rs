@@ -751,6 +751,52 @@ web-поиск и Python под выключателями, экран наст�
   вставляет перевод строки, `Enter` коммитит, `Esc` отменяет (как в чат-вводе).
   `Editor.multiline` ведёт ветвление клавиш/рендера. См. spec §11.6.
 
+### Пост-M9: имперсонация — написание сообщения за пользователя (`Ctrl+U`) (сделано)
+- **Суть** (spec §11.8): по `Ctrl+U` модель пишет следующее сообщение **от лица
+  пользователя** в поле ввода. Запрос строится так: системное сообщение чата
+  (персона ассистента) заменяется на **имперсонационное** из профиля
+  (`Profile.impersonation_system_message`; пусто → `DEFAULT_IMPERSONATION_SYSTEM_
+  MESSAGE`), роли user↔assistant в истории меняются местами (`swap_role_message`;
+  system/tool/пустые отбрасываются — инструментов в режиме нет), семплинг —
+  `AppConfig.impersonation_sampling`. Чистые `build_impersonation_request`/
+  `swap_role_message` в `app/orchestrator.rs`.
+- **Три режима сервера** (`ImpersonationMode` в `shared/config.rs`):
+  `shared` (по умолчанию) — тот же chat-сервер, что у ассистента, но с семплингом
+  имперсонации (отдельный сервер не поднимается); `managed` — отдельный дочерний
+  `llama-server`; `external` — отдельный удалённый сервер. Настройки —
+  `AppConfig.impersonation_engine: ImpersonationEngineSettings` (поля как у
+  `EngineSettings`, но режим трёхзначный). Супервайзер: `ServerSupervisor::
+  apply_impersonation` (real поднимает managed/external + probe; для `shared` не
+  вызывается — оркестратор берёт `backend` ассистента). Оркестратор держит
+  `imp_backend`/`imp_handle`/`imp_status` и пере-поднимает при смене
+  `impersonation_engine` (`apply_impersonation_settings`).
+- **Поток** (фоновая задача, как авто-название): `AppCommand::Impersonate { seed }`
+  → `handle_impersonate` (гейт `State::Idle` + нет активной имперсонации + готовность
+  сервера через `impersonation_backend_if_ready`) → `spawn_impersonation` стримит
+  `AppEvent::ImpersonationChunk`, по концу/таймауту/отмене шлёт `(id, reason)` во
+  внутренний канал `imp_done` → `handle_imp_done` эмитит `ImpersonationFinished`.
+  `AppCommand::CancelImpersonation` (`Esc`) отменяет токен; `Quit` тоже.
+  `IMPERSONATION_TIMEOUT=120с`. «Мысли»/tool-вызовы в поле ввода игнорируются.
+- **UI** (`screens/chat.rs` + `widgets/impersonation_preview.rs`): на время написания
+  поле ввода **скрыто**, на его месте — нередактируемый **потоковый предпросмотр** со
+  спиннером (`ImpersonationState`: text начинается с уже введённого текста-затравки).
+  По `Stop`/`Length` накопленный текст вставляется в поле ввода (`set_text`), по
+  `Cancelled`/`Error` — отбрасывается (поле сохраняет затравку). Во время имперсонации
+  обрабатываются только `Esc` (отмена) и `Ctrl+C` (выход). Петля `app/runtime.rs`
+  перерисовывает каждый тик, пока `is_impersonating()` (анимация спиннера). `Ctrl+U`
+  раскладко-независим (`shared/keys`), добавлен в оверлей помощи (`F1`/`?`).
+- **Продолжение начатого**: если поле ввода непустое, текст уходит как `seed` —
+  `build_impersonation_request` добавляет в системное сообщение просьбу продолжить
+  начатое (вывести только продолжение), а предпросмотр показывает затравку +
+  сгенерированное (итог = затравка + продолжение).
+- **Настройки** (`screens/settings.rs`): секции «Модель/сервер», «Семплинг»,
+  «Профили» получили **селектор подсекции** «Ассистент»/«Имперсонация» (`Subsection`,
+  поля `model_sub`/`sampling_sub`/`profile_sub`; новый `FieldId::*Sub`). Подсекция
+  имперсонации Модели — те же поля + трёхзначный режим (`IxMode`, `cycle_imp_mode`);
+  Семплинга — те же поля над `impersonation_sampling`; Профиля — **только системное
+  сообщение** (`PImpSystem`, многострочный редактор), без инструментов. `ProfileEdit.
+  impersonation_system_message` переносит правку.
+
 ### Отложено за пределы M3
 - **Сворачивание/выделение per-message** и tool-блоки в ленте — сейчас «мысли»
   сворачиваются глобально (`Ctrl+T`); выделение сообщений и tool-блоки — на M5.
