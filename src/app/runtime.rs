@@ -192,6 +192,11 @@ fn run_loop(
         if settings.is_none() && screen.is_rag_active() {
             dirty = true;
         }
+        // Черновик поля ввода изменился — сохраняем его в активном чате (оркестратор
+        // пишет на диск с дебаунсом). Перерисовку это не требует. См. spec §11.7.
+        if let Some(draft) = screen.take_dirty_draft() {
+            let _ = cmd_tx.send(AppCommand::SetDraft(draft));
+        }
         if dirty {
             if let Some(settings_screen) = &mut settings {
                 terminal.draw(|frame| settings_screen.render(frame))?;
@@ -262,7 +267,8 @@ fn apply_event(
             id,
             title,
             messages,
-        } => screen.activate_chat(id, title, &messages),
+            draft,
+        } => screen.activate_chat(id, title, &messages, &draft),
         AppEvent::UserMessage(text) => screen.push_user_message(text),
         AppEvent::RestoreInput(text) => screen.restore_input(text),
         AppEvent::GenerationStarted { generation_id } => screen.begin_generation(generation_id),

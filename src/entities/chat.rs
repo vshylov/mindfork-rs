@@ -25,6 +25,11 @@ pub struct Chat {
     pub messages: Vec<Message>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub sampling_override: Option<SamplingConfig>,
+    /// Несохранённый черновик поля ввода (текст, который пользователь набрал, но
+    /// ещё не отправил). Хранится в файле чата и восстанавливается в поле ввода при
+    /// переключении на чат; у нового чата пустой. См. spec §11.7.
+    #[serde(default)]
+    pub draft: String,
     /// Мягкое удаление.
     #[serde(default)]
     pub is_hidden: bool,
@@ -52,6 +57,7 @@ impl Chat {
             character_names: profile.character_names.clone(),
             messages: Vec::new(),
             sampling_override: None,
+            draft: String::new(),
             is_hidden: false,
         }
     }

@@ -238,6 +238,7 @@ fn conversation_to_chat(conv: &LlConversation, profile_id: Uuid) -> Chat {
         character_names: map_characters(conv.characters_config.as_ref()),
         messages,
         sampling_override: None,
+        draft: String::new(),
         is_hidden: false,
     }
 }

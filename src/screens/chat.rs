@@ -137,6 +137,9 @@ pub struct ChatScreen {
     spell: Option<SpellChecker>,
     /// Текст ввода изменился — нужна перепроверка орфографии (с дебаунсом).
     spell_dirty: bool,
+    /// Черновик ввода изменился — нужно сохранить его в активном чате. Петля
+    /// забирает текст (`take_dirty_draft`) и шлёт `SetDraft`. См. spec §11.7.
+    draft_dirty: bool,
     /// Момент последнего изменения ввода (для дебаунса).
     last_edit: Option<Instant>,
     /// Открытый попап подсказок орфографии.
@@ -178,6 +181,7 @@ impl ChatScreen {
             generating: false,
             spell: None,
             spell_dirty: false,
+            draft_dirty: false,
             last_edit: None,
             suggest: None,
             settings_snapshot: None,
@@ -269,7 +273,7 @@ impl ChatScreen {
         }
     }
 
-    pub fn activate_chat(&mut self, id: Uuid, title: String, messages: &[Message]) {
+    pub fn activate_chat(&mut self, id: Uuid, title: String, messages: &[Message], draft: &str) {
         // Смена чата сбрасывает состояние генерации: «осиротевшие» чанки прежней
         // генерации не должны попадать в ленту нового чата.
         self.active_chat = Some(id);
@@ -281,6 +285,12 @@ impl ChatScreen {
             .filter_map(FeedMessage::from_message)
             .collect();
         self.feed_view.scroll_to_bottom();
+        // Загружаем сохранённый черновик чата в поле ввода (пустой у нового чата).
+        // НЕ помечаем `draft_dirty` — иначе тут же отправили бы его обратно тем же
+        // `SetDraft`; перепроверку орфографии запускаем напрямую.
+        self.input.set_text(draft);
+        self.spell_dirty = true;
+        self.last_edit = None;
     }
 
     /// Возвращает текст в поле ввода после удаления последнего обмена. Если поле
@@ -629,10 +639,23 @@ impl ChatScreen {
         }
     }
 
-    /// Помечает ввод изменённым (запускает дебаунс перепроверки орфографии).
+    /// Помечает ввод изменённым (запускает дебаунс перепроверки орфографии и
+    /// сохранение черновика в активном чате).
     fn mark_input_changed(&mut self) {
         self.spell_dirty = true;
+        self.draft_dirty = true;
         self.last_edit = Some(Instant::now());
+    }
+
+    /// Забирает изменённый черновик ввода для сохранения в активном чате (или
+    /// `None`, если с прошлого раза не менялся). Петля шлёт его командой `SetDraft`;
+    /// запись на диск в оркестраторе идёт с дебаунсом. См. spec §11.7.
+    pub fn take_dirty_draft(&mut self) -> Option<String> {
+        if !self.draft_dirty {
+            return None;
+        }
+        self.draft_dirty = false;
+        Some(self.input.text())
     }
 
     /// Перепроверяет орфографию ввода, если истёк дебаунс. Возвращает `true`, если
@@ -1035,7 +1058,7 @@ mod tests {
             Message::user("привет"),
             Message::assistant("здравствуйте"),
         ];
-        s.activate_chat(id, "Чат".into(), &messages);
+        s.activate_chat(id, "Чат".into(), &messages, "");
         assert_eq!(s.active_chat, Some(id));
         assert!(!s.generating);
         assert!(s.current_gen.is_none());
@@ -1057,6 +1080,42 @@ mod tests {
             s.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE))
                 .is_none()
         );
+    }
+
+    #[test]
+    fn activate_chat_loads_draft_without_marking_dirty() {
+        let mut s = ChatScreen::new();
+        // Активация чата с сохранённым черновиком загружает его в поле ввода…
+        s.activate_chat(gen_id(), "Чат".into(), &[], "недописанный текст");
+        assert_eq!(s.input.text(), "недописанный текст");
+        // …но не помечает черновик «грязным» (иначе тут же отправили бы его обратно).
+        assert_eq!(s.take_dirty_draft(), None);
+        // Переключение на чат без черновика очищает поле ввода.
+        s.activate_chat(gen_id(), "Новый".into(), &[], "");
+        assert!(s.input.is_empty());
+        assert_eq!(s.take_dirty_draft(), None);
+    }
+
+    #[test]
+    fn typing_marks_draft_dirty_and_take_returns_text_once() {
+        let mut s = ChatScreen::new();
+        type_str(&mut s, "черновик");
+        // Первый забор отдаёт набранный текст…
+        assert_eq!(s.take_dirty_draft(), Some("черновик".into()));
+        // …повторный — None, пока ввод снова не изменится.
+        assert_eq!(s.take_dirty_draft(), None);
+    }
+
+    #[test]
+    fn sending_clears_draft_to_empty() {
+        let mut s = ChatScreen::new();
+        s.set_server_status(ServerStatus::Ready);
+        type_str(&mut s, "вопрос");
+        let _ = s.take_dirty_draft(); // забрали черновик при наборе
+        let intent = s.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+        assert_eq!(intent, Some(ChatIntent::Send("вопрос".into())));
+        // Отправка очистила поле — черновик стал пустым (UI отправит SetDraft("")).
+        assert_eq!(s.take_dirty_draft(), Some(String::new()));
     }
 
     #[test]
@@ -1234,7 +1293,7 @@ mod tests {
     fn rename_chat_updates_title_bar_of_active_chat() {
         let mut s = ChatScreen::new();
         let id = gen_id();
-        s.activate_chat(id, "Старое".into(), &[]);
+        s.activate_chat(id, "Старое".into(), &[], "");
         s.rename_chat(id, "Новое".into());
         assert_eq!(s.title, "Новое");
         // Чужой чат не трогает шапку активного.
@@ -1270,7 +1329,7 @@ mod tests {
             None
         );
         let id = gen_id();
-        s.activate_chat(id, "Чат".into(), &[]);
+        s.activate_chat(id, "Чат".into(), &[], "");
         assert_eq!(
             s.handle_key(KeyEvent::new(KeyCode::F(5), KeyModifiers::NONE)),
             Some(ChatIntent::CopyChat(id))
