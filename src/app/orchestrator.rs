@@ -294,6 +294,7 @@ impl Orchestrator {
                 }
             }
             AppCommand::SendMessage(text) => self.handle_send(text),
+            AppCommand::SetDraft(text) => self.handle_set_draft(text),
             AppCommand::RegenerateLast => self.handle_regenerate(),
             AppCommand::DeleteLastExchange => self.handle_delete_last(),
             AppCommand::NewChat { profile_id } => self.handle_new_chat(profile_id),
@@ -337,17 +338,35 @@ impl Orchestrator {
             return;
         };
 
-        // Добавляем сообщение пользователя в историю и эхо в ленту.
+        // Добавляем сообщение пользователя в историю и эхо в ленту. Поле ввода UI
+        // очистил при отправке — чистим и сохранённый черновик чата.
         {
             let Some(chat) = self.chat_mut(active_id) else {
                 return;
             };
             chat.push_message(Message::user(&text));
+            chat.draft.clear();
         }
         self.mark_dirty(active_id);
         let _ = self.evt_tx.send(AppEvent::UserMessage(text));
 
         self.start_generation(active_id, backend);
+    }
+
+    /// Сохраняет черновик поля ввода в активном чате (несохранённый текст). Запись
+    /// на диск идёт с дебаунсом (`mark_dirty`); `modified_at` НЕ трогаем — правка
+    /// черновика не должна поднимать чат в списке. См. spec §11.7.
+    fn handle_set_draft(&mut self, text: String) {
+        let Some(active_id) = self.active_id else {
+            return;
+        };
+        if let Some(chat) = self.chat_mut(active_id) {
+            if chat.draft == text {
+                return;
+            }
+            chat.draft = text;
+            self.mark_dirty(active_id);
+        }
     }
 
     /// Перегенерирует последний ответ ассистента (spec §11.7): удаляет всё после
@@ -1004,6 +1023,7 @@ impl Orchestrator {
             id,
             title: chat.title.clone(),
             messages: chat.messages.clone(),
+            draft: chat.draft.clone(),
         });
     }
 
@@ -1694,6 +1714,92 @@ mod tests {
         orch.chats.push(empty);
         orch.handle_copy_chat(empty_id);
         assert!(matches!(rx.try_recv().unwrap(), AppEvent::ChatListError(_)));
+    }
+
+    #[test]
+    fn set_draft_persists_to_active_chat_without_bumping_modified() {
+        let (_d, mut orch, _rx) = bare_orch_rx();
+        let profile = Profile::new("P", "sys");
+        let chat = Chat::from_profile(&profile, "Чат");
+        let id = chat.id;
+        let modified = chat.modified_at;
+        orch.chats.push(chat);
+        orch.active_id = Some(id);
+
+        orch.handle_set_draft("недописанный текст".into());
+        let c = orch.chats.iter().find(|c| c.id == id).unwrap();
+        assert_eq!(c.draft, "недописанный текст");
+        assert_eq!(
+            c.modified_at, modified,
+            "правка черновика не поднимает чат в списке"
+        );
+        assert!(orch.dirty.contains(&id), "чат помечен для сохранения");
+
+        // Повторная установка того же текста — без повторной пометки (no-op).
+        orch.dirty.clear();
+        orch.handle_set_draft("недописанный текст".into());
+        assert!(!orch.dirty.contains(&id));
+    }
+
+    #[tokio::test]
+    async fn draft_persists_and_clears_on_send() {
+        let backend = Arc::new(MockBackend::scripted(vec![
+            ChatChunk::Text("ответ".into()),
+            ChatChunk::Finished(FinishReason::Stop),
+        ])) as Arc<dyn EngineBackend>;
+        let (_d, cmd_tx, mut evt_rx, handle) = spawn_orch(Some(backend));
+        let root = _d.path().to_path_buf();
+
+        let active = wait_for(&mut evt_rx, |e| matches!(e, AppEvent::ChatActivated { .. }))
+            .await
+            .unwrap();
+        let chat_id = match active {
+            AppEvent::ChatActivated { id, .. } => id,
+            _ => unreachable!(),
+        };
+
+        // Черновик сохраняется в файле чата.
+        cmd_tx
+            .send(AppCommand::SetDraft("недописанное".into()))
+            .unwrap();
+        // Отправка очищает черновик.
+        cmd_tx
+            .send(AppCommand::SendMessage("привет".into()))
+            .unwrap();
+        wait_for(&mut evt_rx, |e| matches!(e, AppEvent::Finished { .. }))
+            .await
+            .unwrap();
+
+        cmd_tx.send(AppCommand::Quit).unwrap();
+        handle.await.unwrap();
+
+        let reopened = Storage::open(Paths::with_root(&root)).unwrap();
+        let chat = reopened.json().load_chat(chat_id).unwrap().unwrap();
+        assert_eq!(chat.draft, "", "после отправки черновик очищен");
+    }
+
+    #[tokio::test]
+    async fn draft_survives_reopen_when_not_sent() {
+        let (_d, cmd_tx, mut evt_rx, handle) = spawn_orch(None);
+        let root = _d.path().to_path_buf();
+
+        let active = wait_for(&mut evt_rx, |e| matches!(e, AppEvent::ChatActivated { .. }))
+            .await
+            .unwrap();
+        let chat_id = match active {
+            AppEvent::ChatActivated { id, .. } => id,
+            _ => unreachable!(),
+        };
+
+        cmd_tx
+            .send(AppCommand::SetDraft("черновик на потом".into()))
+            .unwrap();
+        cmd_tx.send(AppCommand::Quit).unwrap();
+        handle.await.unwrap();
+
+        let reopened = Storage::open(Paths::with_root(&root)).unwrap();
+        let chat = reopened.json().load_chat(chat_id).unwrap().unwrap();
+        assert_eq!(chat.draft, "черновик на потом");
     }
 
     #[tokio::test]
