@@ -26,6 +26,16 @@ pub struct InputBox {
     col: usize,
     /// Первая видимая строка (вертикальный скролл).
     scroll: usize,
+    /// Ширина внутренней области последней отрисовки (в колонках). Нужна навигации
+    /// `↑/↓`, чтобы ходить по **визуальным** рядам перенесённой строки, а не по
+    /// логическим строкам (перенос считается только при рендере). `0` — рендера ещё
+    /// не было: тогда `↑/↓` падают на логический переход. См. [`Self::move_up`].
+    last_width: usize,
+    /// «Целевая» визуальная колонка серии `↑/↓` (в колонках). Запоминается при первом
+    /// вертикальном переходе и держится, пока курсор не сдвинут иначе — тогда серия
+    /// `↑/↓` через короткие ряды сохраняет исходную колонку (как в больших редакторах).
+    /// Любое горизонтальное движение/правка сбрасывает в `None`. См. [`Self::move_up`].
+    goal_col: Option<usize>,
     /// Диапазоны слов с ошибками орфографии по логическим строкам (индекс строки
     /// → отсортированные непересекающиеся `[start, end)` в символах). Заполняет
     /// экран из спелл-чекера; виджет лишь подчёркивает. См. spec §11.5.
@@ -45,6 +55,8 @@ impl InputBox {
             row: 0,
             col: 0,
             scroll: 0,
+            last_width: 0,
+            goal_col: None,
             misspelled: Vec::new(),
         }
     }
@@ -82,6 +94,7 @@ impl InputBox {
         self.row = 0;
         self.col = 0;
         self.scroll = 0;
+        self.goal_col = None;
         self.misspelled.clear();
     }
 
@@ -119,6 +132,7 @@ impl InputBox {
         line.splice(start..end, repl);
         self.row = row;
         self.col = start + repl_len;
+        self.goal_col = None;
     }
 
     /// Заполняет поле текстом, ставит курсор в конец (для правки по месту, M3+).
@@ -131,6 +145,7 @@ impl InputBox {
         self.row = self.lines.len() - 1;
         self.col = self.lines[self.row].len();
         self.scroll = 0;
+        self.goal_col = None;
     }
 
     // ---------- редактирование ----------
@@ -138,6 +153,7 @@ impl InputBox {
     pub fn insert_char(&mut self, c: char) {
         self.lines[self.row].insert(self.col, c);
         self.col += 1;
+        self.goal_col = None;
     }
 
     pub fn insert_newline(&mut self) {
@@ -145,6 +161,7 @@ impl InputBox {
         self.lines.insert(self.row + 1, tail);
         self.row += 1;
         self.col = 0;
+        self.goal_col = None;
     }
 
     /// Вставляет произвольный текст в позицию курсора (вставка из буфера обмена).
@@ -168,9 +185,11 @@ impl InputBox {
         }
         self.col = self.lines[self.row].len();
         self.lines[self.row].extend(tail);
+        self.goal_col = None;
     }
 
     pub fn backspace(&mut self) {
+        self.goal_col = None;
         if self.col > 0 {
             self.col -= 1;
             self.lines[self.row].remove(self.col);
@@ -184,6 +203,7 @@ impl InputBox {
     }
 
     pub fn delete(&mut self) {
+        self.goal_col = None;
         if self.col < self.lines[self.row].len() {
             self.lines[self.row].remove(self.col);
         } else if self.row + 1 < self.lines.len() {
@@ -195,6 +215,7 @@ impl InputBox {
     // ---------- движение курсора ----------
 
     fn move_left(&mut self) {
+        self.goal_col = None;
         if self.col > 0 {
             self.col -= 1;
         } else if self.row > 0 {
@@ -204,6 +225,7 @@ impl InputBox {
     }
 
     fn move_right(&mut self) {
+        self.goal_col = None;
         if self.col < self.lines[self.row].len() {
             self.col += 1;
         } else if self.row + 1 < self.lines.len() {
@@ -212,14 +234,91 @@ impl InputBox {
         }
     }
 
+    /// Вверх по **визуальному** ряду: если логическая строка перенесена, `↑` идёт на
+    /// предыдущий визуальный ряд той же строки, сохраняя колонку. Использует ширину
+    /// последней отрисовки; до первого рендера (`last_width == 0`) — логический переход.
     fn move_up(&mut self) {
+        if self.last_width == 0 {
+            self.goal_col = None;
+            self.move_up_logical();
+            return;
+        }
+        let vrows = self.visual_rows(self.last_width);
+        let (vrow, vcol) = self.cursor_visual(&vrows);
+        // Первый шаг серии запоминает колонку; дальше держим её (goal-column).
+        let goal = *self.goal_col.get_or_insert(vcol);
+        if vrow == 0 {
+            return; // уже верхний визуальный ряд (goal сохранён для обратного ↓)
+        }
+        let (li, start, end) = vrows[vrow - 1];
+        let col = col_for_visual(&self.lines[li], start, end, goal, is_soft(&vrows, vrow - 1));
+        self.row = li;
+        self.col = col;
+    }
+
+    /// Вниз по **визуальному** ряду (зеркально [`Self::move_up`]).
+    fn move_down(&mut self) {
+        if self.last_width == 0 {
+            self.goal_col = None;
+            self.move_down_logical();
+            return;
+        }
+        let vrows = self.visual_rows(self.last_width);
+        let (vrow, vcol) = self.cursor_visual(&vrows);
+        let goal = *self.goal_col.get_or_insert(vcol);
+        if vrow + 1 >= vrows.len() {
+            return; // уже нижний визуальный ряд
+        }
+        let (li, start, end) = vrows[vrow + 1];
+        let col = col_for_visual(&self.lines[li], start, end, goal, is_soft(&vrows, vrow + 1));
+        self.row = li;
+        self.col = col;
+    }
+
+    /// `Home` — в начало текущего **визуального** ряда (не всей логической строки).
+    /// До первого рендера — в начало логической строки.
+    fn move_home(&mut self) {
+        self.goal_col = None;
+        if self.last_width == 0 {
+            self.col = 0;
+            return;
+        }
+        let vrows = self.visual_rows(self.last_width);
+        let (vrow, _) = self.cursor_visual(&vrows);
+        self.col = vrows[vrow].1;
+    }
+
+    /// `End` — в конец текущего **визуального** ряда. На мягком переносе встаёт на
+    /// последнюю позицию этого ряда (не уезжает в начало следующего, см. `is_soft`).
+    /// До первого рендера — в конец логической строки.
+    fn move_end(&mut self) {
+        self.goal_col = None;
+        if self.last_width == 0 {
+            self.col = self.lines[self.row].len();
+            return;
+        }
+        let vrows = self.visual_rows(self.last_width);
+        let (vrow, _) = self.cursor_visual(&vrows);
+        let (li, start, end) = vrows[vrow];
+        self.col = col_for_visual(
+            &self.lines[li],
+            start,
+            end,
+            usize::MAX,
+            is_soft(&vrows, vrow),
+        );
+    }
+
+    /// Логический переход вверх/вниз (фолбэк до первого рендера, когда ширина и,
+    /// значит, перенос ещё неизвестны).
+    fn move_up_logical(&mut self) {
         if self.row > 0 {
             self.row -= 1;
             self.col = self.col.min(self.lines[self.row].len());
         }
     }
 
-    fn move_down(&mut self) {
+    fn move_down_logical(&mut self) {
         if self.row + 1 < self.lines.len() {
             self.row += 1;
             self.col = self.col.min(self.lines[self.row].len());
@@ -263,11 +362,11 @@ impl InputBox {
                 true
             }
             KeyCode::Home => {
-                self.col = 0;
+                self.move_home();
                 true
             }
             KeyCode::End => {
-                self.col = self.lines[self.row].len();
+                self.move_end();
                 true
             }
             _ => false,
@@ -294,6 +393,8 @@ impl InputBox {
 
         let view_w = inner.width.max(1) as usize;
         let visible_rows = inner.height.max(1) as usize;
+        // Запоминаем ширину для навигации `↑/↓` по визуальным рядам (см. `move_up`).
+        self.last_width = view_w;
 
         // Визуальные ряды с учётом переноса; позиция курсора — через тот же перенос
         // (единый источник истины, иначе курсор разъедется с текстом).
@@ -397,6 +498,34 @@ fn normalize_paste(text: &str) -> String {
     text.replace("\r\n", "\n")
         .replace('\r', "\n")
         .replace('\t', "    ")
+}
+
+/// Визуальный ряд `idx` — мягкий перенос (не последний ряд своей логической строки),
+/// т.е. следующий ряд принадлежит той же строке. Тогда позиция курсора `== end`
+/// рисуется в начале следующего ряда — навигация это учитывает.
+fn is_soft(vrows: &[(usize, usize, usize)], idx: usize) -> bool {
+    idx + 1 < vrows.len() && vrows[idx + 1].0 == vrows[idx].0
+}
+
+/// Логический столбец на ряду `[start, end)`, ближайший к целевой визуальной колонке
+/// `target_vw` (в колонках) — для перехода `↑/↓` с сохранением колонки. На мягком
+/// переносе не отдаём `end` (иначе курсор «уедет» в начало следующего ряда) —
+/// откатываемся на символ назад, оставаясь на этом ряду.
+fn col_for_visual(line: &[char], start: usize, end: usize, target_vw: usize, soft: bool) -> usize {
+    let mut w = 0;
+    let mut col = start;
+    while col < end {
+        let cw = wrap::char_width(line[col]);
+        if w + cw > target_vw {
+            break;
+        }
+        w += cw;
+        col += 1;
+    }
+    if soft && col == end && end > start {
+        col -= 1;
+    }
+    col
 }
 
 /// Пересекает диапазоны ошибок `[s, e)` логической строки с визуальным рядом
@@ -669,6 +798,131 @@ mod tests {
         let vrows = ib.visual_rows(8);
         let (row, col) = ib.cursor_visual(&vrows);
         assert_eq!((row, col), (1, 0));
+    }
+
+    /// Рендерит поле во внутреннюю ширину `inner_w` (рамка добавляет 2 колонки),
+    /// чтобы выставить `last_width` для навигации `↑/↓` по визуальным рядам.
+    fn render_at(ib: &mut InputBox, inner_w: u16) {
+        use ratatui::Terminal;
+        use ratatui::backend::TestBackend;
+        let mut term = Terminal::new(TestBackend::new(inner_w + 2, 8)).unwrap();
+        term.draw(|f| ib.render(f, f.area(), "ввод", true, &Palette::default(), false))
+            .unwrap();
+    }
+
+    #[test]
+    fn col_for_visual_clamps_off_soft_break() {
+        let line: Vec<char> = "abcd".chars().collect();
+        // На мягком переносе целевая колонка за концом ряда откатывается на символ
+        // назад (иначе курсор уехал бы в начало следующего ряда).
+        assert_eq!(col_for_visual(&line, 0, 4, 10, true), 3);
+        // На жёстком конце логической строки клампа нет.
+        assert_eq!(col_for_visual(&line, 0, 4, 10, false), 4);
+        // Колонка внутри ряда — обычный поиск по ширине.
+        assert_eq!(col_for_visual(&line, 0, 4, 2, true), 2);
+    }
+
+    #[test]
+    fn arrow_up_moves_within_wrapped_line() {
+        let mut ib = InputBox::new();
+        // одна логическая строка, переносится на два ряда: "один два " | "три"
+        ib.set_text("один два три"); // курсор в конце (row=0, col=12)
+        render_at(&mut ib, 8);
+        // ↑ переводит на предыдущий визуальный ряд той же строки (не уходит выше)
+        assert!(ib.on_key(k(KeyCode::Up)));
+        assert_eq!(ib.cursor(), (0, 3)); // "оди|н два три" — колонка 3 сохранена
+        // ещё одно ↑ на верхнем визуальном ряду — без движения
+        assert!(ib.on_key(k(KeyCode::Up)));
+        assert_eq!(ib.cursor(), (0, 3));
+    }
+
+    #[test]
+    fn arrow_down_moves_within_wrapped_line() {
+        let mut ib = InputBox::new();
+        ib.set_text("один два три");
+        render_at(&mut ib, 8);
+        ib.row = 0;
+        ib.col = 3; // верхний визуальный ряд, колонка 3
+        assert!(ib.on_key(k(KeyCode::Down)));
+        // на нижний ряд "три" с сохранением колонки → конец строки (3 символа)
+        assert_eq!(ib.cursor(), (0, 12));
+        // ещё одно ↓ на нижнем визуальном ряду — без движения
+        assert!(ib.on_key(k(KeyCode::Down)));
+        assert_eq!(ib.cursor(), (0, 12));
+    }
+
+    #[test]
+    fn arrow_up_down_cross_logical_lines_when_not_wrapped() {
+        let mut ib = InputBox::new();
+        ib.set_text("abc\ndef"); // две короткие логические строки, без переноса
+        render_at(&mut ib, 20);
+        ib.row = 1;
+        ib.col = 2;
+        assert!(ib.on_key(k(KeyCode::Up)));
+        assert_eq!(ib.cursor(), (0, 2)); // перешли на предыдущую логическую строку
+        assert!(ib.on_key(k(KeyCode::Down)));
+        assert_eq!(ib.cursor(), (1, 2));
+    }
+
+    #[test]
+    fn goal_column_preserved_through_short_row() {
+        // Серия ↓ через короткую строку держит исходную колонку (goal-column).
+        let mut ib = InputBox::new();
+        ib.set_text("abcdef\nx\nabcdef");
+        render_at(&mut ib, 20); // широко — без переноса, по логическим строкам
+        ib.row = 0;
+        ib.col = 5; // колонка 5 на первой строке
+        ib.goal_col = None; // прямое присвоение col выше не сбрасывает goal
+        assert!(ib.on_key(k(KeyCode::Down)));
+        assert_eq!(ib.cursor(), (1, 1)); // "x" короче — курсор прижат к концу
+        assert!(ib.on_key(k(KeyCode::Down)));
+        assert_eq!(ib.cursor(), (2, 5)); // колонка 5 восстановлена, не осталась 1
+    }
+
+    #[test]
+    fn horizontal_move_resets_goal_column() {
+        let mut ib = InputBox::new();
+        ib.set_text("abcdef\nx\nabcdef");
+        render_at(&mut ib, 20);
+        ib.row = 0;
+        ib.col = 5;
+        ib.goal_col = None;
+        assert!(ib.on_key(k(KeyCode::Down))); // (1,1), goal=5
+        assert!(ib.on_key(k(KeyCode::Left))); // горизонтальное движение сбрасывает goal
+        assert!(ib.on_key(k(KeyCode::Down)));
+        // без goal колонка берётся из текущей (0) → начало третьей строки
+        assert_eq!(ib.cursor(), (2, 0));
+    }
+
+    #[test]
+    fn home_end_act_on_visual_row() {
+        let mut ib = InputBox::new();
+        ib.set_text("один два три"); // ширина 8: "один два " | "три"
+        render_at(&mut ib, 8);
+        // курсор в середине нижнего визуального ряда "три"
+        ib.row = 0;
+        ib.col = 10;
+        assert!(ib.on_key(k(KeyCode::Home)));
+        assert_eq!(ib.cursor(), (0, 9)); // начало ряда "три", а не всей строки
+        assert!(ib.on_key(k(KeyCode::End)));
+        assert_eq!(ib.cursor(), (0, 12)); // конец ряда "три" = конец строки
+        // на верхнем ряду End встаёт на последнюю позицию ряда (мягкий перенос)
+        ib.col = 2;
+        assert!(ib.on_key(k(KeyCode::End)));
+        assert_eq!(ib.cursor(), (0, 8)); // конец "один два", не уезжает в начало "три"
+        assert!(ib.on_key(k(KeyCode::Home)));
+        assert_eq!(ib.cursor(), (0, 0)); // начало верхнего ряда
+    }
+
+    #[test]
+    fn arrow_up_falls_back_to_logical_before_render() {
+        // до первого рендера ширина неизвестна (last_width == 0) → логический переход
+        let mut ib = InputBox::new();
+        ib.set_text("abc\ndef");
+        ib.row = 1;
+        ib.col = 2;
+        assert!(ib.on_key(k(KeyCode::Up)));
+        assert_eq!(ib.cursor(), (0, 2));
     }
 
     #[test]
