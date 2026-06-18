@@ -77,7 +77,7 @@ pub enum ChatIntent {
         path: String,
         recursive: bool,
     },
-    /// Удалить файл/директорию из RAG (команда `/rag delete <path>`).
+    /// Удалить файл/директорию из RAG (команда `/rag remove <path>`).
     RagDelete {
         path: String,
     },
@@ -877,7 +877,7 @@ const HELP_KEYS: &[(&str, &str)] = &[
     ("Ctrl+G", "подсказки орфографии"),
     ("Ctrl+W", "колесо мыши ↔ выделение текста"),
     ("/rag add <путь> [-r]", "индексировать файлы в RAG"),
-    ("/rag delete <путь>", "удалить файлы из RAG"),
+    ("/rag remove <путь>", "удалить файлы из RAG"),
     ("PageUp/PageDown", "прокрутка ленты"),
     ("F1 / ?", "эта справка"),
     ("Ctrl+C", "выход"),
@@ -886,7 +886,7 @@ const HELP_KEYS: &[(&str, &str)] = &[
 /// Рисует оверлей помощи по центру экрана.
 fn render_help(frame: &mut Frame) {
     let rows = (HELP_KEYS.len() as u16 + 2).min(frame.area().height);
-    let area = centered_rect(54, rows, frame.area());
+    let area = centered_rect(65, rows, frame.area());
     frame.render_widget(Clear, area);
     let block = Block::default()
         .borders(Borders::ALL)
@@ -894,7 +894,7 @@ fn render_help(frame: &mut Frame) {
         .title_bottom(Line::from(" любая клавиша — закрыть ").dim());
     let items: Vec<ListItem> = HELP_KEYS
         .iter()
-        .map(|(k, d)| ListItem::new(Line::from(format!("  {k:<16} {d}"))))
+        .map(|(k, d)| ListItem::new(Line::from(format!("  {k:<27} {d}"))))
         .collect();
     frame.render_widget(List::new(items).block(block), area);
 }
@@ -1505,9 +1505,9 @@ mod tests {
     }
 
     #[test]
-    fn rag_delete_command_intercepted_on_enter() {
+    fn rag_remove_command_intercepted_on_enter() {
         let mut s = ChatScreen::new();
-        type_str(&mut s, "/rag delete d:\\dir\\file.txt");
+        type_str(&mut s, "/rag remove d:\\dir\\file.txt");
         let intent = s.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
         assert_eq!(
             intent,

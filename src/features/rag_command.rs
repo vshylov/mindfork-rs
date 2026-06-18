@@ -13,7 +13,7 @@ pub enum RagCommand {
 }
 
 /// Краткая подсказка по синтаксису (показывается при ошибке разбора).
-pub const USAGE: &str = "использование: /rag add|delete <путь к файлу или папке> [-r]";
+pub const USAGE: &str = "использование: /rag add|remove <путь к файлу или папке> [-r]";
 
 /// Пытается разобрать строку ввода как команду RAG.
 ///
@@ -38,7 +38,9 @@ pub fn parse(input: &str) -> Option<Result<RagCommand, String>> {
             Err(msg) => return Some(Err(msg)),
         };
         Some(Ok(RagCommand::Add { path, recursive }))
-    } else if sub.eq_ignore_ascii_case("delete") || sub.eq_ignore_ascii_case("remove") {
+    } else if sub.eq_ignore_ascii_case("remove") {
+        // Подкоманда удаления — только `remove` (слово `delete` намеренно не
+        // поддерживается: пользователи опасались, что оно сотрёт сам файл на диске).
         // Для удаления `-r` не нужен (директория сносится со всем содержимым), но
         // принимаем и игнорируем его, чтобы синтаксис был симметричен `add`.
         let (path, _recursive) = match extract_path(&rest) {
@@ -123,14 +125,23 @@ mod tests {
     }
 
     #[test]
-    fn parses_delete_and_remove_aliases() {
+    fn parses_remove() {
         assert_eq!(
-            parse("/rag delete d:\\dir\\file.txt"),
+            parse("/rag remove d:\\dir\\file.txt"),
             del("d:\\dir\\file.txt")
         );
         assert_eq!(parse("/rag remove d:\\dir"), del("d:\\dir"));
-        // `-r` для delete принимается и игнорируется (директория и так рекурсивна).
-        assert_eq!(parse("/rag delete d:\\dir -r"), del("d:\\dir"));
+        // `-r` для remove принимается и игнорируется (директория и так рекурсивна).
+        assert_eq!(parse("/rag remove d:\\dir -r"), del("d:\\dir"));
+    }
+
+    #[test]
+    fn delete_is_not_a_command() {
+        // Слово `delete` намеренно не поддерживается — это неизвестная подкоманда.
+        assert!(matches!(
+            parse("/rag delete d:\\dir\\file.txt"),
+            Some(Err(_))
+        ));
     }
 
     #[test]
@@ -138,7 +149,7 @@ mod tests {
         assert!(matches!(parse("/rag"), Some(Err(_))));
         assert!(matches!(parse("/rag add"), Some(Err(_))));
         assert!(matches!(parse("/rag add -r"), Some(Err(_))));
-        assert!(matches!(parse("/rag delete"), Some(Err(_))));
+        assert!(matches!(parse("/rag remove"), Some(Err(_))));
         assert!(matches!(parse("/rag purge x"), Some(Err(_))));
     }
 }
