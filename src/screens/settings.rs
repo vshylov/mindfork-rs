@@ -146,8 +146,9 @@ struct FieldRow {
 struct Editor {
     field: FieldId,
     input: InputBox,
-    /// Многострочный редактор (системное сообщение): перенос длинных строк, ввод
-    /// перевода строки по `Shift+Enter`, крупный попап. Прочие поля — однострочные.
+    /// Многострочный редактор (системное сообщение и приветствие): перенос длинных
+    /// строк, ввод перевода строки по `Shift+Enter`, крупный попап. Прочие поля —
+    /// однострочные.
     multiline: bool,
 }
 
@@ -496,10 +497,11 @@ impl SettingsScreen {
                         if f.id == FieldId::PSelect {
                             None
                         } else {
-                            // Системное сообщение — многострочное (перенос + переводы
-                            // строк); прочие поля — однострочные (горизонтальный скролл,
-                            // без переноса на невидимый ряд). См. spec §11.6.
-                            let multiline = f.id == FieldId::PSystem;
+                            // Системное сообщение и приветствие — многострочные
+                            // (перенос + переводы строк); прочие поля — однострочные
+                            // (горизонтальный скролл, без переноса на невидимый ряд).
+                            // См. spec §11.6.
+                            let multiline = matches!(f.id, FieldId::PSystem | FieldId::PGreeting);
                             let mut input = InputBox::new();
                             input.set_single_line(!multiline);
                             // Не показываем плейсхолдеры «(все)»/«—» как значение.
@@ -526,8 +528,8 @@ impl SettingsScreen {
                 self.editor = None;
                 None
             }
-            // Многострочный редактор (системное сообщение): Shift+Enter — перевод
-            // строки, Enter — коммит (как в чат-вводе, spec §11.7).
+            // Многострочный редактор (системное сообщение/приветствие): Shift+Enter —
+            // перевод строки, Enter — коммит (как в чат-вводе, spec §11.7).
             (KeyCode::Enter, KeyModifiers::SHIFT) if editor.multiline => {
                 editor.input.insert_newline();
                 None
@@ -778,8 +780,8 @@ impl SettingsScreen {
         let palette = Palette::for_theme(self.config.interface.theme);
         let area = frame.area();
         if let Some(editor) = self.editor.as_mut() {
-            // Системное сообщение — крупный многострочный попап с переносом; прочие
-            // поля — компактная однострочная полоса.
+            // Системное сообщение/приветствие — крупный многострочный попап с
+            // переносом; прочие поля — компактная однострочная полоса.
             let (popup, title) = if editor.multiline {
                 (
                     centered_rect(80, 40, multiline_popup_height(area), area),
@@ -1220,6 +1222,33 @@ mod tests {
         match intent {
             Some(SettingsIntent::SaveProfile { edit, .. }) => {
                 assert_eq!(edit.system_message.unwrap(), "Ты — ассистент.A\nB");
+            }
+            other => panic!("ожидался SaveProfile, получено {other:?}"),
+        }
+    }
+
+    #[test]
+    fn greeting_editor_is_multiline_and_keeps_newlines() {
+        let mut s = screen();
+        for _ in 0..3 {
+            s.handle_key(key(KeyCode::Tab)); // → Profiles
+        }
+        s.handle_key(key(KeyCode::Enter)); // фокус на поля; PSelect
+        s.handle_key(key(KeyCode::Down)); // PName
+        s.handle_key(key(KeyCode::Down)); // PSystem
+        s.handle_key(key(KeyCode::Down)); // PGreeting
+        s.handle_key(key(KeyCode::Enter)); // открыть редактор
+        let editor = s.editor.as_ref().expect("редактор открыт");
+        assert!(editor.multiline, "приветствие редактируется многострочно");
+        // Shift+Enter вставляет перевод строки, а не коммитит.
+        s.handle_key(key(KeyCode::Char('A')));
+        s.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::SHIFT));
+        s.handle_key(key(KeyCode::Char('B')));
+        assert!(s.editor.is_some(), "Shift+Enter не закрывает редактор");
+        let intent = s.handle_key(key(KeyCode::Enter)); // коммит
+        match intent {
+            Some(SettingsIntent::SaveProfile { edit, .. }) => {
+                assert_eq!(edit.greeting.unwrap().as_deref(), Some("A\nB"));
             }
             other => panic!("ожидался SaveProfile, получено {other:?}"),
         }
