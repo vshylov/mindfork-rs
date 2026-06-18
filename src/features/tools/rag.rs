@@ -5,12 +5,21 @@
 use anyhow::Result;
 
 use crate::entities::profile::ToolId;
-use crate::entities::rag::RagDocument;
+use crate::entities::rag::{RagDocument, RagHit};
 
 use super::{Tool, ToolContext, ToolOutcome};
 
-/// Максимальный размер чанка в символах (грубая нарезка длинных абзацев).
-const MAX_CHUNK_CHARS: usize = 800;
+/// Целевой («мягкий») размер чанка в символах — юниты пакуются до него.
+const CHUNK_TARGET_CHARS: usize = 800;
+/// Перекрытие между соседними чанками в символах: хвост предыдущего повторяется в
+/// начале следующего. Best practice RAG — запрос у границы чанка не теряет контекст
+/// (а при извлечении дубль снимается склейкой, см. [`stitch_hits`]).
+const CHUNK_OVERLAP_CHARS: usize = 150;
+/// Жёсткий потолок для неделимого прогона (очень длинное слово/строка без пунктуации).
+const CHUNK_MAX_CHARS: usize = 1200;
+/// Минимальная длина дословного совпадения для склейки соседних чанков при
+/// извлечении (короче — вероятна случайность, а не заложенное перекрытие).
+const MIN_STITCH_OVERLAP: usize = 24;
 /// Топ-K по умолчанию для поиска.
 const DEFAULT_TOP_K: usize = 5;
 
@@ -107,34 +116,376 @@ impl Tool for RagSearch {
         if hits.is_empty() {
             return Ok(ToolOutcome::text("В базе знаний ничего не найдено."));
         }
-        let mut out = format!("Найдено фрагментов: {}\n", hits.len());
-        for h in &hits {
-            out.push_str(&format!("- [{}] {}\n", h.source, h.chunk_text));
+        // Склеиваем соседние чанки одного источника (по заложенному перекрытию):
+        // экономит контекст и не путает модель повтором (см. [`stitch_hits`]).
+        let passages = stitch_hits(hits);
+        let mut out = format!("Найдено фрагментов: {}\n", passages.len());
+        for p in &passages {
+            out.push_str(&format!("- [{}] {}\n", p.source, p.text));
         }
         Ok(ToolOutcome::text(out.trim_end().to_string()))
     }
 }
 
-/// Нарезает текст на чанки: по абзацам (двойной перевод строки), длинные абзацы
-/// дробятся окнами по `MAX_CHUNK_CHARS` символов. Пустые отбрасываются.
-/// `pub(crate)` — переиспользуется фоновой индексацией файлов (`/rag add`).
+/// Длина строки в символах (а не байтах — корректно для кириллицы/Юникода).
+fn clen(s: &str) -> usize {
+    s.chars().count()
+}
+
+/// Нарезает произвольный текст на чанки с перекрытием по границам предложений/слов
+/// (best practice RAG). `pub(crate)` — переиспользуется фоновой индексацией файлов
+/// (`/rag add`) и инструментом `rag_add`. Для markdown есть [`chunk_markdown`].
+///
+/// Алгоритм: текст сегментируется на атомарные юниты (абзац целиком, если влезает
+/// в цель; иначе — предложения; слишком длинные предложения — окна по словам, а
+/// одиночное гигантское слово — по символам), затем юниты пакуются в чанки до
+/// `CHUNK_TARGET_CHARS`, и каждый следующий чанк начинается с хвоста предыдущего
+/// (перекрытие ≤ `CHUNK_OVERLAP_CHARS`). Мелкие соседние абзацы при этом
+/// группируются в один чанк (а не плодят крошечные строки-чанки).
 pub(crate) fn chunk_text(text: &str) -> Vec<String> {
+    let units = segment_units(text);
+    pack_units(&units, CHUNK_TARGET_CHARS, CHUNK_OVERLAP_CHARS)
+}
+
+/// Семантический чанкинг markdown: режет по ATX-заголовкам (`#`..`######`),
+/// защищает огороженные блоки кода (``` и ~~~), а к каждому чанку секции
+/// добавляет её заголовок как смысловой якорь (заметно улучшает извлечение).
+/// Внутри секции — тот же упаковщик с перекрытием, что и в [`chunk_text`].
+/// Документ без заголовков обрабатывается как обычный текст.
+pub(crate) fn chunk_markdown(text: &str) -> Vec<String> {
+    let sections = split_sections(text);
     let mut chunks = Vec::new();
-    for paragraph in text.split("\n\n") {
-        let trimmed = paragraph.trim();
-        if trimmed.is_empty() {
-            continue;
-        }
-        let chars: Vec<char> = trimmed.chars().collect();
-        if chars.len() <= MAX_CHUNK_CHARS {
-            chunks.push(trimmed.to_string());
+    for (heading, body) in &sections {
+        let units = segment_units(body);
+        let packed = if units.is_empty() {
+            // Секция без тела — заголовок сам по себе как чанк (если он есть).
+            vec![String::new()]
         } else {
-            for window in chars.chunks(MAX_CHUNK_CHARS) {
-                chunks.push(window.iter().collect());
+            pack_units(&units, CHUNK_TARGET_CHARS, CHUNK_OVERLAP_CHARS)
+        };
+        for p in packed {
+            let chunk = match (heading.is_empty(), p.is_empty()) {
+                (true, _) => p,
+                (false, true) => heading.clone(),
+                (false, false) => format!("{heading}\n{p}"),
+            };
+            let chunk = chunk.trim();
+            if !chunk.is_empty() {
+                chunks.push(chunk.to_string());
             }
         }
     }
+    if chunks.is_empty() {
+        // Нет заголовков/пустой документ — обычный чанкинг.
+        return chunk_text(text);
+    }
     chunks
+}
+
+/// Атомарные юниты для упаковки (см. [`chunk_text`]). Пустые отбрасываются.
+fn segment_units(text: &str) -> Vec<String> {
+    let mut units = Vec::new();
+    for paragraph in text.split("\n\n") {
+        let p = paragraph.trim();
+        if p.is_empty() {
+            continue;
+        }
+        if clen(p) <= CHUNK_TARGET_CHARS {
+            units.push(p.to_string());
+            continue;
+        }
+        for sentence in split_sentences(p) {
+            if clen(&sentence) <= CHUNK_MAX_CHARS {
+                units.push(sentence);
+            } else {
+                units.extend(break_long(&sentence, CHUNK_MAX_CHARS));
+            }
+        }
+    }
+    units
+}
+
+/// Делит абзац на предложения по завершающей пунктуации (`. ! ? …` и их
+/// CJK-аналоги), сохраняя её. Граница — пунктуация, за которой пробел/конец.
+fn split_sentences(paragraph: &str) -> Vec<String> {
+    let chars: Vec<char> = paragraph.chars().collect();
+    let mut out = Vec::new();
+    let mut start = 0;
+    let mut i = 0;
+    while i < chars.len() {
+        let is_end = matches!(chars[i], '.' | '!' | '?' | '…' | '。' | '！' | '？');
+        let next_ws = chars.get(i + 1).map(|c| c.is_whitespace()).unwrap_or(true);
+        if is_end && next_ws {
+            let seg: String = chars[start..=i].iter().collect();
+            let seg = seg.trim();
+            if !seg.is_empty() {
+                out.push(seg.to_string());
+            }
+            let mut j = i + 1;
+            while j < chars.len() && chars[j].is_whitespace() {
+                j += 1;
+            }
+            start = j;
+            i = j;
+            continue;
+        }
+        i += 1;
+    }
+    if start < chars.len() {
+        let seg: String = chars[start..].iter().collect();
+        let seg = seg.trim();
+        if !seg.is_empty() {
+            out.push(seg.to_string());
+        }
+    }
+    out
+}
+
+/// Дробит слишком длинную строку (без завершающей пунктуации) на окна по словам;
+/// одиночное слово длиннее потолка рвётся по символам (последнее средство).
+fn break_long(s: &str, max: usize) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut cur = String::new();
+    let mut cur_len = 0usize;
+    for word in s.split_whitespace() {
+        let wlen = clen(word);
+        if wlen > max {
+            if !cur.is_empty() {
+                out.push(std::mem::take(&mut cur));
+                cur_len = 0;
+            }
+            let chars: Vec<char> = word.chars().collect();
+            for w in chars.chunks(max) {
+                out.push(w.iter().collect());
+            }
+            continue;
+        }
+        let add = if cur.is_empty() { wlen } else { wlen + 1 };
+        if cur_len + add > max && !cur.is_empty() {
+            out.push(std::mem::take(&mut cur));
+            cur.push_str(word);
+            cur_len = wlen;
+        } else {
+            if !cur.is_empty() {
+                cur.push(' ');
+                cur_len += 1;
+            }
+            cur.push_str(word);
+            cur_len += wlen;
+        }
+    }
+    if !cur.is_empty() {
+        out.push(cur);
+    }
+    out
+}
+
+/// Упаковывает юниты в чанки до целевого размера, начиная каждый следующий с
+/// хвоста предыдущего (перекрытие ≤ `overlap` символов, по границам юнитов).
+fn pack_units(units: &[String], target: usize, overlap: usize) -> Vec<String> {
+    let mut chunks = Vec::new();
+    let mut cur: Vec<&str> = Vec::new();
+    let mut cur_len = 0usize;
+    for unit in units {
+        let ulen = clen(unit);
+        let add = if cur.is_empty() { ulen } else { ulen + 1 };
+        if !cur.is_empty() && cur_len + add > target {
+            chunks.push(cur.join("\n"));
+            // Хвост для перекрытия: последние юниты в пределах `overlap` символов
+            // (минимум один — иначе цикл не двигался бы).
+            let mut tail: Vec<&str> = Vec::new();
+            let mut tlen = 0usize;
+            for &u in cur.iter().rev() {
+                let a = if tail.is_empty() {
+                    clen(u)
+                } else {
+                    clen(u) + 1
+                };
+                if tlen + a > overlap && !tail.is_empty() {
+                    break;
+                }
+                tail.push(u);
+                tlen += a;
+            }
+            tail.reverse();
+            cur = tail;
+            cur_len = tlen;
+        }
+        if !cur.is_empty() {
+            cur_len += 1;
+        }
+        cur.push(unit);
+        cur_len += ulen;
+    }
+    if !cur.is_empty() {
+        chunks.push(cur.join("\n"));
+    }
+    chunks
+}
+
+/// Разбивает markdown на секции `(заголовок, тело)` по ATX-заголовкам, не трогая
+/// `#` внутри огороженных блоков кода. Преамбула до первого заголовка → `("", …)`.
+fn split_sections(text: &str) -> Vec<(String, String)> {
+    let mut sections: Vec<(String, String)> = Vec::new();
+    let mut heading = String::new();
+    let mut body = String::new();
+    let mut fence: Option<&str> = None;
+    for line in text.lines() {
+        let trimmed = line.trim_start();
+        if let Some(f) = fence {
+            if trimmed.starts_with(f) {
+                fence = None;
+            }
+            body.push_str(line);
+            body.push('\n');
+            continue;
+        }
+        if trimmed.starts_with("```") || trimmed.starts_with("~~~") {
+            fence = Some(if trimmed.starts_with("```") {
+                "```"
+            } else {
+                "~~~"
+            });
+            body.push_str(line);
+            body.push('\n');
+            continue;
+        }
+        if is_atx_heading(trimmed) {
+            if !heading.is_empty() || !body.trim().is_empty() {
+                sections.push((std::mem::take(&mut heading), std::mem::take(&mut body)));
+            }
+            heading = trimmed.trim_end().to_string();
+        } else {
+            body.push_str(line);
+            body.push('\n');
+        }
+    }
+    if !heading.is_empty() || !body.trim().is_empty() {
+        sections.push((heading, body));
+    }
+    sections
+}
+
+/// Это строка ATX-заголовка markdown (`#`..`######` + пробел)?
+fn is_atx_heading(line: &str) -> bool {
+    let hashes = line.chars().take_while(|&c| c == '#').count();
+    (1..=6).contains(&hashes) && line.chars().nth(hashes) == Some(' ')
+}
+
+/// Связный фрагмент извлечения — один или несколько склеенных по перекрытию
+/// чанков одного источника (см. [`stitch_hits`]).
+pub(crate) struct StitchedPassage {
+    pub source: String,
+    pub text: String,
+    pub distance: f32,
+}
+
+/// Склеивает соседние чанки одного источника, если конец одного дословно
+/// совпадает с началом другого (перекрытие, заложенное при чанкинге): объединяет
+/// в один связный фрагмент без дубля — экономит контекст и не путает модель
+/// повтором. Фрагменты упорядочены по лучшему (минимальному) расстоянию.
+pub(crate) fn stitch_hits(hits: Vec<RagHit>) -> Vec<StitchedPassage> {
+    // Группируем по источнику, сохраняя порядок первого появления.
+    let mut by_source: Vec<(String, Vec<(String, f32)>)> = Vec::new();
+    for h in hits {
+        match by_source.iter_mut().find(|(s, _)| *s == h.source) {
+            Some(g) => g.1.push((h.chunk_text, h.distance)),
+            None => by_source.push((h.source, vec![(h.chunk_text, h.distance)])),
+        }
+    }
+    let mut passages = Vec::new();
+    for (source, mut items) in by_source {
+        // Итеративно склеиваем любые две части с реальным перекрытием.
+        while let Some((i, j, text, dist)) = find_mergeable(&items) {
+            let (hi, lo) = (i.max(j), i.min(j));
+            items.remove(hi);
+            items.remove(lo);
+            items.push((text, dist));
+        }
+        for (text, distance) in items {
+            passages.push(StitchedPassage {
+                source: source.clone(),
+                text,
+                distance,
+            });
+        }
+    }
+    passages.sort_by(|a, b| {
+        a.distance
+            .partial_cmp(&b.distance)
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
+    passages
+}
+
+/// Ищет первую пару частей `(i, j)`, которые можно склеить (конец `i` совпадает с
+/// началом `j`); возвращает индексы, объединённый текст и лучшее расстояние.
+fn find_mergeable(items: &[(String, f32)]) -> Option<(usize, usize, String, f32)> {
+    for i in 0..items.len() {
+        for j in 0..items.len() {
+            if i == j {
+                continue;
+            }
+            if let Some(text) = merge_overlap(&items[i].0, &items[j].0) {
+                return Some((i, j, text, items[i].1.min(items[j].1)));
+            }
+        }
+    }
+    None
+}
+
+/// Если конец `a` дословно совпадает с началом `b` (≥ `MIN_STITCH_OVERLAP` симв.),
+/// возвращает `a` + хвост `b` без повтора. Учитывает повторный markdown-заголовок
+/// в начале `b` (тот же, что у `a`): снимает его перед сопоставлением и не дублирует.
+fn merge_overlap(a: &str, b: &str) -> Option<String> {
+    if let Some(k) = overlap_len(a, b) {
+        let tail: String = b.chars().skip(k).collect();
+        return Some(format!("{a}{tail}"));
+    }
+    // `b` начинается с того же заголовка, что и `a` — сопоставляем тело.
+    if let (Some(ha), Some((hb, rest_b))) = (leading_heading(a), strip_leading_heading(b))
+        && ha == hb
+        && let Some(k) = overlap_len(a, &rest_b)
+    {
+        let tail: String = rest_b.chars().skip(k).collect();
+        return Some(format!("{a}{tail}"));
+    }
+    None
+}
+
+/// Длина наибольшего суффикса `a`, равного префиксу `b` (≥ `MIN_STITCH_OVERLAP`).
+fn overlap_len(a: &str, b: &str) -> Option<usize> {
+    let ac: Vec<char> = a.chars().collect();
+    let bc: Vec<char> = b.chars().collect();
+    let max = ac.len().min(bc.len());
+    let mut k = max;
+    while k >= MIN_STITCH_OVERLAP {
+        if ac[ac.len() - k..] == bc[..k] {
+            return Some(k);
+        }
+        k -= 1;
+    }
+    None
+}
+
+/// Ведущая строка-заголовок ATX (если первая строка — заголовок).
+fn leading_heading(s: &str) -> Option<String> {
+    let first = s.lines().next()?;
+    is_atx_heading(first.trim_start()).then(|| first.trim_end().to_string())
+}
+
+/// Снимает ведущий ATX-заголовок: возвращает `(заголовок, остаток)`.
+fn strip_leading_heading(s: &str) -> Option<(String, String)> {
+    let mut lines = s.splitn(2, '\n');
+    let first = lines.next()?;
+    if is_atx_heading(first.trim_start()) {
+        Some((
+            first.trim_end().to_string(),
+            lines.next().unwrap_or("").to_string(),
+        ))
+    } else {
+        None
+    }
 }
 
 #[cfg(test)]
@@ -144,12 +495,102 @@ mod tests {
     use uuid::Uuid;
 
     #[test]
-    fn chunking_splits_paragraphs_and_long_text() {
-        let text = format!("первый абзац\n\nвторой абзац\n\n{}", "x".repeat(2000));
+    fn chunking_groups_small_paragraphs() {
+        // Мелкие соседние абзацы группируются в один чанк (а не плодят крошечные).
+        let chunks = chunk_text("первый абзац\n\nвторой абзац\n\nтретий абзац");
+        assert_eq!(chunks.len(), 1, "{chunks:?}");
+        assert!(chunks[0].contains("первый абзац"));
+        assert!(chunks[0].contains("третий абзац"));
+    }
+
+    #[test]
+    fn chunking_splits_long_paragraph_with_overlap() {
+        // Длинный абзац из предложений режется на несколько чанков с перекрытием.
+        let sentence = "Это предложение средней длины для проверки чанкинга. ";
+        let text = sentence.repeat(60); // ~3000 символов
         let chunks = chunk_text(&text);
-        // 2 коротких абзаца + 3 окна по 800 из 2000 длинного.
-        assert_eq!(chunks.len(), 2 + 3);
-        assert_eq!(chunks[0], "первый абзац");
+        assert!(
+            chunks.len() >= 2,
+            "ожидаем несколько чанков: {}",
+            chunks.len()
+        );
+        // Каждый чанк в разумных пределах (потолок + перекрытие).
+        for c in &chunks {
+            assert!(
+                clen(c) <= CHUNK_MAX_CHARS + CHUNK_OVERLAP_CHARS,
+                "{}",
+                clen(c)
+            );
+        }
+        // Перекрытие: конец первого чанка дословно встречается в начале второго.
+        assert!(
+            overlap_len(&chunks[0], &chunks[1]).is_some(),
+            "ожидаем перекрытие между соседними чанками"
+        );
+    }
+
+    #[test]
+    fn chunking_never_breaks_mid_word() {
+        // Очень длинное «слово» (без пробелов) рвётся, но обычные слова — целиком.
+        let text = format!("короткое начало {} конец", "ё".repeat(2500));
+        let chunks = chunk_text(&text);
+        assert!(chunks.iter().any(|c| c.contains("короткое начало")));
+        assert!(chunks.iter().any(|c| c.contains("конец")));
+    }
+
+    #[test]
+    fn markdown_chunks_carry_their_heading() {
+        let md = "# Заголовок\n\nтекст раздела один\n\n## Подраздел\n\nтекст подраздела";
+        let chunks = chunk_markdown(md);
+        assert!(chunks.iter().any(|c| c.starts_with("# Заголовок")));
+        assert!(chunks.iter().any(|c| c.starts_with("## Подраздел")));
+        // Каждый чанк начинается со своего заголовка (смысловой якорь).
+        assert!(chunks.iter().all(|c| c.starts_with('#')));
+    }
+
+    #[test]
+    fn markdown_ignores_hash_inside_code_fence() {
+        let md = "# Реальный заголовок\n\n```python\n# это комментарий, не заголовок\nx = 1\n```";
+        let sections = split_sections(md);
+        // Один заголовок-секция (комментарий в коде не стал заголовком).
+        assert_eq!(sections.len(), 1, "{sections:?}");
+        assert_eq!(sections[0].0, "# Реальный заголовок");
+        assert!(sections[0].1.contains("# это комментарий"));
+    }
+
+    #[test]
+    fn stitch_merges_overlapping_neighbors() {
+        let mk = |text: &str, d: f32| RagHit {
+            id: Uuid::new_v4(),
+            source: "doc.md".into(),
+            chunk_text: text.into(),
+            distance: d,
+        };
+        // Конец A дословно совпадает с началом B (≥ MIN_STITCH_OVERLAP символов).
+        let a = "альфа бета гамма дельта эпсилон дзета";
+        let b = "гамма дельта эпсилон дзета эта тета йота";
+        let merged = stitch_hits(vec![mk(a, 0.2), mk(b, 0.3)]);
+        assert_eq!(merged.len(), 1, "должны склеиться в один фрагмент");
+        assert_eq!(
+            merged[0].text,
+            "альфа бета гамма дельта эпсилон дзета эта тета йота"
+        );
+        assert_eq!(merged[0].distance, 0.2, "берётся лучшее расстояние");
+    }
+
+    #[test]
+    fn stitch_keeps_unrelated_hits_separate() {
+        let mk = |src: &str, text: &str| RagHit {
+            id: Uuid::new_v4(),
+            source: src.into(),
+            chunk_text: text.into(),
+            distance: 0.5,
+        };
+        let out = stitch_hits(vec![
+            mk("a.txt", "совершенно разный текст один"),
+            mk("b.txt", "никак не связанный текст два"),
+        ]);
+        assert_eq!(out.len(), 2, "разные источники не склеиваются");
     }
 
     #[tokio::test]

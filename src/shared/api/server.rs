@@ -70,6 +70,17 @@ pub fn build_args(cfg: &ManagedConfig) -> Vec<String> {
     }
     if cfg.embeddings {
         args.push("--embeddings".into());
+        // Эмбеддинг-модели non-causal: весь вход обрабатывается в ОДНОМ физическом
+        // батче (ubatch). По умолчанию `n_ubatch=512`, и llama-server приравнивает
+        // `n_batch` к нему — поэтому чанк длиннее ~512 токенов отвергается целым
+        // запросом («input is too large to process. increase the physical batch
+        // size»). Поднимаем физический и логический батч до размера контекста, чтобы
+        // принимать чанки целиком (для кириллицы/кода 512 токенов — это лишь ~сотни
+        // символов, и крупные чанки переставали индексироваться).
+        args.push("-ub".into());
+        args.push(cfg.context_size.to_string());
+        args.push("-b".into());
+        args.push(cfg.context_size.to_string());
     }
     if cfg.no_mmap {
         args.push("--no-mmap".into());
@@ -218,6 +229,19 @@ mod tests {
         let args = build_args(&cfg);
         assert!(args.contains(&"--embeddings".to_string()));
         assert!(!args.contains(&"--jinja".to_string()));
+        // Физический/логический батч подняты до размера контекста, иначе чанки
+        // длиннее ~512 токенов отвергались бы сервером.
+        let ub = args.iter().position(|a| a == "-ub").expect("есть -ub");
+        assert_eq!(args[ub + 1], cfg.context_size.to_string());
+        let b = args.iter().position(|a| a == "-b").expect("есть -b");
+        assert_eq!(args[b + 1], cfg.context_size.to_string());
+    }
+
+    #[test]
+    fn no_batch_flags_for_non_embedding_server() {
+        // Chat-серверу батч-флаги эмбеддера не добавляем.
+        let args = build_args(&base_cfg());
+        assert!(!args.contains(&"-ub".to_string()));
     }
 
     #[test]
