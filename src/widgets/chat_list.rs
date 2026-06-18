@@ -1,5 +1,5 @@
 //! Оверлей списка чатов: поиск-фильтр, две сортировки, переименование по месту,
-//! создание/клонирование/удаление. Вызывается по `Ctrl+L`. См. spec §11.2.
+//! создание/клонирование/удаление. Открывается/закрывается по `Esc`. См. spec §11.2.
 //!
 //! Виджет самодостаточен: хранит снимок списка и состояние ввода, на нажатия
 //! отвечает [`ChatListAction`] (его исполняет `app` — единственный писатель).
@@ -25,6 +25,8 @@ pub enum ChatListAction {
     None,
     /// Закрыть оверлей.
     Close,
+    /// Выйти из приложения (`Ctrl+C`).
+    Quit,
     /// Сделать чат активным (и закрыть оверлей).
     Switch(Uuid),
     /// Создать новый чат.
@@ -153,6 +155,8 @@ impl ChatListState {
         // чтобы он не попал в строку поиска.
         if ctrl && let KeyCode::Char(c) = key.code {
             return match keys::physical_char(c) {
+                // Выход из приложения работает и из оверлея списка чатов.
+                'c' => ChatListAction::Quit,
                 'n' => ChatListAction::New,
                 'd' => match self.selected_id() {
                     Some(id) => ChatListAction::Clone(id),
@@ -341,7 +345,7 @@ impl ChatListState {
     fn help_line(&self) -> Line<'static> {
         match self.mode {
             Mode::Search => Line::from(format!(
-                " ↑↓ выбор · Enter открыть · F2 ⮞ · Ctrl+R авто-назв. · Ctrl+N новый · Ctrl+D копия · F5 в буфер · Del удалить · Tab сорт.: {} ",
+                " ↑↓ выбор · Enter открыть · Esc назад · F2 ⮞ · Ctrl+R авто-назв. · Ctrl+N новый · Ctrl+D копия · F5 в буфер · Del удалить · Ctrl+C выход · Tab сорт.: {} ",
                 self.sort.label()
             ))
             .dim(),
@@ -396,6 +400,14 @@ mod tests {
     fn esc_closes() {
         let mut s = ChatListState::new(vec![chat("A")], None);
         assert_eq!(s.on_key(key(KeyCode::Esc)), ChatListAction::Close);
+    }
+
+    #[test]
+    fn ctrl_c_quits() {
+        let mut s = ChatListState::new(vec![chat("A")], None);
+        assert_eq!(s.on_key(ctrl(KeyCode::Char('c'))), ChatListAction::Quit);
+        // И при кириллической раскладке (физ. C = Ctrl+с).
+        assert_eq!(s.on_key(ctrl(KeyCode::Char('с'))), ChatListAction::Quit);
     }
 
     #[test]
