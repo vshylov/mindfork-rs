@@ -1253,7 +1253,16 @@ async fn index_file(
     path: &std::path::Path,
 ) -> anyhow::Result<usize> {
     let content = crate::features::rag_ingest::read_text(path)?;
-    let chunks = crate::features::tools::rag::chunk_text(&content);
+    // Markdown чанкуем семантически (по заголовкам), прочее — текстовым чанкером.
+    let is_markdown = path
+        .extension()
+        .and_then(|e| e.to_str())
+        .is_some_and(|e| e.eq_ignore_ascii_case("md"));
+    let chunks = if is_markdown {
+        crate::features::tools::rag::chunk_markdown(&content)
+    } else {
+        crate::features::tools::rag::chunk_text(&content)
+    };
     if chunks.is_empty() {
         return Ok(0);
     }

@@ -164,15 +164,27 @@ impl Embedder for OpenAiClient {
     async fn embed(&self, texts: Vec<String>) -> Result<Vec<Vec<f32>>> {
         let url = format!("{}/embeddings", self.base_url);
         let body = wire::EmbeddingRequest { input: texts };
-        let resp: wire::EmbeddingResponse = self
+        let response = self
             .http
             .post(&url)
             .json(&body)
             .send()
             .await
-            .with_context(|| format!("POST {url}"))?
-            .error_for_status()
-            .context("embeddings request returned an error status")?
+            .with_context(|| format!("POST {url}"))?;
+        // Не глотаем тело ошибки (как и в chat_stream): llama-server кладёт причину в
+        // JSON (напр. «input is too large to process. increase the physical batch
+        // size» при слишком длинном чанке) — без неё «error status» бесполезен.
+        let status = response.status();
+        if !status.is_success() {
+            let body = response.text().await.unwrap_or_default();
+            let detail: String = body.trim().chars().take(500).collect();
+            tracing::warn!(%status, body = %detail, "embeddings request returned an error status");
+            if detail.is_empty() {
+                anyhow::bail!("эмбеддер вернул статус {status}");
+            }
+            anyhow::bail!("эмбеддер вернул статус {status}: {detail}");
+        }
+        let resp: wire::EmbeddingResponse = response
             .json()
             .await
             .context("decoding embeddings response")?;
