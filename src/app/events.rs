@@ -60,7 +60,7 @@ pub enum AppCommand {
     /// приходит событиями `RagProgress`. См. spec §9.3.
     RagAdd { path: String, recursive: bool },
     /// Удалить из базы знаний файл или директорию (со всем, что под ней) активного
-    /// профиля (команда `/rag delete <path>`). Результат — событие `RagProgress`.
+    /// профиля (команда `/rag remove <path>`). Результат — событие `RagProgress`.
     RagDelete { path: String },
     /// Завершить работу (оркестратор останавливается).
     Quit,
