@@ -493,10 +493,6 @@ impl ChatScreen {
                 'e' => {
                     return (!self.generating).then_some(ChatIntent::DeleteLastExchange);
                 }
-                'l' => {
-                    self.overlay = Some(ChatListState::new(self.chats.clone(), self.active_chat));
-                    return None;
-                }
                 // Подсказки орфографии для слова под курсором (spec §11.5).
                 'g' => {
                     self.open_suggestions();
@@ -539,11 +535,15 @@ impl ChatScreen {
                 self.feed_view.scroll_down(PAGE_SCROLL);
                 None
             }
+            // Esc переключает на список чатов (и обратно: Esc в открытом оверлее
+            // закрывает его — см. `handle_overlay_key`). Во время генерации Esc
+            // сперва отменяет её. Выход из приложения — `Ctrl+C`. См. spec §11.7.
             (KeyCode::Esc, _) => {
                 if self.generating {
                     Some(ChatIntent::Cancel)
                 } else {
-                    Some(ChatIntent::Quit)
+                    self.overlay = Some(ChatListState::new(self.chats.clone(), self.active_chat));
+                    None
                 }
             }
             // Shift+Enter — перенос строки; Enter — отправка (spec §11.7).
@@ -755,6 +755,8 @@ impl ChatScreen {
                 self.overlay = None;
                 None
             }
+            // `Ctrl+C` выходит из приложения и из оверлея списка чатов тоже.
+            ChatListAction::Quit => Some(ChatIntent::Quit),
             ChatListAction::Switch(id) => {
                 self.overlay = None;
                 Some(ChatIntent::SwitchChat(id))
@@ -866,8 +868,7 @@ impl ChatScreen {
 const HELP_KEYS: &[(&str, &str)] = &[
     ("Enter", "отправить сообщение"),
     ("Shift+Enter", "перенос строки"),
-    ("Esc", "отмена генерации / закрыть"),
-    ("Ctrl+L", "список чатов"),
+    ("Esc", "список чатов · закрыть · отмена генерации"),
     ("Ctrl+N", "новый чат (выбор профиля)"),
     ("F5", "копировать переписку чата"),
     ("Ctrl+R", "перегенерировать ответ"),
@@ -1078,16 +1079,43 @@ mod tests {
     }
 
     #[test]
-    fn esc_cancels_while_generating_else_quits() {
+    fn esc_opens_chat_list_else_cancels_generation() {
         let mut s = ChatScreen::new();
+        // Без генерации Esc открывает список чатов (внутреннее действие, не Quit).
+        assert!(s.overlay.is_none());
         assert_eq!(
             s.handle_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE)),
-            Some(ChatIntent::Quit)
+            None
         );
+        assert!(s.overlay.is_some(), "Esc открыл список чатов");
+        // Esc внутри оверлея закрывает его — переключение «список ↔ чат».
+        assert_eq!(
+            s.handle_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE)),
+            None
+        );
+        assert!(s.overlay.is_none(), "Esc в оверлее вернул к чату");
+        // Во время генерации Esc сперва отменяет её.
         s.begin_generation(gen_id());
         assert_eq!(
             s.handle_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE)),
             Some(ChatIntent::Cancel)
+        );
+    }
+
+    #[test]
+    fn ctrl_c_quits_from_chat_and_from_chat_list() {
+        let mut s = ChatScreen::new();
+        // Из обычного вида чата.
+        assert_eq!(
+            s.handle_key(KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL)),
+            Some(ChatIntent::Quit)
+        );
+        // И из открытого оверлея списка чатов.
+        s.handle_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
+        assert!(s.overlay.is_some());
+        assert_eq!(
+            s.handle_key(KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL)),
+            Some(ChatIntent::Quit)
         );
     }
 
@@ -1147,7 +1175,7 @@ mod tests {
     #[test]
     fn ctrl_shortcuts_work_under_cyrillic_layout() {
         // При русской раскладке физические клавиши дают кириллицу: Ctrl+з (физ. P),
-        // Ctrl+с (физ. C), Ctrl+д (физ. L) — шорткаты обязаны срабатывать.
+        // Ctrl+с (физ. C) — шорткаты обязаны срабатывать.
         let mut s = ChatScreen::new();
         s.set_settings(AppConfig::default(), vec![Profile::new("P", "sys")]);
         assert_eq!(
@@ -1160,17 +1188,10 @@ mod tests {
             Some(ChatIntent::Quit),
             "Ctrl+с (физ. C) — выход"
         );
-        // Ctrl+д (физ. L) открывает оверлей списка чатов (внутреннее действие).
-        assert!(s.overlay.is_none());
-        assert_eq!(
-            s.handle_key(KeyEvent::new(KeyCode::Char('д'), KeyModifiers::CONTROL)),
-            None
-        );
-        assert!(s.overlay.is_some(), "Ctrl+д (физ. L) открыл список чатов");
     }
 
     #[test]
-    fn ctrl_l_opens_overlay_and_routes_keys() {
+    fn esc_opens_overlay_and_routes_keys() {
         let mut s = ChatScreen::new();
         s.set_chat_list(vec![ChatSummary {
             id: gen_id(),
@@ -1180,7 +1201,7 @@ mod tests {
             message_count: 0,
         }]);
         assert!(s.overlay.is_none());
-        s.handle_key(KeyEvent::new(KeyCode::Char('l'), KeyModifiers::CONTROL));
+        s.handle_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
         assert!(s.overlay.is_some());
         // Esc внутри оверлея закрывает его, а не выходит из приложения
         let intent = s.handle_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
@@ -1211,7 +1232,7 @@ mod tests {
             modified_at: chrono::Utc::now(),
             message_count: 2,
         }]);
-        s.handle_key(KeyEvent::new(KeyCode::Char('l'), KeyModifiers::CONTROL));
+        s.handle_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
         assert!(s.overlay.is_some());
         let intent = s.handle_key(KeyEvent::new(KeyCode::Char('r'), KeyModifiers::CONTROL));
         assert_eq!(intent, Some(ChatIntent::AutoRenameChat(id)));
@@ -1246,7 +1267,7 @@ mod tests {
             modified_at: chrono::Utc::now(),
             message_count: 2,
         }]);
-        s.handle_key(KeyEvent::new(KeyCode::Char('l'), KeyModifiers::CONTROL));
+        s.handle_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
         let intent = s.handle_key(KeyEvent::new(KeyCode::F(5), KeyModifiers::NONE));
         assert_eq!(intent, Some(ChatIntent::CopyChat(id)));
         assert!(
@@ -1270,7 +1291,7 @@ mod tests {
             modified_at: chrono::Utc::now(),
             message_count: 0,
         }]);
-        s.handle_key(KeyEvent::new(KeyCode::Char('l'), KeyModifiers::CONTROL));
+        s.handle_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
         s.set_overlay_notice("в оверлей".into());
         assert_eq!(
             s.feed.len(),
@@ -1294,7 +1315,7 @@ mod tests {
             modified_at: chrono::Utc::now(),
             message_count: 0,
         }]);
-        s.handle_key(KeyEvent::new(KeyCode::Char('l'), KeyModifiers::CONTROL));
+        s.handle_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
         s.set_overlay_error("в оверлей".into());
         assert_eq!(
             s.feed.len(),

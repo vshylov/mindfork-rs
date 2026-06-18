@@ -54,10 +54,8 @@ fn spans(
         spans.push(Span::from("мышь: выделение (Ctrl+W)").dim());
     }
     spans.push(
-        Span::from(
-            "  •  F1 справка · Ctrl+L чаты · Ctrl+N новый · Ctrl+P настройки · Ctrl+C выход",
-        )
-        .dim(),
+        Span::from("  •  F1 справка · Esc чаты · Ctrl+N новый · Ctrl+P настройки · Ctrl+C выход")
+            .dim(),
     );
     spans
 }
