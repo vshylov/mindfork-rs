@@ -13,7 +13,12 @@ use std::time::Duration;
 
 use anyhow::Result;
 use ratatui::DefaultTerminal;
-use ratatui::crossterm::event::{self, DisableMouseCapture, EnableMouseCapture, Event};
+#[cfg(unix)]
+use ratatui::crossterm::event::EnableBracketedPaste;
+use ratatui::crossterm::event::{
+    self, DisableBracketedPaste, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyEvent,
+    KeyEventKind, KeyModifiers,
+};
 use ratatui::crossterm::execute;
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
 
@@ -24,6 +29,18 @@ use crate::screens::settings::{SettingsIntent, SettingsScreen};
 
 /// Период опроса ввода (тик перерисовки).
 const TICK: Duration = Duration::from_millis(50);
+
+/// Порог «всплеска» событий за один дренаж, при котором подозреваем вставку и
+/// добираем её хвост (см. `run_loop`). Человек не набирает столько за один
+/// zero-timeout-дренаж — несколько событий разом означают вставку.
+const PASTE_BURST: usize = 2;
+
+/// Пауза-детектор конца вставки. На Windows крупная вставка приходит несколькими
+/// порциями через консольный буфер, и петля дренирует их за разные итерации — на
+/// стыке порций серия символов рвалась бы, а одиночный `Enter` на стыке уезжал бы
+/// как отправка. Пока события идут с зазором < этого порога — считаем их одной
+/// вставкой; реальный ввод человека имеет паузы много больше (>100мс реакции).
+const PASTE_GAP: Duration = Duration::from_millis(20);
 
 /// Инициализирует терминал, запускает петлю и восстанавливает терминал на выходе
 /// (в т.ч. при панике — `ratatui::init` ставит panic hook). Словари спелл-чека
@@ -36,19 +53,26 @@ pub fn run(
     personal: PathBuf,
 ) -> Result<()> {
     let mut terminal = ratatui::init();
+    // На unix включаем bracketed paste: crossterm отдаёт вставку из буфера ОДНИМ
+    // событием `Event::Paste` (целиком, переводы строк — текстом, не Enter). На
+    // Windows этого режима у crossterm нет (ввод читается через Console API), там
+    // вставка приходит пачкой обычных key-событий — её собираем в петле
+    // (`process_input_batch`), поэтому включать тут нечего. См. spec §11.5.
+    #[cfg(unix)]
+    let _ = execute!(stdout(), EnableBracketedPaste);
     // Захват мыши по умолчанию ВЫКЛЮЧЕН: тогда работает нативное выделение текста
     // мышью. Прокрутка ленты колесом включается тумблером (`Ctrl+W`) — он шлёт
     // `EnableMouseCapture`/`DisableMouseCapture` (см. `dispatch`). Дополняем
-    // panic-hook ratatui выключением мыши: иначе после паники с включённым
-    // захватом терминал продолжит слать escape-коды колеса/кликов в шелл.
+    // panic-hook ratatui выключением мыши и bracketed paste: иначе после паники с
+    // включёнными режимами терминал продолжит слать escape-коды в шелл.
     let prev_hook = std::panic::take_hook();
     std::panic::set_hook(Box::new(move |info| {
-        let _ = execute!(stdout(), DisableMouseCapture);
+        let _ = execute!(stdout(), DisableMouseCapture, DisableBracketedPaste);
         prev_hook(info);
     }));
     let result = run_loop(&mut terminal, &cmd_tx, evt_rx, dict_dir, personal);
-    // Снимаем захват на выходе (безвреден, если уже выключен).
-    let _ = execute!(stdout(), DisableMouseCapture);
+    // Снимаем режимы на выходе (безвредно, если уже выключены).
+    let _ = execute!(stdout(), DisableMouseCapture, DisableBracketedPaste);
     ratatui::restore();
     // Просим оркестратор остановиться (на случай выхода не по Quit-команде).
     let _ = cmd_tx.send(AppCommand::Quit);
@@ -179,20 +203,26 @@ fn run_loop(
         if event::poll(TICK)? {
             // Любое терминальное событие (ввод, скролл, ресайз) может изменить вид.
             dirty = true;
-            match event::read()? {
-                Event::Key(key) => {
-                    if let Some(settings_screen) = &mut settings {
-                        if let Some(intent) = settings_screen.handle_key(key) {
-                            dispatch_settings(intent, cmd_tx, &mut settings);
-                        }
-                    } else if let Some(intent) = screen.handle_key(key) {
-                        quit = dispatch(intent, cmd_tx, &screen, &mut settings);
-                    }
+            // Дренируем ВСЕ доступные сейчас события разом. На Windows вставка из
+            // буфера приходит пачкой обычных key-событий (Event::Paste там нет —
+            // см. выше). Без батчинга это перерисовка на символ (тормоза), а Enter
+            // внутри текста = отправка. Пачку коалесим в `process_input_batch`.
+            let mut batch = Vec::new();
+            collect_press(&mut batch, event::read()?);
+            while event::poll(Duration::ZERO)? {
+                collect_press(&mut batch, event::read()?);
+            }
+            // Похоже на вставку (всплеск событий за один дренаж) — добираем её хвост
+            // с короткой паузой-детектором (`PASTE_GAP`), чтобы крупная вставка из
+            // нескольких консольных порций собралась в ОДНУ пачку. Иначе на стыке
+            // порций серия рвётся и одиночный `Enter` уезжает как отправка (Windows).
+            if batch.len() >= PASTE_BURST {
+                while event::poll(PASTE_GAP)? {
+                    collect_press(&mut batch, event::read()?);
                 }
-                // Колесо мыши прокручивает ленту чата. На экране настроек
-                // (своя навигация) прокрутку игнорируем.
-                Event::Mouse(mouse) if settings.is_none() => screen.handle_mouse(mouse),
-                _ => {}
+            }
+            if process_input_batch(batch, &mut screen, &mut settings, cmd_tx) {
+                quit = true;
             }
         }
     }
@@ -273,6 +303,124 @@ fn write_clipboard(slot: &mut Option<arboard::Clipboard>, text: &str) -> Result<
         .map_err(|e| e.to_string())
 }
 
+/// Кладёт событие в пачку, отбрасывая key-события «отпускания»/повтора: приложение
+/// их и так игнорирует (`handle_key` берёт только `Press`), а при коалесинге вставки
+/// они разрывали бы серию символов между нажатиями (на Windows вставка идёт как
+/// пары down/up). Мышь/ресайз/`Paste` пропускаются как есть.
+fn collect_press(batch: &mut Vec<Event>, ev: Event) {
+    if let Event::Key(k) = &ev
+        && k.kind != KeyEventKind::Press
+    {
+        return;
+    }
+    batch.push(ev);
+}
+
+/// Символ для коалесинга вставки: печатная клавиша / Enter / Tab без Ctrl/Alt.
+/// `Enter → '\r'` (CRLF из буфера затем схлопывается в `InputBox::insert_str`),
+/// `Tab → '\t'`. Возвращает `None` для всего остального (стрелки, Ctrl-шорткаты,
+/// функц. клавиши) — оно разрывает серию вставки.
+fn paste_char(key: &KeyEvent) -> Option<char> {
+    if key.kind != KeyEventKind::Press
+        || key
+            .modifiers
+            .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT)
+    {
+        return None;
+    }
+    match key.code {
+        KeyCode::Char(c) => Some(c),
+        KeyCode::Enter => Some('\r'),
+        KeyCode::Tab => Some('\t'),
+        _ => None,
+    }
+}
+
+/// Кусок пачки ввода: либо собранная вставка (серия текстовых клавиш ≥2), либо
+/// одиночное событие (обычная клавиша/мышь/unix-`Paste`).
+enum Chunk {
+    Paste(String),
+    Event(Event),
+}
+
+/// Разбивает пачку событий на куски, коалесируя подряд идущие текстовые клавиши
+/// (см. [`paste_char`]) в одну вставку, если их ≥2. Чистая функция — тестируема без
+/// экрана/терминала. Серия длиной 1 (обычный ввод символа / одиночный Enter)
+/// остаётся одиночным событием, чтобы Enter работал как отправка.
+fn chunk_batch(batch: Vec<Event>) -> Vec<Chunk> {
+    let mut out = Vec::new();
+    let mut iter = batch.into_iter().peekable();
+    while let Some(ev) = iter.next() {
+        if let Event::Key(key) = &ev
+            && let Some(first) = paste_char(key)
+        {
+            let mut run = String::new();
+            run.push(first);
+            while let Some(Event::Key(k)) = iter.peek() {
+                match paste_char(k) {
+                    Some(c) => {
+                        run.push(c);
+                        iter.next();
+                    }
+                    None => break,
+                }
+            }
+            if run.chars().count() >= 2 {
+                out.push(Chunk::Paste(run));
+                continue;
+            }
+            // Серия из одной клавиши — отдаём обычным событием (ниже).
+        }
+        out.push(Chunk::Event(ev));
+    }
+    out
+}
+
+/// Обрабатывает пачку терминальных событий за один проход. Коалесированные вставки
+/// идут в активный редактор (экран настроек) или в поле ввода чата текстом — без
+/// отправки, даже если содержат переводы строк. Одиночные события — обычным путём.
+/// Возвращает `true`, если запрошен выход.
+fn process_input_batch(
+    batch: Vec<Event>,
+    screen: &mut ChatScreen,
+    settings: &mut Option<SettingsScreen>,
+    cmd_tx: &UnboundedSender<AppCommand>,
+) -> bool {
+    let mut quit = false;
+    for chunk in chunk_batch(batch) {
+        match chunk {
+            // Вставка из буфера: на экране настроек — в активный редактор поля,
+            // иначе — в поле ввода чата (никогда не отправляет сообщение).
+            Chunk::Paste(text) | Chunk::Event(Event::Paste(text)) => {
+                if let Some(settings_screen) = settings.as_mut() {
+                    settings_screen.handle_paste(&text);
+                } else {
+                    screen.handle_paste(&text);
+                }
+            }
+            Chunk::Event(Event::Key(key)) => {
+                if let Some(settings_screen) = settings.as_mut() {
+                    // Два стейтмента (не collapsible): сперва снимаем намерение, чтобы
+                    // отпустить заимствование `settings` до `dispatch_settings`.
+                    let intent = settings_screen.handle_key(key);
+                    if let Some(intent) = intent {
+                        dispatch_settings(intent, cmd_tx, settings);
+                    }
+                } else if let Some(intent) = screen.handle_key(key)
+                    && dispatch(intent, cmd_tx, screen, settings)
+                {
+                    quit = true;
+                }
+            }
+            // Колесо мыши прокручивает ленту чата. На экране настроек (своя
+            // навигация) прокрутку игнорируем.
+            Chunk::Event(Event::Mouse(mouse)) if settings.is_none() => screen.handle_mouse(mouse),
+            Chunk::Event(_) => {}
+        }
+    }
+    quit
+}
+
 /// Транслирует намерение чата в команду оркестратору (или открывает настройки).
 /// Возвращает `true` для [`ChatIntent::Quit`] (петля завершается).
 fn dispatch(
@@ -347,6 +495,114 @@ fn dispatch_settings(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn key(code: KeyCode) -> Event {
+        Event::Key(KeyEvent::new(code, KeyModifiers::NONE))
+    }
+
+    #[test]
+    fn chunk_batch_coalesces_text_run_with_newline() {
+        // Серия «a Enter b» (как пришла бы вставка "a\nb" на Windows) → одна вставка;
+        // Enter внутри серии становится переводом строки ('\r' схлопнется при вставке).
+        let batch = vec![
+            key(KeyCode::Char('a')),
+            key(KeyCode::Enter),
+            key(KeyCode::Char('b')),
+        ];
+        let chunks = chunk_batch(batch);
+        assert_eq!(chunks.len(), 1);
+        match &chunks[0] {
+            Chunk::Paste(s) => assert_eq!(s, "a\rb"),
+            _ => panic!("ожидалась коалесированная вставка"),
+        }
+    }
+
+    #[test]
+    fn chunk_batch_keeps_multiple_newlines_in_one_paste() {
+        // Серия с несколькими Enter внутри (многострочная вставка) → одна вставка,
+        // все Enter — переводы строк, ни один не уезжает отправкой.
+        let batch = vec![
+            key(KeyCode::Char('a')),
+            key(KeyCode::Enter),
+            key(KeyCode::Char('b')),
+            key(KeyCode::Enter),
+            key(KeyCode::Char('c')),
+        ];
+        let chunks = chunk_batch(batch);
+        assert_eq!(chunks.len(), 1);
+        assert!(matches!(&chunks[0], Chunk::Paste(s) if s == "a\rb\rc"));
+    }
+
+    #[test]
+    fn chunk_batch_single_enter_stays_event() {
+        // Одиночный Enter — это отправка, НЕ вставка.
+        let chunks = chunk_batch(vec![key(KeyCode::Enter)]);
+        assert_eq!(chunks.len(), 1);
+        assert!(matches!(chunks[0], Chunk::Event(_)));
+    }
+
+    #[test]
+    fn chunk_batch_single_char_stays_event() {
+        let chunks = chunk_batch(vec![key(KeyCode::Char('x'))]);
+        assert_eq!(chunks.len(), 1);
+        assert!(matches!(chunks[0], Chunk::Event(_)));
+    }
+
+    #[test]
+    fn chunk_batch_splits_run_on_arrow() {
+        // Стрелка разрывает серию: "ab" (вставка) + стрелка (событие) + "cd" (вставка).
+        let batch = vec![
+            key(KeyCode::Char('a')),
+            key(KeyCode::Char('b')),
+            key(KeyCode::Left),
+            key(KeyCode::Char('c')),
+            key(KeyCode::Char('d')),
+        ];
+        let chunks = chunk_batch(batch);
+        assert_eq!(chunks.len(), 3);
+        assert!(matches!(&chunks[0], Chunk::Paste(s) if s == "ab"));
+        assert!(matches!(chunks[1], Chunk::Event(_)));
+        assert!(matches!(&chunks[2], Chunk::Paste(s) if s == "cd"));
+    }
+
+    #[test]
+    fn paste_char_maps_and_filters() {
+        assert_eq!(
+            paste_char(&KeyEvent::new(KeyCode::Char('q'), KeyModifiers::NONE)),
+            Some('q')
+        );
+        assert_eq!(
+            paste_char(&KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE)),
+            Some('\r')
+        );
+        assert_eq!(
+            paste_char(&KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE)),
+            Some('\t')
+        );
+        // Ctrl/Alt-комбинации не часть вставки (Ctrl+V, Alt+… — это шорткаты).
+        assert_eq!(
+            paste_char(&KeyEvent::new(KeyCode::Char('v'), KeyModifiers::CONTROL)),
+            None
+        );
+        assert_eq!(
+            paste_char(&KeyEvent::new(KeyCode::Left, KeyModifiers::NONE)),
+            None
+        );
+    }
+
+    #[test]
+    fn collect_press_drops_release_events() {
+        let mut batch = Vec::new();
+        collect_press(&mut batch, key(KeyCode::Char('a')));
+        // «Отпускание» клавиши отбрасывается (иначе разрывало бы серию вставки).
+        let release = Event::Key(KeyEvent::new_with_kind(
+            KeyCode::Char('a'),
+            KeyModifiers::NONE,
+            KeyEventKind::Release,
+        ));
+        collect_press(&mut batch, release);
+        assert_eq!(batch.len(), 1);
+    }
 
     #[test]
     fn spell_loader_reloads_only_on_change() {

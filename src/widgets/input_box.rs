@@ -147,6 +147,29 @@ impl InputBox {
         self.col = 0;
     }
 
+    /// Вставляет произвольный текст в позицию курсора (вставка из буфера обмена).
+    /// Переводы строк (`\n`) разбивают текущую логическую строку на новые; `\r`
+    /// нормализуются (`\r\n`/`\r` → `\n`), `\t` разворачивается в пробелы. Курсор
+    /// встаёт в конец вставленного. Один проход без посимвольной петли — поэтому
+    /// большая вставка не тормозит (см. bracketed paste, spec §11.5).
+    pub fn insert_str(&mut self, text: &str) {
+        // Хвост текущей строки после курсора — приклеим к последней вставленной.
+        let tail: Vec<char> = self.lines[self.row].split_off(self.col);
+        let mut first = true;
+        for segment in normalize_paste(text).split('\n') {
+            if first {
+                first = false;
+            } else {
+                // Новый перевод строки: заводим следующую логическую строку.
+                self.row += 1;
+                self.lines.insert(self.row, Vec::new());
+            }
+            self.lines[self.row].extend(segment.chars());
+        }
+        self.col = self.lines[self.row].len();
+        self.lines[self.row].extend(tail);
+    }
+
     pub fn backspace(&mut self) {
         if self.col > 0 {
             self.col -= 1;
@@ -367,6 +390,15 @@ impl InputBox {
     }
 }
 
+/// Нормализует текст из буфера обмена перед вставкой: `\r\n`/`\r` → `\n`
+/// (единый перевод строки), `\t` → пробелы. Прочие управляющие символы оставляем
+/// как есть (терминал/рендер их отфильтруют).
+fn normalize_paste(text: &str) -> String {
+    text.replace("\r\n", "\n")
+        .replace('\r', "\n")
+        .replace('\t', "    ")
+}
+
 /// Пересекает диапазоны ошибок `[s, e)` логической строки с визуальным рядом
 /// `[start, end)` и сдвигает в координаты ряда (для подчёркивания в [`styled_line`]).
 fn clip_ranges(ranges: &[(usize, usize)], start: usize, end: usize) -> Vec<(usize, usize)> {
@@ -487,6 +519,46 @@ mod tests {
         ib.move_left();
         ib.insert_char('!'); // курсор был на позиции 2 → между ж и и
         assert_eq!(ib.text(), "ёж!и");
+    }
+
+    #[test]
+    fn insert_str_multiline_at_cursor() {
+        let mut ib = InputBox::new();
+        ib.set_text("aXd");
+        ib.row = 0;
+        ib.col = 1; // курсор между 'a' и 'X'
+        ib.insert_str("b\nc");
+        // 'a' + вставка("b\nc") + хвост("Xd")
+        assert_eq!(ib.text(), "ab\ncXd");
+        assert_eq!(ib.line_count(), 2);
+        // курсор в конце вставленного, перед хвостом "Xd"
+        assert_eq!(ib.cursor(), (1, 1));
+    }
+
+    #[test]
+    fn insert_str_normalizes_newlines_and_tabs() {
+        let mut ib = InputBox::new();
+        ib.insert_str("a\r\nb\rc\td");
+        assert_eq!(ib.text(), "a\nb\nc    d");
+        assert_eq!(ib.line_count(), 3);
+    }
+
+    #[test]
+    fn insert_str_single_line_keeps_one_row() {
+        let mut ib = InputBox::new();
+        type_str(&mut ib, "ab");
+        ib.insert_str("XY"); // курсор в конце
+        assert_eq!(ib.text(), "abXY");
+        assert_eq!(ib.line_count(), 1);
+        assert_eq!(ib.cursor(), (0, 4));
+    }
+
+    #[test]
+    fn insert_str_unicode() {
+        let mut ib = InputBox::new();
+        ib.insert_str("привет\nмир");
+        assert_eq!(ib.text(), "привет\nмир");
+        assert_eq!(ib.cursor(), (1, 3));
     }
 
     #[test]

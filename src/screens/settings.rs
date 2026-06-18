@@ -526,6 +526,14 @@ impl SettingsScreen {
         }
     }
 
+    /// Вставка из буфера обмена (bracketed paste): осмысленна только когда открыт
+    /// текстовый редактор поля (например, путь к модели) — иначе no-op. См. spec §11.5.
+    pub fn handle_paste(&mut self, text: &str) {
+        if let Some(editor) = self.editor.as_mut() {
+            editor.input.insert_str(text);
+        }
+    }
+
     fn move_section(&mut self, delta: i32) {
         let n = SECTIONS.len() as i32;
         self.section_idx = (((self.section_idx as i32 + delta) % n + n) % n) as usize;
