@@ -287,6 +287,10 @@ fn push_thoughts(lines: &mut Vec<Line<'static>>, thoughts: &str, expanded: bool)
 /// Добавляет тело ответа ассистента с tool-блоками **на местах вызова**: фрагмент
 /// текста до вызова → tool-блок → следующий фрагмент и т.д. (см. spec §11.3).
 /// `text_offset` каждого вызова делит `item.text` на фрагменты markdown.
+///
+/// Tool-блоки отделяются от текста (и от соседних tool-блоков) пустой строкой
+/// сверху и снизу, чтобы не сливались с сообщением; идущие подряд вызовы делит
+/// ровно одна пустая строка (`ensure_blank_line` схлопывает соседние).
 fn push_assistant_body(
     lines: &mut Vec<Line<'static>>,
     item: &FeedMessage,
@@ -301,16 +305,38 @@ fn push_assistant_body(
         if off > pos {
             push_markdown_fragment(lines, &text[pos..off], palette, width);
         }
+        // Пустая строка перед вызовом (схлопывается, если предыдущая уже пуста —
+        // напр. между двумя подряд идущими вызовами).
+        ensure_blank_line(lines);
         push_tool(lines, tool, palette, width);
         produced = true;
         pos = off;
     }
-    if pos < text.len() && push_markdown_fragment(lines, &text[pos..], palette, width) {
-        produced = true;
+    if pos < text.len() {
+        // Текст после последнего вызова отделяем пустой строкой.
+        if !item.tools.is_empty() {
+            ensure_blank_line(lines);
+        }
+        if push_markdown_fragment(lines, &text[pos..], palette, width) {
+            produced = true;
+        }
     }
     // Пустой стримящийся ответ (ещё ни текста, ни вызовов) — индикатор «…».
     if !produced && item.streaming {
         lines.push(Line::from("…").dim());
+    }
+}
+
+/// Добавляет пустую строку-разделитель, если последняя строка ещё не пуста.
+/// Так соседние разделители (напр. «после вызова» + «перед следующим вызовом»)
+/// схлопываются в одну пустую строку. На пустом буфере — no-op (без ведущей пустой).
+fn ensure_blank_line(lines: &mut Vec<Line<'static>>) {
+    let blank = lines
+        .last()
+        .map(|l| l.spans.iter().all(|s| s.content.trim().is_empty()))
+        .unwrap_or(true);
+    if !blank {
+        lines.push(Line::from(""));
     }
 }
 
@@ -470,6 +496,82 @@ mod tests {
             idx_before < idx_tool && idx_tool < idx_after,
             "ожидался порядок: текст-до < вызов < текст-после, было {idx_before}/{idx_tool}/{idx_after}"
         );
+    }
+
+    /// Хелпер: рендер строк в список «есть ли в строке непустой контент» —
+    /// удобно искать пустые строки-разделители.
+    fn row_texts(lines: &[Line<'static>]) -> Vec<String> {
+        lines
+            .iter()
+            .map(|l| l.spans.iter().map(|s| s.content.as_ref()).collect())
+            .collect()
+    }
+
+    #[test]
+    fn tool_block_separated_from_text_by_blank_lines() {
+        // текст-до → вызов → текст-после: вокруг вызова должны быть пустые строки.
+        let feed = MessageFeed::new();
+        let mut m = msg(FeedRole::Assistant, "доПОСЛЕ", "");
+        m.tools.push(FeedToolCall {
+            name: "note_save".into(),
+            arguments: String::new(),
+            result: String::new(),
+            text_offset: "до".len(),
+        });
+        let rows = row_texts(&feed.build_lines(&[m], &Palette::default(), 80));
+        let i_before = rows.iter().position(|r| r.contains("до")).unwrap();
+        let i_tool = rows
+            .iter()
+            .position(|r| r.contains("🔧 note_save"))
+            .unwrap();
+        let i_after = rows.iter().position(|r| r.contains("ПОСЛЕ")).unwrap();
+        // Между текстом-до и вызовом — ровно одна пустая строка.
+        assert!(
+            rows[i_before + 1..i_tool]
+                .iter()
+                .all(|r| r.trim().is_empty())
+        );
+        assert_eq!(
+            i_tool - i_before,
+            2,
+            "ожидалась одна пустая строка перед вызовом"
+        );
+        // Между вызовом и текстом-после — ровно одна пустая строка.
+        assert_eq!(
+            i_after - i_tool,
+            2,
+            "ожидалась одна пустая строка после вызова"
+        );
+    }
+
+    #[test]
+    fn consecutive_tool_blocks_have_single_blank_between() {
+        let feed = MessageFeed::new();
+        let mut m = msg(FeedRole::Assistant, "", "");
+        for name in ["first_tool", "second_tool"] {
+            m.tools.push(FeedToolCall {
+                name: name.into(),
+                arguments: String::new(),
+                result: String::new(),
+                text_offset: 0,
+            });
+        }
+        let rows = row_texts(&feed.build_lines(&[m], &Palette::default(), 80));
+        let i1 = rows
+            .iter()
+            .position(|r| r.contains("🔧 first_tool"))
+            .unwrap();
+        let i2 = rows
+            .iter()
+            .position(|r| r.contains("🔧 second_tool"))
+            .unwrap();
+        // Между двумя подряд идущими вызовами — ровно одна пустая строка.
+        assert_eq!(
+            i2 - i1,
+            2,
+            "между соседними вызовами должна быть одна пустая строка"
+        );
+        assert!(rows[i1 + 1..i2].iter().all(|r| r.trim().is_empty()));
     }
 
     #[test]
