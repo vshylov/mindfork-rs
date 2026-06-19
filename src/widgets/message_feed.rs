@@ -9,7 +9,7 @@
 
 use ratatui::Frame;
 use ratatui::layout::Rect;
-use ratatui::style::Stylize;
+use ratatui::style::{Modifier, Style, Stylize};
 use ratatui::text::{Line, Span, Text};
 use ratatui::widgets::{Block, Borders, Paragraph};
 
@@ -27,12 +27,18 @@ pub enum FeedRole {
     Note,
 }
 
-/// Tool-блок в ленте: имя инструмента, аргументы и результат (сворачиваемо). См. spec §11.3.
+/// Tool-блок в ленте: имя инструмента, аргументы и результат. См. spec §11.3.
+///
+/// `text_offset` — позиция вызова **в байтах** внутри `FeedMessage::text`: сколько
+/// текста ответа ассистента было сгенерировано ДО этого вызова. Так tool-блок
+/// рисуется ровно на месте вызова (между фрагментами текста), а не в «шапке».
 #[derive(Debug, Clone)]
 pub struct FeedToolCall {
     pub name: String,
     pub arguments: String,
     pub result: String,
+    /// Смещение (в байтах) в `FeedMessage::text`, после которого был сделан вызов.
+    pub text_offset: usize,
 }
 
 /// Элемент ленты сообщений.
@@ -62,12 +68,16 @@ impl FeedMessage {
     /// Проекция доменного сообщения (для перестроения ленты при активации чата).
     /// Системные и tool-сообщения отбрасываются (`None`): tool-вызовы показываются
     /// как блоки внутри сообщения ассистента (`tool_calls`), а не отдельно.
+    ///
+    /// Все вызовы инструментов раунда сделаны ПОСЛЕ его текста, поэтому их
+    /// `text_offset` = длина текста (вызовы рисуются под ним).
     pub fn from_message(msg: &Message) -> Option<Self> {
         let role = match msg.role {
             MessageRole::User => FeedRole::User,
             MessageRole::Assistant => FeedRole::Assistant,
             MessageRole::Tool | MessageRole::System => return None,
         };
+        let off = msg.text.len();
         let tools = msg
             .tool_calls
             .iter()
@@ -75,6 +85,7 @@ impl FeedMessage {
                 name: tc.name.clone(),
                 arguments: tc.arguments.to_string(),
                 result: tc.result.clone().unwrap_or_default(),
+                text_offset: off,
             })
             .collect();
         Some(Self {
@@ -84,6 +95,47 @@ impl FeedMessage {
             tools,
             streaming: false,
         })
+    }
+
+    /// Проекция списка доменных сообщений в ленту со **склейкой раундов**: подряд
+    /// идущие сообщения ассистента (раунды agentic-loop, между которыми в истории
+    /// лежат tool-сообщения — они отбрасываются) сливаются в один блок «Ассистент:».
+    /// Тексты раундов конкатенируются (через пустую строку), а `text_offset`
+    /// вызовов каждого раунда сдвигается на накопленную длину — так live-стрим и
+    /// перезагрузка из истории дают одинаковую инлайн-раскладку вызовов.
+    pub fn from_messages(messages: &[Message]) -> Vec<Self> {
+        let mut out: Vec<Self> = Vec::new();
+        for msg in messages {
+            let Some(mut fm) = Self::from_message(msg) else {
+                continue;
+            };
+            // Сливаем раунд ассистента с предыдущим блоком ассистента.
+            if fm.role == FeedRole::Assistant
+                && let Some(last) = out.last_mut()
+                && last.role == FeedRole::Assistant
+            {
+                if !fm.text.is_empty() {
+                    if !last.text.is_empty() {
+                        last.text.push_str("\n\n");
+                    }
+                    last.text.push_str(&fm.text);
+                }
+                let base = last.text.len();
+                for mut tc in fm.tools.drain(..) {
+                    tc.text_offset = base;
+                    last.tools.push(tc);
+                }
+                if !fm.thoughts.is_empty() {
+                    if !last.thoughts.is_empty() {
+                        last.thoughts.push('\n');
+                    }
+                    last.thoughts.push_str(&fm.thoughts);
+                }
+                continue;
+            }
+            out.push(fm);
+        }
+        out
     }
 }
 
@@ -195,15 +247,17 @@ impl MessageFeed {
         }
         for item in messages {
             match item.role {
-                FeedRole::User => lines.push(Line::from("Вы:").bold().fg(palette.user)),
-                FeedRole::Assistant => {
-                    lines.push(Line::from("Ассистент:").bold().fg(palette.assistant))
+                FeedRole::User => {
+                    lines.push(Line::from("Вы:").bold().fg(palette.user));
+                    push_body(&mut lines, item, palette, width);
                 }
-                FeedRole::Note => {}
+                FeedRole::Assistant => {
+                    lines.push(Line::from("Ассистент:").bold().fg(palette.assistant));
+                    push_thoughts(&mut lines, &item.thoughts, self.show_thoughts);
+                    push_assistant_body(&mut lines, item, palette, width);
+                }
+                FeedRole::Note => push_body(&mut lines, item, palette, width),
             }
-            push_thoughts(&mut lines, &item.thoughts, self.show_thoughts);
-            push_tools(&mut lines, &item.tools, palette);
-            push_body(&mut lines, item, palette, width);
             lines.push(Line::from(""));
         }
         lines
@@ -230,38 +284,109 @@ fn push_thoughts(lines: &mut Vec<Line<'static>>, thoughts: &str, expanded: bool)
     }
 }
 
-/// Добавляет tool-блоки сообщения: имя + аргументы + результат (кратко, dim).
-fn push_tools(lines: &mut Vec<Line<'static>>, tools: &[FeedToolCall], palette: &Palette) {
-    for tool in tools {
-        lines.push(
-            Line::from(format!(
-                "  🔧 {}({})",
-                tool.name,
-                truncate(&tool.arguments, 80)
-            ))
-            .dim()
-            .fg(palette.tool),
-        );
-        if !tool.result.is_empty() {
-            for line in tool.result.lines().take(6) {
-                lines.push(Line::from(format!("  │ {}", truncate(line, 100))).dim());
-            }
+/// Добавляет тело ответа ассистента с tool-блоками **на местах вызова**: фрагмент
+/// текста до вызова → tool-блок → следующий фрагмент и т.д. (см. spec §11.3).
+/// `text_offset` каждого вызова делит `item.text` на фрагменты markdown.
+fn push_assistant_body(
+    lines: &mut Vec<Line<'static>>,
+    item: &FeedMessage,
+    palette: &Palette,
+    width: usize,
+) {
+    let text = item.text.as_str();
+    let mut pos = 0usize;
+    let mut produced = false;
+    for tool in &item.tools {
+        let off = clamp_boundary(text, tool.text_offset.min(text.len())).max(pos);
+        if off > pos {
+            push_markdown_fragment(lines, &text[pos..off], palette, width);
+        }
+        push_tool(lines, tool, palette, width);
+        produced = true;
+        pos = off;
+    }
+    if pos < text.len() && push_markdown_fragment(lines, &text[pos..], palette, width) {
+        produced = true;
+    }
+    // Пустой стримящийся ответ (ещё ни текста, ни вызовов) — индикатор «…».
+    if !produced && item.streaming {
+        lines.push(Line::from("…").dim());
+    }
+}
+
+/// Рендерит фрагмент текста как markdown (если он не пустой). Возвращает, выдал ли строки.
+fn push_markdown_fragment(
+    lines: &mut Vec<Line<'static>>,
+    fragment: &str,
+    palette: &Palette,
+    width: usize,
+) -> bool {
+    if fragment.trim().is_empty() {
+        return false;
+    }
+    let rendered = markdown::render(fragment, width, palette);
+    lines.extend(rendered.lines);
+    true
+}
+
+/// Один tool-блок: заголовок `🔧 имя(аргументы)` (цвет инструмента) и результат на
+/// гуттере `│`. Аргументы и результат **переносятся по ширине** (не обрезаются).
+fn push_tool(lines: &mut Vec<Line<'static>>, tool: &FeedToolCall, palette: &Palette, width: usize) {
+    let head_style = Style::default()
+        .fg(palette.tool)
+        .add_modifier(Modifier::DIM);
+    let header = if tool.arguments.trim().is_empty() {
+        format!("🔧 {}", tool.name)
+    } else {
+        format!("🔧 {}({})", tool.name, tool.arguments)
+    };
+    // Первый ряд с отступом «  », продолжения выравниваем под имя.
+    push_wrapped(lines, "  ", "     ", &header, width, head_style);
+    if !tool.result.is_empty() {
+        let body_style = Style::default().add_modifier(Modifier::DIM);
+        push_wrapped(lines, "  │ ", "  │ ", &tool.result, width, body_style);
+    }
+}
+
+/// Переносит `text` по визуальной ширине с гуттер-префиксами и кладёт в `lines`.
+/// `first` — префикс самого первого ряда блока, `cont` — всех последующих рядов
+/// (и продолжений переноса, и новых логических строк исходника). Каждая строка
+/// `text` переносится отдельно, сохраняя переводы строк.
+fn push_wrapped(
+    lines: &mut Vec<Line<'static>>,
+    first: &str,
+    cont: &str,
+    text: &str,
+    width: usize,
+    style: Style,
+) {
+    let first_w = wrap::display_width(&first.chars().collect::<Vec<_>>());
+    let cont_w = wrap::display_width(&cont.chars().collect::<Vec<_>>());
+    let body_w = width.saturating_sub(first_w.max(cont_w)).max(1);
+    let mut first_row = true;
+    for src in text.split('\n') {
+        let chars: Vec<char> = src.chars().collect();
+        for (s, e) in wrap::wrap_ranges(&chars, body_w) {
+            let prefix = if first_row { first } else { cont };
+            first_row = false;
+            let content: String = chars[s..e].iter().collect();
+            lines.push(Line::from(vec![
+                Span::styled(prefix.to_string(), style),
+                Span::styled(content, style),
+            ]));
         }
     }
 }
 
-/// Обрезает строку до `max` символов с многоточием.
-fn truncate(s: &str, max: usize) -> String {
-    if s.chars().count() <= max {
-        s.to_string()
-    } else {
-        let mut out: String = s.chars().take(max).collect();
-        out.push('…');
-        out
+/// Ближайшая (вниз) валидная граница символа для байтового смещения.
+fn clamp_boundary(text: &str, mut off: usize) -> usize {
+    while off < text.len() && !text.is_char_boundary(off) {
+        off += 1;
     }
+    off.min(text.len())
 }
 
-/// Добавляет тело сообщения: markdown для user/assistant, dim-текст для заметок.
+/// Добавляет тело сообщения: markdown для user, dim-текст для заметок.
 fn push_body(lines: &mut Vec<Line<'static>>, item: &FeedMessage, palette: &Palette, width: usize) {
     if item.text.is_empty() {
         if item.streaming {
@@ -307,6 +432,7 @@ mod tests {
             name: "note_save".into(),
             arguments: "{\"content\":\"x\"}".into(),
             result: "Заметка сохранена".into(),
+            text_offset: m.text.len(),
         });
         let lines = feed.build_lines(&[m], &Palette::default(), 80);
         let joined: String = lines
@@ -315,6 +441,69 @@ mod tests {
             .collect();
         assert!(joined.contains("🔧 note_save"));
         assert!(joined.contains("Заметка сохранена"));
+    }
+
+    #[test]
+    fn tool_call_renders_after_preceding_text_inline() {
+        // Текст до вызова → tool-блок → текст после вызова: проверяем порядок строк.
+        let feed = MessageFeed::new();
+        let mut m = msg(FeedRole::Assistant, "Ищу погоду.\n\nГотово: ясно.", "");
+        let off = "Ищу погоду.".len();
+        m.tools.push(FeedToolCall {
+            name: "web_search".into(),
+            arguments: "{}".into(),
+            result: "ясно".into(),
+            text_offset: off,
+        });
+        let lines = feed.build_lines(&[m], &Palette::default(), 80);
+        let rows: Vec<String> = lines
+            .iter()
+            .map(|l| l.spans.iter().map(|s| s.content.as_ref()).collect())
+            .collect();
+        let idx_before = rows.iter().position(|r| r.contains("Ищу погоду")).unwrap();
+        let idx_tool = rows
+            .iter()
+            .position(|r| r.contains("🔧 web_search"))
+            .unwrap();
+        let idx_after = rows.iter().position(|r| r.contains("Готово")).unwrap();
+        assert!(
+            idx_before < idx_tool && idx_tool < idx_after,
+            "ожидался порядок: текст-до < вызов < текст-после, было {idx_before}/{idx_tool}/{idx_after}"
+        );
+    }
+
+    #[test]
+    fn long_tool_result_wraps_not_truncated() {
+        let feed = MessageFeed::new();
+        let mut m = msg(FeedRole::Assistant, "ок", "");
+        let long = "слово ".repeat(40); // ~240 символов — заведомо шире узкой ленты
+        m.tools.push(FeedToolCall {
+            name: "web_search".into(),
+            arguments: String::new(),
+            result: long.trim_end().into(),
+            text_offset: 0,
+        });
+        let lines = feed.build_lines(&[m], &Palette::default(), 30);
+        // Результат не обрезан (нет «…») и разложен на несколько рядов гуттера.
+        let gutter_rows = lines
+            .iter()
+            .filter(|l| {
+                let s: String = l.spans.iter().map(|sp| sp.content.as_ref()).collect();
+                s.starts_with("  │ ")
+            })
+            .count();
+        assert!(
+            gutter_rows > 1,
+            "длинный результат должен переноситься, рядов: {gutter_rows}"
+        );
+        let joined: String = lines
+            .iter()
+            .flat_map(|l| l.spans.iter().map(|s| s.content.as_ref()))
+            .collect();
+        assert!(
+            !joined.contains('…'),
+            "результат не должен обрезаться многоточием"
+        );
     }
 
     #[test]

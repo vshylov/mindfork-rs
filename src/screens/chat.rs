@@ -178,6 +178,12 @@ pub struct ChatScreen {
     rag: Option<RagBanner>,
     /// Состояние имперсонации (`Ctrl+U`); `None` — не идёт. См. spec §11.8.
     impersonation: Option<ImpersonationState>,
+    /// Был ли вызов инструмента после последнего текстового чанка стримящегося
+    /// ответа: первый текст следующего раунда отделяется пустой строкой (`\n\n`),
+    /// чтобы live-стрим совпадал с перезагрузкой (`FeedMessage::from_messages`).
+    pending_text_sep: bool,
+    /// То же для блока «мыслей» (разделитель `\n` между раундами).
+    pending_thoughts_sep: bool,
 }
 
 impl Default for ChatScreen {
@@ -212,6 +218,8 @@ impl ChatScreen {
             mouse_scroll: false,
             rag: None,
             impersonation: None,
+            pending_text_sep: false,
+            pending_thoughts_sep: false,
         }
     }
 
@@ -303,10 +311,8 @@ impl ChatScreen {
         self.title = title;
         self.current_gen = None;
         self.generating = false;
-        self.feed = messages
-            .iter()
-            .filter_map(FeedMessage::from_message)
-            .collect();
+        // Склейка раундов agentic-loop в один блок «Ассистент:» с инлайн tool-блоками.
+        self.feed = FeedMessage::from_messages(messages);
         self.feed_view.scroll_to_bottom();
         // Загружаем сохранённый черновик чата в поле ввода (пустой у нового чата).
         // НЕ помечаем `draft_dirty` — иначе тут же отправили бы его обратно тем же
@@ -344,6 +350,8 @@ impl ChatScreen {
     pub fn begin_generation(&mut self, generation_id: Uuid) {
         self.current_gen = Some(generation_id);
         self.generating = true;
+        self.pending_text_sep = false;
+        self.pending_thoughts_sep = false;
         self.feed.push(FeedMessage {
             role: FeedRole::Assistant,
             text: String::new(),
@@ -365,11 +373,18 @@ impl ChatScreen {
         if self.current_gen == Some(generation_id)
             && let Some(last) = self.feed.last_mut()
         {
+            // Вызов сделан после уже накопленного текста ответа — фиксируем позицию,
+            // чтобы tool-блок встал на месте вызова, а не в «шапке».
+            let text_offset = last.text.len();
             last.tools.push(crate::widgets::message_feed::FeedToolCall {
                 name,
                 arguments,
                 result,
+                text_offset,
             });
+            // Текст/мысли следующего раунда отделяем разделителем (как при перезагрузке).
+            self.pending_text_sep = true;
+            self.pending_thoughts_sep = true;
             self.feed_view.scroll_to_bottom();
         }
     }
@@ -378,6 +393,14 @@ impl ChatScreen {
         if self.current_gen == Some(generation_id)
             && let Some(last) = self.feed.last_mut()
         {
+            // Первый текст раунда после вызова инструмента — с пустой строкой-
+            // разделителем (совпадение с `FeedMessage::from_messages`).
+            if self.pending_text_sep {
+                self.pending_text_sep = false;
+                if !last.text.is_empty() {
+                    last.text.push_str("\n\n");
+                }
+            }
             last.text.push_str(text);
         }
     }
@@ -386,6 +409,12 @@ impl ChatScreen {
         if self.current_gen == Some(generation_id)
             && let Some(last) = self.feed.last_mut()
         {
+            if self.pending_thoughts_sep {
+                self.pending_thoughts_sep = false;
+                if !last.thoughts.is_empty() {
+                    last.thoughts.push('\n');
+                }
+            }
             last.thoughts.push_str(text);
         }
     }
@@ -1152,6 +1181,53 @@ mod tests {
         assert_eq!(s.feed[1].thoughts, "hmm");
         assert!(!s.feed[1].streaming);
         assert!(!s.generating);
+    }
+
+    #[test]
+    fn live_stream_with_tool_matches_reload() {
+        use crate::entities::message::{Message, ToolCallRecord};
+
+        // Live: текст раунда 1 → вызов инструмента → текст раунда 2 (финал).
+        let mut s = ChatScreen::new();
+        let id = gen_id();
+        s.begin_generation(id);
+        s.push_chunk(id, "Ищу погоду.");
+        s.push_tool_call(
+            id,
+            "web_search".into(),
+            "{\"q\":\"погода\"}".into(),
+            "ясно".into(),
+        );
+        s.push_chunk(id, "Сейчас ясно.");
+        s.finish_generation(id, FinishReason::Stop);
+
+        let live = s.feed.last().unwrap().clone();
+        assert_eq!(live.text, "Ищу погоду.\n\nСейчас ясно.");
+        assert_eq!(live.tools.len(), 1);
+        assert_eq!(live.tools[0].text_offset, "Ищу погоду.".len());
+
+        // Reload: те же раунды как доменные сообщения (assistant+tool / assistant).
+        let mut r1 = Message::assistant("Ищу погоду.");
+        r1.tool_calls = vec![ToolCallRecord {
+            id: "c1".into(),
+            name: "web_search".into(),
+            arguments: serde_json::json!({"q": "погода"}),
+            result: Some("ясно".into()),
+        }];
+        let tool_msg = {
+            let mut m = Message::new(MessageRole::Tool, "ясно");
+            m.tool_call_id = Some("c1".into());
+            m.tool_name = Some("web_search".into());
+            m
+        };
+        let r2 = Message::assistant("Сейчас ясно.");
+        let reload = FeedMessage::from_messages(&[r1, tool_msg, r2]);
+
+        // Один слитый блок ассистента, тот же текст и то же смещение вызова.
+        assert_eq!(reload.len(), 1);
+        assert_eq!(reload[0].text, live.text);
+        assert_eq!(reload[0].tools.len(), 1);
+        assert_eq!(reload[0].tools[0].text_offset, live.tools[0].text_offset);
     }
 
     #[test]
