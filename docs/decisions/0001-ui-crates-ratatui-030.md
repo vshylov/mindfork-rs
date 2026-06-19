@@ -3,7 +3,7 @@
 **Статус:** принято (2026-06-14); markdown-часть уточнена
 [ADR 0003](0003-own-markdown-renderer.md) (пост-M9: `tui-markdown` заменён
 собственным рендерером ради таблиц/math/темы). Закрывает `[R]` «UI-крейты» из
-[plan.md §M3](../../plan.md).
+[plan.md §M3](../history/plan.md).
 **Контекст:** проект зафиксирован на `ratatui 0.30.1`. spec §11.4–11.5 предлагает
 `tui-textarea` (ввод) и `ratatui-markdown` (рендер markdown), с fallback на
 `tui-markdown`. Нужно проверить совместимость с фактической версией ratatui.

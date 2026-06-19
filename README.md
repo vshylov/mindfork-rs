@@ -10,7 +10,8 @@ OpenAI-совместимый сервер (**llama.cpp `llama-server`**). Ин�
 > Gemma/Qwen **осознаннее и интереснее в общении**, дав модели инструменты для
 > саморефлексии: читать и менять собственное системное сообщение и параметры
 > семплинга, вести заметки о пользователе, поднимать короткоживущего саб-агента
-> для «второго мнения». Подробнее — в [request.md](request.md) и [spec.md](spec.md).
+> для «второго мнения». Подробнее — в [spec.md](spec.md) (и в исходном техзадании
+> [docs/history/request.md](docs/history/request.md)).
 
 ---
 
@@ -102,8 +103,7 @@ HTTP-клиент (`OpenAiClient`); встраивание модели (rlib с
 > **Почему не xinfer.** Изначально проект проектировался под лёгкую библиотеку
 > `xinfer`, но она оказалась сырой по Gemma 4 (бессвязный вывод, плохо собирается
 > под Windows). Рабочий бэкенд — **llama.cpp `llama-server`** (OpenAI-протокол,
-> `--jinja`). Описание протокола — в [docs/xinfer-contract.md](docs/xinfer-contract.md)
-> (llama.cpp говорит на том же OpenAI-протоколе).
+> `--jinja`). Запуск и протокол — в [docs/install.md §3](docs/install.md).
 
 Ключевые решения:
 - **Agentic-loop клиентский** (в оркестраторе): стрим → tool-calls → исполнение →
@@ -260,10 +260,11 @@ cargo test ignored_smoke -- --ignored --nocapture --test-threads=1
 
 - **[CLAUDE.md](CLAUDE.md)** — краткий ориентир по проекту и статусу (M0–M9 сделаны).
 - **[spec.md](spec.md)** — полная инженерная спецификация (источник истины).
-- **[plan.md](plan.md)** — пошаговый план по этапам M0–M9 (задачи, тесты, DoD).
-- **[docs/install.md](docs/install.md)** — установка, запуск, движок, словари, импорт.
-- **[docs/xinfer-contract.md](docs/xinfer-contract.md)** — OpenAI-совместимый протокол.
-- **[docs/decisions/](docs/decisions/)** — ADR (UI-крейты, embedding-сервер).
+- **[docs/install.md](docs/install.md)** — установка, запуск, движок (llama.cpp),
+  OpenAI-совместимый протокол, словари, импорт.
+- **[docs/decisions/](docs/decisions/)** — ADR (UI-крейты, embedding-сервер, markdown-рендерер).
+- **[docs/history/](docs/history/)** — архив: исходное техзадание ([request.md](docs/history/request.md))
+  и выполненный план M0–M9 ([plan.md](docs/history/plan.md)).
 
 ## Статус
 
