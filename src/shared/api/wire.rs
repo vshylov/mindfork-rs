@@ -22,10 +22,43 @@ pub struct ChatCompletionRequest {
     pub top_k: Option<i64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub top_p: Option<f32>,
+    // Расширения llama.cpp `llama-server` (см. [`SamplingConfig`]); строгий
+    // сторонний OpenAI-сервер их игнорирует или отклоняет — поэтому шлём только
+    // когда заданы пользователем.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub min_p: Option<f32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub top_n_sigma: Option<f32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub typical_p: Option<f32>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub frequency_penalty: Option<f32>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub presence_penalty: Option<f32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub repeat_penalty: Option<f32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub repeat_last_n: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub dry_multiplier: Option<f32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub dry_base: Option<f32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub dry_allowed_length: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub dry_penalty_last_n: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub xtc_probability: Option<f32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub xtc_threshold: Option<f32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub mirostat: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub mirostat_tau: Option<f32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub mirostat_eta: Option<f32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub seed: Option<i64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub thinking: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -157,8 +190,23 @@ pub fn build_chat_request(req: &ChatRequest, stream: bool) -> ChatCompletionRequ
         max_tokens: s.max_tokens,
         top_k: s.top_k,
         top_p: s.top_p,
+        min_p: s.min_p,
+        top_n_sigma: s.top_n_sigma,
+        typical_p: s.typical_p,
         frequency_penalty: s.frequency_penalty,
         presence_penalty: s.presence_penalty,
+        repeat_penalty: s.repeat_penalty,
+        repeat_last_n: s.repeat_last_n,
+        dry_multiplier: s.dry_multiplier,
+        dry_base: s.dry_base,
+        dry_allowed_length: s.dry_allowed_length,
+        dry_penalty_last_n: s.dry_penalty_last_n,
+        xtc_probability: s.xtc_probability,
+        xtc_threshold: s.xtc_threshold,
+        mirostat: s.mirostat,
+        mirostat_tau: s.mirostat_tau,
+        mirostat_eta: s.mirostat_eta,
+        seed: s.seed,
         thinking: s.thinking,
         reasoning_effort: s.reasoning_effort.map(|r| r.as_wire()),
         reasoning_budget: s.reasoning_budget,
@@ -264,12 +312,22 @@ mod tests {
                 temperature: Some(0.8),
                 top_k: Some(40),
                 top_p: Some(0.95),
+                min_p: Some(0.03),
+                top_n_sigma: Some(1.5),
                 frequency_penalty: Some(0.1),
                 presence_penalty: Some(0.2),
+                repeat_penalty: Some(1.0),
+                dry_multiplier: Some(0.8),
+                dry_base: Some(1.75),
+                dry_allowed_length: Some(2),
+                xtc_probability: Some(0.3),
+                xtc_threshold: Some(0.15),
+                seed: Some(-1),
                 max_tokens: Some(256),
                 thinking: Some(true),
                 reasoning_effort: Some(ReasoningEffort::High),
                 reasoning_budget: Some(0),
+                ..Default::default()
             },
             tools: vec![],
         };
@@ -279,8 +337,17 @@ mod tests {
         assert!(approx(&json["temperature"], 0.8));
         assert_eq!(json["top_k"], 40);
         assert!(approx(&json["top_p"], 0.95));
+        assert!(approx(&json["min_p"], 0.03));
+        assert!(approx(&json["top_n_sigma"], 1.5));
         assert!(approx(&json["frequency_penalty"], 0.1));
         assert!(approx(&json["presence_penalty"], 0.2));
+        assert!(approx(&json["repeat_penalty"], 1.0));
+        assert!(approx(&json["dry_multiplier"], 0.8));
+        assert!(approx(&json["dry_base"], 1.75));
+        assert_eq!(json["dry_allowed_length"], 2);
+        assert!(approx(&json["xtc_probability"], 0.3));
+        assert!(approx(&json["xtc_threshold"], 0.15));
+        assert_eq!(json["seed"], -1);
         assert_eq!(json["max_tokens"], 256);
         assert_eq!(json["thinking"], true);
         assert_eq!(json["reasoning_effort"], "high");
@@ -288,6 +355,9 @@ mod tests {
         // reasoning_budget=0 дублируется сигналом для Jinja-шаблонов.
         assert_eq!(json["chat_template_kwargs"]["enable_thinking"], false);
         assert_eq!(json["stream"], false);
+        // Незаданные расширения не сериализуются.
+        assert!(json.get("typical_p").is_none());
+        assert!(json.get("mirostat").is_none());
     }
 
     #[test]

@@ -1,7 +1,10 @@
-//! Параметры семплинга. Содержит **только** поля, поддержанные xinfer по HTTP
-//! (см. docs/xinfer-contract.md §3.1, §7). `min_p`, `repetition_penalty`,
-//! `seed`-на-запрос, DRY/mirostat/typical в xinfer отсутствуют и здесь не
-//! представлены.
+//! Параметры семплинга (см. spec §8). Поля сериализуются в тело запроса
+//! `/v1/chat/completions`. Помимо стандартных OpenAI-полей (`temperature`,
+//! `top_p`, `frequency_penalty`, …) здесь есть расширения llama.cpp `llama-server`
+//! (`min_p`, `top_n_sigma`, DRY, XTC, `repeat_penalty`, `seed`, mirostat) — их
+//! `llama-server` принимает прямо в теле запроса; сервер, не понимающий поле,
+//! его просто игнорирует (а строгий сторонний OpenAI-сервер может отклонить —
+//! поэтому расширения остаются `None`, пока пользователь их не задаст).
 
 use serde::{Deserialize, Serialize};
 
@@ -34,9 +37,45 @@ pub struct SamplingConfig {
     pub temperature: Option<f32>,
     pub top_k: Option<i64>,
     pub top_p: Option<f32>,
+    /// min-p (llama.cpp): отсекает токены с вероятностью ниже доли от максимальной.
+    pub min_p: Option<f32>,
+    /// top-n-sigma (llama.cpp `top_n_sigma`): отсев по числу σ от макс. логита
+    /// (`-1` = выключено).
+    pub top_n_sigma: Option<f32>,
+    /// locally typical sampling (llama.cpp `typical_p`, `1.0` = выключено).
+    pub typical_p: Option<f32>,
     pub frequency_penalty: Option<f32>,
     pub presence_penalty: Option<f32>,
+    /// Штраф за повтор последовательности токенов (llama.cpp `repeat_penalty`,
+    /// `1.0` = выключено). Отдельно от OpenAI-штрафов presence/frequency.
+    pub repeat_penalty: Option<f32>,
+    /// Сколько последних токенов учитывать для `repeat_penalty` (llama.cpp
+    /// `repeat_last_n`; `0` = выключено, `-1` = весь контекст).
+    pub repeat_last_n: Option<i64>,
+    /// DRY: множитель штрафа (llama.cpp `dry_multiplier`, `0.0` = выключено).
+    pub dry_multiplier: Option<f32>,
+    /// DRY: основание экспоненты (llama.cpp `dry_base`).
+    pub dry_base: Option<f32>,
+    /// DRY: длина допустимого повтора до штрафа (llama.cpp `dry_allowed_length`).
+    pub dry_allowed_length: Option<i64>,
+    /// DRY: сколько последних токенов сканировать (llama.cpp `dry_penalty_last_n`;
+    /// `0` = выключено, `-1` = весь контекст).
+    pub dry_penalty_last_n: Option<i64>,
+    /// XTC: вероятность применения сэмплера (llama.cpp `xtc_probability`,
+    /// `0.0` = выключено).
+    pub xtc_probability: Option<f32>,
+    /// XTC: порог вероятности (llama.cpp `xtc_threshold`).
+    pub xtc_threshold: Option<f32>,
+    /// Mirostat: режим (llama.cpp `mirostat`; `0` = выключено, `1`/`2` = версии).
+    pub mirostat: Option<i64>,
+    /// Mirostat: целевая энтропия τ (llama.cpp `mirostat_tau`).
+    pub mirostat_tau: Option<f32>,
+    /// Mirostat: скорость обучения η (llama.cpp `mirostat_eta`).
+    pub mirostat_eta: Option<f32>,
     pub max_tokens: Option<usize>,
+    /// RNG-seed на запрос (llama.cpp `seed`; `-1` = случайный). `None` — поле не
+    /// отправляется (сервер выбирает сам).
+    pub seed: Option<i64>,
     /// Включить reasoning («мысли», `<think>`/`reasoning_content`).
     pub thinking: Option<bool>,
     pub reasoning_effort: Option<ReasoningEffort>,

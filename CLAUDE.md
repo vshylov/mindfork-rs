@@ -27,9 +27,17 @@ external подойдёт любой такой — vLLM/LM Studio/Ollama). UI �
   сознательно НЕ используется (тянет candle/CUDA).
 - **Agentic-loop клиентский** (в оркестраторе). Инструменты возвращают результат +
   эффекты; оркестратор (единственный владелец `Chat`) их применяет — без локов.
-- **Семплинг**: temperature, top_k, top_p, frequency/presence_penalty, max_tokens,
-  thinking, reasoning_effort (поля `SamplingConfig`). Неподдержанное сервером
-  (min_p/seed/mirostat/…) просто игнорируется.
+- **Семплинг** (`SamplingConfig`, spec §8): стандартные OpenAI-поля (temperature,
+  top_k, top_p, frequency/presence_penalty, max_tokens, thinking, reasoning_effort,
+  reasoning_budget) **плюс расширения llama.cpp**, которые `llama-server` принимает
+  в теле запроса: min_p, top_n_sigma, typical_p, repeat_penalty/repeat_last_n,
+  dry_* (multiplier/base/allowed_length/penalty_last_n), xtc_* (probability/threshold),
+  mirostat/mirostat_tau/mirostat_eta, seed. Каждое поле `Option`, шлётся только когда
+  задано (`skip_serializing_if`) — незаданное не попадает в JSON; неподдержанное
+  сервером поле он игнорирует (строгий сторонний OpenAI-сервер мог бы отвергнуть, но
+  лишь если пользователь сам выставит расширение). UI — секция «Семплинг» (подсекции
+  Ассистент/Имперсонация), поля через `SamplingParam` (`screens/settings.rs`); также
+  правится инструментом `set_sampling` (merge всех полей).
 - **EOS**: остановка по token-id на сервере; поле `stop` НЕ отправляем (анти-самообрыв).
 - **«Мысли» (CoT)**: `delta.reasoning_content` (`llama-server --reasoning-format`);
   fallback — парсинг `<think>` из content.
