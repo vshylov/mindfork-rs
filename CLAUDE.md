@@ -30,14 +30,19 @@ external подойдёт любой такой — vLLM/LM Studio/Ollama). UI �
 - **Семплинг** (`SamplingConfig`, spec §8): стандартные OpenAI-поля (temperature,
   top_k, top_p, frequency/presence_penalty, max_tokens, thinking, reasoning_effort,
   reasoning_budget) **плюс расширения llama.cpp**, которые `llama-server` принимает
-  в теле запроса: min_p, top_n_sigma, typical_p, repeat_penalty/repeat_last_n,
-  dry_* (multiplier/base/allowed_length/penalty_last_n), xtc_* (probability/threshold),
-  mirostat/mirostat_tau/mirostat_eta, seed. Каждое поле `Option`, шлётся только когда
+  в теле запроса: dynatemp_range/dynatemp_exponent (динамическая температура), min_p,
+  top_n_sigma, typical_p, adaptive_target/adaptive_decay (adaptive-p, эксперим.),
+  repeat_penalty/repeat_last_n, dry_* (multiplier/base/allowed_length/penalty_last_n/
+  sequence_breakers), xtc_* (probability/threshold), mirostat/mirostat_tau/mirostat_eta,
+  seed, samplers (порядок сэмплеров). Каждое поле `Option`, шлётся только когда
   задано (`skip_serializing_if`) — незаданное не попадает в JSON; неподдержанное
   сервером поле он игнорирует (строгий сторонний OpenAI-сервер мог бы отвергнуть, но
-  лишь если пользователь сам выставит расширение). UI — секция «Семплинг» (подсекции
-  Ассистент/Имперсонация), поля через `SamplingParam` (`screens/settings.rs`); также
-  правится инструментом `set_sampling` (merge всех полей).
+  лишь если пользователь сам выставит расширение). Списочные поля
+  (`dry_sequence_breakers`, `samplers`) — JSON-массивы, пустыми не шлются. UI — секция
+  «Семплинг» (подсекции Ассистент/Имперсонация), поля через `SamplingParam`
+  (`screens/settings.rs`; списки правятся текстом: samplers через «;», DRY-брейкеры
+  через «,» с эскейпами \n/\t/\r); также правится инструментом `set_sampling`
+  (merge всех полей).
 - **EOS**: остановка по token-id на сервере; поле `stop` НЕ отправляем (анти-самообрыв).
 - **«Мысли» (CoT)**: `delta.reasoning_content` (`llama-server --reasoning-format`);
   fallback — парсинг `<think>` из content.
@@ -831,6 +836,39 @@ web-поиск и Python под выключателями, экран наст�
   следующего раунда, вставляя тот же разделитель (если накопленный текст непуст).
   Сбрасываются в `begin_generation`. Покрыто тестом
   `live_stream_with_tool_matches_reload` (live == `from_messages`).
+
+### Пост-M9: семплинг «для разнообразия» — dynatemp / adaptive-p / DRY-брейкеры / порядок сэмплеров (сделано)
+- **Четыре новых поля `SamplingConfig`** (расширения llama.cpp в теле запроса, для
+  более живых и непредсказуемых ответов): **динамическая температура**
+  `dynatemp_range`/`dynatemp_exponent` (температура подстраивается по энтропии
+  распределения на каждом токене), **adaptive-p** `adaptive_target`/`adaptive_decay`
+  (новый сэмплер, llama.cpp PR #17927), **DRY-брейкеры** `dry_sequence_breakers`
+  (`Option<Vec<String>>`) и настраиваемый **порядок сэмплеров** `samplers`
+  (`Option<Vec<String>>`). Каждое поле `Option`, шлётся только когда задано.
+- **Списочные поля — JSON-массивы, пустыми не шлются** (`wire.rs::build_chat_request`,
+  хелпер `non_empty`): пустой `samplers` сервер истолковал бы как «отключить все
+  сэмплеры», а пустой `dry_sequence_breakers` **llama-server прямо отвергает**
+  (`server-schema.cpp:238` бросает `"must be a non-empty array of strings"`) — фильтр
+  это предотвращает.
+- **Ключи сверены по исходникам** llama.cpp (`tools/server/server-schema.cpp`, куда в
+  свежих версиях переехал разбор тела из `server.cpp`): `dynatemp_range`/`_exponent`
+  (:113), `adaptive_target` (:160, плоский ключ, `≤1.0`, negative=выкл),
+  `adaptive_decay` (:164, hard-диапазон `0.0–0.99`), `dry_sequence_breakers` (:234),
+  `samplers` (:474, массив имён или строка). Валидные имена сэмплеров
+  (`sampling.cpp`): `penalties`, `dry`, `top_k`, `top_p`, `top_n_sigma`, `typ_p`,
+  `min_p`, `xtc`, `temperature`, `infill` (mirostat — отдельный режим, не в списке).
+- **UI** (`screens/settings.rs`, секция «Семплинг»): числовые поля как обычно;
+  `samplers` правится текстом через «;», `dry_sequence_breakers` — через «,» с
+  эскейпами `\n`/`\t`/`\r` (однострочный редактор не даёт ввести их буквально;
+  `parse_breakers`/`join_breakers`/`decode_escapes`/`encode_escapes`). Также правится
+  инструментом `set_sampling` (схема + merge всех полей).
+- **Тесты**: wire-сериализация новых полей + омит пустых массивов
+  (`list_fields_sent_as_arrays_and_empty_omitted`), round-trip списков и эскейпов
+  (`samplers_list_round_trip`, `dry_breakers_decode_and_encode_escapes`), merge в
+  `set_sampling`. **Живой `#[ignore]`-смоук** `accepts_creative_sampling_extensions`
+  (`client.rs`) — все четыре поля в одном запросе; проверяет **объединённый** поток
+  `text`+`thoughts` (reasoning-модель Gemma кладёт ответ в `reasoning_content` —
+  ловушка reasoning-бюджета). Проверено на живом `llama-server` (Gemma 4 12B).
 
 ### Отложено за пределы M3
 - **Сворачивание/выделение per-message** и tool-блоки в ленте — сейчас «мысли»

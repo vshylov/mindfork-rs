@@ -35,6 +35,14 @@ impl ReasoningEffort {
 #[serde(default)]
 pub struct SamplingConfig {
     pub temperature: Option<f32>,
+    /// Динамическая температура (llama.cpp `dynatemp_range`): ширина диапазона
+    /// ± вокруг `temperature`, подстраиваемого по энтропии распределения на
+    /// каждом токене (уверенные позиции — холоднее, неоднозначные — горячее).
+    /// `0.0` = выключено (обычная статическая температура).
+    pub dynatemp_range: Option<f32>,
+    /// Показатель кривой динамической температуры (llama.cpp
+    /// `dynatemp_exponent`, по умолчанию сервера `1.0`).
+    pub dynatemp_exponent: Option<f32>,
     pub top_k: Option<i64>,
     pub top_p: Option<f32>,
     /// min-p (llama.cpp): отсекает токены с вероятностью ниже доли от максимальной.
@@ -44,6 +52,14 @@ pub struct SamplingConfig {
     pub top_n_sigma: Option<f32>,
     /// locally typical sampling (llama.cpp `typical_p`, `1.0` = выключено).
     pub typical_p: Option<f32>,
+    /// adaptive-p (llama.cpp `adaptive_target`, PR #17927): целевая энтропия,
+    /// около которой выбираются токены; отрицательное значение = выключено
+    /// (валидный диапазон `≤ 1.0`). Сверено по `server-schema.cpp` (плоский
+    /// ключ тела запроса). Сэмплер новый — поведение проверять на живой модели.
+    pub adaptive_target: Option<f32>,
+    /// adaptive-p (llama.cpp `adaptive_decay`): EMA-затухание адаптации цели
+    /// (hard-диапазон `0.0`..`0.99`; меньше — реактивнее, больше — стабильнее).
+    pub adaptive_decay: Option<f32>,
     pub frequency_penalty: Option<f32>,
     pub presence_penalty: Option<f32>,
     /// Штраф за повтор последовательности токенов (llama.cpp `repeat_penalty`,
@@ -61,6 +77,10 @@ pub struct SamplingConfig {
     /// DRY: сколько последних токенов сканировать (llama.cpp `dry_penalty_last_n`;
     /// `0` = выключено, `-1` = весь контекст).
     pub dry_penalty_last_n: Option<i64>,
+    /// DRY: «брейкеры» — строки, сбрасывающие учёт повтора (llama.cpp
+    /// `dry_sequence_breakers`). `None`/пусто — серверные по умолчанию
+    /// (`\n`, `:`, `"`, `*`). Отправляется только когда непуст.
+    pub dry_sequence_breakers: Option<Vec<String>>,
     /// XTC: вероятность применения сэмплера (llama.cpp `xtc_probability`,
     /// `0.0` = выключено).
     pub xtc_probability: Option<f32>,
@@ -76,6 +96,12 @@ pub struct SamplingConfig {
     /// RNG-seed на запрос (llama.cpp `seed`; `-1` = случайный). `None` — поле не
     /// отправляется (сервер выбирает сам).
     pub seed: Option<i64>,
+    /// Порядок применения сэмплеров (llama.cpp `samplers`): имена сэмплеров в
+    /// нужном порядке (напр. `["penalties","dry","top_k","top_p","min_p",
+    /// "temperature"]`). `None` — серверный порядок по умолчанию. **Важно:**
+    /// сэмплер, не указанный в непустом списке, отключается — список должен быть
+    /// полным. Отправляется только когда непуст.
+    pub samplers: Option<Vec<String>>,
     /// Включить reasoning («мысли», `<think>`/`reasoning_content`).
     pub thinking: Option<bool>,
     pub reasoning_effort: Option<ReasoningEffort>,

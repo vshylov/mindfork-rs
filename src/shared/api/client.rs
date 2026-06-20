@@ -410,4 +410,69 @@ mod ignored_smoke {
             "expected non-empty thoughts from a reasoning model: text={text:?}"
         );
     }
+
+    /// Расширения «для разнообразия»: динамическая температура, adaptive-p,
+    /// DRY-брейкеры и кастомный порядок сэмплеров — всё в теле одного запроса.
+    /// Цель — убедиться, что `llama-server` **принимает** эти поля (не отвечает
+    /// `400`/ошибкой) и генерирует. Ключи сверены по
+    /// `tools/server/server-schema.cpp` (dynatemp_range/exponent, adaptive_target/
+    /// decay, dry_sequence_breakers — непустой, samplers — массив имён). Если бы
+    /// сервер отверг любое поле, `chat_stream` вернул бы ошибку статуса (клиент не
+    /// глотает тело ошибки) и тест упал бы на `.unwrap()`.
+    ///
+    /// Проверяем **объединённый** поток (`text` + `thoughts`): у reasoning-модели
+    /// (Gemma со «вшитым» thinking) ответ может целиком уйти в `reasoning_content`,
+    /// а `content` остаться пустым с `finish_reason="length"` — это нормально и к
+    /// принятию sampling-полей отношения не имеет (см. CLAUDE.md, ловушка
+    /// reasoning-бюджета). `max_tokens` щедрый, чтобы было видно генерацию.
+    #[tokio::test]
+    #[ignore = "requires a running OpenAI-compatible server (MINDFORK_ENGINE_URL)"]
+    async fn accepts_creative_sampling_extensions() {
+        let Some(client) = client_from_env() else {
+            eprintln!("skip: MINDFORK_ENGINE_URL not set");
+            return;
+        };
+        let req = ChatRequest {
+            system: Some("You are a creative writing assistant.".into()),
+            messages: vec![ApiMessage::user(
+                "Write one whimsical sentence about a teapot.",
+            )],
+            sampling: SamplingConfig {
+                temperature: Some(1.0),
+                // Динамическая температура: ±0.5 вокруг temperature.
+                dynatemp_range: Some(0.5),
+                dynatemp_exponent: Some(1.0),
+                // adaptive-p: положительная цель включает сэмплер (≤1.0).
+                adaptive_target: Some(0.1),
+                adaptive_decay: Some(0.9),
+                // DRY с непустым списком брейкеров (пустой сервер отверг бы).
+                dry_multiplier: Some(0.8),
+                dry_sequence_breakers: Some(vec!["\n".into(), ":".into()]),
+                // Кастомный порядок сэмплеров (валидные имена из sampling.cpp).
+                samplers: Some(vec![
+                    "penalties".into(),
+                    "dry".into(),
+                    "top_k".into(),
+                    "top_p".into(),
+                    "min_p".into(),
+                    "temperature".into(),
+                ]),
+                max_tokens: Some(256),
+                ..Default::default()
+            },
+            tools: vec![],
+        };
+        let (text, thoughts, finish) =
+            collect(client.chat_stream(req, Default::default()).await.unwrap()).await;
+        // Reasoning-модель кладёт ответ в «мысли» — проверяем оба потока.
+        let combined = format!("{thoughts}{text}");
+        assert!(
+            !combined.trim().is_empty(),
+            "server accepted extensions but generated nothing: finish={finish:?}"
+        );
+        assert!(
+            matches!(finish, Some(FinishReason::Stop | FinishReason::Length)),
+            "unexpected finish reason: {finish:?}"
+        );
+    }
 }

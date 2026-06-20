@@ -56,6 +56,14 @@ OpenAI-совместимый сервер (**llama.cpp `llama-server`**). Ин�
   перемешивается.
 - Трёхуровневое разрешение семплинга: `Chat.sampling_override → Profile.default →
   глобальный`.
+- **Богатый семплинг** поверх стандартных OpenAI-полей — расширения llama.cpp
+  прямо в теле запроса: `min_p`, `top_n_sigma`, `typical_p`, штрафы
+  (`repeat_penalty`, DRY, XTC), `mirostat`, `seed`. Для **более живых и
+  непредсказуемых** ответов: **динамическая температура** (`dynatemp_range`/
+  `_exponent` — температура подстраивается по энтропии на каждом токене),
+  **adaptive-p** (`adaptive_target`/`_decay`), **DRY-брейкеры**
+  (`dry_sequence_breakers`) и настраиваемый **порядок сэмплеров** (`samplers`).
+  Каждое поле опционально и шлётся только когда задано.
 
 **Инструменты (клиентский agentic-loop)**
 - **Интроспекция:** `get/set_sampling`, `get/set_system_message`,
