@@ -608,7 +608,7 @@ impl Orchestrator {
             for effect in res.effects {
                 match effect {
                     ChatEffect::SetSystemMessage(s) => chat.system_message = s,
-                    ChatEffect::SetSamplingOverride(s) => chat.sampling_override = Some(s),
+                    ChatEffect::SetSamplingOverride(s) => chat.sampling_override = Some(*s),
                 }
             }
             self.mark_dirty(res.chat_id);

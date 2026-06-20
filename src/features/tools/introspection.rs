@@ -54,9 +54,24 @@ impl Tool for SetSampling {
                 "temperature": {"type": "number"},
                 "top_k": {"type": "integer"},
                 "top_p": {"type": "number"},
+                "min_p": {"type": "number"},
+                "top_n_sigma": {"type": "number"},
+                "typical_p": {"type": "number"},
                 "frequency_penalty": {"type": "number"},
                 "presence_penalty": {"type": "number"},
+                "repeat_penalty": {"type": "number"},
+                "repeat_last_n": {"type": "integer"},
+                "dry_multiplier": {"type": "number"},
+                "dry_base": {"type": "number"},
+                "dry_allowed_length": {"type": "integer"},
+                "dry_penalty_last_n": {"type": "integer"},
+                "xtc_probability": {"type": "number"},
+                "xtc_threshold": {"type": "number"},
+                "mirostat": {"type": "integer"},
+                "mirostat_tau": {"type": "number"},
+                "mirostat_eta": {"type": "number"},
                 "max_tokens": {"type": "integer"},
+                "seed": {"type": "integer"},
                 "thinking": {"type": "boolean"},
                 "reasoning_effort": {"type": "string", "enum": ["none", "low", "medium", "high"]}
             }
@@ -70,7 +85,7 @@ impl Tool for SetSampling {
         let json = serde_json::to_string(&merged)?;
         Ok(ToolOutcome::with_effects(
             format!("Семплинг обновлён: {json}"),
-            vec![ChatEffect::SetSamplingOverride(merged)],
+            vec![ChatEffect::SetSamplingOverride(Box::new(merged))],
         ))
     }
 }
@@ -162,9 +177,24 @@ fn merge_sampling(base: &SamplingConfig, patch: &SamplingConfig) -> SamplingConf
         temperature: patch.temperature.or(base.temperature),
         top_k: patch.top_k.or(base.top_k),
         top_p: patch.top_p.or(base.top_p),
+        min_p: patch.min_p.or(base.min_p),
+        top_n_sigma: patch.top_n_sigma.or(base.top_n_sigma),
+        typical_p: patch.typical_p.or(base.typical_p),
         frequency_penalty: patch.frequency_penalty.or(base.frequency_penalty),
         presence_penalty: patch.presence_penalty.or(base.presence_penalty),
+        repeat_penalty: patch.repeat_penalty.or(base.repeat_penalty),
+        repeat_last_n: patch.repeat_last_n.or(base.repeat_last_n),
+        dry_multiplier: patch.dry_multiplier.or(base.dry_multiplier),
+        dry_base: patch.dry_base.or(base.dry_base),
+        dry_allowed_length: patch.dry_allowed_length.or(base.dry_allowed_length),
+        dry_penalty_last_n: patch.dry_penalty_last_n.or(base.dry_penalty_last_n),
+        xtc_probability: patch.xtc_probability.or(base.xtc_probability),
+        xtc_threshold: patch.xtc_threshold.or(base.xtc_threshold),
+        mirostat: patch.mirostat.or(base.mirostat),
+        mirostat_tau: patch.mirostat_tau.or(base.mirostat_tau),
+        mirostat_eta: patch.mirostat_eta.or(base.mirostat_eta),
         max_tokens: patch.max_tokens.or(base.max_tokens),
+        seed: patch.seed.or(base.seed),
         thinking: patch.thinking.or(base.thinking),
         reasoning_effort: patch.reasoning_effort.or(base.reasoning_effort),
         reasoning_budget: patch.reasoning_budget.or(base.reasoning_budget),
@@ -223,7 +253,13 @@ mod tests {
         let out = SetSampling
             .invoke(
                 &ctx,
-                serde_json::json!({"temperature": 0.9, "reasoning_effort": "high"}),
+                serde_json::json!({
+                    "temperature": 0.9,
+                    "reasoning_effort": "high",
+                    "min_p": 0.03,
+                    "dry_multiplier": 0.8,
+                    "seed": -1
+                }),
             )
             .await
             .unwrap();
@@ -232,6 +268,10 @@ mod tests {
                 assert_eq!(s.temperature, Some(0.9)); // переопределено
                 assert_eq!(s.max_tokens, Some(512)); // сохранено из базы
                 assert_eq!(s.reasoning_effort, Some(ReasoningEffort::High));
+                // Новые расширения llama.cpp тоже мёржатся.
+                assert_eq!(s.min_p, Some(0.03));
+                assert_eq!(s.dry_multiplier, Some(0.8));
+                assert_eq!(s.seed, Some(-1));
             }
             other => panic!("ожидался SetSamplingOverride, got {other:?}"),
         }

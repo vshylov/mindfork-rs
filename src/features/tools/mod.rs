@@ -53,7 +53,9 @@ pub enum ChatEffect {
     /// Заменить системное сообщение чата (действует со следующего построения запроса).
     SetSystemMessage(String),
     /// Заменить override семплинга чата (действует со следующего хода).
-    SetSamplingOverride(SamplingConfig),
+    /// `Box`, т.к. `SamplingConfig` крупнее прочих вариантов (clippy
+    /// `large_enum_variant`).
+    SetSamplingOverride(Box<SamplingConfig>),
 }
 
 /// Результат вызова инструмента: строка для модели + эффекты для оркестратора.

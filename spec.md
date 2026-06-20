@@ -495,9 +495,9 @@ loop:
 
 ### 8.1. Маппинг на OpenAI-совместимый API
 
-`SamplingConfig` несёт сознательно **сокращённый** набор полей; в `POST /v1/chat/completions` передаются: `temperature`, `top_k`, `top_p`, `frequency_penalty`, `presence_penalty`, `max_tokens`, `thinking` (вкл. reasoning), `reasoning_effort`, `reasoning_budget`. Поля, которые сервер не распознаёт (`min_p`/`seed`-на-запрос/mirostat/…), **просто игнорируются** — конкретный сервер может поддерживать и больше (llama.cpp), но в модель/UI приложения они не входят (наследие фиксированного контракта; добавляются при необходимости одной веткой).
+`SamplingConfig` сериализуется в тело `POST /v1/chat/completions`. Помимо стандартных OpenAI-полей (`temperature`, `top_k`, `top_p`, `frequency_penalty`, `presence_penalty`, `max_tokens`, `thinking`/`reasoning_effort`/`reasoning_budget`) модель несёт **расширения llama.cpp `llama-server`**: `min_p`, `top_n_sigma`, `typical_p`, `repeat_penalty`, `repeat_last_n`, `dry_multiplier`/`dry_base`/`dry_allowed_length`/`dry_penalty_last_n`, `xtc_probability`/`xtc_threshold`, `mirostat`/`mirostat_tau`/`mirostat_eta`, `seed`. Эти поля `llama-server` принимает прямо в теле запроса (а не только как CLI-флаги), поэтому они работают и в managed-, и в external-llama.cpp без перезапуска сервера и резолвятся по уровням 8.3. Каждое поле — `Option`, **шлётся только когда задано** (`skip_serializing_if`): незаданные расширения не попадают в JSON, так что строгий сторонний OpenAI-сервер по умолчанию не затрагивается, а llama.cpp-несовместимое поле он бы либо проигнорировал, либо отверг (риск только если пользователь сам выставит расширение на строгом сервере).
 
-| Параметр (`SamplingConfig`, попытка №1) | HTTP-поле | Статус |
+| Параметр | HTTP-поле | Статус |
 |---|---|---|
 | `Temperature` | `temperature` | ✅ переносится |
 | `TopK` | `top_k` | ✅ переносится |
@@ -505,17 +505,20 @@ loop:
 | `AlphaFrequency` | `frequency_penalty` | ✅ переносится |
 | `AlphaPresence` | `presence_penalty` | ✅ переносится |
 | `MaxTokens` | `max_tokens` | ✅ переносится |
-| — (новое) | `thinking` + `reasoning_effort` + `reasoning_budget` | ✅ **добавлено** (вкл./уровень/бюджет reasoning) |
-| `MinP` | — | ❌ **не в модели** (в UI не выводится) |
-| `RepeatPenalty` | — | ❌ **не в модели** |
-| `Seed` / `AlwaysUseRandomSeed` | — | ❌ **на запрос не используется**: вариативность регенерации — через `temperature > 0` |
-| `TypicalP`, `TopNSigma`, Mirostat*, Dynatemp*, DRY | — | ❌ **не в модели** |
+| reasoning | `thinking` + `reasoning_effort` + `reasoning_budget` | ✅ вкл./уровень/бюджет reasoning |
+| `MinP` | `min_p` | ✅ **расширение llama.cpp** |
+| `RepeatPenalty` / `RepeatLastN` | `repeat_penalty` / `repeat_last_n` | ✅ **расширение llama.cpp** |
+| `Seed` | `seed` | ✅ **на запрос** (`-1` = случайный) |
+| `TypicalP`, `TopNSigma` | `typical_p`, `top_n_sigma` | ✅ **расширение llama.cpp** |
+| Mirostat* | `mirostat`/`mirostat_tau`/`mirostat_eta` | ✅ **расширение llama.cpp** |
+| DRY*, XTC* | `dry_*`, `xtc_*` | ✅ **расширение llama.cpp** |
+| Dynatemp* | — | ❌ не добавлено (при необходимости — одной веткой) |
 | `MaxRetriesToRegenerateInvalidOutput` | — | не нужен (structured outputs снижают «битый» вывод) |
 
 ### 8.2. Следствия
 
-- В модель `SamplingConfig` и UI настроек семплинга входят: **temperature, top_k, top_p, frequency_penalty, presence_penalty, max_tokens, thinking, reasoning_effort**. Поля `min_p`/`repetition_penalty`/`seed` (на запрос) **исключаются** (или помечаются недоступными при миграции конфигов).
-- **Случайный seed на чат** (требование «AlwaysUseRandomSeed») по HTTP **не реализуем**: для вариативности при регенерации полагаемся на `temperature > 0`; поведение документируем в UI.
+- В модель `SamplingConfig` и UI настроек семплинга (секция «Семплинг», подсекции «Ассистент»/«Имперсонация») входят все перечисленные выше поля. Расширения llama.cpp по умолчанию `None` — для старых `settings.json` и сторонних серверов поведение не меняется, пока пользователь их не задаст.
+- **Случайный seed на запрос** теперь доступен через поле `seed` (`-1` = случайный); вариативность регенерации по-прежнему можно получать и через `temperature > 0`.
 - Снимок фактически применённых параметров сохраняется в `Message.metadata`.
 
 ### 8.3. Уровни переопределения

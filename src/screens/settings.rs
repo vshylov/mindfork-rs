@@ -17,7 +17,7 @@ use ratatui::widgets::{Block, Borders, Clear, List, ListItem, ListState, Paragra
 use uuid::Uuid;
 
 use crate::entities::profile::Profile;
-use crate::entities::sampling::ReasoningEffort;
+use crate::entities::sampling::{ReasoningEffort, SamplingConfig};
 use crate::features::profiles::ProfileEdit;
 use crate::features::tools::default_tool_ids;
 use crate::shared::config::{AppConfig, ImpersonationMode, ServerMode, Theme};
@@ -100,6 +100,143 @@ impl Section {
     }
 }
 
+/// Параметр семплинга. Адресует конкретное поле [`SamplingConfig`] внутри
+/// подсекции; сама подсекция («Ассистент»/«Имперсонация») кодируется
+/// конструктором [`FieldId::S`]/[`FieldId::IS`]. Числовые параметры
+/// редактируются текстом, `Thinking`/`Reasoning` — циклическим выбором.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SamplingParam {
+    Temp,
+    TopK,
+    TopP,
+    MinP,
+    TopNSigma,
+    TypicalP,
+    FreqPen,
+    PresPen,
+    RepeatPenalty,
+    RepeatLastN,
+    DryMultiplier,
+    DryBase,
+    DryAllowedLength,
+    DryPenaltyLastN,
+    XtcProbability,
+    XtcThreshold,
+    Mirostat,
+    MirostatTau,
+    MirostatEta,
+    MaxTokens,
+    Seed,
+    Thinking,
+    Reasoning,
+}
+
+/// Порядок параметров семплинга в секции (стабильный = порядок отрисовки).
+const SAMPLING_PARAMS: &[SamplingParam] = {
+    use SamplingParam::*;
+    &[
+        Temp,
+        TopK,
+        TopP,
+        MinP,
+        TopNSigma,
+        TypicalP,
+        FreqPen,
+        PresPen,
+        RepeatPenalty,
+        RepeatLastN,
+        DryMultiplier,
+        DryBase,
+        DryAllowedLength,
+        DryPenaltyLastN,
+        XtcProbability,
+        XtcThreshold,
+        Mirostat,
+        MirostatTau,
+        MirostatEta,
+        MaxTokens,
+        Seed,
+        Thinking,
+        Reasoning,
+    ]
+};
+
+impl SamplingParam {
+    /// Подпись поля в UI.
+    fn label(self) -> &'static str {
+        use SamplingParam::*;
+        match self {
+            Temp => "Температура",
+            TopK => "top_k",
+            TopP => "top_p",
+            MinP => "min_p",
+            TopNSigma => "top_n_sigma",
+            TypicalP => "typical_p",
+            FreqPen => "frequency_penalty",
+            PresPen => "presence_penalty",
+            RepeatPenalty => "repeat_penalty",
+            RepeatLastN => "repeat_last_n",
+            DryMultiplier => "dry_multiplier",
+            DryBase => "dry_base",
+            DryAllowedLength => "dry_allowed_length",
+            DryPenaltyLastN => "dry_penalty_last_n",
+            XtcProbability => "xtc_probability",
+            XtcThreshold => "xtc_threshold",
+            Mirostat => "mirostat",
+            MirostatTau => "mirostat_tau",
+            MirostatEta => "mirostat_eta",
+            MaxTokens => "max_tokens",
+            Seed => "seed",
+            Thinking => "Мысли (thinking)",
+            Reasoning => "reasoning_effort",
+        }
+    }
+
+    /// Подсказка-описание (показывается под полем при фокусе). `None` — без подсказки.
+    fn description(self) -> Option<&'static str> {
+        use SamplingParam::*;
+        Some(match self {
+            MinP => {
+                "min-p: отсекает токены с вероятностью ниже доли от самой \
+                     вероятной. 0 — выключено. Расширение llama.cpp."
+            }
+            TopNSigma => {
+                "Отсев токенов дальше N стандартных отклонений (σ) от \
+                          максимального логита. -1 — выключено. Расширение llama.cpp."
+            }
+            TypicalP => "Locally typical sampling. 1.0 — выключено. Расширение llama.cpp.",
+            RepeatPenalty => {
+                "Штраф за повтор токенов (отдельно от presence/frequency). \
+                              1.0 — выключено. Расширение llama.cpp."
+            }
+            RepeatLastN => {
+                "Сколько последних токенов учитывает repeat_penalty. \
+                            0 — выключено, -1 — весь контекст."
+            }
+            DryMultiplier => {
+                "DRY: сила штрафа за дословные повторы. 0 — выключено. \
+                              Расширение llama.cpp."
+            }
+            DryBase => "DRY: основание роста штрафа с длиной повтора.",
+            DryAllowedLength => "DRY: длина повтора, не штрафуемая (обычно 2).",
+            DryPenaltyLastN => "DRY: глубина сканирования в токенах. -1 — весь контекст.",
+            XtcProbability => {
+                "XTC: вероятность срезать вероятные токены ради \
+                               разнообразия. 0 — выключено. Расширение llama.cpp."
+            }
+            XtcThreshold => "XTC: порог вероятности для среза (обычно 0.1–0.2).",
+            Mirostat => {
+                "Mirostat: 0 — выкл, 1 или 2 — версия. Игнорирует top_k/top_p/\
+                         typical_p. Расширение llama.cpp."
+            }
+            MirostatTau => "Mirostat: целевая энтропия (τ).",
+            MirostatEta => "Mirostat: скорость адаптации (η).",
+            Seed => "RNG-seed на запрос: -1 — случайный. Расширение llama.cpp.",
+            _ => return None,
+        })
+    }
+}
+
 /// Идентификатор редактируемого поля (стабильный порядок = порядок в секции).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum FieldId {
@@ -131,24 +268,11 @@ enum FieldId {
     IxPort,
     // Инференс
     MaxToolRounds,
-    // Семплинг — Ассистент
-    STemp,
-    STopK,
-    STopP,
-    SFreqPen,
-    SPresPen,
-    SMaxTokens,
-    SThinking,
-    SReasoning,
-    // Семплинг — Имперсонация
-    ISTemp,
-    ISTopK,
-    ISTopP,
-    ISFreqPen,
-    ISPresPen,
-    ISMaxTokens,
-    ISThinking,
-    ISReasoning,
+    // Семплинг — поле по параметру; подсекция кодируется конструктором.
+    // `S` — Ассистент (`default_sampling`), `IS` — Имперсонация
+    // (`impersonation_sampling`).
+    S(SamplingParam),
+    IS(SamplingParam),
     // Инструменты
     TWeb,
     TPython,
@@ -369,52 +493,12 @@ impl SettingsScreen {
             "Подсекция",
             FieldKind::Choice(self.sampling_sub.label()),
         )];
-        let (s, ids) = match self.sampling_sub {
-            Subsection::Assistant => (
-                &self.config.default_sampling,
-                [
-                    FieldId::STemp,
-                    FieldId::STopK,
-                    FieldId::STopP,
-                    FieldId::SFreqPen,
-                    FieldId::SPresPen,
-                    FieldId::SMaxTokens,
-                    FieldId::SThinking,
-                    FieldId::SReasoning,
-                ],
-            ),
-            Subsection::Impersonation => (
-                &self.config.impersonation_sampling,
-                [
-                    FieldId::ISTemp,
-                    FieldId::ISTopK,
-                    FieldId::ISTopP,
-                    FieldId::ISFreqPen,
-                    FieldId::ISPresPen,
-                    FieldId::ISMaxTokens,
-                    FieldId::ISThinking,
-                    FieldId::ISReasoning,
-                ],
-            ),
+        let (s, imp) = match self.sampling_sub {
+            Subsection::Assistant => (&self.config.default_sampling, false),
+            Subsection::Impersonation => (&self.config.impersonation_sampling, true),
         };
-        rows.extend([
-            num_row(ids[0], "Температура", s.temperature),
-            num_row(ids[1], "top_k", s.top_k),
-            num_row(ids[2], "top_p", s.top_p),
-            num_row(ids[3], "frequency_penalty", s.frequency_penalty),
-            num_row(ids[4], "presence_penalty", s.presence_penalty),
-            num_row(ids[5], "max_tokens", s.max_tokens),
-            row(
-                ids[6],
-                "Мысли (thinking)",
-                FieldKind::Choice(opt_bool_label(s.thinking)),
-            ),
-            row(
-                ids[7],
-                "reasoning_effort",
-                FieldKind::Choice(reasoning_label(s.reasoning_effort)),
-            ),
-        ]);
+        let mk = |p: SamplingParam| if imp { FieldId::IS(p) } else { FieldId::S(p) };
+        rows.extend(SAMPLING_PARAMS.iter().map(|&p| sampling_row(mk(p), p, s)));
         rows
     }
 
@@ -798,26 +882,8 @@ impl SettingsScreen {
                 self.config.interface.theme = cycle_theme(self.config.interface.theme);
                 Some(self.save_config())
             }
-            FieldId::SThinking => {
-                self.config.default_sampling.thinking =
-                    cycle_opt_bool(self.config.default_sampling.thinking);
-                Some(self.save_config())
-            }
-            FieldId::SReasoning => {
-                self.config.default_sampling.reasoning_effort =
-                    cycle_reasoning(self.config.default_sampling.reasoning_effort);
-                Some(self.save_config())
-            }
-            FieldId::ISThinking => {
-                self.config.impersonation_sampling.thinking =
-                    cycle_opt_bool(self.config.impersonation_sampling.thinking);
-                Some(self.save_config())
-            }
-            FieldId::ISReasoning => {
-                self.config.impersonation_sampling.reasoning_effort =
-                    cycle_reasoning(self.config.impersonation_sampling.reasoning_effort);
-                Some(self.save_config())
-            }
+            FieldId::S(p) => self.cycle_sampling_field(false, p),
+            FieldId::IS(p) => self.cycle_sampling_field(true, p),
             FieldId::PSelect => {
                 if !self.profiles.is_empty() {
                     let n = self.profiles.len() as i32;
@@ -827,6 +893,27 @@ impl SettingsScreen {
             }
             _ => None,
         }
+    }
+
+    /// Циклически меняет Choice-параметр семплинга (`Thinking`/`Reasoning`) в нужной
+    /// подсекции. Для числовых параметров — no-op (`None`), чтобы ←/→ над текстовым
+    /// полем не порождали лишнего сохранения.
+    fn cycle_sampling_field(&mut self, imp: bool, p: SamplingParam) -> Option<SettingsIntent> {
+        {
+            let s = if imp {
+                &mut self.config.impersonation_sampling
+            } else {
+                &mut self.config.default_sampling
+            };
+            match p {
+                SamplingParam::Thinking => s.thinking = cycle_opt_bool(s.thinking),
+                SamplingParam::Reasoning => {
+                    s.reasoning_effort = cycle_reasoning(s.reasoning_effort)
+                }
+                _ => return None,
+            }
+        }
+        Some(self.save_config())
     }
 
     /// Применяет текст из редактора к полю и возвращает намерение сохранения.
@@ -887,23 +974,8 @@ impl SettingsScreen {
                     s.max_tool_rounds = v;
                 }
             }
-            FieldId::STemp => s.default_sampling.temperature = parse_opt_f32(trimmed),
-            FieldId::STopK => s.default_sampling.top_k = parse_opt(trimmed),
-            FieldId::STopP => s.default_sampling.top_p = parse_opt_f32(trimmed),
-            FieldId::SFreqPen => s.default_sampling.frequency_penalty = parse_opt_f32(trimmed),
-            FieldId::SPresPen => s.default_sampling.presence_penalty = parse_opt_f32(trimmed),
-            FieldId::SMaxTokens => s.default_sampling.max_tokens = parse_opt(trimmed),
-            // Имперсонация — семплинг.
-            FieldId::ISTemp => s.impersonation_sampling.temperature = parse_opt_f32(trimmed),
-            FieldId::ISTopK => s.impersonation_sampling.top_k = parse_opt(trimmed),
-            FieldId::ISTopP => s.impersonation_sampling.top_p = parse_opt_f32(trimmed),
-            FieldId::ISFreqPen => {
-                s.impersonation_sampling.frequency_penalty = parse_opt_f32(trimmed)
-            }
-            FieldId::ISPresPen => {
-                s.impersonation_sampling.presence_penalty = parse_opt_f32(trimmed)
-            }
-            FieldId::ISMaxTokens => s.impersonation_sampling.max_tokens = parse_opt(trimmed),
+            FieldId::S(p) => apply_sampling_text(&mut s.default_sampling, p, trimmed),
+            FieldId::IS(p) => apply_sampling_text(&mut s.impersonation_sampling, p, trimmed),
             FieldId::TPythonPath => s.tools.python_path = opt(trimmed),
             FieldId::TSubMaxTokens => {
                 if let Ok(v) = trimmed.parse() {
@@ -1141,6 +1213,8 @@ fn field_description(id: FieldId) -> Option<&'static str> {
             "Сколько слоёв модели имперсонации выгрузить на видеокарту (GPU). \
              0 — только процессор, 99 — вся модель на GPU.",
         ),
+        // Описания параметров семплинга (одинаковые для обеих подсекций).
+        FieldId::S(p) | FieldId::IS(p) => p.description(),
         _ => None,
     }
 }
@@ -1173,6 +1247,72 @@ fn num_row<T: ToString>(id: FieldId, label: &str, value: Option<T>) -> FieldRow 
                 .unwrap_or_else(|| "—".to_string()),
         ),
     )
+}
+
+/// Строка поля семплинга по параметру: числовые — текст (`num_row`),
+/// `Thinking`/`Reasoning` — циклический выбор.
+fn sampling_row(id: FieldId, p: SamplingParam, s: &SamplingConfig) -> FieldRow {
+    use SamplingParam::*;
+    let label = p.label();
+    match p {
+        Temp => num_row(id, label, s.temperature),
+        TopK => num_row(id, label, s.top_k),
+        TopP => num_row(id, label, s.top_p),
+        MinP => num_row(id, label, s.min_p),
+        TopNSigma => num_row(id, label, s.top_n_sigma),
+        TypicalP => num_row(id, label, s.typical_p),
+        FreqPen => num_row(id, label, s.frequency_penalty),
+        PresPen => num_row(id, label, s.presence_penalty),
+        RepeatPenalty => num_row(id, label, s.repeat_penalty),
+        RepeatLastN => num_row(id, label, s.repeat_last_n),
+        DryMultiplier => num_row(id, label, s.dry_multiplier),
+        DryBase => num_row(id, label, s.dry_base),
+        DryAllowedLength => num_row(id, label, s.dry_allowed_length),
+        DryPenaltyLastN => num_row(id, label, s.dry_penalty_last_n),
+        XtcProbability => num_row(id, label, s.xtc_probability),
+        XtcThreshold => num_row(id, label, s.xtc_threshold),
+        Mirostat => num_row(id, label, s.mirostat),
+        MirostatTau => num_row(id, label, s.mirostat_tau),
+        MirostatEta => num_row(id, label, s.mirostat_eta),
+        MaxTokens => num_row(id, label, s.max_tokens),
+        Seed => num_row(id, label, s.seed),
+        Thinking => row(id, label, FieldKind::Choice(opt_bool_label(s.thinking))),
+        Reasoning => row(
+            id,
+            label,
+            FieldKind::Choice(reasoning_label(s.reasoning_effort)),
+        ),
+    }
+}
+
+/// Применяет текст редактора к числовому параметру семплинга. `Thinking`/`Reasoning`
+/// — Choice-поля (редактируются ←/→), текстом не правятся.
+fn apply_sampling_text(s: &mut SamplingConfig, p: SamplingParam, trimmed: &str) {
+    use SamplingParam::*;
+    match p {
+        Temp => s.temperature = parse_opt_f32(trimmed),
+        TopK => s.top_k = parse_opt(trimmed),
+        TopP => s.top_p = parse_opt_f32(trimmed),
+        MinP => s.min_p = parse_opt_f32(trimmed),
+        TopNSigma => s.top_n_sigma = parse_opt_f32(trimmed),
+        TypicalP => s.typical_p = parse_opt_f32(trimmed),
+        FreqPen => s.frequency_penalty = parse_opt_f32(trimmed),
+        PresPen => s.presence_penalty = parse_opt_f32(trimmed),
+        RepeatPenalty => s.repeat_penalty = parse_opt_f32(trimmed),
+        RepeatLastN => s.repeat_last_n = parse_opt(trimmed),
+        DryMultiplier => s.dry_multiplier = parse_opt_f32(trimmed),
+        DryBase => s.dry_base = parse_opt_f32(trimmed),
+        DryAllowedLength => s.dry_allowed_length = parse_opt(trimmed),
+        DryPenaltyLastN => s.dry_penalty_last_n = parse_opt(trimmed),
+        XtcProbability => s.xtc_probability = parse_opt_f32(trimmed),
+        XtcThreshold => s.xtc_threshold = parse_opt_f32(trimmed),
+        Mirostat => s.mirostat = parse_opt(trimmed),
+        MirostatTau => s.mirostat_tau = parse_opt_f32(trimmed),
+        MirostatEta => s.mirostat_eta = parse_opt_f32(trimmed),
+        MaxTokens => s.max_tokens = parse_opt(trimmed),
+        Seed => s.seed = parse_opt(trimmed),
+        Thinking | Reasoning => {}
+    }
 }
 
 /// Ширина подписи в терминальных колонках (кириллица/латиница = 1, CJK/эмодзи = 2).
@@ -1614,5 +1754,37 @@ mod tests {
             let mut term = Terminal::new(TestBackend::new(w, h)).unwrap();
             term.draw(|f| s.render(f)).unwrap();
         }
+    }
+
+    #[test]
+    fn editing_new_sampling_field_commits() {
+        let mut s = screen();
+        s.handle_key(key(KeyCode::Tab)); // Inference
+        s.handle_key(key(KeyCode::Tab)); // Sampling
+        s.handle_key(key(KeyCode::Enter)); // фокус на поля (SamplingSub)
+        // Дойти до нового поля min_p (адресуется параметрически).
+        while s.fields().get(s.field_idx).map(|f| f.id) != Some(FieldId::S(SamplingParam::MinP)) {
+            s.handle_key(key(KeyCode::Down));
+        }
+        s.handle_key(key(KeyCode::Enter)); // открыть редактор min_p
+        for c in "0.03".chars() {
+            s.handle_key(key(KeyCode::Char(c)));
+        }
+        let intent = s.handle_key(key(KeyCode::Enter)); // коммит
+        match intent {
+            Some(SettingsIntent::SaveConfig(c)) => {
+                assert_eq!(c.default_sampling.min_p, Some(0.03))
+            }
+            other => panic!("ожидался SaveConfig, получено {other:?}"),
+        }
+    }
+
+    #[test]
+    fn sampling_extensions_have_descriptions() {
+        // Расширения llama.cpp снабжены подсказкой в обеих подсекциях.
+        assert!(field_description(FieldId::S(SamplingParam::MinP)).is_some());
+        assert!(field_description(FieldId::IS(SamplingParam::DryMultiplier)).is_some());
+        // Базовые поля (температура) — без отдельной подсказки.
+        assert!(field_description(FieldId::S(SamplingParam::Temp)).is_none());
     }
 }

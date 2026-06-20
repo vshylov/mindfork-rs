@@ -347,8 +347,9 @@ fn map_sampling(s: &LlSampling, include_thoughts: Option<bool>) -> SamplingConfi
         presence_penalty: s.alpha_presence,
         max_tokens: s.max_tokens,
         thinking: include_thoughts,
-        reasoning_effort: None,
-        reasoning_budget: None,
+        // Прочие поля (min_p/repeat_penalty/seed/mirostat/DRY/XTC) LameLLaMA не
+        // переносим — см. комментарий выше; остаются на значениях по умолчанию.
+        ..Default::default()
     }
 }
 
