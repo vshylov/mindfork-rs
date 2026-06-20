@@ -107,11 +107,15 @@ impl Section {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum SamplingParam {
     Temp,
+    DynatempRange,
+    DynatempExp,
     TopK,
     TopP,
     MinP,
     TopNSigma,
     TypicalP,
+    AdaptiveTarget,
+    AdaptiveDecay,
     FreqPen,
     PresPen,
     RepeatPenalty,
@@ -120,6 +124,7 @@ enum SamplingParam {
     DryBase,
     DryAllowedLength,
     DryPenaltyLastN,
+    DrySeqBreakers,
     XtcProbability,
     XtcThreshold,
     Mirostat,
@@ -127,6 +132,7 @@ enum SamplingParam {
     MirostatEta,
     MaxTokens,
     Seed,
+    Samplers,
     Thinking,
     Reasoning,
 }
@@ -136,11 +142,15 @@ const SAMPLING_PARAMS: &[SamplingParam] = {
     use SamplingParam::*;
     &[
         Temp,
+        DynatempRange,
+        DynatempExp,
         TopK,
         TopP,
         MinP,
         TopNSigma,
         TypicalP,
+        AdaptiveTarget,
+        AdaptiveDecay,
         FreqPen,
         PresPen,
         RepeatPenalty,
@@ -149,6 +159,7 @@ const SAMPLING_PARAMS: &[SamplingParam] = {
         DryBase,
         DryAllowedLength,
         DryPenaltyLastN,
+        DrySeqBreakers,
         XtcProbability,
         XtcThreshold,
         Mirostat,
@@ -156,6 +167,7 @@ const SAMPLING_PARAMS: &[SamplingParam] = {
         MirostatEta,
         MaxTokens,
         Seed,
+        Samplers,
         Thinking,
         Reasoning,
     ]
@@ -167,11 +179,15 @@ impl SamplingParam {
         use SamplingParam::*;
         match self {
             Temp => "Температура",
+            DynatempRange => "dynatemp_range",
+            DynatempExp => "dynatemp_exponent",
             TopK => "top_k",
             TopP => "top_p",
             MinP => "min_p",
             TopNSigma => "top_n_sigma",
             TypicalP => "typical_p",
+            AdaptiveTarget => "adaptive_target",
+            AdaptiveDecay => "adaptive_decay",
             FreqPen => "frequency_penalty",
             PresPen => "presence_penalty",
             RepeatPenalty => "repeat_penalty",
@@ -180,6 +196,7 @@ impl SamplingParam {
             DryBase => "dry_base",
             DryAllowedLength => "dry_allowed_length",
             DryPenaltyLastN => "dry_penalty_last_n",
+            DrySeqBreakers => "dry_sequence_breakers",
             XtcProbability => "xtc_probability",
             XtcThreshold => "xtc_threshold",
             Mirostat => "mirostat",
@@ -187,6 +204,7 @@ impl SamplingParam {
             MirostatEta => "mirostat_eta",
             MaxTokens => "max_tokens",
             Seed => "seed",
+            Samplers => "samplers",
             Thinking => "Мысли (thinking)",
             Reasoning => "reasoning_effort",
         }
@@ -196,6 +214,26 @@ impl SamplingParam {
     fn description(self) -> Option<&'static str> {
         use SamplingParam::*;
         Some(match self {
+            DynatempRange => {
+                "Динамическая температура: ширина диапазона ± вокруг \
+                 температуры, подстраиваемого по энтропии на каждом токене. \
+                 0 — выключено. Расширение llama.cpp."
+            }
+            DynatempExp => "Динамическая температура: показатель кривой адаптации (обычно 1.0).",
+            AdaptiveTarget => {
+                "adaptive-p: целевая вероятность, около которой выбираются \
+                 токены. Отрицательное — выключено. Экспериментально (llama.cpp)."
+            }
+            AdaptiveDecay => "adaptive-p: скорость адаптации цели (0..0.99; меньше — реактивнее).",
+            DrySeqBreakers => {
+                "DRY: брейкеры через запятую (сброс учёта повтора). Пусто — \
+                 серверные по умолчанию. Эскейпы \\n \\t \\r поддержаны."
+            }
+            Samplers => {
+                "Порядок сэмплеров через «;» (напр. penalties;dry;top_k;top_p;\
+                 min_p;temperature). Пусто — порядок сервера. Не указанный \
+                 сэмплер отключается."
+            }
             MinP => {
                 "min-p: отсекает токены с вероятностью ниже доли от самой \
                      вероятной. 0 — выключено. Расширение llama.cpp."
@@ -1256,11 +1294,15 @@ fn sampling_row(id: FieldId, p: SamplingParam, s: &SamplingConfig) -> FieldRow {
     let label = p.label();
     match p {
         Temp => num_row(id, label, s.temperature),
+        DynatempRange => num_row(id, label, s.dynatemp_range),
+        DynatempExp => num_row(id, label, s.dynatemp_exponent),
         TopK => num_row(id, label, s.top_k),
         TopP => num_row(id, label, s.top_p),
         MinP => num_row(id, label, s.min_p),
         TopNSigma => num_row(id, label, s.top_n_sigma),
         TypicalP => num_row(id, label, s.typical_p),
+        AdaptiveTarget => num_row(id, label, s.adaptive_target),
+        AdaptiveDecay => num_row(id, label, s.adaptive_decay),
         FreqPen => num_row(id, label, s.frequency_penalty),
         PresPen => num_row(id, label, s.presence_penalty),
         RepeatPenalty => num_row(id, label, s.repeat_penalty),
@@ -1269,6 +1311,11 @@ fn sampling_row(id: FieldId, p: SamplingParam, s: &SamplingConfig) -> FieldRow {
         DryBase => num_row(id, label, s.dry_base),
         DryAllowedLength => num_row(id, label, s.dry_allowed_length),
         DryPenaltyLastN => num_row(id, label, s.dry_penalty_last_n),
+        DrySeqBreakers => row(
+            id,
+            label,
+            FieldKind::Text(join_breakers(s.dry_sequence_breakers.as_deref())),
+        ),
         XtcProbability => num_row(id, label, s.xtc_probability),
         XtcThreshold => num_row(id, label, s.xtc_threshold),
         Mirostat => num_row(id, label, s.mirostat),
@@ -1276,6 +1323,11 @@ fn sampling_row(id: FieldId, p: SamplingParam, s: &SamplingConfig) -> FieldRow {
         MirostatEta => num_row(id, label, s.mirostat_eta),
         MaxTokens => num_row(id, label, s.max_tokens),
         Seed => num_row(id, label, s.seed),
+        Samplers => row(
+            id,
+            label,
+            FieldKind::Text(join_list(s.samplers.as_deref(), ';')),
+        ),
         Thinking => row(id, label, FieldKind::Choice(opt_bool_label(s.thinking))),
         Reasoning => row(
             id,
@@ -1291,11 +1343,15 @@ fn apply_sampling_text(s: &mut SamplingConfig, p: SamplingParam, trimmed: &str) 
     use SamplingParam::*;
     match p {
         Temp => s.temperature = parse_opt_f32(trimmed),
+        DynatempRange => s.dynatemp_range = parse_opt_f32(trimmed),
+        DynatempExp => s.dynatemp_exponent = parse_opt_f32(trimmed),
         TopK => s.top_k = parse_opt(trimmed),
         TopP => s.top_p = parse_opt_f32(trimmed),
         MinP => s.min_p = parse_opt_f32(trimmed),
         TopNSigma => s.top_n_sigma = parse_opt_f32(trimmed),
         TypicalP => s.typical_p = parse_opt_f32(trimmed),
+        AdaptiveTarget => s.adaptive_target = parse_opt_f32(trimmed),
+        AdaptiveDecay => s.adaptive_decay = parse_opt_f32(trimmed),
         FreqPen => s.frequency_penalty = parse_opt_f32(trimmed),
         PresPen => s.presence_penalty = parse_opt_f32(trimmed),
         RepeatPenalty => s.repeat_penalty = parse_opt_f32(trimmed),
@@ -1304,6 +1360,7 @@ fn apply_sampling_text(s: &mut SamplingConfig, p: SamplingParam, trimmed: &str) 
         DryBase => s.dry_base = parse_opt_f32(trimmed),
         DryAllowedLength => s.dry_allowed_length = parse_opt(trimmed),
         DryPenaltyLastN => s.dry_penalty_last_n = parse_opt(trimmed),
+        DrySeqBreakers => s.dry_sequence_breakers = parse_breakers(trimmed),
         XtcProbability => s.xtc_probability = parse_opt_f32(trimmed),
         XtcThreshold => s.xtc_threshold = parse_opt_f32(trimmed),
         Mirostat => s.mirostat = parse_opt(trimmed),
@@ -1311,6 +1368,7 @@ fn apply_sampling_text(s: &mut SamplingConfig, p: SamplingParam, trimmed: &str) 
         MirostatEta => s.mirostat_eta = parse_opt_f32(trimmed),
         MaxTokens => s.max_tokens = parse_opt(trimmed),
         Seed => s.seed = parse_opt(trimmed),
+        Samplers => s.samplers = parse_list(trimmed, ';'),
         Thinking | Reasoning => {}
     }
 }
@@ -1424,6 +1482,90 @@ fn parse_opt<T: std::str::FromStr>(s: &str) -> Option<T> {
 
 fn parse_opt_f32(s: &str) -> Option<f32> {
     parse_opt(s)
+}
+
+/// Разбор текстового поля-списка строк (UI): разбивает по `sep`, обрезает
+/// пробелы у элементов, отбрасывает пустые; пустой ввод → `None`.
+fn parse_list(s: &str, sep: char) -> Option<Vec<String>> {
+    let v: Vec<String> = s
+        .split(sep)
+        .map(str::trim)
+        .filter(|x| !x.is_empty())
+        .map(str::to_string)
+        .collect();
+    (!v.is_empty()).then_some(v)
+}
+
+/// Склейка списка строк для отображения через `sep`; `None`/пусто → «—».
+fn join_list(v: Option<&[String]>, sep: char) -> String {
+    match v {
+        Some(items) if !items.is_empty() => items.join(&sep.to_string()),
+        _ => "—".to_string(),
+    }
+}
+
+/// DRY-брейкеры: как [`parse_list`] по запятой, но с декодированием эскейпов
+/// `\n`/`\t`/`\r` (однострочный редактор не даёт ввести их буквально).
+fn parse_breakers(s: &str) -> Option<Vec<String>> {
+    let v: Vec<String> = s
+        .split(',')
+        .map(str::trim)
+        .filter(|x| !x.is_empty())
+        .map(decode_escapes)
+        .collect();
+    (!v.is_empty()).then_some(v)
+}
+
+/// DRY-брейкеры для отображения: кодирует управляющие символы обратно в `\n`
+/// и т.п., склеивает через запятую; `None`/пусто → «—».
+fn join_breakers(v: Option<&[String]>) -> String {
+    match v {
+        Some(items) if !items.is_empty() => items
+            .iter()
+            .map(|s| encode_escapes(s))
+            .collect::<Vec<_>>()
+            .join(","),
+        _ => "—".to_string(),
+    }
+}
+
+/// Декодирует литералы `\n`/`\t`/`\r`/`\\` в реальные символы.
+fn decode_escapes(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    let mut chars = s.chars();
+    while let Some(c) = chars.next() {
+        if c == '\\' {
+            match chars.next() {
+                Some('n') => out.push('\n'),
+                Some('t') => out.push('\t'),
+                Some('r') => out.push('\r'),
+                Some('\\') => out.push('\\'),
+                Some(other) => {
+                    out.push('\\');
+                    out.push(other);
+                }
+                None => out.push('\\'),
+            }
+        } else {
+            out.push(c);
+        }
+    }
+    out
+}
+
+/// Кодирует управляющие символы в литералы `\n`/`\t`/`\r`/`\\` (обратно к [`decode_escapes`]).
+fn encode_escapes(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    for c in s.chars() {
+        match c {
+            '\n' => out.push_str("\\n"),
+            '\t' => out.push_str("\\t"),
+            '\r' => out.push_str("\\r"),
+            '\\' => out.push_str("\\\\"),
+            other => out.push(other),
+        }
+    }
+    out
 }
 
 /// Высота крупного попапа редактора системного сообщения: ~60% высоты экрана,
@@ -1636,6 +1778,27 @@ mod tests {
         assert_eq!(s.profile_idx, 0);
         s.handle_key(key(KeyCode::Right));
         assert_eq!(s.profile_idx, 1);
+    }
+
+    #[test]
+    fn samplers_list_round_trip() {
+        // Порядок сэмплеров: разбор по «;», склейка обратно, пустой → None.
+        let v = parse_list("penalties;dry; temperature ", ';').unwrap();
+        assert_eq!(v, vec!["penalties", "dry", "temperature"]);
+        assert_eq!(join_list(Some(&v), ';'), "penalties;dry;temperature");
+        assert_eq!(parse_list("", ';'), None);
+        assert_eq!(parse_list("   ;  ", ';'), None);
+        assert_eq!(join_list(None, ';'), "—");
+    }
+
+    #[test]
+    fn dry_breakers_decode_and_encode_escapes() {
+        // Эскейпы \n \t декодируются при вводе и кодируются обратно при показе.
+        let v = parse_breakers(r#"\n, :, ", *"#).unwrap();
+        assert_eq!(v, vec!["\n", ":", "\"", "*"]);
+        assert_eq!(join_breakers(Some(&v)), r#"\n,:,",*"#);
+        assert_eq!(parse_breakers(""), None);
+        assert_eq!(join_breakers(None), "—");
     }
 
     #[test]

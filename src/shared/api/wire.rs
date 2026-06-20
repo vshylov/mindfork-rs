@@ -17,6 +17,10 @@ pub struct ChatCompletionRequest {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub temperature: Option<f32>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub dynatemp_range: Option<f32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub dynatemp_exponent: Option<f32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub max_tokens: Option<usize>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub top_k: Option<i64>,
@@ -31,6 +35,10 @@ pub struct ChatCompletionRequest {
     pub top_n_sigma: Option<f32>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub typical_p: Option<f32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub adaptive_target: Option<f32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub adaptive_decay: Option<f32>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub frequency_penalty: Option<f32>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -47,6 +55,9 @@ pub struct ChatCompletionRequest {
     pub dry_allowed_length: Option<i64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub dry_penalty_last_n: Option<i64>,
+    /// DRY-брейкеры (массив строк); шлём только непустой список.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub dry_sequence_breakers: Option<Vec<String>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub xtc_probability: Option<f32>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -59,6 +70,9 @@ pub struct ChatCompletionRequest {
     pub mirostat_eta: Option<f32>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub seed: Option<i64>,
+    /// Порядок сэмплеров (массив имён); шлём только непустой список.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub samplers: Option<Vec<String>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub thinking: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -183,16 +197,23 @@ pub fn build_chat_request(req: &ChatRequest, stream: bool) -> ChatCompletionRequ
     // reasoning_budget, а Jinja-шаблоны моделей — enable_thinking; шлём оба.
     let chat_template_kwargs =
         (s.reasoning_budget == Some(0)).then(|| serde_json::json!({ "enable_thinking": false }));
+    // Списочные поля (DRY-брейкеры, порядок сэмплеров): пустой список не шлём —
+    // иначе сервер истолковал бы его как «нет брейкеров»/«отключить все сэмплеры».
+    let non_empty = |v: &Option<Vec<String>>| v.clone().filter(|x| !x.is_empty());
     ChatCompletionRequest {
         messages,
         stream,
         temperature: s.temperature,
+        dynatemp_range: s.dynatemp_range,
+        dynatemp_exponent: s.dynatemp_exponent,
         max_tokens: s.max_tokens,
         top_k: s.top_k,
         top_p: s.top_p,
         min_p: s.min_p,
         top_n_sigma: s.top_n_sigma,
         typical_p: s.typical_p,
+        adaptive_target: s.adaptive_target,
+        adaptive_decay: s.adaptive_decay,
         frequency_penalty: s.frequency_penalty,
         presence_penalty: s.presence_penalty,
         repeat_penalty: s.repeat_penalty,
@@ -201,12 +222,14 @@ pub fn build_chat_request(req: &ChatRequest, stream: bool) -> ChatCompletionRequ
         dry_base: s.dry_base,
         dry_allowed_length: s.dry_allowed_length,
         dry_penalty_last_n: s.dry_penalty_last_n,
+        dry_sequence_breakers: non_empty(&s.dry_sequence_breakers),
         xtc_probability: s.xtc_probability,
         xtc_threshold: s.xtc_threshold,
         mirostat: s.mirostat,
         mirostat_tau: s.mirostat_tau,
         mirostat_eta: s.mirostat_eta,
         seed: s.seed,
+        samplers: non_empty(&s.samplers),
         thinking: s.thinking,
         reasoning_effort: s.reasoning_effort.map(|r| r.as_wire()),
         reasoning_budget: s.reasoning_budget,
@@ -310,10 +333,14 @@ mod tests {
             messages: vec![ApiMessage::user("hi")],
             sampling: SamplingConfig {
                 temperature: Some(0.8),
+                dynatemp_range: Some(0.4),
+                dynatemp_exponent: Some(1.0),
                 top_k: Some(40),
                 top_p: Some(0.95),
                 min_p: Some(0.03),
                 top_n_sigma: Some(1.5),
+                adaptive_target: Some(0.1),
+                adaptive_decay: Some(0.9),
                 frequency_penalty: Some(0.1),
                 presence_penalty: Some(0.2),
                 repeat_penalty: Some(1.0),
@@ -335,10 +362,14 @@ mod tests {
         // f32→f64 расширение делает точное сравнение ненадёжным — сравниваем приближённо.
         let approx = |v: &serde_json::Value, want: f64| (v.as_f64().unwrap() - want).abs() < 1e-6;
         assert!(approx(&json["temperature"], 0.8));
+        assert!(approx(&json["dynatemp_range"], 0.4));
+        assert!(approx(&json["dynatemp_exponent"], 1.0));
         assert_eq!(json["top_k"], 40);
         assert!(approx(&json["top_p"], 0.95));
         assert!(approx(&json["min_p"], 0.03));
         assert!(approx(&json["top_n_sigma"], 1.5));
+        assert!(approx(&json["adaptive_target"], 0.1));
+        assert!(approx(&json["adaptive_decay"], 0.9));
         assert!(approx(&json["frequency_penalty"], 0.1));
         assert!(approx(&json["presence_penalty"], 0.2));
         assert!(approx(&json["repeat_penalty"], 1.0));
@@ -358,6 +389,41 @@ mod tests {
         // Незаданные расширения не сериализуются.
         assert!(json.get("typical_p").is_none());
         assert!(json.get("mirostat").is_none());
+    }
+
+    #[test]
+    fn list_fields_sent_as_arrays_and_empty_omitted() {
+        // Непустые списки → JSON-массивы.
+        let req = ChatRequest {
+            system: None,
+            messages: vec![ApiMessage::user("hi")],
+            sampling: SamplingConfig {
+                dry_sequence_breakers: Some(vec!["\n".into(), ":".into()]),
+                samplers: Some(vec!["penalties".into(), "temperature".into()]),
+                ..Default::default()
+            },
+            tools: vec![],
+        };
+        let json = serde_json::to_value(build_chat_request(&req, false)).unwrap();
+        assert_eq!(json["dry_sequence_breakers"][0], "\n");
+        assert_eq!(json["dry_sequence_breakers"][1], ":");
+        assert_eq!(json["samplers"][0], "penalties");
+        assert_eq!(json["samplers"][1], "temperature");
+
+        // Пустые списки НЕ отправляются (иначе сервер счёл бы их «отключить всё»).
+        let req_empty = ChatRequest {
+            system: None,
+            messages: vec![ApiMessage::user("hi")],
+            sampling: SamplingConfig {
+                dry_sequence_breakers: Some(vec![]),
+                samplers: Some(vec![]),
+                ..Default::default()
+            },
+            tools: vec![],
+        };
+        let json_empty = serde_json::to_value(build_chat_request(&req_empty, false)).unwrap();
+        assert!(json_empty.get("dry_sequence_breakers").is_none());
+        assert!(json_empty.get("samplers").is_none());
     }
 
     #[test]
