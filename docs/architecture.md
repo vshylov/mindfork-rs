@@ -124,8 +124,10 @@ src/
 │                           tokio, ratatui::init, импорт LameLLaMA (CLI-флаг)
 │
 ├─ app/                     композиция: оркестрация, петля TUI, контракт, серверы
-│  ├─ orchestrator.rs       владелец состояния, автомат Idle/Generating/Cancelling,
-│  │                        клиентский agentic-loop, фоновые задачи (title/импер./RAG)
+│  ├─ orchestrator.rs       владелец состояния, клиентский agentic-loop,
+│  │                        фоновые задачи (title/импер./RAG)
+│  ├─ gen_state.rs          GenState: чистый автомат Idle/Generating/Cancelling
+│  │                        (переходы begin/request_cancel/finish, без I/O)
 │  ├─ events.rs             AppCommand (UI→оркестр.) и AppEvent (оркестр.→UI)
 │  ├─ runtime.rs            мост tokio↔TUI: батчинг ввода, dirty-перерисовка,
 │  │                        трансляция Intent→AppCommand, side-effect'ы (мышь/буфер)
@@ -260,7 +262,9 @@ flowchart LR
 
 ## 5. Жизненный цикл генерации и клиентский agentic-loop
 
-Автомат на активный чат (`State` в оркестраторе):
+Автомат на активный чат — выделен в `GenState` ([`app/gen_state.rs`](../src/app/gen_state.rs)):
+чистый тип с валидными по построению переходами (`begin`/`request_cancel`/
+`finish`), оркестратор лишь вызывает их и исполняет side-effect'ы вокруг.
 
 ```mermaid
 stateDiagram-v2

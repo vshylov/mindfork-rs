@@ -15,6 +15,7 @@ use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
 use crate::app::events::{AppCommand, AppEvent, RagProgress, ServerStatus};
+use crate::app::gen_state::GenState;
 use crate::app::supervisor::ServerSupervisor;
 use crate::entities::chat::{Chat, ChatSummary};
 use crate::entities::message::{Message, MessageMetadata, MessageRole, ToolCallRecord};
@@ -68,22 +69,6 @@ pub struct OrchestratorDeps {
     pub config: AppConfig,
     /// Супервайзер серверов инференса/эмбеддингов (real или mock в тестах).
     pub supervisor: Arc<dyn ServerSupervisor>,
-}
-
-/// Состояние генерации (автомат на активный чат).
-enum State {
-    Idle,
-    Generating { id: Uuid, cancel: CancellationToken },
-    Cancelling { id: Uuid },
-}
-
-impl State {
-    fn current_id(&self) -> Option<Uuid> {
-        match self {
-            State::Idle => None,
-            State::Generating { id, .. } | State::Cancelling { id, .. } => Some(*id),
-        }
-    }
 }
 
 /// Результат завершившейся задачи генерации (внутренний канал).
@@ -150,7 +135,7 @@ pub async fn run(deps: OrchestratorDeps) {
         profiles: Vec::new(),
         chats: Vec::new(),
         active_id: None,
-        state: State::Idle,
+        gen_state: GenState::Idle,
         done_tx,
         rag_cancel: None,
         dirty: HashSet::new(),
@@ -268,7 +253,8 @@ struct Orchestrator {
     /// Видимые чаты, целиком в памяти (оркестратор — единственный писатель).
     chats: Vec<Chat>,
     active_id: Option<Uuid>,
-    state: State,
+    /// Автомат жизненного цикла генерации ответа ассистента (см. `gen_state`).
+    gen_state: GenState,
     done_tx: UnboundedSender<GenResult>,
     /// Токен отмены текущей фоновой индексации RAG (`/rag add`); `None` — не идёт.
     /// Снимается/отменяется при новой индексации и при завершении работы.
@@ -324,8 +310,8 @@ impl Orchestrator {
     fn handle_command(&mut self, cmd: AppCommand) -> bool {
         match cmd {
             AppCommand::Quit => {
-                if let State::Generating { cancel, .. } = &self.state {
-                    cancel.cancel();
+                if let Some(token) = self.gen_state.active_cancel() {
+                    token.cancel();
                 }
                 if let Some(token) = &self.rag_cancel {
                     token.cancel();
@@ -336,9 +322,8 @@ impl Orchestrator {
                 return true;
             }
             AppCommand::Cancel => {
-                if let State::Generating { id, cancel, .. } = &self.state {
-                    cancel.cancel();
-                    self.state = State::Cancelling { id: *id };
+                if let Some(token) = self.gen_state.request_cancel() {
+                    token.cancel();
                 }
             }
             AppCommand::SendMessage(text) => self.handle_send(text),
@@ -368,7 +353,7 @@ impl Orchestrator {
     }
 
     fn handle_send(&mut self, text: String) {
-        if !matches!(self.state, State::Idle) {
+        if !self.gen_state.is_idle() {
             return;
         }
         let text = text.trim().to_string();
@@ -424,7 +409,7 @@ impl Orchestrator {
     /// запускает генерацию заново из того же запроса. Лента перестраивается через
     /// переэмит `ChatActivated`. Во время генерации — игнорируется.
     fn handle_regenerate(&mut self) {
-        if !matches!(self.state, State::Idle) {
+        if !self.gen_state.is_idle() {
             return;
         }
         let Some(active_id) = self.active_id else {
@@ -460,7 +445,7 @@ impl Orchestrator {
     /// (`RestoreInput`), чтобы его можно было отредактировать и отправить заново.
     /// Во время генерации — игнорируется.
     fn handle_delete_last(&mut self) {
-        if !matches!(self.state, State::Idle) {
+        if !self.gen_state.is_idle() {
             return;
         }
         let Some(active_id) = self.active_id else {
@@ -571,10 +556,7 @@ impl Orchestrator {
         let _ = self
             .evt_tx
             .send(AppEvent::GenerationStarted { generation_id: id });
-        self.state = State::Generating {
-            id,
-            cancel: cancel.clone(),
-        };
+        self.gen_state.begin(id, cancel.clone());
         spawn_generation(GenSpawn {
             backend,
             registry: self.registry.clone(),
@@ -591,11 +573,11 @@ impl Orchestrator {
     }
 
     fn handle_done(&mut self, res: GenResult) {
-        // Применяем только результат текущей генерации (защита от устаревших).
-        if self.state.current_id() != Some(res.id) {
+        // Применяем только результат текущей генерации (защита от устаревших):
+        // finish() переходит в Idle лишь при совпадении id.
+        if !self.gen_state.finish(res.id) {
             return;
         }
-        self.state = State::Idle;
 
         if res.messages.is_empty() && res.effects.is_empty() {
             return;
@@ -636,12 +618,8 @@ impl Orchestrator {
         }
         // Если идёт генерация — отменяем её (частичный ответ сохранится для
         // исходного чата по приходу GenResult).
-        if let State::Generating {
-            id: gid, cancel, ..
-        } = &self.state
-        {
-            cancel.cancel();
-            self.state = State::Cancelling { id: *gid };
+        if let Some(token) = self.gen_state.request_cancel() {
+            token.cancel();
         }
         if self.chats.iter().any(|c| c.id == id) {
             self.activate(id);
@@ -1068,7 +1046,7 @@ impl Orchestrator {
     /// «за пользователя». Текст стримится в предпросмотр поля ввода. Игнорируется
     /// во время генерации/другой имперсонации.
     fn handle_impersonate(&mut self, seed: String) {
-        if !matches!(self.state, State::Idle) || self.imp_gen.is_some() {
+        if !self.gen_state.is_idle() || self.imp_gen.is_some() {
             return;
         }
         let Some(active_id) = self.active_id else {
@@ -1906,7 +1884,7 @@ mod tests {
             profiles: Vec::new(),
             chats: Vec::new(),
             active_id: None,
-            state: State::Idle,
+            gen_state: GenState::Idle,
             done_tx,
             rag_cancel: None,
             dirty: HashSet::new(),
@@ -2479,7 +2457,7 @@ mod tests {
 
         orch.handle_regenerate();
         // Состояние осталось Idle (генерация не запущена), история не тронута.
-        assert!(matches!(orch.state, State::Idle));
+        assert!(orch.gen_state.is_idle());
         assert_eq!(orch.chats[0].messages.len(), 1);
     }
 
@@ -2506,7 +2484,7 @@ mod tests {
         orch.handle_regenerate();
 
         // Ответ сохранён, генерация не стартовала (история не усечена).
-        assert!(matches!(orch.state, State::Idle));
+        assert!(orch.gen_state.is_idle());
         assert_eq!(
             orch.chats[0].messages.len(),
             2,
@@ -2532,7 +2510,7 @@ mod tests {
 
         orch.handle_send("привет".into());
 
-        assert!(matches!(orch.state, State::Idle));
+        assert!(orch.gen_state.is_idle());
         assert!(orch.chats[0].messages.is_empty(), "сообщение не добавлено");
         // Среди эмитнутых событий — ошибка и возврат текста в поле ввода.
         let mut got_error = false;
