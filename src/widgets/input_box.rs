@@ -49,6 +49,12 @@ pub struct InputBox {
     /// → отсортированные непересекающиеся `[start, end)` в символах). Заполняет
     /// экран из спелл-чекера; виджет лишь подчёркивает. См. spec §11.5.
     misspelled: Vec<Vec<(usize, usize)>>,
+    /// Буфер «отмены» хоткея «удалить весь текст» ([`Self::clear_or_restore`]):
+    /// текст, удалённый последним нажатием, чтобы повторное нажатие его вернуло.
+    /// `Some` только пока после удаления **ничего не вводилось** — любой ввод
+    /// текста (`insert_*`/`replace_range`/`set_text`) инвалидирует буфер в `None`.
+    /// См. spec §11.5.
+    cleared: Option<String>,
 }
 
 impl Default for InputBox {
@@ -69,6 +75,7 @@ impl InputBox {
             last_width: 0,
             goal_col: None,
             misspelled: Vec::new(),
+            cleared: None,
         }
     }
 
@@ -106,7 +113,8 @@ impl InputBox {
         self.visual_rows(width).len()
     }
 
-    /// Очищает поле.
+    /// Очищает поле. Сбрасывает и буфер отмены [`Self::cleared`] (после отправки
+    /// сообщения «вернуть удалённое» не должно воскрешать уже отправленный текст).
     pub fn clear(&mut self) {
         self.lines = vec![Vec::new()];
         self.row = 0;
@@ -115,6 +123,23 @@ impl InputBox {
         self.hscroll = 0;
         self.goal_col = None;
         self.misspelled.clear();
+        self.cleared = None;
+    }
+
+    /// Хоткей «удалить весь текст / вернуть удалённое» (`Ctrl+K`, spec §11.5).
+    /// Если поле непусто — запоминает текст и очищает поле. Если поле пусто, а в
+    /// буфере есть ранее удалённый текст (с тех пор ничего не вводилось) —
+    /// восстанавливает его (курсор в конец). Любой ввод между нажатиями
+    /// инвалидирует буфер (см. [`Self::cleared`]), поэтому восстановить можно лишь
+    /// сразу после удаления.
+    pub fn clear_or_restore(&mut self) {
+        if !self.is_empty() {
+            let text = self.text();
+            self.clear(); // сбрасывает cleared в None
+            self.cleared = Some(text);
+        } else if let Some(text) = self.cleared.take() {
+            self.set_text(&text); // set_text тоже сбросит cleared (уже None)
+        }
     }
 
     /// Текст по логическим строкам (для спелл-чека построчно).
@@ -152,6 +177,7 @@ impl InputBox {
         self.row = row;
         self.col = start + repl_len;
         self.goal_col = None;
+        self.cleared = None;
     }
 
     /// Заполняет поле текстом, ставит курсор в конец (для правки по месту, M3+).
@@ -175,6 +201,7 @@ impl InputBox {
         self.scroll = 0;
         self.hscroll = 0;
         self.goal_col = None;
+        self.cleared = None;
     }
 
     // ---------- редактирование ----------
@@ -183,6 +210,7 @@ impl InputBox {
         self.lines[self.row].insert(self.col, c);
         self.col += 1;
         self.goal_col = None;
+        self.cleared = None;
     }
 
     pub fn insert_newline(&mut self) {
@@ -194,6 +222,7 @@ impl InputBox {
         self.row += 1;
         self.col = 0;
         self.goal_col = None;
+        self.cleared = None;
     }
 
     /// Вставляет произвольный текст в позицию курсора (вставка из буфера обмена).
@@ -225,6 +254,7 @@ impl InputBox {
         self.col = self.lines[self.row].len();
         self.lines[self.row].extend(tail);
         self.goal_col = None;
+        self.cleared = None;
     }
 
     pub fn backspace(&mut self) {
@@ -826,6 +856,73 @@ mod tests {
         ib.clear();
         assert!(ib.is_empty());
         assert_eq!(ib.line_count(), 1);
+    }
+
+    #[test]
+    fn clear_or_restore_clears_then_restores() {
+        let mut ib = InputBox::new();
+        type_str(&mut ib, "привет\nмир");
+        // первое нажатие — удаляет весь текст
+        ib.clear_or_restore();
+        assert!(ib.is_empty());
+        // повторное нажатие на пустом поле — возвращает удалённое
+        ib.clear_or_restore();
+        assert_eq!(ib.text(), "привет\nмир");
+        assert_eq!(ib.cursor(), (1, 3)); // курсор в конце восстановленного
+    }
+
+    #[test]
+    fn restore_invalidated_after_typing() {
+        let mut ib = InputBox::new();
+        type_str(&mut ib, "hello");
+        ib.clear_or_restore(); // удалили, буфер = "hello"
+        assert!(ib.is_empty());
+        ib.insert_char('x'); // ввод инвалидирует буфер отмены
+        ib.clear_or_restore(); // поле непусто → удаляет "x", не восстанавливает "hello"
+        assert!(ib.is_empty());
+        ib.clear_or_restore(); // теперь вернётся именно "x"
+        assert_eq!(ib.text(), "x");
+    }
+
+    #[test]
+    fn restore_invalidated_after_paste() {
+        let mut ib = InputBox::new();
+        type_str(&mut ib, "draft");
+        ib.clear_or_restore();
+        ib.insert_str("pasted"); // вставка тоже инвалидирует буфер
+        ib.clear_or_restore(); // удалит "pasted"
+        ib.clear_or_restore(); // вернёт "pasted", а не "draft"
+        assert_eq!(ib.text(), "pasted");
+    }
+
+    #[test]
+    fn restore_survives_cursor_moves_on_empty_field() {
+        let mut ib = InputBox::new();
+        type_str(&mut ib, "abc");
+        ib.clear_or_restore();
+        // движения курсора по пустому полю не вводят текст → буфер цел
+        ib.on_key(k(KeyCode::Left));
+        ib.on_key(k(KeyCode::Home));
+        ib.clear_or_restore();
+        assert_eq!(ib.text(), "abc");
+    }
+
+    #[test]
+    fn clear_or_restore_on_empty_without_buffer_is_noop() {
+        let mut ib = InputBox::new();
+        ib.clear_or_restore(); // нечего удалять и нечего возвращать
+        assert!(ib.is_empty());
+    }
+
+    #[test]
+    fn plain_clear_drops_undo_buffer() {
+        // После явного clear() (например, при отправке) восстановить нельзя.
+        let mut ib = InputBox::new();
+        type_str(&mut ib, "sent");
+        ib.clear_or_restore(); // буфер = "sent"
+        ib.clear(); // отправка/команда чистит поле и буфер отмены
+        ib.clear_or_restore(); // нечего возвращать
+        assert!(ib.is_empty());
     }
 
     #[test]
