@@ -124,8 +124,18 @@ src/
 │                           tokio, ratatui::init, импорт LameLLaMA (CLI-флаг)
 │
 ├─ app/                     композиция: оркестрация, петля TUI, контракт, серверы
-│  ├─ orchestrator.rs       владелец состояния, клиентский agentic-loop,
-│  │                        фоновые задачи (title/импер./RAG)
+│  ├─ orchestrator/         владелец состояния, расслоён по фичам (god-объект разбит,
+│  │  │                     владелец `Chat` остался один — см. ниже §10):
+│  │  ├─ mod.rs             каркас: Orchestrator, петля run(), диспетчер команд,
+│  │  │                     общие хелперы (эмиттеры, chat_mut, mark_dirty, готовность)
+│  │  ├─ generation.rs      отправка/перегенерация/удаление обмена + задача agentic-loop
+│  │  ├─ chats.rs           список чатов (new/switch/rename/clone/copy/delete) + черновик
+│  │  ├─ profiles.rs        создание/правка/удаление профилей
+│  │  ├─ settings.rs        конфиг + (пере)запуск серверов через супервайзер
+│  │  ├─ title.rs           авто-название чата (фоновая задача)
+│  │  ├─ impersonation.rs   реплика «за пользователя» (фоновая задача)
+│  │  ├─ rag.rs             индексация/удаление файлов в базе знаний
+│  │  └─ request.rs         маппинг доменных сообщений в формат движка
 │  ├─ gen_state.rs          GenState: чистый автомат Idle/Generating/Cancelling
 │  │                        (переходы begin/request_cancel/finish, без I/O)
 │  ├─ events.rs             AppCommand (UI→оркестр.) и AppEvent (оркестр.→UI)
