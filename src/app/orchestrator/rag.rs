@@ -43,7 +43,7 @@ impl Orchestrator {
         self.rag_cancel = Some(cancel.clone());
 
         spawn_rag_ingest(RagIngest {
-            embedder: self.embedder.clone(),
+            embedder: self.engines.embedder(),
             storage: self.storage.clone(),
             profile_id,
             root: std::path::PathBuf::from(path),

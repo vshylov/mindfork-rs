@@ -6,8 +6,9 @@
 //!
 //! Модуль разбит по фичам (god-объект расслоён, владелец `Chat` остался один):
 //! - [`mod.rs`](self) — каркас: [`Orchestrator`], петля [`run`], диспетчер
-//!   [`Orchestrator::handle_command`], общие хелперы (эмиттеры, `chat_mut`,
-//!   `mark_dirty`, разрешение готовности сервера);
+//!   [`Orchestrator::handle_command`], общие хелперы (эмиттеры, `chat_mut`);
+//! - [`engines`] — [`EngineManager`]: жизненный цикл серверов и готовность;
+//! - [`save_queue`] — [`SaveQueue`]: дебаунс отложенного сохранения чатов;
 //! - [`generation`] — отправка/перегенерация/удаление обмена + задача agentic-loop;
 //! - [`chats`] — управление списком чатов и черновиком;
 //! - [`profiles`] — создание/правка/удаление профилей;
@@ -18,18 +19,19 @@
 //! - [`request`] — маппинг доменных сообщений в формат движка.
 
 mod chats;
+mod engines;
 mod generation;
 mod impersonation;
 mod profiles;
 mod rag;
 mod request;
+mod save_queue;
 mod settings;
 mod title;
 
 #[cfg(test)]
 mod tests;
 
-use std::collections::HashSet;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -44,19 +46,18 @@ use crate::entities::chat::{Chat, ChatSummary};
 use crate::entities::message::Message;
 use crate::entities::profile::Profile;
 use crate::entities::sampling::SamplingConfig;
-use crate::shared::api::{Embedder, EngineBackend, FinishReason, ServerHandle};
+use crate::shared::api::FinishReason;
 use crate::shared::config::AppConfig;
 use crate::shared::storage::Storage;
 
+use self::engines::EngineManager;
 use self::generation::GenResult;
+use self::save_queue::SaveQueue;
 use self::title::TitleResult;
 
 /// Системное сообщение профиля по умолчанию (создаётся при пустом хранилище).
 const DEFAULT_SYSTEM_MESSAGE: &str =
     "Ты — полезный ассистент. Отвечай ясно и по существу на языке пользователя.";
-
-/// Дебаунс сохранения изменённых чатов на диск.
-const SAVE_DEBOUNCE: Duration = Duration::from_millis(800);
 
 /// Параметры запуска оркестратора. Серверы (chat/embedding) и реестр инструментов
 /// оркестратор настраивает сам из [`AppConfig`] через [`ServerSupervisor`] — это
@@ -96,32 +97,21 @@ pub async fn run(deps: OrchestratorDeps) {
     let registry = Arc::new(build_registry(&config));
     let mut orch = Orchestrator {
         evt_tx,
-        supervisor,
-        backend: None,
-        chat_handle: None,
-        embed_handle: None,
-        imp_backend: None,
-        imp_handle: None,
-        imp_status: ServerStatus::NotConfigured,
-        imp_status_tx,
+        engines: EngineManager::new(supervisor, status_tx, imp_status_tx),
         imp_cancel: None,
         imp_gen: None,
         imp_done_tx,
-        embedder: Arc::new(crate::shared::api::UnavailableEmbedder),
         storage,
         config,
         registry,
-        status_tx,
         title_tx,
-        server_status: ServerStatus::NotConfigured,
         profiles: Vec::new(),
         chats: Vec::new(),
         active_id: None,
         gen_state: GenState::Idle,
         done_tx,
         rag_cancel: None,
-        dirty: HashSet::new(),
-        save_deadline: None,
+        saves: SaveQueue::default(),
     };
 
     // Поднимаем серверы по конфигу и эмитим стартовые события/настройки.
@@ -136,7 +126,7 @@ pub async fn run(deps: OrchestratorDeps) {
     orch.emit_settings();
 
     loop {
-        let deadline = orch.save_deadline;
+        let deadline = orch.saves.deadline();
         tokio::select! {
             cmd = cmd_rx.recv() => {
                 match cmd {
@@ -151,7 +141,7 @@ pub async fn run(deps: OrchestratorDeps) {
             }
             status = status_rx.recv() => {
                 if let Some(s) = status {
-                    orch.server_status = s.clone();
+                    orch.engines.set_chat_status(s.clone());
                     let _ = orch.evt_tx.send(AppEvent::ServerStatus(s));
                 }
             }
@@ -162,7 +152,7 @@ pub async fn run(deps: OrchestratorDeps) {
             }
             status = imp_status_rx.recv() => {
                 if let Some(s) = status {
-                    orch.imp_status = s;
+                    orch.engines.set_imp_status(s);
                 }
             }
             done = imp_done_rx.recv() => {
@@ -195,42 +185,20 @@ async fn sleep_until_opt(deadline: Option<Instant>) {
 
 struct Orchestrator {
     evt_tx: UnboundedSender<AppEvent>,
-    /// Супервайзер серверов (для перезапуска при смене модели/сервера).
-    supervisor: Arc<dyn ServerSupervisor>,
-    backend: Option<Arc<dyn EngineBackend>>,
-    /// Опора на managed chat-процесс (drop → kill). `None` — external/не настроен.
-    chat_handle: Option<ServerHandle>,
-    /// Опора на managed embedding-процесс.
-    embed_handle: Option<ServerHandle>,
-    /// Движок имперсонации для режимов managed/external (`None` в режиме `shared` —
-    /// тогда используется `backend` ассистента). См. spec §11.8.
-    imp_backend: Option<Arc<dyn EngineBackend>>,
-    /// Опора на managed-процесс сервера имперсонации.
-    imp_handle: Option<ServerHandle>,
-    /// Статус сервера имперсонации (для managed/external; в `shared` не используется).
-    imp_status: ServerStatus,
-    /// Канал статуса сервера имперсонации (фоновый probe).
-    imp_status_tx: UnboundedSender<ServerStatus>,
+    /// Серверы инференса/эмбеддингов и их готовность (выделено в Фазе 3).
+    engines: EngineManager,
     /// Токен отмены текущей имперсонации и её generation_id (`None` — не идёт).
     imp_cancel: Option<tokio_util::sync::CancellationToken>,
     imp_gen: Option<Uuid>,
     /// Канал «имперсонация завершена» (фоновая задача → петля).
     imp_done_tx: UnboundedSender<(Uuid, FinishReason)>,
-    /// Источник эмбеддингов для RAG (выделенный сервер — ADR 0002).
-    embedder: Arc<dyn Embedder>,
     storage: Arc<Storage>,
     /// Полная конфигурация (оркестратор — единственный писатель в `settings.json`).
     config: AppConfig,
     /// Реестр инструментов (пересобирается при правках `config.tools`).
     registry: Arc<crate::features::tools::ToolRegistry>,
-    /// Канал статуса сервера для фонового probe супервайзера.
-    status_tx: UnboundedSender<ServerStatus>,
     /// Канал результатов фоновой генерации авто-названий чатов.
     title_tx: UnboundedSender<TitleResult>,
-    /// Текущий статус chat-сервера. Генерация стартует только в `Ready`: запрос к
-    /// ещё загружающемуся (`Connecting`) managed-серверу вернул бы 503 («error
-    /// status»), а для перегенерации — ещё и снёс бы прежний ответ впустую.
-    server_status: ServerStatus,
     profiles: Vec<Profile>,
     /// Видимые чаты, целиком в памяти (оркестратор — единственный писатель).
     chats: Vec<Chat>,
@@ -241,9 +209,8 @@ struct Orchestrator {
     /// Токен отмены текущей фоновой индексации RAG (`/rag add`); `None` — не идёт.
     /// Снимается/отменяется при новой индексации и при завершении работы.
     rag_cancel: Option<tokio_util::sync::CancellationToken>,
-    /// Чаты, ожидающие записи на диск (дебаунс).
-    dirty: HashSet<Uuid>,
-    save_deadline: Option<Instant>,
+    /// Очередь отложенного сохранения чатов (дебаунс; выделено в Фазе 3).
+    saves: SaveQueue,
 }
 
 impl Orchestrator {
@@ -334,24 +301,6 @@ impl Orchestrator {
         false
     }
 
-    /// Возвращает движок, если chat-сервер готов к генерации (`Ready`); иначе —
-    /// `Err` с понятным текстом (не настроен / ещё подключается / недоступен).
-    /// Сам ничего не эмитит — вызывающий решает, куда направить ошибку (в ленту
-    /// чата или в оверлей списка). См. spec §7.
-    fn backend_if_ready(&self) -> Result<Arc<dyn EngineBackend>, String> {
-        match &self.server_status {
-            ServerStatus::Ready => self
-                .backend
-                .clone()
-                .ok_or_else(|| "LLM-сервер не настроен".to_string()),
-            ServerStatus::Connecting => {
-                Err("Сервер ещё подключается — дождитесь готовности и повторите".into())
-            }
-            ServerStatus::NotConfigured => Err("LLM-сервер не настроен".into()),
-            ServerStatus::Disconnected(reason) => Err(format!("Сервер недоступен: {reason}")),
-        }
-    }
-
     /// Эмитит полный снимок настроек (конфиг + полные профили) для экрана настроек.
     fn emit_settings(&self) {
         let visible: Vec<Profile> = self
@@ -431,18 +380,12 @@ impl Orchestrator {
 
     /// Помечает чат для отложенного сохранения (дебаунс).
     fn mark_dirty(&mut self, id: Uuid) {
-        self.dirty.insert(id);
-        self.save_deadline = Some(Instant::now() + SAVE_DEBOUNCE);
+        self.saves.mark(id);
     }
 
     /// Сохраняет все грязные чаты на диск.
     fn flush_saves(&mut self) {
-        self.save_deadline = None;
-        if self.dirty.is_empty() {
-            return;
-        }
-        let ids: Vec<Uuid> = self.dirty.drain().collect();
-        for id in ids {
+        for id in self.saves.take() {
             if let Some(chat) = self.chats.iter().find(|c| c.id == id)
                 && let Err(err) = self.storage.json().save_chat(chat)
             {

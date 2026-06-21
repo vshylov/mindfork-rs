@@ -1,8 +1,8 @@
 //! Конфигурация приложения и (пере)запуск серверов инференса/эмбеддингов через
 //! [`ServerSupervisor`]. Оркестратор — единственный писатель в `settings.json`.
 
-use crate::app::events::{AppEvent, ServerStatus};
-use crate::shared::config::{AppConfig, ImpersonationMode};
+use crate::app::events::AppEvent;
+use crate::shared::config::AppConfig;
 
 use super::{Orchestrator, build_registry};
 
@@ -37,45 +37,21 @@ impl Orchestrator {
         self.emit_settings();
     }
 
-    /// (Пере)поднимает chat-сервер по `config.engine`: гасит прежний процесс,
-    /// просит супервайзер настроить новый, эмитит немедленный статус.
+    /// (Пере)поднимает chat-сервер по `config.engine` и эмитит немедленный статус.
     pub(super) fn apply_chat_settings(&mut self) {
-        self.chat_handle = None; // drop старого managed-процесса (kill_on_drop)
-        let setup = self
-            .supervisor
-            .apply_chat(&self.config.engine, self.status_tx.clone());
-        self.backend = setup.backend;
-        self.chat_handle = setup.handle;
-        self.server_status = setup.status.clone();
-        let _ = self.evt_tx.send(AppEvent::ServerStatus(setup.status));
+        let status = self.engines.apply_chat(&self.config.engine);
+        let _ = self.evt_tx.send(AppEvent::ServerStatus(status));
     }
 
     /// (Пере)поднимает embedding-сервер по `config.embed`.
     pub(super) fn apply_embed_settings(&mut self) {
-        self.embed_handle = None;
-        let setup = self.supervisor.apply_embed(&self.config.embed);
-        self.embedder = setup.embedder;
-        self.embed_handle = setup.handle;
+        self.engines.apply_embed(&self.config.embed);
     }
 
     /// (Пере)поднимает сервер имперсонации по `config.impersonation_engine`. В режиме
     /// `shared` отдельный сервер не нужен — переиспользуется chat-сервер ассистента.
     pub(super) fn apply_impersonation_settings(&mut self) {
-        self.imp_handle = None; // drop прежнего managed-процесса (kill_on_drop)
-        match self.config.impersonation_engine.mode {
-            ImpersonationMode::Shared => {
-                self.imp_backend = None;
-                self.imp_status = ServerStatus::NotConfigured;
-            }
-            _ => {
-                let setup = self.supervisor.apply_impersonation(
-                    &self.config.impersonation_engine,
-                    self.imp_status_tx.clone(),
-                );
-                self.imp_backend = setup.backend;
-                self.imp_handle = setup.handle;
-                self.imp_status = setup.status;
-            }
-        }
+        self.engines
+            .apply_impersonation(&self.config.impersonation_engine);
     }
 }

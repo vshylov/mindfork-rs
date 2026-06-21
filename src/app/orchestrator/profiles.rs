@@ -56,7 +56,7 @@ impl Orchestrator {
             .collect();
         self.chats.retain(|c| c.profile_id != id);
         for cid in &removed {
-            self.dirty.remove(cid);
+            self.saves.forget(*cid);
         }
         self.emit_profile_list();
 

@@ -118,7 +118,7 @@ impl Orchestrator {
             Ok(true) => {}
         }
         self.chats.retain(|c| c.id != id);
-        self.dirty.remove(&id);
+        self.saves.forget(id);
 
         // Если удалили активный — выбираем другой (или создаём новый).
         if self.active_id == Some(id) {

@@ -931,11 +931,35 @@ web-поиск и Python под выключателями, экран наст�
   зависимости (без `use super::*` в неtest-коде → нет «висячих» импортов под
   `-D warnings`). Фоновые задачи (`spawn_generation/_title/_impersonation/
   _rag_ingest`) — приватные free-функции в файлах своих фич.
-- **Не делалось** (Фаза 3, отложена): выделение когезивных под-структур
-  (`EngineManager` для всех серверных хэндлов/статусов + `apply_*`/`backend_if_ready`;
-  `SaveQueue` для `dirty`/`save_deadline`) ради реального сокращения числа полей
-  `Orchestrator`. Даёт выгоду по связности, но добавляет трение borrow-checker'а —
-  отдельным PR при необходимости.
+- **Фаза 3** (выделение когезивных под-структур) — **сделана отдельным PR**, см. ниже.
+
+### Пост-M9: Фаза 3 — выделены под-структуры EngineManager / SaveQueue (сделано)
+- **`Orchestrator` ужат с 27 до 16 полей** выносом двух когезивных единиц (без
+  изменения поведения, без новых каналов; инвариант «единственный владелец `Chat`»
+  цел):
+  - **`EngineManager`** (`app/orchestrator/engines.rs`) — жизненный цикл серверов
+    инференса/эмбеддингов: владеет `backend`/`imp_backend`/`embedder`, опорами на
+    managed-процессы (`*_handle`, `kill_on_drop`), статусами готовности
+    (`server_status`/`imp_status`) и каналами probe (`status_tx`/`imp_status_tx`) +
+    `supervisor`. Экспонирует `apply_chat` (→ возвращает немедленный статус, эмитит
+    вызывающий), `apply_embed`, `apply_impersonation`, `set_chat_status`/
+    `set_imp_status` (из петли probe), `backend_if_ready`,
+    `impersonation_backend_if_ready(mode)`, `embedder()`. Пара к трейту
+    `ServerSupervisor`. Серверная логика (~120 строк) ушла из оркестратора;
+    `settings.rs` стал тоньше (81 → 57 строк) — `apply_*_settings` теперь делегируют.
+  - **`SaveQueue`** (`app/orchestrator/save_queue.rs`) — дебаунс-очередь отложенного
+    сохранения: `dirty: HashSet<Uuid>` + `deadline`. Методы `mark`/`forget`/
+    `deadline`/`take` (+ `is_dirty` под `#[cfg(test)]`). `SAVE_DEBOUNCE` переехал
+    сюда. Сама запись осталась у оркестратора (`flush_saves` зовёт `saves.take()`).
+- **Видимость**: типы `pub(super)`; поля, которые проставляют тесты/петля
+  (`engines.backend`, `engines.server_status`, `engines.embedder`) — `pub(super)`,
+  остальные приватны. Делегирующие хелперы `Orchestrator::mark_dirty`/`flush_saves`
+  сохранены (минимум правок в местах вызова); прямой `backend_if_ready` оркестратора
+  убран — вызовы идут в `self.engines.backend_if_ready()`.
+- **Не вошло**: состояние *генерации* имперсонации (`imp_cancel`/`imp_gen`/
+  `imp_done_tx`) и `rag_cancel` — это конкурентные подсостояния хода, не серверы;
+  оставлены на `Orchestrator` (как и `gen_state`). `cargo fmt`/`clippy`/`test`
+  зелёные (411 passed, 7 ignored).
 
 ### Отложено за пределы M3
 - **Сворачивание/выделение per-message** и tool-блоки в ленте — сейчас «мысли»

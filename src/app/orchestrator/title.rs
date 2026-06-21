@@ -48,7 +48,7 @@ impl Orchestrator {
             ));
             return;
         };
-        let backend = match self.backend_if_ready() {
+        let backend = match self.engines.backend_if_ready() {
             Ok(backend) => backend,
             Err(msg) => {
                 // Авто-название — операция списка чатов: ошибку готовности сервера
