@@ -214,6 +214,29 @@ impl SamplingParam {
     fn description(self) -> Option<&'static str> {
         use SamplingParam::*;
         Some(match self {
+            Temp => {
+                "Температура: разброс при выборе токенов. Выше — разнообразнее и \
+                 непредсказуемее, ниже — детерминированнее и точнее. 0 — почти \
+                 жадный выбор."
+            }
+            TopK => {
+                "top-k: выбирать только из K самых вероятных токенов. \
+                 0 — выключено (без ограничения числа кандидатов)."
+            }
+            TopP => {
+                "top-p (nucleus): выбор из наименьшего набора токенов, чья \
+                 суммарная вероятность ≥ p. 1.0 — выключено."
+            }
+            FreqPen => {
+                "Штраф за частоту: снижает вероятность токенов пропорционально \
+                 тому, как часто они уже встречались (борьба с повторами). \
+                 0 — выключено."
+            }
+            PresPen => {
+                "Штраф за присутствие: снижает вероятность уже встречавшихся \
+                 токенов (разово, без учёта частоты — подталкивает к новым темам). \
+                 0 — выключено."
+            }
             DynatempRange => {
                 "Динамическая температура: ширина диапазона ± вокруг \
                  температуры, подстраиваемого по энтропии на каждом токене. \
@@ -230,9 +253,9 @@ impl SamplingParam {
                  серверные по умолчанию. Эскейпы \\n \\t \\r поддержаны."
             }
             Samplers => {
-                "Порядок сэмплеров через «;» (напр. penalties;dry;top_k;top_p;\
+                "Порядок семплеров через «;» (напр. penalties;dry;top_k;top_p;\
                  min_p;temperature). Пусто — порядок сервера. Не указанный \
-                 сэмплер отключается."
+                 семплер отключается."
             }
             MinP => {
                 "min-p: отсекает токены с вероятностью ниже доли от самой \
@@ -270,7 +293,19 @@ impl SamplingParam {
             MirostatTau => "Mirostat: целевая энтропия (τ).",
             MirostatEta => "Mirostat: скорость адаптации (η).",
             Seed => "RNG-seed на запрос: -1 — случайный. Расширение llama.cpp.",
-            _ => return None,
+            MaxTokens => {
+                "Максимум токенов в ответе. Пусто — без явного лимита \
+                 (до EOS или конца контекста)."
+            }
+            Thinking => {
+                "«Мысли» (chain-of-thought): включает рассуждения модели до ответа \
+                 (для reasoning-моделей). Показываются отдельным сворачиваемым \
+                 блоком (Ctrl+T)."
+            }
+            Reasoning => {
+                "Усилие рассуждения для reasoning-моделей: low/medium/high. \
+                 Выше — глубже размышляет перед ответом, но медленнее."
+            }
         })
     }
 }
@@ -1782,7 +1817,7 @@ mod tests {
 
     #[test]
     fn samplers_list_round_trip() {
-        // Порядок сэмплеров: разбор по «;», склейка обратно, пустой → None.
+        // Порядок семплеров: разбор по «;», склейка обратно, пустой → None.
         let v = parse_list("penalties;dry; temperature ", ';').unwrap();
         assert_eq!(v, vec!["penalties", "dry", "temperature"]);
         assert_eq!(join_list(Some(&v), ';'), "penalties;dry;temperature");
@@ -1944,10 +1979,19 @@ mod tests {
 
     #[test]
     fn sampling_extensions_have_descriptions() {
-        // Расширения llama.cpp снабжены подсказкой в обеих подсекциях.
-        assert!(field_description(FieldId::S(SamplingParam::MinP)).is_some());
-        assert!(field_description(FieldId::IS(SamplingParam::DryMultiplier)).is_some());
-        // Базовые поля (температура) — без отдельной подсказки.
-        assert!(field_description(FieldId::S(SamplingParam::Temp)).is_none());
+        // Каждый параметр семплинга снабжён подсказкой в обеих подсекциях —
+        // и расширения llama.cpp, и базовые OpenAI-поля.
+        for &p in SAMPLING_PARAMS {
+            assert!(
+                field_description(FieldId::S(p)).is_some(),
+                "нет подсказки для {:?} (Ассистент)",
+                p.label()
+            );
+            assert!(
+                field_description(FieldId::IS(p)).is_some(),
+                "нет подсказки для {:?} (Имперсонация)",
+                p.label()
+            );
+        }
     }
 }
