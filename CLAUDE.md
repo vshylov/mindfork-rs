@@ -34,7 +34,7 @@ external подойдёт любой такой — vLLM/LM Studio/Ollama). UI �
   top_n_sigma, typical_p, adaptive_target/adaptive_decay (adaptive-p, эксперим.),
   repeat_penalty/repeat_last_n, dry_* (multiplier/base/allowed_length/penalty_last_n/
   sequence_breakers), xtc_* (probability/threshold), mirostat/mirostat_tau/mirostat_eta,
-  seed, samplers (порядок сэмплеров). Каждое поле `Option`, шлётся только когда
+  seed, samplers (порядок семплеров). Каждое поле `Option`, шлётся только когда
   задано (`skip_serializing_if`) — незаданное не попадает в JSON; неподдержанное
   сервером поле он игнорирует (строгий сторонний OpenAI-сервер мог бы отвергнуть, но
   лишь если пользователь сам выставит расширение). Списочные поля
@@ -837,24 +837,24 @@ web-поиск и Python под выключателями, экран наст�
   Сбрасываются в `begin_generation`. Покрыто тестом
   `live_stream_with_tool_matches_reload` (live == `from_messages`).
 
-### Пост-M9: семплинг «для разнообразия» — dynatemp / adaptive-p / DRY-брейкеры / порядок сэмплеров (сделано)
+### Пост-M9: семплинг «для разнообразия» — dynatemp / adaptive-p / DRY-брейкеры / порядок семплеров (сделано)
 - **Четыре новых поля `SamplingConfig`** (расширения llama.cpp в теле запроса, для
   более живых и непредсказуемых ответов): **динамическая температура**
   `dynatemp_range`/`dynatemp_exponent` (температура подстраивается по энтропии
   распределения на каждом токене), **adaptive-p** `adaptive_target`/`adaptive_decay`
-  (новый сэмплер, llama.cpp PR #17927), **DRY-брейкеры** `dry_sequence_breakers`
-  (`Option<Vec<String>>`) и настраиваемый **порядок сэмплеров** `samplers`
+  (новый семплер, llama.cpp PR #17927), **DRY-брейкеры** `dry_sequence_breakers`
+  (`Option<Vec<String>>`) и настраиваемый **порядок семплеров** `samplers`
   (`Option<Vec<String>>`). Каждое поле `Option`, шлётся только когда задано.
 - **Списочные поля — JSON-массивы, пустыми не шлются** (`wire.rs::build_chat_request`,
   хелпер `non_empty`): пустой `samplers` сервер истолковал бы как «отключить все
-  сэмплеры», а пустой `dry_sequence_breakers` **llama-server прямо отвергает**
+  семплеры», а пустой `dry_sequence_breakers` **llama-server прямо отвергает**
   (`server-schema.cpp:238` бросает `"must be a non-empty array of strings"`) — фильтр
   это предотвращает.
 - **Ключи сверены по исходникам** llama.cpp (`tools/server/server-schema.cpp`, куда в
   свежих версиях переехал разбор тела из `server.cpp`): `dynatemp_range`/`_exponent`
   (:113), `adaptive_target` (:160, плоский ключ, `≤1.0`, negative=выкл),
   `adaptive_decay` (:164, hard-диапазон `0.0–0.99`), `dry_sequence_breakers` (:234),
-  `samplers` (:474, массив имён или строка). Валидные имена сэмплеров
+  `samplers` (:474, массив имён или строка). Валидные имена семплеров
   (`sampling.cpp`): `penalties`, `dry`, `top_k`, `top_p`, `top_n_sigma`, `typ_p`,
   `min_p`, `xtc`, `temperature`, `infill` (mirostat — отдельный режим, не в списке).
 - **UI** (`screens/settings.rs`, секция «Семплинг»): числовые поля как обычно;

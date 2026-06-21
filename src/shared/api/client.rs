@@ -412,7 +412,7 @@ mod ignored_smoke {
     }
 
     /// Расширения «для разнообразия»: динамическая температура, adaptive-p,
-    /// DRY-брейкеры и кастомный порядок сэмплеров — всё в теле одного запроса.
+    /// DRY-брейкеры и кастомный порядок семплеров — всё в теле одного запроса.
     /// Цель — убедиться, что `llama-server` **принимает** эти поля (не отвечает
     /// `400`/ошибкой) и генерирует. Ключи сверены по
     /// `tools/server/server-schema.cpp` (dynatemp_range/exponent, adaptive_target/
@@ -442,13 +442,13 @@ mod ignored_smoke {
                 // Динамическая температура: ±0.5 вокруг temperature.
                 dynatemp_range: Some(0.5),
                 dynatemp_exponent: Some(1.0),
-                // adaptive-p: положительная цель включает сэмплер (≤1.0).
+                // adaptive-p: положительная цель включает семплер (≤1.0).
                 adaptive_target: Some(0.1),
                 adaptive_decay: Some(0.9),
                 // DRY с непустым списком брейкеров (пустой сервер отверг бы).
                 dry_multiplier: Some(0.8),
                 dry_sequence_breakers: Some(vec!["\n".into(), ":".into()]),
-                // Кастомный порядок сэмплеров (валидные имена из sampling.cpp).
+                // Кастомный порядок семплеров (валидные имена из sampling.cpp).
                 samplers: Some(vec![
                     "penalties".into(),
                     "dry".into(),

@@ -70,7 +70,7 @@ pub struct ChatCompletionRequest {
     pub mirostat_eta: Option<f32>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub seed: Option<i64>,
-    /// Порядок сэмплеров (массив имён); шлём только непустой список.
+    /// Порядок семплеров (массив имён); шлём только непустой список.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub samplers: Option<Vec<String>>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -197,8 +197,8 @@ pub fn build_chat_request(req: &ChatRequest, stream: bool) -> ChatCompletionRequ
     // reasoning_budget, а Jinja-шаблоны моделей — enable_thinking; шлём оба.
     let chat_template_kwargs =
         (s.reasoning_budget == Some(0)).then(|| serde_json::json!({ "enable_thinking": false }));
-    // Списочные поля (DRY-брейкеры, порядок сэмплеров): пустой список не шлём —
-    // иначе сервер истолковал бы его как «нет брейкеров»/«отключить все сэмплеры».
+    // Списочные поля (DRY-брейкеры, порядок семплеров): пустой список не шлём —
+    // иначе сервер истолковал бы его как «нет брейкеров»/«отключить все семплеры».
     let non_empty = |v: &Option<Vec<String>>| v.clone().filter(|x| !x.is_empty());
     ChatCompletionRequest {
         messages,

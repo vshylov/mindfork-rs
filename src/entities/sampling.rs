@@ -55,7 +55,7 @@ pub struct SamplingConfig {
     /// adaptive-p (llama.cpp `adaptive_target`, PR #17927): целевая энтропия,
     /// около которой выбираются токены; отрицательное значение = выключено
     /// (валидный диапазон `≤ 1.0`). Сверено по `server-schema.cpp` (плоский
-    /// ключ тела запроса). Сэмплер новый — поведение проверять на живой модели.
+    /// ключ тела запроса). Семплер новый — поведение проверять на живой модели.
     pub adaptive_target: Option<f32>,
     /// adaptive-p (llama.cpp `adaptive_decay`): EMA-затухание адаптации цели
     /// (hard-диапазон `0.0`..`0.99`; меньше — реактивнее, больше — стабильнее).
@@ -81,7 +81,7 @@ pub struct SamplingConfig {
     /// `dry_sequence_breakers`). `None`/пусто — серверные по умолчанию
     /// (`\n`, `:`, `"`, `*`). Отправляется только когда непуст.
     pub dry_sequence_breakers: Option<Vec<String>>,
-    /// XTC: вероятность применения сэмплера (llama.cpp `xtc_probability`,
+    /// XTC: вероятность применения семплера (llama.cpp `xtc_probability`,
     /// `0.0` = выключено).
     pub xtc_probability: Option<f32>,
     /// XTC: порог вероятности (llama.cpp `xtc_threshold`).
@@ -96,10 +96,10 @@ pub struct SamplingConfig {
     /// RNG-seed на запрос (llama.cpp `seed`; `-1` = случайный). `None` — поле не
     /// отправляется (сервер выбирает сам).
     pub seed: Option<i64>,
-    /// Порядок применения сэмплеров (llama.cpp `samplers`): имена сэмплеров в
+    /// Порядок применения семплеров (llama.cpp `samplers`): имена семплеров в
     /// нужном порядке (напр. `["penalties","dry","top_k","top_p","min_p",
     /// "temperature"]`). `None` — серверный порядок по умолчанию. **Важно:**
-    /// сэмплер, не указанный в непустом списке, отключается — список должен быть
+    /// семплер, не указанный в непустом списке, отключается — список должен быть
     /// полным. Отправляется только когда непуст.
     pub samplers: Option<Vec<String>>,
     /// Включить reasoning («мысли», `<think>`/`reasoning_content`).

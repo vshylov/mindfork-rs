@@ -479,7 +479,7 @@ loop:
 
 ### 7.2. Решение
 
-- Остановка — **строго по token-id реальных спец-токенов** модели (EOG/EOS из словаря), что обеспечивает чат-шаблон/токенайзер на стороне сервера. Если модель сэмплирует литеральный текст `<|im_end|>` обычными токенами — это не конец хода, текст просто попадает в ответ.
+- Остановка — **строго по token-id реальных спец-токенов** модели (EOG/EOS из словаря), что обеспечивает чат-шаблон/токенайзер на стороне сервера. Если модель семплирует литеральный текст `<|im_end|>` обычными токенами — это не конец хода, текст просто попадает в ответ.
 - **Не передаём строковые `stop`-последовательности**, совпадающие с текстом EOS (иначе вернётся проблема обрыва). По умолчанию `stop` в запросе пуст.
 - Если когда-либо понадобятся строковые стоп-строки (например, имя собеседника как разделитель) — это настраивается отдельно и осознанно, с предупреждением в UI.
 
@@ -495,7 +495,7 @@ loop:
 
 ### 8.1. Маппинг на OpenAI-совместимый API
 
-`SamplingConfig` сериализуется в тело `POST /v1/chat/completions`. Помимо стандартных OpenAI-полей (`temperature`, `top_k`, `top_p`, `frequency_penalty`, `presence_penalty`, `max_tokens`, `thinking`/`reasoning_effort`/`reasoning_budget`) модель несёт **расширения llama.cpp `llama-server`**: `dynatemp_range`/`dynatemp_exponent` (динамическая температура), `min_p`, `top_n_sigma`, `typical_p`, `adaptive_target`/`adaptive_decay` (adaptive-p, экспериментально), `repeat_penalty`, `repeat_last_n`, `dry_multiplier`/`dry_base`/`dry_allowed_length`/`dry_penalty_last_n`/`dry_sequence_breakers`, `xtc_probability`/`xtc_threshold`, `mirostat`/`mirostat_tau`/`mirostat_eta`, `seed`, `samplers` (порядок сэмплеров). Эти поля `llama-server` принимает прямо в теле запроса (а не только как CLI-флаги), поэтому они работают и в managed-, и в external-llama.cpp без перезапуска сервера и резолвятся по уровням 8.3. Каждое поле — `Option`, **шлётся только когда задано** (`skip_serializing_if`): незаданные расширения не попадают в JSON, так что строгий сторонний OpenAI-сервер по умолчанию не затрагивается, а llama.cpp-несовместимое поле он бы либо проигнорировал, либо отверг (риск только если пользователь сам выставит расширение на строгом сервере). Списочные поля (`dry_sequence_breakers`, `samplers`) сериализуются JSON-массивом и **не отправляются пустыми** (пустой `samplers` сервер истолковал бы как «отключить все сэмплеры»).
+`SamplingConfig` сериализуется в тело `POST /v1/chat/completions`. Помимо стандартных OpenAI-полей (`temperature`, `top_k`, `top_p`, `frequency_penalty`, `presence_penalty`, `max_tokens`, `thinking`/`reasoning_effort`/`reasoning_budget`) модель несёт **расширения llama.cpp `llama-server`**: `dynatemp_range`/`dynatemp_exponent` (динамическая температура), `min_p`, `top_n_sigma`, `typical_p`, `adaptive_target`/`adaptive_decay` (adaptive-p, экспериментально), `repeat_penalty`, `repeat_last_n`, `dry_multiplier`/`dry_base`/`dry_allowed_length`/`dry_penalty_last_n`/`dry_sequence_breakers`, `xtc_probability`/`xtc_threshold`, `mirostat`/`mirostat_tau`/`mirostat_eta`, `seed`, `samplers` (порядок семплеров). Эти поля `llama-server` принимает прямо в теле запроса (а не только как CLI-флаги), поэтому они работают и в managed-, и в external-llama.cpp без перезапуска сервера и резолвятся по уровням 8.3. Каждое поле — `Option`, **шлётся только когда задано** (`skip_serializing_if`): незаданные расширения не попадают в JSON, так что строгий сторонний OpenAI-сервер по умолчанию не затрагивается, а llama.cpp-несовместимое поле он бы либо проигнорировал, либо отверг (риск только если пользователь сам выставит расширение на строгом сервере). Списочные поля (`dry_sequence_breakers`, `samplers`) сериализуются JSON-массивом и **не отправляются пустыми** (пустой `samplers` сервер истолковал бы как «отключить все семплеры»).
 
 | Параметр | HTTP-поле | Статус |
 |---|---|---|
@@ -514,7 +514,7 @@ loop:
 | DRY*, XTC* | `dry_*` (вкл. `dry_sequence_breakers`), `xtc_*` | ✅ **расширение llama.cpp** |
 | Dynatemp* | `dynatemp_range`/`dynatemp_exponent` | ✅ **расширение llama.cpp** (динамич. температура) |
 | Adaptive-p | `adaptive_target`/`adaptive_decay` | ✅ **расширение llama.cpp** (экспериментально) |
-| Порядок сэмплеров | `samplers` (массив имён) | ✅ **расширение llama.cpp** |
+| Порядок семплеров | `samplers` (массив имён) | ✅ **расширение llama.cpp** |
 | `MaxRetriesToRegenerateInvalidOutput` | — | не нужен (structured outputs снижают «битый» вывод) |
 
 ### 8.2. Следствия
