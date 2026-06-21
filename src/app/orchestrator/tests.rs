@@ -1,15 +1,17 @@
 //! Тесты оркестратора (без UI и реальной модели): автомат генерации, гонки,
 //! agentic-loop, приоритеты семплинга, операции списка/профилей/RAG.
 
+use super::engines::EngineManager;
 use super::impersonation::{build_impersonation_request, swap_role_message};
 use super::request::build_request;
+use super::save_queue::SaveQueue;
 use super::title::salvage_title_source;
 use super::*;
 
 use crate::app::events::RagProgress;
 use crate::entities::message::{Message, MessageRole};
 use crate::features::profiles::ProfileEdit;
-use crate::shared::api::ChatChunk;
+use crate::shared::api::{ChatChunk, Embedder, EngineBackend};
 
 use crate::app::supervisor::MockSupervisor;
 use crate::shared::api::mock::{MockBackend, MockEmbedder};
@@ -94,34 +96,32 @@ fn bare_orch_rx() -> (tempfile::TempDir, Orchestrator, UnboundedReceiver<AppEven
         ..Default::default()
     };
     let registry = Arc::new(build_registry(&config));
+    // Менеджер серверов: сразу «готов» с тестовым эмбеддером (как было у голого
+    // оркестратора). chat-движок тесты при необходимости проставляют сами.
+    let mut engines = EngineManager::new(
+        Arc::new(MockSupervisor::with_backend(None)),
+        status_tx,
+        imp_status_tx,
+    );
+    engines.server_status = ServerStatus::Ready;
+    engines.embedder = test_embedder();
     let orch = Orchestrator {
         evt_tx,
-        supervisor: Arc::new(MockSupervisor::with_backend(None)),
-        backend: None,
-        chat_handle: None,
-        embed_handle: None,
-        imp_backend: None,
-        imp_handle: None,
-        imp_status: ServerStatus::NotConfigured,
-        imp_status_tx,
+        engines,
         imp_cancel: None,
         imp_gen: None,
         imp_done_tx,
-        embedder: test_embedder(),
         storage,
         config,
         registry,
-        status_tx,
         title_tx,
-        server_status: ServerStatus::Ready,
         profiles: Vec::new(),
         chats: Vec::new(),
         active_id: None,
         gen_state: GenState::Idle,
         done_tx,
         rag_cancel: None,
-        dirty: HashSet::new(),
-        save_deadline: None,
+        saves: SaveQueue::default(),
     };
     (dir, orch, evt_rx)
 }
@@ -223,12 +223,12 @@ fn set_draft_persists_to_active_chat_without_bumping_modified() {
         c.modified_at, modified,
         "правка черновика не поднимает чат в списке"
     );
-    assert!(orch.dirty.contains(&id), "чат помечен для сохранения");
+    assert!(orch.saves.is_dirty(id), "чат помечен для сохранения");
 
     // Повторная установка того же текста — без повторной пометки (no-op).
-    orch.dirty.clear();
+    orch.saves.take();
     orch.handle_set_draft("недописанный текст".into());
-    assert!(!orch.dirty.contains(&id));
+    assert!(!orch.saves.is_dirty(id));
 }
 
 #[tokio::test]
@@ -651,7 +651,7 @@ fn auto_rename_when_server_not_ready_errors_into_chat_list() {
     // чатов (`ChatListError`), а не в ленту чата (`Error`) — иначе её скрыл бы
     // полноэкранный оверлей списка.
     let (_d, mut orch, mut rx) = bare_orch_rx();
-    orch.server_status = ServerStatus::Connecting;
+    orch.engines.server_status = ServerStatus::Connecting;
     let profile = Profile::new("P", "sys");
     let mut chat = Chat::from_profile(&profile, "Новый чат");
     chat.push_message(Message::user("привет"));
@@ -676,7 +676,7 @@ async fn regenerate_without_user_message_is_noop() {
         FinishReason::Stop,
     )])) as Arc<dyn EngineBackend>;
     let (_d, mut orch) = bare_orch();
-    orch.backend = Some(backend);
+    orch.engines.backend = Some(backend);
     let mut profile = Profile::new("P", "sys");
     profile.greeting = Some("Привет!".into());
     let mut chat = Chat::from_profile(&profile, "c");
@@ -701,8 +701,8 @@ fn regenerate_on_not_ready_server_keeps_reply() {
         FinishReason::Stop,
     )])) as Arc<dyn EngineBackend>;
     let (_d, mut orch) = bare_orch();
-    orch.backend = Some(backend);
-    orch.server_status = ServerStatus::Connecting; // ещё не готов
+    orch.engines.backend = Some(backend);
+    orch.engines.server_status = ServerStatus::Connecting; // ещё не готов
     let profile = Profile::new("P", "sys");
     let mut chat = Chat::from_profile(&profile, "c");
     chat.push_message(Message::user("вопрос"));
@@ -730,8 +730,8 @@ fn send_on_not_ready_server_restores_input() {
     // поле ввода (RestoreInput), а в чат сообщение не добавляется.
     let backend = Arc::new(MockBackend::scripted(vec![])) as Arc<dyn EngineBackend>;
     let (_d, mut orch, mut rx) = bare_orch_rx();
-    orch.backend = Some(backend);
-    orch.server_status = ServerStatus::Connecting;
+    orch.engines.backend = Some(backend);
+    orch.engines.server_status = ServerStatus::Connecting;
     let profile = Profile::new("P", "sys");
     let chat = Chat::from_profile(&profile, "c");
     let chat_id = chat.id;
@@ -760,9 +760,9 @@ fn send_on_not_ready_server_restores_input() {
 #[test]
 fn ready_backend_gates_by_status() {
     let (_d, mut orch) = bare_orch();
-    orch.backend = Some(Arc::new(MockBackend::scripted(vec![])) as Arc<dyn EngineBackend>);
+    orch.engines.backend = Some(Arc::new(MockBackend::scripted(vec![])) as Arc<dyn EngineBackend>);
 
-    orch.server_status = ServerStatus::Ready;
+    orch.engines.server_status = ServerStatus::Ready;
     assert!(orch.ready_backend().is_some());
 
     for status in [
@@ -770,7 +770,7 @@ fn ready_backend_gates_by_status() {
         ServerStatus::NotConfigured,
         ServerStatus::Disconnected("боль".into()),
     ] {
-        orch.server_status = status;
+        orch.engines.server_status = status;
         assert!(orch.ready_backend().is_none());
     }
 }

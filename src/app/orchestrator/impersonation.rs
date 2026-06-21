@@ -15,7 +15,6 @@ use crate::entities::chat::Chat;
 use crate::entities::message::{Message, MessageRole};
 use crate::entities::sampling::SamplingConfig;
 use crate::shared::api::{ApiMessage, ChatChunk, ChatRequest, EngineBackend, FinishReason};
-use crate::shared::config::ImpersonationMode;
 
 use super::Orchestrator;
 
@@ -29,28 +28,6 @@ const DEFAULT_IMPERSONATION_SYSTEM_MESSAGE: &str = "Ты — пользоват�
 const IMPERSONATION_TIMEOUT: Duration = Duration::from_secs(120);
 
 impl Orchestrator {
-    /// Возвращает движок имперсонации, если он готов; иначе — `Err` с понятным
-    /// текстом. В режиме `shared` используется chat-сервер ассистента.
-    fn impersonation_backend_if_ready(&self) -> Result<Arc<dyn EngineBackend>, String> {
-        use super::ServerStatus;
-        if self.config.impersonation_engine.mode == ImpersonationMode::Shared {
-            return self.backend_if_ready();
-        }
-        match &self.imp_status {
-            ServerStatus::Ready => self
-                .imp_backend
-                .clone()
-                .ok_or_else(|| "Сервер имперсонации не настроен".to_string()),
-            ServerStatus::Connecting => {
-                Err("Сервер имперсонации ещё подключается — повторите позже".into())
-            }
-            ServerStatus::NotConfigured => Err("Сервер имперсонации не настроен".into()),
-            ServerStatus::Disconnected(reason) => {
-                Err(format!("Сервер имперсонации недоступен: {reason}"))
-            }
-        }
-    }
-
     /// Пишет сообщение от лица пользователя (имперсонация, `Ctrl+U`, spec §11.8):
     /// системное сообщение ассистента заменяется на имперсонационное из профиля, а
     /// роли user/assistant в истории меняются местами — модель продолжает диалог
@@ -66,7 +43,10 @@ impl Orchestrator {
                 .send(AppEvent::Error("Нет активного чата".into()));
             return;
         };
-        let backend = match self.impersonation_backend_if_ready() {
+        let backend = match self
+            .engines
+            .impersonation_backend_if_ready(self.config.impersonation_engine.mode)
+        {
             Ok(backend) => backend,
             Err(msg) => {
                 let _ = self.evt_tx.send(AppEvent::Error(msg));

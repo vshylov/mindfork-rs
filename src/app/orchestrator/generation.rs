@@ -142,9 +142,9 @@ impl Orchestrator {
     /// перегенерацию — чтобы запрос не уходил на ещё загружающийся сервер (иначе
     /// 503 → «engine returned an error status»). Для операций списка чатов
     /// (авто-название) ошибка должна идти в оверлей — там используется
-    /// [`Orchestrator::backend_if_ready`] напрямую.
+    /// [`EngineManager::backend_if_ready`](super::engines::EngineManager) напрямую.
     pub(super) fn ready_backend(&self) -> Option<Arc<dyn EngineBackend>> {
-        match self.backend_if_ready() {
+        match self.engines.backend_if_ready() {
             Ok(backend) => Some(backend),
             Err(msg) => {
                 let _ = self.evt_tx.send(AppEvent::Error(msg));
@@ -193,7 +193,7 @@ impl Orchestrator {
                 last_user_message_at: last_user_message_at(chat),
                 storage: self.storage.clone(),
                 engine: backend.clone(),
-                embedder: self.embedder.clone(),
+                embedder: self.engines.embedder(),
             };
         }
 

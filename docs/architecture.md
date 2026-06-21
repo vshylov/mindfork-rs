@@ -126,8 +126,11 @@ src/
 ├─ app/                     композиция: оркестрация, петля TUI, контракт, серверы
 │  ├─ orchestrator/         владелец состояния, расслоён по фичам (god-объект разбит,
 │  │  │                     владелец `Chat` остался один — см. ниже §10):
-│  │  ├─ mod.rs             каркас: Orchestrator, петля run(), диспетчер команд,
-│  │  │                     общие хелперы (эмиттеры, chat_mut, mark_dirty, готовность)
+│  │  ├─ mod.rs             каркас: Orchestrator (16 полей), петля run(), диспетчер
+│  │  │                     команд, общие хелперы (эмиттеры, chat_mut, mark_dirty)
+│  │  ├─ engines.rs         EngineManager: жизненный цикл серверов, готовность,
+│  │  │                     apply_chat/embed/impersonation, backend_if_ready
+│  │  ├─ save_queue.rs      SaveQueue: дебаунс-очередь отложенного сохранения чатов
 │  │  ├─ generation.rs      отправка/перегенерация/удаление обмена + задача agentic-loop
 │  │  ├─ chats.rs           список чатов (new/switch/rename/clone/copy/delete) + черновик
 │  │  ├─ profiles.rs        создание/правка/удаление профилей
@@ -389,6 +392,13 @@ classDiagram
 Супервайзер живёт в `app` (композиционный клей, знающий и про `shared/config`, и
 про `shared/api`). За трейтом — ради `MockSupervisor` в тестах (отдаёт `Ready`
 синхронно, чтобы тесты не зависели от гонки статуса).
+
+Со стороны оркестратора жизненный цикл серверов инкапсулирован в **`EngineManager`**
+(`app/orchestrator/engines.rs`, Фаза 3): владеет движками (`backend`/`imp_backend`/
+`embedder`), опорами на managed-процессы, статусами готовности и каналами probe;
+экспонирует `apply_chat/embed/impersonation`, `backend_if_ready`,
+`impersonation_backend_if_ready`, `embedder()`. Это убрало ~11 полей из
+`Orchestrator` (27 → 16), не затронув инвариант «единственный владелец `Chat`».
 
 ```mermaid
 flowchart TB
