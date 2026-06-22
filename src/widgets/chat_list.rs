@@ -338,7 +338,7 @@ impl ChatListState {
         Line::from(vec![
             Span::from(marker).fg(palette.success),
             Span::from(chat.title.clone()),
-            Span::from(format!("  · {} сообщ.", chat.message_count)).dim(),
+            Span::from(format!(" · {} сообщ.", chat.message_count)).dim(),
         ])
     }
 
