@@ -97,8 +97,8 @@ flowchart TD
 
 **Ключевой инвариант FSD в коде:** `screens`/`widgets` **не импортируют `app`**.
 Экран не знает про `AppCommand` — он возвращает собственное намерение
-(`ChatIntent`/`SettingsIntent`/`ChatListAction`), а `app/runtime.rs` транслирует
-его в `AppCommand`. Аналогично терминальные side-effect'ы (захват мыши, запись в
+(`ChatIntent`/`ChatListIntent`/`SettingsIntent`; виджет списка отдаёт экрану
+`ChatListAction`), а `app/runtime.rs` транслирует его в `AppCommand`. Аналогично терминальные side-effect'ы (захват мыши, запись в
 буфер обмена) экран не делает сам — он сигнализирует намерением, исполняет
 `runtime`.
 
@@ -148,13 +148,14 @@ src/
 │
 ├─ screens/                 целостные экраны (FSD "pages"); НЕ зависят от app
 │  ├─ chat.rs               ChatScreen: всё состояние UI чата, handle_key→ChatIntent
+│  ├─ chat_list.rs          ChatListScreen: полноэкранный список чатов (Esc), → ChatListIntent
 │  └─ settings.rs           SettingsScreen: секции/поля, подсекции Ассистент/Имперсонация
 │
 ├─ widgets/                 составные UI-блоки (FSD "widgets")
 │  ├─ message_feed.rs       лента: markdown, мысли, инлайн tool-блоки, скролл, перенос
 │  ├─ input_box.rs          свой multiline-ввод (ADR 0001): курсор, перенос, спелл-чек,
 │  │                        однострочный режим (поля настроек), визуальная навигация
-│  ├─ chat_list.rs          полноэкранный оверлей списка чатов (поиск/сортировка/F2/F5)
+│  ├─ chat_list.rs          виджет списка чатов (поиск/сортировка/F2/F5); обёрнут ChatListScreen
 │  ├─ status_bar.rs         модель/токены/профиль/состояние сервера/режим мыши
 │  ├─ profile_list.rs       оверлей выбора профиля при создании чата
 │  └─ impersonation_preview.rs  потоковый предпросмотр реплики (Ctrl+U)
@@ -557,17 +558,25 @@ agentic-loop **гейтит и сам вызов** (выключенный ин�
 
 ## 9. UI: экраны, виджеты, рендеринг
 
+`runtime.rs` держит один базовый `ChatScreen` (лента/генерация/ввод) и enum
+`ActiveScreen { Chat | ChatList | Settings }` — экран, открытый поверх чата.
+Открытый список/настройки получают ввод и рисуются вместо чата; событие
+`OpenChatList`/`OpenSettings` от чата создаёт их, `Close` (Esc) — возвращает к
+`Chat`. Список чатов держит снимок актуальным через `AppEvent::ChatList` (его
+`app` применяет и к чату, и к открытому списку).
+
 ```mermaid
 flowchart TB
-    RT["runtime.rs (петля)"]
+    RT["runtime.rs (петля)<br/>ChatScreen + enum ActiveScreen"]
     subgraph SC["screens (отдают Intent, не AppCommand)"]
         CHAT["ChatScreen<br/>handle_key→ChatIntent, мутаторы-проекция AppEvent"]
+        CLS["ChatListScreen<br/>обёртка chat_list → ChatListIntent"]
         SET["SettingsScreen<br/>секции/поля → SettingsIntent"]
     end
     subgraph WG["widgets"]
         FEED["message_feed"]
         INP["input_box"]
-        CL["chat_list (оверлей)"]
+        CL["chat_list (виджет списка)"]
         SB["status_bar"]
         PL["profile_list (оверлей)"]
         IP["impersonation_preview"]
@@ -580,8 +589,10 @@ flowchart TB
     end
 
     RT --> CHAT
+    RT --> CLS
     RT --> SET
-    CHAT --> FEED & INP & CL & SB & PL & IP
+    CHAT --> FEED & INP & SB & PL & IP
+    CLS --> CL
     FEED --> MD --> WR
     FEED --> WR
     INP --> WR

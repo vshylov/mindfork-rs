@@ -25,7 +25,31 @@ use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
 use crate::app::events::{AppCommand, AppEvent};
 use crate::features::spellcheck::{SpellChecker, dict};
 use crate::screens::chat::{ChatIntent, ChatScreen};
+use crate::screens::chat_list::{ChatListIntent, ChatListScreen};
 use crate::screens::settings::{SettingsIntent, SettingsScreen};
+use crate::shared::theme::Palette;
+
+/// Экран, открытый поверх чата. `ChatScreen` всегда существует как база (лента,
+/// генерация, поле ввода); поверх него может быть открыт список чатов (`Esc`) или
+/// настройки (`Ctrl+P`). См. архитектуру UI (architecture.md §9): три экрана.
+enum ActiveScreen {
+    /// Только чат — наложенного экрана нет.
+    Chat,
+    /// Полноэкранный список чатов. Боксируем — экраны крупные, держать их инлайн в
+    /// enum-варианте раздувает каждое значение (clippy::large_enum_variant).
+    ChatList(Box<ChatListScreen>),
+    /// Экран настроек.
+    Settings(Box<SettingsScreen>),
+}
+
+impl ActiveScreen {
+    /// На переднем плане сам чат (а не список/настройки)? Гейтит работу, которая
+    /// относится только к чату: перепроверку орфографии, анимацию спиннеров,
+    /// прокрутку колесом.
+    fn is_chat(&self) -> bool {
+        matches!(self, ActiveScreen::Chat)
+    }
+}
 
 /// Период опроса ввода (тик перерисовки).
 const TICK: Duration = Duration::from_millis(50);
@@ -151,9 +175,9 @@ fn run_loop(
     personal: PathBuf,
 ) -> Result<()> {
     let mut screen = ChatScreen::new();
-    // Экран настроек открывается поверх чата (Ctrl+P). События продолжают
-    // применяться к чату (генерация не прерывается).
-    let mut settings: Option<SettingsScreen> = None;
+    // Поверх чата может быть открыт список чатов (Esc) или настройки (Ctrl+P).
+    // События оркестратора продолжают применяться к чату (генерация не прерывается).
+    let mut active = ActiveScreen::Chat;
     // Буфер обмена создаётся лениво при первом копировании (на headless-Linux без
     // X11/Wayland конструктор может упасть — тогда показываем ошибку, не паникуем).
     let mut clipboard: Option<arboard::Clipboard> = None;
@@ -168,7 +192,7 @@ fn run_loop(
     let mut dirty = true;
     while !quit {
         while let Ok(event) = evt_rx.try_recv() {
-            apply_event(&mut screen, &mut settings, &mut clipboard, event);
+            apply_event(&mut screen, &mut active, &mut clipboard, event);
             dirty = true;
         }
         // Настройки спелл-чека получены/изменились — (пере)грузим словари в фоне.
@@ -184,12 +208,12 @@ fn run_loop(
         // `poll`), даже когда не рисует, поэтому здесь и обеспечивается пробуждение
         // по истечении дебаунса. Перерисовываем только когда подсветка реально
         // пересчитана. На экране настроек ввод чата не активен — пропускаем.
-        if settings.is_none() && screen.maybe_recheck_spelling() {
+        if active.is_chat() && screen.maybe_recheck_spelling() {
             dirty = true;
         }
         // Пока идёт фоновая индексация RAG или имперсонация — перерисовываем каждый
         // тик для анимации спиннера (вне них простаивающие тики не рисуют — `dirty`).
-        if settings.is_none() && (screen.is_rag_active() || screen.is_impersonating()) {
+        if active.is_chat() && (screen.is_rag_active() || screen.is_impersonating()) {
             dirty = true;
         }
         // Черновик поля ввода изменился — сохраняем его в активном чате (оркестратор
@@ -198,11 +222,13 @@ fn run_loop(
             let _ = cmd_tx.send(AppCommand::SetDraft(draft));
         }
         if dirty {
-            if let Some(settings_screen) = &mut settings {
-                terminal.draw(|frame| settings_screen.render(frame))?;
-            } else {
-                terminal.draw(|frame| screen.render(frame))?;
-            }
+            match &mut active {
+                ActiveScreen::Chat => terminal.draw(|frame| screen.render(frame))?,
+                ActiveScreen::ChatList(list) => terminal.draw(|frame| list.render(frame))?,
+                ActiveScreen::Settings(settings) => {
+                    terminal.draw(|frame| settings.render(frame))?
+                }
+            };
             dirty = false;
         }
         if event::poll(TICK)? {
@@ -226,7 +252,7 @@ fn run_loop(
                     collect_press(&mut batch, event::read()?);
                 }
             }
-            if process_input_batch(batch, &mut screen, &mut settings, cmd_tx) {
+            if process_input_batch(batch, &mut screen, &mut active, cmd_tx) {
                 quit = true;
             }
         }
@@ -239,27 +265,58 @@ fn run_loop(
 /// копию (отражает создание/удаление профилей).
 fn apply_event(
     screen: &mut ChatScreen,
-    settings: &mut Option<SettingsScreen>,
+    active: &mut ActiveScreen,
     clipboard: &mut Option<arboard::Clipboard>,
     event: AppEvent,
 ) {
     match event {
         AppEvent::ServerStatus(status) => screen.set_server_status(status),
-        AppEvent::ChatList(chats) => screen.set_chat_list(chats),
-        AppEvent::ChatRenamed { id, title } => screen.rename_chat(id, title),
-        AppEvent::ChatListError(message) => screen.set_overlay_error(message),
-        // Запись в буфер обмена — side-effect UI-слоя; подтверждение/ошибку шлём в
-        // область статуса оверлея списка чатов (его и открывали для копирования).
-        AppEvent::CopyToClipboard(text) => match write_clipboard(clipboard, &text) {
-            Ok(()) => screen.set_overlay_notice("Переписка скопирована в буфер обмена".into()),
-            Err(err) => {
-                screen.set_overlay_error(format!("Не удалось скопировать в буфер обмена: {err}"))
+        // Снимок списка применяем к чату всегда (для следующего открытия/`Ctrl+N`),
+        // а при открытом экране списка — ещё и к нему (живое обновление).
+        AppEvent::ChatList(chats) => {
+            if let ActiveScreen::ChatList(list) = active {
+                list.set_chats(chats.clone());
             }
+            screen.set_chat_list(chats);
+        }
+        AppEvent::ChatRenamed { id, title } => screen.rename_chat(id, title),
+        // Ошибка операции списка: в его область статуса, если экран открыт; иначе
+        // (поздний ответ авто-названия при закрытом списке) — заметкой в ленту.
+        AppEvent::ChatListError(message) => match active {
+            ActiveScreen::ChatList(list) => list.set_error(message),
+            _ => screen.push_error(&message),
         },
+        // Запись в буфер обмена — side-effect UI-слоя; подтверждение/ошибку шлём в
+        // область статуса экрана списка чатов (его и открывали для копирования);
+        // если он уже закрыт — заметкой в ленту.
+        AppEvent::CopyToClipboard(text) => {
+            let result = write_clipboard(clipboard, &text);
+            match active {
+                ActiveScreen::ChatList(list) => match result {
+                    Ok(()) => list.set_notice("Переписка скопирована в буфер обмена".into()),
+                    Err(err) => {
+                        list.set_error(format!("Не удалось скопировать в буфер обмена: {err}"))
+                    }
+                },
+                _ => match result {
+                    Ok(()) => screen.push_note("Переписка скопирована в буфер обмена"),
+                    Err(err) => {
+                        screen.push_error(&format!("Не удалось скопировать в буфер обмена: {err}"))
+                    }
+                },
+            }
+        }
         AppEvent::ProfileList(profiles) => screen.set_profile_list(profiles),
         AppEvent::Settings { config, profiles } => {
-            if let Some(settings_screen) = settings {
-                settings_screen.refresh((*config).clone(), profiles.clone());
+            match active {
+                ActiveScreen::Settings(settings) => {
+                    settings.refresh((*config).clone(), profiles.clone())
+                }
+                // Тема могла смениться — обновим палитру открытого списка.
+                ActiveScreen::ChatList(list) => {
+                    list.set_palette(Palette::for_theme(config.interface.theme))
+                }
+                ActiveScreen::Chat => {}
             }
             screen.set_settings(*config, profiles);
         }
@@ -268,7 +325,14 @@ fn apply_event(
             title,
             messages,
             draft,
-        } => screen.activate_chat(id, title, &messages, &draft),
+        } => {
+            // Удаление активного чата при открытом списке меняет активный — обновим
+            // его метку в списке.
+            if let ActiveScreen::ChatList(list) = active {
+                list.set_active(Some(id));
+            }
+            screen.activate_chat(id, title, &messages, &draft);
+        }
         AppEvent::UserMessage(text) => screen.push_user_message(text),
         AppEvent::RestoreInput(text) => screen.restore_input(text),
         AppEvent::GenerationStarted { generation_id } => screen.begin_generation(generation_id),
@@ -406,51 +470,60 @@ fn chunk_batch(batch: Vec<Event>) -> Vec<Chunk> {
 fn process_input_batch(
     batch: Vec<Event>,
     screen: &mut ChatScreen,
-    settings: &mut Option<SettingsScreen>,
+    active: &mut ActiveScreen,
     cmd_tx: &UnboundedSender<AppCommand>,
 ) -> bool {
     let mut quit = false;
     for chunk in chunk_batch(batch) {
         match chunk {
-            // Вставка из буфера: на экране настроек — в активный редактор поля,
-            // иначе — в поле ввода чата (никогда не отправляет сообщение).
-            Chunk::Paste(text) | Chunk::Event(Event::Paste(text)) => {
-                if let Some(settings_screen) = settings.as_mut() {
-                    settings_screen.handle_paste(&text);
-                } else {
-                    screen.handle_paste(&text);
-                }
-            }
+            // Вставка из буфера: на экране настроек — в активный редактор поля; в
+            // чате — в поле ввода (никогда не отправляет); в списке цели вставки нет.
+            Chunk::Paste(text) | Chunk::Event(Event::Paste(text)) => match active {
+                ActiveScreen::Settings(settings) => settings.handle_paste(&text),
+                ActiveScreen::Chat => screen.handle_paste(&text),
+                ActiveScreen::ChatList(_) => {}
+            },
             Chunk::Event(Event::Key(key)) => {
-                if let Some(settings_screen) = settings.as_mut() {
-                    // Два стейтмента (не collapsible): сперва снимаем намерение, чтобы
-                    // отпустить заимствование `settings` до `dispatch_settings`.
-                    let intent = settings_screen.handle_key(key);
-                    if let Some(intent) = intent {
-                        dispatch_settings(intent, cmd_tx, settings);
-                    }
-                } else if let Some(intent) = screen.handle_key(key)
-                    && dispatch(intent, cmd_tx, screen, settings)
+                // Снимаем намерение из активного экрана (борроу заканчивается на
+                // owned-значении), затем диспетчеризуем — иначе конфликт заимствований.
+                let mut chat_intent = None;
+                let mut list_intent = None;
+                let mut settings_intent = None;
+                match active {
+                    ActiveScreen::Chat => chat_intent = screen.handle_key(key),
+                    ActiveScreen::ChatList(list) => list_intent = list.handle_key(key),
+                    ActiveScreen::Settings(settings) => settings_intent = settings.handle_key(key),
+                }
+                if let Some(intent) = chat_intent
+                    && dispatch(intent, cmd_tx, screen, active)
                 {
                     quit = true;
                 }
+                if let Some(intent) = list_intent
+                    && dispatch_chat_list(intent, cmd_tx, screen, active)
+                {
+                    quit = true;
+                }
+                if let Some(intent) = settings_intent {
+                    dispatch_settings(intent, cmd_tx, active);
+                }
             }
-            // Колесо мыши прокручивает ленту чата. На экране настроек (своя
+            // Колесо мыши прокручивает ленту чата. На списке/настройках (своя
             // навигация) прокрутку игнорируем.
-            Chunk::Event(Event::Mouse(mouse)) if settings.is_none() => screen.handle_mouse(mouse),
+            Chunk::Event(Event::Mouse(mouse)) if active.is_chat() => screen.handle_mouse(mouse),
             Chunk::Event(_) => {}
         }
     }
     quit
 }
 
-/// Транслирует намерение чата в команду оркестратору (или открывает настройки).
-/// Возвращает `true` для [`ChatIntent::Quit`] (петля завершается).
+/// Транслирует намерение чата в команду оркестратору (или открывает экран
+/// настроек/списка чатов). Возвращает `true` для [`ChatIntent::Quit`].
 fn dispatch(
     intent: ChatIntent,
     cmd_tx: &UnboundedSender<AppCommand>,
     screen: &ChatScreen,
-    settings: &mut Option<SettingsScreen>,
+    active: &mut ActiveScreen,
 ) -> bool {
     let command = match intent {
         ChatIntent::Quit => return true,
@@ -461,18 +534,22 @@ fn dispatch(
         ChatIntent::Impersonate { seed } => AppCommand::Impersonate { seed },
         ChatIntent::CancelImpersonation => AppCommand::CancelImpersonation,
         ChatIntent::NewChat { profile_id } => AppCommand::NewChat { profile_id },
-        ChatIntent::SwitchChat(id) => AppCommand::SwitchChat(id),
-        ChatIntent::CloneChat(id) => AppCommand::CloneChat(id),
         ChatIntent::CopyChat(id) => AppCommand::CopyChat(id),
-        ChatIntent::DeleteChat(id) => AppCommand::DeleteChat(id),
         ChatIntent::RagAdd { path, recursive } => AppCommand::RagAdd { path, recursive },
         ChatIntent::RagDelete { path } => AppCommand::RagDelete { path },
-        ChatIntent::RenameChat { id, title } => AppCommand::RenameChat { id, title },
-        ChatIntent::AutoRenameChat(id) => AppCommand::AutoRenameChat(id),
         ChatIntent::OpenSettings => {
             if let Some((config, profiles)) = screen.settings_snapshot() {
-                *settings = Some(SettingsScreen::new(config, profiles));
+                *active = ActiveScreen::Settings(Box::new(SettingsScreen::new(config, profiles)));
             }
+            return false;
+        }
+        // Список чатов открывается из снимка, который чат держит актуальным.
+        ChatIntent::OpenChatList => {
+            *active = ActiveScreen::ChatList(Box::new(ChatListScreen::new(
+                screen.chat_summaries(),
+                screen.active_chat(),
+                screen.palette(),
+            )));
             return false;
         }
         // Тумблер прокрутки колесом: включаем/выключаем захват мыши терминала.
@@ -492,15 +569,59 @@ fn dispatch(
     false
 }
 
+/// Транслирует намерение экрана списка чатов в команду (или управление экранами).
+/// Возвращает `true` для [`ChatListIntent::Quit`] (петля завершается).
+fn dispatch_chat_list(
+    intent: ChatListIntent,
+    cmd_tx: &UnboundedSender<AppCommand>,
+    screen: &mut ChatScreen,
+    active: &mut ActiveScreen,
+) -> bool {
+    let command = match intent {
+        // Закрытие/переход к чату возвращает базовый экран.
+        ChatListIntent::Close => {
+            *active = ActiveScreen::Chat;
+            return false;
+        }
+        ChatListIntent::Quit => return true,
+        ChatListIntent::Switch(id) => {
+            *active = ActiveScreen::Chat;
+            AppCommand::SwitchChat(id)
+        }
+        // Создание чата: закрываем список и запускаем поток нового чата на экране
+        // чата (там живёт выбор профиля — оверлей при >1 профиле).
+        ChatListIntent::NewChat => {
+            *active = ActiveScreen::Chat;
+            if let Some(ChatIntent::NewChat { profile_id }) = screen.request_new_chat() {
+                let _ = cmd_tx.send(AppCommand::NewChat { profile_id });
+            }
+            return false;
+        }
+        ChatListIntent::Clone(id) => {
+            *active = ActiveScreen::Chat;
+            AppCommand::CloneChat(id)
+        }
+        // Копирование/удаление/переименование/авто-название не закрывают список:
+        // подтверждение/ошибка прилетят в его область статуса, обновлённый набор —
+        // событием `ChatList`.
+        ChatListIntent::Copy(id) => AppCommand::CopyChat(id),
+        ChatListIntent::Delete(id) => AppCommand::DeleteChat(id),
+        ChatListIntent::Rename { id, title } => AppCommand::RenameChat { id, title },
+        ChatListIntent::AutoRename(id) => AppCommand::AutoRenameChat(id),
+    };
+    let _ = cmd_tx.send(command);
+    false
+}
+
 /// Транслирует намерение экрана настроек в команду (или закрывает его).
 fn dispatch_settings(
     intent: SettingsIntent,
     cmd_tx: &UnboundedSender<AppCommand>,
-    settings: &mut Option<SettingsScreen>,
+    active: &mut ActiveScreen,
 ) {
     let command = match intent {
         SettingsIntent::Close => {
-            *settings = None;
+            *active = ActiveScreen::Chat;
             return;
         }
         SettingsIntent::SaveConfig(config) => AppCommand::UpdateConfig(config),

@@ -995,6 +995,45 @@ web-поиск и Python под выключателями, экран наст�
   либо проигнорирует (останутся оценка переписки и live-приближение ответа) —
   деградация мягкая.
 
+### Пост-M9: список чатов вынесен в отдельный экран (сделано)
+- **Список чатов был оверлеем внутри `ChatScreen`** (`overlay: Option<ChatListState>`),
+  теперь — **самостоятельный экран** `screens/chat_list.rs` (`ChatListScreen`),
+  разгружая экран чата. Жёсткой привязки не было: виджет `widgets/chat_list.rs`
+  (`ChatListState`) уже держал свой снимок, рисовался во весь экран и отвечал
+  `ChatListAction`. Экран — **тонкая обёртка** над виджетом (FSD: `screens →
+  widgets`): хранит контекст отрисовки (активный чат для метки `●`, палитру) и
+  переводит `ChatListAction` → новый `ChatListIntent` (параллель `ChatIntent`/
+  `SettingsIntent`). Виджет и его тесты не тронуты.
+- **Три экрана через enum** (по выбору): `app/runtime.rs` держит базовый `ChatScreen`
+  + `enum ActiveScreen { Chat | ChatList(Box<…>) | Settings(Box<…>) }` (варианты
+  боксированы — экраны крупные, `clippy::large_enum_variant`). Заменил прежнюю пару
+  «`screen` + `Option<SettingsScreen>`». Открытый список/настройки получают ввод и
+  рисуются **вместо** чата (как раньше настройки); `Esc`/`Close` → `ActiveScreen::Chat`.
+- **Контракт**: чат на `Esc` (не в генерации) отдаёт `ChatIntent::OpenChatList`
+  (вместо локального открытия оверлея); `runtime::dispatch` создаёт `ChatListScreen`
+  из снимков чата (`chat_summaries`/`active_chat`/`palette` — новые геттеры).
+  `dispatch_chat_list` транслирует `ChatListIntent` в `AppCommand`/управление
+  экранами: `Switch`/`Clone`/`NewChat` закрывают список, `Copy`/`Delete`/`Rename`/
+  `AutoRename` оставляют открытым (как было у оверлея). `NewChat` закрывает список и
+  зовёт `ChatScreen::request_new_chat()` (выбор профиля живёт в экране чата — оверлей
+  при >1 профиле не дублируется).
+- **Из `ChatIntent` убраны** ныне мёртвые `SwitchChat/CloneChat/DeleteChat/
+  RenameChat/AutoRenameChat` (их строил только удалённый `handle_overlay_key`; теперь
+  их роль у `ChatListIntent`). Остались `NewChat` (`Ctrl+N`) и `CopyChat` (`F5` в чате).
+- **Маршрутизация событий** (`app/runtime.rs::apply_event` теперь берёт `&mut
+  ActiveScreen`): `ChatList` применяется к чату **всегда** (актуальный снимок для
+  след. открытия/`Ctrl+N`) и дополнительно к открытому списку (живое обновление);
+  `ChatListError`/результат `CopyToClipboard` идут в область статуса списка, если
+  открыт, иначе заметкой в ленту (`ChatScreen::push_note`/`push_error` теперь pub);
+  `ChatActivated` обновляет метку активного чата в открытом списке (`set_active`);
+  `Settings` при открытом списке обновляет его палитру (`set_palette`). Гейты петли
+  (перепроверка орфографии, спиннеры RAG/имперсонации, колесо мыши) переведены с
+  `settings.is_none()` на `active.is_chat()` — пока список/настройки открыты, эти
+  относящиеся к чату вещи приостановлены (как уже было для настроек; фоновые задачи
+  RAG/генерации продолжаются, просто их анимация/баннер не рисуются поверх).
+- `set_overlay_error`/`set_overlay_notice` у `ChatScreen` удалены (роутинг переехал в
+  runtime). 421 тест зелёный, clippy чист.
+
 ### Отложено за пределы M3
 - **Сворачивание/выделение per-message** и tool-блоки в ленте — сейчас «мысли»
   сворачиваются глобально (`Ctrl+T`); выделение сообщений и tool-блоки — на M5.
