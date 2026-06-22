@@ -29,7 +29,6 @@ use crate::shared::config::AppConfig;
 use crate::shared::keys;
 use crate::shared::server::ServerStatus;
 use crate::shared::theme::Palette;
-use crate::widgets::chat_list::{ChatListAction, ChatListState};
 use crate::widgets::impersonation_preview;
 use crate::widgets::input_box::InputBox;
 use crate::widgets::message_feed::{FeedMessage, FeedRole, MessageFeed};
@@ -65,21 +64,14 @@ pub enum ChatIntent {
     },
     /// Отменить текущую имперсонацию (`Esc` в предпросмотре).
     CancelImpersonation,
-    /// Создать чат из профиля (`None` — профиль по умолчанию).
+    /// Создать чат из профиля (`None` — профиль по умолчанию). `Ctrl+N` в чате
+    /// (операции над конкретными чатами — переключение/клон/удаление/переименование
+    /// — идут через экран списка чатов, [`ChatListIntent`](crate::screens::chat_list::ChatListIntent)).
     NewChat {
         profile_id: Option<Uuid>,
     },
-    SwitchChat(Uuid),
-    CloneChat(Uuid),
-    /// Скопировать всю переписку чата в буфер обмена.
+    /// Скопировать всю переписку активного чата в буфер обмена (`F5`).
     CopyChat(Uuid),
-    DeleteChat(Uuid),
-    RenameChat {
-        id: Uuid,
-        title: String,
-    },
-    /// Авто-название чата силами модели (читает переписку, придумывает заголовок).
-    AutoRenameChat(Uuid),
     /// Индексировать файл/директорию в RAG (команда `/rag add <path> [-r]`).
     RagAdd {
         path: String,
@@ -91,6 +83,8 @@ pub enum ChatIntent {
     },
     /// Открыть экран настроек (`Ctrl+P`). `app` создаёт его из снимка настроек.
     OpenSettings,
+    /// Открыть экран списка чатов (`Esc`). `app` создаёт его из снимка списка.
+    OpenChatList,
     /// Включить/выключить захват мыши терминала для прокрутки колесом (`Ctrl+W`).
     /// `true` — колесо прокручивает ленту (выделение текста — с Shift); `false` —
     /// нативное выделение мышью. См. spec §11.3.
@@ -144,7 +138,6 @@ pub struct ChatScreen {
     active_chat: Option<Uuid>,
     title: String,
     chats: Vec<ChatSummary>,
-    overlay: Option<ChatListState>,
     /// Снимок профилей (для оверлея выбора при создании чата).
     profiles: Vec<ProfileSummary>,
     /// Открытый оверлей выбора профиля.
@@ -209,7 +202,6 @@ impl ChatScreen {
             active_chat: None,
             title: String::new(),
             chats: Vec::new(),
-            overlay: None,
             profiles: Vec::new(),
             profile_overlay: None,
             input: InputBox::new(),
@@ -273,11 +265,6 @@ impl ChatScreen {
     }
 
     pub fn set_chat_list(&mut self, chats: Vec<ChatSummary>) {
-        // Если оверлей открыт — синхронизируем его снимок (после
-        // переименования/удаления/клонирования).
-        if let Some(overlay) = &mut self.overlay {
-            overlay.set_chats(chats.clone());
-        }
         self.chats = chats;
     }
 
@@ -285,23 +272,19 @@ impl ChatScreen {
         self.profiles = profiles;
     }
 
-    /// Показывает ошибку операции списка чатов. Если оверлей открыт — в его
-    /// отдельной области (исчезает по нажатию клавиши, не засоряет ленту); иначе
-    /// (оверлей уже закрыт, напр. поздний ответ авто-названия) — заметкой в ленте.
-    pub fn set_overlay_error(&mut self, message: String) {
-        match &mut self.overlay {
-            Some(overlay) => overlay.set_error(message),
-            None => self.push_error(&message),
-        }
+    /// Снимок списка чатов — для создания экрана списка по `Esc` (`OpenChatList`).
+    pub fn chat_summaries(&self) -> Vec<ChatSummary> {
+        self.chats.clone()
     }
 
-    /// Показывает подтверждение операции списка чатов (напр. «скопировано»). Если
-    /// оверлей открыт — в его области статуса (успехом); иначе — заметкой в ленте.
-    pub fn set_overlay_notice(&mut self, message: String) {
-        match &mut self.overlay {
-            Some(overlay) => overlay.set_notice(message),
-            None => self.push_note(&message),
-        }
+    /// Активный чат (метка в экране списка; `None`, пока чат не выбран).
+    pub fn active_chat(&self) -> Option<Uuid> {
+        self.active_chat
+    }
+
+    /// Текущая палитра темы — для отрисовки экрана списка чатов.
+    pub fn palette(&self) -> Palette {
+        self.palette
     }
 
     /// Обновляет заголовок чата в проекции (после ручного/авто-переименования).
@@ -583,7 +566,9 @@ impl ChatScreen {
         self.rag.is_some()
     }
 
-    fn push_note(&mut self, text: &str) {
+    /// Добавляет нейтральную заметку в ленту (напр. подтверждение операции списка
+    /// чатов, когда экран списка уже закрыт — поздний ответ авто-названия/копии).
+    pub fn push_note(&mut self, text: &str) {
         self.feed.push(FeedMessage::note(text));
         self.feed_view.scroll_to_bottom();
     }
@@ -621,9 +606,6 @@ impl ChatScreen {
         }
         if self.profile_overlay.is_some() {
             return self.handle_profile_overlay_key(key);
-        }
-        if self.overlay.is_some() {
-            return self.handle_overlay_key(key);
         }
         // Шорткаты с Ctrl матчим по «физической» латинской клавише — чтобы они
         // срабатывали при любой раскладке (русская ЙЦУКЕН даёт `Ctrl+д` вместо
@@ -706,15 +688,14 @@ impl ChatScreen {
                 self.feed_view.scroll_down(PAGE_SCROLL);
                 None
             }
-            // Esc переключает на список чатов (и обратно: Esc в открытом оверлее
-            // закрывает его — см. `handle_overlay_key`). Во время генерации Esc
-            // сперва отменяет её. Выход из приложения — `Ctrl+C`. См. spec §11.7.
+            // Esc открывает экран списка чатов (`app` создаёт его из снимка списка;
+            // `Esc` там закрывает экран — переключение «список ↔ чат»). Во время
+            // генерации Esc сперва отменяет её. Выход — `Ctrl+C`. См. spec §11.7.
             (KeyCode::Esc, _) => {
                 if self.generating {
                     Some(ChatIntent::Cancel)
                 } else {
-                    self.overlay = Some(ChatListState::new(self.chats.clone(), self.active_chat));
-                    None
+                    Some(ChatIntent::OpenChatList)
                 }
             }
             // Shift+Enter — перенос строки; Enter — отправка (spec §11.7).
@@ -768,11 +749,7 @@ impl ChatScreen {
     /// при открытой справке/попапе/оверлее (их однострочные поля) — no-op. Вставка
     /// не отправляет сообщение даже с переносами внутри. См. spec §11.5.
     pub fn handle_paste(&mut self, text: &str) {
-        if self.show_help
-            || self.suggest.is_some()
-            || self.overlay.is_some()
-            || self.profile_overlay.is_some()
-        {
+        if self.show_help || self.suggest.is_some() || self.profile_overlay.is_some() {
             return;
         }
         if text.is_empty() {
@@ -786,11 +763,7 @@ impl ChatScreen {
     /// в основном виде — при открытом оверлее/попапе/справке прокрутка ленты под
     /// ними была бы неожиданной, поэтому это no-op. См. spec §11.3.
     pub fn handle_mouse(&mut self, mouse: MouseEvent) {
-        if self.show_help
-            || self.suggest.is_some()
-            || self.overlay.is_some()
-            || self.profile_overlay.is_some()
-        {
+        if self.show_help || self.suggest.is_some() || self.profile_overlay.is_some() {
             return;
         }
         match mouse.kind {
@@ -923,7 +896,9 @@ impl ChatScreen {
 
     /// Запрашивает создание чата: при >1 профиле открывает оверлей выбора,
     /// иначе сразу создаёт из единственного/дефолтного профиля (spec §10).
-    fn request_new_chat(&mut self) -> Option<ChatIntent> {
+    /// Публичный: `app` вызывает его, когда `Ctrl+N` нажат в экране списка чатов
+    /// (выбор профиля живёт здесь, в экране чата).
+    pub fn request_new_chat(&mut self) -> Option<ChatIntent> {
         if self.profiles.len() > 1 {
             self.profile_overlay = Some(ProfileListState::new(self.profiles.clone()));
             None
@@ -948,39 +923,6 @@ impl ChatScreen {
                     profile_id: Some(id),
                 })
             }
-        }
-    }
-
-    fn handle_overlay_key(&mut self, key: KeyEvent) -> Option<ChatIntent> {
-        let overlay = self.overlay.as_mut()?;
-        match overlay.on_key(key) {
-            ChatListAction::None => None,
-            ChatListAction::Close => {
-                self.overlay = None;
-                None
-            }
-            // `Ctrl+C` выходит из приложения и из оверлея списка чатов тоже.
-            ChatListAction::Quit => Some(ChatIntent::Quit),
-            ChatListAction::Switch(id) => {
-                self.overlay = None;
-                Some(ChatIntent::SwitchChat(id))
-            }
-            ChatListAction::New => {
-                self.overlay = None;
-                self.request_new_chat()
-            }
-            ChatListAction::Clone(id) => {
-                self.overlay = None;
-                Some(ChatIntent::CloneChat(id))
-            }
-            // Копирование не закрывает оверлей: подтверждение/ошибка прилетят в его
-            // область статуса (`ChatListNotice`/`ChatListError`).
-            ChatListAction::Copy(id) => Some(ChatIntent::CopyChat(id)),
-            // Удаление/переименование/авто-название не закрывают оверлей:
-            // обновлённый список прилетит как `set_chat_list` и синхронизирует снимок.
-            ChatListAction::Delete(id) => Some(ChatIntent::DeleteChat(id)),
-            ChatListAction::Rename { id, title } => Some(ChatIntent::RenameChat { id, title }),
-            ChatListAction::AutoRename(id) => Some(ChatIntent::AutoRenameChat(id)),
         }
     }
 
@@ -1064,8 +1006,7 @@ impl ChatScreen {
             } else {
                 "ввод · Enter отправить · Shift+Enter перенос"
             };
-            let focused =
-                self.overlay.is_none() && self.profile_overlay.is_none() && self.suggest.is_none();
+            let focused = self.profile_overlay.is_none() && self.suggest.is_none();
             let command = self.input_is_command();
             self.input.render(
                 frame,
@@ -1077,9 +1018,6 @@ impl ChatScreen {
             );
         }
 
-        if let Some(overlay) = &self.overlay {
-            overlay.render(frame, frame.area(), self.active_chat, &self.palette);
-        }
         if let Some(overlay) = &self.profile_overlay {
             overlay.render(frame, frame.area());
         }
@@ -1488,19 +1426,11 @@ mod tests {
     #[test]
     fn esc_opens_chat_list_else_cancels_generation() {
         let mut s = ChatScreen::new();
-        // Без генерации Esc открывает список чатов (внутреннее действие, не Quit).
-        assert!(s.overlay.is_none());
+        // Без генерации Esc просит открыть экран списка чатов (его создаёт `app`).
         assert_eq!(
             s.handle_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE)),
-            None
+            Some(ChatIntent::OpenChatList)
         );
-        assert!(s.overlay.is_some(), "Esc открыл список чатов");
-        // Esc внутри оверлея закрывает его — переключение «список ↔ чат».
-        assert_eq!(
-            s.handle_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE)),
-            None
-        );
-        assert!(s.overlay.is_none(), "Esc в оверлее вернул к чату");
         // Во время генерации Esc сперва отменяет её.
         s.begin_generation(gen_id());
         assert_eq!(
@@ -1510,16 +1440,8 @@ mod tests {
     }
 
     #[test]
-    fn ctrl_c_quits_from_chat_and_from_chat_list() {
+    fn ctrl_c_quits_from_chat() {
         let mut s = ChatScreen::new();
-        // Из обычного вида чата.
-        assert_eq!(
-            s.handle_key(KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL)),
-            Some(ChatIntent::Quit)
-        );
-        // И из открытого оверлея списка чатов.
-        s.handle_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
-        assert!(s.overlay.is_some());
         assert_eq!(
             s.handle_key(KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL)),
             Some(ChatIntent::Quit)
@@ -1598,25 +1520,6 @@ mod tests {
     }
 
     #[test]
-    fn esc_opens_overlay_and_routes_keys() {
-        let mut s = ChatScreen::new();
-        s.set_chat_list(vec![ChatSummary {
-            id: gen_id(),
-            title: "A".into(),
-            created_at: chrono::Utc::now(),
-            modified_at: chrono::Utc::now(),
-            message_count: 0,
-        }]);
-        assert!(s.overlay.is_none());
-        s.handle_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
-        assert!(s.overlay.is_some());
-        // Esc внутри оверлея закрывает его, а не выходит из приложения
-        let intent = s.handle_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
-        assert_eq!(intent, None);
-        assert!(s.overlay.is_none());
-    }
-
-    #[test]
     fn rename_chat_updates_title_bar_of_active_chat() {
         let mut s = ChatScreen::new();
         let id = gen_id();
@@ -1626,25 +1529,6 @@ mod tests {
         // Чужой чат не трогает шапку активного.
         s.rename_chat(gen_id(), "Постороннее".into());
         assert_eq!(s.title, "Новое");
-    }
-
-    #[test]
-    fn overlay_ctrl_r_routes_auto_rename_intent() {
-        let mut s = ChatScreen::new();
-        let id = gen_id();
-        s.set_chat_list(vec![ChatSummary {
-            id,
-            title: "A".into(),
-            created_at: chrono::Utc::now(),
-            modified_at: chrono::Utc::now(),
-            message_count: 2,
-        }]);
-        s.handle_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
-        assert!(s.overlay.is_some());
-        let intent = s.handle_key(KeyEvent::new(KeyCode::Char('r'), KeyModifiers::CONTROL));
-        assert_eq!(intent, Some(ChatIntent::AutoRenameChat(id)));
-        // Оверлей остаётся открытым — список обновится событием ChatList.
-        assert!(s.overlay.is_some());
     }
 
     #[test]
@@ -1664,70 +1548,15 @@ mod tests {
     }
 
     #[test]
-    fn overlay_f5_routes_copy_intent_and_keeps_overlay_open() {
+    fn late_list_op_results_fall_to_feed() {
+        // Когда экран списка закрыт, поздние результаты операций списка (копия/
+        // авто-название) `app` кладёт заметкой в ленту через push_note/push_error.
         let mut s = ChatScreen::new();
-        let id = gen_id();
-        s.set_chat_list(vec![ChatSummary {
-            id,
-            title: "A".into(),
-            created_at: chrono::Utc::now(),
-            modified_at: chrono::Utc::now(),
-            message_count: 2,
-        }]);
-        s.handle_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
-        let intent = s.handle_key(KeyEvent::new(KeyCode::F(5), KeyModifiers::NONE));
-        assert_eq!(intent, Some(ChatIntent::CopyChat(id)));
-        assert!(
-            s.overlay.is_some(),
-            "оверлей остаётся открытым после копирования"
-        );
-    }
-
-    #[test]
-    fn overlay_notice_goes_to_overlay_when_open_else_feed() {
-        let mut s = ChatScreen::new();
-        // Оверлей закрыт — подтверждение падает заметкой в ленту.
-        s.set_overlay_notice("скопировано".into());
-        assert!(s.feed.iter().any(|m| m.role == FeedRole::Note));
-        let feed_before = s.feed.len();
-        // Оверлей открыт — подтверждение идёт в его область, лента не растёт.
-        s.set_chat_list(vec![ChatSummary {
-            id: gen_id(),
-            title: "A".into(),
-            created_at: chrono::Utc::now(),
-            modified_at: chrono::Utc::now(),
-            message_count: 0,
-        }]);
-        s.handle_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
-        s.set_overlay_notice("в оверлей".into());
+        s.push_note("Переписка скопирована в буфер обмена");
+        s.push_error("не удалось");
         assert_eq!(
-            s.feed.len(),
-            feed_before,
-            "лента не пополняется при открытом оверлее"
-        );
-    }
-
-    #[test]
-    fn overlay_error_goes_to_overlay_when_open_else_feed() {
-        let mut s = ChatScreen::new();
-        // Оверлей закрыт — ошибка падает заметкой в ленту.
-        s.set_overlay_error("упс".into());
-        assert!(s.feed.iter().any(|m| m.role == FeedRole::Note));
-        let feed_before = s.feed.len();
-        // Оверлей открыт — ошибка идёт в его область, лента не растёт.
-        s.set_chat_list(vec![ChatSummary {
-            id: gen_id(),
-            title: "A".into(),
-            created_at: chrono::Utc::now(),
-            modified_at: chrono::Utc::now(),
-            message_count: 0,
-        }]);
-        s.handle_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
-        s.set_overlay_error("в оверлей".into());
-        assert_eq!(
-            s.feed.len(),
-            feed_before,
-            "лента не пополняется при открытом оверлее"
+            s.feed.iter().filter(|m| m.role == FeedRole::Note).count(),
+            2
         );
     }
 
