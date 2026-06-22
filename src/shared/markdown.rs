@@ -650,6 +650,9 @@ fn render_row(
                 cell.clone()
             };
             wrap::wrap_line(&Line::from(styled), widths[j])
+                .into_iter()
+                .map(trim_row_trailing_ws)
+                .collect()
         })
         .collect();
     let height = wrapped.iter().map(Vec::len).max().unwrap_or(1).max(1);
@@ -668,6 +671,33 @@ fn render_row(
         rows.push(Line::from(spans));
     }
     rows
+}
+
+/// Убирает хвостовые пробелы из визуального ряда ячейки. `wrap::wrap_ranges`
+/// «проливает» пробел на границе слова за край ряда (в обычной ленте он невидим),
+/// но в таблице эти пробелы учитываются в [`pad_cell`] и раздувают строку **шире
+/// столбца** — тогда повторный перенос ленты (`message_feed`) разрывает рамку.
+/// Внутри ячейки хвостовые пробелы незначимы (паддинг добавляется заново), поэтому
+/// их безопасно срезать, гарантируя ряд ≤ `widths[j]`.
+fn trim_row_trailing_ws(line: Line<'static>) -> Line<'static> {
+    let mut spans = line.spans;
+    while let Some(last) = spans.last() {
+        let trimmed = last.content.trim_end();
+        if trimmed.len() == last.content.len() {
+            break;
+        }
+        if trimmed.is_empty() {
+            spans.pop();
+        } else {
+            let style = last.style;
+            *spans.last_mut().unwrap() = Span::styled(trimmed.to_string(), style);
+            break;
+        }
+    }
+    let mut out = Line::from(spans);
+    out.style = line.style;
+    out.alignment = line.alignment;
+    out
 }
 
 /// Дополняет ряд ячейки пробелами до ширины `width` с учётом выравнивания.
@@ -1527,6 +1557,22 @@ mod tests {
         for w in [40usize, 60, 80, 120] {
             let max = max_line_width(TABLE_MD, w);
             assert!(max <= w, "ширина {max} превысила панель {w}");
+        }
+    }
+
+    /// Таблица с переносом ячеек (как на скриншоте) не должна превышать ширину
+    /// **ни при каком** размере панели — иначе повторный перенос в `message_feed`
+    /// разорвал бы рамку. Регрессия на «пролитый» пробел на границе слова.
+    #[test]
+    fn wrapping_table_never_exceeds_any_width() {
+        const WIDE: &str = "\
+| Подход | Как работает | Минус |
+| :--- | :--- | :--- |
+| Стандартный Transformer Chain-of-Thought (o1) | Фиксированный проход Input → Output. Модель пишет рассуждения текстом в скрытый чат | Одинаковые затраты ресурсов на всё. Дорого по токенам, медленно, ограничено длиной текста. |
+| Ваша идея (Recurrent ACT) | Итерации в скрытом пространстве (latent space) | Сложность в обучении (нужны новые методы градиентного спуска). |";
+        for w in 30usize..=140 {
+            let max = max_line_width(WIDE, w);
+            assert!(max <= w, "при ширине {w} строка таблицы вышла на {max}");
         }
     }
 
