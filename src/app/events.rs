@@ -118,6 +118,18 @@ pub enum AppEvent {
     Chunk { generation_id: Uuid, text: String },
     /// Дельта «мыслей» (CoT).
     Thoughts { generation_id: Uuid, text: String },
+    /// Счётчик токенов текущей генерации (live). `completion` — сгенерировано
+    /// токенов ответа (накопительно по раундам agentic-loop); `context` — токенов
+    /// в промпте (вся переписка); `None` оставляет прежнее значение нетронутым.
+    /// `context_exact` — точное ли это число из `usage` сервера (иначе клиентская
+    /// оценка, UI помечает `~`). UI показывает «переписка + ответ» в статус-баре,
+    /// см. spec §11.1.
+    TokenUsage {
+        generation_id: Uuid,
+        completion: u64,
+        context: Option<u64>,
+        context_exact: bool,
+    },
     /// Инструмент вызван и исполнен (для tool-блока в ленте). См. spec §6.3, §11.3.
     ToolCall {
         generation_id: Uuid,

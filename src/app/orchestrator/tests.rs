@@ -351,6 +351,93 @@ async fn send_streams_and_persists_assistant_message() {
 }
 
 #[tokio::test]
+async fn emits_token_counter_during_generation() {
+    use crate::shared::api::backend::TokenUsage;
+    // Две текстовые дельты (live-счёт = 2), затем точный usage от сервера (= 5).
+    let backend = Arc::new(MockBackend::scripted(vec![
+        ChatChunk::Text("При".into()),
+        ChatChunk::Text("вет".into()),
+        ChatChunk::Usage(TokenUsage {
+            prompt_tokens: 12,
+            completion_tokens: 5,
+        }),
+        ChatChunk::Finished(FinishReason::Stop),
+    ])) as Arc<dyn EngineBackend>;
+    let (_d, cmd_tx, mut evt_rx, handle) = spawn_orch(Some(backend));
+
+    wait_for(&mut evt_rx, |e| matches!(e, AppEvent::ChatActivated { .. }))
+        .await
+        .unwrap();
+    cmd_tx
+        .send(AppCommand::SendMessage("привет".into()))
+        .unwrap();
+
+    // Сразу после старта — оценка переписки (промпта): context=Some, неточная,
+    // ответа ещё нет (completion=0).
+    let est = wait_for(&mut evt_rx, |e| matches!(e, AppEvent::TokenUsage { .. }))
+        .await
+        .unwrap();
+    assert!(
+        matches!(
+            est,
+            AppEvent::TokenUsage {
+                completion: 0,
+                context: Some(c),
+                context_exact: false,
+                ..
+            } if c > 0
+        ),
+        "оценка переписки: {est:?}"
+    );
+
+    // Дельты ответа → счётчик ответа растёт, оценку переписки не трогают (None).
+    let first = wait_for(&mut evt_rx, |e| {
+        matches!(e, AppEvent::TokenUsage { context: None, .. })
+    })
+    .await
+    .unwrap();
+    assert!(
+        matches!(
+            first,
+            AppEvent::TokenUsage {
+                completion: 1,
+                context: None,
+                ..
+            }
+        ),
+        "счётчик ответа: {first:?}"
+    );
+
+    // Точный счётчик из usage сервера приходит до завершения: completion=5, context=12.
+    let exact = wait_for(&mut evt_rx, |e| {
+        matches!(
+            e,
+            AppEvent::TokenUsage {
+                context_exact: true,
+                ..
+            }
+        )
+    })
+    .await
+    .unwrap();
+    assert!(
+        matches!(
+            exact,
+            AppEvent::TokenUsage {
+                completion: 5,
+                context: Some(12),
+                context_exact: true,
+                ..
+            }
+        ),
+        "точный счётчик из usage: {exact:?}"
+    );
+
+    cmd_tx.send(AppCommand::Quit).unwrap();
+    handle.await.unwrap();
+}
+
+#[tokio::test]
 async fn regenerate_replaces_last_assistant_message() {
     // Два разных ответа по очереди: исходный ход → «первый», перегенерация → «второй».
     let backend = Arc::new(MockBackend::sequence(vec![

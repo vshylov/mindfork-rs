@@ -16,6 +16,7 @@ use crate::shared::api::{
     ApiMessage, ApiToolCall, ChatChunk, ChatRequest, EngineBackend, FinishReason,
     ToolCallAccumulator,
 };
+use crate::shared::tokens::estimate_prompt;
 
 use super::Orchestrator;
 use super::request::{build_request, last_user_message_at};
@@ -202,6 +203,14 @@ impl Orchestrator {
         let _ = self
             .evt_tx
             .send(AppEvent::GenerationStarted { generation_id: id });
+        // Сразу показываем оценку токенов всей переписки (промпта) — точное число
+        // придёт позже из `usage` сервера и заменит оценку. См. spec §11.1.
+        let _ = self.evt_tx.send(AppEvent::TokenUsage {
+            generation_id: id,
+            completion: 0,
+            context: Some(estimate_prompt_tokens(&request)),
+            context_exact: false,
+        });
         self.gen_state.begin(id, cancel.clone());
         spawn_generation(GenSpawn {
             backend,
@@ -267,6 +276,9 @@ struct RoundOutput {
     thoughts: String,
     calls: Vec<ApiToolCall>,
     reason: FinishReason,
+    /// Сгенерировано токенов за раунд: точное значение из `usage` сервера, иначе
+    /// число потоковых дельт (приближение — у llama-server одна дельта ≈ один токен).
+    tokens: u64,
 }
 
 /// Запускает задачу клиентского agentic-loop (spec §6.3): стрим → при
@@ -291,10 +303,22 @@ fn spawn_generation(spawn: GenSpawn) {
         let mut messages: Vec<Message> = Vec::new();
         let mut effects: Vec<ChatEffect> = Vec::new();
         let mut round: u32 = 0;
+        // Накопительный счётчик токенов ответа по всем раундам agentic-loop —
+        // live-индикатор продолжает расти от раунда к раунду.
+        let mut total_tokens: u64 = 0;
         let reason;
 
         loop {
-            let out = stream_round(&backend, request.clone(), &cancel, id, &evt_tx).await;
+            let out = stream_round(
+                &backend,
+                request.clone(),
+                &cancel,
+                id,
+                &evt_tx,
+                total_tokens,
+            )
+            .await;
+            total_tokens += out.tokens;
 
             // Раунд с вызовами инструментов — исполняем и продолжаем цикл.
             if out.reason == FinishReason::ToolCalls && !out.calls.is_empty() {
@@ -380,19 +404,36 @@ fn spawn_generation(spawn: GenSpawn) {
     });
 }
 
-/// Стримит один запрос, ретранслируя `Text`/`Thoughts` в UI и накапливая
-/// tool-вызовы. Возвращает накопленный раунд.
+/// Стримит один запрос, ретранслируя `Text`/`Thoughts` в UI, накапливая
+/// tool-вызовы и счётчик токенов. `base_tokens` — токены, набранные предыдущими
+/// раундами; счётчик в UI растёт накопительно. Возвращает накопленный раунд.
 async fn stream_round(
     backend: &Arc<dyn EngineBackend>,
     request: ChatRequest,
     cancel: &CancellationToken,
     id: Uuid,
     evt_tx: &UnboundedSender<AppEvent>,
+    base_tokens: u64,
 ) -> RoundOutput {
     let mut text = String::new();
     let mut thoughts = String::new();
     let mut acc = ToolCallAccumulator::default();
     let mut reason = FinishReason::Stop;
+    // Live-счёт: число дельт ответа (≈ токенов). Точное значение из `usage`
+    // сервера, если придёт, заменяет приближение.
+    let mut streamed: u64 = 0;
+    let mut usage_tokens: Option<u64> = None;
+
+    // Счётчик ответа: `context: None` оставляет прежнюю оценку переписки нетронутой
+    // (её эмитит start_generation); точный `context` приходит лишь из usage сервера.
+    let emit_completion = |completion: u64| {
+        let _ = evt_tx.send(AppEvent::TokenUsage {
+            generation_id: id,
+            completion,
+            context: None,
+            context_exact: false,
+        });
+    };
 
     match backend.chat_stream(request, cancel.clone()).await {
         Ok(mut stream) => {
@@ -400,19 +441,34 @@ async fn stream_round(
                 match chunk {
                     ChatChunk::Text(t) => {
                         text.push_str(&t);
+                        streamed += 1;
                         let _ = evt_tx.send(AppEvent::Chunk {
                             generation_id: id,
                             text: t,
                         });
+                        emit_completion(base_tokens + streamed);
                     }
                     ChatChunk::Thoughts(t) => {
                         thoughts.push_str(&t);
+                        streamed += 1;
                         let _ = evt_tx.send(AppEvent::Thoughts {
                             generation_id: id,
                             text: t,
                         });
+                        emit_completion(base_tokens + streamed);
                     }
                     ChatChunk::ToolCall(delta) => acc.push(delta),
+                    ChatChunk::Usage(u) => {
+                        // Точный счёт от сервера: и ответ, и переписку (prompt) —
+                        // заменяет приближение по дельтам и оценку переписки.
+                        usage_tokens = Some(u.completion_tokens as u64);
+                        let _ = evt_tx.send(AppEvent::TokenUsage {
+                            generation_id: id,
+                            completion: base_tokens + u.completion_tokens as u64,
+                            context: Some(u.prompt_tokens as u64),
+                            context_exact: true,
+                        });
+                    }
                     ChatChunk::Finished(r) => {
                         reason = r;
                         break;
@@ -431,7 +487,22 @@ async fn stream_round(
         thoughts,
         calls: acc.finish(),
         reason,
+        tokens: usage_tokens.unwrap_or(streamed),
     }
+}
+
+/// Клиентская оценка числа токенов промпта (всей переписки) для live-индикатора
+/// до прихода точного `usage.prompt_tokens` от сервера. Учитывает системное
+/// сообщение, тексты реплик и аргументы вызовов инструментов в истории.
+fn estimate_prompt_tokens(req: &ChatRequest) -> u64 {
+    let mut parts: Vec<&str> = Vec::with_capacity(req.messages.len());
+    for m in &req.messages {
+        parts.push(m.content.as_str());
+        for tc in &m.tool_calls {
+            parts.push(tc.arguments.as_str());
+        }
+    }
+    estimate_prompt(req.system.as_deref(), parts)
 }
 
 /// Доменное tool-сообщение (роль `Tool`) с привязкой к вызову.

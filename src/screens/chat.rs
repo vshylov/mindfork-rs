@@ -153,6 +153,15 @@ pub struct ChatScreen {
     status: ServerStatus,
     current_gen: Option<Uuid>,
     generating: bool,
+    /// Счётчик токенов ответа текущей/последней генерации (показывается в
+    /// статус-баре). Сбрасывается при старте новой генерации. См. spec §11.1.
+    gen_tokens: u64,
+    /// Токенов в переписке (промпте) — оценка клиента до ответа сервера, затем
+    /// точное `usage.prompt_tokens`; `None`, пока неизвестно.
+    gen_context: Option<u64>,
+    /// Точное ли значение `gen_context` (из `usage` сервера). `false` — оценка,
+    /// статус-бар помечает её `~`.
+    gen_context_exact: bool,
     /// Спелл-чекер (загружается в фоне; `None`, пока не готов/нет словарей).
     spell: Option<SpellChecker>,
     /// Текст ввода изменился — нужна перепроверка орфографии (с дебаунсом).
@@ -207,6 +216,9 @@ impl ChatScreen {
             status: ServerStatus::Connecting,
             current_gen: None,
             generating: false,
+            gen_tokens: 0,
+            gen_context: None,
+            gen_context_exact: false,
             spell: None,
             spell_dirty: false,
             draft_dirty: false,
@@ -350,6 +362,9 @@ impl ChatScreen {
     pub fn begin_generation(&mut self, generation_id: Uuid) {
         self.current_gen = Some(generation_id);
         self.generating = true;
+        self.gen_tokens = 0;
+        self.gen_context = None;
+        self.gen_context_exact = false;
         self.pending_text_sep = false;
         self.pending_thoughts_sep = false;
         self.feed.push(FeedMessage {
@@ -416,6 +431,25 @@ impl ChatScreen {
                 }
             }
             last.thoughts.push_str(text);
+        }
+    }
+
+    /// Обновляет счётчик токенов текущей генерации (live). Игнорирует устаревшие
+    /// события (по `generation_id`). Контекст (переписку) обновляет только когда он
+    /// задан (`Some`), запоминая, точное это число или оценка.
+    pub fn set_token_usage(
+        &mut self,
+        generation_id: Uuid,
+        completion: u64,
+        context: Option<u64>,
+        context_exact: bool,
+    ) {
+        if self.current_gen == Some(generation_id) {
+            self.gen_tokens = completion;
+            if let Some(c) = context {
+                self.gen_context = Some(c);
+                self.gen_context_exact = context_exact;
+            }
         }
     }
 
@@ -1006,6 +1040,9 @@ impl ChatScreen {
             status_area,
             &self.status,
             self.generating,
+            self.gen_tokens,
+            self.gen_context,
+            self.gen_context_exact,
             self.mouse_scroll,
             &self.palette,
         );

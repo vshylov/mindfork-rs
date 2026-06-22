@@ -961,6 +961,40 @@ web-поиск и Python под выключателями, экран наст�
   оставлены на `Orchestrator` (как и `gen_state`). `cargo fmt`/`clippy`/`test`
   зелёные (411 passed, 7 ignored).
 
+### Пост-M9: счётчик токенов в статус-баре при генерации (сделано)
+- **Суммарный счётчик** (`токены: 1290`): токены всей переписки (промпта) **плюс**
+  токены текущего/последнего ответа, одним числом. Виден **сразу при старте**
+  (`~1234`, ответ ещё 0), а не «считается с 1»; во время генерации число растёт
+  live (ярко, accent), после — приглушённо (итог хода) до следующей генерации.
+- **Переписка — оценка `~`, затем точное число**. Точный `prompt_tokens` сервер
+  присылает только в конце хода (с `usage`), поэтому до этого показывается
+  клиентская **оценка** (`shared/tokens.rs::estimate_prompt`, эвристика «байты
+  UTF-8 / 4»: латиница ≈4 симв./токен, кириллица ≈2 — близко к BPE Gemma/Qwen) с
+  пометкой `~`. Оценку эмитит `start_generation` сразу после `GenerationStarted`
+  (`TokenUsage{completion:0, context:Some(est), context_exact:false}`); приход
+  `usage` заменяет её точным `prompt_tokens` (`context_exact:true`, `~` снимается).
+- **Ответ — двойной источник**: (1) live-приближение по числу потоковых дельт
+  (`Text`/`Thoughts`) — у llama-server одна дельта ≈ один токен, работает с любым
+  сервером; (2) точный `completion_tokens` из `usage`. Запрос просит usage через
+  новое поле `stream_options.include_usage=true` (`wire.rs`, только при стриминге);
+  `ChatCompletionChunk.usage` → `Usage{prompt_tokens,completion_tokens}` → клиент
+  эмитит `ChatChunk::Usage(TokenUsage)` (новый вариант enum) **до** разбора
+  `choices` (у usage-чанка `choices` пуст) и до `Finished`.
+- **Поток**: `stream_round` (`orchestrator/generation.rs`) на каждую дельту шлёт
+  `AppEvent::TokenUsage{generation_id, completion, context:None, ..}` с накопительным
+  счётом `base_tokens + streamed` (переписку не трогает — `context:None` сохраняет
+  оценку); на `ChatChunk::Usage` — точные `completion`+`context`. Счётчик ответа
+  **накопителен по раундам agentic-loop** (`total_tokens` += `RoundOutput.tokens`,
+  где `tokens` = usage, иначе число дельт). `runtime.rs` →
+  `ChatScreen::set_token_usage` (гейт по `generation_id`; контекст обновляется лишь
+  при `Some`); поля `gen_tokens`/`gen_context`/`gen_context_exact` сбрасываются в
+  `begin_generation`. `status_bar::render` рисует `токены: [~]<переписка+ответ>`
+  одним числом (`~` пока переписка — оценка); скрыт при `tokens==0 &&
+  context==None`.
+- Внешний/строгий OpenAI-сервер `stream_options` либо поддержит (точный счёт),
+  либо проигнорирует (останутся оценка переписки и live-приближение ответа) —
+  деградация мягкая.
+
 ### Отложено за пределы M3
 - **Сворачивание/выделение per-message** и tool-блоки в ленте — сейчас «мысли»
   сворачиваются глобально (`Ctrl+T`); выделение сообщений и tool-блоки — на M5.

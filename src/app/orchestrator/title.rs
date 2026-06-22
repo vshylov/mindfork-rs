@@ -133,7 +133,7 @@ fn spawn_title(
                     // из последней содержательной строки рассуждений.
                     ChatChunk::Thoughts(t) => thoughts.push_str(&t),
                     ChatChunk::Finished(_) => break,
-                    ChatChunk::ToolCall(_) => {}
+                    ChatChunk::ToolCall(_) | ChatChunk::Usage(_) => {}
                 }
             }
             Ok::<(String, String), anyhow::Error>((text, thoughts))

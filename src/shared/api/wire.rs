@@ -14,6 +14,10 @@ use super::backend::ChatRequest;
 pub struct ChatCompletionRequest {
     pub messages: Vec<WireMessage>,
     pub stream: bool,
+    /// Опции стрима: просим сервер прислать финальный `usage` со счётчиком токенов
+    /// (`include_usage`). Шлём только при стриминге (см. [`StreamOptions`]).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub stream_options: Option<StreamOptions>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub temperature: Option<f32>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -91,6 +95,14 @@ pub struct ChatCompletionRequest {
     pub tools: Option<Vec<WireTool>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub tool_choice: Option<&'static str>,
+}
+
+/// Опции стрима OpenAI (`stream_options`). `include_usage=true` заставляет сервер
+/// прислать финальный чанк с блоком `usage` (счётчик токенов) — иначе в стриме его
+/// нет. llama.cpp `llama-server` это поддерживает.
+#[derive(Debug, Serialize)]
+pub struct StreamOptions {
+    pub include_usage: bool,
 }
 
 #[derive(Debug, Serialize)]
@@ -203,6 +215,10 @@ pub fn build_chat_request(req: &ChatRequest, stream: bool) -> ChatCompletionRequ
     ChatCompletionRequest {
         messages,
         stream,
+        // Счётчик токенов нужен только в стриминговом ходе генерации.
+        stream_options: stream.then_some(StreamOptions {
+            include_usage: true,
+        }),
         temperature: s.temperature,
         dynatemp_range: s.dynatemp_range,
         dynatemp_exponent: s.dynatemp_exponent,
@@ -245,6 +261,19 @@ pub fn build_chat_request(req: &ChatRequest, stream: bool) -> ChatCompletionRequ
 pub struct ChatCompletionChunk {
     #[serde(default)]
     pub choices: Vec<ChatChoiceChunk>,
+    /// Счётчик токенов: присылается финальным чанком при
+    /// `stream_options.include_usage=true` (у такого чанка `choices` обычно пуст).
+    #[serde(default)]
+    pub usage: Option<Usage>,
+}
+
+/// Блок `usage` ответа сервера (счётчик токенов).
+#[derive(Debug, Default, Deserialize)]
+pub struct Usage {
+    #[serde(default)]
+    pub prompt_tokens: u32,
+    #[serde(default)]
+    pub completion_tokens: u32,
 }
 
 #[derive(Debug, Deserialize)]
@@ -320,6 +349,8 @@ mod tests {
         assert!(json.get("stop").is_none(), "stop must never be sent");
         assert!(json.get("temperature").is_none());
         assert_eq!(json["stream"], true);
+        // Стриминг → просим прислать usage (счётчик токенов).
+        assert_eq!(json["stream_options"]["include_usage"], true);
         // system должно идти первым сообщением
         assert_eq!(json["messages"][0]["role"], "system");
         assert_eq!(json["messages"][1]["role"], "user");
@@ -386,6 +417,8 @@ mod tests {
         // reasoning_budget=0 дублируется сигналом для Jinja-шаблонов.
         assert_eq!(json["chat_template_kwargs"]["enable_thinking"], false);
         assert_eq!(json["stream"], false);
+        // Без стриминга usage не запрашиваем.
+        assert!(json.get("stream_options").is_none());
         // Незаданные расширения не сериализуются.
         assert!(json.get("typical_p").is_none());
         assert!(json.get("mirostat").is_none());
@@ -434,6 +467,24 @@ mod tests {
         assert_eq!(c.delta.content.as_deref(), Some("hello"));
         assert_eq!(c.delta.reasoning_content.as_deref(), Some("hmm"));
         assert!(c.finish_reason.is_none());
+    }
+
+    #[test]
+    fn parses_usage_chunk() {
+        // Финальный чанк include_usage: choices пуст, есть usage.
+        let raw = r#"{"choices":[],"usage":{"prompt_tokens":42,"completion_tokens":7,"total_tokens":49}}"#;
+        let chunk: ChatCompletionChunk = serde_json::from_str(raw).unwrap();
+        assert!(chunk.choices.is_empty());
+        let u = chunk.usage.unwrap();
+        assert_eq!(u.prompt_tokens, 42);
+        assert_eq!(u.completion_tokens, 7);
+    }
+
+    #[test]
+    fn chunk_without_usage_is_none() {
+        let raw = r#"{"choices":[{"delta":{"content":"hi"},"finish_reason":null}]}"#;
+        let chunk: ChatCompletionChunk = serde_json::from_str(raw).unwrap();
+        assert!(chunk.usage.is_none());
     }
 
     #[test]

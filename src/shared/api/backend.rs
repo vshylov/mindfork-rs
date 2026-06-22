@@ -136,6 +136,17 @@ impl FinishReason {
     }
 }
 
+/// Счётчик токенов из ответа сервера (поле `usage`). Сервер присылает его
+/// финальным чанком стрима, если запрошено `stream_options.include_usage=true`
+/// (см. [`super::wire`]). Поля могут быть нулевыми, если сервер их не отдал.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct TokenUsage {
+    /// Токенов в промпте (размер контекста запроса).
+    pub prompt_tokens: u32,
+    /// Токенов в ответе (сгенерировано моделью).
+    pub completion_tokens: u32,
+}
+
 /// Дельта вызова инструмента из стрима (накапливается по `index`). См. spec §6.3.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct ToolCallDelta {
@@ -157,6 +168,8 @@ pub enum ChatChunk {
     Thoughts(String),
     /// Дельта вызова инструмента (сервер парсит `<tool_call>` сам).
     ToolCall(ToolCallDelta),
+    /// Счётчик токенов (`usage`) — обычно отдельным чанком перед завершением.
+    Usage(TokenUsage),
     /// Завершение генерации.
     Finished(FinishReason),
 }
