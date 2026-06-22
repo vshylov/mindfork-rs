@@ -280,6 +280,12 @@ fn apply_event(
             generation_id,
             text,
         } => screen.push_thoughts(generation_id, &text),
+        AppEvent::TokenUsage {
+            generation_id,
+            completion,
+            context,
+            context_exact,
+        } => screen.set_token_usage(generation_id, completion, context, context_exact),
         AppEvent::ToolCall {
             generation_id,
             name,

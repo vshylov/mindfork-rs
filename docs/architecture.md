@@ -249,8 +249,16 @@ flowchart LR
 `AppEvent` (оркестратор → UI) включает: `ServerStatus`, `ChatList`,
 `ChatRenamed`, `ChatListError`, `CopyToClipboard`, `ProfileList`, `Settings`,
 `ChatActivated`, `UserMessage`, `RestoreInput`, `GenerationStarted`, `Chunk`,
-`Thoughts`, `ToolCall`, `Finished`, `Impersonation{Started,Chunk,Finished}`,
-`RagProgress`, `Error`.
+`Thoughts`, `TokenUsage`, `ToolCall`, `Finished`,
+`Impersonation{Started,Chunk,Finished}`, `RagProgress`, `Error`.
+
+`TokenUsage { completion, context, context_exact }` — live-счётчик токенов: ответ
+(`completion`, накопительно по раундам agentic-loop) и переписка/промпт (`context`).
+Источник двойной: live-приближение по числу потоковых дельт + точное число из блока
+`usage` сервера (его просим через `stream_options.include_usage=true`; приходит
+финальным чанком как `ChatChunk::Usage`). До прихода `usage` переписка показывается
+клиентской оценкой (`shared/tokens.rs`, эвристика «байты UTF-8 / 4»), помеченной `~`;
+точное `prompt_tokens` её заменяет. Статус-бар показывает сумму одним числом.
 
 ### Инварианты потока
 
@@ -310,8 +318,8 @@ sequenceDiagram
     ORCH->>UI: GenerationStarted{id}
     loop round < max_tool_rounds
         ORCH->>LLM: chat_stream(req, cancel)
-        LLM-->>ORCH: Text / Thoughts / ToolCall deltas
-        ORCH->>UI: Chunk / Thoughts (по generation_id)
+        LLM-->>ORCH: Text / Thoughts / ToolCall / Usage deltas
+        ORCH->>UI: Chunk / Thoughts / TokenUsage (по generation_id)
         alt finish = Stop / Length / Cancelled
             ORCH->>UI: Finished{reason}
             Note over ORCH: зафиксировать ответ, выйти
@@ -379,8 +387,10 @@ classDiagram
 - **`ChatRequest`** = `system` + `messages` (user/assistant/tool, включая
   `tool_calls` и tool-результаты) + `sampling` + `tools` (OpenAI-схемы). История
   append-only → сервер переиспользует prefix cache.
-- **`ChatChunk`** = `Text` | `Thoughts` | `ToolCall(ToolCallDelta)` | `Finished`.
-  `ToolCallAccumulator` собирает разрезанные по чанкам вызовы по `index`.
+- **`ChatChunk`** = `Text` | `Thoughts` | `ToolCall(ToolCallDelta)` |
+  `Usage(TokenUsage)` | `Finished`. `ToolCallAccumulator` собирает разрезанные по
+  чанкам вызовы по `index`; `Usage` (`prompt_tokens`/`completion_tokens`) приходит
+  финальным чанком при `stream_options.include_usage=true` — счётчик токенов.
 - **`ServerHandle`** (`server.rs`) владеет дочерним `llama-server` (`kill_on_drop`).
   `build_args` собирает CLI (`-m`, `-ngl`, `-c`, `--jinja`, `--no-mmap`; для
   эмбеддингов — `--embeddings -ub <ctx> -b <ctx>`). **Предполёт:** если

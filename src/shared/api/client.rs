@@ -10,7 +10,8 @@ use futures_util::StreamExt;
 use tokio_util::sync::CancellationToken;
 
 use super::backend::{
-    ChatChunk, ChatRequest, ChatStream, Embedder, EngineBackend, FinishReason, ToolCallDelta,
+    ChatChunk, ChatRequest, ChatStream, Embedder, EngineBackend, FinishReason, TokenUsage,
+    ToolCallDelta,
 };
 use super::thoughts::{Piece, ThoughtsParser};
 use super::wire;
@@ -113,6 +114,14 @@ impl EngineBackend for OpenAiClient {
                                 }
                                 match serde_json::from_str::<wire::ChatCompletionChunk>(&event.data) {
                                     Ok(chunk) => {
+                                        // Счётчик токенов (include_usage) приходит отдельным
+                                        // чанком (с пустым choices) — отдаём до разбора choice.
+                                        if let Some(u) = chunk.usage {
+                                            yield ChatChunk::Usage(TokenUsage {
+                                                prompt_tokens: u.prompt_tokens,
+                                                completion_tokens: u.completion_tokens,
+                                            });
+                                        }
                                         let Some(choice) = chunk.choices.into_iter().next() else { continue };
                                         if let Some(r) = choice.delta.reasoning_content
                                             && !r.is_empty()
@@ -250,7 +259,7 @@ mod ignored_smoke {
             match chunk {
                 ChatChunk::Text(t) => text.push_str(&t),
                 ChatChunk::Thoughts(t) => thoughts.push_str(&t),
-                ChatChunk::ToolCall(_) => {}
+                ChatChunk::ToolCall(_) | ChatChunk::Usage(_) => {}
                 ChatChunk::Finished(r) => {
                     finish = Some(r);
                     break;
