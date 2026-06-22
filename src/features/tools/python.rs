@@ -72,6 +72,14 @@ impl Tool for PythonExec {
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
+            // Вывод идёт в pipe, а не в консоль, поэтому Python на Windows выбирает
+            // кодировку по локали (часто cp1252) и падает на кириллице в `print`
+            // (`UnicodeEncodeError: 'charmap' codec can't encode`). Мы читаем вывод
+            // как UTF-8 (`from_utf8_lossy`), поэтому и Python просим писать UTF-8:
+            // `PYTHONIOENCODING` чинит stdin/stdout/stderr, `PYTHONUTF8` включает
+            // общий UTF-8-режим (и для `open()`/ФС). См. CLAUDE.md (M7).
+            .env("PYTHONIOENCODING", "utf-8")
+            .env("PYTHONUTF8", "1")
             .kill_on_drop(true);
 
         let child = match cmd.spawn() {
@@ -179,5 +187,23 @@ mod tests {
             .await
             .unwrap();
         assert!(out.result.contains("hello"), "got: {}", out.result);
+    }
+
+    /// Кириллица в `print` не должна падать с `UnicodeEncodeError` (Windows cp1252):
+    /// процесс запускается в UTF-8-режиме (`PYTHONIOENCODING`/`PYTHONUTF8`).
+    #[tokio::test]
+    #[ignore = "requires a Python interpreter on PATH"]
+    async fn prints_cyrillic_without_encoding_error() {
+        let (_d, _s, ctx) = ctx_with_storage(Uuid::new_v4());
+        let out = PythonExec::new(None)
+            .invoke(&ctx, serde_json::json!({"code": "print('Привет, мир')"}))
+            .await
+            .unwrap();
+        assert!(out.result.contains("Привет, мир"), "got: {}", out.result);
+        assert!(
+            !out.result.contains("UnicodeEncodeError"),
+            "got: {}",
+            out.result
+        );
     }
 }
