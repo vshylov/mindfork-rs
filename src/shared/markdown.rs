@@ -7,17 +7,21 @@
 //! блоков кода — `syntect` + `ansi-to-tui`. Полный LaTeX и рендер в изображение
 //! сознательно НЕ реализуются.
 
-use std::sync::LazyLock;
+use std::collections::HashMap;
+use std::str::FromStr;
+use std::sync::{LazyLock, Mutex};
 
 use ansi_to_tui::IntoText;
 use pulldown_cmark::{
     Alignment, CodeBlockKind, CowStr, Event, HeadingLevel, Options, Parser, Tag, TagEnd,
 };
-use ratatui::style::{Modifier, Style, Stylize};
+use ratatui::style::{Color, Modifier, Style, Stylize};
 use ratatui::text::{Line, Span, Text};
 
 use syntect::easy::HighlightLines;
-use syntect::highlighting::ThemeSet;
+use syntect::highlighting::{
+    Color as SynColor, ScopeSelectors, StyleModifier, Theme, ThemeItem, ThemeSettings,
+};
 use syntect::parsing::SyntaxSet;
 use syntect::util::{LinesWithEndings, as_24_bit_terminal_escaped};
 
@@ -79,7 +83,137 @@ fn blockquote_style() -> Style {
 // ---------- writer: pulldown events → строки ----------
 
 static SYNTAX_SET: LazyLock<SyntaxSet> = LazyLock::new(SyntaxSet::load_defaults_newlines);
-static THEME_SET: LazyLock<ThemeSet> = LazyLock::new(ThemeSet::load_defaults);
+
+/// Кэш syntect-тем подсветки кода, **построенных из [`Palette`]** (см.
+/// [`build_code_theme`]). Раньше тема была захардкожена (`base16-ocean.dark`) и не
+/// согласовывалась с dark/light/auto — ADR 0003 отмечал это как задел.
+///
+/// Ключ — палитра (различных всего три: auto/dark/light), поэтому утечка
+/// `Box::leak` ограничена и оправдана: `HighlightLines<'static>` требует темы со
+/// `'static`-временем жизни, а число тем конечно и живёт весь процесс. Альтернатива
+/// (тема на стеке `render` + lifetime у `Writer`) усложнила бы тип ради экономии,
+/// которой нет.
+static CODE_THEMES: LazyLock<Mutex<HashMap<Palette, &'static Theme>>> =
+    LazyLock::new(|| Mutex::new(HashMap::new()));
+
+/// Возвращает (строя при первом обращении и кэшируя) syntect-тему подсветки кода
+/// для данной палитры.
+fn code_theme(palette: &Palette) -> &'static Theme {
+    let mut cache = CODE_THEMES.lock().expect("CODE_THEMES poisoned");
+    cache
+        .entry(*palette)
+        .or_insert_with(|| Box::leak(Box::new(build_code_theme(palette))))
+}
+
+/// Строит syntect-тему подсветки кода из семантической [`Palette`], сопоставляя
+/// синтаксические scope'ы ролям темы: ключевые слова → `accent`, строки →
+/// `success`, числа/константы → `warning`, функции → `user`, типы → `assistant`,
+/// теги → `accent`. Текст «по умолчанию» и комментарии задаются абсолютным серым,
+/// светлым на тёмном фоне и тёмным на светлом (`palette.dark`) — так подсветка
+/// согласована с темой приложения, а не живёт «своей палитрой» (ADR 0003).
+///
+/// Пайплайн рендера (`as_24_bit_terminal_escaped(.., false)`) переносит **только
+/// цвет переднего плана**, поэтому фон/жирность/курсив в теме не задаём.
+fn build_code_theme(palette: &Palette) -> Theme {
+    // Серые, у которых нет адаптируемого ANSI-аналога — выбираем по светлоте фона.
+    let (default_fg, comment) = if palette.dark {
+        (gray(212), gray(128))
+    } else {
+        (gray(40), gray(110))
+    };
+
+    let settings = ThemeSettings {
+        foreground: Some(default_fg),
+        ..Default::default()
+    };
+
+    // Список (scope-селектор → цвет роли). Самый специфичный селектор побеждает
+    // (syntect выбирает по «силе совпадения»), порядок в векторе не важен.
+    let scopes = vec![
+        scope_item("comment", comment),
+        scope_item(
+            "keyword, storage, keyword.operator, keyword.control",
+            to_syn(palette.accent),
+        ),
+        scope_item(
+            "string, string.quoted, string.regexp",
+            to_syn(palette.success),
+        ),
+        scope_item(
+            "constant.numeric, constant.language, constant.character, constant.character.escape",
+            to_syn(palette.warning),
+        ),
+        scope_item(
+            "entity.name.function, support.function, meta.function-call",
+            to_syn(palette.user),
+        ),
+        scope_item(
+            "entity.name.type, entity.name.class, support.type, support.class, entity.other.inherited-class",
+            to_syn(palette.assistant),
+        ),
+        scope_item(
+            "entity.name.tag, punctuation.definition.tag",
+            to_syn(palette.accent),
+        ),
+    ];
+
+    Theme {
+        name: Some("mindfork".to_string()),
+        author: None,
+        settings,
+        scopes,
+    }
+}
+
+/// Непрозрачный оттенок серого `v` по всем каналам.
+fn gray(v: u8) -> SynColor {
+    SynColor {
+        r: v,
+        g: v,
+        b: v,
+        a: 255,
+    }
+}
+
+/// Один элемент темы: scope-селектор(ы) → цвет переднего плана.
+fn scope_item(selector: &str, color: SynColor) -> ThemeItem {
+    ThemeItem {
+        scope: ScopeSelectors::from_str(selector).unwrap_or_default(),
+        style: StyleModifier {
+            foreground: Some(color),
+            background: None,
+            font_style: None,
+        },
+    }
+}
+
+/// Переводит цвет ratatui в RGB-цвет syntect. Именованные ANSI-цвета (у `Auto`/
+/// `Dark` палитра именованная, адаптируемая терминалом) приводятся к стандартным
+/// RGB (палитра Campbell — дефолт Windows Terminal): подсветка кода всё равно
+/// эмитит 24-битный цвет, так что иначе нельзя. `Rgb` копируется как есть.
+fn to_syn(color: Color) -> SynColor {
+    let (r, g, b) = match color {
+        Color::Rgb(r, g, b) => (r, g, b),
+        Color::Black => (12, 12, 12),
+        Color::Red => (197, 15, 31),
+        Color::Green => (19, 161, 14),
+        Color::Yellow => (193, 156, 0),
+        Color::Blue => (0, 55, 218),
+        Color::Magenta => (136, 23, 152),
+        Color::Cyan => (58, 150, 221),
+        Color::Gray => (204, 204, 204),
+        Color::DarkGray => (118, 118, 118),
+        Color::LightRed => (231, 72, 86),
+        Color::LightGreen => (22, 198, 12),
+        Color::LightYellow => (249, 241, 165),
+        Color::LightBlue => (59, 120, 255),
+        Color::LightMagenta => (180, 0, 158),
+        Color::LightCyan => (97, 214, 214),
+        Color::White => (242, 242, 242),
+        Color::Indexed(_) | Color::Reset => (204, 204, 204),
+    };
+    SynColor { r, g, b, a: 255 }
+}
 
 /// Накопитель ячеек таблицы между событиями `Table…`.
 struct TableBuilder {
@@ -327,7 +461,7 @@ impl Writer {
             CodeBlockKind::Indented => "",
         };
         if let Some(syntax) = SYNTAX_SET.find_syntax_by_token(lang) {
-            let theme = &THEME_SET.themes["base16-ocean.dark"];
+            let theme = code_theme(&self.palette);
             self.code_highlighter = Some(HighlightLines::new(syntax, theme));
         } else {
             self.line_styles.push(code_style());
@@ -1602,6 +1736,39 @@ mod tests {
             })
             .collect::<Vec<_>>()
             .join("\n")
+    }
+
+    use crate::shared::config::Theme;
+
+    const CODE_MD: &str = "```rust\nfn main() {\n    let s = \"hi\";\n    // c\n}\n```";
+
+    /// Собирает множество цветов переднего плана спанов рендера.
+    fn fg_colors(input: &str, palette: &Palette) -> Vec<Color> {
+        render(input, 80, palette)
+            .lines
+            .iter()
+            .flat_map(|l| l.spans.iter())
+            .filter_map(|s| s.style.fg)
+            .collect()
+    }
+
+    #[test]
+    fn code_highlight_is_colored() {
+        // Подсветка проставляет цвета переднего плана (не голый текст).
+        let colors = fg_colors(CODE_MD, &Palette::for_theme(Theme::Dark));
+        assert!(
+            colors.iter().any(|c| matches!(c, Color::Rgb(..))),
+            "ожидались RGB-цвета подсветки кода"
+        );
+    }
+
+    #[test]
+    fn code_highlight_follows_theme() {
+        // Та же подсветка кода в тёмной и светлой теме даёт разные цвета —
+        // значит, подсветка согласована с темой, а не живёт «своей палитрой».
+        let dark = fg_colors(CODE_MD, &Palette::for_theme(Theme::Dark));
+        let light = fg_colors(CODE_MD, &Palette::for_theme(Theme::Light));
+        assert_ne!(dark, light, "подсветка кода не зависит от темы");
     }
 
     #[test]

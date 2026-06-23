@@ -11,7 +11,9 @@ use ratatui::style::{Color, Style};
 use crate::shared::config::Theme;
 
 /// Семантические цвета интерфейса. `Copy` — дёшево передавать в render по значению.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// `Hash` — палитра служит ключом кэша (напр. построенной syntect-темы подсветки
+/// кода в `shared/markdown.rs`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct Palette {
     /// Заголовок реплики пользователя.
     pub user: Color,
@@ -27,6 +29,11 @@ pub struct Palette {
     pub error: Color,
     /// Акцент (индикатор генерации).
     pub accent: Color,
+    /// Тёмный ли фон темы. Нужно там, где цвет приходится задавать абсолютным RGB
+    /// (нет именованного ANSI, адаптируемого терминалом) — напр. серый «по умолчанию»
+    /// и цвет комментариев в подсветке кода: на тёмном фоне светлый, на светлом —
+    /// тёмный. `Auto` считаем тёмным (типичный терминал тёмный; так было до тем).
+    pub dark: bool,
 }
 
 impl Palette {
@@ -50,6 +57,7 @@ impl Palette {
             warning: Color::Yellow,
             error: Color::Red,
             accent: Color::Magenta,
+            dark: true,
         }
     }
 
@@ -63,6 +71,7 @@ impl Palette {
             warning: Color::LightYellow,
             error: Color::LightRed,
             accent: Color::LightMagenta,
+            dark: true,
         }
     }
 
@@ -76,6 +85,7 @@ impl Palette {
             warning: Color::Rgb(160, 100, 0),
             error: Color::Rgb(180, 0, 0),
             accent: Color::Rgb(140, 0, 140),
+            dark: false,
         }
     }
 
@@ -121,5 +131,14 @@ mod tests {
     #[test]
     fn default_is_auto() {
         assert_eq!(Palette::default(), Palette::for_theme(Theme::Auto));
+    }
+
+    #[test]
+    fn dark_flag_follows_theme() {
+        // Auto и Dark считаем тёмными, Light — светлой (для абсолютных RGB-цветов
+        // подсветки кода, у которых нет адаптируемого ANSI-аналога).
+        assert!(Palette::for_theme(Theme::Auto).dark);
+        assert!(Palette::for_theme(Theme::Dark).dark);
+        assert!(!Palette::for_theme(Theme::Light).dark);
     }
 }

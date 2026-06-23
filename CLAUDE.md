@@ -408,7 +408,14 @@ web-поиск и Python под выключателями, экран наст�
   прокидывает ширину панели и палитру). Зависимость `tui-markdown` убрана;
   добавлены прямые `pulldown-cmark`, `syntect`, `ansi-to-tui`.
 - **Тема**: цвета (заголовки/ссылки/маркеры списков) из `Palette` (раньше лента
-  игнорировала dark/light). Подсветка блоков кода — `syntect` + `ansi-to-tui`.
+  игнорировала dark/light). Подсветка блоков кода — `syntect` + `ansi-to-tui`,
+  **syntect-тема строится из `Palette`** (`build_code_theme`): scope'ы → роли
+  (keyword→accent, string→success, число→warning, функция→user, тип→assistant),
+  текст/комментарии — серым по светлоте фона (флаг `Palette.dark`: Auto/Dark→тёмный,
+  Light→светлый); именованные ANSI приводятся к RGB (Campbell). Темы кэшируются по
+  палитре (`Box::leak` — палитр конечно много, `HighlightLines<'static>`). Раньше
+  была захардкожена `base16-ocean.dark`, не согласованная с темой (закрыт задел
+  ADR 0003).
 - **LaTeX delimiter-scoped** (по образцу .NET `LaTeXConverter`): `normalize_delimiters`
   приводит `\(…\)`→`$…$`, `\[…\]`→`$$…$$` (пропуская код-спаны/блоки), парсер с
   `ENABLE_MATH` даёт `InlineMath`/`DisplayMath`, и только их содержимое идёт через
