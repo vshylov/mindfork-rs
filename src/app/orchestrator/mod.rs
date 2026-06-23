@@ -173,6 +173,7 @@ fn build_registry(config: &AppConfig) -> crate::features::tools::ToolRegistry {
         subagent_max_tokens: config.tools.subagent_max_tokens,
         subagent_timeout: Duration::from_secs(config.tools.subagent_timeout_secs),
         web_fetch_content: config.tools.web_fetch_content,
+        fs_root: config.tools.fs_root.clone(),
     })
 }
 
@@ -225,10 +226,18 @@ impl Orchestrator {
             .into_iter()
             .filter(|p| !p.is_hidden)
             .collect();
+        // Сверяем инструменты профилей с текущим набором по умолчанию: новые
+        // инструменты приложения включаются в существующих профилях (выключенные
+        // пользователем — нет). См. spec §9.4 и `features::profiles::reconcile_tools`.
+        for profile in &mut self.profiles {
+            if crate::features::profiles::reconcile_tools(profile) {
+                let _ = self.storage.json().upsert_profile(profile);
+            }
+        }
         if self.profiles.is_empty() {
             let mut profile = Profile::new("Ассистент", DEFAULT_SYSTEM_MESSAGE);
-            // Включаем базовые инструменты M5 в дефолтном профиле.
-            profile.enabled_tools = crate::features::tools::default_tool_ids();
+            // Включаем все базовые инструменты в дефолтном профиле.
+            crate::features::profiles::reconcile_tools(&mut profile);
             self.storage.json().upsert_profile(&profile)?;
             self.profiles.push(profile);
         }

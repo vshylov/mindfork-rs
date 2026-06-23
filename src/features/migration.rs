@@ -206,6 +206,9 @@ fn configuration_to_profile(name: &str, cfg: &LlConfiguration) -> Profile {
         greeting: greeting.filter(|g| !g.is_empty()),
         // Импортированные профили получают стандартный набор инструментов.
         enabled_tools: default_tool_ids(),
+        // Реестр известных = тот же набор (новые инструменты добавит reconcile_tools
+        // при следующем запуске, не переоткрывая выключенные). См. spec §9.4.
+        known_tools: default_tool_ids(),
         // Семплинг — глобальный (config.default_sampling), профиль наследует его.
         default_sampling: None,
         is_hidden: false,

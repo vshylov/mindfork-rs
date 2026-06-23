@@ -44,6 +44,12 @@ pub struct Profile {
     pub greeting: Option<String>,
     #[serde(default)]
     pub enabled_tools: Vec<ToolId>,
+    /// Инструменты, которые профилю уже «предлагались» (реестр известных). Нужен,
+    /// чтобы при добавлении в приложение новых инструментов их можно было включить
+    /// в существующих профилях, **не** переоткрывая те, что пользователь осознанно
+    /// выключил. Сверка — [`crate::features::profiles::reconcile_tools`]. См. spec §9.4.
+    #[serde(default)]
+    pub known_tools: Vec<ToolId>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub default_sampling: Option<SamplingConfig>,
     /// Мягкое удаление.
@@ -62,6 +68,7 @@ impl Profile {
             character_names: CharacterNames::default(),
             greeting: None,
             enabled_tools: Vec::new(),
+            known_tools: Vec::new(),
             default_sampling: None,
             is_hidden: false,
         }

@@ -351,6 +351,8 @@ enum FieldId {
     TWebFetch,
     TPython,
     TPythonPath,
+    TFs,
+    TFsRoot,
     TSubMaxTokens,
     TSubTimeout,
     EMode,
@@ -596,6 +598,12 @@ impl SettingsScreen {
                 FieldKind::Toggle(t.python_enabled),
             ),
             text_row(FieldId::TPythonPath, "Путь к Python", &t.python_path),
+            row(
+                FieldId::TFs,
+                "Доступ к файлам",
+                FieldKind::Toggle(t.fs_enabled),
+            ),
+            text_row(FieldId::TFsRoot, "Файлы: каталог-песочница", &t.fs_root),
             row(
                 FieldId::TSubMaxTokens,
                 "call_subagent: max_tokens",
@@ -928,6 +936,7 @@ impl SettingsScreen {
             FieldId::TPython => {
                 self.config.tools.python_enabled = !self.config.tools.python_enabled
             }
+            FieldId::TFs => self.config.tools.fs_enabled = !self.config.tools.fs_enabled,
             FieldId::ISpell => {
                 self.config.interface.spellcheck_enabled = !self.config.interface.spellcheck_enabled
             }
@@ -1078,6 +1087,7 @@ impl SettingsScreen {
             FieldId::S(p) => apply_sampling_text(&mut s.default_sampling, p, trimmed),
             FieldId::IS(p) => apply_sampling_text(&mut s.impersonation_sampling, p, trimmed),
             FieldId::TPythonPath => s.tools.python_path = opt(trimmed),
+            FieldId::TFsRoot => s.tools.fs_root = opt(trimmed),
             FieldId::TSubMaxTokens => {
                 if let Ok(v) = trimmed.parse() {
                     s.tools.subagent_max_tokens = v;
@@ -1333,6 +1343,16 @@ fn field_description(id: FieldId) -> Option<&'static str> {
             "Загружать страницы результатов web-поиска, извлекать читаемый текст и \
              переупорядочивать по релевантности запросу (эмбеддингами). Даёт модели \
              содержимое страниц, но добавляет задержку. Выкл — только заголовки/сниппеты.",
+        ),
+        FieldId::TFs => Some(
+            "Разрешить инструменты чтения/записи/листинга локальных файлов \
+             (fs_read/fs_write/fs_list). Выключено по умолчанию: инструмент может \
+             прочитать или перезаписать любой файл. Ограничить можно каталогом-песочницей.",
+        ),
+        FieldId::TFsRoot => Some(
+            "Каталог-«песочница» для файловых инструментов: если задан, доступ к файлам \
+             ограничен этим каталогом и его подкаталогами (выход через .. блокируется). \
+             Пусто — доступ ко всей файловой системе.",
         ),
         FieldId::RagTarget => Some(
             "Целевой размер фрагмента (чанка) базы знаний в символах. Меньше — точнее \

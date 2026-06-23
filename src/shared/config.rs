@@ -190,6 +190,13 @@ pub struct ToolSettings {
     pub python_enabled: bool,
     /// Путь к интерпретатору Python (`None` → системный `python3`/`python`).
     pub python_path: Option<String>,
+    /// Доступ к локальным файлам (`fs_read`/`fs_write`/`fs_list`). Выключен по
+    /// умолчанию (инструмент может прочитать/перезаписать любой файл — приватность/
+    /// безопасность, как у Python). См. spec §9.3, §13.2.
+    pub fs_enabled: bool,
+    /// Каталог-«песочница» для файловых инструментов (`None` → без ограничения).
+    /// Если задан, все пути обязаны лежать внутри него (защита от выхода `..`).
+    pub fs_root: Option<String>,
     /// Лимит токенов ответа саб-агента (`call_subagent`).
     pub subagent_max_tokens: usize,
     /// Лимит времени на вызов саб-агента (секунды).
@@ -203,6 +210,8 @@ impl Default for ToolSettings {
             web_fetch_content: true,
             python_enabled: false,
             python_path: None,
+            fs_enabled: false,
+            fs_root: None,
             subagent_max_tokens: DEFAULT_SUBAGENT_MAX_TOKENS,
             subagent_timeout_secs: DEFAULT_SUBAGENT_TIMEOUT_SECS,
         }
@@ -356,6 +365,9 @@ mod tests {
         assert_eq!(c.embed.port, 8001);
         assert_eq!(c.tools.subagent_max_tokens, DEFAULT_SUBAGENT_MAX_TOKENS);
         assert_eq!(c.tools.subagent_timeout_secs, DEFAULT_SUBAGENT_TIMEOUT_SECS);
+        // Файловые инструменты выключены по умолчанию (как Python).
+        assert!(!c.tools.fs_enabled);
+        assert_eq!(c.tools.fs_root, None);
         assert_eq!(c.rag.chunk_target_chars, DEFAULT_CHUNK_TARGET_CHARS);
         assert_eq!(c.rag.chunk_overlap_chars, DEFAULT_CHUNK_OVERLAP_CHARS);
         assert_eq!(c.rag.chunk_max_chars, DEFAULT_CHUNK_MAX_CHARS);
