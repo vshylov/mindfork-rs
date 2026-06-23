@@ -168,6 +168,10 @@ src/
 │  │  ├─ introspection.rs   get/set_sampling, get/set_system_message, get_last_user_message_time
 │  │  ├─ python.rs          python_exec (subprocess, таймаут)
 │  │  ├─ web.rs             web_search (мульти-провайдер DDG/Mojeek/Ecosia + анти-бот)
+│  │  ├─ fetch.rs           fetch_url (загрузка страницы + саммаризация через движок)
+│  │  ├─ calc.rs            calculate (свой вычислитель математических выражений)
+│  │  ├─ datetime.rs        current_time (дата/время, chrono)
+│  │  ├─ fs.rs              fs_read/fs_write/fs_list (файлы; гейт fs_enabled + песочница)
 │  │  └─ subagent.rs        call_subagent (без истории/инструментов, запрет вложенности)
 │  ├─ spellcheck/           check, segment, dict, mod — Hunspell + сегментатор + личн. словарь
 │  ├─ profiles.rs           чистые операции над профилями (sanitize_name, ProfileEdit)
@@ -543,7 +547,9 @@ agentic-loop **гейтит и сам вызов** (выключенный ин�
 |----------------|---------------------------------------------------------------|
 | Память/знания  | `note_save`, `note_recall`, `rag_add`, `rag_search`           |
 | Интроспекция   | `get_sampling`, `set_sampling`, `get_system_message`, `set_system_message`, `get_last_user_message_time` |
-| Внешние        | `web_search` (мульти-провайдер + анти-бот), `python_exec` (subprocess) |
+| Внешние        | `web_search` (мульти-провайдер + анти-бот), `fetch_url` (загрузка+саммаризация), `python_exec` (subprocess) — гейтятся `web_enabled`/`python_enabled` |
+| Файлы          | `fs_read`, `fs_write`, `fs_list` — гейтятся `fs_enabled`, опциональная песочница `fs_root` |
+| Утилиты        | `calculate` (свой вычислитель выражений), `current_time` (chrono) — без I/O, не гейтятся |
 | Осознанность   | `call_subagent` (без истории/инструментов, запрет вложенности) |
 
 Особенности реализации:

@@ -43,12 +43,14 @@ use crate::shared::api::Embedder;
 use super::{Tool, ToolContext, ToolOutcome};
 
 /// UA, чтобы поисковики отдавали нормальную разметку (а не «лёгкую»/пустую).
-const USER_AGENT: &str = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) \
+/// `pub(crate)` — переиспользуется `fetch_url` (см. `tools/fetch.rs`).
+pub(crate) const USER_AGENT: &str = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) \
      Chrome/124.0 Safari/537.36";
 /// `Accept` для загрузки страниц контента (как у браузера).
-const ACCEPT_HTML: &str = "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8";
+pub(crate) const ACCEPT_HTML: &str =
+    "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8";
 /// `Accept-Language` для загрузки страниц контента.
-const ACCEPT_LANGUAGE: &str = "en-US,en;q=0.9,ru;q=0.8";
+pub(crate) const ACCEPT_LANGUAGE: &str = "en-US,en;q=0.9,ru;q=0.8";
 /// Результатов по умолчанию.
 const DEFAULT_MAX_RESULTS: usize = 5;
 /// Жёсткий потолок результатов.
@@ -330,7 +332,9 @@ fn cosine(a: &[f32], b: &[f32]) -> f32 {
 /// отбрасываются (иначе на сайтах без семантической разметки в контент попадает
 /// мега-меню). script/style не попадают (их текст не внутри `<p>`/`<li>`). Результат
 /// усечён до `max_chars` символов.
-fn extract_readable(html: &str, max_chars: usize) -> String {
+///
+/// `pub(crate)` — переиспользуется `fetch_url` (см. `tools/fetch.rs`).
+pub(crate) fn extract_readable(html: &str, max_chars: usize) -> String {
     let doc = Html::parse_document(html);
     let scope_sel = Selector::parse("article, main").unwrap();
     let para_sel = Selector::parse("p, li").unwrap();
@@ -377,7 +381,8 @@ fn in_boilerplate(el: scraper::ElementRef) -> bool {
 }
 
 /// Усекает строку до `max` символов (по границе символа, не байта).
-fn truncate_chars(s: &str, max: usize) -> String {
+/// `pub(crate)` — переиспользуется `fetch_url` (см. `tools/fetch.rs`).
+pub(crate) fn truncate_chars(s: &str, max: usize) -> String {
     if s.chars().count() <= max {
         return s.to_string();
     }

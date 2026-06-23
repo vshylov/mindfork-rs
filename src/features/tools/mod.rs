@@ -7,6 +7,10 @@
 //! Инструменты памяти/знаний обязаны фильтровать по `ctx.profile_id` (изоляция,
 //! инвариант репозиториев, spec §9.5).
 
+pub mod calc;
+pub mod datetime;
+pub mod fetch;
+pub mod fs;
 pub mod introspection;
 pub mod notes;
 pub mod python;
@@ -109,6 +113,8 @@ pub trait Tool: Send + Sync {
 
 /// Имя web-инструмента (гейтится глобальным выключателем `tools.web_enabled`).
 pub const WEB_SEARCH_ID: &str = "web_search";
+/// Имя инструмента загрузки URL (гейтится `tools.web_enabled` — сетевой доступ).
+pub const FETCH_URL_ID: &str = "fetch_url";
 /// Имя Python-инструмента (гейтится `tools.python_enabled`).
 pub const PYTHON_EXEC_ID: &str = "python_exec";
 
@@ -127,8 +133,14 @@ pub fn default_tool_ids() -> Vec<ToolId> {
         "rag_add",
         "rag_search",
         "call_subagent",
+        "calculate",
+        "current_time",
         WEB_SEARCH_ID,
+        FETCH_URL_ID,
         PYTHON_EXEC_ID,
+        fs::FS_READ_ID,
+        fs::FS_WRITE_ID,
+        fs::FS_LIST_ID,
     ]
     .into_iter()
     .map(String::from)
@@ -137,16 +149,20 @@ pub fn default_tool_ids() -> Vec<ToolId> {
 
 /// Эффективный набор инструментов: `enabled` минус внешние, отключённые
 /// глобальными выключателями (spec §9.4). Порядок `enabled` сохраняется.
+/// `web_enabled` гейтит и `web_search`, и `fetch_url` (оба — сетевой доступ);
+/// `fs_enabled` — файловые `fs_read`/`fs_write`/`fs_list`.
 pub fn effective_tool_ids(
     enabled: &[ToolId],
     web_enabled: bool,
     python_enabled: bool,
+    fs_enabled: bool,
 ) -> Vec<ToolId> {
     enabled
         .iter()
         .filter(|id| match id.as_str() {
-            WEB_SEARCH_ID => web_enabled,
+            WEB_SEARCH_ID | FETCH_URL_ID => web_enabled,
             PYTHON_EXEC_ID => python_enabled,
+            fs::FS_READ_ID | fs::FS_WRITE_ID | fs::FS_LIST_ID => fs_enabled,
             _ => true,
         })
         .cloned()
@@ -166,6 +182,8 @@ pub struct ToolConfig {
     /// Значение по умолчанию для `web_search.fetch_content` (загрузка/реранк страниц,
     /// `config.tools.web_fetch_content`). Аргумент вызова переопределяет.
     pub web_fetch_content: bool,
+    /// Каталог-«песочница» для файловых инструментов (`None` → без ограничения).
+    pub fs_root: Option<String>,
 }
 
 impl Default for ToolConfig {
@@ -177,6 +195,7 @@ impl Default for ToolConfig {
                 crate::shared::config::DEFAULT_SUBAGENT_TIMEOUT_SECS,
             ),
             web_fetch_content: true,
+            fs_root: None,
         }
     }
 }
@@ -200,7 +219,13 @@ pub fn standard_registry(cfg: &ToolConfig) -> ToolRegistry {
         cfg.subagent_timeout,
     )));
     reg.register(Arc::new(web::WebSearch::new(cfg.web_fetch_content)));
+    reg.register(Arc::new(fetch::FetchUrl::new()));
     reg.register(Arc::new(python::PythonExec::new(cfg.python_path.clone())));
+    reg.register(Arc::new(calc::Calculate));
+    reg.register(Arc::new(datetime::CurrentTime));
+    reg.register(Arc::new(fs::FsRead::new(cfg.fs_root.clone())));
+    reg.register(Arc::new(fs::FsWrite::new(cfg.fs_root.clone())));
+    reg.register(Arc::new(fs::FsList::new(cfg.fs_root.clone())));
     reg
 }
 
@@ -348,17 +373,28 @@ mod tests {
     #[test]
     fn effective_tool_ids_gates_external_tools() {
         let enabled = default_tool_ids();
-        // web on, python off → есть web_search, нет python_exec.
-        let eff = effective_tool_ids(&enabled, true, false);
+        // web on, python off, fs off → есть web_search/fetch_url, нет python/fs.
+        let eff = effective_tool_ids(&enabled, true, false, false);
         assert!(eff.iter().any(|t| t == WEB_SEARCH_ID));
+        assert!(eff.iter().any(|t| t == FETCH_URL_ID));
         assert!(!eff.iter().any(|t| t == PYTHON_EXEC_ID));
-        // оба off → ни одного внешнего, но внутренние остаются.
-        let eff = effective_tool_ids(&enabled, false, false);
+        assert!(!eff.iter().any(|t| t == fs::FS_READ_ID));
+        // всё off → ни одного внешнего/файлового, но внутренние остаются.
+        let eff = effective_tool_ids(&enabled, false, false, false);
+        assert!(!eff.iter().any(|t| t == WEB_SEARCH_ID || t == FETCH_URL_ID));
         assert!(
             !eff.iter()
-                .any(|t| t == WEB_SEARCH_ID || t == PYTHON_EXEC_ID)
+                .any(|t| t == fs::FS_READ_ID || t == fs::FS_WRITE_ID || t == fs::FS_LIST_ID)
         );
         assert!(eff.iter().any(|t| t == "note_save"));
+        // безопасные инструменты доступны всегда.
+        assert!(eff.iter().any(|t| t == "calculate"));
+        assert!(eff.iter().any(|t| t == "current_time"));
+        // fs on → файловые инструменты появляются.
+        let eff = effective_tool_ids(&enabled, false, false, true);
+        assert!(eff.iter().any(|t| t == fs::FS_READ_ID));
+        assert!(eff.iter().any(|t| t == fs::FS_WRITE_ID));
+        assert!(eff.iter().any(|t| t == fs::FS_LIST_ID));
     }
 
     #[test]

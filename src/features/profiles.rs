@@ -5,6 +5,7 @@
 use crate::entities::profile::ToolId;
 use crate::entities::profile::{CharacterNames, Profile};
 use crate::entities::sampling::SamplingConfig;
+use crate::features::tools::default_tool_ids;
 
 /// Максимальная длина имени профиля (в символах). Лишнее обрезается.
 pub const MAX_NAME_LEN: usize = 80;
@@ -32,10 +33,44 @@ pub fn sanitize_name(input: &str) -> Option<String> {
     Some(name.chars().take(MAX_NAME_LEN).collect())
 }
 
-/// Создаёт новый профиль с валидным именем. `None`, если имя пустое.
+/// Создаёт новый профиль с валидным именем. `None`, если имя пустое. Новый профиль
+/// получает текущий набор инструментов по умолчанию (через [`reconcile_tools`]).
 pub fn create(name: &str, system_message: impl Into<String>) -> Option<Profile> {
     let name = sanitize_name(name)?;
-    Some(Profile::new(name, system_message))
+    let mut profile = Profile::new(name, system_message);
+    reconcile_tools(&mut profile);
+    Some(profile)
+}
+
+/// Сверяет инструменты профиля с текущим набором по умолчанию: ранее неизвестные
+/// профилю инструменты (новые в приложении) **включаются** и записываются в реестр
+/// «известных» (`known_tools`). Инструменты, которые пользователь осознанно выключил
+/// (они уже в `known_tools`), повторно НЕ включаются. Возвращает `true`, если профиль
+/// изменён (требуется сохранение). См. spec §9.4.
+///
+/// Для профиля, у которого `known_tools` пуст (создан до появления этого реестра),
+/// «новыми» считаются лишь инструменты, которых нет в `enabled_tools`, — то есть к
+/// уже включённому набору добавляются недостающие (новые в приложении), а сам набор
+/// фиксируется как известный.
+pub fn reconcile_tools(profile: &mut Profile) -> bool {
+    // База «известного» при первом запуске миграции — то, что уже включено
+    // (старый снимок дефолтов). Это не даёт повторно включить инструмент, который
+    // был включён ранее, но ничего не ломает, если known_tools уже заполнен.
+    if profile.known_tools.is_empty() {
+        profile.known_tools = profile.enabled_tools.clone();
+    }
+    let mut changed = false;
+    for id in default_tool_ids() {
+        if profile.known_tools.iter().any(|t| t == &id) {
+            continue; // профиль уже знал инструмент — уважаем выбор пользователя
+        }
+        profile.known_tools.push(id.clone());
+        changed = true;
+        if !profile.enabled_tools.iter().any(|t| t == &id) {
+            profile.enabled_tools.push(id);
+        }
+    }
+    changed
 }
 
 /// Набор правок профиля (любое поле — опционально). Применяется к существующему
@@ -146,6 +181,58 @@ mod tests {
             },
         );
         assert_eq!(p.greeting, None);
+    }
+
+    #[test]
+    fn reconcile_adds_new_tools_to_existing_profile() {
+        // Профиль со «старым» снимком дефолтов (без новых инструментов).
+        let mut p = Profile::new("X", "sys");
+        p.enabled_tools = vec!["note_save".into(), "web_search".into()];
+        // known_tools пуст (создан до реестра) — миграция должна добавить новые.
+        let changed = reconcile_tools(&mut p);
+        assert!(changed);
+        // Новые безопасные инструменты включены.
+        assert!(p.enabled_tools.iter().any(|t| t == "calculate"));
+        assert!(p.enabled_tools.iter().any(|t| t == "current_time"));
+        // Старые сохранены.
+        assert!(p.enabled_tools.iter().any(|t| t == "note_save"));
+        // Все текущие дефолты теперь «известны».
+        for id in default_tool_ids() {
+            assert!(p.known_tools.iter().any(|t| t == &id), "не записан: {id}");
+        }
+    }
+
+    #[test]
+    fn reconcile_does_not_reenable_user_disabled_tool() {
+        // Пользователь осознанно выключил calculate: его нет в enabled, но он в known.
+        let mut p = Profile::new("X", "sys");
+        p.known_tools = default_tool_ids();
+        p.enabled_tools = default_tool_ids()
+            .into_iter()
+            .filter(|t| t != "calculate")
+            .collect();
+        let changed = reconcile_tools(&mut p);
+        assert!(!changed, "ничего нового — известный выключенный не трогаем");
+        assert!(
+            !p.enabled_tools.iter().any(|t| t == "calculate"),
+            "выключенный инструмент не должен переоткрываться"
+        );
+    }
+
+    #[test]
+    fn reconcile_is_idempotent() {
+        let mut p = Profile::new("X", "sys");
+        assert!(reconcile_tools(&mut p)); // первый прогон включает дефолты
+        let after_first = p.clone();
+        assert!(!reconcile_tools(&mut p)); // повтор — без изменений
+        assert_eq!(p, after_first);
+    }
+
+    #[test]
+    fn create_gives_default_tools() {
+        let p = create("Имя", "sys").unwrap();
+        assert!(p.enabled_tools.iter().any(|t| t == "calculate"));
+        assert_eq!(p.enabled_tools, default_tool_ids());
     }
 
     #[test]
