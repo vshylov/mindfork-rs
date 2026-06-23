@@ -7,7 +7,7 @@
 //! переносит» решает вызывающий слой; виджет занимается только редактированием.
 
 use ratatui::Frame;
-use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyEventKind};
+use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 use ratatui::layout::Rect;
 use ratatui::style::{Style, Stylize};
 use ratatui::text::{Line, Span, Text};
@@ -303,6 +303,106 @@ impl InputBox {
         }
     }
 
+    /// Влево на одно слово (`Ctrl+Left`): пропускает пробелы слева, затем символы
+    /// слова — курсор встаёт в начало слова. В начале логической строки переходит
+    /// в конец предыдущей (одно нажатие = одна граница, как в больших редакторах).
+    fn move_word_left(&mut self) {
+        self.goal_col = None;
+        if self.col == 0 {
+            if self.row > 0 {
+                self.row -= 1;
+                self.col = self.lines[self.row].len();
+            }
+            return;
+        }
+        self.col = self.word_left_col();
+    }
+
+    /// Вправо на одно слово (`Ctrl+Right`): пропускает пробелы справа, затем символы
+    /// слова — курсор встаёт за концом слова. В конце логической строки переходит в
+    /// начало следующей.
+    fn move_word_right(&mut self) {
+        self.goal_col = None;
+        if self.col >= self.lines[self.row].len() {
+            if self.row + 1 < self.lines.len() {
+                self.row += 1;
+                self.col = 0;
+            }
+            return;
+        }
+        self.col = self.word_right_col();
+    }
+
+    /// Граница слова слева от курсора **в пределах текущей строки** (для пословного
+    /// движения и удаления): пропускает пробелы, затем символы слова. См.
+    /// [`Self::move_word_left`].
+    fn word_left_col(&self) -> usize {
+        let line = &self.lines[self.row];
+        let mut i = self.col;
+        while i > 0 && line[i - 1].is_whitespace() {
+            i -= 1;
+        }
+        while i > 0 && !line[i - 1].is_whitespace() {
+            i -= 1;
+        }
+        i
+    }
+
+    /// Граница слова справа от курсора **в пределах текущей строки** (зеркально
+    /// [`Self::word_left_col`]).
+    fn word_right_col(&self) -> usize {
+        let line = &self.lines[self.row];
+        let mut i = self.col;
+        while i < line.len() && line[i].is_whitespace() {
+            i += 1;
+        }
+        while i < line.len() && !line[i].is_whitespace() {
+            i += 1;
+        }
+        i
+    }
+
+    /// Удаляет слово слева от курсора (`Ctrl+Backspace`). В начале строки склеивает
+    /// со строкой выше (как обычный `Backspace`).
+    fn delete_word_left(&mut self) {
+        self.goal_col = None;
+        self.cleared = None;
+        if self.col == 0 {
+            self.backspace();
+            return;
+        }
+        let start = self.word_left_col();
+        self.lines[self.row].drain(start..self.col);
+        self.col = start;
+    }
+
+    /// Удаляет слово справа от курсора (`Ctrl+Delete`). В конце строки склеивает со
+    /// строкой ниже (как обычный `Delete`).
+    fn delete_word_right(&mut self) {
+        self.goal_col = None;
+        self.cleared = None;
+        if self.col >= self.lines[self.row].len() {
+            self.delete();
+            return;
+        }
+        let end = self.word_right_col();
+        self.lines[self.row].drain(self.col..end);
+    }
+
+    /// В самое начало текста (`Ctrl+Home`).
+    fn move_doc_start(&mut self) {
+        self.goal_col = None;
+        self.row = 0;
+        self.col = 0;
+    }
+
+    /// В самый конец текста (`Ctrl+End`).
+    fn move_doc_end(&mut self) {
+        self.goal_col = None;
+        self.row = self.lines.len() - 1;
+        self.col = self.lines[self.row].len();
+    }
+
     /// Вверх по **визуальному** ряду: если логическая строка перенесена, `↑` идёт на
     /// предыдущий визуальный ряд той же строки, сохраняя колонку. Использует ширину
     /// последней отрисовки; до первого рендера (`last_width == 0`) — логический переход.
@@ -415,8 +515,38 @@ impl InputBox {
         if key.kind != KeyEventKind::Press {
             return false;
         }
+        // Ctrl усиливает навигацию/удаление до уровня слова / всего текста
+        // (`Ctrl+←/→` — по словам, `Ctrl+Backspace/Delete` — удалить слово,
+        // `Ctrl+Home/End` — в начало/конец текста). См. spec §11.5.
+        let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
         match key.code {
-            KeyCode::Char(c) => {
+            KeyCode::Backspace if ctrl => {
+                self.delete_word_left();
+                true
+            }
+            KeyCode::Delete if ctrl => {
+                self.delete_word_right();
+                true
+            }
+            KeyCode::Left if ctrl => {
+                self.move_word_left();
+                true
+            }
+            KeyCode::Right if ctrl => {
+                self.move_word_right();
+                true
+            }
+            KeyCode::Home if ctrl => {
+                self.move_doc_start();
+                true
+            }
+            KeyCode::End if ctrl => {
+                self.move_doc_end();
+                true
+            }
+            // Обычный ввод символа: Ctrl+символ не печатаем (это шорткат вышестоящего
+            // слоя), иначе в поле попал бы управляющий символ.
+            KeyCode::Char(c) if !ctrl => {
                 self.insert_char(c);
                 true
             }
@@ -741,6 +871,10 @@ mod tests {
 
     fn k(code: KeyCode) -> KeyEvent {
         KeyEvent::new(code, KeyModifiers::NONE)
+    }
+
+    fn ctrl(code: KeyCode) -> KeyEvent {
+        KeyEvent::new(code, KeyModifiers::CONTROL)
     }
 
     fn type_str(ib: &mut InputBox, s: &str) {
@@ -1208,6 +1342,86 @@ mod tests {
         assert_eq!(col_at_width(&line, 0), 0);
         assert_eq!(col_at_width(&line, 3), 3);
         assert_eq!(col_at_width(&line, 100), 6); // за концом — вся строка
+    }
+
+    #[test]
+    fn ctrl_left_right_move_by_word() {
+        let mut ib = InputBox::new();
+        ib.set_text("один два три"); // курсор в конце (col=12)
+        // Ctrl+← → начало слова "три"
+        assert!(ib.on_key(ctrl(KeyCode::Left)));
+        assert_eq!(ib.cursor(), (0, 9));
+        // ещё раз → начало "два"
+        assert!(ib.on_key(ctrl(KeyCode::Left)));
+        assert_eq!(ib.cursor(), (0, 5));
+        // ещё раз → начало "один"
+        assert!(ib.on_key(ctrl(KeyCode::Left)));
+        assert_eq!(ib.cursor(), (0, 0));
+        // Ctrl+→ → за концом "один"
+        assert!(ib.on_key(ctrl(KeyCode::Right)));
+        assert_eq!(ib.cursor(), (0, 4));
+        // ещё раз → за концом "два"
+        assert!(ib.on_key(ctrl(KeyCode::Right)));
+        assert_eq!(ib.cursor(), (0, 8));
+    }
+
+    #[test]
+    fn ctrl_left_right_cross_logical_lines() {
+        let mut ib = InputBox::new();
+        ib.set_text("ab\ncd");
+        ib.row = 1;
+        ib.col = 0; // начало второй строки
+        // Ctrl+← на границе строки → конец предыдущей
+        assert!(ib.on_key(ctrl(KeyCode::Left)));
+        assert_eq!(ib.cursor(), (0, 2));
+        // Ctrl+→ из конца первой строки → начало следующей
+        assert!(ib.on_key(ctrl(KeyCode::Right)));
+        assert_eq!(ib.cursor(), (1, 0));
+    }
+
+    #[test]
+    fn ctrl_backspace_deletes_word_left() {
+        let mut ib = InputBox::new();
+        ib.set_text("один два три"); // курсор в конце
+        assert!(ib.on_key(ctrl(KeyCode::Backspace)));
+        assert_eq!(ib.text(), "один два ");
+        assert_eq!(ib.cursor(), (0, 9));
+        // в начале строки склеивает со строкой выше (как обычный Backspace)
+        ib.set_text("ab\ncd");
+        ib.row = 1;
+        ib.col = 0;
+        assert!(ib.on_key(ctrl(KeyCode::Backspace)));
+        assert_eq!(ib.text(), "abcd");
+    }
+
+    #[test]
+    fn ctrl_delete_deletes_word_right() {
+        let mut ib = InputBox::new();
+        ib.set_text("один два три");
+        ib.col = 0;
+        assert!(ib.on_key(ctrl(KeyCode::Delete)));
+        assert_eq!(ib.text(), " два три"); // удалено слово "один", пробел остался
+        assert_eq!(ib.cursor(), (0, 0));
+    }
+
+    #[test]
+    fn ctrl_home_end_jump_to_document_bounds() {
+        let mut ib = InputBox::new();
+        ib.set_text("abc\ndef\nghi");
+        ib.row = 1;
+        ib.col = 1;
+        assert!(ib.on_key(ctrl(KeyCode::Home)));
+        assert_eq!(ib.cursor(), (0, 0));
+        assert!(ib.on_key(ctrl(KeyCode::End)));
+        assert_eq!(ib.cursor(), (2, 3));
+    }
+
+    #[test]
+    fn ctrl_char_is_not_inserted() {
+        // Ctrl+символ — шорткат вышестоящего слоя, в поле не печатается.
+        let mut ib = InputBox::new();
+        assert!(!ib.on_key(ctrl(KeyCode::Char('a'))));
+        assert!(ib.is_empty());
     }
 
     #[test]
