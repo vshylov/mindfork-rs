@@ -392,11 +392,16 @@ classDiagram
   `Usage(TokenUsage)` | `Finished`. `ToolCallAccumulator` собирает разрезанные по
   чанкам вызовы по `index`; `Usage` (`prompt_tokens`/`completion_tokens`) приходит
   финальным чанком при `stream_options.include_usage=true` — счётчик токенов.
-- **`ServerHandle`** (`server.rs`) владеет дочерним `llama-server` (`kill_on_drop`).
-  `build_args` собирает CLI (`-m`, `-ngl`, `-c`, `--jinja`, `--no-mmap`; для
-  эмбеддингов — `--embeddings -ub <ctx> -b <ctx>`). **Предполёт:** если
-  `model_path` задан, но файла нет — `bail!` до `spawn` (иначе зависание в
-  «подключение…» до таймаута).
+- **`ServerHandle`** (`server.rs`) владеет дочерним `llama-server`: `Child` отдан
+  **монитор-задаче** (`spawn_monitor`), которая `select!`-ит между его выходом (взвод
+  `exited`-токена) и сигналом `kill` (взводится в `Drop` хэндла → `start_kill`;
+  `kill_on_drop` оставлен подстраховкой). `build_args` собирает CLI (`-m`, `-ngl`,
+  `-c`, `--jinja`, `--no-mmap`; для эмбеддингов — `--embeddings -ub <ctx> -b <ctx>`).
+  **Предполёт:** если `model_path` задан, но файла нет — `bail!` до `spawn`.
+  **Ранний выход:** если файл валиден, но процесс умирает уже *в ходе* загрузки
+  (битый GGUF, OOM), монитор взводит `exited`, а `wait_until_ready(..., exited)`
+  прекращает поллинг сразу с понятной ошибкой — не ждёт таймаут (иначе зависание в
+  «подключение…» до `MANAGED_READY_TIMEOUT=600с`).
 
 ### Управление серверами — `ServerSupervisor` (`app/supervisor.rs`)
 

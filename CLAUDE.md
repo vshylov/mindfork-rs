@@ -467,10 +467,9 @@ web-поиск и Python под выключателями, экран наст�
   а статус-бар её показывает — никакой доппроводки. Покрыто тестами
   `launch_missing_model_file_errors_before_spawn` (без tokio-рантайма, проверка до
   spawn) и `managed_with_missing_model_is_disconnected` (реальный путь → `Disconnected`).
-- **Остаётся** (вне правки): если путь валиден, но процесс умирает уже *в ходе*
-  загрузки (битый GGUF, OOM), probe всё ещё ждёт до таймаута. Полное закрытие —
-  мониторинг раннего выхода `Child` в probe (потребует прокинуть `Child`, который
-  сейчас сознательно не держится фоновой пробой).
+- **Закрыто** (см. ниже «Пост-M9: мониторинг раннего выхода `Child` в пробе»):
+  процесс, умерший уже *в ходе* загрузки (битый GGUF, OOM), теперь обнаруживается
+  пробой сразу, а не по таймауту.
 
 ### Пост-M9: копирование переписки чата в буфер обмена (сделано)
 - **`F5` копирует всю переписку чата в системный буфер обмена** — и в окне списка
@@ -1070,6 +1069,32 @@ web-поиск и Python под выключателями, экран наст�
   `handle_rag_list/handle_rag_rebuild`. `reset_rag_cancel`/`active_profile_id`/
   `fail_rag` вынесены в общие хелперы `orchestrator/rag.rs`. Команды добавлены в
   оверлей помощи (`F1`/`?`). **433 теста зелёные**, clippy/fmt чисты.
+
+### Пост-M9: мониторинг раннего выхода `Child` в пробе готовности (сделано)
+- **Симптом**: при битом GGUF / нехватке памяти managed `llama-server` биндит порт,
+  но **умирает уже в ходе загрузки модели** (предполётная проверка файла
+  `launch_missing_model_file_errors_before_spawn` ловит лишь отсутствие файла, не
+  «валидный путь, но процесс упал»). Фоновый probe (`wait_until_ready`) держал только
+  `OpenAiClient` и опрашивал мёртвый порт **до таймаута** `MANAGED_READY_TIMEOUT=600с`,
+  держа UI в «сервер: подключение…».
+- **Причина-ограничение**: `Child` принадлежал `ServerHandle` (для `kill_on_drop`), а
+  обнаружить выход можно лишь `child.wait()` — это `&mut Child` + владение, что
+  конфликтует с удержанием хэндла оркестратором ради kill-on-drop.
+- **Фикс** (`shared/api/server.rs`): `Child` уходит в **монитор-задачу**
+  (`spawn_monitor`), которая `select!`-ит между `child.wait()` (процесс умер → взвод
+  `exited: CancellationToken`) и `kill: CancellationToken` (взводится в `Drop for
+  ServerHandle` → `start_kill` + `wait`). `ServerHandle` хранит оба токена и отдаёт
+  `exited()` пробе. `wait_until_ready(client, timeout, exited: Option<Cancellation
+  Token>)` после неуспешной пробы проверяет `exited.is_cancelled()` → ранний `bail!`
+  с понятным текстом («…завершился до готовности (битый GGUF или нехватка памяти?)»),
+  а в паузе между пробами `select!`-ит со сном, чтобы проснуться мгновенно при смерти
+  процесса. `kill_on_drop(true)` оставлен подстраховкой (монитор владеет `Child`).
+- **Проводка**: `app/supervisor.rs::spawn_probe` принимает `Option<CancellationToken>`;
+  managed-режимы (chat + impersonation) передают `Some(handle.exited())`, external —
+  `None` (процесса нет). Маппинг ошибки → `ServerStatus::Disconnected` уже существовал
+  (статус-бар покажет причину). **435 тестов зелёные** (+2:
+  `wait_until_ready_bails_on_early_exit`, `monitor_cancels_exited_when_child_dies` —
+  реальный короткоживущий процесс, кросс-платформенно), clippy/fmt чисты.
 
 ### Отложено за пределы M3
 - **Сворачивание/выделение per-message** и tool-блоки в ленте — сейчас «мысли»
