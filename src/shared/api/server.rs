@@ -1,5 +1,6 @@
 //! Запуск локального `llama-server` (llama.cpp, managed-режим): дочерний процесс,
-//! ожидание готовности, остановка при завершении (`kill_on_drop`). См. spec §3.4.
+//! ожидание готовности (с обнаружением раннего выхода процесса), остановка при
+//! `drop` хэндла (монитор-задача + `kill_on_drop`). См. spec §3.4.
 
 use std::path::PathBuf;
 use std::process::Stdio;
@@ -8,6 +9,7 @@ use std::time::Duration;
 use anyhow::{Context, Result, bail};
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::process::{Child, Command};
+use tokio_util::sync::CancellationToken;
 
 use super::client::OpenAiClient;
 
@@ -90,15 +92,34 @@ pub fn build_args(cfg: &ManagedConfig) -> Vec<String> {
 }
 
 /// Владелец дочернего процесса `llama-server`. При `drop` процесс убивается
-/// (`kill_on_drop`).
+/// (сигнал `kill` → монитор-задача делает `start_kill`; плюс `kill_on_drop` как
+/// подстраховка, если рантайм роняет монитор-задачу).
 pub struct ServerHandle {
-    _child: Child,
+    /// Взводится при `drop`: монитор-задача (владелец [`Child`]) убивает процесс.
+    kill: CancellationToken,
+    /// Взводится монитор-задачей, когда дочерний процесс завершился сам (нормально
+    /// или упав на загрузке — битый GGUF, нехватка памяти). Проба следит за ним,
+    /// чтобы не ждать таймаут впустую.
+    exited: CancellationToken,
     base_url: String,
+}
+
+impl Drop for ServerHandle {
+    fn drop(&mut self) {
+        // Монитор-задача владеет `Child`; сигналим ей убить процесс.
+        self.kill.cancel();
+    }
 }
 
 impl ServerHandle {
     pub fn base_url(&self) -> &str {
         &self.base_url
+    }
+
+    /// Сигнал «дочерний процесс завершился» — для пробы готовности
+    /// ([`wait_until_ready`]): ловит ранний выход (битый GGUF/OOM) до таймаута.
+    pub fn exited(&self) -> CancellationToken {
+        self.exited.clone()
     }
 
     /// Запускает дочерний процесс `llama-server` (без ожидания готовности).
@@ -134,25 +155,80 @@ impl ServerHandle {
             tokio::spawn(forward_lines(err, true));
         }
 
+        // Монитор-задача владеет `Child` и ждёт либо его выхода, либо сигнала на
+        // убийство (`drop` хэндла). Ранний выход взводит `exited` — проба
+        // готовности это видит и не висит до таймаута на мёртвом процессе.
+        let kill = CancellationToken::new();
+        let exited = CancellationToken::new();
+        spawn_monitor(child, kill.clone(), exited.clone());
+
         Ok(Self {
-            _child: child,
+            kill,
+            exited,
             base_url: cfg.base_url(),
         })
     }
 }
 
+/// Монитор-задача дочернего процесса: ждёт его завершения (взводит `exited`) или
+/// сигнала `kill` (убивает процесс). Владеет [`Child`], поэтому `kill_on_drop`
+/// сработает и при принудительном сбросе задачи рантаймом.
+fn spawn_monitor(mut child: Child, kill: CancellationToken, exited: CancellationToken) {
+    tokio::spawn(async move {
+        tokio::select! {
+            status = child.wait() => {
+                match status {
+                    Ok(s) => tracing::warn!(status = ?s, "managed llama-server завершился сам"),
+                    Err(e) => tracing::warn!(error = %e, "ошибка ожидания дочернего llama-server"),
+                }
+                exited.cancel();
+            }
+            _ = kill.cancelled() => {
+                let _ = child.start_kill();
+                let _ = child.wait().await;
+            }
+        }
+    });
+}
+
 /// Ждёт готовности сервера, поллингом `probe` до таймаута. Свободная функция,
 /// чтобы пробу можно было выполнять в фоне, не удерживая [`ServerHandle`].
-pub async fn wait_until_ready(client: &OpenAiClient, timeout: Duration) -> Result<()> {
+///
+/// `exited` (если задан) — сигнал раннего выхода дочернего процесса (managed):
+/// при битом GGUF/нехватке памяти процесс умирает в ходе загрузки, и без этого
+/// сигнала проба впустую опрашивала бы порт до таймаута (минуты). Для external
+/// процесса нет — передаётся `None`.
+pub async fn wait_until_ready(
+    client: &OpenAiClient,
+    timeout: Duration,
+    exited: Option<CancellationToken>,
+) -> Result<()> {
     let deadline = tokio::time::Instant::now() + timeout;
     loop {
         if client.probe().await.is_ok() {
             return Ok(());
         }
+        // Дочерний процесс умер в ходе загрузки — не ждём таймаут.
+        if exited.as_ref().is_some_and(|e| e.is_cancelled()) {
+            bail!(
+                "llama-server завершился до готовности (битый GGUF или нехватка памяти? — см. логи)"
+            );
+        }
         if tokio::time::Instant::now() >= deadline {
             bail!("llama-server did not become ready within {timeout:?}");
         }
-        tokio::time::sleep(Duration::from_millis(500)).await;
+        // Спим до следующей пробы, но просыпаемся сразу, если процесс умер —
+        // тогда следующая итерация увидит `exited` и завершится с ошибкой.
+        let sleep = tokio::time::sleep(Duration::from_millis(500));
+        match &exited {
+            Some(ex) => {
+                tokio::select! {
+                    _ = sleep => {}
+                    _ = ex.cancelled() => {}
+                }
+            }
+            None => sleep.await,
+        }
     }
 }
 
@@ -272,5 +348,51 @@ mod tests {
             Ok(_) => panic!("ожидалась ошибка отсутствующего файла модели"),
         };
         assert!(err.to_string().contains("файл модели"), "{err}");
+    }
+
+    #[tokio::test]
+    async fn wait_until_ready_bails_on_early_exit() {
+        // Дочерний процесс умер в ходе загрузки (взведён `exited`), порт мёртв —
+        // проба не должна висеть до таймаута, а сразу вернуть понятную ошибку.
+        let client = OpenAiClient::new("http://127.0.0.1:1/v1");
+        let exited = CancellationToken::new();
+        exited.cancel();
+        let err = wait_until_ready(&client, Duration::from_secs(600), Some(exited))
+            .await
+            .expect_err("ожидалась ошибка раннего выхода");
+        assert!(
+            err.to_string().contains("завершился до готовности"),
+            "{err}"
+        );
+    }
+
+    #[tokio::test]
+    async fn monitor_cancels_exited_when_child_dies() {
+        // Реальный кратко живущий процесс: монитор должен взвести `exited` по его
+        // выходу. Кросс-платформенно: `cmd /C exit` на Windows, `sh -c` на unix.
+        let mut cmd = if cfg!(windows) {
+            let mut c = Command::new("cmd");
+            c.args(["/C", "exit"]);
+            c
+        } else {
+            let mut c = Command::new("sh");
+            c.args(["-c", "exit 0"]);
+            c
+        };
+        let child = cmd
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .kill_on_drop(true)
+            .spawn()
+            .expect("spawn короткоживущего процесса");
+
+        let kill = CancellationToken::new();
+        let exited = CancellationToken::new();
+        spawn_monitor(child, kill, exited.clone());
+
+        tokio::time::timeout(Duration::from_secs(5), exited.cancelled())
+            .await
+            .expect("монитор должен взвести exited по выходу процесса");
+        assert!(exited.is_cancelled());
     }
 }

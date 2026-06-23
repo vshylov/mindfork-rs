@@ -10,6 +10,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use tokio::sync::mpsc::UnboundedSender;
+use tokio_util::sync::CancellationToken;
 
 use crate::shared::api::{
     Embedder, EngineBackend, ManagedConfig, OpenAiClient, ServerHandle, UnavailableEmbedder,
@@ -78,7 +79,7 @@ impl ServerSupervisor for LlamaSupervisor {
             ServerMode::External => match settings.url.as_deref() {
                 Some(url) if !url.is_empty() => {
                     let client = Arc::new(OpenAiClient::new(url));
-                    spawn_probe(client.clone(), EXTERNAL_READY_TIMEOUT, status_tx);
+                    spawn_probe(client.clone(), EXTERNAL_READY_TIMEOUT, None, status_tx);
                     ChatSetup {
                         backend: Some(client),
                         handle: None,
@@ -93,7 +94,12 @@ impl ServerSupervisor for LlamaSupervisor {
                     match ServerHandle::launch(&cfg) {
                         Ok(handle) => {
                             let client = Arc::new(OpenAiClient::new(handle.base_url()));
-                            spawn_probe(client.clone(), MANAGED_READY_TIMEOUT, status_tx);
+                            spawn_probe(
+                                client.clone(),
+                                MANAGED_READY_TIMEOUT,
+                                Some(handle.exited()),
+                                status_tx,
+                            );
                             ChatSetup {
                                 backend: Some(client),
                                 handle: Some(handle),
@@ -123,7 +129,7 @@ impl ServerSupervisor for LlamaSupervisor {
             ImpersonationMode::External => match settings.url.as_deref() {
                 Some(url) if !url.is_empty() => {
                     let client = Arc::new(OpenAiClient::new(url));
-                    spawn_probe(client.clone(), EXTERNAL_READY_TIMEOUT, status_tx);
+                    spawn_probe(client.clone(), EXTERNAL_READY_TIMEOUT, None, status_tx);
                     ChatSetup {
                         backend: Some(client),
                         handle: None,
@@ -138,7 +144,12 @@ impl ServerSupervisor for LlamaSupervisor {
                     match ServerHandle::launch(&cfg) {
                         Ok(handle) => {
                             let client = Arc::new(OpenAiClient::new(handle.base_url()));
-                            spawn_probe(client.clone(), MANAGED_READY_TIMEOUT, status_tx);
+                            spawn_probe(
+                                client.clone(),
+                                MANAGED_READY_TIMEOUT,
+                                Some(handle.exited()),
+                                status_tx,
+                            );
                             ChatSetup {
                                 backend: Some(client),
                                 handle: Some(handle),
@@ -251,10 +262,11 @@ fn unavailable_embed() -> EmbedSetup {
 fn spawn_probe(
     client: Arc<OpenAiClient>,
     timeout: Duration,
+    exited: Option<CancellationToken>,
     status_tx: UnboundedSender<ServerStatus>,
 ) {
     tokio::spawn(async move {
-        let status = match wait_until_ready(&client, timeout).await {
+        let status = match wait_until_ready(&client, timeout, exited).await {
             Ok(()) => ServerStatus::Ready,
             Err(err) => ServerStatus::Disconnected(err.to_string()),
         };
