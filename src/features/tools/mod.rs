@@ -45,6 +45,8 @@ pub struct ToolContext {
     pub engine: Arc<dyn EngineBackend>,
     /// Источник эмбеддингов (RAG); выделенный сервер — см. ADR 0002.
     pub embedder: Arc<dyn Embedder>,
+    /// Параметры чанкинга RAG из настроек (`config.rag`, spec §9.3).
+    pub chunk_params: rag::ChunkParams,
 }
 
 /// Эффект, изменяющий `Chat`; возвращается инструментом, применяется оркестратором.
@@ -269,6 +271,7 @@ pub(crate) mod testkit {
             storage: storage.clone(),
             engine,
             embedder,
+            chunk_params: rag::ChunkParams::default(),
         };
         (dir, storage, ctx)
     }

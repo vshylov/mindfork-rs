@@ -178,6 +178,7 @@ mod tests {
             storage,
             engine,
             embedder,
+            chunk_params: crate::features::tools::rag::ChunkParams::default(),
         };
         (dir, ctx)
     }

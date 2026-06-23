@@ -7,21 +7,61 @@ use anyhow::Result;
 use crate::entities::profile::ToolId;
 use crate::entities::rag::{RagDocument, RagHit};
 
+use crate::shared::config::{
+    DEFAULT_CHUNK_MAX_CHARS, DEFAULT_CHUNK_OVERLAP_CHARS, DEFAULT_CHUNK_TARGET_CHARS, RagSettings,
+};
+
 use super::{Tool, ToolContext, ToolOutcome};
 
-/// Целевой («мягкий») размер чанка в символах — юниты пакуются до него.
-const CHUNK_TARGET_CHARS: usize = 800;
-/// Перекрытие между соседними чанками в символах: хвост предыдущего повторяется в
-/// начале следующего. Best practice RAG — запрос у границы чанка не теряет контекст
-/// (а при извлечении дубль снимается склейкой, см. [`stitch_hits`]).
-const CHUNK_OVERLAP_CHARS: usize = 150;
-/// Жёсткий потолок для неделимого прогона (очень длинное слово/строка без пунктуации).
-const CHUNK_MAX_CHARS: usize = 1200;
 /// Минимальная длина дословного совпадения для склейки соседних чанков при
 /// извлечении (короче — вероятна случайность, а не заложенное перекрытие).
 const MIN_STITCH_OVERLAP: usize = 24;
 /// Топ-K по умолчанию для поиска.
 const DEFAULT_TOP_K: usize = 5;
+
+/// Параметры чанкинга (размеры в символах). Конфигурируемы через настройки
+/// (`config.rag`, см. spec §9.3): передаются в [`chunk_text`]/[`chunk_markdown`]
+/// вместо ранее захардкоженных констант. `Default` совпадает с прежними значениями.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ChunkParams {
+    /// Целевой («мягкий») размер чанка — юниты пакуются до него.
+    pub target: usize,
+    /// Перекрытие соседних чанков: хвост предыдущего повторяется в начале следующего.
+    /// Best practice RAG — запрос у границы чанка не теряет контекст (а при извлечении
+    /// дубль снимается склейкой, см. [`stitch_hits`]).
+    pub overlap: usize,
+    /// Жёсткий потолок неделимого прогона (очень длинное слово/строка без пунктуации).
+    pub max: usize,
+}
+
+impl Default for ChunkParams {
+    fn default() -> Self {
+        Self {
+            target: DEFAULT_CHUNK_TARGET_CHARS,
+            overlap: DEFAULT_CHUNK_OVERLAP_CHARS,
+            max: DEFAULT_CHUNK_MAX_CHARS,
+        }
+    }
+}
+
+impl ChunkParams {
+    /// Параметры из настроек RAG (`config.rag`). Невалидные значения (нулевой
+    /// целевой размер) подменяются дефолтом, чтобы чанкер не зациклился/не отдал пусто.
+    pub fn from_settings(rag: &RagSettings) -> Self {
+        let target = if rag.chunk_target_chars == 0 {
+            DEFAULT_CHUNK_TARGET_CHARS
+        } else {
+            rag.chunk_target_chars
+        };
+        // Потолок не может быть меньше цели — иначе целевая упаковка невозможна.
+        let max = rag.chunk_max_chars.max(target);
+        Self {
+            target,
+            overlap: rag.chunk_overlap_chars.min(target.saturating_sub(1)),
+            max,
+        }
+    }
+}
 
 /// `rag_add` — добавляет текст в базу знаний (чанкинг + эмбеддинг). Возвращает
 /// число записанных чанков.
@@ -56,7 +96,7 @@ impl Tool for RagAdd {
             .unwrap_or("(без источника)")
             .to_string();
 
-        let chunks = chunk_text(text);
+        let chunks = chunk_text(text, ctx.chunk_params);
         if chunks.is_empty() {
             anyhow::bail!("text не содержит контента для индексации");
         }
@@ -68,6 +108,11 @@ impl Tool for RagAdd {
             let doc = RagDocument::new(ctx.profile_id, &source, chunk, embedding);
             ctx.storage.db().rag_insert(&doc)?;
         }
+        // Сохраняем исходный текст для возможной реиндексации (`/rag rebuild`).
+        // Инструмент накапливает чанки источника — поэтому дописываем, не заменяем.
+        ctx.storage
+            .db()
+            .rag_source_append(ctx.profile_id, &source, text, chrono::Utc::now())?;
         Ok(ToolOutcome::text(format!(
             "Добавлено чанков: {}.",
             chunks.len()
@@ -142,9 +187,9 @@ fn clen(s: &str) -> usize {
 /// `CHUNK_TARGET_CHARS`, и каждый следующий чанк начинается с хвоста предыдущего
 /// (перекрытие ≤ `CHUNK_OVERLAP_CHARS`). Мелкие соседние абзацы при этом
 /// группируются в один чанк (а не плодят крошечные строки-чанки).
-pub(crate) fn chunk_text(text: &str) -> Vec<String> {
-    let units = segment_units(text);
-    pack_units(&units, CHUNK_TARGET_CHARS, CHUNK_OVERLAP_CHARS)
+pub(crate) fn chunk_text(text: &str, params: ChunkParams) -> Vec<String> {
+    let units = segment_units(text, params);
+    pack_units(&units, params.target, params.overlap)
 }
 
 /// Семантический чанкинг markdown: режет по ATX-заголовкам (`#`..`######`),
@@ -152,16 +197,16 @@ pub(crate) fn chunk_text(text: &str) -> Vec<String> {
 /// добавляет её заголовок как смысловой якорь (заметно улучшает извлечение).
 /// Внутри секции — тот же упаковщик с перекрытием, что и в [`chunk_text`].
 /// Документ без заголовков обрабатывается как обычный текст.
-pub(crate) fn chunk_markdown(text: &str) -> Vec<String> {
+pub(crate) fn chunk_markdown(text: &str, params: ChunkParams) -> Vec<String> {
     let sections = split_sections(text);
     let mut chunks = Vec::new();
     for (heading, body) in &sections {
-        let units = segment_units(body);
+        let units = segment_units(body, params);
         let packed = if units.is_empty() {
             // Секция без тела — заголовок сам по себе как чанк (если он есть).
             vec![String::new()]
         } else {
-            pack_units(&units, CHUNK_TARGET_CHARS, CHUNK_OVERLAP_CHARS)
+            pack_units(&units, params.target, params.overlap)
         };
         for p in packed {
             let chunk = match (heading.is_empty(), p.is_empty()) {
@@ -177,28 +222,28 @@ pub(crate) fn chunk_markdown(text: &str) -> Vec<String> {
     }
     if chunks.is_empty() {
         // Нет заголовков/пустой документ — обычный чанкинг.
-        return chunk_text(text);
+        return chunk_text(text, params);
     }
     chunks
 }
 
 /// Атомарные юниты для упаковки (см. [`chunk_text`]). Пустые отбрасываются.
-fn segment_units(text: &str) -> Vec<String> {
+fn segment_units(text: &str, params: ChunkParams) -> Vec<String> {
     let mut units = Vec::new();
     for paragraph in text.split("\n\n") {
         let p = paragraph.trim();
         if p.is_empty() {
             continue;
         }
-        if clen(p) <= CHUNK_TARGET_CHARS {
+        if clen(p) <= params.target {
             units.push(p.to_string());
             continue;
         }
         for sentence in split_sentences(p) {
-            if clen(&sentence) <= CHUNK_MAX_CHARS {
+            if clen(&sentence) <= params.max {
                 units.push(sentence);
             } else {
-                units.extend(break_long(&sentence, CHUNK_MAX_CHARS));
+                units.extend(break_long(&sentence, params.max));
             }
         }
     }
@@ -497,7 +542,10 @@ mod tests {
     #[test]
     fn chunking_groups_small_paragraphs() {
         // Мелкие соседние абзацы группируются в один чанк (а не плодят крошечные).
-        let chunks = chunk_text("первый абзац\n\nвторой абзац\n\nтретий абзац");
+        let chunks = chunk_text(
+            "первый абзац\n\nвторой абзац\n\nтретий абзац",
+            ChunkParams::default(),
+        );
         assert_eq!(chunks.len(), 1, "{chunks:?}");
         assert!(chunks[0].contains("первый абзац"));
         assert!(chunks[0].contains("третий абзац"));
@@ -508,7 +556,8 @@ mod tests {
         // Длинный абзац из предложений режется на несколько чанков с перекрытием.
         let sentence = "Это предложение средней длины для проверки чанкинга. ";
         let text = sentence.repeat(60); // ~3000 символов
-        let chunks = chunk_text(&text);
+        let params = ChunkParams::default();
+        let chunks = chunk_text(&text, params);
         assert!(
             chunks.len() >= 2,
             "ожидаем несколько чанков: {}",
@@ -516,11 +565,7 @@ mod tests {
         );
         // Каждый чанк в разумных пределах (потолок + перекрытие).
         for c in &chunks {
-            assert!(
-                clen(c) <= CHUNK_MAX_CHARS + CHUNK_OVERLAP_CHARS,
-                "{}",
-                clen(c)
-            );
+            assert!(clen(c) <= params.max + params.overlap, "{}", clen(c));
         }
         // Перекрытие: конец первого чанка дословно встречается в начале второго.
         assert!(
@@ -533,15 +578,49 @@ mod tests {
     fn chunking_never_breaks_mid_word() {
         // Очень длинное «слово» (без пробелов) рвётся, но обычные слова — целиком.
         let text = format!("короткое начало {} конец", "ё".repeat(2500));
-        let chunks = chunk_text(&text);
+        let chunks = chunk_text(&text, ChunkParams::default());
         assert!(chunks.iter().any(|c| c.contains("короткое начало")));
         assert!(chunks.iter().any(|c| c.contains("конец")));
     }
 
     #[test]
+    fn chunk_params_from_settings_respects_config() {
+        // Меньший целевой размер режет тот же текст на больше чанков.
+        let text = "Это предложение средней длины для проверки чанкинга. ".repeat(20);
+        let big = chunk_text(&text, ChunkParams::default());
+        let small = chunk_text(
+            &text,
+            ChunkParams::from_settings(&RagSettings {
+                chunk_target_chars: 200,
+                chunk_overlap_chars: 40,
+                chunk_max_chars: 400,
+            }),
+        );
+        assert!(
+            small.len() > big.len(),
+            "меньший target → больше чанков: small={} big={}",
+            small.len(),
+            big.len()
+        );
+    }
+
+    #[test]
+    fn chunk_params_from_settings_sanitizes_invalid() {
+        // Нулевой target подменяется дефолтом; перекрытие не превышает target.
+        let p = ChunkParams::from_settings(&RagSettings {
+            chunk_target_chars: 0,
+            chunk_overlap_chars: 9999,
+            chunk_max_chars: 10,
+        });
+        assert_eq!(p.target, DEFAULT_CHUNK_TARGET_CHARS);
+        assert!(p.overlap < p.target);
+        assert!(p.max >= p.target, "потолок не меньше цели");
+    }
+
+    #[test]
     fn markdown_chunks_carry_their_heading() {
         let md = "# Заголовок\n\nтекст раздела один\n\n## Подраздел\n\nтекст подраздела";
-        let chunks = chunk_markdown(md);
+        let chunks = chunk_markdown(md, ChunkParams::default());
         assert!(chunks.iter().any(|c| c.starts_with("# Заголовок")));
         assert!(chunks.iter().any(|c| c.starts_with("## Подраздел")));
         // Каждый чанк начинается со своего заголовка (смысловой якорь).
@@ -646,6 +725,7 @@ mod tests {
             storage: storage.clone(),
             engine: engine.clone(),
             embedder: embedder.clone(),
+            chunk_params: ChunkParams::default(),
         };
 
         RagAdd

@@ -537,6 +537,8 @@ fn dispatch(
         ChatIntent::CopyChat(id) => AppCommand::CopyChat(id),
         ChatIntent::RagAdd { path, recursive } => AppCommand::RagAdd { path, recursive },
         ChatIntent::RagDelete { path } => AppCommand::RagDelete { path },
+        ChatIntent::RagList => AppCommand::RagList,
+        ChatIntent::RagRebuild => AppCommand::RagRebuild,
         ChatIntent::OpenSettings => {
             if let Some((config, profiles)) = screen.settings_snapshot() {
                 *active = ActiveScreen::Settings(Box::new(SettingsScreen::new(config, profiles)));

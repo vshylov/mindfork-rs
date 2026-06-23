@@ -1034,6 +1034,43 @@ web-поиск и Python под выключателями, экран наст�
 - `set_overlay_error`/`set_overlay_notice` у `ChatScreen` удалены (роутинг переехал в
   runtime). 421 тест зелёный, clippy чист.
 
+### Пост-M9: RAG — `/rag list`, конфигурируемый чанкинг, `/rag rebuild` (сделано)
+- **Конфигурируемые размеры чанка/перекрытия** (`config.rag: RagSettings` —
+  `chunk_target_chars`/`chunk_overlap_chars`/`chunk_max_chars`, `#[serde(default)]` →
+  старые `settings.json` без миграции; дефолты = прежние константы 800/150/1200).
+  Ранее захардкоженные `CHUNK_*` сняты; вместо них тип `ChunkParams`
+  (`features/tools/rag.rs`, `pub`), который `chunk_text`/`chunk_markdown`/
+  `segment_units` принимают параметром. `ChunkParams::from_settings` санитизирует
+  ввод (нулевой target → дефолт; overlap < target; max ≥ target). Протянут в
+  `ToolContext.chunk_params` (для инструмента `rag_add`, строится из `config.rag` в
+  `orchestrator/generation.rs`) и в фоновые задачи RAG. UI — три текстовых поля в
+  секции «Инструменты» экрана настроек (с подсказками-описаниями).
+- **Хранение исходного текста источников** (`rag_sources(profile_id, source, content,
+  created_at)`, PK по `(profile_id, source)`; `CREATE TABLE IF NOT EXISTS` — без
+  миграции). Файловая индексация (`/rag add`) **заменяет** исходник
+  (`rag_source_upsert`), инструмент `rag_add` (накапливает чанки) — **дописывает**
+  (`rag_source_append`). `/rag remove` чистит и `rag_sources` (тот же предикат пути).
+  Нужно для `/rag rebuild` без обращения к файлам на диске.
+- **`/rag list`** — источники базы знаний активного профиля (счётчик чанков + дата
+  самого раннего чанка): `Db::rag_list_sources` (`GROUP BY source`,
+  `entities::rag::RagSourceInfo`); орк. `handle_rag_list` (на месте, без задачи) →
+  `RagProgress::Listed { sources }` → заметка в ленте (`format_rag_sources`).
+- **`/rag rebuild`** — реиндексация фоновой задачей (`spawn_rag_rebuild`): собирает
+  источники из БД, резолвит текст (сохранённый → иначе чтение файла по пути для
+  legacy-данных; невосстановимые считаются ошибкой), перечанковывает/переэмбеддивает
+  текущими параметрами. **Смена размерности embedding-модели**: размерность вектора в
+  sqlite-vec одна на всю БД, поэтому при `new_dim != current_dim` задача проверяет
+  `Db::rag_other_profiles_have_docs` — если другие профили используют базу, отказ с
+  понятным сообщением (не затираем чужое); иначе `Db::rag_reset_vectors`
+  (drop таблицы векторов + сброс `meta.rag_dim`) и реиндекс в новой размерности. Общая
+  логика файловой индексации и реиндекса вынесена в `index_source`
+  (`orchestrator/rag.rs`). Markdown определяется по расширению `*.md` источника.
+- **Контракт**: `RagCommand::List/Rebuild` (`features/rag_command.rs`) →
+  `ChatIntent::RagList/RagRebuild` → `AppCommand::RagList/RagRebuild` → орк.
+  `handle_rag_list/handle_rag_rebuild`. `reset_rag_cancel`/`active_profile_id`/
+  `fail_rag` вынесены в общие хелперы `orchestrator/rag.rs`. Команды добавлены в
+  оверлей помощи (`F1`/`?`). **433 теста зелёные**, clippy/fmt чисты.
+
 ### Отложено за пределы M3
 - **Сворачивание/выделение per-message** и tool-блоки в ленте — сейчас «мысли»
   сворачиваются глобально (`Ctrl+T`); выделение сообщений и tool-блоки — на M5.

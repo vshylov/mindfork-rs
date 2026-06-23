@@ -26,6 +26,24 @@ pub struct RagHit {
     pub distance: f32,
 }
 
+/// Сводка по источнику в базе знаний профиля (для `/rag list`): сколько чанков
+/// проиндексировано и дата (самого раннего чанка источника).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct RagSourceInfo {
+    pub source: String,
+    pub chunks: usize,
+    pub created_at: DateTime<Utc>,
+}
+
+/// Сохранённый исходный текст индексированного источника (для `/rag rebuild`).
+/// Хранится отдельно от чанков, чтобы реиндексация (смена размера чанка/перекрытия
+/// или embedding-модели) не требовала исходного файла на диске. См. spec §9.3.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct RagStoredSource {
+    pub source: String,
+    pub content: String,
+}
+
 impl RagDocument {
     pub fn new(
         profile_id: Uuid,
