@@ -348,6 +348,7 @@ enum FieldId {
     IS(SamplingParam),
     // Инструменты
     TWeb,
+    TWebFetch,
     TPython,
     TPythonPath,
     TSubMaxTokens,
@@ -584,6 +585,11 @@ impl SettingsScreen {
         let e = &self.config.embed;
         vec![
             row(FieldId::TWeb, "Web-поиск", FieldKind::Toggle(t.web_enabled)),
+            row(
+                FieldId::TWebFetch,
+                "Web: загрузка страниц",
+                FieldKind::Toggle(t.web_fetch_content),
+            ),
             row(
                 FieldId::TPython,
                 "Python-исполнение",
@@ -916,6 +922,9 @@ impl SettingsScreen {
                 self.config.impersonation_engine.no_mmap = !self.config.impersonation_engine.no_mmap
             }
             FieldId::TWeb => self.config.tools.web_enabled = !self.config.tools.web_enabled,
+            FieldId::TWebFetch => {
+                self.config.tools.web_fetch_content = !self.config.tools.web_fetch_content
+            }
             FieldId::TPython => {
                 self.config.tools.python_enabled = !self.config.tools.python_enabled
             }
@@ -1319,6 +1328,11 @@ fn field_description(id: FieldId) -> Option<&'static str> {
         FieldId::IxNgl => Some(
             "Сколько слоёв модели имперсонации выгрузить на видеокарту (GPU). \
              0 — только процессор, 99 — вся модель на GPU.",
+        ),
+        FieldId::TWebFetch => Some(
+            "Загружать страницы результатов web-поиска, извлекать читаемый текст и \
+             переупорядочивать по релевантности запросу (эмбеддингами). Даёт модели \
+             содержимое страниц, но добавляет задержку. Выкл — только заголовки/сниппеты.",
         ),
         FieldId::RagTarget => Some(
             "Целевой размер фрагмента (чанка) базы знаний в символах. Меньше — точнее \

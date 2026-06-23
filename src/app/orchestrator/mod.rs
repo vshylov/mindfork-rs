@@ -172,6 +172,7 @@ fn build_registry(config: &AppConfig) -> crate::features::tools::ToolRegistry {
         python_path: config.tools.python_path.clone(),
         subagent_max_tokens: config.tools.subagent_max_tokens,
         subagent_timeout: Duration::from_secs(config.tools.subagent_timeout_secs),
+        web_fetch_content: config.tools.web_fetch_content,
     })
 }
 

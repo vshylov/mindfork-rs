@@ -19,7 +19,18 @@
 //! кто-то один). Если **все** недоступны/троттлят — возвращается явная ошибка (а не
 //! «нет результатов»), чтобы модель повторила запрос позже, а не сообщила, что
 //! ничего не нашла.
+//!
+//! **Извлечение контента + реранкинг** (spec §9.3.1, по умолчанию включены,
+//! отключаются аргументом `fetch_content`). После получения выдачи страницы
+//! результатов загружаются и из них извлекается читаемый текст ([`extract_readable`]
+//! на `scraper`: содержимое `<article>`/`<main>`/абзацев, без script/nav-мусора) —
+//! «лучшее усилие»: ошибка загрузки одной страницы не валит поиск. Затем результаты
+//! **переупорядочиваются эмбеддингами** (через `ctx.embedder`, ADR 0002): запрос и
+//! контент каждого результата эмбеддятся, сортировка по убыванию косинусной близости
+//! ([`rerank_order`]). Эмбеддер не настроен/недоступен (RAG выключен) → реранкинг
+//! пропускается, остаётся порядок провайдера (мягкая деградация, как у RAG).
 
+use std::cmp::Ordering;
 use std::time::Duration;
 
 use anyhow::{Context, Result};
@@ -27,18 +38,32 @@ use reqwest::StatusCode;
 use scraper::{Html, Selector};
 
 use crate::entities::profile::ToolId;
+use crate::shared::api::Embedder;
 
 use super::{Tool, ToolContext, ToolOutcome};
 
 /// UA, чтобы поисковики отдавали нормальную разметку (а не «лёгкую»/пустую).
 const USER_AGENT: &str = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) \
      Chrome/124.0 Safari/537.36";
+/// `Accept` для загрузки страниц контента (как у браузера).
+const ACCEPT_HTML: &str = "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8";
+/// `Accept-Language` для загрузки страниц контента.
+const ACCEPT_LANGUAGE: &str = "en-US,en;q=0.9,ru;q=0.8";
 /// Результатов по умолчанию.
 const DEFAULT_MAX_RESULTS: usize = 5;
 /// Жёсткий потолок результатов.
 const MAX_RESULTS_CAP: usize = 10;
 /// Таймаут одного HTTP-запроса к поисковику.
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(15);
+/// Потолок извлекаемого читаемого текста одной страницы (символы). Ограничивает
+/// раздувание контекста и размер эмбеддинг-запроса.
+const MAX_CONTENT_CHARS: usize = 1500;
+/// Минимальная длина фрагмента (абзаца) при извлечении: короче — вероятно
+/// навигация/меню/кнопки, а не контент.
+const MIN_FRAGMENT_CHARS: usize = 40;
+/// Сколько символов контента результата идёт в эмбеддинг при реранкинге (хватает
+/// репрезентативного начала; не раздувает запрос к эмбеддеру).
+const RERANK_EMBED_CHARS: usize = 800;
 
 /// HTTP-метод запроса к поисковику.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -113,27 +138,34 @@ pub struct SearchResult {
     pub title: String,
     pub url: String,
     pub snippet: String,
+    /// Извлечённый читаемый текст страницы (пусто, если не загружали/не вышло).
+    pub content: String,
 }
 
 /// `web_search` — поиск в интернете (DuckDuckGo → Mojeek → Ecosia, см. [`PROVIDERS`]).
 pub struct WebSearch {
     http: reqwest::Client,
+    /// Значение по умолчанию для аргумента `fetch_content` (из `config.tools`).
+    fetch_content_default: bool,
 }
 
 impl Default for WebSearch {
     fn default() -> Self {
-        Self::new()
+        Self::new(true)
     }
 }
 
 impl WebSearch {
-    pub fn new() -> Self {
+    pub fn new(fetch_content_default: bool) -> Self {
         // Таймаут на запрос: иначе зависший ответ DDG держал бы весь ход.
         let http = reqwest::Client::builder()
             .timeout(REQUEST_TIMEOUT)
             .build()
             .unwrap_or_default();
-        Self { http }
+        Self {
+            http,
+            fetch_content_default,
+        }
     }
 
     /// Один HTTP-запрос к провайдеру: `Ok(Some(html))` — нормальная страница;
@@ -166,6 +198,190 @@ impl WebSearch {
         }
         Ok(Some(body))
     }
+
+    /// Загружает страницу результата и извлекает читаемый текст. `None` при любой
+    /// ошибке/не-HTML — извлечение «лучшее усилие», поиск не должен падать из-за
+    /// одной недоступной страницы.
+    async fn fetch_content(&self, url: &str) -> Option<String> {
+        let resp = match self
+            .http
+            .get(url)
+            // Браузероподобные заголовки: часть сайтов отдаёт пустую/блок-страницу
+            // на «голый» запрос без Accept/Accept-Language.
+            .header(reqwest::header::USER_AGENT, USER_AGENT)
+            .header(reqwest::header::ACCEPT, ACCEPT_HTML)
+            .header(reqwest::header::ACCEPT_LANGUAGE, ACCEPT_LANGUAGE)
+            .send()
+            .await
+        {
+            Ok(r) => r,
+            Err(err) => {
+                tracing::debug!(url, error = %err, "web-поиск: страница не загрузилась");
+                return None;
+            }
+        };
+        if !resp.status().is_success() {
+            tracing::debug!(url, status = %resp.status(), "web-поиск: страница вернула не-2xx");
+            return None;
+        }
+        // Берём только HTML (PDF/изображения/прочее извлекать нечем). Заголовок
+        // может отсутствовать — тогда пробуем как HTML.
+        let is_html = resp
+            .headers()
+            .get(reqwest::header::CONTENT_TYPE)
+            .and_then(|v| v.to_str().ok())
+            .map(|t| t.contains("html"))
+            .unwrap_or(true);
+        if !is_html {
+            return None;
+        }
+        let body = resp.text().await.ok()?;
+        let text = extract_readable(&body, MAX_CONTENT_CHARS);
+        if text.is_empty() {
+            tracing::debug!(url, "web-поиск: из страницы не извлечён читаемый текст");
+        }
+        (!text.is_empty()).then_some(text)
+    }
+
+    /// Параллельно загружает страницы результатов и проставляет извлечённый текст в
+    /// `content`. Каждая загрузка независима и отказоустойчива (см. [`Self::fetch_content`]).
+    async fn enrich_with_content(&self, results: &mut [SearchResult]) {
+        let contents =
+            futures_util::future::join_all(results.iter().map(|r| self.fetch_content(&r.url)))
+                .await;
+        for (r, c) in results.iter_mut().zip(contents) {
+            if let Some(c) = c {
+                r.content = c;
+            }
+        }
+    }
+}
+
+/// Переупорядочивает результаты по убыванию близости их контента к запросу
+/// (реранкинг эмбеддингами, spec §9.3.1). Эмбеддер недоступен/вернул нестыкующееся
+/// число векторов → результаты не трогаем (мягкая деградация). `query` и контент
+/// каждого результата эмбеддятся одним запросом.
+async fn rerank_by_embeddings(
+    embedder: &dyn Embedder,
+    query: &str,
+    results: &mut Vec<SearchResult>,
+) {
+    if results.len() < 2 {
+        return; // нечего переупорядочивать
+    }
+    let mut texts: Vec<String> = Vec::with_capacity(results.len() + 1);
+    texts.push(query.to_string());
+    texts.extend(results.iter().map(rerank_text));
+    let vecs = match embedder.embed(texts).await {
+        Ok(v) if v.len() == results.len() + 1 => v,
+        Ok(_) => return, // несоответствие — не рискуем перемешать
+        Err(err) => {
+            tracing::debug!(error = %err, "web-поиск: реранкинг недоступен, порядок провайдера");
+            return;
+        }
+    };
+    let query_vec = &vecs[0];
+    let order = rerank_order(query_vec, &vecs[1..]);
+    *results = order.into_iter().map(|i| results[i].clone()).collect();
+}
+
+/// Текст результата для эмбеддинга при реранкинге: контент (если извлечён) с
+/// заголовком/сниппетом в качестве контекста; контент усечён до [`RERANK_EMBED_CHARS`].
+fn rerank_text(r: &SearchResult) -> String {
+    let body = if r.content.is_empty() {
+        r.snippet.clone()
+    } else {
+        truncate_chars(&r.content, RERANK_EMBED_CHARS)
+    };
+    format!("{}\n{}", r.title, body).trim().to_string()
+}
+
+/// Порядок индексов `doc_vecs` по убыванию косинусной близости к `query_vec`.
+fn rerank_order(query_vec: &[f32], doc_vecs: &[Vec<f32>]) -> Vec<usize> {
+    let sims: Vec<f32> = doc_vecs.iter().map(|v| cosine(query_vec, v)).collect();
+    let mut order: Vec<usize> = (0..doc_vecs.len()).collect();
+    // Стабильная сортировка: при равной близости сохраняется порядок провайдера.
+    order.sort_by(|&a, &b| sims[b].partial_cmp(&sims[a]).unwrap_or(Ordering::Equal));
+    order
+}
+
+/// Косинусная близость двух векторов (0.0 при несовпадении длин/нулевой норме).
+fn cosine(a: &[f32], b: &[f32]) -> f32 {
+    if a.len() != b.len() || a.is_empty() {
+        return 0.0;
+    }
+    let mut dot = 0.0f32;
+    let mut na = 0.0f32;
+    let mut nb = 0.0f32;
+    for (x, y) in a.iter().zip(b) {
+        dot += x * y;
+        na += x * x;
+        nb += y * y;
+    }
+    if na == 0.0 || nb == 0.0 {
+        return 0.0;
+    }
+    dot / (na.sqrt() * nb.sqrt())
+}
+
+/// Извлекает читаемый текст HTML-страницы (упрощённый readability): берёт абзацы и
+/// списки из `<article>`/`<main>` (если есть), иначе — из всего документа; короткие
+/// фрагменты и всё внутри навигации/шапки/подвала/сайдбара ([`in_boilerplate`])
+/// отбрасываются (иначе на сайтах без семантической разметки в контент попадает
+/// мега-меню). script/style не попадают (их текст не внутри `<p>`/`<li>`). Результат
+/// усечён до `max_chars` символов.
+fn extract_readable(html: &str, max_chars: usize) -> String {
+    let doc = Html::parse_document(html);
+    let scope_sel = Selector::parse("article, main").unwrap();
+    let para_sel = Selector::parse("p, li").unwrap();
+
+    let take = |el: scraper::ElementRef| -> Option<String> {
+        if in_boilerplate(el) {
+            return None;
+        }
+        let t = collapse_ws(&el.text().collect::<String>());
+        (t.chars().count() >= MIN_FRAGMENT_CHARS).then_some(t)
+    };
+
+    // Предпочитаем основное содержимое (article/main) — меньше навигационного шума.
+    let mut parts: Vec<String> = doc
+        .select(&scope_sel)
+        .flat_map(|root| root.select(&para_sel).filter_map(take).collect::<Vec<_>>())
+        .collect();
+    if parts.is_empty() {
+        parts = doc.select(&para_sel).filter_map(take).collect();
+    }
+
+    let mut out = String::new();
+    for p in parts {
+        if out.chars().count() >= max_chars {
+            break;
+        }
+        if !out.is_empty() {
+            out.push('\n');
+        }
+        out.push_str(&p);
+    }
+    truncate_chars(&out, max_chars)
+}
+
+/// `true`, если элемент лежит внутри навигации/шапки/подвала/сайдбара — это
+/// boilerplate (меню/ссылки), а не основной контент.
+fn in_boilerplate(el: scraper::ElementRef) -> bool {
+    el.ancestors().any(|n| {
+        n.value()
+            .as_element()
+            .map(|e| matches!(e.name(), "nav" | "header" | "footer" | "aside"))
+            .unwrap_or(false)
+    })
+}
+
+/// Усекает строку до `max` символов (по границе символа, не байта).
+fn truncate_chars(s: &str, max: usize) -> String {
+    if s.chars().count() <= max {
+        return s.to_string();
+    }
+    s.chars().take(max).collect()
 }
 
 #[async_trait::async_trait]
@@ -174,19 +390,26 @@ impl Tool for WebSearch {
         "web_search".into()
     }
     fn description(&self) -> String {
-        "Искать в интернете. Возвращает заголовки, ссылки и сниппеты.".into()
+        "Искать в интернете. Возвращает заголовки, ссылки, сниппеты и (по умолчанию) \
+         извлечённый текст страниц, переупорядоченный по релевантности запросу. \
+         Передай fetch_content=false для быстрого поиска без загрузки страниц."
+            .into()
     }
     fn parameters(&self) -> serde_json::Value {
         serde_json::json!({
             "type": "object",
             "properties": {
                 "query": {"type": "string"},
-                "max_results": {"type": "integer", "minimum": 1, "maximum": MAX_RESULTS_CAP}
+                "max_results": {"type": "integer", "minimum": 1, "maximum": MAX_RESULTS_CAP},
+                "fetch_content": {
+                    "type": "boolean",
+                    "description": "Загружать страницы, извлекать текст и переупорядочивать по релевантности (по умолчанию true)."
+                }
             },
             "required": ["query"]
         })
     }
-    async fn invoke(&self, _ctx: &ToolContext, args: serde_json::Value) -> Result<ToolOutcome> {
+    async fn invoke(&self, ctx: &ToolContext, args: serde_json::Value) -> Result<ToolOutcome> {
         let query = args
             .get("query")
             .and_then(|v| v.as_str())
@@ -197,6 +420,10 @@ impl Tool for WebSearch {
             .and_then(|v| v.as_u64())
             .map(|n| (n as usize).clamp(1, MAX_RESULTS_CAP))
             .unwrap_or(DEFAULT_MAX_RESULTS);
+        let fetch_content = args
+            .get("fetch_content")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(self.fetch_content_default);
 
         // Перебираем провайдеров по порядку: первый, кто отдал непустую выдачу,
         // выигрывает. При троттлинге сразу уходим к следующему (ретраить липкий
@@ -251,11 +478,24 @@ impl Tool for WebSearch {
                  Повтори запрос через несколько секунд."
             );
         }
+        // Извлечение контента + реранкинг (если не отключено аргументом).
+        // Загрузка страниц и эмбеддинги — «лучшее усилие»: при сбое остаётся
+        // обычная выдача (заголовки/сниппеты, порядок провайдера).
+        if fetch_content {
+            self.enrich_with_content(&mut results).await;
+            rerank_by_embeddings(ctx.embedder.as_ref(), query, &mut results).await;
+        }
+
         let mut out = format!("Результаты поиска ({}):\n", results.len());
         for (i, r) in results.iter().enumerate() {
             out.push_str(&format!("{}. {} — {}\n", i + 1, r.title, r.url));
             if !r.snippet.is_empty() {
                 out.push_str(&format!("   {}\n", r.snippet));
+            }
+            if !r.content.is_empty() {
+                out.push_str("   Содержимое:\n");
+                out.push_str(&r.content);
+                out.push('\n');
             }
         }
         Ok(ToolOutcome::text(out.trim_end().to_string()))
@@ -316,6 +556,7 @@ fn parse_results(
             title,
             url,
             snippet: snippets.get(i).cloned().unwrap_or_default(),
+            content: String::new(),
         });
     }
     results
@@ -531,11 +772,162 @@ mod tests {
         assert_eq!(extract_real_url("//host.tld/path"), "https://host.tld/path");
     }
 
+    const PAGE_HTML: &str = r#"
+        <html><head><style>.x{color:red}</style><script>var a=1;</script></head>
+        <body>
+        <nav><a href="/">Главная</a> <a href="/about">О нас</a></nav>
+        <header>Шапка сайта</header>
+        <main>
+            <h1>Заголовок</h1>
+            <p>Это первый содержательный абзац статьи, достаточно длинный, чтобы пройти фильтр минимальной длины.</p>
+            <p>Короткий.</p>
+            <p>Второй содержательный абзац статьи с дополнительными подробностями по теме запроса пользователя.</p>
+        </main>
+        <footer>Подвал сайта со ссылками</footer>
+        </body></html>
+    "#;
+
+    #[test]
+    fn extract_readable_picks_main_paragraphs() {
+        let text = extract_readable(PAGE_HTML, 1000);
+        assert!(text.contains("первый содержательный абзац"));
+        assert!(text.contains("Второй содержательный абзац"));
+        // Скрипты/стили и короткие фрагменты (nav/«Короткий.») отброшены.
+        assert!(!text.contains("var a"));
+        assert!(!text.contains("color:red"));
+        assert!(!text.contains("Короткий."));
+    }
+
+    #[test]
+    fn extract_readable_skips_boilerplate() {
+        // Длинный абзац внутри <nav> (нет <main>) — это меню, не контент: отброшен,
+        // а абзац вне навигации — взят.
+        let html = r#"<html><body>
+            <nav><p>Перейти к разделам сайта, услуги, цены, контакты, поддержка и помощь.</p></nav>
+            <div><p>Это настоящий содержательный абзац статьи достаточной длины.</p></div>
+            <footer><p>Все права защищены, политика конфиденциальности, условия использования сервиса.</p></footer>
+        </body></html>"#;
+        let text = extract_readable(html, 1000);
+        assert!(text.contains("настоящий содержательный абзац"));
+        assert!(!text.contains("Перейти к разделам"));
+        assert!(!text.contains("Все права защищены"));
+    }
+
+    #[test]
+    fn extract_readable_falls_back_without_main() {
+        let html = r#"<html><body>
+            <p>Абзац без обёртки main, но содержательный и достаточно длинный для фильтра.</p>
+        </body></html>"#;
+        let text = extract_readable(html, 1000);
+        assert!(text.contains("Абзац без обёртки main"));
+    }
+
+    #[test]
+    fn extract_readable_truncates_to_max() {
+        let text = extract_readable(PAGE_HTML, 20);
+        assert!(text.chars().count() <= 20);
+    }
+
+    #[test]
+    fn cosine_basic() {
+        assert!((cosine(&[1.0, 0.0], &[1.0, 0.0]) - 1.0).abs() < 1e-6);
+        assert!(cosine(&[1.0, 0.0], &[0.0, 1.0]).abs() < 1e-6);
+        // Несовпадение длин / нулевой вектор → 0.0.
+        assert_eq!(cosine(&[1.0], &[1.0, 0.0]), 0.0);
+        assert_eq!(cosine(&[0.0, 0.0], &[1.0, 0.0]), 0.0);
+    }
+
+    #[test]
+    fn rerank_order_sorts_by_similarity() {
+        let query = vec![1.0, 0.0];
+        let docs = vec![
+            vec![0.0, 1.0], // ортогонален — наименее похож
+            vec![1.0, 0.0], // совпадает — наиболее похож
+            vec![0.7, 0.7], // средне
+        ];
+        let order = rerank_order(&query, &docs);
+        assert_eq!(order, vec![1, 2, 0]);
+    }
+
+    #[test]
+    fn rerank_order_is_stable_on_ties() {
+        // При равной близости сохраняется исходный порядок (стабильная сортировка).
+        let query = vec![1.0, 0.0];
+        let docs = vec![vec![1.0, 0.0], vec![1.0, 0.0], vec![1.0, 0.0]];
+        assert_eq!(rerank_order(&query, &docs), vec![0, 1, 2]);
+    }
+
+    #[test]
+    fn rerank_text_prefers_content_over_snippet() {
+        let r = SearchResult {
+            title: "Заголовок".into(),
+            url: "https://e/x".into(),
+            snippet: "сниппет".into(),
+            content: "извлечённый контент".into(),
+        };
+        let t = rerank_text(&r);
+        assert!(t.contains("Заголовок"));
+        assert!(t.contains("извлечённый контент"));
+        assert!(!t.contains("сниппет"));
+        // Без контента — берётся сниппет.
+        let r2 = SearchResult {
+            content: String::new(),
+            ..r
+        };
+        assert!(rerank_text(&r2).contains("сниппет"));
+    }
+
+    #[tokio::test]
+    async fn rerank_reorders_results_by_query() {
+        use crate::shared::api::mock::MockEmbedder;
+        let embedder = MockEmbedder::new(64);
+        let mut results = vec![
+            SearchResult {
+                title: "Про погоду".into(),
+                url: "https://e/weather".into(),
+                snippet: String::new(),
+                content: "сегодня дождь и ветер, прогноз погоды на завтра".into(),
+            },
+            SearchResult {
+                title: "Язык Rust".into(),
+                url: "https://e/rust".into(),
+                snippet: String::new(),
+                content: "rust системный язык программирования с безопасной памятью".into(),
+            },
+        ];
+        rerank_by_embeddings(&embedder, "rust язык программирования", &mut results).await;
+        // Релевантный запросу результат поднялся наверх.
+        assert_eq!(results[0].url, "https://e/rust");
+    }
+
+    #[tokio::test]
+    async fn rerank_noop_when_embedder_unavailable() {
+        use crate::shared::api::UnavailableEmbedder;
+        let mut results = vec![
+            SearchResult {
+                title: "A".into(),
+                url: "https://e/a".into(),
+                snippet: "s".into(),
+                content: "контент a".into(),
+            },
+            SearchResult {
+                title: "B".into(),
+                url: "https://e/b".into(),
+                snippet: "s".into(),
+                content: "контент b".into(),
+            },
+        ];
+        rerank_by_embeddings(&UnavailableEmbedder, "запрос", &mut results).await;
+        // Эмбеддер недоступен → порядок не изменился.
+        assert_eq!(results[0].url, "https://e/a");
+        assert_eq!(results[1].url, "https://e/b");
+    }
+
     /// Реальный сетевой смоук (вручную: `cargo test -- --ignored`).
     #[tokio::test]
     #[ignore = "requires network access to search providers"]
     async fn live_search_returns_results() {
-        let tool = WebSearch::new();
+        let tool = WebSearch::new(true);
         let dir = tempfile::tempdir().unwrap();
         let storage = std::sync::Arc::new(
             crate::shared::storage::Storage::open(crate::shared::paths::Paths::with_root(
