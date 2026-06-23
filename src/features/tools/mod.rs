@@ -163,6 +163,9 @@ pub struct ToolConfig {
     pub subagent_max_tokens: usize,
     /// Лимит времени на вызов `call_subagent`.
     pub subagent_timeout: Duration,
+    /// Значение по умолчанию для `web_search.fetch_content` (загрузка/реранк страниц,
+    /// `config.tools.web_fetch_content`). Аргумент вызова переопределяет.
+    pub web_fetch_content: bool,
 }
 
 impl Default for ToolConfig {
@@ -173,6 +176,7 @@ impl Default for ToolConfig {
             subagent_timeout: Duration::from_secs(
                 crate::shared::config::DEFAULT_SUBAGENT_TIMEOUT_SECS,
             ),
+            web_fetch_content: true,
         }
     }
 }
@@ -195,7 +199,7 @@ pub fn standard_registry(cfg: &ToolConfig) -> ToolRegistry {
         cfg.subagent_max_tokens,
         cfg.subagent_timeout,
     )));
-    reg.register(Arc::new(web::WebSearch::new()));
+    reg.register(Arc::new(web::WebSearch::new(cfg.web_fetch_content)));
     reg.register(Arc::new(python::PythonExec::new(cfg.python_path.clone())));
     reg
 }

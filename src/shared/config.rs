@@ -181,6 +181,11 @@ pub const DEFAULT_SUBAGENT_TIMEOUT_SECS: u64 = 60;
 pub struct ToolSettings {
     /// Web-поиск (DuckDuckGo). Включён по умолчанию (read-only).
     pub web_enabled: bool,
+    /// Загружать страницы результатов, извлекать текст и переупорядочивать по
+    /// релевантности (`web_search`, spec §9.3.1). Включено по умолчанию; даёт модели
+    /// содержимое страниц, но добавляет задержку (загрузка до `max_results` страниц).
+    /// Аргумент `fetch_content` вызова переопределяет это значение.
+    pub web_fetch_content: bool,
     /// Исполнение Python. Выключено по умолчанию (нет OS-песочницы, spec §13.2).
     pub python_enabled: bool,
     /// Путь к интерпретатору Python (`None` → системный `python3`/`python`).
@@ -195,6 +200,7 @@ impl Default for ToolSettings {
     fn default() -> Self {
         Self {
             web_enabled: true,
+            web_fetch_content: true,
             python_enabled: false,
             python_path: None,
             subagent_max_tokens: DEFAULT_SUBAGENT_MAX_TOKENS,
