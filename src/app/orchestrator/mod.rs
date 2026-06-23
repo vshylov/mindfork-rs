@@ -297,6 +297,8 @@ impl Orchestrator {
             AppCommand::UpdateProfile { id, edit } => self.handle_update_profile(id, *edit),
             AppCommand::RagAdd { path, recursive } => self.handle_rag_add(path, recursive),
             AppCommand::RagDelete { path } => self.handle_rag_delete(path),
+            AppCommand::RagList => self.handle_rag_list(),
+            AppCommand::RagRebuild => self.handle_rag_rebuild(),
         }
         false
     }

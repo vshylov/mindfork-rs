@@ -10,10 +10,15 @@ pub enum RagCommand {
     Add { path: String, recursive: bool },
     /// Удалить из базы файл или директорию (со всем, что под ней).
     Delete { path: String },
+    /// Показать источники в базе знаний активного профиля (счётчик чанков, дата).
+    List,
+    /// Реиндексировать базу знаний активного профиля (после смены размера чанка/
+    /// перекрытия или embedding-модели).
+    Rebuild,
 }
 
 /// Краткая подсказка по синтаксису (показывается при ошибке разбора).
-pub const USAGE: &str = "использование: /rag add|remove <путь к файлу или папке> [-r]";
+pub const USAGE: &str = "использование: /rag add|remove <путь> [-r] · /rag list · /rag rebuild";
 
 /// Пытается разобрать строку ввода как команду RAG.
 ///
@@ -48,6 +53,10 @@ pub fn parse(input: &str) -> Option<Result<RagCommand, String>> {
             Err(msg) => return Some(Err(msg)),
         };
         Some(Ok(RagCommand::Delete { path }))
+    } else if sub.eq_ignore_ascii_case("list") {
+        Some(Ok(RagCommand::List))
+    } else if sub.eq_ignore_ascii_case("rebuild") {
+        Some(Ok(RagCommand::Rebuild))
     } else {
         Some(Err(format!("неизвестная подкоманда «{sub}». {USAGE}")))
     }
@@ -142,6 +151,15 @@ mod tests {
             parse("/rag delete d:\\dir\\file.txt"),
             Some(Err(_))
         ));
+    }
+
+    #[test]
+    fn parses_list_and_rebuild() {
+        assert_eq!(parse("/rag list"), Some(Ok(RagCommand::List)));
+        assert_eq!(parse("/RAG List"), Some(Ok(RagCommand::List)));
+        assert_eq!(parse("/rag rebuild"), Some(Ok(RagCommand::Rebuild)));
+        // Лишние токены после list/rebuild игнорируются (пути им не нужны).
+        assert_eq!(parse("/rag list всё"), Some(Ok(RagCommand::List)));
     }
 
     #[test]

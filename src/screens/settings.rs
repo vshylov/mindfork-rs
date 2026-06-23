@@ -357,6 +357,10 @@ enum FieldId {
     EBinary,
     EModel,
     EPort,
+    // RAG (чанкинг базы знаний)
+    RagTarget,
+    RagOverlap,
+    RagMax,
     // Интерфейс
     ITheme,
     ISpell,
@@ -608,6 +612,21 @@ impl SettingsScreen {
                 FieldId::EPort,
                 "Эмбеддинги: порт",
                 FieldKind::Text(e.port.to_string()),
+            ),
+            row(
+                FieldId::RagTarget,
+                "RAG: размер чанка (симв.)",
+                FieldKind::Text(self.config.rag.chunk_target_chars.to_string()),
+            ),
+            row(
+                FieldId::RagOverlap,
+                "RAG: перекрытие (симв.)",
+                FieldKind::Text(self.config.rag.chunk_overlap_chars.to_string()),
+            ),
+            row(
+                FieldId::RagMax,
+                "RAG: потолок чанка (симв.)",
+                FieldKind::Text(self.config.rag.chunk_max_chars.to_string()),
             ),
         ]
     }
@@ -1068,6 +1087,21 @@ impl SettingsScreen {
                     s.embed.port = p;
                 }
             }
+            FieldId::RagTarget => {
+                if let Ok(v) = trimmed.parse() {
+                    s.rag.chunk_target_chars = v;
+                }
+            }
+            FieldId::RagOverlap => {
+                if let Ok(v) = trimmed.parse() {
+                    s.rag.chunk_overlap_chars = v;
+                }
+            }
+            FieldId::RagMax => {
+                if let Ok(v) = trimmed.parse() {
+                    s.rag.chunk_max_chars = v;
+                }
+            }
             FieldId::IDicts => {
                 s.interface.selected_dictionaries = trimmed
                     .split(',')
@@ -1285,6 +1319,20 @@ fn field_description(id: FieldId) -> Option<&'static str> {
         FieldId::IxNgl => Some(
             "Сколько слоёв модели имперсонации выгрузить на видеокарту (GPU). \
              0 — только процессор, 99 — вся модель на GPU.",
+        ),
+        FieldId::RagTarget => Some(
+            "Целевой размер фрагмента (чанка) базы знаний в символах. Меньше — точнее \
+             попадание, но больше фрагментов; больше — шире контекст. Применяется при \
+             индексации (/rag add) и реиндексации (/rag rebuild).",
+        ),
+        FieldId::RagOverlap => Some(
+            "Перекрытие соседних фрагментов в символах: хвост предыдущего повторяется \
+             в начале следующего, чтобы запрос у границы не терял контекст. При \
+             извлечении дубль снимается склейкой.",
+        ),
+        FieldId::RagMax => Some(
+            "Жёсткий потолок неделимого фрагмента в символах (очень длинная строка/слово \
+             без пунктуации). Не меньше целевого размера.",
         ),
         // Описания параметров семплинга (одинаковые для обеих подсекций).
         FieldId::S(p) | FieldId::IS(p) => p.description(),

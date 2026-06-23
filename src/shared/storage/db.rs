@@ -14,7 +14,7 @@ use rusqlite::{Connection, OptionalExtension, params};
 use uuid::Uuid;
 
 use crate::entities::note::Note;
-use crate::entities::rag::{RagDocument, RagHit};
+use crate::entities::rag::{RagDocument, RagHit, RagSourceInfo, RagStoredSource};
 
 static REGISTER_VEC: Once = Once::new();
 
@@ -213,12 +213,168 @@ impl Db {
     pub fn rag_delete_under(&self, profile_id: Uuid, path: &str) -> Result<usize> {
         let needle = norm_path(path);
         let prefix = format!("{needle}/");
-        let conn = self.conn.lock().unwrap();
-        delete_matching(&conn, profile_id, |s| {
+        let pred = |s: &str| {
             let s = norm_path(s);
             s == needle || s.starts_with(&prefix)
-        })
+        };
+        let conn = self.conn.lock().unwrap();
+        let removed = delete_matching(&conn, profile_id, pred)?;
+        // Снимаем и сохранённые исходники (для `/rag rebuild`) по тому же предикату.
+        delete_sources_matching(&conn, profile_id, pred)?;
+        Ok(removed)
     }
+
+    /// Сохраняет (или заменяет) исходный текст индексированного источника — нужен
+    /// для реиндексации (`/rag rebuild`) без обращения к файлу на диске. Изоляция
+    /// по `profile_id`.
+    pub fn rag_source_upsert(
+        &self,
+        profile_id: Uuid,
+        source: &str,
+        content: &str,
+        created_at: DateTime<Utc>,
+    ) -> Result<()> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "INSERT INTO rag_sources(profile_id, source, content, created_at)
+             VALUES (?1, ?2, ?3, ?4)
+             ON CONFLICT(profile_id, source) DO UPDATE SET
+                 content = excluded.content, created_at = excluded.created_at",
+            params![
+                profile_id.to_string(),
+                source,
+                content,
+                created_at.to_rfc3339(),
+            ],
+        )?;
+        Ok(())
+    }
+
+    /// Дописывает текст к сохранённому исходнику (или создаёт его). Используется
+    /// инструментом `rag_add`, который **накапливает** чанки одного источника (в
+    /// отличие от файловой индексации, заменяющей источник) — чтобы реиндексация
+    /// получила весь добавленный текст, а не только последний фрагмент.
+    pub fn rag_source_append(
+        &self,
+        profile_id: Uuid,
+        source: &str,
+        content: &str,
+        created_at: DateTime<Utc>,
+    ) -> Result<()> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "INSERT INTO rag_sources(profile_id, source, content, created_at)
+             VALUES (?1, ?2, ?3, ?4)
+             ON CONFLICT(profile_id, source) DO UPDATE SET
+                 content = content || ?5 || excluded.content",
+            params![
+                profile_id.to_string(),
+                source,
+                content,
+                created_at.to_rfc3339(),
+                "\n\n",
+            ],
+        )?;
+        Ok(())
+    }
+
+    /// Сохранённые исходники профиля (для реиндексации). Изоляция по `profile_id`.
+    pub fn rag_stored_sources(&self, profile_id: Uuid) -> Result<Vec<RagStoredSource>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare(
+            "SELECT source, content FROM rag_sources WHERE profile_id = ?1 ORDER BY source",
+        )?;
+        let rows = stmt
+            .query_map(params![profile_id.to_string()], |r| {
+                Ok(RagStoredSource {
+                    source: r.get(0)?,
+                    content: r.get(1)?,
+                })
+            })?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        Ok(rows)
+    }
+
+    /// Сводка по источникам профиля (`/rag list`): для каждого источника число
+    /// чанков и дата самого раннего чанка. Сортировка — по источнику. Изоляция по
+    /// `profile_id`.
+    pub fn rag_list_sources(&self, profile_id: Uuid) -> Result<Vec<RagSourceInfo>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare(
+            "SELECT source, COUNT(*), MIN(created_at)
+             FROM rag_documents WHERE profile_id = ?1
+             GROUP BY source ORDER BY source",
+        )?;
+        let rows = stmt
+            .query_map(params![profile_id.to_string()], |r| {
+                Ok(RagSourceInfo {
+                    source: r.get(0)?,
+                    chunks: r.get::<_, i64>(1)? as usize,
+                    created_at: parse_dt(r.get::<_, String>(2)?),
+                })
+            })?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        Ok(rows)
+    }
+
+    /// Текущая размерность векторов RAG (общая на всю БД; `None` — ещё ничего не
+    /// индексировали). Используется реиндексацией для распознавания смены модели.
+    pub fn rag_dimension(&self) -> Result<Option<usize>> {
+        let conn = self.conn.lock().unwrap();
+        vec_dim(&conn)
+    }
+
+    /// Есть ли у **других** профилей (кроме `profile_id`) проиндексированные
+    /// документы. Размерность векторов в sqlite-vec одна на всю БД, поэтому смена
+    /// embedding-модели (другая размерность) затрагивает всех — этот признак
+    /// позволяет реиндексации отказать, не затирая чужие данные.
+    pub fn rag_other_profiles_have_docs(&self, profile_id: Uuid) -> Result<bool> {
+        let conn = self.conn.lock().unwrap();
+        let n: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM rag_documents WHERE profile_id <> ?1",
+            params![profile_id.to_string()],
+            |r| r.get(0),
+        )?;
+        Ok(n > 0)
+    }
+
+    /// Сбрасывает таблицу векторов целиком (drop + забыть размерность): нужно при
+    /// смене embedding-модели с другой размерностью. Документы (`rag_documents`)
+    /// **не** трогает — вызывающий сам удаляет/переиндексирует. Безопасно вызывать,
+    /// даже если таблицы ещё нет.
+    pub fn rag_reset_vectors(&self) -> Result<()> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute("DROP TABLE IF EXISTS rag_vectors", [])?;
+        conn.execute("DELETE FROM meta WHERE key = 'rag_dim'", [])?;
+        Ok(())
+    }
+
+    /// Удаляет все чанки (и векторы) профиля; исходники (`rag_sources`) сохраняет —
+    /// они нужны для последующей реиндексации. Возвращает число удалённых чанков.
+    pub fn rag_delete_all_for_profile(&self, profile_id: Uuid) -> Result<usize> {
+        let conn = self.conn.lock().unwrap();
+        delete_matching(&conn, profile_id, |_| true)
+    }
+}
+
+/// Удаляет сохранённые исходники профиля, чьи `source` проходят предикат.
+fn delete_sources_matching(
+    conn: &Connection,
+    profile_id: Uuid,
+    pred: impl Fn(&str) -> bool,
+) -> Result<()> {
+    let sources: Vec<String> = {
+        let mut stmt = conn.prepare("SELECT source FROM rag_sources WHERE profile_id = ?1")?;
+        stmt.query_map(params![profile_id.to_string()], |r| r.get::<_, String>(0))?
+            .collect::<rusqlite::Result<Vec<_>>>()?
+    };
+    for source in sources.into_iter().filter(|s| pred(s)) {
+        conn.execute(
+            "DELETE FROM rag_sources WHERE profile_id = ?1 AND source = ?2",
+            params![profile_id.to_string(), source],
+        )?;
+    }
+    Ok(())
 }
 
 /// Удаляет документы профиля, чьи `source` проходят предикат (вместе с их
@@ -289,7 +445,15 @@ fn migrate(conn: &Connection) -> Result<()> {
              chunk_text  TEXT NOT NULL,
              created_at  TEXT NOT NULL
          );
-         CREATE INDEX IF NOT EXISTS idx_rag_profile ON rag_documents(profile_id);",
+         CREATE INDEX IF NOT EXISTS idx_rag_profile ON rag_documents(profile_id);
+
+         CREATE TABLE IF NOT EXISTS rag_sources (
+             profile_id  TEXT NOT NULL,
+             source      TEXT NOT NULL,
+             content     TEXT NOT NULL,
+             created_at  TEXT NOT NULL,
+             PRIMARY KEY (profile_id, source)
+         );",
     )?;
     Ok(())
 }
@@ -508,6 +672,91 @@ mod tests {
             .unwrap();
         // Обратные слэши и хвостовой слэш в запросе матчат сохранённый «/»-источник.
         assert_eq!(db.rag_delete_under(p, "\\data\\").unwrap(), 1);
+    }
+
+    #[test]
+    fn rag_list_sources_aggregates_chunks_per_source() {
+        let db = db();
+        let p = Uuid::new_v4();
+        db.rag_insert(&RagDocument::new(p, "/data/a.txt", "c1", vec![1.0, 0.0]))
+            .unwrap();
+        db.rag_insert(&RagDocument::new(p, "/data/a.txt", "c2", vec![0.0, 1.0]))
+            .unwrap();
+        db.rag_insert(&RagDocument::new(p, "/data/b.md", "c3", vec![1.0, 1.0]))
+            .unwrap();
+        // Чужой профиль не попадает в выдачу.
+        db.rag_insert(&RagDocument::new(
+            Uuid::new_v4(),
+            "/o.txt",
+            "x",
+            vec![1.0, 0.0],
+        ))
+        .unwrap();
+
+        let sources = db.rag_list_sources(p).unwrap();
+        assert_eq!(sources.len(), 2);
+        assert_eq!(sources[0].source, "/data/a.txt");
+        assert_eq!(sources[0].chunks, 2);
+        assert_eq!(sources[1].source, "/data/b.md");
+        assert_eq!(sources[1].chunks, 1);
+    }
+
+    #[test]
+    fn rag_sources_store_and_delete_with_chunks() {
+        let db = db();
+        let p = Uuid::new_v4();
+        db.rag_source_upsert(p, "/data/a.txt", "полный текст", Utc::now())
+            .unwrap();
+        db.rag_insert(&RagDocument::new(p, "/data/a.txt", "чанк", vec![1.0, 0.0]))
+            .unwrap();
+        // Повторный upsert заменяет содержимое, а не плодит дубликат.
+        db.rag_source_upsert(p, "/data/a.txt", "новый текст", Utc::now())
+            .unwrap();
+        let stored = db.rag_stored_sources(p).unwrap();
+        assert_eq!(stored.len(), 1);
+        assert_eq!(stored[0].content, "новый текст");
+
+        // Удаление под путём снимает и чанки, и сохранённый исходник.
+        assert_eq!(db.rag_delete_under(p, "/data").unwrap(), 1);
+        assert!(db.rag_stored_sources(p).unwrap().is_empty());
+    }
+
+    #[test]
+    fn rag_rebuild_dimension_change_flow() {
+        let db = db();
+        let p = Uuid::new_v4();
+        // Индексировано в размерности 2.
+        db.rag_insert(&RagDocument::new(p, "a", "c", vec![1.0, 0.0]))
+            .unwrap();
+        assert_eq!(db.rag_dimension().unwrap(), Some(2));
+        assert!(!db.rag_other_profiles_have_docs(p).unwrap());
+
+        // Реиндексация в размерность 3 невозможна без сброса (mismatch).
+        assert!(
+            db.rag_insert(&RagDocument::new(p, "a", "c", vec![0.0, 1.0, 0.0]))
+                .is_err()
+        );
+        // Сбрасываем векторы и чистим документы профиля, затем индексируем в новой размерности.
+        db.rag_delete_all_for_profile(p).unwrap();
+        db.rag_reset_vectors().unwrap();
+        assert_eq!(db.rag_dimension().unwrap(), None);
+        db.rag_insert(&RagDocument::new(p, "a", "c", vec![0.0, 1.0, 0.0]))
+            .unwrap();
+        assert_eq!(db.rag_dimension().unwrap(), Some(3));
+        assert_eq!(db.rag_count(p).unwrap(), 1);
+    }
+
+    #[test]
+    fn rag_other_profiles_have_docs_detects_neighbors() {
+        let db = db();
+        let a = Uuid::new_v4();
+        let b = Uuid::new_v4();
+        db.rag_insert(&RagDocument::new(a, "a", "c", vec![1.0, 0.0]))
+            .unwrap();
+        assert!(!db.rag_other_profiles_have_docs(a).unwrap());
+        db.rag_insert(&RagDocument::new(b, "b", "c", vec![0.0, 1.0]))
+            .unwrap();
+        assert!(db.rag_other_profiles_have_docs(a).unwrap());
     }
 
     #[test]

@@ -81,6 +81,10 @@ pub enum ChatIntent {
     RagDelete {
         path: String,
     },
+    /// Показать источники базы знаний (команда `/rag list`).
+    RagList,
+    /// Реиндексировать базу знаний (команда `/rag rebuild`).
+    RagRebuild,
     /// Открыть экран настроек (`Ctrl+P`). `app` создаёт его из снимка настроек.
     OpenSettings,
     /// Открыть экран списка чатов (`Esc`). `app` создаёт его из снимка списка.
@@ -553,6 +557,9 @@ impl ChatScreen {
                 };
                 self.push_note(&msg);
             }
+            RagProgress::Listed { sources } => {
+                self.push_note(&format_rag_sources(&sources));
+            }
             RagProgress::Failed(err) => {
                 self.rag = None;
                 self.push_error(&format!("RAG: {err}"));
@@ -720,6 +727,8 @@ impl ChatScreen {
                             Some(ChatIntent::RagAdd { path, recursive })
                         }
                         Ok(RagCommand::Delete { path }) => Some(ChatIntent::RagDelete { path }),
+                        Ok(RagCommand::List) => Some(ChatIntent::RagList),
+                        Ok(RagCommand::Rebuild) => Some(ChatIntent::RagRebuild),
                         Err(msg) => {
                             self.push_note(&format!("RAG: {msg}"));
                             None
@@ -1030,6 +1039,24 @@ impl ChatScreen {
     }
 }
 
+/// Форматирует перечень источников базы знаний (`/rag list`) для заметки в ленте.
+fn format_rag_sources(sources: &[crate::entities::rag::RagSourceInfo]) -> String {
+    if sources.is_empty() {
+        return "RAG: база знаний пуста".to_string();
+    }
+    let total: usize = sources.iter().map(|s| s.chunks).sum();
+    let mut out = format!("RAG: источников: {}, фрагментов: {total}", sources.len());
+    for s in sources {
+        out.push_str(&format!(
+            "\n• {} — {} фрагм. ({})",
+            s.source,
+            s.chunks,
+            s.created_at.format("%Y-%m-%d")
+        ));
+    }
+    out
+}
+
 /// Список горячих клавиш для оверлея помощи (`F1`/`?`). См. spec §11.7.
 const HELP_KEYS: &[(&str, &str)] = &[
     ("Enter", "отправить сообщение"),
@@ -1048,6 +1075,8 @@ const HELP_KEYS: &[(&str, &str)] = &[
     ("Ctrl+W", "колесо мыши ↔ выделение текста"),
     ("/rag add <путь> [-r]", "индексировать файлы в RAG"),
     ("/rag remove <путь>", "удалить файлы из RAG"),
+    ("/rag list", "источники в базе знаний"),
+    ("/rag rebuild", "реиндексировать базу знаний"),
     ("PageUp/PageDown", "прокрутка ленты"),
     ("F1 / ?", "эта справка"),
     ("Ctrl+C", "выход"),
@@ -1804,6 +1833,47 @@ mod tests {
                 .iter()
                 .any(|m| m.role == FeedRole::Note && m.text.contains("ничего не найдено"))
         );
+    }
+
+    #[test]
+    fn rag_list_and_rebuild_commands_intercepted_on_enter() {
+        let mut s = ChatScreen::new();
+        type_str(&mut s, "/rag list");
+        assert_eq!(
+            s.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE)),
+            Some(ChatIntent::RagList)
+        );
+        assert!(s.input.is_empty());
+
+        type_str(&mut s, "/rag rebuild");
+        assert_eq!(
+            s.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE)),
+            Some(ChatIntent::RagRebuild)
+        );
+    }
+
+    #[test]
+    fn rag_listed_progress_pushes_note() {
+        use crate::entities::rag::RagSourceInfo;
+        let mut s = ChatScreen::new();
+        // Пустая база — понятная заметка.
+        s.set_rag_progress(RagProgress::Listed { sources: vec![] });
+        assert!(
+            s.feed
+                .iter()
+                .any(|m| m.role == FeedRole::Note && m.text.contains("база знаний пуста"))
+        );
+        // С источниками — счётчик чанков и имя источника.
+        s.set_rag_progress(RagProgress::Listed {
+            sources: vec![RagSourceInfo {
+                source: "spec.md".into(),
+                chunks: 42,
+                created_at: chrono::Utc::now(),
+            }],
+        });
+        assert!(s.feed.iter().any(|m| m.role == FeedRole::Note
+            && m.text.contains("spec.md")
+            && m.text.contains("42")));
     }
 
     #[test]

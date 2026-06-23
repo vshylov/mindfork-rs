@@ -203,6 +203,37 @@ impl Default for ToolSettings {
     }
 }
 
+/// Целевой («мягкий») размер чанка RAG в символах по умолчанию.
+pub const DEFAULT_CHUNK_TARGET_CHARS: usize = 800;
+/// Перекрытие между соседними чанками RAG в символах по умолчанию.
+pub const DEFAULT_CHUNK_OVERLAP_CHARS: usize = 150;
+/// Жёсткий потолок неделимого прогона чанка RAG в символах по умолчанию.
+pub const DEFAULT_CHUNK_MAX_CHARS: usize = 1200;
+
+/// Настройки чанкинга базы знаний (RAG). Влияют на нарезку при индексации
+/// (`/rag add`, инструмент `rag_add`) и реиндексации (`/rag rebuild`). Размеры — в
+/// символах (не байтах, корректно для кириллицы/Юникода). См. spec §9.3.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct RagSettings {
+    /// Целевой («мягкий») размер чанка: юниты пакуются до него.
+    pub chunk_target_chars: usize,
+    /// Перекрытие соседних чанков: хвост предыдущего повторяется в начале следующего.
+    pub chunk_overlap_chars: usize,
+    /// Жёсткий потолок неделимого прогона (очень длинное слово/строка без пунктуации).
+    pub chunk_max_chars: usize,
+}
+
+impl Default for RagSettings {
+    fn default() -> Self {
+        Self {
+            chunk_target_chars: DEFAULT_CHUNK_TARGET_CHARS,
+            chunk_overlap_chars: DEFAULT_CHUNK_OVERLAP_CHARS,
+            chunk_max_chars: DEFAULT_CHUNK_MAX_CHARS,
+        }
+    }
+}
+
 /// Тема оформления TUI. Реальное применение в виджетах — на M9 (`shared/theme.rs`);
 /// здесь хранится выбор пользователя.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
@@ -256,6 +287,8 @@ pub struct AppConfig {
     pub max_tool_rounds: u32,
     /// Глобальные выключатели внешних инструментов.
     pub tools: ToolSettings,
+    /// Настройки чанкинга базы знаний (RAG).
+    pub rag: RagSettings,
     /// Настройки интерфейса (тема, спелл-чек, словари).
     pub interface: InterfaceSettings,
 }
@@ -281,6 +314,7 @@ impl Default for AppConfig {
             embed: EmbedSettings::default(),
             max_tool_rounds: 8,
             tools: ToolSettings::default(),
+            rag: RagSettings::default(),
             interface: InterfaceSettings::default(),
         }
     }
@@ -316,6 +350,9 @@ mod tests {
         assert_eq!(c.embed.port, 8001);
         assert_eq!(c.tools.subagent_max_tokens, DEFAULT_SUBAGENT_MAX_TOKENS);
         assert_eq!(c.tools.subagent_timeout_secs, DEFAULT_SUBAGENT_TIMEOUT_SECS);
+        assert_eq!(c.rag.chunk_target_chars, DEFAULT_CHUNK_TARGET_CHARS);
+        assert_eq!(c.rag.chunk_overlap_chars, DEFAULT_CHUNK_OVERLAP_CHARS);
+        assert_eq!(c.rag.chunk_max_chars, DEFAULT_CHUNK_MAX_CHARS);
         assert!(c.interface.spellcheck_enabled);
         assert_eq!(c.interface.theme, Theme::Auto);
         // Имперсонация наполняется дефолтами при отсутствии в файле.

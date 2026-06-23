@@ -195,6 +195,9 @@ impl Orchestrator {
                 storage: self.storage.clone(),
                 engine: backend.clone(),
                 embedder: self.engines.embedder(),
+                chunk_params: crate::features::tools::rag::ChunkParams::from_settings(
+                    &self.config.rag,
+                ),
             };
         }
 
