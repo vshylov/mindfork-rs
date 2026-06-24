@@ -57,6 +57,10 @@ pub struct Palette {
     pub keycap_fg: Color,
     /// Фон «клавиши» в строке хоткеев.
     pub keycap_bg: Color,
+    /// Текст «опасной» клавиши (напр. `Del` удаления) на фоне `keycap_bg`. Отдельно
+    /// от `error`: «клавиша» приглушённая и тёмная, поэтому красный для неё берётся
+    /// **ярче** обычного `error`, чтобы читаться и не сливаться с тёмным фоном пилюли.
+    pub keycap_danger: Color,
     /// Тёмный ли фон темы. Нужно там, где цвет приходится задавать абсолютным RGB
     /// (нет именованного ANSI, адаптируемого терминалом) — напр. серый «по умолчанию»
     /// и цвет комментариев в подсветке кода: на тёмном фоне светлый, на светлом —
@@ -93,8 +97,13 @@ impl Palette {
             muted: Color::DarkGray,
             border: Color::DarkGray,
             border_focus: Color::Gray,
-            keycap_fg: Color::White,
-            keycap_bg: Color::DarkGray,
+            // «Клавиши» — тихие тёмные пилюли (приглушённый текст на фоне чуть выше
+            // типичного тёмного фона терминала), чтобы не перетягивать внимание.
+            // Named ANSI не имеет шага темнее `DarkGray`, поэтому здесь абсолютный RGB
+            // (Auto и так считаем тёмной темой — флаг `dark: true`).
+            keycap_fg: Color::Rgb(138, 144, 152),
+            keycap_bg: Color::Rgb(36, 39, 45),
+            keycap_danger: Color::Rgb(226, 110, 98),
             dark: true,
         }
     }
@@ -117,8 +126,9 @@ impl Palette {
             muted: Color::Rgb(126, 132, 139),          // #7e848b
             border: Color::Rgb(54, 58, 66),            // чуть ярче макетного #24272e для видимости
             border_focus: Color::Rgb(110, 117, 128),   // #6e7580 (фокус)
-            keycap_fg: Color::Rgb(154, 160, 167),      // #9aa0a7
-            keycap_bg: Color::Rgb(42, 45, 52),         // #2a2d34
+            keycap_fg: Color::Rgb(132, 138, 146),      // тише прежнего #9aa0a7
+            keycap_bg: Color::Rgb(33, 36, 42),         // темнее прежнего #2a2d34
+            keycap_danger: Color::Rgb(232, 116, 104),  // ярче error для читаемости на пилюле
             dark: true,
         }
     }
@@ -140,8 +150,9 @@ impl Palette {
             muted: Color::Rgb(110, 116, 124),
             border: Color::Rgb(190, 193, 198),
             border_focus: Color::Rgb(120, 124, 130),
-            keycap_fg: Color::Rgb(40, 42, 46),
+            keycap_fg: Color::Rgb(74, 78, 84),  // мягче чёрного — «клавиши» не кричат
             keycap_bg: Color::Rgb(222, 224, 228),
+            keycap_danger: Color::Rgb(178, 34, 34),
             dark: false,
         }
     }
@@ -252,7 +263,7 @@ impl Palette {
                 let cap = if *danger {
                     Span::styled(
                         format!(" {key} "),
-                        Style::new().fg(self.error).bg(self.keycap_bg),
+                        Style::new().fg(self.keycap_danger).bg(self.keycap_bg),
                     )
                 } else {
                     self.keycap(*key)
