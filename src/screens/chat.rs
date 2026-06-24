@@ -13,7 +13,6 @@ use ratatui::crossterm::event::{
     KeyCode, KeyEvent, KeyEventKind, KeyModifiers, MouseEvent, MouseEventKind,
 };
 use ratatui::layout::{Constraint, Flex, Layout, Rect};
-use ratatui::style::Modifier;
 use ratatui::style::Style;
 use ratatui::style::Stylize;
 use ratatui::text::{Line, Span};
@@ -30,6 +29,7 @@ use crate::shared::config::AppConfig;
 use crate::shared::keys;
 use crate::shared::server::ServerStatus;
 use crate::shared::theme::Palette;
+use crate::shared::ui::dim_background;
 use crate::widgets::impersonation_preview;
 use crate::widgets::input_box::InputBox;
 use crate::widgets::message_feed::{FeedMessage, FeedRole, MessageFeed};
@@ -1068,25 +1068,12 @@ impl ChatScreen {
             overlay.render(frame, frame.area(), &self.palette);
         }
         if let Some(popup) = &self.suggest {
+            dim_background(frame);
             render_suggest(frame, popup, &self.palette);
         }
         if self.show_help {
             dim_background(frame);
             render_help(frame, &self.palette);
-        }
-    }
-}
-
-/// Притеняет весь экран (модификатор `DIM` на все ячейки буфера), чтобы попап
-/// поверх не сливался с фоном. Вызывается перед `Clear`+рендером попапа —
-/// `Clear` затем сбрасывает ячейки попапа к дефолтному (не приглушённому) стилю,
-/// так что притеняется только фон, а сам попап остаётся ярким.
-fn dim_background(frame: &mut Frame) {
-    let area = frame.area();
-    let buf = frame.buffer_mut();
-    for y in area.top()..area.bottom() {
-        for x in area.left()..area.right() {
-            buf[(x, y)].modifier |= Modifier::DIM;
         }
     }
 }
