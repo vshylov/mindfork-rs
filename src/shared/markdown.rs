@@ -63,9 +63,16 @@ fn heading_style(level: u8, palette: &Palette) -> Style {
     }
 }
 
-/// Стиль инлайн-кода и нераскрашенного блока кода — реверс (тема-независим).
+/// Стиль нераскрашенного блока кода — реверс (тема-независим).
 fn code_style() -> Style {
     Style::new().add_modifier(Modifier::REVERSED)
+}
+
+/// Стиль инлайн-кода (`такой текст`) — тихий «чип» как в дизайн-макете: мягкий
+/// приглушённый текст на фоне «клавиши», а не резкий реверс (REVERSED был слишком
+/// заметным). Согласован с темой через [`Palette`].
+fn inline_code_style(palette: &Palette) -> Style {
+    Style::new().fg(palette.keycap_fg).bg(palette.keycap_bg)
 }
 
 /// Стиль ссылки.
@@ -511,7 +518,10 @@ impl Writer {
     }
 
     fn code(&mut self, code: CowStr<'_>) {
-        self.push_span(Span::styled(code.into_string(), code_style()));
+        self.push_span(Span::styled(
+            code.into_string(),
+            inline_code_style(&self.palette),
+        ));
     }
 
     /// Блочная формула `$$…$$`: каждая строка преобразованного содержимого — на
