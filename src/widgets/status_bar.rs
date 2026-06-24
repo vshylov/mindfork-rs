@@ -149,6 +149,9 @@ fn lines(
     let mut hotkeys: Vec<(&str, &str)> = vec![("Ctrl+W", mouse_desc)];
     hotkeys.extend(HOTKEYS.iter().copied());
     let n = hotkeys.len();
+    // В режиме «прокрутка» выделяем описание тумблера мыши (индекс 0) цветом
+    // `accent` — тем же, которым подсвечиваются заголовки markdown в ленте.
+    let accent_idx = mouse_scroll.then_some(0usize);
 
     // Ширина каждой ячейки: «клавиша» (+2 на отступы) + пробел + описание.
     let cell_w: Vec<usize> = hotkeys
@@ -166,7 +169,15 @@ fn lines(
         }
     }
     if cols > 0 {
-        return right_grid(&hotkeys, &cell_w, cols, width, Some(state), palette);
+        return right_grid(
+            &hotkeys,
+            &cell_w,
+            cols,
+            width,
+            Some(state),
+            accent_idx,
+            palette,
+        );
     }
 
     // Слишком узко даже под один столбец рядом с пилюлей — «состояние» отдельной
@@ -176,7 +187,9 @@ fn lines(
         .find(|&c| grid_layout(&cell_w, c).2 <= width)
         .unwrap_or(1);
     let mut out = vec![Line::from(state)];
-    out.extend(right_grid(&hotkeys, &cell_w, cols, width, None, palette));
+    out.extend(right_grid(
+        &hotkeys, &cell_w, cols, width, None, accent_idx, palette,
+    ));
     out
 }
 
@@ -223,6 +236,7 @@ fn right_grid(
     cols: usize,
     width: usize,
     mut state: Option<Vec<Span<'static>>>,
+    accent_idx: Option<usize>,
     palette: &Palette,
 ) -> Vec<Line<'static>> {
     let (grid, colw, block_w) = grid_layout(cell_w, cols);
@@ -251,7 +265,11 @@ fn right_grid(
             match cell {
                 Some(i) => {
                     let (key, desc) = hotkeys[*i];
-                    spans.extend(palette.hint(key, desc));
+                    if accent_idx == Some(*i) {
+                        spans.extend(palette.hint_highlight_value(key, desc, palette.accent));
+                    } else {
+                        spans.extend(palette.hint(key, desc));
+                    }
                     let pad = colw[c].saturating_sub(cell_w[*i]) + gap;
                     if pad > 0 {
                         spans.push(Span::raw(" ".repeat(pad)));
@@ -326,6 +344,33 @@ mod tests {
         let mode = |scroll| flat(&ServerStatus::Ready, false, 0, None, false, scroll);
         assert!(mode(true).contains("мышь: прокрутка"));
         assert!(mode(false).contains("мышь: выделение"));
+    }
+
+    #[test]
+    fn scroll_mode_highlights_only_value() {
+        let palette = Palette::default();
+        let span_fg = |scroll, needle: &str| {
+            lines(
+                200,
+                &ServerStatus::Ready,
+                false,
+                0,
+                None,
+                false,
+                scroll,
+                &palette,
+            )
+            .iter()
+            .flat_map(|l| l.spans.clone())
+            .find(|s| s.content.contains(needle))
+            .and_then(|s| s.style.fg)
+        };
+        // В режиме прокрутки выделено только значение «прокрутка» (цветом `accent`, как
+        // заголовки markdown), а подпись «мышь:» остаётся приглушённой — отдельные спаны.
+        assert_eq!(span_fg(true, "прокрутка"), Some(palette.accent));
+        assert_eq!(span_fg(true, "мышь:"), Some(palette.muted));
+        // В режиме выделения — всё описание приглушённое.
+        assert_eq!(span_fg(false, "мышь: выделение"), Some(palette.muted));
     }
 
     #[test]
