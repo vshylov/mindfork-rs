@@ -11,8 +11,8 @@
 use ratatui::Frame;
 use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 use ratatui::layout::{Constraint, Flex, Layout, Rect};
-use ratatui::style::{Style, Stylize};
-use ratatui::text::Line;
+use ratatui::style::Style;
+use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Clear, List, ListItem, ListState, Paragraph, Wrap};
 use uuid::Uuid;
 
@@ -1182,28 +1182,33 @@ impl SettingsScreen {
 
     pub fn render(&mut self, frame: &mut Frame) {
         let area = frame.area();
-        let block = Block::default()
-            .borders(Borders::ALL)
-            .title(" Настройки ")
-            .title_bottom(
-                Line::from(
-                    " Tab секция · ↑↓ поля · Enter правка · Space тумблер · ←→ выбор · Esc выход ",
-                )
-                .dim(),
-            );
+        let palette = Palette::for_theme(self.config.interface.theme);
+        let mut footer = vec![Span::raw("")];
+        for (key, desc) in [
+            ("Tab", "секция"),
+            ("↑↓", "поля"),
+            ("Enter", "правка"),
+            ("Space", "тумблер"),
+            ("←→", "выбор"),
+            ("Esc", "выход"),
+        ] {
+            footer.push(palette.keycap(key));
+            footer.push(Span::styled(format!(" {desc}  "), palette.muted_style()));
+        }
+        let block = palette
+            .panel("⚙  Настройки", true)
+            .title_bottom(Line::from(footer));
         let inner = block.inner(area);
         frame.render_widget(Clear, area);
         frame.render_widget(&block, area);
 
         let [menu_area, fields_area] =
-            Layout::horizontal([Constraint::Length(22), Constraint::Min(20)]).areas(inner);
+            Layout::horizontal([Constraint::Length(24), Constraint::Min(20)]).areas(inner);
 
         self.render_menu(frame, menu_area);
         self.render_fields(frame, fields_area);
 
         // Редактор поверх — с реальным курсором (InputBox::render требует &mut).
-        let palette = Palette::for_theme(self.config.interface.theme);
-        let area = frame.area();
         if let Some(editor) = self.editor.as_mut() {
             // Системное сообщение/приветствие — крупный многострочный попап с
             // переносом; прочие поля — компактная однострочная полоса.
@@ -1226,20 +1231,43 @@ impl SettingsScreen {
     }
 
     fn render_menu(&self, frame: &mut Frame, area: Rect) {
+        let palette = Palette::for_theme(self.config.interface.theme);
+        let focused = self.focus == Focus::Menu;
+        // Активная секция помечается цветным рейлом и насыщенным заголовком вне
+        // зависимости от фокуса; выбор клавиатурой подсвечивает List highlight.
         let items: Vec<ListItem> = SECTIONS
             .iter()
-            .map(|s| ListItem::new(Line::from(s.title())))
+            .enumerate()
+            .map(|(i, s)| {
+                let active = i == self.section_idx;
+                let bar = if active {
+                    Span::styled("▌ ", Style::new().fg(palette.success))
+                } else {
+                    Span::styled("  ", Style::new())
+                };
+                let title = if active {
+                    Span::styled(s.title(), Style::new().fg(palette.text).bold())
+                } else {
+                    Span::styled(s.title(), palette.muted_style())
+                };
+                ListItem::new(Line::from(vec![bar, title]))
+            })
             .collect();
-        let focused = self.focus == Focus::Menu;
-        let block = Block::default().borders(Borders::RIGHT).title(if focused {
-            "▶ Секции"
-        } else {
-            "Секции"
-        });
+        let block = Block::default()
+            .borders(Borders::RIGHT)
+            .border_style(palette.border_style(false))
+            .title(Span::styled(
+                if focused {
+                    " ▸ Секции "
+                } else {
+                    " Секции "
+                },
+                palette.muted_style(),
+            ));
         let hl = if focused {
             Style::new().reversed()
         } else {
-            Style::new().bold()
+            Style::new()
         };
         let list = List::new(items).block(block).highlight_style(hl);
         let mut state = ListState::default();
@@ -1274,13 +1302,20 @@ impl SettingsScreen {
             .max()
             .unwrap_or(0)
             .max(28);
+        let palette = Palette::for_theme(self.config.interface.theme);
         let items: Vec<ListItem> = fields
             .iter()
-            .map(|f| ListItem::new(render_field_line(f, label_col)))
+            .map(|f| ListItem::new(render_field_line(f, label_col, &palette)))
             .collect();
         let block = Block::default()
             .borders(Borders::NONE)
-            .title(format!(" {} ", self.section().title()));
+            .title(Line::from(vec![
+                Span::styled(" ◆ ", Style::new().fg(palette.assistant)),
+                Span::styled(
+                    format!("{} ", self.section().title()),
+                    Style::new().fg(palette.text).bold(),
+                ),
+            ]));
         let hl = if focused {
             Style::new().reversed()
         } else {
@@ -1495,22 +1530,35 @@ fn label_width(label: &str) -> usize {
     crate::shared::wrap::display_width(&label.chars().collect::<Vec<_>>())
 }
 
-fn render_field_line(f: &FieldRow, label_col: usize) -> Line<'static> {
-    let value = match &f.kind {
+fn render_field_line(f: &FieldRow, label_col: usize, palette: &Palette) -> Line<'static> {
+    // Значение + его цвет по типу поля (тумблер — зелёный/приглушённый, выбор —
+    // синий, прочерк — цвет рамки, текст — основной).
+    let (value, value_style) = match &f.kind {
         FieldKind::Toggle(on) => {
             if *on {
-                "[x]".to_string()
+                ("[x]".to_string(), Style::new().fg(palette.success))
             } else {
-                "[ ]".to_string()
+                ("[ ]".to_string(), palette.muted_style())
             }
         }
-        FieldKind::Choice(v) => format!("‹ {v} ›"),
-        FieldKind::Text(v) => v.clone(),
+        FieldKind::Choice(v) => (format!("‹ {v} ›"), Style::new().fg(palette.user)),
+        FieldKind::Text(v) => {
+            let style = if v.trim() == "—" {
+                Style::new().fg(palette.border)
+            } else {
+                Style::new().fg(palette.text)
+            };
+            (v.clone(), style)
+        }
     };
     // Дополняем подпись пробелами до ширины колонки по реальной ширине в колонках
     // (Rust `{:<N}` считает символы, а не колонки — для CJK/эмодзи это разъезжается).
     let pad = label_col.saturating_sub(label_width(&f.label));
-    Line::from(format!("{}{} {}", f.label, " ".repeat(pad), value))
+    Line::from(vec![
+        Span::styled(f.label.clone(), palette.muted_style()),
+        Span::raw(" ".repeat(pad + 1)),
+        Span::styled(value, value_style),
+    ])
 }
 
 fn mode_label(m: ServerMode) -> String {
