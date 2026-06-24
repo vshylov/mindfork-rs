@@ -266,7 +266,7 @@ fn right_grid(
                 Some(i) => {
                     let (key, desc) = hotkeys[*i];
                     if accent_idx == Some(*i) {
-                        spans.extend(palette.hint_highlight_word(key, desc, palette.accent));
+                        spans.extend(palette.hint_highlight_value(key, desc, palette.accent));
                     } else {
                         spans.extend(palette.hint(key, desc));
                     }
@@ -347,7 +347,7 @@ mod tests {
     }
 
     #[test]
-    fn scroll_mode_highlights_only_word() {
+    fn scroll_mode_highlights_only_value() {
         let palette = Palette::default();
         let span_fg = |scroll, needle: &str| {
             lines(
@@ -365,8 +365,8 @@ mod tests {
             .find(|s| s.content.contains(needle))
             .and_then(|s| s.style.fg)
         };
-        // В режиме прокрутки выделено только слово «прокрутка» (цветом `accent`, как
-        // заголовки markdown), а «мышь:» остаётся приглушённым — это отдельные спаны.
+        // В режиме прокрутки выделено только значение «прокрутка» (цветом `accent`, как
+        // заголовки markdown), а подпись «мышь:» остаётся приглушённой — отдельные спаны.
         assert_eq!(span_fg(true, "прокрутка"), Some(palette.accent));
         assert_eq!(span_fg(true, "мышь:"), Some(palette.muted));
         // В режиме выделения — всё описание приглушённое.

@@ -208,15 +208,21 @@ impl Palette {
         ]
     }
 
-    /// Как `hint`, но **последнее слово** описания выделено цветом `color`, а начало
-    /// остаётся приглушённым — для подсветки значения активного режима (напр. слова
-    /// «прокрутка» в «мышь: прокрутка» цветом `accent`, как заголовки markdown в ленте).
-    pub fn hint_highlight_word(&self, key: &str, desc: &str, color: Color) -> Vec<Span<'static>> {
+    /// Как `hint`, но **значение после двоеточия** выделено цветом `color`, а подпись
+    /// (само двоеточие включительно) остаётся приглушённой — для подсветки значения
+    /// активного режима (напр. «прокрутка» в «мышь: прокрутка» цветом `accent`, как
+    /// заголовки markdown в ленте). Разбиение по `:`, а не по пробелу, корректно для
+    /// многословных значений (важно при будущей локализации). Без двоеточия — всё
+    /// описание выделяется целиком.
+    pub fn hint_highlight_value(&self, key: &str, desc: &str, color: Color) -> Vec<Span<'static>> {
         let mut spans = vec![self.keycap(key)];
-        match desc.rsplit_once(' ') {
-            Some((head, word)) => {
-                spans.push(Span::styled(format!(" {head} "), self.muted_style()));
-                spans.push(Span::styled(word.to_string(), Style::new().fg(color)));
+        match desc.split_once(':') {
+            Some((label, value)) => {
+                spans.push(Span::styled(format!(" {label}: "), self.muted_style()));
+                spans.push(Span::styled(
+                    value.trim().to_string(),
+                    Style::new().fg(color),
+                ));
             }
             None => spans.push(Span::styled(format!(" {desc}"), Style::new().fg(color))),
         }
