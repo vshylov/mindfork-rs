@@ -23,6 +23,7 @@ use crate::features::tools::default_tool_ids;
 use crate::shared::config::{AppConfig, ImpersonationMode, ServerMode, Theme};
 use crate::shared::keys;
 use crate::shared::theme::Palette;
+use crate::shared::ui::dim_background;
 use crate::widgets::input_box::InputBox;
 
 /// Намерение, которое исполняет `app` (транслирует в `AppCommand`).
@@ -1223,6 +1224,12 @@ impl SettingsScreen {
                     "правка · Enter ок · Esc отмена",
                 )
             };
+            // Крупный многострочный попап (системное сообщение/приветствие)
+            // притеняет фон, чтобы не сливаться; компактные однострочные полосы —
+            // нет (правка на месте).
+            if editor.multiline {
+                dim_background(frame);
+            }
             frame.render_widget(Clear, popup);
             editor
                 .input

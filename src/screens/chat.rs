@@ -29,6 +29,7 @@ use crate::shared::config::AppConfig;
 use crate::shared::keys;
 use crate::shared::server::ServerStatus;
 use crate::shared::theme::Palette;
+use crate::shared::ui::dim_background;
 use crate::widgets::impersonation_preview;
 use crate::widgets::input_box::InputBox;
 use crate::widgets::message_feed::{FeedMessage, FeedRole, MessageFeed};
@@ -1067,9 +1068,11 @@ impl ChatScreen {
             overlay.render(frame, frame.area(), &self.palette);
         }
         if let Some(popup) = &self.suggest {
+            dim_background(frame);
             render_suggest(frame, popup, &self.palette);
         }
         if self.show_help {
+            dim_background(frame);
             render_help(frame, &self.palette);
         }
     }
