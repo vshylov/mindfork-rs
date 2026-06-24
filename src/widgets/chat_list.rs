@@ -467,81 +467,25 @@ impl ChatListState {
         }
 
         // Пары «клавиша — описание — опасная ли» (порядок = чтение слева-направо,
-        // сверху-вниз). `Tab` несёт текущий режим сортировки.
+        // сверху-вниз). `Tab` несёт текущий режим сортировки. Сетку выкладывает
+        // общий хелпер `Palette::hotkey_grid` (тот же, что у статус-бара чата).
         let sort = self.sort.label();
-        let items: Vec<(&str, String, bool)> = vec![
-            ("↑↓", "выбор".into(), false),
-            ("Enter", "открыть".into(), false),
-            ("F2", "переименовать".into(), false),
-            ("Ctrl+R", "авто-назв.".into(), false),
-            ("Ctrl+N", "новый".into(), false),
-            ("Ctrl+D", "копия".into(), false),
-            ("F5", "в буфер".into(), false),
-            ("Del", "удалить".into(), true),
-            ("Esc", "назад".into(), false),
-            ("Ctrl+C", "выход".into(), false),
-            ("Tab", format!("сортировка: {sort}"), false),
+        let sort_desc = format!("сортировка: {sort}");
+        let items: [(&str, &str, bool); 11] = [
+            ("↑↓", "выбор", false),
+            ("Enter", "открыть", false),
+            ("F2", "переименовать", false),
+            ("Ctrl+R", "авто-назв.", false),
+            ("Ctrl+N", "новый", false),
+            ("Ctrl+D", "копия", false),
+            ("F5", "в буфер", false),
+            ("Del", "удалить", true),
+            ("Esc", "назад", false),
+            ("Ctrl+C", "выход", false),
+            ("Tab", sort_desc.as_str(), false),
         ];
-
-        let n = items.len();
-        // Ширина ячейки = «клавиша» (символы + 2 на отступы) + пробел + описание.
-        let cell_w: Vec<usize> = items
-            .iter()
-            .map(|(key, desc, _)| keycap_width(key) + 1 + display_width_str(desc))
-            .collect();
-        const GAP: usize = 3; // зазор между столбцами
-
-        // Подбираем максимум столбцов, влезающих в ширину (→ минимум строк).
-        let col_widths = |cols: usize| -> Vec<usize> {
-            let mut w = vec![0usize; cols];
-            for (i, cw) in cell_w.iter().enumerate() {
-                w[i % cols] = w[i % cols].max(*cw);
-            }
-            w
-        };
-        let mut cols = 1;
-        for c in (1..=n).rev() {
-            let total: usize = col_widths(c).iter().sum::<usize>() + GAP * c.saturating_sub(1);
-            if total <= width {
-                cols = c;
-                break;
-            }
-        }
-        let widths = col_widths(cols);
-
-        // Раскладываем по строкам (row-major); каждую ячейку добиваем до ширины
-        // столбца, чтобы столбцы совпадали по вертикали.
-        let mut lines: Vec<Line<'static>> = Vec::new();
-        for row in items.chunks(cols) {
-            let mut spans: Vec<Span<'static>> = Vec::new();
-            for (c, (key, desc, danger)) in row.iter().enumerate() {
-                let cap = if *danger {
-                    Span::styled(
-                        format!(" {key} "),
-                        Style::new().fg(palette.error).bg(palette.keycap_bg),
-                    )
-                } else {
-                    palette.keycap(*key)
-                };
-                spans.push(cap);
-                spans.push(Span::styled(format!(" {desc}"), palette.muted_style()));
-                // Добивка до ширины столбца + зазор (у последнего столбца — без зазора).
-                let used = keycap_width(key) + 1 + display_width_str(desc);
-                let pad = widths[c].saturating_sub(used) + if c + 1 < cols { GAP } else { 0 };
-                if pad > 0 {
-                    spans.push(Span::raw(" ".repeat(pad)));
-                }
-            }
-            lines.push(Line::from(spans));
-        }
-        lines
+        palette.hotkey_grid(&items, width)
     }
-}
-
-/// Ширина «клавиши» в колонках: символы лейбла + 2 (отступы вокруг, как в
-/// [`Palette::keycap`], который форматирует `" {label} "`).
-fn keycap_width(label: &str) -> usize {
-    display_width_str(label) + 2
 }
 
 /// Рисует поле переименования в рамке: обычный однострочный ввод с **настоящим**

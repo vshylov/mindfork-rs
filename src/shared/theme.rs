@@ -13,10 +13,11 @@
 //! только сами цвета.
 
 use ratatui::style::{Color, Modifier, Style};
-use ratatui::text::Span;
+use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, BorderType, Borders};
 
 use crate::shared::config::Theme;
+use crate::shared::wrap;
 
 /// Семантические цвета интерфейса. `Copy` — дёшево передавать в render по значению.
 /// `Hash` — палитра служит ключом кэша (напр. построенной syntect-темы подсветки
@@ -204,6 +205,81 @@ impl Palette {
             Span::styled(format!(" {label}"), Style::new().fg(color)),
         ]
     }
+
+    /// Раскладывает подсказки-хоткеи в аккуратную сетку под ширину `width`:
+    /// «клавиша» + приглушённое описание, столбцы совпадают по вертикали. Число
+    /// столбцов подбирается максимальным из влезающих в ширину (→ минимум строк);
+    /// при переполнении одной строки хоткеи переносятся на следующие. `danger`
+    /// помечает «опасную» клавишу (напр. удаление) красным. Используется в
+    /// статус-баре экрана чата и в оверлее списка чатов — для одинакового вида.
+    pub fn hotkey_grid(&self, items: &[(&str, &str, bool)], width: usize) -> Vec<Line<'static>> {
+        let n = items.len();
+        if n == 0 {
+            return Vec::new();
+        }
+        // Ширина ячейки = «клавиша» (символы + 2 на отступы) + пробел + описание.
+        let cell_w: Vec<usize> = items
+            .iter()
+            .map(|(key, desc, _)| keycap_width(key) + 1 + str_width(desc))
+            .collect();
+        const GAP: usize = 3; // зазор между столбцами
+
+        // Ширины столбцов при `cols` колонках (row-major раскладка).
+        let col_widths = |cols: usize| -> Vec<usize> {
+            let mut w = vec![0usize; cols];
+            for (i, cw) in cell_w.iter().enumerate() {
+                w[i % cols] = w[i % cols].max(*cw);
+            }
+            w
+        };
+        // Подбираем максимум столбцов, влезающих в ширину (→ минимум строк).
+        let mut cols = 1;
+        for c in (1..=n).rev() {
+            let total: usize = col_widths(c).iter().sum::<usize>() + GAP * c.saturating_sub(1);
+            if total <= width {
+                cols = c;
+                break;
+            }
+        }
+        let widths = col_widths(cols);
+
+        // Раскладываем по строкам; каждую ячейку добиваем до ширины столбца, чтобы
+        // столбцы совпадали по вертикали.
+        let mut lines: Vec<Line<'static>> = Vec::new();
+        for row in items.chunks(cols) {
+            let mut spans: Vec<Span<'static>> = Vec::new();
+            for (c, (key, desc, danger)) in row.iter().enumerate() {
+                let cap = if *danger {
+                    Span::styled(
+                        format!(" {key} "),
+                        Style::new().fg(self.error).bg(self.keycap_bg),
+                    )
+                } else {
+                    self.keycap(*key)
+                };
+                spans.push(cap);
+                spans.push(Span::styled(format!(" {desc}"), self.muted_style()));
+                let used = keycap_width(key) + 1 + str_width(desc);
+                let pad = widths[c].saturating_sub(used) + if c + 1 < cols { GAP } else { 0 };
+                if pad > 0 {
+                    spans.push(Span::raw(" ".repeat(pad)));
+                }
+            }
+            lines.push(Line::from(spans));
+        }
+        lines
+    }
+}
+
+/// Видимая ширина строки в колонках терминала.
+fn str_width(s: &str) -> usize {
+    wrap::display_width(&s.chars().collect::<Vec<_>>())
+}
+
+/// Ширина «клавиши» в колонках: символы лейбла + 2 (отступы вокруг, как в
+/// [`Palette::keycap`], который форматирует `" {label} "`).
+fn keycap_width(label: &str) -> usize {
+    str_width(label) + 2
 }
 
 impl Default for Palette {

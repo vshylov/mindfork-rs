@@ -985,11 +985,22 @@ impl ChatScreen {
         // Баннер индексации RAG занимает строку только когда активен (иначе 0 —
         // пустой прямоугольник, рендер в него безвреден).
         let banner_h: u16 = if self.rag.is_some() { 1 } else { 0 };
+        // Высота статус-бара зависит от ширины: хоткеи переносятся, когда не влезают.
+        let status_h = status_bar::height(
+            frame.area().width as usize,
+            &self.status,
+            self.generating,
+            self.gen_tokens,
+            self.gen_context,
+            self.gen_context_exact,
+            self.mouse_scroll,
+            &self.palette,
+        );
         let [feed_area, banner_area, input_area, status_area] = Layout::vertical([
             Constraint::Min(3),
             Constraint::Length(banner_h),
             Constraint::Length(input_h),
-            Constraint::Length(1),
+            Constraint::Length(status_h),
         ])
         .areas(frame.area());
 
