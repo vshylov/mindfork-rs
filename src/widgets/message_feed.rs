@@ -313,12 +313,22 @@ fn role_header(text: &str, color: Color) -> Line<'static> {
 
 /// Прикрепляет цветной гуттер-рейл [`RAIL`] к строке (в начало), сохраняя стиль и
 /// выравнивание исходной строки.
+///
+/// Стиль уровня строки (`line.style`) **вплавляется в спаны содержимого**, а
+/// `out.style` сбрасывается в дефолт — иначе line-level модификаторы (напр. `DIM`
+/// у разделителей `───` и рамок таблиц, см. `shared::markdown`) затекали бы и на
+/// сам рейл (его спан задаёт только `fg`, не трогая модификаторы), и он выглядел бы
+/// другим цветом напротив таких строк.
 fn prepend_rail(line: Line<'static>, rail: Color) -> Line<'static> {
     let mut spans = Vec::with_capacity(line.spans.len() + 1);
     spans.push(Span::styled(RAIL.to_string(), Style::new().fg(rail)));
-    spans.extend(line.spans);
+    // Финальный стиль спана = line.style.patch(span.style); складываем то же самое в
+    // сам спан, чтобы рейл не зависел от стиля строки.
+    for span in line.spans {
+        let merged = line.style.patch(span.style);
+        spans.push(Span::styled(span.content, merged));
+    }
     let mut out = Line::from(spans);
-    out.style = line.style;
     out.alignment = line.alignment;
     out
 }
@@ -730,6 +740,30 @@ mod tests {
             .flat_map(|l| l.spans.iter().map(|s| s.content.as_ref()))
             .collect();
         assert!(joined.contains("x²"));
+    }
+
+    #[test]
+    fn rail_is_not_dimmed_next_to_table_borders() {
+        // Рейл слева должен иметь чистый цвет роли без line-level модификаторов
+        // (напр. DIM у рамок таблиц/разделителей), иначе он другого цвета напротив них.
+        let feed = MessageFeed::new();
+        let table = "| a | b |\n|---|---|\n| 1 | 2 |";
+        let lines = feed.build_lines(
+            &[msg(FeedRole::Assistant, table, "")],
+            &Palette::default(),
+            80,
+        );
+        for line in &lines {
+            // Рейл — первый спан с символом «▌».
+            if let Some(rail) = line.spans.first()
+                && rail.content.starts_with('▌')
+            {
+                assert!(
+                    !rail.style.add_modifier.contains(Modifier::DIM),
+                    "рейл не должен наследовать DIM от строки таблицы/разделителя"
+                );
+            }
+        }
     }
 
     #[test]
