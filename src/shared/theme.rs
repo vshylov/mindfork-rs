@@ -150,7 +150,7 @@ impl Palette {
             muted: Color::Rgb(110, 116, 124),
             border: Color::Rgb(190, 193, 198),
             border_focus: Color::Rgb(120, 124, 130),
-            keycap_fg: Color::Rgb(74, 78, 84),  // мягче чёрного — «клавиши» не кричат
+            keycap_fg: Color::Rgb(74, 78, 84), // мягче чёрного — «клавиши» не кричат
             keycap_bg: Color::Rgb(222, 224, 228),
             keycap_danger: Color::Rgb(178, 34, 34),
             dark: false,
@@ -206,6 +206,21 @@ impl Palette {
             self.keycap(key),
             Span::styled(format!(" {desc}"), self.muted_style()),
         ]
+    }
+
+    /// Как `hint`, но **последнее слово** описания выделено цветом `color`, а начало
+    /// остаётся приглушённым — для подсветки значения активного режима (напр. слова
+    /// «прокрутка» в «мышь: прокрутка» цветом `accent`, как заголовки markdown в ленте).
+    pub fn hint_highlight_word(&self, key: &str, desc: &str, color: Color) -> Vec<Span<'static>> {
+        let mut spans = vec![self.keycap(key)];
+        match desc.rsplit_once(' ') {
+            Some((head, word)) => {
+                spans.push(Span::styled(format!(" {head} "), self.muted_style()));
+                spans.push(Span::styled(word.to_string(), Style::new().fg(color)));
+            }
+            None => spans.push(Span::styled(format!(" {desc}"), Style::new().fg(color))),
+        }
+        spans
     }
 
     /// Статус-«пилюля»: точка-индикатор `●` + подпись, оба цветом `color`
