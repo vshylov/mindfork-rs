@@ -9,14 +9,18 @@
 
 use ratatui::Frame;
 use ratatui::layout::Rect;
-use ratatui::style::{Modifier, Style, Stylize};
+use ratatui::style::{Color, Modifier, Style, Stylize};
 use ratatui::text::{Line, Span, Text};
-use ratatui::widgets::{Block, Borders, Paragraph};
+use ratatui::widgets::{Block, BorderType, Borders, Paragraph};
 
 use crate::entities::message::{Message, MessageRole};
 use crate::shared::markdown;
 use crate::shared::theme::Palette;
 use crate::shared::wrap;
+
+/// Гуттер-рейл слева от каждой строки сообщения: цветная вертикальная черта +
+/// пробел (редизайн: «Role rails — цветные ▌ в гаттере»). Ширина — 2 колонки.
+const RAIL: &str = "▌ ";
 
 /// Роль элемента ленты (UI-проекция; системные сообщения не показываются).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -192,18 +196,32 @@ impl MessageFeed {
         self.follow
     }
 
-    /// Рисует ленту. `messages` — текущее содержимое активного чата.
+    /// Рисует ленту. `messages` — текущее содержимое активного чата. `meta` —
+    /// правая подпись титула (напр. «gemma-4 · 16k ctx»; пусто — не показывать).
     pub fn render(
         &mut self,
         frame: &mut Frame,
         area: Rect,
         title: &str,
+        meta: &str,
         messages: &[FeedMessage],
         palette: &Palette,
     ) {
-        let block = Block::default()
+        // Скруглённая панель: слева титул с маркером ◆, справа — мета (модель/ctx).
+        let mut block = Block::default()
             .borders(Borders::ALL)
-            .title(format!(" {title} "));
+            .border_type(BorderType::Rounded)
+            .border_style(palette.border_style(false))
+            .title(Line::from(vec![
+                Span::styled(" ◆ ", palette.muted_style()),
+                Span::styled(format!("{title} "), Style::new().fg(palette.text)),
+            ]));
+        if !meta.is_empty() {
+            block = block.title(
+                Line::from(Span::styled(format!(" {meta} "), palette.muted_style()))
+                    .right_aligned(),
+            );
+        }
         let inner = block.inner(area);
         frame.render_widget(&block, area);
 
@@ -233,7 +251,9 @@ impl MessageFeed {
     }
 
     /// Собирает строки ленты: заголовки ролей, свёрнутые/развёрнутые «мысли»,
-    /// markdown-рендер тела, разделители.
+    /// markdown-рендер тела, разделители. Каждая строка сообщения получает цветной
+    /// гуттер-рейл по роли (см. [`RAIL`]); содержимое строится в ширину `width - 2`,
+    /// затем переносится и к каждому визуальному ряду прикрепляется рейл.
     fn build_lines(
         &self,
         messages: &[FeedMessage],
@@ -242,45 +262,98 @@ impl MessageFeed {
     ) -> Vec<Line<'static>> {
         let mut lines: Vec<Line<'static>> = Vec::new();
         if messages.is_empty() {
-            lines.push(Line::from("Начните диалог — введите сообщение ниже.").dim());
+            lines.push(Line::from(Span::styled(
+                "Начните диалог — введите сообщение ниже.",
+                palette.muted_style(),
+            )));
             return lines;
         }
+        // Ширина содержимого под рейл (рейл = 2 колонки).
+        let inner = width.saturating_sub(RAIL.chars().count()).max(1);
         for item in messages {
+            let rail = match item.role {
+                FeedRole::User => palette.user,
+                FeedRole::Assistant => palette.assistant,
+                FeedRole::Note => palette.muted,
+            };
+            // Тело сообщения собираем без рейла, в ширину `inner`.
+            let mut body: Vec<Line<'static>> = Vec::new();
             match item.role {
                 FeedRole::User => {
-                    lines.push(Line::from("Вы:").bold().fg(palette.user));
-                    push_body(&mut lines, item, palette, width);
+                    body.push(role_header("❯ ВЫ", palette.user_soft));
+                    push_body(&mut body, item, palette, inner);
                 }
                 FeedRole::Assistant => {
-                    lines.push(Line::from("Ассистент:").bold().fg(palette.assistant));
-                    push_thoughts(&mut lines, &item.thoughts, self.show_thoughts);
-                    push_assistant_body(&mut lines, item, palette, width);
+                    body.push(role_header("✦ АССИСТЕНТ", palette.assistant_soft));
+                    push_thoughts(&mut body, &item.thoughts, self.show_thoughts, palette);
+                    push_assistant_body(&mut body, item, palette, inner);
                 }
-                FeedRole::Note => push_body(&mut lines, item, palette, width),
+                FeedRole::Note => push_body(&mut body, item, palette, inner),
             }
+            // Переносим по ширине содержимого и навешиваем рейл на каждый ряд.
+            for line in body {
+                for wrapped in wrap::wrap_line(&line, inner) {
+                    lines.push(prepend_rail(wrapped, rail));
+                }
+            }
+            // Разделитель между сообщениями — без рейла.
             lines.push(Line::from(""));
         }
         lines
     }
 }
 
-/// Добавляет блок «мыслей» (свёрнутый — одной строкой-индикатором).
-fn push_thoughts(lines: &mut Vec<Line<'static>>, thoughts: &str, expanded: bool) {
+/// Строка-заголовок роли: иконка + название капсом, цветом «мягкого» варианта роли.
+fn role_header(text: &str, color: Color) -> Line<'static> {
+    Line::from(Span::styled(
+        text.to_string(),
+        Style::new().fg(color).add_modifier(Modifier::BOLD),
+    ))
+}
+
+/// Прикрепляет цветной гуттер-рейл [`RAIL`] к строке (в начало), сохраняя стиль и
+/// выравнивание исходной строки.
+fn prepend_rail(line: Line<'static>, rail: Color) -> Line<'static> {
+    let mut spans = Vec::with_capacity(line.spans.len() + 1);
+    spans.push(Span::styled(RAIL.to_string(), Style::new().fg(rail)));
+    spans.extend(line.spans);
+    let mut out = Line::from(spans);
+    out.style = line.style;
+    out.alignment = line.alignment;
+    out
+}
+
+/// Добавляет блок «мыслей»: свёрнутый — «пилюлей» с числом строк и клавишей,
+/// развёрнутый — содержимым на гуттере `│`.
+fn push_thoughts(
+    lines: &mut Vec<Line<'static>>,
+    thoughts: &str,
+    expanded: bool,
+    palette: &Palette,
+) {
     if thoughts.is_empty() {
         return;
     }
+    let muted = palette.muted_style();
     if !expanded {
         let count = thoughts.lines().count();
-        lines.push(
-            Line::from(format!("  ▸ мысли ({count} стр., Ctrl+T)"))
-                .dim()
-                .italic(),
-        );
+        lines.push(Line::from(vec![
+            Span::styled("▸ ", muted),
+            Span::styled("мысли", muted.add_modifier(Modifier::ITALIC)),
+            Span::styled(format!(" · {count} стр. · "), muted),
+            palette.keycap("Ctrl+T"),
+        ]));
         return;
     }
-    lines.push(Line::from("  ▾ мысли:").dim().italic());
+    lines.push(Line::from(Span::styled(
+        "▾ мысли",
+        muted.add_modifier(Modifier::ITALIC),
+    )));
     for t in thoughts.lines() {
-        lines.push(Line::from(format!("  │ {t}")).dim().italic());
+        lines.push(Line::from(Span::styled(
+            format!("│ {t}"),
+            muted.add_modifier(Modifier::ITALIC),
+        )));
     }
 }
 
@@ -355,22 +428,24 @@ fn push_markdown_fragment(
     true
 }
 
-/// Один tool-блок: заголовок `🔧 имя(аргументы)` (цвет инструмента) и результат на
-/// гуттере `│`. Аргументы и результат **переносятся по ширине** (не обрезаются).
+/// Один tool-блок (карточка тул-колла): заголовок `⚒ имя(аргументы)` цветом
+/// инструмента и результат на гуттере `└`. Аргументы и результат **переносятся
+/// по ширине** (не обрезаются).
 fn push_tool(lines: &mut Vec<Line<'static>>, tool: &FeedToolCall, palette: &Palette, width: usize) {
     let head_style = Style::default()
-        .fg(palette.tool)
-        .add_modifier(Modifier::DIM);
+        .fg(palette.tool_soft)
+        .add_modifier(Modifier::BOLD);
     let header = if tool.arguments.trim().is_empty() {
-        format!("🔧 {}", tool.name)
+        tool.name.clone()
     } else {
-        format!("🔧 {}({})", tool.name, tool.arguments)
+        format!("{}({})", tool.name, tool.arguments)
     };
-    // Первый ряд с отступом «  », продолжения выравниваем под имя.
-    push_wrapped(lines, "  ", "     ", &header, width, head_style);
+    // Первый ряд с иконкой ⚒ (эмодзи-глиф шириной 2 — за ним два пробела, чтобы он
+    // не сливался с именем), продолжения выравниваем под имя.
+    push_wrapped(lines, "⚒  ", "   ", &header, width, head_style);
     if !tool.result.is_empty() {
-        let body_style = Style::default().add_modifier(Modifier::DIM);
-        push_wrapped(lines, "  │ ", "  │ ", &tool.result, width, body_style);
+        let body_style = Style::default().fg(palette.muted);
+        push_wrapped(lines, "└ ", "  ", &tool.result, width, body_style);
     }
 }
 
@@ -465,7 +540,7 @@ mod tests {
             .iter()
             .flat_map(|l| l.spans.iter().map(|s| s.content.as_ref()))
             .collect();
-        assert!(joined.contains("🔧 note_save"));
+        assert!(joined.contains("⚒") && joined.contains("note_save"));
         assert!(joined.contains("Заметка сохранена"));
     }
 
@@ -487,10 +562,7 @@ mod tests {
             .map(|l| l.spans.iter().map(|s| s.content.as_ref()).collect())
             .collect();
         let idx_before = rows.iter().position(|r| r.contains("Ищу погоду")).unwrap();
-        let idx_tool = rows
-            .iter()
-            .position(|r| r.contains("🔧 web_search"))
-            .unwrap();
+        let idx_tool = rows.iter().position(|r| r.contains("web_search")).unwrap();
         let idx_after = rows.iter().position(|r| r.contains("Готово")).unwrap();
         assert!(
             idx_before < idx_tool && idx_tool < idx_after,
@@ -507,6 +579,11 @@ mod tests {
             .collect()
     }
 
+    /// Пустой ли визуальный ряд после снятия гуттер-рейла (`▌` + пробелы).
+    fn is_blank_row(r: &str) -> bool {
+        r.trim_matches(|c| c == '▌' || c == ' ').is_empty()
+    }
+
     #[test]
     fn tool_block_separated_from_text_by_blank_lines() {
         // текст-до → вызов → текст-после: вокруг вызова должны быть пустые строки.
@@ -520,17 +597,10 @@ mod tests {
         });
         let rows = row_texts(&feed.build_lines(&[m], &Palette::default(), 80));
         let i_before = rows.iter().position(|r| r.contains("до")).unwrap();
-        let i_tool = rows
-            .iter()
-            .position(|r| r.contains("🔧 note_save"))
-            .unwrap();
+        let i_tool = rows.iter().position(|r| r.contains("note_save")).unwrap();
         let i_after = rows.iter().position(|r| r.contains("ПОСЛЕ")).unwrap();
-        // Между текстом-до и вызовом — ровно одна пустая строка.
-        assert!(
-            rows[i_before + 1..i_tool]
-                .iter()
-                .all(|r| r.trim().is_empty())
-        );
+        // Между текстом-до и вызовом — ровно одна пустая строка (с рейлом-гуттером).
+        assert!(rows[i_before + 1..i_tool].iter().all(|r| is_blank_row(r)));
         assert_eq!(
             i_tool - i_before,
             2,
@@ -557,21 +627,15 @@ mod tests {
             });
         }
         let rows = row_texts(&feed.build_lines(&[m], &Palette::default(), 80));
-        let i1 = rows
-            .iter()
-            .position(|r| r.contains("🔧 first_tool"))
-            .unwrap();
-        let i2 = rows
-            .iter()
-            .position(|r| r.contains("🔧 second_tool"))
-            .unwrap();
+        let i1 = rows.iter().position(|r| r.contains("first_tool")).unwrap();
+        let i2 = rows.iter().position(|r| r.contains("second_tool")).unwrap();
         // Между двумя подряд идущими вызовами — ровно одна пустая строка.
         assert_eq!(
             i2 - i1,
             2,
             "между соседними вызовами должна быть одна пустая строка"
         );
-        assert!(rows[i1 + 1..i2].iter().all(|r| r.trim().is_empty()));
+        assert!(rows[i1 + 1..i2].iter().all(|r| is_blank_row(r)));
     }
 
     #[test]
@@ -586,12 +650,13 @@ mod tests {
             text_offset: 0,
         });
         let lines = feed.build_lines(&[m], &Palette::default(), 30);
-        // Результат не обрезан (нет «…») и разложен на несколько рядов гуттера.
+        // Результат не обрезан (нет «…») и разложен на несколько рядов (рейл + гуттер
+        // `└`/отступ продолжения).
         let gutter_rows = lines
             .iter()
             .filter(|l| {
                 let s: String = l.spans.iter().map(|sp| sp.content.as_ref()).collect();
-                s.starts_with("  │ ")
+                s.contains("слово")
             })
             .count();
         assert!(
@@ -688,7 +753,16 @@ mod tests {
             FeedMessage::note("(генерация отменена)"),
         ];
         let mut term = Terminal::new(TestBackend::new(40, 10)).unwrap();
-        term.draw(|f| feed.render(f, f.area(), "Чат", &messages, &Palette::default()))
-            .unwrap();
+        term.draw(|f| {
+            feed.render(
+                f,
+                f.area(),
+                "Чат",
+                "gemma-4 · 16k ctx",
+                &messages,
+                &Palette::default(),
+            )
+        })
+        .unwrap();
     }
 }

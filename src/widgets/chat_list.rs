@@ -9,7 +9,7 @@ use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::style::{Style, Stylize};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, Borders, Clear, List, ListItem, ListState, Paragraph};
+use ratatui::widgets::{Block, BorderType, Borders, Clear, List, ListItem, ListState, Paragraph};
 use uuid::Uuid;
 
 use crate::entities::chat::ChatSummary;
@@ -17,6 +17,7 @@ use crate::features::chat_search_sort::{SortMode, filter_and_sort};
 use crate::features::rename_chat::sanitize_title;
 use crate::shared::keys;
 use crate::shared::theme::Palette;
+use crate::shared::wrap;
 
 /// Действие, которое оверлей просит выполнить вышестоящий слой.
 #[derive(Debug, Clone, PartialEq)]
@@ -47,8 +48,14 @@ pub enum ChatListAction {
 enum Mode {
     /// Ввод в строку поиска.
     Search,
-    /// Переименование выбранного чата по месту.
-    Rename { id: Uuid, buffer: String },
+    /// Переименование выбранного чата по месту. Текст хранится посимвольно
+    /// (`Vec<char>`), `cursor` — позиция курсора в символах (для перемещения
+    /// стрелками/Home/End и вставки/удаления в середине).
+    Rename {
+        id: Uuid,
+        buffer: Vec<char>,
+        cursor: usize,
+    },
 }
 
 /// Состояние оверлея списка чатов.
@@ -194,9 +201,12 @@ impl ChatListState {
             }
             KeyCode::F(2) => {
                 if let Some(chat) = self.visible().get(self.selected) {
+                    let buffer: Vec<char> = chat.title.chars().collect();
+                    let cursor = buffer.len();
                     self.mode = Mode::Rename {
                         id: chat.id,
-                        buffer: chat.title.clone(),
+                        buffer,
+                        cursor,
                     };
                 }
                 ChatListAction::None
@@ -225,8 +235,10 @@ impl ChatListState {
     }
 
     fn on_key_rename(&mut self, key: KeyEvent) -> ChatListAction {
+        let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
+        let alt = key.modifiers.contains(KeyModifiers::ALT);
         // Локально извлекаем поля, чтобы не держать заём `self.mode`.
-        let Mode::Rename { id, buffer } = &mut self.mode else {
+        let Mode::Rename { id, buffer, cursor } = &mut self.mode else {
             return ChatListAction::None;
         };
         match key.code {
@@ -236,19 +248,48 @@ impl ChatListState {
             }
             KeyCode::Enter => {
                 let id = *id;
-                let action = match sanitize_title(buffer) {
+                let title = buffer.iter().collect::<String>();
+                let action = match sanitize_title(&title) {
                     Some(title) => ChatListAction::Rename { id, title },
                     None => ChatListAction::None,
                 };
                 self.mode = Mode::Search;
                 action
             }
-            KeyCode::Backspace => {
-                buffer.pop();
+            // Перемещение курсора (для правки имени в середине).
+            KeyCode::Left => {
+                *cursor = cursor.saturating_sub(1);
                 ChatListAction::None
             }
-            KeyCode::Char(c) => {
-                buffer.push(c);
+            KeyCode::Right => {
+                *cursor = (*cursor + 1).min(buffer.len());
+                ChatListAction::None
+            }
+            KeyCode::Home => {
+                *cursor = 0;
+                ChatListAction::None
+            }
+            KeyCode::End => {
+                *cursor = buffer.len();
+                ChatListAction::None
+            }
+            KeyCode::Backspace => {
+                if *cursor > 0 {
+                    *cursor -= 1;
+                    buffer.remove(*cursor);
+                }
+                ChatListAction::None
+            }
+            KeyCode::Delete => {
+                if *cursor < buffer.len() {
+                    buffer.remove(*cursor);
+                }
+                ChatListAction::None
+            }
+            // Вставка символа в позицию курсора (Ctrl/Alt-комбинации не печатаем).
+            KeyCode::Char(c) if !ctrl && !alt => {
+                buffer.insert(*cursor, c);
+                *cursor += 1;
                 ChatListAction::None
             }
             _ => ChatListAction::None,
@@ -258,42 +299,66 @@ impl ChatListState {
     /// Рисует окно списка чатов на весь экран (`area`). `active` — текущий
     /// активный чат (метка). См. spec §11.2.
     pub fn render(&self, frame: &mut Frame, area: Rect, active: Option<Uuid>, palette: &Palette) {
-        let popup = area;
-        frame.render_widget(Clear, popup);
+        frame.render_widget(Clear, area);
 
-        let block = Block::default()
-            .borders(Borders::ALL)
-            .title(" Чаты ")
-            .title_bottom(self.help_line());
-        let inner = block.inner(popup);
-        frame.render_widget(block, popup);
+        // Снизу — строка статуса с «клавишами» (как на экране чата): аккуратная
+        // сетка хоткеев (число строк зависит от ширины). Считаем её заранее, чтобы
+        // отвести под неё ровно нужную высоту.
+        let status_lines = self.status_lines(palette, area.width as usize);
+        let status_h = (status_lines.len() as u16).max(1);
+        let [main_area, status_area] =
+            Layout::vertical([Constraint::Min(3), Constraint::Length(status_h)]).areas(area);
 
-        // Под список отдаём всё, кроме строки поиска и (если есть) строки статуса
-        // (ошибка/подтверждение).
-        let mut constraints = vec![Constraint::Length(1), Constraint::Min(1)];
+        // Панель со списком: скруглённая рамка, титул слева, число диалогов справа.
+        let count = self.all.len();
+        let block = palette.panel("▤ Чаты", true).title(
+            Line::from(Span::styled(
+                format!(" {count} диалог(ов) "),
+                palette.muted_style(),
+            ))
+            .right_aligned(),
+        );
+        let inner = block.inner(main_area);
+        frame.render_widget(block, main_area);
+
+        // Внутри панели: строка поиска (в рамке, 3 ряда), список и — при наличии —
+        // строка статуса операции (ошибка/подтверждение).
+        let mut constraints = vec![Constraint::Length(3), Constraint::Min(1)];
         if self.error.is_some() || self.notice.is_some() {
             constraints.push(Constraint::Length(1));
         }
         let chunks = Layout::vertical(constraints).split(inner);
         let (search_area, list_area) = (chunks[0], chunks[1]);
 
-        // --- строка поиска / переименования ---
-        frame.render_widget(self.header_line(palette), search_area);
+        // --- строка поиска (в рамке, с клавишей `/` справа) ИЛИ поле
+        // переименования (обычный ввод с настоящим курсором) ---
+        match &self.mode {
+            Mode::Search => self.render_search(frame, search_area, palette),
+            Mode::Rename { buffer, cursor, .. } => {
+                render_rename(frame, search_area, palette, buffer, *cursor)
+            }
+        }
 
         // --- список ---
         let visible = self.visible();
+        let width = list_area.width as usize;
         let items: Vec<ListItem> = visible
             .iter()
-            .map(|c| ListItem::new(self.item_line(c, active, palette)))
+            .enumerate()
+            .map(|(i, c)| {
+                ListItem::new(self.item_line(c, i == self.selected, active, palette, width))
+            })
             .collect();
-        let list = List::new(items).highlight_style(Style::new().reversed());
+        // Выделение — мягкая подложка (как тинт в макете), а не инверсия всей строки;
+        // зелёный рейл выделенной строки добавляется в `item_line`.
+        let list = List::new(items).highlight_style(Style::new().bg(palette.keycap_bg));
         let mut list_state = ListState::default();
         if !visible.is_empty() {
             list_state.select(Some(self.selected.min(visible.len() - 1)));
         }
         frame.render_stateful_widget(list, list_area, &mut list_state);
 
-        // --- область статуса: ошибка (красным) или подтверждение (успехом) ---
+        // --- область статуса операции: ошибка (красным) или подтверждение (успехом) ---
         if let Some(err) = &self.error {
             let line = Line::from(vec![
                 Span::from("⚠ ").fg(palette.error),
@@ -307,53 +372,261 @@ impl ChatListState {
             ]);
             frame.render_widget(Paragraph::new(line), chunks[2]);
         }
+
+        // --- строка статуса (хоткеи, как на экране чата) ---
+        frame.render_widget(Paragraph::new(status_lines), status_area);
     }
 
-    fn header_line(&self, palette: &Palette) -> Paragraph<'static> {
-        match &self.mode {
-            Mode::Search => Paragraph::new(Line::from(vec![
-                Span::from("🔎 ").dim(),
-                Span::from(self.query.clone()),
-                Span::from("▏").dim(),
-            ])),
-            Mode::Rename { buffer, .. } => Paragraph::new(Line::from(vec![
-                Span::from("✎ ").fg(palette.warning),
-                Span::from(buffer.clone()),
-                Span::from("▏").dim(),
-            ])),
+    /// Рисует строку поиска в рамке; справа — «клавиша» `/` (приглашение фокуса).
+    fn render_search(&self, frame: &mut Frame, area: Rect, palette: &Palette) {
+        let block = Block::default()
+            .borders(Borders::ALL)
+            .border_type(BorderType::Rounded)
+            .border_style(palette.border_style(true));
+        let inner = block.inner(area);
+        frame.render_widget(block, area);
+
+        // Поле и колонка под «клавишу» `/` справа.
+        let [field, cap] =
+            Layout::horizontal([Constraint::Min(1), Constraint::Length(3)]).areas(inner);
+
+        let mut spans = vec![
+            Span::styled("⌕ ", palette.muted_style()),
+            Span::styled(self.query.clone(), Style::new().fg(palette.text)),
+            Span::styled("▏", palette.muted_style()),
+        ];
+        if self.query.is_empty() {
+            spans.push(Span::styled("Поиск по чатам…", palette.muted_style()));
         }
+        frame.render_widget(Paragraph::new(Line::from(spans)), field);
+        frame.render_widget(Paragraph::new(Line::from(palette.keycap("/"))), cap);
     }
 
+    /// Строка чата: цветной рейл выделенной строки, точка (зелёная у активного чата),
+    /// заголовок слева и счётчик сообщений, прижатый к правому краю (`width` — ширина
+    /// области списка). Длинный заголовок усекается с многоточием.
     fn item_line(
         &self,
         chat: &ChatSummary,
+        is_selected: bool,
         active: Option<Uuid>,
         palette: &Palette,
+        width: usize,
     ) -> Line<'static> {
-        let marker = if active == Some(chat.id) {
-            "● "
+        let is_active = active == Some(chat.id);
+        // Рейл выделенной строки (2 колонки) + точка (2 колонки) = префикс.
+        let rail = if is_selected {
+            Span::styled("▌ ", Style::new().fg(palette.success))
         } else {
-            "  "
+            Span::raw("  ")
         };
+        let dot_color = if is_active {
+            palette.success
+        } else {
+            palette.border
+        };
+        let title_style = if is_active {
+            Style::new().fg(palette.text).bold()
+        } else {
+            Style::new().fg(palette.text)
+        };
+
+        let count = format!("{} сообщ.", chat.message_count);
+        let count_w = display_width_str(&count);
+        const PREFIX_W: usize = 4; // рейл (2) + точка «● » (2)
+        const TRAIL: usize = 1; // правый отступ
+        // Доступная ширина под заголовок (минимальный зазор 1 перед счётчиком).
+        let max_title = width.saturating_sub(PREFIX_W + count_w + TRAIL + 1);
+        let (title, title_w) = truncate_to_width(&chat.title, max_title);
+        let gap = width
+            .saturating_sub(PREFIX_W + title_w + count_w + TRAIL)
+            .max(1);
+
         Line::from(vec![
-            Span::from(marker).fg(palette.success),
-            Span::from(chat.title.clone()),
-            Span::from(format!(" · {} сообщ.", chat.message_count)).dim(),
+            rail,
+            Span::styled("● ", Style::new().fg(dot_color)),
+            Span::styled(title, title_style),
+            Span::raw(" ".repeat(gap)),
+            Span::styled(count, palette.muted_style()),
         ])
     }
 
-    fn help_line(&self) -> Line<'static> {
-        match self.mode {
-            Mode::Search => Line::from(format!(
-                " ↑↓ выбор · Enter открыть · Esc назад · F2 ⮞ · Ctrl+R авто-назв. · Ctrl+N новый · Ctrl+D копия · F5 в буфер · Del удалить · Ctrl+C выход · Tab сорт.: {} ",
-                self.sort.label()
-            ))
-            .dim(),
-            Mode::Rename { .. } => {
-                Line::from(" переименование: Enter — ок · Esc — отмена ").dim()
+    /// Строки статуса (хоткеи) внизу экрана — как на экране чата: «клавиши» на
+    /// приглушённом фоне + приглушённые описания, выровненные в аккуратную сетку
+    /// (столбцы совпадают по вертикали). Число строк подбирается под ширину `width`:
+    /// берём максимум столбцов, влезающих в ширину (минимум строк). В режиме
+    /// переименования — одна строка-подсказка.
+    fn status_lines(&self, palette: &Palette, width: usize) -> Vec<Line<'static>> {
+        if let Mode::Rename { .. } = self.mode {
+            return vec![Line::from(vec![
+                palette.keycap("Enter"),
+                Span::styled(" сохранить   ", palette.muted_style()),
+                palette.keycap("Esc"),
+                Span::styled(" отмена", palette.muted_style()),
+            ])];
+        }
+
+        // Пары «клавиша — описание — опасная ли» (порядок = чтение слева-направо,
+        // сверху-вниз). `Tab` несёт текущий режим сортировки.
+        let sort = self.sort.label();
+        let items: Vec<(&str, String, bool)> = vec![
+            ("↑↓", "выбор".into(), false),
+            ("Enter", "открыть".into(), false),
+            ("F2", "переименовать".into(), false),
+            ("Ctrl+R", "авто-назв.".into(), false),
+            ("Ctrl+N", "новый".into(), false),
+            ("Ctrl+D", "копия".into(), false),
+            ("F5", "в буфер".into(), false),
+            ("Del", "удалить".into(), true),
+            ("Esc", "назад".into(), false),
+            ("Ctrl+C", "выход".into(), false),
+            ("Tab", format!("сортировка: {sort}"), false),
+        ];
+
+        let n = items.len();
+        // Ширина ячейки = «клавиша» (символы + 2 на отступы) + пробел + описание.
+        let cell_w: Vec<usize> = items
+            .iter()
+            .map(|(key, desc, _)| keycap_width(key) + 1 + display_width_str(desc))
+            .collect();
+        const GAP: usize = 3; // зазор между столбцами
+
+        // Подбираем максимум столбцов, влезающих в ширину (→ минимум строк).
+        let col_widths = |cols: usize| -> Vec<usize> {
+            let mut w = vec![0usize; cols];
+            for (i, cw) in cell_w.iter().enumerate() {
+                w[i % cols] = w[i % cols].max(*cw);
+            }
+            w
+        };
+        let mut cols = 1;
+        for c in (1..=n).rev() {
+            let total: usize = col_widths(c).iter().sum::<usize>() + GAP * c.saturating_sub(1);
+            if total <= width {
+                cols = c;
+                break;
             }
         }
+        let widths = col_widths(cols);
+
+        // Раскладываем по строкам (row-major); каждую ячейку добиваем до ширины
+        // столбца, чтобы столбцы совпадали по вертикали.
+        let mut lines: Vec<Line<'static>> = Vec::new();
+        for row in items.chunks(cols) {
+            let mut spans: Vec<Span<'static>> = Vec::new();
+            for (c, (key, desc, danger)) in row.iter().enumerate() {
+                let cap = if *danger {
+                    Span::styled(
+                        format!(" {key} "),
+                        Style::new().fg(palette.error).bg(palette.keycap_bg),
+                    )
+                } else {
+                    palette.keycap(*key)
+                };
+                spans.push(cap);
+                spans.push(Span::styled(format!(" {desc}"), palette.muted_style()));
+                // Добивка до ширины столбца + зазор (у последнего столбца — без зазора).
+                let used = keycap_width(key) + 1 + display_width_str(desc);
+                let pad = widths[c].saturating_sub(used) + if c + 1 < cols { GAP } else { 0 };
+                if pad > 0 {
+                    spans.push(Span::raw(" ".repeat(pad)));
+                }
+            }
+            lines.push(Line::from(spans));
+        }
+        lines
     }
+}
+
+/// Ширина «клавиши» в колонках: символы лейбла + 2 (отступы вокруг, как в
+/// [`Palette::keycap`], который форматирует `" {label} "`).
+fn keycap_width(label: &str) -> usize {
+    display_width_str(label) + 2
+}
+
+/// Рисует поле переименования в рамке: обычный однострочный ввод с **настоящим**
+/// терминальным курсором (через `set_cursor_position`) и горизонтальным скроллом
+/// (длинный заголовок «уезжает» влево, курсор всегда виден). Заменяет строку поиска,
+/// пока идёт переименование. `buffer`/`cursor` — текст и позиция курсора (в символах).
+fn render_rename(frame: &mut Frame, area: Rect, palette: &Palette, buffer: &[char], cursor: usize) {
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_type(BorderType::Rounded)
+        .border_style(palette.border_style(true))
+        .title(Span::styled(" Переименование ", palette.muted_style()));
+    let inner = block.inner(area);
+    frame.render_widget(block, area);
+    if inner.width == 0 || inner.height == 0 {
+        return;
+    }
+    let view_w = inner.width as usize;
+    let cursor = cursor.min(buffer.len());
+    let cursor_vw = wrap::display_width(&buffer[..cursor]);
+
+    // Горизонтальный скролл: держим курсор в видимой области.
+    let hscroll = cursor_vw.saturating_sub(view_w.saturating_sub(1));
+    // Видимый срез [start, end) по колонкам [hscroll, hscroll + view_w).
+    let mut start = 0;
+    let mut w = 0;
+    while start < buffer.len() && w < hscroll {
+        w += wrap::char_width(buffer[start]);
+        start += 1;
+    }
+    let mut end = start;
+    let mut vis_w = 0;
+    while end < buffer.len() {
+        let cw = wrap::char_width(buffer[end]);
+        if vis_w + cw > view_w {
+            break;
+        }
+        vis_w += cw;
+        end += 1;
+    }
+    let visible: String = buffer[start..end].iter().collect();
+    frame.render_widget(
+        Paragraph::new(Line::from(Span::styled(
+            visible,
+            Style::new().fg(palette.text),
+        ))),
+        inner,
+    );
+
+    // Настоящий курсор (на ячейке, без «фантомного» столбца как у каретки).
+    let cursor_x = inner.x + (cursor_vw - hscroll) as u16;
+    let x = cursor_x.min(inner.x + inner.width.saturating_sub(1));
+    frame.set_cursor_position((x, inner.y));
+}
+
+/// Видимая ширина строки в колонках терминала.
+fn display_width_str(s: &str) -> usize {
+    wrap::display_width(&s.chars().collect::<Vec<_>>())
+}
+
+/// Усекает строку до ширины `max` колонок, добавляя «…» при усечении. Возвращает
+/// усечённую строку и её фактическую ширину. При `max == 0` — пустая строка.
+fn truncate_to_width(s: &str, max: usize) -> (String, usize) {
+    let chars: Vec<char> = s.chars().collect();
+    let full = wrap::display_width(&chars);
+    if full <= max {
+        return (s.to_string(), full);
+    }
+    if max == 0 {
+        return (String::new(), 0);
+    }
+    // Оставляем место под «…» (1 колонка).
+    let budget = max.saturating_sub(1);
+    let mut out = String::new();
+    let mut w = 0;
+    for c in chars {
+        let cw = wrap::char_width(c);
+        if w + cw > budget {
+            break;
+        }
+        w += cw;
+        out.push(c);
+    }
+    out.push('…');
+    (out, w + 1)
 }
 
 #[cfg(test)]
@@ -497,6 +770,31 @@ mod tests {
             ChatListAction::Rename {
                 id,
                 title: "Новое".into()
+            }
+        );
+    }
+
+    #[test]
+    fn rename_cursor_moves_and_edits_in_middle() {
+        // Курсор в режиме переименования двигается стрелками/Home/End, правка идёт
+        // в позицию курсора (а не только в конец).
+        let chats = vec![chat("abc")];
+        let id = chats[0].id;
+        let mut s = ChatListState::new(chats, None);
+        s.on_key(key(KeyCode::F(2))); // буфер "abc", курсор в конце (3)
+        s.on_key(key(KeyCode::Home)); // курсор → 0
+        s.on_key(key(KeyCode::Char('X'))); // вставка в начало → "Xabc", курсор 1
+        s.on_key(key(KeyCode::End)); // курсор → 4 (конец)
+        s.on_key(key(KeyCode::Char('Y'))); // вставка в конец → "XabcY", курсор 5
+        s.on_key(key(KeyCode::Home)); // курсор → 0
+        s.on_key(key(KeyCode::Right)); // курсор 1
+        s.on_key(key(KeyCode::Right)); // курсор 2 (перед 'b')
+        s.on_key(key(KeyCode::Delete)); // удалить 'b' в середине → "XacY"
+        assert_eq!(
+            s.on_key(key(KeyCode::Enter)),
+            ChatListAction::Rename {
+                id,
+                title: "XacY".into()
             }
         );
     }

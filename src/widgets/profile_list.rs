@@ -7,12 +7,13 @@
 use ratatui::Frame;
 use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyEventKind};
 use ratatui::layout::{Constraint, Flex, Layout, Rect};
-use ratatui::style::{Style, Stylize};
-use ratatui::text::Line;
-use ratatui::widgets::{Block, Borders, Clear, List, ListItem, ListState};
+use ratatui::style::Style;
+use ratatui::text::{Line, Span};
+use ratatui::widgets::{Clear, List, ListItem, ListState};
 use uuid::Uuid;
 
 use crate::entities::profile::ProfileSummary;
+use crate::shared::theme::Palette;
 
 /// Действие, которое оверлей просит выполнить вышестоящий слой.
 #[derive(Debug, Clone, PartialEq)]
@@ -71,19 +72,26 @@ impl ProfileListState {
     }
 
     /// Рисует оверлей по центру `area`.
-    pub fn render(&self, frame: &mut Frame, area: Rect) {
+    pub fn render(&self, frame: &mut Frame, area: Rect, palette: &Palette) {
         let rows = (self.profiles.len() as u16 + 2).clamp(5, area.height);
         let popup = centered_rect(50, 30, rows, area);
         frame.render_widget(Clear, popup);
 
-        let block = Block::default()
-            .borders(Borders::ALL)
-            .title(" Новый чат · выбор профиля ")
-            .title_bottom(Line::from(" ↑↓ выбор · Enter создать · Esc отмена ").dim());
+        let block = palette
+            .panel("✦ Новый чат · выбор профиля", true)
+            .title_bottom(Line::from(Span::styled(
+                " ↑↓ выбор · Enter создать · Esc отмена ",
+                palette.muted_style(),
+            )));
         let items: Vec<ListItem> = self
             .profiles
             .iter()
-            .map(|p| ListItem::new(Line::from(p.name.clone())))
+            .map(|p| {
+                ListItem::new(Line::from(Span::styled(
+                    p.name.clone(),
+                    Style::new().fg(palette.text),
+                )))
+            })
             .collect();
         let list = List::new(items)
             .block(block)
@@ -156,7 +164,8 @@ mod tests {
         let s = ProfileListState::new(vec![profile("Альфа"), profile("Бета")]);
         for (w, h) in [(80u16, 24u16), (20, 6)] {
             let mut term = Terminal::new(TestBackend::new(w, h)).unwrap();
-            term.draw(|f| s.render(f, f.area())).unwrap();
+            term.draw(|f| s.render(f, f.area(), &Palette::default()))
+                .unwrap();
         }
     }
 }

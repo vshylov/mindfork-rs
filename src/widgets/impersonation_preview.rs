@@ -8,7 +8,7 @@
 use ratatui::Frame;
 use ratatui::layout::Rect;
 use ratatui::text::{Line, Text};
-use ratatui::widgets::{Block, Borders, Paragraph};
+use ratatui::widgets::{Block, BorderType, Borders, Paragraph};
 
 use crate::shared::theme::Palette;
 use crate::shared::wrap::wrap_ranges;
@@ -35,6 +35,7 @@ pub fn render(
     };
     let block = Block::default()
         .borders(Borders::ALL)
+        .border_type(BorderType::Rounded)
         .border_style(palette.accent_style())
         .title(Line::from(hint).style(palette.accent_style()));
 

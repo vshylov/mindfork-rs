@@ -4,7 +4,7 @@
 
 use ratatui::Frame;
 use ratatui::layout::Rect;
-use ratatui::style::Stylize;
+use ratatui::style::Style;
 use ratatui::text::{Line, Span};
 
 use crate::shared::server::ServerStatus;
@@ -52,22 +52,28 @@ fn spans(
     mouse_scroll: bool,
     palette: &Palette,
 ) -> Vec<Span<'static>> {
-    let (label, style) = match status {
-        ServerStatus::NotConfigured => ("сервер не настроен".to_string(), palette.warning_style()),
-        ServerStatus::Connecting => ("подключение…".to_string(), palette.warning_style()),
-        ServerStatus::Ready => ("готов".to_string(), palette.success_style()),
-        ServerStatus::Disconnected(why) => (format!("нет связи: {why}"), palette.error_style()),
+    // Разделитель-черта между группами (тихий, цветом рамки).
+    let sep = || Span::styled("  │  ", Style::new().fg(palette.border));
+    let muted = palette.muted_style();
+
+    // Статус сервера — «пилюлей» (точка-индикатор + подпись цветом статуса).
+    let (label, color) = match status {
+        ServerStatus::NotConfigured => ("сервер не настроен".to_string(), palette.warning),
+        ServerStatus::Connecting => ("сервер: подключение…".to_string(), palette.warning),
+        ServerStatus::Ready => ("сервер: готов".to_string(), palette.success),
+        ServerStatus::Disconnected(why) => (format!("сервер: нет связи: {why}"), palette.error),
     };
-    let mut spans = vec![Span::from("сервер: "), Span::styled(label, style)];
+    let mut spans = palette.pill(&label, color);
+
     if generating {
-        spans.push(Span::from("  •  ").dim());
-        spans.push(Span::styled("генерация…", palette.accent_style()));
+        spans.push(sep());
+        spans.push(Span::styled("⟳ генерация…", palette.accent_style()));
     }
     // Суммарный счётчик токенов (переписка + ответ): ярко во время генерации (растёт
     // live), приглушённо после (итог последнего хода). Помечается `~`, пока переписка
     // (промпт) — клиентская оценка, т.е. до прихода точного числа из `usage` сервера.
     if tokens > 0 || context.is_some() {
-        spans.push(Span::from("  •  ").dim());
+        spans.push(sep());
         let total = context.unwrap_or(0) + tokens;
         let approx = if context.is_some() && !context_exact {
             "~"
@@ -78,23 +84,29 @@ fn spans(
         if generating {
             spans.push(Span::styled(label, palette.accent_style()));
         } else {
-            spans.push(Span::from(label).dim());
+            spans.push(Span::styled(label, muted));
         }
     }
-    // Текущий режим мыши + клавиша тумблера (`Ctrl+W`), чтобы он был заметен.
-    spans.push(Span::from("  •  ").dim());
+    // Текущий режим мыши + клавиша тумблера (`Ctrl+W`).
+    spans.push(sep());
+    spans.push(palette.keycap("Ctrl+W"));
     if mouse_scroll {
-        spans.push(Span::styled(
-            "мышь: прокрутка (Ctrl+W)",
-            palette.accent_style(),
-        ));
+        spans.push(Span::styled(" мышь: прокрутка", palette.accent_style()));
     } else {
-        spans.push(Span::from("мышь: выделение (Ctrl+W)").dim());
+        spans.push(Span::styled(" мышь: выделение", muted));
     }
-    spans.push(
-        Span::from("  •  F1 справка · Esc чаты · Ctrl+N новый · Ctrl+P настройки · Ctrl+C выход")
-            .dim(),
-    );
+    // Тихая строка хоткеев — «клавиши» + приглушённые описания.
+    spans.push(sep());
+    for (key, desc) in [
+        ("F1", "справка"),
+        ("Esc", "чаты"),
+        ("Ctrl+N", "новый"),
+        ("Ctrl+P", "настройки"),
+        ("Ctrl+C", "выход"),
+    ] {
+        spans.extend(palette.hint(key, desc));
+        spans.push(Span::raw("   "));
+    }
     spans
 }
 

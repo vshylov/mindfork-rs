@@ -11,10 +11,13 @@ use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 use ratatui::layout::Rect;
 use ratatui::style::{Style, Stylize};
 use ratatui::text::{Line, Span, Text};
-use ratatui::widgets::{Block, Borders, Paragraph};
+use ratatui::widgets::{Block, BorderType, Borders, Paragraph};
 
 use crate::shared::theme::Palette;
 use crate::shared::wrap;
+
+/// Ширина колонки приглашения `❯ ` (в колонках) перед текстом ввода.
+const PROMPT_W: u16 = 2;
 
 /// Многострочное поле ввода с курсором.
 pub struct InputBox {
@@ -600,9 +603,34 @@ impl InputBox {
     ) {
         let block = Block::default()
             .borders(Borders::ALL)
-            .title(format!(" {title} "));
-        let inner = block.inner(area);
+            .border_type(BorderType::Rounded)
+            .border_style(palette.border_style(focused))
+            .title(Span::styled(format!(" {title} "), palette.muted_style()));
+        let full_inner = block.inner(area);
         frame.render_widget(&block, area);
+
+        // Колонка приглашения `❯` слева; текст рисуется правее.
+        let prompt_style = if focused {
+            Style::new().fg(palette.assistant)
+        } else {
+            palette.muted_style()
+        };
+        if full_inner.width > PROMPT_W {
+            let prompt_area = Rect {
+                height: 1,
+                ..full_inner
+            };
+            frame.render_widget(
+                Paragraph::new(Line::from(Span::styled("❯ ", prompt_style))),
+                prompt_area,
+            );
+        }
+        // Внутренняя область под текст — без колонки приглашения.
+        let inner = Rect {
+            x: full_inner.x + PROMPT_W,
+            width: full_inner.width.saturating_sub(PROMPT_W),
+            ..full_inner
+        };
 
         if self.single_line {
             self.render_single_line(frame, inner, focused, palette, command);
@@ -1160,12 +1188,13 @@ mod tests {
         assert_eq!((row, col), (1, 0));
     }
 
-    /// Рендерит поле во внутреннюю ширину `inner_w` (рамка добавляет 2 колонки),
-    /// чтобы выставить `last_width` для навигации `↑/↓` по визуальным рядам.
+    /// Рендерит поле во внутреннюю ширину `inner_w` (рамка добавляет 2 колонки,
+    /// колонка приглашения `❯` — ещё `PROMPT_W`), чтобы выставить `last_width` для
+    /// навигации `↑/↓` по визуальным рядам.
     fn render_at(ib: &mut InputBox, inner_w: u16) {
         use ratatui::Terminal;
         use ratatui::backend::TestBackend;
-        let mut term = Terminal::new(TestBackend::new(inner_w + 2, 8)).unwrap();
+        let mut term = Terminal::new(TestBackend::new(inner_w + 2 + PROMPT_W, 8)).unwrap();
         term.draw(|f| ib.render(f, f.area(), "ввод", true, &Palette::default(), false))
             .unwrap();
     }

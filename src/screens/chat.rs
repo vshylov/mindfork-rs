@@ -16,7 +16,7 @@ use ratatui::layout::{Constraint, Flex, Layout, Rect};
 use ratatui::style::Style;
 use ratatui::style::Stylize;
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, Borders, Clear, List, ListItem, ListState};
+use ratatui::widgets::{Clear, List, ListItem, ListState};
 use uuid::Uuid;
 
 use crate::entities::chat::ChatSummary;
@@ -937,6 +937,30 @@ impl ChatScreen {
 
     // ---------- отрисовка ----------
 
+    /// Правая подпись титула ленты: «модель · Nk ctx» из снимка настроек (пусто,
+    /// пока снимок не получен или модель не задана).
+    fn model_meta(&self) -> String {
+        let Some((cfg, _)) = &self.settings_snapshot else {
+            return String::new();
+        };
+        let model = cfg.engine.model_path.as_deref().and_then(|p| {
+            let name = p.rsplit(['/', '\\']).next().unwrap_or(p);
+            let name = name.trim_end_matches(".gguf");
+            (!name.is_empty()).then(|| name.to_string())
+        });
+        match model {
+            Some(m) => {
+                let ctx = cfg.engine.context_size;
+                if ctx > 0 {
+                    format!("{m} · {}k ctx", (ctx + 512) / 1024)
+                } else {
+                    m
+                }
+            }
+            None => String::new(),
+        }
+    }
+
     pub fn render(&mut self, frame: &mut Frame) {
         let _ = self.maybe_recheck_spelling();
 
@@ -974,8 +998,9 @@ impl ChatScreen {
         } else {
             self.title.clone()
         };
+        let meta = self.model_meta();
         self.feed_view
-            .render(frame, feed_area, &title, &self.feed, &self.palette);
+            .render(frame, feed_area, &title, &meta, &self.feed, &self.palette);
 
         if let Some(banner) = &self.rag {
             let spinner = SPINNER[(banner.tick / 2) % SPINNER.len()];
@@ -1028,13 +1053,13 @@ impl ChatScreen {
         }
 
         if let Some(overlay) = &self.profile_overlay {
-            overlay.render(frame, frame.area());
+            overlay.render(frame, frame.area(), &self.palette);
         }
         if let Some(popup) = &self.suggest {
-            render_suggest(frame, popup);
+            render_suggest(frame, popup, &self.palette);
         }
         if self.show_help {
-            render_help(frame);
+            render_help(frame, &self.palette);
         }
     }
 }
@@ -1085,15 +1110,15 @@ const HELP_KEYS: &[(&str, &str)] = &[
     ("Ctrl+C", "выход"),
 ];
 
-/// Рисует оверлей помощи по центру экрана.
-fn render_help(frame: &mut Frame) {
+/// Рисует оверлей помощи по центру экрана: «клавиши» + приглушённые описания.
+fn render_help(frame: &mut Frame, palette: &Palette) {
     let rows = (HELP_KEYS.len() as u16 + 2).min(frame.area().height);
     let key_width = HELP_KEYS
         .iter()
         .map(|(k, _)| k.chars().count())
         .max()
         .unwrap_or(0)
-        + 2;
+        + 4;
     let desc_width = HELP_KEYS
         .iter()
         .map(|(_, d)| d.chars().count())
@@ -1103,34 +1128,55 @@ fn render_help(frame: &mut Frame) {
     let width = (2 + key_width + 1 + desc_width + 2 + 2) as u16;
     let area = centered_rect(width, rows, frame.area());
     frame.render_widget(Clear, area);
-    let block = Block::default()
-        .borders(Borders::ALL)
-        .title(" Горячие клавиши ")
-        .title_bottom(Line::from(" любая клавиша — закрыть ").dim());
+    let block = palette.panel("⌨  Горячие клавиши", true).title_bottom(
+        Line::from(Span::styled(
+            " Esc или любая клавиша — закрыть ",
+            palette.muted_style(),
+        ))
+        .centered(),
+    );
     let items: Vec<ListItem> = HELP_KEYS
         .iter()
-        .map(|(k, d)| ListItem::new(Line::from(format!("  {k:<key_width$} {d}"))))
+        .map(|(k, d)| {
+            // Команды (`/rag …`) красим как команду, обычные клавиши — «клавишей».
+            let key_span = if k.starts_with('/') {
+                Span::styled(format!(" {k} "), Style::new().fg(palette.warning))
+            } else {
+                palette.keycap(*k)
+            };
+            ListItem::new(Line::from(vec![
+                Span::raw("  "),
+                key_span,
+                Span::styled(format!(" {d}"), palette.muted_style()),
+            ]))
+        })
         .collect();
     frame.render_widget(List::new(items).block(block), area);
 }
 
 /// Рисует попап подсказок орфографии по центру экрана.
-fn render_suggest(frame: &mut Frame, popup: &SuggestPopup) {
+fn render_suggest(frame: &mut Frame, popup: &SuggestPopup, palette: &Palette) {
     let rows = (popup.items.len() as u16 + 2).min(frame.area().height);
     let area = centered_rect(40, rows, frame.area());
     frame.render_widget(Clear, area);
 
-    let block = Block::default()
-        .borders(Borders::ALL)
-        .title(format!(" {} ", popup.word))
-        .title_bottom(Line::from(" Enter — применить · Esc — отмена ").dim());
+    let block = palette
+        .panel(popup.word.clone(), true)
+        .title_bottom(Line::from(Span::styled(
+            " Enter — применить · Esc — отмена ",
+            palette.muted_style(),
+        )));
     let items: Vec<ListItem> = popup
         .items
         .iter()
         .map(|item| {
             ListItem::new(match item {
-                SuggestItem::Replace(word) => Line::from(word.clone()),
-                SuggestItem::AddToDictionary => Line::from("➕ Добавить в словарь").italic(),
+                SuggestItem::Replace(word) => {
+                    Line::from(Span::styled(word.clone(), Style::new().fg(palette.text)))
+                }
+                SuggestItem::AddToDictionary => Line::from(
+                    Span::styled("➕ Добавить в словарь", palette.success_style()).italic(),
+                ),
             })
         })
         .collect();
