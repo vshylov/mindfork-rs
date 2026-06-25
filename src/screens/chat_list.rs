@@ -13,6 +13,7 @@ use ratatui::crossterm::event::KeyEvent;
 use uuid::Uuid;
 
 use crate::entities::chat::ChatSummary;
+use crate::features::spellcheck::SpellChecker;
 use crate::shared::theme::Palette;
 use crate::widgets::chat_list::{ChatListAction, ChatListState};
 
@@ -103,8 +104,22 @@ impl ChatListScreen {
         }
     }
 
-    /// Рисует список во весь экран.
-    pub fn render(&self, frame: &mut Frame) {
+    /// Вставляет текст из буфера обмена в поле переименования (если открыто).
+    /// Вне режима переименования — no-op. См. spec §11.5.
+    pub fn handle_paste(&mut self, text: &str) {
+        self.state.handle_paste(text);
+    }
+
+    /// Перепроверяет орфографию в поле переименования (если открыто и изменилось).
+    /// Возвращает `true`, если подсветка обновлена (нужна перерисовка). Чекер
+    /// одалживается из экрана чата — владельца (`app` сводит это в петле).
+    pub fn recheck_spelling(&mut self, spell: &SpellChecker) -> bool {
+        self.state.recheck_rename_spelling(spell)
+    }
+
+    /// Рисует список во весь экран. `&mut self` — поле переименования рисует
+    /// [`InputBox`](crate::widgets::input_box::InputBox), которому нужен `&mut`.
+    pub fn render(&mut self, frame: &mut Frame) {
         self.state
             .render(frame, frame.area(), self.active, &self.palette);
     }
@@ -181,7 +196,7 @@ mod tests {
     fn render_does_not_panic() {
         use ratatui::Terminal;
         use ratatui::backend::TestBackend;
-        let s = ChatListScreen::new(vec![chat("Альфа")], None, Palette::default());
+        let mut s = ChatListScreen::new(vec![chat("Альфа")], None, Palette::default());
         let mut term = Terminal::new(TestBackend::new(80, 24)).unwrap();
         term.draw(|f| s.render(f)).unwrap();
     }

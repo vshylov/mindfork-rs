@@ -15,9 +15,11 @@ use uuid::Uuid;
 use crate::entities::chat::ChatSummary;
 use crate::features::chat_search_sort::{SortMode, filter_and_sort};
 use crate::features::rename_chat::sanitize_title;
+use crate::features::spellcheck::SpellChecker;
 use crate::shared::keys;
 use crate::shared::theme::Palette;
 use crate::shared::wrap;
+use crate::widgets::input_box::InputBox;
 
 /// Шаг постраничного перемещения выделения по `PageUp`/`PageDown`. Фиксированный,
 /// так как фактическая высота списка известна только во время рендера.
@@ -52,13 +54,16 @@ pub enum ChatListAction {
 enum Mode {
     /// Ввод в строку поиска.
     Search,
-    /// Переименование выбранного чата по месту. Текст хранится посимвольно
-    /// (`Vec<char>`), `cursor` — позиция курсора в символах (для перемещения
-    /// стрелками/Home/End и вставки/удаления в середине).
+    /// Переименование выбранного чата по месту. Текст и курсор ведёт однострочный
+    /// [`InputBox`] (`set_single_line`) — отсюда «бесплатно» доступны спелл-чек,
+    /// пословная навигация/удаление (`Ctrl+←/→`, `Ctrl+Backspace/Delete`),
+    /// `Ctrl+Home/End`, очистка/возврат (`Ctrl+K`) и вставка из буфера. `InputBox`
+    /// крупный — боксируем (clippy::large_enum_variant). `spell_dirty` отмечает,
+    /// что подсветку ошибок нужно пересчитать (см. [`Self::recheck_rename_spelling`]).
     Rename {
         id: Uuid,
-        buffer: Vec<char>,
-        cursor: usize,
+        input: Box<InputBox>,
+        spell_dirty: bool,
     },
 }
 
@@ -227,12 +232,15 @@ impl ChatListState {
             }
             KeyCode::F(2) => {
                 if let Some(chat) = self.visible().get(self.selected) {
-                    let buffer: Vec<char> = chat.title.chars().collect();
-                    let cursor = buffer.len();
+                    // Однострочный `InputBox` с текущим названием (курсор в конце).
+                    // `set_single_line` — до `set_text` (инвариант одной строки).
+                    let mut input = InputBox::new();
+                    input.set_single_line(true);
+                    input.set_text(&chat.title);
                     self.mode = Mode::Rename {
                         id: chat.id,
-                        buffer,
-                        cursor,
+                        input: Box::new(input),
+                        spell_dirty: true,
                     };
                 }
                 ChatListAction::None
@@ -262,11 +270,26 @@ impl ChatListState {
 
     fn on_key_rename(&mut self, key: KeyEvent) -> ChatListAction {
         let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
-        let alt = key.modifiers.contains(KeyModifiers::ALT);
-        // Локально извлекаем поля, чтобы не держать заём `self.mode`.
-        let Mode::Rename { id, buffer, cursor } = &mut self.mode else {
+        let Mode::Rename {
+            id,
+            input,
+            spell_dirty,
+        } = &mut self.mode
+        else {
             return ChatListAction::None;
         };
+        // Очистка/возврат всего текста (`Ctrl+K`) — раскладко-независимо, как в чате.
+        // Прочие Ctrl-комбинации (пословная навигация `Ctrl+←/→`, удаление слова
+        // `Ctrl+Backspace/Delete`, `Ctrl+Home/End`) обрабатывает сам `InputBox` ниже;
+        // незнакомые он глотает (Ctrl+символ в поле не печатается).
+        if ctrl
+            && let KeyCode::Char(c) = key.code
+            && keys::physical_char(c) == 'k'
+        {
+            input.clear_or_restore();
+            *spell_dirty = true;
+            return ChatListAction::None;
+        }
         match key.code {
             KeyCode::Esc => {
                 self.mode = Mode::Search;
@@ -274,7 +297,7 @@ impl ChatListState {
             }
             KeyCode::Enter => {
                 let id = *id;
-                let title = buffer.iter().collect::<String>();
+                let title = input.text();
                 let action = match sanitize_title(&title) {
                     Some(title) => ChatListAction::Rename { id, title },
                     None => ChatListAction::None,
@@ -282,49 +305,60 @@ impl ChatListState {
                 self.mode = Mode::Search;
                 action
             }
-            // Перемещение курсора (для правки имени в середине).
-            KeyCode::Left => {
-                *cursor = cursor.saturating_sub(1);
-                ChatListAction::None
-            }
-            KeyCode::Right => {
-                *cursor = (*cursor + 1).min(buffer.len());
-                ChatListAction::None
-            }
-            KeyCode::Home => {
-                *cursor = 0;
-                ChatListAction::None
-            }
-            KeyCode::End => {
-                *cursor = buffer.len();
-                ChatListAction::None
-            }
-            KeyCode::Backspace => {
-                if *cursor > 0 {
-                    *cursor -= 1;
-                    buffer.remove(*cursor);
+            // Всё прочее (печать, навигация по словам/символам, удаление, `Home/End`)
+            // ведёт сам `InputBox`; помечаем подсветку ошибок на пересчёт.
+            _ => {
+                if input.on_key(key) {
+                    *spell_dirty = true;
                 }
                 ChatListAction::None
             }
-            KeyCode::Delete => {
-                if *cursor < buffer.len() {
-                    buffer.remove(*cursor);
-                }
-                ChatListAction::None
-            }
-            // Вставка символа в позицию курсора (Ctrl/Alt-комбинации не печатаем).
-            KeyCode::Char(c) if !ctrl && !alt => {
-                buffer.insert(*cursor, c);
-                *cursor += 1;
-                ChatListAction::None
-            }
-            _ => ChatListAction::None,
         }
     }
 
+    /// Вставляет текст из буфера обмена в поле переименования (если оно открыто).
+    /// Переводы строк схлопываются в пробел (`InputBox` однострочный). Вне режима
+    /// переименования — no-op (в строке поиска вставка не нужна).
+    pub fn handle_paste(&mut self, text: &str) {
+        if let Mode::Rename {
+            input, spell_dirty, ..
+        } = &mut self.mode
+        {
+            input.insert_str(text);
+            *spell_dirty = true;
+        }
+    }
+
+    /// Пересчитывает подсветку ошибок орфографии в поле переименования, если оно
+    /// открыто и помечено «грязным» (после правки/вставки). Возвращает `true`, если
+    /// подсветка была обновлена (нужна перерисовка). Чекер не владеется виджетом —
+    /// его одалживает `app` (владелец живёт в экране чата). См. spec §11.5.
+    pub fn recheck_rename_spelling(&mut self, spell: &SpellChecker) -> bool {
+        let Mode::Rename {
+            input, spell_dirty, ..
+        } = &mut self.mode
+        else {
+            return false;
+        };
+        if !*spell_dirty {
+            return false;
+        }
+        let ranges = vec![spell.misspellings(&input.text())];
+        input.set_misspelled(ranges);
+        *spell_dirty = false;
+        true
+    }
+
     /// Рисует окно списка чатов на весь экран (`area`). `active` — текущий
-    /// активный чат (метка). См. spec §11.2.
-    pub fn render(&self, frame: &mut Frame, area: Rect, active: Option<Uuid>, palette: &Palette) {
+    /// активный чат (метка). `&mut self` — поле переименования рисует [`InputBox`]
+    /// (ему нужен `&mut` для скролла/курсора). См. spec §11.2.
+    pub fn render(
+        &mut self,
+        frame: &mut Frame,
+        area: Rect,
+        active: Option<Uuid>,
+        palette: &Palette,
+    ) {
         frame.render_widget(Clear, area);
 
         // Снизу — строка статуса с «клавишами» (как на экране чата): аккуратная
@@ -357,12 +391,12 @@ impl ChatListState {
         let (search_area, list_area) = (chunks[0], chunks[1]);
 
         // --- строка поиска (в рамке, с клавишей `/` справа) ИЛИ поле
-        // переименования (обычный ввод с настоящим курсором) ---
-        match &self.mode {
-            Mode::Search => self.render_search(frame, search_area, palette),
-            Mode::Rename { buffer, cursor, .. } => {
-                render_rename(frame, search_area, palette, buffer, *cursor)
-            }
+        // переименования (однострочный `InputBox`: спелл-чек, пословная навигация,
+        // настоящий курсор, горизонтальный скролл) ---
+        if let Mode::Rename { input, .. } = &mut self.mode {
+            input.render(frame, search_area, "Переименование", true, palette, false);
+        } else {
+            self.render_search(frame, search_area, palette);
         }
 
         // --- список ---
@@ -512,59 +546,6 @@ impl ChatListState {
         ];
         palette.hotkey_grid(&items, width)
     }
-}
-
-/// Рисует поле переименования в рамке: обычный однострочный ввод с **настоящим**
-/// терминальным курсором (через `set_cursor_position`) и горизонтальным скроллом
-/// (длинный заголовок «уезжает» влево, курсор всегда виден). Заменяет строку поиска,
-/// пока идёт переименование. `buffer`/`cursor` — текст и позиция курсора (в символах).
-fn render_rename(frame: &mut Frame, area: Rect, palette: &Palette, buffer: &[char], cursor: usize) {
-    let block = Block::default()
-        .borders(Borders::ALL)
-        .border_type(BorderType::Rounded)
-        .border_style(palette.border_style(true))
-        .title(Span::styled(" Переименование ", palette.muted_style()));
-    let inner = block.inner(area);
-    frame.render_widget(block, area);
-    if inner.width == 0 || inner.height == 0 {
-        return;
-    }
-    let view_w = inner.width as usize;
-    let cursor = cursor.min(buffer.len());
-    let cursor_vw = wrap::display_width(&buffer[..cursor]);
-
-    // Горизонтальный скролл: держим курсор в видимой области.
-    let hscroll = cursor_vw.saturating_sub(view_w.saturating_sub(1));
-    // Видимый срез [start, end) по колонкам [hscroll, hscroll + view_w).
-    let mut start = 0;
-    let mut w = 0;
-    while start < buffer.len() && w < hscroll {
-        w += wrap::char_width(buffer[start]);
-        start += 1;
-    }
-    let mut end = start;
-    let mut vis_w = 0;
-    while end < buffer.len() {
-        let cw = wrap::char_width(buffer[end]);
-        if vis_w + cw > view_w {
-            break;
-        }
-        vis_w += cw;
-        end += 1;
-    }
-    let visible: String = buffer[start..end].iter().collect();
-    frame.render_widget(
-        Paragraph::new(Line::from(Span::styled(
-            visible,
-            Style::new().fg(palette.text),
-        ))),
-        inner,
-    );
-
-    // Настоящий курсор (на ячейке, без «фантомного» столбца как у каретки).
-    let cursor_x = inner.x + (cursor_vw - hscroll) as u16;
-    let x = cursor_x.min(inner.x + inner.width.saturating_sub(1));
-    frame.set_cursor_position((x, inner.y));
 }
 
 /// Видимая ширина строки в колонках терминала.
@@ -770,6 +751,86 @@ mod tests {
     }
 
     #[test]
+    fn rename_supports_input_box_word_navigation() {
+        // Поле переименования — однострочный `InputBox`, поэтому `Ctrl+Backspace`
+        // удаляет слово целиком (раньше посимвольный буфер этого не умел).
+        let chats = vec![chat("один два")];
+        let id = chats[0].id;
+        let mut s = ChatListState::new(chats, None);
+        s.on_key(key(KeyCode::F(2))); // "один два", курсор в конце
+        s.on_key(ctrl(KeyCode::Backspace)); // удалить слово "два" → "один "
+        assert_eq!(
+            s.on_key(key(KeyCode::Enter)),
+            ChatListAction::Rename {
+                id,
+                title: "один".into() // хвостовой пробел снимает sanitize_title
+            }
+        );
+    }
+
+    #[test]
+    fn rename_clear_and_restore_with_ctrl_k() {
+        // `Ctrl+K` чистит поле, повторное нажатие возвращает текст (как в чате).
+        let chats = vec![chat("Старое имя")];
+        let id = chats[0].id;
+        let mut s = ChatListState::new(chats, None);
+        s.on_key(key(KeyCode::F(2)));
+        s.on_key(ctrl(KeyCode::Char('k'))); // удалить весь текст
+        s.on_key(ctrl(KeyCode::Char('k'))); // вернуть удалённое
+        assert_eq!(
+            s.on_key(key(KeyCode::Enter)),
+            ChatListAction::Rename {
+                id,
+                title: "Старое имя".into()
+            }
+        );
+    }
+
+    #[test]
+    fn rename_spellcheck_underlines_misspelled_word() {
+        use crate::features::spellcheck::SpellChecker;
+        use std::collections::HashSet;
+        let dict = spellbook::Dictionary::new("SET UTF-8\n", "1\nhello\n").unwrap();
+        let spell = SpellChecker::new(vec![dict], HashSet::new(), None);
+
+        let mut s = ChatListState::new(vec![chat("helo")], None);
+        s.on_key(key(KeyCode::F(2))); // входим в переименование, текст "helo"
+        // Пересчёт орфографии помечает "helo" как ошибку (диапазон непуст).
+        assert!(s.recheck_rename_spelling(&spell));
+        match &s.mode {
+            Mode::Rename {
+                input, spell_dirty, ..
+            } => {
+                assert!(!*spell_dirty, "флаг сбрасывается после пересчёта");
+                assert!(
+                    !input.misspelled_is_empty(),
+                    "ошибка должна быть подчёркнута"
+                );
+            }
+            _ => panic!("ожидался режим переименования"),
+        }
+        // Вне режима переименования пересчёт — no-op.
+        s.on_key(key(KeyCode::Esc));
+        assert!(!s.recheck_rename_spelling(&spell));
+    }
+
+    #[test]
+    fn rename_paste_inserts_into_field() {
+        let chats = vec![chat("a")];
+        let id = chats[0].id;
+        let mut s = ChatListState::new(chats, None);
+        s.on_key(key(KeyCode::F(2))); // "a", курсор в конце
+        s.handle_paste("bc"); // вставка из буфера обмена
+        assert_eq!(
+            s.on_key(key(KeyCode::Enter)),
+            ChatListAction::Rename {
+                id,
+                title: "abc".into()
+            }
+        );
+    }
+
+    #[test]
     fn rename_esc_cancels_without_action() {
         let chats = vec![chat("Старое")];
         let mut s = ChatListState::new(chats, None);
@@ -863,7 +924,7 @@ mod tests {
         use ratatui::Terminal;
         use ratatui::backend::TestBackend;
 
-        let state = ChatListState::new(vec![chat("Альфа"), chat("Бета")], None);
+        let mut state = ChatListState::new(vec![chat("Альфа"), chat("Бета")], None);
         for (w, h) in [(80u16, 24u16), (20, 6)] {
             let mut term = Terminal::new(TestBackend::new(w, h)).unwrap();
             term.draw(|f| state.render(f, f.area(), None, &Palette::default()))

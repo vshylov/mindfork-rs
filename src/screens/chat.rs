@@ -263,6 +263,13 @@ impl ChatScreen {
         self.last_edit = None; // перепроверить немедленно
     }
 
+    /// Текущий спелл-чекер (или `None`, пока словари не загружены). Чекер живёт
+    /// здесь, в экране чата; `app` одалживает его экрану списка чатов для подсветки
+    /// ошибок в поле переименования (`F2`). См. spec §11.5.
+    pub fn spellchecker(&self) -> Option<&SpellChecker> {
+        self.spell.as_ref()
+    }
+
     // ---------- проекция событий оркестратора (вызывается слоем `app`) ----------
 
     pub fn set_server_status(&mut self, status: ServerStatus) {
