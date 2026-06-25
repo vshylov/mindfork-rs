@@ -1167,7 +1167,7 @@ fn render_help(frame: &mut Frame, palette: &Palette) {
             ListItem::new(Line::from(vec![
                 Span::raw("  "),
                 key_span,
-                Span::styled(format!(" {d}"), palette.muted_style()),
+                Span::styled(format!(" {d}"), Style::new().fg(palette.text)),
             ]))
         })
         .collect();
