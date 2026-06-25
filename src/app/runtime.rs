@@ -211,6 +211,14 @@ fn run_loop(
         if active.is_chat() && screen.maybe_recheck_spelling() {
             dirty = true;
         }
+        // На экране списка чатов поле переименования (`F2`) тоже проверяется
+        // орфографией — чекер одалживаем у экрана чата (владельца). См. spec §11.5.
+        if let ActiveScreen::ChatList(list) = &mut active
+            && let Some(spell) = screen.spellchecker()
+            && list.recheck_spelling(spell)
+        {
+            dirty = true;
+        }
         // Пока идёт фоновая индексация RAG или имперсонация — перерисовываем каждый
         // тик для анимации спиннера (вне них простаивающие тики не рисуют — `dirty`).
         if active.is_chat() && (screen.is_rag_active() || screen.is_impersonating()) {
@@ -481,7 +489,8 @@ fn process_input_batch(
             Chunk::Paste(text) | Chunk::Event(Event::Paste(text)) => match active {
                 ActiveScreen::Settings(settings) => settings.handle_paste(&text),
                 ActiveScreen::Chat => screen.handle_paste(&text),
-                ActiveScreen::ChatList(_) => {}
+                // В списке цель вставки — поле переименования (`F2`), если открыто.
+                ActiveScreen::ChatList(list) => list.handle_paste(&text),
             },
             Chunk::Event(Event::Key(key)) => {
                 // Снимаем намерение из активного экрана (борроу заканчивается на
