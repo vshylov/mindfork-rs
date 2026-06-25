@@ -19,6 +19,10 @@ use crate::shared::keys;
 use crate::shared::theme::Palette;
 use crate::shared::wrap;
 
+/// Шаг постраничного перемещения выделения по `PageUp`/`PageDown`. Фиксированный,
+/// так как фактическая высота списка известна только во время рендера.
+const PAGE_STEP: usize = 10;
+
 /// Действие, которое оверлей просит выполнить вышестоящий слой.
 #[derive(Debug, Clone, PartialEq)]
 pub enum ChatListAction {
@@ -192,6 +196,28 @@ impl ChatListState {
                 if len > 0 {
                     self.selected = (self.selected + 1).min(len - 1);
                 }
+                ChatListAction::None
+            }
+            // Постраничное перемещение выделения: шаг на «страницу» (фиксированный,
+            // т.к. высота списка известна лишь при рендере).
+            KeyCode::PageUp => {
+                self.selected = self.selected.saturating_sub(PAGE_STEP);
+                ChatListAction::None
+            }
+            KeyCode::PageDown => {
+                let len = self.visible().len();
+                if len > 0 {
+                    self.selected = (self.selected + PAGE_STEP).min(len - 1);
+                }
+                ChatListAction::None
+            }
+            // Прыжок к первому/последнему чату.
+            KeyCode::Home => {
+                self.selected = 0;
+                ChatListAction::None
+            }
+            KeyCode::End => {
+                self.selected = self.visible().len().saturating_sub(1);
                 ChatListAction::None
             }
             KeyCode::Tab => {
@@ -472,7 +498,7 @@ impl ChatListState {
         let sort = self.sort.label();
         let sort_desc = format!("сортировка: {sort}");
         let items: [(&str, &str, bool); 11] = [
-            ("↑↓", "выбор", false),
+            ("↑↓ PgUp/Dn Home/End", "выбор", false),
             ("Enter", "открыть", false),
             ("F2", "переименовать", false),
             ("Ctrl+R", "авто-назв.", false),
@@ -752,6 +778,53 @@ mod tests {
         // вернулись в режим поиска: печать снова фильтрует
         s.on_key(key(KeyCode::Char('x')));
         assert_eq!(s.selected_id(), None); // 'x' не совпал ни с чем
+    }
+
+    #[test]
+    fn page_up_down_move_selection_by_page() {
+        // 25 чатов; PageDown сдвигает на PAGE_STEP, не выходя за конец, PageUp — назад.
+        let chats: Vec<ChatSummary> = (0..25).map(|i| chat(&format!("чат {i}"))).collect();
+        let mut s = ChatListState::new(chats, None);
+        assert_eq!(s.selected, 0);
+        s.on_key(key(KeyCode::PageDown));
+        assert_eq!(s.selected, PAGE_STEP);
+        s.on_key(key(KeyCode::PageDown));
+        assert_eq!(s.selected, 2 * PAGE_STEP);
+        // Третий PageDown упирается в последний элемент (24), а не уезжает за край.
+        s.on_key(key(KeyCode::PageDown));
+        assert_eq!(s.selected, 24);
+        s.on_key(key(KeyCode::PageUp));
+        assert_eq!(s.selected, 24 - PAGE_STEP);
+        // PageUp из верхней части насыщается на 0 (без переполнения).
+        s.on_key(key(KeyCode::PageUp));
+        s.on_key(key(KeyCode::PageUp));
+        assert_eq!(s.selected, 0);
+    }
+
+    #[test]
+    fn home_end_jump_to_first_and_last() {
+        let chats: Vec<ChatSummary> = (0..25).map(|i| chat(&format!("чат {i}"))).collect();
+        let mut s = ChatListState::new(chats, None);
+        s.on_key(key(KeyCode::End));
+        assert_eq!(s.selected, 24);
+        s.on_key(key(KeyCode::Home));
+        assert_eq!(s.selected, 0);
+    }
+
+    #[test]
+    fn home_end_on_empty_list_is_noop() {
+        let mut s = ChatListState::new(vec![], None);
+        assert_eq!(s.on_key(key(KeyCode::End)), ChatListAction::None);
+        assert_eq!(s.selected, 0);
+        assert_eq!(s.on_key(key(KeyCode::Home)), ChatListAction::None);
+        assert_eq!(s.selected, 0);
+    }
+
+    #[test]
+    fn page_down_on_empty_list_is_noop() {
+        let mut s = ChatListState::new(vec![], None);
+        assert_eq!(s.on_key(key(KeyCode::PageDown)), ChatListAction::None);
+        assert_eq!(s.selected, 0);
     }
 
     #[test]
