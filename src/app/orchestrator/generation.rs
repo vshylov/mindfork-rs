@@ -96,7 +96,11 @@ impl Orchestrator {
             else {
                 return; // нет запроса пользователя — нечего перегенерировать
             };
-            chat.messages.truncate(idx + 1);
+            // Сохраняем удалённое (ответ ассистента + tool-сообщения раунда) и
+            // черновик ввода ради ручного восстановления (spec §11.7).
+            let draft = chat.draft.clone();
+            let removed = chat.messages.split_off(idx + 1);
+            chat.record_deleted(removed, draft);
             chat.modified_at = chrono::Utc::now();
         }
         self.mark_dirty(active_id);
@@ -129,7 +133,12 @@ impl Orchestrator {
                 return; // нет сообщения пользователя — удалять нечего
             };
             user_text = chat.messages[idx].text.clone();
-            chat.messages.truncate(idx);
+            // Сохраняем удалённое (сообщение пользователя + ответ ассистента) и
+            // черновик ввода ДО возврата текста пользователя в поле — ради ручного
+            // восстановления (spec §11.7).
+            let draft = chat.draft.clone();
+            let removed = chat.messages.split_off(idx);
+            chat.record_deleted(removed, draft);
             chat.modified_at = chrono::Utc::now();
         }
         self.mark_dirty(active_id);
