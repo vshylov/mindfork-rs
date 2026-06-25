@@ -30,9 +30,31 @@ pub struct Chat {
     /// переключении на чат; у нового чата пустой. См. spec §11.7.
     #[serde(default)]
     pub draft: String,
+    /// Удалённые обмены (`Ctrl+E`/`Ctrl+R`). Хранятся в файле чата только ради
+    /// **ручного** восстановления (правкой JSON) в редких случаях, когда удалили
+    /// что-то важное; в UI не используются и автоматически не восстанавливаются.
+    /// См. spec §11.7.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub deleted: Vec<DeletedExchange>,
     /// Мягкое удаление.
     #[serde(default)]
     pub is_hidden: bool,
+}
+
+/// Снимок удалённого обмена (`Ctrl+E`/`Ctrl+R`). Это **не** сообщение, а
+/// контейнер: удалённые сообщения + черновик поля ввода на момент удаления.
+/// Восстановления через UI нет — объект существует лишь для ручной правки JSON.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct DeletedExchange {
+    /// Момент удаления (для ориентира при ручном поиске нужной записи).
+    pub deleted_at: DateTime<Utc>,
+    /// Удалённые сообщения. Для `Ctrl+E` (удаление обмена) — сообщение
+    /// пользователя и ответ ассистента; для `Ctrl+R` (перегенерация) — ответ
+    /// ассистента (и связанные tool-сообщения раунда).
+    pub messages: Vec<Message>,
+    /// Содержимое поля ввода на момент удаления — до того, как туда вернулся текст
+    /// удалённого сообщения пользователя (`Ctrl+E`) или начался новый ход (`Ctrl+R`).
+    pub draft: String,
 }
 
 impl Chat {
@@ -58,6 +80,7 @@ impl Chat {
             messages: Vec::new(),
             sampling_override: None,
             draft: String::new(),
+            deleted: Vec::new(),
             is_hidden: false,
         }
     }
@@ -66,6 +89,24 @@ impl Chat {
     pub fn push_message(&mut self, message: Message) {
         self.messages.push(message);
         self.modified_at = Utc::now();
+    }
+
+    /// Записывает удалённый обмен (`Ctrl+E`/`Ctrl+R`) в коллекцию `deleted` ради
+    /// ручного восстановления. Пустой набор сообщений игнорируется. Новая запись
+    /// добавляется в **начало** коллекции (свежие удаления искать быстрее).
+    /// `modified_at` **не** трогаем здесь — его обновляют сами операции усечения.
+    pub fn record_deleted(&mut self, messages: Vec<Message>, draft: String) {
+        if messages.is_empty() {
+            return;
+        }
+        self.deleted.insert(
+            0,
+            DeletedExchange {
+                deleted_at: Utc::now(),
+                messages,
+                draft,
+            },
+        );
     }
 
     /// Краткая карточка чата (для списка/оверлея без копирования сообщений).
@@ -125,11 +166,36 @@ mod tests {
     }
 
     #[test]
+    fn record_deleted_appends_with_draft_and_skips_empty() {
+        let p = Profile::new("X", "s");
+        let mut chat = Chat::from_profile(&p, "t");
+        chat.record_deleted(vec![], "ignored".into());
+        assert!(chat.deleted.is_empty()); // пустой набор не записывается
+
+        chat.record_deleted(
+            vec![Message::user("hi"), Message::assistant("hello")],
+            "набранный, но не отправленный текст".into(),
+        );
+        assert_eq!(chat.deleted.len(), 1);
+        assert_eq!(chat.deleted[0].messages.len(), 2);
+        assert_eq!(chat.deleted[0].draft, "набранный, но не отправленный текст");
+    }
+
+    #[test]
+    fn deleted_empty_is_not_serialized() {
+        let p = Profile::new("X", "s");
+        let chat = Chat::from_profile(&p, "t");
+        let json = serde_json::to_string(&chat).unwrap();
+        assert!(!json.contains("deleted"));
+    }
+
+    #[test]
     fn serde_roundtrip() {
         let p = Profile::new("X", "s");
         let mut chat = Chat::from_profile(&p, "t");
         chat.push_message(Message::user("hi"));
         chat.push_message(Message::assistant("hello"));
+        chat.record_deleted(vec![Message::user("удалённое")], "черновик".into());
         let json = serde_json::to_string(&chat).unwrap();
         let back: Chat = serde_json::from_str(&json).unwrap();
         assert_eq!(chat, back);

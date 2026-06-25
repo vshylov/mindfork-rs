@@ -531,6 +531,15 @@ async fn delete_last_exchange_restores_user_text() {
     let reopened = Storage::open(Paths::with_root(&root)).unwrap();
     let chat = reopened.json().load_chat(chat_id).unwrap().unwrap();
     assert!(chat.messages.is_empty(), "{:?}", chat.messages);
+    // Удалённый обмен сохранён для ручного восстановления (сообщение пользователя +
+    // ответ ассистента), черновик ввода был пуст (spec §11.7).
+    assert_eq!(chat.deleted.len(), 1);
+    let removed = &chat.deleted[0];
+    assert_eq!(removed.messages.len(), 2);
+    assert_eq!(removed.messages[0].role, MessageRole::User);
+    assert_eq!(removed.messages[0].text, "забудь это");
+    assert_eq!(removed.messages[1].role, MessageRole::Assistant);
+    assert_eq!(removed.draft, "");
 }
 
 #[tokio::test]
