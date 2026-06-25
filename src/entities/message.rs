@@ -49,6 +49,13 @@ pub struct Message {
     pub timestamp: DateTime<Utc>,
     #[serde(default = "default_true")]
     pub is_markdown: bool,
+    /// Сообщение ассистента начинает **новый пузырь** в ленте (не склеивается с
+    /// предыдущим блоком ассистента). Ставится управляющим инструментом
+    /// «написать ещё сообщение» (`send_followup_message`) для второго и далее
+    /// сообщений. По умолчанию `false` — обычная склейка раундов agentic-loop.
+    /// См. spec §9.3.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub new_bubble: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub metadata: Option<MessageMetadata>,
     /// Для роли `Tool`: идентификатор tool-call.
@@ -74,6 +81,7 @@ impl Message {
             tool_calls: Vec::new(),
             timestamp: Utc::now(),
             is_markdown: true,
+            new_bubble: false,
             metadata: None,
             tool_call_id: None,
             tool_name: None,

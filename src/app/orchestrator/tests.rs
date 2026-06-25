@@ -1153,6 +1153,299 @@ async fn tool_round_limit_is_respected() {
     handle.await.unwrap();
 }
 
+/// Включает в профиле весь каталог инструментов (в т.ч. управляющие followup/
+/// rewrite) — для тестов управляющих инструментов. Возвращает id профиля.
+async fn enable_all_tools(
+    cmd_tx: &UnboundedSender<AppCommand>,
+    evt_rx: &mut UnboundedReceiver<AppEvent>,
+) -> Uuid {
+    use crate::features::tools::all_tool_ids;
+    let pl = wait_for(evt_rx, |e| matches!(e, AppEvent::ProfileList(_)))
+        .await
+        .unwrap();
+    let pid = match pl {
+        AppEvent::ProfileList(v) => v[0].id,
+        _ => unreachable!(),
+    };
+    cmd_tx
+        .send(AppCommand::UpdateProfile {
+            id: pid,
+            edit: Box::new(ProfileEdit {
+                enabled_tools: Some(all_tool_ids()),
+                ..Default::default()
+            }),
+        })
+        .unwrap();
+    pid
+}
+
+#[tokio::test]
+async fn followup_tool_makes_two_assistant_messages() {
+    use crate::shared::api::backend::ToolCallDelta;
+    // Раунд 1: текст + вызов send_followup_message → раунд 2: второе сообщение.
+    let backend = Arc::new(MockBackend::sequence(vec![
+        vec![
+            ChatChunk::Text("Первое сообщение.".into()),
+            ChatChunk::ToolCall(ToolCallDelta {
+                index: 0,
+                id: Some("c1".into()),
+                name: Some("send_followup_message".into()),
+                arguments: "{}".into(),
+            }),
+            ChatChunk::Finished(FinishReason::ToolCalls),
+        ],
+        vec![
+            ChatChunk::Text("Второе сообщение.".into()),
+            ChatChunk::Finished(FinishReason::Stop),
+        ],
+    ])) as Arc<dyn EngineBackend>;
+
+    let (_d, cmd_tx, mut evt_rx, handle) = spawn_orch(Some(backend));
+    let root = _d.path().to_path_buf();
+    enable_all_tools(&cmd_tx, &mut evt_rx).await;
+    cmd_tx
+        .send(AppCommand::SendMessage("давай".into()))
+        .unwrap();
+
+    // UI получает сигнал «начать новый пузырь».
+    wait_for(&mut evt_rx, |e| {
+        matches!(e, AppEvent::AssistantContinue { .. })
+    })
+    .await
+    .unwrap();
+    wait_for(&mut evt_rx, |e| matches!(e, AppEvent::Finished { .. }))
+        .await
+        .unwrap();
+    cmd_tx.send(AppCommand::Quit).unwrap();
+    handle.await.unwrap();
+
+    // История: user → assistant(followup tool_call) → tool → assistant(2-е, new_bubble).
+    let reopened = Storage::open(Paths::with_root(&root)).unwrap();
+    let chat = reopened
+        .json()
+        .load_chats()
+        .unwrap()
+        .into_iter()
+        .next()
+        .unwrap();
+    assert_eq!(chat.messages.len(), 4, "{:?}", chat.messages);
+    assert_eq!(chat.messages[1].role, MessageRole::Assistant);
+    assert_eq!(chat.messages[1].text, "Первое сообщение.");
+    assert_eq!(chat.messages[1].tool_calls[0].name, "send_followup_message");
+    assert!(!chat.messages[1].new_bubble);
+    assert_eq!(chat.messages[2].role, MessageRole::Tool);
+    assert_eq!(chat.messages[3].text, "Второе сообщение.");
+    assert!(
+        chat.messages[3].new_bubble,
+        "второе сообщение — отдельным пузырём"
+    );
+    // Управляющий инструмент ничего не отбрасывает.
+    assert!(chat.deleted.is_empty());
+}
+
+#[tokio::test]
+async fn rewrite_tool_discards_partial_and_saves_it() {
+    use crate::shared::api::backend::ToolCallDelta;
+    // Раунд 1: неверный текст + вызов rewrite_last_message → раунд 2: переписанный.
+    let backend = Arc::new(MockBackend::sequence(vec![
+        vec![
+            ChatChunk::Text("Неправильный ответ".into()),
+            ChatChunk::ToolCall(ToolCallDelta {
+                index: 0,
+                id: Some("c1".into()),
+                name: Some("rewrite_last_message".into()),
+                arguments: "{}".into(),
+            }),
+            ChatChunk::Finished(FinishReason::ToolCalls),
+        ],
+        vec![
+            ChatChunk::Text("Правильный ответ.".into()),
+            ChatChunk::Finished(FinishReason::Stop),
+        ],
+    ])) as Arc<dyn EngineBackend>;
+
+    let (_d, cmd_tx, mut evt_rx, handle) = spawn_orch(Some(backend));
+    let root = _d.path().to_path_buf();
+    enable_all_tools(&cmd_tx, &mut evt_rx).await;
+    cmd_tx
+        .send(AppCommand::SendMessage("вопрос".into()))
+        .unwrap();
+
+    // UI получает сигнал «отбросить текущий пузырь».
+    wait_for(&mut evt_rx, |e| {
+        matches!(e, AppEvent::AssistantRewrite { .. })
+    })
+    .await
+    .unwrap();
+    wait_for(&mut evt_rx, |e| matches!(e, AppEvent::Finished { .. }))
+        .await
+        .unwrap();
+    cmd_tx.send(AppCommand::Quit).unwrap();
+    handle.await.unwrap();
+
+    // История: user → assistant(переписанный). Неверная версия — в архиве удалённого.
+    let reopened = Storage::open(Paths::with_root(&root)).unwrap();
+    let chat = reopened
+        .json()
+        .load_chats()
+        .unwrap()
+        .into_iter()
+        .next()
+        .unwrap();
+    assert_eq!(chat.messages.len(), 2, "{:?}", chat.messages);
+    assert_eq!(chat.messages[0].role, MessageRole::User);
+    assert_eq!(chat.messages[1].role, MessageRole::Assistant);
+    assert_eq!(chat.messages[1].text, "Правильный ответ.");
+    // Отброшенный (неверный) ответ + его tool-сообщение сохранены для восстановления.
+    assert_eq!(chat.deleted.len(), 1);
+    let discarded = &chat.deleted[0].messages;
+    assert_eq!(discarded[0].role, MessageRole::Assistant);
+    assert_eq!(discarded[0].text, "Неправильный ответ");
+    assert_eq!(discarded[0].tool_calls[0].name, "rewrite_last_message");
+}
+
+/// Реальный chat-движок из `MINDFORK_ENGINE_URL` (для end-to-end смоуков на живой
+/// модели). `None` — переменная не задана (тест пропускается).
+fn live_backend() -> Option<Arc<dyn EngineBackend>> {
+    let url = std::env::var("MINDFORK_ENGINE_URL").ok()?;
+    Some(Arc::new(crate::shared::api::OpenAiClient::new(url)) as Arc<dyn EngineBackend>)
+}
+
+/// Дренирует события до `Finished` (или закрытия), помечая, встретилось ли
+/// `pred`-событие по пути. Для end-to-end смоуков управляющих инструментов.
+async fn drain_until_finished<F: Fn(&AppEvent) -> bool>(
+    rx: &mut UnboundedReceiver<AppEvent>,
+    pred: F,
+) -> bool {
+    let mut saw = false;
+    while let Some(ev) = rx.recv().await {
+        if pred(&ev) {
+            saw = true;
+        }
+        if matches!(ev, AppEvent::Finished { .. }) {
+            break;
+        }
+    }
+    saw
+}
+
+/// End-to-end на живой модели: с включённым `send_followup_message` ассистент
+/// пишет **второе сообщение** отдельным пузырём. Проверяем и сигнал UI
+/// (`AssistantContinue`), и итоговую структуру чата (`Message.new_bubble`).
+/// Модель нестабильна — тест `#[ignore]`, гоняется вручную против Gemma/Qwen.
+#[tokio::test]
+#[ignore = "requires a running OpenAI-compatible server (MINDFORK_ENGINE_URL)"]
+async fn followup_tool_e2e_live() {
+    let Some(backend) = live_backend() else {
+        eprintln!("skip: MINDFORK_ENGINE_URL not set");
+        return;
+    };
+    let (_d, cmd_tx, mut evt_rx, handle) = spawn_orch(Some(backend));
+    let root = _d.path().to_path_buf();
+    enable_all_tools(&cmd_tx, &mut evt_rx).await;
+    cmd_tx
+        .send(AppCommand::SendMessage(
+            "Ответь короткой первой репликой-приветствием, затем ОБЯЗАТЕЛЬНО вызови \
+             инструмент send_followup_message и напиши вторую реплику с интересным \
+             фактом о космосе."
+                .into(),
+        ))
+        .unwrap();
+
+    let saw_continue = drain_until_finished(&mut evt_rx, |e| {
+        matches!(e, AppEvent::AssistantContinue { .. })
+    })
+    .await;
+    cmd_tx.send(AppCommand::Quit).unwrap();
+    handle.await.unwrap();
+
+    let reopened = Storage::open(Paths::with_root(&root)).unwrap();
+    let chat = reopened
+        .json()
+        .load_chats()
+        .unwrap()
+        .into_iter()
+        .next()
+        .unwrap();
+    let new_bubbles = chat.messages.iter().filter(|m| m.new_bubble).count();
+    eprintln!(
+        "followup e2e: saw_continue={saw_continue}, new_bubble={new_bubbles}, \
+         сообщений={}",
+        chat.messages.len()
+    );
+    for (i, m) in chat.messages.iter().enumerate() {
+        eprintln!(
+            "  [{i}] {:?} new_bubble={} tools={:?} text={:?}",
+            m.role,
+            m.new_bubble,
+            m.tool_calls.iter().map(|t| &t.name).collect::<Vec<_>>(),
+            m.text.chars().take(60).collect::<String>()
+        );
+    }
+    assert!(
+        saw_continue && new_bubbles >= 1,
+        "ожидали второе сообщение отдельным пузырём (followup)"
+    );
+}
+
+/// End-to-end на живой модели: с включённым `rewrite_last_message` ассистент
+/// отбрасывает начатый ответ и пишет заново; отброшенное уходит в `Chat.deleted`.
+/// Проверяем сигнал UI (`AssistantRewrite`) и непустой архив удалённого.
+/// Модель нестабильна — тест `#[ignore]`, гоняется вручную.
+#[tokio::test]
+#[ignore = "requires a running OpenAI-compatible server (MINDFORK_ENGINE_URL)"]
+async fn rewrite_tool_e2e_live() {
+    let Some(backend) = live_backend() else {
+        eprintln!("skip: MINDFORK_ENGINE_URL not set");
+        return;
+    };
+    let (_d, cmd_tx, mut evt_rx, handle) = spawn_orch(Some(backend));
+    let root = _d.path().to_path_buf();
+    enable_all_tools(&cmd_tx, &mut evt_rx).await;
+    cmd_tx
+        .send(AppCommand::SendMessage(
+            "Продемонстрируй инструмент rewrite_last_message строго по шагам, НИ ОДИН \
+             не пропуская. Шаг 1: напиши ровно «2+2=5». Шаг 2 (ОБЯЗАТЕЛЬНЫЙ): сразу \
+             вызови инструмент rewrite_last_message — без него задание не выполнено. \
+             Шаг 3: после вызова напиши правильный ответ «2+2=4». Самое важное — \
+             обязательно вызвать rewrite_last_message между шагами 1 и 3."
+                .into(),
+        ))
+        .unwrap();
+
+    let saw_rewrite = drain_until_finished(&mut evt_rx, |e| {
+        matches!(e, AppEvent::AssistantRewrite { .. })
+    })
+    .await;
+    cmd_tx.send(AppCommand::Quit).unwrap();
+    handle.await.unwrap();
+
+    let reopened = Storage::open(Paths::with_root(&root)).unwrap();
+    let chat = reopened
+        .json()
+        .load_chats()
+        .unwrap()
+        .into_iter()
+        .next()
+        .unwrap();
+    eprintln!(
+        "rewrite e2e: saw_rewrite={saw_rewrite}, deleted={}, сообщений={}",
+        chat.deleted.len(),
+        chat.messages.len()
+    );
+    for (i, m) in chat.messages.iter().enumerate() {
+        eprintln!(
+            "  msg[{i}] {:?} text={:?}",
+            m.role,
+            m.text.chars().take(60).collect::<String>()
+        );
+    }
+    assert!(
+        saw_rewrite && !chat.deleted.is_empty(),
+        "ожидали отброшенный (переписанный) ответ в Chat.deleted"
+    );
+}
+
 #[tokio::test]
 async fn send_without_backend_emits_error() {
     let (_d, cmd_tx, mut evt_rx, handle) = spawn_orch(None);

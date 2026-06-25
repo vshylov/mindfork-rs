@@ -484,4 +484,52 @@ mod ignored_smoke {
             "unexpected finish reason: {finish:?}"
         );
     }
+
+    /// Управляющие инструменты беседы (followup/rewrite, spec §9.3.3): живая модель
+    /// должна **вызвать** `send_followup_message` по инструкции — `finish_reason=
+    /// "tool_calls"` и имя разобрано. Это ключевой неизвестный фичи (поймёт ли
+    /// модель схему/описание). Схемы берём прямо из реализаций `Tool` (реальные
+    /// описания). `max_tokens` щедрый — Gemma может «подумать» перед вызовом.
+    #[tokio::test]
+    #[ignore = "requires a running OpenAI-compatible server (MINDFORK_ENGINE_URL)"]
+    async fn control_tools_are_callable() {
+        use crate::features::tools::Tool;
+        use crate::features::tools::control::{RewriteLastMessage, SendFollowupMessage};
+        let Some(client) = client_from_env() else {
+            eprintln!("skip: MINDFORK_ENGINE_URL not set");
+            return;
+        };
+        let req = ChatRequest {
+            system: Some(
+                "Ты — дружелюбный ассистент. Ответь на сообщение пользователя \
+                 короткой первой репликой, а затем ОБЯЗАТЕЛЬНО вызови инструмент \
+                 send_followup_message, чтобы добавить вторую реплику с подробностями."
+                    .into(),
+            ),
+            messages: vec![ApiMessage::user("Расскажи интересный факт о космосе.")],
+            sampling: SamplingConfig {
+                max_tokens: Some(512),
+                ..Default::default()
+            },
+            tools: vec![SendFollowupMessage.schema(), RewriteLastMessage.schema()],
+        };
+        let mut stream = client.chat_stream(req, Default::default()).await.unwrap();
+        let mut acc = ToolCallAccumulator::default();
+        let mut finish = None;
+        while let Some(chunk) = stream.next().await {
+            match chunk {
+                ChatChunk::ToolCall(delta) => acc.push(delta),
+                ChatChunk::Finished(reason) => {
+                    finish = Some(reason);
+                    break;
+                }
+                _ => {}
+            }
+        }
+        let calls = acc.finish();
+        assert!(
+            calls.iter().any(|c| c.name == "send_followup_message"),
+            "модель не вызвала send_followup_message: finish={finish:?} calls={calls:?}"
+        );
+    }
 }

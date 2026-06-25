@@ -11,7 +11,7 @@ use uuid::Uuid;
 use crate::app::events::AppEvent;
 use crate::entities::message::{Message, MessageMetadata, MessageRole, ToolCallRecord};
 use crate::entities::profile::ToolId;
-use crate::features::tools::{ChatEffect, ToolContext, ToolRegistry, effective_tool_ids};
+use crate::features::tools::{ChatEffect, ToolContext, ToolRegistry, control, effective_tool_ids};
 use crate::shared::api::{
     ApiMessage, ApiToolCall, ChatChunk, ChatRequest, EngineBackend, FinishReason,
     ToolCallAccumulator,
@@ -30,6 +30,10 @@ pub(super) struct GenResult {
     pub(super) messages: Vec<Message>,
     /// Эффекты инструментов (применяются оркестратором — владельцем `Chat`).
     pub(super) effects: Vec<ChatEffect>,
+    /// Сообщения, отброшенные инструментом «переписать» (`rewrite_last_message`):
+    /// прежняя (неверная) версия + её tool-сообщение. Сохраняются в `Chat.deleted`
+    /// ради ручного восстановления; в инференсе/ленте не участвуют. См. spec §9.3.
+    pub(super) deleted: Vec<Message>,
 }
 
 impl Orchestrator {
@@ -247,10 +251,15 @@ impl Orchestrator {
             return;
         }
 
-        if res.messages.is_empty() && res.effects.is_empty() {
+        if res.messages.is_empty() && res.effects.is_empty() && res.deleted.is_empty() {
             return;
         }
         if let Some(chat) = self.chat_mut(res.chat_id) {
+            // Отброшенное инструментом «переписать» — в архив удалённого (ручное
+            // восстановление правкой JSON), как Ctrl+E/Ctrl+R. См. spec §9.3, §11.7.
+            if !res.deleted.is_empty() {
+                chat.record_deleted(res.deleted, String::new());
+            }
             for msg in res.messages {
                 chat.push_message(msg);
             }
@@ -315,11 +324,18 @@ fn spawn_generation(spawn: GenSpawn) {
     tokio::spawn(async move {
         let mut messages: Vec<Message> = Vec::new();
         let mut effects: Vec<ChatEffect> = Vec::new();
+        // Отброшенное инструментом «переписать» (для архива удалённого).
+        let mut deleted: Vec<Message> = Vec::new();
         let mut round: u32 = 0;
         // Накопительный счётчик токенов ответа по всем раундам agentic-loop —
         // live-индикатор продолжает расти от раунда к раунду.
         let mut total_tokens: u64 = 0;
+        // Следующее доменное сообщение ассистента начинает новый пузырь (после
+        // `send_followup_message`). См. spec §9.3.
+        let mut pending_new_bubble = false;
         let reason;
+
+        let allowed_has = |name: &str| allowed.iter().any(|t| t == name);
 
         loop {
             let out = stream_round(
@@ -340,25 +356,49 @@ fn spawn_generation(spawn: GenSpawn) {
                         "Достигнут лимит раундов инструментов ({max_rounds})."
                     )));
                     reason = FinishReason::Stop;
-                    if let Some(m) = finalize_message(&out, &ctx) {
+                    if let Some(mut m) = finalize_message(&out, &ctx) {
+                        m.new_bubble = pending_new_bubble;
                         messages.push(m);
                     }
                     break;
                 }
                 round += 1;
 
-                // assistant-ход с вызовами — в историю запроса и в домен.
+                // Управляющие инструменты беседы (spec §9.3) распознаём только если
+                // они реально включены в профиле — иначе обычный отказ ниже.
+                // `rewrite` отбрасывает текущий раунд; `followup` начинает новый пузырь.
+                let rewrite = out
+                    .calls
+                    .iter()
+                    .any(|c| c.name == control::REWRITE_MESSAGE_ID && allowed_has(&c.name));
+                let followup = out
+                    .calls
+                    .iter()
+                    .any(|c| c.name == control::SEND_FOLLOWUP_ID && allowed_has(&c.name));
+
+                // assistant-ход с вызовами — в историю запроса (нужен и для инференса
+                // следующего раунда продолжения/переписывания).
                 request.messages.push(ApiMessage::assistant_tool_calls(
                     out.text.clone(),
                     out.calls.clone(),
                 ));
                 let mut records: Vec<ToolCallRecord> = Vec::new();
+                let mut tool_msgs: Vec<Message> = Vec::new();
                 for call in &out.calls {
                     let args: serde_json::Value =
                         serde_json::from_str(&call.arguments).unwrap_or(serde_json::Value::Null);
-                    let result = if !allowed.iter().any(|t| t == &call.name) {
+                    let is_control = control::is_control_tool(&call.name);
+                    let result = if !allowed_has(&call.name) {
                         // Защита: инструмент выключен глобально/в профиле.
                         format!("Инструмент {} недоступен (выключен).", call.name)
+                    } else if is_control {
+                        // Управляющий инструмент: результат — «разрешение» (его
+                        // увидит модель в следующем раунде). Исполняется петлёй, не
+                        // через registry.
+                        control::control_permission_text(&call.name).to_string()
+                    } else if rewrite {
+                        // Этот раунд отбрасывается — побочные инструменты не исполняем.
+                        "(сообщение переписывается — вызов пропущен)".to_string()
                     } else {
                         match registry.invoke(&call.name, &ctx, args.clone()).await {
                             Ok(outcome) => {
@@ -368,12 +408,16 @@ fn spawn_generation(spawn: GenSpawn) {
                             Err(err) => format!("Ошибка инструмента {}: {err}", call.name),
                         }
                     };
-                    let _ = evt_tx.send(AppEvent::ToolCall {
-                        generation_id: id,
-                        name: call.name.clone(),
-                        arguments: call.arguments.clone(),
-                        result: result.clone(),
-                    });
+                    // UI tool-блок — только для обычных исполненных вызовов
+                    // (служебные followup/rewrite и пропущенные при переписывании — нет).
+                    if !is_control && !rewrite {
+                        let _ = evt_tx.send(AppEvent::ToolCall {
+                            generation_id: id,
+                            name: call.name.clone(),
+                            arguments: call.arguments.clone(),
+                            result: result.clone(),
+                        });
+                    }
                     request.messages.push(ApiMessage::tool(&call.id, &result));
                     records.push(ToolCallRecord {
                         id: call.id.clone(),
@@ -381,23 +425,40 @@ fn spawn_generation(spawn: GenSpawn) {
                         arguments: args,
                         result: Some(result.clone()),
                     });
-                    messages.push(tool_message(call, result));
+                    tool_msgs.push(tool_message(call, result));
                 }
-                // Доменное assistant-сообщение с tool-блоками (текст раунда + мысли).
+
+                // Доменное assistant-сообщение раунда (текст + мысли + tool-блоки).
                 let mut am = Message::assistant(out.text.clone());
                 if !out.thoughts.is_empty() {
                     am.thoughts = Some(out.thoughts.clone());
                 }
                 am.tool_calls = records;
-                // Вставляем assistant ПЕРЕД tool-сообщениями этого раунда.
-                let tool_msgs: Vec<Message> = messages.split_off(messages.len() - out.calls.len());
-                messages.push(am);
-                messages.extend(tool_msgs);
+
+                if rewrite {
+                    // Отбрасываем раунд: assistant + tool-сообщения → архив удалённого.
+                    // Live-лента очищает текущий пузырь под переписанный ответ.
+                    // `pending_new_bubble` намеренно не трогаем (его поглотит финал).
+                    deleted.push(am);
+                    deleted.extend(tool_msgs);
+                    let _ = evt_tx.send(AppEvent::AssistantRewrite { generation_id: id });
+                } else {
+                    // assistant ПЕРЕД tool-сообщениями этого раунда.
+                    am.new_bubble = std::mem::take(&mut pending_new_bubble);
+                    messages.push(am);
+                    messages.extend(tool_msgs);
+                    if followup {
+                        // Следующее сообщение ассистента — отдельным пузырём.
+                        pending_new_bubble = true;
+                        let _ = evt_tx.send(AppEvent::AssistantContinue { generation_id: id });
+                    }
+                }
                 continue;
             }
 
             // Финальный раунд (Stop/Length/Cancelled/Error или без вызовов).
-            if let Some(m) = finalize_message(&out, &ctx) {
+            if let Some(mut m) = finalize_message(&out, &ctx) {
+                m.new_bubble = pending_new_bubble;
                 messages.push(m);
             }
             reason = out.reason;
@@ -413,6 +474,7 @@ fn spawn_generation(spawn: GenSpawn) {
             chat_id,
             messages,
             effects,
+            deleted,
         });
     });
 }

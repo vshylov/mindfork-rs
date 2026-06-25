@@ -254,7 +254,8 @@ flowchart LR
 `AppEvent` (оркестратор → UI) включает: `ServerStatus`, `ChatList`,
 `ChatRenamed`, `ChatListError`, `CopyToClipboard`, `ProfileList`, `Settings`,
 `ChatActivated`, `UserMessage`, `RestoreInput`, `GenerationStarted`, `Chunk`,
-`Thoughts`, `TokenUsage`, `ToolCall`, `Finished`,
+`Thoughts`, `TokenUsage`, `ToolCall`, `AssistantContinue`/`AssistantRewrite`
+(управляющие инструменты беседы — §8), `Finished`,
 `Impersonation{Started,Chunk,Finished}`, `RagProgress`, `Error`.
 
 `TokenUsage { completion, context, context_exact }` — live-счётчик токенов: ответ
@@ -551,12 +552,22 @@ agentic-loop **гейтит и сам вызов** (выключенный ин�
 | Файлы          | `fs_read`, `fs_write`, `fs_list` — гейтятся `fs_enabled`, опциональная песочница `fs_root` |
 | Утилиты        | `calculate` (свой вычислитель выражений), `current_time` (chrono) — без I/O, не гейтятся |
 | Осознанность   | `call_subagent` (без истории/инструментов, запрет вложенности) |
+| Управление беседой | `send_followup_message` / `rewrite_last_message` — **control-flow** (опц., по умолч. выкл): распознаются agentic-loop'ом, а не `Tool::invoke` |
 
 Особенности реализации:
 
 - **`call_subagent`** — независимый одно-ходовый запрос через `ctx.engine`:
   заданное `system`, единственное `user`-сообщение, `tools: []` (запрет
   рекурсии), лимит токенов и таймаут.
+- **Управляющие инструменты беседы** (`send_followup_message` / `rewrite_last_message`,
+  `features/tools/control.rs`) — не обычные инструменты, а **control-flow**: их
+  распознаёт сам agentic-loop (`generation.rs`), а `Tool`-реализации нужны лишь для
+  схемы/регистрации/гейтинга. `send_followup_message` начинает второе сообщение
+  отдельным пузырём (флаг `Message.new_bubble`); `rewrite_last_message` отбрасывает
+  начатый раунд в `Chat.deleted` и пишет ответ заново. Опциональны (нет в
+  `default_tool_ids`, есть в каталоге `all_tool_ids` — тумблеры профиля). Live-стрим
+  ↔ перезагрузка синхронизируются событиями `AppEvent::AssistantContinue`/
+  `AssistantRewrite`. См. spec §9.3.3.
 - **`web_search`** — фоллбэк по провайдерам (DDG lite → DDG html → Mojeek →
   Ecosia); распознаёт анти-бот троттлинг (HTTP 202/403/429) и переключает
   провайдера, а не парсит пустую выдачу.

@@ -19,7 +19,7 @@ use uuid::Uuid;
 use crate::entities::profile::Profile;
 use crate::entities::sampling::{ReasoningEffort, SamplingConfig};
 use crate::features::profiles::ProfileEdit;
-use crate::features::tools::default_tool_ids;
+use crate::features::tools::all_tool_ids;
 use crate::shared::config::{AppConfig, ImpersonationMode, ServerMode, Theme};
 use crate::shared::keys;
 use crate::shared::theme::Palette;
@@ -461,9 +461,10 @@ impl SettingsScreen {
         SECTIONS[self.section_idx]
     }
 
-    /// Каталог всех известных инструментов (для тумблеров в профиле).
+    /// Каталог всех известных инструментов (для тумблеров в профиле) — включая
+    /// опциональные управляющие (по умолчанию выключенные). См. spec §9.3.
     fn tool_catalog() -> Vec<String> {
-        default_tool_ids()
+        all_tool_ids()
     }
 
     // ---------- построение полей текущей секции ----------
@@ -1763,6 +1764,7 @@ fn centered_rect(pct_x: u16, min_w: u16, height: u16, area: Rect) -> Rect {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::features::tools::default_tool_ids;
 
     fn screen() -> SettingsScreen {
         let mut p = Profile::new("Базовый", "Ты — ассистент.");

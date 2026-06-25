@@ -82,9 +82,12 @@ impl FeedMessage {
             MessageRole::Tool | MessageRole::System => return None,
         };
         let off = msg.text.len();
+        // Управляющие инструменты беседы (followup/rewrite) — служебные сигналы,
+        // не контент: их tool-блоки в ленте не показываем. См. spec §9.3.
         let tools = msg
             .tool_calls
             .iter()
+            .filter(|tc| !crate::features::tools::control::is_control_tool(&tc.name))
             .map(|tc| FeedToolCall {
                 name: tc.name.clone(),
                 arguments: tc.arguments.to_string(),
@@ -113,8 +116,11 @@ impl FeedMessage {
             let Some(mut fm) = Self::from_message(msg) else {
                 continue;
             };
-            // Сливаем раунд ассистента с предыдущим блоком ассистента.
+            // Сливаем раунд ассистента с предыдущим блоком ассистента — кроме
+            // случая, когда сообщение помечено `new_bubble` (инструмент «написать
+            // ещё сообщение»): тогда оно начинает отдельный пузырь. См. spec §9.3.
             if fm.role == FeedRole::Assistant
+                && !msg.new_bubble
                 && let Some(last) = out.last_mut()
                 && last.role == FeedRole::Assistant
             {
@@ -681,6 +687,61 @@ mod tests {
             !joined.contains('…'),
             "результат не должен обрезаться многоточием"
         );
+    }
+
+    #[test]
+    fn followup_starts_new_bubble_and_hides_control_tool() {
+        use crate::entities::message::{Message, MessageRole, ToolCallRecord};
+
+        // A1 (с вызовом send_followup_message) → tool → A2 (new_bubble).
+        let mut a1 = Message::assistant("Первое сообщение.");
+        a1.tool_calls = vec![ToolCallRecord {
+            id: "c1".into(),
+            name: "send_followup_message".into(),
+            arguments: serde_json::json!({}),
+            result: Some("ок".into()),
+        }];
+        let tool_msg = {
+            let mut m = Message::new(MessageRole::Tool, "ок");
+            m.tool_call_id = Some("c1".into());
+            m.tool_name = Some("send_followup_message".into());
+            m
+        };
+        let mut a2 = Message::assistant("Второе сообщение.");
+        a2.new_bubble = true;
+
+        let feed = FeedMessage::from_messages(&[a1, tool_msg, a2]);
+        // Два отдельных пузыря ассистента (не склеены).
+        assert_eq!(feed.len(), 2);
+        assert_eq!(feed[0].text, "Первое сообщение.");
+        assert_eq!(feed[1].text, "Второе сообщение.");
+        // Служебный вызов управляющего инструмента в ленте не показывается.
+        assert!(
+            feed[0].tools.is_empty(),
+            "control-вызов не должен давать tool-блок"
+        );
+    }
+
+    #[test]
+    fn assistant_rounds_without_new_bubble_still_merge() {
+        use crate::entities::message::{Message, MessageRole, ToolCallRecord};
+        // Обычный agentic-раунд (note_save) по-прежнему склеивается в один пузырь.
+        let mut a1 = Message::assistant("Ищу.");
+        a1.tool_calls = vec![ToolCallRecord {
+            id: "c1".into(),
+            name: "note_save".into(),
+            arguments: serde_json::json!({}),
+            result: Some("ok".into()),
+        }];
+        let tool_msg = {
+            let mut m = Message::new(MessageRole::Tool, "ok");
+            m.tool_call_id = Some("c1".into());
+            m
+        };
+        let a2 = Message::assistant("Готово.");
+        let feed = FeedMessage::from_messages(&[a1, tool_msg, a2]);
+        assert_eq!(feed.len(), 1, "обычные раунды склеиваются");
+        assert_eq!(feed[0].tools.len(), 1, "обычный tool-блок виден");
     }
 
     #[test]
