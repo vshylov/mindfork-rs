@@ -13,7 +13,7 @@ use uuid::Uuid;
 use crate::app::events::AppEvent;
 use crate::entities::chat::Chat;
 use crate::entities::message::{Message, MessageRole};
-use crate::entities::sampling::SamplingConfig;
+use crate::entities::sampling::{ReasoningEffort, SamplingConfig};
 use crate::shared::api::{ApiMessage, ChatChunk, ChatRequest, EngineBackend, FinishReason};
 
 use super::Orchestrator;
@@ -24,8 +24,12 @@ const DEFAULT_IMPERSONATION_SYSTEM_MESSAGE: &str = "Ты — пользоват�
      пользователя: естественное, по теме разговора, без пояснений и кавычек. \
      Выведи только текст сообщения.";
 
-/// Лимит времени на одну имперсонацию.
-const IMPERSONATION_TIMEOUT: Duration = Duration::from_secs(120);
+/// Лимит времени на одну имперсонацию (страховка от зависшей задачи). Щедрый:
+/// на медленном локальном `llama-server` одна только обработка промпта может занять
+/// ~минуту, плюс генерация на CPU идёт ~5 ток/с — при 120с реплику резало на полуслове
+/// (см. лог `srv stop: cancel task` ровно на 120с). По таймауту накопленный текст
+/// **не теряется** (отдаётся в поле как при достижении лимита) — см. `spawn_impersonation`.
+const IMPERSONATION_TIMEOUT: Duration = Duration::from_secs(600);
 
 impl Orchestrator {
     /// Пишет сообщение от лица пользователя (имперсонация, `Ctrl+U`, spec §11.8):
@@ -117,8 +121,19 @@ pub(super) fn build_impersonation_request(
     chat: &Chat,
     mut system: String,
     seed: &str,
-    sampling: SamplingConfig,
+    mut sampling: SamplingConfig,
 ) -> ChatRequest {
+    // Имперсонация пишет реплику в поле ввода и **отбрасывает** «мысли» (Thoughts
+    // в `spawn_impersonation` игнорируются), поэтому reasoning ей не нужен. Ключевое
+    // — `reasoning_budget=0`: для моделей со «вшитым» в шаблон thinking (Gemma
+    // `peg-gemma4`, Qwen) только он реально гасит «мысли» (+ `enable_thinking=false`
+    // в `wire.rs`); поля `thinking`/`reasoning_effort` сервер для них игнорирует.
+    // Без этого модель тратила весь бюджет токенов на reasoning_content, а ответный
+    // `content` приходил пустым — предпросмотр оставался пустым (тот же класс бага,
+    // что у авто-названия чата, см. `title.rs`).
+    sampling.thinking = Some(false);
+    sampling.reasoning_effort = Some(ReasoningEffort::None);
+    sampling.reasoning_budget = Some(0);
     let messages = chat.messages.iter().filter_map(swap_role_message).collect();
     let seed = seed.trim();
     if !seed.is_empty() {
@@ -181,6 +196,14 @@ fn spawn_impersonation(
             }
             Ok::<FinishReason, anyhow::Error>(reason)
         };
+        // Различаем отмену пользователем и таймаут: при отмене (`Esc`) поток внутри
+        // `run` ловит `cancel.cancelled()` и сам отдаёт `Finished(Cancelled)` — она
+        // приходит сюда как `Ok(Ok(Cancelled))` и приводит к отбрасыванию текста
+        // (пользователь передумал). Таймаут — это `Err(_)`: серверную задачу мы
+        // прерываем (`cancel.cancel()`), но накопленный текст **сохраняем**, отдавая
+        // его как `Length` (модель писала валидную реплику, просто медленно). Прежний
+        // безусловный `if cancel.is_cancelled() { Cancelled }` оба случая сводил к
+        // отбрасыванию — из-за этого реплика, обрезанная таймаутом, исчезала.
         let reason = match tokio::time::timeout(IMPERSONATION_TIMEOUT, run).await {
             Ok(Ok(r)) => r,
             Ok(Err(err)) => {
@@ -189,14 +212,8 @@ fn spawn_impersonation(
             }
             Err(_) => {
                 cancel.cancel();
-                FinishReason::Cancelled
+                FinishReason::Length
             }
-        };
-        // Отмена пользователем перекрывает причину завершения сервера.
-        let reason = if cancel.is_cancelled() {
-            FinishReason::Cancelled
-        } else {
-            reason
         };
         let _ = done_tx.send((id, reason));
     });

@@ -488,22 +488,21 @@ impl ChatScreen {
         }
     }
 
-    /// Завершает имперсонацию. При `Stop`/`Length` накопленный текст вставляется в
-    /// поле ввода; при `Cancelled`/`Error` отбрасывается (поле ввода сохраняет
-    /// исходный текст-затравку). См. spec §11.8.
+    /// Завершает имперсонацию. Накопленный текст вставляется в поле ввода при любом
+    /// завершении, **кроме явной отмены пользователем** (`Cancelled` — `Esc`): тогда
+    /// поле сохраняет исходный текст-затравку. В частности, обрезанная по таймауту
+    /// (`Length`) или прерванная ошибкой потока (`Error`) реплика **не теряется** —
+    /// неполный текст полезнее пустого поля (пользователь допишет сам). См. spec §11.8.
     pub fn finish_impersonation(&mut self, generation_id: Uuid, reason: FinishReason) {
         match &self.impersonation {
             Some(imp) if imp.generation_id == generation_id => {}
             _ => return,
         }
         let imp = self.impersonation.take().unwrap();
-        match reason {
-            FinishReason::Stop | FinishReason::Length => {
-                // set_text ставит курсор в конец вставленного текста.
-                self.input.set_text(&imp.text);
-                self.mark_input_changed();
-            }
-            _ => {}
+        if reason != FinishReason::Cancelled {
+            // set_text ставит курсор в конец вставленного текста.
+            self.input.set_text(&imp.text);
+            self.mark_input_changed();
         }
     }
 
@@ -1465,6 +1464,20 @@ mod tests {
         s.finish_impersonation(id, FinishReason::Cancelled);
         assert!(!s.is_impersonating());
         assert_eq!(s.input.text(), "черновик");
+    }
+
+    #[test]
+    fn impersonation_timeout_keeps_partial_text() {
+        // Таймаут имперсонации приходит как `Length` (не `Cancelled`) — обрезанная
+        // реплика должна сохраниться в поле, а не исчезнуть.
+        let mut s = ChatScreen::new();
+        type_str(&mut s, "Я ");
+        let id = gen_id();
+        s.begin_impersonation(id);
+        s.push_impersonation_chunk(id, "хочу узнать про");
+        s.finish_impersonation(id, FinishReason::Length);
+        assert!(!s.is_impersonating());
+        assert_eq!(s.input.text(), "Я хочу узнать про");
     }
 
     #[test]
