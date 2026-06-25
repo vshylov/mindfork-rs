@@ -110,10 +110,29 @@ impl InputBox {
         self.lines.len()
     }
 
-    /// Число визуальных рядов при ширине `width` (с учётом переноса). Нужно слою
-    /// выше, чтобы высота поля росла под перенос, а не только под `Shift+Enter`.
+    /// Число визуальных рядов при ширине `width` (с учётом переноса). Производный
+    /// путь высоты поля теперь использует [`Self::content_rows`] (он сам вычитает
+    /// рамку и колонку приглашения); метод оставлен для тестов как тонкая обёртка
+    /// над [`Self::visual_rows`].
+    #[cfg(test)]
     pub fn visual_line_count(&self, width: usize) -> usize {
         self.visual_rows(width).len()
+    }
+
+    /// Число визуальных рядов содержимого при отрисовке в область **внешней** ширины
+    /// `area_width` (вместе с рамкой). Вычитает рамку (2) и колонку приглашения
+    /// ([`PROMPT_W`]) — ровно ту же ширину текста, что использует [`Self::render`].
+    /// Слой выше считает высоту поля по этому методу, чтобы она совпадала с реальным
+    /// переносом: иначе расчёт высоты по «ширине минус рамка» завышал бы доступную
+    /// ширину на [`PROMPT_W`] и поле не росло бы на один-два символа за границей
+    /// переноса (курсор прижимался к краю, см. spec §11.5). В однострочном режиме
+    /// перенос отключён — всегда один ряд.
+    pub fn content_rows(&self, area_width: u16) -> usize {
+        if self.single_line {
+            return 1;
+        }
+        let text_w = area_width.saturating_sub(2).saturating_sub(PROMPT_W).max(1) as usize;
+        self.visual_rows(text_w).len()
     }
 
     /// Очищает поле. Сбрасывает и буфер отмены [`Self::cleared`] (после отправки
@@ -1155,6 +1174,36 @@ mod tests {
         let mut term = Terminal::new(TestBackend::new(24, 3)).unwrap();
         term.draw(|f| ib.render(f, f.area(), "ввод", true, &Palette::default(), true))
             .unwrap();
+    }
+
+    #[test]
+    fn content_rows_matches_render_text_width() {
+        // `content_rows(area_width)` должен считать перенос по ТОЙ ЖЕ ширине текста,
+        // что и `render` (минус рамка 2 и колонка приглашения PROMPT_W), иначе высота
+        // поля расходится с реальным переносом (поле не растёт на 1–2 символа за
+        // границей). Внешняя ширина 14 → ширина текста = 14 − 2 − PROMPT_W = 10.
+        let area_width: u16 = 14;
+        let text_w = (area_width - 2 - PROMPT_W) as usize; // 10
+        let mut ib = InputBox::new();
+        // Слово ровно на один символ длиннее ширины текста → render переносит на 2 ряда.
+        let word = "a".repeat(text_w + 1);
+        type_str(&mut ib, &word);
+        // Рендерим во внешнюю область этой ширины — last_width станет = реальной ширине.
+        render_at(&mut ib, area_width - 2 - PROMPT_W);
+        let rendered_rows = ib.visual_rows(ib.last_width).len();
+        assert_eq!(ib.content_rows(area_width), rendered_rows);
+        assert!(
+            ib.content_rows(area_width) > 1,
+            "поле должно вырасти до двух рядов на символе за границей переноса"
+        );
+    }
+
+    #[test]
+    fn content_rows_single_line_is_one() {
+        let mut ib = InputBox::new();
+        ib.set_single_line(true);
+        ib.set_text("очень длинное значение не помещающееся в узкое поле");
+        assert_eq!(ib.content_rows(12), 1);
     }
 
     #[test]

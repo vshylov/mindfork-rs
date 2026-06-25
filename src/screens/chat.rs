@@ -1024,11 +1024,14 @@ impl ChatScreen {
         }
 
         // Высота ввода/предпросмотра растёт под содержимое с учётом переноса (1–6
-        // рядов + рамка). Ширина внутренней области = ширина экрана минус рамки.
-        let input_inner_w = frame.area().width.saturating_sub(2).max(1) as usize;
+        // рядов + рамка). Предпросмотр имперсонации переносит по «ширина минус рамка»
+        // (без колонки приглашения), а у поля ввода есть колонка `❯` — поэтому его
+        // высоту считаем через `content_rows`, который вычитает и рамку, и `PROMPT_W`
+        // (та же ширина текста, что и при отрисовке, иначе поле растёт с опозданием).
+        let area_w = frame.area().width;
         let content_lines = match &self.impersonation {
-            Some(imp) => visual_line_count(&imp.text, input_inner_w),
-            None => self.input.visual_line_count(input_inner_w),
+            Some(imp) => visual_line_count(&imp.text, area_w.saturating_sub(2).max(1) as usize),
+            None => self.input.content_rows(area_w),
         };
         let input_h = (content_lines.clamp(1, 6) + 2) as u16;
         // Баннер индексации RAG занимает строку только когда активен (иначе 0 —
