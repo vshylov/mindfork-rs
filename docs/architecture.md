@@ -552,18 +552,18 @@ agentic-loop **гейтит и сам вызов** (выключенный ин�
 | Файлы          | `fs_read`, `fs_write`, `fs_list` — гейтятся `fs_enabled`, опциональная песочница `fs_root` |
 | Утилиты        | `calculate` (свой вычислитель выражений), `current_time` (chrono) — без I/O, не гейтятся |
 | Осознанность   | `call_subagent` (без истории/инструментов, запрет вложенности) |
-| Управление беседой | `send_followup_message` / `rewrite_last_message` — **control-flow** (опц., по умолч. выкл): распознаются agentic-loop'ом, а не `Tool::invoke` |
+| Управление беседой | `send_followup_message` / `rewrite_current_message` — **control-flow** (опц., по умолч. выкл): распознаются agentic-loop'ом, а не `Tool::invoke` |
 
 Особенности реализации:
 
 - **`call_subagent`** — независимый одно-ходовый запрос через `ctx.engine`:
   заданное `system`, единственное `user`-сообщение, `tools: []` (запрет
   рекурсии), лимит токенов и таймаут.
-- **Управляющие инструменты беседы** (`send_followup_message` / `rewrite_last_message`,
+- **Управляющие инструменты беседы** (`send_followup_message` / `rewrite_current_message`,
   `features/tools/control.rs`) — не обычные инструменты, а **control-flow**: их
   распознаёт сам agentic-loop (`generation.rs`), а `Tool`-реализации нужны лишь для
   схемы/регистрации/гейтинга. `send_followup_message` начинает второе сообщение
-  отдельным пузырём (флаг `Message.new_bubble`); `rewrite_last_message` отбрасывает
+  отдельным пузырём (флаг `Message.new_bubble`); `rewrite_current_message` отбрасывает
   начатый раунд в `Chat.deleted` и пишет ответ заново. Опциональны (нет в
   `default_tool_ids`, есть в каталоге `all_tool_ids` — тумблеры профиля). Live-стрим
   ↔ перезагрузка синхронизируются событиями `AppEvent::AssistantContinue`/

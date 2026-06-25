@@ -494,7 +494,7 @@ mod ignored_smoke {
     #[ignore = "requires a running OpenAI-compatible server (MINDFORK_ENGINE_URL)"]
     async fn control_tools_are_callable() {
         use crate::features::tools::Tool;
-        use crate::features::tools::control::{RewriteLastMessage, SendFollowupMessage};
+        use crate::features::tools::control::{RewriteCurrentMessage, SendFollowupMessage};
         let Some(client) = client_from_env() else {
             eprintln!("skip: MINDFORK_ENGINE_URL not set");
             return;
@@ -511,7 +511,7 @@ mod ignored_smoke {
                 max_tokens: Some(512),
                 ..Default::default()
             },
-            tools: vec![SendFollowupMessage.schema(), RewriteLastMessage.schema()],
+            tools: vec![SendFollowupMessage.schema(), RewriteCurrentMessage.schema()],
         };
         let mut stream = client.chat_stream(req, Default::default()).await.unwrap();
         let mut acc = ToolCallAccumulator::default();
