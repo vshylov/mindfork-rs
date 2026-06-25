@@ -627,6 +627,32 @@ fn impersonation_request_swaps_roles_and_sets_system() {
 }
 
 #[test]
+fn impersonation_request_disables_reasoning() {
+    // Имперсонация отбрасывает «мысли», поэтому запрос обязан гасить reasoning —
+    // иначе модели со «вшитым» thinking (Gemma/Qwen) тратят весь бюджет на
+    // reasoning_content, а ответный текст приходит пустым (предпросмотр пуст).
+    let profile = Profile::new("P", "sys");
+    let chat = Chat::from_profile(&profile, "c");
+    let req = build_impersonation_request(
+        &chat,
+        "Ты — пользователь".into(),
+        "",
+        // Пользователь оставил «мысли» включёнными в семплинге имперсонации —
+        // запрос всё равно должен их выключить.
+        SamplingConfig {
+            thinking: Some(true),
+            ..Default::default()
+        },
+    );
+    assert_eq!(req.sampling.thinking, Some(false));
+    assert_eq!(req.sampling.reasoning_budget, Some(0));
+    assert_eq!(
+        req.sampling.reasoning_effort,
+        Some(crate::entities::sampling::ReasoningEffort::None)
+    );
+}
+
+#[test]
 fn impersonation_request_with_seed_adds_continuation_hint() {
     let profile = Profile::new("P", "sys");
     let chat = Chat::from_profile(&profile, "c");
