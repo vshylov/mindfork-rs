@@ -144,6 +144,14 @@ pub enum AppEvent {
         arguments: String,
         result: String,
     },
+    /// Ассистент решил написать **ещё одно** сообщение (инструмент
+    /// `send_followup_message`): UI завершает текущий пузырь и начинает новый,
+    /// в который пойдёт текст следующего раунда. См. spec §9.3.
+    AssistantContinue { generation_id: Uuid },
+    /// Ассистент решил **переписать** текущее сообщение (инструмент
+    /// `rewrite_last_message`): UI отбрасывает уже накопленный текст текущего
+    /// пузыря; в него пойдёт переписанный ответ. См. spec §9.3.
+    AssistantRewrite { generation_id: Uuid },
     /// Генерация завершена.
     Finished {
         generation_id: Uuid,

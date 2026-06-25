@@ -8,6 +8,7 @@
 //! инвариант репозиториев, spec §9.5).
 
 pub mod calc;
+pub mod control;
 pub mod datetime;
 pub mod fetch;
 pub mod fs;
@@ -120,7 +121,9 @@ pub const PYTHON_EXEC_ID: &str = "python_exec";
 
 /// Идентификаторы инструментов, включаемых в профиле по умолчанию (M5–M7).
 /// Внешние (`web_search`/`python_exec`) дополнительно гейтятся глобальными
-/// выключателями — см. [`effective_tool_ids`].
+/// выключателями — см. [`effective_tool_ids`]. Управляющие инструменты беседы
+/// (`send_followup_message`/`rewrite_last_message`) сюда **не входят** — они
+/// опциональны (по умолчанию выкл), см. [`all_tool_ids`].
 pub fn default_tool_ids() -> Vec<ToolId> {
     [
         "get_sampling",
@@ -145,6 +148,18 @@ pub fn default_tool_ids() -> Vec<ToolId> {
     .into_iter()
     .map(String::from)
     .collect()
+}
+
+/// Полный каталог инструментов для тумблеров профиля: дефолтные + опциональные
+/// (по умолчанию выключенные) управляющие инструменты беседы. В отличие от
+/// [`default_tool_ids`], сюда входят `send_followup_message`/`rewrite_last_message`
+/// — так пользователь видит их в настройках профиля и может включить, но
+/// `reconcile_tools` их **не** включает автоматически. См. spec §9.3.
+pub fn all_tool_ids() -> Vec<ToolId> {
+    let mut ids = default_tool_ids();
+    ids.push(control::SEND_FOLLOWUP_ID.into());
+    ids.push(control::REWRITE_MESSAGE_ID.into());
+    ids
 }
 
 /// Эффективный набор инструментов: `enabled` минус внешние, отключённые
@@ -226,6 +241,9 @@ pub fn standard_registry(cfg: &ToolConfig) -> ToolRegistry {
     reg.register(Arc::new(fs::FsRead::new(cfg.fs_root.clone())));
     reg.register(Arc::new(fs::FsWrite::new(cfg.fs_root.clone())));
     reg.register(Arc::new(fs::FsList::new(cfg.fs_root.clone())));
+    // Управляющие инструменты беседы (опциональны, гейтятся набором профиля).
+    reg.register(Arc::new(control::SendFollowupMessage));
+    reg.register(Arc::new(control::RewriteLastMessage));
     reg
 }
 
@@ -360,13 +378,36 @@ mod tests {
     #[test]
     fn standard_registry_has_all_default_tools() {
         let reg = standard_registry(&ToolConfig::default());
-        for id in default_tool_ids() {
+        // Реестр содержит весь каталог — и дефолтные, и опциональные управляющие.
+        for id in all_tool_ids() {
             assert!(reg.get(&id).is_some(), "инструмент {id} не зарегистрирован");
         }
-        // Схемы для дефолтного набора покрывают все id.
-        assert_eq!(
-            reg.schemas_for(&default_tool_ids()).len(),
-            default_tool_ids().len()
+        // Схемы для полного каталога покрывают все id.
+        assert_eq!(reg.schemas_for(&all_tool_ids()).len(), all_tool_ids().len());
+    }
+
+    #[test]
+    fn control_tools_optional_not_in_defaults() {
+        // Управляющие инструменты — в каталоге, но не среди дефолтных (выкл по умолч.).
+        assert!(
+            !default_tool_ids()
+                .iter()
+                .any(|t| t == control::SEND_FOLLOWUP_ID)
+        );
+        assert!(
+            !default_tool_ids()
+                .iter()
+                .any(|t| t == control::REWRITE_MESSAGE_ID)
+        );
+        assert!(
+            all_tool_ids()
+                .iter()
+                .any(|t| t == control::SEND_FOLLOWUP_ID)
+        );
+        assert!(
+            all_tool_ids()
+                .iter()
+                .any(|t| t == control::REWRITE_MESSAGE_ID)
         );
     }
 

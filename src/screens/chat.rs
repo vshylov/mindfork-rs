@@ -399,6 +399,48 @@ impl ChatScreen {
         }
     }
 
+    /// Ассистент написал сообщение и продолжает вторым (инструмент
+    /// `send_followup_message`): завершаем текущий пузырь и добавляем новый
+    /// стримящийся пузырь ассистента — в него пойдёт текст следующего раунда.
+    /// Так live-лента совпадает с перезагрузкой (`from_messages` не склеивает
+    /// сообщение с `new_bubble`). См. spec §9.3.
+    pub fn continue_assistant(&mut self, generation_id: Uuid) {
+        if self.current_gen != Some(generation_id) {
+            return;
+        }
+        if let Some(last) = self.feed.last_mut() {
+            last.streaming = false;
+        }
+        self.pending_text_sep = false;
+        self.pending_thoughts_sep = false;
+        self.feed.push(FeedMessage {
+            role: FeedRole::Assistant,
+            text: String::new(),
+            thoughts: String::new(),
+            tools: Vec::new(),
+            streaming: true,
+        });
+        self.feed_view.scroll_to_bottom();
+    }
+
+    /// Ассистент решил переписать текущее сообщение (инструмент
+    /// `rewrite_last_message`): отбрасываем уже накопленный текст/мысли/вызовы
+    /// текущего пузыря — переписанный ответ пойдёт в него же. См. spec §9.3.
+    pub fn rewrite_assistant(&mut self, generation_id: Uuid) {
+        if self.current_gen != Some(generation_id) {
+            return;
+        }
+        if let Some(last) = self.feed.last_mut() {
+            last.text.clear();
+            last.thoughts.clear();
+            last.tools.clear();
+            last.streaming = true;
+        }
+        self.pending_text_sep = false;
+        self.pending_thoughts_sep = false;
+        self.feed_view.scroll_to_bottom();
+    }
+
     pub fn push_chunk(&mut self, generation_id: Uuid, text: &str) {
         if self.current_gen == Some(generation_id)
             && let Some(last) = self.feed.last_mut()
@@ -1310,6 +1352,73 @@ mod tests {
         assert_eq!(reload[0].text, live.text);
         assert_eq!(reload[0].tools.len(), 1);
         assert_eq!(reload[0].tools[0].text_offset, live.tools[0].text_offset);
+    }
+
+    #[test]
+    fn live_followup_makes_two_bubbles_matching_reload() {
+        use crate::entities::message::{Message, ToolCallRecord};
+
+        // Live: текст 1 → followup → текст 2.
+        let mut s = ChatScreen::new();
+        let id = gen_id();
+        s.begin_generation(id);
+        s.push_chunk(id, "Первое сообщение.");
+        s.continue_assistant(id);
+        s.push_chunk(id, "Второе сообщение.");
+        s.finish_generation(id, FinishReason::Stop);
+
+        // Два отдельных пузыря ассистента.
+        let bubbles: Vec<&FeedMessage> = s
+            .feed
+            .iter()
+            .filter(|m| m.role == FeedRole::Assistant)
+            .collect();
+        assert_eq!(bubbles.len(), 2);
+        assert_eq!(bubbles[0].text, "Первое сообщение.");
+        assert_eq!(bubbles[1].text, "Второе сообщение.");
+
+        // Reload: A1 (с управляющим вызовом) → tool → A2 (new_bubble).
+        let mut a1 = Message::assistant("Первое сообщение.");
+        a1.tool_calls = vec![ToolCallRecord {
+            id: "c1".into(),
+            name: "send_followup_message".into(),
+            arguments: serde_json::json!({}),
+            result: Some("ок".into()),
+        }];
+        let tool_msg = {
+            let mut m = Message::new(MessageRole::Tool, "ок");
+            m.tool_call_id = Some("c1".into());
+            m.tool_name = Some("send_followup_message".into());
+            m
+        };
+        let mut a2 = Message::assistant("Второе сообщение.");
+        a2.new_bubble = true;
+        let reload = FeedMessage::from_messages(&[a1, tool_msg, a2]);
+        assert_eq!(reload.len(), 2);
+        assert_eq!(reload[0].text, bubbles[0].text);
+        assert_eq!(reload[1].text, bubbles[1].text);
+    }
+
+    #[test]
+    fn live_rewrite_discards_partial_text() {
+        // Live: частичный неверный текст → rewrite → переписанный ответ.
+        let mut s = ChatScreen::new();
+        let id = gen_id();
+        s.begin_generation(id);
+        s.push_chunk(id, "Непра");
+        s.push_chunk(id, "вильный ответ.");
+        s.rewrite_assistant(id);
+        s.push_chunk(id, "Правильный ответ.");
+        s.finish_generation(id, FinishReason::Stop);
+
+        // Ровно один пузырь ассистента с переписанным текстом (частичный отброшен).
+        let bubbles: Vec<&FeedMessage> = s
+            .feed
+            .iter()
+            .filter(|m| m.role == FeedRole::Assistant)
+            .collect();
+        assert_eq!(bubbles.len(), 1);
+        assert_eq!(bubbles[0].text, "Правильный ответ.");
     }
 
     #[test]
