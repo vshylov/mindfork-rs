@@ -1246,14 +1246,14 @@ async fn followup_tool_makes_two_assistant_messages() {
 #[tokio::test]
 async fn rewrite_tool_discards_partial_and_saves_it() {
     use crate::shared::api::backend::ToolCallDelta;
-    // Раунд 1: неверный текст + вызов rewrite_last_message → раунд 2: переписанный.
+    // Раунд 1: неверный текст + вызов rewrite_current_message → раунд 2: переписанный.
     let backend = Arc::new(MockBackend::sequence(vec![
         vec![
             ChatChunk::Text("Неправильный ответ".into()),
             ChatChunk::ToolCall(ToolCallDelta {
                 index: 0,
                 id: Some("c1".into()),
-                name: Some("rewrite_last_message".into()),
+                name: Some("rewrite_current_message".into()),
                 arguments: "{}".into(),
             }),
             ChatChunk::Finished(FinishReason::ToolCalls),
@@ -1301,7 +1301,7 @@ async fn rewrite_tool_discards_partial_and_saves_it() {
     let discarded = &chat.deleted[0].messages;
     assert_eq!(discarded[0].role, MessageRole::Assistant);
     assert_eq!(discarded[0].text, "Неправильный ответ");
-    assert_eq!(discarded[0].tool_calls[0].name, "rewrite_last_message");
+    assert_eq!(discarded[0].tool_calls[0].name, "rewrite_current_message");
 }
 
 /// Реальный chat-движок из `MINDFORK_ENGINE_URL` (для end-to-end смоуков на живой
@@ -1388,7 +1388,7 @@ async fn followup_tool_e2e_live() {
     );
 }
 
-/// End-to-end на живой модели: с включённым `rewrite_last_message` ассистент
+/// End-to-end на живой модели: с включённым `rewrite_current_message` ассистент
 /// отбрасывает начатый ответ и пишет заново; отброшенное уходит в `Chat.deleted`.
 /// Проверяем сигнал UI (`AssistantRewrite`) и непустой архив удалённого.
 /// Модель нестабильна — тест `#[ignore]`, гоняется вручную.
@@ -1404,11 +1404,11 @@ async fn rewrite_tool_e2e_live() {
     enable_all_tools(&cmd_tx, &mut evt_rx).await;
     cmd_tx
         .send(AppCommand::SendMessage(
-            "Продемонстрируй инструмент rewrite_last_message строго по шагам, НИ ОДИН \
+            "Продемонстрируй инструмент rewrite_current_message строго по шагам, НИ ОДИН \
              не пропуская. Шаг 1: напиши ровно «2+2=5». Шаг 2 (ОБЯЗАТЕЛЬНЫЙ): сразу \
-             вызови инструмент rewrite_last_message — без него задание не выполнено. \
+             вызови инструмент rewrite_current_message — без него задание не выполнено. \
              Шаг 3: после вызова напиши правильный ответ «2+2=4». Самое важное — \
-             обязательно вызвать rewrite_last_message между шагами 1 и 3."
+             обязательно вызвать rewrite_current_message между шагами 1 и 3."
                 .into(),
         ))
         .unwrap();

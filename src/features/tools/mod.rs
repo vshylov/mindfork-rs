@@ -122,7 +122,7 @@ pub const PYTHON_EXEC_ID: &str = "python_exec";
 /// Идентификаторы инструментов, включаемых в профиле по умолчанию (M5–M7).
 /// Внешние (`web_search`/`python_exec`) дополнительно гейтятся глобальными
 /// выключателями — см. [`effective_tool_ids`]. Управляющие инструменты беседы
-/// (`send_followup_message`/`rewrite_last_message`) сюда **не входят** — они
+/// (`send_followup_message`/`rewrite_current_message`) сюда **не входят** — они
 /// опциональны (по умолчанию выкл), см. [`all_tool_ids`].
 pub fn default_tool_ids() -> Vec<ToolId> {
     [
@@ -152,13 +152,13 @@ pub fn default_tool_ids() -> Vec<ToolId> {
 
 /// Полный каталог инструментов для тумблеров профиля: дефолтные + опциональные
 /// (по умолчанию выключенные) управляющие инструменты беседы. В отличие от
-/// [`default_tool_ids`], сюда входят `send_followup_message`/`rewrite_last_message`
+/// [`default_tool_ids`], сюда входят `send_followup_message`/`rewrite_current_message`
 /// — так пользователь видит их в настройках профиля и может включить, но
 /// `reconcile_tools` их **не** включает автоматически. См. spec §9.3.
 pub fn all_tool_ids() -> Vec<ToolId> {
     let mut ids = default_tool_ids();
     ids.push(control::SEND_FOLLOWUP_ID.into());
-    ids.push(control::REWRITE_MESSAGE_ID.into());
+    ids.push(control::REWRITE_CURRENT_ID.into());
     ids
 }
 
@@ -243,7 +243,7 @@ pub fn standard_registry(cfg: &ToolConfig) -> ToolRegistry {
     reg.register(Arc::new(fs::FsList::new(cfg.fs_root.clone())));
     // Управляющие инструменты беседы (опциональны, гейтятся набором профиля).
     reg.register(Arc::new(control::SendFollowupMessage));
-    reg.register(Arc::new(control::RewriteLastMessage));
+    reg.register(Arc::new(control::RewriteCurrentMessage));
     reg
 }
 
@@ -397,7 +397,7 @@ mod tests {
         assert!(
             !default_tool_ids()
                 .iter()
-                .any(|t| t == control::REWRITE_MESSAGE_ID)
+                .any(|t| t == control::REWRITE_CURRENT_ID)
         );
         assert!(
             all_tool_ids()
@@ -407,7 +407,7 @@ mod tests {
         assert!(
             all_tool_ids()
                 .iter()
-                .any(|t| t == control::REWRITE_MESSAGE_ID)
+                .any(|t| t == control::REWRITE_CURRENT_ID)
         );
     }
 

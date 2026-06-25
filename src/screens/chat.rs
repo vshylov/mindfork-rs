@@ -424,7 +424,7 @@ impl ChatScreen {
     }
 
     /// Ассистент решил переписать текущее сообщение (инструмент
-    /// `rewrite_last_message`): отбрасываем уже накопленный текст/мысли/вызовы
+    /// `rewrite_current_message`): отбрасываем уже накопленный текст/мысли/вызовы
     /// текущего пузыря — переписанный ответ пойдёт в него же. См. spec §9.3.
     pub fn rewrite_assistant(&mut self, generation_id: Uuid) {
         if self.current_gen != Some(generation_id) {

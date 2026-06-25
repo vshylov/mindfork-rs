@@ -30,7 +30,7 @@ pub(super) struct GenResult {
     pub(super) messages: Vec<Message>,
     /// Эффекты инструментов (применяются оркестратором — владельцем `Chat`).
     pub(super) effects: Vec<ChatEffect>,
-    /// Сообщения, отброшенные инструментом «переписать» (`rewrite_last_message`):
+    /// Сообщения, отброшенные инструментом «переписать» (`rewrite_current_message`):
     /// прежняя (неверная) версия + её tool-сообщение. Сохраняются в `Chat.deleted`
     /// ради ручного восстановления; в инференсе/ленте не участвуют. См. spec §9.3.
     pub(super) deleted: Vec<Message>,
@@ -370,7 +370,7 @@ fn spawn_generation(spawn: GenSpawn) {
                 let rewrite = out
                     .calls
                     .iter()
-                    .any(|c| c.name == control::REWRITE_MESSAGE_ID && allowed_has(&c.name));
+                    .any(|c| c.name == control::REWRITE_CURRENT_ID && allowed_has(&c.name));
                 let followup = out
                     .calls
                     .iter()
