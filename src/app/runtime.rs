@@ -260,7 +260,7 @@ fn run_loop(
                     collect_press(&mut batch, event::read()?);
                 }
             }
-            if process_input_batch(batch, &mut screen, &mut active, cmd_tx) {
+            if process_input_batch(batch, &mut screen, &mut active, cmd_tx, &mut clipboard) {
                 quit = true;
             }
         }
@@ -386,6 +386,66 @@ fn apply_event(
     }
 }
 
+/// Сверяет реконструированную из key-событий вставку с буфером обмена и, если это та
+/// же вставка, возвращает её полную версию из буфера (с восстановленными эмодзи).
+///
+/// **Зачем (Windows):** при вставке из буфера обмена консоль Windows доставляет текст
+/// как обычные key-события, а crossterm 0.29 **теряет** символы supplementary-плоскости
+/// (эмодзи вроде 😊, U+1F60A): они кодируются UTF-16 суррогатной парой, а записи
+/// key-down/key-up консоли ломают сборку пары в crossterm — символ пропадает ещё до
+/// нашего слоя. BMP-символы (буквы, ❤ U+2764, селектор U+FE0F) проходят. Поэтому
+/// реконструкция = вставка без supplementary-эмодзи.
+///
+/// Чтобы вернуть эмодзи, читаем буфер обмена и сверяем: если выбросить из него ровно те
+/// символы, что теряет консоль (кодпойнты > U+FFFF), и нормализовать переводы строк/
+/// табы, совпадает ли он с реконструкцией? Совпал → это та же вставка, отдаём полный
+/// текст буфера. Не совпал (буфер устарел/не та вставка/недоступен) → реконструкцию
+/// (без эмодзи, но без риска вставить чужое). На не-Windows — тождественно (там приходит
+/// корректная bracketed-вставка `Event::Paste`).
+#[cfg(windows)]
+fn reconcile_paste(reconstructed: String, clipboard: &mut Option<arboard::Clipboard>) -> String {
+    match read_clipboard_text(clipboard) {
+        Some(clip) if paste_projection_matches(&clip, &reconstructed) => clip,
+        _ => reconstructed,
+    }
+}
+
+/// На не-Windows вставка приходит корректным UTF-8 (`Event::Paste`) — сверка не нужна.
+#[cfg(not(windows))]
+fn reconcile_paste(reconstructed: String, _clipboard: &mut Option<arboard::Clipboard>) -> String {
+    reconstructed
+}
+
+/// Совпадает ли буфер обмена с реконструкцией вставки по «BMP-проекции» (чистая
+/// функция, тестируема без буфера/терминала). Из буфера выбрасываются символы, которые
+/// консоль Windows теряет (кодпойнты > U+FFFF — суррогатные пары), затем обе стороны
+/// нормализуются по переводам строк/табам (как [`InputBox::insert_str`]). См.
+/// [`reconcile_paste`].
+#[cfg(windows)]
+fn paste_projection_matches(clipboard: &str, reconstructed: &str) -> bool {
+    fn normalize(s: &str) -> String {
+        s.replace("\r\n", "\n")
+            .replace('\r', "\n")
+            .replace('\t', "    ")
+    }
+    let projected: String = clipboard
+        .chars()
+        .filter(|c| (*c as u32) <= 0xFFFF)
+        .collect();
+    !reconstructed.is_empty() && normalize(&projected) == normalize(reconstructed)
+}
+
+/// Читает текст системного буфера обмена (лениво создавая клиент). `None`, если буфер
+/// недоступен/пуст/не текстовый. Используется только на Windows для восстановления
+/// эмодзи во вставке (см. [`reconcile_paste`]).
+#[cfg(windows)]
+fn read_clipboard_text(slot: &mut Option<arboard::Clipboard>) -> Option<String> {
+    if slot.is_none() {
+        *slot = arboard::Clipboard::new().ok();
+    }
+    slot.as_mut().and_then(|c| c.get_text().ok())
+}
+
 /// Пишет текст в системный буфер обмена, создавая клиент лениво и переиспользуя
 /// его. Возвращает текст ошибки (вместо паники), если буфер недоступен — на
 /// headless-Linux без X11/Wayland конструктор `arboard` может упасть.
@@ -482,18 +542,26 @@ fn process_input_batch(
     screen: &mut ChatScreen,
     active: &mut ActiveScreen,
     cmd_tx: &UnboundedSender<AppCommand>,
+    clipboard: &mut Option<arboard::Clipboard>,
 ) -> bool {
     let mut quit = false;
     for chunk in chunk_batch(batch) {
         match chunk {
             // Вставка из буфера: на экране настроек — в активный редактор поля; в
             // чате — в поле ввода (никогда не отправляет); в списке цели вставки нет.
-            Chunk::Paste(text) | Chunk::Event(Event::Paste(text)) => match active {
-                ActiveScreen::Settings(settings) => settings.handle_paste(&text),
-                ActiveScreen::Chat => screen.handle_paste(&text),
-                // В списке цель вставки — поле переименования (`F2`), если открыто.
-                ActiveScreen::ChatList(list) => list.handle_paste(&text),
-            },
+            // `Chunk::Paste` — реконструкция из key-событий (Windows); сверяем её с
+            // буфером обмена, чтобы восстановить потерянные crossterm эмодзи
+            // supplementary-плоскости (см. [`reconcile_paste`]). `Event::Paste` —
+            // настоящая bracketed-вставка (unix), уже корректный UTF-8.
+            Chunk::Paste(text) | Chunk::Event(Event::Paste(text)) => {
+                let text = reconcile_paste(text, clipboard);
+                match active {
+                    ActiveScreen::Settings(settings) => settings.handle_paste(&text),
+                    ActiveScreen::Chat => screen.handle_paste(&text),
+                    // В списке цель вставки — поле переименования (`F2`), если открыто.
+                    ActiveScreen::ChatList(list) => list.handle_paste(&text),
+                }
+            }
             Chunk::Event(Event::Key(key)) => {
                 // Снимаем намерение из активного экрана (борроу заканчивается на
                 // owned-значении), затем диспетчеризуем — иначе конфликт заимствований.
@@ -657,6 +725,27 @@ mod tests {
 
     fn key(code: KeyCode) -> Event {
         Event::Key(KeyEvent::new(code, KeyModifiers::NONE))
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn paste_projection_matches_restores_supplementary_emoji() {
+        // Буфер «hello 😊 world» при потерянном консолью эмодзи реконструируется как
+        // «hello  world» (😊 > U+FFFF выпал) — проекция совпадает → берём буфер.
+        assert!(paste_projection_matches("hello 😊 world", "hello  world"));
+        // ❤ (U+2764) и селектор U+FE0F — BMP, проходят и остаются в реконструкции.
+        assert!(paste_projection_matches("ok ❤\u{FE0F}", "ok ❤\u{FE0F}"));
+        // Переводы строк нормализуются (буфер \n ↔ реконструкция \r от Enter).
+        assert!(paste_projection_matches("a😊\nb", "a\rb"));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn paste_projection_rejects_unrelated_clipboard() {
+        // Устаревший/чужой буфер не совпадает с реконструкцией → НЕ подставляем его.
+        assert!(!paste_projection_matches("совсем другое", "hello  world"));
+        // Пустая реконструкция никогда не матчится (нет сигнала, что это та же вставка).
+        assert!(!paste_projection_matches("😊", ""));
     }
 
     #[test]

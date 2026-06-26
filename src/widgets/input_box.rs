@@ -282,8 +282,11 @@ impl InputBox {
     pub fn backspace(&mut self) {
         self.goal_col = None;
         if self.col > 0 {
-            self.col -= 1;
-            self.lines[self.row].remove(self.col);
+            // Удаляем кластер целиком (`❤️`/`👍🏽` — несколько скаляров), а не один
+            // скаляр — иначе остаётся осиротевший вариатор/модификатор. См. spec §11.5.
+            let start = wrap::prev_boundary(&self.lines[self.row], self.col);
+            self.lines[self.row].drain(start..self.col);
+            self.col = start;
         } else if self.row > 0 {
             // склейка с предыдущей строкой
             let current = self.lines.remove(self.row);
@@ -296,7 +299,9 @@ impl InputBox {
     pub fn delete(&mut self) {
         self.goal_col = None;
         if self.col < self.lines[self.row].len() {
-            self.lines[self.row].remove(self.col);
+            // Удаляем кластер целиком (зеркально `backspace`), а не один скаляр.
+            let end = wrap::next_boundary(&self.lines[self.row], self.col);
+            self.lines[self.row].drain(self.col..end);
         } else if self.row + 1 < self.lines.len() {
             let next = self.lines.remove(self.row + 1);
             self.lines[self.row].extend(next);
@@ -308,7 +313,8 @@ impl InputBox {
     fn move_left(&mut self) {
         self.goal_col = None;
         if self.col > 0 {
-            self.col -= 1;
+            // По графемному кластеру, а не по скаляру (см. `backspace`/spec §11.5).
+            self.col = wrap::prev_boundary(&self.lines[self.row], self.col);
         } else if self.row > 0 {
             self.row -= 1;
             self.col = self.lines[self.row].len();
@@ -318,7 +324,7 @@ impl InputBox {
     fn move_right(&mut self) {
         self.goal_col = None;
         if self.col < self.lines[self.row].len() {
-            self.col += 1;
+            self.col = wrap::next_boundary(&self.lines[self.row], self.col);
         } else if self.row + 1 < self.lines.len() {
             self.row += 1;
             self.col = 0;
@@ -732,7 +738,7 @@ impl InputBox {
         let mut end = start;
         let mut w = 0;
         while end < line.len() {
-            let cw = wrap::char_width(line[end]);
+            let cw = wrap::width_at(line, end);
             if w + cw > view_w {
                 break;
             }
@@ -830,7 +836,7 @@ fn col_at_width(line: &[char], target: usize) -> usize {
     let mut w = 0;
     let mut i = 0;
     while i < line.len() && w < target {
-        w += wrap::char_width(line[i]);
+        w += wrap::width_at(line, i);
         i += 1;
     }
     i
@@ -851,7 +857,7 @@ fn col_for_visual(line: &[char], start: usize, end: usize, target_vw: usize, sof
     let mut w = 0;
     let mut col = start;
     while col < end {
-        let cw = wrap::char_width(line[col]);
+        let cw = wrap::width_at(line, col);
         if w + cw > target_vw {
             break;
         }
@@ -1213,6 +1219,57 @@ mod tests {
         type_str(&mut ib, "один два три четыре");
         assert_eq!(ib.line_count(), 1);
         assert!(ib.visual_line_count(8) > 1);
+    }
+
+    #[test]
+    fn cursor_moves_and_deletes_by_grapheme_cluster() {
+        let mut ib = InputBox::new();
+        ib.insert_str("a❤\u{FE0F}👍🏽");
+        // a(1) + ❤️(2 скаляра) + 👍🏽(2 скаляра) = 5 символов, курсор в конце
+        assert_eq!(ib.cursor(), (0, 5));
+        // ← один раз проходит весь кластер 👍🏽 (на 2 скаляра назад)
+        ib.move_left();
+        assert_eq!(ib.cursor(), (0, 3));
+        // ещё один ← проходит весь ❤️ (тоже 2 скаляра), без остановки в середине
+        ib.move_left();
+        assert_eq!(ib.cursor(), (0, 1));
+        ib.move_left();
+        assert_eq!(ib.cursor(), (0, 0));
+        // Backspace с конца удаляет кластер целиком (не оставляет осиротевший скаляр)
+        ib.move_doc_end();
+        ib.backspace(); // удаляет 👍🏽 целиком
+        assert_eq!(ib.text(), "a❤\u{FE0F}");
+        ib.backspace(); // удаляет ❤️ целиком
+        assert_eq!(ib.text(), "a");
+    }
+
+    #[test]
+    fn delete_forward_removes_whole_cluster() {
+        let mut ib = InputBox::new();
+        ib.insert_str("❤\u{FE0F}👍🏽b");
+        ib.move_doc_start();
+        ib.delete(); // удаляет ❤️ целиком, не оставляя U+FE0F
+        assert_eq!(ib.text(), "👍🏽b");
+        ib.delete(); // удаляет 👍🏽 целиком
+        assert_eq!(ib.text(), "b");
+        ib.delete();
+        assert_eq!(ib.text(), "");
+        assert!(ib.is_empty());
+    }
+
+    #[test]
+    fn cursor_visual_accounts_for_emoji_cluster_width() {
+        // ❤️ (❤ + U+FE0F) терминал рисует шириной 2 → курсор за кластером в колонке 2,
+        // а не 1 (иначе он «садился» в середину эмодзи, см. spec §11.5).
+        let mut ib = InputBox::new();
+        ib.insert_str("❤\u{FE0F}");
+        let vrows = ib.visual_rows(40);
+        let (row, col) = ib.cursor_visual(&vrows);
+        assert_eq!((row, col), (0, 2));
+        // Следующий символ продолжает с колонки 2 — текст после эмодзи не сдвинут.
+        ib.insert_char('a');
+        let vrows = ib.visual_rows(40);
+        assert_eq!(ib.cursor_visual(&vrows), (0, 3));
     }
 
     #[test]

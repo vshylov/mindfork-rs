@@ -891,13 +891,13 @@ fn clip_line(line: &mut Line<'static>, width: usize) {
         }
         // частично влезает — режем по символам
         let mut buf = String::new();
-        for c in chars {
-            let cw = wrap::char_width(c);
+        for i in 0..chars.len() {
+            let cw = wrap::width_at(&chars, i);
             if acc + cw > budget {
                 break;
             }
             acc += cw;
-            buf.push(c);
+            buf.push(chars[i]);
         }
         if !buf.is_empty() {
             new_spans.push(Span::styled(buf, span.style));
