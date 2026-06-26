@@ -157,6 +157,15 @@ pub struct MessageFeed {
     follow: bool,
     /// Показывать развёрнутый блок «мыслей».
     show_thoughts: bool,
+    /// Флаг «лента только что прокручена пользователем» — петля по нему делает
+    /// полную перерисовку терминала (как при ресайзе). Нужен из-за артефактов
+    /// некоторых терминалов (Command Prompt/conhost) на VS16-эмодзи (`🕸️`,
+    /// `🗂️`): они рисуют такой кластер физически шире модели ratatui, контент
+    /// «съезжает» по горизонтали, и при странично-скачковой прокрутке (PageUp/
+    /// PageDown) на месте уехавшего символа остаётся «висячая» буква в физической
+    /// ячейке, которую поячеечный diff ratatui больше не затрагивает. Полная
+    /// перерисовка (`terminal.clear`) гарантированно её стирает. См. spec §11.3.
+    scrolled: bool,
 }
 
 impl Default for MessageFeed {
@@ -171,7 +180,15 @@ impl MessageFeed {
             scroll: 0,
             follow: true,
             show_thoughts: false,
+            scrolled: false,
         }
+    }
+
+    /// Забирает (и сбрасывает) флаг «прокручено пользователем». Петля `app/runtime`
+    /// при `true` делает `terminal.clear()` перед отрисовкой — стирает артефакты
+    /// «съехавших» VS16-эмодзи (см. поле [`MessageFeed::scrolled`]).
+    pub fn take_scrolled(&mut self) -> bool {
+        std::mem::take(&mut self.scrolled)
     }
 
     /// Переключает показ блоков «мыслей».
@@ -183,11 +200,13 @@ impl MessageFeed {
     pub fn scroll_up(&mut self, lines: usize) {
         self.scroll = self.scroll.saturating_sub(lines);
         self.follow = false;
+        self.scrolled = true;
     }
 
     /// Прокрутка вниз (у самого низа снова включает «следование»).
     pub fn scroll_down(&mut self, lines: usize) {
         self.scroll = self.scroll.saturating_add(lines);
+        self.scrolled = true;
         // Фактический кламп и повторное включение follow — в render (там известна высота).
     }
 
@@ -833,6 +852,19 @@ mod tests {
         assert!(feed.follow);
         feed.scroll_up(3);
         assert!(!feed.follow);
+    }
+
+    #[test]
+    fn scroll_sets_take_once_flag() {
+        // Прокрутка (вверх/вниз) взводит флаг, `take_scrolled` забирает его один раз
+        // (петля по нему делает полную перерисовку — стирает артефакты VS16-эмодзи).
+        let mut feed = MessageFeed::new();
+        assert!(!feed.take_scrolled(), "до прокрутки флаг не взведён");
+        feed.scroll_up(3);
+        assert!(feed.take_scrolled(), "после прокрутки флаг взведён");
+        assert!(!feed.take_scrolled(), "флаг забирается однократно");
+        feed.scroll_down(3);
+        assert!(feed.take_scrolled());
     }
 
     #[test]
