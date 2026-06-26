@@ -1673,7 +1673,10 @@ async fn model_change_restarts_chat_server() {
     // Смена модели → перезапуск (повторный apply_chat, spec §11.6 DoD).
     let config = AppConfig {
         engine: crate::shared::config::EngineSettings {
-            model_path: Some("other.gguf".into()),
+            managed: crate::shared::config::ManagedSettings {
+                model_path: Some("other.gguf".into()),
+                ..Default::default()
+            },
             ..Default::default()
         },
         ..Default::default()
@@ -1683,7 +1686,7 @@ async fn model_change_restarts_chat_server() {
         .unwrap();
     wait_for(
         &mut evt_rx,
-        |e| matches!(e, AppEvent::Settings { config, .. } if config.engine.model_path.as_deref() == Some("other.gguf")),
+        |e| matches!(e, AppEvent::Settings { config, .. } if config.engine.managed.model_path.as_deref() == Some("other.gguf")),
     )
     .await
     .unwrap();

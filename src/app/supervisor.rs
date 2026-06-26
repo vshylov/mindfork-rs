@@ -18,7 +18,7 @@ use crate::shared::api::{
 };
 use crate::shared::config::{
     CloudProvider, EmbedSettings, EngineSettings, ImpersonationEngineSettings, ImpersonationMode,
-    ServerMode,
+    ManagedSettings, ServerMode,
 };
 use crate::shared::server::ServerStatus;
 
@@ -77,51 +77,19 @@ impl ServerSupervisor for LlamaSupervisor {
         status_tx: UnboundedSender<ServerStatus>,
     ) -> ChatSetup {
         match settings.mode {
-            ServerMode::External => match settings.url.as_deref() {
-                Some(url) if !url.is_empty() => {
-                    let client = Arc::new(OpenAiClient::new(url));
-                    spawn_probe(client.clone(), EXTERNAL_READY_TIMEOUT, None, status_tx);
-                    ChatSetup {
-                        backend: Some(client),
-                        handle: None,
-                        status: ServerStatus::Connecting,
-                    }
-                }
-                _ => not_configured(),
-            },
-            ServerMode::Managed => match settings.binary.as_deref() {
-                Some(bin) if !bin.is_empty() => {
-                    let cfg = managed_config(settings);
-                    match ServerHandle::launch(&cfg) {
-                        Ok(handle) => {
-                            let client = Arc::new(OpenAiClient::new(handle.base_url()));
-                            spawn_probe(
-                                client.clone(),
-                                MANAGED_READY_TIMEOUT,
-                                Some(handle.exited()),
-                                status_tx,
-                            );
-                            ChatSetup {
-                                backend: Some(client),
-                                handle: Some(handle),
-                                status: ServerStatus::Connecting,
-                            }
-                        }
-                        Err(err) => ChatSetup {
-                            backend: None,
-                            handle: None,
-                            status: ServerStatus::Disconnected(err.to_string()),
-                        },
-                    }
-                }
-                _ => not_configured(),
-            },
-            ServerMode::OpenAi | ServerMode::Gemini | ServerMode::Claude => cloud_chat_setup(
-                settings.mode.cloud_provider().expect("облачный режим"),
-                settings.url.as_deref(),
-                settings.api_key_env.as_deref(),
-                settings.model_name.as_deref(),
-            ),
+            ServerMode::External => {
+                external_chat_setup(settings.external.url.as_deref(), status_tx)
+            }
+            ServerMode::Managed => managed_chat_setup(managed_config(&settings.managed), status_tx),
+            ServerMode::OpenAi | ServerMode::Gemini | ServerMode::Claude => {
+                let cloud = settings.cloud().expect("облачный режим");
+                cloud_chat_setup(
+                    settings.mode.cloud_provider().expect("облачный режим"),
+                    cloud.url.as_deref(),
+                    cloud.api_key_env.as_deref(),
+                    cloud.model_name.as_deref(),
+                )
+            }
         }
     }
 
@@ -133,51 +101,19 @@ impl ServerSupervisor for LlamaSupervisor {
         match settings.mode {
             // `shared` обслуживается оркестратором (chat-сервер ассистента).
             ImpersonationMode::Shared => not_configured(),
-            ImpersonationMode::External => match settings.url.as_deref() {
-                Some(url) if !url.is_empty() => {
-                    let client = Arc::new(OpenAiClient::new(url));
-                    spawn_probe(client.clone(), EXTERNAL_READY_TIMEOUT, None, status_tx);
-                    ChatSetup {
-                        backend: Some(client),
-                        handle: None,
-                        status: ServerStatus::Connecting,
-                    }
-                }
-                _ => not_configured(),
-            },
-            ImpersonationMode::Managed => match settings.binary.as_deref() {
-                Some(bin) if !bin.is_empty() => {
-                    let cfg = impersonation_managed_config(settings, bin);
-                    match ServerHandle::launch(&cfg) {
-                        Ok(handle) => {
-                            let client = Arc::new(OpenAiClient::new(handle.base_url()));
-                            spawn_probe(
-                                client.clone(),
-                                MANAGED_READY_TIMEOUT,
-                                Some(handle.exited()),
-                                status_tx,
-                            );
-                            ChatSetup {
-                                backend: Some(client),
-                                handle: Some(handle),
-                                status: ServerStatus::Connecting,
-                            }
-                        }
-                        Err(err) => ChatSetup {
-                            backend: None,
-                            handle: None,
-                            status: ServerStatus::Disconnected(err.to_string()),
-                        },
-                    }
-                }
-                _ => not_configured(),
-            },
+            ImpersonationMode::External => {
+                external_chat_setup(settings.external.url.as_deref(), status_tx)
+            }
+            ImpersonationMode::Managed => {
+                managed_chat_setup(managed_config(&settings.managed), status_tx)
+            }
             ImpersonationMode::OpenAi | ImpersonationMode::Gemini | ImpersonationMode::Claude => {
+                let cloud = settings.cloud().expect("облачный режим");
                 cloud_chat_setup(
                     settings.mode.cloud_provider().expect("облачный режим"),
-                    settings.url.as_deref(),
-                    settings.api_key_env.as_deref(),
-                    settings.model_name.as_deref(),
+                    cloud.url.as_deref(),
+                    cloud.api_key_env.as_deref(),
+                    cloud.model_name.as_deref(),
                 )
             }
         }
@@ -185,26 +121,27 @@ impl ServerSupervisor for LlamaSupervisor {
 
     fn apply_embed(&self, settings: &EmbedSettings) -> EmbedSetup {
         match settings.mode {
-            ServerMode::External => match settings.url.as_deref() {
+            ServerMode::External => match settings.external.url.as_deref() {
                 Some(url) if !url.is_empty() => EmbedSetup {
                     embedder: Arc::new(OpenAiClient::new(url)),
                     handle: None,
                 },
                 _ => unavailable_embed(),
             },
-            ServerMode::Managed => match settings.binary.as_deref() {
+            ServerMode::Managed => match settings.managed.binary.as_deref() {
                 Some(bin) if !bin.is_empty() => {
+                    let m = &settings.managed;
                     let cfg = ManagedConfig {
                         binary: bin.into(),
-                        model_path: settings.model_path.clone(),
-                        gpu_layers: settings.gpu_layers,
+                        model_path: m.model_path.clone(),
+                        gpu_layers: m.gpu_layers,
                         context_size: crate::shared::config::DEFAULT_CONTEXT_SIZE,
                         jinja: false, // embedding-серверу chat-template не нужен
                         reasoning_format: None,
                         embeddings: true,
                         no_mmap: false,
                         host: "127.0.0.1".into(),
-                        port: settings.port,
+                        port: m.port,
                         extra_args: vec![],
                     };
                     match ServerHandle::launch(&cfg) {
@@ -220,12 +157,15 @@ impl ServerSupervisor for LlamaSupervisor {
                 }
                 _ => unavailable_embed(),
             },
-            ServerMode::OpenAi | ServerMode::Gemini => cloud_embed_setup(
-                settings.mode.cloud_provider().expect("облачный режим"),
-                settings.url.as_deref(),
-                settings.api_key_env.as_deref(),
-                settings.model_name.as_deref(),
-            ),
+            ServerMode::OpenAi | ServerMode::Gemini => {
+                let cloud = settings.cloud().expect("облачный режим");
+                cloud_embed_setup(
+                    settings.mode.cloud_provider().expect("облачный режим"),
+                    cloud.url.as_deref(),
+                    cloud.api_key_env.as_deref(),
+                    cloud.model_name.as_deref(),
+                )
+            }
             // У Anthropic нет embeddings API — RAG берёт отдельный эмбеддер (ADR 0002).
             ServerMode::Claude => {
                 tracing::warn!("у Anthropic нет embeddings API; для RAG задайте другой эмбеддер");
@@ -235,27 +175,56 @@ impl ServerSupervisor for LlamaSupervisor {
     }
 }
 
-/// Строит [`ManagedConfig`] (`llama-server`) из настроек chat-сервера.
-fn managed_config(s: &EngineSettings) -> ManagedConfig {
-    ManagedConfig {
-        binary: s.binary.clone().unwrap_or_default().into(),
-        model_path: s.model_path.clone(),
-        gpu_layers: s.gpu_layers,
-        context_size: s.context_size,
-        jinja: s.jinja,
-        reasoning_format: s.reasoning_format.clone(),
-        embeddings: false,
-        no_mmap: s.no_mmap,
-        host: s.host.clone(),
-        port: s.port,
-        extra_args: vec![],
+/// External chat-setup: подключение по URL (любой OpenAI-сервер), фоновый probe.
+fn external_chat_setup(url: Option<&str>, status_tx: UnboundedSender<ServerStatus>) -> ChatSetup {
+    match url {
+        Some(url) if !url.is_empty() => {
+            let client = Arc::new(OpenAiClient::new(url));
+            spawn_probe(client.clone(), EXTERNAL_READY_TIMEOUT, None, status_tx);
+            ChatSetup {
+                backend: Some(client),
+                handle: None,
+                status: ServerStatus::Connecting,
+            }
+        }
+        _ => not_configured(),
     }
 }
 
-/// Строит [`ManagedConfig`] (`llama-server`) из настроек сервера имперсонации.
-fn impersonation_managed_config(s: &ImpersonationEngineSettings, bin: &str) -> ManagedConfig {
+/// Managed chat-setup: запуск дочернего `llama-server`, фоновый probe (с учётом
+/// раннего выхода процесса). Пустой бинарник → `NotConfigured`.
+fn managed_chat_setup(cfg: ManagedConfig, status_tx: UnboundedSender<ServerStatus>) -> ChatSetup {
+    if cfg.binary.as_os_str().is_empty() {
+        return not_configured();
+    }
+    match ServerHandle::launch(&cfg) {
+        Ok(handle) => {
+            let client = Arc::new(OpenAiClient::new(handle.base_url()));
+            spawn_probe(
+                client.clone(),
+                MANAGED_READY_TIMEOUT,
+                Some(handle.exited()),
+                status_tx,
+            );
+            ChatSetup {
+                backend: Some(client),
+                handle: Some(handle),
+                status: ServerStatus::Connecting,
+            }
+        }
+        Err(err) => ChatSetup {
+            backend: None,
+            handle: None,
+            status: ServerStatus::Disconnected(err.to_string()),
+        },
+    }
+}
+
+/// Строит [`ManagedConfig`] (`llama-server`) из managed-под-секции движка (общий
+/// для chat-сервера ассистента и сервера имперсонации).
+fn managed_config(s: &ManagedSettings) -> ManagedConfig {
     ManagedConfig {
-        binary: bin.into(),
+        binary: s.binary.clone().unwrap_or_default().into(),
         model_path: s.model_path.clone(),
         gpu_layers: s.gpu_layers,
         context_size: s.context_size,
@@ -477,7 +446,10 @@ mod tests {
     fn external(url: Option<&str>) -> EngineSettings {
         EngineSettings {
             mode: ServerMode::External,
-            url: url.map(String::from),
+            external: crate::shared::config::ExternalSettings {
+                url: url.map(String::from),
+                ..Default::default()
+            },
             ..Default::default()
         }
     }
@@ -504,7 +476,6 @@ mod tests {
         let (tx, _rx) = unbounded_channel();
         let s = EngineSettings {
             mode: ServerMode::Managed,
-            binary: None,
             ..Default::default()
         };
         let setup = LlamaSupervisor.apply_chat(&s, tx);
@@ -516,7 +487,10 @@ mod tests {
         let (tx, _rx) = unbounded_channel();
         let s = EngineSettings {
             mode: ServerMode::Managed,
-            binary: Some("definitely-not-a-real-binary-xyz".into()),
+            managed: ManagedSettings {
+                binary: Some("definitely-not-a-real-binary-xyz".into()),
+                ..Default::default()
+            },
             ..Default::default()
         };
         let setup = LlamaSupervisor.apply_chat(&s, tx);
@@ -532,8 +506,11 @@ mod tests {
         let (tx, _rx) = unbounded_channel();
         let s = EngineSettings {
             mode: ServerMode::Managed,
-            binary: Some("llama-server".into()),
-            model_path: Some("no/such/model.gguf".into()),
+            managed: ManagedSettings {
+                binary: Some("llama-server".into()),
+                model_path: Some("no/such/model.gguf".into()),
+                ..Default::default()
+            },
             ..Default::default()
         };
         let setup = LlamaSupervisor.apply_chat(&s, tx);
@@ -561,7 +538,10 @@ mod tests {
         let (tx, _rx) = unbounded_channel();
         let s = EngineSettings {
             mode: ServerMode::OpenAi,
-            api_key_env: Some("PATH".into()),
+            openai: crate::shared::config::CloudSettings {
+                api_key_env: Some("PATH".into()),
+                ..Default::default()
+            },
             ..Default::default()
         };
         match LlamaSupervisor.apply_chat(&s, tx).status {
@@ -575,8 +555,11 @@ mod tests {
         let (tx, _rx) = unbounded_channel();
         let s = EngineSettings {
             mode: ServerMode::OpenAi,
-            model_name: Some("gpt-4o".into()),
-            api_key_env: Some("MINDFORK_DEFINITELY_UNSET_VAR_42".into()),
+            openai: crate::shared::config::CloudSettings {
+                model_name: Some("gpt-4o".into()),
+                api_key_env: Some("MINDFORK_DEFINITELY_UNSET_VAR_42".into()),
+                ..Default::default()
+            },
             ..Default::default()
         };
         match LlamaSupervisor.apply_chat(&s, tx).status {
@@ -593,8 +576,11 @@ mod tests {
         let (tx, _rx) = unbounded_channel();
         let s = EngineSettings {
             mode: ServerMode::Gemini,
-            model_name: Some("gemini-2.5-pro".into()),
-            api_key_env: Some("PATH".into()),
+            gemini: crate::shared::config::CloudSettings {
+                model_name: Some("gemini-2.5-pro".into()),
+                api_key_env: Some("PATH".into()),
+                ..Default::default()
+            },
             ..Default::default()
         };
         let setup = LlamaSupervisor.apply_chat(&s, tx);
@@ -610,8 +596,11 @@ mod tests {
         let (tx, _rx) = unbounded_channel();
         let s = EngineSettings {
             mode: ServerMode::Claude,
-            model_name: Some("claude-opus-4-8".into()),
-            api_key_env: Some("PATH".into()),
+            claude: crate::shared::config::CloudSettings {
+                model_name: Some("claude-opus-4-8".into()),
+                api_key_env: Some("PATH".into()),
+                ..Default::default()
+            },
             ..Default::default()
         };
         let setup = LlamaSupervisor.apply_chat(&s, tx);
@@ -625,8 +614,11 @@ mod tests {
         // У Anthropic нет embeddings — RAG недоступен (как прочие unavailable).
         let s = EmbedSettings {
             mode: ServerMode::Claude,
-            model_name: Some("x".into()),
-            api_key_env: Some("PATH".into()),
+            claude: crate::shared::config::CloudSettings {
+                model_name: Some("x".into()),
+                api_key_env: Some("PATH".into()),
+                ..Default::default()
+            },
             ..Default::default()
         };
         let err = LlamaSupervisor
@@ -643,7 +635,10 @@ mod tests {
         // Облачные эмбеддинги без модели → RAG недоступен (как прочие unavailable).
         let s = EmbedSettings {
             mode: ServerMode::OpenAi,
-            api_key_env: Some("PATH".into()),
+            openai: crate::shared::config::CloudSettings {
+                api_key_env: Some("PATH".into()),
+                ..Default::default()
+            },
             ..Default::default()
         };
         let setup = LlamaSupervisor.apply_embed(&s);
@@ -655,7 +650,10 @@ mod tests {
     async fn embed_external_url_is_available() {
         let s = EmbedSettings {
             mode: ServerMode::External,
-            url: Some("http://127.0.0.1:9/v1".into()),
+            external: crate::shared::config::ExternalSettings {
+                url: Some("http://127.0.0.1:9/v1".into()),
+                ..Default::default()
+            },
             ..Default::default()
         };
         let setup = LlamaSupervisor.apply_embed(&s);

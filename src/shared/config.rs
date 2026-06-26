@@ -69,17 +69,13 @@ pub const DEFAULT_GPU_LAYERS: i32 = 99;
 /// Размер контекста по умолчанию (`-c`).
 pub const DEFAULT_CONTEXT_SIZE: u32 = 8192;
 
-/// Настройки chat-сервера инференса. Транспорт — OpenAI-совместимый HTTP, поэтому
-/// в external-режиме подойдёт любой такой сервер (llama.cpp `llama-server`, vLLM,
-/// LM Studio, …). В managed-режиме mindfork запускает **`llama-server`** (llama.cpp)
-/// дочерним процессом. См. docs/install.md §3.
+/// Настройки локального managed-сервера `llama-server` (llama.cpp): приложение
+/// запускает его дочерним процессом. Своя под-секция в каждом движке, чтобы
+/// переключение режима не теряло этих значений. См. docs/install.md §3.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
-pub struct EngineSettings {
-    pub mode: ServerMode,
-    /// URL для external-режима (например `http://127.0.0.1:8000/v1`).
-    pub url: Option<String>,
-    /// Путь к бинарнику `llama-server` для managed-режима.
+pub struct ManagedSettings {
+    /// Путь к бинарнику `llama-server`.
     pub binary: Option<String>,
     /// Путь к GGUF-модели (`-m`).
     pub model_path: Option<String>,
@@ -98,20 +94,11 @@ pub struct EngineSettings {
     /// Интерфейс bind (`--host`), например `127.0.0.1` или `0.0.0.0`.
     pub host: String,
     pub port: u16,
-    /// Имя модели для облака/мульти-модельного сервера (`gpt-4o`, `gemini-2.5-pro`).
-    /// В managed-режиме не используется (модель неявна — загруженный GGUF). См. ADR 0004.
-    pub model_name: Option<String>,
-    /// Имя env-переменной с API-ключом для облачных режимов (например
-    /// `OPENAI_API_KEY`). Хранится **имя**, а не сам секрет — ключ читается из
-    /// окружения (ADR 0004). `None` — без аутентификации.
-    pub api_key_env: Option<String>,
 }
 
-impl Default for EngineSettings {
+impl Default for ManagedSettings {
     fn default() -> Self {
         Self {
-            mode: ServerMode::Managed,
-            url: None,
             binary: None,
             model_path: None,
             gpu_layers: DEFAULT_GPU_LAYERS,
@@ -121,9 +108,96 @@ impl Default for EngineSettings {
             no_mmap: false,
             host: "127.0.0.1".to_string(),
             port: 8000,
-            model_name: None,
-            api_key_env: None,
         }
+    }
+}
+
+/// Настройки external-режима: подключение к уже запущенному OpenAI-совместимому
+/// серверу (любой: llama.cpp, vLLM, LM Studio…).
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct ExternalSettings {
+    /// URL сервера (например `http://127.0.0.1:8000/v1`).
+    pub url: Option<String>,
+    /// Имя модели для мульти-модельного сервера (опционально).
+    pub model_name: Option<String>,
+}
+
+/// Настройки одного облачного провайдера (OpenAI/Gemini/Claude). Хранятся
+/// отдельно на каждого, чтобы переключение провайдера не теряло чужих значений.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct CloudSettings {
+    /// Имя модели у провайдера (`gpt-4o`, `gemini-2.5-pro`, `claude-opus-4-8`).
+    pub model_name: Option<String>,
+    /// Имя env-переменной с API-ключом (например `OPENAI_API_KEY`). Хранится
+    /// **имя**, а не сам секрет — ключ читается из окружения (ADR 0004).
+    pub api_key_env: Option<String>,
+    /// Переопределение базового URL провайдера (опционально); `None` — дефолт провайдера.
+    pub url: Option<String>,
+}
+
+/// Настройки chat-сервера инференса. Под-секция на каждый режим/провайдера
+/// (managed/external/openai/gemini/claude), чтобы переключение режима не теряло
+/// чужих значений. Транспорт — OpenAI-совместимый HTTP (кроме Claude — Messages
+/// API). См. docs/install.md §3, ADR 0004.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct EngineSettings {
+    pub mode: ServerMode,
+    pub managed: ManagedSettings,
+    pub external: ExternalSettings,
+    pub openai: CloudSettings,
+    pub gemini: CloudSettings,
+    pub claude: CloudSettings,
+}
+
+impl EngineSettings {
+    /// Облачные настройки активного провайдера (`None` — локальный managed/external).
+    pub fn cloud(&self) -> Option<&CloudSettings> {
+        cloud_ref(
+            self.mode.cloud_provider(),
+            &self.openai,
+            &self.gemini,
+            &self.claude,
+        )
+    }
+
+    /// Изменяемые облачные настройки активного провайдера (`None` — локальный).
+    pub fn cloud_mut(&mut self) -> Option<&mut CloudSettings> {
+        cloud_mut(
+            self.mode.cloud_provider(),
+            &mut self.openai,
+            &mut self.gemini,
+            &mut self.claude,
+        )
+    }
+}
+
+/// Активная облачная под-структура по провайдеру (общий хелпер для всех движков).
+fn cloud_ref<'a>(
+    provider: Option<CloudProvider>,
+    openai: &'a CloudSettings,
+    gemini: &'a CloudSettings,
+    claude: &'a CloudSettings,
+) -> Option<&'a CloudSettings> {
+    match provider? {
+        CloudProvider::OpenAi => Some(openai),
+        CloudProvider::Gemini => Some(gemini),
+        CloudProvider::Claude => Some(claude),
+    }
+}
+
+fn cloud_mut<'a>(
+    provider: Option<CloudProvider>,
+    openai: &'a mut CloudSettings,
+    gemini: &'a mut CloudSettings,
+    claude: &'a mut CloudSettings,
+) -> Option<&'a mut CloudSettings> {
+    match provider? {
+        CloudProvider::OpenAi => Some(openai),
+        CloudProvider::Gemini => Some(gemini),
+        CloudProvider::Claude => Some(claude),
     }
 }
 
@@ -166,93 +240,122 @@ impl ImpersonationMode {
 /// Порт по умолчанию для managed-сервера имперсонации (отдельный инстанс).
 pub const DEFAULT_IMPERSONATION_PORT: u16 = 8002;
 
-/// Настройки сервера имперсонации. Поля идентичны [`EngineSettings`], но режим —
-/// [`ImpersonationMode`] (добавлен `shared`). В режиме `shared` остальные поля
-/// (url/binary/model/…) не используются — берётся chat-сервер ассистента. См.
-/// spec §11.8.
+/// Настройки сервера имперсонации. Под-секции идентичны [`EngineSettings`], но
+/// режим — [`ImpersonationMode`] (добавлен `shared`). В режиме `shared` под-секции
+/// не используются — берётся chat-сервер ассистента. См. spec §11.8.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct ImpersonationEngineSettings {
     pub mode: ImpersonationMode,
-    /// URL для external-режима (например `http://127.0.0.1:8002/v1`).
-    pub url: Option<String>,
-    /// Путь к бинарнику `llama-server` для managed-режима.
-    pub binary: Option<String>,
-    /// Путь к GGUF-модели (`-m`).
-    pub model_path: Option<String>,
-    /// Слои на GPU (`-ngl`).
-    pub gpu_layers: i32,
-    /// Размер контекста (`-c`).
-    pub context_size: u32,
-    /// Использовать встроенный chat-template модели (`--jinja`).
-    pub jinja: bool,
-    /// Формат reasoning (`--reasoning-format`); `None` — не задавать.
-    pub reasoning_format: Option<String>,
-    /// Не использовать mmap при загрузке модели (`--no-mmap`).
-    pub no_mmap: bool,
-    /// Интерфейс bind (`--host`).
-    pub host: String,
-    pub port: u16,
-    /// Имя модели для облака/мульти-модельного сервера (см. [`EngineSettings::model_name`]).
-    pub model_name: Option<String>,
-    /// Имя env-переменной с API-ключом для облачных режимов (см. [`EngineSettings::api_key_env`]).
-    pub api_key_env: Option<String>,
+    pub managed: ManagedSettings,
+    pub external: ExternalSettings,
+    pub openai: CloudSettings,
+    pub gemini: CloudSettings,
+    pub claude: CloudSettings,
 }
 
 impl Default for ImpersonationEngineSettings {
     fn default() -> Self {
         Self {
             mode: ImpersonationMode::Shared,
-            url: None,
-            binary: None,
-            model_path: None,
-            gpu_layers: DEFAULT_GPU_LAYERS,
-            context_size: DEFAULT_CONTEXT_SIZE,
-            jinja: true,
-            reasoning_format: None,
-            no_mmap: false,
-            host: "127.0.0.1".to_string(),
-            port: DEFAULT_IMPERSONATION_PORT,
-            model_name: None,
-            api_key_env: None,
+            // Отдельный managed-инстанс имперсонации слушает свой порт.
+            managed: ManagedSettings {
+                port: DEFAULT_IMPERSONATION_PORT,
+                ..Default::default()
+            },
+            external: ExternalSettings::default(),
+            openai: CloudSettings::default(),
+            gemini: CloudSettings::default(),
+            claude: CloudSettings::default(),
         }
     }
 }
 
-/// Настройки выделенного embedding-сервера для RAG (ADR 0002). Отдельный
-/// процесс/порт; если не настроен (`UnavailableEmbedder`) — RAG отдаёт ошибку.
-/// В managed-режиме — тот же `llama-server` с `--embeddings`.
+impl ImpersonationEngineSettings {
+    /// Облачные настройки активного провайдера (`None` — shared/managed/external).
+    pub fn cloud(&self) -> Option<&CloudSettings> {
+        cloud_ref(
+            self.mode.cloud_provider(),
+            &self.openai,
+            &self.gemini,
+            &self.claude,
+        )
+    }
+
+    /// Изменяемые облачные настройки активного провайдера (`None` — локальный).
+    pub fn cloud_mut(&mut self) -> Option<&mut CloudSettings> {
+        cloud_mut(
+            self.mode.cloud_provider(),
+            &mut self.openai,
+            &mut self.gemini,
+            &mut self.claude,
+        )
+    }
+}
+
+/// Порт embedding-сервера по умолчанию.
+pub const DEFAULT_EMBED_PORT: u16 = 8001;
+
+/// Настройки managed embedding-сервера: тот же `llama-server` с `--embeddings`.
+/// У эмбеддинг-сервера нет chat-template/host/no_mmap — супервайзер их фиксирует,
+/// поэтому полей меньше, чем у [`ManagedSettings`].
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
-pub struct EmbedSettings {
-    pub mode: ServerMode,
-    /// URL для external-режима (например `http://127.0.0.1:8001/v1`).
-    pub url: Option<String>,
-    /// Путь к бинарнику `llama-server` для managed-режима.
+pub struct ManagedEmbedSettings {
+    /// Путь к бинарнику `llama-server`.
     pub binary: Option<String>,
     /// Путь к GGUF embedding-модели (`-m`).
     pub model_path: Option<String>,
     /// Слои на GPU (`-ngl`).
     pub gpu_layers: i32,
     pub port: u16,
-    /// Имя embedding-модели для облака (например `text-embedding-3-small`).
-    pub model_name: Option<String>,
-    /// Имя env-переменной с API-ключом для облачных эмбеддингов (см. ADR 0004).
-    pub api_key_env: Option<String>,
 }
 
-impl Default for EmbedSettings {
+impl Default for ManagedEmbedSettings {
     fn default() -> Self {
         Self {
-            mode: ServerMode::Managed,
-            url: None,
             binary: None,
             model_path: None,
             gpu_layers: DEFAULT_GPU_LAYERS,
-            port: 8001,
-            model_name: None,
-            api_key_env: None,
+            port: DEFAULT_EMBED_PORT,
         }
+    }
+}
+
+/// Настройки выделенного embedding-сервера для RAG (ADR 0002). Отдельный
+/// процесс/порт; если не настроен (`UnavailableEmbedder`) — RAG отдаёт ошибку.
+/// Под-секция на режим/провайдера (как у [`EngineSettings`]); облачные эмбеддинги
+/// есть у OpenAI/Gemini (у Anthropic нет — RAG отключится). См. ADR 0004.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct EmbedSettings {
+    pub mode: ServerMode,
+    pub managed: ManagedEmbedSettings,
+    pub external: ExternalSettings,
+    pub openai: CloudSettings,
+    pub gemini: CloudSettings,
+    pub claude: CloudSettings,
+}
+
+impl EmbedSettings {
+    /// Облачные настройки активного провайдера (`None` — локальный managed/external).
+    pub fn cloud(&self) -> Option<&CloudSettings> {
+        cloud_ref(
+            self.mode.cloud_provider(),
+            &self.openai,
+            &self.gemini,
+            &self.claude,
+        )
+    }
+
+    /// Изменяемые облачные настройки активного провайдера (`None` — локальный).
+    pub fn cloud_mut(&mut self) -> Option<&mut CloudSettings> {
+        cloud_mut(
+            self.mode.cloud_provider(),
+            &mut self.openai,
+            &mut self.gemini,
+            &mut self.claude,
+        )
     }
 }
 
@@ -445,11 +548,11 @@ mod tests {
         let c: AppConfig = serde_json::from_str(r#"{"max_tool_rounds":4}"#).unwrap();
         assert_eq!(c.max_tool_rounds, 4);
         assert_eq!(c.schema_version, SCHEMA_VERSION);
-        assert_eq!(c.engine.port, 8000);
-        assert_eq!(c.engine.gpu_layers, DEFAULT_GPU_LAYERS);
-        assert!(c.engine.jinja);
+        assert_eq!(c.engine.managed.port, 8000);
+        assert_eq!(c.engine.managed.gpu_layers, DEFAULT_GPU_LAYERS);
+        assert!(c.engine.managed.jinja);
         // Новые секции наполняются дефолтами при их отсутствии в файле.
-        assert_eq!(c.embed.port, 8001);
+        assert_eq!(c.embed.managed.port, DEFAULT_EMBED_PORT);
         assert_eq!(c.tools.subagent_max_tokens, DEFAULT_SUBAGENT_MAX_TOKENS);
         assert_eq!(c.tools.subagent_timeout_secs, DEFAULT_SUBAGENT_TIMEOUT_SECS);
         // Файловые инструменты выключены по умолчанию (как Python).
@@ -462,7 +565,10 @@ mod tests {
         assert_eq!(c.interface.theme, Theme::Auto);
         // Имперсонация наполняется дефолтами при отсутствии в файле.
         assert_eq!(c.impersonation_engine.mode, ImpersonationMode::Shared);
-        assert_eq!(c.impersonation_engine.port, DEFAULT_IMPERSONATION_PORT);
+        assert_eq!(
+            c.impersonation_engine.managed.port,
+            DEFAULT_IMPERSONATION_PORT
+        );
         assert_eq!(c.impersonation_sampling.thinking, Some(false));
     }
 
@@ -471,9 +577,12 @@ mod tests {
         let c = AppConfig {
             impersonation_engine: ImpersonationEngineSettings {
                 mode: ImpersonationMode::Managed,
-                binary: Some("llama-server".into()),
-                model_path: Some("persona.gguf".into()),
-                port: 8002,
+                managed: ManagedSettings {
+                    binary: Some("llama-server".into()),
+                    model_path: Some("persona.gguf".into()),
+                    port: 8002,
+                    ..Default::default()
+                },
                 ..Default::default()
             },
             impersonation_sampling: SamplingConfig {
@@ -486,6 +595,43 @@ mod tests {
         let json = serde_json::to_string_pretty(&c).unwrap();
         let back: AppConfig = serde_json::from_str(&json).unwrap();
         assert_eq!(c, back);
+    }
+
+    #[test]
+    fn impersonation_managed_default_port_is_8002() {
+        let s = ImpersonationEngineSettings::default();
+        assert_eq!(s.managed.port, DEFAULT_IMPERSONATION_PORT);
+    }
+
+    #[test]
+    fn per_provider_cloud_settings_are_independent() {
+        // Каждый провайдер хранит свои поля — переключение режима не теряет чужих.
+        let mut e = EngineSettings {
+            mode: ServerMode::OpenAi,
+            openai: CloudSettings {
+                model_name: Some("gpt-4o".into()),
+                api_key_env: Some("OPENAI_API_KEY".into()),
+                ..Default::default()
+            },
+            gemini: CloudSettings {
+                model_name: Some("gemini-2.5-pro".into()),
+                api_key_env: Some("GEMINI_API_KEY".into()),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        // Активный провайдер — OpenAI.
+        assert_eq!(e.cloud().unwrap().model_name.as_deref(), Some("gpt-4o"));
+        // Переключение на Gemini открывает его собственные поля, OpenAI цел.
+        e.mode = ServerMode::Gemini;
+        assert_eq!(
+            e.cloud().unwrap().model_name.as_deref(),
+            Some("gemini-2.5-pro")
+        );
+        assert_eq!(e.openai.model_name.as_deref(), Some("gpt-4o"));
+        // Локальные режимы — без облака.
+        e.mode = ServerMode::Managed;
+        assert!(e.cloud().is_none());
     }
 
     #[test]
@@ -505,18 +651,23 @@ mod tests {
         let c = AppConfig {
             engine: EngineSettings {
                 mode: ServerMode::Managed,
-                binary: Some("llama-server".into()),
-                model_path: Some("gemma.gguf".into()),
-                gpu_layers: 50,
-                context_size: 4096,
-                jinja: true,
-                reasoning_format: Some("auto".into()),
+                managed: ManagedSettings {
+                    binary: Some("llama-server".into()),
+                    model_path: Some("gemma.gguf".into()),
+                    gpu_layers: 50,
+                    context_size: 4096,
+                    jinja: true,
+                    reasoning_format: Some("auto".into()),
+                    ..Default::default()
+                },
                 ..Default::default()
             },
             embed: EmbedSettings {
                 mode: ServerMode::External,
-                url: Some("http://127.0.0.1:8001/v1".into()),
-                model_path: Some("embed.gguf".into()),
+                external: ExternalSettings {
+                    url: Some("http://127.0.0.1:8001/v1".into()),
+                    ..Default::default()
+                },
                 ..Default::default()
             },
             tools: ToolSettings {
@@ -596,8 +747,11 @@ mod tests {
         let c = AppConfig {
             engine: EngineSettings {
                 mode: ServerMode::OpenAi,
-                model_name: Some("gpt-4o".into()),
-                api_key_env: Some("OPENAI_API_KEY".into()),
+                openai: CloudSettings {
+                    model_name: Some("gpt-4o".into()),
+                    api_key_env: Some("OPENAI_API_KEY".into()),
+                    ..Default::default()
+                },
                 ..Default::default()
             },
             ..Default::default()
@@ -605,9 +759,10 @@ mod tests {
         let json = serde_json::to_string_pretty(&c).unwrap();
         let back: AppConfig = serde_json::from_str(&json).unwrap();
         assert_eq!(c, back);
-        // Новые поля наполняются дефолтами (None) при отсутствии в старом файле.
+        // Под-секции наполняются дефолтами при отсутствии в файле.
         let old: AppConfig = serde_json::from_str(r#"{"engine":{"mode":"managed"}}"#).unwrap();
-        assert_eq!(old.engine.model_name, None);
-        assert_eq!(old.engine.api_key_env, None);
+        assert_eq!(old.engine.openai.model_name, None);
+        assert_eq!(old.engine.openai.api_key_env, None);
+        assert_eq!(old.engine.managed.binary, None);
     }
 }

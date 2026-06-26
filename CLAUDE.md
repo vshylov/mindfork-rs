@@ -1609,6 +1609,43 @@ web-поиск и Python под выключателями, экран наст�
   `::contract::*`. Итоговая структура: `contract` (трейты/типы), `openai`/`anthropic`/
   `managed` (реализации/запуск), `thoughts`, `mock`. **555 тестов**, clippy/fmt чисты.
 
+### Пост-M9: вложенная конфигурация движка по режимам/провайдерам (сделано)
+- **Конфиг движка стал вложенным** (`shared/config.rs`): раньше `EngineSettings`/
+  `ImpersonationEngineSettings`/`EmbedSettings` делили **плоский** набор полей
+  (`model_name`/`api_key_env`/`url`/`binary`/…), общий для всех режимов — переключение
+  провайдера затирало чужие значения. Теперь у каждого режима/провайдера **своя
+  под-секция**: переиспользуемые `ManagedSettings` (llama-server: binary/model/ngl/ctx/
+  jinja/reasoning_format/no_mmap/host/port), `ExternalSettings` (url + опц. model_name),
+  `CloudSettings` (model_name/api_key_env/url-override) — по экземпляру на каждого из
+  `openai`/`gemini`/`claude`. У эмбеддингов отдельная `ManagedEmbedSettings` (меньше
+  полей — host/jinja/no_mmap/ctx фиксирует супервайзер). Можно держать настроенными
+  managed + OpenAI + Gemini + Claude одновременно и быстро переключаться.
+- **Mode-aware аксессоры** `EngineSettings::cloud()`/`cloud_mut()` (и у impersonation/
+  embed) отдают **активную** облачную под-структуру по `mode` (через
+  `cloud_provider()`); общие хелперы `cloud_ref`/`cloud_mut` в config.rs. Это сохранило
+  существующие `FieldId` в настройках — чтение/запись маршрутизируются по текущему режиму
+  (видна лишь одна группа): `XUrl`/`XModelName` пишут `external.*` в external-режиме и
+  `cloud_mut().*` в облаке; managed-поля → `managed.*`.
+- **Без миграции** (решение пользователя): старый плоский `settings.json` читается через
+  `#[serde(default)]` — незнакомые плоские поля движка молча игнорируются, под-секции
+  дефолтные. Управляемый binary/модель/ключ нужно ввести один раз заново. Чаты/профили
+  не затрагиваются. `schema_version` остался 1.
+- **UI настроек** (`screens/settings.rs`): `model_fields`/embed-часть `tool_fields`
+  строят поля из под-структур (хелперы `managed_rows`/`cloud_rows`); mode-driven
+  visibility (как было). **Неподдерживаемые облаком параметры сэмплинга теперь
+  скрываются** (фильтр `SAMPLING_PARAMS` по `cloud_supported_param`), а не красятся
+  жёлтым — удалён warning-путь (`render_field_line(inactive)`, `CLOUD_UNSUPPORTED_NOTE`,
+  `sampling_unsupported_in_cloud`); значения скрытых параметров сохраняются (заработают
+  на локальной модели). Имперсонация в `shared` наследует фильтр провайдера ассистента.
+- **Косметика шапки чата** (`screens/chat.rs::model_meta`): теперь по `engine.mode` —
+  managed показывает `имя.gguf · Nk ctx`, external — `external.model_name`, облако — имя
+  активной облачной модели (без ctx). Раньше в облачных режимах висели имя локального
+  GGUF и его контекст.
+- Прочие потребители обновлены: `supervisor.rs` (построение клиентов/`ManagedConfig` из
+  под-структур; общий `managed_config(&ManagedSettings)`, хелперы
+  `external_chat_setup`/`managed_chat_setup`), `main.rs::apply_env_overrides`
+  (`config.engine.managed.*`/`external.url`). **556 тестов зелёные**, clippy/fmt чисты.
+
 ### Отложено за пределы M3
 - **Сворачивание/выделение per-message** и tool-блоки в ленте — сейчас «мысли»
   сворачиваются глобально (`Ctrl+T`); выделение сообщений и tool-блоки — на M5.

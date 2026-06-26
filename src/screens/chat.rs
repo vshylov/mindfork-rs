@@ -1036,27 +1036,47 @@ impl ChatScreen {
 
     // ---------- отрисовка ----------
 
-    /// Правая подпись титула ленты: «модель · Nk ctx» из снимка настроек (пусто,
-    /// пока снимок не получен или модель не задана).
+    /// Правая подпись титула ленты: модель активного режима движка. Для managed —
+    /// «имя.gguf · Nk ctx» (контекст осмыслен); для external/облака — имя облачной/
+    /// мульти-модельной модели без ctx. Пусто, пока снимок не получен или модель не
+    /// задана.
     fn model_meta(&self) -> String {
+        use crate::shared::config::ServerMode;
         let Some((cfg, _)) = &self.settings_snapshot else {
             return String::new();
         };
-        let model = cfg.engine.model_path.as_deref().and_then(|p| {
-            let name = p.rsplit(['/', '\\']).next().unwrap_or(p);
-            let name = name.trim_end_matches(".gguf");
-            (!name.is_empty()).then(|| name.to_string())
-        });
-        match model {
-            Some(m) => {
-                let ctx = cfg.engine.context_size;
-                if ctx > 0 {
-                    format!("{m} · {}k ctx", (ctx + 512) / 1024)
-                } else {
-                    m
+        match cfg.engine.mode {
+            ServerMode::Managed => {
+                let m = cfg.engine.managed.model_path.as_deref().and_then(|p| {
+                    let name = p.rsplit(['/', '\\']).next().unwrap_or(p);
+                    let name = name.trim_end_matches(".gguf");
+                    (!name.is_empty()).then(|| name.to_string())
+                });
+                match m {
+                    Some(m) => {
+                        let ctx = cfg.engine.managed.context_size;
+                        if ctx > 0 {
+                            format!("{m} · {}k ctx", (ctx + 512) / 1024)
+                        } else {
+                            m
+                        }
+                    }
+                    None => String::new(),
                 }
             }
-            None => String::new(),
+            ServerMode::External => cfg
+                .engine
+                .external
+                .model_name
+                .clone()
+                .filter(|m| !m.is_empty())
+                .unwrap_or_default(),
+            ServerMode::OpenAi | ServerMode::Gemini | ServerMode::Claude => cfg
+                .engine
+                .cloud()
+                .and_then(|c| c.model_name.clone())
+                .filter(|m| !m.is_empty())
+                .unwrap_or_default(),
         }
     }
 

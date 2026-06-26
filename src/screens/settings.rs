@@ -20,7 +20,9 @@ use crate::entities::profile::Profile;
 use crate::entities::sampling::{ReasoningEffort, SamplingConfig};
 use crate::features::profiles::ProfileEdit;
 use crate::features::tools::all_tool_ids;
-use crate::shared::config::{AppConfig, CloudProvider, ImpersonationMode, ServerMode, Theme};
+use crate::shared::config::{
+    AppConfig, CloudProvider, CloudSettings, ImpersonationMode, ManagedSettings, ServerMode, Theme,
+};
 use crate::shared::keys;
 use crate::shared::theme::Palette;
 use crate::shared::ui::dim_background;
@@ -505,33 +507,29 @@ impl SettingsScreen {
                 // Видимость полей зависит от режима (ADR 0004): для облака показываем
                 // лишь модель/ключ/опц. base URL, для managed — параметры llama-server.
                 match x.mode {
-                    ServerMode::Managed => rows.extend([
-                        text_row(FieldId::XBinary, "Бинарник llama-server", &x.binary),
-                        text_row(FieldId::XModel, "GGUF-модель (-m)", &x.model_path),
-                        num_field(FieldId::XNgl, "GPU-слои (-ngl)", x.gpu_layers),
-                        num_field(FieldId::XCtx, "Контекст (-c)", x.context_size),
-                        row(
-                            FieldId::XJinja,
-                            "Шаблон (--jinja)",
-                            FieldKind::Toggle(x.jinja),
-                        ),
-                        row(
-                            FieldId::XNoMmap,
-                            "No-mmap (--no-mmap)",
-                            FieldKind::Toggle(x.no_mmap),
-                        ),
-                        row(FieldId::XHost, "Host", FieldKind::Text(x.host.clone())),
-                        num_field(FieldId::XPort, "Порт", x.port),
-                    ]),
+                    ServerMode::Managed => rows.extend(managed_rows(
+                        &x.managed,
+                        FieldId::XBinary,
+                        FieldId::XModel,
+                        FieldId::XNgl,
+                        FieldId::XCtx,
+                        FieldId::XJinja,
+                        FieldId::XNoMmap,
+                        FieldId::XHost,
+                        FieldId::XPort,
+                    )),
                     ServerMode::External => rows.extend([
-                        text_row(FieldId::XUrl, "URL (external)", &x.url),
-                        text_row(FieldId::XModelName, "Модель (опц.)", &x.model_name),
+                        text_row(FieldId::XUrl, "URL (external)", &x.external.url),
+                        text_row(FieldId::XModelName, "Модель (опц.)", &x.external.model_name),
                     ]),
-                    ServerMode::OpenAi | ServerMode::Gemini | ServerMode::Claude => rows.extend([
-                        text_row(FieldId::XModelName, "Модель", &x.model_name),
-                        text_row(FieldId::XApiKeyEnv, "API-ключ (env)", &x.api_key_env),
-                        text_row(FieldId::XUrl, "Base URL (опц.)", &x.url),
-                    ]),
+                    ServerMode::OpenAi | ServerMode::Gemini | ServerMode::Claude => {
+                        rows.extend(cloud_rows(
+                            x.cloud(),
+                            FieldId::XModelName,
+                            FieldId::XApiKeyEnv,
+                            FieldId::XUrl,
+                        ))
+                    }
                 }
             }
             Subsection::Impersonation => {
@@ -544,35 +542,33 @@ impl SettingsScreen {
                 match x.mode {
                     // Shared переиспользует движок ассистента — собственных полей нет.
                     ImpersonationMode::Shared => {}
-                    ImpersonationMode::Managed => rows.extend([
-                        text_row(FieldId::IxBinary, "Бинарник llama-server", &x.binary),
-                        text_row(FieldId::IxModel, "GGUF-модель (-m)", &x.model_path),
-                        num_field(FieldId::IxNgl, "GPU-слои (-ngl)", x.gpu_layers),
-                        num_field(FieldId::IxCtx, "Контекст (-c)", x.context_size),
-                        row(
-                            FieldId::IxJinja,
-                            "Шаблон (--jinja)",
-                            FieldKind::Toggle(x.jinja),
-                        ),
-                        row(
-                            FieldId::IxNoMmap,
-                            "No-mmap (--no-mmap)",
-                            FieldKind::Toggle(x.no_mmap),
-                        ),
-                        row(FieldId::IxHost, "Host", FieldKind::Text(x.host.clone())),
-                        num_field(FieldId::IxPort, "Порт", x.port),
-                    ]),
+                    ImpersonationMode::Managed => rows.extend(managed_rows(
+                        &x.managed,
+                        FieldId::IxBinary,
+                        FieldId::IxModel,
+                        FieldId::IxNgl,
+                        FieldId::IxCtx,
+                        FieldId::IxJinja,
+                        FieldId::IxNoMmap,
+                        FieldId::IxHost,
+                        FieldId::IxPort,
+                    )),
                     ImpersonationMode::External => rows.extend([
-                        text_row(FieldId::IxUrl, "URL (external)", &x.url),
-                        text_row(FieldId::IxModelName, "Модель (опц.)", &x.model_name),
+                        text_row(FieldId::IxUrl, "URL (external)", &x.external.url),
+                        text_row(
+                            FieldId::IxModelName,
+                            "Модель (опц.)",
+                            &x.external.model_name,
+                        ),
                     ]),
                     ImpersonationMode::OpenAi
                     | ImpersonationMode::Gemini
-                    | ImpersonationMode::Claude => rows.extend([
-                        text_row(FieldId::IxModelName, "Модель", &x.model_name),
-                        text_row(FieldId::IxApiKeyEnv, "API-ключ (env)", &x.api_key_env),
-                        text_row(FieldId::IxUrl, "Base URL (опц.)", &x.url),
-                    ]),
+                    | ImpersonationMode::Claude => rows.extend(cloud_rows(
+                        x.cloud(),
+                        FieldId::IxModelName,
+                        FieldId::IxApiKeyEnv,
+                        FieldId::IxUrl,
+                    )),
                 }
             }
         }
@@ -598,7 +594,19 @@ impl SettingsScreen {
             Subsection::Impersonation => (&self.config.impersonation_sampling, true),
         };
         let mk = |p: SamplingParam| if imp { FieldId::IS(p) } else { FieldId::S(p) };
-        rows.extend(SAMPLING_PARAMS.iter().map(|&p| sampling_row(mk(p), p, s)));
+        // В облачном режиме показываем только параметры, которые провайдер реально
+        // принимает (расширения llama.cpp и reasoning-поля скрыты — ADR 0004).
+        // Значения скрытых параметров сохраняются и заработают на локальной модели.
+        let provider = self.sampling_cloud_provider(imp);
+        rows.extend(
+            SAMPLING_PARAMS
+                .iter()
+                .filter(|&&p| match provider {
+                    Some(provider) => cloud_supported_param(provider, p),
+                    None => true,
+                })
+                .map(|&p| sampling_row(mk(p), p, s)),
+        );
         rows
     }
 
@@ -644,29 +652,37 @@ impl SettingsScreen {
         // URL/модель/ключ). Облачные эмбеддинги есть у OpenAI/Gemini (ADR 0004).
         match e.mode {
             ServerMode::Managed => rows.extend([
-                text_row(FieldId::EBinary, "Эмбеддинги: бинарник", &e.binary),
-                text_row(FieldId::EModel, "Эмбеддинги: GGUF (-m)", &e.model_path),
-                num_field(FieldId::EPort, "Эмбеддинги: порт", e.port),
+                text_row(FieldId::EBinary, "Эмбеддинги: бинарник", &e.managed.binary),
+                text_row(
+                    FieldId::EModel,
+                    "Эмбеддинги: GGUF (-m)",
+                    &e.managed.model_path,
+                ),
+                num_field(FieldId::EPort, "Эмбеддинги: порт", e.managed.port),
             ]),
             ServerMode::External => rows.extend([
-                text_row(FieldId::EUrl, "Эмбеддинги: URL", &e.url),
+                text_row(FieldId::EUrl, "Эмбеддинги: URL", &e.external.url),
                 text_row(
                     FieldId::EModelName,
                     "Эмбеддинги: модель (опц.)",
-                    &e.model_name,
+                    &e.external.model_name,
                 ),
             ]),
             // Claude в эмбеддингах поля показывает, но Anthropic не умеет embeddings —
             // супервайзер вернёт «недоступно» (RAG отключится). См. ADR 0004.
-            ServerMode::OpenAi | ServerMode::Gemini | ServerMode::Claude => rows.extend([
-                text_row(FieldId::EModelName, "Эмбеддинги: модель", &e.model_name),
-                text_row(
-                    FieldId::EApiKeyEnv,
-                    "Эмбеддинги: API-ключ (env)",
-                    &e.api_key_env,
-                ),
-                text_row(FieldId::EUrl, "Эмбеддинги: Base URL (опц.)", &e.url),
-            ]),
+            ServerMode::OpenAi | ServerMode::Gemini | ServerMode::Claude => {
+                let none = CloudSettings::default();
+                let c = e.cloud().unwrap_or(&none);
+                rows.extend([
+                    text_row(FieldId::EModelName, "Эмбеддинги: модель", &c.model_name),
+                    text_row(
+                        FieldId::EApiKeyEnv,
+                        "Эмбеддинги: API-ключ (env)",
+                        &c.api_key_env,
+                    ),
+                    text_row(FieldId::EUrl, "Эмбеддинги: Base URL (опц.)", &c.url),
+                ])
+            }
         }
         rows.extend([
             row(
@@ -765,22 +781,6 @@ impl SettingsScreen {
             }
         }
         rows
-    }
-
-    /// Поддерживается ли параметр сэмплинга облачным провайдером текущей подсекции.
-    /// Для облака (OpenAI/Gemini) расширения llama.cpp и reasoning-поля не шлются
-    /// (`restrict_to_strict`, ADR 0004) — такие параметры помечаются в подсказке, но
-    /// значение сохраняется (заработает при возврате на локальную модель).
-    fn sampling_unsupported_in_cloud(&self, id: FieldId) -> bool {
-        let (p, imp) = match id {
-            FieldId::S(p) => (p, false),
-            FieldId::IS(p) => (p, true),
-            _ => return false,
-        };
-        match self.sampling_cloud_provider(imp) {
-            Some(provider) => !cloud_supported_param(provider, p),
-            None => false,
-        }
     }
 
     /// Облачный провайдер сэмплинга подсекции (`None` — локальный движок). Для
@@ -993,13 +993,17 @@ impl SettingsScreen {
     /// Переключает булев тумблер и возвращает соответствующее намерение.
     fn toggle_field(&mut self, id: FieldId) -> Option<SettingsIntent> {
         match id {
-            FieldId::XJinja => self.config.engine.jinja = !self.config.engine.jinja,
-            FieldId::XNoMmap => self.config.engine.no_mmap = !self.config.engine.no_mmap,
+            FieldId::XJinja => self.config.engine.managed.jinja = !self.config.engine.managed.jinja,
+            FieldId::XNoMmap => {
+                self.config.engine.managed.no_mmap = !self.config.engine.managed.no_mmap
+            }
             FieldId::IxJinja => {
-                self.config.impersonation_engine.jinja = !self.config.impersonation_engine.jinja
+                self.config.impersonation_engine.managed.jinja =
+                    !self.config.impersonation_engine.managed.jinja
             }
             FieldId::IxNoMmap => {
-                self.config.impersonation_engine.no_mmap = !self.config.impersonation_engine.no_mmap
+                self.config.impersonation_engine.managed.no_mmap =
+                    !self.config.impersonation_engine.managed.no_mmap
             }
             FieldId::TWeb => self.config.tools.web_enabled = !self.config.tools.web_enabled,
             FieldId::TWebFetch => {
@@ -1104,55 +1108,89 @@ impl SettingsScreen {
         let opt = |s: &str| (!s.is_empty()).then(|| s.to_string());
         let s = &mut self.config;
         match id {
-            FieldId::XUrl => s.engine.url = opt(trimmed),
-            FieldId::XBinary => s.engine.binary = opt(trimmed),
-            FieldId::XModel => s.engine.model_path = opt(trimmed),
-            FieldId::XModelName => s.engine.model_name = opt(trimmed),
-            FieldId::XApiKeyEnv => s.engine.api_key_env = opt(trimmed),
+            // URL/модель/ключ маршрутизируются в активную под-секцию по режиму
+            // (external → external.*, облако → cloud_mut().*); managed-поля — в managed.
+            FieldId::XUrl => {
+                if s.engine.mode == ServerMode::External {
+                    s.engine.external.url = opt(trimmed);
+                } else if let Some(c) = s.engine.cloud_mut() {
+                    c.url = opt(trimmed);
+                }
+            }
+            FieldId::XModelName => {
+                if s.engine.mode == ServerMode::External {
+                    s.engine.external.model_name = opt(trimmed);
+                } else if let Some(c) = s.engine.cloud_mut() {
+                    c.model_name = opt(trimmed);
+                }
+            }
+            FieldId::XApiKeyEnv => {
+                if let Some(c) = s.engine.cloud_mut() {
+                    c.api_key_env = opt(trimmed);
+                }
+            }
+            FieldId::XBinary => s.engine.managed.binary = opt(trimmed),
+            FieldId::XModel => s.engine.managed.model_path = opt(trimmed),
             FieldId::XHost => {
                 if !trimmed.is_empty() {
-                    s.engine.host = trimmed.to_string();
+                    s.engine.managed.host = trimmed.to_string();
                 }
             }
             FieldId::XNgl => {
                 if let Ok(v) = trimmed.parse() {
-                    s.engine.gpu_layers = v;
+                    s.engine.managed.gpu_layers = v;
                 }
             }
             FieldId::XCtx => {
                 if let Ok(v) = trimmed.parse() {
-                    s.engine.context_size = v;
+                    s.engine.managed.context_size = v;
                 }
             }
             FieldId::XPort => {
                 if let Ok(p) = trimmed.parse() {
-                    s.engine.port = p;
+                    s.engine.managed.port = p;
                 }
             }
             // Имперсонация — сервер.
-            FieldId::IxUrl => s.impersonation_engine.url = opt(trimmed),
-            FieldId::IxBinary => s.impersonation_engine.binary = opt(trimmed),
-            FieldId::IxModel => s.impersonation_engine.model_path = opt(trimmed),
-            FieldId::IxModelName => s.impersonation_engine.model_name = opt(trimmed),
-            FieldId::IxApiKeyEnv => s.impersonation_engine.api_key_env = opt(trimmed),
+            FieldId::IxUrl => {
+                if s.impersonation_engine.mode == ImpersonationMode::External {
+                    s.impersonation_engine.external.url = opt(trimmed);
+                } else if let Some(c) = s.impersonation_engine.cloud_mut() {
+                    c.url = opt(trimmed);
+                }
+            }
+            FieldId::IxModelName => {
+                if s.impersonation_engine.mode == ImpersonationMode::External {
+                    s.impersonation_engine.external.model_name = opt(trimmed);
+                } else if let Some(c) = s.impersonation_engine.cloud_mut() {
+                    c.model_name = opt(trimmed);
+                }
+            }
+            FieldId::IxApiKeyEnv => {
+                if let Some(c) = s.impersonation_engine.cloud_mut() {
+                    c.api_key_env = opt(trimmed);
+                }
+            }
+            FieldId::IxBinary => s.impersonation_engine.managed.binary = opt(trimmed),
+            FieldId::IxModel => s.impersonation_engine.managed.model_path = opt(trimmed),
             FieldId::IxHost => {
                 if !trimmed.is_empty() {
-                    s.impersonation_engine.host = trimmed.to_string();
+                    s.impersonation_engine.managed.host = trimmed.to_string();
                 }
             }
             FieldId::IxNgl => {
                 if let Ok(v) = trimmed.parse() {
-                    s.impersonation_engine.gpu_layers = v;
+                    s.impersonation_engine.managed.gpu_layers = v;
                 }
             }
             FieldId::IxCtx => {
                 if let Ok(v) = trimmed.parse() {
-                    s.impersonation_engine.context_size = v;
+                    s.impersonation_engine.managed.context_size = v;
                 }
             }
             FieldId::IxPort => {
                 if let Ok(p) = trimmed.parse() {
-                    s.impersonation_engine.port = p;
+                    s.impersonation_engine.managed.port = p;
                 }
             }
             FieldId::MaxToolRounds => {
@@ -1174,14 +1212,30 @@ impl SettingsScreen {
                     s.tools.subagent_timeout_secs = v;
                 }
             }
-            FieldId::EUrl => s.embed.url = opt(trimmed),
-            FieldId::EBinary => s.embed.binary = opt(trimmed),
-            FieldId::EModel => s.embed.model_path = opt(trimmed),
-            FieldId::EModelName => s.embed.model_name = opt(trimmed),
-            FieldId::EApiKeyEnv => s.embed.api_key_env = opt(trimmed),
+            FieldId::EUrl => {
+                if s.embed.mode == ServerMode::External {
+                    s.embed.external.url = opt(trimmed);
+                } else if let Some(c) = s.embed.cloud_mut() {
+                    c.url = opt(trimmed);
+                }
+            }
+            FieldId::EModelName => {
+                if s.embed.mode == ServerMode::External {
+                    s.embed.external.model_name = opt(trimmed);
+                } else if let Some(c) = s.embed.cloud_mut() {
+                    c.model_name = opt(trimmed);
+                }
+            }
+            FieldId::EApiKeyEnv => {
+                if let Some(c) = s.embed.cloud_mut() {
+                    c.api_key_env = opt(trimmed);
+                }
+            }
+            FieldId::EBinary => s.embed.managed.binary = opt(trimmed),
+            FieldId::EModel => s.embed.managed.model_path = opt(trimmed),
             FieldId::EPort => {
                 if let Ok(p) = trimmed.parse() {
-                    s.embed.port = p;
+                    s.embed.managed.port = p;
                 }
             }
             FieldId::RagTarget => {
@@ -1364,26 +1418,11 @@ impl SettingsScreen {
         let focused = self.focus == Focus::Fields;
         // Подсказка-описание сфокусированного поля (если оно есть) — отдельной
         // строкой внизу секции. Резервируем место только когда описание есть,
-        // чтобы прочие секции выглядели как раньше. Для облачного провайдера
-        // неподдерживаемые параметры сэмплинга помечаются припиской (значение
-        // сохраняется для локальных моделей; ADR 0004).
+        // чтобы прочие секции выглядели как раньше. Неподдерживаемые облаком
+        // параметры сэмплинга в облачном режиме не показываются вовсе (ADR 0004).
         let focused_field = focused.then(|| fields.get(self.field_idx)).flatten();
-        let base = focused_field.and_then(|f| field_description(f.id));
-        let unsupported = focused_field
-            .map(|f| self.sampling_unsupported_in_cloud(f.id))
-            .unwrap_or(false);
-        let description: Option<String> = match (unsupported, base) {
-            (true, Some(b)) => Some(format!("{CLOUD_UNSUPPORTED_NOTE} {b}")),
-            (true, None) => Some(CLOUD_UNSUPPORTED_NOTE.to_string()),
-            (false, Some(b)) => Some(b.to_string()),
-            (false, None) => None,
-        };
-        // Приписка про облако добавляет строку — резервируем чуть больше места.
-        let desc_h = match (&description, unsupported) {
-            (Some(_), true) => 5,
-            (Some(_), false) => 4,
-            (None, _) => 0,
-        };
+        let description: Option<&'static str> = focused_field.and_then(|f| field_description(f.id));
+        let desc_h = if description.is_some() { 4 } else { 0 };
         let [list_area, desc_area] =
             Layout::vertical([Constraint::Min(1), Constraint::Length(desc_h)]).areas(area);
         // Колонку со значениями (в т.ч. чекбоксы [x]) выравниваем по самой длинной
@@ -1398,10 +1437,7 @@ impl SettingsScreen {
         let palette = Palette::for_theme(self.config.interface.theme);
         let items: Vec<ListItem> = fields
             .iter()
-            .map(|f| {
-                let inactive = self.sampling_unsupported_in_cloud(f.id);
-                ListItem::new(render_field_line(f, label_col, &palette, inactive))
-            })
+            .map(|f| ListItem::new(render_field_line(f, label_col, &palette)))
             .collect();
         let block = Block::default()
             .borders(Borders::NONE)
@@ -1435,10 +1471,6 @@ impl SettingsScreen {
 }
 
 // ---------- свободные функции ----------
-
-/// Приписка к подсказке для параметров сэмплинга, не поддержанных облаком.
-const CLOUD_UNSUPPORTED_NOTE: &str =
-    "(не поддерживается этим провайдером — значение сохранится для локальных моделей)";
 
 /// Входит ли параметр сэмплинга в подмножество, принимаемое облачным провайдером.
 /// OpenAI/Gemini (строгий OpenAI-диалект, `restrict_to_strict`): temperature/top_p/
@@ -1560,6 +1592,48 @@ fn num_field<T: ToString>(id: FieldId, label: &str, value: T) -> FieldRow {
     row(id, label, FieldKind::Text(value.to_string()))
 }
 
+/// Поля managed-сервера `llama-server` (общие для движка ассистента/имперсонации).
+#[allow(clippy::too_many_arguments)]
+fn managed_rows(
+    m: &ManagedSettings,
+    binary: FieldId,
+    model: FieldId,
+    ngl: FieldId,
+    ctx: FieldId,
+    jinja: FieldId,
+    no_mmap: FieldId,
+    host: FieldId,
+    port: FieldId,
+) -> Vec<FieldRow> {
+    vec![
+        text_row(binary, "Бинарник llama-server", &m.binary),
+        text_row(model, "GGUF-модель (-m)", &m.model_path),
+        num_field(ngl, "GPU-слои (-ngl)", m.gpu_layers),
+        num_field(ctx, "Контекст (-c)", m.context_size),
+        row(jinja, "Шаблон (--jinja)", FieldKind::Toggle(m.jinja)),
+        row(no_mmap, "No-mmap (--no-mmap)", FieldKind::Toggle(m.no_mmap)),
+        row(host, "Host", FieldKind::Text(m.host.clone())),
+        num_field(port, "Порт", m.port),
+    ]
+}
+
+/// Поля облачного провайдера (модель/API-ключ-env/base URL). `cloud` — настройки
+/// активного провайдера (`None` маловероятен в облачном режиме — тогда пустые поля).
+fn cloud_rows(
+    cloud: Option<&CloudSettings>,
+    model_name: FieldId,
+    api_key_env: FieldId,
+    url: FieldId,
+) -> Vec<FieldRow> {
+    let none = CloudSettings::default();
+    let c = cloud.unwrap_or(&none);
+    vec![
+        text_row(model_name, "Модель", &c.model_name),
+        text_row(api_key_env, "API-ключ (env)", &c.api_key_env),
+        text_row(url, "Base URL (опц.)", &c.url),
+    ]
+}
+
 /// Числовая строка из `Option<T>` (None → «—»).
 fn num_row<T: ToString>(id: FieldId, label: &str, value: Option<T>) -> FieldRow {
     row(
@@ -1664,33 +1738,18 @@ fn label_width(label: &str) -> usize {
     crate::shared::wrap::display_width(&label.chars().collect::<Vec<_>>())
 }
 
-/// Строка поля. `inactive` — параметр не действует у текущего провайдера (облако не
-/// принимает это поле сэмплинга): **заданное** значение красится цветом `warning`
-/// (янтарный — внимание, но не тревога), чтобы молчаливо игнорируемая настройка была
-/// видна без фокуса. Незаданные (`—`) не подсвечиваются — флагировать нечего.
-/// Значение при этом сохраняется. См. ADR 0004.
-fn render_field_line(
-    f: &FieldRow,
-    label_col: usize,
-    palette: &Palette,
-    inactive: bool,
-) -> Line<'static> {
-    // Значение + его цвет по типу поля (тумблер — зелёный/приглушённый, выбор —
-    // синий, прочерк — цвет рамки, текст — основной). `set` — задано ли значение
-    // (для прочерка/пустого — нет, такие не подсвечиваем как неподдержанные).
-    let (value, value_style, set) = match &f.kind {
+/// Строка поля: подпись + значение, окрашенное по типу (тумблер — зелёный/
+/// приглушённый, выбор — синий, прочерк/пусто — цвет рамки, текст — основной).
+fn render_field_line(f: &FieldRow, label_col: usize, palette: &Palette) -> Line<'static> {
+    let (value, value_style) = match &f.kind {
         FieldKind::Toggle(on) => {
             if *on {
-                ("[x]".to_string(), Style::new().fg(palette.success), true)
+                ("[x]".to_string(), Style::new().fg(palette.success))
             } else {
-                ("[ ]".to_string(), palette.muted_style(), false)
+                ("[ ]".to_string(), palette.muted_style())
             }
         }
-        FieldKind::Choice(v) => (
-            format!("‹ {v} ›"),
-            Style::new().fg(palette.user),
-            v.trim() != "—",
-        ),
+        FieldKind::Choice(v) => (format!("‹ {v} ›"), Style::new().fg(palette.user)),
         FieldKind::Text(v) => {
             let set = v.trim() != "—" && !v.trim().is_empty();
             let style = if set {
@@ -1698,14 +1757,8 @@ fn render_field_line(
             } else {
                 Style::new().fg(palette.border)
             };
-            (v.clone(), style, set)
+            (v.clone(), style)
         }
-    };
-    // Неподдержанный провайдером, но заданный параметр — красим значение в warning.
-    let value_style = if inactive && set {
-        Style::new().fg(palette.warning)
-    } else {
-        value_style
     };
     // Дополняем подпись пробелами до ширины колонки по реальной ширине в колонках
     // (Rust `{:<N}` считает символы, а не колонки — для CJK/эмодзи это разъезжается).
@@ -2033,7 +2086,7 @@ mod tests {
         let intent = s.handle_key(key(KeyCode::Enter));
         match intent {
             Some(SettingsIntent::SaveConfig(c)) => {
-                assert_eq!(c.engine.model_path.as_deref(), Some("gemma.gguf"))
+                assert_eq!(c.engine.managed.model_path.as_deref(), Some("gemma.gguf"))
             }
             other => panic!("ожидался SaveConfig, получено {other:?}"),
         }
@@ -2052,7 +2105,7 @@ mod tests {
         assert_eq!(intent, None);
         assert!(s.editor.is_none());
         // значение не изменилось
-        assert!(s.config.engine.binary.is_none());
+        assert!(s.config.engine.managed.binary.is_none());
     }
 
     #[test]
@@ -2291,91 +2344,60 @@ mod tests {
     }
 
     #[test]
-    fn cloud_marks_unsupported_sampling_params() {
+    fn cloud_hides_unsupported_sampling_params() {
         let mut s = screen();
-        // Локально (managed по умолчанию) — ничего не помечается.
-        assert!(!s.sampling_unsupported_in_cloud(FieldId::S(SamplingParam::TopK)));
-        // Облако ассистента: top_k/thinking помечаются, temperature/top_p/max_tokens — нет.
+        s.handle_key(key(KeyCode::Tab)); // Inference
+        s.handle_key(key(KeyCode::Tab)); // Sampling
+        let has =
+            |s: &SettingsScreen, p: SamplingParam| s.fields().iter().any(|f| f.id == FieldId::S(p));
+        // Локально (managed по умолчанию) — видны все параметры.
+        assert!(has(&s, SamplingParam::TopK));
+        assert!(has(&s, SamplingParam::Thinking));
+        // Облако (OpenAI): расширения llama.cpp/reasoning скрыты, базовые — видны.
         s.config.engine.mode = ServerMode::OpenAi;
-        assert!(s.sampling_unsupported_in_cloud(FieldId::S(SamplingParam::TopK)));
-        assert!(s.sampling_unsupported_in_cloud(FieldId::S(SamplingParam::Thinking)));
-        assert!(s.sampling_unsupported_in_cloud(FieldId::S(SamplingParam::Reasoning)));
-        assert!(!s.sampling_unsupported_in_cloud(FieldId::S(SamplingParam::Temp)));
-        assert!(!s.sampling_unsupported_in_cloud(FieldId::S(SamplingParam::TopP)));
-        assert!(!s.sampling_unsupported_in_cloud(FieldId::S(SamplingParam::MaxTokens)));
-        // Имперсонация в shared наследует провайдера ассистента (облако).
+        assert!(!has(&s, SamplingParam::TopK));
+        assert!(!has(&s, SamplingParam::Thinking));
+        assert!(!has(&s, SamplingParam::Reasoning));
+        assert!(has(&s, SamplingParam::Temp));
+        assert!(has(&s, SamplingParam::TopP));
+        assert!(has(&s, SamplingParam::MaxTokens));
+        // Claude 4.x «зафиксировал» сэмплинг: виден только max_tokens.
+        s.config.engine.mode = ServerMode::Claude;
+        assert!(!has(&s, SamplingParam::Temp));
+        assert!(!has(&s, SamplingParam::TopP));
+        assert!(!has(&s, SamplingParam::FreqPen));
+        assert!(has(&s, SamplingParam::MaxTokens));
+    }
+
+    #[test]
+    fn impersonation_shared_inherits_assistant_cloud_filter() {
+        let mut s = screen();
+        // Ассистент в облаке, имперсонация в shared → её сэмплинг фильтруется как облако.
+        s.config.engine.mode = ServerMode::OpenAi;
         assert_eq!(
             s.config.impersonation_engine.mode,
             ImpersonationMode::Shared
         );
-        assert!(s.sampling_unsupported_in_cloud(FieldId::IS(SamplingParam::TopK)));
-        // Локальная имперсонация (managed) не помечается, даже если ассистент в облаке.
-        s.config.impersonation_engine.mode = ImpersonationMode::Managed;
-        assert!(!s.sampling_unsupported_in_cloud(FieldId::IS(SamplingParam::TopK)));
-        // Поля вне сэмплинга не помечаются никогда.
-        assert!(!s.sampling_unsupported_in_cloud(FieldId::XNgl));
-        // Claude 4.x «зафиксировал» сэмплинг: temperature/top_p/top_k тоже помечаются,
-        // поддержан только max_tokens.
-        s.config.engine.mode = ServerMode::Claude;
-        assert!(s.sampling_unsupported_in_cloud(FieldId::S(SamplingParam::TopK)));
-        assert!(s.sampling_unsupported_in_cloud(FieldId::S(SamplingParam::Temp)));
-        assert!(s.sampling_unsupported_in_cloud(FieldId::S(SamplingParam::TopP)));
-        assert!(s.sampling_unsupported_in_cloud(FieldId::S(SamplingParam::FreqPen)));
-        assert!(!s.sampling_unsupported_in_cloud(FieldId::S(SamplingParam::MaxTokens)));
-    }
-
-    #[test]
-    fn inactive_set_value_is_colored_warning() {
-        let palette = Palette::for_theme(Theme::Dark);
-        let set = row(
-            FieldId::S(SamplingParam::TopK),
-            "top_k",
-            FieldKind::Text("64".into()),
-        );
-        // Заданное значение неподдержанного параметра окрашено цветом warning.
-        let val = render_field_line(&set, 28, &palette, true)
-            .spans
-            .into_iter()
-            .find(|s| s.content.contains("64"))
-            .unwrap();
-        assert_eq!(val.style.fg, Some(palette.warning));
-        // Без флага неактивности — обычный цвет текста.
-        let plain = render_field_line(&set, 28, &palette, false)
-            .spans
-            .into_iter()
-            .find(|s| s.content.contains("64"))
-            .unwrap();
-        assert_eq!(plain.style.fg, Some(palette.text));
-        // Незаданное значение («—») не подсвечивается даже у неподдержанного параметра.
-        let unset = row(
-            FieldId::S(SamplingParam::MinP),
-            "min_p",
-            FieldKind::Text("—".into()),
-        );
-        let dash = render_field_line(&unset, 28, &palette, true)
-            .spans
-            .into_iter()
-            .find(|s| s.content.contains('—'))
-            .unwrap();
-        assert_eq!(dash.style.fg, Some(palette.border));
-    }
-
-    #[test]
-    fn render_cloud_unsupported_sampling_hint_does_not_panic() {
-        use ratatui::Terminal;
-        use ratatui::backend::TestBackend;
-        let mut s = screen();
-        s.config.engine.mode = ServerMode::OpenAi;
         s.handle_key(key(KeyCode::Tab)); // Inference
         s.handle_key(key(KeyCode::Tab)); // Sampling
-        s.handle_key(key(KeyCode::Enter)); // фокус на поля (SamplingSub)
-        while s.fields().get(s.field_idx).map(|f| f.id) != Some(FieldId::S(SamplingParam::TopK)) {
-            s.handle_key(key(KeyCode::Down));
-        }
-        for (w, h) in [(80u16, 24u16), (40, 12)] {
-            let mut term = Terminal::new(TestBackend::new(w, h)).unwrap();
-            term.draw(|f| s.render(f)).unwrap();
-        }
+        s.handle_key(key(KeyCode::Enter)); // фокус (SamplingSub)
+        s.handle_key(key(KeyCode::Right)); // → подсекция Имперсонация
+        assert_eq!(s.sampling_sub, Subsection::Impersonation);
+        let has_topk = s
+            .fields()
+            .iter()
+            .any(|f| f.id == FieldId::IS(SamplingParam::TopK));
+        assert!(
+            !has_topk,
+            "облако ассистента фильтрует и shared-имперсонацию"
+        );
+        // Локальная имперсонация (managed) показывает все параметры, даже если ассистент в облаке.
+        s.config.impersonation_engine.mode = ImpersonationMode::Managed;
+        let has_topk = s
+            .fields()
+            .iter()
+            .any(|f| f.id == FieldId::IS(SamplingParam::TopK));
+        assert!(has_topk);
     }
 
     #[test]
