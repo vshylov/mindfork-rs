@@ -30,6 +30,7 @@ use crate::shared::keys;
 use crate::shared::server::ServerStatus;
 use crate::shared::theme::Palette;
 use crate::shared::ui::dim_background;
+use crate::widgets::emoji_picker::{EmojiPickerAction, EmojiPickerState};
 use crate::widgets::impersonation_preview;
 use crate::widgets::input_box::InputBox;
 use crate::widgets::message_feed::{FeedMessage, FeedRole, MessageFeed};
@@ -171,6 +172,11 @@ pub struct ChatScreen {
     last_edit: Option<Instant>,
     /// Открытый попап подсказок орфографии.
     suggest: Option<SuggestPopup>,
+    /// Открытый попап выбора эмодзи (`Ctrl+B`). См. spec §11.5.
+    emoji: Option<EmojiPickerState>,
+    /// Индекс последнего выделения в попапе эмодзи — восстанавливается при следующем
+    /// открытии (попап «помнит» выбор).
+    emoji_last: usize,
     /// Последний снимок настроек (конфиг + полные профили) — для открытия экрана
     /// настроек по `Ctrl+P`. Заполняется событием `Settings`. См. spec §11.6.
     settings_snapshot: Option<(AppConfig, Vec<Profile>)>,
@@ -221,6 +227,8 @@ impl ChatScreen {
             draft_dirty: false,
             last_edit: None,
             suggest: None,
+            emoji: None,
+            emoji_last: 0,
             settings_snapshot: None,
             show_help: false,
             palette: Palette::default(),
@@ -660,6 +668,10 @@ impl ChatScreen {
             self.handle_suggest_key(key);
             return None;
         }
+        if self.emoji.is_some() {
+            self.handle_emoji_key(key);
+            return None;
+        }
         if self.profile_overlay.is_some() {
             return self.handle_profile_overlay_key(key);
         }
@@ -705,6 +717,11 @@ impl ChatScreen {
                 // Подсказки орфографии для слова под курсором (spec §11.5).
                 'g' => {
                     self.open_suggestions();
+                    return None;
+                }
+                // Попап выбора эмодзи (spec §11.5). Восстанавливаем прошлое выделение.
+                'b' => {
+                    self.emoji = Some(EmojiPickerState::with_selected(self.emoji_last));
                     return None;
                 }
                 // Сворачивание «мыслей» (spec §11.3).
@@ -807,7 +824,11 @@ impl ChatScreen {
     /// при открытой справке/попапе/оверлее (их однострочные поля) — no-op. Вставка
     /// не отправляет сообщение даже с переносами внутри. См. spec §11.5.
     pub fn handle_paste(&mut self, text: &str) {
-        if self.show_help || self.suggest.is_some() || self.profile_overlay.is_some() {
+        if self.show_help
+            || self.suggest.is_some()
+            || self.emoji.is_some()
+            || self.profile_overlay.is_some()
+        {
             return;
         }
         if text.is_empty() {
@@ -821,7 +842,11 @@ impl ChatScreen {
     /// в основном виде — при открытом оверлее/попапе/справке прокрутка ленты под
     /// ними была бы неожиданной, поэтому это no-op. См. spec §11.3.
     pub fn handle_mouse(&mut self, mouse: MouseEvent) {
-        if self.show_help || self.suggest.is_some() || self.profile_overlay.is_some() {
+        if self.show_help
+            || self.suggest.is_some()
+            || self.emoji.is_some()
+            || self.profile_overlay.is_some()
+        {
             return;
         }
         match mouse.kind {
@@ -950,6 +975,31 @@ impl ChatScreen {
             None => {}
         }
         self.mark_input_changed();
+    }
+
+    /// Обрабатывает клавишу попапа выбора эмодзи: `Enter` вставляет выбранный
+    /// эмодзи в поле ввода на месте курсора и закрывает попап, `Esc` — закрывает
+    /// без вставки. См. spec §11.5.
+    fn handle_emoji_key(&mut self, key: KeyEvent) {
+        let Some(picker) = &mut self.emoji else {
+            return;
+        };
+        match picker.on_key(key) {
+            EmojiPickerAction::None => {}
+            EmojiPickerAction::Cancel => {
+                // Запоминаем выделение и при отмене (попап помнит, где был курсор).
+                self.emoji_last = picker.selected();
+                self.emoji = None;
+            }
+            EmojiPickerAction::Pick(emoji) => {
+                self.emoji_last = picker.selected();
+                self.emoji = None;
+                // insert_str безопасен для многоскалярных эмодзи (`❤️`, `👍🏽`) и
+                // ставит курсор за вставленным.
+                self.input.insert_str(&emoji);
+                self.mark_input_changed();
+            }
+        }
     }
 
     /// Запрашивает создание чата: при >1 профиле открывает оверлей выбора,
@@ -1103,7 +1153,8 @@ impl ChatScreen {
             } else {
                 "ввод · Enter отправить · Shift+Enter перенос"
             };
-            let focused = self.profile_overlay.is_none() && self.suggest.is_none();
+            let focused =
+                self.profile_overlay.is_none() && self.suggest.is_none() && self.emoji.is_none();
             let command = self.input_is_command();
             self.input.render(
                 frame,
@@ -1121,6 +1172,10 @@ impl ChatScreen {
         if let Some(popup) = &self.suggest {
             dim_background(frame);
             render_suggest(frame, popup, &self.palette);
+        }
+        if let Some(picker) = &self.emoji {
+            dim_background(frame);
+            picker.render(frame, frame.area(), &self.palette);
         }
         if self.show_help {
             dim_background(frame);
@@ -1165,6 +1220,7 @@ const HELP_KEYS: &[(&str, &str)] = &[
     ("Ctrl+P", "экран настроек"),
     ("Ctrl+T", "свернуть/развернуть «мысли»"),
     ("Ctrl+G", "подсказки орфографии"),
+    ("Ctrl+B", "вставить эмодзи"),
     ("Ctrl+W", "колесо мыши ↔ выделение текста"),
     ("/rag add <путь> [-r]", "индексировать файлы в RAG"),
     ("/rag remove <путь>", "удалить файлы из RAG"),
@@ -1917,6 +1973,57 @@ mod tests {
         s.set_spellchecker(mk_checker());
         type_str(&mut s, "helo");
         s.open_suggestions();
+        let mut term = Terminal::new(TestBackend::new(50, 16)).unwrap();
+        term.draw(|f| s.render(f)).unwrap();
+    }
+
+    #[test]
+    fn ctrl_b_opens_emoji_picker_and_enter_inserts_at_cursor() {
+        let mut s = ChatScreen::new();
+        type_str(&mut s, "ab");
+        // курсор между 'a' и 'b'
+        s.handle_key(KeyEvent::new(KeyCode::Left, KeyModifiers::NONE));
+        // Ctrl+B открывает попап (в т.ч. при русской раскладке: Ctrl+и → физ. B).
+        s.handle_key(KeyEvent::new(KeyCode::Char('и'), KeyModifiers::CONTROL));
+        assert!(s.emoji.is_some());
+        // Enter вставляет первый эмодзи на месте курсора и закрывает попап.
+        let intent = s.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+        assert_eq!(intent, None);
+        assert!(s.emoji.is_none());
+        assert_eq!(s.input.text(), "a😀b");
+    }
+
+    #[test]
+    fn emoji_picker_remembers_last_selection() {
+        let mut s = ChatScreen::new();
+        // Открываем, сдвигаем выделение и вставляем.
+        s.handle_key(KeyEvent::new(KeyCode::Char('b'), KeyModifiers::CONTROL));
+        s.handle_key(KeyEvent::new(KeyCode::Right, KeyModifiers::NONE));
+        s.handle_key(KeyEvent::new(KeyCode::Right, KeyModifiers::NONE));
+        s.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+        assert!(s.emoji.is_none());
+        // Повторное открытие восстанавливает прежнее выделение (индекс 2).
+        s.handle_key(KeyEvent::new(KeyCode::Char('b'), KeyModifiers::CONTROL));
+        assert_eq!(s.emoji.as_ref().unwrap().selected(), 2);
+    }
+
+    #[test]
+    fn esc_closes_emoji_picker_without_quitting() {
+        let mut s = ChatScreen::new();
+        s.handle_key(KeyEvent::new(KeyCode::Char('b'), KeyModifiers::CONTROL));
+        assert!(s.emoji.is_some());
+        let intent = s.handle_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
+        assert_eq!(intent, None);
+        assert!(s.emoji.is_none());
+        assert!(s.input.is_empty(), "при отмене эмодзи не вставлен");
+    }
+
+    #[test]
+    fn render_with_emoji_picker_does_not_panic() {
+        use ratatui::Terminal;
+        use ratatui::backend::TestBackend;
+        let mut s = ChatScreen::new();
+        s.handle_key(KeyEvent::new(KeyCode::Char('b'), KeyModifiers::CONTROL));
         let mut term = Terminal::new(TestBackend::new(50, 16)).unwrap();
         term.draw(|f| s.render(f)).unwrap();
     }
