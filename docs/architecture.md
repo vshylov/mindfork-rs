@@ -727,6 +727,16 @@ flowchart TB
   старые `settings.json` читаются без миграции. Выбор бэкенда — через настройки или
   env (`MINDFORK_ENGINE_URL` external / `MINDFORK_LLAMA_BIN` + `MINDFORK_MODEL`…
   managed; аналогично `MINDFORK_EMBED_*`).
+  - **Конфиг движка вложенный по режимам/провайдерам:** `EngineSettings`/
+    `ImpersonationEngineSettings`/`EmbedSettings` несут `mode` + под-секции
+    `managed: ManagedSettings`, `external: ExternalSettings` и по `CloudSettings` на
+    каждого облачного провайдера (`openai`/`gemini`/`claude`; у эмбеддингов managed —
+    `ManagedEmbedSettings`). У каждого режима свои поля, поэтому переключение режима/
+    провайдера не теряет чужих значений. Аксессоры `cloud()`/`cloud_mut()` отдают
+    активную облачную под-структуру по `mode`. Экран настроек показывает поля только
+    выбранного режима и скрывает неподдержанные облаком параметры сэмплинга (фильтр
+    `cloud_supported_param`; значения сохраняются для локальных моделей). Шапка чата
+    (`screens/chat::model_meta`) показывает модель активного режима. См. ADR 0004.
 - **Портативность** (`shared/paths.rs`): все данные — рядом с бинарником (в dev —
   `target/debug/`): `settings.json`, `profiles.json`, `chats/`, `data.db`,
   `personal_dictionary.txt`, `dictionaries/`, `logs/`.

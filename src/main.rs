@@ -136,47 +136,47 @@ fn run_import(paths: &Paths, dir: &std::path::Path) -> anyhow::Result<()> {
 fn apply_env_overrides(config: &mut AppConfig) {
     if let Ok(url) = std::env::var("MINDFORK_ENGINE_URL") {
         config.engine.mode = ServerMode::External;
-        config.engine.url = Some(url);
+        config.engine.external.url = Some(url);
     } else if let Ok(bin) = std::env::var("MINDFORK_LLAMA_BIN") {
         config.engine.mode = ServerMode::Managed;
-        config.engine.binary = Some(bin);
+        config.engine.managed.binary = Some(bin);
         if let Ok(m) = std::env::var("MINDFORK_MODEL") {
-            config.engine.model_path = Some(m);
+            config.engine.managed.model_path = Some(m);
         }
         if let Some(ngl) = std::env::var("MINDFORK_NGL")
             .ok()
             .and_then(|v| v.parse().ok())
         {
-            config.engine.gpu_layers = ngl;
+            config.engine.managed.gpu_layers = ngl;
         }
         if let Some(ctx) = std::env::var("MINDFORK_CTX")
             .ok()
             .and_then(|v| v.parse().ok())
         {
-            config.engine.context_size = ctx;
+            config.engine.managed.context_size = ctx;
         }
         if let Some(port) = std::env::var("MINDFORK_PORT")
             .ok()
             .and_then(|p| p.parse().ok())
         {
-            config.engine.port = port;
+            config.engine.managed.port = port;
         }
     }
 
     if let Ok(url) = std::env::var("MINDFORK_EMBED_URL") {
         config.embed.mode = ServerMode::External;
-        config.embed.url = Some(url);
+        config.embed.external.url = Some(url);
     } else if let Ok(bin) = std::env::var("MINDFORK_EMBED_BIN") {
         config.embed.mode = ServerMode::Managed;
-        config.embed.binary = Some(bin);
+        config.embed.managed.binary = Some(bin);
         if let Ok(m) = std::env::var("MINDFORK_EMBED_MODEL") {
-            config.embed.model_path = Some(m);
+            config.embed.managed.model_path = Some(m);
         }
         if let Some(port) = std::env::var("MINDFORK_EMBED_PORT")
             .ok()
             .and_then(|p| p.parse().ok())
         {
-            config.embed.port = port;
+            config.embed.managed.port = port;
         }
     }
 }
