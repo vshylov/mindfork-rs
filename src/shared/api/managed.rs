@@ -215,7 +215,10 @@ pub async fn wait_until_ready(
             );
         }
         if tokio::time::Instant::now() >= deadline {
-            bail!("llama-server did not become ready within {timeout:?}");
+            // Generic-сообщение: проба обслуживает не только managed `llama-server`,
+            // но и external/облачные OpenAI-совместимые серверы (vLLM, Gemini-compat
+            // и т.п.) — поэтому не привязываем текст к конкретному движку.
+            bail!("сервер инференса не вышел в готовность за {timeout:?}");
         }
         // Спим до следующей пробы, но просыпаемся сразу, если процесс умер —
         // тогда следующая итерация увидит `exited` и завершится с ошибкой.
