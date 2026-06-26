@@ -138,7 +138,7 @@ impl FinishReason {
 
 /// Счётчик токенов из ответа сервера (поле `usage`). Сервер присылает его
 /// финальным чанком стрима, если запрошено `stream_options.include_usage=true`
-/// (см. [`super::wire`]). Поля могут быть нулевыми, если сервер их не отдал.
+/// (см. [`openai::wire`]). Поля могут быть нулевыми, если сервер их не отдал.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct TokenUsage {
     /// Токенов в промпте (размер контекста запроса).
@@ -216,7 +216,7 @@ impl ToolCallAccumulator {
 pub type ChatStream = Pin<Box<dyn Stream<Item = ChatChunk> + Send>>;
 
 /// Движок инференса (chat). Реализации: HTTP-клиент к xinfer
-/// ([`super::client::OpenAiClient`]) и mock для тестов.
+/// ([`super::openai::OpenAiClient`]) и mock для тестов.
 #[async_trait::async_trait]
 pub trait EngineBackend: Send + Sync {
     /// Стриминговый одноходовый запрос. Отмена — через `cancel`.

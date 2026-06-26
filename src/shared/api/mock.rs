@@ -6,7 +6,7 @@ use std::sync::Mutex;
 use anyhow::Result;
 use tokio_util::sync::CancellationToken;
 
-use super::backend::{ChatChunk, ChatRequest, ChatStream, Embedder, EngineBackend, FinishReason};
+use super::contract::{ChatChunk, ChatRequest, ChatStream, Embedder, EngineBackend, FinishReason};
 
 /// Скриптованный движок: проигрывает заранее заданные фрагменты. Поддерживает
 /// **последовательность** скриптов по вызовам (для раундов agentic-loop).

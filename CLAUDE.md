@@ -17,7 +17,8 @@ external подойдёт любой такой — vLLM/LM Studio/Ollama). UI �
   managed/external, env, OpenAI-совместимый протокол, словари, импорт).
   **Актуально по движку.**
 - **[docs/decisions/](docs/decisions/)** — ADR: UI-крейты под ratatui 0.30 (0001),
-  выделенный embedding-сервер (0002), собственный markdown-рендерер (0003).
+  выделенный embedding-сервер (0002), собственный markdown-рендерер (0003),
+  контракт движка и мульти-провайдерный инференс без крейт-сплита (0004).
 - **[docs/history/](docs/history/)** — архив: исходное техзадание (`request.md`) и
   выполненный пошаговый план M0–M9 (`plan.md`). Историческая справка, не источник истины.
 
@@ -1494,6 +1495,119 @@ web-поиск и Python под выключателями, экран наст�
   клавиш README/spec §11.5. Чистые тесты виджета (навигация/кламп/`with_selected`/
   render-без-паники) и проводки экрана (вставка на месте курсора, память выбора,
   отмена).
+
+### Пост-M9: мульти-провайдерный инференс — Фаза 0 (фундамент) (сделано)
+- **Облачные провайдеры через тот же трейт `EngineBackend`** ([ADR 0004](docs/decisions/0004-engine-contract-multi-provider.md)):
+  Фаза 0 разблокирует **OpenAI** (`platform.openai.com`) и **Gemini** (через
+  OpenAI-совместимый endpoint). Claude (отдельный протокол `/v1/messages`) — Фаза 2.
+  Слои выше движка (оркестратор, agentic-loop, инструменты, UI) **не тронуты**.
+- **Плоская таксономия режимов** (`shared/config.rs`): `ServerMode` расширен
+  `OpenAi`/`Gemini` (рядом с `Managed`/`External`), `ImpersonationMode` — ими же
+  (плюс `Shared`). Новый `CloudProvider { OpenAi, Gemini }` с `base_url()`;
+  `ServerMode::cloud_provider()`/`ImpersonationMode::cloud_provider()` → `Option`.
+  `EngineSettings`/`ImpersonationEngineSettings`/`EmbedSettings` получили
+  `model_name`/`api_key_env` (всё `#[serde(default)]` → старые `settings.json` без
+  миграции).
+- **Модель — свойство бэкенда, не запроса** (минимум правок): `ChatRequest` модель
+  **не несёт** — её инъектит `OpenAiClient` в тело (`model`). Клиент получил
+  `api_key`/`model`/`dialect` + билдеры `with_api_key`/`with_model`/`with_dialect`,
+  шлёт `Authorization: Bearer` (метод `auth`), для эмбеддингов проставляет `model` в
+  `EmbeddingRequest`. `new(url)` = локальный/external (без ключа, lenient-диалект).
+- **Диалект тела запроса** (`shared/api/wire.rs`, `WireDialect { LlamaCpp, OpenAi,
+  Gemini }`): `build_chat_request(req, stream, model, dialect)`. Строгие облачные
+  диалекты (`OpenAi`/`Gemini`, `is_strict`) **вычищают** расширения llama.cpp и
+  reasoning-сигналы (`top_k`/`min_p`/`dynatemp_*`/`dry_*`/`mirostat*`/`samplers`/
+  `thinking`/`reasoning_*`/`chat_template_kwargs`) — иначе облако вернуло бы `400`
+  даже на дефолтном `thinking:true` (`restrict_to_strict`). Остаются `temperature`/
+  `top_p`/`frequency_penalty`/`presence_penalty`/`seed` + `tools`/`stream*`. **Лимит
+  токенов различается:** OpenAI требует `max_completion_tokens` (новые модели
+  отвергают `max_tokens` с `400` — реальная ошибка при прогоне), Gemini-compat —
+  классический `max_tokens`; `LlamaCpp` шлёт всё как раньше. Провайдер→диалект —
+  `dialect_for` в супервайзере. `WireDialect` экспортирован.
+- **Супервайзер** (`app/supervisor.rs`): `apply_chat`/`apply_impersonation`/`apply_embed`
+  получили облачные ветки (`cloud_chat_setup`/`cloud_embed_setup`). Ключ резолвится из
+  **env-переменной по имени** (`resolve_api_key`; секрет на диск не пишется, ADR 0004);
+  base URL — провайдера (override через `url`); диалект `OpenAi`. Облако не «грузит
+  модель» → статус сразу `Ready` (без probe). Нет модели/ключа → `Disconnected` с
+  понятным текстом (chat) / `UnavailableEmbedder` (RAG).
+- **UI настроек — видимость полей по режиму** (`screens/settings.rs`): `model_fields`/
+  embed-часть `tool_fields` показывают **только релевантные режиму** поля (managed →
+  параметры llama-server; external → URL+модель(опц.); openai/gemini → модель+API-ключ
+  (env)+base URL(опц.)) — это де-загромождает экран. `ServerMode`-цикл (`cycle_mode`,
+  теперь с направлением) проходит все 4 варианта; `cycle_imp_mode` — 5. Новые
+  `FieldId` (`X/Ix/E` × `ModelName`/`ApiKeyEnv`) с `apply_text` и подсказками
+  (`field_description`: режимы, API-ключ-env, имя модели). API-ключ в UI — **имя
+  env-переменной**, не секрет.
+- **Пометка неподдерживаемого сэмплинга в облаке** (`screens/settings.rs`): в секции
+  «Семплинг» при облачном провайдере подсекции параметры, не входящие в строгий
+  диалект (расширения llama.cpp + `thinking`/`reasoning_effort`), помечаются **цветом
+  значения** — заданное значение красится в `palette.warning` (янтарный/коричневый —
+  внимание, но не тревога), видно без фокуса (`render_field_line(..., inactive)`).
+  Подсвечиваются **только заданные** значения (`set`): незаданные `—` флагировать
+  нечего. При фокусе внизу — развёрнутая подсказка `CLOUD_UNSUPPORTED_NOTE`
+  («…значение сохранится для локальных моделей»). **Значение не трогается** (хранится в
+  общем `default_sampling`/`impersonation_sampling`, заработает на локальной модели).
+  Поддержанное подмножество — `cloud_supported_param`
+  (temperature/top_p/frequency_penalty/presence_penalty/seed/max_tokens). Провайдер
+  подсекции — `sampling_is_cloud` (для имперсонации в `shared` берётся движок
+  ассистента). Поля не скрываем (значения переживают переключение на локальную модель).
+  Эволюция: подсказка-при-фокусе → не видна на глаз → текстовая приписка → по просьбе
+  заменена окраской значения (нагляднее, без повторов текста).
+- **Тесты**: config (облачные режимы сериализуются/маппятся в провайдера, roundtrip,
+  старый JSON → дефолты); wire (OpenAi-диалект вычищает расширения и шлёт `model`;
+  LlamaCpp опускает `model=None`); supervisor (`resolve_api_key` env/missing; cloud
+  без модели/ключа → `Disconnected`; с моделью+ключом → `Ready`+backend; cloud-embed
+  без конфига → unavailable); settings (облачный режим показывает model/api-key и
+  прячет llama-server-поля). **543 теста зелёные**, clippy/fmt чисты.
+- **Не вошло в Фазу 0** (по плану ADR 0004): раскладка `shared/api` по подмодулям
+  (`contract/openai/anthropic/managed`) — отложена к Фазе 2, когда появится
+  `AnthropicClient` (до этого подмодуль `anthropic/` пуст, дробить ради одного
+  семейства OpenAI преждевременно). Живые смоуки против реальных OpenAI/Gemini — по
+  ключу, вне CI.
+
+### Пост-M9: мульти-провайдерный инференс — Фаза 2 (Anthropic / Claude) (сделано)
+- **Claude через отдельный протокол Messages API** ([ADR 0004](docs/decisions/0004-engine-contract-multi-provider.md)),
+  как новая реализация трейта `EngineBackend` — слои выше движка не тронуты.
+- **Новый модуль `shared/api/anthropic/`** (`client.rs` + `wire.rs`): `AnthropicClient`
+  бьёт в `/v1/messages` (заголовки `x-api-key` + `anthropic-version`), парсит
+  событийный SSE (`message_start`→usage.input_tokens; `content_block_start` tool_use→
+  `ToolCall`; `content_block_delta`: `text_delta`→`Text`, `thinking_delta`→`Thoughts`,
+  `input_json_delta`→`ToolCall` args; `message_delta`→`Usage`+`Finished` по
+  `stop_reason`). `wire::build_request` транслирует доменный `ChatRequest`: system →
+  **top-level** `system`; роли только user/assistant; tool-результаты → блоки
+  `tool_result` **внутри user** (роль `tool` отсутствует); tool-вызовы → блоки
+  `tool_use`; соседние сообщения одной роли **склеиваются** (Anthropic требует
+  чередования); `max_tokens` обязателен (дефолт 4096); схема инструмента —
+  `input_schema`. **Семплинг: только `max_tokens`** — новейшие Claude 4.x
+  (opus-4-8/haiku-4-5) «зафиксировали» сэмплинг и отвергают `temperature`/`top_p`/
+  `top_k` как deprecated (HTTP 400 на живом прогоне), поэтому их не шлём вовсе (UI
+  помечает их у Claude как неподдержанные через `cloud_supported_param`). Тело ошибки
+  не глотается (как у OpenAiClient).
+  Эмбеддингов у Anthropic нет — `Embedder` не реализуется (RAG берёт отдельный, ADR 0002).
+- **Конфиг**: `ServerMode`/`ImpersonationMode` += `Claude`; `CloudProvider` += `Claude`
+  (`base_url`=`https://api.anthropic.com`, клиент сам добавляет `/v1/messages`).
+- **Супервайзер**: `cloud_chat_setup` ветвится по протоколу провайдера — OpenAI/Gemini
+  → `OpenAiClient` (+диалект), Claude → `AnthropicClient`. Эмбеддинги в режиме Claude →
+  `UnavailableEmbedder` (Anthropic не умеет embeddings) с понятным логом.
+- **Настройки**: `Claude` в циклах режимов (движок 5, имперсонация 6 значений), те же
+  облачные поля (модель/API-ключ-env/base URL). **Пометка сэмплинга провайдеро-зависима**:
+  `cloud_supported_param(provider, p)` — у Claude **`top_k` поддержан** (в отличие от
+  OpenAI/Gemini), а penalties/seed — нет; `sampling_cloud_provider` отдаёт провайдера
+  подсекции (shared-имперсонация наследует ассистента).
+- **Claude в селекторе появился только теперь** (с реальным клиентом) — в Фазе 0 его
+  намеренно не было, чтобы не шипить нерабочий пункт.
+- **Тесты**: wire-трансляция (system top-level, tool_use/tool_result+склейка, input_schema,
+  дефолт max_tokens, разбор всех SSE-событий), маппинг stop_reason, супервайзер (Claude
+  chat → Ready+backend; Claude embed → unavailable), настройки (Claude помечает penalties/
+  seed, но не top_k). **555 тестов зелёные** (+живой `#[ignore]`-смоук
+  `MINDFORK_ANTHROPIC_KEY`), clippy/fmt чисты.
+- **Раскладка `shared/api` по подмодулям (ADR 0004 §2) — сделана** (отдельным шагом
+  после Anthropic, ради симметрии): `backend.rs`→`contract.rs`, `client.rs`+`wire.rs`→
+  `openai/` (приватный `wire`, re-export `OpenAiClient`/`WireDialect`), `server.rs`→
+  `managed.rs`, `anthropic/` уже был. Перемещения — `git mv` (история цела); публичная
+  поверхность та же (re-export из `mod.rs`); внешние `shared::api::backend::*` →
+  `::contract::*`. Итоговая структура: `contract` (трейты/типы), `openai`/`anthropic`/
+  `managed` (реализации/запуск), `thoughts`, `mock`. **555 тестов**, clippy/fmt чисты.
 
 ### Отложено за пределы M3
 - **Сворачивание/выделение per-message** и tool-блоки в ленте — сейчас «мысли»

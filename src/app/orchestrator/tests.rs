@@ -352,7 +352,7 @@ async fn send_streams_and_persists_assistant_message() {
 
 #[tokio::test]
 async fn emits_token_counter_during_generation() {
-    use crate::shared::api::backend::TokenUsage;
+    use crate::shared::api::contract::TokenUsage;
     // Две текстовые дельты (live-счёт = 2), затем точный usage от сервера (= 5).
     let backend = Arc::new(MockBackend::scripted(vec![
         ChatChunk::Text("При".into()),
@@ -612,17 +612,17 @@ fn impersonation_request_swaps_roles_and_sets_system() {
     assert_eq!(req.messages.len(), 3);
     assert_eq!(
         req.messages[0].role,
-        crate::shared::api::backend::ApiRole::User
+        crate::shared::api::contract::ApiRole::User
     );
     assert_eq!(req.messages[0].content, "Привет! Чем помочь?");
     assert_eq!(
         req.messages[1].role,
-        crate::shared::api::backend::ApiRole::Assistant
+        crate::shared::api::contract::ApiRole::Assistant
     );
     assert_eq!(req.messages[1].content, "Расскажи о Rust");
     assert_eq!(
         req.messages[2].role,
-        crate::shared::api::backend::ApiRole::User
+        crate::shared::api::contract::ApiRole::User
     );
 }
 
@@ -1009,7 +1009,7 @@ async fn cancel_stops_generation_and_saves_partial() {
 
 #[tokio::test]
 async fn agentic_loop_executes_tool_then_finalizes() {
-    use crate::shared::api::backend::ToolCallDelta;
+    use crate::shared::api::contract::ToolCallDelta;
     // Раунд 1: вызов note_save → раунд 2: финальный текст.
     let backend = Arc::new(MockBackend::sequence(vec![
         vec![
@@ -1075,7 +1075,7 @@ async fn agentic_loop_executes_tool_then_finalizes() {
 
 #[tokio::test]
 async fn disabled_tool_is_refused_by_loop() {
-    use crate::shared::api::backend::ToolCallDelta;
+    use crate::shared::api::contract::ToolCallDelta;
     // python_exec выключен глобально (spawn_orch: python_enabled = false) —
     // даже если модель его вызовет, loop откажет, не исполняя.
     let backend = Arc::new(MockBackend::sequence(vec![
@@ -1121,7 +1121,7 @@ async fn disabled_tool_is_refused_by_loop() {
 
 #[tokio::test]
 async fn tool_round_limit_is_respected() {
-    use crate::shared::api::backend::ToolCallDelta;
+    use crate::shared::api::contract::ToolCallDelta;
     // Движок всегда просит инструмент — должен сработать лимит раундов.
     let backend = Arc::new(MockBackend::scripted(vec![
         ChatChunk::ToolCall(ToolCallDelta {
@@ -1181,7 +1181,7 @@ async fn enable_all_tools(
 
 #[tokio::test]
 async fn followup_tool_makes_two_assistant_messages() {
-    use crate::shared::api::backend::ToolCallDelta;
+    use crate::shared::api::contract::ToolCallDelta;
     // Раунд 1: текст + вызов send_followup_message → раунд 2: второе сообщение.
     let backend = Arc::new(MockBackend::sequence(vec![
         vec![
@@ -1245,7 +1245,7 @@ async fn followup_tool_makes_two_assistant_messages() {
 
 #[tokio::test]
 async fn rewrite_tool_discards_partial_and_saves_it() {
-    use crate::shared::api::backend::ToolCallDelta;
+    use crate::shared::api::contract::ToolCallDelta;
     // Раунд 1: неверный текст + вызов rewrite_current_message → раунд 2: переписанный.
     let backend = Arc::new(MockBackend::sequence(vec![
         vec![

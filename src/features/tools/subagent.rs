@@ -135,7 +135,7 @@ impl Tool for CallSubagent {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::shared::api::backend::{ChatStream, EngineBackend, FinishReason};
+    use crate::shared::api::contract::{ChatStream, EngineBackend, FinishReason};
     use crate::shared::api::{Embedder, mock::MockEmbedder};
     use crate::shared::paths::Paths;
     use crate::shared::storage::Storage;

@@ -11,7 +11,7 @@ use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::process::{Child, Command};
 use tokio_util::sync::CancellationToken;
 
-use super::client::OpenAiClient;
+use crate::shared::api::OpenAiClient;
 
 /// Конфигурация запуска managed-сервера `llama-server` (llama.cpp).
 #[derive(Debug, Clone)]

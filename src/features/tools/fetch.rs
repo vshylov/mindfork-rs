@@ -212,7 +212,7 @@ async fn summarize_text(
 mod tests {
     use super::*;
     use crate::shared::api::Embedder;
-    use crate::shared::api::backend::{ChatStream, EngineBackend, FinishReason};
+    use crate::shared::api::contract::{ChatStream, EngineBackend, FinishReason};
     use crate::shared::api::mock::{MockBackend, MockEmbedder};
     use crate::shared::paths::Paths;
     use crate::shared::storage::Storage;
