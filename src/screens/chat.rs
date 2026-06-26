@@ -862,6 +862,24 @@ impl ChatScreen {
         }
     }
 
+    /// Забирает флаг «ленту только что прокрутили» и сообщает петле, нужна ли полная
+    /// перерисовка терминала (`terminal.clear()` — стирает «висячие» артефакты).
+    ///
+    /// Полную перерисовку (с кратким миганием от escape-очистки экрана) делаем
+    /// **только если** в ленте есть «съезжающие» на legacy-терминалах кластеры —
+    /// VS16-эмодзи (содержат селектор U+FE0F, напр. `🕸️`/`🗂️`): Command Prompt/
+    /// conhost рисует их физически шире модели ratatui, контент уезжает, и при
+    /// странично-скачковой прокрутке остаётся «висячий» символ. Чистый текст и
+    /// обычные широкие эмодзи артефактов не дают — там прокрутка не мигает.
+    /// См. [`crate::widgets::message_feed::MessageFeed::take_scrolled`].
+    pub fn take_feed_scrolled(&mut self) -> bool {
+        // Сбросить внутренний флаг нужно всегда, даже если перерисовка не потребуется.
+        if !self.feed_view.take_scrolled() {
+            return false;
+        }
+        self.feed.iter().any(feed_msg_has_vs16)
+    }
+
     /// Помечает ввод изменённым (запускает дебаунс перепроверки орфографии и
     /// сохранение черновика в активном чате).
     fn mark_input_changed(&mut self) {
@@ -1257,6 +1275,18 @@ const HELP_KEYS: &[(&str, &str)] = &[
     ("Ctrl+C", "выход"),
 ];
 
+/// Селектор эмодзи-представления (U+FE0F): делает VS16-эмодзи (`🕸️`, `🗂️`) шириной
+/// 2 в эмодзи-способных терминалах. Именно такие кластеры «съезжают» на conhost и
+/// требуют полной перерисовки при прокрутке (см. [`ChatScreen::take_feed_scrolled`]).
+const EMOJI_VS16: char = '\u{FE0F}';
+
+/// Есть ли в элементе ленты «съезжающий» VS16-кластер (в тексте, «мыслях» или
+/// аргументах/результате вызова инструмента).
+fn feed_msg_has_vs16(m: &FeedMessage) -> bool {
+    let has = |s: &str| s.contains(EMOJI_VS16);
+    has(&m.text) || has(&m.thoughts) || m.tools.iter().any(|t| has(&t.arguments) || has(&t.result))
+}
+
 /// Рисует оверлей помощи по центру экрана: «клавиши» + приглушённые описания.
 fn render_help(frame: &mut Frame, palette: &Palette) {
     let rows = (HELP_KEYS.len() as u16 + 2).min(frame.area().height);
@@ -1549,6 +1579,33 @@ mod tests {
         assert!(!s.gen_context_exact);
         // системное сообщение не попадает в ленту
         assert_eq!(s.feed.len(), 2);
+    }
+
+    #[test]
+    fn feed_scroll_requests_clear_only_with_vs16_emoji() {
+        // Прокрутка ленты с чистым текстом не требует полной перерисовки (не мигает),
+        // а с VS16-эмодзи (`🗂️`) — требует (стирает «висячий» артефакт на conhost).
+        let id = gen_id();
+
+        let mut clean = ChatScreen::new();
+        clean.activate_chat(id, "Чат".into(), &[Message::assistant("обычный текст")], "");
+        clean.handle_key(KeyEvent::new(KeyCode::PageUp, KeyModifiers::NONE));
+        assert!(
+            !clean.take_feed_scrolled(),
+            "на чистом тексте полная перерисовка не нужна"
+        );
+        // флаг забран однократно
+        assert!(!clean.take_feed_scrolled());
+
+        let mut emoji = ChatScreen::new();
+        emoji.activate_chat(id, "Чат".into(), &[Message::assistant("## 🗂️ Хэш")], "");
+        emoji.handle_key(KeyEvent::new(KeyCode::PageDown, KeyModifiers::NONE));
+        assert!(
+            emoji.take_feed_scrolled(),
+            "с VS16-эмодзи нужна полная перерисовка"
+        );
+        // без новой прокрутки повторно не запрашиваем
+        assert!(!emoji.take_feed_scrolled());
     }
 
     #[test]

@@ -231,7 +231,21 @@ fn run_loop(
         }
         if dirty {
             match &mut active {
-                ActiveScreen::Chat => terminal.draw(|frame| screen.render(frame))?,
+                ActiveScreen::Chat => {
+                    // Прокрутка ленты с «съезжающими» VS16-эмодзи (`🕸️`/`🗂️`) — полная
+                    // перерисовка терминала (как ресайз): стирает «висячие» артефакты,
+                    // которые некоторые терминалы (Command Prompt/conhost) оставляют,
+                    // рисуя такой кластер шире модели ratatui (контент уезжает, и
+                    // поячеечный diff не достаёт до уехавшего символа). `clear()` шлёт
+                    // escape-очистку экрана (кратко мигает), поэтому делаем её только
+                    // когда артефакт реально возможен — экран чата сам это решает
+                    // (`take_feed_scrolled`); на чистом тексте прокрутка не мигает.
+                    // См. spec §11.3.
+                    if screen.take_feed_scrolled() {
+                        terminal.clear()?;
+                    }
+                    terminal.draw(|frame| screen.render(frame))?
+                }
                 ActiveScreen::ChatList(list) => terminal.draw(|frame| list.render(frame))?,
                 ActiveScreen::Settings(settings) => {
                     terminal.draw(|frame| settings.render(frame))?
