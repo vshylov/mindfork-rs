@@ -105,9 +105,15 @@ fn build_messages(req: &ChatRequest) -> Vec<AntMessage> {
             ApiRole::Assistant => {
                 let mut blocks = text_blocks(&m.content);
                 for tc in &m.tool_calls {
-                    // Аргументы у нас — JSON-строка; Anthropic ждёт объект.
-                    let input = serde_json::from_str(&tc.arguments)
-                        .unwrap_or_else(|_| serde_json::json!({}));
+                    // Аргументы у нас — JSON-строка; Anthropic СТРОГО требует, чтобы
+                    // `input` был ОБЪЕКТОМ. Безаргументный вызов мог сохраниться в
+                    // истории как `null` (старые чаты), и `"null"`/массив/скаляр
+                    // распарсились бы в не-объект → Anthropic 400 («tool_use.input:
+                    // Input should be an object»). Любой не-объект приводим к `{}`.
+                    let input = serde_json::from_str::<Value>(&tc.arguments)
+                        .ok()
+                        .filter(Value::is_object)
+                        .unwrap_or_else(|| serde_json::json!({}));
                     blocks.push(AntBlock::ToolUse {
                         id: tc.id.clone(),
                         name: tc.name.clone(),
@@ -298,6 +304,31 @@ mod tests {
         assert_eq!(json["messages"][2]["content"][0]["type"], "tool_result");
         assert_eq!(json["messages"][2]["content"][0]["tool_use_id"], "t1");
         assert_eq!(json["messages"][2]["content"][1]["content"], "доп");
+    }
+
+    #[test]
+    fn tool_use_input_coerced_to_object_when_not_object() {
+        // Безаргументный вызов в истории мог сохраниться как `null` → строка "null".
+        // Anthropic строго требует объект — приводим к `{}` (иначе 400).
+        for raw in ["null", "", "[1,2]", "42", "\"x\""] {
+            let r = req(vec![
+                ApiMessage::user("введи"),
+                ApiMessage::assistant_tool_calls(
+                    "",
+                    vec![ApiToolCall {
+                        id: "t1".into(),
+                        name: "get_sampling".into(),
+                        arguments: raw.into(),
+                    }],
+                ),
+            ]);
+            let json = serde_json::to_value(build_request(&r, "claude-x", true)).unwrap();
+            let input = &json["messages"][1]["content"][0]["input"];
+            assert!(
+                input.is_object(),
+                "input должен быть объектом для arguments={raw:?}, получили {input}"
+            );
+        }
     }
 
     #[test]
