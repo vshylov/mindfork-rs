@@ -326,6 +326,12 @@ impl ChatScreen {
         self.title = title;
         self.current_gen = None;
         self.generating = false;
+        // Счётчик токенов относится к прежнему чату — гасим его, чтобы он не висел
+        // в строке статуса после переключения (статус-бар скрывает счётчик при
+        // `tokens == 0 && context == None`).
+        self.gen_tokens = 0;
+        self.gen_context = None;
+        self.gen_context_exact = false;
         // Склейка раундов agentic-loop в один блок «Ассистент:» с инлайн tool-блоками.
         self.feed = FeedMessage::from_messages(messages);
         self.feed_view.scroll_to_bottom();
@@ -1524,7 +1530,9 @@ mod tests {
     #[test]
     fn activate_chat_rebuilds_feed_and_resets_gen() {
         let mut s = ChatScreen::new();
-        s.begin_generation(gen_id()); // как будто шла генерация
+        let prev = gen_id();
+        s.begin_generation(prev); // как будто шла генерация
+        s.set_token_usage(prev, 42, Some(123), true); // счётчик токенов прежнего чата
         let id = gen_id();
         let messages = vec![
             Message::new(MessageRole::System, "sys"),
@@ -1535,6 +1543,10 @@ mod tests {
         assert_eq!(s.active_chat, Some(id));
         assert!(!s.generating);
         assert!(s.current_gen.is_none());
+        // счётчик токенов прежнего чата сброшен (иначе висел бы в статус-баре)
+        assert_eq!(s.gen_tokens, 0);
+        assert!(s.gen_context.is_none());
+        assert!(!s.gen_context_exact);
         // системное сообщение не попадает в ленту
         assert_eq!(s.feed.len(), 2);
     }
