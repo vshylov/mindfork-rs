@@ -1500,6 +1500,7 @@ dependencies = [
  "tracing-appender",
  "tracing-subscriber",
  "tui-scrollview",
+ "unicode-segmentation",
  "unicode-width",
  "uuid",
 ]

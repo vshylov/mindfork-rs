@@ -568,13 +568,13 @@ fn truncate_to_width(s: &str, max: usize) -> (String, usize) {
     let budget = max.saturating_sub(1);
     let mut out = String::new();
     let mut w = 0;
-    for c in chars {
-        let cw = wrap::char_width(c);
+    for i in 0..chars.len() {
+        let cw = wrap::width_at(&chars, i);
         if w + cw > budget {
             break;
         }
         w += cw;
-        out.push(c);
+        out.push(chars[i]);
     }
     out.push('…');
     (out, w + 1)
