@@ -13,11 +13,12 @@ use tokio::sync::mpsc::UnboundedSender;
 use tokio_util::sync::CancellationToken;
 
 use crate::shared::api::{
-    Embedder, EngineBackend, ManagedConfig, OpenAiClient, ServerHandle, UnavailableEmbedder,
-    wait_until_ready,
+    AnthropicClient, Embedder, EngineBackend, ManagedConfig, OpenAiClient, ServerHandle,
+    UnavailableEmbedder, WireDialect, wait_until_ready,
 };
 use crate::shared::config::{
-    EmbedSettings, EngineSettings, ImpersonationEngineSettings, ImpersonationMode, ServerMode,
+    CloudProvider, EmbedSettings, EngineSettings, ImpersonationEngineSettings, ImpersonationMode,
+    ServerMode,
 };
 use crate::shared::server::ServerStatus;
 
@@ -115,6 +116,12 @@ impl ServerSupervisor for LlamaSupervisor {
                 }
                 _ => not_configured(),
             },
+            ServerMode::OpenAi | ServerMode::Gemini | ServerMode::Claude => cloud_chat_setup(
+                settings.mode.cloud_provider().expect("облачный режим"),
+                settings.url.as_deref(),
+                settings.api_key_env.as_deref(),
+                settings.model_name.as_deref(),
+            ),
         }
     }
 
@@ -165,6 +172,14 @@ impl ServerSupervisor for LlamaSupervisor {
                 }
                 _ => not_configured(),
             },
+            ImpersonationMode::OpenAi | ImpersonationMode::Gemini | ImpersonationMode::Claude => {
+                cloud_chat_setup(
+                    settings.mode.cloud_provider().expect("облачный режим"),
+                    settings.url.as_deref(),
+                    settings.api_key_env.as_deref(),
+                    settings.model_name.as_deref(),
+                )
+            }
         }
     }
 
@@ -205,6 +220,17 @@ impl ServerSupervisor for LlamaSupervisor {
                 }
                 _ => unavailable_embed(),
             },
+            ServerMode::OpenAi | ServerMode::Gemini => cloud_embed_setup(
+                settings.mode.cloud_provider().expect("облачный режим"),
+                settings.url.as_deref(),
+                settings.api_key_env.as_deref(),
+                settings.model_name.as_deref(),
+            ),
+            // У Anthropic нет embeddings API — RAG берёт отдельный эмбеддер (ADR 0002).
+            ServerMode::Claude => {
+                tracing::warn!("у Anthropic нет embeddings API; для RAG задайте другой эмбеддер");
+                unavailable_embed()
+            }
         }
     }
 }
@@ -240,6 +266,94 @@ fn impersonation_managed_config(s: &ImpersonationEngineSettings, bin: &str) -> M
         host: s.host.clone(),
         port: s.port,
         extra_args: vec![],
+    }
+}
+
+/// Резолвит API-ключ из env-переменной по её имени. `Err` с понятным сообщением,
+/// если имя не задано или переменная отсутствует в окружении. Секрет на диск не
+/// пишется (ADR 0004) — хранится только имя переменной.
+fn resolve_api_key(api_key_env: Option<&str>) -> Result<String, String> {
+    let var = api_key_env
+        .filter(|v| !v.is_empty())
+        .ok_or_else(|| "не задано имя env-переменной с API-ключом".to_string())?;
+    std::env::var(var).map_err(|_| format!("переменная окружения {var} не задана"))
+}
+
+/// Строит облачный chat-backend (OpenAI/Gemini-compat): базовый URL провайдера (с
+/// возможным override через `url`), Bearer-ключ из env, имя модели, строгий
+/// OpenAI-диалект. Облако не «загружает модель» — статус сразу `Ready` (без probe).
+/// Если модель не указана или ключ недоступен — `Disconnected` с понятным текстом
+/// (чтобы не ловить `400` уже в ходе запроса). См. ADR 0004.
+fn cloud_chat_setup(
+    provider: CloudProvider,
+    url_override: Option<&str>,
+    api_key_env: Option<&str>,
+    model_name: Option<&str>,
+) -> ChatSetup {
+    let disconnected = |msg: String| ChatSetup {
+        backend: None,
+        handle: None,
+        status: ServerStatus::Disconnected(msg),
+    };
+    let Some(model) = model_name.filter(|m| !m.is_empty()) else {
+        return disconnected("укажите имя модели для облачного провайдера".into());
+    };
+    let key = match resolve_api_key(api_key_env) {
+        Ok(k) => k,
+        Err(e) => return disconnected(e),
+    };
+    let base = url_override
+        .filter(|u| !u.is_empty())
+        .unwrap_or_else(|| provider.base_url());
+    // Бэкенд по протоколу провайдера: OpenAI-совместимый клиент (OpenAI/Gemini, с
+    // соответствующим диалектом лимита токенов) либо Anthropic Messages API (Claude).
+    let backend: Arc<dyn EngineBackend> = match provider {
+        CloudProvider::OpenAi => Arc::new(
+            OpenAiClient::new(base)
+                .with_api_key(Some(key))
+                .with_model(Some(model.to_string()))
+                .with_dialect(WireDialect::OpenAi),
+        ),
+        CloudProvider::Gemini => Arc::new(
+            OpenAiClient::new(base)
+                .with_api_key(Some(key))
+                .with_model(Some(model.to_string()))
+                .with_dialect(WireDialect::Gemini),
+        ),
+        CloudProvider::Claude => Arc::new(AnthropicClient::new(base, key, model.to_string())),
+    };
+    ChatSetup {
+        backend: Some(backend),
+        handle: None,
+        status: ServerStatus::Ready,
+    }
+}
+
+/// Строит облачный embedding-backend (OpenAI/Gemini). При неполной конфигурации
+/// (нет модели или ключа) — `UnavailableEmbedder` (RAG отдаёт понятную ошибку, не
+/// падает), как и для прочих несконфигурированных эмбеддеров.
+fn cloud_embed_setup(
+    provider: CloudProvider,
+    url_override: Option<&str>,
+    api_key_env: Option<&str>,
+    model_name: Option<&str>,
+) -> EmbedSetup {
+    let (Some(model), Ok(key)) = (
+        model_name.filter(|m| !m.is_empty()),
+        resolve_api_key(api_key_env),
+    ) else {
+        tracing::warn!("облачные эмбеддинги не настроены (модель/ключ); RAG недоступен");
+        return unavailable_embed();
+    };
+    let base = url_override
+        .filter(|u| !u.is_empty())
+        .unwrap_or_else(|| provider.base_url());
+    let client = OpenAiClient::new(base)
+        .with_api_key(Some(key))
+        .with_model(Some(model.to_string()));
+    EmbedSetup {
+        embedder: Arc::new(client),
+        handle: None,
     }
 }
 
@@ -428,6 +542,113 @@ mod tests {
             ServerStatus::Disconnected(msg) => assert!(msg.contains("файл модели"), "{msg}"),
             other => panic!("ожидался Disconnected, получили {other:?}"),
         }
+    }
+
+    #[test]
+    fn resolve_api_key_reads_env_and_reports_missing() {
+        // PATH задана в любой ОС — гарантированный положительный случай без мутации env.
+        assert!(resolve_api_key(Some("PATH")).is_ok());
+        assert!(resolve_api_key(None).is_err());
+        assert!(
+            resolve_api_key(Some("MINDFORK_DEFINITELY_UNSET_VAR_42"))
+                .unwrap_err()
+                .contains("MINDFORK_DEFINITELY_UNSET_VAR_42")
+        );
+    }
+
+    #[tokio::test]
+    async fn cloud_chat_without_model_is_disconnected() {
+        let (tx, _rx) = unbounded_channel();
+        let s = EngineSettings {
+            mode: ServerMode::OpenAi,
+            api_key_env: Some("PATH".into()),
+            ..Default::default()
+        };
+        match LlamaSupervisor.apply_chat(&s, tx).status {
+            ServerStatus::Disconnected(m) => assert!(m.contains("модел"), "{m}"),
+            other => panic!("ожидался Disconnected, получили {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn cloud_chat_missing_key_env_is_disconnected() {
+        let (tx, _rx) = unbounded_channel();
+        let s = EngineSettings {
+            mode: ServerMode::OpenAi,
+            model_name: Some("gpt-4o".into()),
+            api_key_env: Some("MINDFORK_DEFINITELY_UNSET_VAR_42".into()),
+            ..Default::default()
+        };
+        match LlamaSupervisor.apply_chat(&s, tx).status {
+            ServerStatus::Disconnected(m) => {
+                assert!(m.contains("MINDFORK_DEFINITELY_UNSET_VAR_42"), "{m}")
+            }
+            other => panic!("ожидался Disconnected, получили {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn cloud_chat_with_model_and_key_is_ready() {
+        // Используем PATH как «ключ»: важно лишь, что env-переменная резолвится.
+        let (tx, _rx) = unbounded_channel();
+        let s = EngineSettings {
+            mode: ServerMode::Gemini,
+            model_name: Some("gemini-2.5-pro".into()),
+            api_key_env: Some("PATH".into()),
+            ..Default::default()
+        };
+        let setup = LlamaSupervisor.apply_chat(&s, tx);
+        assert!(setup.backend.is_some());
+        assert!(setup.handle.is_none(), "облако без дочернего процесса");
+        assert_eq!(setup.status, ServerStatus::Ready);
+    }
+
+    #[tokio::test]
+    async fn cloud_chat_claude_with_model_and_key_is_ready() {
+        // Claude использует отдельный протокол (AnthropicClient), но контракт настройки
+        // тот же: модель + ключ из env → Ready, без дочернего процесса.
+        let (tx, _rx) = unbounded_channel();
+        let s = EngineSettings {
+            mode: ServerMode::Claude,
+            model_name: Some("claude-opus-4-8".into()),
+            api_key_env: Some("PATH".into()),
+            ..Default::default()
+        };
+        let setup = LlamaSupervisor.apply_chat(&s, tx);
+        assert!(setup.backend.is_some());
+        assert!(setup.handle.is_none());
+        assert_eq!(setup.status, ServerStatus::Ready);
+    }
+
+    #[tokio::test]
+    async fn claude_embed_is_unavailable() {
+        // У Anthropic нет embeddings — RAG недоступен (как прочие unavailable).
+        let s = EmbedSettings {
+            mode: ServerMode::Claude,
+            model_name: Some("x".into()),
+            api_key_env: Some("PATH".into()),
+            ..Default::default()
+        };
+        let err = LlamaSupervisor
+            .apply_embed(&s)
+            .embedder
+            .embed(vec!["x".into()])
+            .await
+            .unwrap_err();
+        assert!(err.to_string().contains("не настроен"));
+    }
+
+    #[tokio::test]
+    async fn cloud_embed_unconfigured_is_unavailable() {
+        // Облачные эмбеддинги без модели → RAG недоступен (как прочие unavailable).
+        let s = EmbedSettings {
+            mode: ServerMode::OpenAi,
+            api_key_env: Some("PATH".into()),
+            ..Default::default()
+        };
+        let setup = LlamaSupervisor.apply_embed(&s);
+        let err = setup.embedder.embed(vec!["x".into()]).await.unwrap_err();
+        assert!(err.to_string().contains("не настроен"));
     }
 
     #[tokio::test]

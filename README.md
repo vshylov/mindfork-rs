@@ -1,10 +1,11 @@
 # mindfork-rs
 
-**Консольное (TUI) приложение ИИ-чата на Rust** для локальных языковых моделей.
-Заточено под **Gemma 3/4** и **Qwen 3.5/3.6**, работающие через локальный
-OpenAI-совместимый сервер (**llama.cpp `llama-server`**). Интерфейс — на
-[ratatui](https://ratatui.rs). Платформы: **Windows** и **Linux**. Архитектура —
-**Feature-Sliced Design (FSD)**.
+**Консольное (TUI) приложение ИИ-чата на Rust.** Заточено под **локальные** модели
+**Gemma 3/4** и **Qwen 3.5/3.6** (через **llama.cpp `llama-server`**), но через единый
+контракт движка поддерживает и **облачные API**: **OpenAI**, **Google Gemini** и
+**Anthropic (Claude)** — см. [ADR 0004](docs/decisions/0004-engine-contract-multi-provider.md).
+Интерфейс — на [ratatui](https://ratatui.rs). Платформы: **Windows** и **Linux**.
+Архитектура — **Feature-Sliced Design (FSD)**.
 
 > Идея проекта — не просто «ещё один клиент к LLM», а попытка сделать локальные
 > Gemma/Qwen **осознаннее и интереснее в общении**, дав модели инструменты для
@@ -133,10 +134,21 @@ OpenAI-совместимый сервер (**llama.cpp `llama-server`**). Ин�
 
 ## Архитектура
 
-Движок инференса — **локальный OpenAI-совместимый HTTP-сервер** (managed
-`llama-server` или любой external: vLLM / LM Studio / Ollama). Приложение —
-HTTP-клиент (`OpenAiClient`); встраивание модели (rlib с candle/CUDA) сознательно
-**не используется**.
+Движок инференса спрятан за трейтом **`EngineBackend`** (`shared/api/contract`), и
+приложение — это HTTP-клиент к нему; встраивание модели (rlib с candle/CUDA)
+сознательно **не используется**. Поддерживаются несколько провайдеров за одним
+контрактом ([ADR 0004](docs/decisions/0004-engine-contract-multi-provider.md)):
+- **локальный OpenAI-совместимый сервер** — managed `llama-server` (приложение само
+  запускает процесс) или любой external (vLLM / LM Studio / Ollama);
+- **облако OpenAI / Gemini** (через OpenAI-совместимый endpoint) — `OpenAiClient` с
+  Bearer-ключом и провайдеро-зависимой фильтрацией сэмплинга;
+- **облако Anthropic (Claude)** — отдельный `AnthropicClient` (Messages API
+  `/v1/messages`, `x-api-key`).
+
+Выбор провайдера — в настройках единым селектором режима (`managed` / `external` /
+`openai` / `gemini` / `claude`); API-ключ задаётся **именем env-переменной** (сам
+секрет на диск не пишется). Слои выше `EngineBackend` (оркестратор, agentic-loop,
+инструменты, UI) от провайдера не зависят.
 
 > **Почему не xinfer.** Изначально проект проектировался под лёгкую библиотеку
 > `xinfer`, но она оказалась сырой по Gemma 4 (бессвязный вывод, плохо собирается
@@ -167,7 +179,7 @@ HTTP-клиент (`OpenAiClient`); встраивание модели (rlib с
 | `src/widgets/` | `message_feed`, `input_box`, `chat_list`, `profile_list`, `status_bar` |
 | `src/features/` | `tools/*`, `spellcheck/*`, `profiles`, `chat_search_sort`, `rename_chat`, `migration` |
 | `src/entities/` | доменные типы: `chat`, `message`, `profile`, `note`, `rag`, `sampling` |
-| `src/shared/` | `api` (движок за трейтом `EngineBackend`), `storage`, `config`, `paths`, `theme`, `markdown`, `wrap`, `keys`, `logging`, … |
+| `src/shared/` | `api` (`contract` + реализации `openai`/`anthropic`/`managed` за трейтом `EngineBackend`), `storage`, `config`, `paths`, `theme`, `markdown`, `wrap`, `keys`, `logging`, … |
 
 UI-крейты выбраны под ratatui 0.30 ([ADR 0001](docs/decisions/0001-ui-crates-ratatui-030.md)):
 `tui-scrollview`, ввод — **собственный виджет** (даёт полный контроль над
@@ -273,7 +285,7 @@ Ctrl-шорткаты раскладко-независимы (работают 
 ## Разработка
 
 ```bash
-cargo test                                 # юнит-тесты (без сервера; ~390 зелёных)
+cargo test                                 # юнит-тесты (без сервера; ~555 зелёных)
 cargo clippy --all-targets -- -D warnings
 cargo fmt --check
 ```
@@ -302,7 +314,8 @@ cargo test ignored_smoke -- --ignored --nocapture --test-threads=1
 - **[spec.md](spec.md)** — полная инженерная спецификация (источник истины).
 - **[docs/install.md](docs/install.md)** — установка, запуск, движок (llama.cpp),
   OpenAI-совместимый протокол, словари, импорт.
-- **[docs/decisions/](docs/decisions/)** — ADR (UI-крейты, embedding-сервер, markdown-рендерер).
+- **[docs/decisions/](docs/decisions/)** — ADR (UI-крейты, embedding-сервер,
+  markdown-рендерер, контракт движка и мульти-провайдерный инференс).
 - **[docs/history/](docs/history/)** — архив: исходное техзадание ([request.md](docs/history/request.md))
   и выполненный план M0–M9 ([plan.md](docs/history/plan.md)).
 
@@ -313,5 +326,8 @@ cargo test ignored_smoke -- --ignored --nocapture --test-threads=1
 настроек, импорт из LameLLaMA, темы, спелл-чек на лету, загрузка файлов в RAG
 командами `/rag add|remove` (умный чанкинг с перекрытием + семантический markdown +
 склейка при извлечении), **имперсонация** пользователя (`Ctrl+U`, shared/managed/
-external). **Gemma 4** проверена на живом `llama-server`. Около **390 юнит-тестов**
-зелёные, 6 `#[ignore]`-смоуков.
+external). **Мульти-провайдерный инференс** ([ADR 0004](docs/decisions/0004-engine-contract-multi-provider.md)):
+локальный llama.cpp + облако **OpenAI / Gemini / Anthropic (Claude)** за единым
+контрактом. **Gemma 4** проверена на живом `llama-server`, **Claude 4.x** — на живом
+Anthropic API. Около **555 юнит-тестов** зелёные, `#[ignore]`-смоуки (llama.cpp +
+Anthropic по ключу).

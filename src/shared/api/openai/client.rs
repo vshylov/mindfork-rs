@@ -9,26 +9,67 @@ use eventsource_stream::Eventsource;
 use futures_util::StreamExt;
 use tokio_util::sync::CancellationToken;
 
-use super::backend::{
+use super::wire::{self, WireDialect};
+use crate::shared::api::contract::{
     ChatChunk, ChatRequest, ChatStream, Embedder, EngineBackend, FinishReason, TokenUsage,
     ToolCallDelta,
 };
-use super::thoughts::{Piece, ThoughtsParser};
-use super::wire;
+use crate::shared::api::thoughts::{Piece, ThoughtsParser};
 
-/// Клиент к OpenAI-совместимому серверу инференса.
+/// Клиент к OpenAI-совместимому серверу инференса (локальный `llama-server` либо
+/// облако OpenAI/Gemini-compat). Транспорт один — отличаются базовый URL, наличие
+/// Bearer-ключа, имя модели и диалект тела запроса (см. [`WireDialect`], ADR 0004).
 pub struct OpenAiClient {
     http: reqwest::Client,
     /// Базовый URL с суффиксом `/v1`, например `http://127.0.0.1:8000/v1`.
     base_url: String,
+    /// API-ключ для Bearer-аутентификации (облако). `None` — без заголовка.
+    api_key: Option<String>,
+    /// Имя модели; подставляется в тело запроса, если задано (облако требует его,
+    /// `llama-server` игнорирует). Доменный [`ChatRequest`] модель не несёт — это
+    /// свойство бэкенда.
+    model: Option<String>,
+    /// Диалект тела запроса (какие поля сэмплинга сериализуются).
+    dialect: WireDialect,
 }
 
 impl OpenAiClient {
+    /// Клиент к локальному/external OpenAI-совместимому серверу: без ключа, без имени
+    /// модели, lenient-диалект (расширения llama.cpp шлются как есть).
     pub fn new(base_url: impl Into<String>) -> Self {
         let base_url = base_url.into().trim_end_matches('/').to_string();
         Self {
             http: reqwest::Client::new(),
             base_url,
+            api_key: None,
+            model: None,
+            dialect: WireDialect::LlamaCpp,
+        }
+    }
+
+    /// Устанавливает API-ключ (Bearer). Билдер-стиль.
+    pub fn with_api_key(mut self, key: Option<String>) -> Self {
+        self.api_key = key.filter(|k| !k.is_empty());
+        self
+    }
+
+    /// Устанавливает имя модели (для облака/мульти-модельного сервера). Билдер-стиль.
+    pub fn with_model(mut self, model: Option<String>) -> Self {
+        self.model = model.filter(|m| !m.is_empty());
+        self
+    }
+
+    /// Устанавливает диалект тела запроса. Билдер-стиль.
+    pub fn with_dialect(mut self, dialect: WireDialect) -> Self {
+        self.dialect = dialect;
+        self
+    }
+
+    /// Добавляет Bearer-заголовок, если задан ключ.
+    fn auth(&self, rb: reqwest::RequestBuilder) -> reqwest::RequestBuilder {
+        match &self.api_key {
+            Some(key) => rb.bearer_auth(key),
+            None => rb,
         }
     }
 
@@ -58,12 +99,11 @@ impl OpenAiClient {
 #[async_trait::async_trait]
 impl EngineBackend for OpenAiClient {
     async fn chat_stream(&self, req: ChatRequest, cancel: CancellationToken) -> Result<ChatStream> {
-        let body = wire::build_chat_request(&req, true);
+        let body = wire::build_chat_request(&req, true, self.model.as_deref(), self.dialect);
         let url = format!("{}/chat/completions", self.base_url);
 
         let response = self
-            .http
-            .post(&url)
+            .auth(self.http.post(&url))
             .json(&body)
             .send()
             .await
@@ -172,10 +212,12 @@ impl EngineBackend for OpenAiClient {
 impl Embedder for OpenAiClient {
     async fn embed(&self, texts: Vec<String>) -> Result<Vec<Vec<f32>>> {
         let url = format!("{}/embeddings", self.base_url);
-        let body = wire::EmbeddingRequest { input: texts };
+        let body = wire::EmbeddingRequest {
+            model: self.model.clone(),
+            input: texts,
+        };
         let response = self
-            .http
-            .post(&url)
+            .auth(self.http.post(&url))
             .json(&body)
             .send()
             .await
@@ -241,7 +283,7 @@ fn piece_to_chunk(piece: Piece) -> ChatChunk {
 mod ignored_smoke {
     use super::*;
     use crate::entities::sampling::SamplingConfig;
-    use crate::shared::api::backend::{ApiMessage, ToolCallAccumulator, ToolSchema};
+    use crate::shared::api::contract::{ApiMessage, ToolCallAccumulator, ToolSchema};
     use futures_util::StreamExt;
 
     fn client_from_env() -> Option<OpenAiClient> {

@@ -8,15 +8,60 @@ use crate::entities::sampling::SamplingConfig;
 /// Текущая версия схемы конфигурации.
 pub const SCHEMA_VERSION: u32 = 1;
 
-/// Режим подключения к серверу инференса. См. docs/xinfer-contract.md §1.
+/// Режим подключения к движку инференса. Локальные (`Managed`/`External`) и
+/// облачные провайдеры (`OpenAi`/`Gemini`) — равноправные варианты одного селектора
+/// (плоская таксономия, [ADR 0004](decisions/0004-engine-contract-multi-provider.md)).
+/// Claude добавляется на Фазе 2 (отдельный протокол `/v1/messages`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum ServerMode {
     /// Приложение само запускает дочерний процесс `llama-server`.
     #[default]
     Managed,
-    /// Подключение к уже запущенному серверу.
+    /// Подключение к уже запущенному OpenAI-совместимому серверу (любой: llama.cpp,
+    /// vLLM, LM Studio…). Поля сэмплинга шлются «как есть» (lenient-диалект).
     External,
+    /// Облако OpenAI (`platform.openai.com`). Строгий OpenAI-диалект + Bearer-ключ.
+    #[serde(rename = "openai")]
+    OpenAi,
+    /// Облако Google Gemini через OpenAI-совместимый endpoint. Строгий диалект + ключ.
+    Gemini,
+    /// Облако Anthropic (`platform.claude.com`). Отдельный протокол Messages API
+    /// (`/v1/messages`), `x-api-key`. См. ADR 0004, Фаза 2.
+    Claude,
+}
+
+/// Облачный провайдер инференса. `OpenAi`/`Gemini` говорят на OpenAI-протоколе,
+/// `Claude` — на Anthropic Messages API. Несёт базовый URL по умолчанию.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CloudProvider {
+    OpenAi,
+    Gemini,
+    Claude,
+}
+
+impl CloudProvider {
+    /// Базовый URL провайдера по умолчанию (можно переопределить полем `url`).
+    pub fn base_url(self) -> &'static str {
+        match self {
+            CloudProvider::OpenAi => "https://api.openai.com/v1",
+            CloudProvider::Gemini => "https://generativelanguage.googleapis.com/v1beta/openai",
+            // Anthropic-клиент сам добавляет `/v1/messages`, поэтому без суффикса.
+            CloudProvider::Claude => "https://api.anthropic.com",
+        }
+    }
+}
+
+impl ServerMode {
+    /// Облачный провайдер для этого режима (`None` — локальный managed/external).
+    pub fn cloud_provider(self) -> Option<CloudProvider> {
+        match self {
+            ServerMode::OpenAi => Some(CloudProvider::OpenAi),
+            ServerMode::Gemini => Some(CloudProvider::Gemini),
+            ServerMode::Claude => Some(CloudProvider::Claude),
+            ServerMode::Managed | ServerMode::External => None,
+        }
+    }
 }
 
 /// Число GPU-слоёв по умолчанию (`-ngl`): всё на GPU.
@@ -53,6 +98,13 @@ pub struct EngineSettings {
     /// Интерфейс bind (`--host`), например `127.0.0.1` или `0.0.0.0`.
     pub host: String,
     pub port: u16,
+    /// Имя модели для облака/мульти-модельного сервера (`gpt-4o`, `gemini-2.5-pro`).
+    /// В managed-режиме не используется (модель неявна — загруженный GGUF). См. ADR 0004.
+    pub model_name: Option<String>,
+    /// Имя env-переменной с API-ключом для облачных режимов (например
+    /// `OPENAI_API_KEY`). Хранится **имя**, а не сам секрет — ключ читается из
+    /// окружения (ADR 0004). `None` — без аутентификации.
+    pub api_key_env: Option<String>,
 }
 
 impl Default for EngineSettings {
@@ -69,6 +121,8 @@ impl Default for EngineSettings {
             no_mmap: false,
             host: "127.0.0.1".to_string(),
             port: 8000,
+            model_name: None,
+            api_key_env: None,
         }
     }
 }
@@ -78,14 +132,35 @@ impl Default for EngineSettings {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum ImpersonationMode {
-    /// Использовать тот же сервер, что и для ответов ассистента (managed или
-    /// external), но с семплингом из подсекции «Имперсонация».
+    /// Использовать тот же движок, что и для ответов ассистента (любой режим), но
+    /// с семплингом из подсекции «Имперсонация».
     #[default]
     Shared,
     /// Поднять отдельный дочерний процесс `llama-server`.
     Managed,
-    /// Подключиться к отдельному удалённому серверу.
+    /// Подключиться к отдельному удалённому OpenAI-совместимому серверу.
     External,
+    /// Облако OpenAI (отдельно от ассистента).
+    #[serde(rename = "openai")]
+    OpenAi,
+    /// Облако Google Gemini через OpenAI-совместимый endpoint.
+    Gemini,
+    /// Облако Anthropic (Claude, Messages API).
+    Claude,
+}
+
+impl ImpersonationMode {
+    /// Облачный провайдер для этого режима (`None` — shared/managed/external).
+    pub fn cloud_provider(self) -> Option<CloudProvider> {
+        match self {
+            ImpersonationMode::OpenAi => Some(CloudProvider::OpenAi),
+            ImpersonationMode::Gemini => Some(CloudProvider::Gemini),
+            ImpersonationMode::Claude => Some(CloudProvider::Claude),
+            ImpersonationMode::Shared
+            | ImpersonationMode::Managed
+            | ImpersonationMode::External => None,
+        }
+    }
 }
 
 /// Порт по умолчанию для managed-сервера имперсонации (отдельный инстанс).
@@ -118,6 +193,10 @@ pub struct ImpersonationEngineSettings {
     /// Интерфейс bind (`--host`).
     pub host: String,
     pub port: u16,
+    /// Имя модели для облака/мульти-модельного сервера (см. [`EngineSettings::model_name`]).
+    pub model_name: Option<String>,
+    /// Имя env-переменной с API-ключом для облачных режимов (см. [`EngineSettings::api_key_env`]).
+    pub api_key_env: Option<String>,
 }
 
 impl Default for ImpersonationEngineSettings {
@@ -134,6 +213,8 @@ impl Default for ImpersonationEngineSettings {
             no_mmap: false,
             host: "127.0.0.1".to_string(),
             port: DEFAULT_IMPERSONATION_PORT,
+            model_name: None,
+            api_key_env: None,
         }
     }
 }
@@ -154,6 +235,10 @@ pub struct EmbedSettings {
     /// Слои на GPU (`-ngl`).
     pub gpu_layers: i32,
     pub port: u16,
+    /// Имя embedding-модели для облака (например `text-embedding-3-small`).
+    pub model_name: Option<String>,
+    /// Имя env-переменной с API-ключом для облачных эмбеддингов (см. ADR 0004).
+    pub api_key_env: Option<String>,
 }
 
 impl Default for EmbedSettings {
@@ -165,6 +250,8 @@ impl Default for EmbedSettings {
             model_path: None,
             gpu_layers: DEFAULT_GPU_LAYERS,
             port: 8001,
+            model_name: None,
+            api_key_env: None,
         }
     }
 }
@@ -453,5 +540,74 @@ mod tests {
     #[test]
     fn theme_serializes_lowercase() {
         assert_eq!(serde_json::to_string(&Theme::Dark).unwrap(), "\"dark\"");
+    }
+
+    #[test]
+    fn cloud_modes_serialize_and_map_to_provider() {
+        assert_eq!(
+            serde_json::to_string(&ServerMode::OpenAi).unwrap(),
+            "\"openai\""
+        );
+        assert_eq!(
+            serde_json::to_string(&ServerMode::Gemini).unwrap(),
+            "\"gemini\""
+        );
+        assert_eq!(
+            ServerMode::OpenAi.cloud_provider(),
+            Some(CloudProvider::OpenAi)
+        );
+        assert_eq!(
+            ServerMode::Gemini.cloud_provider(),
+            Some(CloudProvider::Gemini)
+        );
+        assert_eq!(ServerMode::Managed.cloud_provider(), None);
+        assert_eq!(ServerMode::External.cloud_provider(), None);
+        // Claude — облако, но не OpenAI-протокол.
+        assert_eq!(
+            serde_json::to_string(&ServerMode::Claude).unwrap(),
+            "\"claude\""
+        );
+        assert_eq!(
+            ServerMode::Claude.cloud_provider(),
+            Some(CloudProvider::Claude)
+        );
+        assert!(CloudProvider::Claude.base_url().contains("anthropic"));
+        // Имперсонация: те же облачные провайдеры, прочие режимы — None.
+        assert_eq!(
+            ImpersonationMode::OpenAi.cloud_provider(),
+            Some(CloudProvider::OpenAi)
+        );
+        assert_eq!(ImpersonationMode::Shared.cloud_provider(), None);
+        // Base URL провайдеров.
+        assert!(
+            CloudProvider::OpenAi
+                .base_url()
+                .starts_with("https://api.openai.com")
+        );
+        assert!(
+            CloudProvider::Gemini
+                .base_url()
+                .contains("generativelanguage")
+        );
+    }
+
+    #[test]
+    fn cloud_engine_settings_roundtrip() {
+        let c = AppConfig {
+            engine: EngineSettings {
+                mode: ServerMode::OpenAi,
+                model_name: Some("gpt-4o".into()),
+                api_key_env: Some("OPENAI_API_KEY".into()),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let json = serde_json::to_string_pretty(&c).unwrap();
+        let back: AppConfig = serde_json::from_str(&json).unwrap();
+        assert_eq!(c, back);
+        // Новые поля наполняются дефолтами (None) при отсутствии в старом файле.
+        let old: AppConfig = serde_json::from_str(r#"{"engine":{"mode":"managed"}}"#).unwrap();
+        assert_eq!(old.engine.model_name, None);
+        assert_eq!(old.engine.api_key_env, None);
     }
 }

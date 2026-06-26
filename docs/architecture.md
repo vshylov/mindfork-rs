@@ -6,12 +6,16 @@
 
 - **[spec.md](../spec.md)** — инженерная спецификация («что» и «почему»);
 - **[CLAUDE.md](../CLAUDE.md)** — ориентир и журнал реализованного (M0–M9 + пост-M9);
-- **[docs/decisions/](decisions/)** — ADR (зафиксированные технические решения);
+- **[docs/decisions/](decisions/)** — ADR (зафиксированные технические решения),
+  включая [0004](decisions/0004-engine-contract-multi-provider.md) — границы
+  `shared/api` и мульти-провайдерный инференс без крейт-сплита;
 - **[docs/install.md](install.md)** — установка/запуск, движок, env.
 
-> Терминология: **движок** = локальный OpenAI-совместимый HTTP-сервер
-> (llama.cpp `llama-server`); **приложение** = `mindfork-rs`, HTTP-клиент этого
-> сервера. Agentic-loop **клиентский** — его исполняет оркестратор приложения.
+> Терминология: **движок** = провайдер инференса за трейтом `EngineBackend` —
+> локальный OpenAI-совместимый сервер (llama.cpp `llama-server`) **или** облако
+> (OpenAI / Gemini / Anthropic, [ADR 0004](decisions/0004-engine-contract-multi-provider.md));
+> **приложение** = `mindfork-rs`, HTTP-клиент движка. Agentic-loop **клиентский** —
+> его исполняет оркестратор приложения.
 
 ---
 
@@ -19,8 +23,9 @@
 
 `mindfork-rs` — единый бинарный крейт на Rust (edition 2024), организованный по
 **Feature-Sliced Design (FSD)**. Приложение само по себе **не содержит ML-стека**:
-инференс делает внешний процесс `llama-server` (managed-подпроцесс или external),
-а приложение общается с ним по HTTP (`/v1/chat/completions` SSE, `/v1/embeddings`).
+инференс делает внешний движок — локальный процесс `llama-server` (managed-подпроцесс
+или external) либо облачный API (OpenAI / Gemini / Anthropic), — а приложение
+общается с ним по HTTP (SSE-стриминг, `/v1/embeddings` для RAG; см. §6 и ADR 0004).
 
 Три «оси», вокруг которых построена система:
 
@@ -191,12 +196,12 @@ src/
 │  └─ sampling.rs           SamplingConfig, ReasoningEffort, resolve (трёхуровневый приоритет)
 │
 └─ shared/                  инфраструктура и утилиты (FSD "shared")
-   ├─ api/                  слой движка инференса
-   │  ├─ backend.rs         EngineBackend, Embedder, ChatRequest/Chunk, ToolCallAccumulator
-   │  ├─ client.rs          OpenAiClient (reqwest + SSE), probe /health, embed
-   │  ├─ server.rs          ServerHandle (managed-процесс), ManagedConfig, wait_until_ready
+   ├─ api/                  слой движка инференса (контракт + реализации по семействам, ADR 0004)
+   │  ├─ contract.rs        EngineBackend, Embedder, ChatRequest/Chunk, ToolCallAccumulator (агностичный)
+   │  ├─ openai/            OpenAI-протокол: client.rs (reqwest+SSE, probe /health, embed) + wire.rs (WireDialect)
+   │  ├─ anthropic/         Anthropic Messages API: client.rs + wire.rs (Claude, /v1/messages)
+   │  ├─ managed.rs         ServerHandle (managed-процесс llama-server), ManagedConfig, wait_until_ready
    │  ├─ thoughts.rs        потоковый парсер <think> (fallback к reasoning_content)
-   │  ├─ wire.rs            (де)сериализация OpenAI-формата (приватный)
    │  └─ mock.rs            mock-движок для тестов (#[cfg(test)])
    ├─ storage/              хранилище
    │  ├─ json.rs            атомарная запись (write-rename + .bak) конфиг/профили/чаты
@@ -362,7 +367,11 @@ sequenceDiagram
 
 ## 6. Слой движка (`shared/api`)
 
-Транспорт спрятан за двумя трейтами — это даёт замену движка и mock в тестах.
+Транспорт спрятан за двумя трейтами — это даёт замену движка, мульти-провайдерность
+и mock в тестах. Модуль разложен по семействам ([ADR 0004](decisions/0004-engine-contract-multi-provider.md)):
+**`contract`** (провайдеро-агностичные трейты и типы), **`openai`** (OpenAI-протокол:
+локальный/external `llama-server`, облако OpenAI/Gemini), **`anthropic`** (Claude,
+Messages API), **`managed`** (запуск дочернего `llama-server`).
 
 ```mermaid
 classDiagram
@@ -375,8 +384,13 @@ classDiagram
         +embed(texts) Vec~Vec~f32~~
     }
     class OpenAiClient {
-        reqwest + SSE
+        openai/: reqwest + SSE
         +probe() /health
+        Bearer-ключ, WireDialect
+    }
+    class AnthropicClient {
+        anthropic/: /v1/messages
+        x-api-key, событийный SSE
     }
     class UnavailableEmbedder {
         RAG не настроен → ошибка
@@ -385,19 +399,31 @@ classDiagram
         #[cfg(test)]
     }
     EngineBackend <|.. OpenAiClient
+    EngineBackend <|.. AnthropicClient
     EngineBackend <|.. MockBackend
     Embedder <|.. OpenAiClient
     Embedder <|.. UnavailableEmbedder
 ```
 
+Провайдер выбирается в настройках единым селектором режима (`managed`/`external`/
+`openai`/`gemini`/`claude`); API-ключ хранится **именем env-переменной** (секрет не
+на диске). Поле `model` для облака обязательно — его подставляет сам бэкенд (доменный
+`ChatRequest` модель не несёт). **Диалект сэмплинга** ([`openai::WireDialect`]):
+`LlamaCpp` шлёт все расширения, `OpenAi`/`Gemini` чистят незнакомое (иначе `400`;
+OpenAI требует `max_completion_tokens` вместо `max_tokens`), `AnthropicClient` из
+сэмплинга шлёт только `max_tokens` (Claude 4.x отвергает temperature/top_p/top_k).
+У Anthropic нет embeddings — `Embedder` он не реализует (RAG берёт отдельный, ADR 0002).
+
 - **`ChatRequest`** = `system` + `messages` (user/assistant/tool, включая
-  `tool_calls` и tool-результаты) + `sampling` + `tools` (OpenAI-схемы). История
-  append-only → сервер переиспользует prefix cache.
+  `tool_calls` и tool-результаты) + `sampling` + `tools`. История append-only →
+  локальный сервер переиспользует prefix cache. Каждый бэкенд транслирует в свой
+  wire-формат (OpenAI Chat Completions либо Anthropic Messages: system → top-level,
+  tool-результаты → `tool_result`-блоки в user, склейка соседних ролей).
 - **`ChatChunk`** = `Text` | `Thoughts` | `ToolCall(ToolCallDelta)` |
   `Usage(TokenUsage)` | `Finished`. `ToolCallAccumulator` собирает разрезанные по
   чанкам вызовы по `index`; `Usage` (`prompt_tokens`/`completion_tokens`) приходит
   финальным чанком при `stream_options.include_usage=true` — счётчик токенов.
-- **`ServerHandle`** (`server.rs`) владеет дочерним `llama-server`: `Child` отдан
+- **`ServerHandle`** (`managed.rs`) владеет дочерним `llama-server`: `Child` отдан
   **монитор-задаче** (`spawn_monitor`), которая `select!`-ит между его выходом (взвод
   `exited`-токена) и сигналом `kill` (взводится в `Drop` хэндла → `start_kill`;
   `kill_on_drop` оставлен подстраховкой). `build_args` собирает CLI (`-m`, `-ngl`,
