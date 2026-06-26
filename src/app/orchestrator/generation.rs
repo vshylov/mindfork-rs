@@ -385,8 +385,13 @@ fn spawn_generation(spawn: GenSpawn) {
                 let mut records: Vec<ToolCallRecord> = Vec::new();
                 let mut tool_msgs: Vec<Message> = Vec::new();
                 for call in &out.calls {
-                    let args: serde_json::Value =
-                        serde_json::from_str(&call.arguments).unwrap_or(serde_json::Value::Null);
+                    // Безаргументный вызов даёт пустую строку аргументов — храним как
+                    // пустой ОБЪЕКТ, а не `Null`: иначе сериализация записи в историю
+                    // даёт `"null"`, а строгие провайдеры (Anthropic) ждут объект в
+                    // `input` (см. shared/api/anthropic/wire.rs). Объект и для invoke
+                    // безопаснее (десериализация в struct из `null` падает).
+                    let args: serde_json::Value = serde_json::from_str(&call.arguments)
+                        .unwrap_or_else(|_| serde_json::json!({}));
                     let is_control = control::is_control_tool(&call.name);
                     let result = if !allowed_has(&call.name) {
                         // Защита: инструмент выключен глобально/в профиле.
