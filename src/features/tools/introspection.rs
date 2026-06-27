@@ -10,90 +10,191 @@ use anyhow::Result;
 use chrono::Utc;
 
 use crate::entities::profile::ToolId;
-use crate::entities::sampling::SamplingConfig;
+use crate::entities::sampling::{SamplingConfig, supported_sampling_fields};
+use crate::shared::config::CloudProvider;
 
 use super::{ChatEffect, Tool, ToolContext, ToolOutcome};
 
-/// `get_sampling` — возвращает действующий семплинг (JSON).
-pub struct GetSampling;
+/// Имя инструмента чтения семплинга.
+pub const GET_SAMPLING_ID: &str = "get_sampling";
+/// Имя инструмента изменения семплинга.
+pub const SET_SAMPLING_ID: &str = "set_sampling";
+
+/// `get_sampling` — возвращает действующий семплинг (JSON), ограниченный полями,
+/// доступными в текущем режиме движка (`provider`). См. [`supported_sampling_fields`].
+pub struct GetSampling {
+    /// Облачный провайдер chat-движка (`None` — локальный/external: доступны все поля).
+    provider: Option<CloudProvider>,
+}
+
+impl GetSampling {
+    pub fn new(provider: Option<CloudProvider>) -> Self {
+        Self { provider }
+    }
+}
 
 #[async_trait::async_trait]
 impl Tool for GetSampling {
     fn id(&self) -> ToolId {
-        "get_sampling".into()
+        GET_SAMPLING_ID.into()
     }
     fn description(&self) -> String {
-        "Вернуть текущие параметры семплинга (temperature, top_k и т.д.).".into()
+        format!(
+            "Вернуть текущие параметры семплинга. {}",
+            scope_note(self.provider)
+        )
     }
     fn parameters(&self) -> serde_json::Value {
         empty_object()
     }
     async fn invoke(&self, ctx: &ToolContext, _args: serde_json::Value) -> Result<ToolOutcome> {
-        let json = serde_json::to_string(&ctx.effective_sampling)?;
-        Ok(ToolOutcome::text(json))
+        // Показываем только поля, доступные в текущем режиме (остальные движок
+        // всё равно не принял бы), чтобы модель не пыталась их менять.
+        let filtered = filter_to_supported(&ctx.effective_sampling, self.provider)?;
+        Ok(ToolOutcome::text(serde_json::to_string(&filtered)?))
     }
 }
 
 /// `set_sampling` — переопределяет семплинг чата (частично; со следующего хода).
-pub struct SetSampling;
+/// Доступные поля ограничены текущим режимом движка.
+pub struct SetSampling {
+    /// Облачный провайдер chat-движка (`None` — локальный/external: доступны все поля).
+    provider: Option<CloudProvider>,
+}
+
+impl SetSampling {
+    pub fn new(provider: Option<CloudProvider>) -> Self {
+        Self { provider }
+    }
+}
 
 #[async_trait::async_trait]
 impl Tool for SetSampling {
     fn id(&self) -> ToolId {
-        "set_sampling".into()
+        SET_SAMPLING_ID.into()
     }
     fn description(&self) -> String {
-        "Изменить параметры семплинга чата. Указанные поля переопределяют текущие; \
-         применяется со следующего ответа."
-            .into()
+        format!(
+            "Изменить параметры семплинга чата. Указанные поля переопределяют текущие; \
+             применяется со следующего ответа. {}",
+            scope_note(self.provider)
+        )
     }
     fn parameters(&self) -> serde_json::Value {
-        serde_json::json!({
-            "type": "object",
-            "properties": {
-                "temperature": {"type": "number"},
-                "dynatemp_range": {"type": "number"},
-                "dynatemp_exponent": {"type": "number"},
-                "top_k": {"type": "integer"},
-                "top_p": {"type": "number"},
-                "min_p": {"type": "number"},
-                "top_n_sigma": {"type": "number"},
-                "typical_p": {"type": "number"},
-                "adaptive_target": {"type": "number"},
-                "adaptive_decay": {"type": "number"},
-                "frequency_penalty": {"type": "number"},
-                "presence_penalty": {"type": "number"},
-                "repeat_penalty": {"type": "number"},
-                "repeat_last_n": {"type": "integer"},
-                "dry_multiplier": {"type": "number"},
-                "dry_base": {"type": "number"},
-                "dry_allowed_length": {"type": "integer"},
-                "dry_penalty_last_n": {"type": "integer"},
-                "dry_sequence_breakers": {"type": "array", "items": {"type": "string"}},
-                "xtc_probability": {"type": "number"},
-                "xtc_threshold": {"type": "number"},
-                "mirostat": {"type": "integer"},
-                "mirostat_tau": {"type": "number"},
-                "mirostat_eta": {"type": "number"},
-                "max_tokens": {"type": "integer"},
-                "seed": {"type": "integer"},
-                "samplers": {"type": "array", "items": {"type": "string"}},
-                "thinking": {"type": "boolean"},
-                "reasoning_effort": {"type": "string", "enum": ["none", "low", "medium", "high"]}
+        // Схема несёт только поля, принимаемые движком текущего режима.
+        let supported = supported_sampling_fields(self.provider);
+        let mut props = serde_json::Map::new();
+        for (name, schema) in field_schemas() {
+            if supported.contains(&name) {
+                props.insert(name.to_string(), schema);
             }
-        })
+        }
+        serde_json::json!({ "type": "object", "properties": props })
     }
     async fn invoke(&self, ctx: &ToolContext, args: serde_json::Value) -> Result<ToolOutcome> {
+        let supported = supported_sampling_fields(self.provider);
+        // Отбрасываем поля, недоступные в текущем режиме (движок их не примет),
+        // и сообщаем об этом модели, а не молча применяем неподдержанное.
+        let mut obj = match args {
+            serde_json::Value::Object(map) => map,
+            serde_json::Value::Null => serde_json::Map::new(),
+            other => {
+                anyhow::bail!("неверные аргументы set_sampling: ожидался объект, получено {other}")
+            }
+        };
+        let mut dropped: Vec<String> = obj
+            .keys()
+            .filter(|k| !supported.contains(&k.as_str()))
+            .cloned()
+            .collect();
+        dropped.sort();
+        obj.retain(|k, _| supported.contains(&k.as_str()));
+
         // Разбираем частичный конфиг (все поля Option, отсутствующие = None).
-        let patch: SamplingConfig = serde_json::from_value(args)
+        let patch: SamplingConfig = serde_json::from_value(serde_json::Value::Object(obj))
             .map_err(|e| anyhow::anyhow!("неверные аргументы set_sampling: {e}"))?;
         let merged = merge_sampling(&ctx.effective_sampling, &patch);
         let json = serde_json::to_string(&merged)?;
+        let mut result = format!("Семплинг обновлён: {json}");
+        if !dropped.is_empty() {
+            result.push_str(&format!(
+                ". Проигнорированы недоступные в текущем режиме поля: {}",
+                dropped.join(", ")
+            ));
+        }
         Ok(ToolOutcome::with_effects(
-            format!("Семплинг обновлён: {json}"),
+            result,
             vec![ChatEffect::SetSamplingOverride(Box::new(merged))],
         ))
     }
+}
+
+/// Подсказка модели о доступном наборе полей в текущем режиме.
+fn scope_note(provider: Option<CloudProvider>) -> String {
+    match provider {
+        None => "Доступны все параметры (temperature, top_k, min_p и т.д.).".into(),
+        Some(_) => format!(
+            "В текущем режиме доступны только: {}.",
+            supported_sampling_fields(provider).join(", ")
+        ),
+    }
+}
+
+/// Сериализует семплинг, оставляя только поля, доступные в текущем режиме.
+fn filter_to_supported(
+    sampling: &SamplingConfig,
+    provider: Option<CloudProvider>,
+) -> Result<serde_json::Value> {
+    let supported = supported_sampling_fields(provider);
+    let value = serde_json::to_value(sampling)?;
+    let serde_json::Value::Object(mut map) = value else {
+        return Ok(value);
+    };
+    map.retain(|k, _| supported.contains(&k.as_str()));
+    Ok(serde_json::Value::Object(map))
+}
+
+/// JSON-схемы значений всех настраиваемых полей семплинга (имя → схема). Порядок
+/// совпадает с [`crate::entities::sampling::SETTABLE_SAMPLING_FIELDS`].
+fn field_schemas() -> Vec<(&'static str, serde_json::Value)> {
+    use serde_json::json;
+    let number = || json!({"type": "number"});
+    let integer = || json!({"type": "integer"});
+    let string_list = || json!({"type": "array", "items": {"type": "string"}});
+    vec![
+        ("temperature", number()),
+        ("dynatemp_range", number()),
+        ("dynatemp_exponent", number()),
+        ("top_k", integer()),
+        ("top_p", number()),
+        ("min_p", number()),
+        ("top_n_sigma", number()),
+        ("typical_p", number()),
+        ("adaptive_target", number()),
+        ("adaptive_decay", number()),
+        ("frequency_penalty", number()),
+        ("presence_penalty", number()),
+        ("repeat_penalty", number()),
+        ("repeat_last_n", integer()),
+        ("dry_multiplier", number()),
+        ("dry_base", number()),
+        ("dry_allowed_length", integer()),
+        ("dry_penalty_last_n", integer()),
+        ("dry_sequence_breakers", string_list()),
+        ("xtc_probability", number()),
+        ("xtc_threshold", number()),
+        ("mirostat", integer()),
+        ("mirostat_tau", number()),
+        ("mirostat_eta", number()),
+        ("max_tokens", integer()),
+        ("seed", integer()),
+        ("samplers", string_list()),
+        ("thinking", json!({"type": "boolean"})),
+        (
+            "reasoning_effort",
+            json!({"type": "string", "enum": ["none", "low", "medium", "high"]}),
+        ),
+    ]
 }
 
 /// `get_system_message` — возвращает текущее системное сообщение чата.
@@ -248,7 +349,7 @@ mod tests {
             temperature: Some(0.7),
             ..Default::default()
         };
-        let out = GetSampling
+        let out = GetSampling::new(None)
             .invoke(&ctx, serde_json::json!({}))
             .await
             .unwrap();
@@ -265,7 +366,7 @@ mod tests {
             max_tokens: Some(512),
             ..Default::default()
         };
-        let out = SetSampling
+        let out = SetSampling::new(None)
             .invoke(
                 &ctx,
                 serde_json::json!({
@@ -297,6 +398,77 @@ mod tests {
             }
             other => panic!("ожидался SetSamplingOverride, got {other:?}"),
         }
+    }
+
+    #[tokio::test]
+    async fn get_sampling_cloud_hides_unsupported_fields() {
+        let (_d, _s, mut ctx) = ctx_with_storage(Uuid::new_v4());
+        ctx.effective_sampling = SamplingConfig {
+            temperature: Some(0.7),
+            top_k: Some(40),
+            max_tokens: Some(256),
+            ..Default::default()
+        };
+        // OpenAI: top_k недоступен → не должен попасть в вывод.
+        let out = GetSampling::new(Some(CloudProvider::OpenAi))
+            .invoke(&ctx, serde_json::json!({}))
+            .await
+            .unwrap();
+        let v: serde_json::Value = serde_json::from_str(&out.result).unwrap();
+        assert!(v.get("temperature").is_some());
+        assert!(v.get("max_tokens").is_some());
+        assert!(v.get("top_k").is_none());
+    }
+
+    #[tokio::test]
+    async fn set_sampling_cloud_drops_unsupported_fields() {
+        let (_d, _s, mut ctx) = ctx_with_storage(Uuid::new_v4());
+        ctx.effective_sampling = SamplingConfig::default();
+        // Claude: доступен только max_tokens; temperature/top_k должны быть отброшены.
+        let out = SetSampling::new(Some(CloudProvider::Claude))
+            .invoke(
+                &ctx,
+                serde_json::json!({"max_tokens": 1024, "temperature": 0.9, "top_k": 40}),
+            )
+            .await
+            .unwrap();
+        match &out.effects[..] {
+            [ChatEffect::SetSamplingOverride(s)] => {
+                assert_eq!(s.max_tokens, Some(1024));
+                assert_eq!(s.temperature, None);
+                assert_eq!(s.top_k, None);
+            }
+            other => panic!("ожидался SetSamplingOverride, got {other:?}"),
+        }
+        // Об отброшенных полях модель уведомляется.
+        assert!(out.result.contains("temperature"));
+        assert!(out.result.contains("top_k"));
+    }
+
+    #[test]
+    fn set_sampling_schema_reflects_mode() {
+        // Локально — полная схема (все настраиваемые поля).
+        let local = SetSampling::new(None).parameters();
+        let local_props = local["properties"].as_object().unwrap();
+        assert_eq!(
+            local_props.len(),
+            crate::entities::sampling::SETTABLE_SAMPLING_FIELDS.len()
+        );
+        assert!(local_props.contains_key("top_k"));
+        // Claude — только max_tokens.
+        let claude = SetSampling::new(Some(CloudProvider::Claude)).parameters();
+        let claude_props = claude["properties"].as_object().unwrap();
+        assert_eq!(claude_props.len(), 1);
+        assert!(claude_props.contains_key("max_tokens"));
+    }
+
+    #[test]
+    fn field_schemas_cover_all_settable_fields() {
+        let names: Vec<&str> = field_schemas().into_iter().map(|(n, _)| n).collect();
+        assert_eq!(
+            names.as_slice(),
+            crate::entities::sampling::SETTABLE_SAMPLING_FIELDS
+        );
     }
 
     #[tokio::test]

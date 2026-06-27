@@ -1646,6 +1646,41 @@ web-поиск и Python под выключателями, экран наст�
   `external_chat_setup`/`managed_chat_setup`), `main.rs::apply_env_overrides`
   (`config.engine.managed.*`/`external.url`). **556 тестов зелёные**, clippy/fmt чисты.
 
+### Пост-M9: get_sampling/set_sampling по доступным в режиме параметрам (сделано)
+- **Инструменты `get_sampling`/`set_sampling` теперь показывают/меняют только те поля
+  сэмплинга, которые движок текущего режима реально принимает** — раньше схема
+  `set_sampling` всегда несла полный набор (включая расширения llama.cpp), и в облаке
+  модель пыталась менять `top_k`/`min_p`/… которые провайдер отвергает (`400`). Теперь
+  модель видит ровно то, что применимо.
+- **Единый источник истины** — `entities/sampling.rs::supported_sampling_fields(provider:
+  Option<CloudProvider>) -> &[&str]` (зеркало wire-диалекта `restrict_to_strict` /
+  `anthropic::wire`): `None` (локальный/external llama.cpp) — весь набор
+  `SETTABLE_SAMPLING_FIELDS`; OpenAI/Gemini — `temperature`/`top_p`/`frequency_penalty`/
+  `presence_penalty`/`seed`/`max_tokens`; Claude — только `max_tokens`. Им же теперь
+  питается UI настроек: `screens/settings.rs::cloud_supported_param` делегирует туда
+  (через новый `SamplingParam::field_name()`), убирая дублирование «что поддержано».
+- **Инструменты mode-aware через `provider`** (`features/tools/introspection.rs`):
+  `GetSampling::new(provider)`/`SetSampling::new(provider)` хранят провайдера chat-движка.
+  `SetSampling::parameters` строит JSON-схему только из доступных полей (`field_schemas`
+  — имя→схема, покрывает весь `SETTABLE_SAMPLING_FIELDS`); `invoke` **отбрасывает**
+  недоступные ключи из аргументов и сообщает о них модели (а не молча применяет);
+  `GetSampling::invoke` фильтрует вывод по тому же набору; описания инструментов несут
+  список доступных полей (`scope_note`). Провайдер берётся из `config.engine.mode.
+  cloud_provider()` в `build_registry` (поле `ToolConfig.sampling_provider`); реестр
+  **пересобирается и при смене режима** движка (`orchestrator/settings.rs`), не только
+  `config.tools`.
+- **Если в режиме нет ни одного доступного параметра — инструменты недоступны модели**:
+  `effective_tool_ids` получил 5-й аргумент `sampling_provider` и отфильтровывает
+  `get_sampling`/`set_sampling`, когда `supported_sampling_fields` пуст (страховочный
+  путь — у всех текущих провайдеров есть хотя бы `max_tokens`). Константы
+  `GET_SAMPLING_ID`/`SET_SAMPLING_ID` (re-export из `introspection`).
+- **Тесты**: `supported_sampling_fields` (зеркало диалекта/подмножества); инструменты
+  (облако прячет `top_k` в выводе get_sampling; Claude отбрасывает `temperature`/`top_k`
+  в set_sampling и уведомляет; схема set_sampling по режиму; `field_schemas` покрывает
+  весь набор); `effective_tool_ids` держит инструменты при наличии параметров; UI-фильтр
+  настроек (прежний `cloud_hides_unsupported_sampling_params` — зелёный на делегации).
+  **566 тестов зелёные**, clippy/fmt чисты.
+
 ### Отложено за пределы M3
 - **Сворачивание/выделение per-message** и tool-блоки в ленте — сейчас «мысли»
   сворачиваются глобально (`Ctrl+T`); выделение сообщений и tool-блоки — на M5.

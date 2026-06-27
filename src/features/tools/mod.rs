@@ -28,9 +28,12 @@ use chrono::{DateTime, Utc};
 use uuid::Uuid;
 
 use crate::entities::profile::ToolId;
-use crate::entities::sampling::SamplingConfig;
+use crate::entities::sampling::{SamplingConfig, supported_sampling_fields};
 use crate::shared::api::{Embedder, EngineBackend, ToolSchema};
+use crate::shared::config::CloudProvider;
 use crate::shared::storage::Storage;
+
+pub use introspection::{GET_SAMPLING_ID, SET_SAMPLING_ID};
 
 /// Неизменяемый снимок состояния хода (без разделяемых локов). См. spec §9.2.
 #[derive(Clone)]
@@ -126,8 +129,8 @@ pub const PYTHON_EXEC_ID: &str = "python_exec";
 /// опциональны (по умолчанию выкл), см. [`all_tool_ids`].
 pub fn default_tool_ids() -> Vec<ToolId> {
     [
-        "get_sampling",
-        "set_sampling",
+        GET_SAMPLING_ID,
+        SET_SAMPLING_ID,
         "get_system_message",
         "set_system_message",
         "get_last_user_message_time",
@@ -165,19 +168,24 @@ pub fn all_tool_ids() -> Vec<ToolId> {
 /// Эффективный набор инструментов: `enabled` минус внешние, отключённые
 /// глобальными выключателями (spec §9.4). Порядок `enabled` сохраняется.
 /// `web_enabled` гейтит и `web_search`, и `fetch_url` (оба — сетевой доступ);
-/// `fs_enabled` — файловые `fs_read`/`fs_write`/`fs_list`.
+/// `fs_enabled` — файловые `fs_read`/`fs_write`/`fs_list`. Инструменты семплинга
+/// (`get_sampling`/`set_sampling`) отключаются, если в текущем режиме движка нет
+/// ни одного доступного параметра (`sampling_provider`, см. [`supported_sampling_fields`]).
 pub fn effective_tool_ids(
     enabled: &[ToolId],
     web_enabled: bool,
     python_enabled: bool,
     fs_enabled: bool,
+    sampling_provider: Option<CloudProvider>,
 ) -> Vec<ToolId> {
+    let sampling_available = !supported_sampling_fields(sampling_provider).is_empty();
     enabled
         .iter()
         .filter(|id| match id.as_str() {
             WEB_SEARCH_ID | FETCH_URL_ID => web_enabled,
             PYTHON_EXEC_ID => python_enabled,
             fs::FS_READ_ID | fs::FS_WRITE_ID | fs::FS_LIST_ID => fs_enabled,
+            GET_SAMPLING_ID | SET_SAMPLING_ID => sampling_available,
             _ => true,
         })
         .cloned()
@@ -199,6 +207,10 @@ pub struct ToolConfig {
     pub web_fetch_content: bool,
     /// Каталог-«песочница» для файловых инструментов (`None` → без ограничения).
     pub fs_root: Option<String>,
+    /// Облачный провайдер chat-движка (`None` — локальный/external). Определяет,
+    /// какие параметры семплинга видят/меняют `get_sampling`/`set_sampling` (схема и
+    /// фильтрация результата) — зеркало wire-диалекта. См. ADR 0004.
+    pub sampling_provider: Option<CloudProvider>,
 }
 
 impl Default for ToolConfig {
@@ -211,6 +223,7 @@ impl Default for ToolConfig {
             ),
             web_fetch_content: true,
             fs_root: None,
+            sampling_provider: None,
         }
     }
 }
@@ -220,8 +233,12 @@ impl Default for ToolConfig {
 /// [`effective_tool_ids`]).
 pub fn standard_registry(cfg: &ToolConfig) -> ToolRegistry {
     let mut reg = ToolRegistry::new();
-    reg.register(Arc::new(introspection::GetSampling));
-    reg.register(Arc::new(introspection::SetSampling));
+    reg.register(Arc::new(introspection::GetSampling::new(
+        cfg.sampling_provider,
+    )));
+    reg.register(Arc::new(introspection::SetSampling::new(
+        cfg.sampling_provider,
+    )));
     reg.register(Arc::new(introspection::GetSystemMessage));
     reg.register(Arc::new(introspection::SetSystemMessage));
     reg.register(Arc::new(introspection::GetLastUserMessageTime));
@@ -415,13 +432,13 @@ mod tests {
     fn effective_tool_ids_gates_external_tools() {
         let enabled = default_tool_ids();
         // web on, python off, fs off → есть web_search/fetch_url, нет python/fs.
-        let eff = effective_tool_ids(&enabled, true, false, false);
+        let eff = effective_tool_ids(&enabled, true, false, false, None);
         assert!(eff.iter().any(|t| t == WEB_SEARCH_ID));
         assert!(eff.iter().any(|t| t == FETCH_URL_ID));
         assert!(!eff.iter().any(|t| t == PYTHON_EXEC_ID));
         assert!(!eff.iter().any(|t| t == fs::FS_READ_ID));
         // всё off → ни одного внешнего/файлового, но внутренние остаются.
-        let eff = effective_tool_ids(&enabled, false, false, false);
+        let eff = effective_tool_ids(&enabled, false, false, false, None);
         assert!(!eff.iter().any(|t| t == WEB_SEARCH_ID || t == FETCH_URL_ID));
         assert!(
             !eff.iter()
@@ -432,10 +449,30 @@ mod tests {
         assert!(eff.iter().any(|t| t == "calculate"));
         assert!(eff.iter().any(|t| t == "current_time"));
         // fs on → файловые инструменты появляются.
-        let eff = effective_tool_ids(&enabled, false, false, true);
+        let eff = effective_tool_ids(&enabled, false, false, true, None);
         assert!(eff.iter().any(|t| t == fs::FS_READ_ID));
         assert!(eff.iter().any(|t| t == fs::FS_WRITE_ID));
         assert!(eff.iter().any(|t| t == fs::FS_LIST_ID));
+    }
+
+    #[test]
+    fn effective_tool_ids_keeps_sampling_tools_when_params_available() {
+        let enabled = default_tool_ids();
+        // Любой текущий режим имеет хотя бы один доступный параметр (max_tokens) —
+        // инструменты семплинга остаются доступны (локально и в облаке).
+        for provider in [
+            None,
+            Some(CloudProvider::OpenAi),
+            Some(CloudProvider::Gemini),
+            Some(CloudProvider::Claude),
+        ] {
+            let eff = effective_tool_ids(&enabled, false, false, false, provider);
+            assert!(
+                eff.iter().any(|t| t == GET_SAMPLING_ID),
+                "get_sampling должен быть доступен для {provider:?}"
+            );
+            assert!(eff.iter().any(|t| t == SET_SAMPLING_ID));
+        }
     }
 
     #[test]

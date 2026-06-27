@@ -8,6 +8,8 @@
 
 use serde::{Deserialize, Serialize};
 
+use crate::shared::config::CloudProvider;
+
 /// Уровень reasoning-усилия (OpenAI-совместимый).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -128,6 +130,69 @@ pub fn resolve(
         .unwrap_or_else(|| global.clone())
 }
 
+/// Имена JSON-полей сэмплинга, которыми может управлять модель через инструмент
+/// `set_sampling` (порядок = порядок в JSON-схеме инструмента). Внутреннее
+/// `reasoning_budget` сюда **не** входит — оно не правится моделью.
+pub const SETTABLE_SAMPLING_FIELDS: &[&str] = &[
+    "temperature",
+    "dynatemp_range",
+    "dynatemp_exponent",
+    "top_k",
+    "top_p",
+    "min_p",
+    "top_n_sigma",
+    "typical_p",
+    "adaptive_target",
+    "adaptive_decay",
+    "frequency_penalty",
+    "presence_penalty",
+    "repeat_penalty",
+    "repeat_last_n",
+    "dry_multiplier",
+    "dry_base",
+    "dry_allowed_length",
+    "dry_penalty_last_n",
+    "dry_sequence_breakers",
+    "xtc_probability",
+    "xtc_threshold",
+    "mirostat",
+    "mirostat_tau",
+    "mirostat_eta",
+    "max_tokens",
+    "seed",
+    "samplers",
+    "thinking",
+    "reasoning_effort",
+];
+
+/// Имена полей сэмплинга, которые движок данного режима реально принимает —
+/// зеркало wire-диалекта (`shared/api/openai/wire::restrict_to_strict` и
+/// `anthropic/wire`). `None` провайдер = локальный/external `llama.cpp`: принимает
+/// все поля (расширения он игнорирует, а не отвергает). Облако строгое:
+///
+/// - **OpenAI/Gemini** — `temperature`/`top_p`/`frequency_penalty`/
+///   `presence_penalty`/`seed`/`max_tokens` (прочее → `400`);
+/// - **Claude** — только `max_tokens` (модели 4.x «зафиксировали» сэмплинг и
+///   отвергают `temperature`/`top_p`/`top_k`).
+///
+/// Это единый источник истины для UI настроек (`cloud_supported_param`) и
+/// инструментов `get_sampling`/`set_sampling` (показывать/менять только доступное).
+/// См. ADR 0004.
+pub fn supported_sampling_fields(provider: Option<CloudProvider>) -> &'static [&'static str] {
+    match provider {
+        None => SETTABLE_SAMPLING_FIELDS,
+        Some(CloudProvider::OpenAi | CloudProvider::Gemini) => &[
+            "temperature",
+            "top_p",
+            "frequency_penalty",
+            "presence_penalty",
+            "seed",
+            "max_tokens",
+        ],
+        Some(CloudProvider::Claude) => &["max_tokens"],
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -158,6 +223,31 @@ mod tests {
         let json = serde_json::to_string(&s).unwrap();
         let back: SamplingConfig = serde_json::from_str(&json).unwrap();
         assert_eq!(s, back);
+    }
+
+    #[test]
+    fn supported_fields_mirror_wire_dialect() {
+        // Локально (None) — весь настраиваемый набор.
+        assert_eq!(supported_sampling_fields(None), SETTABLE_SAMPLING_FIELDS);
+        // OpenAI/Gemini — строгое подмножество; расширения/reasoning отсутствуют.
+        let openai = supported_sampling_fields(Some(CloudProvider::OpenAi));
+        assert!(openai.contains(&"temperature"));
+        assert!(openai.contains(&"max_tokens"));
+        assert!(!openai.contains(&"top_k"));
+        assert!(!openai.contains(&"thinking"));
+        assert_eq!(
+            supported_sampling_fields(Some(CloudProvider::Gemini)),
+            openai
+        );
+        // Claude — только max_tokens.
+        assert_eq!(
+            supported_sampling_fields(Some(CloudProvider::Claude)),
+            &["max_tokens"]
+        );
+        // Подмножества облака — действительно подмножества полного набора.
+        for f in openai {
+            assert!(SETTABLE_SAMPLING_FIELDS.contains(f));
+        }
     }
 
     #[test]
