@@ -189,6 +189,7 @@ impl Orchestrator {
             self.config.tools.web_enabled,
             self.config.tools.python_enabled,
             self.config.tools.fs_enabled,
+            self.config.engine.mode.cloud_provider(),
         );
         let schemas = self.registry.schemas_for(&allowed);
 

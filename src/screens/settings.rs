@@ -213,6 +213,18 @@ impl SamplingParam {
         }
     }
 
+    /// Имя JSON-поля `SamplingConfig` (для сверки с набором, доступным провайдеру).
+    fn field_name(self) -> &'static str {
+        use SamplingParam::*;
+        match self {
+            Temp => "temperature",
+            Thinking => "thinking",
+            Reasoning => "reasoning_effort",
+            // Остальные параметры подписаны именем своего JSON-поля.
+            _ => self.label(),
+        }
+    }
+
     /// Подсказка-описание (показывается под полем при фокусе). `None` — без подсказки.
     fn description(self) -> Option<&'static str> {
         use SamplingParam::*;
@@ -1479,13 +1491,9 @@ impl SettingsScreen {
 /// deprecated, поэтому их не шлём (см. `anthropic::wire`). Остальные — расширения
 /// llama.cpp и reasoning-поля — облако не принимает. См. ADR 0004.
 fn cloud_supported_param(provider: CloudProvider, p: SamplingParam) -> bool {
-    use SamplingParam::*;
-    match provider {
-        CloudProvider::OpenAi | CloudProvider::Gemini => {
-            matches!(p, Temp | TopP | FreqPen | PresPen | Seed | MaxTokens)
-        }
-        CloudProvider::Claude => matches!(p, MaxTokens),
-    }
+    // Единый источник истины с инструментами get_sampling/set_sampling — набор
+    // полей, принимаемых движком провайдера (зеркало wire-диалекта).
+    crate::entities::sampling::supported_sampling_fields(Some(provider)).contains(&p.field_name())
 }
 
 /// Человекопонятное описание поля для подсказки внизу секции (`None` — без подсказки).

@@ -584,8 +584,8 @@ pub trait Tool: Send + Sync {
 | `calculate` | `{ expression }` | Вычислить математическое выражение собственным рекурсивно-нисходящим вычислителем (арифметика, `^`, скобки, константы `pi`/`e`/`tau`, функции `sqrt`/`sin`/`log`/`min`/`max`/…). Без I/O, не гейтится. |
 | `current_time` | `{ format? }` | Текущие дата/время (локальная зона + UTC через `chrono`); `format` — строка `strftime`. Без I/O, не гейтится. |
 | `fs_read` / `fs_write` / `fs_list` | `{ path, … }` | Чтение/запись/листинг локальных файлов. Под глобальным выключателем `fs_enabled` (по умолчанию выключены, как Python); опциональная песочница `fs_root` ограничивает доступ каталогом. |
-| `get_sampling` | `{}` | Возвращает `ctx.effective_sampling` (JSON). |
-| `set_sampling` | частичный `SamplingConfig` | Возвращает `ChatEffect::SetSamplingOverride`; применяется со следующего хода. |
+| `get_sampling` | `{}` | Возвращает `ctx.effective_sampling` (JSON), ограниченный полями, доступными в текущем режиме движка (`supported_sampling_fields`). |
+| `set_sampling` | частичный `SamplingConfig` | Возвращает `ChatEffect::SetSamplingOverride`; применяется со следующего хода. Схема и применяемые поля ограничены доступными в текущем режиме (облако отвергло бы прочие); недоступные ключи отбрасываются с уведомлением модели. Если в режиме нет ни одного доступного параметра, `get_sampling`/`set_sampling` модели не предлагаются. |
 | `get_system_message` | `{}` | Возвращает `ctx.system_message`. |
 | `set_system_message` | `{ system_message }` | Возвращает `ChatEffect::SetSystemMessage`; применяется со следующего построения запроса. Единственный инструмент, инвалидирующий prefix-кэш чата (оправдано). |
 | `get_last_user_message_time` | `{}` | Возвращает таймстемп последнего user-сообщения (ISO 8601) + прошедшее время. |

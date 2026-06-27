@@ -21,6 +21,11 @@ impl Orchestrator {
         // Смена настроек chat-сервера (модель/режим/порт/…) — перезапуск (spec §11.6).
         if self.config.engine != old.engine {
             self.apply_chat_settings();
+            // Смена режима меняет набор доступных параметров семплинга
+            // (get_sampling/set_sampling) — пересобираем реестр под новый провайдер.
+            if self.config.engine.mode.cloud_provider() != old.engine.mode.cloud_provider() {
+                self.registry = std::sync::Arc::new(build_registry(&self.config));
+            }
         }
         // Смена настроек сервера имперсонации — пере-подключение/перезапуск.
         if self.config.impersonation_engine != old.impersonation_engine {

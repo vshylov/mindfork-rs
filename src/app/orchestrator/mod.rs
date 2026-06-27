@@ -174,6 +174,9 @@ fn build_registry(config: &AppConfig) -> crate::features::tools::ToolRegistry {
         subagent_timeout: Duration::from_secs(config.tools.subagent_timeout_secs),
         web_fetch_content: config.tools.web_fetch_content,
         fs_root: config.tools.fs_root.clone(),
+        // Режим chat-движка определяет доступные параметры семплинга в
+        // get_sampling/set_sampling (схема + фильтрация). См. ADR 0004.
+        sampling_provider: config.engine.mode.cloud_provider(),
     })
 }
 
