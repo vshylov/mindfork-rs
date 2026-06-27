@@ -32,7 +32,22 @@ fn main() -> anyhow::Result<()> {
         return run_import(&paths, &dir);
     }
 
-    let _instance = instance::acquire().context("single-instance check")?;
+    // Единственный экземпляр на машину/сеанс: второй запуск завершается с понятным
+    // сообщением (не сырым дампом ошибки) ещё до старта рантайма/TUI. См. spec §1.4.
+    let _instance = match instance::acquire() {
+        Ok(guard) => guard,
+        Err(instance::InstanceError::AlreadyRunning) => {
+            eprintln!(
+                "mindfork-rs уже запущен на этом компьютере. \
+                 Закройте предыдущий экземпляр и попробуйте снова."
+            );
+            tracing::warn!("отказ запуска: другой экземпляр приложения уже работает");
+            return Ok(());
+        }
+        Err(err @ instance::InstanceError::Init(_)) => {
+            return Err(anyhow::Error::new(err).context("single-instance check"));
+        }
+    };
     tracing::info!(root = %paths.root().display(), "mindfork-rs starting");
 
     let runtime = tokio::runtime::Builder::new_multi_thread()
