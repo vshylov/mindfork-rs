@@ -968,6 +968,14 @@ impl SettingsScreen {
                 let text = editor.input.text();
                 self.apply_text(editor.field, &text)
             }
+            // Удалить весь текст поля / вернуть удалённое (spec §11.5). Матчим по
+            // «физической» клавише — срабатывает при любой раскладке (как в чат-вводе).
+            (KeyCode::Char(c), m)
+                if m.contains(KeyModifiers::CONTROL) && keys::physical_char(c) == 'k' =>
+            {
+                editor.input.clear_or_restore();
+                None
+            }
             _ => {
                 editor.input.on_key(key);
                 None
@@ -2219,6 +2227,31 @@ mod tests {
             }
             other => panic!("ожидался SaveProfile, получено {other:?}"),
         }
+    }
+
+    #[test]
+    fn ctrl_k_clears_and_restores_multiline_editor() {
+        let mut s = screen();
+        for _ in 0..3 {
+            s.handle_key(key(KeyCode::Tab)); // → Profiles
+        }
+        s.handle_key(key(KeyCode::Enter)); // фокус на поля; PSelect
+        s.handle_key(key(KeyCode::Down)); // PName
+        s.handle_key(key(KeyCode::Down)); // ProfileSub
+        s.handle_key(key(KeyCode::Down)); // PSystem
+        s.handle_key(key(KeyCode::Enter)); // открыть редактор (многострочный)
+        s.handle_key(key(KeyCode::Char('A')));
+        s.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::SHIFT));
+        s.handle_key(key(KeyCode::Char('B')));
+        let ctrl_k = KeyEvent::new(KeyCode::Char('k'), KeyModifiers::CONTROL);
+        s.handle_key(ctrl_k); // очистка
+        assert_eq!(s.editor.as_ref().unwrap().input.text(), "");
+        s.handle_key(ctrl_k); // возврат удалённого
+        assert_eq!(
+            s.editor.as_ref().unwrap().input.text(),
+            "Ты — ассистент.A\nB"
+        );
+        assert!(s.editor.is_some(), "Ctrl+K не закрывает редактор");
     }
 
     #[test]
