@@ -537,8 +537,10 @@ fn push_body(lines: &mut Vec<Line<'static>>, item: &FeedMessage, palette: &Palet
             }
         }
         _ => {
-            // markdown → Text; переносим строки в общий буфер
-            let rendered = markdown::render(&item.text, width, palette);
+            // markdown → Text; переносим строки в общий буфер. Для сообщения
+            // пользователя одиночные переводы строки (Shift+Enter) сохраняем как
+            // реальные переносы (GFM-стиль), иначе текст слился бы в один абзац.
+            let rendered = markdown::render_with(&item.text, width, palette, true);
             lines.extend(rendered.lines);
         }
     }
@@ -804,6 +806,32 @@ mod tests {
             .flat_map(|l| l.spans.iter().map(|s| s.content.as_ref()))
             .collect();
         assert!(joined.contains("секрет"));
+    }
+
+    #[test]
+    fn user_message_preserves_single_newlines() {
+        // Сообщение пользователя с Shift+Enter (одиночный \n) должно сохранять
+        // переносы строк, а не сливаться в один абзац (GFM-стиль).
+        let feed = MessageFeed::new();
+        let lines = feed.build_lines(
+            &[msg(FeedRole::User, "Привет!\nКак дела?", "")],
+            &Palette::default(),
+            80,
+        );
+        let rows = row_texts(&lines);
+        let i_first = rows.iter().position(|r| r.contains("Привет!")).unwrap();
+        let i_second = rows.iter().position(|r| r.contains("Как дела?")).unwrap();
+        assert_ne!(
+            i_first, i_second,
+            "две строки должны оказаться на разных визуальных рядах"
+        );
+        // И ни одна строка не должна содержать обе фразы (не склеены в одну).
+        assert!(
+            !rows
+                .iter()
+                .any(|r| r.contains("Привет!") && r.contains("Как дела?")),
+            "строки не должны сливаться в один ряд"
+        );
     }
 
     #[test]
