@@ -39,6 +39,27 @@ use crate::shared::wrap;
 /// дроби, индексы, символы), а сами разделители снимает парсер. «Голые» команды
 /// вне разделителей (`\alpha` без `$`) НЕ трогаются. Возвращается `'static`-`Text`.
 pub fn render(input: &str, width: usize, palette: &Palette) -> Text<'static> {
+    render_with(input, width, palette, false)
+}
+
+/// Как [`render`], но с управляемой трактовкой «мягких» переносов (одиночных
+/// переводов строки в исходнике).
+///
+/// `soft_break_as_newline = false` — стандартное поведение CommonMark: одиночный
+/// перевод строки схлопывается в пробел (мягкий перенос). Подходит для вывода
+/// ассистента (markdown как есть).
+///
+/// `soft_break_as_newline = true` — одиночный перевод строки сохраняется как
+/// реальный перенос (GFM-стиль, как комментарии на GitHub). Нужно для **сообщений
+/// пользователя**: текст, набранный с `Shift+Enter`, должен показываться построчно,
+/// а не сливаться в один абзац. В ячейках таблиц перенос по-прежнему остаётся
+/// пробелом (раскладку строк делает сама таблица).
+pub fn render_with(
+    input: &str,
+    width: usize,
+    palette: &Palette,
+    soft_break_as_newline: bool,
+) -> Text<'static> {
     let normalized = normalize_delimiters(input);
     let mut parse_opts = Options::empty();
     parse_opts.insert(Options::ENABLE_STRIKETHROUGH);
@@ -47,6 +68,7 @@ pub fn render(input: &str, width: usize, palette: &Palette) -> Text<'static> {
     parse_opts.insert(Options::ENABLE_TABLES);
     let parser = Parser::new_ext(&normalized, parse_opts);
     let mut writer = Writer::new(*palette, width);
+    writer.soft_break_as_newline = soft_break_as_newline;
     writer.run(parser);
     Text::from(writer.lines)
 }
@@ -258,6 +280,9 @@ struct Writer {
     table: Option<TableBuilder>,
     /// Нужен ли пустой разделитель перед следующим блоком.
     needs_newline: bool,
+    /// Трактовать «мягкий» перенос (одиночный `\n`) как реальный перенос строки
+    /// (GFM-стиль). Для сообщений пользователя — `true`. См. [`render_with`].
+    soft_break_as_newline: bool,
 }
 
 impl Writer {
@@ -274,6 +299,7 @@ impl Writer {
             code_highlighter: None,
             table: None,
             needs_newline: false,
+            soft_break_as_newline: false,
         }
     }
 
@@ -289,6 +315,12 @@ impl Writer {
             Event::End(tag) => self.end_tag(tag),
             Event::Text(text) => self.text(text),
             Event::Code(code) => self.code(code),
+            // Одиночный перевод строки: в ленте пользователя сохраняем как реальный
+            // перенос (как HardBreak), иначе — стандартный мягкий перенос (пробел).
+            // В ячейке таблицы всегда пробел (раскладку строк делает таблица).
+            Event::SoftBreak if self.soft_break_as_newline && !self.in_table_cell() => {
+                self.push_line(Line::default())
+            }
             Event::SoftBreak => self.push_span(Span::raw(" ")),
             // В ячейке перенос строки не делаем — продолжаем пробелом.
             Event::HardBreak if self.in_table_cell() => self.push_span(Span::raw(" ")),
