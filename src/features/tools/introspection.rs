@@ -114,7 +114,9 @@ impl Tool for SetSampling {
         let patch: SamplingConfig = serde_json::from_value(serde_json::Value::Object(obj))
             .map_err(|e| anyhow::anyhow!("неверные аргументы set_sampling: {e}"))?;
         let merged = merge_sampling(&ctx.effective_sampling, &patch);
-        let json = serde_json::to_string(&merged)?;
+        // В результат кладём только поля, доступные в текущем режиме — иначе в ленту
+        // (и модели) уезжает полный конфиг с десятками `null`, сбивая с толку.
+        let json = serde_json::to_string(&filter_to_supported(&merged, self.provider)?)?;
         let mut result = format!("Семплинг обновлён: {json}");
         if !dropped.is_empty() {
             result.push_str(&format!(
@@ -443,6 +445,11 @@ mod tests {
         // Об отброшенных полях модель уведомляется.
         assert!(out.result.contains("temperature"));
         assert!(out.result.contains("top_k"));
+        // Но в JSON результата нет полного дампа конфига с десятками `null`-полей —
+        // только доступные в режиме (для Claude это max_tokens).
+        assert!(!out.result.contains("dynatemp_range"));
+        assert!(!out.result.contains("reasoning_budget"));
+        assert!(out.result.contains("max_tokens"));
     }
 
     #[test]

@@ -1664,8 +1664,11 @@ web-поиск и Python под выключателями, экран наст�
   `SetSampling::parameters` строит JSON-схему только из доступных полей (`field_schemas`
   — имя→схема, покрывает весь `SETTABLE_SAMPLING_FIELDS`); `invoke` **отбрасывает**
   недоступные ключи из аргументов и сообщает о них модели (а не молча применяет);
-  `GetSampling::invoke` фильтрует вывод по тому же набору; описания инструментов несут
-  список доступных полей (`scope_note`). Провайдер берётся из `config.engine.mode.
+  `GetSampling::invoke` фильтрует вывод по тому же набору; **текст результата
+  `set_sampling` тоже фильтруется** (`filter_to_supported`) — иначе в ленту и модели
+  уезжал полный конфиг с десятками `null`-полей (сбивает с толку и модель, и
+  пользователя); описания инструментов несут список доступных полей (`scope_note`).
+  Провайдер берётся из `config.engine.mode.
   cloud_provider()` в `build_registry` (поле `ToolConfig.sampling_provider`); реестр
   **пересобирается и при смене режима** движка (`orchestrator/settings.rs`), не только
   `config.tools`.
@@ -1678,8 +1681,9 @@ web-поиск и Python под выключателями, экран наст�
   (облако прячет `top_k` в выводе get_sampling; Claude отбрасывает `temperature`/`top_k`
   в set_sampling и уведомляет; схема set_sampling по режиму; `field_schemas` покрывает
   весь набор); `effective_tool_ids` держит инструменты при наличии параметров; UI-фильтр
-  настроек (прежний `cloud_hides_unsupported_sampling_params` — зелёный на делегации).
-  **566 тестов зелёные**, clippy/fmt чисты.
+  настроек (прежний `cloud_hides_unsupported_sampling_params` — зелёный на делегации);
+  результат `set_sampling` в облаке не несёт полного дампа конфига.
+  **567 тестов зелёные**, clippy/fmt чисты.
 
 ### Отложено за пределы M3
 - **Сворачивание/выделение per-message** и tool-блоки в ленте — сейчас «мысли»
