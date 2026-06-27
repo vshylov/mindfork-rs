@@ -8,6 +8,7 @@
 use std::sync::Arc;
 
 use tokio::sync::mpsc::UnboundedSender;
+use tokio_util::sync::CancellationToken;
 
 use crate::app::events::ServerStatus;
 use crate::app::supervisor::ServerSupervisor;
@@ -40,6 +41,13 @@ pub(super) struct EngineManager {
     status_tx: UnboundedSender<ServerStatus>,
     /// Канал статуса сервера имперсонации (фоновый probe).
     imp_status_tx: UnboundedSender<ServerStatus>,
+    /// Токен инвалидации фонового probe текущего chat-сервера: смена режима/модели
+    /// помечает прежний probe устаревшим, чтобы его поздний результат (напр. таймаут
+    /// промежуточного external при перещёлкивании managed→external→openai) не
+    /// перезаписал статус нового сервера.
+    chat_probe_cancel: Option<CancellationToken>,
+    /// Токен инвалидации фонового probe сервера имперсонации (аналогично).
+    imp_probe_cancel: Option<CancellationToken>,
     /// Источник эмбеддингов для RAG (выделенный сервер — ADR 0002).
     pub(super) embedder: Arc<dyn Embedder>,
 }
@@ -63,6 +71,8 @@ impl EngineManager {
             imp_status: ServerStatus::NotConfigured,
             status_tx,
             imp_status_tx,
+            chat_probe_cancel: None,
+            imp_probe_cancel: None,
             embedder: Arc::new(crate::shared::api::UnavailableEmbedder),
         }
     }
@@ -72,7 +82,15 @@ impl EngineManager {
     /// эмитит его в UI (`AppEvent::ServerStatus`).
     pub(super) fn apply_chat(&mut self, settings: &EngineSettings) -> ServerStatus {
         self.chat_handle = None; // drop старого managed-процесса (kill_on_drop)
-        let setup = self.supervisor.apply_chat(settings, self.status_tx.clone());
+        // Инвалидируем probe прежнего сервера и заводим новый токен.
+        if let Some(tok) = self.chat_probe_cancel.take() {
+            tok.cancel();
+        }
+        let cancel = CancellationToken::new();
+        self.chat_probe_cancel = Some(cancel.clone());
+        let setup = self
+            .supervisor
+            .apply_chat(settings, cancel, self.status_tx.clone());
         self.backend = setup.backend;
         self.chat_handle = setup.handle;
         self.server_status = setup.status.clone();
@@ -91,15 +109,23 @@ impl EngineManager {
     /// нужен — переиспользуется chat-сервер ассистента.
     pub(super) fn apply_impersonation(&mut self, settings: &ImpersonationEngineSettings) {
         self.imp_handle = None; // drop прежнего managed-процесса (kill_on_drop)
+        // Инвалидируем probe прежнего сервера имперсонации (как у chat-сервера).
+        if let Some(tok) = self.imp_probe_cancel.take() {
+            tok.cancel();
+        }
         match settings.mode {
             ImpersonationMode::Shared => {
                 self.imp_backend = None;
                 self.imp_status = ServerStatus::NotConfigured;
             }
             _ => {
-                let setup = self
-                    .supervisor
-                    .apply_impersonation(settings, self.imp_status_tx.clone());
+                let cancel = CancellationToken::new();
+                self.imp_probe_cancel = Some(cancel.clone());
+                let setup = self.supervisor.apply_impersonation(
+                    settings,
+                    cancel,
+                    self.imp_status_tx.clone(),
+                );
                 self.imp_backend = setup.backend;
                 self.imp_handle = setup.handle;
                 self.imp_status = setup.status;
