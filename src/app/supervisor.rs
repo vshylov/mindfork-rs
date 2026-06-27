@@ -46,10 +46,13 @@ pub struct EmbedSetup {
 pub trait ServerSupervisor: Send + Sync {
     /// (Пере)подключается к chat-серверу. Возвращает движок и статус немедленно
     /// (`Connecting`/`NotConfigured`/`Disconnected`), а готовность managed/external
-    /// досылает в `status_tx` фоновым probe.
+    /// досылает в `status_tx` фоновым probe. `cancel` помечает probe устаревшим: при
+    /// быстрой смене режима (managed→external→openai) поздний результат прежнего probe
+    /// не должен перезаписать статус нового сервера.
     fn apply_chat(
         &self,
         settings: &EngineSettings,
+        cancel: CancellationToken,
         status_tx: UnboundedSender<ServerStatus>,
     ) -> ChatSetup;
 
@@ -59,9 +62,11 @@ pub trait ServerSupervisor: Send + Sync {
     /// (Пере)подключается/запускает сервер имперсонации для режимов `managed`/
     /// `external`. Для `shared` НЕ вызывается оркестратором (он переиспользует
     /// chat-сервер ассистента); если всё же вызван — `NotConfigured`. См. spec §11.8.
+    /// `cancel` — как у [`Self::apply_chat`] (инвалидация устаревшего probe).
     fn apply_impersonation(
         &self,
         settings: &ImpersonationEngineSettings,
+        cancel: CancellationToken,
         status_tx: UnboundedSender<ServerStatus>,
     ) -> ChatSetup;
 }
@@ -74,13 +79,16 @@ impl ServerSupervisor for LlamaSupervisor {
     fn apply_chat(
         &self,
         settings: &EngineSettings,
+        cancel: CancellationToken,
         status_tx: UnboundedSender<ServerStatus>,
     ) -> ChatSetup {
         match settings.mode {
             ServerMode::External => {
-                external_chat_setup(settings.external.url.as_deref(), status_tx)
+                external_chat_setup(settings.external.url.as_deref(), cancel, status_tx)
             }
-            ServerMode::Managed => managed_chat_setup(managed_config(&settings.managed), status_tx),
+            ServerMode::Managed => {
+                managed_chat_setup(managed_config(&settings.managed), cancel, status_tx)
+            }
             ServerMode::OpenAi | ServerMode::Gemini | ServerMode::Claude => {
                 let cloud = settings.cloud().expect("облачный режим");
                 cloud_chat_setup(
@@ -96,16 +104,17 @@ impl ServerSupervisor for LlamaSupervisor {
     fn apply_impersonation(
         &self,
         settings: &ImpersonationEngineSettings,
+        cancel: CancellationToken,
         status_tx: UnboundedSender<ServerStatus>,
     ) -> ChatSetup {
         match settings.mode {
             // `shared` обслуживается оркестратором (chat-сервер ассистента).
             ImpersonationMode::Shared => not_configured(),
             ImpersonationMode::External => {
-                external_chat_setup(settings.external.url.as_deref(), status_tx)
+                external_chat_setup(settings.external.url.as_deref(), cancel, status_tx)
             }
             ImpersonationMode::Managed => {
-                managed_chat_setup(managed_config(&settings.managed), status_tx)
+                managed_chat_setup(managed_config(&settings.managed), cancel, status_tx)
             }
             ImpersonationMode::OpenAi | ImpersonationMode::Gemini | ImpersonationMode::Claude => {
                 let cloud = settings.cloud().expect("облачный режим");
@@ -176,11 +185,21 @@ impl ServerSupervisor for LlamaSupervisor {
 }
 
 /// External chat-setup: подключение по URL (любой OpenAI-сервер), фоновый probe.
-fn external_chat_setup(url: Option<&str>, status_tx: UnboundedSender<ServerStatus>) -> ChatSetup {
+fn external_chat_setup(
+    url: Option<&str>,
+    cancel: CancellationToken,
+    status_tx: UnboundedSender<ServerStatus>,
+) -> ChatSetup {
     match url {
         Some(url) if !url.is_empty() => {
             let client = Arc::new(OpenAiClient::new(url));
-            spawn_probe(client.clone(), EXTERNAL_READY_TIMEOUT, None, status_tx);
+            spawn_probe(
+                client.clone(),
+                EXTERNAL_READY_TIMEOUT,
+                None,
+                cancel,
+                status_tx,
+            );
             ChatSetup {
                 backend: Some(client),
                 handle: None,
@@ -193,7 +212,11 @@ fn external_chat_setup(url: Option<&str>, status_tx: UnboundedSender<ServerStatu
 
 /// Managed chat-setup: запуск дочернего `llama-server`, фоновый probe (с учётом
 /// раннего выхода процесса). Пустой бинарник → `NotConfigured`.
-fn managed_chat_setup(cfg: ManagedConfig, status_tx: UnboundedSender<ServerStatus>) -> ChatSetup {
+fn managed_chat_setup(
+    cfg: ManagedConfig,
+    cancel: CancellationToken,
+    status_tx: UnboundedSender<ServerStatus>,
+) -> ChatSetup {
     if cfg.binary.as_os_str().is_empty() {
         return not_configured();
     }
@@ -204,6 +227,7 @@ fn managed_chat_setup(cfg: ManagedConfig, status_tx: UnboundedSender<ServerStatu
                 client.clone(),
                 MANAGED_READY_TIMEOUT,
                 Some(handle.exited()),
+                cancel,
                 status_tx,
             );
             ChatSetup {
@@ -341,18 +365,30 @@ fn unavailable_embed() -> EmbedSetup {
     }
 }
 
-/// Фоновый probe готовности: по завершении шлёт `Ready`/`Disconnected`.
+/// Фоновый probe готовности: по завершении шлёт `Ready`/`Disconnected`. Если probe
+/// помечен устаревшим (`cancel`) — прерывается, не отправляя статус: иначе поздний
+/// результат прежнего сервера (напр. таймаут промежуточного external при
+/// перещёлкивании режимов) перезаписал бы статус нового сервера.
 fn spawn_probe(
     client: Arc<OpenAiClient>,
     timeout: Duration,
     exited: Option<CancellationToken>,
+    cancel: CancellationToken,
     status_tx: UnboundedSender<ServerStatus>,
 ) {
     tokio::spawn(async move {
-        let status = match wait_until_ready(&client, timeout, exited).await {
-            Ok(()) => ServerStatus::Ready,
-            Err(err) => ServerStatus::Disconnected(err.to_string()),
+        let status = tokio::select! {
+            biased;
+            _ = cancel.cancelled() => return,
+            res = wait_until_ready(&client, timeout, exited) => match res {
+                Ok(()) => ServerStatus::Ready,
+                Err(err) => ServerStatus::Disconnected(err.to_string()),
+            },
         };
+        // Пока probe завершался, его могли успеть инвалидировать сменой режима.
+        if cancel.is_cancelled() {
+            return;
+        }
         let _ = status_tx.send(status);
     });
 }
@@ -390,6 +426,7 @@ impl ServerSupervisor for MockSupervisor {
     fn apply_chat(
         &self,
         _settings: &EngineSettings,
+        _cancel: CancellationToken,
         _status_tx: UnboundedSender<ServerStatus>,
     ) -> ChatSetup {
         self.chat_calls
@@ -413,6 +450,7 @@ impl ServerSupervisor for MockSupervisor {
     fn apply_impersonation(
         &self,
         _settings: &ImpersonationEngineSettings,
+        _cancel: CancellationToken,
         _status_tx: UnboundedSender<ServerStatus>,
     ) -> ChatSetup {
         // Mock отдаёт тот же backend готовым сразу (как apply_chat) — для тестов
@@ -457,16 +495,35 @@ mod tests {
     #[tokio::test]
     async fn external_with_url_yields_backend_connecting() {
         let (tx, _rx) = unbounded_channel();
-        let setup = LlamaSupervisor.apply_chat(&external(Some("http://127.0.0.1:9/v1")), tx);
+        let setup = LlamaSupervisor.apply_chat(
+            &external(Some("http://127.0.0.1:9/v1")),
+            CancellationToken::new(),
+            tx,
+        );
         assert!(setup.backend.is_some());
         assert!(setup.handle.is_none());
         assert_eq!(setup.status, ServerStatus::Connecting);
     }
 
     #[tokio::test]
+    async fn superseded_probe_sends_no_status() {
+        // probe, помеченный устаревшим (смена режима managed→external→openai), не
+        // должен слать статус: иначе поздний таймаут прежнего external перезаписал бы
+        // `Ready` нового облачного сервера, и облако «не работало» до перезапуска.
+        let (tx, mut rx) = unbounded_channel();
+        let cancel = CancellationToken::new();
+        cancel.cancel(); // probe устарел ещё до старта фоновой задачи
+        let setup = external_chat_setup(Some("http://127.0.0.1:9/v1"), cancel, tx);
+        assert_eq!(setup.status, ServerStatus::Connecting); // немедленный статус как обычно
+        // Даём фоновой задаче шанс выполниться; устаревший probe ничего не присылает.
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        assert!(rx.try_recv().is_err(), "устаревший probe прислал статус");
+    }
+
+    #[tokio::test]
     async fn external_without_url_is_not_configured() {
         let (tx, _rx) = unbounded_channel();
-        let setup = LlamaSupervisor.apply_chat(&external(None), tx);
+        let setup = LlamaSupervisor.apply_chat(&external(None), CancellationToken::new(), tx);
         assert!(setup.backend.is_none());
         assert_eq!(setup.status, ServerStatus::NotConfigured);
     }
@@ -478,7 +535,7 @@ mod tests {
             mode: ServerMode::Managed,
             ..Default::default()
         };
-        let setup = LlamaSupervisor.apply_chat(&s, tx);
+        let setup = LlamaSupervisor.apply_chat(&s, CancellationToken::new(), tx);
         assert_eq!(setup.status, ServerStatus::NotConfigured);
     }
 
@@ -493,7 +550,7 @@ mod tests {
             },
             ..Default::default()
         };
-        let setup = LlamaSupervisor.apply_chat(&s, tx);
+        let setup = LlamaSupervisor.apply_chat(&s, CancellationToken::new(), tx);
         assert!(setup.backend.is_none());
         assert!(matches!(setup.status, ServerStatus::Disconnected(_)));
     }
@@ -513,7 +570,7 @@ mod tests {
             },
             ..Default::default()
         };
-        let setup = LlamaSupervisor.apply_chat(&s, tx);
+        let setup = LlamaSupervisor.apply_chat(&s, CancellationToken::new(), tx);
         assert!(setup.backend.is_none());
         match setup.status {
             ServerStatus::Disconnected(msg) => assert!(msg.contains("файл модели"), "{msg}"),
@@ -544,7 +601,10 @@ mod tests {
             },
             ..Default::default()
         };
-        match LlamaSupervisor.apply_chat(&s, tx).status {
+        match LlamaSupervisor
+            .apply_chat(&s, CancellationToken::new(), tx)
+            .status
+        {
             ServerStatus::Disconnected(m) => assert!(m.contains("модел"), "{m}"),
             other => panic!("ожидался Disconnected, получили {other:?}"),
         }
@@ -562,7 +622,10 @@ mod tests {
             },
             ..Default::default()
         };
-        match LlamaSupervisor.apply_chat(&s, tx).status {
+        match LlamaSupervisor
+            .apply_chat(&s, CancellationToken::new(), tx)
+            .status
+        {
             ServerStatus::Disconnected(m) => {
                 assert!(m.contains("MINDFORK_DEFINITELY_UNSET_VAR_42"), "{m}")
             }
@@ -583,7 +646,7 @@ mod tests {
             },
             ..Default::default()
         };
-        let setup = LlamaSupervisor.apply_chat(&s, tx);
+        let setup = LlamaSupervisor.apply_chat(&s, CancellationToken::new(), tx);
         assert!(setup.backend.is_some());
         assert!(setup.handle.is_none(), "облако без дочернего процесса");
         assert_eq!(setup.status, ServerStatus::Ready);
@@ -603,7 +666,7 @@ mod tests {
             },
             ..Default::default()
         };
-        let setup = LlamaSupervisor.apply_chat(&s, tx);
+        let setup = LlamaSupervisor.apply_chat(&s, CancellationToken::new(), tx);
         assert!(setup.backend.is_some());
         assert!(setup.handle.is_none());
         assert_eq!(setup.status, ServerStatus::Ready);
