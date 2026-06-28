@@ -586,6 +586,10 @@ pub struct SelfModelSettings {
     pub narrative_in_prompt: usize,
     /// Потолок символов компактного рендера модели в системный промпт.
     pub prompt_cap: usize,
+    /// Авто-рефлексия: запускать фоновую рефлексию каждые N ответов ассистента в
+    /// чате (модель сама обновляет «модель себя»). `0` — выключено (по умолчанию).
+    /// Срабатывает только в профилях с включёнными инструментами модели себя.
+    pub auto_reflect_every: usize,
 }
 
 impl Default for SelfModelSettings {
@@ -594,6 +598,7 @@ impl Default for SelfModelSettings {
             max_narrative: DEFAULT_SELF_MODEL_MAX_NARRATIVE,
             narrative_in_prompt: DEFAULT_SELF_MODEL_NARRATIVE_IN_PROMPT,
             prompt_cap: DEFAULT_SELF_MODEL_PROMPT_CAP,
+            auto_reflect_every: 0,
         }
     }
 }

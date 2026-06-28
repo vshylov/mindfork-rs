@@ -294,6 +294,8 @@ impl Orchestrator {
             self.mark_dirty(res.chat_id);
             self.emit_chat_list();
         }
+        // После успешного ответа — возможно, пора фоновой авто-рефлексии (Tier 3).
+        self.maybe_auto_reflect(res.chat_id);
     }
 }
 

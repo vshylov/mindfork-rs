@@ -121,6 +121,9 @@ fn bare_orch_rx() -> (tempfile::TempDir, Orchestrator, UnboundedReceiver<AppEven
         gen_state: GenState::Idle,
         done_tx,
         rag_cancel: None,
+        reflect_cancel: None,
+        reflect_counts: std::collections::HashMap::new(),
+        reflect_done_tx: unbounded_channel().0,
         saves: SaveQueue::default(),
     };
     (dir, orch, evt_rx)
@@ -1600,6 +1603,57 @@ async fn self_model_insight_e2e_live() {
     assert!(
         tools.iter().any(|t| t == "add_insight"),
         "ожидали вызов add_insight"
+    );
+}
+
+/// End-to-end авто-рефлексии (Tier 3) на живой модели: `auto_reflect_every=1` →
+/// после первого же ответа ассистента в фоне запускается рефлексия, которая сама
+/// обновляет «модель себя». Рефлексия молчалива (нет UI-события) — ждём появления
+/// данных в БД опросом. `#[ignore]`, вручную.
+#[tokio::test]
+#[ignore = "requires a running OpenAI-compatible server (MINDFORK_ENGINE_URL)"]
+async fn auto_reflect_e2e_live() {
+    let Some(backend) = live_backend() else {
+        eprintln!("skip: MINDFORK_ENGINE_URL not set");
+        return;
+    };
+    let mut config = AppConfig::default();
+    config.self_model.auto_reflect_every = 1; // рефлексия после каждого ответа
+    let (_d, cmd_tx, mut evt_rx, handle) = spawn_orch_cfg(Some(backend), config);
+    let root = _d.path().to_path_buf();
+    let pid = enable_all_tools(&cmd_tx, &mut evt_rx).await;
+
+    // Обычная отправка: сообщаем факты, ассистент отвечает (а затем фоновая
+    // рефлексия должна сама зафиксировать «модель себя»).
+    let (_t, _tools) = run_turn_live(
+        &cmd_tx,
+        &mut evt_rx,
+        "Привет! Меня зовут Владимир, пишу на Rust и ценю краткость. Просто ответь \
+         коротким приветствием.",
+    )
+    .await;
+
+    // Ждём, пока фоновая рефлексия запишет модель себя (опрос БД до ~60с).
+    let mut found = None;
+    for _ in 0..120 {
+        let db = Storage::open(Paths::with_root(&root)).unwrap();
+        if let Some(m) = db.db().self_model_get(pid).unwrap()
+            && !m.is_empty()
+        {
+            found = Some(m);
+            break;
+        }
+        drop(db);
+        tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+    }
+
+    cmd_tx.send(AppCommand::Quit).unwrap();
+    handle.await.unwrap();
+
+    eprintln!("auto-reflect: self_model в БД: {found:#?}");
+    assert!(
+        found.is_some(),
+        "ожидали, что фоновая авто-рефлексия заполнит модель себя"
     );
 }
 

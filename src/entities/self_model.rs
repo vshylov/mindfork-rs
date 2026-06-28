@@ -343,6 +343,7 @@ mod tests {
             max_narrative: 5,
             narrative_in_prompt: 2,
             prompt_cap: 1000,
+            ..SelfModelSettings::default()
         });
         let mut m = SelfModel::new(Uuid::new_v4());
         for i in 0..10 {
@@ -362,6 +363,7 @@ mod tests {
             max_narrative: 0,
             narrative_in_prompt: 99,
             prompt_cap: 1,
+            ..SelfModelSettings::default()
         });
         assert_eq!(params.max_narrative, 1);
         assert_eq!(params.narrative_in_prompt, 1);

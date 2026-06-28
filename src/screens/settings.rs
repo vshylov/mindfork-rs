@@ -403,6 +403,7 @@ enum FieldId {
     SmMaxNarrative,
     SmNarrativeInPrompt,
     SmPromptCap,
+    SmAutoReflect,
     // Интерфейс
     ITheme,
     ISpell,
@@ -726,6 +727,11 @@ impl SettingsScreen {
                 FieldId::SmPromptCap,
                 "Модель себя: лимит инъекции (симв.)",
                 FieldKind::Text(self.config.self_model.prompt_cap.to_string()),
+            ),
+            row(
+                FieldId::SmAutoReflect,
+                "Модель себя: авто-рефлексия (кажд. N)",
+                FieldKind::Text(self.config.self_model.auto_reflect_every.to_string()),
             ),
         ]);
         rows
@@ -1347,6 +1353,11 @@ impl SettingsScreen {
                     s.self_model.prompt_cap = v;
                 }
             }
+            FieldId::SmAutoReflect => {
+                if let Ok(v) = trimmed.parse() {
+                    s.self_model.auto_reflect_every = v;
+                }
+            }
             FieldId::IDicts => {
                 s.interface.selected_dictionaries = trimmed
                     .split(',')
@@ -1693,6 +1704,11 @@ fn field_description(id: FieldId) -> Option<&'static str> {
         FieldId::SmPromptCap => Some(
             "Потолок символов компактного блока «модели себя», подмешиваемого в системный \
              промпт. Защита окна контекста: длинный блок усекается.",
+        ),
+        FieldId::SmAutoReflect => Some(
+            "Авто-рефлексия: каждые N ответов ассистента модель в фоне сама пересматривает \
+             разговор и обновляет «модель себя». 0 — выключено. Работает только в профилях \
+             с включёнными инструментами модели себя.",
         ),
         // Описания параметров семплинга (одинаковые для обеих подсекций).
         FieldId::S(p) | FieldId::IS(p) => p.description(),

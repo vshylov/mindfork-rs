@@ -624,7 +624,12 @@ agentic-loop **гейтит и сам вызов** (выключенный ин�
   гейт: профиль включил `get_self_model`). Размеры нарратива и объём инъекции —
   настраиваемы (`config.self_model: SelfModelSettings` → `SelfModelParams`, аналог
   `ChunkParams` у RAG; поля в экране настроек). Опциональны (нет в `default_tool_ids`).
-  См. [docs/self-model-mvp.md](self-model-mvp.md).
+  **Авто-рефлексия** (`orchestrator/reflection.rs`, `config.self_model.
+  auto_reflect_every` > 0): каждые N ответов фоновая задача — **мини agentic-loop** с
+  теми же инструментами — просит модель самой обновить «модель себя» (исполняет её
+  вызовы, пишущие в `Storage`; чат/лента не трогаются). Гейты: профиль включил
+  инструменты, сервер `Ready`, одна рефлексия за раз. См.
+  [docs/self-model-mvp.md](self-model-mvp.md).
 
 ---
 
@@ -710,7 +715,7 @@ flowchart TB
     subgraph RUNTIME["tokio runtime"]
         O["задача оркестратора (1 шт.)"]
         G["задача генерации (на время хода)"]
-        T["фоновые задачи: авто-название, имперсонация, RAG-индексация"]
+        T["фоновые задачи: авто-название, имперсонация, RAG-индексация, авто-рефлексия"]
         P["фоновый probe готовности сервера"]
     end
     L <-->|"cmd_tx / evt_tx (mpsc)"| O
