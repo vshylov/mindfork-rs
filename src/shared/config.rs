@@ -69,6 +69,115 @@ pub const DEFAULT_GPU_LAYERS: i32 = 99;
 /// Размер контекста по умолчанию (`-c`).
 pub const DEFAULT_CONTEXT_SIZE: u32 = 8192;
 
+/// Режим FlashAttention (`--flash-attn`) managed-сервера llama.cpp. `Auto` — флаг
+/// не передаётся (llama.cpp решает сам, это его дефолт); `On`/`Off` — принудительно.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum FlashAttn {
+    #[default]
+    Auto,
+    On,
+    Off,
+}
+
+impl FlashAttn {
+    /// Значение для `--flash-attn`; `None` (Auto) — флаг не передавать.
+    pub fn as_arg(self) -> Option<&'static str> {
+        match self {
+            FlashAttn::Auto => None,
+            FlashAttn::On => Some("on"),
+            FlashAttn::Off => Some("off"),
+        }
+    }
+
+    /// Подпись для UI (Choice-поле).
+    pub fn label(self) -> &'static str {
+        match self {
+            FlashAttn::Auto => "auto",
+            FlashAttn::On => "on",
+            FlashAttn::Off => "off",
+        }
+    }
+
+    /// Циклический перебор с учётом направления (`dir` = +1/-1).
+    pub fn cycle(self, dir: i32) -> Self {
+        use FlashAttn::*;
+        let order = [Auto, On, Off];
+        let idx = order.iter().position(|x| *x == self).unwrap_or(0) as i32;
+        let n = order.len() as i32;
+        order[(((idx + dir) % n + n) % n) as usize]
+    }
+}
+
+/// Тип спекулятивного декодирования (`--spec-type`) managed-сервера llama.cpp.
+/// `None` — выключено (флаг не передаётся). Типы `draft-*` требуют черновую модель
+/// (`-md`) — для MTP-моделей (например `mtp-gemma-4-12B-it.gguf`) это `draft-mtp`;
+/// `ngram-*` отдельной модели не требуют (черновик берётся из истории контекста).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum SpecType {
+    #[default]
+    None,
+    DraftSimple,
+    DraftEagle3,
+    DraftMtp,
+    NgramSimple,
+    NgramMapK,
+    NgramMapK4v,
+    NgramMod,
+    NgramCache,
+}
+
+impl SpecType {
+    /// Все варианты в порядке перебора UI.
+    const ORDER: [SpecType; 9] = [
+        SpecType::None,
+        SpecType::DraftSimple,
+        SpecType::DraftEagle3,
+        SpecType::DraftMtp,
+        SpecType::NgramSimple,
+        SpecType::NgramMapK,
+        SpecType::NgramMapK4v,
+        SpecType::NgramMod,
+        SpecType::NgramCache,
+    ];
+
+    /// Значение для `--spec-type`; `None` — флаг не передавать (выключено).
+    pub fn as_arg(self) -> Option<&'static str> {
+        match self {
+            SpecType::None => Option::None,
+            SpecType::DraftSimple => Some("draft-simple"),
+            SpecType::DraftEagle3 => Some("draft-eagle3"),
+            SpecType::DraftMtp => Some("draft-mtp"),
+            SpecType::NgramSimple => Some("ngram-simple"),
+            SpecType::NgramMapK => Some("ngram-map-k"),
+            SpecType::NgramMapK4v => Some("ngram-map-k4v"),
+            SpecType::NgramMod => Some("ngram-mod"),
+            SpecType::NgramCache => Some("ngram-cache"),
+        }
+    }
+
+    /// Требует ли тип отдельную черновую модель (`-md`): только `draft-*`.
+    pub fn needs_draft_model(self) -> bool {
+        matches!(
+            self,
+            SpecType::DraftSimple | SpecType::DraftEagle3 | SpecType::DraftMtp
+        )
+    }
+
+    /// Подпись для UI (Choice-поле).
+    pub fn label(self) -> &'static str {
+        self.as_arg().unwrap_or("none")
+    }
+
+    /// Циклический перебор с учётом направления (`dir` = +1/-1).
+    pub fn cycle(self, dir: i32) -> Self {
+        let idx = Self::ORDER.iter().position(|x| *x == self).unwrap_or(0) as i32;
+        let n = Self::ORDER.len() as i32;
+        Self::ORDER[(((idx + dir) % n + n) % n) as usize]
+    }
+}
+
 /// Настройки локального managed-сервера `llama-server` (llama.cpp): приложение
 /// запускает его дочерним процессом. Своя под-секция в каждом движке, чтобы
 /// переключение режима не теряло этих значений. См. docs/install.md §3.
@@ -91,6 +200,20 @@ pub struct ManagedSettings {
     /// Не использовать mmap при загрузке модели (`--no-mmap`): веса грузятся в RAM
     /// целиком. Помогает на сетевых/медленных дисках. По умолчанию выключено.
     pub no_mmap: bool,
+    /// FlashAttention (`--flash-attn`): оптимизация внимания. По умолчанию `Auto`.
+    pub flash_attn: FlashAttn,
+    /// Тип спекулятивного декодирования (`--spec-type`). По умолчанию выключено.
+    pub spec_type: SpecType,
+    /// Черновая модель для спекулятивного декодирования (`-md`/`--model-draft`).
+    /// Нужна для типов `draft-*`; для MTP-моделей — путь к соответствующему GGUF.
+    pub draft_model: Option<String>,
+    /// GPU-слои черновой модели (`-ngld`); `None` — авто (флаг не передаётся).
+    pub draft_gpu_layers: Option<i32>,
+    /// Сколько токенов набрасывать черновиком за шаг (`--spec-draft-n-max`); `None` —
+    /// дефолт llama.cpp (3).
+    pub draft_n_max: Option<u32>,
+    /// Минимум черновых токенов за шаг (`--spec-draft-n-min`); `None` — дефолт (0).
+    pub draft_n_min: Option<u32>,
     /// Интерфейс bind (`--host`), например `127.0.0.1` или `0.0.0.0`.
     pub host: String,
     pub port: u16,
@@ -106,6 +229,12 @@ impl Default for ManagedSettings {
             jinja: true,
             reasoning_format: None,
             no_mmap: false,
+            flash_attn: FlashAttn::default(),
+            spec_type: SpecType::default(),
+            draft_model: None,
+            draft_gpu_layers: None,
+            draft_n_max: None,
+            draft_n_min: None,
             host: "127.0.0.1".to_string(),
             port: 8000,
         }
@@ -601,6 +730,63 @@ mod tests {
     fn impersonation_managed_default_port_is_8002() {
         let s = ImpersonationEngineSettings::default();
         assert_eq!(s.managed.port, DEFAULT_IMPERSONATION_PORT);
+    }
+
+    #[test]
+    fn flash_attn_arg_and_cycle() {
+        assert_eq!(FlashAttn::default(), FlashAttn::Auto);
+        assert_eq!(FlashAttn::Auto.as_arg(), None);
+        assert_eq!(FlashAttn::On.as_arg(), Some("on"));
+        assert_eq!(FlashAttn::Off.as_arg(), Some("off"));
+        // Перебор по кругу в обе стороны.
+        assert_eq!(FlashAttn::Auto.cycle(1), FlashAttn::On);
+        assert_eq!(FlashAttn::Auto.cycle(-1), FlashAttn::Off);
+    }
+
+    #[test]
+    fn spec_type_arg_serde_and_draft_need() {
+        assert_eq!(SpecType::default(), SpecType::None);
+        assert_eq!(SpecType::None.as_arg(), None);
+        assert_eq!(SpecType::DraftMtp.as_arg(), Some("draft-mtp"));
+        assert_eq!(SpecType::NgramMapK4v.as_arg(), Some("ngram-map-k4v"));
+        // serde-имя совпадает с CLI-значением (kebab-case).
+        assert_eq!(
+            serde_json::to_string(&SpecType::DraftMtp).unwrap(),
+            "\"draft-mtp\""
+        );
+        assert_eq!(
+            serde_json::to_string(&SpecType::NgramMapK4v).unwrap(),
+            "\"ngram-map-k4v\""
+        );
+        // Черновая модель нужна только типам draft-*.
+        assert!(SpecType::DraftMtp.needs_draft_model());
+        assert!(!SpecType::NgramSimple.needs_draft_model());
+        assert!(!SpecType::None.needs_draft_model());
+    }
+
+    #[test]
+    fn managed_spec_fields_roundtrip() {
+        let c = AppConfig {
+            engine: EngineSettings {
+                mode: ServerMode::Managed,
+                managed: ManagedSettings {
+                    binary: Some("llama-server".into()),
+                    model_path: Some("mtp-gemma-4-12B-it.gguf".into()),
+                    flash_attn: FlashAttn::On,
+                    spec_type: SpecType::DraftMtp,
+                    draft_model: Some("mtp-gemma-4-12B-it.gguf".into()),
+                    draft_gpu_layers: Some(99),
+                    draft_n_max: Some(5),
+                    draft_n_min: Some(1),
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let json = serde_json::to_string_pretty(&c).unwrap();
+        let back: AppConfig = serde_json::from_str(&json).unwrap();
+        assert_eq!(c, back);
     }
 
     #[test]
