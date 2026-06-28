@@ -1562,6 +1562,46 @@ async fn self_model_e2e_live() {
     );
 }
 
+/// End-to-end зонд нарратива (Tier 2): просим модель зафиксировать наблюдение
+/// через `add_insight` — ожидаем непустой нарратив в БД. `#[ignore]`, вручную.
+#[tokio::test]
+#[ignore = "requires a running OpenAI-compatible server (MINDFORK_ENGINE_URL)"]
+async fn self_model_insight_e2e_live() {
+    let Some(backend) = live_backend() else {
+        eprintln!("skip: MINDFORK_ENGINE_URL not set");
+        return;
+    };
+    let (_d, cmd_tx, mut evt_rx, handle) = spawn_orch(Some(backend));
+    let root = _d.path().to_path_buf();
+    let pid = enable_all_tools(&cmd_tx, &mut evt_rx).await;
+
+    let (text, tools) = run_turn_live(
+        &cmd_tx,
+        &mut evt_rx,
+        "Я заметил, что иногда прошу кратко, а иногда — подробно. \
+         Зафиксируй это наблюдение в своём нарративе: вызови инструмент add_insight \
+         с коротким описанием этого противоречия.",
+    )
+    .await;
+    eprintln!("insight: инструменты={tools:?}\nтекст={text:?}\n");
+
+    cmd_tx.send(AppCommand::Quit).unwrap();
+    handle.await.unwrap();
+
+    let reopened = Storage::open(Paths::with_root(&root)).unwrap();
+    let model = reopened.db().self_model_get(pid).unwrap();
+    eprintln!("self_model в БД: {model:#?}");
+    let model = model.expect("ожидали сохранённую модель себя");
+    assert!(
+        !model.narrative.is_empty(),
+        "ожидали хотя бы один инсайт в нарративе (вызов add_insight)"
+    );
+    assert!(
+        tools.iter().any(|t| t == "add_insight"),
+        "ожидали вызов add_insight"
+    );
+}
+
 #[tokio::test]
 async fn send_without_backend_emits_error() {
     let (_d, cmd_tx, mut evt_rx, handle) = spawn_orch(None);

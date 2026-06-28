@@ -585,7 +585,7 @@ agentic-loop **гейтит и сам вызов** (выключенный ин�
 | Утилиты        | `calculate` (свой вычислитель выражений), `current_time` (chrono) — без I/O, не гейтятся |
 | Осознанность   | `call_subagent` (без истории/инструментов, запрет вложенности) |
 | Управление беседой | `send_followup_message` / `rewrite_current_message` — **control-flow** (опц., по умолч. выкл): распознаются agentic-loop'ом, а не `Tool::invoke` |
-| Модель себя    | `get_self_model`, `reflect`, `update_self_model`, `update_user_model` — **опц., по умолч. выкл** (MVP-зонд): пер-профильная «модель себя» в SQLite, пишут напрямую через `storage` (не через `ChatEffect`), см. [docs/self-model-mvp.md](self-model-mvp.md) |
+| Модель себя    | `get_self_model`, `reflect`, `update_self_model`, `update_user_model`, `add_insight` — **опц., по умолч. выкл**: пер-профильная «модель себя» в SQLite (описание + цели + модель собеседника + нарратив инсайтов), пишут напрямую через `storage` (не через `ChatEffect`), см. [docs/self-model-mvp.md](self-model-mvp.md) |
 
 Особенности реализации:
 
@@ -613,25 +613,30 @@ agentic-loop **гейтит и сам вызов** (выключенный ин�
   (смена размеров чанка или embedding-модели; при смене размерности вектора таблица
   векторов пересоздаётся, если базу не делят другие профили). Всё с изоляцией по
   профилю.
-- **Модель себя (SelfModel, MVP-зонд)** — пер-профильная «модель себя» агента
-  (`entities/self_model.rs`: свободный `summary` + `goals` + `user_model`) в таблице
-  `self_models` SQLite. Инструменты `update_self_model`/`update_user_model` пишут
-  **напрямую** через `ctx.storage` (как `note_save`), **без `ChatEffect`** — это не
-  состояние `Chat`. Оркестратор в начале хода читает снимок и **компактно**
-  подмешивает его в `system`-промпт (`generation::inject_self_model`, гейт: профиль
-  включил `get_self_model`). Опциональны (нет в `default_tool_ids`). См.
-  [docs/self-model-mvp.md](self-model-mvp.md).
+- **Модель себя (SelfModel)** — пер-профильная «модель себя» агента
+  (`entities/self_model.rs`: свободный `summary` + `goals` + `user_model` + `narrative`
+  инсайтов с потолком `MAX_NARRATIVE`) в таблице `self_models` SQLite. Инструменты
+  `update_self_model`/`update_user_model`/`add_insight` пишут **напрямую** через
+  `ctx.storage` (как `note_save`), **без `ChatEffect`** — это не состояние `Chat`;
+  `get_self_model`/`reflect` — чтение/рубрика. Противоречия фиксируются нарративом
+  прозой (без отдельного типа). Оркестратор в начале хода читает снимок и
+  **компактно** подмешивает его в `system`-промпт (`generation::inject_self_model`,
+  свежие `NARRATIVE_IN_PROMPT` инсайтов; гейт: профиль включил `get_self_model`).
+  Опциональны (нет в `default_tool_ids`). См. [docs/self-model-mvp.md](self-model-mvp.md).
 
 ---
 
 ## 9. UI: экраны, виджеты, рендеринг
 
 `runtime.rs` держит один базовый `ChatScreen` (лента/генерация/ввод) и enum
-`ActiveScreen { Chat | ChatList | Settings }` — экран, открытый поверх чата.
-Открытый список/настройки получают ввод и рисуются вместо чата; событие
-`OpenChatList`/`OpenSettings` от чата создаёт их, `Close` (Esc) — возвращает к
-`Chat`. Список чатов держит снимок актуальным через `AppEvent::ChatList` (его
-`app` применяет и к чату, и к открытому списку).
+`ActiveScreen { Chat | ChatList | Settings | SelfModel }` — экран, открытый поверх
+чата. Открытый список/настройки/просмотр получают ввод и рисуются вместо чата;
+событие `OpenChatList`/`OpenSettings` от чата создаёт их, `Close` (Esc) — возвращает
+к `Chat`. Список чатов держит снимок актуальным через `AppEvent::ChatList` (его
+`app` применяет и к чату, и к открытому списку). **Просмотр «модели себя»** (`F3`,
+read-only) — данными владеет оркестратор, поэтому `OpenSelfModel` не открывает экран
+сразу, а шлёт `AppCommand::RequestSelfModel`; экран создаётся по ответному событию
+`AppEvent::SelfModelView` (снимок модели активного профиля). См. [docs/self-model-mvp.md](self-model-mvp.md).
 
 ```mermaid
 flowchart TB

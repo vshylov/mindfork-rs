@@ -175,6 +175,7 @@ pub fn all_tool_ids() -> Vec<ToolId> {
     ids.push(self_model::REFLECT_ID.into());
     ids.push(self_model::UPDATE_SELF_MODEL_ID.into());
     ids.push(self_model::UPDATE_USER_MODEL_ID.into());
+    ids.push(self_model::ADD_INSIGHT_ID.into());
     ids
 }
 
@@ -279,6 +280,7 @@ pub fn standard_registry(cfg: &ToolConfig) -> ToolRegistry {
     reg.register(Arc::new(self_model::Reflect));
     reg.register(Arc::new(self_model::UpdateSelfModel));
     reg.register(Arc::new(self_model::UpdateUserModel));
+    reg.register(Arc::new(self_model::AddInsight));
     reg
 }
 
@@ -455,6 +457,7 @@ mod tests {
             self_model::REFLECT_ID,
             self_model::UPDATE_SELF_MODEL_ID,
             self_model::UPDATE_USER_MODEL_ID,
+            self_model::ADD_INSIGHT_ID,
         ] {
             assert!(
                 !default_tool_ids().iter().any(|t| t == id),

@@ -312,8 +312,19 @@ impl Orchestrator {
             AppCommand::RagDelete { path } => self.handle_rag_delete(path),
             AppCommand::RagList => self.handle_rag_list(),
             AppCommand::RagRebuild => self.handle_rag_rebuild(),
+            AppCommand::RequestSelfModel => self.handle_request_self_model(),
         }
         false
+    }
+
+    /// Отдаёт снимок «модели себя» активного профиля для экрана просмотра (`F3`).
+    /// Чтение из БД на месте (быстро); `None` — нет активного чата или модель ещё
+    /// не создавалась. Ошибку чтения трактуем как «нет модели» (вид покажет пусто).
+    fn handle_request_self_model(&self) {
+        let model = self
+            .active_profile_id()
+            .and_then(|pid| self.storage.db().self_model_get(pid).ok().flatten());
+        let _ = self.evt_tx.send(AppEvent::SelfModelView(Box::new(model)));
     }
 
     /// Эмитит полный снимок настроек (конфиг + полные профили) для экрана настроек.

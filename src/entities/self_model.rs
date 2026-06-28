@@ -10,6 +10,11 @@ use uuid::Uuid;
 /// Максимум символов рендера модели в системный промпт (защита 8k-контекста).
 pub const DEFAULT_PROMPT_CAP: usize = 1200;
 
+/// Потолок хранения нарратива (инсайтов): держим самые свежие.
+pub const MAX_NARRATIVE: usize = 50;
+/// Сколько свежих инсайтов подмешивать в системный промпт (экономия контекста).
+pub const NARRATIVE_IN_PROMPT: usize = 3;
+
 /// Представление агента о себе (один экземпляр на профиль).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct SelfModel {
@@ -24,7 +29,19 @@ pub struct SelfModel {
     pub goals: Vec<Goal>,
     #[serde(default)]
     pub user_model: UserModel,
+    /// Нарратив «я во времени»: короткие инсайты/наблюдения (включая замеченные
+    /// противоречия — простой прозой, без отдельного типа). Append-only с потолком.
+    #[serde(default)]
+    pub narrative: Vec<NarrativeSegment>,
     pub updated_at: DateTime<Utc>,
+}
+
+/// Фрагмент нарратива: короткое наблюдение/инсайт агента с отметкой времени.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct NarrativeSegment {
+    pub id: Uuid,
+    pub text: String,
+    pub created_at: DateTime<Utc>,
 }
 
 /// Долгосрочная цель/намерение агента.
@@ -63,6 +80,7 @@ impl SelfModel {
             summary: String::new(),
             goals: Vec::new(),
             user_model: UserModel::default(),
+            narrative: Vec::new(),
             updated_at: Utc::now(),
         }
     }
@@ -74,6 +92,7 @@ impl SelfModel {
         self.summary.trim().is_empty()
             && self.active_goals().next().is_none()
             && self.user_model.is_empty()
+            && self.narrative.is_empty()
     }
 
     /// Активные цели (для рендера/чтения).
@@ -102,6 +121,24 @@ impl SelfModel {
             true
         } else {
             false
+        }
+    }
+
+    /// Добавляет инсайт в нарратив (append-only, с обрезкой до `MAX_NARRATIVE`
+    /// самых свежих). Пустой текст игнорируется.
+    pub fn add_insight(&mut self, text: impl Into<String>) {
+        let text = text.into().trim().to_string();
+        if text.is_empty() {
+            return;
+        }
+        self.narrative.push(NarrativeSegment {
+            id: Uuid::new_v4(),
+            text,
+            created_at: Utc::now(),
+        });
+        if self.narrative.len() > MAX_NARRATIVE {
+            let drop = self.narrative.len() - MAX_NARRATIVE;
+            self.narrative.drain(0..drop);
         }
     }
 
@@ -144,6 +181,14 @@ impl SelfModel {
                 out.push_str(u.relationship_dynamic.trim());
             }
             out.push('\n');
+        }
+        if !self.narrative.is_empty() {
+            out.push_str("Недавние наблюдения:\n");
+            for seg in self.narrative.iter().rev().take(NARRATIVE_IN_PROMPT) {
+                out.push_str("- ");
+                out.push_str(seg.text.trim());
+                out.push('\n');
+            }
         }
         Some(truncate_chars(out.trim_end(), max_chars))
     }
@@ -209,6 +254,33 @@ mod tests {
         assert!(r.contains("черты: любопытный"));
         assert!(r.contains("интересы: Rust"));
         assert!(r.contains("отношения: доверительные"));
+    }
+
+    #[test]
+    fn insights_append_cap_and_render() {
+        let mut m = SelfModel::new(Uuid::new_v4());
+        // Только нарратив → модель уже информативна (рендерится).
+        m.add_insight("заметил напряжение между «кратко» и «полно»");
+        m.add_insight("   "); // пустой игнорируется
+        assert!(!m.is_empty());
+        assert_eq!(m.narrative.len(), 1);
+        let r = m.render_for_prompt(DEFAULT_PROMPT_CAP).unwrap();
+        assert!(r.contains("Недавние наблюдения:"));
+        assert!(r.contains("напряжение"));
+
+        // Потолок: держим самые свежие MAX_NARRATIVE.
+        for i in 0..MAX_NARRATIVE + 10 {
+            m.add_insight(format!("инсайт {i}"));
+        }
+        assert_eq!(m.narrative.len(), MAX_NARRATIVE);
+        // Самый старый из добавленных в цикле вытеснен, последний — присутствует.
+        assert!(m.narrative.iter().any(|s| s.text == "инсайт 59"));
+        assert!(!m.narrative.iter().any(|s| s.text == "инсайт 0"));
+
+        // В промпт идут только NARRATIVE_IN_PROMPT свежих (новейший — первым).
+        let r = m.render_for_prompt(DEFAULT_PROMPT_CAP).unwrap();
+        assert_eq!(r.matches("- инсайт ").count(), NARRATIVE_IN_PROMPT);
+        assert!(r.contains("инсайт 59"));
     }
 
     #[test]

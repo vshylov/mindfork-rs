@@ -16,6 +16,7 @@ pub const GET_SELF_MODEL_ID: &str = "get_self_model";
 pub const REFLECT_ID: &str = "reflect";
 pub const UPDATE_SELF_MODEL_ID: &str = "update_self_model";
 pub const UPDATE_USER_MODEL_ID: &str = "update_user_model";
+pub const ADD_INSIGHT_ID: &str = "add_insight";
 
 /// Загружает модель профиля из хранилища (или пустую, если ещё не создавалась).
 /// Читаем из БД, а не из снимка `ctx.self_model`, чтобы видеть правки, сделанные
@@ -95,10 +96,54 @@ impl Tool for Reflect {
              - Что нового я понял(а) о себе в этом разговоре?\n\
              - Изменились ли мои цели — есть новые, выполненные или неактуальные?\n\
              - Что я узнал(а) о собеседнике (черты, интересы, динамика отношений)?\n\
-             Если есть что зафиксировать — вызови update_self_model и/или update_user_model.",
+             - Заметил(а) ли я противоречие/напряжение в себе или разговоре?\n\
+             Если есть что зафиксировать — вызови update_self_model, update_user_model \
+             и/или add_insight (для наблюдений и противоречий прозой).",
             render_or_empty(&m)
         );
         Ok(ToolOutcome::text(out))
+    }
+}
+
+/// `add_insight` — добавляет короткое наблюдение/инсайт в нарратив (включая
+/// замеченные противоречия — прозой, без отдельного типа). Пишет напрямую в БД.
+pub struct AddInsight;
+
+#[async_trait::async_trait]
+impl Tool for AddInsight {
+    fn id(&self) -> ToolId {
+        ADD_INSIGHT_ID.into()
+    }
+    fn description(&self) -> String {
+        "Записать короткое наблюдение/инсайт о себе, разговоре или собеседнике в свой \
+         нарратив (историю «я во времени»). Сюда же — замеченные противоречия или \
+         внутренние напряжения, простой прозой. Используй для того, что стоит \
+         помнить со временем."
+            .into()
+    }
+    fn parameters(&self) -> serde_json::Value {
+        serde_json::json!({
+            "type": "object",
+            "properties": {
+                "text": {"type": "string", "description": "Короткое наблюдение/инсайт (1-2 предложения)"}
+            },
+            "required": ["text"]
+        })
+    }
+    async fn invoke(&self, ctx: &ToolContext, args: serde_json::Value) -> Result<ToolOutcome> {
+        let text = args
+            .get("text")
+            .and_then(|v| v.as_str())
+            .unwrap_or_default()
+            .trim()
+            .to_string();
+        if text.is_empty() {
+            anyhow::bail!("ожидается непустое поле text");
+        }
+        let mut m = load(ctx)?;
+        m.add_insight(text);
+        ctx.storage.db().self_model_upsert(&m)?;
+        Ok(ToolOutcome::text("Наблюдение записано в нарратив."))
     }
 }
 
@@ -325,5 +370,45 @@ mod tests {
         let out = Reflect.invoke(&ctx, serde_json::json!({})).await.unwrap();
         assert!(out.result.contains("Вопросы для размышления"));
         assert!(out.effects.is_empty());
+    }
+
+    #[tokio::test]
+    async fn add_insight_persists_and_shows() {
+        let profile = Uuid::new_v4();
+        let (_d, storage, ctx) = ctx_with_storage(profile);
+        AddInsight
+            .invoke(
+                &ctx,
+                serde_json::json!({"text": "напряжение между краткостью и полнотой"}),
+            )
+            .await
+            .unwrap();
+        let stored = storage.db().self_model_get(profile).unwrap().unwrap();
+        assert_eq!(stored.narrative.len(), 1);
+
+        let got = GetSelfModel
+            .invoke(&ctx, serde_json::json!({}))
+            .await
+            .unwrap();
+        assert!(got.result.contains("Недавние наблюдения:"));
+        assert!(got.result.contains("напряжение"));
+
+        // Пустой text — ошибка, ничего не дописано.
+        assert!(
+            AddInsight
+                .invoke(&ctx, serde_json::json!({"text": "  "}))
+                .await
+                .is_err()
+        );
+        assert_eq!(
+            storage
+                .db()
+                .self_model_get(profile)
+                .unwrap()
+                .unwrap()
+                .narrative
+                .len(),
+            1
+        );
     }
 }
