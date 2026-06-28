@@ -26,6 +26,7 @@ use crate::app::events::{AppCommand, AppEvent};
 use crate::features::spellcheck::{SpellChecker, dict};
 use crate::screens::chat::{ChatIntent, ChatScreen};
 use crate::screens::chat_list::{ChatListIntent, ChatListScreen};
+use crate::screens::self_model::{SelfModelIntent, SelfModelScreen};
 use crate::screens::settings::{SettingsIntent, SettingsScreen};
 use crate::shared::theme::Palette;
 
@@ -40,6 +41,8 @@ enum ActiveScreen {
     ChatList(Box<ChatListScreen>),
     /// Экран настроек.
     Settings(Box<SettingsScreen>),
+    /// Экран просмотра «модели себя» (read-only, `F3`).
+    SelfModel(Box<SelfModelScreen>),
 }
 
 impl ActiveScreen {
@@ -250,6 +253,7 @@ fn run_loop(
                 ActiveScreen::Settings(settings) => {
                     terminal.draw(|frame| settings.render(frame))?
                 }
+                ActiveScreen::SelfModel(view) => terminal.draw(|frame| view.render(frame))?,
             };
             dirty = false;
         }
@@ -334,9 +338,12 @@ fn apply_event(
                 ActiveScreen::Settings(settings) => {
                     settings.refresh((*config).clone(), profiles.clone())
                 }
-                // Тема могла смениться — обновим палитру открытого списка.
+                // Тема могла смениться — обновим палитру открытых экранов.
                 ActiveScreen::ChatList(list) => {
                     list.set_palette(Palette::for_theme(config.interface.theme))
+                }
+                ActiveScreen::SelfModel(view) => {
+                    view.set_palette(Palette::for_theme(config.interface.theme))
                 }
                 ActiveScreen::Chat => {}
             }
@@ -396,6 +403,17 @@ fn apply_event(
             reason,
         } => screen.finish_impersonation(generation_id, reason),
         AppEvent::RagProgress(progress) => screen.set_rag_progress(progress),
+        // Ответ на запрос/правку модели себя (`F3`): открываем экран либо обновляем
+        // уже открытый на месте (сохраняя выделение — важно при правках).
+        AppEvent::SelfModelView(model) => match active {
+            ActiveScreen::SelfModel(view) => view.set_model(*model),
+            _ => {
+                *active = ActiveScreen::SelfModel(Box::new(SelfModelScreen::new(
+                    *model,
+                    screen.palette(),
+                )))
+            }
+        },
         AppEvent::Error(message) => screen.push_error(&message),
     }
 }
@@ -574,6 +592,8 @@ fn process_input_batch(
                     ActiveScreen::Chat => screen.handle_paste(&text),
                     // В списке цель вставки — поле переименования (`F2`), если открыто.
                     ActiveScreen::ChatList(list) => list.handle_paste(&text),
+                    // В редакторе модели себя — в активное поле правки, если открыто.
+                    ActiveScreen::SelfModel(view) => view.handle_paste(&text),
                 }
             }
             Chunk::Event(Event::Key(key)) => {
@@ -582,10 +602,12 @@ fn process_input_batch(
                 let mut chat_intent = None;
                 let mut list_intent = None;
                 let mut settings_intent = None;
+                let mut self_model_intent = None;
                 match active {
                     ActiveScreen::Chat => chat_intent = screen.handle_key(key),
                     ActiveScreen::ChatList(list) => list_intent = list.handle_key(key),
                     ActiveScreen::Settings(settings) => settings_intent = settings.handle_key(key),
+                    ActiveScreen::SelfModel(view) => self_model_intent = view.handle_key(key),
                 }
                 if let Some(intent) = chat_intent
                     && dispatch(intent, cmd_tx, screen, active)
@@ -599,6 +621,11 @@ fn process_input_batch(
                 }
                 if let Some(intent) = settings_intent {
                     dispatch_settings(intent, cmd_tx, active);
+                }
+                if let Some(intent) = self_model_intent
+                    && dispatch_self_model(intent, cmd_tx, active)
+                {
+                    quit = true;
                 }
             }
             // Колесо мыши прокручивает ленту чата. На списке/настройках (своя
@@ -645,6 +672,12 @@ fn dispatch(
                 screen.active_chat(),
                 screen.palette(),
             )));
+            return false;
+        }
+        // Просмотр модели себя: данными владеет оркестратор — запрашиваем снимок,
+        // экран откроется по событию `SelfModelView` (см. `apply_event`).
+        ChatIntent::OpenSelfModel => {
+            let _ = cmd_tx.send(AppCommand::RequestSelfModel);
             return false;
         }
         // Тумблер прокрутки колесом: включаем/выключаем захват мыши терминала.
@@ -731,6 +764,28 @@ fn dispatch_settings(
         SettingsIntent::DeleteProfile(id) => AppCommand::DeleteProfile(id),
     };
     let _ = cmd_tx.send(command);
+}
+
+/// Транслирует намерение экрана просмотра модели себя: закрытие возвращает к чату,
+/// `Quit` завершает петлю (`true`). Команд оркестратору не шлёт (read-only).
+fn dispatch_self_model(
+    intent: SelfModelIntent,
+    cmd_tx: &UnboundedSender<AppCommand>,
+    active: &mut ActiveScreen,
+) -> bool {
+    match intent {
+        SelfModelIntent::Close => {
+            *active = ActiveScreen::Chat;
+            false
+        }
+        SelfModelIntent::Quit => true,
+        // Правка: команда оркестратору; экран остаётся открытым и обновится по
+        // ответному `SelfModelView` (см. `apply_event`).
+        SelfModelIntent::Edit(edit) => {
+            let _ = cmd_tx.send(AppCommand::UpdateSelfModel(edit));
+            false
+        }
+    }
 }
 
 #[cfg(test)]
@@ -891,5 +946,37 @@ mod tests {
         }
         assert!(got.is_some(), "фоновая загрузка не завершилась");
         assert!(!got.unwrap().is_enabled());
+    }
+
+    #[test]
+    fn open_self_model_requests_snapshot_without_opening() {
+        // `OpenSelfModel` шлёт запрос оркестратору и НЕ открывает экран сразу —
+        // он откроется по ответному событию `SelfModelView`.
+        let screen = ChatScreen::new();
+        let mut active = ActiveScreen::Chat;
+        let (cmd_tx, mut cmd_rx) = tokio::sync::mpsc::unbounded_channel();
+        let quit = dispatch(ChatIntent::OpenSelfModel, &cmd_tx, &screen, &mut active);
+        assert!(!quit);
+        assert!(matches!(active, ActiveScreen::Chat));
+        assert!(matches!(
+            cmd_rx.try_recv(),
+            Ok(AppCommand::RequestSelfModel)
+        ));
+    }
+
+    #[test]
+    fn self_model_view_event_opens_screen() {
+        let mut screen = ChatScreen::new();
+        let mut active = ActiveScreen::Chat;
+        let mut clip = None;
+        let mut m = crate::entities::self_model::SelfModel::new(uuid::Uuid::new_v4());
+        m.summary = "о себе".into();
+        apply_event(
+            &mut screen,
+            &mut active,
+            &mut clip,
+            AppEvent::SelfModelView(Box::new(Some(m))),
+        );
+        assert!(matches!(active, ActiveScreen::SelfModel(_)));
     }
 }

@@ -78,6 +78,12 @@ pub enum AppCommand {
     /// перечанковать и переэмбеддить сохранённые исходники. Выполняется фоновой
     /// задачей; прогресс — событиями `RagProgress`. См. spec §9.3.
     RagRebuild,
+    /// Запросить снимок «модели себя» активного профиля (для экрана просмотра, `F3`).
+    /// Оркестратор (владелец `Storage`) отвечает событием `SelfModelView`.
+    RequestSelfModel,
+    /// Применить ручную правку «модели себя» активного профиля (UI-редактор `F3`).
+    /// Оркестратор применяет, сохраняет и переэмитит обновлённый `SelfModelView`.
+    UpdateSelfModel(crate::entities::self_model::SelfModelEdit),
     /// Завершить работу (оркестратор останавливается).
     Quit,
 }
@@ -170,6 +176,10 @@ pub enum AppEvent {
     },
     /// Прогресс фоновой индексации файлов в RAG (команда `/rag add`). См. spec §9.3.
     RagProgress(RagProgress),
+    /// Снимок «модели себя» активного профиля (ответ на `RequestSelfModel`) для
+    /// экрана просмотра (`F3`). `None` — модель ещё не создавалась. `Box` — крупный
+    /// тип, не раздуваем enum. См. docs/self-model-mvp.md.
+    SelfModelView(Box<Option<crate::entities::self_model::SelfModel>>),
     /// Ошибка (для показа в UI).
     Error(String),
 }

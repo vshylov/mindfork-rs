@@ -24,6 +24,7 @@ mod generation;
 mod impersonation;
 mod profiles;
 mod rag;
+mod reflection;
 mod request;
 mod save_queue;
 mod settings;
@@ -32,6 +33,7 @@ mod title;
 #[cfg(test)]
 mod tests;
 
+use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -94,6 +96,8 @@ pub async fn run(deps: OrchestratorDeps) {
     let (imp_status_tx, mut imp_status_rx) = unbounded_channel::<ServerStatus>();
     // Внутренний канал «имперсонация завершена» (фоновая задача → петля).
     let (imp_done_tx, mut imp_done_rx) = unbounded_channel::<(Uuid, FinishReason)>();
+    // Внутренний канал «авто-рефлексия завершена» (фоновая задача → петля).
+    let (reflect_done_tx, mut reflect_done_rx) = unbounded_channel::<()>();
     let registry = Arc::new(build_registry(&config));
     let mut orch = Orchestrator {
         evt_tx,
@@ -111,6 +115,9 @@ pub async fn run(deps: OrchestratorDeps) {
         gen_state: GenState::Idle,
         done_tx,
         rag_cancel: None,
+        reflect_cancel: None,
+        reflect_counts: HashMap::new(),
+        reflect_done_tx,
         saves: SaveQueue::default(),
     };
 
@@ -158,6 +165,11 @@ pub async fn run(deps: OrchestratorDeps) {
             done = imp_done_rx.recv() => {
                 if let Some((id, reason)) = done {
                     orch.handle_imp_done(id, reason);
+                }
+            }
+            done = reflect_done_rx.recv() => {
+                if done.is_some() {
+                    orch.handle_reflect_done();
                 }
             }
             _ = sleep_until_opt(deadline) => orch.flush_saves(),
@@ -214,6 +226,12 @@ struct Orchestrator {
     /// Токен отмены текущей фоновой индексации RAG (`/rag add`); `None` — не идёт.
     /// Снимается/отменяется при новой индексации и при завершении работы.
     rag_cancel: Option<tokio_util::sync::CancellationToken>,
+    /// Токен отмены текущей фоновой авто-рефлексии (`Some` — идёт; одна за раз).
+    reflect_cancel: Option<tokio_util::sync::CancellationToken>,
+    /// Счётчики ответов ассистента с прошлой авто-рефлексии (по чату).
+    reflect_counts: HashMap<Uuid, u32>,
+    /// Канал «авто-рефлексия завершена» (фоновая задача → петля).
+    reflect_done_tx: UnboundedSender<()>,
     /// Очередь отложенного сохранения чатов (дебаунс; выделено в Фазе 3).
     saves: SaveQueue,
 }
@@ -281,6 +299,9 @@ impl Orchestrator {
                 if let Some(token) = &self.imp_cancel {
                     token.cancel();
                 }
+                if let Some(token) = &self.reflect_cancel {
+                    token.cancel();
+                }
                 return true;
             }
             AppCommand::Cancel => {
@@ -312,8 +333,43 @@ impl Orchestrator {
             AppCommand::RagDelete { path } => self.handle_rag_delete(path),
             AppCommand::RagList => self.handle_rag_list(),
             AppCommand::RagRebuild => self.handle_rag_rebuild(),
+            AppCommand::RequestSelfModel => self.handle_request_self_model(),
+            AppCommand::UpdateSelfModel(edit) => self.handle_update_self_model(edit),
         }
         false
+    }
+
+    /// Отдаёт снимок «модели себя» активного профиля для экрана просмотра (`F3`).
+    /// Чтение из БД на месте (быстро); `None` — нет активного чата или модель ещё
+    /// не создавалась. Ошибку чтения трактуем как «нет модели» (вид покажет пусто).
+    fn handle_request_self_model(&self) {
+        let model = self
+            .active_profile_id()
+            .and_then(|pid| self.storage.db().self_model_get(pid).ok().flatten());
+        let _ = self.evt_tx.send(AppEvent::SelfModelView(Box::new(model)));
+    }
+
+    /// Применяет ручную правку «модели себя» активного профиля (UI-редактор `F3`):
+    /// загружает (или создаёт пустую), применяет правку, при изменении — сохраняет,
+    /// затем переэмитит обновлённый снимок (открытый экран обновится на месте).
+    fn handle_update_self_model(&self, edit: crate::entities::self_model::SelfModelEdit) {
+        let Some(pid) = self.active_profile_id() else {
+            return;
+        };
+        let mut model = self
+            .storage
+            .db()
+            .self_model_get(pid)
+            .ok()
+            .flatten()
+            .unwrap_or_else(|| crate::entities::self_model::SelfModel::new(pid));
+        if model.apply_edit(edit) {
+            let _ = self.storage.db().self_model_upsert(&model);
+        }
+        let snapshot = self.storage.db().self_model_get(pid).ok().flatten();
+        let _ = self
+            .evt_tx
+            .send(AppEvent::SelfModelView(Box::new(snapshot)));
     }
 
     /// Эмитит полный снимок настроек (конфиг + полные профили) для экрана настроек.

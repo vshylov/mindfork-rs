@@ -19,7 +19,7 @@ use super::Orchestrator;
 impl Orchestrator {
     /// Профиль активного чата (RAG изолирован по `profile_id`, §9.5). `None` — нет
     /// активного чата.
-    fn active_profile_id(&self) -> Option<Uuid> {
+    pub(super) fn active_profile_id(&self) -> Option<Uuid> {
         self.active_id
             .and_then(|id| self.chats.iter().find(|c| c.id == id))
             .map(|c| c.profile_id)

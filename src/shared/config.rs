@@ -568,6 +568,41 @@ impl Default for RagSettings {
     }
 }
 
+/// Потолок хранения нарратива «модели себя» (инсайтов) по умолчанию.
+pub const DEFAULT_SELF_MODEL_MAX_NARRATIVE: usize = 50;
+/// Сколько свежих инсайтов подмешивать в системный промпт по умолчанию.
+pub const DEFAULT_SELF_MODEL_NARRATIVE_IN_PROMPT: usize = 3;
+/// Потолок символов рендера «модели себя» в системный промпт по умолчанию.
+pub const DEFAULT_SELF_MODEL_PROMPT_CAP: usize = 1200;
+
+/// Настройки «модели себя» (SelfModel): размеры нарратива и объём инъекции в
+/// системный промпт. См. [docs/self-model-mvp.md] и spec §9.3.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct SelfModelSettings {
+    /// Сколько инсайтов хранить в нарративе (старые вытесняются при добавлении).
+    pub max_narrative: usize,
+    /// Сколько свежих инсайтов подмешивать в системный промпт.
+    pub narrative_in_prompt: usize,
+    /// Потолок символов компактного рендера модели в системный промпт.
+    pub prompt_cap: usize,
+    /// Авто-рефлексия: запускать фоновую рефлексию каждые N ответов ассистента в
+    /// чате (модель сама обновляет «модель себя»). `0` — выключено (по умолчанию).
+    /// Срабатывает только в профилях с включёнными инструментами модели себя.
+    pub auto_reflect_every: usize,
+}
+
+impl Default for SelfModelSettings {
+    fn default() -> Self {
+        Self {
+            max_narrative: DEFAULT_SELF_MODEL_MAX_NARRATIVE,
+            narrative_in_prompt: DEFAULT_SELF_MODEL_NARRATIVE_IN_PROMPT,
+            prompt_cap: DEFAULT_SELF_MODEL_PROMPT_CAP,
+            auto_reflect_every: 0,
+        }
+    }
+}
+
 /// Тема оформления TUI. Реальное применение в виджетах — на M9 (`shared/theme.rs`);
 /// здесь хранится выбор пользователя.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
@@ -623,6 +658,8 @@ pub struct AppConfig {
     pub tools: ToolSettings,
     /// Настройки чанкинга базы знаний (RAG).
     pub rag: RagSettings,
+    /// Настройки «модели себя» (нарратив, объём инъекции в промпт).
+    pub self_model: SelfModelSettings,
     /// Настройки интерфейса (тема, спелл-чек, словари).
     pub interface: InterfaceSettings,
 }
@@ -649,6 +686,7 @@ impl Default for AppConfig {
             max_tool_rounds: 8,
             tools: ToolSettings::default(),
             rag: RagSettings::default(),
+            self_model: SelfModelSettings::default(),
             interface: InterfaceSettings::default(),
         }
     }
@@ -688,6 +726,12 @@ mod tests {
         assert!(!c.tools.fs_enabled);
         assert_eq!(c.tools.fs_root, None);
         assert_eq!(c.rag.chunk_target_chars, DEFAULT_CHUNK_TARGET_CHARS);
+        assert_eq!(c.self_model.max_narrative, DEFAULT_SELF_MODEL_MAX_NARRATIVE);
+        assert_eq!(
+            c.self_model.narrative_in_prompt,
+            DEFAULT_SELF_MODEL_NARRATIVE_IN_PROMPT
+        );
+        assert_eq!(c.self_model.prompt_cap, DEFAULT_SELF_MODEL_PROMPT_CAP);
         assert_eq!(c.rag.chunk_overlap_chars, DEFAULT_CHUNK_OVERLAP_CHARS);
         assert_eq!(c.rag.chunk_max_chars, DEFAULT_CHUNK_MAX_CHARS);
         assert!(c.interface.spellcheck_enabled);

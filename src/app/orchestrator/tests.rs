@@ -121,9 +121,43 @@ fn bare_orch_rx() -> (tempfile::TempDir, Orchestrator, UnboundedReceiver<AppEven
         gen_state: GenState::Idle,
         done_tx,
         rag_cancel: None,
+        reflect_cancel: None,
+        reflect_counts: std::collections::HashMap::new(),
+        reflect_done_tx: unbounded_channel().0,
         saves: SaveQueue::default(),
     };
     (dir, orch, evt_rx)
+}
+
+#[test]
+fn inject_self_model_respects_flag_and_emptiness() {
+    use super::generation::inject_self_model;
+    use crate::entities::self_model::{SelfModel, SelfModelParams};
+
+    let pp = SelfModelParams::default();
+    let mut m = SelfModel::new(Uuid::new_v4());
+    m.summary = "ценю ясность".into();
+
+    // Выключено → система не меняется.
+    assert_eq!(
+        inject_self_model(Some("S".into()), Some(&m), false, &pp),
+        Some("S".into())
+    );
+    // Включено + непустая модель → дописывается к системе.
+    let out = inject_self_model(Some("S".into()), Some(&m), true, &pp).unwrap();
+    assert!(out.starts_with("S\n\n"));
+    assert!(out.contains("ценю ясность"));
+    // Включено, но модели нет → без изменений.
+    assert_eq!(
+        inject_self_model(Some("S".into()), None, true, &pp),
+        Some("S".into())
+    );
+    // Включено, модель пуста → без изменений (None остаётся None).
+    let empty = SelfModel::new(Uuid::new_v4());
+    assert_eq!(inject_self_model(None, Some(&empty), true, &pp), None);
+    // Пустой system + непустая модель → блок становится системой.
+    let only = inject_self_model(None, Some(&m), true, &pp).unwrap();
+    assert!(only.contains("О себе: ценю ясность"));
 }
 
 #[test]
@@ -1444,6 +1478,220 @@ async fn rewrite_tool_e2e_live() {
         saw_rewrite && !chat.deleted.is_empty(),
         "ожидали отброшенный (переписанный) ответ в Chat.deleted"
     );
+}
+
+/// Прогоняет один ход: шлёт сообщение, дренирует события до `Finished`, собирая
+/// текст ответа и имена вызванных инструментов. Для live-смоуков.
+#[cfg(test)]
+async fn run_turn_live(
+    cmd_tx: &UnboundedSender<AppCommand>,
+    evt_rx: &mut UnboundedReceiver<AppEvent>,
+    text: &str,
+) -> (String, Vec<String>) {
+    cmd_tx.send(AppCommand::SendMessage(text.into())).unwrap();
+    let mut out = String::new();
+    let mut tools = Vec::new();
+    while let Some(ev) = evt_rx.recv().await {
+        match &ev {
+            AppEvent::Chunk { text, .. } => out.push_str(text),
+            AppEvent::ToolCall { name, .. } => tools.push(name.clone()),
+            AppEvent::Finished { .. } => break,
+            _ => {}
+        }
+    }
+    (out, tools)
+}
+
+/// End-to-end зонд SelfModel на живой модели (две сессии, один профиль):
+/// 1) сессия 1 — сообщаем факты о себе и просим зафиксировать в «модели себя»
+///    (ожидаем вызовы `update_self_model`/`update_user_model`, запись в БД);
+/// 2) сессия 2 (новый чат тем же профилем) — спрашиваем «что ты обо мне помнишь»;
+///    «модель себя» подмешана в системный промпт → ожидаем припоминание.
+/// Поведение модели нестабильно — тест `#[ignore]`, гоняется вручную; ассертим
+/// **механизм** (БД заполнена), а текст припоминания печатаем для оценки.
+#[tokio::test]
+#[ignore = "requires a running OpenAI-compatible server (MINDFORK_ENGINE_URL)"]
+async fn self_model_e2e_live() {
+    let Some(backend) = live_backend() else {
+        eprintln!("skip: MINDFORK_ENGINE_URL not set");
+        return;
+    };
+    let (_d, cmd_tx, mut evt_rx, handle) = spawn_orch(Some(backend));
+    let root = _d.path().to_path_buf();
+    let pid = enable_all_tools(&cmd_tx, &mut evt_rx).await;
+
+    // --- Сессия 1: сообщаем факты и просим зафиксировать модель себя. ---
+    let (s1_text, s1_tools) = run_turn_live(
+        &cmd_tx,
+        &mut evt_rx,
+        "Меня зовут Владимир, я пишу на Rust и не люблю многословие. \
+         Запомни это: вызови update_user_model (черты, интересы) и update_self_model \
+         (краткое описание себя и цель — помогать мне кратко и по делу).",
+    )
+    .await;
+    eprintln!("сессия 1: инструменты={s1_tools:?}\nтекст={s1_text:?}\n");
+
+    // --- Сессия 2: новый чат тем же профилем, проверяем припоминание. ---
+    cmd_tx
+        .send(AppCommand::NewChat {
+            profile_id: Some(pid),
+        })
+        .unwrap();
+    let (s2_text, s2_tools) = run_turn_live(
+        &cmd_tx,
+        &mut evt_rx,
+        "Что ты обо мне помнишь и какие у тебя цели в общении со мной?",
+    )
+    .await;
+    eprintln!("сессия 2: инструменты={s2_tools:?}\nтекст={s2_text:?}\n");
+
+    cmd_tx.send(AppCommand::Quit).unwrap();
+    handle.await.unwrap();
+
+    // Механизм: после сессии 1 модель себя профиля непуста и сохранена на диск.
+    let reopened = Storage::open(Paths::with_root(&root)).unwrap();
+    let model = reopened.db().self_model_get(pid).unwrap();
+    eprintln!("self_model в БД: {model:#?}");
+    let model = model.expect("ожидали сохранённую модель себя после сессии 1");
+    assert!(
+        !model.is_empty(),
+        "ожидали непустую модель себя (модель должна была вызвать update_*)"
+    );
+    // Хотя бы один из мутаторов реально вызван.
+    assert!(
+        s1_tools
+            .iter()
+            .any(|t| t == "update_self_model" || t == "update_user_model"),
+        "ожидали вызов update_self_model/update_user_model в сессии 1"
+    );
+}
+
+/// End-to-end зонд нарратива (Tier 2): просим модель зафиксировать наблюдение
+/// через `add_insight` — ожидаем непустой нарратив в БД. `#[ignore]`, вручную.
+#[tokio::test]
+#[ignore = "requires a running OpenAI-compatible server (MINDFORK_ENGINE_URL)"]
+async fn self_model_insight_e2e_live() {
+    let Some(backend) = live_backend() else {
+        eprintln!("skip: MINDFORK_ENGINE_URL not set");
+        return;
+    };
+    let (_d, cmd_tx, mut evt_rx, handle) = spawn_orch(Some(backend));
+    let root = _d.path().to_path_buf();
+    let pid = enable_all_tools(&cmd_tx, &mut evt_rx).await;
+
+    let (text, tools) = run_turn_live(
+        &cmd_tx,
+        &mut evt_rx,
+        "Я заметил, что иногда прошу кратко, а иногда — подробно. \
+         Зафиксируй это наблюдение в своём нарративе: вызови инструмент add_insight \
+         с коротким описанием этого противоречия.",
+    )
+    .await;
+    eprintln!("insight: инструменты={tools:?}\nтекст={text:?}\n");
+
+    cmd_tx.send(AppCommand::Quit).unwrap();
+    handle.await.unwrap();
+
+    let reopened = Storage::open(Paths::with_root(&root)).unwrap();
+    let model = reopened.db().self_model_get(pid).unwrap();
+    eprintln!("self_model в БД: {model:#?}");
+    let model = model.expect("ожидали сохранённую модель себя");
+    assert!(
+        !model.narrative.is_empty(),
+        "ожидали хотя бы один инсайт в нарративе (вызов add_insight)"
+    );
+    assert!(
+        tools.iter().any(|t| t == "add_insight"),
+        "ожидали вызов add_insight"
+    );
+}
+
+/// End-to-end авто-рефлексии (Tier 3) на живой модели: `auto_reflect_every=1` →
+/// после первого же ответа ассистента в фоне запускается рефлексия, которая сама
+/// обновляет «модель себя». Рефлексия молчалива (нет UI-события) — ждём появления
+/// данных в БД опросом. `#[ignore]`, вручную.
+#[tokio::test]
+#[ignore = "requires a running OpenAI-compatible server (MINDFORK_ENGINE_URL)"]
+async fn auto_reflect_e2e_live() {
+    let Some(backend) = live_backend() else {
+        eprintln!("skip: MINDFORK_ENGINE_URL not set");
+        return;
+    };
+    let mut config = AppConfig::default();
+    config.self_model.auto_reflect_every = 1; // рефлексия после каждого ответа
+    let (_d, cmd_tx, mut evt_rx, handle) = spawn_orch_cfg(Some(backend), config);
+    let root = _d.path().to_path_buf();
+    let pid = enable_all_tools(&cmd_tx, &mut evt_rx).await;
+
+    // Обычная отправка: сообщаем факты, ассистент отвечает (а затем фоновая
+    // рефлексия должна сама зафиксировать «модель себя»).
+    let (_t, _tools) = run_turn_live(
+        &cmd_tx,
+        &mut evt_rx,
+        "Привет! Меня зовут Владимир, пишу на Rust и ценю краткость. Просто ответь \
+         коротким приветствием.",
+    )
+    .await;
+
+    // Ждём, пока фоновая рефлексия запишет модель себя (опрос БД до ~60с).
+    let mut found = None;
+    for _ in 0..120 {
+        let db = Storage::open(Paths::with_root(&root)).unwrap();
+        if let Some(m) = db.db().self_model_get(pid).unwrap()
+            && !m.is_empty()
+        {
+            found = Some(m);
+            break;
+        }
+        drop(db);
+        tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+    }
+
+    cmd_tx.send(AppCommand::Quit).unwrap();
+    handle.await.unwrap();
+
+    eprintln!("auto-reflect: self_model в БД: {found:#?}");
+    assert!(
+        found.is_some(),
+        "ожидали, что фоновая авто-рефлексия заполнит модель себя"
+    );
+}
+
+#[tokio::test]
+async fn update_self_model_persists_and_reemits() {
+    use crate::entities::self_model::SelfModelEdit;
+    let (_d, cmd_tx, mut evt_rx, handle) = spawn_orch(None);
+    let root = _d.path().to_path_buf();
+    wait_for(&mut evt_rx, |e| matches!(e, AppEvent::ChatActivated { .. }))
+        .await
+        .unwrap();
+
+    // Правка из UI-редактора (без модели — оркестратор создаёт её на месте).
+    cmd_tx
+        .send(AppCommand::UpdateSelfModel(SelfModelEdit::SetSummary(
+            "ценю ясность".into(),
+        )))
+        .unwrap();
+
+    // Переэмит снимка отражает правку.
+    let ev = wait_for(&mut evt_rx, |e| matches!(e, AppEvent::SelfModelView(_)))
+        .await
+        .unwrap();
+    match ev {
+        AppEvent::SelfModelView(m) => {
+            assert_eq!(m.expect("ожидали модель").summary, "ценю ясность");
+        }
+        _ => unreachable!(),
+    }
+
+    cmd_tx.send(AppCommand::Quit).unwrap();
+    handle.await.unwrap();
+
+    // Персистентность: запись видна после перезапуска.
+    let reopened = Storage::open(Paths::with_root(&root)).unwrap();
+    let pid = reopened.json().load_profiles().unwrap()[0].id;
+    let stored = reopened.db().self_model_get(pid).unwrap().unwrap();
+    assert_eq!(stored.summary, "ценю ясность");
 }
 
 #[tokio::test]

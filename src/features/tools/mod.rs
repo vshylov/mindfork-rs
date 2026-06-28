@@ -16,6 +16,7 @@ pub mod introspection;
 pub mod notes;
 pub mod python;
 pub mod rag;
+pub mod self_model;
 pub mod subagent;
 pub mod web;
 
@@ -29,6 +30,7 @@ use uuid::Uuid;
 
 use crate::entities::profile::ToolId;
 use crate::entities::sampling::{SamplingConfig, supported_sampling_fields};
+use crate::entities::self_model::SelfModelParams;
 use crate::shared::api::{Embedder, EngineBackend, ToolSchema};
 use crate::shared::config::CloudProvider;
 use crate::shared::storage::Storage;
@@ -55,6 +57,14 @@ pub struct ToolContext {
     pub embedder: Arc<dyn Embedder>,
     /// Параметры чанкинга RAG из настроек (`config.rag`, spec §9.3).
     pub chunk_params: rag::ChunkParams,
+    /// Снимок «модели себя» профиля на начало хода (то, что подмешано в промпт
+    /// этого хода). Инструменты SelfModel читают/пишут свежее состояние напрямую
+    /// через `storage` (чтобы видеть правки внутри хода), поэтому снимок — пока
+    /// API-впереди-потребителей (как `chat_id`); оставлен ради полноты снимка хода.
+    #[allow(dead_code)]
+    pub self_model: Option<crate::entities::self_model::SelfModel>,
+    /// Параметры рендера/хранения «модели себя» из настроек (`config.self_model`).
+    pub self_model_params: SelfModelParams,
 }
 
 /// Эффект, изменяющий `Chat`; возвращается инструментом, применяется оркестратором.
@@ -162,6 +172,13 @@ pub fn all_tool_ids() -> Vec<ToolId> {
     let mut ids = default_tool_ids();
     ids.push(control::SEND_FOLLOWUP_ID.into());
     ids.push(control::REWRITE_CURRENT_ID.into());
+    // Инструменты «модели себя» (SelfModel MVP) — опциональны, по умолчанию выкл;
+    // данные пер-профильные в SQLite, см. docs/self-model-mvp.md.
+    ids.push(self_model::GET_SELF_MODEL_ID.into());
+    ids.push(self_model::REFLECT_ID.into());
+    ids.push(self_model::UPDATE_SELF_MODEL_ID.into());
+    ids.push(self_model::UPDATE_USER_MODEL_ID.into());
+    ids.push(self_model::ADD_INSIGHT_ID.into());
     ids
 }
 
@@ -261,6 +278,12 @@ pub fn standard_registry(cfg: &ToolConfig) -> ToolRegistry {
     // Управляющие инструменты беседы (опциональны, гейтятся набором профиля).
     reg.register(Arc::new(control::SendFollowupMessage));
     reg.register(Arc::new(control::RewriteCurrentMessage));
+    // Инструменты «модели себя» (опциональны, DB-only, гейтятся набором профиля).
+    reg.register(Arc::new(self_model::GetSelfModel));
+    reg.register(Arc::new(self_model::Reflect));
+    reg.register(Arc::new(self_model::UpdateSelfModel));
+    reg.register(Arc::new(self_model::UpdateUserModel));
+    reg.register(Arc::new(self_model::AddInsight));
     reg
 }
 
@@ -336,6 +359,8 @@ pub(crate) mod testkit {
             engine,
             embedder,
             chunk_params: rag::ChunkParams::default(),
+            self_model: None,
+            self_model_params: SelfModelParams::default(),
         };
         (dir, storage, ctx)
     }
@@ -426,6 +451,31 @@ mod tests {
                 .iter()
                 .any(|t| t == control::REWRITE_CURRENT_ID)
         );
+    }
+
+    #[test]
+    fn self_model_tools_optional_not_in_defaults() {
+        // Инструменты «модели себя» — в каталоге, но не среди дефолтных.
+        for id in [
+            self_model::GET_SELF_MODEL_ID,
+            self_model::REFLECT_ID,
+            self_model::UPDATE_SELF_MODEL_ID,
+            self_model::UPDATE_USER_MODEL_ID,
+            self_model::ADD_INSIGHT_ID,
+        ] {
+            assert!(
+                !default_tool_ids().iter().any(|t| t == id),
+                "{id} в дефолтах"
+            );
+            assert!(
+                all_tool_ids().iter().any(|t| t == id),
+                "{id} нет в каталоге"
+            );
+        }
+        // DB-only: проходят эффективный набор без глобальных гейтов.
+        let eff = effective_tool_ids(&all_tool_ids(), false, false, false, None);
+        assert!(eff.iter().any(|t| t == self_model::GET_SELF_MODEL_ID));
+        assert!(eff.iter().any(|t| t == self_model::UPDATE_SELF_MODEL_ID));
     }
 
     #[test]
