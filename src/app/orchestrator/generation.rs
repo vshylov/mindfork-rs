@@ -197,6 +197,8 @@ impl Orchestrator {
         // системный промпт — только если профиль включил инструмент get_self_model
         // (opt-in). См. docs/self-model-mvp.md.
         let self_model = self.storage.db().self_model_get(profile_id).ok().flatten();
+        let self_model_params =
+            crate::entities::self_model::SelfModelParams::from_settings(&self.config.self_model);
         let inject_enabled = enabled
             .iter()
             .any(|t| t == crate::features::tools::self_model::GET_SELF_MODEL_ID);
@@ -222,12 +224,17 @@ impl Orchestrator {
                     &self.config.rag,
                 ),
                 self_model: self_model.clone(),
+                self_model_params,
             };
         }
 
         // Подмешиваем компактный рендер модели себя в системный промпт.
-        request.system =
-            inject_self_model(request.system.take(), self_model.as_ref(), inject_enabled);
+        request.system = inject_self_model(
+            request.system.take(),
+            self_model.as_ref(),
+            inject_enabled,
+            &self_model_params,
+        );
 
         let id = Uuid::new_v4();
         let cancel = CancellationToken::new();
@@ -607,12 +614,13 @@ pub(super) fn inject_self_model(
     system: Option<String>,
     model: Option<&crate::entities::self_model::SelfModel>,
     enabled: bool,
+    params: &crate::entities::self_model::SelfModelParams,
 ) -> Option<String> {
     if !enabled {
         return system;
     }
     let Some(block) =
-        model.and_then(|m| m.render_for_prompt(crate::entities::self_model::DEFAULT_PROMPT_CAP))
+        model.and_then(|m| m.render_for_prompt(params.prompt_cap, params.narrative_in_prompt))
     else {
         return system;
     };

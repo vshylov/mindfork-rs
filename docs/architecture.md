@@ -615,14 +615,16 @@ agentic-loop **гейтит и сам вызов** (выключенный ин�
   профилю.
 - **Модель себя (SelfModel)** — пер-профильная «модель себя» агента
   (`entities/self_model.rs`: свободный `summary` + `goals` + `user_model` + `narrative`
-  инсайтов с потолком `MAX_NARRATIVE`) в таблице `self_models` SQLite. Инструменты
+  инсайтов) в таблице `self_models` SQLite. Инструменты
   `update_self_model`/`update_user_model`/`add_insight` пишут **напрямую** через
   `ctx.storage` (как `note_save`), **без `ChatEffect`** — это не состояние `Chat`;
   `get_self_model`/`reflect` — чтение/рубрика. Противоречия фиксируются нарративом
   прозой (без отдельного типа). Оркестратор в начале хода читает снимок и
-  **компактно** подмешивает его в `system`-промпт (`generation::inject_self_model`,
-  свежие `NARRATIVE_IN_PROMPT` инсайтов; гейт: профиль включил `get_self_model`).
-  Опциональны (нет в `default_tool_ids`). См. [docs/self-model-mvp.md](self-model-mvp.md).
+  **компактно** подмешивает его в `system`-промпт (`generation::inject_self_model`;
+  гейт: профиль включил `get_self_model`). Размеры нарратива и объём инъекции —
+  настраиваемы (`config.self_model: SelfModelSettings` → `SelfModelParams`, аналог
+  `ChunkParams` у RAG; поля в экране настроек). Опциональны (нет в `default_tool_ids`).
+  См. [docs/self-model-mvp.md](self-model-mvp.md).
 
 ---
 

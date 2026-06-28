@@ -1815,6 +1815,24 @@ web-поиск и Python под выключателями, экран наст�
   **601 юнит-тест зелёный**, clippy/fmt чисты. Не тестируется на живой модели
   (интерактивный TUI — нужен настоящий терминал). Добавлено в оверлей помощи (`F1`/`?`).
 
+### Пост-M9: SelfModel Tier 3-A — параметры нарратива/инъекции в настройках (сделано)
+- **Размеры нарратива и объём инъекции в промпт вынесены из констант в конфиг**
+  (`config.self_model: SelfModelSettings` — `max_narrative`/`narrative_in_prompt`/
+  `prompt_cap`; `#[serde(default)]` → старые `settings.json` без миграции; дефолты =
+  прежние 50/3/1200). Прежние захардкоженные `MAX_NARRATIVE`/`NARRATIVE_IN_PROMPT`/
+  `DEFAULT_PROMPT_CAP` сняты.
+- **Тип `SelfModelParams`** (`entities/self_model.rs`, аналог `ChunkParams` у RAG):
+  `from_settings` санитизирует (max≥1; в промпт не больше, чем хранится; cap≥100).
+  Методы сущности параметризованы: `add_insight(text, max_narrative)`,
+  `render_for_prompt(prompt_cap, narrative_in_prompt)`. Протянут в `ToolContext.
+  self_model_params` (строится из `config.self_model` в `start_generation`);
+  инструменты (`add_insight`/`render_or_empty`) и `inject_self_model` используют его.
+- **UI**: три числовых поля в секции «Инструменты» экрана настроек (рядом с RAG-
+  чанкингом) с подсказками-описаниями (`field_description`); `FieldId::Sm*`.
+- **Тесты**: config (дефолты в `partial_json_fills_defaults`); entity (кастомные
+  параметры ограничивают хранение/инъекцию; санитизация несогласованных настроек).
+  **603 юнит-теста зелёные**, clippy/fmt чисты.
+
 ### Отложено за пределы M3
 - **Сворачивание/выделение per-message** и tool-блоки в ленте — сейчас «мысли»
   сворачиваются глобально (`Ctrl+T`); выделение сообщений и tool-блоки — на M5.

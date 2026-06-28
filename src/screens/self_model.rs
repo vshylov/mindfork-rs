@@ -228,7 +228,7 @@ mod tests {
         m.summary = "ценю ясность".into();
         m.add_goal("помочь с проектом");
         m.user_model.perceived_traits = vec!["скептичный".into()];
-        m.add_insight("замечен интерес к Rust");
+        m.add_insight("замечен интерес к Rust", 50);
         let s = SelfModelScreen::new(Some(m), Palette::default());
 
         // Содержимое включает заголовки секций.

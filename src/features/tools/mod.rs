@@ -30,6 +30,7 @@ use uuid::Uuid;
 
 use crate::entities::profile::ToolId;
 use crate::entities::sampling::{SamplingConfig, supported_sampling_fields};
+use crate::entities::self_model::SelfModelParams;
 use crate::shared::api::{Embedder, EngineBackend, ToolSchema};
 use crate::shared::config::CloudProvider;
 use crate::shared::storage::Storage;
@@ -62,6 +63,8 @@ pub struct ToolContext {
     /// API-впереди-потребителей (как `chat_id`); оставлен ради полноты снимка хода.
     #[allow(dead_code)]
     pub self_model: Option<crate::entities::self_model::SelfModel>,
+    /// Параметры рендера/хранения «модели себя» из настроек (`config.self_model`).
+    pub self_model_params: SelfModelParams,
 }
 
 /// Эффект, изменяющий `Chat`; возвращается инструментом, применяется оркестратором.
@@ -357,6 +360,7 @@ pub(crate) mod testkit {
             embedder,
             chunk_params: rag::ChunkParams::default(),
             self_model: None,
+            self_model_params: SelfModelParams::default(),
         };
         (dir, storage, ctx)
     }

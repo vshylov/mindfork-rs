@@ -7,13 +7,41 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-/// Максимум символов рендера модели в системный промпт (защита 8k-контекста).
-pub const DEFAULT_PROMPT_CAP: usize = 1200;
+use crate::shared::config::SelfModelSettings;
 
-/// Потолок хранения нарратива (инсайтов): держим самые свежие.
-pub const MAX_NARRATIVE: usize = 50;
-/// Сколько свежих инсайтов подмешивать в системный промпт (экономия контекста).
-pub const NARRATIVE_IN_PROMPT: usize = 3;
+/// Параметры рендера/хранения «модели себя» (из `config.self_model`). Передаются в
+/// методы сущности вместо захардкоженных констант, чтобы пользователь мог
+/// регулировать размеры нарратива и объём инъекции в промпт. Аналог
+/// [`ChunkParams`](crate::features::tools::rag::ChunkParams) для RAG.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SelfModelParams {
+    /// Потолок хранения инсайтов (старые вытесняются).
+    pub max_narrative: usize,
+    /// Сколько свежих инсайтов идёт в системный промпт.
+    pub narrative_in_prompt: usize,
+    /// Потолок символов рендера модели в системный промпт.
+    pub prompt_cap: usize,
+}
+
+impl Default for SelfModelParams {
+    fn default() -> Self {
+        Self::from_settings(&SelfModelSettings::default())
+    }
+}
+
+impl SelfModelParams {
+    /// Строит параметры из настроек, санитизируя значения (защита от нулей и
+    /// несогласованности: хотя бы 1 инсайт хранится, в промпт не больше, чем хранится,
+    /// читаемый минимум символов промпта).
+    pub fn from_settings(s: &SelfModelSettings) -> Self {
+        let max_narrative = s.max_narrative.max(1);
+        Self {
+            max_narrative,
+            narrative_in_prompt: s.narrative_in_prompt.min(max_narrative),
+            prompt_cap: s.prompt_cap.max(100),
+        }
+    }
+}
 
 /// Представление агента о себе (один экземпляр на профиль).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -124,9 +152,9 @@ impl SelfModel {
         }
     }
 
-    /// Добавляет инсайт в нарратив (append-only, с обрезкой до `MAX_NARRATIVE`
+    /// Добавляет инсайт в нарратив (append-only, с обрезкой до `max_narrative`
     /// самых свежих). Пустой текст игнорируется.
-    pub fn add_insight(&mut self, text: impl Into<String>) {
+    pub fn add_insight(&mut self, text: impl Into<String>, max_narrative: usize) {
         let text = text.into().trim().to_string();
         if text.is_empty() {
             return;
@@ -136,15 +164,21 @@ impl SelfModel {
             text,
             created_at: Utc::now(),
         });
-        if self.narrative.len() > MAX_NARRATIVE {
-            let drop = self.narrative.len() - MAX_NARRATIVE;
+        let max_narrative = max_narrative.max(1);
+        if self.narrative.len() > max_narrative {
+            let drop = self.narrative.len() - max_narrative;
             self.narrative.drain(0..drop);
         }
     }
 
     /// Компактный человекочитаемый блок для инъекции в системный промпт.
-    /// `None`, если модель пуста. Усекается до `max_chars` символов.
-    pub fn render_for_prompt(&self, max_chars: usize) -> Option<String> {
+    /// `None`, если модель пуста. В нарратив идут `narrative_in_prompt` свежих
+    /// инсайтов; результат усекается до `max_chars` символов.
+    pub fn render_for_prompt(
+        &self,
+        max_chars: usize,
+        narrative_in_prompt: usize,
+    ) -> Option<String> {
         if self.is_empty() {
             return None;
         }
@@ -182,9 +216,9 @@ impl SelfModel {
             }
             out.push('\n');
         }
-        if !self.narrative.is_empty() {
+        if !self.narrative.is_empty() && narrative_in_prompt > 0 {
             out.push_str("Недавние наблюдения:\n");
-            for seg in self.narrative.iter().rev().take(NARRATIVE_IN_PROMPT) {
+            for seg in self.narrative.iter().rev().take(narrative_in_prompt) {
                 out.push_str("- ");
                 out.push_str(seg.text.trim());
                 out.push('\n');
@@ -217,11 +251,19 @@ fn truncate_chars(s: &str, max_chars: usize) -> String {
 mod tests {
     use super::*;
 
+    /// Дефолтные параметры рендера/хранения для тестов.
+    fn p() -> SelfModelParams {
+        SelfModelParams::default()
+    }
+
     #[test]
     fn empty_model_renders_none() {
         let m = SelfModel::new(Uuid::new_v4());
         assert!(m.is_empty());
-        assert!(m.render_for_prompt(DEFAULT_PROMPT_CAP).is_none());
+        assert!(
+            m.render_for_prompt(p().prompt_cap, p().narrative_in_prompt)
+                .is_none()
+        );
     }
 
     #[test]
@@ -248,7 +290,9 @@ mod tests {
         m.user_model.current_interests = vec!["Rust".into()];
         m.user_model.relationship_dynamic = "доверительные".into();
 
-        let r = m.render_for_prompt(DEFAULT_PROMPT_CAP).unwrap();
+        let r = m
+            .render_for_prompt(p().prompt_cap, p().narrative_in_prompt)
+            .unwrap();
         assert!(r.contains("О себе: ценю честность"));
         assert!(r.contains("разобраться в коде"));
         assert!(r.contains("черты: любопытный"));
@@ -258,29 +302,70 @@ mod tests {
 
     #[test]
     fn insights_append_cap_and_render() {
+        let params = p();
         let mut m = SelfModel::new(Uuid::new_v4());
         // Только нарратив → модель уже информативна (рендерится).
-        m.add_insight("заметил напряжение между «кратко» и «полно»");
-        m.add_insight("   "); // пустой игнорируется
+        m.add_insight(
+            "заметил напряжение между «кратко» и «полно»",
+            params.max_narrative,
+        );
+        m.add_insight("   ", params.max_narrative); // пустой игнорируется
         assert!(!m.is_empty());
         assert_eq!(m.narrative.len(), 1);
-        let r = m.render_for_prompt(DEFAULT_PROMPT_CAP).unwrap();
+        let r = m
+            .render_for_prompt(params.prompt_cap, params.narrative_in_prompt)
+            .unwrap();
         assert!(r.contains("Недавние наблюдения:"));
         assert!(r.contains("напряжение"));
 
-        // Потолок: держим самые свежие MAX_NARRATIVE.
-        for i in 0..MAX_NARRATIVE + 10 {
-            m.add_insight(format!("инсайт {i}"));
+        // Потолок: держим самые свежие max_narrative.
+        for i in 0..params.max_narrative + 10 {
+            m.add_insight(format!("инсайт {i}"), params.max_narrative);
         }
-        assert_eq!(m.narrative.len(), MAX_NARRATIVE);
+        assert_eq!(m.narrative.len(), params.max_narrative);
         // Самый старый из добавленных в цикле вытеснен, последний — присутствует.
-        assert!(m.narrative.iter().any(|s| s.text == "инсайт 59"));
+        let last = format!("инсайт {}", params.max_narrative + 9);
+        assert!(m.narrative.iter().any(|s| s.text == last));
         assert!(!m.narrative.iter().any(|s| s.text == "инсайт 0"));
 
-        // В промпт идут только NARRATIVE_IN_PROMPT свежих (новейший — первым).
-        let r = m.render_for_prompt(DEFAULT_PROMPT_CAP).unwrap();
-        assert_eq!(r.matches("- инсайт ").count(), NARRATIVE_IN_PROMPT);
-        assert!(r.contains("инсайт 59"));
+        // В промпт идут только narrative_in_prompt свежих (новейший — первым).
+        let r = m
+            .render_for_prompt(params.prompt_cap, params.narrative_in_prompt)
+            .unwrap();
+        assert_eq!(r.matches("- инсайт ").count(), params.narrative_in_prompt);
+        assert!(r.contains(&last));
+    }
+
+    #[test]
+    fn custom_params_limit_storage_and_injection() {
+        // Параметры из настроек: хранить 5, в промпт — 2.
+        let params = SelfModelParams::from_settings(&SelfModelSettings {
+            max_narrative: 5,
+            narrative_in_prompt: 2,
+            prompt_cap: 1000,
+        });
+        let mut m = SelfModel::new(Uuid::new_v4());
+        for i in 0..10 {
+            m.add_insight(format!("инсайт {i}"), params.max_narrative);
+        }
+        assert_eq!(m.narrative.len(), 5);
+        let r = m
+            .render_for_prompt(params.prompt_cap, params.narrative_in_prompt)
+            .unwrap();
+        assert_eq!(r.matches("- инсайт ").count(), 2);
+    }
+
+    #[test]
+    fn params_sanitize_inconsistent_settings() {
+        // Нулевой max → минимум 1; in_prompt не больше max; крошечный cap → пол.
+        let params = SelfModelParams::from_settings(&SelfModelSettings {
+            max_narrative: 0,
+            narrative_in_prompt: 99,
+            prompt_cap: 1,
+        });
+        assert_eq!(params.max_narrative, 1);
+        assert_eq!(params.narrative_in_prompt, 1);
+        assert_eq!(params.prompt_cap, 100);
     }
 
     #[test]
@@ -291,14 +376,17 @@ mod tests {
         m.set_goal_status(id, GoalStatus::Completed);
         // только завершённая цель → модель «пуста» для рендера
         assert!(m.is_empty());
-        assert!(m.render_for_prompt(DEFAULT_PROMPT_CAP).is_none());
+        assert!(
+            m.render_for_prompt(p().prompt_cap, p().narrative_in_prompt)
+                .is_none()
+        );
     }
 
     #[test]
     fn render_truncates_to_cap() {
         let mut m = SelfModel::new(Uuid::new_v4());
         m.summary = "я".repeat(500);
-        let r = m.render_for_prompt(50).unwrap();
+        let r = m.render_for_prompt(50, p().narrative_in_prompt).unwrap();
         assert_eq!(r.chars().count(), 50);
         assert!(r.ends_with('…'));
     }

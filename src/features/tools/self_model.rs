@@ -8,7 +8,7 @@ use anyhow::Result;
 use uuid::Uuid;
 
 use crate::entities::profile::ToolId;
-use crate::entities::self_model::{DEFAULT_PROMPT_CAP, GoalStatus, SelfModel};
+use crate::entities::self_model::{GoalStatus, SelfModel, SelfModelParams};
 
 use super::{Tool, ToolContext, ToolOutcome};
 
@@ -42,9 +42,10 @@ fn str_array(args: &serde_json::Value, key: &str) -> Vec<String> {
         .unwrap_or_default()
 }
 
-/// Рендер модели для результата инструмента (или явная пометка пустоты).
-fn render_or_empty(m: &SelfModel) -> String {
-    m.render_for_prompt(DEFAULT_PROMPT_CAP)
+/// Рендер модели для результата инструмента (или явная пометка пустоты), по
+/// параметрам хода (`config.self_model`).
+fn render_or_empty(m: &SelfModel, params: &SelfModelParams) -> String {
+    m.render_for_prompt(params.prompt_cap, params.narrative_in_prompt)
         .unwrap_or_else(|| "(модель себя пока пуста)".to_string())
 }
 
@@ -66,7 +67,10 @@ impl Tool for GetSelfModel {
     }
     async fn invoke(&self, ctx: &ToolContext, _args: serde_json::Value) -> Result<ToolOutcome> {
         let m = load(ctx)?;
-        Ok(ToolOutcome::text(render_or_empty(&m)))
+        Ok(ToolOutcome::text(render_or_empty(
+            &m,
+            &ctx.self_model_params,
+        )))
     }
 }
 
@@ -99,7 +103,7 @@ impl Tool for Reflect {
              - Заметил(а) ли я противоречие/напряжение в себе или разговоре?\n\
              Если есть что зафиксировать — вызови update_self_model, update_user_model \
              и/или add_insight (для наблюдений и противоречий прозой).",
-            render_or_empty(&m)
+            render_or_empty(&m, &ctx.self_model_params)
         );
         Ok(ToolOutcome::text(out))
     }
@@ -141,7 +145,7 @@ impl Tool for AddInsight {
             anyhow::bail!("ожидается непустое поле text");
         }
         let mut m = load(ctx)?;
-        m.add_insight(text);
+        m.add_insight(text, ctx.self_model_params.max_narrative);
         ctx.storage.db().self_model_upsert(&m)?;
         Ok(ToolOutcome::text("Наблюдение записано в нарратив."))
     }
@@ -203,7 +207,7 @@ impl Tool for UpdateSelfModel {
         ctx.storage.db().self_model_upsert(&m)?;
         Ok(ToolOutcome::text(format!(
             "Модель себя обновлена.\n{}",
-            render_or_empty(&m)
+            render_or_empty(&m, &ctx.self_model_params)
         )))
     }
 }
@@ -257,7 +261,7 @@ impl Tool for UpdateUserModel {
         ctx.storage.db().self_model_upsert(&m)?;
         Ok(ToolOutcome::text(format!(
             "Модель собеседника обновлена.\n{}",
-            render_or_empty(&m)
+            render_or_empty(&m, &ctx.self_model_params)
         )))
     }
 }

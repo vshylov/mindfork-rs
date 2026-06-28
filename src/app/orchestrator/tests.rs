@@ -129,30 +129,31 @@ fn bare_orch_rx() -> (tempfile::TempDir, Orchestrator, UnboundedReceiver<AppEven
 #[test]
 fn inject_self_model_respects_flag_and_emptiness() {
     use super::generation::inject_self_model;
-    use crate::entities::self_model::SelfModel;
+    use crate::entities::self_model::{SelfModel, SelfModelParams};
 
+    let pp = SelfModelParams::default();
     let mut m = SelfModel::new(Uuid::new_v4());
     m.summary = "ценю ясность".into();
 
     // Выключено → система не меняется.
     assert_eq!(
-        inject_self_model(Some("S".into()), Some(&m), false),
+        inject_self_model(Some("S".into()), Some(&m), false, &pp),
         Some("S".into())
     );
     // Включено + непустая модель → дописывается к системе.
-    let out = inject_self_model(Some("S".into()), Some(&m), true).unwrap();
+    let out = inject_self_model(Some("S".into()), Some(&m), true, &pp).unwrap();
     assert!(out.starts_with("S\n\n"));
     assert!(out.contains("ценю ясность"));
     // Включено, но модели нет → без изменений.
     assert_eq!(
-        inject_self_model(Some("S".into()), None, true),
+        inject_self_model(Some("S".into()), None, true, &pp),
         Some("S".into())
     );
     // Включено, модель пуста → без изменений (None остаётся None).
     let empty = SelfModel::new(Uuid::new_v4());
-    assert_eq!(inject_self_model(None, Some(&empty), true), None);
+    assert_eq!(inject_self_model(None, Some(&empty), true, &pp), None);
     // Пустой system + непустая модель → блок становится системой.
-    let only = inject_self_model(None, Some(&m), true).unwrap();
+    let only = inject_self_model(None, Some(&m), true, &pp).unwrap();
     assert!(only.contains("О себе: ценю ясность"));
 }
 

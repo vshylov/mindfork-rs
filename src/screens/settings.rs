@@ -399,6 +399,10 @@ enum FieldId {
     RagTarget,
     RagOverlap,
     RagMax,
+    // Модель себя (нарратив, инъекция в промпт)
+    SmMaxNarrative,
+    SmNarrativeInPrompt,
+    SmPromptCap,
     // Интерфейс
     ITheme,
     ISpell,
@@ -707,6 +711,21 @@ impl SettingsScreen {
                 FieldId::RagMax,
                 "RAG: потолок чанка (симв.)",
                 FieldKind::Text(self.config.rag.chunk_max_chars.to_string()),
+            ),
+            row(
+                FieldId::SmMaxNarrative,
+                "Модель себя: хранить инсайтов",
+                FieldKind::Text(self.config.self_model.max_narrative.to_string()),
+            ),
+            row(
+                FieldId::SmNarrativeInPrompt,
+                "Модель себя: инсайтов в промпт",
+                FieldKind::Text(self.config.self_model.narrative_in_prompt.to_string()),
+            ),
+            row(
+                FieldId::SmPromptCap,
+                "Модель себя: лимит инъекции (симв.)",
+                FieldKind::Text(self.config.self_model.prompt_cap.to_string()),
             ),
         ]);
         rows
@@ -1313,6 +1332,21 @@ impl SettingsScreen {
                     s.rag.chunk_max_chars = v;
                 }
             }
+            FieldId::SmMaxNarrative => {
+                if let Ok(v) = trimmed.parse() {
+                    s.self_model.max_narrative = v;
+                }
+            }
+            FieldId::SmNarrativeInPrompt => {
+                if let Ok(v) = trimmed.parse() {
+                    s.self_model.narrative_in_prompt = v;
+                }
+            }
+            FieldId::SmPromptCap => {
+                if let Ok(v) = trimmed.parse() {
+                    s.self_model.prompt_cap = v;
+                }
+            }
             FieldId::IDicts => {
                 s.interface.selected_dictionaries = trimmed
                     .split(',')
@@ -1646,6 +1680,19 @@ fn field_description(id: FieldId) -> Option<&'static str> {
         FieldId::RagMax => Some(
             "Жёсткий потолок неделимого фрагмента в символах (очень длинная строка/слово \
              без пунктуации). Не меньше целевого размера.",
+        ),
+        FieldId::SmMaxNarrative => Some(
+            "Сколько инсайтов (наблюдений) хранить в нарративе «модели себя». При \
+             переполнении старые вытесняются. Только для профилей с включёнными \
+             инструментами модели себя.",
+        ),
+        FieldId::SmNarrativeInPrompt => Some(
+            "Сколько самых свежих инсайтов подмешивать в системный промпт (новейшие \
+             первыми). Больше — богаче контекст «я», но дороже по токенам.",
+        ),
+        FieldId::SmPromptCap => Some(
+            "Потолок символов компактного блока «модели себя», подмешиваемого в системный \
+             промпт. Защита окна контекста: длинный блок усекается.",
         ),
         // Описания параметров семплинга (одинаковые для обеих подсекций).
         FieldId::S(p) | FieldId::IS(p) => p.description(),
