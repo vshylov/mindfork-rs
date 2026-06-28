@@ -1721,6 +1721,60 @@ web-поиск и Python под выключателями, экран наст�
   **579 тестов зелёные**, clippy/fmt чисты. Живой прогон на реальном
   `mtp-gemma-4-12B-it.gguf` — ручная проверка (нужны GPU/модель).
 
+### Пост-M9: SelfModel MVP — «модель себя» агента (зонд, сделано)
+- **Урезанный Phase 1 из банка идей** ([docs/self-model.md](docs/self-model.md)) по
+  плану [docs/self-model-mvp.md](docs/self-model-mvp.md): пер-профильная «модель
+  себя» агента — свободный текст о себе + цели + представление о собеседнике. Цель
+  зонда — проверить **поведенческую** пользу (вспоминает ли локальная модель факты о
+  пользователе и свои цели между чатами), а не строить полную мета-когнитивную
+  машинерию. Сознательно **выкинуто**: `beliefs` с числовыми «силами», противоречия
+  с detect/resolve, нарратив, версионная история, авто-рефлексия по таймеру, вся
+  «глубокая осознанность» (Phase 4 исходного документа).
+- **Ключевое отступление от исходного документа**: тот моделировал SelfModel через
+  `ChatEffect` (как состояние `Chat`). В реальной архитектуре пер-профильные данные
+  (заметки/RAG) пишутся инструментами **напрямую** в SQLite (`Storage` —
+  потокобезопасный `Arc`+мьютекс), а `ChatEffect` существует только для мутаций
+  `Chat` (его единолично владеет оркестратор). Поэтому **новых вариантов `ChatEffect`
+  нет** — SelfModel-инструменты пишут через `ctx.storage`, как `note_save`; инвариант
+  «единственный владелец `Chat`» не затронут.
+- **Сущность** `entities/self_model.rs`: `SelfModel { profile_id, version, summary,
+  goals: Vec<Goal>, user_model: UserModel }`; `Goal { id, description, status:
+  Active/Completed/Abandoned }`; `UserModel { perceived_traits, current_interests,
+  relationship_dynamic }`. Методы `new`/`is_empty` (учитывает только **активные**
+  цели — модель из одних завершённых целей не делает блок информативным)/`add_goal`/
+  `set_goal_status`/`render_for_prompt(max_chars)` (компактный блок «[Твоя модель
+  себя] О себе:… / Активные цели:… / О собеседнике:…», усечение по символам ради
+  8k-контекста). serde `#[serde(default)]`.
+- **Хранение** `shared/storage/db.rs`: таблица `self_models(profile_id PK, data JSON,
+  version, updated_at)` (`CREATE TABLE IF NOT EXISTS` → без миграции); методы
+  `self_model_get`/`self_model_upsert` (INSERT OR REPLACE, версию ведёт хранилище;
+  `version` хранится как `i64` — rusqlite не умеет `u64`). Изоляция по PK `profile_id`.
+- **Инструменты** `features/tools/self_model.rs` (4, по шаблону `notes.rs`):
+  `get_self_model` (чтение), `reflect` (возвращает текущую модель + рубрику для
+  саморефлексии, без записи — «точка входа»), `update_self_model` (summary + цели:
+  add/complete/abandon по id; управление целями свёрнуто в один инструмент),
+  `update_user_model` (списки заменяют прежние). Мутаторы читают свежее из БД (а не из
+  снимка `ctx.self_model`), чтобы видеть правки внутри хода; ошибки — текстом, не
+  паника.
+- **Опциональны, по умолчанию выкл** (как control-инструменты): в `all_tool_ids`, но
+  **не** в `default_tool_ids` (`reconcile_tools` их не включает у существующих/новых
+  профилей; тумблеры профиля строятся из `all_tool_ids`). DB-only → в
+  `effective_tool_ids` проходят через `_ => true` без глобальных гейтов.
+- **Интеграция** `app/orchestrator/generation.rs::start_generation`: снимок
+  `self_model_get(profile_id)` кладётся в `ToolContext.self_model` и **компактно**
+  подмешивается в `request.system` чистой функцией `inject_self_model(system, model,
+  enabled)` — гейт: профиль включил `get_self_model` (opt-in). `ToolContext.self_model`
+  пока `#[allow(dead_code)]` (инструменты читают из БД; снимок оставлен ради полноты
+  снимка хода, как `chat_id`). `handle_done` не тронут (эффектов нет).
+- **Тесты**: entity (merge целей, render/усечение, `is_empty` по активным целям); db
+  (round-trip + изоляция по профилю + рост версии); tools (get/update/reflect,
+  персист, no-op без аргументов); mod (в каталоге, не в дефолтах; проход
+  `effective_tool_ids`); orchestrator (чистая `inject_self_model`: гейт/пустота/
+  непустота). **593 теста зелёные**, clippy/fmt чисты.
+- **Дальше — оценка зонда** (Шаг 8 плана): прогон длинных мульти-сессионных диалогов
+  с фичей off/on на Gemma/Qwen, критерий go/no-go для Tier 2 (нарратив, противоречия
+  как проза, UI-оверлей просмотра). Живой прогон — ручной (нужны модель/диалоги).
+
 ### Отложено за пределы M3
 - **Сворачивание/выделение per-message** и tool-блоки в ленте — сейчас «мысли»
   сворачиваются глобально (`Ctrl+T`); выделение сообщений и tool-блоки — на M5.

@@ -193,8 +193,16 @@ impl Orchestrator {
         );
         let schemas = self.registry.schemas_for(&allowed);
 
+        // Снимок «модели себя» профиля на начало хода (SelfModel MVP). Инъекция в
+        // системный промпт — только если профиль включил инструмент get_self_model
+        // (opt-in). См. docs/self-model-mvp.md.
+        let self_model = self.storage.db().self_model_get(profile_id).ok().flatten();
+        let inject_enabled = enabled
+            .iter()
+            .any(|t| t == crate::features::tools::self_model::GET_SELF_MODEL_ID);
+
         // Строим запрос/контекст инструмента из текущей истории чата.
-        let request;
+        let mut request;
         let ctx;
         {
             let Some(chat) = self.chat_mut(active_id) else {
@@ -213,8 +221,13 @@ impl Orchestrator {
                 chunk_params: crate::features::tools::rag::ChunkParams::from_settings(
                     &self.config.rag,
                 ),
+                self_model: self_model.clone(),
             };
         }
+
+        // Подмешиваем компактный рендер модели себя в системный промпт.
+        request.system =
+            inject_self_model(request.system.take(), self_model.as_ref(), inject_enabled);
 
         let id = Uuid::new_v4();
         let cancel = CancellationToken::new();
@@ -584,6 +597,29 @@ fn estimate_prompt_tokens(req: &ChatRequest) -> u64 {
         }
     }
     estimate_prompt(req.system.as_deref(), parts)
+}
+
+/// Подмешивает компактный рендер «модели себя» в системный промпт хода (SelfModel
+/// MVP, см. docs/self-model-mvp.md). Возвращает прежний `system` без изменений,
+/// если инъекция выключена (профиль не включил `get_self_model`) или модель
+/// пуста/отсутствует. Чистая функция — тестируема без движка.
+pub(super) fn inject_self_model(
+    system: Option<String>,
+    model: Option<&crate::entities::self_model::SelfModel>,
+    enabled: bool,
+) -> Option<String> {
+    if !enabled {
+        return system;
+    }
+    let Some(block) =
+        model.and_then(|m| m.render_for_prompt(crate::entities::self_model::DEFAULT_PROMPT_CAP))
+    else {
+        return system;
+    };
+    Some(match system {
+        Some(s) => format!("{s}\n\n{block}"),
+        None => block,
+    })
 }
 
 /// Доменное tool-сообщение (роль `Tool`) с привязкой к вызову.

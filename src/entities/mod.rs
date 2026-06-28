@@ -6,3 +6,4 @@ pub mod note;
 pub mod profile;
 pub mod rag;
 pub mod sampling;
+pub mod self_model;

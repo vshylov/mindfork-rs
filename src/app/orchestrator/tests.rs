@@ -127,6 +127,36 @@ fn bare_orch_rx() -> (tempfile::TempDir, Orchestrator, UnboundedReceiver<AppEven
 }
 
 #[test]
+fn inject_self_model_respects_flag_and_emptiness() {
+    use super::generation::inject_self_model;
+    use crate::entities::self_model::SelfModel;
+
+    let mut m = SelfModel::new(Uuid::new_v4());
+    m.summary = "ценю ясность".into();
+
+    // Выключено → система не меняется.
+    assert_eq!(
+        inject_self_model(Some("S".into()), Some(&m), false),
+        Some("S".into())
+    );
+    // Включено + непустая модель → дописывается к системе.
+    let out = inject_self_model(Some("S".into()), Some(&m), true).unwrap();
+    assert!(out.starts_with("S\n\n"));
+    assert!(out.contains("ценю ясность"));
+    // Включено, но модели нет → без изменений.
+    assert_eq!(
+        inject_self_model(Some("S".into()), None, true),
+        Some("S".into())
+    );
+    // Включено, модель пуста → без изменений (None остаётся None).
+    let empty = SelfModel::new(Uuid::new_v4());
+    assert_eq!(inject_self_model(None, Some(&empty), true), None);
+    // Пустой system + непустая модель → блок становится системой.
+    let only = inject_self_model(None, Some(&m), true).unwrap();
+    assert!(only.contains("О себе: ценю ясность"));
+}
+
+#[test]
 fn effective_sampling_resolves_three_tiers() {
     let (_d, mut orch) = bare_orch();
     let mut profile = Profile::new("P", "sys");
@@ -1443,6 +1473,92 @@ async fn rewrite_tool_e2e_live() {
     assert!(
         saw_rewrite && !chat.deleted.is_empty(),
         "ожидали отброшенный (переписанный) ответ в Chat.deleted"
+    );
+}
+
+/// Прогоняет один ход: шлёт сообщение, дренирует события до `Finished`, собирая
+/// текст ответа и имена вызванных инструментов. Для live-смоуков.
+#[cfg(test)]
+async fn run_turn_live(
+    cmd_tx: &UnboundedSender<AppCommand>,
+    evt_rx: &mut UnboundedReceiver<AppEvent>,
+    text: &str,
+) -> (String, Vec<String>) {
+    cmd_tx.send(AppCommand::SendMessage(text.into())).unwrap();
+    let mut out = String::new();
+    let mut tools = Vec::new();
+    while let Some(ev) = evt_rx.recv().await {
+        match &ev {
+            AppEvent::Chunk { text, .. } => out.push_str(text),
+            AppEvent::ToolCall { name, .. } => tools.push(name.clone()),
+            AppEvent::Finished { .. } => break,
+            _ => {}
+        }
+    }
+    (out, tools)
+}
+
+/// End-to-end зонд SelfModel на живой модели (две сессии, один профиль):
+/// 1) сессия 1 — сообщаем факты о себе и просим зафиксировать в «модели себя»
+///    (ожидаем вызовы `update_self_model`/`update_user_model`, запись в БД);
+/// 2) сессия 2 (новый чат тем же профилем) — спрашиваем «что ты обо мне помнишь»;
+///    «модель себя» подмешана в системный промпт → ожидаем припоминание.
+/// Поведение модели нестабильно — тест `#[ignore]`, гоняется вручную; ассертим
+/// **механизм** (БД заполнена), а текст припоминания печатаем для оценки.
+#[tokio::test]
+#[ignore = "requires a running OpenAI-compatible server (MINDFORK_ENGINE_URL)"]
+async fn self_model_e2e_live() {
+    let Some(backend) = live_backend() else {
+        eprintln!("skip: MINDFORK_ENGINE_URL not set");
+        return;
+    };
+    let (_d, cmd_tx, mut evt_rx, handle) = spawn_orch(Some(backend));
+    let root = _d.path().to_path_buf();
+    let pid = enable_all_tools(&cmd_tx, &mut evt_rx).await;
+
+    // --- Сессия 1: сообщаем факты и просим зафиксировать модель себя. ---
+    let (s1_text, s1_tools) = run_turn_live(
+        &cmd_tx,
+        &mut evt_rx,
+        "Меня зовут Владимир, я пишу на Rust и не люблю многословие. \
+         Запомни это: вызови update_user_model (черты, интересы) и update_self_model \
+         (краткое описание себя и цель — помогать мне кратко и по делу).",
+    )
+    .await;
+    eprintln!("сессия 1: инструменты={s1_tools:?}\nтекст={s1_text:?}\n");
+
+    // --- Сессия 2: новый чат тем же профилем, проверяем припоминание. ---
+    cmd_tx
+        .send(AppCommand::NewChat {
+            profile_id: Some(pid),
+        })
+        .unwrap();
+    let (s2_text, s2_tools) = run_turn_live(
+        &cmd_tx,
+        &mut evt_rx,
+        "Что ты обо мне помнишь и какие у тебя цели в общении со мной?",
+    )
+    .await;
+    eprintln!("сессия 2: инструменты={s2_tools:?}\nтекст={s2_text:?}\n");
+
+    cmd_tx.send(AppCommand::Quit).unwrap();
+    handle.await.unwrap();
+
+    // Механизм: после сессии 1 модель себя профиля непуста и сохранена на диск.
+    let reopened = Storage::open(Paths::with_root(&root)).unwrap();
+    let model = reopened.db().self_model_get(pid).unwrap();
+    eprintln!("self_model в БД: {model:#?}");
+    let model = model.expect("ожидали сохранённую модель себя после сессии 1");
+    assert!(
+        !model.is_empty(),
+        "ожидали непустую модель себя (модель должна была вызвать update_*)"
+    );
+    // Хотя бы один из мутаторов реально вызван.
+    assert!(
+        s1_tools
+            .iter()
+            .any(|t| t == "update_self_model" || t == "update_user_model"),
+        "ожидали вызов update_self_model/update_user_model в сессии 1"
     );
 }
 

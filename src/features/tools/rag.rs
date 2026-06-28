@@ -726,6 +726,7 @@ mod tests {
             engine: engine.clone(),
             embedder: embedder.clone(),
             chunk_params: ChunkParams::default(),
+            self_model: None,
         };
 
         RagAdd
