@@ -625,6 +625,10 @@ pub struct InterfaceSettings {
     /// Базовые имена выбранных словарей (например `en_US`, `ru_RU`). Пусто —
     /// использовать все найденные в каталоге.
     pub selected_dictionaries: Vec<String>,
+    /// Спрашивать подтверждение перед перегенерацией (`Ctrl+R`) и удалением
+    /// последнего обмена (`Ctrl+E`) — обе операции необратимы в UI. По умолчанию
+    /// выключено (комбинации срабатывают сразу). См. spec §11.7.
+    pub confirm_destructive_keys: bool,
 }
 
 impl Default for InterfaceSettings {
@@ -633,6 +637,7 @@ impl Default for InterfaceSettings {
             theme: Theme::default(),
             spellcheck_enabled: true,
             selected_dictionaries: Vec::new(),
+            confirm_destructive_keys: false,
         }
     }
 }
@@ -910,6 +915,7 @@ mod tests {
                 theme: Theme::Dark,
                 spellcheck_enabled: false,
                 selected_dictionaries: vec!["en_US".into(), "ru_RU".into()],
+                confirm_destructive_keys: true,
             },
             ..Default::default()
         };

@@ -16,7 +16,7 @@ use ratatui::layout::{Constraint, Flex, Layout, Rect};
 use ratatui::style::Style;
 use ratatui::style::Stylize;
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Clear, List, ListItem, ListState};
+use ratatui::widgets::{Clear, List, ListItem, ListState, Paragraph, Wrap};
 use uuid::Uuid;
 
 use crate::entities::chat::ChatSummary;
@@ -100,6 +100,39 @@ pub enum ChatIntent {
     SetMouseCapture(bool),
 }
 
+/// Необратимая операция, требующая подтверждения в модальном попапе (`Ctrl+R`/
+/// `Ctrl+E`, когда включена настройка `interface.confirm_destructive_keys`).
+/// См. spec §11.7.
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum ConfirmAction {
+    /// Перегенерировать последний ответ (`Ctrl+R`).
+    Regenerate,
+    /// Удалить последний обмен (`Ctrl+E`).
+    DeleteExchange,
+}
+
+impl ConfirmAction {
+    /// Намерение, которое подтверждает эта операция.
+    fn intent(self) -> ChatIntent {
+        match self {
+            ConfirmAction::Regenerate => ChatIntent::RegenerateLast,
+            ConfirmAction::DeleteExchange => ChatIntent::DeleteLastExchange,
+        }
+    }
+
+    /// Текст-вопрос попапа подтверждения.
+    fn prompt(self) -> &'static str {
+        match self {
+            ConfirmAction::Regenerate => {
+                "Перегенерировать последний ответ? Прежний ответ будет заменён."
+            }
+            ConfirmAction::DeleteExchange => {
+                "Удалить последний обмен? Ваше сообщение вернётся в поле ввода."
+            }
+        }
+    }
+}
+
 /// Пункт попапа подсказок орфографии.
 #[derive(Debug, Clone, PartialEq)]
 enum SuggestItem {
@@ -177,6 +210,12 @@ pub struct ChatScreen {
     suggest: Option<SuggestPopup>,
     /// Открытый попап выбора эмодзи (`Ctrl+B`). См. spec §11.5.
     emoji: Option<EmojiPickerState>,
+    /// Открытый модальный попап подтверждения необратимой операции (`Ctrl+R`/
+    /// `Ctrl+E`); `None` — попап закрыт. См. spec §11.7.
+    confirm: Option<ConfirmAction>,
+    /// Спрашивать ли подтверждение перед `Ctrl+R`/`Ctrl+E` (из
+    /// `interface.confirm_destructive_keys`; обновляется событием `Settings`).
+    confirm_destructive: bool,
     /// Индекс последнего выделения в попапе эмодзи — восстанавливается при следующем
     /// открытии (попап «помнит» выбор).
     emoji_last: usize,
@@ -232,6 +271,8 @@ impl ChatScreen {
             suggest: None,
             emoji: None,
             emoji_last: 0,
+            confirm: None,
+            confirm_destructive: false,
             settings_snapshot: None,
             show_help: false,
             palette: Palette::default(),
@@ -247,6 +288,7 @@ impl ChatScreen {
     /// обновляет палитру темы.
     pub fn set_settings(&mut self, config: AppConfig, profiles: Vec<Profile>) {
         self.palette = Palette::for_theme(config.interface.theme);
+        self.confirm_destructive = config.interface.confirm_destructive_keys;
         self.settings_snapshot = Some((config, profiles));
     }
 
@@ -673,6 +715,11 @@ impl ChatScreen {
             }
             return None;
         }
+        // Модальный попап подтверждения (`Ctrl+R`/`Ctrl+E`): Enter — да, Esc — нет,
+        // прочие клавиши игнорируются (попап остаётся открытым). См. spec §11.7.
+        if self.confirm.is_some() {
+            return self.handle_confirm_key(key);
+        }
         if self.suggest.is_some() {
             self.handle_suggest_key(key);
             return None;
@@ -702,12 +749,8 @@ impl ChatScreen {
                 'n' => return self.request_new_chat(),
                 // Перегенерация / удаление последнего обмена (только когда не идёт
                 // генерация). См. spec §11.7.
-                'r' => {
-                    return (!self.generating).then_some(ChatIntent::RegenerateLast);
-                }
-                'e' => {
-                    return (!self.generating).then_some(ChatIntent::DeleteLastExchange);
-                }
+                'r' => return self.trigger_destructive(ConfirmAction::Regenerate),
+                'e' => return self.trigger_destructive(ConfirmAction::DeleteExchange),
                 // Имперсонация: написать сообщение от лица пользователя (spec §11.8).
                 // `seed` — уже введённый текст (модель продолжит его).
                 'u' => {
@@ -839,6 +882,7 @@ impl ChatScreen {
             || self.suggest.is_some()
             || self.emoji.is_some()
             || self.profile_overlay.is_some()
+            || self.confirm.is_some()
         {
             return;
         }
@@ -857,6 +901,7 @@ impl ChatScreen {
             || self.suggest.is_some()
             || self.emoji.is_some()
             || self.profile_overlay.is_some()
+            || self.confirm.is_some()
         {
             return;
         }
@@ -967,6 +1012,47 @@ impl ChatScreen {
             items,
             selected: 0,
         });
+    }
+
+    /// Запускает необратимую операцию (`Ctrl+R`/`Ctrl+E`): сразу отдаёт намерение,
+    /// либо — если включено подтверждение — открывает модальный попап. Во время
+    /// генерации обе операции игнорируются (как было). См. spec §11.7.
+    fn trigger_destructive(&mut self, action: ConfirmAction) -> Option<ChatIntent> {
+        if self.generating {
+            return None;
+        }
+        if self.confirm_destructive {
+            self.confirm = Some(action);
+            None
+        } else {
+            Some(action.intent())
+        }
+    }
+
+    /// Обрабатывает клавишу модального попапа подтверждения: `Enter` подтверждает
+    /// (отдаёт намерение), `Esc` отменяет, прочие клавиши игнорируются. Подтверждение
+    /// гасится при попадании в генерацию (намерение всё равно гейтит оркестратор).
+    fn handle_confirm_key(&mut self, key: KeyEvent) -> Option<ChatIntent> {
+        let action = self.confirm?;
+        // Ctrl+C пробивает попап на выход (раскладко-независимо). См. spec §11.7.
+        if key.modifiers.contains(KeyModifiers::CONTROL)
+            && let KeyCode::Char(c) = key.code
+            && keys::physical_char(c) == 'c'
+        {
+            self.confirm = None;
+            return Some(ChatIntent::Quit);
+        }
+        match key.code {
+            KeyCode::Enter => {
+                self.confirm = None;
+                (!self.generating).then(|| action.intent())
+            }
+            KeyCode::Esc => {
+                self.confirm = None;
+                None
+            }
+            _ => None,
+        }
     }
 
     fn handle_suggest_key(&mut self, key: KeyEvent) {
@@ -1202,8 +1288,10 @@ impl ChatScreen {
             } else {
                 "ввод · Enter отправить · Shift+Enter перенос"
             };
-            let focused =
-                self.profile_overlay.is_none() && self.suggest.is_none() && self.emoji.is_none();
+            let focused = self.profile_overlay.is_none()
+                && self.suggest.is_none()
+                && self.emoji.is_none()
+                && self.confirm.is_none();
             let command = self.input_is_command();
             self.input.render(
                 frame,
@@ -1225,6 +1313,10 @@ impl ChatScreen {
         if let Some(picker) = &self.emoji {
             dim_background(frame);
             picker.render(frame, frame.area(), &self.palette);
+        }
+        if let Some(action) = self.confirm {
+            dim_background(frame);
+            render_confirm(frame, action, &self.palette);
         }
         if self.show_help {
             dim_background(frame);
@@ -1371,6 +1463,28 @@ fn render_suggest(frame: &mut Frame, popup: &SuggestPopup, palette: &Palette) {
         popup.selected.min(popup.items.len().saturating_sub(1)),
     ));
     frame.render_stateful_widget(list, area, &mut state);
+}
+
+/// Рисует модальный попап подтверждения необратимой операции (`Ctrl+R`/`Ctrl+E`)
+/// по центру экрана. См. spec §11.7.
+fn render_confirm(frame: &mut Frame, action: ConfirmAction, palette: &Palette) {
+    let width = 56u16.min(frame.area().width);
+    let area = centered_rect(width, 5, frame.area());
+    frame.render_widget(Clear, area);
+    let block = palette.panel("Подтверждение", true).title_bottom(
+        Line::from(Span::styled(
+            " Enter — да · Esc — нет ",
+            palette.muted_style(),
+        ))
+        .centered(),
+    );
+    let body = Paragraph::new(Line::from(Span::styled(
+        action.prompt(),
+        Style::new().fg(palette.text),
+    )))
+    .block(block)
+    .wrap(Wrap { trim: true });
+    frame.render_widget(body, area);
 }
 
 /// Число визуальных рядов, которые займёт `text` при переносе по ширине `width`
@@ -1796,6 +1910,84 @@ mod tests {
             s.handle_key(KeyEvent::new(KeyCode::Char('e'), KeyModifiers::CONTROL)),
             None
         );
+    }
+
+    /// Включает подтверждение `Ctrl+R`/`Ctrl+E` через снимок настроек.
+    fn with_confirm() -> ChatScreen {
+        let mut s = ChatScreen::new();
+        let mut cfg = AppConfig::default();
+        cfg.interface.confirm_destructive_keys = true;
+        s.set_settings(cfg, Vec::new());
+        s
+    }
+
+    #[test]
+    fn ctrl_r_with_confirm_opens_popup_then_enter_confirms() {
+        let mut s = with_confirm();
+        // Первое нажатие не отдаёт намерение — открывает попап подтверждения.
+        assert_eq!(
+            s.handle_key(KeyEvent::new(KeyCode::Char('r'), KeyModifiers::CONTROL)),
+            None
+        );
+        assert_eq!(s.confirm, Some(ConfirmAction::Regenerate));
+        // Enter подтверждает и закрывает попап.
+        assert_eq!(
+            s.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE)),
+            Some(ChatIntent::RegenerateLast)
+        );
+        assert_eq!(s.confirm, None);
+    }
+
+    #[test]
+    fn ctrl_e_with_confirm_esc_cancels() {
+        let mut s = with_confirm();
+        assert_eq!(
+            s.handle_key(KeyEvent::new(KeyCode::Char('e'), KeyModifiers::CONTROL)),
+            None
+        );
+        assert_eq!(s.confirm, Some(ConfirmAction::DeleteExchange));
+        // Esc отменяет — попап закрыт, намерения нет.
+        assert_eq!(
+            s.handle_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE)),
+            None
+        );
+        assert_eq!(s.confirm, None);
+    }
+
+    #[test]
+    fn confirm_popup_ignores_other_keys() {
+        let mut s = with_confirm();
+        s.handle_key(KeyEvent::new(KeyCode::Char('r'), KeyModifiers::CONTROL));
+        // Произвольная клавиша не закрывает попап и не печатается в поле ввода.
+        assert_eq!(
+            s.handle_key(KeyEvent::new(KeyCode::Char('x'), KeyModifiers::NONE)),
+            None
+        );
+        assert_eq!(s.confirm, Some(ConfirmAction::Regenerate));
+        assert!(s.input.is_empty());
+    }
+
+    #[test]
+    fn ctrl_c_breaks_through_confirm_popup_to_quit() {
+        let mut s = with_confirm();
+        s.handle_key(KeyEvent::new(KeyCode::Char('r'), KeyModifiers::CONTROL));
+        assert_eq!(s.confirm, Some(ConfirmAction::Regenerate));
+        assert_eq!(
+            s.handle_key(KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL)),
+            Some(ChatIntent::Quit)
+        );
+        assert_eq!(s.confirm, None);
+    }
+
+    #[test]
+    fn ctrl_r_and_e_emit_directly_without_confirm() {
+        // По умолчанию (без снимка настроек) подтверждение выключено.
+        let mut s = ChatScreen::new();
+        assert_eq!(
+            s.handle_key(KeyEvent::new(KeyCode::Char('r'), KeyModifiers::CONTROL)),
+            Some(ChatIntent::RegenerateLast)
+        );
+        assert_eq!(s.confirm, None);
     }
 
     #[test]
