@@ -11,7 +11,7 @@
 use ratatui::Frame;
 use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
-use ratatui::text::{Line, Span};
+use ratatui::text::{Line, Span, Text};
 use ratatui::widgets::{Clear, List, ListItem, ListState, Paragraph};
 use uuid::Uuid;
 
@@ -19,6 +19,7 @@ use crate::entities::self_model::{GoalStatus, SelfModel, SelfModelEdit};
 use crate::shared::keys;
 use crate::shared::theme::Palette;
 use crate::shared::ui::dim_background;
+use crate::shared::wrap::wrap_line;
 use crate::widgets::input_box::InputBox;
 
 /// Намерение экрана «модели себя» (транслируется `app`). Параллель к
@@ -56,12 +57,11 @@ enum EditKind {
     Relationship,
 }
 
-/// Активный текстовый редактор поля (попап).
+/// Активный текстовый редактор поля (попап). Везде многострочный
+/// (`Shift+Enter` — перенос строки, `Enter` — коммит): модели пишут длинный текст.
 struct Editor {
     kind: EditKind,
     input: InputBox,
-    /// Многострочный (описание себя) — `Shift+Enter` перенос, крупный попап.
-    multiline: bool,
 }
 
 /// Экран «модели себя»: снимок модели + состояние навигации/правки.
@@ -255,9 +255,9 @@ impl SelfModelScreen {
             .model
             .clone()
             .unwrap_or_else(|| SelfModel::new(Uuid::nil()));
-        let (kind, multiline, seed) = match action {
-            RowAction::Summary => (EditKind::Summary, true, m.summary.clone()),
-            RowAction::AddGoal => (EditKind::AddGoal, false, String::new()),
+        let (kind, seed) = match action {
+            RowAction::Summary => (EditKind::Summary, m.summary.clone()),
+            RowAction::AddGoal => (EditKind::AddGoal, String::new()),
             RowAction::Goal(id) => {
                 let seed = m
                     .goals
@@ -265,33 +265,23 @@ impl SelfModelScreen {
                     .find(|g| g.id == id)
                     .map(|g| g.description.clone())
                     .unwrap_or_default();
-                (EditKind::GoalText(id), false, seed)
+                (EditKind::GoalText(id), seed)
             }
-            RowAction::Traits => (
-                EditKind::Traits,
-                false,
-                m.user_model.perceived_traits.join(", "),
-            ),
+            RowAction::Traits => (EditKind::Traits, m.user_model.perceived_traits.join(", ")),
             RowAction::Interests => (
                 EditKind::Interests,
-                false,
                 m.user_model.current_interests.join(", "),
             ),
             RowAction::Relationship => (
                 EditKind::Relationship,
-                false,
                 m.user_model.relationship_dynamic.clone(),
             ),
             RowAction::Insight(_) => return None, // инсайты не правим, только удаляем
         };
+        // Поле многострочное (по умолчанию `InputBox` уже такой) — текст переносится.
         let mut input = InputBox::new();
-        input.set_single_line(!multiline);
         input.set_text(&seed);
-        self.editor = Some(Editor {
-            kind,
-            input,
-            multiline,
-        });
+        self.editor = Some(Editor { kind, input });
         None
     }
 
@@ -302,7 +292,7 @@ impl SelfModelScreen {
                 self.editor = None;
                 None
             }
-            (KeyCode::Enter, KeyModifiers::SHIFT) if editor.multiline => {
+            (KeyCode::Enter, KeyModifiers::SHIFT) => {
                 editor.input.insert_newline();
                 None
             }
@@ -343,16 +333,25 @@ impl SelfModelScreen {
             .constraints([Constraint::Min(1), Constraint::Length(1)])
             .split(inner);
 
+        // Перенос по словам: длинные значения (модели пишут много текста) не влезают
+        // в одну строку. Каждая логическая строка списка заворачивается на несколько
+        // визуальных рядов в одном `ListItem` — навигация/выделение остаются по
+        // логическим строкам, а `List` сам прокручивает многорядный элемент.
+        // Ширина = область списка минус колонка маркера выделения `▌ ` (2 колонки).
+        let content_width = (chunks[0].width as usize).saturating_sub(2);
         let items: Vec<ListItem> = self
             .rows()
             .into_iter()
-            .map(|(line, _)| ListItem::new(line))
+            .map(|(line, _)| ListItem::new(Text::from(wrap_line(&line, content_width))))
             .collect();
         let mut state = ListState::default();
         state.select(Some(self.selected.min(items.len().saturating_sub(1))));
         let list = List::new(items)
             .highlight_style(ratatui::style::Style::new().bg(palette.keycap_bg))
-            .highlight_symbol("▌ ");
+            .highlight_symbol("▌ ")
+            // Маркер `▌` на каждом визуальном ряду элемента, а не только на первом —
+            // полоса тянется на всю высоту многострочного (перенесённого) элемента.
+            .repeat_highlight_symbol(true);
         frame.render_stateful_widget(list, chunks[0], &mut state);
 
         // Нижняя строка: подтверждение очистки или хоткеи.
@@ -380,22 +379,11 @@ impl SelfModelScreen {
             frame.render_widget(Paragraph::new(Line::from(hint)), chunks[1]);
         }
 
-        // Редактор поверх — с реальным курсором.
+        // Редактор поверх — с реальным курсором. Везде многострочный (перенос текста).
         if let Some(editor) = self.editor.as_mut() {
-            let (popup, title) = if editor.multiline {
-                (
-                    centered_rect(80, 50, area),
-                    "правка · Shift+Enter перенос · Enter ок · Esc отмена",
-                )
-            } else {
-                (
-                    centered_rect_h(60, 3, area),
-                    "правка · Enter ок · Esc отмена",
-                )
-            };
-            if editor.multiline {
-                dim_background(frame);
-            }
+            let popup = centered_rect(80, 50, area);
+            let title = "правка · Shift+Enter перенос · Enter ок · Esc отмена";
+            dim_background(frame);
             frame.render_widget(Clear, popup);
             editor
                 .input
@@ -422,9 +410,11 @@ fn commit_edit(kind: EditKind, text: String) -> Option<SelfModelIntent> {
     Some(SelfModelIntent::Edit(edit))
 }
 
-/// Список через запятую → вектор непустых обрезанных элементов.
+/// Список → вектор непустых обрезанных элементов. Разделители — запятая **и**
+/// перевод строки (поле многострочное: элементы можно вводить как через запятую,
+/// так и по одному на строку).
 fn parse_list(s: &str) -> Vec<String> {
-    s.split(',')
+    s.split([',', '\n'])
         .map(|x| x.trim().to_string())
         .filter(|x| !x.is_empty())
         .collect()
@@ -439,17 +429,6 @@ fn centered_rect(pct_x: u16, pct_y: u16, area: Rect) -> Rect {
         y: area.y + (area.height.saturating_sub(h)) / 2,
         width: w,
         height: h,
-    }
-}
-
-/// Центрированная горизонтальная полоса фиксированной высоты (однострочный редактор).
-fn centered_rect_h(pct_x: u16, height: u16, area: Rect) -> Rect {
-    let w = area.width * pct_x / 100;
-    Rect {
-        x: area.x + (area.width.saturating_sub(w)) / 2,
-        y: area.y + (area.height.saturating_sub(height)) / 2,
-        width: w,
-        height,
     }
 }
 
@@ -571,6 +550,18 @@ mod tests {
                 assert_eq!(v, vec!["a".to_string(), "b".into(), "c".into()]);
             }
             other => panic!("ожидали SetTraits, получили {other:?}"),
+        }
+    }
+
+    #[test]
+    fn list_edit_splits_on_newlines_too() {
+        // Многострочное поле: элементы можно вводить по одному на строку.
+        let intent = commit_edit(EditKind::Interests, "Rust\nратату\n, TUI".into()).unwrap();
+        match intent {
+            SelfModelIntent::Edit(SelfModelEdit::SetInterests(v)) => {
+                assert_eq!(v, vec!["Rust".to_string(), "ратату".into(), "TUI".into()]);
+            }
+            other => panic!("ожидали SetInterests, получили {other:?}"),
         }
     }
 
