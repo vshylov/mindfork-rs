@@ -32,6 +32,18 @@ pub struct ManagedConfig {
     /// Не использовать mmap при загрузке модели (`--no-mmap`): грузит веса в RAM
     /// целиком. Полезно на сетевых/медленных дисках и при нехватке файлового кэша.
     pub no_mmap: bool,
+    /// FlashAttention (`--flash-attn`): `Some("on"/"off")`; `None` — не задавать (auto).
+    pub flash_attn: Option<String>,
+    /// Тип спекулятивного декодирования (`--spec-type`); `None` — выключено.
+    pub spec_type: Option<String>,
+    /// Черновая модель спек. декодирования (`-md`/`--model-draft`).
+    pub draft_model: Option<String>,
+    /// GPU-слои черновой модели (`-ngld`); `None` — авто.
+    pub draft_gpu_layers: Option<i32>,
+    /// Число черновых токенов за шаг (`--spec-draft-n-max`); `None` — дефолт.
+    pub draft_n_max: Option<u32>,
+    /// Минимум черновых токенов за шаг (`--spec-draft-n-min`); `None` — дефолт.
+    pub draft_n_min: Option<u32>,
     /// Интерфейс bind (`--host`).
     pub host: String,
     pub port: u16,
@@ -87,6 +99,32 @@ pub fn build_args(cfg: &ManagedConfig) -> Vec<String> {
     if cfg.no_mmap {
         args.push("--no-mmap".into());
     }
+    if let Some(fa) = &cfg.flash_attn {
+        args.push("--flash-attn".into());
+        args.push(fa.clone());
+    }
+    // Спекулятивное декодирование: тип + параметры черновой модели. Незаданные
+    // (`None`) поля не передаём — llama.cpp возьмёт свои дефолты.
+    if let Some(st) = &cfg.spec_type {
+        args.push("--spec-type".into());
+        args.push(st.clone());
+    }
+    if let Some(md) = &cfg.draft_model {
+        args.push("-md".into());
+        args.push(md.clone());
+    }
+    if let Some(ngld) = cfg.draft_gpu_layers {
+        args.push("-ngld".into());
+        args.push(ngld.to_string());
+    }
+    if let Some(n) = cfg.draft_n_max {
+        args.push("--spec-draft-n-max".into());
+        args.push(n.to_string());
+    }
+    if let Some(n) = cfg.draft_n_min {
+        args.push("--spec-draft-n-min".into());
+        args.push(n.to_string());
+    }
     args.extend(cfg.extra_args.iter().cloned());
     args
 }
@@ -134,6 +172,14 @@ impl ServerHandle {
             && !std::path::Path::new(model).is_file()
         {
             bail!("файл модели не найден или недоступен: {model}");
+        }
+        // Та же предполётная проверка для черновой модели спекулятивного
+        // декодирования (`-md`): иначе `llama-server` так же тихо упадёт на её
+        // загрузке, а probe будет ждать до таймаута.
+        if let Some(draft) = &cfg.draft_model
+            && !std::path::Path::new(draft).is_file()
+        {
+            bail!("файл черновой модели не найден или недоступен: {draft}");
         }
 
         let args = build_args(cfg);
@@ -263,6 +309,12 @@ mod tests {
             reasoning_format: None,
             embeddings: false,
             no_mmap: false,
+            flash_attn: None,
+            spec_type: None,
+            draft_model: None,
+            draft_gpu_layers: None,
+            draft_n_max: None,
+            draft_n_min: None,
             host: "127.0.0.1".into(),
             port: 8000,
             extra_args: vec![],
@@ -321,6 +373,66 @@ mod tests {
         // Chat-серверу батч-флаги эмбеддера не добавляем.
         let args = build_args(&base_cfg());
         assert!(!args.contains(&"-ub".to_string()));
+    }
+
+    #[test]
+    fn flash_attn_flag_present_only_when_set() {
+        // Auto (None) — флаг не передаётся.
+        assert!(!build_args(&base_cfg()).contains(&"--flash-attn".to_string()));
+        let cfg = ManagedConfig {
+            flash_attn: Some("on".into()),
+            ..base_cfg()
+        };
+        let args = build_args(&cfg);
+        let fa = args.iter().position(|a| a == "--flash-attn").unwrap();
+        assert_eq!(args[fa + 1], "on");
+    }
+
+    #[test]
+    fn spec_decoding_args_for_mtp_draft() {
+        // Конфигурация под MTP-модель: тип draft-mtp + черновая модель и параметры.
+        let cfg = ManagedConfig {
+            spec_type: Some("draft-mtp".into()),
+            draft_model: Some("mtp.gguf".into()),
+            draft_gpu_layers: Some(99),
+            draft_n_max: Some(5),
+            draft_n_min: Some(1),
+            ..base_cfg()
+        };
+        let args = build_args(&cfg);
+        let st = args.iter().position(|a| a == "--spec-type").unwrap();
+        assert_eq!(args[st + 1], "draft-mtp");
+        let md = args.iter().position(|a| a == "-md").unwrap();
+        assert_eq!(args[md + 1], "mtp.gguf");
+        let ngld = args.iter().position(|a| a == "-ngld").unwrap();
+        assert_eq!(args[ngld + 1], "99");
+        let nmax = args.iter().position(|a| a == "--spec-draft-n-max").unwrap();
+        assert_eq!(args[nmax + 1], "5");
+        let nmin = args.iter().position(|a| a == "--spec-draft-n-min").unwrap();
+        assert_eq!(args[nmin + 1], "1");
+    }
+
+    #[test]
+    fn no_spec_args_by_default() {
+        let args = build_args(&base_cfg());
+        assert!(!args.contains(&"--spec-type".to_string()));
+        assert!(!args.contains(&"-md".to_string()));
+        assert!(!args.contains(&"-ngld".to_string()));
+    }
+
+    #[test]
+    fn launch_missing_draft_model_file_errors_before_spawn() {
+        // Несуществующий черновой GGUF → понятная ошибка ещё до spawn.
+        let cfg = ManagedConfig {
+            model_path: None,
+            draft_model: Some("definitely/missing/draft-xyz.gguf".into()),
+            ..base_cfg()
+        };
+        let err = match ServerHandle::launch(&cfg) {
+            Err(e) => e,
+            Ok(_) => panic!("ожидалась ошибка отсутствующего файла черновой модели"),
+        };
+        assert!(err.to_string().contains("черновой модели"), "{err}");
     }
 
     #[test]

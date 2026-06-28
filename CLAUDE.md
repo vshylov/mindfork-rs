@@ -1685,6 +1685,42 @@ web-поиск и Python под выключателями, экран наст�
   результат `set_sampling` в облаке не несёт полного дампа конфига.
   **567 тестов зелёные**, clippy/fmt чисты.
 
+### Пост-M9: FlashAttention + спекулятивное декодирование в managed-режиме (сделано)
+- **Managed `llama-server` получил FlashAttention (`--flash-attn`) и спекулятивное
+  декодирование (`--spec-*`)** — последнее позволяет подключать MTP-модели (например
+  `mtp-gemma-4-12B-it.gguf`) через `--spec-type draft-mtp`. Только локальный managed
+  (chat-сервер ассистента и сервер имперсонации); external/облако не затронуты,
+  эмбеддинг-серверу неприменимо (он не генерирует токены).
+- **Конфиг** (`shared/config.rs`): два enum'а — `FlashAttn { Auto, On, Off }`
+  (`Auto` = флаг не передаётся, дефолт llama.cpp) и `SpecType` (`None`/`draft-simple`/
+  `draft-eagle3`/`draft-mtp`/`ngram-simple`/`ngram-map-k`/`ngram-map-k4v`/`ngram-mod`/
+  `ngram-cache`; serde kebab-case совпадает с CLI-значением; `as_arg()`/`label()`/
+  `cycle(dir)`/`needs_draft_model()`). `ManagedSettings` расширен `flash_attn`,
+  `spec_type` и черновыми полями `draft_model` (`-md`), `draft_gpu_layers` (`-ngld`),
+  `draft_n_max` (`--spec-draft-n-max`), `draft_n_min` (`--spec-draft-n-min`). Всё через
+  `#[serde(default)]` — старые `settings.json` без миграции.
+- **Сборка аргументов** (`shared/api/managed.rs`): `ManagedConfig` несёт примитивы
+  (`flash_attn: Option<String>`, `spec_type: Option<String>`, `draft_*`) — как
+  `reasoning_format`; enum→строку конвертирует супервайзер (`managed_config`). `build_args`
+  добавляет `--flash-attn`/`--spec-type`/`-md`/`-ngld`/`--spec-draft-n-max`/`-n-min`
+  **только когда заданы** (незаданное → дефолт llama.cpp). Предполётная проверка файла
+  расширена на черновую модель (`-md`): несуществующий путь → понятная ошибка до `spawn`
+  (иначе `llama-server` тихо падает на её загрузке, а probe ждёт до таймаута).
+- **UI настроек** (`screens/settings.rs`, секция «Модель/сервер», обе подсекции
+  Ассистент/Имперсонация): FlashAttention и `--spec-type` — Choice-поля (←/→ цикл);
+  черновые поля (`-md`/`-ngld`/n-max/n-min) показываются **только для типов draft-***
+  (`needs_draft_model`), чтобы не загромождать секцию для ngram/none. Все поля с
+  подсказками-описаниями (`field_description`). `managed_rows` отрефакторен с длинного
+  списка FieldId-аргументов на структуру `ManagedFieldIds` (+ две const-инстанции
+  `ASSISTANT_MANAGED_IDS`/`IMP_MANAGED_IDS`). Опциональные числовые поля парсятся через
+  `parse_opt_num` (пусто → `None`/очистить, нечисло → прежнее).
+- **Тесты**: config (as_arg/serde/cycle/needs_draft_model, roundtrip managed-секции с
+  spec-полями); managed (флаги flash-attn/spec в `build_args`, дефолт без них,
+  предполётная ошибка отсутствующего `-md`); settings (видимость flash/spec в managed,
+  раскрытие черновых полей при cycle до draft-mtp, цикл flash-attn с сохранением).
+  **579 тестов зелёные**, clippy/fmt чисты. Живой прогон на реальном
+  `mtp-gemma-4-12B-it.gguf` — ручная проверка (нужны GPU/модель).
+
 ### Отложено за пределы M3
 - **Сворачивание/выделение per-message** и tool-блоки в ленте — сейчас «мысли»
   сворачиваются глобально (`Ctrl+T`); выделение сообщений и tool-блоки — на M5.

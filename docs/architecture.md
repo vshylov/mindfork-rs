@@ -427,8 +427,13 @@ OpenAI требует `max_completion_tokens` вместо `max_tokens`), `Anthr
   **монитор-задаче** (`spawn_monitor`), которая `select!`-ит между его выходом (взвод
   `exited`-токена) и сигналом `kill` (взводится в `Drop` хэндла → `start_kill`;
   `kill_on_drop` оставлен подстраховкой). `build_args` собирает CLI (`-m`, `-ngl`,
-  `-c`, `--jinja`, `--no-mmap`; для эмбеддингов — `--embeddings -ub <ctx> -b <ctx>`).
-  **Предполёт:** если `model_path` задан, но файла нет — `bail!` до `spawn`.
+  `-c`, `--jinja`, `--no-mmap`, `--flash-attn`; спекулятивное декодирование
+  `--spec-type` + черновые `-md`/`-ngld`/`--spec-draft-n-max`/`-n-min`; для
+  эмбеддингов — `--embeddings -ub <ctx> -b <ctx>`). Опциональные флаги добавляются
+  только когда заданы (незаданное → дефолт llama.cpp); `FlashAttn`/`SpecType` —
+  enum'ы в `shared/config`, в `ManagedConfig` приходят примитивами (как
+  `reasoning_format`), enum→строку конвертирует супервайзер.
+  **Предполёт:** если `model_path` (или черновой `-md`) задан, но файла нет — `bail!` до `spawn`.
   **Ранний выход:** если файл валиден, но процесс умирает уже *в ходе* загрузки
   (битый GGUF, OOM), монитор взводит `exited`, а `wait_until_ready(..., exited)`
   прекращает поллинг сразу с понятной ошибкой — не ждёт таймаут (иначе зависание в
@@ -737,6 +742,10 @@ flowchart TB
     выбранного режима и скрывает неподдержанные облаком параметры сэмплинга (фильтр
     `cloud_supported_param`; значения сохраняются для локальных моделей). Шапка чата
     (`screens/chat::model_meta`) показывает модель активного режима. См. ADR 0004.
+    `ManagedSettings` дополнительно несёт `flash_attn: FlashAttn` (`--flash-attn`) и
+    поля спекулятивного декодирования (`spec_type: SpecType` + `draft_model`/
+    `draft_gpu_layers`/`draft_n_max`/`draft_n_min`); черновые поля в UI видны только
+    для типов `draft-*` — для MTP-моделей (`mtp-gemma-…`) это `draft-mtp`.
 - **Портативность** (`shared/paths.rs`): все данные — рядом с бинарником (в dev —
   `target/debug/`): `settings.json`, `profiles.json`, `chats/`, `data.db`,
   `personal_dictionary.txt`, `dictionaries/`, `logs/`.

@@ -343,8 +343,14 @@ enum FieldId {
     XApiKeyEnv,
     XNgl,
     XCtx,
+    XFlashAttn,
     XJinja,
     XNoMmap,
+    XSpecType,
+    XDraftModel,
+    XDraftNgl,
+    XDraftNMax,
+    XDraftNMin,
     XHost,
     XPort,
     // Модель/сервер — Имперсонация
@@ -356,8 +362,14 @@ enum FieldId {
     IxApiKeyEnv,
     IxNgl,
     IxCtx,
+    IxFlashAttn,
     IxJinja,
     IxNoMmap,
+    IxSpecType,
+    IxDraftModel,
+    IxDraftNgl,
+    IxDraftNMax,
+    IxDraftNMin,
     IxHost,
     IxPort,
     // Инференс
@@ -519,17 +531,9 @@ impl SettingsScreen {
                 // Видимость полей зависит от режима (ADR 0004): для облака показываем
                 // лишь модель/ключ/опц. base URL, для managed — параметры llama-server.
                 match x.mode {
-                    ServerMode::Managed => rows.extend(managed_rows(
-                        &x.managed,
-                        FieldId::XBinary,
-                        FieldId::XModel,
-                        FieldId::XNgl,
-                        FieldId::XCtx,
-                        FieldId::XJinja,
-                        FieldId::XNoMmap,
-                        FieldId::XHost,
-                        FieldId::XPort,
-                    )),
+                    ServerMode::Managed => {
+                        rows.extend(managed_rows(&x.managed, ASSISTANT_MANAGED_IDS))
+                    }
                     ServerMode::External => rows.extend([
                         text_row(FieldId::XUrl, "URL (external)", &x.external.url),
                         text_row(FieldId::XModelName, "Модель (опц.)", &x.external.model_name),
@@ -554,17 +558,9 @@ impl SettingsScreen {
                 match x.mode {
                     // Shared переиспользует движок ассистента — собственных полей нет.
                     ImpersonationMode::Shared => {}
-                    ImpersonationMode::Managed => rows.extend(managed_rows(
-                        &x.managed,
-                        FieldId::IxBinary,
-                        FieldId::IxModel,
-                        FieldId::IxNgl,
-                        FieldId::IxCtx,
-                        FieldId::IxJinja,
-                        FieldId::IxNoMmap,
-                        FieldId::IxHost,
-                        FieldId::IxPort,
-                    )),
+                    ImpersonationMode::Managed => {
+                        rows.extend(managed_rows(&x.managed, IMP_MANAGED_IDS))
+                    }
                     ImpersonationMode::External => rows.extend([
                         text_row(FieldId::IxUrl, "URL (external)", &x.external.url),
                         text_row(
@@ -1080,6 +1076,26 @@ impl SettingsScreen {
                     cycle_imp_mode(self.config.impersonation_engine.mode, dir);
                 Some(self.save_config())
             }
+            FieldId::XFlashAttn => {
+                let m = &mut self.config.engine.managed;
+                m.flash_attn = m.flash_attn.cycle(dir);
+                Some(self.save_config())
+            }
+            FieldId::XSpecType => {
+                let m = &mut self.config.engine.managed;
+                m.spec_type = m.spec_type.cycle(dir);
+                Some(self.save_config())
+            }
+            FieldId::IxFlashAttn => {
+                let m = &mut self.config.impersonation_engine.managed;
+                m.flash_attn = m.flash_attn.cycle(dir);
+                Some(self.save_config())
+            }
+            FieldId::IxSpecType => {
+                let m = &mut self.config.impersonation_engine.managed;
+                m.spec_type = m.spec_type.cycle(dir);
+                Some(self.save_config())
+            }
             FieldId::EMode => {
                 self.config.embed.mode = cycle_mode(self.config.embed.mode, dir);
                 Some(self.save_config())
@@ -1151,6 +1167,17 @@ impl SettingsScreen {
             }
             FieldId::XBinary => s.engine.managed.binary = opt(trimmed),
             FieldId::XModel => s.engine.managed.model_path = opt(trimmed),
+            FieldId::XDraftModel => s.engine.managed.draft_model = opt(trimmed),
+            FieldId::XDraftNgl => {
+                s.engine.managed.draft_gpu_layers =
+                    parse_opt_num(trimmed, s.engine.managed.draft_gpu_layers)
+            }
+            FieldId::XDraftNMax => {
+                s.engine.managed.draft_n_max = parse_opt_num(trimmed, s.engine.managed.draft_n_max)
+            }
+            FieldId::XDraftNMin => {
+                s.engine.managed.draft_n_min = parse_opt_num(trimmed, s.engine.managed.draft_n_min)
+            }
             FieldId::XHost => {
                 if !trimmed.is_empty() {
                     s.engine.managed.host = trimmed.to_string();
@@ -1193,6 +1220,19 @@ impl SettingsScreen {
             }
             FieldId::IxBinary => s.impersonation_engine.managed.binary = opt(trimmed),
             FieldId::IxModel => s.impersonation_engine.managed.model_path = opt(trimmed),
+            FieldId::IxDraftModel => s.impersonation_engine.managed.draft_model = opt(trimmed),
+            FieldId::IxDraftNgl => {
+                s.impersonation_engine.managed.draft_gpu_layers =
+                    parse_opt_num(trimmed, s.impersonation_engine.managed.draft_gpu_layers)
+            }
+            FieldId::IxDraftNMax => {
+                s.impersonation_engine.managed.draft_n_max =
+                    parse_opt_num(trimmed, s.impersonation_engine.managed.draft_n_max)
+            }
+            FieldId::IxDraftNMin => {
+                s.impersonation_engine.managed.draft_n_min =
+                    parse_opt_num(trimmed, s.impersonation_engine.managed.draft_n_min)
+            }
             FieldId::IxHost => {
                 if !trimmed.is_empty() {
                     s.impersonation_engine.managed.host = trimmed.to_string();
@@ -1551,6 +1591,33 @@ fn field_description(id: FieldId) -> Option<&'static str> {
             "Сколько слоёв модели имперсонации выгрузить на видеокарту (GPU). \
              0 — только процессор, 99 — вся модель на GPU.",
         ),
+        FieldId::XFlashAttn | FieldId::IxFlashAttn => Some(
+            "FlashAttention — оптимизация механизма внимания: ускоряет генерацию и \
+             экономит видеопамять на поддерживаемых GPU. auto — пусть llama.cpp решит \
+             сам; on/off — включить/выключить принудительно.",
+        ),
+        FieldId::XSpecType | FieldId::IxSpecType => Some(
+            "Спекулятивное декодирование ускоряет генерацию: «черновик» предлагает \
+             несколько токенов вперёд, основная модель их разом проверяет. draft-* — \
+             нужна отдельная черновая модель (-md); для MTP-моделей (mtp-gemma-…) — \
+             draft-mtp; ngram-* — без модели (черновик из контекста). none — выключено.",
+        ),
+        FieldId::XDraftModel | FieldId::IxDraftModel => Some(
+            "Путь к «черновой» GGUF-модели для спекулятивного декодирования (-md). \
+             Должна быть совместима с основной по словарю. Для MTP — путь к \
+             соответствующему MTP-GGUF.",
+        ),
+        FieldId::XDraftNgl | FieldId::IxDraftNgl => {
+            Some("Сколько слоёв черновой модели выгрузить на GPU (-ngld). Пусто — авто.")
+        }
+        FieldId::XDraftNMax | FieldId::IxDraftNMax => Some(
+            "Сколько токенов черновая модель предлагает за один шаг \
+             (--spec-draft-n-max). Пусто — значение llama.cpp по умолчанию (3).",
+        ),
+        FieldId::XDraftNMin | FieldId::IxDraftNMin => Some(
+            "Минимум черновых токенов за шаг (--spec-draft-n-min). Пусто — по \
+             умолчанию (0).",
+        ),
         FieldId::TWebFetch => Some(
             "Загружать страницы результатов web-поиска, извлекать читаемый текст и \
              переупорядочивать по релевантности запросу (эмбеддингами). Даёт модели \
@@ -1608,29 +1675,105 @@ fn num_field<T: ToString>(id: FieldId, label: &str, value: T) -> FieldRow {
     row(id, label, FieldKind::Text(value.to_string()))
 }
 
-/// Поля managed-сервера `llama-server` (общие для движка ассистента/имперсонации).
-#[allow(clippy::too_many_arguments)]
-fn managed_rows(
-    m: &ManagedSettings,
+/// Идентификаторы полей managed-сервера для одного движка (ассистент/имперсонация).
+/// Группируем в структуру, чтобы [`managed_rows`] не разрастался списком аргументов.
+#[derive(Clone, Copy)]
+struct ManagedFieldIds {
     binary: FieldId,
     model: FieldId,
     ngl: FieldId,
     ctx: FieldId,
+    flash_attn: FieldId,
     jinja: FieldId,
     no_mmap: FieldId,
+    spec_type: FieldId,
+    draft_model: FieldId,
+    draft_ngl: FieldId,
+    draft_n_max: FieldId,
+    draft_n_min: FieldId,
     host: FieldId,
     port: FieldId,
-) -> Vec<FieldRow> {
-    vec![
-        text_row(binary, "Бинарник llama-server", &m.binary),
-        text_row(model, "GGUF-модель (-m)", &m.model_path),
-        num_field(ngl, "GPU-слои (-ngl)", m.gpu_layers),
-        num_field(ctx, "Контекст (-c)", m.context_size),
-        row(jinja, "Шаблон (--jinja)", FieldKind::Toggle(m.jinja)),
-        row(no_mmap, "No-mmap (--no-mmap)", FieldKind::Toggle(m.no_mmap)),
-        row(host, "Host", FieldKind::Text(m.host.clone())),
-        num_field(port, "Порт", m.port),
-    ]
+}
+
+/// Набор FieldId для модели/сервера ассистента.
+const ASSISTANT_MANAGED_IDS: ManagedFieldIds = ManagedFieldIds {
+    binary: FieldId::XBinary,
+    model: FieldId::XModel,
+    ngl: FieldId::XNgl,
+    ctx: FieldId::XCtx,
+    flash_attn: FieldId::XFlashAttn,
+    jinja: FieldId::XJinja,
+    no_mmap: FieldId::XNoMmap,
+    spec_type: FieldId::XSpecType,
+    draft_model: FieldId::XDraftModel,
+    draft_ngl: FieldId::XDraftNgl,
+    draft_n_max: FieldId::XDraftNMax,
+    draft_n_min: FieldId::XDraftNMin,
+    host: FieldId::XHost,
+    port: FieldId::XPort,
+};
+
+/// Набор FieldId для модели/сервера имперсонации.
+const IMP_MANAGED_IDS: ManagedFieldIds = ManagedFieldIds {
+    binary: FieldId::IxBinary,
+    model: FieldId::IxModel,
+    ngl: FieldId::IxNgl,
+    ctx: FieldId::IxCtx,
+    flash_attn: FieldId::IxFlashAttn,
+    jinja: FieldId::IxJinja,
+    no_mmap: FieldId::IxNoMmap,
+    spec_type: FieldId::IxSpecType,
+    draft_model: FieldId::IxDraftModel,
+    draft_ngl: FieldId::IxDraftNgl,
+    draft_n_max: FieldId::IxDraftNMax,
+    draft_n_min: FieldId::IxDraftNMin,
+    host: FieldId::IxHost,
+    port: FieldId::IxPort,
+};
+
+/// Поля managed-сервера `llama-server` (общие для движка ассистента/имперсонации).
+fn managed_rows(m: &ManagedSettings, ids: ManagedFieldIds) -> Vec<FieldRow> {
+    let mut rows = vec![
+        text_row(ids.binary, "Бинарник llama-server", &m.binary),
+        text_row(ids.model, "GGUF-модель (-m)", &m.model_path),
+        num_field(ids.ngl, "GPU-слои (-ngl)", m.gpu_layers),
+        num_field(ids.ctx, "Контекст (-c)", m.context_size),
+        row(
+            ids.flash_attn,
+            "FlashAttn (--flash-attn)",
+            FieldKind::Choice(m.flash_attn.label().to_string()),
+        ),
+        row(ids.jinja, "Шаблон (--jinja)", FieldKind::Toggle(m.jinja)),
+        row(
+            ids.no_mmap,
+            "No-mmap (--no-mmap)",
+            FieldKind::Toggle(m.no_mmap),
+        ),
+        row(
+            ids.spec_type,
+            "Спек. декод. (--spec-type)",
+            FieldKind::Choice(m.spec_type.label().to_string()),
+        ),
+    ];
+    // Поля черновой модели показываем только для типов draft-* (им нужна модель);
+    // ngram-* и none их не используют — не загромождаем секцию.
+    if m.spec_type.needs_draft_model() {
+        rows.push(text_row(
+            ids.draft_model,
+            "Черновая модель (-md)",
+            &m.draft_model,
+        ));
+        rows.push(num_row(
+            ids.draft_ngl,
+            "Черновик GPU-слои (-ngld)",
+            m.draft_gpu_layers,
+        ));
+        rows.push(num_row(ids.draft_n_max, "Черновик n-max", m.draft_n_max));
+        rows.push(num_row(ids.draft_n_min, "Черновик n-min", m.draft_n_min));
+    }
+    rows.push(row(ids.host, "Host", FieldKind::Text(m.host.clone())));
+    rows.push(num_field(ids.port, "Порт", m.port));
+    rows
 }
 
 /// Поля облачного провайдера (модель/API-ключ-env/base URL). `cloud` — настройки
@@ -1648,6 +1791,16 @@ fn cloud_rows(
         text_row(api_key_env, "API-ключ (env)", &c.api_key_env),
         text_row(url, "Base URL (опц.)", &c.url),
     ]
+}
+
+/// Парсит редактируемое значение опционального числа: пусто → `None` (очистить),
+/// корректное → `Some`, нечисло → оставить прежнее значение (как у обязательных полей).
+fn parse_opt_num<T: std::str::FromStr + Copy>(text: &str, current: Option<T>) -> Option<T> {
+    if text.is_empty() {
+        None
+    } else {
+        text.parse().ok().or(current)
+    }
 }
 
 /// Числовая строка из `Option<T>` (None → «—»).
@@ -1990,6 +2143,7 @@ fn centered_rect(pct_x: u16, min_w: u16, height: u16, area: Rect) -> Rect {
 mod tests {
     use super::*;
     use crate::features::tools::default_tool_ids;
+    use crate::shared::config::{FlashAttn, SpecType};
 
     fn screen() -> SettingsScreen {
         let mut p = Profile::new("Базовый", "Ты — ассистент.");
@@ -2343,6 +2497,51 @@ mod tests {
         assert!(field_description(FieldId::XJinja).is_some());
         assert!(field_description(FieldId::XNoMmap).is_some());
         assert!(field_description(FieldId::XPort).is_none());
+        // Новые поля FlashAttention/спекулятивного декодирования тоже описаны.
+        assert!(field_description(FieldId::XFlashAttn).is_some());
+        assert!(field_description(FieldId::XSpecType).is_some());
+        assert!(field_description(FieldId::XDraftModel).is_some());
+    }
+
+    #[test]
+    fn managed_mode_shows_flash_attn_and_spec_type() {
+        // В managed-режиме (дефолт) видны FlashAttention и --spec-type; черновые
+        // поля скрыты, пока тип не draft-*.
+        let s = screen();
+        let ids: Vec<FieldId> = s.fields().iter().map(|f| f.id).collect();
+        assert!(ids.contains(&FieldId::XFlashAttn));
+        assert!(ids.contains(&FieldId::XSpecType));
+        assert!(!ids.contains(&FieldId::XDraftModel));
+    }
+
+    #[test]
+    fn cycling_spec_type_to_draft_reveals_draft_fields() {
+        let mut s = screen();
+        s.handle_key(key(KeyCode::Enter)); // фокус на поля (XMode)
+        while s.fields().get(s.field_idx).map(|f| f.id) != Some(FieldId::XSpecType) {
+            s.handle_key(key(KeyCode::Down));
+        }
+        // none → draft-simple → draft-eagle3 → draft-mtp (три шага вправо).
+        s.handle_key(key(KeyCode::Right));
+        s.handle_key(key(KeyCode::Right));
+        s.handle_key(key(KeyCode::Right));
+        assert_eq!(s.config.engine.managed.spec_type, SpecType::DraftMtp);
+        let ids: Vec<FieldId> = s.fields().iter().map(|f| f.id).collect();
+        assert!(ids.contains(&FieldId::XDraftModel));
+        assert!(ids.contains(&FieldId::XDraftNMax));
+    }
+
+    #[test]
+    fn cycling_flash_attn_changes_value_and_saves() {
+        let mut s = screen();
+        s.handle_key(key(KeyCode::Enter)); // фокус на поля (XMode)
+        while s.fields().get(s.field_idx).map(|f| f.id) != Some(FieldId::XFlashAttn) {
+            s.handle_key(key(KeyCode::Down));
+        }
+        assert_eq!(s.config.engine.managed.flash_attn, FlashAttn::Auto);
+        let intent = s.handle_key(key(KeyCode::Right));
+        assert_eq!(s.config.engine.managed.flash_attn, FlashAttn::On);
+        assert!(matches!(intent, Some(SettingsIntent::SaveConfig(_))));
     }
 
     #[test]
