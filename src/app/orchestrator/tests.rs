@@ -1658,6 +1658,43 @@ async fn auto_reflect_e2e_live() {
 }
 
 #[tokio::test]
+async fn update_self_model_persists_and_reemits() {
+    use crate::entities::self_model::SelfModelEdit;
+    let (_d, cmd_tx, mut evt_rx, handle) = spawn_orch(None);
+    let root = _d.path().to_path_buf();
+    wait_for(&mut evt_rx, |e| matches!(e, AppEvent::ChatActivated { .. }))
+        .await
+        .unwrap();
+
+    // Правка из UI-редактора (без модели — оркестратор создаёт её на месте).
+    cmd_tx
+        .send(AppCommand::UpdateSelfModel(SelfModelEdit::SetSummary(
+            "ценю ясность".into(),
+        )))
+        .unwrap();
+
+    // Переэмит снимка отражает правку.
+    let ev = wait_for(&mut evt_rx, |e| matches!(e, AppEvent::SelfModelView(_)))
+        .await
+        .unwrap();
+    match ev {
+        AppEvent::SelfModelView(m) => {
+            assert_eq!(m.expect("ожидали модель").summary, "ценю ясность");
+        }
+        _ => unreachable!(),
+    }
+
+    cmd_tx.send(AppCommand::Quit).unwrap();
+    handle.await.unwrap();
+
+    // Персистентность: запись видна после перезапуска.
+    let reopened = Storage::open(Paths::with_root(&root)).unwrap();
+    let pid = reopened.json().load_profiles().unwrap()[0].id;
+    let stored = reopened.db().self_model_get(pid).unwrap().unwrap();
+    assert_eq!(stored.summary, "ценю ясность");
+}
+
+#[tokio::test]
 async fn send_without_backend_emits_error() {
     let (_d, cmd_tx, mut evt_rx, handle) = spawn_orch(None);
     wait_for(&mut evt_rx, |e| matches!(e, AppEvent::ChatActivated { .. }))

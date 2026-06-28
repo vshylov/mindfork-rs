@@ -640,10 +640,13 @@ agentic-loop **гейтит и сам вызов** (выключенный ин�
 чата. Открытый список/настройки/просмотр получают ввод и рисуются вместо чата;
 событие `OpenChatList`/`OpenSettings` от чата создаёт их, `Close` (Esc) — возвращает
 к `Chat`. Список чатов держит снимок актуальным через `AppEvent::ChatList` (его
-`app` применяет и к чату, и к открытому списку). **Просмотр «модели себя»** (`F3`,
-read-only) — данными владеет оркестратор, поэтому `OpenSelfModel` не открывает экран
-сразу, а шлёт `AppCommand::RequestSelfModel`; экран создаётся по ответному событию
-`AppEvent::SelfModelView` (снимок модели активного профиля). См. [docs/self-model-mvp.md](self-model-mvp.md).
+`app` применяет и к чату, и к открытому списку). **«Модель себя»** (`F3`,
+просмотр+правка) — данными владеет оркестратор, поэтому `OpenSelfModel` не открывает
+экран сразу, а шлёт `AppCommand::RequestSelfModel`; экран создаётся по ответному
+событию `AppEvent::SelfModelView` (снимок модели активного профиля). Правки экран
+отдаёт `SelfModelIntent::Edit` → `AppCommand::UpdateSelfModel`; оркестратор применяет,
+сохраняет и **переэмитит** `SelfModelView` — открытый экран обновляется на месте
+(`set_model`, выделение сохраняется). См. [docs/self-model-mvp.md](self-model-mvp.md).
 
 ```mermaid
 flowchart TB

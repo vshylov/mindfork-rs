@@ -403,11 +403,17 @@ fn apply_event(
             reason,
         } => screen.finish_impersonation(generation_id, reason),
         AppEvent::RagProgress(progress) => screen.set_rag_progress(progress),
-        // Ответ на запрос модели себя (`F3`): открываем read-only экран просмотра.
-        AppEvent::SelfModelView(model) => {
-            *active =
-                ActiveScreen::SelfModel(Box::new(SelfModelScreen::new(*model, screen.palette())));
-        }
+        // Ответ на запрос/правку модели себя (`F3`): открываем экран либо обновляем
+        // уже открытый на месте (сохраняя выделение — важно при правках).
+        AppEvent::SelfModelView(model) => match active {
+            ActiveScreen::SelfModel(view) => view.set_model(*model),
+            _ => {
+                *active = ActiveScreen::SelfModel(Box::new(SelfModelScreen::new(
+                    *model,
+                    screen.palette(),
+                )))
+            }
+        },
         AppEvent::Error(message) => screen.push_error(&message),
     }
 }
@@ -586,8 +592,8 @@ fn process_input_batch(
                     ActiveScreen::Chat => screen.handle_paste(&text),
                     // В списке цель вставки — поле переименования (`F2`), если открыто.
                     ActiveScreen::ChatList(list) => list.handle_paste(&text),
-                    // Просмотр модели себя — read-only, цели вставки нет.
-                    ActiveScreen::SelfModel(_) => {}
+                    // В редакторе модели себя — в активное поле правки, если открыто.
+                    ActiveScreen::SelfModel(view) => view.handle_paste(&text),
                 }
             }
             Chunk::Event(Event::Key(key)) => {
@@ -617,7 +623,7 @@ fn process_input_batch(
                     dispatch_settings(intent, cmd_tx, active);
                 }
                 if let Some(intent) = self_model_intent
-                    && dispatch_self_model(intent, active)
+                    && dispatch_self_model(intent, cmd_tx, active)
                 {
                     quit = true;
                 }
@@ -762,13 +768,23 @@ fn dispatch_settings(
 
 /// Транслирует намерение экрана просмотра модели себя: закрытие возвращает к чату,
 /// `Quit` завершает петлю (`true`). Команд оркестратору не шлёт (read-only).
-fn dispatch_self_model(intent: SelfModelIntent, active: &mut ActiveScreen) -> bool {
+fn dispatch_self_model(
+    intent: SelfModelIntent,
+    cmd_tx: &UnboundedSender<AppCommand>,
+    active: &mut ActiveScreen,
+) -> bool {
     match intent {
         SelfModelIntent::Close => {
             *active = ActiveScreen::Chat;
             false
         }
         SelfModelIntent::Quit => true,
+        // Правка: команда оркестратору; экран остаётся открытым и обновится по
+        // ответному `SelfModelView` (см. `apply_event`).
+        SelfModelIntent::Edit(edit) => {
+            let _ = cmd_tx.send(AppCommand::UpdateSelfModel(edit));
+            false
+        }
     }
 }
 

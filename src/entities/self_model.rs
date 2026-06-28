@@ -88,6 +88,32 @@ pub enum GoalStatus {
     Abandoned,
 }
 
+/// Ручная правка «модели себя» из UI-редактора (`F3`). Применяется сущностью
+/// ([`SelfModel::apply_edit`]); сохраняет оркестратор. Контракт UI↔оркестратор.
+#[derive(Debug, Clone, PartialEq)]
+pub enum SelfModelEdit {
+    /// Заменить краткое описание себя.
+    SetSummary(String),
+    /// Добавить новую активную цель.
+    AddGoal(String),
+    /// Изменить текст цели по id.
+    SetGoalText { id: Uuid, text: String },
+    /// Переключить статус цели (Active→Completed→Abandoned→Active).
+    CycleGoalStatus(Uuid),
+    /// Удалить цель по id.
+    DeleteGoal(Uuid),
+    /// Заменить список воспринимаемых черт собеседника.
+    SetTraits(Vec<String>),
+    /// Заменить список текущих интересов собеседника.
+    SetInterests(Vec<String>),
+    /// Заменить описание динамики отношений.
+    SetRelationship(String),
+    /// Удалить инсайт нарратива по id.
+    DeleteInsight(Uuid),
+    /// Очистить всю модель (описание/цели/собеседник/нарратив).
+    Clear,
+}
+
 /// Представление агента о собеседнике (свободные списки/текст, без id).
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct UserModel {
@@ -149,6 +175,97 @@ impl SelfModel {
             true
         } else {
             false
+        }
+    }
+
+    /// Циклически переключает статус цели Active→Completed→Abandoned→Active (по id).
+    /// Возвращает `true`, если цель найдена.
+    pub fn cycle_goal_status(&mut self, id: Uuid) -> bool {
+        if let Some(g) = self.goals.iter_mut().find(|g| g.id == id) {
+            g.status = match g.status {
+                GoalStatus::Active => GoalStatus::Completed,
+                GoalStatus::Completed => GoalStatus::Abandoned,
+                GoalStatus::Abandoned => GoalStatus::Active,
+            };
+            true
+        } else {
+            false
+        }
+    }
+
+    /// Применяет ручную правку из UI-редактора (`F3`). Возвращает `true`, если
+    /// модель изменилась (оркестратору — стоит ли сохранять). Чистая логика —
+    /// тестируема без оркестратора. Списки черт/интересов заменяются целиком.
+    pub fn apply_edit(&mut self, edit: SelfModelEdit) -> bool {
+        match edit {
+            SelfModelEdit::SetSummary(s) => {
+                let s = s.trim().to_string();
+                if self.summary == s {
+                    return false;
+                }
+                self.summary = s;
+                true
+            }
+            SelfModelEdit::AddGoal(desc) => {
+                let before = self.goals.len();
+                self.add_goal(desc);
+                self.goals.len() != before
+            }
+            SelfModelEdit::SetGoalText { id, text } => {
+                let text = text.trim().to_string();
+                if let Some(g) = self.goals.iter_mut().find(|g| g.id == id) {
+                    if text.is_empty() || g.description == text {
+                        return false;
+                    }
+                    g.description = text;
+                    true
+                } else {
+                    false
+                }
+            }
+            SelfModelEdit::CycleGoalStatus(id) => self.cycle_goal_status(id),
+            SelfModelEdit::DeleteGoal(id) => {
+                let before = self.goals.len();
+                self.goals.retain(|g| g.id != id);
+                self.goals.len() != before
+            }
+            SelfModelEdit::SetTraits(v) => {
+                if self.user_model.perceived_traits == v {
+                    return false;
+                }
+                self.user_model.perceived_traits = v;
+                true
+            }
+            SelfModelEdit::SetInterests(v) => {
+                if self.user_model.current_interests == v {
+                    return false;
+                }
+                self.user_model.current_interests = v;
+                true
+            }
+            SelfModelEdit::SetRelationship(s) => {
+                let s = s.trim().to_string();
+                if self.user_model.relationship_dynamic == s {
+                    return false;
+                }
+                self.user_model.relationship_dynamic = s;
+                true
+            }
+            SelfModelEdit::DeleteInsight(id) => {
+                let before = self.narrative.len();
+                self.narrative.retain(|n| n.id != id);
+                self.narrative.len() != before
+            }
+            SelfModelEdit::Clear => {
+                if self.is_empty() && self.summary.is_empty() && self.goals.is_empty() {
+                    return false;
+                }
+                self.summary.clear();
+                self.goals.clear();
+                self.user_model = UserModel::default();
+                self.narrative.clear();
+                true
+            }
         }
     }
 
@@ -382,6 +499,45 @@ mod tests {
             m.render_for_prompt(p().prompt_cap, p().narrative_in_prompt)
                 .is_none()
         );
+    }
+
+    #[test]
+    fn apply_edit_covers_operations() {
+        let mut m = SelfModel::new(Uuid::new_v4());
+        assert!(m.apply_edit(SelfModelEdit::SetSummary("я краток".into())));
+        assert_eq!(m.summary, "я краток");
+        // повтор того же — без изменений
+        assert!(!m.apply_edit(SelfModelEdit::SetSummary("я краток".into())));
+
+        assert!(m.apply_edit(SelfModelEdit::AddGoal("помочь".into())));
+        let gid = m.goals[0].id;
+        assert!(m.apply_edit(SelfModelEdit::SetGoalText {
+            id: gid,
+            text: "помочь лучше".into()
+        }));
+        assert_eq!(m.goals[0].description, "помочь лучше");
+        // цикл статуса: Active → Completed
+        assert!(m.apply_edit(SelfModelEdit::CycleGoalStatus(gid)));
+        assert_eq!(m.goals[0].status, GoalStatus::Completed);
+        assert!(m.apply_edit(SelfModelEdit::DeleteGoal(gid)));
+        assert!(m.goals.is_empty());
+
+        assert!(m.apply_edit(SelfModelEdit::SetTraits(vec!["скептик".into()])));
+        assert!(m.apply_edit(SelfModelEdit::SetInterests(vec!["Rust".into()])));
+        assert!(m.apply_edit(SelfModelEdit::SetRelationship("рабочие".into())));
+        assert_eq!(m.user_model.perceived_traits, vec!["скептик".to_string()]);
+
+        m.add_insight("наблюдение", 50);
+        let iid = m.narrative[0].id;
+        assert!(m.apply_edit(SelfModelEdit::DeleteInsight(iid)));
+        assert!(m.narrative.is_empty());
+
+        // Clear сбрасывает всё; повторный Clear на пустой — no-op.
+        assert!(m.apply_edit(SelfModelEdit::Clear));
+        assert!(m.is_empty());
+        assert!(!m.apply_edit(SelfModelEdit::Clear));
+        // несуществующие id — no-op
+        assert!(!m.apply_edit(SelfModelEdit::DeleteGoal(Uuid::new_v4())));
     }
 
     #[test]

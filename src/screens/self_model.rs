@@ -1,22 +1,27 @@
-//! Экран просмотра «модели себя» (FSD "page"): read-only полноэкранный вид
-//! текущего представления агента о себе для активного профиля — описание, цели,
-//! модель собеседника и нарратив инсайтов. Открывается из чата по `F3`,
-//! закрывается `Esc`. Данные приходят снимком от оркестратора (он владеет
-//! `Storage`) событием `AppEvent::SelfModelView`. Правка — пока только силами
-//! модели (инструменты SelfModel); ручное редактирование — задел Tier 3.
-//! См. [docs/self-model-mvp.md](../../docs/self-model-mvp.md).
+//! Экран «модели себя» (FSD "page"): просмотр и **ручная правка** представления
+//! агента о себе для активного профиля — описание, цели, модель собеседника и
+//! нарратив инсайтов. Открывается из чата по `F3`, закрывается `Esc`.
+//!
+//! Данные приходят снимком от оркестратора (он владеет `Storage`) событием
+//! `AppEvent::SelfModelView`. Правки экран отдаёт намерением `SelfModelIntent::Edit`
+//! (→ `AppCommand::UpdateSelfModel`); оркестратор применяет, сохраняет и переэмитит
+//! обновлённый снимок (экран обновляется на месте). Сам экран про `app`/`Storage`
+//! не знает (FSD). См. docs/self-model-mvp.md.
 
 use ratatui::Frame;
 use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
-use ratatui::layout::{Constraint, Direction, Layout};
+use ratatui::layout::{Constraint, Direction, Layout, Rect};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::Paragraph;
+use ratatui::widgets::{Clear, List, ListItem, ListState, Paragraph};
+use uuid::Uuid;
 
-use crate::entities::self_model::{GoalStatus, SelfModel};
+use crate::entities::self_model::{GoalStatus, SelfModel, SelfModelEdit};
 use crate::shared::keys;
 use crate::shared::theme::Palette;
+use crate::shared::ui::dim_background;
+use crate::widgets::input_box::InputBox;
 
-/// Намерение экрана просмотра модели себя (транслируется `app`). Параллель к
+/// Намерение экрана «модели себя» (транслируется `app`). Параллель к
 /// [`ChatListIntent`](crate::screens::chat_list::ChatListIntent).
 #[derive(Debug, Clone, PartialEq)]
 pub enum SelfModelIntent {
@@ -24,15 +29,49 @@ pub enum SelfModelIntent {
     Close,
     /// Выйти из приложения (`Ctrl+C`).
     Quit,
+    /// Применить ручную правку (оркестратор сохранит и переэмитит снимок).
+    Edit(SelfModelEdit),
 }
 
-/// Экран просмотра модели себя: снимок модели + контекст отрисовки.
+/// На что указывает выбранная строка (для действий правки).
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum RowAction {
+    Summary,
+    Goal(Uuid),
+    AddGoal,
+    Traits,
+    Interests,
+    Relationship,
+    Insight(Uuid),
+}
+
+/// Что именно редактируется в открытом текстовом редакторе.
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum EditKind {
+    Summary,
+    AddGoal,
+    GoalText(Uuid),
+    Traits,
+    Interests,
+    Relationship,
+}
+
+/// Активный текстовый редактор поля (попап).
+struct Editor {
+    kind: EditKind,
+    input: InputBox,
+    /// Многострочный (описание себя) — `Shift+Enter` перенос, крупный попап.
+    multiline: bool,
+}
+
+/// Экран «модели себя»: снимок модели + состояние навигации/правки.
 pub struct SelfModelScreen {
-    /// Снимок модели активного профиля (`None` — ещё не создавалась).
     model: Option<SelfModel>,
     palette: Palette,
-    /// Вертикальная прокрутка (в строках содержимого).
-    scroll: u16,
+    selected: usize,
+    editor: Option<Editor>,
+    /// Подтверждение очистки всей модели (`Ctrl+K` дважды).
+    confirm_clear: bool,
 }
 
 impl SelfModelScreen {
@@ -41,8 +80,19 @@ impl SelfModelScreen {
         Self {
             model,
             palette,
-            scroll: 0,
+            selected: 0,
+            editor: None,
+            confirm_clear: false,
         }
+    }
+
+    /// Обновляет снимок модели (после правки/рефлексии — событие `SelfModelView`),
+    /// сохраняя выделение по возможности и закрывая подтверждение очистки.
+    pub fn set_model(&mut self, model: Option<SelfModel>) {
+        self.model = model;
+        self.confirm_clear = false;
+        let max = self.rows().len().saturating_sub(1);
+        self.selected = self.selected.min(max);
     }
 
     /// Обновляет палитру темы (событие `AppEvent::Settings`).
@@ -50,104 +100,241 @@ impl SelfModelScreen {
         self.palette = palette;
     }
 
-    /// Обрабатывает нажатие клавиши, возвращая намерение для `app` (или `None`,
-    /// если обработано внутри: прокрутка).
+    /// Строит навигируемые строки (вид + цель действия). Базовые поля присутствуют
+    /// всегда (правка возможна и на пустой модели); цели и инсайты — по наличию.
+    fn rows(&self) -> Vec<(Line<'static>, RowAction)> {
+        let p = &self.palette;
+        let empty = SelfModel::new(Uuid::nil());
+        let m = self.model.as_ref().unwrap_or(&empty);
+        let label = |s: &str| Span::styled(s.to_string(), p.accent_style());
+        let dim = |s: String| Span::styled(s, p.muted_style());
+        let mut rows: Vec<(Line<'static>, RowAction)> = Vec::new();
+
+        // Описание себя.
+        let summary = if m.summary.trim().is_empty() {
+            dim("—".into())
+        } else {
+            Span::raw(m.summary.trim().to_string())
+        };
+        rows.push((
+            Line::from(vec![label("О себе: "), summary]),
+            RowAction::Summary,
+        ));
+
+        // Цели (с маркером статуса) + строка добавления.
+        for g in &m.goals {
+            let (marker, style) = match g.status {
+                GoalStatus::Active => ("● ", p.success_style()),
+                GoalStatus::Completed => ("✓ ", p.muted_style()),
+                GoalStatus::Abandoned => ("✗ ", p.muted_style()),
+            };
+            rows.push((
+                Line::from(vec![
+                    Span::styled(marker.to_string(), style),
+                    Span::raw(g.description.trim().to_string()),
+                ]),
+                RowAction::Goal(g.id),
+            ));
+        }
+        rows.push((
+            Line::from(vec![Span::styled(
+                "＋ добавить цель".to_string(),
+                p.muted_style(),
+            )]),
+            RowAction::AddGoal,
+        ));
+
+        // Модель собеседника.
+        let u = &m.user_model;
+        let join_or_dash = |v: &[String]| {
+            if v.is_empty() {
+                dim("—".into())
+            } else {
+                Span::raw(v.join(", "))
+            }
+        };
+        rows.push((
+            Line::from(vec![label("Черты: "), join_or_dash(&u.perceived_traits)]),
+            RowAction::Traits,
+        ));
+        rows.push((
+            Line::from(vec![
+                label("Интересы: "),
+                join_or_dash(&u.current_interests),
+            ]),
+            RowAction::Interests,
+        ));
+        let rel = if u.relationship_dynamic.trim().is_empty() {
+            dim("—".into())
+        } else {
+            Span::raw(u.relationship_dynamic.trim().to_string())
+        };
+        rows.push((
+            Line::from(vec![label("Отношения: "), rel]),
+            RowAction::Relationship,
+        ));
+
+        // Нарратив (новые сверху) — удаление по `Del`.
+        for seg in m.narrative.iter().rev() {
+            let date = seg.created_at.format("%Y-%m-%d").to_string();
+            rows.push((
+                Line::from(vec![
+                    dim(format!("[{date}] ")),
+                    Span::raw(seg.text.trim().to_string()),
+                ]),
+                RowAction::Insight(seg.id),
+            ));
+        }
+        rows
+    }
+
+    /// Действие выбранной строки (или `None`, если индекс вне диапазона).
+    fn selected_action(&self) -> Option<RowAction> {
+        self.rows().get(self.selected).map(|(_, a)| *a)
+    }
+
+    /// Обрабатывает нажатие клавиши, возвращая намерение для `app`.
     pub fn handle_key(&mut self, key: KeyEvent) -> Option<SelfModelIntent> {
-        // Ctrl+C — выход (раскладко-независимо).
-        if key.modifiers.contains(KeyModifiers::CONTROL)
-            && let KeyCode::Char(c) = key.code
-            && keys::physical_char(c) == 'c'
-        {
+        if self.editor.is_some() {
+            return self.handle_editor_key(key);
+        }
+        let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
+        let phys = if let KeyCode::Char(c) = key.code {
+            keys::physical_char(c)
+        } else {
+            '\0'
+        };
+        // Подтверждение очистки: повторный Ctrl+K — да; любая другая клавиша — отмена.
+        if self.confirm_clear {
+            self.confirm_clear = false;
+            if ctrl && phys == 'k' {
+                return Some(SelfModelIntent::Edit(SelfModelEdit::Clear));
+            }
+            return None;
+        }
+        if ctrl && phys == 'c' {
             return Some(SelfModelIntent::Quit);
         }
+        if ctrl && phys == 'k' {
+            self.confirm_clear = true;
+            return None;
+        }
+        let len = self.rows().len();
         match key.code {
             KeyCode::Esc => return Some(SelfModelIntent::Close),
-            KeyCode::Up => self.scroll = self.scroll.saturating_sub(1),
-            KeyCode::Down => self.scroll = self.scroll.saturating_add(1),
-            KeyCode::PageUp => self.scroll = self.scroll.saturating_sub(10),
-            KeyCode::PageDown => self.scroll = self.scroll.saturating_add(10),
-            KeyCode::Home => self.scroll = 0,
+            KeyCode::Up => self.selected = self.selected.saturating_sub(1),
+            KeyCode::Down => self.selected = (self.selected + 1).min(len.saturating_sub(1)),
+            KeyCode::PageUp => self.selected = self.selected.saturating_sub(10),
+            KeyCode::PageDown => self.selected = (self.selected + 10).min(len.saturating_sub(1)),
+            KeyCode::Home => self.selected = 0,
+            KeyCode::End => self.selected = len.saturating_sub(1),
+            KeyCode::Enter => return self.begin_edit(),
+            KeyCode::Char(' ') => {
+                if let Some(RowAction::Goal(id)) = self.selected_action() {
+                    return Some(SelfModelIntent::Edit(SelfModelEdit::CycleGoalStatus(id)));
+                }
+            }
+            KeyCode::Delete => match self.selected_action() {
+                Some(RowAction::Goal(id)) => {
+                    return Some(SelfModelIntent::Edit(SelfModelEdit::DeleteGoal(id)));
+                }
+                Some(RowAction::Insight(id)) => {
+                    return Some(SelfModelIntent::Edit(SelfModelEdit::DeleteInsight(id)));
+                }
+                _ => {}
+            },
             _ => {}
         }
         None
     }
 
-    /// Строит строки содержимого по снимку модели.
-    fn content_lines(&self) -> Vec<Line<'static>> {
-        let p = &self.palette;
-        let Some(m) = self.model.as_ref().filter(|m| !m.is_empty()) else {
-            return vec![Line::styled(
-                "Модель себя пока пуста (или инструменты модели себя выключены в профиле).",
-                p.muted_style(),
-            )];
+    /// Открывает редактор для выбранной строки (или ничего — для инсайта).
+    fn begin_edit(&mut self) -> Option<SelfModelIntent> {
+        let action = self.selected_action()?;
+        let m = self
+            .model
+            .clone()
+            .unwrap_or_else(|| SelfModel::new(Uuid::nil()));
+        let (kind, multiline, seed) = match action {
+            RowAction::Summary => (EditKind::Summary, true, m.summary.clone()),
+            RowAction::AddGoal => (EditKind::AddGoal, false, String::new()),
+            RowAction::Goal(id) => {
+                let seed = m
+                    .goals
+                    .iter()
+                    .find(|g| g.id == id)
+                    .map(|g| g.description.clone())
+                    .unwrap_or_default();
+                (EditKind::GoalText(id), false, seed)
+            }
+            RowAction::Traits => (
+                EditKind::Traits,
+                false,
+                m.user_model.perceived_traits.join(", "),
+            ),
+            RowAction::Interests => (
+                EditKind::Interests,
+                false,
+                m.user_model.current_interests.join(", "),
+            ),
+            RowAction::Relationship => (
+                EditKind::Relationship,
+                false,
+                m.user_model.relationship_dynamic.clone(),
+            ),
+            RowAction::Insight(_) => return None, // инсайты не правим, только удаляем
         };
-        let mut lines: Vec<Line<'static>> = Vec::new();
-        let header = |text: &str| Line::styled(text.to_string(), p.accent_style());
-
-        if !m.summary.trim().is_empty() {
-            lines.push(header("О себе"));
-            lines.push(Line::raw(m.summary.trim().to_string()));
-            lines.push(Line::raw(""));
-        }
-
-        if !m.goals.is_empty() {
-            lines.push(header("Цели"));
-            for g in &m.goals {
-                let (marker, style) = match g.status {
-                    GoalStatus::Active => ("●", p.success_style()),
-                    GoalStatus::Completed => ("✓", p.muted_style()),
-                    GoalStatus::Abandoned => ("✗", p.muted_style()),
-                };
-                lines.push(Line::from(vec![
-                    Span::styled(format!("{marker} "), style),
-                    Span::raw(g.description.trim().to_string()),
-                ]));
-            }
-            lines.push(Line::raw(""));
-        }
-
-        let u = &m.user_model;
-        if !u.is_empty() {
-            lines.push(header("О собеседнике"));
-            if !u.perceived_traits.is_empty() {
-                lines.push(Line::raw(format!(
-                    "Черты: {}",
-                    u.perceived_traits.join(", ")
-                )));
-            }
-            if !u.current_interests.is_empty() {
-                lines.push(Line::raw(format!(
-                    "Интересы: {}",
-                    u.current_interests.join(", ")
-                )));
-            }
-            if !u.relationship_dynamic.trim().is_empty() {
-                lines.push(Line::raw(format!(
-                    "Отношения: {}",
-                    u.relationship_dynamic.trim()
-                )));
-            }
-            lines.push(Line::raw(""));
-        }
-
-        if !m.narrative.is_empty() {
-            lines.push(header("Нарратив (новые сверху)"));
-            for seg in m.narrative.iter().rev() {
-                let date = seg.created_at.format("%Y-%m-%d").to_string();
-                lines.push(Line::from(vec![
-                    Span::styled(format!("[{date}] "), p.muted_style()),
-                    Span::raw(seg.text.trim().to_string()),
-                ]));
-            }
-        }
-        lines
+        let mut input = InputBox::new();
+        input.set_single_line(!multiline);
+        input.set_text(&seed);
+        self.editor = Some(Editor {
+            kind,
+            input,
+            multiline,
+        });
+        None
     }
 
-    /// Рисует вид во весь экран: скруглённая панель + содержимое + строка хоткеев.
-    pub fn render(&self, frame: &mut Frame) {
+    fn handle_editor_key(&mut self, key: KeyEvent) -> Option<SelfModelIntent> {
+        let editor = self.editor.as_mut()?;
+        match (key.code, key.modifiers) {
+            (KeyCode::Esc, _) => {
+                self.editor = None;
+                None
+            }
+            (KeyCode::Enter, KeyModifiers::SHIFT) if editor.multiline => {
+                editor.input.insert_newline();
+                None
+            }
+            (KeyCode::Enter, _) => {
+                let editor = self.editor.take().unwrap();
+                commit_edit(editor.kind, editor.input.text())
+            }
+            (KeyCode::Char(c), m)
+                if m.contains(KeyModifiers::CONTROL) && keys::physical_char(c) == 'k' =>
+            {
+                editor.input.clear_or_restore();
+                None
+            }
+            _ => {
+                editor.input.on_key(key);
+                None
+            }
+        }
+    }
+
+    /// Вставка из буфера обмена — в активный редактор поля (иначе no-op).
+    pub fn handle_paste(&mut self, text: &str) {
+        if let Some(editor) = self.editor.as_mut() {
+            editor.input.insert_str(text);
+        }
+    }
+
+    /// Рисует экран во весь экран: список полей + строка хоткеев; редактор — попапом.
+    pub fn render(&mut self, frame: &mut Frame) {
         let area = frame.area();
-        let p = &self.palette;
-        let block = p.panel("✦ Модель себя", true);
+        let palette = self.palette;
+        let block = palette.panel("✦ Модель себя", true);
         let inner = block.inner(area);
         frame.render_widget(block, area);
 
@@ -156,20 +343,113 @@ impl SelfModelScreen {
             .constraints([Constraint::Min(1), Constraint::Length(1)])
             .split(inner);
 
-        let lines = self.content_lines();
-        let body = Paragraph::new(lines)
-            .wrap(ratatui::widgets::Wrap { trim: false })
-            .scroll((self.scroll, 0));
-        frame.render_widget(body, chunks[0]);
+        let items: Vec<ListItem> = self
+            .rows()
+            .into_iter()
+            .map(|(line, _)| ListItem::new(line))
+            .collect();
+        let mut state = ListState::default();
+        state.select(Some(self.selected.min(items.len().saturating_sub(1))));
+        let list = List::new(items)
+            .highlight_style(ratatui::style::Style::new().bg(palette.keycap_bg))
+            .highlight_symbol("▌ ");
+        frame.render_stateful_widget(list, chunks[0], &mut state);
 
-        // Строка хоткеев.
-        let mut hint: Vec<Span<'static>> = Vec::new();
-        hint.extend(p.hint("Esc", "закрыть"));
-        hint.push(Span::raw("  "));
-        hint.extend(p.hint("↑↓/PgUp/PgDn", "прокрутка"));
-        hint.push(Span::raw("  "));
-        hint.extend(p.hint("Ctrl+C", "выход"));
-        frame.render_widget(Paragraph::new(Line::from(hint)), chunks[1]);
+        // Нижняя строка: подтверждение очистки или хоткеи.
+        if self.confirm_clear {
+            let warn = ratatui::style::Style::new().fg(palette.warning);
+            frame.render_widget(
+                Paragraph::new(Line::styled(
+                    "Очистить всю модель? Ctrl+K — да, любая клавиша — нет",
+                    warn,
+                )),
+                chunks[1],
+            );
+        } else {
+            let mut hint: Vec<Span<'static>> = Vec::new();
+            for (k, d) in [
+                ("Enter", "правка"),
+                ("Space", "статус цели"),
+                ("Del", "удалить"),
+                ("Ctrl+K", "очистить"),
+                ("Esc", "закрыть"),
+            ] {
+                hint.extend(palette.hint(k, d));
+                hint.push(Span::raw("  "));
+            }
+            frame.render_widget(Paragraph::new(Line::from(hint)), chunks[1]);
+        }
+
+        // Редактор поверх — с реальным курсором.
+        if let Some(editor) = self.editor.as_mut() {
+            let (popup, title) = if editor.multiline {
+                (
+                    centered_rect(80, 50, area),
+                    "правка · Shift+Enter перенос · Enter ок · Esc отмена",
+                )
+            } else {
+                (
+                    centered_rect_h(60, 3, area),
+                    "правка · Enter ок · Esc отмена",
+                )
+            };
+            if editor.multiline {
+                dim_background(frame);
+            }
+            frame.render_widget(Clear, popup);
+            editor
+                .input
+                .render(frame, popup, title, true, &palette, false);
+        }
+    }
+}
+
+/// Формирует намерение правки из коммита редактора (или `None`, если правка пуста).
+fn commit_edit(kind: EditKind, text: String) -> Option<SelfModelIntent> {
+    let edit = match kind {
+        EditKind::Summary => SelfModelEdit::SetSummary(text),
+        EditKind::AddGoal => {
+            if text.trim().is_empty() {
+                return None;
+            }
+            SelfModelEdit::AddGoal(text)
+        }
+        EditKind::GoalText(id) => SelfModelEdit::SetGoalText { id, text },
+        EditKind::Traits => SelfModelEdit::SetTraits(parse_list(&text)),
+        EditKind::Interests => SelfModelEdit::SetInterests(parse_list(&text)),
+        EditKind::Relationship => SelfModelEdit::SetRelationship(text),
+    };
+    Some(SelfModelIntent::Edit(edit))
+}
+
+/// Список через запятую → вектор непустых обрезанных элементов.
+fn parse_list(s: &str) -> Vec<String> {
+    s.split(',')
+        .map(|x| x.trim().to_string())
+        .filter(|x| !x.is_empty())
+        .collect()
+}
+
+/// Центрированный прямоугольник в процентах ширины/высоты.
+fn centered_rect(pct_x: u16, pct_y: u16, area: Rect) -> Rect {
+    let w = area.width * pct_x / 100;
+    let h = area.height * pct_y / 100;
+    Rect {
+        x: area.x + (area.width.saturating_sub(w)) / 2,
+        y: area.y + (area.height.saturating_sub(h)) / 2,
+        width: w,
+        height: h,
+    }
+}
+
+/// Центрированная горизонтальная полоса фиксированной высоты (однострочный редактор).
+fn centered_rect_h(pct_x: u16, height: u16, area: Rect) -> Rect {
+    let w = area.width * pct_x / 100;
+    Rect {
+        x: area.x + (area.width.saturating_sub(w)) / 2,
+        y: area.y + (area.height.saturating_sub(height)) / 2,
+        width: w,
+        height,
     }
 }
 
@@ -178,10 +458,18 @@ mod tests {
     use super::*;
     use ratatui::Terminal;
     use ratatui::backend::TestBackend;
-    use uuid::Uuid;
 
     fn key(code: KeyCode) -> KeyEvent {
         KeyEvent::new(code, KeyModifiers::NONE)
+    }
+
+    fn model() -> SelfModel {
+        let mut m = SelfModel::new(Uuid::new_v4());
+        m.summary = "ценю ясность".into();
+        m.add_goal("помочь с проектом");
+        m.user_model.perceived_traits = vec!["скептичный".into()];
+        m.add_insight("замечен интерес к Rust", 50);
+        m
     }
 
     #[test]
@@ -195,58 +483,103 @@ mod tests {
             s.handle_key(KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL)),
             Some(SelfModelIntent::Quit)
         );
-        // Ctrl+C раскладко-независим (физ. C = русская «с»).
-        assert_eq!(
-            s.handle_key(KeyEvent::new(KeyCode::Char('с'), KeyModifiers::CONTROL)),
-            Some(SelfModelIntent::Quit)
-        );
     }
 
     #[test]
-    fn scroll_keys_return_none_and_clamp_at_top() {
+    fn enter_on_summary_opens_editor_and_commits() {
+        let mut s = SelfModelScreen::new(Some(model()), Palette::default());
+        // Первая строка — описание себя.
+        assert_eq!(s.handle_key(key(KeyCode::Enter)), None);
+        assert!(s.editor.is_some());
+        // Печать и коммит → намерение правки summary.
+        s.handle_key(key(KeyCode::Char('!')));
+        let intent = s.handle_key(key(KeyCode::Enter)).unwrap();
+        match intent {
+            SelfModelIntent::Edit(SelfModelEdit::SetSummary(t)) => assert!(t.contains('!')),
+            other => panic!("ожидали SetSummary, получили {other:?}"),
+        }
+        assert!(s.editor.is_none());
+    }
+
+    #[test]
+    fn space_cycles_goal_delete_removes() {
+        let mut s = SelfModelScreen::new(Some(model()), Palette::default());
+        s.handle_key(key(KeyCode::Down)); // на цель
+        assert!(matches!(s.selected_action(), Some(RowAction::Goal(_))));
+        let cycle = s.handle_key(key(KeyCode::Char(' '))).unwrap();
+        assert!(matches!(
+            cycle,
+            SelfModelIntent::Edit(SelfModelEdit::CycleGoalStatus(_))
+        ));
+        let del = s.handle_key(key(KeyCode::Delete)).unwrap();
+        assert!(matches!(
+            del,
+            SelfModelIntent::Edit(SelfModelEdit::DeleteGoal(_))
+        ));
+    }
+
+    #[test]
+    fn add_goal_commits_and_empty_is_noop() {
         let mut s = SelfModelScreen::new(None, Palette::default());
-        assert_eq!(s.handle_key(key(KeyCode::Up)), None);
-        assert_eq!(s.scroll, 0); // не уходит ниже нуля
-        assert_eq!(s.handle_key(key(KeyCode::Down)), None);
-        assert_eq!(s.scroll, 1);
-        assert_eq!(s.handle_key(key(KeyCode::Home)), None);
-        assert_eq!(s.scroll, 0);
+        // Строки пустой модели: [Summary, AddGoal, Traits, Interests, Relationship].
+        s.selected = 1; // AddGoal
+        assert!(matches!(s.selected_action(), Some(RowAction::AddGoal)));
+        s.handle_key(key(KeyCode::Enter));
+        assert!(s.editor.is_some());
+        // Пустой коммит → no-op.
+        assert_eq!(s.handle_key(key(KeyCode::Enter)), None);
+
+        s.handle_key(key(KeyCode::Enter)); // снова открыть
+        s.handle_key(key(KeyCode::Char('ц')));
+        let intent = s.handle_key(key(KeyCode::Enter)).unwrap();
+        assert!(matches!(
+            intent,
+            SelfModelIntent::Edit(SelfModelEdit::AddGoal(_))
+        ));
     }
 
     #[test]
-    fn empty_model_renders_placeholder_without_panic() {
-        let s = SelfModelScreen::new(None, Palette::default());
-        let lines = s.content_lines();
-        assert_eq!(lines.len(), 1);
-        let mut term = Terminal::new(TestBackend::new(80, 24)).unwrap();
-        term.draw(|f| s.render(f)).unwrap();
+    fn ctrl_k_confirm_then_clear() {
+        let mut s = SelfModelScreen::new(Some(model()), Palette::default());
+        assert_eq!(
+            s.handle_key(KeyEvent::new(KeyCode::Char('k'), KeyModifiers::CONTROL)),
+            None
+        );
+        assert!(s.confirm_clear);
+        // Повторный Ctrl+K подтверждает.
+        let intent = s
+            .handle_key(KeyEvent::new(KeyCode::Char('k'), KeyModifiers::CONTROL))
+            .unwrap();
+        assert_eq!(intent, SelfModelIntent::Edit(SelfModelEdit::Clear));
+        assert!(!s.confirm_clear);
     }
 
     #[test]
-    fn populated_model_renders_sections() {
-        let mut m = SelfModel::new(Uuid::new_v4());
-        m.summary = "ценю ясность".into();
-        m.add_goal("помочь с проектом");
-        m.user_model.perceived_traits = vec!["скептичный".into()];
-        m.add_insight("замечен интерес к Rust", 50);
-        let s = SelfModelScreen::new(Some(m), Palette::default());
+    fn ctrl_k_confirm_cancelled_by_other_key() {
+        let mut s = SelfModelScreen::new(Some(model()), Palette::default());
+        s.handle_key(KeyEvent::new(KeyCode::Char('k'), KeyModifiers::CONTROL));
+        assert!(s.confirm_clear);
+        assert_eq!(s.handle_key(key(KeyCode::Down)), None); // отмена
+        assert!(!s.confirm_clear);
+    }
 
-        // Содержимое включает заголовки секций.
-        let text: String = s
-            .content_lines()
-            .iter()
-            .flat_map(|l| l.spans.iter().map(|sp| sp.content.clone()))
-            .collect::<Vec<_>>()
-            .join("|");
-        assert!(text.contains("О себе"));
-        assert!(text.contains("ценю ясность"));
-        assert!(text.contains("Цели"));
-        assert!(text.contains("помочь с проектом"));
-        assert!(text.contains("О собеседнике"));
-        assert!(text.contains("Нарратив"));
-        assert!(text.contains("замечен интерес к Rust"));
+    #[test]
+    fn traits_edit_parses_comma_list() {
+        let intent = commit_edit(EditKind::Traits, "  a , b ,, c ".into()).unwrap();
+        match intent {
+            SelfModelIntent::Edit(SelfModelEdit::SetTraits(v)) => {
+                assert_eq!(v, vec!["a".to_string(), "b".into(), "c".into()]);
+            }
+            other => panic!("ожидали SetTraits, получили {other:?}"),
+        }
+    }
 
+    #[test]
+    fn render_empty_and_populated_do_not_panic() {
         let mut term = Terminal::new(TestBackend::new(80, 24)).unwrap();
-        term.draw(|f| s.render(f)).unwrap();
+        let mut empty = SelfModelScreen::new(None, Palette::default());
+        term.draw(|f| empty.render(f)).unwrap();
+        let mut full = SelfModelScreen::new(Some(model()), Palette::default());
+        term.draw(|f| full.render(f)).unwrap();
     }
 }

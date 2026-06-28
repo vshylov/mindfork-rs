@@ -334,6 +334,7 @@ impl Orchestrator {
             AppCommand::RagList => self.handle_rag_list(),
             AppCommand::RagRebuild => self.handle_rag_rebuild(),
             AppCommand::RequestSelfModel => self.handle_request_self_model(),
+            AppCommand::UpdateSelfModel(edit) => self.handle_update_self_model(edit),
         }
         false
     }
@@ -346,6 +347,29 @@ impl Orchestrator {
             .active_profile_id()
             .and_then(|pid| self.storage.db().self_model_get(pid).ok().flatten());
         let _ = self.evt_tx.send(AppEvent::SelfModelView(Box::new(model)));
+    }
+
+    /// Применяет ручную правку «модели себя» активного профиля (UI-редактор `F3`):
+    /// загружает (или создаёт пустую), применяет правку, при изменении — сохраняет,
+    /// затем переэмитит обновлённый снимок (открытый экран обновится на месте).
+    fn handle_update_self_model(&self, edit: crate::entities::self_model::SelfModelEdit) {
+        let Some(pid) = self.active_profile_id() else {
+            return;
+        };
+        let mut model = self
+            .storage
+            .db()
+            .self_model_get(pid)
+            .ok()
+            .flatten()
+            .unwrap_or_else(|| crate::entities::self_model::SelfModel::new(pid));
+        if model.apply_edit(edit) {
+            let _ = self.storage.db().self_model_upsert(&model);
+        }
+        let snapshot = self.storage.db().self_model_get(pid).ok().flatten();
+        let _ = self
+            .evt_tx
+            .send(AppEvent::SelfModelView(Box::new(snapshot)));
     }
 
     /// Эмитит полный снимок настроек (конфиг + полные профили) для экрана настроек.
