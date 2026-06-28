@@ -408,6 +408,8 @@ enum FieldId {
     ITheme,
     ISpell,
     IDicts,
+    /// Подтверждение перед `Ctrl+R`/`Ctrl+E` (необратимые операции).
+    IConfirmKeys,
     // Профили (динамические)
     PSelect,
     PName,
@@ -759,6 +761,11 @@ impl SettingsScreen {
                     i.selected_dictionaries.join(", ")
                 }),
             ),
+            row(
+                FieldId::IConfirmKeys,
+                "Подтверждать Ctrl+R / Ctrl+E",
+                FieldKind::Toggle(i.confirm_destructive_keys),
+            ),
         ]
     }
 
@@ -1056,6 +1063,10 @@ impl SettingsScreen {
             FieldId::TFs => self.config.tools.fs_enabled = !self.config.tools.fs_enabled,
             FieldId::ISpell => {
                 self.config.interface.spellcheck_enabled = !self.config.interface.spellcheck_enabled
+            }
+            FieldId::IConfirmKeys => {
+                self.config.interface.confirm_destructive_keys =
+                    !self.config.interface.confirm_destructive_keys
             }
             FieldId::PTool(idx) => return self.toggle_profile_tool(idx),
             _ => return None,
@@ -1709,6 +1720,11 @@ fn field_description(id: FieldId) -> Option<&'static str> {
             "Авто-рефлексия: каждые N ответов ассистента модель в фоне сама пересматривает \
              разговор и обновляет «модель себя». 0 — выключено. Работает только в профилях \
              с включёнными инструментами модели себя.",
+        ),
+        FieldId::IConfirmKeys => Some(
+            "Спрашивать подтверждение перед перегенерацией (Ctrl+R) и удалением последнего \
+             обмена (Ctrl+E) — обе операции необратимы в UI. Выключено — комбинации \
+             срабатывают сразу.",
         ),
         // Описания параметров семплинга (одинаковые для обеих подсекций).
         FieldId::S(p) | FieldId::IS(p) => p.description(),
