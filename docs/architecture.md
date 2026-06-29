@@ -792,13 +792,14 @@ flowchart TB
     поля спекулятивного декодирования (`spec_type: SpecType` + `draft_model`/
     `draft_gpu_layers`/`draft_n_max`/`draft_n_min`); черновые поля в UI видны только
     для типов `draft-*` — для MTP-моделей (`mtp-gemma-…`) это `draft-mtp`.
-- **Расположение данных** (`shared/paths.rs`): по умолчанию **портативно** — всё
-  рядом с бинарником (в dev — `target/debug/`): `settings.json`, `profiles.json`,
-  `chats/`, `data.db`, `personal_dictionary.txt`, `dictionaries/`, `backups/`,
-  `logs/`. Файл-маркер `location.json` рядом с бинарником (`DataLocation`:
-  `portable`/`system`/`path`) переключает корень в стандартную ОС-папку (крейт
-  `directories`) или произвольный каталог; нет маркера → портативный режим
-  (обратная совместимость). **Резервное копирование** (`features/backup.rs`): zip с
+- **Расположение данных** (`shared/paths.rs`): по умолчанию **портативно** — в
+  подкаталоге `data/` рядом с бинарником (в dev — `target/debug/data/`; подкаталог
+  отделяет данные от служебных файлов/кэшей сборки): `settings.json`,
+  `profiles.json`, `chats/`, `data.db`, `personal_dictionary.txt`, `dictionaries/`,
+  `backups/`, `logs/`. Файл-маркер `location.json` рядом с бинарником (всегда вне
+  `data/`; `DataLocation`: `portable`/`system`/`path`) переключает корень в
+  стандартную ОС-папку (крейт `directories`) или произвольный каталог; нет маркера →
+  портативный режим. **Резервное копирование** (`features/backup.rs`): zip с
   настраиваемым сжатием (chats/dictionaries/data.db/profiles/settings/personal +
   `*.bak` + `fs_root`, если внутри корня); восстановление транзакционно (валидация →
   pre-restore копия в `backups/` → очистка → распаковка → откат при сбое).

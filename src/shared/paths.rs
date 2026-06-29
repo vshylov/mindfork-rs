@@ -1,15 +1,19 @@
-//! Расположение пользовательских данных. По умолчанию — портативный режим (всё
-//! лежит рядом с исполняемым файлом). Файл-маркер `location.json` рядом с бинарником
-//! может переключить хранение в стандартную ОС-папку или в произвольный каталог.
-//! См. spec §5.2 (расположение данных) и §12.1 (конфигурация).
+//! Расположение пользовательских данных. По умолчанию — портативный режим: данные
+//! лежат в подкаталоге `data/` рядом с исполняемым файлом (подкаталог отделяет данные
+//! от служебных файлов/кэшей сборки, особенно в dev — `target/debug/data/`). Файл-
+//! маркер `location.json` рядом с бинарником может переключить хранение в стандартную
+//! ОС-папку или в произвольный каталог. См. spec §5.2 (расположение данных) и §12.1.
 
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 
-/// Имя файла-маркера режима хранения (всегда лежит рядом с бинарником).
+/// Имя файла-маркера режима хранения (всегда лежит рядом с бинарником, не в `data/`).
 pub const LOCATION_MARKER: &str = "location.json";
+
+/// Подкаталог данных в портативном режиме (рядом с бинарником).
+pub const PORTABLE_DATA_SUBDIR: &str = "data";
 
 /// Режим хранения пользовательских данных, заданный файлом-маркером `location.json`
 /// рядом с исполняемым файлом. Отсутствие/пустой маркер → [`DataLocation::Portable`]
@@ -42,10 +46,10 @@ impl DataLocation {
     }
 
     /// Корневой каталог данных для этого режима. `exe_dir` — каталог бинарника
-    /// (он же корень в портативном режиме).
+    /// (в портативном режиме корень = `exe_dir/data`).
     pub fn root_dir(&self, exe_dir: &Path) -> Result<PathBuf> {
         match self {
-            Self::Portable => Ok(exe_dir.to_path_buf()),
+            Self::Portable => Ok(exe_dir.join(PORTABLE_DATA_SUBDIR)),
             Self::System => {
                 let dirs = directories::ProjectDirs::from("", "", "mindfork-rs")
                     .context("не удалось определить стандартную ОС-папку для данных")?;
@@ -74,8 +78,8 @@ pub struct Paths {
 
 impl Paths {
     /// Определяет корень данных по файлу-маркеру `location.json` рядом с бинарником.
-    /// Нет маркера → портативный режим (корень = каталог бинарника). Для системного/
-    /// произвольного режима корень при необходимости создаётся.
+    /// Нет маркера → портативный режим (корень = `data/` рядом с бинарником). Корень
+    /// при необходимости создаётся (в т.ч. портативный подкаталог `data/`).
     pub fn discover() -> Result<Self> {
         let exe = std::env::current_exe().context("cannot resolve current executable path")?;
         let exe_dir = exe
@@ -84,10 +88,8 @@ impl Paths {
 
         let location = DataLocation::read(&exe_dir.join(LOCATION_MARKER))?;
         let root = location.root_dir(exe_dir)?;
-        if !matches!(location, DataLocation::Portable) {
-            std::fs::create_dir_all(&root)
-                .with_context(|| format!("создание каталога данных {}", root.display()))?;
-        }
+        std::fs::create_dir_all(&root)
+            .with_context(|| format!("создание каталога данных {}", root.display()))?;
         Ok(Self::with_root(root))
     }
 
@@ -189,8 +191,11 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let loc = DataLocation::read(&dir.path().join(LOCATION_MARKER)).unwrap();
         assert_eq!(loc, DataLocation::Portable);
-        // Портативный режим: корень = каталог бинарника.
-        assert_eq!(loc.root_dir(dir.path()).unwrap(), dir.path());
+        // Портативный режим: корень = подкаталог `data/` рядом с бинарником.
+        assert_eq!(
+            loc.root_dir(dir.path()).unwrap(),
+            dir.path().join(PORTABLE_DATA_SUBDIR)
+        );
     }
 
     #[test]
