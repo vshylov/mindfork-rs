@@ -542,6 +542,8 @@ flowchart LR
     subgraph DB["SQLite + sqlite-vec (db.rs)"]
         NOTES["notes (profile_id)"]
         NV["note_vectors (note_id PK)<br/>эмбеддинг заметки, косинус в Rust"]
+        NL["note_links (граф связей)<br/>from/to/relation, изоляция по profile_id"]
+        NSUP["note_superseded (note_id PK)<br/>«шрам» замещения, скрыт из выдачи"]
         RAGD["rag_documents (profile_id)"]
         VEC["rag_vectors vec0 (rowid)"]
         SELF["self_models (profile_id PK)"]
@@ -593,7 +595,7 @@ agentic-loop **гейтит и сам вызов** (выключенный ин�
 
 | Группа         | Инструменты                                                   |
 |----------------|---------------------------------------------------------------|
-| Память/знания  | `note_save` (эмбеддит заметку + показывает похожие — ворота совместимости), `note_recall` (семантический поиск по эмбеддингу, откат на подстроку), `note_revise` (переписать на месте), `rag_add`, `rag_search`. Связность заметок (накопление → интеграция): см. [docs/notes-connectivity.md](notes-connectivity.md) |
+| Память/знания  | `note_save` (эмбеддит + ворота совместимости), `note_recall` (семантический поиск + spreading activation по графу, откат на подстроку), `note_revise` (правка на месте), `note_link`/`note_neighbors` (типизированный граф связей), `note_supersede`/`note_merge` (замещение со «шрамом» / консолидация), `rag_add`, `rag_search`. Связность заметок (накопление → интеграция): см. [docs/notes-connectivity.md](notes-connectivity.md) |
 | Интроспекция   | `get_sampling`, `set_sampling`, `get_system_message`, `set_system_message`, `get_last_user_message_time` |
 | Внешние        | `web_search` (мульти-провайдер + анти-бот), `fetch_url` (загрузка+саммаризация), `python_exec` (subprocess) — гейтятся `web_enabled`/`python_enabled` |
 | Файлы          | `fs_read`, `fs_write`, `fs_list` — гейтятся `fs_enabled`, опциональная песочница `fs_root` |

@@ -11,12 +11,23 @@ use super::{Tool, ToolContext, ToolOutcome};
 
 /// Имя инструмента ревизии заметки (DB-only, гейтится набором профиля).
 pub const NOTE_REVISE_ID: &str = "note_revise";
+/// Граф связей и ревизионная история (Ярус 2, DB-only, гейтятся набором профиля).
+pub const NOTE_LINK_ID: &str = "note_link";
+pub const NOTE_NEIGHBORS_ID: &str = "note_neighbors";
+pub const NOTE_SUPERSEDE_ID: &str = "note_supersede";
+pub const NOTE_MERGE_ID: &str = "note_merge";
+
+/// Типы связей между заметками (направленные). Зеркалят схему инструмента `note_link`.
+const RELATIONS: [&str; 4] = ["supports", "contradicts", "refines", "relates"];
 
 /// Сколько заметок отдаёт `note_recall` по умолчанию (если лимит не задан).
 const DEFAULT_RECALL: usize = 5;
 
 /// Размер батча при бэкфилле эмбеддингов «старых» заметок.
 const NOTE_BACKFILL_BATCH: usize = 32;
+
+/// Сколько связанных заметок максимум подмешивать в `note_recall` (spreading activation).
+const RELATED_IN_RECALL: usize = 5;
 
 /// `note_save` — сохраняет заметку профиля. Возвращает её id.
 pub struct NoteSave;
@@ -129,18 +140,90 @@ impl Tool for NoteRecall {
 
         // Семантический путь: есть запрос и доступен эмбеддер. Иначе (нет запроса,
         // эмбеддер недоступен или нет векторов у заметок) — откат на подстроку/теги.
-        if let Some(q) = query
-            && let Some(notes) = semantic_recall(ctx, q, &tags, limit).await
-        {
-            return Ok(format_notes(&notes));
-        }
+        let notes = match query {
+            Some(q) => match semantic_recall(ctx, q, &tags, limit).await {
+                Some(n) => n,
+                None => ctx
+                    .storage
+                    .db()
+                    .note_list(ctx.profile_id, query, &tags, limit)?,
+            },
+            None => ctx
+                .storage
+                .db()
+                .note_list(ctx.profile_id, query, &tags, limit)?,
+        };
 
-        let notes = ctx
+        let mut outcome = format_notes(&notes);
+        // Spreading activation: подмешиваем связанные по графу заметки (Ярус 2),
+        // чтобы припоминание поднимало кластер, а не одиночные атомы.
+        if let Some(block) = related_block(ctx, &notes) {
+            outcome.result.push_str(&block);
+        }
+        Ok(outcome)
+    }
+}
+
+/// Подмешиваемый блок «Связанные заметки»: соседи топ-хитов по графу (обе стороны),
+/// без уже показанных и без замещённых. `None`, если связей нет. Чистое чтение БД.
+fn related_block(ctx: &ToolContext, hits: &[Note]) -> Option<String> {
+    let mut seen: std::collections::HashSet<Uuid> = hits.iter().map(|n| n.id).collect();
+    let mut lines: Vec<String> = Vec::new();
+    for hit in hits.iter().take(3) {
+        let nb = ctx
             .storage
             .db()
-            .note_list(ctx.profile_id, query, &tags, limit)?;
-        Ok(format_notes(&notes))
+            .note_neighbors(ctx.profile_id, hit.id, None)
+            .unwrap_or_default();
+        for (note, relation, outgoing) in nb {
+            if !seen.insert(note.id) {
+                continue;
+            }
+            let arrow = if outgoing { "→" } else { "←" };
+            lines.push(format!(
+                "- {arrow}{relation} (id={}) {}",
+                note.id, note.content
+            ));
+            if lines.len() >= RELATED_IN_RECALL {
+                break;
+            }
+        }
+        if lines.len() >= RELATED_IN_RECALL {
+            break;
+        }
     }
+    if lines.is_empty() {
+        None
+    } else {
+        Some(format!("\nСвязанные заметки:\n{}", lines.join("\n")))
+    }
+}
+
+/// Создаёт заметку (insert + best-effort эмбеддинг) и возвращает её id. Используется
+/// `note_supersede`/`note_merge` для новой версии/объединённой заметки.
+async fn create_note(ctx: &ToolContext, content: String, tags: Vec<String>) -> Result<Uuid> {
+    let note = Note::new(ctx.profile_id, content, tags);
+    let id = note.id;
+    ctx.storage.db().note_insert(&note)?;
+    if let Ok(vecs) = ctx.embedder.embed(vec![note.content.clone()]).await
+        && let Some(emb) = vecs.into_iter().next()
+    {
+        let _ = ctx
+            .storage
+            .db()
+            .note_vector_upsert(id, ctx.profile_id, &emb);
+    }
+    Ok(id)
+}
+
+/// Парсит uuid из строкового поля аргументов с понятной ошибкой.
+fn parse_id(args: &serde_json::Value, key: &str) -> Result<Uuid> {
+    let raw = args
+        .get(key)
+        .and_then(|v| v.as_str())
+        .unwrap_or_default()
+        .trim();
+    Uuid::parse_str(raw).map_err(|_| anyhow::anyhow!("некорректный id ({key}): {raw}"))
 }
 
 /// Дотягивает эмбеддинги заметок профиля, у которых их ещё нет (созданы до
@@ -283,6 +366,227 @@ impl Tool for NoteRevise {
         }
         Ok(ToolOutcome::text(format!(
             "Заметка переписана (id={uuid})."
+        )))
+    }
+}
+
+/// `note_link` — связывает две заметки направленной типизированной связью.
+pub struct NoteLink;
+
+#[async_trait::async_trait]
+impl Tool for NoteLink {
+    fn id(&self) -> ToolId {
+        NOTE_LINK_ID.into()
+    }
+    fn description(&self) -> String {
+        "Связать две заметки (по id из note_recall/note_save) направленной связью: \
+         supports (подтверждает), contradicts (противоречит), refines (уточняет), \
+         relates (связано по теме). Помогает помнить, как заметки соотносятся."
+            .into()
+    }
+    fn parameters(&self) -> serde_json::Value {
+        serde_json::json!({
+            "type": "object",
+            "properties": {
+                "from_id": {"type": "string", "description": "id заметки-источника"},
+                "to_id": {"type": "string", "description": "id заметки-цели"},
+                "relation": {"type": "string", "enum": RELATIONS, "description": "тип связи"}
+            },
+            "required": ["from_id", "to_id", "relation"]
+        })
+    }
+    async fn invoke(&self, ctx: &ToolContext, args: serde_json::Value) -> Result<ToolOutcome> {
+        let from = parse_id(&args, "from_id")?;
+        let to = parse_id(&args, "to_id")?;
+        let relation = args
+            .get("relation")
+            .and_then(|v| v.as_str())
+            .unwrap_or_default()
+            .trim();
+        if !RELATIONS.contains(&relation) {
+            anyhow::bail!("неизвестный тип связи: {relation} (допустимо: {RELATIONS:?})");
+        }
+        if from == to {
+            anyhow::bail!("нельзя связать заметку с самой собой");
+        }
+        let db = ctx.storage.db();
+        if !db.note_is_active(ctx.profile_id, from)? || !db.note_is_active(ctx.profile_id, to)? {
+            return Ok(ToolOutcome::text(
+                "Одна из заметок не найдена (или замещена).".to_string(),
+            ));
+        }
+        db.note_link_insert(ctx.profile_id, from, to, relation)?;
+        Ok(ToolOutcome::text(format!(
+            "Связь создана: {from} —{relation}→ {to}."
+        )))
+    }
+}
+
+/// `note_neighbors` — показывает связанные с заданной заметкой заметки.
+pub struct NoteNeighbors;
+
+#[async_trait::async_trait]
+impl Tool for NoteNeighbors {
+    fn id(&self) -> ToolId {
+        NOTE_NEIGHBORS_ID.into()
+    }
+    fn description(&self) -> String {
+        "Показать заметки, связанные с данной (по id), с типом и направлением связи. \
+         Опционально — только связи указанного типа (supports/contradicts/refines/relates)."
+            .into()
+    }
+    fn parameters(&self) -> serde_json::Value {
+        serde_json::json!({
+            "type": "object",
+            "properties": {
+                "id": {"type": "string", "description": "id заметки"},
+                "relation": {"type": "string", "enum": RELATIONS, "description": "фильтр по типу связи (опц.)"}
+            },
+            "required": ["id"]
+        })
+    }
+    async fn invoke(&self, ctx: &ToolContext, args: serde_json::Value) -> Result<ToolOutcome> {
+        let id = parse_id(&args, "id")?;
+        let relation = args
+            .get("relation")
+            .and_then(|v| v.as_str())
+            .map(|s| s.trim())
+            .filter(|s| !s.is_empty());
+        if let Some(r) = relation
+            && !RELATIONS.contains(&r)
+        {
+            anyhow::bail!("неизвестный тип связи: {r} (допустимо: {RELATIONS:?})");
+        }
+        let nb = ctx
+            .storage
+            .db()
+            .note_neighbors(ctx.profile_id, id, relation)?;
+        if nb.is_empty() {
+            return Ok(ToolOutcome::text("Связанных заметок нет."));
+        }
+        let mut out = format!("Связи заметки {id}:\n");
+        for (note, rel, outgoing) in &nb {
+            let arrow = if *outgoing { "→" } else { "←" };
+            out.push_str(&format!(
+                "- {arrow}{rel} (id={}) {}\n",
+                note.id, note.content
+            ));
+        }
+        Ok(ToolOutcome::text(out.trim_end().to_string()))
+    }
+}
+
+/// `note_supersede` — замещает заметку новой версией («шрам» сохраняется).
+pub struct NoteSupersede;
+
+#[async_trait::async_trait]
+impl Tool for NoteSupersede {
+    fn id(&self) -> ToolId {
+        NOTE_SUPERSEDE_ID.into()
+    }
+    fn description(&self) -> String {
+        "Заместить устаревшую заметку новой версией (по id из note_recall): создаётся \
+         новая заметка, старая помечается замещённой (скрывается из поиска, но \
+         хранится для следа изменения). Для простой правки на месте — note_revise."
+            .into()
+    }
+    fn parameters(&self) -> serde_json::Value {
+        serde_json::json!({
+            "type": "object",
+            "properties": {
+                "old_id": {"type": "string", "description": "id замещаемой заметки"},
+                "content": {"type": "string", "description": "Содержимое новой версии"}
+            },
+            "required": ["old_id", "content"]
+        })
+    }
+    async fn invoke(&self, ctx: &ToolContext, args: serde_json::Value) -> Result<ToolOutcome> {
+        let old_id = parse_id(&args, "old_id")?;
+        let content = args
+            .get("content")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| anyhow::anyhow!("ожидается строковое поле content"))?
+            .trim()
+            .to_string();
+        if content.is_empty() {
+            anyhow::bail!("content не может быть пустым");
+        }
+        if !ctx.storage.db().note_is_active(ctx.profile_id, old_id)? {
+            return Ok(ToolOutcome::text(format!(
+                "Заметка не найдена (id={old_id})."
+            )));
+        }
+        let new_id = create_note(ctx, content, Vec::new()).await?;
+        ctx.storage
+            .db()
+            .note_supersede_mark(ctx.profile_id, old_id, new_id)?;
+        Ok(ToolOutcome::text(format!(
+            "Заметка замещена: {old_id} → новая (id={new_id})."
+        )))
+    }
+}
+
+/// `note_merge` — сводит несколько заметок в одну (исходные замещаются).
+pub struct NoteMerge;
+
+#[async_trait::async_trait]
+impl Tool for NoteMerge {
+    fn id(&self) -> ToolId {
+        NOTE_MERGE_ID.into()
+    }
+    fn description(&self) -> String {
+        "Свести несколько заметок (ids из note_recall) в одну: создаётся новая с \
+         объединённым содержимым, исходные помечаются замещёнными (скрываются, но \
+         хранятся). Используй для консолидации дублей/осколков по одной теме."
+            .into()
+    }
+    fn parameters(&self) -> serde_json::Value {
+        serde_json::json!({
+            "type": "object",
+            "properties": {
+                "ids": {"type": "array", "items": {"type": "string"}, "minItems": 2, "description": "id объединяемых заметок"},
+                "content": {"type": "string", "description": "Объединённое содержимое"}
+            },
+            "required": ["ids", "content"]
+        })
+    }
+    async fn invoke(&self, ctx: &ToolContext, args: serde_json::Value) -> Result<ToolOutcome> {
+        let content = args
+            .get("content")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| anyhow::anyhow!("ожидается строковое поле content"))?
+            .trim()
+            .to_string();
+        if content.is_empty() {
+            anyhow::bail!("content не может быть пустым");
+        }
+        let ids: Vec<Uuid> = args
+            .get("ids")
+            .and_then(|v| v.as_array())
+            .map(|a| {
+                a.iter()
+                    .filter_map(|x| x.as_str())
+                    .filter_map(|s| Uuid::parse_str(s.trim()).ok())
+                    .collect()
+            })
+            .unwrap_or_default();
+        let db = ctx.storage.db();
+        let active: Vec<Uuid> = ids
+            .into_iter()
+            .filter(|id| db.note_is_active(ctx.profile_id, *id).unwrap_or(false))
+            .collect();
+        if active.len() < 2 {
+            anyhow::bail!("нужно минимум две существующие заметки для объединения");
+        }
+        let new_id = create_note(ctx, content, Vec::new()).await?;
+        for old in &active {
+            ctx.storage
+                .db()
+                .note_supersede_mark(ctx.profile_id, *old, new_id)?;
+        }
+        Ok(ToolOutcome::text(format!(
+            "Объединено заметок: {} → новая (id={new_id}).",
+            active.len()
         )))
     }
 }
@@ -513,5 +817,175 @@ mod tests {
             .await
             .unwrap();
         assert!(out.result.contains("не найдена"));
+    }
+
+    /// id заметки по содержимому (для тестов графа).
+    fn id_by_content(
+        storage: &crate::shared::storage::Storage,
+        profile: Uuid,
+        content: &str,
+    ) -> Uuid {
+        storage
+            .db()
+            .note_list(profile, None, &[], None)
+            .unwrap()
+            .into_iter()
+            .find(|n| n.content == content)
+            .unwrap()
+            .id
+    }
+
+    #[tokio::test]
+    async fn link_then_neighbors() {
+        let profile = Uuid::new_v4();
+        let (_d, storage, ctx) = ctx_with_storage(profile);
+        NoteSave
+            .invoke(&ctx, serde_json::json!({"content": "альфа"}))
+            .await
+            .unwrap();
+        NoteSave
+            .invoke(&ctx, serde_json::json!({"content": "бета"}))
+            .await
+            .unwrap();
+        let a = id_by_content(&storage, profile, "альфа");
+        let b = id_by_content(&storage, profile, "бета");
+
+        let out = NoteLink
+            .invoke(
+                &ctx,
+                serde_json::json!({"from_id": a.to_string(), "to_id": b.to_string(), "relation": "refines"}),
+            )
+            .await
+            .unwrap();
+        assert!(out.result.contains("Связь создана"));
+
+        let nb = NoteNeighbors
+            .invoke(&ctx, serde_json::json!({"id": a.to_string()}))
+            .await
+            .unwrap();
+        assert!(nb.result.contains("бета"));
+        assert!(nb.result.contains("refines"));
+
+        // Неизвестный тип связи и самосвязь → ошибки.
+        assert!(
+            NoteLink
+                .invoke(
+                    &ctx,
+                    serde_json::json!({"from_id": a.to_string(), "to_id": b.to_string(), "relation": "foo"}),
+                )
+                .await
+                .is_err()
+        );
+        assert!(
+            NoteLink
+                .invoke(
+                    &ctx,
+                    serde_json::json!({"from_id": a.to_string(), "to_id": a.to_string(), "relation": "relates"}),
+                )
+                .await
+                .is_err()
+        );
+    }
+
+    #[tokio::test]
+    async fn supersede_hides_old_shows_new() {
+        let profile = Uuid::new_v4();
+        let (_d, storage, ctx) = ctx_with_storage(profile);
+        NoteSave
+            .invoke(&ctx, serde_json::json!({"content": "первая версия"}))
+            .await
+            .unwrap();
+        let old = id_by_content(&storage, profile, "первая версия");
+
+        let out = NoteSupersede
+            .invoke(
+                &ctx,
+                serde_json::json!({"old_id": old.to_string(), "content": "вторая версия"}),
+            )
+            .await
+            .unwrap();
+        assert!(out.result.contains("замещена"));
+
+        let active = storage.db().note_list(profile, None, &[], None).unwrap();
+        assert_eq!(active.len(), 1);
+        assert_eq!(active[0].content, "вторая версия");
+        assert!(!storage.db().note_is_active(profile, old).unwrap());
+    }
+
+    #[tokio::test]
+    async fn merge_consolidates_sources() {
+        let profile = Uuid::new_v4();
+        let (_d, storage, ctx) = ctx_with_storage(profile);
+        NoteSave
+            .invoke(&ctx, serde_json::json!({"content": "кусок один"}))
+            .await
+            .unwrap();
+        NoteSave
+            .invoke(&ctx, serde_json::json!({"content": "кусок два"}))
+            .await
+            .unwrap();
+        let ids: Vec<String> = storage
+            .db()
+            .note_list(profile, None, &[], None)
+            .unwrap()
+            .into_iter()
+            .map(|n| n.id.to_string())
+            .collect();
+
+        let out = NoteMerge
+            .invoke(
+                &ctx,
+                serde_json::json!({"ids": ids, "content": "единая заметка"}),
+            )
+            .await
+            .unwrap();
+        assert!(out.result.contains("Объединено заметок: 2"));
+
+        let active = storage.db().note_list(profile, None, &[], None).unwrap();
+        assert_eq!(active.len(), 1);
+        assert_eq!(active[0].content, "единая заметка");
+
+        // Меньше двух существующих → ошибка.
+        assert!(
+            NoteMerge
+                .invoke(
+                    &ctx,
+                    serde_json::json!({"ids": [Uuid::new_v4().to_string()], "content": "x"}),
+                )
+                .await
+                .is_err()
+        );
+    }
+
+    #[tokio::test]
+    async fn recall_spreads_to_linked_notes() {
+        let profile = Uuid::new_v4();
+        let (_d, storage, ctx) = ctx_with_storage(profile);
+        NoteSave
+            .invoke(&ctx, serde_json::json!({"content": "aaaa"}))
+            .await
+            .unwrap();
+        NoteSave
+            .invoke(&ctx, serde_json::json!({"content": "zzzz"}))
+            .await
+            .unwrap();
+        let a = id_by_content(&storage, profile, "aaaa");
+        let z = id_by_content(&storage, profile, "zzzz");
+        NoteLink
+            .invoke(
+                &ctx,
+                serde_json::json!({"from_id": a.to_string(), "to_id": z.to_string(), "relation": "relates"}),
+            )
+            .await
+            .unwrap();
+
+        // Запрос близок к «aaaa»; «zzzz» не похож, но связан → попадёт в «Связанные».
+        let out = NoteRecall
+            .invoke(&ctx, serde_json::json!({"query": "aaab", "limit": 1}))
+            .await
+            .unwrap();
+        assert!(out.result.contains("aaaa"));
+        assert!(out.result.contains("Связанные заметки"));
+        assert!(out.result.contains("zzzz"));
     }
 }
