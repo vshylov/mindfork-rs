@@ -146,6 +146,7 @@ pub fn default_tool_ids() -> Vec<ToolId> {
         "get_last_user_message_time",
         "note_save",
         "note_recall",
+        notes::NOTE_REVISE_ID,
         "rag_add",
         "rag_search",
         "call_subagent",
@@ -261,6 +262,7 @@ pub fn standard_registry(cfg: &ToolConfig) -> ToolRegistry {
     reg.register(Arc::new(introspection::GetLastUserMessageTime));
     reg.register(Arc::new(notes::NoteSave));
     reg.register(Arc::new(notes::NoteRecall));
+    reg.register(Arc::new(notes::NoteRevise));
     reg.register(Arc::new(rag::RagAdd));
     reg.register(Arc::new(rag::RagSearch));
     reg.register(Arc::new(subagent::CallSubagent::new(
@@ -426,6 +428,16 @@ mod tests {
         }
         // Схемы для полного каталога покрывают все id.
         assert_eq!(reg.schemas_for(&all_tool_ids()).len(), all_tool_ids().len());
+    }
+
+    #[test]
+    fn note_revise_is_default_tool() {
+        // Ревизия заметки — центральна для интеграции, включена по умолчанию.
+        assert!(
+            default_tool_ids()
+                .iter()
+                .any(|t| t == notes::NOTE_REVISE_ID)
+        );
     }
 
     #[test]
