@@ -4,6 +4,7 @@
 //!
 //! Наполняется на M3+. Логика фич — чистые, тестируемые без UI функции.
 
+pub mod backup;
 pub mod chat_export;
 pub mod chat_search_sort;
 pub mod migration;
