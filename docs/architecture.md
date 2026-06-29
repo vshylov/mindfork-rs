@@ -592,7 +592,7 @@ agentic-loop **гейтит и сам вызов** (выключенный ин�
 
 | Группа         | Инструменты                                                   |
 |----------------|---------------------------------------------------------------|
-| Память/знания  | `note_save`, `note_recall`, `rag_add`, `rag_search`           |
+| Память/знания  | `note_save`, `note_recall`, `rag_add`, `rag_search` — направление развития (связность заметок: семантический поиск, ревизия, ворота совместимости) см. [docs/notes-connectivity.md](notes-connectivity.md) |
 | Интроспекция   | `get_sampling`, `set_sampling`, `get_system_message`, `set_system_message`, `get_last_user_message_time` |
 | Внешние        | `web_search` (мульти-провайдер + анти-бот), `fetch_url` (загрузка+саммаризация), `python_exec` (subprocess) — гейтятся `web_enabled`/`python_enabled` |
 | Файлы          | `fs_read`, `fs_write`, `fs_list` — гейтятся `fs_enabled`, опциональная песочница `fs_root` |
