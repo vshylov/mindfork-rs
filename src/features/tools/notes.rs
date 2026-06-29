@@ -16,6 +16,13 @@ pub const NOTE_LINK_ID: &str = "note_link";
 pub const NOTE_NEIGHBORS_ID: &str = "note_neighbors";
 pub const NOTE_SUPERSEDE_ID: &str = "note_supersede";
 pub const NOTE_MERGE_ID: &str = "note_merge";
+pub const CONSOLIDATE_NOTES_ID: &str = "consolidate_notes";
+
+/// Порог косинусной близости, при котором две заметки считаются возможным дублем
+/// (для обзора консолидации). Подобран эмпирически — пары выше стоит рассмотреть.
+const CONSOLIDATE_SIMILARITY: f32 = 0.85;
+/// Сколько элементов максимум показывать в каждой секции обзора консолидации.
+const CONSOLIDATE_LIST_CAP: usize = 8;
 
 /// Типы связей между заметками (направленные). Зеркалят схему инструмента `note_link`.
 const RELATIONS: [&str; 4] = ["supports", "contradicts", "refines", "relates"];
@@ -601,11 +608,154 @@ impl Tool for NoteMerge {
             ctx.storage
                 .db()
                 .note_supersede_mark(ctx.profile_id, *old, new_id)?;
+            // Связи исходных заметок переносим на объединённую — граф не осиротеет.
+            ctx.storage
+                .db()
+                .note_links_retarget(ctx.profile_id, *old, new_id)?;
         }
         Ok(ToolOutcome::text(format!(
             "Объединено заметок: {} → новая (id={new_id}).",
             active.len()
         )))
+    }
+}
+
+/// Косинусная близость двух векторов (0 при разной длине/нулевой норме).
+fn cosine(a: &[f32], b: &[f32]) -> f32 {
+    if a.len() != b.len() || a.is_empty() {
+        return 0.0;
+    }
+    let dot: f32 = a.iter().zip(b).map(|(x, y)| x * y).sum();
+    let na: f32 = a.iter().map(|x| x * x).sum::<f32>().sqrt();
+    let nb: f32 = b.iter().map(|x| x * x).sum::<f32>().sqrt();
+    if na == 0.0 || nb == 0.0 {
+        return 0.0;
+    }
+    dot / (na * nb)
+}
+
+/// Усечение строки по символам (для компактного обзора).
+fn clip(s: &str, n: usize) -> String {
+    let s = s.trim();
+    if s.chars().count() <= n {
+        return s.to_string();
+    }
+    let mut out: String = s.chars().take(n.saturating_sub(1)).collect();
+    out.push('…');
+    out
+}
+
+/// Строит обзор базы знаний для консолидации: похожие пары (возможные дубли по
+/// косинусу), связи `contradicts`, заметки без связей. Только данные (без рубрики) —
+/// используется и инструментом `consolidate_notes`, и фоновой авто-консолидацией.
+/// Изоляция по `profile_id`. Чистое чтение БД (эмбеддер не нужен — вектора уже в БД).
+pub(crate) fn build_consolidation_overview(
+    storage: &crate::shared::storage::Storage,
+    profile_id: Uuid,
+) -> String {
+    let active = storage
+        .db()
+        .note_list(profile_id, None, &[], None)
+        .unwrap_or_default();
+    if active.is_empty() {
+        return "База заметок пуста — консолидировать нечего.".to_string();
+    }
+    let with_vec = storage
+        .db()
+        .notes_with_vectors(profile_id)
+        .unwrap_or_default();
+    let links = storage.db().note_links_all(profile_id).unwrap_or_default();
+
+    // Похожие пары (возможные дубли) по косинусу, по убыванию близости.
+    let mut pairs: Vec<(f32, &Note, &Note)> = Vec::new();
+    for i in 0..with_vec.len() {
+        for j in (i + 1)..with_vec.len() {
+            let s = cosine(&with_vec[i].1, &with_vec[j].1);
+            if s >= CONSOLIDATE_SIMILARITY {
+                pairs.push((s, &with_vec[i].0, &with_vec[j].0));
+            }
+        }
+    }
+    pairs.sort_by(|a, b| b.0.total_cmp(&a.0));
+
+    let contradicts: Vec<&(Uuid, Uuid, String)> = links
+        .iter()
+        .filter(|(_, _, r)| r == "contradicts")
+        .collect();
+    let linked: std::collections::HashSet<Uuid> =
+        links.iter().flat_map(|(f, t, _)| [*f, *t]).collect();
+    let dangling: Vec<&Note> = active.iter().filter(|n| !linked.contains(&n.id)).collect();
+
+    let mut out = format!(
+        "Обзор базы знаний для консолидации:\nАктивных заметок: {} (без связей: {}).\n",
+        active.len(),
+        dangling.len()
+    );
+
+    out.push_str(&format!(
+        "\nПохожие пары (возможные дубли, близость ≥ {CONSOLIDATE_SIMILARITY}): {}\n",
+        pairs.len()
+    ));
+    for (s, a, b) in pairs.iter().take(CONSOLIDATE_LIST_CAP) {
+        out.push_str(&format!(
+            "- {s:.2} (id={}) {} ↔ (id={}) {}\n",
+            a.id,
+            clip(&a.content, 60),
+            b.id,
+            clip(&b.content, 60)
+        ));
+    }
+
+    out.push_str(&format!(
+        "\nСвязи contradicts (проверь, держится ли противоречие после правок): {}\n",
+        contradicts.len()
+    ));
+    for (f, t, _) in contradicts.iter().take(CONSOLIDATE_LIST_CAP) {
+        out.push_str(&format!("- (id={f}) ↔ (id={t})\n"));
+    }
+
+    out.push_str(&format!(
+        "\nЗаметки без связей (кандидаты связать): {}\n",
+        dangling.len()
+    ));
+    for n in dangling.iter().take(CONSOLIDATE_LIST_CAP) {
+        out.push_str(&format!("- (id={}) {}\n", n.id, clip(&n.content, 60)));
+    }
+
+    out.trim_end().to_string()
+}
+
+/// `consolidate_notes` — обзор базы знаний + рубрика для консолидации (entry-point,
+/// как `reflect` у SelfModel). Ничего не меняет: дальше модель сама зовёт
+/// merge/supersede/revise/link.
+pub struct ConsolidateNotes;
+
+#[async_trait::async_trait]
+impl Tool for ConsolidateNotes {
+    fn id(&self) -> ToolId {
+        CONSOLIDATE_NOTES_ID.into()
+    }
+    fn description(&self) -> String {
+        "Обзор базы знаний для консолидации: похожие пары (возможные дубли), связи \
+         contradicts, заметки без связей — и что с этим делать. Точка входа: дальше \
+         слей дубли (note_merge), перепиши/замести устаревшее (note_revise/\
+         note_supersede), свяжи родственное (note_link)."
+            .into()
+    }
+    fn parameters(&self) -> serde_json::Value {
+        serde_json::json!({ "type": "object", "properties": {} })
+    }
+    async fn invoke(&self, ctx: &ToolContext, _args: serde_json::Value) -> Result<ToolOutcome> {
+        let overview = build_consolidation_overview(&ctx.storage, ctx.profile_id);
+        let out = format!(
+            "{overview}\n\nЧто сделать (только при необходимости):\n\
+             - слей явные дубли: note_merge(ids[], content);\n\
+             - устаревшее перепиши (note_revise — мелкая правка) или замести \
+             (note_supersede — смысловая переработка, сохранит «шрам»);\n\
+             - свяжи родственные заметки: note_link (supports/contradicts/refines/relates).\n\
+             Меняй только то, что действительно нужно; если всё в порядке — ничего не вызывай."
+        );
+        Ok(ToolOutcome::text(out))
     }
 }
 
@@ -1064,5 +1214,81 @@ mod tests {
         assert!(out.result.contains("aaaa"));
         assert!(out.result.contains("Связанные заметки"));
         assert!(out.result.contains("zzzz"));
+    }
+
+    #[tokio::test]
+    async fn consolidate_notes_reports_dups_and_dangling() {
+        let profile = Uuid::new_v4();
+        let (_d, _s, ctx) = ctx_with_storage(profile);
+        // Два почти-дубля (общие символы → высокий косинус на MockEmbedder).
+        NoteSave
+            .invoke(&ctx, serde_json::json!({"content": "aaaa bbbb"}))
+            .await
+            .unwrap();
+        NoteSave
+            .invoke(&ctx, serde_json::json!({"content": "aaaa bbbbb"}))
+            .await
+            .unwrap();
+        // Несвязанная непохожая заметка.
+        NoteSave
+            .invoke(&ctx, serde_json::json!({"content": "zzzz"}))
+            .await
+            .unwrap();
+
+        let out = ConsolidateNotes
+            .invoke(&ctx, serde_json::json!({}))
+            .await
+            .unwrap();
+        assert!(out.result.contains("Обзор базы знаний"));
+        // Похожая пара найдена (хотя бы одна).
+        assert!(out.result.contains("Похожие пары (возможные дубли"));
+        assert!(out.result.contains("aaaa bbbb"));
+        assert!(out.result.contains("без связей"));
+        assert!(out.result.contains("note_merge"));
+    }
+
+    #[tokio::test]
+    async fn merge_transfers_links_to_new_note() {
+        let profile = Uuid::new_v4();
+        let (_d, storage, ctx) = ctx_with_storage(profile);
+        NoteSave
+            .invoke(&ctx, serde_json::json!({"content": "часть один"}))
+            .await
+            .unwrap();
+        NoteSave
+            .invoke(&ctx, serde_json::json!({"content": "часть два"}))
+            .await
+            .unwrap();
+        NoteSave
+            .invoke(&ctx, serde_json::json!({"content": "третья"}))
+            .await
+            .unwrap();
+        // id берём ДО слияния (после источники замещаются и из списка исчезают).
+        let s1 = id_by_content(&storage, profile, "часть один");
+        let s2 = id_by_content(&storage, profile, "часть два");
+        let other = id_by_content(&storage, profile, "третья");
+        NoteLink
+            .invoke(
+                &ctx,
+                serde_json::json!({"from_id": s1.to_string(), "to_id": other.to_string(), "relation": "relates"}),
+            )
+            .await
+            .unwrap();
+
+        NoteMerge
+            .invoke(
+                &ctx,
+                serde_json::json!({"ids": [s1.to_string(), s2.to_string()], "content": "единая"}),
+            )
+            .await
+            .unwrap();
+
+        // Связь источника перенесена на объединённую заметку: сосед «третьей» — «единая».
+        let nb = NoteNeighbors
+            .invoke(&ctx, serde_json::json!({"id": other.to_string()}))
+            .await
+            .unwrap();
+        assert!(nb.result.contains("единая"));
+        assert!(!nb.result.contains("часть один"));
     }
 }

@@ -595,7 +595,7 @@ agentic-loop **гейтит и сам вызов** (выключенный ин�
 
 | Группа         | Инструменты                                                   |
 |----------------|---------------------------------------------------------------|
-| Память/знания  | `note_save` (эмбеддит + ворота совместимости), `note_recall` (семантический поиск + spreading activation по графу, откат на подстроку), `note_revise` (правка на месте), `note_link`/`note_neighbors` (типизированный граф связей), `note_supersede`/`note_merge` (замещение со «шрамом» / консолидация), `rag_add`, `rag_search`. Связность заметок (накопление → интеграция): см. [docs/notes-connectivity.md](notes-connectivity.md) |
+| Память/знания  | `note_save` (эмбеддит + ворота совместимости), `note_recall` (семантический поиск + spreading activation по графу, откат на подстроку), `note_revise` (правка на месте), `note_link`/`note_neighbors` (типизированный граф связей), `note_supersede`/`note_merge` (замещение со «шрамом» / слияние с переносом связей), `consolidate_notes` (обзор для консолидации), `rag_add`, `rag_search`. Связность заметок (накопление → интеграция) + авто-«сон»: см. [docs/notes-connectivity.md](notes-connectivity.md) |
 | Интроспекция   | `get_sampling`, `set_sampling`, `get_system_message`, `set_system_message`, `get_last_user_message_time` |
 | Внешние        | `web_search` (мульти-провайдер + анти-бот), `fetch_url` (загрузка+саммаризация), `python_exec` (subprocess) — гейтятся `web_enabled`/`python_enabled` |
 | Файлы          | `fs_read`, `fs_write`, `fs_list` — гейтятся `fs_enabled`, опциональная песочница `fs_root` |
@@ -735,7 +735,7 @@ flowchart TB
     subgraph RUNTIME["tokio runtime"]
         O["задача оркестратора (1 шт.)"]
         G["задача генерации (на время хода)"]
-        T["фоновые задачи: авто-название, имперсонация, RAG-индексация, авто-рефлексия"]
+        T["фоновые задачи: авто-название, имперсонация, RAG-индексация, авто-рефлексия, авто-консолидация заметок"]
         P["фоновый probe готовности сервера"]
     end
     L <-->|"cmd_tx / evt_tx (mpsc)"| O

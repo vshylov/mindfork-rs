@@ -603,6 +603,17 @@ impl Default for SelfModelSettings {
     }
 }
 
+/// Настройки заметок: авто-консолидация («сон»). См. docs/notes-connectivity.md (Ярус 3).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub struct NotesSettings {
+    /// Авто-консолидация: запускать фоновую «спящую» консолидацию каждые N ответов
+    /// ассистента в чате (модель сама сливает дубли / переписывает устаревшее /
+    /// связывает родственное). `0` — выключено (по умолчанию). Срабатывает только в
+    /// профилях с включёнными инструментами заметок.
+    pub auto_consolidate_every: usize,
+}
+
 /// Тема оформления TUI. Реальное применение в виджетах — на M9 (`shared/theme.rs`);
 /// здесь хранится выбор пользователя.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
@@ -680,6 +691,8 @@ pub struct AppConfig {
     pub rag: RagSettings,
     /// Настройки «модели себя» (нарратив, объём инъекции в промпт).
     pub self_model: SelfModelSettings,
+    /// Настройки заметок (авто-консолидация «сон»).
+    pub notes: NotesSettings,
     /// Настройки интерфейса (тема, спелл-чек, словари).
     pub interface: InterfaceSettings,
     /// Что включать при копировании переписки чата в буфер обмена (`F5`).
@@ -709,6 +722,7 @@ impl Default for AppConfig {
             tools: ToolSettings::default(),
             rag: RagSettings::default(),
             self_model: SelfModelSettings::default(),
+            notes: NotesSettings::default(),
             interface: InterfaceSettings::default(),
             copy: CopySettings::default(),
         }

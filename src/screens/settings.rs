@@ -404,6 +404,7 @@ enum FieldId {
     SmNarrativeInPrompt,
     SmPromptCap,
     SmAutoReflect,
+    NotesAutoConsolidate,
     // Интерфейс
     ITheme,
     ISpell,
@@ -740,6 +741,11 @@ impl SettingsScreen {
                 FieldId::SmAutoReflect,
                 "Модель себя: авто-рефлексия (кажд. N)",
                 FieldKind::Text(self.config.self_model.auto_reflect_every.to_string()),
+            ),
+            row(
+                FieldId::NotesAutoConsolidate,
+                "Заметки: авто-консолидация (кажд. N)",
+                FieldKind::Text(self.config.notes.auto_consolidate_every.to_string()),
             ),
         ]);
         rows
@@ -1399,6 +1405,11 @@ impl SettingsScreen {
                     s.self_model.auto_reflect_every = v;
                 }
             }
+            FieldId::NotesAutoConsolidate => {
+                if let Ok(v) = trimmed.parse() {
+                    s.notes.auto_consolidate_every = v;
+                }
+            }
             FieldId::IDicts => {
                 s.interface.selected_dictionaries = trimmed
                     .split(',')
@@ -1750,6 +1761,11 @@ fn field_description(id: FieldId) -> Option<&'static str> {
             "Авто-рефлексия: каждые N ответов ассистента модель в фоне сама пересматривает \
              разговор и обновляет «модель себя». 0 — выключено. Работает только в профилях \
              с включёнными инструментами модели себя.",
+        ),
+        FieldId::NotesAutoConsolidate => Some(
+            "Авто-консолидация («сон»): каждые N ответов модель в фоне сама пересматривает \
+             базу заметок — сливает дубли, переписывает устаревшее, связывает родственное. \
+             0 — выключено. Работает только в профилях с включёнными инструментами заметок.",
         ),
         FieldId::IConfirmKeys => Some(
             "Спрашивать подтверждение перед перегенерацией (Ctrl+R) и удалением последнего \

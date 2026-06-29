@@ -124,6 +124,9 @@ fn bare_orch_rx() -> (tempfile::TempDir, Orchestrator, UnboundedReceiver<AppEven
         reflect_cancel: None,
         reflect_counts: std::collections::HashMap::new(),
         reflect_done_tx: unbounded_channel().0,
+        consolidate_cancel: None,
+        consolidate_counts: std::collections::HashMap::new(),
+        consolidate_done_tx: unbounded_channel().0,
         saves: SaveQueue::default(),
     };
     (dir, orch, evt_rx)

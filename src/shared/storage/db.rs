@@ -346,6 +346,84 @@ impl Db {
         Ok(())
     }
 
+    /// Активные заметки профиля с их эмбеддингами (для консолидации: поиск дублей
+    /// попарным косинусом). Замещённые исключены.
+    pub fn notes_with_vectors(&self, profile_id: Uuid) -> Result<Vec<(Note, Vec<f32>)>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare(
+            "SELECT n.id, n.profile_id, n.content, n.tags, n.created_at, n.updated_at, v.embedding
+             FROM notes n
+             JOIN note_vectors v ON v.note_id = n.id
+             LEFT JOIN note_superseded s ON s.note_id = n.id
+             WHERE n.profile_id = ?1 AND s.note_id IS NULL",
+        )?;
+        let rows = stmt
+            .query_map(params![profile_id.to_string()], |r| {
+                let note = row_to_note(r)?;
+                let emb: Vec<f32> =
+                    serde_json::from_str(&r.get::<_, String>(6)?).unwrap_or_default();
+                Ok((note, emb))
+            })?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        Ok(rows)
+    }
+
+    /// Все связи профиля `(from, to, relation)` — для обзора консолидации.
+    pub fn note_links_all(&self, profile_id: Uuid) -> Result<Vec<(Uuid, Uuid, String)>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt =
+            conn.prepare("SELECT from_id, to_id, relation FROM note_links WHERE profile_id = ?1")?;
+        let rows = stmt
+            .query_map(params![profile_id.to_string()], |r| {
+                Ok((
+                    parse_uuid(r.get::<_, String>(0)?),
+                    parse_uuid(r.get::<_, String>(1)?),
+                    r.get::<_, String>(2)?,
+                ))
+            })?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        Ok(rows)
+    }
+
+    /// Переносит связи замещённой заметки на новую (при merge): рёбра, где участвует
+    /// `old_id`, перенаправляются на `new_id`; самопетли и дубли отбрасываются.
+    pub fn note_links_retarget(&self, profile_id: Uuid, old_id: Uuid, new_id: Uuid) -> Result<()> {
+        let conn = self.conn.lock().unwrap();
+        let edges: Vec<(String, String, String)> = {
+            let mut stmt = conn.prepare(
+                "SELECT from_id, to_id, relation FROM note_links
+                 WHERE profile_id = ?1 AND (from_id = ?2 OR to_id = ?2)",
+            )?;
+            stmt.query_map(params![profile_id.to_string(), old_id.to_string()], |r| {
+                Ok((
+                    r.get::<_, String>(0)?,
+                    r.get::<_, String>(1)?,
+                    r.get::<_, String>(2)?,
+                ))
+            })?
+            .collect::<rusqlite::Result<Vec<_>>>()?
+        };
+        let (old_s, new_s) = (old_id.to_string(), new_id.to_string());
+        for (from, to, rel) in edges {
+            // Удаляем старое ребро, затем вставляем перенацеленное (OR IGNORE от дублей).
+            conn.execute(
+                "DELETE FROM note_links WHERE profile_id=?1 AND from_id=?2 AND to_id=?3 AND relation=?4",
+                params![profile_id.to_string(), from, to, rel],
+            )?;
+            let nf = if from == old_s { &new_s } else { &from };
+            let nt = if to == old_s { &new_s } else { &to };
+            if nf == nt {
+                continue; // самопетля после переноса — отбрасываем
+            }
+            conn.execute(
+                "INSERT OR IGNORE INTO note_links(profile_id, from_id, to_id, relation, created_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5)",
+                params![profile_id.to_string(), nf, nt, rel, Utc::now().to_rfc3339()],
+            )?;
+        }
+        Ok(())
+    }
+
     // ---------- модель себя (SelfModel) ----------
 
     /// Модель себя профиля (`None`, если ещё не создавалась). Изоляция по PK.
@@ -990,6 +1068,53 @@ mod tests {
         db.note_supersede_mark(a, n2.id, repl.id).unwrap();
         let nb2 = db.note_neighbors(a, n1.id, None).unwrap();
         assert!(!nb2.iter().any(|(n, _, _)| n.id == n2.id));
+    }
+
+    #[test]
+    fn notes_with_vectors_active_only() {
+        let db = db();
+        let a = Uuid::new_v4();
+        let n1 = Note::new(a, "n1", vec![]);
+        let n2 = Note::new(a, "n2", vec![]);
+        db.note_insert(&n1).unwrap();
+        db.note_insert(&n2).unwrap();
+        db.note_vector_upsert(n1.id, a, &[1.0, 0.0]).unwrap();
+        db.note_vector_upsert(n2.id, a, &[0.0, 1.0]).unwrap();
+        // Замещённая исключается из выдачи.
+        let r = Note::new(a, "r", vec![]);
+        db.note_insert(&r).unwrap();
+        db.note_supersede_mark(a, n2.id, r.id).unwrap();
+
+        let wv = db.notes_with_vectors(a).unwrap();
+        assert_eq!(wv.len(), 1);
+        assert_eq!(wv[0].0.id, n1.id);
+        assert_eq!(wv[0].1, vec![1.0, 0.0]);
+    }
+
+    #[test]
+    fn merge_link_retarget_moves_dedups_and_drops_selfloop() {
+        let db = db();
+        let a = Uuid::new_v4();
+        let s1 = Note::new(a, "s1", vec![]);
+        let s2 = Note::new(a, "s2", vec![]);
+        let x = Note::new(a, "x", vec![]);
+        let merged = Note::new(a, "merged", vec![]);
+        for n in [&s1, &s2, &x, &merged] {
+            db.note_insert(n).unwrap();
+        }
+        // s1→x и s2→x (после переноса станут дублем); s1→s2 (станет самопетлёй).
+        db.note_link_insert(a, s1.id, x.id, "contradicts").unwrap();
+        db.note_link_insert(a, s2.id, x.id, "contradicts").unwrap();
+        db.note_link_insert(a, s1.id, s2.id, "relates").unwrap();
+
+        db.note_links_retarget(a, s1.id, merged.id).unwrap();
+        db.note_links_retarget(a, s2.id, merged.id).unwrap();
+
+        let all = db.note_links_all(a).unwrap();
+        assert_eq!(all.len(), 1); // дубль схлопнут, самопетля отброшена
+        assert_eq!(all[0].0, merged.id);
+        assert_eq!(all[0].1, x.id);
+        assert_eq!(all[0].2, "contradicts");
     }
 
     #[test]
