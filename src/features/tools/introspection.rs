@@ -446,7 +446,7 @@ mod tests {
         assert!(out.result.contains("temperature"));
         assert!(out.result.contains("top_k"));
         // Но в JSON результата нет полного дампа конфига с десятками `null`-полей —
-        // только доступные в режиме (для Claude это max_tokens).
+        // только доступные в режиме (для Claude это max_tokens + reasoning).
         assert!(!out.result.contains("dynatemp_range"));
         assert!(!out.result.contains("reasoning_budget"));
         assert!(out.result.contains("max_tokens"));
@@ -462,11 +462,13 @@ mod tests {
             crate::entities::sampling::SETTABLE_SAMPLING_FIELDS.len()
         );
         assert!(local_props.contains_key("top_k"));
-        // Claude — только max_tokens.
+        // Claude — max_tokens + reasoning (thinking/reasoning_effort), но не расширения.
         let claude = SetSampling::new(Some(CloudProvider::Claude)).parameters();
         let claude_props = claude["properties"].as_object().unwrap();
-        assert_eq!(claude_props.len(), 1);
         assert!(claude_props.contains_key("max_tokens"));
+        assert!(claude_props.contains_key("thinking"));
+        assert!(claude_props.contains_key("reasoning_effort"));
+        assert!(!claude_props.contains_key("top_k"));
     }
 
     #[test]

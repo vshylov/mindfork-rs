@@ -16,7 +16,7 @@ pub mod mock;
 pub use anthropic::AnthropicClient;
 pub use contract::{
     ApiMessage, ApiToolCall, ChatChunk, ChatRequest, Embedder, EngineBackend, FinishReason,
-    ToolCallAccumulator, ToolSchema, UnavailableEmbedder,
+    ThinkingBlock, ToolCallAccumulator, ToolSchema, UnavailableEmbedder,
 };
 pub use managed::{ManagedConfig, ServerHandle, wait_until_ready};
 pub use openai::{OpenAiClient, WireDialect};

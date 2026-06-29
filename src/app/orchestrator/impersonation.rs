@@ -187,7 +187,10 @@ fn spawn_impersonation(
                             text: t,
                         });
                     }
-                    ChatChunk::Thoughts(_) | ChatChunk::ToolCall(_) | ChatChunk::Usage(_) => {}
+                    ChatChunk::Thoughts(_)
+                    | ChatChunk::ThoughtsSignature(_)
+                    | ChatChunk::ToolCall(_)
+                    | ChatChunk::Usage(_) => {}
                     ChatChunk::Finished(r) => {
                         reason = r;
                         break;

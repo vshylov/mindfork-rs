@@ -42,6 +42,20 @@ pub struct ApiToolCall {
     pub arguments: String,
 }
 
+/// Блок рассуждений Anthropic (extended thinking) для переотправки в истории.
+/// Anthropic требует возвращать thinking-блок **с его `signature`** в assistant-ходе
+/// с `tool_use` в рамках того же хода — иначе следующий запрос раунда вернёт `400`
+/// (см. [`anthropic::wire`](super::anthropic)). Прочие бэкенды (llama.cpp/OpenAI)
+/// поле игнорируют. Между ходами (перезагрузка/новый запрос) не нужен — Anthropic
+/// требует подпись только для самого свежего assistant-хода, поэтому в доменном
+/// `Message` не персистится. `text` — то, что прислал сервер (при `display:summarized`
+/// это резюме), переотправляется без изменений.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ThinkingBlock {
+    pub text: String,
+    pub signature: String,
+}
+
 /// Сообщение диалога, передаваемое модели.
 #[derive(Debug, Clone)]
 pub struct ApiMessage {
@@ -51,6 +65,10 @@ pub struct ApiMessage {
     pub tool_call_id: Option<String>,
     /// Вызовы инструментов (для роли `Assistant`, инициировавшей tool-call).
     pub tool_calls: Vec<ApiToolCall>,
+    /// Блок рассуждений (Anthropic extended thinking) для переотправки в текущем
+    /// ходе agentic-loop. Ставится только на assistant-ход с `tool_use` (см.
+    /// [`ThinkingBlock`]); прочие бэкенды игнорируют. По умолчанию `None`.
+    pub thinking: Option<ThinkingBlock>,
 }
 
 impl ApiMessage {
@@ -60,6 +78,7 @@ impl ApiMessage {
             content: content.into(),
             tool_call_id: None,
             tool_calls: Vec::new(),
+            thinking: None,
         }
     }
 
@@ -69,6 +88,7 @@ impl ApiMessage {
             content: content.into(),
             tool_call_id: None,
             tool_calls: Vec::new(),
+            thinking: None,
         }
     }
 
@@ -79,7 +99,14 @@ impl ApiMessage {
             content: content.into(),
             tool_call_id: None,
             tool_calls,
+            thinking: None,
         }
+    }
+
+    /// Прикрепляет thinking-блок (Anthropic) к сообщению (builder-стиль).
+    pub fn with_thinking(mut self, thinking: Option<ThinkingBlock>) -> Self {
+        self.thinking = thinking;
+        self
     }
 
     pub fn tool(tool_call_id: impl Into<String>, content: impl Into<String>) -> Self {
@@ -88,6 +115,7 @@ impl ApiMessage {
             content: content.into(),
             tool_call_id: Some(tool_call_id.into()),
             tool_calls: Vec::new(),
+            thinking: None,
         }
     }
 }
@@ -166,6 +194,10 @@ pub enum ChatChunk {
     Text(String),
     /// Дельта «мыслей» (reasoning).
     Thoughts(String),
+    /// Подпись блока «мыслей» (Anthropic `signature_delta`). Нужна, чтобы
+    /// переотправить thinking-блок в assistant-ходе с `tool_use` (см.
+    /// [`ThinkingBlock`]). Прочие бэкенды не эмитят.
+    ThoughtsSignature(String),
     /// Дельта вызова инструмента (сервер парсит `<tool_call>` сам).
     ToolCall(ToolCallDelta),
     /// Счётчик токенов (`usage`) — обычно отдельным чанком перед завершением.

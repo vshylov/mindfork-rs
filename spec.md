@@ -523,6 +523,7 @@ loop:
 - В модель `SamplingConfig` и UI настроек семплинга (секция «Семплинг», подсекции «Ассистент»/«Имперсонация») входят все перечисленные выше поля. Расширения llama.cpp по умолчанию `None` — для старых `settings.json` и сторонних серверов поведение не меняется, пока пользователь их не задаст.
 - **Случайный seed на запрос** теперь доступен через поле `seed` (`-1` = случайный); вариативность регенерации по-прежнему можно получать и через `temperature > 0`.
 - Снимок фактически применённых параметров сохраняется в `Message.metadata`.
+- **Облачные диалекты** ([ADR 0004](docs/decisions/0004-engine-contract-multi-provider.md)) принимают лишь подмножество полей (`supported_sampling_fields`): OpenAI/Gemini чистят расширения llama.cpp и reasoning-сигналы; **Claude** поддерживает `max_tokens` + extended thinking (`thinking`/`reasoning_effort` → `{type:"adaptive", display:"summarized"}` + `output_config.effort`), но **отвергает** `temperature`/`top_p`/`top_k` и `budget_tokens`/`reasoning_budget` (модели 4.x «зафиксировали» сэмплинг). При tool-use Claude требует возвращать thinking-блок с подписью (`signature`) в том же ходе — это ведёт agentic-loop в памяти, без персиста. UI настроек и `get/set_sampling` показывают по режиму только доступные поля.
 
 ### 8.3. Уровни переопределения
 

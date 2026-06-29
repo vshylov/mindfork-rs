@@ -193,7 +193,10 @@ async fn summarize_text(
             match chunk {
                 ChatChunk::Text(t) => out.push_str(&t),
                 ChatChunk::Finished(_) => break,
-                ChatChunk::Thoughts(_) | ChatChunk::ToolCall(_) | ChatChunk::Usage(_) => {}
+                ChatChunk::Thoughts(_)
+                | ChatChunk::ThoughtsSignature(_)
+                | ChatChunk::ToolCall(_)
+                | ChatChunk::Usage(_) => {}
             }
         }
         Ok::<String, anyhow::Error>(out)

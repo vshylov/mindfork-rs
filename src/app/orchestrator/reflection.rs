@@ -210,7 +210,9 @@ fn spawn_reflection(spawn: ReflectSpawn) {
                             reason = r;
                             break;
                         }
-                        ChatChunk::Thoughts(_) | ChatChunk::Usage(_) => {}
+                        ChatChunk::Thoughts(_)
+                        | ChatChunk::ThoughtsSignature(_)
+                        | ChatChunk::Usage(_) => {}
                     }
                 }
                 let calls = acc.finish();

@@ -116,6 +116,17 @@ llama.cpp-расширений (`dynatemp_*`, `dry_*`, `top_n_sigma`, `mirostat`
 - **Фаза 2** — сделана: `AnthropicClient` + `anthropic`-wire в модуле
   `shared/api/anthropic/` (реализация `EngineBackend`); `Claude` проведён через конфиг/
   супервайзер/настройки.
+- **CoT (extended thinking) для Claude** — сделано поверх Фазы 2: `wire::build_request`
+  шлёт `thinking:{type:"adaptive", display:"summarized"}` (+ `output_config.effort`) при
+  включённом `thinking`; `budget_tokens`/`reasoning_budget` не шлём (модели 4.x их
+  отвергают). Парс `signature_delta` → `ChatChunk::ThoughtsSignature`. **При tool-use**
+  Anthropic требует возвращать thinking-блок с подписью в assistant-ходе того же хода —
+  agentic-loop крепит `ApiMessage.thinking` (текст+подпись) к ходу с вызовами,
+  `build_messages` ставит `AntBlock::Thinking` первым. Подпись только в памяти хода
+  (между ходами авто-отбрасывается сервером — не персистится). `supported_sampling_
+  fields(Claude)` расширен на `thinking`/`reasoning_effort`. Проверено живыми
+  `#[ignore]`-смоуками против Anthropic API (Phase A: «мысли»+подпись; Phase B:
+  round-trip подписи с tool-use без `400`). Известный задел — `redacted_thinking`.
 - **Раскладка `shared/api` (§2) — выполнена** (после Фазы 2, ради симметрии с
   `anthropic/`): `backend.rs` → `contract.rs` (провайдеро-агностичный контракт);
   `client.rs`+`wire.rs` → `openai/` (с приватным `wire`, re-export `OpenAiClient`/
