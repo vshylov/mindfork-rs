@@ -90,14 +90,18 @@ impl Db {
         limit: Option<usize>,
     ) -> Result<Vec<Note>> {
         let conn = self.conn.lock().unwrap();
+        // Замещённые (superseded) заметки скрыты из активной выдачи (хранятся ради
+        // «шрама»/трассировки) — anti-join по note_superseded.
         let mut sql = String::from(
-            "SELECT id, profile_id, content, tags, created_at, updated_at
-             FROM notes WHERE profile_id = ?1",
+            "SELECT n.id, n.profile_id, n.content, n.tags, n.created_at, n.updated_at
+             FROM notes n
+             LEFT JOIN note_superseded s ON s.note_id = n.id
+             WHERE n.profile_id = ?1 AND s.note_id IS NULL",
         );
         if query.is_some() {
-            sql.push_str(" AND content LIKE ?2");
+            sql.push_str(" AND n.content LIKE ?2");
         }
-        sql.push_str(" ORDER BY updated_at DESC");
+        sql.push_str(" ORDER BY n.updated_at DESC");
 
         let mut stmt = conn.prepare(&sql)?;
         let like = query.map(|q| format!("%{q}%"));
@@ -180,8 +184,10 @@ impl Db {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare(
             "SELECT n.id, n.profile_id, n.content, n.tags, n.created_at, n.updated_at, v.embedding
-             FROM notes n JOIN note_vectors v ON v.note_id = n.id
-             WHERE n.profile_id = ?1",
+             FROM notes n
+             JOIN note_vectors v ON v.note_id = n.id
+             LEFT JOIN note_superseded s ON s.note_id = n.id
+             WHERE n.profile_id = ?1 AND s.note_id IS NULL",
         )?;
         let mut scored: Vec<(Note, f32)> = stmt
             .query_map(params![profile_id.to_string()], |r| {
@@ -210,7 +216,8 @@ impl Db {
         let mut stmt = conn.prepare(
             "SELECT n.id, n.content FROM notes n
              LEFT JOIN note_vectors v ON v.note_id = n.id
-             WHERE n.profile_id = ?1 AND v.note_id IS NULL",
+             LEFT JOIN note_superseded s ON s.note_id = n.id
+             WHERE n.profile_id = ?1 AND v.note_id IS NULL AND s.note_id IS NULL",
         )?;
         let rows = stmt
             .query_map(params![profile_id.to_string()], |r| {
@@ -218,6 +225,125 @@ impl Db {
             })?
             .collect::<rusqlite::Result<Vec<_>>>()?;
         Ok(rows)
+    }
+
+    // ---------- граф связей и «шрамы» (Ярус 2) ----------
+
+    /// Заметка существует у профиля и не замещена (для проверки концов связи).
+    pub fn note_is_active(&self, profile_id: Uuid, id: Uuid) -> Result<bool> {
+        let conn = self.conn.lock().unwrap();
+        let found: Option<i64> = conn
+            .query_row(
+                "SELECT 1 FROM notes n
+                 LEFT JOIN note_superseded s ON s.note_id = n.id
+                 WHERE n.id = ?1 AND n.profile_id = ?2 AND s.note_id IS NULL",
+                params![id.to_string(), profile_id.to_string()],
+                |r| r.get(0),
+            )
+            .optional()?;
+        Ok(found.is_some())
+    }
+
+    /// Создаёт направленную связь between двумя заметками (идемпотентно по PK).
+    /// Изоляция по `profile_id`. Возвращает `true`, если связь действительно создана
+    /// (`false` — такая связь уже была, `INSERT OR IGNORE` ничего не вставил).
+    pub fn note_link_insert(
+        &self,
+        profile_id: Uuid,
+        from_id: Uuid,
+        to_id: Uuid,
+        relation: &str,
+    ) -> Result<bool> {
+        let conn = self.conn.lock().unwrap();
+        let n = conn.execute(
+            "INSERT OR IGNORE INTO note_links(profile_id, from_id, to_id, relation, created_at)
+             VALUES (?1, ?2, ?3, ?4, ?5)",
+            params![
+                profile_id.to_string(),
+                from_id.to_string(),
+                to_id.to_string(),
+                relation,
+                Utc::now().to_rfc3339(),
+            ],
+        )?;
+        Ok(n > 0)
+    }
+
+    /// Число связей, в которых участвует заметка (в любую сторону). Для предупреждения
+    /// при ревизии смыслонесущего узла (его рёбра могут стать неверными).
+    pub fn note_link_count(&self, profile_id: Uuid, id: Uuid) -> Result<usize> {
+        let conn = self.conn.lock().unwrap();
+        let n: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM note_links
+             WHERE profile_id = ?1 AND (from_id = ?2 OR to_id = ?2)",
+            params![profile_id.to_string(), id.to_string()],
+            |r| r.get(0),
+        )?;
+        Ok(n as usize)
+    }
+
+    /// Соседи заметки по графу (в обе стороны), исключая замещённые. Опциональный
+    /// фильтр по типу связи. Возвращает (заметка, тип связи, исходящая ли связь).
+    pub fn note_neighbors(
+        &self,
+        profile_id: Uuid,
+        id: Uuid,
+        relation: Option<&str>,
+    ) -> Result<Vec<(Note, String, bool)>> {
+        let conn = self.conn.lock().unwrap();
+        let rel = if relation.is_some() {
+            " AND l.relation = ?3"
+        } else {
+            ""
+        };
+        let sql = format!(
+            "SELECT n.id, n.profile_id, n.content, n.tags, n.created_at, n.updated_at, l.relation, 1
+             FROM note_links l
+             JOIN notes n ON n.id = l.to_id
+             LEFT JOIN note_superseded s ON s.note_id = n.id
+             WHERE l.profile_id = ?1 AND l.from_id = ?2 AND s.note_id IS NULL{rel}
+             UNION ALL
+             SELECT n.id, n.profile_id, n.content, n.tags, n.created_at, n.updated_at, l.relation, 0
+             FROM note_links l
+             JOIN notes n ON n.id = l.from_id
+             LEFT JOIN note_superseded s ON s.note_id = n.id
+             WHERE l.profile_id = ?1 AND l.to_id = ?2 AND s.note_id IS NULL{rel}"
+        );
+        let mut stmt = conn.prepare(&sql)?;
+        let map = |r: &rusqlite::Row| -> rusqlite::Result<(Note, String, bool)> {
+            let note = row_to_note(r)?;
+            let relation: String = r.get(6)?;
+            let outgoing: i64 = r.get(7)?;
+            Ok((note, relation, outgoing != 0))
+        };
+        let rows = if let Some(rel) = relation {
+            stmt.query_map(params![profile_id.to_string(), id.to_string(), rel], map)?
+                .collect::<rusqlite::Result<Vec<_>>>()?
+        } else {
+            stmt.query_map(params![profile_id.to_string(), id.to_string()], map)?
+                .collect::<rusqlite::Result<Vec<_>>>()?
+        };
+        Ok(rows)
+    }
+
+    /// Помечает заметку замещённой другой (скрывается из активной выдачи, хранится
+    /// ради «шрама»/трассировки). Идемпотентно (перезапись записи о замещении).
+    pub fn note_supersede_mark(&self, profile_id: Uuid, old_id: Uuid, new_id: Uuid) -> Result<()> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "INSERT INTO note_superseded(note_id, profile_id, superseded_by, superseded_at)
+             VALUES (?1, ?2, ?3, ?4)
+             ON CONFLICT(note_id) DO UPDATE SET
+                 superseded_by = excluded.superseded_by,
+                 superseded_at = excluded.superseded_at",
+            params![
+                old_id.to_string(),
+                profile_id.to_string(),
+                new_id.to_string(),
+                Utc::now().to_rfc3339(),
+            ],
+        )?;
+        Ok(())
     }
 
     // ---------- модель себя (SelfModel) ----------
@@ -611,6 +737,24 @@ fn migrate(conn: &Connection) -> Result<()> {
              data        TEXT NOT NULL,
              version     INTEGER NOT NULL,
              updated_at  TEXT NOT NULL
+         );
+
+         CREATE TABLE IF NOT EXISTS note_links (
+             profile_id  TEXT NOT NULL,
+             from_id     TEXT NOT NULL,
+             to_id       TEXT NOT NULL,
+             relation    TEXT NOT NULL,
+             created_at  TEXT NOT NULL,
+             PRIMARY KEY (profile_id, from_id, to_id, relation)
+         );
+         CREATE INDEX IF NOT EXISTS idx_note_links_from ON note_links(profile_id, from_id);
+         CREATE INDEX IF NOT EXISTS idx_note_links_to ON note_links(profile_id, to_id);
+
+         CREATE TABLE IF NOT EXISTS note_superseded (
+             note_id        TEXT PRIMARY KEY,
+             profile_id     TEXT NOT NULL,
+             superseded_by  TEXT NOT NULL,
+             superseded_at  TEXT NOT NULL
          );",
     )?;
     Ok(())
@@ -784,6 +928,68 @@ mod tests {
         let hits = db.note_search_semantic(a, &[0.0, 1.0], 5).unwrap();
         assert_eq!(hits.len(), 1);
         assert!((hits[0].1 - 1.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn supersede_hides_note_from_list_and_search() {
+        let db = db();
+        let a = Uuid::new_v4();
+        let old = Note::new(a, "old", vec![]);
+        let new = Note::new(a, "new", vec![]);
+        db.note_insert(&old).unwrap();
+        db.note_insert(&new).unwrap();
+        db.note_vector_upsert(old.id, a, &[1.0, 0.0]).unwrap();
+        db.note_vector_upsert(new.id, a, &[1.0, 0.0]).unwrap();
+        db.note_supersede_mark(a, old.id, new.id).unwrap();
+
+        // Замещённая скрыта и из списка, и из семантики, и из is_active.
+        let list = db.note_list(a, None, &[], None).unwrap();
+        assert_eq!(list.len(), 1);
+        assert_eq!(list[0].id, new.id);
+        let hits = db.note_search_semantic(a, &[1.0, 0.0], 5).unwrap();
+        assert_eq!(hits.len(), 1);
+        assert_eq!(hits[0].0.id, new.id);
+        assert!(!db.note_is_active(a, old.id).unwrap());
+        assert!(db.note_is_active(a, new.id).unwrap());
+    }
+
+    #[test]
+    fn links_and_neighbors_both_directions_and_isolation() {
+        let db = db();
+        let a = Uuid::new_v4();
+        let n1 = Note::new(a, "n1", vec![]);
+        let n2 = Note::new(a, "n2", vec![]);
+        let n3 = Note::new(a, "n3", vec![]);
+        db.note_insert(&n1).unwrap();
+        db.note_insert(&n2).unwrap();
+        db.note_insert(&n3).unwrap();
+        assert!(db.note_link_insert(a, n1.id, n2.id, "refines").unwrap());
+        assert!(db.note_link_insert(a, n3.id, n1.id, "contradicts").unwrap());
+        // Повтор той же связи не создаётся (false) — дубля в таблице нет.
+        assert!(!db.note_link_insert(a, n1.id, n2.id, "refines").unwrap());
+
+        let nb = db.note_neighbors(a, n1.id, None).unwrap();
+        assert_eq!(nb.len(), 2); // исходящая на n2 + входящая от n3 (дубль не учтён)
+        assert!(
+            nb.iter()
+                .any(|(n, r, out)| n.id == n2.id && r == "refines" && *out)
+        );
+        assert!(
+            nb.iter()
+                .any(|(n, r, out)| n.id == n3.id && r == "contradicts" && !*out)
+        );
+
+        // Фильтр по типу связи.
+        let only = db.note_neighbors(a, n1.id, Some("refines")).unwrap();
+        assert_eq!(only.len(), 1);
+        assert_eq!(only[0].0.id, n2.id);
+
+        // Замещённый сосед исчезает из выдачи.
+        let repl = Note::new(a, "n2b", vec![]);
+        db.note_insert(&repl).unwrap();
+        db.note_supersede_mark(a, n2.id, repl.id).unwrap();
+        let nb2 = db.note_neighbors(a, n1.id, None).unwrap();
+        assert!(!nb2.iter().any(|(n, _, _)| n.id == n2.id));
     }
 
     #[test]

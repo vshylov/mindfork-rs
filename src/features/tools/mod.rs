@@ -147,6 +147,10 @@ pub fn default_tool_ids() -> Vec<ToolId> {
         "note_save",
         "note_recall",
         notes::NOTE_REVISE_ID,
+        notes::NOTE_LINK_ID,
+        notes::NOTE_NEIGHBORS_ID,
+        notes::NOTE_SUPERSEDE_ID,
+        notes::NOTE_MERGE_ID,
         "rag_add",
         "rag_search",
         "call_subagent",
@@ -263,6 +267,10 @@ pub fn standard_registry(cfg: &ToolConfig) -> ToolRegistry {
     reg.register(Arc::new(notes::NoteSave));
     reg.register(Arc::new(notes::NoteRecall));
     reg.register(Arc::new(notes::NoteRevise));
+    reg.register(Arc::new(notes::NoteLink));
+    reg.register(Arc::new(notes::NoteNeighbors));
+    reg.register(Arc::new(notes::NoteSupersede));
+    reg.register(Arc::new(notes::NoteMerge));
     reg.register(Arc::new(rag::RagAdd));
     reg.register(Arc::new(rag::RagSearch));
     reg.register(Arc::new(subagent::CallSubagent::new(
