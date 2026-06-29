@@ -202,6 +202,24 @@ impl Db {
         Ok(scored)
     }
 
+    /// Заметки профиля, у которых ещё нет эмбеддинга (для бэкфилла «старых» заметок,
+    /// созданных до векторного поиска, импортированных или сохранённых при
+    /// недоступном тогда эмбеддере). Возвращает пары (id, содержимое).
+    pub fn notes_missing_vectors(&self, profile_id: Uuid) -> Result<Vec<(Uuid, String)>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare(
+            "SELECT n.id, n.content FROM notes n
+             LEFT JOIN note_vectors v ON v.note_id = n.id
+             WHERE n.profile_id = ?1 AND v.note_id IS NULL",
+        )?;
+        let rows = stmt
+            .query_map(params![profile_id.to_string()], |r| {
+                Ok((parse_uuid(r.get::<_, String>(0)?), r.get::<_, String>(1)?))
+            })?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        Ok(rows)
+    }
+
     // ---------- модель себя (SelfModel) ----------
 
     /// Модель себя профиля (`None`, если ещё не создавалась). Изоляция по PK.
@@ -738,6 +756,20 @@ mod tests {
         let top1 = db.note_search_semantic(a, &[0.9, 0.1, 0.0], 1).unwrap();
         assert_eq!(top1.len(), 1);
         assert_eq!(top1[0].0.id, id1);
+    }
+
+    #[test]
+    fn notes_missing_vectors_lists_unembedded() {
+        let db = db();
+        let a = Uuid::new_v4();
+        let n1 = Note::new(a, "with vec", vec![]);
+        let n2 = Note::new(a, "no vec", vec![]);
+        db.note_insert(&n1).unwrap();
+        db.note_insert(&n2).unwrap();
+        db.note_vector_upsert(n1.id, a, &[1.0, 0.0]).unwrap();
+        let missing = db.notes_missing_vectors(a).unwrap();
+        assert_eq!(missing.len(), 1);
+        assert_eq!(missing[0].1, "no vec");
     }
 
     #[test]

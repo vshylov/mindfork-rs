@@ -15,6 +15,9 @@ pub const NOTE_REVISE_ID: &str = "note_revise";
 /// Сколько заметок отдаёт `note_recall` по умолчанию (если лимит не задан).
 const DEFAULT_RECALL: usize = 5;
 
+/// Размер батча при бэкфилле эмбеддингов «старых» заметок.
+const NOTE_BACKFILL_BATCH: usize = 32;
+
 /// `note_save` — сохраняет заметку профиля. Возвращает её id.
 pub struct NoteSave;
 
@@ -63,6 +66,9 @@ impl Tool for NoteSave {
                 .storage
                 .db()
                 .note_vector_upsert(id, ctx.profile_id, &emb);
+            // Дотягиваем эмбеддинги «старых» заметок без векторов, чтобы они
+            // участвовали в воротах (и в последующем семантическом поиске).
+            ensure_note_vectors(ctx).await;
             if let Ok(hits) = ctx
                 .storage
                 .db()
@@ -137,6 +143,31 @@ impl Tool for NoteRecall {
     }
 }
 
+/// Дотягивает эмбеддинги заметок профиля, у которых их ещё нет (созданы до
+/// векторного поиска, импортированы или сохранены при недоступном тогда эмбеддере).
+/// Без этого семантический поиск/ворота их не видят. **Best-effort**: эмбеддер
+/// недоступен или батч не прошёл — просто выходим (поиск отработает по тому, что
+/// есть, плюс откат на подстроку). По сути один раз на профиль: после бэкфилла
+/// список «без векторов» пуст и вызов почти бесплатен (один SELECT).
+async fn ensure_note_vectors(ctx: &ToolContext) {
+    let missing = match ctx.storage.db().notes_missing_vectors(ctx.profile_id) {
+        Ok(m) => m,
+        Err(_) => return,
+    };
+    for chunk in missing.chunks(NOTE_BACKFILL_BATCH) {
+        let texts: Vec<String> = chunk.iter().map(|(_, c)| c.clone()).collect();
+        let Ok(vecs) = ctx.embedder.embed(texts).await else {
+            return; // эмбеддер недоступен — дальше смысла нет
+        };
+        for ((id, _), emb) in chunk.iter().zip(vecs) {
+            let _ = ctx
+                .storage
+                .db()
+                .note_vector_upsert(*id, ctx.profile_id, &emb);
+        }
+    }
+}
+
 /// Семантический поиск заметок по эмбеддингу запроса. `None`, если эмбеддер
 /// недоступен (мягкая деградация — вызывающий откатится на подстроку) или выдача
 /// пуста (например, у заметок ещё нет векторов). Теги применяются фильтром поверх
@@ -147,6 +178,9 @@ async fn semantic_recall(
     tags: &[String],
     limit: Option<usize>,
 ) -> Option<Vec<Note>> {
+    // Бэкфилл: дотянуть эмбеддинги заметок без векторов (старые/импортированные),
+    // иначе семантический поиск их не увидит.
+    ensure_note_vectors(ctx).await;
     let emb = ctx
         .embedder
         .embed(vec![query.to_string()])
@@ -375,6 +409,37 @@ mod tests {
             .unwrap();
         assert!(out.result.contains("aaaa"));
         assert!(!out.result.contains("wwww"));
+    }
+
+    #[tokio::test]
+    async fn recall_backfills_legacy_notes_without_vectors() {
+        let profile = Uuid::new_v4();
+        let (_d, storage, ctx) = ctx_with_storage(profile);
+        // «Старые» заметки без векторов (вставлены напрямую — как до фичи/при импорте).
+        storage
+            .db()
+            .note_insert(&Note::new(profile, "aaaa", vec![]))
+            .unwrap();
+        storage
+            .db()
+            .note_insert(&Note::new(profile, "wwww", vec![]))
+            .unwrap();
+        assert_eq!(
+            storage.db().notes_missing_vectors(profile).unwrap().len(),
+            2
+        );
+
+        // Семантический recall дотягивает вектора и находит не-подстрочное совпадение.
+        let out = NoteRecall
+            .invoke(&ctx, serde_json::json!({"query": "aaab", "limit": 1}))
+            .await
+            .unwrap();
+        assert!(out.result.contains("aaaa"));
+        // Бэкфилл выполнен — заметок без векторов больше нет.
+        assert_eq!(
+            storage.db().notes_missing_vectors(profile).unwrap().len(),
+            0
+        );
     }
 
     #[tokio::test]
