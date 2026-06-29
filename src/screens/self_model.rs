@@ -203,7 +203,7 @@ impl SelfModelScreen {
         // заголовком, чтобы наблюдения не сливались с моделью собеседника.
         if !m.narrative.is_empty() {
             rows.push(spacer());
-            rows.push(header("Наблюдения"));
+            rows.push(header(&format!("Наблюдения ({})", m.narrative.len())));
         }
         for seg in m.narrative.iter().rev() {
             let date = seg.created_at.format("%Y-%m-%d").to_string();
