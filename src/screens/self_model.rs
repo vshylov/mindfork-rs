@@ -11,9 +11,9 @@
 use ratatui::Frame;
 use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
-use ratatui::style::Modifier;
-use ratatui::text::{Line, Span, Text};
-use ratatui::widgets::{Clear, List, ListItem, ListState, Paragraph};
+use ratatui::style::{Modifier, Style};
+use ratatui::text::{Line, Span};
+use ratatui::widgets::{Clear, Paragraph};
 use uuid::Uuid;
 
 use crate::entities::self_model::{GoalStatus, SelfModel, SelfModelEdit};
@@ -73,6 +73,10 @@ pub struct SelfModelScreen {
     model: Option<SelfModel>,
     palette: Palette,
     selected: usize,
+    /// Первый видимый визуальный ряд (для прокрутки длинного списка). Держится
+    /// между кадрами; пересчитывается в [`Self::render`] так, чтобы выбранная строка
+    /// оставалась видимой (а если не влезает целиком — был виден её верх).
+    scroll: usize,
     editor: Option<Editor>,
     /// Подтверждение очистки всей модели (`Ctrl+K` дважды).
     confirm_clear: bool,
@@ -85,6 +89,7 @@ impl SelfModelScreen {
             model,
             palette,
             selected: 0,
+            scroll: 0,
             editor: None,
             confirm_clear: false,
         }
@@ -388,24 +393,67 @@ impl SelfModelScreen {
 
         // Перенос по словам: длинные значения (модели пишут много текста) не влезают
         // в одну строку. Каждая логическая строка списка заворачивается на несколько
-        // визуальных рядов в одном `ListItem` — навигация/выделение остаются по
-        // логическим строкам, а `List` сам прокручивает многорядный элемент.
-        // Ширина = область списка минус колонка маркера выделения `▌ ` (2 колонки).
-        let content_width = (chunks[0].width as usize).saturating_sub(2);
-        let items: Vec<ListItem> = self
-            .rows()
-            .into_iter()
-            .map(|(line, _)| ListItem::new(Text::from(wrap_line(&line, content_width))))
-            .collect();
-        let mut state = ListState::default();
-        state.select(Some(self.selected.min(items.len().saturating_sub(1))));
-        let list = List::new(items)
-            .highlight_style(ratatui::style::Style::new().bg(palette.keycap_bg))
-            .highlight_symbol("▌ ")
-            // Маркер `▌` на каждом визуальном ряду элемента, а не только на первом —
-            // полоса тянется на всю высоту многострочного (перенесённого) элемента.
-            .repeat_highlight_symbol(true);
-        frame.render_stateful_widget(list, chunks[0], &mut state);
+        // визуальных рядов; затем рисуем визуальные ряды вручную (а не виджетом
+        // `List`). Причина: `List` целиком ПРОПУСКАЕТ многострочный элемент, который не
+        // вмещается в остаток высоты по высоте (его `get_items_bounds` прерывается на
+        // `height + item.height() > max_height`), оставляя пустоту — длинный пункт
+        // внизу выглядит как «конец списка». Ручной рендер обрезает хвостовой пункт по
+        // высоте области, показывая его верхнюю часть. Ширина содержимого = область
+        // минус колонка маркера выделения `▌ ` (2 колонки).
+        let list_area = chunks[0];
+        let content_width = (list_area.width as usize).saturating_sub(2).max(1);
+        let rows = self.rows();
+        let sel = self.selected.min(rows.len().saturating_sub(1));
+
+        // Разворачиваем каждую логическую строку в визуальные ряды, помня для каждого
+        // ряда индекс его логической строки и где начинается выбранная строка.
+        let mut visual: Vec<(usize, Line<'static>)> = Vec::new();
+        let mut sel_start = 0usize;
+        let mut sel_height = 1usize;
+        for (ri, (line, _)) in rows.iter().enumerate() {
+            let start = visual.len();
+            if ri == sel {
+                sel_start = start;
+            }
+            let mut wrapped = wrap_line(line, content_width);
+            if wrapped.is_empty() {
+                wrapped.push(Line::from(String::new())); // пустой разделитель
+            }
+            if ri == sel {
+                sel_height = wrapped.len();
+            }
+            for vl in wrapped {
+                visual.push((ri, vl));
+            }
+        }
+
+        let view_h = list_area.height as usize;
+        self.scroll = adjust_scroll(self.scroll, sel_start, sel_height, view_h);
+
+        // Рисуем видимые визуальные ряды. У выбранной строки — подложка на всю ширину
+        // ряда (база `Paragraph` красит всю область) и маркер `▌`, у прочих — отступ.
+        for (offset, (ri, line)) in visual.iter().enumerate().skip(self.scroll).take(view_h) {
+            let y = list_area.y + (offset - self.scroll) as u16;
+            let row = Rect {
+                x: list_area.x,
+                y,
+                width: list_area.width,
+                height: 1,
+            };
+            let selected = *ri == sel;
+            let prefix = if selected {
+                Span::raw("▌ ")
+            } else {
+                Span::raw("  ")
+            };
+            let mut spans = vec![prefix];
+            spans.extend(line.spans.iter().cloned());
+            let mut para = Paragraph::new(Line::from(spans));
+            if selected {
+                para = para.style(Style::new().bg(palette.keycap_bg));
+            }
+            frame.render_widget(para, row);
+        }
 
         // Нижняя строка: подтверждение очистки или хоткеи.
         if self.confirm_clear {
@@ -471,6 +519,32 @@ fn parse_list(s: &str) -> Vec<String> {
         .map(|x| x.trim().to_string())
         .filter(|x| !x.is_empty())
         .collect()
+}
+
+/// Пересчитывает прокрутку так, чтобы выбранная строка (визуальные ряды
+/// `[sel_start, sel_start + sel_height)`) была видна в окне высотой `view_h`:
+/// - если строка выше окна — поднимаем верх окна к её началу;
+/// - если её низ за окном — опускаем окно к её низу;
+/// - но если строка целиком не вмещается (выше окна) — прижимаем к её **верху**
+///   (видна верхняя часть длинного пункта, а не низ).
+///
+/// Иначе прокрутка не меняется.
+fn adjust_scroll(scroll: usize, sel_start: usize, sel_height: usize, view_h: usize) -> usize {
+    if view_h == 0 {
+        return scroll;
+    }
+    let sel_end = sel_start + sel_height; // exclusive
+    if sel_start < scroll {
+        sel_start
+    } else if sel_end > scroll + view_h {
+        if sel_height >= view_h {
+            sel_start
+        } else {
+            sel_end - view_h
+        }
+    } else {
+        scroll
+    }
 }
 
 /// Центрированный прямоугольник в процентах ширины/высоты.
@@ -650,5 +724,36 @@ mod tests {
         term.draw(|f| empty.render(f)).unwrap();
         let mut full = SelfModelScreen::new(Some(model()), Palette::default());
         term.draw(|f| full.render(f)).unwrap();
+    }
+
+    #[test]
+    fn adjust_scroll_keeps_selection_visible_and_pins_top_of_tall_item() {
+        // Выбранная строка целиком в окне — прокрутка не меняется.
+        assert_eq!(adjust_scroll(0, 0, 1, 10), 0);
+        // Строка выше окна — поднимаем верх окна к её началу.
+        assert_eq!(adjust_scroll(5, 2, 1, 10), 2);
+        // Низ строки за окном (строка ниже окна) — опускаем окно к её низу.
+        assert_eq!(adjust_scroll(0, 9, 1, 5), 5); // sel_end=10, 10-5=5
+        // Длинный пункт, не влезающий по высоте: прижимаем к его ВЕРХУ.
+        assert_eq!(adjust_scroll(0, 8, 20, 5), 8);
+        // Нулевая высота окна — без изменений.
+        assert_eq!(adjust_scroll(3, 0, 1, 0), 3);
+    }
+
+    #[test]
+    fn render_long_trailing_item_in_short_area_does_not_panic() {
+        // Длинный последний инсайт в маленьком окне: ранее `List` пропускал бы такой
+        // пункт целиком; теперь рисуется его верхняя часть. Проверяем отсутствие
+        // паники при переносе на много рядов в тесной высоте.
+        let mut m = SelfModel::new(Uuid::new_v4());
+        m.summary = "описание".into();
+        m.add_insight("очень длинное наблюдение ".repeat(40), 50);
+        let mut s = SelfModelScreen::new(Some(m), Palette::default());
+        let mut term = Terminal::new(TestBackend::new(40, 8)).unwrap();
+        term.draw(|f| s.render(f)).unwrap();
+        // Перейдём в самый низ (на длинный инсайт) и перерисуем — прокрутка должна
+        // показать его верх без паники.
+        s.handle_key(key(KeyCode::End));
+        term.draw(|f| s.render(f)).unwrap();
     }
 }
