@@ -11,6 +11,7 @@
 use ratatui::Frame;
 use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
+use ratatui::style::Modifier;
 use ratatui::text::{Line, Span, Text};
 use ratatui::widgets::{Clear, List, ListItem, ListState, Paragraph};
 use uuid::Uuid;
@@ -44,6 +45,9 @@ enum RowAction {
     Interests,
     Relationship,
     Insight(Uuid),
+    /// Декоративная строка (пустой разделитель или заголовок секции) — на ней
+    /// нельзя стоять курсором; навигация её пропускает.
+    Decoration,
 }
 
 /// Что именно редактируется в открытом текстовом редакторе.
@@ -93,6 +97,8 @@ impl SelfModelScreen {
         self.confirm_clear = false;
         let max = self.rows().len().saturating_sub(1);
         self.selected = self.selected.min(max);
+        // Снимок мог сдвинуть/убрать строки — увести курсор с декорации, если попал.
+        self.move_selection(0);
     }
 
     /// Обновляет палитру темы (событие `AppEvent::Settings`).
@@ -109,6 +115,18 @@ impl SelfModelScreen {
         let label = |s: &str| Span::styled(s.to_string(), p.accent_style());
         let dim = |s: String| Span::styled(s, p.muted_style());
         let mut rows: Vec<(Line<'static>, RowAction)> = Vec::new();
+        // Декоративные строки-разделители: пустая строка и заголовок секции
+        // (жирным акцентом). На них курсор не встаёт — лишь визуально делят секции.
+        let spacer = || (Line::from(String::new()), RowAction::Decoration);
+        let header = |s: &str| {
+            (
+                Line::from(Span::styled(
+                    s.to_string(),
+                    p.accent_style().add_modifier(Modifier::BOLD),
+                )),
+                RowAction::Decoration,
+            )
+        };
 
         // Описание себя.
         let summary = if m.summary.trim().is_empty() {
@@ -144,7 +162,9 @@ impl SelfModelScreen {
             RowAction::AddGoal,
         ));
 
-        // Модель собеседника.
+        // Модель собеседника — отделена пустой строкой и заголовком от секции «о себе».
+        rows.push(spacer());
+        rows.push(header("Собеседник"));
         let u = &m.user_model;
         let join_or_dash = |v: &[String]| {
             if v.is_empty() {
@@ -174,7 +194,12 @@ impl SelfModelScreen {
             RowAction::Relationship,
         ));
 
-        // Нарратив (новые сверху) — удаление по `Del`.
+        // Нарратив (новые сверху) — удаление по `Del`. Тоже за разделителем и
+        // заголовком, чтобы наблюдения не сливались с моделью собеседника.
+        if !m.narrative.is_empty() {
+            rows.push(spacer());
+            rows.push(header("Наблюдения"));
+        }
         for seg in m.narrative.iter().rev() {
             let date = seg.created_at.format("%Y-%m-%d").to_string();
             rows.push((
@@ -191,6 +216,34 @@ impl SelfModelScreen {
     /// Действие выбранной строки (или `None`, если индекс вне диапазона).
     fn selected_action(&self) -> Option<RowAction> {
         self.rows().get(self.selected).map(|(_, a)| *a)
+    }
+
+    /// Индексы строк, на которых может стоять курсор (всё, кроме декораций).
+    fn selectable_indices(&self) -> Vec<usize> {
+        self.rows()
+            .iter()
+            .enumerate()
+            .filter(|(_, (_, a))| !matches!(a, RowAction::Decoration))
+            .map(|(i, _)| i)
+            .collect()
+    }
+
+    /// Сдвигает выделение на `delta` позиций среди выбираемых строк (декорации
+    /// пропускаются). `isize::MIN`/`MAX` — в начало/конец. Если текущая строка —
+    /// декорация (после смены модели), стартуем от ближайшей выбираемой.
+    fn move_selection(&mut self, delta: isize) {
+        let sel = self.selectable_indices();
+        if sel.is_empty() {
+            return;
+        }
+        let cur = sel
+            .iter()
+            .position(|&i| i == self.selected)
+            .unwrap_or_else(|| sel.iter().filter(|&&i| i < self.selected).count());
+        let new = (cur as isize)
+            .saturating_add(delta)
+            .clamp(0, sel.len() as isize - 1) as usize;
+        self.selected = sel[new];
     }
 
     /// Обрабатывает нажатие клавиши, возвращая намерение для `app`.
@@ -219,15 +272,14 @@ impl SelfModelScreen {
             self.confirm_clear = true;
             return None;
         }
-        let len = self.rows().len();
         match key.code {
             KeyCode::Esc => return Some(SelfModelIntent::Close),
-            KeyCode::Up => self.selected = self.selected.saturating_sub(1),
-            KeyCode::Down => self.selected = (self.selected + 1).min(len.saturating_sub(1)),
-            KeyCode::PageUp => self.selected = self.selected.saturating_sub(10),
-            KeyCode::PageDown => self.selected = (self.selected + 10).min(len.saturating_sub(1)),
-            KeyCode::Home => self.selected = 0,
-            KeyCode::End => self.selected = len.saturating_sub(1),
+            KeyCode::Up => self.move_selection(-1),
+            KeyCode::Down => self.move_selection(1),
+            KeyCode::PageUp => self.move_selection(-10),
+            KeyCode::PageDown => self.move_selection(10),
+            KeyCode::Home => self.move_selection(isize::MIN),
+            KeyCode::End => self.move_selection(isize::MAX),
             KeyCode::Enter => return self.begin_edit(),
             KeyCode::Char(' ') => {
                 if let Some(RowAction::Goal(id)) = self.selected_action() {
@@ -277,6 +329,7 @@ impl SelfModelScreen {
                 m.user_model.relationship_dynamic.clone(),
             ),
             RowAction::Insight(_) => return None, // инсайты не правим, только удаляем
+            RowAction::Decoration => return None, // разделитель/заголовок — не редактируется
         };
         // Поле многострочное (по умолчанию `InputBox` уже такой) — текст переносится.
         let mut input = InputBox::new();
@@ -500,7 +553,8 @@ mod tests {
     #[test]
     fn add_goal_commits_and_empty_is_noop() {
         let mut s = SelfModelScreen::new(None, Palette::default());
-        // Строки пустой модели: [Summary, AddGoal, Traits, Interests, Relationship].
+        // Строки пустой модели: [Summary, AddGoal, ·spacer·, ·Собеседник·, Traits,
+        // Interests, Relationship] — декорации курсор пропускает.
         s.selected = 1; // AddGoal
         assert!(matches!(s.selected_action(), Some(RowAction::AddGoal)));
         s.handle_key(key(KeyCode::Enter));
@@ -563,6 +617,30 @@ mod tests {
             }
             other => panic!("ожидали SetInterests, получили {other:?}"),
         }
+    }
+
+    #[test]
+    fn navigation_skips_decoration_rows() {
+        // Модель с целью и инсайтом: между AddGoal и Traits — spacer+header,
+        // между Relationship и инсайтом — ещё spacer+header. Курсор по `Down`
+        // должен перескакивать декорации и не вставать на них.
+        let mut s = SelfModelScreen::new(Some(model()), Palette::default());
+        let mut seen = Vec::new();
+        loop {
+            seen.push(s.selected_action().unwrap());
+            let before = s.selected;
+            s.handle_key(key(KeyCode::Down));
+            if s.selected == before {
+                break; // достигли конца
+            }
+        }
+        assert!(
+            !seen.iter().any(|a| matches!(a, RowAction::Decoration)),
+            "курсор не должен стоять на декорациях: {seen:?}"
+        );
+        // Прошли все выбираемые строки сверху донизу.
+        assert!(matches!(seen.first(), Some(RowAction::Summary)));
+        assert!(matches!(seen.last(), Some(RowAction::Insight(_))));
     }
 
     #[test]
