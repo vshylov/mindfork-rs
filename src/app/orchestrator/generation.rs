@@ -13,7 +13,7 @@ use crate::entities::message::{Message, MessageMetadata, MessageRole, ToolCallRe
 use crate::entities::profile::ToolId;
 use crate::features::tools::{ChatEffect, ToolContext, ToolRegistry, control, effective_tool_ids};
 use crate::shared::api::{
-    ApiMessage, ApiToolCall, ChatChunk, ChatRequest, EngineBackend, FinishReason,
+    ApiMessage, ApiToolCall, ChatChunk, ChatRequest, EngineBackend, FinishReason, ThinkingBlock,
     ToolCallAccumulator,
 };
 use crate::shared::tokens::estimate_prompt;
@@ -319,6 +319,10 @@ struct GenSpawn {
 struct RoundOutput {
     text: String,
     thoughts: String,
+    /// Подпись блока «мыслей» (Anthropic): нужна для переотправки thinking-блока в
+    /// assistant-ходе с tool_use того же хода. `None` у бэкендов без extended thinking
+    /// (llama.cpp/OpenAI) или когда «мыслей» не было.
+    thoughts_signature: Option<String>,
     calls: Vec<ApiToolCall>,
     reason: FinishReason,
     /// Сгенерировано токенов за раунд: точное значение из `usage` сервера, иначе
@@ -400,11 +404,22 @@ fn spawn_generation(spawn: GenSpawn) {
                     .any(|c| c.name == control::SEND_FOLLOWUP_ID && allowed_has(&c.name));
 
                 // assistant-ход с вызовами — в историю запроса (нужен и для инференса
-                // следующего раунда продолжения/переписывания).
-                request.messages.push(ApiMessage::assistant_tool_calls(
-                    out.text.clone(),
-                    out.calls.clone(),
-                ));
+                // следующего раунда продолжения/переписывания). При extended thinking
+                // (Anthropic) прикрепляем thinking-блок с подписью: его обязан нести
+                // assistant-ход с tool_use в этом же ходе, иначе следующий запрос → 400.
+                // Подпись есть только если модель реально вернула «мысли»; прочие
+                // бэкенды поле игнорируют.
+                let thinking = out
+                    .thoughts_signature
+                    .clone()
+                    .map(|signature| ThinkingBlock {
+                        text: out.thoughts.clone(),
+                        signature,
+                    });
+                request.messages.push(
+                    ApiMessage::assistant_tool_calls(out.text.clone(), out.calls.clone())
+                        .with_thinking(thinking),
+                );
                 let mut records: Vec<ToolCallRecord> = Vec::new();
                 let mut tool_msgs: Vec<Message> = Vec::new();
                 for call in &out.calls {
@@ -520,6 +535,7 @@ async fn stream_round(
 ) -> RoundOutput {
     let mut text = String::new();
     let mut thoughts = String::new();
+    let mut thoughts_signature: Option<String> = None;
     let mut acc = ToolCallAccumulator::default();
     let mut reason = FinishReason::Stop;
     // Live-счёт: число дельт ответа (≈ токенов). Точное значение из `usage`
@@ -560,6 +576,12 @@ async fn stream_round(
                         });
                         emit_completion(base_tokens + streamed);
                     }
+                    // Подпись «мыслей» (Anthropic) — не в UI, копим для переотправки.
+                    ChatChunk::ThoughtsSignature(s) => {
+                        thoughts_signature
+                            .get_or_insert_with(String::new)
+                            .push_str(&s);
+                    }
                     ChatChunk::ToolCall(delta) => acc.push(delta),
                     ChatChunk::Usage(u) => {
                         // Точный счёт от сервера: и ответ, и переписку (prompt) —
@@ -588,6 +610,7 @@ async fn stream_round(
     RoundOutput {
         text,
         thoughts,
+        thoughts_signature,
         calls: acc.finish(),
         reason,
         tokens: usage_tokens.unwrap_or(streamed),

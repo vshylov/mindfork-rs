@@ -172,8 +172,10 @@ pub const SETTABLE_SAMPLING_FIELDS: &[&str] = &[
 ///
 /// - **OpenAI/Gemini** — `temperature`/`top_p`/`frequency_penalty`/
 ///   `presence_penalty`/`seed`/`max_tokens` (прочее → `400`);
-/// - **Claude** — только `max_tokens` (модели 4.x «зафиксировали» сэмплинг и
-///   отвергают `temperature`/`top_p`/`top_k`).
+/// - **Claude** — `max_tokens` + reasoning (`thinking`/`reasoning_effort`):
+///   модели 4.x «зафиксировали» сэмплинг (отвергают `temperature`/`top_p`/`top_k`),
+///   но поддерживают extended thinking (`{type:"adaptive"}` + `output_config.effort`).
+///   `reasoning_budget` сюда не входит — `budget_tokens` модели 4.x отвергают.
 ///
 /// Это единый источник истины для UI настроек (`cloud_supported_param`) и
 /// инструментов `get_sampling`/`set_sampling` (показывать/менять только доступное).
@@ -189,7 +191,7 @@ pub fn supported_sampling_fields(provider: Option<CloudProvider>) -> &'static [&
             "seed",
             "max_tokens",
         ],
-        Some(CloudProvider::Claude) => &["max_tokens"],
+        Some(CloudProvider::Claude) => &["max_tokens", "thinking", "reasoning_effort"],
     }
 }
 
@@ -239,11 +241,12 @@ mod tests {
             supported_sampling_fields(Some(CloudProvider::Gemini)),
             openai
         );
-        // Claude — только max_tokens.
-        assert_eq!(
-            supported_sampling_fields(Some(CloudProvider::Claude)),
-            &["max_tokens"]
-        );
+        // Claude — max_tokens + reasoning (thinking/reasoning_effort), но не top_k.
+        let claude = supported_sampling_fields(Some(CloudProvider::Claude));
+        assert!(claude.contains(&"max_tokens"));
+        assert!(claude.contains(&"thinking"));
+        assert!(claude.contains(&"reasoning_effort"));
+        assert!(!claude.contains(&"top_k"));
         // Подмножества облака — действительно подмножества полного набора.
         for f in openai {
             assert!(SETTABLE_SAMPLING_FIELDS.contains(f));

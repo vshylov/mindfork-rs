@@ -114,7 +114,10 @@ impl Tool for CallSubagent {
                     ChatChunk::Text(t) => text.push_str(&t),
                     ChatChunk::Finished(_) => break,
                     // «Мысли», tool-дельты и счётчик токенов саб-агента игнорируем.
-                    ChatChunk::Thoughts(_) | ChatChunk::ToolCall(_) | ChatChunk::Usage(_) => {}
+                    ChatChunk::Thoughts(_)
+                    | ChatChunk::ThoughtsSignature(_)
+                    | ChatChunk::ToolCall(_)
+                    | ChatChunk::Usage(_) => {}
                 }
             }
             Ok::<String, anyhow::Error>(text)

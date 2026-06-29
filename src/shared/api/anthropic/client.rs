@@ -132,6 +132,9 @@ impl EngineBackend for AnthropicClient {
                                         AntDelta::ThinkingDelta { thinking } if !thinking.is_empty() => {
                                             yield ChatChunk::Thoughts(thinking);
                                         }
+                                        AntDelta::SignatureDelta { signature } if !signature.is_empty() => {
+                                            yield ChatChunk::ThoughtsSignature(signature);
+                                        }
                                         AntDelta::InputJsonDelta { partial_json } => {
                                             yield ChatChunk::ToolCall(ToolCallDelta {
                                                 index,
@@ -192,7 +195,7 @@ mod tests {
 mod ignored_smoke {
     use super::*;
     use crate::entities::sampling::SamplingConfig;
-    use crate::shared::api::contract::ApiMessage;
+    use crate::shared::api::contract::{ApiMessage, ApiToolCall, ThinkingBlock, ToolSchema};
 
     fn client_from_env() -> Option<AnthropicClient> {
         let key = std::env::var("MINDFORK_ANTHROPIC_KEY").ok()?;
@@ -239,5 +242,163 @@ mod ignored_smoke {
             finish,
             Some(FinishReason::Stop | FinishReason::Length)
         ));
+    }
+
+    /// Phase A: с включённым thinking приходят и «мысли», и их подпись.
+    #[tokio::test]
+    #[ignore = "requires MINDFORK_ANTHROPIC_KEY (live Anthropic API)"]
+    async fn extended_thinking_streams_thoughts_and_signature() {
+        let Some(client) = client_from_env() else {
+            eprintln!("skip: MINDFORK_ANTHROPIC_KEY not set");
+            return;
+        };
+        let req = ChatRequest {
+            system: None,
+            messages: vec![ApiMessage::user(
+                "Think step by step: what is 17 * 23? Show brief reasoning.",
+            )],
+            sampling: SamplingConfig {
+                max_tokens: Some(2048),
+                thinking: Some(true),
+                ..Default::default()
+            },
+            tools: vec![],
+        };
+        let mut stream = client.chat_stream(req, Default::default()).await.unwrap();
+        let mut thoughts = String::new();
+        let mut signature = String::new();
+        let mut text = String::new();
+        while let Some(chunk) = stream.next().await {
+            match chunk {
+                ChatChunk::Thoughts(t) => thoughts.push_str(&t),
+                ChatChunk::ThoughtsSignature(s) => signature.push_str(&s),
+                ChatChunk::Text(t) => text.push_str(&t),
+                ChatChunk::Finished(_) => break,
+                _ => {}
+            }
+        }
+        // display:summarized → непустые «мысли»; подпись присутствует.
+        assert!(!thoughts.is_empty(), "expected summarized thoughts");
+        assert!(!signature.is_empty(), "expected thinking signature");
+        assert!(!text.is_empty(), "expected final answer");
+    }
+
+    /// Phase B: thinking + tool-use. Первый раунд даёт «мысли»+подпись+вызов; второй
+    /// запрос переотправляет thinking-блок (с подписью) в assistant-ходе с tool_use и
+    /// результат инструмента — Anthropic не должен вернуть 400 (что и проверяет подпись).
+    #[tokio::test]
+    #[ignore = "requires MINDFORK_ANTHROPIC_KEY (live Anthropic API)"]
+    async fn thinking_with_tool_use_round_trips_signature() {
+        let Some(client) = client_from_env() else {
+            eprintln!("skip: MINDFORK_ANTHROPIC_KEY not set");
+            return;
+        };
+        let tool = ToolSchema {
+            name: "get_weather".into(),
+            description: "Get the current weather for a city.".into(),
+            parameters: serde_json::json!({
+                "type": "object",
+                "properties": {"city": {"type": "string"}},
+                "required": ["city"],
+            }),
+        };
+        let sampling = SamplingConfig {
+            max_tokens: Some(2048),
+            thinking: Some(true),
+            // Высокое усилие: подталкиваем модель действительно подумать перед
+            // вызовом (иначе на тривиальном запросе adaptive thinking может
+            // пропустить рассуждение — и подписи не будет).
+            reasoning_effort: Some(crate::entities::sampling::ReasoningEffort::High),
+            ..Default::default()
+        };
+        // Промпт с явным шагом рассуждения (выбор города) — чтобы модель
+        // сгенерировала thinking-блок с подписью до вызова инструмента.
+        let prompt = "Two candidate cities: Paris and Berlin. Reason briefly about \
+             which one is the capital of France, then call the get_weather tool for \
+             that city.";
+        let round1 = ChatRequest {
+            system: None,
+            messages: vec![ApiMessage::user(prompt)],
+            sampling: sampling.clone(),
+            tools: vec![tool.clone()],
+        };
+        let mut stream = client
+            .chat_stream(round1, Default::default())
+            .await
+            .unwrap();
+        let mut thoughts = String::new();
+        let mut signature = String::new();
+        let mut acc = crate::shared::api::ToolCallAccumulator::default();
+        let mut reason = FinishReason::Stop;
+        while let Some(chunk) = stream.next().await {
+            match chunk {
+                ChatChunk::Thoughts(t) => thoughts.push_str(&t),
+                ChatChunk::ThoughtsSignature(s) => signature.push_str(&s),
+                ChatChunk::ToolCall(d) => acc.push(d),
+                ChatChunk::Finished(r) => {
+                    reason = r;
+                    break;
+                }
+                _ => {}
+            }
+        }
+        assert_eq!(
+            reason,
+            FinishReason::ToolCalls,
+            "model should call the tool"
+        );
+        let calls = acc.finish();
+        assert!(!calls.is_empty(), "expected a tool call");
+        assert!(!signature.is_empty(), "expected a thinking signature");
+        let call = &calls[0];
+
+        // Второй раунд: assistant(thinking+подпись, tool_use) → tool_result.
+        let round2 = ChatRequest {
+            system: None,
+            messages: vec![
+                ApiMessage::user(prompt),
+                ApiMessage::assistant_tool_calls(
+                    "",
+                    vec![ApiToolCall {
+                        id: call.id.clone(),
+                        name: call.name.clone(),
+                        arguments: call.arguments.clone(),
+                    }],
+                )
+                .with_thinking(Some(ThinkingBlock {
+                    text: thoughts.clone(),
+                    signature: signature.clone(),
+                })),
+                ApiMessage::tool(&call.id, "18°C, sunny"),
+            ],
+            sampling,
+            tools: vec![tool],
+        };
+        let mut stream = client
+            .chat_stream(round2, Default::default())
+            .await
+            .unwrap();
+        let mut text = String::new();
+        let mut finish = None;
+        while let Some(chunk) = stream.next().await {
+            match chunk {
+                ChatChunk::Text(t) => text.push_str(&t),
+                ChatChunk::Finished(r) => {
+                    finish = Some(r);
+                    break;
+                }
+                _ => {}
+            }
+        }
+        // Если бы подпись не переотправилась/была невалидна — Anthropic вернул бы 400
+        // и chat_stream выдал бы Finished(Error) с пустым текстом.
+        assert!(
+            matches!(finish, Some(FinishReason::Stop | FinishReason::Length)),
+            "second round must succeed (signature round-trip), got {finish:?}"
+        );
+        assert!(
+            !text.is_empty(),
+            "expected a final answer after tool result"
+        );
     }
 }

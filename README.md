@@ -145,7 +145,9 @@
 - **облако OpenAI / Gemini** (через OpenAI-совместимый endpoint) — `OpenAiClient` с
   Bearer-ключом и провайдеро-зависимой фильтрацией сэмплинга;
 - **облако Anthropic (Claude)** — отдельный `AnthropicClient` (Messages API
-  `/v1/messages`, `x-api-key`).
+  `/v1/messages`, `x-api-key`) с поддержкой **extended thinking (CoT)**: adaptive
+  thinking + видимые «мысли», корректные и при вызове инструментов (переотправка
+  thinking-блока с подписью в том же ходе).
 
 Выбор провайдера — в настройках единым селектором режима (`managed` / `external` /
 `openai` / `gemini` / `claude`); API-ключ задаётся **именем env-переменной** (сам
@@ -172,7 +174,8 @@
   `AppEvent` вниз; `generation_id` отбрасывает устаревшие чанки; автомат
   `Idle / Generating / Cancelling`.
 - **EOS** по token-id на сервере (поле `stop` не отправляется — анти-самообрыв);
-  «мысли» из `delta.reasoning_content` с фолбэком на парсинг `<think>`.
+  «мысли» из `delta.reasoning_content` с фолбэком на парсинг `<think>` (llama.cpp),
+  у Claude — `thinking_delta` + подпись для round-trip при tool-use.
 - **Хранение**: JSON (конфиг/профили/чаты) + SQLite/sqlite-vec (заметки/RAG),
   изоляция по `profile_id`, мягкое удаление везде.
 - **Эмбеддинги** — выделенный embedding-сервер ([ADR 0002](docs/decisions/0002-embeddings-dedicated-server.md)).

@@ -353,10 +353,20 @@ sequenceDiagram
   живым. Это не даёт первому запросу уйти на ещё загружающийся managed-сервер и
   упасть на `503`. При неготовности отправки текст возвращается в поле ввода
   (`RestoreInput`).
-- **«Мысли» (CoT).** Основной путь — `delta.reasoning_content` (`llama-server
-  --reasoning-format`) → `ChatChunk::Thoughts`. Запасной — потоковый парсер
-  `<think>…</think>` (`shared/api/thoughts.rs`), корректно склеивающий теги на
-  границе чанка.
+- **«Мысли» (CoT).** llama.cpp: `delta.reasoning_content` (`llama-server
+  --reasoning-format`) → `ChatChunk::Thoughts`; запасной путь — потоковый парсер
+  `<think>…</think>` (`shared/api/thoughts.rs`), склеивающий теги на границе чанка.
+  **Anthropic (Claude):** `wire::build_request` шлёт `thinking:{type:"adaptive",
+  display:"summarized"}` при `sampling.thinking==Some(true)` (+ `output_config.effort`
+  из `reasoning_effort`); `budget_tokens`/`reasoning_budget` **не шлём** — модели 4.x
+  их отвергают (`400`). `thinking_delta`→`Thoughts`, `signature_delta`→
+  `ChatChunk::ThoughtsSignature`. **При tool-use** Anthropic требует возвращать
+  thinking-блок **с подписью** в assistant-ходе с `tool_use` того же хода (иначе
+  `400`): agentic-loop копит подпись раунда и крепит `ApiMessage.thinking`
+  (`with_thinking`) к ходу с вызовами; `build_messages` ставит `AntBlock::Thinking`
+  первым. Подпись живёт только в памяти хода (между ходами Anthropic авто-отбрасывает
+  старые thinking → не персистится). `supported_sampling_fields(Claude)` =
+  `max_tokens`+`thinking`+`reasoning_effort`.
 - **EOS.** Остановка строго по token-id спец-токенов модели (на стороне сервера);
   строковые `stop` по тексту EOS приложение **не отправляет** (анти-самообрыв).
 - **Регенерация** усекает историю по последнее сообщение пользователя
@@ -411,18 +421,22 @@ classDiagram
 `ChatRequest` модель не несёт). **Диалект сэмплинга** ([`openai::WireDialect`]):
 `LlamaCpp` шлёт все расширения, `OpenAi`/`Gemini` чистят незнакомое (иначе `400`;
 OpenAI требует `max_completion_tokens` вместо `max_tokens`), `AnthropicClient` из
-сэмплинга шлёт только `max_tokens` (Claude 4.x отвергает temperature/top_p/top_k).
-У Anthropic нет embeddings — `Embedder` он не реализует (RAG берёт отдельный, ADR 0002).
+сэмплинга шлёт `max_tokens` + extended thinking (`thinking`/`reasoning_effort` →
+adaptive; Claude 4.x отвергает temperature/top_p/top_k и `budget_tokens` — см. «Мысли
+(CoT)» выше). У Anthropic нет embeddings — `Embedder` он не реализует (RAG берёт
+отдельный, ADR 0002).
 
 - **`ChatRequest`** = `system` + `messages` (user/assistant/tool, включая
   `tool_calls` и tool-результаты) + `sampling` + `tools`. История append-only →
   локальный сервер переиспользует prefix cache. Каждый бэкенд транслирует в свой
   wire-формат (OpenAI Chat Completions либо Anthropic Messages: system → top-level,
   tool-результаты → `tool_result`-блоки в user, склейка соседних ролей).
-- **`ChatChunk`** = `Text` | `Thoughts` | `ToolCall(ToolCallDelta)` |
+- **`ChatChunk`** = `Text` | `Thoughts` | `ThoughtsSignature` | `ToolCall(ToolCallDelta)` |
   `Usage(TokenUsage)` | `Finished`. `ToolCallAccumulator` собирает разрезанные по
   чанкам вызовы по `index`; `Usage` (`prompt_tokens`/`completion_tokens`) приходит
   финальным чанком при `stream_options.include_usage=true` — счётчик токенов.
+  `ThoughtsSignature` эмитит только Anthropic (подпись thinking-блока для переотправки
+  при tool-use); прочие бэкенды его не шлют.
 - **`ServerHandle`** (`managed.rs`) владеет дочерним `llama-server`: `Child` отдан
   **монитор-задаче** (`spawn_monitor`), которая `select!`-ит между его выходом (взвод
   `exited`-токена) и сигналом `kill` (взводится в `Drop` хэндла → `start_kill`;

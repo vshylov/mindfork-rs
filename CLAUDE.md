@@ -1910,6 +1910,56 @@ web-поиск и Python под выключателями, экран наст�
   печатаются в поле ввода; при выключенной настройке намерение отдаётся сразу.
   **614 тестов зелёные**, clippy/fmt чисты.
 
+### Пост-M9: CoT (extended thinking) для режима Claude (сделано)
+- **Claude (Anthropic) теперь умеет «мысли» (CoT)** — раньше `anthropic/wire::build_request`
+  слал только `max_tokens`, поэтому reasoning не запрашивался. Приёмная часть уже была
+  готова (клиент маппит `thinking_delta`→`ChatChunk::Thoughts`, лента рисует блок
+  «мыслей»). Две фазы: **A** — CoT в чате без инструментов; **B** — CoT при tool-use
+  (критично — инструменты центральны для приложения). См. CLAUDE.md (раздел про движок).
+- **Phase A — включение thinking** (`anthropic/wire.rs`): запрос несёт
+  `thinking:{type:"adaptive", display:"summarized"}` когда `sampling.thinking==Some(true)`
+  (+ `output_config.effort` из `reasoning_effort`, кроме `none`). **`budget_tokens`/
+  `reasoning_budget` не шлём** — модели Claude 4.x их отвергают (`400`); только adaptive,
+  глубину задаёт `effort`. `display:"summarized"` нужен, чтобы текст «мыслей» приходил
+  непустым (дефолт `omitted`). `supported_sampling_fields(Claude)` расширен на
+  `thinking`/`reasoning_effort` (зеркало диалекта) → экран настроек и `get/set_sampling`
+  показывают/правят их у Claude; `top_k`/penalties по-прежнему скрыты.
+- **Phase B — подпись thinking-блока при tool-use** (главный нюанс протокола): Anthropic
+  требует, чтобы assistant-ход с `tool_use` нёс **свой thinking-блок с `signature`** в
+  рамках того же хода — иначе следующий запрос раунда `400`. Реализация:
+  - Парс `signature_delta` (`anthropic/wire::AntDelta::SignatureDelta`) → новый чанк
+    `ChatChunk::ThoughtsSignature(String)` (клиент эмитит; прочие бэкенды — нет).
+  - `RoundOutput.thoughts_signature` копит подпись раунда; agentic-loop
+    (`orchestrator/generation.rs`) при наличии подписи прикрепляет thinking-блок к
+    `ApiMessage::assistant_tool_calls(...).with_thinking(...)` на строке push в историю
+    запроса. Тип `ApiMessage.thinking: Option<ThinkingBlock>` (текст+подпись) — generic,
+    использует только Anthropic-wire; `anthropic/wire::build_messages` ставит
+    `AntBlock::Thinking` **первым** в assistant-ходе.
+  - **Подпись живёт только в памяти одного `spawn_generation`** — НЕ персистится в
+    доменном `Message`/JSON: Anthropic требует thinking только у самого свежего
+    assistant-хода, а между ходами (перезагрузка/новый запрос/перегенерация) старые
+    thinking авто-отбрасываются сервером. `message_to_api` (история) thinking не несёт —
+    для Anthropic это корректно. Незавершённые tool-ходы из истории не пересобираются
+    (перегенерация усекает по последнее user-сообщение), так что персист не нужен.
+- **Контракт generic, бэкенды не ломаются**: новый вариант `ChatChunk` и поле
+  `ApiMessage.thinking` игнорируются llama.cpp/OpenAI; llama.cpp-путь thinking как был
+  (`reasoning_budget`/`<think>`). Exhaustive-матчи `ChatChunk` обновлены у всех
+  потребителей (title/impersonation/reflection/subagent/fetch/openai-client/generation).
+- **Тесты**: wire (thinking off по умолчанию; adaptive+summarized+effort при включении;
+  `budget_tokens` не уходит; thinking-блок первым перед tool_use; без подписи блока нет;
+  парс `signature_delta`); обновлены `supported_sampling_fields`/`set_sampling`-схема.
+  **622 теста зелёные**, clippy/fmt чисты. Живые `#[ignore]`-смоуки
+  (`anthropic/client.rs`, `MINDFORK_ANTHROPIC_KEY`) **проверены на реальном Anthropic
+  API**: `extended_thinking_streams_thoughts_and_signature` (Phase A — приходят «мысли»
+  и подпись) и `thinking_with_tool_use_round_trips_signature` (Phase B — второй раунд с
+  переотправкой подписи проходит без `400`). Нюанс смоука Phase B: для гарантии
+  thinking-блока нужен промпт с явным шагом рассуждения + `reasoning_effort: High` —
+  на тривиальном запросе adaptive thinking рассуждение пропускает (подписи нет, что
+  само по себе корректно — без «мыслей» блок и не нужен).
+- **Известное ограничение**: `redacted_thinking`-блоки (редкая защитная реакция
+  классификаторов) пока не обрабатываются — если такой блок придёт перед tool-use, его
+  не переотправим (возможен `400`). Для обычного использования крайне редко; задел.
+
 ### Отложено за пределы M3
 - **Сворачивание/выделение per-message** и tool-блоки в ленте — сейчас «мысли»
   сворачиваются глобально (`Ctrl+T`); выделение сообщений и tool-блоки — на M5.

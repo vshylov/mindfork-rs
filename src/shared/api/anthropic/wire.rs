@@ -12,6 +12,7 @@
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
+use crate::entities::sampling::ReasoningEffort;
 use crate::shared::api::contract::{ApiRole, ChatRequest};
 
 /// `max_tokens` по умолчанию, если в семплинге не задан (Anthropic требует поле).
@@ -29,6 +30,31 @@ pub struct AntRequest {
     pub stream: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub tools: Option<Vec<AntTool>>,
+    /// Extended thinking. Современные Claude (Opus 4.6+/Sonnet 4.6/Fable 5) принимают
+    /// только `{type:"adaptive"}` — старое `budget_tokens` отвергают `400`. `display:
+    /// "summarized"` нужен, чтобы текст «мыслей» приходил непустым (дефолт `omitted`).
+    /// Шлём только когда reasoning включён. См. CLAUDE.md (CoT для Claude).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub thinking: Option<AntThinking>,
+    /// Глубина рассуждений (`output_config.effort`, GA). Шлём только при thinking и
+    /// заданном `reasoning_effort` (кроме `none`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub output_config: Option<AntOutputConfig>,
+}
+
+/// Конфиг extended thinking Anthropic. `type` всегда `adaptive` (единственный
+/// «вкл»-режим у моделей 4.6+); `display` — `summarized` для видимого CoT.
+#[derive(Debug, Serialize)]
+pub struct AntThinking {
+    #[serde(rename = "type")]
+    pub kind: &'static str,
+    pub display: &'static str,
+}
+
+/// `output_config` Anthropic: уровень усилия (`low`/`medium`/`high`).
+#[derive(Debug, Serialize)]
+pub struct AntOutputConfig {
+    pub effort: &'static str,
 }
 
 #[derive(Debug, Serialize)]
@@ -43,6 +69,13 @@ pub struct AntMessage {
 pub enum AntBlock {
     Text {
         text: String,
+    },
+    /// Блок рассуждений (extended thinking) для переотправки. Должен идти **первым**
+    /// в assistant-ходе с `tool_use`; подпись обязательна (иначе `400`). См.
+    /// [`ThinkingBlock`](crate::shared::api::contract::ThinkingBlock).
+    Thinking {
+        thinking: String,
+        signature: String,
     },
     ToolUse {
         id: String,
@@ -82,6 +115,18 @@ pub fn build_request(req: &ChatRequest, model: &str, stream: bool) -> AntRequest
                 .collect(),
         )
     };
+    // Extended thinking включаем по флагу `thinking` сэмплинга. Бюджет/`reasoning_budget`
+    // не используем — модели 4.x отвергают `budget_tokens`; глубину задаёт `effort`.
+    let thinking = (req.sampling.thinking == Some(true)).then_some(AntThinking {
+        kind: "adaptive",
+        display: "summarized",
+    });
+    let output_config = thinking.as_ref().and_then(|_| {
+        req.sampling
+            .reasoning_effort
+            .and_then(ant_effort)
+            .map(|effort| AntOutputConfig { effort })
+    });
     AntRequest {
         model: model.to_string(),
         max_tokens: req
@@ -93,6 +138,19 @@ pub fn build_request(req: &ChatRequest, model: &str, stream: bool) -> AntRequest
         messages: build_messages(req),
         stream,
         tools,
+        thinking,
+        output_config,
+    }
+}
+
+/// Уровень усилия → значение `output_config.effort` Anthropic (`low`/`medium`/`high`).
+/// `None` (в т.ч. `ReasoningEffort::None`) — поле не отправляется.
+fn ant_effort(e: ReasoningEffort) -> Option<&'static str> {
+    match e {
+        ReasoningEffort::None => None,
+        ReasoningEffort::Low => Some("low"),
+        ReasoningEffort::Medium => Some("medium"),
+        ReasoningEffort::High => Some("high"),
     }
 }
 
@@ -103,7 +161,17 @@ fn build_messages(req: &ChatRequest) -> Vec<AntMessage> {
         let (role, blocks): (&'static str, Vec<AntBlock>) = match m.role {
             ApiRole::User => ("user", text_blocks(&m.content)),
             ApiRole::Assistant => {
-                let mut blocks = text_blocks(&m.content);
+                let mut blocks = Vec::new();
+                // Thinking-блок (с подписью) обязан идти ПЕРВЫМ в assistant-ходе с
+                // tool_use — иначе Anthropic вернёт 400. Ставится только в текущем
+                // ходе agentic-loop (см. ApiMessage::with_thinking).
+                if let Some(tb) = &m.thinking {
+                    blocks.push(AntBlock::Thinking {
+                        thinking: tb.text.clone(),
+                        signature: tb.signature.clone(),
+                    });
+                }
+                blocks.extend(text_blocks(&m.content));
                 for tc in &m.tool_calls {
                     // Аргументы у нас — JSON-строка; Anthropic СТРОГО требует, чтобы
                     // `input` был ОБЪЕКТОМ. Безаргументный вызов мог сохраниться в
@@ -215,6 +283,11 @@ pub enum AntDelta {
     ThinkingDelta {
         thinking: String,
     },
+    /// Подпись блока «мыслей» (приходит в конце thinking-блока). Нужна для
+    /// переотправки thinking при tool-use в том же ходе.
+    SignatureDelta {
+        signature: String,
+    },
     #[serde(other)]
     Other,
 }
@@ -236,8 +309,8 @@ pub struct AntUsage {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::entities::sampling::SamplingConfig;
-    use crate::shared::api::contract::{ApiMessage, ApiToolCall, ToolSchema};
+    use crate::entities::sampling::{ReasoningEffort, SamplingConfig};
+    use crate::shared::api::contract::{ApiMessage, ApiToolCall, ThinkingBlock, ToolSchema};
 
     fn req(messages: Vec<ApiMessage>) -> ChatRequest {
         ChatRequest {
@@ -389,5 +462,105 @@ mod tests {
             serde_json::from_str::<AntStreamEvent>(r#"{"type":"ping"}"#).unwrap(),
             AntStreamEvent::Other
         ));
+    }
+
+    #[test]
+    fn thinking_off_by_default() {
+        // Дефолтный сэмплинг (thinking=None) — поле thinking не отправляется.
+        let json = serde_json::to_value(build_request(
+            &req(vec![ApiMessage::user("привет")]),
+            "claude-x",
+            true,
+        ))
+        .unwrap();
+        assert!(json.get("thinking").is_none());
+        assert!(json.get("output_config").is_none());
+    }
+
+    #[test]
+    fn thinking_enabled_sends_adaptive_with_effort() {
+        // thinking=true → adaptive+summarized; reasoning_effort → output_config.effort.
+        // budget_tokens (reasoning_budget) Claude 4.x отвергает — НЕ шлём.
+        let mut r = req(vec![ApiMessage::user("посчитай")]);
+        r.sampling.thinking = Some(true);
+        r.sampling.reasoning_effort = Some(ReasoningEffort::High);
+        r.sampling.reasoning_budget = Some(0);
+        let json = serde_json::to_value(build_request(&r, "claude-x", true)).unwrap();
+        assert_eq!(json["thinking"]["type"], "adaptive");
+        assert_eq!(json["thinking"]["display"], "summarized");
+        assert_eq!(json["output_config"]["effort"], "high");
+        // reasoning_budget наружу не уходит (нет ключа budget_tokens).
+        assert!(json.get("budget_tokens").is_none());
+        assert!(json["thinking"].get("budget_tokens").is_none());
+    }
+
+    #[test]
+    fn thinking_effort_none_omits_output_config() {
+        // thinking включён, но effort не задан → output_config не шлётся.
+        let mut r = req(vec![ApiMessage::user("hi")]);
+        r.sampling.thinking = Some(true);
+        let json = serde_json::to_value(build_request(&r, "claude-x", true)).unwrap();
+        assert_eq!(json["thinking"]["type"], "adaptive");
+        assert!(json.get("output_config").is_none());
+    }
+
+    #[test]
+    fn thinking_block_prepended_to_assistant_tool_use() {
+        // assistant-ход с tool_use + thinking-блоком: первым идёт thinking (с подписью),
+        // затем tool_use. Anthropic требует именно такой порядок (иначе 400).
+        let r = req(vec![
+            ApiMessage::user("посчитай"),
+            ApiMessage::assistant_tool_calls(
+                "",
+                vec![ApiToolCall {
+                    id: "t1".into(),
+                    name: "calc".into(),
+                    arguments: "{\"x\":1}".into(),
+                }],
+            )
+            .with_thinking(Some(ThinkingBlock {
+                text: "надо сложить".into(),
+                signature: "sig-abc".into(),
+            })),
+            ApiMessage::tool("t1", "2"),
+        ]);
+        let json = serde_json::to_value(build_request(&r, "claude-x", true)).unwrap();
+        let blocks = &json["messages"][1]["content"];
+        assert_eq!(blocks[0]["type"], "thinking");
+        assert_eq!(blocks[0]["thinking"], "надо сложить");
+        assert_eq!(blocks[0]["signature"], "sig-abc");
+        assert_eq!(blocks[1]["type"], "tool_use");
+        assert_eq!(blocks[1]["name"], "calc");
+    }
+
+    #[test]
+    fn assistant_without_thinking_has_no_thinking_block() {
+        // Без thinking-блока (обычный/исторический ход) — thinking-блока в выводе нет.
+        let r = req(vec![
+            ApiMessage::user("посчитай"),
+            ApiMessage::assistant_tool_calls(
+                "",
+                vec![ApiToolCall {
+                    id: "t1".into(),
+                    name: "calc".into(),
+                    arguments: "{}".into(),
+                }],
+            ),
+            ApiMessage::tool("t1", "2"),
+        ]);
+        let json = serde_json::to_value(build_request(&r, "claude-x", true)).unwrap();
+        assert_eq!(json["messages"][1]["content"][0]["type"], "tool_use");
+    }
+
+    #[test]
+    fn parses_signature_delta() {
+        let sd = r#"{"type":"content_block_delta","index":0,"delta":{"type":"signature_delta","signature":"sig-xyz"}}"#;
+        match serde_json::from_str::<AntStreamEvent>(sd).unwrap() {
+            AntStreamEvent::ContentBlockDelta {
+                delta: AntDelta::SignatureDelta { signature },
+                ..
+            } => assert_eq!(signature, "sig-xyz"),
+            other => panic!("ожидался SignatureDelta, получили {other:?}"),
+        }
     }
 }

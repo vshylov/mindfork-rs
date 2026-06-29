@@ -301,7 +301,7 @@ mod ignored_smoke {
             match chunk {
                 ChatChunk::Text(t) => text.push_str(&t),
                 ChatChunk::Thoughts(t) => thoughts.push_str(&t),
-                ChatChunk::ToolCall(_) | ChatChunk::Usage(_) => {}
+                ChatChunk::ThoughtsSignature(_) | ChatChunk::ToolCall(_) | ChatChunk::Usage(_) => {}
                 ChatChunk::Finished(r) => {
                     finish = Some(r);
                     break;
