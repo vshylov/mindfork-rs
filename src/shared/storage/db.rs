@@ -127,6 +127,81 @@ impl Db {
         Ok(n > 0)
     }
 
+    /// Переписывает содержимое заметки на месте (ревизия), обновляя `updated_at`.
+    /// Изоляция по `profile_id` в `WHERE`. `false`, если заметка не найдена/чужая.
+    pub fn note_update(&self, id: Uuid, profile_id: Uuid, content: &str) -> Result<bool> {
+        let conn = self.conn.lock().unwrap();
+        let n = conn.execute(
+            "UPDATE notes SET content = ?1, updated_at = ?2 WHERE id = ?3 AND profile_id = ?4",
+            params![
+                content,
+                Utc::now().to_rfc3339(),
+                id.to_string(),
+                profile_id.to_string(),
+            ],
+        )?;
+        Ok(n > 0)
+    }
+
+    /// Сохраняет/заменяет эмбеддинг заметки (для семантического поиска). Вектор —
+    /// JSON-массив f32 в боковой таблице (намеренно НЕ vec0: заметок немного,
+    /// косинус считаем в Rust — см. [`Self::note_search_semantic`]).
+    pub fn note_vector_upsert(
+        &self,
+        note_id: Uuid,
+        profile_id: Uuid,
+        embedding: &[f32],
+    ) -> Result<()> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "INSERT INTO note_vectors(note_id, profile_id, embedding) VALUES (?1, ?2, ?3)
+             ON CONFLICT(note_id) DO UPDATE SET
+                 profile_id = excluded.profile_id,
+                 embedding = excluded.embedding",
+            params![
+                note_id.to_string(),
+                profile_id.to_string(),
+                serde_json::to_string(embedding)?,
+            ],
+        )?;
+        Ok(())
+    }
+
+    /// Семантический поиск заметок профиля по косинусной близости к `query`.
+    /// Brute-force в Rust (заметок десятки–сотни); заметки без эмбеддинга
+    /// пропускаются. Возвращает до `k` пар (заметка, близость) по убыванию.
+    /// Изоляция — `WHERE n.profile_id = ?`.
+    pub fn note_search_semantic(
+        &self,
+        profile_id: Uuid,
+        query: &[f32],
+        k: usize,
+    ) -> Result<Vec<(Note, f32)>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare(
+            "SELECT n.id, n.profile_id, n.content, n.tags, n.created_at, n.updated_at, v.embedding
+             FROM notes n JOIN note_vectors v ON v.note_id = n.id
+             WHERE n.profile_id = ?1",
+        )?;
+        let mut scored: Vec<(Note, f32)> = stmt
+            .query_map(params![profile_id.to_string()], |r| {
+                let note = row_to_note(r)?;
+                let emb: Vec<f32> =
+                    serde_json::from_str(&r.get::<_, String>(6)?).unwrap_or_default();
+                Ok((note, emb))
+            })?
+            .collect::<rusqlite::Result<Vec<_>>>()?
+            .into_iter()
+            .map(|(note, emb)| {
+                let score = cosine(query, &emb);
+                (note, score)
+            })
+            .collect();
+        scored.sort_by(|a, b| b.1.total_cmp(&a.1));
+        scored.truncate(k);
+        Ok(scored)
+    }
+
     // ---------- модель себя (SelfModel) ----------
 
     /// Модель себя профиля (`None`, если ещё не создавалась). Изоляция по PK.
@@ -488,6 +563,13 @@ fn migrate(conn: &Connection) -> Result<()> {
          );
          CREATE INDEX IF NOT EXISTS idx_notes_profile ON notes(profile_id);
 
+         CREATE TABLE IF NOT EXISTS note_vectors (
+             note_id     TEXT PRIMARY KEY,
+             profile_id  TEXT NOT NULL,
+             embedding   TEXT NOT NULL
+         );
+         CREATE INDEX IF NOT EXISTS idx_note_vectors_profile ON note_vectors(profile_id);
+
          CREATE TABLE IF NOT EXISTS rag_documents (
              rowid       INTEGER PRIMARY KEY,
              id          TEXT NOT NULL UNIQUE,
@@ -564,6 +646,20 @@ fn row_to_note(r: &rusqlite::Row) -> rusqlite::Result<Note> {
     })
 }
 
+/// Косинусная близость двух векторов (0, если длины разнятся или нулевая норма).
+fn cosine(a: &[f32], b: &[f32]) -> f32 {
+    if a.len() != b.len() || a.is_empty() {
+        return 0.0;
+    }
+    let dot: f32 = a.iter().zip(b).map(|(x, y)| x * y).sum();
+    let na: f32 = a.iter().map(|x| x * x).sum();
+    let nb: f32 = b.iter().map(|x| x * x).sum();
+    if na == 0.0 || nb == 0.0 {
+        return 0.0;
+    }
+    dot / (na.sqrt() * nb.sqrt())
+}
+
 fn parse_uuid(s: String) -> Uuid {
     Uuid::parse_str(&s).unwrap_or(Uuid::nil())
 }
@@ -597,6 +693,65 @@ mod tests {
         assert_eq!(a_notes[0].content, "secret of A");
         // Профиль B не виден из A.
         assert!(a_notes.iter().all(|n| n.profile_id == a));
+    }
+
+    #[test]
+    fn note_update_only_own_profile() {
+        let db = db();
+        let a = Uuid::new_v4();
+        let b = Uuid::new_v4();
+        let note = Note::new(a, "v1", vec![]);
+        let id = note.id;
+        db.note_insert(&note).unwrap();
+        // Чужой профиль переписать не может.
+        assert!(!db.note_update(id, b, "hacked").unwrap());
+        // Свой — может.
+        assert!(db.note_update(id, a, "v2").unwrap());
+        assert_eq!(db.note_list(a, None, &[], None).unwrap()[0].content, "v2");
+        // Несуществующая заметка.
+        assert!(!db.note_update(Uuid::new_v4(), a, "x").unwrap());
+    }
+
+    #[test]
+    fn note_semantic_search_ranks_and_isolates() {
+        let db = db();
+        let a = Uuid::new_v4();
+        let b = Uuid::new_v4();
+        let n1 = Note::new(a, "rust", vec![]);
+        let n2 = Note::new(a, "banana", vec![]);
+        let (id1, id2) = (n1.id, n2.id);
+        db.note_insert(&n1).unwrap();
+        db.note_insert(&n2).unwrap();
+        db.note_vector_upsert(id1, a, &[1.0, 0.0, 0.0]).unwrap();
+        db.note_vector_upsert(id2, a, &[0.0, 1.0, 0.0]).unwrap();
+        // Заметка другого профиля с близким вектором — не должна попасть в выдачу a.
+        let nb = Note::new(b, "other", vec![]);
+        db.note_insert(&nb).unwrap();
+        db.note_vector_upsert(nb.id, b, &[1.0, 0.0, 0.0]).unwrap();
+
+        let hits = db.note_search_semantic(a, &[0.9, 0.1, 0.0], 5).unwrap();
+        assert_eq!(hits.len(), 2); // только профиль a
+        assert_eq!(hits[0].0.id, id1); // ближе к [1,0,0]
+        assert!(hits[0].1 > hits[1].1);
+
+        // k ограничивает выдачу.
+        let top1 = db.note_search_semantic(a, &[0.9, 0.1, 0.0], 1).unwrap();
+        assert_eq!(top1.len(), 1);
+        assert_eq!(top1[0].0.id, id1);
+    }
+
+    #[test]
+    fn note_vector_upsert_replaces() {
+        let db = db();
+        let a = Uuid::new_v4();
+        let n = Note::new(a, "x", vec![]);
+        let id = n.id;
+        db.note_insert(&n).unwrap();
+        db.note_vector_upsert(id, a, &[1.0, 0.0]).unwrap();
+        db.note_vector_upsert(id, a, &[0.0, 1.0]).unwrap(); // замена
+        let hits = db.note_search_semantic(a, &[0.0, 1.0], 5).unwrap();
+        assert_eq!(hits.len(), 1);
+        assert!((hits[0].1 - 1.0).abs() < 1e-6);
     }
 
     #[test]

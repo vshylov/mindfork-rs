@@ -541,6 +541,7 @@ flowchart LR
     end
     subgraph DB["SQLite + sqlite-vec (db.rs)"]
         NOTES["notes (profile_id)"]
+        NV["note_vectors (note_id PK)<br/>эмбеддинг заметки, косинус в Rust"]
         RAGD["rag_documents (profile_id)"]
         VEC["rag_vectors vec0 (rowid)"]
         SELF["self_models (profile_id PK)"]
@@ -592,7 +593,7 @@ agentic-loop **гейтит и сам вызов** (выключенный ин�
 
 | Группа         | Инструменты                                                   |
 |----------------|---------------------------------------------------------------|
-| Память/знания  | `note_save`, `note_recall`, `rag_add`, `rag_search` — направление развития (связность заметок: семантический поиск, ревизия, ворота совместимости) см. [docs/notes-connectivity.md](notes-connectivity.md) |
+| Память/знания  | `note_save` (эмбеддит заметку + показывает похожие — ворота совместимости), `note_recall` (семантический поиск по эмбеддингу, откат на подстроку), `note_revise` (переписать на месте), `rag_add`, `rag_search`. Связность заметок (накопление → интеграция): см. [docs/notes-connectivity.md](notes-connectivity.md) |
 | Интроспекция   | `get_sampling`, `set_sampling`, `get_system_message`, `set_system_message`, `get_last_user_message_time` |
 | Внешние        | `web_search` (мульти-провайдер + анти-бот), `fetch_url` (загрузка+саммаризация), `python_exec` (subprocess) — гейтятся `web_enabled`/`python_enabled` |
 | Файлы          | `fs_read`, `fs_write`, `fs_list` — гейтятся `fs_enabled`, опциональная песочница `fs_root` |
