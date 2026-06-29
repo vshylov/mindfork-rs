@@ -185,6 +185,7 @@ src/
 │  ├─ chat_export.rs        format_conversation (копирование переписки)
 │  ├─ rag_command.rs        парсер /rag add|remove|list|rebuild
 │  ├─ rag_ingest.rs         scan, read_text, RagProgress (типы прогресса индексации)
+│  ├─ backup.rs             резервное копирование/восстановление данных (zip, транзакц.)
 │  └─ migration.rs          импортёр LameLLaMA (.NET): профили + чаты
 │
 ├─ entities/                доменные типы (без I/O); serde-сериализуемы
@@ -213,7 +214,7 @@ src/
    ├─ theme.rs             Palette (роли user/assistant/tool/…), auto/dark/light
    ├─ keys.rs              раскладко-независимые Ctrl-шорткаты (ЙЦУКЕН→латиница)
    ├─ server.rs            ServerStatus (статус сервера для UI)
-   ├─ paths.rs             портативные пути рядом с бинарником
+   ├─ paths.rs             расположение данных: портативно / ОС-папка / путь (location.json)
    ├─ instance.rs          single-instance
    └─ logging.rs           tracing в файл (stdout занят TUI)
 ```
@@ -767,7 +768,10 @@ flowchart TB
 - **`main.rs`** — тонкая: грузит `AppConfig`, сеет его env-переменными
   (`apply_env_overrides` — dev-workflow), проверяет single-instance, инициализирует
   логирование (в файл) и `tokio`, поднимает `ratatui`, запускает оркестратор и
-  петлю. CLI-флаг `--import-lamellama <dir>` запускает импортёр и выходит.
+  петлю. CLI на `clap` (подкоманды выполняются без TUI и выходят): `import-lamellama
+  <dir>` (импортёр), `backup [-o FILE] [-c 0..9]` и `restore <archive>` (резервное
+  копирование/восстановление, `features/backup.rs`; берут single-instance, чтобы не
+  конкурировать с работающим приложением за `data.db`).
 - **Конфигурация** (`shared/config.rs`): `AppConfig` с секциями `EngineSettings`,
   `EmbedSettings`, `ToolSettings`, `InterfaceSettings`, `ImpersonationEngineSettings`,
   `impersonation_sampling`, глобальный семплинг. Все поля под `#[serde(default)]` —
@@ -788,13 +792,22 @@ flowchart TB
     поля спекулятивного декодирования (`spec_type: SpecType` + `draft_model`/
     `draft_gpu_layers`/`draft_n_max`/`draft_n_min`); черновые поля в UI видны только
     для типов `draft-*` — для MTP-моделей (`mtp-gemma-…`) это `draft-mtp`.
-- **Портативность** (`shared/paths.rs`): все данные — рядом с бинарником (в dev —
-  `target/debug/`): `settings.json`, `profiles.json`, `chats/`, `data.db`,
-  `personal_dictionary.txt`, `dictionaries/`, `logs/`.
+- **Расположение данных** (`shared/paths.rs`): по умолчанию **портативно** — в
+  подкаталоге `data/` рядом с бинарником (в dev — `target/debug/data/`; подкаталог
+  отделяет данные от служебных файлов/кэшей сборки): `settings.json`,
+  `profiles.json`, `chats/`, `data.db`, `personal_dictionary.txt`, `dictionaries/`,
+  `backups/`, `logs/`. Файл-маркер `location.json` рядом с бинарником (всегда вне
+  `data/`; `DataLocation`: `portable`/`system`/`path`) переключает корень в
+  стандартную ОС-папку (крейт `directories`) или произвольный каталог; нет маркера →
+  портативный режим. **Резервное копирование** (`features/backup.rs`): zip с
+  настраиваемым сжатием (chats/dictionaries/data.db/profiles/settings/personal +
+  `*.bak` + `fs_root`, если внутри корня); восстановление транзакционно (валидация →
+  pre-restore копия в `backups/` → очистка → распаковка → откат при сбое).
 - **Зависимости** (см. [Cargo.toml](../Cargo.toml)): `ratatui` 0.30 + `crossterm`,
   `tokio`, `reqwest` (rustls), `rusqlite` (bundled) + `sqlite-vec`,
   `pulldown-cmark` + `syntect` + `ansi-to-tui`, `spellbook`, `arboard`, `scraper`,
-  `serde`/`serde_json`, `uuid`, `chrono`, `tracing`. Приложение **не зависит от
+  `serde`/`serde_json`, `uuid`, `chrono`, `tracing`, `clap` (CLI), `zip` +
+  `directories` (резервное копирование и режим хранения). Приложение **не зависит от
   ML-стека** — это ключевое упрощение сборки.
 - **Релиз**: `[profile.release]` с LTO/strip/`opt-level=3`, `panic=unwind`.
 

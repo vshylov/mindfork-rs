@@ -9,27 +9,67 @@ mod screens;
 mod shared;
 mod widgets;
 
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 
-use anyhow::Context;
+use anyhow::{Context, bail};
+use clap::{Parser, Subcommand};
 use tokio::sync::mpsc::unbounded_channel;
 
 use crate::app::events::{AppCommand, AppEvent};
 use crate::app::orchestrator::{self, OrchestratorDeps};
 use crate::app::supervisor::LlamaSupervisor;
+use crate::features::backup::{self, RestoreOutcome};
 use crate::shared::config::{AppConfig, ServerMode};
-use crate::shared::storage::Storage;
+use crate::shared::storage::{JsonStore, Storage};
 use crate::shared::{instance, logging, paths::Paths};
 
+/// Аргументы командной строки. Без подкоманды запускается обычный TUI.
+#[derive(Parser)]
+#[command(name = "mindfork-rs", about = "Консольный (TUI) ИИ-чат", version)]
+struct Cli {
+    #[command(subcommand)]
+    command: Option<Command>,
+}
+
+#[derive(Subcommand)]
+enum Command {
+    /// Создать резервную копию пользовательских данных (zip-архив).
+    Backup {
+        /// Путь к создаваемому архиву (по умолчанию `backups/mindfork-backup-<дата>.zip`).
+        #[arg(short, long)]
+        output: Option<PathBuf>,
+        /// Степень сжатия `0..=9` (0 — без сжатия).
+        #[arg(short, long, default_value_t = 9, value_parser = clap::value_parser!(i64).range(0..=9))]
+        compression: i64,
+    },
+    /// Восстановить пользовательские данные из резервной копии.
+    Restore {
+        /// Путь к архиву резервной копии.
+        archive: PathBuf,
+    },
+    /// Одноразовый импорт данных из LameLLaMA (.NET).
+    ImportLamellama {
+        /// Каталог с данными LameLLaMA.
+        dir: PathBuf,
+    },
+}
+
 fn main() -> anyhow::Result<()> {
+    let cli = Cli::parse();
     let paths = Paths::discover().context("resolving data paths")?;
     let _logging = logging::init(&paths).context("initializing logging")?;
 
-    // Одноразовый импорт из LameLLaMA (.NET): `mindfork --import-lamellama <dir>`.
-    // Выполняется без TUI/инстанс-гарда и завершает процесс. См. spec §12.2.
-    if let Some(dir) = parse_import_arg() {
-        return run_import(&paths, &dir);
+    // CLI-подкоманды выполняются без TUI и завершают процесс. См. spec §12.2, §12.3.
+    match cli.command {
+        Some(Command::ImportLamellama { dir }) => return run_import(&paths, &dir),
+        Some(Command::Backup {
+            output,
+            compression,
+        }) => return run_backup(&paths, output, compression),
+        Some(Command::Restore { archive }) => return run_restore(&paths, &archive),
+        None => {}
     }
 
     // Единственный экземпляр на машину/сеанс: второй запуск завершается с понятным
@@ -94,15 +134,97 @@ fn main() -> anyhow::Result<()> {
     result
 }
 
-/// Возвращает каталог из аргумента `--import-lamellama <dir>` (если задан).
-fn parse_import_arg() -> Option<std::path::PathBuf> {
-    let mut args = std::env::args().skip(1);
-    while let Some(arg) = args.next() {
-        if arg == "--import-lamellama" {
-            return args.next().map(std::path::PathBuf::from);
+/// Захватывает блокировку единственного экземпляра для CLI-операции над данными
+/// (бэкап/восстановление). Если приложение запущено — отказ (защита целостности
+/// `data.db` от гонки с работающим оркестратором).
+fn acquire_cli_guard(action: &str) -> anyhow::Result<instance::InstanceGuard> {
+    match instance::acquire() {
+        Ok(guard) => Ok(guard),
+        Err(instance::InstanceError::AlreadyRunning) => {
+            bail!("mindfork-rs запущен — закройте приложение, прежде чем {action}")
+        }
+        Err(err @ instance::InstanceError::Init(_)) => {
+            Err(anyhow::Error::new(err).context("single-instance check"))
         }
     }
-    None
+}
+
+/// Песочница файловых инструментов из конфига (для включения/очистки при бэкапе).
+fn config_fs_root(paths: &Paths) -> Option<PathBuf> {
+    JsonStore::new(paths.clone())
+        .load_config()
+        .unwrap_or_default()
+        .tools
+        .fs_root
+        .map(PathBuf::from)
+}
+
+/// CLI: создание резервной копии. Вывод — в stdout (TUI не запущен).
+fn run_backup(paths: &Paths, output: Option<PathBuf>, compression: i64) -> anyhow::Result<()> {
+    let _instance = acquire_cli_guard("создавать резервную копию")?;
+    let fs_root = config_fs_root(paths);
+    let out = backup::create_backup(paths, output, compression, fs_root.as_deref())
+        .context("создание резервной копии")?;
+    println!("Резервная копия создана: {}", out.display());
+    Ok(())
+}
+
+/// CLI: восстановление из резервной копии (транзакционно, с pre-restore копией и
+/// откатом при сбое). Вывод — в stdout/stderr (TUI не запущен).
+fn run_restore(paths: &Paths, archive: &Path) -> anyhow::Result<()> {
+    let _instance = acquire_cli_guard("восстанавливать данные")?;
+    let fs_root = config_fs_root(paths);
+
+    // Err только до разрушительных действий (нет файла / повреждён / небезопасен).
+    let outcome = backup::restore_backup(paths, archive, fs_root.as_deref())?;
+
+    match outcome {
+        RestoreOutcome::Restored { pre_restore } => {
+            if let Some(pre) = pre_restore {
+                println!(
+                    "Прежние данные сохранены в резервную копию: {}",
+                    pre.display()
+                );
+                println!("Пользовательские данные очищены.");
+            }
+            println!("Восстановление из {} завершено.", archive.display());
+            Ok(())
+        }
+        RestoreOutcome::RolledBack {
+            pre_restore,
+            restore_error,
+        } => {
+            eprintln!(
+                "Не удалось восстановить {}: {restore_error:#}",
+                archive.display()
+            );
+            eprintln!(
+                "Выполнен откат: прежние данные восстановлены из {}.",
+                pre_restore.display()
+            );
+            bail!("восстановление не выполнено (прежние данные возвращены)")
+        }
+        RestoreOutcome::Failed {
+            pre_restore,
+            restore_error,
+            rollback_error,
+        } => {
+            eprintln!(
+                "Не удалось восстановить {}: {restore_error:#}",
+                archive.display()
+            );
+            if let Some(rb) = rollback_error {
+                eprintln!("Откат к прежним данным тоже не удался: {rb:#}");
+            }
+            match pre_restore {
+                Some(pre) => bail!(
+                    "данные в несогласованном состоянии; восстановите вручную из {}",
+                    pre.display()
+                ),
+                None => bail!("восстановление не выполнено"),
+            }
+        }
+    }
 }
 
 /// Одноразовый импорт данных LameLLaMA (.NET) в хранилище mindfork (spec §12.2).

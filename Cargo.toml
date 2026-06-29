@@ -13,7 +13,12 @@ async-stream = "0.3.6"
 async-trait = "0.1.89"
 bytemuck = "1.25.0"
 chrono = { version = "0.4.45", features = ["serde"] }
+# Разбор CLI-подкоманд (backup/restore/import-lamellama).
+clap = { version = "4.5.51", features = ["derive"] }
 crossterm = "0.29.0"
+# Стандартные ОС-папки для непортабельного режима хранения данных
+# (Windows %APPDATA%\mindfork-rs, Linux ~/.local/share/mindfork-rs). См. shared/paths.rs.
+directories = "6.0.0"
 eventsource-stream = "0.2.3"
 futures-util = "0.3.32"
 pulldown-cmark = { version = "0.13.4", default-features = false }
@@ -37,6 +42,10 @@ tui-scrollview = "0.6.5"
 unicode-segmentation = "1.13.3"
 unicode-width = "0.2.2"
 uuid = { version = "1.23.3", features = ["v4", "v5", "serde"] }
+# Резервное копирование/восстановление пользовательских данных (zip-архив с
+# настраиваемой степенью сжатия deflate). default-features=false отключает bzip2/zstd
+# (нативные C-зависимости) — нужен только deflate + store. См. features/backup.rs.
+zip = { version = "2.2.2", default-features = false, features = ["deflate"] }
 
 [dev-dependencies]
 tempfile = "3.27.0"
