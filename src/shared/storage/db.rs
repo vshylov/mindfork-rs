@@ -245,16 +245,17 @@ impl Db {
     }
 
     /// Создаёт направленную связь between двумя заметками (идемпотентно по PK).
-    /// Изоляция по `profile_id`.
+    /// Изоляция по `profile_id`. Возвращает `true`, если связь действительно создана
+    /// (`false` — такая связь уже была, `INSERT OR IGNORE` ничего не вставил).
     pub fn note_link_insert(
         &self,
         profile_id: Uuid,
         from_id: Uuid,
         to_id: Uuid,
         relation: &str,
-    ) -> Result<()> {
+    ) -> Result<bool> {
         let conn = self.conn.lock().unwrap();
-        conn.execute(
+        let n = conn.execute(
             "INSERT OR IGNORE INTO note_links(profile_id, from_id, to_id, relation, created_at)
              VALUES (?1, ?2, ?3, ?4, ?5)",
             params![
@@ -265,7 +266,20 @@ impl Db {
                 Utc::now().to_rfc3339(),
             ],
         )?;
-        Ok(())
+        Ok(n > 0)
+    }
+
+    /// Число связей, в которых участвует заметка (в любую сторону). Для предупреждения
+    /// при ревизии смыслонесущего узла (его рёбра могут стать неверными).
+    pub fn note_link_count(&self, profile_id: Uuid, id: Uuid) -> Result<usize> {
+        let conn = self.conn.lock().unwrap();
+        let n: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM note_links
+             WHERE profile_id = ?1 AND (from_id = ?2 OR to_id = ?2)",
+            params![profile_id.to_string(), id.to_string()],
+            |r| r.get(0),
+        )?;
+        Ok(n as usize)
     }
 
     /// Соседи заметки по графу (в обе стороны), исключая замещённые. Опциональный
@@ -949,9 +963,10 @@ mod tests {
         db.note_insert(&n1).unwrap();
         db.note_insert(&n2).unwrap();
         db.note_insert(&n3).unwrap();
-        db.note_link_insert(a, n1.id, n2.id, "refines").unwrap();
-        db.note_link_insert(a, n3.id, n1.id, "contradicts").unwrap();
-        db.note_link_insert(a, n1.id, n2.id, "refines").unwrap(); // идемпотентно
+        assert!(db.note_link_insert(a, n1.id, n2.id, "refines").unwrap());
+        assert!(db.note_link_insert(a, n3.id, n1.id, "contradicts").unwrap());
+        // Повтор той же связи не создаётся (false) — дубля в таблице нет.
+        assert!(!db.note_link_insert(a, n1.id, n2.id, "refines").unwrap());
 
         let nb = db.note_neighbors(a, n1.id, None).unwrap();
         assert_eq!(nb.len(), 2); // исходящая на n2 + входящая от n3 (дубль не учтён)

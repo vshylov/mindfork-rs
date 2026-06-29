@@ -364,9 +364,22 @@ impl Tool for NoteRevise {
                 .db()
                 .note_vector_upsert(uuid, ctx.profile_id, &emb);
         }
-        Ok(ToolOutcome::text(format!(
-            "Заметка переписана (id={uuid})."
-        )))
+        let mut msg = format!("Заметка переписана (id={uuid}).");
+        // Предупреждение целостности графа: правка на месте не трогает связи, но если
+        // изменился СМЫСЛ, входящие рёбра (напр. contradicts) могут стать неверными —
+        // для смысловой переработки честнее note_supersede (сохранит замещённую
+        // версию, к которой относились связи).
+        if let Ok(links) = ctx.storage.db().note_link_count(ctx.profile_id, uuid)
+            && links > 0
+        {
+            msg.push_str(&format!(
+                "\n⚠ У заметки есть связи ({links}). Они не изменились вместе с текстом: \
+                 если смысл стал другим, входящие связи (например contradicts) могут \
+                 теперь лгать. Для смысловой переработки используй note_supersede — \
+                 он сохранит прежнюю версию как замещённую, к которой относились связи."
+            ));
+        }
+        Ok(ToolOutcome::text(msg))
     }
 }
 
@@ -415,9 +428,14 @@ impl Tool for NoteLink {
                 "Одна из заметок не найдена (или замещена).".to_string(),
             ));
         }
-        db.note_link_insert(ctx.profile_id, from, to, relation)?;
+        let created = db.note_link_insert(ctx.profile_id, from, to, relation)?;
+        let verb = if created {
+            "Связь создана"
+        } else {
+            "Связь уже существовала"
+        };
         Ok(ToolOutcome::text(format!(
-            "Связь создана: {from} —{relation}→ {to}."
+            "{verb}: {from} —{relation}→ {to}."
         )))
     }
 }
@@ -859,6 +877,16 @@ mod tests {
             .unwrap();
         assert!(out.result.contains("Связь создана"));
 
+        // Повтор той же связи — честный ответ «уже существовала» (без дубля в графе).
+        let dup = NoteLink
+            .invoke(
+                &ctx,
+                serde_json::json!({"from_id": a.to_string(), "to_id": b.to_string(), "relation": "refines"}),
+            )
+            .await
+            .unwrap();
+        assert!(dup.result.contains("уже существовала"));
+
         let nb = NoteNeighbors
             .invoke(&ctx, serde_json::json!({"id": a.to_string()}))
             .await
@@ -885,6 +913,55 @@ mod tests {
                 .await
                 .is_err()
         );
+    }
+
+    #[tokio::test]
+    async fn revise_warns_when_note_has_links() {
+        let profile = Uuid::new_v4();
+        let (_d, storage, ctx) = ctx_with_storage(profile);
+        NoteSave
+            .invoke(&ctx, serde_json::json!({"content": "узел"}))
+            .await
+            .unwrap();
+        NoteSave
+            .invoke(&ctx, serde_json::json!({"content": "другой"}))
+            .await
+            .unwrap();
+        NoteSave
+            .invoke(&ctx, serde_json::json!({"content": "одиночка"}))
+            .await
+            .unwrap();
+        let a = id_by_content(&storage, profile, "узел");
+        let b = id_by_content(&storage, profile, "другой");
+        let lone = id_by_content(&storage, profile, "одиночка");
+        NoteLink
+            .invoke(
+                &ctx,
+                serde_json::json!({"from_id": b.to_string(), "to_id": a.to_string(), "relation": "contradicts"}),
+            )
+            .await
+            .unwrap();
+
+        // Ревизия узла со связью предупреждает про note_supersede.
+        let out = NoteRevise
+            .invoke(
+                &ctx,
+                serde_json::json!({"id": a.to_string(), "content": "узел v2"}),
+            )
+            .await
+            .unwrap();
+        assert!(out.result.contains("переписана"));
+        assert!(out.result.contains("note_supersede"));
+
+        // Узел без связей — без предупреждения.
+        let out2 = NoteRevise
+            .invoke(
+                &ctx,
+                serde_json::json!({"id": lone.to_string(), "content": "одиночка v2"}),
+            )
+            .await
+            .unwrap();
+        assert!(!out2.result.contains("note_supersede"));
     }
 
     #[tokio::test]
