@@ -94,7 +94,11 @@ impl Orchestrator {
         let Some(chat) = self.chats.iter().find(|c| c.id == id) else {
             return;
         };
-        match crate::features::chat_export::format_conversation(&chat.title, &chat.messages) {
+        match crate::features::chat_export::format_conversation(
+            &chat.title,
+            &chat.messages,
+            &self.config.copy,
+        ) {
             Some(text) => {
                 let _ = self.evt_tx.send(AppEvent::CopyToClipboard(text));
             }

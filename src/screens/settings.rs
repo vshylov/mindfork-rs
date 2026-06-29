@@ -410,6 +410,12 @@ enum FieldId {
     IDicts,
     /// Подтверждение перед `Ctrl+R`/`Ctrl+E` (необратимые операции).
     IConfirmKeys,
+    /// Копировать «мысли» (CoT) при копировании переписки (`F5`).
+    ICopyThoughts,
+    /// Копировать параметры вызовов инструментов при копировании переписки.
+    ICopyToolCalls,
+    /// Копировать результаты вызовов инструментов при копировании переписки.
+    ICopyToolResults,
     // Профили (динамические)
     PSelect,
     PName,
@@ -766,6 +772,21 @@ impl SettingsScreen {
                 "Подтверждать Ctrl+R / Ctrl+E",
                 FieldKind::Toggle(i.confirm_destructive_keys),
             ),
+            row(
+                FieldId::ICopyThoughts,
+                "Копировать с «мыслями» (F5)",
+                FieldKind::Toggle(self.config.copy.copy_thoughts),
+            ),
+            row(
+                FieldId::ICopyToolCalls,
+                "Копировать с параметрами инструментов (F5)",
+                FieldKind::Toggle(self.config.copy.copy_tool_calls),
+            ),
+            row(
+                FieldId::ICopyToolResults,
+                "Копировать с ответами инструментов (F5)",
+                FieldKind::Toggle(self.config.copy.copy_tool_results),
+            ),
         ]
     }
 
@@ -1067,6 +1088,15 @@ impl SettingsScreen {
             FieldId::IConfirmKeys => {
                 self.config.interface.confirm_destructive_keys =
                     !self.config.interface.confirm_destructive_keys
+            }
+            FieldId::ICopyThoughts => {
+                self.config.copy.copy_thoughts = !self.config.copy.copy_thoughts
+            }
+            FieldId::ICopyToolCalls => {
+                self.config.copy.copy_tool_calls = !self.config.copy.copy_tool_calls
+            }
+            FieldId::ICopyToolResults => {
+                self.config.copy.copy_tool_results = !self.config.copy.copy_tool_results
             }
             FieldId::PTool(idx) => return self.toggle_profile_tool(idx),
             _ => return None,
@@ -1725,6 +1755,18 @@ fn field_description(id: FieldId) -> Option<&'static str> {
             "Спрашивать подтверждение перед перегенерацией (Ctrl+R) и удалением последнего \
              обмена (Ctrl+E) — обе операции необратимы в UI. Выключено — комбинации \
              срабатывают сразу.",
+        ),
+        FieldId::ICopyThoughts => Some(
+            "При копировании переписки (F5) включать блок «мыслей» (CoT) ассистента. \
+             По умолчанию копируется только текст сообщений.",
+        ),
+        FieldId::ICopyToolCalls => Some(
+            "При копировании переписки (F5) включать параметры вызовов инструментов \
+             (имя инструмента и аргументы).",
+        ),
+        FieldId::ICopyToolResults => Some(
+            "При копировании переписки (F5) включать результаты (ответы) вызовов \
+             инструментов.",
         ),
         // Описания параметров семплинга (одинаковые для обеих подсекций).
         FieldId::S(p) | FieldId::IS(p) => p.description(),

@@ -642,6 +642,21 @@ impl Default for InterfaceSettings {
     }
 }
 
+/// Что включать при копировании всей переписки чата в буфер обмена (`F5`, spec
+/// §11.2). По умолчанию копируется только текст сообщений (`Default` — все флаги
+/// `false`); опционально добавляются «мысли» (CoT), параметры вызовов инструментов
+/// (имя + аргументы) и их результаты.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub struct CopySettings {
+    /// Включать блок «мыслей» (CoT) ассистента.
+    pub copy_thoughts: bool,
+    /// Включать параметры вызовов инструментов (имя инструмента + аргументы).
+    pub copy_tool_calls: bool,
+    /// Включать результаты (ответы) вызовов инструментов.
+    pub copy_tool_results: bool,
+}
+
 /// Глобальная конфигурация приложения.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
@@ -667,6 +682,8 @@ pub struct AppConfig {
     pub self_model: SelfModelSettings,
     /// Настройки интерфейса (тема, спелл-чек, словари).
     pub interface: InterfaceSettings,
+    /// Что включать при копировании переписки чата в буфер обмена (`F5`).
+    pub copy: CopySettings,
 }
 
 impl Default for AppConfig {
@@ -693,6 +710,7 @@ impl Default for AppConfig {
             rag: RagSettings::default(),
             self_model: SelfModelSettings::default(),
             interface: InterfaceSettings::default(),
+            copy: CopySettings::default(),
         }
     }
 }
@@ -741,6 +759,10 @@ mod tests {
         assert_eq!(c.rag.chunk_max_chars, DEFAULT_CHUNK_MAX_CHARS);
         assert!(c.interface.spellcheck_enabled);
         assert_eq!(c.interface.theme, Theme::Auto);
+        // Копирование переписки: по умолчанию только текст (все флаги выключены).
+        assert!(!c.copy.copy_thoughts);
+        assert!(!c.copy.copy_tool_calls);
+        assert!(!c.copy.copy_tool_results);
         // Имперсонация наполняется дефолтами при отсутствии в файле.
         assert_eq!(c.impersonation_engine.mode, ImpersonationMode::Shared);
         assert_eq!(
