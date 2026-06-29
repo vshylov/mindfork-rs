@@ -19,6 +19,7 @@
 //! - [`request`] — маппинг доменных сообщений в формат движка.
 
 mod chats;
+mod consolidation;
 mod engines;
 mod generation;
 mod impersonation;
@@ -98,6 +99,8 @@ pub async fn run(deps: OrchestratorDeps) {
     let (imp_done_tx, mut imp_done_rx) = unbounded_channel::<(Uuid, FinishReason)>();
     // Внутренний канал «авто-рефлексия завершена» (фоновая задача → петля).
     let (reflect_done_tx, mut reflect_done_rx) = unbounded_channel::<()>();
+    // Внутренний канал «авто-консолидация завершена» (фоновая задача → петля).
+    let (consolidate_done_tx, mut consolidate_done_rx) = unbounded_channel::<()>();
     let registry = Arc::new(build_registry(&config));
     let mut orch = Orchestrator {
         evt_tx,
@@ -118,6 +121,9 @@ pub async fn run(deps: OrchestratorDeps) {
         reflect_cancel: None,
         reflect_counts: HashMap::new(),
         reflect_done_tx,
+        consolidate_cancel: None,
+        consolidate_counts: HashMap::new(),
+        consolidate_done_tx,
         saves: SaveQueue::default(),
     };
 
@@ -170,6 +176,11 @@ pub async fn run(deps: OrchestratorDeps) {
             done = reflect_done_rx.recv() => {
                 if done.is_some() {
                     orch.handle_reflect_done();
+                }
+            }
+            done = consolidate_done_rx.recv() => {
+                if done.is_some() {
+                    orch.handle_consolidate_done();
                 }
             }
             _ = sleep_until_opt(deadline) => orch.flush_saves(),
@@ -232,6 +243,12 @@ struct Orchestrator {
     reflect_counts: HashMap<Uuid, u32>,
     /// Канал «авто-рефлексия завершена» (фоновая задача → петля).
     reflect_done_tx: UnboundedSender<()>,
+    /// Токен отмены текущей фоновой авто-консолидации заметок («сон»); одна за раз.
+    consolidate_cancel: Option<tokio_util::sync::CancellationToken>,
+    /// Счётчики ответов ассистента с прошлой авто-консолидации (по чату).
+    consolidate_counts: HashMap<Uuid, u32>,
+    /// Канал «авто-консолидация завершена» (фоновая задача → петля).
+    consolidate_done_tx: UnboundedSender<()>,
     /// Очередь отложенного сохранения чатов (дебаунс; выделено в Фазе 3).
     saves: SaveQueue,
 }
@@ -300,6 +317,9 @@ impl Orchestrator {
                     token.cancel();
                 }
                 if let Some(token) = &self.reflect_cancel {
+                    token.cancel();
+                }
+                if let Some(token) = &self.consolidate_cancel {
                     token.cancel();
                 }
                 return true;
