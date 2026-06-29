@@ -412,6 +412,34 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn save_gate_surfaces_legacy_note_without_vector() {
+        let profile = Uuid::new_v4();
+        let (_d, storage, ctx) = ctx_with_storage(profile);
+        // «Старая» заметка без вектора (вставлена напрямую — как до фичи/при импорте).
+        storage
+            .db()
+            .note_insert(&Note::new(profile, "aaaa bbbb", vec![]))
+            .unwrap();
+        assert_eq!(
+            storage.db().notes_missing_vectors(profile).unwrap().len(),
+            1
+        );
+
+        // Сохраняем похожую — ворота должны показать старую (бэкфилл в note_save).
+        let out = NoteSave
+            .invoke(&ctx, serde_json::json!({"content": "aaab"}))
+            .await
+            .unwrap();
+        assert!(out.result.contains("Похожие заметки"));
+        assert!(out.result.contains("aaaa bbbb"));
+        // Бэкфилл проиндексировал старую заметку.
+        assert_eq!(
+            storage.db().notes_missing_vectors(profile).unwrap().len(),
+            0
+        );
+    }
+
+    #[tokio::test]
     async fn recall_backfills_legacy_notes_without_vectors() {
         let profile = Uuid::new_v4();
         let (_d, storage, ctx) = ctx_with_storage(profile);
