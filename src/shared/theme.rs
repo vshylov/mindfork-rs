@@ -12,7 +12,7 @@
 //! (адаптируются терминалом) и остаются в виджетах как есть — палитра задаёт
 //! только сами цвета.
 
-use ratatui::style::{Color, Modifier, Style};
+use ratatui::style::{Color, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, BorderType, Borders};
 
@@ -227,15 +227,6 @@ impl Palette {
             None => spans.push(Span::styled(format!(" {desc}"), Style::new().fg(color))),
         }
         spans
-    }
-
-    /// Статус-«пилюля»: точка-индикатор `●` + подпись, оба цветом `color`
-    /// (роль статуса). Используется в статус-баре.
-    pub fn pill(&self, label: &str, color: Color) -> Vec<Span<'static>> {
-        vec![
-            Span::styled("●", Style::new().fg(color).add_modifier(Modifier::BOLD)),
-            Span::styled(format!(" {label}"), Style::new().fg(color)),
-        ]
     }
 
     /// Раскладывает подсказки-хоткеи в аккуратную сетку под ширину `width`:

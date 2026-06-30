@@ -10,7 +10,7 @@ use std::sync::Arc;
 use tokio::sync::mpsc::UnboundedSender;
 use tokio_util::sync::CancellationToken;
 
-use crate::app::events::ServerStatus;
+use crate::app::events::{ServerStatus, ServerStatuses};
 use crate::app::supervisor::ServerSupervisor;
 use crate::shared::api::{Embedder, EngineBackend, ServerHandle};
 use crate::shared::config::{
@@ -35,8 +35,12 @@ pub(super) struct EngineManager {
     /// ещё загружающемуся (`Connecting`) managed-серверу вернул бы 503 («error
     /// status»), а для перегенерации — ещё и снёс бы прежний ответ впустую.
     pub(super) server_status: ServerStatus,
-    /// Статус сервера имперсонации (для managed/external; в `shared` не используется).
+    /// Статус сервера имперсонации (для managed/external; в `shared` —
+    /// `NotConfigured`, чип в строке статуса скрыт).
     imp_status: ServerStatus,
+    /// Статус сервера эмбеддингов. Probe пока нет (RAG ленив) — двухзначен:
+    /// `Ready` (эмбеддер настроен) / `NotConfigured` (`UnavailableEmbedder`).
+    embed_status: ServerStatus,
     /// Канал статуса chat-сервера для фонового probe супервайзера.
     status_tx: UnboundedSender<ServerStatus>,
     /// Канал статуса сервера имперсонации (фоновый probe).
@@ -69,6 +73,7 @@ impl EngineManager {
             imp_handle: None,
             server_status: ServerStatus::NotConfigured,
             imp_status: ServerStatus::NotConfigured,
+            embed_status: ServerStatus::NotConfigured,
             status_tx,
             imp_status_tx,
             chat_probe_cancel: None,
@@ -78,9 +83,9 @@ impl EngineManager {
     }
 
     /// (Пере)поднимает chat-сервер по настройкам: гасит прежний managed-процесс,
-    /// просит супервайзер настроить новый. Возвращает немедленный статус — вызывающий
-    /// эмитит его в UI (`AppEvent::ServerStatus`).
-    pub(super) fn apply_chat(&mut self, settings: &EngineSettings) -> ServerStatus {
+    /// просит супервайзер настроить новый, сохраняет немедленный статус. Снимок
+    /// статусов для UI вызывающий берёт через [`Self::statuses`].
+    pub(super) fn apply_chat(&mut self, settings: &EngineSettings) {
         self.chat_handle = None; // drop старого managed-процесса (kill_on_drop)
         // Инвалидируем probe прежнего сервера и заводим новый токен.
         if let Some(tok) = self.chat_probe_cancel.take() {
@@ -93,8 +98,7 @@ impl EngineManager {
             .apply_chat(settings, cancel, self.status_tx.clone());
         self.backend = setup.backend;
         self.chat_handle = setup.handle;
-        self.server_status = setup.status.clone();
-        setup.status
+        self.server_status = setup.status;
     }
 
     /// (Пере)поднимает embedding-сервер по настройкам.
@@ -103,6 +107,7 @@ impl EngineManager {
         let setup = self.supervisor.apply_embed(settings);
         self.embedder = setup.embedder;
         self.embed_handle = setup.handle;
+        self.embed_status = setup.status;
     }
 
     /// (Пере)поднимает сервер имперсонации. В режиме `shared` отдельный сервер не
@@ -141,6 +146,16 @@ impl EngineManager {
     /// Обновляет статус сервера имперсонации (из фонового probe).
     pub(super) fn set_imp_status(&mut self, status: ServerStatus) {
         self.imp_status = status;
+    }
+
+    /// Снимок статусов всех серверов для строки статуса (чат всегда, эмбеддинги/
+    /// имперсонация — чипами, скрытыми при `NotConfigured`). См. spec §11.1.
+    pub(super) fn statuses(&self) -> ServerStatuses {
+        ServerStatuses {
+            chat: self.server_status.clone(),
+            embed: self.embed_status.clone(),
+            impersonation: self.imp_status.clone(),
+        }
     }
 
     /// Возвращает движок ассистента, если chat-сервер готов (`Ready`); иначе — `Err`
