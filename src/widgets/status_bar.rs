@@ -4,11 +4,11 @@
 
 use ratatui::Frame;
 use ratatui::layout::Rect;
-use ratatui::style::Style;
+use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::Paragraph;
 
-use crate::shared::server::ServerStatus;
+use crate::shared::server::{ServerStatus, ServerStatuses};
 use crate::shared::theme::Palette;
 use crate::shared::wrap;
 
@@ -36,7 +36,7 @@ const GAP: usize = 3;
 pub fn render(
     frame: &mut Frame,
     area: Rect,
-    status: &ServerStatus,
+    statuses: &ServerStatuses,
     generating: bool,
     tokens: u64,
     context: Option<u64>,
@@ -46,7 +46,7 @@ pub fn render(
 ) {
     let lines = lines(
         area.width as usize,
-        status,
+        statuses,
         generating,
         tokens,
         context,
@@ -62,7 +62,7 @@ pub fn render(
 #[allow(clippy::too_many_arguments)]
 pub fn height(
     width: usize,
-    status: &ServerStatus,
+    statuses: &ServerStatuses,
     generating: bool,
     tokens: u64,
     context: Option<u64>,
@@ -72,7 +72,7 @@ pub fn height(
 ) -> u16 {
     lines(
         width,
-        status,
+        statuses,
         generating,
         tokens,
         context,
@@ -96,7 +96,7 @@ pub fn height(
 #[allow(clippy::too_many_arguments)]
 fn lines(
     width: usize,
-    status: &ServerStatus,
+    statuses: &ServerStatuses,
     generating: bool,
     tokens: u64,
     context: Option<u64>,
@@ -107,14 +107,21 @@ fn lines(
     let sep = || Span::styled("  │  ", Style::new().fg(palette.border));
     let muted = palette.muted_style();
 
-    // --- «состояние» (статус сервера, генерация, счётчик токенов) ---
-    let (label, color) = match status {
-        ServerStatus::NotConfigured => ("сервер не настроен".to_string(), palette.warning),
-        ServerStatus::Connecting => ("сервер: подключение…".to_string(), palette.warning),
-        ServerStatus::Ready => ("сервер: готов".to_string(), palette.success),
-        ServerStatus::Disconnected(why) => (format!("сервер: нет связи: {why}"), palette.error),
-    };
-    let mut state = palette.pill(&label, color);
+    // --- «состояние»: чипы серверов + генерация + счётчик токенов ---
+    // Чат-сервер показывается всегда (с причиной обрыва — он блокирует генерацию);
+    // эмбеддинги и имперсонация — отдельными чипами и только когда настроены
+    // (`NotConfigured`, в т.ч. имперсонация в `shared`, → чип скрыт).
+    let mut state = chat_chip(&statuses.chat, palette);
+    for chip in [
+        secondary_chip("эмб", &statuses.embed, palette),
+        secondary_chip("имп", &statuses.impersonation, palette),
+    ]
+    .into_iter()
+    .flatten()
+    {
+        state.push(Span::raw("  ")); // зазор между чипами
+        state.extend(chip);
+    }
 
     if generating {
         state.push(sep());
@@ -191,6 +198,54 @@ fn lines(
         &hotkeys, &cell_w, cols, width, None, accent_idx, palette,
     ));
     out
+}
+
+/// Глиф и цвет статуса сервера для чипа строки статуса. Глифы шириной 1 колонка
+/// (без эмодзи) — раскладка строки от них не «съезжает».
+fn status_glyph(status: &ServerStatus, palette: &Palette) -> (&'static str, Color) {
+    match status {
+        ServerStatus::Ready => ("●", palette.success),
+        ServerStatus::Connecting => ("◐", palette.warning),
+        ServerStatus::NotConfigured => ("✕", palette.warning),
+        ServerStatus::Disconnected(_) => ("✕", palette.error),
+    }
+}
+
+/// Собирает чип: жирный глиф + метка (с ведущим пробелом), оба цвета статуса.
+fn chip(glyph: &'static str, label: String, color: Color) -> Vec<Span<'static>> {
+    vec![
+        Span::styled(glyph, Style::new().fg(color).add_modifier(Modifier::BOLD)),
+        Span::styled(format!(" {label}"), Style::new().fg(color)),
+    ]
+}
+
+/// Чип чат-сервера — показывается всегда. Помимо глифа и метки несёт текст причины,
+/// когда сервер недоступен/не настроен: он блокирует генерацию, и пользователю
+/// нужно знать, почему (у вторичных серверов причина опущена ради компактности).
+fn chat_chip(status: &ServerStatus, palette: &Palette) -> Vec<Span<'static>> {
+    let (glyph, color) = status_glyph(status, palette);
+    let label = match status {
+        ServerStatus::Ready | ServerStatus::Connecting => "чат".to_string(),
+        ServerStatus::NotConfigured => "чат: не настроен".to_string(),
+        ServerStatus::Disconnected(why) => format!("чат: нет связи: {why}"),
+    };
+    chip(glyph, label, color)
+}
+
+/// Чип вторичного сервера (эмбеддинги/имперсонация): глиф + метка, цвет по статусу,
+/// без текста причины (компактно). `None`, когда сервер не настроен
+/// (`NotConfigured`) — чип скрыт, не захламляет строку (имперсонация в режиме
+/// `shared` тоже `NotConfigured`).
+fn secondary_chip(
+    label: &str,
+    status: &ServerStatus,
+    palette: &Palette,
+) -> Option<Vec<Span<'static>>> {
+    if matches!(status, ServerStatus::NotConfigured) {
+        return None;
+    }
+    let (glyph, color) = status_glyph(status, palette);
+    Some(chip(glyph, label.to_string(), color))
 }
 
 /// Раскладка хоткеев по сетке `cols` столбцов: ячейки заполняются по строкам
@@ -297,9 +352,23 @@ fn spans_width(spans: &[Span<'_>]) -> usize {
 mod tests {
     use super::*;
 
+    /// Снимок статусов: чат `chat`, эмбеддинги/имперсонация не настроены (чипы скрыты).
+    fn only_chat(chat: ServerStatus) -> ServerStatuses {
+        ServerStatuses {
+            chat,
+            embed: ServerStatus::NotConfigured,
+            impersonation: ServerStatus::NotConfigured,
+        }
+    }
+
+    /// Снимок с готовым чат-сервером (вторичные не настроены).
+    fn ready() -> ServerStatuses {
+        only_chat(ServerStatus::Ready)
+    }
+
     /// Весь текст статус-бара одной строкой (широкая ширина → одна строка).
     fn flat(
-        status: &ServerStatus,
+        statuses: &ServerStatuses,
         generating: bool,
         tokens: u64,
         context: Option<u64>,
@@ -308,7 +377,7 @@ mod tests {
     ) -> String {
         lines(
             200,
-            status,
+            statuses,
             generating,
             tokens,
             context,
@@ -322,26 +391,67 @@ mod tests {
         .collect()
     }
 
-    fn text(status: &ServerStatus, generating: bool) -> String {
-        flat(status, generating, 0, None, false, false)
+    fn text(statuses: &ServerStatuses, generating: bool) -> String {
+        flat(statuses, generating, 0, None, false, false)
     }
 
     #[test]
-    fn shows_server_state() {
-        assert!(text(&ServerStatus::Ready, false).contains("готов"));
-        assert!(text(&ServerStatus::NotConfigured, false).contains("не настроен"));
-        assert!(text(&ServerStatus::Disconnected("boom".into()), false).contains("boom"));
+    fn shows_chat_state() {
+        assert!(text(&ready(), false).contains("чат"));
+        assert!(text(&only_chat(ServerStatus::NotConfigured), false).contains("не настроен"));
+        assert!(
+            text(&only_chat(ServerStatus::Disconnected("boom".into())), false).contains("boom")
+        );
+    }
+
+    #[test]
+    fn secondary_chips_shown_only_when_configured() {
+        // Эмбеддинги и имперсонация настроены — оба чипа видны.
+        let all = ServerStatuses {
+            chat: ServerStatus::Ready,
+            embed: ServerStatus::Ready,
+            impersonation: ServerStatus::Connecting,
+        };
+        let t = text(&all, false);
+        assert!(
+            t.contains("чат") && t.contains("эмб") && t.contains("имп"),
+            "{t}"
+        );
+        // Имперсонация в `shared` / эмбеддинги выкл (NotConfigured) — чипы скрыты.
+        let t = text(&ready(), false);
+        assert!(
+            t.contains("чат") && !t.contains("эмб") && !t.contains("имп"),
+            "{t}"
+        );
+    }
+
+    #[test]
+    fn chip_color_reflects_status() {
+        let palette = Palette::default();
+        // Цвет глифа (первый спан) по статусу: готов — success, обрыв — error.
+        let glyph_fg = |status: ServerStatus| {
+            chat_chip(&status, &palette)
+                .first()
+                .and_then(|s| s.style.fg)
+                .unwrap()
+        };
+        assert_eq!(glyph_fg(ServerStatus::Ready), palette.success);
+        assert_eq!(
+            glyph_fg(ServerStatus::Disconnected("x".into())),
+            palette.error
+        );
+        assert_eq!(glyph_fg(ServerStatus::Connecting), palette.warning);
     }
 
     #[test]
     fn generating_indicator_toggles() {
-        assert!(text(&ServerStatus::Ready, true).contains("генерация"));
-        assert!(!text(&ServerStatus::Ready, false).contains("генерация"));
+        assert!(text(&ready(), true).contains("генерация"));
+        assert!(!text(&ready(), false).contains("генерация"));
     }
 
     #[test]
     fn shows_mouse_mode() {
-        let mode = |scroll| flat(&ServerStatus::Ready, false, 0, None, false, scroll);
+        let mode = |scroll| flat(&ready(), false, 0, None, false, scroll);
         assert!(mode(true).contains("мышь: прокрутка"));
         assert!(mode(false).contains("мышь: выделение"));
     }
@@ -350,20 +460,11 @@ mod tests {
     fn scroll_mode_highlights_only_value() {
         let palette = Palette::default();
         let span_fg = |scroll, needle: &str| {
-            lines(
-                200,
-                &ServerStatus::Ready,
-                false,
-                0,
-                None,
-                false,
-                scroll,
-                &palette,
-            )
-            .iter()
-            .flat_map(|l| l.spans.clone())
-            .find(|s| s.content.contains(needle))
-            .and_then(|s| s.style.fg)
+            lines(200, &ready(), false, 0, None, false, scroll, &palette)
+                .iter()
+                .flat_map(|l| l.spans.clone())
+                .find(|s| s.content.contains(needle))
+                .and_then(|s| s.style.fg)
         };
         // В режиме прокрутки выделено только значение «прокрутка» (цветом `accent`, как
         // заголовки markdown), а подпись «мышь:» остаётся приглушённой — отдельные спаны.
@@ -375,9 +476,7 @@ mod tests {
 
     #[test]
     fn token_counter_shows_summed_total() {
-        let line = |tokens, context, exact| {
-            flat(&ServerStatus::Ready, true, tokens, context, exact, false)
-        };
+        let line = |tokens, context, exact| flat(&ready(), true, tokens, context, exact, false);
         // Нет токенов и нет контекста — счётчик скрыт.
         assert!(!line(0, None, false).contains("токены"));
         // Только ответ (переписка неизвестна) — сумма = ответ, без `~`.
@@ -394,7 +493,7 @@ mod tests {
     fn hotkeys_fit_on_one_line_when_wide() {
         let n = lines(
             200,
-            &ServerStatus::Ready,
+            &ready(),
             false,
             0,
             None,
@@ -411,7 +510,7 @@ mod tests {
         // Узкая ширина → хоткеи не помещаются и переносятся на следующие строки.
         let h = height(
             40,
-            &ServerStatus::Ready,
+            &ready(),
             false,
             0,
             None,
@@ -421,7 +520,7 @@ mod tests {
         );
         assert!(h > 1, "ожидался перенос хоткеев, высота = {h}");
         // Все хоткеи присутствуют, несмотря на перенос (включая тумблер мыши).
-        let flat = flat(&ServerStatus::Ready, false, 0, None, false, false);
+        let flat = flat(&ready(), false, 0, None, false, false);
         assert!(flat.contains("Ctrl+W") && flat.contains("мышь: выделение"));
         for (_, desc) in HOTKEYS {
             assert!(flat.contains(desc));
@@ -433,31 +532,10 @@ mod tests {
         use ratatui::Terminal;
         use ratatui::backend::TestBackend;
         let p = Palette::default();
-        let h = height(
-            w as usize,
-            &ServerStatus::Ready,
-            false,
-            0,
-            None,
-            false,
-            false,
-            &p,
-        );
+        let h = height(w as usize, &ready(), false, 0, None, false, false, &p);
         let mut term = Terminal::new(TestBackend::new(w, h)).unwrap();
-        term.draw(|f| {
-            render(
-                f,
-                f.area(),
-                &ServerStatus::Ready,
-                false,
-                0,
-                None,
-                false,
-                false,
-                &p,
-            )
-        })
-        .unwrap();
+        term.draw(|f| render(f, f.area(), &ready(), false, 0, None, false, false, &p))
+            .unwrap();
         let buf = term.backend().buffer().clone();
         (0..buf.area.height)
             .map(|y| {
@@ -469,33 +547,30 @@ mod tests {
     }
 
     #[test]
-    fn pill_left_hotkeys_right_on_one_line() {
-        // Широко — одна строка: пилюля прижата влево, хоткеи — вправо.
+    fn chips_left_hotkeys_right_on_one_line() {
+        // Широко — одна строка: чип статуса прижат влево, хоткеи — вправо.
         let r = rows(160);
         assert_eq!(r.len(), 1);
         let line = &r[0];
-        assert!(line.trim_start().starts_with("●"), "пилюля слева: {line:?}");
+        assert!(line.trim_start().starts_with("●"), "чип слева: {line:?}");
         assert!(
             line.trim_end().ends_with("выход"),
             "последний хоткей прижат вправо: {line:?}"
         );
-        // Между пилюлей и хоткеями — заметный зазор (они не слиплись).
-        assert!(
-            line.contains("готов   "),
-            "есть зазор после пилюли: {line:?}"
-        );
+        // Между чипом и хоткеями — заметный зазор (они не слиплись).
+        assert!(line.contains("чат   "), "есть зазор после чипа: {line:?}");
     }
 
     #[test]
     fn wrapped_grid_is_right_aligned_with_pill_on_top_line() {
-        // Узко — хоткеи переносятся аккуратной сеткой, прижатой вправо; пилюля
-        // статуса делит ВЕРХНЮЮ строку с сеткой, перенос — ровно под столбцом выше.
-        let r = rows(120);
+        // Узко — хоткеи переносятся аккуратной сеткой, прижатой вправо; чип статуса
+        // делит ВЕРХНЮЮ строку с сеткой, перенос — ровно под столбцом выше.
+        let r = rows(100);
         assert_eq!(r.len(), 2, "ожидался перенос на 2 строки: {r:?}");
-        // Пилюля статуса — на верхней строке слева.
+        // Чип статуса — на верхней строке слева.
         assert!(
             r[0].trim_start().starts_with("●"),
-            "пилюля сверху слева: {:?}",
+            "чип сверху слева: {:?}",
             r[0]
         );
         // Перенесённый хоткей — на нижней строке, прижат вправо (левая часть пустая).
@@ -522,11 +597,16 @@ mod tests {
         use ratatui::Terminal;
         use ratatui::backend::TestBackend;
         let mut term = Terminal::new(TestBackend::new(60, 1)).unwrap();
+        let all = ServerStatuses {
+            chat: ServerStatus::Ready,
+            embed: ServerStatus::Ready,
+            impersonation: ServerStatus::Connecting,
+        };
         term.draw(|f| {
             render(
                 f,
                 f.area(),
-                &ServerStatus::Ready,
+                &all,
                 true,
                 123,
                 Some(456),

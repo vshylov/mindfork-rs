@@ -35,10 +35,13 @@ pub struct ChatSetup {
     pub status: ServerStatus,
 }
 
-/// Результат настройки embedding-сервера: источник эмбеддингов и опора на процесс.
+/// Результат настройки embedding-сервера: источник эмбеддингов, опора на процесс
+/// и статус. Probe эмбеддингов пока нет (RAG ленив), поэтому статус двухзначный:
+/// `Ready` — эмбеддер настроен, `NotConfigured` — `UnavailableEmbedder` (чип скрыт).
 pub struct EmbedSetup {
     pub embedder: Arc<dyn Embedder>,
     pub handle: Option<ServerHandle>,
+    pub status: ServerStatus,
 }
 
 /// (Пере)подключение/запуск серверов по настройкам. За трейтом — ради mock-теста
@@ -134,6 +137,7 @@ impl ServerSupervisor for LlamaSupervisor {
                 Some(url) if !url.is_empty() => EmbedSetup {
                     embedder: Arc::new(OpenAiClient::new(url)),
                     handle: None,
+                    status: ServerStatus::Ready,
                 },
                 _ => unavailable_embed(),
             },
@@ -165,6 +169,7 @@ impl ServerSupervisor for LlamaSupervisor {
                         Ok(handle) => EmbedSetup {
                             embedder: Arc::new(OpenAiClient::new(handle.base_url())),
                             handle: Some(handle),
+                            status: ServerStatus::Ready,
                         },
                         Err(err) => {
                             tracing::warn!(error = %err, "не удалось запустить embedding-сервер; RAG недоступен");
@@ -359,6 +364,7 @@ fn cloud_embed_setup(
         .with_api_key(Some(key))
         .with_model(Some(model.to_string()));
     EmbedSetup {
+        status: ServerStatus::Ready,
         embedder: Arc::new(client),
         handle: None,
     }
@@ -376,6 +382,7 @@ fn unavailable_embed() -> EmbedSetup {
     EmbedSetup {
         embedder: Arc::new(UnavailableEmbedder),
         handle: None,
+        status: ServerStatus::NotConfigured,
     }
 }
 
@@ -486,6 +493,7 @@ impl ServerSupervisor for MockSupervisor {
         EmbedSetup {
             embedder: Arc::new(crate::shared::api::mock::MockEmbedder::new(self.embed_dim)),
             handle: None,
+            status: ServerStatus::Ready,
         }
     }
 }

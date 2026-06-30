@@ -10,7 +10,7 @@ use crate::features::profiles::ProfileEdit;
 pub use crate::features::rag_ingest::RagProgress;
 use crate::shared::api::FinishReason;
 use crate::shared::config::AppConfig;
-pub use crate::shared::server::ServerStatus;
+pub use crate::shared::server::{ServerStatus, ServerStatuses};
 
 /// Команда от UI к оркестратору.
 #[derive(Debug, Clone)]
@@ -91,8 +91,9 @@ pub enum AppCommand {
 /// Событие от оркестратора к UI. UI обновляет read-only-проекцию только так.
 #[derive(Debug, Clone)]
 pub enum AppEvent {
-    /// Изменился статус сервера.
-    ServerStatus(ServerStatus),
+    /// Изменился статус какого-либо из серверов — снимок всех (чат/эмбеддинги/
+    /// имперсонация).
+    ServerStatus(ServerStatuses),
     /// Полный список видимых чатов (для оверлея). Шлётся при изменениях набора.
     ChatList(Vec<ChatSummary>),
     /// Заголовок чата изменился (ручное/авто-переименование). UI обновляет шапку

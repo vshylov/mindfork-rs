@@ -42,15 +42,17 @@ impl Orchestrator {
         self.emit_settings();
     }
 
-    /// (Пере)поднимает chat-сервер по `config.engine` и эмитит немедленный статус.
+    /// (Пере)поднимает chat-сервер по `config.engine` и эмитит снимок статусов.
     pub(super) fn apply_chat_settings(&mut self) {
-        let status = self.engines.apply_chat(&self.config.engine);
-        let _ = self.evt_tx.send(AppEvent::ServerStatus(status));
+        self.engines.apply_chat(&self.config.engine);
+        self.emit_server_status();
     }
 
-    /// (Пере)поднимает embedding-сервер по `config.embed`.
+    /// (Пере)поднимает embedding-сервер по `config.embed` и эмитит снимок статусов
+    /// (чип эмбеддингов в строке статуса появляется/исчезает по настройке).
     pub(super) fn apply_embed_settings(&mut self) {
         self.engines.apply_embed(&self.config.embed);
+        self.emit_server_status();
     }
 
     /// (Пере)поднимает сервер имперсонации по `config.impersonation_engine`. В режиме
@@ -58,5 +60,6 @@ impl Orchestrator {
     pub(super) fn apply_impersonation_settings(&mut self) {
         self.engines
             .apply_impersonation(&self.config.impersonation_engine);
+        self.emit_server_status();
     }
 }

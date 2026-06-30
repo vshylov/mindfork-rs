@@ -27,7 +27,7 @@ use crate::features::spellcheck::SpellChecker;
 use crate::shared::api::FinishReason;
 use crate::shared::config::AppConfig;
 use crate::shared::keys;
-use crate::shared::server::ServerStatus;
+use crate::shared::server::{ServerStatus, ServerStatuses};
 use crate::shared::theme::Palette;
 use crate::shared::ui::dim_background;
 use crate::widgets::emoji_picker::{EmojiPickerAction, EmojiPickerState};
@@ -185,7 +185,9 @@ pub struct ChatScreen {
     /// Открытый оверлей выбора профиля.
     profile_overlay: Option<ProfileListState>,
     input: InputBox,
-    status: ServerStatus,
+    /// Снимок статусов всех серверов (чат/эмбеддинги/имперсонация) для строки
+    /// статуса. См. spec §11.1.
+    statuses: ServerStatuses,
     current_gen: Option<Uuid>,
     generating: bool,
     /// Счётчик токенов ответа текущей/последней генерации (показывается в
@@ -258,7 +260,11 @@ impl ChatScreen {
             profiles: Vec::new(),
             profile_overlay: None,
             input: InputBox::new(),
-            status: ServerStatus::Connecting,
+            statuses: ServerStatuses {
+                chat: ServerStatus::Connecting,
+                embed: ServerStatus::NotConfigured,
+                impersonation: ServerStatus::NotConfigured,
+            },
             current_gen: None,
             generating: false,
             gen_tokens: 0,
@@ -325,8 +331,8 @@ impl ChatScreen {
 
     // ---------- проекция событий оркестратора (вызывается слоем `app`) ----------
 
-    pub fn set_server_status(&mut self, status: ServerStatus) {
-        self.status = status;
+    pub fn set_server_status(&mut self, statuses: ServerStatuses) {
+        self.statuses = statuses;
     }
 
     pub fn set_chat_list(&mut self, chats: Vec<ChatSummary>) {
@@ -1225,7 +1231,7 @@ impl ChatScreen {
         // Высота статус-бара зависит от ширины: хоткеи переносятся, когда не влезают.
         let status_h = status_bar::height(
             frame.area().width as usize,
-            &self.status,
+            &self.statuses,
             self.generating,
             self.gen_tokens,
             self.gen_context,
@@ -1262,7 +1268,7 @@ impl ChatScreen {
         status_bar::render(
             frame,
             status_area,
-            &self.status,
+            &self.statuses,
             self.generating,
             self.gen_tokens,
             self.gen_context,
@@ -1522,6 +1528,15 @@ mod tests {
         Uuid::new_v4()
     }
 
+    /// Снимок статусов с готовым чат-сервером (эмбеддинги/имперсонация не настроены).
+    fn ready_statuses() -> ServerStatuses {
+        ServerStatuses {
+            chat: ServerStatus::Ready,
+            embed: ServerStatus::NotConfigured,
+            impersonation: ServerStatus::NotConfigured,
+        }
+    }
+
     #[test]
     fn streaming_sequence_builds_feed() {
         let mut s = ChatScreen::new();
@@ -1731,7 +1746,7 @@ mod tests {
     #[test]
     fn enter_sends_when_idle_and_nonempty() {
         let mut s = ChatScreen::new();
-        s.set_server_status(ServerStatus::Ready);
+        s.set_server_status(ready_statuses());
         for c in "привет".chars() {
             s.handle_key(KeyEvent::new(KeyCode::Char(c), KeyModifiers::NONE));
         }
@@ -1771,7 +1786,7 @@ mod tests {
     #[test]
     fn sending_clears_draft_to_empty() {
         let mut s = ChatScreen::new();
-        s.set_server_status(ServerStatus::Ready);
+        s.set_server_status(ready_statuses());
         type_str(&mut s, "вопрос");
         let _ = s.take_dirty_draft(); // забрали черновик при наборе
         let intent = s.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
@@ -2318,7 +2333,7 @@ mod tests {
     #[test]
     fn rag_command_intercepted_on_enter() {
         let mut s = ChatScreen::new();
-        s.set_server_status(ServerStatus::Ready);
+        s.set_server_status(ready_statuses());
         type_str(&mut s, "/rag add d:\\docs -r");
         let intent = s.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
         assert_eq!(
@@ -2334,7 +2349,7 @@ mod tests {
     #[test]
     fn invalid_rag_command_shows_note_and_does_not_send() {
         let mut s = ChatScreen::new();
-        s.set_server_status(ServerStatus::Ready);
+        s.set_server_status(ready_statuses());
         type_str(&mut s, "/rag");
         let intent = s.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
         assert_eq!(intent, None, "ошибочная команда не отправляется");

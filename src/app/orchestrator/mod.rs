@@ -154,8 +154,8 @@ pub async fn run(deps: OrchestratorDeps) {
             }
             status = status_rx.recv() => {
                 if let Some(s) = status {
-                    orch.engines.set_chat_status(s.clone());
-                    let _ = orch.evt_tx.send(AppEvent::ServerStatus(s));
+                    orch.engines.set_chat_status(s);
+                    orch.emit_server_status();
                 }
             }
             title = title_rx.recv() => {
@@ -166,6 +166,7 @@ pub async fn run(deps: OrchestratorDeps) {
             status = imp_status_rx.recv() => {
                 if let Some(s) = status {
                     orch.engines.set_imp_status(s);
+                    orch.emit_server_status();
                 }
             }
             done = imp_done_rx.recv() => {
@@ -467,6 +468,14 @@ impl Orchestrator {
         let _ = self.evt_tx.send(AppEvent::ProfileList(
             self.profiles.iter().map(|p| p.summary()).collect(),
         ));
+    }
+
+    /// Эмитит снимок статусов всех серверов (чат/эмбеддинги/имперсонация) в строку
+    /// статуса. Зовётся при любом изменении любого из статусов (probe/смена настроек).
+    fn emit_server_status(&self) {
+        let _ = self
+            .evt_tx
+            .send(AppEvent::ServerStatus(self.engines.statuses()));
     }
 
     /// Помечает чат для отложенного сохранения (дебаунс).
