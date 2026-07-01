@@ -228,11 +228,12 @@ impl Orchestrator {
             };
         }
 
-        // Подмешиваем компактный рендер модели себя в системный промпт.
+        // Подмешиваем рендер модели себя + протокол ведения в системный промпт.
         request.system = inject_self_model(
             request.system.take(),
             self_model.as_ref(),
             inject_enabled,
+            self.config.self_model.maintenance_protocol,
             &self_model_params,
         );
 
@@ -633,27 +634,53 @@ fn estimate_prompt_tokens(req: &ChatRequest) -> u64 {
     estimate_prompt(req.system.as_deref(), parts)
 }
 
-/// Подмешивает компактный рендер «модели себя» в системный промпт хода (SelfModel
-/// MVP, см. docs/self-model-mvp.md). Возвращает прежний `system` без изменений,
-/// если инъекция выключена (профиль не включил `get_self_model`) или модель
-/// пуста/отсутствует. Чистая функция — тестируема без движка.
+/// Нейтральный к персоне «протокол ведения модели»: короткая инструкция о том, когда
+/// и чем фиксировать изменения. Едет в системном промпте поверх любой персоны профиля
+/// → делает использование SelfModel-инструментов предсказуемым независимо от персоны
+/// и прямо противодействует лести. Подмешивается по `config.self_model.
+/// maintenance_protocol`. См. docs/self-model-mvp.md.
+pub(super) const SELF_MODEL_MAINTENANCE_PROTOCOL: &str = "(Ты сам ведёшь эту «модель себя». Когда меняется что-то устойчивое — о тебе, о \
+     собеседнике или о твоих целях — зафиксируй это инструментами: update_self_model \
+     (описание себя; веди цели — закрывай выполненные и неактуальные по #id, а не только \
+     ставь новые), update_user_model (черты/интересы собеседника — add_/remove_, не \
+     перетирая прежнее), add_insight (наблюдение или противоречие прозой). Мимолётное \
+     (настроение, разовая реакция) — в add_insight, не в модель собеседника. Точность \
+     важнее угодливости: записывай то, что верно, а не то, что польстит.)";
+
+/// Подмешивает «модель себя» в системный промпт хода (SelfModel MVP, см.
+/// docs/self-model-mvp.md): компактный рендер текущей модели (если непуста) плюс,
+/// при `maintenance_protocol`, нейтральный к персоне протокол ведения. Возвращает
+/// прежний `system` без изменений, если инъекция выключена (профиль не включил
+/// `get_self_model`) либо подмешивать нечего (пустая модель и протокол выключен).
+/// Протокол подмешивается даже при пустой модели — чтобы модель начала её вести.
+/// Чистая функция — тестируема без движка.
 pub(super) fn inject_self_model(
     system: Option<String>,
     model: Option<&crate::entities::self_model::SelfModel>,
     enabled: bool,
+    maintenance_protocol: bool,
     params: &crate::entities::self_model::SelfModelParams,
 ) -> Option<String> {
     if !enabled {
         return system;
     }
-    let Some(block) =
-        model.and_then(|m| m.render_for_prompt(params.prompt_cap, params.narrative_in_prompt))
-    else {
-        return system;
-    };
+    let block =
+        model.and_then(|m| m.render_for_prompt(params.prompt_cap, params.narrative_in_prompt));
+    // Собираем подмешиваемые части: рендер модели (если есть) + протокол (если включён).
+    let mut parts: Vec<&str> = Vec::new();
+    if let Some(b) = block.as_deref() {
+        parts.push(b);
+    }
+    if maintenance_protocol {
+        parts.push(SELF_MODEL_MAINTENANCE_PROTOCOL);
+    }
+    if parts.is_empty() {
+        return system; // подмешивать нечего
+    }
+    let inject = parts.join("\n\n");
     Some(match system {
-        Some(s) => format!("{s}\n\n{block}"),
-        None => block,
+        Some(s) => format!("{s}\n\n{inject}"),
+        None => inject,
     })
 }
 

@@ -574,6 +574,8 @@ pub const DEFAULT_SELF_MODEL_MAX_NARRATIVE: usize = 50;
 pub const DEFAULT_SELF_MODEL_NARRATIVE_IN_PROMPT: usize = 3;
 /// Потолок символов рендера «модели себя» в системный промпт по умолчанию.
 pub const DEFAULT_SELF_MODEL_PROMPT_CAP: usize = 1200;
+/// Подмешивать ли нейтральный к персоне «протокол ведения модели» по умолчанию.
+pub const DEFAULT_SELF_MODEL_MAINTENANCE_PROTOCOL: bool = true;
 
 /// Настройки «модели себя» (SelfModel): размеры нарратива и объём инъекции в
 /// системный промпт. См. [docs/self-model-mvp.md] и spec §9.3.
@@ -590,6 +592,12 @@ pub struct SelfModelSettings {
     /// чате (модель сама обновляет «модель себя»). `0` — выключено (по умолчанию).
     /// Срабатывает только в профилях с включёнными инструментами модели себя.
     pub auto_reflect_every: usize,
+    /// Подмешивать ли в системный промпт нейтральный к персоне «протокол ведения
+    /// модели» (когда фиксировать изменения, «мимолётное — в наблюдения», «точность
+    /// важнее угодливости»). Стабилизирует использование инструментов независимо от
+    /// персоны профиля. По умолчанию включён; действует только когда профиль включил
+    /// инструменты модели себя.
+    pub maintenance_protocol: bool,
 }
 
 impl Default for SelfModelSettings {
@@ -599,6 +607,7 @@ impl Default for SelfModelSettings {
             narrative_in_prompt: DEFAULT_SELF_MODEL_NARRATIVE_IN_PROMPT,
             prompt_cap: DEFAULT_SELF_MODEL_PROMPT_CAP,
             auto_reflect_every: 0,
+            maintenance_protocol: DEFAULT_SELF_MODEL_MAINTENANCE_PROTOCOL,
         }
     }
 }
@@ -769,6 +778,9 @@ mod tests {
             DEFAULT_SELF_MODEL_NARRATIVE_IN_PROMPT
         );
         assert_eq!(c.self_model.prompt_cap, DEFAULT_SELF_MODEL_PROMPT_CAP);
+        // Протокол ведения модели себя включён по умолчанию, авто-рефлексия — нет.
+        assert!(c.self_model.maintenance_protocol);
+        assert_eq!(c.self_model.auto_reflect_every, 0);
         assert_eq!(c.rag.chunk_overlap_chars, DEFAULT_CHUNK_OVERLAP_CHARS);
         assert_eq!(c.rag.chunk_max_chars, DEFAULT_CHUNK_MAX_CHARS);
         assert!(c.interface.spellcheck_enabled);
