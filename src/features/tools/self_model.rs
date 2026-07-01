@@ -8,7 +8,7 @@ use anyhow::Result;
 use uuid::Uuid;
 
 use crate::entities::profile::ToolId;
-use crate::entities::self_model::{GoalStatus, SelfModel, SelfModelParams};
+use crate::entities::self_model::{GoalMatch, GoalStatus, SelfModel};
 
 use super::{Tool, ToolContext, ToolOutcome};
 
@@ -17,6 +17,7 @@ pub const REFLECT_ID: &str = "reflect";
 pub const UPDATE_SELF_MODEL_ID: &str = "update_self_model";
 pub const UPDATE_USER_MODEL_ID: &str = "update_user_model";
 pub const ADD_INSIGHT_ID: &str = "add_insight";
+pub const CONSOLIDATE_NARRATIVE_ID: &str = "consolidate_narrative";
 
 /// Загружает модель профиля из хранилища (или пустую, если ещё не создавалась).
 /// Читаем из БД, а не из снимка `ctx.self_model`, чтобы видеть правки, сделанные
@@ -42,13 +43,6 @@ fn str_array(args: &serde_json::Value, key: &str) -> Vec<String> {
         .unwrap_or_default()
 }
 
-/// Рендер модели для результата инструмента (или явная пометка пустоты), по
-/// параметрам хода (`config.self_model`).
-fn render_or_empty(m: &SelfModel, params: &SelfModelParams) -> String {
-    m.render_for_prompt(params.prompt_cap, params.narrative_in_prompt)
-        .unwrap_or_else(|| "(модель себя пока пуста)".to_string())
-}
-
 /// `get_self_model` — текущее состояние модели себя (чтение).
 pub struct GetSelfModel;
 
@@ -58,8 +52,8 @@ impl Tool for GetSelfModel {
         GET_SELF_MODEL_ID.into()
     }
     fn description(&self) -> String {
-        "Прочитать твою текущую «модель себя»: краткое описание себя, активные цели \
-         и представление о собеседнике."
+        "Прочитать твою текущую «модель себя» целиком: описание себя, цели (с #id для \
+         отметки выполненных/неактуальных), представление о собеседнике и наблюдения."
             .into()
     }
     fn parameters(&self) -> serde_json::Value {
@@ -67,10 +61,7 @@ impl Tool for GetSelfModel {
     }
     async fn invoke(&self, ctx: &ToolContext, _args: serde_json::Value) -> Result<ToolOutcome> {
         let m = load(ctx)?;
-        Ok(ToolOutcome::text(render_or_empty(
-            &m,
-            &ctx.self_model_params,
-        )))
+        Ok(ToolOutcome::text(m.render_full()))
     }
 }
 
@@ -97,13 +88,20 @@ impl Tool for Reflect {
         let m = load(ctx)?;
         let out = format!(
             "Текущая модель себя:\n{}\n\nВопросы для размышления:\n\
-             - Что нового я понял(а) о себе в этом разговоре?\n\
-             - Изменились ли мои цели — есть новые, выполненные или неактуальные?\n\
-             - Что я узнал(а) о собеседнике (черты, интересы, динамика отношений)?\n\
-             - Заметил(а) ли я противоречие/напряжение в себе или разговоре?\n\
-             Если есть что зафиксировать — вызови update_self_model, update_user_model \
-             и/или add_insight (для наблюдений и противоречий прозой).",
-            render_or_empty(&m, &ctx.self_model_params)
+             - Что устойчивого я понял(а) о себе? Уточни update_self_model.summary — \
+             интегрируй прежнее с новым, не переписывай с нуля.\n\
+             - Цели: пройди по активным по #id — какие выполнены (complete_goals) или \
+             неактуальны (abandon_goals)? появились ли новые (add_goals)?\n\
+             - Что устойчивого узнал(а) о собеседнике? update_user_model правит списки по \
+             частям (add_/remove_), не перетирая. Мимолётное (настроение, разовая \
+             реакция) — в add_insight, не в модель собеседника.\n\
+             - Заметил(а) ли противоречие/напряжение? Запиши прозой через add_insight.\n\
+             - Не раздулся ли нарратив (дубли, устаревшее)? Подними устойчивое в summary/\
+             черты, а сырые/дублирующие наблюдения вычисти через consolidate_narrative \
+             (убрать по #id, опц. добавить одно сводное).\n\
+             Меняй только то, что действительно изменилось; если менять нечего — ничего \
+             не вызывай.",
+            m.render_full()
         );
         Ok(ToolOutcome::text(out))
     }
@@ -160,55 +158,69 @@ impl Tool for UpdateSelfModel {
         UPDATE_SELF_MODEL_ID.into()
     }
     fn description(&self) -> String {
-        "Обновить «модель себя»: задать краткое описание себя (summary), добавить \
-         новые цели (add_goals), отметить выполненные (complete_goals) или \
-         неактуальные (abandon_goals по id из get_self_model)."
+        "Обновить «модель себя»: уточнить описание себя (summary — интегрируй прежнее с \
+         новым, а не переписывай с нуля), добавить цели (add_goals), отметить \
+         выполненные (complete_goals) или неактуальные (abandon_goals) — по #id или \
+         полному id из get_self_model. Веди цели: закрывай достигнутые, не только \
+         ставь новые."
             .into()
     }
     fn parameters(&self) -> serde_json::Value {
         serde_json::json!({
             "type": "object",
             "properties": {
-                "summary": {"type": "string", "description": "Новое краткое описание себя (заменяет прежнее)"},
+                "summary": {"type": "string", "description": "Уточнённое описание себя (интегрирует прежнее с изменившимся)"},
                 "add_goals": {"type": "array", "items": {"type": "string"}, "description": "Новые цели"},
-                "complete_goals": {"type": "array", "items": {"type": "string"}, "description": "id выполненных целей"},
-                "abandon_goals": {"type": "array", "items": {"type": "string"}, "description": "id неактуальных целей"}
+                "complete_goals": {"type": "array", "items": {"type": "string"}, "description": "#id (или полный id) выполненных целей"},
+                "abandon_goals": {"type": "array", "items": {"type": "string"}, "description": "#id (или полный id) неактуальных целей"}
             }
         })
     }
     async fn invoke(&self, ctx: &ToolContext, args: serde_json::Value) -> Result<ToolOutcome> {
         let mut m = load(ctx)?;
         let mut changed = false;
+        let mut unresolved: Vec<String> = Vec::new();
 
         if let Some(s) = args.get("summary").and_then(|v| v.as_str()) {
-            m.summary = s.trim().to_string();
-            changed = true;
+            let s = s.trim().to_string();
+            if m.summary != s {
+                m.summary = s;
+                changed = true;
+            }
         }
         for g in str_array(&args, "add_goals") {
             m.add_goal(g);
             changed = true;
         }
-        for id in str_array(&args, "complete_goals") {
-            if let Ok(uuid) = Uuid::parse_str(&id) {
-                changed |= m.set_goal_status(uuid, GoalStatus::Completed);
+        // Цели закрываются по #id/полному id — резолвим ручку среди целей модели.
+        for h in str_array(&args, "complete_goals") {
+            match m.match_goal(&h) {
+                GoalMatch::One(id) => changed |= m.set_goal_status(id, GoalStatus::Completed),
+                GoalMatch::None => unresolved.push(h),
+                GoalMatch::Ambiguous => unresolved.push(format!("{h} (неоднозначно)")),
             }
         }
-        for id in str_array(&args, "abandon_goals") {
-            if let Ok(uuid) = Uuid::parse_str(&id) {
-                changed |= m.set_goal_status(uuid, GoalStatus::Abandoned);
+        for h in str_array(&args, "abandon_goals") {
+            match m.match_goal(&h) {
+                GoalMatch::One(id) => changed |= m.set_goal_status(id, GoalStatus::Abandoned),
+                GoalMatch::None => unresolved.push(h),
+                GoalMatch::Ambiguous => unresolved.push(format!("{h} (неоднозначно)")),
             }
         }
 
         if !changed {
-            return Ok(ToolOutcome::text(
-                "Нечего обновлять (не передано ни одного изменения).",
-            ));
+            let mut msg = String::from("Нечего обновлять (не передано ни одного изменения).");
+            if !unresolved.is_empty() {
+                msg.push_str(&format!("\nНе найдены цели: {}.", unresolved.join(", ")));
+            }
+            return Ok(ToolOutcome::text(msg));
         }
         ctx.storage.db().self_model_upsert(&m)?;
-        Ok(ToolOutcome::text(format!(
-            "Модель себя обновлена.\n{}",
-            render_or_empty(&m, &ctx.self_model_params)
-        )))
+        let mut msg = format!("Модель себя обновлена.\n{}", m.render_full());
+        if !unresolved.is_empty() {
+            msg.push_str(&format!("\n(Не найдены цели: {}.)", unresolved.join(", ")));
+        }
+        Ok(ToolOutcome::text(msg))
     }
 }
 
@@ -221,18 +233,25 @@ impl Tool for UpdateUserModel {
         UPDATE_USER_MODEL_ID.into()
     }
     fn description(&self) -> String {
-        "Обновить представление о собеседнике: воспринимаемые черты \
-         (perceived_traits), текущие интересы (current_interests), динамику \
-         отношений (relationship_dynamic). Списки заменяют прежние значения."
+        "Обновить устойчивую, интегрированную модель собеседника (через все разговоры, \
+         не снимок текущего настроения). Списки правятся ПО ЧАСТЯМ и не перетираются: \
+         add_traits/remove_traits (черты), add_interests/remove_interests (интересы); \
+         relationship_dynamic — как вы относитесь во времени. При удалении/замене черты \
+         передай note — что и почему изменилось (уйдёт в нарратив как след ревизии, чтобы \
+         модель себя помнила, что менялась). Мимолётное (сегодняшнее настроение, разовая \
+         реакция) записывай в add_insight, а не сюда."
             .into()
     }
     fn parameters(&self) -> serde_json::Value {
         serde_json::json!({
             "type": "object",
             "properties": {
-                "perceived_traits": {"type": "array", "items": {"type": "string"}},
-                "current_interests": {"type": "array", "items": {"type": "string"}},
-                "relationship_dynamic": {"type": "string"}
+                "add_traits": {"type": "array", "items": {"type": "string"}, "description": "Добавить устойчивые черты (дедуп; прежние сохраняются)"},
+                "remove_traits": {"type": "array", "items": {"type": "string"}, "description": "Убрать неверные/устаревшие черты"},
+                "add_interests": {"type": "array", "items": {"type": "string"}, "description": "Добавить интересы (дедуп; прежние сохраняются)"},
+                "remove_interests": {"type": "array", "items": {"type": "string"}, "description": "Убрать неактуальные интересы"},
+                "relationship_dynamic": {"type": "string", "description": "Как вы относитесь во времени (заменяет прежнее)"},
+                "note": {"type": "string", "description": "Что и почему изменилось (при удалении/замене черт) — уходит в нарратив как след ревизии"}
             }
         })
     }
@@ -240,29 +259,141 @@ impl Tool for UpdateUserModel {
         let mut m = load(ctx)?;
         let mut changed = false;
 
-        if args.get("perceived_traits").is_some() {
-            m.user_model.perceived_traits = str_array(&args, "perceived_traits");
-            changed = true;
-        }
-        if args.get("current_interests").is_some() {
-            m.user_model.current_interests = str_array(&args, "current_interests");
-            changed = true;
-        }
+        // Списки — merge (add/remove с дедупом), а не замена: правка не обнуляет
+        // накопленное представление (частая беда «перетирания по настроению»).
+        changed |= m.user_model.add_traits(str_array(&args, "add_traits"));
+        let removed_traits = m
+            .user_model
+            .remove_traits(&str_array(&args, "remove_traits"));
+        changed |= removed_traits;
+        changed |= m
+            .user_model
+            .add_interests(str_array(&args, "add_interests"));
+        let removed_interests = m
+            .user_model
+            .remove_interests(&str_array(&args, "remove_interests"));
+        changed |= removed_interests;
         if let Some(s) = args.get("relationship_dynamic").and_then(|v| v.as_str()) {
-            m.user_model.relationship_dynamic = s.trim().to_string();
+            let s = s.trim().to_string();
+            if m.user_model.relationship_dynamic != s {
+                m.user_model.relationship_dynamic = s;
+                changed = true;
+            }
+        }
+        // Шрам ревизии: `note` (что и почему изменилось) уходит в нарратив, так
+        // изменение мнения о собеседнике оставляет след, а не стирается бесследно
+        // (черты плоские — «биография» их изменений живёт в нарративе).
+        let note = args
+            .get("note")
+            .and_then(|v| v.as_str())
+            .map(str::trim)
+            .filter(|s| !s.is_empty());
+        let has_note = note.is_some();
+        if let Some(n) = note {
+            m.add_insight(n, ctx.self_model_params.max_narrative);
             changed = true;
         }
 
         if !changed {
             return Ok(ToolOutcome::text(
-                "Нечего обновлять (не передано ни одного поля).",
+                "Нечего обновлять (не передано ни одного изменения).",
             ));
         }
         ctx.storage.db().self_model_upsert(&m)?;
-        Ok(ToolOutcome::text(format!(
-            "Модель собеседника обновлена.\n{}",
-            render_or_empty(&m, &ctx.self_model_params)
-        )))
+        let mut msg = format!("Модель собеседника обновлена.\n{}", m.render_full());
+        // Удаление/замена черты — пересмотр суждения. Причина не записана → напоминаем
+        // оставить след в нарративе (шрам), а не стирать молча.
+        if (removed_traits || removed_interests) && !has_note {
+            msg.push_str(
+                "\n(Ты убрал(а) черты/интересы без пояснения. Если это пересмотр мнения — \
+                 передай note с тем, что и почему изменилось: он останется в нарративе как \
+                 след, чтобы модель себя помнила, что менялась.)",
+            );
+        }
+        Ok(ToolOutcome::text(msg))
+    }
+}
+
+/// `consolidate_narrative` — консолидация нарратива против раздувания: убирает
+/// перечисленные наблюдения (по #id) и опционально добавляет одно сводное вместо
+/// них. Лечит «дрейф» накопления (список наблюдений раздувается, дубли/устаревшее
+/// топят сигнал, а FIFO-потолок тихо роняет старое без интеграции). Зеркало
+/// `note_merge`/`consolidate_notes` в идиоме модели себя, без графа. Пишет в БД.
+pub struct ConsolidateNarrative;
+
+#[async_trait::async_trait]
+impl Tool for ConsolidateNarrative {
+    fn id(&self) -> ToolId {
+        CONSOLIDATE_NARRATIVE_ID.into()
+    }
+    fn description(&self) -> String {
+        "Консолидировать нарратив (список наблюдений) против раздувания: убрать \
+         устаревшие/дублирующие наблюдения по #id (remove) и, если несколько сворачиваются \
+         в один вывод, добавить его вместо них (add). Сначала подними устойчивое в summary/\
+         черты (update_self_model/update_user_model), потом вычисти сырое здесь — это \
+         интеграция, а не потеря."
+            .into()
+    }
+    fn parameters(&self) -> serde_json::Value {
+        serde_json::json!({
+            "type": "object",
+            "properties": {
+                "remove": {"type": "array", "items": {"type": "string"}, "description": "#id (или полные id) убираемых наблюдений (из get_self_model)"},
+                "add": {"type": "string", "description": "Одно сводное наблюдение вместо убранных (опц.)"}
+            },
+            "required": ["remove"]
+        })
+    }
+    async fn invoke(&self, ctx: &ToolContext, args: serde_json::Value) -> Result<ToolOutcome> {
+        let mut m = load(ctx)?;
+        // Резолвим ручки убираемых наблюдений (#id/полный id) среди нарратива.
+        let mut to_remove: Vec<Uuid> = Vec::new();
+        let mut unresolved: Vec<String> = Vec::new();
+        for h in str_array(&args, "remove") {
+            match m.match_insight(&h) {
+                GoalMatch::One(id) => to_remove.push(id),
+                GoalMatch::None => unresolved.push(h),
+                GoalMatch::Ambiguous => unresolved.push(format!("{h} (неоднозначно)")),
+            }
+        }
+        let removed = m.remove_insights(&to_remove);
+        // Сводное наблюдение вместо убранных (опц.).
+        let add = args
+            .get("add")
+            .and_then(|v| v.as_str())
+            .map(str::trim)
+            .filter(|s| !s.is_empty());
+        if let Some(a) = add {
+            m.add_insight(a, ctx.self_model_params.max_narrative);
+        }
+
+        if removed == 0 && add.is_none() {
+            let mut msg = String::from("Нечего консолидировать.");
+            if !unresolved.is_empty() {
+                msg.push_str(&format!(
+                    "\nНе найдены наблюдения: {}.",
+                    unresolved.join(", ")
+                ));
+            }
+            return Ok(ToolOutcome::text(msg));
+        }
+        ctx.storage.db().self_model_upsert(&m)?;
+        let mut msg = format!(
+            "Нарратив консолидирован (убрано: {removed}{}).\n{}",
+            if add.is_some() {
+                ", добавлено сводное"
+            } else {
+                ""
+            },
+            m.render_full()
+        );
+        if !unresolved.is_empty() {
+            msg.push_str(&format!(
+                "\n(Не найдены наблюдения: {}.)",
+                unresolved.join(", ")
+            ));
+        }
+        Ok(ToolOutcome::text(msg))
     }
 }
 
@@ -339,7 +470,7 @@ mod tests {
             .invoke(
                 &ctx,
                 serde_json::json!({
-                    "perceived_traits": ["скептичный", "глубокий"],
+                    "add_traits": ["скептичный", "глубокий"],
                     "relationship_dynamic": "рабочие"
                 }),
             )
@@ -348,6 +479,70 @@ mod tests {
         let stored = storage.db().self_model_get(profile).unwrap().unwrap();
         assert_eq!(stored.user_model.perceived_traits.len(), 2);
         assert_eq!(stored.user_model.relationship_dynamic, "рабочие");
+    }
+
+    #[tokio::test]
+    async fn update_user_model_merges_not_overwrites() {
+        // Ключевой фикс: правка не перетирает прежнее (беда «по настроению»).
+        let profile = Uuid::new_v4();
+        let (_d, storage, ctx) = ctx_with_storage(profile);
+        UpdateUserModel
+            .invoke(&ctx, serde_json::json!({"add_traits": ["добрый"]}))
+            .await
+            .unwrap();
+        // Вторая правка в другом «настроении» — добавляет, а не заменяет.
+        UpdateUserModel
+            .invoke(&ctx, serde_json::json!({"add_traits": ["прямолинейный"]}))
+            .await
+            .unwrap();
+        let stored = storage.db().self_model_get(profile).unwrap().unwrap();
+        assert_eq!(stored.user_model.perceived_traits.len(), 2);
+        assert!(
+            stored
+                .user_model
+                .perceived_traits
+                .contains(&"добрый".to_string())
+        );
+        // remove_traits убирает точечно.
+        UpdateUserModel
+            .invoke(&ctx, serde_json::json!({"remove_traits": ["добрый"]}))
+            .await
+            .unwrap();
+        let stored = storage.db().self_model_get(profile).unwrap().unwrap();
+        assert_eq!(
+            stored.user_model.perceived_traits,
+            vec!["прямолинейный".to_string()]
+        );
+    }
+
+    #[tokio::test]
+    async fn complete_goal_by_short_id() {
+        // Модель ссылается на цель коротким #id из get_self_model.
+        let profile = Uuid::new_v4();
+        let (_d, storage, ctx) = ctx_with_storage(profile);
+        UpdateSelfModel
+            .invoke(&ctx, serde_json::json!({"add_goals": ["цель"]}))
+            .await
+            .unwrap();
+        let id = storage.db().self_model_get(profile).unwrap().unwrap().goals[0].id;
+        let short = id.simple().to_string()[..6].to_string();
+
+        UpdateSelfModel
+            .invoke(
+                &ctx,
+                serde_json::json!({"complete_goals": [format!("#{short}")]}),
+            )
+            .await
+            .unwrap();
+        let stored = storage.db().self_model_get(profile).unwrap().unwrap();
+        assert_eq!(stored.active_goals().count(), 0);
+
+        // Несуществующий #id — понятный отчёт, не паника.
+        let out = UpdateSelfModel
+            .invoke(&ctx, serde_json::json!({"complete_goals": ["#zzzzzz"]}))
+            .await
+            .unwrap();
+        assert!(out.result.contains("Не найдены цели"));
     }
 
     #[tokio::test]
@@ -394,7 +589,7 @@ mod tests {
             .invoke(&ctx, serde_json::json!({}))
             .await
             .unwrap();
-        assert!(got.result.contains("Недавние наблюдения:"));
+        assert!(got.result.contains("Наблюдения"));
         assert!(got.result.contains("напряжение"));
 
         // Пустой text — ошибка, ничего не дописано.
@@ -414,5 +609,103 @@ mod tests {
                 .len(),
             1
         );
+    }
+
+    #[tokio::test]
+    async fn removing_trait_with_note_leaves_scar_in_narrative() {
+        // Ярус 2: ревизия черты с note оставляет след в нарративе (шрам).
+        let profile = Uuid::new_v4();
+        let (_d, storage, ctx) = ctx_with_storage(profile);
+        UpdateUserModel
+            .invoke(
+                &ctx,
+                serde_json::json!({"add_traits": ["компетентный одиночка"]}),
+            )
+            .await
+            .unwrap();
+        UpdateUserModel
+            .invoke(
+                &ctx,
+                serde_json::json!({
+                    "remove_traits": ["компетентный одиночка"],
+                    "add_traits": ["в команде раскрывается при доверии"],
+                    "note": "Пересмотрел: раньше видел одиночкой, но в команде при доверии он силён"
+                }),
+            )
+            .await
+            .unwrap();
+        let stored = storage.db().self_model_get(profile).unwrap().unwrap();
+        // Черта заменена, а причина сохранена в нарративе (не стёрта бесследно).
+        assert_eq!(
+            stored.user_model.perceived_traits,
+            vec!["в команде раскрывается при доверии".to_string()]
+        );
+        assert_eq!(stored.narrative.len(), 1);
+        assert!(stored.narrative[0].text.contains("Пересмотрел"));
+    }
+
+    #[tokio::test]
+    async fn removing_trait_without_note_nudges_for_scar() {
+        let (_d, _s, ctx) = ctx_with_storage(Uuid::new_v4());
+        UpdateUserModel
+            .invoke(&ctx, serde_json::json!({"add_traits": ["скептик"]}))
+            .await
+            .unwrap();
+        let out = UpdateUserModel
+            .invoke(&ctx, serde_json::json!({"remove_traits": ["скептик"]}))
+            .await
+            .unwrap();
+        assert!(out.result.contains("без пояснения"));
+        assert!(out.result.contains("note"));
+    }
+
+    #[tokio::test]
+    async fn consolidate_narrative_prunes_and_folds() {
+        let profile = Uuid::new_v4();
+        let (_d, storage, ctx) = ctx_with_storage(profile);
+        for t in ["дубль А", "дубль Б", "важное"] {
+            AddInsight
+                .invoke(&ctx, serde_json::json!({ "text": t }))
+                .await
+                .unwrap();
+        }
+        let narrative = storage
+            .db()
+            .self_model_get(profile)
+            .unwrap()
+            .unwrap()
+            .narrative;
+        let a = narrative.iter().find(|n| n.text == "дубль А").unwrap().id;
+        let b = narrative.iter().find(|n| n.text == "дубль Б").unwrap().id;
+
+        // Свернуть два дубля в один сводный, «важное» не трогаем.
+        let out = ConsolidateNarrative
+            .invoke(
+                &ctx,
+                serde_json::json!({
+                    "remove": [a.to_string(), b.to_string()],
+                    "add": "сводное про дубли"
+                }),
+            )
+            .await
+            .unwrap();
+        assert!(out.result.contains("убрано: 2"));
+        let stored = storage.db().self_model_get(profile).unwrap().unwrap();
+        assert_eq!(stored.narrative.len(), 2); // важное + сводное
+        assert!(stored.narrative.iter().any(|n| n.text == "важное"));
+        assert!(
+            stored
+                .narrative
+                .iter()
+                .any(|n| n.text == "сводное про дубли")
+        );
+        assert!(!stored.narrative.iter().any(|n| n.text == "дубль А"));
+
+        // Несуществующий #id — отчёт, не паника.
+        let out = ConsolidateNarrative
+            .invoke(&ctx, serde_json::json!({"remove": ["#zzzzzz"]}))
+            .await
+            .unwrap();
+        assert!(out.result.contains("Не найдены наблюдения"));
     }
 }

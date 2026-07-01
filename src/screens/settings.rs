@@ -404,6 +404,7 @@ enum FieldId {
     SmNarrativeInPrompt,
     SmPromptCap,
     SmAutoReflect,
+    SmProtocol,
     NotesAutoConsolidate,
     // Интерфейс
     ITheme,
@@ -741,6 +742,11 @@ impl SettingsScreen {
                 FieldId::SmAutoReflect,
                 "Модель себя: авто-рефлексия (кажд. N)",
                 FieldKind::Text(self.config.self_model.auto_reflect_every.to_string()),
+            ),
+            row(
+                FieldId::SmProtocol,
+                "Модель себя: протокол ведения",
+                FieldKind::Toggle(self.config.self_model.maintenance_protocol),
             ),
             row(
                 FieldId::NotesAutoConsolidate,
@@ -1094,6 +1100,10 @@ impl SettingsScreen {
             FieldId::IConfirmKeys => {
                 self.config.interface.confirm_destructive_keys =
                     !self.config.interface.confirm_destructive_keys
+            }
+            FieldId::SmProtocol => {
+                self.config.self_model.maintenance_protocol =
+                    !self.config.self_model.maintenance_protocol
             }
             FieldId::ICopyThoughts => {
                 self.config.copy.copy_thoughts = !self.config.copy.copy_thoughts
@@ -1761,6 +1771,13 @@ fn field_description(id: FieldId) -> Option<&'static str> {
             "Авто-рефлексия: каждые N ответов ассистента модель в фоне сама пересматривает \
              разговор и обновляет «модель себя». 0 — выключено. Работает только в профилях \
              с включёнными инструментами модели себя.",
+        ),
+        FieldId::SmProtocol => Some(
+            "Подмешивать в системный промпт нейтральную к персоне инструкцию: когда \
+             фиксировать изменения инструментами, «мимолётное — в наблюдения», «точность \
+             важнее угодливости». Делает использование инструментов предсказуемым \
+             независимо от персоны. Работает только в профилях с включёнными инструментами \
+             модели себя.",
         ),
         FieldId::NotesAutoConsolidate => Some(
             "Авто-консолидация («сон»): каждые N ответов модель в фоне сама пересматривает \

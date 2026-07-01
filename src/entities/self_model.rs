@@ -88,6 +88,58 @@ pub enum GoalStatus {
     Abandoned,
 }
 
+/// Сколько недавних завершённых/неактуальных целей показывать в полном чтении
+/// (`render_full`) — виден жизненный цикл, но список не растёт бесконечно.
+const CLOSED_GOALS_SHOWN: usize = 5;
+
+/// Результат разрешения ссылки на цель по «ручке» (короткий `#id` или полный UUID).
+/// См. [`SelfModel::match_goal`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum GoalMatch {
+    /// Однозначно найдена цель.
+    One(Uuid),
+    /// Совпадений нет.
+    None,
+    /// Префикс неоднозначен (совпало несколько целей).
+    Ambiguous,
+}
+
+/// Короткий человекочитаемый id цели: первые 6 hex-символов UUID. Показывается в
+/// чтениях и принимается в `complete_goals`/`abandon_goals` (полный UUID тоже). На
+/// десятке целей коллизия практически невозможна, а `match_goal` всё равно ловит
+/// неоднозначность.
+fn short_hex(id: &Uuid) -> String {
+    id.simple().to_string()[..6].to_string()
+}
+
+/// Разрешает «ручку» (полный UUID или короткий hex-префикс, с ведущим `#` или без;
+/// регистронезависимо) среди набора id. Общая логика для целей и наблюдений.
+fn resolve_handle(handle: &str, ids: &[Uuid]) -> GoalMatch {
+    let h = handle.trim().trim_start_matches('#').to_lowercase();
+    if h.is_empty() {
+        return GoalMatch::None;
+    }
+    // Полный UUID (с дефисами или без).
+    if let Ok(u) = Uuid::parse_str(&h) {
+        return if ids.contains(&u) {
+            GoalMatch::One(u)
+        } else {
+            GoalMatch::None
+        };
+    }
+    // Иначе — префикс hex-представления id (первые символы `simple()`).
+    let mut found: Option<Uuid> = None;
+    for id in ids {
+        if id.simple().to_string().starts_with(&h) {
+            if found.is_some() {
+                return GoalMatch::Ambiguous;
+            }
+            found = Some(*id);
+        }
+    }
+    found.map_or(GoalMatch::None, GoalMatch::One)
+}
+
 /// Ручная правка «модели себя» из UI-редактора (`F3`). Применяется сущностью
 /// ([`SelfModel::apply_edit`]); сохраняет оркестратор. Контракт UI↔оркестратор.
 #[derive(Debug, Clone, PartialEq)]
@@ -288,6 +340,15 @@ impl SelfModel {
         }
     }
 
+    /// Убирает инсайты нарратива по id (консолидация: сырые/устаревшие/дубли
+    /// вычищаются после того, как устойчивое свёрнуто в summary/черты/сводный
+    /// инсайт). Возвращает число удалённых.
+    pub fn remove_insights(&mut self, ids: &[Uuid]) -> usize {
+        let before = self.narrative.len();
+        self.narrative.retain(|n| !ids.contains(&n.id));
+        before - self.narrative.len()
+    }
+
     /// Компактный человекочитаемый блок для инъекции в системный промпт.
     /// `None`, если модель пуста. В нарратив идут `narrative_in_prompt` свежих
     /// инсайтов; результат усекается до `max_chars` символов.
@@ -343,6 +404,98 @@ impl SelfModel {
         }
         Some(truncate_chars(out.trim_end(), max_chars))
     }
+
+    /// Разрешает ссылку на цель по «ручке»: полный UUID или короткий hex-префикс
+    /// (с ведущим `#` или без). Регистронезависимо. Ищет только среди целей модели.
+    pub fn match_goal(&self, handle: &str) -> GoalMatch {
+        let ids: Vec<Uuid> = self.goals.iter().map(|g| g.id).collect();
+        resolve_handle(handle, &ids)
+    }
+
+    /// Разрешает ссылку на инсайт нарратива по «ручке» (полный UUID или короткий
+    /// hex-префикс). Для консолидации нарратива (`consolidate_narrative`).
+    pub fn match_insight(&self, handle: &str) -> GoalMatch {
+        let ids: Vec<Uuid> = self.narrative.iter().map(|n| n.id).collect();
+        resolve_handle(handle, &ids)
+    }
+
+    /// Полное человекочитаемое чтение модели — для инструментов (`get_self_model`,
+    /// `reflect`, эхо после правок). В отличие от [`Self::render_for_prompt`]
+    /// (компактная инъекция в системный промпт) **ничего не усекает**, показывает
+    /// весь нарратив и цели с коротким id и статусом — так модель, читающая себя, не
+    /// видит «…» и получает id, необходимые для complete/abandon. Пустую модель
+    /// помечает явно. См. docs/self-model-mvp.md.
+    pub fn render_full(&self) -> String {
+        let mut out = String::from("[Твоя модель себя]\n");
+        if !self.summary.trim().is_empty() {
+            out.push_str("О себе: ");
+            out.push_str(self.summary.trim());
+            out.push('\n');
+        }
+        let active: Vec<&Goal> = self.active_goals().collect();
+        let closed: Vec<&Goal> = self
+            .goals
+            .iter()
+            .filter(|g| g.status != GoalStatus::Active)
+            .collect();
+        if !active.is_empty() || !closed.is_empty() {
+            out.push_str("Цели (ссылайся по #id):\n");
+            for g in &active {
+                out.push_str(&format!(
+                    "- #{} (активна) {}\n",
+                    short_hex(&g.id),
+                    g.description.trim()
+                ));
+            }
+            // Недавние закрытые — компактно, новейшие первыми.
+            for g in closed.iter().rev().take(CLOSED_GOALS_SHOWN) {
+                let st = match g.status {
+                    GoalStatus::Completed => "выполнена",
+                    GoalStatus::Abandoned => "неактуальна",
+                    GoalStatus::Active => "активна",
+                };
+                out.push_str(&format!(
+                    "- #{} ({st}) {}\n",
+                    short_hex(&g.id),
+                    g.description.trim()
+                ));
+            }
+        }
+        let u = &self.user_model;
+        if !u.is_empty() {
+            out.push_str("О собеседнике:");
+            if !u.perceived_traits.is_empty() {
+                out.push_str(" черты: ");
+                out.push_str(&u.perceived_traits.join(", "));
+                out.push(';');
+            }
+            if !u.current_interests.is_empty() {
+                out.push_str(" интересы: ");
+                out.push_str(&u.current_interests.join(", "));
+                out.push(';');
+            }
+            if !u.relationship_dynamic.trim().is_empty() {
+                out.push_str(" отношения: ");
+                out.push_str(u.relationship_dynamic.trim());
+            }
+            out.push('\n');
+        }
+        // Нарратив целиком (новейшее первым) — без усечения, с #id для консолидации.
+        if !self.narrative.is_empty() {
+            out.push_str(&format!(
+                "Наблюдения ({}, ссылайся по #id):\n",
+                self.narrative.len()
+            ));
+            for seg in self.narrative.iter().rev() {
+                out.push_str(&format!("- #{} {}\n", short_hex(&seg.id), seg.text.trim()));
+            }
+        }
+        let body = out.trim_end();
+        if body == "[Твоя модель себя]" {
+            return "(модель себя пока пуста)".to_string();
+        }
+        body.to_string()
+    }
 }
 
 impl UserModel {
@@ -351,6 +504,58 @@ impl UserModel {
             && self.current_interests.is_empty()
             && self.relationship_dynamic.trim().is_empty()
     }
+
+    /// Добавляет черты (дедуп без учёта регистра, пустые отбрасываются). Возвращает,
+    /// изменился ли список. **Merge, а не замена** — правка не перетирает прежнее.
+    pub fn add_traits(&mut self, items: Vec<String>) -> bool {
+        merge_into(&mut self.perceived_traits, items)
+    }
+    /// Убирает черты по совпадению (без учёта регистра). Возвращает, изменилось ли.
+    pub fn remove_traits(&mut self, items: &[String]) -> bool {
+        remove_from(&mut self.perceived_traits, items)
+    }
+    /// Добавляет интересы (дедуп без учёта регистра). Возвращает, изменилось ли.
+    pub fn add_interests(&mut self, items: Vec<String>) -> bool {
+        merge_into(&mut self.current_interests, items)
+    }
+    /// Убирает интересы по совпадению (без учёта регистра). Возвращает, изменилось ли.
+    pub fn remove_interests(&mut self, items: &[String]) -> bool {
+        remove_from(&mut self.current_interests, items)
+    }
+}
+
+/// Добавляет элементы в список с дедупом без учёта регистра (Unicode). Пустые после
+/// trim отбрасываются. Возвращает `true`, если что-то добавилось.
+fn merge_into(list: &mut Vec<String>, items: Vec<String>) -> bool {
+    let mut changed = false;
+    for it in items {
+        let it = it.trim().to_string();
+        if it.is_empty() {
+            continue;
+        }
+        let lc = it.to_lowercase();
+        if !list.iter().any(|x| x.to_lowercase() == lc) {
+            list.push(it);
+            changed = true;
+        }
+    }
+    changed
+}
+
+/// Убирает из списка элементы, совпадающие (без учёта регистра) с любым из `items`.
+/// Возвращает `true`, если список изменился.
+fn remove_from(list: &mut Vec<String>, items: &[String]) -> bool {
+    let targets: Vec<String> = items
+        .iter()
+        .map(|s| s.trim().to_lowercase())
+        .filter(|s| !s.is_empty())
+        .collect();
+    if targets.is_empty() {
+        return false;
+    }
+    let before = list.len();
+    list.retain(|x| !targets.contains(&x.to_lowercase()));
+    list.len() != before
 }
 
 /// Усечение по символам (не байтам — кириллица) с многоточием.
@@ -547,5 +752,99 @@ mod tests {
         let r = m.render_for_prompt(50, p().narrative_in_prompt).unwrap();
         assert_eq!(r.chars().count(), 50);
         assert!(r.ends_with('…'));
+    }
+
+    #[test]
+    fn render_full_shows_goal_ids_and_is_not_truncated() {
+        let mut m = SelfModel::new(Uuid::new_v4());
+        m.summary = "я".repeat(500);
+        m.add_goal("активная цель");
+        m.add_goal("завершённая цель");
+        let done = m.goals[1].id;
+        m.set_goal_status(done, GoalStatus::Completed);
+        // Много инсайтов — полное чтение показывает все и без «…».
+        for i in 0..12 {
+            m.add_insight(format!("инсайт {i}"), 50);
+        }
+
+        let full = m.render_full();
+        assert!(!full.ends_with('…'), "полное чтение не усекается");
+        // Активная цель — с коротким id и статусом.
+        let short = short_hex(&m.goals[0].id);
+        assert!(full.contains(&format!("#{short} (активна) активная цель")));
+        // Завершённая тоже видна (жизненный цикл).
+        assert!(full.contains("(выполнена) завершённая цель"));
+        // Весь нарратив (не только narrative_in_prompt=3), каждый с #id.
+        assert_eq!(full.matches("инсайт ").count(), 12);
+        assert!(full.contains("Наблюдения (12"));
+        // Полное описание себя целиком (не обрезано до prompt_cap).
+        assert!(full.contains(&"я".repeat(500)));
+    }
+
+    #[test]
+    fn match_insight_and_remove_insights() {
+        let mut m = SelfModel::new(Uuid::new_v4());
+        m.add_insight("первое", 50);
+        m.add_insight("второе", 50);
+        m.add_insight("третье", 50);
+        let ids: Vec<Uuid> = m.narrative.iter().map(|n| n.id).collect();
+
+        // Резолвинг инсайта по короткому #id.
+        let short = short_hex(&ids[1]);
+        assert_eq!(
+            m.match_insight(&format!("#{short}")),
+            GoalMatch::One(ids[1])
+        );
+        assert_eq!(m.match_insight("zzzzzz"), GoalMatch::None);
+
+        // Удаление двух инсайтов (консолидация): остаётся один.
+        let removed = m.remove_insights(&[ids[0], ids[2]]);
+        assert_eq!(removed, 2);
+        assert_eq!(m.narrative.len(), 1);
+        assert_eq!(m.narrative[0].text, "второе");
+    }
+
+    #[test]
+    fn render_full_on_empty_marks_empty() {
+        let m = SelfModel::new(Uuid::new_v4());
+        assert_eq!(m.render_full(), "(модель себя пока пуста)");
+    }
+
+    #[test]
+    fn match_goal_by_prefix_full_and_ambiguous() {
+        let mut m = SelfModel::new(Uuid::new_v4());
+        m.add_goal("первая");
+        let id = m.goals[0].id;
+        // Полный UUID.
+        assert_eq!(m.match_goal(&id.to_string()), GoalMatch::One(id));
+        // Короткий hex-префикс, с ведущим '#'.
+        let short = short_hex(&id);
+        assert_eq!(m.match_goal(&format!("#{short}")), GoalMatch::One(id));
+        // Регистронезависимо.
+        assert_eq!(m.match_goal(&short.to_uppercase()), GoalMatch::One(id));
+        // Несуществующий.
+        assert_eq!(m.match_goal("zzzzzz"), GoalMatch::None);
+        assert_eq!(m.match_goal(""), GoalMatch::None);
+        // Пустой префикс (после снятия '#') совпал бы со всеми → неоднозначно.
+        m.add_goal("вторая");
+        assert_eq!(m.match_goal("#"), GoalMatch::None); // пусто → None, не Ambiguous
+    }
+
+    #[test]
+    fn user_model_merge_add_remove() {
+        let mut u = UserModel::default();
+        assert!(u.add_traits(vec!["добрый".into(), "Добрый".into(), "  ".into()]));
+        // Дедуп без учёта регистра + отброс пустого.
+        assert_eq!(u.perceived_traits, vec!["добрый".to_string()]);
+        // Новая правка не перетирает — merge.
+        assert!(u.add_traits(vec!["прямолинейный".into()]));
+        assert_eq!(u.perceived_traits.len(), 2);
+        // Повтор уже известного — без изменений.
+        assert!(!u.add_traits(vec!["добрый".into()]));
+        // Удаление по совпадению без учёта регистра.
+        assert!(u.remove_traits(&["ДОБРЫЙ".into()]));
+        assert_eq!(u.perceived_traits, vec!["прямолинейный".to_string()]);
+        // Удаление отсутствующего — no-op.
+        assert!(!u.remove_traits(&["нет такого".into()]));
     }
 }
