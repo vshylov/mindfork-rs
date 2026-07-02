@@ -1343,7 +1343,9 @@ fn format_rag_sources(sources: &[crate::entities::rag::RagSourceInfo]) -> String
             "\n• {} — {} фрагм. ({})",
             s.source,
             s.chunks,
-            s.created_at.format("%Y-%m-%d")
+            s.created_at
+                .with_timezone(&chrono::Local)
+                .format("%Y-%m-%d")
         ));
     }
     out
