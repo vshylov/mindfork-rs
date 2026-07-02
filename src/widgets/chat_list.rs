@@ -106,14 +106,18 @@ impl ChatListState {
     }
 
     /// Обновляет снимок списка (после изменений набора чатов), сохраняя выделение
-    /// по возможности на том же чате.
+    /// по возможности на том же чате. Если выделенный чат исчез (напр. был удалён),
+    /// выделение остаётся на **той же позиции** (следующий по списку чат, а при
+    /// удалении последнего — новый последний), а не прыгает на первый элемент —
+    /// как принято в списках.
     pub fn set_chats(&mut self, chats: Vec<ChatSummary>) {
         let current = self.selected_id();
+        let prev_index = self.selected;
         self.all = chats;
         let visible = self.visible();
         self.selected = current
             .and_then(|id| visible.iter().position(|c| c.id == id))
-            .unwrap_or(0);
+            .unwrap_or(prev_index);
         self.clamp_selection();
     }
 
@@ -943,5 +947,56 @@ mod tests {
         s.set_chats(chats);
         assert_eq!(s.selected_id(), sel);
         let _ = b_id;
+    }
+
+    #[test]
+    fn deleting_selected_keeps_position_not_first() {
+        // Удаление выделенного чата (переэмит списка без него) оставляет выделение
+        // на той же позиции — под ним оказывается следующий по списку чат, а не
+        // происходит прыжок на первый элемент.
+        let chats = vec![chat("A"), chat("B"), chat("C")];
+        let mut s = ChatListState::new(chats, None);
+        s.on_key(key(KeyCode::Down)); // выделение на позиции 1
+        assert_eq!(s.selected, 1);
+        // Порядок берём из фактического `visible` (сортировка может отличаться от
+        // порядка ввода) — так тест не зависит от близких таймстампов.
+        let victim_id = s.selected_id().unwrap();
+        let next_id = s.visible()[2].id; // станет под позицией 1 после удаления
+
+        let remaining: Vec<ChatSummary> = s
+            .visible()
+            .into_iter()
+            .filter(|c| c.id != victim_id)
+            .collect();
+        s.set_chats(remaining);
+
+        assert_eq!(s.selected, 1, "позиция выделения сохраняется");
+        assert_eq!(
+            s.selected_id(),
+            Some(next_id),
+            "под выделением — бывший следующий чат, а не первый"
+        );
+    }
+
+    #[test]
+    fn deleting_last_selected_clamps_to_new_last() {
+        // Удаление выделенного последнего чата уводит выделение на новый последний
+        // (а не на первый).
+        let chats = vec![chat("A"), chat("B"), chat("C")];
+        let mut s = ChatListState::new(chats, None);
+        s.on_key(key(KeyCode::End)); // выделение на последнем (позиция 2)
+        assert_eq!(s.selected, 2);
+        let victim_id = s.selected_id().unwrap();
+        let new_last_id = s.visible()[1].id; // станет новым последним
+
+        let remaining: Vec<ChatSummary> = s
+            .visible()
+            .into_iter()
+            .filter(|c| c.id != victim_id)
+            .collect();
+        s.set_chats(remaining);
+
+        assert_eq!(s.selected, 1, "выделение прижато к новому последнему");
+        assert_eq!(s.selected_id(), Some(new_last_id));
     }
 }
