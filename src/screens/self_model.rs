@@ -206,7 +206,14 @@ impl SelfModelScreen {
             rows.push(header(&format!("Наблюдения ({})", m.narrative.len())));
         }
         for seg in m.narrative.iter().rev() {
-            let date = seg.created_at.format("%Y-%m-%d").to_string();
+            // Дата — в локальной зоне: `created_at` хранится в UTC, и без перевода
+            // наблюдение, добавленное после локальной полуночи, показывало бы
+            // вчерашний день (в зонах впереди UTC ещё идут «вчерашние» сутки).
+            let date = seg
+                .created_at
+                .with_timezone(&chrono::Local)
+                .format("%Y-%m-%d")
+                .to_string();
             rows.push((
                 Line::from(vec![
                     dim(format!("[{date}] ")),
