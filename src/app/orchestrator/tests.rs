@@ -1551,6 +1551,27 @@ async fn run_turn_live(
     (out, tools)
 }
 
+/// Как [`run_turn_live`], но собирает пары (имя инструмента, результат) — чтобы
+/// проверить текст результата (напр. срабатывание ворот `add_insight`).
+async fn run_turn_capture(
+    cmd_tx: &UnboundedSender<AppCommand>,
+    evt_rx: &mut UnboundedReceiver<AppEvent>,
+    text: &str,
+) -> (String, Vec<(String, String)>) {
+    cmd_tx.send(AppCommand::SendMessage(text.into())).unwrap();
+    let mut out = String::new();
+    let mut calls = Vec::new();
+    while let Some(ev) = evt_rx.recv().await {
+        match &ev {
+            AppEvent::Chunk { text, .. } => out.push_str(text),
+            AppEvent::ToolCall { name, result, .. } => calls.push((name.clone(), result.clone())),
+            AppEvent::Finished { .. } => break,
+            _ => {}
+        }
+    }
+    (out, calls)
+}
+
 /// End-to-end зонд SelfModel на живой модели (две сессии, один профиль):
 /// 1) сессия 1 — сообщаем факты о себе и просим зафиксировать в «модели себя»
 ///    (ожидаем вызовы `update_self_model`/`update_user_model`, запись в БД);
@@ -1615,11 +1636,13 @@ async fn self_model_e2e_live() {
     );
 }
 
-/// End-to-end зонд нарратива (Tier 2): просим модель зафиксировать наблюдение
-/// через `add_insight` — ожидаем непустой нарратив в БД. `#[ignore]`, вручную.
+/// End-to-end зонд наблюдений: просим модель зафиксировать наблюдение через
+/// `add_insight` — ожидаем self-заметку (@self) в БД (нарратив переехал в заметки,
+/// Ярус 1 «нарратив как заметки»). `#[ignore]`, вручную.
 #[tokio::test]
 #[ignore = "requires a running OpenAI-compatible server (MINDFORK_ENGINE_URL)"]
 async fn self_model_insight_e2e_live() {
+    use crate::features::tools::notes::SELF_NOTE_TAG;
     let Some(backend) = live_backend() else {
         eprintln!("skip: MINDFORK_ENGINE_URL not set");
         return;
@@ -1632,7 +1655,7 @@ async fn self_model_insight_e2e_live() {
         &cmd_tx,
         &mut evt_rx,
         "Я заметил, что иногда прошу кратко, а иногда — подробно. \
-         Зафиксируй это наблюдение в своём нарративе: вызови инструмент add_insight \
+         Зафиксируй это наблюдение в своих наблюдениях: вызови инструмент add_insight \
          с коротким описанием этого противоречия.",
     )
     .await;
@@ -1641,13 +1664,16 @@ async fn self_model_insight_e2e_live() {
     cmd_tx.send(AppCommand::Quit).unwrap();
     handle.await.unwrap();
 
+    // Наблюдение — self-заметка (@self), а не запись в блобе модели.
     let reopened = Storage::open(Paths::with_root(&root)).unwrap();
-    let model = reopened.db().self_model_get(pid).unwrap();
-    eprintln!("self_model в БД: {model:#?}");
-    let model = model.expect("ожидали сохранённую модель себя");
+    let self_notes = reopened
+        .db()
+        .note_list(pid, None, &[SELF_NOTE_TAG.to_string()], None)
+        .unwrap();
+    eprintln!("self-заметки (наблюдения) в БД: {self_notes:#?}");
     assert!(
-        !model.narrative.is_empty(),
-        "ожидали хотя бы один инсайт в нарративе (вызов add_insight)"
+        !self_notes.is_empty(),
+        "ожидали хотя бы одну self-заметку (@self) — наблюдение от add_insight"
     );
     assert!(
         tools.iter().any(|t| t == "add_insight"),
@@ -1682,14 +1708,21 @@ async fn auto_reflect_e2e_live() {
     )
     .await;
 
-    // Ждём, пока фоновая рефлексия запишет модель себя (опрос БД до ~60с).
-    let mut found = None;
+    // Ждём, пока фоновая рефлексия что-то запишет (опрос БД до ~60с): блоб модели
+    // (summary/цели/собеседник) ИЛИ наблюдение self-заметкой (@self, Ярус 1).
+    use crate::features::tools::notes::SELF_NOTE_TAG;
+    let mut model = None;
+    let mut self_notes = Vec::new();
     for _ in 0..120 {
         let db = Storage::open(Paths::with_root(&root)).unwrap();
-        if let Some(m) = db.db().self_model_get(pid).unwrap()
-            && !m.is_empty()
-        {
-            found = Some(m);
+        let m = db.db().self_model_get(pid).unwrap();
+        self_notes = db
+            .db()
+            .note_list(pid, None, &[SELF_NOTE_TAG.to_string()], None)
+            .unwrap();
+        let blob_nonempty = m.as_ref().map(|m| !m.is_empty()).unwrap_or(false);
+        if blob_nonempty || !self_notes.is_empty() {
+            model = m;
             break;
         }
         drop(db);
@@ -1699,10 +1732,106 @@ async fn auto_reflect_e2e_live() {
     cmd_tx.send(AppCommand::Quit).unwrap();
     handle.await.unwrap();
 
-    eprintln!("auto-reflect: self_model в БД: {found:#?}");
+    eprintln!("auto-reflect: self_model={model:#?}\nself-заметки={self_notes:#?}");
+    let blob_nonempty = model.as_ref().map(|m| !m.is_empty()).unwrap_or(false);
     assert!(
-        found.is_some(),
-        "ожидали, что фоновая авто-рефлексия заполнит модель себя"
+        blob_nonempty || !self_notes.is_empty(),
+        "ожидали, что фоновая авто-рефлексия заполнит модель себя (блоб или наблюдение-заметку)"
+    );
+}
+
+/// End-to-end зонд **ворот** (ядро гипотезы Яруса 1 «нарратив как заметки»): модель
+/// записывает наблюдение (`add_insight` → self-заметка @self), затем почти-дубль —
+/// ворота `add_insight` показывают похожее существующее наблюдение с подсказкой
+/// переписать его через `note_revise`/`note_supersede` вместо копии. Ассертим
+/// **механизм** (self-заметки создаются; ворота срабатывают детерминированно —
+/// эмбеддер в тестах `MockEmbedder`, наблюдение #1 уже есть); **решение** модели
+/// интегрировать печатаем для go/no-go (поведение нестабильно). Запуск (нужен
+/// живой сервер + возможно эмбеддер):
+/// `MINDFORK_ENGINE_URL=…/v1 cargo test self_model_gate_e2e_live -- --ignored --nocapture --test-threads=1`.
+#[tokio::test]
+#[ignore = "requires a running OpenAI-compatible server (MINDFORK_ENGINE_URL)"]
+async fn self_model_gate_e2e_live() {
+    use crate::features::tools::notes::SELF_NOTE_TAG;
+    let Some(backend) = live_backend() else {
+        eprintln!("skip: MINDFORK_ENGINE_URL not set");
+        return;
+    };
+    let (_d, cmd_tx, mut evt_rx, handle) = spawn_orch(Some(backend));
+    let root = _d.path().to_path_buf();
+    let pid = enable_all_tools(&cmd_tx, &mut evt_rx).await;
+
+    // Сессия 1: записываем наблюдение → self-заметка #1.
+    let (_t1, tools1) = run_turn_live(
+        &cmd_tx,
+        &mut evt_rx,
+        "Запиши в свои наблюдения (вызови add_insight): я склонен просить краткие ответы.",
+    )
+    .await;
+    eprintln!("сессия 1: инструменты={tools1:?}");
+
+    // Сессия 2: почти-дубль — ворота add_insight должны показать наблюдение #1.
+    let (t2, calls2) = run_turn_capture(
+        &cmd_tx,
+        &mut evt_rx,
+        "Запиши ещё одно, очень похожее наблюдение (вызови add_insight): пользователь \
+         предпочитает лаконичные, краткие ответы. Если инструмент покажет похожее \
+         наблюдение — реши сам, переписать ли его (note_revise/note_supersede) или \
+         оставить оба.",
+    )
+    .await;
+    eprintln!("сессия 2: текст={t2:?}\nвызовы={calls2:#?}");
+
+    cmd_tx.send(AppCommand::Quit).unwrap();
+    handle.await.unwrap();
+
+    // Механизм: add_insight в сессии 1 создал self-заметку (@self).
+    assert!(
+        tools1.iter().any(|t| t == "add_insight"),
+        "сессия 1: ожидали вызов add_insight"
+    );
+    let self_notes = Storage::open(Paths::with_root(&root))
+        .unwrap()
+        .db()
+        .note_list(pid, None, &[SELF_NOTE_TAG.to_string()], None)
+        .unwrap();
+    eprintln!(
+        "self-заметок в БД: {} — {:#?}",
+        self_notes.len(),
+        self_notes
+            .iter()
+            .map(|n| n.content.clone())
+            .collect::<Vec<_>>()
+    );
+    assert!(
+        !self_notes.is_empty(),
+        "ожидали self-заметки (@self) от add_insight"
+    );
+
+    // Ворота: если модель вызвала add_insight в сессии 2, его результат ОБЯЗАН
+    // показать похожее наблюдение (детерминированно: эмбеддер тестовый, наблюдение
+    // #1 уже есть). Если модель пошла напрямую в note_revise/supersede (тоже
+    // интеграция) — ворот в add_insight нет, и это ок.
+    let gate = calls2.iter().find(|(n, _)| n == "add_insight");
+    if let Some((_, result)) = gate {
+        assert!(
+            result.contains("Похожие наблюдения"),
+            "ворота add_insight должны были показать похожее наблюдение (ядро гипотезы): {result:?}"
+        );
+    }
+    let integrated = calls2
+        .iter()
+        .any(|(n, _)| n == "note_revise" || n == "note_supersede");
+    eprintln!(
+        "ворота показали похожее: {}; модель интегрировала (note_revise/supersede): {integrated}",
+        gate.is_some()
+    );
+    // Модель должна была как-то тронуть наблюдения (иначе гипотеза не проверяется).
+    assert!(
+        calls2
+            .iter()
+            .any(|(n, _)| n == "add_insight" || n == "note_revise" || n == "note_supersede"),
+        "сессия 2: ожидали add_insight/note_revise/note_supersede"
     );
 }
 
