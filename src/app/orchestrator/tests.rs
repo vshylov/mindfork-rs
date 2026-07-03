@@ -1981,6 +1981,80 @@ async fn self_model_gate_e2e_live() {
     );
 }
 
+/// End-to-end зонд **графа над наблюдениями** (Ярус 2, шаг B): модель записывает два
+/// соотносящихся наблюдения, затем связывает их (`note_link`). Ассертим механизм
+/// (наблюдения-заметки создаются; модель осмотрела модель себя / связала); появление
+/// связи в графе печатаем для go/no-go (поведение нестабильно). Инъекция по
+/// релевантности проверена детерминированно (`injection_recent_surfaces_relevant_over_fresh`)
+/// + ручной мульти-сессионный прогон пользователя. `#[ignore]`, вручную:
+/// `MINDFORK_ENGINE_URL=…/v1 MINDFORK_EMBED_URL=…/v1 cargo test self_model_graph_e2e_live -- --ignored --nocapture --test-threads=1`.
+#[tokio::test]
+#[ignore = "requires a running OpenAI-compatible server (MINDFORK_ENGINE_URL)"]
+async fn self_model_graph_e2e_live() {
+    use crate::features::tools::notes::SELF_NOTE_TAG;
+    let Some((_d, cmd_tx, mut evt_rx, handle)) = spawn_orch_live() else {
+        eprintln!("skip: MINDFORK_ENGINE_URL not set");
+        return;
+    };
+    let root = _d.path().to_path_buf();
+    let pid = enable_all_tools(&cmd_tx, &mut evt_rx).await;
+
+    // Два соотносящихся (противоречащих) наблюдения.
+    let (_t1, tools1) = run_turn_live(
+        &cmd_tx,
+        &mut evt_rx,
+        "Запиши наблюдение (add_insight): я ценю краткость в ответах.",
+    )
+    .await;
+    let (_t2, tools2) = run_turn_live(
+        &cmd_tx,
+        &mut evt_rx,
+        "Запиши ещё одно наблюдение (add_insight): но иногда я даю слишком многословные ответы.",
+    )
+    .await;
+    eprintln!("наблюдения: {tools1:?} + {tools2:?}");
+
+    // Просим осмотреть модель себя и связать противоречащие наблюдения.
+    let (t3, calls3) = run_turn_capture(
+        &cmd_tx,
+        &mut evt_rx,
+        "Посмотри свои наблюдения (get_self_model). Если два из них противоречат друг \
+         другу — свяжи их инструментом note_link (relation=contradicts) по полному id.",
+    )
+    .await;
+    eprintln!("связывание: текст={t3:?}\nвызовы={calls3:#?}");
+
+    cmd_tx.send(AppCommand::Quit).unwrap();
+    handle.await.unwrap();
+
+    let reopened = Storage::open(Paths::with_root(&root)).unwrap();
+    let self_notes = reopened
+        .db()
+        .note_list(pid, None, &[SELF_NOTE_TAG.to_string()], None)
+        .unwrap();
+    let links = reopened.db().note_links_all(pid).unwrap();
+    eprintln!(
+        "self-заметок: {}; связей в графе наблюдений: {} — {links:?}",
+        self_notes.len(),
+        links.len()
+    );
+
+    // Механизм: наблюдения-заметки созданы.
+    assert!(self_notes.len() >= 2, "ожидали ≥2 наблюдения-заметки");
+    let linked = calls3.iter().any(|(n, _)| n == "note_link");
+    eprintln!(
+        "модель вызвала note_link: {linked}; связей появилось: {}",
+        links.len()
+    );
+    // Модель должна была осмотреть себя и/или связать (иначе граф не проверен).
+    assert!(
+        calls3
+            .iter()
+            .any(|(n, _)| n == "get_self_model" || n == "note_link"),
+        "сессия 3: ожидали get_self_model/note_link"
+    );
+}
+
 #[tokio::test]
 async fn update_self_model_persists_and_reemits() {
     use crate::entities::self_model::SelfModelEdit;
