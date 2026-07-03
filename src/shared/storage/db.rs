@@ -227,6 +227,22 @@ impl Db {
         Ok(rows)
     }
 
+    /// Заметка по id в рамках профиля (включая замещённую) — для чтения тегов при
+    /// замещении/слиянии: новая версия наследует теги исходной (в т.ч. `@self`, чтобы
+    /// self-заметка не «выпала» в пользовательскую выдачу). `None` — не найдена/чужая.
+    pub fn note_get(&self, profile_id: Uuid, id: Uuid) -> Result<Option<Note>> {
+        let conn = self.conn.lock().unwrap();
+        let note = conn
+            .query_row(
+                "SELECT n.id, n.profile_id, n.content, n.tags, n.created_at, n.updated_at
+                 FROM notes n WHERE n.id = ?1 AND n.profile_id = ?2",
+                params![id.to_string(), profile_id.to_string()],
+                row_to_note,
+            )
+            .optional()?;
+        Ok(note)
+    }
+
     // ---------- граф связей и «шрамы» (Ярус 2) ----------
 
     /// Заметка существует у профиля и не замещена (для проверки концов связи).

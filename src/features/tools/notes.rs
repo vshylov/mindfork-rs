@@ -584,7 +584,15 @@ impl Tool for NoteSupersede {
                 "Заметка не найдена (id={old_id})."
             )));
         }
-        let new_id = create_note(ctx, content, Vec::new()).await?;
+        // Новая версия наследует теги замещаемой (в т.ч. @self — иначе self-заметка
+        // при замещении «выпала» бы в пользовательскую выдачу).
+        let tags = ctx
+            .storage
+            .db()
+            .note_get(ctx.profile_id, old_id)?
+            .map(|n| n.tags)
+            .unwrap_or_default();
+        let new_id = create_note(ctx, content, tags).await?;
         ctx.storage
             .db()
             .note_supersede_mark(ctx.profile_id, old_id, new_id)?;
@@ -646,7 +654,19 @@ impl Tool for NoteMerge {
         if active.len() < 2 {
             anyhow::bail!("нужно минимум две существующие заметки для объединения");
         }
-        let new_id = create_note(ctx, content, Vec::new()).await?;
+        // Объединённая заметка наследует union тегов исходных (в т.ч. @self —
+        // слияние self-заметок остаётся self-заметкой, скрытой из recall).
+        let mut tags: Vec<String> = Vec::new();
+        for old in &active {
+            if let Ok(Some(n)) = ctx.storage.db().note_get(ctx.profile_id, *old) {
+                for t in n.tags {
+                    if !tags.contains(&t) {
+                        tags.push(t);
+                    }
+                }
+            }
+        }
+        let new_id = create_note(ctx, content, tags).await?;
         for old in &active {
             ctx.storage
                 .db()
@@ -1315,6 +1335,75 @@ mod tests {
                 .await
                 .is_err()
         );
+    }
+
+    #[tokio::test]
+    async fn supersede_preserves_tags() {
+        // Замещение self-заметки сохраняет тег @self — новая версия остаётся скрытой
+        // из пользовательского recall (иначе «выпала» бы в выдачу).
+        let profile = Uuid::new_v4();
+        let (_d, storage, ctx) = ctx_with_storage(profile);
+        storage
+            .db()
+            .note_insert(&Note::new(
+                profile,
+                "версия 1",
+                vec![SELF_NOTE_TAG.to_string()],
+            ))
+            .unwrap();
+        let old = storage
+            .db()
+            .note_list(profile, None, &[SELF_NOTE_TAG.to_string()], None)
+            .unwrap()[0]
+            .id;
+        NoteSupersede
+            .invoke(
+                &ctx,
+                serde_json::json!({"old_id": old.to_string(), "content": "версия 2"}),
+            )
+            .await
+            .unwrap();
+        let self_notes = storage
+            .db()
+            .note_list(profile, None, &[SELF_NOTE_TAG.to_string()], None)
+            .unwrap();
+        assert_eq!(self_notes.len(), 1);
+        assert_eq!(self_notes[0].content, "версия 2");
+        // И не всплывает в обычном recall.
+        let out = NoteRecall
+            .invoke(&ctx, serde_json::json!({}))
+            .await
+            .unwrap();
+        assert!(out.result.contains("не найдены"));
+    }
+
+    #[tokio::test]
+    async fn merge_unions_tags() {
+        let profile = Uuid::new_v4();
+        let (_d, storage, ctx) = ctx_with_storage(profile);
+        storage
+            .db()
+            .note_insert(&Note::new(profile, "aaa", vec!["x".into()]))
+            .unwrap();
+        storage
+            .db()
+            .note_insert(&Note::new(profile, "bbb", vec!["y".into()]))
+            .unwrap();
+        let ids: Vec<String> = storage
+            .db()
+            .note_list(profile, None, &[], None)
+            .unwrap()
+            .iter()
+            .map(|n| n.id.to_string())
+            .collect();
+        NoteMerge
+            .invoke(&ctx, serde_json::json!({"ids": ids, "content": "ccc"}))
+            .await
+            .unwrap();
+        let merged = storage.db().note_list(profile, None, &[], None).unwrap();
+        assert_eq!(merged.len(), 1);
+        assert!(merged[0].tags.contains(&"x".to_string()));
+        assert!(merged[0].tags.contains(&"y".to_string()));
     }
 
     #[tokio::test]
