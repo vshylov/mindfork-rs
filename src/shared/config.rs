@@ -628,6 +628,12 @@ pub struct NotesSettings {
     /// связывает родственное). `0` — выключено (по умолчанию). Срабатывает только в
     /// профилях с включёнными инструментами заметок.
     pub auto_consolidate_every: usize,
+    /// Показывать ли наблюдения «о себе» (`@self`) в общем `note_recall` — с пометкой
+    /// `[о себе]`. По умолчанию **выключено**: память о себе ≠ память о собеседнике
+    /// (решение Яруса 1). Тумблер даёт «полное смешение выдачи» (Ярус 3, Путь 2) для
+    /// проверки, безопасно ли это; при выключенном self-заметки скрыты, как раньше.
+    /// См. docs/narrative-as-notes.md (Ярус 3, Путь 2).
+    pub recall_includes_self: bool,
 }
 
 /// Тема оформления TUI. Реальное применение в виджетах — на M9 (`shared/theme.rs`);
@@ -792,6 +798,9 @@ mod tests {
         // Протокол ведения модели себя включён по умолчанию, авто-рефлексия — нет.
         assert!(c.self_model.maintenance_protocol);
         assert_eq!(c.self_model.auto_reflect_every, 0);
+        // Заметки: авто-консолидация выкл, self-заметки в recall скрыты (Ярус 3, Путь 2).
+        assert_eq!(c.notes.auto_consolidate_every, 0);
+        assert!(!c.notes.recall_includes_self);
         assert_eq!(c.rag.chunk_overlap_chars, DEFAULT_CHUNK_OVERLAP_CHARS);
         assert_eq!(c.rag.chunk_max_chars, DEFAULT_CHUNK_MAX_CHARS);
         assert!(c.interface.spellcheck_enabled);

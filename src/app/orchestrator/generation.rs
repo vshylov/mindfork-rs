@@ -240,6 +240,7 @@ impl Orchestrator {
                     &self.config.rag,
                 ),
                 self_model_params,
+                recall_includes_self: self.config.notes.recall_includes_self,
             };
         }
 

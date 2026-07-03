@@ -234,9 +234,10 @@ fn related_block(ctx: &ToolContext, hits: &[Note]) -> Option<String> {
     }
 }
 
-/// Substring/тег-выборка **пользовательских** заметок (без self-заметок): читаем без
-/// лимита, отбрасываем self-заметки, затем усечение — иначе self-заметки заняли бы
-/// слоты лимита и вытеснили пользовательские из выдачи.
+/// Substring/тег-выборка заметок для `note_recall`: читаем без лимита, **отбрасываем
+/// self-заметки** (кроме случая `ctx.recall_includes_self` — Ярус 3, Путь 2), затем
+/// усечение — иначе self-заметки заняли бы слоты лимита и вытеснили пользовательские
+/// из выдачи.
 fn list_user_notes(
     ctx: &ToolContext,
     query: Option<&str>,
@@ -247,7 +248,9 @@ fn list_user_notes(
         .storage
         .db()
         .note_list(ctx.profile_id, query, tags, None)?;
-    notes.retain(|n| !is_self_note(n));
+    if !ctx.recall_includes_self {
+        notes.retain(|n| !is_self_note(n));
+    }
     if let Some(l) = limit {
         notes.truncate(l);
     }
@@ -518,8 +521,10 @@ async fn semantic_recall(
     let mut notes: Vec<Note> = hits
         .into_iter()
         .map(|(n, _)| n)
+        // self-заметки исключаются, кроме `recall_includes_self` (Ярус 3, Путь 2).
         .filter(|n| {
-            !is_self_note(n) && (tags.is_empty() || tags.iter().all(|t| n.tags.contains(t)))
+            (ctx.recall_includes_self || !is_self_note(n))
+                && (tags.is_empty() || tags.iter().all(|t| n.tags.contains(t)))
         })
         .collect();
     notes.truncate(want);
@@ -531,15 +536,31 @@ async fn semantic_recall(
 /// `note_supersede` (в т.ч. кросс-органно: связать пользовательскую заметку с
 /// наблюдением «о себе», Ярус 3). Раньше id не выводился, и заметки из recall были
 /// неадресуемы, хотя описание `note_link` обещало «id из note_recall».
+///
+/// Наблюдения «о себе» (`@self`, попадают в выдачу лишь при `recall_includes_self` —
+/// Ярус 3, Путь 2) помечаются префиксом `[о себе]`, а служебный тег `@self` из
+/// показа тегов убирается (пометка его заменяет).
 fn format_notes(notes: &[Note]) -> ToolOutcome {
     if notes.is_empty() {
         return ToolOutcome::text("Заметки не найдены.");
     }
     let mut out = format!("Найдено заметок: {}\n", notes.len());
     for n in notes {
-        out.push_str(&format!("- (id={}) {}", n.id, n.content));
-        if !n.tags.is_empty() {
-            out.push_str(&format!("  [{}]", n.tags.join(", ")));
+        let mark = if is_self_note(n) {
+            "[о себе] "
+        } else {
+            ""
+        };
+        out.push_str(&format!("- (id={}) {mark}{}", n.id, n.content));
+        // Служебный тег @self скрываем — его роль играет пометка [о себе].
+        let tags: Vec<&str> = n
+            .tags
+            .iter()
+            .filter(|t| t.as_str() != SELF_NOTE_TAG)
+            .map(String::as_str)
+            .collect();
+        if !tags.is_empty() {
+            out.push_str(&format!("  [{}]", tags.join(", ")));
         }
         out.push('\n');
     }
@@ -1140,6 +1161,45 @@ mod tests {
             .unwrap();
         assert!(out.result.contains("любит чай"));
         assert!(!out.result.contains("сам люблю чай"));
+    }
+
+    #[tokio::test]
+    async fn recall_includes_self_notes_when_enabled() {
+        // Ярус 3, Путь 2: при recall_includes_self self-заметки (@self) ВХОДЯТ в общий
+        // note_recall с пометкой [о себе] (обе ветки: подстрочная и семантическая);
+        // служебный тег @self в выводе скрыт.
+        let profile = Uuid::new_v4();
+        let (_d, storage, mut ctx) = ctx_with_storage(profile);
+        ctx.recall_includes_self = true;
+        NoteSave
+            .invoke(&ctx, serde_json::json!({"content": "любит чай"}))
+            .await
+            .unwrap();
+        storage
+            .db()
+            .note_insert(&Note::new(
+                profile,
+                "сам люблю чай",
+                vec![SELF_NOTE_TAG.to_string()],
+            ))
+            .unwrap();
+
+        // Подстрочный путь (без query).
+        let out = NoteRecall
+            .invoke(&ctx, serde_json::json!({}))
+            .await
+            .unwrap();
+        assert!(out.result.contains("любит чай"));
+        assert!(out.result.contains("[о себе] сам люблю чай"));
+        // Служебный тег @self в показе тегов скрыт (его заменяет пометка).
+        assert!(!out.result.contains("@self"));
+
+        // Семантический путь (query + эмбеддер).
+        let out = NoteRecall
+            .invoke(&ctx, serde_json::json!({"query": "чай"}))
+            .await
+            .unwrap();
+        assert!(out.result.contains("[о себе] сам люблю чай"));
     }
 
     #[tokio::test]

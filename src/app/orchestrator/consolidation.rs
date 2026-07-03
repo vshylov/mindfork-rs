@@ -133,6 +133,7 @@ impl Orchestrator {
             embedder: self.engines.embedder(),
             chunk_params: crate::features::tools::rag::ChunkParams::from_settings(&self.config.rag),
             self_model_params: SelfModelParams::from_settings(&self.config.self_model),
+            recall_includes_self: self.config.notes.recall_includes_self,
         };
         let sampling = SamplingConfig {
             max_tokens: Some(CONSOLIDATE_MAX_TOKENS),
