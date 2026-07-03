@@ -347,6 +347,59 @@ pub(crate) async fn self_note_similar(
         .collect()
 }
 
+/// Блок «Связи наблюдений» для чтения «модели себя» (граф над self-заметками,
+/// Ярус 2): **рёбра** графа, касающиеся показанных наблюдений (структура «что с чем
+/// соотносится» — то, чего плоский список наблюдений не показывает). Только
+/// self↔self (граф наблюдений); соседа вне показанного набора приводим с текстом
+/// (spreading activation). Дедуп рёбер. `None`, если связей нет. Чистое чтение БД.
+/// См. docs/narrative-as-notes.md (Ярус 2).
+pub(crate) fn self_related_block(ctx: &ToolContext, shown: &[Uuid]) -> Option<String> {
+    let shown_set: std::collections::HashSet<Uuid> = shown.iter().copied().collect();
+    let mut seen_edges: std::collections::HashSet<(Uuid, Uuid, String)> =
+        std::collections::HashSet::new();
+    let mut lines: Vec<String> = Vec::new();
+    for id in shown {
+        let nb = ctx
+            .storage
+            .db()
+            .note_neighbors(ctx.profile_id, *id, None)
+            .unwrap_or_default();
+        for (note, relation, outgoing) in nb {
+            if !is_self_note(&note) {
+                continue; // граф наблюдений — только self↔self
+            }
+            // Нормализуем ребро (от→к) и дедупим (та же связь придёт с обоих концов).
+            let (from, to) = if outgoing {
+                (*id, note.id)
+            } else {
+                (note.id, *id)
+            };
+            if !seen_edges.insert((from, to, relation.clone())) {
+                continue;
+            }
+            // Соседа вне показанного набора приводим с текстом (spreading activation).
+            let tail = if shown_set.contains(&note.id) {
+                format!("(id={})", note.id)
+            } else {
+                format!("(id={}) {}", note.id, note.content)
+            };
+            let arrow = if outgoing { "→" } else { "←" };
+            lines.push(format!("- (id={id}) {arrow}{relation} {tail}"));
+            if lines.len() >= RELATED_IN_RECALL {
+                break;
+            }
+        }
+        if lines.len() >= RELATED_IN_RECALL {
+            break;
+        }
+    }
+    if lines.is_empty() {
+        None
+    } else {
+        Some(format!("\nСвязи наблюдений:\n{}", lines.join("\n")))
+    }
+}
+
 /// Одноразовый идемпотентный перенос нарратива «модели себя» из JSON-блоба в
 /// self-заметки (`@self`), с сохранением `created_at`. Нарратив **атомарно
 /// вычёрпывается** (drain под захватом мьютекса БД) — повторный проход видит пусто

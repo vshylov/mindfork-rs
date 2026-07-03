@@ -91,6 +91,19 @@ fn recent_segments(ctx: &ToolContext) -> Vec<NarrativeSegment> {
     .collect()
 }
 
+/// Полное чтение «модели себя» для инструментов (`get_self_model`/`reflect`/эхо):
+/// `render_full` + блок «Связанные наблюдения» (граф над наблюдениями, Ярус 2).
+/// Наблюдения и их связи — из заметок.
+fn render_self_read(ctx: &ToolContext, m: &SelfModel) -> String {
+    let recent = recent_segments(ctx);
+    let ids: Vec<uuid::Uuid> = recent.iter().map(|s| s.id).collect();
+    let mut out = m.render_full(Utc::now(), &recent);
+    if let Some(block) = notes::self_related_block(ctx, &ids) {
+        out.push_str(&block);
+    }
+    out
+}
+
 /// Извлекает массив строк по ключу (пустой, если нет/не массив).
 fn str_array(args: &serde_json::Value, key: &str) -> Vec<String> {
     args.get(key)
@@ -122,9 +135,7 @@ impl Tool for GetSelfModel {
     }
     async fn invoke(&self, ctx: &ToolContext, _args: serde_json::Value) -> Result<ToolOutcome> {
         let m = load(ctx)?;
-        Ok(ToolOutcome::text(
-            m.render_full(Utc::now(), &recent_segments(ctx)),
-        ))
+        Ok(ToolOutcome::text(render_self_read(ctx, &m)))
     }
 }
 
@@ -163,9 +174,12 @@ impl Tool for Reflect {
              - Есть ли среди наблюдений почти-дубли или устаревшее? Перепиши их через \
              note_revise или замести note_supersede по полному id (из get_self_model), \
              а не плоди почти-копии.\n\
+             - Соотносятся ли наблюдения (противоречат, уточняют, об одном)? Свяжи их \
+             note_link (contradicts/refines/relates) по полному id — память связной, а \
+             не россыпью.\n\
              Меняй только то, что действительно изменилось; если менять нечего — ничего \
              не вызывай.",
-            m.render_full(Utc::now(), &recent_segments(ctx))
+            render_self_read(ctx, &m)
         );
         Ok(ToolOutcome::text(out))
     }
@@ -696,6 +710,36 @@ mod tests {
         assert!(out.result.contains("Похожие наблюдения"));
         assert!(out.result.contains("aaaa bbbb"));
         assert!(out.result.contains("note_revise"));
+    }
+
+    #[tokio::test]
+    async fn get_self_model_surfaces_linked_observations() {
+        // Ярус 2: get_self_model показывает связи между наблюдениями (граф).
+        let profile = Uuid::new_v4();
+        let (_d, storage, ctx) = ctx_with_storage(profile);
+        AddInsight
+            .invoke(&ctx, serde_json::json!({"text": "ценю краткость"}))
+            .await
+            .unwrap();
+        AddInsight
+            .invoke(
+                &ctx,
+                serde_json::json!({"text": "иногда бываю многословен"}),
+            )
+            .await
+            .unwrap();
+        let ns = self_notes(&storage, profile);
+        storage
+            .db()
+            .note_link_insert(profile, ns[0].id, ns[1].id, "contradicts")
+            .unwrap();
+
+        let out = GetSelfModel
+            .invoke(&ctx, serde_json::json!({}))
+            .await
+            .unwrap();
+        assert!(out.result.contains("Связи наблюдений"));
+        assert!(out.result.contains("contradicts"));
     }
 
     #[tokio::test]

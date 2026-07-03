@@ -38,8 +38,9 @@ const REFLECT_TIMEOUT: Duration = Duration::from_secs(120);
 /// заметки (Ярус 1), поэтому вместо удалённого `consolidate_narrative` рефлексии даны
 /// note-инструменты для консолидации наблюдений-заметок: переписать почти-дубль
 /// (`note_revise`), заместить со «шрамом» (`note_supersede`) или слить (`note_merge`).
-/// `note_recall` не даём — он скрывает self-заметки; их модель видит через
-/// `get_self_model` (полные id для note-операций). См. docs/narrative-as-notes.md.
+/// Граф над наблюдениями (Ярус 2): `note_link`/`note_neighbors` — связать
+/// противоречащие/уточняющие наблюдения (id из `get_self_model`). `note_recall` не
+/// даём — он скрывает self-заметки. См. docs/narrative-as-notes.md.
 const REFLECT_TOOL_IDS: &[&str] = &[
     self_model::GET_SELF_MODEL_ID,
     self_model::UPDATE_SELF_MODEL_ID,
@@ -48,6 +49,8 @@ const REFLECT_TOOL_IDS: &[&str] = &[
     notes::NOTE_REVISE_ID,
     notes::NOTE_SUPERSEDE_ID,
     notes::NOTE_MERGE_ID,
+    notes::NOTE_LINK_ID,
+    notes::NOTE_NEIGHBORS_ID,
 ];
 
 /// Системное сообщение фоновой саморефлексии: обрамление + единый `POLICY_CORE`
@@ -56,11 +59,14 @@ const REFLECT_TOOL_IDS: &[&str] = &[
 fn reflect_system_message() -> String {
     format!(
         "Ты проводишь тихую фоновую саморефлексию. Ниже — фрагмент недавнего разговора. \
-         Сначала вызови get_self_model (там цели с #id). Затем: {} Если ниже есть блок \
-         «Поведенческие сигналы» — учти их как свидетельства о собеседнике \
-         (update_user_model) или наблюдение (add_insight): это факты поведения, а не \
-         осуждение. Меняй только действительно изменившееся; нечего — не вызывай ничего. \
-         Не пиши ответ пользователю — только вызывай инструменты.",
+         Сначала вызови get_self_model (там цели с #id, наблюдения с полным id и уже \
+         имеющиеся связи). Затем: {} Если два наблюдения соотносятся — противоречат, \
+         уточняют друг друга или об одном — свяжи их (note_link по полному id: \
+         contradicts/refines/relates), чтобы память была связной, а не россыпью. Если \
+         ниже есть блок «Поведенческие сигналы» — учти их как свидетельства о \
+         собеседнике (update_user_model) или наблюдение (add_insight): это факты \
+         поведения, а не осуждение. Меняй только действительно изменившееся; нечего — \
+         не вызывай ничего. Не пиши ответ пользователю — только вызывай инструменты.",
         self_model::POLICY_CORE
     )
 }
@@ -299,6 +305,16 @@ mod tests {
         assert!(msg.contains("get_self_model"));
         assert!(msg.contains("Поведенческие сигналы"));
         assert!(msg.contains("только вызывай инструменты"));
+        // Ярус 2: рефлексии предложено связывать наблюдения (граф).
+        assert!(msg.contains("note_link"));
+    }
+
+    #[test]
+    fn reflect_tools_include_graph() {
+        // Ярус 2: авто-рефлексии даны note_link/note_neighbors (граф над наблюдениями).
+        use super::{REFLECT_TOOL_IDS, notes};
+        assert!(REFLECT_TOOL_IDS.contains(&notes::NOTE_LINK_ID));
+        assert!(REFLECT_TOOL_IDS.contains(&notes::NOTE_NEIGHBORS_ID));
     }
 
     #[test]
