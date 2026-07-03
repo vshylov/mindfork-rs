@@ -36,6 +36,21 @@ const NOTE_BACKFILL_BATCH: usize = 32;
 /// Сколько связанных заметок максимум подмешивать в `note_recall` (spreading activation).
 const RELATED_IN_RECALL: usize = 5;
 
+/// Зарезервированный тег «заметок о себе»: нарратив «модели себя» переехал в обычные
+/// заметки (см. docs/narrative-as-notes.md, Ярус 1). Self-заметки делят таблицы,
+/// эмбеддинги, граф и консолидацию с обычными, но **скрыты** из пользовательского
+/// `note_recall`, ворот `note_save` и обзора консолидации фильтром по этому тегу —
+/// память о себе ≠ память о собеседнике, смешение выдачи рискованно. Лидирующий `@`
+/// не встречается в естественных тегах; коллизия редка и безобидна (такая заметка
+/// просто станет считаться инсайтом). Читаются self-заметки отдельным путём
+/// (`self_notes_recent`).
+pub const SELF_NOTE_TAG: &str = "@self";
+
+/// Несёт ли заметка зарезервированный тег [`SELF_NOTE_TAG`] («заметка о себе»).
+pub(crate) fn is_self_note(note: &Note) -> bool {
+    note.tags.iter().any(|t| t == SELF_NOTE_TAG)
+}
+
 /// `note_save` — сохраняет заметку профиля. Возвращает её id.
 pub struct NoteSave;
 
@@ -95,7 +110,9 @@ impl Tool for NoteSave {
                 let similar: Vec<Note> = hits
                     .into_iter()
                     .map(|(n, _)| n)
-                    .filter(|n| n.id != id)
+                    // Исключаем только что созданную и self-заметки (@self) — обычная
+                    // запись не должна натыкаться на наблюдения «модели себя».
+                    .filter(|n| n.id != id && !is_self_note(n))
                     .take(3)
                     .collect();
                 if !similar.is_empty() {
@@ -147,18 +164,13 @@ impl Tool for NoteRecall {
 
         // Семантический путь: есть запрос и доступен эмбеддер. Иначе (нет запроса,
         // эмбеддер недоступен или нет векторов у заметок) — откат на подстроку/теги.
+        // Оба пути исключают self-заметки (@self) из пользовательской выдачи.
         let notes = match query {
             Some(q) => match semantic_recall(ctx, q, &tags, limit).await {
                 Some(n) => n,
-                None => ctx
-                    .storage
-                    .db()
-                    .note_list(ctx.profile_id, query, &tags, limit)?,
+                None => list_user_notes(ctx, query, &tags, limit)?,
             },
-            None => ctx
-                .storage
-                .db()
-                .note_list(ctx.profile_id, query, &tags, limit)?,
+            None => list_user_notes(ctx, None, &tags, limit)?,
         };
 
         let mut outcome = format_notes(&notes);
@@ -183,6 +195,10 @@ fn related_block(ctx: &ToolContext, hits: &[Note]) -> Option<String> {
             .note_neighbors(ctx.profile_id, hit.id, None)
             .unwrap_or_default();
         for (note, relation, outgoing) in nb {
+            // Self-заметки не подмешиваем в пользовательское припоминание.
+            if is_self_note(&note) {
+                continue;
+            }
             if !seen.insert(note.id) {
                 continue;
             }
@@ -206,9 +222,34 @@ fn related_block(ctx: &ToolContext, hits: &[Note]) -> Option<String> {
     }
 }
 
+/// Substring/тег-выборка **пользовательских** заметок (без self-заметок): читаем без
+/// лимита, отбрасываем self-заметки, затем усечение — иначе self-заметки заняли бы
+/// слоты лимита и вытеснили пользовательские из выдачи.
+fn list_user_notes(
+    ctx: &ToolContext,
+    query: Option<&str>,
+    tags: &[String],
+    limit: Option<usize>,
+) -> Result<Vec<Note>> {
+    let mut notes = ctx
+        .storage
+        .db()
+        .note_list(ctx.profile_id, query, tags, None)?;
+    notes.retain(|n| !is_self_note(n));
+    if let Some(l) = limit {
+        notes.truncate(l);
+    }
+    Ok(notes)
+}
+
 /// Создаёт заметку (insert + best-effort эмбеддинг) и возвращает её id. Используется
-/// `note_supersede`/`note_merge` для новой версии/объединённой заметки.
-async fn create_note(ctx: &ToolContext, content: String, tags: Vec<String>) -> Result<Uuid> {
+/// `note_supersede`/`note_merge` для новой версии/объединённой заметки, а также
+/// инструментами «модели себя» для self-заметок (тег [`SELF_NOTE_TAG`]).
+pub(crate) async fn create_note(
+    ctx: &ToolContext,
+    content: String,
+    tags: Vec<String>,
+) -> Result<Uuid> {
     let note = Note::new(ctx.profile_id, content, tags);
     let id = note.id;
     ctx.storage.db().note_insert(&note)?;
@@ -279,8 +320,8 @@ async fn semantic_recall(
         .into_iter()
         .next()?;
     let want = limit.unwrap_or(DEFAULT_RECALL);
-    // При фильтре по тегам берём больше кандидатов, затем отсекаем до `want`.
-    let cand = if tags.is_empty() { want } else { want.max(30) };
+    // Берём запас кандидатов: их прорежают фильтр по тегам и исключение self-заметок.
+    let cand = want.max(30);
     let hits = ctx
         .storage
         .db()
@@ -289,7 +330,9 @@ async fn semantic_recall(
     let mut notes: Vec<Note> = hits
         .into_iter()
         .map(|(n, _)| n)
-        .filter(|n| tags.is_empty() || tags.iter().all(|t| n.tags.contains(t)))
+        .filter(|n| {
+            !is_self_note(n) && (tags.is_empty() || tags.iter().all(|t| n.tags.contains(t)))
+        })
         .collect();
     notes.truncate(want);
     if notes.is_empty() { None } else { Some(notes) }
@@ -653,17 +696,21 @@ pub(crate) fn build_consolidation_overview(
     storage: &crate::shared::storage::Storage,
     profile_id: Uuid,
 ) -> String {
-    let active = storage
+    // Консолидация — только над пользовательскими заметками: self-заметки (@self)
+    // исключаем, чтобы «сон» не сливал память о себе с памятью о собеседнике.
+    let mut active = storage
         .db()
         .note_list(profile_id, None, &[], None)
         .unwrap_or_default();
+    active.retain(|n| !is_self_note(n));
     if active.is_empty() {
         return "База заметок пуста — консолидировать нечего.".to_string();
     }
-    let with_vec = storage
+    let mut with_vec = storage
         .db()
         .notes_with_vectors(profile_id)
         .unwrap_or_default();
+    with_vec.retain(|(n, _)| !is_self_note(n));
     let links = storage.db().note_links_all(profile_id).unwrap_or_default();
 
     // Похожие пары (возможные дубли) по косинусу, по убыванию близости.
@@ -843,6 +890,92 @@ mod tests {
                 .await
                 .is_err()
         );
+    }
+
+    #[tokio::test]
+    async fn recall_excludes_self_notes() {
+        // Ярус 1 «нарратив как заметки»: self-заметки (@self) не всплывают в
+        // пользовательском note_recall — ни подстрочном, ни семантическом.
+        let profile = Uuid::new_v4();
+        let (_d, storage, ctx) = ctx_with_storage(profile);
+        NoteSave
+            .invoke(&ctx, serde_json::json!({"content": "любит чай"}))
+            .await
+            .unwrap();
+        storage
+            .db()
+            .note_insert(&Note::new(
+                profile,
+                "сам люблю чай",
+                vec![SELF_NOTE_TAG.to_string()],
+            ))
+            .unwrap();
+
+        // Подстрочный путь (без query).
+        let out = NoteRecall
+            .invoke(&ctx, serde_json::json!({}))
+            .await
+            .unwrap();
+        assert!(out.result.contains("любит чай"));
+        assert!(!out.result.contains("сам люблю чай"));
+
+        // Семантический путь (есть query + эмбеддер).
+        let out = NoteRecall
+            .invoke(&ctx, serde_json::json!({"query": "чай"}))
+            .await
+            .unwrap();
+        assert!(out.result.contains("любит чай"));
+        assert!(!out.result.contains("сам люблю чай"));
+    }
+
+    #[tokio::test]
+    async fn save_gate_excludes_self_notes() {
+        // Ворота note_save не показывают семантически близкие self-заметки — обычная
+        // запись не должна натыкаться на наблюдения «модели себя».
+        let profile = Uuid::new_v4();
+        let (_d, storage, ctx) = ctx_with_storage(profile);
+        storage
+            .db()
+            .note_insert(&Note::new(
+                profile,
+                "aaaa bbbb",
+                vec![SELF_NOTE_TAG.to_string()],
+            ))
+            .unwrap();
+        let out = NoteSave
+            .invoke(&ctx, serde_json::json!({"content": "aaab"}))
+            .await
+            .unwrap();
+        // Единственная близкая заметка — self → блок «Похожие заметки» не появляется.
+        assert!(!out.result.contains("Похожие заметки"));
+        assert!(!out.result.contains("aaaa bbbb"));
+    }
+
+    #[tokio::test]
+    async fn consolidation_overview_excludes_self_notes() {
+        let profile = Uuid::new_v4();
+        let (_d, storage, ctx) = ctx_with_storage(profile);
+        NoteSave
+            .invoke(&ctx, serde_json::json!({"content": "обычная одна"}))
+            .await
+            .unwrap();
+        NoteSave
+            .invoke(&ctx, serde_json::json!({"content": "обычная два"}))
+            .await
+            .unwrap();
+        storage
+            .db()
+            .note_insert(&Note::new(
+                profile,
+                "наблюдение о себе",
+                vec![SELF_NOTE_TAG.to_string()],
+            ))
+            .unwrap();
+
+        let overview = build_consolidation_overview(&storage, profile);
+        // Self-заметка не в счёте активных и не в списках обзора.
+        assert!(overview.contains("Активных заметок: 2"));
+        assert!(!overview.contains("наблюдение о себе"));
     }
 
     #[tokio::test]
