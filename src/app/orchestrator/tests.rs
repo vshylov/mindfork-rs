@@ -2055,6 +2055,90 @@ async fn self_model_graph_e2e_live() {
     );
 }
 
+/// End-to-end зонд **ворот родственных черт** `user_model` (Ярус 2, шаг C): модель
+/// добавляет черту собеседника (`update_user_model` с `add_traits`), затем близкую —
+/// ворота `add_traits` показывают родственную черту и просят решить (дубль/противоречие).
+/// Ассертим **механизм** (черта записана в `perceived_traits`; во второй сессии снова
+/// вызван `update_user_model`); срабатывание ворот и решение модели печатаем для
+/// go/no-go. **Порог ворот 0.72** (откалиброван на bge-m3, в отличие от беспороговых
+/// ворот `add_insight`), поэтому на реальном эмбеддере срабатывание зависит от близости
+/// сгенерированных моделью формулировок — здесь это диагностика, не жёсткая проверка.
+/// `#[ignore]`, вручную:
+/// `MINDFORK_ENGINE_URL=…/v1 MINDFORK_EMBED_URL=…/v1 cargo test trait_gate_e2e_live -- --ignored --nocapture --test-threads=1`.
+#[tokio::test]
+#[ignore = "requires a running OpenAI-compatible server (MINDFORK_ENGINE_URL)"]
+async fn trait_gate_e2e_live() {
+    let Some((_d, cmd_tx, mut evt_rx, handle)) = spawn_orch_live() else {
+        eprintln!("skip: MINDFORK_ENGINE_URL not set");
+        return;
+    };
+    let root = _d.path().to_path_buf();
+    let pid = enable_all_tools(&cmd_tx, &mut evt_rx).await;
+
+    // Сессия 1: добавляем черту собеседника → user_model.perceived_traits.
+    let (_t1, tools1) = run_turn_live(
+        &cmd_tx,
+        &mut evt_rx,
+        "Обнови модель собеседника (вызови update_user_model): добавь черту (add_traits) \
+         — «ценит краткость в ответах».",
+    )
+    .await;
+    eprintln!("сессия 1: инструменты={tools1:?}");
+
+    // Сессия 2: очень похожая черта — ворота add_traits должны предупредить о дубле.
+    let (t2, calls2) = run_turn_capture(
+        &cmd_tx,
+        &mut evt_rx,
+        "Обнови модель собеседника ещё раз (update_user_model): добавь очень похожую \
+         черту (add_traits) — «любит лаконичность». Если инструмент предупредит о \
+         почти-дубле — реши сам, объединить ли их через remove_traits.",
+    )
+    .await;
+    eprintln!("сессия 2: текст={t2:?}\nвызовы={calls2:#?}");
+
+    cmd_tx.send(AppCommand::Quit).unwrap();
+    handle.await.unwrap();
+
+    // Механизм: update_user_model в сессии 1 записал черту.
+    assert!(
+        tools1.iter().any(|t| t == "update_user_model"),
+        "сессия 1: ожидали вызов update_user_model"
+    );
+    let stored = Storage::open(Paths::with_root(&root))
+        .unwrap()
+        .db()
+        .self_model_get(pid)
+        .unwrap();
+    let traits = stored
+        .as_ref()
+        .map(|m| m.user_model.perceived_traits.clone())
+        .unwrap_or_default();
+    eprintln!("черты собеседника в БД: {traits:?}");
+    assert!(
+        !traits.is_empty(),
+        "ожидали ≥1 черту в user_model от update_user_model"
+    );
+
+    // Ворота: результат update_user_model в сессии 2 показал родственную черту?
+    // (`remove_traits` — аргумент update_user_model, не отдельное имя инструмента,
+    // поэтому интеграцию читаем по итоговому состоянию БД, а не по имени вызова.)
+    let gate_fired = calls2
+        .iter()
+        .any(|(n, r)| n == "update_user_model" && r.contains("Родственные черты"));
+    // Интеграция почти-дубля: модель свела перефразы к одной черте (не оставила обе).
+    let integrated = traits.len() <= 1;
+    eprintln!(
+        "ворота предупредили о похожей черте: {gate_fired}; \
+         модель свела к одной черте (не копит перефразы): {integrated}"
+    );
+
+    // Модель должна была снова тронуть модель собеседника (иначе ворота не проверены).
+    assert!(
+        calls2.iter().any(|(n, _)| n == "update_user_model"),
+        "сессия 2: ожидали update_user_model"
+    );
+}
+
 #[tokio::test]
 async fn update_self_model_persists_and_reemits() {
     use crate::entities::self_model::SelfModelEdit;
