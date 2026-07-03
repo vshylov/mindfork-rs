@@ -70,7 +70,9 @@ fn reflect_system_message() -> String {
          наблюдение «о себе» соотносится с фактом «о собеседнике» — найди факт через \
          note_recall (он даёт id заметок) и свяжи их note_link (наблюдение из \
          get_self_model, заметку из note_recall): память о себе и о собеседнике не \
-         изолированы. Если \
+         изолированы. Если ниже есть блок «Обзор наблюдений для консолидации» — используй \
+         его: сливай похожие пары (note_merge/note_supersede), проверяй связи contradicts, \
+         связывай наблюдения без связей (note_link). Если \
          ниже есть блок «Поведенческие сигналы» — учти их как свидетельства о \
          собеседнике (update_user_model) или наблюдение (add_insight): это факты \
          поведения, а не осуждение. Меняй только действительно изменившееся; нечего — \
@@ -158,7 +160,7 @@ impl Orchestrator {
         let profile_id;
         let system_message;
         let last_user;
-        let digest;
+        let mut digest;
         let watermark; // длина истории на момент охвата — фиксируем при спавне
         let allowed: Vec<ToolId>;
         {
@@ -205,6 +207,15 @@ impl Orchestrator {
                 None => d,
             };
             watermark = chat.messages.len();
+        }
+
+        // Обзор наблюдений для консолидации (похожие пары / contradicts / без связей) —
+        // конкретные данные к рефлексии над памятью «о себе» (обзор self-консолидации,
+        // отложенный в Ярусе 2; включён после подтверждения пользы связывания в Ярусе 3).
+        // Пусто, если наблюдений < 2.
+        if let Some(overview) = notes::build_self_consolidation_overview(&self.storage, profile_id)
+        {
+            digest = format!("{digest}\n\n{overview}");
         }
 
         // Уже идёт рефлексия? Пропускаем без сдвига ватермарка (повторим на след. ходу).
@@ -335,6 +346,8 @@ mod tests {
         let msg = super::reflect_system_message();
         assert!(msg.contains("note_recall"));
         assert!(msg.contains("о собеседнике"));
+        // Обзор self-консолидации: рефлексии указано использовать его блок.
+        assert!(msg.contains("Обзор наблюдений для консолидации"));
     }
 
     #[test]

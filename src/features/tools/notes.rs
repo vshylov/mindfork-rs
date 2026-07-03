@@ -1100,6 +1100,90 @@ pub(crate) fn build_consolidation_overview(
     out.trim_end().to_string()
 }
 
+/// Обзор **наблюдений «о себе»** (self-заметок `@self`) для консолидации: похожие пары
+/// (возможные дубли), связи `contradicts` среди наблюдений, наблюдения без связей.
+/// Аналог [`build_consolidation_overview`], но над памятью «о себе» — для авто-рефлексии
+/// и инструмента `reflect`. Обзор self-консолидации был отложен в Ярусе 2 «до
+/// подтверждения пользы связывания»; связывание подтвердилось (Ярус 3, GO) — включаем.
+/// `None`, если наблюдений < 2 (консолидировать нечего). Чистое чтение БД (вектора уже в
+/// БД). Изоляция по `profile_id`. См. docs/narrative-as-notes.md.
+pub(crate) fn build_self_consolidation_overview(
+    storage: &crate::shared::storage::Storage,
+    profile_id: Uuid,
+) -> Option<String> {
+    // Только наблюдения «о себе» (@self) — зеркально исключению self из обзора
+    // пользовательских заметок: «сон» наблюдений не трогает память о собеседнике.
+    let active = storage
+        .db()
+        .note_list(profile_id, None, &[SELF_NOTE_TAG.to_string()], None)
+        .unwrap_or_default();
+    if active.len() < 2 {
+        return None;
+    }
+    let self_ids: std::collections::HashSet<Uuid> = active.iter().map(|n| n.id).collect();
+    let mut with_vec = storage
+        .db()
+        .notes_with_vectors(profile_id)
+        .unwrap_or_default();
+    with_vec.retain(|(n, _)| is_self_note(n));
+    let links = storage.db().note_links_all(profile_id).unwrap_or_default();
+
+    // Похожие пары (возможные дубли наблюдений) по косинусу, по убыванию близости.
+    let mut pairs: Vec<(f32, &Note, &Note)> = Vec::new();
+    for i in 0..with_vec.len() {
+        for j in (i + 1)..with_vec.len() {
+            let s = cosine(&with_vec[i].1, &with_vec[j].1);
+            if s >= CONSOLIDATE_SIMILARITY {
+                pairs.push((s, &with_vec[i].0, &with_vec[j].0));
+            }
+        }
+    }
+    pairs.sort_by(|a, b| b.0.total_cmp(&a.0));
+
+    // contradicts среди наблюдений — оба конца @self (граф наблюдений).
+    let contradicts: Vec<&(Uuid, Uuid, String)> = links
+        .iter()
+        .filter(|(f, t, r)| r == "contradicts" && self_ids.contains(f) && self_ids.contains(t))
+        .collect();
+    let linked: std::collections::HashSet<Uuid> =
+        links.iter().flat_map(|(f, t, _)| [*f, *t]).collect();
+    let dangling: Vec<&Note> = active.iter().filter(|n| !linked.contains(&n.id)).collect();
+
+    let mut out = format!(
+        "Обзор наблюдений «о себе» для консолидации:\nНаблюдений: {} (без связей: {}).\n",
+        active.len(),
+        dangling.len()
+    );
+    out.push_str(&format!(
+        "\nПохожие пары (возможные дубли, близость ≥ {CONSOLIDATE_SIMILARITY}): {}\n",
+        pairs.len()
+    ));
+    for (s, a, b) in pairs.iter().take(CONSOLIDATE_LIST_CAP) {
+        out.push_str(&format!(
+            "- {s:.2} (id={}) {} ↔ (id={}) {}\n",
+            a.id,
+            clip(&a.content, 60),
+            b.id,
+            clip(&b.content, 60)
+        ));
+    }
+    out.push_str(&format!(
+        "\nСвязи contradicts среди наблюдений: {}\n",
+        contradicts.len()
+    ));
+    for (f, t, _) in contradicts.iter().take(CONSOLIDATE_LIST_CAP) {
+        out.push_str(&format!("- (id={f}) ↔ (id={t})\n"));
+    }
+    out.push_str(&format!(
+        "\nНаблюдения без связей (кандидаты связать): {}\n",
+        dangling.len()
+    ));
+    for n in dangling.iter().take(CONSOLIDATE_LIST_CAP) {
+        out.push_str(&format!("- (id={}) {}\n", n.id, clip(&n.content, 60)));
+    }
+    Some(out.trim_end().to_string())
+}
+
 /// `consolidate_notes` — обзор базы знаний + рубрика для консолидации (entry-point,
 /// как `reflect` у SelfModel). Ничего не меняет: дальше модель сама зовёт
 /// merge/supersede/revise/link.
@@ -1495,6 +1579,54 @@ mod tests {
         // Self-заметка не в счёте активных и не в списках обзора.
         assert!(overview.contains("Активных заметок: 2"));
         assert!(!overview.contains("наблюдение о себе"));
+    }
+
+    #[tokio::test]
+    async fn self_consolidation_overview_covers_self_only() {
+        // Ярус 3: обзор self-консолидации над наблюдениями (@self) — похожие пары,
+        // contradicts, без связей; пользовательские заметки исключены; None при < 2.
+        let profile = Uuid::new_v4();
+        let (_d, storage, ctx) = ctx_with_storage(profile);
+        assert!(build_self_consolidation_overview(&storage, profile).is_none());
+        create_note(&ctx, "aaaa bbbb".into(), vec![SELF_NOTE_TAG.to_string()])
+            .await
+            .unwrap();
+        // 1 наблюдение → всё ещё None.
+        assert!(build_self_consolidation_overview(&storage, profile).is_none());
+        create_note(&ctx, "aaab".into(), vec![SELF_NOTE_TAG.to_string()])
+            .await
+            .unwrap();
+        create_note(&ctx, "wwww".into(), vec![SELF_NOTE_TAG.to_string()])
+            .await
+            .unwrap();
+        // Пользовательская заметка не должна попасть в обзор наблюдений.
+        NoteSave
+            .invoke(
+                &ctx,
+                serde_json::json!({"content": "aaaa пользовательская"}),
+            )
+            .await
+            .unwrap();
+
+        let ov = build_self_consolidation_overview(&storage, profile).unwrap();
+        assert!(ov.contains("Обзор наблюдений"));
+        assert!(ov.contains("Наблюдений: 3")); // только @self
+        assert!(!ov.contains("пользовательская"));
+        // Похожая пара среди наблюдений (aaaa bbbb ↔ aaab, cosine ≈ 0.89 ≥ 0.85).
+        assert!(ov.contains("aaaa bbbb"));
+        assert!(ov.contains("aaab"));
+
+        // Связь contradicts среди наблюдений — обзор её показывает.
+        let selves = storage
+            .db()
+            .note_list(profile, None, &[SELF_NOTE_TAG.to_string()], None)
+            .unwrap();
+        storage
+            .db()
+            .note_link_insert(profile, selves[0].id, selves[1].id, "contradicts")
+            .unwrap();
+        let ov = build_self_consolidation_overview(&storage, profile).unwrap();
+        assert!(ov.contains("Связи contradicts среди наблюдений: 1"));
     }
 
     #[test]
