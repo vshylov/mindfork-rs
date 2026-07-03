@@ -231,6 +231,10 @@ pub struct ChatScreen {
     /// Включён ли захват мыши для прокрутки колесом (тумблер `Ctrl+W`). По
     /// умолчанию выключен — работает нативное выделение текста мышью. См. spec §11.3.
     mouse_scroll: bool,
+    /// Идёт ли фоновая авто-рефлексия «модели себя» (тихий индикатор в статус-баре).
+    reflecting: bool,
+    /// Идёт ли фоновая авто-консолидация заметок («сон»; тихий индикатор).
+    consolidating: bool,
     /// Индикатор фоновой индексации RAG (`/rag add`); `None` — индексация не идёт.
     rag: Option<RagBanner>,
     /// Состояние имперсонации (`Ctrl+U`); `None` — не идёт. См. spec §11.8.
@@ -283,6 +287,8 @@ impl ChatScreen {
             show_help: false,
             palette: Palette::default(),
             mouse_scroll: false,
+            reflecting: false,
+            consolidating: false,
             rag: None,
             impersonation: None,
             pending_text_sep: false,
@@ -333,6 +339,28 @@ impl ChatScreen {
 
     pub fn set_server_status(&mut self, statuses: ServerStatuses) {
         self.statuses = statuses;
+    }
+
+    /// Ставит/снимает флаг активной авто-рефлексии (тихий индикатор в статус-баре).
+    /// Вид фоновой задачи различает `app` (маппинг `AppEvent::BackgroundTask`) — так
+    /// `screens` не зависит от контракта `app` (FSD).
+    pub fn set_reflecting(&mut self, active: bool) {
+        self.reflecting = active;
+    }
+
+    /// Ставит/снимает флаг активной авто-консолидации заметок («сон»).
+    pub fn set_consolidating(&mut self, active: bool) {
+        self.consolidating = active;
+    }
+
+    /// Метка активных фоновых задач для статус-бара (`None` — ничего не идёт).
+    fn background_hint(&self) -> Option<String> {
+        match (self.reflecting, self.consolidating) {
+            (true, true) => Some("рефлексия · сон".into()),
+            (true, false) => Some("рефлексия".into()),
+            (false, true) => Some("сон заметок".into()),
+            (false, false) => None,
+        }
     }
 
     pub fn set_chat_list(&mut self, chats: Vec<ChatSummary>) {
@@ -1229,6 +1257,7 @@ impl ChatScreen {
         // пустой прямоугольник, рендер в него безвреден).
         let banner_h: u16 = if self.rag.is_some() { 1 } else { 0 };
         // Высота статус-бара зависит от ширины: хоткеи переносятся, когда не влезают.
+        let background = self.background_hint();
         let status_h = status_bar::height(
             frame.area().width as usize,
             &self.statuses,
@@ -1237,6 +1266,7 @@ impl ChatScreen {
             self.gen_context,
             self.gen_context_exact,
             self.mouse_scroll,
+            background.as_deref(),
             &self.palette,
         );
         let [feed_area, banner_area, input_area, status_area] = Layout::vertical([
@@ -1274,6 +1304,7 @@ impl ChatScreen {
             self.gen_context,
             self.gen_context_exact,
             self.mouse_scroll,
+            background.as_deref(),
             &self.palette,
         );
 

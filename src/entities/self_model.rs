@@ -21,6 +21,8 @@ pub struct SelfModelParams {
     pub narrative_in_prompt: usize,
     /// Потолок символов рендера модели в системный промпт.
     pub prompt_cap: usize,
+    /// Сколько закрытых целей держать в структуре (старейшие сверх — в нарратив-шрам).
+    pub max_closed_goals: usize,
 }
 
 impl Default for SelfModelParams {
@@ -39,6 +41,7 @@ impl SelfModelParams {
             max_narrative,
             narrative_in_prompt: s.narrative_in_prompt.min(max_narrative),
             prompt_cap: s.prompt_cap.max(100),
+            max_closed_goals: s.max_closed_goals.max(1),
         }
     }
 }
@@ -79,6 +82,11 @@ pub struct Goal {
     pub description: String,
     pub status: GoalStatus,
     pub created_at: DateTime<Utc>,
+    /// Когда цель ушла из `Active` (для возраста закрытой цели и свёртки старых
+    /// закрытых). `None` у активных и у старых записей (без миграции —
+    /// `#[serde(default)]`). Возраст закрытой считается от неё, иначе — от `created_at`.
+    #[serde(default)]
+    pub closed_at: Option<DateTime<Utc>>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -110,6 +118,36 @@ pub enum GoalMatch {
 /// неоднозначность.
 fn short_hex(id: &Uuid) -> String {
     id.simple().to_string()[..6].to_string()
+}
+
+/// Проставляет/снимает `closed_at` цели по её текущему статусу: при уходе из
+/// `Active` — ставит момент (если ещё не стоял), при возврате в `Active` — снимает.
+fn stamp_closed(g: &mut Goal) {
+    match g.status {
+        GoalStatus::Active => g.closed_at = None,
+        _ => {
+            if g.closed_at.is_none() {
+                g.closed_at = Some(Utc::now());
+            }
+        }
+    }
+}
+
+/// Грубая человекочитаемая метка возраста записи (сутки-гранулярность). Внутри
+/// одного дня текст стабилен — значит инъекция «модели себя» в системный промпт не
+/// меняется от хода к ходу (prefix cache локальной модели страдает не чаще раза в
+/// день, сверх реальных правок модели). Отрицательная разница (часы вперёд из-за
+/// рассинхронизации) трактуется как «сегодня».
+fn age_label(at: DateTime<Utc>, now: DateTime<Utc>) -> String {
+    let days = (now - at).num_days();
+    match days {
+        d if d <= 0 => "сегодня".to_string(),
+        1 => "вчера".to_string(),
+        2..=6 => format!("{days} дн."),
+        7..=30 => format!("{} нед.", days / 7),
+        31..=364 => format!("{} мес.", days / 30),
+        _ => format!("{} г.", days / 365),
+    }
 }
 
 /// Разрешает «ручку» (полный UUID или короткий hex-префикс, с ведущим `#` или без;
@@ -217,13 +255,16 @@ impl SelfModel {
             description,
             status: GoalStatus::Active,
             created_at: Utc::now(),
+            closed_at: None,
         });
     }
 
     /// Переводит цель в статус (по id). Возвращает `true`, если цель найдена.
+    /// Проставляет/снимает `closed_at` при уходе из `Active`/реактивации.
     pub fn set_goal_status(&mut self, id: Uuid, status: GoalStatus) -> bool {
         if let Some(g) = self.goals.iter_mut().find(|g| g.id == id) {
             g.status = status;
+            stamp_closed(g);
             true
         } else {
             false
@@ -239,6 +280,7 @@ impl SelfModel {
                 GoalStatus::Completed => GoalStatus::Abandoned,
                 GoalStatus::Abandoned => GoalStatus::Active,
             };
+            stamp_closed(g);
             true
         } else {
             false
@@ -322,11 +364,17 @@ impl SelfModel {
     }
 
     /// Добавляет инсайт в нарратив (append-only, с обрезкой до `max_narrative`
-    /// самых свежих). Пустой текст игнорируется.
-    pub fn add_insight(&mut self, text: impl Into<String>, max_narrative: usize) {
+    /// самых свежих). Пустой текст игнорируется. Возвращает **вытесненные** за
+    /// потолок сегменты (пусто, если ничего не вытеснено) — чтобы вызывающий мог
+    /// сообщить модели, что именно ушло (иначе FIFO молча теряет старейшее).
+    pub fn add_insight(
+        &mut self,
+        text: impl Into<String>,
+        max_narrative: usize,
+    ) -> Vec<NarrativeSegment> {
         let text = text.into().trim().to_string();
         if text.is_empty() {
-            return;
+            return Vec::new();
         }
         self.narrative.push(NarrativeSegment {
             id: Uuid::new_v4(),
@@ -336,7 +384,66 @@ impl SelfModel {
         let max_narrative = max_narrative.max(1);
         if self.narrative.len() > max_narrative {
             let drop = self.narrative.len() - max_narrative;
-            self.narrative.drain(0..drop);
+            return self.narrative.drain(0..drop).collect();
+        }
+        Vec::new()
+    }
+
+    /// Сворачивает старые закрытые цели в нарратив-шрам и убирает их из `goals`,
+    /// оставляя не более `keep` самых свежих закрытых (по `closed_at`/`created_at`).
+    /// Возвращает число свёрнутых. Активные цели не трогает. Это интеграция, а не
+    /// потеря: закрытая цель уходит записью «[архив цели] …», а не молча удаляется —
+    /// потолок закрытых целей достигается той же философией, что и у нарратива.
+    pub fn fold_closed_goals(&mut self, keep: usize, max_narrative: usize) -> usize {
+        let freshness = |g: &Goal| g.closed_at.unwrap_or(g.created_at);
+        let mut closed: Vec<(Uuid, DateTime<Utc>)> = self
+            .goals
+            .iter()
+            .filter(|g| g.status != GoalStatus::Active)
+            .map(|g| (g.id, freshness(g)))
+            .collect();
+        if closed.len() <= keep {
+            return 0;
+        }
+        closed.sort_by_key(|(_, at)| std::cmp::Reverse(*at)); // новые первыми
+        let fold_ids: std::collections::HashSet<Uuid> =
+            closed[keep..].iter().map(|(id, _)| *id).collect();
+
+        let scars: Vec<String> = self
+            .goals
+            .iter()
+            .filter(|g| fold_ids.contains(&g.id))
+            .map(|g| {
+                let verb = match g.status {
+                    GoalStatus::Completed => "выполнена",
+                    GoalStatus::Abandoned => "оставлена",
+                    GoalStatus::Active => "активна",
+                };
+                format!("[архив цели] {verb}: {}", g.description.trim())
+            })
+            .collect();
+        let n = scars.len();
+        self.goals.retain(|g| !fold_ids.contains(&g.id));
+        for s in scars {
+            self.add_insight(s, max_narrative);
+        }
+        n
+    }
+
+    /// Подсказка о заполненности нарратива для протокола ведения: `Some(...)`, когда
+    /// занято ≥ 80% потолка (пора консолидировать); иначе `None`. Делает статичный
+    /// протокол ведения data-aware (см. `generation::inject_self_model`).
+    pub fn narrative_fill_hint(&self, max_narrative: usize) -> Option<String> {
+        let max = max_narrative.max(1);
+        let n = self.narrative.len();
+        // n/max >= 0.8  ⇔  n*5 >= max*4 (без плавающей точки).
+        if n > 0 && n * 5 >= max * 4 {
+            Some(format!(
+                "Наблюдений {n} из {max} — близко к потолку: подними устойчивое в \
+                 summary/черты и вычисти сырое через consolidate_narrative."
+            ))
+        } else {
+            None
         }
     }
 
@@ -351,11 +458,14 @@ impl SelfModel {
 
     /// Компактный человекочитаемый блок для инъекции в системный промпт.
     /// `None`, если модель пуста. В нарратив идут `narrative_in_prompt` свежих
-    /// инсайтов; результат усекается до `max_chars` символов.
+    /// инсайтов; результат усекается до `max_chars` символов. `now` — точка отсчёта
+    /// для меток возраста (сутки-гранулярность, стабильно в пределах дня — см.
+    /// [`age_label`]).
     pub fn render_for_prompt(
         &self,
         max_chars: usize,
         narrative_in_prompt: usize,
+        now: DateTime<Utc>,
     ) -> Option<String> {
         if self.is_empty() {
             return None;
@@ -370,9 +480,11 @@ impl SelfModel {
         if !active.is_empty() {
             out.push_str("Активные цели:\n");
             for g in active {
-                out.push_str("- ");
-                out.push_str(g.description.trim());
-                out.push('\n');
+                out.push_str(&format!(
+                    "- {} ({})\n",
+                    g.description.trim(),
+                    age_label(g.created_at, now)
+                ));
             }
         }
         let u = &self.user_model;
@@ -397,9 +509,11 @@ impl SelfModel {
         if !self.narrative.is_empty() && narrative_in_prompt > 0 {
             out.push_str("Недавние наблюдения:\n");
             for seg in self.narrative.iter().rev().take(narrative_in_prompt) {
-                out.push_str("- ");
-                out.push_str(seg.text.trim());
-                out.push('\n');
+                out.push_str(&format!(
+                    "- ({}) {}\n",
+                    age_label(seg.created_at, now),
+                    seg.text.trim()
+                ));
             }
         }
         Some(truncate_chars(out.trim_end(), max_chars))
@@ -425,7 +539,7 @@ impl SelfModel {
     /// весь нарратив и цели с коротким id и статусом — так модель, читающая себя, не
     /// видит «…» и получает id, необходимые для complete/abandon. Пустую модель
     /// помечает явно. См. docs/self-model-mvp.md.
-    pub fn render_full(&self) -> String {
+    pub fn render_full(&self, now: DateTime<Utc>) -> String {
         let mut out = String::from("[Твоя модель себя]\n");
         if !self.summary.trim().is_empty() {
             out.push_str("О себе: ");
@@ -442,12 +556,14 @@ impl SelfModel {
             out.push_str("Цели (ссылайся по #id):\n");
             for g in &active {
                 out.push_str(&format!(
-                    "- #{} (активна) {}\n",
+                    "- #{} (активна · {}) {}\n",
                     short_hex(&g.id),
+                    age_label(g.created_at, now),
                     g.description.trim()
                 ));
             }
-            // Недавние закрытые — компактно, новейшие первыми.
+            // Недавние закрытые — компактно, новейшие первыми. Возраст — от момента
+            // закрытия (`closed_at`), иначе от создания.
             for g in closed.iter().rev().take(CLOSED_GOALS_SHOWN) {
                 let st = match g.status {
                     GoalStatus::Completed => "выполнена",
@@ -455,8 +571,9 @@ impl SelfModel {
                     GoalStatus::Active => "активна",
                 };
                 out.push_str(&format!(
-                    "- #{} ({st}) {}\n",
+                    "- #{} ({st} · {}) {}\n",
                     short_hex(&g.id),
+                    age_label(g.closed_at.unwrap_or(g.created_at), now),
                     g.description.trim()
                 ));
             }
@@ -487,7 +604,12 @@ impl SelfModel {
                 self.narrative.len()
             ));
             for seg in self.narrative.iter().rev() {
-                out.push_str(&format!("- #{} {}\n", short_hex(&seg.id), seg.text.trim()));
+                out.push_str(&format!(
+                    "- #{} ({}) {}\n",
+                    short_hex(&seg.id),
+                    age_label(seg.created_at, now),
+                    seg.text.trim()
+                ));
             }
         }
         let body = out.trim_end();
@@ -503,6 +625,32 @@ impl UserModel {
         self.perceived_traits.is_empty()
             && self.current_interests.is_empty()
             && self.relationship_dynamic.trim().is_empty()
+    }
+
+    /// Компактная подсказка для имперсонации (`Ctrl+U`): агент пишет реплику **за**
+    /// человека, а `UserModel` — модель этого человека, поэтому подмешивание её в
+    /// системный промпт имперсонации делает голос точнее. `None`, если модель пуста;
+    /// результат усечён до `max_chars` символов.
+    pub fn render_for_impersonation(&self, max_chars: usize) -> Option<String> {
+        if self.is_empty() {
+            return None;
+        }
+        let mut out = String::from("Известное о человеке, за которого ты пишешь:");
+        if !self.perceived_traits.is_empty() {
+            out.push_str(" черты — ");
+            out.push_str(&self.perceived_traits.join(", "));
+            out.push(';');
+        }
+        if !self.current_interests.is_empty() {
+            out.push_str(" интересы — ");
+            out.push_str(&self.current_interests.join(", "));
+            out.push(';');
+        }
+        if !self.relationship_dynamic.trim().is_empty() {
+            out.push_str(" отношения с собеседником — ");
+            out.push_str(self.relationship_dynamic.trim());
+        }
+        Some(truncate_chars(out.trim_end_matches([';', ' ']), max_chars))
     }
 
     /// Добавляет черты (дедуп без учёта регистра, пустые отбрасываются). Возвращает,
@@ -578,12 +726,18 @@ mod tests {
         SelfModelParams::default()
     }
 
+    /// Точка отсчёта времени для тестов рендера (совпадает с моментом создания
+    /// записей → свежие показываются как «сегодня»).
+    fn now() -> DateTime<Utc> {
+        Utc::now()
+    }
+
     #[test]
     fn empty_model_renders_none() {
         let m = SelfModel::new(Uuid::new_v4());
         assert!(m.is_empty());
         assert!(
-            m.render_for_prompt(p().prompt_cap, p().narrative_in_prompt)
+            m.render_for_prompt(p().prompt_cap, p().narrative_in_prompt, now())
                 .is_none()
         );
     }
@@ -613,7 +767,7 @@ mod tests {
         m.user_model.relationship_dynamic = "доверительные".into();
 
         let r = m
-            .render_for_prompt(p().prompt_cap, p().narrative_in_prompt)
+            .render_for_prompt(p().prompt_cap, p().narrative_in_prompt, now())
             .unwrap();
         assert!(r.contains("О себе: ценю честность"));
         assert!(r.contains("разобраться в коде"));
@@ -635,7 +789,7 @@ mod tests {
         assert!(!m.is_empty());
         assert_eq!(m.narrative.len(), 1);
         let r = m
-            .render_for_prompt(params.prompt_cap, params.narrative_in_prompt)
+            .render_for_prompt(params.prompt_cap, params.narrative_in_prompt, now())
             .unwrap();
         assert!(r.contains("Недавние наблюдения:"));
         assert!(r.contains("напряжение"));
@@ -652,9 +806,9 @@ mod tests {
 
         // В промпт идут только narrative_in_prompt свежих (новейший — первым).
         let r = m
-            .render_for_prompt(params.prompt_cap, params.narrative_in_prompt)
+            .render_for_prompt(params.prompt_cap, params.narrative_in_prompt, now())
             .unwrap();
-        assert_eq!(r.matches("- инсайт ").count(), params.narrative_in_prompt);
+        assert_eq!(r.matches("инсайт ").count(), params.narrative_in_prompt);
         assert!(r.contains(&last));
     }
 
@@ -673,9 +827,9 @@ mod tests {
         }
         assert_eq!(m.narrative.len(), 5);
         let r = m
-            .render_for_prompt(params.prompt_cap, params.narrative_in_prompt)
+            .render_for_prompt(params.prompt_cap, params.narrative_in_prompt, now())
             .unwrap();
-        assert_eq!(r.matches("- инсайт ").count(), 2);
+        assert_eq!(r.matches("инсайт ").count(), 2);
     }
 
     #[test]
@@ -701,7 +855,7 @@ mod tests {
         // только завершённая цель → модель «пуста» для рендера
         assert!(m.is_empty());
         assert!(
-            m.render_for_prompt(p().prompt_cap, p().narrative_in_prompt)
+            m.render_for_prompt(p().prompt_cap, p().narrative_in_prompt, now())
                 .is_none()
         );
     }
@@ -749,7 +903,9 @@ mod tests {
     fn render_truncates_to_cap() {
         let mut m = SelfModel::new(Uuid::new_v4());
         m.summary = "я".repeat(500);
-        let r = m.render_for_prompt(50, p().narrative_in_prompt).unwrap();
+        let r = m
+            .render_for_prompt(50, p().narrative_in_prompt, now())
+            .unwrap();
         assert_eq!(r.chars().count(), 50);
         assert!(r.ends_with('…'));
     }
@@ -767,13 +923,13 @@ mod tests {
             m.add_insight(format!("инсайт {i}"), 50);
         }
 
-        let full = m.render_full();
+        let full = m.render_full(now());
         assert!(!full.ends_with('…'), "полное чтение не усекается");
-        // Активная цель — с коротким id и статусом.
+        // Активная цель — с коротким id, статусом и меткой возраста («сегодня»).
         let short = short_hex(&m.goals[0].id);
-        assert!(full.contains(&format!("#{short} (активна) активная цель")));
-        // Завершённая тоже видна (жизненный цикл).
-        assert!(full.contains("(выполнена) завершённая цель"));
+        assert!(full.contains(&format!("#{short} (активна · сегодня) активная цель")));
+        // Завершённая тоже видна (жизненный цикл), с возрастом от закрытия.
+        assert!(full.contains("(выполнена · сегодня) завершённая цель"));
         // Весь нарратив (не только narrative_in_prompt=3), каждый с #id.
         assert_eq!(full.matches("инсайт ").count(), 12);
         assert!(full.contains("Наблюдения (12"));
@@ -807,7 +963,7 @@ mod tests {
     #[test]
     fn render_full_on_empty_marks_empty() {
         let m = SelfModel::new(Uuid::new_v4());
-        assert_eq!(m.render_full(), "(модель себя пока пуста)");
+        assert_eq!(m.render_full(now()), "(модель себя пока пуста)");
     }
 
     #[test]
@@ -846,5 +1002,127 @@ mod tests {
         assert_eq!(u.perceived_traits, vec!["прямолинейный".to_string()]);
         // Удаление отсутствующего — no-op.
         assert!(!u.remove_traits(&["нет такого".into()]));
+    }
+
+    #[test]
+    fn user_model_render_for_impersonation() {
+        // Пустая → None.
+        assert!(UserModel::default().render_for_impersonation(500).is_none());
+        let u = UserModel {
+            perceived_traits: vec!["скептик".into(), "любопытный".into()],
+            current_interests: vec!["Rust".into()],
+            relationship_dynamic: "доверительные, на равных".into(),
+        };
+        let r = u.render_for_impersonation(500).unwrap();
+        assert!(r.contains("за которого ты пишешь"));
+        assert!(r.contains("черты — скептик, любопытный"));
+        assert!(r.contains("интересы — Rust"));
+        assert!(r.contains("отношения с собеседником — доверительные, на равных"));
+    }
+
+    #[test]
+    fn age_label_buckets() {
+        use chrono::Duration;
+        let base = Utc::now();
+        let ago = |d: i64| base - Duration::days(d);
+        assert_eq!(age_label(base, base), "сегодня");
+        assert_eq!(age_label(ago(1), base), "вчера");
+        assert_eq!(age_label(ago(3), base), "3 дн.");
+        assert_eq!(age_label(ago(6), base), "6 дн.");
+        assert_eq!(age_label(ago(7), base), "1 нед.");
+        assert_eq!(age_label(ago(20), base), "2 нед.");
+        assert_eq!(age_label(ago(31), base), "1 мес.");
+        assert_eq!(age_label(ago(200), base), "6 мес.");
+        assert_eq!(age_label(ago(365), base), "1 г.");
+        assert_eq!(age_label(ago(800), base), "2 г.");
+        // Время «из будущего» (рассинхронизация часов) → «сегодня», не паника.
+        assert_eq!(age_label(base + Duration::hours(5), base), "сегодня");
+    }
+
+    #[test]
+    fn set_goal_status_stamps_and_clears_closed_at() {
+        let mut m = SelfModel::new(Uuid::new_v4());
+        m.add_goal("цель");
+        let id = m.goals[0].id;
+        assert!(m.goals[0].closed_at.is_none()); // активная — без отметки
+        m.set_goal_status(id, GoalStatus::Completed);
+        let closed = m.goals[0].closed_at;
+        assert!(closed.is_some()); // закрытие проставило момент
+        // Повторное закрытие (в другой статус) момент не сдвигает.
+        m.set_goal_status(id, GoalStatus::Abandoned);
+        assert_eq!(m.goals[0].closed_at, closed);
+        // Реактивация снимает отметку.
+        m.set_goal_status(id, GoalStatus::Active);
+        assert!(m.goals[0].closed_at.is_none());
+    }
+
+    #[test]
+    fn add_insight_returns_evicted_over_cap() {
+        let mut m = SelfModel::new(Uuid::new_v4());
+        // Наполняем ровно до потолка — вытеснения нет.
+        for i in 0..3 {
+            assert!(m.add_insight(format!("i{i}"), 3).is_empty());
+        }
+        // Сверх потолка — возвращается самый старый вытесненный.
+        let evicted = m.add_insight("i3", 3);
+        assert_eq!(evicted.len(), 1);
+        assert_eq!(evicted[0].text, "i0");
+        assert_eq!(m.narrative.len(), 3);
+    }
+
+    #[test]
+    fn narrative_fill_hint_at_threshold() {
+        let mut m = SelfModel::new(Uuid::new_v4());
+        // 3/5 = 60% → нет подсказки.
+        for i in 0..3 {
+            m.add_insight(format!("i{i}"), 5);
+        }
+        assert!(m.narrative_fill_hint(5).is_none());
+        // 4/5 = 80% → подсказка появляется.
+        m.add_insight("i3", 5);
+        let hint = m.narrative_fill_hint(5).unwrap();
+        assert!(hint.contains("4 из 5"));
+        assert!(hint.contains("consolidate_narrative"));
+        // Пустой нарратив — без подсказки.
+        assert!(
+            SelfModel::new(Uuid::new_v4())
+                .narrative_fill_hint(5)
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn fold_closed_goals_archives_oldest_beyond_keep() {
+        use chrono::Duration;
+        let mut m = SelfModel::new(Uuid::new_v4());
+        // Пять закрытых целей с разным временем закрытия + одна активная.
+        for i in 0..5 {
+            m.add_goal(format!("закрытая {i}"));
+        }
+        m.add_goal("активная");
+        // Закрываем первые пять, проставляя разные closed_at (старые — раньше).
+        for i in 0..5 {
+            let id = m.goals[i].id;
+            m.set_goal_status(id, GoalStatus::Completed);
+            m.goals[i].closed_at = Some(Utc::now() - Duration::days((5 - i) as i64));
+        }
+        // Держим 2 самых свежих закрытых, остальные 3 → в нарратив-шрам.
+        let folded = m.fold_closed_goals(2, 50);
+        assert_eq!(folded, 3);
+        // Активная не тронута; всего целей: 2 закрытых + 1 активная.
+        assert_eq!(m.goals.len(), 3);
+        assert_eq!(m.active_goals().count(), 1);
+        // Свёрнутые ушли записями «[архив цели]».
+        assert_eq!(
+            m.narrative
+                .iter()
+                .filter(|s| s.text.starts_with("[архив цели]"))
+                .count(),
+            3
+        );
+        // Самая старая закрытая (закрытая 0) — среди свёрнутых.
+        assert!(m.narrative.iter().any(|s| s.text.contains("закрытая 0")));
+        // Меньше keep закрытых → no-op.
+        assert_eq!(m.fold_closed_goals(2, 50), 0);
     }
 }

@@ -144,17 +144,25 @@ impl SelfModelScreen {
             RowAction::Summary,
         ));
 
-        // Цели (с маркером статуса) + строка добавления.
+        // Цели (с маркером статуса) + строка добавления. Дата — в локальной зоне:
+        // для активной — создание, для закрытой — момент закрытия (`closed_at`).
         for g in &m.goals {
             let (marker, style) = match g.status {
                 GoalStatus::Active => ("● ", p.success_style()),
                 GoalStatus::Completed => ("✓ ", p.muted_style()),
                 GoalStatus::Abandoned => ("✗ ", p.muted_style()),
             };
+            let date = g
+                .closed_at
+                .unwrap_or(g.created_at)
+                .with_timezone(&chrono::Local)
+                .format("%Y-%m-%d")
+                .to_string();
             rows.push((
                 Line::from(vec![
                     Span::styled(marker.to_string(), style),
                     Span::raw(g.description.trim().to_string()),
+                    dim(format!("  [{date}]")),
                 ]),
                 RowAction::Goal(g.id),
             ));

@@ -245,6 +245,8 @@ fn conversation_to_chat(conv: &LlConversation, profile_id: Uuid) -> Chat {
         sampling_override: None,
         draft: String::new(),
         deleted: Vec::new(),
+        reflected_upto: None,
+        reflected_at: None,
         is_hidden: false,
     }
 }

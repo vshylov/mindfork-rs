@@ -9,6 +9,7 @@ use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
 use crate::app::events::AppEvent;
+use crate::entities::chat::DeletedCause;
 use crate::entities::message::{Message, MessageMetadata, MessageRole, ToolCallRecord};
 use crate::entities::profile::ToolId;
 use crate::features::tools::{ChatEffect, ToolContext, ToolRegistry, control, effective_tool_ids};
@@ -104,7 +105,7 @@ impl Orchestrator {
             // черновик ввода ради ручного восстановления (spec §11.7).
             let draft = chat.draft.clone();
             let removed = chat.messages.split_off(idx + 1);
-            chat.record_deleted(removed, draft);
+            chat.record_deleted(removed, draft, DeletedCause::Regenerate);
             chat.modified_at = chrono::Utc::now();
         }
         self.mark_dirty(active_id);
@@ -142,7 +143,7 @@ impl Orchestrator {
             // восстановления (spec §11.7).
             let draft = chat.draft.clone();
             let removed = chat.messages.split_off(idx);
-            chat.record_deleted(removed, draft);
+            chat.record_deleted(removed, draft, DeletedCause::DeleteExchange);
             chat.modified_at = chrono::Utc::now();
         }
         self.mark_dirty(active_id);
@@ -223,7 +224,6 @@ impl Orchestrator {
                 chunk_params: crate::features::tools::rag::ChunkParams::from_settings(
                     &self.config.rag,
                 ),
-                self_model: self_model.clone(),
                 self_model_params,
             };
         }
@@ -235,6 +235,7 @@ impl Orchestrator {
             inject_enabled,
             self.config.self_model.maintenance_protocol,
             &self_model_params,
+            chrono::Utc::now(),
         );
 
         let id = Uuid::new_v4();
@@ -276,11 +277,18 @@ impl Orchestrator {
         if res.messages.is_empty() && res.effects.is_empty() && res.deleted.is_empty() {
             return;
         }
+        // Правила ли модель «модель себя» своими инструментами в этом ходу? Если да —
+        // просигналим `SelfModelChanged` (открытый экран `F3` перезапросит снимок).
+        let self_model_touched = res.messages.iter().any(|m| {
+            m.tool_calls
+                .iter()
+                .any(|tc| crate::features::tools::self_model::is_self_model_tool(&tc.name))
+        });
         if let Some(chat) = self.chat_mut(res.chat_id) {
             // Отброшенное инструментом «переписать» — в архив удалённого (ручное
             // восстановление правкой JSON), как Ctrl+E/Ctrl+R. См. spec §9.3, §11.7.
             if !res.deleted.is_empty() {
-                chat.record_deleted(res.deleted, String::new());
+                chat.record_deleted(res.deleted, String::new(), DeletedCause::Rewrite);
             }
             for msg in res.messages {
                 chat.push_message(msg);
@@ -294,6 +302,9 @@ impl Orchestrator {
             }
             self.mark_dirty(res.chat_id);
             self.emit_chat_list();
+        }
+        if self_model_touched {
+            let _ = self.evt_tx.send(AppEvent::SelfModelChanged);
         }
         // После успешного ответа — возможно, пора фоновой авто-рефлексии (Tier 3)
         // и/или авто-консолидации заметок («сон», Ярус 3).
@@ -634,19 +645,6 @@ fn estimate_prompt_tokens(req: &ChatRequest) -> u64 {
     estimate_prompt(req.system.as_deref(), parts)
 }
 
-/// Нейтральный к персоне «протокол ведения модели»: короткая инструкция о том, когда
-/// и чем фиксировать изменения. Едет в системном промпте поверх любой персоны профиля
-/// → делает использование SelfModel-инструментов предсказуемым независимо от персоны
-/// и прямо противодействует лести. Подмешивается по `config.self_model.
-/// maintenance_protocol`. См. docs/self-model-mvp.md.
-pub(super) const SELF_MODEL_MAINTENANCE_PROTOCOL: &str = "(Ты сам ведёшь эту «модель себя». Когда меняется что-то устойчивое — о тебе, о \
-     собеседнике или о твоих целях — зафиксируй это инструментами: update_self_model \
-     (описание себя; веди цели — закрывай выполненные и неактуальные по #id, а не только \
-     ставь новые), update_user_model (черты/интересы собеседника — add_/remove_, не \
-     перетирая прежнее), add_insight (наблюдение или противоречие прозой). Мимолётное \
-     (настроение, разовая реакция) — в add_insight, не в модель собеседника. Точность \
-     важнее угодливости: записывай то, что верно, а не то, что польстит.)";
-
 /// Подмешивает «модель себя» в системный промпт хода (SelfModel MVP, см.
 /// docs/self-model-mvp.md): компактный рендер текущей модели (если непуста) плюс,
 /// при `maintenance_protocol`, нейтральный к персоне протокол ведения. Возвращает
@@ -660,19 +658,28 @@ pub(super) fn inject_self_model(
     enabled: bool,
     maintenance_protocol: bool,
     params: &crate::entities::self_model::SelfModelParams,
+    now: chrono::DateTime<chrono::Utc>,
 ) -> Option<String> {
     if !enabled {
         return system;
     }
     let block =
-        model.and_then(|m| m.render_for_prompt(params.prompt_cap, params.narrative_in_prompt));
+        model.and_then(|m| m.render_for_prompt(params.prompt_cap, params.narrative_in_prompt, now));
     // Собираем подмешиваемые части: рендер модели (если есть) + протокол (если включён).
-    let mut parts: Vec<&str> = Vec::new();
-    if let Some(b) = block.as_deref() {
+    let mut parts: Vec<String> = Vec::new();
+    if let Some(b) = block {
         parts.push(b);
     }
     if maintenance_protocol {
-        parts.push(SELF_MODEL_MAINTENANCE_PROTOCOL);
+        // Протокол ведения собирается из единого POLICY_CORE (этап 6) — те же
+        // правила, что у фоновой авто-рефлексии.
+        parts.push(crate::features::tools::self_model::maintenance_protocol());
+        // data-aware приписка: если нарратив близок к потолку — подсказать
+        // консолидацию прямо в системном промпте (протокол становится приборной
+        // панелью, а не статичным плакатом).
+        if let Some(h) = model.and_then(|m| m.narrative_fill_hint(params.max_narrative)) {
+            parts.push(format!("({h})"));
+        }
     }
     if parts.is_empty() {
         return system; // подмешивать нечего

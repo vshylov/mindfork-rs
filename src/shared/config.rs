@@ -576,6 +576,9 @@ pub const DEFAULT_SELF_MODEL_NARRATIVE_IN_PROMPT: usize = 3;
 pub const DEFAULT_SELF_MODEL_PROMPT_CAP: usize = 1200;
 /// Подмешивать ли нейтральный к персоне «протокол ведения модели» по умолчанию.
 pub const DEFAULT_SELF_MODEL_MAINTENANCE_PROTOCOL: bool = true;
+/// Сколько закрытых целей держать в структуре по умолчанию (старейшие сверх этого
+/// сворачиваются в нарратив-шрам и удаляются — потолок закрытых целей).
+pub const DEFAULT_SELF_MODEL_MAX_CLOSED_GOALS: usize = 10;
 
 /// Настройки «модели себя» (SelfModel): размеры нарратива и объём инъекции в
 /// системный промпт. См. [docs/self-model-mvp.md] и spec §9.3.
@@ -588,6 +591,9 @@ pub struct SelfModelSettings {
     pub narrative_in_prompt: usize,
     /// Потолок символов компактного рендера модели в системный промпт.
     pub prompt_cap: usize,
+    /// Сколько закрытых (выполненных/неактуальных) целей держать в структуре;
+    /// старейшие сверх этого сворачиваются в нарратив-шрам и удаляются.
+    pub max_closed_goals: usize,
     /// Авто-рефлексия: запускать фоновую рефлексию каждые N ответов ассистента в
     /// чате (модель сама обновляет «модель себя»). `0` — выключено (по умолчанию).
     /// Срабатывает только в профилях с включёнными инструментами модели себя.
@@ -606,6 +612,7 @@ impl Default for SelfModelSettings {
             max_narrative: DEFAULT_SELF_MODEL_MAX_NARRATIVE,
             narrative_in_prompt: DEFAULT_SELF_MODEL_NARRATIVE_IN_PROMPT,
             prompt_cap: DEFAULT_SELF_MODEL_PROMPT_CAP,
+            max_closed_goals: DEFAULT_SELF_MODEL_MAX_CLOSED_GOALS,
             auto_reflect_every: 0,
             maintenance_protocol: DEFAULT_SELF_MODEL_MAINTENANCE_PROTOCOL,
         }
@@ -778,6 +785,10 @@ mod tests {
             DEFAULT_SELF_MODEL_NARRATIVE_IN_PROMPT
         );
         assert_eq!(c.self_model.prompt_cap, DEFAULT_SELF_MODEL_PROMPT_CAP);
+        assert_eq!(
+            c.self_model.max_closed_goals,
+            DEFAULT_SELF_MODEL_MAX_CLOSED_GOALS
+        );
         // Протокол ведения модели себя включён по умолчанию, авто-рефлексия — нет.
         assert!(c.self_model.maintenance_protocol);
         assert_eq!(c.self_model.auto_reflect_every, 0);

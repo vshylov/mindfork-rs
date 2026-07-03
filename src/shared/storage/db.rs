@@ -429,6 +429,52 @@ impl Db {
     /// Модель себя профиля (`None`, если ещё не создавалась). Изоляция по PK.
     pub fn self_model_get(&self, profile_id: Uuid) -> Result<Option<SelfModel>> {
         let conn = self.conn.lock().unwrap();
+        Self::self_model_get_conn(&conn, profile_id)
+    }
+
+    /// Сохраняет модель себя (INSERT OR REPLACE), повышая `version`. Поле `version`
+    /// в переданной модели игнорируется — авторитетный счётчик ведёт хранилище.
+    ///
+    /// Для правки существующей модели предпочтителен [`Self::self_model_update`]:
+    /// он делает чтение-правку-запись **атомарно** (под одним захватом мьютекса),
+    /// исключая гонку «прочитал → кто-то записал → записал поверх» между фоновой
+    /// авто-рефлексией, ручной правкой `F3` и инструментами хода. Прямой upsert
+    /// оставлен как симметричный примитив хранилища (get/upsert/update) и
+    /// используется тестами; прикладные писатели идут через `self_model_update`.
+    #[allow(dead_code)]
+    pub fn self_model_upsert(&self, model: &SelfModel) -> Result<()> {
+        let conn = self.conn.lock().unwrap();
+        Self::self_model_upsert_conn(&conn, model)?;
+        Ok(())
+    }
+
+    /// Атомарное чтение-правка-запись модели профиля: SELECT + `mutate` + upsert
+    /// под **одним** захватом мьютекса соединения. `mutate` возвращает `true`, если
+    /// модель изменилась (иначе запись и рост `version` не делаются). Возвращает
+    /// модель после правки (с авторитетными `version`/`updated_at`, если записана)
+    /// и признак записи. Так исключается гонка load-modify-save между параллельными
+    /// писателями (см. док к [`Self::self_model_upsert`]).
+    ///
+    /// `mutate` вызывается под захваченным мьютексом БД — внутри него **нельзя**
+    /// обращаться к другим методам `Db` того же соединения (реентерабельный `lock()`
+    /// нереентерабельного `Mutex` = дедлок); это чистая правка значения `SelfModel`.
+    pub fn self_model_update(
+        &self,
+        profile_id: Uuid,
+        mutate: impl FnOnce(&mut SelfModel) -> bool,
+    ) -> Result<(SelfModel, bool)> {
+        let conn = self.conn.lock().unwrap();
+        let mut model = Self::self_model_get_conn(&conn, profile_id)?
+            .unwrap_or_else(|| SelfModel::new(profile_id));
+        let changed = mutate(&mut model);
+        if changed {
+            model = Self::self_model_upsert_conn(&conn, &model)?;
+        }
+        Ok((model, changed))
+    }
+
+    /// Чтение модели по соединению (без захвата мьютекса — вызывается под ним).
+    fn self_model_get_conn(conn: &Connection, profile_id: Uuid) -> Result<Option<SelfModel>> {
         let data: Option<String> = conn
             .query_row(
                 "SELECT data FROM self_models WHERE profile_id = ?1",
@@ -442,10 +488,10 @@ impl Db {
         }
     }
 
-    /// Сохраняет модель себя (INSERT OR REPLACE), повышая `version`. Поле `version`
-    /// в переданной модели игнорируется — авторитетный счётчик ведёт хранилище.
-    pub fn self_model_upsert(&self, model: &SelfModel) -> Result<()> {
-        let conn = self.conn.lock().unwrap();
+    /// Запись модели по соединению (без захвата мьютекса — вызывается под ним).
+    /// Возвращает фактически сохранённую модель (с повышенным `version` и свежим
+    /// `updated_at`), чтобы вызывающий не перечитывал БД.
+    fn self_model_upsert_conn(conn: &Connection, model: &SelfModel) -> Result<SelfModel> {
         // rusqlite не поддерживает u64 в ToSql/FromSql — версию храним как i64.
         let prev: Option<i64> = conn
             .query_row(
@@ -471,7 +517,7 @@ impl Db {
                 stored.updated_at.to_rfc3339(),
             ],
         )?;
-        Ok(())
+        Ok(stored)
     }
 
     // ---------- RAG ----------
@@ -1147,6 +1193,52 @@ mod tests {
         let reloaded = db.self_model_get(a).unwrap().unwrap();
         assert_eq!(reloaded.summary, "обновлено");
         assert_eq!(reloaded.version, 2);
+    }
+
+    #[test]
+    fn self_model_update_is_atomic_under_concurrency() {
+        use std::sync::Arc;
+        // Два потока параллельно дописывают инсайты в модель одного профиля. При
+        // неатомарном read-modify-write часть записей терялась бы (гонка «прочитал →
+        // другой записал → записал поверх»). `self_model_update` держит SELECT+upsert
+        // под одним захватом мьютекса — ни одна запись не теряется.
+        let db = Arc::new(db());
+        let pid = Uuid::new_v4();
+        let n: usize = 50;
+        let handles: Vec<_> = ["A", "B"]
+            .iter()
+            .map(|prefix| {
+                let db = db.clone();
+                let prefix = prefix.to_string();
+                std::thread::spawn(move || {
+                    for i in 0..n {
+                        db.self_model_update(pid, |m| {
+                            // Щедрый потолок — вытеснения нет, считаем ровно.
+                            m.add_insight(format!("{prefix}{i}"), 10_000);
+                            true
+                        })
+                        .unwrap();
+                    }
+                })
+            })
+            .collect();
+        for h in handles {
+            h.join().unwrap();
+        }
+        let m = db.self_model_get(pid).unwrap().unwrap();
+        assert_eq!(m.narrative.len(), 2 * n);
+        assert_eq!(m.version, (2 * n) as u64); // каждая правка = один upsert
+    }
+
+    #[test]
+    fn self_model_update_skips_write_when_unchanged() {
+        let db = db();
+        let pid = Uuid::new_v4();
+        // mutate вернул false → записи и роста версии нет, строки в БД не появилось.
+        let (model, changed) = db.self_model_update(pid, |_m| false).unwrap();
+        assert!(!changed);
+        assert_eq!(model.version, 0);
+        assert!(db.self_model_get(pid).unwrap().is_none());
     }
 
     #[test]

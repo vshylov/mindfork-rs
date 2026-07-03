@@ -57,13 +57,10 @@ pub struct ToolContext {
     pub embedder: Arc<dyn Embedder>,
     /// Параметры чанкинга RAG из настроек (`config.rag`, spec §9.3).
     pub chunk_params: rag::ChunkParams,
-    /// Снимок «модели себя» профиля на начало хода (то, что подмешано в промпт
-    /// этого хода). Инструменты SelfModel читают/пишут свежее состояние напрямую
-    /// через `storage` (чтобы видеть правки внутри хода), поэтому снимок — пока
-    /// API-впереди-потребителей (как `chat_id`); оставлен ради полноты снимка хода.
-    #[allow(dead_code)]
-    pub self_model: Option<crate::entities::self_model::SelfModel>,
     /// Параметры рендера/хранения «модели себя» из настроек (`config.self_model`).
+    /// Снимок самой модели в контекст **не** кладётся: инструменты SelfModel
+    /// читают/пишут свежее состояние напрямую через `storage` (чтобы видеть правки
+    /// внутри хода), а инъекция модели в промпт — отдельным путём в оркестраторе.
     pub self_model_params: SelfModelParams,
 }
 
@@ -373,7 +370,6 @@ pub(crate) mod testkit {
             engine,
             embedder,
             chunk_params: rag::ChunkParams::default(),
-            self_model: None,
             self_model_params: SelfModelParams::default(),
         };
         (dir, storage, ctx)
