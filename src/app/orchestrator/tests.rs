@@ -2312,6 +2312,68 @@ async fn recall_includes_self_e2e_live() {
     );
 }
 
+/// End-to-end зонд **связи заметок с RAG-источниками** (Ярус 3, Путь 3): модель
+/// добавляет документ в базу знаний, находит его (`rag_search`), записывает вывод
+/// заметкой (`note_save`) и связывает её с источником (`note_cite_source`). Ассертим
+/// **механизм** (источник в базе; модель искала/связывала); появление связи заметка↔
+/// источник в БД печатаем для go/no-go. `#[ignore]`, вручную:
+/// `MINDFORK_ENGINE_URL=…/v1 MINDFORK_EMBED_URL=…/v1 cargo test note_cite_source_e2e_live -- --ignored --nocapture --test-threads=1`.
+#[tokio::test]
+#[ignore = "requires a running OpenAI-compatible server (MINDFORK_ENGINE_URL)"]
+async fn note_cite_source_e2e_live() {
+    let Some((_d, cmd_tx, mut evt_rx, handle)) = spawn_orch_live() else {
+        eprintln!("skip: MINDFORK_ENGINE_URL not set");
+        return;
+    };
+    let root = _d.path().to_path_buf();
+    let pid = enable_all_tools(&cmd_tx, &mut evt_rx).await;
+
+    // База знаний: добавляем документ под источником «факты».
+    let (_t1, tools1) = run_turn_live(
+        &cmd_tx,
+        &mut evt_rx,
+        "Добавь в базу знаний (rag_add) текст «Столица Франции — Париж.» с источником «факты».",
+    )
+    .await;
+    eprintln!("rag_add: {tools1:?}");
+
+    // Модель ищет, записывает вывод и связывает его с источником.
+    let (t2, calls2) = run_turn_capture(
+        &cmd_tx,
+        &mut evt_rx,
+        "Найди в базе знаний (rag_search) про столицу Франции. Запиши краткий вывод \
+         заметкой (note_save), затем свяжи эту заметку с источником через \
+         note_cite_source (источник называется «факты»).",
+    )
+    .await;
+    eprintln!("цитирование: текст={t2:?}\nвызовы={calls2:#?}");
+
+    cmd_tx.send(AppCommand::Quit).unwrap();
+    handle.await.unwrap();
+
+    let reopened = Storage::open(Paths::with_root(&root)).unwrap();
+    // Механизм: источник «факты» в базе знаний.
+    assert!(
+        reopened.db().rag_source_exists(pid, "факты").unwrap(),
+        "ожидали источник «факты» в базе знаний"
+    );
+    // Связь заметка↔источник (обратный путь): заметки, ссылающиеся на «факты».
+    let citing = reopened.db().notes_citing_source(pid, "факты").unwrap();
+    let cited = calls2.iter().any(|(n, _)| n == "note_cite_source");
+    eprintln!(
+        "модель вызвала note_cite_source: {cited}; заметок со ссылкой на «факты»: {} — {:?}",
+        citing.len(),
+        citing.iter().map(|n| n.content.clone()).collect::<Vec<_>>()
+    );
+    // Модель должна была искать и/или связать (иначе путь не проверен).
+    assert!(
+        calls2
+            .iter()
+            .any(|(n, _)| n == "rag_search" || n == "note_cite_source"),
+        "сессия 2: ожидали rag_search/note_cite_source"
+    );
+}
+
 #[tokio::test]
 async fn update_self_model_persists_and_reemits() {
     use crate::entities::self_model::SelfModelEdit;
