@@ -217,8 +217,13 @@ impl Tool for Reflect {
     }
     async fn invoke(&self, ctx: &ToolContext, _args: serde_json::Value) -> Result<ToolOutcome> {
         let m = load(ctx)?;
+        // Обзор наблюдений для консолидации (похожие пары / contradicts / без связей) —
+        // конкретные данные под рубрику ниже. Пусто, если наблюдений < 2.
+        let overview = notes::build_self_consolidation_overview(&ctx.storage, ctx.profile_id)
+            .map(|o| format!("\n\n{o}"))
+            .unwrap_or_default();
         let out = format!(
-            "Текущая модель себя:\n{}\n\nВопросы для размышления:\n\
+            "Текущая модель себя:\n{}{overview}\n\nВопросы для размышления:\n\
              - Что устойчивого я понял(а) о себе? Уточни update_self_model.summary — \
              интегрируй прежнее с новым, не переписывай с нуля.\n\
              - Цели: пройди по активным по #id — какие выполнены (complete_goals) или \
@@ -755,6 +760,27 @@ mod tests {
         let out = Reflect.invoke(&ctx, serde_json::json!({})).await.unwrap();
         assert!(out.result.contains("Вопросы для размышления"));
         assert!(out.effects.is_empty());
+        // Без наблюдений (< 2) обзор self-консолидации не подмешивается.
+        assert!(!out.result.contains("Обзор наблюдений"));
+    }
+
+    #[tokio::test]
+    async fn reflect_includes_self_consolidation_overview() {
+        // Ярус 3: при ≥2 наблюдениях reflect подмешивает обзор self-консолидации
+        // (конкретные похожие пары / связи / без связей под рубрику).
+        let profile = Uuid::new_v4();
+        let (_d, _s, ctx) = ctx_with_storage(profile);
+        AddInsight
+            .invoke(&ctx, serde_json::json!({"text": "aaaa bbbb"}))
+            .await
+            .unwrap();
+        AddInsight
+            .invoke(&ctx, serde_json::json!({"text": "aaab"}))
+            .await
+            .unwrap();
+        let out = Reflect.invoke(&ctx, serde_json::json!({})).await.unwrap();
+        assert!(out.result.contains("Обзор наблюдений"));
+        assert!(out.result.contains("Похожие пары"));
     }
 
     #[tokio::test]
