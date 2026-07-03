@@ -134,6 +134,11 @@ impl Db {
             "DELETE FROM note_vectors WHERE note_id = ?1",
             params![id.to_string()],
         )?;
+        // Ссылки на RAG-источники этой заметки тоже снимаем (Ярус 3, Путь 3).
+        conn.execute(
+            "DELETE FROM note_rag_links WHERE profile_id = ?1 AND note_id = ?2",
+            params![profile_id.to_string(), id.to_string()],
+        )?;
         let n = conn.execute(
             "DELETE FROM notes WHERE id = ?1 AND profile_id = ?2",
             params![id.to_string(), profile_id.to_string()],
@@ -370,6 +375,80 @@ impl Db {
             ],
         )?;
         Ok(())
+    }
+
+    // ---------- связи заметок с RAG-источниками (Ярус 3, Путь 3) ----------
+
+    /// Есть ли у профиля RAG-источник с таким именем (в чанках или сохранённых
+    /// исходниках). Для валидации `note_cite_source` — ссылаться можно лишь на
+    /// реально существующий источник. Изоляция по `profile_id`.
+    pub fn rag_source_exists(&self, profile_id: Uuid, source: &str) -> Result<bool> {
+        let conn = self.conn.lock().unwrap();
+        let found: Option<i64> = conn
+            .query_row(
+                "SELECT 1 WHERE EXISTS(
+                     SELECT 1 FROM rag_documents WHERE profile_id = ?1 AND source = ?2)
+                   OR EXISTS(
+                     SELECT 1 FROM rag_sources WHERE profile_id = ?1 AND source = ?2)",
+                params![profile_id.to_string(), source],
+                |r| r.get(0),
+            )
+            .optional()?;
+        Ok(found.is_some())
+    }
+
+    /// Связывает заметку с RAG-источником (по имени источника — стабильно к
+    /// переиндексации, в отличие от id чанков). Идемпотентно по PK. Возвращает
+    /// `true`, если связь действительно создана. Изоляция по `profile_id`.
+    pub fn note_cite_source_insert(
+        &self,
+        profile_id: Uuid,
+        note_id: Uuid,
+        source: &str,
+    ) -> Result<bool> {
+        let conn = self.conn.lock().unwrap();
+        let n = conn.execute(
+            "INSERT OR IGNORE INTO note_rag_links(profile_id, note_id, source, created_at)
+             VALUES (?1, ?2, ?3, ?4)",
+            params![
+                profile_id.to_string(),
+                note_id.to_string(),
+                source,
+                Utc::now().to_rfc3339(),
+            ],
+        )?;
+        Ok(n > 0)
+    }
+
+    /// RAG-источники, на которые ссылается заметка (для показа при припоминании).
+    /// Изоляция по `profile_id`.
+    pub fn note_cited_sources(&self, profile_id: Uuid, note_id: Uuid) -> Result<Vec<String>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare(
+            "SELECT source FROM note_rag_links
+             WHERE profile_id = ?1 AND note_id = ?2 ORDER BY source",
+        )?;
+        let rows = stmt.query_map(params![profile_id.to_string(), note_id.to_string()], |r| {
+            r.get::<_, String>(0)
+        })?;
+        Ok(rows.filter_map(|r| r.ok()).collect())
+    }
+
+    /// Активные (не замещённые) заметки профиля, ссылающиеся на данный RAG-источник —
+    /// обратное направление (поиск заметок через RAG, «оба органа»). Изоляция по
+    /// `profile_id`.
+    pub fn notes_citing_source(&self, profile_id: Uuid, source: &str) -> Result<Vec<Note>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare(
+            "SELECT n.id, n.profile_id, n.content, n.tags, n.created_at, n.updated_at
+             FROM note_rag_links l
+             JOIN notes n ON n.id = l.note_id
+             LEFT JOIN note_superseded s ON s.note_id = n.id
+             WHERE l.profile_id = ?1 AND l.source = ?2 AND s.note_id IS NULL
+             ORDER BY n.updated_at DESC",
+        )?;
+        let rows = stmt.query_map(params![profile_id.to_string(), source], row_to_note)?;
+        Ok(rows.filter_map(|r| r.ok()).collect())
     }
 
     /// Активные заметки профиля с их эмбеддингами (для консолидации: поиск дублей
@@ -905,7 +984,17 @@ fn migrate(conn: &Connection) -> Result<()> {
              profile_id     TEXT NOT NULL,
              superseded_by  TEXT NOT NULL,
              superseded_at  TEXT NOT NULL
-         );",
+         );
+
+         CREATE TABLE IF NOT EXISTS note_rag_links (
+             profile_id  TEXT NOT NULL,
+             note_id     TEXT NOT NULL,
+             source      TEXT NOT NULL,
+             created_at  TEXT NOT NULL,
+             PRIMARY KEY (profile_id, note_id, source)
+         );
+         CREATE INDEX IF NOT EXISTS idx_note_rag_note ON note_rag_links(profile_id, note_id);
+         CREATE INDEX IF NOT EXISTS idx_note_rag_source ON note_rag_links(profile_id, source);",
     )?;
     Ok(())
 }
@@ -1374,6 +1463,66 @@ mod tests {
         // Поиск тоже больше их не находит (векторы удалены).
         let hits = db.rag_search(p, &[1.0, 0.0], 5).unwrap();
         assert!(hits.iter().all(|h| h.source == "/data/b.txt"));
+    }
+
+    #[test]
+    fn note_rag_links_bidirectional_and_isolated() {
+        use crate::entities::note::Note;
+        let db = db();
+        let p = Uuid::new_v4();
+        let other = Uuid::new_v4();
+        db.rag_insert(&RagDocument::new(p, "/kb/spec.md", "chunk", vec![1.0, 0.0]))
+            .unwrap();
+        let note = Note::new(p, "опирается на спеку", vec![]);
+        let nid = note.id;
+        db.note_insert(&note).unwrap();
+
+        // Существование источника (изоляция по профилю).
+        assert!(db.rag_source_exists(p, "/kb/spec.md").unwrap());
+        assert!(!db.rag_source_exists(p, "/kb/missing.md").unwrap());
+        assert!(!db.rag_source_exists(other, "/kb/spec.md").unwrap());
+
+        // Связь идемпотентна.
+        assert!(db.note_cite_source_insert(p, nid, "/kb/spec.md").unwrap());
+        assert!(!db.note_cite_source_insert(p, nid, "/kb/spec.md").unwrap());
+
+        // Прямое направление: источники заметки.
+        assert_eq!(
+            db.note_cited_sources(p, nid).unwrap(),
+            vec!["/kb/spec.md".to_string()]
+        );
+        // Обратное направление: заметки источника (+ изоляция).
+        let citing = db.notes_citing_source(p, "/kb/spec.md").unwrap();
+        assert_eq!(citing.len(), 1);
+        assert_eq!(citing[0].id, nid);
+        assert!(
+            db.notes_citing_source(other, "/kb/spec.md")
+                .unwrap()
+                .is_empty()
+        );
+
+        // Удаление заметки снимает её ссылки на источники.
+        db.note_delete(p, nid).unwrap();
+        assert!(db.notes_citing_source(p, "/kb/spec.md").unwrap().is_empty());
+    }
+
+    #[test]
+    fn notes_citing_source_hides_superseded() {
+        use crate::entities::note::Note;
+        let db = db();
+        let p = Uuid::new_v4();
+        db.rag_insert(&RagDocument::new(p, "/kb/a.md", "c", vec![1.0, 0.0]))
+            .unwrap();
+        let n = Note::new(p, "старое", vec![]);
+        let nid = n.id;
+        db.note_insert(&n).unwrap();
+        db.note_cite_source_insert(p, nid, "/kb/a.md").unwrap();
+        // Замещённая заметка не всплывает в обратном пути.
+        let new = Note::new(p, "новое", vec![]);
+        let new_id = new.id;
+        db.note_insert(&new).unwrap();
+        db.note_supersede_mark(p, nid, new_id).unwrap();
+        assert!(db.notes_citing_source(p, "/kb/a.md").unwrap().is_empty());
     }
 
     #[test]

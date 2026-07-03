@@ -20,6 +20,8 @@ pub const NOTE_NEIGHBORS_ID: &str = "note_neighbors";
 pub const NOTE_SUPERSEDE_ID: &str = "note_supersede";
 pub const NOTE_MERGE_ID: &str = "note_merge";
 pub const CONSOLIDATE_NOTES_ID: &str = "consolidate_notes";
+/// Связь заметки с RAG-источником (Ярус 3, Путь 3 — связывание органов памяти).
+pub const NOTE_CITE_SOURCE_ID: &str = "note_cite_source";
 
 /// Порог косинусной близости, при котором две заметки считаются возможным дублем
 /// (для обзора консолидации). Подобран эмпирически — пары выше стоит рассмотреть.
@@ -182,6 +184,12 @@ impl Tool for NoteRecall {
         if let Some(block) = related_block(ctx, &notes) {
             outcome.result.push_str(&block);
         }
+        // Ссылки заметок на RAG-источники (Ярус 3, Путь 3): показываем, на что опирается
+        // заметка (связывание органов памяти).
+        let ids: Vec<Uuid> = notes.iter().map(|n| n.id).collect();
+        if let Some(block) = cited_sources_block(ctx, &ids) {
+            outcome.result.push_str(&block);
+        }
         Ok(outcome)
     }
 }
@@ -231,6 +239,29 @@ fn related_block(ctx: &ToolContext, hits: &[Note]) -> Option<String> {
         None
     } else {
         Some(format!("\nСвязанные заметки:\n{}", lines.join("\n")))
+    }
+}
+
+/// Блок «Ссылки на источники»: для показанных заметок (по id) перечисляет RAG-источники,
+/// на которые они ссылаются (Ярус 3, Путь 3 — связывание органов памяти). `None`, если
+/// ссылок нет. Чистое чтение БД. `pub(crate)` — используется и `note_recall`, и чтением
+/// «модели себя» (`self_model::render_self_read`).
+pub(crate) fn cited_sources_block(ctx: &ToolContext, note_ids: &[Uuid]) -> Option<String> {
+    let mut lines: Vec<String> = Vec::new();
+    for id in note_ids {
+        let srcs = ctx
+            .storage
+            .db()
+            .note_cited_sources(ctx.profile_id, *id)
+            .unwrap_or_default();
+        for s in srcs {
+            lines.push(format!("- (id={id}) → источник «{s}»"));
+        }
+    }
+    if lines.is_empty() {
+        None
+    } else {
+        Some(format!("\nСсылки на источники:\n{}", lines.join("\n")))
     }
 }
 
@@ -896,6 +927,68 @@ impl Tool for NoteMerge {
     }
 }
 
+/// `note_cite_source` — связывает заметку с RAG-источником (Ярус 3, Путь 3: связывание
+/// органов памяти). Ссылка ведётся на **имя источника** (стабильно к переиндексации, в
+/// отличие от id чанков). Источник должен реально существовать в базе знаний профиля.
+pub struct NoteCiteSource;
+
+#[async_trait::async_trait]
+impl Tool for NoteCiteSource {
+    fn id(&self) -> ToolId {
+        NOTE_CITE_SOURCE_ID.into()
+    }
+    fn description(&self) -> String {
+        "Связать заметку (по id из note_recall/note_save) с источником из базы знаний \
+         (RAG): указывает, что заметка/наблюдение опирается на этот источник. Имя \
+         источника — как в выдаче rag_search (в квадратных скобках). Потом при \
+         припоминании заметки виден её источник, а поиск rag_search показывает \
+         ссылающиеся заметки."
+            .into()
+    }
+    fn parameters(&self) -> serde_json::Value {
+        serde_json::json!({
+            "type": "object",
+            "properties": {
+                "note_id": {"type": "string", "description": "id заметки (из note_recall/note_save)"},
+                "source": {"type": "string", "description": "имя источника из базы знаний (как в rag_search)"}
+            },
+            "required": ["note_id", "source"]
+        })
+    }
+    async fn invoke(&self, ctx: &ToolContext, args: serde_json::Value) -> Result<ToolOutcome> {
+        let note_id = parse_id(&args, "note_id")?;
+        let source = args
+            .get("source")
+            .and_then(|v| v.as_str())
+            .unwrap_or_default()
+            .trim()
+            .to_string();
+        if source.is_empty() {
+            anyhow::bail!("ожидается непустое поле source");
+        }
+        let db = ctx.storage.db();
+        if !db.note_is_active(ctx.profile_id, note_id)? {
+            return Ok(ToolOutcome::text(format!(
+                "Заметка не найдена (или замещена) (id={note_id})."
+            )));
+        }
+        if !db.rag_source_exists(ctx.profile_id, &source)? {
+            return Ok(ToolOutcome::text(format!(
+                "Источник «{source}» не найден в базе знаний. Проверь имя (как в rag_search)."
+            )));
+        }
+        let created = db.note_cite_source_insert(ctx.profile_id, note_id, &source)?;
+        let verb = if created {
+            "Связь с источником создана"
+        } else {
+            "Связь с источником уже существовала"
+        };
+        Ok(ToolOutcome::text(format!(
+            "{verb}: заметка {note_id} → источник «{source}»."
+        )))
+    }
+}
+
 /// Косинусная близость двух векторов (0 при разной длине/нулевой норме).
 /// `pub(crate)` — переиспользуется воротами почти-дублей черт `user_model`
 /// (`self_model::UpdateUserModel`), где вектора черт эмбеддятся на лету.
@@ -1218,6 +1311,65 @@ mod tests {
             .await
             .unwrap();
         assert!(out.result.contains(&format!("(id={id})")));
+    }
+
+    #[tokio::test]
+    async fn note_cite_source_links_and_recall_shows_it() {
+        // Ярус 3, Путь 3: заметка ссылается на RAG-источник; note_recall показывает
+        // блок «Ссылки на источники».
+        use crate::entities::rag::RagDocument;
+        let profile = Uuid::new_v4();
+        let (_d, storage, ctx) = ctx_with_storage(profile);
+        storage
+            .db()
+            .rag_insert(&RagDocument::new(
+                profile,
+                "spec.md",
+                "текст про X",
+                vec![1.0, 0.0],
+            ))
+            .unwrap();
+        NoteSave
+            .invoke(&ctx, serde_json::json!({"content": "вывод про X"}))
+            .await
+            .unwrap();
+        let id = storage.db().note_list(profile, None, &[], None).unwrap()[0].id;
+
+        // Неизвестный источник — понятный отказ, ничего не создано.
+        let out = NoteCiteSource
+            .invoke(
+                &ctx,
+                serde_json::json!({"note_id": id.to_string(), "source": "нет.md"}),
+            )
+            .await
+            .unwrap();
+        assert!(out.result.contains("не найден в базе знаний"));
+
+        // Существующий источник — связь создана; повтор — уже существовала.
+        let out = NoteCiteSource
+            .invoke(
+                &ctx,
+                serde_json::json!({"note_id": id.to_string(), "source": "spec.md"}),
+            )
+            .await
+            .unwrap();
+        assert!(out.result.contains("Связь с источником создана"));
+        let out = NoteCiteSource
+            .invoke(
+                &ctx,
+                serde_json::json!({"note_id": id.to_string(), "source": "spec.md"}),
+            )
+            .await
+            .unwrap();
+        assert!(out.result.contains("уже существовала"));
+
+        // note_recall показывает ссылку на источник.
+        let out = NoteRecall
+            .invoke(&ctx, serde_json::json!({}))
+            .await
+            .unwrap();
+        assert!(out.result.contains("Ссылки на источники"));
+        assert!(out.result.contains("spec.md"));
     }
 
     #[tokio::test]

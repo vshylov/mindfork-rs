@@ -152,6 +152,7 @@ pub fn default_tool_ids() -> Vec<ToolId> {
         notes::NOTE_SUPERSEDE_ID,
         notes::NOTE_MERGE_ID,
         notes::CONSOLIDATE_NOTES_ID,
+        notes::NOTE_CITE_SOURCE_ID,
         "rag_add",
         "rag_search",
         "call_subagent",
@@ -273,6 +274,7 @@ pub fn standard_registry(cfg: &ToolConfig) -> ToolRegistry {
     reg.register(Arc::new(notes::NoteSupersede));
     reg.register(Arc::new(notes::NoteMerge));
     reg.register(Arc::new(notes::ConsolidateNotes));
+    reg.register(Arc::new(notes::NoteCiteSource));
     reg.register(Arc::new(rag::RagAdd));
     reg.register(Arc::new(rag::RagSearch));
     reg.register(Arc::new(subagent::CallSubagent::new(

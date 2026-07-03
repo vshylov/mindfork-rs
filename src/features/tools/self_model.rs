@@ -92,13 +92,17 @@ fn recent_segments(ctx: &ToolContext) -> Vec<NarrativeSegment> {
 }
 
 /// Полное чтение «модели себя» для инструментов (`get_self_model`/`reflect`/эхо):
-/// `render_full` + блок «Связанные наблюдения» (граф над наблюдениями, Ярус 2).
-/// Наблюдения и их связи — из заметок.
+/// `render_full` + блок «Связанные наблюдения» (граф над наблюдениями, Ярус 2) + блок
+/// «Ссылки на источники» (наблюдение опирается на RAG-источник, Ярус 3, Путь 3).
+/// Наблюдения, их связи и ссылки — из заметок.
 fn render_self_read(ctx: &ToolContext, m: &SelfModel) -> String {
     let recent = recent_segments(ctx);
     let ids: Vec<uuid::Uuid> = recent.iter().map(|s| s.id).collect();
     let mut out = m.render_full(Utc::now(), &recent);
     if let Some(block) = notes::self_related_block(ctx, &ids) {
+        out.push_str(&block);
+    }
+    if let Some(block) = notes::cited_sources_block(ctx, &ids) {
         out.push_str(&block);
     }
     out

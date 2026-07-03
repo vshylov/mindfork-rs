@@ -168,6 +168,34 @@ impl Tool for RagSearch {
         for p in &passages {
             out.push_str(&format!("- [{}] {}\n", p.source, p.text));
         }
+        // Обратное направление (Ярус 3, Путь 3): заметки/наблюдения, ссылающиеся на
+        // найденные источники — «поиск через оба органа». self-наблюдения помечаем
+        // [о себе] (органы различимы). Дедуп заметок по id.
+        let mut seen: std::collections::HashSet<uuid::Uuid> = std::collections::HashSet::new();
+        let mut linked: Vec<String> = Vec::new();
+        for p in &passages {
+            let notes = ctx
+                .storage
+                .db()
+                .notes_citing_source(ctx.profile_id, &p.source)
+                .unwrap_or_default();
+            for n in notes {
+                if !seen.insert(n.id) {
+                    continue;
+                }
+                let mark = if super::notes::is_self_note(&n) {
+                    "[о себе] "
+                } else {
+                    ""
+                };
+                linked.push(format!("- {mark}(id={}) {}", n.id, n.content));
+            }
+        }
+        if !linked.is_empty() {
+            out.push_str("\nЗаметки со ссылкой на эти источники:\n");
+            out.push_str(&linked.join("\n"));
+            out.push('\n');
+        }
         Ok(ToolOutcome::text(out.trim_end().to_string()))
     }
 }
@@ -696,6 +724,36 @@ mod tests {
             out.result
         );
         assert!(out.result.contains("факты"));
+    }
+
+    #[tokio::test]
+    async fn search_surfaces_notes_citing_matched_source() {
+        // Ярус 3, Путь 3 (обратное направление): rag_search показывает заметки,
+        // ссылающиеся на найденный источник — «поиск через оба органа».
+        use crate::entities::note::Note;
+        let profile = Uuid::new_v4();
+        let (_d, storage, ctx) = ctx_with_storage(profile);
+        RagAdd
+            .invoke(
+                &ctx,
+                serde_json::json!({"text": "кошки любят рыбу", "source": "факты"}),
+            )
+            .await
+            .unwrap();
+        let note = Note::new(profile, "мой вывод о кошках", vec![]);
+        let nid = note.id;
+        storage.db().note_insert(&note).unwrap();
+        storage
+            .db()
+            .note_cite_source_insert(profile, nid, "факты")
+            .unwrap();
+
+        let out = RagSearch
+            .invoke(&ctx, serde_json::json!({"query": "кошки рыба", "top_k": 1}))
+            .await
+            .unwrap();
+        assert!(out.result.contains("Заметки со ссылкой на эти источники"));
+        assert!(out.result.contains("мой вывод о кошках"));
     }
 
     #[tokio::test]
