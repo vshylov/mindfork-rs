@@ -376,38 +376,99 @@ impl Orchestrator {
     /// Отдаёт снимок «модели себя» активного профиля для экрана просмотра (`F3`).
     /// Чтение из БД на месте (быстро); `None` — нет активного чата или модель ещё
     /// не создавалась. Ошибку чтения трактуем как «нет модели» (вид покажет пусто).
+    /// Снимок «модели себя» профиля для экрана `F3`: блоб модели + наблюдения,
+    /// реконструированные из self-заметок (нарратив переехал в заметки, Ярус 1).
+    /// Наблюдения кладутся в поле `narrative` снимка **только для отображения** — сам
+    /// снимок никогда не персистится (запись идёт через `self_model_update` над
+    /// реальной, пустой по нарративу моделью). `None`, если нет ни модели, ни
+    /// наблюдений. См. docs/narrative-as-notes.md.
+    fn self_model_view_snapshot(
+        &self,
+        pid: uuid::Uuid,
+    ) -> Option<crate::entities::self_model::SelfModel> {
+        use crate::entities::self_model::{NarrativeSegment, SelfModel, SelfModelParams};
+        let cap = SelfModelParams::from_settings(&self.config.self_model).max_narrative;
+        let notes = crate::features::tools::notes::self_notes_recent(&self.storage, pid, cap);
+        let model = self.storage.db().self_model_get(pid).ok().flatten();
+        if model.is_none() && notes.is_empty() {
+            return None;
+        }
+        let mut m = model.unwrap_or_else(|| SelfModel::new(pid));
+        m.narrative = notes
+            .into_iter()
+            .map(|n| NarrativeSegment {
+                id: n.id,
+                text: n.content,
+                created_at: n.created_at,
+            })
+            .collect();
+        Some(m)
+    }
+
     fn handle_request_self_model(&self) {
-        let model = self
+        let snapshot = self
             .active_profile_id()
-            .and_then(|pid| self.storage.db().self_model_get(pid).ok().flatten());
-        let _ = self.evt_tx.send(AppEvent::SelfModelView(Box::new(model)));
+            .and_then(|pid| self.self_model_view_snapshot(pid));
+        let _ = self
+            .evt_tx
+            .send(AppEvent::SelfModelView(Box::new(snapshot)));
     }
 
     /// Применяет ручную правку «модели себя» активного профиля (UI-редактор `F3`):
     /// загружает (или создаёт пустую), применяет правку, при изменении — сохраняет,
     /// затем переэмитит обновлённый снимок (открытый экран обновится на месте).
     fn handle_update_self_model(&self, edit: crate::entities::self_model::SelfModelEdit) {
+        use crate::entities::self_model::SelfModelEdit;
         let Some(pid) = self.active_profile_id() else {
             return;
         };
+        // Наблюдения — self-заметки, поэтому их удаление/полная очистка идут по
+        // заметкам, а не по блобу модели (нарратив переехал в заметки, Ярус 1).
+        match &edit {
+            SelfModelEdit::DeleteInsight(id) => {
+                let _ = self.storage.db().note_delete(pid, *id);
+                let snapshot = self.self_model_view_snapshot(pid);
+                let _ = self
+                    .evt_tx
+                    .send(AppEvent::SelfModelView(Box::new(snapshot)));
+                return;
+            }
+            SelfModelEdit::Clear => {
+                // Полная очистка сносит и наблюдения-заметки (@self), и блоб (ниже).
+                for n in
+                    crate::features::tools::notes::self_notes_recent(&self.storage, pid, usize::MAX)
+                {
+                    let _ = self.storage.db().note_delete(pid, n.id);
+                }
+            }
+            _ => {}
+        }
         // Атомарная правка (под одним захватом мьютекса БД) — не даёт параллельной
         // авто-рефлексии затереть ручную правку гонкой load-modify-save. Заодно
-        // сворачиваем старые закрытые цели (единообразно с инструментами).
+        // сворачиваем старые закрытые цели (единообразно с инструментами): fold
+        // возвращает шрамы, которые пишем self-заметками после правки.
         let params =
             crate::entities::self_model::SelfModelParams::from_settings(&self.config.self_model);
-        let snapshot = match self.storage.db().self_model_update(pid, |m| {
+        let mut scars: Vec<String> = Vec::new();
+        let _ = self.storage.db().self_model_update(pid, |m| {
             let mut changed = m.apply_edit(edit);
-            if m.fold_closed_goals(params.max_closed_goals, params.max_narrative) > 0 {
+            scars = m.fold_closed_goals(params.max_closed_goals);
+            if !scars.is_empty() {
                 changed = true;
             }
             changed
-        }) {
-            // Правка применена — переэмитим авторитетный снимок (с ней).
-            Ok((model, true)) => Some(model),
-            // Правки не было (или ошибка) — переэмитим фактически сохранённый снимок
-            // (`None`, если модель для профиля ещё не создавалась).
-            _ => self.storage.db().self_model_get(pid).ok().flatten(),
-        };
+        });
+        // Шрамы свёрнутых закрытых целей → self-заметки. Sync insert (вектор лениво).
+        for scar in scars {
+            let note = crate::entities::note::Note::new(
+                pid,
+                scar,
+                vec![crate::features::tools::notes::SELF_NOTE_TAG.to_string()],
+            );
+            let _ = self.storage.db().note_insert(&note);
+        }
+        // Переэмитим авторитетный снимок (модель + наблюдения из self-заметок).
+        let snapshot = self.self_model_view_snapshot(pid);
         let _ = self
             .evt_tx
             .send(AppEvent::SelfModelView(Box::new(snapshot)));

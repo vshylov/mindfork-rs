@@ -101,14 +101,17 @@ impl Orchestrator {
         if self.consolidate_cancel.is_some() {
             return; // уже идёт — пропускаем без сброса (повторим на след. ходу)
         }
-        // Нечего консолидировать, если активных заметок меньше двух (счётчик не сброшен
-        // — повторим на следующем цикле).
-        let active = self
+        // Нечего консолидировать, если пользовательских заметок меньше двух (self-заметки
+        // не в счёт — консолидация над ними не работает). Счётчик не сброшен — повторим.
+        let active_user = self
             .storage
             .db()
             .note_list(profile_id, None, &[], None)
-            .unwrap_or_default();
-        if active.len() < 2 {
+            .unwrap_or_default()
+            .iter()
+            .filter(|n| !notes::is_self_note(n))
+            .count();
+        if active_user < 2 {
             return;
         }
         // Сервер готов? Иначе тихо пропускаем (счётчик не сброшен).

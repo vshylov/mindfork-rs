@@ -136,68 +136,156 @@ fn bare_orch_rx() -> (tempfile::TempDir, Orchestrator, UnboundedReceiver<AppEven
 #[test]
 fn inject_self_model_respects_flag_and_emptiness() {
     use super::generation::inject_self_model;
-    use crate::entities::self_model::{SelfModel, SelfModelParams};
+    use crate::entities::self_model::{NarrativeSegment, SelfModel, SelfModelParams};
 
     let pp = SelfModelParams::default();
     let mut m = SelfModel::new(Uuid::new_v4());
     m.summary = "ценю ясность".into();
+    let now = chrono::Utc::now();
+    let seg = |t: &str| NarrativeSegment {
+        id: Uuid::new_v4(),
+        text: t.into(),
+        created_at: now,
+    };
 
     // Выключено → система не меняется (протокол тоже не подмешивается).
     assert_eq!(
-        inject_self_model(
-            Some("S".into()),
-            Some(&m),
-            false,
-            true,
-            &pp,
-            chrono::Utc::now()
-        ),
+        inject_self_model(Some("S".into()), Some(&m), false, true, &pp, now, &[]),
         Some("S".into())
     );
     // Включено, протокол выкл, непустая модель → блок дописывается, протокола нет.
-    let out = inject_self_model(
-        Some("S".into()),
-        Some(&m),
-        true,
-        false,
-        &pp,
-        chrono::Utc::now(),
-    )
-    .unwrap();
+    let out = inject_self_model(Some("S".into()), Some(&m), true, false, &pp, now, &[]).unwrap();
     assert!(out.starts_with("S\n\n"));
     assert!(out.contains("ценю ясность"));
     assert!(!out.contains("угодливости"));
-    // Включено, протокол выкл, модели нет → без изменений.
+    // Включено, протокол выкл, модели нет, наблюдений нет → без изменений.
     assert_eq!(
-        inject_self_model(Some("S".into()), None, true, false, &pp, chrono::Utc::now()),
+        inject_self_model(Some("S".into()), None, true, false, &pp, now, &[]),
         Some("S".into())
     );
-    // Включено, протокол выкл, модель пуста, system=None → нечего подмешивать → None.
+    // Модели нет, но есть наблюдения (self-заметки) → инъекция всё равно происходит.
+    let obs = [seg("заметил склонность к краткости")];
+    let only_obs = inject_self_model(None, None, true, false, &pp, now, &obs).unwrap();
+    assert!(only_obs.contains("Недавние наблюдения:"));
+    assert!(only_obs.contains("склонность к краткости"));
+    // Пустая модель + пустые наблюдения, system=None → нечего подмешивать → None.
     let empty = SelfModel::new(Uuid::new_v4());
     assert_eq!(
-        inject_self_model(None, Some(&empty), true, false, &pp, chrono::Utc::now()),
+        inject_self_model(None, Some(&empty), true, false, &pp, now, &[]),
         None
     );
     // Пустой system + непустая модель (протокол выкл) → блок становится системой.
-    let only = inject_self_model(None, Some(&m), true, false, &pp, chrono::Utc::now()).unwrap();
+    let only = inject_self_model(None, Some(&m), true, false, &pp, now, &[]).unwrap();
     assert!(only.contains("О себе: ценю ясность"));
 
     // Протокол вкл + пустая модель → протокол всё равно подмешивается (bootstrap).
-    let boot = inject_self_model(
-        Some("S".into()),
-        Some(&empty),
-        true,
-        true,
-        &pp,
-        chrono::Utc::now(),
-    )
-    .unwrap();
+    let boot =
+        inject_self_model(Some("S".into()), Some(&empty), true, true, &pp, now, &[]).unwrap();
     assert!(boot.starts_with("S\n\n"));
     assert!(boot.contains("угодливости"));
     // Протокол вкл + непустая модель → и рендер, и протокол.
-    let both = inject_self_model(None, Some(&m), true, true, &pp, chrono::Utc::now()).unwrap();
+    let both = inject_self_model(None, Some(&m), true, true, &pp, now, &[]).unwrap();
     assert!(both.contains("ценю ясность"));
     assert!(both.contains("угодливости"));
+}
+
+#[test]
+fn blend_self_notes_prioritizes_relevant_and_guarantees_freshest() {
+    use super::generation::blend_self_notes;
+    use crate::entities::note::Note;
+    let p = Uuid::new_v4();
+    let mk = |c: &str| Note::new(p, c, vec![]);
+    let (r1, r2) = (mk("релевантное 1"), mk("релевантное 2"));
+    let (f0, f1) = (mk("самое свежее"), mk("свежее 1"));
+    let relevant = vec![r1.clone(), r2.clone()];
+    let fresh = vec![f0.clone(), f1.clone()];
+
+    // n=3: 2 релевантных + гарантированное самое свежее (f1 не влезает).
+    let out = blend_self_notes(relevant.clone(), &fresh, 3);
+    let ids: Vec<_> = out.iter().map(|n| n.id).collect();
+    assert_eq!(out.len(), 3);
+    assert!(ids.contains(&r1.id) && ids.contains(&r2.id));
+    assert!(
+        ids.contains(&f0.id),
+        "самое свежее наблюдение гарантированно включено"
+    );
+    assert!(!ids.contains(&f1.id));
+
+    // n=2 при 2 релевантных: последнюю релевантную теснит самое свежее.
+    let out = blend_self_notes(relevant, &fresh, 2);
+    let ids: Vec<_> = out.iter().map(|n| n.id).collect();
+    assert_eq!(out.len(), 2);
+    assert!(ids.contains(&r1.id));
+    assert!(ids.contains(&f0.id));
+    assert!(!ids.contains(&r2.id));
+
+    // Дедуп: если самое свежее уже среди релевантных — не дублируется.
+    let out = blend_self_notes(vec![f0.clone(), r1.clone()], &fresh, 3);
+    assert_eq!(out.iter().filter(|n| n.id == f0.id).count(), 1);
+}
+
+#[tokio::test]
+async fn injection_recent_surfaces_relevant_over_fresh() {
+    // Ярус 2: инъекция по релевантности поднимает СТАРОЕ, но релевантное запросу
+    // наблюдение — то, что чистая свежесть потеряла бы.
+    use super::generation::injection_recent;
+    use crate::entities::note::Note;
+    use crate::entities::self_model::SelfModelParams;
+    use crate::features::tools::notes::SELF_NOTE_TAG;
+    use chrono::{Duration, Utc};
+
+    let dir = tempfile::tempdir().unwrap();
+    let storage = Storage::open(Paths::with_root(dir.path())).unwrap();
+    let embedder = MockEmbedder::new(16);
+    let profile = Uuid::new_v4();
+
+    // X — старое (10 дней назад), тема «xxxx». Затем 4 свежих Y (тема «yyyy»),
+    // вытесняющих X из свежести (narrative_in_prompt=3).
+    let now = Utc::now();
+    let mut seeds: Vec<(String, chrono::DateTime<Utc>)> =
+        vec![("xxxx старое наблюдение".into(), now - Duration::days(10))];
+    for i in 0..4 {
+        seeds.push((format!("yyyy свежее {i}"), now));
+    }
+    for (content, at) in &seeds {
+        let note = Note {
+            id: Uuid::new_v4(),
+            profile_id: profile,
+            content: content.clone(),
+            tags: vec![SELF_NOTE_TAG.to_string()],
+            created_at: *at,
+            updated_at: *at,
+        };
+        storage.db().note_insert(&note).unwrap();
+        let emb = embedder
+            .embed(vec![content.clone()])
+            .await
+            .unwrap()
+            .into_iter()
+            .next()
+            .unwrap();
+        storage
+            .db()
+            .note_vector_upsert(note.id, profile, &emb)
+            .unwrap();
+    }
+    let params = SelfModelParams::default();
+
+    // Запрос про «xxxx» → старое релевантное наблюдение поднято (хоть не свежайшее).
+    let recent = injection_recent(&storage, &embedder, profile, true, "xxxx", &params).await;
+    assert!(
+        recent.iter().any(|s| s.text.contains("xxxx старое")),
+        "релевантное старое наблюдение должно быть поднято: {recent:?}"
+    );
+    // Запрос про «yyyy» → нерелевантное старое X не поднимается.
+    let recent = injection_recent(&storage, &embedder, profile, true, "yyyy", &params).await;
+    assert!(!recent.iter().any(|s| s.text.contains("xxxx")));
+    // Инъекция выключена → пусто.
+    assert!(
+        injection_recent(&storage, &embedder, profile, false, "xxxx", &params)
+            .await
+            .is_empty()
+    );
 }
 
 #[test]
@@ -1405,6 +1493,46 @@ fn live_backend() -> Option<Arc<dyn EngineBackend>> {
     Some(Arc::new(crate::shared::api::OpenAiClient::new(url)) as Arc<dyn EngineBackend>)
 }
 
+/// Реальный эмбеддер из `MINDFORK_EMBED_URL` (для живых смоуков — bge-m3 и т.п.);
+/// `None`, если не задан → живой смоук берёт тестовый `MockEmbedder`.
+fn live_embedder() -> Option<Arc<dyn Embedder>> {
+    let url = std::env::var("MINDFORK_EMBED_URL").ok()?;
+    Some(Arc::new(crate::shared::api::OpenAiClient::new(url)) as Arc<dyn Embedder>)
+}
+
+/// Кортеж поднятого оркестратора (как у [`spawn_orch`]): каталог данных, канал
+/// команд, приёмник событий, handle петли.
+type OrchHandle = (
+    tempfile::TempDir,
+    UnboundedSender<AppCommand>,
+    UnboundedReceiver<AppEvent>,
+    tokio::task::JoinHandle<()>,
+);
+
+/// Поднимает оркестратор для живого смоука: chat из `MINDFORK_ENGINE_URL`, эмбеддер
+/// из `MINDFORK_EMBED_URL` (реальный сервер; иначе детерминированный `MockEmbedder`).
+/// `None`, если `MINDFORK_ENGINE_URL` не задан (смоук пропускается).
+fn spawn_orch_live() -> Option<OrchHandle> {
+    let backend = live_backend()?;
+    let embedder = live_embedder();
+    let dir = tempfile::tempdir().unwrap();
+    let storage = Arc::new(Storage::open(Paths::with_root(dir.path())).unwrap());
+    let (cmd_tx, cmd_rx) = unbounded_channel();
+    let (evt_tx, evt_rx) = unbounded_channel();
+    let deps = OrchestratorDeps {
+        cmd_rx,
+        evt_tx,
+        storage,
+        config: AppConfig::default(),
+        supervisor: Arc::new(MockSupervisor::with_backend_and_embedder(
+            Some(backend),
+            embedder,
+        )),
+    };
+    let handle = tokio::spawn(run(deps));
+    Some((dir, cmd_tx, evt_rx, handle))
+}
+
 /// Дренирует события до `Finished` (или закрытия), помечая, встретилось ли
 /// `pred`-событие по пути. Для end-to-end смоуков управляющих инструментов.
 async fn drain_until_finished<F: Fn(&AppEvent) -> bool>(
@@ -1562,6 +1690,27 @@ async fn run_turn_live(
     (out, tools)
 }
 
+/// Как [`run_turn_live`], но собирает пары (имя инструмента, результат) — чтобы
+/// проверить текст результата (напр. срабатывание ворот `add_insight`).
+async fn run_turn_capture(
+    cmd_tx: &UnboundedSender<AppCommand>,
+    evt_rx: &mut UnboundedReceiver<AppEvent>,
+    text: &str,
+) -> (String, Vec<(String, String)>) {
+    cmd_tx.send(AppCommand::SendMessage(text.into())).unwrap();
+    let mut out = String::new();
+    let mut calls = Vec::new();
+    while let Some(ev) = evt_rx.recv().await {
+        match &ev {
+            AppEvent::Chunk { text, .. } => out.push_str(text),
+            AppEvent::ToolCall { name, result, .. } => calls.push((name.clone(), result.clone())),
+            AppEvent::Finished { .. } => break,
+            _ => {}
+        }
+    }
+    (out, calls)
+}
+
 /// End-to-end зонд SelfModel на живой модели (две сессии, один профиль):
 /// 1) сессия 1 — сообщаем факты о себе и просим зафиксировать в «модели себя»
 ///    (ожидаем вызовы `update_self_model`/`update_user_model`, запись в БД);
@@ -1626,11 +1775,13 @@ async fn self_model_e2e_live() {
     );
 }
 
-/// End-to-end зонд нарратива (Tier 2): просим модель зафиксировать наблюдение
-/// через `add_insight` — ожидаем непустой нарратив в БД. `#[ignore]`, вручную.
+/// End-to-end зонд наблюдений: просим модель зафиксировать наблюдение через
+/// `add_insight` — ожидаем self-заметку (@self) в БД (нарратив переехал в заметки,
+/// Ярус 1 «нарратив как заметки»). `#[ignore]`, вручную.
 #[tokio::test]
 #[ignore = "requires a running OpenAI-compatible server (MINDFORK_ENGINE_URL)"]
 async fn self_model_insight_e2e_live() {
+    use crate::features::tools::notes::SELF_NOTE_TAG;
     let Some(backend) = live_backend() else {
         eprintln!("skip: MINDFORK_ENGINE_URL not set");
         return;
@@ -1643,7 +1794,7 @@ async fn self_model_insight_e2e_live() {
         &cmd_tx,
         &mut evt_rx,
         "Я заметил, что иногда прошу кратко, а иногда — подробно. \
-         Зафиксируй это наблюдение в своём нарративе: вызови инструмент add_insight \
+         Зафиксируй это наблюдение в своих наблюдениях: вызови инструмент add_insight \
          с коротким описанием этого противоречия.",
     )
     .await;
@@ -1652,13 +1803,16 @@ async fn self_model_insight_e2e_live() {
     cmd_tx.send(AppCommand::Quit).unwrap();
     handle.await.unwrap();
 
+    // Наблюдение — self-заметка (@self), а не запись в блобе модели.
     let reopened = Storage::open(Paths::with_root(&root)).unwrap();
-    let model = reopened.db().self_model_get(pid).unwrap();
-    eprintln!("self_model в БД: {model:#?}");
-    let model = model.expect("ожидали сохранённую модель себя");
+    let self_notes = reopened
+        .db()
+        .note_list(pid, None, &[SELF_NOTE_TAG.to_string()], None)
+        .unwrap();
+    eprintln!("self-заметки (наблюдения) в БД: {self_notes:#?}");
     assert!(
-        !model.narrative.is_empty(),
-        "ожидали хотя бы один инсайт в нарративе (вызов add_insight)"
+        !self_notes.is_empty(),
+        "ожидали хотя бы одну self-заметку (@self) — наблюдение от add_insight"
     );
     assert!(
         tools.iter().any(|t| t == "add_insight"),
@@ -1693,14 +1847,21 @@ async fn auto_reflect_e2e_live() {
     )
     .await;
 
-    // Ждём, пока фоновая рефлексия запишет модель себя (опрос БД до ~60с).
-    let mut found = None;
+    // Ждём, пока фоновая рефлексия что-то запишет (опрос БД до ~60с): блоб модели
+    // (summary/цели/собеседник) ИЛИ наблюдение self-заметкой (@self, Ярус 1).
+    use crate::features::tools::notes::SELF_NOTE_TAG;
+    let mut model = None;
+    let mut self_notes = Vec::new();
     for _ in 0..120 {
         let db = Storage::open(Paths::with_root(&root)).unwrap();
-        if let Some(m) = db.db().self_model_get(pid).unwrap()
-            && !m.is_empty()
-        {
-            found = Some(m);
+        let m = db.db().self_model_get(pid).unwrap();
+        self_notes = db
+            .db()
+            .note_list(pid, None, &[SELF_NOTE_TAG.to_string()], None)
+            .unwrap();
+        let blob_nonempty = m.as_ref().map(|m| !m.is_empty()).unwrap_or(false);
+        if blob_nonempty || !self_notes.is_empty() {
+            model = m;
             break;
         }
         drop(db);
@@ -1710,10 +1871,187 @@ async fn auto_reflect_e2e_live() {
     cmd_tx.send(AppCommand::Quit).unwrap();
     handle.await.unwrap();
 
-    eprintln!("auto-reflect: self_model в БД: {found:#?}");
+    eprintln!("auto-reflect: self_model={model:#?}\nself-заметки={self_notes:#?}");
+    let blob_nonempty = model.as_ref().map(|m| !m.is_empty()).unwrap_or(false);
     assert!(
-        found.is_some(),
-        "ожидали, что фоновая авто-рефлексия заполнит модель себя"
+        blob_nonempty || !self_notes.is_empty(),
+        "ожидали, что фоновая авто-рефлексия заполнит модель себя (блоб или наблюдение-заметку)"
+    );
+}
+
+/// End-to-end зонд **ворот** (ядро гипотезы Яруса 1 «нарратив как заметки»): модель
+/// записывает наблюдение (`add_insight` → self-заметка @self), затем почти-дубль —
+/// ворота `add_insight` показывают похожее существующее наблюдение с подсказкой
+/// переписать его через `note_revise`/`note_supersede` вместо копии. Ассертим
+/// **механизм** (self-заметки создаются; ворота срабатывают детерминированно —
+/// эмбеддер в тестах `MockEmbedder`, наблюдение #1 уже есть); **решение** модели
+/// интегрировать печатаем для go/no-go (поведение нестабильно). Запуск (нужен
+/// живой сервер + возможно эмбеддер):
+/// `MINDFORK_ENGINE_URL=…/v1 cargo test self_model_gate_e2e_live -- --ignored --nocapture --test-threads=1`.
+#[tokio::test]
+#[ignore = "requires a running OpenAI-compatible server (MINDFORK_ENGINE_URL)"]
+async fn self_model_gate_e2e_live() {
+    use crate::features::tools::notes::SELF_NOTE_TAG;
+    // Реальный chat + эмбеддер (MINDFORK_ENGINE_URL / MINDFORK_EMBED_URL) — ворота
+    // работают на настоящих эмбеддингах (bge-m3 и т.п.), а не на MockEmbedder.
+    let Some((_d, cmd_tx, mut evt_rx, handle)) = spawn_orch_live() else {
+        eprintln!("skip: MINDFORK_ENGINE_URL not set");
+        return;
+    };
+    let root = _d.path().to_path_buf();
+    let pid = enable_all_tools(&cmd_tx, &mut evt_rx).await;
+
+    // Сессия 1: записываем наблюдение → self-заметка #1.
+    let (_t1, tools1) = run_turn_live(
+        &cmd_tx,
+        &mut evt_rx,
+        "Запиши в свои наблюдения (вызови add_insight): я склонен просить краткие ответы.",
+    )
+    .await;
+    eprintln!("сессия 1: инструменты={tools1:?}");
+
+    // Сессия 2: почти-дубль — ворота add_insight должны показать наблюдение #1.
+    let (t2, calls2) = run_turn_capture(
+        &cmd_tx,
+        &mut evt_rx,
+        "Запиши ещё одно, очень похожее наблюдение (вызови add_insight): пользователь \
+         предпочитает лаконичные, краткие ответы. Если инструмент покажет похожее \
+         наблюдение — реши сам, переписать ли его (note_revise/note_supersede) или \
+         оставить оба.",
+    )
+    .await;
+    eprintln!("сессия 2: текст={t2:?}\nвызовы={calls2:#?}");
+
+    cmd_tx.send(AppCommand::Quit).unwrap();
+    handle.await.unwrap();
+
+    // Механизм: add_insight в сессии 1 создал self-заметку (@self).
+    assert!(
+        tools1.iter().any(|t| t == "add_insight"),
+        "сессия 1: ожидали вызов add_insight"
+    );
+    let self_notes = Storage::open(Paths::with_root(&root))
+        .unwrap()
+        .db()
+        .note_list(pid, None, &[SELF_NOTE_TAG.to_string()], None)
+        .unwrap();
+    eprintln!(
+        "self-заметок в БД: {} — {:#?}",
+        self_notes.len(),
+        self_notes
+            .iter()
+            .map(|n| n.content.clone())
+            .collect::<Vec<_>>()
+    );
+    assert!(
+        !self_notes.is_empty(),
+        "ожидали self-заметки (@self) от add_insight"
+    );
+
+    // Ворота: результат add_insight в сессии 2 показал похожее наблюдение?
+    let gate_fired = calls2
+        .iter()
+        .any(|(n, r)| n == "add_insight" && r.contains("Похожие наблюдения"));
+    // С тестовым MockEmbedder (MINDFORK_EMBED_URL не задан) ворота детерминированны:
+    // если модель вызвала add_insight, они ОБЯЗАНЫ сработать (наблюдение #1 уже есть).
+    // С реальным эмбеддером срабатывание зависит от его настройки (напр. llama-server
+    // нужен `--embeddings`), а при недоступности ворота мягко деградируют в пусто —
+    // поэтому там это лишь диагностика, не жёсткая проверка.
+    let real_embedder = std::env::var("MINDFORK_EMBED_URL").is_ok();
+    if !real_embedder && calls2.iter().any(|(n, _)| n == "add_insight") {
+        assert!(
+            gate_fired,
+            "ворота add_insight должны были показать похожее наблюдение (MockEmbedder, ядро гипотезы): {calls2:?}"
+        );
+    }
+    // Интеграция почти-дубля: перепись/замещение/слияние наблюдений.
+    let integrated = calls2
+        .iter()
+        .any(|(n, _)| n == "note_revise" || n == "note_supersede" || n == "note_merge");
+    eprintln!(
+        "ворота показали похожее: {gate_fired} (реальный эмбеддер: {real_embedder}); \
+         модель интегрировала (note_revise/supersede/merge): {integrated}"
+    );
+    // Модель должна была как-то тронуть наблюдения (иначе гипотеза не проверяется).
+    assert!(
+        calls2.iter().any(|(n, _)| {
+            n == "add_insight" || n == "note_revise" || n == "note_supersede" || n == "note_merge"
+        }),
+        "сессия 2: ожидали add_insight/note_revise/note_supersede/note_merge"
+    );
+}
+
+/// End-to-end зонд **графа над наблюдениями** (Ярус 2, шаг B): модель записывает два
+/// соотносящихся наблюдения, затем связывает их (`note_link`). Ассертим механизм
+/// (наблюдения-заметки создаются; модель осмотрела модель себя / связала); появление
+/// связи в графе печатаем для go/no-go (поведение нестабильно). Инъекция по
+/// релевантности проверена детерминированно (`injection_recent_surfaces_relevant_over_fresh`)
+/// + ручной мульти-сессионный прогон пользователя. `#[ignore]`, вручную:
+/// `MINDFORK_ENGINE_URL=…/v1 MINDFORK_EMBED_URL=…/v1 cargo test self_model_graph_e2e_live -- --ignored --nocapture --test-threads=1`.
+#[tokio::test]
+#[ignore = "requires a running OpenAI-compatible server (MINDFORK_ENGINE_URL)"]
+async fn self_model_graph_e2e_live() {
+    use crate::features::tools::notes::SELF_NOTE_TAG;
+    let Some((_d, cmd_tx, mut evt_rx, handle)) = spawn_orch_live() else {
+        eprintln!("skip: MINDFORK_ENGINE_URL not set");
+        return;
+    };
+    let root = _d.path().to_path_buf();
+    let pid = enable_all_tools(&cmd_tx, &mut evt_rx).await;
+
+    // Два соотносящихся (противоречащих) наблюдения.
+    let (_t1, tools1) = run_turn_live(
+        &cmd_tx,
+        &mut evt_rx,
+        "Запиши наблюдение (add_insight): я ценю краткость в ответах.",
+    )
+    .await;
+    let (_t2, tools2) = run_turn_live(
+        &cmd_tx,
+        &mut evt_rx,
+        "Запиши ещё одно наблюдение (add_insight): но иногда я даю слишком многословные ответы.",
+    )
+    .await;
+    eprintln!("наблюдения: {tools1:?} + {tools2:?}");
+
+    // Просим осмотреть модель себя и связать противоречащие наблюдения.
+    let (t3, calls3) = run_turn_capture(
+        &cmd_tx,
+        &mut evt_rx,
+        "Посмотри свои наблюдения (get_self_model). Если два из них противоречат друг \
+         другу — свяжи их инструментом note_link (relation=contradicts) по полному id.",
+    )
+    .await;
+    eprintln!("связывание: текст={t3:?}\nвызовы={calls3:#?}");
+
+    cmd_tx.send(AppCommand::Quit).unwrap();
+    handle.await.unwrap();
+
+    let reopened = Storage::open(Paths::with_root(&root)).unwrap();
+    let self_notes = reopened
+        .db()
+        .note_list(pid, None, &[SELF_NOTE_TAG.to_string()], None)
+        .unwrap();
+    let links = reopened.db().note_links_all(pid).unwrap();
+    eprintln!(
+        "self-заметок: {}; связей в графе наблюдений: {} — {links:?}",
+        self_notes.len(),
+        links.len()
+    );
+
+    // Механизм: наблюдения-заметки созданы.
+    assert!(self_notes.len() >= 2, "ожидали ≥2 наблюдения-заметки");
+    let linked = calls3.iter().any(|(n, _)| n == "note_link");
+    eprintln!(
+        "модель вызвала note_link: {linked}; связей появилось: {}",
+        links.len()
+    );
+    // Модель должна была осмотреть себя и/или связать (иначе граф не проверен).
+    assert!(
+        calls3
+            .iter()
+            .any(|(n, _)| n == "get_self_model" || n == "note_link"),
+        "сессия 3: ожидали get_self_model/note_link"
     );
 }
 
@@ -1752,6 +2090,75 @@ async fn update_self_model_persists_and_reemits() {
     let pid = reopened.json().load_profiles().unwrap()[0].id;
     let stored = reopened.db().self_model_get(pid).unwrap().unwrap();
     assert_eq!(stored.summary, "ценю ясность");
+}
+
+/// Готовит голый оркестратор с профилем + активным чатом (для F3-правок).
+fn orch_with_active_profile() -> (tempfile::TempDir, Orchestrator, Uuid) {
+    let (dir, mut orch) = bare_orch();
+    let profile = Profile::new("P", "sys");
+    let pid = profile.id;
+    let chat = Chat::from_profile(&profile, "t");
+    let chat_id = chat.id;
+    orch.profiles.push(profile);
+    orch.chats.push(chat);
+    orch.active_id = Some(chat_id);
+    (dir, orch, pid)
+}
+
+#[test]
+fn f3_delete_insight_removes_self_note() {
+    use crate::entities::self_model::SelfModelEdit;
+    use crate::features::tools::notes::SELF_NOTE_TAG;
+    let (_d, orch, pid) = orch_with_active_profile();
+    // Наблюдение — self-заметка (@self).
+    let note = crate::entities::note::Note::new(pid, "наблюдение", vec![SELF_NOTE_TAG.to_string()]);
+    let nid = note.id;
+    orch.storage.db().note_insert(&note).unwrap();
+
+    // F3 «удалить наблюдение» → удаление self-заметки (не правка блоба).
+    orch.handle_update_self_model(SelfModelEdit::DeleteInsight(nid));
+    assert!(
+        orch.storage
+            .db()
+            .note_list(pid, None, &[SELF_NOTE_TAG.to_string()], None)
+            .unwrap()
+            .is_empty()
+    );
+}
+
+#[test]
+fn f3_clear_removes_self_notes_and_blob() {
+    use crate::entities::self_model::SelfModelEdit;
+    use crate::features::tools::notes::SELF_NOTE_TAG;
+    let (_d, orch, pid) = orch_with_active_profile();
+    // Наблюдение-заметка + непустой блоб модели.
+    orch.storage
+        .db()
+        .note_insert(&crate::entities::note::Note::new(
+            pid,
+            "наблюдение",
+            vec![SELF_NOTE_TAG.to_string()],
+        ))
+        .unwrap();
+    orch.storage
+        .db()
+        .self_model_update(pid, |m| {
+            m.summary = "о себе".into();
+            true
+        })
+        .unwrap();
+
+    orch.handle_update_self_model(SelfModelEdit::Clear);
+    // Self-заметки снесены, блоб очищен.
+    assert!(
+        orch.storage
+            .db()
+            .note_list(pid, None, &[SELF_NOTE_TAG.to_string()], None)
+            .unwrap()
+            .is_empty()
+    );
+    let stored = orch.storage.db().self_model_get(pid).unwrap();
+    assert!(stored.map(|m| m.summary.is_empty()).unwrap_or(true));
 }
 
 /// Готовит оркестратор с чатом (user+assistant) и профилем, включившим модель себя;

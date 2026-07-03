@@ -584,12 +584,24 @@ mod tests {
         KeyEvent::new(code, KeyModifiers::NONE)
     }
 
+    /// Добавляет наблюдение в снимок для тестов. Наблюдения переехали в заметки, а
+    /// снимок `F3` несёт их реконструированными в поле `narrative` (оркестратор
+    /// заполняет из self-заметок), поэтому в тестах кладём прямо в поле.
+    fn push_insight(m: &mut SelfModel, text: &str) {
+        m.narrative
+            .push(crate::entities::self_model::NarrativeSegment {
+                id: Uuid::new_v4(),
+                text: text.into(),
+                created_at: chrono::Utc::now(),
+            });
+    }
+
     fn model() -> SelfModel {
         let mut m = SelfModel::new(Uuid::new_v4());
         m.summary = "ценю ясность".into();
         m.add_goal("помочь с проектом");
         m.user_model.perceived_traits = vec!["скептичный".into()];
-        m.add_insight("замечен интерес к Rust", 50);
+        push_insight(&mut m, "замечен интерес к Rust");
         m
     }
 
@@ -762,7 +774,7 @@ mod tests {
         // паники при переносе на много рядов в тесной высоте.
         let mut m = SelfModel::new(Uuid::new_v4());
         m.summary = "описание".into();
-        m.add_insight("очень длинное наблюдение ".repeat(40), 50);
+        push_insight(&mut m, &"очень длинное наблюдение ".repeat(40));
         let mut s = SelfModelScreen::new(Some(m), Palette::default());
         let mut term = Terminal::new(TestBackend::new(40, 8)).unwrap();
         term.draw(|f| s.render(f)).unwrap();

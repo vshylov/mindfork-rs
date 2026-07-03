@@ -123,11 +123,21 @@ impl Db {
         Ok(notes)
     }
 
-    /// Жёсткое удаление заметки по id (репозиторная операция; UI-потребитель — позже).
-    #[allow(dead_code)]
-    pub fn note_delete(&self, id: Uuid) -> Result<bool> {
+    /// Жёсткое удаление заметки профиля по id (вместе с её вектором). Используется
+    /// удалением наблюдения из экрана `F3` (наблюдения — self-заметки). Изоляция по
+    /// `profile_id` в `WHERE`. Возвращает, была ли удалена заметка.
+    pub fn note_delete(&self, profile_id: Uuid, id: Uuid) -> Result<bool> {
         let conn = self.conn.lock().unwrap();
-        let n = conn.execute("DELETE FROM notes WHERE id = ?1", params![id.to_string()])?;
+        // Вектор удаляем безусловно (боковая таблица; чужой профиль сюда не попадёт,
+        // т.к. note_id уникален и проверка профиля — на самой заметке ниже).
+        conn.execute(
+            "DELETE FROM note_vectors WHERE note_id = ?1",
+            params![id.to_string()],
+        )?;
+        let n = conn.execute(
+            "DELETE FROM notes WHERE id = ?1 AND profile_id = ?2",
+            params![id.to_string(), profile_id.to_string()],
+        )?;
         Ok(n > 0)
     }
 
@@ -225,6 +235,22 @@ impl Db {
             })?
             .collect::<rusqlite::Result<Vec<_>>>()?;
         Ok(rows)
+    }
+
+    /// Заметка по id в рамках профиля (включая замещённую) — для чтения тегов при
+    /// замещении/слиянии: новая версия наследует теги исходной (в т.ч. `@self`, чтобы
+    /// self-заметка не «выпала» в пользовательскую выдачу). `None` — не найдена/чужая.
+    pub fn note_get(&self, profile_id: Uuid, id: Uuid) -> Result<Option<Note>> {
+        let conn = self.conn.lock().unwrap();
+        let note = conn
+            .query_row(
+                "SELECT n.id, n.profile_id, n.content, n.tags, n.created_at, n.updated_at
+                 FROM notes n WHERE n.id = ?1 AND n.profile_id = ?2",
+                params![id.to_string(), profile_id.to_string()],
+                row_to_note,
+            )
+            .optional()?;
+        Ok(note)
     }
 
     // ---------- граф связей и «шрамы» (Ярус 2) ----------
@@ -1213,8 +1239,8 @@ mod tests {
                 std::thread::spawn(move || {
                     for i in 0..n {
                         db.self_model_update(pid, |m| {
-                            // Щедрый потолок — вытеснения нет, считаем ровно.
-                            m.add_insight(format!("{prefix}{i}"), 10_000);
+                            // Накапливаем цели — считаем ровно (add_goal без потолка).
+                            m.add_goal(format!("{prefix}{i}"));
                             true
                         })
                         .unwrap();
@@ -1226,7 +1252,7 @@ mod tests {
             h.join().unwrap();
         }
         let m = db.self_model_get(pid).unwrap().unwrap();
-        assert_eq!(m.narrative.len(), 2 * n);
+        assert_eq!(m.goals.len(), 2 * n);
         assert_eq!(m.version, (2 * n) as u64); // каждая правка = один upsert
     }
 
@@ -1239,6 +1265,25 @@ mod tests {
         assert!(!changed);
         assert_eq!(model.version, 0);
         assert!(db.self_model_get(pid).unwrap().is_none());
+    }
+
+    #[test]
+    fn note_delete_removes_and_is_profile_isolated() {
+        let db = db();
+        let p = Uuid::new_v4();
+        let other = Uuid::new_v4();
+        let n = Note::new(p, "наблюдение", vec![]);
+        let id = n.id;
+        db.note_insert(&n).unwrap();
+        db.note_vector_upsert(id, p, &[1.0, 0.0]).unwrap();
+        // Чужой профиль не удаляет.
+        assert!(!db.note_delete(other, id).unwrap());
+        assert_eq!(db.note_list(p, None, &[], None).unwrap().len(), 1);
+        // Свой — удаляет заметку (и её вектор).
+        assert!(db.note_delete(p, id).unwrap());
+        assert!(db.note_list(p, None, &[], None).unwrap().is_empty());
+        // Заметки без вектора нет (обе таблицы пусты) — вектор снят вместе с заметкой.
+        assert!(db.notes_missing_vectors(p).unwrap().is_empty());
     }
 
     #[test]
@@ -1270,7 +1315,7 @@ mod tests {
         let p = Uuid::new_v4();
         let note = Note::new(p, "x", vec![]);
         db.note_insert(&note).unwrap();
-        assert!(db.note_delete(note.id).unwrap());
+        assert!(db.note_delete(p, note.id).unwrap());
         assert!(db.note_list(p, None, &[], None).unwrap().is_empty());
     }
 
