@@ -39,13 +39,17 @@ const REFLECT_TIMEOUT: Duration = Duration::from_secs(120);
 /// note-инструменты для консолидации наблюдений-заметок: переписать почти-дубль
 /// (`note_revise`), заместить со «шрамом» (`note_supersede`) или слить (`note_merge`).
 /// Граф над наблюдениями (Ярус 2): `note_link`/`note_neighbors` — связать
-/// противоречащие/уточняющие наблюдения (id из `get_self_model`). `note_recall` не
-/// даём — он скрывает self-заметки. См. docs/narrative-as-notes.md.
+/// противоречащие/уточняющие наблюдения (id из `get_self_model`). **Кросс-органные
+/// связи (Ярус 3):** дан `note_recall` — он отдаёт id пользовательских заметок «о
+/// собеседнике» (self-заметки по-прежнему скрывает), чтобы рефлексия могла связать
+/// наблюдение «о себе» с фактом «о собеседнике» (`note_link` self↔user).
+/// См. docs/narrative-as-notes.md.
 const REFLECT_TOOL_IDS: &[&str] = &[
     self_model::GET_SELF_MODEL_ID,
     self_model::UPDATE_SELF_MODEL_ID,
     self_model::UPDATE_USER_MODEL_ID,
     self_model::ADD_INSIGHT_ID,
+    notes::NOTE_RECALL_ID,
     notes::NOTE_REVISE_ID,
     notes::NOTE_SUPERSEDE_ID,
     notes::NOTE_MERGE_ID,
@@ -63,6 +67,10 @@ fn reflect_system_message() -> String {
          имеющиеся связи). Затем: {} Если два наблюдения соотносятся — противоречат, \
          уточняют друг друга или об одном — свяжи их (note_link по полному id: \
          contradicts/refines/relates), чтобы память была связной, а не россыпью. Если \
+         наблюдение «о себе» соотносится с фактом «о собеседнике» — найди факт через \
+         note_recall (он даёт id заметок) и свяжи их note_link (наблюдение из \
+         get_self_model, заметку из note_recall): память о себе и о собеседнике не \
+         изолированы. Если \
          ниже есть блок «Поведенческие сигналы» — учти их как свидетельства о \
          собеседнике (update_user_model) или наблюдение (add_insight): это факты \
          поведения, а не осуждение. Меняй только действительно изменившееся; нечего — \
@@ -312,9 +320,20 @@ mod tests {
     #[test]
     fn reflect_tools_include_graph() {
         // Ярус 2: авто-рефлексии даны note_link/note_neighbors (граф над наблюдениями).
+        // Ярус 3: + note_recall (id пользовательских заметок для кросс-органных связей).
         use super::{REFLECT_TOOL_IDS, notes};
         assert!(REFLECT_TOOL_IDS.contains(&notes::NOTE_LINK_ID));
         assert!(REFLECT_TOOL_IDS.contains(&notes::NOTE_NEIGHBORS_ID));
+        assert!(REFLECT_TOOL_IDS.contains(&notes::NOTE_RECALL_ID));
+    }
+
+    #[test]
+    fn reflect_message_nudges_cross_organ_linking() {
+        // Ярус 3: рефлексии предложено связывать наблюдение «о себе» с фактом «о
+        // собеседнике» (кросс-органное ребро через note_recall + note_link).
+        let msg = super::reflect_system_message();
+        assert!(msg.contains("note_recall"));
+        assert!(msg.contains("о собеседнике"));
     }
 
     #[test]

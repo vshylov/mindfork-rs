@@ -9,6 +9,9 @@ use crate::entities::profile::ToolId;
 
 use super::{Tool, ToolContext, ToolOutcome};
 
+/// Имя инструмента припоминания заметок (нужно рефлексии для кросс-органных связей,
+/// Ярус 3 — id пользовательских заметок).
+pub const NOTE_RECALL_ID: &str = "note_recall";
 /// Имя инструмента ревизии заметки (DB-only, гейтится набором профиля).
 pub const NOTE_REVISE_ID: &str = "note_revise";
 /// Граф связей и ревизионная история (Ярус 2, DB-only, гейтятся набором профиля).
@@ -136,7 +139,7 @@ pub struct NoteRecall;
 #[async_trait::async_trait]
 impl Tool for NoteRecall {
     fn id(&self) -> ToolId {
-        "note_recall".into()
+        NOTE_RECALL_ID.into()
     }
     fn description(&self) -> String {
         "Найти ранее сохранённые заметки по тексту и/или тегам.".into()
@@ -185,6 +188,12 @@ impl Tool for NoteRecall {
 
 /// Подмешиваемый блок «Связанные заметки»: соседи топ-хитов по графу (обе стороны),
 /// без уже показанных и без замещённых. `None`, если связей нет. Чистое чтение БД.
+///
+/// **Кросс-органные связи (Ярус 3):** сосед-наблюдение «о себе» (`@self`), явно
+/// связанный моделью с пользовательской заметкой, **показывается** с пометкой
+/// `[о себе]`. Это НЕ реверс сокрытия Яруса 1: обычный поиск/spreading по-прежнему
+/// не тащит self-заметки — всплывает лишь **намеренно созданное** моделью ребро
+/// между органами. См. docs/narrative-as-notes.md (Ярус 3, кросс-органные связи).
 fn related_block(ctx: &ToolContext, hits: &[Note]) -> Option<String> {
     let mut seen: std::collections::HashSet<Uuid> = hits.iter().map(|n| n.id).collect();
     let mut lines: Vec<String> = Vec::new();
@@ -195,16 +204,19 @@ fn related_block(ctx: &ToolContext, hits: &[Note]) -> Option<String> {
             .note_neighbors(ctx.profile_id, hit.id, None)
             .unwrap_or_default();
         for (note, relation, outgoing) in nb {
-            // Self-заметки не подмешиваем в пользовательское припоминание.
-            if is_self_note(&note) {
-                continue;
-            }
             if !seen.insert(note.id) {
                 continue;
             }
             let arrow = if outgoing { "→" } else { "←" };
+            // Кросс-органный сосед (наблюдение «о себе») помечается — так модель видит
+            // связь заметки с наблюдением, не смешивая органы в общей выдаче.
+            let mark = if is_self_note(&note) {
+                "[о себе] "
+            } else {
+                ""
+            };
             lines.push(format!(
-                "- {arrow}{relation} (id={}) {}",
+                "- {arrow}{relation} {mark}(id={}) {}",
                 note.id, note.content
             ));
             if lines.len() >= RELATED_IN_RECALL {
@@ -349,10 +361,15 @@ pub(crate) async fn self_note_similar(
 
 /// Блок «Связи наблюдений» для чтения «модели себя» (граф над self-заметками,
 /// Ярус 2): **рёбра** графа, касающиеся показанных наблюдений (структура «что с чем
-/// соотносится» — то, чего плоский список наблюдений не показывает). Только
-/// self↔self (граф наблюдений); соседа вне показанного набора приводим с текстом
-/// (spreading activation). Дедуп рёбер. `None`, если связей нет. Чистое чтение БД.
-/// См. docs/narrative-as-notes.md (Ярус 2).
+/// соотносится» — то, чего плоский список наблюдений не показывает). Соседа вне
+/// показанного набора приводим с текстом (spreading activation). Дедуп рёбер.
+/// `None`, если связей нет. Чистое чтение БД.
+///
+/// **Кросс-органные связи (Ярус 3):** сосед-**пользовательская** заметка (не `@self`),
+/// явно связанная моделью с наблюдением, показывается с пометкой `[заметка]` — так
+/// чтение «модели себя» видит, что наблюдение «о себе» соотносится с фактом «о
+/// собеседнике» (self↔user ребро). Органы остаются раздельными по хранению/поиску;
+/// всплывает лишь намеренно созданное ребро. См. docs/narrative-as-notes.md (Ярус 3).
 pub(crate) fn self_related_block(ctx: &ToolContext, shown: &[Uuid]) -> Option<String> {
     let shown_set: std::collections::HashSet<Uuid> = shown.iter().copied().collect();
     let mut seen_edges: std::collections::HashSet<(Uuid, Uuid, String)> =
@@ -365,9 +382,6 @@ pub(crate) fn self_related_block(ctx: &ToolContext, shown: &[Uuid]) -> Option<St
             .note_neighbors(ctx.profile_id, *id, None)
             .unwrap_or_default();
         for (note, relation, outgoing) in nb {
-            if !is_self_note(&note) {
-                continue; // граф наблюдений — только self↔self
-            }
             // Нормализуем ребро (от→к) и дедупим (та же связь придёт с обоих концов).
             let (from, to) = if outgoing {
                 (*id, note.id)
@@ -377,11 +391,18 @@ pub(crate) fn self_related_block(ctx: &ToolContext, shown: &[Uuid]) -> Option<St
             if !seen_edges.insert((from, to, relation.clone())) {
                 continue;
             }
+            // Кросс-органный сосед (пользовательская заметка) помечается — чтение
+            // «модели себя» видит связь наблюдения с фактом «о собеседнике».
+            let mark = if is_self_note(&note) {
+                ""
+            } else {
+                "[заметка] "
+            };
             // Соседа вне показанного набора приводим с текстом (spreading activation).
             let tail = if shown_set.contains(&note.id) {
                 format!("(id={})", note.id)
             } else {
-                format!("(id={}) {}", note.id, note.content)
+                format!("{mark}(id={}) {}", note.id, note.content)
             };
             let arrow = if outgoing { "→" } else { "←" };
             lines.push(format!("- (id={id}) {arrow}{relation} {tail}"));
@@ -505,14 +526,18 @@ async fn semantic_recall(
     if notes.is_empty() { None } else { Some(notes) }
 }
 
-/// Форматирует список заметок в текстовый результат инструмента.
+/// Форматирует список заметок в текстовый результат инструмента. Показывает **id**
+/// каждой заметки — чтобы модель могла ссылаться на неё в `note_link`/`note_revise`/
+/// `note_supersede` (в т.ч. кросс-органно: связать пользовательскую заметку с
+/// наблюдением «о себе», Ярус 3). Раньше id не выводился, и заметки из recall были
+/// неадресуемы, хотя описание `note_link` обещало «id из note_recall».
 fn format_notes(notes: &[Note]) -> ToolOutcome {
     if notes.is_empty() {
         return ToolOutcome::text("Заметки не найдены.");
     }
     let mut out = format!("Найдено заметок: {}\n", notes.len());
     for n in notes {
-        out.push_str(&format!("- {}", n.content));
+        out.push_str(&format!("- (id={}) {}", n.id, n.content));
         if !n.tags.is_empty() {
             out.push_str(&format!("  [{}]", n.tags.join(", ")));
         }
@@ -1115,6 +1140,99 @@ mod tests {
             .unwrap();
         assert!(out.result.contains("любит чай"));
         assert!(!out.result.contains("сам люблю чай"));
+    }
+
+    #[tokio::test]
+    async fn recall_shows_note_ids() {
+        // Ярус 3: note_recall выводит id заметок — иначе модель не сможет ссылаться на
+        // них в note_link/note_revise (в т.ч. кросс-органно).
+        let profile = Uuid::new_v4();
+        let (_d, storage, ctx) = ctx_with_storage(profile);
+        NoteSave
+            .invoke(&ctx, serde_json::json!({"content": "любит чай"}))
+            .await
+            .unwrap();
+        let id = storage.db().note_list(profile, None, &[], None).unwrap()[0].id;
+        let out = NoteRecall
+            .invoke(&ctx, serde_json::json!({}))
+            .await
+            .unwrap();
+        assert!(out.result.contains(&format!("(id={id})")));
+    }
+
+    #[tokio::test]
+    async fn recall_surfaces_cross_organ_self_neighbor_marked() {
+        // Ярус 3 (кросс-органные связи): пользовательская заметка, ЯВНО связанная с
+        // наблюдением «о себе», показывает его в блоке «Связанные заметки» с пометкой
+        // [о себе] — но обычный поиск self-заметки по-прежнему не тащит.
+        let profile = Uuid::new_v4();
+        let (_d, storage, ctx) = ctx_with_storage(profile);
+        NoteSave
+            .invoke(
+                &ctx,
+                serde_json::json!({"content": "пользователь любит краткость"}),
+            )
+            .await
+            .unwrap();
+        storage
+            .db()
+            .note_insert(&Note::new(
+                profile,
+                "я склонен к многословию",
+                vec![SELF_NOTE_TAG.to_string()],
+            ))
+            .unwrap();
+        let user_id = id_by_content(&storage, profile, "пользователь любит краткость");
+        let self_id = id_by_content(&storage, profile, "я склонен к многословию");
+        storage
+            .db()
+            .note_link_insert(profile, user_id, self_id, "contradicts")
+            .unwrap();
+
+        let out = NoteRecall
+            .invoke(&ctx, serde_json::json!({"query": "краткость"}))
+            .await
+            .unwrap();
+        // Первичная выдача — только пользовательская заметка (self скрыта из поиска).
+        assert!(out.result.contains("пользователь любит краткость"));
+        // Но связанное наблюдение всплывает в блоке связей с пометкой [о себе].
+        assert!(out.result.contains("Связанные заметки"));
+        assert!(out.result.contains("[о себе]"));
+        assert!(out.result.contains("я склонен к многословию"));
+    }
+
+    #[tokio::test]
+    async fn self_related_block_surfaces_cross_organ_user_note_marked() {
+        // Ярус 3: чтение «модели себя» показывает пользовательскую заметку-соседа
+        // наблюдения с пометкой [заметка] (self↔user ребро).
+        let profile = Uuid::new_v4();
+        let (_d, storage, ctx) = ctx_with_storage(profile);
+        storage
+            .db()
+            .note_insert(&Note::new(
+                profile,
+                "я склонен к многословию",
+                vec![SELF_NOTE_TAG.to_string()],
+            ))
+            .unwrap();
+        NoteSave
+            .invoke(
+                &ctx,
+                serde_json::json!({"content": "пользователь любит краткость"}),
+            )
+            .await
+            .unwrap();
+        let self_id = id_by_content(&storage, profile, "я склонен к многословию");
+        let user_id = id_by_content(&storage, profile, "пользователь любит краткость");
+        storage
+            .db()
+            .note_link_insert(profile, self_id, user_id, "contradicts")
+            .unwrap();
+
+        let block = self_related_block(&ctx, &[self_id]).expect("ожидали блок связей");
+        assert!(block.contains("[заметка]"));
+        assert!(block.contains("пользователь любит краткость"));
+        assert!(block.contains("contradicts"));
     }
 
     #[tokio::test]
