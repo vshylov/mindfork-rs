@@ -117,6 +117,59 @@ fn str_array(args: &serde_json::Value, key: &str) -> Vec<String> {
         .unwrap_or_default()
 }
 
+/// Порог косинусной близости, при котором добавляемая черта считается **родственной**
+/// уже имеющейся (ворота `add_traits`). Откалиброван на живом bge-m3 (Шаг C): у него
+/// короткие черты сжаты в узкую полосу, и настоящие перефразы дают ~0.73–0.83
+/// («любит лаконичность» ↔ «ценит краткость» = 0.77, «скептичный» ↔ «критично» = 0.73),
+/// а не-родственные — ниже (кофе↔альпинизм = 0.69, программист↔готовка = 0.58). Порог
+/// 0.72 разделяет их. **Важно:** bge-m3 сближает по *измерению/теме*, не по направлению
+/// смысла, поэтому в полосу попадают и антонимы («любит краткость» ↔ «любит длинные
+/// объяснения» = 0.71) — но это фича ворот: родственную черту стоит показать, чтобы
+/// модель решила, **дубль это (слить) или противоречие (записать наблюдением)**. См.
+/// docs/narrative-as-notes.md (Ярус 2, Шаг C).
+const TRAIT_SIMILARITY: f32 = 0.72;
+
+/// Ворота родственных черт (Шаг C): для КАЖДОЙ реально добавленной черты ищет
+/// ближайшую среди ПРЕЖНИХ (существовавших до этой правки) выше порога
+/// [`TRAIT_SIMILARITY`]. Возвращает пары (добавленная, близкая существующая),
+/// новейшие первыми. Эмбеддит новые + прежние одним запросом; у черт нет хранимых
+/// векторов (плоский `Vec<String>`), поэтому считаем на лету. Пусто при недоступном
+/// эмбеддере или нестыковке числа векторов — **мягкая деградация**, прямое зеркало
+/// ворот `add_insight`/`note_save`. См. docs/narrative-as-notes.md (Ярус 2, Шаг C).
+async fn near_duplicate_traits(
+    ctx: &ToolContext,
+    added: &[String],
+    existing_before: &[String],
+) -> Vec<(String, String)> {
+    if added.is_empty() || existing_before.is_empty() {
+        return Vec::new();
+    }
+    // Один запрос: сначала добавленные, затем прежние — чтобы разбить по границе.
+    let texts: Vec<String> = added.iter().chain(existing_before).cloned().collect();
+    let Ok(vecs) = ctx.embedder.embed(texts).await else {
+        return Vec::new();
+    };
+    if vecs.len() != added.len() + existing_before.len() {
+        return Vec::new();
+    }
+    let (added_vecs, existing_vecs) = vecs.split_at(added.len());
+    let mut out = Vec::new();
+    for (i, a) in added.iter().enumerate() {
+        // Ближайшая прежняя черта выше порога (одна на добавленную — не шумим).
+        let mut best: Option<(f32, usize)> = None;
+        for (j, _) in existing_before.iter().enumerate() {
+            let s = notes::cosine(&added_vecs[i], &existing_vecs[j]);
+            if s >= TRAIT_SIMILARITY && best.map(|(bs, _)| s > bs).unwrap_or(true) {
+                best = Some((s, j));
+            }
+        }
+        if let Some((_, j)) = best {
+            out.push((a.clone(), existing_before[j].clone()));
+        }
+    }
+    out
+}
+
 /// `get_self_model` — текущее состояние модели себя (чтение).
 pub struct GetSelfModel;
 
@@ -354,7 +407,9 @@ impl Tool for UpdateUserModel {
          relationship_dynamic — как вы относитесь во времени. При удалении/замене черты \
          передай note — что и почему изменилось (уйдёт в нарратив как след ревизии, чтобы \
          модель себя помнила, что менялась). Мимолётное (сегодняшнее настроение, разовая \
-         реакция) записывай в add_insight, а не сюда."
+         реакция) записывай в add_insight, а не сюда. Если добавляемая черта близка по теме \
+         к уже имеющейся, инструмент это покажет — реши: дубль (объедини через remove_traits) \
+         или противоречие (запиши наблюдением add_insight), а не копи обе молча."
             .into()
     }
     fn parameters(&self) -> serde_json::Value {
@@ -380,12 +435,17 @@ impl Tool for UpdateUserModel {
         // Шрам ревизии (`note`) собираем внутри closure, но записываем **после** —
         // как self-заметку (наблюдение), а не в блоб модели (async/storage вне closure).
         let mut note_scar: Option<String> = None;
+        // Ворота почти-дублей черт (Шаг C): нужен снимок черт ДО добавления —
+        // собираем внутри атомарной правки (захват по `&mut`), эмбеддинг — после.
+        let requested_traits = str_array(&args, "add_traits");
+        let mut existing_before_traits: Vec<String> = Vec::new();
         let (model, changed) = ctx.storage.db().self_model_update(ctx.profile_id, |m| {
             let mut changed = false;
 
             // Списки — merge (add/remove с дедупом), а не замена: правка не обнуляет
             // накопленное представление (частая беда «перетирания по настроению»).
-            changed |= m.user_model.add_traits(str_array(&args, "add_traits"));
+            existing_before_traits = m.user_model.perceived_traits.clone();
+            changed |= m.user_model.add_traits(requested_traits.clone());
             removed_traits = m
                 .user_model
                 .remove_traits(&str_array(&args, "remove_traits"));
@@ -432,10 +492,41 @@ impl Tool for UpdateUserModel {
                 "Нечего обновлять (не передано ни одного изменения).",
             ));
         }
+        // Реально добавленные черты (новые после дедупа, без внутрибатчевых повторов) —
+        // сравниваем их с прежними воротами почти-дублей (эмбеддинг только если есть
+        // что сравнивать; при недоступном эмбеддере — мягко пусто).
+        let mut added_traits: Vec<String> = Vec::new();
+        for t in &requested_traits {
+            let lc = t.to_lowercase();
+            let known = existing_before_traits
+                .iter()
+                .any(|x| x.to_lowercase() == lc)
+                || added_traits.iter().any(|x| x.to_lowercase() == lc);
+            if !known {
+                added_traits.push(t.clone());
+            }
+        }
+        let dup_pairs = near_duplicate_traits(ctx, &added_traits, &existing_before_traits).await;
+
         let mut msg = format!(
             "Модель собеседника обновлена.\n{}",
             model.render_full(Utc::now(), &recent_segments(ctx))
         );
+        // Ворота родственных черт (Шаг C): близкая по теме черта уже существует.
+        // bge-m3 сближает черты по измерению (перефразы И антонимы), поэтому просим
+        // модель РЕШИТЬ: это дубль (слить через remove_traits) или противоречие
+        // (записать наблюдением add_insight) — зеркало ворот add_insight, но над
+        // плоским списком черт (интеграция вместо накопления).
+        if !dup_pairs.is_empty() {
+            msg.push_str(
+                "\nРодственные черты уже есть (близки по теме — проверь: это дубль или \
+                 противоречие?). Если дубль — оставь одну через remove_traits; если \
+                 противоречие — запиши его наблюдением (add_insight), а не копи оба молча:",
+            );
+            for (added, existing) in &dup_pairs {
+                msg.push_str(&format!("\n- «{added}» ≈ «{existing}»"));
+            }
+        }
         // Удаление черты/интереса или замена непустой динамики — пересмотр суждения.
         // Причина не записана → напоминаем оставить след наблюдением (шрам), а не менять
         // молча (смена динамики отношений — самый значимый пересмотр модели собеседника).
@@ -740,6 +831,49 @@ mod tests {
             .unwrap();
         assert!(out.result.contains("Связи наблюдений"));
         assert!(out.result.contains("contradicts"));
+    }
+
+    #[tokio::test]
+    async fn add_trait_gate_surfaces_near_duplicate() {
+        // Шаг C: добавление черты, родственной уже имеющейся, поднимает ворота
+        // (зеркало ворот add_insight). MockEmbedder(16) — мешок символов: «aaaa bbbb»
+        // ↔ «aaab» близки (cosine ≈ 0.89 > порога 0.72).
+        let profile = Uuid::new_v4();
+        let (_d, _s, ctx) = ctx_with_storage(profile);
+        // Первая черта — прежних нет, ворота молчат.
+        let out = UpdateUserModel
+            .invoke(&ctx, serde_json::json!({"add_traits": ["aaaa bbbb"]}))
+            .await
+            .unwrap();
+        assert!(!out.result.contains("Родственные черты"));
+        // Вторая черта близка к первой → ворота показывают родственную черту.
+        let out = UpdateUserModel
+            .invoke(&ctx, serde_json::json!({"add_traits": ["aaab"]}))
+            .await
+            .unwrap();
+        assert!(out.result.contains("Родственные черты"));
+        assert!(out.result.contains("aaab"));
+        assert!(out.result.contains("aaaa bbbb"));
+        assert!(out.result.contains("remove_traits"));
+    }
+
+    #[tokio::test]
+    async fn add_trait_gate_silent_for_dissimilar() {
+        // Неродственная черта не поднимает ворота (ложных срабатываний нет).
+        let profile = Uuid::new_v4();
+        let (_d, storage, ctx) = ctx_with_storage(profile);
+        UpdateUserModel
+            .invoke(&ctx, serde_json::json!({"add_traits": ["aaaa bbbb"]}))
+            .await
+            .unwrap();
+        let out = UpdateUserModel
+            .invoke(&ctx, serde_json::json!({"add_traits": ["wwww"]}))
+            .await
+            .unwrap();
+        assert!(!out.result.contains("Родственные черты"));
+        // Обе черты сохранены (ворота ничего не блокируют — только предупреждают).
+        let stored = storage.db().self_model_get(profile).unwrap().unwrap();
+        assert_eq!(stored.user_model.perceived_traits.len(), 2);
     }
 
     #[tokio::test]
