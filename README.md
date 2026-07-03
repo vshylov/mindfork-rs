@@ -309,20 +309,25 @@ Ctrl-шорткаты раскладко-независимы (работают 
 ## Разработка
 
 ```bash
-cargo test                                 # юнит-тесты (без сервера; ~555 зелёных)
+cargo test                                 # юнит-тесты (без сервера; 729 зелёных)
 cargo clippy --all-targets -- -D warnings
 cargo fmt --check
 ```
 
-Смоук-тесты против живой модели помечены `#[ignore]` и запускаются вручную:
+Смоук-тесты против живой модели помечены `#[ignore]` и запускаются вручную (без
+нужной env-переменной тихо пропускаются):
 
 ```powershell
-$env:MINDFORK_ENGINE_URL = "http://127.0.0.1:8000/v1"
-cargo test ignored_smoke -- --ignored --nocapture --test-threads=1
+$env:MINDFORK_ENGINE_URL = "http://127.0.0.1:8000/v1"   # чат-сервер (URL включает /v1)
+$env:MINDFORK_EMBED_URL  = "http://127.0.0.1:8001/v1"   # эмбеддер (память/RAG-смоуки)
+cargo test -- --ignored --nocapture --test-threads=1
 ```
 
 Покрывают стриминг/финиш, анти-самообрыв на тексте EOS (`<|im_end|>` Qwen и
-`<end_of_turn>` Gemma), tool-calling и «мысли». Проверено зелёным на Gemma 4 E4B-it.
+`<end_of_turn>` Gemma), tool-calling, «мысли», расширения семплинга и control-
+инструменты, а также end-to-end модели себя/заметок/нарратива (ворота, граф,
+рефлексия, консолидация, кросс-органные связи). **25 `#[ignore]`-смоуков прогнаны
+зелёными на Gemma 4 31B + bge-m3** (`llama-server`, ~370с).
 
 **Конвенции:** Rust edition 2024; `anyhow` в прикладных слоях, `thiserror` в
 библиотечных `shared`; логи только в файл (`logs/`, stdout занят TUI); тесты рядом
@@ -345,13 +350,15 @@ cargo test ignored_smoke -- --ignored --nocapture --test-threads=1
 
 ## Статус
 
-Реализован весь план **M0–M9**. Чат-цикл, профили с изоляцией, инструменты с
-клиентским agentic-loop, саб-агент, web-поиск и Python под выключателями, экран
-настроек, импорт из LameLLaMA, темы, спелл-чек на лету, загрузка файлов в RAG
-командами `/rag add|remove` (умный чанкинг с перекрытием + семантический markdown +
-склейка при извлечении), **имперсонация** пользователя (`Ctrl+U`, shared/managed/
-external). **Мульти-провайдерный инференс** ([ADR 0004](docs/decisions/0004-engine-contract-multi-provider.md)):
+Реализован весь план **M0–M9** плюс обширный пост-M9. Чат-цикл, профили с изоляцией,
+инструменты с клиентским agentic-loop, саб-агент, web-поиск и Python под
+выключателями, экран настроек, импорт из LameLLaMA, темы, спелл-чек на лету, загрузка
+файлов в RAG командами `/rag add|remove` (умный чанкинг с перекрытием + семантический
+markdown + склейка при извлечении), **имперсонация** пользователя (`Ctrl+U`, shared/
+managed/external), **«модель себя»/собеседника** (`F3`) и **связность заметок**
+(семантический recall, граф связей, замещение со «шрамом», авто-«сон», нарратив как
+заметки). **Мульти-провайдерный инференс** ([ADR 0004](docs/decisions/0004-engine-contract-multi-provider.md)):
 локальный llama.cpp + облако **OpenAI / Gemini / Anthropic (Claude)** за единым
-контрактом. **Gemma 4** проверена на живом `llama-server`, **Claude 4.x** — на живом
-Anthropic API. Около **555 юнит-тестов** зелёные, `#[ignore]`-смоуки (llama.cpp +
-Anthropic по ключу).
+контрактом. **729 юнит-тестов** зелёные; **25 `#[ignore]`-смоуков** прогнаны на живой
+связке **Gemma 4 31B + bge-m3** (`llama-server`), **Claude 4.x** — на живом Anthropic
+API по ключу.

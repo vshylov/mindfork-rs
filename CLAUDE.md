@@ -89,23 +89,34 @@ cargo run                          # TUI (нужен НАСТОЯЩИЙ терм
 ```
 Запуск против реального сервера (смоук, llama.cpp):
 ```
-llama-server -m gemma-4-E4B-it.gguf --host 0.0.0.0 --port 8000 -ngl 99 -c 8192 --jinja  # терм. 1
-$env:MINDFORK_ENGINE_URL="http://127.0.0.1:8000/v1"  # терминал 2 (PowerShell)
+llama-server -m gemma-4-it.gguf   --host 0.0.0.0 --port 8000 -ngl 99 -c 16384 --jinja        # чат
+llama-server -m bge-m3-Q8_0.gguf  --host 0.0.0.0 --port 8001 -ngl 99 -c 16384 --embeddings   # эмбеддер (память/RAG)
+$env:MINDFORK_ENGINE_URL="http://127.0.0.1:8000/v1"   # PowerShell; URL включает /v1
+$env:MINDFORK_EMBED_URL="http://127.0.0.1:8001/v1"    # нужен воротам/графу/консолидации памяти
 cargo run
-cargo test ignored_smoke -- --ignored --test-threads=1   # смоук-тесты
+# Все живые смоуки (без нужной env-переменной тихо пропускаются):
+cargo test -- --ignored --nocapture --test-threads=1
+# Только память/модель себя/заметки (12 e2e):  cargo test e2e_live -- --ignored --nocapture --test-threads=1
 ```
 Env для выбора бэкенда: `MINDFORK_ENGINE_URL` (external, любой OpenAI-сервер) ИЛИ
 `MINDFORK_LLAMA_BIN` (+ `MINDFORK_MODEL` GGUF, `MINDFORK_NGL`, `MINDFORK_CTX`,
 `MINDFORK_PORT`) для managed `llama-server`.
 
-## Статус (на 2026-06-16)
-Сделан весь план **M0–M9** (в `main`). **333 теста зелёные, 6 `#[ignore]`.**
+## Статус (на 2026-07-04)
+Сделан весь план **M0–M9** плюс обширный пост-M9 (в `main`). **729 юнит-тестов
+зелёные, 25 `#[ignore]`-смоуков.** Весь набор `#[ignore]` прогнан на живой связке
+**Gemma 4 31B (q4) + bge-m3** (`llama-server`, external, `--jinja`) — 25/25 зелёные
+(~370с): базовые смоуки Gemma (стриминг, EOS-анти-самообрыв, tool-calling, «мысли»,
+расширения семплинга, control-инструменты) + end-to-end модели себя/заметок/нарратива
+(ворота дублей, граф, авто-рефлексия/консолидация, семантические черты, кросс-органные
+связи, цитирование RAG, нарратив-как-заметки). Мульти-провайдер (OpenAI/Gemini/Claude)
+покрыт unit-тестами + отдельными `MINDFORK_ANTHROPIC_KEY`-смоуками.
 Чат-цикл, профили с изоляцией, инструменты с клиентским agentic-loop, саб-агент,
 web-поиск и Python под выключателями, экран настроек со всеми секциями и
 перезапуском managed-сервера при смене модели, импорт из LameLLaMA (.NET), оверлей
 помощи, релизный профиль, **темы (auto/dark/light)**, **спелл-чек на лету по
-настройкам**. **Gemma 4 проверена** на живом `llama-server` (стриминг, EOS-анти-
-самообрыв, tool-calling, «мысли» — `#[ignore]`-смоуки зелёные).
+настройкам**, **«модель себя»/собеседника** и **связность заметок** (нарратив как
+заметки). Полный журнал пост-M9 — ниже.
 
 > **Движок инференса:** `xinfer` оказался сырым по Gemma 4 (бессвязный вывод,
 > плохо собирается под Windows). Рабочий бэкенд — **llama.cpp `llama-server`**
