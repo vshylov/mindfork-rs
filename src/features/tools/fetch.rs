@@ -260,6 +260,7 @@ mod tests {
             embedder,
             chunk_params: crate::features::tools::rag::ChunkParams::default(),
             self_model_params: crate::entities::self_model::SelfModelParams::default(),
+            recall_includes_self: false,
         };
         (dir, ctx)
     }

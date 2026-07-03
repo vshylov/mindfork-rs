@@ -406,6 +406,7 @@ enum FieldId {
     SmAutoReflect,
     SmProtocol,
     NotesAutoConsolidate,
+    NotesRecallIncludesSelf,
     // Интерфейс
     ITheme,
     ISpell,
@@ -752,6 +753,11 @@ impl SettingsScreen {
                 FieldId::NotesAutoConsolidate,
                 "Заметки: авто-консолидация (кажд. N)",
                 FieldKind::Text(self.config.notes.auto_consolidate_every.to_string()),
+            ),
+            row(
+                FieldId::NotesRecallIncludesSelf,
+                "Заметки: наблюдения «о себе» в note_recall",
+                FieldKind::Toggle(self.config.notes.recall_includes_self),
             ),
         ]);
         rows
@@ -1104,6 +1110,9 @@ impl SettingsScreen {
             FieldId::SmProtocol => {
                 self.config.self_model.maintenance_protocol =
                     !self.config.self_model.maintenance_protocol
+            }
+            FieldId::NotesRecallIncludesSelf => {
+                self.config.notes.recall_includes_self = !self.config.notes.recall_includes_self
             }
             FieldId::ICopyThoughts => {
                 self.config.copy.copy_thoughts = !self.config.copy.copy_thoughts
@@ -1783,6 +1792,11 @@ fn field_description(id: FieldId) -> Option<&'static str> {
             "Авто-консолидация («сон»): каждые N ответов модель в фоне сама пересматривает \
              базу заметок — сливает дубли, переписывает устаревшее, связывает родственное. \
              0 — выключено. Работает только в профилях с включёнными инструментами заметок.",
+        ),
+        FieldId::NotesRecallIncludesSelf => Some(
+            "Показывать наблюдения «о себе» (@self) в общем note_recall — с пометкой \
+             [о себе]. По умолчанию выключено: память о себе ≠ память о собеседнике. \
+             Включение смешивает выдачу (модель увидит свои наблюдения при поиске заметок).",
         ),
         FieldId::IConfirmKeys => Some(
             "Спрашивать подтверждение перед перегенерацией (Ctrl+R) и удалением последнего \

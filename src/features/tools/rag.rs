@@ -727,6 +727,7 @@ mod tests {
             embedder: embedder.clone(),
             chunk_params: ChunkParams::default(),
             self_model_params: crate::entities::self_model::SelfModelParams::default(),
+            recall_includes_self: false,
         };
 
         RagAdd

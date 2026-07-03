@@ -2241,6 +2241,77 @@ async fn cross_organ_link_e2e_live() {
     );
 }
 
+/// End-to-end зонд **смешения выдачи** (Ярус 3, Путь 2): при включённом тумблере
+/// `notes.recall_includes_self` наблюдения «о себе» (`@self`) входят в общий
+/// `note_recall` с пометкой `[о себе]`. Ассертим **механизм** (тумблер применён; модель
+/// вызвала `note_recall`); появление self-наблюдения с пометкой и **ответ модели**
+/// (не «загрязняет» ли — go/no-go по безопасности смешения) печатаем. `#[ignore]`,
+/// вручную: `MINDFORK_ENGINE_URL=…/v1 MINDFORK_EMBED_URL=…/v1 cargo test recall_includes_self_e2e_live -- --ignored --nocapture --test-threads=1`.
+#[tokio::test]
+#[ignore = "requires a running OpenAI-compatible server (MINDFORK_ENGINE_URL)"]
+async fn recall_includes_self_e2e_live() {
+    let Some((_d, cmd_tx, mut evt_rx, handle)) = spawn_orch_live() else {
+        eprintln!("skip: MINDFORK_ENGINE_URL not set");
+        return;
+    };
+    let _pid = enable_all_tools(&cmd_tx, &mut evt_rx).await;
+    // Включаем смешение выдачи (Путь 2). MockSupervisor игнорирует настройки серверов,
+    // так что живой backend/embedder остаются; меняется лишь recall_includes_self.
+    let config = AppConfig {
+        notes: crate::shared::config::NotesSettings {
+            recall_includes_self: true,
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+    cmd_tx
+        .send(AppCommand::UpdateConfig(Box::new(config)))
+        .unwrap();
+    wait_for(
+        &mut evt_rx,
+        |e| matches!(e, AppEvent::Settings { config, .. } if config.notes.recall_includes_self),
+    )
+    .await
+    .unwrap();
+
+    // Факт «о собеседнике» + наблюдение «о себе».
+    run_turn_live(
+        &cmd_tx,
+        &mut evt_rx,
+        "Запиши заметку о собеседнике (note_save): пользователь любит краткость.",
+    )
+    .await;
+    run_turn_live(
+        &cmd_tx,
+        &mut evt_rx,
+        "Запиши наблюдение о себе (add_insight): я склонен к многословию.",
+    )
+    .await;
+
+    // Поиск: при включённом тумблере note_recall должен вернуть и заметку, и наблюдение
+    // «о себе» (с пометкой [о себе]).
+    let (t3, calls3) = run_turn_capture(
+        &cmd_tx,
+        &mut evt_rx,
+        "Поищи в заметках (note_recall) всё про краткость и многословие — что там есть?",
+    )
+    .await;
+    eprintln!("recall: текст={t3:?}\nвызовы={calls3:#?}");
+
+    cmd_tx.send(AppCommand::Quit).unwrap();
+    handle.await.unwrap();
+
+    // Механизм: note_recall при включённом тумблере вернул self-наблюдение с пометкой.
+    let self_marked = calls3
+        .iter()
+        .any(|(n, r)| n == "note_recall" && r.contains("[о себе]"));
+    eprintln!("note_recall показал наблюдение «о себе» с пометкой: {self_marked}");
+    assert!(
+        calls3.iter().any(|(n, _)| n == "note_recall"),
+        "ожидали вызов note_recall"
+    );
+}
+
 #[tokio::test]
 async fn update_self_model_persists_and_reemits() {
     use crate::entities::self_model::SelfModelEdit;

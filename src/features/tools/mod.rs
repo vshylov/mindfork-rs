@@ -62,6 +62,9 @@ pub struct ToolContext {
     /// читают/пишут свежее состояние напрямую через `storage` (чтобы видеть правки
     /// внутри хода), а инъекция модели в промпт — отдельным путём в оркестраторе.
     pub self_model_params: SelfModelParams,
+    /// Показывать ли self-заметки (`@self`) в общем `note_recall` (Ярус 3, Путь 2).
+    /// Из `config.notes.recall_includes_self`; по умолчанию `false` (self скрыты).
+    pub recall_includes_self: bool,
 }
 
 /// Эффект, изменяющий `Chat`; возвращается инструментом, применяется оркестратором.
@@ -369,6 +372,7 @@ pub(crate) mod testkit {
             embedder,
             chunk_params: rag::ChunkParams::default(),
             self_model_params: SelfModelParams::default(),
+            recall_includes_self: false,
         };
         (dir, storage, ctx)
     }
