@@ -197,14 +197,14 @@ impl Orchestrator {
         // «Модель себя» профиля на начало хода. Инъекция в системный промпт — только
         // если профиль включил get_self_model (opt-in); сама инъекция (наблюдения по
         // релевантности к последней реплике + свежесть) происходит в задаче генерации
-        // (нужен async-эмбеддинг). См. docs/narrative-as-notes.md (Ярус 2).
+        // (нужен async-эмбеддинг). См. docs/history/narrative-as-notes.md (Ярус 2).
         let self_model_params =
             crate::entities::self_model::SelfModelParams::from_settings(&self.config.self_model);
         let inject_enabled = enabled
             .iter()
             .any(|t| t == crate::features::tools::self_model::GET_SELF_MODEL_ID);
         // Одноразовый идемпотентный перенос старого нарратива «модели себя» в
-        // self-заметки (@self). Best-effort. См. docs/narrative-as-notes.md, шаг 6.
+        // self-заметки (@self). Best-effort. См. docs/history/narrative-as-notes.md, шаг 6.
         if inject_enabled {
             crate::features::tools::notes::migrate_self_narrative(&self.storage, profile_id);
         }
@@ -330,7 +330,7 @@ struct GenSpawn {
     allowed: Vec<ToolId>,
     /// «Модель себя» профиля (снимок на начало хода) + параметры/флаги инъекции.
     /// Инъекция в системный промпт делается в задаче (нужен async-эмбеддинг для
-    /// релевантной выборки наблюдений). См. docs/narrative-as-notes.md (Ярус 2).
+    /// релевантной выборки наблюдений). См. docs/history/narrative-as-notes.md (Ярус 2).
     self_model: Option<crate::entities::self_model::SelfModel>,
     self_model_params: crate::entities::self_model::SelfModelParams,
     inject_enabled: bool,
@@ -761,7 +761,7 @@ pub(super) async fn injection_recent(
 }
 
 /// Подмешивает «модель себя» в системный промпт хода (SelfModel MVP, см.
-/// docs/self-model-mvp.md): компактный рендер текущей модели (если непуста) плюс,
+/// docs/history/self-model-mvp.md): компактный рендер текущей модели (если непуста) плюс,
 /// при `maintenance_protocol`, нейтральный к персоне протокол ведения. Возвращает
 /// прежний `system` без изменений, если инъекция выключена (профиль не включил
 /// `get_self_model`) либо подмешивать нечего (пустая модель и протокол выключен).

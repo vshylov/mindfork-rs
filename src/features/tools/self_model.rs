@@ -2,7 +2,7 @@
 //! минимальное обновление представления агента о себе, целях и собеседнике.
 //! Данные пер-профильные, в SQLite (как заметки) — инструменты-мутаторы пишут
 //! **напрямую** через `ctx.storage` (не через `ChatEffect`). Изоляция по
-//! `ctx.profile_id`. См. [docs/self-model-mvp.md](../../../docs/self-model-mvp.md).
+//! `ctx.profile_id`. См. [docs/history/self-model-mvp.md](../../../docs/history/self-model-mvp.md).
 
 use anyhow::Result;
 use chrono::Utc;
@@ -21,7 +21,7 @@ pub const ADD_INSIGHT_ID: &str = "add_insight";
 /// Все id инструментов группы «модели себя» (для детекции правок в ходе).
 /// `consolidate_narrative` удалён — наблюдения переехали в заметки (Ярус 1
 /// «нарратив как заметки»), их консолидируют note-инструменты (note_revise/
-/// note_supersede/note_merge). См. docs/narrative-as-notes.md.
+/// note_supersede/note_merge). См. docs/history/narrative-as-notes.md.
 pub const ALL_IDS: &[&str] = &[
     GET_SELF_MODEL_ID,
     REFLECT_ID,
@@ -130,7 +130,7 @@ fn str_array(args: &serde_json::Value, key: &str) -> Vec<String> {
 /// смысла, поэтому в полосу попадают и антонимы («любит краткость» ↔ «любит длинные
 /// объяснения» = 0.71) — но это фича ворот: родственную черту стоит показать, чтобы
 /// модель решила, **дубль это (слить) или противоречие (записать наблюдением)**. См.
-/// docs/narrative-as-notes.md (Ярус 2, Шаг C).
+/// docs/history/narrative-as-notes.md (Ярус 2, Шаг C).
 const TRAIT_SIMILARITY: f32 = 0.72;
 
 /// Ворота родственных черт (Шаг C): для КАЖДОЙ реально добавленной черты ищет
@@ -139,7 +139,7 @@ const TRAIT_SIMILARITY: f32 = 0.72;
 /// новейшие первыми. Эмбеддит новые + прежние одним запросом; у черт нет хранимых
 /// векторов (плоский `Vec<String>`), поэтому считаем на лету. Пусто при недоступном
 /// эмбеддере или нестыковке числа векторов — **мягкая деградация**, прямое зеркало
-/// ворот `add_insight`/`note_save`. См. docs/narrative-as-notes.md (Ярус 2, Шаг C).
+/// ворот `add_insight`/`note_save`. См. docs/history/narrative-as-notes.md (Ярус 2, Шаг C).
 async fn near_duplicate_traits(
     ctx: &ToolContext,
     added: &[String],
@@ -287,7 +287,7 @@ impl Tool for AddInsight {
         }
         // Наблюдение — это self-заметка (@self): получает эмбеддинг, семантический
         // поиск, граф и консолидацию наравне с обычными заметками, но скрыта из
-        // пользовательского recall. См. docs/narrative-as-notes.md.
+        // пользовательского recall. См. docs/history/narrative-as-notes.md.
         let id =
             notes::create_note(ctx, text.clone(), vec![notes::SELF_NOTE_TAG.to_string()]).await?;
         let mut msg = format!("Наблюдение записано (id={id}).");
@@ -555,7 +555,7 @@ impl Tool for UpdateUserModel {
 
 // `consolidate_narrative` удалён: наблюдения переехали в заметки (Ярус 1), их
 // консолидируют note-инструменты (note_revise/note_supersede/note_merge) — они
-// сильнее (замещение со «шрамом», а не удаление по id). См. docs/narrative-as-notes.md.
+// сильнее (замещение со «шрамом», а не удаление по id). См. docs/history/narrative-as-notes.md.
 
 #[cfg(test)]
 mod tests {

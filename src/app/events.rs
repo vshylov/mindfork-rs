@@ -179,7 +179,7 @@ pub enum AppEvent {
     RagProgress(RagProgress),
     /// Снимок «модели себя» активного профиля (ответ на `RequestSelfModel`) для
     /// экрана просмотра (`F3`). `None` — модель ещё не создавалась. `Box` — крупный
-    /// тип, не раздуваем enum. См. docs/self-model-mvp.md.
+    /// тип, не раздуваем enum. См. docs/history/self-model-mvp.md.
     SelfModelView(Box<Option<crate::entities::self_model::SelfModel>>),
     /// «Модель себя» изменилась (фоновой рефлексией или инструментами хода) — сигнал
     /// **без снимка**. Если экран `F3` открыт, UI перезапрашивает свежий снимок

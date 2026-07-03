@@ -6,7 +6,7 @@
 //! `AppEvent::SelfModelView`. Правки экран отдаёт намерением `SelfModelIntent::Edit`
 //! (→ `AppCommand::UpdateSelfModel`); оркестратор применяет, сохраняет и переэмитит
 //! обновлённый снимок (экран обновляется на месте). Сам экран про `app`/`Storage`
-//! не знает (FSD). См. docs/self-model-mvp.md.
+//! не знает (FSD). См. docs/history/self-model-mvp.md.
 
 use ratatui::Frame;
 use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};

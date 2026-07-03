@@ -1,7 +1,7 @@
 //! «Модель себя» агента — пер-профильное представление о себе, целях и
 //! собеседнике. Живёт в SQLite (как заметки/RAG), изолирована по `profile_id`.
 //! Минимальный MVP-зонд: свободный текст + цели + модель пользователя, без
-//! числовых «сил убеждений». См. [docs/self-model-mvp.md](../../docs/self-model-mvp.md).
+//! числовых «сил убеждений». См. [docs/history/self-model-mvp.md](../../docs/history/self-model-mvp.md).
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
@@ -234,7 +234,7 @@ impl SelfModel {
 
     /// Пуста ли **структурная** часть модели: пустое описание, нет активных целей
     /// (рендерятся только они) и пустая модель собеседника. Нарратив здесь **не
-    /// учитывается** — он переехал в заметки (`@self`, см. docs/narrative-as-notes.md)
+    /// учитывается** — он переехал в заметки (`@self`, см. docs/history/narrative-as-notes.md)
     /// и передаётся в рендер параметром `recent`; наличие наблюдений проверяет
     /// вызывающий (`is_empty() && recent.is_empty()`). Завершённые цели сами по себе
     /// «пустой» модель не делают информативной.
@@ -371,7 +371,7 @@ impl SelfModel {
     /// Сворачивает старые закрытые цели в «шрам»-наблюдения и убирает их из `goals`,
     /// оставляя не более `keep` самых свежих закрытых (по `closed_at`/`created_at`).
     /// **Возвращает** тексты шрамов («[архив цели] …») — вызывающий записывает их как
-    /// self-заметки (наблюдения переехали в заметки, см. docs/narrative-as-notes.md).
+    /// self-заметки (наблюдения переехали в заметки, см. docs/history/narrative-as-notes.md).
     /// Активные цели не трогает. Это интеграция, а не потеря: закрытая цель уходит
     /// наблюдением-шрамом, а не молча удаляется.
     pub fn fold_closed_goals(&mut self, keep: usize) -> Vec<String> {
@@ -485,7 +485,7 @@ impl SelfModel {
     /// статусом. Цели — с коротким `#id` (их ведёт `update_self_model` резолвером);
     /// наблюдения — с **полным** id (они заметки, их переписывает/замещает
     /// note_revise/note_supersede по полному id). Пустую модель помечает явно.
-    /// См. docs/self-model-mvp.md, docs/narrative-as-notes.md.
+    /// См. docs/history/self-model-mvp.md, docs/history/narrative-as-notes.md.
     pub fn render_full(&self, now: DateTime<Utc>, recent: &[NarrativeSegment]) -> String {
         let mut out = String::from("[Твоя модель себя]\n");
         if !self.summary.trim().is_empty() {

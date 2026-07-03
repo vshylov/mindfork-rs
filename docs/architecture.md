@@ -602,7 +602,7 @@ agentic-loop **гейтит и сам вызов** (выключенный ин�
 
 | Группа         | Инструменты                                                   |
 |----------------|---------------------------------------------------------------|
-| Память/знания  | `note_save` (эмбеддит + ворота совместимости), `note_recall` (семантический поиск + spreading activation по графу, откат на подстроку; **скрывает self-заметки** `@self`), `note_revise` (правка на месте), `note_link`/`note_neighbors` (типизированный граф связей), `note_supersede`/`note_merge` (замещение со «шрамом» / слияние с переносом связей; **наследуют теги**, в т.ч. `@self`), `consolidate_notes` (обзор для консолидации), `rag_add`, `rag_search`. Связность заметок (накопление → интеграция) + авто-«сон»: см. [docs/notes-connectivity.md](notes-connectivity.md). Наблюдения «модели себя» — обычные заметки с тегом `@self` ([docs/narrative-as-notes.md](narrative-as-notes.md), §9) |
+| Память/знания  | `note_save` (эмбеддит + ворота совместимости), `note_recall` (семантический поиск + spreading activation по графу, откат на подстроку; **скрывает self-заметки** `@self`), `note_revise` (правка на месте), `note_link`/`note_neighbors` (типизированный граф связей), `note_supersede`/`note_merge` (замещение со «шрамом» / слияние с переносом связей; **наследуют теги**, в т.ч. `@self`), `consolidate_notes` (обзор для консолидации), `rag_add`, `rag_search`. Связность заметок (накопление → интеграция) + авто-«сон»: см. [docs/notes-connectivity.md](history/notes-connectivity.md). Наблюдения «модели себя» — обычные заметки с тегом `@self` ([docs/narrative-as-notes.md](history/narrative-as-notes.md), §9) |
 | Интроспекция   | `get_sampling`, `set_sampling`, `get_system_message`, `set_system_message`, `get_last_user_message_time` |
 | Внешние        | `web_search` (мульти-провайдер + анти-бот), `fetch_url` (загрузка+саммаризация), `python_exec` (subprocess) — гейтятся `web_enabled`/`python_enabled` |
 | Файлы          | `fs_read`, `fs_write`, `fs_list` — гейтятся `fs_enabled`, опциональная песочница `fs_root` |
@@ -652,8 +652,8 @@ agentic-loop **гейтит и сам вызов** (выключенный ин�
 целях и собеседнике, живущее **между чатами**. Цель — дать модели **непрерывность и
 идентичность**: чтобы во втором чате того же профиля она помнила, кто её собеседник, к
 чему стремится и что о себе поняла. Механизм вырос из банка идей
-([docs/self-model.md](self-model.md)) через реализуемый зонд
-([docs/self-model-mvp.md](self-model-mvp.md)) и два раунда правок по живому
+([docs/self-model.md](history/self-model.md)) через реализуемый зонд
+([docs/self-model-mvp.md](history/self-model-mvp.md)) и два раунда правок по живому
 тестированию на Opus 4.8 (журнал — в [CLAUDE.md](../CLAUDE.md)).
 
 Ключевая архитектурная позиция: **модель себя — пер-профильные данные в SQLite (как
@@ -725,7 +725,7 @@ classDiagram
 - **`narrative`** — «биография я во времени»: короткие инсайты/наблюдения (включая
   замеченные противоречия и **шрамы ревизий** — прозой). Именно наблюдения, а не
   структурные поля, хранят «что и почему менялось». **Наблюдения переехали в заметки**
-  (тег `@self`, Ярус 1 [narrative-as-notes.md](narrative-as-notes.md)): поле
+  (тег `@self`, Ярус 1 [narrative-as-notes.md](history/narrative-as-notes.md)): поле
   `narrative` в блобе оставлено лишь для одноразового бэкфилла и реконструкции снимка
   `F3`; запись/чтение идут через заметки (эмбеддинги, ворота дублей, замещение, «сон»).
 
@@ -800,7 +800,7 @@ flowchart TB
   явного вызова инструмента. Наблюдения (self-заметки) идут в промпт **по релевантности
   к последней реплике** пользователя (эмбеддинг реплики → близкие наблюдения) **плюс
   гарантия свежайшего** — старое, но относящееся к теме наблюдение всплывает, когда
-  тема возвращается (Ярус 2, [narrative-as-notes.md](narrative-as-notes.md)):
+  тема возвращается (Ярус 2, [narrative-as-notes.md](history/narrative-as-notes.md)):
   `notes::self_notes_relevant` + `blend_self_notes` → `injection_recent`; мягкая
   деградация к свежести без эмбеддера. Инъекция **делается в async-задаче генерации**
   (`spawn_generation`, а не в sync `start_generation`) — релевантность требует
@@ -842,7 +842,7 @@ DB-only → проходят `effective_tool_ids` через `_ => true`; тум
 
 Наблюдения-заметки консолидируют **note-инструменты** (`note_revise`/`note_supersede`/
 `note_merge` — замещение со «шрамом»); прежний `consolidate_narrative` удалён (Ярус 1,
-[narrative-as-notes.md](narrative-as-notes.md)). **Граф над наблюдениями** (Ярус 2):
+[narrative-as-notes.md](history/narrative-as-notes.md)). **Граф над наблюдениями** (Ярус 2):
 `note_link`/`note_neighbors` связывают соотносящиеся наблюдения (`contradicts`/`refines`/
 `relates`); связи показываются в `get_self_model`/`reflect` (`self_related_block`).
 **Кросс-органные связи** (Ярус 3, Путь 1): наблюдение «о себе» можно связать с
@@ -955,7 +955,7 @@ label, done_tx, … }` и различаются лишь параметрами
 thinking-подписи Anthropic, usage, эффекты; её сложность не окупает общий сток.
 
 **Каденция — ватермарк, а не in-memory счётчик** (этап 3 доводки,
-[refinements.md](refinements.md)). `Chat.reflected_upto: Option<usize>` — индекс-
+[refinements.md](history/refinements.md)). `Chat.reflected_upto: Option<usize>` — индекс-
 водораздел: сколько первых сообщений уже охвачено рефлексией. `reflect_window` считает
 ответы ассистента **только в окне `messages[wm..]`** (кламп ватермарка к длине истории →
 устойчив к усечению `Ctrl+R`/`Ctrl+E`), и дайджест строится по тому же окну — иначе
@@ -1029,7 +1029,7 @@ flowchart LR
 Две философии, на которых стоит механизм и которые задают вектор:
 
 - **Интеграция вместо накопления** (родственно
-  [notes-connectivity](notes-connectivity.md)): и перезапись (теряет прошлое), и чистое
+  [notes-connectivity](history/notes-connectivity.md)): и перезапись (теряет прошлое), и чистое
   накопление (раздувание/дрейф) — болезни; ответ — merge + шрам + консолидация.
 - **Текущий снимок + биография-шрам:** структурные поля = рабочий снимок выводов;
   нарратив = биография, помнящая, что менялась.
@@ -1043,7 +1043,7 @@ flowchart LR
   без связей), так что «сон» идёт с конкретными данными; отдельного таймера пока нет.
 - **Унификация органов памяти** — нарратив был **вторым, слабым экземпляром заметок**
   (append-only, FIFO-потолок, без графа). **Ярус 1 сделан**: наблюдения переехали в
-  заметки `@self` ([narrative-as-notes.md](narrative-as-notes.md)) — получили эмбеддинги,
+  заметки `@self` ([narrative-as-notes.md](history/narrative-as-notes.md)) — получили эмбеддинги,
   ворота дублей, замещение со «шрамом», «сон». **Ярус 2 сделан** (структура): инъекция
   наблюдений **по релевантности** к реплике (`injection_recent`), **граф** над
   наблюдениями (`note_link`/`note_neighbors` + блок «Связи наблюдений», граф-смоук —
@@ -1084,7 +1084,7 @@ flowchart LR
 событию `AppEvent::SelfModelView` (снимок модели активного профиля). Правки экран
 отдаёт `SelfModelIntent::Edit` → `AppCommand::UpdateSelfModel`; оркестратор применяет,
 сохраняет и **переэмитит** `SelfModelView` — открытый экран обновляется на месте
-(`set_model`, выделение сохраняется). См. [docs/self-model-mvp.md](self-model-mvp.md).
+(`set_model`, выделение сохраняется). См. [docs/self-model-mvp.md](history/self-model-mvp.md).
 
 ```mermaid
 flowchart TB

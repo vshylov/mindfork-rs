@@ -5,7 +5,7 @@
 //! note-инструменты, петля их исполняет (пишут напрямую в `Storage`). Чат не
 //! мутируется, в UI ничего не стримится — консолидация молчалива и опциональна
 //! (`config.notes.auto_consolidate_every`, по умолчанию выкл).
-//! См. docs/notes-connectivity.md (Ярус 3).
+//! См. docs/history/notes-connectivity.md (Ярус 3).
 
 use std::time::Duration;
 

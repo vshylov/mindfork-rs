@@ -5,7 +5,7 @@
 //! модель вызывает `update_self_model`/`update_user_model`/`add_insight`, петля их
 //! исполняет (инструменты пишут напрямую в `Storage`). Чат не мутируется, в UI
 //! ничего не стримится — рефлексия молчалива и опциональна (`config.self_model.
-//! auto_reflect_every`, по умолчанию выкл). См. docs/self-model-mvp.md.
+//! auto_reflect_every`, по умолчанию выкл). См. docs/history/self-model-mvp.md.
 
 use std::time::Duration;
 
@@ -43,7 +43,7 @@ const REFLECT_TIMEOUT: Duration = Duration::from_secs(120);
 /// связи (Ярус 3):** дан `note_recall` — он отдаёт id пользовательских заметок «о
 /// собеседнике» (self-заметки по-прежнему скрывает), чтобы рефлексия могла связать
 /// наблюдение «о себе» с фактом «о собеседнике» (`note_link` self↔user).
-/// См. docs/narrative-as-notes.md.
+/// См. docs/history/narrative-as-notes.md.
 const REFLECT_TOOL_IDS: &[&str] = &[
     self_model::GET_SELF_MODEL_ID,
     self_model::UPDATE_SELF_MODEL_ID,
