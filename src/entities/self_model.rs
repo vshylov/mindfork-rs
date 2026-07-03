@@ -627,6 +627,32 @@ impl UserModel {
             && self.relationship_dynamic.trim().is_empty()
     }
 
+    /// Компактная подсказка для имперсонации (`Ctrl+U`): агент пишет реплику **за**
+    /// человека, а `UserModel` — модель этого человека, поэтому подмешивание её в
+    /// системный промпт имперсонации делает голос точнее. `None`, если модель пуста;
+    /// результат усечён до `max_chars` символов.
+    pub fn render_for_impersonation(&self, max_chars: usize) -> Option<String> {
+        if self.is_empty() {
+            return None;
+        }
+        let mut out = String::from("Известное о человеке, за которого ты пишешь:");
+        if !self.perceived_traits.is_empty() {
+            out.push_str(" черты — ");
+            out.push_str(&self.perceived_traits.join(", "));
+            out.push(';');
+        }
+        if !self.current_interests.is_empty() {
+            out.push_str(" интересы — ");
+            out.push_str(&self.current_interests.join(", "));
+            out.push(';');
+        }
+        if !self.relationship_dynamic.trim().is_empty() {
+            out.push_str(" отношения с собеседником — ");
+            out.push_str(self.relationship_dynamic.trim());
+        }
+        Some(truncate_chars(out.trim_end_matches([';', ' ']), max_chars))
+    }
+
     /// Добавляет черты (дедуп без учёта регистра, пустые отбрасываются). Возвращает,
     /// изменился ли список. **Merge, а не замена** — правка не перетирает прежнее.
     pub fn add_traits(&mut self, items: Vec<String>) -> bool {
@@ -976,6 +1002,22 @@ mod tests {
         assert_eq!(u.perceived_traits, vec!["прямолинейный".to_string()]);
         // Удаление отсутствующего — no-op.
         assert!(!u.remove_traits(&["нет такого".into()]));
+    }
+
+    #[test]
+    fn user_model_render_for_impersonation() {
+        // Пустая → None.
+        assert!(UserModel::default().render_for_impersonation(500).is_none());
+        let u = UserModel {
+            perceived_traits: vec!["скептик".into(), "любопытный".into()],
+            current_interests: vec!["Rust".into()],
+            relationship_dynamic: "доверительные, на равных".into(),
+        };
+        let r = u.render_for_impersonation(500).unwrap();
+        assert!(r.contains("за которого ты пишешь"));
+        assert!(r.contains("черты — скептик, любопытный"));
+        assert!(r.contains("интересы — Rust"));
+        assert!(r.contains("отношения с собеседником — доверительные, на равных"));
     }
 
     #[test]

@@ -14,8 +14,9 @@ use futures_util::StreamExt;
 use tokio::sync::mpsc::UnboundedSender;
 use tokio_util::sync::CancellationToken;
 
-use chrono::Utc;
+use chrono::{DateTime, Utc};
 
+use crate::entities::chat::{Chat, DeletedCause};
 use crate::entities::message::{Message, MessageRole};
 use crate::entities::profile::ToolId;
 use crate::entities::sampling::SamplingConfig;
@@ -57,7 +58,9 @@ const REFLECT_SYSTEM_MESSAGE: &str = "Ты проводишь тихую фон�
      add_insight, не в модель собеседника. Если наблюдений накопилось много или есть \
      дубли/устаревшее — подними устойчивое в summary/черты и вычисти сырое через \
      consolidate_narrative. Точность важнее угодливости: фиксируй то, что верно, а не что \
-     польстит. Меняй только действительно изменившееся; нечего — не вызывай ничего. Не \
+     польстит. Если ниже есть блок «Поведенческие сигналы» — учти их как свидетельства о \
+     собеседнике (update_user_model) или наблюдение (add_insight): это факты поведения, а \
+     не осуждение. Меняй только действительно изменившееся; нечего — не вызывай ничего. Не \
      пиши ответ пользователю — только вызывай инструменты.";
 
 /// Пора ли запускать рефлексию: фича включена (`every > 0`) и накоплено достаточно
@@ -77,6 +80,55 @@ pub(super) fn reflect_window(messages: &[Message], reflected_upto: Option<usize>
         .filter(|m| m.role == MessageRole::Assistant && !m.text.trim().is_empty())
         .count() as u32;
     (wm, count)
+}
+
+/// Сводка поведенческих сигналов за окно рефлексии (удаления с `deleted_at > since`):
+/// сколько раз собеседник перегенерировал/удалил ответ (косвенные свидетельства «ответ
+/// не устроил») и сколько раз сам ассистент переписывал реплику. `None`, если сигналов
+/// нет. Даёт рефлексии реальное поведение вместо одних самоописаний. Записи без причины
+/// (старые) не считаются. Чистая функция — тестируема.
+pub(super) fn behavior_markers(chat: &Chat, since: Option<DateTime<Utc>>) -> Option<String> {
+    let (mut regen, mut del, mut rewrite) = (0u32, 0u32, 0u32);
+    for d in &chat.deleted {
+        if let Some(s) = since
+            && d.deleted_at <= s
+        {
+            continue; // до прошлой рефлексии — уже учтено
+        }
+        match d.cause {
+            Some(DeletedCause::Regenerate) => regen += 1,
+            Some(DeletedCause::DeleteExchange) => del += 1,
+            Some(DeletedCause::Rewrite) => rewrite += 1,
+            None => {}
+        }
+    }
+    if regen == 0 && del == 0 && rewrite == 0 {
+        return None;
+    }
+    // Сигналы собеседника (перегенерация/удаление) отделяем от собственного поведения
+    // (переписывание) — их нельзя приписывать собеседнику.
+    let mut about_user: Vec<String> = Vec::new();
+    if regen > 0 {
+        about_user.push(format!(
+            "перегенерировал твой ответ ×{regen} (вероятно, ответ не устроил)"
+        ));
+    }
+    if del > 0 {
+        about_user.push(format!("удалил обмен ×{del}"));
+    }
+    let mut out = String::new();
+    if !about_user.is_empty() {
+        out.push_str("Поведенческие сигналы собеседника за окно: ");
+        out.push_str(&about_user.join("; "));
+        out.push('.');
+    }
+    if rewrite > 0 {
+        if !out.is_empty() {
+            out.push(' ');
+        }
+        out.push_str(&format!("Ты сам переписывал свой ответ ×{rewrite}."));
+    }
+    Some(out)
 }
 
 impl Orchestrator {
@@ -135,7 +187,13 @@ impl Orchestrator {
             else {
                 return; // переписки в окне недостаточно — ватермарк не трогаем
             };
-            digest = d;
+            // Поведенческие сигналы за окно (перегенерации/удаления с прошлой
+            // рефлексии) — пища для модели собеседника. `since` = прежний `reflected_at`
+            // (ещё не перезаписан спавном ниже).
+            digest = match behavior_markers(chat, chat.reflected_at) {
+                Some(markers) => format!("{d}\n\n{markers}"),
+                None => d,
+            };
             watermark = chat.messages.len();
         }
 
@@ -293,7 +351,47 @@ fn spawn_reflection(spawn: ReflectSpawn) {
 
 #[cfg(test)]
 mod tests {
-    use super::{Message, due, reflect_window};
+    use super::{Chat, DeletedCause, Message, behavior_markers, due, reflect_window};
+
+    #[test]
+    fn behavior_markers_counts_by_cause_and_filters_since() {
+        use crate::entities::chat::DeletedExchange;
+        use crate::entities::profile::Profile;
+        use chrono::{Duration, Utc};
+
+        let p = Profile::new("P", "s");
+        let mut chat = Chat::from_profile(&p, "t");
+        let base = Utc::now();
+        let mk = |at, cause| DeletedExchange {
+            deleted_at: at,
+            messages: vec![Message::user("x")],
+            draft: String::new(),
+            cause: Some(cause),
+        };
+        chat.deleted = vec![
+            mk(base - Duration::hours(1), DeletedCause::Regenerate),
+            mk(base - Duration::hours(2), DeletedCause::Regenerate),
+            mk(base - Duration::hours(3), DeletedCause::DeleteExchange),
+            mk(base - Duration::days(5), DeletedCause::Rewrite), // до since
+            DeletedExchange {
+                deleted_at: base - Duration::hours(1),
+                messages: vec![Message::user("x")],
+                draft: String::new(),
+                cause: None, // старая запись без причины — не считается
+            },
+        ];
+        // since = 4 ч назад → последние 3 (2 regen + 1 delete); rewrite (5 дн.) отсечён.
+        let out = behavior_markers(&chat, Some(base - Duration::hours(4))).unwrap();
+        assert!(out.contains("перегенерировал твой ответ ×2"));
+        assert!(out.contains("удалил обмен ×1"));
+        assert!(!out.contains("переписывал"));
+        // since=None → учитываем всё, собственное поведение (rewrite) — отдельной фразой.
+        let all = behavior_markers(&chat, None).unwrap();
+        assert!(all.contains("Ты сам переписывал свой ответ ×1"));
+        // Нет сигналов → None.
+        let empty = Chat::from_profile(&p, "t2");
+        assert!(behavior_markers(&empty, None).is_none());
+    }
 
     #[test]
     fn due_respects_threshold_and_disabled() {

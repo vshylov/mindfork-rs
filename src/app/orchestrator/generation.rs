@@ -9,6 +9,7 @@ use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
 use crate::app::events::AppEvent;
+use crate::entities::chat::DeletedCause;
 use crate::entities::message::{Message, MessageMetadata, MessageRole, ToolCallRecord};
 use crate::entities::profile::ToolId;
 use crate::features::tools::{ChatEffect, ToolContext, ToolRegistry, control, effective_tool_ids};
@@ -104,7 +105,7 @@ impl Orchestrator {
             // черновик ввода ради ручного восстановления (spec §11.7).
             let draft = chat.draft.clone();
             let removed = chat.messages.split_off(idx + 1);
-            chat.record_deleted(removed, draft);
+            chat.record_deleted(removed, draft, DeletedCause::Regenerate);
             chat.modified_at = chrono::Utc::now();
         }
         self.mark_dirty(active_id);
@@ -142,7 +143,7 @@ impl Orchestrator {
             // восстановления (spec §11.7).
             let draft = chat.draft.clone();
             let removed = chat.messages.split_off(idx);
-            chat.record_deleted(removed, draft);
+            chat.record_deleted(removed, draft, DeletedCause::DeleteExchange);
             chat.modified_at = chrono::Utc::now();
         }
         self.mark_dirty(active_id);
@@ -281,7 +282,7 @@ impl Orchestrator {
             // Отброшенное инструментом «переписать» — в архив удалённого (ручное
             // восстановление правкой JSON), как Ctrl+E/Ctrl+R. См. spec §9.3, §11.7.
             if !res.deleted.is_empty() {
-                chat.record_deleted(res.deleted, String::new());
+                chat.record_deleted(res.deleted, String::new(), DeletedCause::Rewrite);
             }
             for msg in res.messages {
                 chat.push_message(msg);

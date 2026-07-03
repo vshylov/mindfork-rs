@@ -676,6 +676,7 @@ fn impersonation_request_swaps_roles_and_sets_system() {
         "Ты — пользователь".into(),
         "",
         SamplingConfig::default(),
+        None,
     );
 
     assert_eq!(req.system.as_deref(), Some("Ты — пользователь"));
@@ -715,6 +716,7 @@ fn impersonation_request_disables_reasoning() {
             thinking: Some(true),
             ..Default::default()
         },
+        None,
     );
     assert_eq!(req.sampling.thinking, Some(false));
     assert_eq!(req.sampling.reasoning_budget, Some(0));
@@ -733,10 +735,28 @@ fn impersonation_request_with_seed_adds_continuation_hint() {
         "Ты — пользователь".into(),
         "Мне нужно ",
         SamplingConfig::default(),
+        None,
     );
     let system = req.system.unwrap();
     assert!(system.contains("Ты — пользователь"));
     assert!(system.contains("Мне нужно"), "затравка попала в инструкцию");
+}
+
+#[test]
+fn impersonation_request_includes_user_hint() {
+    let profile = Profile::new("P", "sys");
+    let chat = Chat::from_profile(&profile, "c");
+    let req = build_impersonation_request(
+        &chat,
+        "Ты — пользователь".into(),
+        "",
+        SamplingConfig::default(),
+        Some("Известное о человеке: черты — скептик"),
+    );
+    let system = req.system.unwrap();
+    assert!(system.contains("Ты — пользователь"));
+    // Модель собеседника подмешана в системный промпт имперсонации.
+    assert!(system.contains("черты — скептик"));
 }
 
 #[test]

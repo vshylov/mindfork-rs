@@ -67,6 +67,23 @@ pub struct DeletedExchange {
     /// Содержимое поля ввода на момент удаления — до того, как туда вернулся текст
     /// удалённого сообщения пользователя (`Ctrl+E`) или начался новый ход (`Ctrl+R`).
     pub draft: String,
+    /// Что вызвало удаление — поведенческий сигнал собеседника (или самого агента).
+    /// Авто-рефлексия читает его как косвенное свидетельство («перегенерировал =
+    /// ответ, вероятно, не устроил»). `None` у старых записей (без миграции).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cause: Option<DeletedCause>,
+}
+
+/// Причина удаления обмена — поведенческий сигнал для авто-рефлексии (§этап 4).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum DeletedCause {
+    /// `Ctrl+E` — собеседник удалил обмен (ответ его не устроил / передумал спрашивать).
+    DeleteExchange,
+    /// `Ctrl+R` — собеседник перегенерировал ответ (ответ, вероятно, не устроил).
+    Regenerate,
+    /// `rewrite_current_message` — сам ассистент переписал свою реплику (сигнал о
+    /// собственном поведении, не приписывается собеседнику).
+    Rewrite,
 }
 
 impl Chat {
@@ -109,7 +126,7 @@ impl Chat {
     /// ручного восстановления. Пустой набор сообщений игнорируется. Новая запись
     /// добавляется в **начало** коллекции (свежие удаления искать быстрее).
     /// `modified_at` **не** трогаем здесь — его обновляют сами операции усечения.
-    pub fn record_deleted(&mut self, messages: Vec<Message>, draft: String) {
+    pub fn record_deleted(&mut self, messages: Vec<Message>, draft: String, cause: DeletedCause) {
         if messages.is_empty() {
             return;
         }
@@ -119,6 +136,7 @@ impl Chat {
                 deleted_at: Utc::now(),
                 messages,
                 draft,
+                cause: Some(cause),
             },
         );
     }
@@ -183,16 +201,18 @@ mod tests {
     fn record_deleted_appends_with_draft_and_skips_empty() {
         let p = Profile::new("X", "s");
         let mut chat = Chat::from_profile(&p, "t");
-        chat.record_deleted(vec![], "ignored".into());
+        chat.record_deleted(vec![], "ignored".into(), DeletedCause::DeleteExchange);
         assert!(chat.deleted.is_empty()); // пустой набор не записывается
 
         chat.record_deleted(
             vec![Message::user("hi"), Message::assistant("hello")],
             "набранный, но не отправленный текст".into(),
+            DeletedCause::DeleteExchange,
         );
         assert_eq!(chat.deleted.len(), 1);
         assert_eq!(chat.deleted[0].messages.len(), 2);
         assert_eq!(chat.deleted[0].draft, "набранный, но не отправленный текст");
+        assert_eq!(chat.deleted[0].cause, Some(DeletedCause::DeleteExchange));
     }
 
     #[test]
@@ -209,7 +229,11 @@ mod tests {
         let mut chat = Chat::from_profile(&p, "t");
         chat.push_message(Message::user("hi"));
         chat.push_message(Message::assistant("hello"));
-        chat.record_deleted(vec![Message::user("удалённое")], "черновик".into());
+        chat.record_deleted(
+            vec![Message::user("удалённое")],
+            "черновик".into(),
+            DeletedCause::Regenerate,
+        );
         let json = serde_json::to_string(&chat).unwrap();
         let back: Chat = serde_json::from_str(&json).unwrap();
         assert_eq!(chat, back);

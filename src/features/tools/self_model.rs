@@ -291,8 +291,8 @@ impl Tool for UpdateUserModel {
                 "remove_traits": {"type": "array", "items": {"type": "string"}, "description": "Убрать неверные/устаревшие черты"},
                 "add_interests": {"type": "array", "items": {"type": "string"}, "description": "Добавить интересы (дедуп; прежние сохраняются)"},
                 "remove_interests": {"type": "array", "items": {"type": "string"}, "description": "Убрать неактуальные интересы"},
-                "relationship_dynamic": {"type": "string", "description": "Как вы относитесь во времени (заменяет прежнее)"},
-                "note": {"type": "string", "description": "Что и почему изменилось (при удалении/замене черт) — уходит в нарратив как след ревизии"}
+                "relationship_dynamic": {"type": "string", "description": "Как вы относитесь во времени (заменяет прежнее; при существенной смене передай note)"},
+                "note": {"type": "string", "description": "Что и почему изменилось (при удалении/замене черт или смене динамики) — уходит в нарратив как след ревизии"}
             }
         })
     }
@@ -301,6 +301,7 @@ impl Tool for UpdateUserModel {
         // `&mut`); запись — под одним захватом мьютекса (защита от гонки).
         let mut removed_traits = false;
         let mut removed_interests = false;
+        let mut replaced_dynamic = false;
         let mut has_note = false;
         let max = ctx.self_model_params.max_narrative;
         let (model, changed) = ctx.storage.db().self_model_update(ctx.profile_id, |m| {
@@ -323,6 +324,9 @@ impl Tool for UpdateUserModel {
             if let Some(s) = args.get("relationship_dynamic").and_then(|v| v.as_str()) {
                 let s = s.trim().to_string();
                 if m.user_model.relationship_dynamic != s {
+                    // Замена НЕПУСТОЙ динамики — существенный пересмотр (в отличие от
+                    // первичного заполнения); просим оставить след (шрам), как у черт.
+                    replaced_dynamic = !m.user_model.relationship_dynamic.trim().is_empty();
                     m.user_model.relationship_dynamic = s;
                     changed = true;
                 }
@@ -352,13 +356,14 @@ impl Tool for UpdateUserModel {
             "Модель собеседника обновлена.\n{}",
             model.render_full(Utc::now())
         );
-        // Удаление/замена черты — пересмотр суждения. Причина не записана → напоминаем
-        // оставить след в нарративе (шрам), а не стирать молча.
-        if (removed_traits || removed_interests) && !has_note {
+        // Удаление черты/интереса или замена непустой динамики — пересмотр суждения.
+        // Причина не записана → напоминаем оставить след в нарративе (шрам), а не менять
+        // молча (смена динамики отношений — самый значимый пересмотр модели собеседника).
+        if (removed_traits || removed_interests || replaced_dynamic) && !has_note {
             msg.push_str(
-                "\n(Ты убрал(а) черты/интересы без пояснения. Если это пересмотр мнения — \
-                 передай note с тем, что и почему изменилось: он останется в нарративе как \
-                 след, чтобы модель себя помнила, что менялась.)",
+                "\n(Ты изменил(а) черты/интересы/динамику без пояснения. Если это пересмотр \
+                 мнения — передай note с тем, что и почему изменилось: он останется в \
+                 нарративе как след, чтобы модель себя помнила, что менялась.)",
             );
         }
         // Если note добавлен и нарратив близок к потолку — напомнить о консолидации.
@@ -718,6 +723,42 @@ mod tests {
             .unwrap();
         assert!(out.result.contains("без пояснения"));
         assert!(out.result.contains("note"));
+    }
+
+    #[tokio::test]
+    async fn replacing_nonempty_dynamic_without_note_nudges() {
+        let (_d, _s, ctx) = ctx_with_storage(Uuid::new_v4());
+        // Первичное заполнение динамики — БЕЗ напоминания (это не пересмотр).
+        let out = UpdateUserModel
+            .invoke(
+                &ctx,
+                serde_json::json!({"relationship_dynamic": "доверительные"}),
+            )
+            .await
+            .unwrap();
+        assert!(!out.result.contains("без пояснения"));
+        // Замена непустой динамики без note — напоминание про шрам.
+        let out = UpdateUserModel
+            .invoke(
+                &ctx,
+                serde_json::json!({"relationship_dynamic": "натянутые"}),
+            )
+            .await
+            .unwrap();
+        assert!(out.result.contains("без пояснения"));
+        // С note — напоминания нет, а причина уходит в нарратив.
+        let out = UpdateUserModel
+            .invoke(
+                &ctx,
+                serde_json::json!({
+                    "relationship_dynamic": "снова тёплые",
+                    "note": "помирились после спора"
+                }),
+            )
+            .await
+            .unwrap();
+        assert!(!out.result.contains("без пояснения"));
+        assert!(out.result.contains("помирились после спора"));
     }
 
     #[tokio::test]

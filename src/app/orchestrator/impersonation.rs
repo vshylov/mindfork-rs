@@ -14,6 +14,7 @@ use crate::app::events::AppEvent;
 use crate::entities::chat::Chat;
 use crate::entities::message::{Message, MessageRole};
 use crate::entities::sampling::{ReasoningEffort, SamplingConfig};
+use crate::features::tools::self_model;
 use crate::shared::api::{ApiMessage, ChatChunk, ChatRequest, EngineBackend, FinishReason};
 
 use super::Orchestrator;
@@ -60,18 +61,40 @@ impl Orchestrator {
         let Some(chat) = self.chats.iter().find(|c| c.id == active_id) else {
             return;
         };
-        let imp_system = self
-            .profiles
-            .iter()
-            .find(|p| p.id == chat.profile_id)
+        let profile = self.profiles.iter().find(|p| p.id == chat.profile_id);
+        let imp_system = profile
             .map(|p| p.impersonation_system_message.trim().to_string())
             .filter(|s| !s.is_empty())
             .unwrap_or_else(|| DEFAULT_IMPERSONATION_SYSTEM_MESSAGE.to_string());
+        // Модель собеседника подмешивается в промпт имперсонации (агент пишет ЗА
+        // человека) — но только если профиль включил модель себя (тот же opt-in-гейт,
+        // что у пассивной инъекции в обычный ход).
+        let user_hint = profile
+            .filter(|p| {
+                p.enabled_tools
+                    .iter()
+                    .any(|t| t == self_model::GET_SELF_MODEL_ID)
+            })
+            .and_then(|_| {
+                self.storage
+                    .db()
+                    .self_model_get(chat.profile_id)
+                    .ok()
+                    .flatten()
+            })
+            .and_then(|m| {
+                let cap = crate::entities::self_model::SelfModelParams::from_settings(
+                    &self.config.self_model,
+                )
+                .prompt_cap;
+                m.user_model.render_for_impersonation(cap)
+            });
         let request = build_impersonation_request(
             chat,
             imp_system,
             &seed,
             self.config.impersonation_sampling.clone(),
+            user_hint.as_deref(),
         );
 
         let id = Uuid::new_v4();
@@ -122,6 +145,7 @@ pub(super) fn build_impersonation_request(
     mut system: String,
     seed: &str,
     mut sampling: SamplingConfig,
+    user_hint: Option<&str>,
 ) -> ChatRequest {
     // Имперсонация пишет реплику в поле ввода и **отбрасывает** «мысли» (Thoughts
     // в `spawn_impersonation` игнорируются), поэтому reasoning ей не нужен. Ключевое
@@ -134,6 +158,11 @@ pub(super) fn build_impersonation_request(
     sampling.thinking = Some(false);
     sampling.reasoning_effort = Some(ReasoningEffort::None);
     sampling.reasoning_budget = Some(0);
+    // Подсказка о собеседнике (модель того, за кого пишем) — перед seed-продолжением.
+    if let Some(hint) = user_hint.map(str::trim).filter(|s| !s.is_empty()) {
+        system.push_str("\n\n");
+        system.push_str(hint);
+    }
     let messages = chat.messages.iter().filter_map(swap_role_message).collect();
     let seed = seed.trim();
     if !seed.is_empty() {
