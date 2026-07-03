@@ -194,15 +194,38 @@ impl Orchestrator {
         );
         let schemas = self.registry.schemas_for(&allowed);
 
-        // Снимок «модели себя» профиля на начало хода (SelfModel MVP). Инъекция в
-        // системный промпт — только если профиль включил инструмент get_self_model
-        // (opt-in). См. docs/self-model-mvp.md.
-        let self_model = self.storage.db().self_model_get(profile_id).ok().flatten();
+        // «Модель себя» профиля на начало хода (SelfModel MVP). Инъекция в системный
+        // промпт — только если профиль включил инструмент get_self_model (opt-in).
         let self_model_params =
             crate::entities::self_model::SelfModelParams::from_settings(&self.config.self_model);
         let inject_enabled = enabled
             .iter()
             .any(|t| t == crate::features::tools::self_model::GET_SELF_MODEL_ID);
+        // Одноразовый идемпотентный перенос старого нарратива «модели себя» в
+        // self-заметки (@self) — до чтения наблюдений. Best-effort. См.
+        // docs/narrative-as-notes.md, шаг 6.
+        if inject_enabled {
+            crate::features::tools::notes::migrate_self_narrative(&self.storage, profile_id);
+        }
+        let self_model = self.storage.db().self_model_get(profile_id).ok().flatten();
+        // Свежие наблюдения (self-заметки), новейшие первыми — рендер «модели себя»
+        // получает их параметром (нарратив переехал в заметки).
+        let recent: Vec<crate::entities::self_model::NarrativeSegment> = if inject_enabled {
+            crate::features::tools::notes::self_notes_recent(
+                &self.storage,
+                profile_id,
+                self_model_params.max_narrative,
+            )
+            .into_iter()
+            .map(|n| crate::entities::self_model::NarrativeSegment {
+                id: n.id,
+                text: n.content,
+                created_at: n.created_at,
+            })
+            .collect()
+        } else {
+            Vec::new()
+        };
 
         // Строим запрос/контекст инструмента из текущей истории чата.
         let mut request;
@@ -228,7 +251,8 @@ impl Orchestrator {
             };
         }
 
-        // Подмешиваем рендер модели себя + протокол ведения в системный промпт.
+        // Подмешиваем рендер модели себя (+ наблюдения из self-заметок) и протокол
+        // ведения в системный промпт.
         request.system = inject_self_model(
             request.system.take(),
             self_model.as_ref(),
@@ -236,6 +260,7 @@ impl Orchestrator {
             self.config.self_model.maintenance_protocol,
             &self_model_params,
             chrono::Utc::now(),
+            &recent,
         );
 
         let id = Uuid::new_v4();
@@ -659,12 +684,23 @@ pub(super) fn inject_self_model(
     maintenance_protocol: bool,
     params: &crate::entities::self_model::SelfModelParams,
     now: chrono::DateTime<chrono::Utc>,
+    recent: &[crate::entities::self_model::NarrativeSegment],
 ) -> Option<String> {
     if !enabled {
         return system;
     }
-    let block =
-        model.and_then(|m| m.render_for_prompt(params.prompt_cap, params.narrative_in_prompt, now));
+    // Наблюдения (self-заметки) могут существовать без блоба модели — тогда рендерим
+    // пустую модель с наблюдениями. `render_for_prompt` вернёт None, если пусто и
+    // структурно, и по наблюдениям.
+    let empty;
+    let m = match model {
+        Some(m) => m,
+        None => {
+            empty = crate::entities::self_model::SelfModel::new(uuid::Uuid::nil());
+            &empty
+        }
+    };
+    let block = m.render_for_prompt(params.prompt_cap, params.narrative_in_prompt, now, recent);
     // Собираем подмешиваемые части: рендер модели (если есть) + протокол (если включён).
     let mut parts: Vec<String> = Vec::new();
     if let Some(b) = block {
@@ -674,12 +710,6 @@ pub(super) fn inject_self_model(
         // Протокол ведения собирается из единого POLICY_CORE (этап 6) — те же
         // правила, что у фоновой авто-рефлексии.
         parts.push(crate::features::tools::self_model::maintenance_protocol());
-        // data-aware приписка: если нарратив близок к потолку — подсказать
-        // консолидацию прямо в системном промпте (протокол становится приборной
-        // панелью, а не статичным плакатом).
-        if let Some(h) = model.and_then(|m| m.narrative_fill_hint(params.max_narrative)) {
-            parts.push(format!("({h})"));
-        }
     }
     if parts.is_empty() {
         return system; // подмешивать нечего

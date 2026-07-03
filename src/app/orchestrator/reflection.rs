@@ -19,7 +19,7 @@ use crate::entities::message::{Message, MessageRole};
 use crate::entities::profile::ToolId;
 use crate::entities::sampling::SamplingConfig;
 use crate::entities::self_model::SelfModelParams;
-use crate::features::tools::{ToolContext, self_model};
+use crate::features::tools::{ToolContext, notes, self_model};
 use crate::shared::api::{ApiMessage, ChatRequest};
 
 use super::Orchestrator;
@@ -33,14 +33,21 @@ const REFLECT_MAX_ROUNDS: u32 = 6;
 /// Лимит времени на всю рефлексию.
 const REFLECT_TIMEOUT: Duration = Duration::from_secs(120);
 
-/// Инструменты, доступные рефлексии (подмножество SelfModel; пересекается с
-/// набором профиля). `reflect` (рубрика) не нужен — авто-режим уже «рефлексирует».
+/// Инструменты, доступные рефлексии (пересекается с набором профиля). `reflect`
+/// (рубрика) не нужен — авто-режим уже «рефлексирует». Наблюдения переехали в
+/// заметки (Ярус 1), поэтому вместо удалённого `consolidate_narrative` рефлексии даны
+/// note-инструменты для консолидации наблюдений-заметок: переписать почти-дубль
+/// (`note_revise`), заместить со «шрамом» (`note_supersede`) или слить (`note_merge`).
+/// `note_recall` не даём — он скрывает self-заметки; их модель видит через
+/// `get_self_model` (полные id для note-операций). См. docs/narrative-as-notes.md.
 const REFLECT_TOOL_IDS: &[&str] = &[
     self_model::GET_SELF_MODEL_ID,
     self_model::UPDATE_SELF_MODEL_ID,
     self_model::UPDATE_USER_MODEL_ID,
     self_model::ADD_INSIGHT_ID,
-    self_model::CONSOLIDATE_NARRATIVE_ID,
+    notes::NOTE_REVISE_ID,
+    notes::NOTE_SUPERSEDE_ID,
+    notes::NOTE_MERGE_ID,
 ];
 
 /// Системное сообщение фоновой саморефлексии: обрамление + единый `POLICY_CORE`

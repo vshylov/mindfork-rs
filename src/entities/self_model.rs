@@ -15,9 +15,12 @@ use crate::shared::config::SelfModelSettings;
 /// [`ChunkParams`](crate::features::tools::rag::ChunkParams) для RAG.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct SelfModelParams {
-    /// Потолок хранения инсайтов (старые вытесняются).
+    /// Сколько недавних наблюдений (self-заметок) поднимать при полном чтении модели
+    /// (`get_self_model`/`reflect`). Наблюдения переехали в заметки — FIFO-потолка
+    /// хранения больше нет; параметр лишь ограничивает объём чтения. Историческое имя
+    /// поля сохранено ради совместимости `settings.json`.
     pub max_narrative: usize,
-    /// Сколько свежих инсайтов идёт в системный промпт.
+    /// Сколько свежих наблюдений идёт в системный промпт (инъекция).
     pub narrative_in_prompt: usize,
     /// Потолок символов рендера модели в системный промпт.
     pub prompt_cap: usize,
@@ -229,14 +232,16 @@ impl SelfModel {
         }
     }
 
-    /// Нечего показывать/инъектить: пустое описание, нет активных целей (рендерятся
-    /// только они) и пустая модель собеседника. Завершённые/неактуальные цели сами
-    /// по себе «пустой» модель не делают информативной.
+    /// Пуста ли **структурная** часть модели: пустое описание, нет активных целей
+    /// (рендерятся только они) и пустая модель собеседника. Нарратив здесь **не
+    /// учитывается** — он переехал в заметки (`@self`, см. docs/narrative-as-notes.md)
+    /// и передаётся в рендер параметром `recent`; наличие наблюдений проверяет
+    /// вызывающий (`is_empty() && recent.is_empty()`). Завершённые цели сами по себе
+    /// «пустой» модель не делают информативной.
     pub fn is_empty(&self) -> bool {
         self.summary.trim().is_empty()
             && self.active_goals().next().is_none()
             && self.user_model.is_empty()
-            && self.narrative.is_empty()
     }
 
     /// Активные цели (для рендера/чтения).
@@ -363,38 +368,13 @@ impl SelfModel {
         }
     }
 
-    /// Добавляет инсайт в нарратив (append-only, с обрезкой до `max_narrative`
-    /// самых свежих). Пустой текст игнорируется. Возвращает **вытесненные** за
-    /// потолок сегменты (пусто, если ничего не вытеснено) — чтобы вызывающий мог
-    /// сообщить модели, что именно ушло (иначе FIFO молча теряет старейшее).
-    pub fn add_insight(
-        &mut self,
-        text: impl Into<String>,
-        max_narrative: usize,
-    ) -> Vec<NarrativeSegment> {
-        let text = text.into().trim().to_string();
-        if text.is_empty() {
-            return Vec::new();
-        }
-        self.narrative.push(NarrativeSegment {
-            id: Uuid::new_v4(),
-            text,
-            created_at: Utc::now(),
-        });
-        let max_narrative = max_narrative.max(1);
-        if self.narrative.len() > max_narrative {
-            let drop = self.narrative.len() - max_narrative;
-            return self.narrative.drain(0..drop).collect();
-        }
-        Vec::new()
-    }
-
-    /// Сворачивает старые закрытые цели в нарратив-шрам и убирает их из `goals`,
+    /// Сворачивает старые закрытые цели в «шрам»-наблюдения и убирает их из `goals`,
     /// оставляя не более `keep` самых свежих закрытых (по `closed_at`/`created_at`).
-    /// Возвращает число свёрнутых. Активные цели не трогает. Это интеграция, а не
-    /// потеря: закрытая цель уходит записью «[архив цели] …», а не молча удаляется —
-    /// потолок закрытых целей достигается той же философией, что и у нарратива.
-    pub fn fold_closed_goals(&mut self, keep: usize, max_narrative: usize) -> usize {
+    /// **Возвращает** тексты шрамов («[архив цели] …») — вызывающий записывает их как
+    /// self-заметки (наблюдения переехали в заметки, см. docs/narrative-as-notes.md).
+    /// Активные цели не трогает. Это интеграция, а не потеря: закрытая цель уходит
+    /// наблюдением-шрамом, а не молча удаляется.
+    pub fn fold_closed_goals(&mut self, keep: usize) -> Vec<String> {
         let freshness = |g: &Goal| g.closed_at.unwrap_or(g.created_at);
         let mut closed: Vec<(Uuid, DateTime<Utc>)> = self
             .goals
@@ -403,7 +383,7 @@ impl SelfModel {
             .map(|g| (g.id, freshness(g)))
             .collect();
         if closed.len() <= keep {
-            return 0;
+            return Vec::new();
         }
         closed.sort_by_key(|(_, at)| std::cmp::Reverse(*at)); // новые первыми
         let fold_ids: std::collections::HashSet<Uuid> =
@@ -422,52 +402,24 @@ impl SelfModel {
                 format!("[архив цели] {verb}: {}", g.description.trim())
             })
             .collect();
-        let n = scars.len();
         self.goals.retain(|g| !fold_ids.contains(&g.id));
-        for s in scars {
-            self.add_insight(s, max_narrative);
-        }
-        n
-    }
-
-    /// Подсказка о заполненности нарратива для протокола ведения: `Some(...)`, когда
-    /// занято ≥ 80% потолка (пора консолидировать); иначе `None`. Делает статичный
-    /// протокол ведения data-aware (см. `generation::inject_self_model`).
-    pub fn narrative_fill_hint(&self, max_narrative: usize) -> Option<String> {
-        let max = max_narrative.max(1);
-        let n = self.narrative.len();
-        // n/max >= 0.8  ⇔  n*5 >= max*4 (без плавающей точки).
-        if n > 0 && n * 5 >= max * 4 {
-            Some(format!(
-                "Наблюдений {n} из {max} — близко к потолку: подними устойчивое в \
-                 summary/черты и вычисти сырое через consolidate_narrative."
-            ))
-        } else {
-            None
-        }
-    }
-
-    /// Убирает инсайты нарратива по id (консолидация: сырые/устаревшие/дубли
-    /// вычищаются после того, как устойчивое свёрнуто в summary/черты/сводный
-    /// инсайт). Возвращает число удалённых.
-    pub fn remove_insights(&mut self, ids: &[Uuid]) -> usize {
-        let before = self.narrative.len();
-        self.narrative.retain(|n| !ids.contains(&n.id));
-        before - self.narrative.len()
+        scars
     }
 
     /// Компактный человекочитаемый блок для инъекции в системный промпт.
-    /// `None`, если модель пуста. В нарратив идут `narrative_in_prompt` свежих
-    /// инсайтов; результат усекается до `max_chars` символов. `now` — точка отсчёта
-    /// для меток возраста (сутки-гранулярность, стабильно в пределах дня — см.
-    /// [`age_label`]).
+    /// `None`, если структурная часть пуста **и** нет наблюдений. Наблюдения
+    /// (`recent` — self-заметки, новейшие первыми, готовит вызывающий) идут в блок в
+    /// количестве `narrative_in_prompt` самых свежих; результат усекается до
+    /// `max_chars` символов. `now` — точка отсчёта для меток возраста (сутки-
+    /// гранулярность, стабильно в пределах дня — см. [`age_label`]).
     pub fn render_for_prompt(
         &self,
         max_chars: usize,
         narrative_in_prompt: usize,
         now: DateTime<Utc>,
+        recent: &[NarrativeSegment],
     ) -> Option<String> {
-        if self.is_empty() {
+        if self.is_empty() && recent.is_empty() {
             return None;
         }
         let mut out = String::from("[Твоя модель себя]\n");
@@ -506,9 +458,9 @@ impl SelfModel {
             }
             out.push('\n');
         }
-        if !self.narrative.is_empty() && narrative_in_prompt > 0 {
+        if !recent.is_empty() && narrative_in_prompt > 0 {
             out.push_str("Недавние наблюдения:\n");
-            for seg in self.narrative.iter().rev().take(narrative_in_prompt) {
+            for seg in recent.iter().take(narrative_in_prompt) {
                 out.push_str(&format!(
                     "- ({}) {}\n",
                     age_label(seg.created_at, now),
@@ -526,20 +478,15 @@ impl SelfModel {
         resolve_handle(handle, &ids)
     }
 
-    /// Разрешает ссылку на инсайт нарратива по «ручке» (полный UUID или короткий
-    /// hex-префикс). Для консолидации нарратива (`consolidate_narrative`).
-    pub fn match_insight(&self, handle: &str) -> GoalMatch {
-        let ids: Vec<Uuid> = self.narrative.iter().map(|n| n.id).collect();
-        resolve_handle(handle, &ids)
-    }
-
     /// Полное человекочитаемое чтение модели — для инструментов (`get_self_model`,
     /// `reflect`, эхо после правок). В отличие от [`Self::render_for_prompt`]
-    /// (компактная инъекция в системный промпт) **ничего не усекает**, показывает
-    /// весь нарратив и цели с коротким id и статусом — так модель, читающая себя, не
-    /// видит «…» и получает id, необходимые для complete/abandon. Пустую модель
-    /// помечает явно. См. docs/self-model-mvp.md.
-    pub fn render_full(&self, now: DateTime<Utc>) -> String {
+    /// (компактная инъекция) **ничего не усекает**, показывает все наблюдения
+    /// (`recent` — self-заметки, новейшие первыми, готовит вызывающий) и цели со
+    /// статусом. Цели — с коротким `#id` (их ведёт `update_self_model` резолвером);
+    /// наблюдения — с **полным** id (они заметки, их переписывает/замещает
+    /// note_revise/note_supersede по полному id). Пустую модель помечает явно.
+    /// См. docs/self-model-mvp.md, docs/narrative-as-notes.md.
+    pub fn render_full(&self, now: DateTime<Utc>, recent: &[NarrativeSegment]) -> String {
         let mut out = String::from("[Твоя модель себя]\n");
         if !self.summary.trim().is_empty() {
             out.push_str("О себе: ");
@@ -597,16 +544,14 @@ impl SelfModel {
             }
             out.push('\n');
         }
-        // Нарратив целиком (новейшее первым) — без усечения, с #id для консолидации.
-        if !self.narrative.is_empty() {
-            out.push_str(&format!(
-                "Наблюдения ({}, ссылайся по #id):\n",
-                self.narrative.len()
-            ));
-            for seg in self.narrative.iter().rev() {
+        // Наблюдения (self-заметки) целиком, новейшее первым — без усечения. Полный
+        // id: наблюдение переписывается/замещается note-инструментами по полному id.
+        if !recent.is_empty() {
+            out.push_str(&format!("Наблюдения ({}):\n", recent.len()));
+            for seg in recent {
                 out.push_str(&format!(
-                    "- #{} ({}) {}\n",
-                    short_hex(&seg.id),
+                    "- (id={}) ({}) {}\n",
+                    seg.id,
                     age_label(seg.created_at, now),
                     seg.text.trim()
                 ));
@@ -732,14 +677,62 @@ mod tests {
         Utc::now()
     }
 
+    /// Наблюдение (self-заметка) для тестов рендера: id + текст + «сейчас».
+    /// Наблюдения переехали в заметки и передаются в рендер параметром `recent`.
+    fn seg(text: &str) -> NarrativeSegment {
+        NarrativeSegment {
+            id: Uuid::new_v4(),
+            text: text.into(),
+            created_at: Utc::now(),
+        }
+    }
+
     #[test]
     fn empty_model_renders_none() {
         let m = SelfModel::new(Uuid::new_v4());
         assert!(m.is_empty());
+        // Пусто и структурно, и по наблюдениям → None.
         assert!(
-            m.render_for_prompt(p().prompt_cap, p().narrative_in_prompt, now())
+            m.render_for_prompt(p().prompt_cap, p().narrative_in_prompt, now(), &[])
                 .is_none()
         );
+    }
+
+    #[test]
+    fn render_includes_recent_observations() {
+        // Только наблюдения (recent), структурная часть пуста → модель информативна.
+        let m = SelfModel::new(Uuid::new_v4());
+        let recent = [seg("заметил напряжение между «кратко» и «полно»")];
+        let r = m
+            .render_for_prompt(p().prompt_cap, p().narrative_in_prompt, now(), &recent)
+            .unwrap();
+        assert!(r.contains("Недавние наблюдения:"));
+        assert!(r.contains("напряжение"));
+    }
+
+    #[test]
+    fn render_for_prompt_takes_freshest_n() {
+        // recent — новейшие первыми; в промпт идут только narrative_in_prompt свежих.
+        let params = SelfModelParams::from_settings(&SelfModelSettings {
+            narrative_in_prompt: 2,
+            prompt_cap: 1000,
+            ..SelfModelSettings::default()
+        });
+        let m = SelfModel::new(Uuid::new_v4());
+        let recent: Vec<NarrativeSegment> =
+            (0..10).rev().map(|i| seg(&format!("инсайт {i}"))).collect();
+        let r = m
+            .render_for_prompt(
+                params.prompt_cap,
+                params.narrative_in_prompt,
+                now(),
+                &recent,
+            )
+            .unwrap();
+        assert_eq!(r.matches("инсайт ").count(), 2);
+        // Первые два (новейшие) — «инсайт 9», «инсайт 8».
+        assert!(r.contains("инсайт 9"));
+        assert!(r.contains("инсайт 8"));
     }
 
     #[test]
@@ -767,69 +760,13 @@ mod tests {
         m.user_model.relationship_dynamic = "доверительные".into();
 
         let r = m
-            .render_for_prompt(p().prompt_cap, p().narrative_in_prompt, now())
+            .render_for_prompt(p().prompt_cap, p().narrative_in_prompt, now(), &[])
             .unwrap();
         assert!(r.contains("О себе: ценю честность"));
         assert!(r.contains("разобраться в коде"));
         assert!(r.contains("черты: любопытный"));
         assert!(r.contains("интересы: Rust"));
         assert!(r.contains("отношения: доверительные"));
-    }
-
-    #[test]
-    fn insights_append_cap_and_render() {
-        let params = p();
-        let mut m = SelfModel::new(Uuid::new_v4());
-        // Только нарратив → модель уже информативна (рендерится).
-        m.add_insight(
-            "заметил напряжение между «кратко» и «полно»",
-            params.max_narrative,
-        );
-        m.add_insight("   ", params.max_narrative); // пустой игнорируется
-        assert!(!m.is_empty());
-        assert_eq!(m.narrative.len(), 1);
-        let r = m
-            .render_for_prompt(params.prompt_cap, params.narrative_in_prompt, now())
-            .unwrap();
-        assert!(r.contains("Недавние наблюдения:"));
-        assert!(r.contains("напряжение"));
-
-        // Потолок: держим самые свежие max_narrative.
-        for i in 0..params.max_narrative + 10 {
-            m.add_insight(format!("инсайт {i}"), params.max_narrative);
-        }
-        assert_eq!(m.narrative.len(), params.max_narrative);
-        // Самый старый из добавленных в цикле вытеснен, последний — присутствует.
-        let last = format!("инсайт {}", params.max_narrative + 9);
-        assert!(m.narrative.iter().any(|s| s.text == last));
-        assert!(!m.narrative.iter().any(|s| s.text == "инсайт 0"));
-
-        // В промпт идут только narrative_in_prompt свежих (новейший — первым).
-        let r = m
-            .render_for_prompt(params.prompt_cap, params.narrative_in_prompt, now())
-            .unwrap();
-        assert_eq!(r.matches("инсайт ").count(), params.narrative_in_prompt);
-        assert!(r.contains(&last));
-    }
-
-    #[test]
-    fn custom_params_limit_storage_and_injection() {
-        // Параметры из настроек: хранить 5, в промпт — 2.
-        let params = SelfModelParams::from_settings(&SelfModelSettings {
-            max_narrative: 5,
-            narrative_in_prompt: 2,
-            prompt_cap: 1000,
-            ..SelfModelSettings::default()
-        });
-        let mut m = SelfModel::new(Uuid::new_v4());
-        for i in 0..10 {
-            m.add_insight(format!("инсайт {i}"), params.max_narrative);
-        }
-        assert_eq!(m.narrative.len(), 5);
-        let r = m
-            .render_for_prompt(params.prompt_cap, params.narrative_in_prompt, now())
-            .unwrap();
-        assert_eq!(r.matches("инсайт ").count(), 2);
     }
 
     #[test]
@@ -855,7 +792,7 @@ mod tests {
         // только завершённая цель → модель «пуста» для рендера
         assert!(m.is_empty());
         assert!(
-            m.render_for_prompt(p().prompt_cap, p().narrative_in_prompt, now())
+            m.render_for_prompt(p().prompt_cap, p().narrative_in_prompt, now(), &[])
                 .is_none()
         );
     }
@@ -886,7 +823,10 @@ mod tests {
         assert!(m.apply_edit(SelfModelEdit::SetRelationship("рабочие".into())));
         assert_eq!(m.user_model.perceived_traits, vec!["скептик".to_string()]);
 
-        m.add_insight("наблюдение", 50);
+        // DeleteInsight в apply_edit работает над полем `narrative` (в проде
+        // оркестратор перехватывает его и удаляет self-заметку; поле оставлено для
+        // реконструкции снимка `F3` и совместимости). Наполняем поле напрямую.
+        m.narrative.push(seg("наблюдение"));
         let iid = m.narrative[0].id;
         assert!(m.apply_edit(SelfModelEdit::DeleteInsight(iid)));
         assert!(m.narrative.is_empty());
@@ -904,66 +844,44 @@ mod tests {
         let mut m = SelfModel::new(Uuid::new_v4());
         m.summary = "я".repeat(500);
         let r = m
-            .render_for_prompt(50, p().narrative_in_prompt, now())
+            .render_for_prompt(50, p().narrative_in_prompt, now(), &[])
             .unwrap();
         assert_eq!(r.chars().count(), 50);
         assert!(r.ends_with('…'));
     }
 
     #[test]
-    fn render_full_shows_goal_ids_and_is_not_truncated() {
+    fn render_full_shows_goal_ids_and_full_observation_ids() {
         let mut m = SelfModel::new(Uuid::new_v4());
         m.summary = "я".repeat(500);
         m.add_goal("активная цель");
         m.add_goal("завершённая цель");
         let done = m.goals[1].id;
         m.set_goal_status(done, GoalStatus::Completed);
-        // Много инсайтов — полное чтение показывает все и без «…».
-        for i in 0..12 {
-            m.add_insight(format!("инсайт {i}"), 50);
-        }
+        // Много наблюдений (recent, новейшие первыми) — полное чтение показывает все.
+        let recent: Vec<NarrativeSegment> =
+            (0..12).rev().map(|i| seg(&format!("инсайт {i}"))).collect();
 
-        let full = m.render_full(now());
+        let full = m.render_full(now(), &recent);
         assert!(!full.ends_with('…'), "полное чтение не усекается");
-        // Активная цель — с коротким id, статусом и меткой возраста («сегодня»).
+        // Активная цель — с коротким #id, статусом и меткой возраста («сегодня»).
         let short = short_hex(&m.goals[0].id);
         assert!(full.contains(&format!("#{short} (активна · сегодня) активная цель")));
         // Завершённая тоже видна (жизненный цикл), с возрастом от закрытия.
         assert!(full.contains("(выполнена · сегодня) завершённая цель"));
-        // Весь нарратив (не только narrative_in_prompt=3), каждый с #id.
+        // Все наблюдения (не только narrative_in_prompt=3), с ПОЛНЫМ id (для
+        // note_revise/note_supersede).
         assert_eq!(full.matches("инсайт ").count(), 12);
         assert!(full.contains("Наблюдения (12"));
+        assert!(full.contains(&format!("(id={})", recent[0].id)));
         // Полное описание себя целиком (не обрезано до prompt_cap).
         assert!(full.contains(&"я".repeat(500)));
     }
 
     #[test]
-    fn match_insight_and_remove_insights() {
-        let mut m = SelfModel::new(Uuid::new_v4());
-        m.add_insight("первое", 50);
-        m.add_insight("второе", 50);
-        m.add_insight("третье", 50);
-        let ids: Vec<Uuid> = m.narrative.iter().map(|n| n.id).collect();
-
-        // Резолвинг инсайта по короткому #id.
-        let short = short_hex(&ids[1]);
-        assert_eq!(
-            m.match_insight(&format!("#{short}")),
-            GoalMatch::One(ids[1])
-        );
-        assert_eq!(m.match_insight("zzzzzz"), GoalMatch::None);
-
-        // Удаление двух инсайтов (консолидация): остаётся один.
-        let removed = m.remove_insights(&[ids[0], ids[2]]);
-        assert_eq!(removed, 2);
-        assert_eq!(m.narrative.len(), 1);
-        assert_eq!(m.narrative[0].text, "второе");
-    }
-
-    #[test]
     fn render_full_on_empty_marks_empty() {
         let m = SelfModel::new(Uuid::new_v4());
-        assert_eq!(m.render_full(now()), "(модель себя пока пуста)");
+        assert_eq!(m.render_full(now(), &[]), "(модель себя пока пуста)");
     }
 
     #[test]
@@ -1057,42 +975,7 @@ mod tests {
     }
 
     #[test]
-    fn add_insight_returns_evicted_over_cap() {
-        let mut m = SelfModel::new(Uuid::new_v4());
-        // Наполняем ровно до потолка — вытеснения нет.
-        for i in 0..3 {
-            assert!(m.add_insight(format!("i{i}"), 3).is_empty());
-        }
-        // Сверх потолка — возвращается самый старый вытесненный.
-        let evicted = m.add_insight("i3", 3);
-        assert_eq!(evicted.len(), 1);
-        assert_eq!(evicted[0].text, "i0");
-        assert_eq!(m.narrative.len(), 3);
-    }
-
-    #[test]
-    fn narrative_fill_hint_at_threshold() {
-        let mut m = SelfModel::new(Uuid::new_v4());
-        // 3/5 = 60% → нет подсказки.
-        for i in 0..3 {
-            m.add_insight(format!("i{i}"), 5);
-        }
-        assert!(m.narrative_fill_hint(5).is_none());
-        // 4/5 = 80% → подсказка появляется.
-        m.add_insight("i3", 5);
-        let hint = m.narrative_fill_hint(5).unwrap();
-        assert!(hint.contains("4 из 5"));
-        assert!(hint.contains("consolidate_narrative"));
-        // Пустой нарратив — без подсказки.
-        assert!(
-            SelfModel::new(Uuid::new_v4())
-                .narrative_fill_hint(5)
-                .is_none()
-        );
-    }
-
-    #[test]
-    fn fold_closed_goals_archives_oldest_beyond_keep() {
+    fn fold_closed_goals_returns_scars_beyond_keep() {
         use chrono::Duration;
         let mut m = SelfModel::new(Uuid::new_v4());
         // Пять закрытых целей с разным временем закрытия + одна активная.
@@ -1106,23 +989,17 @@ mod tests {
             m.set_goal_status(id, GoalStatus::Completed);
             m.goals[i].closed_at = Some(Utc::now() - Duration::days((5 - i) as i64));
         }
-        // Держим 2 самых свежих закрытых, остальные 3 → в нарратив-шрам.
-        let folded = m.fold_closed_goals(2, 50);
-        assert_eq!(folded, 3);
+        // Держим 2 самых свежих закрытых, остальные 3 → возвращаются шрамами (их
+        // вызывающий запишет как self-заметки).
+        let scars = m.fold_closed_goals(2);
+        assert_eq!(scars.len(), 3);
         // Активная не тронута; всего целей: 2 закрытых + 1 активная.
         assert_eq!(m.goals.len(), 3);
         assert_eq!(m.active_goals().count(), 1);
-        // Свёрнутые ушли записями «[архив цели]».
-        assert_eq!(
-            m.narrative
-                .iter()
-                .filter(|s| s.text.starts_with("[архив цели]"))
-                .count(),
-            3
-        );
-        // Самая старая закрытая (закрытая 0) — среди свёрнутых.
-        assert!(m.narrative.iter().any(|s| s.text.contains("закрытая 0")));
-        // Меньше keep закрытых → no-op.
-        assert_eq!(m.fold_closed_goals(2, 50), 0);
+        // Шрамы — записи «[архив цели]»; самая старая закрытая среди них.
+        assert!(scars.iter().all(|s| s.starts_with("[архив цели]")));
+        assert!(scars.iter().any(|s| s.contains("закрытая 0")));
+        // Меньше keep закрытых → пусто.
+        assert!(m.fold_closed_goals(2).is_empty());
     }
 }

@@ -264,6 +264,83 @@ pub(crate) async fn create_note(
     Ok(id)
 }
 
+/// Свежие «заметки о себе» профиля (нарратив «модели себя»), новейшие первыми
+/// (`updated_at DESC`), не более `limit`. Отдельный путь чтения self-заметок для
+/// инъекции/`get_self_model`/`reflect` — пользовательский `note_recall` их скрывает.
+/// См. docs/narrative-as-notes.md.
+pub(crate) fn self_notes_recent(
+    storage: &crate::shared::storage::Storage,
+    profile_id: Uuid,
+    limit: usize,
+) -> Vec<Note> {
+    let mut notes = storage
+        .db()
+        .note_list(profile_id, None, &[SELF_NOTE_TAG.to_string()], None)
+        .unwrap_or_default();
+    notes.truncate(limit);
+    notes
+}
+
+/// Семантически близкие self-заметки к `content` — ворота инструмента `add_insight`:
+/// дотягивает вектора self-заметок (бэкфилл), эмбеддит запрос, ищет среди
+/// self-заметок, исключает `exclude`. Пусто при недоступном эмбеддере (мягкая
+/// деградация) — прямое зеркало ворот `note_save`, но над памятью «о себе».
+pub(crate) async fn self_note_similar(
+    ctx: &ToolContext,
+    content: &str,
+    exclude: Uuid,
+) -> Vec<Note> {
+    ensure_note_vectors(ctx).await;
+    let Ok(vecs) = ctx.embedder.embed(vec![content.to_string()]).await else {
+        return Vec::new();
+    };
+    let Some(emb) = vecs.into_iter().next() else {
+        return Vec::new();
+    };
+    let Ok(hits) = ctx
+        .storage
+        .db()
+        .note_search_semantic(ctx.profile_id, &emb, 8)
+    else {
+        return Vec::new();
+    };
+    hits.into_iter()
+        .map(|(n, _)| n)
+        .filter(|n| n.id != exclude && is_self_note(n))
+        .take(3)
+        .collect()
+}
+
+/// Одноразовый идемпотентный перенос нарратива «модели себя» из JSON-блоба в
+/// self-заметки (`@self`), с сохранением `created_at`. Нарратив **атомарно
+/// вычёрпывается** (drain под захватом мьютекса БД) — повторный проход видит пусто
+/// (no-op), так что дублей не будет. Вектора эмбеддятся лениво (при следующем
+/// recall/воротах — `ensure_note_vectors`). Оркестратор зовёт это best-effort перед
+/// чтением self-заметок. См. docs/narrative-as-notes.md, шаг 6.
+pub(crate) fn migrate_self_narrative(storage: &crate::shared::storage::Storage, profile_id: Uuid) {
+    use crate::entities::self_model::NarrativeSegment;
+    let mut segments: Vec<NarrativeSegment> = Vec::new();
+    let _ = storage.db().self_model_update(profile_id, |m| {
+        if m.narrative.is_empty() {
+            return false;
+        }
+        segments = std::mem::take(&mut m.narrative);
+        true
+    });
+    for seg in segments {
+        // Сохраняем исходные даты — порядок «свежих наблюдений» после переноса цел.
+        let note = Note {
+            id: Uuid::new_v4(),
+            profile_id,
+            content: seg.text,
+            tags: vec![SELF_NOTE_TAG.to_string()],
+            created_at: seg.created_at,
+            updated_at: seg.created_at,
+        };
+        let _ = storage.db().note_insert(&note);
+    }
+}
+
 /// Парсит uuid из строкового поля аргументов с понятной ошибкой.
 fn parse_id(args: &serde_json::Value, key: &str) -> Result<Uuid> {
     let raw = args
@@ -996,6 +1073,64 @@ mod tests {
         // Self-заметка не в счёте активных и не в списках обзора.
         assert!(overview.contains("Активных заметок: 2"));
         assert!(!overview.contains("наблюдение о себе"));
+    }
+
+    #[test]
+    fn migrate_self_narrative_moves_and_is_idempotent() {
+        use crate::entities::self_model::{NarrativeSegment, SelfModel};
+        use chrono::{Duration, Utc};
+        let profile = Uuid::new_v4();
+        let (_d, storage, _ctx) = ctx_with_storage(profile);
+        // «Старая» модель с нарративом-блобом (как до Яруса 1).
+        let mut m = SelfModel::new(profile);
+        let old = Utc::now() - Duration::days(3);
+        m.narrative = vec![
+            NarrativeSegment {
+                id: Uuid::new_v4(),
+                text: "старое наблюдение".into(),
+                created_at: old,
+            },
+            NarrativeSegment {
+                id: Uuid::new_v4(),
+                text: "ещё одно".into(),
+                created_at: Utc::now(),
+            },
+        ];
+        storage.db().self_model_upsert(&m).unwrap();
+
+        migrate_self_narrative(&storage, profile);
+
+        // Нарратив блоба очищен, наблюдения стали @self-заметками (created_at сохранён).
+        assert!(
+            storage
+                .db()
+                .self_model_get(profile)
+                .unwrap()
+                .unwrap()
+                .narrative
+                .is_empty()
+        );
+        let self_notes = storage
+            .db()
+            .note_list(profile, None, &[SELF_NOTE_TAG.to_string()], None)
+            .unwrap();
+        assert_eq!(self_notes.len(), 2);
+        assert!(
+            self_notes
+                .iter()
+                .any(|n| n.content == "старое наблюдение" && n.created_at == old)
+        );
+
+        // Повторный проход — no-op (нарратив пуст, дублей нет).
+        migrate_self_narrative(&storage, profile);
+        assert_eq!(
+            storage
+                .db()
+                .note_list(profile, None, &[SELF_NOTE_TAG.to_string()], None)
+                .unwrap()
+                .len(),
+            2
+        );
     }
 
     #[tokio::test]

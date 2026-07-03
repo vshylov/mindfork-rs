@@ -1229,8 +1229,8 @@ mod tests {
                 std::thread::spawn(move || {
                     for i in 0..n {
                         db.self_model_update(pid, |m| {
-                            // Щедрый потолок — вытеснения нет, считаем ровно.
-                            m.add_insight(format!("{prefix}{i}"), 10_000);
+                            // Накапливаем цели — считаем ровно (add_goal без потолка).
+                            m.add_goal(format!("{prefix}{i}"));
                             true
                         })
                         .unwrap();
@@ -1242,7 +1242,7 @@ mod tests {
             h.join().unwrap();
         }
         let m = db.self_model_get(pid).unwrap().unwrap();
-        assert_eq!(m.narrative.len(), 2 * n);
+        assert_eq!(m.goals.len(), 2 * n);
         assert_eq!(m.version, (2 * n) as u64); // каждая правка = один upsert
     }
 
