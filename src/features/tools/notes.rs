@@ -851,7 +851,9 @@ impl Tool for NoteMerge {
 }
 
 /// Косинусная близость двух векторов (0 при разной длине/нулевой норме).
-fn cosine(a: &[f32], b: &[f32]) -> f32 {
+/// `pub(crate)` — переиспользуется воротами почти-дублей черт `user_model`
+/// (`self_model::UpdateUserModel`), где вектора черт эмбеддятся на лету.
+pub(crate) fn cosine(a: &[f32], b: &[f32]) -> f32 {
     if a.len() != b.len() || a.is_empty() {
         return 0.0;
     }
