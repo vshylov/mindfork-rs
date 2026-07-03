@@ -101,7 +101,7 @@ impl Tool for NoteSave {
                 .note_vector_upsert(id, ctx.profile_id, &emb);
             // Дотягиваем эмбеддинги «старых» заметок без векторов, чтобы они
             // участвовали в воротах (и в последующем семантическом поиске).
-            ensure_note_vectors(ctx).await;
+            ensure_note_vectors(&ctx.storage, ctx.embedder.as_ref(), ctx.profile_id).await;
             if let Ok(hits) = ctx
                 .storage
                 .db()
@@ -281,6 +281,42 @@ pub(crate) fn self_notes_recent(
     notes
 }
 
+/// Наиболее РЕЛЕВАНТНЫЕ запросу self-заметки (инъекция по релевантности, Ярус 2):
+/// бэкфилл векторов → эмбеддинг запроса → поиск среди self-заметок по косинусу,
+/// top-`limit` (по убыванию близости). Пусто при пустом запросе / недоступном
+/// эмбеддере (вызывающий откатится на свежесть — мягкая деградация, как Ярус 1).
+/// См. docs/narrative-as-notes.md (Ярус 2, инъекция по релевантности).
+pub(crate) async fn self_notes_relevant(
+    storage: &crate::shared::storage::Storage,
+    embedder: &dyn crate::shared::api::Embedder,
+    profile_id: Uuid,
+    query: &str,
+    limit: usize,
+) -> Vec<Note> {
+    if query.trim().is_empty() || limit == 0 {
+        return Vec::new();
+    }
+    ensure_note_vectors(storage, embedder, profile_id).await;
+    let Ok(vecs) = embedder.embed(vec![query.to_string()]).await else {
+        return Vec::new();
+    };
+    let Some(emb) = vecs.into_iter().next() else {
+        return Vec::new();
+    };
+    // Запас кандидатов под фильтр @self (среди всех заметок есть и обычные).
+    let Ok(hits) = storage
+        .db()
+        .note_search_semantic(profile_id, &emb, limit.max(20))
+    else {
+        return Vec::new();
+    };
+    hits.into_iter()
+        .map(|(n, _)| n)
+        .filter(is_self_note)
+        .take(limit)
+        .collect()
+}
+
 /// Семантически близкие self-заметки к `content` — ворота инструмента `add_insight`:
 /// дотягивает вектора self-заметок (бэкфилл), эмбеддит запрос, ищет среди
 /// self-заметок, исключает `exclude`. Пусто при недоступном эмбеддере (мягкая
@@ -290,7 +326,7 @@ pub(crate) async fn self_note_similar(
     content: &str,
     exclude: Uuid,
 ) -> Vec<Note> {
-    ensure_note_vectors(ctx).await;
+    ensure_note_vectors(&ctx.storage, ctx.embedder.as_ref(), ctx.profile_id).await;
     let Ok(vecs) = ctx.embedder.embed(vec![content.to_string()]).await else {
         return Vec::new();
     };
@@ -357,21 +393,22 @@ fn parse_id(args: &serde_json::Value, key: &str) -> Result<Uuid> {
 /// недоступен или батч не прошёл — просто выходим (поиск отработает по тому, что
 /// есть, плюс откат на подстроку). По сути один раз на профиль: после бэкфилла
 /// список «без векторов» пуст и вызов почти бесплатен (один SELECT).
-async fn ensure_note_vectors(ctx: &ToolContext) {
-    let missing = match ctx.storage.db().notes_missing_vectors(ctx.profile_id) {
+async fn ensure_note_vectors(
+    storage: &crate::shared::storage::Storage,
+    embedder: &dyn crate::shared::api::Embedder,
+    profile_id: Uuid,
+) {
+    let missing = match storage.db().notes_missing_vectors(profile_id) {
         Ok(m) => m,
         Err(_) => return,
     };
     for chunk in missing.chunks(NOTE_BACKFILL_BATCH) {
         let texts: Vec<String> = chunk.iter().map(|(_, c)| c.clone()).collect();
-        let Ok(vecs) = ctx.embedder.embed(texts).await else {
+        let Ok(vecs) = embedder.embed(texts).await else {
             return; // эмбеддер недоступен — дальше смысла нет
         };
         for ((id, _), emb) in chunk.iter().zip(vecs) {
-            let _ = ctx
-                .storage
-                .db()
-                .note_vector_upsert(*id, ctx.profile_id, &emb);
+            let _ = storage.db().note_vector_upsert(*id, profile_id, &emb);
         }
     }
 }
@@ -388,7 +425,7 @@ async fn semantic_recall(
 ) -> Option<Vec<Note>> {
     // Бэкфилл: дотянуть эмбеддинги заметок без векторов (старые/импортированные),
     // иначе семантический поиск их не увидит.
-    ensure_note_vectors(ctx).await;
+    ensure_note_vectors(&ctx.storage, ctx.embedder.as_ref(), ctx.profile_id).await;
     let emb = ctx
         .embedder
         .embed(vec![query.to_string()])
@@ -1130,6 +1167,43 @@ mod tests {
                 .unwrap()
                 .len(),
             2
+        );
+    }
+
+    #[tokio::test]
+    async fn self_notes_relevant_ranks_and_filters() {
+        // Ярус 2: инъекция по релевантности — self_notes_relevant ранжирует
+        // self-заметки по близости к запросу и не отдаёт обычные заметки.
+        let profile = Uuid::new_v4();
+        let (_d, storage, ctx) = ctx_with_storage(profile);
+        create_note(
+            &ctx,
+            "aaaa про краткость".into(),
+            vec![SELF_NOTE_TAG.to_string()],
+        )
+        .await
+        .unwrap();
+        create_note(
+            &ctx,
+            "wwww про погоду".into(),
+            vec![SELF_NOTE_TAG.to_string()],
+        )
+        .await
+        .unwrap();
+        // Обычная заметка (не @self) — не должна попадать в выборку наблюдений.
+        create_note(&ctx, "aaaa обычная".into(), vec![])
+            .await
+            .unwrap();
+
+        let rel = self_notes_relevant(&storage, ctx.embedder.as_ref(), profile, "aaaa", 3).await;
+        assert!(!rel.is_empty());
+        assert!(rel[0].content.contains("краткость")); // ближайшая к «aaaa»
+        assert!(rel.iter().all(|n| n.content != "aaaa обычная")); // только @self
+        // Пустой запрос → пусто (мягкая деградация к свежести у вызывающего).
+        assert!(
+            self_notes_relevant(&storage, ctx.embedder.as_ref(), profile, "  ", 3)
+                .await
+                .is_empty()
         );
     }
 

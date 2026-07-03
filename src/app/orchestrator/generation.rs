@@ -194,47 +194,39 @@ impl Orchestrator {
         );
         let schemas = self.registry.schemas_for(&allowed);
 
-        // «Модель себя» профиля на начало хода (SelfModel MVP). Инъекция в системный
-        // промпт — только если профиль включил инструмент get_self_model (opt-in).
+        // «Модель себя» профиля на начало хода. Инъекция в системный промпт — только
+        // если профиль включил get_self_model (opt-in); сама инъекция (наблюдения по
+        // релевантности к последней реплике + свежесть) происходит в задаче генерации
+        // (нужен async-эмбеддинг). См. docs/narrative-as-notes.md (Ярус 2).
         let self_model_params =
             crate::entities::self_model::SelfModelParams::from_settings(&self.config.self_model);
         let inject_enabled = enabled
             .iter()
             .any(|t| t == crate::features::tools::self_model::GET_SELF_MODEL_ID);
         // Одноразовый идемпотентный перенос старого нарратива «модели себя» в
-        // self-заметки (@self) — до чтения наблюдений. Best-effort. См.
-        // docs/narrative-as-notes.md, шаг 6.
+        // self-заметки (@self). Best-effort. См. docs/narrative-as-notes.md, шаг 6.
         if inject_enabled {
             crate::features::tools::notes::migrate_self_narrative(&self.storage, profile_id);
         }
         let self_model = self.storage.db().self_model_get(profile_id).ok().flatten();
-        // Свежие наблюдения (self-заметки), новейшие первыми — рендер «модели себя»
-        // получает их параметром (нарратив переехал в заметки).
-        let recent: Vec<crate::entities::self_model::NarrativeSegment> = if inject_enabled {
-            crate::features::tools::notes::self_notes_recent(
-                &self.storage,
-                profile_id,
-                self_model_params.max_narrative,
-            )
-            .into_iter()
-            .map(|n| crate::entities::self_model::NarrativeSegment {
-                id: n.id,
-                text: n.content,
-                created_at: n.created_at,
-            })
-            .collect()
-        } else {
-            Vec::new()
-        };
 
-        // Строим запрос/контекст инструмента из текущей истории чата.
-        let mut request;
+        // Строим запрос/контекст + берём последнюю реплику пользователя (для
+        // релевантной инъекции наблюдений в задаче).
+        let request;
         let ctx;
+        let last_user;
         {
             let Some(chat) = self.chat_mut(active_id) else {
                 return;
             };
             request = build_request(chat, sampling.clone(), schemas);
+            last_user = chat
+                .messages
+                .iter()
+                .rev()
+                .find(|m| m.role == MessageRole::User)
+                .map(|m| m.text.clone())
+                .unwrap_or_default();
             ctx = ToolContext {
                 profile_id,
                 chat_id: active_id,
@@ -251,31 +243,11 @@ impl Orchestrator {
             };
         }
 
-        // Подмешиваем рендер модели себя (+ наблюдения из self-заметок) и протокол
-        // ведения в системный промпт.
-        request.system = inject_self_model(
-            request.system.take(),
-            self_model.as_ref(),
-            inject_enabled,
-            self.config.self_model.maintenance_protocol,
-            &self_model_params,
-            chrono::Utc::now(),
-            &recent,
-        );
-
         let id = Uuid::new_v4();
         let cancel = CancellationToken::new();
         let _ = self
             .evt_tx
             .send(AppEvent::GenerationStarted { generation_id: id });
-        // Сразу показываем оценку токенов всей переписки (промпта) — точное число
-        // придёт позже из `usage` сервера и заменит оценку. См. spec §11.1.
-        let _ = self.evt_tx.send(AppEvent::TokenUsage {
-            generation_id: id,
-            completion: 0,
-            context: Some(estimate_prompt_tokens(&request)),
-            context_exact: false,
-        });
         self.gen_state.begin(id, cancel.clone());
         spawn_generation(GenSpawn {
             backend,
@@ -287,6 +259,11 @@ impl Orchestrator {
             chat_id: active_id,
             max_rounds: self.config.max_tool_rounds,
             allowed,
+            self_model,
+            self_model_params,
+            inject_enabled,
+            maintenance_protocol: self.config.self_model.maintenance_protocol,
+            last_user,
             evt_tx: self.evt_tx.clone(),
             done_tx: self.done_tx.clone(),
         });
@@ -350,6 +327,15 @@ struct GenSpawn {
     max_rounds: u32,
     /// Эффективно разрешённые инструменты (защита от вызова отключённых).
     allowed: Vec<ToolId>,
+    /// «Модель себя» профиля (снимок на начало хода) + параметры/флаги инъекции.
+    /// Инъекция в системный промпт делается в задаче (нужен async-эмбеддинг для
+    /// релевантной выборки наблюдений). См. docs/narrative-as-notes.md (Ярус 2).
+    self_model: Option<crate::entities::self_model::SelfModel>,
+    self_model_params: crate::entities::self_model::SelfModelParams,
+    inject_enabled: bool,
+    maintenance_protocol: bool,
+    /// Последняя реплика пользователя — запрос для инъекции наблюдений по релевантности.
+    last_user: String,
     evt_tx: UnboundedSender<AppEvent>,
     done_tx: UnboundedSender<GenResult>,
 }
@@ -383,11 +369,72 @@ fn spawn_generation(spawn: GenSpawn) {
         chat_id,
         max_rounds,
         allowed,
+        self_model,
+        self_model_params,
+        inject_enabled,
+        maintenance_protocol,
+        last_user,
         evt_tx,
         done_tx,
     } = spawn;
 
     tokio::spawn(async move {
+        // Инъекция «модели себя» в системный промпт (в задаче — нужен async-эмбеддинг
+        // последней реплики для выборки наблюдений по релевантности; Ярус 2). При
+        // выключенной инъекции `inject_self_model` вернёт system как есть.
+        {
+            use crate::features::tools::notes;
+            let n = self_model_params.narrative_in_prompt;
+            let recent: Vec<crate::entities::self_model::NarrativeSegment> = if inject_enabled {
+                let fresh = notes::self_notes_recent(
+                    &ctx.storage,
+                    ctx.profile_id,
+                    self_model_params.max_narrative,
+                );
+                // Релевантные последней реплике наблюдения; пусто → откат на свежесть.
+                let relevant = notes::self_notes_relevant(
+                    &ctx.storage,
+                    ctx.embedder.as_ref(),
+                    ctx.profile_id,
+                    &last_user,
+                    n,
+                )
+                .await;
+                let picked = if relevant.is_empty() {
+                    fresh
+                } else {
+                    blend_self_notes(relevant, &fresh, n)
+                };
+                picked
+                    .into_iter()
+                    .map(|nt| crate::entities::self_model::NarrativeSegment {
+                        id: nt.id,
+                        text: nt.content,
+                        created_at: nt.created_at,
+                    })
+                    .collect()
+            } else {
+                Vec::new()
+            };
+            request.system = inject_self_model(
+                request.system.take(),
+                self_model.as_ref(),
+                inject_enabled,
+                maintenance_protocol,
+                &self_model_params,
+                chrono::Utc::now(),
+                &recent,
+            );
+        }
+        // Оценка токенов промпта (после инъекции модели себя) — точное число придёт из
+        // `usage` сервера и заменит оценку. См. spec §11.1.
+        let _ = evt_tx.send(AppEvent::TokenUsage {
+            generation_id: id,
+            completion: 0,
+            context: Some(estimate_prompt_tokens(&request)),
+            context_exact: false,
+        });
+
         let mut messages: Vec<Message> = Vec::new();
         let mut effects: Vec<ChatEffect> = Vec::new();
         // Отброшенное инструментом «переписать» (для архива удалённого).
@@ -668,6 +715,36 @@ fn estimate_prompt_tokens(req: &ChatRequest) -> u64 {
         }
     }
     estimate_prompt(req.system.as_deref(), parts)
+}
+
+/// Смешивает релевантные и свежие self-заметки для инъекции по релевантности
+/// (Ярус 2): сперва релевантные (по убыванию близости, до `n`), затем **гарантируем
+/// самое свежее наблюдение** (непрерывность «что я только что заметил») — потеснив
+/// последнюю релевантную, если места нет. Дедуп по id. Чистая функция — тестируема.
+pub(super) fn blend_self_notes(
+    relevant: Vec<crate::entities::note::Note>,
+    fresh: &[crate::entities::note::Note],
+    n: usize,
+) -> Vec<crate::entities::note::Note> {
+    let mut out: Vec<crate::entities::note::Note> = Vec::new();
+    let mut seen: std::collections::HashSet<Uuid> = std::collections::HashSet::new();
+    for r in relevant {
+        if out.len() >= n {
+            break;
+        }
+        if seen.insert(r.id) {
+            out.push(r);
+        }
+    }
+    if let Some(f) = fresh.first()
+        && !seen.contains(&f.id)
+    {
+        if out.len() >= n && !out.is_empty() {
+            out.pop();
+        }
+        out.push(f.clone());
+    }
+    out
 }
 
 /// Подмешивает «модель себя» в системный промпт хода (SelfModel MVP, см.

@@ -190,6 +190,41 @@ fn inject_self_model_respects_flag_and_emptiness() {
 }
 
 #[test]
+fn blend_self_notes_prioritizes_relevant_and_guarantees_freshest() {
+    use super::generation::blend_self_notes;
+    use crate::entities::note::Note;
+    let p = Uuid::new_v4();
+    let mk = |c: &str| Note::new(p, c, vec![]);
+    let (r1, r2) = (mk("релевантное 1"), mk("релевантное 2"));
+    let (f0, f1) = (mk("самое свежее"), mk("свежее 1"));
+    let relevant = vec![r1.clone(), r2.clone()];
+    let fresh = vec![f0.clone(), f1.clone()];
+
+    // n=3: 2 релевантных + гарантированное самое свежее (f1 не влезает).
+    let out = blend_self_notes(relevant.clone(), &fresh, 3);
+    let ids: Vec<_> = out.iter().map(|n| n.id).collect();
+    assert_eq!(out.len(), 3);
+    assert!(ids.contains(&r1.id) && ids.contains(&r2.id));
+    assert!(
+        ids.contains(&f0.id),
+        "самое свежее наблюдение гарантированно включено"
+    );
+    assert!(!ids.contains(&f1.id));
+
+    // n=2 при 2 релевантных: последнюю релевантную теснит самое свежее.
+    let out = blend_self_notes(relevant, &fresh, 2);
+    let ids: Vec<_> = out.iter().map(|n| n.id).collect();
+    assert_eq!(out.len(), 2);
+    assert!(ids.contains(&r1.id));
+    assert!(ids.contains(&f0.id));
+    assert!(!ids.contains(&r2.id));
+
+    // Дедуп: если самое свежее уже среди релевантных — не дублируется.
+    let out = blend_self_notes(vec![f0.clone(), r1.clone()], &fresh, 3);
+    assert_eq!(out.iter().filter(|n| n.id == f0.id).count(), 1);
+}
+
+#[test]
 fn effective_sampling_resolves_three_tiers() {
     let (_d, mut orch) = bare_orch();
     let mut profile = Profile::new("P", "sys");
