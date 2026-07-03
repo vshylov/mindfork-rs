@@ -224,7 +224,6 @@ impl Orchestrator {
                 chunk_params: crate::features::tools::rag::ChunkParams::from_settings(
                     &self.config.rag,
                 ),
-                self_model: self_model.clone(),
                 self_model_params,
             };
         }
@@ -278,6 +277,13 @@ impl Orchestrator {
         if res.messages.is_empty() && res.effects.is_empty() && res.deleted.is_empty() {
             return;
         }
+        // Правила ли модель «модель себя» своими инструментами в этом ходу? Если да —
+        // просигналим `SelfModelChanged` (открытый экран `F3` перезапросит снимок).
+        let self_model_touched = res.messages.iter().any(|m| {
+            m.tool_calls
+                .iter()
+                .any(|tc| crate::features::tools::self_model::is_self_model_tool(&tc.name))
+        });
         if let Some(chat) = self.chat_mut(res.chat_id) {
             // Отброшенное инструментом «переписать» — в архив удалённого (ручное
             // восстановление правкой JSON), как Ctrl+E/Ctrl+R. См. spec §9.3, §11.7.
@@ -296,6 +302,9 @@ impl Orchestrator {
             }
             self.mark_dirty(res.chat_id);
             self.emit_chat_list();
+        }
+        if self_model_touched {
+            let _ = self.evt_tx.send(AppEvent::SelfModelChanged);
         }
         // После успешного ответа — возможно, пора фоновой авто-рефлексии (Tier 3)
         // и/или авто-консолидации заметок («сон», Ярус 3).

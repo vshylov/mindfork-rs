@@ -16,6 +16,7 @@ use tokio_util::sync::CancellationToken;
 
 use chrono::{DateTime, Utc};
 
+use crate::app::events::{AppEvent, BackgroundKind};
 use crate::entities::chat::{Chat, DeletedCause};
 use crate::entities::message::{Message, MessageRole};
 use crate::entities::profile::ToolId;
@@ -224,7 +225,6 @@ impl Orchestrator {
             engine: backend.clone(),
             embedder: self.engines.embedder(),
             chunk_params: crate::features::tools::rag::ChunkParams::from_settings(&self.config.rag),
-            self_model: None,
             self_model_params: SelfModelParams::from_settings(&self.config.self_model),
         };
         let sampling = SamplingConfig {
@@ -249,13 +249,40 @@ impl Orchestrator {
             allowed,
             cancel,
             done_tx: self.reflect_done_tx.clone(),
+            profile_id,
+        });
+        // Тихий индикатор «идёт рефлексия» в статус-баре.
+        let _ = self.evt_tx.send(AppEvent::BackgroundTask {
+            kind: BackgroundKind::Reflection,
+            active: true,
         });
     }
 
-    /// Фоновая рефлексия завершилась — снимаем «идёт рефлексия». Инструменты уже
+    /// Фоновая рефлексия завершилась — снимаем «идёт рефлексия», гасим индикатор.
+    /// При успехе: сбрасываем серию неудач и сигналим `SelfModelChanged` (открытый
+    /// экран `F3` перезапросит свежий снимок). При неудаче: копим серию и на пороге
+    /// один раз показываем ошибку в UI (наблюдаемость без спама). Инструменты уже
     /// записали изменения в `Storage`; ленту/чат это не трогает.
-    pub(super) fn handle_reflect_done(&mut self) {
+    pub(super) fn handle_reflect_done(&mut self, result: Result<(), String>) {
         self.reflect_cancel = None;
+        let _ = self.evt_tx.send(AppEvent::BackgroundTask {
+            kind: BackgroundKind::Reflection,
+            active: false,
+        });
+        match result {
+            Ok(()) => {
+                self.reflect_failures = 0;
+                let _ = self.evt_tx.send(AppEvent::SelfModelChanged);
+            }
+            Err(reason) => {
+                self.reflect_failures += 1;
+                if self.reflect_failures == super::BACKGROUND_FAILURE_ALERT {
+                    let _ = self.evt_tx.send(AppEvent::Error(format!(
+                        "Авто-рефлексия трижды подряд завершилась ошибкой: {reason}"
+                    )));
+                }
+            }
+        }
     }
 }
 
@@ -268,12 +295,15 @@ struct ReflectSpawn {
     /// Разрешённые инструменты (защита от вызова чего-то вне набора рефлексии).
     allowed: Vec<ToolId>,
     cancel: CancellationToken,
-    done_tx: UnboundedSender<()>,
+    done_tx: UnboundedSender<Result<(), String>>,
+    /// Профиль (для диагностических логов).
+    profile_id: uuid::Uuid,
 }
 
 /// Запускает фоновую задачу рефлексии: мини agentic-loop, исполняющий вызовы
-/// SelfModel-инструментов (они пишут напрямую в `Storage`). Результат не нужен —
-/// по завершении шлёт сигнал в `done_tx`, чтобы снять флаг «идёт рефлексия».
+/// SelfModel-инструментов (они пишут напрямую в `Storage`). По завершении шлёт исход
+/// (`Ok`/`Err(причина)`) в `done_tx` — снять флаг «идёт рефлексия» и вести
+/// наблюдаемость (серия неудач → одна ошибка в UI).
 fn spawn_reflection(spawn: ReflectSpawn) {
     let ReflectSpawn {
         backend,
@@ -283,6 +313,7 @@ fn spawn_reflection(spawn: ReflectSpawn) {
         allowed,
         cancel,
         done_tx,
+        profile_id,
     } = spawn;
 
     tokio::spawn(async move {
@@ -337,15 +368,19 @@ fn spawn_reflection(spawn: ReflectSpawn) {
             Ok::<(), anyhow::Error>(())
         };
 
-        match tokio::time::timeout(REFLECT_TIMEOUT, run).await {
-            Ok(Ok(())) => {}
-            Ok(Err(e)) => tracing::debug!("авто-рефлексия: ошибка: {e}"),
+        let outcome: Result<(), String> = match tokio::time::timeout(REFLECT_TIMEOUT, run).await {
+            Ok(Ok(())) => Ok(()),
+            Ok(Err(e)) => {
+                tracing::warn!(%profile_id, "авто-рефлексия: ошибка: {e}");
+                Err(e.to_string())
+            }
             Err(_) => {
                 cancel.cancel();
-                tracing::debug!("авто-рефлексия: превышен лимит времени");
+                tracing::warn!(%profile_id, "авто-рефлексия: превышен лимит времени");
+                Err("превышен лимит времени".to_string())
             }
-        }
-        let _ = done_tx.send(());
+        };
+        let _ = done_tx.send(outcome);
     });
 }
 

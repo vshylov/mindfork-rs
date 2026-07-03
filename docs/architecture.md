@@ -262,7 +262,10 @@ flowchart LR
 `ChatActivated`, `UserMessage`, `RestoreInput`, `GenerationStarted`, `Chunk`,
 `Thoughts`, `TokenUsage`, `ToolCall`, `AssistantContinue`/`AssistantRewrite`
 (управляющие инструменты беседы — §8), `Finished`,
-`Impersonation{Started,Chunk,Finished}`, `RagProgress`, `Error`.
+`Impersonation{Started,Chunk,Finished}`, `RagProgress`, `SelfModelView`,
+`SelfModelChanged` (лёгкий сигнал «модель себя изменилась» — открытый экран `F3`
+перезапрашивает снимок; §9.7), `BackgroundTask{kind,active}` (тихий индикатор
+фоновой рефлексии/консолидации в статус-баре), `Error`.
 
 `TokenUsage { completion, context, context_exact }` — live-счётчик токенов: ответ
 (`completion`, накопительно по раундам agentic-loop) и переписка/промпт (`context`).
@@ -579,7 +582,7 @@ flowchart LR
 ```mermaid
 flowchart TB
     REG["ToolRegistry<br/>schemas_for = профиль ∩ реестр · invoke(name,args,ctx)"]
-    CTX["ToolContext (снимок на начало хода)<br/>profile_id, chat_id, system_message,<br/>effective_sampling, last_user_message_at,<br/>storage: Arc&lt;Storage&gt;, engine, embedder, self_model"]
+    CTX["ToolContext (снимок на начало хода)<br/>profile_id, chat_id, system_message,<br/>effective_sampling, last_user_message_at,<br/>storage: Arc&lt;Storage&gt;, engine, embedder, self_model_params"]
     OUT["ToolOutcome { result: String, effects: Vec&lt;ChatEffect&gt; }"]
     EFF["ChatEffect: SetSystemMessage | SetSamplingOverride"]
 
@@ -918,6 +921,17 @@ sequenceDiagram
 а не одни самоописания (перегенерация/удаление приписываются собеседнику, rewrite —
 собственному поведению агента; записи без `cause` — старые — не считаются).
 
+**Наблюдаемость фоновых задач** (этап 5): рефлексия и консолидация — молчаливые
+фоновые задачи, поэтому их отказы легко не заметить (протухший облачный ключ → фича
+месяцами «не работает»). Внутренний done-канал несёт **исход** (`Result<(), String>`);
+оркестратор считает подряд идущие неудачи и на пороге (`BACKGROUND_FAILURE_ALERT=3`)
+**один раз** эмитит `AppEvent::Error`, дальше молчит до первого успеха (сброс) —
+наблюдаемость без спама; ошибки логируются на уровне `warn` с `profile_id`. Пока задача
+идёт, `BackgroundTask{active}` рисует тихий индикатор в статус-баре (`✻ рефлексия`/
+`✻ сон заметок`). После **успешной** рефлексии — `SelfModelChanged` (открытый `F3`
+перезапросит снимок; §9.7); то же — из `handle_done`, если модель правила себя своими
+инструментами в ходу (детект по `self_model::is_self_model_tool`).
+
 ### 9.7 UI: просмотр и правка (`F3`)
 
 Экран «Модель себя» (`screens/self_model.rs`, `ActiveScreen::SelfModel`, см. §10) —
@@ -927,8 +941,11 @@ sequenceDiagram
 профиля). Правки: `SelfModelIntent::Edit` → `AppCommand::UpdateSelfModel` → оркестратор
 применяет (`SelfModel::apply_edit`), сохраняет и **переэмитит** `SelfModelView` (открытый
 экран обновляется на месте). Ручная правка списков заменяет их целиком — там человек (в
-отличие от merge-семантики инструментов). Размеры/инъекция/протокол/авто-рефлексия — поля
-секции «Инструменты» настроек (`Sm*`).
+отличие от merge-семантики инструментов). Когда модель меняется **не** через этот экран
+(фоновая рефлексия, инструменты хода), приходит лёгкий `SelfModelChanged` — runtime, если
+экран `F3` открыт, шлёт `RequestSelfModel` и обновляет его свежим снимком; при закрытом
+экране сигнал игнорируется (не открывает его, в отличие от `SelfModelView`). Размеры/
+инъекция/протокол/авто-рефлексия — поля секции «Инструменты» настроек (`Sm*`).
 
 ### 9.8 Инварианты
 

@@ -181,6 +181,22 @@ pub enum AppEvent {
     /// экрана просмотра (`F3`). `None` — модель ещё не создавалась. `Box` — крупный
     /// тип, не раздуваем enum. См. docs/self-model-mvp.md.
     SelfModelView(Box<Option<crate::entities::self_model::SelfModel>>),
+    /// «Модель себя» изменилась (фоновой рефлексией или инструментами хода) — сигнал
+    /// **без снимка**. Если экран `F3` открыт, UI перезапрашивает свежий снимок
+    /// (`RequestSelfModel`); при закрытом экране игнорируется. См. этап 5 доводки.
+    SelfModelChanged,
+    /// Активность фоновой задачи (авто-рефлексия/консолидация) для тихого индикатора
+    /// в статус-баре: `active=true` при старте, `false` при завершении. См. этап 5.
+    BackgroundTask { kind: BackgroundKind, active: bool },
     /// Ошибка (для показа в UI).
     Error(String),
+}
+
+/// Вид фоновой задачи для индикатора в статус-баре (`AppEvent::BackgroundTask`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BackgroundKind {
+    /// Авто-рефлексия «модели себя».
+    Reflection,
+    /// Авто-консолидация заметок («сон»).
+    Consolidation,
 }

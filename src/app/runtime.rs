@@ -22,7 +22,7 @@ use ratatui::crossterm::event::{
 use ratatui::crossterm::execute;
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
 
-use crate::app::events::{AppCommand, AppEvent};
+use crate::app::events::{AppCommand, AppEvent, BackgroundKind};
 use crate::features::spellcheck::{SpellChecker, dict};
 use crate::screens::chat::{ChatIntent, ChatScreen};
 use crate::screens::chat_list::{ChatListIntent, ChatListScreen};
@@ -195,7 +195,7 @@ fn run_loop(
     let mut dirty = true;
     while !quit {
         while let Ok(event) = evt_rx.try_recv() {
-            apply_event(&mut screen, &mut active, &mut clipboard, event);
+            apply_event(&mut screen, &mut active, &mut clipboard, cmd_tx, event);
             dirty = true;
         }
         // Настройки спелл-чека получены/изменились — (пере)грузим словари в фоне.
@@ -314,6 +314,7 @@ fn apply_event(
     screen: &mut ChatScreen,
     active: &mut ActiveScreen,
     clipboard: &mut Option<arboard::Clipboard>,
+    cmd_tx: &UnboundedSender<AppCommand>,
     event: AppEvent,
 ) {
     match event {
@@ -434,6 +435,17 @@ fn apply_event(
                     screen.palette(),
                 )))
             }
+        },
+        // «Модель себя» изменилась фоном/инструментами — обновляем ТОЛЬКО открытый
+        // экран `F3` (перезапрос свежего снимка); при закрытом — игнор.
+        AppEvent::SelfModelChanged => {
+            if matches!(active, ActiveScreen::SelfModel(_)) {
+                let _ = cmd_tx.send(AppCommand::RequestSelfModel);
+            }
+        }
+        AppEvent::BackgroundTask { kind, active: on } => match kind {
+            BackgroundKind::Reflection => screen.set_reflecting(on),
+            BackgroundKind::Consolidation => screen.set_consolidating(on),
         },
         AppEvent::Error(message) => screen.push_error(&message),
     }
@@ -990,14 +1002,61 @@ mod tests {
         let mut screen = ChatScreen::new();
         let mut active = ActiveScreen::Chat;
         let mut clip = None;
+        let (cmd_tx, _cmd_rx) = tokio::sync::mpsc::unbounded_channel();
         let mut m = crate::entities::self_model::SelfModel::new(uuid::Uuid::new_v4());
         m.summary = "о себе".into();
         apply_event(
             &mut screen,
             &mut active,
             &mut clip,
+            &cmd_tx,
             AppEvent::SelfModelView(Box::new(Some(m))),
         );
         assert!(matches!(active, ActiveScreen::SelfModel(_)));
+    }
+
+    #[test]
+    fn self_model_changed_refreshes_open_screen_only() {
+        let mut screen = ChatScreen::new();
+        let mut clip = None;
+        let (cmd_tx, mut cmd_rx) = tokio::sync::mpsc::unbounded_channel();
+
+        // Экран `F3` закрыт → SelfModelChanged ничего не шлёт.
+        let mut active = ActiveScreen::Chat;
+        apply_event(
+            &mut screen,
+            &mut active,
+            &mut clip,
+            &cmd_tx,
+            AppEvent::SelfModelChanged,
+        );
+        assert!(cmd_rx.try_recv().is_err());
+
+        // Экран `F3` открыт → перезапрос снимка.
+        let mut active =
+            ActiveScreen::SelfModel(Box::new(SelfModelScreen::new(None, screen.palette())));
+        apply_event(
+            &mut screen,
+            &mut active,
+            &mut clip,
+            &cmd_tx,
+            AppEvent::SelfModelChanged,
+        );
+        assert!(matches!(
+            cmd_rx.try_recv(),
+            Ok(AppCommand::RequestSelfModel)
+        ));
+
+        // BackgroundTask ставит флаг индикатора у экрана чата (не паникует).
+        apply_event(
+            &mut screen,
+            &mut active,
+            &mut clip,
+            &cmd_tx,
+            AppEvent::BackgroundTask {
+                kind: BackgroundKind::Reflection,
+                active: true,
+            },
+        );
     }
 }

@@ -182,7 +182,6 @@ mod tests {
             engine,
             embedder,
             chunk_params: crate::features::tools::rag::ChunkParams::default(),
-            self_model: None,
             self_model_params: crate::entities::self_model::SelfModelParams::default(),
         };
         (dir, ctx)

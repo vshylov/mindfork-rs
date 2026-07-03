@@ -14,6 +14,7 @@ use futures_util::StreamExt;
 use tokio::sync::mpsc::UnboundedSender;
 use tokio_util::sync::CancellationToken;
 
+use crate::app::events::{AppEvent, BackgroundKind};
 use crate::entities::profile::ToolId;
 use crate::entities::sampling::SamplingConfig;
 use crate::entities::self_model::SelfModelParams;
@@ -138,7 +139,6 @@ impl Orchestrator {
             engine: backend.clone(),
             embedder: self.engines.embedder(),
             chunk_params: crate::features::tools::rag::ChunkParams::from_settings(&self.config.rag),
-            self_model: None,
             self_model_params: SelfModelParams::from_settings(&self.config.self_model),
         };
         let sampling = SamplingConfig {
@@ -163,13 +163,35 @@ impl Orchestrator {
             allowed,
             cancel,
             done_tx: self.consolidate_done_tx.clone(),
+            profile_id,
+        });
+        // Тихий индикатор «идёт консолидация» в статус-баре.
+        let _ = self.evt_tx.send(AppEvent::BackgroundTask {
+            kind: BackgroundKind::Consolidation,
+            active: true,
         });
     }
 
-    /// Фоновая консолидация завершилась — снимаем «идёт консолидация». Инструменты уже
-    /// записали изменения в `Storage`; ленту/чат это не трогает.
-    pub(super) fn handle_consolidate_done(&mut self) {
+    /// Фоновая консолидация завершилась — снимаем «идёт консолидация», гасим индикатор
+    /// и ведём серию неудач (как рефлексия). `SelfModelChanged` **не** шлём — меняются
+    /// заметки, не «модель себя». Инструменты уже записали изменения в `Storage`.
+    pub(super) fn handle_consolidate_done(&mut self, result: Result<(), String>) {
         self.consolidate_cancel = None;
+        let _ = self.evt_tx.send(AppEvent::BackgroundTask {
+            kind: BackgroundKind::Consolidation,
+            active: false,
+        });
+        match result {
+            Ok(()) => self.consolidate_failures = 0,
+            Err(reason) => {
+                self.consolidate_failures += 1;
+                if self.consolidate_failures == super::BACKGROUND_FAILURE_ALERT {
+                    let _ = self.evt_tx.send(AppEvent::Error(format!(
+                        "Авто-консолидация трижды подряд завершилась ошибкой: {reason}"
+                    )));
+                }
+            }
+        }
     }
 }
 
@@ -182,12 +204,14 @@ struct ConsolidateSpawn {
     /// Разрешённые инструменты (защита от вызова чего-то вне набора консолидации).
     allowed: Vec<ToolId>,
     cancel: CancellationToken,
-    done_tx: UnboundedSender<()>,
+    done_tx: UnboundedSender<Result<(), String>>,
+    /// Профиль (для диагностических логов).
+    profile_id: uuid::Uuid,
 }
 
 /// Запускает фоновую задачу консолидации: мини agentic-loop, исполняющий вызовы
-/// note-инструментов (они пишут напрямую в `Storage`). Результат не нужен — по
-/// завершении шлёт сигнал в `done_tx`, чтобы снять флаг «идёт консолидация».
+/// note-инструментов (они пишут напрямую в `Storage`). По завершении шлёт исход в
+/// `done_tx` — снять флаг «идёт консолидация» и вести наблюдаемость.
 fn spawn_consolidation(spawn: ConsolidateSpawn) {
     let ConsolidateSpawn {
         backend,
@@ -197,6 +221,7 @@ fn spawn_consolidation(spawn: ConsolidateSpawn) {
         allowed,
         cancel,
         done_tx,
+        profile_id,
     } = spawn;
 
     tokio::spawn(async move {
@@ -251,15 +276,20 @@ fn spawn_consolidation(spawn: ConsolidateSpawn) {
             Ok::<(), anyhow::Error>(())
         };
 
-        match tokio::time::timeout(CONSOLIDATE_TIMEOUT, run).await {
-            Ok(Ok(())) => {}
-            Ok(Err(e)) => tracing::debug!("авто-консолидация: ошибка: {e}"),
+        let outcome: Result<(), String> = match tokio::time::timeout(CONSOLIDATE_TIMEOUT, run).await
+        {
+            Ok(Ok(())) => Ok(()),
+            Ok(Err(e)) => {
+                tracing::warn!(%profile_id, "авто-консолидация: ошибка: {e}");
+                Err(e.to_string())
+            }
             Err(_) => {
                 cancel.cancel();
-                tracing::debug!("авто-консолидация: превышен лимит времени");
+                tracing::warn!(%profile_id, "авто-консолидация: превышен лимит времени");
+                Err("превышен лимит времени".to_string())
             }
-        }
-        let _ = done_tx.send(());
+        };
+        let _ = done_tx.send(outcome);
     });
 }
 

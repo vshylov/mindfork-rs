@@ -726,7 +726,6 @@ mod tests {
             engine: engine.clone(),
             embedder: embedder.clone(),
             chunk_params: ChunkParams::default(),
-            self_model: None,
             self_model_params: crate::entities::self_model::SelfModelParams::default(),
         };
 

@@ -20,6 +20,22 @@ pub const UPDATE_USER_MODEL_ID: &str = "update_user_model";
 pub const ADD_INSIGHT_ID: &str = "add_insight";
 pub const CONSOLIDATE_NARRATIVE_ID: &str = "consolidate_narrative";
 
+/// Все id инструментов группы «модели себя» (для детекции правок в ходе).
+pub const ALL_IDS: &[&str] = &[
+    GET_SELF_MODEL_ID,
+    REFLECT_ID,
+    UPDATE_SELF_MODEL_ID,
+    UPDATE_USER_MODEL_ID,
+    ADD_INSIGHT_ID,
+    CONSOLIDATE_NARRATIVE_ID,
+];
+
+/// Относится ли инструмент к группе «модели себя» (для сигнала `SelfModelChanged`
+/// после хода, где модель что-то правила через свои инструменты).
+pub fn is_self_model_tool(name: &str) -> bool {
+    ALL_IDS.contains(&name)
+}
+
 /// Загружает модель профиля из хранилища (или пустую, если ещё не создавалась).
 /// Читаем из БД, а не из снимка `ctx.self_model`, чтобы видеть правки, сделанные
 /// другими SelfModel-инструментами в этом же ходе.
@@ -467,6 +483,15 @@ impl Tool for ConsolidateNarrative {
 mod tests {
     use super::super::testkit::ctx_with_storage;
     use super::*;
+
+    #[test]
+    fn is_self_model_tool_recognizes_group() {
+        assert!(is_self_model_tool(UPDATE_SELF_MODEL_ID));
+        assert!(is_self_model_tool(ADD_INSIGHT_ID));
+        assert!(is_self_model_tool(CONSOLIDATE_NARRATIVE_ID));
+        assert!(!is_self_model_tool("note_save"));
+        assert!(!is_self_model_tool("web_search"));
+    }
 
     #[tokio::test]
     async fn get_on_empty_reports_empty() {

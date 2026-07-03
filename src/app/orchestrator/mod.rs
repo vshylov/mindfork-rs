@@ -97,10 +97,11 @@ pub async fn run(deps: OrchestratorDeps) {
     let (imp_status_tx, mut imp_status_rx) = unbounded_channel::<ServerStatus>();
     // Внутренний канал «имперсонация завершена» (фоновая задача → петля).
     let (imp_done_tx, mut imp_done_rx) = unbounded_channel::<(Uuid, FinishReason)>();
-    // Внутренний канал «авто-рефлексия завершена» (фоновая задача → петля).
-    let (reflect_done_tx, mut reflect_done_rx) = unbounded_channel::<()>();
+    // Внутренний канал «авто-рефлексия завершена» (фоновая задача → петля); несёт
+    // исход (`Ok`/`Err(причина)`) для наблюдаемости.
+    let (reflect_done_tx, mut reflect_done_rx) = unbounded_channel::<Result<(), String>>();
     // Внутренний канал «авто-консолидация завершена» (фоновая задача → петля).
-    let (consolidate_done_tx, mut consolidate_done_rx) = unbounded_channel::<()>();
+    let (consolidate_done_tx, mut consolidate_done_rx) = unbounded_channel::<Result<(), String>>();
     let registry = Arc::new(build_registry(&config));
     let mut orch = Orchestrator {
         evt_tx,
@@ -120,9 +121,11 @@ pub async fn run(deps: OrchestratorDeps) {
         rag_cancel: None,
         reflect_cancel: None,
         reflect_done_tx,
+        reflect_failures: 0,
         consolidate_cancel: None,
         consolidate_counts: HashMap::new(),
         consolidate_done_tx,
+        consolidate_failures: 0,
         saves: SaveQueue::default(),
     };
 
@@ -174,13 +177,13 @@ pub async fn run(deps: OrchestratorDeps) {
                 }
             }
             done = reflect_done_rx.recv() => {
-                if done.is_some() {
-                    orch.handle_reflect_done();
+                if let Some(res) = done {
+                    orch.handle_reflect_done(res);
                 }
             }
             done = consolidate_done_rx.recv() => {
-                if done.is_some() {
-                    orch.handle_consolidate_done();
+                if let Some(res) = done {
+                    orch.handle_consolidate_done(res);
                 }
             }
             _ = sleep_until_opt(deadline) => orch.flush_saves(),
@@ -188,6 +191,11 @@ pub async fn run(deps: OrchestratorDeps) {
     }
     orch.flush_saves();
 }
+
+/// Сколько подряд идущих неудач фоновой задачи (рефлексия/консолидация) должно
+/// накопиться, чтобы один раз показать ошибку в UI. Дальше — молчим до первого
+/// успеха (сброс счётчика). Наблюдаемость без спама. См. этап 5 доводки.
+pub(super) const BACKGROUND_FAILURE_ALERT: u32 = 3;
 
 /// Строит реестр инструментов из конфигурации (`config.tools`).
 fn build_registry(config: &AppConfig) -> crate::features::tools::ToolRegistry {
@@ -239,16 +247,21 @@ struct Orchestrator {
     rag_cancel: Option<tokio_util::sync::CancellationToken>,
     /// Токен отмены текущей фоновой авто-рефлексии (`Some` — идёт; одна за раз).
     reflect_cancel: Option<tokio_util::sync::CancellationToken>,
-    /// Канал «авто-рефлексия завершена» (фоновая задача → петля). Каденция рефлексии
-    /// ведётся ватермарком `Chat.reflected_upto` (переживает рестарт), а не in-memory
-    /// счётчиком — см. `reflection::maybe_auto_reflect`.
-    reflect_done_tx: UnboundedSender<()>,
+    /// Канал «авто-рефлексия завершена» (фоновая задача → петля), несёт исход. Каденция
+    /// рефлексии ведётся ватермарком `Chat.reflected_upto` (переживает рестарт), а не
+    /// in-memory счётчиком — см. `reflection::maybe_auto_reflect`.
+    reflect_done_tx: UnboundedSender<Result<(), String>>,
+    /// Число подряд идущих неудач авто-рефлексии; на пороге эмитим одну ошибку в UI,
+    /// дальше молчим до первого успеха (сброс). Наблюдаемость без спама.
+    reflect_failures: u32,
     /// Токен отмены текущей фоновой авто-консолидации заметок («сон»); одна за раз.
     consolidate_cancel: Option<tokio_util::sync::CancellationToken>,
     /// Счётчики ответов ассистента с прошлой авто-консолидации (по чату).
     consolidate_counts: HashMap<Uuid, u32>,
-    /// Канал «авто-консолидация завершена» (фоновая задача → петля).
-    consolidate_done_tx: UnboundedSender<()>,
+    /// Канал «авто-консолидация завершена» (фоновая задача → петля), несёт исход.
+    consolidate_done_tx: UnboundedSender<Result<(), String>>,
+    /// Число подряд идущих неудач авто-консолидации (как `reflect_failures`).
+    consolidate_failures: u32,
     /// Очередь отложенного сохранения чатов (дебаунс; выделено в Фазе 3).
     saves: SaveQueue,
 }

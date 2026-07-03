@@ -950,7 +950,6 @@ mod tests {
             engine: std::sync::Arc::new(crate::shared::api::mock::MockBackend::scripted(vec![])),
             embedder: std::sync::Arc::new(crate::shared::api::mock::MockEmbedder::new(16)),
             chunk_params: crate::features::tools::rag::ChunkParams::default(),
-            self_model: None,
             self_model_params: crate::entities::self_model::SelfModelParams::default(),
         };
         let out = tool

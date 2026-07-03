@@ -42,6 +42,7 @@ pub fn render(
     context: Option<u64>,
     context_exact: bool,
     mouse_scroll: bool,
+    background: Option<&str>,
     palette: &Palette,
 ) {
     let lines = lines(
@@ -52,6 +53,7 @@ pub fn render(
         context,
         context_exact,
         mouse_scroll,
+        background,
         palette,
     );
     frame.render_widget(Paragraph::new(lines), area);
@@ -68,6 +70,7 @@ pub fn height(
     context: Option<u64>,
     context_exact: bool,
     mouse_scroll: bool,
+    background: Option<&str>,
     palette: &Palette,
 ) -> u16 {
     lines(
@@ -78,6 +81,7 @@ pub fn height(
         context,
         context_exact,
         mouse_scroll,
+        background,
         palette,
     )
     .len()
@@ -102,6 +106,7 @@ fn lines(
     context: Option<u64>,
     context_exact: bool,
     mouse_scroll: bool,
+    background: Option<&str>,
     palette: &Palette,
 ) -> Vec<Line<'static>> {
     let sep = || Span::styled("  │  ", Style::new().fg(palette.border));
@@ -144,6 +149,12 @@ fn lines(
         } else {
             state.push(Span::styled(label, muted));
         }
+    }
+    // Тихий индикатор фоновой задачи (авто-рефлексия/консолидация) — приглушённо,
+    // глиф `✻` шириной 1 колонка (раскладка сетки хоткеев не «съезжает»).
+    if let Some(hint) = background {
+        state.push(sep());
+        state.push(Span::styled(format!("✻ {hint}"), muted));
     }
     let state_w = spans_width(&state);
 
@@ -383,6 +394,7 @@ mod tests {
             context,
             context_exact,
             mouse_scroll,
+            None,
             &Palette::default(),
         )
         .iter()
@@ -460,7 +472,7 @@ mod tests {
     fn scroll_mode_highlights_only_value() {
         let palette = Palette::default();
         let span_fg = |scroll, needle: &str| {
-            lines(200, &ready(), false, 0, None, false, scroll, &palette)
+            lines(200, &ready(), false, 0, None, false, scroll, None, &palette)
                 .iter()
                 .flat_map(|l| l.spans.clone())
                 .find(|s| s.content.contains(needle))
@@ -499,6 +511,7 @@ mod tests {
             None,
             false,
             false,
+            None,
             &Palette::default(),
         )
         .len();
@@ -516,6 +529,7 @@ mod tests {
             None,
             false,
             false,
+            None,
             &Palette::default(),
         );
         assert!(h > 1, "ожидался перенос хоткеев, высота = {h}");
@@ -532,10 +546,23 @@ mod tests {
         use ratatui::Terminal;
         use ratatui::backend::TestBackend;
         let p = Palette::default();
-        let h = height(w as usize, &ready(), false, 0, None, false, false, &p);
+        let h = height(w as usize, &ready(), false, 0, None, false, false, None, &p);
         let mut term = Terminal::new(TestBackend::new(w, h)).unwrap();
-        term.draw(|f| render(f, f.area(), &ready(), false, 0, None, false, false, &p))
-            .unwrap();
+        term.draw(|f| {
+            render(
+                f,
+                f.area(),
+                &ready(),
+                false,
+                0,
+                None,
+                false,
+                false,
+                None,
+                &p,
+            )
+        })
+        .unwrap();
         let buf = term.backend().buffer().clone();
         (0..buf.area.height)
             .map(|y| {
@@ -612,6 +639,7 @@ mod tests {
                 Some(456),
                 true,
                 true,
+                Some("рефлексия"),
                 &Palette::default(),
             )
         })

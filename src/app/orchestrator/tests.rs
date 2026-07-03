@@ -123,9 +123,11 @@ fn bare_orch_rx() -> (tempfile::TempDir, Orchestrator, UnboundedReceiver<AppEven
         rag_cancel: None,
         reflect_cancel: None,
         reflect_done_tx: unbounded_channel().0,
+        reflect_failures: 0,
         consolidate_cancel: None,
         consolidate_counts: std::collections::HashMap::new(),
         consolidate_done_tx: unbounded_channel().0,
+        consolidate_failures: 0,
         saves: SaveQueue::default(),
     };
     (dir, orch, evt_rx)
@@ -1796,6 +1798,77 @@ async fn auto_reflect_keeps_watermark_when_server_not_ready() {
     let chat = orch.chats.iter().find(|c| c.id == chat_id).unwrap();
     assert_eq!(chat.reflected_upto, None); // цикл не потерян — повторим позже
     assert!(orch.reflect_cancel.is_none());
+}
+
+#[tokio::test]
+async fn reflect_failures_alert_once_then_reset() {
+    let (_d, mut orch, mut rx) = bare_orch_rx();
+    let saw_error = |rx: &mut UnboundedReceiver<AppEvent>| {
+        let mut seen = false;
+        while let Ok(e) = rx.try_recv() {
+            if matches!(e, AppEvent::Error(_)) {
+                seen = true;
+            }
+        }
+        seen
+    };
+    // Две неудачи подряд — в UI ещё тихо (наблюдаемость без спама).
+    orch.handle_reflect_done(Err("boom".into()));
+    orch.handle_reflect_done(Err("boom".into()));
+    assert!(!saw_error(&mut rx));
+    // Третья подряд — одна ошибка.
+    orch.handle_reflect_done(Err("boom".into()));
+    assert!(saw_error(&mut rx));
+    assert_eq!(orch.reflect_failures, 3);
+    // Успех сбрасывает серию и шлёт SelfModelChanged.
+    orch.handle_reflect_done(Ok(()));
+    assert_eq!(orch.reflect_failures, 0);
+    let mut changed = false;
+    while let Ok(e) = rx.try_recv() {
+        if matches!(e, AppEvent::SelfModelChanged) {
+            changed = true;
+        }
+    }
+    assert!(changed);
+}
+
+#[tokio::test]
+async fn handle_done_signals_self_model_changed_on_self_model_tool_call() {
+    use crate::entities::message::ToolCallRecord;
+    let (_d, mut orch, mut rx) = bare_orch_rx();
+    let profile = Profile::new("P", "sys");
+    let mut chat = Chat::from_profile(&profile, "t");
+    chat.push_message(Message::user("привет"));
+    let chat_id = chat.id;
+    orch.profiles.push(profile);
+    orch.chats.push(chat);
+    orch.active_id = Some(chat_id);
+    let gen_id = Uuid::new_v4();
+    orch.gen_state
+        .begin(gen_id, tokio_util::sync::CancellationToken::new());
+
+    // Ответ ассистента с вызовом self-model-инструмента → SelfModelChanged.
+    let mut msg = Message::assistant("готово");
+    msg.tool_calls = vec![ToolCallRecord {
+        id: "c1".into(),
+        name: "update_self_model".into(),
+        arguments: serde_json::json!({}),
+        result: Some("ok".into()),
+    }];
+    orch.handle_done(super::generation::GenResult {
+        id: gen_id,
+        chat_id,
+        messages: vec![msg],
+        effects: vec![],
+        deleted: vec![],
+    });
+    let mut changed = false;
+    while let Ok(e) = rx.try_recv() {
+        if matches!(e, AppEvent::SelfModelChanged) {
+            changed = true;
+        }
+    }
+    assert!(changed);
 }
 
 #[tokio::test]
