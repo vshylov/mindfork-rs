@@ -30,6 +30,7 @@ mod request;
 mod save_queue;
 mod settings;
 mod title;
+mod tool_loop;
 
 #[cfg(test)]
 mod tests;

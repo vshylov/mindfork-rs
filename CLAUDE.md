@@ -2482,6 +2482,42 @@ web-поиск и Python под выключателями, экран наст�
   tools (`is_self_model_tool` распознаёт группу); status_bar-тесты обновлены под новый
   параметр. **705 тестов зелёные** (+4), clippy/fmt чисты.
 
+### Пост-M9: доводка модели себя — этап 6 (дедуп петель + политика одним источником) (сделано)
+- Финальный этап плана [refinements.md](docs/refinements.md): механический рефактор
+  без изменения поведения.
+- **Общий тихий раннер** (6.1, `app/orchestrator/tool_loop.rs`): тело мини
+  agentic-loop (стрим → аккумулятор вызовов → исполнение разрешённых инструментов →
+  раунд, толерантность к Thoughts/ThoughtsSignature/Usage) дублировалось **дословно**
+  в `reflection.rs` и `consolidation.rs` (различались лишь лимиты и метка лога). Теперь
+  оно одно — `spawn_silent_loop(SilentLoop { backend, registry, ctx, request, allowed,
+  cancel, max_rounds, timeout, label, profile_id, done_tx })` + приватный `run_rounds`.
+  Общий спавн-хвост (таймаут + `warn`-лог + отправка исхода в done-канал). Предикат
+  каденции `due` тоже переехал сюда (был в обоих модулях). Оба места стали тоньше:
+  строят `SilentLoop` и зовут раннер; их `ReflectSpawn`/`ConsolidateSpawn`/
+  `spawn_reflection`/`spawn_consolidation`/`due` удалены. **Основную петлю генерации
+  сознательно не влили** — стриминг в UI, control-flow-инструменты, thinking-подписи
+  Anthropic, usage, эффекты; её сложность не окупает общий сток (отмечено в доке модуля).
+- **Политика ведения одним источником** (6.2): формулировки правил дублировались в
+  `SELF_MODEL_MAINTENANCE_PROTOCOL` (`generation.rs`) и `REFLECT_SYSTEM_MESSAGE`
+  (`reflection.rs`) и уже слегка разъехались. Введена канон-константа
+  `self_model::POLICY_CORE` (интегрируй summary; веди цели по #id; merge user_model;
+  мимолётное → add_insight; точность важнее угодливости; консолидируй нарратив). Оба
+  текста собираются из неё: `self_model::maintenance_protocol()` = `POLICY_CORE` в
+  обрамлении «ты сам ведёшь»; `reflection::reflect_system_message()` = преамбула +
+  `POLICY_CORE` + пояснение о поведенческих сигналах (строятся в рантайме — `format!`
+  не годится для `const`). Интерактивная рубрика `reflect` **намеренно** оставлена
+  как есть — иной жанр (вопросы, не императив), покрывает те же темы.
+- **Полевую группировку `BackgroundLoop`** (план 6.1) — **не делал**: рефлексия и
+  консолидация различаются (у консолидации счётчик `consolidate_counts`, у рефлексии
+  ватермарк), выигрыш косметический, а риск размазать инвариант по call-site'ам не
+  окупается. Поля `*_cancel`/`*_failures`/`*_done_tx` оставлены на `Orchestrator`.
+- **Тесты**: `due` — один набор (в `tool_loop`); `maintenance_protocol_wraps_policy_core`
+  и `reflect_system_message_composes_from_policy_core` (композиция из `POLICY_CORE` +
+  своё обрамление). Поведение петель проверяют прежние интеграционные тесты
+  (`auto_reflect_advances_watermark_on_spawn` и др. — через общий раннер). **706 тестов
+  зелёные**, clippy/fmt чисты. **Доводка модели себя (этапы 1–6, refinements.md) —
+  завершена.**
+
 ### Отложено за пределы M3
 - **Сворачивание/выделение per-message** и tool-блоки в ленте — сейчас «мысли»
   сворачиваются глобально (`Ctrl+T`); выделение сообщений и tool-блоки — на M5.

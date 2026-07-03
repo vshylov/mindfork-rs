@@ -7,11 +7,8 @@
 //! ничего не стримится — рефлексия молчалива и опциональна (`config.self_model.
 //! auto_reflect_every`, по умолчанию выкл). См. docs/self-model-mvp.md.
 
-use std::sync::Arc;
 use std::time::Duration;
 
-use futures_util::StreamExt;
-use tokio::sync::mpsc::UnboundedSender;
 use tokio_util::sync::CancellationToken;
 
 use chrono::{DateTime, Utc};
@@ -22,13 +19,12 @@ use crate::entities::message::{Message, MessageRole};
 use crate::entities::profile::ToolId;
 use crate::entities::sampling::SamplingConfig;
 use crate::entities::self_model::SelfModelParams;
-use crate::features::tools::{ToolContext, ToolRegistry, self_model};
-use crate::shared::api::{
-    ApiMessage, ChatChunk, ChatRequest, EngineBackend, FinishReason, ToolCallAccumulator,
-};
+use crate::features::tools::{ToolContext, self_model};
+use crate::shared::api::{ApiMessage, ChatRequest};
 
 use super::Orchestrator;
 use super::request::last_user_message_at;
+use super::tool_loop;
 
 /// Потолок токенов ответа на раунд рефлексии (с запасом на «мысли» перед вызовом).
 const REFLECT_MAX_TOKENS: usize = 2048;
@@ -47,27 +43,19 @@ const REFLECT_TOOL_IDS: &[&str] = &[
     self_model::CONSOLIDATE_NARRATIVE_ID,
 ];
 
-/// Системное сообщение фоновой саморефлексии.
-const REFLECT_SYSTEM_MESSAGE: &str = "Ты проводишь тихую фоновую саморефлексию. Ниже — фрагмент недавнего разговора. \
-     Сначала вызови get_self_model (там цели с #id). Затем обнови свою «модель себя», \
-     если что-то устойчивое изменилось: уточни описание себя (update_self_model.summary — \
-     интегрируй прежнее с новым, не переписывай с нуля); веди цели по #id — закрывай \
-     выполненные (complete_goals) и неактуальные (abandon_goals), добавляй новые \
-     (add_goals); правь модель собеседника (update_user_model) частями — add_/remove_ \
-     черт и интересов, не перетирая; важное наблюдение или замеченное противоречие \
-     запиши прозой (add_insight). Мимолётное (настроение, разовая реакция) — только в \
-     add_insight, не в модель собеседника. Если наблюдений накопилось много или есть \
-     дубли/устаревшее — подними устойчивое в summary/черты и вычисти сырое через \
-     consolidate_narrative. Точность важнее угодливости: фиксируй то, что верно, а не что \
-     польстит. Если ниже есть блок «Поведенческие сигналы» — учти их как свидетельства о \
-     собеседнике (update_user_model) или наблюдение (add_insight): это факты поведения, а \
-     не осуждение. Меняй только действительно изменившееся; нечего — не вызывай ничего. Не \
-     пиши ответ пользователю — только вызывай инструменты.";
-
-/// Пора ли запускать рефлексию: фича включена (`every > 0`) и накоплено достаточно
-/// ответов. Чистая функция — тестируема.
-pub(super) fn due(count: u32, every: usize) -> bool {
-    every > 0 && (count as usize) >= every
+/// Системное сообщение фоновой саморефлексии: обрамление + единый `POLICY_CORE`
+/// (этап 6 — те же правила, что у протокола ведения). Строится в рантайме, поскольку
+/// склеивает `const`-фрагмент с константой правил.
+fn reflect_system_message() -> String {
+    format!(
+        "Ты проводишь тихую фоновую саморефлексию. Ниже — фрагмент недавнего разговора. \
+         Сначала вызови get_self_model (там цели с #id). Затем: {} Если ниже есть блок \
+         «Поведенческие сигналы» — учти их как свидетельства о собеседнике \
+         (update_user_model) или наблюдение (add_insight): это факты поведения, а не \
+         осуждение. Меняй только действительно изменившееся; нечего — не вызывай ничего. \
+         Не пиши ответ пользователю — только вызывай инструменты.",
+        self_model::POLICY_CORE
+    )
 }
 
 /// Начало окна рефлексии (кламп ватермарка к длине истории — устойчиво к усечению
@@ -171,7 +159,7 @@ impl Orchestrator {
             // Каденция по окну: ответы ассистента с прошлой рефлексии. Не накопилось —
             // выходим, ватермарк не трогаем.
             let (wm, count) = reflect_window(&chat.messages, chat.reflected_upto);
-            if !due(count, every) {
+            if !tool_loop::due(count, every) {
                 return;
             }
             allowed = REFLECT_TOOL_IDS
@@ -233,7 +221,7 @@ impl Orchestrator {
             ..Default::default()
         };
         let request = ChatRequest {
-            system: Some(REFLECT_SYSTEM_MESSAGE.to_string()),
+            system: Some(reflect_system_message()),
             messages: vec![ApiMessage::user(digest)],
             sampling,
             tools: self.registry.schemas_for(&allowed),
@@ -241,15 +229,18 @@ impl Orchestrator {
 
         let cancel = CancellationToken::new();
         self.reflect_cancel = Some(cancel.clone());
-        spawn_reflection(ReflectSpawn {
+        tool_loop::spawn_silent_loop(tool_loop::SilentLoop {
             backend,
             registry: self.registry.clone(),
             ctx,
             request,
             allowed,
             cancel,
-            done_tx: self.reflect_done_tx.clone(),
+            max_rounds: REFLECT_MAX_ROUNDS,
+            timeout: REFLECT_TIMEOUT,
+            label: "авто-рефлексия",
             profile_id,
+            done_tx: self.reflect_done_tx.clone(),
         });
         // Тихий индикатор «идёт рефлексия» в статус-баре.
         let _ = self.evt_tx.send(AppEvent::BackgroundTask {
@@ -286,107 +277,22 @@ impl Orchestrator {
     }
 }
 
-/// Параметры запуска задачи рефлексии.
-struct ReflectSpawn {
-    backend: Arc<dyn EngineBackend>,
-    registry: Arc<ToolRegistry>,
-    ctx: ToolContext,
-    request: ChatRequest,
-    /// Разрешённые инструменты (защита от вызова чего-то вне набора рефлексии).
-    allowed: Vec<ToolId>,
-    cancel: CancellationToken,
-    done_tx: UnboundedSender<Result<(), String>>,
-    /// Профиль (для диагностических логов).
-    profile_id: uuid::Uuid,
-}
-
-/// Запускает фоновую задачу рефлексии: мини agentic-loop, исполняющий вызовы
-/// SelfModel-инструментов (они пишут напрямую в `Storage`). По завершении шлёт исход
-/// (`Ok`/`Err(причина)`) в `done_tx` — снять флаг «идёт рефлексия» и вести
-/// наблюдаемость (серия неудач → одна ошибка в UI).
-fn spawn_reflection(spawn: ReflectSpawn) {
-    let ReflectSpawn {
-        backend,
-        registry,
-        ctx,
-        mut request,
-        allowed,
-        cancel,
-        done_tx,
-        profile_id,
-    } = spawn;
-
-    tokio::spawn(async move {
-        let allowed_has = |name: &str| allowed.iter().any(|t| t == name);
-        let run = async {
-            let mut round: u32 = 0;
-            loop {
-                let mut stream = backend.chat_stream(request.clone(), cancel.clone()).await?;
-                let mut acc = ToolCallAccumulator::default();
-                let mut text = String::new();
-                let mut reason = FinishReason::Stop;
-                while let Some(chunk) = stream.next().await {
-                    match chunk {
-                        ChatChunk::ToolCall(d) => acc.push(d),
-                        ChatChunk::Text(t) => text.push_str(&t),
-                        ChatChunk::Finished(r) => {
-                            reason = r;
-                            break;
-                        }
-                        ChatChunk::Thoughts(_)
-                        | ChatChunk::ThoughtsSignature(_)
-                        | ChatChunk::Usage(_) => {}
-                    }
-                }
-                let calls = acc.finish();
-                // Раунд без вызовов или достигнут лимит — рефлексия окончена.
-                if reason != FinishReason::ToolCalls
-                    || calls.is_empty()
-                    || round >= REFLECT_MAX_ROUNDS
-                {
-                    break;
-                }
-                round += 1;
-                request.messages.push(ApiMessage::assistant_tool_calls(
-                    text.clone(),
-                    calls.clone(),
-                ));
-                for call in &calls {
-                    let args: serde_json::Value = serde_json::from_str(&call.arguments)
-                        .unwrap_or_else(|_| serde_json::json!({}));
-                    let result = if allowed_has(&call.name) {
-                        match registry.invoke(&call.name, &ctx, args).await {
-                            Ok(o) => o.result,
-                            Err(e) => format!("Ошибка инструмента {}: {e}", call.name),
-                        }
-                    } else {
-                        format!("Инструмент {} недоступен.", call.name)
-                    };
-                    request.messages.push(ApiMessage::tool(&call.id, &result));
-                }
-            }
-            Ok::<(), anyhow::Error>(())
-        };
-
-        let outcome: Result<(), String> = match tokio::time::timeout(REFLECT_TIMEOUT, run).await {
-            Ok(Ok(())) => Ok(()),
-            Ok(Err(e)) => {
-                tracing::warn!(%profile_id, "авто-рефлексия: ошибка: {e}");
-                Err(e.to_string())
-            }
-            Err(_) => {
-                cancel.cancel();
-                tracing::warn!(%profile_id, "авто-рефлексия: превышен лимит времени");
-                Err("превышен лимит времени".to_string())
-            }
-        };
-        let _ = done_tx.send(outcome);
-    });
-}
-
 #[cfg(test)]
 mod tests {
-    use super::{Chat, DeletedCause, Message, behavior_markers, due, reflect_window};
+    use super::{
+        Chat, DeletedCause, Message, behavior_markers, reflect_system_message, reflect_window,
+    };
+
+    #[test]
+    fn reflect_system_message_composes_from_policy_core() {
+        let msg = reflect_system_message();
+        // Собрано из единого POLICY_CORE (те же правила, что у протокола ведения).
+        assert!(msg.contains(crate::features::tools::self_model::POLICY_CORE));
+        // Плюс рефлексия-специфичное обрамление.
+        assert!(msg.contains("get_self_model"));
+        assert!(msg.contains("Поведенческие сигналы"));
+        assert!(msg.contains("только вызывай инструменты"));
+    }
 
     #[test]
     fn behavior_markers_counts_by_cause_and_filters_since() {
@@ -426,15 +332,6 @@ mod tests {
         // Нет сигналов → None.
         let empty = Chat::from_profile(&p, "t2");
         assert!(behavior_markers(&empty, None).is_none());
-    }
-
-    #[test]
-    fn due_respects_threshold_and_disabled() {
-        assert!(!due(5, 0)); // выключено
-        assert!(!due(1, 3));
-        assert!(!due(2, 3));
-        assert!(due(3, 3)); // достигли порога
-        assert!(due(4, 3)); // и выше
     }
 
     #[test]
