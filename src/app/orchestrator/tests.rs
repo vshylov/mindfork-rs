@@ -2055,6 +2055,103 @@ async fn self_model_graph_e2e_live() {
     );
 }
 
+/// End-to-end зонд **обзора self-консолидации** (Ярус 3, отложенный из Яруса 2 B):
+/// модель записывает два похожих наблюдения, затем зовёт `reflect` — его результат
+/// теперь несёт блок «Обзор наблюдений для консолидации» (похожие пары / contradicts /
+/// без связей), под который модель сводит дубли (`note_merge`/`note_supersede`/
+/// `note_revise`). Ассертим **механизм** (≥1 наблюдение-заметка; при вызове `reflect`
+/// и ≥2 наблюдениях его результат содержит обзор — детерминированно, заголовок/счётчики
+/// строятся без векторов, не зависят от порога эмбеддера); фактическое сведение дублей
+/// печатаем для go/no-go (поведение нестабильно). `#[ignore]`, вручную:
+/// `MINDFORK_ENGINE_URL=…/v1 MINDFORK_EMBED_URL=…/v1 cargo test self_consolidation_overview_e2e_live -- --ignored --nocapture --test-threads=1`.
+#[tokio::test]
+#[ignore = "requires a running OpenAI-compatible server (MINDFORK_ENGINE_URL)"]
+async fn self_consolidation_overview_e2e_live() {
+    use crate::features::tools::notes::SELF_NOTE_TAG;
+    let Some((_d, cmd_tx, mut evt_rx, handle)) = spawn_orch_live() else {
+        eprintln!("skip: MINDFORK_ENGINE_URL not set");
+        return;
+    };
+    let root = _d.path().to_path_buf();
+    let pid = enable_all_tools(&cmd_tx, &mut evt_rx).await;
+
+    // Два похожих наблюдения (кандидаты в дубли) — пока НЕ объединяем.
+    let (_t1, tools1) = run_turn_live(
+        &cmd_tx,
+        &mut evt_rx,
+        "Запиши наблюдение (add_insight): я ценю краткость в ответах. Пока не объединяй \
+         ни с чем — просто запиши.",
+    )
+    .await;
+    let (_t2, tools2) = run_turn_live(
+        &cmd_tx,
+        &mut evt_rx,
+        "Запиши ещё одно наблюдение (add_insight): пользователь предпочитает лаконичные, \
+         краткие ответы. Даже если инструмент покажет похожее — на этот раз оставь оба.",
+    )
+    .await;
+    eprintln!("наблюдения: {tools1:?} + {tools2:?}");
+
+    // Просим отрефлексировать и свести дубли — reflect несёт обзор self-консолидации.
+    let (t3, calls3) = run_turn_capture(
+        &cmd_tx,
+        &mut evt_rx,
+        "Вызови reflect и просмотри блок «Обзор наблюдений для консолидации». Если среди \
+         наблюдений есть похожие дубли — сведи их (note_merge или note_supersede).",
+    )
+    .await;
+    eprintln!("рефлексия: текст={t3:?}\nвызовы={calls3:#?}");
+
+    cmd_tx.send(AppCommand::Quit).unwrap();
+    handle.await.unwrap();
+
+    let reopened = Storage::open(Paths::with_root(&root)).unwrap();
+    let self_notes = reopened
+        .db()
+        .note_list(pid, None, &[SELF_NOTE_TAG.to_string()], None)
+        .unwrap();
+    eprintln!(
+        "self-заметок в БД: {} — {:#?}",
+        self_notes.len(),
+        self_notes
+            .iter()
+            .map(|n| n.content.clone())
+            .collect::<Vec<_>>()
+    );
+    // Механизм: наблюдения-заметки созданы.
+    assert!(
+        !self_notes.is_empty(),
+        "ожидали self-заметки (@self) от add_insight"
+    );
+
+    // Обзор self-консолидации: если модель вызвала reflect и наблюдений ≥2, его
+    // результат ОБЯЗАН нести блок «Обзор наблюдений» (детерминированно — заголовок и
+    // счётчики строятся без векторов, порог эмбеддера влияет лишь на список похожих пар).
+    // Если модель свела дубли к одному ещё в сессии 2, наблюдений < 2 и обзора нет — ок.
+    if let Some((_, result)) = calls3.iter().find(|(n, _)| n == "reflect") {
+        let has_overview = result.contains("Обзор наблюдений");
+        eprintln!("reflect вернул обзор self-консолидации: {has_overview}");
+        if self_notes.len() >= 2 {
+            assert!(
+                has_overview,
+                "reflect при ≥2 наблюдениях должен нести обзор self-консолидации: {result}"
+            );
+        }
+    }
+    // Сведение дублей — go/no-go (нестабильно): печатаем.
+    let consolidated = calls3
+        .iter()
+        .any(|(n, _)| n == "note_merge" || n == "note_supersede" || n == "note_revise");
+    eprintln!("модель свела дубли (note_merge/supersede/revise): {consolidated}");
+    // Модель должна была отрефлексировать и/или тронуть наблюдения.
+    assert!(
+        calls3.iter().any(|(n, _)| {
+            n == "reflect" || n == "note_merge" || n == "note_supersede" || n == "note_revise"
+        }),
+        "сессия 3: ожидали reflect/note_merge/note_supersede/note_revise: {calls3:?}"
+    );
+}
+
 /// End-to-end зонд **ворот родственных черт** `user_model` (Ярус 2, шаг C): модель
 /// добавляет черту собеседника (`update_user_model` с `add_traits`), затем близкую —
 /// ворота `add_traits` показывают родственную черту и просят решить (дубль/противоречие).
