@@ -381,7 +381,7 @@ impl Orchestrator {
     /// Наблюдения кладутся в поле `narrative` снимка **только для отображения** — сам
     /// снимок никогда не персистится (запись идёт через `self_model_update` над
     /// реальной, пустой по нарративу моделью). `None`, если нет ни модели, ни
-    /// наблюдений. См. docs/narrative-as-notes.md.
+    /// наблюдений. См. docs/history/narrative-as-notes.md.
     fn self_model_view_snapshot(
         &self,
         pid: uuid::Uuid,

@@ -581,7 +581,7 @@ pub const DEFAULT_SELF_MODEL_MAINTENANCE_PROTOCOL: bool = true;
 pub const DEFAULT_SELF_MODEL_MAX_CLOSED_GOALS: usize = 10;
 
 /// Настройки «модели себя» (SelfModel): размеры нарратива и объём инъекции в
-/// системный промпт. См. [docs/self-model-mvp.md] и spec §9.3.
+/// системный промпт. См. [docs/history/self-model-mvp.md] и spec §9.3.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct SelfModelSettings {
@@ -619,7 +619,7 @@ impl Default for SelfModelSettings {
     }
 }
 
-/// Настройки заметок: авто-консолидация («сон»). См. docs/notes-connectivity.md (Ярус 3).
+/// Настройки заметок: авто-консолидация («сон»). См. docs/history/notes-connectivity.md (Ярус 3).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(default)]
 pub struct NotesSettings {
@@ -632,7 +632,7 @@ pub struct NotesSettings {
     /// `[о себе]`. По умолчанию **выключено**: память о себе ≠ память о собеседнике
     /// (решение Яруса 1). Тумблер даёт «полное смешение выдачи» (Ярус 3, Путь 2) для
     /// проверки, безопасно ли это; при выключенном self-заметки скрыты, как раньше.
-    /// См. docs/narrative-as-notes.md (Ярус 3, Путь 2).
+    /// См. docs/history/narrative-as-notes.md (Ярус 3, Путь 2).
     pub recall_includes_self: bool,
 }
 

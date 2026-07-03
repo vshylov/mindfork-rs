@@ -1,7 +1,7 @@
 # Системные промпты для исследования «модели себя»
 
 Набор из трёх системных сообщений для сравнительных прогонов влияния SelfModel
-(см. [spec.md §17](../../spec.md), [self-model-mvp.md](../self-model-mvp.md)) на
+(см. [spec.md §17](../../spec.md), [self-model-mvp.md](../history/self-model-mvp.md)) на
 поведение локальных моделей (Gemma 4 / Qwen).
 
 **Принцип A/B:** вводный абзац (персона) и финальная строка о пользователе
@@ -114,5 +114,5 @@ SelfModel хранится пер-профильно, изоляция гара�
 
 ---
 
-*Источники: [spec.md §17](../../spec.md) (что/почему), [self-model-mvp.md](../self-model-mvp.md)
+*Источники: [spec.md §17](../../spec.md) (что/почему), [self-model-mvp.md](../history/self-model-mvp.md)
 (план и решения), [CLAUDE.md](../../CLAUDE.md) (журнал реализации).*

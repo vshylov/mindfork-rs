@@ -180,7 +180,7 @@ pub fn all_tool_ids() -> Vec<ToolId> {
     ids.push(control::SEND_FOLLOWUP_ID.into());
     ids.push(control::REWRITE_CURRENT_ID.into());
     // Инструменты «модели себя» (SelfModel MVP) — опциональны, по умолчанию выкл;
-    // данные пер-профильные в SQLite, см. docs/self-model-mvp.md.
+    // данные пер-профильные в SQLite, см. docs/history/self-model-mvp.md.
     ids.push(self_model::GET_SELF_MODEL_ID.into());
     ids.push(self_model::REFLECT_ID.into());
     ids.push(self_model::UPDATE_SELF_MODEL_ID.into());

@@ -42,7 +42,7 @@ const NOTE_BACKFILL_BATCH: usize = 32;
 const RELATED_IN_RECALL: usize = 5;
 
 /// Зарезервированный тег «заметок о себе»: нарратив «модели себя» переехал в обычные
-/// заметки (см. docs/narrative-as-notes.md, Ярус 1). Self-заметки делят таблицы,
+/// заметки (см. docs/history/narrative-as-notes.md, Ярус 1). Self-заметки делят таблицы,
 /// эмбеддинги, граф и консолидацию с обычными, но **скрыты** из пользовательского
 /// `note_recall`, ворот `note_save` и обзора консолидации фильтром по этому тегу —
 /// память о себе ≠ память о собеседнике, смешение выдачи рискованно. Лидирующий `@`
@@ -201,7 +201,7 @@ impl Tool for NoteRecall {
 /// связанный моделью с пользовательской заметкой, **показывается** с пометкой
 /// `[о себе]`. Это НЕ реверс сокрытия Яруса 1: обычный поиск/spreading по-прежнему
 /// не тащит self-заметки — всплывает лишь **намеренно созданное** моделью ребро
-/// между органами. См. docs/narrative-as-notes.md (Ярус 3, кросс-органные связи).
+/// между органами. См. docs/history/narrative-as-notes.md (Ярус 3, кросс-органные связи).
 fn related_block(ctx: &ToolContext, hits: &[Note]) -> Option<String> {
     let mut seen: std::collections::HashSet<Uuid> = hits.iter().map(|n| n.id).collect();
     let mut lines: Vec<String> = Vec::new();
@@ -313,7 +313,7 @@ pub(crate) async fn create_note(
 /// Свежие «заметки о себе» профиля (нарратив «модели себя»), новейшие первыми
 /// (`updated_at DESC`), не более `limit`. Отдельный путь чтения self-заметок для
 /// инъекции/`get_self_model`/`reflect` — пользовательский `note_recall` их скрывает.
-/// См. docs/narrative-as-notes.md.
+/// См. docs/history/narrative-as-notes.md.
 pub(crate) fn self_notes_recent(
     storage: &crate::shared::storage::Storage,
     profile_id: Uuid,
@@ -331,7 +331,7 @@ pub(crate) fn self_notes_recent(
 /// бэкфилл векторов → эмбеддинг запроса → поиск среди self-заметок по косинусу,
 /// top-`limit` (по убыванию близости). Пусто при пустом запросе / недоступном
 /// эмбеддере (вызывающий откатится на свежесть — мягкая деградация, как Ярус 1).
-/// См. docs/narrative-as-notes.md (Ярус 2, инъекция по релевантности).
+/// См. docs/history/narrative-as-notes.md (Ярус 2, инъекция по релевантности).
 pub(crate) async fn self_notes_relevant(
     storage: &crate::shared::storage::Storage,
     embedder: &dyn crate::shared::api::Embedder,
@@ -403,7 +403,7 @@ pub(crate) async fn self_note_similar(
 /// явно связанная моделью с наблюдением, показывается с пометкой `[заметка]` — так
 /// чтение «модели себя» видит, что наблюдение «о себе» соотносится с фактом «о
 /// собеседнике» (self↔user ребро). Органы остаются раздельными по хранению/поиску;
-/// всплывает лишь намеренно созданное ребро. См. docs/narrative-as-notes.md (Ярус 3).
+/// всплывает лишь намеренно созданное ребро. См. docs/history/narrative-as-notes.md (Ярус 3).
 pub(crate) fn self_related_block(ctx: &ToolContext, shown: &[Uuid]) -> Option<String> {
     let shown_set: std::collections::HashSet<Uuid> = shown.iter().copied().collect();
     let mut seen_edges: std::collections::HashSet<(Uuid, Uuid, String)> =
@@ -460,7 +460,7 @@ pub(crate) fn self_related_block(ctx: &ToolContext, shown: &[Uuid]) -> Option<St
 /// вычёрпывается** (drain под захватом мьютекса БД) — повторный проход видит пусто
 /// (no-op), так что дублей не будет. Вектора эмбеддятся лениво (при следующем
 /// recall/воротах — `ensure_note_vectors`). Оркестратор зовёт это best-effort перед
-/// чтением self-заметок. См. docs/narrative-as-notes.md, шаг 6.
+/// чтением self-заметок. См. docs/history/narrative-as-notes.md, шаг 6.
 pub(crate) fn migrate_self_narrative(storage: &crate::shared::storage::Storage, profile_id: Uuid) {
     use crate::entities::self_model::NarrativeSegment;
     let mut segments: Vec<NarrativeSegment> = Vec::new();
@@ -1106,7 +1106,7 @@ pub(crate) fn build_consolidation_overview(
 /// и инструмента `reflect`. Обзор self-консолидации был отложен в Ярусе 2 «до
 /// подтверждения пользы связывания»; связывание подтвердилось (Ярус 3, GO) — включаем.
 /// `None`, если наблюдений < 2 (консолидировать нечего). Чистое чтение БД (вектора уже в
-/// БД). Изоляция по `profile_id`. См. docs/narrative-as-notes.md.
+/// БД). Изоляция по `profile_id`. См. docs/history/narrative-as-notes.md.
 pub(crate) fn build_self_consolidation_overview(
     storage: &crate::shared::storage::Storage,
     profile_id: Uuid,
