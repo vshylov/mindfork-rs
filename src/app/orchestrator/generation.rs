@@ -235,6 +235,7 @@ impl Orchestrator {
             inject_enabled,
             self.config.self_model.maintenance_protocol,
             &self_model_params,
+            chrono::Utc::now(),
         );
 
         let id = Uuid::new_v4();
@@ -660,19 +661,26 @@ pub(super) fn inject_self_model(
     enabled: bool,
     maintenance_protocol: bool,
     params: &crate::entities::self_model::SelfModelParams,
+    now: chrono::DateTime<chrono::Utc>,
 ) -> Option<String> {
     if !enabled {
         return system;
     }
     let block =
-        model.and_then(|m| m.render_for_prompt(params.prompt_cap, params.narrative_in_prompt));
+        model.and_then(|m| m.render_for_prompt(params.prompt_cap, params.narrative_in_prompt, now));
     // Собираем подмешиваемые части: рендер модели (если есть) + протокол (если включён).
-    let mut parts: Vec<&str> = Vec::new();
-    if let Some(b) = block.as_deref() {
+    let mut parts: Vec<String> = Vec::new();
+    if let Some(b) = block {
         parts.push(b);
     }
     if maintenance_protocol {
-        parts.push(SELF_MODEL_MAINTENANCE_PROTOCOL);
+        parts.push(SELF_MODEL_MAINTENANCE_PROTOCOL.to_string());
+        // data-aware приписка: если нарратив близок к потолку — подсказать
+        // консолидацию прямо в системном промпте (протокол становится приборной
+        // панелью, а не статичным плакатом).
+        if let Some(h) = model.and_then(|m| m.narrative_fill_hint(params.max_narrative)) {
+            parts.push(format!("({h})"));
+        }
     }
     if parts.is_empty() {
         return system; // подмешивать нечего

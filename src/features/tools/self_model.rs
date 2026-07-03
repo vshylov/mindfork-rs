@@ -5,6 +5,7 @@
 //! `ctx.profile_id`. См. [docs/self-model-mvp.md](../../../docs/self-model-mvp.md).
 
 use anyhow::Result;
+use chrono::Utc;
 use uuid::Uuid;
 
 use crate::entities::profile::ToolId;
@@ -61,7 +62,7 @@ impl Tool for GetSelfModel {
     }
     async fn invoke(&self, ctx: &ToolContext, _args: serde_json::Value) -> Result<ToolOutcome> {
         let m = load(ctx)?;
-        Ok(ToolOutcome::text(m.render_full()))
+        Ok(ToolOutcome::text(m.render_full(Utc::now())))
     }
 }
 
@@ -86,6 +87,12 @@ impl Tool for Reflect {
     }
     async fn invoke(&self, ctx: &ToolContext, _args: serde_json::Value) -> Result<ToolOutcome> {
         let m = load(ctx)?;
+        // Приписка о заполненности нарратива (если близко к потолку) — рубрика
+        // становится приборной панелью, а не плакатом.
+        let fill = m
+            .narrative_fill_hint(ctx.self_model_params.max_narrative)
+            .map(|h| format!("\n{h}"))
+            .unwrap_or_default();
         let out = format!(
             "Текущая модель себя:\n{}\n\nВопросы для размышления:\n\
              - Что устойчивого я понял(а) о себе? Уточни update_self_model.summary — \
@@ -98,10 +105,10 @@ impl Tool for Reflect {
              - Заметил(а) ли противоречие/напряжение? Запиши прозой через add_insight.\n\
              - Не раздулся ли нарратив (дубли, устаревшее)? Подними устойчивое в summary/\
              черты, а сырые/дублирующие наблюдения вычисти через consolidate_narrative \
-             (убрать по #id, опц. добавить одно сводное).\n\
+             (убрать по #id, опц. добавить одно сводное).{fill}\n\
              Меняй только то, что действительно изменилось; если менять нечего — ничего \
              не вызывай.",
-            m.render_full()
+            m.render_full(Utc::now())
         );
         Ok(ToolOutcome::text(out))
     }
@@ -145,11 +152,33 @@ impl Tool for AddInsight {
         // Атомарно (под мьютексом БД), чтобы параллельная авто-рефлексия/`F3` не
         // затёрла запись гонкой load-modify-save.
         let max = ctx.self_model_params.max_narrative;
-        ctx.storage.db().self_model_update(ctx.profile_id, |m| {
-            m.add_insight(text, max);
+        // Вытесненные за потолок сегменты — чтобы явно сообщить, что ушло (иначе
+        // FIFO молча теряет старейшее).
+        let mut evicted: Vec<String> = Vec::new();
+        let (model, _) = ctx.storage.db().self_model_update(ctx.profile_id, |m| {
+            evicted = m
+                .add_insight(text, max)
+                .into_iter()
+                .map(|s| s.text)
+                .collect();
             true
         })?;
-        Ok(ToolOutcome::text("Наблюдение записано в нарратив."))
+        let mut msg = format!(
+            "Наблюдение записано (нарратив {}/{max}).",
+            model.narrative.len()
+        );
+        if !evicted.is_empty() {
+            let list = evicted
+                .iter()
+                .map(|t| format!("«{t}»"))
+                .collect::<Vec<_>>()
+                .join(", ");
+            msg.push_str(&format!(
+                " Вытеснены старейшие: {list}. Если в них было устойчивое — подними в \
+                 summary/черты или сведи сводным через consolidate_narrative."
+            ));
+        }
+        Ok(ToolOutcome::text(msg))
     }
 }
 
@@ -184,6 +213,7 @@ impl Tool for UpdateSelfModel {
         // Нерезолвленные ручки целей собираются внутри атомарной правки (захват по
         // `&mut`), запись — под одним захватом мьютекса (защита от гонки).
         let mut unresolved: Vec<String> = Vec::new();
+        let params = ctx.self_model_params;
         let (model, changed) = ctx.storage.db().self_model_update(ctx.profile_id, |m| {
             let mut changed = false;
             if let Some(s) = args.get("summary").and_then(|v| v.as_str()) {
@@ -212,6 +242,11 @@ impl Tool for UpdateSelfModel {
                     GoalMatch::Ambiguous => unresolved.push(format!("{h} (неоднозначно)")),
                 }
             }
+            // Свёртка старых закрытых целей в нарратив-шрам (потолок закрытых целей):
+            // структура не растёт бесконечно, а «биография» сохраняется.
+            if m.fold_closed_goals(params.max_closed_goals, params.max_narrative) > 0 {
+                changed = true;
+            }
             changed
         })?;
 
@@ -222,7 +257,7 @@ impl Tool for UpdateSelfModel {
             }
             return Ok(ToolOutcome::text(msg));
         }
-        let mut msg = format!("Модель себя обновлена.\n{}", model.render_full());
+        let mut msg = format!("Модель себя обновлена.\n{}", model.render_full(Utc::now()));
         if !unresolved.is_empty() {
             msg.push_str(&format!("\n(Не найдены цели: {}.)", unresolved.join(", ")));
         }
@@ -313,7 +348,10 @@ impl Tool for UpdateUserModel {
                 "Нечего обновлять (не передано ни одного изменения).",
             ));
         }
-        let mut msg = format!("Модель собеседника обновлена.\n{}", model.render_full());
+        let mut msg = format!(
+            "Модель собеседника обновлена.\n{}",
+            model.render_full(Utc::now())
+        );
         // Удаление/замена черты — пересмотр суждения. Причина не записана → напоминаем
         // оставить след в нарративе (шрам), а не стирать молча.
         if (removed_traits || removed_interests) && !has_note {
@@ -322,6 +360,10 @@ impl Tool for UpdateUserModel {
                  передай note с тем, что и почему изменилось: он останется в нарративе как \
                  след, чтобы модель себя помнила, что менялась.)",
             );
+        }
+        // Если note добавлен и нарратив близок к потолку — напомнить о консолидации.
+        if has_note && let Some(h) = model.narrative_fill_hint(max) {
+            msg.push_str(&format!("\n({h})"));
         }
         Ok(ToolOutcome::text(msg))
     }
@@ -404,7 +446,7 @@ impl Tool for ConsolidateNarrative {
             } else {
                 ""
             },
-            model.render_full()
+            model.render_full(Utc::now())
         );
         if !unresolved.is_empty() {
             msg.push_str(&format!(
@@ -726,5 +768,78 @@ mod tests {
             .await
             .unwrap();
         assert!(out.result.contains("Не найдены наблюдения"));
+    }
+
+    #[tokio::test]
+    async fn add_insight_reports_count_and_eviction() {
+        use crate::entities::self_model::SelfModelParams;
+        use crate::shared::config::SelfModelSettings;
+        let profile = Uuid::new_v4();
+        let (_d, _storage, mut ctx) = ctx_with_storage(profile);
+        // Маленький потолок нарратива, чтобы поймать вытеснение.
+        ctx.self_model_params = SelfModelParams::from_settings(&SelfModelSettings {
+            max_narrative: 2,
+            ..SelfModelSettings::default()
+        });
+        for t in ["первое", "второе"] {
+            let out = AddInsight
+                .invoke(&ctx, serde_json::json!({ "text": t }))
+                .await
+                .unwrap();
+            assert!(out.result.contains("нарратив"));
+            assert!(!out.result.contains("Вытеснены"));
+        }
+        // Третье вытесняет «первое» — результат явно об этом сообщает.
+        let out = AddInsight
+            .invoke(&ctx, serde_json::json!({ "text": "третье" }))
+            .await
+            .unwrap();
+        assert!(out.result.contains("нарратив 2/2"));
+        assert!(out.result.contains("Вытеснены старейшие"));
+        assert!(out.result.contains("«первое»"));
+    }
+
+    #[tokio::test]
+    async fn update_self_model_folds_old_closed_goals() {
+        use crate::entities::self_model::SelfModelParams;
+        use crate::shared::config::SelfModelSettings;
+        let profile = Uuid::new_v4();
+        let (_d, storage, mut ctx) = ctx_with_storage(profile);
+        // Держим не более 2 закрытых целей.
+        ctx.self_model_params = SelfModelParams::from_settings(&SelfModelSettings {
+            max_closed_goals: 2,
+            ..SelfModelSettings::default()
+        });
+        UpdateSelfModel
+            .invoke(
+                &ctx,
+                serde_json::json!({"add_goals": ["ц0", "ц1", "ц2", "ц3", "ц4"]}),
+            )
+            .await
+            .unwrap();
+        let ids: Vec<String> = storage
+            .db()
+            .self_model_get(profile)
+            .unwrap()
+            .unwrap()
+            .goals
+            .iter()
+            .map(|g| g.id.to_string())
+            .collect();
+        // Закрываем все пять — свёртка оставит 2 самых свежих закрытых, 3 → в архив.
+        UpdateSelfModel
+            .invoke(&ctx, serde_json::json!({"complete_goals": ids}))
+            .await
+            .unwrap();
+        let stored = storage.db().self_model_get(profile).unwrap().unwrap();
+        assert_eq!(stored.goals.len(), 2); // потолок закрытых целей соблюдён
+        assert_eq!(
+            stored
+                .narrative
+                .iter()
+                .filter(|s| s.text.starts_with("[архив цели]"))
+                .count(),
+            3
+        );
     }
 }

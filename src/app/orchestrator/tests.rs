@@ -143,35 +143,58 @@ fn inject_self_model_respects_flag_and_emptiness() {
 
     // Выключено → система не меняется (протокол тоже не подмешивается).
     assert_eq!(
-        inject_self_model(Some("S".into()), Some(&m), false, true, &pp),
+        inject_self_model(
+            Some("S".into()),
+            Some(&m),
+            false,
+            true,
+            &pp,
+            chrono::Utc::now()
+        ),
         Some("S".into())
     );
     // Включено, протокол выкл, непустая модель → блок дописывается, протокола нет.
-    let out = inject_self_model(Some("S".into()), Some(&m), true, false, &pp).unwrap();
+    let out = inject_self_model(
+        Some("S".into()),
+        Some(&m),
+        true,
+        false,
+        &pp,
+        chrono::Utc::now(),
+    )
+    .unwrap();
     assert!(out.starts_with("S\n\n"));
     assert!(out.contains("ценю ясность"));
     assert!(!out.contains("угодливости"));
     // Включено, протокол выкл, модели нет → без изменений.
     assert_eq!(
-        inject_self_model(Some("S".into()), None, true, false, &pp),
+        inject_self_model(Some("S".into()), None, true, false, &pp, chrono::Utc::now()),
         Some("S".into())
     );
     // Включено, протокол выкл, модель пуста, system=None → нечего подмешивать → None.
     let empty = SelfModel::new(Uuid::new_v4());
     assert_eq!(
-        inject_self_model(None, Some(&empty), true, false, &pp),
+        inject_self_model(None, Some(&empty), true, false, &pp, chrono::Utc::now()),
         None
     );
     // Пустой system + непустая модель (протокол выкл) → блок становится системой.
-    let only = inject_self_model(None, Some(&m), true, false, &pp).unwrap();
+    let only = inject_self_model(None, Some(&m), true, false, &pp, chrono::Utc::now()).unwrap();
     assert!(only.contains("О себе: ценю ясность"));
 
     // Протокол вкл + пустая модель → протокол всё равно подмешивается (bootstrap).
-    let boot = inject_self_model(Some("S".into()), Some(&empty), true, true, &pp).unwrap();
+    let boot = inject_self_model(
+        Some("S".into()),
+        Some(&empty),
+        true,
+        true,
+        &pp,
+        chrono::Utc::now(),
+    )
+    .unwrap();
     assert!(boot.starts_with("S\n\n"));
     assert!(boot.contains("угодливости"));
     // Протокол вкл + непустая модель → и рендер, и протокол.
-    let both = inject_self_model(None, Some(&m), true, true, &pp).unwrap();
+    let both = inject_self_model(None, Some(&m), true, true, &pp, chrono::Utc::now()).unwrap();
     assert!(both.contains("ценю ясность"));
     assert!(both.contains("угодливости"));
 }

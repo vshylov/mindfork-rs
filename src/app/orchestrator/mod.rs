@@ -378,12 +378,17 @@ impl Orchestrator {
             return;
         };
         // Атомарная правка (под одним захватом мьютекса БД) — не даёт параллельной
-        // авто-рефлексии затереть ручную правку гонкой load-modify-save.
-        let snapshot = match self
-            .storage
-            .db()
-            .self_model_update(pid, |m| m.apply_edit(edit))
-        {
+        // авто-рефлексии затереть ручную правку гонкой load-modify-save. Заодно
+        // сворачиваем старые закрытые цели (единообразно с инструментами).
+        let params =
+            crate::entities::self_model::SelfModelParams::from_settings(&self.config.self_model);
+        let snapshot = match self.storage.db().self_model_update(pid, |m| {
+            let mut changed = m.apply_edit(edit);
+            if m.fold_closed_goals(params.max_closed_goals, params.max_narrative) > 0 {
+                changed = true;
+            }
+            changed
+        }) {
             // Правка применена — переэмитим авторитетный снимок (с ней).
             Ok((model, true)) => Some(model),
             // Правки не было (или ошибка) — переэмитим фактически сохранённый снимок
