@@ -224,6 +224,70 @@ fn blend_self_notes_prioritizes_relevant_and_guarantees_freshest() {
     assert_eq!(out.iter().filter(|n| n.id == f0.id).count(), 1);
 }
 
+#[tokio::test]
+async fn injection_recent_surfaces_relevant_over_fresh() {
+    // Ярус 2: инъекция по релевантности поднимает СТАРОЕ, но релевантное запросу
+    // наблюдение — то, что чистая свежесть потеряла бы.
+    use super::generation::injection_recent;
+    use crate::entities::note::Note;
+    use crate::entities::self_model::SelfModelParams;
+    use crate::features::tools::notes::SELF_NOTE_TAG;
+    use chrono::{Duration, Utc};
+
+    let dir = tempfile::tempdir().unwrap();
+    let storage = Storage::open(Paths::with_root(dir.path())).unwrap();
+    let embedder = MockEmbedder::new(16);
+    let profile = Uuid::new_v4();
+
+    // X — старое (10 дней назад), тема «xxxx». Затем 4 свежих Y (тема «yyyy»),
+    // вытесняющих X из свежести (narrative_in_prompt=3).
+    let now = Utc::now();
+    let mut seeds: Vec<(String, chrono::DateTime<Utc>)> =
+        vec![("xxxx старое наблюдение".into(), now - Duration::days(10))];
+    for i in 0..4 {
+        seeds.push((format!("yyyy свежее {i}"), now));
+    }
+    for (content, at) in &seeds {
+        let note = Note {
+            id: Uuid::new_v4(),
+            profile_id: profile,
+            content: content.clone(),
+            tags: vec![SELF_NOTE_TAG.to_string()],
+            created_at: *at,
+            updated_at: *at,
+        };
+        storage.db().note_insert(&note).unwrap();
+        let emb = embedder
+            .embed(vec![content.clone()])
+            .await
+            .unwrap()
+            .into_iter()
+            .next()
+            .unwrap();
+        storage
+            .db()
+            .note_vector_upsert(note.id, profile, &emb)
+            .unwrap();
+    }
+    let params = SelfModelParams::default();
+
+    // Запрос про «xxxx» → старое релевантное наблюдение поднято (хоть не свежайшее).
+    let recent = injection_recent(&storage, &embedder, profile, true, "xxxx", &params).await;
+    assert!(
+        recent.iter().any(|s| s.text.contains("xxxx старое")),
+        "релевантное старое наблюдение должно быть поднято: {recent:?}"
+    );
+    // Запрос про «yyyy» → нерелевантное старое X не поднимается.
+    let recent = injection_recent(&storage, &embedder, profile, true, "yyyy", &params).await;
+    assert!(!recent.iter().any(|s| s.text.contains("xxxx")));
+    // Инъекция выключена → пусто.
+    assert!(
+        injection_recent(&storage, &embedder, profile, false, "xxxx", &params)
+            .await
+            .is_empty()
+    );
+}
+
 #[test]
 fn effective_sampling_resolves_three_tiers() {
     let (_d, mut orch) = bare_orch();

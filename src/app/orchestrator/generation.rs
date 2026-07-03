@@ -383,39 +383,15 @@ fn spawn_generation(spawn: GenSpawn) {
         // последней реплики для выборки наблюдений по релевантности; Ярус 2). При
         // выключенной инъекции `inject_self_model` вернёт system как есть.
         {
-            use crate::features::tools::notes;
-            let n = self_model_params.narrative_in_prompt;
-            let recent: Vec<crate::entities::self_model::NarrativeSegment> = if inject_enabled {
-                let fresh = notes::self_notes_recent(
-                    &ctx.storage,
-                    ctx.profile_id,
-                    self_model_params.max_narrative,
-                );
-                // Релевантные последней реплике наблюдения; пусто → откат на свежесть.
-                let relevant = notes::self_notes_relevant(
-                    &ctx.storage,
-                    ctx.embedder.as_ref(),
-                    ctx.profile_id,
-                    &last_user,
-                    n,
-                )
-                .await;
-                let picked = if relevant.is_empty() {
-                    fresh
-                } else {
-                    blend_self_notes(relevant, &fresh, n)
-                };
-                picked
-                    .into_iter()
-                    .map(|nt| crate::entities::self_model::NarrativeSegment {
-                        id: nt.id,
-                        text: nt.content,
-                        created_at: nt.created_at,
-                    })
-                    .collect()
-            } else {
-                Vec::new()
-            };
+            let recent = injection_recent(
+                &ctx.storage,
+                ctx.embedder.as_ref(),
+                ctx.profile_id,
+                inject_enabled,
+                &last_user,
+                &self_model_params,
+            )
+            .await;
             request.system = inject_self_model(
                 request.system.take(),
                 self_model.as_ref(),
@@ -745,6 +721,42 @@ pub(super) fn blend_self_notes(
         out.push(f.clone());
     }
     out
+}
+
+/// Собирает наблюдения (self-заметки) для инъекции в системный промпт (Ярус 2):
+/// **релевантные** последней реплике + гарантия свежайшего наблюдения, с откатом на
+/// чистую свежесть при недоступном эмбеддере/пустом запросе. Пусто, если инъекция
+/// выключена. Async (эмбеддинг запроса) — потому и вынесено из sync-обработчика в
+/// задачу генерации. Тестируется поверх temp-хранилища + `MockEmbedder`.
+pub(super) async fn injection_recent(
+    storage: &crate::shared::storage::Storage,
+    embedder: &dyn crate::shared::api::Embedder,
+    profile_id: Uuid,
+    inject_enabled: bool,
+    last_user: &str,
+    params: &crate::entities::self_model::SelfModelParams,
+) -> Vec<crate::entities::self_model::NarrativeSegment> {
+    if !inject_enabled {
+        return Vec::new();
+    }
+    use crate::features::tools::notes;
+    let n = params.narrative_in_prompt;
+    let fresh = notes::self_notes_recent(storage, profile_id, params.max_narrative);
+    // Релевантные последней реплике наблюдения; пусто → откат на свежесть.
+    let relevant = notes::self_notes_relevant(storage, embedder, profile_id, last_user, n).await;
+    let picked = if relevant.is_empty() {
+        fresh
+    } else {
+        blend_self_notes(relevant, &fresh, n)
+    };
+    picked
+        .into_iter()
+        .map(|nt| crate::entities::self_model::NarrativeSegment {
+            id: nt.id,
+            text: nt.content,
+            created_at: nt.created_at,
+        })
+        .collect()
 }
 
 /// Подмешивает «модель себя» в системный промпт хода (SelfModel MVP, см.
