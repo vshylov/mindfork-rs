@@ -36,6 +36,18 @@ pub struct Chat {
     /// См. spec §11.7.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub deleted: Vec<DeletedExchange>,
+    /// Индекс-водораздел фоновой авто-рефлексии: сколько первых сообщений `messages`
+    /// уже охвачено рефлексией. Дайджест строится только по «хвосту» `messages[wm..]`
+    /// — чтобы каждый цикл не перечитывал один и тот же ранний материал (иначе
+    /// плодятся дубли инсайтов). Живёт с чатом → переживает рестарт; усечение истории
+    /// (`Ctrl+R`/`Ctrl+E`) лечится клампом при чтении. `None`/старые файлы — с начала.
+    /// См. docs/refinements.md (этап 3).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reflected_upto: Option<usize>,
+    /// Когда фоновая авто-рефлексия запускалась в последний раз (ориентир; на будущее
+    /// — фильтр поведенческих сигналов по окну). `None`/старые файлы — не запускалась.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reflected_at: Option<DateTime<Utc>>,
     /// Мягкое удаление.
     #[serde(default)]
     pub is_hidden: bool,
@@ -81,6 +93,8 @@ impl Chat {
             sampling_override: None,
             draft: String::new(),
             deleted: Vec::new(),
+            reflected_upto: None,
+            reflected_at: None,
             is_hidden: false,
         }
     }
@@ -199,5 +213,27 @@ mod tests {
         let json = serde_json::to_string(&chat).unwrap();
         let back: Chat = serde_json::from_str(&json).unwrap();
         assert_eq!(chat, back);
+    }
+
+    #[test]
+    fn deserializes_old_json_without_reflection_watermark() {
+        // Старый файл чата (до этапа 3) не имеет полей ватермарка рефлексии — читается
+        // без миграции, поля — дефолтные `None`. И не сериализуются, когда пусты.
+        let json = r#"{
+            "id": "00000000-0000-0000-0000-000000000001",
+            "profile_id": "00000000-0000-0000-0000-000000000002",
+            "title": "старый чат",
+            "created_at": "2026-01-01T00:00:00Z",
+            "modified_at": "2026-01-01T00:00:00Z",
+            "system_message": "s",
+            "messages": []
+        }"#;
+        let chat: Chat = serde_json::from_str(json).unwrap();
+        assert_eq!(chat.reflected_upto, None);
+        assert_eq!(chat.reflected_at, None);
+        // Пустые поля ватермарка не засоряют JSON (skip_serializing_if).
+        let out = serde_json::to_string(&chat).unwrap();
+        assert!(!out.contains("reflected_upto"));
+        assert!(!out.contains("reflected_at"));
     }
 }

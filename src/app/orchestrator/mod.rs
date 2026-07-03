@@ -119,7 +119,6 @@ pub async fn run(deps: OrchestratorDeps) {
         done_tx,
         rag_cancel: None,
         reflect_cancel: None,
-        reflect_counts: HashMap::new(),
         reflect_done_tx,
         consolidate_cancel: None,
         consolidate_counts: HashMap::new(),
@@ -240,9 +239,9 @@ struct Orchestrator {
     rag_cancel: Option<tokio_util::sync::CancellationToken>,
     /// Токен отмены текущей фоновой авто-рефлексии (`Some` — идёт; одна за раз).
     reflect_cancel: Option<tokio_util::sync::CancellationToken>,
-    /// Счётчики ответов ассистента с прошлой авто-рефлексии (по чату).
-    reflect_counts: HashMap<Uuid, u32>,
-    /// Канал «авто-рефлексия завершена» (фоновая задача → петля).
+    /// Канал «авто-рефлексия завершена» (фоновая задача → петля). Каденция рефлексии
+    /// ведётся ватермарком `Chat.reflected_upto` (переживает рестарт), а не in-memory
+    /// счётчиком — см. `reflection::maybe_auto_reflect`.
     reflect_done_tx: UnboundedSender<()>,
     /// Токен отмены текущей фоновой авто-консолидации заметок («сон»); одна за раз.
     consolidate_cancel: Option<tokio_util::sync::CancellationToken>,

@@ -122,7 +122,6 @@ fn bare_orch_rx() -> (tempfile::TempDir, Orchestrator, UnboundedReceiver<AppEven
         done_tx,
         rag_cancel: None,
         reflect_cancel: None,
-        reflect_counts: std::collections::HashMap::new(),
         reflect_done_tx: unbounded_channel().0,
         consolidate_cancel: None,
         consolidate_counts: std::collections::HashMap::new(),
@@ -1731,6 +1730,52 @@ async fn update_self_model_persists_and_reemits() {
     let pid = reopened.json().load_profiles().unwrap()[0].id;
     let stored = reopened.db().self_model_get(pid).unwrap().unwrap();
     assert_eq!(stored.summary, "ценю ясность");
+}
+
+/// Готовит оркестратор с чатом (user+assistant) и профилем, включившим модель себя;
+/// `auto_reflect_every=1`. Возвращает `(dir, orch, chat_id)`.
+fn orch_ready_for_reflection() -> (tempfile::TempDir, Orchestrator, Uuid) {
+    use crate::features::tools::self_model::GET_SELF_MODEL_ID;
+    let (dir, mut orch) = bare_orch();
+    orch.config.self_model.auto_reflect_every = 1;
+    let mut profile = Profile::new("P", "sys");
+    profile.enabled_tools = vec![GET_SELF_MODEL_ID.into()];
+    let mut chat = Chat::from_profile(&profile, "t");
+    chat.push_message(Message::user("привет"));
+    chat.push_message(Message::assistant("здравствуй"));
+    let chat_id = chat.id;
+    orch.profiles.push(profile);
+    orch.chats.push(chat);
+    orch.active_id = Some(chat_id);
+    (dir, orch, chat_id)
+}
+
+#[tokio::test]
+async fn auto_reflect_advances_watermark_on_spawn() {
+    let (_d, mut orch, chat_id) = orch_ready_for_reflection();
+    // Готовый движок — рефлексия реально спавнится (пустой скрипт → задача завершится).
+    orch.engines.backend = Some(Arc::new(MockBackend::scripted(vec![ChatChunk::Finished(
+        FinishReason::Stop,
+    )])) as Arc<dyn EngineBackend>);
+
+    orch.maybe_auto_reflect(chat_id);
+
+    let chat = orch.chats.iter().find(|c| c.id == chat_id).unwrap();
+    // Ватермарк сдвинут на всю длину истории (окно охвачено), рефлексия запущена.
+    assert_eq!(chat.reflected_upto, Some(2));
+    assert!(chat.reflected_at.is_some());
+    assert!(orch.reflect_cancel.is_some());
+}
+
+#[tokio::test]
+async fn auto_reflect_keeps_watermark_when_server_not_ready() {
+    let (_d, mut orch, chat_id) = orch_ready_for_reflection();
+    // Движок не задан → backend_if_ready вернёт Err → пропуск БЕЗ сдвига ватермарка.
+    orch.maybe_auto_reflect(chat_id);
+
+    let chat = orch.chats.iter().find(|c| c.id == chat_id).unwrap();
+    assert_eq!(chat.reflected_upto, None); // цикл не потерян — повторим позже
+    assert!(orch.reflect_cancel.is_none());
 }
 
 #[tokio::test]

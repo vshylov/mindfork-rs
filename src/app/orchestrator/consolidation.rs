@@ -97,21 +97,20 @@ impl Orchestrator {
             last_user = last_user_message_at(chat);
         }
 
-        // Счётчик ответов с прошлой консолидации (порог → сброс).
-        let trigger = {
+        // Счётчик ответов с прошлой консолидации: инкремент; если порог не достигнут —
+        // выходим (счётчик копится дальше). Сброс — только при фактическом спавне
+        // (ниже), чтобы пропуск по гейту не терял накопленный цикл.
+        {
             let count = self.consolidate_counts.entry(chat_id).or_insert(0);
             *count += 1;
-            if due(*count, every) {
-                *count = 0;
-                true
-            } else {
-                false
+            if !due(*count, every) {
+                return;
             }
-        };
-        if !trigger || self.consolidate_cancel.is_some() {
-            return;
         }
-        // Нечего консолидировать, если активных заметок меньше двух (триггер уже сброшен
+        if self.consolidate_cancel.is_some() {
+            return; // уже идёт — пропускаем без сброса (повторим на след. ходу)
+        }
+        // Нечего консолидировать, если активных заметок меньше двух (счётчик не сброшен
         // — повторим на следующем цикле).
         let active = self
             .storage
@@ -121,10 +120,12 @@ impl Orchestrator {
         if active.len() < 2 {
             return;
         }
-        // Сервер готов? Иначе тихо пропускаем.
+        // Сервер готов? Иначе тихо пропускаем (счётчик не сброшен).
         let Ok(backend) = self.engines.backend_if_ready() else {
             return;
         };
+        // Все гейты пройдены — сбрасываем счётчик и запускаем.
+        self.consolidate_counts.insert(chat_id, 0);
         let overview = notes::build_consolidation_overview(&self.storage, profile_id);
 
         let ctx = ToolContext {

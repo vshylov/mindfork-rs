@@ -14,6 +14,9 @@ use futures_util::StreamExt;
 use tokio::sync::mpsc::UnboundedSender;
 use tokio_util::sync::CancellationToken;
 
+use chrono::Utc;
+
+use crate::entities::message::{Message, MessageRole};
 use crate::entities::profile::ToolId;
 use crate::entities::sampling::SamplingConfig;
 use crate::entities::self_model::SelfModelParams;
@@ -63,11 +66,26 @@ pub(super) fn due(count: u32, every: usize) -> bool {
     every > 0 && (count as usize) >= every
 }
 
+/// Начало окна рефлексии (кламп ватермарка к длине истории — устойчиво к усечению
+/// `Ctrl+R`/`Ctrl+E`) и число ответов ассистента в этом окне. Каденция считается по
+/// окну `messages[wm..]`, а не по всей истории — чтобы каждый цикл не перечитывал уже
+/// отрефлексированный материал. Чистая функция — тестируема.
+pub(super) fn reflect_window(messages: &[Message], reflected_upto: Option<usize>) -> (usize, u32) {
+    let wm = reflected_upto.unwrap_or(0).min(messages.len());
+    let count = messages[wm..]
+        .iter()
+        .filter(|m| m.role == MessageRole::Assistant && !m.text.trim().is_empty())
+        .count() as u32;
+    (wm, count)
+}
+
 impl Orchestrator {
     /// Вызывается после успешной генерации (`handle_done`): считает ответы ассистента
-    /// в чате и при достижении порога запускает фоновую рефлексию. Тихо ничего не
-    /// делает, если фича выключена, профиль не включил инструменты модели себя,
-    /// рефлексия уже идёт, сервер не готов или переписки недостаточно.
+    /// **в окне с прошлой рефлексии** и при достижении порога запускает фоновую
+    /// рефлексию. Тихо ничего не делает, если фича выключена, профиль не включил
+    /// инструменты модели себя, рефлексия уже идёт, сервер не готов или переписки в
+    /// окне недостаточно. Ватермарк (`Chat.reflected_upto`) сдвигается **только при
+    /// фактическом спавне** — пропуск по гейту не теряет накопленный цикл.
     pub(super) fn maybe_auto_reflect(&mut self, chat_id: uuid::Uuid) {
         let every = self.config.self_model.auto_reflect_every;
         if every == 0 {
@@ -79,6 +97,7 @@ impl Orchestrator {
         let system_message;
         let last_user;
         let digest;
+        let watermark; // длина истории на момент охвата — фиксируем при спавне
         let allowed: Vec<ToolId>;
         {
             let Some(chat) = self.chats.iter().find(|c| c.id == chat_id) else {
@@ -96,6 +115,12 @@ impl Orchestrator {
             {
                 return;
             }
+            // Каденция по окну: ответы ассистента с прошлой рефлексии. Не накопилось —
+            // выходим, ватермарк не трогаем.
+            let (wm, count) = reflect_window(&chat.messages, chat.reflected_upto);
+            if !due(count, every) {
+                return;
+            }
             allowed = REFLECT_TOOL_IDS
                 .iter()
                 .filter(|id| profile.enabled_tools.iter().any(|t| t == **id))
@@ -103,31 +128,33 @@ impl Orchestrator {
                 .collect();
             system_message = chat.system_message.clone();
             last_user = last_user_message_at(chat);
-            let Some(d) = crate::features::rename_chat::build_conversation_digest(&chat.messages)
+            // Дайджест — только по окну (не по всей истории): иначе каждый цикл
+            // перечитывал бы уже отрефлексированное и плодил дубли инсайтов.
+            let Some(d) =
+                crate::features::rename_chat::build_conversation_digest(&chat.messages[wm..])
             else {
-                return; // переписки недостаточно
+                return; // переписки в окне недостаточно — ватермарк не трогаем
             };
             digest = d;
+            watermark = chat.messages.len();
         }
 
-        // Счётчик ответов с прошлой рефлексии (порог → сброс).
-        let trigger = {
-            let count = self.reflect_counts.entry(chat_id).or_insert(0);
-            *count += 1;
-            if due(*count, every) {
-                *count = 0;
-                true
-            } else {
-                false
-            }
-        };
-        if !trigger || self.reflect_cancel.is_some() {
+        // Уже идёт рефлексия? Пропускаем без сдвига ватермарка (повторим на след. ходу).
+        if self.reflect_cancel.is_some() {
             return;
         }
-        // Сервер готов? Иначе тихо пропускаем (счётчик уже сброшен — повторим позже).
+        // Сервер готов? Иначе пропускаем без сдвига ватермарка (повторим позже).
         let Ok(backend) = self.engines.backend_if_ready() else {
             return;
         };
+
+        // Все гейты пройдены — фиксируем ватермарк (окно охвачено) и сохраняем чат.
+        // `modified_at` не трогаем: рефлексия не должна поднимать чат в списке.
+        if let Some(chat) = self.chats.iter_mut().find(|c| c.id == chat_id) {
+            chat.reflected_upto = Some(watermark);
+            chat.reflected_at = Some(Utc::now());
+        }
+        self.mark_dirty(chat_id);
 
         let ctx = ToolContext {
             profile_id,
@@ -266,7 +293,7 @@ fn spawn_reflection(spawn: ReflectSpawn) {
 
 #[cfg(test)]
 mod tests {
-    use super::due;
+    use super::{Message, due, reflect_window};
 
     #[test]
     fn due_respects_threshold_and_disabled() {
@@ -275,5 +302,32 @@ mod tests {
         assert!(!due(2, 3));
         assert!(due(3, 3)); // достигли порога
         assert!(due(4, 3)); // и выше
+    }
+
+    #[test]
+    fn reflect_window_counts_assistant_from_watermark() {
+        let msgs = vec![
+            Message::user("u1"),
+            Message::assistant("a1"),
+            Message::user("u2"),
+            Message::assistant("a2"),
+            Message::assistant(""), // пустой ответ не считается
+            Message::user("u3"),
+            Message::assistant("a3"),
+        ];
+        // Без ватермарка — считаем все непустые ответы ассистента (a1,a2,a3).
+        assert_eq!(reflect_window(&msgs, None), (0, 3));
+        // Ватермарк после a2 (индекс 4): в окне только a3.
+        assert_eq!(reflect_window(&msgs, Some(4)), (4, 1));
+        // Ватермарк в конце — окно пусто.
+        assert_eq!(reflect_window(&msgs, Some(msgs.len())), (7, 0));
+    }
+
+    #[test]
+    fn reflect_window_clamps_past_watermark_after_truncation() {
+        // История усечена (Ctrl+R/Ctrl+E) — ватермарк больше длины: кламп к len,
+        // окно пусто, паники нет.
+        let msgs = vec![Message::user("u1"), Message::assistant("a1")];
+        assert_eq!(reflect_window(&msgs, Some(99)), (2, 0));
     }
 }
