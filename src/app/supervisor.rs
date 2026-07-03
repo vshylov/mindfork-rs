@@ -422,6 +422,9 @@ pub struct MockSupervisor {
     backend: Option<Arc<dyn EngineBackend>>,
     chat_calls: std::sync::atomic::AtomicUsize,
     embed_dim: usize,
+    /// Опциональный **реальный** эмбеддер (живые смоуки — bge-m3 из MINDFORK_EMBED_URL
+    /// и т.п.); `None` → детерминированный `MockEmbedder`.
+    embedder: Option<Arc<dyn Embedder>>,
 }
 
 #[cfg(test)]
@@ -433,6 +436,21 @@ impl MockSupervisor {
             backend,
             chat_calls: std::sync::atomic::AtomicUsize::new(0),
             embed_dim: 16,
+            embedder: None,
+        }
+    }
+
+    /// Как [`Self::with_backend`], но с заданным **реальным** эмбеддером (живые смоуки
+    /// над настоящим сервером эмбеддингов). `None` → тестовый `MockEmbedder`.
+    pub fn with_backend_and_embedder(
+        backend: Option<Arc<dyn EngineBackend>>,
+        embedder: Option<Arc<dyn Embedder>>,
+    ) -> Self {
+        Self {
+            backend,
+            chat_calls: std::sync::atomic::AtomicUsize::new(0),
+            embed_dim: 16,
+            embedder,
         }
     }
 
@@ -490,8 +508,11 @@ impl ServerSupervisor for MockSupervisor {
     }
 
     fn apply_embed(&self, _settings: &EmbedSettings) -> EmbedSetup {
+        let embedder = self.embedder.clone().unwrap_or_else(|| {
+            Arc::new(crate::shared::api::mock::MockEmbedder::new(self.embed_dim))
+        });
         EmbedSetup {
-            embedder: Arc::new(crate::shared::api::mock::MockEmbedder::new(self.embed_dim)),
+            embedder,
             handle: None,
             status: ServerStatus::Ready,
         }

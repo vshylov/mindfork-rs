@@ -1394,6 +1394,46 @@ fn live_backend() -> Option<Arc<dyn EngineBackend>> {
     Some(Arc::new(crate::shared::api::OpenAiClient::new(url)) as Arc<dyn EngineBackend>)
 }
 
+/// Реальный эмбеддер из `MINDFORK_EMBED_URL` (для живых смоуков — bge-m3 и т.п.);
+/// `None`, если не задан → живой смоук берёт тестовый `MockEmbedder`.
+fn live_embedder() -> Option<Arc<dyn Embedder>> {
+    let url = std::env::var("MINDFORK_EMBED_URL").ok()?;
+    Some(Arc::new(crate::shared::api::OpenAiClient::new(url)) as Arc<dyn Embedder>)
+}
+
+/// Кортеж поднятого оркестратора (как у [`spawn_orch`]): каталог данных, канал
+/// команд, приёмник событий, handle петли.
+type OrchHandle = (
+    tempfile::TempDir,
+    UnboundedSender<AppCommand>,
+    UnboundedReceiver<AppEvent>,
+    tokio::task::JoinHandle<()>,
+);
+
+/// Поднимает оркестратор для живого смоука: chat из `MINDFORK_ENGINE_URL`, эмбеддер
+/// из `MINDFORK_EMBED_URL` (реальный сервер; иначе детерминированный `MockEmbedder`).
+/// `None`, если `MINDFORK_ENGINE_URL` не задан (смоук пропускается).
+fn spawn_orch_live() -> Option<OrchHandle> {
+    let backend = live_backend()?;
+    let embedder = live_embedder();
+    let dir = tempfile::tempdir().unwrap();
+    let storage = Arc::new(Storage::open(Paths::with_root(dir.path())).unwrap());
+    let (cmd_tx, cmd_rx) = unbounded_channel();
+    let (evt_tx, evt_rx) = unbounded_channel();
+    let deps = OrchestratorDeps {
+        cmd_rx,
+        evt_tx,
+        storage,
+        config: AppConfig::default(),
+        supervisor: Arc::new(MockSupervisor::with_backend_and_embedder(
+            Some(backend),
+            embedder,
+        )),
+    };
+    let handle = tokio::spawn(run(deps));
+    Some((dir, cmd_tx, evt_rx, handle))
+}
+
 /// Дренирует события до `Finished` (или закрытия), помечая, встретилось ли
 /// `pred`-событие по пути. Для end-to-end смоуков управляющих инструментов.
 async fn drain_until_finished<F: Fn(&AppEvent) -> bool>(
@@ -1753,11 +1793,12 @@ async fn auto_reflect_e2e_live() {
 #[ignore = "requires a running OpenAI-compatible server (MINDFORK_ENGINE_URL)"]
 async fn self_model_gate_e2e_live() {
     use crate::features::tools::notes::SELF_NOTE_TAG;
-    let Some(backend) = live_backend() else {
+    // Реальный chat + эмбеддер (MINDFORK_ENGINE_URL / MINDFORK_EMBED_URL) — ворота
+    // работают на настоящих эмбеддингах (bge-m3 и т.п.), а не на MockEmbedder.
+    let Some((_d, cmd_tx, mut evt_rx, handle)) = spawn_orch_live() else {
         eprintln!("skip: MINDFORK_ENGINE_URL not set");
         return;
     };
-    let (_d, cmd_tx, mut evt_rx, handle) = spawn_orch(Some(backend));
     let root = _d.path().to_path_buf();
     let pid = enable_all_tools(&cmd_tx, &mut evt_rx).await;
 
@@ -1808,30 +1849,36 @@ async fn self_model_gate_e2e_live() {
         "ожидали self-заметки (@self) от add_insight"
     );
 
-    // Ворота: если модель вызвала add_insight в сессии 2, его результат ОБЯЗАН
-    // показать похожее наблюдение (детерминированно: эмбеддер тестовый, наблюдение
-    // #1 уже есть). Если модель пошла напрямую в note_revise/supersede (тоже
-    // интеграция) — ворот в add_insight нет, и это ок.
-    let gate = calls2.iter().find(|(n, _)| n == "add_insight");
-    if let Some((_, result)) = gate {
+    // Ворота: результат add_insight в сессии 2 показал похожее наблюдение?
+    let gate_fired = calls2
+        .iter()
+        .any(|(n, r)| n == "add_insight" && r.contains("Похожие наблюдения"));
+    // С тестовым MockEmbedder (MINDFORK_EMBED_URL не задан) ворота детерминированны:
+    // если модель вызвала add_insight, они ОБЯЗАНЫ сработать (наблюдение #1 уже есть).
+    // С реальным эмбеддером срабатывание зависит от его настройки (напр. llama-server
+    // нужен `--embeddings`), а при недоступности ворота мягко деградируют в пусто —
+    // поэтому там это лишь диагностика, не жёсткая проверка.
+    let real_embedder = std::env::var("MINDFORK_EMBED_URL").is_ok();
+    if !real_embedder && calls2.iter().any(|(n, _)| n == "add_insight") {
         assert!(
-            result.contains("Похожие наблюдения"),
-            "ворота add_insight должны были показать похожее наблюдение (ядро гипотезы): {result:?}"
+            gate_fired,
+            "ворота add_insight должны были показать похожее наблюдение (MockEmbedder, ядро гипотезы): {calls2:?}"
         );
     }
+    // Интеграция почти-дубля: перепись/замещение/слияние наблюдений.
     let integrated = calls2
         .iter()
-        .any(|(n, _)| n == "note_revise" || n == "note_supersede");
+        .any(|(n, _)| n == "note_revise" || n == "note_supersede" || n == "note_merge");
     eprintln!(
-        "ворота показали похожее: {}; модель интегрировала (note_revise/supersede): {integrated}",
-        gate.is_some()
+        "ворота показали похожее: {gate_fired} (реальный эмбеддер: {real_embedder}); \
+         модель интегрировала (note_revise/supersede/merge): {integrated}"
     );
     // Модель должна была как-то тронуть наблюдения (иначе гипотеза не проверяется).
     assert!(
-        calls2
-            .iter()
-            .any(|(n, _)| n == "add_insight" || n == "note_revise" || n == "note_supersede"),
-        "сессия 2: ожидали add_insight/note_revise/note_supersede"
+        calls2.iter().any(|(n, _)| {
+            n == "add_insight" || n == "note_revise" || n == "note_supersede" || n == "note_merge"
+        }),
+        "сессия 2: ожидали add_insight/note_revise/note_supersede/note_merge"
     );
 }
 
