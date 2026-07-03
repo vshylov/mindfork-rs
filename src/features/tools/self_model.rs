@@ -142,9 +142,13 @@ impl Tool for AddInsight {
         if text.is_empty() {
             anyhow::bail!("ожидается непустое поле text");
         }
-        let mut m = load(ctx)?;
-        m.add_insight(text, ctx.self_model_params.max_narrative);
-        ctx.storage.db().self_model_upsert(&m)?;
+        // Атомарно (под мьютексом БД), чтобы параллельная авто-рефлексия/`F3` не
+        // затёрла запись гонкой load-modify-save.
+        let max = ctx.self_model_params.max_narrative;
+        ctx.storage.db().self_model_update(ctx.profile_id, |m| {
+            m.add_insight(text, max);
+            true
+        })?;
         Ok(ToolOutcome::text("Наблюдение записано в нарратив."))
     }
 }
@@ -177,36 +181,39 @@ impl Tool for UpdateSelfModel {
         })
     }
     async fn invoke(&self, ctx: &ToolContext, args: serde_json::Value) -> Result<ToolOutcome> {
-        let mut m = load(ctx)?;
-        let mut changed = false;
+        // Нерезолвленные ручки целей собираются внутри атомарной правки (захват по
+        // `&mut`), запись — под одним захватом мьютекса (защита от гонки).
         let mut unresolved: Vec<String> = Vec::new();
-
-        if let Some(s) = args.get("summary").and_then(|v| v.as_str()) {
-            let s = s.trim().to_string();
-            if m.summary != s {
-                m.summary = s;
+        let (model, changed) = ctx.storage.db().self_model_update(ctx.profile_id, |m| {
+            let mut changed = false;
+            if let Some(s) = args.get("summary").and_then(|v| v.as_str()) {
+                let s = s.trim().to_string();
+                if m.summary != s {
+                    m.summary = s;
+                    changed = true;
+                }
+            }
+            for g in str_array(&args, "add_goals") {
+                m.add_goal(g);
                 changed = true;
             }
-        }
-        for g in str_array(&args, "add_goals") {
-            m.add_goal(g);
-            changed = true;
-        }
-        // Цели закрываются по #id/полному id — резолвим ручку среди целей модели.
-        for h in str_array(&args, "complete_goals") {
-            match m.match_goal(&h) {
-                GoalMatch::One(id) => changed |= m.set_goal_status(id, GoalStatus::Completed),
-                GoalMatch::None => unresolved.push(h),
-                GoalMatch::Ambiguous => unresolved.push(format!("{h} (неоднозначно)")),
+            // Цели закрываются по #id/полному id — резолвим ручку среди целей модели.
+            for h in str_array(&args, "complete_goals") {
+                match m.match_goal(&h) {
+                    GoalMatch::One(id) => changed |= m.set_goal_status(id, GoalStatus::Completed),
+                    GoalMatch::None => unresolved.push(h),
+                    GoalMatch::Ambiguous => unresolved.push(format!("{h} (неоднозначно)")),
+                }
             }
-        }
-        for h in str_array(&args, "abandon_goals") {
-            match m.match_goal(&h) {
-                GoalMatch::One(id) => changed |= m.set_goal_status(id, GoalStatus::Abandoned),
-                GoalMatch::None => unresolved.push(h),
-                GoalMatch::Ambiguous => unresolved.push(format!("{h} (неоднозначно)")),
+            for h in str_array(&args, "abandon_goals") {
+                match m.match_goal(&h) {
+                    GoalMatch::One(id) => changed |= m.set_goal_status(id, GoalStatus::Abandoned),
+                    GoalMatch::None => unresolved.push(h),
+                    GoalMatch::Ambiguous => unresolved.push(format!("{h} (неоднозначно)")),
+                }
             }
-        }
+            changed
+        })?;
 
         if !changed {
             let mut msg = String::from("Нечего обновлять (не передано ни одного изменения).");
@@ -215,8 +222,7 @@ impl Tool for UpdateSelfModel {
             }
             return Ok(ToolOutcome::text(msg));
         }
-        ctx.storage.db().self_model_upsert(&m)?;
-        let mut msg = format!("Модель себя обновлена.\n{}", m.render_full());
+        let mut msg = format!("Модель себя обновлена.\n{}", model.render_full());
         if !unresolved.is_empty() {
             msg.push_str(&format!("\n(Не найдены цели: {}.)", unresolved.join(", ")));
         }
@@ -256,51 +262,58 @@ impl Tool for UpdateUserModel {
         })
     }
     async fn invoke(&self, ctx: &ToolContext, args: serde_json::Value) -> Result<ToolOutcome> {
-        let mut m = load(ctx)?;
-        let mut changed = false;
+        // Признаки удаления/наличия note собираем внутри атомарной правки (захват по
+        // `&mut`); запись — под одним захватом мьютекса (защита от гонки).
+        let mut removed_traits = false;
+        let mut removed_interests = false;
+        let mut has_note = false;
+        let max = ctx.self_model_params.max_narrative;
+        let (model, changed) = ctx.storage.db().self_model_update(ctx.profile_id, |m| {
+            let mut changed = false;
 
-        // Списки — merge (add/remove с дедупом), а не замена: правка не обнуляет
-        // накопленное представление (частая беда «перетирания по настроению»).
-        changed |= m.user_model.add_traits(str_array(&args, "add_traits"));
-        let removed_traits = m
-            .user_model
-            .remove_traits(&str_array(&args, "remove_traits"));
-        changed |= removed_traits;
-        changed |= m
-            .user_model
-            .add_interests(str_array(&args, "add_interests"));
-        let removed_interests = m
-            .user_model
-            .remove_interests(&str_array(&args, "remove_interests"));
-        changed |= removed_interests;
-        if let Some(s) = args.get("relationship_dynamic").and_then(|v| v.as_str()) {
-            let s = s.trim().to_string();
-            if m.user_model.relationship_dynamic != s {
-                m.user_model.relationship_dynamic = s;
+            // Списки — merge (add/remove с дедупом), а не замена: правка не обнуляет
+            // накопленное представление (частая беда «перетирания по настроению»).
+            changed |= m.user_model.add_traits(str_array(&args, "add_traits"));
+            removed_traits = m
+                .user_model
+                .remove_traits(&str_array(&args, "remove_traits"));
+            changed |= removed_traits;
+            changed |= m
+                .user_model
+                .add_interests(str_array(&args, "add_interests"));
+            removed_interests = m
+                .user_model
+                .remove_interests(&str_array(&args, "remove_interests"));
+            changed |= removed_interests;
+            if let Some(s) = args.get("relationship_dynamic").and_then(|v| v.as_str()) {
+                let s = s.trim().to_string();
+                if m.user_model.relationship_dynamic != s {
+                    m.user_model.relationship_dynamic = s;
+                    changed = true;
+                }
+            }
+            // Шрам ревизии: `note` (что и почему изменилось) уходит в нарратив, так
+            // изменение мнения о собеседнике оставляет след, а не стирается бесследно
+            // (черты плоские — «биография» их изменений живёт в нарративе).
+            let note = args
+                .get("note")
+                .and_then(|v| v.as_str())
+                .map(str::trim)
+                .filter(|s| !s.is_empty());
+            has_note = note.is_some();
+            if let Some(n) = note {
+                m.add_insight(n, max);
                 changed = true;
             }
-        }
-        // Шрам ревизии: `note` (что и почему изменилось) уходит в нарратив, так
-        // изменение мнения о собеседнике оставляет след, а не стирается бесследно
-        // (черты плоские — «биография» их изменений живёт в нарративе).
-        let note = args
-            .get("note")
-            .and_then(|v| v.as_str())
-            .map(str::trim)
-            .filter(|s| !s.is_empty());
-        let has_note = note.is_some();
-        if let Some(n) = note {
-            m.add_insight(n, ctx.self_model_params.max_narrative);
-            changed = true;
-        }
+            changed
+        })?;
 
         if !changed {
             return Ok(ToolOutcome::text(
                 "Нечего обновлять (не передано ни одного изменения).",
             ));
         }
-        ctx.storage.db().self_model_upsert(&m)?;
-        let mut msg = format!("Модель собеседника обновлена.\n{}", m.render_full());
+        let mut msg = format!("Модель собеседника обновлена.\n{}", model.render_full());
         // Удаление/замена черты — пересмотр суждения. Причина не записана → напоминаем
         // оставить след в нарративе (шрам), а не стирать молча.
         if (removed_traits || removed_interests) && !has_note {
@@ -345,27 +358,34 @@ impl Tool for ConsolidateNarrative {
         })
     }
     async fn invoke(&self, ctx: &ToolContext, args: serde_json::Value) -> Result<ToolOutcome> {
-        let mut m = load(ctx)?;
-        // Резолвим ручки убираемых наблюдений (#id/полный id) среди нарратива.
-        let mut to_remove: Vec<Uuid> = Vec::new();
-        let mut unresolved: Vec<String> = Vec::new();
-        for h in str_array(&args, "remove") {
-            match m.match_insight(&h) {
-                GoalMatch::One(id) => to_remove.push(id),
-                GoalMatch::None => unresolved.push(h),
-                GoalMatch::Ambiguous => unresolved.push(format!("{h} (неоднозначно)")),
-            }
-        }
-        let removed = m.remove_insights(&to_remove);
-        // Сводное наблюдение вместо убранных (опц.).
+        // Сводное наблюдение вместо убранных (опц.) — извлекаем до правки, чтобы
+        // проверять `add.is_none()` и после закрытия closure.
         let add = args
             .get("add")
             .and_then(|v| v.as_str())
             .map(str::trim)
-            .filter(|s| !s.is_empty());
-        if let Some(a) = add {
-            m.add_insight(a, ctx.self_model_params.max_narrative);
-        }
+            .filter(|s| !s.is_empty())
+            .map(str::to_string);
+        // Нерезолвленные ручки и счётчик удалённого собираем внутри атомарной правки.
+        let mut unresolved: Vec<String> = Vec::new();
+        let mut removed = 0usize;
+        let max = ctx.self_model_params.max_narrative;
+        let (model, _changed) = ctx.storage.db().self_model_update(ctx.profile_id, |m| {
+            // Резолвим ручки убираемых наблюдений (#id/полный id) среди нарратива.
+            let mut to_remove: Vec<Uuid> = Vec::new();
+            for h in str_array(&args, "remove") {
+                match m.match_insight(&h) {
+                    GoalMatch::One(id) => to_remove.push(id),
+                    GoalMatch::None => unresolved.push(h),
+                    GoalMatch::Ambiguous => unresolved.push(format!("{h} (неоднозначно)")),
+                }
+            }
+            removed = m.remove_insights(&to_remove);
+            if let Some(a) = add.as_deref() {
+                m.add_insight(a, max);
+            }
+            removed > 0 || add.is_some()
+        })?;
 
         if removed == 0 && add.is_none() {
             let mut msg = String::from("Нечего консолидировать.");
@@ -377,7 +397,6 @@ impl Tool for ConsolidateNarrative {
             }
             return Ok(ToolOutcome::text(msg));
         }
-        ctx.storage.db().self_model_upsert(&m)?;
         let mut msg = format!(
             "Нарратив консолидирован (убрано: {removed}{}).\n{}",
             if add.is_some() {
@@ -385,7 +404,7 @@ impl Tool for ConsolidateNarrative {
             } else {
                 ""
             },
-            m.render_full()
+            model.render_full()
         );
         if !unresolved.is_empty() {
             msg.push_str(&format!(

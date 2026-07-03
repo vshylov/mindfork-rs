@@ -377,17 +377,19 @@ impl Orchestrator {
         let Some(pid) = self.active_profile_id() else {
             return;
         };
-        let mut model = self
+        // Атомарная правка (под одним захватом мьютекса БД) — не даёт параллельной
+        // авто-рефлексии затереть ручную правку гонкой load-modify-save.
+        let snapshot = match self
             .storage
             .db()
-            .self_model_get(pid)
-            .ok()
-            .flatten()
-            .unwrap_or_else(|| crate::entities::self_model::SelfModel::new(pid));
-        if model.apply_edit(edit) {
-            let _ = self.storage.db().self_model_upsert(&model);
-        }
-        let snapshot = self.storage.db().self_model_get(pid).ok().flatten();
+            .self_model_update(pid, |m| m.apply_edit(edit))
+        {
+            // Правка применена — переэмитим авторитетный снимок (с ней).
+            Ok((model, true)) => Some(model),
+            // Правки не было (или ошибка) — переэмитим фактически сохранённый снимок
+            // (`None`, если модель для профиля ещё не создавалась).
+            _ => self.storage.db().self_model_get(pid).ok().flatten(),
+        };
         let _ = self
             .evt_tx
             .send(AppEvent::SelfModelView(Box::new(snapshot)));
