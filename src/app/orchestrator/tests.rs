@@ -2139,6 +2139,108 @@ async fn trait_gate_e2e_live() {
     );
 }
 
+/// End-to-end зонд **кросс-органных связей** (Ярус 3, Путь 1): модель записывает факт
+/// «о собеседнике» (`note_save`) и наблюдение «о себе» (`add_insight`), затем связывает
+/// их (`note_link`) — ребро между органами памяти. Ассертим **механизм** (обе заметки
+/// созданы; модель осмотрела оба органа и/или связала); появление **кросс-органного
+/// ребра** (один конец `@self`, другой — пользовательская заметка) печатаем для
+/// go/no-go. `#[ignore]`, вручную:
+/// `MINDFORK_ENGINE_URL=…/v1 MINDFORK_EMBED_URL=…/v1 cargo test cross_organ_link_e2e_live -- --ignored --nocapture --test-threads=1`.
+#[tokio::test]
+#[ignore = "requires a running OpenAI-compatible server (MINDFORK_ENGINE_URL)"]
+async fn cross_organ_link_e2e_live() {
+    use crate::features::tools::notes::{SELF_NOTE_TAG, is_self_note};
+    let Some((_d, cmd_tx, mut evt_rx, handle)) = spawn_orch_live() else {
+        eprintln!("skip: MINDFORK_ENGINE_URL not set");
+        return;
+    };
+    let root = _d.path().to_path_buf();
+    let pid = enable_all_tools(&cmd_tx, &mut evt_rx).await;
+
+    // Факт «о собеседнике» → пользовательская заметка.
+    let (_t1, tools1) = run_turn_live(
+        &cmd_tx,
+        &mut evt_rx,
+        "Запиши заметку о собеседнике (note_save): пользователь ценит краткость в ответах.",
+    )
+    .await;
+    // Наблюдение «о себе» → self-заметка.
+    let (_t2, tools2) = run_turn_live(
+        &cmd_tx,
+        &mut evt_rx,
+        "Запиши наблюдение о себе (add_insight): я склонен давать многословные ответы.",
+    )
+    .await;
+    eprintln!("сохранение: {tools1:?} + {tools2:?}");
+
+    // Просим связать наблюдение «о себе» с фактом «о собеседнике» (кросс-органно).
+    let (t3, calls3) = run_turn_capture(
+        &cmd_tx,
+        &mut evt_rx,
+        "Посмотри свои наблюдения (get_self_model) и заметки о собеседнике (note_recall). \
+         Если наблюдение о себе противоречит факту о собеседнике — свяжи их note_link \
+         (relation=contradicts) по их id.",
+    )
+    .await;
+    eprintln!("связывание: текст={t3:?}\nвызовы={calls3:#?}");
+
+    cmd_tx.send(AppCommand::Quit).unwrap();
+    handle.await.unwrap();
+
+    let reopened = Storage::open(Paths::with_root(&root)).unwrap();
+    let self_notes = reopened
+        .db()
+        .note_list(pid, None, &[SELF_NOTE_TAG.to_string()], None)
+        .unwrap();
+    let links = reopened.db().note_links_all(pid).unwrap();
+    // Кросс-органное ребро: один конец @self, другой — пользовательская заметка.
+    let cross = links
+        .iter()
+        .filter(|(f, t, _)| {
+            let fs = reopened
+                .db()
+                .note_get(pid, *f)
+                .ok()
+                .flatten()
+                .as_ref()
+                .map(is_self_note);
+            let ts = reopened
+                .db()
+                .note_get(pid, *t)
+                .ok()
+                .flatten()
+                .as_ref()
+                .map(is_self_note);
+            matches!((fs, ts), (Some(a), Some(b)) if a != b)
+        })
+        .count();
+    eprintln!(
+        "self-заметок: {}; всего связей: {}; кросс-органных: {cross} — {links:?}",
+        self_notes.len(),
+        links.len()
+    );
+
+    // Механизм: обе заметки созданы (наблюдение @self + пользовательская).
+    assert!(
+        !self_notes.is_empty(),
+        "ожидали self-заметку от add_insight"
+    );
+    let all = reopened.db().note_list(pid, None, &[], None).unwrap();
+    assert!(
+        all.iter().any(|n| !is_self_note(n)),
+        "ожидали пользовательскую заметку от note_save"
+    );
+    let linked = calls3.iter().any(|(n, _)| n == "note_link");
+    eprintln!("модель вызвала note_link: {linked}; кросс-органных рёбер: {cross}");
+    // Модель должна была осмотреть органы и/или связать (иначе кросс-связь не проверена).
+    assert!(
+        calls3
+            .iter()
+            .any(|(n, _)| n == "get_self_model" || n == "note_recall" || n == "note_link"),
+        "сессия 3: ожидали get_self_model/note_recall/note_link"
+    );
+}
+
 #[tokio::test]
 async fn update_self_model_persists_and_reemits() {
     use crate::entities::self_model::SelfModelEdit;
