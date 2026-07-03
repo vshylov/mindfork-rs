@@ -1743,6 +1743,75 @@ async fn update_self_model_persists_and_reemits() {
     assert_eq!(stored.summary, "ценю ясность");
 }
 
+/// Готовит голый оркестратор с профилем + активным чатом (для F3-правок).
+fn orch_with_active_profile() -> (tempfile::TempDir, Orchestrator, Uuid) {
+    let (dir, mut orch) = bare_orch();
+    let profile = Profile::new("P", "sys");
+    let pid = profile.id;
+    let chat = Chat::from_profile(&profile, "t");
+    let chat_id = chat.id;
+    orch.profiles.push(profile);
+    orch.chats.push(chat);
+    orch.active_id = Some(chat_id);
+    (dir, orch, pid)
+}
+
+#[test]
+fn f3_delete_insight_removes_self_note() {
+    use crate::entities::self_model::SelfModelEdit;
+    use crate::features::tools::notes::SELF_NOTE_TAG;
+    let (_d, orch, pid) = orch_with_active_profile();
+    // Наблюдение — self-заметка (@self).
+    let note = crate::entities::note::Note::new(pid, "наблюдение", vec![SELF_NOTE_TAG.to_string()]);
+    let nid = note.id;
+    orch.storage.db().note_insert(&note).unwrap();
+
+    // F3 «удалить наблюдение» → удаление self-заметки (не правка блоба).
+    orch.handle_update_self_model(SelfModelEdit::DeleteInsight(nid));
+    assert!(
+        orch.storage
+            .db()
+            .note_list(pid, None, &[SELF_NOTE_TAG.to_string()], None)
+            .unwrap()
+            .is_empty()
+    );
+}
+
+#[test]
+fn f3_clear_removes_self_notes_and_blob() {
+    use crate::entities::self_model::SelfModelEdit;
+    use crate::features::tools::notes::SELF_NOTE_TAG;
+    let (_d, orch, pid) = orch_with_active_profile();
+    // Наблюдение-заметка + непустой блоб модели.
+    orch.storage
+        .db()
+        .note_insert(&crate::entities::note::Note::new(
+            pid,
+            "наблюдение",
+            vec![SELF_NOTE_TAG.to_string()],
+        ))
+        .unwrap();
+    orch.storage
+        .db()
+        .self_model_update(pid, |m| {
+            m.summary = "о себе".into();
+            true
+        })
+        .unwrap();
+
+    orch.handle_update_self_model(SelfModelEdit::Clear);
+    // Self-заметки снесены, блоб очищен.
+    assert!(
+        orch.storage
+            .db()
+            .note_list(pid, None, &[SELF_NOTE_TAG.to_string()], None)
+            .unwrap()
+            .is_empty()
+    );
+    let stored = orch.storage.db().self_model_get(pid).unwrap();
+    assert!(stored.map(|m| m.summary.is_empty()).unwrap_or(true));
+}
+
 /// Готовит оркестратор с чатом (user+assistant) и профилем, включившим модель себя;
 /// `auto_reflect_every=1`. Возвращает `(dir, orch, chat_id)`.
 fn orch_ready_for_reflection() -> (tempfile::TempDir, Orchestrator, Uuid) {

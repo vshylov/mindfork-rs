@@ -418,9 +418,31 @@ impl Orchestrator {
     /// загружает (или создаёт пустую), применяет правку, при изменении — сохраняет,
     /// затем переэмитит обновлённый снимок (открытый экран обновится на месте).
     fn handle_update_self_model(&self, edit: crate::entities::self_model::SelfModelEdit) {
+        use crate::entities::self_model::SelfModelEdit;
         let Some(pid) = self.active_profile_id() else {
             return;
         };
+        // Наблюдения — self-заметки, поэтому их удаление/полная очистка идут по
+        // заметкам, а не по блобу модели (нарратив переехал в заметки, Ярус 1).
+        match &edit {
+            SelfModelEdit::DeleteInsight(id) => {
+                let _ = self.storage.db().note_delete(pid, *id);
+                let snapshot = self.self_model_view_snapshot(pid);
+                let _ = self
+                    .evt_tx
+                    .send(AppEvent::SelfModelView(Box::new(snapshot)));
+                return;
+            }
+            SelfModelEdit::Clear => {
+                // Полная очистка сносит и наблюдения-заметки (@self), и блоб (ниже).
+                for n in
+                    crate::features::tools::notes::self_notes_recent(&self.storage, pid, usize::MAX)
+                {
+                    let _ = self.storage.db().note_delete(pid, n.id);
+                }
+            }
+            _ => {}
+        }
         // Атомарная правка (под одним захватом мьютекса БД) — не даёт параллельной
         // авто-рефлексии затереть ручную правку гонкой load-modify-save. Заодно
         // сворачиваем старые закрытые цели (единообразно с инструментами): fold
