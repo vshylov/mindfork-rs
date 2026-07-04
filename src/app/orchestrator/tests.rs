@@ -473,6 +473,93 @@ async fn bootstrap_emits_chat_list_and_active_chat() {
     handle.await.unwrap();
 }
 
+/// Последний открытый чат запоминается в настройках и восстанавливается при
+/// следующем запуске — даже если другой чат изменён позже (обычный fallback выбрал
+/// бы самый недавний).
+#[tokio::test]
+async fn remembers_and_restores_last_opened_chat() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().to_path_buf();
+
+    // Запуск 1: bootstrap создаёт дефолтный чат, добавляем второй (он становится
+    // активным и изменённым позже), затем переключаемся обратно на первый.
+    let first_id;
+    {
+        let storage = Arc::new(Storage::open(Paths::with_root(&root)).unwrap());
+        let (cmd_tx, cmd_rx) = unbounded_channel();
+        let (evt_tx, mut evt_rx) = unbounded_channel();
+        let deps = OrchestratorDeps {
+            cmd_rx,
+            evt_tx,
+            storage,
+            config: AppConfig::default(),
+            supervisor: Arc::new(MockSupervisor::with_backend(None)),
+        };
+        let handle = tokio::spawn(run(deps));
+
+        let a = wait_for(&mut evt_rx, |e| matches!(e, AppEvent::ChatActivated { .. }))
+            .await
+            .unwrap();
+        first_id = match a {
+            AppEvent::ChatActivated { id, .. } => id,
+            _ => unreachable!(),
+        };
+
+        cmd_tx
+            .send(AppCommand::NewChat { profile_id: None })
+            .unwrap();
+        wait_for(
+            &mut evt_rx,
+            |e| matches!(e, AppEvent::ChatActivated { id, .. } if *id != first_id),
+        )
+        .await
+        .unwrap();
+
+        cmd_tx.send(AppCommand::SwitchChat(first_id)).unwrap();
+        wait_for(
+            &mut evt_rx,
+            |e| matches!(e, AppEvent::ChatActivated { id, .. } if *id == first_id),
+        )
+        .await
+        .unwrap();
+
+        cmd_tx.send(AppCommand::Quit).unwrap();
+        handle.await.unwrap();
+    }
+
+    // Настройки на диске помнят первый чат.
+    let persisted = Storage::open(Paths::with_root(&root)).unwrap();
+    let config = persisted.json().load_config().unwrap();
+    assert_eq!(config.last_active_chat, Some(first_id));
+
+    // Запуск 2 на тех же данных (конфиг загружается с диска, как в main.rs):
+    // восстанавливается именно первый чат.
+    {
+        let storage = Arc::new(Storage::open(Paths::with_root(&root)).unwrap());
+        let (cmd_tx, cmd_rx) = unbounded_channel();
+        let (evt_tx, mut evt_rx) = unbounded_channel();
+        let deps = OrchestratorDeps {
+            cmd_rx,
+            evt_tx,
+            storage,
+            config,
+            supervisor: Arc::new(MockSupervisor::with_backend(None)),
+        };
+        let handle = tokio::spawn(run(deps));
+
+        let a = wait_for(&mut evt_rx, |e| matches!(e, AppEvent::ChatActivated { .. }))
+            .await
+            .unwrap();
+        match a {
+            AppEvent::ChatActivated { id, .. } => assert_eq!(id, first_id),
+            _ => unreachable!(),
+        }
+
+        cmd_tx.send(AppCommand::Quit).unwrap();
+        handle.await.unwrap();
+    }
+}
+
 #[tokio::test]
 async fn send_streams_and_persists_assistant_message() {
     let backend = Arc::new(MockBackend::scripted(vec![

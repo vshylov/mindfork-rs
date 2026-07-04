@@ -308,7 +308,13 @@ impl Orchestrator {
         }
         self.chats.sort_by_key(|c| std::cmp::Reverse(c.modified_at));
 
-        let active = self.chats.first().map(|c| c.id);
+        // Восстанавливаем последний открытый чат, если он ещё виден; иначе —
+        // самый недавно изменённый (прежнее поведение).
+        let active = self
+            .config
+            .last_active_chat
+            .filter(|id| self.chats.iter().any(|c| c.id == *id))
+            .or_else(|| self.chats.first().map(|c| c.id));
         self.emit_profile_list();
         self.emit_chat_list();
         if let Some(id) = active {
@@ -537,6 +543,22 @@ impl Orchestrator {
             messages: chat.messages.clone(),
             draft: chat.draft.clone(),
         });
+        self.remember_active_chat(id);
+    }
+
+    /// Запоминает последний открытый чат в `settings.json`, чтобы восстановить его
+    /// при следующем запуске. Пишет только при реальной смене активного чата —
+    /// `activate` зовётся и для перестроения ленты того же чата (перегенерация,
+    /// удаление обмена), где записывать настройки не нужно. Ошибку записи не
+    /// эскалируем (память — удобство, не критично).
+    fn remember_active_chat(&mut self, id: Uuid) {
+        if self.config.last_active_chat == Some(id) {
+            return;
+        }
+        self.config.last_active_chat = Some(id);
+        if let Err(err) = self.storage.json().save_config(&self.config) {
+            tracing::warn!(error = %err, "не удалось запомнить последний открытый чат");
+        }
     }
 
     fn emit_chat_list(&self) {
