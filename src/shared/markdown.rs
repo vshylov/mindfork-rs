@@ -280,6 +280,12 @@ struct Writer {
     table: Option<TableBuilder>,
     /// Нужен ли пустой разделитель перед следующим блоком.
     needs_newline: bool,
+    /// Только что открыт элемент списка (строка маркера `1. `/`- ` уже добавлена),
+    /// и первый абзац этого элемента должен продолжаться **на строке маркера**, а не
+    /// на новой строке. В «рыхлых» (loose) списках pulldown-cmark оборачивает
+    /// содержимое элемента в `Paragraph`; без этого флага номер оставался бы на одной
+    /// строке, а текст уезжал на следующую. Сбрасывается в начале любого `Start(tag)`.
+    item_marker_open: bool,
     /// Трактовать «мягкий» перенос (одиночный `\n`) как реальный перенос строки
     /// (GFM-стиль). Для сообщений пользователя — `true`. См. [`render_with`].
     soft_break_as_newline: bool,
@@ -299,6 +305,7 @@ impl Writer {
             code_highlighter: None,
             table: None,
             needs_newline: false,
+            item_marker_open: false,
             soft_break_as_newline: false,
         }
     }
@@ -338,8 +345,11 @@ impl Writer {
     }
 
     fn start_tag(&mut self, tag: Tag<'_>) {
+        // Любой блочный `Start` «закрывает» ожидание содержимого элемента списка;
+        // значение сохраняем для первого абзаца (он продолжает строку маркера).
+        let marker_open = std::mem::take(&mut self.item_marker_open);
         match tag {
-            Tag::Paragraph => self.start_paragraph(),
+            Tag::Paragraph => self.start_paragraph(marker_open),
             Tag::Heading { level, .. } => self.start_heading(level),
             Tag::BlockQuote(_) => self.start_blockquote(),
             Tag::CodeBlock(kind) => self.start_codeblock(kind),
@@ -402,7 +412,13 @@ impl Writer {
         }
     }
 
-    fn start_paragraph(&mut self) {
+    fn start_paragraph(&mut self, marker_open: bool) {
+        // Первый абзац «рыхлого» элемента списка продолжается на строке маркера
+        // (`1. `/`- `), а не начинает новую — иначе номер отрывается от текста.
+        if marker_open {
+            self.needs_newline = false;
+            return;
+        }
         if self.needs_newline {
             self.push_line(Line::default());
         }
@@ -465,6 +481,8 @@ impl Writer {
             self.push_span(span);
         }
         self.needs_newline = false;
+        // Первый абзац этого элемента должен продолжиться на строке маркера.
+        self.item_marker_open = true;
     }
 
     fn task_list_marker(&mut self, checked: bool) {
@@ -506,7 +524,11 @@ impl Writer {
             self.line_styles.push(code_style());
         }
         self.push_line(Line::from(format!("```{lang}")).add_modifier(Modifier::DIM));
-        self.needs_newline = false;
+        // Содержимое блока должно начаться на новой строке под открывающим `​```​`, а
+        // не приклеиться к нему. В неподсвеченном пути (`text`) первая строка иначе
+        // допишется в строку заборчика (`i==0`, `needs_newline==false`); подсвеченный
+        // путь этот флаг игнорирует (кладёт строки сам).
+        self.needs_newline = true;
     }
 
     fn end_codeblock(&mut self) {
@@ -1813,11 +1835,67 @@ mod tests {
         assert_ne!(dark, light, "подсветка кода не зависит от темы");
     }
 
+    /// Неподсвеченный (без языка) fenced-блок: содержимое начинается на строке под
+    /// открывающим `​```​`, а не приклеивается к нему (регрессия: первая строка
+    /// дописывалась в строку заборчика, `i==0` + `needs_newline==false`).
+    #[test]
+    fn plain_code_block_content_not_glued_to_fence() {
+        let md = "```\nX_ij = 1, тест\nE = 2/(j-i+1)\n```";
+        let lines: Vec<String> = render(md, 80, &Palette::default())
+            .lines
+            .iter()
+            .map(|l| l.spans.iter().map(|s| s.content.as_ref()).collect())
+            .collect();
+        // Открывающий заборчик — на своей строке, без содержимого.
+        assert_eq!(
+            lines[0], "```",
+            "содержимое приклеилось к заборчику: {lines:?}"
+        );
+        assert_eq!(lines[1], "X_ij = 1, тест");
+        assert_eq!(lines[2], "E = 2/(j-i+1)");
+        assert_eq!(lines[3], "```");
+    }
+
     #[test]
     fn render_headings_lists_quotes() {
         let collected = rendered_text("## Заголовок\n\n- пункт раз\n- пункт два\n\n> цитата");
         assert!(collected.contains("## Заголовок"));
         assert!(collected.contains("- пункт раз"));
         assert!(collected.contains("> цитата"));
+    }
+
+    /// «Рыхлый» (loose) нумерованный список — элементы разделены пустой строкой,
+    /// поэтому pulldown-cmark оборачивает содержимое в `Paragraph`. Номер и текст
+    /// должны остаться на **одной** строке (`1. текст`), а не разъехаться (регрессия:
+    /// `start_paragraph` безусловно добавлял новую строку после маркера).
+    #[test]
+    fn loose_ordered_list_keeps_number_with_text() {
+        let md = "1. **Первый.** Текст первого пункта.\n\n\
+                  2. **Второй.** Текст второго пункта.\n\n\
+                  3. **Третий.** Текст третьего пункта.";
+        let collected = rendered_text(md);
+        // Номер приклеен к своему тексту на одной строке ленты.
+        assert!(
+            collected.contains("1. Первый."),
+            "номер оторвался от текста:\n{collected}"
+        );
+        assert!(collected.contains("2. Второй."));
+        assert!(collected.contains("3. Третий."));
+        // Пустой строки между маркером и его текстом быть не должно.
+        assert!(
+            !collected.contains("1. \n"),
+            "после маркера образовался перенос:\n{collected}"
+        );
+    }
+
+    /// Многоабзацный элемент «рыхлого» списка: первый абзац — на строке маркера,
+    /// последующие — на своих строках (маркер не дублируется).
+    #[test]
+    fn loose_list_item_second_paragraph_on_own_line() {
+        let md = "1. Первый абзац.\n\n   Второй абзац того же пункта.\n\n2. Другой пункт.";
+        let collected = rendered_text(md);
+        assert!(collected.contains("1. Первый абзац."));
+        assert!(collected.contains("Второй абзац того же пункта."));
+        assert!(collected.contains("2. Другой пункт."));
     }
 }
