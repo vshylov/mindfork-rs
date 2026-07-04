@@ -11,6 +11,11 @@ impl Orchestrator {
     /// необходимости и переэмитит настройки. Единственный писатель в `settings.json`.
     pub(super) fn handle_update_config(&mut self, config: AppConfig) {
         let old = std::mem::replace(&mut self.config, config);
+        // «Последний открытый чат» — свойство оркестратора, а не редактируемая на
+        // экране настроек величина. Снимок конфига из UI может нести устаревшее
+        // значение (например `None` со старта) — сохраняем актуальное, чтобы правка
+        // настроек не стёрла память о чате.
+        self.config.last_active_chat = old.last_active_chat;
         if let Err(err) = self.storage.json().save_config(&self.config) {
             let _ = self.evt_tx.send(AppEvent::Error(format!(
                 "Не удалось сохранить настройки: {err}"

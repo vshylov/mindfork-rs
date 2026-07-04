@@ -719,6 +719,10 @@ pub struct AppConfig {
     pub interface: InterfaceSettings,
     /// Что включать при копировании переписки чата в буфер обмена (`F5`).
     pub copy: CopySettings,
+    /// Последний открытый чат — восстанавливается при следующем запуске. Пишется
+    /// оркестратором (не редактируется через экран настроек). `None` — нет памяти
+    /// (первый запуск/чат удалён) → открывается самый недавний.
+    pub last_active_chat: Option<uuid::Uuid>,
 }
 
 impl Default for AppConfig {
@@ -747,6 +751,7 @@ impl Default for AppConfig {
             notes: NotesSettings::default(),
             interface: InterfaceSettings::default(),
             copy: CopySettings::default(),
+            last_active_chat: None,
         }
     }
 }
@@ -816,6 +821,8 @@ mod tests {
             DEFAULT_IMPERSONATION_PORT
         );
         assert_eq!(c.impersonation_sampling.thinking, Some(false));
+        // Память о последнем открытом чате: по умолчанию пусто.
+        assert_eq!(c.last_active_chat, None);
     }
 
     #[test]
