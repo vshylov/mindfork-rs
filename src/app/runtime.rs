@@ -377,10 +377,17 @@ fn apply_event(
             messages,
             draft,
         } => {
-            // Удаление активного чата при открытом списке меняет активный — обновим
-            // его метку в списке.
             if let ActiveScreen::ChatList(list) = active {
-                list.set_active(Some(id));
+                if list.take_pending_new_chat() {
+                    // Пришла активация только что созданного чата (`Ctrl+N` в
+                    // списке) — закрываем список и показываем новый чат. Так
+                    // переход прежний→новый атомарен, без промежуточного мигания.
+                    *active = ActiveScreen::Chat;
+                } else {
+                    // Удаление активного чата при открытом списке меняет активный —
+                    // обновим его метку в списке.
+                    list.set_active(Some(id));
+                }
             }
             screen.activate_chat(id, title, &messages, &draft);
         }
@@ -749,12 +756,23 @@ fn dispatch_chat_list(
             *active = ActiveScreen::Chat;
             AppCommand::SwitchChat(id)
         }
-        // Создание чата: закрываем список и запускаем поток нового чата на экране
-        // чата (там живёт выбор профиля — оверлей при >1 профиле).
+        // Создание чата запускает поток нового чата на экране чата (там живёт
+        // выбор профиля — оверлей при >1 профиле).
         ChatListIntent::NewChat => {
-            *active = ActiveScreen::Chat;
-            if let Some(ChatIntent::NewChat { profile_id }) = screen.request_new_chat() {
-                let _ = cmd_tx.send(AppCommand::NewChat { profile_id });
+            match screen.request_new_chat() {
+                // Один профиль: чат создаёт оркестратор (round-trip). Список
+                // ОСТАВЛЯЕМ открытым до прихода `ChatActivated` нового чата —
+                // иначе на время round-trip мигнул бы прежний активный чат. По
+                // приходу активации `apply_event` переключит на новый чат.
+                Some(ChatIntent::NewChat { profile_id }) => {
+                    if let ActiveScreen::ChatList(list) = active {
+                        list.set_pending_new_chat();
+                    }
+                    let _ = cmd_tx.send(AppCommand::NewChat { profile_id });
+                }
+                // >1 профиля: `request_new_chat` открыл оверлей выбора профиля в
+                // экране чата — показываем чат, чтобы оверлей был виден.
+                _ => *active = ActiveScreen::Chat,
             }
             return false;
         }

@@ -48,6 +48,10 @@ pub struct ChatListScreen {
     active: Option<Uuid>,
     /// Палитра темы для отрисовки (обновляется при `Settings`).
     palette: Palette,
+    /// Ждём активации только что созданного чата (`Ctrl+N`): список остаётся на
+    /// экране до прихода его `ChatActivated`, чтобы не мигнуть прежним чатом
+    /// перед новым. Гасится в `take_pending_new_chat`. См. spec §11.2.
+    pending_new_chat: bool,
 }
 
 impl ChatListScreen {
@@ -57,7 +61,20 @@ impl ChatListScreen {
             state: ChatListState::new(chats, active),
             active,
             palette,
+            pending_new_chat: false,
         }
+    }
+
+    /// Помечает: создан новый чат, ждём его `ChatActivated`, чтобы переключиться
+    /// на него атомарно (не показав прежний чат). См. `dispatch_chat_list`.
+    pub fn set_pending_new_chat(&mut self) {
+        self.pending_new_chat = true;
+    }
+
+    /// Забирает флаг ожидания нового чата (сбрасывая его). `true` — пришедшая
+    /// активация относится к только что созданному чату, список пора закрыть.
+    pub fn take_pending_new_chat(&mut self) -> bool {
+        std::mem::take(&mut self.pending_new_chat)
     }
 
     /// Обновляет снимок списка (после изменения набора чатов) — событие
@@ -190,6 +207,16 @@ mod tests {
             ChatListScreen::new(vec![chat("Альфа"), chat("Бета")], None, Palette::default());
         // Печать символа в строку поиска — обработана внутри (нет намерения).
         assert_eq!(s.handle_key(key(KeyCode::Char('Б'))), None);
+    }
+
+    #[test]
+    fn pending_new_chat_flag_set_and_taken_once() {
+        let mut s = ChatListScreen::new(vec![chat("A")], None, Palette::default());
+        assert!(!s.take_pending_new_chat());
+        s.set_pending_new_chat();
+        // Забирается ровно один раз (сбрасывается) — вторая активация закрыть не должна.
+        assert!(s.take_pending_new_chat());
+        assert!(!s.take_pending_new_chat());
     }
 
     #[test]
