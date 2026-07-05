@@ -17,6 +17,7 @@ use crate::shared::api::{
     ApiMessage, ApiToolCall, ChatChunk, ChatRequest, EngineBackend, FinishReason, ThinkingBlock,
     ToolCallAccumulator,
 };
+use crate::shared::config::ServerMode;
 use crate::shared::tokens::estimate_prompt;
 
 use super::Orchestrator;
@@ -265,6 +266,8 @@ impl Orchestrator {
             inject_enabled,
             maintenance_protocol: self.config.self_model.maintenance_protocol,
             last_user,
+            engine_mode: self.config.engine.mode,
+            model_name: self.config.engine.active_model_name(),
             evt_tx: self.evt_tx.clone(),
             done_tx: self.done_tx.clone(),
         });
@@ -337,6 +340,9 @@ struct GenSpawn {
     maintenance_protocol: bool,
     /// Последняя реплика пользователя — запрос для инъекции наблюдений по релевантности.
     last_user: String,
+    /// Режим движка и имя модели — снимок в `Message.metadata` (spec §8.3).
+    engine_mode: ServerMode,
+    model_name: Option<String>,
     evt_tx: UnboundedSender<AppEvent>,
     done_tx: UnboundedSender<GenResult>,
 }
@@ -375,6 +381,8 @@ fn spawn_generation(spawn: GenSpawn) {
         inject_enabled,
         maintenance_protocol,
         last_user,
+        engine_mode,
+        model_name,
         evt_tx,
         done_tx,
     } = spawn;
@@ -446,7 +454,7 @@ fn spawn_generation(spawn: GenSpawn) {
                         "Достигнут лимит раундов инструментов ({max_rounds})."
                     )));
                     reason = FinishReason::Stop;
-                    if let Some(mut m) = finalize_message(&out, &ctx) {
+                    if let Some(mut m) = finalize_message(&out, &ctx, engine_mode, &model_name) {
                         m.new_bubble = pending_new_bubble;
                         messages.push(m);
                     }
@@ -563,7 +571,7 @@ fn spawn_generation(spawn: GenSpawn) {
             }
 
             // Финальный раунд (Stop/Length/Cancelled/Error или без вызовов).
-            if let Some(mut m) = finalize_message(&out, &ctx) {
+            if let Some(mut m) = finalize_message(&out, &ctx, engine_mode, &model_name) {
                 m.new_bubble = pending_new_bubble;
                 messages.push(m);
             }
@@ -819,8 +827,15 @@ fn tool_message(call: &ApiToolCall, result: String) -> Message {
     m
 }
 
-/// Финальное assistant-сообщение хода (если есть текст/мысли) со снимком семплинга.
-fn finalize_message(out: &RoundOutput, ctx: &ToolContext) -> Option<Message> {
+/// Финальное assistant-сообщение хода (если есть текст/мысли) со снимком
+/// метаданных: режим движка, имя модели и семплинг, **урезанный до полей,
+/// доступных в этом режиме** (движок недоступное поле не принял бы — spec §8.3).
+fn finalize_message(
+    out: &RoundOutput,
+    ctx: &ToolContext,
+    mode: ServerMode,
+    model: &Option<String>,
+) -> Option<Message> {
     if out.text.is_empty() && out.thoughts.is_empty() {
         return None;
     }
@@ -829,8 +844,11 @@ fn finalize_message(out: &RoundOutput, ctx: &ToolContext) -> Option<Message> {
         m.thoughts = Some(out.thoughts.clone());
     }
     m.metadata = Some(MessageMetadata {
-        sampling: ctx.effective_sampling.clone(),
-        model: None,
+        sampling: ctx
+            .effective_sampling
+            .retain_supported(mode.cloud_provider()),
+        mode,
+        model: model.clone(),
     });
     Some(m)
 }
