@@ -358,6 +358,12 @@ impl Tool for UpdateSelfModel {
         let mut scars: Vec<String> = Vec::new();
         // Менялось ли описание себя — для строки размера в эхе (ворота размера, этап 2).
         let mut summary_changed = false;
+        // Дельты правки для компактного эха (этап 4): что реально добавлено/закрыто —
+        // вместо полного render_full (тот остаётся у get_self_model). Цели называем
+        // #id — теми же ручками, по которым их потом закрывать.
+        let mut added_goals: Vec<(String, uuid::Uuid)> = Vec::new();
+        let mut completed: Vec<uuid::Uuid> = Vec::new();
+        let mut abandoned: Vec<uuid::Uuid> = Vec::new();
         let params = ctx.self_model_params;
         let (model, changed) = ctx.storage.db().self_model_update(ctx.profile_id, |m| {
             let mut changed = false;
@@ -370,20 +376,36 @@ impl Tool for UpdateSelfModel {
                 }
             }
             for g in str_array(&args, "add_goals") {
+                let before = m.goals.len();
                 m.add_goal(g);
-                changed = true;
+                // add_goal игнорирует пустые — фиксируем только реально добавленное.
+                if m.goals.len() != before {
+                    let goal = m.goals.last().expect("только что добавлена");
+                    added_goals.push((goal.description.clone(), goal.id));
+                    changed = true;
+                }
             }
             // Цели закрываются по #id/полному id — резолвим ручку среди целей модели.
             for h in str_array(&args, "complete_goals") {
                 match m.match_goal(&h) {
-                    GoalMatch::One(id) => changed |= m.set_goal_status(id, GoalStatus::Completed),
+                    GoalMatch::One(id) => {
+                        if m.set_goal_status(id, GoalStatus::Completed) {
+                            completed.push(id);
+                            changed = true;
+                        }
+                    }
                     GoalMatch::None => unresolved.push(h),
                     GoalMatch::Ambiguous => unresolved.push(format!("{h} (неоднозначно)")),
                 }
             }
             for h in str_array(&args, "abandon_goals") {
                 match m.match_goal(&h) {
-                    GoalMatch::One(id) => changed |= m.set_goal_status(id, GoalStatus::Abandoned),
+                    GoalMatch::One(id) => {
+                        if m.set_goal_status(id, GoalStatus::Abandoned) {
+                            abandoned.push(id);
+                            changed = true;
+                        }
+                    }
                     GoalMatch::None => unresolved.push(h),
                     GoalMatch::Ambiguous => unresolved.push(format!("{h} (неоднозначно)")),
                 }
@@ -411,10 +433,10 @@ impl Tool for UpdateSelfModel {
             }
             return Ok(ToolOutcome::text(msg));
         }
-        let mut msg = format!(
-            "Модель себя обновлена.\n{}",
-            model.render_full(Utc::now(), &recent_segments(ctx))
-        );
+        // Дельта-эхо (этап 4): только изменённое, без полного render_full (полное чтение
+        // — у get_self_model). Экономит токены и не «заякоривает» модель на жанре эссе.
+        use crate::entities::self_model::short_id;
+        let mut msg = String::from("Модель себя обновлена.");
         // Обратная связь о размере описания (этап 2): всегда при правке summary, чтобы
         // модель видела рост даже до превышения ориентира. См. docs/summary-as-snapshot.md.
         if summary_changed {
@@ -422,6 +444,33 @@ impl Tool for UpdateSelfModel {
                 "\nОписание: {} симв. (ориентир ≤ {}).",
                 model.summary.chars().count(),
                 params.summary_target_chars
+            ));
+        }
+        if !added_goals.is_empty() {
+            let list: Vec<String> = added_goals
+                .iter()
+                .map(|(d, id)| format!("#{} {d}", short_id(id)))
+                .collect();
+            msg.push_str(&format!("\nДобавлены цели: {}.", list.join("; ")));
+        }
+        if !completed.is_empty() {
+            let ids: Vec<String> = completed
+                .iter()
+                .map(|id| format!("#{}", short_id(id)))
+                .collect();
+            msg.push_str(&format!("\nЗакрыты выполненными: {}.", ids.join(", ")));
+        }
+        if !abandoned.is_empty() {
+            let ids: Vec<String> = abandoned
+                .iter()
+                .map(|id| format!("#{}", short_id(id)))
+                .collect();
+            msg.push_str(&format!("\nПомечены неактуальными: {}.", ids.join(", ")));
+        }
+        if !scars.is_empty() {
+            msg.push_str(&format!(
+                "\nСтарые закрытые цели свёрнуты в наблюдения: {}.",
+                scars.len()
             ));
         }
         if !unresolved.is_empty() {
@@ -547,10 +596,30 @@ impl Tool for UpdateUserModel {
         }
         let dup_pairs = near_duplicate_traits(ctx, &added_traits, &existing_before_traits).await;
 
-        let mut msg = format!(
-            "Модель собеседника обновлена.\n{}",
-            model.render_full(Utc::now(), &recent_segments(ctx))
-        );
+        // Дельта-эхо (этап 4): компактные итоговые списки модели собеседника вместо
+        // полного render_full (полное чтение — у get_self_model). Списки коротки по
+        // построению (merge с дедупом), поэтому показываем их целиком.
+        let mut msg = String::from("Модель собеседника обновлена.");
+        let u = &model.user_model;
+        if !u.perceived_traits.is_empty() {
+            msg.push_str(&format!(
+                "\nЧерты теперь: {}.",
+                u.perceived_traits.join(", ")
+            ));
+        }
+        if !u.current_interests.is_empty() {
+            msg.push_str(&format!(
+                "\nИнтересы теперь: {}.",
+                u.current_interests.join(", ")
+            ));
+        }
+        if !u.relationship_dynamic.trim().is_empty() {
+            msg.push_str(&format!("\nОтношения: {}.", u.relationship_dynamic.trim()));
+        }
+        // Подтверждение шрама ревизии (если передан note) — виден его текст.
+        if let Some(scar) = &note_scar {
+            msg.push_str(&format!("\nПояснение сохранено наблюдением: «{scar}»."));
+        }
         // Ворота родственных черт (Шаг C): близкая по теме черта уже существует.
         // bge-m3 сближает черты по измерению (перефразы И антонимы), поэтому просим
         // модель РЕШИТЬ: это дубль (слить через remove_traits) или противоречие
@@ -695,6 +764,71 @@ mod tests {
             .await
             .unwrap();
         assert!(!out.result.contains("Описание:"));
+    }
+
+    #[tokio::test]
+    async fn update_self_model_echo_is_delta_not_full() {
+        // Этап 4: эхо правки несёт дельты (#id добавленной цели), но НЕ полный текст
+        // summary (полное чтение — только у get_self_model).
+        let (_d, _s, ctx) = ctx_with_storage(Uuid::new_v4());
+        let out = UpdateSelfModel
+            .invoke(
+                &ctx,
+                serde_json::json!({
+                    "summary": "УНИКАЛЬНЫЙ_МАРКЕР_ОПИСАНИЯ",
+                    "add_goals": ["новая цель"]
+                }),
+            )
+            .await
+            .unwrap();
+        assert!(out.result.contains("Добавлены цели:"));
+        assert!(out.result.contains("новая цель"));
+        assert!(out.result.contains('#'));
+        assert!(out.result.contains("Описание:")); // строка размера (этап 2)
+        // Текст summary в эхо не попадает (нет «заякоривания» на жанре эссе).
+        assert!(!out.result.contains("УНИКАЛЬНЫЙ_МАРКЕР_ОПИСАНИЯ"));
+    }
+
+    #[tokio::test]
+    async fn update_self_model_echo_shows_closed_goal_id() {
+        // Этап 4: закрытие цели отражается в эхе её #id (та же ручка, что и для закрытия).
+        let profile = Uuid::new_v4();
+        let (_d, storage, ctx) = ctx_with_storage(profile);
+        UpdateSelfModel
+            .invoke(&ctx, serde_json::json!({"add_goals": ["цель"]}))
+            .await
+            .unwrap();
+        let id = storage.db().self_model_get(profile).unwrap().unwrap().goals[0].id;
+        let short = id.simple().to_string()[..6].to_string();
+        let out = UpdateSelfModel
+            .invoke(
+                &ctx,
+                serde_json::json!({"complete_goals": [format!("#{short}")]}),
+            )
+            .await
+            .unwrap();
+        assert!(out.result.contains("Закрыты выполненными:"));
+        assert!(out.result.contains(&format!("#{short}")));
+    }
+
+    #[tokio::test]
+    async fn update_user_model_echo_shows_final_lists() {
+        // Этап 4: эхо показывает компактные итоговые списки, не полный render_full.
+        let (_d, _s, ctx) = ctx_with_storage(Uuid::new_v4());
+        let out = UpdateUserModel
+            .invoke(
+                &ctx,
+                serde_json::json!({
+                    "add_traits": ["скептик"],
+                    "add_interests": ["Rust"],
+                    "relationship_dynamic": "рабочие"
+                }),
+            )
+            .await
+            .unwrap();
+        assert!(out.result.contains("Черты теперь: скептик"));
+        assert!(out.result.contains("Интересы теперь: Rust"));
+        assert!(out.result.contains("Отношения: рабочие"));
     }
 
     #[tokio::test]

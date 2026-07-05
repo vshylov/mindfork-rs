@@ -127,6 +127,14 @@ fn short_hex(id: &Uuid) -> String {
     id.simple().to_string()[..6].to_string()
 }
 
+/// Публичный короткий id для эха инструментов (первые 6 hex UUID, тот же формат, что
+/// `#id` в чтениях `render_full`). Обёртка над [`short_hex`] — чтобы дельта-эхо правок
+/// (этап 4, docs/summary-as-snapshot.md) называло цели теми же ручками, по которым их
+/// закрывают.
+pub fn short_id(id: &Uuid) -> String {
+    short_hex(id)
+}
+
 /// Проставляет/снимает `closed_at` цели по её текущему статусу: при уходе из
 /// `Active` — ставит момент (если ещё не стоял), при возврате в `Active` — снимает.
 fn stamp_closed(g: &mut Goal) {
