@@ -446,7 +446,11 @@ impl SelfModel {
         let mut out = String::from("[Твоя модель себя]\n");
         if !self.summary.trim().is_empty() {
             out.push_str("О себе: ");
-            out.push_str(self.summary.trim());
+            // Посекционный бюджет (этап 3): описание — не более половины лимита, чтобы
+            // раздутый summary не вытеснял из инъекции цели/собеседника/наблюдения.
+            // Финальное усечение всего блока ниже остаётся страховкой.
+            // См. docs/summary-as-snapshot.md.
+            out.push_str(&truncate_chars_word(self.summary.trim(), max_chars / 2));
             out.push('\n');
         }
         let active: Vec<&Goal> = self.active_goals().collect();
@@ -683,6 +687,26 @@ fn truncate_chars(s: &str, max_chars: usize) -> String {
     out
 }
 
+/// Усечение по границе слова: как [`truncate_chars`], но откатывается к последнему
+/// пробелу в пределах лимита, чтобы не рвать слово посреди («…» внутри слова читается
+/// как повреждённая память). Если пробела нет (одно длинное слово) — режет по символу.
+/// Результат, как и у [`truncate_chars`], не длиннее `max_chars` символов.
+fn truncate_chars_word(s: &str, max_chars: usize) -> String {
+    if s.chars().count() <= max_chars {
+        return s.to_string();
+    }
+    let take = max_chars.saturating_sub(1);
+    let head: String = s.chars().take(take).collect();
+    // rfind даёт байтовый индекс пробела (на границе символа — валиден для среза).
+    let base = match head.rfind(char::is_whitespace) {
+        Some(idx) => head[..idx].trim_end(),
+        None => head.as_str(),
+    };
+    // Откат съел всё (лидирующий пробел) — падаем обратно на посимвольный head.
+    let base = if base.is_empty() { head.as_str() } else { base };
+    format!("{base}…")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -882,6 +906,59 @@ mod tests {
         assert!(!m.apply_edit(SelfModelEdit::Clear));
         // несуществующие id — no-op
         assert!(!m.apply_edit(SelfModelEdit::DeleteGoal(Uuid::new_v4())));
+    }
+
+    #[test]
+    fn bloated_summary_does_not_starve_sections() {
+        // Этап 3: раздутое описание не вытесняет из инъекции цели/собеседника/наблюдения
+        // (посекционный бюджет: summary ≤ половины лимита).
+        let mut m = SelfModel::new(Uuid::new_v4());
+        m.summary = "слово ".repeat(400); // ~2400 симв., много слов
+        m.add_goal("активная цель");
+        m.user_model.perceived_traits = vec!["внимательный".into()];
+        let recent = [seg("свежее наблюдение о стиле")];
+
+        let r = m.render_for_prompt(1200, 3, now(), &recent).unwrap();
+        // Все секции присутствуют, несмотря на раздутое описание.
+        assert!(r.contains("Активные цели:"), "цели вытеснены: {r}");
+        assert!(r.contains("О собеседнике:"), "собеседник вытеснен: {r}");
+        assert!(
+            r.contains("Недавние наблюдения:"),
+            "наблюдения вытеснены: {r}"
+        );
+        // Блок в пределах лимита; описание усечено (сверх половины бюджета).
+        assert!(r.chars().count() <= 1200);
+        assert!(r.contains("О себе: "));
+    }
+
+    #[test]
+    fn small_summary_not_truncated() {
+        // Небольшое описание проходит без «…» (поведение прежнее для нераздутых моделей).
+        let mut m = SelfModel::new(Uuid::new_v4());
+        m.summary = "ценю ясность и краткость".into();
+        let r = m
+            .render_for_prompt(1200, p().narrative_in_prompt, now(), &[])
+            .unwrap();
+        assert!(r.contains("О себе: ценю ясность и краткость"));
+        assert!(!r.contains('…'));
+    }
+
+    #[test]
+    fn truncate_word_does_not_split_word() {
+        // Усечение по границе слова не рвёт слово посреди.
+        let s = "первое второе третье четвёртое пятое";
+        let out = truncate_chars_word(s, 20);
+        assert!(out.ends_with('…'));
+        assert!(out.chars().count() <= 20);
+        // Обрезка на границе слова: без «…» результат — префикс из целых слов.
+        let body = out.trim_end_matches('…');
+        assert!(s.starts_with(body.trim_end()));
+        assert!(!body.trim_end().is_empty());
+        // Одно длинное слово без пробелов — падаем на посимвольное усечение.
+        let long = "я".repeat(50);
+        let out = truncate_chars_word(&long, 10);
+        assert_eq!(out.chars().count(), 10);
+        assert!(out.ends_with('…'));
     }
 
     #[test]
