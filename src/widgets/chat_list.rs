@@ -18,6 +18,7 @@ use crate::features::rename_chat::sanitize_title;
 use crate::features::spellcheck::SpellChecker;
 use crate::shared::keys;
 use crate::shared::theme::Palette;
+use crate::shared::ui::render_scrollbar;
 use crate::shared::wrap;
 use crate::widgets::input_box::InputBox;
 
@@ -421,6 +422,24 @@ impl ChatListState {
             list_state.select(Some(self.selected.min(visible.len() - 1)));
         }
         frame.render_stateful_widget(list, list_area, &mut list_state);
+
+        // Скроллбар на правой рамке панели «Чаты» — когда чатов больше видимой
+        // высоты списка. Бар занимает только ряды списка (строка поиска и статус
+        // не затрагиваются); позиция — фактический offset списка после рендера.
+        render_scrollbar(
+            frame,
+            Rect {
+                x: main_area.x,
+                y: list_area.y,
+                width: main_area.width,
+                height: list_area.height,
+            },
+            visible.len(),
+            list_area.height as usize,
+            list_state.offset(),
+            true, // рамка панели — в фокусном цвете (panel(_, true))
+            palette,
+        );
 
         // --- область статуса операции: ошибка (красным) или подтверждение (успехом) ---
         if let Some(err) = &self.error {
@@ -921,6 +940,29 @@ mod tests {
             term.draw(|f| state.render(f, f.area(), None, &Palette::default()))
                 .unwrap();
         }
+    }
+
+    #[test]
+    fn scrollbar_appears_only_when_list_overflows() {
+        use ratatui::Terminal;
+        use ratatui::backend::TestBackend;
+        // Бегунок «█» на правой рамке панели — только когда чатов больше высоты.
+        let has_thumb = |term: &Terminal<TestBackend>| {
+            let buf = term.backend().buffer();
+            let x = buf.area.right() - 1; // колонка рамки панели «Чаты»
+            (buf.area.top()..buf.area.bottom()).any(|y| buf[(x, y)].symbol() == "█")
+        };
+        // Ширина 72 — сетка хоткеев внизу в 2 колонки (не съедает высоту списка).
+        let mut term = Terminal::new(TestBackend::new(72, 24)).unwrap();
+        let mut short = ChatListState::new(vec![chat("A"), chat("B")], None);
+        term.draw(|f| short.render(f, f.area(), None, &Palette::default()))
+            .unwrap();
+        assert!(!has_thumb(&term), "короткий список — без бегунка");
+        let chats: Vec<ChatSummary> = (0..40).map(|i| chat(&format!("Чат {i}"))).collect();
+        let mut long = ChatListState::new(chats, None);
+        term.draw(|f| long.render(f, f.area(), None, &Palette::default()))
+            .unwrap();
+        assert!(has_thumb(&term), "длинный список — с бегунком");
     }
 
     #[test]

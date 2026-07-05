@@ -25,7 +25,7 @@ use crate::shared::config::{
 };
 use crate::shared::keys;
 use crate::shared::theme::Palette;
-use crate::shared::ui::dim_background;
+use crate::shared::ui::{dim_background, render_scrollbar};
 use crate::widgets::input_box::InputBox;
 
 /// Намерение, которое исполняет `app` (транслирует в `AppCommand`).
@@ -1648,6 +1648,28 @@ impl SettingsScreen {
         }
         frame.render_stateful_widget(list, list_area, &mut state);
 
+        // Скроллбар, когда полей больше видимой высоты. Рисуем поверх правой
+        // рамки экрана настроек: `fields_area` доходит ровно до неё (inner
+        // панели), поэтому колонка `list_area.right()` — это линия рамки.
+        // Верхнюю строку списка занимает титул секции — бар идёт ниже него.
+        if list_area.height > 1 {
+            let bar = Rect {
+                y: list_area.y + 1,
+                height: list_area.height - 1,
+                width: list_area.width + 1,
+                ..list_area
+            };
+            render_scrollbar(
+                frame,
+                bar,
+                fields.len(),
+                bar.height as usize,
+                state.offset(),
+                true, // рамка экрана настроек рисуется в фокусном цвете
+                &palette,
+            );
+        }
+
         if let Some(text) = description {
             let para = Paragraph::new(text)
                 .block(Block::default().borders(Borders::TOP))
@@ -2751,6 +2773,28 @@ mod tests {
             let mut term = Terminal::new(TestBackend::new(w, h)).unwrap();
             term.draw(|f| s.render(f)).unwrap();
         }
+    }
+
+    #[test]
+    fn fields_scrollbar_appears_only_on_overflow() {
+        use ratatui::Terminal;
+        use ratatui::backend::TestBackend;
+        // Бегунок «█» на правой рамке экрана — только когда полей больше высоты.
+        let has_thumb = |term: &Terminal<TestBackend>| {
+            let buf = term.backend().buffer();
+            let x = buf.area.right() - 1; // колонка рамки панели настроек
+            (buf.area.top()..buf.area.bottom()).any(|y| buf[(x, y)].symbol() == "█")
+        };
+        let mut s = screen();
+        s.handle_key(key(KeyCode::Tab)); // Инференс
+        s.handle_key(key(KeyCode::Tab)); // Семплинг: полей заведомо больше высоты
+        let mut term = Terminal::new(TestBackend::new(80, 14)).unwrap();
+        term.draw(|f| s.render(f)).unwrap();
+        assert!(has_thumb(&term), "переполненная секция — с бегунком");
+        // В высоком окне все поля видны — бегунка нет.
+        let mut term = Terminal::new(TestBackend::new(80, 50)).unwrap();
+        term.draw(|f| s.render(f)).unwrap();
+        assert!(!has_thumb(&term), "все поля видны — без бегунка");
     }
 
     #[test]
