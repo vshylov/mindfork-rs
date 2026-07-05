@@ -3,7 +3,7 @@
 
 use ratatui::Frame;
 use ratatui::layout::Rect;
-use ratatui::style::{Modifier, Style};
+use ratatui::style::Modifier;
 use ratatui::widgets::{Scrollbar, ScrollbarOrientation, ScrollbarState};
 
 use crate::shared::theme::Palette;
@@ -45,8 +45,10 @@ pub fn dim_background(frame: &mut Frame, palette: &Palette) {
 /// Панели с рамкой передают область с вертикальным отступом 1
 /// (`area.inner(Margin::new(0, 1))`): бар ложится **на правую линию рамки**, не
 /// трогая её углы и не отнимая ширину у содержимого. `focused` — в каком цвете
-/// нарисована рамка под баром (обычная/в фокусе): трек рисуется тем же цветом и
-/// визуально остаётся рамкой; бегунок — цветом текста (читается на обоих).
+/// нарисована рамка под баром (обычная/в фокусе): и трек, и бегунок рисуются
+/// этим цветом, так что скроллбар сливается с рамкой, отличаясь лишь заливкой
+/// `█` (бегунок) против тонкого `│` (трек). Бегунок следует за цветом рамки —
+/// смена палитры рамки автоматически перекрашивает и его.
 pub fn render_scrollbar(
     frame: &mut Frame,
     area: Rect,
@@ -72,7 +74,7 @@ pub fn render_scrollbar(
         .track_symbol(Some("│"))
         .thumb_symbol("█")
         .track_style(palette.border_style(focused))
-        .thumb_style(Style::new().fg(palette.text));
+        .thumb_style(palette.border_style(focused));
     frame.render_stateful_widget(bar, area, &mut state);
 }
 
@@ -133,6 +135,23 @@ mod tests {
             Some(&7),
             "при полной прокрутке бегунок у низа: {bottom:?}"
         );
+    }
+
+    #[test]
+    fn scrollbar_thumb_uses_border_color() {
+        // Бегунок рисуется цветом рамки (как трек), а не текстом. В Auto-палитре
+        // `border` (DarkGray) и `text` (Reset) различны, так что проверка значима.
+        let palette = Palette::default();
+        let mut term = Terminal::new(TestBackend::new(4, 8)).unwrap();
+        term.draw(|f| render_scrollbar(f, f.area(), 32, 8, 0, false, &palette))
+            .unwrap();
+        let buf = term.backend().buffer();
+        let area = buf.area;
+        let thumb_fg = (area.top()..area.bottom())
+            .map(|y| &buf[(area.right() - 1, y)])
+            .find(|c| c.symbol() == "█")
+            .map(|c| c.fg);
+        assert_eq!(thumb_fg, Some(palette.border), "бегунок — цветом рамки");
     }
 
     #[test]
