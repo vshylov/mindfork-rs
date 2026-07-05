@@ -301,6 +301,24 @@ impl EngineSettings {
             &mut self.claude,
         )
     }
+
+    /// Имя активной модели для текущего режима (для снимка в `Message.metadata` и
+    /// подписи ленты). Managed — базовое имя GGUF без пути и расширения `.gguf`;
+    /// external/облако — заданное `model_name`. `None`, если модель не задана.
+    pub fn active_model_name(&self) -> Option<String> {
+        match self.mode {
+            ServerMode::Managed => self.managed.model_path.as_deref().and_then(|p| {
+                let name = p.rsplit(['/', '\\']).next().unwrap_or(p);
+                let name = name.trim_end_matches(".gguf");
+                (!name.is_empty()).then(|| name.to_string())
+            }),
+            ServerMode::External => self.external.model_name.clone().filter(|m| !m.is_empty()),
+            ServerMode::OpenAi | ServerMode::Gemini | ServerMode::Claude => self
+                .cloud()
+                .and_then(|c| c.model_name.clone())
+                .filter(|m| !m.is_empty()),
+        }
+    }
 }
 
 /// Активная облачная под-структура по провайдеру (общий хелпер для всех движков).
@@ -779,6 +797,34 @@ mod tests {
         let json = serde_json::to_string_pretty(&c).unwrap();
         let back: AppConfig = serde_json::from_str(&json).unwrap();
         assert_eq!(c, back);
+    }
+
+    #[test]
+    fn active_model_name_by_mode() {
+        // Managed — базовое имя GGUF без пути и расширения.
+        let mut e = EngineSettings {
+            mode: ServerMode::Managed,
+            managed: ManagedSettings {
+                model_path: Some("/models/gemma-4-it.gguf".into()),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        assert_eq!(e.active_model_name().as_deref(), Some("gemma-4-it"));
+        // Не задан путь → None.
+        e.managed.model_path = None;
+        assert_eq!(e.active_model_name(), None);
+        // External — имя модели как есть.
+        e.mode = ServerMode::External;
+        e.external.model_name = Some("qwen-3.6".into());
+        assert_eq!(e.active_model_name().as_deref(), Some("qwen-3.6"));
+        // Облако — имя из активной облачной подсекции.
+        e.mode = ServerMode::OpenAi;
+        e.openai.model_name = Some("gpt-4o".into());
+        assert_eq!(e.active_model_name().as_deref(), Some("gpt-4o"));
+        // Пустое имя трактуется как незаданное.
+        e.openai.model_name = Some(String::new());
+        assert_eq!(e.active_model_name(), None);
     }
 
     #[test]

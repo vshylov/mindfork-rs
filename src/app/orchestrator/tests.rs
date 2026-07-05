@@ -600,6 +600,68 @@ async fn send_streams_and_persists_assistant_message() {
 }
 
 #[tokio::test]
+async fn assistant_metadata_records_mode_model_and_filtered_sampling() {
+    use crate::entities::sampling::SamplingConfig;
+    use crate::shared::config::{CloudSettings, EngineSettings, ServerMode};
+
+    // Облачный режим (OpenAI) + имя модели; глобальный семплинг с top_k, который
+    // строгий облачный диалект не принимает → в снимок метаданных он попасть не должен.
+    let config = AppConfig {
+        engine: EngineSettings {
+            mode: ServerMode::OpenAi,
+            openai: CloudSettings {
+                model_name: Some("gpt-test".into()),
+                ..Default::default()
+            },
+            ..Default::default()
+        },
+        default_sampling: SamplingConfig {
+            temperature: Some(0.7),
+            top_k: Some(40),
+            max_tokens: Some(128),
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+
+    let backend = Arc::new(MockBackend::scripted(vec![
+        ChatChunk::Text("Привет".into()),
+        ChatChunk::Finished(FinishReason::Stop),
+    ])) as Arc<dyn EngineBackend>;
+    let (_d, cmd_tx, mut evt_rx, handle) = spawn_orch_cfg(Some(backend), config);
+    let root = _d.path().to_path_buf();
+
+    let active = wait_for(&mut evt_rx, |e| matches!(e, AppEvent::ChatActivated { .. }))
+        .await
+        .unwrap();
+    let chat_id = match active {
+        AppEvent::ChatActivated { id, .. } => id,
+        _ => unreachable!(),
+    };
+    cmd_tx
+        .send(AppCommand::SendMessage("привет".into()))
+        .unwrap();
+    wait_for(&mut evt_rx, |e| matches!(e, AppEvent::Finished { .. }))
+        .await
+        .unwrap();
+    cmd_tx.send(AppCommand::Quit).unwrap();
+    handle.await.unwrap();
+
+    let reopened = Storage::open(Paths::with_root(&root)).unwrap();
+    let chat = reopened.json().load_chat(chat_id).unwrap().unwrap();
+    let meta = chat.messages[1]
+        .metadata
+        .as_ref()
+        .expect("снимок метаданных");
+    assert_eq!(meta.mode, ServerMode::OpenAi);
+    assert_eq!(meta.model.as_deref(), Some("gpt-test"));
+    // Доступные в облаке поля сохранены, недоступный top_k — обнулён.
+    assert_eq!(meta.sampling.temperature, Some(0.7));
+    assert_eq!(meta.sampling.max_tokens, Some(128));
+    assert_eq!(meta.sampling.top_k, None);
+}
+
+#[tokio::test]
 async fn emits_token_counter_during_generation() {
     use crate::shared::api::contract::TokenUsage;
     // Две текстовые дельты (live-счёт = 2), затем точный usage от сервера (= 5).

@@ -5,6 +5,7 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use crate::entities::sampling::SamplingConfig;
+use crate::shared::config::ServerMode;
 
 /// Роль сообщения в чате.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -27,9 +28,18 @@ pub struct ToolCallRecord {
 }
 
 /// Снимок параметров генерации, фактически применённых к сообщению.
+///
+/// `sampling` содержит **только** поля, доступные в режиме движка на момент
+/// генерации (см. [`SamplingConfig::retain_supported`]) — прочие поля движок бы
+/// не принял, поэтому в снимок «что применилось» они не попадают. `mode` — режим
+/// движка (managed/external/openai/gemini/claude), `model` — имя модели.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct MessageMetadata {
     pub sampling: SamplingConfig,
+    /// Режим движка, которым сгенерировано сообщение. `#[serde(default)]` → старые
+    /// сообщения без поля читаются как `Managed`.
+    #[serde(default)]
+    pub mode: ServerMode,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub model: Option<String>,
 }

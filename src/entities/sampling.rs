@@ -114,6 +114,23 @@ pub struct SamplingConfig {
     pub reasoning_budget: Option<i64>,
 }
 
+impl SamplingConfig {
+    /// Копия, где обнулены (`None`) все поля, **недоступные** в режиме движка
+    /// провайдера `provider` (см. [`supported_sampling_fields`]). Используется для
+    /// снимка в `Message.metadata`: движок недоступное поле всё равно не принял бы,
+    /// поэтому в «что применилось» оно не должно попадать. Список-поля
+    /// (`samplers`/`dry_sequence_breakers`) обрабатываются как обычные ключи.
+    pub fn retain_supported(&self, provider: Option<CloudProvider>) -> SamplingConfig {
+        let supported = supported_sampling_fields(provider);
+        // Сериализация нашего типа не падает; при неожиданности возвращаем как есть.
+        let Ok(serde_json::Value::Object(mut map)) = serde_json::to_value(self) else {
+            return self.clone();
+        };
+        map.retain(|k, _| supported.contains(&k.as_str()));
+        serde_json::from_value(serde_json::Value::Object(map)).unwrap_or_else(|_| self.clone())
+    }
+}
+
 /// Разрешает фактический семплинг по приоритету (spec §8.3):
 /// `Chat.sampling_override` → `Profile.default_sampling` → глобальный.
 ///
@@ -251,6 +268,39 @@ mod tests {
         for f in openai {
             assert!(SETTABLE_SAMPLING_FIELDS.contains(f));
         }
+    }
+
+    #[test]
+    fn retain_supported_drops_fields_by_mode() {
+        let s = SamplingConfig {
+            temperature: Some(0.7),
+            top_k: Some(40),
+            min_p: Some(0.05),
+            max_tokens: Some(256),
+            thinking: Some(true),
+            ..Default::default()
+        };
+        // Локально (None) — llama.cpp принимает всё настраиваемое: поля сохраняются.
+        let local = s.retain_supported(None);
+        assert_eq!(local.temperature, Some(0.7));
+        assert_eq!(local.top_k, Some(40));
+        assert_eq!(local.min_p, Some(0.05));
+        assert_eq!(local.thinking, Some(true));
+        // OpenAI — строгое подмножество: top_k/min_p/thinking обнуляются, temperature
+        // и max_tokens остаются.
+        let openai = s.retain_supported(Some(CloudProvider::OpenAi));
+        assert_eq!(openai.temperature, Some(0.7));
+        assert_eq!(openai.max_tokens, Some(256));
+        assert_eq!(openai.top_k, None);
+        assert_eq!(openai.min_p, None);
+        assert_eq!(openai.thinking, None);
+        // Claude — только max_tokens + reasoning: temperature/top_k обнуляются,
+        // thinking сохраняется.
+        let claude = s.retain_supported(Some(CloudProvider::Claude));
+        assert_eq!(claude.max_tokens, Some(256));
+        assert_eq!(claude.thinking, Some(true));
+        assert_eq!(claude.temperature, None);
+        assert_eq!(claude.top_k, None);
     }
 
     #[test]

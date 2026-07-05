@@ -1210,38 +1210,15 @@ impl ChatScreen {
         let Some((cfg, _)) = &self.settings_snapshot else {
             return String::new();
         };
-        match cfg.engine.mode {
-            ServerMode::Managed => {
-                let m = cfg.engine.managed.model_path.as_deref().and_then(|p| {
-                    let name = p.rsplit(['/', '\\']).next().unwrap_or(p);
-                    let name = name.trim_end_matches(".gguf");
-                    (!name.is_empty()).then(|| name.to_string())
-                });
-                match m {
-                    Some(m) => {
-                        let ctx = cfg.engine.managed.context_size;
-                        if ctx > 0 {
-                            format!("{m} · {}k ctx", (ctx + 512) / 1024)
-                        } else {
-                            m
-                        }
-                    }
-                    None => String::new(),
-                }
-            }
-            ServerMode::External => cfg
-                .engine
-                .external
-                .model_name
-                .clone()
-                .filter(|m| !m.is_empty())
-                .unwrap_or_default(),
-            ServerMode::OpenAi | ServerMode::Gemini | ServerMode::Claude => cfg
-                .engine
-                .cloud()
-                .and_then(|c| c.model_name.clone())
-                .filter(|m| !m.is_empty())
-                .unwrap_or_default(),
+        let Some(name) = cfg.engine.active_model_name() else {
+            return String::new();
+        };
+        // Для managed контекст осмыслен — добавляем «· Nk ctx».
+        let ctx = cfg.engine.managed.context_size;
+        if cfg.engine.mode == ServerMode::Managed && ctx > 0 {
+            format!("{name} · {}k ctx", (ctx + 512) / 1024)
+        } else {
+            name
         }
     }
 

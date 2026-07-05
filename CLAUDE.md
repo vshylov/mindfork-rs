@@ -106,8 +106,8 @@ Env для выбора бэкенда: `MINDFORK_ENGINE_URL` (external, люб�
 `MINDFORK_PORT`) для managed `llama-server`.
 
 ## Статус (на 2026-07-05)
-Сделан весь план **M0–M9** плюс обширный пост-M9 (в `main`). **751 юнит-тест
-зелёный, 25 `#[ignore]`-смоуков.** Весь набор `#[ignore]` прогнан на живой связке
+Сделан весь план **M0–M9** плюс обширный пост-M9 (в `main`). **755 юнит-тестов
+зелёные, 25 `#[ignore]`-смоуков.** Весь набор `#[ignore]` прогнан на живой связке
 **Gemma 4 31B (q4) + bge-m3** (`llama-server`, external, `--jinja`) — 25/25 зелёные
 (~370с): базовые смоуки Gemma (стриминг, EOS-анти-самообрыв, tool-calling, «мысли»,
 расширения семплинга, control-инструменты) + end-to-end модели себя/заметок/нарратива
@@ -2929,6 +2929,36 @@ web-поиск и Python под выключателями, экран наст�
   clippy/fmt чисты.
 - **Задел**: авто-детект старого терминала при первом запуске (эвристика
   `WT_SESSION`/`TERM_PROGRAM` на Windows) — сейчас включение только ручное.
+
+### Пост-M9: метаданные сообщения — режим/модель + семплинг по доступным полям (сделано)
+- **Снимок в `Message.metadata` теперь несёт режим движка и имя модели, а семплинг
+  урезается до полей, доступных в этом режиме.** Раньше `finalize_message`
+  (`app/orchestrator/generation.rs`) писал `MessageMetadata { sampling: полный
+  effective_sampling, model: None }` — режим не фиксировался, модель всегда `None`, а
+  в снимок «что применилось» попадали расширения llama.cpp, которые строгий облачный
+  диалект (OpenAI/Gemini/Claude) даже не принял бы.
+- **`MessageMetadata`** (`entities/message.rs`) получил поле `mode: ServerMode`
+  (`#[serde(default)]` → старые сообщения читаются как `Managed`; `model:
+  Option<String>` уже было). `sampling` теперь фильтруется.
+- **`SamplingConfig::retain_supported(provider)`** (`entities/sampling.rs`): копия
+  конфига с обнулёнными (`None`) полями, недоступными в режиме провайдера — **зеркало
+  wire-диалекта** через существующий `supported_sampling_fields` (тот же источник
+  истины, что у UI настроек и `get/set_sampling`; сериализационный round-trip с
+  `retain` по ключам, как `filter_to_supported` в introspection). Для локального
+  (`None`) — весь настраиваемый набор; облако — строгие подмножества.
+- **`EngineSettings::active_model_name()`** (`shared/config.rs`): имя активной модели
+  по режиму (managed — базовое имя GGUF без пути/`.gguf`; external/облако —
+  `model_name`). `screens/chat.rs::model_meta` отрефакторен на него (убрано дублирование
+  вывода имени модели — подпись ленты и снимок метаданных берут имя из одного места).
+- **Проводка**: `GenSpawn` получил `engine_mode`/`model_name` (снимок из
+  `config.engine` на старте хода), `finalize_message` их принимает и строит метаданные
+  с `retain_supported(mode.cloud_provider())`.
+- **Тесты**: entity (`retain_supported` роняет `top_k`/`thinking` для OpenAI, оставляет
+  для локального; Claude оставляет `thinking`, роняет `temperature`); config
+  (`active_model_name` по режимам, пустое имя = None); оркестратор
+  (`assistant_metadata_records_mode_model_and_filtered_sampling` — облачный режим →
+  метаданные несут `mode=openai`, `model`, а `top_k` из семплинга обнулён).
+  **755 тестов зелёные** (+3), clippy/fmt чисты.
 
 ### Отложено за пределы M3
 - **Сворачивание/выделение per-message** и tool-блоки в ленте — сейчас «мысли»
