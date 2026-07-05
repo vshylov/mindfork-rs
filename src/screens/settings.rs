@@ -411,6 +411,8 @@ enum FieldId {
     NotesRecallIncludesSelf,
     // Интерфейс
     ITheme,
+    /// Режим совместимости со старыми терминалами (эмодзи → безопасные глифы).
+    ICompat,
     ISpell,
     IDicts,
     /// Подтверждение перед `Ctrl+R`/`Ctrl+E` (необратимые операции).
@@ -774,6 +776,11 @@ impl SettingsScreen {
                 FieldKind::Choice(theme_label(i.theme)),
             ),
             row(
+                FieldId::ICompat,
+                "Совместимость со старым терминалом",
+                FieldKind::Toggle(i.terminal_compat),
+            ),
+            row(
                 FieldId::ISpell,
                 "Спелл-чек",
                 FieldKind::Toggle(i.spellcheck_enabled),
@@ -1111,6 +1118,9 @@ impl SettingsScreen {
                 self.config.tools.python_enabled = !self.config.tools.python_enabled
             }
             FieldId::TFs => self.config.tools.fs_enabled = !self.config.tools.fs_enabled,
+            FieldId::ICompat => {
+                self.config.interface.terminal_compat = !self.config.interface.terminal_compat
+            }
             FieldId::ISpell => {
                 self.config.interface.spellcheck_enabled = !self.config.interface.spellcheck_enabled
             }
@@ -1499,9 +1509,15 @@ impl SettingsScreen {
 
     // ---------- отрисовка ----------
 
+    /// Палитра по рабочей копии конфига: тема + режим совместимости терминала.
+    fn palette(&self) -> Palette {
+        Palette::for_theme(self.config.interface.theme)
+            .with_compat(self.config.interface.terminal_compat)
+    }
+
     pub fn render(&mut self, frame: &mut Frame) {
         let area = frame.area();
-        let palette = Palette::for_theme(self.config.interface.theme);
+        let palette = self.palette();
         let mut footer = vec![Span::raw("")];
         for (key, desc) in [
             ("Tab", "секция"),
@@ -1516,7 +1532,7 @@ impl SettingsScreen {
             footer.push(Span::styled(format!(" {desc}  "), palette.muted_style()));
         }
         let block = palette
-            .panel("⚙  Настройки", true)
+            .panel(format!("{}Настройки", palette.glyphs().settings_icon), true)
             .title_bottom(Line::from(footer));
         let inner = block.inner(area);
         frame.render_widget(Clear, area);
@@ -1547,7 +1563,7 @@ impl SettingsScreen {
             // притеняет фон, чтобы не сливаться; компактные однострочные полосы —
             // нет (правка на месте).
             if editor.multiline {
-                dim_background(frame);
+                dim_background(frame, &palette);
             }
             frame.render_widget(Clear, popup);
             editor
@@ -1557,7 +1573,7 @@ impl SettingsScreen {
     }
 
     fn render_menu(&self, frame: &mut Frame, area: Rect) {
-        let palette = Palette::for_theme(self.config.interface.theme);
+        let palette = self.palette();
         let focused = self.focus == Focus::Menu;
         // Активная секция помечается цветным рейлом и насыщенным заголовком вне
         // зависимости от фокуса; выбор клавиатурой подсвечивает List highlight.
@@ -1584,9 +1600,9 @@ impl SettingsScreen {
             .border_style(palette.border_style(false))
             .title(Span::styled(
                 if focused {
-                    " ▸ Секции "
+                    format!(" {} Секции ", palette.glyphs().collapsed)
                 } else {
-                    " Секции "
+                    " Секции ".to_string()
                 },
                 palette.muted_style(),
             ));
@@ -1622,7 +1638,7 @@ impl SettingsScreen {
             .max()
             .unwrap_or(0)
             .max(28);
-        let palette = Palette::for_theme(self.config.interface.theme);
+        let palette = self.palette();
         let items: Vec<ListItem> = fields
             .iter()
             .map(|f| ListItem::new(render_field_line(f, label_col, &palette)))
@@ -1630,7 +1646,10 @@ impl SettingsScreen {
         let block = Block::default()
             .borders(Borders::NONE)
             .title(Line::from(vec![
-                Span::styled(" ◆ ", Style::new().fg(palette.assistant)),
+                Span::styled(
+                    format!(" {} ", palette.glyphs().title_marker),
+                    Style::new().fg(palette.assistant),
+                ),
                 Span::styled(
                     format!("{} ", self.section().title()),
                     Style::new().fg(palette.text).bold(),
@@ -1831,6 +1850,12 @@ fn field_description(id: FieldId) -> Option<&'static str> {
             "Показывать наблюдения «о себе» (@self) в общем note_recall — с пометкой \
              [о себе]. По умолчанию выключено: память о себе ≠ память о собеседнике. \
              Включение смешивает выдачу (модель увидит свои наблюдения при поиске заметок).",
+        ),
+        FieldId::ICompat => Some(
+            "Режим совместимости со старыми эмуляторами терминала (conhost Windows 10 \
+             и т.п.): эмодзи и редкие символы заменяются на простые глифы, рамки — \
+             прямые, спиннер — ASCII, затемнение фона попапов — цветом. Включите, \
+             если вместо иконок видны квадраты-«тофу».",
         ),
         FieldId::IConfirmKeys => Some(
             "Спрашивать подтверждение перед перегенерацией (Ctrl+R) и удалением последнего \
@@ -2403,6 +2428,22 @@ mod tests {
             Some(SettingsIntent::SaveConfig(c)) => assert!(!c.tools.web_enabled),
             other => panic!("ожидался SaveConfig, получено {other:?}"),
         }
+    }
+
+    #[test]
+    fn interface_has_terminal_compat_toggle() {
+        let mut s = screen();
+        // Поле есть в секции «Интерфейс», сразу после темы.
+        let rows = s.interface_fields();
+        assert!(rows.iter().any(|r| r.id == FieldId::ICompat));
+        // Переключение сохраняет конфиг с поднятым флагом…
+        match s.toggle_field(FieldId::ICompat) {
+            Some(SettingsIntent::SaveConfig(c)) => assert!(c.interface.terminal_compat),
+            other => panic!("ожидался SaveConfig, получено {other:?}"),
+        }
+        // …и палитра рабочей копии тут же переходит на компат-набор глифов.
+        assert!(s.palette().compat);
+        assert!(field_description(FieldId::ICompat).is_some());
     }
 
     #[test]

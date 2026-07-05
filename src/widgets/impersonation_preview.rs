@@ -8,17 +8,15 @@
 use ratatui::Frame;
 use ratatui::layout::Rect;
 use ratatui::text::{Line, Text};
-use ratatui::widgets::{Block, BorderType, Borders, Paragraph};
+use ratatui::widgets::{Block, Borders, Paragraph};
 
 use crate::shared::theme::Palette;
 use crate::shared::wrap::wrap_ranges;
 
-/// Кадры спиннера «идёт генерация» (как у индикатора RAG).
-const SPINNER: &[char] = &['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
-
 /// Рисует предпросмотр имперсонации в `area`. `text` — накопленный текст реплики,
 /// `tick` — счётчик кадров для анимации спиннера, `done` — генерация завершена
-/// (спиннер гаснет, подсказка меняется).
+/// (спиннер гаснет, подсказка меняется). Кадры спиннера — из набора глифов
+/// палитры (Брайль; в режиме совместимости — ASCII).
 pub fn render(
     frame: &mut Frame,
     area: Rect,
@@ -30,12 +28,13 @@ pub fn render(
     let hint = if done {
         " имперсонация · готово ".to_string()
     } else {
-        let spinner = SPINNER[(tick / 2) % SPINNER.len()];
+        let frames = palette.glyphs().spinner;
+        let spinner = frames[(tick / 2) % frames.len()];
         format!(" {spinner} имперсонация · Esc отмена ")
     };
     let block = Block::default()
         .borders(Borders::ALL)
-        .border_type(BorderType::Rounded)
+        .border_type(palette.glyphs().border)
         .border_style(palette.accent_style())
         .title(Line::from(hint).style(palette.accent_style()));
 

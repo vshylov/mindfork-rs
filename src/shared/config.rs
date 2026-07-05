@@ -662,6 +662,12 @@ pub struct InterfaceSettings {
     /// последнего обмена (`Ctrl+E`) — обе операции необратимы в UI. По умолчанию
     /// выключено (комбинации срабатывают сразу). См. spec §11.7.
     pub confirm_destructive_keys: bool,
+    /// Режим совместимости со старыми эмуляторами терминала (conhost Windows 10
+    /// и т.п.): вместо эмодзи и редких символов Юникода — глифы из безопасного
+    /// набора (WGL4/ASCII), прямые рамки вместо скруглённых, ASCII-спиннер,
+    /// затемнение фона попапов цветом вместо `DIM`. По умолчанию выключен.
+    /// См. spec §11.6 и [`crate::shared::theme::GlyphSet`].
+    pub terminal_compat: bool,
 }
 
 impl Default for InterfaceSettings {
@@ -671,6 +677,7 @@ impl Default for InterfaceSettings {
             spellcheck_enabled: true,
             selected_dictionaries: Vec::new(),
             confirm_destructive_keys: false,
+            terminal_compat: false,
         }
     }
 }
@@ -810,6 +817,8 @@ mod tests {
         assert_eq!(c.rag.chunk_max_chars, DEFAULT_CHUNK_MAX_CHARS);
         assert!(c.interface.spellcheck_enabled);
         assert_eq!(c.interface.theme, Theme::Auto);
+        // Режим совместимости со старым терминалом по умолчанию выключен.
+        assert!(!c.interface.terminal_compat);
         // Копирование переписки: по умолчанию только текст (все флаги выключены).
         assert!(!c.copy.copy_thoughts);
         assert!(!c.copy.copy_tool_calls);
@@ -991,6 +1000,7 @@ mod tests {
                 spellcheck_enabled: false,
                 selected_dictionaries: vec!["en_US".into(), "ru_RU".into()],
                 confirm_destructive_keys: true,
+                terminal_compat: true,
             },
             ..Default::default()
         };

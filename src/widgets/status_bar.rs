@@ -130,7 +130,10 @@ fn lines(
 
     if generating {
         state.push(sep());
-        state.push(Span::styled("⟳ генерация…", palette.accent_style()));
+        state.push(Span::styled(
+            format!("{} генерация…", palette.glyphs().busy),
+            palette.accent_style(),
+        ));
     }
     // Суммарный счётчик токенов (переписка + ответ): ярко во время генерации (растёт
     // live), приглушённо после (итог последнего хода). Помечается `~`, пока переписка
@@ -151,10 +154,13 @@ fn lines(
         }
     }
     // Тихий индикатор фоновой задачи (авто-рефлексия/консолидация) — приглушённо,
-    // глиф `✻` шириной 1 колонка (раскладка сетки хоткеев не «съезжает»).
+    // глиф `✻` (компат — `*`) шириной 1 колонка (раскладка сетки не «съезжает»).
     if let Some(hint) = background {
         state.push(sep());
-        state.push(Span::styled(format!("✻ {hint}"), muted));
+        state.push(Span::styled(
+            format!("{} {hint}", palette.glyphs().background),
+            muted,
+        ));
     }
     let state_w = spans_width(&state);
 
@@ -212,13 +218,15 @@ fn lines(
 }
 
 /// Глиф и цвет статуса сервера для чипа строки статуса. Глифы шириной 1 колонка
-/// (без эмодзи) — раскладка строки от них не «съезжает».
+/// (без эмодзи) — раскладка строки от них не «съезжает». Готовность — `●` в обоих
+/// наборах (WGL4-безопасен); «подключение»/«нет связи» в компат-режиме — `○`/`×`.
 fn status_glyph(status: &ServerStatus, palette: &Palette) -> (&'static str, Color) {
+    let glyphs = palette.glyphs();
     match status {
         ServerStatus::Ready => ("●", palette.success),
-        ServerStatus::Connecting => ("◐", palette.warning),
-        ServerStatus::NotConfigured => ("✕", palette.warning),
-        ServerStatus::Disconnected(_) => ("✕", palette.error),
+        ServerStatus::Connecting => (glyphs.status_connecting, palette.warning),
+        ServerStatus::NotConfigured => (glyphs.status_off, palette.warning),
+        ServerStatus::Disconnected(_) => (glyphs.status_off, palette.error),
     }
 }
 
@@ -435,6 +443,41 @@ mod tests {
             t.contains("чат") && !t.contains("эмб") && !t.contains("имп"),
             "{t}"
         );
+    }
+
+    #[test]
+    fn compat_palette_swaps_chip_and_activity_glyphs() {
+        // В режиме совместимости: «подключение» — `○`, обрыв — `×`, генерация — `»`,
+        // фоновая задача — `*`; готовность остаётся `●` (WGL4-безопасен).
+        let compat = Palette::default().with_compat(true);
+        let flat_compat = |statuses: &ServerStatuses, generating: bool| -> String {
+            lines(
+                200,
+                statuses,
+                generating,
+                0,
+                None,
+                false,
+                false,
+                Some("рефлексия"),
+                &compat,
+            )
+            .iter()
+            .flat_map(|l| l.spans.iter())
+            .map(|s| s.content.as_ref())
+            .collect()
+        };
+        let t = flat_compat(&only_chat(ServerStatus::Connecting), true);
+        assert!(t.contains("○ чат"), "компат-глиф подключения: {t}");
+        assert!(t.contains("» генерация"), "компат-глиф генерации: {t}");
+        assert!(t.contains("* рефлексия"), "компат-глиф фоновой задачи: {t}");
+        for banned in ['◐', '⟳', '✻'] {
+            assert!(!t.contains(banned), "остался {banned}: {t}");
+        }
+        let t = flat_compat(&only_chat(ServerStatus::Disconnected("boom".into())), false);
+        assert!(t.contains("× чат"), "компат-глиф обрыва: {t}");
+        let t = flat_compat(&ready(), false);
+        assert!(t.contains("● чат"), "готовность остаётся ●: {t}");
     }
 
     #[test]

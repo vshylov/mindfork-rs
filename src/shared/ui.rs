@@ -13,13 +13,25 @@ use crate::shared::theme::Palette;
 /// `Clear` затем сбрасывает ячейки попапа к дефолтному (не приглушённому) стилю,
 /// так что притеняется только фон, а сам попап остаётся ярким.
 ///
-/// Эффект `DIM` терминало-зависим (Windows Terminal поддерживает).
-pub fn dim_background(frame: &mut Frame) {
+/// Эффект `DIM` терминало-зависим (Windows Terminal поддерживает, conhost
+/// Windows 10 — нет), поэтому в режиме совместимости (`palette.compat`, spec
+/// §11.6) фон притеняется **цветом**: fg всех ячеек → `palette.muted` (плюс
+/// снимается `BOLD` — в 16-цветном маппинге он даёт «яркий» вариант и свёл бы
+/// притенение на нет).
+pub fn dim_background(frame: &mut Frame, palette: &Palette) {
     let area = frame.area();
+    let compat = palette.compat;
+    let muted = palette.muted;
     let buf = frame.buffer_mut();
     for y in area.top()..area.bottom() {
         for x in area.left()..area.right() {
-            buf[(x, y)].modifier |= Modifier::DIM;
+            let cell = &mut buf[(x, y)];
+            if compat {
+                cell.fg = muted;
+                cell.modifier.remove(Modifier::BOLD);
+            } else {
+                cell.modifier |= Modifier::DIM;
+            }
         }
     }
 }
@@ -130,6 +142,26 @@ mod tests {
         term.draw(|f| {
             let zero = Rect::new(0, 0, 0, 0);
             render_scrollbar(f, zero, 10, 2, 0, false, &palette);
+        })
+        .unwrap();
+    }
+
+    #[test]
+    fn dim_background_uses_color_in_compat_mode() {
+        let mut term = Terminal::new(TestBackend::new(4, 2)).unwrap();
+        // Обычный режим — модификатор DIM на ячейках.
+        term.draw(|f| {
+            dim_background(f, &Palette::default());
+            assert!(f.buffer_mut()[(0, 0)].modifier.contains(Modifier::DIM));
+        })
+        .unwrap();
+        // Режим совместимости — приглушённый цвет вместо DIM (conhost его не умеет).
+        let compat = Palette::default().with_compat(true);
+        term.draw(|f| {
+            dim_background(f, &compat);
+            let cell = f.buffer_mut()[(0, 0)].clone();
+            assert_eq!(cell.fg, compat.muted);
+            assert!(!cell.modifier.contains(Modifier::DIM));
         })
         .unwrap();
     }
