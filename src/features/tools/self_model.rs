@@ -43,16 +43,19 @@ pub fn is_self_model_tool(name: &str) -> bool {
 /// дублировались в двух местах и уже слегка разъехались; здесь они одни (этап 6
 /// доводки). Интерактивная рубрика инструмента `reflect` намеренно **не** отсюда — она
 /// иного жанра (вопросы, а не императив), но покрывает те же темы.
-pub const POLICY_CORE: &str = "Когда что-то устойчивое изменилось — о тебе, о собеседнике или о твоих целях — \
-     зафиксируй это инструментами: update_self_model (описание себя — интегрируй прежнее \
-     с новым, не переписывай с нуля; веди цели по #id — закрывай выполненные и \
-     неактуальные, а не только ставь новые), update_user_model (черты/интересы \
-     собеседника — add_/remove_, не перетирая прежнее), add_insight (наблюдение или \
-     противоречие прозой — оно сохранится как заметка «о себе»). Мимолётное (настроение, \
-     разовая реакция) — в add_insight, не в модель собеседника. Если наблюдение почти \
-     повторяет прежнее (add_insight покажет похожие) — перепиши то через note_revise или \
-     замести note_supersede, а не плоди почти-дубль. Точность важнее угодливости: \
-     фиксируй то, что верно, а не что польстит.";
+pub const POLICY_CORE: &str = "Куда что писать. summary (update_self_model) — компактный \
+     рабочий снимок: кто ты, что ценишь, как работаешь; держи его кратким, при правке \
+     интегрируй и СОКРАЩАЙ, а не только дописывай, и перед правкой прочти его целиком \
+     через get_self_model (в промпте он может быть усечён). Событийные выводы — что и \
+     когда ты понял(а), разрешённые вопросы, эпизоды, противоречия — записывай add_insight, \
+     ДАЖЕ ЕСЛИ они устойчивы: наблюдение не теряется (всплывает по релевантности к теме), \
+     связывается и консолидируется, а описание себя не раздувается. Мимолётное (настроение, \
+     разовая реакция) — тоже в add_insight, не в модель собеседника. Цели веди по #id — \
+     закрывай выполненные и неактуальные (update_self_model), а не только ставь новые. \
+     Черты/интересы собеседника — update_user_model (add_/remove_, не перетирая прежнее). \
+     Если наблюдение почти повторяет прежнее (add_insight покажет похожие) — перепиши то \
+     через note_revise или замести note_supersede, а не плоди почти-дубль. Точность важнее \
+     угодливости: фиксируй то, что верно, а не что польстит.";
 
 /// Нейтральный к персоне «протокол ведения модели» — [`POLICY_CORE`] в обрамлении «ты
 /// сам ведёшь эту модель». Подмешивается в системный промпт хода поверх любой персоны
@@ -104,6 +107,13 @@ fn render_self_read(ctx: &ToolContext, m: &SelfModel) -> String {
     }
     if let Some(block) = notes::cited_sources_block(ctx, &ids) {
         out.push_str(&block);
+    }
+    // Мягкие ворота размера описания (этап 2): если summary разрослось — подсказка
+    // сократить. Видна в get_self_model/reflect и авто-рефлексии (та начинает с
+    // get_self_model). См. docs/summary-as-snapshot.md.
+    if let Some(hint) = m.summary_fill_hint(ctx.self_model_params.summary_target_chars) {
+        out.push_str("\n\n");
+        out.push_str(&hint);
     }
     out
 }
@@ -225,7 +235,10 @@ impl Tool for Reflect {
         let out = format!(
             "Текущая модель себя:\n{}{overview}\n\nВопросы для размышления:\n\
              - Что устойчивого я понял(а) о себе? Уточни update_self_model.summary — \
-             интегрируй прежнее с новым, не переписывай с нуля.\n\
+             компактный снимок (кто я, что ценю, как работаю); интегрируй и сокращай, \
+             а не только дописывай.\n\
+             - Не разрослось ли описание себя? Событийные выводы «что и когда понял» из \
+             него — в наблюдения (add_insight), в summary оставь суть.\n\
              - Цели: пройди по активным по #id — какие выполнены (complete_goals) или \
              неактуальны (abandon_goals)? появились ли новые (add_goals)?\n\
              - Что устойчивого узнал(а) о собеседнике? update_user_model правит списки по \
@@ -261,9 +274,10 @@ impl Tool for AddInsight {
     }
     fn description(&self) -> String {
         "Записать короткое наблюдение/инсайт о себе, разговоре или собеседнике в свой \
-         нарратив (историю «я во времени»). Сюда же — замеченные противоречия или \
-         внутренние напряжения, простой прозой. Используй для того, что стоит \
-         помнить со временем."
+         нарратив (историю «я во времени»). Сюда же — событийные выводы «что и когда я \
+         понял(а)», разрешённые вопросы, эпизоды, замеченные противоречия — ДАЖЕ ЕСЛИ они \
+         устойчивы: наблюдение всплывает по релевантности к теме и не раздувает описание \
+         себя (в отличие от summary). Используй для того, что стоит помнить со временем."
             .into()
     }
     fn parameters(&self) -> serde_json::Value {
@@ -316,11 +330,12 @@ impl Tool for UpdateSelfModel {
         UPDATE_SELF_MODEL_ID.into()
     }
     fn description(&self) -> String {
-        "Обновить «модель себя»: уточнить описание себя (summary — интегрируй прежнее с \
-         новым, а не переписывай с нуля), добавить цели (add_goals), отметить \
-         выполненные (complete_goals) или неактуальные (abandon_goals) — по #id или \
-         полному id из get_self_model. Веди цели: закрывай достигнутые, не только \
-         ставь новые."
+        "Обновить «модель себя»: уточнить описание себя (summary — компактный снимок: \
+         кто ты, что ценишь, как работаешь; интегрируй и СОКРАЩАЙ, а не только дописывай; \
+         событийные выводы «что и когда понял» — в add_insight, не сюда), добавить цели \
+         (add_goals), отметить выполненные (complete_goals) или неактуальные \
+         (abandon_goals) — по #id или полному id из get_self_model. Веди цели: закрывай \
+         достигнутые, не только ставь новые."
             .into()
     }
     fn parameters(&self) -> serde_json::Value {
@@ -341,6 +356,14 @@ impl Tool for UpdateSelfModel {
         // доступа к storage/async).
         let mut unresolved: Vec<String> = Vec::new();
         let mut scars: Vec<String> = Vec::new();
+        // Менялось ли описание себя — для строки размера в эхе (ворота размера, этап 2).
+        let mut summary_changed = false;
+        // Дельты правки для компактного эха (этап 4): что реально добавлено/закрыто —
+        // вместо полного render_full (тот остаётся у get_self_model). Цели называем
+        // #id — теми же ручками, по которым их потом закрывать.
+        let mut added_goals: Vec<(String, uuid::Uuid)> = Vec::new();
+        let mut completed: Vec<uuid::Uuid> = Vec::new();
+        let mut abandoned: Vec<uuid::Uuid> = Vec::new();
         let params = ctx.self_model_params;
         let (model, changed) = ctx.storage.db().self_model_update(ctx.profile_id, |m| {
             let mut changed = false;
@@ -349,23 +372,40 @@ impl Tool for UpdateSelfModel {
                 if m.summary != s {
                     m.summary = s;
                     changed = true;
+                    summary_changed = true;
                 }
             }
             for g in str_array(&args, "add_goals") {
+                let before = m.goals.len();
                 m.add_goal(g);
-                changed = true;
+                // add_goal игнорирует пустые — фиксируем только реально добавленное.
+                if m.goals.len() != before {
+                    let goal = m.goals.last().expect("только что добавлена");
+                    added_goals.push((goal.description.clone(), goal.id));
+                    changed = true;
+                }
             }
             // Цели закрываются по #id/полному id — резолвим ручку среди целей модели.
             for h in str_array(&args, "complete_goals") {
                 match m.match_goal(&h) {
-                    GoalMatch::One(id) => changed |= m.set_goal_status(id, GoalStatus::Completed),
+                    GoalMatch::One(id) => {
+                        if m.set_goal_status(id, GoalStatus::Completed) {
+                            completed.push(id);
+                            changed = true;
+                        }
+                    }
                     GoalMatch::None => unresolved.push(h),
                     GoalMatch::Ambiguous => unresolved.push(format!("{h} (неоднозначно)")),
                 }
             }
             for h in str_array(&args, "abandon_goals") {
                 match m.match_goal(&h) {
-                    GoalMatch::One(id) => changed |= m.set_goal_status(id, GoalStatus::Abandoned),
+                    GoalMatch::One(id) => {
+                        if m.set_goal_status(id, GoalStatus::Abandoned) {
+                            abandoned.push(id);
+                            changed = true;
+                        }
+                    }
                     GoalMatch::None => unresolved.push(h),
                     GoalMatch::Ambiguous => unresolved.push(format!("{h} (неоднозначно)")),
                 }
@@ -393,10 +433,46 @@ impl Tool for UpdateSelfModel {
             }
             return Ok(ToolOutcome::text(msg));
         }
-        let mut msg = format!(
-            "Модель себя обновлена.\n{}",
-            model.render_full(Utc::now(), &recent_segments(ctx))
-        );
+        // Дельта-эхо (этап 4): только изменённое, без полного render_full (полное чтение
+        // — у get_self_model). Экономит токены и не «заякоривает» модель на жанре эссе.
+        use crate::entities::self_model::short_id;
+        let mut msg = String::from("Модель себя обновлена.");
+        // Обратная связь о размере описания (этап 2): всегда при правке summary, чтобы
+        // модель видела рост даже до превышения ориентира. См. docs/summary-as-snapshot.md.
+        if summary_changed {
+            msg.push_str(&format!(
+                "\nОписание: {} симв. (ориентир ≤ {}).",
+                model.summary.chars().count(),
+                params.summary_target_chars
+            ));
+        }
+        if !added_goals.is_empty() {
+            let list: Vec<String> = added_goals
+                .iter()
+                .map(|(d, id)| format!("#{} {d}", short_id(id)))
+                .collect();
+            msg.push_str(&format!("\nДобавлены цели: {}.", list.join("; ")));
+        }
+        if !completed.is_empty() {
+            let ids: Vec<String> = completed
+                .iter()
+                .map(|id| format!("#{}", short_id(id)))
+                .collect();
+            msg.push_str(&format!("\nЗакрыты выполненными: {}.", ids.join(", ")));
+        }
+        if !abandoned.is_empty() {
+            let ids: Vec<String> = abandoned
+                .iter()
+                .map(|id| format!("#{}", short_id(id)))
+                .collect();
+            msg.push_str(&format!("\nПомечены неактуальными: {}.", ids.join(", ")));
+        }
+        if !scars.is_empty() {
+            msg.push_str(&format!(
+                "\nСтарые закрытые цели свёрнуты в наблюдения: {}.",
+                scars.len()
+            ));
+        }
         if !unresolved.is_empty() {
             msg.push_str(&format!("\n(Не найдены цели: {}.)", unresolved.join(", ")));
         }
@@ -520,10 +596,30 @@ impl Tool for UpdateUserModel {
         }
         let dup_pairs = near_duplicate_traits(ctx, &added_traits, &existing_before_traits).await;
 
-        let mut msg = format!(
-            "Модель собеседника обновлена.\n{}",
-            model.render_full(Utc::now(), &recent_segments(ctx))
-        );
+        // Дельта-эхо (этап 4): компактные итоговые списки модели собеседника вместо
+        // полного render_full (полное чтение — у get_self_model). Списки коротки по
+        // построению (merge с дедупом), поэтому показываем их целиком.
+        let mut msg = String::from("Модель собеседника обновлена.");
+        let u = &model.user_model;
+        if !u.perceived_traits.is_empty() {
+            msg.push_str(&format!(
+                "\nЧерты теперь: {}.",
+                u.perceived_traits.join(", ")
+            ));
+        }
+        if !u.current_interests.is_empty() {
+            msg.push_str(&format!(
+                "\nИнтересы теперь: {}.",
+                u.current_interests.join(", ")
+            ));
+        }
+        if !u.relationship_dynamic.trim().is_empty() {
+            msg.push_str(&format!("\nОтношения: {}.", u.relationship_dynamic.trim()));
+        }
+        // Подтверждение шрама ревизии (если передан note) — виден его текст.
+        if let Some(scar) = &note_scar {
+            msg.push_str(&format!("\nПояснение сохранено наблюдением: «{scar}»."));
+        }
         // Ворота родственных черт (Шаг C): близкая по теме черта уже существует.
         // bge-m3 сближает черты по измерению (перефразы И антонимы), поэтому просим
         // модель РЕШИТЬ: это дубль (слить через remove_traits) или противоречие
@@ -593,6 +689,26 @@ mod tests {
         assert!(p.contains("угодливости"));
     }
 
+    #[test]
+    fn policy_core_routes_events_to_insights() {
+        // Этап 1 (summary — снимок, не летопись): жанровая граница проведена по оси
+        // «состояние → summary, событие-вывод → add_insight (даже устойчивое)».
+        assert!(POLICY_CORE.contains("снимок"));
+        assert!(POLICY_CORE.contains("СОКРАЩАЙ"));
+        assert!(POLICY_CORE.contains("ДАЖЕ ЕСЛИ"));
+        // Явный шаг «прочти целиком перед правкой» (защита от правки с усечённого вида).
+        assert!(POLICY_CORE.contains("прочти его целиком через get_self_model"));
+    }
+
+    #[test]
+    fn update_self_model_description_routes_events_to_insights() {
+        // Описание инструмента направляет событийные выводы в add_insight, а summary
+        // держит компактным снимком.
+        let d = UpdateSelfModel.description();
+        assert!(d.contains("снимок"));
+        assert!(d.contains("add_insight"));
+    }
+
     #[tokio::test]
     async fn get_on_empty_reports_empty() {
         let (_d, _s, ctx) = ctx_with_storage(Uuid::new_v4());
@@ -630,6 +746,112 @@ mod tests {
             .unwrap();
         assert!(got.result.contains("ценю ясность"));
         assert!(got.result.contains("помочь с проектом"));
+    }
+
+    #[tokio::test]
+    async fn update_summary_echo_shows_size() {
+        // Этап 2: эхо правки summary всегда несёт строку размера (обратная связь о росте).
+        let (_d, _s, ctx) = ctx_with_storage(Uuid::new_v4());
+        let out = UpdateSelfModel
+            .invoke(&ctx, serde_json::json!({"summary": "ценю ясность"}))
+            .await
+            .unwrap();
+        assert!(out.result.contains("Описание:"));
+        assert!(out.result.contains("симв."));
+        // Правка без summary (только цель) — строки размера нет.
+        let out = UpdateSelfModel
+            .invoke(&ctx, serde_json::json!({"add_goals": ["цель"]}))
+            .await
+            .unwrap();
+        assert!(!out.result.contains("Описание:"));
+    }
+
+    #[tokio::test]
+    async fn update_self_model_echo_is_delta_not_full() {
+        // Этап 4: эхо правки несёт дельты (#id добавленной цели), но НЕ полный текст
+        // summary (полное чтение — только у get_self_model).
+        let (_d, _s, ctx) = ctx_with_storage(Uuid::new_v4());
+        let out = UpdateSelfModel
+            .invoke(
+                &ctx,
+                serde_json::json!({
+                    "summary": "УНИКАЛЬНЫЙ_МАРКЕР_ОПИСАНИЯ",
+                    "add_goals": ["новая цель"]
+                }),
+            )
+            .await
+            .unwrap();
+        assert!(out.result.contains("Добавлены цели:"));
+        assert!(out.result.contains("новая цель"));
+        assert!(out.result.contains('#'));
+        assert!(out.result.contains("Описание:")); // строка размера (этап 2)
+        // Текст summary в эхо не попадает (нет «заякоривания» на жанре эссе).
+        assert!(!out.result.contains("УНИКАЛЬНЫЙ_МАРКЕР_ОПИСАНИЯ"));
+    }
+
+    #[tokio::test]
+    async fn update_self_model_echo_shows_closed_goal_id() {
+        // Этап 4: закрытие цели отражается в эхе её #id (та же ручка, что и для закрытия).
+        let profile = Uuid::new_v4();
+        let (_d, storage, ctx) = ctx_with_storage(profile);
+        UpdateSelfModel
+            .invoke(&ctx, serde_json::json!({"add_goals": ["цель"]}))
+            .await
+            .unwrap();
+        let id = storage.db().self_model_get(profile).unwrap().unwrap().goals[0].id;
+        let short = id.simple().to_string()[..6].to_string();
+        let out = UpdateSelfModel
+            .invoke(
+                &ctx,
+                serde_json::json!({"complete_goals": [format!("#{short}")]}),
+            )
+            .await
+            .unwrap();
+        assert!(out.result.contains("Закрыты выполненными:"));
+        assert!(out.result.contains(&format!("#{short}")));
+    }
+
+    #[tokio::test]
+    async fn update_user_model_echo_shows_final_lists() {
+        // Этап 4: эхо показывает компактные итоговые списки, не полный render_full.
+        let (_d, _s, ctx) = ctx_with_storage(Uuid::new_v4());
+        let out = UpdateUserModel
+            .invoke(
+                &ctx,
+                serde_json::json!({
+                    "add_traits": ["скептик"],
+                    "add_interests": ["Rust"],
+                    "relationship_dynamic": "рабочие"
+                }),
+            )
+            .await
+            .unwrap();
+        assert!(out.result.contains("Черты теперь: скептик"));
+        assert!(out.result.contains("Интересы теперь: Rust"));
+        assert!(out.result.contains("Отношения: рабочие"));
+    }
+
+    #[tokio::test]
+    async fn get_self_model_surfaces_summary_fill_hint_over_target() {
+        // Этап 2: раздутое описание (сверх ориентира) поднимает подсказку в чтении.
+        use crate::entities::self_model::SelfModelParams;
+        use crate::shared::config::SelfModelSettings;
+        let profile = Uuid::new_v4();
+        let (_d, _s, mut ctx) = ctx_with_storage(profile);
+        // Ориентир 5 санитизируется до пола 200 — описание берём длиннее 200 символов.
+        ctx.self_model_params = SelfModelParams::from_settings(&SelfModelSettings {
+            summary_target_chars: 5,
+            ..SelfModelSettings::default()
+        });
+        UpdateSelfModel
+            .invoke(&ctx, serde_json::json!({"summary": "я".repeat(250)}))
+            .await
+            .unwrap();
+        let out = GetSelfModel
+            .invoke(&ctx, serde_json::json!({}))
+            .await
+            .unwrap();
+        assert!(out.result.contains("Описание себя разрослось"));
     }
 
     #[tokio::test]
@@ -759,6 +981,8 @@ mod tests {
         let (_d, _s, ctx) = ctx_with_storage(Uuid::new_v4());
         let out = Reflect.invoke(&ctx, serde_json::json!({})).await.unwrap();
         assert!(out.result.contains("Вопросы для размышления"));
+        // Этап 1: рубрика спрашивает про разрастание описания себя.
+        assert!(out.result.contains("Не разрослось ли описание себя"));
         assert!(out.effects.is_empty());
         // Без наблюдений (< 2) обзор self-консолидации не подмешивается.
         assert!(!out.result.contains("Обзор наблюдений"));

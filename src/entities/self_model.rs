@@ -26,6 +26,9 @@ pub struct SelfModelParams {
     pub prompt_cap: usize,
     /// Сколько закрытых целей держать в структуре (старейшие сверх — в нарратив-шрам).
     pub max_closed_goals: usize,
+    /// Ориентир размера описания себя (summary): сверх него [`SelfModel::summary_fill_hint`]
+    /// возвращает мягкую подсказку сократить. Ворота, не потолок.
+    pub summary_target_chars: usize,
 }
 
 impl Default for SelfModelParams {
@@ -45,6 +48,7 @@ impl SelfModelParams {
             narrative_in_prompt: s.narrative_in_prompt.min(max_narrative),
             prompt_cap: s.prompt_cap.max(100),
             max_closed_goals: s.max_closed_goals.max(1),
+            summary_target_chars: s.summary_target_chars.max(200),
         }
     }
 }
@@ -121,6 +125,14 @@ pub enum GoalMatch {
 /// неоднозначность.
 fn short_hex(id: &Uuid) -> String {
     id.simple().to_string()[..6].to_string()
+}
+
+/// Публичный короткий id для эха инструментов (первые 6 hex UUID, тот же формат, что
+/// `#id` в чтениях `render_full`). Обёртка над [`short_hex`] — чтобы дельта-эхо правок
+/// (этап 4, docs/summary-as-snapshot.md) называло цели теми же ручками, по которым их
+/// закрывают.
+pub fn short_id(id: &Uuid) -> String {
+    short_hex(id)
 }
 
 /// Проставляет/снимает `closed_at` цели по её текущему статусу: при уходе из
@@ -406,6 +418,23 @@ impl SelfModel {
         scars
     }
 
+    /// Мягкая подсказка о разросшемся описании себя: `None`, пока `summary` в
+    /// пределах ориентира `target`; иначе текст с текущим размером и ориентиром,
+    /// направляющий вынести событийное в наблюдения. Прямой аналог бывшего
+    /// `narrative_fill_hint`, но для `summary` — единственного органа, у которого не
+    /// было обратной связи о размере. Ворота, а не потолок: ничего не усекает и не
+    /// блокирует. См. docs/summary-as-snapshot.md (этап 2).
+    pub fn summary_fill_hint(&self, target: usize) -> Option<String> {
+        let n = self.summary.chars().count();
+        (n > target).then(|| {
+            format!(
+                "Описание себя разрослось: {n} симв. при ориентире ≤ {target} — при \
+                 ближайшей правке сократи его до сути, событийные выводы вынеси в \
+                 наблюдения (add_insight)."
+            )
+        })
+    }
+
     /// Компактный человекочитаемый блок для инъекции в системный промпт.
     /// `None`, если структурная часть пуста **и** нет наблюдений. Наблюдения
     /// (`recent` — self-заметки, новейшие первыми, готовит вызывающий) идут в блок в
@@ -425,7 +454,11 @@ impl SelfModel {
         let mut out = String::from("[Твоя модель себя]\n");
         if !self.summary.trim().is_empty() {
             out.push_str("О себе: ");
-            out.push_str(self.summary.trim());
+            // Посекционный бюджет (этап 3): описание — не более половины лимита, чтобы
+            // раздутый summary не вытеснял из инъекции цели/собеседника/наблюдения.
+            // Финальное усечение всего блока ниже остаётся страховкой.
+            // См. docs/summary-as-snapshot.md.
+            out.push_str(&truncate_chars_word(self.summary.trim(), max_chars / 2));
             out.push('\n');
         }
         let active: Vec<&Goal> = self.active_goals().collect();
@@ -662,6 +695,26 @@ fn truncate_chars(s: &str, max_chars: usize) -> String {
     out
 }
 
+/// Усечение по границе слова: как [`truncate_chars`], но откатывается к последнему
+/// пробелу в пределах лимита, чтобы не рвать слово посреди («…» внутри слова читается
+/// как повреждённая память). Если пробела нет (одно длинное слово) — режет по символу.
+/// Результат, как и у [`truncate_chars`], не длиннее `max_chars` символов.
+fn truncate_chars_word(s: &str, max_chars: usize) -> String {
+    if s.chars().count() <= max_chars {
+        return s.to_string();
+    }
+    let take = max_chars.saturating_sub(1);
+    let head: String = s.chars().take(take).collect();
+    // rfind даёт байтовый индекс пробела (на границе символа — валиден для среза).
+    let base = match head.rfind(char::is_whitespace) {
+        Some(idx) => head[..idx].trim_end(),
+        None => head.as_str(),
+    };
+    // Откат съел всё (лидирующий пробел) — падаем обратно на посимвольный head.
+    let base = if base.is_empty() { head.as_str() } else { base };
+    format!("{base}…")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -784,6 +837,30 @@ mod tests {
     }
 
     #[test]
+    fn summary_target_sanitized_to_floor() {
+        // Крошечный ориентир → пол 200 (защита от бессмысленно малого значения).
+        let params = SelfModelParams::from_settings(&SelfModelSettings {
+            summary_target_chars: 10,
+            ..SelfModelSettings::default()
+        });
+        assert_eq!(params.summary_target_chars, 200);
+    }
+
+    #[test]
+    fn summary_fill_hint_only_over_target() {
+        let mut m = SelfModel::new(Uuid::new_v4());
+        m.summary = "к".repeat(50);
+        // В пределах ориентира — подсказки нет.
+        assert!(m.summary_fill_hint(100).is_none());
+        // Сверх ориентира — подсказка с числами.
+        m.summary = "к".repeat(150);
+        let hint = m.summary_fill_hint(100).unwrap();
+        assert!(hint.contains("150"));
+        assert!(hint.contains("100"));
+        assert!(hint.contains("add_insight"));
+    }
+
+    #[test]
     fn completed_goals_not_rendered() {
         let mut m = SelfModel::new(Uuid::new_v4());
         m.add_goal("старая цель");
@@ -837,6 +914,59 @@ mod tests {
         assert!(!m.apply_edit(SelfModelEdit::Clear));
         // несуществующие id — no-op
         assert!(!m.apply_edit(SelfModelEdit::DeleteGoal(Uuid::new_v4())));
+    }
+
+    #[test]
+    fn bloated_summary_does_not_starve_sections() {
+        // Этап 3: раздутое описание не вытесняет из инъекции цели/собеседника/наблюдения
+        // (посекционный бюджет: summary ≤ половины лимита).
+        let mut m = SelfModel::new(Uuid::new_v4());
+        m.summary = "слово ".repeat(400); // ~2400 симв., много слов
+        m.add_goal("активная цель");
+        m.user_model.perceived_traits = vec!["внимательный".into()];
+        let recent = [seg("свежее наблюдение о стиле")];
+
+        let r = m.render_for_prompt(1200, 3, now(), &recent).unwrap();
+        // Все секции присутствуют, несмотря на раздутое описание.
+        assert!(r.contains("Активные цели:"), "цели вытеснены: {r}");
+        assert!(r.contains("О собеседнике:"), "собеседник вытеснен: {r}");
+        assert!(
+            r.contains("Недавние наблюдения:"),
+            "наблюдения вытеснены: {r}"
+        );
+        // Блок в пределах лимита; описание усечено (сверх половины бюджета).
+        assert!(r.chars().count() <= 1200);
+        assert!(r.contains("О себе: "));
+    }
+
+    #[test]
+    fn small_summary_not_truncated() {
+        // Небольшое описание проходит без «…» (поведение прежнее для нераздутых моделей).
+        let mut m = SelfModel::new(Uuid::new_v4());
+        m.summary = "ценю ясность и краткость".into();
+        let r = m
+            .render_for_prompt(1200, p().narrative_in_prompt, now(), &[])
+            .unwrap();
+        assert!(r.contains("О себе: ценю ясность и краткость"));
+        assert!(!r.contains('…'));
+    }
+
+    #[test]
+    fn truncate_word_does_not_split_word() {
+        // Усечение по границе слова не рвёт слово посреди.
+        let s = "первое второе третье четвёртое пятое";
+        let out = truncate_chars_word(s, 20);
+        assert!(out.ends_with('…'));
+        assert!(out.chars().count() <= 20);
+        // Обрезка на границе слова: без «…» результат — префикс из целых слов.
+        let body = out.trim_end_matches('…');
+        assert!(s.starts_with(body.trim_end()));
+        assert!(!body.trim_end().is_empty());
+        // Одно длинное слово без пробелов — падаем на посимвольное усечение.
+        let long = "я".repeat(50);
+        let out = truncate_chars_word(&long, 10);
+        assert_eq!(out.chars().count(), 10);
+        assert!(out.ends_with('…'));
     }
 
     #[test]

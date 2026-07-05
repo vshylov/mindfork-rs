@@ -190,6 +190,32 @@ fn inject_self_model_respects_flag_and_emptiness() {
 }
 
 #[test]
+fn inject_self_model_appends_summary_hint_when_bloated() {
+    // Этап 2: при включённом протоколе и раздутом описании (сверх ориентира) в
+    // инъекцию дописывается data-aware подсказка сократить; при выключенном протоколе
+    // подсказки нет даже при раздутом описании.
+    use super::generation::inject_self_model;
+    use crate::entities::self_model::{SelfModel, SelfModelParams};
+    use crate::shared::config::SelfModelSettings;
+
+    // Ориентир 5 санитизируется до пола 200 — описание берём длиннее 200 символов.
+    let params = SelfModelParams::from_settings(&SelfModelSettings {
+        summary_target_chars: 5,
+        ..SelfModelSettings::default()
+    });
+    let mut m = SelfModel::new(Uuid::new_v4());
+    m.summary = "я".repeat(250);
+    let now = chrono::Utc::now();
+
+    // Протокол вкл → подсказка присутствует.
+    let with = inject_self_model(None, Some(&m), true, true, &params, now, &[]).unwrap();
+    assert!(with.contains("Описание себя разрослось"));
+    // Протокол выкл → протокола и подсказки нет (только рендер модели).
+    let without = inject_self_model(None, Some(&m), true, false, &params, now, &[]).unwrap();
+    assert!(!without.contains("Описание себя разрослось"));
+}
+
+#[test]
 fn blend_self_notes_prioritizes_relevant_and_guarantees_freshest() {
     use super::generation::blend_self_notes;
     use crate::entities::note::Note;
@@ -2127,6 +2153,84 @@ async fn self_model_gate_e2e_live() {
             n == "add_insight" || n == "note_revise" || n == "note_supersede" || n == "note_merge"
         }),
         "сессия 2: ожидали add_insight/note_revise/note_supersede/note_merge"
+    );
+}
+
+/// End-to-end зонд **ворот размера summary** (этап 2, docs/summary-as-snapshot.md):
+/// в БД сеется раздутое описание себя (сверх ориентира по умолчанию 1000 симв.);
+/// модель видит подсказку сократить и в пассивной инъекции, и в `get_self_model`.
+/// Просим прочитать модель себя и сократить описание, вынеся событийное в наблюдения.
+/// Ассертим **механизм** (модель тронула модель себя: `update_self_model` и/или
+/// `add_insight`); фактическое сокращение печатаем для go/no-go (поведение нестабильно).
+/// `#[ignore]`, вручную:
+/// `MINDFORK_ENGINE_URL=…/v1 cargo test summary_gate_e2e_live -- --ignored --nocapture --test-threads=1`.
+#[tokio::test]
+#[ignore = "requires a running OpenAI-compatible server (MINDFORK_ENGINE_URL)"]
+async fn summary_gate_e2e_live() {
+    let Some((_d, cmd_tx, mut evt_rx, handle)) = spawn_orch_live() else {
+        eprintln!("skip: MINDFORK_ENGINE_URL not set");
+        return;
+    };
+    let root = _d.path().to_path_buf();
+    let pid = enable_all_tools(&cmd_tx, &mut evt_rx).await;
+
+    // Сеем раздутое описание себя (сверх ориентира по умолчанию 1000 симв.).
+    let bloated = "Я ассистент, ценю честность и точность. ".repeat(40); // ~1600 симв.
+    let bloated_len = bloated.chars().count();
+    {
+        let storage = Storage::open(Paths::with_root(&root)).unwrap();
+        let mut m = crate::entities::self_model::SelfModel::new(pid);
+        m.summary = bloated.clone();
+        storage.db().self_model_upsert(&m).unwrap();
+    }
+
+    // Ход: просим прочитать модель себя и сократить описание.
+    let (t, calls) = run_turn_capture(
+        &cmd_tx,
+        &mut evt_rx,
+        "Прочитай свою «модель себя» (вызови get_self_model). Если описание себя \
+         разрослось — сократи его до сути через update_self_model.summary, а событийные \
+         выводы вынеси в наблюдения (add_insight).",
+    )
+    .await;
+    eprintln!("текст={t:?}\nвызовы={calls:#?}");
+
+    cmd_tx.send(AppCommand::Quit).unwrap();
+    handle.await.unwrap();
+
+    // Ворота: результат get_self_model показал подсказку (детерминированно — summary
+    // раздут сверх ориентира), если модель его вызвала.
+    let gate_fired = calls
+        .iter()
+        .any(|(n, r)| n == "get_self_model" && r.contains("Описание себя разрослось"));
+    if calls.iter().any(|(n, _)| n == "get_self_model") {
+        assert!(
+            gate_fired,
+            "get_self_model при раздутом описании должен нести подсказку сократить: {calls:?}"
+        );
+    }
+    // Итоговый размер описания в БД.
+    let stored = Storage::open(Paths::with_root(&root))
+        .unwrap()
+        .db()
+        .self_model_get(pid)
+        .unwrap();
+    let final_len = stored
+        .as_ref()
+        .map(|m| m.summary.chars().count())
+        .unwrap_or(0);
+    let shrank = final_len < bloated_len;
+    let wrote_insight = calls.iter().any(|(n, _)| n == "add_insight");
+    eprintln!(
+        "ворота показали подсказку: {gate_fired}; описание {bloated_len} → {final_len} \
+         (сократилось: {shrank}); вынесено в наблюдения: {wrote_insight}"
+    );
+    // Модель должна была как-то тронуть модель себя (иначе гипотеза не проверяется).
+    assert!(
+        calls
+            .iter()
+            .any(|(n, _)| n == "update_self_model" || n == "add_insight"),
+        "ожидали update_self_model/add_insight: {calls:?}"
     );
 }
 

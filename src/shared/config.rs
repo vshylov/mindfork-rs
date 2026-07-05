@@ -597,6 +597,10 @@ pub const DEFAULT_SELF_MODEL_MAINTENANCE_PROTOCOL: bool = true;
 /// Сколько закрытых целей держать в структуре по умолчанию (старейшие сверх этого
 /// сворачиваются в нарратив-шрам и удаляются — потолок закрытых целей).
 pub const DEFAULT_SELF_MODEL_MAX_CLOSED_GOALS: usize = 10;
+/// Ориентир размера описания себя (summary) в символах по умолчанию. Сверх него
+/// инструменты и протокол ведения мягко предлагают сократить описание (это ворота,
+/// а не потолок — данные не усекаются). См. docs/summary-as-snapshot.md (этап 2).
+pub const DEFAULT_SELF_MODEL_SUMMARY_TARGET: usize = 1000;
 
 /// Настройки «модели себя» (SelfModel): размеры нарратива и объём инъекции в
 /// системный промпт. См. [docs/history/self-model-mvp.md] и spec §9.3.
@@ -612,6 +616,10 @@ pub struct SelfModelSettings {
     /// Сколько закрытых (выполненных/неактуальных) целей держать в структуре;
     /// старейшие сверх этого сворачиваются в нарратив-шрам и удаляются.
     pub max_closed_goals: usize,
+    /// Ориентир размера описания себя (summary) в символах: сверх него инструменты и
+    /// протокол ведения мягко предлагают сократить описание. Ворота, не потолок —
+    /// данные не усекаются. См. docs/summary-as-snapshot.md (этап 2).
+    pub summary_target_chars: usize,
     /// Авто-рефлексия: запускать фоновую рефлексию каждые N ответов ассистента в
     /// чате (модель сама обновляет «модель себя»). `0` — выключено (по умолчанию).
     /// Срабатывает только в профилях с включёнными инструментами модели себя.
@@ -631,6 +639,7 @@ impl Default for SelfModelSettings {
             narrative_in_prompt: DEFAULT_SELF_MODEL_NARRATIVE_IN_PROMPT,
             prompt_cap: DEFAULT_SELF_MODEL_PROMPT_CAP,
             max_closed_goals: DEFAULT_SELF_MODEL_MAX_CLOSED_GOALS,
+            summary_target_chars: DEFAULT_SELF_MODEL_SUMMARY_TARGET,
             auto_reflect_every: 0,
             maintenance_protocol: DEFAULT_SELF_MODEL_MAINTENANCE_PROTOCOL,
         }
@@ -852,6 +861,10 @@ mod tests {
         assert_eq!(
             c.self_model.max_closed_goals,
             DEFAULT_SELF_MODEL_MAX_CLOSED_GOALS
+        );
+        assert_eq!(
+            c.self_model.summary_target_chars,
+            DEFAULT_SELF_MODEL_SUMMARY_TARGET
         );
         // Протокол ведения модели себя включён по умолчанию, авто-рефлексия — нет.
         assert!(c.self_model.maintenance_protocol);
