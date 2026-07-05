@@ -33,6 +33,8 @@ use crate::widgets::input_box::InputBox;
 pub enum SettingsIntent {
     /// Закрыть экран настроек (вернуться в чат).
     Close,
+    /// Выйти из приложения (`Ctrl+C`).
+    Quit,
     /// Сохранить конфигурацию (правка любой секции, кроме профилей).
     SaveConfig(Box<AppConfig>),
     /// Сохранить правки профиля.
@@ -882,6 +884,15 @@ impl SettingsScreen {
         if key.kind != KeyEventKind::Press {
             return None;
         }
+        // Ctrl+C — выход из приложения, откуда угодно на экране настроек (в т.ч. из
+        // редактора поля). Матчим по «физической» латинской клавише — работает при
+        // любой раскладке (см. shared::keys).
+        if key.modifiers.contains(KeyModifiers::CONTROL)
+            && let KeyCode::Char(c) = key.code
+            && keys::physical_char(c) == 'c'
+        {
+            return Some(SettingsIntent::Quit);
+        }
         if self.editor.is_some() {
             return self.handle_editor_key(key);
         }
@@ -1498,7 +1509,8 @@ impl SettingsScreen {
             ("Enter", "правка"),
             ("Space", "тумблер"),
             ("←→", "выбор"),
-            ("Esc", "выход"),
+            ("Esc", "назад"),
+            ("Ctrl+C", "выход"),
         ] {
             footer.push(palette.keycap(key));
             footer.push(Span::styled(format!(" {desc}  "), palette.muted_style()));
@@ -2330,6 +2342,19 @@ mod tests {
     fn esc_closes() {
         let mut s = screen();
         assert_eq!(s.handle_key(key(KeyCode::Esc)), Some(SettingsIntent::Close));
+    }
+
+    #[test]
+    fn ctrl_c_quits() {
+        let mut s = screen();
+        assert_eq!(s.handle_key(ctrl('c')), Some(SettingsIntent::Quit));
+        // И при открытом редакторе поля — тоже выход.
+        s.editor = Some(Editor {
+            field: FieldId::XBinary,
+            input: InputBox::new(),
+            multiline: false,
+        });
+        assert_eq!(s.handle_key(ctrl('c')), Some(SettingsIntent::Quit));
     }
 
     #[test]

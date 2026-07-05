@@ -659,8 +659,10 @@ fn process_input_batch(
                 {
                     quit = true;
                 }
-                if let Some(intent) = settings_intent {
-                    dispatch_settings(intent, cmd_tx, active);
+                if let Some(intent) = settings_intent
+                    && dispatch_settings(intent, cmd_tx, active)
+                {
+                    quit = true;
                 }
                 if let Some(intent) = self_model_intent
                     && dispatch_self_model(intent, cmd_tx, active)
@@ -793,16 +795,18 @@ fn dispatch_chat_list(
 }
 
 /// Транслирует намерение экрана настроек в команду (или закрывает его).
+/// Возвращает `true` для [`SettingsIntent::Quit`] (петля завершается).
 fn dispatch_settings(
     intent: SettingsIntent,
     cmd_tx: &UnboundedSender<AppCommand>,
     active: &mut ActiveScreen,
-) {
+) -> bool {
     let command = match intent {
         SettingsIntent::Close => {
             *active = ActiveScreen::Chat;
-            return;
+            return false;
         }
+        SettingsIntent::Quit => return true,
         SettingsIntent::SaveConfig(config) => AppCommand::UpdateConfig(config),
         SettingsIntent::SaveProfile { id, edit } => AppCommand::UpdateProfile { id, edit },
         SettingsIntent::CreateProfile {
@@ -815,6 +819,7 @@ fn dispatch_settings(
         SettingsIntent::DeleteProfile(id) => AppCommand::DeleteProfile(id),
     };
     let _ = cmd_tx.send(command);
+    false
 }
 
 /// Транслирует намерение экрана просмотра модели себя: закрытие возвращает к чату,
