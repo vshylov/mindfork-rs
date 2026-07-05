@@ -147,10 +147,13 @@ impl SelfModelScreen {
         // Цели (с маркером статуса) + строка добавления. Дата — в локальной зоне:
         // для активной — создание, для закрытой — момент закрытия (`closed_at`).
         for g in &m.goals {
+            // Активная — `●` (WGL4-безопасен, без замены); закрытые — из набора
+            // глифов палитры (компат: `√`/`×`).
+            let glyphs = p.glyphs();
             let (marker, style) = match g.status {
-                GoalStatus::Active => ("● ", p.success_style()),
-                GoalStatus::Completed => ("✓ ", p.muted_style()),
-                GoalStatus::Abandoned => ("✗ ", p.muted_style()),
+                GoalStatus::Active => ("● ".to_string(), p.success_style()),
+                GoalStatus::Completed => (format!("{} ", glyphs.ok), p.muted_style()),
+                GoalStatus::Abandoned => (format!("{} ", glyphs.failed), p.muted_style()),
             };
             let date = g
                 .closed_at
@@ -397,7 +400,10 @@ impl SelfModelScreen {
     pub fn render(&mut self, frame: &mut Frame) {
         let area = frame.area();
         let palette = self.palette;
-        let block = palette.panel("✦ Модель себя", true);
+        let block = palette.panel(
+            format!("{} Модель себя", palette.glyphs().assistant_icon),
+            true,
+        );
         let inner = block.inner(area);
         frame.render_widget(block, area);
 
@@ -499,7 +505,7 @@ impl SelfModelScreen {
         if let Some(editor) = self.editor.as_mut() {
             let popup = centered_rect(80, 50, area);
             let title = "правка · Shift+Enter перенос · Enter ок · Esc отмена";
-            dim_background(frame);
+            dim_background(frame, &palette);
             frame.render_widget(Clear, popup);
             editor
                 .input

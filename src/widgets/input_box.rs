@@ -11,7 +11,7 @@ use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 use ratatui::layout::{Margin, Rect};
 use ratatui::style::{Style, Stylize};
 use ratatui::text::{Line, Span, Text};
-use ratatui::widgets::{Block, BorderType, Borders, Paragraph};
+use ratatui::widgets::{Block, Borders, Paragraph};
 
 use crate::shared::theme::Palette;
 use crate::shared::ui::render_scrollbar;
@@ -629,7 +629,7 @@ impl InputBox {
     ) {
         let block = Block::default()
             .borders(Borders::ALL)
-            .border_type(BorderType::Rounded)
+            .border_type(palette.glyphs().border)
             .border_style(palette.border_style(focused))
             .title(Span::styled(format!(" {title} "), palette.muted_style()));
         let full_inner = block.inner(area);
@@ -647,7 +647,10 @@ impl InputBox {
                 ..full_inner
             };
             frame.render_widget(
-                Paragraph::new(Line::from(Span::styled("❯ ", prompt_style))),
+                Paragraph::new(Line::from(Span::styled(
+                    palette.glyphs().prompt,
+                    prompt_style,
+                ))),
                 prompt_area,
             );
         }

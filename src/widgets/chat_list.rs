@@ -9,7 +9,7 @@ use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::style::{Style, Stylize};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, BorderType, Borders, Clear, List, ListItem, ListState, Paragraph};
+use ratatui::widgets::{Block, Borders, Clear, List, ListItem, ListState, Paragraph};
 use uuid::Uuid;
 
 use crate::entities::chat::ChatSummary;
@@ -376,7 +376,8 @@ impl ChatListState {
 
         // Панель со списком: скруглённая рамка, титул слева, число диалогов справа.
         let count = self.all.len();
-        let block = palette.panel("▤ Чаты", true).title(
+        let title = format!("{} Чаты", palette.glyphs().chats_icon);
+        let block = palette.panel(title, true).title(
             Line::from(Span::styled(
                 format!(" {count} диалог(ов) "),
                 palette.muted_style(),
@@ -444,13 +445,13 @@ impl ChatListState {
         // --- область статуса операции: ошибка (красным) или подтверждение (успехом) ---
         if let Some(err) = &self.error {
             let line = Line::from(vec![
-                Span::from("⚠ ").fg(palette.error),
+                Span::from(format!("{} ", palette.glyphs().warn)).fg(palette.error),
                 Span::from(err.clone()).fg(palette.error),
             ]);
             frame.render_widget(Paragraph::new(line), chunks[2]);
         } else if let Some(notice) = &self.notice {
             let line = Line::from(vec![
-                Span::from("✓ ").fg(palette.success),
+                Span::from(format!("{} ", palette.glyphs().ok)).fg(palette.success),
                 Span::from(notice.clone()).fg(palette.success),
             ]);
             frame.render_widget(Paragraph::new(line), chunks[2]);
@@ -462,9 +463,10 @@ impl ChatListState {
 
     /// Рисует строку поиска в рамке; справа — «клавиша» `/` (приглашение фокуса).
     fn render_search(&self, frame: &mut Frame, area: Rect, palette: &Palette) {
+        let glyphs = palette.glyphs();
         let block = Block::default()
             .borders(Borders::ALL)
-            .border_type(BorderType::Rounded)
+            .border_type(glyphs.border)
             .border_style(palette.border_style(true));
         let inner = block.inner(area);
         frame.render_widget(block, area);
@@ -474,9 +476,9 @@ impl ChatListState {
             Layout::horizontal([Constraint::Min(1), Constraint::Length(3)]).areas(inner);
 
         let mut spans = vec![
-            Span::styled("⌕ ", palette.muted_style()),
+            Span::styled(format!("{} ", glyphs.search), palette.muted_style()),
             Span::styled(self.query.clone(), Style::new().fg(palette.text)),
-            Span::styled("▏", palette.muted_style()),
+            Span::styled(glyphs.caret, palette.muted_style()),
         ];
         if self.query.is_empty() {
             spans.push(Span::styled("Поиск по чатам…", palette.muted_style()));

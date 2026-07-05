@@ -360,13 +360,16 @@ fn apply_event(
                 ActiveScreen::Settings(settings) => {
                     settings.refresh((*config).clone(), profiles.clone())
                 }
-                // Тема могла смениться — обновим палитру открытых экранов.
-                ActiveScreen::ChatList(list) => {
-                    list.set_palette(Palette::for_theme(config.interface.theme))
-                }
-                ActiveScreen::SelfModel(view) => {
-                    view.set_palette(Palette::for_theme(config.interface.theme))
-                }
+                // Тема/режим совместимости могли смениться — обновим палитру
+                // открытых экранов.
+                ActiveScreen::ChatList(list) => list.set_palette(
+                    Palette::for_theme(config.interface.theme)
+                        .with_compat(config.interface.terminal_compat),
+                ),
+                ActiveScreen::SelfModel(view) => view.set_palette(
+                    Palette::for_theme(config.interface.theme)
+                        .with_compat(config.interface.terminal_compat),
+                ),
                 ActiveScreen::Chat => {}
             }
             screen.set_settings(*config, profiles);

@@ -11,7 +11,7 @@ use ratatui::Frame;
 use ratatui::layout::{Margin, Rect};
 use ratatui::style::{Color, Modifier, Style, Stylize};
 use ratatui::text::{Line, Span, Text};
-use ratatui::widgets::{Block, BorderType, Borders, Paragraph};
+use ratatui::widgets::{Block, Borders, Paragraph};
 
 use crate::entities::message::{Message, MessageRole};
 use crate::shared::markdown;
@@ -234,12 +234,13 @@ impl MessageFeed {
         palette: &Palette,
     ) {
         // Скруглённая панель: слева титул с маркером ◆, справа — мета (модель/ctx).
+        let glyphs = palette.glyphs();
         let mut block = Block::default()
             .borders(Borders::ALL)
-            .border_type(BorderType::Rounded)
+            .border_type(glyphs.border)
             .border_style(palette.border_style(false))
             .title(Line::from(vec![
-                Span::styled(" ◆ ", palette.muted_style()),
+                Span::styled(format!(" {} ", glyphs.title_marker), palette.muted_style()),
                 Span::styled(format!("{title} "), Style::new().fg(palette.text)),
             ]));
         if !meta.is_empty() {
@@ -317,13 +318,20 @@ impl MessageFeed {
             };
             // Тело сообщения собираем без рейла, в ширину `inner`.
             let mut body: Vec<Line<'static>> = Vec::new();
+            let glyphs = palette.glyphs();
             match item.role {
                 FeedRole::User => {
-                    body.push(role_header("❯ ВЫ", palette.user_soft));
+                    body.push(role_header(
+                        &format!("{} ВЫ", glyphs.user_icon),
+                        palette.user_soft,
+                    ));
                     push_body(&mut body, item, palette, inner);
                 }
                 FeedRole::Assistant => {
-                    body.push(role_header("✦ АССИСТЕНТ", palette.assistant_soft));
+                    body.push(role_header(
+                        &format!("{} АССИСТЕНТ", glyphs.assistant_icon),
+                        palette.assistant_soft,
+                    ));
                     push_thoughts(&mut body, &item.thoughts, self.show_thoughts, palette);
                     push_assistant_body(&mut body, item, palette, inner);
                 }
@@ -384,10 +392,11 @@ fn push_thoughts(
         return;
     }
     let muted = palette.muted_style();
+    let glyphs = palette.glyphs();
     if !expanded {
         let count = thoughts.lines().count();
         lines.push(Line::from(vec![
-            Span::styled("▸ ", muted),
+            Span::styled(format!("{} ", glyphs.collapsed), muted),
             Span::styled("мысли", muted.add_modifier(Modifier::ITALIC)),
             Span::styled(format!(" · {count} стр. · "), muted),
             palette.keycap("Ctrl+T"),
@@ -395,7 +404,7 @@ fn push_thoughts(
         return;
     }
     lines.push(Line::from(Span::styled(
-        "▾ мысли",
+        format!("{} мысли", glyphs.expanded),
         muted.add_modifier(Modifier::ITALIC),
     )));
     for t in thoughts.lines() {
@@ -490,8 +499,17 @@ fn push_tool(lines: &mut Vec<Line<'static>>, tool: &FeedToolCall, palette: &Pale
         format!("{}({})", tool.name, tool.arguments)
     };
     // Первый ряд с иконкой ⚒ (эмодзи-глиф шириной 2 — за ним два пробела, чтобы он
-    // не сливался с именем), продолжения выравниваем под имя.
-    push_wrapped(lines, "⚒  ", "   ", &header, width, head_style);
+    // не сливался с именем), продолжения выравниваем под имя. В режиме
+    // совместимости — ASCII-префикс той же роли (см. GlyphSet::tool_head).
+    let glyphs = palette.glyphs();
+    push_wrapped(
+        lines,
+        glyphs.tool_head,
+        glyphs.tool_cont,
+        &header,
+        width,
+        head_style,
+    );
     if !tool.result.is_empty() {
         let body_style = Style::default().fg(palette.muted);
         push_wrapped(lines, "└ ", "  ", &tool.result, width, body_style);
@@ -593,6 +611,36 @@ mod tests {
             .collect();
         assert!(joined.contains("⚒") && joined.contains("note_save"));
         assert!(joined.contains("Заметка сохранена"));
+    }
+
+    #[test]
+    fn compat_palette_renders_without_emoji() {
+        // Режим совместимости: заголовки ролей, свёрнутые «мысли» и tool-карточка
+        // рисуются безопасными глифами — эмодзи/редких символов в ленте нет.
+        let feed = MessageFeed::new();
+        let mut m = msg(FeedRole::Assistant, "готово", "думал");
+        m.tools.push(FeedToolCall {
+            name: "note_save".into(),
+            arguments: "{}".into(),
+            result: "ок".into(),
+            text_offset: m.text.len(),
+        });
+        let user = msg(FeedRole::User, "привет", "");
+        let compat = Palette::default().with_compat(true);
+        let lines = feed.build_lines(&[user, m], &compat, 80);
+        let joined: String = lines
+            .iter()
+            .flat_map(|l| l.spans.iter().map(|s| s.content.as_ref()))
+            .collect();
+        assert!(joined.contains("* АССИСТЕНТ") && joined.contains("> ВЫ"));
+        assert!(
+            joined.contains("# note_save"),
+            "ASCII tool-префикс: {joined}"
+        );
+        assert!(joined.contains("► мысли"), "компат-пилюля мыслей: {joined}");
+        for banned in ['✦', '❯', '⚒', '▸'] {
+            assert!(!joined.contains(banned), "остался {banned}: {joined}");
+        }
     }
 
     #[test]

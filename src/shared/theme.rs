@@ -11,6 +11,11 @@
 //! Атрибуты-модификаторы (`dim`/`bold`/`reversed`/`underlined`) тема-независимы
 //! (адаптируются терминалом) и остаются в виджетах как есть — палитра задаёт
 //! только сами цвета.
+//!
+//! Помимо цветов палитра несёт **набор глифов** ([`GlyphSet`], метод
+//! [`Palette::glyphs`]): в режиме совместимости со старыми терминалами
+//! (`config.interface.terminal_compat`, spec §11.6) декоративные эмодзи и редкие
+//! символы Юникода заменяются на безопасные, а скруглённые рамки — на прямые.
 
 use ratatui::style::{Color, Style};
 use ratatui::text::{Line, Span};
@@ -18,6 +23,129 @@ use ratatui::widgets::{Block, BorderType, Borders};
 
 use crate::shared::config::Theme;
 use crate::shared::wrap;
+
+/// Набор глифов интерфейса. [`UNICODE_GLYPHS`] — вид редизайна (эмодзи и
+/// декоративные символы, требуют современный терминал/шрифт с фолбэком:
+/// Windows Terminal и т.п.); [`COMPAT_GLYPHS`] — режим совместимости со старыми
+/// эмуляторами (conhost Windows 10 и др.), где эмодзи и редкие глифы рисуются
+/// квадратами-«тофу».
+///
+/// Ориентир совместимого набора — **WGL4** (базовый репертуар шрифтов Windows:
+/// Consolas/Lucida Console его покрывают) плюс ASCII: поэтому здесь допустимы
+/// `●`/`○`/`►`/`▼`/`♦`/`√`/`×`/`≡`/`»`, а также box-drawing (`─│└┼`), блоки
+/// (`▌█░`) и стрелки (`←↑↓→`) — они остаются и в других местах UI (рейлы,
+/// таблицы markdown, скроллбар) без замены. Вне набора — эмодзи (`⚒`, `✻`, `➕`),
+/// «редкие» символы (`✦❯▸▾◆▤⌨⚙⌕▏✕⚠✓✗⟳`), Брайль-спиннер (`⠋⠙…`) и
+/// арк-сегменты скруглённых рамок (`╭╮╰╯`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct GlyphSet {
+    /// Тип рамки панелей: скруглённая / прямая (арк-сегменты `╭╮╰╯` есть не во
+    /// всех консольных шрифтах).
+    pub border: BorderType,
+    /// Иконка ассистента («✦») — заголовок реплики, титулы панелей.
+    pub assistant_icon: &'static str,
+    /// Иконка пользователя («❯») — заголовок реплики.
+    pub user_icon: &'static str,
+    /// Колонка приглашения поля ввода («❯ »; ширина 2 колонки в обоих наборах,
+    /// см. `input_box::PROMPT_W`).
+    pub prompt: &'static str,
+    /// Префикс первого ряда tool-карточки («⚒  »: эмодзи рисуется шириной 2,
+    /// поэтому за ним два пробела — см. `message_feed::push_tool`).
+    pub tool_head: &'static str,
+    /// Отступ продолжений tool-карточки — той же **счётной** ширины, что
+    /// [`Self::tool_head`] (выравнивание переносов).
+    pub tool_cont: &'static str,
+    /// Маркер свёрнутого блока («▸») — пилюля «мыслей», титул «Секции».
+    pub collapsed: &'static str,
+    /// Маркер развёрнутого блока («▾») — блок «мыслей».
+    pub expanded: &'static str,
+    /// Маркер титула панели/секции («◆») — лента чата, секция настроек.
+    pub title_marker: &'static str,
+    /// Иконка панели списка чатов («▤»).
+    pub chats_icon: &'static str,
+    /// Иконка панели настроек («⚙  », ширина-2-эмодзи → два пробела).
+    pub settings_icon: &'static str,
+    /// Иконка попапа помощи по клавишам («⌨  », ширина-2-эмодзи → два пробела).
+    pub help_icon: &'static str,
+    /// Подтверждение/успех («✓»).
+    pub ok: &'static str,
+    /// Отказ/брошенная цель («✗»).
+    pub failed: &'static str,
+    /// Предупреждение/ошибка («⚠»).
+    pub warn: &'static str,
+    /// Статус «подключение…» в чипе сервера («◐»; готовность — `●`, он в WGL4
+    /// и не заменяется).
+    pub status_connecting: &'static str,
+    /// Статус «нет связи/не настроен» в чипе сервера («✕»).
+    pub status_off: &'static str,
+    /// Индикатор активной генерации в статус-баре («⟳»).
+    pub busy: &'static str,
+    /// Индикатор фоновой задачи в статус-баре («✻»); ширина 1 колонка — от неё
+    /// зависит раскладка сетки хоткеев.
+    pub background: &'static str,
+    /// Иконка строки поиска («⌕»).
+    pub search: &'static str,
+    /// Псевдокурсор строки поиска («▏»).
+    pub caret: &'static str,
+    /// Пункт «добавить в словарь» в подсказках орфографии («➕»).
+    pub add: &'static str,
+    /// Кадры спиннера фоновых операций (RAG-индексация, имперсонация).
+    pub spinner: &'static [char],
+}
+
+/// Глифы редизайна (по умолчанию): эмодзи и декоративные символы Юникода.
+pub static UNICODE_GLYPHS: GlyphSet = GlyphSet {
+    border: BorderType::Rounded,
+    assistant_icon: "✦",
+    user_icon: "❯",
+    prompt: "❯ ",
+    tool_head: "⚒  ",
+    tool_cont: "   ",
+    collapsed: "▸",
+    expanded: "▾",
+    title_marker: "◆",
+    chats_icon: "▤",
+    settings_icon: "⚙  ",
+    help_icon: "⌨  ",
+    ok: "✓",
+    failed: "✗",
+    warn: "⚠",
+    status_connecting: "◐",
+    status_off: "✕",
+    busy: "⟳",
+    background: "✻",
+    search: "⌕",
+    caret: "▏",
+    add: "➕",
+    spinner: &['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'],
+};
+
+/// Глифы режима совместимости: только WGL4/ASCII (см. док-коммент [`GlyphSet`]).
+pub static COMPAT_GLYPHS: GlyphSet = GlyphSet {
+    border: BorderType::Plain,
+    assistant_icon: "*",
+    user_icon: ">",
+    prompt: "> ",
+    tool_head: "# ",
+    tool_cont: "  ",
+    collapsed: "►",
+    expanded: "▼",
+    title_marker: "♦",
+    chats_icon: "≡",
+    settings_icon: "# ",
+    help_icon: "# ",
+    ok: "√",
+    failed: "×",
+    warn: "!",
+    status_connecting: "○",
+    status_off: "×",
+    busy: "»",
+    background: "*",
+    search: "?",
+    caret: "│",
+    add: "+",
+    spinner: &['|', '/', '-', '\\'],
+};
 
 /// Семантические цвета интерфейса. `Copy` — дёшево передавать в render по значению.
 /// `Hash` — палитра служит ключом кэша (напр. построенной syntect-темы подсветки
@@ -66,6 +194,11 @@ pub struct Palette {
     /// и цвет комментариев в подсветке кода: на тёмном фоне светлый, на светлом —
     /// тёмный. `Auto` считаем тёмным (типичный терминал тёмный; так было до тем).
     pub dark: bool,
+    /// Режим совместимости со старым терминалом (`config.interface.terminal_compat`):
+    /// глифы берутся из [`COMPAT_GLYPHS`] (см. [`Palette::glyphs`]), а затемнение
+    /// фона попапов идёт цветом вместо `DIM` (`shared/ui.rs::dim_background`).
+    /// Не цвет, но живёт в палитре (как `dark`): она уже протянута во все render.
+    pub compat: bool,
 }
 
 impl Palette {
@@ -105,6 +238,7 @@ impl Palette {
             keycap_bg: Color::Rgb(36, 39, 45),
             keycap_danger: Color::Rgb(226, 110, 98),
             dark: true,
+            compat: false,
         }
     }
 
@@ -130,6 +264,7 @@ impl Palette {
             keycap_bg: Color::Rgb(33, 36, 42),         // темнее прежнего #2a2d34
             keycap_danger: Color::Rgb(232, 116, 104),  // ярче error для читаемости на пилюле
             dark: true,
+            compat: false,
         }
     }
 
@@ -154,6 +289,24 @@ impl Palette {
             keycap_bg: Color::Rgb(222, 224, 228),
             keycap_danger: Color::Rgb(178, 34, 34),
             dark: false,
+            compat: false,
+        }
+    }
+
+    /// Та же палитра с выставленным режимом совместимости (builder-стиль; удобно
+    /// на месте: `Palette::for_theme(t).with_compat(flag)`).
+    pub fn with_compat(mut self, compat: bool) -> Self {
+        self.compat = compat;
+        self
+    }
+
+    /// Активный набор глифов: юникодный по умолчанию, безопасный — в режиме
+    /// совместимости со старым терминалом. См. [`GlyphSet`].
+    pub fn glyphs(&self) -> &'static GlyphSet {
+        if self.compat {
+            &COMPAT_GLYPHS
+        } else {
+            &UNICODE_GLYPHS
         }
     }
 
@@ -179,11 +332,12 @@ impl Palette {
     }
 
     /// Скруглённая панель (`Block`) с титулом и опциональным фокусом — единый
-    /// «фрейм» редизайна. Титул рисуется на верхней линии, рамка — цветом палитры.
+    /// «фрейм» редизайна. Титул рисуется на верхней линии, рамка — цветом палитры;
+    /// в режиме совместимости рамка прямая (см. [`GlyphSet::border`]).
     pub fn panel(&self, title: impl Into<String>, focused: bool) -> Block<'static> {
         Block::default()
             .borders(Borders::ALL)
-            .border_type(BorderType::Rounded)
+            .border_type(self.glyphs().border)
             .border_style(self.border_style(focused))
             .title(Span::styled(
                 format!(" {} ", title.into()),
@@ -351,5 +505,71 @@ mod tests {
         let hint = p.hint("Enter", "отправить");
         let joined: String = hint.iter().map(|s| s.content.as_ref()).collect();
         assert!(joined.contains("Enter") && joined.contains("отправить"));
+    }
+
+    #[test]
+    fn glyphs_follow_compat_flag() {
+        // По умолчанию — юникодный набор и скруглённые рамки; в режиме
+        // совместимости — безопасный набор и прямые рамки.
+        let p = Palette::default();
+        assert!(!p.compat);
+        assert_eq!(p.glyphs(), &UNICODE_GLYPHS);
+        assert_eq!(p.glyphs().border, BorderType::Rounded);
+        let c = p.with_compat(true);
+        assert_eq!(c.glyphs(), &COMPAT_GLYPHS);
+        assert_eq!(c.glyphs().border, BorderType::Plain);
+    }
+
+    #[test]
+    fn compat_glyphs_avoid_rare_symbols() {
+        // В компат-набор не должны просочиться заменяемые эмодзи/редкие символы
+        // (они и есть причина режима: старый терминал рисует их «тофу»).
+        let banned: Vec<char> = "✦❯⚒▸▾◆▤⚙⌨✓✗⚠◐✕⟳✻⌕▏➕".chars().collect();
+        let g = &COMPAT_GLYPHS;
+        let all = [
+            g.assistant_icon,
+            g.user_icon,
+            g.prompt,
+            g.tool_head,
+            g.tool_cont,
+            g.collapsed,
+            g.expanded,
+            g.title_marker,
+            g.chats_icon,
+            g.settings_icon,
+            g.help_icon,
+            g.ok,
+            g.failed,
+            g.warn,
+            g.status_connecting,
+            g.status_off,
+            g.busy,
+            g.background,
+            g.search,
+            g.caret,
+            g.add,
+        ];
+        for s in all {
+            for ch in s.chars() {
+                assert!(
+                    !banned.contains(&ch),
+                    "редкий символ в компат-наборе: {ch:?}"
+                );
+            }
+        }
+        // Спиннер — чистый ASCII (Брайль-кадры старые консоли не рисуют).
+        assert!(g.spinner.iter().all(|c| c.is_ascii()), "{:?}", g.spinner);
+    }
+
+    #[test]
+    fn tool_head_and_cont_widths_match_in_both_sets() {
+        // Продолжения tool-карточки выравниваются под первый ряд — счётные ширины
+        // префиксов должны совпадать в обоих наборах (см. message_feed::push_tool).
+        for g in [&UNICODE_GLYPHS, &COMPAT_GLYPHS] {
+            assert_eq!(str_width(g.tool_head), str_width(g.tool_cont));
+        }
+        // Колонка приглашения ввода — всегда 2 колонки (input_box::PROMPT_W).
+        assert_eq!(str_width(UNICODE_GLYPHS.prompt), 2);
+        assert_eq!(str_width(COMPAT_GLYPHS.prompt), 2);
     }
 }

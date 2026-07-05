@@ -78,7 +78,13 @@ impl ProfileListState {
         frame.render_widget(Clear, popup);
 
         let block = palette
-            .panel("✦ Новый чат · выбор профиля", true)
+            .panel(
+                format!(
+                    "{} Новый чат · выбор профиля",
+                    palette.glyphs().assistant_icon
+                ),
+                true,
+            )
             .title_bottom(Line::from(Span::styled(
                 " ↑↓ выбор · Enter создать · Esc отмена ",
                 palette.muted_style(),

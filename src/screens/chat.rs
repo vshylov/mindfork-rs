@@ -46,9 +46,6 @@ const WHEEL_SCROLL: usize = 3;
 /// Задержка дебаунса спелл-чека: слово не флагуется, пока пользователь печатает.
 const SPELL_DEBOUNCE: Duration = Duration::from_millis(300);
 
-/// Кадры спиннера индикатора фоновой индексации RAG.
-const SPINNER: &[char] = &['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
-
 /// Намерение пользователя, которое исполняет `app` (транслирует в `AppCommand`).
 #[derive(Debug, Clone, PartialEq)]
 pub enum ChatIntent {
@@ -302,9 +299,10 @@ impl ChatScreen {
     }
 
     /// Сохраняет снимок настроек (для открытия экрана настроек по `Ctrl+P`) и
-    /// обновляет палитру темы.
+    /// обновляет палитру темы (вместе с режимом совместимости терминала).
     pub fn set_settings(&mut self, config: AppConfig, profiles: Vec<Profile>) {
-        self.palette = Palette::for_theme(config.interface.theme);
+        self.palette = Palette::for_theme(config.interface.theme)
+            .with_compat(config.interface.terminal_compat);
         self.confirm_destructive = config.interface.confirm_destructive_keys;
         self.settings_snapshot = Some((config, profiles));
     }
@@ -603,7 +601,8 @@ impl ChatScreen {
     }
 
     pub fn push_error(&mut self, message: &str) {
-        self.push_note(&format!("⚠ {message}"));
+        let warn = self.palette.glyphs().warn;
+        self.push_note(&format!("{warn} {message}"));
     }
 
     // ---------- имперсонация (Ctrl+U, spec §11.8) ----------
@@ -1304,7 +1303,9 @@ impl ChatScreen {
             .render(frame, feed_area, &title, &meta, &self.feed, &self.palette);
 
         if let Some(banner) = &self.rag {
-            let spinner = SPINNER[(banner.tick / 2) % SPINNER.len()];
+            // Кадры спиннера — из набора глифов палитры (Брайль; компат — ASCII).
+            let frames = self.palette.glyphs().spinner;
+            let spinner = frames[(banner.tick / 2) % frames.len()];
             let line = Line::from(vec![
                 Span::styled(format!("{spinner} RAG: "), self.palette.accent_style()),
                 Span::from(banner.text.clone()),
@@ -1361,19 +1362,19 @@ impl ChatScreen {
             overlay.render(frame, frame.area(), &self.palette);
         }
         if let Some(popup) = &self.suggest {
-            dim_background(frame);
+            dim_background(frame, &self.palette);
             render_suggest(frame, popup, &self.palette);
         }
         if let Some(picker) = &self.emoji {
-            dim_background(frame);
+            dim_background(frame, &self.palette);
             picker.render(frame, frame.area(), &self.palette);
         }
         if let Some(action) = self.confirm {
-            dim_background(frame);
+            dim_background(frame, &self.palette);
             render_confirm(frame, action, &self.palette);
         }
         if self.show_help {
-            dim_background(frame);
+            dim_background(frame, &self.palette);
             render_help(frame, &mut self.help_scroll, &self.palette);
         }
     }
@@ -1472,7 +1473,10 @@ fn render_help(frame: &mut Frame, scroll: &mut usize, palette: &Palette) {
         " Esc или любая клавиша — закрыть "
     };
     let block = palette
-        .panel("⌨  Горячие клавиши", true)
+        .panel(
+            format!("{}Горячие клавиши", palette.glyphs().help_icon),
+            true,
+        )
         .title_bottom(Line::from(Span::styled(hint, palette.muted_style())).centered());
     let lines: Vec<Line> = HELP_KEYS
         .iter()
@@ -1528,7 +1532,11 @@ fn render_suggest(frame: &mut Frame, popup: &SuggestPopup, palette: &Palette) {
                     Line::from(Span::styled(word.clone(), Style::new().fg(palette.text)))
                 }
                 SuggestItem::AddToDictionary => Line::from(
-                    Span::styled("➕ Добавить в словарь", palette.success_style()).italic(),
+                    Span::styled(
+                        format!("{} Добавить в словарь", palette.glyphs().add),
+                        palette.success_style(),
+                    )
+                    .italic(),
                 ),
             })
         })
