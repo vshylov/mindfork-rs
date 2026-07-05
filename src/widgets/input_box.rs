@@ -8,12 +8,13 @@
 
 use ratatui::Frame;
 use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
-use ratatui::layout::Rect;
+use ratatui::layout::{Margin, Rect};
 use ratatui::style::{Style, Stylize};
 use ratatui::text::{Line, Span, Text};
 use ratatui::widgets::{Block, BorderType, Borders, Paragraph};
 
 use crate::shared::theme::Palette;
+use crate::shared::ui::render_scrollbar;
 use crate::shared::wrap;
 
 /// Ширина колонки приглашения `❯ ` (в колонках) перед текстом ввода.
@@ -699,6 +700,19 @@ impl InputBox {
             Text::from(lines)
         };
         frame.render_widget(Paragraph::new(text), inner);
+
+        // Скроллбар на правой рамке — когда визуальных рядов больше, чем видно
+        // (поле выросло до потолка высоты и прокручивается). Цвет трека — как у
+        // рамки поля (она зависит от фокуса).
+        render_scrollbar(
+            frame,
+            area.inner(Margin::new(0, 1)),
+            vrows.len(),
+            visible_rows,
+            self.scroll,
+            focused,
+            palette,
+        );
 
         if focused {
             let cursor_y = inner.y + (cursor_row.saturating_sub(self.scroll)) as u16;
@@ -1569,5 +1583,35 @@ mod tests {
         let mut term = Terminal::new(TestBackend::new(12, 4)).unwrap();
         term.draw(|f| ib.render(f, f.area(), "ввод", true, &Palette::default(), false))
             .unwrap();
+    }
+
+    #[test]
+    fn scrollbar_appears_only_when_input_scrolls() {
+        use ratatui::Terminal;
+        use ratatui::backend::TestBackend;
+        // Бегунок «█» на правой рамке — только когда рядов больше видимой высоты.
+        let right_col = |term: &Terminal<TestBackend>| -> Vec<String> {
+            let buf = term.backend().buffer();
+            let area = buf.area;
+            (area.top()..area.bottom())
+                .map(|y| buf[(area.right() - 1, y)].symbol().to_string())
+                .collect()
+        };
+        let mut ib = InputBox::new();
+        ib.set_text("a\nb"); // 2 ряда во внутренней высоте 2 — помещается
+        let mut term = Terminal::new(TestBackend::new(20, 4)).unwrap();
+        term.draw(|f| ib.render(f, f.area(), "ввод", true, &Palette::default(), false))
+            .unwrap();
+        assert!(
+            !right_col(&term).iter().any(|s| s == "█"),
+            "помещающийся текст — без бегунка"
+        );
+        ib.set_text("1\n2\n3\n4\n5\n6"); // 6 рядов, видно 2 — прокрутка
+        term.draw(|f| ib.render(f, f.area(), "ввод", true, &Palette::default(), false))
+            .unwrap();
+        assert!(
+            right_col(&term).iter().any(|s| s == "█"),
+            "прокручиваемое поле — с бегунком"
+        );
     }
 }

@@ -8,7 +8,7 @@
 //! принадлежат UI-состоянию и передаются на отрисовку.
 
 use ratatui::Frame;
-use ratatui::layout::Rect;
+use ratatui::layout::{Margin, Rect};
 use ratatui::style::{Color, Modifier, Style, Stylize};
 use ratatui::text::{Line, Span, Text};
 use ratatui::widgets::{Block, BorderType, Borders, Paragraph};
@@ -16,6 +16,7 @@ use ratatui::widgets::{Block, BorderType, Borders, Paragraph};
 use crate::entities::message::{Message, MessageRole};
 use crate::shared::markdown;
 use crate::shared::theme::Palette;
+use crate::shared::ui::render_scrollbar;
 use crate::shared::wrap;
 
 /// Гуттер-рейл слева от каждой строки сообщения: цветная вертикальная черта +
@@ -273,6 +274,19 @@ impl MessageFeed {
 
         let paragraph = Paragraph::new(Text::from(lines)).scroll((self.scroll as u16, 0));
         frame.render_widget(paragraph, inner);
+
+        // Скроллбар на правой рамке панели (углы не трогаем) — только когда
+        // лента не помещается по высоте. Ширину содержимого не отнимает; рамка
+        // ленты всегда не-фокусная (см. `border_style(false)` выше).
+        render_scrollbar(
+            frame,
+            area.inner(Margin::new(0, 1)),
+            total,
+            view_h,
+            self.scroll,
+            false,
+            palette,
+        );
     }
 
     /// Собирает строки ленты: заголовки ролей, свёрнутые/развёрнутые «мысли»,
@@ -919,5 +933,35 @@ mod tests {
             )
         })
         .unwrap();
+    }
+
+    #[test]
+    fn scrollbar_appears_only_when_feed_overflows() {
+        // Бегунок «█» на правой рамке — только когда строк больше высоты ленты.
+        let right_col = |term: &Terminal<TestBackend>| -> Vec<String> {
+            let buf = term.backend().buffer();
+            let area = buf.area;
+            (area.top()..area.bottom())
+                .map(|y| buf[(area.right() - 1, y)].symbol().to_string())
+                .collect()
+        };
+        let mut feed = MessageFeed::new();
+        let mut term = Terminal::new(TestBackend::new(30, 8)).unwrap();
+        let short = vec![msg(FeedRole::User, "привет", "")];
+        term.draw(|f| feed.render(f, f.area(), "Чат", "", &short, &Palette::default()))
+            .unwrap();
+        assert!(
+            !right_col(&term).iter().any(|s| s == "█"),
+            "короткая лента — без бегунка"
+        );
+        let many: Vec<FeedMessage> = (0..30)
+            .map(|i| msg(FeedRole::User, &format!("строка {i}"), ""))
+            .collect();
+        term.draw(|f| feed.render(f, f.area(), "Чат", "", &many, &Palette::default()))
+            .unwrap();
+        assert!(
+            right_col(&term).iter().any(|s| s == "█"),
+            "переполненная лента — с бегунком"
+        );
     }
 }

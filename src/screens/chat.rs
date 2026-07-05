@@ -12,10 +12,10 @@ use ratatui::Frame;
 use ratatui::crossterm::event::{
     KeyCode, KeyEvent, KeyEventKind, KeyModifiers, MouseEvent, MouseEventKind,
 };
-use ratatui::layout::{Constraint, Flex, Layout, Rect};
+use ratatui::layout::{Constraint, Flex, Layout, Margin, Rect};
 use ratatui::style::Style;
 use ratatui::style::Stylize;
-use ratatui::text::{Line, Span};
+use ratatui::text::{Line, Span, Text};
 use ratatui::widgets::{Clear, List, ListItem, ListState, Paragraph, Wrap};
 use uuid::Uuid;
 
@@ -29,7 +29,7 @@ use crate::shared::config::AppConfig;
 use crate::shared::keys;
 use crate::shared::server::{ServerStatus, ServerStatuses};
 use crate::shared::theme::Palette;
-use crate::shared::ui::dim_background;
+use crate::shared::ui::{dim_background, render_scrollbar};
 use crate::widgets::emoji_picker::{EmojiPickerAction, EmojiPickerState};
 use crate::widgets::impersonation_preview;
 use crate::widgets::input_box::InputBox;
@@ -226,6 +226,10 @@ pub struct ChatScreen {
     settings_snapshot: Option<(AppConfig, Vec<Profile>)>,
     /// Показан ли оверлей помощи по клавишам (`F1`/`?`). См. spec §11.7.
     show_help: bool,
+    /// Прокрутка оверлея помощи (первый видимый ряд списка клавиш) — для коротких
+    /// терминалов, где весь список не помещается. Сбрасывается при открытии;
+    /// клампится к максимуму в `render_help` (высота попапа известна там).
+    help_scroll: usize,
     /// Активная палитра темы (из `config.interface.theme`). См. spec §11.6.
     palette: Palette,
     /// Включён ли захват мыши для прокрутки колесом (тумблер `Ctrl+W`). По
@@ -285,6 +289,7 @@ impl ChatScreen {
             confirm_destructive: false,
             settings_snapshot: None,
             show_help: false,
+            help_scroll: 0,
             palette: Palette::default(),
             mouse_scroll: false,
             reflecting: false,
@@ -730,9 +735,19 @@ impl ChatScreen {
         if key.kind != KeyEventKind::Press {
             return None;
         }
-        // Оверлей помощи перехватывает ввод: любая клавиша закрывает его.
+        // Оверлей помощи перехватывает ввод: ↑↓/PgUp/PgDn прокручивают список
+        // (на коротком терминале он не помещается), любая другая клавиша
+        // закрывает. Кламп прокрутки — в `render_help`.
         if self.show_help {
-            self.show_help = false;
+            match key.code {
+                KeyCode::Up => self.help_scroll = self.help_scroll.saturating_sub(1),
+                KeyCode::Down => self.help_scroll = self.help_scroll.saturating_add(1),
+                KeyCode::PageUp => self.help_scroll = self.help_scroll.saturating_sub(PAGE_SCROLL),
+                KeyCode::PageDown => {
+                    self.help_scroll = self.help_scroll.saturating_add(PAGE_SCROLL)
+                }
+                _ => self.show_help = false,
+            }
             return None;
         }
         // Во время имперсонации поле ввода скрыто (показан предпросмотр): реагируем
@@ -829,10 +844,12 @@ impl ChatScreen {
             // символ печатается). См. spec §11.7.
             (KeyCode::F(1), _) => {
                 self.show_help = true;
+                self.help_scroll = 0;
                 None
             }
             (KeyCode::Char('?'), KeyModifiers::NONE) if self.input.is_empty() => {
                 self.show_help = true;
+                self.help_scroll = 0;
                 None
             }
             // Просмотр «модели себя» активного профиля (read-only вид).
@@ -1357,7 +1374,7 @@ impl ChatScreen {
         }
         if self.show_help {
             dim_background(frame);
-            render_help(frame, &self.palette);
+            render_help(frame, &mut self.help_scroll, &self.palette);
         }
     }
 }
@@ -1425,7 +1442,10 @@ fn feed_msg_has_vs16(m: &FeedMessage) -> bool {
 }
 
 /// Рисует оверлей помощи по центру экрана: «клавиши» + приглушённые описания.
-fn render_help(frame: &mut Frame, palette: &Palette) {
+/// На коротком терминале список не помещается и прокручивается (`↑↓`/`PgUp`/
+/// `PgDn` в `handle_key`) со скроллбаром на правой рамке; `scroll` клампится
+/// здесь — только при отрисовке известна фактическая высота попапа.
+fn render_help(frame: &mut Frame, scroll: &mut usize, palette: &Palette) {
     let rows = (HELP_KEYS.len() as u16 + 2).min(frame.area().height);
     let key_width = HELP_KEYS
         .iter()
@@ -1442,14 +1462,19 @@ fn render_help(frame: &mut Frame, palette: &Palette) {
     let width = (2 + key_width + 1 + desc_width + 2 + 2) as u16;
     let area = centered_rect(width, rows, frame.area());
     frame.render_widget(Clear, area);
-    let block = palette.panel("⌨  Горячие клавиши", true).title_bottom(
-        Line::from(Span::styled(
-            " Esc или любая клавиша — закрыть ",
-            palette.muted_style(),
-        ))
-        .centered(),
-    );
-    let items: Vec<ListItem> = HELP_KEYS
+
+    let total = HELP_KEYS.len();
+    let view_h = area.height.saturating_sub(2) as usize; // минус рамка
+    *scroll = (*scroll).min(total.saturating_sub(view_h));
+    let hint = if total > view_h {
+        " ↑↓ прокрутка · Esc — закрыть "
+    } else {
+        " Esc или любая клавиша — закрыть "
+    };
+    let block = palette
+        .panel("⌨  Горячие клавиши", true)
+        .title_bottom(Line::from(Span::styled(hint, palette.muted_style())).centered());
+    let lines: Vec<Line> = HELP_KEYS
         .iter()
         .map(|(k, d)| {
             // Команды (`/rag …`) красим как команду, обычные клавиши — «клавишей».
@@ -1458,14 +1483,28 @@ fn render_help(frame: &mut Frame, palette: &Palette) {
             } else {
                 palette.keycap(*k)
             };
-            ListItem::new(Line::from(vec![
+            Line::from(vec![
                 Span::raw("  "),
                 key_span,
                 Span::styled(format!(" {d}"), Style::new().fg(palette.text)),
-            ]))
+            ])
         })
         .collect();
-    frame.render_widget(List::new(items).block(block), area);
+    frame.render_widget(
+        Paragraph::new(Text::from(lines))
+            .block(block)
+            .scroll((*scroll as u16, 0)),
+        area,
+    );
+    render_scrollbar(
+        frame,
+        area.inner(Margin::new(0, 1)),
+        total,
+        view_h,
+        *scroll,
+        true, // рамка попапа — в фокусном цвете (panel(_, true))
+        palette,
+    );
 }
 
 /// Рисует попап подсказок орфографии по центру экрана.
@@ -2088,6 +2127,52 @@ mod tests {
         s.handle_key(KeyEvent::new(KeyCode::Char('?'), KeyModifiers::NONE));
         assert!(!s.show_help);
         assert_eq!(s.input.text(), "abc?");
+    }
+
+    #[test]
+    fn help_arrow_keys_scroll_without_closing() {
+        let mut s = ChatScreen::new();
+        s.handle_key(KeyEvent::new(KeyCode::F(1), KeyModifiers::NONE));
+        assert!(s.show_help);
+        // ↑↓/PgUp/PgDn прокручивают, не закрывая справку.
+        s.handle_key(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE));
+        s.handle_key(KeyEvent::new(KeyCode::PageDown, KeyModifiers::NONE));
+        assert!(s.show_help, "прокрутка не должна закрывать справку");
+        assert_eq!(s.help_scroll, 1 + PAGE_SCROLL);
+        s.handle_key(KeyEvent::new(KeyCode::Up, KeyModifiers::NONE));
+        assert_eq!(s.help_scroll, PAGE_SCROLL);
+        s.handle_key(KeyEvent::new(KeyCode::PageUp, KeyModifiers::NONE));
+        assert_eq!(s.help_scroll, 0);
+        // Прочая клавиша закрывает; повторное открытие сбрасывает прокрутку.
+        s.help_scroll = 5;
+        s.handle_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
+        assert!(!s.show_help);
+        s.handle_key(KeyEvent::new(KeyCode::F(1), KeyModifiers::NONE));
+        assert_eq!(s.help_scroll, 0, "открытие справки сбрасывает прокрутку");
+    }
+
+    #[test]
+    fn help_scroll_clamps_and_draws_scrollbar_on_short_terminal() {
+        use ratatui::Terminal;
+        use ratatui::backend::TestBackend;
+        let mut s = ChatScreen::new();
+        s.handle_key(KeyEvent::new(KeyCode::F(1), KeyModifiers::NONE));
+        s.help_scroll = 10_000; // «перекручено» — рендер клампит к максимуму
+        let mut term = Terminal::new(TestBackend::new(90, 12)).unwrap();
+        term.draw(|f| s.render(f)).unwrap();
+        // Попап занял весь экран по высоте (12), внутри видно 10 рядов.
+        assert_eq!(s.help_scroll, HELP_KEYS.len() - 10);
+        let buf = term.backend().buffer();
+        let mut thumb = false;
+        for y in buf.area.top()..buf.area.bottom() {
+            for x in buf.area.left()..buf.area.right() {
+                thumb |= buf[(x, y)].symbol() == "█";
+            }
+        }
+        assert!(
+            thumb,
+            "на коротком терминале у справки есть бегунок скроллбара"
+        );
     }
 
     #[test]
