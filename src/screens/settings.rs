@@ -405,6 +405,7 @@ enum FieldId {
     SmMaxNarrative,
     SmNarrativeInPrompt,
     SmPromptCap,
+    SmSummaryTarget,
     SmAutoReflect,
     SmProtocol,
     NotesAutoConsolidate,
@@ -742,6 +743,11 @@ impl SettingsScreen {
                 FieldId::SmPromptCap,
                 "Модель себя: лимит инъекции (симв.)",
                 FieldKind::Text(self.config.self_model.prompt_cap.to_string()),
+            ),
+            row(
+                FieldId::SmSummaryTarget,
+                "Модель себя: ориентир описания (симв.)",
+                FieldKind::Text(self.config.self_model.summary_target_chars.to_string()),
             ),
             row(
                 FieldId::SmAutoReflect,
@@ -1440,6 +1446,11 @@ impl SettingsScreen {
                     s.self_model.prompt_cap = v;
                 }
             }
+            FieldId::SmSummaryTarget => {
+                if let Ok(v) = trimmed.parse() {
+                    s.self_model.summary_target_chars = v;
+                }
+            }
             FieldId::SmAutoReflect => {
                 if let Ok(v) = trimmed.parse() {
                     s.self_model.auto_reflect_every = v;
@@ -1828,6 +1839,11 @@ fn field_description(id: FieldId) -> Option<&'static str> {
         FieldId::SmPromptCap => Some(
             "Потолок символов компактного блока «модели себя», подмешиваемого в системный \
              промпт. Защита окна контекста: длинный блок усекается.",
+        ),
+        FieldId::SmSummaryTarget => Some(
+            "Ориентир размера описания себя (summary) в символах. Сверх него инструменты и \
+             протокол ведения мягко предлагают сократить описание, вынеся событийное в \
+             наблюдения. Это ворота, а не потолок: данные не усекаются.",
         ),
         FieldId::SmAutoReflect => Some(
             "Авто-рефлексия: каждые N ответов ассистента модель в фоне сама пересматривает \

@@ -808,6 +808,12 @@ pub(super) fn inject_self_model(
         // Протокол ведения собирается из единого POLICY_CORE (этап 6) — те же
         // правила, что у фоновой авто-рефлексии.
         parts.push(crate::features::tools::self_model::maintenance_protocol());
+        // Data-aware приписка: если описание себя разрослось сверх ориентира —
+        // конкретная подсказка сократить (статичный протокол становится предметным,
+        // когда summary действительно раздут). См. docs/summary-as-snapshot.md (этап 2).
+        if let Some(hint) = m.summary_fill_hint(params.summary_target_chars) {
+            parts.push(format!("({hint})"));
+        }
     }
     if parts.is_empty() {
         return system; // подмешивать нечего

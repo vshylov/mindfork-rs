@@ -108,6 +108,13 @@ fn render_self_read(ctx: &ToolContext, m: &SelfModel) -> String {
     if let Some(block) = notes::cited_sources_block(ctx, &ids) {
         out.push_str(&block);
     }
+    // Мягкие ворота размера описания (этап 2): если summary разрослось — подсказка
+    // сократить. Видна в get_self_model/reflect и авто-рефлексии (та начинает с
+    // get_self_model). См. docs/summary-as-snapshot.md.
+    if let Some(hint) = m.summary_fill_hint(ctx.self_model_params.summary_target_chars) {
+        out.push_str("\n\n");
+        out.push_str(&hint);
+    }
     out
 }
 
@@ -349,6 +356,8 @@ impl Tool for UpdateSelfModel {
         // доступа к storage/async).
         let mut unresolved: Vec<String> = Vec::new();
         let mut scars: Vec<String> = Vec::new();
+        // Менялось ли описание себя — для строки размера в эхе (ворота размера, этап 2).
+        let mut summary_changed = false;
         let params = ctx.self_model_params;
         let (model, changed) = ctx.storage.db().self_model_update(ctx.profile_id, |m| {
             let mut changed = false;
@@ -357,6 +366,7 @@ impl Tool for UpdateSelfModel {
                 if m.summary != s {
                     m.summary = s;
                     changed = true;
+                    summary_changed = true;
                 }
             }
             for g in str_array(&args, "add_goals") {
@@ -405,6 +415,15 @@ impl Tool for UpdateSelfModel {
             "Модель себя обновлена.\n{}",
             model.render_full(Utc::now(), &recent_segments(ctx))
         );
+        // Обратная связь о размере описания (этап 2): всегда при правке summary, чтобы
+        // модель видела рост даже до превышения ориентира. См. docs/summary-as-snapshot.md.
+        if summary_changed {
+            msg.push_str(&format!(
+                "\nОписание: {} симв. (ориентир ≤ {}).",
+                model.summary.chars().count(),
+                params.summary_target_chars
+            ));
+        }
         if !unresolved.is_empty() {
             msg.push_str(&format!("\n(Не найдены цели: {}.)", unresolved.join(", ")));
         }
@@ -658,6 +677,47 @@ mod tests {
             .unwrap();
         assert!(got.result.contains("ценю ясность"));
         assert!(got.result.contains("помочь с проектом"));
+    }
+
+    #[tokio::test]
+    async fn update_summary_echo_shows_size() {
+        // Этап 2: эхо правки summary всегда несёт строку размера (обратная связь о росте).
+        let (_d, _s, ctx) = ctx_with_storage(Uuid::new_v4());
+        let out = UpdateSelfModel
+            .invoke(&ctx, serde_json::json!({"summary": "ценю ясность"}))
+            .await
+            .unwrap();
+        assert!(out.result.contains("Описание:"));
+        assert!(out.result.contains("симв."));
+        // Правка без summary (только цель) — строки размера нет.
+        let out = UpdateSelfModel
+            .invoke(&ctx, serde_json::json!({"add_goals": ["цель"]}))
+            .await
+            .unwrap();
+        assert!(!out.result.contains("Описание:"));
+    }
+
+    #[tokio::test]
+    async fn get_self_model_surfaces_summary_fill_hint_over_target() {
+        // Этап 2: раздутое описание (сверх ориентира) поднимает подсказку в чтении.
+        use crate::entities::self_model::SelfModelParams;
+        use crate::shared::config::SelfModelSettings;
+        let profile = Uuid::new_v4();
+        let (_d, _s, mut ctx) = ctx_with_storage(profile);
+        // Ориентир 5 санитизируется до пола 200 — описание берём длиннее 200 символов.
+        ctx.self_model_params = SelfModelParams::from_settings(&SelfModelSettings {
+            summary_target_chars: 5,
+            ..SelfModelSettings::default()
+        });
+        UpdateSelfModel
+            .invoke(&ctx, serde_json::json!({"summary": "я".repeat(250)}))
+            .await
+            .unwrap();
+        let out = GetSelfModel
+            .invoke(&ctx, serde_json::json!({}))
+            .await
+            .unwrap();
+        assert!(out.result.contains("Описание себя разрослось"));
     }
 
     #[tokio::test]

@@ -26,6 +26,9 @@ pub struct SelfModelParams {
     pub prompt_cap: usize,
     /// Сколько закрытых целей держать в структуре (старейшие сверх — в нарратив-шрам).
     pub max_closed_goals: usize,
+    /// Ориентир размера описания себя (summary): сверх него [`SelfModel::summary_fill_hint`]
+    /// возвращает мягкую подсказку сократить. Ворота, не потолок.
+    pub summary_target_chars: usize,
 }
 
 impl Default for SelfModelParams {
@@ -45,6 +48,7 @@ impl SelfModelParams {
             narrative_in_prompt: s.narrative_in_prompt.min(max_narrative),
             prompt_cap: s.prompt_cap.max(100),
             max_closed_goals: s.max_closed_goals.max(1),
+            summary_target_chars: s.summary_target_chars.max(200),
         }
     }
 }
@@ -404,6 +408,23 @@ impl SelfModel {
             .collect();
         self.goals.retain(|g| !fold_ids.contains(&g.id));
         scars
+    }
+
+    /// Мягкая подсказка о разросшемся описании себя: `None`, пока `summary` в
+    /// пределах ориентира `target`; иначе текст с текущим размером и ориентиром,
+    /// направляющий вынести событийное в наблюдения. Прямой аналог бывшего
+    /// `narrative_fill_hint`, но для `summary` — единственного органа, у которого не
+    /// было обратной связи о размере. Ворота, а не потолок: ничего не усекает и не
+    /// блокирует. См. docs/summary-as-snapshot.md (этап 2).
+    pub fn summary_fill_hint(&self, target: usize) -> Option<String> {
+        let n = self.summary.chars().count();
+        (n > target).then(|| {
+            format!(
+                "Описание себя разрослось: {n} симв. при ориентире ≤ {target} — при \
+                 ближайшей правке сократи его до сути, событийные выводы вынеси в \
+                 наблюдения (add_insight)."
+            )
+        })
     }
 
     /// Компактный человекочитаемый блок для инъекции в системный промпт.
@@ -781,6 +802,30 @@ mod tests {
         assert_eq!(params.max_narrative, 1);
         assert_eq!(params.narrative_in_prompt, 1);
         assert_eq!(params.prompt_cap, 100);
+    }
+
+    #[test]
+    fn summary_target_sanitized_to_floor() {
+        // Крошечный ориентир → пол 200 (защита от бессмысленно малого значения).
+        let params = SelfModelParams::from_settings(&SelfModelSettings {
+            summary_target_chars: 10,
+            ..SelfModelSettings::default()
+        });
+        assert_eq!(params.summary_target_chars, 200);
+    }
+
+    #[test]
+    fn summary_fill_hint_only_over_target() {
+        let mut m = SelfModel::new(Uuid::new_v4());
+        m.summary = "к".repeat(50);
+        // В пределах ориентира — подсказки нет.
+        assert!(m.summary_fill_hint(100).is_none());
+        // Сверх ориентира — подсказка с числами.
+        m.summary = "к".repeat(150);
+        let hint = m.summary_fill_hint(100).unwrap();
+        assert!(hint.contains("150"));
+        assert!(hint.contains("100"));
+        assert!(hint.contains("add_insight"));
     }
 
     #[test]
