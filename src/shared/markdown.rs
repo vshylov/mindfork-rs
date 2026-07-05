@@ -22,7 +22,7 @@ use syntect::easy::HighlightLines;
 use syntect::highlighting::{
     Color as SynColor, ScopeSelectors, StyleModifier, Theme, ThemeItem, ThemeSettings,
 };
-use syntect::parsing::SyntaxSet;
+use syntect::parsing::{SyntaxReference, SyntaxSet};
 use syntect::util::{LinesWithEndings, as_24_bit_terminal_escaped};
 
 use crate::shared::theme::Palette;
@@ -112,6 +112,63 @@ fn blockquote_style() -> Style {
 // ---------- writer: pulldown events → строки ----------
 
 static SYNTAX_SET: LazyLock<SyntaxSet> = LazyLock::new(SyntaxSet::load_defaults_newlines);
+
+/// Резолвит метку языка код-блока (` ```csharp `) в синтаксис syntect.
+///
+/// `SyntaxSet::find_syntax_by_token` в дефолтном наборе Sublime сопоставляет метку
+/// либо расширению файла (`rs`, `cs`), либо **имени** синтаксиса регистронезависимо
+/// (`Rust`, `C#`). Поэтому `rust` находится по счастливому совпадению с именем
+/// `Rust`, а распространённые метки моделей вроде `csharp`/`c++`/`golang` не
+/// совпадают ни с именем (`C#`, `C++`, `Go`), ни с расширением — и код остаётся без
+/// подсветки. Таблица [`canonical_lang`] приводит такие алиасы к токену, который
+/// набор распознаёт; при промахе пробуем исходную метку (вдруг это уже валидное
+/// расширение/имя, которого нет в таблице).
+fn resolve_syntax(lang: &str) -> Option<&'static SyntaxReference> {
+    if lang.is_empty() {
+        return None;
+    }
+    let canonical = canonical_lang(lang);
+    SYNTAX_SET
+        .find_syntax_by_token(canonical)
+        .or_else(|| SYNTAX_SET.find_syntax_by_token(lang))
+}
+
+/// Сводит алиас языка к токену (расширению/имени), понятному дефолтному набору
+/// syntect. Регистр метки игнорируется. Немаппированная метка возвращается как есть
+/// (её пробует распознать сам `find_syntax_by_token`).
+///
+/// Ключи — типичные метки, которыми Gemma/Qwen/Claude размечают код-блоки. **Все
+/// цели сверены с дефолтным бандлом** (`SyntaxSet::load_defaults_newlines`) — набор
+/// узкий (нет TypeScript/Kotlin/PowerShell/Dockerfile/TOML/Swift/…), поэтому мапить
+/// в несуществующий синтаксис бессмысленно. Уже резолвящиеся метки (`rust`,
+/// `python`, `go`, `js`, `java`, `ruby`, `php`, `sql`, `html`, `css`, `json`,
+/// `yaml`, `bash`, `c`, `c++`, `c#`/`cs`, …) в таблицу не вносим.
+fn canonical_lang(lang: &str) -> &str {
+    match lang.trim().to_ascii_lowercase().as_str() {
+        // --- прямые алиасы: цель есть в наборе, но метка с ней не совпадает ---
+        "csharp" | "cs-script" | "dotnet" => "cs", // имя "C#" ≠ "csharp"
+        "cpp" | "cplusplus" | "cxx" | "cc" => "c++", // имя "C++" ≠ "cpp"
+        "objc" | "objective-c" | "objectivec" | "obj-c" => "m", // имя "Objective-C"
+        "objcpp" | "objc++" | "objective-c++" => "mm", // имя "Objective-C++"
+        "golang" => "go",
+        "rustlang" => "rs",
+        "python3" | "py3" | "python2" => "py",
+        "node" | "nodejs" => "js",
+        "shell" | "sh" | "zsh" | "console" | "shell-session" | "shellsession" => "bash",
+        "yml" | "yaml-frontmatter" | "frontmatter" => "yaml",
+        "rlang" => "r",
+        // --- приближения: языка нет в наборе, берём близкий по синтаксису ---
+        // Лучше частичная подсветка родственным грамматиком, чем серый текст.
+        "typescript" | "ts" | "tsx" | "mts" | "cts" | "jsx" => "js", // база JS
+        "kotlin" | "kt" | "kts" => "java",
+        other => {
+            // Немаппированную метку возвращаем как есть; заимствование из исходной
+            // строки, поэтому отдаём срез `lang`, а не временный lowercase-буфер.
+            let _ = other;
+            lang.trim()
+        }
+    }
+}
 
 /// Кэш syntect-тем подсветки кода, **построенных из [`Palette`]** (см.
 /// [`build_code_theme`]). Раньше тема была захардкожена (`base16-ocean.dark`) и не
@@ -517,7 +574,7 @@ impl Writer {
             CodeBlockKind::Fenced(ref lang) => lang.as_ref(),
             CodeBlockKind::Indented => "",
         };
-        if let Some(syntax) = SYNTAX_SET.find_syntax_by_token(lang) {
+        if let Some(syntax) = resolve_syntax(lang) {
             let theme = code_theme(&self.palette);
             self.code_highlighter = Some(HighlightLines::new(syntax, theme));
         } else {
@@ -1556,6 +1613,43 @@ mod tests {
             })
             .collect::<Vec<_>>()
             .join("\n")
+    }
+
+    /// Метки языков, которыми модели помечают код-блоки, должны резолвиться в
+    /// синтаксис — иначе блок остаётся без подсветки (был баг с ` ```csharp `:
+    /// токен не совпадал ни с именем `C#`, ни с расширением `cs`).
+    #[test]
+    fn language_aliases_resolve_to_syntax() {
+        for (label, expect_name) in [
+            ("rust", "Rust"),
+            ("csharp", "C#"),
+            ("c#", "C#"),
+            ("CSharp", "C#"),
+            ("cs", "C#"),
+            ("cpp", "C++"),
+            ("c++", "C++"),
+            ("golang", "Go"),
+            ("objc", "Objective-C"),
+            ("objective-c++", "Objective-C++"),
+            ("python3", "Python"),
+            ("nodejs", "JavaScript"),
+            ("shell", "Bourne Again Shell (bash)"),
+            ("yml", "YAML"),
+            // приближения: языка нет в наборе → близкий грамматик
+            ("typescript", "JavaScript"),
+            ("kotlin", "Java"),
+        ] {
+            let syntax = resolve_syntax(label)
+                .unwrap_or_else(|| panic!("метка {label:?} не резолвится в синтаксис"));
+            assert_eq!(syntax.name, expect_name, "метка {label:?}");
+        }
+    }
+
+    /// Пустая/неизвестная метка не паникует и не резолвится.
+    #[test]
+    fn empty_and_unknown_language_do_not_resolve() {
+        assert!(resolve_syntax("").is_none());
+        assert!(resolve_syntax("совсем-не-язык-42").is_none());
     }
 
     #[test]
