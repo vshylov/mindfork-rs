@@ -3472,6 +3472,30 @@ web-поиск и Python под выключателями, экран наст�
   architecture.md §3. **Разбор god-object'ов (этапы 1–7) — завершён**: settings/chat/
   orchestrator-tests/notes/db/markdown/runtime; крупнейший исходный файл упал с 4966 до
   ≤1175 строк, все impl-блоки ≤ ~660.
+### Рефакторинг god-object'ов — этап 3: `orchestrator/tests.rs` → `orchestrator/tests/` (сделано)
+- **Этап 3** плана разбора god-object'ов (docs/refactoring-god-objects.md — живёт на
+  ветке этапа 1 `refactor/settings-module-split`; этот этап — ветка
+  `refactor/orchestrator-tests-split` от `main`, доки-план синхронизируется при
+  merge). Тест-монолит `app/orchestrator/tests.rs` (3506 строк, 74 теста всех фич в
+  одном файле) разбит на каталог `app/orchestrator/tests/` — чисто механический
+  перенос (item-level слайсы, поведение/имена тестов не менялись).
+- **Раскладка**: `mod.rs` (315: **все фикстуры** — `spawn_orch`/`spawn_orch_cfg`/
+  `wait_for`/`bare_orch*`/`enable_all_tools`/`orch_*`/live-хелперы + декларации
+  подмодулей) и по файлу на фичу зеркально сорс-модулям: `generation.rs` (755),
+  `live.rs` (959, все `#[ignore]` e2e-смоуки), `chats.rs` (323), `self_model.rs`
+  (317), `rag.rs` (267), `impersonation.rs` (169), `settings.rs` (158), `profiles.rs`
+  (113), `title.rs` (107), `reflection.rs` (64), `request.rs` (17). Крупнейший файл
+  упал с 3506 до 959.
+- **Ключевые правила** (плейбук для тест-модулей): (1) **все** не-`#[test]` хелперы
+  → `mod.rs`, чтобы любой подмодуль видел их через `use super::*;` (устраняет
+  межфайловую видимость фикстур). (2) Коллизия имён: тест-подмодуль `tests::generation`
+  затеняет сорс-модуль `orchestrator::generation` — в `self_model.rs` ссылки на
+  инъекцию модели себя (`inject_self_model`/`blend_self_notes`/`injection_recent`/
+  `GenResult`) переписаны с `super::generation::` на `super::super::generation::`
+  (вверх до `orchestrator`). Прочие подмодули такого пересечения не имеют.
+- Путь модуля `tests` не изменился (`mod tests;` в `orchestrator/mod.rs`). **805
+  тестов зелёные** (0 упавших, 26 `#[ignore]`; число не изменилось — чистый перенос),
+  clippy `-D warnings`/fmt чисты. Доки: architecture.md §3.
 
 ### Отложено за пределы M3
 - **Сворачивание/выделение per-message** и tool-блоки в ленте — сейчас «мысли»
