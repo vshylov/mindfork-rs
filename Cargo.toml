@@ -51,6 +51,10 @@ zip = { version = "2.2.2", default-features = false, features = ["deflate"] }
 
 [dev-dependencies]
 tempfile = "3.27.0"
+# `test-util` включает паузу/перемотку виртуального времени tokio в тестах
+# (`start_paused`) — детерминированные тесты дебаунса рестарта серверов без
+# реального ожидания. Только для тест-сборок (feature unification dev-deps).
+tokio = { version = "1.52.3", features = ["test-util"] }
 
 # Релизный профиль (Windows + Linux): оптимизация размера/скорости.
 # panic=unwind сохранён намеренно — нужны drop-guard/panic-hook для восстановления
