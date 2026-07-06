@@ -28,6 +28,7 @@ use crate::shared::config::{
     ServerMode, SpecType, Theme,
 };
 use crate::shared::keys;
+use crate::shared::server::{ServerStatus, ServerStatuses};
 use crate::shared::theme::Palette;
 use crate::shared::ui::{dim_background, render_scrollbar};
 use crate::widgets::input_box::InputBox;
@@ -629,6 +630,9 @@ pub struct SettingsScreen {
     search: Option<SearchState>,
     /// Попап выбора значения Choice-поля (Enter); `None` — закрыт.
     choice: Option<ChoiceState>,
+    /// Снимок статусов серверов (чат/эмбеддинги/имперсонация) — чипы в секции
+    /// «Модель/сервер». Обновляется `app` из события `ServerStatus`. См. spec §11.6.
+    statuses: ServerStatuses,
 }
 
 impl SettingsScreen {
@@ -647,7 +651,18 @@ impl SettingsScreen {
             editor: None,
             search: None,
             choice: None,
+            statuses: ServerStatuses {
+                chat: ServerStatus::NotConfigured,
+                embed: ServerStatus::NotConfigured,
+                impersonation: ServerStatus::NotConfigured,
+            },
         }
+    }
+
+    /// Обновляет снимок статусов серверов (чипы в секции «Модель/сервер»). Вызывается
+    /// `app` при создании экрана и по событию `ServerStatus`.
+    pub fn set_server_statuses(&mut self, statuses: ServerStatuses) {
+        self.statuses = statuses;
     }
 
     /// Обновляет рабочую копию из переэмита настроек (после create/delete профиля
@@ -2414,6 +2429,17 @@ impl SettingsScreen {
         frame.render_stateful_widget(list, area, &mut state);
     }
 
+    /// Чип статуса сервера активной подсекции секции «Модель» (ассистент → чат,
+    /// имперсонация → имперсонация, эмбеддинги → эмбеддинги).
+    fn model_server_chip(&self, palette: &Palette) -> Vec<Span<'static>> {
+        let (status, label) = match self.model_sub {
+            ModelTab::Assistant => (&self.statuses.chat, "чат"),
+            ModelTab::Impersonation => (&self.statuses.impersonation, "имперсонация"),
+            ModelTab::Embeddings => (&self.statuses.embed, "эмбеддинги"),
+        };
+        server_status_chip(status, label, palette)
+    }
+
     /// Таб-стрип подсекции для текущей секции: (подписи вкладок, активная).
     /// `None` — секция без подсекций.
     fn subsection_tabs(&self) -> Option<(&'static [&'static str], usize)> {
@@ -2447,7 +2473,7 @@ impl SettingsScreen {
         ])
         .areas(area);
 
-        let mut head_lines = vec![Line::from(vec![
+        let mut title_spans = vec![
             Span::styled(
                 format!(" {} ", palette.glyphs().title_marker),
                 Style::new().fg(palette.assistant),
@@ -2456,7 +2482,20 @@ impl SettingsScreen {
                 format!("{} ", self.section().title()),
                 Style::new().fg(palette.text).bold(),
             ),
-        ])];
+        ];
+        // Секция «Модель/сервер»: чип статуса сервера активной подсекции справа —
+        // правишь движок и видишь эффект (подключение → готов), не выходя в чат.
+        if self.section() == Section::Model {
+            let chip = self.model_server_chip(&palette);
+            let used_left: usize = title_spans.iter().map(|s| span_width(s)).sum();
+            let used_right: usize = chip.iter().map(|s| span_width(s)).sum();
+            let head_w = head_area.width as usize;
+            if head_w > used_left + used_right + 1 {
+                title_spans.push(Span::raw(" ".repeat(head_w - used_left - used_right - 1)));
+                title_spans.extend(chip);
+            }
+        }
+        let mut head_lines = vec![Line::from(title_spans)];
         if let Some((labels, active)) = tabs {
             let on_tabs = focused && sub_pos == Some(self.field_idx);
             head_lines.push(tab_strip_line(labels, active, on_tabs, &palette));
@@ -3109,6 +3148,41 @@ fn gate_hint(gate: ToolGate) -> &'static str {
     }
 }
 
+/// Ширина спана в колонках терминала (для правого выравнивания чипа статуса).
+fn span_width(s: &Span) -> usize {
+    crate::shared::wrap::display_width(&s.content.chars().collect::<Vec<_>>())
+}
+
+/// Чип статуса сервера для секции «Модель/сервер»: глиф + метка (+ причина, если
+/// сервер недоступен/не настроен — на экране настроек её видеть важно). Глифы/цвета
+/// зеркалят строку статуса (`widgets::status_bar`): `●` готов, `◐` подключение,
+/// `✕` нет связи/не настроен. Ширина глифа — 1 колонка (WGL4/GlyphSet, компат-безопасно).
+fn server_status_chip(status: &ServerStatus, label: &str, palette: &Palette) -> Vec<Span<'static>> {
+    let glyphs = palette.glyphs();
+    let (glyph, color, text) = match status {
+        ServerStatus::Ready => ("●", palette.success, format!("{label}: готов")),
+        ServerStatus::Connecting => (
+            glyphs.status_connecting,
+            palette.warning,
+            format!("{label}: подключение…"),
+        ),
+        ServerStatus::NotConfigured => (
+            glyphs.status_off,
+            palette.muted,
+            format!("{label}: не настроен"),
+        ),
+        ServerStatus::Disconnected(why) => (
+            glyphs.status_off,
+            palette.error,
+            format!("{label}: нет связи: {why}"),
+        ),
+    };
+    vec![
+        Span::styled(glyph, Style::new().fg(color).bold()),
+        Span::styled(format!(" {text} "), Style::new().fg(color)),
+    ]
+}
+
 /// Является ли поле селектором подсекции (рисуется таб-стрипом, а не строкой списка).
 fn is_subsection(id: FieldId) -> bool {
     matches!(
@@ -3746,6 +3820,46 @@ mod tests {
             Some(SettingsIntent::SaveConfig(c)) => assert!(!c.tools.web_enabled),
             other => panic!("ожидался SaveConfig, получено {other:?}"),
         }
+    }
+
+    #[test]
+    fn model_section_shows_active_subsection_server_chip() {
+        use ratatui::Terminal;
+        use ratatui::backend::TestBackend;
+        let render_text = |s: &mut SettingsScreen| -> String {
+            let mut term = Terminal::new(TestBackend::new(94, 12)).unwrap();
+            term.draw(|f| s.render(f)).unwrap();
+            let buf = term.backend().buffer();
+            (0..buf.area.height)
+                .map(|y| {
+                    (0..buf.area.width)
+                        .map(|x| buf[(x, y)].symbol().to_string())
+                        .collect::<String>()
+                })
+                .collect::<Vec<_>>()
+                .join("\n")
+        };
+        let mut s = screen();
+        s.set_server_statuses(ServerStatuses {
+            chat: ServerStatus::Ready,
+            embed: ServerStatus::Connecting,
+            impersonation: ServerStatus::NotConfigured,
+        });
+        // Ассистент → чип чат-сервера («готов»).
+        let t = render_text(&mut s);
+        assert!(t.contains("чат: готов"), "чип чат-сервера: {t}");
+        // Переключение подсекции меняет чип на сервер эмбеддингов («подключение»).
+        s.model_sub = ModelTab::Embeddings;
+        let t = render_text(&mut s);
+        assert!(
+            t.contains("эмбеддинги: подключение"),
+            "чип эмбеддингов: {t}"
+        );
+        assert!(!t.contains("чат: готов"), "чужой чип не показывается");
+        // Другие секции чип не рисуют.
+        goto_section(&mut s, Section::Interface);
+        let t = render_text(&mut s);
+        assert!(!t.contains("готов") && !t.contains("подключение"));
     }
 
     #[test]
