@@ -23,22 +23,27 @@ impl Orchestrator {
             self.config = old; // откат к прежнему состоянию
             return;
         }
-        // Смена настроек chat-сервера (модель/режим/порт/…) — перезапуск (spec §11.6).
+        // Смена настроек chat-сервера (модель/режим/порт/…) — перезапуск (spec
+        // §11.6), но отложенный: экран настроек применяет правку при коммите
+        // каждого поля, и дебаунс коалесит серию быстрых правок в один рестарт
+        // ([`super::restart_queue::RestartQueue`], флаш по дедлайну в петле).
         if self.config.engine != old.engine {
-            self.apply_chat_settings();
+            self.restarts.mark_chat();
             // Смена режима меняет набор доступных параметров семплинга
-            // (get_sampling/set_sampling) — пересобираем реестр под новый провайдер.
+            // (get_sampling/set_sampling) — пересобираем реестр под новый
+            // провайдер немедленно (дёшево, in-memory; схема должна быть
+            // актуальна уже со следующего хода).
             if self.config.engine.mode.cloud_provider() != old.engine.mode.cloud_provider() {
                 self.registry = std::sync::Arc::new(build_registry(&self.config));
             }
         }
-        // Смена настроек сервера имперсонации — пере-подключение/перезапуск.
+        // Смена настроек сервера имперсонации — отложенное пере-подключение.
         if self.config.impersonation_engine != old.impersonation_engine {
-            self.apply_impersonation_settings();
+            self.restarts.mark_impersonation();
         }
-        // Смена настроек embedding-сервера — пере-подключение/перезапуск.
+        // Смена настроек embedding-сервера — отложенное пере-подключение.
         if self.config.embed != old.embed {
-            self.apply_embed_settings();
+            self.restarts.mark_embed();
         }
         // Смена параметров инструментов — пересборка реестра (python_path, лимиты).
         if self.config.tools != old.tools {
@@ -47,7 +52,30 @@ impl Orchestrator {
         self.emit_settings();
     }
 
+    /// Применяет отложенные дебаунсом (пере)запуски серверов (дедлайн истёк):
+    /// по одному `apply_*` на каждый помеченный сервер и один общий снимок
+    /// статусов. Читает **финальный** `self.config` — конфиг заменяется ещё при
+    /// правке, так что серия правок даёт один рестарт с итоговыми значениями.
+    pub(super) fn flush_restarts(&mut self) {
+        let (chat, embed, imp) = self.restarts.take();
+        if chat {
+            self.engines.apply_chat(&self.config.engine);
+        }
+        if embed {
+            self.engines.apply_embed(&self.config.embed);
+        }
+        if imp {
+            self.engines
+                .apply_impersonation(&self.config.impersonation_engine);
+        }
+        if chat || embed || imp {
+            self.emit_server_status();
+        }
+    }
+
     /// (Пере)поднимает chat-сервер по `config.engine` и эмитит снимок статусов.
+    /// Немедленный путь стартового подъёма (до петли `run`); правки настроек
+    /// идут через дебаунс-очередь `restarts` → [`Self::flush_restarts`].
     pub(super) fn apply_chat_settings(&mut self) {
         self.engines.apply_chat(&self.config.engine);
         self.emit_server_status();

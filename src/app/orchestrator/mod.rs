@@ -9,6 +9,8 @@
 //!   [`Orchestrator::handle_command`], общие хелперы (эмиттеры, `chat_mut`);
 //! - [`engines`] — [`EngineManager`]: жизненный цикл серверов и готовность;
 //! - [`save_queue`] — [`SaveQueue`]: дебаунс отложенного сохранения чатов;
+//! - [`restart_queue`] — [`RestartQueue`]: дебаунс (пере)запуска серверов при
+//!   правках настроек движка;
 //! - [`generation`] — отправка/перегенерация/удаление обмена + задача agentic-loop;
 //! - [`chats`] — управление списком чатов и черновиком;
 //! - [`profiles`] — создание/правка/удаление профилей;
@@ -27,6 +29,7 @@ mod profiles;
 mod rag;
 mod reflection;
 mod request;
+mod restart_queue;
 mod save_queue;
 mod settings;
 mod title;
@@ -56,6 +59,7 @@ use crate::shared::storage::Storage;
 
 use self::engines::EngineManager;
 use self::generation::GenResult;
+use self::restart_queue::RestartQueue;
 use self::save_queue::SaveQueue;
 use self::title::TitleResult;
 
@@ -128,6 +132,7 @@ pub async fn run(deps: OrchestratorDeps) {
         consolidate_done_tx,
         consolidate_failures: 0,
         saves: SaveQueue::default(),
+        restarts: RestartQueue::default(),
     };
 
     // Поднимаем серверы по конфигу и эмитим стартовые события/настройки.
@@ -143,6 +148,7 @@ pub async fn run(deps: OrchestratorDeps) {
 
     loop {
         let deadline = orch.saves.deadline();
+        let restart_deadline = orch.restarts.deadline();
         tokio::select! {
             cmd = cmd_rx.recv() => {
                 match cmd {
@@ -188,8 +194,11 @@ pub async fn run(deps: OrchestratorDeps) {
                 }
             }
             _ = sleep_until_opt(deadline) => orch.flush_saves(),
+            _ = sleep_until_opt(restart_deadline) => orch.flush_restarts(),
         }
     }
+    // Отложенные рестарты на выходе намеренно НЕ применяются: серверы всё равно
+    // рвутся через Drop/kill_on_drop — поднимать процесс перед его дропом незачем.
     orch.flush_saves();
 }
 
@@ -212,7 +221,7 @@ fn build_registry(config: &AppConfig) -> crate::features::tools::ToolRegistry {
     })
 }
 
-/// Спит до `deadline`, либо «висит вечно», если дедлайна нет (нет грязных чатов).
+/// Спит до `deadline`, либо «висит вечно», если дедлайна нет (очередь пуста).
 async fn sleep_until_opt(deadline: Option<Instant>) {
     match deadline {
         Some(d) => tokio::time::sleep_until(d).await,
@@ -265,6 +274,9 @@ struct Orchestrator {
     consolidate_failures: u32,
     /// Очередь отложенного сохранения чатов (дебаунс; выделено в Фазе 3).
     saves: SaveQueue,
+    /// Очередь отложенного (пере)запуска серверов при правках настроек движка
+    /// (дебаунс: серия быстрых правок полей коалесится в один рестарт).
+    restarts: RestartQueue,
 }
 
 impl Orchestrator {

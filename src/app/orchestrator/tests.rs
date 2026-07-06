@@ -4,6 +4,7 @@
 use super::engines::EngineManager;
 use super::impersonation::{build_impersonation_request, swap_role_message};
 use super::request::build_request;
+use super::restart_queue::RestartQueue;
 use super::save_queue::SaveQueue;
 use super::title::salvage_title_source;
 use super::*;
@@ -129,6 +130,7 @@ fn bare_orch_rx() -> (tempfile::TempDir, Orchestrator, UnboundedReceiver<AppEven
         consolidate_done_tx: unbounded_channel().0,
         consolidate_failures: 0,
         saves: SaveQueue::default(),
+        restarts: RestartQueue::default(),
     };
     (dir, orch, evt_rx)
 }
@@ -3148,8 +3150,13 @@ async fn update_profile_persists_edit() {
     handle.await.unwrap();
 }
 
-#[tokio::test]
-async fn model_change_restarts_chat_server() {
+/// Смена модели перезапускает chat-сервер (spec §11.6 DoD), но с дебаунсом:
+/// серия быстрых правок полей движка коалесится в **один** рестарт после паузы
+/// тишины (`RestartQueue`), а конфиг сохраняется/переэмитится сразу.
+/// `start_paused` — виртуальное время tokio: дедлайн дебаунса доматывается
+/// мгновенно и детерминированно, когда обе правки уже обработаны.
+#[tokio::test(start_paused = true)]
+async fn model_change_restarts_chat_server_debounced() {
     let backend = Arc::new(MockBackend::scripted(vec![ChatChunk::Finished(
         FinishReason::Stop,
     )])) as Arc<dyn EngineBackend>;
@@ -3168,33 +3175,54 @@ async fn model_change_restarts_chat_server() {
     wait_for(&mut evt_rx, |e| matches!(e, AppEvent::Settings { .. }))
         .await
         .unwrap();
-    // Бутстрап поднял сервер один раз.
+    // Бутстрап поднял сервер один раз (стартовый путь — немедленный, без дебаунса).
     assert_eq!(sup.chat_call_count(), 1);
 
-    // Смена модели → перезапуск (повторный apply_chat, spec §11.6 DoD).
-    let config = AppConfig {
-        engine: crate::shared::config::EngineSettings {
-            managed: crate::shared::config::ManagedSettings {
-                model_path: Some("other.gguf".into()),
-                ..Default::default()
-            },
+    // Две правки движка подряд (смена модели, затем -ngl) — как серия коммитов
+    // полей на экране настроек. Обе уходят до истечения дебаунса.
+    let engine1 = crate::shared::config::EngineSettings {
+        managed: crate::shared::config::ManagedSettings {
+            model_path: Some("other.gguf".into()),
             ..Default::default()
         },
         ..Default::default()
     };
+    let mut engine2 = engine1.clone();
+    engine2.managed.gpu_layers = 10;
     cmd_tx
-        .send(AppCommand::UpdateConfig(Box::new(config)))
+        .send(AppCommand::UpdateConfig(Box::new(AppConfig {
+            engine: engine1,
+            ..Default::default()
+        })))
         .unwrap();
+    cmd_tx
+        .send(AppCommand::UpdateConfig(Box::new(AppConfig {
+            engine: engine2,
+            ..Default::default()
+        })))
+        .unwrap();
+    // Конфиг переэмичен сразу (обе правки), рестарта ещё не было.
     wait_for(
         &mut evt_rx,
-        |e| matches!(e, AppEvent::Settings { config, .. } if config.engine.managed.model_path.as_deref() == Some("other.gguf")),
+        |e| matches!(e, AppEvent::Settings { config, .. } if config.engine.managed.gpu_layers == 10),
     )
     .await
     .unwrap();
     assert_eq!(
         sup.chat_call_count(),
+        1,
+        "рестарт отложен дебаунсом, конфиг применён сразу"
+    );
+
+    // По истечении паузы тишины — ровно один рестарт с итоговыми значениями
+    // (флаш эмитит снимок статусов — ждём его как маркер).
+    wait_for(&mut evt_rx, |e| matches!(e, AppEvent::ServerStatus(_)))
+        .await
+        .unwrap();
+    assert_eq!(
+        sup.chat_call_count(),
         2,
-        "смена модели должна перезапустить сервер"
+        "две правки движка → один отложенный перезапуск сервера"
     );
 
     cmd_tx.send(AppCommand::Quit).unwrap();
