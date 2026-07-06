@@ -152,8 +152,12 @@ src/
 │  ├─ gen_state.rs          GenState: чистый автомат Idle/Generating/Cancelling
 │  │                        (переходы begin/request_cancel/finish, без I/O)
 │  ├─ events.rs             AppCommand (UI→оркестр.) и AppEvent (оркестр.→UI)
-│  ├─ runtime.rs            мост tokio↔TUI: батчинг ввода, dirty-перерисовка,
-│  │                        трансляция Intent→AppCommand, side-effect'ы (мышь/буфер)
+│  ├─ runtime/              мост tokio↔TUI. God-object разбит (docs/refactoring-god-
+│  │  │                     objects.md, этап 7; внешняя поверхность — только run):
+│  │  ├─ mod.rs             run/run_loop (петля, dirty-перерисовка), ActiveScreen, SpellLoader
+│  │  ├─ input.rs           батчинг ввода + вставка из буфера (Windows-путь): Chunk, коалесинг
+│  │  ├─ dispatch.rs        apply_event (AppEvent→экран) + трансляция Intent→AppCommand
+│  │  └─ clipboard.rs       чтение/запись системного буфера обмена (arboard)
 │  └─ supervisor.rs         ServerSupervisor: (пере)запуск managed / подключение external
 │
 ├─ screens/                 целостные экраны (FSD "pages"); НЕ зависят от app
