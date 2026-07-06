@@ -32,6 +32,7 @@ use crate::shared::server::{ServerStatus, ServerStatuses};
 use crate::shared::theme::Palette;
 use crate::shared::ui::{dim_background, render_scrollbar};
 use crate::widgets::input_box::InputBox;
+use crate::widgets::status_bar;
 
 /// Намерение, которое исполняет `app` (транслирует в `AppCommand`).
 #[derive(Debug, Clone, PartialEq)]
@@ -2178,17 +2179,19 @@ impl SettingsScreen {
         }
         hints.push(("Esc", "назад"));
         hints.push(("Ctrl+C", "выход"));
-        let mut footer = vec![Span::raw("")];
-        for (key, desc) in hints {
-            footer.push(palette.keycap(key));
-            footer.push(Span::styled(format!(" {desc}  "), palette.muted_style()));
-        }
-        let block = palette
-            .panel(format!("{}Настройки", palette.glyphs().settings_icon), true)
-            .title_bottom(Line::from(footer));
-        let inner = block.inner(area);
+        // Строка хоткеев — под панелью (вне рамки), переносится сеткой по той же
+        // логике, что статус-бар экрана чата (прижата вправо). Высоту считаем заранее.
+        let hotkeys = status_bar::hotkey_lines(area.width as usize, &hints, &palette);
+        let status_h = (hotkeys.len() as u16).max(1);
+
         frame.render_widget(Clear, area);
-        frame.render_widget(&block, area);
+        let [panel_area, status_area] =
+            Layout::vertical([Constraint::Min(3), Constraint::Length(status_h)]).areas(area);
+
+        let block = palette.panel(format!("{}Настройки", palette.glyphs().settings_icon), true);
+        let inner = block.inner(panel_area);
+        frame.render_widget(&block, panel_area);
+        frame.render_widget(Paragraph::new(hotkeys), status_area);
 
         let [menu_area, fields_area] =
             Layout::horizontal([Constraint::Length(24), Constraint::Min(20)]).areas(inner);
@@ -4175,6 +4178,56 @@ mod tests {
             let mut term = Terminal::new(TestBackend::new(w, h)).unwrap();
             term.draw(|f| s.render(f)).unwrap();
         }
+    }
+
+    #[test]
+    fn hotkeys_render_below_panel_and_wrap_when_narrow() {
+        use ratatui::Terminal;
+        use ratatui::backend::TestBackend;
+        let rows = |w: u16, h: u16| -> Vec<String> {
+            let mut s = screen();
+            let mut term = Terminal::new(TestBackend::new(w, h)).unwrap();
+            term.draw(|f| s.render(f)).unwrap();
+            let buf = term.backend().buffer().clone();
+            (0..buf.area.height)
+                .map(|y| {
+                    (0..buf.area.width)
+                        .map(|x| buf[(x, y)].symbol().to_string())
+                        .collect::<String>()
+                })
+                .collect()
+        };
+        // Строки хоткеев (вне рамки, прижаты вправо) начинаются с пробела в колонке 0,
+        // тогда как строки панели несут символ рамки. Считаем хвостовые строки-хоткеи.
+        let status_rows = |lines: &[String]| -> usize {
+            lines
+                .iter()
+                .rev()
+                .take_while(|l| l.starts_with(' '))
+                .count()
+        };
+        // Широко — хоткеи умещаются в одну строку под панелью, прижаты вправо
+        // (заканчиваются на «выход»); строка над ними — нижняя рамка панели (не пробел).
+        let wide = rows(120, 24);
+        assert_eq!(status_rows(&wide), 1, "широко — одна строка хоткеев");
+        let last = wide.last().unwrap();
+        assert!(last.contains("Tab") && last.contains("выход"));
+        assert!(
+            last.trim_end().ends_with("выход"),
+            "прижаты вправо: {last:?}"
+        );
+        assert!(
+            !wide[wide.len() - 2].starts_with(' '),
+            "над хоткеями — нижняя рамка панели: {:?}",
+            wide[wide.len() - 2]
+        );
+        // Узко — хоткеи переносятся на несколько строк (высота статус-области > 1).
+        let narrow = rows(46, 24);
+        assert!(
+            status_rows(&narrow) > 1,
+            "ожидался перенос хоткеев: {}",
+            status_rows(&narrow)
+        );
     }
 
     #[test]

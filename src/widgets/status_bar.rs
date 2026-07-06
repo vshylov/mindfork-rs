@@ -88,6 +88,33 @@ pub fn height(
     .clamp(1, u16::MAX as usize) as u16
 }
 
+/// Раскладывает хоткеи в аккуратную сетку, **прижатую к правому краю** `width` — та
+/// же логика переноса, что и в статус-баре экрана чата, но без пилюли статуса
+/// (`state = None`). Число столбцов — максимум влезающих в ширину (→ минимум строк);
+/// при переполнении хоткеи переносятся вниз, столбцы совпадают по вертикали, а
+/// неполная нижняя строка прижата вправо под столбцами выше. Возвращает пусто на
+/// пустом наборе. Используется экраном настроек (см. spec §11.1, §11.6).
+pub fn hotkey_lines(
+    width: usize,
+    hotkeys: &[(&str, &str)],
+    palette: &Palette,
+) -> Vec<Line<'static>> {
+    if hotkeys.is_empty() {
+        return Vec::new();
+    }
+    // Ширина ячейки как в `lines`: «клавиша» (+2 на отступы) + пробел + описание.
+    let cell_w: Vec<usize> = hotkeys
+        .iter()
+        .map(|(key, desc)| str_w(key) + 2 + 1 + str_w(desc))
+        .collect();
+    let n = hotkeys.len();
+    let cols = (1..=n)
+        .rev()
+        .find(|&c| grid_layout(&cell_w, c).2 <= width)
+        .unwrap_or(1);
+    right_grid(hotkeys, &cell_w, cols, width, None, None, palette)
+}
+
 /// Собирает строки статус-бара. Слева на **верхней** строке — «состояние» (пилюля
 /// статуса, индикатор генерации, счётчик токенов), прижатое к левому краю. Справа —
 /// хоткеи (начиная с тумблера мыши `Ctrl+W`, чьё описание = текущий режим), выложенные
@@ -660,6 +687,27 @@ mod tests {
             r[0],
             r[1]
         );
+    }
+
+    #[test]
+    fn hotkey_lines_wraps_and_right_aligns() {
+        let p = Palette::default();
+        let items: &[(&str, &str)] = &[
+            ("Tab", "секция"),
+            ("↑↓", "поля"),
+            ("Enter", "правка"),
+            ("Esc", "назад"),
+            ("Ctrl+C", "выход"),
+        ];
+        // Широко — одна строка, прижата вправо (заканчивается описанием последней клавиши).
+        let wide = hotkey_lines(200, items, &p);
+        assert_eq!(wide.len(), 1);
+        let flat: String = wide[0].spans.iter().map(|s| s.content.as_ref()).collect();
+        assert!(flat.contains("Tab") && flat.trim_end().ends_with("выход"));
+        // Узко — переносится на несколько строк.
+        assert!(hotkey_lines(24, items, &p).len() > 1);
+        // Пустой набор — без строк.
+        assert!(hotkey_lines(80, &[], &p).is_empty());
     }
 
     #[test]
