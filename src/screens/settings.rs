@@ -93,6 +93,13 @@ impl Subsection {
             Subsection::Impersonation => Subsection::Assistant,
         }
     }
+
+    /// Все варианты (для перечисления полей всех подсекций при поиске).
+    const ALL: [Subsection; 2] = [Subsection::Assistant, Subsection::Impersonation];
+
+    fn from_index(i: usize) -> Self {
+        Self::ALL.get(i).copied().unwrap_or(Subsection::Assistant)
+    }
 }
 
 /// Подсекция секции «Модель/сервер»: три сервера приложения (зеркало чипов
@@ -113,16 +120,22 @@ impl ModelTab {
         MODEL_TABS[self as usize].to_string()
     }
 
+    /// Все варианты (для перечисления полей всех подсекций при поиске).
+    const ALL: [ModelTab; 3] = [
+        ModelTab::Assistant,
+        ModelTab::Impersonation,
+        ModelTab::Embeddings,
+    ];
+
     /// Циклический сдвиг вкладки (←/→ по таб-стрипу).
     fn cycle(self, dir: i32) -> Self {
-        let order = [
-            ModelTab::Assistant,
-            ModelTab::Impersonation,
-            ModelTab::Embeddings,
-        ];
         let idx = self as i32;
-        let n = order.len() as i32;
-        order[(((idx + dir) % n + n) % n) as usize]
+        let n = Self::ALL.len() as i32;
+        Self::ALL[(((idx + dir) % n + n) % n) as usize]
+    }
+
+    fn from_index(i: usize) -> Self {
+        Self::ALL.get(i).copied().unwrap_or(ModelTab::Assistant)
     }
 }
 
@@ -539,6 +552,31 @@ enum Focus {
     Fields,
 }
 
+/// Одна цель поиска по полям: координаты для прыжка + текст для показа/сопоставления.
+struct SearchHit {
+    section_idx: usize,
+    /// Подсекция для прыжка (дискриминант; `None` — секция без подсекций).
+    subsection: Option<usize>,
+    /// Индекс поля в `*_fields()` соответствующей подсекции.
+    field_idx: usize,
+    /// «Секция › Группа › Подпись» для показа.
+    crumb: String,
+    /// Текущее значение поля (усекается при показе).
+    value: String,
+    /// Ловушка совпадения (lowercase): секция + группа + подпись + описание + hint.
+    haystack: String,
+}
+
+/// Оверлей поиска по полям (`/`): строка запроса + плоская отфильтрованная выдача.
+struct SearchState {
+    input: InputBox,
+    /// Полный индекс полей всех секций/подсекций (строится при открытии).
+    all: Vec<SearchHit>,
+    /// Индексы в `all`, прошедшие фильтр запроса.
+    results: Vec<usize>,
+    selected: usize,
+}
+
 /// Экран настроек: рабочая копия конфигурации и профилей + состояние навигации.
 pub struct SettingsScreen {
     config: AppConfig,
@@ -554,6 +592,8 @@ pub struct SettingsScreen {
     sampling_sub: Subsection,
     profile_sub: Subsection,
     editor: Option<Editor>,
+    /// Оверлей поиска по полям (`/`); `None` — закрыт.
+    search: Option<SearchState>,
 }
 
 impl SettingsScreen {
@@ -570,6 +610,7 @@ impl SettingsScreen {
             sampling_sub: Subsection::Assistant,
             profile_sub: Subsection::Assistant,
             editor: None,
+            search: None,
         }
     }
 
@@ -607,13 +648,19 @@ impl SettingsScreen {
     }
 
     fn model_fields(&self) -> Vec<FieldRow> {
+        self.model_fields_for(self.model_sub)
+    }
+
+    /// Поля секции «Модель» для заданной подсекции (для перечисления при поиске —
+    /// [`SettingsScreen::model_fields`] строит их для активной подсекции).
+    fn model_fields_for(&self, model_sub: ModelTab) -> Vec<FieldRow> {
         // Селектор подсекции (таб-стрип) — всегда поле 0; в списке он не рисуется.
         let sub = row(
             FieldId::ModelSub,
             "Подсекция",
-            FieldKind::Choice(self.model_sub.label()),
+            FieldKind::Choice(model_sub.label()),
         );
-        match self.model_sub {
+        match model_sub {
             ModelTab::Assistant => {
                 let x = &self.config.engine;
                 let mut rows = vec![
@@ -741,12 +788,17 @@ impl SettingsScreen {
     }
 
     fn sampling_fields(&self) -> Vec<FieldRow> {
+        self.sampling_fields_for(self.sampling_sub)
+    }
+
+    /// Поля секции «Семплинг» для заданной подсекции (для перечисления при поиске).
+    fn sampling_fields_for(&self, sampling_sub: Subsection) -> Vec<FieldRow> {
         let mut rows = vec![row(
             FieldId::SamplingSub,
             "Подсекция",
-            FieldKind::Choice(self.sampling_sub.label()),
+            FieldKind::Choice(sampling_sub.label()),
         )];
-        let (s, imp) = match self.sampling_sub {
+        let (s, imp) = match sampling_sub {
             Subsection::Assistant => (&self.config.default_sampling, false),
             Subsection::Impersonation => (&self.config.impersonation_sampling, true),
         };
@@ -976,6 +1028,11 @@ impl SettingsScreen {
     }
 
     fn profile_fields(&self) -> Vec<FieldRow> {
+        self.profile_fields_for(self.profile_sub)
+    }
+
+    /// Поля секции «Профили» для заданной подсекции (для перечисления при поиске).
+    fn profile_fields_for(&self, profile_sub: Subsection) -> Vec<FieldRow> {
         let Some(p) = self.profiles.get(self.profile_idx) else {
             return vec![row(
                 FieldId::PSelect,
@@ -989,7 +1046,7 @@ impl SettingsScreen {
             row(
                 FieldId::ProfileSub,
                 "Подсекция",
-                FieldKind::Choice(self.profile_sub.label()),
+                FieldKind::Choice(profile_sub.label()),
             ),
             row(
                 FieldId::PSelect,
@@ -998,7 +1055,7 @@ impl SettingsScreen {
             ),
             row(FieldId::PName, "Имя", FieldKind::Text(p.name.clone())),
         ];
-        match self.profile_sub {
+        match profile_sub {
             Subsection::Assistant => {
                 rows.extend(grouped(
                     "Персона",
@@ -1082,6 +1139,154 @@ impl SettingsScreen {
         }
     }
 
+    // ---------- поиск по полям (`/`) ----------
+
+    /// Строит полный индекс полей всех секций/подсекций для поиска. Поля
+    /// mode-зависимой видимости берутся по текущему режиму (managed/облако).
+    fn build_search_index(&self) -> Vec<SearchHit> {
+        let mut out = Vec::new();
+        for (sec_idx, sec) in SECTIONS.iter().enumerate() {
+            match sec {
+                Section::Model => {
+                    for (si, sub) in ModelTab::ALL.iter().enumerate() {
+                        collect_hits(
+                            &mut out,
+                            sec_idx,
+                            *sec,
+                            Some(si),
+                            Some(MODEL_TABS[si]),
+                            self.model_fields_for(*sub),
+                        );
+                    }
+                }
+                Section::Sampling => {
+                    for (si, sub) in Subsection::ALL.iter().enumerate() {
+                        collect_hits(
+                            &mut out,
+                            sec_idx,
+                            *sec,
+                            Some(si),
+                            Some(SUB_TABS[si]),
+                            self.sampling_fields_for(*sub),
+                        );
+                    }
+                }
+                Section::Profiles => {
+                    for (si, sub) in Subsection::ALL.iter().enumerate() {
+                        collect_hits(
+                            &mut out,
+                            sec_idx,
+                            *sec,
+                            Some(si),
+                            Some(SUB_TABS[si]),
+                            self.profile_fields_for(*sub),
+                        );
+                    }
+                }
+                Section::Tools => {
+                    collect_hits(&mut out, sec_idx, *sec, None, None, self.tool_fields())
+                }
+                Section::Memory => {
+                    collect_hits(&mut out, sec_idx, *sec, None, None, self.memory_fields())
+                }
+                Section::Interface => {
+                    collect_hits(&mut out, sec_idx, *sec, None, None, self.interface_fields())
+                }
+            }
+        }
+        out
+    }
+
+    fn open_search(&mut self) {
+        let mut input = InputBox::new();
+        input.set_single_line(true);
+        let all = self.build_search_index();
+        let results = (0..all.len()).collect();
+        self.search = Some(SearchState {
+            input,
+            all,
+            results,
+            selected: 0,
+        });
+    }
+
+    /// Пересчитывает выдачу по запросу (AND по словам-подстрокам, регистронезав.).
+    fn search_filter(&mut self) {
+        if let Some(st) = &mut self.search {
+            let q = st.input.text().to_lowercase();
+            let terms: Vec<&str> = q.split_whitespace().collect();
+            st.results = st
+                .all
+                .iter()
+                .enumerate()
+                .filter(|(_, h)| terms.iter().all(|t| h.haystack.contains(t)))
+                .map(|(i, _)| i)
+                .collect();
+            if st.selected >= st.results.len() {
+                st.selected = st.results.len().saturating_sub(1);
+            }
+        }
+    }
+
+    /// Прыжок к выбранному результату: секция, подсекция, поле, фокус на полях.
+    fn jump_to_selected(&mut self) {
+        let target = self.search.as_ref().and_then(|st| {
+            st.results.get(st.selected).map(|&ai| {
+                let h = &st.all[ai];
+                (h.section_idx, h.subsection, h.field_idx)
+            })
+        });
+        if let Some((section_idx, subsection, field_idx)) = target {
+            self.section_idx = section_idx;
+            if let Some(si) = subsection {
+                match SECTIONS[section_idx] {
+                    Section::Model => self.model_sub = ModelTab::from_index(si),
+                    Section::Sampling => self.sampling_sub = Subsection::from_index(si),
+                    Section::Profiles => self.profile_sub = Subsection::from_index(si),
+                    _ => {}
+                }
+            }
+            self.field_idx = field_idx;
+            self.focus = Focus::Fields;
+        }
+        self.search = None;
+    }
+
+    fn handle_search_key(&mut self, key: KeyEvent) -> Option<SettingsIntent> {
+        match (key.code, key.modifiers) {
+            (KeyCode::Esc, _) => self.search = None,
+            (KeyCode::Enter, _) => self.jump_to_selected(),
+            (KeyCode::Up, _) => {
+                if let Some(s) = &mut self.search {
+                    s.selected = s.selected.saturating_sub(1);
+                }
+            }
+            (KeyCode::Down, _) => {
+                if let Some(s) = &mut self.search
+                    && s.selected + 1 < s.results.len()
+                {
+                    s.selected += 1;
+                }
+            }
+            // Ctrl+K — очистить/вернуть запрос (как в прочих полях).
+            (KeyCode::Char(c), m)
+                if m.contains(KeyModifiers::CONTROL) && keys::physical_char(c) == 'k' =>
+            {
+                if let Some(s) = &mut self.search {
+                    s.input.clear_or_restore();
+                }
+                self.search_filter();
+            }
+            _ => {
+                if let Some(s) = &mut self.search {
+                    s.input.on_key(key);
+                }
+                self.search_filter();
+            }
+        }
+        None
+    }
+
     // ---------- обработка клавиш ----------
 
     /// Обрабатывает нажатие, возвращая намерение для `app` (или `None`).
@@ -1098,8 +1303,20 @@ impl SettingsScreen {
         {
             return Some(SettingsIntent::Quit);
         }
+        // Оверлей поиска перехватывает ввод (кроме Ctrl+C выше).
+        if self.search.is_some() {
+            return self.handle_search_key(key);
+        }
         if self.editor.is_some() {
             return self.handle_editor_key(key);
+        }
+        // `/` открывает поиск по полям (в редакторе `/` — обычный символ, обработан выше).
+        if key.code == KeyCode::Char('/')
+            && !key.modifiers.contains(KeyModifiers::CONTROL)
+            && !key.modifiers.contains(KeyModifiers::ALT)
+        {
+            self.open_search();
+            return None;
         }
         // Создать/удалить профиль (в секции «Профили»). Матчим по «физической»
         // латинской клавише — шорткаты работают при любой раскладке (см. shared::keys).
@@ -1269,7 +1486,10 @@ impl SettingsScreen {
     /// Вставка из буфера обмена (bracketed paste): осмысленна только когда открыт
     /// текстовый редактор поля (например, путь к модели) — иначе no-op. См. spec §11.5.
     pub fn handle_paste(&mut self, text: &str) {
-        if let Some(editor) = self.editor.as_mut() {
+        if let Some(search) = self.search.as_mut() {
+            search.input.insert_str(text);
+            self.search_filter();
+        } else if let Some(editor) = self.editor.as_mut() {
             editor.input.insert_str(text);
         }
     }
@@ -1729,6 +1949,7 @@ impl SettingsScreen {
             ("Enter", "правка"),
             ("Space", "тумблер"),
             ("←→", "выбор"),
+            ("/", "поиск"),
         ];
         if self.section() == Section::Profiles {
             hints.push(("Ctrl+N", "новый"));
@@ -1779,6 +2000,100 @@ impl SettingsScreen {
             editor
                 .input
                 .render(frame, popup, title, true, &palette, false);
+        }
+
+        // Оверлей поиска по полям — поверх всего (редактор при поиске закрыт).
+        if self.search.is_some() {
+            self.render_search(frame, area, &palette);
+        }
+    }
+
+    /// Рисует оверлей поиска: строка запроса + отфильтрованная выдача.
+    fn render_search(&mut self, frame: &mut Frame, area: Rect, palette: &Palette) {
+        let popup = centered_rect(72, 50, (area.height * 3 / 4).max(8), area);
+        dim_background(frame, palette);
+        frame.render_widget(Clear, popup);
+
+        let [input_area, list_area] =
+            Layout::vertical([Constraint::Length(3), Constraint::Min(1)]).areas(popup);
+
+        // Снимок для списка (селект/выдача) до мутабельного заимствования input.
+        let (results, all_len, selected): (Vec<(String, String)>, usize, usize) = {
+            let s = self.search.as_ref().unwrap();
+            let rows = s
+                .results
+                .iter()
+                .map(|&ai| {
+                    let h = &s.all[ai];
+                    (h.crumb.clone(), h.value.clone())
+                })
+                .collect();
+            (rows, s.all.len(), s.selected)
+        };
+
+        let title = format!("Поиск полей ({}/{})", results.len(), all_len);
+        self.search
+            .as_mut()
+            .unwrap()
+            .input
+            .render(frame, input_area, &title, true, palette, false);
+
+        // Список результатов: «крошка   значение» (значение приглушённо).
+        let inner_w = list_area.width.saturating_sub(2) as usize;
+        let items: Vec<ListItem> = if results.is_empty() {
+            vec![ListItem::new(Line::styled(
+                "  ничего не найдено",
+                palette.muted_style(),
+            ))]
+        } else {
+            results
+                .iter()
+                .map(|(crumb, value)| {
+                    let vw = if value.is_empty() {
+                        0
+                    } else {
+                        (value.chars().count() + 2).min(inner_w / 2)
+                    };
+                    let (crumb_s, cw) = truncate_to_width(crumb, inner_w.saturating_sub(vw + 1));
+                    let mut spans = vec![Span::styled(crumb_s, Style::new().fg(palette.text))];
+                    if vw > 0 {
+                        let (vs, _) = truncate_to_width(value, inner_w.saturating_sub(cw + 2));
+                        spans.push(Span::raw("  "));
+                        spans.push(Span::styled(vs, palette.muted_style()));
+                    }
+                    ListItem::new(Line::from(spans))
+                })
+                .collect()
+        };
+        let block = palette
+            .panel("Enter — перейти · ↑↓ — выбор · Esc — отмена", false)
+            .border_style(palette.border_style(true));
+        let list = List::new(items)
+            .block(block)
+            .highlight_style(Style::new().reversed());
+        let mut state = ListState::default();
+        if !results.is_empty() {
+            state.select(Some(selected.min(results.len() - 1)));
+        }
+        frame.render_stateful_widget(list, list_area, &mut state);
+
+        // Скроллбар на правой рамке панели, когда результатов больше видимой высоты.
+        if list_area.height > 2 {
+            let bar = Rect {
+                x: list_area.x,
+                y: list_area.y + 1,
+                width: list_area.width,
+                height: list_area.height - 2,
+            };
+            render_scrollbar(
+                frame,
+                bar,
+                results.len(),
+                bar.height as usize,
+                state.offset(),
+                true,
+                palette,
+            );
         }
     }
 
@@ -2542,6 +2857,60 @@ fn is_subsection(id: FieldId) -> bool {
         id,
         FieldId::ModelSub | FieldId::SamplingSub | FieldId::ProfileSub
     )
+}
+
+/// Отображаемое значение поля (для крошки поиска).
+fn value_text(kind: &FieldKind) -> String {
+    match kind {
+        FieldKind::Toggle(on) => (if *on { "вкл" } else { "выкл" }).to_string(),
+        FieldKind::Choice(v) => v.clone(),
+        FieldKind::Text(v) => v.clone(),
+    }
+}
+
+/// Добавляет поля секции/подсекции в индекс поиска (пропуская селектор подсекции).
+/// `sub_label` — подпись подсекции (в крошку и ловушку), чтобы одинаковые поля
+/// разных вкладок различались.
+fn collect_hits(
+    out: &mut Vec<SearchHit>,
+    section_idx: usize,
+    section: Section,
+    subsection: Option<usize>,
+    sub_label: Option<&str>,
+    fields: Vec<FieldRow>,
+) {
+    let head = match sub_label {
+        Some(sub) => format!("{} · {}", section.title(), sub),
+        None => section.title().to_string(),
+    };
+    for (fi, f) in fields.iter().enumerate() {
+        if is_subsection(f.id) {
+            continue;
+        }
+        let desc = field_description(f.id).unwrap_or("");
+        let crumb = if f.group.is_empty() {
+            format!("{head} › {}", f.label)
+        } else {
+            format!("{head} › {} › {}", f.group, f.label)
+        };
+        let value = value_text(&f.kind);
+        let haystack = format!(
+            "{head} {} {} {} {}",
+            f.group,
+            f.label,
+            desc,
+            f.hint.unwrap_or("")
+        )
+        .to_lowercase();
+        out.push(SearchHit {
+            section_idx,
+            subsection,
+            field_idx: fi,
+            crumb,
+            value,
+            haystack,
+        });
+    }
 }
 
 /// Таб-стрип подсекции: `Ассистент │ Имперсонация │ Эмбеддинги`. Активная вкладка
@@ -3532,6 +3901,90 @@ mod tests {
         assert!(
             !ptext.contains('/'),
             "у группы без счётчика его быть не должно"
+        );
+    }
+
+    #[test]
+    fn search_filters_and_jumps_to_field() {
+        let mut s = screen();
+        // `/` открывает поиск; ввод фильтрует по уникальному слову.
+        s.handle_key(key(KeyCode::Char('/')));
+        assert!(s.search.is_some(), "`/` открывает оверлей поиска");
+        for c in "приветствие".chars() {
+            s.handle_key(key(KeyCode::Char(c)));
+        }
+        {
+            let st = s.search.as_ref().unwrap();
+            assert!(!st.results.is_empty());
+            assert!(
+                st.results
+                    .iter()
+                    .all(|&i| st.all[i].haystack.contains("приветствие")),
+                "все результаты содержат запрос"
+            );
+        }
+        // Enter — прыжок к полю (секция/фокус/индекс), оверлей закрыт.
+        s.handle_key(key(KeyCode::Enter));
+        assert!(s.search.is_none());
+        assert_eq!(s.section(), Section::Profiles);
+        assert!(s.focus == Focus::Fields);
+        assert_eq!(
+            s.fields().get(s.field_idx).map(|f| f.id),
+            Some(FieldId::PGreeting)
+        );
+    }
+
+    #[test]
+    fn search_jump_switches_subsection() {
+        // Прыжок в поле неактивной подсекции переключает её (Модель → Эмбеддинги).
+        let mut s = screen();
+        assert_eq!(s.model_sub, ModelTab::Assistant);
+        s.handle_key(key(KeyCode::Char('/')));
+        for c in "эмбеддинги порт".chars() {
+            s.handle_key(key(KeyCode::Char(c)));
+        }
+        assert!(!s.search.as_ref().unwrap().results.is_empty());
+        s.handle_key(key(KeyCode::Enter));
+        assert_eq!(s.section(), Section::Model);
+        assert_eq!(s.model_sub, ModelTab::Embeddings);
+        assert_eq!(
+            s.fields().get(s.field_idx).map(|f| f.id),
+            Some(FieldId::EPort)
+        );
+    }
+
+    #[test]
+    fn search_esc_cancels_without_jump() {
+        let mut s = screen();
+        let before = (s.section_idx, s.field_idx);
+        s.handle_key(key(KeyCode::Char('/')));
+        for c in "порт".chars() {
+            s.handle_key(key(KeyCode::Char(c)));
+        }
+        s.handle_key(key(KeyCode::Esc));
+        assert!(s.search.is_none());
+        assert_eq!(
+            (s.section_idx, s.field_idx),
+            before,
+            "Esc не двигает навигацию"
+        );
+    }
+
+    #[test]
+    fn search_index_covers_all_subsections() {
+        // Индекс поиска содержит поля всех подсекций (напр. и managed-сервер, и
+        // облачная модель ассистента доступны через поиск при текущем режиме).
+        let s = screen();
+        let idx = s.build_search_index();
+        assert!(
+            idx.len() > 100,
+            "индекс охватывает все секции: {}",
+            idx.len()
+        );
+        // Поле имперсонации-модели индексируется, хотя активна подсекция ассистента.
+        assert!(
+            idx.iter().any(|h| h.crumb.contains("Имперсонация")),
+            "в индексе есть поля подсекции имперсонации"
         );
     }
 
