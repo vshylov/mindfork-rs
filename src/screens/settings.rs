@@ -22,6 +22,7 @@ use crate::entities::profile::Profile;
 use crate::entities::sampling::{ReasoningEffort, SamplingConfig};
 use crate::features::profiles::ProfileEdit;
 use crate::features::tools::all_tool_ids;
+use crate::features::tools::meta::{self, ToolGate};
 use crate::shared::config::{
     AppConfig, CloudProvider, CloudSettings, ImpersonationMode, ManagedSettings, ServerMode, Theme,
 };
@@ -514,6 +515,11 @@ struct FieldRow {
     label: String,
     kind: FieldKind,
     group: &'static str,
+    /// Короткая инлайн-подсказка справа от значения (описание инструмента). `None` — нет.
+    hint: Option<&'static str>,
+    /// Значение и подсказку рисовать цветом предупреждения — инструмент включён в
+    /// профиле, но выключен глобальным гейтом (недоступен модели).
+    warn: bool,
 }
 
 /// Активный редактор текстового поля (попап).
@@ -1009,15 +1015,34 @@ impl SettingsScreen {
                         ),
                     ],
                 ));
-                let tools: Vec<FieldRow> = Self::tool_catalog()
-                    .into_iter()
-                    .enumerate()
-                    .map(|(idx, tool)| {
-                        let on = p.enabled_tools.iter().any(|t| t == &tool);
-                        row(FieldId::PTool(idx), &tool, FieldKind::Toggle(on))
-                    })
-                    .collect();
-                rows.extend(grouped("Инструменты", tools));
+                // Тумблеры инструментов: раскладываем по смысловым группам
+                // (`meta::tool_group`), с коротким описанием и честным гейтом.
+                // Индекс `PTool` — позиция в `tool_catalog()` (источник истины для
+                // `toggle_profile_tool`); порядок ПОКАЗА группируем стабильной
+                // сортировкой, не трогая индексы.
+                let mut indexed: Vec<(usize, String)> =
+                    Self::tool_catalog().into_iter().enumerate().collect();
+                indexed.sort_by_key(|(_, id)| {
+                    meta::TOOL_GROUPS
+                        .iter()
+                        .position(|g| *g == meta::tool_group(id))
+                        .unwrap_or(usize::MAX)
+                });
+                for (idx, tool) in indexed {
+                    let on = p.enabled_tools.iter().any(|t| t == &tool);
+                    let gate = meta::tool_gate(&tool);
+                    let gated_off = on && gate.is_some_and(|g| self.gate_disabled(g));
+                    let mut r = row(FieldId::PTool(idx), &tool, FieldKind::Toggle(on));
+                    r.group = meta::tool_group(&tool);
+                    r.warn = gated_off;
+                    r.hint = if gated_off {
+                        gate.map(gate_hint)
+                    } else {
+                        let d = meta::tool_description(&tool);
+                        (!d.is_empty()).then_some(d)
+                    };
+                    rows.push(r);
+                }
             }
             // В имперсонации инструментов нет (spec §11.8) — только сис. сообщение.
             Subsection::Impersonation => {
@@ -1032,6 +1057,16 @@ impl SettingsScreen {
             }
         }
         rows
+    }
+
+    /// Выключен ли глобальный гейт инструмента (тогда инструмент недоступен модели,
+    /// даже если включён в профиле).
+    fn gate_disabled(&self, gate: ToolGate) -> bool {
+        match gate {
+            ToolGate::Web => !self.config.tools.web_enabled,
+            ToolGate::Python => !self.config.tools.python_enabled,
+            ToolGate::Fs => !self.config.tools.fs_enabled,
+        }
     }
 
     /// Облачный провайдер сэмплинга подсекции (`None` — локальный движок). Для
@@ -1867,14 +1902,23 @@ impl SettingsScreen {
 
         // Колонку значений выравниваем по самой длинной подписи ВНУТРИ группы (не
         // всей секции): одно длинное имя больше не отгоняет значения других групп.
+        // Заодно считаем тумблеры группы (вкл/всего) для счётчика в заголовке.
         // Селектор подсекции в списке не рисуется — из выравнивания исключён.
         let mut group_col: HashMap<&str, usize> = HashMap::new();
+        let mut group_toggles: HashMap<&str, (usize, usize)> = HashMap::new();
         for f in &fields {
             if is_subsection(f.id) {
                 continue;
             }
             let w = group_col.entry(f.group).or_insert(0);
             *w = (*w).max(label_width(&f.label));
+            if let FieldKind::Toggle(on) = f.kind {
+                let e = group_toggles.entry(f.group).or_insert((0, 0));
+                e.1 += 1;
+                if on {
+                    e.0 += 1;
+                }
+            }
         }
         const MIN_LABEL_COL: usize = 20;
 
@@ -1891,7 +1935,15 @@ impl SettingsScreen {
                 continue;
             }
             if !f.group.is_empty() && prev_group != Some(f.group) {
-                items.push(ListItem::new(header_line(f.group, inner_w, &palette)));
+                // Счётчик «вкл/всего» — только для групп с ≥2 тумблерами (там он
+                // информативен; для одиночного тумблера дублировал бы видимый [x]).
+                let count = group_toggles
+                    .get(f.group)
+                    .copied()
+                    .filter(|&(_, total)| total >= 2);
+                items.push(ListItem::new(header_line(
+                    f.group, count, inner_w, &palette,
+                )));
             }
             prev_group = Some(f.group);
             if focused && i == self.field_idx {
@@ -1964,6 +2016,16 @@ impl SettingsScreen {
                 }
                 if let Some(text) = field_description(f.id) {
                     lines.push(Line::styled(text, palette.muted_style()));
+                }
+                // Выключенный глобально инструмент — развёрнутое пояснение (цветом
+                // предупреждения), чтобы честный гейт был понятен, а не только «⊘».
+                if f.warn {
+                    lines.push(Line::styled(
+                        "Инструмент включён в профиле, но выключен глобальным \
+                         выключателем — он недоступен модели. Включите его в секции \
+                         «Инструменты».",
+                        Style::new().fg(palette.warning),
+                    ));
                 }
             }
             let para = Paragraph::new(lines)
@@ -2188,6 +2250,8 @@ fn row(id: FieldId, label: &str, kind: FieldKind) -> FieldRow {
         label: label.to_string(),
         kind,
         group: "",
+        hint: None,
+        warn: false,
     }
 }
 
@@ -2462,6 +2526,16 @@ fn label_width(label: &str) -> usize {
     crate::shared::wrap::display_width(&label.chars().collect::<Vec<_>>())
 }
 
+/// Инлайн-подсказка для инструмента, выключенного глобальным гейтом («выкл.
+/// глобально: <выключатель>»). Показывается цветом предупреждения.
+fn gate_hint(gate: ToolGate) -> &'static str {
+    match gate {
+        ToolGate::Web => "выкл. глобально: Web-поиск",
+        ToolGate::Python => "выкл. глобально: Python",
+        ToolGate::Fs => "выкл. глобально: файлы",
+    }
+}
+
 /// Является ли поле селектором подсекции (рисуется таб-стрипом, а не строкой списка).
 fn is_subsection(id: FieldId) -> bool {
     matches!(
@@ -2496,16 +2570,36 @@ fn tab_strip_line(tabs: &[&str], active: usize, focused: bool, palette: &Palette
     Line::from(spans)
 }
 
-/// Заголовок группы полей: `Группа ────────` на всю ширину. Имя — приглушённо-
-/// жирным, продолжение — линией цветом рамки. `─` входит в WGL4 → без компат-замены.
-fn header_line(name: &str, width: usize, palette: &Palette) -> Line<'static> {
+/// Заголовок группы полей: `Группа ──── N/M ──` на всю ширину. Имя — приглушённо-
+/// жирным, продолжение — линией цветом рамки; `count = (вкл, всего)` показывает
+/// счётчик тумблеров группы. `─` входит в WGL4 → без компат-замены.
+fn header_line(
+    name: &str,
+    count: Option<(usize, usize)>,
+    width: usize,
+    palette: &Palette,
+) -> Line<'static> {
     let label = format!(" {name} ");
-    let used = label_width(&label);
+    let mut spans = vec![Span::styled(
+        label.clone(),
+        Style::new().fg(palette.muted).bold(),
+    )];
+    let mut used = label_width(&label);
+    if let Some((on, total)) = count {
+        let tag = format!("{on}/{total} ");
+        used += label_width(&tag) + 1;
+        // Тонкий разделитель + счётчик приглушённым перед линией.
+        let dashes_lead = "── ";
+        used += label_width(dashes_lead);
+        spans.push(Span::styled(dashes_lead, Style::new().fg(palette.border)));
+        spans.push(Span::styled(tag, palette.muted_style()));
+    }
     let dashes = width.saturating_sub(used + 1);
-    Line::from(vec![
-        Span::styled(label, Style::new().fg(palette.muted).bold()),
-        Span::styled("─".repeat(dashes), Style::new().fg(palette.border)),
-    ])
+    spans.push(Span::styled(
+        "─".repeat(dashes),
+        Style::new().fg(palette.border),
+    ));
+    Line::from(spans)
 }
 
 /// Строка поля: подпись + значение, окрашенное по типу (тумблер — зелёный/
@@ -2519,11 +2613,21 @@ fn render_field_line(
 ) -> Line<'static> {
     let (value, value_style) = match &f.kind {
         FieldKind::Toggle(on) => {
-            if *on {
-                ("[x]".to_string(), Style::new().fg(palette.success))
+            // Гейт: включённый в профиле, но выключенный глобально инструмент —
+            // цветом предупреждения (он не действует), а не зелёным.
+            let color = if *on {
+                if f.warn {
+                    palette.warning
+                } else {
+                    palette.success
+                }
             } else {
-                ("[ ]".to_string(), palette.muted_style())
-            }
+                palette.muted
+            };
+            (
+                (if *on { "[x]" } else { "[ ]" }).to_string(),
+                Style::new().fg(color),
+            )
         }
         FieldKind::Choice(v) => (format!("‹ {v} ›"), Style::new().fg(palette.user)),
         FieldKind::Text(v) => {
@@ -2536,15 +2640,30 @@ fn render_field_line(
             (v.clone(), style)
         }
     };
-    let (value, _) = truncate_to_width(&value, value_w.max(1));
+    let (value, vw) = truncate_to_width(&value, value_w.max(1));
     // Дополняем подпись пробелами до ширины колонки по реальной ширине в колонках
     // (Rust `{:<N}` считает символы, а не колонки — для CJK/эмодзи это разъезжается).
     let pad = label_col.saturating_sub(label_width(&f.label));
-    Line::from(vec![
+    let mut spans = vec![
         Span::styled(f.label.clone(), palette.muted_style()),
         Span::raw(" ".repeat(pad + 1)),
         Span::styled(value, value_style),
-    ])
+    ];
+    // Инлайн-подсказка (описание инструмента) справа от значения — в остатке ширины.
+    if let Some(hint) = f.hint {
+        let remaining = value_w.saturating_sub(vw + 2);
+        if remaining >= 2 {
+            let (h, _) = truncate_to_width(hint, remaining);
+            let style = if f.warn {
+                Style::new().fg(palette.warning)
+            } else {
+                palette.muted_style()
+            };
+            spans.push(Span::raw("  "));
+            spans.push(Span::styled(h, style));
+        }
+    }
+    Line::from(spans)
 }
 
 /// Усечение строки до `max` колонок с добавлением «…» (WGL4-безопасный). Возвращает
@@ -3350,6 +3469,73 @@ mod tests {
     }
 
     #[test]
+    fn profile_tools_are_grouped_with_descriptions() {
+        // Каждый тумблер инструмента размечен смысловой группой (из meta) и несёт
+        // короткое инлайн-описание. Группы — из известного порядка TOOL_GROUPS.
+        let mut s = screen();
+        goto_section(&mut s, Section::Profiles);
+        let fields = s.profile_fields();
+        let tool_rows: Vec<&FieldRow> = fields
+            .iter()
+            .filter(|r| matches!(r.id, FieldId::PTool(_)))
+            .collect();
+        assert!(!tool_rows.is_empty());
+        for r in &tool_rows {
+            assert!(
+                meta::TOOL_GROUPS.contains(&r.group),
+                "инструмент вне известной группы: {}",
+                r.label
+            );
+            assert!(r.hint.is_some(), "нет инлайн-описания у {}", r.label);
+        }
+        // Инструменты одной группы идут подряд (заголовок не повторяется).
+        let groups: Vec<&str> = tool_rows.iter().map(|r| r.group).collect();
+        let mut seen = std::collections::HashSet::new();
+        let mut prev = "";
+        for g in groups {
+            if g != prev {
+                assert!(seen.insert(g), "группа {g} не непрерывна");
+                prev = g;
+            }
+        }
+    }
+
+    #[test]
+    fn globally_disabled_tool_is_marked_gated() {
+        // python выключен глобально, но включён в профиле → строка помечена гейтом
+        // (warn + подсказка «выкл. глобально»); web включён → обычное описание.
+        let mut s = screen();
+        s.config.tools.python_enabled = false;
+        s.config.tools.web_enabled = true;
+        goto_section(&mut s, Section::Profiles);
+        let fields = s.profile_fields();
+        let idx_of =
+            |name: &str| -> usize { all_tool_ids().iter().position(|t| t == name).unwrap() };
+        let find = |id: FieldId| fields.iter().find(|r| r.id == id).unwrap();
+        let py = find(FieldId::PTool(idx_of("python_exec")));
+        assert!(py.warn, "выключенный глобально python_exec — гейт");
+        assert!(py.hint.unwrap().contains("глобально"));
+        let web = find(FieldId::PTool(idx_of("web_search")));
+        assert!(!web.warn, "web включён глобально — не гейт");
+        assert_eq!(web.hint, Some("поиск в интернете"));
+    }
+
+    #[test]
+    fn group_header_shows_toggle_count() {
+        // Заголовок группы с ≥2 тумблерами несёт счётчик «вкл/всего»; одиночный — нет.
+        let palette = Palette::default();
+        let line = header_line("Веб-поиск", Some((1, 2)), 60, &palette);
+        let text: String = line.spans.iter().map(|s| s.content.as_ref()).collect();
+        assert!(text.contains("1/2"), "нет счётчика: {text:?}");
+        let plain = header_line("Сервер", None, 60, &palette);
+        let ptext: String = plain.spans.iter().map(|s| s.content.as_ref()).collect();
+        assert!(
+            !ptext.contains('/'),
+            "у группы без счётчика его быть не должно"
+        );
+    }
+
+    #[test]
     fn memory_section_gathers_rag_notes_self_model() {
         // Секция «Память» собрала поля, ранее размазанные по «Инструментам».
         let mut s = screen();
@@ -3395,6 +3581,8 @@ mod tests {
             label: "GGUF-модель (-m)".into(),
             kind: FieldKind::Text("D:\\LLM\\GGUF\\very-long-model-name-".repeat(4)),
             group: "Модель",
+            hint: None,
+            warn: false,
         };
         let line = render_field_line(&f, 20, 24, &palette);
         let rendered: String = line.spans.iter().map(|sp| sp.content.as_ref()).collect();

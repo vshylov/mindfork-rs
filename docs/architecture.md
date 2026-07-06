@@ -172,6 +172,7 @@ src/
 ├─ features/                пользовательские сценарии (FSD "features")
 │  ├─ tools/                реестр и реализации инструментов (client-side)
 │  │  ├─ mod.rs             Tool, ToolContext, ToolOutcome/ChatEffect, ToolRegistry, ToolConfig
+│  │  ├─ meta.rs            метаданные каталога для UI: группа/описание/гейт инструмента
 │  │  ├─ rag.rs             rag_add/rag_search: чанкинг, эмбеддинг, kNN, склейка
 │  │  ├─ notes.rs           note_save/note_recall
 │  │  ├─ introspection.rs   get/set_sampling, get/set_system_message, get_last_user_message_time
