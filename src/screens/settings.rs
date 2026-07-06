@@ -545,8 +545,9 @@ enum FieldKind {
 }
 
 /// Строка поля: идентификатор, подпись, текущее представление значения и
-/// смысловая группа (для заголовка группы и выравнивания значений; `""` — вне
-/// группы, без заголовка).
+/// смысловая группа (для заголовка группы и счётчика тумблеров; `""` — вне
+/// группы, без заголовка). Значения выравниваются единой колонкой на всю
+/// секцию ([`section_label_col`]), группа на колонку не влияет.
 struct FieldRow {
     id: FieldId,
     label: String,
@@ -968,7 +969,7 @@ impl SettingsScreen {
                 ),
                 row(
                     FieldId::NotesRecallIncludesSelf,
-                    "Наблюдения «о себе» в note_recall",
+                    "«О себе» в note_recall",
                     FieldKind::Toggle(self.config.notes.recall_includes_self),
                 ),
             ],
@@ -1023,7 +1024,7 @@ impl SettingsScreen {
                 ),
                 row(
                     FieldId::ICompat,
-                    "Совместимость со старым терминалом",
+                    "Режим старого терминала",
                     FieldKind::Toggle(i.terminal_compat),
                 ),
             ],
@@ -1055,22 +1056,25 @@ impl SettingsScreen {
                 FieldKind::Toggle(i.confirm_destructive_keys),
             )],
         ));
+        // Подписи читаются как продолжение заголовка группы («Копирование … —
+        // с «мыслями»»): общий префикс «Копировать» ушёл в заголовок, чтобы
+        // длинные имена не отгоняли колонку значений (см. LABEL_CAP).
         rows.extend(grouped(
             "Копирование переписки (F5)",
             vec![
                 row(
                     FieldId::ICopyThoughts,
-                    "Копировать с «мыслями»",
+                    "С «мыслями»",
                     FieldKind::Toggle(self.config.copy.copy_thoughts),
                 ),
                 row(
                     FieldId::ICopyToolCalls,
-                    "Копировать с параметрами инструментов",
+                    "С параметрами инструментов",
                     FieldKind::Toggle(self.config.copy.copy_tool_calls),
                 ),
                 row(
                     FieldId::ICopyToolResults,
-                    "Копировать с ответами инструментов",
+                    "С ответами инструментов",
                     FieldKind::Toggle(self.config.copy.copy_tool_results),
                 ),
             ],
@@ -2502,18 +2506,18 @@ impl SettingsScreen {
         }
         frame.render_widget(Paragraph::new(head_lines), head_area);
 
-        // Колонку значений выравниваем по самой длинной подписи ВНУТРИ группы (не
-        // всей секции): одно длинное имя больше не отгоняет значения других групп.
-        // Заодно считаем тумблеры группы (вкл/всего) для счётчика в заголовке.
-        // Селектор подсекции в списке не рисуется — из выравнивания исключён.
-        let mut group_col: HashMap<&str, usize> = HashMap::new();
+        // Единая колонка значений на ВСЮ секцию (`section_label_col`): значения и
+        // инлайн-подсказки всех групп стоят на одной вертикали (колонка на группу
+        // «пилила» — у каждой группы был свой стоп). Сверхдлинная подпись
+        // (> LABEL_CAP) колонку не отгоняет — её значение локально встаёт сразу
+        // после подписи. Здесь же считаем тумблеры группы (вкл/всего) для счётчика
+        // в заголовке.
+        let label_col = section_label_col(&fields);
         let mut group_toggles: HashMap<&str, (usize, usize)> = HashMap::new();
         for f in &fields {
             if is_subsection(f.id) {
                 continue;
             }
-            let w = group_col.entry(f.group).or_insert(0);
-            *w = (*w).max(label_width(&f.label));
             if let FieldKind::Toggle(on) = f.kind {
                 let e = group_toggles.entry(f.group).or_insert((0, 0));
                 e.1 += 1;
@@ -2522,7 +2526,6 @@ impl SettingsScreen {
                 }
             }
         }
-        const MIN_LABEL_COL: usize = 20;
 
         // Поля из дефолтного конфига — для маркера «изменено» (строим один раз).
         let default_fields = self.default_fields();
@@ -2554,20 +2557,18 @@ impl SettingsScreen {
             if focused && i == self.field_idx {
                 select = Some(items.len());
             }
-            let col = group_col
-                .get(f.group)
-                .copied()
-                .unwrap_or(0)
-                .max(MIN_LABEL_COL);
             let modified = default_fields
                 .iter()
                 .find(|d| d.id == f.id)
                 .map(|d| value_text(&d.kind) != value_text(&f.kind))
                 .unwrap_or(false);
             // Ширина под значение: минус маркер(2)+подпись+отступ и правый зазор.
-            let value_w = inner_w.saturating_sub(col + 4);
+            // Подпись длиннее колонки (> LABEL_CAP) сдвигает значение вправо —
+            // считаем остаток от её реального конца, чтобы усечение «…» не врало.
+            let start = label_col.max(label_width(&f.label));
+            let value_w = inner_w.saturating_sub(start + 4);
             items.push(ListItem::new(render_field_line(
-                f, col, value_w, modified, &palette,
+                f, label_col, value_w, modified, &palette,
             )));
         }
         let total = items.len();
@@ -3136,6 +3137,31 @@ fn apply_sampling_text(s: &mut SamplingConfig, p: SamplingParam, trimmed: &str) 
 /// Ширина подписи в терминальных колонках (кириллица/латиница = 1, CJK/эмодзи = 2).
 fn label_width(label: &str) -> usize {
     crate::shared::wrap::display_width(&label.chars().collect::<Vec<_>>())
+}
+
+/// Пол колонки значений: у секции из одних коротких подписей значения не
+/// прижимаются к самому левому краю (стабильный минимум между секциями).
+const MIN_LABEL_COL: usize = 20;
+/// Потолок участия подписи в выравнивании: более длинная подпись не отгоняет
+/// колонку значений всей секции — её значение встаёт сразу после неё самой
+/// (локальное переполнение). Все текущие подписи укладываются в потолок
+/// (тест `all_labels_fit_alignment_cap`) — это страховка на будущее.
+const LABEL_CAP: usize = 28;
+
+/// Единая колонка значений секции: самая длинная подпись среди видимых полей,
+/// с полом [`MIN_LABEL_COL`] и потолком [`LABEL_CAP`]. Одна колонка на секцию
+/// (а не на группу): значения всех групп стоят на общей вертикали — колонка на
+/// группу давала «пилу» из разных стопов от группы к группе. Селектор подсекции
+/// рисуется таб-стрипом, не строкой списка — из выравнивания исключён.
+fn section_label_col(fields: &[FieldRow]) -> usize {
+    fields
+        .iter()
+        .filter(|f| !is_subsection(f.id))
+        .map(|f| label_width(&f.label))
+        .filter(|&w| w <= LABEL_CAP)
+        .max()
+        .unwrap_or(0)
+        .max(MIN_LABEL_COL)
 }
 
 /// Инлайн-подсказка для инструмента, выключенного глобальным гейтом («выкл.
@@ -4677,6 +4703,113 @@ mod tests {
             rendered.contains('…'),
             "длинное значение усечено: {rendered:?}"
         );
+    }
+
+    #[test]
+    fn section_label_col_has_floor_cap_and_skips_subsection() {
+        let text = |s: &str| FieldKind::Text(s.into());
+        // Одни короткие подписи → пол MIN_LABEL_COL.
+        let short = vec![row(FieldId::PName, "Имя", text("x"))];
+        assert_eq!(section_label_col(&short), MIN_LABEL_COL);
+        // Самая длинная подпись в пределах потолка задаёт колонку всей секции.
+        let medium = vec![
+            row(FieldId::PName, "Имя", text("x")),
+            row(FieldId::PGreeting, "Подпись средней длины!", text("y")),
+        ];
+        assert_eq!(section_label_col(&medium), 22);
+        // Сверхдлинная подпись (> LABEL_CAP) колонку не отгоняет…
+        let mut with_outlier = medium;
+        with_outlier.push(row(
+            FieldId::PSystem,
+            &"а".repeat(LABEL_CAP + 12),
+            text("z"),
+        ));
+        assert_eq!(section_label_col(&with_outlier), 22);
+        // …а селектор подсекции (таб-стрип, не строка списка) исключён вовсе.
+        let with_sub = vec![
+            row(FieldId::PName, "Имя", text("x")),
+            row(FieldId::ModelSub, &"б".repeat(25), text("s")),
+        ];
+        assert_eq!(section_label_col(&with_sub), MIN_LABEL_COL);
+    }
+
+    #[test]
+    fn all_labels_fit_alignment_cap() {
+        // Все подписи всех секций/подсекций укладываются в потолок выравнивания —
+        // значения каждой секции стоят на одной вертикали, без локальных
+        // переполнений. Новому длинному имени — сократить подпись, перенеся
+        // контекст в заголовок группы (как «Копирование переписки (F5)»).
+        let mut cfg = AppConfig::default();
+        // Черновые поля спекулятивного декодирования видны только для draft-типов.
+        cfg.engine.managed.spec_type = SpecType::DraftMtp;
+        let mut p = Profile::new("Базовый", "Ты — ассистент.");
+        p.enabled_tools = default_tool_ids();
+        let s = SettingsScreen::new(cfg, vec![p]);
+        let mut all: Vec<(&str, Vec<FieldRow>)> = vec![
+            ("Инструменты", s.tool_fields()),
+            ("Память", s.memory_fields()),
+            ("Интерфейс", s.interface_fields()),
+        ];
+        for tab in ModelTab::ALL {
+            all.push(("Модель", s.model_fields_for(tab)));
+        }
+        for sub in Subsection::ALL {
+            all.push(("Семплинг", s.sampling_fields_for(sub)));
+            all.push(("Профили", s.profile_fields_for(sub)));
+        }
+        for (section, fields) in all {
+            for f in fields {
+                assert!(
+                    label_width(&f.label) <= LABEL_CAP,
+                    "подпись «{}» ({section}) шире LABEL_CAP={LABEL_CAP} — сократите \
+                     её или перенесите контекст в заголовок группы",
+                    f.label
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn value_column_is_shared_across_groups() {
+        use ratatui::Terminal;
+        use ratatui::backend::TestBackend;
+        // Значения разных групп секции стоят на одной вертикали (единая колонка
+        // на секцию; колонка на группу давала «пилу» между группами).
+        let mut s = screen();
+        goto_section(&mut s, Section::Tools);
+        let mut term = Terminal::new(TestBackend::new(100, 30)).unwrap();
+        term.draw(|f| s.render(f)).unwrap();
+        let buf = term.backend().buffer();
+        let lines: Vec<String> = (0..buf.area.height)
+            .map(|y| {
+                (0..buf.area.width)
+                    .map(|x| buf[(x, y)].symbol().to_string())
+                    .collect()
+            })
+            .collect();
+        // Ячейка первого непробельного символа после подписи (= начало значения).
+        let value_cell = |label: &str| -> usize {
+            let line = lines
+                .iter()
+                .find(|l| l.contains(label))
+                .unwrap_or_else(|| panic!("нет строки с подписью {label:?}"));
+            let chars: Vec<char> = line.chars().collect();
+            let needle: Vec<char> = label.chars().collect();
+            let start = (0..=chars.len() - needle.len())
+                .find(|&i| chars[i..i + needle.len()] == needle[..])
+                .unwrap();
+            let after = start + needle.len();
+            after + chars[after..].iter().take_while(|c| **c == ' ').count()
+        };
+        // Три поля из трёх разных групп («Агентный цикл»/«Веб-поиск»/«Файлы»).
+        let a = value_cell("Лимит раундов инструментов");
+        let b = value_cell("Web-поиск");
+        let c = value_cell("Доступ к файлам");
+        assert_eq!(
+            a, b,
+            "значения групп «Агентный цикл» и «Веб-поиск» в одной колонке"
+        );
+        assert_eq!(b, c, "значения группы «Файлы» в той же колонке");
     }
 
     #[test]
