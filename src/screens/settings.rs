@@ -24,7 +24,8 @@ use crate::features::profiles::ProfileEdit;
 use crate::features::tools::all_tool_ids;
 use crate::features::tools::meta::{self, ToolGate};
 use crate::shared::config::{
-    AppConfig, CloudProvider, CloudSettings, ImpersonationMode, ManagedSettings, ServerMode, Theme,
+    AppConfig, CloudProvider, CloudSettings, FlashAttn, ImpersonationMode, ManagedSettings,
+    ServerMode, SpecType, Theme,
 };
 use crate::shared::keys;
 use crate::shared::theme::Palette;
@@ -150,6 +151,13 @@ impl Section {
             Section::Interface => "Интерфейс",
         }
     }
+}
+
+/// Числовой вид редактируемого поля (для валидации ввода без закрытия редактора).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum NumKind {
+    Int,
+    Float,
 }
 
 /// Параметр семплинга. Адресует конкретное поле [`SamplingConfig`] внутри
@@ -281,6 +289,21 @@ impl SamplingParam {
             Reasoning => "reasoning_effort",
             // Остальные параметры подписаны именем своего JSON-поля.
             _ => self.label(),
+        }
+    }
+
+    /// Числовой вид параметра для валидации редактора (`None` — не число: списки/
+    /// выбор `Thinking`/`Reasoning`).
+    fn num_kind(self) -> Option<NumKind> {
+        use SamplingParam::*;
+        match self {
+            // Целочисленные.
+            TopK | RepeatLastN | DryAllowedLength | DryPenaltyLastN | Mirostat | MaxTokens
+            | Seed => Some(NumKind::Int),
+            // Списки/выбор — не число.
+            DrySeqBreakers | Samplers | Thinking | Reasoning => None,
+            // Остальные — вещественные.
+            _ => Some(NumKind::Float),
         }
     }
 
@@ -543,6 +566,9 @@ struct Editor {
     /// строк, ввод перевода строки по `Shift+Enter`, крупный попап. Прочие поля —
     /// однострочные.
     multiline: bool,
+    /// Ошибка валидации (напр. «нужно число»): редактор не закрывается по `Enter`,
+    /// подпись краснеет. `None` — ввод валиден.
+    error: Option<&'static str>,
 }
 
 /// Фокус: левое меню секций или список полей справа.
@@ -577,6 +603,13 @@ struct SearchState {
     selected: usize,
 }
 
+/// Попап выбора значения Choice-поля (Enter): список вариантов с отметкой текущего.
+struct ChoiceState {
+    field: FieldId,
+    options: Vec<String>,
+    selected: usize,
+}
+
 /// Экран настроек: рабочая копия конфигурации и профилей + состояние навигации.
 pub struct SettingsScreen {
     config: AppConfig,
@@ -594,6 +627,8 @@ pub struct SettingsScreen {
     editor: Option<Editor>,
     /// Оверлей поиска по полям (`/`); `None` — закрыт.
     search: Option<SearchState>,
+    /// Попап выбора значения Choice-поля (Enter); `None` — закрыт.
+    choice: Option<ChoiceState>,
 }
 
 impl SettingsScreen {
@@ -611,6 +646,7 @@ impl SettingsScreen {
             profile_sub: Subsection::Assistant,
             editor: None,
             search: None,
+            choice: None,
         }
     }
 
@@ -1139,6 +1175,149 @@ impl SettingsScreen {
         }
     }
 
+    // ---------- попап выбора Choice-поля / сброс к дефолту ----------
+
+    /// Список вариантов Choice-поля + индекс текущего (`None` — поле не Choice).
+    fn choice_menu(&self, id: FieldId) -> Option<(Vec<String>, usize)> {
+        let mode_menu = |m: ServerMode| index_menu(&SERVER_MODES, m, mode_label);
+        match id {
+            FieldId::XMode => Some(mode_menu(self.config.engine.mode)),
+            FieldId::EMode => Some(mode_menu(self.config.embed.mode)),
+            FieldId::IxMode => Some(index_menu(
+                &IMP_MODES,
+                self.config.impersonation_engine.mode,
+                imp_mode_label,
+            )),
+            FieldId::XFlashAttn => Some(flash_menu(self.config.engine.managed.flash_attn)),
+            FieldId::IxFlashAttn => Some(flash_menu(
+                self.config.impersonation_engine.managed.flash_attn,
+            )),
+            FieldId::XSpecType => Some(spec_menu(self.config.engine.managed.spec_type)),
+            FieldId::IxSpecType => Some(spec_menu(
+                self.config.impersonation_engine.managed.spec_type,
+            )),
+            FieldId::ITheme => Some(index_menu(
+                &THEMES,
+                self.config.interface.theme,
+                theme_label,
+            )),
+            FieldId::S(p @ (SamplingParam::Thinking | SamplingParam::Reasoning)) => {
+                Some(sampling_choice_menu(&self.config.default_sampling, p))
+            }
+            FieldId::IS(p @ (SamplingParam::Thinking | SamplingParam::Reasoning)) => {
+                Some(sampling_choice_menu(&self.config.impersonation_sampling, p))
+            }
+            FieldId::PSelect => {
+                let opts: Vec<String> = self.profiles.iter().map(|p| p.name.clone()).collect();
+                (!opts.is_empty()).then_some((opts, self.profile_idx))
+            }
+            _ => None,
+        }
+    }
+
+    fn open_choice(&mut self, id: FieldId) {
+        if let Some((options, selected)) = self.choice_menu(id)
+            && !options.is_empty()
+        {
+            self.choice = Some(ChoiceState {
+                field: id,
+                options,
+                selected,
+            });
+        }
+    }
+
+    /// Применяет выбор варианта по индексу через существующий цикл (`cycle_field`):
+    /// делает столько шагов вперёд, сколько нужно от текущего до целевого.
+    fn apply_choice(&mut self, id: FieldId, target: usize) -> Option<SettingsIntent> {
+        let (opts, cur) = self.choice_menu(id)?;
+        let n = opts.len();
+        if n == 0 {
+            return None;
+        }
+        let steps = (target + n - cur) % n;
+        let mut intent = None;
+        for _ in 0..steps {
+            if let Some(i) = self.cycle_field(id, 1) {
+                intent = Some(i);
+            }
+        }
+        intent
+    }
+
+    fn handle_choice_key(&mut self, key: KeyEvent) -> Option<SettingsIntent> {
+        let st = self.choice.as_mut()?;
+        match key.code {
+            KeyCode::Esc => {
+                self.choice = None;
+                None
+            }
+            KeyCode::Up | KeyCode::Left => {
+                st.selected = st.selected.saturating_sub(1);
+                None
+            }
+            KeyCode::Down | KeyCode::Right => {
+                if st.selected + 1 < st.options.len() {
+                    st.selected += 1;
+                }
+                None
+            }
+            KeyCode::Enter => {
+                let (id, target) = (st.field, st.selected);
+                self.choice = None;
+                self.apply_choice(id, target)
+            }
+            _ => None,
+        }
+    }
+
+    /// Поля текущей секции/подсекции, построенные из **дефолтного** конфига (для
+    /// маркера «изменено» и сброса). Профили — те же (у них нет config-дефолта).
+    fn default_fields(&self) -> Vec<FieldRow> {
+        let mut tmp = SettingsScreen::new(AppConfig::default(), self.profiles.clone());
+        tmp.section_idx = self.section_idx;
+        tmp.model_sub = self.model_sub;
+        tmp.sampling_sub = self.sampling_sub;
+        tmp.profile_sub = self.profile_sub;
+        tmp.profile_idx = self.profile_idx;
+        tmp.fields()
+    }
+
+    /// Сбрасывает config-поле к значению по умолчанию. Профильные поля и уже
+    /// дефолтные значения — no-op (без лишнего сохранения).
+    fn reset_field(&mut self, id: FieldId) -> Option<SettingsIntent> {
+        if is_profile_field(id) {
+            return None;
+        }
+        let cur_kind = self
+            .fields()
+            .into_iter()
+            .find(|f| f.id == id)
+            .map(|f| f.kind)?;
+        let default_kind = self
+            .default_fields()
+            .into_iter()
+            .find(|d| d.id == id)
+            .map(|d| d.kind)?;
+        // Уже совпадает с дефолтом — ничего не делаем.
+        if value_text(&cur_kind) == value_text(&default_kind) {
+            return None;
+        }
+        match default_kind {
+            FieldKind::Toggle(_) => self.toggle_field(id),
+            FieldKind::Choice(def_label) => {
+                let (opts, _) = self.choice_menu(id)?;
+                let idx = opts.iter().position(|o| *o == def_label)?;
+                self.apply_choice(id, idx)
+            }
+            FieldKind::Text(def) => {
+                // «—» — плейсхолдер пустого (Option::None); очищаем поле.
+                let text = if def == "—" { "" } else { &def };
+                self.apply_text(id, text)
+            }
+        }
+    }
+
     // ---------- поиск по полям (`/`) ----------
 
     /// Строит полный индекс полей всех секций/подсекций для поиска. Поля
@@ -1307,6 +1486,10 @@ impl SettingsScreen {
         if self.search.is_some() {
             return self.handle_search_key(key);
         }
+        // Попап выбора Choice-поля.
+        if self.choice.is_some() {
+            return self.handle_choice_key(key);
+        }
         if self.editor.is_some() {
             return self.handle_editor_key(key);
         }
@@ -1413,36 +1596,41 @@ impl SettingsScreen {
                 }
                 None
             }
+            // Del — сброс поля к значению по умолчанию (config-поля; профильные — no-op).
+            KeyCode::Delete => {
+                let id = fields.get(self.field_idx)?.id;
+                self.reset_field(id)
+            }
             KeyCode::Enter => {
                 let f = fields.get(self.field_idx)?;
                 match &f.kind {
                     FieldKind::Toggle(_) => self.toggle_field(f.id),
-                    FieldKind::Choice(_) => self.cycle_field(f.id, 1),
+                    // Choice (в т.ч. выбор профиля PSelect) — попап списка вариантов.
+                    FieldKind::Choice(_) => {
+                        self.open_choice(f.id);
+                        None
+                    }
                     FieldKind::Text(value) => {
-                        // Открываем редактор; PSelect — выбор профиля, не текст.
-                        if f.id == FieldId::PSelect {
-                            None
-                        } else {
-                            // Системное сообщение и приветствие — многострочные
-                            // (перенос + переводы строк); прочие поля — однострочные
-                            // (горизонтальный скролл, без переноса на невидимый ряд).
-                            // См. spec §11.6.
-                            let multiline = matches!(
-                                f.id,
-                                FieldId::PSystem | FieldId::PGreeting | FieldId::PImpSystem
-                            );
-                            let mut input = InputBox::new();
-                            input.set_single_line(!multiline);
-                            // Не показываем плейсхолдеры «(все)»/«—» как значение.
-                            let seed = self.field_seed(f.id, value);
-                            input.set_text(&seed);
-                            self.editor = Some(Editor {
-                                field: f.id,
-                                input,
-                                multiline,
-                            });
-                            None
-                        }
+                        // Системное сообщение и приветствие — многострочные
+                        // (перенос + переводы строк); прочие поля — однострочные
+                        // (горизонтальный скролл, без переноса на невидимый ряд).
+                        // См. spec §11.6.
+                        let multiline = matches!(
+                            f.id,
+                            FieldId::PSystem | FieldId::PGreeting | FieldId::PImpSystem
+                        );
+                        let mut input = InputBox::new();
+                        input.set_single_line(!multiline);
+                        // Не показываем плейсхолдеры «(все)»/«—» как значение.
+                        let seed = self.field_seed(f.id, value);
+                        input.set_text(&seed);
+                        self.editor = Some(Editor {
+                            field: f.id,
+                            input,
+                            multiline,
+                            error: None,
+                        });
+                        None
                     }
                 }
             }
@@ -1464,8 +1652,14 @@ impl SettingsScreen {
                 None
             }
             (KeyCode::Enter, _) => {
-                let editor = self.editor.take().unwrap();
                 let text = editor.input.text();
+                // Валидация без закрытия: невалидное числовое поле оставляет редактор
+                // открытым, подпись краснеет; исправление или Esc закрывают.
+                if let Some(err) = field_validation_error(editor.field, &text) {
+                    editor.error = Some(err);
+                    return None;
+                }
+                let editor = self.editor.take().unwrap();
                 self.apply_text(editor.field, &text)
             }
             // Удалить весь текст поля / вернуть удалённое (spec §11.5). Матчим по
@@ -1474,10 +1668,12 @@ impl SettingsScreen {
                 if m.contains(KeyModifiers::CONTROL) && keys::physical_char(c) == 'k' =>
             {
                 editor.input.clear_or_restore();
+                editor.error = None;
                 None
             }
             _ => {
                 editor.input.on_key(key);
+                editor.error = None; // правка сбрасывает прежнюю ошибку
                 None
             }
         }
@@ -1951,6 +2147,9 @@ impl SettingsScreen {
             ("←→", "выбор"),
             ("/", "поиск"),
         ];
+        if self.focus == Focus::Fields {
+            hints.push(("Del", "сброс"));
+        }
         if self.section() == Section::Profiles {
             hints.push(("Ctrl+N", "новый"));
             hints.push(("Ctrl+D", "удалить"));
@@ -1978,17 +2177,22 @@ impl SettingsScreen {
         // Редактор поверх — с реальным курсором (InputBox::render требует &mut).
         if let Some(editor) = self.editor.as_mut() {
             // Системное сообщение/приветствие — крупный многострочный попап с
-            // переносом; прочие поля — компактная однострочная полоса.
-            let (popup, title) = if editor.multiline {
-                (
-                    centered_rect(80, 40, multiline_popup_height(area), area),
-                    "правка · Shift+Enter перенос · Enter ок · Esc отмена",
-                )
+            // переносом; прочие поля — компактная однострочная полоса. При ошибке
+            // валидации титул несёт красное сообщение и редактор не закрывается.
+            let err = editor.error;
+            let base_title = if editor.multiline {
+                "правка · Shift+Enter перенос · Enter ок · Esc отмена"
             } else {
-                (
-                    centered_rect(60, 30, 3, area),
-                    "правка · Enter ок · Esc отмена",
-                )
+                "правка · Enter ок · Esc отмена"
+            };
+            let title = match err {
+                Some(e) => format!("{} {e} · Esc отмена", palette.glyphs().warn),
+                None => base_title.to_string(),
+            };
+            let popup = if editor.multiline {
+                centered_rect(80, 40, multiline_popup_height(area), area)
+            } else {
+                centered_rect(60, 30, 3, area)
             };
             // Крупный многострочный попап (системное сообщение/приветствие)
             // притеняет фон, чтобы не сливаться; компактные однострочные полосы —
@@ -1999,13 +2203,57 @@ impl SettingsScreen {
             frame.render_widget(Clear, popup);
             editor
                 .input
-                .render(frame, popup, title, true, &palette, false);
+                .render(frame, popup, &title, true, &palette, false);
+        }
+
+        // Попап выбора Choice-поля — поверх (при поиске редактор/выбор закрыты).
+        if self.choice.is_some() {
+            self.render_choice(frame, area, &palette);
         }
 
         // Оверлей поиска по полям — поверх всего (редактор при поиске закрыт).
         if self.search.is_some() {
             self.render_search(frame, area, &palette);
         }
+    }
+
+    /// Рисует попап выбора значения Choice-поля: список вариантов, текущий отмечен.
+    fn render_choice(&self, frame: &mut Frame, area: Rect, palette: &Palette) {
+        let st = self.choice.as_ref().unwrap();
+        // Высота = число вариантов + рамка, но не выше экрана; ширина по самой
+        // длинной подписи (с запасом), центрирован.
+        let want_h = (st.options.len() as u16 + 2).min(area.height.max(3));
+        let want_w = st
+            .options
+            .iter()
+            .map(|o| o.chars().count())
+            .max()
+            .unwrap_or(4) as u16
+            + 8;
+        let popup = centered_rect_wh(want_w.max(24), want_h.max(3), area);
+        dim_background(frame, palette);
+        frame.render_widget(Clear, popup);
+        let items: Vec<ListItem> = st
+            .options
+            .iter()
+            .enumerate()
+            .map(|(i, o)| {
+                let mark = if i == st.selected { "› " } else { "  " };
+                ListItem::new(Line::from(vec![
+                    Span::styled(mark, Style::new().fg(palette.accent)),
+                    Span::styled(o.clone(), Style::new().fg(palette.text)),
+                ]))
+            })
+            .collect();
+        let block = palette
+            .panel("выбор · Enter · Esc", true)
+            .border_style(palette.border_style(true));
+        let list = List::new(items)
+            .block(block)
+            .highlight_style(Style::new().reversed());
+        let mut state = ListState::default();
+        state.select(Some(st.selected.min(st.options.len().saturating_sub(1))));
+        frame.render_stateful_widget(list, popup, &mut state);
     }
 
     /// Рисует оверлей поиска: строка запроса + отфильтрованная выдача.
@@ -2237,6 +2485,9 @@ impl SettingsScreen {
         }
         const MIN_LABEL_COL: usize = 20;
 
+        // Поля из дефолтного конфига — для маркера «изменено» (строим один раз).
+        let default_fields = self.default_fields();
+
         // Строим элементы: заголовок группы вставляется на переходе к новой
         // непустой группе; `select` — позиция выбранного поля среди элементов (с
         // учётом заголовков) для подсветки/скролла. Селектор подсекции пропускаем
@@ -2269,9 +2520,16 @@ impl SettingsScreen {
                 .copied()
                 .unwrap_or(0)
                 .max(MIN_LABEL_COL);
-            // Ширина под значение: минус подпись+отступ и правый зазор под скроллбар.
-            let value_w = inner_w.saturating_sub(col + 2);
-            items.push(ListItem::new(render_field_line(f, col, value_w, &palette)));
+            let modified = default_fields
+                .iter()
+                .find(|d| d.id == f.id)
+                .map(|d| value_text(&d.kind) != value_text(&f.kind))
+                .unwrap_or(false);
+            // Ширина под значение: минус маркер(2)+подпись+отступ и правый зазор.
+            let value_w = inner_w.saturating_sub(col + 4);
+            items.push(ListItem::new(render_field_line(
+                f, col, value_w, modified, &palette,
+            )));
         }
         let total = items.len();
 
@@ -2978,6 +3236,7 @@ fn render_field_line(
     f: &FieldRow,
     label_col: usize,
     value_w: usize,
+    modified: bool,
     palette: &Palette,
 ) -> Line<'static> {
     let (value, value_style) = match &f.kind {
@@ -3013,7 +3272,15 @@ fn render_field_line(
     // Дополняем подпись пробелами до ширины колонки по реальной ширине в колонках
     // (Rust `{:<N}` считает символы, а не колонки — для CJK/эмодзи это разъезжается).
     let pad = label_col.saturating_sub(label_width(&f.label));
+    // Маркер «изменено против дефолта» (2 колонки), фиксом слева — поля выглядят
+    // отступленными под заголовком группы.
+    let marker = if modified {
+        Span::styled("• ", Style::new().fg(palette.accent))
+    } else {
+        Span::raw("  ")
+    };
     let mut spans = vec![
+        marker,
         Span::styled(f.label.clone(), palette.muted_style()),
         Span::raw(" ".repeat(pad + 1)),
         Span::styled(value, value_style),
@@ -3149,6 +3416,128 @@ fn cycle_reasoning(r: Option<ReasoningEffort>) -> Option<ReasoningEffort> {
     }
 }
 
+/// Числовой вид поля для валидации (`None` — не числовое: текст/URL/списки/выбор).
+fn field_num_kind(id: FieldId) -> Option<NumKind> {
+    use FieldId::*;
+    match id {
+        // Целочисленные поля.
+        XNgl | XCtx | XPort | XDraftNgl | XDraftNMax | XDraftNMin | IxNgl | IxCtx | IxPort
+        | IxDraftNgl | IxDraftNMax | IxDraftNMin | EPort | MaxToolRounds | TSubMaxTokens
+        | TSubTimeout | RagTarget | RagOverlap | RagMax | SmMaxNarrative | SmNarrativeInPrompt
+        | SmPromptCap | SmSummaryTarget | SmAutoReflect | NotesAutoConsolidate => {
+            Some(NumKind::Int)
+        }
+        // Параметры семплинга — по своему виду.
+        S(p) | IS(p) => p.num_kind(),
+        _ => None,
+    }
+}
+
+/// Ошибка валидации поля (`None` — валидно). Пустой ввод допустим (очистка/сохранение
+/// прежнего); непустой в числовом поле обязан парситься. Проверка «мягкая» (i64/f64),
+/// точный тип и диапазон досматривает `apply_text`.
+fn field_validation_error(id: FieldId, text: &str) -> Option<&'static str> {
+    let t = text.trim();
+    if t.is_empty() {
+        return None;
+    }
+    match field_num_kind(id) {
+        Some(NumKind::Int) if t.parse::<i64>().is_err() => Some("нужно целое число"),
+        Some(NumKind::Float) if t.parse::<f64>().is_err() => Some("нужно число"),
+        _ => None,
+    }
+}
+
+/// Порядок вариантов режима движка (для Choice-попапа; совпадает с `cycle_mode`).
+const SERVER_MODES: [ServerMode; 5] = [
+    ServerMode::Managed,
+    ServerMode::External,
+    ServerMode::OpenAi,
+    ServerMode::Gemini,
+    ServerMode::Claude,
+];
+
+/// Порядок вариантов режима имперсонации (совпадает с `cycle_imp_mode`).
+const IMP_MODES: [ImpersonationMode; 6] = [
+    ImpersonationMode::Shared,
+    ImpersonationMode::Managed,
+    ImpersonationMode::External,
+    ImpersonationMode::OpenAi,
+    ImpersonationMode::Gemini,
+    ImpersonationMode::Claude,
+];
+
+/// Порядок тем (совпадает с `cycle_theme`).
+const THEMES: [Theme; 3] = [Theme::Auto, Theme::Dark, Theme::Light];
+
+/// Строит (подписи, индекс текущего) из массива вариантов и функции-подписи.
+fn index_menu<T: Copy + PartialEq>(
+    all: &[T],
+    cur: T,
+    label: impl Fn(T) -> String,
+) -> (Vec<String>, usize) {
+    let opts = all.iter().map(|&x| label(x)).collect();
+    let idx = all.iter().position(|&x| x == cur).unwrap_or(0);
+    (opts, idx)
+}
+
+fn flash_menu(cur: FlashAttn) -> (Vec<String>, usize) {
+    index_menu(&FlashAttn::ALL, cur, |x| x.label().to_string())
+}
+
+fn spec_menu(cur: SpecType) -> (Vec<String>, usize) {
+    index_menu(&SpecType::ALL, cur, |x| x.label().to_string())
+}
+
+/// Меню выбора для Choice-параметров семплинга (`Thinking`/`Reasoning`); порядок
+/// подписей совпадает с циклом `cycle_opt_bool`/`cycle_reasoning`.
+fn sampling_choice_menu(s: &SamplingConfig, p: SamplingParam) -> (Vec<String>, usize) {
+    match p {
+        SamplingParam::Thinking => {
+            let opts = [None, Some(true), Some(false)]
+                .iter()
+                .map(|&b| opt_bool_label(b))
+                .collect();
+            let idx = match s.thinking {
+                None => 0,
+                Some(true) => 1,
+                Some(false) => 2,
+            };
+            (opts, idx)
+        }
+        SamplingParam::Reasoning => {
+            let order = [
+                None,
+                Some(ReasoningEffort::None),
+                Some(ReasoningEffort::Low),
+                Some(ReasoningEffort::Medium),
+                Some(ReasoningEffort::High),
+            ];
+            let opts = order.iter().map(|&r| reasoning_label(r)).collect();
+            let idx = order
+                .iter()
+                .position(|&r| r == s.reasoning_effort)
+                .unwrap_or(0);
+            (opts, idx)
+        }
+        _ => (Vec::new(), 0),
+    }
+}
+
+/// Поле принадлежит профилю (у него нет config-дефолта → не участвует в `•`/сбросе).
+fn is_profile_field(id: FieldId) -> bool {
+    matches!(
+        id,
+        FieldId::PSelect
+            | FieldId::PName
+            | FieldId::PSystem
+            | FieldId::PGreeting
+            | FieldId::PImpSystem
+            | FieldId::PTool(_)
+            | FieldId::ProfileSub
+    )
+}
+
 fn parse_opt<T: std::str::FromStr>(s: &str) -> Option<T> {
     if s.is_empty() { None } else { s.parse().ok() }
 }
@@ -3261,6 +3650,17 @@ fn centered_rect(pct_x: u16, min_w: u16, height: u16, area: Rect) -> Rect {
     v
 }
 
+/// Прямоугольник по центру `area` с явными шириной/высотой (клампятся к `area`).
+fn centered_rect_wh(width: u16, height: u16, area: Rect) -> Rect {
+    let [h] = Layout::horizontal([Constraint::Length(width.min(area.width))])
+        .flex(Flex::Center)
+        .areas(area);
+    let [v] = Layout::vertical([Constraint::Length(height.min(area.height))])
+        .flex(Flex::Center)
+        .areas(h);
+    v
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -3320,6 +3720,7 @@ mod tests {
             field: FieldId::XBinary,
             input: InputBox::new(),
             multiline: false,
+            error: None,
         });
         assert_eq!(s.handle_key(ctrl('c')), Some(SettingsIntent::Quit));
     }
@@ -3905,6 +4306,125 @@ mod tests {
     }
 
     #[test]
+    fn choice_popup_opens_and_applies_selection() {
+        // Enter на Choice-поле открывает попап списка; ↓ + Enter применяет выбор.
+        let mut s = screen();
+        goto_field(&mut s, FieldId::XSpecType);
+        s.handle_key(key(KeyCode::Enter));
+        assert!(s.choice.is_some(), "Enter на Choice открывает попап");
+        assert_eq!(s.config.engine.managed.spec_type, SpecType::None);
+        s.handle_key(key(KeyCode::Down)); // none → draft-simple
+        let intent = s.handle_key(key(KeyCode::Enter));
+        assert!(s.choice.is_none(), "Enter применяет и закрывает попап");
+        assert_eq!(s.config.engine.managed.spec_type, SpecType::DraftSimple);
+        assert!(matches!(intent, Some(SettingsIntent::SaveConfig(_))));
+    }
+
+    #[test]
+    fn choice_popup_esc_cancels() {
+        let mut s = screen();
+        goto_field(&mut s, FieldId::XMode);
+        s.handle_key(key(KeyCode::Enter));
+        assert!(s.choice.is_some());
+        s.handle_key(key(KeyCode::Down));
+        s.handle_key(key(KeyCode::Esc));
+        assert!(s.choice.is_none());
+        assert_eq!(
+            s.config.engine.mode,
+            ServerMode::Managed,
+            "Esc не меняет значение"
+        );
+    }
+
+    #[test]
+    fn invalid_number_keeps_editor_open() {
+        // Нечисло в числовом поле оставляет редактор открытым с ошибкой; правка сбрасывает.
+        let mut s = screen();
+        goto_field(&mut s, FieldId::XNgl);
+        s.handle_key(key(KeyCode::Enter)); // редактор
+        for c in "abc".chars() {
+            s.handle_key(key(KeyCode::Char(c)));
+        }
+        let intent = s.handle_key(key(KeyCode::Enter)); // валидация: не закрывать
+        assert_eq!(intent, None);
+        assert!(s.editor.is_some(), "невалидный ввод не закрывает редактор");
+        assert!(s.editor.as_ref().unwrap().error.is_some());
+        // Правка сбрасывает ошибку и валидное значение коммитится.
+        s.handle_key(ctrl('k')); // очистить
+        for c in "42".chars() {
+            s.handle_key(key(KeyCode::Char(c)));
+        }
+        let intent = s.handle_key(key(KeyCode::Enter));
+        assert!(s.editor.is_none());
+        match intent {
+            Some(SettingsIntent::SaveConfig(c)) => assert_eq!(c.engine.managed.gpu_layers, 42),
+            other => panic!("ожидался SaveConfig, получено {other:?}"),
+        }
+    }
+
+    #[test]
+    fn field_validation_error_classifies_numbers() {
+        assert!(field_validation_error(FieldId::XNgl, "abc").is_some());
+        assert!(field_validation_error(FieldId::XNgl, "12").is_none());
+        assert!(field_validation_error(FieldId::XNgl, "").is_none()); // пусто допустимо
+        assert!(field_validation_error(FieldId::S(SamplingParam::Temp), "x").is_some());
+        assert!(field_validation_error(FieldId::S(SamplingParam::Temp), "0.7").is_none());
+        // Текстовые/списочные поля не валидируются как числа.
+        assert!(field_validation_error(FieldId::XBinary, "любой текст").is_none());
+        assert!(
+            field_validation_error(FieldId::S(SamplingParam::Samplers), "top_k;top_p").is_none()
+        );
+    }
+
+    #[test]
+    fn del_resets_field_to_default() {
+        let mut s = screen();
+        s.config.engine.managed.gpu_layers = 40; // не дефолт
+        let default_ngl = AppConfig::default().engine.managed.gpu_layers;
+        goto_field(&mut s, FieldId::XNgl);
+        let intent = s.handle_key(key(KeyCode::Delete));
+        match intent {
+            Some(SettingsIntent::SaveConfig(c)) => {
+                assert_eq!(c.engine.managed.gpu_layers, default_ngl)
+            }
+            other => panic!("ожидался SaveConfig, получено {other:?}"),
+        }
+    }
+
+    #[test]
+    fn del_on_default_field_is_noop() {
+        // Поле уже в дефолте → Del ничего не делает; профильные поля Del не трогает.
+        let mut s = screen();
+        goto_field(&mut s, FieldId::XNgl);
+        assert_eq!(s.handle_key(key(KeyCode::Delete)), None);
+    }
+
+    #[test]
+    fn modified_field_shows_marker() {
+        use ratatui::Terminal;
+        use ratatui::backend::TestBackend;
+        let render_text = |s: &mut SettingsScreen| -> String {
+            let mut term = Terminal::new(TestBackend::new(92, 24)).unwrap();
+            term.draw(|f| s.render(f)).unwrap();
+            let buf = term.backend().buffer();
+            (0..buf.area.height)
+                .flat_map(|y| (0..buf.area.width).map(move |x| (x, y)))
+                .map(|(x, y)| buf[(x, y)].symbol().to_string())
+                .collect()
+        };
+        // Дефолтный конфиг — маркеров нет.
+        let mut s = screen();
+        s.handle_key(key(KeyCode::Enter));
+        assert!(!render_text(&mut s).contains('•'), "в дефолте маркеров нет");
+        // Изменённое поле — маркер появляется.
+        s.config.engine.managed.gpu_layers = 40;
+        assert!(
+            render_text(&mut s).contains('•'),
+            "изменённое поле помечено •"
+        );
+    }
+
+    #[test]
     fn search_filters_and_jumps_to_field() {
         let mut s = screen();
         // `/` открывает поиск; ввод фильтрует по уникальному слову.
@@ -4037,7 +4557,7 @@ mod tests {
             hint: None,
             warn: false,
         };
-        let line = render_field_line(&f, 20, 24, &palette);
+        let line = render_field_line(&f, 20, 24, false, &palette);
         let rendered: String = line.spans.iter().map(|sp| sp.content.as_ref()).collect();
         assert!(
             rendered.contains('…'),
