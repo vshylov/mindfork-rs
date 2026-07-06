@@ -3295,6 +3295,35 @@ web-поиск и Python под выключателями, экран наст�
   `value_column_is_shared_across_groups` (рендер: значения трёх групп «Инструментов»
   в одной колонке). **797 тестов зелёные** (+3), clippy/fmt чисты. Доки: spec §11.6.
 
+### Рефакторинг god-object'ов — этап 7: `app/runtime.rs` → `app/runtime/` (сделано)
+- **Этап 7** (финальный) плана разбора god-object'ов
+  (docs/refactoring-god-objects.md — на ветке этапа 1; этот этап — ветка
+  `refactor/runtime-module-split` от `main`). `app/runtime.rs` (1099 строк: петля TUI +
+  батчинг вставки + буфер обмена + диспетчеризация) разбит на каталог `app/runtime/` —
+  чисто механический перенос (item-level слайсы, поведение не менялось).
+- **Раскладка**: `mod.rs` (309: `run`/`run_loop` — петля + dirty-перерисовка,
+  `ActiveScreen`, `SpellLoader`, `TICK` + проводка), `dispatch.rs` (334: `apply_event`
+  применяет `AppEvent` к экрану + `dispatch`/`dispatch_chat_list`/`dispatch_settings`/
+  `dispatch_self_model` транслируют Intent→`AppCommand`), `input.rs` (218: батчинг ввода
+  и вставка из буфера на Windows — `Chunk`/`chunk_batch`/`process_input_batch`/
+  `collect_press`/`paste_char`/`reconcile_paste`/`paste_projection_matches`),
+  `clipboard.rs` (30: `read_clipboard_text`/`write_clipboard` через arboard), `tests.rs`
+  (238). Внешняя поверхность — только `run` (main.rs), осталась `pub` в `mod.rs`.
+- **Проводка** (как в markdown): межфайловые элементы помечены `pub(super)`, `mod.rs`
+  сводит их приватным глобом `use self::{clipboard::*, dispatch::*, input::*};`
+  (`run_loop`-хаб зовёт их по короткому имени); подмодули берут `ActiveScreen`/типы через
+  `use super::*;`. **cfg-гейтинг сохранён** (`#[cfg(windows)]` на `read_clipboard_text`/
+  `paste_projection_matches`, `#[cfg(windows)]`/`#[cfg(not(windows))]` на `reconcile_paste`).
+- **Нюанс Linux-сборки**: `clipboard.rs` пользуется только `arboard::` (полный путь) и
+  прелюдией — `use super::*` оказался неиспользованным (на Linux `read_clipboard_text`
+  под cfg отсутствует, остаётся лишь `write_clipboard`), удалён, чтобы не ловить
+  unused-import под `-D warnings` на не-Windows цели.
+- Путь модуля `runtime` не изменился. **805 тестов зелёные** (0 упавших, 26 `#[ignore]`;
+  число не изменилось — чистый перенос), clippy `-D warnings`/fmt чисты. Доки:
+  architecture.md §3. **Разбор god-object'ов (этапы 1–7) — завершён**: settings/chat/
+  orchestrator-tests/notes/db/markdown/runtime; крупнейший исходный файл упал с 4966 до
+  ≤1175 строк, все impl-блоки ≤ ~660.
+
 ### Отложено за пределы M3
 - **Сворачивание/выделение per-message** и tool-блоки в ленте — сейчас «мысли»
   сворачиваются глобально (`Ctrl+T`); выделение сообщений и tool-блоки — на M5.
