@@ -318,7 +318,14 @@ fn apply_event(
     event: AppEvent,
 ) {
     match event {
-        AppEvent::ServerStatus(status) => screen.set_server_status(status),
+        // Статус серверов — в чат (строка статуса) и, если открыт, в экран настроек
+        // (чипы в секции «Модель/сервер»: подключение → готов видно на месте).
+        AppEvent::ServerStatus(status) => {
+            if let ActiveScreen::Settings(settings) = active {
+                settings.set_server_statuses(status.clone());
+            }
+            screen.set_server_status(status);
+        }
         // Снимок списка применяем к чату всегда (для следующего открытия/`Ctrl+N`),
         // а при открытом экране списка — ещё и к нему (живое обновление).
         AppEvent::ChatList(chats) => {
@@ -706,7 +713,11 @@ fn dispatch(
         ChatIntent::RagRebuild => AppCommand::RagRebuild,
         ChatIntent::OpenSettings => {
             if let Some((config, profiles)) = screen.settings_snapshot() {
-                *active = ActiveScreen::Settings(Box::new(SettingsScreen::new(config, profiles)));
+                let mut settings = SettingsScreen::new(config, profiles);
+                // Начальный снимок статусов серверов (чипы в секции «Модель/сервер»);
+                // дальше их обновляет `apply_event` из события `ServerStatus`.
+                settings.set_server_statuses(screen.server_statuses());
+                *active = ActiveScreen::Settings(Box::new(settings));
             }
             return false;
         }

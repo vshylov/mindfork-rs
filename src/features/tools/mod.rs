@@ -13,6 +13,7 @@ pub mod datetime;
 pub mod fetch;
 pub mod fs;
 pub mod introspection;
+pub mod meta;
 pub mod notes;
 pub mod python;
 pub mod rag;

@@ -8,6 +8,8 @@
 //! перезапускает сервер при смене модели). Работает на собственной рабочей копии
 //! `AppConfig`/профилей, обновляемой теми же правками.
 
+use std::collections::HashMap;
+
 use ratatui::Frame;
 use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 use ratatui::layout::{Constraint, Flex, Layout, Rect};
@@ -20,10 +22,13 @@ use crate::entities::profile::Profile;
 use crate::entities::sampling::{ReasoningEffort, SamplingConfig};
 use crate::features::profiles::ProfileEdit;
 use crate::features::tools::all_tool_ids;
+use crate::features::tools::meta::{self, ToolGate};
 use crate::shared::config::{
-    AppConfig, CloudProvider, CloudSettings, ImpersonationMode, ManagedSettings, ServerMode, Theme,
+    AppConfig, CloudProvider, CloudSettings, FlashAttn, ImpersonationMode, ManagedSettings,
+    ServerMode, SpecType, Theme,
 };
 use crate::shared::keys;
+use crate::shared::server::{ServerStatus, ServerStatuses};
 use crate::shared::theme::Palette;
 use crate::shared::ui::{dim_background, render_scrollbar};
 use crate::widgets::input_box::InputBox;
@@ -52,36 +57,36 @@ pub enum SettingsIntent {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Section {
     Model,
-    Inference,
     Sampling,
-    Profiles,
     Tools,
+    Memory,
+    Profiles,
     Interface,
 }
 
 const SECTIONS: [Section; 6] = [
     Section::Model,
-    Section::Inference,
     Section::Sampling,
-    Section::Profiles,
     Section::Tools,
+    Section::Memory,
+    Section::Profiles,
     Section::Interface,
 ];
 
-/// Подсекция «Ассистент» / «Имперсонация» внутри секций Модель/Семплинг/Профили.
-/// См. spec §11.8.
+/// Подсекция «Ассистент» / «Имперсонация» внутри секций Семплинг/Профили.
+/// См. spec §11.8. Отображается как таб-стрип над полями секции.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Subsection {
     Assistant,
     Impersonation,
 }
 
+/// Подписи вкладок [`Subsection`] (порядок = дискриминанты).
+const SUB_TABS: [&str; 2] = ["Ассистент", "Имперсонация"];
+
 impl Subsection {
     fn label(self) -> String {
-        match self {
-            Subsection::Assistant => "Ассистент".into(),
-            Subsection::Impersonation => "Имперсонация".into(),
-        }
+        SUB_TABS[self as usize].to_string()
     }
 
     fn toggled(self) -> Self {
@@ -90,19 +95,70 @@ impl Subsection {
             Subsection::Impersonation => Subsection::Assistant,
         }
     }
+
+    /// Все варианты (для перечисления полей всех подсекций при поиске).
+    const ALL: [Subsection; 2] = [Subsection::Assistant, Subsection::Impersonation];
+
+    fn from_index(i: usize) -> Self {
+        Self::ALL.get(i).copied().unwrap_or(Subsection::Assistant)
+    }
+}
+
+/// Подсекция секции «Модель/сервер»: три сервера приложения (зеркало чипов
+/// статус-бара чат/имп/эмб) — ассистент, имперсонация, эмбеддинги. Отображается
+/// как таб-стрип над полями. См. spec §11.6.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ModelTab {
+    Assistant,
+    Impersonation,
+    Embeddings,
+}
+
+/// Подписи вкладок [`ModelTab`] (порядок = дискриминанты).
+const MODEL_TABS: [&str; 3] = ["Ассистент", "Имперсонация", "Эмбеддинги"];
+
+impl ModelTab {
+    fn label(self) -> String {
+        MODEL_TABS[self as usize].to_string()
+    }
+
+    /// Все варианты (для перечисления полей всех подсекций при поиске).
+    const ALL: [ModelTab; 3] = [
+        ModelTab::Assistant,
+        ModelTab::Impersonation,
+        ModelTab::Embeddings,
+    ];
+
+    /// Циклический сдвиг вкладки (←/→ по таб-стрипу).
+    fn cycle(self, dir: i32) -> Self {
+        let idx = self as i32;
+        let n = Self::ALL.len() as i32;
+        Self::ALL[(((idx + dir) % n + n) % n) as usize]
+    }
+
+    fn from_index(i: usize) -> Self {
+        Self::ALL.get(i).copied().unwrap_or(ModelTab::Assistant)
+    }
 }
 
 impl Section {
     fn title(self) -> &'static str {
         match self {
             Section::Model => "Модель/сервер",
-            Section::Inference => "Инференс",
             Section::Sampling => "Семплинг",
-            Section::Profiles => "Профили",
             Section::Tools => "Инструменты",
+            Section::Memory => "Память",
+            Section::Profiles => "Профили",
             Section::Interface => "Интерфейс",
         }
     }
+}
+
+/// Числовой вид редактируемого поля (для валидации ввода без закрытия редактора).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum NumKind {
+    Int,
+    Float,
 }
 
 /// Параметр семплинга. Адресует конкретное поле [`SamplingConfig`] внутри
@@ -143,36 +199,46 @@ enum SamplingParam {
 }
 
 /// Порядок параметров семплинга в секции (стабильный = порядок отрисовки).
+/// Сгруппирован по смыслу: параметры одной группы идут подряд, чтобы заголовок
+/// группы ([`SamplingParam::group`]) в UI ставился один раз перед серией.
 const SAMPLING_PARAMS: &[SamplingParam] = {
     use SamplingParam::*;
     &[
+        // Основные
         Temp,
-        DynatempRange,
-        DynatempExp,
         TopK,
         TopP,
+        MaxTokens,
+        Seed,
+        // Динамическая температура
+        DynatempRange,
+        DynatempExp,
+        // Разнообразие
         MinP,
         TopNSigma,
         TypicalP,
         AdaptiveTarget,
         AdaptiveDecay,
+        XtcProbability,
+        XtcThreshold,
+        // Штрафы за повтор
         FreqPen,
         PresPen,
         RepeatPenalty,
         RepeatLastN,
+        // DRY (анти-повтор)
         DryMultiplier,
         DryBase,
         DryAllowedLength,
         DryPenaltyLastN,
         DrySeqBreakers,
-        XtcProbability,
-        XtcThreshold,
+        // Mirostat
         Mirostat,
         MirostatTau,
         MirostatEta,
-        MaxTokens,
-        Seed,
+        // Порядок семплеров
         Samplers,
+        // Рассуждения
         Thinking,
         Reasoning,
     ]
@@ -224,6 +290,39 @@ impl SamplingParam {
             Reasoning => "reasoning_effort",
             // Остальные параметры подписаны именем своего JSON-поля.
             _ => self.label(),
+        }
+    }
+
+    /// Числовой вид параметра для валидации редактора (`None` — не число: списки/
+    /// выбор `Thinking`/`Reasoning`).
+    fn num_kind(self) -> Option<NumKind> {
+        use SamplingParam::*;
+        match self {
+            // Целочисленные.
+            TopK | RepeatLastN | DryAllowedLength | DryPenaltyLastN | Mirostat | MaxTokens
+            | Seed => Some(NumKind::Int),
+            // Списки/выбор — не число.
+            DrySeqBreakers | Samplers | Thinking | Reasoning => None,
+            // Остальные — вещественные.
+            _ => Some(NumKind::Float),
+        }
+    }
+
+    /// Смысловая группа параметра (заголовок группы в секции «Семплинг»).
+    fn group(self) -> &'static str {
+        use SamplingParam::*;
+        match self {
+            Temp | TopK | TopP | MaxTokens | Seed => "Основные",
+            DynatempRange | DynatempExp => "Динамическая температура",
+            MinP | TopNSigma | TypicalP | AdaptiveTarget | AdaptiveDecay | XtcProbability
+            | XtcThreshold => "Разнообразие",
+            FreqPen | PresPen | RepeatPenalty | RepeatLastN => "Штрафы за повтор",
+            DryMultiplier | DryBase | DryAllowedLength | DryPenaltyLastN | DrySeqBreakers => {
+                "DRY (анти-повтор)"
+            }
+            Mirostat | MirostatTau | MirostatEta => "Mirostat",
+            Samplers => "Порядок семплеров",
+            Thinking | Reasoning => "Рассуждения",
         }
     }
 
@@ -445,11 +544,19 @@ enum FieldKind {
     Text(String),
 }
 
-/// Строка поля: идентификатор, подпись и текущее представление значения.
+/// Строка поля: идентификатор, подпись, текущее представление значения и
+/// смысловая группа (для заголовка группы и выравнивания значений; `""` — вне
+/// группы, без заголовка).
 struct FieldRow {
     id: FieldId,
     label: String,
     kind: FieldKind,
+    group: &'static str,
+    /// Короткая инлайн-подсказка справа от значения (описание инструмента). `None` — нет.
+    hint: Option<&'static str>,
+    /// Значение и подсказку рисовать цветом предупреждения — инструмент включён в
+    /// профиле, но выключен глобальным гейтом (недоступен модели).
+    warn: bool,
 }
 
 /// Активный редактор текстового поля (попап).
@@ -460,6 +567,9 @@ struct Editor {
     /// строк, ввод перевода строки по `Shift+Enter`, крупный попап. Прочие поля —
     /// однострочные.
     multiline: bool,
+    /// Ошибка валидации (напр. «нужно число»): редактор не закрывается по `Enter`,
+    /// подпись краснеет. `None` — ввод валиден.
+    error: Option<&'static str>,
 }
 
 /// Фокус: левое меню секций или список полей справа.
@@ -467,6 +577,38 @@ struct Editor {
 enum Focus {
     Menu,
     Fields,
+}
+
+/// Одна цель поиска по полям: координаты для прыжка + текст для показа/сопоставления.
+struct SearchHit {
+    section_idx: usize,
+    /// Подсекция для прыжка (дискриминант; `None` — секция без подсекций).
+    subsection: Option<usize>,
+    /// Индекс поля в `*_fields()` соответствующей подсекции.
+    field_idx: usize,
+    /// «Секция › Группа › Подпись» для показа.
+    crumb: String,
+    /// Текущее значение поля (усекается при показе).
+    value: String,
+    /// Ловушка совпадения (lowercase): секция + группа + подпись + описание + hint.
+    haystack: String,
+}
+
+/// Оверлей поиска по полям (`/`): строка запроса + плоская отфильтрованная выдача.
+struct SearchState {
+    input: InputBox,
+    /// Полный индекс полей всех секций/подсекций (строится при открытии).
+    all: Vec<SearchHit>,
+    /// Индексы в `all`, прошедшие фильтр запроса.
+    results: Vec<usize>,
+    selected: usize,
+}
+
+/// Попап выбора значения Choice-поля (Enter): список вариантов с отметкой текущего.
+struct ChoiceState {
+    field: FieldId,
+    options: Vec<String>,
+    selected: usize,
 }
 
 /// Экран настроек: рабочая копия конфигурации и профилей + состояние навигации.
@@ -478,11 +620,19 @@ pub struct SettingsScreen {
     focus: Focus,
     /// Выбранный профиль в секции «Профили».
     profile_idx: usize,
-    /// Активные подсекции «Ассистент»/«Имперсонация» (Модель/Семплинг/Профили).
-    model_sub: Subsection,
+    /// Активные подсекции. Модель — три вкладки (Ассистент/Имперсонация/Эмбеддинги);
+    /// Семплинг/Профили — две (Ассистент/Имперсонация).
+    model_sub: ModelTab,
     sampling_sub: Subsection,
     profile_sub: Subsection,
     editor: Option<Editor>,
+    /// Оверлей поиска по полям (`/`); `None` — закрыт.
+    search: Option<SearchState>,
+    /// Попап выбора значения Choice-поля (Enter); `None` — закрыт.
+    choice: Option<ChoiceState>,
+    /// Снимок статусов серверов (чат/эмбеддинги/имперсонация) — чипы в секции
+    /// «Модель/сервер». Обновляется `app` из события `ServerStatus`. См. spec §11.6.
+    statuses: ServerStatuses,
 }
 
 impl SettingsScreen {
@@ -495,11 +645,24 @@ impl SettingsScreen {
             field_idx: 0,
             focus: Focus::Menu,
             profile_idx: 0,
-            model_sub: Subsection::Assistant,
+            model_sub: ModelTab::Assistant,
             sampling_sub: Subsection::Assistant,
             profile_sub: Subsection::Assistant,
             editor: None,
+            search: None,
+            choice: None,
+            statuses: ServerStatuses {
+                chat: ServerStatus::NotConfigured,
+                embed: ServerStatus::NotConfigured,
+                impersonation: ServerStatus::NotConfigured,
+            },
         }
+    }
+
+    /// Обновляет снимок статусов серверов (чипы в секции «Модель/сервер»). Вызывается
+    /// `app` при создании экрана и по событию `ServerStatus`.
+    pub fn set_server_statuses(&mut self, statuses: ServerStatuses) {
+        self.statuses = statuses;
     }
 
     /// Обновляет рабочую копию из переэмита настроек (после create/delete профиля
@@ -527,98 +690,166 @@ impl SettingsScreen {
     fn fields(&self) -> Vec<FieldRow> {
         match self.section() {
             Section::Model => self.model_fields(),
-            Section::Inference => self.inference_fields(),
             Section::Sampling => self.sampling_fields(),
-            Section::Profiles => self.profile_fields(),
             Section::Tools => self.tool_fields(),
+            Section::Memory => self.memory_fields(),
+            Section::Profiles => self.profile_fields(),
             Section::Interface => self.interface_fields(),
         }
     }
 
     fn model_fields(&self) -> Vec<FieldRow> {
-        let mut rows = vec![row(
+        self.model_fields_for(self.model_sub)
+    }
+
+    /// Поля секции «Модель» для заданной подсекции (для перечисления при поиске —
+    /// [`SettingsScreen::model_fields`] строит их для активной подсекции).
+    fn model_fields_for(&self, model_sub: ModelTab) -> Vec<FieldRow> {
+        // Селектор подсекции (таб-стрип) — всегда поле 0; в списке он не рисуется.
+        let sub = row(
             FieldId::ModelSub,
             "Подсекция",
-            FieldKind::Choice(self.model_sub.label()),
-        )];
-        match self.model_sub {
-            Subsection::Assistant => {
+            FieldKind::Choice(model_sub.label()),
+        );
+        match model_sub {
+            ModelTab::Assistant => {
                 let x = &self.config.engine;
-                rows.push(row(
-                    FieldId::XMode,
-                    "Режим",
-                    FieldKind::Choice(mode_label(x.mode)),
-                ));
+                let mut rows = vec![
+                    sub,
+                    row(
+                        FieldId::XMode,
+                        "Режим",
+                        FieldKind::Choice(mode_label(x.mode)),
+                    ),
+                ];
                 // Видимость полей зависит от режима (ADR 0004): для облака показываем
                 // лишь модель/ключ/опц. base URL, для managed — параметры llama-server.
                 match x.mode {
                     ServerMode::Managed => {
                         rows.extend(managed_rows(&x.managed, ASSISTANT_MANAGED_IDS))
                     }
-                    ServerMode::External => rows.extend([
-                        text_row(FieldId::XUrl, "URL (external)", &x.external.url),
-                        text_row(FieldId::XModelName, "Модель (опц.)", &x.external.model_name),
-                    ]),
+                    ServerMode::External => rows.extend(grouped(
+                        "Сервер",
+                        vec![
+                            text_row(FieldId::XUrl, "URL (external)", &x.external.url),
+                            text_row(FieldId::XModelName, "Модель (опц.)", &x.external.model_name),
+                        ],
+                    )),
                     ServerMode::OpenAi | ServerMode::Gemini | ServerMode::Claude => {
-                        rows.extend(cloud_rows(
-                            x.cloud(),
-                            FieldId::XModelName,
-                            FieldId::XApiKeyEnv,
-                            FieldId::XUrl,
+                        rows.extend(grouped(
+                            "Провайдер",
+                            cloud_rows(
+                                x.cloud(),
+                                FieldId::XModelName,
+                                FieldId::XApiKeyEnv,
+                                FieldId::XUrl,
+                            ),
                         ))
                     }
                 }
+                rows
             }
-            Subsection::Impersonation => {
+            ModelTab::Impersonation => {
                 let x = &self.config.impersonation_engine;
-                rows.push(row(
-                    FieldId::IxMode,
-                    "Режим",
-                    FieldKind::Choice(imp_mode_label(x.mode)),
-                ));
+                let mut rows = vec![
+                    sub,
+                    row(
+                        FieldId::IxMode,
+                        "Режим",
+                        FieldKind::Choice(imp_mode_label(x.mode)),
+                    ),
+                ];
                 match x.mode {
                     // Shared переиспользует движок ассистента — собственных полей нет.
                     ImpersonationMode::Shared => {}
                     ImpersonationMode::Managed => {
                         rows.extend(managed_rows(&x.managed, IMP_MANAGED_IDS))
                     }
-                    ImpersonationMode::External => rows.extend([
-                        text_row(FieldId::IxUrl, "URL (external)", &x.external.url),
-                        text_row(
-                            FieldId::IxModelName,
-                            "Модель (опц.)",
-                            &x.external.model_name,
-                        ),
-                    ]),
+                    ImpersonationMode::External => rows.extend(grouped(
+                        "Сервер",
+                        vec![
+                            text_row(FieldId::IxUrl, "URL (external)", &x.external.url),
+                            text_row(
+                                FieldId::IxModelName,
+                                "Модель (опц.)",
+                                &x.external.model_name,
+                            ),
+                        ],
+                    )),
                     ImpersonationMode::OpenAi
                     | ImpersonationMode::Gemini
-                    | ImpersonationMode::Claude => rows.extend(cloud_rows(
-                        x.cloud(),
-                        FieldId::IxModelName,
-                        FieldId::IxApiKeyEnv,
-                        FieldId::IxUrl,
+                    | ImpersonationMode::Claude => rows.extend(grouped(
+                        "Провайдер",
+                        cloud_rows(
+                            x.cloud(),
+                            FieldId::IxModelName,
+                            FieldId::IxApiKeyEnv,
+                            FieldId::IxUrl,
+                        ),
                     )),
                 }
+                rows
+            }
+            ModelTab::Embeddings => {
+                // Эмбеддинги — выделенный сервер (память/RAG). Поля по режиму
+                // (managed → llama-server; external/облако → URL/модель/ключ).
+                let e = &self.config.embed;
+                let mut rows = vec![
+                    sub,
+                    row(
+                        FieldId::EMode,
+                        "Режим",
+                        FieldKind::Choice(mode_label(e.mode)),
+                    ),
+                ];
+                match e.mode {
+                    ServerMode::Managed => rows.extend(grouped(
+                        "Сервер",
+                        vec![
+                            text_row(FieldId::EBinary, "Бинарник llama-server", &e.managed.binary),
+                            text_row(FieldId::EModel, "GGUF-модель (-m)", &e.managed.model_path),
+                            num_field(FieldId::EPort, "Порт", e.managed.port),
+                        ],
+                    )),
+                    ServerMode::External => rows.extend(grouped(
+                        "Сервер",
+                        vec![
+                            text_row(FieldId::EUrl, "URL (external)", &e.external.url),
+                            text_row(FieldId::EModelName, "Модель (опц.)", &e.external.model_name),
+                        ],
+                    )),
+                    // Claude поля показывает, но Anthropic не умеет embeddings —
+                    // супервайзер вернёт «недоступно» (RAG отключится). ADR 0004.
+                    ServerMode::OpenAi | ServerMode::Gemini | ServerMode::Claude => {
+                        let none = CloudSettings::default();
+                        let c = e.cloud().unwrap_or(&none);
+                        rows.extend(grouped(
+                            "Провайдер",
+                            vec![
+                                text_row(FieldId::EModelName, "Модель", &c.model_name),
+                                text_row(FieldId::EApiKeyEnv, "API-ключ (env)", &c.api_key_env),
+                                text_row(FieldId::EUrl, "Base URL (опц.)", &c.url),
+                            ],
+                        ))
+                    }
+                }
+                rows
             }
         }
-        rows
-    }
-
-    fn inference_fields(&self) -> Vec<FieldRow> {
-        vec![row(
-            FieldId::MaxToolRounds,
-            "Лимит раундов инструментов",
-            FieldKind::Text(self.config.max_tool_rounds.to_string()),
-        )]
     }
 
     fn sampling_fields(&self) -> Vec<FieldRow> {
+        self.sampling_fields_for(self.sampling_sub)
+    }
+
+    /// Поля секции «Семплинг» для заданной подсекции (для перечисления при поиске).
+    fn sampling_fields_for(&self, sampling_sub: Subsection) -> Vec<FieldRow> {
         let mut rows = vec![row(
             FieldId::SamplingSub,
             "Подсекция",
-            FieldKind::Choice(self.sampling_sub.label()),
+            FieldKind::Choice(sampling_sub.label()),
         )];
-        let (s, imp) = match self.sampling_sub {
+        let (s, imp) = match sampling_sub {
             Subsection::Assistant => (&self.config.default_sampling, false),
             Subsection::Impersonation => (&self.config.impersonation_sampling, true),
         };
@@ -634,196 +865,225 @@ impl SettingsScreen {
                     Some(provider) => cloud_supported_param(provider, p),
                     None => true,
                 })
-                .map(|&p| sampling_row(mk(p), p, s)),
+                .map(|&p| {
+                    let mut r = sampling_row(mk(p), p, s);
+                    r.group = p.group();
+                    r
+                }),
         );
         rows
     }
 
     fn tool_fields(&self) -> Vec<FieldRow> {
         let t = &self.config.tools;
-        let e = &self.config.embed;
-        let mut rows = vec![
-            row(FieldId::TWeb, "Web-поиск", FieldKind::Toggle(t.web_enabled)),
-            row(
-                FieldId::TWebFetch,
-                "Web: загрузка страниц",
-                FieldKind::Toggle(t.web_fetch_content),
-            ),
-            row(
-                FieldId::TPython,
-                "Python-исполнение",
-                FieldKind::Toggle(t.python_enabled),
-            ),
-            text_row(FieldId::TPythonPath, "Путь к Python", &t.python_path),
-            row(
-                FieldId::TFs,
-                "Доступ к файлам",
-                FieldKind::Toggle(t.fs_enabled),
-            ),
-            text_row(FieldId::TFsRoot, "Файлы: каталог-песочница", &t.fs_root),
-            row(
-                FieldId::TSubMaxTokens,
-                "call_subagent: max_tokens",
-                FieldKind::Text(t.subagent_max_tokens.to_string()),
-            ),
-            row(
-                FieldId::TSubTimeout,
-                "call_subagent: таймаут (с)",
-                FieldKind::Text(t.subagent_timeout_secs.to_string()),
-            ),
-            row(
-                FieldId::EMode,
-                "Эмбеддинги: режим",
-                FieldKind::Choice(mode_label(e.mode)),
-            ),
-        ];
-        // Эмбеддинги: поля по режиму (managed → llama-server; external/облако →
-        // URL/модель/ключ). Облачные эмбеддинги есть у OpenAI/Gemini (ADR 0004).
-        match e.mode {
-            ServerMode::Managed => rows.extend([
-                text_row(FieldId::EBinary, "Эмбеддинги: бинарник", &e.managed.binary),
-                text_row(
-                    FieldId::EModel,
-                    "Эмбеддинги: GGUF (-m)",
-                    &e.managed.model_path,
+        let mut rows = grouped(
+            "Агентный цикл",
+            vec![
+                row(
+                    FieldId::MaxToolRounds,
+                    "Лимит раундов инструментов",
+                    FieldKind::Text(self.config.max_tool_rounds.to_string()),
                 ),
-                num_field(FieldId::EPort, "Эмбеддинги: порт", e.managed.port),
-            ]),
-            ServerMode::External => rows.extend([
-                text_row(FieldId::EUrl, "Эмбеддинги: URL", &e.external.url),
-                text_row(
-                    FieldId::EModelName,
-                    "Эмбеддинги: модель (опц.)",
-                    &e.external.model_name,
+                row(
+                    FieldId::TSubMaxTokens,
+                    "Субагент: лимит токенов",
+                    FieldKind::Text(t.subagent_max_tokens.to_string()),
                 ),
-            ]),
-            // Claude в эмбеддингах поля показывает, но Anthropic не умеет embeddings —
-            // супервайзер вернёт «недоступно» (RAG отключится). См. ADR 0004.
-            ServerMode::OpenAi | ServerMode::Gemini | ServerMode::Claude => {
-                let none = CloudSettings::default();
-                let c = e.cloud().unwrap_or(&none);
-                rows.extend([
-                    text_row(FieldId::EModelName, "Эмбеддинги: модель", &c.model_name),
-                    text_row(
-                        FieldId::EApiKeyEnv,
-                        "Эмбеддинги: API-ключ (env)",
-                        &c.api_key_env,
-                    ),
-                    text_row(FieldId::EUrl, "Эмбеддинги: Base URL (опц.)", &c.url),
-                ])
-            }
-        }
-        rows.extend([
-            row(
-                FieldId::RagTarget,
-                "RAG: размер чанка (симв.)",
-                FieldKind::Text(self.config.rag.chunk_target_chars.to_string()),
-            ),
-            row(
-                FieldId::RagOverlap,
-                "RAG: перекрытие (симв.)",
-                FieldKind::Text(self.config.rag.chunk_overlap_chars.to_string()),
-            ),
-            row(
-                FieldId::RagMax,
-                "RAG: потолок чанка (симв.)",
-                FieldKind::Text(self.config.rag.chunk_max_chars.to_string()),
-            ),
-            row(
-                FieldId::SmMaxNarrative,
-                "Модель себя: хранить инсайтов",
-                FieldKind::Text(self.config.self_model.max_narrative.to_string()),
-            ),
-            row(
-                FieldId::SmNarrativeInPrompt,
-                "Модель себя: инсайтов в промпт",
-                FieldKind::Text(self.config.self_model.narrative_in_prompt.to_string()),
-            ),
-            row(
-                FieldId::SmPromptCap,
-                "Модель себя: лимит инъекции (симв.)",
-                FieldKind::Text(self.config.self_model.prompt_cap.to_string()),
-            ),
-            row(
-                FieldId::SmSummaryTarget,
-                "Модель себя: ориентир описания (симв.)",
-                FieldKind::Text(self.config.self_model.summary_target_chars.to_string()),
-            ),
-            row(
-                FieldId::SmAutoReflect,
-                "Модель себя: авто-рефлексия (кажд. N)",
-                FieldKind::Text(self.config.self_model.auto_reflect_every.to_string()),
-            ),
-            row(
-                FieldId::SmProtocol,
-                "Модель себя: протокол ведения",
-                FieldKind::Toggle(self.config.self_model.maintenance_protocol),
-            ),
-            row(
-                FieldId::NotesAutoConsolidate,
-                "Заметки: авто-консолидация (кажд. N)",
-                FieldKind::Text(self.config.notes.auto_consolidate_every.to_string()),
-            ),
-            row(
-                FieldId::NotesRecallIncludesSelf,
-                "Заметки: наблюдения «о себе» в note_recall",
-                FieldKind::Toggle(self.config.notes.recall_includes_self),
-            ),
-        ]);
+                row(
+                    FieldId::TSubTimeout,
+                    "Субагент: таймаут (с)",
+                    FieldKind::Text(t.subagent_timeout_secs.to_string()),
+                ),
+            ],
+        );
+        rows.extend(grouped(
+            "Веб-поиск",
+            vec![
+                row(FieldId::TWeb, "Web-поиск", FieldKind::Toggle(t.web_enabled)),
+                row(
+                    FieldId::TWebFetch,
+                    "Загрузка страниц",
+                    FieldKind::Toggle(t.web_fetch_content),
+                ),
+            ],
+        ));
+        rows.extend(grouped(
+            "Python",
+            vec![
+                row(
+                    FieldId::TPython,
+                    "Python-исполнение",
+                    FieldKind::Toggle(t.python_enabled),
+                ),
+                text_row(
+                    FieldId::TPythonPath,
+                    "Путь к интерпретатору",
+                    &t.python_path,
+                ),
+            ],
+        ));
+        rows.extend(grouped(
+            "Файлы",
+            vec![
+                row(
+                    FieldId::TFs,
+                    "Доступ к файлам",
+                    FieldKind::Toggle(t.fs_enabled),
+                ),
+                text_row(FieldId::TFsRoot, "Каталог-песочница", &t.fs_root),
+            ],
+        ));
+        rows
+    }
+
+    /// Секция «Память»: чанкинг базы знаний (RAG), заметки, «модель себя».
+    fn memory_fields(&self) -> Vec<FieldRow> {
+        let mut rows = grouped(
+            "База знаний (RAG)",
+            vec![
+                row(
+                    FieldId::RagTarget,
+                    "Размер чанка (симв.)",
+                    FieldKind::Text(self.config.rag.chunk_target_chars.to_string()),
+                ),
+                row(
+                    FieldId::RagOverlap,
+                    "Перекрытие (симв.)",
+                    FieldKind::Text(self.config.rag.chunk_overlap_chars.to_string()),
+                ),
+                row(
+                    FieldId::RagMax,
+                    "Потолок чанка (симв.)",
+                    FieldKind::Text(self.config.rag.chunk_max_chars.to_string()),
+                ),
+            ],
+        );
+        rows.extend(grouped(
+            "Заметки",
+            vec![
+                row(
+                    FieldId::NotesAutoConsolidate,
+                    "Авто-консолидация (кажд. N)",
+                    FieldKind::Text(self.config.notes.auto_consolidate_every.to_string()),
+                ),
+                row(
+                    FieldId::NotesRecallIncludesSelf,
+                    "Наблюдения «о себе» в note_recall",
+                    FieldKind::Toggle(self.config.notes.recall_includes_self),
+                ),
+            ],
+        ));
+        rows.extend(grouped(
+            "Модель себя",
+            vec![
+                row(
+                    FieldId::SmMaxNarrative,
+                    "Хранить инсайтов",
+                    FieldKind::Text(self.config.self_model.max_narrative.to_string()),
+                ),
+                row(
+                    FieldId::SmNarrativeInPrompt,
+                    "Инсайтов в промпт",
+                    FieldKind::Text(self.config.self_model.narrative_in_prompt.to_string()),
+                ),
+                row(
+                    FieldId::SmPromptCap,
+                    "Лимит инъекции (симв.)",
+                    FieldKind::Text(self.config.self_model.prompt_cap.to_string()),
+                ),
+                row(
+                    FieldId::SmSummaryTarget,
+                    "Ориентир описания (симв.)",
+                    FieldKind::Text(self.config.self_model.summary_target_chars.to_string()),
+                ),
+                row(
+                    FieldId::SmAutoReflect,
+                    "Авто-рефлексия (кажд. N)",
+                    FieldKind::Text(self.config.self_model.auto_reflect_every.to_string()),
+                ),
+                row(
+                    FieldId::SmProtocol,
+                    "Протокол ведения",
+                    FieldKind::Toggle(self.config.self_model.maintenance_protocol),
+                ),
+            ],
+        ));
         rows
     }
 
     fn interface_fields(&self) -> Vec<FieldRow> {
         let i = &self.config.interface;
-        vec![
-            row(
-                FieldId::ITheme,
-                "Тема",
-                FieldKind::Choice(theme_label(i.theme)),
-            ),
-            row(
-                FieldId::ICompat,
-                "Совместимость со старым терминалом",
-                FieldKind::Toggle(i.terminal_compat),
-            ),
-            row(
-                FieldId::ISpell,
-                "Спелл-чек",
-                FieldKind::Toggle(i.spellcheck_enabled),
-            ),
-            row(
-                FieldId::IDicts,
-                "Словари (через запятую)",
-                FieldKind::Text(if i.selected_dictionaries.is_empty() {
-                    "(все)".to_string()
-                } else {
-                    i.selected_dictionaries.join(", ")
-                }),
-            ),
-            row(
+        let mut rows = grouped(
+            "Оформление",
+            vec![
+                row(
+                    FieldId::ITheme,
+                    "Тема",
+                    FieldKind::Choice(theme_label(i.theme)),
+                ),
+                row(
+                    FieldId::ICompat,
+                    "Совместимость со старым терминалом",
+                    FieldKind::Toggle(i.terminal_compat),
+                ),
+            ],
+        );
+        rows.extend(grouped(
+            "Орфография",
+            vec![
+                row(
+                    FieldId::ISpell,
+                    "Спелл-чек",
+                    FieldKind::Toggle(i.spellcheck_enabled),
+                ),
+                row(
+                    FieldId::IDicts,
+                    "Словари (через запятую)",
+                    FieldKind::Text(if i.selected_dictionaries.is_empty() {
+                        "(все)".to_string()
+                    } else {
+                        i.selected_dictionaries.join(", ")
+                    }),
+                ),
+            ],
+        ));
+        rows.extend(grouped(
+            "Поведение",
+            vec![row(
                 FieldId::IConfirmKeys,
                 "Подтверждать Ctrl+R / Ctrl+E",
                 FieldKind::Toggle(i.confirm_destructive_keys),
-            ),
-            row(
-                FieldId::ICopyThoughts,
-                "Копировать с «мыслями» (F5)",
-                FieldKind::Toggle(self.config.copy.copy_thoughts),
-            ),
-            row(
-                FieldId::ICopyToolCalls,
-                "Копировать с параметрами инструментов (F5)",
-                FieldKind::Toggle(self.config.copy.copy_tool_calls),
-            ),
-            row(
-                FieldId::ICopyToolResults,
-                "Копировать с ответами инструментов (F5)",
-                FieldKind::Toggle(self.config.copy.copy_tool_results),
-            ),
-        ]
+            )],
+        ));
+        rows.extend(grouped(
+            "Копирование переписки (F5)",
+            vec![
+                row(
+                    FieldId::ICopyThoughts,
+                    "Копировать с «мыслями»",
+                    FieldKind::Toggle(self.config.copy.copy_thoughts),
+                ),
+                row(
+                    FieldId::ICopyToolCalls,
+                    "Копировать с параметрами инструментов",
+                    FieldKind::Toggle(self.config.copy.copy_tool_calls),
+                ),
+                row(
+                    FieldId::ICopyToolResults,
+                    "Копировать с ответами инструментов",
+                    FieldKind::Toggle(self.config.copy.copy_tool_results),
+                ),
+            ],
+        ));
+        rows
     }
 
     fn profile_fields(&self) -> Vec<FieldRow> {
+        self.profile_fields_for(self.profile_sub)
+    }
+
+    /// Поля секции «Профили» для заданной подсекции (для перечисления при поиске).
+    fn profile_fields_for(&self, profile_sub: Subsection) -> Vec<FieldRow> {
         let Some(p) = self.profiles.get(self.profile_idx) else {
             return vec![row(
                 FieldId::PSelect,
@@ -831,50 +1091,90 @@ impl SettingsScreen {
                 FieldKind::Choice("(нет профилей)".to_string()),
             )];
         };
+        // ProfileSub — селектор подсекции (таб-стрип, поле 0, в списке не рисуется);
+        // выбор профиля и имя — секционные (общие для обеих подсекций).
         let mut rows = vec![
+            row(
+                FieldId::ProfileSub,
+                "Подсекция",
+                FieldKind::Choice(profile_sub.label()),
+            ),
             row(
                 FieldId::PSelect,
                 "Профиль",
                 FieldKind::Choice(p.name.clone()),
             ),
             row(FieldId::PName, "Имя", FieldKind::Text(p.name.clone())),
-            row(
-                FieldId::ProfileSub,
-                "Подсекция",
-                FieldKind::Choice(self.profile_sub.label()),
-            ),
         ];
-        match self.profile_sub {
+        match profile_sub {
             Subsection::Assistant => {
-                rows.push(row(
-                    FieldId::PSystem,
-                    "Системное сообщение",
-                    FieldKind::Text(p.default_system_message.clone()),
+                rows.extend(grouped(
+                    "Персона",
+                    vec![
+                        row(
+                            FieldId::PSystem,
+                            "Системное сообщение",
+                            FieldKind::Text(p.default_system_message.clone()),
+                        ),
+                        row(
+                            FieldId::PGreeting,
+                            "Приветствие",
+                            FieldKind::Text(p.greeting.clone().unwrap_or_default()),
+                        ),
+                    ],
                 ));
-                rows.push(row(
-                    FieldId::PGreeting,
-                    "Приветствие",
-                    FieldKind::Text(p.greeting.clone().unwrap_or_default()),
-                ));
-                for (idx, tool) in Self::tool_catalog().into_iter().enumerate() {
+                // Тумблеры инструментов: раскладываем по смысловым группам
+                // (`meta::tool_group`), с коротким описанием и честным гейтом.
+                // Индекс `PTool` — позиция в `tool_catalog()` (источник истины для
+                // `toggle_profile_tool`); порядок ПОКАЗА группируем стабильной
+                // сортировкой, не трогая индексы.
+                let mut indexed: Vec<(usize, String)> =
+                    Self::tool_catalog().into_iter().enumerate().collect();
+                indexed.sort_by_key(|(_, id)| {
+                    meta::TOOL_GROUPS
+                        .iter()
+                        .position(|g| *g == meta::tool_group(id))
+                        .unwrap_or(usize::MAX)
+                });
+                for (idx, tool) in indexed {
                     let on = p.enabled_tools.iter().any(|t| t == &tool);
-                    rows.push(row(
-                        FieldId::PTool(idx),
-                        &format!("инструмент: {tool}"),
-                        FieldKind::Toggle(on),
-                    ));
+                    let gate = meta::tool_gate(&tool);
+                    let gated_off = on && gate.is_some_and(|g| self.gate_disabled(g));
+                    let mut r = row(FieldId::PTool(idx), &tool, FieldKind::Toggle(on));
+                    r.group = meta::tool_group(&tool);
+                    r.warn = gated_off;
+                    r.hint = if gated_off {
+                        gate.map(gate_hint)
+                    } else {
+                        let d = meta::tool_description(&tool);
+                        (!d.is_empty()).then_some(d)
+                    };
+                    rows.push(r);
                 }
             }
             // В имперсонации инструментов нет (spec §11.8) — только сис. сообщение.
             Subsection::Impersonation => {
-                rows.push(row(
-                    FieldId::PImpSystem,
-                    "Системное сообщение",
-                    FieldKind::Text(p.impersonation_system_message.clone()),
+                rows.extend(grouped(
+                    "Персона",
+                    vec![row(
+                        FieldId::PImpSystem,
+                        "Системное сообщение",
+                        FieldKind::Text(p.impersonation_system_message.clone()),
+                    )],
                 ));
             }
         }
         rows
+    }
+
+    /// Выключен ли глобальный гейт инструмента (тогда инструмент недоступен модели,
+    /// даже если включён в профиле).
+    fn gate_disabled(&self, gate: ToolGate) -> bool {
+        match gate {
+            ToolGate::Web => !self.config.tools.web_enabled,
+            ToolGate::Python => !self.config.tools.python_enabled,
+            ToolGate::Fs => !self.config.tools.fs_enabled,
+        }
     }
 
     /// Облачный провайдер сэмплинга подсекции (`None` — локальный движок). Для
@@ -888,6 +1188,297 @@ impl SettingsScreen {
         } else {
             self.config.engine.mode.cloud_provider()
         }
+    }
+
+    // ---------- попап выбора Choice-поля / сброс к дефолту ----------
+
+    /// Список вариантов Choice-поля + индекс текущего (`None` — поле не Choice).
+    fn choice_menu(&self, id: FieldId) -> Option<(Vec<String>, usize)> {
+        let mode_menu = |m: ServerMode| index_menu(&SERVER_MODES, m, mode_label);
+        match id {
+            FieldId::XMode => Some(mode_menu(self.config.engine.mode)),
+            FieldId::EMode => Some(mode_menu(self.config.embed.mode)),
+            FieldId::IxMode => Some(index_menu(
+                &IMP_MODES,
+                self.config.impersonation_engine.mode,
+                imp_mode_label,
+            )),
+            FieldId::XFlashAttn => Some(flash_menu(self.config.engine.managed.flash_attn)),
+            FieldId::IxFlashAttn => Some(flash_menu(
+                self.config.impersonation_engine.managed.flash_attn,
+            )),
+            FieldId::XSpecType => Some(spec_menu(self.config.engine.managed.spec_type)),
+            FieldId::IxSpecType => Some(spec_menu(
+                self.config.impersonation_engine.managed.spec_type,
+            )),
+            FieldId::ITheme => Some(index_menu(
+                &THEMES,
+                self.config.interface.theme,
+                theme_label,
+            )),
+            FieldId::S(p @ (SamplingParam::Thinking | SamplingParam::Reasoning)) => {
+                Some(sampling_choice_menu(&self.config.default_sampling, p))
+            }
+            FieldId::IS(p @ (SamplingParam::Thinking | SamplingParam::Reasoning)) => {
+                Some(sampling_choice_menu(&self.config.impersonation_sampling, p))
+            }
+            FieldId::PSelect => {
+                let opts: Vec<String> = self.profiles.iter().map(|p| p.name.clone()).collect();
+                (!opts.is_empty()).then_some((opts, self.profile_idx))
+            }
+            _ => None,
+        }
+    }
+
+    fn open_choice(&mut self, id: FieldId) {
+        if let Some((options, selected)) = self.choice_menu(id)
+            && !options.is_empty()
+        {
+            self.choice = Some(ChoiceState {
+                field: id,
+                options,
+                selected,
+            });
+        }
+    }
+
+    /// Применяет выбор варианта по индексу через существующий цикл (`cycle_field`):
+    /// делает столько шагов вперёд, сколько нужно от текущего до целевого.
+    fn apply_choice(&mut self, id: FieldId, target: usize) -> Option<SettingsIntent> {
+        let (opts, cur) = self.choice_menu(id)?;
+        let n = opts.len();
+        if n == 0 {
+            return None;
+        }
+        let steps = (target + n - cur) % n;
+        let mut intent = None;
+        for _ in 0..steps {
+            if let Some(i) = self.cycle_field(id, 1) {
+                intent = Some(i);
+            }
+        }
+        intent
+    }
+
+    fn handle_choice_key(&mut self, key: KeyEvent) -> Option<SettingsIntent> {
+        let st = self.choice.as_mut()?;
+        match key.code {
+            KeyCode::Esc => {
+                self.choice = None;
+                None
+            }
+            KeyCode::Up | KeyCode::Left => {
+                st.selected = st.selected.saturating_sub(1);
+                None
+            }
+            KeyCode::Down | KeyCode::Right => {
+                if st.selected + 1 < st.options.len() {
+                    st.selected += 1;
+                }
+                None
+            }
+            KeyCode::Enter => {
+                let (id, target) = (st.field, st.selected);
+                self.choice = None;
+                self.apply_choice(id, target)
+            }
+            _ => None,
+        }
+    }
+
+    /// Поля текущей секции/подсекции, построенные из **дефолтного** конфига (для
+    /// маркера «изменено» и сброса). Профили — те же (у них нет config-дефолта).
+    fn default_fields(&self) -> Vec<FieldRow> {
+        let mut tmp = SettingsScreen::new(AppConfig::default(), self.profiles.clone());
+        tmp.section_idx = self.section_idx;
+        tmp.model_sub = self.model_sub;
+        tmp.sampling_sub = self.sampling_sub;
+        tmp.profile_sub = self.profile_sub;
+        tmp.profile_idx = self.profile_idx;
+        tmp.fields()
+    }
+
+    /// Сбрасывает config-поле к значению по умолчанию. Профильные поля и уже
+    /// дефолтные значения — no-op (без лишнего сохранения).
+    fn reset_field(&mut self, id: FieldId) -> Option<SettingsIntent> {
+        if is_profile_field(id) {
+            return None;
+        }
+        let cur_kind = self
+            .fields()
+            .into_iter()
+            .find(|f| f.id == id)
+            .map(|f| f.kind)?;
+        let default_kind = self
+            .default_fields()
+            .into_iter()
+            .find(|d| d.id == id)
+            .map(|d| d.kind)?;
+        // Уже совпадает с дефолтом — ничего не делаем.
+        if value_text(&cur_kind) == value_text(&default_kind) {
+            return None;
+        }
+        match default_kind {
+            FieldKind::Toggle(_) => self.toggle_field(id),
+            FieldKind::Choice(def_label) => {
+                let (opts, _) = self.choice_menu(id)?;
+                let idx = opts.iter().position(|o| *o == def_label)?;
+                self.apply_choice(id, idx)
+            }
+            FieldKind::Text(def) => {
+                // «—» — плейсхолдер пустого (Option::None); очищаем поле.
+                let text = if def == "—" { "" } else { &def };
+                self.apply_text(id, text)
+            }
+        }
+    }
+
+    // ---------- поиск по полям (`/`) ----------
+
+    /// Строит полный индекс полей всех секций/подсекций для поиска. Поля
+    /// mode-зависимой видимости берутся по текущему режиму (managed/облако).
+    fn build_search_index(&self) -> Vec<SearchHit> {
+        let mut out = Vec::new();
+        for (sec_idx, sec) in SECTIONS.iter().enumerate() {
+            match sec {
+                Section::Model => {
+                    for (si, sub) in ModelTab::ALL.iter().enumerate() {
+                        collect_hits(
+                            &mut out,
+                            sec_idx,
+                            *sec,
+                            Some(si),
+                            Some(MODEL_TABS[si]),
+                            self.model_fields_for(*sub),
+                        );
+                    }
+                }
+                Section::Sampling => {
+                    for (si, sub) in Subsection::ALL.iter().enumerate() {
+                        collect_hits(
+                            &mut out,
+                            sec_idx,
+                            *sec,
+                            Some(si),
+                            Some(SUB_TABS[si]),
+                            self.sampling_fields_for(*sub),
+                        );
+                    }
+                }
+                Section::Profiles => {
+                    for (si, sub) in Subsection::ALL.iter().enumerate() {
+                        collect_hits(
+                            &mut out,
+                            sec_idx,
+                            *sec,
+                            Some(si),
+                            Some(SUB_TABS[si]),
+                            self.profile_fields_for(*sub),
+                        );
+                    }
+                }
+                Section::Tools => {
+                    collect_hits(&mut out, sec_idx, *sec, None, None, self.tool_fields())
+                }
+                Section::Memory => {
+                    collect_hits(&mut out, sec_idx, *sec, None, None, self.memory_fields())
+                }
+                Section::Interface => {
+                    collect_hits(&mut out, sec_idx, *sec, None, None, self.interface_fields())
+                }
+            }
+        }
+        out
+    }
+
+    fn open_search(&mut self) {
+        let mut input = InputBox::new();
+        input.set_single_line(true);
+        let all = self.build_search_index();
+        let results = (0..all.len()).collect();
+        self.search = Some(SearchState {
+            input,
+            all,
+            results,
+            selected: 0,
+        });
+    }
+
+    /// Пересчитывает выдачу по запросу (AND по словам-подстрокам, регистронезав.).
+    fn search_filter(&mut self) {
+        if let Some(st) = &mut self.search {
+            let q = st.input.text().to_lowercase();
+            let terms: Vec<&str> = q.split_whitespace().collect();
+            st.results = st
+                .all
+                .iter()
+                .enumerate()
+                .filter(|(_, h)| terms.iter().all(|t| h.haystack.contains(t)))
+                .map(|(i, _)| i)
+                .collect();
+            if st.selected >= st.results.len() {
+                st.selected = st.results.len().saturating_sub(1);
+            }
+        }
+    }
+
+    /// Прыжок к выбранному результату: секция, подсекция, поле, фокус на полях.
+    fn jump_to_selected(&mut self) {
+        let target = self.search.as_ref().and_then(|st| {
+            st.results.get(st.selected).map(|&ai| {
+                let h = &st.all[ai];
+                (h.section_idx, h.subsection, h.field_idx)
+            })
+        });
+        if let Some((section_idx, subsection, field_idx)) = target {
+            self.section_idx = section_idx;
+            if let Some(si) = subsection {
+                match SECTIONS[section_idx] {
+                    Section::Model => self.model_sub = ModelTab::from_index(si),
+                    Section::Sampling => self.sampling_sub = Subsection::from_index(si),
+                    Section::Profiles => self.profile_sub = Subsection::from_index(si),
+                    _ => {}
+                }
+            }
+            self.field_idx = field_idx;
+            self.focus = Focus::Fields;
+        }
+        self.search = None;
+    }
+
+    fn handle_search_key(&mut self, key: KeyEvent) -> Option<SettingsIntent> {
+        match (key.code, key.modifiers) {
+            (KeyCode::Esc, _) => self.search = None,
+            (KeyCode::Enter, _) => self.jump_to_selected(),
+            (KeyCode::Up, _) => {
+                if let Some(s) = &mut self.search {
+                    s.selected = s.selected.saturating_sub(1);
+                }
+            }
+            (KeyCode::Down, _) => {
+                if let Some(s) = &mut self.search
+                    && s.selected + 1 < s.results.len()
+                {
+                    s.selected += 1;
+                }
+            }
+            // Ctrl+K — очистить/вернуть запрос (как в прочих полях).
+            (KeyCode::Char(c), m)
+                if m.contains(KeyModifiers::CONTROL) && keys::physical_char(c) == 'k' =>
+            {
+                if let Some(s) = &mut self.search {
+                    s.input.clear_or_restore();
+                }
+                self.search_filter();
+            }
+            _ => {
+                if let Some(s) = &mut self.search {
+                    s.input.on_key(key);
+                }
+                self.search_filter();
+            }
+        }
+        None
     }
 
     // ---------- обработка клавиш ----------
@@ -906,8 +1497,24 @@ impl SettingsScreen {
         {
             return Some(SettingsIntent::Quit);
         }
+        // Оверлей поиска перехватывает ввод (кроме Ctrl+C выше).
+        if self.search.is_some() {
+            return self.handle_search_key(key);
+        }
+        // Попап выбора Choice-поля.
+        if self.choice.is_some() {
+            return self.handle_choice_key(key);
+        }
         if self.editor.is_some() {
             return self.handle_editor_key(key);
+        }
+        // `/` открывает поиск по полям (в редакторе `/` — обычный символ, обработан выше).
+        if key.code == KeyCode::Char('/')
+            && !key.modifiers.contains(KeyModifiers::CONTROL)
+            && !key.modifiers.contains(KeyModifiers::ALT)
+        {
+            self.open_search();
+            return None;
         }
         // Создать/удалить профиль (в секции «Профили»). Матчим по «физической»
         // латинской клавише — шорткаты работают при любой раскладке (см. shared::keys).
@@ -1004,36 +1611,41 @@ impl SettingsScreen {
                 }
                 None
             }
+            // Del — сброс поля к значению по умолчанию (config-поля; профильные — no-op).
+            KeyCode::Delete => {
+                let id = fields.get(self.field_idx)?.id;
+                self.reset_field(id)
+            }
             KeyCode::Enter => {
                 let f = fields.get(self.field_idx)?;
                 match &f.kind {
                     FieldKind::Toggle(_) => self.toggle_field(f.id),
-                    FieldKind::Choice(_) => self.cycle_field(f.id, 1),
+                    // Choice (в т.ч. выбор профиля PSelect) — попап списка вариантов.
+                    FieldKind::Choice(_) => {
+                        self.open_choice(f.id);
+                        None
+                    }
                     FieldKind::Text(value) => {
-                        // Открываем редактор; PSelect — выбор профиля, не текст.
-                        if f.id == FieldId::PSelect {
-                            None
-                        } else {
-                            // Системное сообщение и приветствие — многострочные
-                            // (перенос + переводы строк); прочие поля — однострочные
-                            // (горизонтальный скролл, без переноса на невидимый ряд).
-                            // См. spec §11.6.
-                            let multiline = matches!(
-                                f.id,
-                                FieldId::PSystem | FieldId::PGreeting | FieldId::PImpSystem
-                            );
-                            let mut input = InputBox::new();
-                            input.set_single_line(!multiline);
-                            // Не показываем плейсхолдеры «(все)»/«—» как значение.
-                            let seed = self.field_seed(f.id, value);
-                            input.set_text(&seed);
-                            self.editor = Some(Editor {
-                                field: f.id,
-                                input,
-                                multiline,
-                            });
-                            None
-                        }
+                        // Системное сообщение и приветствие — многострочные
+                        // (перенос + переводы строк); прочие поля — однострочные
+                        // (горизонтальный скролл, без переноса на невидимый ряд).
+                        // См. spec §11.6.
+                        let multiline = matches!(
+                            f.id,
+                            FieldId::PSystem | FieldId::PGreeting | FieldId::PImpSystem
+                        );
+                        let mut input = InputBox::new();
+                        input.set_single_line(!multiline);
+                        // Не показываем плейсхолдеры «(все)»/«—» как значение.
+                        let seed = self.field_seed(f.id, value);
+                        input.set_text(&seed);
+                        self.editor = Some(Editor {
+                            field: f.id,
+                            input,
+                            multiline,
+                            error: None,
+                        });
+                        None
                     }
                 }
             }
@@ -1055,8 +1667,14 @@ impl SettingsScreen {
                 None
             }
             (KeyCode::Enter, _) => {
-                let editor = self.editor.take().unwrap();
                 let text = editor.input.text();
+                // Валидация без закрытия: невалидное числовое поле оставляет редактор
+                // открытым, подпись краснеет; исправление или Esc закрывают.
+                if let Some(err) = field_validation_error(editor.field, &text) {
+                    editor.error = Some(err);
+                    return None;
+                }
+                let editor = self.editor.take().unwrap();
                 self.apply_text(editor.field, &text)
             }
             // Удалить весь текст поля / вернуть удалённое (spec §11.5). Матчим по
@@ -1065,10 +1683,12 @@ impl SettingsScreen {
                 if m.contains(KeyModifiers::CONTROL) && keys::physical_char(c) == 'k' =>
             {
                 editor.input.clear_or_restore();
+                editor.error = None;
                 None
             }
             _ => {
                 editor.input.on_key(key);
+                editor.error = None; // правка сбрасывает прежнюю ошибку
                 None
             }
         }
@@ -1077,7 +1697,10 @@ impl SettingsScreen {
     /// Вставка из буфера обмена (bracketed paste): осмысленна только когда открыт
     /// текстовый редактор поля (например, путь к модели) — иначе no-op. См. spec §11.5.
     pub fn handle_paste(&mut self, text: &str) {
-        if let Some(editor) = self.editor.as_mut() {
+        if let Some(search) = self.search.as_mut() {
+            search.input.insert_str(text);
+            self.search_filter();
+        } else if let Some(editor) = self.editor.as_mut() {
             editor.input.insert_str(text);
         }
     }
@@ -1171,10 +1794,10 @@ impl SettingsScreen {
     /// Циклически меняет значение Choice-поля.
     fn cycle_field(&mut self, id: FieldId, dir: i32) -> Option<SettingsIntent> {
         match id {
-            // Переключение подсекций «Ассистент»/«Имперсонация» — чисто навигация
-            // (без сохранения). Сбрасываем курсор на селектор подсекции.
+            // Переключение подсекций (таб-стрип) — чисто навигация, без сохранения.
+            // Модель — три вкладки с учётом направления; Семплинг/Профили — две.
             FieldId::ModelSub => {
-                self.model_sub = self.model_sub.toggled();
+                self.model_sub = self.model_sub.cycle(dir);
                 None
             }
             FieldId::SamplingSub => {
@@ -1529,16 +2152,27 @@ impl SettingsScreen {
     pub fn render(&mut self, frame: &mut Frame) {
         let area = frame.area();
         let palette = self.palette();
-        let mut footer = vec![Span::raw("")];
-        for (key, desc) in [
+        // Контекстный футер: базовые хоткеи + специфичные для секции. В «Профилях» —
+        // создание/удаление профиля.
+        let mut hints: Vec<(&str, &str)> = vec![
             ("Tab", "секция"),
             ("↑↓", "поля"),
             ("Enter", "правка"),
             ("Space", "тумблер"),
             ("←→", "выбор"),
-            ("Esc", "назад"),
-            ("Ctrl+C", "выход"),
-        ] {
+            ("/", "поиск"),
+        ];
+        if self.focus == Focus::Fields {
+            hints.push(("Del", "сброс"));
+        }
+        if self.section() == Section::Profiles {
+            hints.push(("Ctrl+N", "новый"));
+            hints.push(("Ctrl+D", "удалить"));
+        }
+        hints.push(("Esc", "назад"));
+        hints.push(("Ctrl+C", "выход"));
+        let mut footer = vec![Span::raw("")];
+        for (key, desc) in hints {
             footer.push(palette.keycap(key));
             footer.push(Span::styled(format!(" {desc}  "), palette.muted_style()));
         }
@@ -1558,17 +2192,22 @@ impl SettingsScreen {
         // Редактор поверх — с реальным курсором (InputBox::render требует &mut).
         if let Some(editor) = self.editor.as_mut() {
             // Системное сообщение/приветствие — крупный многострочный попап с
-            // переносом; прочие поля — компактная однострочная полоса.
-            let (popup, title) = if editor.multiline {
-                (
-                    centered_rect(80, 40, multiline_popup_height(area), area),
-                    "правка · Shift+Enter перенос · Enter ок · Esc отмена",
-                )
+            // переносом; прочие поля — компактная однострочная полоса. При ошибке
+            // валидации титул несёт красное сообщение и редактор не закрывается.
+            let err = editor.error;
+            let base_title = if editor.multiline {
+                "правка · Shift+Enter перенос · Enter ок · Esc отмена"
             } else {
-                (
-                    centered_rect(60, 30, 3, area),
-                    "правка · Enter ок · Esc отмена",
-                )
+                "правка · Enter ок · Esc отмена"
+            };
+            let title = match err {
+                Some(e) => format!("{} {e} · Esc отмена", palette.glyphs().warn),
+                None => base_title.to_string(),
+            };
+            let popup = if editor.multiline {
+                centered_rect(80, 40, multiline_popup_height(area), area)
+            } else {
+                centered_rect(60, 30, 3, area)
             };
             // Крупный многострочный попап (системное сообщение/приветствие)
             // притеняет фон, чтобы не сливаться; компактные однострочные полосы —
@@ -1579,13 +2218,166 @@ impl SettingsScreen {
             frame.render_widget(Clear, popup);
             editor
                 .input
-                .render(frame, popup, title, true, &palette, false);
+                .render(frame, popup, &title, true, &palette, false);
+        }
+
+        // Попап выбора Choice-поля — поверх (при поиске редактор/выбор закрыты).
+        if self.choice.is_some() {
+            self.render_choice(frame, area, &palette);
+        }
+
+        // Оверлей поиска по полям — поверх всего (редактор при поиске закрыт).
+        if self.search.is_some() {
+            self.render_search(frame, area, &palette);
+        }
+    }
+
+    /// Рисует попап выбора значения Choice-поля: список вариантов, текущий отмечен.
+    fn render_choice(&self, frame: &mut Frame, area: Rect, palette: &Palette) {
+        let st = self.choice.as_ref().unwrap();
+        // Высота = число вариантов + рамка, но не выше экрана; ширина по самой
+        // длинной подписи (с запасом), центрирован.
+        let want_h = (st.options.len() as u16 + 2).min(area.height.max(3));
+        let want_w = st
+            .options
+            .iter()
+            .map(|o| o.chars().count())
+            .max()
+            .unwrap_or(4) as u16
+            + 8;
+        let popup = centered_rect_wh(want_w.max(24), want_h.max(3), area);
+        dim_background(frame, palette);
+        frame.render_widget(Clear, popup);
+        let items: Vec<ListItem> = st
+            .options
+            .iter()
+            .enumerate()
+            .map(|(i, o)| {
+                let mark = if i == st.selected { "› " } else { "  " };
+                ListItem::new(Line::from(vec![
+                    Span::styled(mark, Style::new().fg(palette.accent)),
+                    Span::styled(o.clone(), Style::new().fg(palette.text)),
+                ]))
+            })
+            .collect();
+        let block = palette
+            .panel("выбор · Enter · Esc", true)
+            .border_style(palette.border_style(true));
+        let list = List::new(items)
+            .block(block)
+            .highlight_style(Style::new().reversed());
+        let mut state = ListState::default();
+        state.select(Some(st.selected.min(st.options.len().saturating_sub(1))));
+        frame.render_stateful_widget(list, popup, &mut state);
+    }
+
+    /// Рисует оверлей поиска: строка запроса + отфильтрованная выдача.
+    fn render_search(&mut self, frame: &mut Frame, area: Rect, palette: &Palette) {
+        let popup = centered_rect(72, 50, (area.height * 3 / 4).max(8), area);
+        dim_background(frame, palette);
+        frame.render_widget(Clear, popup);
+
+        let [input_area, list_area] =
+            Layout::vertical([Constraint::Length(3), Constraint::Min(1)]).areas(popup);
+
+        // Снимок для списка (селект/выдача) до мутабельного заимствования input.
+        let (results, all_len, selected): (Vec<(String, String)>, usize, usize) = {
+            let s = self.search.as_ref().unwrap();
+            let rows = s
+                .results
+                .iter()
+                .map(|&ai| {
+                    let h = &s.all[ai];
+                    (h.crumb.clone(), h.value.clone())
+                })
+                .collect();
+            (rows, s.all.len(), s.selected)
+        };
+
+        let title = format!("Поиск полей ({}/{})", results.len(), all_len);
+        self.search
+            .as_mut()
+            .unwrap()
+            .input
+            .render(frame, input_area, &title, true, palette, false);
+
+        // Список результатов: «крошка   значение» (значение приглушённо).
+        let inner_w = list_area.width.saturating_sub(2) as usize;
+        let items: Vec<ListItem> = if results.is_empty() {
+            vec![ListItem::new(Line::styled(
+                "  ничего не найдено",
+                palette.muted_style(),
+            ))]
+        } else {
+            results
+                .iter()
+                .map(|(crumb, value)| {
+                    let vw = if value.is_empty() {
+                        0
+                    } else {
+                        (value.chars().count() + 2).min(inner_w / 2)
+                    };
+                    let (crumb_s, cw) = truncate_to_width(crumb, inner_w.saturating_sub(vw + 1));
+                    let mut spans = vec![Span::styled(crumb_s, Style::new().fg(palette.text))];
+                    if vw > 0 {
+                        let (vs, _) = truncate_to_width(value, inner_w.saturating_sub(cw + 2));
+                        spans.push(Span::raw("  "));
+                        spans.push(Span::styled(vs, palette.muted_style()));
+                    }
+                    ListItem::new(Line::from(spans))
+                })
+                .collect()
+        };
+        let block = palette
+            .panel("Enter — перейти · ↑↓ — выбор · Esc — отмена", false)
+            .border_style(palette.border_style(true));
+        let list = List::new(items)
+            .block(block)
+            .highlight_style(Style::new().reversed());
+        let mut state = ListState::default();
+        if !results.is_empty() {
+            state.select(Some(selected.min(results.len() - 1)));
+        }
+        frame.render_stateful_widget(list, list_area, &mut state);
+
+        // Скроллбар на правой рамке панели, когда результатов больше видимой высоты.
+        if list_area.height > 2 {
+            let bar = Rect {
+                x: list_area.x,
+                y: list_area.y + 1,
+                width: list_area.width,
+                height: list_area.height - 2,
+            };
+            render_scrollbar(
+                frame,
+                bar,
+                results.len(),
+                bar.height as usize,
+                state.offset(),
+                true,
+                palette,
+            );
+        }
+    }
+
+    /// Число редактируемых полей секции (для счётчика в меню слева).
+    fn section_field_count(&self, s: Section) -> usize {
+        match s {
+            Section::Model => self.model_fields().len(),
+            Section::Sampling => self.sampling_fields().len(),
+            Section::Tools => self.tool_fields().len(),
+            Section::Memory => self.memory_fields().len(),
+            Section::Profiles => self.profile_fields().len(),
+            Section::Interface => self.interface_fields().len(),
         }
     }
 
     fn render_menu(&self, frame: &mut Frame, area: Rect) {
         let palette = self.palette();
         let focused = self.focus == Focus::Menu;
+        // Ширина под содержимое строки меню (минус правая рамка) — для правого
+        // выравнивания счётчика полей.
+        let inner_w = area.width.saturating_sub(1) as usize;
         // Активная секция помечается цветным рейлом и насыщенным заголовком вне
         // зависимости от фокуса; выбор клавиатурой подсвечивает List highlight.
         let items: Vec<ListItem> = SECTIONS
@@ -1603,7 +2395,16 @@ impl SettingsScreen {
                 } else {
                     Span::styled(s.title(), palette.muted_style())
                 };
-                ListItem::new(Line::from(vec![bar, title]))
+                // Счётчик полей секции, прижатый к правому краю меню.
+                let count = self.section_field_count(*s).to_string();
+                let used = 2 + label_width(s.title()) + count.chars().count();
+                let pad = inner_w.saturating_sub(used).max(1);
+                ListItem::new(Line::from(vec![
+                    bar,
+                    title,
+                    Span::raw(" ".repeat(pad)),
+                    Span::styled(count, palette.muted_style()),
+                ]))
             })
             .collect();
         let block = Block::default()
@@ -1628,82 +2429,223 @@ impl SettingsScreen {
         frame.render_stateful_widget(list, area, &mut state);
     }
 
+    /// Чип статуса сервера активной подсекции секции «Модель» (ассистент → чат,
+    /// имперсонация → имперсонация, эмбеддинги → эмбеддинги).
+    fn model_server_chip(&self, palette: &Palette) -> Vec<Span<'static>> {
+        let (status, label) = match self.model_sub {
+            ModelTab::Assistant => (&self.statuses.chat, "чат"),
+            ModelTab::Impersonation => (&self.statuses.impersonation, "имперсонация"),
+            ModelTab::Embeddings => (&self.statuses.embed, "эмбеддинги"),
+        };
+        server_status_chip(status, label, palette)
+    }
+
+    /// Таб-стрип подсекции для текущей секции: (подписи вкладок, активная).
+    /// `None` — секция без подсекций.
+    fn subsection_tabs(&self) -> Option<(&'static [&'static str], usize)> {
+        match self.section() {
+            Section::Model => Some((&MODEL_TABS, self.model_sub as usize)),
+            Section::Sampling => Some((&SUB_TABS, self.sampling_sub as usize)),
+            Section::Profiles => Some((&SUB_TABS, self.profile_sub as usize)),
+            _ => None,
+        }
+    }
+
     fn render_fields(&self, frame: &mut Frame, area: Rect) {
         let fields = self.fields();
         let focused = self.focus == Focus::Fields;
-        // Подсказка-описание сфокусированного поля (если оно есть) — отдельной
-        // строкой внизу секции. Резервируем место только когда описание есть,
-        // чтобы прочие секции выглядели как раньше. Неподдерживаемые облаком
-        // параметры сэмплинга в облачном режиме не показываются вовсе (ADR 0004).
         let focused_field = focused.then(|| fields.get(self.field_idx)).flatten();
-        let description: Option<&'static str> = focused_field.and_then(|f| field_description(f.id));
-        let desc_h = if description.is_some() { 4 } else { 0 };
-        let [list_area, desc_area] =
-            Layout::vertical([Constraint::Min(1), Constraint::Length(desc_h)]).areas(area);
-        // Колонку со значениями (в т.ч. чекбоксы [x]) выравниваем по самой длинной
-        // подписи — иначе при разной длине имён инструментов [x] «гуляют». Минимум 28,
-        // чтобы короткие секции выглядели как раньше.
-        let label_col = fields
-            .iter()
-            .map(|f| label_width(&f.label))
-            .max()
-            .unwrap_or(0)
-            .max(28);
         let palette = self.palette();
-        let items: Vec<ListItem> = fields
-            .iter()
-            .map(|f| ListItem::new(render_field_line(f, label_col, &palette)))
-            .collect();
-        let block = Block::default()
-            .borders(Borders::NONE)
-            .title(Line::from(vec![
-                Span::styled(
-                    format!(" {} ", palette.glyphs().title_marker),
-                    Style::new().fg(palette.assistant),
-                ),
-                Span::styled(
-                    format!("{} ", self.section().title()),
-                    Style::new().fg(palette.text).bold(),
-                ),
-            ]));
+
+        // Селектор подсекции (если есть в текущем наборе полей) рисуется не строкой
+        // списка, а таб-стрипом над ним. Его позиция нужна для «фокуса на вкладках».
+        let sub_pos = fields.iter().position(|f| is_subsection(f.id));
+        let tabs = sub_pos.and(self.subsection_tabs());
+
+        // Шапка: титул секции (всегда) + таб-стрип (если есть подсекции). Нижняя
+        // панель (значение+описание) резервируется всегда при наличии полей.
+        let desc_h: u16 = if fields.is_empty() { 0 } else { 4 };
+        let head_h: u16 = 1 + if tabs.is_some() { 1 } else { 0 };
+        let [head_area, list_area, desc_area] = Layout::vertical([
+            Constraint::Length(head_h),
+            Constraint::Min(1),
+            Constraint::Length(desc_h),
+        ])
+        .areas(area);
+
+        let mut title_spans = vec![
+            Span::styled(
+                format!(" {} ", palette.glyphs().title_marker),
+                Style::new().fg(palette.assistant),
+            ),
+            Span::styled(
+                format!("{} ", self.section().title()),
+                Style::new().fg(palette.text).bold(),
+            ),
+        ];
+        // Секция «Модель/сервер»: чип статуса сервера активной подсекции справа —
+        // правишь движок и видишь эффект (подключение → готов), не выходя в чат.
+        if self.section() == Section::Model {
+            let chip = self.model_server_chip(&palette);
+            let used_left: usize = title_spans.iter().map(|s| span_width(s)).sum();
+            let used_right: usize = chip.iter().map(|s| span_width(s)).sum();
+            let head_w = head_area.width as usize;
+            if head_w > used_left + used_right + 1 {
+                title_spans.push(Span::raw(" ".repeat(head_w - used_left - used_right - 1)));
+                title_spans.extend(chip);
+            }
+        }
+        let mut head_lines = vec![Line::from(title_spans)];
+        if let Some((labels, active)) = tabs {
+            let on_tabs = focused && sub_pos == Some(self.field_idx);
+            head_lines.push(tab_strip_line(labels, active, on_tabs, &palette));
+        }
+        frame.render_widget(Paragraph::new(head_lines), head_area);
+
+        // Колонку значений выравниваем по самой длинной подписи ВНУТРИ группы (не
+        // всей секции): одно длинное имя больше не отгоняет значения других групп.
+        // Заодно считаем тумблеры группы (вкл/всего) для счётчика в заголовке.
+        // Селектор подсекции в списке не рисуется — из выравнивания исключён.
+        let mut group_col: HashMap<&str, usize> = HashMap::new();
+        let mut group_toggles: HashMap<&str, (usize, usize)> = HashMap::new();
+        for f in &fields {
+            if is_subsection(f.id) {
+                continue;
+            }
+            let w = group_col.entry(f.group).or_insert(0);
+            *w = (*w).max(label_width(&f.label));
+            if let FieldKind::Toggle(on) = f.kind {
+                let e = group_toggles.entry(f.group).or_insert((0, 0));
+                e.1 += 1;
+                if on {
+                    e.0 += 1;
+                }
+            }
+        }
+        const MIN_LABEL_COL: usize = 20;
+
+        // Поля из дефолтного конфига — для маркера «изменено» (строим один раз).
+        let default_fields = self.default_fields();
+
+        // Строим элементы: заголовок группы вставляется на переходе к новой
+        // непустой группе; `select` — позиция выбранного поля среди элементов (с
+        // учётом заголовков) для подсветки/скролла. Селектор подсекции пропускаем
+        // (он — таб-стрип): когда курсор на нём, список без выделения.
+        let inner_w = list_area.width as usize;
+        let mut items: Vec<ListItem> = Vec::with_capacity(fields.len() + 8);
+        let mut select: Option<usize> = None;
+        let mut prev_group: Option<&str> = None;
+        for (i, f) in fields.iter().enumerate() {
+            if is_subsection(f.id) {
+                continue;
+            }
+            if !f.group.is_empty() && prev_group != Some(f.group) {
+                // Счётчик «вкл/всего» — только для групп с ≥2 тумблерами (там он
+                // информативен; для одиночного тумблера дублировал бы видимый [x]).
+                let count = group_toggles
+                    .get(f.group)
+                    .copied()
+                    .filter(|&(_, total)| total >= 2);
+                items.push(ListItem::new(header_line(
+                    f.group, count, inner_w, &palette,
+                )));
+            }
+            prev_group = Some(f.group);
+            if focused && i == self.field_idx {
+                select = Some(items.len());
+            }
+            let col = group_col
+                .get(f.group)
+                .copied()
+                .unwrap_or(0)
+                .max(MIN_LABEL_COL);
+            let modified = default_fields
+                .iter()
+                .find(|d| d.id == f.id)
+                .map(|d| value_text(&d.kind) != value_text(&f.kind))
+                .unwrap_or(false);
+            // Ширина под значение: минус маркер(2)+подпись+отступ и правый зазор.
+            let value_w = inner_w.saturating_sub(col + 4);
+            items.push(ListItem::new(render_field_line(
+                f, col, value_w, modified, &palette,
+            )));
+        }
+        let total = items.len();
+
         let hl = if focused {
             Style::new().reversed()
         } else {
             Style::new()
         };
-        let list = List::new(items).block(block).highlight_style(hl);
+        let list = List::new(items)
+            .block(Block::default().borders(Borders::NONE))
+            .highlight_style(hl);
         let mut state = ListState::default();
-        if focused && !fields.is_empty() {
-            state.select(Some(self.field_idx.min(fields.len() - 1)));
+        if let Some(sel) = select {
+            state.select(Some(sel));
         }
         frame.render_stateful_widget(list, list_area, &mut state);
 
-        // Скроллбар, когда полей больше видимой высоты. Рисуем поверх правой
-        // рамки экрана настроек: `fields_area` доходит ровно до неё (inner
-        // панели), поэтому колонка `list_area.right()` — это линия рамки.
-        // Верхнюю строку списка занимает титул секции — бар идёт ниже него.
-        if list_area.height > 1 {
+        // Скроллбар, когда элементов больше видимой высоты. Рисуем поверх правой
+        // рамки экрана настроек: `fields_area` доходит ровно до неё (inner панели),
+        // поэтому колонка `list_area.right()` — это линия рамки. Титул/таб-стрип
+        // теперь в отдельной шапке (не в списке) → бар на всю высоту `list_area`.
+        // Длина содержимого — ПОЛНОЕ число элементов (заголовки групп тоже строки).
+        if list_area.height > 0 {
             let bar = Rect {
-                y: list_area.y + 1,
-                height: list_area.height - 1,
                 width: list_area.width + 1,
                 ..list_area
             };
             render_scrollbar(
                 frame,
                 bar,
-                fields.len(),
-                bar.height as usize,
+                total,
+                list_area.height as usize,
                 state.offset(),
                 true, // рамка экрана настроек рисуется в фокусном цвете
                 &palette,
             );
         }
 
-        if let Some(text) = description {
-            let para = Paragraph::new(text)
-                .block(Block::default().borders(Borders::TOP))
-                .style(Style::new().dim())
+        // Нижняя панель: полное значение выбранного текстового поля (пути целиком,
+        // в списке они усечены «…») + описание-подсказка.
+        if desc_h > 0 {
+            let mut lines: Vec<Line<'static>> = Vec::new();
+            if let Some(f) = focused_field {
+                if let FieldKind::Text(v) = &f.kind {
+                    let shown = v.trim();
+                    // Полное значение показываем только для «длинных» полей (пути, URL,
+                    // системное сообщение) — в списке они усекаются «…». Короткие
+                    // значения (числа, host) в списке видны целиком, дублировать незачем.
+                    let long =
+                        crate::shared::wrap::display_width(&shown.chars().collect::<Vec<_>>()) > 32;
+                    if !shown.is_empty() && shown != "—" && long {
+                        // Ограничиваем превью (многострочное системное сообщение
+                        // может быть огромным) — панель всё равно клипует по высоте.
+                        let preview: String = shown.chars().take(400).collect();
+                        lines.push(Line::styled(preview, Style::new().fg(palette.text)));
+                    }
+                }
+                if let Some(text) = field_description(f.id) {
+                    lines.push(Line::styled(text, palette.muted_style()));
+                }
+                // Выключенный глобально инструмент — развёрнутое пояснение (цветом
+                // предупреждения), чтобы честный гейт был понятен, а не только «⊘».
+                if f.warn {
+                    lines.push(Line::styled(
+                        "Инструмент включён в профиле, но выключен глобальным \
+                         выключателем — он недоступен модели. Включите его в секции \
+                         «Инструменты».",
+                        Style::new().fg(palette.warning),
+                    ));
+                }
+            }
+            let para = Paragraph::new(lines)
+                .block(
+                    Block::default()
+                        .borders(Borders::TOP)
+                        .border_style(palette.border_style(false)),
+                )
                 .wrap(Wrap { trim: true });
             frame.render_widget(para, desc_area);
         }
@@ -1797,6 +2739,24 @@ fn field_description(id: FieldId) -> Option<&'static str> {
         FieldId::XDraftNMin | FieldId::IxDraftNMin => Some(
             "Минимум черновых токенов за шаг (--spec-draft-n-min). Пусто — по \
              умолчанию (0).",
+        ),
+        FieldId::MaxToolRounds => Some(
+            "Максимум раундов клиентского agentic-loop за один ответ: сколько раз \
+             модель может вызвать инструменты подряд, прежде чем цикл принудительно \
+             завершится. Защита от зацикливания (по умолчанию 8).",
+        ),
+        FieldId::TSubMaxTokens => Some(
+            "Лимит токенов в ответе субагента (call_subagent) — независимого одно-ходового \
+             запроса без истории и инструментов.",
+        ),
+        FieldId::TSubTimeout => Some("Таймаут запроса субагента (call_subagent) в секундах."),
+        FieldId::TWeb => Some(
+            "Разрешить инструменты web_search и fetch_url (сетевой доступ). Мастер-гейт: \
+             при выключении оба инструмента недоступны модели независимо от настроек профиля.",
+        ),
+        FieldId::TPython => Some(
+            "Разрешить инструмент python_exec (исполнение кода в отдельном процессе). \
+             Выключено по умолчанию: код исполняется на вашей машине.",
         ),
         FieldId::TWebFetch => Some(
             "Загружать страницы результатов web-поиска, извлекать читаемый текст и \
@@ -1901,7 +2861,19 @@ fn row(id: FieldId, label: &str, kind: FieldKind) -> FieldRow {
         id,
         label: label.to_string(),
         kind,
+        group: "",
+        hint: None,
+        warn: false,
     }
+}
+
+/// Проставляет группу всем строкам батча — секции строятся как серии
+/// `grouped("Группа", vec![...])`, а заголовок группы UI ставит на переходе.
+fn grouped(group: &'static str, mut rows: Vec<FieldRow>) -> Vec<FieldRow> {
+    for r in &mut rows {
+        r.group = group;
+    }
+    rows
 }
 
 /// Текстовая строка из `Option<String>` (пусто → «—»).
@@ -1974,48 +2946,64 @@ const IMP_MANAGED_IDS: ManagedFieldIds = ManagedFieldIds {
     port: FieldId::IxPort,
 };
 
-/// Поля managed-сервера `llama-server` (общие для движка ассистента/имперсонации).
+/// Поля managed-сервера `llama-server` (общие для движка ассистента/имперсонации),
+/// разложенные по смысловым группам: Сервер / Модель / Производительность /
+/// Спекулятивное декодирование.
 fn managed_rows(m: &ManagedSettings, ids: ManagedFieldIds) -> Vec<FieldRow> {
-    let mut rows = vec![
-        text_row(ids.binary, "Бинарник llama-server", &m.binary),
-        text_row(ids.model, "GGUF-модель (-m)", &m.model_path),
-        num_field(ids.ngl, "GPU-слои (-ngl)", m.gpu_layers),
-        num_field(ids.ctx, "Контекст (-c)", m.context_size),
-        row(
-            ids.flash_attn,
-            "FlashAttn (--flash-attn)",
-            FieldKind::Choice(m.flash_attn.label().to_string()),
-        ),
-        row(ids.jinja, "Шаблон (--jinja)", FieldKind::Toggle(m.jinja)),
-        row(
-            ids.no_mmap,
-            "No-mmap (--no-mmap)",
-            FieldKind::Toggle(m.no_mmap),
-        ),
-        row(
-            ids.spec_type,
-            "Спек. декод. (--spec-type)",
-            FieldKind::Choice(m.spec_type.label().to_string()),
-        ),
-    ];
+    let mut rows = grouped(
+        "Сервер",
+        vec![
+            text_row(ids.binary, "Бинарник llama-server", &m.binary),
+            row(ids.host, "Host", FieldKind::Text(m.host.clone())),
+            num_field(ids.port, "Порт", m.port),
+        ],
+    );
+    rows.extend(grouped(
+        "Модель",
+        vec![
+            text_row(ids.model, "GGUF-модель (-m)", &m.model_path),
+            num_field(ids.ctx, "Контекст (-c)", m.context_size),
+            row(ids.jinja, "Шаблон (--jinja)", FieldKind::Toggle(m.jinja)),
+        ],
+    ));
+    rows.extend(grouped(
+        "Производительность",
+        vec![
+            num_field(ids.ngl, "GPU-слои (-ngl)", m.gpu_layers),
+            row(
+                ids.flash_attn,
+                "FlashAttn (--flash-attn)",
+                FieldKind::Choice(m.flash_attn.label().to_string()),
+            ),
+            row(
+                ids.no_mmap,
+                "No-mmap (--no-mmap)",
+                FieldKind::Toggle(m.no_mmap),
+            ),
+        ],
+    ));
+    let mut spec = vec![row(
+        ids.spec_type,
+        "Спек. декод. (--spec-type)",
+        FieldKind::Choice(m.spec_type.label().to_string()),
+    )];
     // Поля черновой модели показываем только для типов draft-* (им нужна модель);
     // ngram-* и none их не используют — не загромождаем секцию.
     if m.spec_type.needs_draft_model() {
-        rows.push(text_row(
+        spec.push(text_row(
             ids.draft_model,
             "Черновая модель (-md)",
             &m.draft_model,
         ));
-        rows.push(num_row(
+        spec.push(num_row(
             ids.draft_ngl,
             "Черновик GPU-слои (-ngld)",
             m.draft_gpu_layers,
         ));
-        rows.push(num_row(ids.draft_n_max, "Черновик n-max", m.draft_n_max));
-        rows.push(num_row(ids.draft_n_min, "Черновик n-min", m.draft_n_min));
+        spec.push(num_row(ids.draft_n_max, "Черновик n-max", m.draft_n_max));
+        spec.push(num_row(ids.draft_n_min, "Черновик n-min", m.draft_n_min));
     }
-    rows.push(row(ids.host, "Host", FieldKind::Text(m.host.clone())));
-    rows.push(num_field(ids.port, "Порт", m.port));
+    rows.extend(grouped("Спекулятивное декодирование", spec));
     rows
 }
 
@@ -2150,16 +3138,198 @@ fn label_width(label: &str) -> usize {
     crate::shared::wrap::display_width(&label.chars().collect::<Vec<_>>())
 }
 
+/// Инлайн-подсказка для инструмента, выключенного глобальным гейтом («выкл.
+/// глобально: <выключатель>»). Показывается цветом предупреждения.
+fn gate_hint(gate: ToolGate) -> &'static str {
+    match gate {
+        ToolGate::Web => "выкл. глобально: Web-поиск",
+        ToolGate::Python => "выкл. глобально: Python",
+        ToolGate::Fs => "выкл. глобально: файлы",
+    }
+}
+
+/// Ширина спана в колонках терминала (для правого выравнивания чипа статуса).
+fn span_width(s: &Span) -> usize {
+    crate::shared::wrap::display_width(&s.content.chars().collect::<Vec<_>>())
+}
+
+/// Чип статуса сервера для секции «Модель/сервер»: глиф + метка (+ причина, если
+/// сервер недоступен/не настроен — на экране настроек её видеть важно). Глифы/цвета
+/// зеркалят строку статуса (`widgets::status_bar`): `●` готов, `◐` подключение,
+/// `✕` нет связи/не настроен. Ширина глифа — 1 колонка (WGL4/GlyphSet, компат-безопасно).
+fn server_status_chip(status: &ServerStatus, label: &str, palette: &Palette) -> Vec<Span<'static>> {
+    let glyphs = palette.glyphs();
+    let (glyph, color, text) = match status {
+        ServerStatus::Ready => ("●", palette.success, format!("{label}: готов")),
+        ServerStatus::Connecting => (
+            glyphs.status_connecting,
+            palette.warning,
+            format!("{label}: подключение…"),
+        ),
+        ServerStatus::NotConfigured => (
+            glyphs.status_off,
+            palette.muted,
+            format!("{label}: не настроен"),
+        ),
+        ServerStatus::Disconnected(why) => (
+            glyphs.status_off,
+            palette.error,
+            format!("{label}: нет связи: {why}"),
+        ),
+    };
+    vec![
+        Span::styled(glyph, Style::new().fg(color).bold()),
+        Span::styled(format!(" {text} "), Style::new().fg(color)),
+    ]
+}
+
+/// Является ли поле селектором подсекции (рисуется таб-стрипом, а не строкой списка).
+fn is_subsection(id: FieldId) -> bool {
+    matches!(
+        id,
+        FieldId::ModelSub | FieldId::SamplingSub | FieldId::ProfileSub
+    )
+}
+
+/// Отображаемое значение поля (для крошки поиска).
+fn value_text(kind: &FieldKind) -> String {
+    match kind {
+        FieldKind::Toggle(on) => (if *on { "вкл" } else { "выкл" }).to_string(),
+        FieldKind::Choice(v) => v.clone(),
+        FieldKind::Text(v) => v.clone(),
+    }
+}
+
+/// Добавляет поля секции/подсекции в индекс поиска (пропуская селектор подсекции).
+/// `sub_label` — подпись подсекции (в крошку и ловушку), чтобы одинаковые поля
+/// разных вкладок различались.
+fn collect_hits(
+    out: &mut Vec<SearchHit>,
+    section_idx: usize,
+    section: Section,
+    subsection: Option<usize>,
+    sub_label: Option<&str>,
+    fields: Vec<FieldRow>,
+) {
+    let head = match sub_label {
+        Some(sub) => format!("{} · {}", section.title(), sub),
+        None => section.title().to_string(),
+    };
+    for (fi, f) in fields.iter().enumerate() {
+        if is_subsection(f.id) {
+            continue;
+        }
+        let desc = field_description(f.id).unwrap_or("");
+        let crumb = if f.group.is_empty() {
+            format!("{head} › {}", f.label)
+        } else {
+            format!("{head} › {} › {}", f.group, f.label)
+        };
+        let value = value_text(&f.kind);
+        let haystack = format!(
+            "{head} {} {} {} {}",
+            f.group,
+            f.label,
+            desc,
+            f.hint.unwrap_or("")
+        )
+        .to_lowercase();
+        out.push(SearchHit {
+            section_idx,
+            subsection,
+            field_idx: fi,
+            crumb,
+            value,
+            haystack,
+        });
+    }
+}
+
+/// Таб-стрип подсекции: `Ассистент │ Имперсонация │ Эмбеддинги`. Активная вкладка
+/// выделена (при фокусе на стрипе — подложкой, иначе — акцентным цветом), справа
+/// при фокусе — подсказка `←→`. Разделитель `│` и всё содержимое — WGL4-безопасны.
+fn tab_strip_line(tabs: &[&str], active: usize, focused: bool, palette: &Palette) -> Line<'static> {
+    let mut spans: Vec<Span<'static>> = vec![Span::raw(" ")];
+    for (i, t) in tabs.iter().enumerate() {
+        if i > 0 {
+            spans.push(Span::styled(" │", palette.border_style(false)));
+        }
+        let style = if i == active {
+            if focused {
+                Style::new().fg(palette.text).bg(palette.keycap_bg).bold()
+            } else {
+                Style::new().fg(palette.accent).bold()
+            }
+        } else {
+            palette.muted_style()
+        };
+        spans.push(Span::styled(format!(" {t} "), style));
+    }
+    if focused {
+        spans.push(Span::styled("   ←→", palette.muted_style()));
+    }
+    Line::from(spans)
+}
+
+/// Заголовок группы полей: `Группа ──── N/M ──` на всю ширину. Имя — приглушённо-
+/// жирным, продолжение — линией цветом рамки; `count = (вкл, всего)` показывает
+/// счётчик тумблеров группы. `─` входит в WGL4 → без компат-замены.
+fn header_line(
+    name: &str,
+    count: Option<(usize, usize)>,
+    width: usize,
+    palette: &Palette,
+) -> Line<'static> {
+    let label = format!(" {name} ");
+    let mut spans = vec![Span::styled(
+        label.clone(),
+        Style::new().fg(palette.muted).bold(),
+    )];
+    let mut used = label_width(&label);
+    if let Some((on, total)) = count {
+        let tag = format!("{on}/{total} ");
+        used += label_width(&tag) + 1;
+        // Тонкий разделитель + счётчик приглушённым перед линией.
+        let dashes_lead = "── ";
+        used += label_width(dashes_lead);
+        spans.push(Span::styled(dashes_lead, Style::new().fg(palette.border)));
+        spans.push(Span::styled(tag, palette.muted_style()));
+    }
+    let dashes = width.saturating_sub(used + 1);
+    spans.push(Span::styled(
+        "─".repeat(dashes),
+        Style::new().fg(palette.border),
+    ));
+    Line::from(spans)
+}
+
 /// Строка поля: подпись + значение, окрашенное по типу (тумблер — зелёный/
 /// приглушённый, выбор — синий, прочерк/пусто — цвет рамки, текст — основной).
-fn render_field_line(f: &FieldRow, label_col: usize, palette: &Palette) -> Line<'static> {
+/// Значение усекается по `value_w` с «…» (полностью его видно в нижней панели).
+fn render_field_line(
+    f: &FieldRow,
+    label_col: usize,
+    value_w: usize,
+    modified: bool,
+    palette: &Palette,
+) -> Line<'static> {
     let (value, value_style) = match &f.kind {
         FieldKind::Toggle(on) => {
-            if *on {
-                ("[x]".to_string(), Style::new().fg(palette.success))
+            // Гейт: включённый в профиле, но выключенный глобально инструмент —
+            // цветом предупреждения (он не действует), а не зелёным.
+            let color = if *on {
+                if f.warn {
+                    palette.warning
+                } else {
+                    palette.success
+                }
             } else {
-                ("[ ]".to_string(), palette.muted_style())
-            }
+                palette.muted
+            };
+            (
+                (if *on { "[x]" } else { "[ ]" }).to_string(),
+                Style::new().fg(color),
+            )
         }
         FieldKind::Choice(v) => (format!("‹ {v} ›"), Style::new().fg(palette.user)),
         FieldKind::Text(v) => {
@@ -2172,14 +3342,64 @@ fn render_field_line(f: &FieldRow, label_col: usize, palette: &Palette) -> Line<
             (v.clone(), style)
         }
     };
+    let (value, vw) = truncate_to_width(&value, value_w.max(1));
     // Дополняем подпись пробелами до ширины колонки по реальной ширине в колонках
     // (Rust `{:<N}` считает символы, а не колонки — для CJK/эмодзи это разъезжается).
     let pad = label_col.saturating_sub(label_width(&f.label));
-    Line::from(vec![
+    // Маркер «изменено против дефолта» (2 колонки), фиксом слева — поля выглядят
+    // отступленными под заголовком группы.
+    let marker = if modified {
+        Span::styled("• ", Style::new().fg(palette.accent))
+    } else {
+        Span::raw("  ")
+    };
+    let mut spans = vec![
+        marker,
         Span::styled(f.label.clone(), palette.muted_style()),
         Span::raw(" ".repeat(pad + 1)),
         Span::styled(value, value_style),
-    ])
+    ];
+    // Инлайн-подсказка (описание инструмента) справа от значения — в остатке ширины.
+    if let Some(hint) = f.hint {
+        let remaining = value_w.saturating_sub(vw + 2);
+        if remaining >= 2 {
+            let (h, _) = truncate_to_width(hint, remaining);
+            let style = if f.warn {
+                Style::new().fg(palette.warning)
+            } else {
+                palette.muted_style()
+            };
+            spans.push(Span::raw("  "));
+            spans.push(Span::styled(h, style));
+        }
+    }
+    Line::from(spans)
+}
+
+/// Усечение строки до `max` колонок с добавлением «…» (WGL4-безопасный). Возвращает
+/// усечённую строку и её фактическую ширину в колонках.
+fn truncate_to_width(s: &str, max: usize) -> (String, usize) {
+    let chars: Vec<char> = s.chars().collect();
+    let full = crate::shared::wrap::display_width(&chars);
+    if full <= max {
+        return (s.to_string(), full);
+    }
+    if max == 0 {
+        return (String::new(), 0);
+    }
+    let budget = max.saturating_sub(1); // место под «…»
+    let mut out = String::new();
+    let mut w = 0;
+    for i in 0..chars.len() {
+        let cw = crate::shared::wrap::width_at(&chars, i);
+        if w + cw > budget {
+            break;
+        }
+        w += cw;
+        out.push(chars[i]);
+    }
+    out.push('…');
+    (out, w + 1)
 }
 
 fn mode_label(m: ServerMode) -> String {
@@ -2268,6 +3488,128 @@ fn cycle_reasoning(r: Option<ReasoningEffort>) -> Option<ReasoningEffort> {
         Some(ReasoningEffort::Medium) => Some(ReasoningEffort::High),
         Some(ReasoningEffort::High) => None,
     }
+}
+
+/// Числовой вид поля для валидации (`None` — не числовое: текст/URL/списки/выбор).
+fn field_num_kind(id: FieldId) -> Option<NumKind> {
+    use FieldId::*;
+    match id {
+        // Целочисленные поля.
+        XNgl | XCtx | XPort | XDraftNgl | XDraftNMax | XDraftNMin | IxNgl | IxCtx | IxPort
+        | IxDraftNgl | IxDraftNMax | IxDraftNMin | EPort | MaxToolRounds | TSubMaxTokens
+        | TSubTimeout | RagTarget | RagOverlap | RagMax | SmMaxNarrative | SmNarrativeInPrompt
+        | SmPromptCap | SmSummaryTarget | SmAutoReflect | NotesAutoConsolidate => {
+            Some(NumKind::Int)
+        }
+        // Параметры семплинга — по своему виду.
+        S(p) | IS(p) => p.num_kind(),
+        _ => None,
+    }
+}
+
+/// Ошибка валидации поля (`None` — валидно). Пустой ввод допустим (очистка/сохранение
+/// прежнего); непустой в числовом поле обязан парситься. Проверка «мягкая» (i64/f64),
+/// точный тип и диапазон досматривает `apply_text`.
+fn field_validation_error(id: FieldId, text: &str) -> Option<&'static str> {
+    let t = text.trim();
+    if t.is_empty() {
+        return None;
+    }
+    match field_num_kind(id) {
+        Some(NumKind::Int) if t.parse::<i64>().is_err() => Some("нужно целое число"),
+        Some(NumKind::Float) if t.parse::<f64>().is_err() => Some("нужно число"),
+        _ => None,
+    }
+}
+
+/// Порядок вариантов режима движка (для Choice-попапа; совпадает с `cycle_mode`).
+const SERVER_MODES: [ServerMode; 5] = [
+    ServerMode::Managed,
+    ServerMode::External,
+    ServerMode::OpenAi,
+    ServerMode::Gemini,
+    ServerMode::Claude,
+];
+
+/// Порядок вариантов режима имперсонации (совпадает с `cycle_imp_mode`).
+const IMP_MODES: [ImpersonationMode; 6] = [
+    ImpersonationMode::Shared,
+    ImpersonationMode::Managed,
+    ImpersonationMode::External,
+    ImpersonationMode::OpenAi,
+    ImpersonationMode::Gemini,
+    ImpersonationMode::Claude,
+];
+
+/// Порядок тем (совпадает с `cycle_theme`).
+const THEMES: [Theme; 3] = [Theme::Auto, Theme::Dark, Theme::Light];
+
+/// Строит (подписи, индекс текущего) из массива вариантов и функции-подписи.
+fn index_menu<T: Copy + PartialEq>(
+    all: &[T],
+    cur: T,
+    label: impl Fn(T) -> String,
+) -> (Vec<String>, usize) {
+    let opts = all.iter().map(|&x| label(x)).collect();
+    let idx = all.iter().position(|&x| x == cur).unwrap_or(0);
+    (opts, idx)
+}
+
+fn flash_menu(cur: FlashAttn) -> (Vec<String>, usize) {
+    index_menu(&FlashAttn::ALL, cur, |x| x.label().to_string())
+}
+
+fn spec_menu(cur: SpecType) -> (Vec<String>, usize) {
+    index_menu(&SpecType::ALL, cur, |x| x.label().to_string())
+}
+
+/// Меню выбора для Choice-параметров семплинга (`Thinking`/`Reasoning`); порядок
+/// подписей совпадает с циклом `cycle_opt_bool`/`cycle_reasoning`.
+fn sampling_choice_menu(s: &SamplingConfig, p: SamplingParam) -> (Vec<String>, usize) {
+    match p {
+        SamplingParam::Thinking => {
+            let opts = [None, Some(true), Some(false)]
+                .iter()
+                .map(|&b| opt_bool_label(b))
+                .collect();
+            let idx = match s.thinking {
+                None => 0,
+                Some(true) => 1,
+                Some(false) => 2,
+            };
+            (opts, idx)
+        }
+        SamplingParam::Reasoning => {
+            let order = [
+                None,
+                Some(ReasoningEffort::None),
+                Some(ReasoningEffort::Low),
+                Some(ReasoningEffort::Medium),
+                Some(ReasoningEffort::High),
+            ];
+            let opts = order.iter().map(|&r| reasoning_label(r)).collect();
+            let idx = order
+                .iter()
+                .position(|&r| r == s.reasoning_effort)
+                .unwrap_or(0);
+            (opts, idx)
+        }
+        _ => (Vec::new(), 0),
+    }
+}
+
+/// Поле принадлежит профилю (у него нет config-дефолта → не участвует в `•`/сбросе).
+fn is_profile_field(id: FieldId) -> bool {
+    matches!(
+        id,
+        FieldId::PSelect
+            | FieldId::PName
+            | FieldId::PSystem
+            | FieldId::PGreeting
+            | FieldId::PImpSystem
+            | FieldId::PTool(_)
+            | FieldId::ProfileSub
+    )
 }
 
 fn parse_opt<T: std::str::FromStr>(s: &str) -> Option<T> {
@@ -2382,6 +3724,17 @@ fn centered_rect(pct_x: u16, min_w: u16, height: u16, area: Rect) -> Rect {
     v
 }
 
+/// Прямоугольник по центру `area` с явными шириной/высотой (клампятся к `area`).
+fn centered_rect_wh(width: u16, height: u16, area: Rect) -> Rect {
+    let [h] = Layout::horizontal([Constraint::Length(width.min(area.width))])
+        .flex(Flex::Center)
+        .areas(area);
+    let [v] = Layout::vertical([Constraint::Length(height.min(area.height))])
+        .flex(Flex::Center)
+        .areas(h);
+    v
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2401,6 +3754,31 @@ mod tests {
         KeyEvent::new(KeyCode::Char(c), KeyModifiers::CONTROL)
     }
 
+    /// Переходит на нужную секцию через Tab (устойчиво к порядку секций).
+    /// После вызова фокус в меню (Tab сбрасывает его), поля не фокусированы.
+    fn goto_section(s: &mut SettingsScreen, sec: Section) {
+        for _ in 0..SECTIONS.len() {
+            if s.section() == sec {
+                return;
+            }
+            s.handle_key(key(KeyCode::Tab));
+        }
+        assert_eq!(s.section(), sec, "секция {sec:?} не найдена");
+    }
+
+    /// Фокусирует поля и доходит вниз до поля `id` (устойчиво к группам/порядку).
+    /// Предполагает, что фокус в меню (как сразу после [`goto_section`]).
+    fn goto_field(s: &mut SettingsScreen, id: FieldId) {
+        s.handle_key(key(KeyCode::Enter)); // фокус на поля
+        for _ in 0..300 {
+            if s.fields().get(s.field_idx).map(|f| f.id) == Some(id) {
+                return;
+            }
+            s.handle_key(key(KeyCode::Down));
+        }
+        panic!("поле {id:?} не найдено в секции {:?}", s.section());
+    }
+
     #[test]
     fn esc_closes() {
         let mut s = screen();
@@ -2416,6 +3794,7 @@ mod tests {
             field: FieldId::XBinary,
             input: InputBox::new(),
             multiline: false,
+            error: None,
         });
         assert_eq!(s.handle_key(ctrl('c')), Some(SettingsIntent::Quit));
     }
@@ -2425,7 +3804,7 @@ mod tests {
         let mut s = screen();
         assert_eq!(s.section(), Section::Model);
         s.handle_key(key(KeyCode::Tab));
-        assert_eq!(s.section(), Section::Inference);
+        assert_eq!(s.section(), Section::Sampling);
         s.handle_key(KeyEvent::new(KeyCode::BackTab, KeyModifiers::NONE));
         assert_eq!(s.section(), Section::Model);
     }
@@ -2433,17 +3812,54 @@ mod tests {
     #[test]
     fn toggle_web_emits_save_with_flipped_value() {
         let mut s = screen();
-        // Переходим в Инструменты, в список полей, на первый тумблер (web).
-        s.handle_key(key(KeyCode::Tab)); // Inference
-        s.handle_key(key(KeyCode::Tab)); // Sampling
-        s.handle_key(key(KeyCode::Tab)); // Profiles
-        s.handle_key(key(KeyCode::Tab)); // Tools
-        s.handle_key(key(KeyCode::Enter)); // фокус на поля
+        // Переходим в Инструменты, на тумблер web-поиска.
+        goto_section(&mut s, Section::Tools);
+        goto_field(&mut s, FieldId::TWeb);
         let intent = s.handle_key(key(KeyCode::Char(' ')));
         match intent {
             Some(SettingsIntent::SaveConfig(c)) => assert!(!c.tools.web_enabled),
             other => panic!("ожидался SaveConfig, получено {other:?}"),
         }
+    }
+
+    #[test]
+    fn model_section_shows_active_subsection_server_chip() {
+        use ratatui::Terminal;
+        use ratatui::backend::TestBackend;
+        let render_text = |s: &mut SettingsScreen| -> String {
+            let mut term = Terminal::new(TestBackend::new(94, 12)).unwrap();
+            term.draw(|f| s.render(f)).unwrap();
+            let buf = term.backend().buffer();
+            (0..buf.area.height)
+                .map(|y| {
+                    (0..buf.area.width)
+                        .map(|x| buf[(x, y)].symbol().to_string())
+                        .collect::<String>()
+                })
+                .collect::<Vec<_>>()
+                .join("\n")
+        };
+        let mut s = screen();
+        s.set_server_statuses(ServerStatuses {
+            chat: ServerStatus::Ready,
+            embed: ServerStatus::Connecting,
+            impersonation: ServerStatus::NotConfigured,
+        });
+        // Ассистент → чип чат-сервера («готов»).
+        let t = render_text(&mut s);
+        assert!(t.contains("чат: готов"), "чип чат-сервера: {t}");
+        // Переключение подсекции меняет чип на сервер эмбеддингов («подключение»).
+        s.model_sub = ModelTab::Embeddings;
+        let t = render_text(&mut s);
+        assert!(
+            t.contains("эмбеддинги: подключение"),
+            "чип эмбеддингов: {t}"
+        );
+        assert!(!t.contains("чат: готов"), "чужой чип не показывается");
+        // Другие секции чип не рисуют.
+        goto_section(&mut s, Section::Interface);
+        let t = render_text(&mut s);
+        assert!(!t.contains("готов") && !t.contains("подключение"));
     }
 
     #[test]
@@ -2477,10 +3893,10 @@ mod tests {
     #[test]
     fn model_subsection_switches_to_impersonation_fields() {
         let mut s = screen();
-        s.handle_key(key(KeyCode::Enter)); // фокус на поля (ModelSub)
+        s.handle_key(key(KeyCode::Enter)); // фокус на поля (ModelSub — таб-стрип)
         // → переключает подсекцию на «Имперсонация» (без сохранения).
         assert_eq!(s.handle_key(key(KeyCode::Right)), None);
-        assert_eq!(s.model_sub, Subsection::Impersonation);
+        assert_eq!(s.model_sub, ModelTab::Impersonation);
         // Первое поле подсекции — режим имперсонации (3 значения).
         s.handle_key(key(KeyCode::Down)); // IxMode
         // Цикл shared → managed.
@@ -2494,14 +3910,27 @@ mod tests {
     }
 
     #[test]
+    fn model_subsection_third_tab_is_embeddings() {
+        // Модель имеет третью вкладку «Эмбеддинги» (сервер переехал из «Инструментов»);
+        // цикл вкладок вправо: Ассистент → Имперсонация → Эмбеддинги.
+        let mut s = screen();
+        s.handle_key(key(KeyCode::Enter)); // ModelSub (таб-стрип)
+        s.handle_key(key(KeyCode::Right)); // → Имперсонация
+        s.handle_key(key(KeyCode::Right)); // → Эмбеддинги
+        assert_eq!(s.model_sub, ModelTab::Embeddings);
+        let ids: Vec<FieldId> = s.fields().iter().map(|f| f.id).collect();
+        assert!(ids.contains(&FieldId::EMode));
+        assert!(ids.contains(&FieldId::EBinary));
+        // В «Инструментах» эмбеддингов больше нет.
+        goto_section(&mut s, Section::Tools);
+        assert!(!s.fields().iter().any(|f| f.id == FieldId::EMode));
+    }
+
+    #[test]
     fn impersonation_profile_subsection_has_no_tools() {
         let mut s = screen();
-        for _ in 0..3 {
-            s.handle_key(key(KeyCode::Tab)); // → Profiles
-        }
-        s.handle_key(key(KeyCode::Enter)); // фокус на поля; PSelect
-        s.handle_key(key(KeyCode::Down)); // PName
-        s.handle_key(key(KeyCode::Down)); // ProfileSub
+        goto_section(&mut s, Section::Profiles);
+        goto_field(&mut s, FieldId::ProfileSub); // таб-стрип подсекции (поле 0)
         s.handle_key(key(KeyCode::Right)); // → Имперсонация
         assert_eq!(s.profile_sub, Subsection::Impersonation);
         let fields = s.fields();
@@ -2515,11 +3944,7 @@ mod tests {
     #[test]
     fn editing_model_commits_text() {
         let mut s = screen();
-        s.handle_key(key(KeyCode::Enter)); // фокус на поля (ModelSub)
-        // Managed-режим: ModelSub → XMode → XBinary → XModel (URL скрыт в managed).
-        for _ in 0..3 {
-            s.handle_key(key(KeyCode::Down));
-        }
+        goto_field(&mut s, FieldId::XModel); // GGUF-модель (группа «Модель»)
         s.handle_key(key(KeyCode::Enter)); // открыть редактор XModel
         assert!(s.editor.is_some());
         for c in "gemma.gguf".chars() {
@@ -2553,9 +3978,7 @@ mod tests {
     #[test]
     fn create_and_delete_profile_in_profiles_section() {
         let mut s = screen();
-        for _ in 0..3 {
-            s.handle_key(key(KeyCode::Tab));
-        }
+        goto_section(&mut s, Section::Profiles);
         assert_eq!(s.section(), Section::Profiles);
         let create = s.handle_key(ctrl('n'));
         assert!(matches!(create, Some(SettingsIntent::CreateProfile { .. })));
@@ -2567,14 +3990,8 @@ mod tests {
     #[test]
     fn toggling_profile_tool_emits_save_profile() {
         let mut s = screen();
-        for _ in 0..3 {
-            s.handle_key(key(KeyCode::Tab));
-        }
-        s.handle_key(key(KeyCode::Enter)); // фокус на поля
-        // Перейти к первому тумблеру (после PSelect/PName/ProfileSub/PSystem/PGreeting).
-        for _ in 0..5 {
-            s.handle_key(key(KeyCode::Down));
-        }
+        goto_section(&mut s, Section::Profiles);
+        goto_field(&mut s, FieldId::PTool(0)); // первый тумблер инструмента
         let before = s.profiles[0].enabled_tools.len();
         let intent = s.handle_key(key(KeyCode::Char(' ')));
         match intent {
@@ -2595,10 +4012,8 @@ mod tests {
             p1.enabled_tools = default_tool_ids();
             vec![p1, p2]
         });
-        for _ in 0..3 {
-            s.handle_key(key(KeyCode::Tab));
-        }
-        s.handle_key(key(KeyCode::Enter)); // поля; курсор на PSelect
+        goto_section(&mut s, Section::Profiles);
+        goto_field(&mut s, FieldId::PSelect); // селектор профиля (после таб-стрипа)
         assert_eq!(s.profile_idx, 0);
         s.handle_key(key(KeyCode::Right));
         assert_eq!(s.profile_idx, 1);
@@ -2628,13 +4043,8 @@ mod tests {
     #[test]
     fn system_message_editor_is_multiline_and_keeps_newlines() {
         let mut s = screen();
-        for _ in 0..3 {
-            s.handle_key(key(KeyCode::Tab)); // → Profiles
-        }
-        s.handle_key(key(KeyCode::Enter)); // фокус на поля; PSelect
-        s.handle_key(key(KeyCode::Down)); // PName
-        s.handle_key(key(KeyCode::Down)); // ProfileSub
-        s.handle_key(key(KeyCode::Down)); // PSystem
+        goto_section(&mut s, Section::Profiles);
+        goto_field(&mut s, FieldId::PSystem);
         s.handle_key(key(KeyCode::Enter)); // открыть редактор
         let editor = s.editor.as_ref().expect("редактор открыт");
         assert!(
@@ -2658,13 +4068,8 @@ mod tests {
     #[test]
     fn ctrl_k_clears_and_restores_multiline_editor() {
         let mut s = screen();
-        for _ in 0..3 {
-            s.handle_key(key(KeyCode::Tab)); // → Profiles
-        }
-        s.handle_key(key(KeyCode::Enter)); // фокус на поля; PSelect
-        s.handle_key(key(KeyCode::Down)); // PName
-        s.handle_key(key(KeyCode::Down)); // ProfileSub
-        s.handle_key(key(KeyCode::Down)); // PSystem
+        goto_section(&mut s, Section::Profiles);
+        goto_field(&mut s, FieldId::PSystem);
         s.handle_key(key(KeyCode::Enter)); // открыть редактор (многострочный)
         s.handle_key(key(KeyCode::Char('A')));
         s.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::SHIFT));
@@ -2683,14 +4088,8 @@ mod tests {
     #[test]
     fn greeting_editor_is_multiline_and_keeps_newlines() {
         let mut s = screen();
-        for _ in 0..3 {
-            s.handle_key(key(KeyCode::Tab)); // → Profiles
-        }
-        s.handle_key(key(KeyCode::Enter)); // фокус на поля; PSelect
-        s.handle_key(key(KeyCode::Down)); // PName
-        s.handle_key(key(KeyCode::Down)); // ProfileSub
-        s.handle_key(key(KeyCode::Down)); // PSystem
-        s.handle_key(key(KeyCode::Down)); // PGreeting
+        goto_section(&mut s, Section::Profiles);
+        goto_field(&mut s, FieldId::PGreeting);
         s.handle_key(key(KeyCode::Enter)); // открыть редактор
         let editor = s.editor.as_ref().expect("редактор открыт");
         assert!(editor.multiline, "приветствие редактируется многострочно");
@@ -2843,8 +4242,7 @@ mod tests {
             (buf.area.top()..buf.area.bottom()).any(|y| buf[(x, y)].symbol() == "█")
         };
         let mut s = screen();
-        s.handle_key(key(KeyCode::Tab)); // Инференс
-        s.handle_key(key(KeyCode::Tab)); // Семплинг: полей заведомо больше высоты
+        goto_section(&mut s, Section::Sampling); // полей+заголовков заведомо больше высоты
         let mut term = Terminal::new(TestBackend::new(80, 14)).unwrap();
         term.draw(|f| s.render(f)).unwrap();
         assert!(has_thumb(&term), "переполненная секция — с бегунком");
@@ -2857,13 +4255,8 @@ mod tests {
     #[test]
     fn editing_new_sampling_field_commits() {
         let mut s = screen();
-        s.handle_key(key(KeyCode::Tab)); // Inference
-        s.handle_key(key(KeyCode::Tab)); // Sampling
-        s.handle_key(key(KeyCode::Enter)); // фокус на поля (SamplingSub)
-        // Дойти до нового поля min_p (адресуется параметрически).
-        while s.fields().get(s.field_idx).map(|f| f.id) != Some(FieldId::S(SamplingParam::MinP)) {
-            s.handle_key(key(KeyCode::Down));
-        }
+        goto_section(&mut s, Section::Sampling);
+        goto_field(&mut s, FieldId::S(SamplingParam::MinP));
         s.handle_key(key(KeyCode::Enter)); // открыть редактор min_p
         for c in "0.03".chars() {
             s.handle_key(key(KeyCode::Char(c)));
@@ -2880,8 +4273,7 @@ mod tests {
     #[test]
     fn cloud_hides_unsupported_sampling_params() {
         let mut s = screen();
-        s.handle_key(key(KeyCode::Tab)); // Inference
-        s.handle_key(key(KeyCode::Tab)); // Sampling
+        goto_section(&mut s, Section::Sampling);
         let has =
             |s: &SettingsScreen, p: SamplingParam| s.fields().iter().any(|f| f.id == FieldId::S(p));
         // Локально (managed по умолчанию) — видны все параметры.
@@ -2912,8 +4304,7 @@ mod tests {
             s.config.impersonation_engine.mode,
             ImpersonationMode::Shared
         );
-        s.handle_key(key(KeyCode::Tab)); // Inference
-        s.handle_key(key(KeyCode::Tab)); // Sampling
+        goto_section(&mut s, Section::Sampling);
         s.handle_key(key(KeyCode::Enter)); // фокус (SamplingSub)
         s.handle_key(key(KeyCode::Right)); // → подсекция Имперсонация
         assert_eq!(s.sampling_sub, Subsection::Impersonation);
@@ -2932,6 +4323,360 @@ mod tests {
             .iter()
             .any(|f| f.id == FieldId::IS(SamplingParam::TopK));
         assert!(has_topk);
+    }
+
+    #[test]
+    fn subsection_renders_as_tab_strip_not_list_row() {
+        use ratatui::Terminal;
+        use ratatui::backend::TestBackend;
+        let mut s = screen();
+        s.handle_key(key(KeyCode::Enter)); // фокус на поля (Модель)
+        let mut term = Terminal::new(TestBackend::new(90, 24)).unwrap();
+        term.draw(|f| s.render(f)).unwrap();
+        let buf = term.backend().buffer();
+        let text: String = (0..buf.area.height)
+            .map(|y| {
+                (0..buf.area.width)
+                    .map(|x| buf[(x, y)].symbol().to_string())
+                    .collect::<String>()
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+        // Все три вкладки подсекции модели видны как таб-стрип.
+        assert!(text.contains("Ассистент"));
+        assert!(text.contains("Эмбеддинги"));
+        // Псевдо-поле «Подсекция» больше не рисуется строкой списка.
+        assert!(
+            !text.contains("Подсекция"),
+            "селектор подсекции должен быть таб-стрипом, а не строкой списка"
+        );
+    }
+
+    #[test]
+    fn profile_tools_are_grouped_with_descriptions() {
+        // Каждый тумблер инструмента размечен смысловой группой (из meta) и несёт
+        // короткое инлайн-описание. Группы — из известного порядка TOOL_GROUPS.
+        let mut s = screen();
+        goto_section(&mut s, Section::Profiles);
+        let fields = s.profile_fields();
+        let tool_rows: Vec<&FieldRow> = fields
+            .iter()
+            .filter(|r| matches!(r.id, FieldId::PTool(_)))
+            .collect();
+        assert!(!tool_rows.is_empty());
+        for r in &tool_rows {
+            assert!(
+                meta::TOOL_GROUPS.contains(&r.group),
+                "инструмент вне известной группы: {}",
+                r.label
+            );
+            assert!(r.hint.is_some(), "нет инлайн-описания у {}", r.label);
+        }
+        // Инструменты одной группы идут подряд (заголовок не повторяется).
+        let groups: Vec<&str> = tool_rows.iter().map(|r| r.group).collect();
+        let mut seen = std::collections::HashSet::new();
+        let mut prev = "";
+        for g in groups {
+            if g != prev {
+                assert!(seen.insert(g), "группа {g} не непрерывна");
+                prev = g;
+            }
+        }
+    }
+
+    #[test]
+    fn globally_disabled_tool_is_marked_gated() {
+        // python выключен глобально, но включён в профиле → строка помечена гейтом
+        // (warn + подсказка «выкл. глобально»); web включён → обычное описание.
+        let mut s = screen();
+        s.config.tools.python_enabled = false;
+        s.config.tools.web_enabled = true;
+        goto_section(&mut s, Section::Profiles);
+        let fields = s.profile_fields();
+        let idx_of =
+            |name: &str| -> usize { all_tool_ids().iter().position(|t| t == name).unwrap() };
+        let find = |id: FieldId| fields.iter().find(|r| r.id == id).unwrap();
+        let py = find(FieldId::PTool(idx_of("python_exec")));
+        assert!(py.warn, "выключенный глобально python_exec — гейт");
+        assert!(py.hint.unwrap().contains("глобально"));
+        let web = find(FieldId::PTool(idx_of("web_search")));
+        assert!(!web.warn, "web включён глобально — не гейт");
+        assert_eq!(web.hint, Some("поиск в интернете"));
+    }
+
+    #[test]
+    fn group_header_shows_toggle_count() {
+        // Заголовок группы с ≥2 тумблерами несёт счётчик «вкл/всего»; одиночный — нет.
+        let palette = Palette::default();
+        let line = header_line("Веб-поиск", Some((1, 2)), 60, &palette);
+        let text: String = line.spans.iter().map(|s| s.content.as_ref()).collect();
+        assert!(text.contains("1/2"), "нет счётчика: {text:?}");
+        let plain = header_line("Сервер", None, 60, &palette);
+        let ptext: String = plain.spans.iter().map(|s| s.content.as_ref()).collect();
+        assert!(
+            !ptext.contains('/'),
+            "у группы без счётчика его быть не должно"
+        );
+    }
+
+    #[test]
+    fn choice_popup_opens_and_applies_selection() {
+        // Enter на Choice-поле открывает попап списка; ↓ + Enter применяет выбор.
+        let mut s = screen();
+        goto_field(&mut s, FieldId::XSpecType);
+        s.handle_key(key(KeyCode::Enter));
+        assert!(s.choice.is_some(), "Enter на Choice открывает попап");
+        assert_eq!(s.config.engine.managed.spec_type, SpecType::None);
+        s.handle_key(key(KeyCode::Down)); // none → draft-simple
+        let intent = s.handle_key(key(KeyCode::Enter));
+        assert!(s.choice.is_none(), "Enter применяет и закрывает попап");
+        assert_eq!(s.config.engine.managed.spec_type, SpecType::DraftSimple);
+        assert!(matches!(intent, Some(SettingsIntent::SaveConfig(_))));
+    }
+
+    #[test]
+    fn choice_popup_esc_cancels() {
+        let mut s = screen();
+        goto_field(&mut s, FieldId::XMode);
+        s.handle_key(key(KeyCode::Enter));
+        assert!(s.choice.is_some());
+        s.handle_key(key(KeyCode::Down));
+        s.handle_key(key(KeyCode::Esc));
+        assert!(s.choice.is_none());
+        assert_eq!(
+            s.config.engine.mode,
+            ServerMode::Managed,
+            "Esc не меняет значение"
+        );
+    }
+
+    #[test]
+    fn invalid_number_keeps_editor_open() {
+        // Нечисло в числовом поле оставляет редактор открытым с ошибкой; правка сбрасывает.
+        let mut s = screen();
+        goto_field(&mut s, FieldId::XNgl);
+        s.handle_key(key(KeyCode::Enter)); // редактор
+        for c in "abc".chars() {
+            s.handle_key(key(KeyCode::Char(c)));
+        }
+        let intent = s.handle_key(key(KeyCode::Enter)); // валидация: не закрывать
+        assert_eq!(intent, None);
+        assert!(s.editor.is_some(), "невалидный ввод не закрывает редактор");
+        assert!(s.editor.as_ref().unwrap().error.is_some());
+        // Правка сбрасывает ошибку и валидное значение коммитится.
+        s.handle_key(ctrl('k')); // очистить
+        for c in "42".chars() {
+            s.handle_key(key(KeyCode::Char(c)));
+        }
+        let intent = s.handle_key(key(KeyCode::Enter));
+        assert!(s.editor.is_none());
+        match intent {
+            Some(SettingsIntent::SaveConfig(c)) => assert_eq!(c.engine.managed.gpu_layers, 42),
+            other => panic!("ожидался SaveConfig, получено {other:?}"),
+        }
+    }
+
+    #[test]
+    fn field_validation_error_classifies_numbers() {
+        assert!(field_validation_error(FieldId::XNgl, "abc").is_some());
+        assert!(field_validation_error(FieldId::XNgl, "12").is_none());
+        assert!(field_validation_error(FieldId::XNgl, "").is_none()); // пусто допустимо
+        assert!(field_validation_error(FieldId::S(SamplingParam::Temp), "x").is_some());
+        assert!(field_validation_error(FieldId::S(SamplingParam::Temp), "0.7").is_none());
+        // Текстовые/списочные поля не валидируются как числа.
+        assert!(field_validation_error(FieldId::XBinary, "любой текст").is_none());
+        assert!(
+            field_validation_error(FieldId::S(SamplingParam::Samplers), "top_k;top_p").is_none()
+        );
+    }
+
+    #[test]
+    fn del_resets_field_to_default() {
+        let mut s = screen();
+        s.config.engine.managed.gpu_layers = 40; // не дефолт
+        let default_ngl = AppConfig::default().engine.managed.gpu_layers;
+        goto_field(&mut s, FieldId::XNgl);
+        let intent = s.handle_key(key(KeyCode::Delete));
+        match intent {
+            Some(SettingsIntent::SaveConfig(c)) => {
+                assert_eq!(c.engine.managed.gpu_layers, default_ngl)
+            }
+            other => panic!("ожидался SaveConfig, получено {other:?}"),
+        }
+    }
+
+    #[test]
+    fn del_on_default_field_is_noop() {
+        // Поле уже в дефолте → Del ничего не делает; профильные поля Del не трогает.
+        let mut s = screen();
+        goto_field(&mut s, FieldId::XNgl);
+        assert_eq!(s.handle_key(key(KeyCode::Delete)), None);
+    }
+
+    #[test]
+    fn modified_field_shows_marker() {
+        use ratatui::Terminal;
+        use ratatui::backend::TestBackend;
+        let render_text = |s: &mut SettingsScreen| -> String {
+            let mut term = Terminal::new(TestBackend::new(92, 24)).unwrap();
+            term.draw(|f| s.render(f)).unwrap();
+            let buf = term.backend().buffer();
+            (0..buf.area.height)
+                .flat_map(|y| (0..buf.area.width).map(move |x| (x, y)))
+                .map(|(x, y)| buf[(x, y)].symbol().to_string())
+                .collect()
+        };
+        // Дефолтный конфиг — маркеров нет.
+        let mut s = screen();
+        s.handle_key(key(KeyCode::Enter));
+        assert!(!render_text(&mut s).contains('•'), "в дефолте маркеров нет");
+        // Изменённое поле — маркер появляется.
+        s.config.engine.managed.gpu_layers = 40;
+        assert!(
+            render_text(&mut s).contains('•'),
+            "изменённое поле помечено •"
+        );
+    }
+
+    #[test]
+    fn search_filters_and_jumps_to_field() {
+        let mut s = screen();
+        // `/` открывает поиск; ввод фильтрует по уникальному слову.
+        s.handle_key(key(KeyCode::Char('/')));
+        assert!(s.search.is_some(), "`/` открывает оверлей поиска");
+        for c in "приветствие".chars() {
+            s.handle_key(key(KeyCode::Char(c)));
+        }
+        {
+            let st = s.search.as_ref().unwrap();
+            assert!(!st.results.is_empty());
+            assert!(
+                st.results
+                    .iter()
+                    .all(|&i| st.all[i].haystack.contains("приветствие")),
+                "все результаты содержат запрос"
+            );
+        }
+        // Enter — прыжок к полю (секция/фокус/индекс), оверлей закрыт.
+        s.handle_key(key(KeyCode::Enter));
+        assert!(s.search.is_none());
+        assert_eq!(s.section(), Section::Profiles);
+        assert!(s.focus == Focus::Fields);
+        assert_eq!(
+            s.fields().get(s.field_idx).map(|f| f.id),
+            Some(FieldId::PGreeting)
+        );
+    }
+
+    #[test]
+    fn search_jump_switches_subsection() {
+        // Прыжок в поле неактивной подсекции переключает её (Модель → Эмбеддинги).
+        let mut s = screen();
+        assert_eq!(s.model_sub, ModelTab::Assistant);
+        s.handle_key(key(KeyCode::Char('/')));
+        for c in "эмбеддинги порт".chars() {
+            s.handle_key(key(KeyCode::Char(c)));
+        }
+        assert!(!s.search.as_ref().unwrap().results.is_empty());
+        s.handle_key(key(KeyCode::Enter));
+        assert_eq!(s.section(), Section::Model);
+        assert_eq!(s.model_sub, ModelTab::Embeddings);
+        assert_eq!(
+            s.fields().get(s.field_idx).map(|f| f.id),
+            Some(FieldId::EPort)
+        );
+    }
+
+    #[test]
+    fn search_esc_cancels_without_jump() {
+        let mut s = screen();
+        let before = (s.section_idx, s.field_idx);
+        s.handle_key(key(KeyCode::Char('/')));
+        for c in "порт".chars() {
+            s.handle_key(key(KeyCode::Char(c)));
+        }
+        s.handle_key(key(KeyCode::Esc));
+        assert!(s.search.is_none());
+        assert_eq!(
+            (s.section_idx, s.field_idx),
+            before,
+            "Esc не двигает навигацию"
+        );
+    }
+
+    #[test]
+    fn search_index_covers_all_subsections() {
+        // Индекс поиска содержит поля всех подсекций (напр. и managed-сервер, и
+        // облачная модель ассистента доступны через поиск при текущем режиме).
+        let s = screen();
+        let idx = s.build_search_index();
+        assert!(
+            idx.len() > 100,
+            "индекс охватывает все секции: {}",
+            idx.len()
+        );
+        // Поле имперсонации-модели индексируется, хотя активна подсекция ассистента.
+        assert!(
+            idx.iter().any(|h| h.crumb.contains("Имперсонация")),
+            "в индексе есть поля подсекции имперсонации"
+        );
+    }
+
+    #[test]
+    fn memory_section_gathers_rag_notes_self_model() {
+        // Секция «Память» собрала поля, ранее размазанные по «Инструментам».
+        let mut s = screen();
+        goto_section(&mut s, Section::Memory);
+        let ids: Vec<FieldId> = s.fields().iter().map(|f| f.id).collect();
+        for id in [
+            FieldId::RagTarget,
+            FieldId::NotesAutoConsolidate,
+            FieldId::SmMaxNarrative,
+            FieldId::SmProtocol,
+        ] {
+            assert!(ids.contains(&id), "в «Памяти» нет {id:?}");
+        }
+        // А в «Инструментах» их больше нет — там только гейты/параметры.
+        goto_section(&mut s, Section::Tools);
+        let tool_ids: Vec<FieldId> = s.fields().iter().map(|f| f.id).collect();
+        assert!(!tool_ids.contains(&FieldId::RagTarget));
+        assert!(!tool_ids.contains(&FieldId::SmMaxNarrative));
+        // max_tool_rounds переехал из бывшего «Инференса» в «Инструменты».
+        assert!(tool_ids.contains(&FieldId::MaxToolRounds));
+    }
+
+    #[test]
+    fn fields_carry_group_headers() {
+        // Поля секции размечены смысловыми группами (заголовки групп в UI).
+        let s = screen();
+        let groups: Vec<&str> = s.model_fields().iter().map(|f| f.group).collect();
+        // Подсекция/режим — вне группы; параметры сервера — в группе «Сервер».
+        assert!(groups.iter().any(|g| g.is_empty()));
+        assert!(groups.contains(&"Сервер"));
+        // Семплинг: параметры сгруппированы по смыслу.
+        let sg: Vec<&str> = s.sampling_fields().iter().map(|f| f.group).collect();
+        assert!(sg.contains(&"Основные"));
+        assert!(sg.contains(&"Рассуждения"));
+    }
+
+    #[test]
+    fn long_value_is_truncated_with_ellipsis() {
+        // Очень длинное значение усекается с «…» под ширину колонки.
+        let palette = Palette::default();
+        let f = FieldRow {
+            id: FieldId::XModel,
+            label: "GGUF-модель (-m)".into(),
+            kind: FieldKind::Text("D:\\LLM\\GGUF\\very-long-model-name-".repeat(4)),
+            group: "Модель",
+            hint: None,
+            warn: false,
+        };
+        let line = render_field_line(&f, 20, 24, false, &palette);
+        let rendered: String = line.spans.iter().map(|sp| sp.content.as_ref()).collect();
+        assert!(
+            rendered.contains('…'),
+            "длинное значение усечено: {rendered:?}"
+        );
     }
 
     #[test]

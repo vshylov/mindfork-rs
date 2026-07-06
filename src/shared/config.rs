@@ -81,6 +81,9 @@ pub enum FlashAttn {
 }
 
 impl FlashAttn {
+    /// Все варианты в порядке перебора UI (для Choice-попапа и цикла).
+    pub const ALL: [FlashAttn; 3] = [FlashAttn::Auto, FlashAttn::On, FlashAttn::Off];
+
     /// Значение для `--flash-attn`; `None` (Auto) — флаг не передавать.
     pub fn as_arg(self) -> Option<&'static str> {
         match self {
@@ -101,11 +104,9 @@ impl FlashAttn {
 
     /// Циклический перебор с учётом направления (`dir` = +1/-1).
     pub fn cycle(self, dir: i32) -> Self {
-        use FlashAttn::*;
-        let order = [Auto, On, Off];
-        let idx = order.iter().position(|x| *x == self).unwrap_or(0) as i32;
-        let n = order.len() as i32;
-        order[(((idx + dir) % n + n) % n) as usize]
+        let idx = Self::ALL.iter().position(|x| *x == self).unwrap_or(0) as i32;
+        let n = Self::ALL.len() as i32;
+        Self::ALL[(((idx + dir) % n + n) % n) as usize]
     }
 }
 
@@ -129,8 +130,8 @@ pub enum SpecType {
 }
 
 impl SpecType {
-    /// Все варианты в порядке перебора UI.
-    const ORDER: [SpecType; 9] = [
+    /// Все варианты в порядке перебора UI (для Choice-попапа и цикла).
+    pub const ALL: [SpecType; 9] = [
         SpecType::None,
         SpecType::DraftSimple,
         SpecType::DraftEagle3,
@@ -172,9 +173,9 @@ impl SpecType {
 
     /// Циклический перебор с учётом направления (`dir` = +1/-1).
     pub fn cycle(self, dir: i32) -> Self {
-        let idx = Self::ORDER.iter().position(|x| *x == self).unwrap_or(0) as i32;
-        let n = Self::ORDER.len() as i32;
-        Self::ORDER[(((idx + dir) % n + n) % n) as usize]
+        let idx = Self::ALL.iter().position(|x| *x == self).unwrap_or(0) as i32;
+        let n = Self::ALL.len() as i32;
+        Self::ALL[(((idx + dir) % n + n) % n) as usize]
     }
 }
 

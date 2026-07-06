@@ -157,7 +157,8 @@ src/
 ├─ screens/                 целостные экраны (FSD "pages"); НЕ зависят от app
 │  ├─ chat.rs               ChatScreen: всё состояние UI чата, handle_key→ChatIntent
 │  ├─ chat_list.rs          ChatListScreen: полноэкранный список чатов (Esc), → ChatListIntent
-│  └─ settings.rs           SettingsScreen: секции/поля, подсекции Ассистент/Имперсонация
+│  └─ settings.rs           SettingsScreen: секции (Модель/Семплинг/Инструменты/Память/
+│                           Профили/Интерфейс) с группами полей, подсекции Ассистент/Имперсонация
 │
 ├─ widgets/                 составные UI-блоки (FSD "widgets")
 │  ├─ message_feed.rs       лента: markdown, мысли, инлайн tool-блоки, скролл, перенос
@@ -171,6 +172,7 @@ src/
 ├─ features/                пользовательские сценарии (FSD "features")
 │  ├─ tools/                реестр и реализации инструментов (client-side)
 │  │  ├─ mod.rs             Tool, ToolContext, ToolOutcome/ChatEffect, ToolRegistry, ToolConfig
+│  │  ├─ meta.rs            метаданные каталога для UI: группа/описание/гейт инструмента
 │  │  ├─ rag.rs             rag_add/rag_search: чанкинг, эмбеддинг, kNN, склейка
 │  │  ├─ notes.rs           note_save/note_recall
 │  │  ├─ introspection.rs   get/set_sampling, get/set_system_message, get_last_user_message_time
