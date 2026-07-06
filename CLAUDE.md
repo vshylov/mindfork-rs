@@ -3295,6 +3295,34 @@ web-поиск и Python под выключателями, экран наст�
   `value_column_is_shared_across_groups` (рендер: значения трёх групп «Инструментов»
   в одной колонке). **797 тестов зелёные** (+3), clippy/fmt чисты. Доки: spec §11.6.
 
+### Рефакторинг god-object'ов — этап 6: `shared/markdown.rs` → `shared/markdown/` (сделано)
+- **Этап 6** плана разбора god-object'ов (docs/refactoring-god-objects.md — на ветке
+  этапа 1; этот этап — ветка `refactor/markdown-module-split` от `main`).
+  `shared/markdown.rs` (1995 строк, три подсистемы: walker `Writer`, таблицы, LaTeX-
+  конвертер + подсветка кода) разбит на каталог `shared/markdown/` — чисто механический
+  перенос (item-level слайсы с виденьем, поведение не менялось).
+- **Раскладка**: `mod.rs` (146: `render`/`render_with` — **вся внешняя поверхность** +
+  стили из палитры `heading_style`/`code_style`/… + проводка), `latex.rs` (578: LaTeX→
+  unicode — нормализация разделителей + конвертер команд, **самодостаточен**),
+  `writer.rs` (418: `Writer` — walker событий pulldown-cmark → строки + `heading_number`),
+  `table.rs` (312: `TableBuilder` + `render_table` + раскладка колонок), `code.rs` (176:
+  подсветка syntect — синтаксис + тема из палитры), `tests.rs` (397).
+- **Ключевое — `Writer` это хаб** (вызывает стили из `mod.rs`, подсветку из `code`,
+  таблицы из `table`, LaTeX из `latex`; `mod.rs::render_with` строит `Writer`). Проводка:
+  подсистемные элементы, используемые межфайлово, помечены `pub(super)` (включая поля
+  `TableBuilder` — их строит/мутирует `Writer` и читает `render_table` — и поля
+  `Writer.lines`/`soft_break_as_newline`, к которым обращается `render_with`); `mod.rs`
+  сводит их приватным глобом `use self::{code::*, latex::*, table::*, writer::*};`, а
+  подмодули берут всё через `use super::*;` (стили из `mod.rs` — как приватные предка).
+- **Два урока clippy** (не ловятся `cargo build`, только `-D warnings`): (1) реэкспорт
+  внутренней проводки должен быть **приватным** `use …::*` (не `pub(crate) use`) — иначе
+  «glob import doesn't reexport anything with visibility pub(crate)», т.к. элементы
+  `pub(super)`, а не `pub`; (2) `latex.rs` самодостаточен — его `use super::*` оказался
+  неиспользованным и удалён.
+- Внешняя поверхность (`markdown::render`/`render_with`, только `message_feed`) не
+  тронута. **805 тестов зелёные** (0 упавших, 26 `#[ignore]`; число не изменилось —
+  чистый перенос), clippy `-D warnings`/fmt чисты. Доки: architecture.md §3.
+
 ### Отложено за пределы M3
 - **Сворачивание/выделение per-message** и tool-блоки в ленте — сейчас «мысли»
   сворачиваются глобально (`Ctrl+T`); выделение сообщений и tool-блоки — на M5.
