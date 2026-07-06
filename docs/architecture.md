@@ -252,7 +252,14 @@ src/
    │  │  └─ rag.rs         RAG: документы/поиск/источники/размерность + удаление по пути
    │  └─ mod.rs             фасад Storage (потокобезопасный)
    ├─ config.rs            AppConfig и секции (Engine/Embed/Tool/Interface/Impersonation…)
-   ├─ markdown.rs          свой рендерер на pulldown-cmark (ADR 0003): таблицы + LaTeX + тема
+   ├─ markdown/            свой рендерер на pulldown-cmark (ADR 0003): таблицы + LaTeX +
+   │  │                    тема. God-object разбит по подсистемам (docs/refactoring-god-
+   │  │                    objects.md, этап 6; внутренняя проводка через реэкспорт):
+   │  ├─ mod.rs            render/render_with (внешняя поверхность) + стили из палитры
+   │  ├─ writer.rs         Writer: walker событий pulldown-cmark → строки
+   │  ├─ code.rs           подсветка блоков кода (syntect: синтаксис + тема из палитры)
+   │  ├─ table.rs          TableBuilder + render_table (раскладка/отрисовка таблиц)
+   │  └─ latex.rs          LaTeX→unicode: нормализация разделителей + конвертер команд
    ├─ wrap.rs              перенос слов по колонкам (unicode-width)
    ├─ theme.rs             Palette (роли user/assistant/tool/…), auto/dark/light
    ├─ keys.rs              раскладко-независимые Ctrl-шорткаты (ЙЦУКЕН→латиница)

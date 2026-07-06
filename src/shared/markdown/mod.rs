@@ -1,0 +1,146 @@
+//! Рендер markdown в `ratatui::Text` + lёгкая unicode-аппроксимация LaTeX.
+//! См. spec §11.4 и docs/decisions/0003-own-markdown-renderer.md.
+//!
+//! Markdown парсим напрямую через `pulldown-cmark` собственным «писателем»
+//! (`Writer`): markdown → `Text`. Это даёт темизацию через [`Palette`] (а не
+//! захардкоженные цвета), а позже — нативные таблицы и math-события. Подсветка
+//! блоков кода — `syntect` + `ansi-to-tui`. Полный LaTeX и рендер в изображение
+//! сознательно НЕ реализуются.
+
+use std::collections::HashMap;
+use std::str::FromStr;
+use std::sync::{LazyLock, Mutex};
+
+use ansi_to_tui::IntoText;
+use pulldown_cmark::{
+    Alignment, CodeBlockKind, CowStr, Event, HeadingLevel, Options, Parser, Tag, TagEnd,
+};
+use ratatui::style::{Color, Modifier, Style, Stylize};
+use ratatui::text::{Line, Span, Text};
+
+use syntect::easy::HighlightLines;
+use syntect::highlighting::{
+    Color as SynColor, ScopeSelectors, StyleModifier, Theme, ThemeItem, ThemeSettings,
+};
+use syntect::parsing::{SyntaxReference, SyntaxSet};
+use syntect::util::{LinesWithEndings, as_24_bit_terminal_escaped};
+
+use crate::shared::theme::Palette;
+use crate::shared::wrap;
+
+/// Рендерит markdown-строку в владеющий [`Text`] (готовый к показу/кэшированию).
+///
+/// `width` — ширина панели в колонках (используется для раскладки таблиц).
+/// `palette` задаёт цвета (заголовки/ссылки/код/цитаты) под текущую тему.
+///
+/// LaTeX обрабатывается **только внутри математических разделителей**
+/// (`$…$`/`$$…$$`; формы `\(…\)`/`\[…\]` приводятся к ним в [`normalize_delimiters`]).
+/// Содержимое math-событий парсера проходит через [`latex_to_unicode`] (стрелки,
+/// дроби, индексы, символы), а сами разделители снимает парсер. «Голые» команды
+/// вне разделителей (`\alpha` без `$`) НЕ трогаются. Возвращается `'static`-`Text`.
+pub fn render(input: &str, width: usize, palette: &Palette) -> Text<'static> {
+    render_with(input, width, palette, false)
+}
+
+/// Как [`render`], но с управляемой трактовкой «мягких» переносов (одиночных
+/// переводов строки в исходнике).
+///
+/// `soft_break_as_newline = false` — стандартное поведение CommonMark: одиночный
+/// перевод строки схлопывается в пробел (мягкий перенос). Подходит для вывода
+/// ассистента (markdown как есть).
+///
+/// `soft_break_as_newline = true` — одиночный перевод строки сохраняется как
+/// реальный перенос (GFM-стиль, как комментарии на GitHub). Нужно для **сообщений
+/// пользователя**: текст, набранный с `Shift+Enter`, должен показываться построчно,
+/// а не сливаться в один абзац. В ячейках таблиц перенос по-прежнему остаётся
+/// пробелом (раскладку строк делает сама таблица).
+pub fn render_with(
+    input: &str,
+    width: usize,
+    palette: &Palette,
+    soft_break_as_newline: bool,
+) -> Text<'static> {
+    let normalized = normalize_delimiters(input);
+    let mut parse_opts = Options::empty();
+    parse_opts.insert(Options::ENABLE_STRIKETHROUGH);
+    parse_opts.insert(Options::ENABLE_TASKLISTS);
+    parse_opts.insert(Options::ENABLE_MATH);
+    parse_opts.insert(Options::ENABLE_TABLES);
+    let parser = Parser::new_ext(&normalized, parse_opts);
+    let mut writer = Writer::new(*palette, width);
+    writer.soft_break_as_newline = soft_break_as_newline;
+    writer.run(parser);
+    Text::from(writer.lines)
+}
+
+// ---------- стили из палитры ----------
+
+/// Стиль заголовка уровня `level` (1 — крупнейший).
+fn heading_style(level: u8, palette: &Palette) -> Style {
+    let base = Style::new().fg(palette.accent).add_modifier(Modifier::BOLD);
+    match level {
+        1 => base.add_modifier(Modifier::UNDERLINED),
+        2 => base,
+        _ => base.add_modifier(Modifier::ITALIC),
+    }
+}
+
+/// Стиль нераскрашенного блока кода — реверс (тема-независим).
+fn code_style() -> Style {
+    Style::new().add_modifier(Modifier::REVERSED)
+}
+
+/// Стиль инлайн-кода (`такой текст`) — тихий «чип» как в дизайн-макете: мягкий
+/// приглушённый текст на фоне «клавиши», а не резкий реверс (REVERSED был слишком
+/// заметным). Согласован с темой через [`Palette`].
+fn inline_code_style(palette: &Palette) -> Style {
+    Style::new().fg(palette.keycap_fg).bg(palette.keycap_bg)
+}
+
+/// Стиль ссылки.
+fn link_style(palette: &Palette) -> Style {
+    Style::new()
+        .fg(palette.accent)
+        .add_modifier(Modifier::UNDERLINED)
+}
+
+/// Стиль цитаты (тема-независим).
+fn blockquote_style() -> Style {
+    Style::new().add_modifier(Modifier::DIM | Modifier::ITALIC)
+}
+
+/// Кэш syntect-тем подсветки кода, **построенных из [`Palette`]** (см.
+/// [`build_code_theme`]). Раньше тема была захардкожена (`base16-ocean.dark`) и не
+/// согласовывалась с dark/light/auto — ADR 0003 отмечал это как задел.
+///
+/// Ключ — палитра (различных всего три: auto/dark/light), поэтому утечка
+/// `Box::leak` ограничена и оправдана: `HighlightLines<'static>` требует темы со
+/// `'static`-временем жизни, а число тем конечно и живёт весь процесс. Альтернатива
+/// (тема на стеке `render` + lifetime у `Writer`) усложнила бы тип ради экономии,
+/// которой нет.
+static CODE_THEMES: LazyLock<Mutex<HashMap<Palette, &'static Theme>>> =
+    LazyLock::new(|| Mutex::new(HashMap::new()));
+
+/// Возвращает (строя при первом обращении и кэшируя) syntect-тему подсветки кода
+/// для данной палитры.
+fn code_theme(palette: &Palette) -> &'static Theme {
+    let mut cache = CODE_THEMES.lock().expect("CODE_THEMES poisoned");
+    cache
+        .entry(*palette)
+        .or_insert_with(|| Box::leak(Box::new(build_code_theme(palette))))
+}
+
+// ---------- подмодули (разбор god-object: docs/refactoring-god-objects.md, этап 6) ----------
+
+mod code;
+mod latex;
+mod table;
+mod writer;
+
+// Внутренняя проводка: Writer (writer) + подсветка (code) + таблицы (table) +
+// LaTeX (latex) видны друг другу и mod.rs через реэкспорт (внешняя поверхность —
+// только render/render_with, определены здесь).
+use self::{code::*, latex::*, table::*, writer::*};
+
+#[cfg(test)]
+mod tests;
