@@ -3295,6 +3295,208 @@ web-поиск и Python под выключателями, экран наст�
   `value_column_is_shared_across_groups` (рендер: значения трёх групп «Инструментов»
   в одной колонке). **797 тестов зелёные** (+3), clippy/fmt чисты. Доки: spec §11.6.
 
+### Рефакторинг god-object'ов — этап 1: `screens/settings.rs` → `screens/settings/` (сделано)
+- **План направления** — [docs/refactoring-god-objects.md](docs/refactoring-god-objects.md)
+  (7 этапов + опц.): разбор нескольких файлов-монолитов, выросших в god-object'ы
+  (settings/chat/orchestrator-tests/notes/db/markdown/runtime). Метод — тот же
+  плейбук, что и разбор оркестратора (Фазы 1–3): **чисто механический перенос**
+  файла в каталог-модуль без изменения типов/полей/каналов/поведения.
+- **Этап 1**: `screens/settings.rs` (4966 строк, один `impl SettingsScreen`
+  ~2040 строк + ~1100 строк свободных функций) разбит на **8 файлов** каталога
+  `screens/settings/` (byte-exact слайсы по диапазонам строк — нулевой риск
+  транскрипции): `mod.rs` (650: `SettingsIntent`, enum'ы секций/подсекций
+  `Section`/`Subsection`/`ModelTab`, типы формы `FieldId`/`FieldKind`/`FieldRow`/
+  `Editor`/`Focus`/`SearchHit`/`SearchState`/`ChoiceState`, `SamplingParam` +
+  `SAMPLING_PARAMS`, `struct SettingsScreen`, декларации подмодулей), `catalog.rs`
+  (565: конструктор + построители полей всех секций/подсекций + гейты
+  `gate_disabled`/`sampling_cloud_provider`), `apply.rs` (675: `handle_key` +
+  диспетчеры + редактор поля + тумблеры/циклы + `apply_text`/`save_*`),
+  `choice.rs` (150: попап Choice + `reset_field`/`default_fields`), `search.rs`
+  (155: оверлей поиска `/`), `render.rs` (530: вся отрисовка), `helpers.rs` (1130:
+  свободные функции — `row`/`grouped`/`sampling_row`/`managed_rows`/`cloud_rows`,
+  `field_description`/`gate_hint`, `render_field_line`/`header_line`/`tab_strip_line`,
+  циклы `cycle_*`/label-функции, парсеры `parse_*`/`decode/encode_escapes`),
+  `tests.rs` (1175). Прежний `impl SettingsScreen` разложен на 4 impl-блока
+  (≤ ~660 строк каждый).
+- **Правила видимости (плейбук для UI-экранов):** (1) подмодули берут элементы
+  `mod.rs` через `use super::*;` — glob подтягивает и приватные `use`-импорты
+  родителя (ratatui/uuid/crate::…), поэтому внешние импорты в подмодулях не
+  дублируются, а в `mod.rs` не «висят» (все использованы транзитивно → ноль
+  warning'ов). (2) Свободные функции `helpers.rs` помечены `pub(super)` (иначе не
+  видны сиблингам); потребители — `use super::helpers::*;`. (3) Приватные методы
+  `impl SettingsScreen`, вызываемые из другого файла, помечены `pub(super)`
+  (метод-приватность в Rust — по модулю определения).
+- **Отклонения от проекта**: `descriptions.rs`/`editor.rs` не выделялись
+  (`field_description`/`gate_hint` → `helpers.rs`; редактор поля → `apply.rs`,
+  тесно связан с обработкой клавиш). `helpers.rs` оставлен единым модулем свободных
+  функций — дальнейшее дробление отложено (независимые чистые функции, не
+  запутанный impl-блок). Публичный путь модуля не изменился
+  (`crate::screens::settings::{SettingsScreen, SettingsIntent}`), внешние `use` не
+  тронуты (`app/runtime.rs`). **805 тестов зелёные** (0 упавших, 26 `#[ignore]`;
+  число не изменилось — чистый перенос), clippy `-D warnings`/fmt чисты. Доки:
+  architecture.md §3.
+### Рефакторинг god-object'ов — этап 2: `screens/chat.rs` → `screens/chat/` (сделано)
+- **Этап 2** плана разбора god-object'ов (docs/refactoring-god-objects.md — на ветке
+  этапа 1; этот этап — ветка `refactor/chat-module-split` от `main`). `screens/chat.rs`
+  (2616 строк, один `impl ChatScreen` ~54 метода на ~1100 строк + рендер-хелперы)
+  разбит на каталог `screens/chat/` — чисто механический перенос (item-level слайсы:
+  методы режутся по 4-пробельному `}`, свободные функции по col-0 закрытию;
+  типы/поля/контракт `ChatIntent`/поведение не менялись).
+- **Раскладка**: `mod.rs` (409: `ChatIntent`, типы попапов `ConfirmAction`/
+  `SuggestPopup`/`ImpersonationState`/`RagBanner`, `struct ChatScreen`, аксессоры-
+  снимки — сеттеры/геттеры настроек/списков/статусов/палитры), `input.rs` (367:
+  `handle_key`/`handle_paste`/`handle_mouse` + черновик/орфография/команды +
+  `trigger_destructive`/`handle_profile_overlay_key`), `popups.rs` (281: попапы
+  орфографии/подтверждения/эмодзи/справки + `render_help`/`render_suggest`/
+  `render_confirm`/`HELP_KEYS`), `feed.rs` (241: проекция `AppEvent` в ленту +
+  `feed_msg_has_vs16`), `render.rs` (190: `render`/`model_meta` + `centered_rect`/
+  `visual_line_count`), `rag.rs` (94: баннер + `format_rag_sources`),
+  `impersonation.rs` (51), `tests.rs` (1034). Прежний `impl ChatScreen` разложен на
+  7 impl-блоков (≤ ~360 строк каждый).
+- **Правила видимости** (тот же плейбук, что этап 1): подмодули берут `mod.rs` через
+  `use super::*;`; приватные методы, вызываемые межфайлово, и свободные функции
+  помечены `pub(super)`. Межмодульные свободные функции — точечные `use`:
+  `input.rs` → `super::feed::feed_msg_has_vs16`, `popups.rs` →
+  `super::render::centered_rect`, `render.rs` → `super::popups::{render_help,
+  render_suggest, render_confirm}`, `tests.rs` → `super::popups::HELP_KEYS`.
+- Публичный путь модуля не изменился (`crate::screens::chat::{ChatScreen,
+  ChatIntent}`), внешние `use` (`app/runtime.rs`) не тронуты. **805 тестов зелёные**
+  (0 упавших, 26 `#[ignore]`; число не изменилось — чистый перенос), clippy
+  `-D warnings`/fmt чисты. Доки: architecture.md §3.
+### Рефакторинг god-object'ов — этап 3: `orchestrator/tests.rs` → `orchestrator/tests/` (сделано)
+- **Этап 3** плана разбора god-object'ов (docs/refactoring-god-objects.md — живёт на
+  ветке этапа 1 `refactor/settings-module-split`; этот этап — ветка
+  `refactor/orchestrator-tests-split` от `main`, доки-план синхронизируется при
+  merge). Тест-монолит `app/orchestrator/tests.rs` (3506 строк, 74 теста всех фич в
+  одном файле) разбит на каталог `app/orchestrator/tests/` — чисто механический
+  перенос (item-level слайсы, поведение/имена тестов не менялись).
+- **Раскладка**: `mod.rs` (315: **все фикстуры** — `spawn_orch`/`spawn_orch_cfg`/
+  `wait_for`/`bare_orch*`/`enable_all_tools`/`orch_*`/live-хелперы + декларации
+  подмодулей) и по файлу на фичу зеркально сорс-модулям: `generation.rs` (755),
+  `live.rs` (959, все `#[ignore]` e2e-смоуки), `chats.rs` (323), `self_model.rs`
+  (317), `rag.rs` (267), `impersonation.rs` (169), `settings.rs` (158), `profiles.rs`
+  (113), `title.rs` (107), `reflection.rs` (64), `request.rs` (17). Крупнейший файл
+  упал с 3506 до 959.
+- **Ключевые правила** (плейбук для тест-модулей): (1) **все** не-`#[test]` хелперы
+  → `mod.rs`, чтобы любой подмодуль видел их через `use super::*;` (устраняет
+  межфайловую видимость фикстур). (2) Коллизия имён: тест-подмодуль `tests::generation`
+  затеняет сорс-модуль `orchestrator::generation` — в `self_model.rs` ссылки на
+  инъекцию модели себя (`inject_self_model`/`blend_self_notes`/`injection_recent`/
+  `GenResult`) переписаны с `super::generation::` на `super::super::generation::`
+  (вверх до `orchestrator`). Прочие подмодули такого пересечения не имеют.
+- Путь модуля `tests` не изменился (`mod tests;` в `orchestrator/mod.rs`). **805
+  тестов зелёные** (0 упавших, 26 `#[ignore]`; число не изменилось — чистый перенос),
+  clippy `-D warnings`/fmt чисты. Доки: architecture.md §3.
+
+### Рефакторинг god-object'ов — этап 4: `features/tools/notes.rs` → `features/tools/notes/` (сделано)
+- **Этап 4** плана разбора god-object'ов (docs/refactoring-god-objects.md — на ветке
+  этапа 1; этот этап — ветка `refactor/notes-module-split` от `main`).
+  `features/tools/notes.rs` (2242 строки: 9 инструментов + подсистема self-заметок +
+  обзоры консолидации) разбит на каталог `features/tools/notes/` — чисто механический
+  перенос (item-level слайсы, поведение не менялось).
+- **Раскладка**: `mod.rs` (123: ID-константы `NOTE_*_ID`, пороги, `SELF_NOTE_TAG`,
+  общие хелперы `is_self_note`/`parse_id`/`parse_tags`/`clip`/`cosine`, реэкспорты),
+  `recall.rs` (234: `NoteRecall` + `list_user_notes`/`semantic_recall`/`related_block`/
+  `cited_sources_block`/`format_notes`), `edit.rs` (222: `NoteRevise`/`NoteSupersede`/
+  `NoteMerge`), `overview.rs` (206: `ConsolidateNotes` + `build_consolidation_overview`/
+  `build_self_consolidation_overview`), `save.rs` (161: `NoteSave` + `create_note`/
+  `ensure_note_vectors`/`self_note_similar`), `self_notes.rs` (149: `self_notes_recent`/
+  `self_notes_relevant`/`self_related_block`/`migrate_self_narrative`), `graph.rs` (115:
+  `NoteLink`/`NoteNeighbors`), `cite.rs` (66: `NoteCiteSource`), `tests.rs` (1005).
+- **Ключевое — сохранение внешней поверхности** (широкая: оркестратор/`self_model`/
+  `rag`/`tools::mod`/`meta` зовут ~30 `notes::X`): mod.rs реэкспортирует всё
+  `pub(crate) use self::{cite::*, edit::*, …}::*;`, поэтому внешние
+  `use crate::features::tools::notes::{NoteSave, create_note, self_notes_recent, …}` не
+  тронуты. Приватные кросс-подмодульные хелперы (`related_block`/`list_user_notes`/
+  `semantic_recall`/`format_notes`/`ensure_note_vectors`) расширены до `pub(crate)`;
+  подмодули берут всё через `use super::*;` (glob через реэкспорт родителя). Консты и
+  мелкие общие хелперы оставлены в `mod.rs` (видны подмодулям как приватные предка).
+- **Нюанс парсинга** (учтён): строчный `///`-докомментарий, заканчивающийся `;`
+  (проза «…по хранению/поиску;»), ложно принимался за границу элемента и рвал
+  докомментарий — в парсер добавлена защита «границей `;` не считается строка,
+  начинающаяся с `//`».
+- Публичный путь модуля не изменился. **805 тестов зелёные** (0 упавших, 26
+  `#[ignore]`; число не изменилось — чистый перенос), clippy `-D warnings`/fmt чисты.
+  Доки: architecture.md §3.
+### Рефакторинг god-object'ов — этап 5: `shared/storage/db.rs` → `shared/storage/db/` (сделано)
+- **Этап 5** плана разбора god-object'ов (docs/refactoring-god-objects.md — на ветке
+  этапа 1; этот этап — ветка `refactor/db-module-split` от `main`).
+  `shared/storage/db.rs` (1665 строк, один `impl Db` на ~41 метод, 4 домена данных)
+  разбит на каталог `shared/storage/db/` по доменам — чисто механический перенос
+  (item-level слайсы, поведение/схема БД не менялись).
+- **Раскладка**: `mod.rs` (222: `struct Db`, `open`/`open_in_memory`/`from_conn`,
+  `register_sqlite_vec`, **`migrate()` — вся схема одним куском**, `ensure_vec_table`/
+  `vec_dim`, общие хелперы `row_to_note`/`parse_uuid`/`parse_dt`/`cosine`, декларации),
+  `rag.rs` (321: документы/поиск/источники/размерность + удаление по пути +
+  `delete_matching`/`delete_sources_matching`/`norm_path`), `notes.rs` (242: вставка/
+  список/правка/удаление + эмбеддинги/семантика), `graph.rs` (218: граф связей +
+  замещение + цитирование источников), `self_model.rs` (102: get/upsert/атомарный
+  update), `tests.rs` (591). Прежний `impl Db` разложен на 5 impl-блоков (≤ ~320 строк).
+- **Ключевое**: методы `Db` — inherent-методы (`pub`, вызываются как `db.method()`
+  через фасад `Storage`), поэтому разложение `impl Db` по файлам **не требует
+  реэкспортов** (метод резолвится по типу независимо от файла). Приватные поля
+  `struct Db` (`conn`) видны подмодулям (потомки видят приватное предка); общие
+  свободные хелперы `mod.rs` (private) подмодули берут через `use super::*;` (glob
+  тянет приватные элементы родителя). Собралось с первого раза — ни правок видимости,
+  ни явных импортов.
+- Путь модуля `db` не изменился (`shared::storage::db::Db`). **805 тестов зелёные**
+  (0 упавших, 26 `#[ignore]`; число не изменилось — чистый перенос), clippy
+  `-D warnings`/fmt чисты. Доки: architecture.md §3.
+### Рефакторинг god-object'ов — этап 6: `shared/markdown.rs` → `shared/markdown/` (сделано)
+- **Этап 6** плана разбора god-object'ов (docs/refactoring-god-objects.md — на ветке
+  этапа 1; этот этап — ветка `refactor/markdown-module-split` от `main`).
+  `shared/markdown.rs` (1995 строк, три подсистемы: walker `Writer`, таблицы, LaTeX-
+  конвертер + подсветка кода) разбит на каталог `shared/markdown/` — чисто механический
+  перенос (item-level слайсы с виденьем, поведение не менялось).
+- **Раскладка**: `mod.rs` (146: `render`/`render_with` — **вся внешняя поверхность** +
+  стили из палитры `heading_style`/`code_style`/… + проводка), `latex.rs` (578: LaTeX→
+  unicode — нормализация разделителей + конвертер команд, **самодостаточен**),
+  `writer.rs` (418: `Writer` — walker событий pulldown-cmark → строки + `heading_number`),
+  `table.rs` (312: `TableBuilder` + `render_table` + раскладка колонок), `code.rs` (176:
+  подсветка syntect — синтаксис + тема из палитры), `tests.rs` (397).
+- **Ключевое — `Writer` это хаб** (вызывает стили из `mod.rs`, подсветку из `code`,
+  таблицы из `table`, LaTeX из `latex`; `mod.rs::render_with` строит `Writer`). Проводка:
+  подсистемные элементы, используемые межфайлово, помечены `pub(super)` (включая поля
+  `TableBuilder` — их строит/мутирует `Writer` и читает `render_table` — и поля
+  `Writer.lines`/`soft_break_as_newline`, к которым обращается `render_with`); `mod.rs`
+  сводит их приватным глобом `use self::{code::*, latex::*, table::*, writer::*};`, а
+  подмодули берут всё через `use super::*;` (стили из `mod.rs` — как приватные предка).
+- **Два урока clippy** (не ловятся `cargo build`, только `-D warnings`): (1) реэкспорт
+  внутренней проводки должен быть **приватным** `use …::*` (не `pub(crate) use`) — иначе
+  «glob import doesn't reexport anything with visibility pub(crate)», т.к. элементы
+  `pub(super)`, а не `pub`; (2) `latex.rs` самодостаточен — его `use super::*` оказался
+  неиспользованным и удалён.
+- Внешняя поверхность (`markdown::render`/`render_with`, только `message_feed`) не
+  тронута. **805 тестов зелёные** (0 упавших, 26 `#[ignore]`; число не изменилось —
+  чистый перенос), clippy `-D warnings`/fmt чисты. Доки: architecture.md §3.
+### Рефакторинг god-object'ов — этап 7: `app/runtime.rs` → `app/runtime/` (сделано)
+- **Этап 7** (финальный) плана разбора god-object'ов
+  (docs/refactoring-god-objects.md — на ветке этапа 1; этот этап — ветка
+  `refactor/runtime-module-split` от `main`). `app/runtime.rs` (1099 строк: петля TUI +
+  батчинг вставки + буфер обмена + диспетчеризация) разбит на каталог `app/runtime/` —
+  чисто механический перенос (item-level слайсы, поведение не менялось).
+- **Раскладка**: `mod.rs` (309: `run`/`run_loop` — петля + dirty-перерисовка,
+  `ActiveScreen`, `SpellLoader`, `TICK` + проводка), `dispatch.rs` (334: `apply_event`
+  применяет `AppEvent` к экрану + `dispatch`/`dispatch_chat_list`/`dispatch_settings`/
+  `dispatch_self_model` транслируют Intent→`AppCommand`), `input.rs` (218: батчинг ввода
+  и вставка из буфера на Windows — `Chunk`/`chunk_batch`/`process_input_batch`/
+  `collect_press`/`paste_char`/`reconcile_paste`/`paste_projection_matches`),
+  `clipboard.rs` (30: `read_clipboard_text`/`write_clipboard` через arboard), `tests.rs`
+  (238). Внешняя поверхность — только `run` (main.rs), осталась `pub` в `mod.rs`.
+- **Проводка** (как в markdown): межфайловые элементы помечены `pub(super)`, `mod.rs`
+  сводит их приватным глобом `use self::{clipboard::*, dispatch::*, input::*};`
+  (`run_loop`-хаб зовёт их по короткому имени); подмодули берут `ActiveScreen`/типы через
+  `use super::*;`. **cfg-гейтинг сохранён** (`#[cfg(windows)]` на `read_clipboard_text`/
+  `paste_projection_matches`, `#[cfg(windows)]`/`#[cfg(not(windows))]` на `reconcile_paste`).
+- **Нюанс Linux-сборки**: `clipboard.rs` пользуется только `arboard::` (полный путь) и
+  прелюдией — `use super::*` оказался неиспользованным (на Linux `read_clipboard_text`
+  под cfg отсутствует, остаётся лишь `write_clipboard`), удалён, чтобы не ловить
+  unused-import под `-D warnings` на не-Windows цели.
+- Путь модуля `runtime` не изменился. **805 тестов зелёные** (0 упавших, 26 `#[ignore]`;
+  число не изменилось — чистый перенос), clippy `-D warnings`/fmt чисты. Доки:
+  architecture.md §3. **Разбор god-object'ов (этапы 1–7) — завершён**: settings/chat/
+  orchestrator-tests/notes/db/markdown/runtime; крупнейший исходный файл упал с 4966 до
+  ≤1175 строк, все impl-блоки ≤ ~660.
 ### Отложено за пределы M3
 - **Сворачивание/выделение per-message** и tool-блоки в ленте — сейчас «мысли»
   сворачиваются глобально (`Ctrl+T`); выделение сообщений и tool-блоки — на M5.

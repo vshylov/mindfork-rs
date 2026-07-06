@@ -148,19 +148,43 @@ src/
 │  │  ├─ reflection.rs      авто-рефлексия «модели себя» (окно/ватермарк, сигналы)
 │  │  ├─ consolidation.rs   авто-консолидация заметок («сон»)
 │  │  ├─ tool_loop.rs       общий «тихий» agentic-loop фоновых задач (рефлексия/консолидация)
-│  │  └─ request.rs         маппинг доменных сообщений в формат движка
+│  │  ├─ request.rs         маппинг доменных сообщений в формат движка
+│  │  └─ tests/             тесты оркестратора, разбиты по фичам (mod.rs — фикстуры;
+│  │                        generation/chats/profiles/settings/title/impersonation/
+│  │                        self_model/reflection/rag/request + live.rs #[ignore])
 │  ├─ gen_state.rs          GenState: чистый автомат Idle/Generating/Cancelling
 │  │                        (переходы begin/request_cancel/finish, без I/O)
 │  ├─ events.rs             AppCommand (UI→оркестр.) и AppEvent (оркестр.→UI)
-│  ├─ runtime.rs            мост tokio↔TUI: батчинг ввода, dirty-перерисовка,
-│  │                        трансляция Intent→AppCommand, side-effect'ы (мышь/буфер)
+│  ├─ runtime/              мост tokio↔TUI. God-object разбит (docs/refactoring-god-
+│  │  │                     objects.md, этап 7; внешняя поверхность — только run):
+│  │  ├─ mod.rs             run/run_loop (петля, dirty-перерисовка), ActiveScreen, SpellLoader
+│  │  ├─ input.rs           батчинг ввода + вставка из буфера (Windows-путь): Chunk, коалесинг
+│  │  ├─ dispatch.rs        apply_event (AppEvent→экран) + трансляция Intent→AppCommand
+│  │  └─ clipboard.rs       чтение/запись системного буфера обмена (arboard)
 │  └─ supervisor.rs         ServerSupervisor: (пере)запуск managed / подключение external
 │
 ├─ screens/                 целостные экраны (FSD "pages"); НЕ зависят от app
-│  ├─ chat.rs               ChatScreen: всё состояние UI чата, handle_key→ChatIntent
+│  ├─ chat/                 ChatScreen: состояние UI чата. God-object разбит
+│  │  │                     (docs/refactoring-god-objects.md, этап 2):
+│  │  ├─ mod.rs             ChatIntent, типы попапов, struct ChatScreen, аксессоры
+│  │  ├─ feed.rs            проекция AppEvent в ленту (сообщения/генерация/tool/токены)
+│  │  ├─ input.rs           обработка клавиш/мыши/вставки, черновик, орфография, команды
+│  │  ├─ popups.rs          попапы: орфография, подтверждение, эмодзи, справка
+│  │  ├─ impersonation.rs   предпросмотр реплики за пользователя (Ctrl+U)
+│  │  ├─ rag.rs             баннер прогресса индексации RAG
+│  │  └─ render.rs          отрисовка экрана
 │  ├─ chat_list.rs          ChatListScreen: полноэкранный список чатов (Esc), → ChatListIntent
-│  └─ settings.rs           SettingsScreen: секции (Модель/Семплинг/Инструменты/Память/
-│                           Профили/Интерфейс) с группами полей, подсекции Ассистент/Имперсонация
+│  └─ settings/             SettingsScreen: секции (Модель/Семплинг/Инструменты/Память/
+│     │                     Профили/Интерфейс) с группами полей, подсекции Ассистент/Имперсонация.
+│     │                     God-object разбит (docs/refactoring-god-objects.md, этап 1):
+│     ├─ mod.rs             SettingsIntent, enum'ы секций/подсекций, типы полей
+│     │                     (FieldId/FieldRow/Editor/…), struct SettingsScreen
+│     ├─ catalog.rs         построители полей секций/подсекций + гейты доступности
+│     ├─ apply.rs           обработка клавиш, редактор поля, тумблеры/циклы, сохранение
+│     ├─ choice.rs          попап выбора Choice-поля + сброс поля к дефолту
+│     ├─ search.rs          оверлей поиска по полям (`/`): индекс/фильтр/прыжок
+│     ├─ render.rs          отрисовка: меню, таб-стрип, список полей, попапы
+│     └─ helpers.rs         свободные функции: построители строк, описания, парсеры
 │
 ├─ widgets/                 составные UI-блоки (FSD "widgets")
 │  ├─ message_feed.rs       лента: markdown, мысли, инлайн tool-блоки, скролл, перенос
@@ -176,7 +200,18 @@ src/
 │  │  ├─ mod.rs             Tool, ToolContext, ToolOutcome/ChatEffect, ToolRegistry, ToolConfig
 │  │  ├─ meta.rs            метаданные каталога для UI: группа/описание/гейт инструмента
 │  │  ├─ rag.rs             rag_add/rag_search: чанкинг, эмбеддинг, kNN, склейка
-│  │  ├─ notes.rs           note_save/note_recall
+│  │  ├─ notes/             заметки. God-object разбит (docs/refactoring-god-objects.md,
+│  │  │                     этап 4; внешняя поверхность `notes::*` сохранена реэкспортом
+│  │  │                     `pub(crate) use <submod>::*` из mod.rs):
+│  │  │  ├─ mod.rs          ID-константы, пороги, SELF_NOTE_TAG, is_self_note/parse_*/
+│  │  │  │                  clip/cosine, реэкспорты
+│  │  │  ├─ save.rs         note_save + create_note/ensure_note_vectors/ворота похожести
+│  │  │  ├─ recall.rs       note_recall + семантический путь, связанные блоки, формат
+│  │  │  ├─ edit.rs         note_revise/note_supersede/note_merge
+│  │  │  ├─ graph.rs        note_link/note_neighbors (типизированный граф связей)
+│  │  │  ├─ cite.rs         note_cite_source (ссылка заметки на источник RAG)
+│  │  │  ├─ overview.rs     consolidate_notes + обзоры консолидации (польз./@self)
+│  │  │  └─ self_notes.rs   подсистема self-заметок (@self): свежие/релевантные, граф
 │  │  ├─ introspection.rs   get/set_sampling, get/set_system_message, get_last_user_message_time
 │  │  ├─ python.rs          python_exec (subprocess, таймаут)
 │  │  ├─ web.rs             web_search (мульти-провайдер DDG/Mojeek/Ecosia + анти-бот)
@@ -213,10 +248,25 @@ src/
    │  └─ mock.rs            mock-движок для тестов (#[cfg(test)])
    ├─ storage/              хранилище
    │  ├─ json.rs            атомарная запись (write-rename + .bak) конфиг/профили/чаты
-   │  ├─ db.rs              SQLite + sqlite-vec: notes/RAG, изоляция по profile_id
+   │  ├─ db/               SQLite + sqlite-vec: notes/RAG, изоляция по profile_id.
+   │  │  │                 God-object разбит по доменам (docs/refactoring-god-objects.md,
+   │  │  │                 этап 5; `impl Db` — несколько блоков, схема/хелперы в mod.rs):
+   │  │  ├─ mod.rs         struct Db, open/from_conn, migrate() (схема), ensure_vec_table/
+   │  │  │                 vec_dim, общие хелперы (row_to_note/parse_uuid/parse_dt/cosine)
+   │  │  ├─ notes.rs       заметки: вставка/список/правка/удаление + эмбеддинги/семантика
+   │  │  ├─ graph.rs       граф связей + замещение + цитирование источников
+   │  │  ├─ self_model.rs  модель себя: get/upsert/атомарный update
+   │  │  └─ rag.rs         RAG: документы/поиск/источники/размерность + удаление по пути
    │  └─ mod.rs             фасад Storage (потокобезопасный)
    ├─ config.rs            AppConfig и секции (Engine/Embed/Tool/Interface/Impersonation…)
-   ├─ markdown.rs          свой рендерер на pulldown-cmark (ADR 0003): таблицы + LaTeX + тема
+   ├─ markdown/            свой рендерер на pulldown-cmark (ADR 0003): таблицы + LaTeX +
+   │  │                    тема. God-object разбит по подсистемам (docs/refactoring-god-
+   │  │                    objects.md, этап 6; внутренняя проводка через реэкспорт):
+   │  ├─ mod.rs            render/render_with (внешняя поверхность) + стили из палитры
+   │  ├─ writer.rs         Writer: walker событий pulldown-cmark → строки
+   │  ├─ code.rs           подсветка блоков кода (syntect: синтаксис + тема из палитры)
+   │  ├─ table.rs          TableBuilder + render_table (раскладка/отрисовка таблиц)
+   │  └─ latex.rs          LaTeX→unicode: нормализация разделителей + конвертер команд
    ├─ wrap.rs              перенос слов по колонкам (unicode-width)
    ├─ theme.rs             Palette (роли user/assistant/tool/…), auto/dark/light
    ├─ keys.rs              раскладко-независимые Ctrl-шорткаты (ЙЦУКЕН→латиница)
