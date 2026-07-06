@@ -157,7 +157,15 @@ src/
 │  └─ supervisor.rs         ServerSupervisor: (пере)запуск managed / подключение external
 │
 ├─ screens/                 целостные экраны (FSD "pages"); НЕ зависят от app
-│  ├─ chat.rs               ChatScreen: всё состояние UI чата, handle_key→ChatIntent
+│  ├─ chat/                 ChatScreen: состояние UI чата. God-object разбит
+│  │  │                     (docs/refactoring-god-objects.md, этап 2):
+│  │  ├─ mod.rs             ChatIntent, типы попапов, struct ChatScreen, аксессоры
+│  │  ├─ feed.rs            проекция AppEvent в ленту (сообщения/генерация/tool/токены)
+│  │  ├─ input.rs           обработка клавиш/мыши/вставки, черновик, орфография, команды
+│  │  ├─ popups.rs          попапы: орфография, подтверждение, эмодзи, справка
+│  │  ├─ impersonation.rs   предпросмотр реплики за пользователя (Ctrl+U)
+│  │  ├─ rag.rs             баннер прогресса индексации RAG
+│  │  └─ render.rs          отрисовка экрана
 │  ├─ chat_list.rs          ChatListScreen: полноэкранный список чатов (Esc), → ChatListIntent
 │  └─ settings.rs           SettingsScreen: секции (Модель/Семплинг/Инструменты/Память/
 │                           Профили/Интерфейс) с группами полей, подсекции Ассистент/Имперсонация

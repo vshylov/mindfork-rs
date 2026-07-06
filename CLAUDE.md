@@ -3295,6 +3295,35 @@ web-поиск и Python под выключателями, экран наст�
   `value_column_is_shared_across_groups` (рендер: значения трёх групп «Инструментов»
   в одной колонке). **797 тестов зелёные** (+3), clippy/fmt чисты. Доки: spec §11.6.
 
+### Рефакторинг god-object'ов — этап 2: `screens/chat.rs` → `screens/chat/` (сделано)
+- **Этап 2** плана разбора god-object'ов (docs/refactoring-god-objects.md — на ветке
+  этапа 1; этот этап — ветка `refactor/chat-module-split` от `main`). `screens/chat.rs`
+  (2616 строк, один `impl ChatScreen` ~54 метода на ~1100 строк + рендер-хелперы)
+  разбит на каталог `screens/chat/` — чисто механический перенос (item-level слайсы:
+  методы режутся по 4-пробельному `}`, свободные функции по col-0 закрытию;
+  типы/поля/контракт `ChatIntent`/поведение не менялись).
+- **Раскладка**: `mod.rs` (409: `ChatIntent`, типы попапов `ConfirmAction`/
+  `SuggestPopup`/`ImpersonationState`/`RagBanner`, `struct ChatScreen`, аксессоры-
+  снимки — сеттеры/геттеры настроек/списков/статусов/палитры), `input.rs` (367:
+  `handle_key`/`handle_paste`/`handle_mouse` + черновик/орфография/команды +
+  `trigger_destructive`/`handle_profile_overlay_key`), `popups.rs` (281: попапы
+  орфографии/подтверждения/эмодзи/справки + `render_help`/`render_suggest`/
+  `render_confirm`/`HELP_KEYS`), `feed.rs` (241: проекция `AppEvent` в ленту +
+  `feed_msg_has_vs16`), `render.rs` (190: `render`/`model_meta` + `centered_rect`/
+  `visual_line_count`), `rag.rs` (94: баннер + `format_rag_sources`),
+  `impersonation.rs` (51), `tests.rs` (1034). Прежний `impl ChatScreen` разложен на
+  7 impl-блоков (≤ ~360 строк каждый).
+- **Правила видимости** (тот же плейбук, что этап 1): подмодули берут `mod.rs` через
+  `use super::*;`; приватные методы, вызываемые межфайлово, и свободные функции
+  помечены `pub(super)`. Межмодульные свободные функции — точечные `use`:
+  `input.rs` → `super::feed::feed_msg_has_vs16`, `popups.rs` →
+  `super::render::centered_rect`, `render.rs` → `super::popups::{render_help,
+  render_suggest, render_confirm}`, `tests.rs` → `super::popups::HELP_KEYS`.
+- Публичный путь модуля не изменился (`crate::screens::chat::{ChatScreen,
+  ChatIntent}`), внешние `use` (`app/runtime.rs`) не тронуты. **805 тестов зелёные**
+  (0 упавших, 26 `#[ignore]`; число не изменилось — чистый перенос), clippy
+  `-D warnings`/fmt чисты. Доки: architecture.md §3.
+
 ### Отложено за пределы M3
 - **Сворачивание/выделение per-message** и tool-блоки в ленте — сейчас «мысли»
   сворачиваются глобально (`Ctrl+T`); выделение сообщений и tool-блоки — на M5.
