@@ -193,7 +193,18 @@ src/
 │  │  ├─ mod.rs             Tool, ToolContext, ToolOutcome/ChatEffect, ToolRegistry, ToolConfig
 │  │  ├─ meta.rs            метаданные каталога для UI: группа/описание/гейт инструмента
 │  │  ├─ rag.rs             rag_add/rag_search: чанкинг, эмбеддинг, kNN, склейка
-│  │  ├─ notes.rs           note_save/note_recall
+│  │  ├─ notes/             заметки. God-object разбит (docs/refactoring-god-objects.md,
+│  │  │                     этап 4; внешняя поверхность `notes::*` сохранена реэкспортом
+│  │  │                     `pub(crate) use <submod>::*` из mod.rs):
+│  │  │  ├─ mod.rs          ID-константы, пороги, SELF_NOTE_TAG, is_self_note/parse_*/
+│  │  │  │                  clip/cosine, реэкспорты
+│  │  │  ├─ save.rs         note_save + create_note/ensure_note_vectors/ворота похожести
+│  │  │  ├─ recall.rs       note_recall + семантический путь, связанные блоки, формат
+│  │  │  ├─ edit.rs         note_revise/note_supersede/note_merge
+│  │  │  ├─ graph.rs        note_link/note_neighbors (типизированный граф связей)
+│  │  │  ├─ cite.rs         note_cite_source (ссылка заметки на источник RAG)
+│  │  │  ├─ overview.rs     consolidate_notes + обзоры консолидации (польз./@self)
+│  │  │  └─ self_notes.rs   подсистема self-заметок (@self): свежие/релевантные, граф
 │  │  ├─ introspection.rs   get/set_sampling, get/set_system_message, get_last_user_message_time
 │  │  ├─ python.rs          python_exec (subprocess, таймаут)
 │  │  ├─ web.rs             web_search (мульти-провайдер DDG/Mojeek/Ecosia + анти-бот)
