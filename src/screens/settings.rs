@@ -8,6 +8,8 @@
 //! перезапускает сервер при смене модели). Работает на собственной рабочей копии
 //! `AppConfig`/профилей, обновляемой теми же правками.
 
+use std::collections::HashMap;
+
 use ratatui::Frame;
 use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 use ratatui::layout::{Constraint, Flex, Layout, Rect};
@@ -52,19 +54,19 @@ pub enum SettingsIntent {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Section {
     Model,
-    Inference,
     Sampling,
-    Profiles,
     Tools,
+    Memory,
+    Profiles,
     Interface,
 }
 
 const SECTIONS: [Section; 6] = [
     Section::Model,
-    Section::Inference,
     Section::Sampling,
-    Section::Profiles,
     Section::Tools,
+    Section::Memory,
+    Section::Profiles,
     Section::Interface,
 ];
 
@@ -96,10 +98,10 @@ impl Section {
     fn title(self) -> &'static str {
         match self {
             Section::Model => "Модель/сервер",
-            Section::Inference => "Инференс",
             Section::Sampling => "Семплинг",
-            Section::Profiles => "Профили",
             Section::Tools => "Инструменты",
+            Section::Memory => "Память",
+            Section::Profiles => "Профили",
             Section::Interface => "Интерфейс",
         }
     }
@@ -143,36 +145,46 @@ enum SamplingParam {
 }
 
 /// Порядок параметров семплинга в секции (стабильный = порядок отрисовки).
+/// Сгруппирован по смыслу: параметры одной группы идут подряд, чтобы заголовок
+/// группы ([`SamplingParam::group`]) в UI ставился один раз перед серией.
 const SAMPLING_PARAMS: &[SamplingParam] = {
     use SamplingParam::*;
     &[
+        // Основные
         Temp,
-        DynatempRange,
-        DynatempExp,
         TopK,
         TopP,
+        MaxTokens,
+        Seed,
+        // Динамическая температура
+        DynatempRange,
+        DynatempExp,
+        // Разнообразие
         MinP,
         TopNSigma,
         TypicalP,
         AdaptiveTarget,
         AdaptiveDecay,
+        XtcProbability,
+        XtcThreshold,
+        // Штрафы за повтор
         FreqPen,
         PresPen,
         RepeatPenalty,
         RepeatLastN,
+        // DRY (анти-повтор)
         DryMultiplier,
         DryBase,
         DryAllowedLength,
         DryPenaltyLastN,
         DrySeqBreakers,
-        XtcProbability,
-        XtcThreshold,
+        // Mirostat
         Mirostat,
         MirostatTau,
         MirostatEta,
-        MaxTokens,
-        Seed,
+        // Порядок семплеров
         Samplers,
+        // Рассуждения
         Thinking,
         Reasoning,
     ]
@@ -224,6 +236,24 @@ impl SamplingParam {
             Reasoning => "reasoning_effort",
             // Остальные параметры подписаны именем своего JSON-поля.
             _ => self.label(),
+        }
+    }
+
+    /// Смысловая группа параметра (заголовок группы в секции «Семплинг»).
+    fn group(self) -> &'static str {
+        use SamplingParam::*;
+        match self {
+            Temp | TopK | TopP | MaxTokens | Seed => "Основные",
+            DynatempRange | DynatempExp => "Динамическая температура",
+            MinP | TopNSigma | TypicalP | AdaptiveTarget | AdaptiveDecay | XtcProbability
+            | XtcThreshold => "Разнообразие",
+            FreqPen | PresPen | RepeatPenalty | RepeatLastN => "Штрафы за повтор",
+            DryMultiplier | DryBase | DryAllowedLength | DryPenaltyLastN | DrySeqBreakers => {
+                "DRY (анти-повтор)"
+            }
+            Mirostat | MirostatTau | MirostatEta => "Mirostat",
+            Samplers => "Порядок семплеров",
+            Thinking | Reasoning => "Рассуждения",
         }
     }
 
@@ -445,11 +475,14 @@ enum FieldKind {
     Text(String),
 }
 
-/// Строка поля: идентификатор, подпись и текущее представление значения.
+/// Строка поля: идентификатор, подпись, текущее представление значения и
+/// смысловая группа (для заголовка группы и выравнивания значений; `""` — вне
+/// группы, без заголовка).
 struct FieldRow {
     id: FieldId,
     label: String,
     kind: FieldKind,
+    group: &'static str,
 }
 
 /// Активный редактор текстового поля (попап).
@@ -527,89 +560,103 @@ impl SettingsScreen {
     fn fields(&self) -> Vec<FieldRow> {
         match self.section() {
             Section::Model => self.model_fields(),
-            Section::Inference => self.inference_fields(),
             Section::Sampling => self.sampling_fields(),
-            Section::Profiles => self.profile_fields(),
             Section::Tools => self.tool_fields(),
+            Section::Memory => self.memory_fields(),
+            Section::Profiles => self.profile_fields(),
             Section::Interface => self.interface_fields(),
         }
     }
 
     fn model_fields(&self) -> Vec<FieldRow> {
-        let mut rows = vec![row(
-            FieldId::ModelSub,
-            "Подсекция",
-            FieldKind::Choice(self.model_sub.label()),
-        )];
         match self.model_sub {
             Subsection::Assistant => {
                 let x = &self.config.engine;
-                rows.push(row(
-                    FieldId::XMode,
-                    "Режим",
-                    FieldKind::Choice(mode_label(x.mode)),
-                ));
+                let mut rows = vec![
+                    row(
+                        FieldId::ModelSub,
+                        "Подсекция",
+                        FieldKind::Choice(self.model_sub.label()),
+                    ),
+                    row(
+                        FieldId::XMode,
+                        "Режим",
+                        FieldKind::Choice(mode_label(x.mode)),
+                    ),
+                ];
                 // Видимость полей зависит от режима (ADR 0004): для облака показываем
                 // лишь модель/ключ/опц. base URL, для managed — параметры llama-server.
                 match x.mode {
                     ServerMode::Managed => {
                         rows.extend(managed_rows(&x.managed, ASSISTANT_MANAGED_IDS))
                     }
-                    ServerMode::External => rows.extend([
-                        text_row(FieldId::XUrl, "URL (external)", &x.external.url),
-                        text_row(FieldId::XModelName, "Модель (опц.)", &x.external.model_name),
-                    ]),
+                    ServerMode::External => rows.extend(grouped(
+                        "Сервер",
+                        vec![
+                            text_row(FieldId::XUrl, "URL (external)", &x.external.url),
+                            text_row(FieldId::XModelName, "Модель (опц.)", &x.external.model_name),
+                        ],
+                    )),
                     ServerMode::OpenAi | ServerMode::Gemini | ServerMode::Claude => {
-                        rows.extend(cloud_rows(
-                            x.cloud(),
-                            FieldId::XModelName,
-                            FieldId::XApiKeyEnv,
-                            FieldId::XUrl,
+                        rows.extend(grouped(
+                            "Провайдер",
+                            cloud_rows(
+                                x.cloud(),
+                                FieldId::XModelName,
+                                FieldId::XApiKeyEnv,
+                                FieldId::XUrl,
+                            ),
                         ))
                     }
                 }
+                rows
             }
             Subsection::Impersonation => {
                 let x = &self.config.impersonation_engine;
-                rows.push(row(
-                    FieldId::IxMode,
-                    "Режим",
-                    FieldKind::Choice(imp_mode_label(x.mode)),
-                ));
+                let mut rows = vec![
+                    row(
+                        FieldId::ModelSub,
+                        "Подсекция",
+                        FieldKind::Choice(self.model_sub.label()),
+                    ),
+                    row(
+                        FieldId::IxMode,
+                        "Режим",
+                        FieldKind::Choice(imp_mode_label(x.mode)),
+                    ),
+                ];
                 match x.mode {
                     // Shared переиспользует движок ассистента — собственных полей нет.
                     ImpersonationMode::Shared => {}
                     ImpersonationMode::Managed => {
                         rows.extend(managed_rows(&x.managed, IMP_MANAGED_IDS))
                     }
-                    ImpersonationMode::External => rows.extend([
-                        text_row(FieldId::IxUrl, "URL (external)", &x.external.url),
-                        text_row(
-                            FieldId::IxModelName,
-                            "Модель (опц.)",
-                            &x.external.model_name,
-                        ),
-                    ]),
+                    ImpersonationMode::External => rows.extend(grouped(
+                        "Сервер",
+                        vec![
+                            text_row(FieldId::IxUrl, "URL (external)", &x.external.url),
+                            text_row(
+                                FieldId::IxModelName,
+                                "Модель (опц.)",
+                                &x.external.model_name,
+                            ),
+                        ],
+                    )),
                     ImpersonationMode::OpenAi
                     | ImpersonationMode::Gemini
-                    | ImpersonationMode::Claude => rows.extend(cloud_rows(
-                        x.cloud(),
-                        FieldId::IxModelName,
-                        FieldId::IxApiKeyEnv,
-                        FieldId::IxUrl,
+                    | ImpersonationMode::Claude => rows.extend(grouped(
+                        "Провайдер",
+                        cloud_rows(
+                            x.cloud(),
+                            FieldId::IxModelName,
+                            FieldId::IxApiKeyEnv,
+                            FieldId::IxUrl,
+                        ),
                     )),
                 }
+                rows
             }
         }
-        rows
-    }
-
-    fn inference_fields(&self) -> Vec<FieldRow> {
-        vec![row(
-            FieldId::MaxToolRounds,
-            "Лимит раундов инструментов",
-            FieldKind::Text(self.config.max_tool_rounds.to_string()),
-        )]
     }
 
     fn sampling_fields(&self) -> Vec<FieldRow> {
@@ -634,7 +681,11 @@ impl SettingsScreen {
                     Some(provider) => cloud_supported_param(provider, p),
                     None => true,
                 })
-                .map(|&p| sampling_row(mk(p), p, s)),
+                .map(|&p| {
+                    let mut r = sampling_row(mk(p), p, s);
+                    r.group = p.group();
+                    r
+                }),
         );
         rows
     }
@@ -642,185 +693,237 @@ impl SettingsScreen {
     fn tool_fields(&self) -> Vec<FieldRow> {
         let t = &self.config.tools;
         let e = &self.config.embed;
-        let mut rows = vec![
-            row(FieldId::TWeb, "Web-поиск", FieldKind::Toggle(t.web_enabled)),
-            row(
-                FieldId::TWebFetch,
-                "Web: загрузка страниц",
-                FieldKind::Toggle(t.web_fetch_content),
-            ),
-            row(
-                FieldId::TPython,
-                "Python-исполнение",
-                FieldKind::Toggle(t.python_enabled),
-            ),
-            text_row(FieldId::TPythonPath, "Путь к Python", &t.python_path),
-            row(
-                FieldId::TFs,
-                "Доступ к файлам",
-                FieldKind::Toggle(t.fs_enabled),
-            ),
-            text_row(FieldId::TFsRoot, "Файлы: каталог-песочница", &t.fs_root),
-            row(
-                FieldId::TSubMaxTokens,
-                "call_subagent: max_tokens",
-                FieldKind::Text(t.subagent_max_tokens.to_string()),
-            ),
-            row(
-                FieldId::TSubTimeout,
-                "call_subagent: таймаут (с)",
-                FieldKind::Text(t.subagent_timeout_secs.to_string()),
-            ),
-            row(
-                FieldId::EMode,
-                "Эмбеддинги: режим",
-                FieldKind::Choice(mode_label(e.mode)),
-            ),
-        ];
-        // Эмбеддинги: поля по режиму (managed → llama-server; external/облако →
-        // URL/модель/ключ). Облачные эмбеддинги есть у OpenAI/Gemini (ADR 0004).
+        let mut rows = grouped(
+            "Агентный цикл",
+            vec![
+                row(
+                    FieldId::MaxToolRounds,
+                    "Лимит раундов инструментов",
+                    FieldKind::Text(self.config.max_tool_rounds.to_string()),
+                ),
+                row(
+                    FieldId::TSubMaxTokens,
+                    "Субагент: лимит токенов",
+                    FieldKind::Text(t.subagent_max_tokens.to_string()),
+                ),
+                row(
+                    FieldId::TSubTimeout,
+                    "Субагент: таймаут (с)",
+                    FieldKind::Text(t.subagent_timeout_secs.to_string()),
+                ),
+            ],
+        );
+        rows.extend(grouped(
+            "Веб-поиск",
+            vec![
+                row(FieldId::TWeb, "Web-поиск", FieldKind::Toggle(t.web_enabled)),
+                row(
+                    FieldId::TWebFetch,
+                    "Загрузка страниц",
+                    FieldKind::Toggle(t.web_fetch_content),
+                ),
+            ],
+        ));
+        rows.extend(grouped(
+            "Python",
+            vec![
+                row(
+                    FieldId::TPython,
+                    "Python-исполнение",
+                    FieldKind::Toggle(t.python_enabled),
+                ),
+                text_row(
+                    FieldId::TPythonPath,
+                    "Путь к интерпретатору",
+                    &t.python_path,
+                ),
+            ],
+        ));
+        rows.extend(grouped(
+            "Файлы",
+            vec![
+                row(
+                    FieldId::TFs,
+                    "Доступ к файлам",
+                    FieldKind::Toggle(t.fs_enabled),
+                ),
+                text_row(FieldId::TFsRoot, "Каталог-песочница", &t.fs_root),
+            ],
+        ));
+        // Эмбеддинги — отдельный сервер (память/RAG). Поля по режиму (managed →
+        // llama-server; external/облако → URL/модель/ключ). Облачные эмбеддинги есть
+        // у OpenAI/Gemini (ADR 0004).
+        let mut embed = vec![row(
+            FieldId::EMode,
+            "Режим",
+            FieldKind::Choice(mode_label(e.mode)),
+        )];
         match e.mode {
-            ServerMode::Managed => rows.extend([
-                text_row(FieldId::EBinary, "Эмбеддинги: бинарник", &e.managed.binary),
-                text_row(
-                    FieldId::EModel,
-                    "Эмбеддинги: GGUF (-m)",
-                    &e.managed.model_path,
-                ),
-                num_field(FieldId::EPort, "Эмбеддинги: порт", e.managed.port),
+            ServerMode::Managed => embed.extend([
+                text_row(FieldId::EBinary, "Бинарник llama-server", &e.managed.binary),
+                text_row(FieldId::EModel, "GGUF-модель (-m)", &e.managed.model_path),
+                num_field(FieldId::EPort, "Порт", e.managed.port),
             ]),
-            ServerMode::External => rows.extend([
-                text_row(FieldId::EUrl, "Эмбеддинги: URL", &e.external.url),
-                text_row(
-                    FieldId::EModelName,
-                    "Эмбеддинги: модель (опц.)",
-                    &e.external.model_name,
-                ),
+            ServerMode::External => embed.extend([
+                text_row(FieldId::EUrl, "URL (external)", &e.external.url),
+                text_row(FieldId::EModelName, "Модель (опц.)", &e.external.model_name),
             ]),
             // Claude в эмбеддингах поля показывает, но Anthropic не умеет embeddings —
             // супервайзер вернёт «недоступно» (RAG отключится). См. ADR 0004.
             ServerMode::OpenAi | ServerMode::Gemini | ServerMode::Claude => {
                 let none = CloudSettings::default();
                 let c = e.cloud().unwrap_or(&none);
-                rows.extend([
-                    text_row(FieldId::EModelName, "Эмбеддинги: модель", &c.model_name),
-                    text_row(
-                        FieldId::EApiKeyEnv,
-                        "Эмбеддинги: API-ключ (env)",
-                        &c.api_key_env,
-                    ),
-                    text_row(FieldId::EUrl, "Эмбеддинги: Base URL (опц.)", &c.url),
+                embed.extend([
+                    text_row(FieldId::EModelName, "Модель", &c.model_name),
+                    text_row(FieldId::EApiKeyEnv, "API-ключ (env)", &c.api_key_env),
+                    text_row(FieldId::EUrl, "Base URL (опц.)", &c.url),
                 ])
             }
         }
-        rows.extend([
-            row(
-                FieldId::RagTarget,
-                "RAG: размер чанка (симв.)",
-                FieldKind::Text(self.config.rag.chunk_target_chars.to_string()),
-            ),
-            row(
-                FieldId::RagOverlap,
-                "RAG: перекрытие (симв.)",
-                FieldKind::Text(self.config.rag.chunk_overlap_chars.to_string()),
-            ),
-            row(
-                FieldId::RagMax,
-                "RAG: потолок чанка (симв.)",
-                FieldKind::Text(self.config.rag.chunk_max_chars.to_string()),
-            ),
-            row(
-                FieldId::SmMaxNarrative,
-                "Модель себя: хранить инсайтов",
-                FieldKind::Text(self.config.self_model.max_narrative.to_string()),
-            ),
-            row(
-                FieldId::SmNarrativeInPrompt,
-                "Модель себя: инсайтов в промпт",
-                FieldKind::Text(self.config.self_model.narrative_in_prompt.to_string()),
-            ),
-            row(
-                FieldId::SmPromptCap,
-                "Модель себя: лимит инъекции (симв.)",
-                FieldKind::Text(self.config.self_model.prompt_cap.to_string()),
-            ),
-            row(
-                FieldId::SmSummaryTarget,
-                "Модель себя: ориентир описания (симв.)",
-                FieldKind::Text(self.config.self_model.summary_target_chars.to_string()),
-            ),
-            row(
-                FieldId::SmAutoReflect,
-                "Модель себя: авто-рефлексия (кажд. N)",
-                FieldKind::Text(self.config.self_model.auto_reflect_every.to_string()),
-            ),
-            row(
-                FieldId::SmProtocol,
-                "Модель себя: протокол ведения",
-                FieldKind::Toggle(self.config.self_model.maintenance_protocol),
-            ),
-            row(
-                FieldId::NotesAutoConsolidate,
-                "Заметки: авто-консолидация (кажд. N)",
-                FieldKind::Text(self.config.notes.auto_consolidate_every.to_string()),
-            ),
-            row(
-                FieldId::NotesRecallIncludesSelf,
-                "Заметки: наблюдения «о себе» в note_recall",
-                FieldKind::Toggle(self.config.notes.recall_includes_self),
-            ),
-        ]);
+        rows.extend(grouped("Эмбеддинги (сервер)", embed));
+        rows
+    }
+
+    /// Секция «Память»: чанкинг базы знаний (RAG), заметки, «модель себя».
+    fn memory_fields(&self) -> Vec<FieldRow> {
+        let mut rows = grouped(
+            "База знаний (RAG)",
+            vec![
+                row(
+                    FieldId::RagTarget,
+                    "Размер чанка (симв.)",
+                    FieldKind::Text(self.config.rag.chunk_target_chars.to_string()),
+                ),
+                row(
+                    FieldId::RagOverlap,
+                    "Перекрытие (симв.)",
+                    FieldKind::Text(self.config.rag.chunk_overlap_chars.to_string()),
+                ),
+                row(
+                    FieldId::RagMax,
+                    "Потолок чанка (симв.)",
+                    FieldKind::Text(self.config.rag.chunk_max_chars.to_string()),
+                ),
+            ],
+        );
+        rows.extend(grouped(
+            "Заметки",
+            vec![
+                row(
+                    FieldId::NotesAutoConsolidate,
+                    "Авто-консолидация (кажд. N)",
+                    FieldKind::Text(self.config.notes.auto_consolidate_every.to_string()),
+                ),
+                row(
+                    FieldId::NotesRecallIncludesSelf,
+                    "Наблюдения «о себе» в note_recall",
+                    FieldKind::Toggle(self.config.notes.recall_includes_self),
+                ),
+            ],
+        ));
+        rows.extend(grouped(
+            "Модель себя",
+            vec![
+                row(
+                    FieldId::SmMaxNarrative,
+                    "Хранить инсайтов",
+                    FieldKind::Text(self.config.self_model.max_narrative.to_string()),
+                ),
+                row(
+                    FieldId::SmNarrativeInPrompt,
+                    "Инсайтов в промпт",
+                    FieldKind::Text(self.config.self_model.narrative_in_prompt.to_string()),
+                ),
+                row(
+                    FieldId::SmPromptCap,
+                    "Лимит инъекции (симв.)",
+                    FieldKind::Text(self.config.self_model.prompt_cap.to_string()),
+                ),
+                row(
+                    FieldId::SmSummaryTarget,
+                    "Ориентир описания (симв.)",
+                    FieldKind::Text(self.config.self_model.summary_target_chars.to_string()),
+                ),
+                row(
+                    FieldId::SmAutoReflect,
+                    "Авто-рефлексия (кажд. N)",
+                    FieldKind::Text(self.config.self_model.auto_reflect_every.to_string()),
+                ),
+                row(
+                    FieldId::SmProtocol,
+                    "Протокол ведения",
+                    FieldKind::Toggle(self.config.self_model.maintenance_protocol),
+                ),
+            ],
+        ));
         rows
     }
 
     fn interface_fields(&self) -> Vec<FieldRow> {
         let i = &self.config.interface;
-        vec![
-            row(
-                FieldId::ITheme,
-                "Тема",
-                FieldKind::Choice(theme_label(i.theme)),
-            ),
-            row(
-                FieldId::ICompat,
-                "Совместимость со старым терминалом",
-                FieldKind::Toggle(i.terminal_compat),
-            ),
-            row(
-                FieldId::ISpell,
-                "Спелл-чек",
-                FieldKind::Toggle(i.spellcheck_enabled),
-            ),
-            row(
-                FieldId::IDicts,
-                "Словари (через запятую)",
-                FieldKind::Text(if i.selected_dictionaries.is_empty() {
-                    "(все)".to_string()
-                } else {
-                    i.selected_dictionaries.join(", ")
-                }),
-            ),
-            row(
+        let mut rows = grouped(
+            "Оформление",
+            vec![
+                row(
+                    FieldId::ITheme,
+                    "Тема",
+                    FieldKind::Choice(theme_label(i.theme)),
+                ),
+                row(
+                    FieldId::ICompat,
+                    "Совместимость со старым терминалом",
+                    FieldKind::Toggle(i.terminal_compat),
+                ),
+            ],
+        );
+        rows.extend(grouped(
+            "Орфография",
+            vec![
+                row(
+                    FieldId::ISpell,
+                    "Спелл-чек",
+                    FieldKind::Toggle(i.spellcheck_enabled),
+                ),
+                row(
+                    FieldId::IDicts,
+                    "Словари (через запятую)",
+                    FieldKind::Text(if i.selected_dictionaries.is_empty() {
+                        "(все)".to_string()
+                    } else {
+                        i.selected_dictionaries.join(", ")
+                    }),
+                ),
+            ],
+        ));
+        rows.extend(grouped(
+            "Поведение",
+            vec![row(
                 FieldId::IConfirmKeys,
                 "Подтверждать Ctrl+R / Ctrl+E",
                 FieldKind::Toggle(i.confirm_destructive_keys),
-            ),
-            row(
-                FieldId::ICopyThoughts,
-                "Копировать с «мыслями» (F5)",
-                FieldKind::Toggle(self.config.copy.copy_thoughts),
-            ),
-            row(
-                FieldId::ICopyToolCalls,
-                "Копировать с параметрами инструментов (F5)",
-                FieldKind::Toggle(self.config.copy.copy_tool_calls),
-            ),
-            row(
-                FieldId::ICopyToolResults,
-                "Копировать с ответами инструментов (F5)",
-                FieldKind::Toggle(self.config.copy.copy_tool_results),
-            ),
-        ]
+            )],
+        ));
+        rows.extend(grouped(
+            "Копирование переписки (F5)",
+            vec![
+                row(
+                    FieldId::ICopyThoughts,
+                    "Копировать с «мыслями»",
+                    FieldKind::Toggle(self.config.copy.copy_thoughts),
+                ),
+                row(
+                    FieldId::ICopyToolCalls,
+                    "Копировать с параметрами инструментов",
+                    FieldKind::Toggle(self.config.copy.copy_tool_calls),
+                ),
+                row(
+                    FieldId::ICopyToolResults,
+                    "Копировать с ответами инструментов",
+                    FieldKind::Toggle(self.config.copy.copy_tool_results),
+                ),
+            ],
+        ));
+        rows
     }
 
     fn profile_fields(&self) -> Vec<FieldRow> {
@@ -846,31 +949,40 @@ impl SettingsScreen {
         ];
         match self.profile_sub {
             Subsection::Assistant => {
-                rows.push(row(
-                    FieldId::PSystem,
-                    "Системное сообщение",
-                    FieldKind::Text(p.default_system_message.clone()),
+                rows.extend(grouped(
+                    "Персона",
+                    vec![
+                        row(
+                            FieldId::PSystem,
+                            "Системное сообщение",
+                            FieldKind::Text(p.default_system_message.clone()),
+                        ),
+                        row(
+                            FieldId::PGreeting,
+                            "Приветствие",
+                            FieldKind::Text(p.greeting.clone().unwrap_or_default()),
+                        ),
+                    ],
                 ));
-                rows.push(row(
-                    FieldId::PGreeting,
-                    "Приветствие",
-                    FieldKind::Text(p.greeting.clone().unwrap_or_default()),
-                ));
-                for (idx, tool) in Self::tool_catalog().into_iter().enumerate() {
-                    let on = p.enabled_tools.iter().any(|t| t == &tool);
-                    rows.push(row(
-                        FieldId::PTool(idx),
-                        &format!("инструмент: {tool}"),
-                        FieldKind::Toggle(on),
-                    ));
-                }
+                let tools: Vec<FieldRow> = Self::tool_catalog()
+                    .into_iter()
+                    .enumerate()
+                    .map(|(idx, tool)| {
+                        let on = p.enabled_tools.iter().any(|t| t == &tool);
+                        row(FieldId::PTool(idx), &tool, FieldKind::Toggle(on))
+                    })
+                    .collect();
+                rows.extend(grouped("Инструменты", tools));
             }
             // В имперсонации инструментов нет (spec §11.8) — только сис. сообщение.
             Subsection::Impersonation => {
-                rows.push(row(
-                    FieldId::PImpSystem,
-                    "Системное сообщение",
-                    FieldKind::Text(p.impersonation_system_message.clone()),
+                rows.extend(grouped(
+                    "Персона",
+                    vec![row(
+                        FieldId::PImpSystem,
+                        "Системное сообщение",
+                        FieldKind::Text(p.impersonation_system_message.clone()),
+                    )],
                 ));
             }
         }
@@ -1583,9 +1695,24 @@ impl SettingsScreen {
         }
     }
 
+    /// Число редактируемых полей секции (для счётчика в меню слева).
+    fn section_field_count(&self, s: Section) -> usize {
+        match s {
+            Section::Model => self.model_fields().len(),
+            Section::Sampling => self.sampling_fields().len(),
+            Section::Tools => self.tool_fields().len(),
+            Section::Memory => self.memory_fields().len(),
+            Section::Profiles => self.profile_fields().len(),
+            Section::Interface => self.interface_fields().len(),
+        }
+    }
+
     fn render_menu(&self, frame: &mut Frame, area: Rect) {
         let palette = self.palette();
         let focused = self.focus == Focus::Menu;
+        // Ширина под содержимое строки меню (минус правая рамка) — для правого
+        // выравнивания счётчика полей.
+        let inner_w = area.width.saturating_sub(1) as usize;
         // Активная секция помечается цветным рейлом и насыщенным заголовком вне
         // зависимости от фокуса; выбор клавиатурой подсвечивает List highlight.
         let items: Vec<ListItem> = SECTIONS
@@ -1603,7 +1730,16 @@ impl SettingsScreen {
                 } else {
                     Span::styled(s.title(), palette.muted_style())
                 };
-                ListItem::new(Line::from(vec![bar, title]))
+                // Счётчик полей секции, прижатый к правому краю меню.
+                let count = self.section_field_count(*s).to_string();
+                let used = 2 + label_width(s.title()) + count.chars().count();
+                let pad = inner_w.saturating_sub(used).max(1);
+                ListItem::new(Line::from(vec![
+                    bar,
+                    title,
+                    Span::raw(" ".repeat(pad)),
+                    Span::styled(count, palette.muted_style()),
+                ]))
             })
             .collect();
         let block = Block::default()
@@ -1631,29 +1767,50 @@ impl SettingsScreen {
     fn render_fields(&self, frame: &mut Frame, area: Rect) {
         let fields = self.fields();
         let focused = self.focus == Focus::Fields;
-        // Подсказка-описание сфокусированного поля (если оно есть) — отдельной
-        // строкой внизу секции. Резервируем место только когда описание есть,
-        // чтобы прочие секции выглядели как раньше. Неподдерживаемые облаком
-        // параметры сэмплинга в облачном режиме не показываются вовсе (ADR 0004).
         let focused_field = focused.then(|| fields.get(self.field_idx)).flatten();
-        let description: Option<&'static str> = focused_field.and_then(|f| field_description(f.id));
-        let desc_h = if description.is_some() { 4 } else { 0 };
+        let palette = self.palette();
+
+        // Нижняя панель (полное значение выбранного поля + описание) резервируется
+        // всегда, когда есть поля — так список не «прыгает» при смене поля/фокуса.
+        let desc_h: u16 = if fields.is_empty() { 0 } else { 4 };
         let [list_area, desc_area] =
             Layout::vertical([Constraint::Min(1), Constraint::Length(desc_h)]).areas(area);
-        // Колонку со значениями (в т.ч. чекбоксы [x]) выравниваем по самой длинной
-        // подписи — иначе при разной длине имён инструментов [x] «гуляют». Минимум 28,
-        // чтобы короткие секции выглядели как раньше.
-        let label_col = fields
-            .iter()
-            .map(|f| label_width(&f.label))
-            .max()
-            .unwrap_or(0)
-            .max(28);
-        let palette = self.palette();
-        let items: Vec<ListItem> = fields
-            .iter()
-            .map(|f| ListItem::new(render_field_line(f, label_col, &palette)))
-            .collect();
+
+        // Колонку значений выравниваем по самой длинной подписи ВНУТРИ группы (не
+        // всей секции): одно длинное имя больше не отгоняет значения других групп.
+        let mut group_col: HashMap<&str, usize> = HashMap::new();
+        for f in &fields {
+            let w = group_col.entry(f.group).or_insert(0);
+            *w = (*w).max(label_width(&f.label));
+        }
+        const MIN_LABEL_COL: usize = 20;
+
+        // Строим элементы: заголовок группы вставляется на переходе к новой
+        // непустой группе; `select` — позиция выбранного поля среди элементов (с
+        // учётом заголовков) для подсветки/скролла.
+        let inner_w = list_area.width as usize;
+        let mut items: Vec<ListItem> = Vec::with_capacity(fields.len() + 8);
+        let mut select: Option<usize> = None;
+        let mut prev_group: Option<&str> = None;
+        for (i, f) in fields.iter().enumerate() {
+            if !f.group.is_empty() && prev_group != Some(f.group) {
+                items.push(ListItem::new(header_line(f.group, inner_w, &palette)));
+            }
+            prev_group = Some(f.group);
+            if focused && i == self.field_idx {
+                select = Some(items.len());
+            }
+            let col = group_col
+                .get(f.group)
+                .copied()
+                .unwrap_or(0)
+                .max(MIN_LABEL_COL);
+            // Ширина под значение: минус подпись+отступ и правый зазор под скроллбар.
+            let value_w = inner_w.saturating_sub(col + 2);
+            items.push(ListItem::new(render_field_line(f, col, value_w, &palette)));
+        }
+        let total = items.len();
+
         let block = Block::default()
             .borders(Borders::NONE)
             .title(Line::from(vec![
@@ -1673,15 +1830,16 @@ impl SettingsScreen {
         };
         let list = List::new(items).block(block).highlight_style(hl);
         let mut state = ListState::default();
-        if focused && !fields.is_empty() {
-            state.select(Some(self.field_idx.min(fields.len() - 1)));
+        if let Some(sel) = select {
+            state.select(Some(sel));
         }
         frame.render_stateful_widget(list, list_area, &mut state);
 
-        // Скроллбар, когда полей больше видимой высоты. Рисуем поверх правой
-        // рамки экрана настроек: `fields_area` доходит ровно до неё (inner
-        // панели), поэтому колонка `list_area.right()` — это линия рамки.
-        // Верхнюю строку списка занимает титул секции — бар идёт ниже него.
+        // Скроллбар, когда элементов больше видимой высоты. Рисуем поверх правой
+        // рамки экрана настроек: `fields_area` доходит ровно до неё (inner панели),
+        // поэтому колонка `list_area.right()` — это линия рамки. Верхнюю строку
+        // списка занимает титул секции — бар идёт ниже него. Длина содержимого —
+        // ПОЛНОЕ число элементов (заголовки групп тоже занимают строки).
         if list_area.height > 1 {
             let bar = Rect {
                 y: list_area.y + 1,
@@ -1692,7 +1850,7 @@ impl SettingsScreen {
             render_scrollbar(
                 frame,
                 bar,
-                fields.len(),
+                total,
                 bar.height as usize,
                 state.offset(),
                 true, // рамка экрана настроек рисуется в фокусном цвете
@@ -1700,10 +1858,35 @@ impl SettingsScreen {
             );
         }
 
-        if let Some(text) = description {
-            let para = Paragraph::new(text)
-                .block(Block::default().borders(Borders::TOP))
-                .style(Style::new().dim())
+        // Нижняя панель: полное значение выбранного текстового поля (пути целиком,
+        // в списке они усечены «…») + описание-подсказка.
+        if desc_h > 0 {
+            let mut lines: Vec<Line<'static>> = Vec::new();
+            if let Some(f) = focused_field {
+                if let FieldKind::Text(v) = &f.kind {
+                    let shown = v.trim();
+                    // Полное значение показываем только для «длинных» полей (пути, URL,
+                    // системное сообщение) — в списке они усекаются «…». Короткие
+                    // значения (числа, host) в списке видны целиком, дублировать незачем.
+                    let long =
+                        crate::shared::wrap::display_width(&shown.chars().collect::<Vec<_>>()) > 32;
+                    if !shown.is_empty() && shown != "—" && long {
+                        // Ограничиваем превью (многострочное системное сообщение
+                        // может быть огромным) — панель всё равно клипует по высоте.
+                        let preview: String = shown.chars().take(400).collect();
+                        lines.push(Line::styled(preview, Style::new().fg(palette.text)));
+                    }
+                }
+                if let Some(text) = field_description(f.id) {
+                    lines.push(Line::styled(text, palette.muted_style()));
+                }
+            }
+            let para = Paragraph::new(lines)
+                .block(
+                    Block::default()
+                        .borders(Borders::TOP)
+                        .border_style(palette.border_style(false)),
+                )
                 .wrap(Wrap { trim: true });
             frame.render_widget(para, desc_area);
         }
@@ -1797,6 +1980,24 @@ fn field_description(id: FieldId) -> Option<&'static str> {
         FieldId::XDraftNMin | FieldId::IxDraftNMin => Some(
             "Минимум черновых токенов за шаг (--spec-draft-n-min). Пусто — по \
              умолчанию (0).",
+        ),
+        FieldId::MaxToolRounds => Some(
+            "Максимум раундов клиентского agentic-loop за один ответ: сколько раз \
+             модель может вызвать инструменты подряд, прежде чем цикл принудительно \
+             завершится. Защита от зацикливания (по умолчанию 8).",
+        ),
+        FieldId::TSubMaxTokens => Some(
+            "Лимит токенов в ответе субагента (call_subagent) — независимого одно-ходового \
+             запроса без истории и инструментов.",
+        ),
+        FieldId::TSubTimeout => Some("Таймаут запроса субагента (call_subagent) в секундах."),
+        FieldId::TWeb => Some(
+            "Разрешить инструменты web_search и fetch_url (сетевой доступ). Мастер-гейт: \
+             при выключении оба инструмента недоступны модели независимо от настроек профиля.",
+        ),
+        FieldId::TPython => Some(
+            "Разрешить инструмент python_exec (исполнение кода в отдельном процессе). \
+             Выключено по умолчанию: код исполняется на вашей машине.",
         ),
         FieldId::TWebFetch => Some(
             "Загружать страницы результатов web-поиска, извлекать читаемый текст и \
@@ -1901,7 +2102,17 @@ fn row(id: FieldId, label: &str, kind: FieldKind) -> FieldRow {
         id,
         label: label.to_string(),
         kind,
+        group: "",
     }
+}
+
+/// Проставляет группу всем строкам батча — секции строятся как серии
+/// `grouped("Группа", vec![...])`, а заголовок группы UI ставит на переходе.
+fn grouped(group: &'static str, mut rows: Vec<FieldRow>) -> Vec<FieldRow> {
+    for r in &mut rows {
+        r.group = group;
+    }
+    rows
 }
 
 /// Текстовая строка из `Option<String>` (пусто → «—»).
@@ -1974,48 +2185,64 @@ const IMP_MANAGED_IDS: ManagedFieldIds = ManagedFieldIds {
     port: FieldId::IxPort,
 };
 
-/// Поля managed-сервера `llama-server` (общие для движка ассистента/имперсонации).
+/// Поля managed-сервера `llama-server` (общие для движка ассистента/имперсонации),
+/// разложенные по смысловым группам: Сервер / Модель / Производительность /
+/// Спекулятивное декодирование.
 fn managed_rows(m: &ManagedSettings, ids: ManagedFieldIds) -> Vec<FieldRow> {
-    let mut rows = vec![
-        text_row(ids.binary, "Бинарник llama-server", &m.binary),
-        text_row(ids.model, "GGUF-модель (-m)", &m.model_path),
-        num_field(ids.ngl, "GPU-слои (-ngl)", m.gpu_layers),
-        num_field(ids.ctx, "Контекст (-c)", m.context_size),
-        row(
-            ids.flash_attn,
-            "FlashAttn (--flash-attn)",
-            FieldKind::Choice(m.flash_attn.label().to_string()),
-        ),
-        row(ids.jinja, "Шаблон (--jinja)", FieldKind::Toggle(m.jinja)),
-        row(
-            ids.no_mmap,
-            "No-mmap (--no-mmap)",
-            FieldKind::Toggle(m.no_mmap),
-        ),
-        row(
-            ids.spec_type,
-            "Спек. декод. (--spec-type)",
-            FieldKind::Choice(m.spec_type.label().to_string()),
-        ),
-    ];
+    let mut rows = grouped(
+        "Сервер",
+        vec![
+            text_row(ids.binary, "Бинарник llama-server", &m.binary),
+            row(ids.host, "Host", FieldKind::Text(m.host.clone())),
+            num_field(ids.port, "Порт", m.port),
+        ],
+    );
+    rows.extend(grouped(
+        "Модель",
+        vec![
+            text_row(ids.model, "GGUF-модель (-m)", &m.model_path),
+            num_field(ids.ctx, "Контекст (-c)", m.context_size),
+            row(ids.jinja, "Шаблон (--jinja)", FieldKind::Toggle(m.jinja)),
+        ],
+    ));
+    rows.extend(grouped(
+        "Производительность",
+        vec![
+            num_field(ids.ngl, "GPU-слои (-ngl)", m.gpu_layers),
+            row(
+                ids.flash_attn,
+                "FlashAttn (--flash-attn)",
+                FieldKind::Choice(m.flash_attn.label().to_string()),
+            ),
+            row(
+                ids.no_mmap,
+                "No-mmap (--no-mmap)",
+                FieldKind::Toggle(m.no_mmap),
+            ),
+        ],
+    ));
+    let mut spec = vec![row(
+        ids.spec_type,
+        "Спек. декод. (--spec-type)",
+        FieldKind::Choice(m.spec_type.label().to_string()),
+    )];
     // Поля черновой модели показываем только для типов draft-* (им нужна модель);
     // ngram-* и none их не используют — не загромождаем секцию.
     if m.spec_type.needs_draft_model() {
-        rows.push(text_row(
+        spec.push(text_row(
             ids.draft_model,
             "Черновая модель (-md)",
             &m.draft_model,
         ));
-        rows.push(num_row(
+        spec.push(num_row(
             ids.draft_ngl,
             "Черновик GPU-слои (-ngld)",
             m.draft_gpu_layers,
         ));
-        rows.push(num_row(ids.draft_n_max, "Черновик n-max", m.draft_n_max));
-        rows.push(num_row(ids.draft_n_min, "Черновик n-min", m.draft_n_min));
+        spec.push(num_row(ids.draft_n_max, "Черновик n-max", m.draft_n_max));
+        spec.push(num_row(ids.draft_n_min, "Черновик n-min", m.draft_n_min));
     }
-    rows.push(row(ids.host, "Host", FieldKind::Text(m.host.clone())));
-    rows.push(num_field(ids.port, "Порт", m.port));
+    rows.extend(grouped("Спекулятивное декодирование", spec));
     rows
 }
 
@@ -2150,9 +2377,27 @@ fn label_width(label: &str) -> usize {
     crate::shared::wrap::display_width(&label.chars().collect::<Vec<_>>())
 }
 
+/// Заголовок группы полей: `Группа ────────` на всю ширину. Имя — приглушённо-
+/// жирным, продолжение — линией цветом рамки. `─` входит в WGL4 → без компат-замены.
+fn header_line(name: &str, width: usize, palette: &Palette) -> Line<'static> {
+    let label = format!(" {name} ");
+    let used = label_width(&label);
+    let dashes = width.saturating_sub(used + 1);
+    Line::from(vec![
+        Span::styled(label, Style::new().fg(palette.muted).bold()),
+        Span::styled("─".repeat(dashes), Style::new().fg(palette.border)),
+    ])
+}
+
 /// Строка поля: подпись + значение, окрашенное по типу (тумблер — зелёный/
 /// приглушённый, выбор — синий, прочерк/пусто — цвет рамки, текст — основной).
-fn render_field_line(f: &FieldRow, label_col: usize, palette: &Palette) -> Line<'static> {
+/// Значение усекается по `value_w` с «…» (полностью его видно в нижней панели).
+fn render_field_line(
+    f: &FieldRow,
+    label_col: usize,
+    value_w: usize,
+    palette: &Palette,
+) -> Line<'static> {
     let (value, value_style) = match &f.kind {
         FieldKind::Toggle(on) => {
             if *on {
@@ -2172,6 +2417,7 @@ fn render_field_line(f: &FieldRow, label_col: usize, palette: &Palette) -> Line<
             (v.clone(), style)
         }
     };
+    let (value, _) = truncate_to_width(&value, value_w.max(1));
     // Дополняем подпись пробелами до ширины колонки по реальной ширине в колонках
     // (Rust `{:<N}` считает символы, а не колонки — для CJK/эмодзи это разъезжается).
     let pad = label_col.saturating_sub(label_width(&f.label));
@@ -2180,6 +2426,32 @@ fn render_field_line(f: &FieldRow, label_col: usize, palette: &Palette) -> Line<
         Span::raw(" ".repeat(pad + 1)),
         Span::styled(value, value_style),
     ])
+}
+
+/// Усечение строки до `max` колонок с добавлением «…» (WGL4-безопасный). Возвращает
+/// усечённую строку и её фактическую ширину в колонках.
+fn truncate_to_width(s: &str, max: usize) -> (String, usize) {
+    let chars: Vec<char> = s.chars().collect();
+    let full = crate::shared::wrap::display_width(&chars);
+    if full <= max {
+        return (s.to_string(), full);
+    }
+    if max == 0 {
+        return (String::new(), 0);
+    }
+    let budget = max.saturating_sub(1); // место под «…»
+    let mut out = String::new();
+    let mut w = 0;
+    for i in 0..chars.len() {
+        let cw = crate::shared::wrap::width_at(&chars, i);
+        if w + cw > budget {
+            break;
+        }
+        w += cw;
+        out.push(chars[i]);
+    }
+    out.push('…');
+    (out, w + 1)
 }
 
 fn mode_label(m: ServerMode) -> String {
@@ -2401,6 +2673,31 @@ mod tests {
         KeyEvent::new(KeyCode::Char(c), KeyModifiers::CONTROL)
     }
 
+    /// Переходит на нужную секцию через Tab (устойчиво к порядку секций).
+    /// После вызова фокус в меню (Tab сбрасывает его), поля не фокусированы.
+    fn goto_section(s: &mut SettingsScreen, sec: Section) {
+        for _ in 0..SECTIONS.len() {
+            if s.section() == sec {
+                return;
+            }
+            s.handle_key(key(KeyCode::Tab));
+        }
+        assert_eq!(s.section(), sec, "секция {sec:?} не найдена");
+    }
+
+    /// Фокусирует поля и доходит вниз до поля `id` (устойчиво к группам/порядку).
+    /// Предполагает, что фокус в меню (как сразу после [`goto_section`]).
+    fn goto_field(s: &mut SettingsScreen, id: FieldId) {
+        s.handle_key(key(KeyCode::Enter)); // фокус на поля
+        for _ in 0..300 {
+            if s.fields().get(s.field_idx).map(|f| f.id) == Some(id) {
+                return;
+            }
+            s.handle_key(key(KeyCode::Down));
+        }
+        panic!("поле {id:?} не найдено в секции {:?}", s.section());
+    }
+
     #[test]
     fn esc_closes() {
         let mut s = screen();
@@ -2425,7 +2722,7 @@ mod tests {
         let mut s = screen();
         assert_eq!(s.section(), Section::Model);
         s.handle_key(key(KeyCode::Tab));
-        assert_eq!(s.section(), Section::Inference);
+        assert_eq!(s.section(), Section::Sampling);
         s.handle_key(KeyEvent::new(KeyCode::BackTab, KeyModifiers::NONE));
         assert_eq!(s.section(), Section::Model);
     }
@@ -2433,12 +2730,9 @@ mod tests {
     #[test]
     fn toggle_web_emits_save_with_flipped_value() {
         let mut s = screen();
-        // Переходим в Инструменты, в список полей, на первый тумблер (web).
-        s.handle_key(key(KeyCode::Tab)); // Inference
-        s.handle_key(key(KeyCode::Tab)); // Sampling
-        s.handle_key(key(KeyCode::Tab)); // Profiles
-        s.handle_key(key(KeyCode::Tab)); // Tools
-        s.handle_key(key(KeyCode::Enter)); // фокус на поля
+        // Переходим в Инструменты, на тумблер web-поиска.
+        goto_section(&mut s, Section::Tools);
+        goto_field(&mut s, FieldId::TWeb);
         let intent = s.handle_key(key(KeyCode::Char(' ')));
         match intent {
             Some(SettingsIntent::SaveConfig(c)) => assert!(!c.tools.web_enabled),
@@ -2496,9 +2790,7 @@ mod tests {
     #[test]
     fn impersonation_profile_subsection_has_no_tools() {
         let mut s = screen();
-        for _ in 0..3 {
-            s.handle_key(key(KeyCode::Tab)); // → Profiles
-        }
+        goto_section(&mut s, Section::Profiles);
         s.handle_key(key(KeyCode::Enter)); // фокус на поля; PSelect
         s.handle_key(key(KeyCode::Down)); // PName
         s.handle_key(key(KeyCode::Down)); // ProfileSub
@@ -2515,11 +2807,7 @@ mod tests {
     #[test]
     fn editing_model_commits_text() {
         let mut s = screen();
-        s.handle_key(key(KeyCode::Enter)); // фокус на поля (ModelSub)
-        // Managed-режим: ModelSub → XMode → XBinary → XModel (URL скрыт в managed).
-        for _ in 0..3 {
-            s.handle_key(key(KeyCode::Down));
-        }
+        goto_field(&mut s, FieldId::XModel); // GGUF-модель (группа «Модель»)
         s.handle_key(key(KeyCode::Enter)); // открыть редактор XModel
         assert!(s.editor.is_some());
         for c in "gemma.gguf".chars() {
@@ -2553,9 +2841,7 @@ mod tests {
     #[test]
     fn create_and_delete_profile_in_profiles_section() {
         let mut s = screen();
-        for _ in 0..3 {
-            s.handle_key(key(KeyCode::Tab));
-        }
+        goto_section(&mut s, Section::Profiles);
         assert_eq!(s.section(), Section::Profiles);
         let create = s.handle_key(ctrl('n'));
         assert!(matches!(create, Some(SettingsIntent::CreateProfile { .. })));
@@ -2567,14 +2853,8 @@ mod tests {
     #[test]
     fn toggling_profile_tool_emits_save_profile() {
         let mut s = screen();
-        for _ in 0..3 {
-            s.handle_key(key(KeyCode::Tab));
-        }
-        s.handle_key(key(KeyCode::Enter)); // фокус на поля
-        // Перейти к первому тумблеру (после PSelect/PName/ProfileSub/PSystem/PGreeting).
-        for _ in 0..5 {
-            s.handle_key(key(KeyCode::Down));
-        }
+        goto_section(&mut s, Section::Profiles);
+        goto_field(&mut s, FieldId::PTool(0)); // первый тумблер инструмента
         let before = s.profiles[0].enabled_tools.len();
         let intent = s.handle_key(key(KeyCode::Char(' ')));
         match intent {
@@ -2595,9 +2875,7 @@ mod tests {
             p1.enabled_tools = default_tool_ids();
             vec![p1, p2]
         });
-        for _ in 0..3 {
-            s.handle_key(key(KeyCode::Tab));
-        }
+        goto_section(&mut s, Section::Profiles);
         s.handle_key(key(KeyCode::Enter)); // поля; курсор на PSelect
         assert_eq!(s.profile_idx, 0);
         s.handle_key(key(KeyCode::Right));
@@ -2628,13 +2906,8 @@ mod tests {
     #[test]
     fn system_message_editor_is_multiline_and_keeps_newlines() {
         let mut s = screen();
-        for _ in 0..3 {
-            s.handle_key(key(KeyCode::Tab)); // → Profiles
-        }
-        s.handle_key(key(KeyCode::Enter)); // фокус на поля; PSelect
-        s.handle_key(key(KeyCode::Down)); // PName
-        s.handle_key(key(KeyCode::Down)); // ProfileSub
-        s.handle_key(key(KeyCode::Down)); // PSystem
+        goto_section(&mut s, Section::Profiles);
+        goto_field(&mut s, FieldId::PSystem);
         s.handle_key(key(KeyCode::Enter)); // открыть редактор
         let editor = s.editor.as_ref().expect("редактор открыт");
         assert!(
@@ -2658,13 +2931,8 @@ mod tests {
     #[test]
     fn ctrl_k_clears_and_restores_multiline_editor() {
         let mut s = screen();
-        for _ in 0..3 {
-            s.handle_key(key(KeyCode::Tab)); // → Profiles
-        }
-        s.handle_key(key(KeyCode::Enter)); // фокус на поля; PSelect
-        s.handle_key(key(KeyCode::Down)); // PName
-        s.handle_key(key(KeyCode::Down)); // ProfileSub
-        s.handle_key(key(KeyCode::Down)); // PSystem
+        goto_section(&mut s, Section::Profiles);
+        goto_field(&mut s, FieldId::PSystem);
         s.handle_key(key(KeyCode::Enter)); // открыть редактор (многострочный)
         s.handle_key(key(KeyCode::Char('A')));
         s.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::SHIFT));
@@ -2683,14 +2951,8 @@ mod tests {
     #[test]
     fn greeting_editor_is_multiline_and_keeps_newlines() {
         let mut s = screen();
-        for _ in 0..3 {
-            s.handle_key(key(KeyCode::Tab)); // → Profiles
-        }
-        s.handle_key(key(KeyCode::Enter)); // фокус на поля; PSelect
-        s.handle_key(key(KeyCode::Down)); // PName
-        s.handle_key(key(KeyCode::Down)); // ProfileSub
-        s.handle_key(key(KeyCode::Down)); // PSystem
-        s.handle_key(key(KeyCode::Down)); // PGreeting
+        goto_section(&mut s, Section::Profiles);
+        goto_field(&mut s, FieldId::PGreeting);
         s.handle_key(key(KeyCode::Enter)); // открыть редактор
         let editor = s.editor.as_ref().expect("редактор открыт");
         assert!(editor.multiline, "приветствие редактируется многострочно");
@@ -2843,8 +3105,7 @@ mod tests {
             (buf.area.top()..buf.area.bottom()).any(|y| buf[(x, y)].symbol() == "█")
         };
         let mut s = screen();
-        s.handle_key(key(KeyCode::Tab)); // Инференс
-        s.handle_key(key(KeyCode::Tab)); // Семплинг: полей заведомо больше высоты
+        goto_section(&mut s, Section::Sampling); // полей+заголовков заведомо больше высоты
         let mut term = Terminal::new(TestBackend::new(80, 14)).unwrap();
         term.draw(|f| s.render(f)).unwrap();
         assert!(has_thumb(&term), "переполненная секция — с бегунком");
@@ -2857,13 +3118,8 @@ mod tests {
     #[test]
     fn editing_new_sampling_field_commits() {
         let mut s = screen();
-        s.handle_key(key(KeyCode::Tab)); // Inference
-        s.handle_key(key(KeyCode::Tab)); // Sampling
-        s.handle_key(key(KeyCode::Enter)); // фокус на поля (SamplingSub)
-        // Дойти до нового поля min_p (адресуется параметрически).
-        while s.fields().get(s.field_idx).map(|f| f.id) != Some(FieldId::S(SamplingParam::MinP)) {
-            s.handle_key(key(KeyCode::Down));
-        }
+        goto_section(&mut s, Section::Sampling);
+        goto_field(&mut s, FieldId::S(SamplingParam::MinP));
         s.handle_key(key(KeyCode::Enter)); // открыть редактор min_p
         for c in "0.03".chars() {
             s.handle_key(key(KeyCode::Char(c)));
@@ -2880,8 +3136,7 @@ mod tests {
     #[test]
     fn cloud_hides_unsupported_sampling_params() {
         let mut s = screen();
-        s.handle_key(key(KeyCode::Tab)); // Inference
-        s.handle_key(key(KeyCode::Tab)); // Sampling
+        goto_section(&mut s, Section::Sampling);
         let has =
             |s: &SettingsScreen, p: SamplingParam| s.fields().iter().any(|f| f.id == FieldId::S(p));
         // Локально (managed по умолчанию) — видны все параметры.
@@ -2912,8 +3167,7 @@ mod tests {
             s.config.impersonation_engine.mode,
             ImpersonationMode::Shared
         );
-        s.handle_key(key(KeyCode::Tab)); // Inference
-        s.handle_key(key(KeyCode::Tab)); // Sampling
+        goto_section(&mut s, Section::Sampling);
         s.handle_key(key(KeyCode::Enter)); // фокус (SamplingSub)
         s.handle_key(key(KeyCode::Right)); // → подсекция Имперсонация
         assert_eq!(s.sampling_sub, Subsection::Impersonation);
@@ -2932,6 +3186,61 @@ mod tests {
             .iter()
             .any(|f| f.id == FieldId::IS(SamplingParam::TopK));
         assert!(has_topk);
+    }
+
+    #[test]
+    fn memory_section_gathers_rag_notes_self_model() {
+        // Секция «Память» собрала поля, ранее размазанные по «Инструментам».
+        let mut s = screen();
+        goto_section(&mut s, Section::Memory);
+        let ids: Vec<FieldId> = s.fields().iter().map(|f| f.id).collect();
+        for id in [
+            FieldId::RagTarget,
+            FieldId::NotesAutoConsolidate,
+            FieldId::SmMaxNarrative,
+            FieldId::SmProtocol,
+        ] {
+            assert!(ids.contains(&id), "в «Памяти» нет {id:?}");
+        }
+        // А в «Инструментах» их больше нет — там только гейты/параметры.
+        goto_section(&mut s, Section::Tools);
+        let tool_ids: Vec<FieldId> = s.fields().iter().map(|f| f.id).collect();
+        assert!(!tool_ids.contains(&FieldId::RagTarget));
+        assert!(!tool_ids.contains(&FieldId::SmMaxNarrative));
+        // max_tool_rounds переехал из бывшего «Инференса» в «Инструменты».
+        assert!(tool_ids.contains(&FieldId::MaxToolRounds));
+    }
+
+    #[test]
+    fn fields_carry_group_headers() {
+        // Поля секции размечены смысловыми группами (заголовки групп в UI).
+        let s = screen();
+        let groups: Vec<&str> = s.model_fields().iter().map(|f| f.group).collect();
+        // Подсекция/режим — вне группы; параметры сервера — в группе «Сервер».
+        assert!(groups.iter().any(|g| g.is_empty()));
+        assert!(groups.contains(&"Сервер"));
+        // Семплинг: параметры сгруппированы по смыслу.
+        let sg: Vec<&str> = s.sampling_fields().iter().map(|f| f.group).collect();
+        assert!(sg.contains(&"Основные"));
+        assert!(sg.contains(&"Рассуждения"));
+    }
+
+    #[test]
+    fn long_value_is_truncated_with_ellipsis() {
+        // Очень длинное значение усекается с «…» под ширину колонки.
+        let palette = Palette::default();
+        let f = FieldRow {
+            id: FieldId::XModel,
+            label: "GGUF-модель (-m)".into(),
+            kind: FieldKind::Text("D:\\LLM\\GGUF\\very-long-model-name-".repeat(4)),
+            group: "Модель",
+        };
+        let line = render_field_line(&f, 20, 24, &palette);
+        let rendered: String = line.spans.iter().map(|sp| sp.content.as_ref()).collect();
+        assert!(
+            rendered.contains('…'),
+            "длинное значение усечено: {rendered:?}"
+        );
     }
 
     #[test]

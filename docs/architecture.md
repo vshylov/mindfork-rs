@@ -157,7 +157,8 @@ src/
 ├─ screens/                 целостные экраны (FSD "pages"); НЕ зависят от app
 │  ├─ chat.rs               ChatScreen: всё состояние UI чата, handle_key→ChatIntent
 │  ├─ chat_list.rs          ChatListScreen: полноэкранный список чатов (Esc), → ChatListIntent
-│  └─ settings.rs           SettingsScreen: секции/поля, подсекции Ассистент/Имперсонация
+│  └─ settings.rs           SettingsScreen: секции (Модель/Семплинг/Инструменты/Память/
+│                           Профили/Интерфейс) с группами полей, подсекции Ассистент/Имперсонация
 │
 ├─ widgets/                 составные UI-блоки (FSD "widgets")
 │  ├─ message_feed.rs       лента: markdown, мысли, инлайн tool-блоки, скролл, перенос
