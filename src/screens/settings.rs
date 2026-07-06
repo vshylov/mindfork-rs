@@ -2428,8 +2428,13 @@ impl SettingsScreen {
                 },
                 palette.muted_style(),
             ));
+        // Выделение — мягкая подложка (как в списке чатов), а не инверсия всей
+        // строки: реверс свапал бы fg↔bg у каждого спана по отдельности, из-за чего
+        // зелёный рейл `▌` расползался на ~1.5 колонки (глиф — левый полублок), а
+        // разные спаны получали разный фон (рейл/заголовок/счётчик — свой). Единый
+        // `keycap_bg` + зелёный рейл поверх него читаются чисто.
         let hl = if focused {
-            Style::new().reversed()
+            Style::new().bg(palette.keycap_bg)
         } else {
             Style::new()
         };
@@ -2574,13 +2579,21 @@ impl SettingsScreen {
             let start = label_col.max(label_width(&f.label));
             let value_w = inner_w.saturating_sub(start + 4);
             items.push(ListItem::new(render_field_line(
-                f, label_col, value_w, modified, &palette,
+                f,
+                label_col,
+                value_w,
+                modified,
+                focused && i == self.field_idx,
+                &palette,
             )));
         }
         let total = items.len();
 
+        // Выделение — мягкая подложка (как в меню секций и списке чатов), а не
+        // инверсия всей строки; зелёный рейл выбранной строки добавлен в
+        // `render_field_line`.
         let hl = if focused {
-            Style::new().reversed()
+            Style::new().bg(palette.keycap_bg)
         } else {
             Style::new()
         };
@@ -3343,6 +3356,7 @@ fn render_field_line(
     label_col: usize,
     value_w: usize,
     modified: bool,
+    selected: bool,
     palette: &Palette,
 ) -> Line<'static> {
     let (value, value_style) = match &f.kind {
@@ -3378,9 +3392,14 @@ fn render_field_line(
     // Дополняем подпись пробелами до ширины колонки по реальной ширине в колонках
     // (Rust `{:<N}` считает символы, а не колонки — для CJK/эмодзи это разъезжается).
     let pad = label_col.saturating_sub(label_width(&f.label));
-    // Маркер «изменено против дефолта» (2 колонки), фиксом слева — поля выглядят
-    // отступленными под заголовком группы.
-    let marker = if modified {
+    // Левая колонка (2 клетки), фиксом — поля выглядят отступленными под
+    // заголовком группы. У выбранного поля — зелёный рейл `▌` (как активная секция
+    // в меню слева); иначе маркер «изменено против дефолта» `•`, иначе пусто. Рейл
+    // на выбранной строке важнее маркера (поле и так в фокусе; отойдёшь — `•`
+    // вернётся), поэтому имеет приоритет.
+    let marker = if selected {
+        Span::styled("▌ ", Style::new().fg(palette.success))
+    } else if modified {
         Span::styled("• ", Style::new().fg(palette.accent))
     } else {
         Span::raw("  ")
@@ -4765,12 +4784,38 @@ mod tests {
             hint: None,
             warn: false,
         };
-        let line = render_field_line(&f, 20, 24, false, &palette);
+        let line = render_field_line(&f, 20, 24, false, false, &palette);
         let rendered: String = line.spans.iter().map(|sp| sp.content.as_ref()).collect();
         assert!(
             rendered.contains('…'),
             "длинное значение усечено: {rendered:?}"
         );
+    }
+
+    #[test]
+    fn selected_field_shows_green_rail() {
+        let palette = Palette::default();
+        let f = FieldRow {
+            id: FieldId::XModel,
+            label: "GGUF-модель (-m)".into(),
+            kind: FieldKind::Text("model".into()),
+            group: "Модель",
+            hint: None,
+            warn: false,
+        };
+        // Выбранное поле — зелёный рейл `▌` в левой колонке (как активная секция меню).
+        let sel = render_field_line(&f, 20, 24, false, true, &palette);
+        assert_eq!(sel.spans[0].content.as_ref(), "▌ ");
+        assert_eq!(sel.spans[0].style.fg, Some(palette.success));
+        // Невыбранное изменённое — маркер «•».
+        let modf = render_field_line(&f, 20, 24, true, false, &palette);
+        assert_eq!(modf.spans[0].content.as_ref(), "• ");
+        // Невыбранное немодифицированное — пусто.
+        let plain = render_field_line(&f, 20, 24, false, false, &palette);
+        assert_eq!(plain.spans[0].content.as_ref(), "  ");
+        // У выбранного изменённого поля рейл приоритетнее маркера «•».
+        let both = render_field_line(&f, 20, 24, true, true, &palette);
+        assert_eq!(both.spans[0].content.as_ref(), "▌ ");
     }
 
     #[test]
