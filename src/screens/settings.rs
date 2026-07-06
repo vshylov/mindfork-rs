@@ -70,20 +70,20 @@ const SECTIONS: [Section; 6] = [
     Section::Interface,
 ];
 
-/// Подсекция «Ассистент» / «Имперсонация» внутри секций Модель/Семплинг/Профили.
-/// См. spec §11.8.
+/// Подсекция «Ассистент» / «Имперсонация» внутри секций Семплинг/Профили.
+/// См. spec §11.8. Отображается как таб-стрип над полями секции.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Subsection {
     Assistant,
     Impersonation,
 }
 
+/// Подписи вкладок [`Subsection`] (порядок = дискриминанты).
+const SUB_TABS: [&str; 2] = ["Ассистент", "Имперсонация"];
+
 impl Subsection {
     fn label(self) -> String {
-        match self {
-            Subsection::Assistant => "Ассистент".into(),
-            Subsection::Impersonation => "Имперсонация".into(),
-        }
+        SUB_TABS[self as usize].to_string()
     }
 
     fn toggled(self) -> Self {
@@ -91,6 +91,37 @@ impl Subsection {
             Subsection::Assistant => Subsection::Impersonation,
             Subsection::Impersonation => Subsection::Assistant,
         }
+    }
+}
+
+/// Подсекция секции «Модель/сервер»: три сервера приложения (зеркало чипов
+/// статус-бара чат/имп/эмб) — ассистент, имперсонация, эмбеддинги. Отображается
+/// как таб-стрип над полями. См. spec §11.6.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ModelTab {
+    Assistant,
+    Impersonation,
+    Embeddings,
+}
+
+/// Подписи вкладок [`ModelTab`] (порядок = дискриминанты).
+const MODEL_TABS: [&str; 3] = ["Ассистент", "Имперсонация", "Эмбеддинги"];
+
+impl ModelTab {
+    fn label(self) -> String {
+        MODEL_TABS[self as usize].to_string()
+    }
+
+    /// Циклический сдвиг вкладки (←/→ по таб-стрипу).
+    fn cycle(self, dir: i32) -> Self {
+        let order = [
+            ModelTab::Assistant,
+            ModelTab::Impersonation,
+            ModelTab::Embeddings,
+        ];
+        let idx = self as i32;
+        let n = order.len() as i32;
+        order[(((idx + dir) % n + n) % n) as usize]
     }
 }
 
@@ -511,8 +542,9 @@ pub struct SettingsScreen {
     focus: Focus,
     /// Выбранный профиль в секции «Профили».
     profile_idx: usize,
-    /// Активные подсекции «Ассистент»/«Имперсонация» (Модель/Семплинг/Профили).
-    model_sub: Subsection,
+    /// Активные подсекции. Модель — три вкладки (Ассистент/Имперсонация/Эмбеддинги);
+    /// Семплинг/Профили — две (Ассистент/Имперсонация).
+    model_sub: ModelTab,
     sampling_sub: Subsection,
     profile_sub: Subsection,
     editor: Option<Editor>,
@@ -528,7 +560,7 @@ impl SettingsScreen {
             field_idx: 0,
             focus: Focus::Menu,
             profile_idx: 0,
-            model_sub: Subsection::Assistant,
+            model_sub: ModelTab::Assistant,
             sampling_sub: Subsection::Assistant,
             profile_sub: Subsection::Assistant,
             editor: None,
@@ -569,15 +601,17 @@ impl SettingsScreen {
     }
 
     fn model_fields(&self) -> Vec<FieldRow> {
+        // Селектор подсекции (таб-стрип) — всегда поле 0; в списке он не рисуется.
+        let sub = row(
+            FieldId::ModelSub,
+            "Подсекция",
+            FieldKind::Choice(self.model_sub.label()),
+        );
         match self.model_sub {
-            Subsection::Assistant => {
+            ModelTab::Assistant => {
                 let x = &self.config.engine;
                 let mut rows = vec![
-                    row(
-                        FieldId::ModelSub,
-                        "Подсекция",
-                        FieldKind::Choice(self.model_sub.label()),
-                    ),
+                    sub,
                     row(
                         FieldId::XMode,
                         "Режим",
@@ -611,14 +645,10 @@ impl SettingsScreen {
                 }
                 rows
             }
-            Subsection::Impersonation => {
+            ModelTab::Impersonation => {
                 let x = &self.config.impersonation_engine;
                 let mut rows = vec![
-                    row(
-                        FieldId::ModelSub,
-                        "Подсекция",
-                        FieldKind::Choice(self.model_sub.label()),
-                    ),
+                    sub,
                     row(
                         FieldId::IxMode,
                         "Режим",
@@ -653,6 +683,51 @@ impl SettingsScreen {
                             FieldId::IxUrl,
                         ),
                     )),
+                }
+                rows
+            }
+            ModelTab::Embeddings => {
+                // Эмбеддинги — выделенный сервер (память/RAG). Поля по режиму
+                // (managed → llama-server; external/облако → URL/модель/ключ).
+                let e = &self.config.embed;
+                let mut rows = vec![
+                    sub,
+                    row(
+                        FieldId::EMode,
+                        "Режим",
+                        FieldKind::Choice(mode_label(e.mode)),
+                    ),
+                ];
+                match e.mode {
+                    ServerMode::Managed => rows.extend(grouped(
+                        "Сервер",
+                        vec![
+                            text_row(FieldId::EBinary, "Бинарник llama-server", &e.managed.binary),
+                            text_row(FieldId::EModel, "GGUF-модель (-m)", &e.managed.model_path),
+                            num_field(FieldId::EPort, "Порт", e.managed.port),
+                        ],
+                    )),
+                    ServerMode::External => rows.extend(grouped(
+                        "Сервер",
+                        vec![
+                            text_row(FieldId::EUrl, "URL (external)", &e.external.url),
+                            text_row(FieldId::EModelName, "Модель (опц.)", &e.external.model_name),
+                        ],
+                    )),
+                    // Claude поля показывает, но Anthropic не умеет embeddings —
+                    // супервайзер вернёт «недоступно» (RAG отключится). ADR 0004.
+                    ServerMode::OpenAi | ServerMode::Gemini | ServerMode::Claude => {
+                        let none = CloudSettings::default();
+                        let c = e.cloud().unwrap_or(&none);
+                        rows.extend(grouped(
+                            "Провайдер",
+                            vec![
+                                text_row(FieldId::EModelName, "Модель", &c.model_name),
+                                text_row(FieldId::EApiKeyEnv, "API-ключ (env)", &c.api_key_env),
+                                text_row(FieldId::EUrl, "Base URL (опц.)", &c.url),
+                            ],
+                        ))
+                    }
                 }
                 rows
             }
@@ -692,7 +767,6 @@ impl SettingsScreen {
 
     fn tool_fields(&self) -> Vec<FieldRow> {
         let t = &self.config.tools;
-        let e = &self.config.embed;
         let mut rows = grouped(
             "Агентный цикл",
             vec![
@@ -750,37 +824,6 @@ impl SettingsScreen {
                 text_row(FieldId::TFsRoot, "Каталог-песочница", &t.fs_root),
             ],
         ));
-        // Эмбеддинги — отдельный сервер (память/RAG). Поля по режиму (managed →
-        // llama-server; external/облако → URL/модель/ключ). Облачные эмбеддинги есть
-        // у OpenAI/Gemini (ADR 0004).
-        let mut embed = vec![row(
-            FieldId::EMode,
-            "Режим",
-            FieldKind::Choice(mode_label(e.mode)),
-        )];
-        match e.mode {
-            ServerMode::Managed => embed.extend([
-                text_row(FieldId::EBinary, "Бинарник llama-server", &e.managed.binary),
-                text_row(FieldId::EModel, "GGUF-модель (-m)", &e.managed.model_path),
-                num_field(FieldId::EPort, "Порт", e.managed.port),
-            ]),
-            ServerMode::External => embed.extend([
-                text_row(FieldId::EUrl, "URL (external)", &e.external.url),
-                text_row(FieldId::EModelName, "Модель (опц.)", &e.external.model_name),
-            ]),
-            // Claude в эмбеддингах поля показывает, но Anthropic не умеет embeddings —
-            // супервайзер вернёт «недоступно» (RAG отключится). См. ADR 0004.
-            ServerMode::OpenAi | ServerMode::Gemini | ServerMode::Claude => {
-                let none = CloudSettings::default();
-                let c = e.cloud().unwrap_or(&none);
-                embed.extend([
-                    text_row(FieldId::EModelName, "Модель", &c.model_name),
-                    text_row(FieldId::EApiKeyEnv, "API-ключ (env)", &c.api_key_env),
-                    text_row(FieldId::EUrl, "Base URL (опц.)", &c.url),
-                ])
-            }
-        }
-        rows.extend(grouped("Эмбеддинги (сервер)", embed));
         rows
     }
 
@@ -934,18 +977,20 @@ impl SettingsScreen {
                 FieldKind::Choice("(нет профилей)".to_string()),
             )];
         };
+        // ProfileSub — селектор подсекции (таб-стрип, поле 0, в списке не рисуется);
+        // выбор профиля и имя — секционные (общие для обеих подсекций).
         let mut rows = vec![
+            row(
+                FieldId::ProfileSub,
+                "Подсекция",
+                FieldKind::Choice(self.profile_sub.label()),
+            ),
             row(
                 FieldId::PSelect,
                 "Профиль",
                 FieldKind::Choice(p.name.clone()),
             ),
             row(FieldId::PName, "Имя", FieldKind::Text(p.name.clone())),
-            row(
-                FieldId::ProfileSub,
-                "Подсекция",
-                FieldKind::Choice(self.profile_sub.label()),
-            ),
         ];
         match self.profile_sub {
             Subsection::Assistant => {
@@ -1283,10 +1328,10 @@ impl SettingsScreen {
     /// Циклически меняет значение Choice-поля.
     fn cycle_field(&mut self, id: FieldId, dir: i32) -> Option<SettingsIntent> {
         match id {
-            // Переключение подсекций «Ассистент»/«Имперсонация» — чисто навигация
-            // (без сохранения). Сбрасываем курсор на селектор подсекции.
+            // Переключение подсекций (таб-стрип) — чисто навигация, без сохранения.
+            // Модель — три вкладки с учётом направления; Семплинг/Профили — две.
             FieldId::ModelSub => {
-                self.model_sub = self.model_sub.toggled();
+                self.model_sub = self.model_sub.cycle(dir);
                 None
             }
             FieldId::SamplingSub => {
@@ -1641,16 +1686,23 @@ impl SettingsScreen {
     pub fn render(&mut self, frame: &mut Frame) {
         let area = frame.area();
         let palette = self.palette();
-        let mut footer = vec![Span::raw("")];
-        for (key, desc) in [
+        // Контекстный футер: базовые хоткеи + специфичные для секции. В «Профилях» —
+        // создание/удаление профиля.
+        let mut hints: Vec<(&str, &str)> = vec![
             ("Tab", "секция"),
             ("↑↓", "поля"),
             ("Enter", "правка"),
             ("Space", "тумблер"),
             ("←→", "выбор"),
-            ("Esc", "назад"),
-            ("Ctrl+C", "выход"),
-        ] {
+        ];
+        if self.section() == Section::Profiles {
+            hints.push(("Ctrl+N", "новый"));
+            hints.push(("Ctrl+D", "удалить"));
+        }
+        hints.push(("Esc", "назад"));
+        hints.push(("Ctrl+C", "выход"));
+        let mut footer = vec![Span::raw("")];
+        for (key, desc) in hints {
             footer.push(palette.keycap(key));
             footer.push(Span::styled(format!(" {desc}  "), palette.muted_style()));
         }
@@ -1764,22 +1816,63 @@ impl SettingsScreen {
         frame.render_stateful_widget(list, area, &mut state);
     }
 
+    /// Таб-стрип подсекции для текущей секции: (подписи вкладок, активная).
+    /// `None` — секция без подсекций.
+    fn subsection_tabs(&self) -> Option<(&'static [&'static str], usize)> {
+        match self.section() {
+            Section::Model => Some((&MODEL_TABS, self.model_sub as usize)),
+            Section::Sampling => Some((&SUB_TABS, self.sampling_sub as usize)),
+            Section::Profiles => Some((&SUB_TABS, self.profile_sub as usize)),
+            _ => None,
+        }
+    }
+
     fn render_fields(&self, frame: &mut Frame, area: Rect) {
         let fields = self.fields();
         let focused = self.focus == Focus::Fields;
         let focused_field = focused.then(|| fields.get(self.field_idx)).flatten();
         let palette = self.palette();
 
-        // Нижняя панель (полное значение выбранного поля + описание) резервируется
-        // всегда, когда есть поля — так список не «прыгает» при смене поля/фокуса.
+        // Селектор подсекции (если есть в текущем наборе полей) рисуется не строкой
+        // списка, а таб-стрипом над ним. Его позиция нужна для «фокуса на вкладках».
+        let sub_pos = fields.iter().position(|f| is_subsection(f.id));
+        let tabs = sub_pos.and(self.subsection_tabs());
+
+        // Шапка: титул секции (всегда) + таб-стрип (если есть подсекции). Нижняя
+        // панель (значение+описание) резервируется всегда при наличии полей.
         let desc_h: u16 = if fields.is_empty() { 0 } else { 4 };
-        let [list_area, desc_area] =
-            Layout::vertical([Constraint::Min(1), Constraint::Length(desc_h)]).areas(area);
+        let head_h: u16 = 1 + if tabs.is_some() { 1 } else { 0 };
+        let [head_area, list_area, desc_area] = Layout::vertical([
+            Constraint::Length(head_h),
+            Constraint::Min(1),
+            Constraint::Length(desc_h),
+        ])
+        .areas(area);
+
+        let mut head_lines = vec![Line::from(vec![
+            Span::styled(
+                format!(" {} ", palette.glyphs().title_marker),
+                Style::new().fg(palette.assistant),
+            ),
+            Span::styled(
+                format!("{} ", self.section().title()),
+                Style::new().fg(palette.text).bold(),
+            ),
+        ])];
+        if let Some((labels, active)) = tabs {
+            let on_tabs = focused && sub_pos == Some(self.field_idx);
+            head_lines.push(tab_strip_line(labels, active, on_tabs, &palette));
+        }
+        frame.render_widget(Paragraph::new(head_lines), head_area);
 
         // Колонку значений выравниваем по самой длинной подписи ВНУТРИ группы (не
         // всей секции): одно длинное имя больше не отгоняет значения других групп.
+        // Селектор подсекции в списке не рисуется — из выравнивания исключён.
         let mut group_col: HashMap<&str, usize> = HashMap::new();
         for f in &fields {
+            if is_subsection(f.id) {
+                continue;
+            }
             let w = group_col.entry(f.group).or_insert(0);
             *w = (*w).max(label_width(&f.label));
         }
@@ -1787,12 +1880,16 @@ impl SettingsScreen {
 
         // Строим элементы: заголовок группы вставляется на переходе к новой
         // непустой группе; `select` — позиция выбранного поля среди элементов (с
-        // учётом заголовков) для подсветки/скролла.
+        // учётом заголовков) для подсветки/скролла. Селектор подсекции пропускаем
+        // (он — таб-стрип): когда курсор на нём, список без выделения.
         let inner_w = list_area.width as usize;
         let mut items: Vec<ListItem> = Vec::with_capacity(fields.len() + 8);
         let mut select: Option<usize> = None;
         let mut prev_group: Option<&str> = None;
         for (i, f) in fields.iter().enumerate() {
+            if is_subsection(f.id) {
+                continue;
+            }
             if !f.group.is_empty() && prev_group != Some(f.group) {
                 items.push(ListItem::new(header_line(f.group, inner_w, &palette)));
             }
@@ -1811,24 +1908,14 @@ impl SettingsScreen {
         }
         let total = items.len();
 
-        let block = Block::default()
-            .borders(Borders::NONE)
-            .title(Line::from(vec![
-                Span::styled(
-                    format!(" {} ", palette.glyphs().title_marker),
-                    Style::new().fg(palette.assistant),
-                ),
-                Span::styled(
-                    format!("{} ", self.section().title()),
-                    Style::new().fg(palette.text).bold(),
-                ),
-            ]));
         let hl = if focused {
             Style::new().reversed()
         } else {
             Style::new()
         };
-        let list = List::new(items).block(block).highlight_style(hl);
+        let list = List::new(items)
+            .block(Block::default().borders(Borders::NONE))
+            .highlight_style(hl);
         let mut state = ListState::default();
         if let Some(sel) = select {
             state.select(Some(sel));
@@ -1837,13 +1924,11 @@ impl SettingsScreen {
 
         // Скроллбар, когда элементов больше видимой высоты. Рисуем поверх правой
         // рамки экрана настроек: `fields_area` доходит ровно до неё (inner панели),
-        // поэтому колонка `list_area.right()` — это линия рамки. Верхнюю строку
-        // списка занимает титул секции — бар идёт ниже него. Длина содержимого —
-        // ПОЛНОЕ число элементов (заголовки групп тоже занимают строки).
-        if list_area.height > 1 {
+        // поэтому колонка `list_area.right()` — это линия рамки. Титул/таб-стрип
+        // теперь в отдельной шапке (не в списке) → бар на всю высоту `list_area`.
+        // Длина содержимого — ПОЛНОЕ число элементов (заголовки групп тоже строки).
+        if list_area.height > 0 {
             let bar = Rect {
-                y: list_area.y + 1,
-                height: list_area.height - 1,
                 width: list_area.width + 1,
                 ..list_area
             };
@@ -1851,7 +1936,7 @@ impl SettingsScreen {
                 frame,
                 bar,
                 total,
-                bar.height as usize,
+                list_area.height as usize,
                 state.offset(),
                 true, // рамка экрана настроек рисуется в фокусном цвете
                 &palette,
@@ -2377,6 +2462,40 @@ fn label_width(label: &str) -> usize {
     crate::shared::wrap::display_width(&label.chars().collect::<Vec<_>>())
 }
 
+/// Является ли поле селектором подсекции (рисуется таб-стрипом, а не строкой списка).
+fn is_subsection(id: FieldId) -> bool {
+    matches!(
+        id,
+        FieldId::ModelSub | FieldId::SamplingSub | FieldId::ProfileSub
+    )
+}
+
+/// Таб-стрип подсекции: `Ассистент │ Имперсонация │ Эмбеддинги`. Активная вкладка
+/// выделена (при фокусе на стрипе — подложкой, иначе — акцентным цветом), справа
+/// при фокусе — подсказка `←→`. Разделитель `│` и всё содержимое — WGL4-безопасны.
+fn tab_strip_line(tabs: &[&str], active: usize, focused: bool, palette: &Palette) -> Line<'static> {
+    let mut spans: Vec<Span<'static>> = vec![Span::raw(" ")];
+    for (i, t) in tabs.iter().enumerate() {
+        if i > 0 {
+            spans.push(Span::styled(" │", palette.border_style(false)));
+        }
+        let style = if i == active {
+            if focused {
+                Style::new().fg(palette.text).bg(palette.keycap_bg).bold()
+            } else {
+                Style::new().fg(palette.accent).bold()
+            }
+        } else {
+            palette.muted_style()
+        };
+        spans.push(Span::styled(format!(" {t} "), style));
+    }
+    if focused {
+        spans.push(Span::styled("   ←→", palette.muted_style()));
+    }
+    Line::from(spans)
+}
+
 /// Заголовок группы полей: `Группа ────────` на всю ширину. Имя — приглушённо-
 /// жирным, продолжение — линией цветом рамки. `─` входит в WGL4 → без компат-замены.
 fn header_line(name: &str, width: usize, palette: &Palette) -> Line<'static> {
@@ -2771,10 +2890,10 @@ mod tests {
     #[test]
     fn model_subsection_switches_to_impersonation_fields() {
         let mut s = screen();
-        s.handle_key(key(KeyCode::Enter)); // фокус на поля (ModelSub)
+        s.handle_key(key(KeyCode::Enter)); // фокус на поля (ModelSub — таб-стрип)
         // → переключает подсекцию на «Имперсонация» (без сохранения).
         assert_eq!(s.handle_key(key(KeyCode::Right)), None);
-        assert_eq!(s.model_sub, Subsection::Impersonation);
+        assert_eq!(s.model_sub, ModelTab::Impersonation);
         // Первое поле подсекции — режим имперсонации (3 значения).
         s.handle_key(key(KeyCode::Down)); // IxMode
         // Цикл shared → managed.
@@ -2788,12 +2907,27 @@ mod tests {
     }
 
     #[test]
+    fn model_subsection_third_tab_is_embeddings() {
+        // Модель имеет третью вкладку «Эмбеддинги» (сервер переехал из «Инструментов»);
+        // цикл вкладок вправо: Ассистент → Имперсонация → Эмбеддинги.
+        let mut s = screen();
+        s.handle_key(key(KeyCode::Enter)); // ModelSub (таб-стрип)
+        s.handle_key(key(KeyCode::Right)); // → Имперсонация
+        s.handle_key(key(KeyCode::Right)); // → Эмбеддинги
+        assert_eq!(s.model_sub, ModelTab::Embeddings);
+        let ids: Vec<FieldId> = s.fields().iter().map(|f| f.id).collect();
+        assert!(ids.contains(&FieldId::EMode));
+        assert!(ids.contains(&FieldId::EBinary));
+        // В «Инструментах» эмбеддингов больше нет.
+        goto_section(&mut s, Section::Tools);
+        assert!(!s.fields().iter().any(|f| f.id == FieldId::EMode));
+    }
+
+    #[test]
     fn impersonation_profile_subsection_has_no_tools() {
         let mut s = screen();
         goto_section(&mut s, Section::Profiles);
-        s.handle_key(key(KeyCode::Enter)); // фокус на поля; PSelect
-        s.handle_key(key(KeyCode::Down)); // PName
-        s.handle_key(key(KeyCode::Down)); // ProfileSub
+        goto_field(&mut s, FieldId::ProfileSub); // таб-стрип подсекции (поле 0)
         s.handle_key(key(KeyCode::Right)); // → Имперсонация
         assert_eq!(s.profile_sub, Subsection::Impersonation);
         let fields = s.fields();
@@ -2876,7 +3010,7 @@ mod tests {
             vec![p1, p2]
         });
         goto_section(&mut s, Section::Profiles);
-        s.handle_key(key(KeyCode::Enter)); // поля; курсор на PSelect
+        goto_field(&mut s, FieldId::PSelect); // селектор профиля (после таб-стрипа)
         assert_eq!(s.profile_idx, 0);
         s.handle_key(key(KeyCode::Right));
         assert_eq!(s.profile_idx, 1);
@@ -3186,6 +3320,33 @@ mod tests {
             .iter()
             .any(|f| f.id == FieldId::IS(SamplingParam::TopK));
         assert!(has_topk);
+    }
+
+    #[test]
+    fn subsection_renders_as_tab_strip_not_list_row() {
+        use ratatui::Terminal;
+        use ratatui::backend::TestBackend;
+        let mut s = screen();
+        s.handle_key(key(KeyCode::Enter)); // фокус на поля (Модель)
+        let mut term = Terminal::new(TestBackend::new(90, 24)).unwrap();
+        term.draw(|f| s.render(f)).unwrap();
+        let buf = term.backend().buffer();
+        let text: String = (0..buf.area.height)
+            .map(|y| {
+                (0..buf.area.width)
+                    .map(|x| buf[(x, y)].symbol().to_string())
+                    .collect::<String>()
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+        // Все три вкладки подсекции модели видны как таб-стрип.
+        assert!(text.contains("Ассистент"));
+        assert!(text.contains("Эмбеддинги"));
+        // Псевдо-поле «Подсекция» больше не рисуется строкой списка.
+        assert!(
+            !text.contains("Подсекция"),
+            "селектор подсекции должен быть таб-стрипом, а не строкой списка"
+        );
     }
 
     #[test]
