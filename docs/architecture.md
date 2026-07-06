@@ -241,7 +241,15 @@ src/
    │  └─ mock.rs            mock-движок для тестов (#[cfg(test)])
    ├─ storage/              хранилище
    │  ├─ json.rs            атомарная запись (write-rename + .bak) конфиг/профили/чаты
-   │  ├─ db.rs              SQLite + sqlite-vec: notes/RAG, изоляция по profile_id
+   │  ├─ db/               SQLite + sqlite-vec: notes/RAG, изоляция по profile_id.
+   │  │  │                 God-object разбит по доменам (docs/refactoring-god-objects.md,
+   │  │  │                 этап 5; `impl Db` — несколько блоков, схема/хелперы в mod.rs):
+   │  │  ├─ mod.rs         struct Db, open/from_conn, migrate() (схема), ensure_vec_table/
+   │  │  │                 vec_dim, общие хелперы (row_to_note/parse_uuid/parse_dt/cosine)
+   │  │  ├─ notes.rs       заметки: вставка/список/правка/удаление + эмбеддинги/семантика
+   │  │  ├─ graph.rs       граф связей + замещение + цитирование источников
+   │  │  ├─ self_model.rs  модель себя: get/upsert/атомарный update
+   │  │  └─ rag.rs         RAG: документы/поиск/источники/размерность + удаление по пути
    │  └─ mod.rs             фасад Storage (потокобезопасный)
    ├─ config.rs            AppConfig и секции (Engine/Embed/Tool/Interface/Impersonation…)
    ├─ markdown.rs          свой рендерер на pulldown-cmark (ADR 0003): таблицы + LaTeX + тема
