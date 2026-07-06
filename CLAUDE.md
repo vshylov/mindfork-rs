@@ -3295,6 +3295,47 @@ web-поиск и Python под выключателями, экран наст�
   `value_column_is_shared_across_groups` (рендер: значения трёх групп «Инструментов»
   в одной колонке). **797 тестов зелёные** (+3), clippy/fmt чисты. Доки: spec §11.6.
 
+### Рефакторинг god-object'ов — этап 1: `screens/settings.rs` → `screens/settings/` (сделано)
+- **План направления** — [docs/refactoring-god-objects.md](docs/refactoring-god-objects.md)
+  (7 этапов + опц.): разбор нескольких файлов-монолитов, выросших в god-object'ы
+  (settings/chat/orchestrator-tests/notes/db/markdown/runtime). Метод — тот же
+  плейбук, что и разбор оркестратора (Фазы 1–3): **чисто механический перенос**
+  файла в каталог-модуль без изменения типов/полей/каналов/поведения.
+- **Этап 1**: `screens/settings.rs` (4966 строк, один `impl SettingsScreen`
+  ~2040 строк + ~1100 строк свободных функций) разбит на **8 файлов** каталога
+  `screens/settings/` (byte-exact слайсы по диапазонам строк — нулевой риск
+  транскрипции): `mod.rs` (650: `SettingsIntent`, enum'ы секций/подсекций
+  `Section`/`Subsection`/`ModelTab`, типы формы `FieldId`/`FieldKind`/`FieldRow`/
+  `Editor`/`Focus`/`SearchHit`/`SearchState`/`ChoiceState`, `SamplingParam` +
+  `SAMPLING_PARAMS`, `struct SettingsScreen`, декларации подмодулей), `catalog.rs`
+  (565: конструктор + построители полей всех секций/подсекций + гейты
+  `gate_disabled`/`sampling_cloud_provider`), `apply.rs` (675: `handle_key` +
+  диспетчеры + редактор поля + тумблеры/циклы + `apply_text`/`save_*`),
+  `choice.rs` (150: попап Choice + `reset_field`/`default_fields`), `search.rs`
+  (155: оверлей поиска `/`), `render.rs` (530: вся отрисовка), `helpers.rs` (1130:
+  свободные функции — `row`/`grouped`/`sampling_row`/`managed_rows`/`cloud_rows`,
+  `field_description`/`gate_hint`, `render_field_line`/`header_line`/`tab_strip_line`,
+  циклы `cycle_*`/label-функции, парсеры `parse_*`/`decode/encode_escapes`),
+  `tests.rs` (1175). Прежний `impl SettingsScreen` разложен на 4 impl-блока
+  (≤ ~660 строк каждый).
+- **Правила видимости (плейбук для UI-экранов):** (1) подмодули берут элементы
+  `mod.rs` через `use super::*;` — glob подтягивает и приватные `use`-импорты
+  родителя (ratatui/uuid/crate::…), поэтому внешние импорты в подмодулях не
+  дублируются, а в `mod.rs` не «висят» (все использованы транзитивно → ноль
+  warning'ов). (2) Свободные функции `helpers.rs` помечены `pub(super)` (иначе не
+  видны сиблингам); потребители — `use super::helpers::*;`. (3) Приватные методы
+  `impl SettingsScreen`, вызываемые из другого файла, помечены `pub(super)`
+  (метод-приватность в Rust — по модулю определения).
+- **Отклонения от проекта**: `descriptions.rs`/`editor.rs` не выделялись
+  (`field_description`/`gate_hint` → `helpers.rs`; редактор поля → `apply.rs`,
+  тесно связан с обработкой клавиш). `helpers.rs` оставлен единым модулем свободных
+  функций — дальнейшее дробление отложено (независимые чистые функции, не
+  запутанный impl-блок). Публичный путь модуля не изменился
+  (`crate::screens::settings::{SettingsScreen, SettingsIntent}`), внешние `use` не
+  тронуты (`app/runtime.rs`). **805 тестов зелёные** (0 упавших, 26 `#[ignore]`;
+  число не изменилось — чистый перенос), clippy `-D warnings`/fmt чисты. Доки:
+  architecture.md §3.
+
 ### Отложено за пределы M3
 - **Сворачивание/выделение per-message** и tool-блоки в ленте — сейчас «мысли»
   сворачиваются глобально (`Ctrl+T`); выделение сообщений и tool-блоки — на M5.
