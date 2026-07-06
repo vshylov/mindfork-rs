@@ -3333,7 +3333,7 @@ fn header_line(
     let mut used = label_width(&label);
     if let Some((on, total)) = count {
         let tag = format!("{on}/{total} ");
-        used += label_width(&tag) + 1;
+        used += label_width(&tag);
         // Тонкий разделитель + счётчик приглушённым перед линией.
         let dashes_lead = "── ";
         used += label_width(dashes_lead);
@@ -4518,6 +4518,27 @@ mod tests {
             !ptext.contains('/'),
             "у группы без счётчика его быть не должно"
         );
+    }
+
+    #[test]
+    fn group_headers_same_length_with_and_without_count() {
+        // Заголовки групп со счётчиком и без него доходят до одной колонки —
+        // раньше счётчик давал линию на 1 символ короче (spurious +1).
+        let palette = Palette::default();
+        let line_width = |line: Line<'static>| -> usize {
+            line.spans
+                .iter()
+                .map(|s| label_width(s.content.as_ref()))
+                .sum()
+        };
+        for w in [40usize, 60, 74, 100] {
+            let counted = line_width(header_line("Интроспекция", Some((5, 5)), w, &palette));
+            let plain = line_width(header_line("Персона", None, w, &palette));
+            assert_eq!(
+                counted, plain,
+                "ширина {w}: со счётчиком {counted} ≠ без {plain}"
+            );
+        }
     }
 
     #[test]
