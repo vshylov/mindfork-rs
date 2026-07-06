@@ -148,7 +148,10 @@ src/
 │  │  ├─ reflection.rs      авто-рефлексия «модели себя» (окно/ватермарк, сигналы)
 │  │  ├─ consolidation.rs   авто-консолидация заметок («сон»)
 │  │  ├─ tool_loop.rs       общий «тихий» agentic-loop фоновых задач (рефлексия/консолидация)
-│  │  └─ request.rs         маппинг доменных сообщений в формат движка
+│  │  ├─ request.rs         маппинг доменных сообщений в формат движка
+│  │  └─ tests/             тесты оркестратора, разбиты по фичам (mod.rs — фикстуры;
+│  │                        generation/chats/profiles/settings/title/impersonation/
+│  │                        self_model/reflection/rag/request + live.rs #[ignore])
 │  ├─ gen_state.rs          GenState: чистый автомат Idle/Generating/Cancelling
 │  │                        (переходы begin/request_cancel/finish, без I/O)
 │  ├─ events.rs             AppCommand (UI→оркестр.) и AppEvent (оркестр.→UI)
