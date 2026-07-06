@@ -1512,8 +1512,11 @@ impl SettingsScreen {
         if self.editor.is_some() {
             return self.handle_editor_key(key);
         }
-        // `/` открывает поиск по полям (в редакторе `/` — обычный символ, обработан выше).
-        if key.code == KeyCode::Char('/')
+        // `/` открывает поиск по полям (в редакторе `/` — обычный символ, обработан
+        // выше). Матчим по «физической» клавише `/` — при русской раскладке та же
+        // клавиша отдаёт `.` (см. shared::keys::is_slash_key).
+        if let KeyCode::Char(c) = key.code
+            && keys::is_slash_key(c)
             && !key.modifiers.contains(KeyModifiers::CONTROL)
             && !key.modifiers.contains(KeyModifiers::ALT)
         {
@@ -4591,6 +4594,18 @@ mod tests {
         assert_eq!(
             s.fields().get(s.field_idx).map(|f| f.id),
             Some(FieldId::PGreeting)
+        );
+    }
+
+    #[test]
+    fn search_opens_on_cyrillic_slash_key() {
+        // При русской раскладке физическая клавиша `/` отдаёт `.` — поиск всё равно
+        // должен открыться.
+        let mut s = screen();
+        s.handle_key(key(KeyCode::Char('.')));
+        assert!(
+            s.search.is_some(),
+            "`.` (русская раскладка) открывает поиск"
         );
     }
 
