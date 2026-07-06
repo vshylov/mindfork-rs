@@ -10,7 +10,7 @@
 
 use ratatui::Frame;
 use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
-use ratatui::layout::{Constraint, Direction, Layout, Rect};
+use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Clear, Paragraph};
@@ -396,21 +396,41 @@ impl SelfModelScreen {
         }
     }
 
-    /// Рисует экран во весь экран: список полей + строка хоткеев; редактор — попапом.
+    /// Строка хоткеев экрана (пары «клавиша — описание — опасная ли»). Раскладывается
+    /// в сетку общим хелпером [`Palette::hotkey_grid`] — та же логика переноса, что в
+    /// оверлее списка чатов (слева-направо, столбцы совпадают по вертикали).
+    const HOTKEYS: [(&'static str, &'static str, bool); 5] = [
+        ("Enter", "правка", false),
+        ("Space", "статус цели", false),
+        ("Del", "удалить", true),
+        ("Ctrl+K", "очистить", false),
+        ("Esc", "закрыть", false),
+    ];
+
+    /// Рисует экран во весь экран: список полей + строка хоткеев (под панелью, вне
+    /// рамки); редактор — попапом.
     pub fn render(&mut self, frame: &mut Frame) {
         let area = frame.area();
         let palette = self.palette;
+
+        // Строка хоткеев — под панелью (вне рамки), переносится сеткой как в оверлее
+        // списка чатов. При подтверждении очистки на её месте — предупреждение (1 ряд).
+        // Высоту считаем заранее, чтобы отвести под неё ровно нужное число рядов.
+        let hotkeys = palette.hotkey_grid(&Self::HOTKEYS, area.width as usize);
+        let status_h = if self.confirm_clear {
+            1
+        } else {
+            (hotkeys.len() as u16).max(1)
+        };
+        let [panel_area, status_area] =
+            Layout::vertical([Constraint::Min(3), Constraint::Length(status_h)]).areas(area);
+
         let block = palette.panel(
             format!("{} Модель себя", palette.glyphs().assistant_icon),
             true,
         );
-        let inner = block.inner(area);
-        frame.render_widget(block, area);
-
-        let chunks = Layout::default()
-            .direction(Direction::Vertical)
-            .constraints([Constraint::Min(1), Constraint::Length(1)])
-            .split(inner);
+        let inner = block.inner(panel_area);
+        frame.render_widget(block, panel_area);
 
         // Перенос по словам: длинные значения (модели пишут много текста) не влезают
         // в одну строку. Каждая логическая строка списка заворачивается на несколько
@@ -421,7 +441,7 @@ impl SelfModelScreen {
         // внизу выглядит как «конец списка». Ручной рендер обрезает хвостовой пункт по
         // высоте области, показывая его верхнюю часть. Ширина содержимого = область
         // минус колонка маркера выделения `▌ ` (2 колонки).
-        let list_area = chunks[0];
+        let list_area = inner;
         let content_width = (list_area.width as usize).saturating_sub(2).max(1);
         let rows = self.rows();
         let sel = self.selected.min(rows.len().saturating_sub(1));
@@ -476,29 +496,19 @@ impl SelfModelScreen {
             frame.render_widget(para, row);
         }
 
-        // Нижняя строка: подтверждение очистки или хоткеи.
+        // Нижняя область (под панелью, вне рамки): подтверждение очистки или сетка
+        // хоткеев (рассчитана выше).
         if self.confirm_clear {
-            let warn = ratatui::style::Style::new().fg(palette.warning);
+            let warn = Style::new().fg(palette.warning);
             frame.render_widget(
                 Paragraph::new(Line::styled(
                     "Очистить всю модель? Ctrl+K — да, любая клавиша — нет",
                     warn,
                 )),
-                chunks[1],
+                status_area,
             );
         } else {
-            let mut hint: Vec<Span<'static>> = Vec::new();
-            for (k, d) in [
-                ("Enter", "правка"),
-                ("Space", "статус цели"),
-                ("Del", "удалить"),
-                ("Ctrl+K", "очистить"),
-                ("Esc", "закрыть"),
-            ] {
-                hint.extend(palette.hint(k, d));
-                hint.push(Span::raw("  "));
-            }
-            frame.render_widget(Paragraph::new(Line::from(hint)), chunks[1]);
+            frame.render_widget(Paragraph::new(hotkeys), status_area);
         }
 
         // Редактор поверх — с реальным курсором. Везде многострочный (перенос текста).
@@ -757,6 +767,60 @@ mod tests {
         term.draw(|f| empty.render(f)).unwrap();
         let mut full = SelfModelScreen::new(Some(model()), Palette::default());
         term.draw(|f| full.render(f)).unwrap();
+    }
+
+    #[test]
+    fn hotkeys_render_below_panel_and_wrap_when_narrow() {
+        // Строка хоткеев — под панелью (вне рамки): её ряды начинаются с пробела в
+        // колонке 0 (левая рамка панели — символ рамки, поэтому её ряды не начинаются
+        // с пробела). Считаем хвостовые ряды-хоткеи.
+        let rows = |w: u16, h: u16| -> Vec<String> {
+            let mut s = SelfModelScreen::new(Some(model()), Palette::default());
+            let mut term = Terminal::new(TestBackend::new(w, h)).unwrap();
+            term.draw(|f| s.render(f)).unwrap();
+            let buf = term.backend().buffer().clone();
+            (0..buf.area.height)
+                .map(|y| {
+                    (0..buf.area.width)
+                        .map(|x| buf[(x, y)].symbol().to_string())
+                        .collect::<String>()
+                })
+                .collect()
+        };
+        let status_rows = |lines: &[String]| -> usize {
+            lines
+                .iter()
+                .rev()
+                .take_while(|l| l.starts_with(' '))
+                .count()
+        };
+        // Широко — одна строка хоткеев под панелью; над ней — нижняя рамка панели.
+        let wide = rows(120, 24);
+        assert_eq!(status_rows(&wide), 1);
+        assert!(wide.last().unwrap().contains("Enter"));
+        assert!(
+            !wide[wide.len() - 2].starts_with(' '),
+            "над хоткеями — нижняя рамка панели: {:?}",
+            wide[wide.len() - 2]
+        );
+        // Узко — хоткеи переносятся сеткой на несколько строк.
+        let narrow = rows(30, 24);
+        assert!(status_rows(&narrow) > 1);
+    }
+
+    #[test]
+    fn confirm_clear_shows_prompt_in_status_area() {
+        // Подтверждение очистки занимает нижнюю область (вне рамки) одной строкой.
+        let mut s = SelfModelScreen::new(Some(model()), Palette::default());
+        s.handle_key(KeyEvent::new(KeyCode::Char('k'), KeyModifiers::CONTROL));
+        assert!(s.confirm_clear);
+        let mut term = Terminal::new(TestBackend::new(80, 24)).unwrap();
+        term.draw(|f| s.render(f)).unwrap();
+        let buf = term.backend().buffer().clone();
+        let last: String = (0..buf.area.width)
+            .map(|x| buf[(x, buf.area.height - 1)].symbol().to_string())
+            .collect();
+        assert!(last.contains("Очистить всю модель"), "{last:?}");
     }
 
     #[test]
