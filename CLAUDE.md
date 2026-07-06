@@ -3295,6 +3295,37 @@ web-поиск и Python под выключателями, экран наст�
   `value_column_is_shared_across_groups` (рендер: значения трёх групп «Инструментов»
   в одной колонке). **797 тестов зелёные** (+3), clippy/fmt чисты. Доки: spec §11.6.
 
+### Рефакторинг god-object'ов — этап 4: `features/tools/notes.rs` → `features/tools/notes/` (сделано)
+- **Этап 4** плана разбора god-object'ов (docs/refactoring-god-objects.md — на ветке
+  этапа 1; этот этап — ветка `refactor/notes-module-split` от `main`).
+  `features/tools/notes.rs` (2242 строки: 9 инструментов + подсистема self-заметок +
+  обзоры консолидации) разбит на каталог `features/tools/notes/` — чисто механический
+  перенос (item-level слайсы, поведение не менялось).
+- **Раскладка**: `mod.rs` (123: ID-константы `NOTE_*_ID`, пороги, `SELF_NOTE_TAG`,
+  общие хелперы `is_self_note`/`parse_id`/`parse_tags`/`clip`/`cosine`, реэкспорты),
+  `recall.rs` (234: `NoteRecall` + `list_user_notes`/`semantic_recall`/`related_block`/
+  `cited_sources_block`/`format_notes`), `edit.rs` (222: `NoteRevise`/`NoteSupersede`/
+  `NoteMerge`), `overview.rs` (206: `ConsolidateNotes` + `build_consolidation_overview`/
+  `build_self_consolidation_overview`), `save.rs` (161: `NoteSave` + `create_note`/
+  `ensure_note_vectors`/`self_note_similar`), `self_notes.rs` (149: `self_notes_recent`/
+  `self_notes_relevant`/`self_related_block`/`migrate_self_narrative`), `graph.rs` (115:
+  `NoteLink`/`NoteNeighbors`), `cite.rs` (66: `NoteCiteSource`), `tests.rs` (1005).
+- **Ключевое — сохранение внешней поверхности** (широкая: оркестратор/`self_model`/
+  `rag`/`tools::mod`/`meta` зовут ~30 `notes::X`): mod.rs реэкспортирует всё
+  `pub(crate) use self::{cite::*, edit::*, …}::*;`, поэтому внешние
+  `use crate::features::tools::notes::{NoteSave, create_note, self_notes_recent, …}` не
+  тронуты. Приватные кросс-подмодульные хелперы (`related_block`/`list_user_notes`/
+  `semantic_recall`/`format_notes`/`ensure_note_vectors`) расширены до `pub(crate)`;
+  подмодули берут всё через `use super::*;` (glob через реэкспорт родителя). Консты и
+  мелкие общие хелперы оставлены в `mod.rs` (видны подмодулям как приватные предка).
+- **Нюанс парсинга** (учтён): строчный `///`-докомментарий, заканчивающийся `;`
+  (проза «…по хранению/поиску;»), ложно принимался за границу элемента и рвал
+  докомментарий — в парсер добавлена защита «границей `;` не считается строка,
+  начинающаяся с `//`».
+- Публичный путь модуля не изменился. **805 тестов зелёные** (0 упавших, 26
+  `#[ignore]`; число не изменилось — чистый перенос), clippy `-D warnings`/fmt чисты.
+  Доки: architecture.md §3.
+
 ### Отложено за пределы M3
 - **Сворачивание/выделение per-message** и tool-блоки в ленте — сейчас «мысли»
   сворачиваются глобально (`Ctrl+T`); выделение сообщений и tool-блоки — на M5.
