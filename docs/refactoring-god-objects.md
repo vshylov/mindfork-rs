@@ -1,10 +1,11 @@
 # План рефакторинга: разбор god-object'ов (2026-07)
 
-Дизайн-план направления. Статус: **в работе** (этап 1 сделан). По завершении всех
-этапов — переезжает в `docs/history/` (как refinements.md и др.).
+Дизайн-план направления. Статус: **завершён** (этапы 1–7 сделаны). Кандидат на
+переезд в `docs/history/` (как refinements.md и др.).
 
-**Прогресс:** этап 1 (`screens/settings/`) — **сделан** (ветка
-`refactor/settings-module-split`); детали — в конце документа.
+**Прогресс:** все семь этапов сделаны и сведены в одну ветку `refactor/god-object-split`
+(изначально каждый — отдельная ветка от `main`). Итоговая таблица и детали — в §6;
+полный журнал по каждому этапу — в [CLAUDE.md](../CLAUDE.md).
 
 ## 1. Контекст и диагноз
 
@@ -346,3 +347,45 @@ enum'ы секций + `struct SettingsScreen` + декларации подмо
 по ответственностям (catalog/apply/render/descriptions) отложено как
 низкоприоритетное. Гейты зелёные: **805 тестов** (0 упавших, 26 `#[ignore]`),
 clippy `-D warnings` чист, `cargo fmt --check` чист.
+
+### Этапы 2–7 (сделаны)
+
+Все остальные этапы выполнены тем же плейбуком (§2). Полный разбор каждого — в
+журнале [CLAUDE.md](../CLAUDE.md) (записи «Рефакторинг god-object'ов — этап N»);
+здесь — сводка «было → крупнейший файл после» и что легло куда.
+
+| Этап | Файл | Было | Крупнейший после | Ключевой файл-раскладка |
+|---|---|---:|---:|---|
+| 1 | `screens/settings.rs` | 4966 | 1175 (tests) | mod/catalog/apply/render/choice/search/helpers/tests |
+| 2 | `screens/chat.rs` | 2616 | 1034 (tests) | mod/feed/input/popups/impersonation/rag/render/tests |
+| 3 | `app/orchestrator/tests.rs` | 3506 | 959 (live) | mod (фикстуры) + по фиче + live.rs |
+| 4 | `features/tools/notes.rs` | 2242 | 1005 (tests) | mod/save/recall/edit/graph/cite/overview/self_notes |
+| 5 | `shared/storage/db.rs` | 1665 | 591 (tests) | mod (схема) + notes/graph/self_model/rag |
+| 6 | `shared/markdown.rs` | 1995 | 578 (latex) | mod/writer/code/table/latex/tests |
+| 7 | `app/runtime.rs` | 1099 | 334 (dispatch) | mod/input/dispatch/clipboard/tests |
+
+Уточнения плейбука, выведенные по ходу (закреплены как правила §2):
+
+- **Реэкспорт по нужде.** Внешняя поверхность подмодулей (напр. `notes::*` — ~30
+  символов из оркестратора/`self_model`/`rag`/`meta`) сохраняется реэкспортом
+  `pub(crate) use <submod>::*` из `mod.rs`. Для **чисто внутренней** проводки
+  (markdown, runtime) реэкспорт **приватный** `use self::{…::*}` — `pub(crate) use`
+  здесь ловит clippy «glob import doesn't reexport anything with visibility
+  pub(crate)», т.к. элементы `pub(super)`, а не `pub`.
+- **Inherent-методы реэкспортов не требуют** (этап 5, `db.method()` через фасад
+  `Storage`) — резолвятся по типу независимо от файла; собралось с первого раза.
+- **Коллизия имён подмодулей** (этап 3): тест-подмодуль `tests::generation`
+  затеняет сорс-модуль `orchestrator::generation` — ссылки переписаны на
+  `super::super::generation::`.
+- **cfg-гейтинг сохраняется байт-в-байт** (этап 7); `clipboard.rs` использует лишь
+  `arboard::`+прелюдию → его `use super::*` удалён (иначе unused-import на Linux, где
+  `read_clipboard_text` под `#[cfg(windows)]` отсутствует).
+- **clippy `-D warnings` — страховочная сеть**: поймал orphaned doc-comment (этап 4,
+  прозаический `///`, заканчивающийся `;`, ложно принятый парсером за границу) и
+  кросс-платформенный unused-import (этап 7) — оба `cargo build` пропускал.
+
+**Итог направления:** крупнейший исходный файл упал с 4966 до ≤1175 строк; ни одного
+`impl`-блока > ~660 строк; публичные пути модулей не изменились (внешние `use` не
+тронуты); **805 юнит-тестов** зелёные после каждого этапа (число неизменно — чистый
+перенос), 26 `#[ignore]`-смоуков не тронуты; `cargo clippy --all-targets -- -D
+warnings` и `cargo fmt --check` чисты. DoD (§5) выполнен.
