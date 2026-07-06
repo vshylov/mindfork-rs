@@ -159,8 +159,17 @@ src/
 ├─ screens/                 целостные экраны (FSD "pages"); НЕ зависят от app
 │  ├─ chat.rs               ChatScreen: всё состояние UI чата, handle_key→ChatIntent
 │  ├─ chat_list.rs          ChatListScreen: полноэкранный список чатов (Esc), → ChatListIntent
-│  └─ settings.rs           SettingsScreen: секции (Модель/Семплинг/Инструменты/Память/
-│                           Профили/Интерфейс) с группами полей, подсекции Ассистент/Имперсонация
+│  └─ settings/             SettingsScreen: секции (Модель/Семплинг/Инструменты/Память/
+│     │                     Профили/Интерфейс) с группами полей, подсекции Ассистент/Имперсонация.
+│     │                     God-object разбит (docs/refactoring-god-objects.md, этап 1):
+│     ├─ mod.rs             SettingsIntent, enum'ы секций/подсекций, типы полей
+│     │                     (FieldId/FieldRow/Editor/…), struct SettingsScreen
+│     ├─ catalog.rs         построители полей секций/подсекций + гейты доступности
+│     ├─ apply.rs           обработка клавиш, редактор поля, тумблеры/циклы, сохранение
+│     ├─ choice.rs          попап выбора Choice-поля + сброс поля к дефолту
+│     ├─ search.rs          оверлей поиска по полям (`/`): индекс/фильтр/прыжок
+│     ├─ render.rs          отрисовка: меню, таб-стрип, список полей, попапы
+│     └─ helpers.rs         свободные функции: построители строк, описания, парсеры
 │
 ├─ widgets/                 составные UI-блоки (FSD "widgets")
 │  ├─ message_feed.rs       лента: markdown, мысли, инлайн tool-блоки, скролл, перенос
