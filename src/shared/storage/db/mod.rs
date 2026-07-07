@@ -217,6 +217,3 @@ mod graph;
 mod notes;
 mod rag;
 mod self_model;
-
-#[cfg(test)]
-mod tests;

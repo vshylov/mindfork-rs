@@ -250,7 +250,8 @@ src/
    │  ├─ json.rs            атомарная запись (write-rename + .bak) конфиг/профили/чаты
    │  ├─ db/               SQLite + sqlite-vec: notes/RAG, изоляция по profile_id.
    │  │  │                 God-object разбит по доменам (docs/refactoring-god-objects.md,
-   │  │  │                 этап 5; `impl Db` — несколько блоков, схема/хелперы в mod.rs):
+   │  │  │                 этап 5; `impl Db` — несколько блоков, схема/хелперы в mod.rs;
+   │  │  │                 тесты домена — в `mod tests` своего подфайла, локальный `db()`):
    │  │  ├─ mod.rs         struct Db, open/from_conn, migrate() (схема), ensure_vec_table/
    │  │  │                 vec_dim, общие хелперы (row_to_note/parse_uuid/parse_dt/cosine)
    │  │  ├─ notes.rs       заметки: вставка/список/правка/удаление + эмбеддинги/семантика
@@ -261,7 +262,8 @@ src/
    ├─ config.rs            AppConfig и секции (Engine/Embed/Tool/Interface/Impersonation…)
    ├─ markdown/            свой рендерер на pulldown-cmark (ADR 0003): таблицы + LaTeX +
    │  │                    тема. God-object разбит по подсистемам (docs/refactoring-god-
-   │  │                    objects.md, этап 6; внутренняя проводка через реэкспорт):
+   │  │                    objects.md, этап 6; внутренняя проводка через реэкспорт; тесты
+   │  │                    подсистемы — в `mod tests` подфайла, общие хелперы — `mod testkit`):
    │  ├─ mod.rs            render/render_with (внешняя поверхность) + стили из палитры
    │  ├─ writer.rs         Writer: walker событий pulldown-cmark → строки
    │  ├─ code.rs           подсветка блоков кода (syntect: синтаксис + тема из палитры)

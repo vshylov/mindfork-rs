@@ -319,3 +319,207 @@ fn norm_path(p: &str) -> String {
         trimmed.to_string()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn db() -> Db {
+        Db::open_in_memory().unwrap()
+    }
+
+    #[test]
+    fn rag_knn_respects_profile_isolation() {
+        let db = db();
+        let a = Uuid::new_v4();
+        let b = Uuid::new_v4();
+        // Профиль B имеет вектор, идентичный запросу — он не должен «утечь» в поиск A.
+        db.rag_insert(&RagDocument::new(b, "b", "B doc", vec![1.0, 0.0, 0.0, 0.0]))
+            .unwrap();
+        db.rag_insert(&RagDocument::new(
+            a,
+            "a1",
+            "A near",
+            vec![0.9, 0.1, 0.0, 0.0],
+        ))
+        .unwrap();
+        db.rag_insert(&RagDocument::new(
+            a,
+            "a2",
+            "A far",
+            vec![0.0, 0.0, 1.0, 0.0],
+        ))
+        .unwrap();
+
+        let hits = db.rag_search(a, &[1.0, 0.0, 0.0, 0.0], 5).unwrap();
+        assert_eq!(hits.len(), 2, "only profile A docs");
+        assert_eq!(hits[0].chunk_text, "A near");
+        assert_eq!(hits[1].chunk_text, "A far");
+        assert_eq!(db.rag_count(a).unwrap(), 2);
+        assert_eq!(db.rag_count(b).unwrap(), 1);
+    }
+
+    #[test]
+    fn rag_search_empty_before_any_insert() {
+        let db = db();
+        let hits = db.rag_search(Uuid::new_v4(), &[1.0, 0.0], 5).unwrap();
+        assert!(hits.is_empty());
+    }
+
+    #[test]
+    fn rag_delete_by_source_removes_exact_only() {
+        let db = db();
+        let p = Uuid::new_v4();
+        db.rag_insert(&RagDocument::new(p, "/data/a.txt", "c1", vec![1.0, 0.0]))
+            .unwrap();
+        db.rag_insert(&RagDocument::new(p, "/data/a.txt", "c2", vec![0.0, 1.0]))
+            .unwrap();
+        db.rag_insert(&RagDocument::new(p, "/data/b.txt", "c3", vec![1.0, 1.0]))
+            .unwrap();
+
+        // Удаляются оба чанка источника a.txt, b.txt остаётся.
+        assert_eq!(db.rag_delete_by_source(p, "/data/a.txt").unwrap(), 2);
+        assert_eq!(db.rag_count(p).unwrap(), 1);
+        // Поиск тоже больше их не находит (векторы удалены).
+        let hits = db.rag_search(p, &[1.0, 0.0], 5).unwrap();
+        assert!(hits.iter().all(|h| h.source == "/data/b.txt"));
+    }
+
+    #[test]
+    fn rag_delete_under_removes_path_and_descendants() {
+        let db = db();
+        let p = Uuid::new_v4();
+        let other = Uuid::new_v4();
+        db.rag_insert(&RagDocument::new(p, "/data/a.txt", "a", vec![1.0, 0.0]))
+            .unwrap();
+        db.rag_insert(&RagDocument::new(p, "/data/sub/b.txt", "b", vec![0.0, 1.0]))
+            .unwrap();
+        db.rag_insert(&RagDocument::new(p, "/other/c.txt", "c", vec![1.0, 1.0]))
+            .unwrap();
+        // Чужой профиль с тем же путём не должен затрагиваться (изоляция).
+        db.rag_insert(&RagDocument::new(other, "/data/a.txt", "x", vec![1.0, 0.0]))
+            .unwrap();
+
+        // Удаление директории сносит файл и вложенные, но не «/other» и не чужой профиль.
+        assert_eq!(db.rag_delete_under(p, "/data").unwrap(), 2);
+        assert_eq!(db.rag_count(p).unwrap(), 1);
+        assert_eq!(db.rag_count(other).unwrap(), 1);
+
+        // Префикс не цепляет соседнюю директорию с общим началом имени.
+        db.rag_insert(&RagDocument::new(p, "/x/file.txt", "f", vec![1.0, 0.0]))
+            .unwrap();
+        db.rag_insert(&RagDocument::new(
+            p,
+            "/x-extra/file.txt",
+            "g",
+            vec![0.0, 1.0],
+        ))
+        .unwrap();
+        assert_eq!(db.rag_delete_under(p, "/x").unwrap(), 1);
+    }
+
+    #[test]
+    fn rag_delete_under_tolerates_separators_and_trailing_slash() {
+        let db = db();
+        let p = Uuid::new_v4();
+        db.rag_insert(&RagDocument::new(p, "/data/a.txt", "a", vec![1.0, 0.0]))
+            .unwrap();
+        // Обратные слэши и хвостовой слэш в запросе матчат сохранённый «/»-источник.
+        assert_eq!(db.rag_delete_under(p, "\\data\\").unwrap(), 1);
+    }
+
+    #[test]
+    fn rag_list_sources_aggregates_chunks_per_source() {
+        let db = db();
+        let p = Uuid::new_v4();
+        db.rag_insert(&RagDocument::new(p, "/data/a.txt", "c1", vec![1.0, 0.0]))
+            .unwrap();
+        db.rag_insert(&RagDocument::new(p, "/data/a.txt", "c2", vec![0.0, 1.0]))
+            .unwrap();
+        db.rag_insert(&RagDocument::new(p, "/data/b.md", "c3", vec![1.0, 1.0]))
+            .unwrap();
+        // Чужой профиль не попадает в выдачу.
+        db.rag_insert(&RagDocument::new(
+            Uuid::new_v4(),
+            "/o.txt",
+            "x",
+            vec![1.0, 0.0],
+        ))
+        .unwrap();
+
+        let sources = db.rag_list_sources(p).unwrap();
+        assert_eq!(sources.len(), 2);
+        assert_eq!(sources[0].source, "/data/a.txt");
+        assert_eq!(sources[0].chunks, 2);
+        assert_eq!(sources[1].source, "/data/b.md");
+        assert_eq!(sources[1].chunks, 1);
+    }
+
+    #[test]
+    fn rag_sources_store_and_delete_with_chunks() {
+        let db = db();
+        let p = Uuid::new_v4();
+        db.rag_source_upsert(p, "/data/a.txt", "полный текст", Utc::now())
+            .unwrap();
+        db.rag_insert(&RagDocument::new(p, "/data/a.txt", "чанк", vec![1.0, 0.0]))
+            .unwrap();
+        // Повторный upsert заменяет содержимое, а не плодит дубликат.
+        db.rag_source_upsert(p, "/data/a.txt", "новый текст", Utc::now())
+            .unwrap();
+        let stored = db.rag_stored_sources(p).unwrap();
+        assert_eq!(stored.len(), 1);
+        assert_eq!(stored[0].content, "новый текст");
+
+        // Удаление под путём снимает и чанки, и сохранённый исходник.
+        assert_eq!(db.rag_delete_under(p, "/data").unwrap(), 1);
+        assert!(db.rag_stored_sources(p).unwrap().is_empty());
+    }
+
+    #[test]
+    fn rag_rebuild_dimension_change_flow() {
+        let db = db();
+        let p = Uuid::new_v4();
+        // Индексировано в размерности 2.
+        db.rag_insert(&RagDocument::new(p, "a", "c", vec![1.0, 0.0]))
+            .unwrap();
+        assert_eq!(db.rag_dimension().unwrap(), Some(2));
+        assert!(!db.rag_other_profiles_have_docs(p).unwrap());
+
+        // Реиндексация в размерность 3 невозможна без сброса (mismatch).
+        assert!(
+            db.rag_insert(&RagDocument::new(p, "a", "c", vec![0.0, 1.0, 0.0]))
+                .is_err()
+        );
+        // Сбрасываем векторы и чистим документы профиля, затем индексируем в новой размерности.
+        db.rag_delete_all_for_profile(p).unwrap();
+        db.rag_reset_vectors().unwrap();
+        assert_eq!(db.rag_dimension().unwrap(), None);
+        db.rag_insert(&RagDocument::new(p, "a", "c", vec![0.0, 1.0, 0.0]))
+            .unwrap();
+        assert_eq!(db.rag_dimension().unwrap(), Some(3));
+        assert_eq!(db.rag_count(p).unwrap(), 1);
+    }
+
+    #[test]
+    fn rag_other_profiles_have_docs_detects_neighbors() {
+        let db = db();
+        let a = Uuid::new_v4();
+        let b = Uuid::new_v4();
+        db.rag_insert(&RagDocument::new(a, "a", "c", vec![1.0, 0.0]))
+            .unwrap();
+        assert!(!db.rag_other_profiles_have_docs(a).unwrap());
+        db.rag_insert(&RagDocument::new(b, "b", "c", vec![0.0, 1.0]))
+            .unwrap();
+        assert!(db.rag_other_profiles_have_docs(a).unwrap());
+    }
+
+    #[test]
+    fn rag_dim_mismatch_errors() {
+        let db = db();
+        let p = Uuid::new_v4();
+        db.rag_insert(&RagDocument::new(p, "s", "t", vec![1.0, 0.0, 0.0, 0.0]))
+            .unwrap();
+        let err = db.rag_insert(&RagDocument::new(p, "s", "t", vec![1.0, 0.0]));
+        assert!(err.is_err());
+    }
+}

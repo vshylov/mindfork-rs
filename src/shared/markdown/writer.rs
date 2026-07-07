@@ -416,3 +416,60 @@ pub(super) fn heading_number(level: HeadingLevel) -> u8 {
         HeadingLevel::H6 => 6,
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::super::testkit::*;
+    use super::*;
+
+    #[test]
+    fn render_produces_owned_text() {
+        let text = render("# Заголовок\n\nабзац с `кодом`.", 80, &Palette::default());
+        assert!(!text.lines.is_empty());
+        let collected = rendered_text("# Заголовок\n\nабзац с `кодом`.");
+        assert!(collected.contains("Заголовок"));
+    }
+
+    #[test]
+    fn render_headings_lists_quotes() {
+        let collected = rendered_text("## Заголовок\n\n- пункт раз\n- пункт два\n\n> цитата");
+        assert!(collected.contains("## Заголовок"));
+        assert!(collected.contains("- пункт раз"));
+        assert!(collected.contains("> цитата"));
+    }
+
+    /// «Рыхлый» (loose) нумерованный список — элементы разделены пустой строкой,
+    /// поэтому pulldown-cmark оборачивает содержимое в `Paragraph`. Номер и текст
+    /// должны остаться на **одной** строке (`1. текст`), а не разъехаться (регрессия:
+    /// `start_paragraph` безусловно добавлял новую строку после маркера).
+    #[test]
+    fn loose_ordered_list_keeps_number_with_text() {
+        let md = "1. **Первый.** Текст первого пункта.\n\n\
+                  2. **Второй.** Текст второго пункта.\n\n\
+                  3. **Третий.** Текст третьего пункта.";
+        let collected = rendered_text(md);
+        // Номер приклеен к своему тексту на одной строке ленты.
+        assert!(
+            collected.contains("1. Первый."),
+            "номер оторвался от текста:\n{collected}"
+        );
+        assert!(collected.contains("2. Второй."));
+        assert!(collected.contains("3. Третий."));
+        // Пустой строки между маркером и его текстом быть не должно.
+        assert!(
+            !collected.contains("1. \n"),
+            "после маркера образовался перенос:\n{collected}"
+        );
+    }
+
+    /// Многоабзацный элемент «рыхлого» списка: первый абзац — на строке маркера,
+    /// последующие — на своих строках (маркер не дублируется).
+    #[test]
+    fn loose_list_item_second_paragraph_on_own_line() {
+        let md = "1. Первый абзац.\n\n   Второй абзац того же пункта.\n\n2. Другой пункт.";
+        let collected = rendered_text(md);
+        assert!(collected.contains("1. Первый абзац."));
+        assert!(collected.contains("Второй абзац того же пункта."));
+        assert!(collected.contains("2. Другой пункт."));
+    }
+}
