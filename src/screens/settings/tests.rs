@@ -191,66 +191,54 @@ fn model_subsection_third_tab_is_embeddings() {
 }
 
 #[test]
-fn section_field_count_is_tab_and_mode_independent() {
-    // Счётчик параметров секции в меню слева — фиксированное свойство секции
-    // (union распознаваемых полей по всем подсекциям И режимам движка). Он не
-    // должен меняться ни при переключении вкладки (таб-стрипа), ни при смене
-    // режима движка (managed/external/облако) или спек-декодирования.
+fn section_counts_sum_matches_search_index() {
+    // Счётчики параметров секций привязаны к выбранным режимам и выводятся из
+    // того же индекса, что и поиск: сумма счётчиков секций тождественно равна
+    // числу полей в поиске (инвариант, о котором просил пользователь). Проверяем
+    // при разных сочетаниях режимов движка/провайдера.
     let mut s = screen();
+    for &m in SERVER_MODES.iter() {
+        s.config.engine.mode = m;
+        s.config.embed.mode = m;
+        let total: usize = s.section_counts().iter().sum();
+        let search_total = s.build_search_index().len();
+        assert_eq!(total, search_total, "режим {m:?}");
+    }
+}
 
-    let model = s.section_field_count(Section::Model);
-    let sampling = s.section_field_count(Section::Sampling);
-    let profiles = s.section_field_count(Section::Profiles);
-    assert!(model > 0 && sampling > 0 && profiles > 0);
+#[test]
+fn section_count_tracks_selected_mode() {
+    // В отличие от прежнего union-подхода счётчик отражает текущий режим: у
+    // managed llama-server полей заметно больше, чем у облачного провайдера (тот
+    // показывает лишь модель/ключ/base URL — ADR 0004).
+    let mut s = screen();
+    s.config.engine.mode = ServerMode::Managed;
+    s.config.impersonation_engine.mode = ImpersonationMode::Shared;
+    s.config.embed.mode = ServerMode::Managed;
+    let managed = s.section_field_count(Section::Model);
+    s.config.engine.mode = ServerMode::OpenAi;
+    let cloud = s.section_field_count(Section::Model);
+    assert!(
+        cloud < managed,
+        "облако должно показывать меньше полей: managed={managed} cloud={cloud}"
+    );
 
-    // Перебор осей текущего выбора: вкладка Модели, режимы всех трёх серверов,
-    // спек-декодирование, подсекции Семплинга/Профилей. Счётчики неизменны.
-    for tab in ModelTab::ALL {
-        s.model_sub = tab;
-        for &m in SERVER_MODES.iter() {
-            s.config.engine.mode = m;
-            s.config.embed.mode = m;
-            s.config.engine.managed.spec_type = SpecType::DraftMtp;
-            assert_eq!(
-                s.section_field_count(Section::Model),
-                model,
-                "Модель @ {tab:?}/{m:?}"
-            );
-            assert_eq!(
-                s.section_field_count(Section::Sampling),
-                sampling,
-                "Семплинг @ {m:?}"
-            );
-        }
-        s.config.engine.managed.spec_type = SpecType::None;
-        assert_eq!(
-            s.section_field_count(Section::Model),
-            model,
-            "Модель без draft @ {tab:?}"
-        );
-    }
-    for m in IMP_MODES {
-        s.config.impersonation_engine.mode = m;
-        assert_eq!(
-            s.section_field_count(Section::Model),
-            model,
-            "Модель @ imp {m:?}"
-        );
-    }
-    for sub in Subsection::ALL {
-        s.sampling_sub = sub;
-        s.profile_sub = sub;
-        assert_eq!(s.section_field_count(Section::Sampling), sampling);
-        assert_eq!(s.section_field_count(Section::Profiles), profiles);
-    }
+    // Счётчик секции «Модель» совпадает с числом её полей в индексе поиска
+    // (сумма трёх вкладок для их текущих режимов, без селекторов подсекций).
+    let model_from_search = s
+        .build_search_index()
+        .iter()
+        .filter(|h| SECTIONS[h.section_idx] == Section::Model)
+        .count();
+    assert_eq!(cloud, model_from_search);
 }
 
 #[test]
 fn section_field_count_excludes_subsection_selector() {
     // Селектор подсекции (таб-стрип) — навигационный элемент, не параметр, — в
-    // счётчик не входит. Семплинг: union = все параметры каждой подсекции (в
-    // локальном режиме) без строки-селектора.
-    let mut s = screen();
+    // счётчик не входит. Семплинг в локальном режиме (дефолт) показывает все
+    // параметры каждой подсекции без строки-селектора.
+    let s = screen();
     assert_eq!(
         s.section_field_count(Section::Sampling),
         Subsection::ALL.len() * SAMPLING_PARAMS.len(),
