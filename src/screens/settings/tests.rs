@@ -191,6 +191,74 @@ fn model_subsection_third_tab_is_embeddings() {
 }
 
 #[test]
+fn section_field_count_is_tab_and_mode_independent() {
+    // Счётчик параметров секции в меню слева — фиксированное свойство секции
+    // (union распознаваемых полей по всем подсекциям И режимам движка). Он не
+    // должен меняться ни при переключении вкладки (таб-стрипа), ни при смене
+    // режима движка (managed/external/облако) или спек-декодирования.
+    let mut s = screen();
+
+    let model = s.section_field_count(Section::Model);
+    let sampling = s.section_field_count(Section::Sampling);
+    let profiles = s.section_field_count(Section::Profiles);
+    assert!(model > 0 && sampling > 0 && profiles > 0);
+
+    // Перебор осей текущего выбора: вкладка Модели, режимы всех трёх серверов,
+    // спек-декодирование, подсекции Семплинга/Профилей. Счётчики неизменны.
+    for tab in ModelTab::ALL {
+        s.model_sub = tab;
+        for &m in SERVER_MODES.iter() {
+            s.config.engine.mode = m;
+            s.config.embed.mode = m;
+            s.config.engine.managed.spec_type = SpecType::DraftMtp;
+            assert_eq!(
+                s.section_field_count(Section::Model),
+                model,
+                "Модель @ {tab:?}/{m:?}"
+            );
+            assert_eq!(
+                s.section_field_count(Section::Sampling),
+                sampling,
+                "Семплинг @ {m:?}"
+            );
+        }
+        s.config.engine.managed.spec_type = SpecType::None;
+        assert_eq!(
+            s.section_field_count(Section::Model),
+            model,
+            "Модель без draft @ {tab:?}"
+        );
+    }
+    for m in IMP_MODES {
+        s.config.impersonation_engine.mode = m;
+        assert_eq!(
+            s.section_field_count(Section::Model),
+            model,
+            "Модель @ imp {m:?}"
+        );
+    }
+    for sub in Subsection::ALL {
+        s.sampling_sub = sub;
+        s.profile_sub = sub;
+        assert_eq!(s.section_field_count(Section::Sampling), sampling);
+        assert_eq!(s.section_field_count(Section::Profiles), profiles);
+    }
+}
+
+#[test]
+fn section_field_count_excludes_subsection_selector() {
+    // Селектор подсекции (таб-стрип) — навигационный элемент, не параметр, — в
+    // счётчик не входит. Семплинг: union = все параметры каждой подсекции (в
+    // локальном режиме) без строки-селектора.
+    let mut s = screen();
+    assert_eq!(
+        s.section_field_count(Section::Sampling),
+        Subsection::ALL.len() * SAMPLING_PARAMS.len(),
+        "селектор подсекции попал в счёт семплинга"
+    );
+}
+
+#[test]
 fn impersonation_profile_subsection_has_no_tools() {
     let mut s = screen();
     goto_section(&mut s, Section::Profiles);

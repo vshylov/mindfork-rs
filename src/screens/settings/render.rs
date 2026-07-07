@@ -53,7 +53,10 @@ impl SettingsScreen {
         let [menu_area, fields_area] =
             Layout::horizontal([Constraint::Length(24), Constraint::Min(20)]).areas(inner);
 
-        self.render_menu(frame, menu_area);
+        // Счётчики секций считаем заранее (нужен `&mut self` — подсчёт временно
+        // подменяет рабочий конфиг), затем рисуем меню/поля по неизменяемой ссылке.
+        let counts = self.section_counts();
+        self.render_menu(frame, menu_area, &counts);
         self.render_fields(frame, fields_area);
 
         // Редактор поверх — с реальным курсором (InputBox::render требует &mut).
@@ -227,19 +230,81 @@ impl SettingsScreen {
         }
     }
 
-    /// Число редактируемых полей секции (для счётчика в меню слева).
-    pub(super) fn section_field_count(&self, s: Section) -> usize {
+    /// Число редактируемых параметров секции (для счётчика в меню слева).
+    ///
+    /// Считается как **union распознаваемых `FieldId`** по всем подсекциям
+    /// (таб-стрипам) И режимам движка/спекулятивного декодирования: набор
+    /// параметров секции фиксирован кодом, поэтому счётчик не должен зависеть
+    /// от текущего выбора вкладки/режима (иначе он мигал бы при переключении).
+    /// Селектор подсекции — навигационный таб, не параметр, — исключён
+    /// (`is_subsection`).
+    ///
+    /// Требует `&mut self`: перебор режимов реализован временной подменой
+    /// рабочего конфига (после подсчёта он восстанавливается) — построители
+    /// полей читают видимость из `self.config` (ADR 0004).
+    pub(super) fn section_field_count(&mut self, s: Section) -> usize {
+        let saved = self.config.clone();
+        let mut ids: Vec<FieldId> = Vec::new();
+        let add = |ids: &mut Vec<FieldId>, fields: Vec<FieldRow>| {
+            for f in fields {
+                if !is_subsection(f.id) && !ids.contains(&f.id) {
+                    ids.push(f.id);
+                }
+            }
+        };
         match s {
-            Section::Model => self.model_fields().len(),
-            Section::Sampling => self.sampling_fields().len(),
-            Section::Tools => self.tool_fields().len(),
-            Section::Memory => self.memory_fields().len(),
-            Section::Profiles => self.profile_fields().len(),
-            Section::Interface => self.interface_fields().len(),
+            Section::Model => {
+                // Ассистент/эмбеддинги — все режимы движка; имперсонация — свои.
+                // Для managed включаем draft-spec, чтобы раскрыть поля черновой
+                // модели (видны лишь при `spec_type = draft-*`).
+                for &mode in SERVER_MODES.iter() {
+                    self.config.engine.mode = mode;
+                    self.config.engine.managed.spec_type = SpecType::DraftMtp;
+                    add(&mut ids, self.model_fields_for(ModelTab::Assistant));
+                }
+                for &mode in IMP_MODES.iter() {
+                    self.config.impersonation_engine.mode = mode;
+                    self.config.impersonation_engine.managed.spec_type = SpecType::DraftMtp;
+                    add(&mut ids, self.model_fields_for(ModelTab::Impersonation));
+                }
+                for &mode in SERVER_MODES.iter() {
+                    self.config.embed.mode = mode;
+                    add(&mut ids, self.model_fields_for(ModelTab::Embeddings));
+                }
+            }
+            Section::Sampling => {
+                // Локальный режим (без облачного провайдера) показывает все
+                // параметры сэмплинга — это и есть union (облако лишь скрывает).
+                self.config.engine.mode = ServerMode::Managed;
+                self.config.impersonation_engine.mode = ImpersonationMode::Managed;
+                for sub in Subsection::ALL {
+                    add(&mut ids, self.sampling_fields_for(sub));
+                }
+            }
+            Section::Profiles => {
+                for sub in Subsection::ALL {
+                    add(&mut ids, self.profile_fields_for(sub));
+                }
+            }
+            Section::Tools => add(&mut ids, self.tool_fields()),
+            Section::Memory => add(&mut ids, self.memory_fields()),
+            Section::Interface => add(&mut ids, self.interface_fields()),
         }
+        self.config = saved;
+        ids.len()
     }
 
-    pub(super) fn render_menu(&self, frame: &mut Frame, area: Rect) {
+    /// Счётчики параметров всех секций (union по режимам/подсекциям), в порядке
+    /// [`SECTIONS`]. Считаются заранее в [`Self::render`] (где доступен `&mut
+    /// self`), т.к. подсчёт временно подменяет рабочий конфиг.
+    pub(super) fn section_counts(&mut self) -> Vec<usize> {
+        SECTIONS
+            .iter()
+            .map(|&s| self.section_field_count(s))
+            .collect()
+    }
+
+    pub(super) fn render_menu(&self, frame: &mut Frame, area: Rect, counts: &[usize]) {
         let palette = self.palette();
         let focused = self.focus == Focus::Menu;
         // Ширина под содержимое строки меню (минус правая рамка) — для правого
@@ -263,7 +328,7 @@ impl SettingsScreen {
                     Span::styled(s.title(), palette.muted_style())
                 };
                 // Счётчик полей секции, прижатый к правому краю меню.
-                let count = self.section_field_count(*s).to_string();
+                let count = counts.get(i).copied().unwrap_or(0).to_string();
                 let used = 2 + label_width(s.title()) + count.chars().count();
                 let pad = inner_w.saturating_sub(used).max(1);
                 ListItem::new(Line::from(vec![
