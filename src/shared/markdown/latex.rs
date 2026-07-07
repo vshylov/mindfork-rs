@@ -576,3 +576,148 @@ pub(super) fn subscript(c: char) -> Option<char> {
         _ => return None,
     })
 }
+
+#[cfg(test)]
+mod tests {
+    use super::super::testkit::*;
+    use super::*;
+
+    #[test]
+    fn greek_and_arrows() {
+        assert_eq!(latex_to_unicode(r"\alpha + \beta"), "α + β");
+        assert_eq!(latex_to_unicode(r"A \rightarrow B"), "A → B");
+        assert_eq!(latex_to_unicode(r"x \leq y \times z"), "x ≤ y × z");
+        assert_eq!(latex_to_unicode(r"\Omega \neq \emptyset"), "Ω ≠ ∅");
+    }
+
+    #[test]
+    fn command_preserves_following_whitespace() {
+        // пробелы пользователя сохраняются (аппроксимация для чтения)
+        assert_eq!(latex_to_unicode(r"\pi r^2"), "π r²");
+        assert_eq!(latex_to_unicode(r"\alpha+\beta"), "α+β");
+    }
+
+    #[test]
+    fn unknown_command_is_left_intact() {
+        assert_eq!(latex_to_unicode(r"\foobar x"), r"\foobar x");
+    }
+
+    #[test]
+    fn escaped_backslash_and_brace() {
+        assert_eq!(latex_to_unicode(r"a \\ b"), r"a \ b");
+        assert_eq!(latex_to_unicode(r"\{x\}"), "{x}");
+    }
+
+    #[test]
+    fn superscripts_and_subscripts() {
+        assert_eq!(latex_to_unicode("x^2"), "x²");
+        assert_eq!(latex_to_unicode("H_2O"), "H₂O");
+        assert_eq!(latex_to_unicode("e^{-1}"), "e⁻¹");
+        assert_eq!(latex_to_unicode("a_{12}"), "a₁₂");
+    }
+
+    #[test]
+    fn unmappable_script_strips_group_braces() {
+        // 'q' нет в верхних индексах — индекс не применяется; группирующие скобки
+        // снимаются (это содержимое формулы, скобки — синтаксис группировки).
+        assert_eq!(latex_to_unicode("x^q"), "x^q");
+        assert_eq!(latex_to_unicode("x^{ab}"), "x^ab");
+    }
+
+    #[test]
+    fn plain_text_unchanged() {
+        assert_eq!(
+            latex_to_unicode("обычный текст 2 + 2"),
+            "обычный текст 2 + 2"
+        );
+    }
+
+    #[test]
+    fn frac_sqrt_and_text_wrappers() {
+        assert_eq!(latex_to_unicode(r"\frac{a}{b}"), "a/b");
+        assert_eq!(latex_to_unicode(r"\frac{\alpha}{2}"), "α/2");
+        assert_eq!(latex_to_unicode(r"\sqrt{x+1}"), "√(x+1)");
+        assert_eq!(latex_to_unicode(r"\text{скорость} = v"), "скорость = v");
+        assert_eq!(latex_to_unicode(r"\mathbb{R}"), "R");
+    }
+
+    #[test]
+    fn spacing_commands_become_space() {
+        assert_eq!(latex_to_unicode(r"a\,b"), "a b");
+        assert_eq!(latex_to_unicode(r"a\;b"), "a b");
+        assert_eq!(latex_to_unicode(r"a\!b"), "ab");
+    }
+
+    #[test]
+    fn extended_symbols() {
+        assert_eq!(latex_to_unicode(r"a \therefore b"), "a ∴ b");
+        assert_eq!(latex_to_unicode(r"x \longrightarrow y"), "x ⟶ y");
+        assert_eq!(latex_to_unicode(r"p \ll q"), "p ≪ q");
+    }
+
+    #[test]
+    fn function_names_render_as_words() {
+        assert_eq!(latex_to_unicode(r"O(n \log n)"), "O(n log n)");
+        assert_eq!(latex_to_unicode(r"\sin x + \cos x"), "sin x + cos x");
+        assert_eq!(latex_to_unicode(r"\lim f"), "lim f");
+        assert_eq!(latex_to_unicode(r"\ln(x) \exp(y)"), "ln(x) exp(y)");
+    }
+
+    #[test]
+    fn bracket_size_modifiers_stripped() {
+        assert_eq!(latex_to_unicode(r"\left( x \right)"), "( x )");
+        assert_eq!(latex_to_unicode(r"\bigl[ a \bigr]"), "[ a ]");
+    }
+
+    #[test]
+    fn accents_show_content() {
+        assert_eq!(latex_to_unicode(r"\vec{v}"), "v");
+        assert_eq!(latex_to_unicode(r"\overline{AB}"), "AB");
+        assert_eq!(latex_to_unicode(r"\hat{x} + \bar{y}"), "x + y");
+    }
+
+    #[test]
+    fn pmod_and_bmod() {
+        assert_eq!(latex_to_unicode(r"a \bmod n"), "a mod n");
+        assert_eq!(latex_to_unicode(r"x \pmod{7}"), "x (mod 7)");
+    }
+
+    #[test]
+    fn normalize_paren_and_bracket_delimiters() {
+        assert_eq!(normalize_delimiters(r"итог \(x^2\) тут"), "итог $x^2$ тут");
+        assert_eq!(normalize_delimiters(r"\[a+b\]"), "$$a+b$$");
+    }
+
+    #[test]
+    fn normalize_skips_code_spans() {
+        // внутри код-спана `\(` не трогаем
+        assert_eq!(normalize_delimiters(r"`\(x\)`"), r"`\(x\)`");
+        assert_eq!(
+            normalize_delimiters("```\n\\(x\\)\n```"),
+            "```\n\\(x\\)\n```"
+        );
+    }
+
+    #[test]
+    fn render_converts_math_and_strips_dollars() {
+        let collected = rendered_text(r"Формула: $x^2 + \alpha$");
+        assert!(collected.contains("x²"));
+        assert!(collected.contains('α'));
+        // доллары-разделители сняты парсером
+        assert!(!collected.contains('$'));
+    }
+
+    #[test]
+    fn render_leaves_bare_commands_outside_math() {
+        // вне $…$ команды не трогаем (выбранная семантика)
+        let collected = rendered_text(r"стрелка \rightarrow без формулы");
+        assert!(collected.contains(r"\rightarrow"));
+    }
+
+    #[test]
+    fn render_paren_delimiters_become_math() {
+        let collected = rendered_text(r"путь \(\alpha \to \beta\) готов");
+        assert!(collected.contains("α → β"));
+        assert!(!collected.contains('$'));
+    }
+}

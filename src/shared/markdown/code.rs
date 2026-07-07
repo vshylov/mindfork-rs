@@ -174,3 +174,87 @@ pub(super) fn to_syn(color: Color) -> SynColor {
     };
     SynColor { r, g, b, a: 255 }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::super::testkit::*;
+    use super::*;
+    use crate::shared::config::Theme;
+
+    /// Метки языков, которыми модели помечают код-блоки, должны резолвиться в
+    /// синтаксис — иначе блок остаётся без подсветки (был баг с ` ```csharp `:
+    /// токен не совпадал ни с именем `C#`, ни с расширением `cs`).
+    #[test]
+    fn language_aliases_resolve_to_syntax() {
+        for (label, expect_name) in [
+            ("rust", "Rust"),
+            ("csharp", "C#"),
+            ("c#", "C#"),
+            ("CSharp", "C#"),
+            ("cs", "C#"),
+            ("cpp", "C++"),
+            ("c++", "C++"),
+            ("golang", "Go"),
+            ("objc", "Objective-C"),
+            ("objective-c++", "Objective-C++"),
+            ("python3", "Python"),
+            ("nodejs", "JavaScript"),
+            ("shell", "Bourne Again Shell (bash)"),
+            ("yml", "YAML"),
+            // приближения: языка нет в наборе → близкий грамматик
+            ("typescript", "JavaScript"),
+            ("kotlin", "Java"),
+        ] {
+            let syntax = resolve_syntax(label)
+                .unwrap_or_else(|| panic!("метка {label:?} не резолвится в синтаксис"));
+            assert_eq!(syntax.name, expect_name, "метка {label:?}");
+        }
+    }
+
+    /// Пустая/неизвестная метка не паникует и не резолвится.
+    #[test]
+    fn empty_and_unknown_language_do_not_resolve() {
+        assert!(resolve_syntax("").is_none());
+        assert!(resolve_syntax("совсем-не-язык-42").is_none());
+    }
+
+    #[test]
+    fn code_highlight_is_colored() {
+        // Подсветка проставляет цвета переднего плана (не голый текст).
+        let colors = fg_colors(CODE_MD, &Palette::for_theme(Theme::Dark));
+        assert!(
+            colors.iter().any(|c| matches!(c, Color::Rgb(..))),
+            "ожидались RGB-цвета подсветки кода"
+        );
+    }
+
+    #[test]
+    fn code_highlight_follows_theme() {
+        // Та же подсветка кода в тёмной и светлой теме даёт разные цвета —
+        // значит, подсветка согласована с темой, а не живёт «своей палитрой».
+        let dark = fg_colors(CODE_MD, &Palette::for_theme(Theme::Dark));
+        let light = fg_colors(CODE_MD, &Palette::for_theme(Theme::Light));
+        assert_ne!(dark, light, "подсветка кода не зависит от темы");
+    }
+
+    /// Неподсвеченный (без языка) fenced-блок: содержимое начинается на строке под
+    /// открывающим `​```​`, а не приклеивается к нему (регрессия: первая строка
+    /// дописывалась в строку заборчика, `i==0` + `needs_newline==false`).
+    #[test]
+    fn plain_code_block_content_not_glued_to_fence() {
+        let md = "```\nX_ij = 1, тест\nE = 2/(j-i+1)\n```";
+        let lines: Vec<String> = render(md, 80, &Palette::default())
+            .lines
+            .iter()
+            .map(|l| l.spans.iter().map(|s| s.content.as_ref()).collect())
+            .collect();
+        // Открывающий заборчик — на своей строке, без содержимого.
+        assert_eq!(
+            lines[0], "```",
+            "содержимое приклеилось к заборчику: {lines:?}"
+        );
+        assert_eq!(lines[1], "X_ij = 1, тест");
+        assert_eq!(lines[2], "E = 2/(j-i+1)");
+        assert_eq!(lines[3], "```");
+    }
+}

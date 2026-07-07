@@ -142,5 +142,63 @@ mod writer;
 // только render/render_with, определены здесь).
 use self::{code::*, latex::*, table::*, writer::*};
 
+/// Общие тест-хелперы рендера, используемые тестами нескольких подмодулей
+/// (code/latex/table/writer). См. docs/refactoring-god-objects.md.
 #[cfg(test)]
-mod tests;
+pub(super) mod testkit {
+    use super::*;
+
+    /// Собирает весь текст рендера в одну строку (для проверок содержимого):
+    /// спаны одной строки склеиваются без разделителя, строки — через `\n`.
+    pub(super) fn rendered_text(input: &str) -> String {
+        rendered_text_w(input, 80)
+    }
+
+    /// Как [`rendered_text`], но с заданной шириной.
+    pub(super) fn rendered_text_w(input: &str, width: usize) -> String {
+        render(input, width, &Palette::default())
+            .lines
+            .iter()
+            .map(|l| {
+                l.spans
+                    .iter()
+                    .map(|s| s.content.as_ref())
+                    .collect::<String>()
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+
+    /// Максимальная ширина (в колонках) среди строк рендера.
+    pub(super) fn max_line_width(input: &str, width: usize) -> usize {
+        let text = render(input, width, &Palette::default());
+        text.lines
+            .iter()
+            .map(|l| {
+                l.spans
+                    .iter()
+                    .map(|s| wrap::display_width(&s.content.chars().collect::<Vec<_>>()))
+                    .sum::<usize>()
+            })
+            .max()
+            .unwrap_or(0)
+    }
+
+    /// Собирает множество цветов переднего плана спанов рендера.
+    pub(super) fn fg_colors(input: &str, palette: &Palette) -> Vec<Color> {
+        render(input, 80, palette)
+            .lines
+            .iter()
+            .flat_map(|l| l.spans.iter())
+            .filter_map(|s| s.style.fg)
+            .collect()
+    }
+
+    pub(super) const TABLE_MD: &str = "\
+| Алгоритм | Время | Память |
+| :--- | :--- | :--- |
+| QuickSort | O(n log n) | O(log n) |
+| MergeSort | O(n log n) | O(n) |";
+
+    pub(super) const CODE_MD: &str = "```rust\nfn main() {\n    let s = \"hi\";\n    // c\n}\n```";
+}

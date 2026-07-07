@@ -100,3 +100,90 @@ impl Db {
         Ok(stored)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn db() -> Db {
+        Db::open_in_memory().unwrap()
+    }
+
+    #[test]
+    fn self_model_round_trip_and_isolation() {
+        use crate::entities::self_model::SelfModel;
+        let db = db();
+        let a = Uuid::new_v4();
+        let b = Uuid::new_v4();
+
+        // Изначально нет.
+        assert!(db.self_model_get(a).unwrap().is_none());
+
+        let mut m = SelfModel::new(a);
+        m.summary = "о себе A".into();
+        m.add_goal("цель A");
+        db.self_model_upsert(&m).unwrap();
+
+        let loaded = db.self_model_get(a).unwrap().unwrap();
+        assert_eq!(loaded.summary, "о себе A");
+        assert_eq!(loaded.goals.len(), 1);
+        assert_eq!(loaded.version, 1); // версия выставлена хранилищем
+
+        // Профиль B не видит модель A.
+        assert!(db.self_model_get(b).unwrap().is_none());
+
+        // Повторный upsert повышает версию и заменяет данные.
+        let mut m2 = loaded.clone();
+        m2.summary = "обновлено".into();
+        db.self_model_upsert(&m2).unwrap();
+        let reloaded = db.self_model_get(a).unwrap().unwrap();
+        assert_eq!(reloaded.summary, "обновлено");
+        assert_eq!(reloaded.version, 2);
+    }
+
+    #[test]
+    fn self_model_update_is_atomic_under_concurrency() {
+        use std::sync::Arc;
+        // Два потока параллельно дописывают инсайты в модель одного профиля. При
+        // неатомарном read-modify-write часть записей терялась бы (гонка «прочитал →
+        // другой записал → записал поверх»). `self_model_update` держит SELECT+upsert
+        // под одним захватом мьютекса — ни одна запись не теряется.
+        let db = Arc::new(db());
+        let pid = Uuid::new_v4();
+        let n: usize = 50;
+        let handles: Vec<_> = ["A", "B"]
+            .iter()
+            .map(|prefix| {
+                let db = db.clone();
+                let prefix = prefix.to_string();
+                std::thread::spawn(move || {
+                    for i in 0..n {
+                        db.self_model_update(pid, |m| {
+                            // Накапливаем цели — считаем ровно (add_goal без потолка).
+                            m.add_goal(format!("{prefix}{i}"));
+                            true
+                        })
+                        .unwrap();
+                    }
+                })
+            })
+            .collect();
+        for h in handles {
+            h.join().unwrap();
+        }
+        let m = db.self_model_get(pid).unwrap().unwrap();
+        assert_eq!(m.goals.len(), 2 * n);
+        assert_eq!(m.version, (2 * n) as u64); // каждая правка = один upsert
+    }
+
+    #[test]
+    fn self_model_update_skips_write_when_unchanged() {
+        let db = db();
+        let pid = Uuid::new_v4();
+        // mutate вернул false → записи и роста версии нет, строки в БД не появилось.
+        let (model, changed) = db.self_model_update(pid, |_m| false).unwrap();
+        assert!(!changed);
+        assert_eq!(model.version, 0);
+        assert!(db.self_model_get(pid).unwrap().is_none());
+    }
+}

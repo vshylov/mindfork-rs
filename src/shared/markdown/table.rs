@@ -310,3 +310,70 @@ pub(super) fn clip_line(line: &mut Line<'static>, width: usize) {
     new_spans.push(Span::styled("…", Style::new().dim()));
     *line = Line::from(new_spans);
 }
+
+#[cfg(test)]
+mod tests {
+    use super::super::testkit::*;
+    use super::*;
+
+    #[test]
+    fn table_wraps_cell_content() {
+        // длинная ячейка переносится в несколько рядов, не вылезая за ширину
+        let long = "\
+| A | Особенности |
+| :--- | :--- |
+| x | Самая высокая скорость на практике сортировки |";
+        let w = 40;
+        assert!(max_line_width(long, w) <= w);
+        // несколько строк тела → перенос произошёл
+        let lines = render(long, w, &Palette::default()).lines.len();
+        assert!(lines >= 6, "ожидался перенос ячейки в несколько рядов");
+    }
+
+    #[test]
+    fn table_renders_box_and_content() {
+        let collected = rendered_text(TABLE_MD);
+        assert!(collected.contains('┌') && collected.contains('┼') && collected.contains('└'));
+        assert!(collected.contains("Алгоритм"));
+        assert!(collected.contains("QuickSort"));
+        assert!(collected.contains("MergeSort"));
+    }
+
+    #[test]
+    fn table_fits_panel_width() {
+        // при достаточной ширине таблица не превышает её
+        for w in [40usize, 60, 80, 120] {
+            let max = max_line_width(TABLE_MD, w);
+            assert!(max <= w, "ширина {max} превысила панель {w}");
+        }
+    }
+
+    /// Таблица с переносом ячеек (как на скриншоте) не должна превышать ширину
+    /// **ни при каком** размере панели — иначе повторный перенос в `message_feed`
+    /// разорвал бы рамку. Регрессия на «пролитый» пробел на границе слова.
+    #[test]
+    fn wrapping_table_never_exceeds_any_width() {
+        const WIDE: &str = "\
+| Подход | Как работает | Минус |
+| :--- | :--- | :--- |
+| Стандартный Transformer Chain-of-Thought (o1) | Фиксированный проход Input → Output. Модель пишет рассуждения текстом в скрытый чат | Одинаковые затраты ресурсов на всё. Дорого по токенам, медленно, ограничено длиной текста. |
+| Ваша идея (Recurrent ACT) | Итерации в скрытом пространстве (latent space) | Сложность в обучении (нужны новые методы градиентного спуска). |";
+        for w in 30usize..=140 {
+            let max = max_line_width(WIDE, w);
+            assert!(max <= w, "при ширине {w} строка таблицы вышла на {max}");
+        }
+    }
+
+    #[test]
+    fn wide_table_is_clipped_to_width() {
+        // узкая панель: таблица обрезается, но не вылезает за край
+        let narrow = 24;
+        let max = max_line_width(TABLE_MD, narrow);
+        assert!(
+            max <= narrow,
+            "ширина {max} превысила узкую панель {narrow}"
+        );
+        let collected = rendered_text_w(TABLE_MD, narrow);
+        assert!(collected.contains('…'), "ожидался маркер обрезки");
+    }
+}

@@ -3518,6 +3518,35 @@ web-поиск и Python под выключателями, экран наст�
   меньше полей секции «Модель», чем managed — счётчик это отражает; совпадает с числом
   полей секции в индексе поиска). Прежний `section_field_count_is_tab_and_mode_
   independent` заменён (он утверждал обратное). **808 тестов зелёные**, clippy/fmt чисты.
+### Пост-M9: со-локация тестов db/markdown по подмодулям (сделано)
+- **Хвост разбора god-object'ов** (docs/refactoring-god-objects.md §2.5): при разборе
+  этапов 5 (db) и 6 (markdown) доменные тесты сложили единым файлом `tests.rs`, хотя
+  план предписывал распределять их в `mod tests` своих подфайлов (конвенция «тесты
+  рядом с кодом»). Приведено к плану — **чистый механический перенос** (byte-exact
+  слайсы тел тестов, имена не менялись; поведение/типы/схема не тронуты). Экраны
+  (`settings`/`chat` — тесты «через `handle_key`/`render`») и `orchestrator/tests/`
+  (уже разбит по фичам) сознательно оставлены как есть; `notes/tests.rs` не трогали
+  (много кросс-инструментальных интеграционных тестов save→recall→cite без единого
+  «дома»); `runtime/tests.rs` мал (238 строк) — не окупает дробления.
+- **db** (`shared/storage/db/tests.rs`, 591 → удалён): 27 тестов разложены в `mod tests`
+  подфайлов — `notes.rs` (9), `graph.rs` (5: supersede/links/merge/cite), `self_model.rs`
+  (3), `rag.rs` (10). Каждый `mod tests` — `use super::*` + локальный `fn db() ->
+  Db { Db::open_in_memory().unwrap() }` (3 строки, самодостаточно; inherent-методы `Db`
+  резолвятся по типу независимо от файла).
+- **markdown** (`shared/markdown/tests.rs`, 397 → удалён): ~33 теста в `mod tests`
+  подфайлов — `code.rs` (resolve_syntax + подсветка; +`use crate::shared::config::Theme`
+  для тени над syntect-`Theme`), `latex.rs` (latex_to_unicode/normalize + math-через-
+  render), `table.rs` (раскладка таблиц), `writer.rs` (базовый render/списки/цитаты).
+  Общие тест-хелперы рендера (`rendered_text`/`rendered_text_w`/`max_line_width`/
+  `fg_colors` + консты `TABLE_MD`/`CODE_MD`) вынесены в `#[cfg(test)] pub(super) mod
+  testkit` в `mod.rs` (плейбук §2.5); подмодули берут их `use super::super::testkit::*`.
+- **Видимость**: `mod tests { use super::* }` внутри подфайла видит элементы `mod.rs`
+  транзитивно (подфайл сам делает `use super::*`; потомок видит приватные импорты
+  предка — тот же приём, что у orchestrator-сплита); testkit-хелперы `pub(super)`
+  (публичны в модуле markdown → видны всем его потомкам-тестам). Индентацию нормализует
+  `cargo fmt`. **808 тестов зелёные** (число неизменно — чистый перенос), 26 `#[ignore]`,
+  clippy `-D warnings`/fmt чисты. Доки: architecture.md §3.
+
 ### Отложено за пределы M3
 - **Сворачивание/выделение per-message** и tool-блоки в ленте — сейчас «мысли»
   сворачиваются глобально (`Ctrl+T`); выделение сообщений и tool-блоки — на M5.

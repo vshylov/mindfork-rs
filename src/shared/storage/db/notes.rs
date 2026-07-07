@@ -240,3 +240,175 @@ impl Db {
         Ok(rows)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn db() -> Db {
+        Db::open_in_memory().unwrap()
+    }
+
+    #[test]
+    fn notes_isolated_by_profile() {
+        let db = db();
+        let a = Uuid::new_v4();
+        let b = Uuid::new_v4();
+        db.note_insert(&Note::new(a, "secret of A", vec![]))
+            .unwrap();
+        db.note_insert(&Note::new(b, "secret of B", vec![]))
+            .unwrap();
+
+        let a_notes = db.note_list(a, None, &[], None).unwrap();
+        assert_eq!(a_notes.len(), 1);
+        assert_eq!(a_notes[0].content, "secret of A");
+        // Профиль B не виден из A.
+        assert!(a_notes.iter().all(|n| n.profile_id == a));
+    }
+
+    #[test]
+    fn note_update_only_own_profile() {
+        let db = db();
+        let a = Uuid::new_v4();
+        let b = Uuid::new_v4();
+        let note = Note::new(a, "v1", vec![]);
+        let id = note.id;
+        db.note_insert(&note).unwrap();
+        // Чужой профиль переписать не может.
+        assert!(!db.note_update(id, b, "hacked").unwrap());
+        // Свой — может.
+        assert!(db.note_update(id, a, "v2").unwrap());
+        assert_eq!(db.note_list(a, None, &[], None).unwrap()[0].content, "v2");
+        // Несуществующая заметка.
+        assert!(!db.note_update(Uuid::new_v4(), a, "x").unwrap());
+    }
+
+    #[test]
+    fn note_semantic_search_ranks_and_isolates() {
+        let db = db();
+        let a = Uuid::new_v4();
+        let b = Uuid::new_v4();
+        let n1 = Note::new(a, "rust", vec![]);
+        let n2 = Note::new(a, "banana", vec![]);
+        let (id1, id2) = (n1.id, n2.id);
+        db.note_insert(&n1).unwrap();
+        db.note_insert(&n2).unwrap();
+        db.note_vector_upsert(id1, a, &[1.0, 0.0, 0.0]).unwrap();
+        db.note_vector_upsert(id2, a, &[0.0, 1.0, 0.0]).unwrap();
+        // Заметка другого профиля с близким вектором — не должна попасть в выдачу a.
+        let nb = Note::new(b, "other", vec![]);
+        db.note_insert(&nb).unwrap();
+        db.note_vector_upsert(nb.id, b, &[1.0, 0.0, 0.0]).unwrap();
+
+        let hits = db.note_search_semantic(a, &[0.9, 0.1, 0.0], 5).unwrap();
+        assert_eq!(hits.len(), 2); // только профиль a
+        assert_eq!(hits[0].0.id, id1); // ближе к [1,0,0]
+        assert!(hits[0].1 > hits[1].1);
+
+        // k ограничивает выдачу.
+        let top1 = db.note_search_semantic(a, &[0.9, 0.1, 0.0], 1).unwrap();
+        assert_eq!(top1.len(), 1);
+        assert_eq!(top1[0].0.id, id1);
+    }
+
+    #[test]
+    fn notes_missing_vectors_lists_unembedded() {
+        let db = db();
+        let a = Uuid::new_v4();
+        let n1 = Note::new(a, "with vec", vec![]);
+        let n2 = Note::new(a, "no vec", vec![]);
+        db.note_insert(&n1).unwrap();
+        db.note_insert(&n2).unwrap();
+        db.note_vector_upsert(n1.id, a, &[1.0, 0.0]).unwrap();
+        let missing = db.notes_missing_vectors(a).unwrap();
+        assert_eq!(missing.len(), 1);
+        assert_eq!(missing[0].1, "no vec");
+    }
+
+    #[test]
+    fn note_vector_upsert_replaces() {
+        let db = db();
+        let a = Uuid::new_v4();
+        let n = Note::new(a, "x", vec![]);
+        let id = n.id;
+        db.note_insert(&n).unwrap();
+        db.note_vector_upsert(id, a, &[1.0, 0.0]).unwrap();
+        db.note_vector_upsert(id, a, &[0.0, 1.0]).unwrap(); // замена
+        let hits = db.note_search_semantic(a, &[0.0, 1.0], 5).unwrap();
+        assert_eq!(hits.len(), 1);
+        assert!((hits[0].1 - 1.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn notes_with_vectors_active_only() {
+        let db = db();
+        let a = Uuid::new_v4();
+        let n1 = Note::new(a, "n1", vec![]);
+        let n2 = Note::new(a, "n2", vec![]);
+        db.note_insert(&n1).unwrap();
+        db.note_insert(&n2).unwrap();
+        db.note_vector_upsert(n1.id, a, &[1.0, 0.0]).unwrap();
+        db.note_vector_upsert(n2.id, a, &[0.0, 1.0]).unwrap();
+        // Замещённая исключается из выдачи.
+        let r = Note::new(a, "r", vec![]);
+        db.note_insert(&r).unwrap();
+        db.note_supersede_mark(a, n2.id, r.id).unwrap();
+
+        let wv = db.notes_with_vectors(a).unwrap();
+        assert_eq!(wv.len(), 1);
+        assert_eq!(wv[0].0.id, n1.id);
+        assert_eq!(wv[0].1, vec![1.0, 0.0]);
+    }
+
+    #[test]
+    fn note_delete_removes_and_is_profile_isolated() {
+        let db = db();
+        let p = Uuid::new_v4();
+        let other = Uuid::new_v4();
+        let n = Note::new(p, "наблюдение", vec![]);
+        let id = n.id;
+        db.note_insert(&n).unwrap();
+        db.note_vector_upsert(id, p, &[1.0, 0.0]).unwrap();
+        // Чужой профиль не удаляет.
+        assert!(!db.note_delete(other, id).unwrap());
+        assert_eq!(db.note_list(p, None, &[], None).unwrap().len(), 1);
+        // Свой — удаляет заметку (и её вектор).
+        assert!(db.note_delete(p, id).unwrap());
+        assert!(db.note_list(p, None, &[], None).unwrap().is_empty());
+        // Заметки без вектора нет (обе таблицы пусты) — вектор снят вместе с заметкой.
+        assert!(db.notes_missing_vectors(p).unwrap().is_empty());
+    }
+
+    #[test]
+    fn note_query_and_tag_filter() {
+        let db = db();
+        let p = Uuid::new_v4();
+        db.note_insert(&Note::new(p, "likes tea", vec!["pref".into()]))
+            .unwrap();
+        db.note_insert(&Note::new(
+            p,
+            "likes coffee",
+            vec!["pref".into(), "drink".into()],
+        ))
+        .unwrap();
+
+        assert_eq!(db.note_list(p, Some("tea"), &[], None).unwrap().len(), 1);
+        assert_eq!(
+            db.note_list(p, None, &["drink".to_string()], None)
+                .unwrap()
+                .len(),
+            1
+        );
+        assert_eq!(db.note_list(p, None, &[], Some(1)).unwrap().len(), 1);
+    }
+
+    #[test]
+    fn note_delete_works() {
+        let db = db();
+        let p = Uuid::new_v4();
+        let note = Note::new(p, "x", vec![]);
+        db.note_insert(&note).unwrap();
+        assert!(db.note_delete(p, note.id).unwrap());
+        assert!(db.note_list(p, None, &[], None).unwrap().is_empty());
+    }
+}
