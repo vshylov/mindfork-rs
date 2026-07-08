@@ -1,7 +1,8 @@
 # План рефакторинга: точечные SOLID-улучшения (2026-07)
 
 Дизайн-план направления. Статус: **этапы 1, 2, 4 сделаны** (PR #125, в `main`);
-**этап 3 в работе** — шаг 3.1 сделан (ветка `refactor/settings-field-descriptors`).
+**этап 3 сделан** — шаги 3.1/3.2/3.3 (ветка `refactor/settings-field-descriptors`).
+Направление завершено.
 
 Происхождение — оценка соблюдения SOLID по всей кодовой базе (2026-07-08):
 архитектура здорова (транспорт за трейтами, FSD, единые источники истины,
@@ -408,6 +409,20 @@ X*/Ix*/E* (маршрутизация external/cloud внутри сеттеро
 `cycle_field`-config-армы/config-ветки `apply_text` удалены; по `FieldId`
 остаются **два** структурных match'а (таблица `field_spec` + построители
 каталога) вместо шести; 808+ тестов зелёные.
+
+**Статус: сделано** (ветка `refactor/settings-field-descriptors`). 3.2/3.3:
+новый модуль `screens/settings/spec.rs` — `enum Access { Toggle(fn(&mut AppConfig)) |
+Text(fn(&mut AppConfig,&str)) | Choice { cycle, options } }` + `FieldSpec { access, num }`
++ единственный `field_spec(id) -> Option<FieldSpec>` по config-полям (fn-указатели,
+маршрутизация external/cloud — внутри сеттеров). Потребители сведены к таблице:
+`toggle_field`/`cycle_field`/`apply_text` (config-армы) → `field_spec`; `field_num_kind`
+→ `field_spec.num`; `choice_menu` (config Choice) → `field_spec.options` (это и есть 3.3).
+Вне таблицы (прежний путь): семплинг `S(p)`/`IS(p)`, профильные поля, селекторы
+подсекций/`PSelect` — навигация. **Шаг (c) (reset/маркер `•` на `get`-сравнение) не
+делался**: `reset_field`/маркер уже работают обобщённо через `default_fields()`
+(нет per-field арм) — collapse-цели там нет. Построители каталога (label/значение/
+описание) не тронуты. **808 тестов зелёные**, clippy/fmt чисты. **Направление
+(этапы 1–4) завершено.**
 
 ---
 

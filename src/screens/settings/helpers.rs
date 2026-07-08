@@ -781,19 +781,11 @@ pub(super) fn cycle_reasoning(r: Option<ReasoningEffort>) -> Option<ReasoningEff
 }
 
 /// Числовой вид поля для валидации (`None` — не числовое: текст/URL/списки/выбор).
+/// Config-поля — из таблицы доступа (`field_spec.num`); семплинг — по своему виду.
 pub(super) fn field_num_kind(id: FieldId) -> Option<NumKind> {
-    use FieldId::*;
     match id {
-        // Целочисленные поля.
-        XNgl | XCtx | XPort | XDraftNgl | XDraftNMax | XDraftNMin | IxNgl | IxCtx | IxPort
-        | IxDraftNgl | IxDraftNMax | IxDraftNMin | EPort | MaxToolRounds | TSubMaxTokens
-        | TSubTimeout | RagTarget | RagOverlap | RagMax | SmMaxNarrative | SmNarrativeInPrompt
-        | SmPromptCap | SmSummaryTarget | SmAutoReflect | NotesAutoConsolidate => {
-            Some(NumKind::Int)
-        }
-        // Параметры семплинга — по своему виду.
-        S(p) | IS(p) => p.num_kind(),
-        _ => None,
+        FieldId::S(p) | FieldId::IS(p) => p.num_kind(),
+        _ => super::spec::field_spec(id).and_then(|s| s.num),
     }
 }
 

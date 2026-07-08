@@ -656,6 +656,7 @@ mod choice;
 mod helpers;
 mod render;
 mod search;
+mod spec;
 
 #[cfg(test)]
 mod tests;

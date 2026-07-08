@@ -3730,6 +3730,46 @@ web-поиск и Python под выключателями, экран наст�
   `-D warnings`/fmt чисты. Шаги 3.2 (доступ к значению через `field_spec`) и 3.3
   (options Choice) — по плану следующими.
 
+### Пост-M9: SOLID-рефакторинг — этап 3, шаги 3.2/3.3: таблица доступа к значению поля (`field_spec`) (сделано)
+- **Шаги 3.2 (ядро) + 3.3** этапа 3
+  ([docs/refactoring-solid.md §5](docs/refactoring-solid.md), ветка
+  `refactor/settings-field-descriptors`): доступ к значению config-поля настроек был
+  размазан по **четырём** match-сайтам по `FieldId` (`toggle_field`/`cycle_field`/
+  config-ветки `apply_text`/`field_num_kind`) + options Choice (`choice_menu`). Сведены
+  в **одну таблицу**. Чисто структурно, поведение не менялось — сеть безопасности
+  ~134 settings-теста.
+- **Новый модуль `screens/settings/spec.rs`**: `enum Access { Toggle(fn(&mut AppConfig))
+  | Text(fn(&mut AppConfig,&str)) | Choice { cycle: fn(&mut AppConfig,i32), options:
+  fn(&AppConfig)->(Vec<String>,usize) } }` + `FieldSpec { access, num: Option<NumKind> }`
+  + **единственный** `field_spec(id) -> Option<FieldSpec>` по всем config-полям.
+  fn-указатели (не замыкания) — `'static`, без капчуринга; **маршрутизация по режиму**
+  (external → `external.*`, облако → `cloud_mut()`) живёт **внутри** сеттера (ему
+  доступен весь `AppConfig`). Семантика парсинга каждого поля (opt/`if let Ok`/
+  `parse_opt_num`/host-спецслучай/список словарей) — в его сеттере, байт-в-байт с
+  прежними армами.
+- **Потребители сведены к таблице**: `toggle_field` (`Access::Toggle` + `save_config`;
+  `PTool` — прежний путь), `cycle_field` (`Access::Choice.cycle`; подсекции/`S`/`IS`/
+  `PSelect` — прежний путь), `apply_text` (`Access::Text.set`; `S`/`IS`/профильные —
+  прежний путь), `field_num_kind` (`field_spec.num`; `S`/`IS` — `p.num_kind()`),
+  `choice_menu` (`Access::Choice.options` — это и есть **3.3**; `S`/`IS`/`PSelect` —
+  прежний путь).
+- **Границы охвата** (вне таблицы, прежний путь в apply.rs): параметры семплинга
+  `S(p)`/`IS(p)` (свой дескриптор `SamplingParam`), профильные поля (над
+  `profiles[idx]`, не `AppConfig`), селекторы подсекций и `PSelect` (навигация).
+  Оставшиеся `match id` в apply/choice/helpers обслуживают только эти out-of-scope
+  поля.
+- **Шаг (c) (reset_field/маркер `•` на `get`-сравнение) сознательно не делался**:
+  `reset_field` и маркер уже работают обобщённо через `default_fields()` (сравнение
+  значений `fields()`↔дефолт, **без per-field арм**) — collapse-цели там нет; добавлять
+  `get` в `Access` ради этого — лишняя косвенность. Построители каталога (label/значение/
+  описание из 3.1) не тронуты.
+- **DoD этапа**: `field_description` (3.1) + config-армы `toggle_field`/`cycle_field`/
+  `apply_text` + `field_num_kind`-config удалены; по `FieldId` для config-значений
+  остаётся **один** структурный match (`field_spec`) + построители каталога — вместо
+  прежних шести. **808 тестов зелёные** (число неизменно — рефактор), 26 `#[ignore]`,
+  clippy `-D warnings`/fmt чисты. Доки: architecture.md §3. **Направление точечных
+  SOLID-улучшений (этапы 1–4) завершено.**
+
 ### Отложено за пределы M3
 - **Сворачивание/выделение per-message** и tool-блоки в ленте — сейчас «мысли»
   сворачиваются глобально (`Ctrl+T`); выделение сообщений и tool-блоки — на M5.
