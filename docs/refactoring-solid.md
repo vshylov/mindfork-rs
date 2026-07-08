@@ -1,6 +1,7 @@
 # План рефакторинга: точечные SOLID-улучшения (2026-07)
 
-Дизайн-план направления. Статус: **не начат**.
+Дизайн-план направления. Статус: **этап 2 сделан** (фоновые задачи, ветка
+`refactor/bg-task-slots`); этапы 1/3/4 — по отдельным веткам.
 
 Происхождение — оценка соблюдения SOLID по всей кодовой базе (2026-07-08):
 архитектура здорова (транспорт за трейтами, FSD, единые источники истины,
@@ -248,6 +249,16 @@ fn kind_label(kind: BackgroundKind) -> &'static str {
 `consolidate_cancel|_done_tx|_failures` удалены; в `run()` одна bg-ветка;
 `rg "BACKGROUND_FAILURE_ALERT" src` — единственный потребитель
 `handle_bg_done`.
+
+**Статус: сделано** (ветка `refactor/bg-task-slots`). Новый модуль
+`orchestrator/background.rs`: `BgSlot { cancel, failures }` + методы `bg_running`/
+`begin_bg`/`handle_bg_done`/`cancel_all_bg` (+ `#[cfg(test)] bg_failures`) +
+`kind_label` (тексты ошибок байт-в-байт). Поля оркестратора 6 → 2
+(`bg: HashMap<BackgroundKind, BgSlot>` + `bg_done_tx`); `consolidate_counts`
+оставлен (данные каденции). `run()`: два канала/ветки → один `bg_done` + одна ветка;
+`Quit` → `cancel_all_bg`. `SilentLoop` получил `kind`, `done_tx` шлёт `(kind, исход)`.
+`BackgroundKind` получил `Hash`. Тесты переведены на новый API без переименований.
+**808 тестов зелёные**, clippy/fmt чисты.
 
 ---
 

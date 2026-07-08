@@ -3593,6 +3593,48 @@ web-поиск и Python под выключателями, экран наст�
   каталог упорядочен по id). **808 тестов зелёные** (чистый рефактор, без движка),
   clippy `-D warnings`/fmt чисты. Доки: architecture.md §8.
 
+### Пост-M9: SOLID-рефакторинг — этап 2: фоновые задачи (реестр слотов + единый done-канал) (сделано)
+- **Этап 2** направления SOLID-улучшений
+  ([docs/refactoring-solid.md §4](docs/refactoring-solid.md), ветка
+  `refactor/bg-task-slots`): семейство «тихих» фоновых задач (авто-рефлексия
+  «модели себя» + авто-консолидация заметок — мини agentic-loop без UI, общий раннер
+  `tool_loop::spawn_silent_loop`) обслуживалось **копипастой жизненного цикла** —
+  триплет полей + канал + ветка `select!` + обработчик на каждую задачу. Подготовка
+  каркаса к задаче №3 семейства (авто-консолидация «модели себя» по таймеру, roadmap
+  §9.9): её добавление больше не трогает `run()`/`Quit`. Чисто структурно, поведение
+  не менялось (тексты ошибок/событий байт-в-байт).
+- **Реестр слотов** (`app/orchestrator/background.rs`, новый модуль): `BgSlot { cancel:
+  Option<CancellationToken>, failures: u32 }` (серия неудач живёт дольше запуска →
+  слот, не задача); ключ — существующий `BackgroundKind` (получил `Hash`). Методы
+  `impl Orchestrator`: `bg_running(kind)` (гейт «одна за раз»), `begin_bg(kind, cancel)`
+  (флаг «идёт» + индикатор в статус-баре), `handle_bg_done(kind, result)` (**общий**
+  обработчик исхода: гашение индикатора, серия неудач → одна ошибка на пороге
+  `BACKGROUND_FAILURE_ALERT`, при успехе **рефлексии** — `SelfModelChanged`,
+  консолидации — нет), `cancel_all_bg()` (для `Quit`), `#[cfg(test)] bg_failures(kind)`.
+  Тексты ошибок собираются из `kind_label(kind)` («Авто-рефлексия»/«Авто-консолидация»)
+  **байт-в-байт** с прежними — на них смотрят тесты.
+- **Поля оркестратора 6 → 2**: `reflect_cancel`/`reflect_done_tx`/`reflect_failures` +
+  `consolidate_cancel`/`consolidate_done_tx`/`consolidate_failures` → `bg: HashMap<
+  BackgroundKind, BgSlot>` + `bg_done_tx: UnboundedSender<(BackgroundKind, Result<(),
+  String>)>`. `consolidate_counts` (каденция консолидации по чату) **оставлен** — это
+  данные каденции, не жизненный цикл задачи. В `run()`: два канала/две ветки `select!`
+  → один `bg_done` + одна ветка; `Quit` — перечисление токенов → `cancel_all_bg()`.
+- **`SilentLoop`** (`tool_loop.rs`) получил поле `kind: BackgroundKind`; `done_tx` шлёт
+  `(kind, исход)` вместо голого исхода. Спавн-хвосты `maybe_auto_reflect`/
+  `maybe_auto_consolidate` переведены на `begin_bg` (устанавливает cancel + индикатор),
+  гейты «уже идёт» — на `bg_running`; `handle_reflect_done`/`handle_consolidate_done`
+  удалены.
+- **Границы семейства** (не тронуты): имперсонация (свой done-канал `(Uuid,
+  FinishReason)`, стриминг в UI), RAG-индексация (done-канала нет, прогресс через
+  `RagProgress`), авто-название (`title_tx`, результат с id чата). `gen_state`/
+  `rag_cancel`/`imp_cancel` в `Quit` остались как есть.
+- **DoD**: поля `reflect_*`/`consolidate_cancel|_done_tx|_failures` удалены; в `run()`
+  одна bg-ветка; `BACKGROUND_FAILURE_ALERT` — единственный потребитель `handle_bg_done`.
+  Тесты переведены на новый API без переименований (`bg_running`/`handle_bg_done`/
+  `bg_failures`). **808 тестов зелёные** (число неизменно — рефактор), 26 `#[ignore]`,
+  clippy `-D warnings`/fmt чисты. Доки: architecture.md §3 (карта модулей), §11
+  (конкурентность).
+
 ### Отложено за пределы M3
 - **Сворачивание/выделение per-message** и tool-блоки в ленте — сейчас «мысли»
   сворачиваются глобально (`Ctrl+T`); выделение сообщений и tool-блоки — на M5.
