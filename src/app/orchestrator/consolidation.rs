@@ -11,7 +11,7 @@ use std::time::Duration;
 
 use tokio_util::sync::CancellationToken;
 
-use crate::app::events::{AppEvent, BackgroundKind};
+use crate::app::events::BackgroundKind;
 use crate::entities::profile::ToolId;
 use crate::entities::sampling::SamplingConfig;
 use crate::features::tools::{ToolContext, ToolParams, TurnInfo, notes};
@@ -97,7 +97,7 @@ impl Orchestrator {
                 return;
             }
         }
-        if self.consolidate_cancel.is_some() {
+        if self.bg_running(BackgroundKind::Consolidation) {
             return; // уже идёт — пропускаем без сброса (повторим на след. ходу)
         }
         // Нечего консолидировать, если пользовательских заметок меньше двух (self-заметки
@@ -144,47 +144,22 @@ impl Orchestrator {
             tools: self.registry.schemas_for(&allowed),
         };
 
+        // Спавним задачу и фиксируем слот (флаг «идёт» + тихий индикатор в статус-баре).
         let cancel = CancellationToken::new();
-        self.consolidate_cancel = Some(cancel.clone());
         tool_loop::spawn_silent_loop(tool_loop::SilentLoop {
             backend,
             registry: self.registry.clone(),
             ctx,
             request,
             allowed,
-            cancel,
+            cancel: cancel.clone(),
             max_rounds: CONSOLIDATE_MAX_ROUNDS,
             timeout: CONSOLIDATE_TIMEOUT,
             label: "авто-консолидация",
             profile_id,
-            done_tx: self.consolidate_done_tx.clone(),
-        });
-        // Тихий индикатор «идёт консолидация» в статус-баре.
-        let _ = self.evt_tx.send(AppEvent::BackgroundTask {
             kind: BackgroundKind::Consolidation,
-            active: true,
+            done_tx: self.bg_done_tx.clone(),
         });
-    }
-
-    /// Фоновая консолидация завершилась — снимаем «идёт консолидация», гасим индикатор
-    /// и ведём серию неудач (как рефлексия). `SelfModelChanged` **не** шлём — меняются
-    /// заметки, не «модель себя». Инструменты уже записали изменения в `Storage`.
-    pub(super) fn handle_consolidate_done(&mut self, result: Result<(), String>) {
-        self.consolidate_cancel = None;
-        let _ = self.evt_tx.send(AppEvent::BackgroundTask {
-            kind: BackgroundKind::Consolidation,
-            active: false,
-        });
-        match result {
-            Ok(()) => self.consolidate_failures = 0,
-            Err(reason) => {
-                self.consolidate_failures += 1;
-                if self.consolidate_failures == super::BACKGROUND_FAILURE_ALERT {
-                    let _ = self.evt_tx.send(AppEvent::Error(format!(
-                        "Авто-консолидация трижды подряд завершилась ошибкой: {reason}"
-                    )));
-                }
-            }
-        }
+        self.begin_bg(BackgroundKind::Consolidation, cancel);
     }
 }

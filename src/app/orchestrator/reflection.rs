@@ -13,7 +13,7 @@ use tokio_util::sync::CancellationToken;
 
 use chrono::{DateTime, Utc};
 
-use crate::app::events::{AppEvent, BackgroundKind};
+use crate::app::events::BackgroundKind;
 use crate::entities::chat::{Chat, DeletedCause};
 use crate::entities::message::{Message, MessageRole};
 use crate::entities::profile::ToolId;
@@ -218,7 +218,7 @@ impl Orchestrator {
         }
 
         // Уже идёт рефлексия? Пропускаем без сдвига ватермарка (повторим на след. ходу).
-        if self.reflect_cancel.is_some() {
+        if self.bg_running(BackgroundKind::Reflection) {
             return;
         }
         // Сервер готов? Иначе пропускаем без сдвига ватермарка (повторим позже).
@@ -257,53 +257,23 @@ impl Orchestrator {
             tools: self.registry.schemas_for(&allowed),
         };
 
+        // Спавним задачу и фиксируем слот (флаг «идёт» + тихий индикатор в статус-баре).
         let cancel = CancellationToken::new();
-        self.reflect_cancel = Some(cancel.clone());
         tool_loop::spawn_silent_loop(tool_loop::SilentLoop {
             backend,
             registry: self.registry.clone(),
             ctx,
             request,
             allowed,
-            cancel,
+            cancel: cancel.clone(),
             max_rounds: REFLECT_MAX_ROUNDS,
             timeout: REFLECT_TIMEOUT,
             label: "авто-рефлексия",
             profile_id,
-            done_tx: self.reflect_done_tx.clone(),
-        });
-        // Тихий индикатор «идёт рефлексия» в статус-баре.
-        let _ = self.evt_tx.send(AppEvent::BackgroundTask {
             kind: BackgroundKind::Reflection,
-            active: true,
+            done_tx: self.bg_done_tx.clone(),
         });
-    }
-
-    /// Фоновая рефлексия завершилась — снимаем «идёт рефлексия», гасим индикатор.
-    /// При успехе: сбрасываем серию неудач и сигналим `SelfModelChanged` (открытый
-    /// экран `F3` перезапросит свежий снимок). При неудаче: копим серию и на пороге
-    /// один раз показываем ошибку в UI (наблюдаемость без спама). Инструменты уже
-    /// записали изменения в `Storage`; ленту/чат это не трогает.
-    pub(super) fn handle_reflect_done(&mut self, result: Result<(), String>) {
-        self.reflect_cancel = None;
-        let _ = self.evt_tx.send(AppEvent::BackgroundTask {
-            kind: BackgroundKind::Reflection,
-            active: false,
-        });
-        match result {
-            Ok(()) => {
-                self.reflect_failures = 0;
-                let _ = self.evt_tx.send(AppEvent::SelfModelChanged);
-            }
-            Err(reason) => {
-                self.reflect_failures += 1;
-                if self.reflect_failures == super::BACKGROUND_FAILURE_ALERT {
-                    let _ = self.evt_tx.send(AppEvent::Error(format!(
-                        "Авто-рефлексия трижды подряд завершилась ошибкой: {reason}"
-                    )));
-                }
-            }
-        }
+        self.begin_bg(BackgroundKind::Reflection, cancel);
     }
 }
 

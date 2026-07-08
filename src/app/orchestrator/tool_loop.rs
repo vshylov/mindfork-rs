@@ -15,6 +15,7 @@ use tokio::sync::mpsc::UnboundedSender;
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
+use crate::app::events::BackgroundKind;
 use crate::entities::profile::ToolId;
 use crate::features::tools::{ToolContext, ToolRegistry};
 use crate::shared::api::{
@@ -45,8 +46,11 @@ pub(super) struct SilentLoop {
     pub label: &'static str,
     /// Профиль (для логов).
     pub profile_id: Uuid,
-    /// Канал исхода: `Ok(())` при успехе, `Err(причина)` при ошибке/таймауте.
-    pub done_tx: UnboundedSender<Result<(), String>>,
+    /// Вид задачи — уходит в `done_tx` вместе с исходом (петля разбирает одной веткой).
+    pub kind: BackgroundKind,
+    /// Единый канал исхода: `(вид, Ok(()))` при успехе, `(вид, Err(причина))` при
+    /// ошибке/таймауте.
+    pub done_tx: UnboundedSender<(BackgroundKind, Result<(), String>)>,
 }
 
 /// Запускает тихую фоновую задачу: мини agentic-loop под таймаутом. По завершении
@@ -64,6 +68,7 @@ pub(super) fn spawn_silent_loop(spawn: SilentLoop) {
         timeout,
         label,
         profile_id,
+        kind,
         done_tx,
     } = spawn;
 
@@ -89,7 +94,7 @@ pub(super) fn spawn_silent_loop(spawn: SilentLoop) {
                 Err("превышен лимит времени".to_string())
             }
         };
-        let _ = done_tx.send(outcome);
+        let _ = done_tx.send((kind, outcome));
     });
 }
 
