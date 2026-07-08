@@ -17,195 +17,45 @@ pub(super) fn cloud_supported_param(provider: CloudProvider, p: SamplingParam) -
     crate::entities::sampling::supported_sampling_fields(Some(provider)).contains(&p.field_name())
 }
 
-/// Человекопонятное описание поля для подсказки внизу секции (`None` — без подсказки).
-pub(super) fn field_description(id: FieldId) -> Option<&'static str> {
-    match id {
-        FieldId::XNgl => Some(
-            "Сколько слоёв модели выгрузить на видеокарту (GPU). Больше слоёв — \
-             быстрее, но нужна видеопамять; 0 — считать только на процессоре, \
-             99 — вся модель на GPU.",
-        ),
-        FieldId::XJinja => Some(
-            "Использовать встроенный chat-шаблон модели (Jinja). Нужен для \
-             правильного формата сообщений и вызова инструментов — обычно держат включённым.",
-        ),
-        FieldId::XNoMmap | FieldId::IxNoMmap => Some(
-            "Грузить веса модели целиком в оперативную память вместо отображения \
-             файла с диска (mmap). Помогает на сетевых и медленных дисках, но требует \
-             больше свободной RAM.",
-        ),
-        FieldId::XMode | FieldId::EMode => Some(
-            "managed — локальный llama-server (приложение запускает процесс); \
-             external — свой OpenAI-совместимый сервер по URL; openai/gemini — облако \
-             (нужны имя модели и API-ключ из env-переменной).",
-        ),
-        FieldId::IxMode => Some(
-            "shared — тот же движок, что у ассистента (с семплингом имперсонации); \
-             managed — отдельный llama-server; external — отдельный удалённый сервер; \
-             openai/gemini — облако (имя модели + API-ключ из env).",
-        ),
-        FieldId::XApiKeyEnv | FieldId::IxApiKeyEnv | FieldId::EApiKeyEnv => Some(
-            "Имя переменной окружения с API-ключом (например OPENAI_API_KEY). Хранится \
-             только имя — сам ключ читается из окружения и на диск не пишется.",
-        ),
-        FieldId::XModelName | FieldId::IxModelName | FieldId::EModelName => Some(
-            "Имя модели у провайдера (например gpt-4o, gemini-2.5-pro, \
-             text-embedding-3-small). Для облака обязательно.",
-        ),
-        FieldId::ModelSub | FieldId::SamplingSub | FieldId::ProfileSub => Some(
-            "Переключение между настройками ассистента и имперсонации (написание \
-             сообщения от лица пользователя, Ctrl+U). ←/→ или Enter.",
-        ),
-        FieldId::IxJinja => Some(
-            "Использовать встроенный chat-шаблон модели (Jinja) для сервера \
-             имперсонации.",
-        ),
-        FieldId::IxNgl => Some(
-            "Сколько слоёв модели имперсонации выгрузить на видеокарту (GPU). \
-             0 — только процессор, 99 — вся модель на GPU.",
-        ),
-        FieldId::XFlashAttn | FieldId::IxFlashAttn => Some(
-            "FlashAttention — оптимизация механизма внимания: ускоряет генерацию и \
-             экономит видеопамять на поддерживаемых GPU. auto — пусть llama.cpp решит \
-             сам; on/off — включить/выключить принудительно.",
-        ),
-        FieldId::XSpecType | FieldId::IxSpecType => Some(
-            "Спекулятивное декодирование ускоряет генерацию: «черновик» предлагает \
-             несколько токенов вперёд, основная модель их разом проверяет. draft-* — \
-             нужна отдельная черновая модель (-md); для MTP-моделей (mtp-gemma-…) — \
-             draft-mtp; ngram-* — без модели (черновик из контекста). none — выключено.",
-        ),
-        FieldId::XDraftModel | FieldId::IxDraftModel => Some(
-            "Путь к «черновой» GGUF-модели для спекулятивного декодирования (-md). \
-             Должна быть совместима с основной по словарю. Для MTP — путь к \
-             соответствующему MTP-GGUF.",
-        ),
-        FieldId::XDraftNgl | FieldId::IxDraftNgl => {
-            Some("Сколько слоёв черновой модели выгрузить на GPU (-ngld). Пусто — авто.")
-        }
-        FieldId::XDraftNMax | FieldId::IxDraftNMax => Some(
-            "Сколько токенов черновая модель предлагает за один шаг \
-             (--spec-draft-n-max). Пусто — значение llama.cpp по умолчанию (3).",
-        ),
-        FieldId::XDraftNMin | FieldId::IxDraftNMin => Some(
-            "Минимум черновых токенов за шаг (--spec-draft-n-min). Пусто — по \
-             умолчанию (0).",
-        ),
-        FieldId::MaxToolRounds => Some(
-            "Максимум раундов клиентского agentic-loop за один ответ: сколько раз \
-             модель может вызвать инструменты подряд, прежде чем цикл принудительно \
-             завершится. Защита от зацикливания (по умолчанию 8).",
-        ),
-        FieldId::TSubMaxTokens => Some(
-            "Лимит токенов в ответе субагента (call_subagent) — независимого одно-ходового \
-             запроса без истории и инструментов.",
-        ),
-        FieldId::TSubTimeout => Some("Таймаут запроса субагента (call_subagent) в секундах."),
-        FieldId::TWeb => Some(
-            "Разрешить инструменты web_search и fetch_url (сетевой доступ). Мастер-гейт: \
-             при выключении оба инструмента недоступны модели независимо от настроек профиля.",
-        ),
-        FieldId::TPython => Some(
-            "Разрешить инструмент python_exec (исполнение кода в отдельном процессе). \
-             Выключено по умолчанию: код исполняется на вашей машине.",
-        ),
-        FieldId::TWebFetch => Some(
-            "Загружать страницы результатов web-поиска, извлекать читаемый текст и \
-             переупорядочивать по релевантности запросу (эмбеддингами). Даёт модели \
-             содержимое страниц, но добавляет задержку. Выкл — только заголовки/сниппеты.",
-        ),
-        FieldId::TFs => Some(
-            "Разрешить инструменты чтения/записи/листинга локальных файлов \
-             (fs_read/fs_write/fs_list). Выключено по умолчанию: инструмент может \
-             прочитать или перезаписать любой файл. Ограничить можно каталогом-песочницей.",
-        ),
-        FieldId::TFsRoot => Some(
-            "Каталог-«песочница» для файловых инструментов: если задан, доступ к файлам \
-             ограничен этим каталогом и его подкаталогами (выход через .. блокируется). \
-             Пусто — доступ ко всей файловой системе.",
-        ),
-        FieldId::RagTarget => Some(
-            "Целевой размер фрагмента (чанка) базы знаний в символах. Меньше — точнее \
-             попадание, но больше фрагментов; больше — шире контекст. Применяется при \
-             индексации (/rag add) и реиндексации (/rag rebuild).",
-        ),
-        FieldId::RagOverlap => Some(
-            "Перекрытие соседних фрагментов в символах: хвост предыдущего повторяется \
-             в начале следующего, чтобы запрос у границы не терял контекст. При \
-             извлечении дубль снимается склейкой.",
-        ),
-        FieldId::RagMax => Some(
-            "Жёсткий потолок неделимого фрагмента в символах (очень длинная строка/слово \
-             без пунктуации). Не меньше целевого размера.",
-        ),
-        FieldId::SmMaxNarrative => Some(
-            "Сколько инсайтов (наблюдений) хранить в нарративе «модели себя». При \
-             переполнении старые вытесняются. Только для профилей с включёнными \
-             инструментами модели себя.",
-        ),
-        FieldId::SmNarrativeInPrompt => Some(
-            "Сколько самых свежих инсайтов подмешивать в системный промпт (новейшие \
-             первыми). Больше — богаче контекст «я», но дороже по токенам.",
-        ),
-        FieldId::SmPromptCap => Some(
-            "Потолок символов компактного блока «модели себя», подмешиваемого в системный \
-             промпт. Защита окна контекста: длинный блок усекается.",
-        ),
-        FieldId::SmSummaryTarget => Some(
-            "Ориентир размера описания себя (summary) в символах. Сверх него инструменты и \
-             протокол ведения мягко предлагают сократить описание, вынеся событийное в \
-             наблюдения. Это ворота, а не потолок: данные не усекаются.",
-        ),
-        FieldId::SmAutoReflect => Some(
-            "Авто-рефлексия: каждые N ответов ассистента модель в фоне сама пересматривает \
-             разговор и обновляет «модель себя». 0 — выключено. Работает только в профилях \
-             с включёнными инструментами модели себя.",
-        ),
-        FieldId::SmProtocol => Some(
-            "Подмешивать в системный промпт нейтральную к персоне инструкцию: когда \
-             фиксировать изменения инструментами, «мимолётное — в наблюдения», «точность \
-             важнее угодливости». Делает использование инструментов предсказуемым \
-             независимо от персоны. Работает только в профилях с включёнными инструментами \
-             модели себя.",
-        ),
-        FieldId::NotesAutoConsolidate => Some(
-            "Авто-консолидация («сон»): каждые N ответов модель в фоне сама пересматривает \
-             базу заметок — сливает дубли, переписывает устаревшее, связывает родственное. \
-             0 — выключено. Работает только в профилях с включёнными инструментами заметок.",
-        ),
-        FieldId::NotesRecallIncludesSelf => Some(
-            "Показывать наблюдения «о себе» (@self) в общем note_recall — с пометкой \
-             [о себе]. По умолчанию выключено: память о себе ≠ память о собеседнике. \
-             Включение смешивает выдачу (модель увидит свои наблюдения при поиске заметок).",
-        ),
-        FieldId::ICompat => Some(
-            "Режим совместимости со старыми эмуляторами терминала (conhost Windows 10 \
-             и т.п.): эмодзи и редкие символы заменяются на простые глифы, рамки — \
-             прямые, спиннер — ASCII, затемнение фона попапов — цветом. Включите, \
-             если вместо иконок видны квадраты-«тофу».",
-        ),
-        FieldId::IConfirmKeys => Some(
-            "Спрашивать подтверждение перед перегенерацией (Ctrl+R) и удалением последнего \
-             обмена (Ctrl+E) — обе операции необратимы в UI. Выключено — комбинации \
-             срабатывают сразу.",
-        ),
-        FieldId::ICopyThoughts => Some(
-            "При копировании переписки (F5) включать блок «мыслей» (CoT) ассистента. \
-             По умолчанию копируется только текст сообщений.",
-        ),
-        FieldId::ICopyToolCalls => Some(
-            "При копировании переписки (F5) включать параметры вызовов инструментов \
-             (имя инструмента и аргументы).",
-        ),
-        FieldId::ICopyToolResults => Some(
-            "При копировании переписки (F5) включать результаты (ответы) вызовов \
-             инструментов.",
-        ),
-        // Описания параметров семплинга (одинаковые для обеих подсекций).
-        FieldId::S(p) | FieldId::IS(p) => p.description(),
-        _ => None,
-    }
-}
+// ---------- описания полей (прикрепляются к строкам при построении, см.
+// `FieldRow::describe`) ----------
+//
+// Описания, общие для нескольких мест построения строк, вынесены в `const` (единый
+// источник текста). Специфичные для одного поля — инлайн-литералом у места постройки
+// (catalog.rs / managed_rows). Ngl/Jinja различаются у ассистента и имперсонации —
+// их тексты несёт `ManagedFieldIds`. Параметры семплинга — `SamplingParam::description`.
+
+/// Режим движка (ассистента/эмбеддингов).
+pub(super) const DESC_MODE: &str = "managed — локальный llama-server (приложение запускает процесс); \
+     external — свой OpenAI-совместимый сервер по URL; openai/gemini — облако \
+     (нужны имя модели и API-ключ из env-переменной).";
+/// Режим движка имперсонации (добавляет `shared`).
+pub(super) const DESC_IMP_MODE: &str = "shared — тот же движок, что у ассистента (с семплингом имперсонации); \
+     managed — отдельный llama-server; external — отдельный удалённый сервер; \
+     openai/gemini — облако (имя модели + API-ключ из env).";
+/// Имя env-переменной с API-ключом (X/Ix/E).
+pub(super) const DESC_API_KEY_ENV: &str = "Имя переменной окружения с API-ключом (например OPENAI_API_KEY). Хранится \
+     только имя — сам ключ читается из окружения и на диск не пишется.";
+/// Имя облачной модели (X/Ix/E).
+pub(super) const DESC_MODEL_NAME: &str = "Имя модели у провайдера (например gpt-4o, gemini-2.5-pro, \
+     text-embedding-3-small). Для облака обязательно.";
+/// Селектор подсекции (таб-стрип Модель/Семплинг/Профили).
+pub(super) const DESC_SUBSECTION: &str = "Переключение между настройками ассистента и имперсонации (написание \
+     сообщения от лица пользователя, Ctrl+U). ←/→ или Enter.";
+
+/// -ngl у движка ассистента (текст отличается от имперсонации).
+pub(super) const DESC_NGL_ASSISTANT: &str = "Сколько слоёв модели выгрузить на видеокарту (GPU). Больше слоёв — \
+     быстрее, но нужна видеопамять; 0 — считать только на процессоре, \
+     99 — вся модель на GPU.";
+/// -ngl у движка имперсонации.
+pub(super) const DESC_NGL_IMP: &str = "Сколько слоёв модели имперсонации выгрузить на видеокарту (GPU). \
+     0 — только процессор, 99 — вся модель на GPU.";
+/// --jinja у движка ассистента.
+pub(super) const DESC_JINJA_ASSISTANT: &str = "Использовать встроенный chat-шаблон модели (Jinja). Нужен для \
+     правильного формата сообщений и вызова инструментов — обычно держат включённым.";
+/// --jinja у движка имперсонации.
+pub(super) const DESC_JINJA_IMP: &str = "Использовать встроенный chat-шаблон модели (Jinja) для сервера \
+     имперсонации.";
 
 pub(super) fn row(id: FieldId, label: &str, kind: FieldKind) -> FieldRow {
     FieldRow {
@@ -214,6 +64,7 @@ pub(super) fn row(id: FieldId, label: &str, kind: FieldKind) -> FieldRow {
         kind,
         group: "",
         hint: None,
+        description: None,
         warn: false,
     }
 }
@@ -259,6 +110,10 @@ pub(super) struct ManagedFieldIds {
     draft_n_min: FieldId,
     host: FieldId,
     port: FieldId,
+    /// Описания `-ngl`/`--jinja` — различаются у ассистента и имперсонации, поэтому
+    /// несутся здесь, а не инлайн в `managed_rows` (общей для обоих движков).
+    ngl_desc: &'static str,
+    jinja_desc: &'static str,
 }
 
 /// Набор FieldId для модели/сервера ассистента.
@@ -277,6 +132,8 @@ pub(super) const ASSISTANT_MANAGED_IDS: ManagedFieldIds = ManagedFieldIds {
     draft_n_min: FieldId::XDraftNMin,
     host: FieldId::XHost,
     port: FieldId::XPort,
+    ngl_desc: DESC_NGL_ASSISTANT,
+    jinja_desc: DESC_JINJA_ASSISTANT,
 };
 
 /// Набор FieldId для модели/сервера имперсонации.
@@ -295,6 +152,8 @@ pub(super) const IMP_MANAGED_IDS: ManagedFieldIds = ManagedFieldIds {
     draft_n_min: FieldId::IxDraftNMin,
     host: FieldId::IxHost,
     port: FieldId::IxPort,
+    ngl_desc: DESC_NGL_IMP,
+    jinja_desc: DESC_JINJA_IMP,
 };
 
 /// Поля managed-сервера `llama-server` (общие для движка ассистента/имперсонации),
@@ -314,45 +173,78 @@ pub(super) fn managed_rows(m: &ManagedSettings, ids: ManagedFieldIds) -> Vec<Fie
         vec![
             text_row(ids.model, "GGUF-модель (-m)", &m.model_path),
             num_field(ids.ctx, "Контекст (-c)", m.context_size),
-            row(ids.jinja, "Шаблон (--jinja)", FieldKind::Toggle(m.jinja)),
+            row(ids.jinja, "Шаблон (--jinja)", FieldKind::Toggle(m.jinja)).describe(ids.jinja_desc),
         ],
     ));
     rows.extend(grouped(
         "Производительность",
         vec![
-            num_field(ids.ngl, "GPU-слои (-ngl)", m.gpu_layers),
+            num_field(ids.ngl, "GPU-слои (-ngl)", m.gpu_layers).describe(ids.ngl_desc),
             row(
                 ids.flash_attn,
                 "FlashAttn (--flash-attn)",
                 FieldKind::Choice(m.flash_attn.label().to_string()),
+            )
+            .describe(
+                "FlashAttention — оптимизация механизма внимания: ускоряет генерацию и \
+                 экономит видеопамять на поддерживаемых GPU. auto — пусть llama.cpp решит \
+                 сам; on/off — включить/выключить принудительно.",
             ),
             row(
                 ids.no_mmap,
                 "No-mmap (--no-mmap)",
                 FieldKind::Toggle(m.no_mmap),
+            )
+            .describe(
+                "Грузить веса модели целиком в оперативную память вместо отображения \
+                 файла с диска (mmap). Помогает на сетевых и медленных дисках, но требует \
+                 больше свободной RAM.",
             ),
         ],
     ));
-    let mut spec = vec![row(
-        ids.spec_type,
-        "Спек. декод. (--spec-type)",
-        FieldKind::Choice(m.spec_type.label().to_string()),
-    )];
+    let mut spec = vec![
+        row(
+            ids.spec_type,
+            "Спек. декод. (--spec-type)",
+            FieldKind::Choice(m.spec_type.label().to_string()),
+        )
+        .describe(
+            "Спекулятивное декодирование ускоряет генерацию: «черновик» предлагает \
+             несколько токенов вперёд, основная модель их разом проверяет. draft-* — \
+             нужна отдельная черновая модель (-md); для MTP-моделей (mtp-gemma-…) — \
+             draft-mtp; ngram-* — без модели (черновик из контекста). none — выключено.",
+        ),
+    ];
     // Поля черновой модели показываем только для типов draft-* (им нужна модель);
     // ngram-* и none их не используют — не загромождаем секцию.
     if m.spec_type.needs_draft_model() {
-        spec.push(text_row(
-            ids.draft_model,
-            "Черновая модель (-md)",
-            &m.draft_model,
-        ));
-        spec.push(num_row(
-            ids.draft_ngl,
-            "Черновик GPU-слои (-ngld)",
-            m.draft_gpu_layers,
-        ));
-        spec.push(num_row(ids.draft_n_max, "Черновик n-max", m.draft_n_max));
-        spec.push(num_row(ids.draft_n_min, "Черновик n-min", m.draft_n_min));
+        spec.push(
+            text_row(ids.draft_model, "Черновая модель (-md)", &m.draft_model).describe(
+                "Путь к «черновой» GGUF-модели для спекулятивного декодирования (-md). \
+                 Должна быть совместима с основной по словарю. Для MTP — путь к \
+                 соответствующему MTP-GGUF.",
+            ),
+        );
+        spec.push(
+            num_row(
+                ids.draft_ngl,
+                "Черновик GPU-слои (-ngld)",
+                m.draft_gpu_layers,
+            )
+            .describe("Сколько слоёв черновой модели выгрузить на GPU (-ngld). Пусто — авто."),
+        );
+        spec.push(
+            num_row(ids.draft_n_max, "Черновик n-max", m.draft_n_max).describe(
+                "Сколько токенов черновая модель предлагает за один шаг \
+             (--spec-draft-n-max). Пусто — значение llama.cpp по умолчанию (3).",
+            ),
+        );
+        spec.push(
+            num_row(ids.draft_n_min, "Черновик n-min", m.draft_n_min).describe(
+                "Минимум черновых токенов за шаг (--spec-draft-n-min). Пусто — по \
+             умолчанию (0).",
+            ),
+        );
     }
     rows.extend(grouped("Спекулятивное декодирование", spec));
     rows
@@ -369,8 +261,8 @@ pub(super) fn cloud_rows(
     let none = CloudSettings::default();
     let c = cloud.unwrap_or(&none);
     vec![
-        text_row(model_name, "Модель", &c.model_name),
-        text_row(api_key_env, "API-ключ (env)", &c.api_key_env),
+        text_row(model_name, "Модель", &c.model_name).describe(DESC_MODEL_NAME),
+        text_row(api_key_env, "API-ключ (env)", &c.api_key_env).describe(DESC_API_KEY_ENV),
         text_row(url, "Base URL (опц.)", &c.url),
     ]
 }
@@ -406,7 +298,7 @@ pub(super) fn num_row<T: ToString>(id: FieldId, label: &str, value: Option<T>) -
 pub(super) fn sampling_row(id: FieldId, p: SamplingParam, s: &SamplingConfig) -> FieldRow {
     use SamplingParam::*;
     let label = p.label();
-    match p {
+    let mut r = match p {
         Temp => num_row(id, label, s.temperature),
         DynatempRange => num_row(id, label, s.dynatemp_range),
         DynatempExp => num_row(id, label, s.dynatemp_exponent),
@@ -448,7 +340,11 @@ pub(super) fn sampling_row(id: FieldId, p: SamplingParam, s: &SamplingConfig) ->
             label,
             FieldKind::Choice(reasoning_label(s.reasoning_effort)),
         ),
-    }
+    };
+    // Описание параметра — единый источник `SamplingParam::description` (одинаково для
+    // обеих подсекций Ассистент/Имперсонация).
+    r.description = p.description();
+    r
 }
 
 /// Применяет текст редактора к числовому параметру семплинга. `Thinking`/`Reasoning`
@@ -602,7 +498,7 @@ pub(super) fn collect_hits(
         if is_subsection(f.id) {
             continue;
         }
-        let desc = field_description(f.id).unwrap_or("");
+        let desc = f.description.unwrap_or("");
         let crumb = if f.group.is_empty() {
             format!("{head} › {}", f.label)
         } else {
