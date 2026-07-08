@@ -52,6 +52,30 @@ impl ActiveScreen {
     fn is_chat(&self) -> bool {
         matches!(self, ActiveScreen::Chat)
     }
+
+    /// Обновляет палитру открытого overlay-экрана (список чатов / модель себя) при
+    /// смене темы или режима совместимости. Экран настроек обновляется отдельно
+    /// (`refresh` шире палитры), чат — своей базой (`ChatScreen::set_settings`).
+    /// Каноничное место перечисления экранов для broadcast палитры.
+    fn set_palette(&mut self, palette: Palette) {
+        match self {
+            ActiveScreen::ChatList(list) => list.set_palette(palette),
+            ActiveScreen::SelfModel(view) => view.set_palette(palette),
+            ActiveScreen::Chat | ActiveScreen::Settings(_) => {}
+        }
+    }
+
+    /// Направляет вставку из буфера в целевой экран: настройки/список/модель себя —
+    /// в свои поля; базовый чат — в поле ввода. Каноничное место маршрутизации
+    /// вставки по экранам. `chat` — базовый экран (нужен для варианта `Chat`).
+    fn handle_paste(&mut self, chat: &mut ChatScreen, text: &str) {
+        match self {
+            ActiveScreen::Settings(settings) => settings.handle_paste(text),
+            ActiveScreen::Chat => chat.handle_paste(text),
+            ActiveScreen::ChatList(list) => list.handle_paste(text),
+            ActiveScreen::SelfModel(view) => view.handle_paste(text),
+        }
+    }
 }
 
 /// Период опроса ввода (тик перерисовки).

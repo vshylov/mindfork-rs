@@ -25,67 +25,38 @@ const HOTKEYS: [(&str, &str); 5] = [
 /// Зазор между столбцами хоткеев и между пилюлей статуса и сеткой хоткеев.
 const GAP: usize = 3;
 
-/// Рисует статус-строку в `area`. `tokens` — токенов ответа (live), `context` —
-/// токенов переписки (промпта; `None` — неизвестно), `context_exact` — точное ли
-/// это число из `usage` сервера (иначе оценка, помечается `~`). `mouse_scroll` —
-/// включён ли захват мыши для прокрутки колесом (иначе нативное выделение текста).
-/// Когда хоткеи не помещаются по ширине, они переносятся на следующие строки
-/// аккуратной сеткой (как в оверлее списка чатов); высоту под это отводит вызывающий
-/// через [`height`]. См. spec §11.1, §11.3.
-#[allow(clippy::too_many_arguments)]
-pub fn render(
-    frame: &mut Frame,
-    area: Rect,
-    statuses: &ServerStatuses,
-    generating: bool,
-    tokens: u64,
-    context: Option<u64>,
-    context_exact: bool,
-    mouse_scroll: bool,
-    background: Option<&str>,
-    palette: &Palette,
-) {
-    let lines = lines(
-        area.width as usize,
-        statuses,
-        generating,
-        tokens,
-        context,
-        context_exact,
-        mouse_scroll,
-        background,
-        palette,
-    );
+/// Снимок состояния для строки статуса — экран собирает его в одном месте
+/// ([`ChatScreen::status_model`](crate::screens::chat::ChatScreen)), поэтому новый
+/// индикатор добавляет поле, а не расширяет сигнатуры `render`/`height`.
+/// `tokens` — токенов ответа (live), `context` — токенов переписки (промпта; `None`
+/// — неизвестно), `context_exact` — точное ли это число из `usage` сервера (иначе
+/// оценка, помечается `~`). `mouse_scroll` — включён ли захват мыши для прокрутки
+/// колесом (иначе нативное выделение текста). `background` — тихий индикатор фоновой
+/// задачи (авто-рефлексия/консолидация; `None` — нет). См. spec §11.1, §11.3.
+pub struct StatusModel<'a> {
+    pub statuses: &'a ServerStatuses,
+    pub generating: bool,
+    pub tokens: u64,
+    pub context: Option<u64>,
+    pub context_exact: bool,
+    pub mouse_scroll: bool,
+    pub background: Option<&'a str>,
+}
+
+/// Рисует статус-строку в `area`. Когда хоткеи не помещаются по ширине, они
+/// переносятся на следующие строки аккуратной сеткой (как в оверлее списка чатов);
+/// высоту под это отводит вызывающий через [`height`]. См. spec §11.1, §11.3.
+pub fn render(frame: &mut Frame, area: Rect, model: &StatusModel, palette: &Palette) {
+    let lines = lines(area.width as usize, model, palette);
     frame.render_widget(Paragraph::new(lines), area);
 }
 
 /// Сколько строк займёт статус-бар при ширине `width` — вызывающий отводит под него
 /// ровно эту высоту (минимум 1). Хоткеи переносятся, когда не помещаются.
-#[allow(clippy::too_many_arguments)]
-pub fn height(
-    width: usize,
-    statuses: &ServerStatuses,
-    generating: bool,
-    tokens: u64,
-    context: Option<u64>,
-    context_exact: bool,
-    mouse_scroll: bool,
-    background: Option<&str>,
-    palette: &Palette,
-) -> u16 {
-    lines(
-        width,
-        statuses,
-        generating,
-        tokens,
-        context,
-        context_exact,
-        mouse_scroll,
-        background,
-        palette,
-    )
-    .len()
-    .clamp(1, u16::MAX as usize) as u16
+pub fn height(width: usize, model: &StatusModel, palette: &Palette) -> u16 {
+    lines(width, model, palette)
+        .len()
+        .clamp(1, u16::MAX as usize) as u16
 }
 
 /// Раскладывает хоткеи в аккуратную сетку, **прижатую к правому краю** `width` — та
@@ -124,18 +95,15 @@ pub fn hotkey_lines(
 /// её клавиши встают ровно под столбцами строки выше, не привлекая внимание к
 /// левой/средней части окна. Пилюля статуса делит верхнюю строку с сеткой. См.
 /// spec §11.1, §11.3.
-#[allow(clippy::too_many_arguments)]
-fn lines(
-    width: usize,
-    statuses: &ServerStatuses,
-    generating: bool,
-    tokens: u64,
-    context: Option<u64>,
-    context_exact: bool,
-    mouse_scroll: bool,
-    background: Option<&str>,
-    palette: &Palette,
-) -> Vec<Line<'static>> {
+fn lines(width: usize, model: &StatusModel, palette: &Palette) -> Vec<Line<'static>> {
+    // Поля Copy (ссылки/скаляры) — разворачиваем в локальные, тело ниже не меняется.
+    let statuses = model.statuses;
+    let generating = model.generating;
+    let tokens = model.tokens;
+    let context = model.context;
+    let context_exact = model.context_exact;
+    let mouse_scroll = model.mouse_scroll;
+    let background = model.background;
     let sep = || Span::styled("  │  ", Style::new().fg(palette.border));
     let muted = palette.muted_style();
 
@@ -412,6 +380,26 @@ mod tests {
         only_chat(ServerStatus::Ready)
     }
 
+    /// Снимок статуса для тестов (background = `None`).
+    fn model<'a>(
+        statuses: &'a ServerStatuses,
+        generating: bool,
+        tokens: u64,
+        context: Option<u64>,
+        context_exact: bool,
+        mouse_scroll: bool,
+    ) -> StatusModel<'a> {
+        StatusModel {
+            statuses,
+            generating,
+            tokens,
+            context,
+            context_exact,
+            mouse_scroll,
+            background: None,
+        }
+    }
+
     /// Весь текст статус-бара одной строкой (широкая ширина → одна строка).
     fn flat(
         statuses: &ServerStatuses,
@@ -421,21 +409,19 @@ mod tests {
         context_exact: bool,
         mouse_scroll: bool,
     ) -> String {
-        lines(
-            200,
+        let m = model(
             statuses,
             generating,
             tokens,
             context,
             context_exact,
             mouse_scroll,
-            None,
-            &Palette::default(),
-        )
-        .iter()
-        .flat_map(|l| l.spans.iter())
-        .map(|s| s.content.as_ref())
-        .collect()
+        );
+        lines(200, &m, &Palette::default())
+            .iter()
+            .flat_map(|l| l.spans.iter())
+            .map(|s| s.content.as_ref())
+            .collect()
     }
 
     fn text(statuses: &ServerStatuses, generating: bool) -> String {
@@ -478,21 +464,20 @@ mod tests {
         // фоновая задача — `*`; готовность остаётся `●` (WGL4-безопасен).
         let compat = Palette::default().with_compat(true);
         let flat_compat = |statuses: &ServerStatuses, generating: bool| -> String {
-            lines(
-                200,
+            let m = StatusModel {
                 statuses,
                 generating,
-                0,
-                None,
-                false,
-                false,
-                Some("рефлексия"),
-                &compat,
-            )
-            .iter()
-            .flat_map(|l| l.spans.iter())
-            .map(|s| s.content.as_ref())
-            .collect()
+                tokens: 0,
+                context: None,
+                context_exact: false,
+                mouse_scroll: false,
+                background: Some("рефлексия"),
+            };
+            lines(200, &m, &compat)
+                .iter()
+                .flat_map(|l| l.spans.iter())
+                .map(|s| s.content.as_ref())
+                .collect()
         };
         let t = flat_compat(&only_chat(ServerStatus::Connecting), true);
         assert!(t.contains("○ чат"), "компат-глиф подключения: {t}");
@@ -542,7 +527,9 @@ mod tests {
     fn scroll_mode_highlights_only_value() {
         let palette = Palette::default();
         let span_fg = |scroll, needle: &str| {
-            lines(200, &ready(), false, 0, None, false, scroll, None, &palette)
+            let statuses = ready();
+            let m = model(&statuses, false, 0, None, false, scroll);
+            lines(200, &m, &palette)
                 .iter()
                 .flat_map(|l| l.spans.clone())
                 .find(|s| s.content.contains(needle))
@@ -573,35 +560,18 @@ mod tests {
 
     #[test]
     fn hotkeys_fit_on_one_line_when_wide() {
-        let n = lines(
-            200,
-            &ready(),
-            false,
-            0,
-            None,
-            false,
-            false,
-            None,
-            &Palette::default(),
-        )
-        .len();
+        let statuses = ready();
+        let m = model(&statuses, false, 0, None, false, false);
+        let n = lines(200, &m, &Palette::default()).len();
         assert_eq!(n, 1);
     }
 
     #[test]
     fn hotkeys_wrap_to_grid_when_narrow() {
         // Узкая ширина → хоткеи не помещаются и переносятся на следующие строки.
-        let h = height(
-            40,
-            &ready(),
-            false,
-            0,
-            None,
-            false,
-            false,
-            None,
-            &Palette::default(),
-        );
+        let statuses = ready();
+        let m = model(&statuses, false, 0, None, false, false);
+        let h = height(40, &m, &Palette::default());
         assert!(h > 1, "ожидался перенос хоткеев, высота = {h}");
         // Все хоткеи присутствуют, несмотря на перенос (включая тумблер мыши).
         let flat = flat(&ready(), false, 0, None, false, false);
@@ -616,23 +586,11 @@ mod tests {
         use ratatui::Terminal;
         use ratatui::backend::TestBackend;
         let p = Palette::default();
-        let h = height(w as usize, &ready(), false, 0, None, false, false, None, &p);
+        let statuses = ready();
+        let m = model(&statuses, false, 0, None, false, false);
+        let h = height(w as usize, &m, &p);
         let mut term = Terminal::new(TestBackend::new(w, h)).unwrap();
-        term.draw(|f| {
-            render(
-                f,
-                f.area(),
-                &ready(),
-                false,
-                0,
-                None,
-                false,
-                false,
-                None,
-                &p,
-            )
-        })
-        .unwrap();
+        term.draw(|f| render(f, f.area(), &m, &p)).unwrap();
         let buf = term.backend().buffer().clone();
         (0..buf.area.height)
             .map(|y| {
@@ -720,20 +678,16 @@ mod tests {
             embed: ServerStatus::Ready,
             impersonation: ServerStatus::Connecting,
         };
-        term.draw(|f| {
-            render(
-                f,
-                f.area(),
-                &all,
-                true,
-                123,
-                Some(456),
-                true,
-                true,
-                Some("рефлексия"),
-                &Palette::default(),
-            )
-        })
-        .unwrap();
+        let m = StatusModel {
+            statuses: &all,
+            generating: true,
+            tokens: 123,
+            context: Some(456),
+            context_exact: true,
+            mouse_scroll: true,
+            background: Some("рефлексия"),
+        };
+        term.draw(|f| render(f, f.area(), &m, &Palette::default()))
+            .unwrap();
     }
 }

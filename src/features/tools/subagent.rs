@@ -146,8 +146,6 @@ mod tests {
     use super::*;
     use crate::shared::api::contract::{ChatStream, EngineBackend, FinishReason};
     use crate::shared::api::{Embedder, mock::MockEmbedder};
-    use crate::shared::paths::Paths;
-    use crate::shared::storage::Storage;
     use std::sync::{Arc, Mutex};
     use uuid::Uuid;
 
@@ -175,22 +173,9 @@ mod tests {
     }
 
     fn ctx_with_engine(engine: Arc<dyn EngineBackend>) -> (tempfile::TempDir, ToolContext) {
-        let dir = tempfile::tempdir().unwrap();
-        let storage = Arc::new(Storage::open(Paths::with_root(dir.path())).unwrap());
         let embedder: Arc<dyn Embedder> = Arc::new(MockEmbedder::new(16));
-        let ctx = ToolContext {
-            profile_id: Uuid::new_v4(),
-            chat_id: Uuid::new_v4(),
-            system_message: "основной системный промпт".into(),
-            effective_sampling: SamplingConfig::default(),
-            last_user_message_at: None,
-            storage,
-            engine,
-            embedder,
-            chunk_params: crate::features::tools::rag::ChunkParams::default(),
-            self_model_params: crate::entities::self_model::SelfModelParams::default(),
-            recall_includes_self: false,
-        };
+        let (dir, _storage, ctx) =
+            super::super::testkit::ctx_with_backends(Uuid::new_v4(), engine, embedder);
         (dir, ctx)
     }
 

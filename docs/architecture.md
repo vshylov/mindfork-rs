@@ -148,6 +148,7 @@ src/
 │  │  ├─ reflection.rs      авто-рефлексия «модели себя» (окно/ватермарк, сигналы)
 │  │  ├─ consolidation.rs   авто-консолидация заметок («сон»)
 │  │  ├─ tool_loop.rs       общий «тихий» agentic-loop фоновых задач (рефлексия/консолидация)
+│  │  ├─ background.rs      реестр слотов тихих фоновых задач (BgSlot по BackgroundKind)
 │  │  ├─ request.rs         маппинг доменных сообщений в формат движка
 │  │  └─ tests/             тесты оркестратора, разбиты по фичам (mod.rs — фикстуры;
 │  │                        generation/chats/profiles/settings/title/impersonation/
@@ -664,6 +665,15 @@ flowchart TB
 `Profile.enabled_tools` ∩ глобальные выключатели (`effective_tool_ids`);
 agentic-loop **гейтит и сам вызов** (выключенный инструмент отклоняется).
 
+**Сборка `ToolContext`** идёт через `ToolContext::new(deps, params, turn)` из трёх
+строительных блоков (плоские публичные поля контекста сохранены — код инструментов
+`ctx.storage`/`ctx.chunk_params`/… не меняется): `ToolDeps` (разделяемые
+`Arc`-зависимости — storage/engine/embedder; в оркестраторе собирается хелпером
+`tool_deps`), `ToolParams` (снимок параметров из конфига; **единственное** место
+маппинга `AppConfig` → параметры — `ToolParams::from_config`) и `TurnInfo` (снимок
+хода: идентичность + поля `Chat`). Так новое поле контекста правит один файл
+(`tools/mod.rs`), а не каждый сайт сборки. См. docs/refactoring-solid.md §3.
+
 **Метаданные каталога** (смысловая группа, короткий лейбл тумблера, глобальный гейт,
 «включён по умолчанию») объявляет **сам инструмент** через трейт `Tool`
 (`group()`/`ui_label()` — обязательные, без дефолта, → новый инструмент невозможно
@@ -1033,7 +1043,7 @@ sequenceDiagram
         LLM-->>TASK: ToolCall(update_self_model / … / consolidate_narrative)
         TASK->>DB: инструмент пишет напрямую
     end
-    TASK-->>ORCH: reflect_done (снять флаг «идёт рефлексия»)
+    TASK-->>ORCH: bg_done (вид, исход) → handle_bg_done снимает флаг «идёт»
     Note over ORCH,DB: чат/лента НЕ трогаются — рефлексия молчалива
 ```
 
@@ -1188,6 +1198,16 @@ flowchart LR
 сохраняет и **переэмитит** `SelfModelView` — открытый экран обновляется на месте
 (`set_model`, выделение сохраняется). См. [docs/self-model-mvp.md](history/self-model-mvp.md).
 
+Перечисления экранов сведены к **каноничным местам**: broadcast палитры (смена темы) —
+`ActiveScreen::set_palette`, маршрутизация вставки из буфера — `ActiveScreen::handle_paste`
+(методы рядом с enum); снятое из активного экрана намерение диспетчеризуется единым
+`AnyIntent` + `dispatch_any` (одно владение вместо 4 параллельных `Option`); запись в
+буфер обмена — `deliver_clipboard` (`apply_event` не знает про `arboard`). Строка статуса
+получает снимок `status_bar::StatusModel` (собирается `ChatScreen::status_model`) — новый
+индикатор добавляет поле, а не расширяет сигнатуры `render`/`height`. Сам per-событийный
+`match` в `apply_event` осознанно остаётся (enum-диспетчеризация идиоматична). См.
+docs/refactoring-solid.md §6.
+
 ```mermaid
 flowchart TB
     RT["runtime.rs (петля)<br/>ChatScreen + enum ActiveScreen"]
@@ -1274,8 +1294,18 @@ flowchart TB
   канала `ChatEffect` и реентерабельных локов — дедлок невозможен по построению
   (упрощение относительно серверного agentic-loop попытки №1).
 - **Внутренние каналы** оркестратора (`done_tx`, `status_tx`, `title_tx`,
-  `imp_done_tx`, `imp_status_tx`) собирают результаты фоновых задач обратно в
-  главный `select!`-цикл, сохраняя единую точку записи состояния.
+  `imp_done_tx`, `imp_status_tx`, `bg_done_tx`) собирают результаты фоновых задач
+  обратно в главный `select!`-цикл, сохраняя единую точку записи состояния.
+- **Семейство «тихих» фоновых задач** (авто-рефлексия/консолидация — мини
+  agentic-loop без UI, общий раннер `tool_loop::spawn_silent_loop`) обслуживается
+  **реестром слотов** `bg: HashMap<BackgroundKind, BgSlot>` (`orchestrator/background.rs`):
+  слот = токен активного запуска («идёт», одна за раз) + серия неудач. Один канал
+  `bg_done_tx` несёт `(вид, исход)`, одна ветка `select!` зовёт `handle_bg_done` (общий
+  жизненный цикл: гашение индикатора, серия неудач → одна ошибка на пороге, у рефлексии
+  при успехе — `SelfModelChanged`); `Quit` отменяет все слоты через `cancel_all_bg`.
+  Так задача №3 семейства (авто-консолидация «модели себя», §9.9) не трогает каркас
+  `run()`/`Quit`. Каденция консолидации (`consolidate_counts`) — отдельные данные, не
+  жизненный цикл. См. docs/refactoring-solid.md §4.
 - **Отмена** — `CancellationToken` прерывает HTTP-стрим/фоновую задачу; частичный
   ответ фиксируется; новая задача того же рода отменяет предыдущую (RAG,
   имперсонация).

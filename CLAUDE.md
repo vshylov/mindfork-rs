@@ -3593,6 +3593,114 @@ web-поиск и Python под выключателями, экран наст�
   каталог упорядочен по id). **808 тестов зелёные** (чистый рефактор, без движка),
   clippy `-D warnings`/fmt чисты. Доки: architecture.md §8.
 
+### Пост-M9: SOLID-рефакторинг — этап 1: `ToolContext` (пучки зависимостей + конструктор) (сделано)
+- **Первый этап направления точечных SOLID-улучшений**
+  ([docs/refactoring-solid.md](docs/refactoring-solid.md), ветка
+  `refactor/tool-context-bundles`): устранён shotgun-surgery при добавлении поля
+  `ToolContext` — раньше 11-строчный литерал повторялся в **8 местах** (3 продакшн +
+  5 тест), новое поле правило все. Чисто структурный рефактор (поведение не менялось).
+- **Три строительных блока + конструктор** (`features/tools/mod.rs`, **плоские
+  публичные поля `ToolContext` сохранены** → код инструментов `ctx.storage`/
+  `ctx.chunk_params`/… не тронут): `ToolDeps` (разделяемые `Arc`: storage/engine/
+  embedder), `ToolParams` (снимок параметров из конфига; `from_config(&AppConfig)` —
+  **единственное** место маппинга) и `TurnInfo` (снимок хода: идентичность + поля
+  `Chat`); `ToolContext::new(deps, params, turn)` разворачивает их в прежние поля.
+- **Оркестратор**: хелпер `tool_deps(&self, backend) -> ToolDeps` (рядом с общими
+  хелперами `mod.rs`); три продакшн-сайта переведены на `new` — reflection/
+  consolidation через `ToolParams::from_config(&self.config)`, generation тоже
+  (`self_model_params` там считается отдельно — он ещё уходит в `GenSpawn` для
+  инъекции). **Нюанс borrow**: в generation `chat_mut` держит `&mut self`, поэтому
+  `TurnInfo` (последнее обращение к `chat`) строится в локальную перед `new`, после
+  чего borrow `chat` завершается и можно читать `self.config`/`tool_deps`.
+- **testkit**: `ctx_with_storage` через `new`; добавлены `ctx_with_backends`
+  (кастомные движок/эмбеддер — web/subagent/fetch делегируют свои локальные
+  `ctx_with_engine` сюда) и `ctx_with_deps` (общий пучок для теста изоляции rag, где
+  два контекста делят одно хранилище). Все литералы в тестах инструментов ушли.
+- **Ripple-проверка**: добавление поля в `ToolContext` требует правки **только**
+  `ToolContext::new` (проверено примерочным полем). **808 тестов зелёные** (число
+  неизменно — рефактор), 26 `#[ignore]`, clippy `-D warnings`/fmt чисты. Доки:
+  architecture.md §8.
+
+### Пост-M9: SOLID-рефакторинг — этап 2: фоновые задачи (реестр слотов + единый done-канал) (сделано)
+- **Этап 2** направления SOLID-улучшений
+  ([docs/refactoring-solid.md §4](docs/refactoring-solid.md), ветка
+  `refactor/bg-task-slots`): семейство «тихих» фоновых задач (авто-рефлексия
+  «модели себя» + авто-консолидация заметок — мини agentic-loop без UI, общий раннер
+  `tool_loop::spawn_silent_loop`) обслуживалось **копипастой жизненного цикла** —
+  триплет полей + канал + ветка `select!` + обработчик на каждую задачу. Подготовка
+  каркаса к задаче №3 семейства (авто-консолидация «модели себя» по таймеру, roadmap
+  §9.9): её добавление больше не трогает `run()`/`Quit`. Чисто структурно, поведение
+  не менялось (тексты ошибок/событий байт-в-байт).
+- **Реестр слотов** (`app/orchestrator/background.rs`, новый модуль): `BgSlot { cancel:
+  Option<CancellationToken>, failures: u32 }` (серия неудач живёт дольше запуска →
+  слот, не задача); ключ — существующий `BackgroundKind` (получил `Hash`). Методы
+  `impl Orchestrator`: `bg_running(kind)` (гейт «одна за раз»), `begin_bg(kind, cancel)`
+  (флаг «идёт» + индикатор в статус-баре), `handle_bg_done(kind, result)` (**общий**
+  обработчик исхода: гашение индикатора, серия неудач → одна ошибка на пороге
+  `BACKGROUND_FAILURE_ALERT`, при успехе **рефлексии** — `SelfModelChanged`,
+  консолидации — нет), `cancel_all_bg()` (для `Quit`), `#[cfg(test)] bg_failures(kind)`.
+  Тексты ошибок собираются из `kind_label(kind)` («Авто-рефлексия»/«Авто-консолидация»)
+  **байт-в-байт** с прежними — на них смотрят тесты.
+- **Поля оркестратора 6 → 2**: `reflect_cancel`/`reflect_done_tx`/`reflect_failures` +
+  `consolidate_cancel`/`consolidate_done_tx`/`consolidate_failures` → `bg: HashMap<
+  BackgroundKind, BgSlot>` + `bg_done_tx: UnboundedSender<(BackgroundKind, Result<(),
+  String>)>`. `consolidate_counts` (каденция консолидации по чату) **оставлен** — это
+  данные каденции, не жизненный цикл задачи. В `run()`: два канала/две ветки `select!`
+  → один `bg_done` + одна ветка; `Quit` — перечисление токенов → `cancel_all_bg()`.
+- **`SilentLoop`** (`tool_loop.rs`) получил поле `kind: BackgroundKind`; `done_tx` шлёт
+  `(kind, исход)` вместо голого исхода. Спавн-хвосты `maybe_auto_reflect`/
+  `maybe_auto_consolidate` переведены на `begin_bg` (устанавливает cancel + индикатор),
+  гейты «уже идёт» — на `bg_running`; `handle_reflect_done`/`handle_consolidate_done`
+  удалены.
+- **Границы семейства** (не тронуты): имперсонация (свой done-канал `(Uuid,
+  FinishReason)`, стриминг в UI), RAG-индексация (done-канала нет, прогресс через
+  `RagProgress`), авто-название (`title_tx`, результат с id чата). `gen_state`/
+  `rag_cancel`/`imp_cancel` в `Quit` остались как есть.
+- **DoD**: поля `reflect_*`/`consolidate_cancel|_done_tx|_failures` удалены; в `run()`
+  одна bg-ветка; `BACKGROUND_FAILURE_ALERT` — единственный потребитель `handle_bg_done`.
+  Тесты переведены на новый API без переименований (`bg_running`/`handle_bg_done`/
+  `bg_failures`). **808 тестов зелёные** (число неизменно — рефактор), 26 `#[ignore]`,
+  clippy `-D warnings`/fmt чисты. Доки: architecture.md §3 (карта модулей), §11
+  (конкурентность).
+
+### Пост-M9: SOLID-рефакторинг — этап 4: статус-бар view-model + каноничные хелперы runtime (сделано)
+- **Этап 4 (мелкие точечные)** направления SOLID-улучшений
+  ([docs/refactoring-solid.md §6](docs/refactoring-solid.md), ветка
+  `refactor/status-bar-runtime`): убраны 10-аргументные сигнатуры статус-бара и
+  разрозненные поимённые перечисления экранов в runtime. Чисто структурно (поведение
+  не менялось). Сделаны 4a/4b/4d; 4c (группировка полей `ChatScreen`) — **не делал**
+  (по плану только попутно при правке `chat/`, отдельным PR ради себя не стоит).
+- **4a — view-model статус-бара** (`widgets/status_bar.rs`): `render`/`height` несли
+  по 10 аргументов (`#[allow(too_many_arguments)]`). Введён `StatusModel<'a>` (снимок:
+  statuses/generating/tokens/context/context_exact/mouse_scroll/background); `render`
+  → 4 параметра, `height` → 3, оба `allow` сняты. `ChatScreen` собирает снимок одним
+  приватным хелпером `status_model()` (`chat/render.rs`) — новый индикатор = поле +
+  заполнение, без churn сигнатур. **Нюанс borrow**: хелпер заимствует весь `&self`,
+  а между `height` и `render` идёт `&mut self.feed_view` — поэтому снимок строится
+  временным в каждом из двух вызовов (короткоживущий заём, не пересекается с `&mut`),
+  а не удерживается в локальной. Тесты переведены на литерал `StatusModel` (через
+  тест-хелпер `model()`; `ready()`-снимок биндится в локальную — иначе temporary
+  живёт меньше заимствования).
+- **4b — каноничные перечисления экранов** (`app/runtime/`): broadcast палитры (смена
+  темы/компат) и маршрутизация вставки из буфера сведены к методам на самом
+  `ActiveScreen` (`set_palette`/`handle_paste`, рядом с enum в `mod.rs`) — арм
+  `Settings` в `apply_event` сохраняет свой `refresh` (шире палитры), прочие экраны
+  накрывает `other.set_palette(...)`. Снятое из активного экрана намерение
+  диспетчеризуется единым `enum AnyIntent { Chat|List|Settings|SelfModel }` +
+  `dispatch_any` (одно владение вместо 4 параллельных `Option` и 4 почти одинаковых
+  `if`-блоков — прежняя форма была обходом конфликта заимствований `active`/`screen`).
+- **4d — буфер обмена из `apply_event`**: запись + маршрутизация подтверждения/ошибки
+  вынесены в `deliver_clipboard(screen, active, clipboard, text)` (`dispatch.rs`) —
+  `apply_event` перестал знать про `arboard` (арм `CopyToClipboard` — один вызов).
+- **Осознанно оставлено**: per-событийный `match active` в `apply_event`
+  (ServerStatus/ChatList/ChatActivated/…) — это событийная логика с разной семантикой
+  на экран, а не «перечисление экранов»; enum-диспетчеризация здесь идиоматична (план
+  §6: «`match` по экранам не исчезает — это и не цель»).
+- **DoD**: сигнатуры статус-бара ≤4 без `allow`; в `dispatch.rs`/`input.rs` нет
+  поимённых перечислений экранов вне `ActiveScreen`/`dispatch_any`. **808 тестов
+  зелёные** (число неизменно — рефактор), 26 `#[ignore]`, clippy `-D warnings`/fmt
+  чисты. Доки: architecture.md §9.
+
 ### Отложено за пределы M3
 - **Сворачивание/выделение per-message** и tool-блоки в ленте — сейчас «мысли»
   сворачиваются глобально (`Ctrl+T`); выделение сообщений и tool-блоки — на M5.

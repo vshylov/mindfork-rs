@@ -193,7 +193,8 @@ pub enum AppEvent {
 }
 
 /// Вид фоновой задачи для индикатора в статус-баре (`AppEvent::BackgroundTask`).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// `Hash` — используется ключом реестра слотов фоновых задач (`orchestrator::background`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum BackgroundKind {
     /// Авто-рефлексия «модели себя».
     Reflection,

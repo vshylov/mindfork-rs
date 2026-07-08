@@ -20,6 +20,7 @@
 //! - [`rag`] — индексация/удаление файлов в базе знаний;
 //! - [`request`] — маппинг доменных сообщений в формат движка.
 
+mod background;
 mod chats;
 mod consolidation;
 mod engines;
@@ -46,7 +47,7 @@ use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender, unbounded_channel};
 use tokio::time::Instant;
 use uuid::Uuid;
 
-use crate::app::events::{AppCommand, AppEvent, ServerStatus};
+use crate::app::events::{AppCommand, AppEvent, BackgroundKind, ServerStatus};
 use crate::app::gen_state::GenState;
 use crate::app::supervisor::ServerSupervisor;
 use crate::entities::chat::{Chat, ChatSummary};
@@ -57,6 +58,7 @@ use crate::shared::api::FinishReason;
 use crate::shared::config::AppConfig;
 use crate::shared::storage::Storage;
 
+use self::background::BgSlot;
 use self::engines::EngineManager;
 use self::generation::GenResult;
 use self::restart_queue::RestartQueue;
@@ -102,11 +104,9 @@ pub async fn run(deps: OrchestratorDeps) {
     let (imp_status_tx, mut imp_status_rx) = unbounded_channel::<ServerStatus>();
     // Внутренний канал «имперсонация завершена» (фоновая задача → петля).
     let (imp_done_tx, mut imp_done_rx) = unbounded_channel::<(Uuid, FinishReason)>();
-    // Внутренний канал «авто-рефлексия завершена» (фоновая задача → петля); несёт
-    // исход (`Ok`/`Err(причина)`) для наблюдаемости.
-    let (reflect_done_tx, mut reflect_done_rx) = unbounded_channel::<Result<(), String>>();
-    // Внутренний канал «авто-консолидация завершена» (фоновая задача → петля).
-    let (consolidate_done_tx, mut consolidate_done_rx) = unbounded_channel::<Result<(), String>>();
+    // Единый канал исхода «тихих» фоновых задач (авто-рефлексия/консолидация): задача
+    // шлёт `(вид, Ok/Err(причина))`, петля — одной веткой в `handle_bg_done`.
+    let (bg_done_tx, mut bg_done_rx) = unbounded_channel::<(BackgroundKind, Result<(), String>)>();
     let registry = Arc::new(build_registry(&config));
     let mut orch = Orchestrator {
         evt_tx,
@@ -124,13 +124,9 @@ pub async fn run(deps: OrchestratorDeps) {
         gen_state: GenState::Idle,
         done_tx,
         rag_cancel: None,
-        reflect_cancel: None,
-        reflect_done_tx,
-        reflect_failures: 0,
-        consolidate_cancel: None,
+        bg: HashMap::new(),
+        bg_done_tx,
         consolidate_counts: HashMap::new(),
-        consolidate_done_tx,
-        consolidate_failures: 0,
         saves: SaveQueue::default(),
         restarts: RestartQueue::default(),
     };
@@ -183,14 +179,9 @@ pub async fn run(deps: OrchestratorDeps) {
                     orch.handle_imp_done(id, reason);
                 }
             }
-            done = reflect_done_rx.recv() => {
-                if let Some(res) = done {
-                    orch.handle_reflect_done(res);
-                }
-            }
-            done = consolidate_done_rx.recv() => {
-                if let Some(res) = done {
-                    orch.handle_consolidate_done(res);
+            done = bg_done_rx.recv() => {
+                if let Some((kind, res)) = done {
+                    orch.handle_bg_done(kind, res);
                 }
             }
             _ = sleep_until_opt(deadline) => orch.flush_saves(),
@@ -255,23 +246,16 @@ struct Orchestrator {
     /// Токен отмены текущей фоновой индексации RAG (`/rag add`); `None` — не идёт.
     /// Снимается/отменяется при новой индексации и при завершении работы.
     rag_cancel: Option<tokio_util::sync::CancellationToken>,
-    /// Токен отмены текущей фоновой авто-рефлексии (`Some` — идёт; одна за раз).
-    reflect_cancel: Option<tokio_util::sync::CancellationToken>,
-    /// Канал «авто-рефлексия завершена» (фоновая задача → петля), несёт исход. Каденция
-    /// рефлексии ведётся ватермарком `Chat.reflected_upto` (переживает рестарт), а не
-    /// in-memory счётчиком — см. `reflection::maybe_auto_reflect`.
-    reflect_done_tx: UnboundedSender<Result<(), String>>,
-    /// Число подряд идущих неудач авто-рефлексии; на пороге эмитим одну ошибку в UI,
-    /// дальше молчим до первого успеха (сброс). Наблюдаемость без спама.
-    reflect_failures: u32,
-    /// Токен отмены текущей фоновой авто-консолидации заметок («сон»); одна за раз.
-    consolidate_cancel: Option<tokio_util::sync::CancellationToken>,
-    /// Счётчики ответов ассистента с прошлой авто-консолидации (по чату).
+    /// Реестр слотов «тихих» фоновых задач (авто-рефлексия/консолидация): по слоту на
+    /// [`BackgroundKind`] — флаг «идёт» (токен отмены) + серия неудач. Жизненный цикл —
+    /// в [`background`](self::background). Каденция рефлексии ведётся ватермарком
+    /// `Chat.reflected_upto` (переживает рестарт), а не полем здесь.
+    bg: HashMap<BackgroundKind, BgSlot>,
+    /// Единый канал исхода «тихих» фоновых задач (`(вид, Ok/Err(причина))` → петля).
+    bg_done_tx: UnboundedSender<(BackgroundKind, Result<(), String>)>,
+    /// Счётчики ответов ассистента с прошлой авто-консолидации (по чату). Данные
+    /// каденции консолидации (не жизненный цикл задачи — тот в `bg`).
     consolidate_counts: HashMap<Uuid, u32>,
-    /// Канал «авто-консолидация завершена» (фоновая задача → петля), несёт исход.
-    consolidate_done_tx: UnboundedSender<Result<(), String>>,
-    /// Число подряд идущих неудач авто-консолидации (как `reflect_failures`).
-    consolidate_failures: u32,
     /// Очередь отложенного сохранения чатов (дебаунс; выделено в Фазе 3).
     saves: SaveQueue,
     /// Очередь отложенного (пере)запуска серверов при правках настроек движка
@@ -348,12 +332,7 @@ impl Orchestrator {
                 if let Some(token) = &self.imp_cancel {
                     token.cancel();
                 }
-                if let Some(token) = &self.reflect_cancel {
-                    token.cancel();
-                }
-                if let Some(token) = &self.consolidate_cancel {
-                    token.cancel();
-                }
+                self.cancel_all_bg();
                 return true;
             }
             AppCommand::Cancel => {
@@ -526,6 +505,19 @@ impl Orchestrator {
 
     fn chat_mut(&mut self, id: Uuid) -> Option<&mut Chat> {
         self.chats.iter_mut().find(|c| c.id == id)
+    }
+
+    /// Собирает пучок разделяемых зависимостей инструментов для указанного
+    /// chat-движка (эмбеддер и хранилище — общие). См. docs/refactoring-solid.md §3.
+    fn tool_deps(
+        &self,
+        backend: Arc<dyn crate::shared::api::EngineBackend>,
+    ) -> crate::features::tools::ToolDeps {
+        crate::features::tools::ToolDeps {
+            storage: self.storage.clone(),
+            engine: backend,
+            embedder: self.engines.embedder(),
+        }
     }
 
     /// Разрешает фактический семплинг для чата: `Chat.sampling_override` →

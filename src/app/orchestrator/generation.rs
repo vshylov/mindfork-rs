@@ -12,7 +12,9 @@ use crate::app::events::AppEvent;
 use crate::entities::chat::DeletedCause;
 use crate::entities::message::{Message, MessageMetadata, MessageRole, ToolCallRecord};
 use crate::entities::profile::ToolId;
-use crate::features::tools::{ChatEffect, ToolContext, ToolRegistry, control, effective_tool_ids};
+use crate::features::tools::{
+    ChatEffect, ToolContext, ToolParams, ToolRegistry, TurnInfo, control, effective_tool_ids,
+};
 use crate::shared::api::{
     ApiMessage, ApiToolCall, ChatChunk, ChatRequest, EngineBackend, FinishReason, ThinkingBlock,
     ToolCallAccumulator,
@@ -228,21 +230,20 @@ impl Orchestrator {
                 .find(|m| m.role == MessageRole::User)
                 .map(|m| m.text.clone())
                 .unwrap_or_default();
-            ctx = ToolContext {
+            // `turn` строится последним обращением к `chat`; после этого borrow
+            // `chat` завершается, и можно читать `self` (deps/config) для `new`.
+            let turn = TurnInfo {
                 profile_id,
                 chat_id: active_id,
                 system_message: chat.system_message.clone(),
                 effective_sampling: sampling,
                 last_user_message_at: last_user_message_at(chat),
-                storage: self.storage.clone(),
-                engine: backend.clone(),
-                embedder: self.engines.embedder(),
-                chunk_params: crate::features::tools::rag::ChunkParams::from_settings(
-                    &self.config.rag,
-                ),
-                self_model_params,
-                recall_includes_self: self.config.notes.recall_includes_self,
             };
+            ctx = ToolContext::new(
+                self.tool_deps(backend.clone()),
+                ToolParams::from_config(&self.config),
+                turn,
+            );
         }
 
         let id = Uuid::new_v4();

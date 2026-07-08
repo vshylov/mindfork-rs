@@ -1,6 +1,7 @@
 # План рефакторинга: точечные SOLID-улучшения (2026-07)
 
-Дизайн-план направления. Статус: **не начат**.
+Дизайн-план направления. Статус: **этапы 1, 2, 4 сделаны** (объединены в PR,
+ветка `refactor/solid-stages-1-2-4`); этап 3 — отдельным PR.
 
 Происхождение — оценка соблюдения SOLID по всей кодовой базе (2026-07-08):
 архитектура здорова (транспорт за трейтами, FSD, единые источники истины,
@@ -148,6 +149,17 @@ FSD чист: `features/tools` уже импортирует `shared::config` (`
 `ToolContext::new` (единственный литерал в конструкторе); файлы инструментов
 (кроме тестовых конструкций) не изменены.
 
+**Статус: сделано** (ветка `refactor/tool-context-bundles`). `ToolDeps`/
+`ToolParams`/`TurnInfo` + `ToolContext::new` в `tools/mod.rs`; хелпер
+`Orchestrator::tool_deps`; три продакшн-сайта (generation/reflection/consolidation)
+переведены на `new` (у reflection/consolidation параметры — `ToolParams::from_config`;
+generation держит `ToolParams::from_config`, а `self_model_params` считает отдельно —
+он ещё уходит в `GenSpawn` для инъекции). testkit получил `ctx_with_backends`
+(кастомные движок/эмбеддер) и `ctx_with_deps` (общий пучок для теста изоляции rag);
+литералы в web/subagent/rag/fetch сведены к ним. Ripple-проверка: добавление поля в
+`ToolContext` требует правки **только** `ToolContext::new`. **808 тестов зелёные**,
+26 `#[ignore]`, clippy `-D warnings`/fmt чисты.
+
 ---
 
 ## 4. Этап 2 — фоновые задачи: единый done-канал + реестр слотов (SRP / OCP)
@@ -248,6 +260,16 @@ fn kind_label(kind: BackgroundKind) -> &'static str {
 `consolidate_cancel|_done_tx|_failures` удалены; в `run()` одна bg-ветка;
 `rg "BACKGROUND_FAILURE_ALERT" src` — единственный потребитель
 `handle_bg_done`.
+
+**Статус: сделано** (ветка `refactor/bg-task-slots`). Новый модуль
+`orchestrator/background.rs`: `BgSlot { cancel, failures }` + методы `bg_running`/
+`begin_bg`/`handle_bg_done`/`cancel_all_bg` (+ `#[cfg(test)] bg_failures`) +
+`kind_label` (тексты ошибок байт-в-байт). Поля оркестратора 6 → 2
+(`bg: HashMap<BackgroundKind, BgSlot>` + `bg_done_tx`); `consolidate_counts`
+оставлен (данные каденции). `run()`: два канала/ветки → один `bg_done` + одна ветка;
+`Quit` → `cancel_all_bg`. `SilentLoop` получил `kind`, `done_tx` шлёт `(kind, исход)`.
+`BackgroundKind` получил `Hash`. Тесты переведены на новый API без переименований.
+**808 тестов зелёные**, clippy/fmt чисты.
 
 ---
 
@@ -453,6 +475,15 @@ god-object'ов §4 как поведенческая правка. Ценнос
 **DoD:** сигнатуры статус-бара ≤4 параметров без `allow`; в `dispatch.rs`/
 `input.rs` нет поимённых перечислений экранов вне методов `ActiveScreen`/
 `dispatch_any`; 808+ тестов зелёные.
+
+**Статус: 4a/4b/4d сделаны** (ветка `refactor/status-bar-runtime`). 4a:
+`StatusModel<'a>` (снимок из `ChatScreen::status_model`), `render`/`height` — 4/3
+параметра без `too_many_arguments`. 4b: `ActiveScreen::set_palette`/`handle_paste`
+(broadcast палитры/маршрутизация вставки), `AnyIntent` + `dispatch_any` (единое
+владение вместо 4 `Option`). 4d: `deliver_clipboard` (`apply_event` не знает про
+`arboard`). Per-событийный `match` в `apply_event` осознанно оставлен. **4c
+(группировка полей `ChatScreen`) — не делал** (по плану — только попутно при правке
+`chat/`, отдельным PR ради себя не стоит). 808 тестов зелёные, clippy/fmt чисты.
 
 ---
 

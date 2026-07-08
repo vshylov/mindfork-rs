@@ -33,7 +33,7 @@ use crate::entities::profile::ToolId;
 use crate::entities::sampling::{SamplingConfig, supported_sampling_fields};
 use crate::entities::self_model::SelfModelParams;
 use crate::shared::api::{Embedder, EngineBackend, ToolSchema};
-use crate::shared::config::CloudProvider;
+use crate::shared::config::{AppConfig, CloudProvider};
 use crate::shared::storage::Storage;
 
 pub use introspection::{GET_SAMPLING_ID, SET_SAMPLING_ID};
@@ -66,6 +66,67 @@ pub struct ToolContext {
     /// Показывать ли self-заметки (`@self`) в общем `note_recall` (Ярус 3, Путь 2).
     /// Из `config.notes.recall_includes_self`; по умолчанию `false` (self скрыты).
     pub recall_includes_self: bool,
+}
+
+/// Долгоживущие разделяемые зависимости инструментов (пучок `Arc`; меняется при
+/// рестарте серверов, не от хода к ходу). Собирается в один блок, чтобы новая
+/// зависимость не правила каждый сайт сборки [`ToolContext`]. См.
+/// docs/refactoring-solid.md §3.
+#[derive(Clone)]
+pub struct ToolDeps {
+    pub storage: Arc<Storage>,
+    pub engine: Arc<dyn EngineBackend>,
+    pub embedder: Arc<dyn Embedder>,
+}
+
+/// Параметры инструментов из конфига (снимок на ход). Единственное место маппинга
+/// `AppConfig` → параметры инструментов — [`ToolParams::from_config`].
+#[derive(Clone)]
+pub struct ToolParams {
+    pub chunk_params: rag::ChunkParams,
+    pub self_model_params: SelfModelParams,
+    pub recall_includes_self: bool,
+}
+
+impl ToolParams {
+    /// Снимает параметры инструментов из конфигурации приложения.
+    pub fn from_config(cfg: &AppConfig) -> Self {
+        Self {
+            chunk_params: rag::ChunkParams::from_settings(&cfg.rag),
+            self_model_params: SelfModelParams::from_settings(&cfg.self_model),
+            recall_includes_self: cfg.notes.recall_includes_self,
+        }
+    }
+}
+
+/// Снимок хода: что инструмент видит о текущем чате (идентичность + снимок `Chat`).
+pub struct TurnInfo {
+    pub profile_id: Uuid,
+    pub chat_id: Uuid,
+    pub system_message: String,
+    pub effective_sampling: SamplingConfig,
+    pub last_user_message_at: Option<DateTime<Utc>>,
+}
+
+impl ToolContext {
+    /// Разворачивает строительные блоки в прежние плоские поля. Плоская форма
+    /// сохранена сознательно — код инструментов (`ctx.storage`, `ctx.chunk_params`,
+    /// …) не меняется. См. docs/refactoring-solid.md §3.
+    pub fn new(deps: ToolDeps, params: ToolParams, turn: TurnInfo) -> Self {
+        Self {
+            profile_id: turn.profile_id,
+            chat_id: turn.chat_id,
+            system_message: turn.system_message,
+            effective_sampling: turn.effective_sampling,
+            last_user_message_at: turn.last_user_message_at,
+            storage: deps.storage,
+            engine: deps.engine,
+            embedder: deps.embedder,
+            chunk_params: params.chunk_params,
+            self_model_params: params.self_model_params,
+            recall_includes_self: params.recall_includes_self,
+        }
+    }
 }
 
 /// Эффект, изменяющий `Chat`; возвращается инструментом, применяется оркестратором.
@@ -380,26 +441,61 @@ pub(crate) mod testkit {
     use crate::shared::api::mock::{MockBackend, MockEmbedder};
     use crate::shared::paths::Paths;
 
-    /// Контекст инструмента поверх временного хранилища. Возвращает также
-    /// `TempDir` (держать живым) и `Arc<Storage>` (для проверок в тесте).
-    pub fn ctx_with_storage(profile_id: Uuid) -> (tempfile::TempDir, Arc<Storage>, ToolContext) {
-        let dir = tempfile::tempdir().unwrap();
-        let storage = Arc::new(Storage::open(Paths::with_root(dir.path())).unwrap());
-        let engine: Arc<dyn EngineBackend> = Arc::new(MockBackend::scripted(vec![]));
-        let embedder: Arc<dyn Embedder> = Arc::new(MockEmbedder::new(16));
-        let ctx = ToolContext {
+    /// Дефолтные параметры инструментов для тестов.
+    fn test_params() -> ToolParams {
+        ToolParams {
+            chunk_params: rag::ChunkParams::default(),
+            self_model_params: SelfModelParams::default(),
+            recall_includes_self: false,
+        }
+    }
+
+    /// Дефолтный снимок хода для тестов (профиль задан, чат — новый).
+    fn test_turn(profile_id: Uuid) -> TurnInfo {
+        TurnInfo {
             profile_id,
             chat_id: Uuid::new_v4(),
             system_message: "системное сообщение".into(),
             effective_sampling: SamplingConfig::default(),
             last_user_message_at: None,
+        }
+    }
+
+    /// Контекст инструмента поверх временного хранилища. Возвращает также
+    /// `TempDir` (держать живым) и `Arc<Storage>` (для проверок в тесте).
+    pub fn ctx_with_storage(profile_id: Uuid) -> (tempfile::TempDir, Arc<Storage>, ToolContext) {
+        let dir = tempfile::tempdir().unwrap();
+        let storage = Arc::new(Storage::open(Paths::with_root(dir.path())).unwrap());
+        let deps = ToolDeps {
+            storage: storage.clone(),
+            engine: Arc::new(MockBackend::scripted(vec![])),
+            embedder: Arc::new(MockEmbedder::new(16)),
+        };
+        let ctx = ToolContext::new(deps, test_params(), test_turn(profile_id));
+        (dir, storage, ctx)
+    }
+
+    /// Контекст инструмента поверх готового пучка зависимостей (тесты, где
+    /// несколько контекстов делят одно хранилище — напр. изоляция по профилю).
+    pub fn ctx_with_deps(profile_id: Uuid, deps: ToolDeps) -> ToolContext {
+        ToolContext::new(deps, test_params(), test_turn(profile_id))
+    }
+
+    /// Контекст инструмента с кастомными движком/эмбеддером (тесты web/subagent/
+    /// rag/fetch), поверх временного хранилища.
+    pub fn ctx_with_backends(
+        profile_id: Uuid,
+        engine: Arc<dyn EngineBackend>,
+        embedder: Arc<dyn Embedder>,
+    ) -> (tempfile::TempDir, Arc<Storage>, ToolContext) {
+        let dir = tempfile::tempdir().unwrap();
+        let storage = Arc::new(Storage::open(Paths::with_root(dir.path())).unwrap());
+        let deps = ToolDeps {
             storage: storage.clone(),
             engine,
             embedder,
-            chunk_params: rag::ChunkParams::default(),
-            self_model_params: SelfModelParams::default(),
-            recall_includes_self: false,
         };
+        let ctx = ToolContext::new(deps, test_params(), test_turn(profile_id));
         (dir, storage, ctx)
     }
 }
