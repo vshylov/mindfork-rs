@@ -11,6 +11,12 @@ impl Tool for NoteLink {
     fn id(&self) -> ToolId {
         NOTE_LINK_ID.into()
     }
+    fn group(&self) -> crate::features::tools::meta::ToolGroup {
+        crate::features::tools::meta::ToolGroup::Memory
+    }
+    fn ui_label(&self) -> &'static str {
+        "связать заметки"
+    }
     fn description(&self) -> String {
         "Связать две заметки (по id из note_recall/note_save) направленной связью: \
          supports (подтверждает), contradicts (противоречит), refines (уточняет), \
@@ -67,6 +73,12 @@ pub struct NoteNeighbors;
 impl Tool for NoteNeighbors {
     fn id(&self) -> ToolId {
         NOTE_NEIGHBORS_ID.into()
+    }
+    fn group(&self) -> crate::features::tools::meta::ToolGroup {
+        crate::features::tools::meta::ToolGroup::Memory
+    }
+    fn ui_label(&self) -> &'static str {
+        "связи заметки"
     }
     fn description(&self) -> String {
         "Показать заметки, связанные с данной (по id), с типом и направлением связи. \

@@ -13,6 +13,12 @@ impl Tool for NoteCiteSource {
     fn id(&self) -> ToolId {
         NOTE_CITE_SOURCE_ID.into()
     }
+    fn group(&self) -> crate::features::tools::meta::ToolGroup {
+        crate::features::tools::meta::ToolGroup::Memory
+    }
+    fn ui_label(&self) -> &'static str {
+        "сослаться на источник"
+    }
     fn description(&self) -> String {
         "Связать заметку (по id из note_recall/note_save) с источником из базы знаний \
          (RAG): указывает, что заметка/наблюдение опирается на этот источник. Имя \

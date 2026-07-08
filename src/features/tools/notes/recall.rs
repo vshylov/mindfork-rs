@@ -11,6 +11,12 @@ impl Tool for NoteRecall {
     fn id(&self) -> ToolId {
         NOTE_RECALL_ID.into()
     }
+    fn group(&self) -> crate::features::tools::meta::ToolGroup {
+        crate::features::tools::meta::ToolGroup::Memory
+    }
+    fn ui_label(&self) -> &'static str {
+        "найти заметки"
+    }
     fn description(&self) -> String {
         "Найти ранее сохранённые заметки по тексту и/или тегам.".into()
     }

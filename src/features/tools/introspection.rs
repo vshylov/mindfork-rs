@@ -38,6 +38,12 @@ impl Tool for GetSampling {
     fn id(&self) -> ToolId {
         GET_SAMPLING_ID.into()
     }
+    fn group(&self) -> crate::features::tools::meta::ToolGroup {
+        crate::features::tools::meta::ToolGroup::Introspection
+    }
+    fn ui_label(&self) -> &'static str {
+        "показать семплинг"
+    }
     fn description(&self) -> String {
         format!(
             "Вернуть текущие параметры семплинга. {}",
@@ -72,6 +78,12 @@ impl SetSampling {
 impl Tool for SetSampling {
     fn id(&self) -> ToolId {
         SET_SAMPLING_ID.into()
+    }
+    fn group(&self) -> crate::features::tools::meta::ToolGroup {
+        crate::features::tools::meta::ToolGroup::Introspection
+    }
+    fn ui_label(&self) -> &'static str {
+        "изменить семплинг"
     }
     fn description(&self) -> String {
         format!(
@@ -207,6 +219,12 @@ impl Tool for GetSystemMessage {
     fn id(&self) -> ToolId {
         "get_system_message".into()
     }
+    fn group(&self) -> crate::features::tools::meta::ToolGroup {
+        crate::features::tools::meta::ToolGroup::Introspection
+    }
+    fn ui_label(&self) -> &'static str {
+        "показать сис. сообщение"
+    }
     fn description(&self) -> String {
         "Вернуть текущее системное сообщение чата.".into()
     }
@@ -225,6 +243,12 @@ pub struct SetSystemMessage;
 impl Tool for SetSystemMessage {
     fn id(&self) -> ToolId {
         "set_system_message".into()
+    }
+    fn group(&self) -> crate::features::tools::meta::ToolGroup {
+        crate::features::tools::meta::ToolGroup::Introspection
+    }
+    fn ui_label(&self) -> &'static str {
+        "изменить сис. сообщение"
     }
     fn description(&self) -> String {
         "Изменить системное сообщение чата. Применяется со следующего ответа.".into()
@@ -256,6 +280,12 @@ pub struct GetLastUserMessageTime;
 impl Tool for GetLastUserMessageTime {
     fn id(&self) -> ToolId {
         "get_last_user_message_time".into()
+    }
+    fn group(&self) -> crate::features::tools::meta::ToolGroup {
+        crate::features::tools::meta::ToolGroup::Introspection
+    }
+    fn ui_label(&self) -> &'static str {
+        "время посл. сообщения"
     }
     fn description(&self) -> String {
         "Вернуть время последнего сообщения пользователя (ISO 8601) и сколько прошло.".into()

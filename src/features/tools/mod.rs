@@ -22,7 +22,7 @@ pub mod subagent;
 pub mod web;
 
 use std::collections::BTreeMap;
-use std::sync::Arc;
+use std::sync::{Arc, LazyLock};
 use std::time::Duration;
 
 use anyhow::Result;
@@ -124,6 +124,25 @@ pub trait Tool: Send + Sync {
             parameters: self.parameters(),
         }
     }
+
+    /// Смысловая группа для тумблеров профиля (UI настроек).
+    fn group(&self) -> meta::ToolGroup;
+
+    /// Короткий (2–4 слова) лейбл для тумблера профиля (в отличие от
+    /// LLM-ориентированного [`Tool::description`]).
+    fn ui_label(&self) -> &'static str;
+
+    /// Глобальный выключатель, гейтящий инструмент (`None` — негейтимый). См.
+    /// [`effective_tool_ids`].
+    fn gate(&self) -> Option<meta::ToolGate> {
+        None
+    }
+
+    /// Включён ли инструмент в профиле по умолчанию (`false` — опциональный,
+    /// включается вручную). См. [`default_tool_ids`]/[`all_tool_ids`].
+    fn enabled_by_default(&self) -> bool {
+        true
+    }
 }
 
 /// Имя web-инструмента (гейтится глобальным выключателем `tools.web_enabled`).
@@ -133,69 +152,54 @@ pub const FETCH_URL_ID: &str = "fetch_url";
 /// Имя Python-инструмента (гейтится `tools.python_enabled`).
 pub const PYTHON_EXEC_ID: &str = "python_exec";
 
-/// Идентификаторы инструментов, включаемых в профиле по умолчанию (M5–M7).
-/// Внешние (`web_search`/`python_exec`) дополнительно гейтятся глобальными
-/// выключателями — см. [`effective_tool_ids`]. Управляющие инструменты беседы
-/// (`send_followup_message`/`rewrite_current_message`) сюда **не входят** — они
-/// опциональны (по умолчанию выкл), см. [`all_tool_ids`].
-pub fn default_tool_ids() -> Vec<ToolId> {
-    [
-        GET_SAMPLING_ID,
-        SET_SAMPLING_ID,
-        "get_system_message",
-        "set_system_message",
-        "get_last_user_message_time",
-        "note_save",
-        "note_recall",
-        notes::NOTE_REVISE_ID,
-        notes::NOTE_LINK_ID,
-        notes::NOTE_NEIGHBORS_ID,
-        notes::NOTE_SUPERSEDE_ID,
-        notes::NOTE_MERGE_ID,
-        notes::CONSOLIDATE_NOTES_ID,
-        notes::NOTE_CITE_SOURCE_ID,
-        "rag_add",
-        "rag_search",
-        "call_subagent",
-        "calculate",
-        "current_time",
-        WEB_SEARCH_ID,
-        FETCH_URL_ID,
-        PYTHON_EXEC_ID,
-        fs::FS_READ_ID,
-        fs::FS_WRITE_ID,
-        fs::FS_LIST_ID,
-    ]
-    .into_iter()
-    .map(String::from)
-    .collect()
+/// Снимок метаданных всех инструментов (единый источник — сами инструменты через
+/// трейт [`Tool`]). Метаданные (группа/лейбл/гейт/дефолт) не зависят от
+/// [`ToolConfig`], поэтому каталог строится один раз на дефолтном конфиге — это
+/// избавляет от пересборки реестра в горячем [`effective_tool_ids`] (зовётся на
+/// каждый раунд agentic-loop).
+static CATALOG: LazyLock<Vec<meta::ToolInfo>> =
+    LazyLock::new(|| standard_registry(&ToolConfig::default()).infos());
+
+/// Каталог метаданных всех известных инструментов (снимок [`CATALOG`]). Порядок —
+/// алфавитный по id (реестр — `BTreeMap`). Потребители используют id по значению
+/// (членство/итерация), не по позиции.
+pub fn tool_catalog() -> Vec<meta::ToolInfo> {
+    CATALOG.clone()
 }
 
-/// Полный каталог инструментов для тумблеров профиля: дефолтные + опциональные
-/// (по умолчанию выключенные) управляющие инструменты беседы. В отличие от
-/// [`default_tool_ids`], сюда входят `send_followup_message`/`rewrite_current_message`
-/// — так пользователь видит их в настройках профиля и может включить, но
-/// `reconcile_tools` их **не** включает автоматически. См. spec §9.3.
+/// Идентификаторы инструментов, включаемых в профиле по умолчанию (M5–M7).
+/// Внешние (`web_search`/`python_exec`) дополнительно гейтятся глобальными
+/// выключателями — см. [`effective_tool_ids`]. Управляющие инструменты беседы и
+/// «модель себя» опциональны (по умолчанию выкл, `Tool::enabled_by_default`), см.
+/// [`all_tool_ids`]. Выводится из [`CATALOG`] (единый источник — сами инструменты).
+pub fn default_tool_ids() -> Vec<ToolId> {
+    CATALOG
+        .iter()
+        .filter(|i| i.enabled_by_default)
+        .map(|i| i.id.clone())
+        .collect()
+}
+
+/// Полный каталог id инструментов для тумблеров профиля: дефолтные + опциональные
+/// (по умолчанию выключенные — управляющие инструменты беседы и «модель себя»). В
+/// отличие от [`default_tool_ids`], сюда входят опциональные — так пользователь
+/// видит их в настройках профиля и может включить, но `reconcile_tools` их **не**
+/// включает автоматически. Выводится из [`CATALOG`]. См. spec §9.3.
+// Каталог тумблеров профиля берёт метаданные через [`tool_catalog`]; этот
+// id-хелпер сейчас используют тесты (фикстуры/каталог) — оставлен как публичный API.
+#[allow(dead_code)]
 pub fn all_tool_ids() -> Vec<ToolId> {
-    let mut ids = default_tool_ids();
-    ids.push(control::SEND_FOLLOWUP_ID.into());
-    ids.push(control::REWRITE_CURRENT_ID.into());
-    // Инструменты «модели себя» (SelfModel MVP) — опциональны, по умолчанию выкл;
-    // данные пер-профильные в SQLite, см. docs/history/self-model-mvp.md.
-    ids.push(self_model::GET_SELF_MODEL_ID.into());
-    ids.push(self_model::REFLECT_ID.into());
-    ids.push(self_model::UPDATE_SELF_MODEL_ID.into());
-    ids.push(self_model::UPDATE_USER_MODEL_ID.into());
-    ids.push(self_model::ADD_INSIGHT_ID.into());
-    ids
+    CATALOG.iter().map(|i| i.id.clone()).collect()
 }
 
 /// Эффективный набор инструментов: `enabled` минус внешние, отключённые
 /// глобальными выключателями (spec §9.4). Порядок `enabled` сохраняется.
 /// `web_enabled` гейтит и `web_search`, и `fetch_url` (оба — сетевой доступ);
-/// `fs_enabled` — файловые `fs_read`/`fs_write`/`fs_list`. Инструменты семплинга
-/// (`get_sampling`/`set_sampling`) отключаются, если в текущем режиме движка нет
-/// ни одного доступного параметра (`sampling_provider`, см. [`supported_sampling_fields`]).
+/// `fs_enabled` — файловые `fs_read`/`fs_write`/`fs_list` (гейт берётся из метаданных
+/// инструмента, [`Tool::gate`]). Инструменты семплинга (`get_sampling`/`set_sampling`)
+/// отключаются, если в текущем режиме движка нет ни одного доступного параметра
+/// (`sampling_provider`, см. [`supported_sampling_fields`]) — это динамический гейт по
+/// провайдеру, поэтому обрабатывается отдельно от статических [`meta::ToolGate`].
 pub fn effective_tool_ids(
     enabled: &[ToolId],
     web_enabled: bool,
@@ -204,14 +208,19 @@ pub fn effective_tool_ids(
     sampling_provider: Option<CloudProvider>,
 ) -> Vec<ToolId> {
     let sampling_available = !supported_sampling_fields(sampling_provider).is_empty();
+    let gate_of = |id: &str| CATALOG.iter().find(|i| i.id == id).and_then(|i| i.gate);
     enabled
         .iter()
-        .filter(|id| match id.as_str() {
-            WEB_SEARCH_ID | FETCH_URL_ID => web_enabled,
-            PYTHON_EXEC_ID => python_enabled,
-            fs::FS_READ_ID | fs::FS_WRITE_ID | fs::FS_LIST_ID => fs_enabled,
-            GET_SAMPLING_ID | SET_SAMPLING_ID => sampling_available,
-            _ => true,
+        .filter(|id| {
+            if id.as_str() == GET_SAMPLING_ID || id.as_str() == SET_SAMPLING_ID {
+                return sampling_available;
+            }
+            match gate_of(id) {
+                Some(meta::ToolGate::Web) => web_enabled,
+                Some(meta::ToolGate::Python) => python_enabled,
+                Some(meta::ToolGate::Fs) => fs_enabled,
+                None => true,
+            }
         })
         .cloned()
         .collect()
@@ -324,6 +333,20 @@ impl ToolRegistry {
         self.tools.get(id)
     }
 
+    /// Снимок метаданных всех зарегистрированных инструментов (для каталога UI).
+    pub fn infos(&self) -> Vec<meta::ToolInfo> {
+        self.tools
+            .values()
+            .map(|t| meta::ToolInfo {
+                id: t.id(),
+                group: t.group(),
+                label: t.ui_label(),
+                gate: t.gate(),
+                enabled_by_default: t.enabled_by_default(),
+            })
+            .collect()
+    }
+
     /// Схемы для подмножества включённых инструментов (профиль ∩ глобально), с
     /// сохранением порядка `enabled`. Неизвестные имена игнорируются.
     pub fn schemas_for(&self, enabled: &[ToolId]) -> Vec<ToolSchema> {
@@ -405,6 +428,12 @@ mod tests {
         async fn invoke(&self, _ctx: &ToolContext, args: serde_json::Value) -> Result<ToolOutcome> {
             let text = args["text"].as_str().unwrap_or_default();
             Ok(ToolOutcome::text(text))
+        }
+        fn group(&self) -> meta::ToolGroup {
+            meta::ToolGroup::Utils
+        }
+        fn ui_label(&self) -> &'static str {
+            "эхо"
         }
     }
 

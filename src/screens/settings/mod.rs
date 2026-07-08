@@ -21,8 +21,7 @@ use uuid::Uuid;
 use crate::entities::profile::Profile;
 use crate::entities::sampling::{ReasoningEffort, SamplingConfig};
 use crate::features::profiles::ProfileEdit;
-use crate::features::tools::all_tool_ids;
-use crate::features::tools::meta::{self, ToolGate};
+use crate::features::tools::meta::{ToolGate, ToolInfo};
 use crate::shared::config::{
     AppConfig, CloudProvider, CloudSettings, FlashAttn, ImpersonationMode, ManagedSettings,
     ServerMode, SpecType, Theme,

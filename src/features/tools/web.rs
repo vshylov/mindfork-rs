@@ -392,7 +392,16 @@ pub(crate) fn truncate_chars(s: &str, max: usize) -> String {
 #[async_trait::async_trait]
 impl Tool for WebSearch {
     fn id(&self) -> ToolId {
-        "web_search".into()
+        super::WEB_SEARCH_ID.into()
+    }
+    fn group(&self) -> crate::features::tools::meta::ToolGroup {
+        crate::features::tools::meta::ToolGroup::ExternalWorld
+    }
+    fn ui_label(&self) -> &'static str {
+        "поиск в интернете"
+    }
+    fn gate(&self) -> Option<crate::features::tools::meta::ToolGate> {
+        Some(crate::features::tools::meta::ToolGate::Web)
     }
     fn description(&self) -> String {
         "Искать в интернете. Возвращает заголовки, ссылки, сниппеты и (по умолчанию) \

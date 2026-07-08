@@ -12,6 +12,12 @@ impl Tool for NoteRevise {
     fn id(&self) -> ToolId {
         NOTE_REVISE_ID.into()
     }
+    fn group(&self) -> crate::features::tools::meta::ToolGroup {
+        crate::features::tools::meta::ToolGroup::Memory
+    }
+    fn ui_label(&self) -> &'static str {
+        "переписать заметку"
+    }
     fn description(&self) -> String {
         "Переписать существующую заметку на месте (по id из note_recall/note_save): \
          новое содержимое замещает прежнее. Используй, когда заметка устарела, \
@@ -90,6 +96,12 @@ impl Tool for NoteSupersede {
     fn id(&self) -> ToolId {
         NOTE_SUPERSEDE_ID.into()
     }
+    fn group(&self) -> crate::features::tools::meta::ToolGroup {
+        crate::features::tools::meta::ToolGroup::Memory
+    }
+    fn ui_label(&self) -> &'static str {
+        "заместить заметку"
+    }
     fn description(&self) -> String {
         "Заместить устаревшую заметку новой версией (по id из note_recall): создаётся \
          новая заметка, старая помечается замещённой (скрывается из поиска, но \
@@ -147,6 +159,12 @@ pub struct NoteMerge;
 impl Tool for NoteMerge {
     fn id(&self) -> ToolId {
         NOTE_MERGE_ID.into()
+    }
+    fn group(&self) -> crate::features::tools::meta::ToolGroup {
+        crate::features::tools::meta::ToolGroup::Memory
+    }
+    fn ui_label(&self) -> &'static str {
+        "слить заметки"
     }
     fn description(&self) -> String {
         "Свести несколько заметок (ids из note_recall) в одну: создаётся новая с \

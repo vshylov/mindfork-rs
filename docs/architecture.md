@@ -664,6 +664,18 @@ flowchart TB
 `Profile.enabled_tools` ∩ глобальные выключатели (`effective_tool_ids`);
 agentic-loop **гейтит и сам вызов** (выключенный инструмент отклоняется).
 
+**Метаданные каталога** (смысловая группа, короткий лейбл тумблера, глобальный гейт,
+«включён по умолчанию») объявляет **сам инструмент** через трейт `Tool`
+(`group()`/`ui_label()` — обязательные, без дефолта, → новый инструмент невозможно
+добавить без группы и лейбла; `gate()`/`enabled_by_default()` — с дефолтами
+`None`/`true`). `meta.rs` несёт только типы (`ToolGroup`/`ToolGate`/`ToolInfo`), не
+значения. Каталог для UI — статик `CATALOG` (снимок `ToolRegistry::infos()` на
+дефолтном `ToolConfig`, т.к. метаданные от конфига не зависят); `default_tool_ids`/
+`all_tool_ids`/`tool_catalog`/`effective_tool_ids` выводятся из него, `screens/settings`
+потребляет `Vec<ToolInfo>` (FSD: без живого `Arc<dyn Tool>`). Порядок каталога —
+алфавитный по id (реестр — `BTreeMap`); UI пересортировывает тумблеры по `ToolGroup`
+(`Ord`).
+
 | Группа         | Инструменты                                                   |
 |----------------|---------------------------------------------------------------|
 | Память/знания  | `note_save` (эмбеддит + ворота совместимости), `note_recall` (семантический поиск + spreading activation по графу, откат на подстроку; **скрывает self-заметки** `@self`), `note_revise` (правка на месте), `note_link`/`note_neighbors` (типизированный граф связей), `note_supersede`/`note_merge` (замещение со «шрамом» / слияние с переносом связей; **наследуют теги**, в т.ч. `@self`), `consolidate_notes` (обзор для консолидации), `rag_add`, `rag_search`. Связность заметок (накопление → интеграция) + авто-«сон»: см. [docs/notes-connectivity.md](history/notes-connectivity.md). Наблюдения «модели себя» — обычные заметки с тегом `@self` ([docs/narrative-as-notes.md](history/narrative-as-notes.md), §9) |

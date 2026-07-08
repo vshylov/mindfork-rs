@@ -72,6 +72,12 @@ impl Tool for RagAdd {
     fn id(&self) -> ToolId {
         "rag_add".into()
     }
+    fn group(&self) -> crate::features::tools::meta::ToolGroup {
+        crate::features::tools::meta::ToolGroup::Memory
+    }
+    fn ui_label(&self) -> &'static str {
+        "добавить в базу знаний"
+    }
     fn description(&self) -> String {
         "Добавить текст в базу знаний для последующего семантического поиска.".into()
     }
@@ -127,6 +133,12 @@ pub struct RagSearch;
 impl Tool for RagSearch {
     fn id(&self) -> ToolId {
         "rag_search".into()
+    }
+    fn group(&self) -> crate::features::tools::meta::ToolGroup {
+        crate::features::tools::meta::ToolGroup::Memory
+    }
+    fn ui_label(&self) -> &'static str {
+        "поиск в базе знаний"
     }
     fn description(&self) -> String {
         "Найти релевантные фрагменты в базе знаний по смысловому запросу.".into()

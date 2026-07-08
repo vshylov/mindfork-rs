@@ -45,7 +45,16 @@ impl PythonExec {
 #[async_trait::async_trait]
 impl Tool for PythonExec {
     fn id(&self) -> ToolId {
-        "python_exec".into()
+        super::PYTHON_EXEC_ID.into()
+    }
+    fn group(&self) -> crate::features::tools::meta::ToolGroup {
+        crate::features::tools::meta::ToolGroup::ExternalWorld
+    }
+    fn ui_label(&self) -> &'static str {
+        "исполнить Python"
+    }
+    fn gate(&self) -> Option<crate::features::tools::meta::ToolGate> {
+        Some(crate::features::tools::meta::ToolGate::Python)
     }
     fn description(&self) -> String {
         "Исполнить код Python и вернуть stdout/stderr. Есть таймаут и лимит вывода.".into()
