@@ -3,6 +3,7 @@
 //! Часть модуля [`super`]; разбито из settings.rs.
 
 use super::helpers::*;
+use super::spec::{Access, FieldSpec, field_spec};
 use super::*;
 
 impl SettingsScreen {
@@ -254,57 +255,20 @@ impl SettingsScreen {
 
     /// Переключает булев тумблер и возвращает соответствующее намерение.
     pub(super) fn toggle_field(&mut self, id: FieldId) -> Option<SettingsIntent> {
-        match id {
-            FieldId::XJinja => self.config.engine.managed.jinja = !self.config.engine.managed.jinja,
-            FieldId::XNoMmap => {
-                self.config.engine.managed.no_mmap = !self.config.engine.managed.no_mmap
-            }
-            FieldId::IxJinja => {
-                self.config.impersonation_engine.managed.jinja =
-                    !self.config.impersonation_engine.managed.jinja
-            }
-            FieldId::IxNoMmap => {
-                self.config.impersonation_engine.managed.no_mmap =
-                    !self.config.impersonation_engine.managed.no_mmap
-            }
-            FieldId::TWeb => self.config.tools.web_enabled = !self.config.tools.web_enabled,
-            FieldId::TWebFetch => {
-                self.config.tools.web_fetch_content = !self.config.tools.web_fetch_content
-            }
-            FieldId::TPython => {
-                self.config.tools.python_enabled = !self.config.tools.python_enabled
-            }
-            FieldId::TFs => self.config.tools.fs_enabled = !self.config.tools.fs_enabled,
-            FieldId::ICompat => {
-                self.config.interface.terminal_compat = !self.config.interface.terminal_compat
-            }
-            FieldId::ISpell => {
-                self.config.interface.spellcheck_enabled = !self.config.interface.spellcheck_enabled
-            }
-            FieldId::IConfirmKeys => {
-                self.config.interface.confirm_destructive_keys =
-                    !self.config.interface.confirm_destructive_keys
-            }
-            FieldId::SmProtocol => {
-                self.config.self_model.maintenance_protocol =
-                    !self.config.self_model.maintenance_protocol
-            }
-            FieldId::NotesRecallIncludesSelf => {
-                self.config.notes.recall_includes_self = !self.config.notes.recall_includes_self
-            }
-            FieldId::ICopyThoughts => {
-                self.config.copy.copy_thoughts = !self.config.copy.copy_thoughts
-            }
-            FieldId::ICopyToolCalls => {
-                self.config.copy.copy_tool_calls = !self.config.copy.copy_tool_calls
-            }
-            FieldId::ICopyToolResults => {
-                self.config.copy.copy_tool_results = !self.config.copy.copy_tool_results
-            }
-            FieldId::PTool(idx) => return self.toggle_profile_tool(idx),
-            _ => return None,
+        // Тумблеры инструментов профиля — над `profiles[idx]`, не над `AppConfig`.
+        if let FieldId::PTool(idx) = id {
+            return self.toggle_profile_tool(idx);
         }
-        Some(self.save_config())
+        // Config-тумблеры — через таблицу доступа (единый источник, см. spec.rs).
+        if let Some(FieldSpec {
+            access: Access::Toggle(flip),
+            ..
+        }) = field_spec(id)
+        {
+            flip(&mut self.config);
+            return Some(self.save_config());
+        }
+        None
     }
 
     pub(super) fn toggle_profile_tool(&mut self, idx: usize) -> Option<SettingsIntent> {
@@ -321,6 +285,15 @@ impl SettingsScreen {
 
     /// Циклически меняет значение Choice-поля.
     pub(super) fn cycle_field(&mut self, id: FieldId, dir: i32) -> Option<SettingsIntent> {
+        // Config Choice-поля (режимы/flash-attn/spec-type/тема) — через таблицу доступа.
+        if let Some(FieldSpec {
+            access: Access::Choice { cycle, .. },
+            ..
+        }) = field_spec(id)
+        {
+            cycle(&mut self.config, dir);
+            return Some(self.save_config());
+        }
         match id {
             // Переключение подсекций (таб-стрип) — чисто навигация, без сохранения.
             // Модель — три вкладки с учётом направления; Семплинг/Профили — две.
@@ -336,45 +309,10 @@ impl SettingsScreen {
                 self.profile_sub = self.profile_sub.toggled();
                 None
             }
-            FieldId::XMode => {
-                self.config.engine.mode = cycle_mode(self.config.engine.mode, dir);
-                Some(self.save_config())
-            }
-            FieldId::IxMode => {
-                self.config.impersonation_engine.mode =
-                    cycle_imp_mode(self.config.impersonation_engine.mode, dir);
-                Some(self.save_config())
-            }
-            FieldId::XFlashAttn => {
-                let m = &mut self.config.engine.managed;
-                m.flash_attn = m.flash_attn.cycle(dir);
-                Some(self.save_config())
-            }
-            FieldId::XSpecType => {
-                let m = &mut self.config.engine.managed;
-                m.spec_type = m.spec_type.cycle(dir);
-                Some(self.save_config())
-            }
-            FieldId::IxFlashAttn => {
-                let m = &mut self.config.impersonation_engine.managed;
-                m.flash_attn = m.flash_attn.cycle(dir);
-                Some(self.save_config())
-            }
-            FieldId::IxSpecType => {
-                let m = &mut self.config.impersonation_engine.managed;
-                m.spec_type = m.spec_type.cycle(dir);
-                Some(self.save_config())
-            }
-            FieldId::EMode => {
-                self.config.embed.mode = cycle_mode(self.config.embed.mode, dir);
-                Some(self.save_config())
-            }
-            FieldId::ITheme => {
-                self.config.interface.theme = cycle_theme(self.config.interface.theme);
-                Some(self.save_config())
-            }
+            // Параметры семплинга — свой дескриптор (`SamplingParam`), не в таблице.
             FieldId::S(p) => self.cycle_sampling_field(false, p),
             FieldId::IS(p) => self.cycle_sampling_field(true, p),
+            // Выбор профиля — навигация по `profiles`, без сохранения конфига.
             FieldId::PSelect => {
                 if !self.profiles.is_empty() {
                     let n = self.profiles.len() as i32;
@@ -414,220 +352,28 @@ impl SettingsScreen {
     /// Применяет текст из редактора к полю и возвращает намерение сохранения.
     pub(super) fn apply_text(&mut self, id: FieldId, text: &str) -> Option<SettingsIntent> {
         let trimmed = text.trim();
-        let opt = |s: &str| (!s.is_empty()).then(|| s.to_string());
-        let s = &mut self.config;
         match id {
-            // URL/модель/ключ маршрутизируются в активную под-секцию по режиму
-            // (external → external.*, облако → cloud_mut().*); managed-поля — в managed.
-            FieldId::XUrl => {
-                if s.engine.mode == ServerMode::External {
-                    s.engine.external.url = opt(trimmed);
-                } else if let Some(c) = s.engine.cloud_mut() {
-                    c.url = opt(trimmed);
-                }
+            // Параметры семплинга — свой дескриптор (`SamplingParam`), не в таблице.
+            FieldId::S(p) => apply_sampling_text(&mut self.config.default_sampling, p, trimmed),
+            FieldId::IS(p) => {
+                apply_sampling_text(&mut self.config.impersonation_sampling, p, trimmed)
             }
-            FieldId::XModelName => {
-                if s.engine.mode == ServerMode::External {
-                    s.engine.external.model_name = opt(trimmed);
-                } else if let Some(c) = s.engine.cloud_mut() {
-                    c.model_name = opt(trimmed);
-                }
-            }
-            FieldId::XApiKeyEnv => {
-                if let Some(c) = s.engine.cloud_mut() {
-                    c.api_key_env = opt(trimmed);
-                }
-            }
-            FieldId::XBinary => s.engine.managed.binary = opt(trimmed),
-            FieldId::XModel => s.engine.managed.model_path = opt(trimmed),
-            FieldId::XDraftModel => s.engine.managed.draft_model = opt(trimmed),
-            FieldId::XDraftNgl => {
-                s.engine.managed.draft_gpu_layers =
-                    parse_opt_num(trimmed, s.engine.managed.draft_gpu_layers)
-            }
-            FieldId::XDraftNMax => {
-                s.engine.managed.draft_n_max = parse_opt_num(trimmed, s.engine.managed.draft_n_max)
-            }
-            FieldId::XDraftNMin => {
-                s.engine.managed.draft_n_min = parse_opt_num(trimmed, s.engine.managed.draft_n_min)
-            }
-            FieldId::XHost => {
-                if !trimmed.is_empty() {
-                    s.engine.managed.host = trimmed.to_string();
-                }
-            }
-            FieldId::XNgl => {
-                if let Ok(v) = trimmed.parse() {
-                    s.engine.managed.gpu_layers = v;
-                }
-            }
-            FieldId::XCtx => {
-                if let Ok(v) = trimmed.parse() {
-                    s.engine.managed.context_size = v;
-                }
-            }
-            FieldId::XPort => {
-                if let Ok(p) = trimmed.parse() {
-                    s.engine.managed.port = p;
-                }
-            }
-            // Имперсонация — сервер.
-            FieldId::IxUrl => {
-                if s.impersonation_engine.mode == ImpersonationMode::External {
-                    s.impersonation_engine.external.url = opt(trimmed);
-                } else if let Some(c) = s.impersonation_engine.cloud_mut() {
-                    c.url = opt(trimmed);
-                }
-            }
-            FieldId::IxModelName => {
-                if s.impersonation_engine.mode == ImpersonationMode::External {
-                    s.impersonation_engine.external.model_name = opt(trimmed);
-                } else if let Some(c) = s.impersonation_engine.cloud_mut() {
-                    c.model_name = opt(trimmed);
-                }
-            }
-            FieldId::IxApiKeyEnv => {
-                if let Some(c) = s.impersonation_engine.cloud_mut() {
-                    c.api_key_env = opt(trimmed);
-                }
-            }
-            FieldId::IxBinary => s.impersonation_engine.managed.binary = opt(trimmed),
-            FieldId::IxModel => s.impersonation_engine.managed.model_path = opt(trimmed),
-            FieldId::IxDraftModel => s.impersonation_engine.managed.draft_model = opt(trimmed),
-            FieldId::IxDraftNgl => {
-                s.impersonation_engine.managed.draft_gpu_layers =
-                    parse_opt_num(trimmed, s.impersonation_engine.managed.draft_gpu_layers)
-            }
-            FieldId::IxDraftNMax => {
-                s.impersonation_engine.managed.draft_n_max =
-                    parse_opt_num(trimmed, s.impersonation_engine.managed.draft_n_max)
-            }
-            FieldId::IxDraftNMin => {
-                s.impersonation_engine.managed.draft_n_min =
-                    parse_opt_num(trimmed, s.impersonation_engine.managed.draft_n_min)
-            }
-            FieldId::IxHost => {
-                if !trimmed.is_empty() {
-                    s.impersonation_engine.managed.host = trimmed.to_string();
-                }
-            }
-            FieldId::IxNgl => {
-                if let Ok(v) = trimmed.parse() {
-                    s.impersonation_engine.managed.gpu_layers = v;
-                }
-            }
-            FieldId::IxCtx => {
-                if let Ok(v) = trimmed.parse() {
-                    s.impersonation_engine.managed.context_size = v;
-                }
-            }
-            FieldId::IxPort => {
-                if let Ok(p) = trimmed.parse() {
-                    s.impersonation_engine.managed.port = p;
-                }
-            }
-            FieldId::MaxToolRounds => {
-                if let Ok(v) = trimmed.parse() {
-                    s.max_tool_rounds = v;
-                }
-            }
-            FieldId::S(p) => apply_sampling_text(&mut s.default_sampling, p, trimmed),
-            FieldId::IS(p) => apply_sampling_text(&mut s.impersonation_sampling, p, trimmed),
-            FieldId::TPythonPath => s.tools.python_path = opt(trimmed),
-            FieldId::TFsRoot => s.tools.fs_root = opt(trimmed),
-            FieldId::TSubMaxTokens => {
-                if let Ok(v) = trimmed.parse() {
-                    s.tools.subagent_max_tokens = v;
-                }
-            }
-            FieldId::TSubTimeout => {
-                if let Ok(v) = trimmed.parse() {
-                    s.tools.subagent_timeout_secs = v;
-                }
-            }
-            FieldId::EUrl => {
-                if s.embed.mode == ServerMode::External {
-                    s.embed.external.url = opt(trimmed);
-                } else if let Some(c) = s.embed.cloud_mut() {
-                    c.url = opt(trimmed);
-                }
-            }
-            FieldId::EModelName => {
-                if s.embed.mode == ServerMode::External {
-                    s.embed.external.model_name = opt(trimmed);
-                } else if let Some(c) = s.embed.cloud_mut() {
-                    c.model_name = opt(trimmed);
-                }
-            }
-            FieldId::EApiKeyEnv => {
-                if let Some(c) = s.embed.cloud_mut() {
-                    c.api_key_env = opt(trimmed);
-                }
-            }
-            FieldId::EBinary => s.embed.managed.binary = opt(trimmed),
-            FieldId::EModel => s.embed.managed.model_path = opt(trimmed),
-            FieldId::EPort => {
-                if let Ok(p) = trimmed.parse() {
-                    s.embed.managed.port = p;
-                }
-            }
-            FieldId::RagTarget => {
-                if let Ok(v) = trimmed.parse() {
-                    s.rag.chunk_target_chars = v;
-                }
-            }
-            FieldId::RagOverlap => {
-                if let Ok(v) = trimmed.parse() {
-                    s.rag.chunk_overlap_chars = v;
-                }
-            }
-            FieldId::RagMax => {
-                if let Ok(v) = trimmed.parse() {
-                    s.rag.chunk_max_chars = v;
-                }
-            }
-            FieldId::SmMaxNarrative => {
-                if let Ok(v) = trimmed.parse() {
-                    s.self_model.max_narrative = v;
-                }
-            }
-            FieldId::SmNarrativeInPrompt => {
-                if let Ok(v) = trimmed.parse() {
-                    s.self_model.narrative_in_prompt = v;
-                }
-            }
-            FieldId::SmPromptCap => {
-                if let Ok(v) = trimmed.parse() {
-                    s.self_model.prompt_cap = v;
-                }
-            }
-            FieldId::SmSummaryTarget => {
-                if let Ok(v) = trimmed.parse() {
-                    s.self_model.summary_target_chars = v;
-                }
-            }
-            FieldId::SmAutoReflect => {
-                if let Ok(v) = trimmed.parse() {
-                    s.self_model.auto_reflect_every = v;
-                }
-            }
-            FieldId::NotesAutoConsolidate => {
-                if let Ok(v) = trimmed.parse() {
-                    s.notes.auto_consolidate_every = v;
-                }
-            }
-            FieldId::IDicts => {
-                s.interface.selected_dictionaries = trimmed
-                    .split(',')
-                    .map(|x| x.trim().to_string())
-                    .filter(|x| !x.is_empty())
-                    .collect();
-            }
-            // Поля профиля.
+            // Поля профиля — над `profiles[idx]`, не над `AppConfig`.
             FieldId::PName | FieldId::PSystem | FieldId::PGreeting | FieldId::PImpSystem => {
                 return self.apply_profile_text(id, trimmed);
             }
-            _ => return None,
+            // Config-поля — через таблицу доступа (сеттер сам парсит и маршрутизирует
+            // по режиму external/cloud; см. spec.rs).
+            _ => {
+                let Some(FieldSpec {
+                    access: Access::Text(set),
+                    ..
+                }) = field_spec(id)
+                else {
+                    return None;
+                };
+                set(&mut self.config, trimmed);
+            }
         }
         Some(self.save_config())
     }

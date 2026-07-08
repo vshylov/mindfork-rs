@@ -1,7 +1,8 @@
 # План рефакторинга: точечные SOLID-улучшения (2026-07)
 
-Дизайн-план направления. Статус: **этапы 1, 2, 4 сделаны** (объединены в PR,
-ветка `refactor/solid-stages-1-2-4`); этап 3 — отдельным PR.
+Дизайн-план направления. Статус: **этапы 1, 2, 4 сделаны** (PR #125, в `main`);
+**этап 3 сделан** — шаги 3.1/3.2/3.3 (ветка `refactor/settings-field-descriptors`).
+Направление завершено.
 
 Происхождение — оценка соблюдения SOLID по всей кодовой базе (2026-07-08):
 архитектура здорова (транспорт за трейтами, FSD, единые источники истины,
@@ -316,6 +317,19 @@ fn kind_label(kind: BackgroundKind) -> &'static str {
 **Итог шага:** подпись + группа + описание поля живут в **одном** месте.
 Риск низкий. Объём ~0.5 сессии.
 
+**Статус: сделано** (ветка `refactor/settings-field-descriptors`). `FieldRow` получил
+`description: Option<&'static str>` + builder `describe(d)`. Тексты `field_description`
+(190-строчный match) переехали к местам постройки: секционные (Инструменты/Память/
+Интерфейс) — инлайн-литералы в catalog.rs; общие для нескольких мест (режим/имя модели/
+API-ключ-env/подсекция) — `const DESC_*` в helpers.rs; `-ngl`/`--jinja` (различаются у
+ассистента/имперсонации) — в `ManagedFieldIds`; прочие managed (no-mmap/flash-attn/
+spec-*) — инлайн в `managed_rows`; семплинг — `sampling_row` ставит `p.description()`.
+Потребители (нижняя панель render.rs, ловушка поиска `collect_hits`) читают
+`row.description`; сам match удалён. Нюанс: описания теперь есть только у **видимых**
+строк (draft-поля — при spec_type=draft-*); тесты `field_description(id)` переведены на
+хелпер `field_desc(&screen, id)` (строит поля секций и ищет строку). **808 тестов
+зелёные**, clippy/fmt чисты.
+
 ### Шаг 3.2 — доступ к значению через спецификацию поля (ядро)
 
 Свернуть оставшиеся четыре match-сайта (**toggle/cycle/apply_text/валидация** +
@@ -395,6 +409,20 @@ X*/Ix*/E* (маршрутизация external/cloud внутри сеттеро
 `cycle_field`-config-армы/config-ветки `apply_text` удалены; по `FieldId`
 остаются **два** структурных match'а (таблица `field_spec` + построители
 каталога) вместо шести; 808+ тестов зелёные.
+
+**Статус: сделано** (ветка `refactor/settings-field-descriptors`). 3.2/3.3:
+новый модуль `screens/settings/spec.rs` — `enum Access { Toggle(fn(&mut AppConfig)) |
+Text(fn(&mut AppConfig,&str)) | Choice { cycle, options } }` + `FieldSpec { access, num }`
++ единственный `field_spec(id) -> Option<FieldSpec>` по config-полям (fn-указатели,
+маршрутизация external/cloud — внутри сеттеров). Потребители сведены к таблице:
+`toggle_field`/`cycle_field`/`apply_text` (config-армы) → `field_spec`; `field_num_kind`
+→ `field_spec.num`; `choice_menu` (config Choice) → `field_spec.options` (это и есть 3.3).
+Вне таблицы (прежний путь): семплинг `S(p)`/`IS(p)`, профильные поля, селекторы
+подсекций/`PSelect` — навигация. **Шаг (c) (reset/маркер `•` на `get`-сравнение) не
+делался**: `reset_field`/маркер уже работают обобщённо через `default_fields()`
+(нет per-field арм) — collapse-цели там нет. Построители каталога (label/значение/
+описание) не тронуты. **808 тестов зелёные**, clippy/fmt чисты. **Направление
+(этапы 1–4) завершено.**
 
 ---
 

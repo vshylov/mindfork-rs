@@ -3701,6 +3701,75 @@ web-поиск и Python под выключателями, экран наст�
   зелёные** (число неизменно — рефактор), 26 `#[ignore]`, clippy `-D warnings`/fmt
   чисты. Доки: architecture.md §9.
 
+### Пост-M9: SOLID-рефакторинг — этап 3, шаг 3.1: описание поля настроек в `FieldRow` (сделано)
+- **Шаг 3.1** этапа 3 (дескрипторы полей настроек,
+  [docs/refactoring-solid.md §5](docs/refactoring-solid.md), ветка
+  `refactor/settings-field-descriptors`): аспекты одного поля настроек размазаны по
+  пяти match-сайтам; 3.1 сводит **описание** к месту постройки строки (SRP-заготовка).
+  Чисто структурно, поведение не менялось.
+- **`FieldRow`** получил `description: Option<&'static str>` + builder `describe(d)`
+  (`row(...).describe("…")`). 190-строчный match `field_description(id)` **удалён**;
+  тексты переехали: секционные (Инструменты/Память/Интерфейс) — инлайн-литералами в
+  `catalog.rs`; общие для нескольких мест построения (режим движка, имя облачной модели,
+  имя env-переменной API-ключа, селектор подсекции) — `const DESC_*` в `helpers.rs`;
+  `-ngl`/`--jinja` (тексты **различаются** у ассистента и имперсонации) — новыми полями
+  `ngl_desc`/`jinja_desc` в `ManagedFieldIds`; прочие managed-поля (no-mmap/flash-attn/
+  spec-*, общие для обоих движков) — инлайн в `managed_rows`; семплинг — `sampling_row`
+  ставит `p.description()` (источник `SamplingParam::description` не тронут).
+- **Потребители** (нижняя панель `render.rs`, ловушка поиска `collect_hits` в
+  `helpers.rs`) читают `row.description` вместо вызова `field_description(f.id)`.
+- **Нюанс** (следствие co-location): описание теперь есть только у **видимых** строк
+  (draft-поля спекулятивного декодирования — лишь при `spec_type=draft-*`). Паритет
+  поведения сохранён: `XModelName`/`IxModelName`/`EModelName` в external-режиме тоже
+  получают описание (старый match матчил по id вне зависимости от режима). Тесты
+  `field_description(id)` переведены на хелпер `field_desc(&screen, id)` (строит поля
+  секций/подсекций и ищет строку; draft-тест включает `spec_type=draft-mtp`) — имена
+  тестов не менялись.
+- **DoD шага**: подпись + группа + описание поля живут в одном месте; `field_description`
+  удалён. **808 тестов зелёные** (число неизменно — рефактор), 26 `#[ignore]`, clippy
+  `-D warnings`/fmt чисты. Шаги 3.2 (доступ к значению через `field_spec`) и 3.3
+  (options Choice) — по плану следующими.
+
+### Пост-M9: SOLID-рефакторинг — этап 3, шаги 3.2/3.3: таблица доступа к значению поля (`field_spec`) (сделано)
+- **Шаги 3.2 (ядро) + 3.3** этапа 3
+  ([docs/refactoring-solid.md §5](docs/refactoring-solid.md), ветка
+  `refactor/settings-field-descriptors`): доступ к значению config-поля настроек был
+  размазан по **четырём** match-сайтам по `FieldId` (`toggle_field`/`cycle_field`/
+  config-ветки `apply_text`/`field_num_kind`) + options Choice (`choice_menu`). Сведены
+  в **одну таблицу**. Чисто структурно, поведение не менялось — сеть безопасности
+  ~134 settings-теста.
+- **Новый модуль `screens/settings/spec.rs`**: `enum Access { Toggle(fn(&mut AppConfig))
+  | Text(fn(&mut AppConfig,&str)) | Choice { cycle: fn(&mut AppConfig,i32), options:
+  fn(&AppConfig)->(Vec<String>,usize) } }` + `FieldSpec { access, num: Option<NumKind> }`
+  + **единственный** `field_spec(id) -> Option<FieldSpec>` по всем config-полям.
+  fn-указатели (не замыкания) — `'static`, без капчуринга; **маршрутизация по режиму**
+  (external → `external.*`, облако → `cloud_mut()`) живёт **внутри** сеттера (ему
+  доступен весь `AppConfig`). Семантика парсинга каждого поля (opt/`if let Ok`/
+  `parse_opt_num`/host-спецслучай/список словарей) — в его сеттере, байт-в-байт с
+  прежними армами.
+- **Потребители сведены к таблице**: `toggle_field` (`Access::Toggle` + `save_config`;
+  `PTool` — прежний путь), `cycle_field` (`Access::Choice.cycle`; подсекции/`S`/`IS`/
+  `PSelect` — прежний путь), `apply_text` (`Access::Text.set`; `S`/`IS`/профильные —
+  прежний путь), `field_num_kind` (`field_spec.num`; `S`/`IS` — `p.num_kind()`),
+  `choice_menu` (`Access::Choice.options` — это и есть **3.3**; `S`/`IS`/`PSelect` —
+  прежний путь).
+- **Границы охвата** (вне таблицы, прежний путь в apply.rs): параметры семплинга
+  `S(p)`/`IS(p)` (свой дескриптор `SamplingParam`), профильные поля (над
+  `profiles[idx]`, не `AppConfig`), селекторы подсекций и `PSelect` (навигация).
+  Оставшиеся `match id` в apply/choice/helpers обслуживают только эти out-of-scope
+  поля.
+- **Шаг (c) (reset_field/маркер `•` на `get`-сравнение) сознательно не делался**:
+  `reset_field` и маркер уже работают обобщённо через `default_fields()` (сравнение
+  значений `fields()`↔дефолт, **без per-field арм**) — collapse-цели там нет; добавлять
+  `get` в `Access` ради этого — лишняя косвенность. Построители каталога (label/значение/
+  описание из 3.1) не тронуты.
+- **DoD этапа**: `field_description` (3.1) + config-армы `toggle_field`/`cycle_field`/
+  `apply_text` + `field_num_kind`-config удалены; по `FieldId` для config-значений
+  остаётся **один** структурный match (`field_spec`) + построители каталога — вместо
+  прежних шести. **808 тестов зелёные** (число неизменно — рефактор), 26 `#[ignore]`,
+  clippy `-D warnings`/fmt чисты. Доки: architecture.md §3. **Направление точечных
+  SOLID-улучшений (этапы 1–4) завершено.**
+
 ### Отложено за пределы M3
 - **Сворачивание/выделение per-message** и tool-блоки в ленте — сейчас «мысли»
   сворачиваются глобально (`Ctrl+T`); выделение сообщений и tool-блоки — на M5.

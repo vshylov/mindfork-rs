@@ -30,6 +30,31 @@ fn goto_section(s: &mut SettingsScreen, sec: Section) {
     assert_eq!(s.section(), sec, "секция {sec:?} не найдена");
 }
 
+/// Описание поля по id: строит поля всех секций/подсекций экрана и ищет строку.
+/// Описание живёт на `FieldRow` (прикрепляется при построении — см. этап 3.1), а не
+/// в отдельном match; поэтому оно есть только у **видимых** строк (draft-поля нужно
+/// сделать видимыми, задав spec_type=draft-*).
+fn field_desc(s: &SettingsScreen, id: FieldId) -> Option<&'static str> {
+    let mut rows = Vec::new();
+    for mt in [
+        ModelTab::Assistant,
+        ModelTab::Impersonation,
+        ModelTab::Embeddings,
+    ] {
+        rows.extend(s.model_fields_for(mt));
+    }
+    for sub in [Subsection::Assistant, Subsection::Impersonation] {
+        rows.extend(s.sampling_fields_for(sub));
+        rows.extend(s.profile_fields_for(sub));
+    }
+    rows.extend(s.tool_fields());
+    rows.extend(s.memory_fields());
+    rows.extend(s.interface_fields());
+    rows.into_iter()
+        .find(|r| r.id == id)
+        .and_then(|r| r.description)
+}
+
 /// Фокусирует поля и доходит вниз до поля `id` (устойчиво к группам/порядку).
 /// Предполагает, что фокус в меню (как сразу после [`goto_section`]).
 fn goto_field(s: &mut SettingsScreen, id: FieldId) {
@@ -139,7 +164,7 @@ fn interface_has_terminal_compat_toggle() {
     }
     // …и палитра рабочей копии тут же переходит на компат-набор глифов.
     assert!(s.palette().compat);
-    assert!(field_description(FieldId::ICompat).is_some());
+    assert!(field_desc(&s, FieldId::ICompat).is_some());
 }
 
 #[test]
@@ -541,15 +566,18 @@ fn render_with_editor_does_not_panic() {
 
 #[test]
 fn flag_fields_have_descriptions() {
+    // Черновые поля видны только при spec_type=draft-* — включаем, чтобы проверить их описание.
+    let mut s = screen();
+    s.config.engine.managed.spec_type = SpecType::DraftMtp;
     // -ngl, --jinja и --no-mmap снабжены человекопонятной подсказкой; обычное поле — нет.
-    assert!(field_description(FieldId::XNgl).is_some());
-    assert!(field_description(FieldId::XJinja).is_some());
-    assert!(field_description(FieldId::XNoMmap).is_some());
-    assert!(field_description(FieldId::XPort).is_none());
+    assert!(field_desc(&s, FieldId::XNgl).is_some());
+    assert!(field_desc(&s, FieldId::XJinja).is_some());
+    assert!(field_desc(&s, FieldId::XNoMmap).is_some());
+    assert!(field_desc(&s, FieldId::XPort).is_none());
     // Новые поля FlashAttention/спекулятивного декодирования тоже описаны.
-    assert!(field_description(FieldId::XFlashAttn).is_some());
-    assert!(field_description(FieldId::XSpecType).is_some());
-    assert!(field_description(FieldId::XDraftModel).is_some());
+    assert!(field_desc(&s, FieldId::XFlashAttn).is_some());
+    assert!(field_desc(&s, FieldId::XSpecType).is_some());
+    assert!(field_desc(&s, FieldId::XDraftModel).is_some());
 }
 
 #[test]
@@ -1082,6 +1110,7 @@ fn long_value_is_truncated_with_ellipsis() {
         kind: FieldKind::Text("D:\\LLM\\GGUF\\very-long-model-name-".repeat(4)),
         group: "Модель",
         hint: None,
+        description: None,
         warn: false,
     };
     let line = render_field_line(&f, 20, 24, false, false, &palette);
@@ -1101,6 +1130,7 @@ fn selected_field_shows_green_rail() {
         kind: FieldKind::Text("model".into()),
         group: "Модель",
         hint: None,
+        description: None,
         warn: false,
     };
     // Выбранное поле — зелёный рейл `▌` в левой колонке (как активная секция меню).
@@ -1229,14 +1259,15 @@ fn value_column_is_shared_across_groups() {
 fn sampling_extensions_have_descriptions() {
     // Каждый параметр семплинга снабжён подсказкой в обеих подсекциях —
     // и расширения llama.cpp, и базовые OpenAI-поля.
+    let s = screen();
     for &p in SAMPLING_PARAMS {
         assert!(
-            field_description(FieldId::S(p)).is_some(),
+            field_desc(&s, FieldId::S(p)).is_some(),
             "нет подсказки для {:?} (Ассистент)",
             p.label()
         );
         assert!(
-            field_description(FieldId::IS(p)).is_some(),
+            field_desc(&s, FieldId::IS(p)).is_some(),
             "нет подсказки для {:?} (Имперсонация)",
             p.label()
         );

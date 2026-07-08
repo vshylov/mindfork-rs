@@ -555,9 +555,21 @@ struct FieldRow {
     group: &'static str,
     /// Короткая инлайн-подсказка справа от значения (описание инструмента). `None` — нет.
     hint: Option<&'static str>,
+    /// Человекопонятное описание поля (нижняя панель настроек + ловушка поиска).
+    /// Живёт рядом с подписью — задаётся при построении строки через [`FieldRow::describe`]
+    /// (раньше — отдельный match `field_description(id)`). `None` — без описания.
+    description: Option<&'static str>,
     /// Значение и подсказку рисовать цветом предупреждения — инструмент включён в
     /// профиле, но выключен глобальным гейтом (недоступен модели).
     warn: bool,
+}
+
+impl FieldRow {
+    /// Прикрепляет описание поля (builder-стиль: `row(...).describe("…")`).
+    fn describe(mut self, d: &'static str) -> Self {
+        self.description = Some(d);
+        self
+    }
 }
 
 /// Активный редактор текстового поля (попап).
@@ -644,6 +656,7 @@ mod choice;
 mod helpers;
 mod render;
 mod search;
+mod spec;
 
 #[cfg(test)]
 mod tests;

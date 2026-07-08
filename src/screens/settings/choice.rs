@@ -2,6 +2,7 @@
 //! Часть модуля [`super`]; разбито из settings.rs.
 
 use super::helpers::*;
+use super::spec::{Access, FieldSpec, field_spec};
 use super::*;
 
 impl SettingsScreen {
@@ -9,28 +10,16 @@ impl SettingsScreen {
 
     /// Список вариантов Choice-поля + индекс текущего (`None` — поле не Choice).
     pub(super) fn choice_menu(&self, id: FieldId) -> Option<(Vec<String>, usize)> {
-        let mode_menu = |m: ServerMode| index_menu(&SERVER_MODES, m, mode_label);
+        // Config Choice-поля (режимы/flash-attn/spec-type/тема) — из таблицы доступа.
+        if let Some(FieldSpec {
+            access: Access::Choice { options, .. },
+            ..
+        }) = field_spec(id)
+        {
+            return Some(options(&self.config));
+        }
         match id {
-            FieldId::XMode => Some(mode_menu(self.config.engine.mode)),
-            FieldId::EMode => Some(mode_menu(self.config.embed.mode)),
-            FieldId::IxMode => Some(index_menu(
-                &IMP_MODES,
-                self.config.impersonation_engine.mode,
-                imp_mode_label,
-            )),
-            FieldId::XFlashAttn => Some(flash_menu(self.config.engine.managed.flash_attn)),
-            FieldId::IxFlashAttn => Some(flash_menu(
-                self.config.impersonation_engine.managed.flash_attn,
-            )),
-            FieldId::XSpecType => Some(spec_menu(self.config.engine.managed.spec_type)),
-            FieldId::IxSpecType => Some(spec_menu(
-                self.config.impersonation_engine.managed.spec_type,
-            )),
-            FieldId::ITheme => Some(index_menu(
-                &THEMES,
-                self.config.interface.theme,
-                theme_label,
-            )),
+            // Семплинг (Thinking/Reasoning) и выбор профиля — свои источники вариантов.
             FieldId::S(p @ (SamplingParam::Thinking | SamplingParam::Reasoning)) => {
                 Some(sampling_choice_menu(&self.config.default_sampling, p))
             }

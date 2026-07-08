@@ -81,7 +81,8 @@ impl SettingsScreen {
             FieldId::ModelSub,
             "Подсекция",
             FieldKind::Choice(model_sub.label()),
-        );
+        )
+        .describe(DESC_SUBSECTION);
         match model_sub {
             ModelTab::Assistant => {
                 let x = &self.config.engine;
@@ -91,7 +92,8 @@ impl SettingsScreen {
                         FieldId::XMode,
                         "Режим",
                         FieldKind::Choice(mode_label(x.mode)),
-                    ),
+                    )
+                    .describe(DESC_MODE),
                 ];
                 // Видимость полей зависит от режима (ADR 0004): для облака показываем
                 // лишь модель/ключ/опц. base URL, для managed — параметры llama-server.
@@ -103,7 +105,8 @@ impl SettingsScreen {
                         "Сервер",
                         vec![
                             text_row(FieldId::XUrl, "URL (external)", &x.external.url),
-                            text_row(FieldId::XModelName, "Модель (опц.)", &x.external.model_name),
+                            text_row(FieldId::XModelName, "Модель (опц.)", &x.external.model_name)
+                                .describe(DESC_MODEL_NAME),
                         ],
                     )),
                     ServerMode::OpenAi | ServerMode::Gemini | ServerMode::Claude => {
@@ -128,7 +131,8 @@ impl SettingsScreen {
                         FieldId::IxMode,
                         "Режим",
                         FieldKind::Choice(imp_mode_label(x.mode)),
-                    ),
+                    )
+                    .describe(DESC_IMP_MODE),
                 ];
                 match x.mode {
                     // Shared переиспользует движок ассистента — собственных полей нет.
@@ -144,7 +148,8 @@ impl SettingsScreen {
                                 FieldId::IxModelName,
                                 "Модель (опц.)",
                                 &x.external.model_name,
-                            ),
+                            )
+                            .describe(DESC_MODEL_NAME),
                         ],
                     )),
                     ImpersonationMode::OpenAi
@@ -171,7 +176,8 @@ impl SettingsScreen {
                         FieldId::EMode,
                         "Режим",
                         FieldKind::Choice(mode_label(e.mode)),
-                    ),
+                    )
+                    .describe(DESC_MODE),
                 ];
                 match e.mode {
                     ServerMode::Managed => rows.extend(grouped(
@@ -186,7 +192,8 @@ impl SettingsScreen {
                         "Сервер",
                         vec![
                             text_row(FieldId::EUrl, "URL (external)", &e.external.url),
-                            text_row(FieldId::EModelName, "Модель (опц.)", &e.external.model_name),
+                            text_row(FieldId::EModelName, "Модель (опц.)", &e.external.model_name)
+                                .describe(DESC_MODEL_NAME),
                         ],
                     )),
                     // Claude поля показывает, но Anthropic не умеет embeddings —
@@ -197,8 +204,10 @@ impl SettingsScreen {
                         rows.extend(grouped(
                             "Провайдер",
                             vec![
-                                text_row(FieldId::EModelName, "Модель", &c.model_name),
-                                text_row(FieldId::EApiKeyEnv, "API-ключ (env)", &c.api_key_env),
+                                text_row(FieldId::EModelName, "Модель", &c.model_name)
+                                    .describe(DESC_MODEL_NAME),
+                                text_row(FieldId::EApiKeyEnv, "API-ключ (env)", &c.api_key_env)
+                                    .describe(DESC_API_KEY_ENV),
                                 text_row(FieldId::EUrl, "Base URL (опц.)", &c.url),
                             ],
                         ))
@@ -215,11 +224,14 @@ impl SettingsScreen {
 
     /// Поля секции «Семплинг» для заданной подсекции (для перечисления при поиске).
     pub(super) fn sampling_fields_for(&self, sampling_sub: Subsection) -> Vec<FieldRow> {
-        let mut rows = vec![row(
-            FieldId::SamplingSub,
-            "Подсекция",
-            FieldKind::Choice(sampling_sub.label()),
-        )];
+        let mut rows = vec![
+            row(
+                FieldId::SamplingSub,
+                "Подсекция",
+                FieldKind::Choice(sampling_sub.label()),
+            )
+            .describe(DESC_SUBSECTION),
+        ];
         let (s, imp) = match sampling_sub {
             Subsection::Assistant => (&self.config.default_sampling, false),
             Subsection::Impersonation => (&self.config.impersonation_sampling, true),
@@ -254,27 +266,46 @@ impl SettingsScreen {
                     FieldId::MaxToolRounds,
                     "Лимит раундов инструментов",
                     FieldKind::Text(self.config.max_tool_rounds.to_string()),
+                )
+                .describe(
+                    "Максимум раундов клиентского agentic-loop за один ответ: сколько раз \
+                     модель может вызвать инструменты подряд, прежде чем цикл принудительно \
+                     завершится. Защита от зацикливания (по умолчанию 8).",
                 ),
                 row(
                     FieldId::TSubMaxTokens,
                     "Субагент: лимит токенов",
                     FieldKind::Text(t.subagent_max_tokens.to_string()),
+                )
+                .describe(
+                    "Лимит токенов в ответе субагента (call_subagent) — независимого \
+                     одно-ходового запроса без истории и инструментов.",
                 ),
                 row(
                     FieldId::TSubTimeout,
                     "Субагент: таймаут (с)",
                     FieldKind::Text(t.subagent_timeout_secs.to_string()),
-                ),
+                )
+                .describe("Таймаут запроса субагента (call_subagent) в секундах."),
             ],
         );
         rows.extend(grouped(
             "Веб-поиск",
             vec![
-                row(FieldId::TWeb, "Web-поиск", FieldKind::Toggle(t.web_enabled)),
+                row(FieldId::TWeb, "Web-поиск", FieldKind::Toggle(t.web_enabled)).describe(
+                    "Разрешить инструменты web_search и fetch_url (сетевой доступ). \
+                     Мастер-гейт: при выключении оба инструмента недоступны модели \
+                     независимо от настроек профиля.",
+                ),
                 row(
                     FieldId::TWebFetch,
                     "Загрузка страниц",
                     FieldKind::Toggle(t.web_fetch_content),
+                )
+                .describe(
+                    "Загружать страницы результатов web-поиска, извлекать читаемый текст и \
+                     переупорядочивать по релевантности запросу (эмбеддингами). Даёт модели \
+                     содержимое страниц, но добавляет задержку. Выкл — только заголовки/сниппеты.",
                 ),
             ],
         ));
@@ -285,6 +316,10 @@ impl SettingsScreen {
                     FieldId::TPython,
                     "Python-исполнение",
                     FieldKind::Toggle(t.python_enabled),
+                )
+                .describe(
+                    "Разрешить инструмент python_exec (исполнение кода в отдельном процессе). \
+                     Выключено по умолчанию: код исполняется на вашей машине.",
                 ),
                 text_row(
                     FieldId::TPythonPath,
@@ -300,8 +335,17 @@ impl SettingsScreen {
                     FieldId::TFs,
                     "Доступ к файлам",
                     FieldKind::Toggle(t.fs_enabled),
+                )
+                .describe(
+                    "Разрешить инструменты чтения/записи/листинга локальных файлов \
+                     (fs_read/fs_write/fs_list). Выключено по умолчанию: инструмент может \
+                     прочитать или перезаписать любой файл. Ограничить можно каталогом-песочницей.",
                 ),
-                text_row(FieldId::TFsRoot, "Каталог-песочница", &t.fs_root),
+                text_row(FieldId::TFsRoot, "Каталог-песочница", &t.fs_root).describe(
+                    "Каталог-«песочница» для файловых инструментов: если задан, доступ к файлам \
+                     ограничен этим каталогом и его подкаталогами (выход через .. блокируется). \
+                     Пусто — доступ ко всей файловой системе.",
+                ),
             ],
         ));
         rows
@@ -316,16 +360,30 @@ impl SettingsScreen {
                     FieldId::RagTarget,
                     "Размер чанка (симв.)",
                     FieldKind::Text(self.config.rag.chunk_target_chars.to_string()),
+                )
+                .describe(
+                    "Целевой размер фрагмента (чанка) базы знаний в символах. Меньше — точнее \
+                     попадание, но больше фрагментов; больше — шире контекст. Применяется при \
+                     индексации (/rag add) и реиндексации (/rag rebuild).",
                 ),
                 row(
                     FieldId::RagOverlap,
                     "Перекрытие (симв.)",
                     FieldKind::Text(self.config.rag.chunk_overlap_chars.to_string()),
+                )
+                .describe(
+                    "Перекрытие соседних фрагментов в символах: хвост предыдущего повторяется \
+                     в начале следующего, чтобы запрос у границы не терял контекст. При \
+                     извлечении дубль снимается склейкой.",
                 ),
                 row(
                     FieldId::RagMax,
                     "Потолок чанка (симв.)",
                     FieldKind::Text(self.config.rag.chunk_max_chars.to_string()),
+                )
+                .describe(
+                    "Жёсткий потолок неделимого фрагмента в символах (очень длинная \
+                     строка/слово без пунктуации). Не меньше целевого размера.",
                 ),
             ],
         );
@@ -336,11 +394,22 @@ impl SettingsScreen {
                     FieldId::NotesAutoConsolidate,
                     "Авто-консолидация (кажд. N)",
                     FieldKind::Text(self.config.notes.auto_consolidate_every.to_string()),
+                )
+                .describe(
+                    "Авто-консолидация («сон»): каждые N ответов модель в фоне сама \
+                     пересматривает базу заметок — сливает дубли, переписывает устаревшее, \
+                     связывает родственное. 0 — выключено. Работает только в профилях с \
+                     включёнными инструментами заметок.",
                 ),
                 row(
                     FieldId::NotesRecallIncludesSelf,
                     "«О себе» в note_recall",
                     FieldKind::Toggle(self.config.notes.recall_includes_self),
+                )
+                .describe(
+                    "Показывать наблюдения «о себе» (@self) в общем note_recall — с пометкой \
+                     [о себе]. По умолчанию выключено: память о себе ≠ память о собеседнике. \
+                     Включение смешивает выдачу (модель увидит свои наблюдения при поиске заметок).",
                 ),
             ],
         ));
@@ -351,31 +420,61 @@ impl SettingsScreen {
                     FieldId::SmMaxNarrative,
                     "Хранить инсайтов",
                     FieldKind::Text(self.config.self_model.max_narrative.to_string()),
+                )
+                .describe(
+                    "Сколько инсайтов (наблюдений) хранить в нарративе «модели себя». При \
+                     переполнении старые вытесняются. Только для профилей с включёнными \
+                     инструментами модели себя.",
                 ),
                 row(
                     FieldId::SmNarrativeInPrompt,
                     "Инсайтов в промпт",
                     FieldKind::Text(self.config.self_model.narrative_in_prompt.to_string()),
+                )
+                .describe(
+                    "Сколько самых свежих инсайтов подмешивать в системный промпт (новейшие \
+                     первыми). Больше — богаче контекст «я», но дороже по токенам.",
                 ),
                 row(
                     FieldId::SmPromptCap,
                     "Лимит инъекции (симв.)",
                     FieldKind::Text(self.config.self_model.prompt_cap.to_string()),
+                )
+                .describe(
+                    "Потолок символов компактного блока «модели себя», подмешиваемого в \
+                     системный промпт. Защита окна контекста: длинный блок усекается.",
                 ),
                 row(
                     FieldId::SmSummaryTarget,
                     "Ориентир описания (симв.)",
                     FieldKind::Text(self.config.self_model.summary_target_chars.to_string()),
+                )
+                .describe(
+                    "Ориентир размера описания себя (summary) в символах. Сверх него \
+                     инструменты и протокол ведения мягко предлагают сократить описание, \
+                     вынеся событийное в наблюдения. Это ворота, а не потолок: данные не усекаются.",
                 ),
                 row(
                     FieldId::SmAutoReflect,
                     "Авто-рефлексия (кажд. N)",
                     FieldKind::Text(self.config.self_model.auto_reflect_every.to_string()),
+                )
+                .describe(
+                    "Авто-рефлексия: каждые N ответов ассистента модель в фоне сама \
+                     пересматривает разговор и обновляет «модель себя». 0 — выключено. \
+                     Работает только в профилях с включёнными инструментами модели себя.",
                 ),
                 row(
                     FieldId::SmProtocol,
                     "Протокол ведения",
                     FieldKind::Toggle(self.config.self_model.maintenance_protocol),
+                )
+                .describe(
+                    "Подмешивать в системный промпт нейтральную к персоне инструкцию: когда \
+                     фиксировать изменения инструментами, «мимолётное — в наблюдения», \
+                     «точность важнее угодливости». Делает использование инструментов \
+                     предсказуемым независимо от персоны. Работает только в профилях с \
+                     включёнными инструментами модели себя.",
                 ),
             ],
         ));
@@ -396,6 +495,12 @@ impl SettingsScreen {
                     FieldId::ICompat,
                     "Режим старого терминала",
                     FieldKind::Toggle(i.terminal_compat),
+                )
+                .describe(
+                    "Режим совместимости со старыми эмуляторами терминала (conhost Windows 10 \
+                     и т.п.): эмодзи и редкие символы заменяются на простые глифы, рамки — \
+                     прямые, спиннер — ASCII, затемнение фона попапов — цветом. Включите, \
+                     если вместо иконок видны квадраты-«тофу».",
                 ),
             ],
         );
@@ -420,11 +525,18 @@ impl SettingsScreen {
         ));
         rows.extend(grouped(
             "Поведение",
-            vec![row(
-                FieldId::IConfirmKeys,
-                "Подтверждать Ctrl+R / Ctrl+E",
-                FieldKind::Toggle(i.confirm_destructive_keys),
-            )],
+            vec![
+                row(
+                    FieldId::IConfirmKeys,
+                    "Подтверждать Ctrl+R / Ctrl+E",
+                    FieldKind::Toggle(i.confirm_destructive_keys),
+                )
+                .describe(
+                    "Спрашивать подтверждение перед перегенерацией (Ctrl+R) и удалением \
+                     последнего обмена (Ctrl+E) — обе операции необратимы в UI. Выключено — \
+                     комбинации срабатывают сразу.",
+                ),
+            ],
         ));
         // Подписи читаются как продолжение заголовка группы («Копирование … —
         // с «мыслями»»): общий префикс «Копировать» ушёл в заголовок, чтобы
@@ -436,16 +548,28 @@ impl SettingsScreen {
                     FieldId::ICopyThoughts,
                     "С «мыслями»",
                     FieldKind::Toggle(self.config.copy.copy_thoughts),
+                )
+                .describe(
+                    "При копировании переписки (F5) включать блок «мыслей» (CoT) ассистента. \
+                     По умолчанию копируется только текст сообщений.",
                 ),
                 row(
                     FieldId::ICopyToolCalls,
                     "С параметрами инструментов",
                     FieldKind::Toggle(self.config.copy.copy_tool_calls),
+                )
+                .describe(
+                    "При копировании переписки (F5) включать параметры вызовов инструментов \
+                     (имя инструмента и аргументы).",
                 ),
                 row(
                     FieldId::ICopyToolResults,
                     "С ответами инструментов",
                     FieldKind::Toggle(self.config.copy.copy_tool_results),
+                )
+                .describe(
+                    "При копировании переписки (F5) включать результаты (ответы) вызовов \
+                     инструментов.",
                 ),
             ],
         ));
@@ -472,7 +596,8 @@ impl SettingsScreen {
                 FieldId::ProfileSub,
                 "Подсекция",
                 FieldKind::Choice(profile_sub.label()),
-            ),
+            )
+            .describe(DESC_SUBSECTION),
             row(
                 FieldId::PSelect,
                 "Профиль",

@@ -528,7 +528,7 @@ impl SettingsScreen {
                         lines.push(Line::styled(preview, Style::new().fg(palette.text)));
                     }
                 }
-                if let Some(text) = field_description(f.id) {
+                if let Some(text) = f.description {
                     lines.push(Line::styled(text, palette.muted_style()));
                 }
                 // Выключенный глобально инструмент — развёрнутое пояснение (цветом
