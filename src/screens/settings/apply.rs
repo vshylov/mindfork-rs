@@ -309,7 +309,7 @@ impl SettingsScreen {
 
     pub(super) fn toggle_profile_tool(&mut self, idx: usize) -> Option<SettingsIntent> {
         let catalog = Self::tool_catalog();
-        let tool = catalog.get(idx)?.clone();
+        let tool = catalog.get(idx)?.id.clone();
         let p = self.profiles.get_mut(self.profile_idx)?;
         if let Some(pos) = p.enabled_tools.iter().position(|t| t == &tool) {
             p.enabled_tools.remove(pos);

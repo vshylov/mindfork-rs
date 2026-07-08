@@ -58,6 +58,15 @@ impl Tool for SendFollowupMessage {
     fn id(&self) -> ToolId {
         SEND_FOLLOWUP_ID.into()
     }
+    fn group(&self) -> crate::features::tools::meta::ToolGroup {
+        crate::features::tools::meta::ToolGroup::Conversation
+    }
+    fn ui_label(&self) -> &'static str {
+        "дописать сообщение"
+    }
+    fn enabled_by_default(&self) -> bool {
+        false
+    }
     fn description(&self) -> String {
         "Разрешает написать ещё одно сообщение сразу после текущего (отдельной \
          репликой). Сначала допиши текущее сообщение до конца, затем вызови этот \
@@ -82,6 +91,15 @@ pub struct RewriteCurrentMessage;
 impl Tool for RewriteCurrentMessage {
     fn id(&self) -> ToolId {
         REWRITE_CURRENT_ID.into()
+    }
+    fn group(&self) -> crate::features::tools::meta::ToolGroup {
+        crate::features::tools::meta::ToolGroup::Conversation
+    }
+    fn ui_label(&self) -> &'static str {
+        "переписать ответ"
+    }
+    fn enabled_by_default(&self) -> bool {
+        false
     }
     fn description(&self) -> String {
         "Отменяет сообщение, которое ты пишешь прямо сейчас (в текущем ходе), и \

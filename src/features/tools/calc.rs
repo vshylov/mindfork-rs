@@ -20,6 +20,12 @@ impl Tool for Calculate {
     fn id(&self) -> ToolId {
         "calculate".into()
     }
+    fn group(&self) -> crate::features::tools::meta::ToolGroup {
+        crate::features::tools::meta::ToolGroup::Utils
+    }
+    fn ui_label(&self) -> &'static str {
+        "калькулятор"
+    }
     fn description(&self) -> String {
         "Вычислить математическое выражение и вернуть число. Поддерживает + - * / % ^, \
          скобки, константы (pi, e, tau) и функции (sqrt, cbrt, abs, exp, ln, log, log2, \

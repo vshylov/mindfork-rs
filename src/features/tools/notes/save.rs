@@ -11,6 +11,12 @@ impl Tool for NoteSave {
     fn id(&self) -> ToolId {
         "note_save".into()
     }
+    fn group(&self) -> crate::features::tools::meta::ToolGroup {
+        crate::features::tools::meta::ToolGroup::Memory
+    }
+    fn ui_label(&self) -> &'static str {
+        "сохранить заметку"
+    }
     fn description(&self) -> String {
         "Сохранить заметку о пользователе/контексте для будущих диалогов.".into()
     }

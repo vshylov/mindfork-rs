@@ -76,7 +76,16 @@ impl FetchUrl {
 #[async_trait::async_trait]
 impl Tool for FetchUrl {
     fn id(&self) -> ToolId {
-        "fetch_url".into()
+        super::FETCH_URL_ID.into()
+    }
+    fn group(&self) -> crate::features::tools::meta::ToolGroup {
+        crate::features::tools::meta::ToolGroup::ExternalWorld
+    }
+    fn ui_label(&self) -> &'static str {
+        "загрузить страницу"
+    }
+    fn gate(&self) -> Option<crate::features::tools::meta::ToolGate> {
+        Some(crate::features::tools::meta::ToolGate::Web)
     }
     fn description(&self) -> String {
         "Загрузить веб-страницу по URL и вернуть её краткое содержание. Передай focus, \

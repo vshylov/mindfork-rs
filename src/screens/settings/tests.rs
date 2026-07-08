@@ -311,13 +311,21 @@ fn create_and_delete_profile_in_profiles_section() {
 fn toggling_profile_tool_emits_save_profile() {
     let mut s = screen();
     goto_section(&mut s, Section::Profiles);
-    goto_field(&mut s, FieldId::PTool(0)); // первый тумблер инструмента
+    // Каталог упорядочен по id (не по дефолт-списку), поэтому берём индекс первого
+    // РЕАЛЬНО включённого в профиле инструмента — его тумблер должен выключиться.
+    let catalog = crate::features::tools::tool_catalog();
+    let enabled = s.profiles[0].enabled_tools.clone();
+    let idx = catalog
+        .iter()
+        .position(|i| enabled.contains(&i.id))
+        .expect("в профиле есть включённый инструмент из каталога");
+    goto_field(&mut s, FieldId::PTool(idx));
     let before = s.profiles[0].enabled_tools.len();
     let intent = s.handle_key(key(KeyCode::Char(' ')));
     match intent {
         Some(SettingsIntent::SaveProfile { edit, .. }) => {
             let tools = edit.enabled_tools.unwrap();
-            assert_eq!(tools.len(), before - 1, "первый инструмент выключился");
+            assert_eq!(tools.len(), before - 1, "включённый инструмент выключился");
         }
         other => panic!("ожидался SaveProfile, получено {other:?}"),
     }
@@ -725,7 +733,7 @@ fn subsection_renders_as_tab_strip_not_list_row() {
 #[test]
 fn profile_tools_are_grouped_with_descriptions() {
     // Каждый тумблер инструмента размечен смысловой группой (из meta) и несёт
-    // короткое инлайн-описание. Группы — из известного порядка TOOL_GROUPS.
+    // короткое инлайн-описание. Группы — из известного набора (`group_titles`).
     let mut s = screen();
     goto_section(&mut s, Section::Profiles);
     let fields = s.profile_fields();
@@ -736,7 +744,7 @@ fn profile_tools_are_grouped_with_descriptions() {
     assert!(!tool_rows.is_empty());
     for r in &tool_rows {
         assert!(
-            meta::TOOL_GROUPS.contains(&r.group),
+            crate::features::tools::meta::group_titles().contains(&r.group),
             "инструмент вне известной группы: {}",
             r.label
         );
@@ -763,7 +771,12 @@ fn globally_disabled_tool_is_marked_gated() {
     s.config.tools.web_enabled = true;
     goto_section(&mut s, Section::Profiles);
     let fields = s.profile_fields();
-    let idx_of = |name: &str| -> usize { all_tool_ids().iter().position(|t| t == name).unwrap() };
+    let idx_of = |name: &str| -> usize {
+        crate::features::tools::all_tool_ids()
+            .iter()
+            .position(|t| t == name)
+            .unwrap()
+    };
     let find = |id: FieldId| fields.iter().find(|r| r.id == id).unwrap();
     let py = find(FieldId::PTool(idx_of("python_exec")));
     assert!(py.warn, "выключенный глобально python_exec — гейт");

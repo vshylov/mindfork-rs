@@ -181,6 +181,12 @@ impl Tool for ConsolidateNotes {
     fn id(&self) -> ToolId {
         CONSOLIDATE_NOTES_ID.into()
     }
+    fn group(&self) -> crate::features::tools::meta::ToolGroup {
+        crate::features::tools::meta::ToolGroup::Memory
+    }
+    fn ui_label(&self) -> &'static str {
+        "консолидация заметок"
+    }
     fn description(&self) -> String {
         "Обзор базы знаний для консолидации: похожие пары (возможные дубли), связи \
          contradicts, заметки без связей — и что с этим делать. Точка входа: дальше \

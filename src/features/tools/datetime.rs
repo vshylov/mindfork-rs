@@ -19,6 +19,12 @@ impl Tool for CurrentTime {
     fn id(&self) -> ToolId {
         "current_time".into()
     }
+    fn group(&self) -> crate::features::tools::meta::ToolGroup {
+        crate::features::tools::meta::ToolGroup::Utils
+    }
+    fn ui_label(&self) -> &'static str {
+        "текущее время"
+    }
     fn description(&self) -> String {
         "Получить текущие дату и время (локальная зона и UTC). Опционально передай \
          format — строку формата strftime (например %Y-%m-%d или %H:%M)."

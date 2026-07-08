@@ -54,6 +54,12 @@ impl Tool for CallSubagent {
     fn id(&self) -> ToolId {
         "call_subagent".into()
     }
+    fn group(&self) -> crate::features::tools::meta::ToolGroup {
+        crate::features::tools::meta::ToolGroup::Subagent
+    }
+    fn ui_label(&self) -> &'static str {
+        "запрос суб-агенту"
+    }
     fn description(&self) -> String {
         "Спросить независимого саб-агента (с заданным ему системным сообщением) для \
          альтернативного мнения. У саб-агента нет истории этого чата и нет инструментов."

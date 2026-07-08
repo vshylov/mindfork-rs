@@ -192,6 +192,15 @@ impl Tool for GetSelfModel {
     fn id(&self) -> ToolId {
         GET_SELF_MODEL_ID.into()
     }
+    fn group(&self) -> crate::features::tools::meta::ToolGroup {
+        crate::features::tools::meta::ToolGroup::SelfModel
+    }
+    fn ui_label(&self) -> &'static str {
+        "показать модель себя"
+    }
+    fn enabled_by_default(&self) -> bool {
+        false
+    }
     fn description(&self) -> String {
         "Прочитать твою текущую «модель себя» целиком: описание себя, цели (с #id для \
          отметки выполненных/неактуальных), представление о собеседнике и наблюдения."
@@ -215,6 +224,15 @@ pub struct Reflect;
 impl Tool for Reflect {
     fn id(&self) -> ToolId {
         REFLECT_ID.into()
+    }
+    fn group(&self) -> crate::features::tools::meta::ToolGroup {
+        crate::features::tools::meta::ToolGroup::SelfModel
+    }
+    fn ui_label(&self) -> &'static str {
+        "саморефлексия"
+    }
+    fn enabled_by_default(&self) -> bool {
+        false
     }
     fn description(&self) -> String {
         "Поразмышлять над недавним разговором: получить текущую «модель себя» и \
@@ -272,6 +290,15 @@ impl Tool for AddInsight {
     fn id(&self) -> ToolId {
         ADD_INSIGHT_ID.into()
     }
+    fn group(&self) -> crate::features::tools::meta::ToolGroup {
+        crate::features::tools::meta::ToolGroup::SelfModel
+    }
+    fn ui_label(&self) -> &'static str {
+        "добавить наблюдение"
+    }
+    fn enabled_by_default(&self) -> bool {
+        false
+    }
     fn description(&self) -> String {
         "Записать короткое наблюдение/инсайт о себе, разговоре или собеседнике в свой \
          нарратив (историю «я во времени»). Сюда же — событийные выводы «что и когда я \
@@ -328,6 +355,15 @@ pub struct UpdateSelfModel;
 impl Tool for UpdateSelfModel {
     fn id(&self) -> ToolId {
         UPDATE_SELF_MODEL_ID.into()
+    }
+    fn group(&self) -> crate::features::tools::meta::ToolGroup {
+        crate::features::tools::meta::ToolGroup::SelfModel
+    }
+    fn ui_label(&self) -> &'static str {
+        "обновить модель себя"
+    }
+    fn enabled_by_default(&self) -> bool {
+        false
     }
     fn description(&self) -> String {
         "Обновить «модель себя»: уточнить описание себя (summary — компактный снимок: \
@@ -487,6 +523,15 @@ pub struct UpdateUserModel;
 impl Tool for UpdateUserModel {
     fn id(&self) -> ToolId {
         UPDATE_USER_MODEL_ID.into()
+    }
+    fn group(&self) -> crate::features::tools::meta::ToolGroup {
+        crate::features::tools::meta::ToolGroup::SelfModel
+    }
+    fn ui_label(&self) -> &'static str {
+        "обновить собеседника"
+    }
+    fn enabled_by_default(&self) -> bool {
+        false
     }
     fn description(&self) -> String {
         "Обновить устойчивую, интегрированную модель собеседника (через все разговоры, \
