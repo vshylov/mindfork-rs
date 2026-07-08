@@ -1,5 +1,5 @@
 //! Тесты оркестратора — модель себя: инъекция, F3-правки, сигналы. Часть модуля [`super`]
-//! (фикстуры в mod.rs). См. docs/refactoring-god-objects.md, этап 3.
+//! (фикстуры в mod.rs). См. docs/history/refactoring-god-objects.md, этап 3.
 
 use super::*;
 

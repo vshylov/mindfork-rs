@@ -296,7 +296,7 @@ fn orch_ready_for_reflection() -> (tempfile::TempDir, Orchestrator, Uuid) {
     (dir, orch, chat_id)
 }
 
-// ---------- подмодули тестов (разбор god-object: docs/refactoring-god-objects.md, этап 3) ----------
+// ---------- подмодули тестов (разбор god-object: docs/history/refactoring-god-objects.md, этап 3) ----------
 
 mod chats;
 mod generation;

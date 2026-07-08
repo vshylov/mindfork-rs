@@ -648,7 +648,7 @@ pub struct SettingsScreen {
     statuses: ServerStatuses,
 }
 
-// ---------- подмодули (разбор god-object'а: docs/refactoring-god-objects.md) ----------
+// ---------- подмодули (разбор god-object'а: docs/history/refactoring-god-objects.md) ----------
 
 mod apply;
 mod catalog;

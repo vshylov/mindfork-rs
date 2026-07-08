@@ -3296,7 +3296,7 @@ web-поиск и Python под выключателями, экран наст�
   в одной колонке). **797 тестов зелёные** (+3), clippy/fmt чисты. Доки: spec §11.6.
 
 ### Рефакторинг god-object'ов — этап 1: `screens/settings.rs` → `screens/settings/` (сделано)
-- **План направления** — [docs/refactoring-god-objects.md](docs/refactoring-god-objects.md)
+- **План направления** — [docs/history/refactoring-god-objects.md](docs/history/refactoring-god-objects.md)
   (7 этапов + опц.): разбор нескольких файлов-монолитов, выросших в god-object'ы
   (settings/chat/orchestrator-tests/notes/db/markdown/runtime). Метод — тот же
   плейбук, что и разбор оркестратора (Фазы 1–3): **чисто механический перенос**
@@ -3336,7 +3336,7 @@ web-поиск и Python под выключателями, экран наст�
   число не изменилось — чистый перенос), clippy `-D warnings`/fmt чисты. Доки:
   architecture.md §3.
 ### Рефакторинг god-object'ов — этап 2: `screens/chat.rs` → `screens/chat/` (сделано)
-- **Этап 2** плана разбора god-object'ов (docs/refactoring-god-objects.md — на ветке
+- **Этап 2** плана разбора god-object'ов (docs/history/refactoring-god-objects.md — на ветке
   этапа 1; этот этап — ветка `refactor/chat-module-split` от `main`). `screens/chat.rs`
   (2616 строк, один `impl ChatScreen` ~54 метода на ~1100 строк + рендер-хелперы)
   разбит на каталог `screens/chat/` — чисто механический перенос (item-level слайсы:
@@ -3364,7 +3364,7 @@ web-поиск и Python под выключателями, экран наст�
   (0 упавших, 26 `#[ignore]`; число не изменилось — чистый перенос), clippy
   `-D warnings`/fmt чисты. Доки: architecture.md §3.
 ### Рефакторинг god-object'ов — этап 3: `orchestrator/tests.rs` → `orchestrator/tests/` (сделано)
-- **Этап 3** плана разбора god-object'ов (docs/refactoring-god-objects.md — живёт на
+- **Этап 3** плана разбора god-object'ов (docs/history/refactoring-god-objects.md — живёт на
   ветке этапа 1 `refactor/settings-module-split`; этот этап — ветка
   `refactor/orchestrator-tests-split` от `main`, доки-план синхронизируется при
   merge). Тест-монолит `app/orchestrator/tests.rs` (3506 строк, 74 теста всех фич в
@@ -3389,7 +3389,7 @@ web-поиск и Python под выключателями, экран наст�
   clippy `-D warnings`/fmt чисты. Доки: architecture.md §3.
 
 ### Рефакторинг god-object'ов — этап 4: `features/tools/notes.rs` → `features/tools/notes/` (сделано)
-- **Этап 4** плана разбора god-object'ов (docs/refactoring-god-objects.md — на ветке
+- **Этап 4** плана разбора god-object'ов (docs/history/refactoring-god-objects.md — на ветке
   этапа 1; этот этап — ветка `refactor/notes-module-split` от `main`).
   `features/tools/notes.rs` (2242 строки: 9 инструментов + подсистема self-заметок +
   обзоры консолидации) разбит на каталог `features/tools/notes/` — чисто механический
@@ -3419,7 +3419,7 @@ web-поиск и Python под выключателями, экран наст�
   `#[ignore]`; число не изменилось — чистый перенос), clippy `-D warnings`/fmt чисты.
   Доки: architecture.md §3.
 ### Рефакторинг god-object'ов — этап 5: `shared/storage/db.rs` → `shared/storage/db/` (сделано)
-- **Этап 5** плана разбора god-object'ов (docs/refactoring-god-objects.md — на ветке
+- **Этап 5** плана разбора god-object'ов (docs/history/refactoring-god-objects.md — на ветке
   этапа 1; этот этап — ветка `refactor/db-module-split` от `main`).
   `shared/storage/db.rs` (1665 строк, один `impl Db` на ~41 метод, 4 домена данных)
   разбит на каталог `shared/storage/db/` по доменам — чисто механический перенос
@@ -3443,7 +3443,7 @@ web-поиск и Python под выключателями, экран наст�
   (0 упавших, 26 `#[ignore]`; число не изменилось — чистый перенос), clippy
   `-D warnings`/fmt чисты. Доки: architecture.md §3.
 ### Рефакторинг god-object'ов — этап 6: `shared/markdown.rs` → `shared/markdown/` (сделано)
-- **Этап 6** плана разбора god-object'ов (docs/refactoring-god-objects.md — на ветке
+- **Этап 6** плана разбора god-object'ов (docs/history/refactoring-god-objects.md — на ветке
   этапа 1; этот этап — ветка `refactor/markdown-module-split` от `main`).
   `shared/markdown.rs` (1995 строк, три подсистемы: walker `Writer`, таблицы, LaTeX-
   конвертер + подсветка кода) разбит на каталог `shared/markdown/` — чисто механический
@@ -3471,7 +3471,7 @@ web-поиск и Python под выключателями, экран наст�
   чистый перенос), clippy `-D warnings`/fmt чисты. Доки: architecture.md §3.
 ### Рефакторинг god-object'ов — этап 7: `app/runtime.rs` → `app/runtime/` (сделано)
 - **Этап 7** (финальный) плана разбора god-object'ов
-  (docs/refactoring-god-objects.md — на ветке этапа 1; этот этап — ветка
+  (docs/history/refactoring-god-objects.md — на ветке этапа 1; этот этап — ветка
   `refactor/runtime-module-split` от `main`). `app/runtime.rs` (1099 строк: петля TUI +
   батчинг вставки + буфер обмена + диспетчеризация) разбит на каталог `app/runtime/` —
   чисто механический перенос (item-level слайсы, поведение не менялось).
@@ -3519,7 +3519,7 @@ web-поиск и Python под выключателями, экран наст�
   полей секции в индексе поиска). Прежний `section_field_count_is_tab_and_mode_
   independent` заменён (он утверждал обратное). **808 тестов зелёные**, clippy/fmt чисты.
 ### Пост-M9: со-локация тестов db/markdown по подмодулям (сделано)
-- **Хвост разбора god-object'ов** (docs/refactoring-god-objects.md §2.5): при разборе
+- **Хвост разбора god-object'ов** (docs/history/refactoring-god-objects.md §2.5): при разборе
   этапов 5 (db) и 6 (markdown) доменные тесты сложили единым файлом `tests.rs`, хотя
   план предписывал распределять их в `mod tests` своих подфайлов (конвенция «тесты
   рядом с кодом»). Приведено к плану — **чистый механический перенос** (byte-exact
@@ -3595,7 +3595,7 @@ web-поиск и Python под выключателями, экран наст�
 
 ### Пост-M9: SOLID-рефакторинг — этап 1: `ToolContext` (пучки зависимостей + конструктор) (сделано)
 - **Первый этап направления точечных SOLID-улучшений**
-  ([docs/refactoring-solid.md](docs/refactoring-solid.md), ветка
+  ([docs/history/refactoring-solid.md](docs/history/refactoring-solid.md), ветка
   `refactor/tool-context-bundles`): устранён shotgun-surgery при добавлении поля
   `ToolContext` — раньше 11-строчный литерал повторялся в **8 местах** (3 продакшн +
   5 тест), новое поле правило все. Чисто структурный рефактор (поведение не менялось).
@@ -3623,7 +3623,7 @@ web-поиск и Python под выключателями, экран наст�
 
 ### Пост-M9: SOLID-рефакторинг — этап 2: фоновые задачи (реестр слотов + единый done-канал) (сделано)
 - **Этап 2** направления SOLID-улучшений
-  ([docs/refactoring-solid.md §4](docs/refactoring-solid.md), ветка
+  ([docs/history/refactoring-solid.md §4](docs/history/refactoring-solid.md), ветка
   `refactor/bg-task-slots`): семейство «тихих» фоновых задач (авто-рефлексия
   «модели себя» + авто-консолидация заметок — мини agentic-loop без UI, общий раннер
   `tool_loop::spawn_silent_loop`) обслуживалось **копипастой жизненного цикла** —
@@ -3665,7 +3665,7 @@ web-поиск и Python под выключателями, экран наст�
 
 ### Пост-M9: SOLID-рефакторинг — этап 4: статус-бар view-model + каноничные хелперы runtime (сделано)
 - **Этап 4 (мелкие точечные)** направления SOLID-улучшений
-  ([docs/refactoring-solid.md §6](docs/refactoring-solid.md), ветка
+  ([docs/history/refactoring-solid.md §6](docs/history/refactoring-solid.md), ветка
   `refactor/status-bar-runtime`): убраны 10-аргументные сигнатуры статус-бара и
   разрозненные поимённые перечисления экранов в runtime. Чисто структурно (поведение
   не менялось). Сделаны 4a/4b/4d; 4c (группировка полей `ChatScreen`) — **не делал**
@@ -3703,7 +3703,7 @@ web-поиск и Python под выключателями, экран наст�
 
 ### Пост-M9: SOLID-рефакторинг — этап 3, шаг 3.1: описание поля настроек в `FieldRow` (сделано)
 - **Шаг 3.1** этапа 3 (дескрипторы полей настроек,
-  [docs/refactoring-solid.md §5](docs/refactoring-solid.md), ветка
+  [docs/history/refactoring-solid.md §5](docs/history/refactoring-solid.md), ветка
   `refactor/settings-field-descriptors`): аспекты одного поля настроек размазаны по
   пяти match-сайтам; 3.1 сводит **описание** к месту постройки строки (SRP-заготовка).
   Чисто структурно, поведение не менялось.
@@ -3732,7 +3732,7 @@ web-поиск и Python под выключателями, экран наст�
 
 ### Пост-M9: SOLID-рефакторинг — этап 3, шаги 3.2/3.3: таблица доступа к значению поля (`field_spec`) (сделано)
 - **Шаги 3.2 (ядро) + 3.3** этапа 3
-  ([docs/refactoring-solid.md §5](docs/refactoring-solid.md), ветка
+  ([docs/history/refactoring-solid.md §5](docs/history/refactoring-solid.md), ветка
   `refactor/settings-field-descriptors`): доступ к значению config-поля настроек был
   размазан по **четырём** match-сайтам по `FieldId` (`toggle_field`/`cycle_field`/
   config-ветки `apply_text`/`field_num_kind`) + options Choice (`choice_menu`). Сведены

@@ -211,7 +211,7 @@ fn parse_dt(s: String) -> DateTime<Utc> {
         .unwrap_or_else(|_| Utc::now())
 }
 
-// ---------- подмодули по доменам (разбор god-object: docs/refactoring-god-objects.md, этап 5) ----------
+// ---------- подмодули по доменам (разбор god-object: docs/history/refactoring-god-objects.md, этап 5) ----------
 
 mod graph;
 mod notes;

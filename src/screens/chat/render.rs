@@ -1,5 +1,5 @@
 //! Экран чата — отрисовка экрана чата. Часть модуля [`super`]; разбито из
-//! монолита chat.rs (см. docs/refactoring-god-objects.md, этап 2).
+//! монолита chat.rs (см. docs/history/refactoring-god-objects.md, этап 2).
 
 use super::popups::{render_confirm, render_help, render_suggest};
 use super::*;

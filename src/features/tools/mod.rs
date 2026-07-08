@@ -71,7 +71,7 @@ pub struct ToolContext {
 /// Долгоживущие разделяемые зависимости инструментов (пучок `Arc`; меняется при
 /// рестарте серверов, не от хода к ходу). Собирается в один блок, чтобы новая
 /// зависимость не правила каждый сайт сборки [`ToolContext`]. См.
-/// docs/refactoring-solid.md §3.
+/// docs/history/refactoring-solid.md §3.
 #[derive(Clone)]
 pub struct ToolDeps {
     pub storage: Arc<Storage>,
@@ -111,7 +111,7 @@ pub struct TurnInfo {
 impl ToolContext {
     /// Разворачивает строительные блоки в прежние плоские поля. Плоская форма
     /// сохранена сознательно — код инструментов (`ctx.storage`, `ctx.chunk_params`,
-    /// …) не меняется. См. docs/refactoring-solid.md §3.
+    /// …) не меняется. См. docs/history/refactoring-solid.md §3.
     pub fn new(deps: ToolDeps, params: ToolParams, turn: TurnInfo) -> Self {
         Self {
             profile_id: turn.profile_id,

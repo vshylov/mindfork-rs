@@ -1,6 +1,6 @@
 //! Экран настроек — отрисовка: меню секций, таб-стрип подсекций, список полей,
 //! попап выбора и оверлей поиска. Часть модуля [super]; разбито из монолита
-//! settings.rs (см. docs/refactoring-god-objects.md).
+//! settings.rs (см. docs/history/refactoring-god-objects.md).
 
 use super::helpers::*;
 use super::*;

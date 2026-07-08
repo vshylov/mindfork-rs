@@ -1,5 +1,5 @@
 //! Хранилище (SQLite) — граф связей заметок + замещение + цитирование источников. Часть модуля [`super`]; разбито из
-//! монолита db.rs (см. docs/refactoring-god-objects.md, этап 5).
+//! монолита db.rs (см. docs/history/refactoring-god-objects.md, этап 5).
 
 use super::*;
 

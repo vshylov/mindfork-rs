@@ -1,5 +1,5 @@
 //! Markdown — LaTeX→unicode: нормализация разделителей + конвертер команд. Часть модуля [`super`]; разбито из монолита
-//! markdown.rs (см. docs/refactoring-god-objects.md, этап 6).
+//! markdown.rs (см. docs/history/refactoring-god-objects.md, этап 6).
 
 // ---------- нормализация разделителей формул ----------
 

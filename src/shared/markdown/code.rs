@@ -1,5 +1,5 @@
 //! Markdown — подсветка блоков кода (syntect: синтаксис + тема из палитры). Часть модуля [`super`]; разбито из монолита
-//! markdown.rs (см. docs/refactoring-god-objects.md, этап 6).
+//! markdown.rs (см. docs/history/refactoring-god-objects.md, этап 6).
 
 use super::*;
 

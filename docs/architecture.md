@@ -166,7 +166,7 @@ src/
 │
 ├─ screens/                 целостные экраны (FSD "pages"); НЕ зависят от app
 │  ├─ chat/                 ChatScreen: состояние UI чата. God-object разбит
-│  │  │                     (docs/refactoring-god-objects.md, этап 2):
+│  │  │                     (docs/history/refactoring-god-objects.md, этап 2):
 │  │  ├─ mod.rs             ChatIntent, типы попапов, struct ChatScreen, аксессоры
 │  │  ├─ feed.rs            проекция AppEvent в ленту (сообщения/генерация/tool/токены)
 │  │  ├─ input.rs           обработка клавиш/мыши/вставки, черновик, орфография, команды
@@ -177,7 +177,7 @@ src/
 │  ├─ chat_list.rs          ChatListScreen: полноэкранный список чатов (Esc), → ChatListIntent
 │  └─ settings/             SettingsScreen: секции (Модель/Семплинг/Инструменты/Память/
 │     │                     Профили/Интерфейс) с группами полей, подсекции Ассистент/Имперсонация.
-│     │                     God-object разбит (docs/refactoring-god-objects.md, этап 1):
+│     │                     God-object разбит (docs/history/refactoring-god-objects.md, этап 1):
 │     ├─ mod.rs             SettingsIntent, enum'ы секций/подсекций, типы полей
 │     │                     (FieldId/FieldRow/Editor/…), struct SettingsScreen
 │     ├─ catalog.rs         построители полей секций/подсекций + гейты доступности
@@ -202,7 +202,7 @@ src/
 │  │  ├─ mod.rs             Tool, ToolContext, ToolOutcome/ChatEffect, ToolRegistry, ToolConfig
 │  │  ├─ meta.rs            метаданные каталога для UI: группа/описание/гейт инструмента
 │  │  ├─ rag.rs             rag_add/rag_search: чанкинг, эмбеддинг, kNN, склейка
-│  │  ├─ notes/             заметки. God-object разбит (docs/refactoring-god-objects.md,
+│  │  ├─ notes/             заметки. God-object разбит (docs/history/refactoring-god-objects.md,
 │  │  │                     этап 4; внешняя поверхность `notes::*` сохранена реэкспортом
 │  │  │                     `pub(crate) use <submod>::*` из mod.rs):
 │  │  │  ├─ mod.rs          ID-константы, пороги, SELF_NOTE_TAG, is_self_note/parse_*/
@@ -251,7 +251,7 @@ src/
    ├─ storage/              хранилище
    │  ├─ json.rs            атомарная запись (write-rename + .bak) конфиг/профили/чаты
    │  ├─ db/               SQLite + sqlite-vec: notes/RAG, изоляция по profile_id.
-   │  │  │                 God-object разбит по доменам (docs/refactoring-god-objects.md,
+   │  │  │                 God-object разбит по доменам (docs/history/refactoring-god-objects.md,
    │  │  │                 этап 5; `impl Db` — несколько блоков, схема/хелперы в mod.rs;
    │  │  │                 тесты домена — в `mod tests` своего подфайла, локальный `db()`):
    │  │  ├─ mod.rs         struct Db, open/from_conn, migrate() (схема), ensure_vec_table/
@@ -673,7 +673,7 @@ agentic-loop **гейтит и сам вызов** (выключенный ин�
 `tool_deps`), `ToolParams` (снимок параметров из конфига; **единственное** место
 маппинга `AppConfig` → параметры — `ToolParams::from_config`) и `TurnInfo` (снимок
 хода: идентичность + поля `Chat`). Так новое поле контекста правит один файл
-(`tools/mod.rs`), а не каждый сайт сборки. См. docs/refactoring-solid.md §3.
+(`tools/mod.rs`), а не каждый сайт сборки. См. docs/history/refactoring-solid.md §3.
 
 **Метаданные каталога** (смысловая группа, короткий лейбл тумблера, глобальный гейт,
 «включён по умолчанию») объявляет **сам инструмент** через трейт `Tool`
@@ -1207,7 +1207,7 @@ flowchart LR
 получает снимок `status_bar::StatusModel` (собирается `ChatScreen::status_model`) — новый
 индикатор добавляет поле, а не расширяет сигнатуры `render`/`height`. Сам per-событийный
 `match` в `apply_event` осознанно остаётся (enum-диспетчеризация идиоматична). См.
-docs/refactoring-solid.md §6.
+docs/history/refactoring-solid.md §6.
 
 ```mermaid
 flowchart TB
@@ -1306,7 +1306,7 @@ flowchart TB
   при успехе — `SelfModelChanged`); `Quit` отменяет все слоты через `cancel_all_bg`.
   Так задача №3 семейства (авто-консолидация «модели себя», §9.9) не трогает каркас
   `run()`/`Quit`. Каденция консолидации (`consolidate_counts`) — отдельные данные, не
-  жизненный цикл. См. docs/refactoring-solid.md §4.
+  жизненный цикл. См. docs/history/refactoring-solid.md §4.
 - **Отмена** — `CancellationToken` прерывает HTTP-стрим/фоновую задачу; частичный
   ответ фиксируется; новая задача того же рода отменяет предыдущую (RAG,
   имперсонация).

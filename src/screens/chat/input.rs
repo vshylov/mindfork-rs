@@ -1,5 +1,5 @@
 //! Экран чата — обработка клавиш/мыши/вставки, черновик, орфография, команды. Часть модуля [`super`]; разбито из
-//! монолита chat.rs (см. docs/refactoring-god-objects.md, этап 2).
+//! монолита chat.rs (см. docs/history/refactoring-god-objects.md, этап 2).
 
 use super::feed::feed_msg_has_vs16;
 use super::*;

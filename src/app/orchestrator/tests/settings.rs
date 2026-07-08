@@ -1,5 +1,5 @@
 //! Тесты оркестратора — настройки: снимок, апдейты, дебаунс рестарта. Часть модуля [`super`]
-//! (фикстуры в mod.rs). См. docs/refactoring-god-objects.md, этап 3.
+//! (фикстуры в mod.rs). См. docs/history/refactoring-god-objects.md, этап 3.
 
 use super::*;
 

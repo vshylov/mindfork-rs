@@ -396,7 +396,7 @@ impl ChatScreen {
     }
 }
 
-// ---------- подмодули (разбор god-object: docs/refactoring-god-objects.md, этап 2) ----------
+// ---------- подмодули (разбор god-object: docs/history/refactoring-god-objects.md, этап 2) ----------
 
 mod feed;
 mod impersonation;
