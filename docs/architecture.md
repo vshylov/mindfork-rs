@@ -1198,6 +1198,16 @@ flowchart LR
 сохраняет и **переэмитит** `SelfModelView` — открытый экран обновляется на месте
 (`set_model`, выделение сохраняется). См. [docs/self-model-mvp.md](history/self-model-mvp.md).
 
+Перечисления экранов сведены к **каноничным местам**: broadcast палитры (смена темы) —
+`ActiveScreen::set_palette`, маршрутизация вставки из буфера — `ActiveScreen::handle_paste`
+(методы рядом с enum); снятое из активного экрана намерение диспетчеризуется единым
+`AnyIntent` + `dispatch_any` (одно владение вместо 4 параллельных `Option`); запись в
+буфер обмена — `deliver_clipboard` (`apply_event` не знает про `arboard`). Строка статуса
+получает снимок `status_bar::StatusModel` (собирается `ChatScreen::status_model`) — новый
+индикатор добавляет поле, а не расширяет сигнатуры `render`/`height`. Сам per-событийный
+`match` в `apply_event` осознанно остаётся (enum-диспетчеризация идиоматична). См.
+docs/refactoring-solid.md §6.
+
 ```mermaid
 flowchart TB
     RT["runtime.rs (петля)<br/>ChatScreen + enum ActiveScreen"]

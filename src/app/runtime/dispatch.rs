@@ -37,26 +37,10 @@ pub(super) fn apply_event(
             ActiveScreen::ChatList(list) => list.set_error(message),
             _ => screen.push_error(&message),
         },
-        // Запись в буфер обмена — side-effect UI-слоя; подтверждение/ошибку шлём в
-        // область статуса экрана списка чатов (его и открывали для копирования);
-        // если он уже закрыт — заметкой в ленту.
-        AppEvent::CopyToClipboard(text) => {
-            let result = write_clipboard(clipboard, &text);
-            match active {
-                ActiveScreen::ChatList(list) => match result {
-                    Ok(()) => list.set_notice("Переписка скопирована в буфер обмена".into()),
-                    Err(err) => {
-                        list.set_error(format!("Не удалось скопировать в буфер обмена: {err}"))
-                    }
-                },
-                _ => match result {
-                    Ok(()) => screen.push_note("Переписка скопирована в буфер обмена"),
-                    Err(err) => {
-                        screen.push_error(&format!("Не удалось скопировать в буфер обмена: {err}"))
-                    }
-                },
-            }
-        }
+        // Запись в буфер обмена — side-effect UI-слоя; сама запись и маршрутизация
+        // подтверждения/ошибки вынесены в `deliver_clipboard` (`apply_event` не знает
+        // про `arboard`).
+        AppEvent::CopyToClipboard(text) => deliver_clipboard(screen, active, clipboard, &text),
         AppEvent::ProfileList(profiles) => screen.set_profile_list(profiles),
         AppEvent::Settings { config, profiles } => {
             match active {
@@ -64,16 +48,11 @@ pub(super) fn apply_event(
                     settings.refresh((*config).clone(), profiles.clone())
                 }
                 // Тема/режим совместимости могли смениться — обновим палитру
-                // открытых экранов.
-                ActiveScreen::ChatList(list) => list.set_palette(
+                // открытых overlay-экранов (список/модель себя) одним broadcast.
+                other => other.set_palette(
                     Palette::for_theme(config.interface.theme)
                         .with_compat(config.interface.terminal_compat),
                 ),
-                ActiveScreen::SelfModel(view) => view.set_palette(
-                    Palette::for_theme(config.interface.theme)
-                        .with_compat(config.interface.terminal_compat),
-                ),
-                ActiveScreen::Chat => {}
             }
             screen.set_settings(*config, profiles);
         }
@@ -161,6 +140,55 @@ pub(super) fn apply_event(
             BackgroundKind::Consolidation => screen.set_consolidating(on),
         },
         AppEvent::Error(message) => screen.push_error(&message),
+    }
+}
+
+/// Пишет переписку в буфер обмена и направляет подтверждение/ошибку в статус
+/// экрана списка чатов (его открывали для копирования) либо, если он закрыт, —
+/// заметкой в ленту. Инкапсулирует единственное обращение к `arboard`
+/// ([`write_clipboard`]), чтобы `apply_event` не знал про буфер обмена.
+pub(super) fn deliver_clipboard(
+    screen: &mut ChatScreen,
+    active: &mut ActiveScreen,
+    clipboard: &mut Option<arboard::Clipboard>,
+    text: &str,
+) {
+    let result = write_clipboard(clipboard, text);
+    match active {
+        ActiveScreen::ChatList(list) => match result {
+            Ok(()) => list.set_notice("Переписка скопирована в буфер обмена".into()),
+            Err(err) => list.set_error(format!("Не удалось скопировать в буфер обмена: {err}")),
+        },
+        _ => match result {
+            Ok(()) => screen.push_note("Переписка скопирована в буфер обмена"),
+            Err(err) => screen.push_error(&format!("Не удалось скопировать в буфер обмена: {err}")),
+        },
+    }
+}
+
+/// Намерение любого из экранов — единый тип, чтобы снятое из активного экрана
+/// намерение можно было диспетчеризовать одним владением (без 4 параллельных
+/// `Option` и 4 почти одинаковых `if`-блоков, конфликтовавших по заимствованиям).
+pub(super) enum AnyIntent {
+    Chat(ChatIntent),
+    List(ChatListIntent),
+    Settings(SettingsIntent),
+    SelfModel(SelfModelIntent),
+}
+
+/// Диспетчеризует намерение активного экрана в соответствующий транслятор.
+/// Возвращает `true`, если запрошен выход.
+pub(super) fn dispatch_any(
+    intent: AnyIntent,
+    cmd_tx: &UnboundedSender<AppCommand>,
+    screen: &mut ChatScreen,
+    active: &mut ActiveScreen,
+) -> bool {
+    match intent {
+        AnyIntent::Chat(i) => dispatch(i, cmd_tx, screen, active),
+        AnyIntent::List(i) => dispatch_chat_list(i, cmd_tx, screen, active),
+        AnyIntent::Settings(i) => dispatch_settings(i, cmd_tx, active),
+        AnyIntent::SelfModel(i) => dispatch_self_model(i, cmd_tx, active),
     }
 }
 

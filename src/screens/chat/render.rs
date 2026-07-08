@@ -28,6 +28,22 @@ impl ChatScreen {
         }
     }
 
+    /// Собирает снимок состояния для строки статуса в одном месте — новый индикатор
+    /// добавляет поле сюда, а не расширяет сигнатуры `status_bar::render`/`height`.
+    /// `background` передаётся отдельно (владелец-`String` живёт у вызывающего дольше
+    /// заимствования).
+    fn status_model<'a>(&'a self, background: Option<&'a str>) -> status_bar::StatusModel<'a> {
+        status_bar::StatusModel {
+            statuses: &self.statuses,
+            generating: self.generating,
+            tokens: self.gen_tokens,
+            context: self.gen_context,
+            context_exact: self.gen_context_exact,
+            mouse_scroll: self.mouse_scroll,
+            background,
+        }
+    }
+
     pub fn render(&mut self, frame: &mut Frame) {
         let _ = self.maybe_recheck_spelling();
 
@@ -56,16 +72,12 @@ impl ChatScreen {
         // пустой прямоугольник, рендер в него безвреден).
         let banner_h: u16 = if self.rag.is_some() { 1 } else { 0 };
         // Высота статус-бара зависит от ширины: хоткеи переносятся, когда не влезают.
+        // Снимок статуса собираем временным через `status_model` в каждом вызове
+        // (короткоживущий заём `&self` — не пересекается с `&mut self.feed_view` ниже).
         let background = self.background_hint();
         let status_h = status_bar::height(
             frame.area().width as usize,
-            &self.statuses,
-            self.generating,
-            self.gen_tokens,
-            self.gen_context,
-            self.gen_context_exact,
-            self.mouse_scroll,
-            background.as_deref(),
+            &self.status_model(background.as_deref()),
             &self.palette,
         );
         let [feed_area, banner_area, input_area, status_area] = Layout::vertical([
@@ -99,13 +111,7 @@ impl ChatScreen {
         status_bar::render(
             frame,
             status_area,
-            &self.statuses,
-            self.generating,
-            self.gen_tokens,
-            self.gen_context,
-            self.gen_context_exact,
-            self.mouse_scroll,
-            background.as_deref(),
+            &self.status_model(background.as_deref()),
             &self.palette,
         );
 

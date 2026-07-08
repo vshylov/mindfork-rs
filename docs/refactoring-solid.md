@@ -476,6 +476,15 @@ god-object'ов §4 как поведенческая правка. Ценнос
 `input.rs` нет поимённых перечислений экранов вне методов `ActiveScreen`/
 `dispatch_any`; 808+ тестов зелёные.
 
+**Статус: 4a/4b/4d сделаны** (ветка `refactor/status-bar-runtime`). 4a:
+`StatusModel<'a>` (снимок из `ChatScreen::status_model`), `render`/`height` — 4/3
+параметра без `too_many_arguments`. 4b: `ActiveScreen::set_palette`/`handle_paste`
+(broadcast палитры/маршрутизация вставки), `AnyIntent` + `dispatch_any` (единое
+владение вместо 4 `Option`). 4d: `deliver_clipboard` (`apply_event` не знает про
+`arboard`). Per-событийный `match` в `apply_event` осознанно оставлен. **4c
+(группировка полей `ChatScreen`) — не делал** (по плану — только попутно при правке
+`chat/`, отдельным PR ради себя не стоит). 808 тестов зелёные, clippy/fmt чисты.
+
 ---
 
 ## 7. Что сознательно НЕ делаем (границы направления)

@@ -164,46 +164,26 @@ pub(super) fn process_input_batch(
             // supplementary-плоскости (см. [`reconcile_paste`]). `Event::Paste` —
             // настоящая bracketed-вставка (unix), уже корректный UTF-8.
             Chunk::Paste(text) | Chunk::Event(Event::Paste(text)) => {
+                // `Chunk::Paste` — реконструкция из key-событий (Windows); сверяем её с
+                // буфером, чтобы восстановить эмодзи (см. [`reconcile_paste`]).
+                // Маршрутизацию по экранам держит `ActiveScreen::handle_paste`.
                 let text = reconcile_paste(text, clipboard);
-                match active {
-                    ActiveScreen::Settings(settings) => settings.handle_paste(&text),
-                    ActiveScreen::Chat => screen.handle_paste(&text),
-                    // В списке цель вставки — поле переименования (`F2`), если открыто.
-                    ActiveScreen::ChatList(list) => list.handle_paste(&text),
-                    // В редакторе модели себя — в активное поле правки, если открыто.
-                    ActiveScreen::SelfModel(view) => view.handle_paste(&text),
-                }
+                active.handle_paste(screen, &text);
             }
             Chunk::Event(Event::Key(key)) => {
                 // Снимаем намерение из активного экрана (борроу заканчивается на
-                // owned-значении), затем диспетчеризуем — иначе конфликт заимствований.
-                let mut chat_intent = None;
-                let mut list_intent = None;
-                let mut settings_intent = None;
-                let mut self_model_intent = None;
-                match active {
-                    ActiveScreen::Chat => chat_intent = screen.handle_key(key),
-                    ActiveScreen::ChatList(list) => list_intent = list.handle_key(key),
-                    ActiveScreen::Settings(settings) => settings_intent = settings.handle_key(key),
-                    ActiveScreen::SelfModel(view) => self_model_intent = view.handle_key(key),
-                }
-                if let Some(intent) = chat_intent
-                    && dispatch(intent, cmd_tx, screen, active)
-                {
-                    quit = true;
-                }
-                if let Some(intent) = list_intent
-                    && dispatch_chat_list(intent, cmd_tx, screen, active)
-                {
-                    quit = true;
-                }
-                if let Some(intent) = settings_intent
-                    && dispatch_settings(intent, cmd_tx, active)
-                {
-                    quit = true;
-                }
-                if let Some(intent) = self_model_intent
-                    && dispatch_self_model(intent, cmd_tx, active)
+                // owned-значении `AnyIntent`), затем диспетчеризуем одним владением —
+                // иначе конфликт заимствований `active`/`screen`.
+                let intent = match active {
+                    ActiveScreen::Chat => screen.handle_key(key).map(AnyIntent::Chat),
+                    ActiveScreen::ChatList(list) => list.handle_key(key).map(AnyIntent::List),
+                    ActiveScreen::Settings(settings) => {
+                        settings.handle_key(key).map(AnyIntent::Settings)
+                    }
+                    ActiveScreen::SelfModel(view) => view.handle_key(key).map(AnyIntent::SelfModel),
+                };
+                if let Some(intent) = intent
+                    && dispatch_any(intent, cmd_tx, screen, active)
                 {
                     quit = true;
                 }
