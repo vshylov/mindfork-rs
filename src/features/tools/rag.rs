@@ -786,19 +786,14 @@ mod tests {
 
         let a = Uuid::new_v4();
         let b = Uuid::new_v4();
-        let mk = |pid| super::ToolContext {
-            profile_id: pid,
-            chat_id: Uuid::new_v4(),
-            system_message: String::new(),
-            effective_sampling: Default::default(),
-            last_user_message_at: None,
+        // Общий пучок зависимостей: оба профиля делят одно хранилище (проверка
+        // изоляции по profile_id).
+        let deps = crate::features::tools::ToolDeps {
             storage: storage.clone(),
             engine: engine.clone(),
             embedder: embedder.clone(),
-            chunk_params: ChunkParams::default(),
-            self_model_params: crate::entities::self_model::SelfModelParams::default(),
-            recall_includes_self: false,
         };
+        let mk = |pid| super::super::testkit::ctx_with_deps(pid, deps.clone());
 
         RagAdd
             .invoke(&mk(a), serde_json::json!({"text": "секрет профиля A"}))

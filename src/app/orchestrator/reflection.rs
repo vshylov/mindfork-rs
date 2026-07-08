@@ -18,8 +18,7 @@ use crate::entities::chat::{Chat, DeletedCause};
 use crate::entities::message::{Message, MessageRole};
 use crate::entities::profile::ToolId;
 use crate::entities::sampling::SamplingConfig;
-use crate::entities::self_model::SelfModelParams;
-use crate::features::tools::{ToolContext, notes, self_model};
+use crate::features::tools::{ToolContext, ToolParams, TurnInfo, notes, self_model};
 use crate::shared::api::{ApiMessage, ChatRequest};
 
 use super::Orchestrator;
@@ -235,19 +234,17 @@ impl Orchestrator {
         }
         self.mark_dirty(chat_id);
 
-        let ctx = ToolContext {
-            profile_id,
-            chat_id,
-            system_message,
-            effective_sampling: SamplingConfig::default(),
-            last_user_message_at: last_user,
-            storage: self.storage.clone(),
-            engine: backend.clone(),
-            embedder: self.engines.embedder(),
-            chunk_params: crate::features::tools::rag::ChunkParams::from_settings(&self.config.rag),
-            self_model_params: SelfModelParams::from_settings(&self.config.self_model),
-            recall_includes_self: self.config.notes.recall_includes_self,
-        };
+        let ctx = ToolContext::new(
+            self.tool_deps(backend.clone()),
+            ToolParams::from_config(&self.config),
+            TurnInfo {
+                profile_id,
+                chat_id,
+                system_message,
+                effective_sampling: SamplingConfig::default(),
+                last_user_message_at: last_user,
+            },
+        );
         let sampling = SamplingConfig {
             max_tokens: Some(REFLECT_MAX_TOKENS),
             temperature: Some(0.4),

@@ -942,26 +942,11 @@ mod tests {
     #[ignore = "requires network access to search providers"]
     async fn live_search_returns_results() {
         let tool = WebSearch::new(true);
-        let dir = tempfile::tempdir().unwrap();
-        let storage = std::sync::Arc::new(
-            crate::shared::storage::Storage::open(crate::shared::paths::Paths::with_root(
-                dir.path(),
-            ))
-            .unwrap(),
+        let (_dir, _storage, ctx) = super::super::testkit::ctx_with_backends(
+            uuid::Uuid::new_v4(),
+            std::sync::Arc::new(crate::shared::api::mock::MockBackend::scripted(vec![])),
+            std::sync::Arc::new(crate::shared::api::mock::MockEmbedder::new(16)),
         );
-        let ctx = ToolContext {
-            profile_id: uuid::Uuid::new_v4(),
-            chat_id: uuid::Uuid::new_v4(),
-            system_message: String::new(),
-            effective_sampling: Default::default(),
-            last_user_message_at: None,
-            storage,
-            engine: std::sync::Arc::new(crate::shared::api::mock::MockBackend::scripted(vec![])),
-            embedder: std::sync::Arc::new(crate::shared::api::mock::MockEmbedder::new(16)),
-            chunk_params: crate::features::tools::rag::ChunkParams::default(),
-            self_model_params: crate::entities::self_model::SelfModelParams::default(),
-            recall_includes_self: false,
-        };
         let out = tool
             .invoke(
                 &ctx,

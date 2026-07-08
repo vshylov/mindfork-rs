@@ -528,6 +528,19 @@ impl Orchestrator {
         self.chats.iter_mut().find(|c| c.id == id)
     }
 
+    /// Собирает пучок разделяемых зависимостей инструментов для указанного
+    /// chat-движка (эмбеддер и хранилище — общие). См. docs/refactoring-solid.md §3.
+    fn tool_deps(
+        &self,
+        backend: Arc<dyn crate::shared::api::EngineBackend>,
+    ) -> crate::features::tools::ToolDeps {
+        crate::features::tools::ToolDeps {
+            storage: self.storage.clone(),
+            engine: backend,
+            embedder: self.engines.embedder(),
+        }
+    }
+
     /// Разрешает фактический семплинг для чата: `Chat.sampling_override` →
     /// `Profile.default_sampling` → глобальный (spec §8.3).
     fn effective_sampling(&self, chat_id: Uuid) -> SamplingConfig {

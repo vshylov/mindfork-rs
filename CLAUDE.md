@@ -3593,6 +3593,34 @@ web-поиск и Python под выключателями, экран наст�
   каталог упорядочен по id). **808 тестов зелёные** (чистый рефактор, без движка),
   clippy `-D warnings`/fmt чисты. Доки: architecture.md §8.
 
+### Пост-M9: SOLID-рефакторинг — этап 1: `ToolContext` (пучки зависимостей + конструктор) (сделано)
+- **Первый этап направления точечных SOLID-улучшений**
+  ([docs/refactoring-solid.md](docs/refactoring-solid.md), ветка
+  `refactor/tool-context-bundles`): устранён shotgun-surgery при добавлении поля
+  `ToolContext` — раньше 11-строчный литерал повторялся в **8 местах** (3 продакшн +
+  5 тест), новое поле правило все. Чисто структурный рефактор (поведение не менялось).
+- **Три строительных блока + конструктор** (`features/tools/mod.rs`, **плоские
+  публичные поля `ToolContext` сохранены** → код инструментов `ctx.storage`/
+  `ctx.chunk_params`/… не тронут): `ToolDeps` (разделяемые `Arc`: storage/engine/
+  embedder), `ToolParams` (снимок параметров из конфига; `from_config(&AppConfig)` —
+  **единственное** место маппинга) и `TurnInfo` (снимок хода: идентичность + поля
+  `Chat`); `ToolContext::new(deps, params, turn)` разворачивает их в прежние поля.
+- **Оркестратор**: хелпер `tool_deps(&self, backend) -> ToolDeps` (рядом с общими
+  хелперами `mod.rs`); три продакшн-сайта переведены на `new` — reflection/
+  consolidation через `ToolParams::from_config(&self.config)`, generation тоже
+  (`self_model_params` там считается отдельно — он ещё уходит в `GenSpawn` для
+  инъекции). **Нюанс borrow**: в generation `chat_mut` держит `&mut self`, поэтому
+  `TurnInfo` (последнее обращение к `chat`) строится в локальную перед `new`, после
+  чего borrow `chat` завершается и можно читать `self.config`/`tool_deps`.
+- **testkit**: `ctx_with_storage` через `new`; добавлены `ctx_with_backends`
+  (кастомные движок/эмбеддер — web/subagent/fetch делегируют свои локальные
+  `ctx_with_engine` сюда) и `ctx_with_deps` (общий пучок для теста изоляции rag, где
+  два контекста делят одно хранилище). Все литералы в тестах инструментов ушли.
+- **Ripple-проверка**: добавление поля в `ToolContext` требует правки **только**
+  `ToolContext::new` (проверено примерочным полем). **808 тестов зелёные** (число
+  неизменно — рефактор), 26 `#[ignore]`, clippy `-D warnings`/fmt чисты. Доки:
+  architecture.md §8.
+
 ### Отложено за пределы M3
 - **Сворачивание/выделение per-message** и tool-блоки в ленте — сейчас «мысли»
   сворачиваются глобально (`Ctrl+T`); выделение сообщений и tool-блоки — на M5.

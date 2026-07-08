@@ -1,6 +1,7 @@
 # План рефакторинга: точечные SOLID-улучшения (2026-07)
 
-Дизайн-план направления. Статус: **не начат**.
+Дизайн-план направления. Статус: **этап 1 сделан** (`ToolContext`, PR —
+ветка `refactor/tool-context-bundles`); этапы 2/3/4 — не начаты.
 
 Происхождение — оценка соблюдения SOLID по всей кодовой базе (2026-07-08):
 архитектура здорова (транспорт за трейтами, FSD, единые источники истины,
@@ -147,6 +148,17 @@ FSD чист: `features/tools` уже импортирует `shared::config` (`
 **DoD:** 808+ тестов зелёные; `rg "ToolContext \{" src` находит **только**
 `ToolContext::new` (единственный литерал в конструкторе); файлы инструментов
 (кроме тестовых конструкций) не изменены.
+
+**Статус: сделано** (ветка `refactor/tool-context-bundles`). `ToolDeps`/
+`ToolParams`/`TurnInfo` + `ToolContext::new` в `tools/mod.rs`; хелпер
+`Orchestrator::tool_deps`; три продакшн-сайта (generation/reflection/consolidation)
+переведены на `new` (у reflection/consolidation параметры — `ToolParams::from_config`;
+generation держит `ToolParams::from_config`, а `self_model_params` считает отдельно —
+он ещё уходит в `GenSpawn` для инъекции). testkit получил `ctx_with_backends`
+(кастомные движок/эмбеддер) и `ctx_with_deps` (общий пучок для теста изоляции rag);
+литералы в web/subagent/rag/fetch сведены к ним. Ripple-проверка: добавление поля в
+`ToolContext` требует правки **только** `ToolContext::new`. **808 тестов зелёные**,
+26 `#[ignore]`, clippy `-D warnings`/fmt чисты.
 
 ---
 
