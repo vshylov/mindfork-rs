@@ -1,5 +1,5 @@
 //! Runtime — батчинг ввода и вставка из буфера (Windows-путь): коалесинг клавиш, Chunk, сверка с буфером. Часть модуля [`super`]; разбито из монолита
-//! runtime.rs (см. docs/refactoring-god-objects.md, этап 7).
+//! runtime.rs (см. docs/history/refactoring-god-objects.md, этап 7).
 
 use super::*;
 

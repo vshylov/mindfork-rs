@@ -1,5 +1,5 @@
 //! Тесты оркестратора — RAG: индексация/удаление/список/реиндекс. Часть модуля [`super`]
-//! (фикстуры в mod.rs). См. docs/refactoring-god-objects.md, этап 3.
+//! (фикстуры в mod.rs). См. docs/history/refactoring-god-objects.md, этап 3.
 
 use super::*;
 

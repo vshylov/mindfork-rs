@@ -5,7 +5,7 @@
 //! дублировался полями и обработчиками на каждую задачу. Здесь он один — ключ
 //! реестра — существующий [`BackgroundKind`]. Добавление задачи №3 (авто-консолидация
 //! «модели себя», roadmap — architecture.md §9.9) не трогает каркас `run()`/`Quit`.
-//! См. docs/refactoring-solid.md §4.
+//! См. docs/history/refactoring-solid.md §4.
 
 use tokio_util::sync::CancellationToken;
 

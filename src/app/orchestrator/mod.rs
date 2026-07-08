@@ -508,7 +508,7 @@ impl Orchestrator {
     }
 
     /// Собирает пучок разделяемых зависимостей инструментов для указанного
-    /// chat-движка (эмбеддер и хранилище — общие). См. docs/refactoring-solid.md §3.
+    /// chat-движка (эмбеддер и хранилище — общие). См. docs/history/refactoring-solid.md §3.
     fn tool_deps(
         &self,
         backend: Arc<dyn crate::shared::api::EngineBackend>,

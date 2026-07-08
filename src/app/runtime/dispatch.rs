@@ -1,5 +1,5 @@
 //! Runtime — применение AppEvent к экрану + трансляция Intent → AppCommand. Часть модуля [`super`]; разбито из монолита
-//! runtime.rs (см. docs/refactoring-god-objects.md, этап 7).
+//! runtime.rs (см. docs/history/refactoring-god-objects.md, этап 7).
 
 use super::*;
 

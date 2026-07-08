@@ -1,5 +1,5 @@
 //! Экран чата — баннер прогресса индексации RAG. Часть модуля [`super`]; разбито из
-//! монолита chat.rs (см. docs/refactoring-god-objects.md, этап 2).
+//! монолита chat.rs (см. docs/history/refactoring-god-objects.md, этап 2).
 
 use super::*;
 

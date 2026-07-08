@@ -105,7 +105,7 @@ fn parse_tags(args: &serde_json::Value) -> Vec<String> {
         .unwrap_or_default()
 }
 
-// ---------- подмодули (разбор god-object: docs/refactoring-god-objects.md, этап 4) ----------
+// ---------- подмодули (разбор god-object: docs/history/refactoring-god-objects.md, этап 4) ----------
 
 mod cite;
 mod edit;

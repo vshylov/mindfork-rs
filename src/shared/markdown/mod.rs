@@ -130,7 +130,7 @@ fn code_theme(palette: &Palette) -> &'static Theme {
         .or_insert_with(|| Box::leak(Box::new(build_code_theme(palette))))
 }
 
-// ---------- подмодули (разбор god-object: docs/refactoring-god-objects.md, этап 6) ----------
+// ---------- подмодули (разбор god-object: docs/history/refactoring-god-objects.md, этап 6) ----------
 
 mod code;
 mod latex;
@@ -143,7 +143,7 @@ mod writer;
 use self::{code::*, latex::*, table::*, writer::*};
 
 /// Общие тест-хелперы рендера, используемые тестами нескольких подмодулей
-/// (code/latex/table/writer). См. docs/refactoring-god-objects.md.
+/// (code/latex/table/writer). См. docs/history/refactoring-god-objects.md.
 #[cfg(test)]
 pub(super) mod testkit {
     use super::*;

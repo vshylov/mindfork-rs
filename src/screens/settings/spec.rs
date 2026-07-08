@@ -1,7 +1,7 @@
 //! Экран настроек — таблица доступа к значениям config-полей (`field_spec`). Один
 //! match по [`FieldId`] вместо прежних четырёх (`toggle_field`/`cycle_field`/
 //! `apply_text`/`field_num_kind`) — поле целиком (как читать/писать/циклить/валидировать
-//! значение) описано в одной строке. См. docs/refactoring-solid.md §5 (шаг 3.2).
+//! значение) описано в одной строке. См. docs/history/refactoring-solid.md §5 (шаг 3.2).
 //!
 //! **Границы охвата.** Только config-поля (над `AppConfig`). Вне таблицы (прежний путь
 //! в apply.rs): профильные (`PName`/`PSystem`/…, над `profiles[idx]`), параметры

@@ -319,7 +319,7 @@ fn run_loop(
     Ok(())
 }
 
-// ---------- подмодули (разбор god-object: docs/refactoring-god-objects.md, этап 7) ----------
+// ---------- подмодули (разбор god-object: docs/history/refactoring-god-objects.md, этап 7) ----------
 
 mod clipboard;
 mod dispatch;

@@ -1,5 +1,5 @@
 //! Заметки — note_revise / note_supersede / note_merge (правка/замещение/слияние). Часть модуля [`super`]; разбито из монолита
-//! notes.rs (см. docs/refactoring-god-objects.md, этап 4).
+//! notes.rs (см. docs/history/refactoring-god-objects.md, этап 4).
 
 use super::*;
 
