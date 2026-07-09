@@ -237,6 +237,37 @@ mod tests {
         assert_ne!(dark, light, "подсветка кода не зависит от темы");
     }
 
+    #[test]
+    fn highlight_code_has_no_fences_and_is_colored() {
+        // Хелпер для tool-карточек: подсветка без ограждающих ```, с RGB-цветами.
+        let lines = highlight_code("fn main() {}", "rust", &Palette::for_theme(Theme::Dark));
+        let joined: String = lines
+            .iter()
+            .flat_map(|l| l.spans.iter().map(|s| s.content.as_ref()))
+            .collect();
+        assert!(joined.contains("fn main"), "содержимое кода: {joined}");
+        assert!(!joined.contains("```"), "не должно быть заборов: {joined}");
+        assert!(
+            lines
+                .iter()
+                .flat_map(|l| l.spans.iter())
+                .any(|s| matches!(s.style.fg, Some(Color::Rgb(..)))),
+            "ожидалась RGB-подсветка"
+        );
+    }
+
+    #[test]
+    fn highlight_code_unknown_lang_falls_back_to_plain() {
+        // Нераспознанный язык → строки без подсветки (без паники, текст цел).
+        let lines = highlight_code("a\nb", "нет-такого-языка", &Palette::default());
+        assert_eq!(lines.len(), 2);
+        let joined: String = lines
+            .iter()
+            .flat_map(|l| l.spans.iter().map(|s| s.content.as_ref()))
+            .collect();
+        assert_eq!(joined, "ab");
+    }
+
     /// Неподсвеченный (без языка) fenced-блок: содержимое начинается на строке под
     /// открывающим `​```​`, а не приклеивается к нему (регрессия: первая строка
     /// дописывалась в строку заборчика, `i==0` + `needs_newline==false`).

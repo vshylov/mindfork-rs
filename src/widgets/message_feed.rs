@@ -14,6 +14,7 @@ use ratatui::text::{Line, Span, Text};
 use ratatui::widgets::{Block, Borders, Paragraph};
 
 use crate::entities::message::{Message, MessageRole};
+use crate::features::tools::present::{self, ToolBlock};
 use crate::shared::markdown;
 use crate::shared::theme::Palette;
 use crate::shared::ui::render_scrollbar;
@@ -337,6 +338,13 @@ impl MessageFeed {
                 }
                 FeedRole::Note => push_body(&mut body, item, palette, inner),
             }
+            // Если тело уже заканчивается пустой строкой (рейловый отступ после
+            // tool-карточки), безрейловый межсообщенческий разделитель не добавляем —
+            // иначе получился бы двойной пропуск.
+            let body_ends_blank = body
+                .last()
+                .map(|l| l.spans.iter().all(|s| s.content.trim().is_empty()))
+                .unwrap_or(false);
             // Переносим по ширине содержимого и навешиваем рейл на каждый ряд.
             for line in body {
                 for wrapped in wrap::wrap_line(&line, inner) {
@@ -344,7 +352,9 @@ impl MessageFeed {
                 }
             }
             // Разделитель между сообщениями — без рейла.
-            lines.push(Line::from(""));
+            if !body_ends_blank {
+                lines.push(Line::from(""));
+            }
         }
         lines
     }
@@ -440,17 +450,19 @@ fn push_assistant_body(
         // напр. между двумя подряд идущими вызовами).
         ensure_blank_line(lines);
         push_tool(lines, tool, palette, width);
+        // Пустая (рейловая) строка ПОСЛЕ карточки — чтобы рейл продолжался под
+        // результатом независимо от того, идёт ли дальше текст/ещё вызов. Соседние
+        // `ensure_blank_line` схлопываются (перед следующим вызовом/текстом — no-op),
+        // а на конце сообщения этот отступ заменяет межсообщенческий разделитель
+        // (см. `build_lines`). Раньше отступ после последнего вызова давал лишь
+        // безрейловый разделитель, и рейл обрывался на результате — заметно у
+        // `python_exec`, чей результат часто и есть финал хода.
+        ensure_blank_line(lines);
         produced = true;
         pos = off;
     }
-    if pos < text.len() {
-        // Текст после последнего вызова отделяем пустой строкой.
-        if !item.tools.is_empty() {
-            ensure_blank_line(lines);
-        }
-        if push_markdown_fragment(lines, &text[pos..], palette, width) {
-            produced = true;
-        }
+    if pos < text.len() && push_markdown_fragment(lines, &text[pos..], palette, width) {
+        produced = true;
     }
     // Пустой стримящийся ответ (ещё ни текста, ни вызовов) — индикатор «…».
     if !produced && item.streaming {
@@ -486,17 +498,18 @@ fn push_markdown_fragment(
     true
 }
 
-/// Один tool-блок (карточка тул-колла): заголовок `⚒ имя(аргументы)` цветом
-/// инструмента и результат на гуттере `└`. Аргументы и результат **переносятся
-/// по ширине** (не обрезаются).
+/// Один tool-блок (карточка тул-колла): заголовок `⚒ имя(суффикс)` цветом
+/// инструмента, затем блоки аргументов и результата, подготовленные презентером
+/// [`present`] (подсвеченный код, консольный вывод, markdown-проза, плоский
+/// текст). Всё **переносится по ширине** (не обрезается). См. spec §11.3.
 fn push_tool(lines: &mut Vec<Line<'static>>, tool: &FeedToolCall, palette: &Palette, width: usize) {
     let head_style = Style::default()
         .fg(palette.tool_soft)
         .add_modifier(Modifier::BOLD);
-    let header = if tool.arguments.trim().is_empty() {
-        tool.name.clone()
-    } else {
-        format!("{}({})", tool.name, tool.arguments)
+    let p = present::present(&tool.name, &tool.arguments, &tool.result);
+    let header = match &p.header_suffix {
+        Some(suffix) => format!("{}({suffix})", tool.name),
+        None => tool.name.clone(),
     };
     // Первый ряд с иконкой ⚒ (эмодзи-глиф шириной 2 — за ним два пробела, чтобы он
     // не сливался с именем), продолжения выравниваем под имя. В режиме
@@ -510,9 +523,111 @@ fn push_tool(lines: &mut Vec<Line<'static>>, tool: &FeedToolCall, palette: &Pale
         width,
         head_style,
     );
-    if !tool.result.is_empty() {
-        let body_style = Style::default().fg(palette.muted);
-        push_wrapped(lines, "└ ", "  ", &tool.result, width, body_style);
+    for block in &p.args {
+        push_block(lines, block, palette, width, false);
+    }
+    for block in &p.result {
+        push_block(lines, block, palette, width, true);
+    }
+}
+
+/// Рисует один блок tool-карточки. `is_result` меняет ведущий гуттер: результат
+/// начинается с `└ ` (углом), аргумент — с `│ ` (вертикальной чертой, «вложен под
+/// заголовок»). Гуттер `│`/`└` — WGL4-безопасен и в режиме совместимости.
+fn push_block(
+    lines: &mut Vec<Line<'static>>,
+    block: &ToolBlock,
+    palette: &Palette,
+    width: usize,
+    is_result: bool,
+) {
+    let gutter_style = Style::default().fg(palette.muted);
+    match block {
+        ToolBlock::Plain(text) => {
+            let (first, cont) = if is_result {
+                ("└ ", "  ")
+            } else {
+                ("│ ", "│ ")
+            };
+            push_wrapped(lines, first, cont, text, width, gutter_style);
+        }
+        ToolBlock::Code { lang, text } => {
+            let hl = markdown::highlight_code(text, lang, palette);
+            push_gutter_lines(lines, hl, "│ ", "│ ", gutter_style, width);
+        }
+        ToolBlock::Markdown(text) => {
+            let body_w = width.saturating_sub(2).max(1);
+            let rendered = markdown::render(text, body_w, palette);
+            push_gutter_lines(lines, rendered.lines, "└ ", "  ", gutter_style, width);
+        }
+        ToolBlock::Console(c) => push_console(lines, c, palette, width),
+    }
+}
+
+/// Рисует консольный вывод `python_exec`: stdout (цветом текста), stderr (цветом
+/// ошибки) и код возврата (цветом предупреждения) отдельными секциями. Каждая
+/// секция — метка на гуттере `└ ` и содержимое на `│ `.
+fn push_console(
+    lines: &mut Vec<Line<'static>>,
+    console: &present::Console,
+    palette: &Palette,
+    width: usize,
+) {
+    let label = Style::default().fg(palette.muted);
+    let out_style = Style::default().fg(palette.text);
+    let err_style = Style::default().fg(palette.error);
+    if !console.stdout.trim().is_empty() {
+        push_wrapped(lines, "└ ", "  ", "stdout", width, label);
+        push_wrapped(lines, "│ ", "│ ", &console.stdout, width, out_style);
+    }
+    if !console.stderr.trim().is_empty() {
+        push_wrapped(lines, "└ ", "  ", "stderr", width, err_style);
+        push_wrapped(lines, "│ ", "│ ", &console.stderr, width, err_style);
+    }
+    if let Some(code) = console.exit {
+        let warn = Style::default().fg(palette.warning);
+        push_wrapped(
+            lines,
+            "└ ",
+            "  ",
+            &format!("код возврата: {code}"),
+            width,
+            warn,
+        );
+    }
+}
+
+/// Кладёт готовые (уже стилизованные) строки под гуттер-префиксами, перенося
+/// каждую по ширине. `first`/`cont` — префиксы первого/последующих рядов. Стиль
+/// уровня строки вплавляется в спаны содержимого (как в [`prepend_rail`]), чтобы
+/// line-level модификаторы (напр. `DIM` рамок таблиц) не затекали на гуттер.
+fn push_gutter_lines(
+    lines: &mut Vec<Line<'static>>,
+    src: Vec<Line<'static>>,
+    first: &str,
+    cont: &str,
+    gutter_style: Style,
+    width: usize,
+) {
+    let first_w = wrap::display_width(&first.chars().collect::<Vec<_>>());
+    let cont_w = wrap::display_width(&cont.chars().collect::<Vec<_>>());
+    let body_w = width.saturating_sub(first_w.max(cont_w)).max(1);
+    let mut first_row = true;
+    for line in src {
+        let line_style = line.style;
+        let align = line.alignment;
+        for wrapped in wrap::wrap_line(&line, body_w) {
+            let prefix = if first_row { first } else { cont };
+            first_row = false;
+            let mut spans = Vec::with_capacity(wrapped.spans.len() + 1);
+            spans.push(Span::styled(prefix.to_string(), gutter_style));
+            for span in wrapped.spans {
+                spans.push(Span::styled(span.content, line_style.patch(span.style)));
+            }
+            let mut out = Line::from(spans);
+            out.alignment = align;
+            lines.push(out);
+        }
     }
 }
 
@@ -644,6 +759,74 @@ mod tests {
     }
 
     #[test]
+    fn python_tool_renders_highlighted_code_and_console() {
+        // python_exec: код аргумента — подсвеченным блоком (RGB-цвета), результат —
+        // консольной секцией stdout с содержимым.
+        let feed = MessageFeed::new();
+        let mut m = msg(FeedRole::Assistant, "готово", "");
+        m.tools.push(FeedToolCall {
+            name: "python_exec".into(),
+            arguments: r#"{"code":"print(42)"}"#.into(),
+            result: "stdout:\n42".into(),
+            text_offset: m.text.len(),
+        });
+        let palette = Palette::for_theme(crate::shared::config::Theme::Dark);
+        let lines = feed.build_lines(&[m], &palette, 80);
+        let joined: String = lines
+            .iter()
+            .flat_map(|l| l.spans.iter().map(|s| s.content.as_ref()))
+            .collect();
+        // Заголовок без сырого JSON, код и консоль присутствуют.
+        assert!(joined.contains("python_exec"), "{joined}");
+        assert!(
+            !joined.contains("{\"code\""),
+            "сырой JSON не должен показываться"
+        );
+        assert!(joined.contains("print(42)"), "код: {joined}");
+        assert!(
+            joined.contains("stdout") && joined.contains("42"),
+            "консоль: {joined}"
+        );
+        // Подсветка проставила RGB-цвет хотя бы одному спану кода.
+        let has_rgb = lines
+            .iter()
+            .flat_map(|l| l.spans.iter())
+            .any(|s| s.content.contains("print") && matches!(s.style.fg, Some(Color::Rgb(..))));
+        assert!(has_rgb, "ожидался подсвеченный (RGB) спан кода");
+    }
+
+    #[test]
+    fn python_stderr_uses_error_color() {
+        let feed = MessageFeed::new();
+        let palette = Palette::default();
+        let mut m = msg(FeedRole::Assistant, "", "");
+        m.tools.push(FeedToolCall {
+            name: "python_exec".into(),
+            arguments: r#"{"code":"raise SystemExit(1)"}"#.into(),
+            result: "stderr:\nTraceback here\n\nкод возврата: 1".into(),
+            text_offset: 0,
+        });
+        let lines = feed.build_lines(&[m], &palette, 80);
+        // Строка с текстом stderr окрашена цветом ошибки.
+        let err_line = lines
+            .iter()
+            .find(|l| l.spans.iter().any(|s| s.content.contains("Traceback here")));
+        let err_line = err_line.expect("строка stderr");
+        assert!(
+            err_line
+                .spans
+                .iter()
+                .any(|s| s.content.contains("Traceback") && s.style.fg == Some(palette.error)),
+            "stderr должен быть цветом ошибки"
+        );
+        let joined: String = lines
+            .iter()
+            .flat_map(|l| l.spans.iter().map(|s| s.content.as_ref()))
+            .collect();
+        assert!(joined.contains("код возврата: 1"), "{joined}");
+    }
+
+    #[test]
     fn tool_call_renders_after_preceding_text_inline() {
         // Текст до вызова → tool-блок → текст после вызова: проверяем порядок строк.
         let feed = MessageFeed::new();
@@ -710,6 +893,36 @@ mod tests {
             i_after - i_tool,
             2,
             "ожидалась одна пустая строка после вызова"
+        );
+    }
+
+    #[test]
+    fn tool_last_in_message_keeps_railed_trailing_blank() {
+        // Вызов — последний элемент сообщения (результат = финал хода, типично для
+        // python_exec). После карточки должен идти РЕЙЛОВЫЙ отступ (рейл продолжается
+        // под результатом), а не безрейловый межсообщенческий разделитель, и ровно
+        // один (без двойного пропуска).
+        let feed = MessageFeed::new();
+        let mut m = msg(FeedRole::Assistant, "Считаю.", "");
+        m.tools.push(FeedToolCall {
+            name: "python_exec".into(),
+            arguments: r#"{"code":"print(1)"}"#.into(),
+            result: "stdout:\n1".into(),
+            text_offset: "Считаю.".len(),
+        });
+        let next = msg(FeedRole::User, "дальше", "");
+        let rows = row_texts(&feed.build_lines(&[m, next], &Palette::default(), 60));
+        let i_result = rows.iter().position(|r| r.contains('1')).unwrap();
+        let i_next = rows.iter().position(|r| r.contains("дальше")).unwrap();
+        // Между результатом и заголовком следующего сообщения — ровно одна пустая
+        // строка, и она с рейлом (не безрейловый разделитель `[]`).
+        let between: Vec<&String> = rows[i_result + 1..i_next].iter().collect();
+        let blanks = between.iter().filter(|r| is_blank_row(r)).count();
+        assert_eq!(blanks, 1, "ожидалась одна пустая строка: {between:?}");
+        assert!(
+            rows[i_next - 1].contains('▌'),
+            "отступ после карточки должен нести рейл: {:?}",
+            rows[i_next - 1]
         );
     }
 
