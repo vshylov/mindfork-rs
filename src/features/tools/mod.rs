@@ -15,6 +15,7 @@ pub mod fs;
 pub mod introspection;
 pub mod meta;
 pub mod notes;
+pub mod present;
 pub mod python;
 pub mod rag;
 pub mod self_model;

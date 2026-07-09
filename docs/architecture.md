@@ -201,6 +201,8 @@ src/
 │  ├─ tools/                реестр и реализации инструментов (client-side)
 │  │  ├─ mod.rs             Tool, ToolContext, ToolOutcome/ChatEffect, ToolRegistry, ToolConfig
 │  │  ├─ meta.rs            метаданные каталога для UI: группа/описание/гейт инструмента
+│  │  ├─ present.rs         презентация вызова для ленты (ToolPresentation): подсвеч.
+│  │  │                     код / консоль python / компактный заголовок вместо JSON
 │  │  ├─ rag.rs             rag_add/rag_search: чанкинг, эмбеддинг, kNN, склейка
 │  │  ├─ notes/             заметки. God-object разбит (docs/history/refactoring-god-objects.md,
 │  │  │                     этап 4; внешняя поверхность `notes::*` сохранена реэкспортом
@@ -266,7 +268,8 @@ src/
    │  │                    тема. God-object разбит по подсистемам (docs/refactoring-god-
    │  │                    objects.md, этап 6; внутренняя проводка через реэкспорт; тесты
    │  │                    подсистемы — в `mod tests` подфайла, общие хелперы — `mod testkit`):
-   │  ├─ mod.rs            render/render_with (внешняя поверхность) + стили из палитры
+   │  ├─ mod.rs            render/render_with + highlight_code (подсветка без ``` —
+   │  │                    для tool-карточек ленты) + стили из палитры
    │  ├─ writer.rs         Writer: walker событий pulldown-cmark → строки
    │  ├─ code.rs           подсветка блоков кода (syntect: синтаксис + тема из палитры)
    │  ├─ table.rs          TableBuilder + render_table (раскладка/отрисовка таблиц)
@@ -700,6 +703,16 @@ agentic-loop **гейтит и сам вызов** (выключенный ин�
 
 Особенности реализации:
 
+- **Презентация вызова в ленте** (`present.rs`, чистый слой без ratatui) — как
+  показать аргументы/результат конкретного инструмента вместо сырого JSON:
+  `present(name, arguments, result) → ToolPresentation` (компактный суффикс
+  заголовка + блоки `Code`/`Console`/`Markdown`/`Plain`). `python_exec` — код
+  подсвеченным Python-блоком + консоль (stdout/stderr/код возврата раздельными
+  цветами); `fs_read`/`fs_write` — содержимое подсвечено по расширению пути;
+  проза-инструменты (`web_search`/`fetch_url`/`rag_search`/`note_recall`) —
+  markdown; короткие аргументы — `name(значение)` / `name(k=v, …)`. Знание про
+  инструменты живёт здесь (слой tools), виджет `message_feed` остаётся generic и
+  рендерит блоки, переиспользуя `markdown::highlight_code`. См. spec §11.3–11.4.
 - **`call_subagent`** — независимый одно-ходовый запрос через `ctx.engine`:
   заданное `system`, единственное `user`-сообщение, `tools: []` (запрет
   рекурсии), лимит токенов и таймаут.

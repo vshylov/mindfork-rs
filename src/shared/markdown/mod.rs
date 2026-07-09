@@ -73,6 +73,44 @@ pub fn render_with(
     Text::from(writer.lines)
 }
 
+/// Подсвечивает блок кода `code` на языке `lang` **без ограждающих ` ``` `** и без
+/// переноса по ширине — для встраивания в tool-карточки ленты (см.
+/// [`crate::widgets::message_feed`]). Возвращает по одной строке на строку
+/// исходника, окрашенную по [`build_code_theme`] (той же теме, что fenced-блоки
+/// markdown). Если язык не распознан ([`resolve_syntax`] промахнулся) — строки без
+/// подсветки, цветом `palette.text` (не реверс — для нестрого-кодовых аргументов
+/// читабельнее). Перенос длинных строк делает вызывающий.
+pub fn highlight_code(code: &str, lang: &str, palette: &Palette) -> Vec<Line<'static>> {
+    let Some(syntax) = resolve_syntax(lang) else {
+        return code
+            .split('\n')
+            .map(|l| Line::from(Span::styled(l.to_string(), Style::new().fg(palette.text))))
+            .collect();
+    };
+    let theme = code_theme(palette);
+    let mut hl = HighlightLines::new(syntax, theme);
+    let mut out: Vec<Line<'static>> = Vec::new();
+    for line in LinesWithEndings::from(code) {
+        let Ok(parts) = hl.highlight_line(line, &SYNTAX_SET) else {
+            out.push(Line::from(line.trim_end_matches('\n').to_string()));
+            continue;
+        };
+        match as_24_bit_terminal_escaped(&parts, false).into_text() {
+            Ok(text) => out.extend(text.lines),
+            Err(_) => out.push(Line::from(line.trim_end_matches('\n').to_string())),
+        }
+    }
+    // Подсветка часто добавляет хвостовую пустую строку — снимаем, чтобы не давать
+    // лишний пустой ряд под блоком в карточке.
+    while out
+        .last()
+        .is_some_and(|l| l.spans.iter().all(|s| s.content.trim().is_empty()))
+    {
+        out.pop();
+    }
+    out
+}
+
 // ---------- стили из палитры ----------
 
 /// Стиль заголовка уровня `level` (1 — крупнейший).
