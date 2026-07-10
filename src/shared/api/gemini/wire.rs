@@ -139,7 +139,9 @@ fn thinking_config(req: &ChatRequest, model: &str) -> Option<Value> {
     } else {
         // 2.5 и прочие: thinkingBudget (токены).
         let budget = if force_off {
-            0
+            // Gemini 2.5 Pro не умеет ВЫКЛЮЧАТЬ мысли (минимум 128) — `thinkingBudget:0`
+            // вернул бы `400`; шлём минимум. Flash/Flash-Lite: `0` выключает.
+            if is_gemini_25_pro(model) { 128 } else { 0 }
         } else {
             s.reasoning_effort.map(effort_to_budget).unwrap_or(-1) // -1 = динамически
         };
@@ -151,6 +153,11 @@ fn thinking_config(req: &ChatRequest, model: &str) -> Option<Value> {
 /// Поколение Gemini 3.x (использует `thinkingLevel`). Грубый инференс по имени модели.
 fn is_gemini_3(model: &str) -> bool {
     model.contains("gemini-3")
+}
+
+/// Gemini 2.5 **Pro** — не умеет полностью выключать мысли (`thinkingBudget` минимум 128).
+fn is_gemini_25_pro(model: &str) -> bool {
+    model.contains("gemini-2.5-pro")
 }
 
 /// `reasoning_effort` → `thinkingLevel` (Gemini 3.x). `None` — уровень не шлём.
@@ -294,6 +301,20 @@ pub struct GenResponse {
     pub candidates: Vec<Candidate>,
     #[serde(default)]
     pub usage_metadata: Option<UsageMetadata>,
+    /// Обратная связь по промпту: заполняется, когда сам **запрос** заблокирован
+    /// фильтром (тогда `candidates` пуст) — иначе пустой ответ выглядел бы как обычный
+    /// `STOP` без объяснения. См. [`PromptFeedback`].
+    #[serde(default)]
+    pub prompt_feedback: Option<PromptFeedback>,
+}
+
+/// Обратная связь по промпту. `block_reason` (`SAFETY`/`OTHER`/…) присутствует, когда
+/// запрос отклонён фильтром безопасности до генерации.
+#[derive(Debug, Default, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PromptFeedback {
+    #[serde(default)]
+    pub block_reason: Option<String>,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -430,6 +451,22 @@ mod tests {
         let tc3 = &j3["generationConfig"]["thinkingConfig"];
         assert_eq!(tc3["thinkingLevel"], "minimal");
         assert_eq!(tc3["includeThoughts"], false);
+        // 2.5 Pro не умеет выключать мысли (минимум 128) — force_off → 128, не 0.
+        let jpro = serde_json::to_value(build_request(&r, "gemini-2.5-pro")).unwrap();
+        let tcpro = &jpro["generationConfig"]["thinkingConfig"];
+        assert_eq!(tcpro["thinkingBudget"], 128);
+        assert_eq!(tcpro["includeThoughts"], false);
+    }
+
+    #[test]
+    fn parses_prompt_feedback_block_reason() {
+        let raw = r#"{"promptFeedback":{"blockReason":"SAFETY"}}"#;
+        let r: GenResponse = serde_json::from_str(raw).unwrap();
+        assert!(r.candidates.is_empty());
+        assert_eq!(
+            r.prompt_feedback.and_then(|f| f.block_reason).as_deref(),
+            Some("SAFETY")
+        );
     }
 
     #[test]

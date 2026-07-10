@@ -53,14 +53,37 @@ impl GeminiClient {
 
 /// Строковый `finishReason` Gemini → доменная причина. Наличие вызовов инструментов
 /// (`saw_tool_call`) даёт `ToolCalls` даже при `STOP` (Gemini возвращает `STOP` с
-/// `functionCall`-частями). `MAX_TOKENS` → `Length`; прочее (`SAFETY`/`RECITATION`/…)
-/// сводим к `Stop`, чтобы не падать.
+/// `functionCall`-частями). `MAX_TOKENS` → `Length`; прочее — `Stop`, чтобы не падать
+/// (блокирующие причины распознаёт [`is_block_reason`] отдельно и сюрфейсит заметкой).
 fn map_finish(reason: &str, saw_tool_call: bool) -> FinishReason {
     match reason {
         "MAX_TOKENS" => FinishReason::Length,
         _ if saw_tool_call => FinishReason::ToolCalls,
         _ => FinishReason::Stop,
     }
+}
+
+/// «Блокирующая» причина завершения/отклонения: фильтр безопасности, рецитация,
+/// битый вызов и т.п. Такой ответ приходит пустым — без пояснения пользователь видел бы
+/// молчаливый пустой ход, поэтому сюрфейсим заметкой (см. [`block_note`]).
+fn is_block_reason(reason: &str) -> bool {
+    matches!(
+        reason,
+        "SAFETY"
+            | "RECITATION"
+            | "BLOCKLIST"
+            | "PROHIBITED_CONTENT"
+            | "SPII"
+            | "IMAGE_SAFETY"
+            | "MALFORMED_FUNCTION_CALL"
+            | "OTHER"
+    )
+}
+
+/// Заметка пользователю о блокировке (уходит в ленту как текст ответа, чтобы пустой ход
+/// был объясним).
+fn block_note(reason: &str) -> String {
+    format!("\n⚠ Gemini не выдал ответ (причина: {reason}).")
 }
 
 #[async_trait::async_trait]
@@ -130,6 +153,18 @@ impl EngineBackend for GeminiClient {
                                         continue;
                                     }
                                 };
+                                // Промпт заблокирован фильтром (candidates пуст) —
+                                // объясняем заметкой, иначе выглядело бы как пустой STOP.
+                                if let Some(reason) = resp
+                                    .prompt_feedback
+                                    .and_then(|f| f.block_reason)
+                                    .filter(|r| !r.is_empty())
+                                {
+                                    tracing::warn!(reason = %reason, "gemini blocked the prompt");
+                                    yield ChatChunk::Text(block_note(&reason));
+                                    yield ChatChunk::Finished(FinishReason::Stop);
+                                    break;
+                                }
                                 let candidate = resp.candidates.into_iter().next();
                                 if let Some(cand) = &candidate
                                     && let Some(content) = &cand.content
@@ -166,6 +201,12 @@ impl EngineBackend for GeminiClient {
                                     });
                                 }
                                 if let Some(reason) = candidate.and_then(|c| c.finish_reason) {
+                                    // Блокирующая причина (SAFETY/RECITATION/…) — сюрфейсим
+                                    // заметкой, иначе пустой ход остался бы без пояснения.
+                                    if is_block_reason(&reason) && !saw_tool_call {
+                                        tracing::warn!(reason = %reason, "gemini stopped with a block reason");
+                                        yield ChatChunk::Text(block_note(&reason));
+                                    }
                                     yield ChatChunk::Finished(map_finish(&reason, saw_tool_call));
                                     break;
                                 }
@@ -196,6 +237,17 @@ mod tests {
     fn strips_models_prefix_from_model() {
         let c = GeminiClient::new("https://x/v1beta", "k", "models/gemini-2.5-flash");
         assert_eq!(c.model, "gemini-2.5-flash");
+    }
+
+    #[test]
+    fn block_reasons_recognized_and_noted() {
+        assert!(is_block_reason("SAFETY"));
+        assert!(is_block_reason("RECITATION"));
+        assert!(is_block_reason("MALFORMED_FUNCTION_CALL"));
+        assert!(!is_block_reason("STOP"));
+        assert!(!is_block_reason("MAX_TOKENS"));
+        // Заметка несёт причину.
+        assert!(block_note("SAFETY").contains("SAFETY"));
     }
 }
 

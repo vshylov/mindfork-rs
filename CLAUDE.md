@@ -4027,6 +4027,31 @@ web-поиск и Python под выключателями, экран наст�
   подписей и обе фазы подтверждены на живой модели; развилка §7-1 закрыта выбором дизайна
   (всегда переотправляем → failure-mode недостижим), персист оставлен.
 
+### Пост-M9: нативный Gemini — Фаза C (частично: force-off 2.5 Pro + сюрфейс блокировок) (сделано)
+- Два точечных фикса корректности по итогам Фаз A+B (docs/research/gemini-native-client.md
+  §8 Фаза C). Полная санитизация схем инструментов и явный UI-выбор `thinkingLevel`/
+  `thinkingBudget` — отложены (по сканированию схемы инструментов чистые: из «экзотики»
+  только `enum`, который Gemini принимает; ни `$ref`/`oneOf`/`nullable`/… нет).
+- **Кламп force-off на Gemini 2.5 Pro** (`wire::thinking_config`): 2.5 Pro **не умеет
+  выключать мысли** (`thinkingBudget` минимум 128) — прежний `reasoning_budget==0`
+  (импперсонация/авто-название) слал `thinkingBudget:0` → `400`. Теперь для 2.5 Pro
+  (`is_gemini_25_pro` = имя содержит `gemini-2.5-pro`) force-off шлёт `128` (+
+  `includeThoughts:false`); Flash/Flash-Lite по-прежнему `0` (у них `0` выключает).
+  Узкий баг (только 2.5 Pro + глушение), но конкретный.
+- **Сюрфейс блокировок** (`client.rs`): раньше `finishReason` вроде `SAFETY`/`RECITATION`
+  и блок промпта сводились к пустому `Stop` — пользователь видел молчаливый пустой ход.
+  Теперь: (1) `promptFeedback.blockReason` (запрос отклонён фильтром до генерации, новый
+  тип `PromptFeedback` в wire) и (2) блокирующие `finishReason` (`is_block_reason`:
+  SAFETY/RECITATION/BLOCKLIST/PROHIBITED_CONTENT/SPII/IMAGE_SAFETY/MALFORMED_FUNCTION_CALL/
+  OTHER, кроме случая с вызовом инструмента) → эмитят заметку `ChatChunk::Text`
+  («⚠ Gemini не выдал ответ (причина: …)») + лог `warn`, чтобы пустой ход был объясним.
+  `Finished(Stop)` (не Error) — обычное завершение хода с пояснением в ленте.
+- **Тесты**: wire (force-off 2.5 Pro → 128; разбор `promptFeedback.blockReason`); client
+  (`is_block_reason`/`block_note`). **853 юнит-теста зелёные** (+2), clippy `-D warnings`/
+  fmt чисты. **Задел (не Фаза C)**: подписи мыслей на text-частях (не персистятся —
+  жёсткое требование Gemini 3 только для functionCall); проверка полного реестра
+  инструментов против Gemini (по живому прогону — чинить только реальные `400`).
+
 ### Отложено за пределы M3
 - **Сворачивание/выделение per-message** и tool-блоки в ленте — сейчас «мысли»
   сворачиваются глобально (`Ctrl+T`); выделение сообщений и tool-блоки — на M5.
