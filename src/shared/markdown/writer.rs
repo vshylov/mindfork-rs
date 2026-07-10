@@ -19,6 +19,8 @@ pub(super) struct Writer {
     list_indices: Vec<Option<u64>>,
     /// Накопленный URL ссылки (добавляется при закрытии тега).
     link: Option<String>,
+    /// Накопленный URL изображения (отдельно от `link` — картинка бывает в ссылке).
+    image: Option<String>,
     /// Подсветчик активного блока кода.
     code_highlighter: Option<HighlightLines<'static>>,
     /// Активный сбор таблицы (вне таблицы — `None`).
@@ -29,7 +31,9 @@ pub(super) struct Writer {
     /// и первый абзац этого элемента должен продолжаться **на строке маркера**, а не
     /// на новой строке. В «рыхлых» (loose) списках pulldown-cmark оборачивает
     /// содержимое элемента в `Paragraph`; без этого флага номер оставался бы на одной
-    /// строке, а текст уезжал на следующую. Сбрасывается в начале любого `Start(tag)`.
+    /// строке, а текст уезжал на следующую. Сбрасывается в начале любого `Start(tag)`
+    /// и на `End(Item)` — иначе в **тугом** (tight) списке, где обёртки `Paragraph`
+    /// нет, флаг некому потребить и он «утекал» на следующий блок.
     item_marker_open: bool,
     /// Трактовать «мягкий» перенос (одиночный `\n`) как реальный перенос строки
     /// (GFM-стиль). Для сообщений пользователя — `true`. См. [`render_with`].
@@ -47,6 +51,7 @@ impl Writer {
             line_styles: Vec::new(),
             list_indices: Vec::new(),
             link: None,
+            image: None,
             code_highlighter: None,
             table: None,
             needs_newline: false,
@@ -77,11 +82,27 @@ impl Writer {
             // В ячейке перенос строки не делаем — продолжаем пробелом.
             Event::HardBreak if self.in_table_cell() => self.push_span(Span::raw(" ")),
             Event::HardBreak => self.push_line(Line::default()),
+            // `<br>` (частый в ячейках таблиц у моделей) — как HardBreak; прочий
+            // inline/block HTML игнорируем (текст между тегами приходит как `Text`).
+            Event::InlineHtml(html) | Event::Html(html) if is_br(&html) => {
+                if self.in_table_cell() {
+                    self.push_span(Span::raw(" "));
+                } else {
+                    self.push_line(Line::default());
+                }
+            }
             Event::Rule => self.rule(),
             Event::TaskListMarker(checked) => self.task_list_marker(checked),
             Event::InlineMath(content) => {
                 let style = self.current_style();
-                self.push_span(Span::styled(latex_to_unicode(&content), style));
+                if looks_like_price_fragment(&content) {
+                    // Ложное срабатывание math на диапазоне цен «$5-$10»: pulldown
+                    // отдаёт content="5-". Печатаем литералом с долларами, а не как
+                    // формулу (иначе доллары исчезли бы, «5-10» рвалось на «5-» и «10»).
+                    self.push_span(Span::styled(format!("${content}$"), style));
+                } else {
+                    self.push_span(Span::styled(latex_to_unicode(&content), style));
+                }
             }
             Event::DisplayMath(content) => self.display_math(&content),
             // HTML, сноски — игнорируем.
@@ -103,7 +124,18 @@ impl Writer {
             Tag::Emphasis => self.push_inline_style(Style::new().italic()),
             Tag::Strong => self.push_inline_style(Style::new().bold()),
             Tag::Strikethrough => self.push_inline_style(Style::new().crossed_out()),
-            Tag::Link { dest_url, .. } => self.link = Some(dest_url.into_string()),
+            Tag::Link {
+                link_type,
+                dest_url,
+                ..
+            } => {
+                // Автолинк (`<url>`) и email печатают URL как текст сами — суффикс
+                // ` (url)` дал бы дубль. Для них ссылку не запоминаем.
+                if !matches!(link_type, LinkType::Autolink | LinkType::Email) {
+                    self.link = Some(dest_url.into_string());
+                }
+            }
+            Tag::Image { dest_url, .. } => self.image = Some(dest_url.into_string()),
             Tag::Table(alignments) => self.start_table(alignments),
             Tag::TableHead => {
                 if let Some(tb) = &mut self.table {
@@ -135,6 +167,11 @@ impl Writer {
                 self.inline_styles.pop();
             }
             TagEnd::Link => self.end_link(),
+            TagEnd::Image => self.end_image(),
+            // Сброс «маркер открыт»: в ТУГОМ списке содержимое элемента — инлайн без
+            // обёртки `Paragraph`, поэтому флаг некому потребить, и он «утекал» на
+            // следующий блок (склеивая его с строкой маркера и глотая пустую строку).
+            TagEnd::Item => self.item_marker_open = false,
             TagEnd::TableCell => {
                 if let Some(tb) = &mut self.table {
                     let cell = tb.current_cell.take().unwrap_or_default();
@@ -250,7 +287,11 @@ impl Writer {
         if self.needs_newline {
             self.push_line(Line::default());
         }
-        self.push_line(Line::from("───").add_modifier(Modifier::DIM));
+        // Тянем линию на ширину панели (self.width — уже внутренняя ширина под рейл),
+        // чтобы `---` не выглядел обрубком рядом с полноширинными таблицами. Линия
+        // ≤ ширины → повторный перенос в `message_feed` — no-op.
+        let rule = "─".repeat(self.width.max(3));
+        self.push_line(Line::from(rule).add_modifier(Modifier::DIM));
         self.needs_newline = true;
     }
 
@@ -258,17 +299,20 @@ impl Writer {
         if !self.lines.is_empty() {
             self.push_line(Line::default());
         }
-        let lang = match kind {
+        let info = match kind {
             CodeBlockKind::Fenced(ref lang) => lang.as_ref(),
             CodeBlockKind::Indented => "",
         };
+        // Инфо-строка может нести не только язык: ` ```rust,no_run `, ` ```py title=x `.
+        // Синтаксис резолвим по первому токену, а в заборчик печатаем метку целиком.
+        let lang = info.split([',', ' ', '\t']).next().unwrap_or("");
         if let Some(syntax) = resolve_syntax(lang) {
             let theme = code_theme(&self.palette);
             self.code_highlighter = Some(HighlightLines::new(syntax, theme));
         } else {
             self.line_styles.push(code_style());
         }
-        self.push_line(Line::from(format!("```{lang}")).add_modifier(Modifier::DIM));
+        self.push_line(Line::from(format!("```{info}")).add_modifier(Modifier::DIM));
         // Содержимое блока должно начаться на новой строке под открывающим `​```​`, а
         // не приклеиться к нему. В неподсвеченном пути (`text`) первая строка иначе
         // допишется в строку заборчика (`i==0`, `needs_newline==false`); подсвеченный
@@ -286,14 +330,13 @@ impl Writer {
 
     pub(super) fn text(&mut self, text: CowStr<'_>) {
         if let Some(highlighter) = &mut self.code_highlighter {
-            let highlighted: Text = LinesWithEndings::from(&text)
-                .filter_map(|line| highlighter.highlight_line(line, &SYNTAX_SET).ok())
-                .filter_map(|parts| as_24_bit_terminal_escaped(&parts, false).into_text().ok())
-                .flatten()
-                .collect();
-            for line in highlighted.lines {
-                self.lines.push(line);
+            // На ошибку syntect/ansi строку не выбрасываем, а показываем плоской
+            // (`highlight_line_or_plain`) — иначе строка кода молча пропадала бы.
+            let mut rendered: Vec<Line<'static>> = Vec::new();
+            for line in LinesWithEndings::from(&text) {
+                rendered.extend(highlight_line_or_plain(highlighter, line));
             }
+            self.lines.extend(rendered);
             self.needs_newline = false;
             return;
         }
@@ -324,17 +367,44 @@ impl Writer {
     }
 
     /// Блочная формула `$$…$$`: каждая строка преобразованного содержимого — на
-    /// своей строке ленты.
+    /// своей строке ленты. Первую строку кладём **в текущую (пустую) строку** абзаца
+    /// через `push_span` — иначе между прозой и формулой оставался бы двойной пропуск
+    /// (`start_paragraph` уже открыл пустую строку, а прежний код клал контент новой).
+    /// В ячейке таблицы формула остаётся **в ячейке** (строки склеиваем `«; »`),
+    /// иначе `push_line` увёл бы её строки в ленту над таблицей.
     pub(super) fn display_math(&mut self, content: &str) {
-        let converted = latex_to_unicode(content);
-        for line in converted.split('\n') {
-            self.push_line(Line::from(line.to_string()));
+        let converted = latex_to_unicode_display(content);
+        if self.in_table_cell() {
+            let joined = converted.split('\n').collect::<Vec<_>>().join("; ");
+            self.push_span(Span::raw(joined));
+            return;
+        }
+        for (i, line) in converted.split('\n').enumerate() {
+            if self.needs_newline {
+                self.push_line(Line::default());
+                self.needs_newline = false;
+            }
+            if i > 0 {
+                self.push_line(Line::default());
+            }
+            self.push_span(Span::raw(line.to_string()));
         }
         self.needs_newline = true;
     }
 
     pub(super) fn end_link(&mut self) {
         if let Some(url) = self.link.take() {
+            self.push_span(Span::from(" ("));
+            self.push_span(Span::styled(url, link_style(&self.palette)));
+            self.push_span(Span::from(")"));
+        }
+    }
+
+    /// Закрытие изображения `![alt](url)`: alt-текст уже напечатан событиями `Text`,
+    /// дописываем URL в скобках (как у ссылки). Отдельное поле `image` — картинка
+    /// бывает вложена в ссылку, `self.link` перезатирать нельзя.
+    pub(super) fn end_image(&mut self) {
+        if let Some(url) = self.image.take() {
             self.push_span(Span::from(" ("));
             self.push_span(Span::styled(url, link_style(&self.palette)));
             self.push_span(Span::from(")"));
@@ -406,6 +476,28 @@ impl Writer {
     }
 }
 
+/// Эвристика «это диапазон/дробь цен, а не формула»: `$5-$10` парсер math отдаёт
+/// как `InlineMath("5-")`. Содержимое из одних цифр/точек/запятых/пробелов/дефисов/
+/// слэшей И оканчивающееся на разделитель (`-`/`–`/`/`) — сигнатура диапазона цен;
+/// законное число оканчивается цифрой, а формула содержит math-символы.
+pub(super) fn looks_like_price_fragment(content: &str) -> bool {
+    let t = content.trim();
+    if t.is_empty() {
+        return false;
+    }
+    t.chars()
+        .all(|c| c.is_ascii_digit() || matches!(c, '.' | ',' | ' ' | '-' | '–' | '/'))
+        && t.ends_with(['-', '–', '/'])
+}
+
+/// Распознаёт тег переноса строки `<br>` в его формах (регистр игнорируется).
+pub(super) fn is_br(html: &str) -> bool {
+    matches!(
+        html.trim().to_ascii_lowercase().as_str(),
+        "<br>" | "<br/>" | "<br />"
+    )
+}
+
 pub(super) fn heading_number(level: HeadingLevel) -> u8 {
     match level {
         HeadingLevel::H1 => 1,
@@ -471,5 +563,200 @@ mod tests {
         assert!(collected.contains("1. Первый абзац."));
         assert!(collected.contains("Второй абзац того же пункта."));
         assert!(collected.contains("2. Другой пункт."));
+    }
+
+    /// Строки рендера как вектор строк (для проверки раскладки по рядам).
+    fn rows(input: &str, width: usize) -> Vec<String> {
+        render(input, width, &Palette::default())
+            .lines
+            .iter()
+            .map(|l| l.spans.iter().map(|s| s.content.as_ref()).collect())
+            .collect()
+    }
+
+    /// Между прозой и блочной формулой `$$…$$` — ровно одна пустая строка (регрессия:
+    /// было две — `start_paragraph` открывал пустую строку, а `display_math` клал
+    /// контент новой, оставляя ту пустой).
+    #[test]
+    fn display_math_single_blank_line_before() {
+        let lines = rows("текст\n\n$$E=mc^2$$\n\nконец", 80);
+        let text_idx = lines.iter().position(|l| l.contains("текст")).unwrap();
+        let math_idx = lines.iter().position(|l| l.contains("E=mc")).unwrap();
+        assert_eq!(
+            math_idx - text_idx,
+            2,
+            "ожидалась одна пустая строка между прозой и формулой:\n{lines:?}"
+        );
+        assert!(lines[text_idx + 1].trim().is_empty());
+    }
+
+    /// Блочная формула внутри цитаты сохраняет префикс `> `.
+    #[test]
+    fn display_math_in_blockquote_keeps_prefix() {
+        let lines = rows("> $$x+1$$", 80);
+        let math = lines.iter().find(|l| l.contains("x+1")).unwrap();
+        assert!(math.starts_with("> "), "префикс цитаты потерян: {math:?}");
+    }
+
+    /// Формула `$$…$$` в ячейке таблицы остаётся **в ячейке**, не утекая строкой над
+    /// таблицей (регрессия: `display_math` звал `push_line` без учёта `in_table_cell`).
+    #[test]
+    fn display_math_in_table_cell_stays_in_cell() {
+        let md = "| A | B |\n| :--- | :--- |\n| $$x+1$$ | y |";
+        let lines = rows(md, 60);
+        let first = lines
+            .iter()
+            .find(|l| !l.trim().is_empty())
+            .expect("пустой рендер");
+        assert!(
+            first.contains('┌'),
+            "первая строка должна быть верхней рамкой таблицы, а не формулой: {first:?}"
+        );
+        let joined = lines.join("\n");
+        assert!(joined.contains("x+1"), "формула потеряна: {joined}");
+    }
+
+    /// Автолинк `<url>` печатает URL один раз (регрессия: `end_link` дописывал
+    /// ` (url)` поверх текста-URL → «url (url)»).
+    #[test]
+    fn autolink_url_not_duplicated() {
+        let collected = rendered_text("см. <https://example.com> тут");
+        assert_eq!(
+            collected.matches("example.com").count(),
+            1,
+            "URL автолинка продублирован: {collected}"
+        );
+    }
+
+    /// Обычная ссылка `[t](u)` по-прежнему печатает URL в скобках.
+    #[test]
+    fn inline_link_keeps_url_suffix() {
+        let collected = rendered_text("[текст](https://example.com)");
+        assert!(
+            collected.contains("текст (https://example.com)"),
+            "{collected}"
+        );
+    }
+
+    /// `<br>` в абзаце — перенос строки.
+    #[test]
+    fn br_tag_breaks_line_in_paragraph() {
+        let lines = rows("a<br>b", 80);
+        assert!(lines.iter().any(|l| l.trim() == "a"), "{lines:?}");
+        assert!(lines.iter().any(|l| l.trim() == "b"), "{lines:?}");
+    }
+
+    /// `<br>` в ячейке таблицы — пробел (переносов в ячейке нет).
+    #[test]
+    fn br_tag_in_table_cell_becomes_space() {
+        let md = "| A | B |\n| :--- | :--- |\n| x<br>y | z |";
+        let joined = rendered_text_w(md, 60);
+        assert!(
+            joined.contains("x y"),
+            "<br> в ячейке должен стать пробелом: {joined}"
+        );
+    }
+
+    /// Метка языка с инфо-строкой (` ```rust,no_run `) резолвится по первому токену —
+    /// блок подсвечивается (регрессия: вся инфо-строка не совпадала с синтаксисом).
+    #[test]
+    fn code_block_info_string_resolves_language() {
+        use crate::shared::config::Theme;
+        let colors = fg_colors(
+            "```rust,no_run\nfn main() {}\n```",
+            &Palette::for_theme(Theme::Dark),
+        );
+        assert!(
+            colors.iter().any(|c| matches!(c, Color::Rgb(..))),
+            "ожидалась подсветка по языку из инфо-строки"
+        );
+    }
+
+    /// Горизонтальная линия `---` тянется на ширину панели (не обрубок `───`).
+    #[test]
+    fn rule_spans_panel_width() {
+        let w = 40;
+        let text = render("текст\n\n---\n\nещё", w, &Palette::default());
+        let rule = text
+            .lines
+            .iter()
+            .find(|l| l.spans.iter().any(|s| s.content.contains('─')))
+            .expect("нет линии-разделителя");
+        let width: usize = rule
+            .spans
+            .iter()
+            .map(|s| wrap::display_width(&s.content.chars().collect::<Vec<_>>()))
+            .sum();
+        assert_eq!(width, w, "линия должна занимать ширину панели");
+    }
+
+    /// Тугой (tight) элемент списка не «утекает» на следующий блок: после
+    /// `3. Название` с пустой строкой идущий следом абзац не приклеивается к строке
+    /// маркера, а пустая строка сохраняется (регрессия: `item_marker_open` в тугом
+    /// списке не потреблялся — контент элемента инлайновый, без обёртки `Paragraph`).
+    /// Сцена — трек-лист альбома: `3. Трек` + теги Suno на следующих строках.
+    #[test]
+    fn tight_list_item_does_not_bleed_into_next_block() {
+        let md = "3. Взгляд из ниоткуда\n\n[Intro - Ambient]\nЯ — тишина.";
+        let lines = rows(md, 100);
+        let marker = lines
+            .iter()
+            .find(|l| l.contains("3. Взгляд из ниоткуда"))
+            .expect("нет строки маркера");
+        assert!(
+            !marker.contains("[Intro"),
+            "следующий блок приклеился к строке маркера: {marker:?}"
+        );
+        let marker_idx = lines.iter().position(|l| l.contains("3. Взгляд")).unwrap();
+        let intro_idx = lines.iter().position(|l| l.contains("[Intro")).unwrap();
+        assert!(
+            intro_idx > marker_idx,
+            "теги не на отдельной строке: {lines:?}"
+        );
+        // между маркером и тегами — сохранённая пустая строка
+        assert!(
+            lines[marker_idx + 1..intro_idx]
+                .iter()
+                .any(|l| l.trim().is_empty()),
+            "потеряна пустая строка после названия трека: {lines:?}"
+        );
+    }
+
+    /// Обычный тугой список (несколько пунктов) не сломан: каждый пункт — на своей
+    /// строке, следующий не приклеивается к предыдущему.
+    #[test]
+    fn tight_list_items_stay_on_separate_lines() {
+        let lines = rows("- один\n- два\n- три", 80);
+        assert!(lines.iter().any(|l| l.trim() == "- один"), "{lines:?}");
+        assert!(lines.iter().any(|l| l.trim() == "- два"), "{lines:?}");
+        assert!(lines.iter().any(|l| l.trim() == "- три"), "{lines:?}");
+    }
+
+    /// Изображение печатает alt-текст и URL в скобках (как ссылка).
+    #[test]
+    fn image_prints_alt_and_url() {
+        let collected = rendered_text("![схема](http://x/i.png)");
+        assert!(collected.contains("схема (http://x/i.png)"), "{collected}");
+    }
+
+    /// Диапазон/дробь цен `$5-$10` не съедается math-расширением (доллары остаются,
+    /// «5-10» не рвётся).
+    #[test]
+    fn price_range_not_treated_as_math() {
+        let c = rendered_text("товар $5-$10 или $5/$7");
+        assert!(c.contains("$5-$10"), "{c}");
+        assert!(c.contains("$5/$7"), "{c}");
+    }
+
+    /// Настоящая математика по-прежнему конвертируется (доллары сняты).
+    #[test]
+    fn real_math_still_converts() {
+        let c = rendered_text(r"значения $3.14$, $2+2$ и $x^2$");
+        assert!(c.contains("3.14"), "{c}");
+        assert!(
+            !c.contains("$3.14$"),
+            "доллары не сняты у настоящей формулы: {c}"
+        );
+        assert!(c.contains("x²"), "{c}");
     }
 }
