@@ -93,7 +93,14 @@ impl Writer {
             Event::TaskListMarker(checked) => self.task_list_marker(checked),
             Event::InlineMath(content) => {
                 let style = self.current_style();
-                self.push_span(Span::styled(latex_to_unicode(&content), style));
+                if looks_like_price_fragment(&content) {
+                    // Ложное срабатывание math на диапазоне цен «$5-$10»: pulldown
+                    // отдаёт content="5-". Печатаем литералом с долларами, а не как
+                    // формулу (иначе доллары исчезли бы, «5-10» рвалось на «5-» и «10»).
+                    self.push_span(Span::styled(format!("${content}$"), style));
+                } else {
+                    self.push_span(Span::styled(latex_to_unicode(&content), style));
+                }
             }
             Event::DisplayMath(content) => self.display_math(&content),
             // HTML, сноски — игнорируем.
@@ -463,6 +470,20 @@ impl Writer {
     }
 }
 
+/// Эвристика «это диапазон/дробь цен, а не формула»: `$5-$10` парсер math отдаёт
+/// как `InlineMath("5-")`. Содержимое из одних цифр/точек/запятых/пробелов/дефисов/
+/// слэшей И оканчивающееся на разделитель (`-`/`–`/`/`) — сигнатура диапазона цен;
+/// законное число оканчивается цифрой, а формула содержит math-символы.
+pub(super) fn looks_like_price_fragment(content: &str) -> bool {
+    let t = content.trim();
+    if t.is_empty() {
+        return false;
+    }
+    t.chars()
+        .all(|c| c.is_ascii_digit() || matches!(c, '.' | ',' | ' ' | '-' | '–' | '/'))
+        && t.ends_with(['-', '–', '/'])
+}
+
 /// Распознаёт тег переноса строки `<br>` в его формах (регистр игнорируется).
 pub(super) fn is_br(html: &str) -> bool {
     matches!(
@@ -668,5 +689,26 @@ mod tests {
     fn image_prints_alt_and_url() {
         let collected = rendered_text("![схема](http://x/i.png)");
         assert!(collected.contains("схема (http://x/i.png)"), "{collected}");
+    }
+
+    /// Диапазон/дробь цен `$5-$10` не съедается math-расширением (доллары остаются,
+    /// «5-10» не рвётся).
+    #[test]
+    fn price_range_not_treated_as_math() {
+        let c = rendered_text("товар $5-$10 или $5/$7");
+        assert!(c.contains("$5-$10"), "{c}");
+        assert!(c.contains("$5/$7"), "{c}");
+    }
+
+    /// Настоящая математика по-прежнему конвертируется (доллары сняты).
+    #[test]
+    fn real_math_still_converts() {
+        let c = rendered_text(r"значения $3.14$, $2+2$ и $x^2$");
+        assert!(c.contains("3.14"), "{c}");
+        assert!(
+            !c.contains("$3.14$"),
+            "доллары не сняты у настоящей формулы: {c}"
+        );
+        assert!(c.contains("x²"), "{c}");
     }
 }
