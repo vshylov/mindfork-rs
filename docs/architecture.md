@@ -488,7 +488,10 @@ classDiagram
 на диске). Поле `model` для облака обязательно — его подставляет сам бэкенд (доменный
 `ChatRequest` модель не несёт). **Диалект сэмплинга** ([`openai::WireDialect`]):
 `LlamaCpp` шлёт все расширения, `OpenAi`/`Gemini` чистят незнакомое (иначе `400`;
-OpenAI требует `max_completion_tokens` вместо `max_tokens`), `AnthropicClient` из
+OpenAI требует `max_completion_tokens` вместо `max_tokens` и **не принимает
+`temperature`/`top_p`** — их поддерживало лишь семейство GPT 5.4, у GPT 5.5/5.6 их
+уже нет, поэтому `supported_sampling_fields(OpenAi)` = penalties+`seed`+`max_tokens`,
+а Gemini-compat те два поля принимает), `AnthropicClient` из
 сэмплинга шлёт `max_tokens` + extended thinking (`thinking`/`reasoning_effort` →
 adaptive; Claude 4.x отвергает temperature/top_p/top_k и `budget_tokens` — см. «Мысли
 (CoT)» выше). У Anthropic нет embeddings — `Embedder` он не реализует (RAG берёт

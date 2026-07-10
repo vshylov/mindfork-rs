@@ -301,6 +301,10 @@ pub fn build_chat_request(
     if dialect == WireDialect::OpenAi {
         // Новые модели OpenAI требуют max_completion_tokens вместо max_tokens.
         body.max_completion_tokens = body.max_tokens.take();
+        // temperature/top_p принимало лишь семейство GPT 5.4 (скоро отключается);
+        // GPT 5.5/5.6 отвергают их. Gemini-compat, наоборот, их принимает.
+        body.temperature = None;
+        body.top_p = None;
     }
     body
 }
@@ -308,7 +312,9 @@ pub fn build_chat_request(
 /// Обнуляет поля сэмплинга, не входящие в строгий облачный OpenAI-протокол
 /// (расширения llama.cpp и reasoning-сигналы), чтобы сервер не отверг запрос с `400`.
 /// Остаются `temperature`/`top_p`/`max_tokens`/`frequency_penalty`/`presence_penalty`/
-/// `seed`, а также `messages`/`tools`/`tool_choice`/`stream*`. См. ADR 0004.
+/// `seed`, а также `messages`/`tools`/`tool_choice`/`stream*`. В диалекте
+/// [`WireDialect::OpenAi`] дополнительно снимаются `temperature`/`top_p` (см.
+/// [`build_chat_request`]) — их принимало только семейство GPT 5.4. См. ADR 0004.
 fn restrict_to_strict(body: &mut ChatCompletionRequest) {
     body.dynatemp_range = None;
     body.dynatemp_exponent = None;
@@ -557,8 +563,8 @@ mod tests {
 
     #[test]
     fn openai_dialect_strips_extensions_and_sends_model() {
-        // Строгий OpenAI-диалект: общеподдержанное остаётся, расширения llama.cpp и
-        // reasoning-сигналы вычищаются; имя модели проставляется.
+        // Строгий OpenAI-диалект: общеподдержанное остаётся, расширения llama.cpp,
+        // reasoning-сигналы и temperature/top_p вычищаются; имя модели проставляется.
         let req = ChatRequest {
             system: None,
             messages: vec![ApiMessage::user("hi")],
@@ -591,16 +597,17 @@ mod tests {
         .unwrap();
         assert_eq!(json["model"], "gpt-4o");
         // Поддержанное OpenAI — на месте.
-        assert!((json["temperature"].as_f64().unwrap() - 0.7).abs() < 1e-6);
-        assert!(json.get("top_p").is_some());
         assert!(json.get("frequency_penalty").is_some());
         assert!(json.get("presence_penalty").is_some());
         assert_eq!(json["seed"], 7);
         // OpenAI: лимит токенов под именем max_completion_tokens, не max_tokens.
         assert_eq!(json["max_completion_tokens"], 128);
         assert!(json.get("max_tokens").is_none());
-        // Расширения и reasoning-сигналы вычищены.
+        // Расширения, reasoning-сигналы и temperature/top_p (GPT 5.5/5.6 их
+        // отвергают) вычищены.
         for k in [
+            "temperature",
+            "top_p",
             "top_k",
             "min_p",
             "dynatemp_range",
@@ -620,12 +627,15 @@ mod tests {
 
     #[test]
     fn gemini_dialect_keeps_max_tokens_and_strips_extensions() {
-        // Gemini-compat: расширения чистим, но лимит токенов — классический max_tokens.
+        // Gemini-compat: расширения чистим, но лимит токенов — классический max_tokens,
+        // а temperature/top_p (в отличие от OpenAI) провайдер принимает.
         let req = ChatRequest {
             system: None,
             messages: vec![ApiMessage::user("hi")],
             sampling: SamplingConfig {
                 max_tokens: Some(200),
+                temperature: Some(0.7),
+                top_p: Some(0.95),
                 top_k: Some(40),
                 thinking: Some(true),
                 ..Default::default()
@@ -642,6 +652,8 @@ mod tests {
         assert_eq!(json["model"], "gemini-2.5-pro");
         assert_eq!(json["max_tokens"], 200);
         assert!(json.get("max_completion_tokens").is_none());
+        assert!(json.get("temperature").is_some());
+        assert!(json.get("top_p").is_some());
         assert!(json.get("top_k").is_none());
         assert!(json.get("thinking").is_none());
     }

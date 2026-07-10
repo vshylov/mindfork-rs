@@ -3816,6 +3816,34 @@ web-поиск и Python под выключателями, экран наст�
   зелёные** (+19), 26 `#[ignore]`, clippy/fmt чисты. Доки: spec §11.3–11.4,
   architecture.md §8.
 
+### Пост-M9: OpenAI больше не принимает `temperature`/`top_p` (сделано)
+- **Режим `openai` перестал слать и показывать `temperature`/`top_p`**: их принимало
+  только семейство **GPT 5.4** (скоро отключается), у **GPT 5.5/5.6** этих параметров
+  уже нет (запрос с ними → `400`). Прежде оба поля входили в общее для OpenAI/Gemini
+  строгое подмножество (Фаза 0 мульти-провайдера).
+- **Разделены подмножества OpenAI и Gemini** (`entities/sampling.rs::
+  supported_sampling_fields` — единый источник истины для UI настроек, `get_sampling`/
+  `set_sampling` и снимка `Message.metadata`): OpenAI = `frequency_penalty`/
+  `presence_penalty`/`seed`/`max_tokens`; **Gemini** (OpenAI-совместимый endpoint) —
+  то же **плюс** `temperature`/`top_p` (compat-слой их принимает, как и раньше);
+  Claude — без изменений.
+- **Зеркало в wire** (`shared/api/openai/wire.rs`): общий `restrict_to_strict`
+  (расширения llama.cpp + reasoning) не тронут — `temperature`/`top_p` снимаются в
+  уже существующей ветке `dialect == WireDialect::OpenAi` рядом с подменой
+  `max_tokens → max_completion_tokens`, так что Gemini-диалект их сохраняет.
+- **Следствия без правки кода** (всё выведено из единого источника): секция
+  «Семплинг» экрана настроек в режиме `openai` больше не показывает оба поля
+  (`cloud_supported_param`); схема `set_sampling` их не предлагает, а `get_sampling`
+  не выводит; `retain_supported` обнуляет их в снимке метаданных сообщения.
+  Значения сохраняются в `default_sampling`/`impersonation_sampling` и заработают на
+  локальной модели/Gemini (как у прочих скрытых параметров).
+- **Тесты**: sampling (подмножества OpenAI/Gemini разошлись; `retain_supported`
+  роняет `temperature` у OpenAI и хранит у Gemini); wire (OpenAI-диалект вычищает
+  `temperature`/`top_p`; Gemini их шлёт); introspection (`get_sampling` их прячет у
+  OpenAI, показывает у Gemini); settings (фильтр полей секции «Семплинг» по режиму);
+  оркестратор (метаданные сообщения в режиме `openai` без `temperature`). **827
+  тестов зелёные** (число неизменно), clippy/fmt чисты. Доки: architecture.md §9.
+
 ### Отложено за пределы M3
 - **Сворачивание/выделение per-message** и tool-блоки в ленте — сейчас «мысли»
   сворачиваются глобально (`Ctrl+T`); выделение сообщений и tool-блоки — на M5.

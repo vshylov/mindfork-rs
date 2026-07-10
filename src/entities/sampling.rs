@@ -187,8 +187,10 @@ pub const SETTABLE_SAMPLING_FIELDS: &[&str] = &[
 /// `anthropic/wire`). `None` провайдер = локальный/external `llama.cpp`: принимает
 /// все поля (расширения он игнорирует, а не отвергает). Облако строгое:
 ///
-/// - **OpenAI/Gemini** — `temperature`/`top_p`/`frequency_penalty`/
-///   `presence_penalty`/`seed`/`max_tokens` (прочее → `400`);
+/// - **OpenAI** — `frequency_penalty`/`presence_penalty`/`seed`/`max_tokens`
+///   (прочее → `400`). `temperature`/`top_p` **не шлём**: их принимало лишь семейство
+///   GPT 5.4 (скоро отключается), а GPT 5.5/5.6 их уже отвергают;
+/// - **Gemini** (OpenAI-совместимый endpoint) — то же плюс `temperature`/`top_p`;
 /// - **Claude** — `max_tokens` + reasoning (`thinking`/`reasoning_effort`):
 ///   модели 4.x «зафиксировали» сэмплинг (отвергают `temperature`/`top_p`/`top_k`),
 ///   но поддерживают extended thinking (`{type:"adaptive"}` + `output_config.effort`).
@@ -200,7 +202,13 @@ pub const SETTABLE_SAMPLING_FIELDS: &[&str] = &[
 pub fn supported_sampling_fields(provider: Option<CloudProvider>) -> &'static [&'static str] {
     match provider {
         None => SETTABLE_SAMPLING_FIELDS,
-        Some(CloudProvider::OpenAi | CloudProvider::Gemini) => &[
+        Some(CloudProvider::OpenAi) => &[
+            "frequency_penalty",
+            "presence_penalty",
+            "seed",
+            "max_tokens",
+        ],
+        Some(CloudProvider::Gemini) => &[
             "temperature",
             "top_p",
             "frequency_penalty",
@@ -248,16 +256,23 @@ mod tests {
     fn supported_fields_mirror_wire_dialect() {
         // Локально (None) — весь настраиваемый набор.
         assert_eq!(supported_sampling_fields(None), SETTABLE_SAMPLING_FIELDS);
-        // OpenAI/Gemini — строгое подмножество; расширения/reasoning отсутствуют.
+        // OpenAI — строгое подмножество; расширения/reasoning отсутствуют, а
+        // temperature/top_p отвергают GPT 5.5/5.6.
         let openai = supported_sampling_fields(Some(CloudProvider::OpenAi));
-        assert!(openai.contains(&"temperature"));
         assert!(openai.contains(&"max_tokens"));
+        assert!(openai.contains(&"seed"));
+        assert!(!openai.contains(&"temperature"));
+        assert!(!openai.contains(&"top_p"));
         assert!(!openai.contains(&"top_k"));
         assert!(!openai.contains(&"thinking"));
-        assert_eq!(
-            supported_sampling_fields(Some(CloudProvider::Gemini)),
-            openai
-        );
+        // Gemini-compat принимает те же поля плюс temperature/top_p.
+        let gemini = supported_sampling_fields(Some(CloudProvider::Gemini));
+        assert!(gemini.contains(&"temperature"));
+        assert!(gemini.contains(&"top_p"));
+        assert!(!gemini.contains(&"top_k"));
+        for f in openai {
+            assert!(gemini.contains(f));
+        }
         // Claude — max_tokens + reasoning (thinking/reasoning_effort), но не top_k.
         let claude = supported_sampling_fields(Some(CloudProvider::Claude));
         assert!(claude.contains(&"max_tokens"));
@@ -286,14 +301,19 @@ mod tests {
         assert_eq!(local.top_k, Some(40));
         assert_eq!(local.min_p, Some(0.05));
         assert_eq!(local.thinking, Some(true));
-        // OpenAI — строгое подмножество: top_k/min_p/thinking обнуляются, temperature
-        // и max_tokens остаются.
+        // OpenAI — строгое подмножество: top_k/min_p/thinking и temperature (GPT
+        // 5.5/5.6 её отвергают) обнуляются, max_tokens остаётся.
         let openai = s.retain_supported(Some(CloudProvider::OpenAi));
-        assert_eq!(openai.temperature, Some(0.7));
         assert_eq!(openai.max_tokens, Some(256));
+        assert_eq!(openai.temperature, None);
         assert_eq!(openai.top_k, None);
         assert_eq!(openai.min_p, None);
         assert_eq!(openai.thinking, None);
+        // Gemini-compat temperature принимает.
+        let gemini = s.retain_supported(Some(CloudProvider::Gemini));
+        assert_eq!(gemini.temperature, Some(0.7));
+        assert_eq!(gemini.max_tokens, Some(256));
+        assert_eq!(gemini.top_k, None);
         // Claude — только max_tokens + reasoning: temperature/top_k обнуляются,
         // thinking сохраняется.
         let claude = s.retain_supported(Some(CloudProvider::Claude));
