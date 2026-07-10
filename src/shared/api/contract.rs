@@ -34,12 +34,17 @@ impl ApiRole {
 }
 
 /// Вызов инструмента ассистентом (в истории assistant-сообщения). См. spec §9.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct ApiToolCall {
     pub id: String,
     pub name: String,
     /// Аргументы как JSON-строка (так их отдаёт/принимает сервер).
     pub arguments: String,
+    /// Подпись мысли, привязанная к вызову (Gemini 3 `thoughtSignature`). Нужна для
+    /// переотправки при tool-use: Gemini 3 требует её на `functionCall`-частях (иначе
+    /// `400`). Прочие бэкенды — `None` (у Anthropic/OpenAI подпись одна на ход и едет
+    /// через [`ThinkingRef`]). См. docs/research/gemini-native-client.md §2.3.
+    pub thought_signature: Option<String>,
 }
 
 /// Блок рассуждений (extended thinking / reasoning item) для переотправки в истории.
@@ -210,6 +215,9 @@ pub struct ToolCallDelta {
     pub name: Option<String>,
     /// Дельта строки аргументов (склеивается).
     pub arguments: String,
+    /// Подпись мысли вызова (Gemini 3 `thoughtSignature`). Эмитит только Gemini-клиент
+    /// (у прочих `None`); накапливается в [`ApiToolCall::thought_signature`].
+    pub thought_signature: Option<String>,
 }
 
 /// Инкрементальный фрагмент ответа модели.
@@ -240,11 +248,7 @@ pub struct ToolCallAccumulator {
 impl ToolCallAccumulator {
     pub fn push(&mut self, delta: ToolCallDelta) {
         while self.calls.len() <= delta.index {
-            self.calls.push(ApiToolCall {
-                id: String::new(),
-                name: String::new(),
-                arguments: String::new(),
-            });
+            self.calls.push(ApiToolCall::default());
         }
         let call = &mut self.calls[delta.index];
         if let Some(id) = delta.id
@@ -256,6 +260,12 @@ impl ToolCallAccumulator {
             && !name.is_empty()
         {
             call.name = name;
+        }
+        // Подпись мысли (Gemini) приходит вместе с вызовом — сохраняем на нём.
+        if let Some(sig) = delta.thought_signature
+            && !sig.is_empty()
+        {
+            call.thought_signature = Some(sig);
         }
         call.arguments.push_str(&delta.arguments);
     }
@@ -325,12 +335,14 @@ mod tests {
     fn accumulator_assembles_split_tool_call() {
         let mut acc = ToolCallAccumulator::default();
         acc.push(ToolCallDelta {
+            thought_signature: None,
             index: 0,
             id: Some("call_1".into()),
             name: Some("note_save".into()),
             arguments: "{\"con".into(),
         });
         acc.push(ToolCallDelta {
+            thought_signature: None,
             index: 0,
             id: None,
             name: None,
@@ -344,15 +356,32 @@ mod tests {
     }
 
     #[test]
+    fn accumulator_carries_thought_signature() {
+        // Gemini кладёт подпись на дельту вызова — она оседает на собранном ApiToolCall.
+        let mut acc = ToolCallAccumulator::default();
+        acc.push(ToolCallDelta {
+            index: 0,
+            id: Some("calc-0".into()),
+            name: Some("calc".into()),
+            arguments: "{}".into(),
+            thought_signature: Some("SIG".into()),
+        });
+        let calls = acc.finish();
+        assert_eq!(calls[0].thought_signature.as_deref(), Some("SIG"));
+    }
+
+    #[test]
     fn accumulator_handles_two_parallel_calls() {
         let mut acc = ToolCallAccumulator::default();
         acc.push(ToolCallDelta {
+            thought_signature: None,
             index: 0,
             id: Some("a".into()),
             name: Some("f".into()),
             arguments: "{}".into(),
         });
         acc.push(ToolCallDelta {
+            thought_signature: None,
             index: 1,
             id: Some("b".into()),
             name: Some("g".into()),

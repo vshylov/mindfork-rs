@@ -992,6 +992,7 @@ mod tests {
         // A1 (с вызовом send_followup_message) → tool → A2 (new_bubble).
         let mut a1 = Message::assistant("Первое сообщение.");
         a1.tool_calls = vec![ToolCallRecord {
+            thought_signature: None,
             id: "c1".into(),
             name: "send_followup_message".into(),
             arguments: serde_json::json!({}),
@@ -1024,6 +1025,7 @@ mod tests {
         // Обычный agentic-раунд (note_save) по-прежнему склеивается в один пузырь.
         let mut a1 = Message::assistant("Ищу.");
         a1.tool_calls = vec![ToolCallRecord {
+            thought_signature: None,
             id: "c1".into(),
             name: "note_save".into(),
             arguments: serde_json::json!({}),

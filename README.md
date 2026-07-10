@@ -47,7 +47,7 @@
   пользователя** — потоковый предпросмотр на месте поля ввода, по завершении текст
   вставляется в ввод (`Esc` отменяет). Непустой ввод используется как затравка —
   модель продолжает начатое. Отдельный сервер и семплинг: `shared` (тот же сервер,
-  что у ассистента) / `managed` / `external`.
+  что у ассистента) / `managed` / `external` / облако (`openai` / `gemini` / `claude`).
 - **Спелл-чек на лету** для русского и английского (Hunspell): подчёркивание
   ошибок, попап подсказок (`Ctrl+G`), персональный словарь.
 - **Темы** auto / dark / light, оверлей помощи по клавишам (`F1` / `?`).
@@ -150,13 +150,20 @@
 сознательно **не используется**. Поддерживаются несколько провайдеров за одним
 контрактом ([ADR 0004](docs/decisions/0004-engine-contract-multi-provider.md)):
 - **локальный OpenAI-совместимый сервер** — managed `llama-server` (приложение само
-  запускает процесс) или любой external (vLLM / LM Studio / Ollama);
-- **облако OpenAI / Gemini** (через OpenAI-совместимый endpoint) — `OpenAiClient` с
-  Bearer-ключом и провайдеро-зависимой фильтрацией сэмплинга;
-- **облако Anthropic (Claude)** — отдельный `AnthropicClient` (Messages API
-  `/v1/messages`, `x-api-key`) с поддержкой **extended thinking (CoT)**: adaptive
-  thinking + видимые «мысли», корректные и при вызове инструментов (переотправка
-  thinking-блока с подписью в том же ходе).
+  запускает процесс) или любой external (vLLM / LM Studio / Ollama), `OpenAiClient`
+  (Chat Completions, сэмплинг шлётся как есть);
+- **облако OpenAI** — `ResponsesClient` (Responses API `/v1/responses`, Bearer-ключ):
+  резюме рассуждений («мысли»), `reasoning.effort`, `text.verbosity`; рассуждение
+  переотправляется вместе с вызовом инструмента (reasoning-элемент);
+- **облако Google Gemini** — нативный `GeminiClient` (`generateContent`,
+  `x-goog-api-key`): резюме «мыслей» (`thinkingConfig.includeThoughts`), глубина
+  `thinkingLevel` (3.x) / `thinkingBudget` (2.5), `top_k`; подпись мысли
+  (`thoughtSignature`) переотправляется на вызове инструмента (обязательна для
+  Gemini 3);
+- **облако Anthropic (Claude)** — `AnthropicClient` (Messages API `/v1/messages`,
+  `x-api-key`) с **extended thinking (CoT)**: adaptive thinking + видимые «мысли»,
+  корректные и при вызове инструментов (переотправка thinking-блока с подписью в
+  том же ходе).
 
 Выбор провайдера — в настройках единым селектором режима (`managed` / `external` /
 `openai` / `gemini` / `claude`); API-ключ задаётся **именем env-переменной** (сам
@@ -184,7 +191,9 @@
   `Idle / Generating / Cancelling`.
 - **EOS** по token-id на сервере (поле `stop` не отправляется — анти-самообрыв);
   «мысли» из `delta.reasoning_content` с фолбэком на парсинг `<think>` (llama.cpp),
-  у Claude — `thinking_delta` + подпись для round-trip при tool-use.
+  у Claude — `thinking_delta` + подпись, у OpenAI Responses — `reasoning.summary` +
+  reasoning-элемент, у Gemini — части `thought:true` + `thoughtSignature` на вызове
+  (всё для корректного round-trip при tool-use).
 - **Хранение**: JSON (конфиг/профили/чаты) + SQLite/sqlite-vec (заметки/RAG),
   изоляция по `profile_id`, мягкое удаление везде.
 - **Эмбеддинги** — выделенный embedding-сервер ([ADR 0002](docs/decisions/0002-embeddings-dedicated-server.md)).
@@ -200,7 +209,7 @@
 | `src/widgets/` | `message_feed`, `input_box`, `chat_list`, `profile_list`, `status_bar` |
 | `src/features/` | `tools/*`, `spellcheck/*`, `profiles`, `chat_search_sort`, `rename_chat`, `migration` |
 | `src/entities/` | доменные типы: `chat`, `message`, `profile`, `note`, `rag`, `sampling` |
-| `src/shared/` | `api` (`contract` + реализации `openai`/`anthropic`/`managed` за трейтом `EngineBackend`), `storage`, `config`, `paths`, `theme`, `markdown`, `wrap`, `keys`, `logging`, … |
+| `src/shared/` | `api` (`contract` + реализации `openai` (Chat Completions + `responses/`), `gemini`, `anthropic`, `managed` за трейтом `EngineBackend`), `storage`, `config`, `paths`, `theme`, `markdown`, `wrap`, `keys`, `logging`, … |
 
 UI-крейты выбраны под ratatui 0.30 ([ADR 0001](docs/decisions/0001-ui-crates-ratatui-030.md)):
 `tui-scrollview`, ввод — **собственный виджет** (даёт полный контроль над
@@ -362,7 +371,9 @@ markdown + склейка при извлечении), **имперсонаци
 managed/external), **«модель себя»/собеседника** (`F3`) и **связность заметок**
 (семантический recall, граф связей, замещение со «шрамом», авто-«сон», нарратив как
 заметки). **Мульти-провайдерный инференс** ([ADR 0004](docs/decisions/0004-engine-contract-multi-provider.md)):
-локальный llama.cpp + облако **OpenAI / Gemini / Anthropic (Claude)** за единым
-контрактом. **729 юнит-тестов** зелёные; **25 `#[ignore]`-смоуков** прогнаны на живой
-связке **Gemma 4 31B + bge-m3** (`llama-server`), **Claude 4.x** — на живом Anthropic
-API по ключу.
+локальный llama.cpp + облако **OpenAI (Responses API) / Google Gemini (нативный
+`generateContent`) / Anthropic (Claude)** за единым контрактом, каждый с резюме
+рассуждений/«мыслей» и корректным round-trip при tool-use. **853 юнит-теста** зелёные;
+`#[ignore]`-смоуки прогнаны на живой связке **Gemma 4 31B + bge-m3** (`llama-server`),
+**Claude 4.x** — на живом Anthropic API, **Gemini 3.1 Pro** — на живом Gemini API по
+ключу.

@@ -544,6 +544,8 @@ fn spawn_generation(spawn: GenSpawn) {
                         name: call.name.clone(),
                         arguments: args,
                         result: Some(result.clone()),
+                        // Подпись мысли (Gemini 3) персистим — нужна на реплее истории.
+                        thought_signature: call.thought_signature.clone(),
                     });
                     tool_msgs.push(tool_message(call, result));
                 }

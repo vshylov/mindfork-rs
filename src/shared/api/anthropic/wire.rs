@@ -361,6 +361,7 @@ mod tests {
             ApiMessage::assistant_tool_calls(
                 "",
                 vec![ApiToolCall {
+                    thought_signature: None,
                     id: "t1".into(),
                     name: "calc".into(),
                     arguments: "{\"x\":1}".into(),
@@ -391,6 +392,7 @@ mod tests {
                 ApiMessage::assistant_tool_calls(
                     "",
                     vec![ApiToolCall {
+                        thought_signature: None,
                         id: "t1".into(),
                         name: "get_sampling".into(),
                         arguments: raw.into(),
@@ -515,6 +517,7 @@ mod tests {
             ApiMessage::assistant_tool_calls(
                 "",
                 vec![ApiToolCall {
+                    thought_signature: None,
                     id: "t1".into(),
                     name: "calc".into(),
                     arguments: "{\"x\":1}".into(),
@@ -544,6 +547,7 @@ mod tests {
             ApiMessage::assistant_tool_calls(
                 "",
                 vec![ApiToolCall {
+                    thought_signature: None,
                     id: "t1".into(),
                     name: "calc".into(),
                     arguments: "{}".into(),

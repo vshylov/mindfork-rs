@@ -116,7 +116,7 @@ impl EngineBackend for ResponsesClient {
                                         item: RespItem::FunctionCall { call_id, name },
                                     }) => {
                                         saw_tool_call = true;
-                                        yield ChatChunk::ToolCall(ToolCallDelta {
+                                        yield ChatChunk::ToolCall(ToolCallDelta { thought_signature: None,
                                             index: output_index,
                                             id: Some(call_id),
                                             name: Some(name),
@@ -124,7 +124,7 @@ impl EngineBackend for ResponsesClient {
                                         });
                                     }
                                     Ok(RespEvent::FunctionArgsDelta { output_index, delta }) => {
-                                        yield ChatChunk::ToolCall(ToolCallDelta {
+                                        yield ChatChunk::ToolCall(ToolCallDelta { thought_signature: None,
                                             index: output_index,
                                             id: None,
                                             name: None,
@@ -367,6 +367,7 @@ mod ignored_smoke {
                 ApiMessage::assistant_tool_calls(
                     "",
                     vec![ApiToolCall {
+                        thought_signature: None,
                         id: call.id.clone(),
                         name: call.name.clone(),
                         arguments: call.arguments.clone(),

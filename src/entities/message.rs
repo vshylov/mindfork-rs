@@ -25,6 +25,12 @@ pub struct ToolCallRecord {
     pub arguments: serde_json::Value,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub result: Option<String>,
+    /// Подпись мысли (Gemini 3 `thoughtSignature`), привязанная к этому вызову.
+    /// Персистится ради реплея истории: Gemini 3 требует подпись на исторических
+    /// `functionCall` (иначе `400`). Прочие провайдеры — `None` (у Anthropic/OpenAI
+    /// подпись одна на ход и не персистится). См. docs/research/gemini-native-client.md §2.3.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub thought_signature: Option<String>,
 }
 
 /// Снимок параметров генерации, фактически применённых к сообщению.
@@ -136,5 +142,38 @@ mod tests {
         assert!(m.is_markdown);
         assert!(m.tool_calls.is_empty());
         assert!(m.thoughts.is_none());
+    }
+
+    #[test]
+    fn tool_call_thought_signature_defaults_and_roundtrips() {
+        // Старая запись без поля читается как None (без миграции).
+        let raw = r#"{"id":"c1","name":"calc","arguments":{}}"#;
+        let rec: ToolCallRecord = serde_json::from_str(raw).unwrap();
+        assert!(rec.thought_signature.is_none());
+        // С подписью — round-trip; пустое поле не сериализуется.
+        let with_sig = ToolCallRecord {
+            id: "c1".into(),
+            name: "calc".into(),
+            arguments: serde_json::json!({}),
+            result: None,
+            thought_signature: Some("SIG".into()),
+        };
+        let json = serde_json::to_string(&with_sig).unwrap();
+        assert!(json.contains("thought_signature"));
+        let back: ToolCallRecord = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.thought_signature.as_deref(), Some("SIG"));
+        // Без подписи — ключ отсутствует (skip_serializing_if).
+        let no_sig = ToolCallRecord {
+            id: "c1".into(),
+            name: "calc".into(),
+            arguments: serde_json::json!({}),
+            result: None,
+            thought_signature: None,
+        };
+        assert!(
+            !serde_json::to_string(&no_sig)
+                .unwrap()
+                .contains("thought_signature")
+        );
     }
 }

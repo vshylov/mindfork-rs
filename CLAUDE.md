@@ -3929,6 +3929,129 @@ web-поиск и Python под выключателями, экран наст�
   `code_interpreter` — конфликтуют с клиентским agentic-loop), нативный Gemini через
   свой протокол (следующее направление).
 
+### Пост-M9: нативный клиент Gemini (generateContent) — Фаза A (сделано)
+- **Режим `gemini` переведён с OpenAI-совместимого Chat Completions на нативный
+  `generateContent`/`streamGenerateContent`** — исследование и план в
+  [docs/research/gemini-native-client.md](docs/research/gemini-native-client.md), ADR 0004.
+  Мотив: у compat-пути (`OpenAiClient`+`WireDialect::Gemini`) строгий диалект вычищал
+  reasoning — «мыслей» и управления глубиной не было вовсе (даже `top_k`, который Gemini
+  принимает нативно, резался). Нативный API — **новая реализация `EngineBackend`** рядом
+  с `AnthropicClient`/`ResponsesClient` (слои выше движка не тронуты). **Фаза A** — ядро
+  (мысли + reasoning, без подписей); **Фаза B** (подписи мыслей Gemini 3 при tool-use) —
+  следующим шагом.
+- **Новый модуль `shared/api/gemini/`** (`GeminiClient` + `wire`): бьёт в
+  `…/v1beta/models/{model}:streamGenerateContent?alt=sse` (заголовок `x-goog-api-key`),
+  `wire::build_request` транслирует `ChatRequest` → Gemini: system → top-level
+  `systemInstruction:{parts:[{text}]}`; история → `contents:[{role:"user"|"model",
+  parts}]` (ролей `system`/`tool` нет — system top-level, результат инструмента → часть
+  `functionResponse:{name,response:{result}}` в `role:"user"`; соседние одной роли
+  склеиваются); вызов → часть `{functionCall:{name,args}}` (`args` — **объект**, не
+  строка; у Gemini нет `call_id` → клиент синтезирует стабильный `id` `"{name}-{index}"`,
+  парность functionResponse — по нему); `max_tokens`→`generationConfig.maxOutputTokens`;
+  reasoning → `thinkingConfig`. SSE-части: `text`→`Text`, `text`+`thought:true`→`Thoughts`,
+  `functionCall`→`ToolCall` (args целым чанком), `usageMetadata`→`Usage`
+  (`thoughtsTokenCount`→`reasoning_tokens`), `finishReason`→`Finished`
+  (`MAX_TOKENS`→`Length`; наличие вызовов→`ToolCalls` даже при `STOP`). Тело ошибки не
+  глотается (как прочие клиенты). Эмбеддингов клиент не даёт — RAG в режиме Gemini берёт
+  их через OpenAI-совместимый `…/v1beta/openai/embeddings` (`OpenAiClient`), как у Anthropic.
+- **thinkingConfig + инференс поколения** (внесён уже в Фазу A): `includeThoughts:true`
+  при `thinking==Some(true)`; глубина — Gemini 3.x через `thinkingLevel`
+  (`minimal/low/medium/high`), Gemini 2.5 через `thinkingBudget` (токены; зеркало таблицы
+  compat: low→1024/medium→8192/high→24576). Поколение — грубым инференсом по имени модели
+  (`gemini-3*`). `reasoning_budget==Some(0)` (импперсонация/авто-название) глушит:
+  `thinkingBudget:0` (2.5 — выключить) / `thinkingLevel:"minimal"` (3.x — полностью
+  выключить нельзя, как у OpenAI `effort:none` не у всех). `verbosity` у Gemini нет.
+  Санитизация схем инструментов под OpenAPI-подмножество (снятие `$schema`/
+  `additionalProperties`; Фаза C уточнит по живым схемам).
+- **Семплинг**: `supported_sampling_fields(Gemini)` = `temperature`/`top_p`/**`top_k`**/
+  `max_tokens`/`seed`/`frequency_penalty`/`presence_penalty` + **reasoning**
+  (`thinking`/`reasoning_effort`), без `verbosity`. Отличия от прежнего compat:
+  **+`top_k`** (нативно принимается) **+reasoning**. Единый источник истины → UI секции
+  «Семплинг», `get/set_sampling` и снимок `Message.metadata` подхватывают автоматически.
+- **`WireDialect` удалён целиком** (после переезда Gemini осиротел — единственным
+  строгим потребителем был он; `OpenAi` уже ушёл на Responses ранее): вместе с
+  `is_strict`/`restrict_to_strict` и параметром `dialect` в `build_chat_request`/
+  `OpenAiClient` (`openai/wire.rs` похудел на ~160 строк). `OpenAiClient` остаётся для
+  external/прокси и эмбеддингов, шлёт сэмплинг как есть (llama.cpp игнорирует незнакомое).
+- **Супервайзер**: `cloud_chat_setup` ветка `Gemini` → `GeminiClient`; новый
+  `CloudProvider::chat_base_url()` даёт нативный `…/v1beta` для чата, а `base_url()`
+  (`…/v1beta/openai`) остаётся для эмбеддингов. Импперсонация в режиме Gemini получает
+  нативный клиент автоматически (та же `cloud_chat_setup`).
+- **Тесты**: wire (system top-level; generationConfig; thinkingBudget для 2.5 /
+  thinkingLevel для 3.x / force_off; санитизация схем; functionCall/functionResponse +
+  склейка; coercion не-объекта args; разбор SSE-частей — текст/мысль/вызов/usage);
+  client (маппинг finishReason, срез префикса `models/`). **848 юнит-тестов зелёные**
+  (+13), 3 `#[ignore]`-смоука (`MINDFORK_GEMINI_KEY`: генерация, поток мыслей, один
+  tool-раунд), clippy `-D warnings`/fmt чисты. Живой прогон на реальном ключе — вне CI.
+
+### Пост-M9: нативный клиент Gemini — Фаза B (подписи мыслей при tool-use) (сделано)
+- **Подписи мыслей Gemini 3 (`thoughtSignature`) для tool-use round-trip** — уникальное
+  отличие от Anthropic/OpenAI: у Gemini подпись привязана к **конкретной части**
+  (`functionCall`), а не одна на ход, и **обязательна для Gemini 3** (иначе `400`:
+  «missing thought_signature» на историческом вызове). Поэтому существующий
+  `ThinkingRef`/`ThinkingBlock` (один на ход) **не переиспользуется** — подпись едет на
+  самом вызове. См. docs/research/gemini-native-client.md §2.3.
+- **Контракт**: `ApiToolCall.thought_signature: Option<String>` и
+  `ToolCallDelta.thought_signature` (`ApiToolCall` получил `Default`); `ToolCallAccumulator::
+  push` копит подпись в нужный вызов по `index` (у параллельных вызовов Gemini кладёт
+  подпись только на первый — accumulator это переживает, прочие `None`). Прочие бэкенды
+  поле не выставляют.
+- **Домен (персист)**: `ToolCallRecord.thought_signature: Option<String>` (`#[serde(default,
+  skip_serializing_if=Option::is_none)]` → старые чаты без миграции; пустое не засоряет
+  JSON). Персист **обязателен**: `message_to_api`/`record_to_api` пересобирают историю на
+  каждой генерации, и без подписи на историческом `functionCall` Gemini 3 вернёт `400`.
+  Подпись опаковая/зашифрованная — хранить безопасно.
+- **Проводка**: Gemini-клиент кладёт `part.thought_signature` в `ToolCallDelta`; wire
+  `build_contents` переотправляет её соседом `functionCall` (`thoughtSignature`) при
+  наличии; `generation.rs` персистит `call.thought_signature` в `ToolCallRecord`;
+  `record_to_api` протягивает обратно на реплее. Внутри одной генерации подпись едет через
+  `out.calls` (accumulator → `assistant_tool_calls`), между генерациями — через персист.
+  Round-level `thinking_ref`/`.with_thinking` (Anthropic/OpenAI) **не тронут** — Gemini его
+  не использует.
+- **Развилка «персист vs подпись-только-текущего-хода»** (§7-1): требует ли Gemini 3
+  подпись у **всех** исторических `functionCall` или лишь у самого свежего хода — под
+  живой ключ. По умолчанию проектируем **с персистом** (безопаснее); если живой прогон
+  покажет, что хватает подписи-в-памяти (как у Anthropic), персист можно снять.
+- **Известное ограничение**: подписи на **text-частях** (чисто-reasoning ход без вызова)
+  не персистятся — наш реплей assistant-текста их не несёт; жёсткое требование Gemini 3
+  касается только `functionCall`-частей.
+- **Тесты**: wire (эмит `thoughtSignature` соседом `functionCall` при наличии; отсутствие
+  ключа без подписи); contract (проброс подписи через accumulator); message (serde:
+  дефолт-`None` у старой записи, round-trip, `skip` пустого). **851 юнит-тест зелёный**
+  (+3), +`#[ignore]`-смоук `tool_use_round_trips_signature` (Gemini 3: раунд-2 с
+  переотправкой подписи без `400`). clippy `-D warnings`/fmt чисты.
+- **Живой прогон — GO** (Gemini 3.1 Pro Preview, `MINDFORK_GEMINI_MODEL=gemini-3.1-pro-preview`):
+  все 4 gemini-смоука зелёные (генерация, поток «мыслей» через `includeThoughts`, один
+  tool-раунд, round-trip подписи) — у `tool_use_round_trips_signature` подпись пришла
+  (`thought_signature present: true`) и переотправка прошла **без `400`**. Механизм
+  подписей и обе фазы подтверждены на живой модели; развилка §7-1 закрыта выбором дизайна
+  (всегда переотправляем → failure-mode недостижим), персист оставлен.
+
+### Пост-M9: нативный Gemini — Фаза C (частично: force-off 2.5 Pro + сюрфейс блокировок) (сделано)
+- Два точечных фикса корректности по итогам Фаз A+B (docs/research/gemini-native-client.md
+  §8 Фаза C). Полная санитизация схем инструментов и явный UI-выбор `thinkingLevel`/
+  `thinkingBudget` — отложены (по сканированию схемы инструментов чистые: из «экзотики»
+  только `enum`, который Gemini принимает; ни `$ref`/`oneOf`/`nullable`/… нет).
+- **Кламп force-off на Gemini 2.5 Pro** (`wire::thinking_config`): 2.5 Pro **не умеет
+  выключать мысли** (`thinkingBudget` минимум 128) — прежний `reasoning_budget==0`
+  (импперсонация/авто-название) слал `thinkingBudget:0` → `400`. Теперь для 2.5 Pro
+  (`is_gemini_25_pro` = имя содержит `gemini-2.5-pro`) force-off шлёт `128` (+
+  `includeThoughts:false`); Flash/Flash-Lite по-прежнему `0` (у них `0` выключает).
+  Узкий баг (только 2.5 Pro + глушение), но конкретный.
+- **Сюрфейс блокировок** (`client.rs`): раньше `finishReason` вроде `SAFETY`/`RECITATION`
+  и блок промпта сводились к пустому `Stop` — пользователь видел молчаливый пустой ход.
+  Теперь: (1) `promptFeedback.blockReason` (запрос отклонён фильтром до генерации, новый
+  тип `PromptFeedback` в wire) и (2) блокирующие `finishReason` (`is_block_reason`:
+  SAFETY/RECITATION/BLOCKLIST/PROHIBITED_CONTENT/SPII/IMAGE_SAFETY/MALFORMED_FUNCTION_CALL/
+  OTHER, кроме случая с вызовом инструмента) → эмитят заметку `ChatChunk::Text`
+  («⚠ Gemini не выдал ответ (причина: …)») + лог `warn`, чтобы пустой ход был объясним.
+  `Finished(Stop)` (не Error) — обычное завершение хода с пояснением в ленте.
+- **Тесты**: wire (force-off 2.5 Pro → 128; разбор `promptFeedback.blockReason`); client
+  (`is_block_reason`/`block_note`). **853 юнит-теста зелёные** (+2), clippy `-D warnings`/
+  fmt чисты. **Задел (не Фаза C)**: подписи мыслей на text-частях (не персистятся —
+  жёсткое требование Gemini 3 только для functionCall); проверка полного реестра
+  инструментов против Gemini (по живому прогону — чинить только реальные `400`).
+
 ### Отложено за пределы M3
 - **Сворачивание/выделение per-message** и tool-блоки в ленте — сейчас «мысли»
   сворачиваются глобально (`Ctrl+T`); выделение сообщений и tool-блоки — на M5.

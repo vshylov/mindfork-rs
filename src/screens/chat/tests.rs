@@ -63,6 +63,7 @@ fn live_stream_with_tool_matches_reload() {
     // Reload: те же раунды как доменные сообщения (assistant+tool / assistant).
     let mut r1 = Message::assistant("Ищу погоду.");
     r1.tool_calls = vec![ToolCallRecord {
+        thought_signature: None,
         id: "c1".into(),
         name: "web_search".into(),
         arguments: serde_json::json!({"q": "погода"}),
@@ -110,6 +111,7 @@ fn live_followup_makes_two_bubbles_matching_reload() {
     // Reload: A1 (с управляющим вызовом) → tool → A2 (new_bubble).
     let mut a1 = Message::assistant("Первое сообщение.");
     a1.tool_calls = vec![ToolCallRecord {
+        thought_signature: None,
         id: "c1".into(),
         name: "send_followup_message".into(),
         arguments: serde_json::json!({}),

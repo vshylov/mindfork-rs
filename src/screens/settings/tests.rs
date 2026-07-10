@@ -685,11 +685,13 @@ fn cloud_hides_unsupported_sampling_params() {
     // Локально (managed по умолчанию) — видны все параметры.
     assert!(has(&s, SamplingParam::TopK));
     assert!(has(&s, SamplingParam::Thinking));
-    // Облако (Gemini): расширения llama.cpp/reasoning скрыты, базовые — видны.
+    // Облако (Gemini, нативный): расширения llama.cpp (min_p) скрыты, а базовые +
+    // top_k + reasoning — видны.
     s.config.engine.mode = ServerMode::Gemini;
-    assert!(!has(&s, SamplingParam::TopK));
-    assert!(!has(&s, SamplingParam::Thinking));
-    assert!(!has(&s, SamplingParam::Reasoning));
+    assert!(!has(&s, SamplingParam::MinP));
+    assert!(has(&s, SamplingParam::TopK));
+    assert!(has(&s, SamplingParam::Thinking));
+    assert!(has(&s, SamplingParam::Reasoning));
     assert!(has(&s, SamplingParam::Temp));
     assert!(has(&s, SamplingParam::TopP));
     assert!(has(&s, SamplingParam::MaxTokens));
