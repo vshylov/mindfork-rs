@@ -587,6 +587,7 @@ mod tests {
                 ApiMessage::assistant_tool_calls(
                     "",
                     vec![ApiToolCall {
+                        thought_signature: None,
                         id: "c1".into(),
                         name: "f".into(),
                         arguments: "{}".into(),

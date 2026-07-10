@@ -11,7 +11,8 @@
 //! - reasoning — `generationConfig.thinkingConfig` (`thinkingLevel` для Gemini 3.x /
 //!   `thinkingBudget` для 2.5 + `includeThoughts` для видимого резюме «мыслей»).
 //!
-//! Подписи мыслей (`thoughtSignature` на частях) — Фаза B (здесь не ставятся).
+//! Подписи мыслей (`thoughtSignature`) — сосед `functionCall`-части; переотправляются
+//! на реплее истории (Gemini 3 иначе `400`), из [`ApiToolCall::thought_signature`](crate::shared::api::contract::ApiToolCall).
 //! Событийный SSE (`?alt=sse`): строки `data: {…}` с частичным `GenerateContentResponse`.
 
 use serde::{Deserialize, Serialize};
@@ -203,9 +204,17 @@ fn build_contents(req: &ChatRequest) -> Vec<Value> {
                         .ok()
                         .filter(Value::is_object)
                         .unwrap_or_else(|| json!({}));
-                    parts.push(json!({
+                    let mut part = json!({
                         "functionCall": { "name": tc.name, "args": args }
-                    }));
+                    });
+                    // Подпись мысли (Gemini 3) — сосед functionCall в той же части.
+                    // Без неё Gemini 3 отвергает исторический вызов (`400`). См. §2.3.
+                    if let Some(sig) = &tc.thought_signature
+                        && let Some(obj) = part.as_object_mut()
+                    {
+                        obj.insert("thoughtSignature".into(), json!(sig));
+                    }
+                    parts.push(part);
                 }
                 push("model", parts);
             }
@@ -313,10 +322,9 @@ pub struct Part {
     pub thought: Option<bool>,
     #[serde(default)]
     pub function_call: Option<FunctionCall>,
-    /// Подпись мысли на части (Gemini 3). Читается на Фазе B (переотправка при tool-use);
-    /// на Фазе A разбирается, но не используется. См. docs/research/gemini-native-client.md §2.3.
+    /// Подпись мысли на части (Gemini 3 `thoughtSignature`). Клиент кладёт её на вызов
+    /// (`ToolCallDelta`→`ApiToolCall`) для переотправки при tool-use. См. §2.3.
     #[serde(default)]
-    #[allow(dead_code)]
     pub thought_signature: Option<String>,
 }
 
@@ -456,6 +464,7 @@ mod tests {
             ApiMessage::assistant_tool_calls(
                 "",
                 vec![ApiToolCall {
+                    thought_signature: None,
                     id: "calc-0".into(),
                     name: "calc".into(),
                     arguments: "{\"x\":1}".into(),
@@ -481,12 +490,54 @@ mod tests {
     }
 
     #[test]
+    fn function_call_emits_thought_signature_when_present() {
+        // Фаза B: подпись мысли (Gemini 3) переотправляется соседом functionCall.
+        let with_sig = base_req(vec![
+            ApiMessage::user("посчитай"),
+            ApiMessage::assistant_tool_calls(
+                "",
+                vec![ApiToolCall {
+                    id: "calc-0".into(),
+                    name: "calc".into(),
+                    arguments: "{}".into(),
+                    thought_signature: Some("SIG-XYZ".into()),
+                }],
+            ),
+        ]);
+        let json = serde_json::to_value(build_request(&with_sig, "gemini-3-pro")).unwrap();
+        let part = &json["contents"][1]["parts"][0];
+        assert_eq!(part["functionCall"]["name"], "calc");
+        assert_eq!(part["thoughtSignature"], "SIG-XYZ");
+
+        // Без подписи ключ не появляется.
+        let no_sig = base_req(vec![
+            ApiMessage::user("посчитай"),
+            ApiMessage::assistant_tool_calls(
+                "",
+                vec![ApiToolCall {
+                    id: "calc-0".into(),
+                    name: "calc".into(),
+                    arguments: "{}".into(),
+                    thought_signature: None,
+                }],
+            ),
+        ]);
+        let json = serde_json::to_value(build_request(&no_sig, "gemini-3-pro")).unwrap();
+        assert!(
+            json["contents"][1]["parts"][0]
+                .get("thoughtSignature")
+                .is_none()
+        );
+    }
+
+    #[test]
     fn adjacent_tool_results_merge_into_one_user_content() {
         let r = base_req(vec![
             ApiMessage::user("посчитай"),
             ApiMessage::assistant_tool_calls(
                 "",
                 vec![ApiToolCall {
+                    thought_signature: None,
                     id: "calc-0".into(),
                     name: "calc".into(),
                     arguments: "{}".into(),
@@ -516,6 +567,7 @@ mod tests {
                 ApiMessage::assistant_tool_calls(
                     "",
                     vec![ApiToolCall {
+                        thought_signature: None,
                         id: "f-0".into(),
                         name: "f".into(),
                         arguments: raw.into(),

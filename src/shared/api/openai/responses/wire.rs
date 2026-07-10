@@ -406,6 +406,7 @@ mod tests {
             ApiMessage::assistant_tool_calls(
                 "",
                 vec![ApiToolCall {
+                    thought_signature: None,
                     id: "call_1".into(),
                     name: "calc".into(),
                     arguments: "{\"x\":1}".into(),
@@ -432,6 +433,7 @@ mod tests {
             ApiMessage::assistant_tool_calls(
                 "",
                 vec![ApiToolCall {
+                    thought_signature: None,
                     id: "call_1".into(),
                     name: "calc".into(),
                     arguments: "{}".into(),
@@ -460,6 +462,7 @@ mod tests {
             ApiMessage::assistant_tool_calls(
                 "",
                 vec![ApiToolCall {
+                    thought_signature: None,
                     id: "call_1".into(),
                     name: "calc".into(),
                     arguments: "{}".into(),

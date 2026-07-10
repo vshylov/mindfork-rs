@@ -108,6 +108,7 @@ mod tests {
         let mut m = Message::assistant("ответ");
         m.thoughts = Some("я думаю".into());
         m.tool_calls = vec![ToolCallRecord {
+            thought_signature: None,
             id: "c1".into(),
             name: "note_save".into(),
             arguments: serde_json::json!({"text": "заметка"}),
@@ -220,6 +221,7 @@ mod tests {
         // Пустой текст, но есть вызов инструмента и опция включена → блок не пропадает.
         let mut m = Message::assistant("");
         m.tool_calls = vec![ToolCallRecord {
+            thought_signature: None,
             id: "c1".into(),
             name: "calculate".into(),
             arguments: serde_json::json!({"expr": "2+2"}),
@@ -234,6 +236,7 @@ mod tests {
         // Но при выключенных опциях такое сообщение пропускается целиком.
         let mut m2 = Message::assistant("");
         m2.tool_calls = vec![ToolCallRecord {
+            thought_signature: None,
             id: "c1".into(),
             name: "calculate".into(),
             arguments: serde_json::json!({}),

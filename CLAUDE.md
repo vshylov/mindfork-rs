@@ -3984,6 +3984,43 @@ web-поиск и Python под выключателями, экран наст�
   (+13), 3 `#[ignore]`-смоука (`MINDFORK_GEMINI_KEY`: генерация, поток мыслей, один
   tool-раунд), clippy `-D warnings`/fmt чисты. Живой прогон на реальном ключе — вне CI.
 
+### Пост-M9: нативный клиент Gemini — Фаза B (подписи мыслей при tool-use) (сделано)
+- **Подписи мыслей Gemini 3 (`thoughtSignature`) для tool-use round-trip** — уникальное
+  отличие от Anthropic/OpenAI: у Gemini подпись привязана к **конкретной части**
+  (`functionCall`), а не одна на ход, и **обязательна для Gemini 3** (иначе `400`:
+  «missing thought_signature» на историческом вызове). Поэтому существующий
+  `ThinkingRef`/`ThinkingBlock` (один на ход) **не переиспользуется** — подпись едет на
+  самом вызове. См. docs/research/gemini-native-client.md §2.3.
+- **Контракт**: `ApiToolCall.thought_signature: Option<String>` и
+  `ToolCallDelta.thought_signature` (`ApiToolCall` получил `Default`); `ToolCallAccumulator::
+  push` копит подпись в нужный вызов по `index` (у параллельных вызовов Gemini кладёт
+  подпись только на первый — accumulator это переживает, прочие `None`). Прочие бэкенды
+  поле не выставляют.
+- **Домен (персист)**: `ToolCallRecord.thought_signature: Option<String>` (`#[serde(default,
+  skip_serializing_if=Option::is_none)]` → старые чаты без миграции; пустое не засоряет
+  JSON). Персист **обязателен**: `message_to_api`/`record_to_api` пересобирают историю на
+  каждой генерации, и без подписи на историческом `functionCall` Gemini 3 вернёт `400`.
+  Подпись опаковая/зашифрованная — хранить безопасно.
+- **Проводка**: Gemini-клиент кладёт `part.thought_signature` в `ToolCallDelta`; wire
+  `build_contents` переотправляет её соседом `functionCall` (`thoughtSignature`) при
+  наличии; `generation.rs` персистит `call.thought_signature` в `ToolCallRecord`;
+  `record_to_api` протягивает обратно на реплее. Внутри одной генерации подпись едет через
+  `out.calls` (accumulator → `assistant_tool_calls`), между генерациями — через персист.
+  Round-level `thinking_ref`/`.with_thinking` (Anthropic/OpenAI) **не тронут** — Gemini его
+  не использует.
+- **Развилка «персист vs подпись-только-текущего-хода»** (§7-1): требует ли Gemini 3
+  подпись у **всех** исторических `functionCall` или лишь у самого свежего хода — под
+  живой ключ. По умолчанию проектируем **с персистом** (безопаснее); если живой прогон
+  покажет, что хватает подписи-в-памяти (как у Anthropic), персист можно снять.
+- **Известное ограничение**: подписи на **text-частях** (чисто-reasoning ход без вызова)
+  не персистятся — наш реплей assistant-текста их не несёт; жёсткое требование Gemini 3
+  касается только `functionCall`-частей.
+- **Тесты**: wire (эмит `thoughtSignature` соседом `functionCall` при наличии; отсутствие
+  ключа без подписи); contract (проброс подписи через accumulator); message (serde:
+  дефолт-`None` у старой записи, round-trip, `skip` пустого). **851 юнит-тест зелёный**
+  (+3), +`#[ignore]`-смоук `tool_use_round_trips_signature` (Gemini 3: раунд-2 с
+  переотправкой подписи без `400`). clippy `-D warnings`/fmt чисты.
+
 ### Отложено за пределы M3
 - **Сворачивание/выделение per-message** и tool-блоки в ленте — сейчас «мысли»
   сворачиваются глобально (`Ctrl+T`); выделение сообщений и tool-блоки — на M5.

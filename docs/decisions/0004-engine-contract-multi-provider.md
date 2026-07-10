@@ -152,9 +152,15 @@ llama.cpp-расширений (`dynatemp_*`, `dry_*`, `top_n_sigma`, `mirostat`
   `functionCall` (args-объект, без `call_id` — id синтезируется). Диалект `WireDialect`
   **удалён целиком** (Gemini был последним потребителем; `OpenAiClient` шлёт сэмплинг как
   есть). Эмбеддинги Gemini остаются на OpenAI-совместимом endpoint (`OpenAiClient`,
-  `…/v1beta/openai/embeddings`), как у Anthropic RAG. **Фаза B** (подписи мыслей
-  `thoughtSignature` per-tool-call для Gemini 3 при tool-use — уникальное отличие от
-  Anthropic/OpenAI, где подпись одна на ход) — следующим шагом.
+  `…/v1beta/openai/embeddings`), как у Anthropic RAG.
+- **Нативный Gemini — Фаза B сделана** (2026-07-10): подписи мыслей `thoughtSignature`
+  **per-tool-call** (уникальное отличие от Anthropic/OpenAI, где подпись одна на ход) для
+  Gemini 3 при tool-use. `ApiToolCall`/`ToolCallDelta` (контракт) и `ToolCallRecord`
+  (домен, **персист** без миграции) получили `thought_signature`; accumulator копит её по
+  индексу, Gemini-клиент кладёт из `functionCall`-части, wire переотправляет соседом
+  `functionCall`, `generation.rs`/`record_to_api` персистят и протягивают на реплее
+  истории (иначе Gemini 3 `400`). Round-level `ThinkingRef` (Anthropic/OpenAI) не тронут.
+  Развилку «персист vs подпись-только-текущего-хода» подтвердить на живом ключе.
 - **Раскладка `shared/api` (§2) — выполнена** (после Фазы 2, ради симметрии с
   `anthropic/`): `backend.rs` → `contract.rs` (провайдеро-агностичный контракт);
   `client.rs`+`wire.rs` → `openai/` (с приватным `wire`, re-export `OpenAiClient`/

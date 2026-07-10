@@ -362,7 +362,19 @@ assistant-ходы с tool-вызовами (`ApiMessage::assistant_tool_calls`)
    → **Гейт A**: `cargo fmt`/`clippy -D warnings`/`test` зелёные; живой смоук
    (генерация + мысли + один tool-раунд) на Gemini 2.5/3.
 
-### Фаза B — подписи мыслей (Gemini 3, tool-use round-trip)
+### Фаза B — подписи мыслей (Gemini 3, tool-use round-trip) — СДЕЛАНА
+
+> **Статус (2026-07-10):** реализовано на ветке `feat/gemini-native-client`.
+> `thought_signature: Option<String>` добавлен в `ApiToolCall`/`ToolCallDelta` (контракт)
+> и `ToolCallRecord` (домен, **персист** `#[serde(default, skip_serializing_if)]` → без
+> миграции). Accumulator копит подпись по индексу; Gemini-клиент кладёт её из
+> `functionCall`-части; wire `build_contents` переотправляет соседом `functionCall`;
+> `generation.rs` персистит `call.thought_signature`, `record_to_api` протягивает на
+> реплее истории. Round-level `thinking_ref` (Anthropic/OpenAI) не тронут. **+3 unit-теста**
+> (эмит подписи в wire; проброс через accumulator; serde-роунд-трип записи) + `#[ignore]`
+> smoke `tool_use_round_trips_signature` (Gemini 3). Развилку «персист vs текущий ход»
+> подтвердить на живом ключе (§7-1) — по умолчанию персистим (безопаснее). fmt/clippy/test
+> зелёные (**851 passed**).
 
 Отличие Gemini от Anthropic/OpenAI: подпись **per-tool-call**, не одна на ход →
 существующий `ThinkingRef`/`ThinkingBlock` не переиспользуем, а добавляем поле в вызов.

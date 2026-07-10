@@ -118,7 +118,7 @@ impl EngineBackend for AnthropicClient {
                                         index,
                                         content_block: AntStartBlock::ToolUse { id, name },
                                     }) => {
-                                        yield ChatChunk::ToolCall(ToolCallDelta {
+                                        yield ChatChunk::ToolCall(ToolCallDelta { thought_signature: None,
                                             index,
                                             id: Some(id),
                                             name: Some(name),
@@ -140,7 +140,7 @@ impl EngineBackend for AnthropicClient {
                                             });
                                         }
                                         AntDelta::InputJsonDelta { partial_json } => {
-                                            yield ChatChunk::ToolCall(ToolCallDelta {
+                                            yield ChatChunk::ToolCall(ToolCallDelta { thought_signature: None,
                                                 index,
                                                 id: None,
                                                 name: None,
@@ -367,6 +367,7 @@ mod ignored_smoke {
                 ApiMessage::assistant_tool_calls(
                     "",
                     vec![ApiToolCall {
+                        thought_signature: None,
                         id: call.id.clone(),
                         name: call.name.clone(),
                         arguments: call.arguments.clone(),

@@ -142,6 +142,8 @@ impl EngineBackend for GeminiClient {
                                                 id: Some(format!("{}-{}", fc.name, tool_index)),
                                                 name: Some(fc.name.clone()),
                                                 arguments: fc.args.to_string(),
+                                                // Подпись мысли (Gemini 3) — на functionCall-части.
+                                                thought_signature: part.thought_signature.clone(),
                                             });
                                             tool_index += 1;
                                         } else if let Some(text) = &part.text {
@@ -339,5 +341,106 @@ mod ignored_smoke {
         let calls = acc.finish();
         assert!(!calls.is_empty(), "expected a tool call");
         assert_eq!(calls[0].name, "get_weather");
+    }
+
+    /// Фаза B: tool-use round-trip с переотправкой подписи мысли. На **Gemini 3**
+    /// (`MINDFORK_GEMINI_MODEL=gemini-3-*`) первый раунд даёт вызов + `thoughtSignature`;
+    /// второй переотправляет её на `functionCall` + результат — Gemini не должен вернуть
+    /// `400` («missing thought_signature»). На 2.5 подпись опциональна (раунд тоже
+    /// проходит). Проверяет: подпись пришла и переотправка не ломает раунд.
+    #[tokio::test]
+    #[ignore = "requires MINDFORK_GEMINI_KEY (live Gemini API), Gemini 3 for signatures"]
+    async fn tool_use_round_trips_signature() {
+        let Some(client) = client_from_env() else {
+            eprintln!("skip: MINDFORK_GEMINI_KEY not set");
+            return;
+        };
+        let tool = ToolSchema {
+            name: "get_weather".into(),
+            description: "Get the current weather for a city.".into(),
+            parameters: serde_json::json!({
+                "type": "object",
+                "properties": {"city": {"type": "string"}},
+                "required": ["city"],
+            }),
+        };
+        let sampling = SamplingConfig {
+            max_tokens: Some(4096),
+            thinking: Some(true),
+            reasoning_effort: Some(ReasoningEffort::High),
+            ..Default::default()
+        };
+        let prompt = "Reason briefly which of Paris or Berlin is the capital of France, \
+             then call get_weather for that city.";
+        let round1 = ChatRequest {
+            system: None,
+            messages: vec![ApiMessage::user(prompt)],
+            sampling: sampling.clone(),
+            tools: vec![tool.clone()],
+        };
+        let mut stream = client
+            .chat_stream(round1, Default::default())
+            .await
+            .unwrap();
+        let mut acc = ToolCallAccumulator::default();
+        let mut reason = FinishReason::Stop;
+        while let Some(chunk) = stream.next().await {
+            match chunk {
+                ChatChunk::ToolCall(d) => acc.push(d),
+                ChatChunk::Finished(r) => {
+                    reason = r;
+                    break;
+                }
+                _ => {}
+            }
+        }
+        assert_eq!(
+            reason,
+            FinishReason::ToolCalls,
+            "model should call the tool"
+        );
+        let calls = acc.finish();
+        assert!(!calls.is_empty(), "expected a tool call");
+        let call = calls[0].clone();
+        eprintln!(
+            "thought_signature present: {}",
+            call.thought_signature.is_some()
+        );
+
+        // Второй раунд: assistant(functionCall с подписью) + результат.
+        let round2 = ChatRequest {
+            system: None,
+            messages: vec![
+                ApiMessage::user(prompt),
+                ApiMessage::assistant_tool_calls("", vec![call.clone()]),
+                ApiMessage::tool(&call.id, "18°C, sunny"),
+            ],
+            sampling,
+            tools: vec![tool],
+        };
+        let mut stream = client
+            .chat_stream(round2, Default::default())
+            .await
+            .unwrap();
+        let mut text = String::new();
+        let mut finish = None;
+        while let Some(chunk) = stream.next().await {
+            match chunk {
+                ChatChunk::Text(t) => text.push_str(&t),
+                ChatChunk::Finished(r) => {
+                    finish = Some(r);
+                    break;
+                }
+                _ => {}
+            }
+        }
+        assert!(
+            matches!(finish, Some(FinishReason::Stop | FinishReason::Length)),
+            "second round must succeed (no 400), got {finish:?}"
+        );
+        assert!(
+            !text.is_empty(),
+            "expected a final answer after tool result"
+        );
     }
 }

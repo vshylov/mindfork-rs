@@ -475,6 +475,7 @@ async fn agentic_loop_executes_tool_then_finalizes() {
     let backend = Arc::new(MockBackend::sequence(vec![
         vec![
             ChatChunk::ToolCall(ToolCallDelta {
+                thought_signature: None,
                 index: 0,
                 id: Some("c1".into()),
                 name: Some("note_save".into()),
@@ -542,6 +543,7 @@ async fn disabled_tool_is_refused_by_loop() {
     let backend = Arc::new(MockBackend::sequence(vec![
         vec![
             ChatChunk::ToolCall(ToolCallDelta {
+                thought_signature: None,
                 index: 0,
                 id: Some("c1".into()),
                 name: Some("python_exec".into()),
@@ -586,6 +588,7 @@ async fn tool_round_limit_is_respected() {
     // Движок всегда просит инструмент — должен сработать лимит раундов.
     let backend = Arc::new(MockBackend::scripted(vec![
         ChatChunk::ToolCall(ToolCallDelta {
+            thought_signature: None,
             index: 0,
             id: Some("c1".into()),
             name: Some("get_sampling".into()),
@@ -622,6 +625,7 @@ async fn followup_tool_makes_two_assistant_messages() {
         vec![
             ChatChunk::Text("Первое сообщение.".into()),
             ChatChunk::ToolCall(ToolCallDelta {
+                thought_signature: None,
                 index: 0,
                 id: Some("c1".into()),
                 name: Some("send_followup_message".into()),
@@ -686,6 +690,7 @@ async fn rewrite_tool_discards_partial_and_saves_it() {
         vec![
             ChatChunk::Text("Неправильный ответ".into()),
             ChatChunk::ToolCall(ToolCallDelta {
+                thought_signature: None,
                 index: 0,
                 id: Some("c1".into()),
                 name: Some("rewrite_current_message".into()),

@@ -34,6 +34,9 @@ fn record_to_api(rec: &ToolCallRecord) -> ApiToolCall {
         id: rec.id.clone(),
         name: rec.name.clone(),
         arguments: rec.arguments.to_string(),
+        // Подпись мысли (Gemini 3) сохранена в записи — переотправляем на реплее
+        // истории, иначе Gemini 3 вернёт 400 на исторический functionCall.
+        thought_signature: rec.thought_signature.clone(),
     }
 }
 

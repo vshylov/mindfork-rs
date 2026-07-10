@@ -175,7 +175,7 @@ impl EngineBackend for OpenAiClient {
                                                     Some(f) => (f.name, f.arguments.unwrap_or_default()),
                                                     None => (None, String::new()),
                                                 };
-                                                yield ChatChunk::ToolCall(ToolCallDelta {
+                                                yield ChatChunk::ToolCall(ToolCallDelta { thought_signature: None,
                                                     index: tc.index,
                                                     id: tc.id,
                                                     name,
