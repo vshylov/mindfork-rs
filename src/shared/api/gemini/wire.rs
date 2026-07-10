@@ -108,7 +108,8 @@ fn generation_config(req: &ChatRequest, model: &str) -> Option<Value> {
 /// `thinkingBudget` (токены). `includeThoughts:true` включает видимое резюме «мыслей»
 /// (сырой CoT API не отдаёт). `reasoning_budget==0` (импперсонация/авто-название)
 /// глушит «мысли»: `thinkingBudget:0` (2.5 — выключить; 3.x — минимальный уровень,
-/// полностью выключить нельзя). Возвращает `None`, когда reasoning не востребован
+/// полностью выключить нельзя; у 3 Pro минимум `low` — «minimal» не поддержан).
+/// Возвращает `None`, когда reasoning не востребован
 /// (модель использует thinking по умолчанию). Инференс поколения по имени модели —
 /// см. docs/research/gemini-native-client.md §3, ловушка 1.
 fn thinking_config(req: &ChatRequest, model: &str) -> Option<Value> {
@@ -125,12 +126,23 @@ fn thinking_config(req: &ChatRequest, model: &str) -> Option<Value> {
     tc.insert("includeThoughts".into(), json!(include));
 
     if is_gemini_3(model) {
-        // 3.x: thinkingLevel. Полностью выключить нельзя — force_off → "minimal".
+        // 3.x: thinkingLevel. Полностью выключить нельзя — force_off → минимальный уровень.
         let level = if force_off {
             Some("minimal")
         } else {
             s.reasoning_effort.and_then(effort_to_level)
         };
+        // Gemini 3 **Pro** не поддерживает `thinkingLevel:"minimal"` (вернёт `400`
+        // «Thinking level MINIMAL is not supported for this model») — минимум у него
+        // `low`. Кламп «minimal → low» для Pro (зеркало `is_gemini_25_pro`, где 0→128):
+        // касается и force_off (авто-название/импперсонация), и явного effort=Minimal.
+        let level = level.map(|l| {
+            if l == "minimal" && is_gemini_3_pro(model) {
+                "low"
+            } else {
+                l
+            }
+        });
         // effort не задан (level None) при thinking on — уровень не шлём (дефолт модели),
         // остаётся includeThoughts.
         if let Some(level) = level {
@@ -158,6 +170,12 @@ fn is_gemini_3(model: &str) -> bool {
 /// Gemini 2.5 **Pro** — не умеет полностью выключать мысли (`thinkingBudget` минимум 128).
 fn is_gemini_25_pro(model: &str) -> bool {
     model.contains("gemini-2.5-pro")
+}
+
+/// Gemini 3.x **Pro** — не поддерживает `thinkingLevel:"minimal"` (минимум `low`).
+/// Например `gemini-3-pro-preview`, `gemini-3.1-pro-preview`.
+fn is_gemini_3_pro(model: &str) -> bool {
+    is_gemini_3(model) && model.contains("pro")
 }
 
 /// `reasoning_effort` → `thinkingLevel` (Gemini 3.x). `None` — уровень не шлём.
@@ -456,6 +474,11 @@ mod tests {
         let tcpro = &jpro["generationConfig"]["thinkingConfig"];
         assert_eq!(tcpro["thinkingBudget"], 128);
         assert_eq!(tcpro["includeThoughts"], false);
+        // 3.x Pro не поддерживает "minimal" — force_off клампится к "low".
+        let j3pro = serde_json::to_value(build_request(&r, "gemini-3.1-pro-preview")).unwrap();
+        let tc3pro = &j3pro["generationConfig"]["thinkingConfig"];
+        assert_eq!(tc3pro["thinkingLevel"], "low");
+        assert_eq!(tc3pro["includeThoughts"], false);
     }
 
     #[test]
