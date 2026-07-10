@@ -13,8 +13,8 @@ use tokio::sync::mpsc::UnboundedSender;
 use tokio_util::sync::CancellationToken;
 
 use crate::shared::api::{
-    AnthropicClient, Embedder, EngineBackend, ManagedConfig, OpenAiClient, ResponsesClient,
-    ServerHandle, UnavailableEmbedder, WireDialect, wait_until_ready,
+    AnthropicClient, Embedder, EngineBackend, GeminiClient, ManagedConfig, OpenAiClient,
+    ResponsesClient, ServerHandle, UnavailableEmbedder, wait_until_ready,
 };
 use crate::shared::config::{
     CloudProvider, EmbedSettings, EngineSettings, ImpersonationEngineSettings, ImpersonationMode,
@@ -333,20 +333,17 @@ fn cloud_chat_setup(
         Ok(k) => k,
         Err(e) => return disconnected(e),
     };
+    // Чат-URL — нативный путь провайдера (у Gemini `…/v1beta`, не compat-эмбеддинги).
     let base = url_override
         .filter(|u| !u.is_empty())
-        .unwrap_or_else(|| provider.base_url());
+        .unwrap_or_else(|| provider.chat_base_url());
     // Бэкенд по протоколу провайдера: OpenAI Responses API (`ResponsesClient` — резюме
-    // рассуждений, reasoning.effort, verbosity), Gemini через OpenAI-совместимый Chat
-    // Completions (`OpenAiClient` + Gemini-диалект) либо Anthropic Messages API (Claude).
+    // рассуждений, reasoning.effort, verbosity), Gemini через нативный generateContent
+    // (`GeminiClient` — резюме «мыслей», thinkingLevel/thinkingBudget) либо Anthropic
+    // Messages API (Claude).
     let backend: Arc<dyn EngineBackend> = match provider {
         CloudProvider::OpenAi => Arc::new(ResponsesClient::new(base, key, model.to_string())),
-        CloudProvider::Gemini => Arc::new(
-            OpenAiClient::new(base)
-                .with_api_key(Some(key))
-                .with_model(Some(model.to_string()))
-                .with_dialect(WireDialect::Gemini),
-        ),
+        CloudProvider::Gemini => Arc::new(GeminiClient::new(base, key, model.to_string())),
         CloudProvider::Claude => Arc::new(AnthropicClient::new(base, key, model.to_string())),
     };
     ChatSetup {

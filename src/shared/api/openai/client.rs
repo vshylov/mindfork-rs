@@ -9,33 +9,34 @@ use eventsource_stream::Eventsource;
 use futures_util::StreamExt;
 use tokio_util::sync::CancellationToken;
 
-use super::wire::{self, WireDialect};
+use super::wire;
 use crate::shared::api::contract::{
     ChatChunk, ChatRequest, ChatStream, Embedder, EngineBackend, FinishReason, TokenUsage,
     ToolCallDelta,
 };
 use crate::shared::api::thoughts::{Piece, ThoughtsParser};
 
-/// Клиент к OpenAI-совместимому серверу инференса (локальный `llama-server` либо
-/// облако OpenAI/Gemini-compat). Транспорт один — отличаются базовый URL, наличие
-/// Bearer-ключа, имя модели и диалект тела запроса (см. [`WireDialect`], ADR 0004).
+/// Клиент к OpenAI-совместимому серверу инференса (локальный/external `llama-server`,
+/// vLLM, LM Studio…; при желании — прокси с Bearer-ключом). Облака теперь используют
+/// свои протоколы (OpenAI → Responses, Gemini → нативный, Claude → Anthropic), поэтому
+/// диалекта тела больше нет — сэмплинг шлётся как есть (см. ADR 0004). Также источник
+/// эмбеддингов (`/v1/embeddings`) для локального/облачного RAG.
 pub struct OpenAiClient {
     http: reqwest::Client,
     /// Базовый URL с суффиксом `/v1`, например `http://127.0.0.1:8000/v1`.
     base_url: String,
-    /// API-ключ для Bearer-аутентификации (облако). `None` — без заголовка.
+    /// API-ключ для Bearer-аутентификации (прокси/облачные эмбеддинги). `None` — без
+    /// заголовка.
     api_key: Option<String>,
-    /// Имя модели; подставляется в тело запроса, если задано (облако требует его,
-    /// `llama-server` игнорирует). Доменный [`ChatRequest`] модель не несёт — это
-    /// свойство бэкенда.
+    /// Имя модели; подставляется в тело запроса, если задано (облачные эмбеддинги/
+    /// мульти-модельный прокси требуют, `llama-server` игнорирует). Доменный
+    /// [`ChatRequest`] модель не несёт — это свойство бэкенда.
     model: Option<String>,
-    /// Диалект тела запроса (какие поля сэмплинга сериализуются).
-    dialect: WireDialect,
 }
 
 impl OpenAiClient {
     /// Клиент к локальному/external OpenAI-совместимому серверу: без ключа, без имени
-    /// модели, lenient-диалект (расширения llama.cpp шлются как есть).
+    /// модели (расширения llama.cpp шлются как есть).
     pub fn new(base_url: impl Into<String>) -> Self {
         let base_url = base_url.into().trim_end_matches('/').to_string();
         Self {
@@ -43,7 +44,6 @@ impl OpenAiClient {
             base_url,
             api_key: None,
             model: None,
-            dialect: WireDialect::LlamaCpp,
         }
     }
 
@@ -53,15 +53,10 @@ impl OpenAiClient {
         self
     }
 
-    /// Устанавливает имя модели (для облака/мульти-модельного сервера). Билдер-стиль.
+    /// Устанавливает имя модели (для облачных эмбеддингов/мульти-модельного сервера).
+    /// Билдер-стиль.
     pub fn with_model(mut self, model: Option<String>) -> Self {
         self.model = model.filter(|m| !m.is_empty());
-        self
-    }
-
-    /// Устанавливает диалект тела запроса. Билдер-стиль.
-    pub fn with_dialect(mut self, dialect: WireDialect) -> Self {
-        self.dialect = dialect;
         self
     }
 
@@ -99,7 +94,7 @@ impl OpenAiClient {
 #[async_trait::async_trait]
 impl EngineBackend for OpenAiClient {
     async fn chat_stream(&self, req: ChatRequest, cancel: CancellationToken) -> Result<ChatStream> {
-        let body = wire::build_chat_request(&req, true, self.model.as_deref(), self.dialect);
+        let body = wire::build_chat_request(&req, true, self.model.as_deref());
         let url = format!("{}/chat/completions", self.base_url);
 
         let response = self

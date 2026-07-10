@@ -443,10 +443,11 @@ mod tests {
         ctx.effective_sampling = SamplingConfig {
             temperature: Some(0.7),
             top_k: Some(40),
+            min_p: Some(0.05),
             max_tokens: Some(256),
             ..Default::default()
         };
-        // Gemini: top_k недоступен → не должен попасть в вывод (temperature — да).
+        // Gemini (нативный): top_k доступен, а min_p (расширение llama.cpp) — нет.
         let out = GetSampling::new(Some(CloudProvider::Gemini))
             .invoke(&ctx, serde_json::json!({}))
             .await
@@ -454,7 +455,8 @@ mod tests {
         let v: serde_json::Value = serde_json::from_str(&out.result).unwrap();
         assert!(v.get("temperature").is_some());
         assert!(v.get("max_tokens").is_some());
-        assert!(v.get("top_k").is_none());
+        assert!(v.get("top_k").is_some());
+        assert!(v.get("min_p").is_none());
 
         // OpenAI: недоступна и temperature (GPT 5.5/5.6 её отвергают).
         let out = GetSampling::new(Some(CloudProvider::OpenAi))

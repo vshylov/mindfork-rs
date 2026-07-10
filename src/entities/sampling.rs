@@ -222,8 +222,11 @@ pub const SETTABLE_SAMPLING_FIELDS: &[&str] = &[
 ///   Режим ходит в **Responses API** (`ResponsesClient`), где нет
 ///   `temperature`/`top_p`/`seed`/penalties (reasoning-модели их отвергают), но есть
 ///   резюме рассуждений и `text.verbosity`. См. ADR 0004, docs/research/openai-responses-client.md;
-/// - **Gemini** (OpenAI-совместимый Chat Completions) — `temperature`/`top_p`/
-///   `frequency_penalty`/`presence_penalty`/`seed`/`max_tokens`;
+/// - **Gemini** (нативный `generateContent`, [`GeminiClient`](crate::shared::api::gemini::GeminiClient))
+///   — `temperature`/`top_p`/`top_k`/`max_tokens`/`seed`/`frequency_penalty`/
+///   `presence_penalty` **+ reasoning** (`thinking`/`reasoning_effort`): нативный API
+///   принимает `top_k` (в отличие от прежнего compat) и даёт резюме «мыслей» +
+///   `thinkingLevel`/`thinkingBudget`. Нет `verbosity` (это OpenAI-Responses-специфика);
 /// - **Claude** — `max_tokens` + reasoning (`thinking`/`reasoning_effort`):
 ///   модели 4.x «зафиксировали» сэмплинг (отвергают `temperature`/`top_p`/`top_k`),
 ///   но поддерживают extended thinking (`{type:"adaptive"}` + `output_config.effort`).
@@ -239,10 +242,13 @@ pub fn supported_sampling_fields(provider: Option<CloudProvider>) -> &'static [&
         Some(CloudProvider::Gemini) => &[
             "temperature",
             "top_p",
+            "top_k",
+            "max_tokens",
+            "seed",
             "frequency_penalty",
             "presence_penalty",
-            "seed",
-            "max_tokens",
+            "thinking",
+            "reasoning_effort",
         ],
         Some(CloudProvider::Claude) => &["max_tokens", "thinking", "reasoning_effort"],
     }
@@ -295,13 +301,15 @@ mod tests {
         assert!(!openai.contains(&"temperature"));
         assert!(!openai.contains(&"top_p"));
         assert!(!openai.contains(&"top_k"));
-        // Gemini-compat (Chat Completions): temperature/top_p/penalties/seed/max_tokens,
-        // но без reasoning/verbosity (это Responses-специфика).
+        // Gemini (нативный generateContent): temperature/top_p/top_k/penalties/seed/
+        // max_tokens + reasoning (thinking/reasoning_effort), но без verbosity.
         let gemini = supported_sampling_fields(Some(CloudProvider::Gemini));
         assert!(gemini.contains(&"temperature"));
         assert!(gemini.contains(&"top_p"));
+        assert!(gemini.contains(&"top_k"));
         assert!(gemini.contains(&"seed"));
-        assert!(!gemini.contains(&"top_k"));
+        assert!(gemini.contains(&"thinking"));
+        assert!(gemini.contains(&"reasoning_effort"));
         assert!(!gemini.contains(&"verbosity"));
         // Claude — max_tokens + reasoning (thinking/reasoning_effort), но не top_k.
         let claude = supported_sampling_fields(Some(CloudProvider::Claude));
@@ -339,11 +347,14 @@ mod tests {
         assert_eq!(openai.temperature, None);
         assert_eq!(openai.top_k, None);
         assert_eq!(openai.min_p, None);
-        // Gemini-compat temperature принимает.
+        // Gemini (нативный) принимает temperature/top_k/thinking; min_p (расширение
+        // llama.cpp) обнуляется.
         let gemini = s.retain_supported(Some(CloudProvider::Gemini));
         assert_eq!(gemini.temperature, Some(0.7));
         assert_eq!(gemini.max_tokens, Some(256));
-        assert_eq!(gemini.top_k, None);
+        assert_eq!(gemini.top_k, Some(40));
+        assert_eq!(gemini.thinking, Some(true));
+        assert_eq!(gemini.min_p, None);
         // Claude — только max_tokens + reasoning: temperature/top_k обнуляются,
         // thinking сохраняется.
         let claude = s.retain_supported(Some(CloudProvider::Claude));

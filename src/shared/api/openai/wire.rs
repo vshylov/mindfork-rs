@@ -8,26 +8,12 @@ use serde::{Deserialize, Serialize};
 
 use crate::shared::api::contract::ChatRequest;
 
-/// Диалект тела запроса Chat Completions. От него зависит, какие поля сэмплинга
-/// сериализуются. Облако **OpenAI** здесь не участвует — оно ходит в Responses API
-/// ([`ResponsesClient`](super::ResponsesClient)), а не через этот клиент. См. ADR 0004.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub enum WireDialect {
-    /// llama.cpp `llama-server` (managed/external): принимает расширения сэмплинга в
-    /// теле запроса и игнорирует незнакомое — шлём всё заданное (lenient).
-    #[default]
-    LlamaCpp,
-    /// Google Gemini через OpenAI-совместимый endpoint: строгий (расширения llama.cpp
-    /// и reasoning-сигналы чистим), лимит токенов — классический `max_tokens`.
-    Gemini,
-}
-
-impl WireDialect {
-    /// Строгий ли диалект (облако): нужно вычищать расширения llama.cpp.
-    fn is_strict(self) -> bool {
-        matches!(self, WireDialect::Gemini)
-    }
-}
+// Единственный потребитель этого клиента — локальный/external llama.cpp `llama-server`
+// (managed/external). Облака ушли на свои протоколы: OpenAI → Responses
+// ([`ResponsesClient`](super::ResponsesClient)), Gemini → нативный
+// [`GeminiClient`](crate::shared::api::gemini::GeminiClient), Claude → Anthropic
+// Messages. Поэтому диалекта/фильтрации сэмплинга больше нет — шлём всё заданное
+// (llama.cpp игнорирует незнакомое). См. ADR 0004.
 
 // ---------- запрос чата ----------
 
@@ -172,13 +158,13 @@ pub struct WireFunctionCall {
 }
 
 /// Строит тело запроса чата из доменного [`ChatRequest`]. `model` подставляется в
-/// поле `model` (для облака — обязательно; для llama-server можно `None`). `dialect`
-/// определяет набор сериализуемых полей сэмплинга (см. [`WireDialect`]).
+/// поле `model` (для external-прокси при желании; для llama-server можно `None` —
+/// сервер берёт загруженную модель). Шлётся всё заданное в сэмплинге (llama.cpp
+/// игнорирует незнакомое).
 pub fn build_chat_request(
     req: &ChatRequest,
     stream: bool,
     model: Option<&str>,
-    dialect: WireDialect,
 ) -> ChatCompletionRequest {
     let mut messages = Vec::with_capacity(req.messages.len() + 1);
     if let Some(system) = &req.system {
@@ -244,7 +230,7 @@ pub fn build_chat_request(
     // Списочные поля (DRY-брейкеры, порядок семплеров): пустой список не шлём —
     // иначе сервер истолковал бы его как «нет брейкеров»/«отключить все семплеры».
     let non_empty = |v: &Option<Vec<String>>| v.clone().filter(|x| !x.is_empty());
-    let mut body = ChatCompletionRequest {
+    ChatCompletionRequest {
         model: model.map(str::to_string),
         messages,
         stream,
@@ -285,43 +271,7 @@ pub fn build_chat_request(
         chat_template_kwargs,
         tools,
         tool_choice,
-    };
-    if dialect.is_strict() {
-        restrict_to_strict(&mut body);
     }
-    body
-}
-
-/// Обнуляет поля сэмплинга, не входящие в строгий Gemini-compat протокол (расширения
-/// llama.cpp и reasoning-сигналы), чтобы сервер не отверг запрос с `400`. Остаются
-/// `temperature`/`top_p`/`max_tokens`/`frequency_penalty`/`presence_penalty`/`seed`,
-/// а также `messages`/`tools`/`tool_choice`/`stream*`. См. ADR 0004.
-fn restrict_to_strict(body: &mut ChatCompletionRequest) {
-    body.dynatemp_range = None;
-    body.dynatemp_exponent = None;
-    body.top_k = None;
-    body.min_p = None;
-    body.top_n_sigma = None;
-    body.typical_p = None;
-    body.adaptive_target = None;
-    body.adaptive_decay = None;
-    body.repeat_penalty = None;
-    body.repeat_last_n = None;
-    body.dry_multiplier = None;
-    body.dry_base = None;
-    body.dry_allowed_length = None;
-    body.dry_penalty_last_n = None;
-    body.dry_sequence_breakers = None;
-    body.xtc_probability = None;
-    body.xtc_threshold = None;
-    body.mirostat = None;
-    body.mirostat_tau = None;
-    body.mirostat_eta = None;
-    body.samplers = None;
-    body.thinking = None;
-    body.reasoning_effort = None;
-    body.reasoning_budget = None;
-    body.chat_template_kwargs = None;
 }
 
 // ---------- стриминговый ответ ----------
@@ -428,7 +378,7 @@ mod tests {
             sampling: SamplingConfig::default(),
             tools: vec![],
         };
-        let body = build_chat_request(&req, true, None, WireDialect::LlamaCpp);
+        let body = build_chat_request(&req, true, None);
         let json = serde_json::to_value(&body).unwrap();
         assert!(json.get("stop").is_none(), "stop must never be sent");
         assert!(json.get("temperature").is_none());
@@ -473,9 +423,7 @@ mod tests {
             },
             tools: vec![],
         };
-        let json =
-            serde_json::to_value(build_chat_request(&req, false, None, WireDialect::LlamaCpp))
-                .unwrap();
+        let json = serde_json::to_value(build_chat_request(&req, false, None)).unwrap();
         // f32→f64 расширение делает точное сравнение ненадёжным — сравниваем приближённо.
         let approx = |v: &serde_json::Value, want: f64| (v.as_f64().unwrap() - want).abs() < 1e-6;
         assert!(approx(&json["temperature"], 0.8));
@@ -523,9 +471,7 @@ mod tests {
             },
             tools: vec![],
         };
-        let json =
-            serde_json::to_value(build_chat_request(&req, false, None, WireDialect::LlamaCpp))
-                .unwrap();
+        let json = serde_json::to_value(build_chat_request(&req, false, None)).unwrap();
         assert_eq!(json["dry_sequence_breakers"][0], "\n");
         assert_eq!(json["dry_sequence_breakers"][1], ":");
         assert_eq!(json["samplers"][0], "penalties");
@@ -542,81 +488,25 @@ mod tests {
             },
             tools: vec![],
         };
-        let json_empty = serde_json::to_value(build_chat_request(
-            &req_empty,
-            false,
-            None,
-            WireDialect::LlamaCpp,
-        ))
-        .unwrap();
+        let json_empty = serde_json::to_value(build_chat_request(&req_empty, false, None)).unwrap();
         assert!(json_empty.get("dry_sequence_breakers").is_none());
         assert!(json_empty.get("samplers").is_none());
     }
 
     #[test]
-    fn gemini_dialect_keeps_temp_and_strips_extensions() {
-        // Gemini-compat (Chat Completions): расширения llama.cpp и reasoning чистим, но
-        // temperature/top_p/max_tokens провайдер принимает; имя модели проставляется.
-        let req = ChatRequest {
-            system: None,
-            messages: vec![ApiMessage::user("hi")],
-            sampling: SamplingConfig {
-                max_tokens: Some(200),
-                temperature: Some(0.7),
-                top_p: Some(0.95),
-                top_k: Some(40),
-                min_p: Some(0.05),
-                dynatemp_range: Some(0.5),
-                mirostat: Some(2),
-                samplers: Some(vec!["top_k".into()]),
-                thinking: Some(true),
-                reasoning_budget: Some(0),
-                ..Default::default()
-            },
-            tools: vec![],
-        };
-        let json = serde_json::to_value(build_chat_request(
-            &req,
-            true,
-            Some("gemini-2.5-pro"),
-            WireDialect::Gemini,
-        ))
-        .unwrap();
-        assert_eq!(json["model"], "gemini-2.5-pro");
-        assert_eq!(json["max_tokens"], 200);
-        // Поддержанное Gemini — на месте.
-        assert!(json.get("temperature").is_some());
-        assert!(json.get("top_p").is_some());
-        // Расширения llama.cpp и reasoning-сигналы вычищены.
-        for k in [
-            "top_k",
-            "min_p",
-            "dynatemp_range",
-            "mirostat",
-            "samplers",
-            "thinking",
-            "reasoning_budget",
-            "chat_template_kwargs",
-        ] {
-            assert!(
-                json.get(k).is_none(),
-                "поле {k} не должно слаться в Gemini-диалекте"
-            );
-        }
-    }
-
-    #[test]
-    fn llamacpp_dialect_omits_model_when_none() {
+    fn model_is_sent_when_some_and_omitted_when_none() {
+        // Для external-прокси имя модели проставляется; для llama-server (None) — нет.
         let req = ChatRequest {
             system: None,
             messages: vec![ApiMessage::user("hi")],
             sampling: SamplingConfig::default(),
             tools: vec![],
         };
-        let json =
-            serde_json::to_value(build_chat_request(&req, true, None, WireDialect::LlamaCpp))
-                .unwrap();
-        assert!(json.get("model").is_none());
+        let with_model =
+            serde_json::to_value(build_chat_request(&req, true, Some("some-model"))).unwrap();
+        assert_eq!(with_model["model"], "some-model");
+        let no_model = serde_json::to_value(build_chat_request(&req, true, None)).unwrap();
+        assert!(no_model.get("model").is_none());
     }
 
     #[test]
@@ -682,9 +572,7 @@ mod tests {
                 parameters: serde_json::json!({"type":"object"}),
             }],
         };
-        let json =
-            serde_json::to_value(build_chat_request(&req, true, None, WireDialect::LlamaCpp))
-                .unwrap();
+        let json = serde_json::to_value(build_chat_request(&req, true, None)).unwrap();
         assert_eq!(json["tool_choice"], "auto");
         assert_eq!(json["tools"][0]["type"], "function");
         assert_eq!(json["tools"][0]["function"]["name"], "note_save");
@@ -709,9 +597,7 @@ mod tests {
             sampling: SamplingConfig::default(),
             tools: vec![],
         };
-        let json =
-            serde_json::to_value(build_chat_request(&req, true, None, WireDialect::LlamaCpp))
-                .unwrap();
+        let json = serde_json::to_value(build_chat_request(&req, true, None)).unwrap();
         assert_eq!(json["messages"][0]["tool_calls"][0]["id"], "c1");
         assert_eq!(
             json["messages"][0]["tool_calls"][0]["function"]["name"],

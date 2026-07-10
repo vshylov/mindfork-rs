@@ -3929,6 +3929,61 @@ web-поиск и Python под выключателями, экран наст�
   `code_interpreter` — конфликтуют с клиентским agentic-loop), нативный Gemini через
   свой протокол (следующее направление).
 
+### Пост-M9: нативный клиент Gemini (generateContent) — Фаза A (сделано)
+- **Режим `gemini` переведён с OpenAI-совместимого Chat Completions на нативный
+  `generateContent`/`streamGenerateContent`** — исследование и план в
+  [docs/research/gemini-native-client.md](docs/research/gemini-native-client.md), ADR 0004.
+  Мотив: у compat-пути (`OpenAiClient`+`WireDialect::Gemini`) строгий диалект вычищал
+  reasoning — «мыслей» и управления глубиной не было вовсе (даже `top_k`, который Gemini
+  принимает нативно, резался). Нативный API — **новая реализация `EngineBackend`** рядом
+  с `AnthropicClient`/`ResponsesClient` (слои выше движка не тронуты). **Фаза A** — ядро
+  (мысли + reasoning, без подписей); **Фаза B** (подписи мыслей Gemini 3 при tool-use) —
+  следующим шагом.
+- **Новый модуль `shared/api/gemini/`** (`GeminiClient` + `wire`): бьёт в
+  `…/v1beta/models/{model}:streamGenerateContent?alt=sse` (заголовок `x-goog-api-key`),
+  `wire::build_request` транслирует `ChatRequest` → Gemini: system → top-level
+  `systemInstruction:{parts:[{text}]}`; история → `contents:[{role:"user"|"model",
+  parts}]` (ролей `system`/`tool` нет — system top-level, результат инструмента → часть
+  `functionResponse:{name,response:{result}}` в `role:"user"`; соседние одной роли
+  склеиваются); вызов → часть `{functionCall:{name,args}}` (`args` — **объект**, не
+  строка; у Gemini нет `call_id` → клиент синтезирует стабильный `id` `"{name}-{index}"`,
+  парность functionResponse — по нему); `max_tokens`→`generationConfig.maxOutputTokens`;
+  reasoning → `thinkingConfig`. SSE-части: `text`→`Text`, `text`+`thought:true`→`Thoughts`,
+  `functionCall`→`ToolCall` (args целым чанком), `usageMetadata`→`Usage`
+  (`thoughtsTokenCount`→`reasoning_tokens`), `finishReason`→`Finished`
+  (`MAX_TOKENS`→`Length`; наличие вызовов→`ToolCalls` даже при `STOP`). Тело ошибки не
+  глотается (как прочие клиенты). Эмбеддингов клиент не даёт — RAG в режиме Gemini берёт
+  их через OpenAI-совместимый `…/v1beta/openai/embeddings` (`OpenAiClient`), как у Anthropic.
+- **thinkingConfig + инференс поколения** (внесён уже в Фазу A): `includeThoughts:true`
+  при `thinking==Some(true)`; глубина — Gemini 3.x через `thinkingLevel`
+  (`minimal/low/medium/high`), Gemini 2.5 через `thinkingBudget` (токены; зеркало таблицы
+  compat: low→1024/medium→8192/high→24576). Поколение — грубым инференсом по имени модели
+  (`gemini-3*`). `reasoning_budget==Some(0)` (импперсонация/авто-название) глушит:
+  `thinkingBudget:0` (2.5 — выключить) / `thinkingLevel:"minimal"` (3.x — полностью
+  выключить нельзя, как у OpenAI `effort:none` не у всех). `verbosity` у Gemini нет.
+  Санитизация схем инструментов под OpenAPI-подмножество (снятие `$schema`/
+  `additionalProperties`; Фаза C уточнит по живым схемам).
+- **Семплинг**: `supported_sampling_fields(Gemini)` = `temperature`/`top_p`/**`top_k`**/
+  `max_tokens`/`seed`/`frequency_penalty`/`presence_penalty` + **reasoning**
+  (`thinking`/`reasoning_effort`), без `verbosity`. Отличия от прежнего compat:
+  **+`top_k`** (нативно принимается) **+reasoning**. Единый источник истины → UI секции
+  «Семплинг», `get/set_sampling` и снимок `Message.metadata` подхватывают автоматически.
+- **`WireDialect` удалён целиком** (после переезда Gemini осиротел — единственным
+  строгим потребителем был он; `OpenAi` уже ушёл на Responses ранее): вместе с
+  `is_strict`/`restrict_to_strict` и параметром `dialect` в `build_chat_request`/
+  `OpenAiClient` (`openai/wire.rs` похудел на ~160 строк). `OpenAiClient` остаётся для
+  external/прокси и эмбеддингов, шлёт сэмплинг как есть (llama.cpp игнорирует незнакомое).
+- **Супервайзер**: `cloud_chat_setup` ветка `Gemini` → `GeminiClient`; новый
+  `CloudProvider::chat_base_url()` даёт нативный `…/v1beta` для чата, а `base_url()`
+  (`…/v1beta/openai`) остаётся для эмбеддингов. Импперсонация в режиме Gemini получает
+  нативный клиент автоматически (та же `cloud_chat_setup`).
+- **Тесты**: wire (system top-level; generationConfig; thinkingBudget для 2.5 /
+  thinkingLevel для 3.x / force_off; санитизация схем; functionCall/functionResponse +
+  склейка; coercion не-объекта args; разбор SSE-частей — текст/мысль/вызов/usage);
+  client (маппинг finishReason, срез префикса `models/`). **848 юнит-тестов зелёные**
+  (+13), 3 `#[ignore]`-смоука (`MINDFORK_GEMINI_KEY`: генерация, поток мыслей, один
+  tool-раунд), clippy `-D warnings`/fmt чисты. Живой прогон на реальном ключе — вне CI.
+
 ### Отложено за пределы M3
 - **Сворачивание/выделение per-message** и tool-блоки в ленте — сейчас «мысли»
   сворачиваются глобально (`Ctrl+T`); выделение сообщений и tool-блоки — на M5.

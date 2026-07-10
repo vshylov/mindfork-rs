@@ -41,13 +41,26 @@ pub enum CloudProvider {
 }
 
 impl CloudProvider {
-    /// Базовый URL провайдера по умолчанию (можно переопределить полем `url`).
+    /// Базовый URL для **эмбеддингов**/совместимого доступа (OpenAI-совместимый
+    /// endpoint). У Gemini это compat-путь `…/v1beta/openai` (эмбеддинги RAG идут
+    /// через него, `OpenAiClient`). Можно переопределить полем `url`.
     pub fn base_url(self) -> &'static str {
         match self {
             CloudProvider::OpenAi => "https://api.openai.com/v1",
             CloudProvider::Gemini => "https://generativelanguage.googleapis.com/v1beta/openai",
             // Anthropic-клиент сам добавляет `/v1/messages`, поэтому без суффикса.
             CloudProvider::Claude => "https://api.anthropic.com",
+        }
+    }
+
+    /// Базовый URL для **чата** (нативный протокол клиента). У Gemini — `…/v1beta`
+    /// (нативный `GeminiClient` добавляет `/models/{model}:streamGenerateContent`), в
+    /// отличие от compat-пути эмбеддингов ([`base_url`](Self::base_url)). У OpenAI
+    /// (Responses) и Claude совпадает с `base_url`. Можно переопределить полем `url`.
+    pub fn chat_base_url(self) -> &'static str {
+        match self {
+            CloudProvider::Gemini => "https://generativelanguage.googleapis.com/v1beta",
+            CloudProvider::OpenAi | CloudProvider::Claude => self.base_url(),
         }
     }
 }

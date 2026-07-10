@@ -140,6 +140,21 @@ llama.cpp-расширений (`dynatemp_*`, `dry_*`, `top_n_sigma`, `mirostat`
   удалён (Gemini остаётся на Chat Completions). `supported_sampling_fields(OpenAi)` =
   `max_tokens`+reasoning+verbosity. «Прокси с ключом» (прежний `openai`+url-override)
   закрыт `ExternalSettings.api_key_env`. Nativ Gemini через Responses — задел.
+- **Нативный Gemini — Фаза A сделана** (2026-07-10, docs/research/gemini-native-client.md):
+  режим `gemini` переведён с OpenAI-compat Chat Completions на **нативный
+  `generateContent`/`streamGenerateContent`** — новая реализация `EngineBackend`
+  (`shared/api/gemini/`, `GeminiClient`). Даёт резюме «мыслей»
+  (`thinkingConfig.includeThoughts` → `ChatChunk::Thoughts`), глубину рассуждений
+  (`thinkingLevel` у Gemini 3.x / `thinkingBudget` у 2.5, инференс по имени модели),
+  `thoughtsTokenCount`. `supported_sampling_fields(Gemini)` += `top_k`/`thinking`/
+  `reasoning_effort` (− `verbosity`). system → top-level `systemInstruction`, роли
+  `user`/`model`, результат инструмента → `functionResponse` в user, вызов →
+  `functionCall` (args-объект, без `call_id` — id синтезируется). Диалект `WireDialect`
+  **удалён целиком** (Gemini был последним потребителем; `OpenAiClient` шлёт сэмплинг как
+  есть). Эмбеддинги Gemini остаются на OpenAI-совместимом endpoint (`OpenAiClient`,
+  `…/v1beta/openai/embeddings`), как у Anthropic RAG. **Фаза B** (подписи мыслей
+  `thoughtSignature` per-tool-call для Gemini 3 при tool-use — уникальное отличие от
+  Anthropic/OpenAI, где подпись одна на ход) — следующим шагом.
 - **Раскладка `shared/api` (§2) — выполнена** (после Фазы 2, ради симметрии с
   `anthropic/`): `backend.rs` → `contract.rs` (провайдеро-агностичный контракт);
   `client.rs`+`wire.rs` → `openai/` (с приватным `wire`, re-export `OpenAiClient`/
