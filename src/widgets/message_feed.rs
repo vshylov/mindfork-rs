@@ -168,6 +168,29 @@ pub struct MessageFeed {
     /// ячейке, которую поячеечный diff ratatui больше не затрагивает. Полная
     /// перерисовка (`terminal.clear`) гарантированно её стирает. См. spec §11.3.
     scrolled: bool,
+    /// Кэш отрендеренных строк по одному блоку на сообщение (см. [`CachedBlock`]).
+    /// Индекс = позиция сообщения. `build_lines` зовётся на каждый dirty-кадр
+    /// (стрим, прокрутка) и заново прогонял бы markdown+syntect по ВСЕЙ истории;
+    /// кэш пересчитывает лишь изменившиеся сообщения (сверка по фингерпринту).
+    cache: Vec<CachedBlock>,
+    /// Ключ кэша: при смене ширины/палитры/показа мыслей кэш сбрасывается целиком.
+    cache_key: Option<CacheKey>,
+}
+
+/// Ключ валидности кэша ленты. Любое из полей влияет на раскладку всех блоков,
+/// поэтому его смена обнуляет кэш. `Palette` — `Copy + Eq` (ключ и в кэше syntect-тем).
+#[derive(PartialEq)]
+struct CacheKey {
+    width: usize,
+    palette: Palette,
+    show_thoughts: bool,
+}
+
+/// Кэшированный вклад одного сообщения в ленту (уже перенесённые по ширине строки с
+/// рейлом + хвостовой разделитель) вместе с фингерпринтом исходного [`FeedMessage`].
+struct CachedBlock {
+    fingerprint: u64,
+    lines: Vec<Line<'static>>,
 }
 
 impl Default for MessageFeed {
@@ -183,6 +206,8 @@ impl MessageFeed {
             follow: true,
             show_thoughts: false,
             scrolled: false,
+            cache: Vec::new(),
+            cache_key: None,
         }
     }
 
@@ -296,68 +321,134 @@ impl MessageFeed {
     /// гуттер-рейл по роли (см. [`RAIL`]); содержимое строится в ширину `width - 2`,
     /// затем переносится и к каждому визуальному ряду прикрепляется рейл.
     fn build_lines(
-        &self,
+        &mut self,
         messages: &[FeedMessage],
         palette: &Palette,
         width: usize,
     ) -> Vec<Line<'static>> {
-        let mut lines: Vec<Line<'static>> = Vec::new();
         if messages.is_empty() {
-            lines.push(Line::from(Span::styled(
+            // Плейсхолдер пустой ленты не кэшируем.
+            return vec![Line::from(Span::styled(
                 "Начните диалог — введите сообщение ниже.",
                 palette.muted_style(),
-            )));
-            return lines;
+            ))];
         }
-        // Ширина содержимого под рейл (рейл = 2 колонки).
-        let inner = width.saturating_sub(RAIL.chars().count()).max(1);
-        for item in messages {
-            let rail = match item.role {
-                FeedRole::User => palette.user,
-                FeedRole::Assistant => palette.assistant,
-                FeedRole::Note => palette.muted,
-            };
-            // Тело сообщения собираем без рейла, в ширину `inner`.
-            let mut body: Vec<Line<'static>> = Vec::new();
-            let glyphs = palette.glyphs();
-            match item.role {
-                FeedRole::User => {
-                    body.push(role_header(
-                        &format!("{} ВЫ", glyphs.user_icon),
-                        palette.user_soft,
-                    ));
-                    push_body(&mut body, item, palette, inner);
-                }
-                FeedRole::Assistant => {
-                    body.push(role_header(
-                        &format!("{} АССИСТЕНТ", glyphs.assistant_icon),
-                        palette.assistant_soft,
-                    ));
-                    push_thoughts(&mut body, &item.thoughts, self.show_thoughts, palette);
-                    push_assistant_body(&mut body, item, palette, inner);
-                }
-                FeedRole::Note => push_body(&mut body, item, palette, inner),
-            }
-            // Если тело уже заканчивается пустой строкой (рейловый отступ после
-            // tool-карточки), безрейловый межсообщенческий разделитель не добавляем —
-            // иначе получился бы двойной пропуск.
-            let body_ends_blank = body
-                .last()
-                .map(|l| l.spans.iter().all(|s| s.content.trim().is_empty()))
-                .unwrap_or(false);
-            // Переносим по ширине содержимого и навешиваем рейл на каждый ряд.
-            for line in body {
-                for wrapped in wrap::wrap_line(&line, inner) {
-                    lines.push(prepend_rail(wrapped, rail));
+        // Сброс кэша при смене ширины/палитры/показа мыслей (влияют на все блоки).
+        let key = CacheKey {
+            width,
+            palette: *palette,
+            show_thoughts: self.show_thoughts,
+        };
+        if self.cache_key.as_ref() != Some(&key) {
+            self.cache.clear();
+            self.cache_key = Some(key);
+        }
+        // История усечена (Ctrl+E/regenerate) — отбрасываем хвост кэша.
+        self.cache.truncate(messages.len());
+
+        let mut lines: Vec<Line<'static>> = Vec::new();
+        for (idx, item) in messages.iter().enumerate() {
+            let fp = message_fingerprint(item);
+            let hit = self.cache.get(idx).is_some_and(|c| c.fingerprint == fp);
+            if !hit {
+                // Стримящееся/изменённое сообщение — пересчитываем только его блок.
+                let block = build_message_block(item, palette, width, self.show_thoughts);
+                let cb = CachedBlock {
+                    fingerprint: fp,
+                    lines: block,
+                };
+                if idx < self.cache.len() {
+                    self.cache[idx] = cb;
+                } else {
+                    self.cache.push(cb);
                 }
             }
-            // Разделитель между сообщениями — без рейла.
-            if !body_ends_blank {
-                lines.push(Line::from(""));
-            }
+            lines.extend(self.cache[idx].lines.iter().cloned());
         }
         lines
     }
+}
+
+/// Собирает вклад одного сообщения в ленту: перенесённые по ширине строки с цветным
+/// рейлом роли + хвостовой разделитель (если тело не оканчивается пустой строкой).
+/// Чистая функция от (`item`, `palette`, `width`, `show_thoughts`) — основа кэша.
+fn build_message_block(
+    item: &FeedMessage,
+    palette: &Palette,
+    width: usize,
+    show_thoughts: bool,
+) -> Vec<Line<'static>> {
+    // Ширина содержимого под рейл (рейл = 2 колонки).
+    let inner = width.saturating_sub(RAIL.chars().count()).max(1);
+    let rail = match item.role {
+        FeedRole::User => palette.user,
+        FeedRole::Assistant => palette.assistant,
+        FeedRole::Note => palette.muted,
+    };
+    // Тело сообщения собираем без рейла, в ширину `inner`.
+    let mut body: Vec<Line<'static>> = Vec::new();
+    let glyphs = palette.glyphs();
+    match item.role {
+        FeedRole::User => {
+            body.push(role_header(
+                &format!("{} ВЫ", glyphs.user_icon),
+                palette.user_soft,
+            ));
+            push_body(&mut body, item, palette, inner);
+        }
+        FeedRole::Assistant => {
+            body.push(role_header(
+                &format!("{} АССИСТЕНТ", glyphs.assistant_icon),
+                palette.assistant_soft,
+            ));
+            push_thoughts(&mut body, &item.thoughts, show_thoughts, palette);
+            push_assistant_body(&mut body, item, palette, inner);
+        }
+        FeedRole::Note => push_body(&mut body, item, palette, inner),
+    }
+    // Если тело уже заканчивается пустой строкой (рейловый отступ после tool-карточки),
+    // безрейловый межсообщенческий разделитель не добавляем — иначе двойной пропуск.
+    let body_ends_blank = body
+        .last()
+        .map(|l| l.spans.iter().all(|s| s.content.trim().is_empty()))
+        .unwrap_or(false);
+    // Переносим по ширине содержимого и навешиваем рейл на каждый ряд.
+    let mut out: Vec<Line<'static>> = Vec::new();
+    for line in body {
+        for wrapped in wrap::wrap_line(&line, inner) {
+            out.push(prepend_rail(wrapped, rail));
+        }
+    }
+    // Разделитель между сообщениями — без рейла.
+    if !body_ends_blank {
+        out.push(Line::from(""));
+    }
+    out
+}
+
+/// Фингерпринт сообщения по всем полям, влияющим на рендер. Хеш O(len) против
+/// рендера O(len·markdown+syntect) — на порядки дешевле; стримящееся сообщение меняет
+/// `text` каждым чанком → фингерпринт не совпадает → пересчитывается только оно.
+fn message_fingerprint(item: &FeedMessage) -> u64 {
+    use std::hash::{Hash, Hasher};
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    let role_tag: u8 = match item.role {
+        FeedRole::User => 0,
+        FeedRole::Assistant => 1,
+        FeedRole::Note => 2,
+    };
+    role_tag.hash(&mut h);
+    item.text.hash(&mut h);
+    item.thoughts.hash(&mut h);
+    item.streaming.hash(&mut h);
+    item.tools.len().hash(&mut h);
+    for tc in &item.tools {
+        tc.name.hash(&mut h);
+        tc.arguments.hash(&mut h);
+        tc.result.hash(&mut h);
+        tc.text_offset.hash(&mut h);
+    }
+    h.finish()
 }
 
 /// Строка-заголовок роли: иконка + название капсом, цветом «мягкого» варианта роли.
@@ -711,7 +802,7 @@ mod tests {
 
     #[test]
     fn tool_blocks_render() {
-        let feed = MessageFeed::new();
+        let mut feed = MessageFeed::new();
         let mut m = msg(FeedRole::Assistant, "готово", "");
         m.tools.push(FeedToolCall {
             name: "note_save".into(),
@@ -732,7 +823,7 @@ mod tests {
     fn compat_palette_renders_without_emoji() {
         // Режим совместимости: заголовки ролей, свёрнутые «мысли» и tool-карточка
         // рисуются безопасными глифами — эмодзи/редких символов в ленте нет.
-        let feed = MessageFeed::new();
+        let mut feed = MessageFeed::new();
         let mut m = msg(FeedRole::Assistant, "готово", "думал");
         m.tools.push(FeedToolCall {
             name: "note_save".into(),
@@ -762,7 +853,7 @@ mod tests {
     fn python_tool_renders_highlighted_code_and_console() {
         // python_exec: код аргумента — подсвеченным блоком (RGB-цвета), результат —
         // консольной секцией stdout с содержимым.
-        let feed = MessageFeed::new();
+        let mut feed = MessageFeed::new();
         let mut m = msg(FeedRole::Assistant, "готово", "");
         m.tools.push(FeedToolCall {
             name: "python_exec".into(),
@@ -797,7 +888,7 @@ mod tests {
 
     #[test]
     fn python_stderr_uses_error_color() {
-        let feed = MessageFeed::new();
+        let mut feed = MessageFeed::new();
         let palette = Palette::default();
         let mut m = msg(FeedRole::Assistant, "", "");
         m.tools.push(FeedToolCall {
@@ -829,7 +920,7 @@ mod tests {
     #[test]
     fn tool_call_renders_after_preceding_text_inline() {
         // Текст до вызова → tool-блок → текст после вызова: проверяем порядок строк.
-        let feed = MessageFeed::new();
+        let mut feed = MessageFeed::new();
         let mut m = msg(FeedRole::Assistant, "Ищу погоду.\n\nГотово: ясно.", "");
         let off = "Ищу погоду.".len();
         m.tools.push(FeedToolCall {
@@ -869,7 +960,7 @@ mod tests {
     #[test]
     fn tool_block_separated_from_text_by_blank_lines() {
         // текст-до → вызов → текст-после: вокруг вызова должны быть пустые строки.
-        let feed = MessageFeed::new();
+        let mut feed = MessageFeed::new();
         let mut m = msg(FeedRole::Assistant, "доПОСЛЕ", "");
         m.tools.push(FeedToolCall {
             name: "note_save".into(),
@@ -902,7 +993,7 @@ mod tests {
         // python_exec). После карточки должен идти РЕЙЛОВЫЙ отступ (рейл продолжается
         // под результатом), а не безрейловый межсообщенческий разделитель, и ровно
         // один (без двойного пропуска).
-        let feed = MessageFeed::new();
+        let mut feed = MessageFeed::new();
         let mut m = msg(FeedRole::Assistant, "Считаю.", "");
         m.tools.push(FeedToolCall {
             name: "python_exec".into(),
@@ -928,7 +1019,7 @@ mod tests {
 
     #[test]
     fn consecutive_tool_blocks_have_single_blank_between() {
-        let feed = MessageFeed::new();
+        let mut feed = MessageFeed::new();
         let mut m = msg(FeedRole::Assistant, "", "");
         for name in ["first_tool", "second_tool"] {
             m.tools.push(FeedToolCall {
@@ -952,7 +1043,7 @@ mod tests {
 
     #[test]
     fn long_tool_result_wraps_not_truncated() {
-        let feed = MessageFeed::new();
+        let mut feed = MessageFeed::new();
         let mut m = msg(FeedRole::Assistant, "ок", "");
         let long = "слово ".repeat(40); // ~240 символов — заведомо шире узкой ленты
         m.tools.push(FeedToolCall {
@@ -1055,7 +1146,7 @@ mod tests {
 
     #[test]
     fn collapsed_thoughts_show_indicator_not_content() {
-        let feed = MessageFeed::new(); // show_thoughts = false
+        let mut feed = MessageFeed::new(); // show_thoughts = false
         let lines = feed.build_lines(
             &[msg(FeedRole::Assistant, "ответ", "секрет\nмысль")],
             &Palette::default(),
@@ -1089,7 +1180,7 @@ mod tests {
     fn user_message_preserves_single_newlines() {
         // Сообщение пользователя с Shift+Enter (одиночный \n) должно сохранять
         // переносы строк, а не сливаться в один абзац (GFM-стиль).
-        let feed = MessageFeed::new();
+        let mut feed = MessageFeed::new();
         let lines = feed.build_lines(
             &[msg(FeedRole::User, "Привет!\nКак дела?", "")],
             &Palette::default(),
@@ -1113,7 +1204,7 @@ mod tests {
 
     #[test]
     fn markdown_is_applied_to_body() {
-        let feed = MessageFeed::new();
+        let mut feed = MessageFeed::new();
         // LaTeX действует внутри $…$ (delimiter-scoped, см. shared::markdown)
         let lines = feed.build_lines(
             &[msg(FeedRole::Assistant, "формула $x^2$", "")],
@@ -1131,7 +1222,7 @@ mod tests {
     fn rail_is_not_dimmed_next_to_table_borders() {
         // Рейл слева должен иметь чистый цвет роли без line-level модификаторов
         // (напр. DIM у рамок таблиц/разделителей), иначе он другого цвета напротив них.
-        let feed = MessageFeed::new();
+        let mut feed = MessageFeed::new();
         let table = "| a | b |\n|---|---|\n| 1 | 2 |";
         let lines = feed.build_lines(
             &[msg(FeedRole::Assistant, table, "")],
@@ -1226,5 +1317,136 @@ mod tests {
             right_col(&term).iter().any(|s| s == "█"),
             "переполненная лента — с бегунком"
         );
+    }
+
+    /// Собирает содержимое всех спанов строки в кортеж (текст, fg) — для сравнения.
+    fn line_sig(l: &Line<'static>) -> Vec<(String, Option<Color>)> {
+        l.spans
+            .iter()
+            .map(|s| (s.content.to_string(), s.style.fg))
+            .collect()
+    }
+
+    /// Тёплый кэш даёт построчно идентичный вывод свежему рендеру — по разным
+    /// сценариям, ширинам, палитрам и состоянию показа мыслей.
+    #[test]
+    fn cache_matches_fresh_render() {
+        let tool_msg = {
+            let mut m = msg(FeedRole::Assistant, "готово", "");
+            m.tools.push(FeedToolCall {
+                name: "note_save".into(),
+                arguments: "{}".into(),
+                result: "ок".into(),
+                text_offset: m.text.len(),
+            });
+            m
+        };
+        let scenarios: Vec<Vec<FeedMessage>> = vec![
+            vec![msg(FeedRole::User, "привет как дела сегодня", "")],
+            vec![
+                msg(FeedRole::User, "вопрос", ""),
+                msg(
+                    FeedRole::Assistant,
+                    "# Заголовок\n\nответ с `кодом` и формулой $x^2 + \\alpha$",
+                    "рассуждение модели",
+                ),
+            ],
+            vec![tool_msg],
+        ];
+        for messages in &scenarios {
+            for width in [40usize, 80] {
+                for palette in [Palette::default(), Palette::default().with_compat(true)] {
+                    for show in [false, true] {
+                        let mut warm = MessageFeed::new();
+                        if show {
+                            warm.toggle_thoughts();
+                        }
+                        // прогреваем кэш повторными вызовами
+                        let _ = warm.build_lines(messages, &palette, width);
+                        let _ = warm.build_lines(messages, &palette, width);
+                        let warm_lines = warm.build_lines(messages, &palette, width);
+
+                        let mut fresh = MessageFeed::new();
+                        if show {
+                            fresh.toggle_thoughts();
+                        }
+                        let fresh_lines = fresh.build_lines(messages, &palette, width);
+
+                        let w: Vec<_> = warm_lines.iter().map(line_sig).collect();
+                        let f: Vec<_> = fresh_lines.iter().map(line_sig).collect();
+                        assert_eq!(w, f, "кэш разошёлся: width={width} show={show}");
+                    }
+                }
+            }
+        }
+    }
+
+    /// Стриминг: на каждом шаге роста текста тёплый кэш совпадает со свежим рендером
+    /// (пересчитывается только хвостовое сообщение).
+    #[test]
+    fn cache_matches_fresh_during_streaming() {
+        let mut warm = MessageFeed::new();
+        let palette = Palette::default();
+        let full = "Это ответ ассистента, который растёт по чанкам стриминга.";
+        let total = full.chars().count();
+        for end in (1..=total).step_by(3) {
+            let partial: String = full.chars().take(end).collect();
+            let mut m = msg(FeedRole::Assistant, &partial, "");
+            m.streaming = true;
+            let messages = vec![msg(FeedRole::User, "спроси", ""), m];
+            let warm_lines = warm.build_lines(&messages, &palette, 60);
+            let mut fresh = MessageFeed::new();
+            let fresh_lines = fresh.build_lines(&messages, &palette, 60);
+            let w: Vec<_> = warm_lines.iter().map(line_sig).collect();
+            let f: Vec<_> = fresh_lines.iter().map(line_sig).collect();
+            assert_eq!(w, f, "стрим-кэш разошёлся на end={end}");
+        }
+    }
+
+    /// Правка текста сообщения инвалидирует кэш (новый текст виден, старого нет).
+    #[test]
+    fn cache_invalidates_on_message_edit() {
+        let mut feed = MessageFeed::new();
+        let palette = Palette::default();
+        let join = |ls: &[Line<'static>]| -> String {
+            ls.iter()
+                .flat_map(|l| l.spans.iter().map(|s| s.content.to_string()))
+                .collect()
+        };
+        let l1 = feed.build_lines(
+            &[msg(FeedRole::Assistant, "первый вариант", "")],
+            &palette,
+            80,
+        );
+        assert!(join(&l1).contains("первый вариант"));
+        let l2 = feed.build_lines(
+            &[msg(FeedRole::Assistant, "другой текст", "")],
+            &palette,
+            80,
+        );
+        let j2 = join(&l2);
+        assert!(j2.contains("другой текст"), "{j2}");
+        assert!(!j2.contains("первый вариант"), "устаревший кэш: {j2}");
+    }
+
+    /// Усечение истории (Ctrl+E/regenerate): после укорачивания вывод тёплого кэша
+    /// совпадает со свежим (хвост кэша отброшен).
+    #[test]
+    fn cache_handles_history_truncation() {
+        let mut feed = MessageFeed::new();
+        let palette = Palette::default();
+        let long = vec![
+            msg(FeedRole::User, "раз", ""),
+            msg(FeedRole::Assistant, "ответ раз", ""),
+            msg(FeedRole::User, "два", ""),
+            msg(FeedRole::Assistant, "ответ два", ""),
+        ];
+        let _ = feed.build_lines(&long, &palette, 80);
+        let warm = feed.build_lines(&long[..2], &palette, 80);
+        let mut fresh = MessageFeed::new();
+        let fresh_lines = fresh.build_lines(&long[..2], &palette, 80);
+        let w: Vec<_> = warm.iter().map(line_sig).collect();
+        let f: Vec<_> = fresh_lines.iter().map(line_sig).collect();
+        assert_eq!(w, f);
     }
 }
