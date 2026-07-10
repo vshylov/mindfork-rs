@@ -31,7 +31,9 @@ pub(super) struct Writer {
     /// и первый абзац этого элемента должен продолжаться **на строке маркера**, а не
     /// на новой строке. В «рыхлых» (loose) списках pulldown-cmark оборачивает
     /// содержимое элемента в `Paragraph`; без этого флага номер оставался бы на одной
-    /// строке, а текст уезжал на следующую. Сбрасывается в начале любого `Start(tag)`.
+    /// строке, а текст уезжал на следующую. Сбрасывается в начале любого `Start(tag)`
+    /// и на `End(Item)` — иначе в **тугом** (tight) списке, где обёртки `Paragraph`
+    /// нет, флаг некому потребить и он «утекал» на следующий блок.
     item_marker_open: bool,
     /// Трактовать «мягкий» перенос (одиночный `\n`) как реальный перенос строки
     /// (GFM-стиль). Для сообщений пользователя — `true`. См. [`render_with`].
@@ -166,6 +168,10 @@ impl Writer {
             }
             TagEnd::Link => self.end_link(),
             TagEnd::Image => self.end_image(),
+            // Сброс «маркер открыт»: в ТУГОМ списке содержимое элемента — инлайн без
+            // обёртки `Paragraph`, поэтому флаг некому потребить, и он «утекал» на
+            // следующий блок (склеивая его с строкой маркера и глотая пустую строку).
+            TagEnd::Item => self.item_marker_open = false,
             TagEnd::TableCell => {
                 if let Some(tb) = &mut self.table {
                     let cell = tb.current_cell.take().unwrap_or_default();
@@ -682,6 +688,48 @@ mod tests {
             .map(|s| wrap::display_width(&s.content.chars().collect::<Vec<_>>()))
             .sum();
         assert_eq!(width, w, "линия должна занимать ширину панели");
+    }
+
+    /// Тугой (tight) элемент списка не «утекает» на следующий блок: после
+    /// `3. Название` с пустой строкой идущий следом абзац не приклеивается к строке
+    /// маркера, а пустая строка сохраняется (регрессия: `item_marker_open` в тугом
+    /// списке не потреблялся — контент элемента инлайновый, без обёртки `Paragraph`).
+    /// Сцена — трек-лист альбома: `3. Трек` + теги Suno на следующих строках.
+    #[test]
+    fn tight_list_item_does_not_bleed_into_next_block() {
+        let md = "3. Взгляд из ниоткуда\n\n[Intro - Ambient]\nЯ — тишина.";
+        let lines = rows(md, 100);
+        let marker = lines
+            .iter()
+            .find(|l| l.contains("3. Взгляд из ниоткуда"))
+            .expect("нет строки маркера");
+        assert!(
+            !marker.contains("[Intro"),
+            "следующий блок приклеился к строке маркера: {marker:?}"
+        );
+        let marker_idx = lines.iter().position(|l| l.contains("3. Взгляд")).unwrap();
+        let intro_idx = lines.iter().position(|l| l.contains("[Intro")).unwrap();
+        assert!(
+            intro_idx > marker_idx,
+            "теги не на отдельной строке: {lines:?}"
+        );
+        // между маркером и тегами — сохранённая пустая строка
+        assert!(
+            lines[marker_idx + 1..intro_idx]
+                .iter()
+                .any(|l| l.trim().is_empty()),
+            "потеряна пустая строка после названия трека: {lines:?}"
+        );
+    }
+
+    /// Обычный тугой список (несколько пунктов) не сломан: каждый пункт — на своей
+    /// строке, следующий не приклеивается к предыдущему.
+    #[test]
+    fn tight_list_items_stay_on_separate_lines() {
+        let lines = rows("- один\n- два\n- три", 80);
+        assert!(lines.iter().any(|l| l.trim() == "- один"), "{lines:?}");
+        assert!(lines.iter().any(|l| l.trim() == "- два"), "{lines:?}");
+        assert!(lines.iter().any(|l| l.trim() == "- три"), "{lines:?}");
     }
 
     /// Изображение печатает alt-текст и URL в скобках (как ссылка).
