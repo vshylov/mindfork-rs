@@ -4020,6 +4020,12 @@ web-поиск и Python под выключателями, экран наст�
   дефолт-`None` у старой записи, round-trip, `skip` пустого). **851 юнит-тест зелёный**
   (+3), +`#[ignore]`-смоук `tool_use_round_trips_signature` (Gemini 3: раунд-2 с
   переотправкой подписи без `400`). clippy `-D warnings`/fmt чисты.
+- **Живой прогон — GO** (Gemini 3.1 Pro Preview, `MINDFORK_GEMINI_MODEL=gemini-3.1-pro-preview`):
+  все 4 gemini-смоука зелёные (генерация, поток «мыслей» через `includeThoughts`, один
+  tool-раунд, round-trip подписи) — у `tool_use_round_trips_signature` подпись пришла
+  (`thought_signature present: true`) и переотправка прошла **без `400`**. Механизм
+  подписей и обе фазы подтверждены на живой модели; развилка §7-1 закрыта выбором дизайна
+  (всегда переотправляем → failure-mode недостижим), персист оставлен.
 
 ### Отложено за пределы M3
 - **Сворачивание/выделение per-message** и tool-блоки в ленте — сейчас «мысли»
