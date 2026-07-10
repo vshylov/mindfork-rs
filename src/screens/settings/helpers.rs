@@ -6,8 +6,10 @@ use super::*;
 // ---------- свободные функции ----------
 
 /// Входит ли параметр сэмплинга в подмножество, принимаемое облачным провайдером.
-/// OpenAI/Gemini (строгий OpenAI-диалект, `restrict_to_strict`): temperature/top_p/
-/// penalties/seed/max_tokens. Anthropic (Claude): **только `max_tokens`** — новейшие
+/// Gemini (строгий OpenAI-диалект, `restrict_to_strict`): temperature/top_p/
+/// penalties/seed/max_tokens. OpenAI — то же **без `temperature`/`top_p`**: их
+/// принимало лишь семейство GPT 5.4, а GPT 5.5/5.6 отвергают. Anthropic (Claude):
+/// **только `max_tokens`** — новейшие
 /// модели 4.x «зафиксировали» сэмплинг и отвергают `temperature`/`top_p`/`top_k` как
 /// deprecated, поэтому их не шлём (см. `anthropic::wire`). Остальные — расширения
 /// llama.cpp и reasoning-поля — облако не принимает. См. ADR 0004.

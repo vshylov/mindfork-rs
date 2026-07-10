@@ -685,13 +685,19 @@ fn cloud_hides_unsupported_sampling_params() {
     // Локально (managed по умолчанию) — видны все параметры.
     assert!(has(&s, SamplingParam::TopK));
     assert!(has(&s, SamplingParam::Thinking));
-    // Облако (OpenAI): расширения llama.cpp/reasoning скрыты, базовые — видны.
-    s.config.engine.mode = ServerMode::OpenAi;
+    // Облако (Gemini): расширения llama.cpp/reasoning скрыты, базовые — видны.
+    s.config.engine.mode = ServerMode::Gemini;
     assert!(!has(&s, SamplingParam::TopK));
     assert!(!has(&s, SamplingParam::Thinking));
     assert!(!has(&s, SamplingParam::Reasoning));
     assert!(has(&s, SamplingParam::Temp));
     assert!(has(&s, SamplingParam::TopP));
+    assert!(has(&s, SamplingParam::MaxTokens));
+    // OpenAI: сверх того скрыты temperature/top_p (их принимало лишь GPT 5.4).
+    s.config.engine.mode = ServerMode::OpenAi;
+    assert!(!has(&s, SamplingParam::Temp));
+    assert!(!has(&s, SamplingParam::TopP));
+    assert!(has(&s, SamplingParam::FreqPen));
     assert!(has(&s, SamplingParam::MaxTokens));
     // Claude 4.x «зафиксировал» сэмплинг: виден только max_tokens.
     s.config.engine.mode = ServerMode::Claude;

@@ -127,10 +127,11 @@ async fn assistant_metadata_records_mode_model_and_filtered_sampling() {
         .expect("снимок метаданных");
     assert_eq!(meta.mode, ServerMode::OpenAi);
     assert_eq!(meta.model.as_deref(), Some("gpt-test"));
-    // Доступные в облаке поля сохранены, недоступный top_k — обнулён.
-    assert_eq!(meta.sampling.temperature, Some(0.7));
+    // Доступные в режиме поля сохранены; недоступные top_k и temperature (её
+    // отвергают GPT 5.5/5.6) — обнулены.
     assert_eq!(meta.sampling.max_tokens, Some(128));
     assert_eq!(meta.sampling.top_k, None);
+    assert_eq!(meta.sampling.temperature, None);
 }
 
 #[tokio::test]
