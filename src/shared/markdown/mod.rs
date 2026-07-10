@@ -1,4 +1,4 @@
-//! Рендер markdown в `ratatui::Text` + lёгкая unicode-аппроксимация LaTeX.
+//! Рендер markdown в `ratatui::Text` + лёгкая unicode-аппроксимация LaTeX.
 //! См. spec §11.4 и docs/decisions/0003-own-markdown-renderer.md.
 //!
 //! Markdown парсим напрямую через `pulldown-cmark` собственным «писателем»

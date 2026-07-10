@@ -1,6 +1,17 @@
 //! Markdown — LaTeX→unicode: нормализация разделителей + конвертер команд. Часть модуля [`super`]; разбито из монолита
 //! markdown.rs (см. docs/history/refactoring-god-objects.md, этап 6).
 
+/// Сентинелы для скобок, которые должны пережить финальный срез группировки:
+/// литеральные `\{`/`\}` **и** скобки нераспознанных brace-команд (`\binom{n}{k}`
+/// остаётся читаемым, а не склеивается в `\binomnk`).
+const LBRACE: char = '\u{1}';
+const RBRACE: char = '\u{2}';
+
+/// Потолок глубины рекурсии [`apply_brace_commands`] — защита стека от
+/// патологической вложенности (`\frac{\frac{…}}` на тысячи уровней). Глубже —
+/// содержимое группы копируется без дальнейшего разбора.
+const MAX_BRACE_DEPTH: usize = 64;
+
 // ---------- нормализация разделителей формул ----------
 
 /// Приводит формы разделителей LaTeX к долларовым, понятным парсеру:
@@ -13,18 +24,43 @@ pub fn normalize_delimiters(input: &str) -> String {
     let mut out = String::with_capacity(input.len());
     let mut i = 0;
     while i < n {
-        // Код-спан/блок: копируем от открывающего ряда бэктиков до закрывающего
-        // ряда той же длины дословно.
+        // Код-спан/блок на бэктиках: содержимое копируем дословно (внутри кода `\(`
+        // не трогаем). Закрывающий ряд — той же длины.
         if chars[i] == '`' {
-            let fence = backtick_run(&chars, i);
+            let fence = char_run(&chars, i, '`');
             let body_start = i + fence;
-            let end = match find_backtick_run(&chars, body_start, fence) {
-                Some(close_end) => close_end,
-                None => n,
-            };
-            out.extend(&chars[i..end]);
-            i = end;
+            match find_char_run(&chars, body_start, fence, '`') {
+                Some(close_end) => {
+                    out.extend(&chars[i..close_end]);
+                    i = close_end;
+                }
+                None if fence >= 3 => {
+                    // Незакрытый забор — норма при стриминге ` ``` `: до конца дословно
+                    // (внутри незавершённого блока нормализовать нельзя).
+                    out.extend(&chars[i..]);
+                    i = n;
+                }
+                None => {
+                    // Незакрытый короткий ряд (1–2) по CommonMark — литерал: копируем
+                    // сами бэктики и ПРОДОЛЖАЕМ нормализацию (иначе одинокий ` глушил бы
+                    // конверсию формул до конца сообщения).
+                    out.extend(&chars[i..body_start]);
+                    i = body_start;
+                }
+            }
             continue;
+        }
+        // Огороженный блок на тильдах (`~~~`): содержимое дословно. Ряд < 3 (напр.
+        // `~~зачёркивание~~`) забором не считается — тильды копируются обычным путём.
+        if chars[i] == '~' {
+            let run = char_run(&chars, i, '~');
+            if run >= 3 {
+                let body_start = i + run;
+                let end = find_tilde_fence_close(&chars, body_start).unwrap_or(n);
+                out.extend(&chars[i..end]);
+                i = end;
+                continue;
+            }
         }
         if chars[i] == '\\' && i + 1 < n {
             match chars[i + 1] {
@@ -55,23 +91,42 @@ pub fn normalize_delimiters(input: &str) -> String {
     out
 }
 
-/// Длина ряда бэктиков, начинающегося с `start`.
-pub(super) fn backtick_run(chars: &[char], start: usize) -> usize {
+/// Длина ряда одинаковых символов `ch`, начинающегося с `start`.
+pub(super) fn char_run(chars: &[char], start: usize, ch: char) -> usize {
     let mut k = start;
-    while k < chars.len() && chars[k] == '`' {
+    while k < chars.len() && chars[k] == ch {
         k += 1;
     }
     k - start
 }
 
-/// Ищет закрывающий ряд бэктиков ровно длины `len`, начиная с `from`.
+/// Ищет закрывающий ряд `ch` ровно длины `len`, начиная с `from`.
 /// Возвращает индекс **за** закрывающим рядом.
-pub(super) fn find_backtick_run(chars: &[char], from: usize, len: usize) -> Option<usize> {
+pub(super) fn find_char_run(chars: &[char], from: usize, len: usize, ch: char) -> Option<usize> {
     let mut j = from;
     while j < chars.len() {
-        if chars[j] == '`' {
-            let run = backtick_run(chars, j);
+        if chars[j] == ch {
+            let run = char_run(chars, j, ch);
             if run == len {
+                return Some(j + run);
+            }
+            j += run;
+        } else {
+            j += 1;
+        }
+    }
+    None
+}
+
+/// Ищет закрывающий ряд тильд длины ≥ 3, начиная с `from` (заборы `~~~`
+/// закрываются рядом не короче открывающего, но для «пропустить код» достаточно
+/// найти любой ряд ≥ 3). Возвращает индекс **за** закрывающим рядом.
+pub(super) fn find_tilde_fence_close(chars: &[char], from: usize) -> Option<usize> {
+    let mut j = from;
+    while j < chars.len() {
+        if chars[j] == '~' {
+            let run = char_run(chars, j, '~');
+            if run >= 3 {
                 return Some(j + run);
             }
             j += run;
@@ -103,8 +158,6 @@ pub(super) fn find_pair(chars: &[char], from: usize, a: char, b: char) -> Option
 /// Литеральные `\{`/`\}` сохраняются. Неизвестные команды остаются как есть.
 pub fn latex_to_unicode(input: &str) -> String {
     // Защищаем литеральные скобки от снятия группировки в конце.
-    const LBRACE: char = '\u{1}';
-    const RBRACE: char = '\u{2}';
     let protected = input.replace("\\{", "\u{1}").replace("\\}", "\u{2}");
     let with_braces = apply_brace_commands(&protected);
     let with_commands = replace_commands(&with_braces);
@@ -127,65 +180,178 @@ pub fn latex_to_unicode(input: &str) -> String {
 /// (вложенные дроби/обёртки). Прочие `\name` копируются как есть (их разберёт
 /// [`replace_commands`]).
 pub(super) fn apply_brace_commands(input: &str) -> String {
+    apply_brace_commands_depth(input, 0)
+}
+
+/// Рекурсивно обрабатывает содержимое группы (с учётом потолка глубины).
+fn brace_recurse(s: &str, depth: usize) -> String {
+    if depth >= MAX_BRACE_DEPTH {
+        s.to_string()
+    } else {
+        apply_brace_commands_depth(s, depth + 1)
+    }
+}
+
+fn apply_brace_commands_depth(input: &str, depth: usize) -> String {
     let chars: Vec<char> = input.chars().collect();
     let n = chars.len();
     let mut out = String::with_capacity(input.len());
     let mut i = 0;
     while i < n {
-        if chars[i] == '\\' {
-            let start = i + 1;
-            let mut j = start;
-            while j < n && chars[j].is_ascii_alphabetic() {
-                j += 1;
-            }
-            let name: String = chars[start..j].iter().collect();
-            if !name.is_empty() && j < n && chars[j] == '{' {
-                if name == "frac"
-                    && let Some((a, after_a)) = read_group(&chars, j)
-                    && after_a < n
-                    && chars[after_a] == '{'
-                    && let Some((b, after_b)) = read_group(&chars, after_a)
-                {
-                    out.push_str(&apply_brace_commands(&a));
-                    out.push('/');
-                    out.push_str(&apply_brace_commands(&b));
-                    i = after_b;
-                    continue;
-                } else if name == "sqrt"
-                    && let Some((a, after_a)) = read_group(&chars, j)
-                {
-                    out.push('√');
-                    out.push('(');
-                    out.push_str(&apply_brace_commands(&a));
-                    out.push(')');
-                    i = after_a;
-                    continue;
-                } else if name == "pmod"
-                    && let Some((a, after_a)) = read_group(&chars, j)
-                {
-                    out.push_str("(mod ");
-                    out.push_str(&apply_brace_commands(&a));
-                    out.push(')');
-                    i = after_a;
-                    continue;
-                } else if is_text_command(&name)
-                    && let Some((a, after_a)) = read_group(&chars, j)
-                {
-                    out.push_str(&apply_brace_commands(&a));
-                    i = after_a;
-                    continue;
-                }
-            }
-            // Не обрабатываемая здесь команда: копируем только '\', остальное —
-            // обычными символами (их подхватит replace_commands).
-            out.push('\\');
+        if chars[i] != '\\' {
+            out.push(chars[i]);
             i += 1;
             continue;
         }
-        out.push(chars[i]);
+        let start = i + 1;
+        let mut j = start;
+        while j < n && chars[j].is_ascii_alphabetic() {
+            j += 1;
+        }
+        let name: String = chars[start..j].iter().collect();
+
+        // `\sqrt` с опциональным индексом `\sqrt[3]{x}` → ∛(x). Проверяем до общего
+        // brace-разбора (индекс идёт между именем и группой).
+        if name == "sqrt" {
+            let (root, after_opt) = read_optional(&chars, j);
+            if after_opt < n
+                && chars[after_opt] == '{'
+                && let Some((a, after_a)) = read_group(&chars, after_opt)
+            {
+                out.push_str(&sqrt_render(root.as_deref(), &brace_recurse(&a, depth)));
+                i = after_a;
+                continue;
+            }
+            // иначе — «голый» \sqrt, разберётся ниже как обычная команда (→ √)
+        }
+
+        if !name.is_empty() && j < n && chars[j] == '{' {
+            // Дроби: `\frac`/`\dfrac`/`\tfrac`/`\cfrac{a}{b}` → a/b.
+            if is_frac_command(&name)
+                && let Some((a, after_a)) = read_group(&chars, j)
+                && after_a < n
+                && chars[after_a] == '{'
+                && let Some((b, after_b)) = read_group(&chars, after_a)
+            {
+                out.push_str(&brace_recurse(&a, depth));
+                out.push('/');
+                out.push_str(&brace_recurse(&b, depth));
+                i = after_b;
+                continue;
+            }
+            // Биномиальный коэффициент `\binom{n}{k}` → C(n, k).
+            if name == "binom"
+                && let Some((a, after_a)) = read_group(&chars, j)
+                && after_a < n
+                && chars[after_a] == '{'
+                && let Some((b, after_b)) = read_group(&chars, after_a)
+            {
+                out.push('C');
+                out.push('(');
+                out.push_str(&brace_recurse(&a, depth));
+                out.push_str(", ");
+                out.push_str(&brace_recurse(&b, depth));
+                out.push(')');
+                i = after_b;
+                continue;
+            }
+            // `\pmod{n}` → (mod n).
+            if name == "pmod"
+                && let Some((a, after_a)) = read_group(&chars, j)
+            {
+                out.push_str("(mod ");
+                out.push_str(&brace_recurse(&a, depth));
+                out.push(')');
+                i = after_a;
+                continue;
+            }
+            // Наложения `\overset{a}{b}`/`\underset`/`\stackrel` → базовый (второй)
+            // аргумент; аннотация опускается (как диакритика у акцентов).
+            if is_stack_command(&name)
+                && let Some((_a, after_a)) = read_group(&chars, j)
+                && after_a < n
+                && chars[after_a] == '{'
+                && let Some((b, after_b)) = read_group(&chars, after_a)
+            {
+                out.push_str(&brace_recurse(&b, depth));
+                i = after_b;
+                continue;
+            }
+            // Текстовые/шрифтовые обёртки и акценты → содержимое.
+            if is_text_command(&name)
+                && let Some((a, after_a)) = read_group(&chars, j)
+            {
+                out.push_str(&brace_recurse(&a, depth));
+                i = after_a;
+                continue;
+            }
+            // НЕИЗВЕСТНАЯ команда с группой: сохраняем `\name` и все её группы,
+            // **защищая скобки** (сентинелы) — иначе финальный срез склеил бы
+            // `\binom{n}{k}` в `\binomnk`. Содержимое групп обрабатывается рекурсивно.
+            out.push('\\');
+            out.push_str(&name);
+            let mut k = j;
+            while k < n && chars[k] == '{' {
+                let Some((g, after)) = read_group(&chars, k) else {
+                    break;
+                };
+                out.push(LBRACE);
+                out.push_str(&brace_recurse(&g, depth));
+                out.push(RBRACE);
+                k = after;
+            }
+            i = k;
+            continue;
+        }
+
+        // Команда без группы (или одиночный '\'): копируем '\', остальное подхватит
+        // replace_commands.
+        out.push('\\');
         i += 1;
     }
     out
+}
+
+/// Дроби, сводимые к `a/b`.
+fn is_frac_command(name: &str) -> bool {
+    matches!(name, "frac" | "dfrac" | "tfrac" | "cfrac")
+}
+
+/// Команды-наложения, у которых берём базовый (второй) аргумент.
+fn is_stack_command(name: &str) -> bool {
+    matches!(name, "overset" | "underset" | "stackrel")
+}
+
+/// Читает опциональный аргумент `[…]` начиная с `from` (если он там есть).
+/// Возвращает (содержимое без скобок, индекс за `]`); если `[` нет — `(None, from)`.
+fn read_optional(chars: &[char], from: usize) -> (Option<String>, usize) {
+    if from < chars.len()
+        && chars[from] == '['
+        && let Some(rel) = chars[from + 1..].iter().position(|&c| c == ']')
+    {
+        let inner: String = chars[from + 1..from + 1 + rel].iter().collect();
+        return (Some(inner), from + 1 + rel + 1);
+    }
+    (None, from)
+}
+
+/// Рендер корня по опциональному индексу: `None`/`2` → `√(x)`, `3` → `∛(x)`,
+/// `4` → `∜(x)`, иначе — префикс-superscript `ⁿ√(x)` (если индекс целиком мапится)
+/// либо фолбэк `√[n](x)`.
+fn sqrt_render(root: Option<&str>, inner: &str) -> String {
+    let prefix = match root {
+        None | Some("2") => "√".to_string(),
+        Some("3") => "∛".to_string(),
+        Some("4") => "∜".to_string(),
+        Some(r) => {
+            let rc: Vec<char> = r.chars().collect();
+            match map_script_chars(&rc, true) {
+                Some(sup) => format!("{sup}√"),
+                None => format!("√[{r}]"),
+            }
+        }
+    };
+    format!("{prefix}({inner})")
 }
 
 /// Читает сбалансированную группу `{…}`, начиная с `open` (где `chars[open]=='{'`).
@@ -224,11 +390,19 @@ pub(super) fn is_text_command(name: &str) -> bool {
             | "textbf"
             | "textit"
             | "textrm"
+            | "textnormal"
+            | "textsf"
+            | "textsl"
+            | "texttt"
+            | "textup"
+            | "mbox"
+            | "emph"
             | "mathrm"
             | "mathbf"
             | "mathit"
             | "mathbb"
             | "mathcal"
+            | "mathfrak"
             | "mathsf"
             | "mathtt"
             | "operatorname"
@@ -236,6 +410,10 @@ pub(super) fn is_text_command(name: &str) -> bool {
             // акценты/обёртки: показываем содержимое (диакритику опускаем)
             | "overline"
             | "underline"
+            | "overbrace"
+            | "underbrace"
+            | "overrightarrow"
+            | "overleftarrow"
             | "hat"
             | "widehat"
             | "bar"
@@ -335,6 +513,11 @@ pub(super) fn replace_commands(input: &str) -> String {
         if let Some(sym) = command_symbol(name) {
             out.push_str(sym);
             i = j;
+            // `\left.` / `\right.` — «невидимый» делимитер-точка: модификатор снят
+            // (пустая строка), съедаем и точку, чтобы не осталась висячая «.».
+            if (name == "left" || name == "right") && i < bytes.len() && bytes[i] == b'.' {
+                i += 1;
+            }
             // Пробел после команды НЕ съедаем (в отличие от настоящего LaTeX):
             // это аппроксимация для чтения, и пользовательские пробелы — значимый
             // визуальный разделитель (`\alpha + \beta` → «α + β», не «α+ β»).
@@ -466,6 +649,73 @@ pub(super) fn command_symbol(name: &str) -> Option<&'static str> {
         "cdots" => "⋯",
         "vdots" => "⋮",
         "ddots" => "⋱",
+        // делимитеры и разделители
+        "langle" => "⟨",
+        "rangle" => "⟩",
+        "lfloor" => "⌊",
+        "rfloor" => "⌋",
+        "lceil" => "⌈",
+        "rceil" => "⌉",
+        "mid" => "|",
+        "parallel" | "Vert" => "‖",
+        "setminus" | "smallsetminus" => "∖",
+        "backslash" => "\\",
+        // отношения
+        "cong" => "≅",
+        "simeq" => "≃",
+        "asymp" => "≍",
+        "doteq" => "≐",
+        "vdash" => "⊢",
+        "dashv" => "⊣",
+        "models" | "vDash" => "⊨",
+        "triangleq" => "≜",
+        "coloneqq" | "coloneq" => "≔",
+        "subsetneq" => "⊊",
+        "supsetneq" => "⊋",
+        "nsubseteq" => "⊈",
+        "nsupseteq" => "⊉",
+        "sqsubseteq" => "⊑",
+        "sqsupseteq" => "⊒",
+        "ni" | "owns" => "∋",
+        // стрелки (симметрия к уже имеющимся + частые)
+        "Longleftarrow" => "⟸",
+        "longleftrightarrow" => "⟷",
+        "Longleftrightarrow" => "⟺",
+        "hookrightarrow" => "↪",
+        "hookleftarrow" => "↩",
+        "twoheadrightarrow" => "↠",
+        "rightsquigarrow" | "leadsto" => "⇝",
+        "nearrow" => "↗",
+        "searrow" => "↘",
+        "nwarrow" => "↖",
+        "swarrow" => "↙",
+        // греческие варианты
+        "vartheta" => "ϑ",
+        "varsigma" => "ς",
+        "varrho" => "ϱ",
+        "varkappa" => "ϰ",
+        "varpi" => "ϖ",
+        // операторы над множествами и большие операторы
+        "sqcap" => "⊓",
+        "sqcup" => "⊔",
+        "uplus" => "⊎",
+        "bigcup" => "⋃",
+        "bigcap" => "⋂",
+        "coprod" => "∐",
+        "iint" => "∬",
+        "iiint" => "∭",
+        "odot" => "⊙",
+        "ominus" => "⊖",
+        "oslash" => "⊘",
+        // прочие символы
+        "dagger" => "†",
+        "ddagger" => "‡",
+        "diamond" => "⋄",
+        "Box" | "square" => "□",
+        "blacksquare" => "■",
+        "triangleleft" => "◁",
+        "triangleright" => "▷",
+        "checkmark" => "✓",
         // пробельные команды (читаемость): сводим к пробелу
         "quad" => " ",
         "qquad" => "  ",
@@ -719,5 +969,102 @@ mod tests {
         let collected = rendered_text(r"путь \(\alpha \to \beta\) готов");
         assert!(collected.contains("α → β"));
         assert!(!collected.contains('$'));
+    }
+
+    #[test]
+    fn unknown_brace_command_keeps_braces() {
+        // Нераспознанная команда с группой не склеивается с аргументом (регрессия:
+        // \boxed{x+1} → \boxedx+1). Содержимое внутри — конвертируется.
+        assert_eq!(latex_to_unicode(r"\boxed{x+1}"), r"\boxed{x+1}");
+        assert_eq!(latex_to_unicode(r"\boxed{\alpha}"), r"\boxed{α}");
+        assert_eq!(latex_to_unicode(r"\op{a}{b}"), r"\op{a}{b}");
+    }
+
+    #[test]
+    fn frac_family_aliases() {
+        assert_eq!(latex_to_unicode(r"\dfrac{a}{b}"), "a/b");
+        assert_eq!(latex_to_unicode(r"\tfrac{1}{2}"), "1/2");
+        assert_eq!(latex_to_unicode(r"\cfrac{x}{y}"), "x/y");
+    }
+
+    #[test]
+    fn binom_coefficient() {
+        assert_eq!(latex_to_unicode(r"\binom{n}{k}"), "C(n, k)");
+        assert_eq!(latex_to_unicode(r"\binom{\alpha}{2}"), "C(α, 2)");
+    }
+
+    #[test]
+    fn sqrt_with_index() {
+        assert_eq!(latex_to_unicode(r"\sqrt[3]{x}"), "∛(x)");
+        assert_eq!(latex_to_unicode(r"\sqrt[4]{y}"), "∜(y)");
+        assert_eq!(latex_to_unicode(r"\sqrt[n]{x}"), "ⁿ√(x)");
+        // индекс без superscript-аналога — фолбэк с квадратными скобками
+        assert_eq!(latex_to_unicode(r"\sqrt[ab]{x}"), "√[ab](x)");
+        // «голый» \sqrt без индекса по-прежнему работает
+        assert_eq!(latex_to_unicode(r"\sqrt{x}"), "√(x)");
+    }
+
+    #[test]
+    fn left_right_dot_delimiter_eaten() {
+        assert_eq!(latex_to_unicode(r"\left. x \right."), "x");
+        // модификатор снят, скобка-делимитер остаётся
+        assert_eq!(latex_to_unicode(r"\left( x \right)"), "( x )");
+    }
+
+    #[test]
+    fn overset_underset_take_base() {
+        assert_eq!(latex_to_unicode(r"\overset{def}{=}"), "=");
+        assert_eq!(latex_to_unicode(r"\underset{n}{\min}"), "min");
+        assert_eq!(latex_to_unicode(r"\stackrel{?}{=}"), "=");
+    }
+
+    #[test]
+    fn more_text_wrappers() {
+        assert_eq!(latex_to_unicode(r"\texttt{code}"), "code");
+        assert_eq!(latex_to_unicode(r"\emph{важно}"), "важно");
+        assert_eq!(latex_to_unicode(r"\underbrace{a+b}"), "a+b");
+    }
+
+    #[test]
+    fn extended_symbol_table() {
+        assert_eq!(latex_to_unicode(r"\langle x \rangle"), "⟨ x ⟩");
+        assert_eq!(latex_to_unicode(r"\lfloor x \rfloor"), "⌊ x ⌋");
+        assert_eq!(latex_to_unicode(r"a \cong b"), "a ≅ b");
+        assert_eq!(latex_to_unicode(r"\Gamma \vdash x"), "Γ ⊢ x");
+        assert_eq!(latex_to_unicode(r"A \setminus B"), "A ∖ B");
+        assert_eq!(latex_to_unicode(r"x \hookrightarrow y"), "x ↪ y");
+        assert_eq!(latex_to_unicode(r"\vartheta + \varpi"), "ϑ + ϖ");
+        assert_eq!(latex_to_unicode(r"\bigcup_i A"), "⋃_i A");
+    }
+
+    #[test]
+    fn backslash_command_is_literal() {
+        assert_eq!(latex_to_unicode(r"a \backslash b"), r"a \ b");
+    }
+
+    #[test]
+    fn normalize_skips_tilde_fence() {
+        // внутри ~~~-забора `\(` не трогаем (порча кода)
+        assert_eq!(
+            normalize_delimiters("~~~\n\\(x\\)\n~~~"),
+            "~~~\n\\(x\\)\n~~~"
+        );
+        // ~~зачёркивание~~ (ряд < 3) забором не считается — формула после нормализуется
+        assert_eq!(normalize_delimiters(r"~~s~~ \(y\)"), r"~~s~~ $y$");
+    }
+
+    #[test]
+    fn normalize_unclosed_short_backtick_continues() {
+        // одинокий ` (незакрытый короткий ряд) — литерал, формула после нормализуется
+        assert_eq!(normalize_delimiters(r"a ` b \(x\)"), r"a ` b $x$");
+        // незакрытый забор ``` — до конца дословно (норма при стриминге)
+        assert_eq!(normalize_delimiters("```\n\\(x\\)"), "```\n\\(x\\)");
+    }
+
+    #[test]
+    fn deep_nesting_does_not_overflow_stack() {
+        // патологическая вложенность не роняет стек (потолок MAX_BRACE_DEPTH)
+        let deep = "\\sqrt{".repeat(5000) + "x" + &"}".repeat(5000);
+        let _ = latex_to_unicode(&deep);
     }
 }

@@ -605,7 +605,10 @@ mod tests {
     #[test]
     fn inline_link_keeps_url_suffix() {
         let collected = rendered_text("[текст](https://example.com)");
-        assert!(collected.contains("текст (https://example.com)"), "{collected}");
+        assert!(
+            collected.contains("текст (https://example.com)"),
+            "{collected}"
+        );
     }
 
     /// `<br>` в абзаце — перенос строки.
@@ -621,7 +624,10 @@ mod tests {
     fn br_tag_in_table_cell_becomes_space() {
         let md = "| A | B |\n| :--- | :--- |\n| x<br>y | z |";
         let joined = rendered_text_w(md, 60);
-        assert!(joined.contains("x y"), "<br> в ячейке должен стать пробелом: {joined}");
+        assert!(
+            joined.contains("x y"),
+            "<br> в ячейке должен стать пробелом: {joined}"
+        );
     }
 
     /// Метка языка с инфо-строкой (` ```rust,no_run `) резолвится по первому токену —
