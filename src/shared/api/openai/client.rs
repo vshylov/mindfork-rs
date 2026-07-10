@@ -160,6 +160,7 @@ impl EngineBackend for OpenAiClient {
                                             yield ChatChunk::Usage(TokenUsage {
                                                 prompt_tokens: u.prompt_tokens,
                                                 completion_tokens: u.completion_tokens,
+                                                reasoning_tokens: u.completion_tokens_details.reasoning_tokens,
                                             });
                                         }
                                         let Some(choice) = chunk.choices.into_iter().next() else { continue };

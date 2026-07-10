@@ -206,7 +206,11 @@ fn field_schemas() -> Vec<(&'static str, serde_json::Value)> {
         ("thinking", json!({"type": "boolean"})),
         (
             "reasoning_effort",
-            json!({"type": "string", "enum": ["none", "low", "medium", "high"]}),
+            json!({"type": "string", "enum": ["none", "minimal", "low", "medium", "high", "xhigh"]}),
+        ),
+        (
+            "verbosity",
+            json!({"type": "string", "enum": ["low", "medium", "high"]}),
         ),
     ]
 }
@@ -346,6 +350,7 @@ fn merge_sampling(base: &SamplingConfig, patch: &SamplingConfig) -> SamplingConf
         thinking: patch.thinking.or(base.thinking),
         reasoning_effort: patch.reasoning_effort.or(base.reasoning_effort),
         reasoning_budget: patch.reasoning_budget.or(base.reasoning_budget),
+        verbosity: patch.verbosity.or(base.verbosity),
     }
 }
 

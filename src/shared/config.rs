@@ -251,6 +251,10 @@ pub struct ExternalSettings {
     pub url: Option<String>,
     /// Имя модели для мульти-модельного сервера (опционально).
     pub model_name: Option<String>,
+    /// Имя env-переменной с Bearer-ключом (опционально) — для OpenAI-совместимого
+    /// прокси/шлюза, требующего авторизацию. Хранится **имя**, не секрет (ADR 0004).
+    /// `None`/пусто — без авторизации (локальный `llama-server` её не требует).
+    pub api_key_env: Option<String>,
 }
 
 /// Настройки одного облачного провайдера (OpenAI/Gemini/Claude). Хранятся

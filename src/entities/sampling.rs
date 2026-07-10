@@ -10,24 +10,51 @@ use serde::{Deserialize, Serialize};
 
 use crate::shared::config::CloudProvider;
 
-/// Уровень reasoning-усилия (OpenAI-совместимый).
+/// Уровень reasoning-усилия. `Minimal`/`XHigh` — расширенные ступени OpenAI (gpt-5.x
+/// Responses API); локальные модели/Anthropic понимают `low`/`medium`/`high` (крайние
+/// ступени маппятся к ним при трансляции). Порядок вариантов = порядок цикла в UI.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum ReasoningEffort {
     None,
+    Minimal,
+    Low,
+    Medium,
+    High,
+    XHigh,
+}
+
+impl ReasoningEffort {
+    /// Строковое представление для HTTP-поля `reasoning_effort` / `reasoning.effort`.
+    pub fn as_wire(self) -> &'static str {
+        match self {
+            ReasoningEffort::None => "none",
+            ReasoningEffort::Minimal => "minimal",
+            ReasoningEffort::Low => "low",
+            ReasoningEffort::Medium => "medium",
+            ReasoningEffort::High => "high",
+            ReasoningEffort::XHigh => "xhigh",
+        }
+    }
+}
+
+/// Многословность ответа (OpenAI Responses `text.verbosity`): регулирует длину
+/// ответа отдельно от температуры. Только OpenAI-Responses; прочие бэкенды игнорируют.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Verbosity {
     Low,
     Medium,
     High,
 }
 
-impl ReasoningEffort {
-    /// Строковое представление для HTTP-поля `reasoning_effort`.
+impl Verbosity {
+    /// Строковое представление для HTTP-поля `text.verbosity`.
     pub fn as_wire(self) -> &'static str {
         match self {
-            ReasoningEffort::None => "none",
-            ReasoningEffort::Low => "low",
-            ReasoningEffort::Medium => "medium",
-            ReasoningEffort::High => "high",
+            Verbosity::Low => "low",
+            Verbosity::Medium => "medium",
+            Verbosity::High => "high",
         }
     }
 }
@@ -112,6 +139,9 @@ pub struct SamplingConfig {
     /// reasoning (Gemma `peg-gemma4`, Qwen), `-1` — без ограничения. `None` —
     /// поле не отправляется (поведение сервера по умолчанию). См. spec §8.
     pub reasoning_budget: Option<i64>,
+    /// Многословность ответа (OpenAI Responses `text.verbosity`). `None` — поле не
+    /// отправляется (дефолт провайдера). Прочие бэкенды игнорируют.
+    pub verbosity: Option<Verbosity>,
 }
 
 impl SamplingConfig {
@@ -180,6 +210,7 @@ pub const SETTABLE_SAMPLING_FIELDS: &[&str] = &[
     "samplers",
     "thinking",
     "reasoning_effort",
+    "verbosity",
 ];
 
 /// Имена полей сэмплинга, которые движок данного режима реально принимает —
@@ -187,10 +218,12 @@ pub const SETTABLE_SAMPLING_FIELDS: &[&str] = &[
 /// `anthropic/wire`). `None` провайдер = локальный/external `llama.cpp`: принимает
 /// все поля (расширения он игнорирует, а не отвергает). Облако строгое:
 ///
-/// - **OpenAI** — `frequency_penalty`/`presence_penalty`/`seed`/`max_tokens`
-///   (прочее → `400`). `temperature`/`top_p` **не шлём**: их принимало лишь семейство
-///   GPT 5.4 (скоро отключается), а GPT 5.5/5.6 их уже отвергают;
-/// - **Gemini** (OpenAI-совместимый endpoint) — то же плюс `temperature`/`top_p`;
+/// - **OpenAI** — `max_tokens` + reasoning (`thinking`/`reasoning_effort`) + `verbosity`.
+///   Режим ходит в **Responses API** (`ResponsesClient`), где нет
+///   `temperature`/`top_p`/`seed`/penalties (reasoning-модели их отвергают), но есть
+///   резюме рассуждений и `text.verbosity`. См. ADR 0004, docs/research/openai-responses-client.md;
+/// - **Gemini** (OpenAI-совместимый Chat Completions) — `temperature`/`top_p`/
+///   `frequency_penalty`/`presence_penalty`/`seed`/`max_tokens`;
 /// - **Claude** — `max_tokens` + reasoning (`thinking`/`reasoning_effort`):
 ///   модели 4.x «зафиксировали» сэмплинг (отвергают `temperature`/`top_p`/`top_k`),
 ///   но поддерживают extended thinking (`{type:"adaptive"}` + `output_config.effort`).
@@ -202,12 +235,7 @@ pub const SETTABLE_SAMPLING_FIELDS: &[&str] = &[
 pub fn supported_sampling_fields(provider: Option<CloudProvider>) -> &'static [&'static str] {
     match provider {
         None => SETTABLE_SAMPLING_FIELDS,
-        Some(CloudProvider::OpenAi) => &[
-            "frequency_penalty",
-            "presence_penalty",
-            "seed",
-            "max_tokens",
-        ],
+        Some(CloudProvider::OpenAi) => &["max_tokens", "thinking", "reasoning_effort", "verbosity"],
         Some(CloudProvider::Gemini) => &[
             "temperature",
             "top_p",
@@ -256,23 +284,25 @@ mod tests {
     fn supported_fields_mirror_wire_dialect() {
         // Локально (None) — весь настраиваемый набор.
         assert_eq!(supported_sampling_fields(None), SETTABLE_SAMPLING_FIELDS);
-        // OpenAI — строгое подмножество; расширения/reasoning отсутствуют, а
-        // temperature/top_p отвергают GPT 5.5/5.6.
+        // OpenAI — Responses API: max_tokens + reasoning + verbosity; нет
+        // temperature/top_p/seed/penalties (reasoning-модели их отвергают).
         let openai = supported_sampling_fields(Some(CloudProvider::OpenAi));
         assert!(openai.contains(&"max_tokens"));
-        assert!(openai.contains(&"seed"));
+        assert!(openai.contains(&"thinking"));
+        assert!(openai.contains(&"reasoning_effort"));
+        assert!(openai.contains(&"verbosity"));
+        assert!(!openai.contains(&"seed"));
         assert!(!openai.contains(&"temperature"));
         assert!(!openai.contains(&"top_p"));
         assert!(!openai.contains(&"top_k"));
-        assert!(!openai.contains(&"thinking"));
-        // Gemini-compat принимает те же поля плюс temperature/top_p.
+        // Gemini-compat (Chat Completions): temperature/top_p/penalties/seed/max_tokens,
+        // но без reasoning/verbosity (это Responses-специфика).
         let gemini = supported_sampling_fields(Some(CloudProvider::Gemini));
         assert!(gemini.contains(&"temperature"));
         assert!(gemini.contains(&"top_p"));
+        assert!(gemini.contains(&"seed"));
         assert!(!gemini.contains(&"top_k"));
-        for f in openai {
-            assert!(gemini.contains(f));
-        }
+        assert!(!gemini.contains(&"verbosity"));
         // Claude — max_tokens + reasoning (thinking/reasoning_effort), но не top_k.
         let claude = supported_sampling_fields(Some(CloudProvider::Claude));
         assert!(claude.contains(&"max_tokens"));
@@ -280,7 +310,7 @@ mod tests {
         assert!(claude.contains(&"reasoning_effort"));
         assert!(!claude.contains(&"top_k"));
         // Подмножества облака — действительно подмножества полного набора.
-        for f in openai {
+        for f in openai.iter().chain(gemini).chain(claude) {
             assert!(SETTABLE_SAMPLING_FIELDS.contains(f));
         }
     }
@@ -301,14 +331,14 @@ mod tests {
         assert_eq!(local.top_k, Some(40));
         assert_eq!(local.min_p, Some(0.05));
         assert_eq!(local.thinking, Some(true));
-        // OpenAI — строгое подмножество: top_k/min_p/thinking и temperature (GPT
-        // 5.5/5.6 её отвергают) обнуляются, max_tokens остаётся.
+        // OpenAI (Responses): max_tokens + thinking остаются; temperature/top_k/min_p
+        // обнуляются (их нет в Responses API).
         let openai = s.retain_supported(Some(CloudProvider::OpenAi));
         assert_eq!(openai.max_tokens, Some(256));
+        assert_eq!(openai.thinking, Some(true));
         assert_eq!(openai.temperature, None);
         assert_eq!(openai.top_k, None);
         assert_eq!(openai.min_p, None);
-        assert_eq!(openai.thinking, None);
         // Gemini-compat temperature принимает.
         let gemini = s.retain_supported(Some(CloudProvider::Gemini));
         assert_eq!(gemini.temperature, Some(0.7));

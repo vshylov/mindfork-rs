@@ -19,7 +19,7 @@ use ratatui::widgets::{Block, Borders, Clear, List, ListItem, ListState, Paragra
 use uuid::Uuid;
 
 use crate::entities::profile::Profile;
-use crate::entities::sampling::{ReasoningEffort, SamplingConfig};
+use crate::entities::sampling::{ReasoningEffort, SamplingConfig, Verbosity};
 use crate::features::profiles::ProfileEdit;
 use crate::features::tools::meta::{ToolGate, ToolInfo};
 use crate::shared::config::{
@@ -196,6 +196,7 @@ enum SamplingParam {
     Samplers,
     Thinking,
     Reasoning,
+    Verbosity,
 }
 
 /// Порядок параметров семплинга в секции (стабильный = порядок отрисовки).
@@ -241,6 +242,7 @@ const SAMPLING_PARAMS: &[SamplingParam] = {
         // Рассуждения
         Thinking,
         Reasoning,
+        Verbosity,
     ]
 };
 
@@ -278,6 +280,7 @@ impl SamplingParam {
             Samplers => "samplers",
             Thinking => "Мысли (thinking)",
             Reasoning => "reasoning_effort",
+            Verbosity => "verbosity",
         }
     }
 
@@ -288,6 +291,7 @@ impl SamplingParam {
             Temp => "temperature",
             Thinking => "thinking",
             Reasoning => "reasoning_effort",
+            Verbosity => "verbosity",
             // Остальные параметры подписаны именем своего JSON-поля.
             _ => self.label(),
         }
@@ -302,7 +306,7 @@ impl SamplingParam {
             TopK | RepeatLastN | DryAllowedLength | DryPenaltyLastN | Mirostat | MaxTokens
             | Seed => Some(NumKind::Int),
             // Списки/выбор — не число.
-            DrySeqBreakers | Samplers | Thinking | Reasoning => None,
+            DrySeqBreakers | Samplers | Thinking | Reasoning | Verbosity => None,
             // Остальные — вещественные.
             _ => Some(NumKind::Float),
         }
@@ -322,7 +326,7 @@ impl SamplingParam {
             }
             Mirostat | MirostatTau | MirostatEta => "Mirostat",
             Samplers => "Порядок семплеров",
-            Thinking | Reasoning => "Рассуждения",
+            Thinking | Reasoning | Verbosity => "Рассуждения",
         }
     }
 
@@ -419,8 +423,13 @@ impl SamplingParam {
                  блоком (Ctrl+T)."
             }
             Reasoning => {
-                "Усилие рассуждения для reasoning-моделей: low/medium/high. \
-                 Выше — глубже размышляет перед ответом, но медленнее."
+                "Усилие рассуждения для reasoning-моделей: none/minimal/low/medium/\
+                 high/xhigh. Выше — глубже размышляет перед ответом, но медленнее. \
+                 minimal/xhigh — расширенные ступени OpenAI (gpt-5.x)."
+            }
+            Verbosity => {
+                "Многословность ответа (OpenAI Responses): low/medium/high. Регулирует \
+                 длину ответа отдельно от температуры. Только для облака OpenAI."
             }
         })
     }

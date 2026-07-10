@@ -3844,6 +3844,91 @@ web-поиск и Python под выключателями, экран наст�
   оркестратор (метаданные сообщения в режиме `openai` без `temperature`). **827
   тестов зелёные** (число неизменно), clippy/fmt чисты. Доки: architecture.md §9.
 
+### Пост-M9: OpenAI → Responses API («мысли», reasoning_effort, verbosity) (сделано)
+- **Режим `openai` переведён с Chat Completions на Responses API** (`POST /v1/responses`)
+  — исследование и решение в [docs/research/openai-responses-client.md](docs/research/openai-responses-client.md),
+  ADR 0004. Мотив: reasoning-резюме («мысли») и `reasoning.effort` у OpenAI живут
+  **только** в Responses; Chat Completions для reasoning-моделей — legacy. Responses —
+  отдельный протокол того же вендора → **новая реализация `EngineBackend`** рядом с
+  `AnthropicClient` (слои выше движка не тронуты). Выбран **вариант A** (замена
+  транспорта, а не второй режим/тумблер) — конфиг не растёт, `CloudProvider::OpenAi`
+  остаётся ключом `supported_sampling_fields`. Gemini и External остаются на Chat
+  Completions (`OpenAiClient`); эмбеддинги — тоже (`/v1/embeddings`, в Responses их нет).
+- **Новый модуль `shared/api/openai/responses/`** (`ResponsesClient` + `wire`): бьёт в
+  `{base}/responses` (Bearer-ключ), `wire::build_request` транслирует `ChatRequest` →
+  Responses: system → top-level `instructions`; история → массив `input` из **элементов**
+  (`{type:message}` со строковым `content`, `reasoning`, `function_call`,
+  `function_call_output` — роли `tool` нет); `max_tokens`→`max_output_tokens`; `store:false`;
+  function-tool плоский (`{type,name,description,parameters,strict:false}` — наши схемы не
+  строгие). SSE — событийный (тег = поле `type` в `data`, как Anthropic):
+  `response.output_text.delta`→`Text`, `response.reasoning_summary_text.delta`→`Thoughts`,
+  `response.output_item.added`(function_call)+`response.function_call_arguments.delta`→
+  `ToolCall`, `response.output_item.done`(reasoning c `encrypted_content`)→
+  `ThoughtsSignature`, `response.completed`/`incomplete`→`Usage`+`Finished`. Причина
+  завершения выводится клиентом (`saw_tool_call`→`ToolCalls`; `incomplete`→`Length`) —
+  Responses не шлёт `finish_reason`. Тело ошибки не глотается (как прочие клиенты).
+- **Reasoning + tool-use round-trip** (stateless `store:false`): при `include:
+  ["reasoning.encrypted_content"]` reasoning-элемент (`id`+`encrypted_content`) должен
+  **переотправляться перед своим `function_call`** — иначе просадка качества (OpenAI
+  меряли ~3% на SWE-bench). Это **тот же механизм**, что подпись thinking Anthropic
+  (Phase B): `ChatChunk::ThoughtsSignature(String)` → `ThoughtsSignature(ThinkingRef{id,
+  signature})` (id несёт только OpenAI, у Anthropic `None`), `ThinkingBlock` += `id`;
+  `RoundOutput.thinking_ref` копит id+signature; `build_input` ставит reasoning-элемент
+  перед `function_call`. Места, где вариант игнорируется (`subagent`/`fetch`/`title`/
+  `impersonation`/`tool_loop`), матчат `ThoughtsSignature(_)` — не тронуты.
+- **Семплинг**: `ReasoningEffort` расширен `Minimal`/`XHigh` (gpt-5.x; Anthropic-wire
+  маппит их к `low`/`high`); новое поле `SamplingConfig.verbosity: Option<Verbosity>`
+  (`text.verbosity`, Responses-специфика); `reasoning_budget==Some(0)` (импперсонация/
+  авто-название) → `reasoning.effort:"none"` без summary (аналог глушения «мыслей»).
+  `supported_sampling_fields(OpenAi)` = `max_tokens`+`thinking`+`reasoning_effort`+
+  `verbosity` (нет `temperature`/`top_p`/`seed`/penalties — Responses их не имеет). UI
+  секции «Семплинг» показывает reasoning/verbosity для OpenAI, `set_sampling`/`get_sampling`
+  и снимок `Message.metadata` — из того же источника. Новый `SamplingParam::Verbosity`
+  (Choice-поле, как Reasoning).
+- **`WireDialect::OpenAi` удалён** (единственный потребитель — облако OpenAI, теперь на
+  Responses): вместе с полем `max_completion_tokens` и OpenAI-веткой `restrict_to_strict`.
+  Остались `LlamaCpp`+`Gemini` (Gemini строгий, temperature/top_p сохраняет).
+- **«Прокси с ключом» закрыт** (`ExternalSettings.api_key_env`, `#[serde(default)]` → без
+  миграции): прежний паттерн «режим `openai` + url-override как OpenAI-совместимый прокси
+  с ключом» после перевода `openai` на Responses не работал бы — теперь для этого есть
+  External с опциональным Bearer-ключом из env (у External раньше поля ключа не было —
+  самостоятельный пробел). Проброшено в супервайзер (chat/imp/embed external) и UI
+  (поле «API-ключ (env, опц.)» в External-группе; setter в `spec.rs` маршрутизирует по
+  режиму, как url/model).
+- **Тесты**: responses-wire (system→instructions, store:false, reasoning/summary/effort/
+  verbosity, budget=0→effort:none, tools strict:false, tool-call/result→элементы,
+  reasoning-элемент перед function_call, thinking без id → без reasoning-элемента, разбор
+  всех SSE-событий); sampling (подмножество OpenAi, `retain_supported`); settings (OpenAi
+  показывает reasoning/verbosity, Gemini/Claude — нет; verbosity только у OpenAi);
+  introspection (схема `set_sampling` c minimal/xhigh + verbosity). **835 юнит-тестов
+  зелёные** (+8), clippy `-D warnings`/fmt чисты. Живые `#[ignore]`-смоуки
+  (`responses/client.rs`, `MINDFORK_OPENAI_KEY`): простая генерация, поток `Thoughts` при
+  thinking, tool-use round-trip reasoning-элемента — прогон на реальном OpenAI вне CI.
+- **Живой прогон (gpt-5.5)**: генерация/tool-calling работают; но **резюме рассуждений
+  («мысли») не пришли**. Причина серверная, не в клиенте: OpenAI отдаёт
+  `reasoning.summary` **только верифицированным организациям**
+  (`platform.openai.com/settings/organization/general`) — неверифицированной резюме
+  приходит пустым (или `400` на сам факт `reasoning.summary`). Сырой CoT не отдаётся
+  никогда — только резюме. Две правки по итогам: (1) `summary:"auto"` → **`"detailed"`**
+  (часть моделей на `auto` отдаёт пустое резюме, на `detailed` — текст; gpt-5.x
+  поддерживает); (2) добавлен разбор события `response.reasoning_text.delta` вдобавок к
+  `response.reasoning_summary_text.delta` — оба → `ChatChunk::Thoughts` (робастность к
+  моделям, стримящим рассуждение под другим именем события). Резюме появятся после
+  верификации организации.
+- **Reasoning-токены в статус-баре (сделано)**: `TokenUsage` расширен полем
+  `reasoning_tokens` (OpenAI Responses `output_tokens_details.reasoning_tokens`;
+  OpenAI-compat/llama.cpp `completion_tokens_details.reasoning_tokens`; Anthropic не
+  разделяет → `0`, «мысли» уже в `completion_tokens`). Накопительно по раундам
+  agentic-loop (`stream_round` принимает `base_reasoning`, `RoundOutput.reasoning_tokens`);
+  событие `AppEvent::TokenUsage.reasoning: Option<u32>` (`None` — не трогать, известно
+  только из `usage`); `StatusModel.reasoning` → пометка «(рассужд. N)» рядом со счётчиком
+  при `>0`. Позволяет видеть «мыслительную» активность модели даже когда текст резюме
+  гейтится верификацией организации. **836 тестов** (+1: `token_counter_shows_reasoning_when_present`).
+- **Задел** (docs/research/openai-responses-client.md §5): `cached_tokens` в счётчике,
+  `prompt_cache_key`, встроенные серверные инструменты OpenAI (`web_search`/
+  `code_interpreter` — конфликтуют с клиентским agentic-loop), нативный Gemini через
+  свой протокол (следующее направление).
+
 ### Отложено за пределы M3
 - **Сворачивание/выделение per-message** и tool-блоки в ленте — сейчас «мысли»
   сворачиваются глобально (`Ctrl+T`); выделение сообщений и tool-блоки — на M5.

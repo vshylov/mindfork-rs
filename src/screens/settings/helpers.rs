@@ -41,6 +41,10 @@ pub(super) const DESC_API_KEY_ENV: &str = "Имя переменной окру�
 /// Имя облачной модели (X/Ix/E).
 pub(super) const DESC_MODEL_NAME: &str = "Имя модели у провайдера (например gpt-4o, gemini-2.5-pro, \
      text-embedding-3-small). Для облака обязательно.";
+/// Имя env-переменной с ключом для external-сервера (опционально).
+pub(super) const DESC_EXT_API_KEY_ENV: &str = "Имя переменной окружения с Bearer-ключом для \
+     external-сервера (например прокси/шлюз, требующий авторизацию). Пусто — без ключа \
+     (локальный llama-server его не требует). Хранится имя, не секрет.";
 /// Селектор подсекции (таб-стрип Модель/Семплинг/Профили).
 pub(super) const DESC_SUBSECTION: &str = "Переключение между настройками ассистента и имперсонации (написание \
      сообщения от лица пользователя, Ctrl+U). ←/→ или Enter.";
@@ -342,6 +346,7 @@ pub(super) fn sampling_row(id: FieldId, p: SamplingParam, s: &SamplingConfig) ->
             label,
             FieldKind::Choice(reasoning_label(s.reasoning_effort)),
         ),
+        Verbosity => row(id, label, FieldKind::Choice(verbosity_label(s.verbosity))),
     };
     // Описание параметра — единый источник `SamplingParam::description` (одинаково для
     // обеих подсекций Ассистент/Имперсонация).
@@ -381,7 +386,7 @@ pub(super) fn apply_sampling_text(s: &mut SamplingConfig, p: SamplingParam, trim
         MaxTokens => s.max_tokens = parse_opt(trimmed),
         Seed => s.seed = parse_opt(trimmed),
         Samplers => s.samplers = parse_list(trimmed, ';'),
-        Thinking | Reasoning => {}
+        Thinking | Reasoning | Verbosity => {}
     }
 }
 
@@ -772,14 +777,40 @@ pub(super) fn reasoning_label(r: Option<ReasoningEffort>) -> String {
     }
 }
 
+/// Порядок вариантов `reasoning_effort` в цикле/меню (совпадает с [`REASONING_ORDER`]).
+pub(super) const REASONING_ORDER: [Option<ReasoningEffort>; 7] = [
+    None,
+    Some(ReasoningEffort::None),
+    Some(ReasoningEffort::Minimal),
+    Some(ReasoningEffort::Low),
+    Some(ReasoningEffort::Medium),
+    Some(ReasoningEffort::High),
+    Some(ReasoningEffort::XHigh),
+];
+
 pub(super) fn cycle_reasoning(r: Option<ReasoningEffort>) -> Option<ReasoningEffort> {
-    match r {
-        None => Some(ReasoningEffort::None),
-        Some(ReasoningEffort::None) => Some(ReasoningEffort::Low),
-        Some(ReasoningEffort::Low) => Some(ReasoningEffort::Medium),
-        Some(ReasoningEffort::Medium) => Some(ReasoningEffort::High),
-        Some(ReasoningEffort::High) => None,
+    let i = REASONING_ORDER.iter().position(|&x| x == r).unwrap_or(0);
+    REASONING_ORDER[(i + 1) % REASONING_ORDER.len()]
+}
+
+pub(super) fn verbosity_label(v: Option<Verbosity>) -> String {
+    match v {
+        None => "—".into(),
+        Some(x) => x.as_wire().to_string(),
     }
+}
+
+/// Порядок вариантов `verbosity` в цикле/меню.
+pub(super) const VERBOSITY_ORDER: [Option<Verbosity>; 4] = [
+    None,
+    Some(Verbosity::Low),
+    Some(Verbosity::Medium),
+    Some(Verbosity::High),
+];
+
+pub(super) fn cycle_verbosity(v: Option<Verbosity>) -> Option<Verbosity> {
+    let i = VERBOSITY_ORDER.iter().position(|&x| x == v).unwrap_or(0);
+    VERBOSITY_ORDER[(i + 1) % VERBOSITY_ORDER.len()]
 }
 
 /// Числовой вид поля для валидации (`None` — не числовое: текст/URL/списки/выбор).
@@ -864,17 +895,24 @@ pub(super) fn sampling_choice_menu(s: &SamplingConfig, p: SamplingParam) -> (Vec
             (opts, idx)
         }
         SamplingParam::Reasoning => {
-            let order = [
-                None,
-                Some(ReasoningEffort::None),
-                Some(ReasoningEffort::Low),
-                Some(ReasoningEffort::Medium),
-                Some(ReasoningEffort::High),
-            ];
-            let opts = order.iter().map(|&r| reasoning_label(r)).collect();
-            let idx = order
+            let opts = REASONING_ORDER
+                .iter()
+                .map(|&r| reasoning_label(r))
+                .collect();
+            let idx = REASONING_ORDER
                 .iter()
                 .position(|&r| r == s.reasoning_effort)
+                .unwrap_or(0);
+            (opts, idx)
+        }
+        SamplingParam::Verbosity => {
+            let opts = VERBOSITY_ORDER
+                .iter()
+                .map(|&v| verbosity_label(v))
+                .collect();
+            let idx = VERBOSITY_ORDER
+                .iter()
+                .position(|&v| v == s.verbosity)
                 .unwrap_or(0);
             (opts, idx)
         }

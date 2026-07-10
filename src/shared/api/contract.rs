@@ -42,17 +42,36 @@ pub struct ApiToolCall {
     pub arguments: String,
 }
 
-/// Блок рассуждений Anthropic (extended thinking) для переотправки в истории.
-/// Anthropic требует возвращать thinking-блок **с его `signature`** в assistant-ходе
-/// с `tool_use` в рамках того же хода — иначе следующий запрос раунда вернёт `400`
-/// (см. [`anthropic::wire`](super::anthropic)). Прочие бэкенды (llama.cpp/OpenAI)
-/// поле игнорируют. Между ходами (перезагрузка/новый запрос) не нужен — Anthropic
-/// требует подпись только для самого свежего assistant-хода, поэтому в доменном
-/// `Message` не персистится. `text` — то, что прислал сервер (при `display:summarized`
-/// это резюме), переотправляется без изменений.
+/// Блок рассуждений (extended thinking / reasoning item) для переотправки в истории.
+/// Нужен провайдерам, которые требуют вернуть рассуждение вместе с вызовом инструмента
+/// в том же ходе, иначе следующий запрос раунда вернёт `400`/деградирует:
+/// - **Anthropic**: thinking-блок с `signature` в assistant-ходе с `tool_use`
+///   (см. [`anthropic::wire`](super::anthropic));
+/// - **OpenAI Responses**: reasoning-элемент (`id` + `encrypted_content`) непосредственно
+///   перед своим `function_call` (см. [`openai::responses`](super::openai)).
+///
+/// Прочие бэкенды (llama.cpp Chat Completions) поле игнорируют. Между ходами
+/// (перезагрузка/новый запрос) не нужен — оба провайдера требуют его только для самого
+/// свежего assistant-хода, поэтому в доменном `Message` не персистится. `text` — то,
+/// что прислал сервер (при `display:summarized` это резюме), переотправляется без
+/// изменений (Anthropic); `id` заполняет только OpenAI Responses (у Anthropic `None`).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ThinkingBlock {
     pub text: String,
+    /// Подпись (Anthropic `signature`) или зашифрованное рассуждение
+    /// (OpenAI `encrypted_content`) — переотправляется без изменений.
+    pub signature: String,
+    /// Идентификатор reasoning-элемента (OpenAI `rs_…`); у Anthropic `None`.
+    pub id: Option<String>,
+}
+
+/// Ссылка на рассуждение из потока: идентификатор reasoning-элемента (OpenAI `rs_…`,
+/// у Anthropic `None`) и подпись/зашифрованное содержимое. Приходит чанком
+/// [`ChatChunk::ThoughtsSignature`], накапливается в ходе, затем крепится к
+/// assistant-сообщению как [`ThinkingBlock`].
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct ThinkingRef {
+    pub id: Option<String>,
     pub signature: String,
 }
 
@@ -103,7 +122,8 @@ impl ApiMessage {
         }
     }
 
-    /// Прикрепляет thinking-блок (Anthropic) к сообщению (builder-стиль).
+    /// Прикрепляет thinking-блок (Anthropic/OpenAI Responses) к сообщению
+    /// (builder-стиль).
     pub fn with_thinking(mut self, thinking: Option<ThinkingBlock>) -> Self {
         self.thinking = thinking;
         self
@@ -173,6 +193,11 @@ pub struct TokenUsage {
     pub prompt_tokens: u32,
     /// Токенов в ответе (сгенерировано моделью).
     pub completion_tokens: u32,
+    /// Токенов рассуждения («мыслей»), уже входящих в `completion_tokens`. Отдают
+    /// reasoning-провайдеры (OpenAI Responses `output_tokens_details.reasoning_tokens`;
+    /// OpenAI-compat/llama.cpp `completion_tokens_details.reasoning_tokens`). `0` —
+    /// провайдер не разделяет (Anthropic: «мысли» считаются в `completion_tokens`).
+    pub reasoning_tokens: u32,
 }
 
 /// Дельта вызова инструмента из стрима (накапливается по `index`). См. spec §6.3.
@@ -194,10 +219,10 @@ pub enum ChatChunk {
     Text(String),
     /// Дельта «мыслей» (reasoning).
     Thoughts(String),
-    /// Подпись блока «мыслей» (Anthropic `signature_delta`). Нужна, чтобы
-    /// переотправить thinking-блок в assistant-ходе с `tool_use` (см.
-    /// [`ThinkingBlock`]). Прочие бэкенды не эмитят.
-    ThoughtsSignature(String),
+    /// Ссылка на рассуждение (Anthropic `signature_delta` / OpenAI reasoning-элемент).
+    /// Нужна, чтобы переотправить thinking-блок в assistant-ходе с вызовом инструмента
+    /// (см. [`ThinkingBlock`]). Бэкенды без extended thinking не эмитят.
+    ThoughtsSignature(ThinkingRef),
     /// Дельта вызова инструмента (сервер парсит `<tool_call>` сам).
     ToolCall(ToolCallDelta),
     /// Счётчик токенов (`usage`) — обычно отдельным чанком перед завершением.

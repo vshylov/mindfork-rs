@@ -343,6 +343,7 @@ impl SettingsScreen {
                 SamplingParam::Reasoning => {
                     s.reasoning_effort = cycle_reasoning(s.reasoning_effort)
                 }
+                SamplingParam::Verbosity => s.verbosity = cycle_verbosity(s.verbosity),
                 _ => return None,
             }
         }

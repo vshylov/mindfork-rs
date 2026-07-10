@@ -177,7 +177,7 @@ fn activate_chat_rebuilds_feed_and_resets_gen() {
     let mut s = ChatScreen::new();
     let prev = gen_id();
     s.begin_generation(prev); // как будто шла генерация
-    s.set_token_usage(prev, 42, Some(123), true); // счётчик токенов прежнего чата
+    s.set_token_usage(prev, 42, Some(123), true, Some(7)); // счётчик токенов прежнего чата
     let id = gen_id();
     let messages = vec![
         Message::new(MessageRole::System, "sys"),

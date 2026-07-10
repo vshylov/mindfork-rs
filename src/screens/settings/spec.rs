@@ -139,7 +139,9 @@ pub(super) fn field_spec(id: FieldId) -> Option<FieldSpec> {
             }
         }),
         XApiKeyEnv => text(|c, t| {
-            if let Some(cl) = c.engine.cloud_mut() {
+            if c.engine.mode == ServerMode::External {
+                c.engine.external.api_key_env = opt(t);
+            } else if let Some(cl) = c.engine.cloud_mut() {
                 cl.api_key_env = opt(t);
             }
         }),
@@ -192,7 +194,9 @@ pub(super) fn field_spec(id: FieldId) -> Option<FieldSpec> {
             }
         }),
         IxApiKeyEnv => text(|c, t| {
-            if let Some(cl) = c.impersonation_engine.cloud_mut() {
+            if c.impersonation_engine.mode == ImpersonationMode::External {
+                c.impersonation_engine.external.api_key_env = opt(t);
+            } else if let Some(cl) = c.impersonation_engine.cloud_mut() {
                 cl.api_key_env = opt(t);
             }
         }),
@@ -248,7 +252,9 @@ pub(super) fn field_spec(id: FieldId) -> Option<FieldSpec> {
             }
         }),
         EApiKeyEnv => text(|c, t| {
-            if let Some(cl) = c.embed.cloud_mut() {
+            if c.embed.mode == ServerMode::External {
+                c.embed.external.api_key_env = opt(t);
+            } else if let Some(cl) = c.embed.cloud_mut() {
                 cl.api_key_env = opt(t);
             }
         }),

@@ -8,28 +8,24 @@ use serde::{Deserialize, Serialize};
 
 use crate::shared::api::contract::ChatRequest;
 
-/// Диалект тела запроса. От него зависит, какие поля сэмплинга сериализуются и под
-/// каким именем шлётся лимит токенов. См. ADR 0004.
+/// Диалект тела запроса Chat Completions. От него зависит, какие поля сэмплинга
+/// сериализуются. Облако **OpenAI** здесь не участвует — оно ходит в Responses API
+/// ([`ResponsesClient`](super::ResponsesClient)), а не через этот клиент. См. ADR 0004.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum WireDialect {
     /// llama.cpp `llama-server` (managed/external): принимает расширения сэмплинга в
     /// теле запроса и игнорирует незнакомое — шлём всё заданное (lenient).
     #[default]
     LlamaCpp,
-    /// Облако OpenAI (`platform.openai.com`): строгий протокол (незнакомые поля →
-    /// `400`), лимит токенов — `max_completion_tokens` (новые модели отвергают
-    /// `max_tokens`).
-    OpenAi,
-    /// Google Gemini через OpenAI-совместимый endpoint: тоже строгий (расширения
-    /// чистим), но лимит токенов — классический `max_tokens` (compat-слой Gemini
-    /// `max_completion_tokens` не принимает).
+    /// Google Gemini через OpenAI-совместимый endpoint: строгий (расширения llama.cpp
+    /// и reasoning-сигналы чистим), лимит токенов — классический `max_tokens`.
     Gemini,
 }
 
 impl WireDialect {
     /// Строгий ли диалект (облако): нужно вычищать расширения llama.cpp.
     fn is_strict(self) -> bool {
-        matches!(self, WireDialect::OpenAi | WireDialect::Gemini)
+        matches!(self, WireDialect::Gemini)
     }
 }
 
@@ -55,10 +51,6 @@ pub struct ChatCompletionRequest {
     pub dynatemp_exponent: Option<f32>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub max_tokens: Option<usize>,
-    /// Лимит токенов для новых моделей OpenAI (`gpt-5`/o-серия), которые отвергают
-    /// `max_tokens`. Заполняется только в OpenAI-диалекте (вместо `max_tokens`).
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub max_completion_tokens: Option<usize>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub top_k: Option<i64>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -264,7 +256,6 @@ pub fn build_chat_request(
         dynatemp_range: s.dynatemp_range,
         dynatemp_exponent: s.dynatemp_exponent,
         max_tokens: s.max_tokens,
-        max_completion_tokens: None,
         top_k: s.top_k,
         top_p: s.top_p,
         min_p: s.min_p,
@@ -298,23 +289,13 @@ pub fn build_chat_request(
     if dialect.is_strict() {
         restrict_to_strict(&mut body);
     }
-    if dialect == WireDialect::OpenAi {
-        // Новые модели OpenAI требуют max_completion_tokens вместо max_tokens.
-        body.max_completion_tokens = body.max_tokens.take();
-        // temperature/top_p принимало лишь семейство GPT 5.4 (скоро отключается);
-        // GPT 5.5/5.6 отвергают их. Gemini-compat, наоборот, их принимает.
-        body.temperature = None;
-        body.top_p = None;
-    }
     body
 }
 
-/// Обнуляет поля сэмплинга, не входящие в строгий облачный OpenAI-протокол
-/// (расширения llama.cpp и reasoning-сигналы), чтобы сервер не отверг запрос с `400`.
-/// Остаются `temperature`/`top_p`/`max_tokens`/`frequency_penalty`/`presence_penalty`/
-/// `seed`, а также `messages`/`tools`/`tool_choice`/`stream*`. В диалекте
-/// [`WireDialect::OpenAi`] дополнительно снимаются `temperature`/`top_p` (см.
-/// [`build_chat_request`]) — их принимало только семейство GPT 5.4. См. ADR 0004.
+/// Обнуляет поля сэмплинга, не входящие в строгий Gemini-compat протокол (расширения
+/// llama.cpp и reasoning-сигналы), чтобы сервер не отверг запрос с `400`. Остаются
+/// `temperature`/`top_p`/`max_tokens`/`frequency_penalty`/`presence_penalty`/`seed`,
+/// а также `messages`/`tools`/`tool_choice`/`stream*`. См. ADR 0004.
 fn restrict_to_strict(body: &mut ChatCompletionRequest) {
     body.dynatemp_range = None;
     body.dynatemp_exponent = None;
@@ -355,13 +336,24 @@ pub struct ChatCompletionChunk {
     pub usage: Option<Usage>,
 }
 
-/// Блок `usage` ответа сервера (счётчик токенов).
+/// Блок `usage` ответа сервера (счётчик токенов). `completion_tokens_details.
+/// reasoning_tokens` отдают OpenAI-compat/llama.cpp-серверы с reasoning-моделью
+/// (входит в `completion_tokens`); отсутствует → `0`.
 #[derive(Debug, Default, Deserialize)]
 pub struct Usage {
     #[serde(default)]
     pub prompt_tokens: u32,
     #[serde(default)]
     pub completion_tokens: u32,
+    #[serde(default)]
+    pub completion_tokens_details: CompletionTokensDetails,
+}
+
+/// Детализация токенов ответа Chat Completions (интересуют reasoning-токены).
+#[derive(Debug, Default, Deserialize)]
+pub struct CompletionTokensDetails {
+    #[serde(default)]
+    pub reasoning_tokens: u32,
 }
 
 #[derive(Debug, Deserialize)]
@@ -562,73 +554,9 @@ mod tests {
     }
 
     #[test]
-    fn openai_dialect_strips_extensions_and_sends_model() {
-        // Строгий OpenAI-диалект: общеподдержанное остаётся, расширения llama.cpp,
-        // reasoning-сигналы и temperature/top_p вычищаются; имя модели проставляется.
-        let req = ChatRequest {
-            system: None,
-            messages: vec![ApiMessage::user("hi")],
-            sampling: SamplingConfig {
-                temperature: Some(0.7),
-                top_p: Some(0.9),
-                frequency_penalty: Some(0.1),
-                presence_penalty: Some(0.2),
-                seed: Some(7),
-                max_tokens: Some(128),
-                // Не-OpenAI поля — должны исчезнуть.
-                top_k: Some(40),
-                min_p: Some(0.05),
-                dynatemp_range: Some(0.5),
-                dry_multiplier: Some(0.8),
-                mirostat: Some(2),
-                samplers: Some(vec!["top_k".into()]),
-                thinking: Some(true),
-                reasoning_budget: Some(0),
-                ..Default::default()
-            },
-            tools: vec![],
-        };
-        let json = serde_json::to_value(build_chat_request(
-            &req,
-            true,
-            Some("gpt-4o"),
-            WireDialect::OpenAi,
-        ))
-        .unwrap();
-        assert_eq!(json["model"], "gpt-4o");
-        // Поддержанное OpenAI — на месте.
-        assert!(json.get("frequency_penalty").is_some());
-        assert!(json.get("presence_penalty").is_some());
-        assert_eq!(json["seed"], 7);
-        // OpenAI: лимит токенов под именем max_completion_tokens, не max_tokens.
-        assert_eq!(json["max_completion_tokens"], 128);
-        assert!(json.get("max_tokens").is_none());
-        // Расширения, reasoning-сигналы и temperature/top_p (GPT 5.5/5.6 их
-        // отвергают) вычищены.
-        for k in [
-            "temperature",
-            "top_p",
-            "top_k",
-            "min_p",
-            "dynatemp_range",
-            "dry_multiplier",
-            "mirostat",
-            "samplers",
-            "thinking",
-            "reasoning_budget",
-            "chat_template_kwargs",
-        ] {
-            assert!(
-                json.get(k).is_none(),
-                "поле {k} не должно слаться в OpenAI-диалекте"
-            );
-        }
-    }
-
-    #[test]
-    fn gemini_dialect_keeps_max_tokens_and_strips_extensions() {
-        // Gemini-compat: расширения чистим, но лимит токенов — классический max_tokens,
-        // а temperature/top_p (в отличие от OpenAI) провайдер принимает.
+    fn gemini_dialect_keeps_temp_and_strips_extensions() {
+        // Gemini-compat (Chat Completions): расширения llama.cpp и reasoning чистим, но
+        // temperature/top_p/max_tokens провайдер принимает; имя модели проставляется.
         let req = ChatRequest {
             system: None,
             messages: vec![ApiMessage::user("hi")],
@@ -637,7 +565,12 @@ mod tests {
                 temperature: Some(0.7),
                 top_p: Some(0.95),
                 top_k: Some(40),
+                min_p: Some(0.05),
+                dynatemp_range: Some(0.5),
+                mirostat: Some(2),
+                samplers: Some(vec!["top_k".into()]),
                 thinking: Some(true),
+                reasoning_budget: Some(0),
                 ..Default::default()
             },
             tools: vec![],
@@ -651,11 +584,25 @@ mod tests {
         .unwrap();
         assert_eq!(json["model"], "gemini-2.5-pro");
         assert_eq!(json["max_tokens"], 200);
-        assert!(json.get("max_completion_tokens").is_none());
+        // Поддержанное Gemini — на месте.
         assert!(json.get("temperature").is_some());
         assert!(json.get("top_p").is_some());
-        assert!(json.get("top_k").is_none());
-        assert!(json.get("thinking").is_none());
+        // Расширения llama.cpp и reasoning-сигналы вычищены.
+        for k in [
+            "top_k",
+            "min_p",
+            "dynatemp_range",
+            "mirostat",
+            "samplers",
+            "thinking",
+            "reasoning_budget",
+            "chat_template_kwargs",
+        ] {
+            assert!(
+                json.get(k).is_none(),
+                "поле {k} не должно слаться в Gemini-диалекте"
+            );
+        }
     }
 
     #[test]
