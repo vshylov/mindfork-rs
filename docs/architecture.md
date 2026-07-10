@@ -246,8 +246,9 @@ src/
    ├─ api/                  слой движка инференса (контракт + реализации по семействам, ADR 0004)
    │  ├─ contract.rs        EngineBackend, Embedder, ChatRequest/Chunk, ThinkingRef, ToolCallAccumulator (агностичный)
    │  ├─ openai/            семейство OpenAI:
-   │  │  ├─ client.rs+wire.rs   Chat Completions: OpenAiClient (reqwest+SSE, probe /health, embed), WireDialect (LlamaCpp/Gemini)
+   │  │  ├─ client.rs+wire.rs   Chat Completions: OpenAiClient (reqwest+SSE, probe /health, embed; local/external/прокси; диалекта нет — сэмплинг как есть)
    │  │  └─ responses/          Responses API: ResponsesClient + wire (облако OpenAI, /v1/responses — резюме рассуждений, effort, verbosity)
+   │  ├─ gemini/            нативный Gemini: client.rs + wire.rs (generateContent, x-goog-api-key — резюме «мыслей», thinkingLevel/Budget, thoughtSignature per-tool-call)
    │  ├─ anthropic/         Anthropic Messages API: client.rs + wire.rs (Claude, /v1/messages)
    │  ├─ managed.rs         ServerHandle (managed-процесс llama-server), ManagedConfig, wait_until_ready
    │  ├─ thoughts.rs        потоковый парсер <think> (fallback к reasoning_content)
@@ -442,6 +443,15 @@ sequenceDiagram
   верифицированным организациям OpenAI** — иначе поток «мыслей» пуст (сырой CoT не
   отдаётся никогда). `supported_sampling_fields(OpenAi)` =
   `max_tokens`+`thinking`+`reasoning_effort`+`verbosity`.
+  **Gemini (нативный `generateContent`):** `generationConfig.thinkingConfig.
+  includeThoughts:true` → части `{text, thought:true}` → `Thoughts`; глубина —
+  `thinkingLevel` (3.x: `minimal/low/medium/high`) или `thinkingBudget` (2.5, токены),
+  инференс поколения по имени модели; `reasoning_budget==0` глушит (2.5 Flash — `0`,
+  2.5 Pro — минимум `128`, 3.x — `minimal`). `usageMetadata.thoughtsTokenCount` →
+  `reasoning_tokens`. `supported_sampling_fields(Gemini)` = `temperature`/`top_p`/
+  `top_k`/`max_tokens`/`seed`/`frequency_penalty`/`presence_penalty`+`thinking`/
+  `reasoning_effort`. Блокировки (`promptFeedback.blockReason`, `finishReason` вроде
+  `SAFETY`/`RECITATION`) сюрфейсятся заметкой в ленту, а не молчаливым пустым `Stop`.
 - **Переотправка рассуждения при tool-use** (общий механизм для Anthropic и OpenAI
   Responses). Оба провайдера требуют вернуть рассуждение вместе с вызовом инструмента в
   том же ходе (иначе `400`/просадка): `ChatChunk::ThoughtsSignature(ThinkingRef{id,
@@ -453,6 +463,15 @@ sequenceDiagram
   **перед** его `function_call`. Живёт только в памяти хода (между ходами оба провайдера
   авто-отбрасывают старые thinking → не персистится). `supported_sampling_fields(Claude)`
   = `max_tokens`+`thinking`+`reasoning_effort`.
+- **Подписи мыслей Gemini — per-tool-call и персистятся** (отличие от механизма выше).
+  У Gemini `thoughtSignature` привязана к **конкретному** `functionCall`, а не одна на
+  ход, и для Gemini 3 **обязательна** на исторических вызовах (иначе `400`). Поэтому не
+  используется `ThinkingRef`/`ThinkingBlock`, а поле `thought_signature` живёт на самом
+  вызове: `ToolCallDelta`→`ApiToolCall` (клиент кладёт из части, accumulator копит по
+  индексу) и **персистится** в `ToolCallRecord` (`#[serde(default,skip_serializing_if)]`,
+  без миграции). Внутри генерации подпись едет через `out.calls`, между генерациями —
+  через персист (`record_to_api`); `wire::build_contents` переотправляет её соседом
+  `functionCall`. Подтверждено на живом Gemini 3.1 Pro (round-trip без `400`).
 - **EOS.** Остановка строго по token-id спец-токенов модели (на стороне сервера);
   строковые `stop` по тексту EOS приложение **не отправляет** (анти-самообрыв).
 - **Регенерация** усекает историю по последнее сообщение пользователя
@@ -466,9 +485,10 @@ sequenceDiagram
 Транспорт спрятан за двумя трейтами — это даёт замену движка, мульти-провайдерность
 и mock в тестах. Модуль разложен по семействам ([ADR 0004](decisions/0004-engine-contract-multi-provider.md)):
 **`contract`** (провайдеро-агностичные трейты и типы), **`openai`** (два протокола
-семейства: `client`+`wire` — Chat Completions для локального/external `llama-server` и
-облака Gemini; `responses` — Responses API для облака OpenAI), **`anthropic`** (Claude,
-Messages API), **`managed`** (запуск дочернего `llama-server`).
+семейства: `client`+`wire` — Chat Completions для локального/external `llama-server`/
+прокси; `responses` — Responses API для облака OpenAI), **`gemini`** (нативный
+`generateContent` для облака Google Gemini), **`anthropic`** (Claude, Messages API),
+**`managed`** (запуск дочернего `llama-server`).
 
 ```mermaid
 classDiagram
@@ -483,11 +503,15 @@ classDiagram
     class OpenAiClient {
         openai/: Chat Completions, reqwest + SSE
         +probe() /health
-        Bearer-ключ, WireDialect (LlamaCpp/Gemini)
+        local/external/прокси, Bearer, embed
     }
     class ResponsesClient {
         openai/responses/: /v1/responses
         Bearer, событийный SSE, reasoning/verbosity
+    }
+    class GeminiClient {
+        gemini/: generateContent, SSE
+        x-goog-api-key, thinking, thoughtSignature
     }
     class AnthropicClient {
         anthropic/: /v1/messages
@@ -501,6 +525,7 @@ classDiagram
     }
     EngineBackend <|.. OpenAiClient
     EngineBackend <|.. ResponsesClient
+    EngineBackend <|.. GeminiClient
     EngineBackend <|.. AnthropicClient
     EngineBackend <|.. MockBackend
     Embedder <|.. OpenAiClient
@@ -514,18 +539,21 @@ classDiagram
 
 | Режим | Бэкенд | Протокол | Сэмплинг (`supported_sampling_fields`) |
 |---|---|---|---|
-| managed / external | `OpenAiClient` (`LlamaCpp`) | Chat Completions | весь набор (расширения llama.cpp) |
-| gemini | `OpenAiClient` (`Gemini`) | Chat Completions | `temperature`/`top_p`/penalties/`seed`/`max_tokens` |
+| managed / external | `OpenAiClient` | Chat Completions | весь набор (расширения llama.cpp) |
+| **gemini** | **`GeminiClient`** | **нативный `generateContent`** | `temperature`/`top_p`/`top_k`/penalties/`seed`/`max_tokens`+`thinking`/`reasoning_effort` |
 | **openai** | **`ResponsesClient`** | **Responses (`/v1/responses`)** | `max_tokens`+`thinking`+`reasoning_effort`+`verbosity` |
 | claude | `AnthropicClient` | Messages (`/v1/messages`) | `max_tokens`+`thinking`+`reasoning_effort` |
 
-**Диалект сэмплинга Chat Completions** ([`openai::WireDialect`]): `LlamaCpp` шлёт все
-расширения; `Gemini` чистит незнакомое (иначе `400`), оставляя
-`temperature`/`top_p`/penalties/`seed`/`max_tokens`. Облако **OpenAI** через этот клиент
-**не ходит** — оно на Responses (`ResponsesClient`): системное сообщение → top-level
-`instructions`, история → массив `input` из элементов, `max_tokens`→`max_output_tokens`,
-`store:false`, function-tool плоский со `strict:false`; резюме рассуждений/`effort`/
-`verbosity` (см. «Мысли (CoT)»). `AnthropicClient` из сэмплинга шлёт `max_tokens` +
+**Сэмплинг Chat Completions** (`OpenAiClient`): диалекта/фильтрации больше нет — все
+поля шлются как есть (llama.cpp игнорирует незнакомое; облака ушли на свои протоколы,
+`WireDialect` удалён). Облако **OpenAI** — на Responses (`ResponsesClient`): системное
+сообщение → top-level `instructions`, история → массив `input` из элементов,
+`max_tokens`→`max_output_tokens`, `store:false`, function-tool плоский со `strict:false`;
+резюме рассуждений/`effort`/`verbosity` (см. «Мысли (CoT)»). Облако **Gemini** — на
+нативном `generateContent` (`GeminiClient`): system → top-level `systemInstruction`,
+роли `user`/`model` (tool-результат → `functionResponse` в user), вызов → `functionCall`
+(args-объект, без `call_id`), `thinkingConfig`; подпись мысли `thoughtSignature`
+per-tool-call (персист). `AnthropicClient` из сэмплинга шлёт `max_tokens` +
 extended thinking (`thinking`/`reasoning_effort` → adaptive; Claude 4.x отвергает
 temperature/top_p/top_k и `budget_tokens`). У Anthropic и Responses нет embeddings —
 `Embedder` реализует только `OpenAiClient` (RAG берёт отдельный, ADR 0002). External
@@ -540,8 +568,11 @@ temperature/top_p/top_k и `budget_tokens`). У Anthropic и Responses нет em
   `ToolCall(ToolCallDelta)` | `Usage(TokenUsage)` | `Finished`. `ToolCallAccumulator` собирает разрезанные по
   чанкам вызовы по `index`; `Usage` (`prompt_tokens`/`completion_tokens`) приходит
   финальным чанком при `stream_options.include_usage=true` — счётчик токенов.
-  `ThoughtsSignature` эмитит только Anthropic (подпись thinking-блока для переотправки
-  при tool-use); прочие бэкенды его не шлют.
+  `ThoughtsSignature` эмитят **Anthropic** (подпись thinking-блока) и **OpenAI Responses**
+  (reasoning-элемент `id`+`encrypted_content`) — подпись одна на ход. **Gemini** подпись
+  не шлёт через `ThoughtsSignature`: она per-tool-call, едет полем
+  `ToolCallDelta.thought_signature`→`ApiToolCall`→`ToolCallRecord` (персист). Прочие
+  бэкенды подписи не эмитят.
 - **`ServerHandle`** (`managed.rs`) владеет дочерним `llama-server`: `Child` отдан
   **монитор-задаче** (`spawn_monitor`), которая `select!`-ит между его выходом (взвод
   `exited`-токена) и сигналом `kill` (взводится в `Drop` хэндла → `start_kill`;
