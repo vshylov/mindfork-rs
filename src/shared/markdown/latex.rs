@@ -277,6 +277,15 @@ fn apply_brace_commands_depth(input: &str, depth: usize) -> String {
                 i = after_b;
                 continue;
             }
+            // Начертания `\mathbb{R}`→ℝ, `\mathcal{L}`→ℒ, `\mathfrak{g}`: одиночная
+            // буква с BMP-аналогом → глиф; иначе — содержимое (как обёртка).
+            if matches!(name.as_str(), "mathbb" | "mathcal" | "mathfrak")
+                && let Some((a, after_a)) = read_group(&chars, j)
+            {
+                out.push_str(&blackboard_or_content(&name, &a, depth));
+                i = after_a;
+                continue;
+            }
             // Текстовые/шрифтовые обёртки и акценты → содержимое.
             if is_text_command(&name)
                 && let Some((a, after_a)) = read_group(&chars, j)
@@ -352,6 +361,69 @@ fn sqrt_render(root: Option<&str>, inner: &str) -> String {
         }
     };
     format!("{prefix}({inner})")
+}
+
+/// `\mathbb{R}`→ℝ и родственные начертания: одиночная буква с BMP-аналогом → глиф,
+/// иначе содержимое обрабатывается как обычная текст-обёртка (`\mathbb{XY}`→`XY`).
+/// Supplementary-plane (`𝔸`…, строчные) не берём — терминалы поддерживают неровно.
+fn blackboard_or_content(name: &str, content: &str, depth: usize) -> String {
+    let chars: Vec<char> = content.chars().collect();
+    if chars.len() == 1 {
+        let mapped = match name {
+            "mathbb" => double_struck(chars[0]),
+            "mathcal" => script_letter(chars[0]),
+            "mathfrak" => fraktur_letter(chars[0]),
+            _ => None,
+        };
+        if let Some(g) = mapped {
+            return g.to_string();
+        }
+    }
+    brace_recurse(content, depth)
+}
+
+/// Double-struck (blackboard bold) заглавные из блока Letterlike Symbols (BMP).
+fn double_struck(c: char) -> Option<char> {
+    Some(match c {
+        'C' => 'ℂ',
+        'H' => 'ℍ',
+        'N' => 'ℕ',
+        'P' => 'ℙ',
+        'Q' => 'ℚ',
+        'R' => 'ℝ',
+        'Z' => 'ℤ',
+        _ => return None,
+    })
+}
+
+/// Script (каллиграфические) буквы из блока Letterlike Symbols (BMP, набор неполный).
+fn script_letter(c: char) -> Option<char> {
+    Some(match c {
+        'B' => 'ℬ',
+        'E' => 'ℰ',
+        'F' => 'ℱ',
+        'H' => 'ℋ',
+        'I' => 'ℐ',
+        'L' => 'ℒ',
+        'M' => 'ℳ',
+        'R' => 'ℛ',
+        'e' => 'ℯ',
+        'g' => 'ℊ',
+        'o' => 'ℴ',
+        _ => return None,
+    })
+}
+
+/// Fraktur (готические) буквы из блока Letterlike Symbols (BMP, набор неполный).
+fn fraktur_letter(c: char) -> Option<char> {
+    Some(match c {
+        'C' => 'ℭ',
+        'H' => 'ℌ',
+        'I' => 'ℑ',
+        'R' => 'ℜ',
+        'Z' => 'ℨ',
+        _ => return None,
+    })
 }
 
 /// Читает сбалансированную группу `{…}`, начиная с `open` (где `chars[open]=='{'`).
@@ -762,9 +834,18 @@ pub(super) fn take_script(rest: &[char], sup: bool) -> Option<(String, usize)> {
         // ищем закрывающую '}'
         let close = rest.iter().position(|&c| c == '}')?;
         let inner = &rest[1..close];
-        let mapped = map_script_chars(inner, sup)?;
-        Some((mapped, close + 1)) // включая '{' и '}'
+        match map_script_chars(inner, sup) {
+            Some(mapped) => Some((mapped, close + 1)), // включая '{' и '}'
+            None => {
+                // Группа не мапится целиком — показываем как `^(…)`/`_(…)`, сохраняя
+                // группировку (иначе `x^{q+}` терял бы скобки → `x^q+`).
+                let marker = if sup { '^' } else { '_' };
+                let inner_str: String = inner.iter().collect();
+                Some((format!("{marker}({inner_str})"), close + 1))
+            }
+        }
     } else {
+        // Одиночный символ без группы: не мапится — оставляем как есть (`x^q`→`x^q`).
         let mapped = map_script_chars(&rest[0..1], sup)?;
         Some((mapped, 1))
     }
@@ -800,8 +881,52 @@ pub(super) fn superscript(c: char) -> Option<char> {
         '=' => '⁼',
         '(' => '⁽',
         ')' => '⁾',
-        'n' => 'ⁿ',
+        // строчные латинские (нет 'q' в Unicode)
+        'a' => 'ᵃ',
+        'b' => 'ᵇ',
+        'c' => 'ᶜ',
+        'd' => 'ᵈ',
+        'e' => 'ᵉ',
+        'f' => 'ᶠ',
+        'g' => 'ᵍ',
+        'h' => 'ʰ',
         'i' => 'ⁱ',
+        'j' => 'ʲ',
+        'k' => 'ᵏ',
+        'l' => 'ˡ',
+        'm' => 'ᵐ',
+        'n' => 'ⁿ',
+        'o' => 'ᵒ',
+        'p' => 'ᵖ',
+        'r' => 'ʳ',
+        's' => 'ˢ',
+        't' => 'ᵗ',
+        'u' => 'ᵘ',
+        'v' => 'ᵛ',
+        'w' => 'ʷ',
+        'x' => 'ˣ',
+        'y' => 'ʸ',
+        'z' => 'ᶻ',
+        // заглавные латинские (доступны не все)
+        'A' => 'ᴬ',
+        'B' => 'ᴮ',
+        'D' => 'ᴰ',
+        'E' => 'ᴱ',
+        'G' => 'ᴳ',
+        'H' => 'ᴴ',
+        'I' => 'ᴵ',
+        'J' => 'ᴶ',
+        'K' => 'ᴷ',
+        'L' => 'ᴸ',
+        'M' => 'ᴹ',
+        'N' => 'ᴺ',
+        'O' => 'ᴼ',
+        'P' => 'ᴾ',
+        'R' => 'ᴿ',
+        'T' => 'ᵀ',
+        'U' => 'ᵁ',
+        'V' => 'ⱽ',
+        'W' => 'ᵂ',
         _ => return None,
     })
 }
@@ -823,6 +948,24 @@ pub(super) fn subscript(c: char) -> Option<char> {
         '=' => '₌',
         '(' => '₍',
         ')' => '₎',
+        // строчные латинские (Unicode покрывает лишь часть)
+        'a' => 'ₐ',
+        'e' => 'ₑ',
+        'h' => 'ₕ',
+        'i' => 'ᵢ',
+        'j' => 'ⱼ',
+        'k' => 'ₖ',
+        'l' => 'ₗ',
+        'm' => 'ₘ',
+        'n' => 'ₙ',
+        'o' => 'ₒ',
+        'p' => 'ₚ',
+        'r' => 'ᵣ',
+        's' => 'ₛ',
+        't' => 'ₜ',
+        'u' => 'ᵤ',
+        'v' => 'ᵥ',
+        'x' => 'ₓ',
         _ => return None,
     })
 }
@@ -867,11 +1010,30 @@ mod tests {
     }
 
     #[test]
-    fn unmappable_script_strips_group_braces() {
-        // 'q' нет в верхних индексах — индекс не применяется; группирующие скобки
-        // снимаются (это содержимое формулы, скобки — синтаксис группировки).
+    fn unmappable_script_keeps_group_as_parens() {
+        // 'q' нет в верхних индексах — одиночный символ без группы остаётся как есть;
+        // группа с несмапливаемым символом сохраняется как `^(…)` (не теряет скобки).
         assert_eq!(latex_to_unicode("x^q"), "x^q");
-        assert_eq!(latex_to_unicode("x^{ab}"), "x^ab");
+        assert_eq!(latex_to_unicode("x^{q+}"), "x^(q+)");
+    }
+
+    #[test]
+    fn letter_scripts_map_to_unicode() {
+        // буквенные индексы (частые: x_i, a_n, x^T) теперь конвертируются
+        assert_eq!(latex_to_unicode("x_i"), "xᵢ");
+        assert_eq!(latex_to_unicode("a_n"), "aₙ");
+        assert_eq!(latex_to_unicode("x^T"), "xᵀ");
+        assert_eq!(latex_to_unicode("x^{ab}"), "xᵃᵇ");
+        assert_eq!(latex_to_unicode(r"\sum_{i=1}^{n}"), "∑ᵢ₌₁ⁿ");
+    }
+
+    #[test]
+    fn mathbb_double_struck() {
+        assert_eq!(latex_to_unicode(r"x \in \mathbb{R}"), "x ∈ ℝ");
+        assert_eq!(latex_to_unicode(r"\mathbb{Z}"), "ℤ");
+        assert_eq!(latex_to_unicode(r"\mathcal{L}"), "ℒ");
+        assert_eq!(latex_to_unicode(r"\mathfrak{g}"), "g"); // 'g' нет в наборе → содержимое
+        assert_eq!(latex_to_unicode(r"\mathbb{XY}"), "XY"); // не одна буква → содержимое
     }
 
     #[test]
@@ -888,7 +1050,7 @@ mod tests {
         assert_eq!(latex_to_unicode(r"\frac{\alpha}{2}"), "α/2");
         assert_eq!(latex_to_unicode(r"\sqrt{x+1}"), "√(x+1)");
         assert_eq!(latex_to_unicode(r"\text{скорость} = v"), "скорость = v");
-        assert_eq!(latex_to_unicode(r"\mathbb{R}"), "R");
+        assert_eq!(latex_to_unicode(r"\mathbb{R}"), "ℝ");
     }
 
     #[test]
@@ -998,8 +1160,8 @@ mod tests {
         assert_eq!(latex_to_unicode(r"\sqrt[3]{x}"), "∛(x)");
         assert_eq!(latex_to_unicode(r"\sqrt[4]{y}"), "∜(y)");
         assert_eq!(latex_to_unicode(r"\sqrt[n]{x}"), "ⁿ√(x)");
-        // индекс без superscript-аналога — фолбэк с квадратными скобками
-        assert_eq!(latex_to_unicode(r"\sqrt[ab]{x}"), "√[ab](x)");
+        // индекс без superscript-аналога ('q' нет) — фолбэк с квадратными скобками
+        assert_eq!(latex_to_unicode(r"\sqrt[q]{x}"), "√[q](x)");
         // «голый» \sqrt без индекса по-прежнему работает
         assert_eq!(latex_to_unicode(r"\sqrt{x}"), "√(x)");
     }
@@ -1034,7 +1196,7 @@ mod tests {
         assert_eq!(latex_to_unicode(r"A \setminus B"), "A ∖ B");
         assert_eq!(latex_to_unicode(r"x \hookrightarrow y"), "x ↪ y");
         assert_eq!(latex_to_unicode(r"\vartheta + \varpi"), "ϑ + ϖ");
-        assert_eq!(latex_to_unicode(r"\bigcup_i A"), "⋃_i A");
+        assert_eq!(latex_to_unicode(r"\bigcup_i A"), "⋃ᵢ A");
     }
 
     #[test]
