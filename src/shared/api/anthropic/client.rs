@@ -13,7 +13,8 @@ use tokio_util::sync::CancellationToken;
 
 use super::wire::{self, AntDelta, AntStartBlock, AntStreamEvent};
 use crate::shared::api::contract::{
-    ChatChunk, ChatRequest, ChatStream, EngineBackend, FinishReason, TokenUsage, ToolCallDelta,
+    ChatChunk, ChatRequest, ChatStream, EngineBackend, FinishReason, ThinkingRef, TokenUsage,
+    ToolCallDelta,
 };
 
 /// Версия Anthropic API (обязательный заголовок `anthropic-version`).
@@ -133,7 +134,10 @@ impl EngineBackend for AnthropicClient {
                                             yield ChatChunk::Thoughts(thinking);
                                         }
                                         AntDelta::SignatureDelta { signature } if !signature.is_empty() => {
-                                            yield ChatChunk::ThoughtsSignature(signature);
+                                            yield ChatChunk::ThoughtsSignature(ThinkingRef {
+                                                id: None,
+                                                signature,
+                                            });
                                         }
                                         AntDelta::InputJsonDelta { partial_json } => {
                                             yield ChatChunk::ToolCall(ToolCallDelta {
@@ -271,7 +275,7 @@ mod ignored_smoke {
         while let Some(chunk) = stream.next().await {
             match chunk {
                 ChatChunk::Thoughts(t) => thoughts.push_str(&t),
-                ChatChunk::ThoughtsSignature(s) => signature.push_str(&s),
+                ChatChunk::ThoughtsSignature(r) => signature.push_str(&r.signature),
                 ChatChunk::Text(t) => text.push_str(&t),
                 ChatChunk::Finished(_) => break,
                 _ => {}
@@ -333,7 +337,7 @@ mod ignored_smoke {
         while let Some(chunk) = stream.next().await {
             match chunk {
                 ChatChunk::Thoughts(t) => thoughts.push_str(&t),
-                ChatChunk::ThoughtsSignature(s) => signature.push_str(&s),
+                ChatChunk::ThoughtsSignature(r) => signature.push_str(&r.signature),
                 ChatChunk::ToolCall(d) => acc.push(d),
                 ChatChunk::Finished(r) => {
                     reason = r;
@@ -368,6 +372,7 @@ mod ignored_smoke {
                 .with_thinking(Some(ThinkingBlock {
                     text: thoughts.clone(),
                     signature: signature.clone(),
+                    id: None,
                 })),
                 ApiMessage::tool(&call.id, "18°C, sunny"),
             ],

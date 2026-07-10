@@ -693,12 +693,19 @@ fn cloud_hides_unsupported_sampling_params() {
     assert!(has(&s, SamplingParam::Temp));
     assert!(has(&s, SamplingParam::TopP));
     assert!(has(&s, SamplingParam::MaxTokens));
-    // OpenAI: сверх того скрыты temperature/top_p (их принимало лишь GPT 5.4).
+    // OpenAI (Responses): нет temperature/top_p/penalties/seed; есть reasoning и
+    // verbosity (Responses-специфика).
     s.config.engine.mode = ServerMode::OpenAi;
     assert!(!has(&s, SamplingParam::Temp));
     assert!(!has(&s, SamplingParam::TopP));
-    assert!(has(&s, SamplingParam::FreqPen));
+    assert!(!has(&s, SamplingParam::FreqPen));
     assert!(has(&s, SamplingParam::MaxTokens));
+    assert!(has(&s, SamplingParam::Thinking));
+    assert!(has(&s, SamplingParam::Reasoning));
+    assert!(has(&s, SamplingParam::Verbosity));
+    // Verbosity — только у OpenAI: для Gemini/Claude скрыт.
+    s.config.engine.mode = ServerMode::Gemini;
+    assert!(!has(&s, SamplingParam::Verbosity));
     // Claude 4.x «зафиксировал» сэмплинг: виден только max_tokens.
     s.config.engine.mode = ServerMode::Claude;
     assert!(!has(&s, SamplingParam::Temp));

@@ -19,13 +19,13 @@ impl SettingsScreen {
             return Some(options(&self.config));
         }
         match id {
-            // Семплинг (Thinking/Reasoning) и выбор профиля — свои источники вариантов.
-            FieldId::S(p @ (SamplingParam::Thinking | SamplingParam::Reasoning)) => {
-                Some(sampling_choice_menu(&self.config.default_sampling, p))
-            }
-            FieldId::IS(p @ (SamplingParam::Thinking | SamplingParam::Reasoning)) => {
-                Some(sampling_choice_menu(&self.config.impersonation_sampling, p))
-            }
+            // Семплинг (Thinking/Reasoning/Verbosity) и выбор профиля — свои источники.
+            FieldId::S(
+                p @ (SamplingParam::Thinking | SamplingParam::Reasoning | SamplingParam::Verbosity),
+            ) => Some(sampling_choice_menu(&self.config.default_sampling, p)),
+            FieldId::IS(
+                p @ (SamplingParam::Thinking | SamplingParam::Reasoning | SamplingParam::Verbosity),
+            ) => Some(sampling_choice_menu(&self.config.impersonation_sampling, p)),
             FieldId::PSelect => {
                 let opts: Vec<String> = self.profiles.iter().map(|p| p.name.clone()).collect();
                 (!opts.is_empty()).then_some((opts, self.profile_idx))

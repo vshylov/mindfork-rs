@@ -13,8 +13,8 @@ use tokio::sync::mpsc::UnboundedSender;
 use tokio_util::sync::CancellationToken;
 
 use crate::shared::api::{
-    AnthropicClient, Embedder, EngineBackend, ManagedConfig, OpenAiClient, ServerHandle,
-    UnavailableEmbedder, WireDialect, wait_until_ready,
+    AnthropicClient, Embedder, EngineBackend, ManagedConfig, OpenAiClient, ResponsesClient,
+    ServerHandle, UnavailableEmbedder, WireDialect, wait_until_ready,
 };
 use crate::shared::config::{
     CloudProvider, EmbedSettings, EngineSettings, ImpersonationEngineSettings, ImpersonationMode,
@@ -86,9 +86,12 @@ impl ServerSupervisor for LlamaSupervisor {
         status_tx: UnboundedSender<ServerStatus>,
     ) -> ChatSetup {
         match settings.mode {
-            ServerMode::External => {
-                external_chat_setup(settings.external.url.as_deref(), cancel, status_tx)
-            }
+            ServerMode::External => external_chat_setup(
+                settings.external.url.as_deref(),
+                settings.external.api_key_env.as_deref(),
+                cancel,
+                status_tx,
+            ),
             ServerMode::Managed => {
                 managed_chat_setup(managed_config(&settings.managed), cancel, status_tx)
             }
@@ -113,9 +116,12 @@ impl ServerSupervisor for LlamaSupervisor {
         match settings.mode {
             // `shared` обслуживается оркестратором (chat-сервер ассистента).
             ImpersonationMode::Shared => not_configured(),
-            ImpersonationMode::External => {
-                external_chat_setup(settings.external.url.as_deref(), cancel, status_tx)
-            }
+            ImpersonationMode::External => external_chat_setup(
+                settings.external.url.as_deref(),
+                settings.external.api_key_env.as_deref(),
+                cancel,
+                status_tx,
+            ),
             ImpersonationMode::Managed => {
                 managed_chat_setup(managed_config(&settings.managed), cancel, status_tx)
             }
@@ -135,7 +141,15 @@ impl ServerSupervisor for LlamaSupervisor {
         match settings.mode {
             ServerMode::External => match settings.external.url.as_deref() {
                 Some(url) if !url.is_empty() => EmbedSetup {
-                    embedder: Arc::new(OpenAiClient::new(url)),
+                    embedder: Arc::new(
+                        OpenAiClient::new(url).with_api_key(
+                            settings
+                                .external
+                                .api_key_env
+                                .as_deref()
+                                .and_then(|e| resolve_api_key(Some(e)).ok()),
+                        ),
+                    ),
                     handle: None,
                     status: ServerStatus::Ready,
                 },
@@ -197,15 +211,20 @@ impl ServerSupervisor for LlamaSupervisor {
     }
 }
 
-/// External chat-setup: подключение по URL (любой OpenAI-сервер), фоновый probe.
+/// External chat-setup: подключение по URL (любой OpenAI-совместимый сервер), фоновый
+/// probe. Опциональный `api_key_env` — имя env-переменной с Bearer-ключом (для
+/// OpenAI-совместимого прокси/шлюза с авторизацией); отсутствие/нерезолвимость ключа
+/// не ошибка (локальный `llama-server` ключа не требует).
 fn external_chat_setup(
     url: Option<&str>,
+    api_key_env: Option<&str>,
     cancel: CancellationToken,
     status_tx: UnboundedSender<ServerStatus>,
 ) -> ChatSetup {
     match url {
         Some(url) if !url.is_empty() => {
-            let client = Arc::new(OpenAiClient::new(url));
+            let key = api_key_env.and_then(|e| resolve_api_key(Some(e)).ok());
+            let client = Arc::new(OpenAiClient::new(url).with_api_key(key));
             spawn_probe(
                 client.clone(),
                 EXTERNAL_READY_TIMEOUT,
@@ -317,15 +336,11 @@ fn cloud_chat_setup(
     let base = url_override
         .filter(|u| !u.is_empty())
         .unwrap_or_else(|| provider.base_url());
-    // Бэкенд по протоколу провайдера: OpenAI-совместимый клиент (OpenAI/Gemini, с
-    // соответствующим диалектом лимита токенов) либо Anthropic Messages API (Claude).
+    // Бэкенд по протоколу провайдера: OpenAI Responses API (`ResponsesClient` — резюме
+    // рассуждений, reasoning.effort, verbosity), Gemini через OpenAI-совместимый Chat
+    // Completions (`OpenAiClient` + Gemini-диалект) либо Anthropic Messages API (Claude).
     let backend: Arc<dyn EngineBackend> = match provider {
-        CloudProvider::OpenAi => Arc::new(
-            OpenAiClient::new(base)
-                .with_api_key(Some(key))
-                .with_model(Some(model.to_string()))
-                .with_dialect(WireDialect::OpenAi),
-        ),
+        CloudProvider::OpenAi => Arc::new(ResponsesClient::new(base, key, model.to_string())),
         CloudProvider::Gemini => Arc::new(
             OpenAiClient::new(base)
                 .with_api_key(Some(key))
@@ -556,7 +571,7 @@ mod tests {
         let (tx, mut rx) = unbounded_channel();
         let cancel = CancellationToken::new();
         cancel.cancel(); // probe устарел ещё до старта фоновой задачи
-        let setup = external_chat_setup(Some("http://127.0.0.1:9/v1"), cancel, tx);
+        let setup = external_chat_setup(Some("http://127.0.0.1:9/v1"), None, cancel, tx);
         assert_eq!(setup.status, ServerStatus::Connecting); // немедленный статус как обычно
         // Даём фоновой задаче шанс выполниться; устаревший probe ничего не присылает.
         tokio::time::sleep(Duration::from_millis(50)).await;

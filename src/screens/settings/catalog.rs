@@ -107,6 +107,12 @@ impl SettingsScreen {
                             text_row(FieldId::XUrl, "URL (external)", &x.external.url),
                             text_row(FieldId::XModelName, "Модель (опц.)", &x.external.model_name)
                                 .describe(DESC_MODEL_NAME),
+                            text_row(
+                                FieldId::XApiKeyEnv,
+                                "API-ключ (env, опц.)",
+                                &x.external.api_key_env,
+                            )
+                            .describe(DESC_EXT_API_KEY_ENV),
                         ],
                     )),
                     ServerMode::OpenAi | ServerMode::Gemini | ServerMode::Claude => {
@@ -150,6 +156,12 @@ impl SettingsScreen {
                                 &x.external.model_name,
                             )
                             .describe(DESC_MODEL_NAME),
+                            text_row(
+                                FieldId::IxApiKeyEnv,
+                                "API-ключ (env, опц.)",
+                                &x.external.api_key_env,
+                            )
+                            .describe(DESC_EXT_API_KEY_ENV),
                         ],
                     )),
                     ImpersonationMode::OpenAi
@@ -194,6 +206,12 @@ impl SettingsScreen {
                             text_row(FieldId::EUrl, "URL (external)", &e.external.url),
                             text_row(FieldId::EModelName, "Модель (опц.)", &e.external.model_name)
                                 .describe(DESC_MODEL_NAME),
+                            text_row(
+                                FieldId::EApiKeyEnv,
+                                "API-ключ (env, опц.)",
+                                &e.external.api_key_env,
+                            )
+                            .describe(DESC_EXT_API_KEY_ENV),
                         ],
                     )),
                     // Claude поля показывает, но Anthropic не умеет embeddings —

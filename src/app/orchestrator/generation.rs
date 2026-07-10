@@ -17,7 +17,7 @@ use crate::features::tools::{
 };
 use crate::shared::api::{
     ApiMessage, ApiToolCall, ChatChunk, ChatRequest, EngineBackend, FinishReason, ThinkingBlock,
-    ToolCallAccumulator,
+    ThinkingRef, ToolCallAccumulator,
 };
 use crate::shared::config::ServerMode;
 use crate::shared::tokens::estimate_prompt;
@@ -352,10 +352,10 @@ struct GenSpawn {
 struct RoundOutput {
     text: String,
     thoughts: String,
-    /// Подпись блока «мыслей» (Anthropic): нужна для переотправки thinking-блока в
-    /// assistant-ходе с tool_use того же хода. `None` у бэкендов без extended thinking
-    /// (llama.cpp/OpenAI) или когда «мыслей» не было.
-    thoughts_signature: Option<String>,
+    /// Ссылка на рассуждение (Anthropic-подпись / OpenAI reasoning-элемент): нужна для
+    /// переотправки thinking-блока в assistant-ходе с вызовом инструмента того же хода.
+    /// `None` у бэкендов без extended thinking (llama.cpp) или когда «мыслей» не было.
+    thinking_ref: Option<ThinkingRef>,
     calls: Vec<ApiToolCall>,
     reason: FinishReason,
     /// Сгенерировано токенов за раунд: точное значение из `usage` сервера, иначе
@@ -481,13 +481,11 @@ fn spawn_generation(spawn: GenSpawn) {
                 // assistant-ход с tool_use в этом же ходе, иначе следующий запрос → 400.
                 // Подпись есть только если модель реально вернула «мысли»; прочие
                 // бэкенды поле игнорируют.
-                let thinking = out
-                    .thoughts_signature
-                    .clone()
-                    .map(|signature| ThinkingBlock {
-                        text: out.thoughts.clone(),
-                        signature,
-                    });
+                let thinking = out.thinking_ref.clone().map(|r| ThinkingBlock {
+                    text: out.thoughts.clone(),
+                    signature: r.signature,
+                    id: r.id,
+                });
                 request.messages.push(
                     ApiMessage::assistant_tool_calls(out.text.clone(), out.calls.clone())
                         .with_thinking(thinking),
@@ -608,6 +606,7 @@ async fn stream_round(
     let mut text = String::new();
     let mut thoughts = String::new();
     let mut thoughts_signature: Option<String> = None;
+    let mut thoughts_id: Option<String> = None;
     let mut acc = ToolCallAccumulator::default();
     let mut reason = FinishReason::Stop;
     // Live-счёт: число дельт ответа (≈ токенов). Точное значение из `usage`
@@ -648,11 +647,16 @@ async fn stream_round(
                         });
                         emit_completion(base_tokens + streamed);
                     }
-                    // Подпись «мыслей» (Anthropic) — не в UI, копим для переотправки.
-                    ChatChunk::ThoughtsSignature(s) => {
+                    // Ссылка на рассуждение (Anthropic-подпись / OpenAI reasoning-элемент)
+                    // — не в UI, копим для переотправки при tool-use. `id` несёт только
+                    // OpenAI Responses (reasoning `rs_…`); подпись/encrypted — оба.
+                    ChatChunk::ThoughtsSignature(r) => {
                         thoughts_signature
                             .get_or_insert_with(String::new)
-                            .push_str(&s);
+                            .push_str(&r.signature);
+                        if r.id.is_some() {
+                            thoughts_id = r.id;
+                        }
                     }
                     ChatChunk::ToolCall(delta) => acc.push(delta),
                     ChatChunk::Usage(u) => {
@@ -679,10 +683,16 @@ async fn stream_round(
         }
     }
 
+    let thinking_ref =
+        (thoughts_signature.is_some() || thoughts_id.is_some()).then(|| ThinkingRef {
+            id: thoughts_id,
+            signature: thoughts_signature.unwrap_or_default(),
+        });
+
     RoundOutput {
         text,
         thoughts,
-        thoughts_signature,
+        thinking_ref,
         calls: acc.finish(),
         reason,
         tokens: usage_tokens.unwrap_or(streamed),

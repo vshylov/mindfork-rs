@@ -148,9 +148,11 @@ pub fn build_request(req: &ChatRequest, model: &str, stream: bool) -> AntRequest
 fn ant_effort(e: ReasoningEffort) -> Option<&'static str> {
     match e {
         ReasoningEffort::None => None,
-        ReasoningEffort::Low => Some("low"),
+        // Anthropic понимает только low/medium/high — крайние ступени OpenAI (minimal/
+        // xhigh) приводим к ближайшей поддержанной.
+        ReasoningEffort::Minimal | ReasoningEffort::Low => Some("low"),
         ReasoningEffort::Medium => Some("medium"),
-        ReasoningEffort::High => Some("high"),
+        ReasoningEffort::High | ReasoningEffort::XHigh => Some("high"),
     }
 }
 
@@ -521,6 +523,7 @@ mod tests {
             .with_thinking(Some(ThinkingBlock {
                 text: "надо сложить".into(),
                 signature: "sig-abc".into(),
+                id: None,
             })),
             ApiMessage::tool("t1", "2"),
         ]);

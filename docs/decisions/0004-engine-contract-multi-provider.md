@@ -127,6 +127,19 @@ llama.cpp-расширений (`dynatemp_*`, `dry_*`, `top_n_sigma`, `mirostat`
   fields(Claude)` расширен на `thinking`/`reasoning_effort`. Проверено живыми
   `#[ignore]`-смоуками против Anthropic API (Phase A: «мысли»+подпись; Phase B:
   round-trip подписи с tool-use без `400`). Известный задел — `redacted_thinking`.
+- **OpenAI Responses API — сделано** (2026-07-10, docs/research/openai-responses-client.md):
+  режим `openai` переведён с Chat Completions на Responses (`POST /v1/responses`) — новая
+  реализация `EngineBackend` (`shared/api/openai/responses/`, `ResponsesClient`). Даёт
+  резюме рассуждений (`reasoning.summary:"auto"` → `ChatChunk::Thoughts`), глубину
+  (`reasoning.effort`, `ReasoningEffort` расширен `Minimal`/`XHigh`), многословность
+  (`text.verbosity`, новое поле `SamplingConfig.verbosity`). Tool-use round-trip —
+  reasoning-элемент (`id`+`encrypted_content`) переотправляется перед своим
+  `function_call` (аналог подписи thinking Anthropic): `ThoughtsSignature(String)` →
+  `ThoughtsSignature(ThinkingRef{id,signature})`, `ThinkingBlock.id`. `store:false`,
+  `include:["reasoning.encrypted_content"]`, `strict:false`. Диалект `WireDialect::OpenAi`
+  удалён (Gemini остаётся на Chat Completions). `supported_sampling_fields(OpenAi)` =
+  `max_tokens`+reasoning+verbosity. «Прокси с ключом» (прежний `openai`+url-override)
+  закрыт `ExternalSettings.api_key_env`. Nativ Gemini через Responses — задел.
 - **Раскладка `shared/api` (§2) — выполнена** (после Фазы 2, ради симметрии с
   `anthropic/`): `backend.rs` → `contract.rs` (провайдеро-агностичный контракт);
   `client.rs`+`wire.rs` → `openai/` (с приватным `wire`, re-export `OpenAiClient`/
@@ -152,7 +165,7 @@ llama.cpp-расширений (`dynatemp_*`, `dry_*`, `top_n_sigma`, `mirostat`
 | Режим | Видимые поля |
 |---|---|
 | Managed (локальный `llama-server`) | binary, model (`-m`), ngl, ctx, jinja, no_mmap, host, port |
-| External (свой OpenAI-URL) | url, model (опц., для мульти-модельных серверов) |
+| External (свой OpenAI-URL) | url, model (опц.), api-ключ (имя env-переменной, опц. — для прокси/шлюза с авторизацией) |
 | OpenAI / Claude / Gemini (облако) | model, api-ключ (имя env-переменной), base URL (опц., переопределение) |
 | Shared (только имперсонация) | — (переиспользует движок ассистента) |
 
