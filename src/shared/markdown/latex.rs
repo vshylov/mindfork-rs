@@ -151,15 +151,35 @@ pub(super) fn find_pair(chars: &[char], from: usize, a: char, b: char) -> Option
 
 // ---------- содержимое формулы → unicode ----------
 
-/// Преобразует содержимое формулы (без разделителей) в unicode-аппроксимацию:
+/// Режим формулы: влияет на разделитель строк `\\` (в display — перенос, в inline —
+/// «; »). Inline-вывод не должен содержать переводов строк (спан ratatui).
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum MathMode {
+    Inline,
+    Display,
+}
+
+/// Преобразует содержимое **строчной** формулы (`$…$`) в unicode-аппроксимацию:
 /// дроби `\frac{a}{b}`→`a/b`, корни `\sqrt{x}`→`√(x)`, текстовые обёртки
 /// (`\text{…}`/`\mathrm{…}`/…) → содержимое, команды (`\alpha`→α, `\leq`→≤, …),
 /// верхние/нижние индексы (`x^2`→x², `^{-1}`→⁻¹), скобки-группировки снимаются.
 /// Литеральные `\{`/`\}` сохраняются. Неизвестные команды остаются как есть.
+/// Окружения `\begin{…}…\end{…}` снимаются, `\\` → «; », `&` (выравнивание) убирается.
 pub fn latex_to_unicode(input: &str) -> String {
+    latex_to_unicode_mode(input, MathMode::Inline)
+}
+
+/// Как [`latex_to_unicode`], но для **блочной** формулы (`$$…$$`): `\\` даёт реальный
+/// перенос строки, так что `\begin{aligned}…\end{aligned}` раскладывается построчно.
+pub fn latex_to_unicode_display(input: &str) -> String {
+    latex_to_unicode_mode(input, MathMode::Display)
+}
+
+fn latex_to_unicode_mode(input: &str, mode: MathMode) -> String {
     // Защищаем литеральные скобки от снятия группировки в конце.
     let protected = input.replace("\\{", "\u{1}").replace("\\}", "\u{2}");
-    let with_braces = apply_brace_commands(&protected);
+    let without_env = strip_environments(&protected, mode);
+    let with_braces = apply_brace_commands(&without_env);
     let with_commands = replace_commands(&with_braces);
     let with_scripts = replace_scripts(&with_commands);
     // Снимаем оставшиеся группирующие скобки и восстанавливаем литеральные.
@@ -172,7 +192,169 @@ pub fn latex_to_unicode(input: &str) -> String {
             other => other,
         })
         .collect();
-    stripped.trim().to_string()
+    // В inline переводов строк быть не должно (спан ratatui) — схлопываем в пробел;
+    // в обоих режимах чистим пробелы построчно (снятие `&`/`\hline` оставляет двойные)
+    // и снимаем пустые крайние строки.
+    let stripped = match mode {
+        MathMode::Inline => stripped.replace('\n', " "),
+        MathMode::Display => stripped,
+    };
+    stripped
+        .split('\n')
+        .map(|l| collapse_spaces(l.trim()))
+        .collect::<Vec<_>>()
+        .join("\n")
+        .trim()
+        .to_string()
+}
+
+/// Схлопывает подряд идущие пробелы в один (в аппроксимации для чтения кратность
+/// пробела незначима; снятие выравнивания `&`/`\hline` иначе оставляет двойные).
+fn collapse_spaces(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    let mut prev_space = false;
+    for ch in s.chars() {
+        if ch == ' ' {
+            if !prev_space {
+                out.push(' ');
+            }
+            prev_space = true;
+        } else {
+            out.push(ch);
+            prev_space = false;
+        }
+    }
+    out
+}
+
+/// Снимает окружения `\begin{…}…\end{…}`, переводит `\\` в разделитель строк (по
+/// [`MathMode`]), убирает выравнивание `&` и служебные команды (`\hline`, `\label{…}`,
+/// `\notag`, …). Прочие команды (`\alpha`, `\frac`, …) копируются без изменений — их
+/// разбирают следующие проходы. Работает по уже «защищённой» строке (после `\{`→LBRACE).
+pub(super) fn strip_environments(input: &str, mode: MathMode) -> String {
+    let chars: Vec<char> = input.chars().collect();
+    let n = chars.len();
+    let sep = match mode {
+        MathMode::Display => "\n",
+        MathMode::Inline => "; ",
+    };
+    let mut out = String::with_capacity(input.len());
+    let mut i = 0;
+    while i < n {
+        let c = chars[i];
+        // Реальные переводы строк источника — не разрывы формулы (разрыв только `\\`).
+        if c == '\n' || c == '\r' {
+            out.push(' ');
+            i += 1;
+            continue;
+        }
+        // Выравнивание таблиц/матриц — убираем.
+        if c == '&' {
+            i += 1;
+            continue;
+        }
+        if c == '\\' {
+            // `\\` (+ опциональный отступ `[6pt]`) — перенос строки; пробелы вокруг
+            // разделителя схлопываем.
+            if i + 1 < n && chars[i + 1] == '\\' {
+                i += 2;
+                if i < n
+                    && chars[i] == '['
+                    && let Some(rel) = chars[i + 1..].iter().position(|&ch| ch == ']')
+                {
+                    i += 1 + rel + 1;
+                }
+                while i < n && chars[i].is_whitespace() {
+                    i += 1;
+                }
+                while out.ends_with(char::is_whitespace) {
+                    out.pop();
+                }
+                out.push_str(sep);
+                continue;
+            }
+            // `\&` — литеральный амперсанд (не выравнивание).
+            if i + 1 < n && chars[i + 1] == '&' {
+                out.push('&');
+                i += 2;
+                continue;
+            }
+            // Именованная команда.
+            let start = i + 1;
+            let mut j = start;
+            while j < n && chars[j].is_ascii_alphabetic() {
+                j += 1;
+            }
+            let name: String = chars[start..j].iter().collect();
+            match name.as_str() {
+                "begin" => {
+                    // `\begin{env}` (+ спецификация столбцов `{cc}` у array/tabular).
+                    let mut k = j;
+                    let mut env = String::new();
+                    if k < n
+                        && chars[k] == '{'
+                        && let Some((g, after)) = read_group(&chars, k)
+                    {
+                        env = g;
+                        k = after;
+                    }
+                    if matches!(env.trim(), "array" | "tabular" | "tabularx")
+                        && k < n
+                        && chars[k] == '{'
+                        && let Some((_g, after)) = read_group(&chars, k)
+                    {
+                        k = after;
+                    }
+                    i = k;
+                }
+                "end" => {
+                    let mut k = j;
+                    if k < n
+                        && chars[k] == '{'
+                        && let Some((_g, after)) = read_group(&chars, k)
+                    {
+                        k = after;
+                    }
+                    i = k;
+                }
+                "hline" | "midrule" | "toprule" | "bottomrule" | "notag" | "nonumber" => {
+                    i = j;
+                }
+                "label" | "cline" | "tag" | "ref" | "eqref" => {
+                    // снимаем вместе с группой-аргументом
+                    let mut k = j;
+                    if k < n
+                        && chars[k] == '{'
+                        && let Some((_g, after)) = read_group(&chars, k)
+                    {
+                        k = after;
+                    }
+                    i = k;
+                }
+                "" => {
+                    // `\` перед не-буквой (спец-символ `\,`, `\%`, …) — копируем пару,
+                    // её разберёт replace_commands.
+                    out.push('\\');
+                    if start < n {
+                        out.push(chars[start]);
+                        i = start + 1;
+                    } else {
+                        i = start;
+                    }
+                }
+                _ => {
+                    // Прочая команда — копируем `\name` без изменений.
+                    out.push('\\');
+                    out.push_str(&name);
+                    i = j;
+                }
+            }
+            continue;
+        }
+        out.push(c);
+        i += 1;
+    }
+    out
 }
 
 /// Раскрывает brace-команды: `\frac{a}{b}`→`a/b`, `\sqrt{a}`→`√(a)`,
@@ -997,7 +1179,9 @@ mod tests {
 
     #[test]
     fn escaped_backslash_and_brace() {
-        assert_eq!(latex_to_unicode(r"a \\ b"), r"a \ b");
+        // \\ — теперь разделитель строк (в inline → «; »); литеральный бэкслеш пишется
+        // как \backslash (см. backslash_command_is_literal).
+        assert_eq!(latex_to_unicode(r"a \\ b"), "a; b");
         assert_eq!(latex_to_unicode(r"\{x\}"), "{x}");
     }
 
@@ -1228,5 +1412,51 @@ mod tests {
         // патологическая вложенность не роняет стек (потолок MAX_BRACE_DEPTH)
         let deep = "\\sqrt{".repeat(5000) + "x" + &"}".repeat(5000);
         let _ = latex_to_unicode(&deep);
+    }
+
+    #[test]
+    fn display_environment_lays_out_rows() {
+        // \begin{aligned}…\end{aligned} с \\ и & — построчно, выравнивание убрано
+        let r = latex_to_unicode_display(r"\begin{aligned} x &= y \\ z &= w \end{aligned}");
+        assert_eq!(r, "x = y\nz = w");
+    }
+
+    #[test]
+    fn display_cases_and_matrix() {
+        assert_eq!(
+            latex_to_unicode_display(r"\begin{cases} a & x>0 \\ b & x<0 \end{cases}"),
+            "a x>0\nb x<0"
+        );
+        assert_eq!(
+            latex_to_unicode_display(r"\begin{pmatrix} 1 & 2 \\ 3 & 4 \end{pmatrix}"),
+            "1 2\n3 4"
+        );
+    }
+
+    #[test]
+    fn inline_double_backslash_is_semicolon() {
+        assert_eq!(latex_to_unicode(r"a \\ b"), "a; b");
+        // окружение в inline тоже раскладывается через «; »
+        assert_eq!(
+            latex_to_unicode(r"\begin{aligned} x &= 1 \\ y &= 2 \end{aligned}"),
+            "x = 1; y = 2"
+        );
+    }
+
+    #[test]
+    fn environment_helpers_stripped() {
+        // \label{…}, \\[4pt], \hline, \notag, \& (литеральный)
+        assert_eq!(
+            latex_to_unicode_display(r"a = b \label{eq:1} \\[4pt] c = d"),
+            "a = b\nc = d"
+        );
+        assert_eq!(latex_to_unicode_display(r"x \hline y"), "x y");
+        assert_eq!(latex_to_unicode(r"P \& Q"), "P & Q");
+    }
+
+    #[test]
+    fn display_math_multiline_source_without_break() {
+        // реальные переводы строк источника (без \\) не рвут формулу
+        assert_eq!(latex_to_unicode_display("x = y +\nz"), "x = y + z");
     }
 }

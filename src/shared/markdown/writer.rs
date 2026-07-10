@@ -360,7 +360,7 @@ impl Writer {
     /// В ячейке таблицы формула остаётся **в ячейке** (строки склеиваем `«; »`),
     /// иначе `push_line` увёл бы её строки в ленту над таблицей.
     pub(super) fn display_math(&mut self, content: &str) {
-        let converted = latex_to_unicode(content);
+        let converted = latex_to_unicode_display(content);
         if self.in_table_cell() {
             let joined = converted.split('\n').collect::<Vec<_>>().join("; ");
             self.push_span(Span::raw(joined));
