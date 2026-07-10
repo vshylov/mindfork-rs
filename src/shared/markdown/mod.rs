@@ -13,7 +13,7 @@ use std::sync::{LazyLock, Mutex};
 
 use ansi_to_tui::IntoText;
 use pulldown_cmark::{
-    Alignment, CodeBlockKind, CowStr, Event, HeadingLevel, Options, Parser, Tag, TagEnd,
+    Alignment, CodeBlockKind, CowStr, Event, HeadingLevel, LinkType, Options, Parser, Tag, TagEnd,
 };
 use ratatui::style::{Color, Modifier, Style, Stylize};
 use ratatui::text::{Line, Span, Text};
@@ -91,14 +91,7 @@ pub fn highlight_code(code: &str, lang: &str, palette: &Palette) -> Vec<Line<'st
     let mut hl = HighlightLines::new(syntax, theme);
     let mut out: Vec<Line<'static>> = Vec::new();
     for line in LinesWithEndings::from(code) {
-        let Ok(parts) = hl.highlight_line(line, &SYNTAX_SET) else {
-            out.push(Line::from(line.trim_end_matches('\n').to_string()));
-            continue;
-        };
-        match as_24_bit_terminal_escaped(&parts, false).into_text() {
-            Ok(text) => out.extend(text.lines),
-            Err(_) => out.push(Line::from(line.trim_end_matches('\n').to_string())),
-        }
+        out.extend(highlight_line_or_plain(&mut hl, line));
     }
     // Подсветка часто добавляет хвостовую пустую строку — снимаем, чтобы не давать
     // лишний пустой ряд под блоком в карточке.

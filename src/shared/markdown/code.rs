@@ -65,6 +65,24 @@ pub(super) fn canonical_lang(lang: &str) -> &str {
     }
 }
 
+/// Подсвечивает одну строку кода `line` (может нести хвостовой `\n`) в визуальные
+/// ряды. При ошибке syntect/`ansi-to-tui` деградирует в плоскую строку — **текст
+/// не теряется** (раньше путь `Writer::text` молча выбрасывал строку на ошибке
+/// `highlight_line`). Общий для `Writer::text` и [`super::highlight_code`].
+pub(super) fn highlight_line_or_plain(
+    hl: &mut HighlightLines<'static>,
+    line: &str,
+) -> Vec<Line<'static>> {
+    let plain = || vec![Line::from(line.trim_end_matches('\n').to_string())];
+    let Ok(parts) = hl.highlight_line(line, &SYNTAX_SET) else {
+        return plain();
+    };
+    match as_24_bit_terminal_escaped(&parts, false).into_text() {
+        Ok(text) => text.lines,
+        Err(_) => plain(),
+    }
+}
+
 /// Строит syntect-тему подсветки кода из семантической [`Palette`], сопоставляя
 /// синтаксические scope'ы ролям темы: ключевые слова → `accent`, строки →
 /// `success`, числа/константы → `warning`, функции → `user`, типы → `assistant`,
