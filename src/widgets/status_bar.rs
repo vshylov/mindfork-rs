@@ -39,6 +39,8 @@ pub struct StatusModel<'a> {
     pub tokens: u64,
     pub context: Option<u64>,
     pub context_exact: bool,
+    /// Reasoning-токенов («мыслей») в ответе (входят в `tokens`); `0` — не показывать.
+    pub reasoning: u32,
     pub mouse_scroll: bool,
     pub background: Option<&'a str>,
 }
@@ -102,6 +104,7 @@ fn lines(width: usize, model: &StatusModel, palette: &Palette) -> Vec<Line<'stat
     let tokens = model.tokens;
     let context = model.context;
     let context_exact = model.context_exact;
+    let reasoning = model.reasoning;
     let mouse_scroll = model.mouse_scroll;
     let background = model.background;
     let sep = || Span::styled("  │  ", Style::new().fg(palette.border));
@@ -141,7 +144,13 @@ fn lines(width: usize, model: &StatusModel, palette: &Palette) -> Vec<Line<'stat
         } else {
             ""
         };
-        let label = format!("токены: {approx}{total}");
+        // Reasoning-токены («мысли») — отдельной пометкой, они входят в общий счёт.
+        let reason = if reasoning > 0 {
+            format!(" (рассужд. {reasoning})")
+        } else {
+            String::new()
+        };
+        let label = format!("токены: {approx}{total}{reason}");
         if generating {
             state.push(Span::styled(label, palette.accent_style()));
         } else {
@@ -395,6 +404,7 @@ mod tests {
             tokens,
             context,
             context_exact,
+            reasoning: 0,
             mouse_scroll,
             background: None,
         }
@@ -470,6 +480,7 @@ mod tests {
                 tokens: 0,
                 context: None,
                 context_exact: false,
+                reasoning: 0,
                 mouse_scroll: false,
                 background: Some("рефлексия"),
             };
@@ -556,6 +567,34 @@ mod tests {
         assert!(line(42, Some(1000), true).contains("токены: 1042"));
         // Видно сразу при старте: переписка есть, ответ ещё 0 → сумма = переписка.
         assert!(line(0, Some(1000), false).contains("токены: ~1000"));
+    }
+
+    #[test]
+    fn token_counter_shows_reasoning_when_present() {
+        let statuses = ready();
+        let with_reason = |reasoning: u32| -> String {
+            let m = StatusModel {
+                statuses: &statuses,
+                generating: true,
+                tokens: 42,
+                context: Some(1000),
+                context_exact: true,
+                reasoning,
+                mouse_scroll: false,
+                background: None,
+            };
+            lines(200, &m, &Palette::default())
+                .iter()
+                .flat_map(|l| l.spans.iter())
+                .map(|s| s.content.as_ref())
+                .collect()
+        };
+        // Reasoning-токены показываются отдельной пометкой (входят в общий счёт).
+        assert!(with_reason(300).contains("токены: 1042 (рассужд. 300)"));
+        // Ноль reasoning-токенов — пометки нет.
+        let none = with_reason(0);
+        assert!(none.contains("токены: 1042"));
+        assert!(!none.contains("рассужд"));
     }
 
     #[test]
@@ -684,6 +723,7 @@ mod tests {
             tokens: 123,
             context: Some(456),
             context_exact: true,
+            reasoning: 0,
             mouse_scroll: true,
             background: Some("рефлексия"),
         };

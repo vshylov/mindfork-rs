@@ -286,13 +286,23 @@ pub struct RespBody {
     pub usage: Option<RespUsage>,
 }
 
-/// Счётчик токенов ответа Responses (`input_tokens`/`output_tokens`).
+/// Счётчик токенов ответа Responses (`input_tokens`/`output_tokens` +
+/// `output_tokens_details.reasoning_tokens`).
 #[derive(Debug, Default, Deserialize)]
 pub struct RespUsage {
     #[serde(default)]
     pub input_tokens: u32,
     #[serde(default)]
     pub output_tokens: u32,
+    #[serde(default)]
+    pub output_tokens_details: RespOutputTokensDetails,
+}
+
+/// Детализация токенов ответа (интересуют reasoning-токены «мыслей»).
+#[derive(Debug, Default, Deserialize)]
+pub struct RespOutputTokensDetails {
+    #[serde(default)]
+    pub reasoning_tokens: u32,
 }
 
 #[cfg(test)]

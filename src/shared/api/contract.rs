@@ -193,6 +193,11 @@ pub struct TokenUsage {
     pub prompt_tokens: u32,
     /// Токенов в ответе (сгенерировано моделью).
     pub completion_tokens: u32,
+    /// Токенов рассуждения («мыслей»), уже входящих в `completion_tokens`. Отдают
+    /// reasoning-провайдеры (OpenAI Responses `output_tokens_details.reasoning_tokens`;
+    /// OpenAI-compat/llama.cpp `completion_tokens_details.reasoning_tokens`). `0` —
+    /// провайдер не разделяет (Anthropic: «мысли» считаются в `completion_tokens`).
+    pub reasoning_tokens: u32,
 }
 
 /// Дельта вызова инструмента из стрима (накапливается по `index`). См. spec §6.3.

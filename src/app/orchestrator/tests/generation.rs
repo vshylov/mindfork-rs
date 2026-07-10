@@ -144,6 +144,7 @@ async fn emits_token_counter_during_generation() {
         ChatChunk::Usage(TokenUsage {
             prompt_tokens: 12,
             completion_tokens: 5,
+            reasoning_tokens: 0,
         }),
         ChatChunk::Finished(FinishReason::Stop),
     ])) as Arc<dyn EngineBackend>;

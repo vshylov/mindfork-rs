@@ -3915,11 +3915,19 @@ web-поиск и Python под выключателями, экран наст�
   `response.reasoning_summary_text.delta` — оба → `ChatChunk::Thoughts` (робастность к
   моделям, стримящим рассуждение под другим именем события). Резюме появятся после
   верификации организации.
-- **Задел** (docs/research/openai-responses-client.md §5): `reasoning_tokens`/
-  `cached_tokens` в статус-баре (позволил бы видеть «мыслительную» активность даже когда
-  текст резюме гейтится верификацией), `prompt_cache_key`, встроенные серверные
-  инструменты OpenAI (`web_search`/`code_interpreter` — конфликтуют с клиентским
-  agentic-loop), нативный Gemini через свой протокол (следующее направление).
+- **Reasoning-токены в статус-баре (сделано)**: `TokenUsage` расширен полем
+  `reasoning_tokens` (OpenAI Responses `output_tokens_details.reasoning_tokens`;
+  OpenAI-compat/llama.cpp `completion_tokens_details.reasoning_tokens`; Anthropic не
+  разделяет → `0`, «мысли» уже в `completion_tokens`). Накопительно по раундам
+  agentic-loop (`stream_round` принимает `base_reasoning`, `RoundOutput.reasoning_tokens`);
+  событие `AppEvent::TokenUsage.reasoning: Option<u32>` (`None` — не трогать, известно
+  только из `usage`); `StatusModel.reasoning` → пометка «(рассужд. N)» рядом со счётчиком
+  при `>0`. Позволяет видеть «мыслительную» активность модели даже когда текст резюме
+  гейтится верификацией организации. **836 тестов** (+1: `token_counter_shows_reasoning_when_present`).
+- **Задел** (docs/research/openai-responses-client.md §5): `cached_tokens` в счётчике,
+  `prompt_cache_key`, встроенные серверные инструменты OpenAI (`web_search`/
+  `code_interpreter` — конфликтуют с клиентским agentic-loop), нативный Gemini через
+  свой протокол (следующее направление).
 
 ### Отложено за пределы M3
 - **Сворачивание/выделение per-message** и tool-блоки в ленте — сейчас «мысли»

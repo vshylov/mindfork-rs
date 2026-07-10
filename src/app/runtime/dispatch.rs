@@ -92,7 +92,8 @@ pub(super) fn apply_event(
             completion,
             context,
             context_exact,
-        } => screen.set_token_usage(generation_id, completion, context, context_exact),
+            reasoning,
+        } => screen.set_token_usage(generation_id, completion, context, context_exact, reasoning),
         AppEvent::ToolCall {
             generation_id,
             name,

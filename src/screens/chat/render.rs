@@ -39,6 +39,7 @@ impl ChatScreen {
             tokens: self.gen_tokens,
             context: self.gen_context,
             context_exact: self.gen_context_exact,
+            reasoning: self.gen_reasoning,
             mouse_scroll: self.mouse_scroll,
             background,
         }

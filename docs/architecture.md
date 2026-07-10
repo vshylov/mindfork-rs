@@ -244,8 +244,10 @@ src/
 │
 └─ shared/                  инфраструктура и утилиты (FSD "shared")
    ├─ api/                  слой движка инференса (контракт + реализации по семействам, ADR 0004)
-   │  ├─ contract.rs        EngineBackend, Embedder, ChatRequest/Chunk, ToolCallAccumulator (агностичный)
-   │  ├─ openai/            OpenAI-протокол: client.rs (reqwest+SSE, probe /health, embed) + wire.rs (WireDialect)
+   │  ├─ contract.rs        EngineBackend, Embedder, ChatRequest/Chunk, ThinkingRef, ToolCallAccumulator (агностичный)
+   │  ├─ openai/            семейство OpenAI:
+   │  │  ├─ client.rs+wire.rs   Chat Completions: OpenAiClient (reqwest+SSE, probe /health, embed), WireDialect (LlamaCpp/Gemini)
+   │  │  └─ responses/          Responses API: ResponsesClient + wire (облако OpenAI, /v1/responses — резюме рассуждений, effort, verbosity)
    │  ├─ anthropic/         Anthropic Messages API: client.rs + wire.rs (Claude, /v1/messages)
    │  ├─ managed.rs         ServerHandle (managed-процесс llama-server), ManagedConfig, wait_until_ready
    │  ├─ thoughts.rs        потоковый парсер <think> (fallback к reasoning_content)
@@ -331,13 +333,18 @@ flowchart LR
 перезапрашивает снимок; §9.7), `BackgroundTask{kind,active}` (тихий индикатор
 фоновой рефлексии/консолидации в статус-баре), `Error`.
 
-`TokenUsage { completion, context, context_exact }` — live-счётчик токенов: ответ
-(`completion`, накопительно по раундам agentic-loop) и переписка/промпт (`context`).
-Источник двойной: live-приближение по числу потоковых дельт + точное число из блока
-`usage` сервера (его просим через `stream_options.include_usage=true`; приходит
+`TokenUsage { completion, context, context_exact, reasoning }` — live-счётчик токенов:
+ответ (`completion`, накопительно по раундам agentic-loop) и переписка/промпт
+(`context`). Источник двойной: live-приближение по числу потоковых дельт + точное число
+из блока `usage` сервера (его просим через `stream_options.include_usage=true`; приходит
 финальным чанком как `ChatChunk::Usage`). До прихода `usage` переписка показывается
 клиентской оценкой (`shared/tokens.rs`, эвристика «байты UTF-8 / 4»), помеченной `~`;
 точное `prompt_tokens` её заменяет. Статус-бар показывает сумму одним числом.
+`reasoning` — reasoning-токены «мыслей» (входят в `completion`), известны только из
+`usage` (`None` — не трогать прежнее); их отдают reasoning-провайдеры (OpenAI Responses
+`output_tokens_details.reasoning_tokens`, OpenAI-compat/llama.cpp
+`completion_tokens_details.reasoning_tokens`; Anthropic не разделяет → `0`). Статус-бар
+при `>0` показывает пометку «(рассужд. N)» рядом с суммой.
 
 ### Инварианты потока
 
@@ -428,13 +435,24 @@ sequenceDiagram
   display:"summarized"}` при `sampling.thinking==Some(true)` (+ `output_config.effort`
   из `reasoning_effort`); `budget_tokens`/`reasoning_budget` **не шлём** — модели 4.x
   их отвергают (`400`). `thinking_delta`→`Thoughts`, `signature_delta`→
-  `ChatChunk::ThoughtsSignature`. **При tool-use** Anthropic требует возвращать
-  thinking-блок **с подписью** в assistant-ходе с `tool_use` того же хода (иначе
-  `400`): agentic-loop копит подпись раунда и крепит `ApiMessage.thinking`
-  (`with_thinking`) к ходу с вызовами; `build_messages` ставит `AntBlock::Thinking`
-  первым. Подпись живёт только в памяти хода (между ходами Anthropic авто-отбрасывает
-  старые thinking → не персистится). `supported_sampling_fields(Claude)` =
-  `max_tokens`+`thinking`+`reasoning_effort`.
+  `ChatChunk::ThoughtsSignature`. **OpenAI Responses:** `reasoning.summary` (шлём
+  `"detailed"` — надёжнее `"auto"`) → `response.reasoning_summary_text.delta` (и
+  `response.reasoning_text.delta`) → `Thoughts`; глубину задаёт `reasoning.effort`
+  (`ReasoningEffort` включает `minimal`/`xhigh`). **Резюме отдаётся только
+  верифицированным организациям OpenAI** — иначе поток «мыслей» пуст (сырой CoT не
+  отдаётся никогда). `supported_sampling_fields(OpenAi)` =
+  `max_tokens`+`thinking`+`reasoning_effort`+`verbosity`.
+- **Переотправка рассуждения при tool-use** (общий механизм для Anthropic и OpenAI
+  Responses). Оба провайдера требуют вернуть рассуждение вместе с вызовом инструмента в
+  том же ходе (иначе `400`/просадка): `ChatChunk::ThoughtsSignature(ThinkingRef{id,
+  signature})` — `id` несёт только OpenAI (reasoning-элемент `rs_…`), у Anthropic
+  `None`. Agentic-loop копит `ThinkingRef` раунда и крепит `ApiMessage.thinking`
+  (`with_thinking`, `ThinkingBlock{text,signature,id}`) к ходу с вызовами. Anthropic:
+  `build_messages` ставит `AntBlock::Thinking` **первым** в assistant-ходе; OpenAI
+  Responses: `build_input` ставит reasoning-элемент (`id`+`encrypted_content`)
+  **перед** его `function_call`. Живёт только в памяти хода (между ходами оба провайдера
+  авто-отбрасывают старые thinking → не персистится). `supported_sampling_fields(Claude)`
+  = `max_tokens`+`thinking`+`reasoning_effort`.
 - **EOS.** Остановка строго по token-id спец-токенов модели (на стороне сервера);
   строковые `stop` по тексту EOS приложение **не отправляет** (анти-самообрыв).
 - **Регенерация** усекает историю по последнее сообщение пользователя
@@ -447,8 +465,9 @@ sequenceDiagram
 
 Транспорт спрятан за двумя трейтами — это даёт замену движка, мульти-провайдерность
 и mock в тестах. Модуль разложен по семействам ([ADR 0004](decisions/0004-engine-contract-multi-provider.md)):
-**`contract`** (провайдеро-агностичные трейты и типы), **`openai`** (OpenAI-протокол:
-локальный/external `llama-server`, облако OpenAI/Gemini), **`anthropic`** (Claude,
+**`contract`** (провайдеро-агностичные трейты и типы), **`openai`** (два протокола
+семейства: `client`+`wire` — Chat Completions для локального/external `llama-server` и
+облака Gemini; `responses` — Responses API для облака OpenAI), **`anthropic`** (Claude,
 Messages API), **`managed`** (запуск дочернего `llama-server`).
 
 ```mermaid
@@ -462,9 +481,13 @@ classDiagram
         +embed(texts) Vec~Vec~f32~~
     }
     class OpenAiClient {
-        openai/: reqwest + SSE
+        openai/: Chat Completions, reqwest + SSE
         +probe() /health
-        Bearer-ключ, WireDialect
+        Bearer-ключ, WireDialect (LlamaCpp/Gemini)
+    }
+    class ResponsesClient {
+        openai/responses/: /v1/responses
+        Bearer, событийный SSE, reasoning/verbosity
     }
     class AnthropicClient {
         anthropic/: /v1/messages
@@ -477,6 +500,7 @@ classDiagram
         #[cfg(test)]
     }
     EngineBackend <|.. OpenAiClient
+    EngineBackend <|.. ResponsesClient
     EngineBackend <|.. AnthropicClient
     EngineBackend <|.. MockBackend
     Embedder <|.. OpenAiClient
@@ -486,24 +510,34 @@ classDiagram
 Провайдер выбирается в настройках единым селектором режима (`managed`/`external`/
 `openai`/`gemini`/`claude`); API-ключ хранится **именем env-переменной** (секрет не
 на диске). Поле `model` для облака обязательно — его подставляет сам бэкенд (доменный
-`ChatRequest` модель не несёт). **Диалект сэмплинга** ([`openai::WireDialect`]):
-`LlamaCpp` шлёт все расширения, `OpenAi`/`Gemini` чистят незнакомое (иначе `400`;
-OpenAI требует `max_completion_tokens` вместо `max_tokens` и **не принимает
-`temperature`/`top_p`** — их поддерживало лишь семейство GPT 5.4, у GPT 5.5/5.6 их
-уже нет, поэтому `supported_sampling_fields(OpenAi)` = penalties+`seed`+`max_tokens`,
-а Gemini-compat те два поля принимает), `AnthropicClient` из
-сэмплинга шлёт `max_tokens` + extended thinking (`thinking`/`reasoning_effort` →
-adaptive; Claude 4.x отвергает temperature/top_p/top_k и `budget_tokens` — см. «Мысли
-(CoT)» выше). У Anthropic нет embeddings — `Embedder` он не реализует (RAG берёт
-отдельный, ADR 0002).
+`ChatRequest` модель не несёт). Соответствие режима и бэкенда/протокола:
+
+| Режим | Бэкенд | Протокол | Сэмплинг (`supported_sampling_fields`) |
+|---|---|---|---|
+| managed / external | `OpenAiClient` (`LlamaCpp`) | Chat Completions | весь набор (расширения llama.cpp) |
+| gemini | `OpenAiClient` (`Gemini`) | Chat Completions | `temperature`/`top_p`/penalties/`seed`/`max_tokens` |
+| **openai** | **`ResponsesClient`** | **Responses (`/v1/responses`)** | `max_tokens`+`thinking`+`reasoning_effort`+`verbosity` |
+| claude | `AnthropicClient` | Messages (`/v1/messages`) | `max_tokens`+`thinking`+`reasoning_effort` |
+
+**Диалект сэмплинга Chat Completions** ([`openai::WireDialect`]): `LlamaCpp` шлёт все
+расширения; `Gemini` чистит незнакомое (иначе `400`), оставляя
+`temperature`/`top_p`/penalties/`seed`/`max_tokens`. Облако **OpenAI** через этот клиент
+**не ходит** — оно на Responses (`ResponsesClient`): системное сообщение → top-level
+`instructions`, история → массив `input` из элементов, `max_tokens`→`max_output_tokens`,
+`store:false`, function-tool плоский со `strict:false`; резюме рассуждений/`effort`/
+`verbosity` (см. «Мысли (CoT)»). `AnthropicClient` из сэмплинга шлёт `max_tokens` +
+extended thinking (`thinking`/`reasoning_effort` → adaptive; Claude 4.x отвергает
+temperature/top_p/top_k и `budget_tokens`). У Anthropic и Responses нет embeddings —
+`Embedder` реализует только `OpenAiClient` (RAG берёт отдельный, ADR 0002). External
+получил опциональный `api_key_env` (Bearer-ключ для OpenAI-совместимого прокси/шлюза).
 
 - **`ChatRequest`** = `system` + `messages` (user/assistant/tool, включая
   `tool_calls` и tool-результаты) + `sampling` + `tools`. История append-only →
   локальный сервер переиспользует prefix cache. Каждый бэкенд транслирует в свой
   wire-формат (OpenAI Chat Completions либо Anthropic Messages: system → top-level,
   tool-результаты → `tool_result`-блоки в user, склейка соседних ролей).
-- **`ChatChunk`** = `Text` | `Thoughts` | `ThoughtsSignature` | `ToolCall(ToolCallDelta)` |
-  `Usage(TokenUsage)` | `Finished`. `ToolCallAccumulator` собирает разрезанные по
+- **`ChatChunk`** = `Text` | `Thoughts` | `ThoughtsSignature(ThinkingRef)` |
+  `ToolCall(ToolCallDelta)` | `Usage(TokenUsage)` | `Finished`. `ToolCallAccumulator` собирает разрезанные по
   чанкам вызовы по `index`; `Usage` (`prompt_tokens`/`completion_tokens`) приходит
   финальным чанком при `stream_options.include_usage=true` — счётчик токенов.
   `ThoughtsSignature` эмитит только Anthropic (подпись thinking-блока для переотправки

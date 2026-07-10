@@ -336,13 +336,24 @@ pub struct ChatCompletionChunk {
     pub usage: Option<Usage>,
 }
 
-/// Блок `usage` ответа сервера (счётчик токенов).
+/// Блок `usage` ответа сервера (счётчик токенов). `completion_tokens_details.
+/// reasoning_tokens` отдают OpenAI-compat/llama.cpp-серверы с reasoning-моделью
+/// (входит в `completion_tokens`); отсутствует → `0`.
 #[derive(Debug, Default, Deserialize)]
 pub struct Usage {
     #[serde(default)]
     pub prompt_tokens: u32,
     #[serde(default)]
     pub completion_tokens: u32,
+    #[serde(default)]
+    pub completion_tokens_details: CompletionTokensDetails,
+}
+
+/// Детализация токенов ответа Chat Completions (интересуют reasoning-токены).
+#[derive(Debug, Default, Deserialize)]
+pub struct CompletionTokensDetails {
+    #[serde(default)]
+    pub reasoning_tokens: u32,
 }
 
 #[derive(Debug, Deserialize)]

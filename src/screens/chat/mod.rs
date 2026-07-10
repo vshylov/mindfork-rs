@@ -196,6 +196,9 @@ pub struct ChatScreen {
     /// Точное ли значение `gen_context` (из `usage` сервера). `false` — оценка,
     /// статус-бар помечает её `~`.
     gen_context_exact: bool,
+    /// Reasoning-токены («мысли») текущей/последней генерации из `usage` (`0` — нет/
+    /// провайдер не разделяет). Статус-бар показывает их отдельно при `> 0`.
+    gen_reasoning: u32,
     /// Спелл-чекер (загружается в фоне; `None`, пока не готов/нет словарей).
     spell: Option<SpellChecker>,
     /// Текст ввода изменился — нужна перепроверка орфографии (с дебаунсом).
@@ -275,6 +278,7 @@ impl ChatScreen {
             gen_tokens: 0,
             gen_context: None,
             gen_context_exact: false,
+            gen_reasoning: 0,
             spell: None,
             spell_dirty: false,
             draft_dirty: false,

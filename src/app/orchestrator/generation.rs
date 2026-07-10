@@ -361,6 +361,8 @@ struct RoundOutput {
     /// Сгенерировано токенов за раунд: точное значение из `usage` сервера, иначе
     /// число потоковых дельт (приближение — у llama-server одна дельта ≈ один токен).
     tokens: u64,
+    /// Reasoning-токены («мысли») за раунд из `usage` (`0` — провайдер не разделяет).
+    reasoning_tokens: u32,
 }
 
 /// Запускает задачу клиентского agentic-loop (spec §6.3): стрим → при
@@ -419,6 +421,7 @@ fn spawn_generation(spawn: GenSpawn) {
             completion: 0,
             context: Some(estimate_prompt_tokens(&request)),
             context_exact: false,
+            reasoning: None,
         });
 
         let mut messages: Vec<Message> = Vec::new();
@@ -429,6 +432,8 @@ fn spawn_generation(spawn: GenSpawn) {
         // Накопительный счётчик токенов ответа по всем раундам agentic-loop —
         // live-индикатор продолжает расти от раунда к раунду.
         let mut total_tokens: u64 = 0;
+        // Накопительные reasoning-токены («мысли») по раундам.
+        let mut total_reasoning: u32 = 0;
         // Следующее доменное сообщение ассистента начинает новый пузырь (после
         // `send_followup_message`). См. spec §9.3.
         let mut pending_new_bubble = false;
@@ -444,9 +449,11 @@ fn spawn_generation(spawn: GenSpawn) {
                 id,
                 &evt_tx,
                 total_tokens,
+                total_reasoning,
             )
             .await;
             total_tokens += out.tokens;
+            total_reasoning += out.reasoning_tokens;
 
             // Раунд с вызовами инструментов — исполняем и продолжаем цикл.
             if out.reason == FinishReason::ToolCalls && !out.calls.is_empty() {
@@ -593,8 +600,9 @@ fn spawn_generation(spawn: GenSpawn) {
 }
 
 /// Стримит один запрос, ретранслируя `Text`/`Thoughts` в UI, накапливая
-/// tool-вызовы и счётчик токенов. `base_tokens` — токены, набранные предыдущими
-/// раундами; счётчик в UI растёт накопительно. Возвращает накопленный раунд.
+/// tool-вызовы и счётчик токенов. `base_tokens`/`base_reasoning` — токены/reasoning-
+/// токены, набранные предыдущими раундами; счётчик в UI растёт накопительно.
+/// Возвращает накопленный раунд.
 async fn stream_round(
     backend: &Arc<dyn EngineBackend>,
     request: ChatRequest,
@@ -602,6 +610,7 @@ async fn stream_round(
     id: Uuid,
     evt_tx: &UnboundedSender<AppEvent>,
     base_tokens: u64,
+    base_reasoning: u32,
 ) -> RoundOutput {
     let mut text = String::new();
     let mut thoughts = String::new();
@@ -613,6 +622,8 @@ async fn stream_round(
     // сервера, если придёт, заменяет приближение.
     let mut streamed: u64 = 0;
     let mut usage_tokens: Option<u64> = None;
+    // Reasoning-токены раунда (из `usage`; `0` — провайдер не разделяет).
+    let mut round_reasoning: u32 = 0;
 
     // Счётчик ответа: `context: None` оставляет прежнюю оценку переписки нетронутой
     // (её эмитит start_generation); точный `context` приходит лишь из usage сервера.
@@ -622,6 +633,7 @@ async fn stream_round(
             completion,
             context: None,
             context_exact: false,
+            reasoning: None,
         });
     };
 
@@ -661,13 +673,16 @@ async fn stream_round(
                     ChatChunk::ToolCall(delta) => acc.push(delta),
                     ChatChunk::Usage(u) => {
                         // Точный счёт от сервера: и ответ, и переписку (prompt) —
-                        // заменяет приближение по дельтам и оценку переписки.
+                        // заменяет приближение по дельтам и оценку переписки. Reasoning-
+                        // токены («мысли») — накопительно по раундам (base + текущий).
                         usage_tokens = Some(u.completion_tokens as u64);
+                        round_reasoning = u.reasoning_tokens;
                         let _ = evt_tx.send(AppEvent::TokenUsage {
                             generation_id: id,
                             completion: base_tokens + u.completion_tokens as u64,
                             context: Some(u.prompt_tokens as u64),
                             context_exact: true,
+                            reasoning: Some(base_reasoning + u.reasoning_tokens),
                         });
                     }
                     ChatChunk::Finished(r) => {
@@ -696,6 +711,7 @@ async fn stream_round(
         calls: acc.finish(),
         reason,
         tokens: usage_tokens.unwrap_or(streamed),
+        reasoning_tokens: round_reasoning,
     }
 }
 

@@ -154,6 +154,9 @@ impl EngineBackend for AnthropicClient {
                                         yield ChatChunk::Usage(TokenUsage {
                                             prompt_tokens: input_tokens,
                                             completion_tokens: completion,
+                                            // Anthropic не разделяет reasoning-токены — «мысли»
+                                            // уже учтены в output_tokens.
+                                            reasoning_tokens: 0,
                                         });
                                         let reason = delta
                                             .stop_reason

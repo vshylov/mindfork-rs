@@ -147,6 +147,7 @@ impl EngineBackend for ResponsesClient {
                                             yield ChatChunk::Usage(TokenUsage {
                                                 prompt_tokens: u.input_tokens,
                                                 completion_tokens: u.output_tokens,
+                                                reasoning_tokens: u.output_tokens_details.reasoning_tokens,
                                             });
                                         }
                                         let reason = if saw_tool_call {
@@ -163,6 +164,7 @@ impl EngineBackend for ResponsesClient {
                                             yield ChatChunk::Usage(TokenUsage {
                                                 prompt_tokens: u.input_tokens,
                                                 completion_tokens: u.output_tokens,
+                                                reasoning_tokens: u.output_tokens_details.reasoning_tokens,
                                             });
                                         }
                                         yield ChatChunk::Finished(FinishReason::Length);

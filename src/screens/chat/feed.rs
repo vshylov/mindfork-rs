@@ -29,6 +29,7 @@ impl ChatScreen {
         self.gen_tokens = 0;
         self.gen_context = None;
         self.gen_context_exact = false;
+        self.gen_reasoning = 0;
         // Склейка раундов agentic-loop в один блок «Ассистент:» с инлайн tool-блоками.
         self.feed = FeedMessage::from_messages(messages);
         self.feed_view.scroll_to_bottom();
@@ -71,6 +72,7 @@ impl ChatScreen {
         self.gen_tokens = 0;
         self.gen_context = None;
         self.gen_context_exact = false;
+        self.gen_reasoning = 0;
         self.pending_text_sep = false;
         self.pending_thoughts_sep = false;
         self.feed.push(FeedMessage {
@@ -191,12 +193,17 @@ impl ChatScreen {
         completion: u64,
         context: Option<u64>,
         context_exact: bool,
+        reasoning: Option<u32>,
     ) {
         if self.current_gen == Some(generation_id) {
             self.gen_tokens = completion;
             if let Some(c) = context {
                 self.gen_context = Some(c);
                 self.gen_context_exact = context_exact;
+            }
+            // Reasoning-токены известны только из `usage` (Some) — иначе не трогаем.
+            if let Some(r) = reasoning {
+                self.gen_reasoning = r;
             }
         }
     }
