@@ -213,7 +213,7 @@ impl MessageFeed {
             scrolled: false,
             // Зеркало дефолта конфига (`InterfaceSettings::default`): до прихода
             // первого снимка настроек лента рисует таблицы как дефолтный конфиг.
-            table_row_separators: true,
+            table_row_separators: false,
             cache: Vec::new(),
             cache_key: None,
         }
@@ -1297,8 +1297,8 @@ mod tests {
 
     #[test]
     fn table_row_separators_follow_setting_and_invalidate_cache() {
-        // По умолчанию (зеркало дефолта конфига) между строками таблицы рисуются
-        // разделители `├…┤`; выключение настройки убирает их, а смена значения
+        // По умолчанию (зеркало дефолта конфига) разделителей между строками нет —
+        // только под заголовком; включение настройки добавляет их, а смена значения
         // сбрасывает кэш (сообщение/ширина/палитра те же — меняется только флаг).
         let mut feed = MessageFeed::new();
         let palette = Palette::default();
@@ -1309,18 +1309,14 @@ mod tests {
                 .filter(|l| l.spans.iter().any(|s| s.content.contains('├')))
                 .count()
         };
+        let off = feed.build_lines(&[msg(FeedRole::Assistant, table, "")], &palette, 80);
+        assert_eq!(mids(&off), 1, "по умолчанию: только под заголовком");
+        feed.set_table_row_separators(true);
         let on = feed.build_lines(&[msg(FeedRole::Assistant, table, "")], &palette, 80);
         assert_eq!(
             mids(&on),
             2,
-            "включено: разделитель заголовка + один межстрочный"
-        );
-        feed.set_table_row_separators(false);
-        let off = feed.build_lines(&[msg(FeedRole::Assistant, table, "")], &palette, 80);
-        assert_eq!(
-            mids(&off),
-            1,
-            "выключено: только под заголовком (кэш должен сброситься по ключу)"
+            "включено: разделитель заголовка + один межстрочный (кэш сброшен по ключу)"
         );
     }
 

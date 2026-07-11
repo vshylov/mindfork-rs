@@ -177,9 +177,9 @@ fn interface_has_table_separators_toggle() {
     // Поле есть в секции «Интерфейс» (группа «Оформление»).
     let rows = s.interface_fields();
     assert!(rows.iter().any(|r| r.id == FieldId::ITableSeparators));
-    // По умолчанию включено; переключение сохраняет конфиг с опущенным флагом.
+    // По умолчанию выключено; переключение сохраняет конфиг с поднятым флагом.
     match s.toggle_field(FieldId::ITableSeparators) {
-        Some(SettingsIntent::SaveConfig(c)) => assert!(!c.interface.table_row_separators),
+        Some(SettingsIntent::SaveConfig(c)) => assert!(c.interface.table_row_separators),
         other => panic!("ожидался SaveConfig, получено {other:?}"),
     }
     assert!(field_desc(&s, FieldId::ITableSeparators).is_some());

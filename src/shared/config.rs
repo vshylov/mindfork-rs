@@ -714,8 +714,8 @@ pub struct InterfaceSettings {
     /// См. spec §11.6 и [`crate::shared::theme::GlyphSet`].
     pub terminal_compat: bool,
     /// Горизонтальные разделители между строками Markdown-таблиц в ленте
-    /// (`├───┼───┤`, «сеточный» вид). По умолчанию включены; выключение
-    /// возвращает компактный вид — разделитель только под заголовком.
+    /// (`├───┼───┤`, «сеточный» вид). По умолчанию выключены (компактный вид —
+    /// разделитель только под заголовком); включение даёт «сеточный» вид.
     /// См. spec §11.4.
     pub table_row_separators: bool,
 }
@@ -728,7 +728,7 @@ impl Default for InterfaceSettings {
             selected_dictionaries: Vec::new(),
             confirm_destructive_keys: false,
             terminal_compat: false,
-            table_row_separators: true,
+            table_row_separators: false,
         }
     }
 }
@@ -902,8 +902,8 @@ mod tests {
         assert_eq!(c.interface.theme, Theme::Auto);
         // Режим совместимости со старым терминалом по умолчанию выключен.
         assert!(!c.interface.terminal_compat);
-        // Разделители строк Markdown-таблиц по умолчанию включены.
-        assert!(c.interface.table_row_separators);
+        // Разделители строк Markdown-таблиц по умолчанию выключены.
+        assert!(!c.interface.table_row_separators);
         // Копирование переписки: по умолчанию только текст (все флаги выключены).
         assert!(!c.copy.copy_thoughts);
         assert!(!c.copy.copy_tool_calls);
@@ -1086,7 +1086,7 @@ mod tests {
                 selected_dictionaries: vec!["en_US".into(), "ru_RU".into()],
                 confirm_destructive_keys: true,
                 terminal_compat: true,
-                table_row_separators: false,
+                table_row_separators: true,
             },
             ..Default::default()
         };
