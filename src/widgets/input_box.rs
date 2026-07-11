@@ -67,6 +67,37 @@ impl Default for InputBox {
     }
 }
 
+/// Итог обработки клавиши полем ввода ([`InputBox::on_key`]): различает **правку
+/// содержимого** и одно лишь **движение курсора/скролла**. Вызывающий по нему решает,
+/// помечать ли ввод «грязным» (сохранение черновика + перепроверка орфографии).
+/// Раньше `on_key` возвращал `bool` («обработана/нет»), и любое движение курсора зря
+/// поднимало дебаунс орфографии и слало `SetDraft` на диск. См. spec §11.5.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum KeyOutcome {
+    /// Содержимое изменено.
+    Edited,
+    /// Курсор/скролл сдвинут, содержимое не менялось.
+    Moved,
+    /// Клавиша не обработана (вызывающий трактует её дальше).
+    Ignored,
+}
+
+impl KeyOutcome {
+    /// Клавиша обработана виджетом (вызывающий не трактует её дальше). Пока нужен
+    /// только тестам — продакшн-вызовы ветвятся по [`Self::edited`]; оставлен как
+    /// парный к нему элемент публичного API виджета.
+    #[allow(dead_code)]
+    pub fn handled(self) -> bool {
+        !matches!(self, KeyOutcome::Ignored)
+    }
+
+    /// Правка изменила содержимое (нужны пометка «грязного» ввода / перепроверка
+    /// орфографии); движение курсора и необработанная клавиша — нет.
+    pub fn edited(self) -> bool {
+        matches!(self, KeyOutcome::Edited)
+    }
+}
+
 impl InputBox {
     pub fn new() -> Self {
         Self {
@@ -84,10 +115,28 @@ impl InputBox {
     }
 
     /// Включает однострочный режим (горизонтальный скролл вместо переноса; `↑/↓` и
-    /// перевод строки отключены). Вызывать **до** [`Self::set_text`]. См. поле
-    /// [`Self::single_line`].
+    /// перевод строки отключены). Обычно вызывается **до** [`Self::set_text`], но
+    /// инвариант «одна логическая строка» держится и при включении на уже
+    /// многострочном содержимом: строки схлопываются в одну через пробел, курсор
+    /// клампится. Иначе [`Self::render_single_line`] взял бы `lines[0]`, а `col` мог
+    /// указывать за её длину — паника на срезе. См. поле [`Self::single_line`].
     pub fn set_single_line(&mut self, on: bool) {
         self.single_line = on;
+        if on && self.lines.len() > 1 {
+            let mut merged: Vec<char> = Vec::new();
+            for (idx, line) in self.lines.iter().enumerate() {
+                if idx > 0 {
+                    merged.push(' ');
+                }
+                merged.extend(line.iter().copied());
+            }
+            self.col = self.col.min(merged.len());
+            self.lines = vec![merged];
+            self.row = 0;
+            self.scroll = 0;
+            self.hscroll = 0;
+            self.goal_col = None;
+        }
     }
 
     /// Текст поля (строки через `\n`).
@@ -180,10 +229,49 @@ impl InputBox {
         self.misspelled = ranges;
     }
 
+    /// Синхронизирует диапазоны ошибок строки `row` с правкой её содержимого: в
+    /// позиции `at` удалено `removed` и вставлено `inserted` символов. Диапазоны
+    /// целиком слева от правки не трогаются; целиком справа — сдвигаются на дельту;
+    /// пересекающие изменённый участок — сбрасываются (слово изменилось — пусть
+    /// перепроверка его переоценит). Так подчёркивания держатся на месте между
+    /// дебаунс-перепроверками, не «съезжая» на соседние слова (иначе стилем ошибки
+    /// подсвечивался бы уже другой текст). См. spec §11.5.
+    fn edit_misspelled(&mut self, row: usize, at: usize, removed: usize, inserted: usize) {
+        let Some(ranges) = self.misspelled.get_mut(row) else {
+            return;
+        };
+        let end = at + removed;
+        let delta = inserted as isize - removed as isize;
+        ranges.retain_mut(|(s, e)| {
+            if *e <= at {
+                true // целиком слева — без изменений
+            } else if *s >= end {
+                *s = (*s as isize + delta).max(0) as usize; // целиком справа — сдвиг
+                *e = (*e as isize + delta).max(0) as usize;
+                *e > *s
+            } else {
+                false // пересекает правку — сбросить
+            }
+        });
+    }
+
     /// Нет ли отмеченных ошибок орфографии (для тестов вышестоящего слоя).
     #[cfg(test)]
     pub fn misspelled_is_empty(&self) -> bool {
         self.misspelled.iter().all(|r| r.is_empty())
+    }
+
+    /// Диапазоны ошибок орфографии строки `row` (для тестов синхронизации правок).
+    #[cfg(test)]
+    fn misspelled_ranges_for_test(&self, row: usize) -> Vec<(usize, usize)> {
+        self.misspelled.get(row).cloned().unwrap_or_default()
+    }
+
+    /// Текущий горизонтальный скролл (в колонках) — для теста выравнивания по границе
+    /// символа в однострочном режиме.
+    #[cfg(test)]
+    fn hscroll_for_test(&self) -> usize {
+        self.hscroll
     }
 
     /// Заменяет диапазон символов `[start, end)` в строке `row` на `replacement`
@@ -197,6 +285,7 @@ impl InputBox {
         let repl: Vec<char> = replacement.chars().collect();
         let repl_len = repl.len();
         line.splice(start..end, repl);
+        self.edit_misspelled(row, start, end - start, repl_len);
         self.row = row;
         self.col = start + repl_len;
         self.goal_col = None;
@@ -225,12 +314,16 @@ impl InputBox {
         self.hscroll = 0;
         self.goal_col = None;
         self.cleared = None;
+        // Старые диапазоны ошибок относились к прежнему тексту — сбрасываем (иначе до
+        // ближайшей перепроверки подчёркивания рисовались бы на новом содержимом).
+        self.misspelled.clear();
     }
 
     // ---------- редактирование ----------
 
     pub fn insert_char(&mut self, c: char) {
         self.lines[self.row].insert(self.col, c);
+        self.edit_misspelled(self.row, self.col, 0, 1);
         self.col += 1;
         self.goal_col = None;
         self.cleared = None;
@@ -242,6 +335,12 @@ impl InputBox {
         }
         let tail = self.lines[self.row].split_off(self.col);
         self.lines.insert(self.row + 1, tail);
+        // Синхронизируем подчёркивания: текущую строку сбрасываем (её хвост уехал на
+        // новую), для новой строки вставляем пустой набор диапазонов.
+        if self.row < self.misspelled.len() {
+            self.misspelled[self.row].clear();
+            self.misspelled.insert(self.row + 1, Vec::new());
+        }
         self.row += 1;
         self.col = 0;
         self.goal_col = None;
@@ -278,6 +377,10 @@ impl InputBox {
         self.lines[self.row].extend(tail);
         self.goal_col = None;
         self.cleared = None;
+        // Вставка (буфер обмена) меняет строки произвольно; проще сбросить все
+        // подчёркивания — перепроверка (её всегда запускает `mark_input_changed`
+        // после вставки) их перестроит. См. spec §11.5.
+        self.misspelled.clear();
     }
 
     pub fn backspace(&mut self) {
@@ -287,10 +390,12 @@ impl InputBox {
             // скаляр — иначе остаётся осиротевший вариатор/модификатор. См. spec §11.5.
             let start = wrap::prev_boundary(&self.lines[self.row], self.col);
             self.lines[self.row].drain(start..self.col);
+            self.edit_misspelled(self.row, start, self.col - start, 0);
             self.col = start;
         } else if self.row > 0 {
             // склейка с предыдущей строкой
             let current = self.lines.remove(self.row);
+            self.join_misspelled_into_prev(self.row);
             self.row -= 1;
             self.col = self.lines[self.row].len();
             self.lines[self.row].extend(current);
@@ -303,9 +408,27 @@ impl InputBox {
             // Удаляем кластер целиком (зеркально `backspace`), а не один скаляр.
             let end = wrap::next_boundary(&self.lines[self.row], self.col);
             self.lines[self.row].drain(self.col..end);
+            self.edit_misspelled(self.row, self.col, end - self.col, 0);
         } else if self.row + 1 < self.lines.len() {
             let next = self.lines.remove(self.row + 1);
+            self.join_misspelled_into_prev(self.row + 1);
             self.lines[self.row].extend(next);
+        }
+    }
+
+    /// Синхронизирует подчёркивания при склейке строк: строка `removed` уходит в
+    /// предыдущую. Диапазоны обеих строк относятся к прежним координатам, поэтому
+    /// проще сбросить их у остающейся строки (её содержимое меняется) и убрать запись
+    /// уехавшей — перепроверка перестроит. `removed` — индекс строки, которую убрали
+    /// из [`Self::lines`]; предыдущая строка — `removed - 1`.
+    fn join_misspelled_into_prev(&mut self, removed: usize) {
+        if removed < self.misspelled.len() {
+            self.misspelled.remove(removed);
+        }
+        if removed > 0
+            && let Some(r) = self.misspelled.get_mut(removed - 1)
+        {
+            r.clear();
         }
     }
 
@@ -402,6 +525,7 @@ impl InputBox {
         }
         let start = self.word_left_col();
         self.lines[self.row].drain(start..self.col);
+        self.edit_misspelled(self.row, start, self.col - start, 0);
         self.col = start;
     }
 
@@ -416,6 +540,7 @@ impl InputBox {
         }
         let end = self.word_right_col();
         self.lines[self.row].drain(self.col..end);
+        self.edit_misspelled(self.row, self.col, end - self.col, 0);
     }
 
     /// В самое начало текста (`Ctrl+Home`).
@@ -537,12 +662,14 @@ impl InputBox {
         }
     }
 
-    /// Обрабатывает клавишу редактирования. Возвращает `true`, если клавиша
-    /// обработана (вызывающий не трактует её дальше). `Enter` НЕ обрабатывается
-    /// (политику отправки/переноса задаёт вызывающий слой).
-    pub fn on_key(&mut self, key: KeyEvent) -> bool {
+    /// Обрабатывает клавишу редактирования. Возвращает [`KeyOutcome`]: `Edited`
+    /// (содержимое изменено), `Moved` (сдвинут курсор) или `Ignored` (клавиша не
+    /// обработана — вызывающий трактует её дальше). `Enter` НЕ обрабатывается
+    /// (политику отправки/переноса задаёт вызывающий слой). Различие `Edited`/`Moved`
+    /// нужно вызывающему, чтобы не помечать ввод «грязным» на голой навигации.
+    pub fn on_key(&mut self, key: KeyEvent) -> KeyOutcome {
         if key.kind != KeyEventKind::Press {
-            return false;
+            return KeyOutcome::Ignored;
         }
         // Ctrl усиливает навигацию/удаление до уровня слова / всего текста
         // (`Ctrl+←/→` — по словам, `Ctrl+Backspace/Delete` — удалить слово,
@@ -551,67 +678,67 @@ impl InputBox {
         match key.code {
             KeyCode::Backspace if ctrl => {
                 self.delete_word_left();
-                true
+                KeyOutcome::Edited
             }
             KeyCode::Delete if ctrl => {
                 self.delete_word_right();
-                true
+                KeyOutcome::Edited
             }
             KeyCode::Left if ctrl => {
                 self.move_word_left();
-                true
+                KeyOutcome::Moved
             }
             KeyCode::Right if ctrl => {
                 self.move_word_right();
-                true
+                KeyOutcome::Moved
             }
             KeyCode::Home if ctrl => {
                 self.move_doc_start();
-                true
+                KeyOutcome::Moved
             }
             KeyCode::End if ctrl => {
                 self.move_doc_end();
-                true
+                KeyOutcome::Moved
             }
             // Обычный ввод символа: Ctrl+символ не печатаем (это шорткат вышестоящего
             // слоя), иначе в поле попал бы управляющий символ.
             KeyCode::Char(c) if !ctrl => {
                 self.insert_char(c);
-                true
+                KeyOutcome::Edited
             }
             KeyCode::Backspace => {
                 self.backspace();
-                true
+                KeyOutcome::Edited
             }
             KeyCode::Delete => {
                 self.delete();
-                true
+                KeyOutcome::Edited
             }
             KeyCode::Left => {
                 self.move_left();
-                true
+                KeyOutcome::Moved
             }
             KeyCode::Right => {
                 self.move_right();
-                true
+                KeyOutcome::Moved
             }
             KeyCode::Up => {
                 self.move_up();
-                true
+                KeyOutcome::Moved
             }
             KeyCode::Down => {
                 self.move_down();
-                true
+                KeyOutcome::Moved
             }
             KeyCode::Home => {
                 self.move_home();
-                true
+                KeyOutcome::Moved
             }
             KeyCode::End => {
                 self.move_end();
-                true
+                KeyOutcome::Moved
             }
-            _ => false,
+            _ => KeyOutcome::Ignored,
         }
     }
 
@@ -749,9 +876,14 @@ impl InputBox {
         } else if cursor_vw >= self.hscroll + view_w {
             self.hscroll = cursor_vw + 1 - view_w;
         }
-
-        // Видимый срез [start, end) — от колонки `hscroll` на ширину `view_w`.
+        // Выравниваем левый край скролла по границе символа. Без этого при широком
+        // глифе (CJK/эмодзи) слева срез мог начаться «в середине» символа, а `hscroll`
+        // (в колонках) не совпадал бы с реальной шириной скрытого префикса — курсор
+        // рисовался бы на колонку правее фактической позиции. `col_at_width` округляет
+        // старт вверх до границы, а `hscroll` приводим к ширине этого префикса
+        // (гарантированно `≤ cursor_vw` → курсор остаётся видимым, см. spec §11.6).
         let start = col_at_width(line, self.hscroll);
+        self.hscroll = wrap::display_width(&line[..start]);
         let mut end = start;
         let mut w = 0;
         while end < line.len() {
@@ -869,7 +1001,10 @@ fn is_soft(vrows: &[(usize, usize, usize)], idx: usize) -> bool {
 /// Логический столбец на ряду `[start, end)`, ближайший к целевой визуальной колонке
 /// `target_vw` (в колонках) — для перехода `↑/↓` с сохранением колонки. На мягком
 /// переносе не отдаём `end` (иначе курсор «уедет» в начало следующего ряда) —
-/// откатываемся на символ назад, оставаясь на этом ряду.
+/// откатываемся на символ назад, оставаясь на этом ряду. Результат снапится к границе
+/// графемного кластера, чтобы курсор не садился между базой и вариатором эмодзи
+/// (`❤️` = `❤`+U+FE0F): иначе последующий `insert`/`backspace` разорвал бы кластер
+/// (осиротевший селектор). См. spec §11.5.
 fn col_for_visual(line: &[char], start: usize, end: usize, target_vw: usize, soft: bool) -> usize {
     let mut w = 0;
     let mut col = start;
@@ -884,7 +1019,9 @@ fn col_for_visual(line: &[char], start: usize, end: usize, target_vw: usize, sof
     if soft && col == end && end > start {
         col -= 1;
     }
-    col
+    // Снап вниз к границе кластера. Всегда `≥ start` (start — граница ряда), поэтому
+    // курсор не покидает этот визуальный ряд.
+    wrap::snap_boundary(line, col)
 }
 
 /// Пересекает диапазоны ошибок `[s, e)` логической строки с визуальным рядом
@@ -1132,9 +1269,9 @@ mod tests {
     #[test]
     fn on_key_handles_editing_but_not_enter() {
         let mut ib = InputBox::new();
-        assert!(ib.on_key(k(KeyCode::Char('x'))));
-        assert!(ib.on_key(k(KeyCode::Backspace)));
-        assert!(!ib.on_key(k(KeyCode::Enter)));
+        assert!(ib.on_key(k(KeyCode::Char('x'))).handled());
+        assert!(ib.on_key(k(KeyCode::Backspace)).handled());
+        assert!(!ib.on_key(k(KeyCode::Enter)).handled());
         assert!(ib.is_empty());
     }
 
@@ -1341,10 +1478,10 @@ mod tests {
         ib.set_text("один два три"); // курсор в конце (row=0, col=12)
         render_at(&mut ib, 8);
         // ↑ переводит на предыдущий визуальный ряд той же строки (не уходит выше)
-        assert!(ib.on_key(k(KeyCode::Up)));
+        assert!(ib.on_key(k(KeyCode::Up)).handled());
         assert_eq!(ib.cursor(), (0, 3)); // "оди|н два три" — колонка 3 сохранена
         // ещё одно ↑ на верхнем визуальном ряду — без движения
-        assert!(ib.on_key(k(KeyCode::Up)));
+        assert!(ib.on_key(k(KeyCode::Up)).handled());
         assert_eq!(ib.cursor(), (0, 3));
     }
 
@@ -1355,11 +1492,11 @@ mod tests {
         render_at(&mut ib, 8);
         ib.row = 0;
         ib.col = 3; // верхний визуальный ряд, колонка 3
-        assert!(ib.on_key(k(KeyCode::Down)));
+        assert!(ib.on_key(k(KeyCode::Down)).handled());
         // на нижний ряд "три" с сохранением колонки → конец строки (3 символа)
         assert_eq!(ib.cursor(), (0, 12));
         // ещё одно ↓ на нижнем визуальном ряду — без движения
-        assert!(ib.on_key(k(KeyCode::Down)));
+        assert!(ib.on_key(k(KeyCode::Down)).handled());
         assert_eq!(ib.cursor(), (0, 12));
     }
 
@@ -1370,9 +1507,9 @@ mod tests {
         render_at(&mut ib, 20);
         ib.row = 1;
         ib.col = 2;
-        assert!(ib.on_key(k(KeyCode::Up)));
+        assert!(ib.on_key(k(KeyCode::Up)).handled());
         assert_eq!(ib.cursor(), (0, 2)); // перешли на предыдущую логическую строку
-        assert!(ib.on_key(k(KeyCode::Down)));
+        assert!(ib.on_key(k(KeyCode::Down)).handled());
         assert_eq!(ib.cursor(), (1, 2));
     }
 
@@ -1385,9 +1522,9 @@ mod tests {
         ib.row = 0;
         ib.col = 5; // колонка 5 на первой строке
         ib.goal_col = None; // прямое присвоение col выше не сбрасывает goal
-        assert!(ib.on_key(k(KeyCode::Down)));
+        assert!(ib.on_key(k(KeyCode::Down)).handled());
         assert_eq!(ib.cursor(), (1, 1)); // "x" короче — курсор прижат к концу
-        assert!(ib.on_key(k(KeyCode::Down)));
+        assert!(ib.on_key(k(KeyCode::Down)).handled());
         assert_eq!(ib.cursor(), (2, 5)); // колонка 5 восстановлена, не осталась 1
     }
 
@@ -1399,9 +1536,9 @@ mod tests {
         ib.row = 0;
         ib.col = 5;
         ib.goal_col = None;
-        assert!(ib.on_key(k(KeyCode::Down))); // (1,1), goal=5
-        assert!(ib.on_key(k(KeyCode::Left))); // горизонтальное движение сбрасывает goal
-        assert!(ib.on_key(k(KeyCode::Down)));
+        assert!(ib.on_key(k(KeyCode::Down)).handled()); // (1,1), goal=5
+        assert!(ib.on_key(k(KeyCode::Left)).handled()); // горизонтальное движение сбрасывает goal
+        assert!(ib.on_key(k(KeyCode::Down)).handled());
         // без goal колонка берётся из текущей (0) → начало третьей строки
         assert_eq!(ib.cursor(), (2, 0));
     }
@@ -1414,15 +1551,15 @@ mod tests {
         // курсор в середине нижнего визуального ряда "три"
         ib.row = 0;
         ib.col = 10;
-        assert!(ib.on_key(k(KeyCode::Home)));
+        assert!(ib.on_key(k(KeyCode::Home)).handled());
         assert_eq!(ib.cursor(), (0, 9)); // начало ряда "три", а не всей строки
-        assert!(ib.on_key(k(KeyCode::End)));
+        assert!(ib.on_key(k(KeyCode::End)).handled());
         assert_eq!(ib.cursor(), (0, 12)); // конец ряда "три" = конец строки
         // на верхнем ряду End встаёт на последнюю позицию ряда (мягкий перенос)
         ib.col = 2;
-        assert!(ib.on_key(k(KeyCode::End)));
+        assert!(ib.on_key(k(KeyCode::End)).handled());
         assert_eq!(ib.cursor(), (0, 8)); // конец "один два", не уезжает в начало "три"
-        assert!(ib.on_key(k(KeyCode::Home)));
+        assert!(ib.on_key(k(KeyCode::Home)).handled());
         assert_eq!(ib.cursor(), (0, 0)); // начало верхнего ряда
     }
 
@@ -1433,7 +1570,7 @@ mod tests {
         ib.set_text("abc\ndef");
         ib.row = 1;
         ib.col = 2;
-        assert!(ib.on_key(k(KeyCode::Up)));
+        assert!(ib.on_key(k(KeyCode::Up)).handled());
         assert_eq!(ib.cursor(), (0, 2));
     }
 
@@ -1457,9 +1594,9 @@ mod tests {
         ib.set_single_line(true);
         ib.set_text("hello");
         ib.col = 2;
-        assert!(ib.on_key(k(KeyCode::Up)));
+        assert!(ib.on_key(k(KeyCode::Up)).handled());
         assert_eq!(ib.cursor(), (0, 2));
-        assert!(ib.on_key(k(KeyCode::Down)));
+        assert!(ib.on_key(k(KeyCode::Down)).handled());
         assert_eq!(ib.cursor(), (0, 2));
     }
 
@@ -1470,9 +1607,9 @@ mod tests {
         ib.set_text("a long value");
         render_at(&mut ib, 4); // узкое поле — значение длиннее ширины
         ib.col = 5;
-        assert!(ib.on_key(k(KeyCode::Home)));
+        assert!(ib.on_key(k(KeyCode::Home)).handled());
         assert_eq!(ib.cursor(), (0, 0));
-        assert!(ib.on_key(k(KeyCode::End)));
+        assert!(ib.on_key(k(KeyCode::End)).handled());
         assert_eq!(ib.cursor(), (0, 12)); // конец всего значения, не визуального ряда
     }
 
@@ -1501,19 +1638,19 @@ mod tests {
         let mut ib = InputBox::new();
         ib.set_text("один два три"); // курсор в конце (col=12)
         // Ctrl+← → начало слова "три"
-        assert!(ib.on_key(ctrl(KeyCode::Left)));
+        assert!(ib.on_key(ctrl(KeyCode::Left)).handled());
         assert_eq!(ib.cursor(), (0, 9));
         // ещё раз → начало "два"
-        assert!(ib.on_key(ctrl(KeyCode::Left)));
+        assert!(ib.on_key(ctrl(KeyCode::Left)).handled());
         assert_eq!(ib.cursor(), (0, 5));
         // ещё раз → начало "один"
-        assert!(ib.on_key(ctrl(KeyCode::Left)));
+        assert!(ib.on_key(ctrl(KeyCode::Left)).handled());
         assert_eq!(ib.cursor(), (0, 0));
         // Ctrl+→ → за концом "один"
-        assert!(ib.on_key(ctrl(KeyCode::Right)));
+        assert!(ib.on_key(ctrl(KeyCode::Right)).handled());
         assert_eq!(ib.cursor(), (0, 4));
         // ещё раз → за концом "два"
-        assert!(ib.on_key(ctrl(KeyCode::Right)));
+        assert!(ib.on_key(ctrl(KeyCode::Right)).handled());
         assert_eq!(ib.cursor(), (0, 8));
     }
 
@@ -1524,10 +1661,10 @@ mod tests {
         ib.row = 1;
         ib.col = 0; // начало второй строки
         // Ctrl+← на границе строки → конец предыдущей
-        assert!(ib.on_key(ctrl(KeyCode::Left)));
+        assert!(ib.on_key(ctrl(KeyCode::Left)).handled());
         assert_eq!(ib.cursor(), (0, 2));
         // Ctrl+→ из конца первой строки → начало следующей
-        assert!(ib.on_key(ctrl(KeyCode::Right)));
+        assert!(ib.on_key(ctrl(KeyCode::Right)).handled());
         assert_eq!(ib.cursor(), (1, 0));
     }
 
@@ -1535,14 +1672,14 @@ mod tests {
     fn ctrl_backspace_deletes_word_left() {
         let mut ib = InputBox::new();
         ib.set_text("один два три"); // курсор в конце
-        assert!(ib.on_key(ctrl(KeyCode::Backspace)));
+        assert!(ib.on_key(ctrl(KeyCode::Backspace)).handled());
         assert_eq!(ib.text(), "один два ");
         assert_eq!(ib.cursor(), (0, 9));
         // в начале строки склеивает со строкой выше (как обычный Backspace)
         ib.set_text("ab\ncd");
         ib.row = 1;
         ib.col = 0;
-        assert!(ib.on_key(ctrl(KeyCode::Backspace)));
+        assert!(ib.on_key(ctrl(KeyCode::Backspace)).handled());
         assert_eq!(ib.text(), "abcd");
     }
 
@@ -1551,7 +1688,7 @@ mod tests {
         let mut ib = InputBox::new();
         ib.set_text("один два три");
         ib.col = 0;
-        assert!(ib.on_key(ctrl(KeyCode::Delete)));
+        assert!(ib.on_key(ctrl(KeyCode::Delete)).handled());
         assert_eq!(ib.text(), " два три"); // удалено слово "один", пробел остался
         assert_eq!(ib.cursor(), (0, 0));
     }
@@ -1562,9 +1699,9 @@ mod tests {
         ib.set_text("abc\ndef\nghi");
         ib.row = 1;
         ib.col = 1;
-        assert!(ib.on_key(ctrl(KeyCode::Home)));
+        assert!(ib.on_key(ctrl(KeyCode::Home)).handled());
         assert_eq!(ib.cursor(), (0, 0));
-        assert!(ib.on_key(ctrl(KeyCode::End)));
+        assert!(ib.on_key(ctrl(KeyCode::End)).handled());
         assert_eq!(ib.cursor(), (2, 3));
     }
 
@@ -1572,7 +1709,7 @@ mod tests {
     fn ctrl_char_is_not_inserted() {
         // Ctrl+символ — шорткат вышестоящего слоя, в поле не печатается.
         let mut ib = InputBox::new();
-        assert!(!ib.on_key(ctrl(KeyCode::Char('a'))));
+        assert!(!ib.on_key(ctrl(KeyCode::Char('a'))).handled());
         assert!(ib.is_empty());
     }
 
@@ -1586,6 +1723,158 @@ mod tests {
         let mut term = Terminal::new(TestBackend::new(12, 4)).unwrap();
         term.draw(|f| ib.render(f, f.area(), "ввод", true, &Palette::default(), false))
             .unwrap();
+    }
+
+    // ---------- п.1: снап курсора к границе кластера ----------
+
+    #[test]
+    fn col_for_visual_snaps_off_emoji_cluster() {
+        // "❤️abc" = ❤(U+2764) + U+FE0F + a + b + c. Целевая колонка 1 попадает между
+        // базой и селектором → снап к началу кластера (0), а не в его середину (иначе
+        // insert/backspace разорвали бы ❤️). Колонка 2 — сразу за кластером (граница).
+        let line: Vec<char> = "❤\u{FE0F}abc".chars().collect();
+        assert_eq!(col_for_visual(&line, 0, line.len(), 1, false), 0);
+        assert_eq!(col_for_visual(&line, 0, line.len(), 2, false), 2);
+        // Мягкий перенос: конец ряда на VS16-кластере не оставляет курсор в середине.
+        // ряд "❤️" [0,2): target за концом, soft → откат, затем снап к границе (0).
+        assert_eq!(col_for_visual(&line, 0, 2, 10, true), 0);
+    }
+
+    #[test]
+    fn arrow_up_lands_on_cluster_boundary() {
+        // Верхний ряд начинается с ❤️; ↓ затем ↑ с goal-колонкой 1 (середина ❤️) не
+        // сажает курсор между базой и селектором.
+        let mut ib = InputBox::new();
+        ib.set_text("❤\u{FE0F}xy\nz");
+        render_at(&mut ib, 20);
+        ib.row = 1;
+        ib.col = 1; // визуальная колонка 1 на нижней строке "z"
+        ib.goal_col = None;
+        assert!(ib.on_key(k(KeyCode::Up)).handled());
+        // на верхней строке колонка-цель 1 попадает в ❤️ → курсор снапится к 0 или 2,
+        // но НЕ встаёт между скалярами (индекс 1 = между ❤ и U+FE0F)
+        assert_ne!(ib.cursor(), (0, 1), "курсор сел в середину кластера ❤️");
+    }
+
+    // ---------- п.3: жёсткий инвариант однострочного режима ----------
+
+    #[test]
+    fn single_line_after_multiline_content_merges_without_panic() {
+        let mut ib = InputBox::new();
+        ib.set_text("first\nsecond\nthird"); // многострочно, курсор в конце
+        ib.set_single_line(true); // включаем ПОСЛЕ set_text — инвариант должен устоять
+        assert_eq!(ib.line_count(), 1);
+        assert_eq!(ib.text(), "first second third");
+        assert_eq!(ib.cursor().0, 0);
+        // рендер однострочного не паникует (col не за границей lines[0])
+        render_at(&mut ib, 8);
+    }
+
+    // ---------- п.4: выравнивание hscroll по границе символа ----------
+
+    #[test]
+    fn single_line_hscroll_aligns_to_char_boundary() {
+        // "世aBcd": ведущий CJK-глиф шириной 2. Курсор после "世a" (визуальная колонка
+        // 3), узкое поле (view_w=3) → скролл. Без выравнивания hscroll оказался бы «в
+        // середине» 世 (значение вне множества префиксных ширин) и курсор рисовался бы
+        // на колонку правее. См. spec §11.6.
+        let mut ib = InputBox::new();
+        ib.set_single_line(true);
+        ib.set_text("世aBcd");
+        ib.col = 2; // после "世a"
+        render_at(&mut ib, 3);
+        let line: Vec<char> = "世aBcd".chars().collect();
+        let boundary_widths: Vec<usize> = (0..=line.len())
+            .map(|k| wrap::display_width(&line[..k]))
+            .collect();
+        assert!(
+            boundary_widths.contains(&ib.hscroll_for_test()),
+            "hscroll={} не совпал ни с одной префиксной шириной (не на границе символа)",
+            ib.hscroll_for_test()
+        );
+    }
+
+    // ---------- п.5: синхронизация подчёркиваний орфографии с правкой ----------
+
+    #[test]
+    fn misspelled_shifts_on_insert_before_word() {
+        let mut ib = InputBox::new();
+        ib.set_text("foo bar");
+        ib.set_misspelled(vec![vec![(4, 7)]]); // помечено "bar"
+        ib.row = 0;
+        ib.col = 0;
+        ib.insert_char('X'); // "Xfoo bar" — "bar" сдвинулось на [5,8)
+        assert_eq!(ib.misspelled_ranges_for_test(0), vec![(5, 8)]);
+    }
+
+    #[test]
+    fn misspelled_dropped_when_edited_inside_word() {
+        let mut ib = InputBox::new();
+        ib.set_text("foo bar");
+        ib.set_misspelled(vec![vec![(4, 7)]]);
+        ib.row = 0;
+        ib.col = 5; // внутри "bar"
+        ib.insert_char('X'); // правка внутри слова — диапазон сбрасывается
+        assert!(ib.misspelled_ranges_for_test(0).is_empty());
+    }
+
+    #[test]
+    fn misspelled_shifts_left_on_delete_after_word() {
+        let mut ib = InputBox::new();
+        ib.set_text("X foo");
+        ib.set_misspelled(vec![vec![(2, 5)]]); // помечено "foo"
+        ib.row = 0;
+        ib.col = 0;
+        ib.delete(); // удалили 'X' в начале → "foo" теперь [1,4)? нет: " foo" [1,4)
+        assert_eq!(ib.misspelled_ranges_for_test(0), vec![(1, 4)]);
+    }
+
+    #[test]
+    fn misspelled_synced_on_newline_and_join() {
+        let mut ib = InputBox::new();
+        ib.set_text("foo bar");
+        ib.set_misspelled(vec![vec![(0, 3), (4, 7)]]);
+        ib.row = 0;
+        ib.col = 3; // после "foo"
+        ib.insert_newline(); // "foo" | " bar": текущая сброшена, новая пустая
+        assert!(ib.misspelled_ranges_for_test(0).is_empty());
+        assert!(ib.misspelled_ranges_for_test(1).is_empty());
+        // склейка обратно — согласованность сохраняется, без паники
+        ib.row = 1;
+        ib.col = 0;
+        ib.backspace();
+        assert_eq!(ib.line_count(), 1);
+    }
+
+    #[test]
+    fn set_text_and_paste_clear_misspelled() {
+        let mut ib = InputBox::new();
+        ib.set_text("helo");
+        ib.set_misspelled(vec![vec![(0, 4)]]);
+        ib.set_text("совсем другой текст"); // старые диапазоны прежнего текста сброшены
+        assert!(ib.misspelled_ranges_for_test(0).is_empty());
+        // вставка тоже сбрасывает подчёркивания (перепроверка их перестроит)
+        ib.set_misspelled(vec![vec![(0, 6)]]);
+        ib.insert_str("abc");
+        assert!(ib.misspelled_is_empty());
+    }
+
+    // ---------- п.6: on_key различает правку и движение ----------
+
+    #[test]
+    fn on_key_distinguishes_edit_move_ignore() {
+        let mut ib = InputBox::new();
+        assert_eq!(ib.on_key(k(KeyCode::Char('a'))), KeyOutcome::Edited);
+        assert_eq!(ib.on_key(k(KeyCode::Left)), KeyOutcome::Moved);
+        assert_eq!(ib.on_key(k(KeyCode::Backspace)), KeyOutcome::Edited);
+        assert_eq!(ib.on_key(k(KeyCode::Enter)), KeyOutcome::Ignored);
+        assert_eq!(ib.on_key(ctrl(KeyCode::Left)), KeyOutcome::Moved);
+        assert_eq!(ib.on_key(ctrl(KeyCode::Backspace)), KeyOutcome::Edited);
+        // хелперы edited()/handled()
+        assert!(KeyOutcome::Edited.edited());
+        assert!(!KeyOutcome::Moved.edited());
+        assert!(KeyOutcome::Moved.handled());
+        assert!(!KeyOutcome::Ignored.handled());
     }
 
     #[test]

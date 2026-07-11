@@ -311,9 +311,10 @@ impl ChatListState {
                 action
             }
             // Всё прочее (печать, навигация по словам/символам, удаление, `Home/End`)
-            // ведёт сам `InputBox`; помечаем подсветку ошибок на пересчёт.
+            // ведёт сам `InputBox`; на реальной правке помечаем подсветку ошибок на
+            // пересчёт (движение курсора его не требует). См. [`KeyOutcome`].
             _ => {
-                if input.on_key(key) {
+                if input.on_key(key).edited() {
                     *spell_dirty = true;
                 }
                 ChatListAction::None

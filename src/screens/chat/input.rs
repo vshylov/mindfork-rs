@@ -193,7 +193,10 @@ impl ChatScreen {
                 }
             }
             _ => {
-                if self.input.on_key(key) {
+                // Помечаем ввод «грязным» только на реальной правке — голое движение
+                // курсора (`Moved`) не должно зря будить дебаунс орфографии и слать
+                // `SetDraft`. См. [`KeyOutcome`].
+                if self.input.on_key(key).edited() {
                     self.mark_input_changed();
                 }
                 None
