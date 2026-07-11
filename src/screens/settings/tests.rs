@@ -75,17 +75,21 @@ fn esc_closes() {
 }
 
 #[test]
-fn ctrl_c_quits() {
+fn ctrl_q_and_f10_quit() {
     let mut s = screen();
-    assert_eq!(s.handle_key(ctrl('c')), Some(SettingsIntent::Quit));
-    // И при открытом редакторе поля — тоже выход.
+    assert_eq!(s.handle_key(ctrl('q')), Some(SettingsIntent::Quit));
+    assert_eq!(
+        s.handle_key(key(KeyCode::F(10))),
+        Some(SettingsIntent::Quit)
+    );
+    // И при открытом редакторе поля — тоже выход (Ctrl+Q поверх редактора).
     s.editor = Some(Editor {
         field: FieldId::XBinary,
         input: InputBox::new(),
         multiline: false,
         error: None,
     });
-    assert_eq!(s.handle_key(ctrl('c')), Some(SettingsIntent::Quit));
+    assert_eq!(s.handle_key(ctrl('q')), Some(SettingsIntent::Quit));
 }
 
 #[test]

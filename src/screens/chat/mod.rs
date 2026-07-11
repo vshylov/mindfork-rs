@@ -95,6 +95,10 @@ pub enum ChatIntent {
     /// `true` — колесо прокручивает ленту (выделение текста — с Shift); `false` —
     /// нативное выделение мышью. См. spec §11.3.
     SetMouseCapture(bool),
+    /// Записать текст в системный буфер обмена (`Ctrl+C` копировать / `Ctrl+X`
+    /// вырезать выделение поля ввода). Side-effect UI-слоя — `runtime` пишет через
+    /// `arboard` (не идёт в оркестратор: текст уже у UI). См. docs/input-selection-undo-mouse.md §B.
+    CopyToClipboard(String),
 }
 
 /// Необратимая операция, требующая подтверждения в модальном попапе (`Ctrl+R`/

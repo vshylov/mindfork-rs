@@ -29,7 +29,7 @@ use crate::widgets::input_box::InputBox;
 pub enum SelfModelIntent {
     /// Закрыть вид, вернуться к чату (`Esc`).
     Close,
-    /// Выйти из приложения (`Ctrl+C`).
+    /// Выйти из приложения (`Ctrl+Q`/`F10`).
     Quit,
     /// Применить ручную правку (оркестратор сохранит и переэмитит снимок).
     Edit(SelfModelEdit),
@@ -288,7 +288,8 @@ impl SelfModelScreen {
             }
             return None;
         }
-        if ctrl && phys == 'c' {
+        // Выход переехал на Ctrl+Q/F10 (Ctrl+C освобождён). См. docs/input-selection-undo-mouse.md §B.
+        if ctrl && phys == 'q' {
             return Some(SelfModelIntent::Quit);
         }
         if ctrl && phys == 'k' {
@@ -296,6 +297,7 @@ impl SelfModelScreen {
             return None;
         }
         match key.code {
+            KeyCode::F(10) => return Some(SelfModelIntent::Quit), // второй вариант выхода
             KeyCode::Esc => return Some(SelfModelIntent::Close),
             KeyCode::Up => self.move_selection(-1),
             KeyCode::Down => self.move_selection(1),
@@ -622,14 +624,18 @@ mod tests {
     }
 
     #[test]
-    fn esc_closes_ctrl_c_quits() {
+    fn esc_closes_ctrl_q_and_f10_quit() {
         let mut s = SelfModelScreen::new(None, Palette::default());
         assert_eq!(
             s.handle_key(key(KeyCode::Esc)),
             Some(SelfModelIntent::Close)
         );
         assert_eq!(
-            s.handle_key(KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL)),
+            s.handle_key(KeyEvent::new(KeyCode::Char('q'), KeyModifiers::CONTROL)),
+            Some(SelfModelIntent::Quit)
+        );
+        assert_eq!(
+            s.handle_key(key(KeyCode::F(10))),
             Some(SelfModelIntent::Quit)
         );
     }

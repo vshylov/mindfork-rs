@@ -29,11 +29,14 @@ impl ChatScreen {
             return None;
         }
         // Во время имперсонации поле ввода скрыто (показан предпросмотр): реагируем
-        // только на отмену (`Esc`) и выход (`Ctrl+C`); прочие клавиши игнорируем.
+        // только на отмену (`Esc`) и выход (`Ctrl+Q`/`F10`); прочие клавиши игнорируем.
         if self.impersonation.is_some() {
+            if key.code == KeyCode::F(10) {
+                return Some(ChatIntent::Quit);
+            }
             if key.modifiers.contains(KeyModifiers::CONTROL)
                 && let KeyCode::Char(c) = key.code
-                && keys::physical_char(c) == 'c'
+                && keys::physical_char(c) == 'q'
             {
                 return Some(ChatIntent::Quit);
             }
@@ -65,7 +68,29 @@ impl ChatScreen {
             && let KeyCode::Char(c) = key.code
         {
             match keys::physical_char(c) {
-                'c' => return Some(ChatIntent::Quit),
+                // Выход переехал на Ctrl+Q/F10 (F10 — в матче кодов ниже); Ctrl+C
+                // освобождён под копирование. См. docs/input-selection-undo-mouse.md §B.
+                'q' => return Some(ChatIntent::Quit),
+                // Копировать выделение в буфер обмена (Ctrl+C). Запись — side-effect
+                // runtime (`AppCommand` не нужен, текст у UI). Без выделения — no-op.
+                'c' => {
+                    if self.input.has_selection() {
+                        let text = self.input.selected_text().unwrap_or_default();
+                        self.input.clear_selection();
+                        return Some(ChatIntent::CopyToClipboard(text));
+                    }
+                    return None;
+                }
+                // Вырезать выделение (Ctrl+X): копировать + удалить.
+                'x' => {
+                    if self.input.has_selection() {
+                        let text = self.input.selected_text().unwrap_or_default();
+                        self.input.delete_selection();
+                        self.mark_input_changed();
+                        return Some(ChatIntent::CopyToClipboard(text));
+                    }
+                    return None;
+                }
                 // Экран настроек (Ctrl+P) — открывается, если снимок настроек получен.
                 'p' => {
                     return self
@@ -118,6 +143,9 @@ impl ChatScreen {
             }
         }
         match (key.code, key.modifiers) {
+            // Выход — Ctrl+Q (выше) или F10 (второй вариант, если терминал перехватит
+            // Ctrl+Q; F10 часто открывает меню эмулятора в Linux-DE, но отключается).
+            (KeyCode::F(10), _) => Some(ChatIntent::Quit),
             // Помощь по клавишам: F1 всегда; `?` — только при пустом вводе (иначе
             // символ печатается). См. spec §11.7.
             (KeyCode::F(1), _) => {

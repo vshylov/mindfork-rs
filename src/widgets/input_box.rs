@@ -494,10 +494,8 @@ impl InputBox {
 
     // ---------- выделение ----------
 
-    /// Есть ли непустое выделение (якорь стоит и не совпал с курсором). Публичный —
-    /// нужен консьюмерам этапа B (копирование/вырезание, docs/input-selection-undo-mouse.md);
-    /// пока используется только тестами и внутри виджета.
-    #[allow(dead_code)]
+    /// Есть ли непустое выделение (якорь стоит и не совпал с курсором). Нужен
+    /// консьюмерам для копирования/вырезания (docs/input-selection-undo-mouse.md §B).
     pub fn has_selection(&self) -> bool {
         matches!(self.anchor, Some(a) if a != (self.row, self.col))
     }
@@ -515,8 +513,7 @@ impl InputBox {
     }
 
     /// Текст выделения (строки через `\n`), либо `None`. Для копирования/вырезания
-    /// (консьюмеры этапа B); пока используется только тестами.
-    #[allow(dead_code)]
+    /// (консьюмеры, docs/input-selection-undo-mouse.md §B).
     pub fn selected_text(&self) -> Option<String> {
         let ((sr, sc), (er, ec)) = self.selection_span()?;
         let mut out = String::new();
@@ -542,8 +539,9 @@ impl InputBox {
         }
     }
 
-    /// Снимает выделение (обычная навигация без `Shift`).
-    fn clear_selection(&mut self) {
+    /// Снимает выделение (обычная навигация без `Shift`; консьюмеры — после
+    /// копирования по `Ctrl+C`).
+    pub fn clear_selection(&mut self) {
         self.anchor = None;
     }
 

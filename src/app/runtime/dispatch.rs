@@ -252,6 +252,9 @@ pub(super) fn dispatch(
             };
             return false;
         }
+        // Копирование в буфер обмена перехватывается раньше — в `process_input_batch`
+        // (там есть слот `arboard`, а здесь `screen` иммутабелен). Сюда не доходит.
+        ChatIntent::CopyToClipboard(_) => return false,
     };
     let _ = cmd_tx.send(command);
     false

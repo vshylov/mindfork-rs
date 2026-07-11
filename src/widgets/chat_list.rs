@@ -33,7 +33,7 @@ pub enum ChatListAction {
     None,
     /// Закрыть оверлей.
     Close,
-    /// Выйти из приложения (`Ctrl+C`).
+    /// Выйти из приложения (`Ctrl+Q`/`F10`).
     Quit,
     /// Сделать чат активным (и закрыть оверлей).
     Switch(Uuid),
@@ -176,8 +176,9 @@ impl ChatListState {
         // чтобы он не попал в строку поиска.
         if ctrl && let KeyCode::Char(c) = key.code {
             return match keys::physical_char(c) {
-                // Выход из приложения работает и из оверлея списка чатов.
-                'c' => ChatListAction::Quit,
+                // Выход работает и из списка чатов; переехал на Ctrl+Q/F10 (Ctrl+C
+                // освобождён). См. docs/input-selection-undo-mouse.md §B.
+                'q' => ChatListAction::Quit,
                 'n' => ChatListAction::New,
                 'd' => match self.selected_id() {
                     Some(id) => ChatListAction::Clone(id),
@@ -192,6 +193,7 @@ impl ChatListState {
             };
         }
         match key.code {
+            KeyCode::F(10) => ChatListAction::Quit, // второй вариант выхода
             KeyCode::Esc => ChatListAction::Close,
             KeyCode::Enter => match self.selected_id() {
                 Some(id) => ChatListAction::Switch(id),
@@ -567,7 +569,7 @@ impl ChatListState {
             ("F5", "в буфер", false),
             ("Del", "удалить", true),
             ("Esc", "назад", false),
-            ("Ctrl+C", "выход", false),
+            ("Ctrl+Q", "выход", false),
             ("Tab", sort_desc.as_str(), false),
         ];
         palette.hotkey_grid(&items, width)
@@ -653,11 +655,15 @@ mod tests {
     }
 
     #[test]
-    fn ctrl_c_quits() {
+    fn ctrl_q_and_f10_quit() {
         let mut s = ChatListState::new(vec![chat("A")], None);
-        assert_eq!(s.on_key(ctrl(KeyCode::Char('c'))), ChatListAction::Quit);
-        // И при кириллической раскладке (физ. C = Ctrl+с).
-        assert_eq!(s.on_key(ctrl(KeyCode::Char('с'))), ChatListAction::Quit);
+        assert_eq!(s.on_key(ctrl(KeyCode::Char('q'))), ChatListAction::Quit);
+        // И при кириллической раскладке (физ. Q = Ctrl+й).
+        assert_eq!(s.on_key(ctrl(KeyCode::Char('й'))), ChatListAction::Quit);
+        // F10 — второй вариант выхода.
+        assert_eq!(s.on_key(key(KeyCode::F(10))), ChatListAction::Quit);
+        // Ctrl+C больше не выход (освобождён под копирование).
+        assert_ne!(s.on_key(ctrl(KeyCode::Char('c'))), ChatListAction::Quit);
     }
 
     #[test]

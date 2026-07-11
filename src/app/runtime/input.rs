@@ -182,10 +182,23 @@ pub(super) fn process_input_batch(
                     }
                     ActiveScreen::SelfModel(view) => view.handle_key(key).map(AnyIntent::SelfModel),
                 };
-                if let Some(intent) = intent
-                    && dispatch_any(intent, cmd_tx, screen, active)
-                {
-                    quit = true;
+                match intent {
+                    // Копирование выделения в буфер обмена (`Ctrl+C`/`Ctrl+X`) —
+                    // side-effect UI-слоя: текст уже у нас, в оркестратор не идём.
+                    // Слот `arboard` есть тут (в `dispatch` его нет). Успех молчалив,
+                    // сбой (headless-Linux без X11) — заметкой в ленту.
+                    Some(AnyIntent::Chat(ChatIntent::CopyToClipboard(text))) => {
+                        if let Err(e) = write_clipboard(clipboard, &text) {
+                            screen
+                                .push_error(&format!("Не удалось скопировать в буфер обмена: {e}"));
+                        }
+                    }
+                    Some(intent) => {
+                        if dispatch_any(intent, cmd_tx, screen, active) {
+                            quit = true;
+                        }
+                    }
+                    None => {}
                 }
             }
             // Колесо мыши прокручивает ленту чата. На списке/настройках (своя

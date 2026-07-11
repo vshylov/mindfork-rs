@@ -23,7 +23,7 @@ use crate::widgets::chat_list::{ChatListAction, ChatListState};
 pub enum ChatListIntent {
     /// Закрыть список, вернуться к чату (`Esc`).
     Close,
-    /// Выйти из приложения (`Ctrl+C`).
+    /// Выйти из приложения (`Ctrl+Q`/`F10`).
     Quit,
     /// Сделать чат активным и вернуться к чату (`Enter`).
     Switch(Uuid),
@@ -173,10 +173,14 @@ mod tests {
     }
 
     #[test]
-    fn ctrl_c_maps_to_quit() {
+    fn ctrl_q_and_f10_map_to_quit() {
         let mut s = ChatListScreen::new(vec![chat("A")], None, Palette::default());
         assert_eq!(
-            s.handle_key(ctrl(KeyCode::Char('c'))),
+            s.handle_key(ctrl(KeyCode::Char('q'))),
+            Some(ChatListIntent::Quit)
+        );
+        assert_eq!(
+            s.handle_key(key(KeyCode::F(10))),
             Some(ChatListIntent::Quit)
         );
     }
