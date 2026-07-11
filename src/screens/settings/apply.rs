@@ -207,12 +207,12 @@ impl SettingsScreen {
                 let editor = self.editor.take().unwrap();
                 self.apply_text(editor.field, &text)
             }
-            // Удалить весь текст поля / вернуть удалённое (spec §11.5). Матчим по
+            // Удалить весь текст поля (spec §11.5; возврат — Ctrl+Z). Матчим по
             // «физической» клавише — срабатывает при любой раскладке (как в чат-вводе).
             (KeyCode::Char(c), m)
                 if m.contains(KeyModifiers::CONTROL) && keys::physical_char(c) == 'k' =>
             {
-                editor.input.clear_or_restore();
+                editor.input.clear_undoable();
                 editor.error = None;
                 None
             }

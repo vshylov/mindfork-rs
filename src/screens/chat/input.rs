@@ -110,11 +110,10 @@ impl ChatScreen {
                         seed: self.input.text(),
                     });
                 }
-                // Удалить весь текст ввода / вернуть удалённое (spec §11.5).
-                // Повторное нажатие восстанавливает удалённое, если после него
-                // ничего не вводилось.
+                // Удалить весь текст ввода (spec §11.5); возврат — `Ctrl+Z`
+                // (общая модель отмены, см. docs/input-selection-undo-mouse.md §C).
                 'k' => {
-                    self.input.clear_or_restore();
+                    self.input.clear_undoable();
                     self.mark_input_changed();
                     return None;
                 }

@@ -285,15 +285,15 @@ impl ChatListState {
         else {
             return ChatListAction::None;
         };
-        // Очистка/возврат всего текста (`Ctrl+K`) — раскладко-независимо, как в чате.
-        // Прочие Ctrl-комбинации (пословная навигация `Ctrl+←/→`, удаление слова
-        // `Ctrl+Backspace/Delete`, `Ctrl+Home/End`) обрабатывает сам `InputBox` ниже;
-        // незнакомые он глотает (Ctrl+символ в поле не печатается).
+        // Очистка всего текста (`Ctrl+K`; возврат — `Ctrl+Z`) — раскладко-независимо,
+        // как в чате. Прочие Ctrl-комбинации (пословная навигация `Ctrl+←/→`, удаление
+        // слова `Ctrl+Backspace/Delete`, `Ctrl+Home/End`, отмена/повтор `Ctrl+Z/Y`)
+        // обрабатывает сам `InputBox` ниже; незнакомые он глотает.
         if ctrl
             && let KeyCode::Char(c) = key.code
             && keys::physical_char(c) == 'k'
         {
-            input.clear_or_restore();
+            input.clear_undoable();
             *spell_dirty = true;
             return ChatListAction::None;
         }
@@ -801,14 +801,14 @@ mod tests {
     }
 
     #[test]
-    fn rename_clear_and_restore_with_ctrl_k() {
-        // `Ctrl+K` чистит поле, повторное нажатие возвращает текст (как в чате).
+    fn rename_clear_with_ctrl_k_undo_with_ctrl_z() {
+        // `Ctrl+K` чистит поле, `Ctrl+Z` возвращает текст (общая модель отмены, §C).
         let chats = vec![chat("Старое имя")];
         let id = chats[0].id;
         let mut s = ChatListState::new(chats, None);
         s.on_key(key(KeyCode::F(2)));
         s.on_key(ctrl(KeyCode::Char('k'))); // удалить весь текст
-        s.on_key(ctrl(KeyCode::Char('k'))); // вернуть удалённое
+        s.on_key(ctrl(KeyCode::Char('z'))); // отмена — вернуть удалённое
         assert_eq!(
             s.on_key(key(KeyCode::Enter)),
             ChatListAction::Rename {

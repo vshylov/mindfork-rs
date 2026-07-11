@@ -381,7 +381,7 @@ impl SelfModelScreen {
             (KeyCode::Char(c), m)
                 if m.contains(KeyModifiers::CONTROL) && keys::physical_char(c) == 'k' =>
             {
-                editor.input.clear_or_restore();
+                editor.input.clear_undoable();
                 None
             }
             _ => {

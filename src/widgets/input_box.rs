@@ -29,6 +29,32 @@ type VisualRow = (usize, usize, usize);
 /// [`InputBox::rows_cache`].
 type RowCache = Option<(usize, u64, Vec<VisualRow>)>;
 
+/// Потолок глубины стека отмены (единиц). Самые старые вытесняются.
+const UNDO_CAP: usize = 200;
+
+/// Снимок содержимого для отмены/повтора: строки + позиция курсора. См.
+/// [`InputBox::record_undo`], docs/input-selection-undo-mouse.md §C.
+#[derive(Clone)]
+struct Snapshot {
+    lines: Vec<Vec<char>>,
+    row: usize,
+    col: usize,
+}
+
+/// Класс правки для коалесинга отмены: подряд идущие правки одного класса (кроме
+/// `Structural`) сливаются в одну единицу отмены; смена класса, навигация или
+/// структурная правка начинают новую. См. [`InputBox::record_undo`].
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum EditKind {
+    /// Набор символов (коалесится; разрыв на пробеле — word-granular отмена).
+    Insert,
+    /// Удаление (`Backspace`/`Delete`/слово) — коалесится.
+    Delete,
+    /// Структурная правка (перевод строки, вставка, замена диапазона/выделения,
+    /// очистка `Ctrl+K`) — всегда отдельная единица отмены.
+    Structural,
+}
+
 /// Многострочное поле ввода с курсором.
 pub struct InputBox {
     /// Логические строки (символы). Всегда непусто (минимум одна строка).
@@ -62,12 +88,16 @@ pub struct InputBox {
     /// → отсортированные непересекающиеся `[start, end)` в символах). Заполняет
     /// экран из спелл-чекера; виджет лишь подчёркивает. См. spec §11.5.
     misspelled: Vec<Vec<(usize, usize)>>,
-    /// Буфер «отмены» хоткея «удалить весь текст» ([`Self::clear_or_restore`]):
-    /// текст, удалённый последним нажатием, чтобы повторное нажатие его вернуло.
-    /// `Some` только пока после удаления **ничего не вводилось** — любой ввод
-    /// текста (`insert_*`/`replace_range`/`set_text`) инвалидирует буфер в `None`.
-    /// См. spec §11.5.
-    cleared: Option<String>,
+    /// Стек отмены: снимки содержимого **до** правки (с коалесингом по классу правки,
+    /// см. [`Self::record_undo`]). `Ctrl+Z` восстанавливает верхний. Потолок [`UNDO_CAP`].
+    undo: Vec<Snapshot>,
+    /// Стек повтора: снимки, снятые с `undo` при отмене; чистится любой новой правкой.
+    /// `Ctrl+Y` восстанавливает верхний.
+    redo: Vec<Snapshot>,
+    /// Класс последней правки — для коалесинга единиц отмены. Сбрасывается навигацией/
+    /// выделением/отменой (тогда следующая правка начинает новую единицу). См.
+    /// [`Self::record_undo`].
+    last_edit_kind: Option<EditKind>,
     /// Счётчик ревизии содержимого: инкрементируется при любой правке `lines`
     /// ([`Self::touch`]). Вместе с шириной — ключ кэша визуальных рядов: если ревизия
     /// и ширина не изменились, перенос не пересчитывается.
@@ -135,7 +165,9 @@ impl InputBox {
             last_width: 0,
             goal_col: None,
             misspelled: Vec::new(),
-            cleared: None,
+            undo: Vec::new(),
+            redo: Vec::new(),
+            last_edit_kind: None,
             revision: 0,
             rows_cache: None,
             anchor: None,
@@ -226,8 +258,9 @@ impl InputBox {
         self.rows_cached(text_w).len()
     }
 
-    /// Очищает поле. Сбрасывает и буфер отмены [`Self::cleared`] (после отправки
-    /// сообщения «вернуть удалённое» не должно воскрешать уже отправленный текст).
+    /// Очищает поле **программно** (отправка сообщения, сброс). В отличие от
+    /// [`Self::clear_undoable`] — **чистит историю отмены** (после отправки/загрузки
+    /// чужого текста `Ctrl+Z` не должен воскрешать прежний контекст).
     pub fn clear(&mut self) {
         self.lines = vec![Vec::new()];
         self.row = 0;
@@ -236,24 +269,29 @@ impl InputBox {
         self.hscroll = 0;
         self.goal_col = None;
         self.misspelled.clear();
-        self.cleared = None;
+        self.undo.clear();
+        self.redo.clear();
+        self.last_edit_kind = None;
         self.touch();
     }
 
-    /// Хоткей «удалить весь текст / вернуть удалённое» (`Ctrl+K`, spec §11.5).
-    /// Если поле непусто — запоминает текст и очищает поле. Если поле пусто, а в
-    /// буфере есть ранее удалённый текст (с тех пор ничего не вводилось) —
-    /// восстанавливает его (курсор в конец). Любой ввод между нажатиями
-    /// инвалидирует буфер (см. [`Self::cleared`]), поэтому восстановить можно лишь
-    /// сразу после удаления.
-    pub fn clear_or_restore(&mut self) {
-        if !self.is_empty() {
-            let text = self.text();
-            self.clear(); // сбрасывает cleared в None
-            self.cleared = Some(text);
-        } else if let Some(text) = self.cleared.take() {
-            self.set_text(&text); // set_text тоже сбросит cleared (уже None)
+    /// Хоткей «удалить весь текст ввода» (`Ctrl+K`, spec §11.5). Записывает снимок в
+    /// историю отмены и очищает содержимое, **не** трогая историю — так `Ctrl+Z`
+    /// возвращает текст (общая модель отмены; прежняя toggle-семантика удалена, см.
+    /// docs/input-selection-undo-mouse.md §C). Пустое поле — no-op.
+    pub fn clear_undoable(&mut self) {
+        if self.is_empty() {
+            return;
         }
+        self.record_undo(EditKind::Structural); // снимок непустого содержимого
+        self.lines = vec![Vec::new()];
+        self.row = 0;
+        self.col = 0;
+        self.scroll = 0;
+        self.hscroll = 0;
+        self.goal_col = None;
+        self.misspelled.clear();
+        self.touch(); // ревизия + снятие выделения (историю НЕ чистим)
     }
 
     /// Текст по логическим строкам (для спелл-чека построчно).
@@ -319,9 +357,11 @@ impl InputBox {
     /// Заменяет диапазон символов `[start, end)` в строке `row` на `replacement`
     /// и ставит курсор за вставленным текстом (для применения подсказки).
     pub fn replace_range(&mut self, row: usize, start: usize, end: usize, replacement: &str) {
-        let Some(line) = self.lines.get_mut(row) else {
+        if row >= self.lines.len() {
             return;
-        };
+        }
+        self.record_undo(EditKind::Structural); // до мутации (замена — отдельная единица)
+        let line = &mut self.lines[row];
         let end = end.min(line.len());
         let start = start.min(end);
         let repl: Vec<char> = replacement.chars().collect();
@@ -331,7 +371,6 @@ impl InputBox {
         self.row = row;
         self.col = start + repl_len;
         self.goal_col = None;
-        self.cleared = None;
         self.touch();
     }
 
@@ -356,7 +395,11 @@ impl InputBox {
         self.scroll = 0;
         self.hscroll = 0;
         self.goal_col = None;
-        self.cleared = None;
+        // Программная замена текста (загрузка черновика чужого чата, restore_input) —
+        // чистим историю отмены: `Ctrl+Z` не должен воскрешать чужой контекст.
+        self.undo.clear();
+        self.redo.clear();
+        self.last_edit_kind = None;
         // Старые диапазоны ошибок относились к прежнему тексту — сбрасываем (иначе до
         // ближайшей перепроверки подчёркивания рисовались бы на новом содержимом).
         self.misspelled.clear();
@@ -366,20 +409,25 @@ impl InputBox {
     // ---------- редактирование ----------
 
     pub fn insert_char(&mut self, c: char) {
-        self.delete_selection(); // ввод поверх выделения заменяет его
+        self.record_undo(EditKind::Insert);
+        self.remove_selection(); // ввод поверх выделения заменяет его (undo уже записан)
         self.lines[self.row].insert(self.col, c);
         self.edit_misspelled(self.row, self.col, 0, 1);
         self.col += 1;
         self.goal_col = None;
-        self.cleared = None;
         self.touch();
+        // Пробел завершает единицу отмены (word-granular): следующий набор — новая единица.
+        if c.is_whitespace() {
+            self.last_edit_kind = None;
+        }
     }
 
     pub fn insert_newline(&mut self) {
         if self.single_line {
             return; // в однострочном режиме перевод строки запрещён
         }
-        self.delete_selection(); // перевод строки поверх выделения заменяет его
+        self.record_undo(EditKind::Structural);
+        self.remove_selection(); // перевод строки поверх выделения заменяет его
         let tail = self.lines[self.row].split_off(self.col);
         self.lines.insert(self.row + 1, tail);
         // Синхронизируем подчёркивания: текущую строку сбрасываем (её хвост уехал на
@@ -391,7 +439,6 @@ impl InputBox {
         self.row += 1;
         self.col = 0;
         self.goal_col = None;
-        self.cleared = None;
         self.touch();
     }
 
@@ -401,7 +448,8 @@ impl InputBox {
     /// встаёт в конец вставленного. Один проход без посимвольной петли — поэтому
     /// большая вставка не тормозит (см. bracketed paste, spec §11.5).
     pub fn insert_str(&mut self, text: &str) {
-        self.delete_selection(); // вставка поверх выделения заменяет его
+        self.record_undo(EditKind::Structural);
+        self.remove_selection(); // вставка поверх выделения заменяет его
         // Хвост текущей строки после курсора — приклеим к последней вставленной.
         let tail: Vec<char> = self.lines[self.row].split_off(self.col);
         // В однострочном режиме переводы строк превращаем в пробелы (одна строка).
@@ -425,7 +473,6 @@ impl InputBox {
         self.col = self.lines[self.row].len();
         self.lines[self.row].extend(tail);
         self.goal_col = None;
-        self.cleared = None;
         // Вставка (буфер обмена) меняет строки произвольно; проще сбросить все
         // подчёркивания — перепроверка (её всегда запускает `mark_input_changed`
         // после вставки) их перестроит. См. spec §11.5.
@@ -434,7 +481,12 @@ impl InputBox {
     }
 
     pub fn backspace(&mut self) {
-        if self.delete_selection() {
+        // Нечего удалять (пустой префикс без выделения) — не пишем единицу отмены.
+        if !self.has_selection() && self.col == 0 && self.row == 0 {
+            return;
+        }
+        self.record_undo(EditKind::Delete);
+        if self.remove_selection() {
             return; // при выделении Backspace удаляет его целиком
         }
         self.goal_col = None;
@@ -458,7 +510,15 @@ impl InputBox {
     }
 
     pub fn delete(&mut self) {
-        if self.delete_selection() {
+        // Нечего удалять (курсор в самом конце без выделения) — не пишем единицу отмены.
+        if !self.has_selection()
+            && self.col >= self.lines[self.row].len()
+            && self.row + 1 >= self.lines.len()
+        {
+            return;
+        }
+        self.record_undo(EditKind::Delete);
+        if self.remove_selection() {
             return; // при выделении Delete удаляет его целиком
         }
         self.goal_col = None;
@@ -545,18 +605,33 @@ impl InputBox {
         self.anchor = None;
     }
 
-    /// Выделяет весь текст (`Ctrl+A`): якорь — начало, курсор — конец.
+    /// Выделяет весь текст (`Ctrl+A`): якорь — начало, курсор — конец. Сбрасывает
+    /// коалесинг отмены (правка после выделения — новая единица).
     fn select_all(&mut self) {
         self.anchor = Some((0, 0));
         self.row = self.lines.len() - 1;
         self.col = self.lines[self.row].len();
         self.goal_col = None;
+        self.last_edit_kind = None;
+    }
+
+    /// Удаляет выделение как **самостоятельное** действие (`Ctrl+X` вырезать): пишет
+    /// снимок в историю отмены, затем удаляет. Возвращает, было ли что удалять.
+    /// Внутренние мутаторы (`insert_char`/`backspace`/…) удаляют выделение через
+    /// [`Self::remove_selection`] (без записи — они уже записали свой снимок).
+    pub fn delete_selection(&mut self) -> bool {
+        if !self.has_selection() {
+            return false;
+        }
+        self.record_undo(EditKind::Structural);
+        self.remove_selection()
     }
 
     /// Удаляет выделенный текст, ставит курсор в его начало, снимает выделение.
     /// Возвращает, было ли что удалять. Многострочное выделение склеивает строки;
     /// подчёркивания орфографии синхронизируются (как при удалении/склейке, п.5).
-    pub fn delete_selection(&mut self) -> bool {
+    /// **Не пишет** снимок отмены — это делает вызывающий (см. [`Self::delete_selection`]).
+    fn remove_selection(&mut self) -> bool {
         let Some(((sr, sc), (er, ec))) = self.selection_span() else {
             return false;
         };
@@ -582,8 +657,69 @@ impl InputBox {
         self.row = sr;
         self.col = sc;
         self.goal_col = None;
-        self.cleared = None;
         self.touch(); // снимает anchor + инвалидирует кэш
+        true
+    }
+
+    // ---------- отмена / повтор ----------
+
+    /// Снимок текущего содержимого (строки + курсор) для истории отмены.
+    fn snapshot(&self) -> Snapshot {
+        Snapshot {
+            lines: self.lines.clone(),
+            row: self.row,
+            col: self.col,
+        }
+    }
+
+    /// Запоминает снимок **до** правки для отмены (вызывается в начале мутатора).
+    /// Коалесинг: подряд идущие правки одного класса (кроме `Structural`) сливаются в
+    /// одну единицу — снимок толкается лишь при смене класса / после навигации/выделения
+    /// (там `last_edit_kind` сброшен) / для `Structural`. Любая правка чистит стек
+    /// повтора. Потолок [`UNDO_CAP`] — старейшие вытесняются. См. §C плана.
+    fn record_undo(&mut self, kind: EditKind) {
+        let coalesce = self.last_edit_kind == Some(kind) && kind != EditKind::Structural;
+        if !coalesce {
+            self.undo.push(self.snapshot());
+            if self.undo.len() > UNDO_CAP {
+                self.undo.remove(0);
+            }
+            self.redo.clear();
+        }
+        self.last_edit_kind = Some(kind);
+    }
+
+    /// Восстанавливает содержимое из снимка (общее для отмены/повтора): строки+курсор,
+    /// снятие выделения/подсветки, инвалидация кэша. Историю отмены не трогает.
+    fn restore(&mut self, snap: Snapshot) {
+        self.lines = snap.lines;
+        self.row = snap.row;
+        self.col = snap.col;
+        self.scroll = 0;
+        self.hscroll = 0;
+        self.goal_col = None;
+        self.misspelled.clear();
+        self.last_edit_kind = None;
+        self.touch(); // ревизия + снятие anchor
+    }
+
+    /// Отменяет последнюю единицу правки (`Ctrl+Z`). Возвращает, была ли отмена.
+    pub fn undo(&mut self) -> bool {
+        let Some(prev) = self.undo.pop() else {
+            return false;
+        };
+        self.redo.push(self.snapshot());
+        self.restore(prev);
+        true
+    }
+
+    /// Повторяет отменённую правку (`Ctrl+Y`). Возвращает, был ли повтор.
+    pub fn redo(&mut self) -> bool {
+        let Some(next) = self.redo.pop() else {
+            return false;
+        };
+        self.undo.push(self.snapshot());
+        self.restore(next);
         true
     }
 
@@ -684,13 +820,13 @@ impl InputBox {
     /// Удаляет слово слева от курсора (`Ctrl+Backspace`). В начале строки склеивает
     /// со строкой выше (как обычный `Backspace`).
     fn delete_word_left(&mut self) {
-        if self.delete_selection() {
+        self.record_undo(EditKind::Delete);
+        if self.remove_selection() {
             return; // при выделении Ctrl+Backspace удаляет его целиком
         }
         self.goal_col = None;
-        self.cleared = None;
         if self.col == 0 {
-            self.backspace();
+            self.backspace(); // record_undo(Delete) коалесится — доп. снимка нет
             return;
         }
         let start = self.word_left_col();
@@ -703,13 +839,13 @@ impl InputBox {
     /// Удаляет слово справа от курсора (`Ctrl+Delete`). В конце строки склеивает со
     /// строкой ниже (как обычный `Delete`).
     fn delete_word_right(&mut self) {
-        if self.delete_selection() {
+        self.record_undo(EditKind::Delete);
+        if self.remove_selection() {
             return; // при выделении Ctrl+Delete удаляет его целиком
         }
         self.goal_col = None;
-        self.cleared = None;
         if self.col >= self.lines[self.row].len() {
-            self.delete();
+            self.delete(); // record_undo(Delete) коалесится — доп. снимка нет
             return;
         }
         let end = self.word_right_col();
@@ -858,23 +994,47 @@ impl InputBox {
         let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
         let shift = key.modifiers.contains(KeyModifiers::SHIFT);
 
-        // Ctrl+A — выделить всё (раскладко-независимо, как прочие Ctrl-шорткаты).
-        if ctrl
-            && let KeyCode::Char(c) = key.code
-            && keys::physical_char(c) == 'a'
-        {
-            self.select_all();
-            return KeyOutcome::Moved;
+        // Ctrl-шорткаты редактора: выделить всё / отмена / повтор / очистка
+        // (раскладко-независимо через `physical_char`). Отмена/повтор возвращают
+        // `Edited`, только если реально что-то изменили (иначе `Moved` — no-op).
+        if ctrl && let KeyCode::Char(c) = key.code {
+            match keys::physical_char(c) {
+                'a' => {
+                    self.select_all();
+                    return KeyOutcome::Moved;
+                }
+                'z' => {
+                    return if self.undo() {
+                        KeyOutcome::Edited
+                    } else {
+                        KeyOutcome::Moved
+                    };
+                }
+                'y' => {
+                    return if self.redo() {
+                        KeyOutcome::Edited
+                    } else {
+                        KeyOutcome::Moved
+                    };
+                }
+                'k' => {
+                    self.clear_undoable();
+                    return KeyOutcome::Edited;
+                }
+                _ => {}
+            }
         }
 
         // Навигация (в т.ч. `Ctrl`+слово / `Ctrl`+начало/конец): с `Shift` растим
-        // выделение (ставим якорь до движения), без — снимаем.
+        // выделение (ставим якорь до движения), без — снимаем. Любая навигация/
+        // выделение завершает коалесинг отмены (правка после — новая единица).
         if let Some(mv) = navigation(key.code, ctrl) {
             if shift {
                 self.set_anchor_if_none();
             } else {
                 self.clear_selection();
             }
+            self.last_edit_kind = None;
             mv(self);
             return KeyOutcome::Moved;
         }
@@ -1440,71 +1600,114 @@ mod tests {
         assert_eq!(ib.line_count(), 1);
     }
 
-    #[test]
-    fn clear_or_restore_clears_then_restores() {
-        let mut ib = InputBox::new();
-        type_str(&mut ib, "привет\nмир");
-        // первое нажатие — удаляет весь текст
-        ib.clear_or_restore();
-        assert!(ib.is_empty());
-        // повторное нажатие на пустом поле — возвращает удалённое
-        ib.clear_or_restore();
-        assert_eq!(ib.text(), "привет\nмир");
-        assert_eq!(ib.cursor(), (1, 3)); // курсор в конце восстановленного
-    }
+    // ---------- этап C: отмена/повтор ----------
 
     #[test]
-    fn restore_invalidated_after_typing() {
+    fn undo_typing_run_is_one_unit_then_redo() {
+        // Набор без пробелов — одна единица отмены; Ctrl+Z → пусто, Ctrl+Y → назад.
         let mut ib = InputBox::new();
         type_str(&mut ib, "hello");
-        ib.clear_or_restore(); // удалили, буфер = "hello"
+        assert!(ib.undo());
         assert!(ib.is_empty());
-        ib.insert_char('x'); // ввод инвалидирует буфер отмены
-        ib.clear_or_restore(); // поле непусто → удаляет "x", не восстанавливает "hello"
-        assert!(ib.is_empty());
-        ib.clear_or_restore(); // теперь вернётся именно "x"
-        assert_eq!(ib.text(), "x");
+        assert!(ib.redo());
+        assert_eq!(ib.text(), "hello");
+        // повтор исчерпан
+        assert!(!ib.redo());
     }
 
     #[test]
-    fn restore_invalidated_after_paste() {
+    fn undo_breaks_on_whitespace_word_granular() {
+        // Пробел завершает единицу: "ab cd" отменяется по словам ("ab " ← "").
         let mut ib = InputBox::new();
-        type_str(&mut ib, "draft");
-        ib.clear_or_restore();
-        ib.insert_str("pasted"); // вставка тоже инвалидирует буфер
-        ib.clear_or_restore(); // удалит "pasted"
-        ib.clear_or_restore(); // вернёт "pasted", а не "draft"
-        assert_eq!(ib.text(), "pasted");
+        type_str(&mut ib, "ab cd");
+        assert!(ib.undo());
+        assert_eq!(ib.text(), "ab ");
+        assert!(ib.undo());
+        assert!(ib.is_empty());
     }
 
     #[test]
-    fn restore_survives_cursor_moves_on_empty_field() {
+    fn navigation_breaks_undo_coalescing() {
+        // Набор, стрелка, ещё набор → две единицы отмены (разрыв по навигации).
         let mut ib = InputBox::new();
         type_str(&mut ib, "abc");
-        ib.clear_or_restore();
-        // движения курсора по пустому полю не вводят текст → буфер цел
-        ib.on_key(k(KeyCode::Left));
-        ib.on_key(k(KeyCode::Home));
-        ib.clear_or_restore();
-        assert_eq!(ib.text(), "abc");
+        ib.on_key(k(KeyCode::Left)); // навигация сбрасывает коалесинг
+        ib.insert_char('X'); // курсор был перед 'c' → "abXc"
+        assert_eq!(ib.text(), "abXc");
+        assert!(ib.undo());
+        assert_eq!(ib.text(), "abc"); // отменён только 'X'
     }
 
     #[test]
-    fn clear_or_restore_on_empty_without_buffer_is_noop() {
+    fn insert_str_is_separate_undo_unit() {
         let mut ib = InputBox::new();
-        ib.clear_or_restore(); // нечего удалять и нечего возвращать
-        assert!(ib.is_empty());
+        type_str(&mut ib, "ab");
+        ib.insert_str("XY"); // вставка — отдельная (Structural) единица
+        assert_eq!(ib.text(), "abXY");
+        assert!(ib.undo());
+        assert_eq!(ib.text(), "ab"); // отменена только вставка
     }
 
     #[test]
-    fn plain_clear_drops_undo_buffer() {
-        // После явного clear() (например, при отправке) восстановить нельзя.
+    fn edit_clears_redo() {
         let mut ib = InputBox::new();
-        type_str(&mut ib, "sent");
-        ib.clear_or_restore(); // буфер = "sent"
-        ib.clear(); // отправка/команда чистит поле и буфер отмены
-        ib.clear_or_restore(); // нечего возвращать
+        type_str(&mut ib, "abc");
+        ib.undo(); // "" , redo has "abc"
+        ib.insert_char('z'); // новая правка чистит redo
+        assert!(!ib.redo());
+        assert_eq!(ib.text(), "z");
+    }
+
+    #[test]
+    fn set_text_clears_undo_history() {
+        // Программная замена (загрузка чужого черновика) — Ctrl+Z не воскрешает.
+        let mut ib = InputBox::new();
+        type_str(&mut ib, "user text");
+        ib.set_text("другой чат");
+        assert!(!ib.undo());
+        assert_eq!(ib.text(), "другой чат");
+    }
+
+    #[test]
+    fn ctrl_k_clears_and_ctrl_z_restores() {
+        let mut ib = InputBox::new();
+        type_str(&mut ib, "привет\nмир");
+        assert_eq!(ib.on_key(ctrl(KeyCode::Char('k'))), KeyOutcome::Edited);
         assert!(ib.is_empty());
+        // Ctrl+Z возвращает удалённое (общая модель отмены, не toggle).
+        assert_eq!(ib.on_key(ctrl(KeyCode::Char('z'))), KeyOutcome::Edited);
+        assert_eq!(ib.text(), "привет\nмир");
+    }
+
+    #[test]
+    fn undo_redo_noop_returns_moved() {
+        // Пустые стеки — Ctrl+Z/Ctrl+Y ничего не меняют (Moved, не Edited).
+        let mut ib = InputBox::new();
+        assert_eq!(ib.on_key(ctrl(KeyCode::Char('z'))), KeyOutcome::Moved);
+        assert_eq!(ib.on_key(ctrl(KeyCode::Char('y'))), KeyOutcome::Moved);
+    }
+
+    #[test]
+    fn undo_cap_evicts_oldest() {
+        // Больше UNDO_CAP единиц — старейшие вытесняются (не паникует, стек ограничен).
+        let mut ib = InputBox::new();
+        for _ in 0..(UNDO_CAP + 20) {
+            // Каждая вставка — Structural → отдельная единица.
+            ib.insert_str("x");
+        }
+        assert_eq!(ib.undo.len(), UNDO_CAP);
+    }
+
+    #[test]
+    fn undo_restores_selection_replacement() {
+        // Ввод поверх выделения — одна единица: Ctrl+Z возвращает исходный текст.
+        let mut ib = InputBox::new();
+        ib.set_text("hello");
+        ib.on_key(ctrl(KeyCode::Char('a'))); // выделить всё
+        ib.insert_char('Z'); // заменить выделение
+        assert_eq!(ib.text(), "Z");
+        assert!(ib.undo());
+        assert_eq!(ib.text(), "hello");
     }
 
     #[test]
