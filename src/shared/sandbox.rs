@@ -102,14 +102,14 @@ impl WasmerSandbox {
         Self { dir }
     }
 
-    /// Путь/имя бинаря `wasmer`: env-override → `<dir>/wasmer[.exe]`.
+    /// Путь/имя бинаря `wasmer`: env-override → каталог песочницы ([`locate_wasmer`]).
     fn resolve_wasmer(&self) -> Option<OsString> {
         if let Some(o) = env_override(ENV_WASMER) {
             return Some(o);
         }
         self.dir
             .as_deref()
-            .and_then(wasmer_in_dir)
+            .and_then(locate_wasmer)
             .map(PathBuf::into_os_string)
     }
 
@@ -184,6 +184,12 @@ impl SandboxRunner for WasmerSandbox {
             // процесс), поэтому kill самого wasmer останавливает и код. На таймауте/
             // отмене future дропается → процесс убивается.
             .kill_on_drop(true);
+        // Кэш скомпилированных модулей — под каталогом песочницы (самодостаточно,
+        // не в ~/.wasmer): первый запуск компилирует python.wasm (секунды), дальше
+        // тёплый старт из кэша. См. docs/research/python-wasmer-sandbox.md §2.3.
+        if let Some(dir) = &self.dir {
+            cmd.env("WASMER_CACHE_DIR", dir.join("cache"));
+        }
 
         let child = cmd
             .spawn()
@@ -207,10 +213,17 @@ impl SandboxRunner for WasmerSandbox {
     }
 }
 
-/// Ищет бинарь `wasmer` в каталоге (чистая, тестируемая).
-fn wasmer_in_dir(dir: &Path) -> Option<PathBuf> {
-    let p = dir.join(WASMER_BIN);
-    p.is_file().then_some(p)
+/// Ищет бинарь `wasmer` в каталоге песочницы (чистая, тестируемая). Порядок:
+/// прямое размещение `<dir>/wasmer[.exe]` (ручная установка) → распаковка setup'ом
+/// `<dir>/wasmer-dist/bin/wasmer[.exe]`. Используется и рантаймом ([`WasmerSandbox`]),
+/// и провизией (`features::sandbox_setup`) — единый источник истины о раскладке.
+pub fn locate_wasmer(dir: &Path) -> Option<PathBuf> {
+    let direct = dir.join(WASMER_BIN);
+    if direct.is_file() {
+        return Some(direct);
+    }
+    let dist = dir.join("wasmer-dist").join("bin").join(WASMER_BIN);
+    dist.is_file().then_some(dist)
 }
 
 /// Непустое значение env-переменной как `OsString` (override пути/имени).
@@ -389,12 +402,18 @@ mod tests {
     }
 
     #[test]
-    fn wasmer_in_dir_finds_binary() {
+    fn locate_wasmer_finds_direct_and_dist() {
         let dir = tempfile::tempdir().unwrap();
-        assert!(wasmer_in_dir(dir.path()).is_none());
+        assert!(locate_wasmer(dir.path()).is_none());
+        // Распаковка setup'ом: <dir>/wasmer-dist/bin/wasmer[.exe].
+        let bin_dir = dir.path().join("wasmer-dist").join("bin");
+        std::fs::create_dir_all(&bin_dir).unwrap();
+        std::fs::write(bin_dir.join(WASMER_BIN), b"stub").unwrap();
+        assert!(locate_wasmer(dir.path()).unwrap().ends_with(WASMER_BIN));
+        // Прямое размещение имеет приоритет.
         std::fs::write(dir.path().join(WASMER_BIN), b"stub").unwrap();
-        let found = wasmer_in_dir(dir.path()).unwrap();
-        assert!(found.ends_with(WASMER_BIN));
+        let found = locate_wasmer(dir.path()).unwrap();
+        assert_eq!(found, dir.path().join(WASMER_BIN));
     }
 
     #[test]

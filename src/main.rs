@@ -54,6 +54,22 @@ enum Command {
         /// Каталог с данными LameLLaMA.
         dir: PathBuf,
     },
+    /// Управление песочницей Python (Wasmer/WASIX).
+    Sandbox {
+        #[command(subcommand)]
+        action: SandboxAction,
+    },
+}
+
+#[derive(Subcommand)]
+enum SandboxAction {
+    /// Установить/обновить песочницу: скачать `wasmer`, `python.webc` и пакеты
+    /// (numpy, requests и др.) в `data/sandbox/`.
+    Setup {
+        /// Перекачать/переустановить всё, даже если уже на месте.
+        #[arg(short, long)]
+        force: bool,
+    },
 }
 
 fn main() -> anyhow::Result<()> {
@@ -69,6 +85,7 @@ fn main() -> anyhow::Result<()> {
             compression,
         }) => return run_backup(&paths, output, compression),
         Some(Command::Restore { archive }) => return run_restore(&paths, &archive),
+        Some(Command::Sandbox { action }) => return run_sandbox(&paths, action),
         None => {}
     }
 
@@ -225,6 +242,32 @@ fn run_restore(paths: &Paths, archive: &Path) -> anyhow::Result<()> {
             }
         }
     }
+}
+
+/// CLI: управление песочницей Python. Вывод — в stdout (TUI не запущен).
+fn run_sandbox(paths: &Paths, action: SandboxAction) -> anyhow::Result<()> {
+    match action {
+        SandboxAction::Setup { force } => run_sandbox_setup(paths, force),
+    }
+}
+
+/// CLI: установка/обновление песочницы Python (скачивание wasmer + python.webc +
+/// пакетов в `data/sandbox/`). Требует собственный tokio-рантайм (сетевой async).
+fn run_sandbox_setup(paths: &Paths, force: bool) -> anyhow::Result<()> {
+    // Гард единственного экземпляра: не переустанавливаем песочницу, пока приложение
+    // работает (могло бы читать заменяемый бинарь/ассеты во время индексации/запуска).
+    let _instance = acquire_cli_guard("устанавливать песочницу")?;
+    let dir = paths.sandbox_dir();
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()
+        .context("building tokio runtime")?;
+    runtime.block_on(features::sandbox_setup::setup(
+        &dir,
+        &features::sandbox_setup::SetupOptions { force },
+        |msg| println!("{msg}"),
+    ))?;
+    Ok(())
 }
 
 /// Одноразовый импорт данных LameLLaMA (.NET) в хранилище mindfork (spec §12.2).

@@ -22,6 +22,9 @@ crossterm = "0.29.0"
 # (Windows %APPDATA%\mindfork-rs, Linux ~/.local/share/mindfork-rs). См. shared/paths.rs.
 directories = "6.0.0"
 eventsource-stream = "0.2.3"
+# Распаковка архива `wasmer` (tar.gz) в `mindfork sandbox setup` (Фаза 2 песочницы
+# Python). flate2 — чистый Rust (miniz_oxide, без C-зависимостей), tar — чистый Rust.
+flate2 = "1.0"
 futures-util = "0.3.32"
 pulldown-cmark = { version = "0.13.4", default-features = false }
 ratatui = "0.30.1"
@@ -30,10 +33,14 @@ rusqlite = { version = "0.40.1", features = ["bundled"] }
 scraper = "0.27.0"
 serde = { version = "1.0.228", features = ["derive"] }
 serde_json = "1.0.150"
+# Проверка целостности (sha256) скачанных ассетов песочницы (Фаза 2). Чистый Rust.
+sha2 = "0.10"
 single-instance = "0.3.3"
 spellbook = "0.4.2"
 sqlite-vec = "0.1.9"
 syntect = "5.3.0"
+# Распаковка tar-архива `wasmer` (см. flate2 выше). Чистый Rust.
+tar = "0.4"
 thiserror = "2.0.18"
 tokio = { version = "1.52.3", features = ["rt-multi-thread", "macros", "sync", "process", "time", "io-util", "rt"] }
 tokio-util = "0.7.18"

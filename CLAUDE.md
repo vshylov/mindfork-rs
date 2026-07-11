@@ -4596,6 +4596,49 @@ web-поиск и Python под выключателями, экран наст�
   скомпилированного модуля, баннер первого запуска; `#[ignore]`-смоуки numpy/requests/
   кириллица/таймаут. **Фаза 3** — лимиты ресурсов, гейт «одна задача», ADR 0005.
 
+### Пост-M9: Python-песочница на Wasmer/WASIX — Фаза 2 (провизия ассетов) (сделано)
+- **`mindfork sandbox setup`** — clap-подкоманда (`Sandbox{Setup{--force}}`, как
+  `backup`/`restore`): устанавливает песочницу Python в `data/sandbox/` **из коробки**
+  (решение пользователя — авто-скачивание). Своя tokio-рантайм (сетевой async вне
+  TUI) + single-instance-гард; прогресс в stdout. Идемпотентно: существующее
+  пропускается, `--force` перекачивает.
+- **`features/sandbox_setup.rs`** — чистое ядро + тонкий сетевой слой. Провизия по
+  **lock-списку с точными URL+sha256** (`ARCHIVES`/`WHEELS` — консты в репо, устойчиво
+  к «latest»): (1) бинарь **`wasmer`** — платформенный tar.gz с GitHub (по
+  `std::env::consts::OS/ARCH`), потоковое скачивание с инкрементальным sha256 (крупный
+  архив не буферим), распаковка `flate2`(pure-Rust)+`tar` в `data/sandbox/wasmer-dist/`;
+  (2) **`python.webc`** — через сам `wasmer package download python/python -o … --wasmer-dir`
+  (дом/кэш под песочницей, не в `~/.wasmer`); (3) **колёса** — numpy с
+  `pythonindex.wasix.org` (нативное wasix-колесо), requests-стек (requests/urllib3/
+  certifi/idna/charset_normalizer) с PyPI (`py3-none-any`) → verify sha256 → распаковка
+  zip в `site-packages/` **без pip/host-Python** (защита от zip-slip `enclosed_name`,
+  как в `backup`). Чистые тестируемые `archive_for`/`verify_sha256`/`hex_lower`/
+  `unpack_wheel`/`extract_targz`.
+- **Кэш компиляции** (`shared/sandbox.rs`): `WasmerSandbox::run` ставит env
+  `WASMER_CACHE_DIR=<dir>/cache` — первый запуск компилирует python.wasm (секунды),
+  дальше тёплый старт из кэша, самодостаточно.
+- **Общий резолвер бинаря** `shared::sandbox::locate_wasmer(dir)` (прямой
+  `<dir>/wasmer[.exe]` для ручной установки → `wasmer-dist/bin/wasmer[.exe]` после
+  setup) — единый источник истины о раскладке для рантайма (`WasmerSandbox`) и провизии
+  (`sandbox_setup`).
+- **Зависимости**: `flate2` (уже был транзитивно; miniz_oxide, без C), `tar`, `sha2` —
+  все чистый Rust.
+- **Отложено в Фазу 3** (по объёму): баннер первого запуска (прогресс компиляции
+  tool→UI — нужна проводка события, setup-команда прогресс печатает в stdout); лимиты
+  ресурсов; гейт «одна задача»; пересмотр дефолта `python_enabled` (теперь setup — одна
+  команда).
+- **Тесты**: sandbox_setup (выбор архива по платформе; `verify_sha256`/`hex_lower`;
+  `unpack_wheel` на крафт-zip; `extract_targz` round-trip на синтетическом tar.gz;
+  lock-список покрывает numpy+requests-стек, все URL https + sha256 64-hex);
+  `locate_wasmer` (прямой + wasmer-dist, приоритет прямого). **969 юнит-тестов зелёные**
+  (+6), **39 `#[ignore]`** (+5 живых смоуков), clippy `-D warnings`/fmt чисты.
+- **Прогон на реальной связке** (Windows 11, wasmer 7.2.0): `mindfork sandbox setup`
+  скачал и распаковал всё (wasmer 206МБ → `wasmer-dist/bin/wasmer.exe` 90МБ, python.webc
+  44МБ, 6 колёс, все sha256 сошлись). **8 живых смоуков зелёные** (`MINDFORK_SANDBOX_DIR`
+  на провизионированный каталог): numpy 2.3.2 (matmul/sum через динлинковку нативных
+  `.so`), requests HTTPS 200 (с сетью), requests заблокирован без сети, кириллица,
+  таймаут-kill (`while True: pass` → «превысил лимит времени»), базовые sandbox/local.
+
 ### Отложено за пределы M3
 - **Сворачивание/выделение per-message** и tool-блоки в ленте — сейчас «мысли»
   сворачиваются глобально (`Ctrl+T`); выделение сообщений и tool-блоки — на M5.

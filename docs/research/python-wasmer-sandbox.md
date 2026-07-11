@@ -340,16 +340,30 @@ data/sandbox/                 # за shared/paths.rs (portable/system/path)
   Живой `#[ignore]`-смоук `runs_real_python_in_sandbox` прогнан на реальном
   `wasmer 7.2.0` — `print('hello sandbox')` исполнился в песочнице. По решениям
   пользователя: `python_enabled=false`, сеть=`true` с тумблером.
-- **Фаза 2 — ассеты и сеть.** `mindfork sandbox setup` (clap-подкоманда): скачать
-  `wasmer` бинарь + `python.webc` + колёса по lock-списку (numpy с wasix-индекса,
-  requests-стек с PyPI; §9.4), sha256, распаковка колёс в `site-packages/` без pip.
-  Кэш скомпилированного модуля Wasmer; `python_net_enabled`; баннер первого запуска
-  (паттерн `RagProgress`). `#[ignore]`-смоуки: numpy, requests (с сетью и без),
-  кириллица, таймаут-kill.
+- **Фаза 2 — ассеты и сеть. ✅ СДЕЛАНО** (2026-07-12).
+  `mindfork sandbox setup` (clap-подкоманда `Sandbox{Setup{--force}}`, свой tokio-
+  рантайм + single-instance-гард): скачивает в `data/sandbox/` бинарь **`wasmer`**
+  (платформенный tar.gz с GitHub, потоково + sha256, распаковка `flate2`+`tar` в
+  `wasmer-dist/`), **`python.webc`** (через сам `wasmer package download`, дом/кэш под
+  песочницей), **колёса** по lock-списку (numpy с wasix-индекса, requests-стек с
+  PyPI) → verify sha256 → распаковка zip в `site-packages/` **без pip/host-Python**.
+  Всё по **lock-списку с точными URL+sha256** (`features/sandbox_setup.rs`, чистое
+  ядро + тонкий сетевой слой), идемпотентно (существующее пропускается, `--force`
+  перекачивает). **Кэш компиляции** — `WasmerSandbox` ставит `WASMER_CACHE_DIR=
+  <dir>/cache` (тёплые старты). Общий резолвер `shared::sandbox::locate_wasmer`
+  (прямой `<dir>/wasmer[.exe]` → `wasmer-dist/bin/wasmer[.exe]`) — единый для рантайма
+  и setup. Решение по сети (Фаза 1): `python_net_enabled` тумблер. Баннер первого
+  запуска (компиляция python.wasm) — **отложен в Фазу 3** (нужна проводка прогресса
+  tool→UI; setup-команда прогресс печатает в stdout). **969 тестов зелёные, 39
+  `#[ignore]`** (+5 живых смоуков), clippy/fmt чисты. **Прогон на реальной связке
+  (Windows, wasmer 7.2.0)**: `sandbox setup` скачал/распаковал всё (wasmer 206МБ,
+  python.webc 44МБ, 6 колёс, sha256 сошлись); **8 живых смоуков зелёные** — numpy
+  2.3.2 (динлинковка), requests HTTPS 200 (с сетью), блокировка без сети, кириллица,
+  таймаут-kill.
 - **Фаза 3 — прочность и полировка.** Лимит памяти/ресурсов сайдкара; гейт «одна
-  задача»; пересмотр дефолта `python_enabled` (§7.1); доки (install.md, spec
-  §9.3/§13.2, CLAUDE.md, + ADR «Python-песочница: сайдкар `wasmer`/WASIX за
-  `shared/sandbox.rs`» → `docs/decisions/0005`).
+  задача»; баннер первого запуска (прогресс компиляции tool→UI); пересмотр дефолта
+  `python_enabled` (§7.1, теперь setup — одна команда); доки (spec §9.3/§13.2) + ADR
+  «Python-песочница: сайдкар `wasmer`/WASIX за `shared/sandbox.rs`» → `docs/decisions/0005`.
 
 ---
 

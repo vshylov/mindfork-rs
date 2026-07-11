@@ -388,6 +388,111 @@ mod tests {
         assert!(out.result.contains("hello sandbox"), "got: {}", out.result);
     }
 
+    /// Инструмент над **провизионированной** песочницей (`mindfork sandbox setup`):
+    /// каталог задаётся env `MINDFORK_SANDBOX_DIR` (в нём wasmer-dist/python.webc/
+    /// site-packages). `None` — env не задан, смоук пропускается.
+    fn provisioned(net: bool, timeout_secs: u64) -> Option<PythonExec> {
+        use crate::shared::sandbox::WasmerSandbox;
+        let dir = std::env::var("MINDFORK_SANDBOX_DIR").ok()?;
+        Some(PythonExec::new(
+            PythonMode::Wasmer,
+            None,
+            Arc::new(WasmerSandbox::new(Some(std::path::PathBuf::from(dir)))),
+            net,
+            Duration::from_secs(timeout_secs),
+        ))
+    }
+
+    /// numpy (нативные `.so` через динлинковку WASIX) в провизионированной песочнице.
+    #[tokio::test]
+    #[ignore = "requires a provisioned sandbox (MINDFORK_SANDBOX_DIR)"]
+    async fn numpy_in_sandbox() {
+        let Some(tool) = provisioned(false, 120) else {
+            return;
+        };
+        let (_d, _s, ctx) = ctx_with_storage(Uuid::new_v4());
+        let code = "import numpy as np; print('numpy', np.__version__); \
+                    print('sum', int(np.arange(10).sum()))";
+        let out = tool
+            .invoke(&ctx, serde_json::json!({ "code": code }))
+            .await
+            .unwrap();
+        assert!(out.result.contains("numpy 2."), "got: {}", out.result);
+        assert!(out.result.contains("sum 45"), "got: {}", out.result);
+    }
+
+    /// requests по HTTPS при включённой сети.
+    #[tokio::test]
+    #[ignore = "requires a provisioned sandbox + network (MINDFORK_SANDBOX_DIR)"]
+    async fn requests_in_sandbox_with_net() {
+        let Some(tool) = provisioned(true, 120) else {
+            return;
+        };
+        let (_d, _s, ctx) = ctx_with_storage(Uuid::new_v4());
+        let code = "import requests; r = requests.get('https://example.com', timeout=20); \
+                    print('status', r.status_code)";
+        let out = tool
+            .invoke(&ctx, serde_json::json!({ "code": code }))
+            .await
+            .unwrap();
+        assert!(out.result.contains("status 200"), "got: {}", out.result);
+    }
+
+    /// Без сети запрос должен провалиться (сокетов в песочнице нет) — не 200.
+    #[tokio::test]
+    #[ignore = "requires a provisioned sandbox (MINDFORK_SANDBOX_DIR)"]
+    async fn requests_blocked_without_net() {
+        let Some(tool) = provisioned(false, 60) else {
+            return;
+        };
+        let (_d, _s, ctx) = ctx_with_storage(Uuid::new_v4());
+        let code = "import requests\n\
+                    try:\n\
+                    \x20   r = requests.get('https://example.com', timeout=10)\n\
+                    \x20   print('status', r.status_code)\n\
+                    except Exception as e:\n\
+                    \x20   print('blocked')";
+        let out = tool
+            .invoke(&ctx, serde_json::json!({ "code": code }))
+            .await
+            .unwrap();
+        assert!(!out.result.contains("status 200"), "got: {}", out.result);
+    }
+
+    /// Кириллица в `print` не должна падать (гость WASIX — UTF-8).
+    #[tokio::test]
+    #[ignore = "requires a provisioned sandbox (MINDFORK_SANDBOX_DIR)"]
+    async fn cyrillic_print_in_sandbox() {
+        let Some(tool) = provisioned(false, 60) else {
+            return;
+        };
+        let (_d, _s, ctx) = ctx_with_storage(Uuid::new_v4());
+        let out = tool
+            .invoke(&ctx, serde_json::json!({"code": "print('Привет, мир')"}))
+            .await
+            .unwrap();
+        assert!(out.result.contains("Привет, мир"), "got: {}", out.result);
+    }
+
+    /// Бесконечный цикл прерывается по таймауту (kill процесса wasmer).
+    #[tokio::test]
+    #[ignore = "requires a provisioned sandbox (MINDFORK_SANDBOX_DIR)"]
+    async fn timeout_kills_sandbox() {
+        let Some(tool) = provisioned(false, 3) else {
+            return;
+        };
+        let (_d, _s, ctx) = ctx_with_storage(Uuid::new_v4());
+        let out = tool
+            .invoke(&ctx, serde_json::json!({"code": "while True: pass"}))
+            .await
+            .unwrap();
+        assert!(
+            out.result.contains("превысил лимит времени"),
+            "got: {}",
+            out.result
+        );
+    }
+
     /// Реальное локальное исполнение (вручную, если установлен Python).
     #[tokio::test]
     #[ignore = "requires a Python interpreter on PATH"]
