@@ -168,6 +168,10 @@ pub struct MessageFeed {
     /// ячейке, которую поячеечный diff ratatui больше не затрагивает. Полная
     /// перерисовка (`terminal.clear`) гарантированно её стирает. См. spec §11.3.
     scrolled: bool,
+    /// Горизонтальные разделители между строками Markdown-таблиц (настройка
+    /// `interface.table_row_separators`; экран чата прокидывает её из снимка
+    /// настроек через [`MessageFeed::set_table_row_separators`]).
+    table_row_separators: bool,
     /// Кэш отрендеренных строк по одному блоку на сообщение (см. [`CachedBlock`]).
     /// Индекс = позиция сообщения. `build_lines` зовётся на каждый dirty-кадр
     /// (стрим, прокрутка) и заново прогонял бы markdown+syntect по ВСЕЙ истории;
@@ -184,6 +188,7 @@ struct CacheKey {
     width: usize,
     palette: Palette,
     show_thoughts: bool,
+    table_row_separators: bool,
 }
 
 /// Кэшированный вклад одного сообщения в ленту (уже перенесённые по ширине строки с
@@ -206,9 +211,19 @@ impl MessageFeed {
             follow: true,
             show_thoughts: false,
             scrolled: false,
+            // Зеркало дефолта конфига (`InterfaceSettings::default`): до прихода
+            // первого снимка настроек лента рисует таблицы как дефолтный конфиг.
+            table_row_separators: true,
             cache: Vec::new(),
             cache_key: None,
         }
+    }
+
+    /// Включает/выключает горизонтальные разделители строк Markdown-таблиц
+    /// (настройка `interface.table_row_separators`). Смена значения инвалидирует
+    /// кэш рендера через [`CacheKey`].
+    pub fn set_table_row_separators(&mut self, on: bool) {
+        self.table_row_separators = on;
     }
 
     /// Забирает (и сбрасывает) флаг «прокручено пользователем». Петля `app/runtime`
@@ -338,6 +353,7 @@ impl MessageFeed {
             width,
             palette: *palette,
             show_thoughts: self.show_thoughts,
+            table_row_separators: self.table_row_separators,
         };
         if self.cache_key.as_ref() != Some(&key) {
             self.cache.clear();
@@ -352,7 +368,13 @@ impl MessageFeed {
             let hit = self.cache.get(idx).is_some_and(|c| c.fingerprint == fp);
             if !hit {
                 // Стримящееся/изменённое сообщение — пересчитываем только его блок.
-                let block = build_message_block(item, palette, width, self.show_thoughts);
+                let block = build_message_block(
+                    item,
+                    palette,
+                    width,
+                    self.show_thoughts,
+                    self.table_row_separators,
+                );
                 let cb = CachedBlock {
                     fingerprint: fp,
                     lines: block,
@@ -371,12 +393,14 @@ impl MessageFeed {
 
 /// Собирает вклад одного сообщения в ленту: перенесённые по ширине строки с цветным
 /// рейлом роли + хвостовой разделитель (если тело не оканчивается пустой строкой).
-/// Чистая функция от (`item`, `palette`, `width`, `show_thoughts`) — основа кэша.
+/// Чистая функция от (`item`, `palette`, `width`, `show_thoughts`,
+/// `table_row_separators`) — основа кэша.
 fn build_message_block(
     item: &FeedMessage,
     palette: &Palette,
     width: usize,
     show_thoughts: bool,
+    table_row_separators: bool,
 ) -> Vec<Line<'static>> {
     // Ширина содержимого под рейл (рейл = 2 колонки).
     let inner = width.saturating_sub(RAIL.chars().count()).max(1);
@@ -394,7 +418,7 @@ fn build_message_block(
                 &format!("{} ВЫ", glyphs.user_icon),
                 palette.user_soft,
             ));
-            push_body(&mut body, item, palette, inner);
+            push_body(&mut body, item, palette, inner, table_row_separators);
         }
         FeedRole::Assistant => {
             body.push(role_header(
@@ -402,9 +426,9 @@ fn build_message_block(
                 palette.assistant_soft,
             ));
             push_thoughts(&mut body, &item.thoughts, show_thoughts, palette);
-            push_assistant_body(&mut body, item, palette, inner);
+            push_assistant_body(&mut body, item, palette, inner, table_row_separators);
         }
-        FeedRole::Note => push_body(&mut body, item, palette, inner),
+        FeedRole::Note => push_body(&mut body, item, palette, inner, table_row_separators),
     }
     // Если тело уже заканчивается пустой строкой (рейловый отступ после tool-карточки),
     // безрейловый межсообщенческий разделитель не добавляем — иначе двойной пропуск.
@@ -528,6 +552,7 @@ fn push_assistant_body(
     item: &FeedMessage,
     palette: &Palette,
     width: usize,
+    table_row_separators: bool,
 ) {
     let text = item.text.as_str();
     let mut pos = 0usize;
@@ -535,12 +560,12 @@ fn push_assistant_body(
     for tool in &item.tools {
         let off = clamp_boundary(text, tool.text_offset.min(text.len())).max(pos);
         if off > pos {
-            push_markdown_fragment(lines, &text[pos..off], palette, width);
+            push_markdown_fragment(lines, &text[pos..off], palette, width, table_row_separators);
         }
         // Пустая строка перед вызовом (схлопывается, если предыдущая уже пуста —
         // напр. между двумя подряд идущими вызовами).
         ensure_blank_line(lines);
-        push_tool(lines, tool, palette, width);
+        push_tool(lines, tool, palette, width, table_row_separators);
         // Пустая (рейловая) строка ПОСЛЕ карточки — чтобы рейл продолжался под
         // результатом независимо от того, идёт ли дальше текст/ещё вызов. Соседние
         // `ensure_blank_line` схлопываются (перед следующим вызовом/текстом — no-op),
@@ -552,7 +577,9 @@ fn push_assistant_body(
         produced = true;
         pos = off;
     }
-    if pos < text.len() && push_markdown_fragment(lines, &text[pos..], palette, width) {
+    if pos < text.len()
+        && push_markdown_fragment(lines, &text[pos..], palette, width, table_row_separators)
+    {
         produced = true;
     }
     // Пустой стримящийся ответ (ещё ни текста, ни вызовов) — индикатор «…».
@@ -580,11 +607,16 @@ fn push_markdown_fragment(
     fragment: &str,
     palette: &Palette,
     width: usize,
+    table_row_separators: bool,
 ) -> bool {
     if fragment.trim().is_empty() {
         return false;
     }
-    let rendered = markdown::render(fragment, width, palette);
+    let opts = markdown::RenderOpts {
+        table_row_separators,
+        ..Default::default()
+    };
+    let rendered = markdown::render_with(fragment, width, palette, opts);
     lines.extend(rendered.lines);
     true
 }
@@ -593,7 +625,13 @@ fn push_markdown_fragment(
 /// инструмента, затем блоки аргументов и результата, подготовленные презентером
 /// [`present`] (подсвеченный код, консольный вывод, markdown-проза, плоский
 /// текст). Всё **переносится по ширине** (не обрезается). См. spec §11.3.
-fn push_tool(lines: &mut Vec<Line<'static>>, tool: &FeedToolCall, palette: &Palette, width: usize) {
+fn push_tool(
+    lines: &mut Vec<Line<'static>>,
+    tool: &FeedToolCall,
+    palette: &Palette,
+    width: usize,
+    table_row_separators: bool,
+) {
     let head_style = Style::default()
         .fg(palette.tool_soft)
         .add_modifier(Modifier::BOLD);
@@ -615,10 +653,10 @@ fn push_tool(lines: &mut Vec<Line<'static>>, tool: &FeedToolCall, palette: &Pale
         head_style,
     );
     for block in &p.args {
-        push_block(lines, block, palette, width, false);
+        push_block(lines, block, palette, width, false, table_row_separators);
     }
     for block in &p.result {
-        push_block(lines, block, palette, width, true);
+        push_block(lines, block, palette, width, true, table_row_separators);
     }
 }
 
@@ -631,6 +669,7 @@ fn push_block(
     palette: &Palette,
     width: usize,
     is_result: bool,
+    table_row_separators: bool,
 ) {
     let gutter_style = Style::default().fg(palette.muted);
     match block {
@@ -648,7 +687,11 @@ fn push_block(
         }
         ToolBlock::Markdown(text) => {
             let body_w = width.saturating_sub(2).max(1);
-            let rendered = markdown::render(text, body_w, palette);
+            let opts = markdown::RenderOpts {
+                table_row_separators,
+                ..Default::default()
+            };
+            let rendered = markdown::render_with(text, body_w, palette, opts);
             push_gutter_lines(lines, rendered.lines, "└ ", "  ", gutter_style, width);
         }
         ToolBlock::Console(c) => push_console(lines, c, palette, width),
@@ -761,7 +804,13 @@ fn clamp_boundary(text: &str, mut off: usize) -> usize {
 }
 
 /// Добавляет тело сообщения: markdown для user, dim-текст для заметок.
-fn push_body(lines: &mut Vec<Line<'static>>, item: &FeedMessage, palette: &Palette, width: usize) {
+fn push_body(
+    lines: &mut Vec<Line<'static>>,
+    item: &FeedMessage,
+    palette: &Palette,
+    width: usize,
+    table_row_separators: bool,
+) {
     if item.text.is_empty() {
         if item.streaming {
             lines.push(Line::from("…").dim());
@@ -778,7 +827,11 @@ fn push_body(lines: &mut Vec<Line<'static>>, item: &FeedMessage, palette: &Palet
             // markdown → Text; переносим строки в общий буфер. Для сообщения
             // пользователя одиночные переводы строки (Shift+Enter) сохраняем как
             // реальные переносы (GFM-стиль), иначе текст слился бы в один абзац.
-            let rendered = markdown::render_with(&item.text, width, palette, true);
+            let opts = markdown::RenderOpts {
+                soft_break_as_newline: true,
+                table_row_separators,
+            };
+            let rendered = markdown::render_with(&item.text, width, palette, opts);
             lines.extend(rendered.lines);
         }
     }
@@ -1240,6 +1293,35 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn table_row_separators_follow_setting_and_invalidate_cache() {
+        // По умолчанию (зеркало дефолта конфига) между строками таблицы рисуются
+        // разделители `├…┤`; выключение настройки убирает их, а смена значения
+        // сбрасывает кэш (сообщение/ширина/палитра те же — меняется только флаг).
+        let mut feed = MessageFeed::new();
+        let palette = Palette::default();
+        let table = "| a | b |\n|---|---|\n| 1 | 2 |\n| 3 | 4 |";
+        let mids = |lines: &[Line<'static>]| {
+            lines
+                .iter()
+                .filter(|l| l.spans.iter().any(|s| s.content.contains('├')))
+                .count()
+        };
+        let on = feed.build_lines(&[msg(FeedRole::Assistant, table, "")], &palette, 80);
+        assert_eq!(
+            mids(&on),
+            2,
+            "включено: разделитель заголовка + один межстрочный"
+        );
+        feed.set_table_row_separators(false);
+        let off = feed.build_lines(&[msg(FeedRole::Assistant, table, "")], &palette, 80);
+        assert_eq!(
+            mids(&off),
+            1,
+            "выключено: только под заголовком (кэш должен сброситься по ключу)"
+        );
     }
 
     #[test]

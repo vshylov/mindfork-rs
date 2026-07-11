@@ -28,7 +28,28 @@ use syntect::util::{LinesWithEndings, as_24_bit_terminal_escaped};
 use crate::shared::theme::Palette;
 use crate::shared::wrap;
 
-/// Рендерит markdown-строку в владеющий [`Text`] (готовый к показу/кэшированию).
+/// Поведенческие флаги рендера markdown (ширина и палитра — отдельными
+/// аргументами, как раньше). Прецедент — `RenderOpts` у
+/// [`crate::widgets::input_box`]: опции структурой вместо роста позиционных bool.
+/// `Default` — «чистый» CommonMark-рендер (все флаги выключены); нужное включает
+/// вызывающий (лента прокидывает флаги из настроек интерфейса).
+#[derive(Debug, Clone, Copy, Default)]
+pub struct RenderOpts {
+    /// Трактовать «мягкий» перенос (одиночный `\n` в исходнике) как реальный
+    /// перенос строки (GFM-стиль, как комментарии на GitHub). `false` — стандарт
+    /// CommonMark: одиночный перевод строки схлопывается в пробел. Нужно для
+    /// **сообщений пользователя**: текст, набранный с `Shift+Enter`, должен
+    /// показываться построчно, а не сливаться в один абзац. В ячейках таблиц
+    /// перенос в любом случае остаётся пробелом (раскладку строк делает таблица).
+    pub soft_break_as_newline: bool,
+    /// Горизонтальные разделители (`├───┼───┤`) между строками тела таблиц —
+    /// «сеточный» вид. `false` — компактный: разделитель только под заголовком.
+    /// Управляется настройкой `interface.table_row_separators` (см. spec §11.4).
+    pub table_row_separators: bool,
+}
+
+/// Рендерит markdown-строку в владеющий [`Text`] (готовый к показу/кэшированию)
+/// с дефолтными флагами ([`RenderOpts::default`]).
 ///
 /// `width` — ширина панели в колонках (используется для раскладки таблиц).
 /// `palette` задаёт цвета (заголовки/ссылки/код/цитаты) под текущую тему.
@@ -38,27 +59,19 @@ use crate::shared::wrap;
 /// Содержимое math-событий парсера проходит через [`latex_to_unicode`] (стрелки,
 /// дроби, индексы, символы), а сами разделители снимает парсер. «Голые» команды
 /// вне разделителей (`\alpha` без `$`) НЕ трогаются. Возвращается `'static`-`Text`.
+// Продакшн-пути (лента) передают флаги явно через `render_with`; фасад с дефолтами
+// используют тесты модуля — оставлен как публичная поверхность (см. ADR 0003).
+#[allow(dead_code)]
 pub fn render(input: &str, width: usize, palette: &Palette) -> Text<'static> {
-    render_with(input, width, palette, false)
+    render_with(input, width, palette, RenderOpts::default())
 }
 
-/// Как [`render`], но с управляемой трактовкой «мягких» переносов (одиночных
-/// переводов строки в исходнике).
-///
-/// `soft_break_as_newline = false` — стандартное поведение CommonMark: одиночный
-/// перевод строки схлопывается в пробел (мягкий перенос). Подходит для вывода
-/// ассистента (markdown как есть).
-///
-/// `soft_break_as_newline = true` — одиночный перевод строки сохраняется как
-/// реальный перенос (GFM-стиль, как комментарии на GitHub). Нужно для **сообщений
-/// пользователя**: текст, набранный с `Shift+Enter`, должен показываться построчно,
-/// а не сливаться в один абзац. В ячейках таблиц перенос по-прежнему остаётся
-/// пробелом (раскладку строк делает сама таблица).
+/// Как [`render`], но с явными поведенческими флагами (см. [`RenderOpts`]).
 pub fn render_with(
     input: &str,
     width: usize,
     palette: &Palette,
-    soft_break_as_newline: bool,
+    opts: RenderOpts,
 ) -> Text<'static> {
     let normalized = normalize_delimiters(input);
     let mut parse_opts = Options::empty();
@@ -68,7 +81,8 @@ pub fn render_with(
     parse_opts.insert(Options::ENABLE_TABLES);
     let parser = Parser::new_ext(&normalized, parse_opts);
     let mut writer = Writer::new(*palette, width);
-    writer.soft_break_as_newline = soft_break_as_newline;
+    writer.soft_break_as_newline = opts.soft_break_as_newline;
+    writer.table_row_separators = opts.table_row_separators;
     writer.run(parser);
     Text::from(writer.lines)
 }

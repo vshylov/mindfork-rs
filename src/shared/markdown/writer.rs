@@ -36,8 +36,10 @@ pub(super) struct Writer {
     /// нет, флаг некому потребить и он «утекал» на следующий блок.
     item_marker_open: bool,
     /// Трактовать «мягкий» перенос (одиночный `\n`) как реальный перенос строки
-    /// (GFM-стиль). Для сообщений пользователя — `true`. См. [`render_with`].
+    /// (GFM-стиль). Для сообщений пользователя — `true`. См. [`RenderOpts`].
     pub(super) soft_break_as_newline: bool,
+    /// Горизонтальные разделители между строками тела таблиц. См. [`RenderOpts`].
+    pub(super) table_row_separators: bool,
 }
 
 impl Writer {
@@ -57,6 +59,7 @@ impl Writer {
             needs_newline: false,
             item_marker_open: false,
             soft_break_as_newline: false,
+            table_row_separators: false,
         }
     }
 
@@ -427,7 +430,7 @@ impl Writer {
 
     pub(super) fn end_table(&mut self) {
         if let Some(tb) = self.table.take() {
-            for line in render_table(&tb, self.width, &self.palette) {
+            for line in render_table(&tb, self.width, &self.palette, self.table_row_separators) {
                 self.lines.push(line);
             }
         }
