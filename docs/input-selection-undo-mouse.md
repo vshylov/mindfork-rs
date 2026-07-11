@@ -503,8 +503,10 @@ last_area: Option<Rect>,
   позже одинаковым паттерном).
 - **`Shift`/`Ctrl+Z` на «голом» unix-терминале** без kitty keyboard protocol — мягкая
   деградация (модификаторы к стрелкам могут не приходить; `Ctrl+Z` может уйти в
-  SIGTSTP). Windows — основной таргет; unix-доводка (включение
-  `PushKeyboardEnhancementFlags`) — задел (тот же, что `Shift+Enter`, п.11 аудита).
+  SIGTSTP). Windows — основной таргет. **Сделано (п.11 аудита):** на unix `runtime`
+  включает kitty keyboard protocol (`DISAMBIGUATE_ESCAPE_CODES`) при поддержке
+  терминалом → `Shift+Enter`/`Shift`+стрелки распознаются; для терминалов без протокола
+  `Alt+Enter` — запасной перенос строки во всех многострочных полях.
 - **Скролл ленты при драге к краю поля** (autoscroll) — вне объёма.
 
 ---

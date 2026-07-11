@@ -423,6 +423,27 @@ fn system_message_editor_is_multiline_and_keeps_newlines() {
 }
 
 #[test]
+fn alt_enter_also_inserts_newline_in_multiline_editor() {
+    // Запасной перенос строки для терминалов без kitty-протокола (Shift+Enter там
+    // неотличим от Enter). См. п.11 аудита InputBox.
+    let mut s = screen();
+    goto_section(&mut s, Section::Profiles);
+    goto_field(&mut s, FieldId::PSystem);
+    s.handle_key(key(KeyCode::Enter)); // открыть редактор (многострочный)
+    s.handle_key(key(KeyCode::Char('A')));
+    s.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::ALT));
+    s.handle_key(key(KeyCode::Char('B')));
+    assert!(s.editor.is_some(), "Alt+Enter не закрывает редактор");
+    let intent = s.handle_key(key(KeyCode::Enter)); // коммит
+    match intent {
+        Some(SettingsIntent::SaveProfile { edit, .. }) => {
+            assert_eq!(edit.system_message.unwrap(), "Ты — ассистент.A\nB");
+        }
+        other => panic!("ожидался SaveProfile, получено {other:?}"),
+    }
+}
+
+#[test]
 fn ctrl_k_clears_and_ctrl_z_restores_multiline_editor() {
     let mut s = screen();
     goto_section(&mut s, Section::Profiles);

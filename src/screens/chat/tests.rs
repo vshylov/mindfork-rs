@@ -242,6 +242,37 @@ fn enter_sends_when_idle_and_nonempty() {
 }
 
 #[test]
+fn shift_and_alt_enter_insert_newline_not_send() {
+    let mut s = ChatScreen::new();
+    s.set_server_status(ready_statuses());
+    for c in "ab".chars() {
+        s.handle_key(KeyEvent::new(KeyCode::Char(c), KeyModifiers::NONE));
+    }
+    // Shift+Enter — перенос строки, не отправка.
+    assert_eq!(
+        s.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::SHIFT)),
+        None
+    );
+    for c in "cd".chars() {
+        s.handle_key(KeyEvent::new(KeyCode::Char(c), KeyModifiers::NONE));
+    }
+    // Alt+Enter — тот же перенос (запасной вариант для терминалов без kitty-протокола).
+    assert_eq!(
+        s.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::ALT)),
+        None
+    );
+    for c in "ef".chars() {
+        s.handle_key(KeyEvent::new(KeyCode::Char(c), KeyModifiers::NONE));
+    }
+    assert_eq!(s.input.text(), "ab\ncd\nef");
+    // Голый Enter по-прежнему отправляет весь многострочный ввод.
+    assert_eq!(
+        s.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE)),
+        Some(ChatIntent::Send("ab\ncd\nef".into()))
+    );
+}
+
+#[test]
 fn activate_chat_loads_draft_without_marking_dirty() {
     let mut s = ChatScreen::new();
     // Активация чата с сохранённым черновиком загружает его в поле ввода…
