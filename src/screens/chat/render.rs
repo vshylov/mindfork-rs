@@ -145,10 +145,13 @@ impl ChatScreen {
             self.input.render(
                 frame,
                 input_area,
-                input_title,
-                focused,
+                crate::widgets::input_box::RenderOpts {
+                    title: input_title,
+                    focused,
+                    command,
+                    placeholder: "введите сообщение…",
+                },
                 &self.palette,
-                command,
             );
         }
 

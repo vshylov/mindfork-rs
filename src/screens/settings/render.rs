@@ -88,7 +88,7 @@ impl SettingsScreen {
             frame.render_widget(Clear, popup);
             editor
                 .input
-                .render(frame, popup, &title, true, &palette, false);
+                .render(frame, popup, RenderOpts::focused(&title), &palette);
         }
 
         // Попап выбора Choice-поля — поверх (при поиске редактор/выбор закрыты).
@@ -165,11 +165,12 @@ impl SettingsScreen {
         };
 
         let title = format!("Поиск полей ({}/{})", results.len(), all_len);
-        self.search
-            .as_mut()
-            .unwrap()
-            .input
-            .render(frame, input_area, &title, true, palette, false);
+        self.search.as_mut().unwrap().input.render(
+            frame,
+            input_area,
+            RenderOpts::focused(&title),
+            palette,
+        );
 
         // Список результатов: «крошка   значение» (значение приглушённо).
         let inner_w = list_area.width.saturating_sub(2) as usize;

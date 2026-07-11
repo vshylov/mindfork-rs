@@ -110,13 +110,6 @@ impl ChatScreen {
                         seed: self.input.text(),
                     });
                 }
-                // Удалить весь текст ввода (spec §11.5); возврат — `Ctrl+Z`
-                // (общая модель отмены, см. docs/input-selection-undo-mouse.md §C).
-                'k' => {
-                    self.input.clear_undoable();
-                    self.mark_input_changed();
-                    return None;
-                }
                 // Подсказки орфографии для слова под курсором (spec §11.5).
                 'g' => {
                     self.open_suggestions();

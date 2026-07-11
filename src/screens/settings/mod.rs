@@ -30,7 +30,7 @@ use crate::shared::keys;
 use crate::shared::server::{ServerStatus, ServerStatuses};
 use crate::shared::theme::Palette;
 use crate::shared::ui::{dim_background, render_scrollbar};
-use crate::widgets::input_box::InputBox;
+use crate::widgets::input_box::{InputBox, RenderOpts};
 use crate::widgets::status_bar;
 
 /// Намерение, которое исполняет `app` (транслирует в `AppCommand`).
