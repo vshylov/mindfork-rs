@@ -252,9 +252,12 @@ impl ChatScreen {
         self.mark_input_changed();
     }
 
-    /// Обрабатывает событие мыши: колесо прокручивает ленту чата. Работает только
-    /// в основном виде — при открытом оверлее/попапе/справке прокрутка ленты под
-    /// ними была бы неожиданной, поэтому это no-op. См. spec §11.3.
+    /// Обрабатывает событие мыши (доходит только при захвате мыши `Ctrl+W`): колесо
+    /// прокручивает ленту чата; клик/драг левой кнопкой в поле ввода ставит курсор /
+    /// растит выделение (этап D плана). Работает только в основном виде — при открытом
+    /// оверлее/попапе/справке это no-op (прокрутка/правка курсора под ними были бы
+    /// неожиданны). Клик/драг вне области поля (в ленту) — no-op (выделение ленты —
+    /// отдельное направление). См. spec §11.3, §11.5.
     pub fn handle_mouse(&mut self, mouse: MouseEvent) {
         if self.show_help
             || self.suggest.is_some()
@@ -267,6 +270,14 @@ impl ChatScreen {
         match mouse.kind {
             MouseEventKind::ScrollUp => self.feed_view.scroll_up(WHEEL_SCROLL),
             MouseEventKind::ScrollDown => self.feed_view.scroll_down(WHEEL_SCROLL),
+            // Клик/драг в поле ввода — только когда поле видно (во время имперсонации
+            // на его месте предпросмотр, а `last_area` поля устарела).
+            MouseEventKind::Down(MouseButton::Left) if self.impersonation.is_none() => {
+                self.input.mouse_press(mouse.column, mouse.row);
+            }
+            MouseEventKind::Drag(MouseButton::Left) if self.impersonation.is_none() => {
+                self.input.mouse_drag(mouse.column, mouse.row);
+            }
             _ => {}
         }
     }

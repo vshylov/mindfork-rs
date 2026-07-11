@@ -721,6 +721,59 @@ fn wheel(kind: MouseEventKind) -> MouseEvent {
     }
 }
 
+fn mouse_at(kind: MouseEventKind, column: u16, row: u16) -> MouseEvent {
+    MouseEvent {
+        kind,
+        column,
+        row,
+        modifiers: KeyModifiers::NONE,
+    }
+}
+
+#[test]
+fn mouse_click_and_drag_in_input_build_selection() {
+    use ratatui::Terminal;
+    use ratatui::backend::TestBackend;
+    use ratatui::crossterm::event::MouseButton;
+    let mut s = ChatScreen::new();
+    type_str(&mut s, "hello world");
+    // Рендерим, чтобы поле ввода запомнило свою область (last_area).
+    let mut term = Terminal::new(TestBackend::new(50, 16)).unwrap();
+    term.draw(|f| s.render(f)).unwrap();
+    let area = s.input.last_area_for_test().expect("поле отрисовано");
+    // Клик в начало поля — курсор туда, выделения ещё нет.
+    s.handle_mouse(mouse_at(
+        MouseEventKind::Down(MouseButton::Left),
+        area.x,
+        area.y,
+    ));
+    assert_eq!(s.input.cursor(), (0, 0));
+    assert!(!s.input.has_selection());
+    // Драг вправо на 5 колонок растит выделение "hello".
+    s.handle_mouse(mouse_at(
+        MouseEventKind::Drag(MouseButton::Left),
+        area.x + 5,
+        area.y,
+    ));
+    assert!(s.input.has_selection());
+    assert_eq!(s.input.selected_text().as_deref(), Some("hello"));
+}
+
+#[test]
+fn mouse_click_outside_input_does_not_move_cursor() {
+    use ratatui::Terminal;
+    use ratatui::backend::TestBackend;
+    use ratatui::crossterm::event::MouseButton;
+    let mut s = ChatScreen::new();
+    type_str(&mut s, "hello");
+    let mut term = Terminal::new(TestBackend::new(50, 16)).unwrap();
+    term.draw(|f| s.render(f)).unwrap();
+    // Клик в ленту (верх экрана, вне поля ввода) — курсор поля не двигается.
+    s.handle_mouse(mouse_at(MouseEventKind::Down(MouseButton::Left), 0, 0));
+    assert_eq!(s.input.cursor(), (0, 5)); // курсор остался в конце текста
+    assert!(!s.input.has_selection());
+}
+
 #[test]
 fn mouse_wheel_up_scrolls_feed_and_disables_follow() {
     let mut s = ChatScreen::new();

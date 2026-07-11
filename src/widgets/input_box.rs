@@ -114,6 +114,11 @@ pub struct InputBox {
     /// растит выделение, обычное движение — снимает; любая правка содержимого снимает
     /// (через [`Self::touch`]). См. [`Self::selection_span`], docs/input-selection-undo-mouse.md.
     anchor: Option<(usize, usize)>,
+    /// Внутренняя область текста последней отрисовки (после рамки и колонки `❯`).
+    /// Нужна маппингу клика мыши (экранные координаты → позиция в тексте): клик/драг
+    /// левой кнопкой ставит курсор / растит выделение (при захвате мыши `Ctrl+W`).
+    /// `None` до первого рендера. См. [`Self::place_cursor_at`], этап D плана.
+    last_area: Option<Rect>,
 }
 
 impl Default for InputBox {
@@ -171,6 +176,7 @@ impl InputBox {
             revision: 0,
             rows_cache: None,
             anchor: None,
+            last_area: None,
         }
     }
 
@@ -661,6 +667,74 @@ impl InputBox {
         true
     }
 
+    // ---------- мышь ----------
+
+    /// Ставит курсор по экранным координатам клика мыши `(mx, my)` (при захвате мыши
+    /// `Ctrl+W`). Возвращает, попал ли клик во внутреннюю область текста последней
+    /// отрисовки ([`Self::last_area`]). Курсор снапится к границе графемного кластера
+    /// (клик по широкому/эмодзи-глифу не садит его в середину, п.1); клик ниже
+    /// последнего ряда → конец текста, правее конца ряда → конец ряда. До первого
+    /// рендера (`last_area == None`) или клик вне области — no-op (`false`). Выделения
+    /// не трогает — им управляют [`Self::mouse_press`]/[`Self::mouse_drag`]. Сбрасывает
+    /// коалесинг отмены (как навигация). См. этап D плана.
+    fn place_cursor_at(&mut self, mx: u16, my: u16) -> bool {
+        let Some(area) = self.last_area else {
+            return false;
+        };
+        if mx < area.x || mx >= area.x + area.width || my < area.y || my >= area.y + area.height {
+            return false;
+        }
+        self.goal_col = None;
+        self.last_edit_kind = None; // клик рвёт коалесинг отмены (как навигация)
+        let vcol = (mx - area.x) as usize;
+        if self.single_line {
+            // Однострочный: колонка от левого края + горизонтальный скролл, снап к границе.
+            let line = &self.lines[0];
+            let col = col_at_width(line, self.hscroll + vcol).min(line.len());
+            self.col = wrap::snap_boundary(line, col);
+            return true;
+        }
+        let vrow = (my - area.y) as usize + self.scroll;
+        let vrows = self.rows_cached(self.last_width).to_vec();
+        if vrow >= vrows.len() {
+            // Ниже последнего ряда → конец текста.
+            self.row = self.lines.len() - 1;
+            self.col = self.lines[self.row].len();
+            return true;
+        }
+        let (li, start, end) = vrows[vrow];
+        // Внутри ряда: логический столбец по накопленной ширине; правее конца ряда
+        // `col_for_visual` даёт конец ряда (с откатом на мягком переносе) + снап.
+        self.col = col_for_visual(&self.lines[li], start, end, vcol, is_soft(&vrows, vrow));
+        self.row = li;
+        true
+    }
+
+    /// Ставит курсор по нажатию левой кнопки мыши и **начинает** выделение от этой
+    /// точки (пустое — курсор перемещён, видимого выделения ещё нет; драг растит его).
+    /// Возвращает, попал ли клик в область текста. См. [`Self::place_cursor_at`].
+    pub fn mouse_press(&mut self, mx: u16, my: u16) -> bool {
+        if self.place_cursor_at(mx, my) {
+            self.anchor = Some((self.row, self.col));
+            true
+        } else {
+            false
+        }
+    }
+
+    /// Двигает курсор по драгу мыши, **сохраняя** якорь — выделение растёт от точки
+    /// нажатия до текущей. Возвращает, попал ли драг в область текста.
+    pub fn mouse_drag(&mut self, mx: u16, my: u16) -> bool {
+        self.place_cursor_at(mx, my)
+    }
+
+    /// Внутренняя область текста последней отрисовки (для тестов проводки мыши —
+    /// вычислить экранные координаты клика по полю).
+    #[cfg(test)]
+    pub(crate) fn last_area_for_test(&self) -> Option<Rect> {
+        self.last_area
+    }
+
     // ---------- отмена / повтор ----------
 
     /// Снимок текущего содержимого (строки + курсор) для истории отмены.
@@ -1113,6 +1187,8 @@ impl InputBox {
             width: full_inner.width.saturating_sub(PROMPT_W),
             ..full_inner
         };
+        // Запоминаем для маппинга клика мыши (экран → позиция в тексте).
+        self.last_area = Some(inner);
 
         if self.single_line {
             self.render_single_line(frame, inner, focused, palette, command);
@@ -2536,6 +2612,121 @@ mod tests {
         ib.insert_str("XY");
         assert_eq!(ib.text(), "XY");
         assert!(!ib.has_selection());
+    }
+
+    // ---------- этап D: мышь (клик → курсор, драг → выделение) ----------
+
+    // `render_at(ib, inner_w)` рисует во внутреннюю ширину `inner_w`: рамка добавляет
+    // рамку (1 слева) + колонку приглашения `❯` (PROMPT_W), поэтому область текста
+    // начинается в экранном `x = 1 + PROMPT_W = 3`, `y = 1`. Экранные координаты
+    // клика по визуальной ячейке `(vrow, vcol)` — `(3 + vcol, 1 + vrow)`.
+    const TX: u16 = 1 + PROMPT_W; // левый край области текста при render_at
+    const TY: u16 = 1; // верхний край области текста
+
+    #[test]
+    fn place_cursor_at_maps_click_to_position() {
+        let mut ib = InputBox::new();
+        ib.set_text("hello world"); // одна логическая строка
+        render_at(&mut ib, 20); // широко — без переноса
+        // клик в середину строки → курсор туда
+        assert!(ib.place_cursor_at(TX + 3, TY));
+        assert_eq!(ib.cursor(), (0, 3));
+        // клик правее конца текста (в пределах области) → конец ряда
+        assert!(ib.place_cursor_at(TX + 15, TY));
+        assert_eq!(ib.cursor(), (0, 11));
+    }
+
+    #[test]
+    fn place_cursor_below_last_row_goes_to_text_end() {
+        let mut ib = InputBox::new();
+        ib.set_text("abc\ndef");
+        render_at(&mut ib, 20);
+        // клик ниже последнего ряда (но в пределах высоты области) → конец текста
+        assert!(ib.place_cursor_at(TX, TY + 5));
+        assert_eq!(ib.cursor(), (1, 3));
+    }
+
+    #[test]
+    fn place_cursor_snaps_to_cluster_boundary() {
+        // Клик в середину VS16-кластера ❤️ (❤ + U+FE0F, ширина 2) снапится к границе
+        // (0), а не садится между базой и селектором (иначе insert/backspace порвал бы).
+        let mut ib = InputBox::new();
+        ib.set_text("❤\u{FE0F}abc");
+        render_at(&mut ib, 20);
+        assert!(ib.place_cursor_at(TX + 1, TY)); // визуальная колонка 1 = середина ❤️
+        assert_ne!(ib.cursor(), (0, 1), "курсор сел в середину кластера ❤️");
+        assert_eq!(ib.cursor(), (0, 0));
+    }
+
+    #[test]
+    fn place_cursor_outside_area_is_noop() {
+        let mut ib = InputBox::new();
+        ib.set_text("hello");
+        render_at(&mut ib, 20);
+        ib.row = 0;
+        ib.col = 2;
+        // клик левее области текста (в колонке приглашения/рамке) — не двигает курсор
+        assert!(!ib.place_cursor_at(0, TY));
+        assert_eq!(ib.cursor(), (0, 2));
+    }
+
+    #[test]
+    fn place_cursor_before_render_is_noop() {
+        // До первого рендера last_area == None → клик игнорируется.
+        let mut ib = InputBox::new();
+        ib.set_text("hello");
+        assert!(!ib.place_cursor_at(3, 1));
+    }
+
+    #[test]
+    fn mouse_press_then_drag_builds_selection() {
+        let mut ib = InputBox::new();
+        ib.set_text("hello world");
+        render_at(&mut ib, 20);
+        // нажатие в колонке 0 — курсор туда, выделения ещё нет (пустое)
+        assert!(ib.mouse_press(TX, TY));
+        assert_eq!(ib.cursor(), (0, 0));
+        assert!(!ib.has_selection());
+        // драг до колонки 5 растит выделение "hello"
+        assert!(ib.mouse_drag(TX + 5, TY));
+        assert_eq!(ib.cursor(), (0, 5));
+        assert!(ib.has_selection());
+        assert_eq!(ib.selected_text().as_deref(), Some("hello"));
+    }
+
+    #[test]
+    fn mouse_press_without_drag_is_empty_selection() {
+        let mut ib = InputBox::new();
+        ib.set_text("hello");
+        render_at(&mut ib, 20);
+        assert!(ib.mouse_press(TX + 3, TY));
+        assert_eq!(ib.cursor(), (0, 3));
+        assert!(!ib.has_selection()); // клик без драга — курсор перемещён, выделения нет
+    }
+
+    #[test]
+    fn mouse_press_outside_keeps_cursor() {
+        let mut ib = InputBox::new();
+        ib.set_text("hello");
+        render_at(&mut ib, 20);
+        ib.row = 0;
+        ib.col = 4;
+        assert!(!ib.mouse_press(0, TY)); // вне области текста
+        assert_eq!(ib.cursor(), (0, 4));
+        assert!(!ib.has_selection());
+    }
+
+    #[test]
+    fn mouse_drag_selects_across_wrapped_rows() {
+        // Драг через мягкий перенос выделяет по логическим координатам.
+        let mut ib = InputBox::new();
+        ib.set_text("один два три"); // ширина 8: "один два " | "три"
+        render_at(&mut ib, 8);
+        assert!(ib.mouse_press(TX, TY)); // начало верхнего ряда (0,0)
+        assert_eq!(ib.cursor(), (0, 0));
+        assert!(ib.mouse_drag(TX + 1, TY + 1)); // нижний ряд "три", колонка 1
+        assert_eq!(ib.cursor(), (0, 10)); // "три" начинается на индексе 9 → +1 = 10
+        assert_eq!(ib.selected_text().as_deref(), Some("один два т"));
     }
 
     #[test]
