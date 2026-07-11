@@ -20,7 +20,7 @@ use crate::shared::keys;
 use crate::shared::theme::Palette;
 use crate::shared::ui::render_scrollbar;
 use crate::shared::wrap;
-use crate::widgets::input_box::InputBox;
+use crate::widgets::input_box::{InputBox, RenderOpts};
 
 /// Шаг постраничного перемещения выделения по `PageUp`/`PageDown`. Фиксированный,
 /// так как фактическая высота списка известна только во время рендера.
@@ -276,7 +276,6 @@ impl ChatListState {
     }
 
     fn on_key_rename(&mut self, key: KeyEvent) -> ChatListAction {
-        let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
         let Mode::Rename {
             id,
             input,
@@ -285,18 +284,10 @@ impl ChatListState {
         else {
             return ChatListAction::None;
         };
-        // Очистка всего текста (`Ctrl+K`; возврат — `Ctrl+Z`) — раскладко-независимо,
-        // как в чате. Прочие Ctrl-комбинации (пословная навигация `Ctrl+←/→`, удаление
-        // слова `Ctrl+Backspace/Delete`, `Ctrl+Home/End`, отмена/повтор `Ctrl+Z/Y`)
-        // обрабатывает сам `InputBox` ниже; незнакомые он глотает.
-        if ctrl
-            && let KeyCode::Char(c) = key.code
-            && keys::physical_char(c) == 'k'
-        {
-            input.clear_undoable();
-            *spell_dirty = true;
-            return ChatListAction::None;
-        }
+        // Все Ctrl-комбинации поля (очистка `Ctrl+K`, пословная навигация `Ctrl+←/→`,
+        // удаление слова `Ctrl+Backspace/Delete`, `Ctrl+Home/End`, отмена/повтор
+        // `Ctrl+Z/Y`) обрабатывает сам `InputBox` в `on_key` (раскладко-независимо);
+        // незнакомые он глотает. `Ctrl+K` → `Edited` → пометим подсветку на пересчёт.
         match key.code {
             KeyCode::Esc => {
                 self.mode = Mode::Search;
@@ -403,7 +394,12 @@ impl ChatListState {
         // переименования (однострочный `InputBox`: спелл-чек, пословная навигация,
         // настоящий курсор, горизонтальный скролл) ---
         if let Mode::Rename { input, .. } = &mut self.mode {
-            input.render(frame, search_area, "Переименование", true, palette, false);
+            input.render(
+                frame,
+                search_area,
+                RenderOpts::focused("Переименование"),
+                palette,
+            );
         } else {
             self.render_search(frame, search_area, palette);
         }

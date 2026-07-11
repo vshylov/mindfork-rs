@@ -158,6 +158,35 @@ impl KeyOutcome {
     }
 }
 
+/// Параметры отрисовки поля ввода — бандл вместо шести позиционных аргументов
+/// (прецедент — `StatusModel`, SOLID-этап 4a). `title` — заголовок рамки; `focused`
+/// ставит курсор и (при пустом поле) прячет плейсхолдер; `command` красит весь текст
+/// цветом `warning` и глушит подчёркивания орфографии (ввод распознан как команда
+/// `/rag …`); `placeholder` — серый текст пустого **не** сфокусированного поля.
+/// Раньше плейсхолдер был зашит («введите сообщение…») прямо в generic-виджет —
+/// семантически чужой для полей настроек/переименования/поиска (их спасало лишь то,
+/// что они всегда `focused`, и плейсхолдер не рисовался). См. п.12 аудита, spec §11.5.
+pub struct RenderOpts<'a> {
+    pub title: &'a str,
+    pub focused: bool,
+    pub command: bool,
+    pub placeholder: &'a str,
+}
+
+impl<'a> RenderOpts<'a> {
+    /// Сфокусированное поле без плейсхолдера и командной подсветки — типовой случай
+    /// модальных полей (переименование чата, редактор настроек/«модели себя», поиск):
+    /// они всегда `focused`, команд не распознают, а плейсхолдер им семантически чужой.
+    pub fn focused(title: &'a str) -> Self {
+        Self {
+            title,
+            focused: true,
+            command: false,
+            placeholder: "",
+        }
+    }
+}
+
 impl InputBox {
     pub fn new() -> Self {
         Self {
@@ -865,6 +894,13 @@ impl InputBox {
     /// Граница слова слева от курсора **в пределах текущей строки** (для пословного
     /// движения и удаления): пропускает пробелы, затем символы слова. См.
     /// [`Self::move_word_left`].
+    ///
+    /// «Слово» здесь — по классу **пробел/не-пробел** (пунктуация — часть слова), это
+    /// **осознанно расходится** с сегментацией спелл-чека (`features/spellcheck/segment.rs`,
+    /// где пунктуация — отдельный класс, чтобы не тащить её в проверяемое слово).
+    /// Пословная навигация/удаление живут по правилам редактора, орфография — по своим;
+    /// сводить их не нужно (у больших редакторов пунктуация тоже отдельный класс — это
+    /// известное упрощение, не баг). См. п.14 аудита InputBox.
     fn word_left_col(&self) -> usize {
         let line = &self.lines[self.row];
         let mut i = self.col;
@@ -1142,18 +1178,18 @@ impl InputBox {
         }
     }
 
-    /// Рисует поле в `area` с рамкой и заголовком. При `focused` ставит курсор.
-    /// При `command` весь текст подсвечивается цветом `warning` (это команда вроде
-    /// `/rag …`), а подчёркивания орфографии не рисуются. См. spec §11.5.
-    pub fn render(
-        &mut self,
-        frame: &mut Frame,
-        area: Rect,
-        title: &str,
-        focused: bool,
-        palette: &Palette,
-        command: bool,
-    ) {
+    /// Рисует поле в `area` с рамкой и заголовком. Параметры — в [`RenderOpts`]
+    /// (заголовок, фокус, командная подсветка, плейсхолдер); палитра — отдельно (как
+    /// у `StatusModel`). При `focused` ставит курсор. При `command` весь текст
+    /// подсвечивается цветом `warning` (это команда вроде `/rag …`), а подчёркивания
+    /// орфографии не рисуются. См. spec §11.5.
+    pub fn render(&mut self, frame: &mut Frame, area: Rect, opts: RenderOpts, palette: &Palette) {
+        let RenderOpts {
+            title,
+            focused,
+            command,
+            placeholder,
+        } = opts;
         let block = Block::default()
             .borders(Borders::ALL)
             .border_type(palette.glyphs().border)
@@ -1191,7 +1227,7 @@ impl InputBox {
         self.last_area = Some(inner);
 
         if self.single_line {
-            self.render_single_line(frame, inner, focused, palette, command);
+            self.render_single_line(frame, inner, focused, command, placeholder, palette);
             return;
         }
 
@@ -1228,9 +1264,9 @@ impl InputBox {
                 styled_line(sub, mis.as_deref(), sel, base_fg, palette)
             })
             .collect();
-        let placeholder = self.is_empty() && !focused;
-        let text = if placeholder {
-            Text::from(Line::from("введите сообщение…").dim())
+        let show_placeholder = self.is_empty() && !focused;
+        let text = if show_placeholder {
+            Text::from(Line::from(placeholder).dim())
         } else {
             Text::from(lines)
         };
@@ -1267,8 +1303,9 @@ impl InputBox {
         frame: &mut Frame,
         inner: Rect,
         focused: bool,
-        palette: &Palette,
         command: bool,
+        placeholder: &str,
+        palette: &Palette,
     ) {
         let view_w = inner.width.max(1) as usize;
         self.last_width = view_w;
@@ -1301,9 +1338,9 @@ impl InputBox {
         }
         let sub = &line[start..end];
 
-        let placeholder = self.is_empty() && !focused;
-        let text = if placeholder {
-            Text::from(Line::from("введите сообщение…").dim())
+        let show_placeholder = self.is_empty() && !focused;
+        let text = if show_placeholder {
+            Text::from(Line::from(placeholder).dim())
         } else {
             let base_fg = command.then_some(palette.warning);
             let mis = if command {
@@ -1828,8 +1865,15 @@ mod tests {
         ib.set_text("helo world\nпревед");
         ib.set_misspelled(vec![vec![(0, 4)], vec![(0, 6)]]);
         let mut term = Terminal::new(TestBackend::new(20, 4)).unwrap();
-        term.draw(|f| ib.render(f, f.area(), "ввод", true, &Palette::default(), false))
-            .unwrap();
+        term.draw(|f| {
+            ib.render(
+                f,
+                f.area(),
+                RenderOpts::focused("ввод"),
+                &Palette::default(),
+            )
+        })
+        .unwrap();
     }
 
     #[test]
@@ -1839,8 +1883,15 @@ mod tests {
         let mut ib = InputBox::new();
         ib.set_text("строка 1\nстрока 2\nстрока 3");
         let mut term = Terminal::new(TestBackend::new(20, 4)).unwrap();
-        term.draw(|f| ib.render(f, f.area(), "ввод", true, &Palette::default(), false))
-            .unwrap();
+        term.draw(|f| {
+            ib.render(
+                f,
+                f.area(),
+                RenderOpts::focused("ввод"),
+                &Palette::default(),
+            )
+        })
+        .unwrap();
     }
 
     #[test]
@@ -1852,8 +1903,18 @@ mod tests {
         // даже при наличии «ошибок» в режиме команды подчёркивания не рисуются
         ib.set_misspelled(vec![vec![(0, 4)]]);
         let mut term = Terminal::new(TestBackend::new(24, 3)).unwrap();
-        term.draw(|f| ib.render(f, f.area(), "ввод", true, &Palette::default(), true))
-            .unwrap();
+        term.draw(|f| {
+            ib.render(
+                f,
+                f.area(),
+                RenderOpts {
+                    command: true,
+                    ..RenderOpts::focused("ввод")
+                },
+                &Palette::default(),
+            )
+        })
+        .unwrap();
     }
 
     #[test]
@@ -1975,8 +2036,15 @@ mod tests {
         use ratatui::Terminal;
         use ratatui::backend::TestBackend;
         let mut term = Terminal::new(TestBackend::new(inner_w + 2 + PROMPT_W, 8)).unwrap();
-        term.draw(|f| ib.render(f, f.area(), "ввод", true, &Palette::default(), false))
-            .unwrap();
+        term.draw(|f| {
+            ib.render(
+                f,
+                f.area(),
+                RenderOpts::focused("ввод"),
+                &Palette::default(),
+            )
+        })
+        .unwrap();
     }
 
     #[test]
@@ -2141,8 +2209,15 @@ mod tests {
         ib.set_single_line(true);
         ib.set_text("/very/long/path/to/a/gguf/model/that/does/not/fit.gguf");
         let mut term = Terminal::new(TestBackend::new(20, 3)).unwrap();
-        term.draw(|f| ib.render(f, f.area(), "ввод", true, &Palette::default(), false))
-            .unwrap();
+        term.draw(|f| {
+            ib.render(
+                f,
+                f.area(),
+                RenderOpts::focused("ввод"),
+                &Palette::default(),
+            )
+        })
+        .unwrap();
     }
 
     #[test]
@@ -2242,8 +2317,15 @@ mod tests {
         ib.set_text("очень длинная строка которая точно не влезает в узкое поле ввода");
         ib.set_misspelled(vec![vec![(0, 5)]]);
         let mut term = Terminal::new(TestBackend::new(12, 4)).unwrap();
-        term.draw(|f| ib.render(f, f.area(), "ввод", true, &Palette::default(), false))
-            .unwrap();
+        term.draw(|f| {
+            ib.render(
+                f,
+                f.area(),
+                RenderOpts::focused("ввод"),
+                &Palette::default(),
+            )
+        })
+        .unwrap();
     }
 
     // ---------- п.1: снап курсора к границе кластера ----------
@@ -2591,7 +2673,7 @@ mod tests {
         ib.on_key(ctrl(KeyCode::Char('a'))); // выделить всё
         let pal = Palette::default();
         let mut term = Terminal::new(TestBackend::new(20, 3)).unwrap();
-        term.draw(|f| ib.render(f, f.area(), "ввод", true, &pal, false))
+        term.draw(|f| ib.render(f, f.area(), RenderOpts::focused("ввод"), &pal))
             .unwrap();
         let buf = term.backend().buffer();
         let area = buf.area;
@@ -2744,18 +2826,71 @@ mod tests {
         let mut ib = InputBox::new();
         ib.set_text("a\nb"); // 2 ряда во внутренней высоте 2 — помещается
         let mut term = Terminal::new(TestBackend::new(20, 4)).unwrap();
-        term.draw(|f| ib.render(f, f.area(), "ввод", true, &Palette::default(), false))
-            .unwrap();
+        term.draw(|f| {
+            ib.render(
+                f,
+                f.area(),
+                RenderOpts::focused("ввод"),
+                &Palette::default(),
+            )
+        })
+        .unwrap();
         assert!(
             !right_col(&term).iter().any(|s| s == "█"),
             "помещающийся текст — без бегунка"
         );
         ib.set_text("1\n2\n3\n4\n5\n6"); // 6 рядов, видно 2 — прокрутка
-        term.draw(|f| ib.render(f, f.area(), "ввод", true, &Palette::default(), false))
-            .unwrap();
+        term.draw(|f| {
+            ib.render(
+                f,
+                f.area(),
+                RenderOpts::focused("ввод"),
+                &Palette::default(),
+            )
+        })
+        .unwrap();
         assert!(
             right_col(&term).iter().any(|s| s == "█"),
             "прокручиваемое поле — с бегунком"
         );
+    }
+
+    #[test]
+    fn placeholder_is_configurable_on_unfocused_empty_field() {
+        use ratatui::Terminal;
+        use ratatui::backend::TestBackend;
+        // Плейсхолдер рисуется у пустого НЕ сфокусированного поля и берётся из
+        // `RenderOpts` (раньше был зашит «введите сообщение…» в generic-виджет, п.12).
+        let render_ph = |ph: &str| -> String {
+            let mut ib = InputBox::new();
+            let mut term = Terminal::new(TestBackend::new(30, 3)).unwrap();
+            term.draw(|f| {
+                ib.render(
+                    f,
+                    f.area(),
+                    RenderOpts {
+                        title: "поле",
+                        focused: false,
+                        command: false,
+                        placeholder: ph,
+                    },
+                    &Palette::default(),
+                )
+            })
+            .unwrap();
+            let buf = term.backend().buffer();
+            let area = buf.area;
+            (area.top()..area.bottom())
+                .map(|y| {
+                    (area.left()..area.right())
+                        .map(|x| buf[(x, y)].symbol().to_string())
+                        .collect::<String>()
+                })
+                .collect::<Vec<_>>()
+                .join("")
+        };
+        assert!(render_ph("введите сообщение…").contains("введите сообщение"));
+        // Другой текст — тоже отображается (не зашит): подтверждает конфигурируемость.
+        assert!(render_ph("свой плейсхолдер").contains("свой плейсхолдер"));
     }
 }

@@ -21,7 +21,7 @@ use crate::shared::keys;
 use crate::shared::theme::Palette;
 use crate::shared::ui::dim_background;
 use crate::shared::wrap::wrap_line;
-use crate::widgets::input_box::InputBox;
+use crate::widgets::input_box::{InputBox, RenderOpts};
 
 /// Намерение экрана «модели себя» (транслируется `app`). Параллель к
 /// [`ChatListIntent`](crate::screens::chat_list::ChatListIntent).
@@ -380,12 +380,8 @@ impl SelfModelScreen {
                 let editor = self.editor.take().unwrap();
                 commit_edit(editor.kind, editor.input.text())
             }
-            (KeyCode::Char(c), m)
-                if m.contains(KeyModifiers::CONTROL) && keys::physical_char(c) == 'k' =>
-            {
-                editor.input.clear_undoable();
-                None
-            }
+            // Ctrl+K (очистка поля, возврат — `Ctrl+Z`) и прочие Ctrl-комбинации поля
+            // обрабатывает сам `InputBox` в `on_key` (раскладко-независимо).
             _ => {
                 editor.input.on_key(key);
                 None
@@ -523,7 +519,7 @@ impl SelfModelScreen {
             frame.render_widget(Clear, popup);
             editor
                 .input
-                .render(frame, popup, title, true, &palette, false);
+                .render(frame, popup, RenderOpts::focused(title), &palette);
         }
     }
 }

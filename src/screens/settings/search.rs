@@ -134,15 +134,8 @@ impl SettingsScreen {
                     s.selected += 1;
                 }
             }
-            // Ctrl+K — очистить/вернуть запрос (как в прочих полях).
-            (KeyCode::Char(c), m)
-                if m.contains(KeyModifiers::CONTROL) && keys::physical_char(c) == 'k' =>
-            {
-                if let Some(s) = &mut self.search {
-                    s.input.clear_undoable();
-                }
-                self.search_filter();
-            }
+            // Ctrl+K (очистка запроса, возврат — `Ctrl+Z`) и прочие Ctrl-комбинации
+            // поля обрабатывает сам `InputBox` в `on_key`; фильтр перезапускаем ниже.
             _ => {
                 if let Some(s) = &mut self.search {
                     s.input.on_key(key);

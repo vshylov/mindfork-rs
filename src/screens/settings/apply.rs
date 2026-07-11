@@ -210,15 +210,9 @@ impl SettingsScreen {
                 let editor = self.editor.take().unwrap();
                 self.apply_text(editor.field, &text)
             }
-            // Удалить весь текст поля (spec §11.5; возврат — Ctrl+Z). Матчим по
-            // «физической» клавише — срабатывает при любой раскладке (как в чат-вводе).
-            (KeyCode::Char(c), m)
-                if m.contains(KeyModifiers::CONTROL) && keys::physical_char(c) == 'k' =>
-            {
-                editor.input.clear_undoable();
-                editor.error = None;
-                None
-            }
+            // Все Ctrl-комбинации поля (очистка `Ctrl+K` с возвратом по `Ctrl+Z`,
+            // пословная навигация/удаление, отмена/повтор) обрабатывает сам `InputBox`
+            // в `on_key` (раскладко-независимо); `editor.error` сбрасываем ниже.
             _ => {
                 editor.input.on_key(key);
                 editor.error = None; // правка сбрасывает прежнюю ошибку
