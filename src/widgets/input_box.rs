@@ -9,10 +9,11 @@
 use ratatui::Frame;
 use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 use ratatui::layout::{Margin, Rect};
-use ratatui::style::{Style, Stylize};
+use ratatui::style::{Color, Style, Stylize};
 use ratatui::text::{Line, Span, Text};
 use ratatui::widgets::{Block, Borders, Paragraph};
 
+use crate::shared::keys;
 use crate::shared::theme::Palette;
 use crate::shared::ui::render_scrollbar;
 use crate::shared::wrap;
@@ -76,6 +77,13 @@ pub struct InputBox {
     /// [`Self::render`], навигация `↑/↓`), а меняется лишь при правке или смене ширины.
     /// Инвалидируется по `(width, revision)`. См. [`Self::rows_cached`].
     rows_cache: RowCache,
+    /// Якорь выделения `(строка, столбец)` в индексах символов. `Some` — есть активное
+    /// выделение `[anchor, cursor]` (нормализуется при использовании: начало = меньшая
+    /// из позиций в лексикографическом порядке `(строка, столбец)`). `None` — выделения
+    /// нет; курсор — существующие `(row, col)`. Движение с `Shift` ставит якорь и
+    /// растит выделение, обычное движение — снимает; любая правка содержимого снимает
+    /// (через [`Self::touch`]). См. [`Self::selection_span`], docs/input-selection-undo-mouse.md.
+    anchor: Option<(usize, usize)>,
 }
 
 impl Default for InputBox {
@@ -130,6 +138,7 @@ impl InputBox {
             cleared: None,
             revision: 0,
             rows_cache: None,
+            anchor: None,
         }
     }
 
@@ -357,6 +366,7 @@ impl InputBox {
     // ---------- редактирование ----------
 
     pub fn insert_char(&mut self, c: char) {
+        self.delete_selection(); // ввод поверх выделения заменяет его
         self.lines[self.row].insert(self.col, c);
         self.edit_misspelled(self.row, self.col, 0, 1);
         self.col += 1;
@@ -369,6 +379,7 @@ impl InputBox {
         if self.single_line {
             return; // в однострочном режиме перевод строки запрещён
         }
+        self.delete_selection(); // перевод строки поверх выделения заменяет его
         let tail = self.lines[self.row].split_off(self.col);
         self.lines.insert(self.row + 1, tail);
         // Синхронизируем подчёркивания: текущую строку сбрасываем (её хвост уехал на
@@ -390,6 +401,7 @@ impl InputBox {
     /// встаёт в конец вставленного. Один проход без посимвольной петли — поэтому
     /// большая вставка не тормозит (см. bracketed paste, spec §11.5).
     pub fn insert_str(&mut self, text: &str) {
+        self.delete_selection(); // вставка поверх выделения заменяет его
         // Хвост текущей строки после курсора — приклеим к последней вставленной.
         let tail: Vec<char> = self.lines[self.row].split_off(self.col);
         // В однострочном режиме переводы строк превращаем в пробелы (одна строка).
@@ -422,6 +434,9 @@ impl InputBox {
     }
 
     pub fn backspace(&mut self) {
+        if self.delete_selection() {
+            return; // при выделении Backspace удаляет его целиком
+        }
         self.goal_col = None;
         if self.col > 0 {
             // Удаляем кластер целиком (`❤️`/`👍🏽` — несколько скаляров), а не один
@@ -443,6 +458,9 @@ impl InputBox {
     }
 
     pub fn delete(&mut self) {
+        if self.delete_selection() {
+            return; // при выделении Delete удаляет его целиком
+        }
         self.goal_col = None;
         if self.col < self.lines[self.row].len() {
             // Удаляем кластер целиком (зеркально `backspace`), а не один скаляр.
@@ -472,6 +490,115 @@ impl InputBox {
         {
             r.clear();
         }
+    }
+
+    // ---------- выделение ----------
+
+    /// Есть ли непустое выделение (якорь стоит и не совпал с курсором). Публичный —
+    /// нужен консьюмерам этапа B (копирование/вырезание, docs/input-selection-undo-mouse.md);
+    /// пока используется только тестами и внутри виджета.
+    #[allow(dead_code)]
+    pub fn has_selection(&self) -> bool {
+        matches!(self.anchor, Some(a) if a != (self.row, self.col))
+    }
+
+    /// Нормализованный диапазон выделения `(начало, конец)` в лексикографическом
+    /// порядке `(строка, столбец)`. `None`, если выделения нет (якорь снят или совпал
+    /// с курсором).
+    fn selection_span(&self) -> Option<((usize, usize), (usize, usize))> {
+        let a = self.anchor?;
+        let c = (self.row, self.col);
+        if a == c {
+            return None;
+        }
+        Some(if a <= c { (a, c) } else { (c, a) })
+    }
+
+    /// Текст выделения (строки через `\n`), либо `None`. Для копирования/вырезания
+    /// (консьюмеры этапа B); пока используется только тестами.
+    #[allow(dead_code)]
+    pub fn selected_text(&self) -> Option<String> {
+        let ((sr, sc), (er, ec)) = self.selection_span()?;
+        let mut out = String::new();
+        if sr == er {
+            out.extend(self.lines[sr][sc..ec].iter().copied());
+        } else {
+            out.extend(self.lines[sr][sc..].iter().copied());
+            out.push('\n');
+            for line in &self.lines[sr + 1..er] {
+                out.extend(line.iter().copied());
+                out.push('\n');
+            }
+            out.extend(self.lines[er][..ec].iter().copied());
+        }
+        Some(out)
+    }
+
+    /// Ставит якорь в текущий курсор, если его ещё нет (перед `Shift`-навигацией —
+    /// начало выделения). Уже поставленный якорь не сдвигает (выделение растёт от него).
+    fn set_anchor_if_none(&mut self) {
+        if self.anchor.is_none() {
+            self.anchor = Some((self.row, self.col));
+        }
+    }
+
+    /// Снимает выделение (обычная навигация без `Shift`).
+    fn clear_selection(&mut self) {
+        self.anchor = None;
+    }
+
+    /// Выделяет весь текст (`Ctrl+A`): якорь — начало, курсор — конец.
+    fn select_all(&mut self) {
+        self.anchor = Some((0, 0));
+        self.row = self.lines.len() - 1;
+        self.col = self.lines[self.row].len();
+        self.goal_col = None;
+    }
+
+    /// Удаляет выделенный текст, ставит курсор в его начало, снимает выделение.
+    /// Возвращает, было ли что удалять. Многострочное выделение склеивает строки;
+    /// подчёркивания орфографии синхронизируются (как при удалении/склейке, п.5).
+    pub fn delete_selection(&mut self) -> bool {
+        let Some(((sr, sc), (er, ec))) = self.selection_span() else {
+            return false;
+        };
+        // Синхронизация `misspelled`: одна строка — сдвиг/сброс диапазонов; несколько —
+        // убрать записи промежуточных/последней строк и сбросить запись первой.
+        if sr == er {
+            self.edit_misspelled(sr, sc, ec - sc, 0);
+        } else {
+            for _ in sr..er {
+                if sr + 1 < self.misspelled.len() {
+                    self.misspelled.remove(sr + 1);
+                }
+            }
+            if let Some(m) = self.misspelled.get_mut(sr) {
+                m.clear();
+            }
+        }
+        // Склейка: `lines[sr][..sc]` + `lines[er][ec..]`, промежуточные строки убрать.
+        let tail: Vec<char> = self.lines[er][ec..].to_vec();
+        self.lines[sr].truncate(sc);
+        self.lines[sr].extend(tail);
+        self.lines.drain((sr + 1)..=er);
+        self.row = sr;
+        self.col = sc;
+        self.goal_col = None;
+        self.cleared = None;
+        self.touch(); // снимает anchor + инвалидирует кэш
+        true
+    }
+
+    /// Диапазон выделения на визуальном ряду `[start, end)` логической строки `li` в
+    /// **row-local** координатах (для подсветки фона в рендере), либо `None`.
+    fn row_selection(&self, li: usize, start: usize, end: usize) -> Option<(usize, usize)> {
+        let ((sr, sc), (er, ec)) = self.selection_span()?;
+        if li < sr || li > er {
+            return None;
+        }
+        let s = if li == sr { sc.max(start) } else { start };
+        let e = if li == er { ec.min(end) } else { end };
+        (s < e).then(|| (s - start, e - start))
     }
 
     // ---------- движение курсора ----------
@@ -559,6 +686,9 @@ impl InputBox {
     /// Удаляет слово слева от курсора (`Ctrl+Backspace`). В начале строки склеивает
     /// со строкой выше (как обычный `Backspace`).
     fn delete_word_left(&mut self) {
+        if self.delete_selection() {
+            return; // при выделении Ctrl+Backspace удаляет его целиком
+        }
         self.goal_col = None;
         self.cleared = None;
         if self.col == 0 {
@@ -575,6 +705,9 @@ impl InputBox {
     /// Удаляет слово справа от курсора (`Ctrl+Delete`). В конце строки склеивает со
     /// строкой ниже (как обычный `Delete`).
     fn delete_word_right(&mut self) {
+        if self.delete_selection() {
+            return; // при выделении Ctrl+Delete удаляет его целиком
+        }
         self.goal_col = None;
         self.cleared = None;
         if self.col >= self.lines[self.row].len() {
@@ -707,10 +840,16 @@ impl InputBox {
     }
 
     /// Обрабатывает клавишу редактирования. Возвращает [`KeyOutcome`]: `Edited`
-    /// (содержимое изменено), `Moved` (сдвинут курсор) или `Ignored` (клавиша не
-    /// обработана — вызывающий трактует её дальше). `Enter` НЕ обрабатывается
+    /// (содержимое изменено), `Moved` (сдвинут курсор/выделение) или `Ignored` (клавиша
+    /// не обработана — вызывающий трактует её дальше). `Enter` НЕ обрабатывается
     /// (политику отправки/переноса задаёт вызывающий слой). Различие `Edited`/`Moved`
     /// нужно вызывающему, чтобы не помечать ввод «грязным» на голой навигации.
+    ///
+    /// **Выделение** (etape A, docs/input-selection-undo-mouse.md): `Shift`+навигация
+    /// растит выделение (ставит якорь), обычная навигация — снимает; `Ctrl+A` выделяет
+    /// всё; правка при активном выделении сперва удаляет его (ввод/`Backspace`/`Delete`
+    /// поверх выделения заменяют/удаляют его целиком). Копирование/вырезание —
+    /// side-effect вызывающего слоя (§B плана), виджет отдаёт [`Self::selected_text`].
     pub fn on_key(&mut self, key: KeyEvent) -> KeyOutcome {
         if key.kind != KeyEventKind::Press {
             return KeyOutcome::Ignored;
@@ -719,6 +858,31 @@ impl InputBox {
         // (`Ctrl+←/→` — по словам, `Ctrl+Backspace/Delete` — удалить слово,
         // `Ctrl+Home/End` — в начало/конец текста). См. spec §11.5.
         let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
+        let shift = key.modifiers.contains(KeyModifiers::SHIFT);
+
+        // Ctrl+A — выделить всё (раскладко-независимо, как прочие Ctrl-шорткаты).
+        if ctrl
+            && let KeyCode::Char(c) = key.code
+            && keys::physical_char(c) == 'a'
+        {
+            self.select_all();
+            return KeyOutcome::Moved;
+        }
+
+        // Навигация (в т.ч. `Ctrl`+слово / `Ctrl`+начало/конец): с `Shift` растим
+        // выделение (ставим якорь до движения), без — снимаем.
+        if let Some(mv) = navigation(key.code, ctrl) {
+            if shift {
+                self.set_anchor_if_none();
+            } else {
+                self.clear_selection();
+            }
+            mv(self);
+            return KeyOutcome::Moved;
+        }
+
+        // Правка: замену/удаление выделения делают сами мутаторы (в начале —
+        // `delete_selection`), поэтому вставка/`Shift+Enter`/эмодзи тоже её уважают.
         match key.code {
             KeyCode::Backspace if ctrl => {
                 self.delete_word_left();
@@ -727,22 +891,6 @@ impl InputBox {
             KeyCode::Delete if ctrl => {
                 self.delete_word_right();
                 KeyOutcome::Edited
-            }
-            KeyCode::Left if ctrl => {
-                self.move_word_left();
-                KeyOutcome::Moved
-            }
-            KeyCode::Right if ctrl => {
-                self.move_word_right();
-                KeyOutcome::Moved
-            }
-            KeyCode::Home if ctrl => {
-                self.move_doc_start();
-                KeyOutcome::Moved
-            }
-            KeyCode::End if ctrl => {
-                self.move_doc_end();
-                KeyOutcome::Moved
             }
             // Обычный ввод символа: Ctrl+символ не печатаем (это шорткат вышестоящего
             // слоя), иначе в поле попал бы управляющий символ.
@@ -757,30 +905,6 @@ impl InputBox {
             KeyCode::Delete => {
                 self.delete();
                 KeyOutcome::Edited
-            }
-            KeyCode::Left => {
-                self.move_left();
-                KeyOutcome::Moved
-            }
-            KeyCode::Right => {
-                self.move_right();
-                KeyOutcome::Moved
-            }
-            KeyCode::Up => {
-                self.move_up();
-                KeyOutcome::Moved
-            }
-            KeyCode::Down => {
-                self.move_down();
-                KeyOutcome::Moved
-            }
-            KeyCode::Home => {
-                self.move_home();
-                KeyOutcome::Moved
-            }
-            KeyCode::End => {
-                self.move_end();
-                KeyOutcome::Moved
             }
             _ => KeyOutcome::Ignored,
         }
@@ -850,23 +974,24 @@ impl InputBox {
         let (cursor_row, cursor_col) = self.cursor_visual(&vrows);
         self.adjust_scroll(cursor_row, vrows.len(), visible_rows);
 
-        // В режиме команды весь текст красим в `warning` и не подчёркиваем ошибки.
-        let cmd_style = command.then(|| Style::new().fg(palette.warning));
+        // В режиме команды весь текст красим в `warning` и не подчёркиваем ошибки;
+        // выделение (фон) показываем в любом режиме.
+        let base_fg = command.then_some(palette.warning);
         let lines: Vec<Line> = vrows
             .iter()
             .skip(self.scroll)
             .take(visible_rows)
             .map(|&(li, start, end)| {
                 let sub = &self.lines[li][start..end];
-                if let Some(style) = cmd_style {
-                    Line::styled(sub.iter().collect::<String>(), style)
+                let mis = if command {
+                    None
                 } else {
-                    let ranges = self
-                        .misspelled
+                    self.misspelled
                         .get(li)
-                        .map(|rs| clip_ranges(rs, start, end));
-                    styled_line(sub, ranges.as_deref(), palette)
-                }
+                        .map(|rs| clip_ranges(rs, start, end))
+                };
+                let sel = self.row_selection(li, start, end);
+                styled_line(sub, mis.as_deref(), sel, base_fg, palette)
             })
             .collect();
         let placeholder = self.is_empty() && !focused;
@@ -945,14 +1070,17 @@ impl InputBox {
         let placeholder = self.is_empty() && !focused;
         let text = if placeholder {
             Text::from(Line::from("введите сообщение…").dim())
-        } else if let Some(style) = command.then(|| Style::new().fg(palette.warning)) {
-            Text::from(Line::styled(sub.iter().collect::<String>(), style))
         } else {
-            let ranges = self
-                .misspelled
-                .first()
-                .map(|rs| clip_ranges(rs, start, end));
-            Text::from(styled_line(sub, ranges.as_deref(), palette))
+            let base_fg = command.then_some(palette.warning);
+            let mis = if command {
+                None
+            } else {
+                self.misspelled
+                    .first()
+                    .map(|rs| clip_ranges(rs, start, end))
+            };
+            let sel = self.row_selection(0, start, end);
+            Text::from(styled_line(sub, mis.as_deref(), sel, base_fg, palette))
         };
         frame.render_widget(Paragraph::new(text), inner);
 
@@ -964,10 +1092,13 @@ impl InputBox {
     }
 
     /// Помечает содержимое изменённым — инвалидирует кэш визуальных рядов (следующий
-    /// [`Self::rows_cached`] увидит несовпадение ревизии). Зовётся всеми мутаторами
-    /// `lines`; навигация его НЕ зовёт (движение курсора не меняет ряды).
+    /// [`Self::rows_cached`] увидит несовпадение ревизии) и **снимает выделение**
+    /// (после правки якорь указывал бы на устаревшие координаты). Зовётся всеми
+    /// мутаторами `lines`; навигация его НЕ зовёт (она сама ведёт `anchor`).
+    /// [`Self::delete_selection`] снимает `anchor` до `touch` — двойной сброс безвреден.
     fn touch(&mut self) {
         self.revision = self.revision.wrapping_add(1);
+        self.anchor = None;
     }
 
     /// Визуальные ряды с кэшем по `(ширина, ревизия)` (см. [`Self::rows_cache`]).
@@ -1038,6 +1169,27 @@ impl InputBox {
     }
 }
 
+/// Метод движения курсора для клавиши навигации (или `None`, если клавиша — не
+/// навигация). Выделено таблицей, чтобы логику выделения (`Shift` → якорь, обычное →
+/// снять) применить единообразно ко всем направлениям без дублирования веток. `Ctrl`
+/// усиливает `←/→` до слова, `Home/End` — до границ текста; `Ctrl+↑/↓` не задан
+/// (падает в `None` → `Ignored`, как раньше).
+fn navigation(code: KeyCode, ctrl: bool) -> Option<fn(&mut InputBox)> {
+    Some(match (code, ctrl) {
+        (KeyCode::Left, true) => InputBox::move_word_left,
+        (KeyCode::Right, true) => InputBox::move_word_right,
+        (KeyCode::Home, true) => InputBox::move_doc_start,
+        (KeyCode::End, true) => InputBox::move_doc_end,
+        (KeyCode::Left, false) => InputBox::move_left,
+        (KeyCode::Right, false) => InputBox::move_right,
+        (KeyCode::Up, false) => InputBox::move_up,
+        (KeyCode::Down, false) => InputBox::move_down,
+        (KeyCode::Home, false) => InputBox::move_home,
+        (KeyCode::End, false) => InputBox::move_end,
+        _ => return None,
+    })
+}
+
 /// Нормализует текст из буфера обмена перед вставкой: `\r\n`/`\r` → `\n`
 /// (единый перевод строки), `\t` → пробелы. Прочие управляющие символы оставляем
 /// как есть (терминал/рендер их отфильтруют).
@@ -1106,36 +1258,50 @@ fn clip_ranges(ranges: &[(usize, usize)], start: usize, end: usize) -> Vec<(usiz
         .collect()
 }
 
-/// Строит строку, подчёркивая (`UNDERLINED`, цветом ошибки темы) диапазоны ошибок.
-/// `ranges` — отсортированные непересекающиеся `[start, end)` в символах.
+/// Строит строку, компонуя три оформления по символам: подчёркивание ошибок
+/// орфографии (`misspelled`, `UNDERLINED` + цвет ошибки), фон выделения (`selection`,
+/// `keycap_bg`) и базовый цвет команды (`base_fg`, весь текст). Диапазоны — row-local
+/// `[start, end)` в символах; выделение и ошибки могут пересекаться (складываются:
+/// подчёркнуто И на фоне). Быстрый путь — когда оформлять нечего.
 fn styled_line(
     chars: &[char],
-    ranges: Option<&[(usize, usize)]>,
+    misspelled: Option<&[(usize, usize)]>,
+    selection: Option<(usize, usize)>,
+    base_fg: Option<Color>,
     palette: &Palette,
 ) -> Line<'static> {
-    let ranges = match ranges {
-        Some(r) if !r.is_empty() => r,
-        _ => return Line::from(chars.iter().collect::<String>()),
-    };
-    let bad = Style::new().underlined().fg(palette.error);
-    let mut spans: Vec<Span<'static>> = Vec::new();
-    let mut pos = 0;
-    for &(start, end) in ranges {
-        let start = start.min(chars.len());
-        let end = end.min(chars.len());
-        if start > pos {
-            spans.push(Span::raw(chars[pos..start].iter().collect::<String>()));
-        }
-        if end > start {
-            spans.push(Span::styled(
-                chars[start..end].iter().collect::<String>(),
-                bad,
-            ));
-        }
-        pos = end.max(pos);
+    let has_mis = misspelled.is_some_and(|r| !r.is_empty());
+    let has_sel = selection.is_some_and(|(s, e)| e > s);
+    if !has_mis && !has_sel && base_fg.is_none() {
+        return Line::from(chars.iter().collect::<String>());
     }
-    if pos < chars.len() {
-        spans.push(Span::raw(chars[pos..].iter().collect::<String>()));
+    let n = chars.len();
+    let base = base_fg.map(|c| Style::new().fg(c)).unwrap_or_default();
+    let mut styles = vec![base; n];
+    if let Some(ranges) = misspelled {
+        let bad = Style::new().underlined().fg(palette.error);
+        for &(s, e) in ranges {
+            for st in styles.iter_mut().take(e.min(n)).skip(s.min(n)) {
+                *st = st.patch(bad);
+            }
+        }
+    }
+    if let Some((s, e)) = selection {
+        for st in styles.iter_mut().take(e.min(n)).skip(s.min(n)) {
+            *st = st.bg(palette.keycap_bg);
+        }
+    }
+    // Склеиваем соседние символы с одинаковым стилем в спаны.
+    let mut spans: Vec<Span<'static>> = Vec::new();
+    let mut i = 0;
+    while i < n {
+        let st = styles[i];
+        let mut buf = String::new();
+        while i < n && styles[i] == st {
+            buf.push(chars[i]);
+            i += 1;
+        }
+        spans.push(Span::styled(buf, st));
     }
     Line::from(spans)
 }
@@ -1151,6 +1317,14 @@ mod tests {
 
     fn ctrl(code: KeyCode) -> KeyEvent {
         KeyEvent::new(code, KeyModifiers::CONTROL)
+    }
+
+    fn shift(code: KeyCode) -> KeyEvent {
+        KeyEvent::new(code, KeyModifiers::SHIFT)
+    }
+
+    fn ctrl_shift(code: KeyCode) -> KeyEvent {
+        KeyEvent::new(code, KeyModifiers::CONTROL | KeyModifiers::SHIFT)
     }
 
     fn type_str(ib: &mut InputBox, s: &str) {
@@ -1776,9 +1950,10 @@ mod tests {
 
     #[test]
     fn ctrl_char_is_not_inserted() {
-        // Ctrl+символ — шорткат вышестоящего слоя, в поле не печатается.
+        // Ctrl+символ — шорткат вышестоящего слоя, в поле не печатается. Берём `j`
+        // (нейтральный; `a` теперь «выделить всё», прочие Ctrl-буквы не обработаны).
         let mut ib = InputBox::new();
-        assert!(!ib.on_key(ctrl(KeyCode::Char('a'))).handled());
+        assert!(!ib.on_key(ctrl(KeyCode::Char('j'))).handled());
         assert!(ib.is_empty());
     }
 
@@ -2031,6 +2206,135 @@ mod tests {
         assert_eq!(ib.first_non_whitespace(), Some('x'));
         ib.set_text("   "); // только пробелы
         assert_eq!(ib.first_non_whitespace(), None);
+    }
+
+    // ---------- этап A: выделение ----------
+
+    #[test]
+    fn shift_arrow_extends_selection_plain_arrow_collapses() {
+        let mut ib = InputBox::new();
+        ib.set_text("hello");
+        ib.col = 0;
+        assert!(!ib.has_selection());
+        // Shift+Right ×2 → выделено "he"
+        ib.on_key(shift(KeyCode::Right));
+        ib.on_key(shift(KeyCode::Right));
+        assert!(ib.has_selection());
+        assert_eq!(ib.selected_text().as_deref(), Some("he"));
+        // обычный Right снимает выделение
+        ib.on_key(k(KeyCode::Right));
+        assert!(!ib.has_selection());
+        assert_eq!(ib.selected_text(), None);
+    }
+
+    #[test]
+    fn ctrl_a_selects_all() {
+        let mut ib = InputBox::new();
+        ib.set_text("line1\nline2");
+        assert_eq!(ib.on_key(ctrl(KeyCode::Char('a'))), KeyOutcome::Moved);
+        assert!(ib.has_selection());
+        assert_eq!(ib.selected_text().as_deref(), Some("line1\nline2"));
+        assert_eq!(ib.cursor(), (1, 5));
+    }
+
+    #[test]
+    fn ctrl_shift_right_selects_word() {
+        let mut ib = InputBox::new();
+        ib.set_text("one two");
+        ib.col = 0;
+        ib.on_key(ctrl_shift(KeyCode::Right)); // до конца "one"
+        assert_eq!(ib.selected_text().as_deref(), Some("one"));
+    }
+
+    #[test]
+    fn typing_replaces_selection() {
+        let mut ib = InputBox::new();
+        ib.set_text("hello");
+        ib.on_key(ctrl(KeyCode::Char('a'))); // выделить всё
+        assert_eq!(ib.on_key(k(KeyCode::Char('X'))), KeyOutcome::Edited);
+        assert_eq!(ib.text(), "X");
+        assert!(!ib.has_selection());
+    }
+
+    #[test]
+    fn backspace_deletes_whole_selection() {
+        let mut ib = InputBox::new();
+        ib.set_text("abcdef");
+        ib.col = 1;
+        for _ in 0..3 {
+            ib.on_key(shift(KeyCode::Right)); // выделено "bcd"
+        }
+        assert_eq!(ib.selected_text().as_deref(), Some("bcd"));
+        ib.on_key(k(KeyCode::Backspace));
+        assert_eq!(ib.text(), "aef");
+        assert!(!ib.has_selection());
+    }
+
+    #[test]
+    fn delete_multiline_selection_merges_and_syncs_misspelled() {
+        let mut ib = InputBox::new();
+        ib.set_text("abc\ndef\nghi");
+        ib.set_misspelled(vec![vec![(0, 3)], vec![(0, 3)], vec![(0, 3)]]);
+        // выделение (0,1)..(2,2): "bc\ndef\ngh"
+        ib.anchor = Some((0, 1));
+        ib.row = 2;
+        ib.col = 2;
+        assert_eq!(ib.selected_text().as_deref(), Some("bc\ndef\ngh"));
+        assert!(ib.delete_selection());
+        assert_eq!(ib.text(), "ai"); // "a" + "i"
+        assert_eq!(ib.cursor(), (0, 1));
+        assert_eq!(ib.line_count(), 1);
+        // подчёркивания синхронизированы: одна строка, первая сброшена
+        assert!(ib.misspelled_ranges_for_test(0).is_empty());
+    }
+
+    #[test]
+    fn shift_nav_is_moved_edit_over_selection_is_edited() {
+        let mut ib = InputBox::new();
+        ib.set_text("hello");
+        render_at(&mut ib, 20);
+        ib.col = 0;
+        let r0 = ib.revision;
+        assert_eq!(ib.on_key(shift(KeyCode::Right)), KeyOutcome::Moved);
+        assert_eq!(
+            ib.revision, r0,
+            "расширение выделения не бампит ревизию (кэш цел)"
+        );
+        assert!(ib.has_selection());
+        assert_eq!(ib.on_key(k(KeyCode::Char('Z'))), KeyOutcome::Edited);
+        assert!(ib.revision > r0, "правка поверх выделения инвалидирует кэш");
+    }
+
+    #[test]
+    fn render_highlights_selection_background() {
+        use ratatui::Terminal;
+        use ratatui::backend::TestBackend;
+        let mut ib = InputBox::new();
+        ib.set_text("hello");
+        ib.on_key(ctrl(KeyCode::Char('a'))); // выделить всё
+        let pal = Palette::default();
+        let mut term = Terminal::new(TestBackend::new(20, 3)).unwrap();
+        term.draw(|f| ib.render(f, f.area(), "ввод", true, &pal, false))
+            .unwrap();
+        let buf = term.backend().buffer();
+        let area = buf.area;
+        let has_sel_bg = (area.left()..area.right()).any(|x| {
+            (area.top()..area.bottom()).any(|y| buf[(x, y)].style().bg == Some(pal.keycap_bg))
+        });
+        assert!(has_sel_bg, "выделение не отрисовано фоном keycap_bg");
+    }
+
+    #[test]
+    fn paste_replaces_selection() {
+        // Вставка (мимо `on_key`) тоже заменяет выделение — удаление вынесено в сам
+        // мутатор `insert_str`, поэтому paste/`Shift+Enter`/эмодзи уважают выделение.
+        let mut ib = InputBox::new();
+        ib.set_text("hello");
+        ib.on_key(ctrl(KeyCode::Char('a')));
+        assert!(ib.has_selection());
+        ib.insert_str("XY");
+        assert_eq!(ib.text(), "XY");
+        assert!(!ib.has_selection());
     }
 
     #[test]
