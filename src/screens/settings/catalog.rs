@@ -327,25 +327,57 @@ impl SettingsScreen {
                 ),
             ],
         ));
-        rows.extend(grouped(
-            "Python",
-            vec![
+        rows.extend(grouped("Python", {
+            let mut py = vec![
+                row(
+                    FieldId::TPythonMode,
+                    "Режим Python",
+                    FieldKind::Choice(t.python_mode.label().to_string()),
+                )
+                .describe(
+                    "Wasmer-песочница (по умолчанию): изолированное исполнение без доступа \
+                     к файлам машины, предустановленные пакеты (numpy, requests). Локальный \
+                     интерпретатор: код исполняется на вашей машине напрямую.",
+                ),
                 row(
                     FieldId::TPython,
                     "Python-исполнение",
                     FieldKind::Toggle(t.python_enabled),
                 )
                 .describe(
-                    "Разрешить инструмент python_exec (исполнение кода в отдельном процессе). \
-                     Выключено по умолчанию: код исполняется на вашей машине.",
+                    "Разрешить инструмент python_exec. Выключено по умолчанию.",
                 ),
-                text_row(
-                    FieldId::TPythonPath,
-                    "Путь к интерпретатору",
-                    &t.python_path,
+            ];
+            match t.python_mode {
+                PythonMode::Local => py.push(
+                    text_row(FieldId::TPythonPath, "Путь к интерпретатору", &t.python_path).describe(
+                        "Путь к python/python3 (пусто → системный из PATH). Только локальный режим.",
+                    ),
                 ),
-            ],
-        ));
+                PythonMode::Wasmer => {
+                    py.push(
+                        row(
+                            FieldId::TPythonNet,
+                            "Сеть в песочнице",
+                            FieldKind::Toggle(t.python_net_enabled),
+                        )
+                        .describe(
+                            "Разрешить коду в песочнице доступ в сеть (--net; нужно для requests). \
+                             Включено по умолчанию.",
+                        ),
+                    );
+                    py.push(
+                        num_field(
+                            FieldId::TPythonWasmTimeout,
+                            "Таймаут песочницы (с)",
+                            t.python_wasm_timeout_secs,
+                        )
+                        .describe("Лимит времени исполнения кода в песочнице (секунды)."),
+                    );
+                }
+            }
+            py
+        }));
         rows.extend(grouped(
             "Файлы",
             vec![

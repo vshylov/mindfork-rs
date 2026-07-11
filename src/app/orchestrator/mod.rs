@@ -107,7 +107,7 @@ pub async fn run(deps: OrchestratorDeps) {
     // Единый канал исхода «тихих» фоновых задач (авто-рефлексия/консолидация): задача
     // шлёт `(вид, Ok/Err(причина))`, петля — одной веткой в `handle_bg_done`.
     let (bg_done_tx, mut bg_done_rx) = unbounded_channel::<(BackgroundKind, Result<(), String>)>();
-    let registry = Arc::new(build_registry(&config));
+    let registry = Arc::new(build_registry(&config, storage.json().sandbox_dir()));
     let mut orch = Orchestrator {
         evt_tx,
         engines: EngineManager::new(supervisor, status_tx, imp_status_tx),
@@ -198,10 +198,18 @@ pub async fn run(deps: OrchestratorDeps) {
 /// успеха (сброс счётчика). Наблюдаемость без спама. См. этап 5 доводки.
 pub(super) const BACKGROUND_FAILURE_ALERT: u32 = 3;
 
-/// Строит реестр инструментов из конфигурации (`config.tools`).
-fn build_registry(config: &AppConfig) -> crate::features::tools::ToolRegistry {
+/// Строит реестр инструментов из конфигурации (`config.tools`). `sandbox_dir` —
+/// каталог песочницы Python (`data/sandbox/`, из [`Paths`]) для режима Wasmer.
+fn build_registry(
+    config: &AppConfig,
+    sandbox_dir: std::path::PathBuf,
+) -> crate::features::tools::ToolRegistry {
     crate::features::tools::standard_registry(&crate::features::tools::ToolConfig {
+        python_mode: config.tools.python_mode,
         python_path: config.tools.python_path.clone(),
+        python_net: config.tools.python_net_enabled,
+        python_wasm_timeout: Duration::from_secs(config.tools.python_wasm_timeout_secs),
+        sandbox_dir: Some(sandbox_dir),
         subagent_max_tokens: config.tools.subagent_max_tokens,
         subagent_timeout: Duration::from_secs(config.tools.subagent_timeout_secs),
         web_fetch_content: config.tools.web_fetch_content,

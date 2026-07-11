@@ -96,7 +96,7 @@ fn bare_orch_rx() -> (tempfile::TempDir, Orchestrator, UnboundedReceiver<AppEven
         },
         ..Default::default()
     };
-    let registry = Arc::new(build_registry(&config));
+    let registry = Arc::new(build_registry(&config, storage.json().sandbox_dir()));
     // Менеджер серверов: сразу «готов» с тестовым эмбеддером (как было у голого
     // оркестратора). chat-движок тесты при необходимости проставляют сами.
     let mut engines = EngineManager::new(

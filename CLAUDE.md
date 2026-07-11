@@ -4546,6 +4546,56 @@ web-поиск и Python под выключателями, экран наст�
   **947 юнит-тестов зелёные** (+6), 33 `#[ignore]`, clippy `-D warnings`/fmt
   чисты.
 
+### Пост-M9: Python-песочница на Wasmer/WASIX — Фаза 1 (каркас сайдкара) (сделано)
+- **`python_exec` получил два режима** ([docs/research/python-wasmer-sandbox.md](docs/research/python-wasmer-sandbox.md)):
+  **Wasmer** (по умолчанию) — изолированная песочница WASIX через **сайдкар `wasmer`**
+  (бинарь рядом, не embed в exe — решение Фазы 0 §9.7: embed V8 в dll тянет
+  LLVM/libclang+статик-V8 в нашу сборку, а process-kill сайдкара чист); **Local** —
+  прежний системный интерпретатор. Ветка `spike/python-wasmer-sandbox`. Решения
+  пользователя: `python_enabled=false` (мастер-гейт как был), сеть в песочнице
+  `=true` с тумблером.
+- **`shared/sandbox.rs`** — контракт `SandboxRunner` за трейтом (`availability`/`run`;
+  `MockSandbox` для тестов, паттерн `EngineBackend`) + реальный `WasmerSandbox`:
+  поиск бинаря (env `MINDFORK_SANDBOX_WASMER` → `data/sandbox/wasmer[.exe]`), источник
+  CPython (env → `data/sandbox/python.webc` → пакет реестра `python/python`), запуск
+  `tokio::process` (`wasmer run --v8 [--net] --volume HOST:GUEST --env … <python> --
+  /w/job.py`), захват stdout/stderr, таймаут+`kill_on_drop` (python исполняется ВНУТРИ
+  процесса wasmer — V8 in-process, kill самого wasmer останавливает код). Чистые
+  тестируемые `build_wrapper`/`build_args`. **Враппер кода несёт шим `setsockopt`**
+  (находка Фазы 0: WASIX не реализует `TCP_NODELAY` → `EINVAL`, а http.client/requests
+  его всегда ставят; шим глушит → requests/urllib работают). Скрипт задачи — во
+  временном каталоге (`JobDir` с авто-очисткой через `Drop`, без рантайм-зависимости
+  `tempfile`). `site-packages/` монтируется в `/sp` (PYTHONPATH) при наличии.
+- **`features/tools/python.rs`** — enum-диспетчер по `PythonMode`: id `python_exec`
+  **не меняется** (стабильный wire-протокол), `description()` варьируется режимом+сетью
+  (в Wasmer перечисляет пакеты — модель охотнее пользуется). Общий `format_output_parts`
+  для обоих путей → презентер ленты (`present::parse_console`) не тронут. Graceful
+  «песочница недоступна» при отсутствии бинаря (паттерн `UnavailableEmbedder`).
+- **Конфиг** (`shared/config.rs`): `PythonMode{Wasmer(деф.)/Local}` (serde lowercase,
+  `ALL`/`label`/`cycle` как `FlashAttn`); `ToolSettings += python_mode/
+  python_net_enabled(деф. true)/python_wasm_timeout_secs(деф. 30)` (все `#[serde(default)]`
+  → старые `settings.json` без миграции). `python_enabled` остаётся `false`,
+  `python_path` — Local. `ToolConfig`/`build_registry` прокидывают режим/сеть/таймаут +
+  `sandbox_dir` (из `Paths::sandbox_dir` = `data/sandbox/`; `JsonStore::sandbox_dir`
+  делегирует — без правки всех сайтов `OrchestratorDeps`).
+- **UI настроек** (секция «Инструменты»→группа «Python»): Choice режим (`TPythonMode`) +
+  тумблер `python_enabled` + **mode-driven видимость** (путь к интерпретатору — только
+  Local; сеть+таймаут — только Wasmer), через field_spec/catalog (прецедент managed/
+  cloud); описания-подсказки. Новые `FieldId`: `TPythonMode`/`TPythonNet`/
+  `TPythonWasmTimeout`.
+- **Тесты**: sandbox (`build_wrapper` несёт шим; `build_args` порядок/net/монтирование
+  HOST:GUEST; `wasmer_in_dir`; availability Ready/Missing; python-фолбэк на пакет);
+  python (диспетчер Wasmer/Local через `MockSandbox`; таймаут/недоступность; формат
+  вывода; `description` по режиму); config (дефолты + serde/cycle `PythonMode`);
+  settings (mode-driven видимость группы Python + цикл режима). **963 юнит-теста
+  зелёные** (+16), clippy `-D warnings`/fmt чисты. Живой `#[ignore]`-смоук
+  `runs_real_python_in_sandbox` прогнан на реальном `wasmer 7.2.0` (Windows):
+  `print('hello sandbox')` исполнился в песочнице.
+- **Дальше — Фаза 2**: `mindfork sandbox setup` (скачать `wasmer` + `python.webc` +
+  колёса по lock-списку: numpy с wasix-индекса, requests-стек с PyPI), кэш
+  скомпилированного модуля, баннер первого запуска; `#[ignore]`-смоуки numpy/requests/
+  кириллица/таймаут. **Фаза 3** — лимиты ресурсов, гейт «одна задача», ADR 0005.
+
 ### Отложено за пределы M3
 - **Сворачивание/выделение per-message** и tool-блоки в ленте — сейчас «мысли»
   сворачиваются глобально (`Ctrl+T`); выделение сообщений и tool-блоки — на M5.

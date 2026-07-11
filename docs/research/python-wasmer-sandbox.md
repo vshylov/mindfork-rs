@@ -322,14 +322,24 @@ data/sandbox/                 # за shared/paths.rs (portable/system/path)
   тяжесть embed → **решение: сайдкар (§9.7)**. Embedding-спайк не достраивался
   (неактуален для сайдкара). *Осталось (по желанию): контрольный прогон на Linux —
   но механика сайдкара идентична и уже проверена на Windows.*
-- **Фаза 1 — каркас (сайдкар).** `shared/sandbox.rs` (`SandboxRunner` за трейтом +
-  mock): поиск `wasmer` рядом с exe, запуск `tokio::process` (`--v8`, `--volume`,
-  таймаут+kill), захват stdout/stderr, враппер кода (**шим `setsockopt`** + запись
-  во временный файл, без `-c`-экранирования). `python.rs` — режимы **Wasmer/Local**
-  (enum-диспетчер, id `python_exec` не меняется), конфиг `PythonMode`/поля,
-  UI-секция «Инструменты»→«Python» (mode-driven видимость), graceful «песочница не
-  установлена». Юнит-тесты: диспетчер режимов, сборка аргументов/враппера, парсинг
-  вывода, ошибки; живое — `#[ignore]`.
+- **Фаза 1 — каркас (сайдкар). ✅ СДЕЛАНО** (2026-07-11).
+  `shared/sandbox.rs` (`SandboxRunner` за трейтом + `MockSandbox`; реальный
+  `WasmerSandbox`): поиск `wasmer` (env `MINDFORK_SANDBOX_WASMER` → `data/sandbox/`),
+  запуск `tokio::process` (`--v8`, `--volume HOST:GUEST`, `--net` по флагу,
+  таймаут+`kill_on_drop`), захват stdout/stderr, враппер кода (**шим `setsockopt`** +
+  скрипт во временный каталог с авто-очисткой, без `-c`-экранирования); чистые
+  `build_wrapper`/`build_args`. `python.rs` — enum-диспетчер **Wasmer/Local** (id
+  `python_exec` не меняется, `description` по режиму+сети; `format_output_parts`
+  общий для обоих путей → презентер ленты не тронут; graceful «песочница не
+  установлена»). Конфиг `PythonMode{Wasmer(деф.)/Local}`, `ToolSettings +=
+  python_mode/python_net_enabled(деф. true)/python_wasm_timeout_secs(деф. 30)`;
+  `python_enabled` остаётся `false`. `ToolConfig`/`build_registry` прокидывают режим,
+  сеть, таймаут и `sandbox_dir` (из `Paths::sandbox_dir`, `data/sandbox/`). UI-секция
+  «Инструменты»→«Python»: Choice режим + тумблер + mode-driven видимость (путь —
+  Local; сеть+таймаут — Wasmer). **963 юнит-теста зелёные** (+16), clippy/fmt чисты.
+  Живой `#[ignore]`-смоук `runs_real_python_in_sandbox` прогнан на реальном
+  `wasmer 7.2.0` — `print('hello sandbox')` исполнился в песочнице. По решениям
+  пользователя: `python_enabled=false`, сеть=`true` с тумблером.
 - **Фаза 2 — ассеты и сеть.** `mindfork sandbox setup` (clap-подкоманда): скачать
   `wasmer` бинарь + `python.webc` + колёса по lock-списку (numpy с wasix-индекса,
   requests-стек с PyPI; §9.4), sha256, распаковка колёс в `site-packages/` без pip.

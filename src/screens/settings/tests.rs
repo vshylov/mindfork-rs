@@ -3,7 +3,7 @@
 use super::helpers::*;
 use super::*;
 use crate::features::tools::default_tool_ids;
-use crate::shared::config::{FlashAttn, SpecType};
+use crate::shared::config::{FlashAttn, PythonMode, SpecType};
 
 fn screen() -> SettingsScreen {
     let mut p = Profile::new("Базовый", "Ты — ассистент.");
@@ -111,6 +111,47 @@ fn toggle_web_emits_save_with_flipped_value() {
     let intent = s.handle_key(key(KeyCode::Char(' ')));
     match intent {
         Some(SettingsIntent::SaveConfig(c)) => assert!(!c.tools.web_enabled),
+        other => panic!("ожидался SaveConfig, получено {other:?}"),
+    }
+}
+
+#[test]
+fn python_group_visibility_follows_mode() {
+    // По умолчанию — режим Wasmer: видны «сеть» и «таймаут песочницы», путь скрыт.
+    let mut s = screen();
+    goto_section(&mut s, Section::Tools);
+    let ids: Vec<FieldId> = s.fields().iter().map(|f| f.id).collect();
+    assert!(ids.contains(&FieldId::TPythonMode));
+    assert!(ids.contains(&FieldId::TPython));
+    assert!(ids.contains(&FieldId::TPythonNet));
+    assert!(ids.contains(&FieldId::TPythonWasmTimeout));
+    assert!(!ids.contains(&FieldId::TPythonPath));
+
+    // Режим Local: виден путь к интерпретатору, поля песочницы скрыты.
+    let mut cfg = AppConfig::default();
+    cfg.tools.python_mode = PythonMode::Local;
+    let mut p = Profile::new("Базовый", "Ты — ассистент.");
+    p.enabled_tools = default_tool_ids();
+    let mut s = SettingsScreen::new(cfg, vec![p]);
+    goto_section(&mut s, Section::Tools);
+    let ids: Vec<FieldId> = s.fields().iter().map(|f| f.id).collect();
+    assert!(ids.contains(&FieldId::TPythonMode));
+    assert!(ids.contains(&FieldId::TPythonPath));
+    assert!(!ids.contains(&FieldId::TPythonNet));
+    assert!(!ids.contains(&FieldId::TPythonWasmTimeout));
+}
+
+#[test]
+fn python_mode_cycles_and_emits_save() {
+    let mut s = screen();
+    goto_section(&mut s, Section::Tools);
+    goto_field(&mut s, FieldId::TPythonMode);
+    // Правый цикл на 2-вариантном режиме переводит Wasmer → Local.
+    let intent = s.handle_key(key(KeyCode::Right));
+    match intent {
+        Some(SettingsIntent::SaveConfig(c)) => {
+            assert_eq!(c.tools.python_mode, PythonMode::Local)
+        }
         other => panic!("ожидался SaveConfig, получено {other:?}"),
     }
 }

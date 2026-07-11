@@ -281,6 +281,8 @@ src/
    ├─ theme.rs             Palette (роли user/assistant/tool/…), auto/dark/light
    ├─ keys.rs              раскладко-независимые Ctrl-шорткаты (ЙЦУКЕН→латиница)
    ├─ server.rs            ServerStatus (статус сервера для UI)
+   ├─ sandbox.rs           SandboxRunner (за трейтом) + WasmerSandbox: сайдкар `wasmer`
+   │                       для `python_exec` в режиме песочницы (WASIX-изоляция, §8)
    ├─ paths.rs             расположение данных: портативно / ОС-папка / путь (location.json)
    ├─ instance.rs          single-instance
    └─ logging.rs           tracing в файл (stdout занят TUI)

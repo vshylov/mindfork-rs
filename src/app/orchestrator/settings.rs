@@ -34,7 +34,10 @@ impl Orchestrator {
             // провайдер немедленно (дёшево, in-memory; схема должна быть
             // актуальна уже со следующего хода).
             if self.config.engine.mode.cloud_provider() != old.engine.mode.cloud_provider() {
-                self.registry = std::sync::Arc::new(build_registry(&self.config));
+                self.registry = std::sync::Arc::new(build_registry(
+                    &self.config,
+                    self.storage.json().sandbox_dir(),
+                ));
             }
         }
         // Смена настроек сервера имперсонации — отложенное пере-подключение.
@@ -47,7 +50,10 @@ impl Orchestrator {
         }
         // Смена параметров инструментов — пересборка реестра (python_path, лимиты).
         if self.config.tools != old.tools {
-            self.registry = std::sync::Arc::new(build_registry(&self.config));
+            self.registry = std::sync::Arc::new(build_registry(
+                &self.config,
+                self.storage.json().sandbox_dir(),
+            ));
         }
         self.emit_settings();
     }
