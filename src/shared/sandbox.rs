@@ -13,9 +13,11 @@
 use std::ffi::{OsStr, OsString};
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
+use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::{Context, Result};
+use tokio::sync::Semaphore;
 use uuid::Uuid;
 
 /// Имя бинаря `wasmer` в каталоге песочницы (по платформе).
@@ -93,13 +95,20 @@ pub struct WasmerSandbox {
     /// Каталог песочницы (`data/sandbox/`): `wasmer[.exe]`, `python.webc`,
     /// `site-packages/`. `None` — только через env-override (тесты/дефолт).
     dir: Option<PathBuf>,
+    /// Гейт «одна задача за раз» (одно разрешение). Защита от утечки процессов/
+    /// потоков и предсказуемая нагрузка: параллельный вызов сразу отклоняется.
+    /// В штатном agentic-loop вызовы и так последовательны — это защита в глубину.
+    gate: Arc<Semaphore>,
 }
 
 impl WasmerSandbox {
     /// Создаёт песочницу с каталогом ассетов (`data/sandbox/`; `None` — без него,
     /// тогда бинарь берётся только из env-override).
     pub fn new(dir: Option<PathBuf>) -> Self {
-        Self { dir }
+        Self {
+            dir,
+            gate: Arc::new(Semaphore::new(1)),
+        }
     }
 
     /// Путь/имя бинаря `wasmer`: env-override → каталог песочницы ([`locate_wasmer`]).
@@ -150,6 +159,10 @@ impl SandboxRunner for WasmerSandbox {
     }
 
     async fn run(&self, code: &str, net: bool, timeout: Duration) -> Result<SandboxOutput> {
+        // Гейт «одна задача»: параллельный запуск сразу отклоняется (до спавна).
+        let _permit = self.gate.try_acquire().map_err(|_| {
+            anyhow::anyhow!("песочница занята другой задачей — дождитесь её завершения")
+        })?;
         let wasmer = self
             .resolve_wasmer()
             .ok_or_else(|| anyhow::anyhow!("бинарь wasmer не найден"))?;
@@ -436,6 +449,41 @@ mod tests {
         std::fs::write(dir.path().join(WASMER_BIN), b"stub").unwrap();
         let sb = WasmerSandbox::new(Some(dir.path().to_path_buf()));
         assert_eq!(sb.availability(), SandboxAvailability::Ready);
+    }
+
+    #[tokio::test]
+    async fn gate_rejects_second_concurrent_task() {
+        let dir = tempfile::tempdir().unwrap();
+        let sb = WasmerSandbox::new(Some(dir.path().to_path_buf()));
+        // Держим единственное разрешение — эмулируем «уже идёт задача».
+        let _held = sb.gate.try_acquire().unwrap();
+        // Второй запуск отклоняется мгновенно (до resolve_wasmer/спавна процесса).
+        let err = sb
+            .run("print(1)", false, Duration::from_secs(5))
+            .await
+            .unwrap_err();
+        assert!(err.to_string().contains("занята"), "got: {err}");
+    }
+
+    #[tokio::test]
+    async fn gate_permit_released_after_run() {
+        // После завершения run (тут — ошибкой «нет бинаря») разрешение возвращается,
+        // и следующий вызов снова доходит до логики (а не упирается в гейт).
+        let dir = tempfile::tempdir().unwrap();
+        let sb = WasmerSandbox::new(Some(dir.path().to_path_buf()));
+        if env_override(ENV_WASMER).is_some() {
+            return; // окружение задаёт бинарь — этот тест про отсутствие бинаря
+        }
+        let e1 = sb
+            .run("print(1)", false, Duration::from_secs(5))
+            .await
+            .unwrap_err();
+        assert!(e1.to_string().contains("wasmer"), "got: {e1}");
+        let e2 = sb
+            .run("print(1)", false, Duration::from_secs(5))
+            .await
+            .unwrap_err();
+        assert!(e2.to_string().contains("wasmer"), "got: {e2}");
     }
 
     #[test]

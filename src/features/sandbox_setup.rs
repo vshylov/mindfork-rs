@@ -11,13 +11,14 @@
 
 use std::io::{Cursor, Read};
 use std::path::{Path, PathBuf};
+use std::time::Duration;
 
 use anyhow::{Context, Result, bail};
 use futures_util::StreamExt;
 use sha2::{Digest, Sha256};
 use tokio::io::AsyncWriteExt;
 
-use crate::shared::sandbox::locate_wasmer;
+use crate::shared::sandbox::{SandboxRunner, WasmerSandbox, locate_wasmer};
 
 /// Версия `wasmer`, к которой привязан lock-список (GitHub release tag `v<...>`).
 pub const WASMER_VERSION: &str = "7.2.0";
@@ -124,9 +125,30 @@ pub async fn setup(dir: &Path, opts: &SetupOptions, mut progress: impl FnMut(&st
     let wasmer = ensure_wasmer(&client, dir, opts, &mut progress).await?;
     ensure_python_webc(dir, &wasmer, opts, &mut progress).await?;
     ensure_wheels(&client, dir, opts, &mut progress).await?;
+    warmup(dir, &mut progress).await;
 
     progress("Готово. Песочница Python установлена.");
     Ok(())
+}
+
+/// Прогрев кэша компиляции: один прогон компилирует `python.wasm` (+ нативные `.so`
+/// numpy) в `<dir>/cache`, чтобы **первый реальный вызов** инструмента был тёплым —
+/// без многосекундной компиляции на глазах у пользователя (заменяет «баннер первого
+/// запуска»). «Лучшее усилие»: сбой прогрева не проваливает установку. Идёт через
+/// реальный [`WasmerSandbox`], так что кэш и пути совпадают с рантаймом.
+async fn warmup(dir: &Path, progress: &mut impl FnMut(&str)) {
+    progress("Прогрев кэша компиляции (может занять время)…");
+    let sb = WasmerSandbox::new(Some(dir.to_path_buf()));
+    // `import numpy` компилирует и интерпретатор, и нативные модули numpy; даже при
+    // сбое импорта интерпретатор уже скомпилирован в кэш (частичный прогрев полезен).
+    match sb
+        .run("import numpy", false, Duration::from_secs(300))
+        .await
+    {
+        Ok(out) if out.exit_code == Some(0) => progress("Кэш прогрет."),
+        Ok(_) => progress("Прогрев завершён частично (не критично)."),
+        Err(e) => progress(&format!("Прогрев пропущен: {e} (не критично).")),
+    }
 }
 
 /// Архив `wasmer` для платформы `(os, arch)` (чистая, тестируемая).
