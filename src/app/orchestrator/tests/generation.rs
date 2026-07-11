@@ -618,6 +618,66 @@ async fn tool_round_limit_is_respected() {
 }
 
 #[tokio::test]
+async fn round_limit_forces_final_synthesis_without_tools() {
+    use crate::shared::api::contract::ToolCallDelta;
+    // При лимите раундов модель не должна оставить пользователя без ответа: после
+    // исчерпания раундов делается финальный раунд БЕЗ инструментов, где модель
+    // сводит итог. Скрипты: раунд 1 и 2 — вызовы инструмента, 3-й (форс-синтез) — текст.
+    let toolcall = || {
+        vec![
+            ChatChunk::ToolCall(ToolCallDelta {
+                thought_signature: None,
+                index: 0,
+                id: Some("c1".into()),
+                name: Some("get_sampling".into()),
+                arguments: "{}".into(),
+            }),
+            ChatChunk::Finished(FinishReason::ToolCalls),
+        ]
+    };
+    let backend = Arc::new(MockBackend::sequence(vec![
+        toolcall(),
+        toolcall(),
+        vec![
+            ChatChunk::Text("Итог по собранному материалу.".into()),
+            ChatChunk::Finished(FinishReason::Stop),
+        ],
+    ])) as Arc<dyn EngineBackend>;
+
+    let config = AppConfig {
+        max_tool_rounds: 1,
+        ..Default::default()
+    };
+    let (_d, cmd_tx, mut evt_rx, handle) = spawn_orch_cfg(Some(backend), config);
+    let root = _d.path().to_path_buf();
+    wait_for(&mut evt_rx, |e| matches!(e, AppEvent::ChatActivated { .. }))
+        .await
+        .unwrap();
+    cmd_tx
+        .send(AppCommand::SendMessage("собери и проанализируй".into()))
+        .unwrap();
+
+    wait_for(&mut evt_rx, |e| matches!(e, AppEvent::Finished { .. }))
+        .await
+        .unwrap();
+    cmd_tx.send(AppCommand::Quit).unwrap();
+    handle.await.unwrap();
+
+    // Последнее сообщение — финальный текст ассистента (свод), а не пустота.
+    let reopened = Storage::open(Paths::with_root(&root)).unwrap();
+    let chat = reopened
+        .json()
+        .load_chats()
+        .unwrap()
+        .into_iter()
+        .next()
+        .unwrap();
+    let last = chat.messages.last().unwrap();
+    assert_eq!(last.role, MessageRole::Assistant);
+    assert_eq!(last.text, "Итог по собранному материалу.");
+}
+
+#[tokio::test]
 async fn followup_tool_makes_two_assistant_messages() {
     use crate::shared::api::contract::ToolCallDelta;
     // Раунд 1: текст + вызов send_followup_message → раунд 2: второе сообщение.

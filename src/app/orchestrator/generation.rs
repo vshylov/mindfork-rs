@@ -458,14 +458,38 @@ fn spawn_generation(spawn: GenSpawn) {
             // Раунд с вызовами инструментов — исполняем и продолжаем цикл.
             if out.reason == FinishReason::ToolCalls && !out.calls.is_empty() {
                 if round >= max_rounds {
+                    // Лимит достигнут: НЕ исполняем новые вызовы, а просим модель
+                    // свести итог из уже собранного — финальный раунд БЕЗ инструментов.
+                    // Иначе (прежнее поведение) `out` содержал лишь намерение вызвать
+                    // ещё инструменты с пустым текстом → `finalize_message` возвращал
+                    // `None`, и пользователь не получал ответа вовсе, хотя данных за
+                    // предыдущие раунды набрано достаточно. Тулы убираем из запроса,
+                    // так что модель обязана ответить текстом (стрим идёт в ленту).
                     let _ = evt_tx.send(AppEvent::Error(format!(
-                        "Достигнут лимит раундов инструментов ({max_rounds})."
+                        "Достигнут лимит раундов инструментов ({max_rounds}) — свожу итог из собранного."
                     )));
-                    reason = FinishReason::Stop;
-                    if let Some(mut m) = finalize_message(&out, &ctx, engine_mode, &model_name) {
+                    request.tools.clear();
+                    // Счётчик токенов финального раунда `stream_round` эмитит сам
+                    // (от `base = total_*`); дальше `break`, накапливать не нужно.
+                    let final_out = stream_round(
+                        &backend,
+                        request.clone(),
+                        &cancel,
+                        id,
+                        &evt_tx,
+                        total_tokens,
+                        total_reasoning,
+                    )
+                    .await;
+                    if let Some(mut m) =
+                        finalize_message(&final_out, &ctx, engine_mode, &model_name)
+                    {
                         m.new_bubble = pending_new_bubble;
                         messages.push(m);
                     }
+                    // Причина завершения — из финального раунда (обычно Stop; при отмене
+                    // пользователем/ошибке потока — Cancelled/Error), а не искусственный Stop.
+                    reason = final_out.reason;
                     break;
                 }
                 round += 1;
