@@ -72,7 +72,8 @@ struct Wheel {
     sha256: &'static str,
 }
 
-/// Lock-список колёс. **numpy** — нативное wasix-колесо с `pythonindex.wasix.org`;
+/// Lock-список колёс. **numpy**/**pandas** — нативные wasix-колёса с
+/// `pythonindex.wasix.org`; их чистые зависимости (dateutil/six/pytz/tzdata) и
 /// **requests-стек** (requests/urllib3/certifi/idna/charset_normalizer) — чистый
 /// Python с PyPI (`py3-none-any`). Версии закреплены; sha256 — из индекса/PyPI.
 const WHEELS: &[Wheel] = &[
@@ -80,6 +81,32 @@ const WHEELS: &[Wheel] = &[
         dir: "numpy",
         url: "https://pythonindex.wasix.org/packages/numpy-2.3.2-cp313-cp313-wasix_wasm32.whl",
         sha256: "f2abcba47de3063e00fd960b17058bf14954fb3485e58153ba6925447d28af55",
+    },
+    // pandas (нативное wasix-колесо) + его чистые зависимости.
+    Wheel {
+        dir: "pandas",
+        url: "https://pythonindex.wasix.org/packages/pandas-2.3.2-cp313-cp313-wasix_wasm32.whl",
+        sha256: "9b7d0e64cd3bebe36dedb4a2d888a0df6dbc50a53011c2d6e96d4dac95eadd67",
+    },
+    Wheel {
+        dir: "dateutil",
+        url: "https://files.pythonhosted.org/packages/ec/57/56b9bcc3c9c6a792fcbaf139543cee77261f3651ca9da0c93f5c1221264b/python_dateutil-2.9.0.post0-py2.py3-none-any.whl",
+        sha256: "a8b2bc7bffae282281c8140a97d3aa9c14da0b136dfe83f850eea9a5f7470427",
+    },
+    Wheel {
+        dir: "six.py",
+        url: "https://files.pythonhosted.org/packages/b7/ce/149a00dd41f10bc29e5921b496af8b574d8413afcd5e30dfa0ed46c2cc5e/six-1.17.0-py2.py3-none-any.whl",
+        sha256: "4721f391ed90541fddacab5acf947aa0d3dc7d27b2e1e8eda2be8970586c3274",
+    },
+    Wheel {
+        dir: "pytz",
+        url: "https://files.pythonhosted.org/packages/ec/dd/96da98f892250475bdf2328112d7468abdd4acc7b902b6af23f4ed958ea0/pytz-2026.2-py2.py3-none-any.whl",
+        sha256: "04156e608bee23d3792fd45c94ae47fae1036688e75032eea2e3bf0323d1f126",
+    },
+    Wheel {
+        dir: "tzdata",
+        url: "https://files.pythonhosted.org/packages/e5/6d/b53b99a9f2766d095985947a5782f1702cabb129a34f7a802d7197af832f/tzdata-2026.3-py2.py3-none-any.whl",
+        sha256: "dc096730c87af6cab1b171c9d532be840741ff5d459015e7f6947bd7d7e54931",
     },
     Wheel {
         dir: "requests",
@@ -132,17 +159,17 @@ pub async fn setup(dir: &Path, opts: &SetupOptions, mut progress: impl FnMut(&st
 }
 
 /// Прогрев кэша компиляции: один прогон компилирует `python.wasm` (+ нативные `.so`
-/// numpy) в `<dir>/cache`, чтобы **первый реальный вызов** инструмента был тёплым —
-/// без многосекундной компиляции на глазах у пользователя (заменяет «баннер первого
-/// запуска»). «Лучшее усилие»: сбой прогрева не проваливает установку. Идёт через
-/// реальный [`WasmerSandbox`], так что кэш и пути совпадают с рантаймом.
+/// numpy/pandas) в `<dir>/cache`, чтобы **первый реальный вызов** инструмента был
+/// тёплым — без многосекундной компиляции на глазах у пользователя (заменяет «баннер
+/// первого запуска»). «Лучшее усилие»: сбой прогрева не проваливает установку. Идёт
+/// через реальный [`WasmerSandbox`], так что кэш и пути совпадают с рантаймом.
 async fn warmup(dir: &Path, progress: &mut impl FnMut(&str)) {
     progress("Прогрев кэша компиляции (может занять время)…");
     let sb = WasmerSandbox::new(Some(dir.to_path_buf()));
-    // `import numpy` компилирует и интерпретатор, и нативные модули numpy; даже при
-    // сбое импорта интерпретатор уже скомпилирован в кэш (частичный прогрев полезен).
+    // `import pandas` тянет и интерпретатор, и нативные модули numpy/pandas (самый
+    // тяжёлый путь компиляции); даже при сбое импорта интерпретатор уже в кэше.
     match sb
-        .run("import numpy", false, Duration::from_secs(300))
+        .run("import pandas", false, Duration::from_secs(300))
         .await
     {
         Ok(out) if out.exit_code == Some(0) => progress("Кэш прогрет."),
@@ -414,7 +441,9 @@ mod tests {
     #[test]
     fn lockfile_wheels_cover_numpy_and_requests_stack() {
         let dirs: Vec<&str> = WHEELS.iter().map(|w| w.dir).collect();
-        for expected in ["numpy", "requests", "urllib3", "certifi", "idna"] {
+        for expected in [
+            "numpy", "pandas", "dateutil", "pytz", "requests", "urllib3", "certifi", "idna",
+        ] {
             assert!(dirs.contains(&expected), "нет колеса {expected}");
         }
         // Все URL — https, все sha256 — 64 hex-символа.

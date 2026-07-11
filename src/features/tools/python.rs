@@ -421,6 +421,25 @@ mod tests {
         assert!(out.result.contains("sum 45"), "got: {}", out.result);
     }
 
+    /// pandas (нативное wasix-колесо + чистые зависимости) в провизионированной песочнице.
+    #[tokio::test]
+    #[ignore = "requires a provisioned sandbox (MINDFORK_SANDBOX_DIR)"]
+    async fn pandas_in_sandbox() {
+        let Some(tool) = provisioned(false, 120) else {
+            return;
+        };
+        let (_d, _s, ctx) = ctx_with_storage(Uuid::new_v4());
+        let code = "import pandas as pd; \
+                    df = pd.DataFrame({'a': [1, 2, 3], 'b': [4, 5, 6]}); \
+                    print('pandas', pd.__version__); print('total', int(df.values.sum()))";
+        let out = tool
+            .invoke(&ctx, serde_json::json!({ "code": code }))
+            .await
+            .unwrap();
+        assert!(out.result.contains("pandas 2."), "got: {}", out.result);
+        assert!(out.result.contains("total 21"), "got: {}", out.result);
+    }
+
     /// requests по HTTPS при включённой сети.
     #[tokio::test]
     #[ignore = "requires a provisioned sandbox + network (MINDFORK_SANDBOX_DIR)"]
