@@ -25,6 +25,7 @@ use ratatui::crossterm::event::{
 use ratatui::crossterm::execute;
 #[cfg(unix)]
 use ratatui::crossterm::terminal::supports_keyboard_enhancement;
+use ratatui::crossterm::terminal::{BeginSynchronizedUpdate, EndSynchronizedUpdate};
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
 
 use crate::app::events::{AppCommand, AppEvent, BackgroundKind};
@@ -129,10 +130,19 @@ pub fn run(
     // мышью. Прокрутка ленты колесом включается тумблером (`Ctrl+W`) — он шлёт
     // `EnableMouseCapture`/`DisableMouseCapture` (см. `dispatch`). Дополняем
     // panic-hook ratatui выключением мыши и bracketed paste: иначе после паники с
-    // включёнными режимами терминал продолжит слать escape-коды в шелл.
+    // включёнными режимами терминал продолжит слать escape-коды в шелл. Здесь же
+    // снимаем синхронизированный вывод (DEC 2026, см. петлю): паника внутри
+    // `terminal.draw` случается между `?2026h` и `?2026l`, и без снятия терминал
+    // держал бы кадр замороженным (сообщение паники не видно) до своего таймаута.
+    // DECRST невзведённого режима — no-op, лишний `?2026l` безвреден.
     let prev_hook = std::panic::take_hook();
     std::panic::set_hook(Box::new(move |info| {
-        let _ = execute!(stdout(), DisableMouseCapture, DisableBracketedPaste);
+        let _ = execute!(
+            stdout(),
+            EndSynchronizedUpdate,
+            DisableMouseCapture,
+            DisableBracketedPaste
+        );
         // Снимаем kitty-протокол, если пушили (unix); безвредно при пустом стеке.
         #[cfg(unix)]
         let _ = execute!(stdout(), PopKeyboardEnhancementFlags);
@@ -140,7 +150,12 @@ pub fn run(
     }));
     let result = run_loop(&mut terminal, &cmd_tx, evt_rx, dict_dir, personal);
     // Снимаем режимы на выходе (безвредно, если уже выключены).
-    let _ = execute!(stdout(), DisableMouseCapture, DisableBracketedPaste);
+    let _ = execute!(
+        stdout(),
+        EndSynchronizedUpdate,
+        DisableMouseCapture,
+        DisableBracketedPaste
+    );
     #[cfg(unix)]
     let _ = execute!(stdout(), PopKeyboardEnhancementFlags);
     ratatui::restore();
@@ -276,7 +291,26 @@ fn run_loop(
             let _ = cmd_tx.send(AppCommand::SetDraft(draft));
         }
         if dirty {
-            match &mut active {
+            // Кадр обёрнут в синхронизированный вывод (DEC private mode 2026):
+            // `?2026h` до отрисовки, `?2026l` после — терминал буферизует всё
+            // между ними и применяет кадр АТОМАРНО. Без этого аппаратный курсор
+            // был виден на промежуточных состояниях записи: ratatui пишет diff
+            // при видимом курсоре (курсор терминала = позиция записи) и
+            // возвращает его в поле ввода отдельными записями ПОСЛЕ diff'а
+            // (`show_cursor`/`set_cursor_position` у CrosstermBackend — это
+            // `execute!` с немедленным flush; крупный diff вдобавок дробится
+            // маленьким буфером stdout). Windows Terminal рендерит асинхронно и
+            // успевал показать курсор на последней записанной ячейке diff'а: при
+            // генерации это счётчик токенов (нижние строки статус-бара пишутся
+            // последними), при индексации RAG — спиннер баннера. Курсор «прыгал»
+            // между полем ввода и этими ячейками с частотой кадров (~20/с).
+            //
+            // Терминалы без поддержки 2026 (conhost компат-режима) игнорируют
+            // незнакомый приватный режим — мягкая деградация (прыжок остаётся,
+            // как раньше). Ошибка draw пробрасывается ПОСЛЕ снятия режима, чтобы
+            // терминал не остался в буферизации. См. spec §4.4.1.
+            let _ = execute!(stdout(), BeginSynchronizedUpdate);
+            let drawn = match &mut active {
                 ActiveScreen::Chat => {
                     // Прокрутка ленты с «съезжающими» VS16-эмодзи (`🕸️`/`🗂️`) требует
                     // ПОЛНОЙ перерисовки: некоторые терминалы (Command Prompt/conhost)
@@ -311,14 +345,14 @@ fn run_loop(
                         }
                         terminal.swap_buffers();
                     }
-                    terminal.draw(|frame| screen.render(frame))?
+                    terminal.draw(|frame| screen.render(frame))
                 }
-                ActiveScreen::ChatList(list) => terminal.draw(|frame| list.render(frame))?,
-                ActiveScreen::Settings(settings) => {
-                    terminal.draw(|frame| settings.render(frame))?
-                }
-                ActiveScreen::SelfModel(view) => terminal.draw(|frame| view.render(frame))?,
+                ActiveScreen::ChatList(list) => terminal.draw(|frame| list.render(frame)),
+                ActiveScreen::Settings(settings) => terminal.draw(|frame| settings.render(frame)),
+                ActiveScreen::SelfModel(view) => terminal.draw(|frame| view.render(frame)),
             };
+            let _ = execute!(stdout(), EndSynchronizedUpdate);
+            drawn?;
             dirty = false;
         }
         if event::poll(TICK)? {
