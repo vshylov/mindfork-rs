@@ -64,13 +64,44 @@ impl FetchUrl {
         if !status.is_success() {
             anyhow::bail!("страница вернула статус {status}");
         }
+        // Content-Type читаем ДО поглощения тела (`resp.text()` забирает resp).
+        let content_type = resp
+            .headers()
+            .get(reqwest::header::CONTENT_TYPE)
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or("")
+            .to_string();
         let body = resp.text().await.with_context(|| format!("чтение {url}"))?;
-        let text = extract_readable(&body, MAX_CONTENT_CHARS);
-        if text.is_empty() {
-            anyhow::bail!("со страницы не удалось извлечь читаемый текст");
-        }
-        Ok(text)
+        body_to_text(&content_type, &body)
+            .ok_or_else(|| anyhow::anyhow!("со страницы не удалось извлечь читаемый текст"))
     }
+}
+
+/// Выбирает текст для возврата из тела ответа. Не-HTML **текстовые** ответы
+/// (JSON/text/csv/JS — определяем по `Content-Type`, а при его отсутствии по
+/// JSON-форме тела) отдаём как есть (усечённо): это данные API, readability к ним
+/// неприменима (нет `<p>`/`<li>`) — именно из-за этого JSON Steam-API прежде давал
+/// «не удалось извлечь читаемый текст». HTML → извлечение читаемого текста.
+/// `None` — извлекать нечего (пусто). Чистая функция — тестируема без сети.
+fn body_to_text(content_type: &str, body: &str) -> Option<String> {
+    let ct = content_type.to_ascii_lowercase();
+    let is_html = ct.contains("html") || ct.contains("xml");
+    let is_texty = ct.contains("json")
+        || ct.contains("text/plain")
+        || ct.contains("javascript")
+        || ct.contains("csv");
+    let looks_json = {
+        let t = body.trim_start();
+        t.starts_with('{') || t.starts_with('[')
+    };
+    if is_texty || (looks_json && !is_html) {
+        let trimmed = body.trim();
+        if !trimmed.is_empty() {
+            return Some(truncate_chars(trimmed, MAX_CONTENT_CHARS));
+        }
+    }
+    let text = extract_readable(body, MAX_CONTENT_CHARS);
+    (!text.is_empty()).then_some(text)
 }
 
 #[async_trait::async_trait]
@@ -311,6 +342,39 @@ mod tests {
         // focus попал в задачу.
         let msg = format!("{:?}", req.messages[0]);
         assert!(msg.contains("какова цена"), "focus в задаче: {msg}");
+    }
+
+    #[test]
+    fn json_body_returned_as_is_not_extracted() {
+        // JSON-ответ API (по Content-Type) отдаётся как есть — раньше readability
+        // возвращала пусто → «не удалось извлечь читаемый текст» (Steam appreviews).
+        let body = r#"{"success":1,"query_summary":{"total_positive":200,"total_negative":30}}"#;
+        let out = body_to_text("application/json; charset=utf-8", body).unwrap();
+        assert!(out.contains("total_positive"), "got: {out}");
+    }
+
+    #[test]
+    fn json_shaped_body_returned_when_content_type_missing() {
+        // Нет Content-Type, но тело — JSON-форма (начинается с `{`) → отдаём как есть.
+        let out = body_to_text("", r#"  {"a":1}"#).unwrap();
+        assert!(out.contains("\"a\":1"), "got: {out}");
+    }
+
+    #[test]
+    fn html_without_readable_text_yields_none() {
+        // HTML без читаемого текста (только скрипты) → извлекать нечего.
+        assert!(body_to_text("text/html", "<html><script>var x=1;</script></html>").is_none());
+    }
+
+    #[test]
+    fn html_with_paragraph_is_extracted() {
+        let out = body_to_text(
+            "text/html; charset=utf-8",
+            "<html><body><p>Реальный читаемый абзац страницы, достаточно длинный, \
+             чтобы пройти порог отсева коротких фрагментов.</p></body></html>",
+        )
+        .unwrap();
+        assert!(out.contains("читаемый абзац"), "got: {out}");
     }
 
     /// Реальный сетевой смоук (вручную: `cargo test -- --ignored`).

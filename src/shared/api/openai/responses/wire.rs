@@ -162,8 +162,16 @@ fn build_input(req: &ChatRequest) -> Vec<Value> {
                 if let Some(tb) = &m.thinking
                     && let Some(id) = &tb.id
                 {
+                    // `summary` — ОБЯЗАТЕЛЬНОЕ поле reasoning-элемента в Responses API
+                    // (иначе 400 `Missing required parameter: 'input[N].summary'`). Шлём
+                    // пустой массив: смысл несёт `encrypted_content`, а текст резюме не
+                    // нужен для переотправки (и у неверифицированной орг. он пуст, §7a
+                    // docs/research/openai-responses-client.md).
                     items.push(json!({
-                        "type": "reasoning", "id": id, "encrypted_content": tb.signature,
+                        "type": "reasoning",
+                        "id": id,
+                        "summary": [],
+                        "encrypted_content": tb.signature,
                     }));
                 }
                 if !m.content.is_empty() {
@@ -447,10 +455,12 @@ mod tests {
             ApiMessage::tool("call_1", "2"),
         ]);
         let json = serde_json::to_value(build_request(&r, "gpt-x", true)).unwrap();
-        // [0] user, [1] reasoning (id+encrypted), [2] function_call, [3] output.
+        // [0] user, [1] reasoning (id+summary+encrypted), [2] function_call, [3] output.
         assert_eq!(json["input"][1]["type"], "reasoning");
         assert_eq!(json["input"][1]["id"], "rs_42");
         assert_eq!(json["input"][1]["encrypted_content"], "gAAA-enc");
+        // `summary` обязателен для reasoning-элемента (иначе 400) — шлём пустой массив.
+        assert_eq!(json["input"][1]["summary"], json!([]));
         assert_eq!(json["input"][2]["type"], "function_call");
     }
 

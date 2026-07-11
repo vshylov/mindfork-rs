@@ -154,10 +154,33 @@ impl ChatScreen {
         self.feed_view.scroll_to_bottom();
     }
 
+    /// Гарантирует, что `last` — стримящийся пузырь ассистента (цель для чанков).
+    /// Если посреди генерации в ленту вклинилась заметка (напр. `AppEvent::Error`
+    /// о достижении лимита раундов перед финальным синтезом), `last` оказывается
+    /// заметкой — тогда открываем новый пузырь ассистента, иначе стрим уходил бы в
+    /// заметку и рендерился простым текстом без markdown.
+    fn ensure_streaming_bubble(&mut self) {
+        let ok = matches!(
+            self.feed.last(),
+            Some(m) if m.role == FeedRole::Assistant && m.streaming
+        );
+        if !ok {
+            self.feed.push(FeedMessage {
+                role: FeedRole::Assistant,
+                text: String::new(),
+                thoughts: String::new(),
+                tools: Vec::new(),
+                streaming: true,
+            });
+        }
+    }
+
     pub fn push_chunk(&mut self, generation_id: Uuid, text: &str) {
-        if self.current_gen == Some(generation_id)
-            && let Some(last) = self.feed.last_mut()
-        {
+        if self.current_gen != Some(generation_id) {
+            return;
+        }
+        self.ensure_streaming_bubble();
+        if let Some(last) = self.feed.last_mut() {
             // Первый текст раунда после вызова инструмента — с пустой строкой-
             // разделителем (совпадение с `FeedMessage::from_messages`).
             if self.pending_text_sep {
@@ -171,9 +194,11 @@ impl ChatScreen {
     }
 
     pub fn push_thoughts(&mut self, generation_id: Uuid, text: &str) {
-        if self.current_gen == Some(generation_id)
-            && let Some(last) = self.feed.last_mut()
-        {
+        if self.current_gen != Some(generation_id) {
+            return;
+        }
+        self.ensure_streaming_bubble();
+        if let Some(last) = self.feed.last_mut() {
             if self.pending_thoughts_sep {
                 self.pending_thoughts_sep = false;
                 if !last.thoughts.is_empty() {

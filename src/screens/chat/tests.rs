@@ -18,6 +18,38 @@ fn ready_statuses() -> ServerStatuses {
 }
 
 #[test]
+fn chunk_after_midgen_note_goes_to_new_assistant_bubble() {
+    // Регрессия: пометка (AppEvent::Error о лимите раундов) посреди генерации
+    // делала `last` заметкой, и последующий стрим финального ответа дописывался в
+    // неё (простой текст, без markdown). Теперь чанк открывает новый пузырь.
+    let mut s = ChatScreen::new();
+    let id = gen_id();
+    s.push_user_message("собери отзывы".into());
+    s.begin_generation(id);
+    // Ассистент вызвал инструмент (пузырь ассистента пуст по тексту)...
+    s.push_tool_call(id, "web_search".into(), "{}".into(), "результаты".into());
+    // ...достигнут лимит — в ленту уходит пометка.
+    s.push_error("Достигнут лимит раундов инструментов (8) — свожу итог.");
+    // Форс-синтез стримит финальный ответ.
+    s.push_chunk(id, "## Итог\n\n**Вывод**.");
+    s.finish_generation(id, FinishReason::Stop);
+
+    // Заметка отдельным элементом; финальный текст — в пузыре ассистента (markdown),
+    // а не в заметке.
+    let notes: Vec<_> = s.feed.iter().filter(|m| m.role == FeedRole::Note).collect();
+    assert_eq!(notes.len(), 1, "ровно одна заметка о лимите");
+    assert!(
+        !notes[0].text.contains("## Итог"),
+        "финальный текст не должен попасть в заметку: {:?}",
+        notes[0].text
+    );
+    let last = s.feed.last().unwrap();
+    assert_eq!(last.role, FeedRole::Assistant);
+    assert_eq!(last.text, "## Итог\n\n**Вывод**.");
+    assert!(!last.streaming);
+}
+
+#[test]
 fn streaming_sequence_builds_feed() {
     let mut s = ChatScreen::new();
     let id = gen_id();
