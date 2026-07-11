@@ -71,20 +71,36 @@ pub fn display_width(chars: &[char]) -> usize {
 /// модификатор тона), ZWJ-последовательности и флаги проходятся/удаляются по половинке
 /// (курсор садится в середину эмодзи, Backspace оставляет «осиротевший» вариатор). UAX
 /// #29 (extended grapheme clusters) через `unicode-segmentation`. См. spec §11.5.
+///
+/// Стримит границы, останавливаясь на первой `≥ col` — не собирает все границы в `Vec`
+/// (нужна лишь одна соседняя, вызывается на каждый `←`/`Backspace`).
 pub fn prev_boundary(chars: &[char], col: usize) -> usize {
-    cluster_boundaries(chars)
-        .into_iter()
-        .rfind(|&b| b < col)
-        .unwrap_or(0)
+    let s: String = chars.iter().collect();
+    let mut prev = 0;
+    let mut acc = 0;
+    for g in s.graphemes(true) {
+        acc += g.chars().count();
+        if acc >= col {
+            break;
+        }
+        prev = acc;
+    }
+    prev
 }
 
 /// Граница графемного кластера **справа** от позиции `col` (зеркально
-/// [`prev_boundary`]) — конец кластера, на котором стоит курсор.
+/// [`prev_boundary`]) — конец кластера, на котором стоит курсор. Стримит границы,
+/// возвращая первую `> col`.
 pub fn next_boundary(chars: &[char], col: usize) -> usize {
-    cluster_boundaries(chars)
-        .into_iter()
-        .find(|&b| b > col)
-        .unwrap_or(chars.len())
+    let s: String = chars.iter().collect();
+    let mut acc = 0;
+    for g in s.graphemes(true) {
+        acc += g.chars().count();
+        if acc > col {
+            return acc;
+        }
+    }
+    chars.len()
 }
 
 /// Ближайшая граница графемного кластера **на позиции `col` или слева** от неё
@@ -92,27 +108,18 @@ pub fn next_boundary(chars: &[char], col: usize) -> usize {
 /// `col`. Нужна навигации/переносу, чтобы курсор и точки разрыва не садились в
 /// середину эмодзи-кластера (`❤️` = база + вариатор, флаг = пара индикаторов) —
 /// иначе `insert`/`backspace` разорвали бы кластер (осиротевший вариатор). UAX #29.
-/// См. spec §11.5.
+/// Стримит границы, продвигаясь, пока следующая не превысит `col`. См. spec §11.5.
 pub fn snap_boundary(chars: &[char], col: usize) -> usize {
-    cluster_boundaries(chars)
-        .into_iter()
-        .take_while(|&b| b <= col)
-        .last()
-        .unwrap_or(0)
-}
-
-/// Границы графемных кластеров в срезе (индексы символов), включая `0` и `len`.
-/// Между соседними границами — один кластер (возможно из нескольких скаляров).
-fn cluster_boundaries(chars: &[char]) -> Vec<usize> {
     let s: String = chars.iter().collect();
-    let mut bounds = Vec::with_capacity(chars.len() + 1);
-    bounds.push(0);
     let mut acc = 0;
     for g in s.graphemes(true) {
-        acc += g.chars().count();
-        bounds.push(acc);
+        let next = acc + g.chars().count();
+        if next > col {
+            break;
+        }
+        acc = next;
     }
-    bounds
+    acc
 }
 
 /// Точка жёсткого разрыва длинного слова на индексе `i` (символ, переполнивший

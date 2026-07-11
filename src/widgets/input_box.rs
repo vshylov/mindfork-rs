@@ -20,6 +20,14 @@ use crate::shared::wrap;
 /// Ширина колонки приглашения `❯ ` (в колонках) перед текстом ввода.
 const PROMPT_W: u16 = 2;
 
+/// Один визуальный ряд: `(логическая строка, начало, конец)` в индексах символов
+/// строки (с учётом переноса по ширине). См. [`InputBox::visual_rows`].
+type VisualRow = (usize, usize, usize);
+
+/// Кэш визуальных рядов: `(ширина, ревизия содержимого, ряды)`. См.
+/// [`InputBox::rows_cache`].
+type RowCache = Option<(usize, u64, Vec<VisualRow>)>;
+
 /// Многострочное поле ввода с курсором.
 pub struct InputBox {
     /// Логические строки (символы). Всегда непусто (минимум одна строка).
@@ -59,6 +67,15 @@ pub struct InputBox {
     /// текста (`insert_*`/`replace_range`/`set_text`) инвалидирует буфер в `None`.
     /// См. spec §11.5.
     cleared: Option<String>,
+    /// Счётчик ревизии содержимого: инкрементируется при любой правке `lines`
+    /// ([`Self::touch`]). Вместе с шириной — ключ кэша визуальных рядов: если ревизия
+    /// и ширина не изменились, перенос не пересчитывается.
+    revision: u64,
+    /// Кэш визуальных рядов `(ширина, ревизия, ряды)`. Перенос (`visual_rows`, O(n)
+    /// по символам) за кадр нужен 2–3 раза (высота через [`Self::content_rows`], сам
+    /// [`Self::render`], навигация `↑/↓`), а меняется лишь при правке или смене ширины.
+    /// Инвалидируется по `(width, revision)`. См. [`Self::rows_cached`].
+    rows_cache: RowCache,
 }
 
 impl Default for InputBox {
@@ -111,6 +128,8 @@ impl InputBox {
             goal_col: None,
             misspelled: Vec::new(),
             cleared: None,
+            revision: 0,
+            rows_cache: None,
         }
     }
 
@@ -136,6 +155,7 @@ impl InputBox {
             self.scroll = 0;
             self.hscroll = 0;
             self.goal_col = None;
+            self.touch();
         }
     }
 
@@ -151,6 +171,18 @@ impl InputBox {
     /// Пусто ли поле (одна пустая строка).
     pub fn is_empty(&self) -> bool {
         self.lines.len() == 1 && self.lines[0].is_empty()
+    }
+
+    /// Первый непробельный символ значения (по логическим строкам), если есть. Дешёвая
+    /// проверка «похоже на команду» без аллокации всего текста: вызывающий слой сперва
+    /// смотрит на `Some('/')` и лишь тогда парсит полный [`Self::text`]. Останавливается
+    /// на первом непробельном символе. См. `ChatScreen::input_is_command`.
+    pub fn first_non_whitespace(&self) -> Option<char> {
+        self.lines
+            .iter()
+            .flat_map(|l| l.iter())
+            .copied()
+            .find(|c| !c.is_whitespace())
     }
 
     /// Число логических строк. Высоту поля теперь считает [`Self::visual_line_count`]
@@ -177,12 +209,12 @@ impl InputBox {
     /// ширину на [`PROMPT_W`] и поле не росло бы на один-два символа за границей
     /// переноса (курсор прижимался к краю, см. spec §11.5). В однострочном режиме
     /// перенос отключён — всегда один ряд.
-    pub fn content_rows(&self, area_width: u16) -> usize {
+    pub fn content_rows(&mut self, area_width: u16) -> usize {
         if self.single_line {
             return 1;
         }
         let text_w = area_width.saturating_sub(2).saturating_sub(PROMPT_W).max(1) as usize;
-        self.visual_rows(text_w).len()
+        self.rows_cached(text_w).len()
     }
 
     /// Очищает поле. Сбрасывает и буфер отмены [`Self::cleared`] (после отправки
@@ -196,6 +228,7 @@ impl InputBox {
         self.goal_col = None;
         self.misspelled.clear();
         self.cleared = None;
+        self.touch();
     }
 
     /// Хоткей «удалить весь текст / вернуть удалённое» (`Ctrl+K`, spec §11.5).
@@ -290,6 +323,7 @@ impl InputBox {
         self.col = start + repl_len;
         self.goal_col = None;
         self.cleared = None;
+        self.touch();
     }
 
     /// Заполняет поле текстом, ставит курсор в конец (для правки по месту, M3+).
@@ -317,6 +351,7 @@ impl InputBox {
         // Старые диапазоны ошибок относились к прежнему тексту — сбрасываем (иначе до
         // ближайшей перепроверки подчёркивания рисовались бы на новом содержимом).
         self.misspelled.clear();
+        self.touch();
     }
 
     // ---------- редактирование ----------
@@ -327,6 +362,7 @@ impl InputBox {
         self.col += 1;
         self.goal_col = None;
         self.cleared = None;
+        self.touch();
     }
 
     pub fn insert_newline(&mut self) {
@@ -345,6 +381,7 @@ impl InputBox {
         self.col = 0;
         self.goal_col = None;
         self.cleared = None;
+        self.touch();
     }
 
     /// Вставляет произвольный текст в позицию курсора (вставка из буфера обмена).
@@ -381,6 +418,7 @@ impl InputBox {
         // подчёркивания — перепроверка (её всегда запускает `mark_input_changed`
         // после вставки) их перестроит. См. spec §11.5.
         self.misspelled.clear();
+        self.touch();
     }
 
     pub fn backspace(&mut self) {
@@ -392,6 +430,7 @@ impl InputBox {
             self.lines[self.row].drain(start..self.col);
             self.edit_misspelled(self.row, start, self.col - start, 0);
             self.col = start;
+            self.touch();
         } else if self.row > 0 {
             // склейка с предыдущей строкой
             let current = self.lines.remove(self.row);
@@ -399,6 +438,7 @@ impl InputBox {
             self.row -= 1;
             self.col = self.lines[self.row].len();
             self.lines[self.row].extend(current);
+            self.touch();
         }
     }
 
@@ -409,10 +449,12 @@ impl InputBox {
             let end = wrap::next_boundary(&self.lines[self.row], self.col);
             self.lines[self.row].drain(self.col..end);
             self.edit_misspelled(self.row, self.col, end - self.col, 0);
+            self.touch();
         } else if self.row + 1 < self.lines.len() {
             let next = self.lines.remove(self.row + 1);
             self.join_misspelled_into_prev(self.row + 1);
             self.lines[self.row].extend(next);
+            self.touch();
         }
     }
 
@@ -527,6 +569,7 @@ impl InputBox {
         self.lines[self.row].drain(start..self.col);
         self.edit_misspelled(self.row, start, self.col - start, 0);
         self.col = start;
+        self.touch();
     }
 
     /// Удаляет слово справа от курсора (`Ctrl+Delete`). В конце строки склеивает со
@@ -541,6 +584,7 @@ impl InputBox {
         let end = self.word_right_col();
         self.lines[self.row].drain(self.col..end);
         self.edit_misspelled(self.row, self.col, end - self.col, 0);
+        self.touch();
     }
 
     /// В самое начало текста (`Ctrl+Home`).
@@ -569,7 +613,7 @@ impl InputBox {
             self.move_up_logical();
             return;
         }
-        let vrows = self.visual_rows(self.last_width);
+        let vrows = self.rows_cached(self.last_width).to_vec();
         let (vrow, vcol) = self.cursor_visual(&vrows);
         // Первый шаг серии запоминает колонку; дальше держим её (goal-column).
         let goal = *self.goal_col.get_or_insert(vcol);
@@ -592,7 +636,7 @@ impl InputBox {
             self.move_down_logical();
             return;
         }
-        let vrows = self.visual_rows(self.last_width);
+        let vrows = self.rows_cached(self.last_width).to_vec();
         let (vrow, vcol) = self.cursor_visual(&vrows);
         let goal = *self.goal_col.get_or_insert(vcol);
         if vrow + 1 >= vrows.len() {
@@ -616,7 +660,7 @@ impl InputBox {
             self.col = 0;
             return;
         }
-        let vrows = self.visual_rows(self.last_width);
+        let vrows = self.rows_cached(self.last_width).to_vec();
         let (vrow, _) = self.cursor_visual(&vrows);
         self.col = vrows[vrow].1;
     }
@@ -634,7 +678,7 @@ impl InputBox {
             self.col = self.lines[self.row].len();
             return;
         }
-        let vrows = self.visual_rows(self.last_width);
+        let vrows = self.rows_cached(self.last_width).to_vec();
         let (vrow, _) = self.cursor_visual(&vrows);
         let (li, start, end) = vrows[vrow];
         self.col = col_for_visual(
@@ -799,8 +843,10 @@ impl InputBox {
         self.last_width = view_w;
 
         // Визуальные ряды с учётом переноса; позиция курсора — через тот же перенос
-        // (единый источник истины, иначе курсор разъедется с текстом).
-        let vrows = self.visual_rows(view_w);
+        // (единый источник истины, иначе курсор разъедется с текстом). Берём копию
+        // кэша: дальше мутируем `self` (scroll/курсор), поэтому заимствование держать
+        // нельзя, а memcpy готового результата дешевле повторного O(n)-переноса.
+        let vrows = self.rows_cached(view_w).to_vec();
         let (cursor_row, cursor_col) = self.cursor_visual(&vrows);
         self.adjust_scroll(cursor_row, vrows.len(), visible_rows);
 
@@ -917,9 +963,32 @@ impl InputBox {
         }
     }
 
+    /// Помечает содержимое изменённым — инвалидирует кэш визуальных рядов (следующий
+    /// [`Self::rows_cached`] увидит несовпадение ревизии). Зовётся всеми мутаторами
+    /// `lines`; навигация его НЕ зовёт (движение курсора не меняет ряды).
+    fn touch(&mut self) {
+        self.revision = self.revision.wrapping_add(1);
+    }
+
+    /// Визуальные ряды с кэшем по `(ширина, ревизия)` (см. [`Self::rows_cache`]).
+    /// Пересчитывает перенос только при смене ширины или содержимого; иначе отдаёт
+    /// заимствование в кэш. Потребители, которые дальше мутируют `self`, берут копию
+    /// (`.to_vec()` — дешёвый memcpy результата против O(n)-переноса).
+    fn rows_cached(&mut self, width: usize) -> &[VisualRow] {
+        let fresh =
+            matches!(&self.rows_cache, Some((w, r, _)) if *w == width && *r == self.revision);
+        if !fresh {
+            let rows = self.visual_rows(width);
+            self.rows_cache = Some((width, self.revision, rows));
+        }
+        // Кэш только что заполнен/проверен — unwrap безопасен.
+        &self.rows_cache.as_ref().unwrap().2
+    }
+
     /// Визуальные ряды: для каждого — `(логическая строка, начало, конец)` в
-    /// индексах символов этой строки (с учётом переноса по ширине `width`).
-    fn visual_rows(&self, width: usize) -> Vec<(usize, usize, usize)> {
+    /// индексах символов этой строки (с учётом переноса по ширине `width`). Чистый
+    /// пересчёт; кэшированный путь — [`Self::rows_cached`].
+    fn visual_rows(&self, width: usize) -> Vec<VisualRow> {
         let mut rows = Vec::new();
         for (li, chars) in self.lines.iter().enumerate() {
             for (start, end) in wrap::wrap_ranges(chars, width) {
@@ -932,7 +1001,7 @@ impl InputBox {
     /// Позиция курсора в визуальных координатах `(индекс ряда, столбец-колонки)`.
     /// На мягком переносе (курсор в конце ряда, но не в конце логической строки)
     /// курсор уходит на начало следующего ряда.
-    fn cursor_visual(&self, vrows: &[(usize, usize, usize)]) -> (usize, usize) {
+    fn cursor_visual(&self, vrows: &[VisualRow]) -> (usize, usize) {
         let mut last: Option<(usize, usize)> = None; // (индекс ряда, начало)
         for (idx, &(li, start, end)) in vrows.iter().enumerate() {
             if li != self.row {
@@ -994,7 +1063,7 @@ fn col_at_width(line: &[char], target: usize) -> usize {
 /// Визуальный ряд `idx` — мягкий перенос (не последний ряд своей логической строки),
 /// т.е. следующий ряд принадлежит той же строке. Тогда позиция курсора `== end`
 /// рисуется в начале следующего ряда — навигация это учитывает.
-fn is_soft(vrows: &[(usize, usize, usize)], idx: usize) -> bool {
+fn is_soft(vrows: &[VisualRow], idx: usize) -> bool {
     idx + 1 < vrows.len() && vrows[idx + 1].0 == vrows[idx].0
 }
 
@@ -1875,6 +1944,93 @@ mod tests {
         assert!(!KeyOutcome::Moved.edited());
         assert!(KeyOutcome::Moved.handled());
         assert!(!KeyOutcome::Ignored.handled());
+    }
+
+    // ---------- п.7: кэш визуальных рядов + дешёвый предохранитель ----------
+
+    #[test]
+    fn row_cache_invalidates_on_every_mutator() {
+        // После правки кэш визуальных рядов обязан совпасть со свежим пересчётом —
+        // иначе где-то забыт `touch()` (кэш вернул бы устаревший перенос, разъехавшись
+        // с реальным содержимым: неверные курсор/скролл).
+        fn check(setup: &str, mutate: impl FnOnce(&mut InputBox)) {
+            const W: usize = 6;
+            let mut ib = InputBox::new();
+            ib.set_text(setup);
+            let _ = ib.rows_cached(W); // заполняем кэш ДО правки
+            mutate(&mut ib);
+            let cached = ib.rows_cached(W).to_vec();
+            let fresh = ib.visual_rows(W);
+            assert_eq!(cached, fresh, "кэш визуальных рядов не инвалидировался");
+        }
+        check("abc", |ib| {
+            ib.col = 3;
+            ib.insert_char('d');
+        });
+        check("abc", |ib| ib.replace_range(0, 0, 3, "xy"));
+        check("abc", |ib| {
+            ib.col = 3;
+            ib.backspace();
+        });
+        check("ab\ncd", |ib| {
+            ib.row = 1;
+            ib.col = 0;
+            ib.backspace(); // склейка строк
+        });
+        check("abc", |ib| {
+            ib.col = 0;
+            ib.delete();
+        });
+        check("ab\ncd", |ib| {
+            ib.row = 0;
+            ib.col = 2;
+            ib.delete(); // склейка строк
+        });
+        check("abc def", |ib| {
+            ib.col = 7;
+            ib.delete_word_left();
+        });
+        check("abc def", |ib| {
+            ib.col = 0;
+            ib.delete_word_right();
+        });
+        check("abc", |ib| {
+            ib.col = 1;
+            ib.insert_newline();
+        });
+        check("abc", |ib| ib.insert_str("X\nY"));
+        check("abc", |ib| ib.set_text("zzzz"));
+        check("abc", |ib| ib.clear());
+    }
+
+    #[test]
+    fn navigation_preserves_revision_but_edit_bumps_it() {
+        // Инвариант оптимизации: движение курсора не инвалидирует кэш (ревизия не
+        // растёт), а правка — растит (кэш пересчитается).
+        let mut ib = InputBox::new();
+        ib.set_text("hello world");
+        render_at(&mut ib, 20);
+        let r0 = ib.revision;
+        assert!(ib.on_key(k(KeyCode::Left)).handled());
+        assert!(ib.on_key(k(KeyCode::Home)).handled());
+        assert!(ib.on_key(ctrl(KeyCode::Right)).handled());
+        assert_eq!(ib.revision, r0, "навигация не должна инвалидировать кэш");
+        assert!(ib.on_key(k(KeyCode::Char('!'))).handled());
+        assert!(ib.revision > r0, "правка должна инвалидировать кэш");
+    }
+
+    #[test]
+    fn first_non_whitespace_finds_leading_glyph() {
+        let mut ib = InputBox::new();
+        assert_eq!(ib.first_non_whitespace(), None); // пусто
+        ib.set_text("  /rag add x");
+        assert_eq!(ib.first_non_whitespace(), Some('/'));
+        ib.set_text("привет");
+        assert_eq!(ib.first_non_whitespace(), Some('п'));
+        ib.set_text("\n\n  x"); // ведущие пустые строки/пробелы
+        assert_eq!(ib.first_non_whitespace(), Some('x'));
+        ib.set_text("   "); // только пробелы
+        assert_eq!(ib.first_non_whitespace(), None);
     }
 
     #[test]
