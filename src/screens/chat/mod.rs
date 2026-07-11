@@ -307,11 +307,14 @@ impl ChatScreen {
     }
 
     /// Сохраняет снимок настроек (для открытия экрана настроек по `Ctrl+P`) и
-    /// обновляет палитру темы (вместе с режимом совместимости терминала).
+    /// обновляет палитру темы (вместе с режимом совместимости терминала) и
+    /// параметры отрисовки ленты (разделители строк таблиц).
     pub fn set_settings(&mut self, config: AppConfig, profiles: Vec<Profile>) {
         self.palette = Palette::for_theme(config.interface.theme)
             .with_compat(config.interface.terminal_compat);
         self.confirm_destructive = config.interface.confirm_destructive_keys;
+        self.feed_view
+            .set_table_row_separators(config.interface.table_row_separators);
         self.settings_snapshot = Some((config, profiles));
     }
 

@@ -28,10 +28,15 @@ pub(super) const MAX_MIN: usize = 12;
 /// (см. [`fit_columns`]); содержимое ячеек переносится по словам. Если столбцам
 /// не хватает даже читаемого минимума — таблица рисуется в естественной ширине и
 /// **обрезается** по правому краю панели (горизонтальный клип).
+///
+/// `row_separators` — рисовать горизонтальный разделитель (`├─┼─┤`) **между**
+/// строками тела («сеточный» вид, [`RenderOpts::table_row_separators`]); после
+/// последней строки разделителя нет (низ таблицы закрывает `└─┴─┘`).
 pub(super) fn render_table(
     tb: &TableBuilder,
     width: usize,
     palette: &Palette,
+    row_separators: bool,
 ) -> Vec<Line<'static>> {
     let ncols = tb
         .alignments
@@ -80,7 +85,10 @@ pub(super) fn render_table(
     out.push(border_line(&widths, Border::Top));
     out.extend(render_row(&tb.head, &widths, &aligns, palette, true));
     out.push(border_line(&widths, Border::Mid));
-    for row in &tb.rows {
+    for (i, row) in tb.rows.iter().enumerate() {
+        if row_separators && i > 0 {
+            out.push(border_line(&widths, Border::Mid));
+        }
         out.extend(render_row(row, &widths, &aligns, palette, false));
     }
     out.push(border_line(&widths, Border::Bottom));
@@ -375,5 +383,105 @@ mod tests {
         );
         let collected = rendered_text_w(TABLE_MD, narrow);
         assert!(collected.contains('…'), "ожидался маркер обрезки");
+    }
+
+    /// Рендер с флагом разделителей строк, склеенный в текст (как `rendered_text_w`).
+    fn rendered_with_separators(input: &str, width: usize) -> String {
+        let opts = RenderOpts {
+            table_row_separators: true,
+            ..Default::default()
+        };
+        render_with(input, width, &Palette::default(), opts)
+            .lines
+            .iter()
+            .map(|l| {
+                l.spans
+                    .iter()
+                    .map(|s| s.content.as_ref())
+                    .collect::<String>()
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+
+    /// Число строк-разделителей `├…┤` в склеенном рендере.
+    fn mid_border_count(text: &str) -> usize {
+        text.lines().filter(|l| l.starts_with('├')).count()
+    }
+
+    /// По умолчанию (без флага) — прежний компактный вид: единственный `├…┤`
+    /// под заголовком, между строками тела разделителей нет.
+    #[test]
+    fn row_separators_off_by_default() {
+        let collected = rendered_text(TABLE_MD);
+        assert_eq!(
+            mid_border_count(&collected),
+            1,
+            "ожидался только разделитель под заголовком:\n{collected}"
+        );
+    }
+
+    /// С флагом `table_row_separators` между строками тела появляются `├…┤`
+    /// (у TABLE_MD две строки → один разделитель между ними + один под
+    /// заголовком), а после последней строки — по-прежнему низ `└…┘`.
+    #[test]
+    fn row_separators_drawn_between_body_rows() {
+        let collected = rendered_with_separators(TABLE_MD, 80);
+        assert_eq!(
+            mid_border_count(&collected),
+            2,
+            "ожидались разделитель заголовка + один межстрочный:\n{collected}"
+        );
+        assert!(
+            collected.lines().last().unwrap().starts_with('└'),
+            "после последней строки должен идти низ таблицы, не разделитель"
+        );
+        // Разделитель стоит между содержимым строк, а не подряд с низом.
+        let quick = collected.lines().position(|l| l.contains("QuickSort"));
+        let merge = collected.lines().position(|l| l.contains("MergeSort"));
+        let mid = collected
+            .lines()
+            .enumerate()
+            .filter(|(_, l)| l.starts_with('├'))
+            .map(|(i, _)| i)
+            .last();
+        let (quick, merge, mid) = (quick.unwrap(), merge.unwrap(), mid.unwrap());
+        assert!(
+            quick < mid && mid < merge,
+            "межстрочный разделитель должен стоять между строками таблицы"
+        );
+    }
+
+    /// Таблица с одной строкой тела: межстрочному разделителю неоткуда взяться —
+    /// вид совпадает с выключенным флагом.
+    #[test]
+    fn row_separators_noop_for_single_row_table() {
+        let single = "| A | B |\n| :--- | :--- |\n| x | y |";
+        assert_eq!(mid_border_count(&rendered_with_separators(single, 80)), 1);
+    }
+
+    /// Разделители не ломают инвариант ширины: и при подгонке колонок, и на узкой
+    /// панели (клип с «…») строки таблицы остаются ≤ ширины панели.
+    #[test]
+    fn row_separators_respect_panel_width() {
+        let opts = RenderOpts {
+            table_row_separators: true,
+            ..Default::default()
+        };
+        for w in [24usize, 40, 60, 80] {
+            let text = render_with(TABLE_MD, w, &Palette::default(), opts);
+            let max = text
+                .lines
+                .iter()
+                .map(|l| {
+                    l.spans
+                        .iter()
+                        .map(|s| wrap::display_width(&s.content.chars().collect::<Vec<_>>()))
+                        .sum::<usize>()
+                })
+                .max()
+                .unwrap_or(0);
+            assert!(max <= w, "при ширине {w} строка вышла на {max}");
+        }
     }
 }

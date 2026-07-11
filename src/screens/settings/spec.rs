@@ -67,6 +67,9 @@ pub(super) fn field_spec(id: FieldId) -> Option<FieldSpec> {
         TPython => toggle(|c| c.tools.python_enabled = !c.tools.python_enabled),
         TFs => toggle(|c| c.tools.fs_enabled = !c.tools.fs_enabled),
         ICompat => toggle(|c| c.interface.terminal_compat = !c.interface.terminal_compat),
+        ITableSeparators => {
+            toggle(|c| c.interface.table_row_separators = !c.interface.table_row_separators)
+        }
         ISpell => toggle(|c| c.interface.spellcheck_enabled = !c.interface.spellcheck_enabled),
         IConfirmKeys => {
             toggle(|c| c.interface.confirm_destructive_keys = !c.interface.confirm_destructive_keys)
