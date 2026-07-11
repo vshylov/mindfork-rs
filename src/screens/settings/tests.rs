@@ -75,17 +75,21 @@ fn esc_closes() {
 }
 
 #[test]
-fn ctrl_c_quits() {
+fn ctrl_q_and_f10_quit() {
     let mut s = screen();
-    assert_eq!(s.handle_key(ctrl('c')), Some(SettingsIntent::Quit));
-    // И при открытом редакторе поля — тоже выход.
+    assert_eq!(s.handle_key(ctrl('q')), Some(SettingsIntent::Quit));
+    assert_eq!(
+        s.handle_key(key(KeyCode::F(10))),
+        Some(SettingsIntent::Quit)
+    );
+    // И при открытом редакторе поля — тоже выход (Ctrl+Q поверх редактора).
     s.editor = Some(Editor {
         field: FieldId::XBinary,
         input: InputBox::new(),
         multiline: false,
         error: None,
     });
-    assert_eq!(s.handle_key(ctrl('c')), Some(SettingsIntent::Quit));
+    assert_eq!(s.handle_key(ctrl('q')), Some(SettingsIntent::Quit));
 }
 
 #[test]
@@ -419,7 +423,7 @@ fn system_message_editor_is_multiline_and_keeps_newlines() {
 }
 
 #[test]
-fn ctrl_k_clears_and_restores_multiline_editor() {
+fn ctrl_k_clears_and_ctrl_z_restores_multiline_editor() {
     let mut s = screen();
     goto_section(&mut s, Section::Profiles);
     goto_field(&mut s, FieldId::PSystem);
@@ -428,14 +432,15 @@ fn ctrl_k_clears_and_restores_multiline_editor() {
     s.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::SHIFT));
     s.handle_key(key(KeyCode::Char('B')));
     let ctrl_k = KeyEvent::new(KeyCode::Char('k'), KeyModifiers::CONTROL);
+    let ctrl_z = KeyEvent::new(KeyCode::Char('z'), KeyModifiers::CONTROL);
     s.handle_key(ctrl_k); // очистка
     assert_eq!(s.editor.as_ref().unwrap().input.text(), "");
-    s.handle_key(ctrl_k); // возврат удалённого
+    s.handle_key(ctrl_z); // возврат удалённого (общая модель отмены, §C)
     assert_eq!(
         s.editor.as_ref().unwrap().input.text(),
         "Ты — ассистент.A\nB"
     );
-    assert!(s.editor.is_some(), "Ctrl+K не закрывает редактор");
+    assert!(s.editor.is_some(), "Ctrl+K/Ctrl+Z не закрывают редактор");
 }
 
 #[test]

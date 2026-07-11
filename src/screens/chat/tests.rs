@@ -363,9 +363,13 @@ fn keys_ignored_during_impersonation_except_cancel_quit() {
         s.handle_key(KeyEvent::new(KeyCode::Char('x'), KeyModifiers::NONE)),
         None
     );
-    // Ctrl+C всё ещё выходит.
+    // Ctrl+Q / F10 всё ещё выходят (выход переехал с Ctrl+C).
     assert_eq!(
-        s.handle_key(KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL)),
+        s.handle_key(KeyEvent::new(KeyCode::Char('q'), KeyModifiers::CONTROL)),
+        Some(ChatIntent::Quit)
+    );
+    assert_eq!(
+        s.handle_key(KeyEvent::new(KeyCode::F(10), KeyModifiers::NONE)),
         Some(ChatIntent::Quit)
     );
 }
@@ -465,12 +469,12 @@ fn confirm_popup_ignores_other_keys() {
 }
 
 #[test]
-fn ctrl_c_breaks_through_confirm_popup_to_quit() {
+fn ctrl_q_breaks_through_confirm_popup_to_quit() {
     let mut s = with_confirm();
     s.handle_key(KeyEvent::new(KeyCode::Char('r'), KeyModifiers::CONTROL));
     assert_eq!(s.confirm, Some(ConfirmAction::Regenerate));
     assert_eq!(
-        s.handle_key(KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL)),
+        s.handle_key(KeyEvent::new(KeyCode::Char('q'), KeyModifiers::CONTROL)),
         Some(ChatIntent::Quit)
     );
     assert_eq!(s.confirm, None);
@@ -504,12 +508,50 @@ fn esc_opens_chat_list_else_cancels_generation() {
 }
 
 #[test]
-fn ctrl_c_quits_from_chat() {
+fn ctrl_q_and_f10_quit_from_chat() {
     let mut s = ChatScreen::new();
     assert_eq!(
-        s.handle_key(KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL)),
+        s.handle_key(KeyEvent::new(KeyCode::Char('q'), KeyModifiers::CONTROL)),
         Some(ChatIntent::Quit)
     );
+    assert_eq!(
+        s.handle_key(KeyEvent::new(KeyCode::F(10), KeyModifiers::NONE)),
+        Some(ChatIntent::Quit)
+    );
+    // Ctrl+C без выделения — no-op (освобождён под копирование, не выход).
+    assert_eq!(
+        s.handle_key(KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL)),
+        None
+    );
+}
+
+#[test]
+fn ctrl_c_copies_selection_ctrl_x_cuts() {
+    let mut s = ChatScreen::new();
+    s.input.set_text("hello world");
+    s.input
+        .on_key(KeyEvent::new(KeyCode::Home, KeyModifiers::CONTROL)); // курсор в начало
+    for _ in 0..5 {
+        s.input
+            .on_key(KeyEvent::new(KeyCode::Right, KeyModifiers::SHIFT)); // выделить "hello"
+    }
+    // Ctrl+C → намерение записать выделение в буфер; выделение снято, текст цел.
+    assert_eq!(
+        s.handle_key(KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL)),
+        Some(ChatIntent::CopyToClipboard("hello".into()))
+    );
+    assert!(!s.input.has_selection());
+    assert_eq!(s.input.text(), "hello world");
+    // Выделяем следующие 5 символов (" worl") и вырезаем — текст укорачивается.
+    for _ in 0..5 {
+        s.input
+            .on_key(KeyEvent::new(KeyCode::Right, KeyModifiers::SHIFT));
+    }
+    assert_eq!(
+        s.handle_key(KeyEvent::new(KeyCode::Char('x'), KeyModifiers::CONTROL)),
+        Some(ChatIntent::CopyToClipboard(" worl".into()))
+    );
+    assert_eq!(s.input.text(), "hellod");
 }
 
 #[test]
@@ -614,7 +656,7 @@ fn ctrl_p_opens_settings_only_with_snapshot() {
 #[test]
 fn ctrl_shortcuts_work_under_cyrillic_layout() {
     // При русской раскладке физические клавиши дают кириллицу: Ctrl+з (физ. P),
-    // Ctrl+с (физ. C) — шорткаты обязаны срабатывать.
+    // Ctrl+й (физ. Q) — шорткаты обязаны срабатывать.
     let mut s = ChatScreen::new();
     s.set_settings(AppConfig::default(), vec![Profile::new("P", "sys")]);
     assert_eq!(
@@ -623,9 +665,9 @@ fn ctrl_shortcuts_work_under_cyrillic_layout() {
         "Ctrl+з (физ. P) открывает настройки"
     );
     assert_eq!(
-        s.handle_key(KeyEvent::new(KeyCode::Char('с'), KeyModifiers::CONTROL)),
+        s.handle_key(KeyEvent::new(KeyCode::Char('й'), KeyModifiers::CONTROL)),
         Some(ChatIntent::Quit),
-        "Ctrl+с (физ. C) — выход"
+        "Ctrl+й (физ. Q) — выход"
     );
 }
 
@@ -677,6 +719,59 @@ fn wheel(kind: MouseEventKind) -> MouseEvent {
         row: 0,
         modifiers: KeyModifiers::NONE,
     }
+}
+
+fn mouse_at(kind: MouseEventKind, column: u16, row: u16) -> MouseEvent {
+    MouseEvent {
+        kind,
+        column,
+        row,
+        modifiers: KeyModifiers::NONE,
+    }
+}
+
+#[test]
+fn mouse_click_and_drag_in_input_build_selection() {
+    use ratatui::Terminal;
+    use ratatui::backend::TestBackend;
+    use ratatui::crossterm::event::MouseButton;
+    let mut s = ChatScreen::new();
+    type_str(&mut s, "hello world");
+    // Рендерим, чтобы поле ввода запомнило свою область (last_area).
+    let mut term = Terminal::new(TestBackend::new(50, 16)).unwrap();
+    term.draw(|f| s.render(f)).unwrap();
+    let area = s.input.last_area_for_test().expect("поле отрисовано");
+    // Клик в начало поля — курсор туда, выделения ещё нет.
+    s.handle_mouse(mouse_at(
+        MouseEventKind::Down(MouseButton::Left),
+        area.x,
+        area.y,
+    ));
+    assert_eq!(s.input.cursor(), (0, 0));
+    assert!(!s.input.has_selection());
+    // Драг вправо на 5 колонок растит выделение "hello".
+    s.handle_mouse(mouse_at(
+        MouseEventKind::Drag(MouseButton::Left),
+        area.x + 5,
+        area.y,
+    ));
+    assert!(s.input.has_selection());
+    assert_eq!(s.input.selected_text().as_deref(), Some("hello"));
+}
+
+#[test]
+fn mouse_click_outside_input_does_not_move_cursor() {
+    use ratatui::Terminal;
+    use ratatui::backend::TestBackend;
+    use ratatui::crossterm::event::MouseButton;
+    let mut s = ChatScreen::new();
+    type_str(&mut s, "hello");
+    let mut term = Terminal::new(TestBackend::new(50, 16)).unwrap();
+    term.draw(|f| s.render(f)).unwrap();
+    // Клик в ленту (верх экрана, вне поля ввода) — курсор поля не двигается.
+    s.handle_mouse(mouse_at(MouseEventKind::Down(MouseButton::Left), 0, 0));
+    assert_eq!(s.input.cursor(), (0, 5)); // курсор остался в конце текста
+    assert!(!s.input.has_selection());
 }
 
 #[test]

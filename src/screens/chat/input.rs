@@ -29,11 +29,14 @@ impl ChatScreen {
             return None;
         }
         // Во время имперсонации поле ввода скрыто (показан предпросмотр): реагируем
-        // только на отмену (`Esc`) и выход (`Ctrl+C`); прочие клавиши игнорируем.
+        // только на отмену (`Esc`) и выход (`Ctrl+Q`/`F10`); прочие клавиши игнорируем.
         if self.impersonation.is_some() {
+            if key.code == KeyCode::F(10) {
+                return Some(ChatIntent::Quit);
+            }
             if key.modifiers.contains(KeyModifiers::CONTROL)
                 && let KeyCode::Char(c) = key.code
-                && keys::physical_char(c) == 'c'
+                && keys::physical_char(c) == 'q'
             {
                 return Some(ChatIntent::Quit);
             }
@@ -65,7 +68,29 @@ impl ChatScreen {
             && let KeyCode::Char(c) = key.code
         {
             match keys::physical_char(c) {
-                'c' => return Some(ChatIntent::Quit),
+                // Выход переехал на Ctrl+Q/F10 (F10 — в матче кодов ниже); Ctrl+C
+                // освобождён под копирование. См. docs/input-selection-undo-mouse.md §B.
+                'q' => return Some(ChatIntent::Quit),
+                // Копировать выделение в буфер обмена (Ctrl+C). Запись — side-effect
+                // runtime (`AppCommand` не нужен, текст у UI). Без выделения — no-op.
+                'c' => {
+                    if self.input.has_selection() {
+                        let text = self.input.selected_text().unwrap_or_default();
+                        self.input.clear_selection();
+                        return Some(ChatIntent::CopyToClipboard(text));
+                    }
+                    return None;
+                }
+                // Вырезать выделение (Ctrl+X): копировать + удалить.
+                'x' => {
+                    if self.input.has_selection() {
+                        let text = self.input.selected_text().unwrap_or_default();
+                        self.input.delete_selection();
+                        self.mark_input_changed();
+                        return Some(ChatIntent::CopyToClipboard(text));
+                    }
+                    return None;
+                }
                 // Экран настроек (Ctrl+P) — открывается, если снимок настроек получен.
                 'p' => {
                     return self
@@ -85,11 +110,10 @@ impl ChatScreen {
                         seed: self.input.text(),
                     });
                 }
-                // Удалить весь текст ввода / вернуть удалённое (spec §11.5).
-                // Повторное нажатие восстанавливает удалённое, если после него
-                // ничего не вводилось.
+                // Удалить весь текст ввода (spec §11.5); возврат — `Ctrl+Z`
+                // (общая модель отмены, см. docs/input-selection-undo-mouse.md §C).
                 'k' => {
-                    self.input.clear_or_restore();
+                    self.input.clear_undoable();
                     self.mark_input_changed();
                     return None;
                 }
@@ -118,6 +142,9 @@ impl ChatScreen {
             }
         }
         match (key.code, key.modifiers) {
+            // Выход — Ctrl+Q (выше) или F10 (второй вариант, если терминал перехватит
+            // Ctrl+Q; F10 часто открывает меню эмулятора в Linux-DE, но отключается).
+            (KeyCode::F(10), _) => Some(ChatIntent::Quit),
             // Помощь по клавишам: F1 всегда; `?` — только при пустом вводе (иначе
             // символ печатается). См. spec §11.7.
             (KeyCode::F(1), _) => {
@@ -193,7 +220,10 @@ impl ChatScreen {
                 }
             }
             _ => {
-                if self.input.on_key(key) {
+                // Помечаем ввод «грязным» только на реальной правке — голое движение
+                // курсора (`Moved`) не должно зря будить дебаунс орфографии и слать
+                // `SetDraft`. См. [`KeyOutcome`].
+                if self.input.on_key(key).edited() {
                     self.mark_input_changed();
                 }
                 None
@@ -222,9 +252,12 @@ impl ChatScreen {
         self.mark_input_changed();
     }
 
-    /// Обрабатывает событие мыши: колесо прокручивает ленту чата. Работает только
-    /// в основном виде — при открытом оверлее/попапе/справке прокрутка ленты под
-    /// ними была бы неожиданной, поэтому это no-op. См. spec §11.3.
+    /// Обрабатывает событие мыши (доходит только при захвате мыши `Ctrl+W`): колесо
+    /// прокручивает ленту чата; клик/драг левой кнопкой в поле ввода ставит курсор /
+    /// растит выделение (этап D плана). Работает только в основном виде — при открытом
+    /// оверлее/попапе/справке это no-op (прокрутка/правка курсора под ними были бы
+    /// неожиданны). Клик/драг вне области поля (в ленту) — no-op (выделение ленты —
+    /// отдельное направление). См. spec §11.3, §11.5.
     pub fn handle_mouse(&mut self, mouse: MouseEvent) {
         if self.show_help
             || self.suggest.is_some()
@@ -237,6 +270,14 @@ impl ChatScreen {
         match mouse.kind {
             MouseEventKind::ScrollUp => self.feed_view.scroll_up(WHEEL_SCROLL),
             MouseEventKind::ScrollDown => self.feed_view.scroll_down(WHEEL_SCROLL),
+            // Клик/драг в поле ввода — только когда поле видно (во время имперсонации
+            // на его месте предпросмотр, а `last_area` поля устарела).
+            MouseEventKind::Down(MouseButton::Left) if self.impersonation.is_none() => {
+                self.input.mouse_press(mouse.column, mouse.row);
+            }
+            MouseEventKind::Drag(MouseButton::Left) if self.impersonation.is_none() => {
+                self.input.mouse_drag(mouse.column, mouse.row);
+            }
             _ => {}
         }
     }
@@ -313,9 +354,13 @@ impl ChatScreen {
     }
 
     /// Является ли текущий ввод командой (`/rag …`). Такой текст подсвечивается
-    /// жёлтым и не проверяется орфографией. См. spec §11.5.
+    /// жёлтым и не проверяется орфографией. См. spec §11.5. Проверяется каждый кадр,
+    /// поэтому сперва — дешёвый предохранитель: команда всегда начинается с `/`
+    /// (первый непробельный символ), и лишь тогда парсим полный текст (аллокация
+    /// `text()` + разбор). Для обычного ввода (буквы, кириллица) `text()` не строится.
     pub(super) fn input_is_command(&self) -> bool {
-        crate::features::rag_command::parse(&self.input.text()).is_some()
+        self.input.first_non_whitespace() == Some('/')
+            && crate::features::rag_command::parse(&self.input.text()).is_some()
     }
 
     /// Запускает необратимую операцию (`Ctrl+R`/`Ctrl+E`): сразу отдаёт намерение,

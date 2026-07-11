@@ -38,7 +38,7 @@ use crate::widgets::status_bar;
 pub enum SettingsIntent {
     /// Закрыть экран настроек (вернуться в чат).
     Close,
-    /// Выйти из приложения (`Ctrl+C`).
+    /// Выйти из приложения (`Ctrl+Q`/`F10`).
     Quit,
     /// Сохранить конфигурацию (правка любой секции, кроме профилей).
     SaveConfig(Box<AppConfig>),

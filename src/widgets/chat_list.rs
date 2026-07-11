@@ -33,7 +33,7 @@ pub enum ChatListAction {
     None,
     /// Закрыть оверлей.
     Close,
-    /// Выйти из приложения (`Ctrl+C`).
+    /// Выйти из приложения (`Ctrl+Q`/`F10`).
     Quit,
     /// Сделать чат активным (и закрыть оверлей).
     Switch(Uuid),
@@ -176,8 +176,9 @@ impl ChatListState {
         // чтобы он не попал в строку поиска.
         if ctrl && let KeyCode::Char(c) = key.code {
             return match keys::physical_char(c) {
-                // Выход из приложения работает и из оверлея списка чатов.
-                'c' => ChatListAction::Quit,
+                // Выход работает и из списка чатов; переехал на Ctrl+Q/F10 (Ctrl+C
+                // освобождён). См. docs/input-selection-undo-mouse.md §B.
+                'q' => ChatListAction::Quit,
                 'n' => ChatListAction::New,
                 'd' => match self.selected_id() {
                     Some(id) => ChatListAction::Clone(id),
@@ -192,6 +193,7 @@ impl ChatListState {
             };
         }
         match key.code {
+            KeyCode::F(10) => ChatListAction::Quit, // второй вариант выхода
             KeyCode::Esc => ChatListAction::Close,
             KeyCode::Enter => match self.selected_id() {
                 Some(id) => ChatListAction::Switch(id),
@@ -283,15 +285,15 @@ impl ChatListState {
         else {
             return ChatListAction::None;
         };
-        // Очистка/возврат всего текста (`Ctrl+K`) — раскладко-независимо, как в чате.
-        // Прочие Ctrl-комбинации (пословная навигация `Ctrl+←/→`, удаление слова
-        // `Ctrl+Backspace/Delete`, `Ctrl+Home/End`) обрабатывает сам `InputBox` ниже;
-        // незнакомые он глотает (Ctrl+символ в поле не печатается).
+        // Очистка всего текста (`Ctrl+K`; возврат — `Ctrl+Z`) — раскладко-независимо,
+        // как в чате. Прочие Ctrl-комбинации (пословная навигация `Ctrl+←/→`, удаление
+        // слова `Ctrl+Backspace/Delete`, `Ctrl+Home/End`, отмена/повтор `Ctrl+Z/Y`)
+        // обрабатывает сам `InputBox` ниже; незнакомые он глотает.
         if ctrl
             && let KeyCode::Char(c) = key.code
             && keys::physical_char(c) == 'k'
         {
-            input.clear_or_restore();
+            input.clear_undoable();
             *spell_dirty = true;
             return ChatListAction::None;
         }
@@ -311,9 +313,10 @@ impl ChatListState {
                 action
             }
             // Всё прочее (печать, навигация по словам/символам, удаление, `Home/End`)
-            // ведёт сам `InputBox`; помечаем подсветку ошибок на пересчёт.
+            // ведёт сам `InputBox`; на реальной правке помечаем подсветку ошибок на
+            // пересчёт (движение курсора его не требует). См. [`KeyOutcome`].
             _ => {
-                if input.on_key(key) {
+                if input.on_key(key).edited() {
                     *spell_dirty = true;
                 }
                 ChatListAction::None
@@ -566,7 +569,7 @@ impl ChatListState {
             ("F5", "в буфер", false),
             ("Del", "удалить", true),
             ("Esc", "назад", false),
-            ("Ctrl+C", "выход", false),
+            ("Ctrl+Q", "выход", false),
             ("Tab", sort_desc.as_str(), false),
         ];
         palette.hotkey_grid(&items, width)
@@ -652,11 +655,15 @@ mod tests {
     }
 
     #[test]
-    fn ctrl_c_quits() {
+    fn ctrl_q_and_f10_quit() {
         let mut s = ChatListState::new(vec![chat("A")], None);
-        assert_eq!(s.on_key(ctrl(KeyCode::Char('c'))), ChatListAction::Quit);
-        // И при кириллической раскладке (физ. C = Ctrl+с).
-        assert_eq!(s.on_key(ctrl(KeyCode::Char('с'))), ChatListAction::Quit);
+        assert_eq!(s.on_key(ctrl(KeyCode::Char('q'))), ChatListAction::Quit);
+        // И при кириллической раскладке (физ. Q = Ctrl+й).
+        assert_eq!(s.on_key(ctrl(KeyCode::Char('й'))), ChatListAction::Quit);
+        // F10 — второй вариант выхода.
+        assert_eq!(s.on_key(key(KeyCode::F(10))), ChatListAction::Quit);
+        // Ctrl+C больше не выход (освобождён под копирование).
+        assert_ne!(s.on_key(ctrl(KeyCode::Char('c'))), ChatListAction::Quit);
     }
 
     #[test]
@@ -794,14 +801,14 @@ mod tests {
     }
 
     #[test]
-    fn rename_clear_and_restore_with_ctrl_k() {
-        // `Ctrl+K` чистит поле, повторное нажатие возвращает текст (как в чате).
+    fn rename_clear_with_ctrl_k_undo_with_ctrl_z() {
+        // `Ctrl+K` чистит поле, `Ctrl+Z` возвращает текст (общая модель отмены, §C).
         let chats = vec![chat("Старое имя")];
         let id = chats[0].id;
         let mut s = ChatListState::new(chats, None);
         s.on_key(key(KeyCode::F(2)));
         s.on_key(ctrl(KeyCode::Char('k'))); // удалить весь текст
-        s.on_key(ctrl(KeyCode::Char('k'))); // вернуть удалённое
+        s.on_key(ctrl(KeyCode::Char('z'))); // отмена — вернуть удалённое
         assert_eq!(
             s.on_key(key(KeyCode::Enter)),
             ChatListAction::Rename {

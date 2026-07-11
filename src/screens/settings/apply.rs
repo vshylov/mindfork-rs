@@ -14,16 +14,17 @@ impl SettingsScreen {
         if key.kind != KeyEventKind::Press {
             return None;
         }
-        // Ctrl+C — выход из приложения, откуда угодно на экране настроек (в т.ч. из
-        // редактора поля). Матчим по «физической» латинской клавише — работает при
-        // любой раскладке (см. shared::keys).
-        if key.modifiers.contains(KeyModifiers::CONTROL)
-            && let KeyCode::Char(c) = key.code
-            && keys::physical_char(c) == 'c'
+        // Выход из приложения (`Ctrl+Q`/`F10`), откуда угодно на экране настроек (в
+        // т.ч. из редактора поля). Ctrl+Q матчим по «физической» латинской клавише —
+        // работает при любой раскладке (см. shared::keys). Выход переехал с `Ctrl+C`
+        // (освобождён), см. docs/input-selection-undo-mouse.md §B.
+        if key.code == KeyCode::F(10)
+            || (key.modifiers.contains(KeyModifiers::CONTROL)
+                && matches!(key.code, KeyCode::Char(c) if keys::physical_char(c) == 'q'))
         {
             return Some(SettingsIntent::Quit);
         }
-        // Оверлей поиска перехватывает ввод (кроме Ctrl+C выше).
+        // Оверлей поиска перехватывает ввод (кроме выхода выше).
         if self.search.is_some() {
             return self.handle_search_key(key);
         }
@@ -206,12 +207,12 @@ impl SettingsScreen {
                 let editor = self.editor.take().unwrap();
                 self.apply_text(editor.field, &text)
             }
-            // Удалить весь текст поля / вернуть удалённое (spec §11.5). Матчим по
+            // Удалить весь текст поля (spec §11.5; возврат — Ctrl+Z). Матчим по
             // «физической» клавише — срабатывает при любой раскладке (как в чат-вводе).
             (KeyCode::Char(c), m)
                 if m.contains(KeyModifiers::CONTROL) && keys::physical_char(c) == 'k' =>
             {
-                editor.input.clear_or_restore();
+                editor.input.clear_undoable();
                 editor.error = None;
                 None
             }

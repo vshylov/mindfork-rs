@@ -139,7 +139,7 @@ impl SettingsScreen {
                 if m.contains(KeyModifiers::CONTROL) && keys::physical_char(c) == 'k' =>
             {
                 if let Some(s) = &mut self.search {
-                    s.input.clear_or_restore();
+                    s.input.clear_undoable();
                 }
                 self.search_filter();
             }

@@ -35,7 +35,7 @@ impl SettingsScreen {
             hints.push(("Ctrl+D", "удалить"));
         }
         hints.push(("Esc", "назад"));
-        hints.push(("Ctrl+C", "выход"));
+        hints.push(("Ctrl+Q", "выход"));
         // Строка хоткеев — под панелью (вне рамки), переносится сеткой по той же
         // логике, что статус-бар экрана чата (прижата вправо). Высоту считаем заранее.
         let hotkeys = status_bar::hotkey_lines(area.width as usize, &hints, &palette);

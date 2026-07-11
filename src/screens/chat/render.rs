@@ -64,9 +64,13 @@ impl ChatScreen {
         // высоту считаем через `content_rows`, который вычитает и рамку, и `PROMPT_W`
         // (та же ширина текста, что и при отрисовке, иначе поле растёт с опозданием).
         let area_w = frame.area().width;
-        let content_lines = match &self.impersonation {
-            Some(imp) => visual_line_count(&imp.text, area_w.saturating_sub(2).max(1) as usize),
-            None => self.input.content_rows(area_w),
+        // `if let` (а не `match &self.impersonation`): в `else`-ветке нужен `&mut
+        // self.input` (`content_rows` кэширует ряды), а заём `&self.impersonation`
+        // в неё не продлевается — поля непересекающиеся.
+        let content_lines = if let Some(imp) = &self.impersonation {
+            visual_line_count(&imp.text, area_w.saturating_sub(2).max(1) as usize)
+        } else {
+            self.input.content_rows(area_w)
         };
         let input_h = (content_lines.clamp(1, 6) + 2) as u16;
         // Баннер индексации RAG занимает строку только когда активен (иначе 0 —

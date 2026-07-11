@@ -35,10 +35,10 @@ impl ChatScreen {
     /// гасится при попадании в генерацию (намерение всё равно гейтит оркестратор).
     pub(super) fn handle_confirm_key(&mut self, key: KeyEvent) -> Option<ChatIntent> {
         let action = self.confirm?;
-        // Ctrl+C пробивает попап на выход (раскладко-независимо). См. spec §11.7.
-        if key.modifiers.contains(KeyModifiers::CONTROL)
-            && let KeyCode::Char(c) = key.code
-            && keys::physical_char(c) == 'c'
+        // Ctrl+Q/F10 пробивают попап на выход (раскладко-независимо). См. spec §11.7.
+        if key.code == KeyCode::F(10)
+            || (key.modifiers.contains(KeyModifiers::CONTROL)
+                && matches!(key.code, KeyCode::Char(c) if keys::physical_char(c) == 'q'))
         {
             self.confirm = None;
             return Some(ChatIntent::Quit);
@@ -123,6 +123,10 @@ impl ChatScreen {
 pub(super) const HELP_KEYS: &[(&str, &str)] = &[
     ("Enter", "отправить сообщение"),
     ("Shift+Enter", "перенос строки"),
+    ("Shift+←/→/↑/↓", "выделить текст"),
+    ("Ctrl+A", "выделить весь ввод"),
+    ("Ctrl+C", "копировать выделение"),
+    ("Ctrl+X", "вырезать выделение"),
     ("Ctrl+V", "вставить текст из буфера (многострочно)"),
     ("Esc", "список чатов · закрыть · отмена генерации"),
     ("Ctrl+N", "новый чат (выбор профиля)"),
@@ -131,7 +135,8 @@ pub(super) const HELP_KEYS: &[(&str, &str)] = &[
     ("Ctrl+R", "перегенерировать ответ"),
     ("Ctrl+E", "удалить последний обмен (правка)"),
     ("Ctrl+U", "написать сообщение за пользователя"),
-    ("Ctrl+K", "удалить весь текст ввода (повтор — вернуть)"),
+    ("Ctrl+K", "удалить весь текст ввода (возврат — Ctrl+Z)"),
+    ("Ctrl+Z / Ctrl+Y", "отмена / повтор правки"),
     ("Ctrl+←/→", "курсор по словам"),
     ("Ctrl+Backspace/Delete", "удалить слово слева/справа"),
     ("Ctrl+Home/End", "в начало/конец текста ввода"),
@@ -140,13 +145,17 @@ pub(super) const HELP_KEYS: &[(&str, &str)] = &[
     ("Ctrl+G", "подсказки орфографии"),
     ("Ctrl+B", "вставить эмодзи"),
     ("Ctrl+W", "колесо мыши ↔ выделение текста"),
+    (
+        "клик/драг мышью",
+        "курсор/выделение в поле (при захвате Ctrl+W)",
+    ),
     ("/rag add <путь> [-r]", "индексировать файлы в RAG"),
     ("/rag remove <путь>", "удалить файлы из RAG"),
     ("/rag list", "источники в базе знаний"),
     ("/rag rebuild", "реиндексировать базу знаний"),
     ("PageUp/PageDown", "прокрутка ленты"),
     ("F1 / ?", "эта справка"),
-    ("Ctrl+C", "выход"),
+    ("Ctrl+Q / F10", "выход"),
 ];
 
 /// Рисует оверлей помощи по центру экрана: «клавиши» + приглушённые описания.
