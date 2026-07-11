@@ -370,7 +370,9 @@ impl SelfModelScreen {
                 self.editor = None;
                 None
             }
-            (KeyCode::Enter, KeyModifiers::SHIFT) => {
+            // Shift+Enter (или Alt+Enter — запасной перенос для терминалов без
+            // kitty-протокола, см. п.11) — перевод строки; Enter — коммит.
+            (KeyCode::Enter, m) if m.intersects(KeyModifiers::SHIFT | KeyModifiers::ALT) => {
                 editor.input.insert_newline();
                 None
             }
@@ -654,6 +656,23 @@ mod tests {
             other => panic!("ожидали SetSummary, получили {other:?}"),
         }
         assert!(s.editor.is_none());
+    }
+
+    #[test]
+    fn alt_enter_inserts_newline_in_editor() {
+        // Запасной перенос строки для терминалов без kitty-протокола (Shift+Enter там
+        // неотличим от Enter). См. п.11 аудита InputBox.
+        let mut s = SelfModelScreen::new(Some(model()), Palette::default());
+        s.handle_key(key(KeyCode::Enter)); // открыть редактор описания себя
+        s.handle_key(key(KeyCode::Char('A')));
+        s.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::ALT));
+        s.handle_key(key(KeyCode::Char('B')));
+        assert!(s.editor.is_some(), "Alt+Enter не закрывает редактор");
+        let intent = s.handle_key(key(KeyCode::Enter)).unwrap();
+        match intent {
+            SelfModelIntent::Edit(SelfModelEdit::SetSummary(t)) => assert!(t.contains("A\nB")),
+            other => panic!("ожидали SetSummary, получили {other:?}"),
+        }
     }
 
     #[test]

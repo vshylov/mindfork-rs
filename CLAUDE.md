@@ -4392,6 +4392,45 @@ web-поиск и Python под выключателями, экран наст�
   Живой прогон (клик/драг на реальном терминале) — финальный ручной шаг всего
   направления (A–D). **Направление «выделение/undo/мышь» (этапы A–D) завершено.**
 
+### Пост-M9: перенос строки на unix-терминалах — kitty-протокол + Alt+Enter (п.11 аудита) (сделано)
+- Закрыт **п.11 аудита InputBox** (задел из docs/input-selection-undo-mouse.md §9):
+  на «голом» unix-терминале legacy-кодировка шлёт для `Shift+Enter` и `Enter` **один и
+  тот же CR**, поэтому перенос строки в поле ввода там был недоступен вовсе (Windows не
+  затронут — Console API сообщает модификаторы). Слой runtime, не виджет.
+- **Включение kitty keyboard protocol** (`app/runtime/mod.rs`, `#[cfg(unix)]` рядом с
+  bracketed paste): если терминал поддерживает (`crossterm::terminal::
+  supports_keyboard_enhancement()`), пушим `PushKeyboardEnhancementFlags(
+  DISAMBIGUATE_ESCAPE_CODES)` — терминал начинает сообщать модификаторы у спец-клавиш,
+  и `Shift+Enter` становится **отличим** от `Enter` (а `Shift`+стрелки — от голых
+  стрелок, что заодно оживляет выделение с клавиатуры из этапа A). Снимаем
+  (`PopKeyboardEnhancementFlags`) на выходе и в panic-hook (безвредно при пустом стеке).
+  **Уровень `disambiguate` выбран сознательно** — он НЕ трогает печатный ввод и
+  одиночный `Shift`+символ (текст идёт как есть): `?` (Shift+/) приходит обычным
+  `Char('?')`+`NONE`, эмодзи-ввод и раскладко-независимый разбор Ctrl-шорткатов
+  (`shared::keys::physical_char`, кириллица) не регрессируют (в отличие от
+  `REPORT_ALL_KEYS`/`REPORT_EVENT_TYPES`, которые дали бы release-события и escape для
+  всех клавиш). На Windows блок под `#[cfg(unix)]` не компилируется (импорты тоже
+  cfg-гейтятся — нет unused-warning).
+- **`Alt+Enter` — запасной перенос строки** для терминалов **без** протокола: `Alt+Enter`
+  приходит как `Enter`+`ALT` через meta-префикс `ESC` и распознаётся даже на legacy-
+  терминалах (в отличие от неотличимого `Shift+Enter`). Принят во **всех трёх**
+  многострочных полях: чат (`screens/chat/input.rs`), системное сообщение/приветствие
+  профиля (`screens/settings/apply.rs`, только `editor.multiline`), редактор «модели
+  себя» (`screens/self_model.rs`). Матч расширен с `(Enter, SHIFT)` на
+  `(Enter, m) if m.intersects(SHIFT | ALT)` — голый `Enter` по-прежнему отправляет/
+  коммитит. На Windows `Alt+Enter` часто перехватывает эмулятор (fullscreen) — но там
+  `Shift+Enter` и так работает, так что overlap безвреден.
+- **Доки**: spec §11.5 (протокол + `Alt+Enter`) и §11.7 (таблица клавиш), README,
+  оверлей помощи (`F1`/`?`: «Shift+Enter / Alt+Enter — перенос строки»),
+  docs/input-selection-undo-mouse.md §9 (задел закрыт).
+- **Тесты**: чат (`shift_and_alt_enter_insert_newline_not_send` — оба переносят,
+  голый Enter шлёт весь многострочный ввод), настройки
+  (`alt_enter_also_inserts_newline_in_multiline_editor`), модель себя
+  (`alt_enter_inserts_newline_in_editor`). Кэш переноса/выделение не затронуты.
+  **934 юнит-теста зелёные** (+3), 33 `#[ignore]`, clippy `-D warnings`/fmt чисты.
+  Живой прогон kitty-протокола на реальном unix-терминале (без него — на Windows —
+  не воспроизводится) — финальный ручной шаг.
+
 ### Отложено за пределы M3
 - **Сворачивание/выделение per-message** и tool-блоки в ленте — сейчас «мысли»
   сворачиваются глобально (`Ctrl+T`); выделение сообщений и tool-блоки — на M5.

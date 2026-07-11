@@ -13,13 +13,18 @@ use std::time::Duration;
 
 use anyhow::Result;
 use ratatui::DefaultTerminal;
-#[cfg(unix)]
-use ratatui::crossterm::event::EnableBracketedPaste;
 use ratatui::crossterm::event::{
     self, DisableBracketedPaste, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyEvent,
     KeyEventKind, KeyModifiers,
 };
+#[cfg(unix)]
+use ratatui::crossterm::event::{
+    EnableBracketedPaste, KeyboardEnhancementFlags, PopKeyboardEnhancementFlags,
+    PushKeyboardEnhancementFlags,
+};
 use ratatui::crossterm::execute;
+#[cfg(unix)]
+use ratatui::crossterm::terminal::supports_keyboard_enhancement;
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
 
 use crate::app::events::{AppCommand, AppEvent, BackgroundKind};
@@ -97,8 +102,29 @@ pub fn run(
     // Windows этого режима у crossterm нет (ввод читается через Console API), там
     // вставка приходит пачкой обычных key-событий — её собираем в петле
     // (`process_input_batch`), поэтому включать тут нечего. См. spec §11.5.
+    //
+    // Здесь же (unix) включаем kitty keyboard protocol на уровне «disambiguate»:
+    // legacy-кодировка терминала шлёт для `Shift+Enter` и `Enter` один и тот же CR,
+    // поэтому перенос строки в поле ввода на «голом» unix-терминале был недоступен.
+    // С `DISAMBIGUATE_ESCAPE_CODES` терминал сообщает модификаторы у спец-клавиш
+    // (Enter/стрелки/…), и `Shift+Enter` становится отличим от `Enter` (а `Shift`+
+    // стрелки — от голых стрелок, что оживляет выделение с клавиатуры). Пушим только
+    // если терминал поддерживает протокол (иначе no-op); снимаем на выходе и в
+    // panic-hook. Печатный ввод и одиночный `Shift`+символ этот флаг не трогает
+    // (текст идёт как есть), поэтому раскладко-независимый разбор Ctrl-шорткатов
+    // (`shared::keys`) и ввод `?`/эмодзи не регрессируют. На Windows не нужно —
+    // Console API и так сообщает модификаторы. `Alt+Enter` в поле ввода — запасной
+    // перенос строки для терминалов без этого протокола (см. spec §11.5, п.11 аудита).
     #[cfg(unix)]
-    let _ = execute!(stdout(), EnableBracketedPaste);
+    {
+        let _ = execute!(stdout(), EnableBracketedPaste);
+        if supports_keyboard_enhancement().unwrap_or(false) {
+            let _ = execute!(
+                stdout(),
+                PushKeyboardEnhancementFlags(KeyboardEnhancementFlags::DISAMBIGUATE_ESCAPE_CODES)
+            );
+        }
+    }
     // Захват мыши по умолчанию ВЫКЛЮЧЕН: тогда работает нативное выделение текста
     // мышью. Прокрутка ленты колесом включается тумблером (`Ctrl+W`) — он шлёт
     // `EnableMouseCapture`/`DisableMouseCapture` (см. `dispatch`). Дополняем
@@ -107,11 +133,16 @@ pub fn run(
     let prev_hook = std::panic::take_hook();
     std::panic::set_hook(Box::new(move |info| {
         let _ = execute!(stdout(), DisableMouseCapture, DisableBracketedPaste);
+        // Снимаем kitty-протокол, если пушили (unix); безвредно при пустом стеке.
+        #[cfg(unix)]
+        let _ = execute!(stdout(), PopKeyboardEnhancementFlags);
         prev_hook(info);
     }));
     let result = run_loop(&mut terminal, &cmd_tx, evt_rx, dict_dir, personal);
     // Снимаем режимы на выходе (безвредно, если уже выключены).
     let _ = execute!(stdout(), DisableMouseCapture, DisableBracketedPaste);
+    #[cfg(unix)]
+    let _ = execute!(stdout(), PopKeyboardEnhancementFlags);
     ratatui::restore();
     // Просим оркестратор остановиться (на случай выхода не по Quit-команде).
     let _ = cmd_tx.send(AppCommand::Quit);

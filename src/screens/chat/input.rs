@@ -181,8 +181,11 @@ impl ChatScreen {
                     Some(ChatIntent::OpenChatList)
                 }
             }
-            // Shift+Enter — перенос строки; Enter — отправка (spec §11.7).
-            (KeyCode::Enter, KeyModifiers::SHIFT) => {
+            // Shift+Enter — перенос строки; Enter — отправка (spec §11.7). Alt+Enter —
+            // тот же перенос: запасной вариант для «голых» unix-терминалов без kitty-
+            // протокола, где Shift+Enter неотличим от Enter (оба шлют CR), а Alt+Enter
+            // приходит как Enter+ALT (meta-префикс ESC) и потому распознаётся. См. п.11.
+            (KeyCode::Enter, m) if m.intersects(KeyModifiers::SHIFT | KeyModifiers::ALT) => {
                 self.input.insert_newline();
                 self.mark_input_changed();
                 None

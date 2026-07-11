@@ -190,9 +190,12 @@ impl SettingsScreen {
                 self.editor = None;
                 None
             }
-            // Многострочный редактор (системное сообщение/приветствие): Shift+Enter —
-            // перевод строки, Enter — коммит (как в чат-вводе, spec §11.7).
-            (KeyCode::Enter, KeyModifiers::SHIFT) if editor.multiline => {
+            // Многострочный редактор (системное сообщение/приветствие): Shift+Enter
+            // (или Alt+Enter — запасной вариант для терминалов без kitty-протокола,
+            // см. п.11) — перевод строки, Enter — коммит (как в чат-вводе, spec §11.7).
+            (KeyCode::Enter, m)
+                if editor.multiline && m.intersects(KeyModifiers::SHIFT | KeyModifiers::ALT) =>
+            {
                 editor.input.insert_newline();
                 None
             }
