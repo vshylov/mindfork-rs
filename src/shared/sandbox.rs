@@ -99,6 +99,9 @@ pub struct WasmerSandbox {
     /// потоков и предсказуемая нагрузка: параллельный вызов сразу отклоняется.
     /// В штатном agentic-loop вызовы и так последовательны — это защита в глубину.
     gate: Arc<Semaphore>,
+    /// Жёсткий лимит памяти процесса (МБ; `None` — без лимита). Применяется только
+    /// на Windows (Job Object). См. [`WasmerSandbox::with_memory_limit`].
+    memory_mb: Option<u64>,
 }
 
 impl WasmerSandbox {
@@ -108,7 +111,18 @@ impl WasmerSandbox {
         Self {
             dir,
             gate: Arc::new(Semaphore::new(1)),
+            memory_mb: None,
         }
+    }
+
+    /// Задаёт жёсткий лимит памяти (МБ; `Some(0)`/`None` — без лимита). Только
+    /// Windows: процесс `wasmer` помещается в Job Object с
+    /// `JOB_OBJECT_LIMIT_PROCESS_MEMORY`; превышение убивает процесс (защита хоста
+    /// от OOM). На Unix поле игнорируется (rlimit ненадёжен с V8 — резервирует
+    /// большое виртуальное пространство). См. ADR 0005.
+    pub fn with_memory_limit(mut self, mb: Option<u64>) -> Self {
+        self.memory_mb = mb.filter(|&m| m > 0);
+        self
     }
 
     /// Путь/имя бинаря `wasmer`: env-override → каталог песочницы ([`locate_wasmer`]).
@@ -208,6 +222,12 @@ impl SandboxRunner for WasmerSandbox {
             .spawn()
             .with_context(|| format!("запуск wasmer ({})", wasmer.to_string_lossy()))?;
 
+        // Жёсткий лимит памяти (Windows Job Object) — сразу после спавна, до того как
+        // V8 закоммитит существенную память. «Лучшее усилие»: сбой лишь логируется.
+        if let Some(mb) = self.memory_mb {
+            apply_memory_limit(&child, mb);
+        }
+
         match tokio::time::timeout(timeout, child.wait_with_output()).await {
             Ok(Ok(out)) => Ok(SandboxOutput {
                 stdout: String::from_utf8_lossy(&out.stdout).into_owned(),
@@ -242,6 +262,63 @@ pub fn locate_wasmer(dir: &Path) -> Option<PathBuf> {
 /// Непустое значение env-переменной как `OsString` (override пути/имени).
 fn env_override(key: &str) -> Option<OsString> {
     std::env::var_os(key).filter(|v| !v.is_empty())
+}
+
+/// Применяет жёсткий лимит памяти к процессу `wasmer` (Windows Job Object). При
+/// превышении процесс убивается — защита хоста от OOM. «Лучшее усилие»: сбой winapi
+/// лишь логируется. Проверено вживую (§9.6 исследования): лимит держится и после
+/// закрытия хэндла job'а (job живёт, пока процесс — его член), поэтому HANDLE не
+/// удерживается через `await` (важно для `Send`-фьючи).
+#[cfg(windows)]
+fn apply_memory_limit(child: &tokio::process::Child, mb: u64) {
+    use windows_sys::Win32::Foundation::{CloseHandle, HANDLE};
+    use windows_sys::Win32::System::JobObjects::{
+        AssignProcessToJobObject, CreateJobObjectW, JOB_OBJECT_LIMIT_PROCESS_MEMORY,
+        JOBOBJECT_EXTENDED_LIMIT_INFORMATION, JobObjectExtendedLimitInformation,
+        SetInformationJobObject,
+    };
+
+    let Some(raw) = child.raw_handle() else {
+        tracing::warn!("песочница: нет хэндла процесса — лимит памяти не применён");
+        return;
+    };
+    // SAFETY: `raw` — валидный хэндл только что запущенного процесса; job создаётся и
+    // закрывается в пределах этого блока, поля структуры инициализированы нулями.
+    unsafe {
+        let job: HANDLE = CreateJobObjectW(std::ptr::null(), std::ptr::null());
+        if job.is_null() {
+            tracing::warn!("песочница: CreateJobObjectW не удался");
+            return;
+        }
+        let mut info: JOBOBJECT_EXTENDED_LIMIT_INFORMATION = std::mem::zeroed();
+        info.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_PROCESS_MEMORY;
+        info.ProcessMemoryLimit = (mb as usize).saturating_mul(1024 * 1024);
+        let ok = SetInformationJobObject(
+            job,
+            JobObjectExtendedLimitInformation,
+            &info as *const _ as *const core::ffi::c_void,
+            std::mem::size_of::<JOBOBJECT_EXTENDED_LIMIT_INFORMATION>() as u32,
+        );
+        if ok == 0 {
+            tracing::warn!("песочница: SetInformationJobObject не удался");
+            CloseHandle(job);
+            return;
+        }
+        if AssignProcessToJobObject(job, raw as HANDLE) == 0 {
+            tracing::warn!("песочница: AssignProcessToJobObject не удался");
+        }
+        // Хэндл можно закрыть сразу: лимит остаётся, пока процесс — член job'а.
+        CloseHandle(job);
+    }
+}
+
+/// На не-Windows жёсткий лимит памяти не применяется: `rlimit`/`RLIMIT_AS`
+/// ненадёжен с бэкендом V8 (он резервирует большое виртуальное адресное
+/// пространство, из-за чего низкий лимит ломает сам старт). Полагаемся на таймаут
+/// и wasm32 (~4 ГБ). См. ADR 0005.
+#[cfg(not(windows))]
+fn apply_memory_limit(_child: &tokio::process::Child, _mb: u64) {
+    tracing::debug!("песочница: лимит памяти поддержан только на Windows — пропуск");
 }
 
 /// Оборачивает пользовательский код шимом `setsockopt` (чистая, тестируемая).

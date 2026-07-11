@@ -4673,6 +4673,32 @@ web-поиск и Python под выключателями, экран наст�
   **971 юнит-тест зелёный** (+2), **39 `#[ignore]`**, clippy `-D warnings`/fmt чисты.
   Живой прогон: `sandbox setup` прогрел кэш (`import numpy`), смоуки зелёные.
 
+### Пост-M9: Python-песочница — OS-level лимит памяти (Windows Job Object) (сделано)
+- **Задел «жёсткий RAM-cap» из Фазы 3 реализован** для Windows (по запросу). Новая
+  настройка `tools.python_wasm_memory_mb: Option<u64>` (по умолчанию **None** —
+  opt-in): при заданном значении процесс `wasmer` помещается в **Job Object** с
+  `JOB_OBJECT_LIMIT_PROCESS_MEMORY`; превышение убивает процесс — **защита хоста от
+  OOM** при рантайм-скрипте.
+- **Спайк-исследование** (scratchpad, реальный wasmer): Job Object-лимит работает как
+  жёсткий бэкстоп; сбой **не graceful** (V8 «Fatal out of memory» в stderr, либо
+  Python `MemoryError`), но хост защищён. **Baseline ~768 МБ** — V8+CPython столько
+  нужно на старт (ниже — песочница не стартует), поэтому осмысленный лимит ≥~1024.
+  **Хэндл job'а закрывается сразу после `AssignProcessToJobObject`** (лимит держится,
+  пока процесс — член job'а) → raw-HANDLE не удерживается через `await`, фьюча
+  остаётся `Send`. **На Unix не делаем**: `RLIMIT_AS` ненадёжен с V8 (резервирует
+  большое виртуальное пространство, низкий лимит ломает старт) — там таймаут + wasm32.
+- **Реализация**: `WasmerSandbox::with_memory_limit(Option<u64>)` + `apply_memory_limit`
+  (`#[cfg(windows)]` winapi через `windows-sys` target-dep; `#[cfg(not(windows))]` —
+  no-op с debug-логом), вызывается сразу после спавна. Прокинуто `ToolSettings` →
+  `ToolConfig` → `build_registry`. UI-поле «Лимит памяти (МБ, 0=без)» в группе Python
+  (режим Wasmer) с подсказкой (только Windows, минимум ~1024).
+- **Тесты**: config (дефолт None); UI (поле видно в Wasmer, скрыто в Local). Живые
+  `#[ignore]`+`#[cfg(windows)]` смоуки на провизионированной песочнице: `memory_cap_
+  stops_runaway` (лимит 1 ГБ + alloc 3 ГБ → отказ, хост цел) и `memory_cap_allows_
+  normal_work` (лимит 2 ГБ не мешает) — **оба зелёные вживую**. **971 юнит-тест
+  зелёный**, **41 `#[ignore]`**, clippy `-D warnings`/fmt чисты. ADR 0005 / spec §13.2
+  обновлены.
+
 ### Отложено за пределы M3
 - **Сворачивание/выделение per-message** и tool-блоки в ленте — сейчас «мысли»
   сворачиваются глобально (`Ctrl+T`); выделение сообщений и tool-блоки — на M5.

@@ -595,6 +595,14 @@ pub struct ToolSettings {
     /// Таймаут исполнения в песочнице Wasmer (секунды). Локальный режим держит свой
     /// (меньший) таймаут. См. [`DEFAULT_PYTHON_WASM_TIMEOUT_SECS`].
     pub python_wasm_timeout_secs: u64,
+    /// Жёсткий OS-level лимит памяти песочницы Wasmer (МБ; `None`/0 — без лимита).
+    /// Защита хоста от OOM при рантайм-скрипте: при превышении процесс `wasmer`
+    /// убивается (не graceful — V8 падает с «Fatal out of memory»). **Только
+    /// Windows** (Job Object); на Unix не применяется (rlimit ненадёжен с V8, ADR
+    /// 0005). Минимум ~1024 (меньше — песочница может не стартовать: V8+CPython
+    /// требует ~768 МБ). По умолчанию без лимита (защита в глубину поверх таймаута
+    /// и wasm32 ~4 ГБ).
+    pub python_wasm_memory_mb: Option<u64>,
     /// Доступ к локальным файлам (`fs_read`/`fs_write`/`fs_list`). Выключен по
     /// умолчанию (инструмент может прочитать/перезаписать любой файл — приватность/
     /// безопасность, как у Python). См. spec §9.3, §13.2.
@@ -618,6 +626,7 @@ impl Default for ToolSettings {
             python_path: None,
             python_net_enabled: true,
             python_wasm_timeout_secs: DEFAULT_PYTHON_WASM_TIMEOUT_SECS,
+            python_wasm_memory_mb: None,
             fs_enabled: false,
             fs_root: None,
             subagent_max_tokens: DEFAULT_SUBAGENT_MAX_TOKENS,
@@ -937,6 +946,8 @@ mod tests {
             c.tools.python_wasm_timeout_secs,
             DEFAULT_PYTHON_WASM_TIMEOUT_SECS
         );
+        // Лимит памяти песочницы по умолчанию отключён (opt-in, только Windows).
+        assert_eq!(c.tools.python_wasm_memory_mb, None);
         assert_eq!(c.rag.chunk_target_chars, DEFAULT_CHUNK_TARGET_CHARS);
         assert_eq!(c.self_model.max_narrative, DEFAULT_SELF_MODEL_MAX_NARRATIVE);
         assert_eq!(

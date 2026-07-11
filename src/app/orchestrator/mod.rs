@@ -209,6 +209,7 @@ fn build_registry(
         python_path: config.tools.python_path.clone(),
         python_net: config.tools.python_net_enabled,
         python_wasm_timeout: Duration::from_secs(config.tools.python_wasm_timeout_secs),
+        python_wasm_memory_mb: config.tools.python_wasm_memory_mb,
         sandbox_dir: Some(sandbox_dir),
         subagent_max_tokens: config.tools.subagent_max_tokens,
         subagent_timeout: Duration::from_secs(config.tools.subagent_timeout_secs),

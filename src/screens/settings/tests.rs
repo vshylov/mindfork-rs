@@ -125,6 +125,7 @@ fn python_group_visibility_follows_mode() {
     assert!(ids.contains(&FieldId::TPython));
     assert!(ids.contains(&FieldId::TPythonNet));
     assert!(ids.contains(&FieldId::TPythonWasmTimeout));
+    assert!(ids.contains(&FieldId::TPythonWasmMemory));
     assert!(!ids.contains(&FieldId::TPythonPath));
 
     // Режим Local: виден путь к интерпретатору, поля песочницы скрыты.
@@ -139,6 +140,7 @@ fn python_group_visibility_follows_mode() {
     assert!(ids.contains(&FieldId::TPythonPath));
     assert!(!ids.contains(&FieldId::TPythonNet));
     assert!(!ids.contains(&FieldId::TPythonWasmTimeout));
+    assert!(!ids.contains(&FieldId::TPythonWasmMemory));
 }
 
 #[test]

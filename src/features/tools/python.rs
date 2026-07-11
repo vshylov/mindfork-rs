@@ -493,6 +493,65 @@ mod tests {
         );
     }
 
+    /// Инструмент над провизионированной песочницей с лимитом памяти (Windows).
+    #[cfg(windows)]
+    fn provisioned_capped(memory_mb: u64) -> Option<PythonExec> {
+        use crate::shared::sandbox::WasmerSandbox;
+        let dir = std::env::var("MINDFORK_SANDBOX_DIR").ok()?;
+        Some(PythonExec::new(
+            PythonMode::Wasmer,
+            None,
+            Arc::new(
+                WasmerSandbox::new(Some(std::path::PathBuf::from(dir)))
+                    .with_memory_limit(Some(memory_mb)),
+            ),
+            false,
+            Duration::from_secs(60),
+        ))
+    }
+
+    /// Лимит памяти (Windows Job Object) не даёт рантайм-скрипту выесть память хоста:
+    /// большой allocation под низким лимитом не проходит (процесс убит).
+    #[cfg(windows)]
+    #[tokio::test]
+    #[ignore = "requires a provisioned sandbox (MINDFORK_SANDBOX_DIR)"]
+    async fn memory_cap_stops_runaway() {
+        let Some(tool) = provisioned_capped(1024) else {
+            return;
+        };
+        let (_d, _s, ctx) = ctx_with_storage(Uuid::new_v4());
+        // Выделение 3 ГБ под лимитом 1 ГБ обязано провалиться — либо graceful
+        // MemoryError, либо фатальный крах V8, либо ненулевой код возврата.
+        let code = "b = bytearray(3 * 1024 * 1024 * 1024)\nprint(len(b))";
+        let out = tool
+            .invoke(&ctx, serde_json::json!({ "code": code }))
+            .await
+            .unwrap();
+        let r = &out.result;
+        assert!(
+            r.contains("MemoryError") || r.contains("Fatal") || r.contains("код возврата"),
+            "ожидался отказ выделения под лимитом, got: {r}"
+        );
+        // И 3 ГиБ точно не выделены (число байт в stdout не появилось).
+        assert!(!r.contains("3221225472"), "got: {r}");
+    }
+
+    /// Разумный лимит (2 ГБ) не мешает лёгкой работе.
+    #[cfg(windows)]
+    #[tokio::test]
+    #[ignore = "requires a provisioned sandbox (MINDFORK_SANDBOX_DIR)"]
+    async fn memory_cap_allows_normal_work() {
+        let Some(tool) = provisioned_capped(2048) else {
+            return;
+        };
+        let (_d, _s, ctx) = ctx_with_storage(Uuid::new_v4());
+        let out = tool
+            .invoke(&ctx, serde_json::json!({"code": "print(sum(range(1000)))"}))
+            .await
+            .unwrap();
+        assert!(out.result.contains("499500"), "got: {}", out.result);
+    }
+
     /// Реальное локальное исполнение (вручную, если установлен Python).
     #[tokio::test]
     #[ignore = "requires a Python interpreter on PATH"]

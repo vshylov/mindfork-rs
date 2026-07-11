@@ -290,6 +290,10 @@ pub(super) fn field_spec(id: FieldId) -> Option<FieldSpec> {
                 c.tools.python_wasm_timeout_secs = v;
             }
         }),
+        // Лимит памяти: пусто/0/невалидно → без лимита (None), иначе Some(МБ).
+        TPythonWasmMemory => int(|c, t| {
+            c.tools.python_wasm_memory_mb = t.trim().parse::<u64>().ok().filter(|&m| m > 0);
+        }),
         TFsRoot => text(|c, t| c.tools.fs_root = opt(t)),
         TSubMaxTokens => int(|c, t| {
             if let Ok(v) = t.parse() {

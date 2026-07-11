@@ -302,6 +302,8 @@ pub struct ToolConfig {
     pub python_net: bool,
     /// Таймаут исполнения в песочнице Wasmer.
     pub python_wasm_timeout: Duration,
+    /// Жёсткий лимит памяти песочницы (МБ; `None` — без лимита). Только Windows.
+    pub python_wasm_memory_mb: Option<u64>,
     /// Каталог песочницы (`data/sandbox/`) с бинарём `wasmer` и ассетами (`None` —
     /// нет каталога, песочница только через env-override).
     pub sandbox_dir: Option<PathBuf>,
@@ -329,6 +331,7 @@ impl Default for ToolConfig {
             python_wasm_timeout: Duration::from_secs(
                 crate::shared::config::DEFAULT_PYTHON_WASM_TIMEOUT_SECS,
             ),
+            python_wasm_memory_mb: None,
             sandbox_dir: None,
             subagent_max_tokens: crate::shared::config::DEFAULT_SUBAGENT_MAX_TOKENS,
             subagent_timeout: Duration::from_secs(
@@ -375,7 +378,10 @@ pub fn standard_registry(cfg: &ToolConfig) -> ToolRegistry {
     reg.register(Arc::new(python::PythonExec::new(
         cfg.python_mode,
         cfg.python_path.clone(),
-        Arc::new(WasmerSandbox::new(cfg.sandbox_dir.clone())),
+        Arc::new(
+            WasmerSandbox::new(cfg.sandbox_dir.clone())
+                .with_memory_limit(cfg.python_wasm_memory_mb),
+        ),
         cfg.python_net,
         cfg.python_wasm_timeout,
     )));

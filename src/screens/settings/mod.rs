@@ -497,6 +497,7 @@ enum FieldId {
     TPythonPath,
     TPythonNet,
     TPythonWasmTimeout,
+    TPythonWasmMemory,
     TFs,
     TFsRoot,
     TSubMaxTokens,
