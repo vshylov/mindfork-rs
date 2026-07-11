@@ -105,8 +105,13 @@
 - **`fetch_url(url, focus?, summarize?)`** — загрузить страницу и саммаризировать её
   моделью (как `call_subagent`); `focus` фокусирует пересказ, `summarize=false` даёт
   извлечённый текст без модели. Под выключателем web-доступа.
-- **`python_exec`** — исполнение Python в отдельном процессе с таймаутом
-  (**выключен по умолчанию**, особенно на Windows — нет OS-песочницы).
+- **`python_exec`** — исполнение Python в **изолированной песочнице Wasmer/WASIX**
+  (по умолчанию: нет доступа к файлам машины, сеть — по тумблеру, предустановленные
+  пакеты **numpy / pandas / requests**, не требует Python на машине) либо в **локальном
+  интерпретаторе** (прежнее поведение). Сам инструмент **выключен по умолчанию**.
+  Прерывание по таймауту (kill процесса), гейт «одна задача», опциональный лимит
+  памяти (Windows). Песочница ставится одной командой `mindfork sandbox setup`; см.
+  [ADR 0005](docs/decisions/0005-python-sandbox-wasmer.md).
 - **Файлы** `fs_read` / `fs_write` / `fs_list` — чтение/запись/листинг локальных
   файлов (**выключены по умолчанию**, как Python). Опциональная «песочница»
   `fs_root` ограничивает доступ заданным каталогом (выход через `..` блокируется).
@@ -131,6 +136,9 @@
   managed-сервер на лету. У managed-сервера настраиваются **FlashAttention**
   (`--flash-attn`) и **спекулятивное декодирование** (`--spec-type`, включая
   `draft-mtp` для MTP-моделей — даёт кратный прирост скорости).
+- **Песочница Python**: `mindfork sandbox setup` — устанавливает изолированную
+  WASIX-среду (скачивает `wasmer` + `python.webc` + пакеты numpy/pandas/requests по
+  lock-списку с проверкой sha256) для режима песочницы инструмента `python_exec`.
 - **Импорт** из LameLLaMA (.NET): `mindfork import-lamellama <dir>` (идемпотентно,
   проверено на 6 профилях / 226 чатах).
 - **Резервное копирование/восстановление**: `mindfork backup [-o FILE] [-c 0..9]` и
@@ -325,7 +333,7 @@ Ctrl-шорткаты раскладко-независимы (работают 
 ## Разработка
 
 ```bash
-cargo test                                 # юнит-тесты (без сервера; 729 зелёных)
+cargo test                                 # юнит-тесты (без сервера; 971 зелёный)
 cargo clippy --all-targets -- -D warnings
 cargo fmt --check
 ```
@@ -360,7 +368,8 @@ cargo test -- --ignored --nocapture --test-threads=1
 - **[docs/install.md](docs/install.md)** — установка, запуск, движок (llama.cpp),
   OpenAI-совместимый протокол, словари, импорт.
 - **[docs/decisions/](docs/decisions/)** — ADR (UI-крейты, embedding-сервер,
-  markdown-рендерер, контракт движка и мульти-провайдерный инференс).
+  markdown-рендерер, контракт движка и мульти-провайдерный инференс,
+  Python-песочница на Wasmer/WASIX).
 - **[docs/history/](docs/history/)** — архив: исходное техзадание ([request.md](docs/history/request.md))
   и выполненный план M0–M9 ([plan.md](docs/history/plan.md)).
 
@@ -373,10 +382,13 @@ cargo test -- --ignored --nocapture --test-threads=1
 markdown + склейка при извлечении), **имперсонация** пользователя (`Ctrl+U`, shared/
 managed/external), **«модель себя»/собеседника** (`F3`) и **связность заметок**
 (семантический recall, граф связей, замещение со «шрамом», авто-«сон», нарратив как
-заметки). **Мульти-провайдерный инференс** ([ADR 0004](docs/decisions/0004-engine-contract-multi-provider.md)):
+заметки). **Изолированная песочница Python** ([ADR 0005](docs/decisions/0005-python-sandbox-wasmer.md)):
+`python_exec` в WASIX-изоляции через сайдкар `wasmer` (numpy/pandas/requests, сеть по
+тумблеру, лимит памяти на Windows), ставится `mindfork sandbox setup`.
+**Мульти-провайдерный инференс** ([ADR 0004](docs/decisions/0004-engine-contract-multi-provider.md)):
 локальный llama.cpp + облако **OpenAI (Responses API) / Google Gemini (нативный
 `generateContent`) / Anthropic (Claude)** за единым контрактом, каждый с резюме
-рассуждений/«мыслей» и корректным round-trip при tool-use. **853 юнит-теста** зелёные;
+рассуждений/«мыслей» и корректным round-trip при tool-use. **971 юнит-тест** зелёный;
 `#[ignore]`-смоуки прогнаны на живой связке **Gemma 4 31B + bge-m3** (`llama-server`),
 **Claude 4.x** — на живом Anthropic API, **Gemini 3.1 Pro** — на живом Gemini API по
-ключу.
+ключу, **песочница Python** — на живом `wasmer` (Windows).
