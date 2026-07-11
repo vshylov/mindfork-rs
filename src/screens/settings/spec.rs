@@ -65,6 +65,7 @@ pub(super) fn field_spec(id: FieldId) -> Option<FieldSpec> {
         TWeb => toggle(|c| c.tools.web_enabled = !c.tools.web_enabled),
         TWebFetch => toggle(|c| c.tools.web_fetch_content = !c.tools.web_fetch_content),
         TPython => toggle(|c| c.tools.python_enabled = !c.tools.python_enabled),
+        TPythonNet => toggle(|c| c.tools.python_net_enabled = !c.tools.python_net_enabled),
         TFs => toggle(|c| c.tools.fs_enabled = !c.tools.fs_enabled),
         ICompat => toggle(|c| c.interface.terminal_compat = !c.interface.terminal_compat),
         ITableSeparators => {
@@ -96,6 +97,14 @@ pub(super) fn field_spec(id: FieldId) -> Option<FieldSpec> {
         IxMode => choice(
             |c, dir| c.impersonation_engine.mode = cycle_imp_mode(c.impersonation_engine.mode, dir),
             |c| index_menu(&IMP_MODES, c.impersonation_engine.mode, imp_mode_label),
+        ),
+        TPythonMode => choice(
+            |c, dir| c.tools.python_mode = c.tools.python_mode.cycle(dir),
+            |c| {
+                index_menu(&PythonMode::ALL, c.tools.python_mode, |x| {
+                    x.label().to_string()
+                })
+            },
         ),
         XFlashAttn => choice(
             |c, dir| c.engine.managed.flash_attn = c.engine.managed.flash_attn.cycle(dir),
@@ -276,6 +285,15 @@ pub(super) fn field_spec(id: FieldId) -> Option<FieldSpec> {
             }
         }),
         TPythonPath => text(|c, t| c.tools.python_path = opt(t)),
+        TPythonWasmTimeout => int(|c, t| {
+            if let Ok(v) = t.parse() {
+                c.tools.python_wasm_timeout_secs = v;
+            }
+        }),
+        // Лимит памяти: пусто/0/невалидно → без лимита (None), иначе Some(МБ).
+        TPythonWasmMemory => int(|c, t| {
+            c.tools.python_wasm_memory_mb = t.trim().parse::<u64>().ok().filter(|&m| m > 0);
+        }),
         TFsRoot => text(|c, t| c.tools.fs_root = opt(t)),
         TSubMaxTokens => int(|c, t| {
             if let Ok(v) = t.parse() {

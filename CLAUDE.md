@@ -18,7 +18,8 @@ external подойдёт любой такой — vLLM/LM Studio/Ollama). UI �
   **Актуально по движку.**
 - **[docs/decisions/](docs/decisions/)** — ADR: UI-крейты под ratatui 0.30 (0001),
   выделенный embedding-сервер (0002), собственный markdown-рендерер (0003),
-  контракт движка и мульти-провайдерный инференс без крейт-сплита (0004).
+  контракт движка и мульти-провайдерный инференс без крейт-сплита (0004),
+  Python-песочница сайдкаром `wasmer`/WASIX за `shared/sandbox.rs` (0005).
 - **[docs/history/](docs/history/)** — архив реализованного: исходное техзадание
   (`request.md`), выполненный пошаговый план M0–M9 (`plan.md`) и **дизайн-планы
   завершённых направлений** (ниже). Историческая справка, не источник истины.
@@ -4545,6 +4546,174 @@ web-поиск и Python под выключателями, экран наст�
   config (дефолт включён, round-trip с выключенным). Доки: spec §11.4.
   **947 юнит-тестов зелёные** (+6), 33 `#[ignore]`, clippy `-D warnings`/fmt
   чисты.
+
+### Пост-M9: Python-песочница на Wasmer/WASIX — Фаза 1 (каркас сайдкара) (сделано)
+- **`python_exec` получил два режима** ([docs/research/python-wasmer-sandbox.md](docs/research/python-wasmer-sandbox.md)):
+  **Wasmer** (по умолчанию) — изолированная песочница WASIX через **сайдкар `wasmer`**
+  (бинарь рядом, не embed в exe — решение Фазы 0 §9.7: embed V8 в dll тянет
+  LLVM/libclang+статик-V8 в нашу сборку, а process-kill сайдкара чист); **Local** —
+  прежний системный интерпретатор. Ветка `spike/python-wasmer-sandbox`. Решения
+  пользователя: `python_enabled=false` (мастер-гейт как был), сеть в песочнице
+  `=true` с тумблером.
+- **`shared/sandbox.rs`** — контракт `SandboxRunner` за трейтом (`availability`/`run`;
+  `MockSandbox` для тестов, паттерн `EngineBackend`) + реальный `WasmerSandbox`:
+  поиск бинаря (env `MINDFORK_SANDBOX_WASMER` → `data/sandbox/wasmer[.exe]`), источник
+  CPython (env → `data/sandbox/python.webc` → пакет реестра `python/python`), запуск
+  `tokio::process` (`wasmer run --v8 [--net] --volume HOST:GUEST --env … <python> --
+  /w/job.py`), захват stdout/stderr, таймаут+`kill_on_drop` (python исполняется ВНУТРИ
+  процесса wasmer — V8 in-process, kill самого wasmer останавливает код). Чистые
+  тестируемые `build_wrapper`/`build_args`. **Враппер кода несёт шим `setsockopt`**
+  (находка Фазы 0: WASIX не реализует `TCP_NODELAY` → `EINVAL`, а http.client/requests
+  его всегда ставят; шим глушит → requests/urllib работают). Скрипт задачи — во
+  временном каталоге (`JobDir` с авто-очисткой через `Drop`, без рантайм-зависимости
+  `tempfile`). `site-packages/` монтируется в `/sp` (PYTHONPATH) при наличии.
+- **`features/tools/python.rs`** — enum-диспетчер по `PythonMode`: id `python_exec`
+  **не меняется** (стабильный wire-протокол), `description()` варьируется режимом+сетью
+  (в Wasmer перечисляет пакеты — модель охотнее пользуется). Общий `format_output_parts`
+  для обоих путей → презентер ленты (`present::parse_console`) не тронут. Graceful
+  «песочница недоступна» при отсутствии бинаря (паттерн `UnavailableEmbedder`).
+- **Конфиг** (`shared/config.rs`): `PythonMode{Wasmer(деф.)/Local}` (serde lowercase,
+  `ALL`/`label`/`cycle` как `FlashAttn`); `ToolSettings += python_mode/
+  python_net_enabled(деф. true)/python_wasm_timeout_secs(деф. 30)` (все `#[serde(default)]`
+  → старые `settings.json` без миграции). `python_enabled` остаётся `false`,
+  `python_path` — Local. `ToolConfig`/`build_registry` прокидывают режим/сеть/таймаут +
+  `sandbox_dir` (из `Paths::sandbox_dir` = `data/sandbox/`; `JsonStore::sandbox_dir`
+  делегирует — без правки всех сайтов `OrchestratorDeps`).
+- **UI настроек** (секция «Инструменты»→группа «Python»): Choice режим (`TPythonMode`) +
+  тумблер `python_enabled` + **mode-driven видимость** (путь к интерпретатору — только
+  Local; сеть+таймаут — только Wasmer), через field_spec/catalog (прецедент managed/
+  cloud); описания-подсказки. Новые `FieldId`: `TPythonMode`/`TPythonNet`/
+  `TPythonWasmTimeout`.
+- **Тесты**: sandbox (`build_wrapper` несёт шим; `build_args` порядок/net/монтирование
+  HOST:GUEST; `wasmer_in_dir`; availability Ready/Missing; python-фолбэк на пакет);
+  python (диспетчер Wasmer/Local через `MockSandbox`; таймаут/недоступность; формат
+  вывода; `description` по режиму); config (дефолты + serde/cycle `PythonMode`);
+  settings (mode-driven видимость группы Python + цикл режима). **963 юнит-теста
+  зелёные** (+16), clippy `-D warnings`/fmt чисты. Живой `#[ignore]`-смоук
+  `runs_real_python_in_sandbox` прогнан на реальном `wasmer 7.2.0` (Windows):
+  `print('hello sandbox')` исполнился в песочнице.
+- **Дальше — Фаза 2**: `mindfork sandbox setup` (скачать `wasmer` + `python.webc` +
+  колёса по lock-списку: numpy с wasix-индекса, requests-стек с PyPI), кэш
+  скомпилированного модуля, баннер первого запуска; `#[ignore]`-смоуки numpy/requests/
+  кириллица/таймаут. **Фаза 3** — лимиты ресурсов, гейт «одна задача», ADR 0005.
+
+### Пост-M9: Python-песочница на Wasmer/WASIX — Фаза 2 (провизия ассетов) (сделано)
+- **`mindfork sandbox setup`** — clap-подкоманда (`Sandbox{Setup{--force}}`, как
+  `backup`/`restore`): устанавливает песочницу Python в `data/sandbox/` **из коробки**
+  (решение пользователя — авто-скачивание). Своя tokio-рантайм (сетевой async вне
+  TUI) + single-instance-гард; прогресс в stdout. Идемпотентно: существующее
+  пропускается, `--force` перекачивает.
+- **`features/sandbox_setup.rs`** — чистое ядро + тонкий сетевой слой. Провизия по
+  **lock-списку с точными URL+sha256** (`ARCHIVES`/`WHEELS` — консты в репо, устойчиво
+  к «latest»): (1) бинарь **`wasmer`** — платформенный tar.gz с GitHub (по
+  `std::env::consts::OS/ARCH`), потоковое скачивание с инкрементальным sha256 (крупный
+  архив не буферим), распаковка `flate2`(pure-Rust)+`tar` в `data/sandbox/wasmer-dist/`;
+  (2) **`python.webc`** — через сам `wasmer package download python/python -o … --wasmer-dir`
+  (дом/кэш под песочницей, не в `~/.wasmer`); (3) **колёса** — numpy с
+  `pythonindex.wasix.org` (нативное wasix-колесо), requests-стек (requests/urllib3/
+  certifi/idna/charset_normalizer) с PyPI (`py3-none-any`) → verify sha256 → распаковка
+  zip в `site-packages/` **без pip/host-Python** (защита от zip-slip `enclosed_name`,
+  как в `backup`). Чистые тестируемые `archive_for`/`verify_sha256`/`hex_lower`/
+  `unpack_wheel`/`extract_targz`.
+- **Кэш компиляции** (`shared/sandbox.rs`): `WasmerSandbox::run` ставит env
+  `WASMER_CACHE_DIR=<dir>/cache` — первый запуск компилирует python.wasm (секунды),
+  дальше тёплый старт из кэша, самодостаточно.
+- **Общий резолвер бинаря** `shared::sandbox::locate_wasmer(dir)` (прямой
+  `<dir>/wasmer[.exe]` для ручной установки → `wasmer-dist/bin/wasmer[.exe]` после
+  setup) — единый источник истины о раскладке для рантайма (`WasmerSandbox`) и провизии
+  (`sandbox_setup`).
+- **Зависимости**: `flate2` (уже был транзитивно; miniz_oxide, без C), `tar`, `sha2` —
+  все чистый Rust.
+- **Отложено в Фазу 3** (по объёму): баннер первого запуска (прогресс компиляции
+  tool→UI — нужна проводка события, setup-команда прогресс печатает в stdout); лимиты
+  ресурсов; гейт «одна задача»; пересмотр дефолта `python_enabled` (теперь setup — одна
+  команда).
+- **Тесты**: sandbox_setup (выбор архива по платформе; `verify_sha256`/`hex_lower`;
+  `unpack_wheel` на крафт-zip; `extract_targz` round-trip на синтетическом tar.gz;
+  lock-список покрывает numpy+requests-стек, все URL https + sha256 64-hex);
+  `locate_wasmer` (прямой + wasmer-dist, приоритет прямого). **969 юнит-тестов зелёные**
+  (+6), **39 `#[ignore]`** (+5 живых смоуков), clippy `-D warnings`/fmt чисты.
+- **Прогон на реальной связке** (Windows 11, wasmer 7.2.0): `mindfork sandbox setup`
+  скачал и распаковал всё (wasmer 206МБ → `wasmer-dist/bin/wasmer.exe` 90МБ, python.webc
+  44МБ, 6 колёс, все sha256 сошлись). **8 живых смоуков зелёные** (`MINDFORK_SANDBOX_DIR`
+  на провизионированный каталог): numpy 2.3.2 (matmul/sum через динлинковку нативных
+  `.so`), requests HTTPS 200 (с сетью), requests заблокирован без сети, кириллица,
+  таймаут-kill (`while True: pass` → «превысил лимит времени»), базовые sandbox/local.
+
+### Пост-M9: Python-песочница на Wasmer/WASIX — Фаза 3 (прочность/полировка) (сделано)
+- **Зафиксировано решением** [ADR 0005](docs/decisions/0005-python-sandbox-wasmer.md)
+  (сайдкар `wasmer`/WASIX за `shared/sandbox.rs`; посадка безопасности/ресурсов;
+  дефолты). Итог направления (Фазы 0–3): песочница Python рабочая «из коробки».
+- **Гейт «одна задача за раз»** (`shared/sandbox.rs`): `WasmerSandbox` получил
+  `Arc<Semaphore>` (1 разрешение); `run` **до** resolve/спавна делает `try_acquire`
+  — параллельный вызов сразу отклоняется («песочница занята другой задачей»).
+  Защита в глубину от утечки процессов/потоков и предсказуемая нагрузка (в штатном
+  agentic-loop вызовы и так последовательны). Разрешение держится на время `run`,
+  освобождается по завершении/таймауту.
+- **Прогрев кэша компиляции при установке** (`features/sandbox_setup.rs::warmup`,
+  best-effort в конце `setup`): один прогон `import numpy` через реальный
+  `WasmerSandbox` компилирует `python.wasm` (+ нативные `.so` numpy) в
+  `<dir>/cache`, поэтому **первый реальный вызов инструмента тёплый** — без
+  многосекундной компиляции на глазах у пользователя. Это **заменяет** запланированный
+  «баннер первого запуска» (не нужна проводка прогресса tool→UI): холодного старта
+  на первом вызове больше нет. Сбой прогрева установку не проваливает.
+- **Лимит RAM — осознанно не делаем**: CLI `wasmer` не даёт флага памяти/fuel/
+  metering (только `--stack-size` и toggles proposal'ов), а OS-level job-objects/
+  `setrlimit` — unsafe и платформенно-специфично ради малого выигрыша. Посадка
+  ресурсов песочницы: **таймаут** (CPU) + **wasm32** (адресное пространство ~4 ГБ) +
+  **гейт одной задачи**; жёсткий RAM-cap — задел (в ADR 0005/spec §13.2 зафиксировано).
+- **`python_enabled` остаётся `false`** (осознанный opt-in): песочница снимает
+  исходную причину, но «включён без ассетов» хуже «выключен»; включение — шаг после
+  `sandbox setup`. Зафиксировано в ADR 0005.
+- **Доки**: ADR 0005; spec §13.2 переписан под два режима + посадку ресурсов, §9.3
+  (строка `python_exec`); install.md §4.1 (setup прогревает кэш); ADR-список в
+  CLAUDE.md/architecture.md.
+- **Тесты**: гейт (`gate_rejects_second_concurrent_task` — удержание разрешения →
+  отказ до спавна; `gate_permit_released_after_run` — разрешение возвращается).
+  **971 юнит-тест зелёный** (+2), **39 `#[ignore]`**, clippy `-D warnings`/fmt чисты.
+  Живой прогон: `sandbox setup` прогрел кэш (`import numpy`), смоуки зелёные.
+
+### Пост-M9: Python-песочница — OS-level лимит памяти (Windows Job Object) (сделано)
+- **Задел «жёсткий RAM-cap» из Фазы 3 реализован** для Windows (по запросу). Новая
+  настройка `tools.python_wasm_memory_mb: Option<u64>` (по умолчанию **None** —
+  opt-in): при заданном значении процесс `wasmer` помещается в **Job Object** с
+  `JOB_OBJECT_LIMIT_PROCESS_MEMORY`; превышение убивает процесс — **защита хоста от
+  OOM** при рантайм-скрипте.
+- **Спайк-исследование** (scratchpad, реальный wasmer): Job Object-лимит работает как
+  жёсткий бэкстоп; сбой **не graceful** (V8 «Fatal out of memory» в stderr, либо
+  Python `MemoryError`), но хост защищён. **Baseline ~768 МБ** — V8+CPython столько
+  нужно на старт (ниже — песочница не стартует), поэтому осмысленный лимит ≥~1024.
+  **Хэндл job'а закрывается сразу после `AssignProcessToJobObject`** (лимит держится,
+  пока процесс — член job'а) → raw-HANDLE не удерживается через `await`, фьюча
+  остаётся `Send`. **На Unix не делаем**: `RLIMIT_AS` ненадёжен с V8 (резервирует
+  большое виртуальное пространство, низкий лимит ломает старт) — там таймаут + wasm32.
+- **Реализация**: `WasmerSandbox::with_memory_limit(Option<u64>)` + `apply_memory_limit`
+  (`#[cfg(windows)]` winapi через `windows-sys` target-dep; `#[cfg(not(windows))]` —
+  no-op с debug-логом), вызывается сразу после спавна. Прокинуто `ToolSettings` →
+  `ToolConfig` → `build_registry`. UI-поле «Лимит памяти (МБ, 0=без)» в группе Python
+  (режим Wasmer) с подсказкой (только Windows, минимум ~1024).
+- **Тесты**: config (дефолт None); UI (поле видно в Wasmer, скрыто в Local). Живые
+  `#[ignore]`+`#[cfg(windows)]` смоуки на провизионированной песочнице: `memory_cap_
+  stops_runaway` (лимит 1 ГБ + alloc 3 ГБ → отказ, хост цел) и `memory_cap_allows_
+  normal_work` (лимит 2 ГБ не мешает) — **оба зелёные вживую**. **971 юнит-тест
+  зелёный**, **41 `#[ignore]`**, clippy `-D warnings`/fmt чисты. ADR 0005 / spec §13.2
+  обновлены.
+
+### Пост-M9: Python-песочница — pandas в стартовом наборе (сделано)
+- **pandas добавлен в lock-список** `sandbox setup` (задел «больше пакетов»;
+  завершает планировавшийся стартовый набор numpy/pandas/requests и делает описание
+  инструмента точным — раньше оно обещало pandas, которого не было). `pandas 2.3.2`
+  (нативное wasix-колесо) + чистые зависимости с PyPI (python-dateutil/six/pytz/
+  tzdata) в `WHEELS` (URL+sha256). **Прогрев** переведён на `import pandas` (тянет
+  и numpy — самый тяжёлый путь компиляции). **Проверено вживую**: pandas импортится
+  под WASIX (DataFrame + агрегаты; первый импорт ~11с на компиляцию `.so`, дальше
+  тёплый). Смоук `pandas_in_sandbox` (`#[ignore]`) зелёный; `lockfile_wheels_*` тест
+  расширен. **971 юнит-тест**, **42 `#[ignore]`**, clippy/fmt чисты. Скачивание
+  setup выросло ~на 10 МБ (pandas ~8.7 МБ + чистые деп-колёса).
+- **Осознанно НЕ добавлены**: matplotlib (headless-вывод заперт в песочнице —
+  бесполезен), scipy (в wasix-индексе пока нет), polars/PyTorch (анонсированы, ещё
+  не в индексе). Минорные заделы (валидация мин. лимита памяти в UI, прогон на
+  Linux/macOS) — вне текущего объёма.
 
 ### Отложено за пределы M3
 - **Сворачивание/выделение per-message** и tool-блоки в ленте — сейчас «мысли»

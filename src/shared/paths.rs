@@ -147,6 +147,12 @@ impl Paths {
     pub fn backups_dir(&self) -> PathBuf {
         self.root.join("backups")
     }
+
+    /// Каталог песочницы Python (`sandbox/`): бинарь `wasmer`, `python.webc`,
+    /// `site-packages/`. Наполняется командой `mindfork sandbox setup` (Фаза 2).
+    pub fn sandbox_dir(&self) -> PathBuf {
+        self.root.join("sandbox")
+    }
 }
 
 #[cfg(test)]

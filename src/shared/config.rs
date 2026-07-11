@@ -528,6 +528,44 @@ impl EmbedSettings {
 pub const DEFAULT_SUBAGENT_MAX_TOKENS: usize = 1024;
 /// Лимит времени на один вызов саб-агента по умолчанию (секунды).
 pub const DEFAULT_SUBAGENT_TIMEOUT_SECS: u64 = 60;
+/// Таймаут исполнения кода в песочнице Wasmer по умолчанию (секунды). Щедрее, чем у
+/// локального интерпретатора (10с): WASM-интерпретация в ~2–5× медленнее нативной.
+/// См. docs/research/python-wasmer-sandbox.md.
+pub const DEFAULT_PYTHON_WASM_TIMEOUT_SECS: u64 = 30;
+
+/// Режим исполнения `python_exec`: изолированная песочница Wasmer/WASIX (по
+/// умолчанию — нет доступа к файлам машины, предустановленные пакеты) либо локальный
+/// системный интерпретатор (прежнее поведение). См.
+/// docs/research/python-wasmer-sandbox.md (Фаза 0 → сайдкар `wasmer`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum PythonMode {
+    /// Изолированная песочница на бандленном `wasmer` (сайдкар). Дефолт.
+    #[default]
+    Wasmer,
+    /// Локальный системный интерпретатор (`python`/`python3`), без изоляции.
+    Local,
+}
+
+impl PythonMode {
+    /// Все варианты в порядке перебора UI (для Choice-попапа и цикла).
+    pub const ALL: [PythonMode; 2] = [PythonMode::Wasmer, PythonMode::Local];
+
+    /// Подпись для UI (Choice-поле).
+    pub fn label(self) -> &'static str {
+        match self {
+            PythonMode::Wasmer => "Wasmer-песочница",
+            PythonMode::Local => "локальный интерпретатор",
+        }
+    }
+
+    /// Циклический перебор с учётом направления (`dir` = +1/-1).
+    pub fn cycle(self, dir: i32) -> Self {
+        let idx = Self::ALL.iter().position(|x| *x == self).unwrap_or(0) as i32;
+        let n = Self::ALL.len() as i32;
+        Self::ALL[(((idx + dir) % n + n) % n) as usize]
+    }
+}
 
 /// Глобальные «мастер-выключатели» внешних инструментов (безопасность/приватность,
 /// spec §9.4, §13.2). Эффективный набор = `Profile.enabled_tools ∩ глобально вкл.`
@@ -541,10 +579,30 @@ pub struct ToolSettings {
     /// содержимое страниц, но добавляет задержку (загрузка до `max_results` страниц).
     /// Аргумент `fetch_content` вызова переопределяет это значение.
     pub web_fetch_content: bool,
-    /// Исполнение Python. Выключено по умолчанию (нет OS-песочницы, spec §13.2).
+    /// Исполнение Python. Выключено по умолчанию (мастер-гейт инструмента).
     pub python_enabled: bool,
+    /// Режим исполнения `python_exec`: песочница Wasmer (по умолчанию) или локальный
+    /// интерпретатор. См. [`PythonMode`].
+    pub python_mode: PythonMode,
     /// Путь к интерпретатору Python (`None` → системный `python3`/`python`).
+    /// Используется только в режиме [`PythonMode::Local`].
     pub python_path: Option<String>,
+    /// Разрешить сеть внутри песочницы Wasmer (`--net`). По умолчанию включено —
+    /// главная ценность предустановленного `requests`; но код в песочнице сможет
+    /// ходить в сеть. Режим [`PythonMode::Local`] это поле не использует (там сеть
+    /// всегда есть). См. docs/research/python-wasmer-sandbox.md §7.
+    pub python_net_enabled: bool,
+    /// Таймаут исполнения в песочнице Wasmer (секунды). Локальный режим держит свой
+    /// (меньший) таймаут. См. [`DEFAULT_PYTHON_WASM_TIMEOUT_SECS`].
+    pub python_wasm_timeout_secs: u64,
+    /// Жёсткий OS-level лимит памяти песочницы Wasmer (МБ; `None`/0 — без лимита).
+    /// Защита хоста от OOM при рантайм-скрипте: при превышении процесс `wasmer`
+    /// убивается (не graceful — V8 падает с «Fatal out of memory»). **Только
+    /// Windows** (Job Object); на Unix не применяется (rlimit ненадёжен с V8, ADR
+    /// 0005). Минимум ~1024 (меньше — песочница может не стартовать: V8+CPython
+    /// требует ~768 МБ). По умолчанию без лимита (защита в глубину поверх таймаута
+    /// и wasm32 ~4 ГБ).
+    pub python_wasm_memory_mb: Option<u64>,
     /// Доступ к локальным файлам (`fs_read`/`fs_write`/`fs_list`). Выключен по
     /// умолчанию (инструмент может прочитать/перезаписать любой файл — приватность/
     /// безопасность, как у Python). См. spec §9.3, §13.2.
@@ -564,7 +622,11 @@ impl Default for ToolSettings {
             web_enabled: true,
             web_fetch_content: true,
             python_enabled: false,
+            python_mode: PythonMode::default(),
             python_path: None,
+            python_net_enabled: true,
+            python_wasm_timeout_secs: DEFAULT_PYTHON_WASM_TIMEOUT_SECS,
+            python_wasm_memory_mb: None,
             fs_enabled: false,
             fs_root: None,
             subagent_max_tokens: DEFAULT_SUBAGENT_MAX_TOKENS,
@@ -875,6 +937,17 @@ mod tests {
         // Файловые инструменты выключены по умолчанию (как Python).
         assert!(!c.tools.fs_enabled);
         assert_eq!(c.tools.fs_root, None);
+        // Python: инструмент выключен, режим — песочница Wasmer, сеть в песочнице
+        // включена, таймаст песочницы — дефолтный.
+        assert!(!c.tools.python_enabled);
+        assert_eq!(c.tools.python_mode, PythonMode::Wasmer);
+        assert!(c.tools.python_net_enabled);
+        assert_eq!(
+            c.tools.python_wasm_timeout_secs,
+            DEFAULT_PYTHON_WASM_TIMEOUT_SECS
+        );
+        // Лимит памяти песочницы по умолчанию отключён (opt-in, только Windows).
+        assert_eq!(c.tools.python_wasm_memory_mb, None);
         assert_eq!(c.rag.chunk_target_chars, DEFAULT_CHUNK_TARGET_CHARS);
         assert_eq!(c.self_model.max_narrative, DEFAULT_SELF_MODEL_MAX_NARRATIVE);
         assert_eq!(
@@ -959,6 +1032,23 @@ mod tests {
         // Перебор по кругу в обе стороны.
         assert_eq!(FlashAttn::Auto.cycle(1), FlashAttn::On);
         assert_eq!(FlashAttn::Auto.cycle(-1), FlashAttn::Off);
+    }
+
+    #[test]
+    fn python_mode_default_cycle_and_serde() {
+        assert_eq!(PythonMode::default(), PythonMode::Wasmer);
+        // Перебор по кругу (два варианта).
+        assert_eq!(PythonMode::Wasmer.cycle(1), PythonMode::Local);
+        assert_eq!(PythonMode::Local.cycle(1), PythonMode::Wasmer);
+        assert_eq!(PythonMode::Wasmer.cycle(-1), PythonMode::Local);
+        // serde — lowercase, round-trip.
+        assert_eq!(
+            serde_json::to_string(&PythonMode::Local).unwrap(),
+            "\"local\""
+        );
+        let m: PythonMode = serde_json::from_str("\"wasmer\"").unwrap();
+        assert_eq!(m, PythonMode::Wasmer);
+        assert!(PythonMode::ALL.contains(&PythonMode::Local));
     }
 
     #[test]

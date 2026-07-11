@@ -24,7 +24,7 @@ use crate::features::profiles::ProfileEdit;
 use crate::features::tools::meta::{ToolGate, ToolInfo};
 use crate::shared::config::{
     AppConfig, CloudProvider, CloudSettings, FlashAttn, ImpersonationMode, ManagedSettings,
-    ServerMode, SpecType, Theme,
+    PythonMode, ServerMode, SpecType, Theme,
 };
 use crate::shared::keys;
 use crate::shared::server::{ServerStatus, ServerStatuses};
@@ -493,7 +493,11 @@ enum FieldId {
     TWeb,
     TWebFetch,
     TPython,
+    TPythonMode,
     TPythonPath,
+    TPythonNet,
+    TPythonWasmTimeout,
+    TPythonWasmMemory,
     TFs,
     TFsRoot,
     TSubMaxTokens,

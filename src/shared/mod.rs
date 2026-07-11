@@ -8,6 +8,7 @@ pub mod keys;
 pub mod logging;
 pub mod markdown;
 pub mod paths;
+pub mod sandbox;
 pub mod server;
 pub mod storage;
 pub mod theme;

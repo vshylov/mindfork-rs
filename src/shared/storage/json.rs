@@ -23,6 +23,12 @@ impl JsonStore {
         Self { paths }
     }
 
+    /// Каталог песочницы Python (`sandbox/`) — для реестра инструментов
+    /// (`python_exec`, режим Wasmer). См. [`Paths::sandbox_dir`].
+    pub fn sandbox_dir(&self) -> std::path::PathBuf {
+        self.paths.sandbox_dir()
+    }
+
     // ---------- конфигурация ----------
 
     /// Загружает конфиг; если файла нет — возвращает дефолтный.

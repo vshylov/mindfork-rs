@@ -8,7 +8,9 @@
 - **[CLAUDE.md](../CLAUDE.md)** — ориентир и журнал реализованного (M0–M9 + пост-M9);
 - **[docs/decisions/](decisions/)** — ADR (зафиксированные технические решения),
   включая [0004](decisions/0004-engine-contract-multi-provider.md) — границы
-  `shared/api` и мульти-провайдерный инференс без крейт-сплита;
+  `shared/api` и мульти-провайдерный инференс без крейт-сплита; и
+  [0005](decisions/0005-python-sandbox-wasmer.md) — Python-песочница сайдкаром
+  `wasmer`/WASIX за `shared/sandbox.rs`;
 - **[docs/install.md](install.md)** — установка/запуск, движок, env.
 
 > Терминология: **движок** = провайдер инференса за трейтом `EngineBackend` —
@@ -232,6 +234,8 @@ src/
 │  ├─ rag_command.rs        парсер /rag add|remove|list|rebuild
 │  ├─ rag_ingest.rs         scan, read_text, RagProgress (типы прогресса индексации)
 │  ├─ backup.rs             резервное копирование/восстановление данных (zip, транзакц.)
+│  ├─ sandbox_setup.rs      провизия песочницы Python (mindfork sandbox setup): wasmer +
+│  │                        python.webc + колёса по lock-списку (sha256); прогрев кэша
 │  └─ migration.rs          импортёр LameLLaMA (.NET): профили + чаты
 │
 ├─ entities/                доменные типы (без I/O); serde-сериализуемы
@@ -281,6 +285,8 @@ src/
    ├─ theme.rs             Palette (роли user/assistant/tool/…), auto/dark/light
    ├─ keys.rs              раскладко-независимые Ctrl-шорткаты (ЙЦУКЕН→латиница)
    ├─ server.rs            ServerStatus (статус сервера для UI)
+   ├─ sandbox.rs           SandboxRunner (за трейтом) + WasmerSandbox: сайдкар `wasmer`
+   │                       для `python_exec` в режиме песочницы (WASIX-изоляция, §8)
    ├─ paths.rs             расположение данных: портативно / ОС-папка / путь (location.json)
    ├─ instance.rs          single-instance
    └─ logging.rs           tracing в файл (stdout занят TUI)

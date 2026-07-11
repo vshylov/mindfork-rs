@@ -23,6 +23,7 @@ pub mod subagent;
 pub mod web;
 
 use std::collections::BTreeMap;
+use std::path::PathBuf;
 use std::sync::{Arc, LazyLock};
 use std::time::Duration;
 
@@ -34,7 +35,8 @@ use crate::entities::profile::ToolId;
 use crate::entities::sampling::{SamplingConfig, supported_sampling_fields};
 use crate::entities::self_model::SelfModelParams;
 use crate::shared::api::{Embedder, EngineBackend, ToolSchema};
-use crate::shared::config::{AppConfig, CloudProvider};
+use crate::shared::config::{AppConfig, CloudProvider, PythonMode};
+use crate::shared::sandbox::WasmerSandbox;
 use crate::shared::storage::Storage;
 
 pub use introspection::{GET_SAMPLING_ID, SET_SAMPLING_ID};
@@ -292,8 +294,19 @@ pub fn effective_tool_ids(
 /// spec §11.6). Позволяют пересобирать реестр при правках настроек (live).
 #[derive(Debug, Clone)]
 pub struct ToolConfig {
-    /// Путь к интерпретатору Python для `python_exec` (`None` → системный).
+    /// Режим исполнения `python_exec` (песочница Wasmer / локальный интерпретатор).
+    pub python_mode: PythonMode,
+    /// Путь к интерпретатору Python для `python_exec` (`None` → системный, режим Local).
     pub python_path: Option<String>,
+    /// Разрешить сеть в песочнице Wasmer (`--net`).
+    pub python_net: bool,
+    /// Таймаут исполнения в песочнице Wasmer.
+    pub python_wasm_timeout: Duration,
+    /// Жёсткий лимит памяти песочницы (МБ; `None` — без лимита). Только Windows.
+    pub python_wasm_memory_mb: Option<u64>,
+    /// Каталог песочницы (`data/sandbox/`) с бинарём `wasmer` и ассетами (`None` —
+    /// нет каталога, песочница только через env-override).
+    pub sandbox_dir: Option<PathBuf>,
     /// Лимит токенов ответа `call_subagent`.
     pub subagent_max_tokens: usize,
     /// Лимит времени на вызов `call_subagent`.
@@ -312,7 +325,14 @@ pub struct ToolConfig {
 impl Default for ToolConfig {
     fn default() -> Self {
         Self {
+            python_mode: PythonMode::default(),
             python_path: None,
+            python_net: true,
+            python_wasm_timeout: Duration::from_secs(
+                crate::shared::config::DEFAULT_PYTHON_WASM_TIMEOUT_SECS,
+            ),
+            python_wasm_memory_mb: None,
+            sandbox_dir: None,
             subagent_max_tokens: crate::shared::config::DEFAULT_SUBAGENT_MAX_TOKENS,
             subagent_timeout: Duration::from_secs(
                 crate::shared::config::DEFAULT_SUBAGENT_TIMEOUT_SECS,
@@ -355,7 +375,16 @@ pub fn standard_registry(cfg: &ToolConfig) -> ToolRegistry {
     )));
     reg.register(Arc::new(web::WebSearch::new(cfg.web_fetch_content)));
     reg.register(Arc::new(fetch::FetchUrl::new()));
-    reg.register(Arc::new(python::PythonExec::new(cfg.python_path.clone())));
+    reg.register(Arc::new(python::PythonExec::new(
+        cfg.python_mode,
+        cfg.python_path.clone(),
+        Arc::new(
+            WasmerSandbox::new(cfg.sandbox_dir.clone())
+                .with_memory_limit(cfg.python_wasm_memory_mb),
+        ),
+        cfg.python_net,
+        cfg.python_wasm_timeout,
+    )));
     reg.register(Arc::new(calc::Calculate));
     reg.register(Arc::new(datetime::CurrentTime));
     reg.register(Arc::new(fs::FsRead::new(cfg.fs_root.clone())));
