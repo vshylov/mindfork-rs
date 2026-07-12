@@ -203,8 +203,11 @@ impl Orchestrator {
         // конкретные данные к рефлексии над памятью «о себе» (обзор self-консолидации,
         // отложенный в Ярусе 2; включён после подтверждения пользы связывания в Ярусе 3).
         // Пусто, если наблюдений < 2.
-        if let Some(overview) = notes::build_self_consolidation_overview(&self.storage, profile_id)
-        {
+        if let Some(overview) = notes::build_self_consolidation_overview(
+            &self.storage,
+            profile_id,
+            crate::shared::i18n::locale(lang),
+        ) {
             digest = format!("{digest}\n\n{overview}");
         }
 

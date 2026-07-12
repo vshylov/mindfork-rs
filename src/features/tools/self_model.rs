@@ -193,10 +193,8 @@ impl Tool for GetSelfModel {
     fn enabled_by_default(&self) -> bool {
         false
     }
-    fn description(&self, _loc: &crate::shared::i18n::Locale) -> String {
-        "Прочитать твою текущую «модель себя» целиком: описание себя, цели (с #id для \
-         отметки выполненных/неактуальных), представление о собеседнике и наблюдения."
-            .into()
+    fn description(&self, loc: &crate::shared::i18n::Locale) -> String {
+        loc.t("tool.get_self_model.desc").into()
     }
     fn parameters(&self, _loc: &crate::shared::i18n::Locale) -> serde_json::Value {
         serde_json::json!({ "type": "object", "properties": {} })
@@ -226,11 +224,8 @@ impl Tool for Reflect {
     fn enabled_by_default(&self) -> bool {
         false
     }
-    fn description(&self, _loc: &crate::shared::i18n::Locale) -> String {
-        "Поразмышлять над недавним разговором: получить текущую «модель себя» и \
-         вопросы для саморефлексии. Если по итогам что-то изменилось — обнови \
-         модель через update_self_model / update_user_model."
-            .into()
+    fn description(&self, loc: &crate::shared::i18n::Locale) -> String {
+        loc.t("tool.reflect.desc").into()
     }
     fn parameters(&self, _loc: &crate::shared::i18n::Locale) -> serde_json::Value {
         serde_json::json!({ "type": "object", "properties": {} })
@@ -239,35 +234,15 @@ impl Tool for Reflect {
         let m = load(ctx)?;
         // Обзор наблюдений для консолидации (похожие пары / contradicts / без связей) —
         // конкретные данные под рубрику ниже. Пусто, если наблюдений < 2.
-        let overview = notes::build_self_consolidation_overview(&ctx.storage, ctx.profile_id)
-            .map(|o| format!("\n\n{o}"))
-            .unwrap_or_default();
+        let overview =
+            notes::build_self_consolidation_overview(&ctx.storage, ctx.profile_id, ctx.loc)
+                .map(|o| format!("\n\n{o}"))
+                .unwrap_or_default();
         let out = format!(
-            "Текущая модель себя:\n{}{overview}\n\nВопросы для размышления:\n\
-             - Что устойчивого я понял(а) о себе? Уточни update_self_model.summary — \
-             компактный снимок (кто я, что ценю, как работаю); интегрируй и сокращай, \
-             а не только дописывай.\n\
-             - Не разрослось ли описание себя? Событийные выводы «что и когда понял» из \
-             него — в наблюдения (add_insight), в summary оставь суть.\n\
-             - Цели: пройди по активным по #id — какие выполнены (complete_goals) или \
-             неактуальны (abandon_goals)? появились ли новые (add_goals)?\n\
-             - Что устойчивого узнал(а) о собеседнике? update_user_model правит списки по \
-             частям (add_/remove_), не перетирая. Мимолётное (настроение, разовая \
-             реакция) — в add_insight, не в модель собеседника.\n\
-             - Заметил(а) ли противоречие/напряжение? Запиши прозой через add_insight \
-             (оно сохранится как заметка «о себе»).\n\
-             - Есть ли среди наблюдений почти-дубли или устаревшее? Перепиши их через \
-             note_revise или замести note_supersede по полному id (из get_self_model), \
-             а не плоди почти-копии.\n\
-             - Соотносятся ли наблюдения (противоречат, уточняют, об одном)? Свяжи их \
-             note_link (contradicts/refines/relates) по полному id — память связной, а \
-             не россыпью.\n\
-             - Соотносится ли наблюдение «о себе» с фактом «о собеседнике»? Найди факт \
-             через note_recall (даёт id заметок) и свяжи их note_link — память о себе и \
-             о собеседнике не изолированы.\n\
-             Меняй только то, что действительно изменилось; если менять нечего — ничего \
-             не вызывай.",
-            render_self_read(ctx, &m)
+            "{}\n{}{overview}\n\n{}",
+            ctx.loc.t("tool.reflect.rubric.header"),
+            render_self_read(ctx, &m),
+            ctx.loc.t("tool.reflect.rubric.questions"),
         );
         Ok(ToolOutcome::text(out))
     }
@@ -291,19 +266,14 @@ impl Tool for AddInsight {
     fn enabled_by_default(&self) -> bool {
         false
     }
-    fn description(&self, _loc: &crate::shared::i18n::Locale) -> String {
-        "Записать короткое наблюдение/инсайт о себе, разговоре или собеседнике в свой \
-         нарратив (историю «я во времени»). Сюда же — событийные выводы «что и когда я \
-         понял(а)», разрешённые вопросы, эпизоды, замеченные противоречия — ДАЖЕ ЕСЛИ они \
-         устойчивы: наблюдение всплывает по релевантности к теме и не раздувает описание \
-         себя (в отличие от summary). Используй для того, что стоит помнить со временем."
-            .into()
+    fn description(&self, loc: &crate::shared::i18n::Locale) -> String {
+        loc.t("tool.add_insight.desc").into()
     }
-    fn parameters(&self, _loc: &crate::shared::i18n::Locale) -> serde_json::Value {
+    fn parameters(&self, loc: &crate::shared::i18n::Locale) -> serde_json::Value {
         serde_json::json!({
             "type": "object",
             "properties": {
-                "text": {"type": "string", "description": "Короткое наблюдение/инсайт (1-2 предложения)"}
+                "text": {"type": "string", "description": loc.t("tool.add_insight.param.text")}
             },
             "required": ["text"]
         })
@@ -316,22 +286,23 @@ impl Tool for AddInsight {
             .trim()
             .to_string();
         if text.is_empty() {
-            anyhow::bail!("ожидается непустое поле text");
+            anyhow::bail!(ctx.loc.t("tool.add_insight.err.text_empty"));
         }
         // Наблюдение — это self-заметка (@self): получает эмбеддинг, семантический
         // поиск, граф и консолидацию наравне с обычными заметками, но скрыта из
         // пользовательского recall. См. docs/history/narrative-as-notes.md.
         let id =
             notes::create_note(ctx, text.clone(), vec![notes::SELF_NOTE_TAG.to_string()]).await?;
-        let mut msg = format!("Наблюдение записано (id={id}).");
+        let mut msg = ctx.loc.tf(
+            "tool.add_insight.result.recorded",
+            &[("id", &id.to_string())],
+        );
         // Ворота (ядро гипотезы Яруса 1): похожие существующие наблюдения — чтобы
         // переписать почти-дубль через note_revise/note_supersede, а не плодить копию.
         let similar = notes::self_note_similar(ctx, &text, id).await;
         if !similar.is_empty() {
-            msg.push_str(
-                "\nПохожие наблюдения (возможен дубль — при необходимости перепиши то \
-                 через note_revise или замести note_supersede вместо новой записи):",
-            );
+            msg.push('\n');
+            msg.push_str(ctx.loc.t("tool.add_insight.gate.similar"));
             for n in similar {
                 msg.push_str(&format!("\n- (id={}) {}", n.id, n.content));
             }
@@ -357,23 +328,17 @@ impl Tool for UpdateSelfModel {
     fn enabled_by_default(&self) -> bool {
         false
     }
-    fn description(&self, _loc: &crate::shared::i18n::Locale) -> String {
-        "Обновить «модель себя»: уточнить описание себя (summary — компактный снимок: \
-         кто ты, что ценишь, как работаешь; интегрируй и СОКРАЩАЙ, а не только дописывай; \
-         событийные выводы «что и когда понял» — в add_insight, не сюда), добавить цели \
-         (add_goals), отметить выполненные (complete_goals) или неактуальные \
-         (abandon_goals) — по #id или полному id из get_self_model. Веди цели: закрывай \
-         достигнутые, не только ставь новые."
-            .into()
+    fn description(&self, loc: &crate::shared::i18n::Locale) -> String {
+        loc.t("tool.update_self_model.desc").into()
     }
-    fn parameters(&self, _loc: &crate::shared::i18n::Locale) -> serde_json::Value {
+    fn parameters(&self, loc: &crate::shared::i18n::Locale) -> serde_json::Value {
         serde_json::json!({
             "type": "object",
             "properties": {
-                "summary": {"type": "string", "description": "Уточнённое описание себя (интегрирует прежнее с изменившимся)"},
-                "add_goals": {"type": "array", "items": {"type": "string"}, "description": "Новые цели"},
-                "complete_goals": {"type": "array", "items": {"type": "string"}, "description": "#id (или полный id) выполненных целей"},
-                "abandon_goals": {"type": "array", "items": {"type": "string"}, "description": "#id (или полный id) неактуальных целей"}
+                "summary": {"type": "string", "description": loc.t("tool.update_self_model.param.summary")},
+                "add_goals": {"type": "array", "items": {"type": "string"}, "description": loc.t("tool.update_self_model.param.add_goals")},
+                "complete_goals": {"type": "array", "items": {"type": "string"}, "description": loc.t("tool.update_self_model.param.complete_goals")},
+                "abandon_goals": {"type": "array", "items": {"type": "string"}, "description": loc.t("tool.update_self_model.param.abandon_goals")}
             }
         })
     }
@@ -394,60 +359,63 @@ impl Tool for UpdateSelfModel {
         let mut abandoned: Vec<uuid::Uuid> = Vec::new();
         let params = ctx.self_model_params;
         let loc = ctx.loc; // &'static — копируем, чтобы не заимствовать ctx в closure
-        let (model, changed) = ctx.storage.db().self_model_update(ctx.profile_id, |m| {
-            let mut changed = false;
-            if let Some(s) = args.get("summary").and_then(|v| v.as_str()) {
-                let s = s.trim().to_string();
-                if m.summary != s {
-                    m.summary = s;
-                    changed = true;
-                    summary_changed = true;
-                }
-            }
-            for g in str_array(&args, "add_goals") {
-                let before = m.goals.len();
-                m.add_goal(g);
-                // add_goal игнорирует пустые — фиксируем только реально добавленное.
-                if m.goals.len() != before {
-                    let goal = m.goals.last().expect("только что добавлена");
-                    added_goals.push((goal.description.clone(), goal.id));
-                    changed = true;
-                }
-            }
-            // Цели закрываются по #id/полному id — резолвим ручку среди целей модели.
-            for h in str_array(&args, "complete_goals") {
-                match m.match_goal(&h) {
-                    GoalMatch::One(id) => {
-                        if m.set_goal_status(id, GoalStatus::Completed) {
-                            completed.push(id);
-                            changed = true;
-                        }
+        let (model, changed) =
+            ctx.storage.db().self_model_update(ctx.profile_id, |m| {
+                let mut changed = false;
+                if let Some(s) = args.get("summary").and_then(|v| v.as_str()) {
+                    let s = s.trim().to_string();
+                    if m.summary != s {
+                        m.summary = s;
+                        changed = true;
+                        summary_changed = true;
                     }
-                    GoalMatch::None => unresolved.push(h),
-                    GoalMatch::Ambiguous => unresolved.push(format!("{h} (неоднозначно)")),
                 }
-            }
-            for h in str_array(&args, "abandon_goals") {
-                match m.match_goal(&h) {
-                    GoalMatch::One(id) => {
-                        if m.set_goal_status(id, GoalStatus::Abandoned) {
-                            abandoned.push(id);
-                            changed = true;
-                        }
+                for g in str_array(&args, "add_goals") {
+                    let before = m.goals.len();
+                    m.add_goal(g);
+                    // add_goal игнорирует пустые — фиксируем только реально добавленное.
+                    if m.goals.len() != before {
+                        let goal = m.goals.last().expect("только что добавлена");
+                        added_goals.push((goal.description.clone(), goal.id));
+                        changed = true;
                     }
-                    GoalMatch::None => unresolved.push(h),
-                    GoalMatch::Ambiguous => unresolved.push(format!("{h} (неоднозначно)")),
                 }
-            }
-            // Свёртка старых закрытых целей: fold возвращает шрамы (тексты) — их
-            // запишем self-заметками после атомарной правки (потолок закрытых целей:
-            // структура не растёт, «биография» сохраняется наблюдением).
-            scars = m.fold_closed_goals(params.max_closed_goals, loc);
-            if !scars.is_empty() {
-                changed = true;
-            }
-            changed
-        })?;
+                // Цели закрываются по #id/полному id — резолвим ручку среди целей модели.
+                for h in str_array(&args, "complete_goals") {
+                    match m.match_goal(&h) {
+                        GoalMatch::One(id) => {
+                            if m.set_goal_status(id, GoalStatus::Completed) {
+                                completed.push(id);
+                                changed = true;
+                            }
+                        }
+                        GoalMatch::None => unresolved.push(h),
+                        GoalMatch::Ambiguous => unresolved
+                            .push(loc.tf("tool.update_self_model.ambiguous", &[("h", &h)])),
+                    }
+                }
+                for h in str_array(&args, "abandon_goals") {
+                    match m.match_goal(&h) {
+                        GoalMatch::One(id) => {
+                            if m.set_goal_status(id, GoalStatus::Abandoned) {
+                                abandoned.push(id);
+                                changed = true;
+                            }
+                        }
+                        GoalMatch::None => unresolved.push(h),
+                        GoalMatch::Ambiguous => unresolved
+                            .push(loc.tf("tool.update_self_model.ambiguous", &[("h", &h)])),
+                    }
+                }
+                // Свёртка старых закрытых целей: fold возвращает шрамы (тексты) — их
+                // запишем self-заметками после атомарной правки (потолок закрытых целей:
+                // структура не растёт, «биография» сохраняется наблюдением).
+                scars = m.fold_closed_goals(params.max_closed_goals, loc);
+                if !scars.is_empty() {
+                    changed = true;
+                }
+                changed
+            })?;
 
         // Шрамы свёрнутых закрытых целей → self-заметки (наблюдения). Best-effort.
         for scar in &scars {
@@ -456,23 +424,33 @@ impl Tool for UpdateSelfModel {
         }
 
         if !changed {
-            let mut msg = String::from("Нечего обновлять (не передано ни одного изменения).");
+            let mut msg = ctx.loc.t("selfmodel.result.nothing").to_string();
             if !unresolved.is_empty() {
-                msg.push_str(&format!("\nНе найдены цели: {}.", unresolved.join(", ")));
+                msg.push('\n');
+                msg.push_str(&ctx.loc.tf(
+                    "tool.update_self_model.goals_not_found",
+                    &[("list", &unresolved.join(", "))],
+                ));
             }
             return Ok(ToolOutcome::text(msg));
         }
         // Дельта-эхо (этап 4): только изменённое, без полного render_full (полное чтение
         // — у get_self_model). Экономит токены и не «заякоривает» модель на жанре эссе.
         use crate::entities::self_model::short_id;
-        let mut msg = String::from("Модель себя обновлена.");
+        let mut msg = ctx
+            .loc
+            .t("tool.update_self_model.result.updated")
+            .to_string();
         // Обратная связь о размере описания (этап 2): всегда при правке summary, чтобы
         // модель видела рост даже до превышения ориентира. См. docs/summary-as-snapshot.md.
         if summary_changed {
-            msg.push_str(&format!(
-                "\nОписание: {} симв. (ориентир ≤ {}).",
-                model.summary.chars().count(),
-                params.summary_target_chars
+            msg.push('\n');
+            msg.push_str(&ctx.loc.tf(
+                "tool.update_self_model.size",
+                &[
+                    ("n", &model.summary.chars().count().to_string()),
+                    ("target", &params.summary_target_chars.to_string()),
+                ],
             ));
         }
         if !added_goals.is_empty() {
@@ -480,30 +458,47 @@ impl Tool for UpdateSelfModel {
                 .iter()
                 .map(|(d, id)| format!("#{} {d}", short_id(id)))
                 .collect();
-            msg.push_str(&format!("\nДобавлены цели: {}.", list.join("; ")));
+            msg.push('\n');
+            msg.push_str(&ctx.loc.tf(
+                "tool.update_self_model.added_goals",
+                &[("list", &list.join("; "))],
+            ));
         }
         if !completed.is_empty() {
             let ids: Vec<String> = completed
                 .iter()
                 .map(|id| format!("#{}", short_id(id)))
                 .collect();
-            msg.push_str(&format!("\nЗакрыты выполненными: {}.", ids.join(", ")));
+            msg.push('\n');
+            msg.push_str(&ctx.loc.tf(
+                "tool.update_self_model.completed",
+                &[("list", &ids.join(", "))],
+            ));
         }
         if !abandoned.is_empty() {
             let ids: Vec<String> = abandoned
                 .iter()
                 .map(|id| format!("#{}", short_id(id)))
                 .collect();
-            msg.push_str(&format!("\nПомечены неактуальными: {}.", ids.join(", ")));
+            msg.push('\n');
+            msg.push_str(&ctx.loc.tf(
+                "tool.update_self_model.abandoned",
+                &[("list", &ids.join(", "))],
+            ));
         }
         if !scars.is_empty() {
-            msg.push_str(&format!(
-                "\nСтарые закрытые цели свёрнуты в наблюдения: {}.",
-                scars.len()
+            msg.push('\n');
+            msg.push_str(&ctx.loc.tf(
+                "tool.update_self_model.folded",
+                &[("n", &scars.len().to_string())],
             ));
         }
         if !unresolved.is_empty() {
-            msg.push_str(&format!("\n(Не найдены цели: {}.)", unresolved.join(", ")));
+            msg.push('\n');
+            msg.push_str(&ctx.loc.tf(
+                "tool.update_self_model.goals_not_found_paren",
+                &[("list", &unresolved.join(", "))],
+            ));
         }
         Ok(ToolOutcome::text(msg))
     }
@@ -526,28 +521,19 @@ impl Tool for UpdateUserModel {
     fn enabled_by_default(&self) -> bool {
         false
     }
-    fn description(&self, _loc: &crate::shared::i18n::Locale) -> String {
-        "Обновить устойчивую, интегрированную модель собеседника (через все разговоры, \
-         не снимок текущего настроения). Списки правятся ПО ЧАСТЯМ и не перетираются: \
-         add_traits/remove_traits (черты), add_interests/remove_interests (интересы); \
-         relationship_dynamic — как вы относитесь во времени. При удалении/замене черты \
-         передай note — что и почему изменилось (уйдёт в нарратив как след ревизии, чтобы \
-         модель себя помнила, что менялась). Мимолётное (сегодняшнее настроение, разовая \
-         реакция) записывай в add_insight, а не сюда. Если добавляемая черта близка по теме \
-         к уже имеющейся, инструмент это покажет — реши: дубль (объедини через remove_traits) \
-         или противоречие (запиши наблюдением add_insight), а не копи обе молча."
-            .into()
+    fn description(&self, loc: &crate::shared::i18n::Locale) -> String {
+        loc.t("tool.update_user_model.desc").into()
     }
-    fn parameters(&self, _loc: &crate::shared::i18n::Locale) -> serde_json::Value {
+    fn parameters(&self, loc: &crate::shared::i18n::Locale) -> serde_json::Value {
         serde_json::json!({
             "type": "object",
             "properties": {
-                "add_traits": {"type": "array", "items": {"type": "string"}, "description": "Добавить устойчивые черты (дедуп; прежние сохраняются)"},
-                "remove_traits": {"type": "array", "items": {"type": "string"}, "description": "Убрать неверные/устаревшие черты"},
-                "add_interests": {"type": "array", "items": {"type": "string"}, "description": "Добавить интересы (дедуп; прежние сохраняются)"},
-                "remove_interests": {"type": "array", "items": {"type": "string"}, "description": "Убрать неактуальные интересы"},
-                "relationship_dynamic": {"type": "string", "description": "Как вы относитесь во времени (заменяет прежнее; при существенной смене передай note)"},
-                "note": {"type": "string", "description": "Что и почему изменилось (при удалении/замене черт или смене динамики) — уходит в нарратив как след ревизии"}
+                "add_traits": {"type": "array", "items": {"type": "string"}, "description": loc.t("tool.update_user_model.param.add_traits")},
+                "remove_traits": {"type": "array", "items": {"type": "string"}, "description": loc.t("tool.update_user_model.param.remove_traits")},
+                "add_interests": {"type": "array", "items": {"type": "string"}, "description": loc.t("tool.update_user_model.param.add_interests")},
+                "remove_interests": {"type": "array", "items": {"type": "string"}, "description": loc.t("tool.update_user_model.param.remove_interests")},
+                "relationship_dynamic": {"type": "string", "description": loc.t("tool.update_user_model.param.relationship_dynamic")},
+                "note": {"type": "string", "description": loc.t("tool.update_user_model.param.note")}
             }
         })
     }
@@ -614,9 +600,7 @@ impl Tool for UpdateUserModel {
         }
 
         if !changed && !has_note {
-            return Ok(ToolOutcome::text(
-                "Нечего обновлять (не передано ни одного изменения).",
-            ));
+            return Ok(ToolOutcome::text(ctx.loc.t("selfmodel.result.nothing")));
         }
         // Реально добавленные черты (новые после дедупа, без внутрибатчевых повторов) —
         // сравниваем их с прежними воротами почти-дублей (эмбеддинг только если есть
@@ -637,26 +621,39 @@ impl Tool for UpdateUserModel {
         // Дельта-эхо (этап 4): компактные итоговые списки модели собеседника вместо
         // полного render_full (полное чтение — у get_self_model). Списки коротки по
         // построению (merge с дедупом), поэтому показываем их целиком.
-        let mut msg = String::from("Модель собеседника обновлена.");
+        let mut msg = ctx
+            .loc
+            .t("tool.update_user_model.result.updated")
+            .to_string();
         let u = &model.user_model;
         if !u.perceived_traits.is_empty() {
-            msg.push_str(&format!(
-                "\nЧерты теперь: {}.",
-                u.perceived_traits.join(", ")
+            msg.push('\n');
+            msg.push_str(&ctx.loc.tf(
+                "tool.update_user_model.traits",
+                &[("list", &u.perceived_traits.join(", "))],
             ));
         }
         if !u.current_interests.is_empty() {
-            msg.push_str(&format!(
-                "\nИнтересы теперь: {}.",
-                u.current_interests.join(", ")
+            msg.push('\n');
+            msg.push_str(&ctx.loc.tf(
+                "tool.update_user_model.interests",
+                &[("list", &u.current_interests.join(", "))],
             ));
         }
         if !u.relationship_dynamic.trim().is_empty() {
-            msg.push_str(&format!("\nОтношения: {}.", u.relationship_dynamic.trim()));
+            msg.push('\n');
+            msg.push_str(&ctx.loc.tf(
+                "tool.update_user_model.relationship",
+                &[("dyn", u.relationship_dynamic.trim())],
+            ));
         }
         // Подтверждение шрама ревизии (если передан note) — виден его текст.
         if let Some(scar) = &note_scar {
-            msg.push_str(&format!("\nПояснение сохранено наблюдением: «{scar}»."));
+            msg.push('\n');
+            msg.push_str(
+                &ctx.loc
+                    .tf("tool.update_user_model.scar_saved", &[("scar", scar)]),
+            );
         }
         // Ворота родственных черт (Шаг C): близкая по теме черта уже существует.
         // bge-m3 сближает черты по измерению (перефразы И антонимы), поэтому просим
@@ -664,11 +661,8 @@ impl Tool for UpdateUserModel {
         // (записать наблюдением add_insight) — зеркало ворот add_insight, но над
         // плоским списком черт (интеграция вместо накопления).
         if !dup_pairs.is_empty() {
-            msg.push_str(
-                "\nРодственные черты уже есть (близки по теме — проверь: это дубль или \
-                 противоречие?). Если дубль — оставь одну через remove_traits; если \
-                 противоречие — запиши его наблюдением (add_insight), а не копи оба молча:",
-            );
+            msg.push('\n');
+            msg.push_str(ctx.loc.t("tool.update_user_model.gate.related"));
             for (added, existing) in &dup_pairs {
                 msg.push_str(&format!("\n- «{added}» ≈ «{existing}»"));
             }
@@ -677,11 +671,8 @@ impl Tool for UpdateUserModel {
         // Причина не записана → напоминаем оставить след наблюдением (шрам), а не менять
         // молча (смена динамики отношений — самый значимый пересмотр модели собеседника).
         if (removed_traits || removed_interests || replaced_dynamic) && !has_note {
-            msg.push_str(
-                "\n(Ты изменил(а) черты/интересы/динамику без пояснения. Если это пересмотр \
-                 мнения — передай note с тем, что и почему изменилось: он останется \
-                 наблюдением как след, чтобы модель себя помнила, что менялась.)",
-            );
+            msg.push('\n');
+            msg.push_str(ctx.loc.t("tool.update_user_model.nudge_note"));
         }
         Ok(ToolOutcome::text(msg))
     }
@@ -707,6 +698,56 @@ mod tests {
             .db()
             .note_list(profile, None, &[notes::SELF_NOTE_TAG.to_string()], None)
             .unwrap()
+    }
+
+    #[test]
+    fn self_model_tool_descriptions_are_localized() {
+        // Каждый инструмент «модели себя» возвращает РАЗНЫЙ текст на ru/en (ловит
+        // забытый `_loc`), en — без кириллицы. §3.5 docs/i18n.md.
+        use crate::shared::i18n::{Lang, locale};
+        let (r, e) = (locale(Lang::Ru), locale(Lang::En));
+        let no_cyr = |s: &str| {
+            !s.chars()
+                .any(|c| ('а'..='я').contains(&c) || ('А'..='Я').contains(&c))
+        };
+        let pairs: Vec<(String, String)> = vec![
+            (GetSelfModel.description(r), GetSelfModel.description(e)),
+            (Reflect.description(r), Reflect.description(e)),
+            (AddInsight.description(r), AddInsight.description(e)),
+            (
+                UpdateSelfModel.description(r),
+                UpdateSelfModel.description(e),
+            ),
+            (
+                UpdateUserModel.description(r),
+                UpdateUserModel.description(e),
+            ),
+        ];
+        for (ru_d, en_d) in pairs {
+            assert_ne!(ru_d, en_d, "описание не локализовано: {ru_d}");
+            assert!(no_cyr(&en_d), "кириллица в en-описании: {en_d}");
+        }
+    }
+
+    #[tokio::test]
+    async fn add_insight_result_localized_for_all_langs() {
+        // Подтверждение записи наблюдения рендерится на каждом вшитом языке.
+        use crate::shared::i18n::{Lang, locale};
+        for &lang in Lang::ALL {
+            let (_d, _s, mut ctx) = ctx_with_storage(Uuid::new_v4());
+            ctx.loc = locale(lang);
+            let out = AddInsight
+                .invoke(&ctx, serde_json::json!({"text": "hello observation"}))
+                .await
+                .unwrap();
+            // Результат начинается с локализованного шаблона «записано (id=…)».
+            let prefix = locale(lang)
+                .t("tool.add_insight.result.recorded")
+                .split("{id}")
+                .next()
+                .unwrap();
+            assert!(out.result.starts_with(prefix), "{lang:?}: {}", out.result);
+        }
     }
 
     #[test]

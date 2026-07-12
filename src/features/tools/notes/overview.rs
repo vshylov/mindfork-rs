@@ -10,6 +10,7 @@ use super::*;
 pub(crate) fn build_consolidation_overview(
     storage: &crate::shared::storage::Storage,
     profile_id: Uuid,
+    loc: &crate::shared::i18n::Locale,
 ) -> String {
     // Консолидация — только над пользовательскими заметками: self-заметки (@self)
     // исключаем, чтобы «сон» не сливал память о себе с памятью о собеседнике.
@@ -19,7 +20,7 @@ pub(crate) fn build_consolidation_overview(
         .unwrap_or_default();
     active.retain(|n| !is_self_note(n));
     if active.is_empty() {
-        return "База заметок пуста — консолидировать нечего.".to_string();
+        return loc.t("notes.overview.empty").to_string();
     }
     let mut with_vec = storage
         .db()
@@ -49,15 +50,26 @@ pub(crate) fn build_consolidation_overview(
     let dangling: Vec<&Note> = active.iter().filter(|n| !linked.contains(&n.id)).collect();
 
     let mut out = format!(
-        "Обзор базы знаний для консолидации:\nАктивных заметок: {} (без связей: {}).\n",
-        active.len(),
-        dangling.len()
+        "{}\n{}\n",
+        loc.t("notes.overview.header"),
+        loc.tf(
+            "notes.overview.active",
+            &[
+                ("n", &active.len().to_string()),
+                ("d", &dangling.len().to_string())
+            ]
+        )
     );
 
-    out.push_str(&format!(
-        "\nПохожие пары (возможные дубли, близость ≥ {CONSOLIDATE_SIMILARITY}): {}\n",
-        pairs.len()
+    out.push('\n');
+    out.push_str(&loc.tf(
+        "notes.overview.pairs",
+        &[
+            ("sim", &CONSOLIDATE_SIMILARITY.to_string()),
+            ("n", &pairs.len().to_string()),
+        ],
     ));
+    out.push('\n');
     for (s, a, b) in pairs.iter().take(CONSOLIDATE_LIST_CAP) {
         out.push_str(&format!(
             "- {s:.2} (id={}) {} ↔ (id={}) {}\n",
@@ -68,18 +80,22 @@ pub(crate) fn build_consolidation_overview(
         ));
     }
 
-    out.push_str(&format!(
-        "\nСвязи contradicts (проверь, держится ли противоречие после правок): {}\n",
-        contradicts.len()
+    out.push('\n');
+    out.push_str(&loc.tf(
+        "notes.overview.contradicts",
+        &[("n", &contradicts.len().to_string())],
     ));
+    out.push('\n');
     for (f, t, _) in contradicts.iter().take(CONSOLIDATE_LIST_CAP) {
         out.push_str(&format!("- (id={f}) ↔ (id={t})\n"));
     }
 
-    out.push_str(&format!(
-        "\nЗаметки без связей (кандидаты связать): {}\n",
-        dangling.len()
+    out.push('\n');
+    out.push_str(&loc.tf(
+        "notes.overview.dangling",
+        &[("n", &dangling.len().to_string())],
     ));
+    out.push('\n');
     for n in dangling.iter().take(CONSOLIDATE_LIST_CAP) {
         out.push_str(&format!("- (id={}) {}\n", n.id, clip(&n.content, 60)));
     }
@@ -97,6 +113,7 @@ pub(crate) fn build_consolidation_overview(
 pub(crate) fn build_self_consolidation_overview(
     storage: &crate::shared::storage::Storage,
     profile_id: Uuid,
+    loc: &crate::shared::i18n::Locale,
 ) -> Option<String> {
     // Только наблюдения «о себе» (@self) — зеркально исключению self из обзора
     // пользовательских заметок: «сон» наблюдений не трогает память о собеседнике.
@@ -137,14 +154,25 @@ pub(crate) fn build_self_consolidation_overview(
     let dangling: Vec<&Note> = active.iter().filter(|n| !linked.contains(&n.id)).collect();
 
     let mut out = format!(
-        "Обзор наблюдений «о себе» для консолидации:\nНаблюдений: {} (без связей: {}).\n",
-        active.len(),
-        dangling.len()
+        "{}\n{}\n",
+        loc.t("notes.self_overview.header"),
+        loc.tf(
+            "notes.self_overview.count",
+            &[
+                ("n", &active.len().to_string()),
+                ("d", &dangling.len().to_string())
+            ]
+        )
     );
-    out.push_str(&format!(
-        "\nПохожие пары (возможные дубли, близость ≥ {CONSOLIDATE_SIMILARITY}): {}\n",
-        pairs.len()
+    out.push('\n');
+    out.push_str(&loc.tf(
+        "notes.overview.pairs",
+        &[
+            ("sim", &CONSOLIDATE_SIMILARITY.to_string()),
+            ("n", &pairs.len().to_string()),
+        ],
     ));
+    out.push('\n');
     for (s, a, b) in pairs.iter().take(CONSOLIDATE_LIST_CAP) {
         out.push_str(&format!(
             "- {s:.2} (id={}) {} ↔ (id={}) {}\n",
@@ -154,17 +182,21 @@ pub(crate) fn build_self_consolidation_overview(
             clip(&b.content, 60)
         ));
     }
-    out.push_str(&format!(
-        "\nСвязи contradicts среди наблюдений: {}\n",
-        contradicts.len()
+    out.push('\n');
+    out.push_str(&loc.tf(
+        "notes.self_overview.contradicts",
+        &[("n", &contradicts.len().to_string())],
     ));
+    out.push('\n');
     for (f, t, _) in contradicts.iter().take(CONSOLIDATE_LIST_CAP) {
         out.push_str(&format!("- (id={f}) ↔ (id={t})\n"));
     }
-    out.push_str(&format!(
-        "\nНаблюдения без связей (кандидаты связать): {}\n",
-        dangling.len()
+    out.push('\n');
+    out.push_str(&loc.tf(
+        "notes.self_overview.dangling",
+        &[("n", &dangling.len().to_string())],
     ));
+    out.push('\n');
     for n in dangling.iter().take(CONSOLIDATE_LIST_CAP) {
         out.push_str(&format!("- (id={}) {}\n", n.id, clip(&n.content, 60)));
     }
@@ -187,25 +219,17 @@ impl Tool for ConsolidateNotes {
     fn ui_label(&self) -> &'static str {
         "консолидация заметок"
     }
-    fn description(&self, _loc: &crate::shared::i18n::Locale) -> String {
-        "Обзор базы знаний для консолидации: похожие пары (возможные дубли), связи \
-         contradicts, заметки без связей — и что с этим делать. Точка входа: дальше \
-         слей дубли (note_merge), перепиши/замести устаревшее (note_revise/\
-         note_supersede), свяжи родственное (note_link)."
-            .into()
+    fn description(&self, loc: &crate::shared::i18n::Locale) -> String {
+        loc.t("tool.consolidate_notes.desc").into()
     }
     fn parameters(&self, _loc: &crate::shared::i18n::Locale) -> serde_json::Value {
         serde_json::json!({ "type": "object", "properties": {} })
     }
     async fn invoke(&self, ctx: &ToolContext, _args: serde_json::Value) -> Result<ToolOutcome> {
-        let overview = build_consolidation_overview(&ctx.storage, ctx.profile_id);
+        let overview = build_consolidation_overview(&ctx.storage, ctx.profile_id, ctx.loc);
         let out = format!(
-            "{overview}\n\nЧто сделать (только при необходимости):\n\
-             - слей явные дубли: note_merge(ids[], content);\n\
-             - устаревшее перепиши (note_revise — мелкая правка) или замести \
-             (note_supersede — смысловая переработка, сохранит «шрам»);\n\
-             - свяжи родственные заметки: note_link (supports/contradicts/refines/relates).\n\
-             Меняй только то, что действительно нужно; если всё в порядке — ничего не вызывай."
+            "{overview}\n\n{}",
+            ctx.loc.t("tool.consolidate_notes.rubric")
         );
         Ok(ToolOutcome::text(out))
     }

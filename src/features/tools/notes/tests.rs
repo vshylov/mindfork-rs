@@ -4,6 +4,80 @@ use super::super::testkit::ctx_with_storage;
 use super::*;
 use uuid::Uuid;
 
+/// Референсная локаль (ru) — прямые вызовы обзоров в тестах пинят ru-бандл.
+fn ru() -> &'static crate::shared::i18n::Locale {
+    crate::shared::i18n::locale(crate::shared::i18n::Lang::Ru)
+}
+
+/// Нет ли кириллицы в строке (прокси «переведено на en»).
+fn no_cyrillic(s: &str) -> bool {
+    !s.chars()
+        .any(|c| ('а'..='я').contains(&c) || ('А'..='Я').contains(&c))
+}
+
+#[test]
+fn note_tool_descriptions_are_localized() {
+    // Каждый note-инструмент возвращает РАЗНЫЙ текст на ru/en (ловит забытый `_loc`),
+    // а en-описание — без кириллицы. §3.5 docs/i18n.md.
+    use crate::shared::i18n::{Lang, locale};
+    let (ru, en) = (locale(Lang::Ru), locale(Lang::En));
+    let pairs: Vec<(String, String)> = vec![
+        (NoteSave.description(ru), NoteSave.description(en)),
+        (NoteRecall.description(ru), NoteRecall.description(en)),
+        (NoteRevise.description(ru), NoteRevise.description(en)),
+        (NoteSupersede.description(ru), NoteSupersede.description(en)),
+        (NoteMerge.description(ru), NoteMerge.description(en)),
+        (NoteLink.description(ru), NoteLink.description(en)),
+        (NoteNeighbors.description(ru), NoteNeighbors.description(en)),
+        (
+            ConsolidateNotes.description(ru),
+            ConsolidateNotes.description(en),
+        ),
+        (
+            NoteCiteSource.description(ru),
+            NoteCiteSource.description(en),
+        ),
+    ];
+    for (r, e) in pairs {
+        assert_ne!(r, e, "описание не локализовано (забыт loc?): {r}");
+        assert!(no_cyrillic(&e), "кириллица в en-описании: {e}");
+    }
+}
+
+#[tokio::test]
+async fn note_recall_result_localized_for_all_langs() {
+    // Пустая выдача и заголовок «найдено» рендерятся на каждом вшитом языке.
+    use crate::shared::i18n::{Lang, locale};
+    for &lang in Lang::ALL {
+        let profile = Uuid::new_v4();
+        let (_d, _s, mut ctx) = ctx_with_storage(profile);
+        ctx.loc = locale(lang);
+        let empty = NoteRecall
+            .invoke(&ctx, serde_json::json!({}))
+            .await
+            .unwrap();
+        assert_eq!(
+            empty.result,
+            locale(lang).t("tool.note_recall.result.empty")
+        );
+        NoteSave
+            .invoke(&ctx, serde_json::json!({"content": "hello world"}))
+            .await
+            .unwrap();
+        let out = NoteRecall
+            .invoke(&ctx, serde_json::json!({}))
+            .await
+            .unwrap();
+        assert!(out.result.contains("hello world"), "{lang:?}");
+        assert!(
+            out.result
+                .contains(&locale(lang).tf("tool.note_recall.result.header", &[("n", "1")])),
+            "{lang:?}: {}",
+            out.result
+        );
+    }
+}
+
 #[tokio::test]
 async fn save_then_recall_isolated_by_profile() {
     let profile = Uuid::new_v4();
@@ -343,7 +417,7 @@ async fn consolidation_overview_excludes_self_notes() {
         ))
         .unwrap();
 
-    let overview = build_consolidation_overview(&storage, profile);
+    let overview = build_consolidation_overview(&storage, profile, ru());
     // Self-заметка не в счёте активных и не в списках обзора.
     assert!(overview.contains("Активных заметок: 2"));
     assert!(!overview.contains("наблюдение о себе"));
@@ -355,12 +429,12 @@ async fn self_consolidation_overview_covers_self_only() {
     // contradicts, без связей; пользовательские заметки исключены; None при < 2.
     let profile = Uuid::new_v4();
     let (_d, storage, ctx) = ctx_with_storage(profile);
-    assert!(build_self_consolidation_overview(&storage, profile).is_none());
+    assert!(build_self_consolidation_overview(&storage, profile, ru()).is_none());
     create_note(&ctx, "aaaa bbbb".into(), vec![SELF_NOTE_TAG.to_string()])
         .await
         .unwrap();
     // 1 наблюдение → всё ещё None.
-    assert!(build_self_consolidation_overview(&storage, profile).is_none());
+    assert!(build_self_consolidation_overview(&storage, profile, ru()).is_none());
     create_note(&ctx, "aaab".into(), vec![SELF_NOTE_TAG.to_string()])
         .await
         .unwrap();
@@ -376,7 +450,7 @@ async fn self_consolidation_overview_covers_self_only() {
         .await
         .unwrap();
 
-    let ov = build_self_consolidation_overview(&storage, profile).unwrap();
+    let ov = build_self_consolidation_overview(&storage, profile, ru()).unwrap();
     assert!(ov.contains("Обзор наблюдений"));
     assert!(ov.contains("Наблюдений: 3")); // только @self
     assert!(!ov.contains("пользовательская"));
@@ -393,7 +467,7 @@ async fn self_consolidation_overview_covers_self_only() {
         .db()
         .note_link_insert(profile, selves[0].id, selves[1].id, "contradicts")
         .unwrap();
-    let ov = build_self_consolidation_overview(&storage, profile).unwrap();
+    let ov = build_self_consolidation_overview(&storage, profile, ru()).unwrap();
     assert!(ov.contains("Связи contradicts среди наблюдений: 1"));
 }
 

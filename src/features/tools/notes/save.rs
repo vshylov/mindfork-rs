@@ -17,14 +17,14 @@ impl Tool for NoteSave {
     fn ui_label(&self) -> &'static str {
         "сохранить заметку"
     }
-    fn description(&self, _loc: &crate::shared::i18n::Locale) -> String {
-        "Сохранить заметку о пользователе/контексте для будущих диалогов.".into()
+    fn description(&self, loc: &crate::shared::i18n::Locale) -> String {
+        loc.t("tool.note_save.desc").into()
     }
-    fn parameters(&self, _loc: &crate::shared::i18n::Locale) -> serde_json::Value {
+    fn parameters(&self, loc: &crate::shared::i18n::Locale) -> serde_json::Value {
         serde_json::json!({
             "type": "object",
             "properties": {
-                "content": {"type": "string", "description": "Текст заметки"},
+                "content": {"type": "string", "description": loc.t("tool.note_save.param.content")},
                 "tags": {"type": "array", "items": {"type": "string"}}
             },
             "required": ["content"]
@@ -34,18 +34,20 @@ impl Tool for NoteSave {
         let content = args
             .get("content")
             .and_then(|v| v.as_str())
-            .ok_or_else(|| anyhow::anyhow!("ожидается строковое поле content"))?
+            .ok_or_else(|| anyhow::anyhow!(ctx.loc.t("notes.err.content_string")))?
             .trim()
             .to_string();
         if content.is_empty() {
-            anyhow::bail!("content не может быть пустым");
+            anyhow::bail!(ctx.loc.t("notes.err.content_empty"));
         }
         let tags = parse_tags(&args);
         let note = Note::new(ctx.profile_id, content, tags);
         let id = note.id;
         ctx.storage.db().note_insert(&note)?;
 
-        let mut out = format!("Заметка сохранена (id={id}).");
+        let mut out = ctx
+            .loc
+            .tf("tool.note_save.result.saved", &[("id", &id.to_string())]);
         // Эмбеддинг (best-effort) + ворота совместимости: показать семантически
         // близкие существующие заметки, чтобы модель могла переписать дубль через
         // note_revise вместо накопления почти-копии. Без эмбеддера — мягко пропускаем
@@ -74,10 +76,8 @@ impl Tool for NoteSave {
                     .take(3)
                     .collect();
                 if !similar.is_empty() {
-                    out.push_str(
-                        "\nПохожие заметки (возможен дубль/конфликт — при необходимости \
-                         перепиши существующую через note_revise вместо новой записи):",
-                    );
+                    out.push('\n');
+                    out.push_str(ctx.loc.t("tool.note_save.gate.similar"));
                     for n in similar {
                         out.push_str(&format!("\n- (id={}) {}", n.id, n.content));
                     }

@@ -46,7 +46,14 @@
 
 ## Порядок групп (из docs/i18n.md)
 
-### 2a — notes + self_model (самое ценное и связанное)
+> **Статус: группа 2a СДЕЛАНА** (ветка `feat/i18n-tools-notes`, 992 юнит-теста, живой
+> GO — `self_model_gate_en_e2e_live`). Следующие — 2b (rag+web+fetch), 2c (остальное).
+> Все три подводных камня ниже относятся к 2a — учтены (заголовки блоков `overview.rs`
+> на ключах, согласованы с промптами; ворота `add_insight` в `self_model.rs` на ключе
+> `tool.add_insight.gate.similar`; `present.rs::parse_console` — камень **2c**, python
+> ещё не трогали).
+
+### 2a — notes + self_model (самое ценное и связанное) — СДЕЛАНО
 Файлы: `src/features/tools/notes/{save,recall,edit,graph,cite,overview}.rs` (9
 инструментов: note_save/recall/revise/supersede/merge/link/neighbors/consolidate_notes/
 cite_source) + `src/features/tools/self_model.rs` (5: get_self_model/reflect/

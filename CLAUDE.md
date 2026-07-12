@@ -116,10 +116,10 @@ Env для выбора бэкенда: `MINDFORK_ENGINE_URL` (external, люб�
 `MINDFORK_PORT`) для managed `llama-server`.
 
 ## Статус (на 2026-07-12)
-Сделан весь план **M0–M9** плюс обширный пост-M9 (в `main`). **988 юнит-тестов
-зелёные, 43 `#[ignore]`-смоука** (крупнейший счётчик — журнал ниже; последнее
-направление — мультиязычность служебного каркаса, Ярус 1 + `defaults.json`, ветка
-`feat/i18n-core`).
+Сделан весь план **M0–M9** плюс обширный пост-M9 (в `main`). **992 юнит-теста
+зелёные, 44 `#[ignore]`-смоука** (крупнейший счётчик — журнал ниже; последнее
+направление — мультиязычность служебного каркаса, Ярус 2 группа 2a (перевод
+инструментов notes + self_model), ветка `feat/i18n-tools-notes`).
 Историческая сводка `#[ignore]` прогнана на живой связке
 **Gemma 4 31B (q4) + bge-m3** (`llama-server`, external, `--jinja`) — 25/25 зелёные
 (~370с): базовые смоуки Gemma (стриминг, EOS-анти-самообрыв, tool-calling, «мысли»,
@@ -4830,11 +4830,49 @@ web-поиск и Python под выключателями, экран наст�
   перевод по группам — следующий шаг. **Механический рефактор, поведение не менялось**
   (en-профиль по-прежнему получает русские описания/результаты инструментов — Ярус 2
   переведёт их по группам). **988 юнит-тестов зелёные**, clippy `-D warnings`/fmt чисты.
-- **Следующий шаг (не начат)**: перевод по группам (2a notes+self_model → 2b rag+web+
-  fetch → 2c introspection+fs+python+…): вынести русские строки описаний/схем/
-  результатов в ключи бандла (ru байт-в-байт + en), синхронизировать кросс-ссылки
-  заголовков блоков, тесты на ключи + цикл по локалям. **en-формулировки деликатных
-  текстов (ворота, рубрика `reflect`, эхо правок) — на ревью пользователя.**
+- **Следующий шаг (не начат на момент инфры)**: перевод по группам (2a → 2b → 2c).
+
+### Пост-M9: i18n Ярус 2 — группа 2a: перевод инструментов notes + self_model (сделано)
+- **14 инструментов группы 2a переведены** (ветка `feat/i18n-tools-notes`, docs/i18n.md
+  Ярус 2): notes — `note_save`/`recall`/`revise`/`supersede`/`merge`/`link`/`neighbors`/
+  `consolidate_notes`/`cite_source`; self_model — `get_self_model`/`reflect`/
+  `update_self_model`/`update_user_model`/`add_insight`. Описания, JSON-схемы (описания
+  полей), тексты результатов, **ворота** (`note_save`/`add_insight`/родственные черты),
+  **блоки** («Связанные заметки»/«Связи наблюдений»/«Ссылки на источники»), **обзоры
+  консолидации** (пользовательский + `@self`), рубрики `reflect`/`consolidate_notes` и
+  все валидационные ошибки вынесены в ключи бандла (`locales/ru.json` **байт-в-байт** +
+  `locales/en.json`). Конвенция ключей `tool.<id>.desc`/`.param.<field>`/`.result.<что>`/
+  `.gate.<что>`, общие — `notes.block.*`/`notes.mark.*`/`notes.overview.*`/
+  `notes.err.*`/`selfmodel.result.nothing`.
+- **Проводка `loc`**: `_loc`→`loc` во всех impl; хелперы `format_notes`/
+  `build_consolidation_overview`/`build_self_consolidation_overview`/`parse_id` получили
+  параметр `&Locale` (у них не было `ctx`), остальные читают `ctx.loc`. Вызовы обзоров в
+  оркестраторе (`consolidation.rs`/`reflection.rs`) передают `locale(lang)` профиля.
+  Кросс-ссылки (заголовки блоков `overview.rs` ↔ упоминания в промптах
+  reflect/consolidation) держатся на одном языке профиля; известный лёгкий рассинхрон
+  имён блоков (Ярус 1) сохранён как был в обоих бандлах.
+- **ru байт-в-байт → тесты не менялись**: testkit использует `Lang::Ru`, поэтому
+  существующие ru-ассерты продолжают проходить (результаты идентичны прежним строкам).
+  Добавлены per-locale тесты (§3.5): `note_tool_descriptions_are_localized`/
+  `self_model_tool_descriptions_are_localized` (ловят забытый `_loc`: en≠ru + без
+  кириллицы), `note_recall_result_localized_for_all_langs`/
+  `add_insight_result_localized_for_all_langs`. Прямые вызовы обзоров в `notes/tests.rs`
+  переведены на `ru()`-локаль. Гейты key/placeholder parity + `en_bundle_has_no_cyrillic`
+  покрывают полноту. **992 юнит-теста зелёные** (+4), **44 `#[ignore]`** (+1), clippy
+  `-D warnings`/fmt чисты.
+- **Живой прогон — GO** (Gemma 4 31B q4 + bge-m3, `llama-server`): новый смоук
+  `self_model_gate_en_e2e_live` (en-зеркало `self_model_gate_e2e_live`) — на en-профиле
+  ход записал наблюдение (`add_insight`), почти-дубль поднял ворота **по-английски**
+  («Similar observations (possible duplicate …)»), модель интегрировала через
+  `note_supersede` (результат «Note superseded: … → new …» — тоже английский),
+  кириллицы в результатах инструментов нет. Регрессия ru зелёная
+  (`self_model_gate_e2e_live` — ворота «Похожие наблюдения …» и «Заметка замещена: …»
+  байт-в-байт русские). Критерий go/no-go Яруса 2 — **go**.
+- **Осталось (следующие PR)**: 2b (rag + web + fetch — `web.rs` блок «Содержимое:»,
+  `fetch.rs` промпт саммаризации), 2c (introspection + fs + python + calc + datetime +
+  subagent + control; **камень**: `present.rs::parse_console` парсит вывод python по
+  русским меткам — локализация меток требует синхронной правки парсера). Инструкция —
+  [docs/i18n-continuation.md](docs/i18n-continuation.md).
 
 ### Отложено за пределы M3
 - **Сворачивание/выделение per-message** и tool-блоки в ленте — сейчас «мысли»
