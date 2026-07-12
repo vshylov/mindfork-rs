@@ -621,6 +621,26 @@ mod tests {
     }
 
     #[test]
+    fn all_tool_descriptions_localized_to_en() {
+        // Сильный гейт (§3.5 docs/i18n.md): описание КАЖДОГО инструмента на en не
+        // содержит кириллицы и отличается от ru — ловит забытый `_loc` в любой группе.
+        use crate::shared::i18n::{Lang, locale};
+        let reg = standard_registry(&ToolConfig::default());
+        let (ru, en) = (locale(Lang::Ru), locale(Lang::En));
+        for id in all_tool_ids() {
+            let t = reg.get(&id).expect("инструмент в реестре");
+            let d_en = t.description(en);
+            assert!(
+                !d_en
+                    .chars()
+                    .any(|c| ('а'..='я').contains(&c) || ('А'..='Я').contains(&c)),
+                "{id}: кириллица в en-описании: {d_en}"
+            );
+            assert_ne!(t.description(ru), d_en, "{id}: описание не локализовано");
+        }
+    }
+
+    #[test]
     fn note_revise_is_default_tool() {
         // Ревизия заметки — центральна для интеграции, включена по умолчанию.
         assert!(

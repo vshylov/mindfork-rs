@@ -35,16 +35,12 @@ pub fn is_control_tool(name: &str) -> bool {
 }
 
 /// Текст «разрешения», который петля кладёт как результат вызова управляющего
-/// инструмента (его видит модель в истории следующего раунда).
-pub fn control_permission_text(name: &str) -> &'static str {
+/// инструмента (его видит модель в истории следующего раунда). На языке каркаса `loc`.
+pub fn control_permission_text(name: &str, loc: &crate::shared::i18n::Locale) -> String {
     match name {
-        SEND_FOLLOWUP_ID => {
-            "Хорошо. Напиши следующее сообщение — оно будет показано отдельной репликой."
-        }
-        REWRITE_CURRENT_ID => {
-            "Хорошо. Напиши своё текущее сообщение заново — черновая версия будет скрыта."
-        }
-        _ => "",
+        SEND_FOLLOWUP_ID => loc.t("control.permission.followup").to_string(),
+        REWRITE_CURRENT_ID => loc.t("control.permission.rewrite").to_string(),
+        _ => String::new(),
     }
 }
 
@@ -67,17 +63,17 @@ impl Tool for SendFollowupMessage {
     fn enabled_by_default(&self) -> bool {
         false
     }
-    fn description(&self, _loc: &crate::shared::i18n::Locale) -> String {
-        "Разрешает написать ещё одно сообщение сразу после текущего (отдельной \
-         репликой). Сначала допиши текущее сообщение до конца, затем вызови этот \
-         инструмент — после него можно написать вторую реплику."
-            .into()
+    fn description(&self, loc: &crate::shared::i18n::Locale) -> String {
+        loc.t("tool.send_followup_message.desc").into()
     }
     fn parameters(&self, _loc: &crate::shared::i18n::Locale) -> serde_json::Value {
         serde_json::json!({ "type": "object", "properties": {} })
     }
-    async fn invoke(&self, _ctx: &ToolContext, _args: serde_json::Value) -> Result<ToolOutcome> {
-        Ok(ToolOutcome::text(control_permission_text(SEND_FOLLOWUP_ID)))
+    async fn invoke(&self, ctx: &ToolContext, _args: serde_json::Value) -> Result<ToolOutcome> {
+        Ok(ToolOutcome::text(control_permission_text(
+            SEND_FOLLOWUP_ID,
+            ctx.loc,
+        )))
     }
 }
 
@@ -101,20 +97,16 @@ impl Tool for RewriteCurrentMessage {
     fn enabled_by_default(&self) -> bool {
         false
     }
-    fn description(&self, _loc: &crate::shared::i18n::Locale) -> String {
-        "Отменяет сообщение, которое ты пишешь прямо сейчас (в текущем ходе), и \
-         позволяет написать его заново. Касается ТОЛЬКО твоей собственной текущей \
-         реплики — не сообщения пользователя и не твоих прошлых ответов. Вызови, \
-         если понял, что начал отвечать неправильно: уже написанный черновик будет \
-         отброшен, а следующая реплика заменит его."
-            .into()
+    fn description(&self, loc: &crate::shared::i18n::Locale) -> String {
+        loc.t("tool.rewrite_current_message.desc").into()
     }
     fn parameters(&self, _loc: &crate::shared::i18n::Locale) -> serde_json::Value {
         serde_json::json!({ "type": "object", "properties": {} })
     }
-    async fn invoke(&self, _ctx: &ToolContext, _args: serde_json::Value) -> Result<ToolOutcome> {
+    async fn invoke(&self, ctx: &ToolContext, _args: serde_json::Value) -> Result<ToolOutcome> {
         Ok(ToolOutcome::text(control_permission_text(
             REWRITE_CURRENT_ID,
+            ctx.loc,
         )))
     }
 }
@@ -132,8 +124,9 @@ mod tests {
 
     #[test]
     fn permission_text_per_tool() {
-        assert!(!control_permission_text(SEND_FOLLOWUP_ID).is_empty());
-        assert!(!control_permission_text(REWRITE_CURRENT_ID).is_empty());
-        assert!(control_permission_text("note_save").is_empty());
+        let ru = crate::shared::i18n::locale(crate::shared::i18n::Lang::Ru);
+        assert!(!control_permission_text(SEND_FOLLOWUP_ID, ru).is_empty());
+        assert!(!control_permission_text(REWRITE_CURRENT_ID, ru).is_empty());
+        assert!(control_permission_text("note_save", ru).is_empty());
     }
 }

@@ -60,22 +60,20 @@ impl Tool for CallSubagent {
     fn ui_label(&self) -> &'static str {
         "запрос суб-агенту"
     }
-    fn description(&self, _loc: &crate::shared::i18n::Locale) -> String {
-        "Спросить независимого саб-агента (с заданным ему системным сообщением) для \
-         альтернативного мнения. У саб-агента нет истории этого чата и нет инструментов."
-            .into()
+    fn description(&self, loc: &crate::shared::i18n::Locale) -> String {
+        loc.t("tool.call_subagent.desc").into()
     }
-    fn parameters(&self, _loc: &crate::shared::i18n::Locale) -> serde_json::Value {
+    fn parameters(&self, loc: &crate::shared::i18n::Locale) -> serde_json::Value {
         serde_json::json!({
             "type": "object",
             "properties": {
                 "system_message": {
                     "type": "string",
-                    "description": "Роль/инструкция для саб-агента"
+                    "description": loc.t("tool.call_subagent.param.system_message")
                 },
                 "message": {
                     "type": "string",
-                    "description": "Единственное сообщение саб-агенту"
+                    "description": loc.t("tool.call_subagent.param.message")
                 }
             },
             "required": ["system_message", "message"]
@@ -91,7 +89,7 @@ impl Tool for CallSubagent {
             .get("message")
             .and_then(|v| v.as_str())
             .filter(|s| !s.trim().is_empty())
-            .ok_or_else(|| anyhow::anyhow!("ожидается непустое поле message"))?
+            .ok_or_else(|| anyhow::anyhow!(ctx.loc.t("tool.call_subagent.err.message_empty")))?
             .to_string();
 
         // Лимит токенов поверх действующего семплинга; БЕЗ инструментов и истории.
@@ -131,11 +129,18 @@ impl Tool for CallSubagent {
 
         match tokio::time::timeout(self.timeout, collect).await {
             Ok(Ok(text)) if !text.trim().is_empty() => Ok(ToolOutcome::text(text)),
-            Ok(Ok(_)) => Ok(ToolOutcome::text("(саб-агент вернул пустой ответ)")),
-            Ok(Err(err)) => Ok(ToolOutcome::text(format!("Ошибка саб-агента: {err}"))),
+            Ok(Ok(_)) => Ok(ToolOutcome::text(
+                ctx.loc.t("tool.call_subagent.result.empty"),
+            )),
+            Ok(Err(err)) => Ok(ToolOutcome::text(ctx.loc.tf(
+                "tool.call_subagent.result.error",
+                &[("err", &err.to_string())],
+            ))),
             Err(_) => {
                 cancel.cancel();
-                Ok(ToolOutcome::text("Саб-агент превысил лимит времени."))
+                Ok(ToolOutcome::text(
+                    ctx.loc.t("tool.call_subagent.result.timeout"),
+                ))
             }
         }
     }

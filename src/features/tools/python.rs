@@ -70,8 +70,8 @@ impl PythonExec {
     }
 
     /// Локальный режим: системный интерпретатор отдельным процессом. Возвращает уже
-    /// отформатированный текст результата (успех/ошибка/таймаут).
-    async fn run_local(&self, code: &str) -> String {
+    /// отформатированный текст результата (успех/ошибка/таймаут) на языке `loc`.
+    async fn run_local(&self, code: &str, loc: &crate::shared::i18n::Locale) -> String {
         // Аргумент передаётся напрямую (без шелла) — нет проблем с экранированием.
         let mut cmd = tokio::process::Command::new(self.interpreter());
         cmd.arg("-c")
@@ -90,9 +90,9 @@ impl PythonExec {
         let child = match cmd.spawn() {
             Ok(c) => c,
             Err(err) => {
-                return format!(
-                    "Не удалось запустить Python ({}): {err}",
-                    self.interpreter()
+                return loc.tf(
+                    "tool.python_exec.err.spawn",
+                    &[("py", &self.interpreter()), ("err", &err.to_string())],
                 );
             }
         };
@@ -104,35 +104,37 @@ impl PythonExec {
                 &String::from_utf8_lossy(&out.stderr),
                 out.status.success(),
                 out.status.code(),
+                loc,
             ),
-            Ok(Err(err)) => format!("Ошибка исполнения: {err}"),
-            Err(_) => format!(
-                "Python превысил лимит времени ({} с) и был остановлен.",
-                LOCAL_TIMEOUT.as_secs()
+            Ok(Err(err)) => loc.tf("tool.python_exec.err.exec", &[("err", &err.to_string())]),
+            Err(_) => loc.tf(
+                "tool.python_exec.err.timeout",
+                &[("secs", &LOCAL_TIMEOUT.as_secs().to_string())],
             ),
         }
     }
 
-    /// Режим песочницы Wasmer. Возвращает уже отформатированный текст результата.
-    async fn run_wasmer(&self, code: &str) -> String {
+    /// Режим песочницы Wasmer. Возвращает уже отформатированный текст результата на
+    /// языке `loc`.
+    async fn run_wasmer(&self, code: &str, loc: &crate::shared::i18n::Locale) -> String {
         match self.sandbox.availability() {
-            SandboxAvailability::Missing(why) => format!(
-                "Песочница Python недоступна: {why}.\n\nМожно переключиться на локальный \
-                 интерпретатор в настройках (Инструменты → Python → Режим)."
-            ),
+            SandboxAvailability::Missing(why) => {
+                loc.tf("tool.python_exec.err.sandbox_missing", &[("why", &why)])
+            }
             SandboxAvailability::Ready => {
                 match self.sandbox.run(code, self.net, self.wasm_timeout).await {
-                    Ok(out) if out.timed_out => format!(
-                        "Python превысил лимит времени ({} с) и был остановлен.",
-                        self.wasm_timeout.as_secs()
+                    Ok(out) if out.timed_out => loc.tf(
+                        "tool.python_exec.err.timeout",
+                        &[("secs", &self.wasm_timeout.as_secs().to_string())],
                     ),
                     Ok(out) => format_output_parts(
                         &out.stdout,
                         &out.stderr,
                         out.exit_code == Some(0),
                         out.exit_code,
+                        loc,
                     ),
-                    Err(e) => format!("Ошибка песочницы: {e}"),
+                    Err(e) => loc.tf("tool.python_exec.err.sandbox", &[("e", &e.to_string())]),
                 }
             }
         }
@@ -153,22 +155,16 @@ impl Tool for PythonExec {
     fn gate(&self) -> Option<crate::features::tools::meta::ToolGate> {
         Some(crate::features::tools::meta::ToolGate::Python)
     }
-    fn description(&self, _loc: &crate::shared::i18n::Locale) -> String {
+    fn description(&self, loc: &crate::shared::i18n::Locale) -> String {
         match self.mode {
-            PythonMode::Local => "Исполнить код Python и вернуть stdout/stderr \
-                 (локальный интерпретатор). Есть таймаут и лимит вывода."
-                .into(),
+            PythonMode::Local => loc.t("tool.python_exec.desc.local").into(),
             PythonMode::Wasmer => {
                 let net = if self.net {
-                    "есть доступ в сеть"
+                    loc.t("tool.python_exec.net.on")
                 } else {
-                    "без доступа в сеть"
+                    loc.t("tool.python_exec.net.off")
                 };
-                format!(
-                    "Исполнить код Python в изолированной песочнице (нет доступа к файлам \
-                     машины; {net}). При установленной песочнице доступны научные пакеты \
-                     (numpy, pandas, requests и т.п.). Есть таймаут и лимит вывода."
-                )
+                loc.tf("tool.python_exec.desc.wasmer", &[("net", net)])
             }
         }
     }
@@ -179,17 +175,17 @@ impl Tool for PythonExec {
             "required": ["code"]
         })
     }
-    async fn invoke(&self, _ctx: &ToolContext, args: serde_json::Value) -> Result<ToolOutcome> {
+    async fn invoke(&self, ctx: &ToolContext, args: serde_json::Value) -> Result<ToolOutcome> {
         let code = args
             .get("code")
             .and_then(|v| v.as_str())
             .filter(|s| !s.trim().is_empty())
-            .ok_or_else(|| anyhow::anyhow!("ожидается непустое поле code"))?
+            .ok_or_else(|| anyhow::anyhow!(ctx.loc.t("tool.python_exec.err.code_empty")))?
             .to_string();
 
         let result = match self.mode {
-            PythonMode::Local => self.run_local(&code).await,
-            PythonMode::Wasmer => self.run_wasmer(&code).await,
+            PythonMode::Local => self.run_local(&code, ctx.loc).await,
+            PythonMode::Wasmer => self.run_wasmer(&code, ctx.loc).await,
         };
         Ok(ToolOutcome::text(result))
     }
@@ -197,32 +193,50 @@ impl Tool for PythonExec {
 
 /// Форматирует результат исполнения (stdout/stderr/код возврата) — единый вид для
 /// обоих режимов, чтобы презентер ленты (`present::parse_console`) распознавал
-/// консоль по меткам `stdout:`/`stderr:`/`код возврата:`.
-fn format_output_parts(stdout: &str, stderr: &str, success: bool, code: Option<i32>) -> String {
+/// консоль по меткам. Метки `stdout:`/`stderr:` — универсальные (не переводятся);
+/// метку кода возврата (`python.console.exit`) и служебные строки локализуем по `loc`,
+/// а `parse_console` распознаёт метку кода по всем локалям.
+fn format_output_parts(
+    stdout: &str,
+    stderr: &str,
+    success: bool,
+    code: Option<i32>,
+    loc: &crate::shared::i18n::Locale,
+) -> String {
     let mut parts = Vec::new();
     if !stdout.trim().is_empty() {
-        parts.push(format!("stdout:\n{}", truncate(stdout, MAX_OUTPUT_CHARS)));
+        parts.push(format!(
+            "stdout:\n{}",
+            truncate(stdout, MAX_OUTPUT_CHARS, loc)
+        ));
     }
     if !stderr.trim().is_empty() {
-        parts.push(format!("stderr:\n{}", truncate(stderr, MAX_OUTPUT_CHARS)));
+        parts.push(format!(
+            "stderr:\n{}",
+            truncate(stderr, MAX_OUTPUT_CHARS, loc)
+        ));
     }
     if !success {
-        parts.push(format!("код возврата: {}", code.unwrap_or(-1)));
+        parts.push(format!(
+            "{} {}",
+            loc.t("python.console.exit"),
+            code.unwrap_or(-1)
+        ));
     }
     if parts.is_empty() {
-        "(пустой вывод, успех)".to_string()
+        loc.t("python.console.empty").to_string()
     } else {
         parts.join("\n\n")
     }
 }
 
-/// Обрезает строку до `max` символов с пометкой об усечении.
-fn truncate(s: &str, max: usize) -> String {
+/// Обрезает строку до `max` символов с пометкой об усечении (на языке `loc`).
+fn truncate(s: &str, max: usize, loc: &crate::shared::i18n::Locale) -> String {
     if s.chars().count() <= max {
         s.to_string()
     } else {
         let cut: String = s.chars().take(max).collect();
-        format!("{cut}\n…(вывод обрезан)")
+        format!("{cut}\n{}", loc.t("python.truncated"))
     }
 }
 
@@ -232,6 +246,11 @@ mod tests {
     use super::*;
     use crate::shared::sandbox::{MockSandbox, SandboxOutput};
     use uuid::Uuid;
+
+    /// Референсная локаль (ru) для прямых вызовов форматирования вывода.
+    fn ru() -> &'static crate::shared::i18n::Locale {
+        crate::shared::i18n::locale(crate::shared::i18n::Lang::Ru)
+    }
 
     /// Инструмент в локальном режиме с заданным путём интерпретатора.
     fn local(python_path: Option<String>) -> PythonExec {
@@ -269,18 +288,18 @@ mod tests {
     #[test]
     fn truncate_marks_cut() {
         let long = "a".repeat(MAX_OUTPUT_CHARS + 10);
-        let out = truncate(&long, MAX_OUTPUT_CHARS);
+        let out = truncate(&long, MAX_OUTPUT_CHARS, ru());
         assert!(out.contains("вывод обрезан"));
     }
 
     #[test]
     fn format_output_parts_shapes_console() {
-        let s = format_output_parts("hi", "oops", false, Some(2));
+        let s = format_output_parts("hi", "oops", false, Some(2), ru());
         assert!(s.contains("stdout:\nhi"));
         assert!(s.contains("stderr:\noops"));
         assert!(s.contains("код возврата: 2"));
         assert_eq!(
-            format_output_parts("", "", true, Some(0)),
+            format_output_parts("", "", true, Some(0), ru()),
             "(пустой вывод, успех)"
         );
     }

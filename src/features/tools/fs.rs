@@ -43,18 +43,22 @@ impl FsRoot {
     /// Резолвит путь из аргумента и проверяет, что он внутри песочницы (если задана).
     /// Для существующих путей сравнение идёт по каноничной форме; для ещё не
     /// существующих (запись нового файла) канонизируется родительский каталог.
-    fn resolve(&self, raw: &str) -> Result<PathBuf> {
+    /// `loc` — язык каркаса для текстов ошибок.
+    fn resolve(&self, raw: &str, loc: &crate::shared::i18n::Locale) -> Result<PathBuf> {
         let raw = raw.trim();
         if raw.is_empty() {
-            anyhow::bail!("пустой путь");
+            anyhow::bail!(loc.t("tool.fs.err.empty_path").to_string());
         }
         let requested = PathBuf::from(raw);
         let Some(root) = &self.root else {
             return Ok(requested);
         };
-        let root = root
-            .canonicalize()
-            .with_context(|| format!("каталог-песочница недоступен: {}", root.display()))?;
+        let root = root.canonicalize().with_context(|| {
+            loc.tf(
+                "tool.fs.err.sandbox_unavailable",
+                &[("path", &root.display().to_string())],
+            )
+        })?;
         // Абсолютный путь берётся как есть, относительный — от корня песочницы.
         let candidate = if requested.is_absolute() {
             requested
@@ -67,42 +71,48 @@ impl FsRoot {
             Err(_) => {
                 let parent = candidate
                     .parent()
-                    .ok_or_else(|| anyhow::anyhow!("у пути нет родительского каталога"))?;
+                    .ok_or_else(|| anyhow::anyhow!(loc.t("tool.fs.err.no_parent").to_string()))?;
                 let parent = parent.canonicalize().with_context(|| {
-                    format!("родительский каталог недоступен: {}", parent.display())
+                    loc.tf(
+                        "tool.fs.err.parent_unavailable",
+                        &[("path", &parent.display().to_string())],
+                    )
                 })?;
                 let name = candidate
                     .file_name()
-                    .ok_or_else(|| anyhow::anyhow!("у пути нет имени файла"))?;
+                    .ok_or_else(|| anyhow::anyhow!(loc.t("tool.fs.err.no_filename").to_string()))?;
                 parent.join(name)
             }
         };
         if !canonical.starts_with(&root) {
-            anyhow::bail!(
-                "путь вне разрешённого каталога ({}). Доступ ограничен песочницей.",
-                root.display()
-            );
+            anyhow::bail!(loc.tf(
+                "tool.fs.err.outside_sandbox",
+                &[("root", &root.display().to_string())]
+            ));
         }
         Ok(canonical)
     }
 }
 
 /// Достаёт строковый аргумент `path`.
-fn arg_path(args: &serde_json::Value) -> Result<String> {
+fn arg_path(args: &serde_json::Value, loc: &crate::shared::i18n::Locale) -> Result<String> {
     args.get("path")
         .and_then(|v| v.as_str())
         .filter(|s| !s.trim().is_empty())
         .map(|s| s.to_string())
-        .ok_or_else(|| anyhow::anyhow!("ожидается непустое поле path"))
+        .ok_or_else(|| anyhow::anyhow!(loc.t("tool.fs.err.path_field_empty").to_string()))
 }
 
 /// Усекает строку до `max` символов (по границе символа) с пометкой.
-fn truncate_chars(s: &str, max: usize) -> String {
+fn truncate_chars(s: &str, max: usize, loc: &crate::shared::i18n::Locale) -> String {
     if s.chars().count() <= max {
         return s.to_string();
     }
     let cut: String = s.chars().take(max).collect();
-    format!("{cut}\n…(содержимое обрезано, показаны первые {max} символов)")
+    format!(
+        "{cut}\n{}",
+        loc.tf("tool.fs.truncated_read", &[("max", &max.to_string())])
+    )
 }
 
 /// `fs_read` — читает текстовый файл и возвращает его содержимое.
@@ -132,30 +142,37 @@ impl Tool for FsRead {
     fn gate(&self) -> Option<crate::features::tools::meta::ToolGate> {
         Some(crate::features::tools::meta::ToolGate::Fs)
     }
-    fn description(&self, _loc: &crate::shared::i18n::Locale) -> String {
-        "Прочитать текстовый файл и вернуть его содержимое (с лимитом на размер).".into()
+    fn description(&self, loc: &crate::shared::i18n::Locale) -> String {
+        loc.t("tool.fs_read.desc").into()
     }
-    fn parameters(&self, _loc: &crate::shared::i18n::Locale) -> serde_json::Value {
+    fn parameters(&self, loc: &crate::shared::i18n::Locale) -> serde_json::Value {
         serde_json::json!({
             "type": "object",
-            "properties": {"path": {"type": "string", "description": "Путь к файлу"}},
+            "properties": {"path": {"type": "string", "description": loc.t("tool.fs.param.file_path")}},
             "required": ["path"]
         })
     }
-    async fn invoke(&self, _ctx: &ToolContext, args: serde_json::Value) -> Result<ToolOutcome> {
-        let path = self.fs.resolve(&arg_path(&args)?)?;
+    async fn invoke(&self, ctx: &ToolContext, args: serde_json::Value) -> Result<ToolOutcome> {
+        let path = self.fs.resolve(&arg_path(&args, ctx.loc)?, ctx.loc)?;
         let bytes = match tokio::fs::read(&path).await {
             Ok(b) => b,
             Err(err) => {
-                return Ok(ToolOutcome::text(format!(
-                    "Не удалось прочитать {}: {err}",
-                    path.display()
+                return Ok(ToolOutcome::text(ctx.loc.tf(
+                    "tool.fs_read.result.read_failed",
+                    &[
+                        ("path", &path.display().to_string()),
+                        ("err", &err.to_string()),
+                    ],
                 )));
             }
         };
         // Читаем как UTF-8 (с заменой неверных байтов) — бинарные файлы читать нечем.
         let text = String::from_utf8_lossy(&bytes);
-        Ok(ToolOutcome::text(truncate_chars(&text, MAX_READ_CHARS)))
+        Ok(ToolOutcome::text(truncate_chars(
+            &text,
+            MAX_READ_CHARS,
+            ctx.loc,
+        )))
     }
 }
 
@@ -186,28 +203,26 @@ impl Tool for FsWrite {
     fn gate(&self) -> Option<crate::features::tools::meta::ToolGate> {
         Some(crate::features::tools::meta::ToolGate::Fs)
     }
-    fn description(&self, _loc: &crate::shared::i18n::Locale) -> String {
-        "Записать текст в файл (перезаписывает существующий). Передай append=true, \
-         чтобы дописать в конец."
-            .into()
+    fn description(&self, loc: &crate::shared::i18n::Locale) -> String {
+        loc.t("tool.fs_write.desc").into()
     }
-    fn parameters(&self, _loc: &crate::shared::i18n::Locale) -> serde_json::Value {
+    fn parameters(&self, loc: &crate::shared::i18n::Locale) -> serde_json::Value {
         serde_json::json!({
             "type": "object",
             "properties": {
-                "path": {"type": "string", "description": "Путь к файлу"},
-                "content": {"type": "string", "description": "Содержимое для записи"},
-                "append": {"type": "boolean", "description": "Дописать в конец (по умолчанию false)"}
+                "path": {"type": "string", "description": loc.t("tool.fs.param.file_path")},
+                "content": {"type": "string", "description": loc.t("tool.fs_write.param.content")},
+                "append": {"type": "boolean", "description": loc.t("tool.fs_write.param.append")}
             },
             "required": ["path", "content"]
         })
     }
-    async fn invoke(&self, _ctx: &ToolContext, args: serde_json::Value) -> Result<ToolOutcome> {
-        let path = self.fs.resolve(&arg_path(&args)?)?;
+    async fn invoke(&self, ctx: &ToolContext, args: serde_json::Value) -> Result<ToolOutcome> {
+        let path = self.fs.resolve(&arg_path(&args, ctx.loc)?, ctx.loc)?;
         let content = args
             .get("content")
             .and_then(|v| v.as_str())
-            .ok_or_else(|| anyhow::anyhow!("ожидается поле content"))?;
+            .ok_or_else(|| anyhow::anyhow!(ctx.loc.t("tool.fs_write.err.content")))?;
         let append = args
             .get("append")
             .and_then(|v| v.as_bool())
@@ -218,20 +233,24 @@ impl Tool for FsWrite {
         } else {
             tokio::fs::write(&path, content.as_bytes()).await
         };
+        let args = [
+            ("path", path.display().to_string()),
+            ("n", content.chars().count().to_string()),
+        ];
         match result {
-            Ok(()) => Ok(ToolOutcome::text(format!(
-                "{} {} ({} символов).",
-                if append {
-                    "Дописано в"
+            Ok(()) => {
+                let key = if append {
+                    "tool.fs_write.result.appended"
                 } else {
-                    "Записано в"
-                },
-                path.display(),
-                content.chars().count()
-            ))),
-            Err(err) => Ok(ToolOutcome::text(format!(
-                "Не удалось записать {}: {err}",
-                path.display()
+                    "tool.fs_write.result.written"
+                };
+                Ok(ToolOutcome::text(
+                    ctx.loc.tf(key, &[("path", &args[0].1), ("n", &args[1].1)]),
+                ))
+            }
+            Err(err) => Ok(ToolOutcome::text(ctx.loc.tf(
+                "tool.fs_write.result.write_failed",
+                &[("path", &args[0].1), ("err", &err.to_string())],
             ))),
         }
     }
@@ -275,24 +294,27 @@ impl Tool for FsList {
     fn gate(&self) -> Option<crate::features::tools::meta::ToolGate> {
         Some(crate::features::tools::meta::ToolGate::Fs)
     }
-    fn description(&self, _loc: &crate::shared::i18n::Locale) -> String {
-        "Перечислить содержимое каталога (файлы и подкаталоги).".into()
+    fn description(&self, loc: &crate::shared::i18n::Locale) -> String {
+        loc.t("tool.fs_list.desc").into()
     }
-    fn parameters(&self, _loc: &crate::shared::i18n::Locale) -> serde_json::Value {
+    fn parameters(&self, loc: &crate::shared::i18n::Locale) -> serde_json::Value {
         serde_json::json!({
             "type": "object",
-            "properties": {"path": {"type": "string", "description": "Путь к каталогу"}},
+            "properties": {"path": {"type": "string", "description": loc.t("tool.fs.param.dir_path")}},
             "required": ["path"]
         })
     }
-    async fn invoke(&self, _ctx: &ToolContext, args: serde_json::Value) -> Result<ToolOutcome> {
-        let path = self.fs.resolve(&arg_path(&args)?)?;
+    async fn invoke(&self, ctx: &ToolContext, args: serde_json::Value) -> Result<ToolOutcome> {
+        let path = self.fs.resolve(&arg_path(&args, ctx.loc)?, ctx.loc)?;
         let mut rd = match tokio::fs::read_dir(&path).await {
             Ok(rd) => rd,
             Err(err) => {
-                return Ok(ToolOutcome::text(format!(
-                    "Не удалось открыть каталог {}: {err}",
-                    path.display()
+                return Ok(ToolOutcome::text(ctx.loc.tf(
+                    "tool.fs_list.result.open_failed",
+                    &[
+                        ("path", &path.display().to_string()),
+                        ("err", &err.to_string()),
+                    ],
                 )));
             }
         };
@@ -309,15 +331,28 @@ impl Tool for FsList {
         }
         entries.sort();
         if entries.is_empty() {
-            return Ok(ToolOutcome::text(format!(
-                "Каталог {} пуст.",
-                path.display()
+            return Ok(ToolOutcome::text(ctx.loc.tf(
+                "tool.fs_list.result.empty",
+                &[("path", &path.display().to_string())],
             )));
         }
-        let mut out = format!("Содержимое {} ({}):\n", path.display(), entries.len());
+        let mut out = format!(
+            "{}\n",
+            ctx.loc.tf(
+                "tool.fs_list.result.header",
+                &[
+                    ("path", &path.display().to_string()),
+                    ("n", &entries.len().to_string())
+                ]
+            )
+        );
         out.push_str(&entries.join("\n"));
         if truncated {
-            out.push_str(&format!("\n…(показаны первые {MAX_LIST_ENTRIES})"));
+            out.push('\n');
+            out.push_str(&ctx.loc.tf(
+                "tool.fs_list.truncated",
+                &[("max", &MAX_LIST_ENTRIES.to_string())],
+            ));
         }
         Ok(ToolOutcome::text(out))
     }

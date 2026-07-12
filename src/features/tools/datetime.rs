@@ -25,46 +25,51 @@ impl Tool for CurrentTime {
     fn ui_label(&self) -> &'static str {
         "текущее время"
     }
-    fn description(&self, _loc: &crate::shared::i18n::Locale) -> String {
-        "Получить текущие дату и время (локальная зона и UTC). Опционально передай \
-         format — строку формата strftime (например %Y-%m-%d или %H:%M)."
-            .into()
+    fn description(&self, loc: &crate::shared::i18n::Locale) -> String {
+        loc.t("tool.current_time.desc").into()
     }
-    fn parameters(&self, _loc: &crate::shared::i18n::Locale) -> serde_json::Value {
+    fn parameters(&self, loc: &crate::shared::i18n::Locale) -> serde_json::Value {
         serde_json::json!({
             "type": "object",
             "properties": {
                 "format": {
                     "type": "string",
-                    "description": "Необязательная строка формата strftime, напр. %Y-%m-%d %H:%M:%S"
+                    "description": loc.t("tool.current_time.param.format")
                 }
             }
         })
     }
-    async fn invoke(&self, _ctx: &ToolContext, args: serde_json::Value) -> Result<ToolOutcome> {
+    async fn invoke(&self, ctx: &ToolContext, args: serde_json::Value) -> Result<ToolOutcome> {
         let format = args.get("format").and_then(|v| v.as_str());
-        Ok(ToolOutcome::text(render(Local::now(), Utc::now(), format)))
+        Ok(ToolOutcome::text(render(
+            Local::now(),
+            Utc::now(),
+            format,
+            ctx.loc,
+        )))
     }
 }
 
 /// Формирует ответ: при заданном `format` — локальное время по нему, иначе —
 /// человекочитаемые локальное время и UTC (RFC 3339). Вынесено для тестируемости
-/// (инъекция момента времени).
+/// (инъекция момента времени). Тексты — на языке каркаса `loc`.
 fn render(
     local: chrono::DateTime<Local>,
     utc: chrono::DateTime<Utc>,
     format: Option<&str>,
+    loc: &crate::shared::i18n::Locale,
 ) -> String {
     if let Some(fmt) = format.filter(|f| !f.trim().is_empty()) {
         // `format` с неверной спецификацией паникует при материализации — ловим
         // через отдельную попытку рендера в String.
         return match render_with_format(local, fmt) {
             Some(s) => s,
-            None => format!("Неверная строка формата «{fmt}»."),
+            None => loc.tf("tool.current_time.err.bad_format", &[("fmt", fmt)]),
         };
     }
     format!(
-        "Локальное время: {}\nUTC: {}",
+        "{} {}\nUTC: {}",
+        loc.t("tool.current_time.local_label"),
         local.format("%Y-%m-%d %H:%M:%S %:z"),
         utc.format("%Y-%m-%d %H:%M:%S UTC")
     )
@@ -87,11 +92,16 @@ mod tests {
     use chrono::TimeZone;
     use uuid::Uuid;
 
+    /// Референсная локаль (ru) для проверки текстов render.
+    fn ru() -> &'static crate::shared::i18n::Locale {
+        crate::shared::i18n::locale(crate::shared::i18n::Lang::Ru)
+    }
+
     #[test]
     fn default_render_has_local_and_utc() {
         let utc = Utc.with_ymd_and_hms(2026, 6, 23, 12, 30, 0).unwrap();
         let local = utc.with_timezone(&Local);
-        let s = render(local, utc, None);
+        let s = render(local, utc, None, ru());
         assert!(s.contains("Локальное время:"), "got: {s}");
         assert!(s.contains("UTC:"), "got: {s}");
         assert!(s.contains("2026"), "got: {s}");
@@ -101,7 +111,7 @@ mod tests {
     fn custom_format_is_applied() {
         let utc = Utc.with_ymd_and_hms(2026, 6, 23, 12, 30, 0).unwrap();
         let local = utc.with_timezone(&Local);
-        let s = render(local, utc, Some("%Y-%m-%d"));
+        let s = render(local, utc, Some("%Y-%m-%d"), ru());
         // Локальная дата (зона теста неизвестна) — но год точно присутствует.
         assert!(s.contains("2026"), "got: {s}");
         assert!(!s.contains("UTC"), "формат-режим не печатает UTC: {s}");
@@ -111,7 +121,7 @@ mod tests {
     fn invalid_format_reports_error() {
         let utc = Utc.with_ymd_and_hms(2026, 6, 23, 12, 30, 0).unwrap();
         let local = utc.with_timezone(&Local);
-        let s = render(local, utc, Some("%Q"));
+        let s = render(local, utc, Some("%Q"), ru());
         assert!(s.contains("Неверная строка формата"), "got: {s}");
     }
 
@@ -119,7 +129,7 @@ mod tests {
     fn empty_format_falls_back_to_default() {
         let utc = Utc.with_ymd_and_hms(2026, 6, 23, 12, 30, 0).unwrap();
         let local = utc.with_timezone(&Local);
-        let s = render(local, utc, Some("   "));
+        let s = render(local, utc, Some("   "), ru());
         assert!(s.contains("UTC:"), "got: {s}");
     }
 
