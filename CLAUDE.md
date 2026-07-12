@@ -116,10 +116,10 @@ Env для выбора бэкенда: `MINDFORK_ENGINE_URL` (external, люб�
 `MINDFORK_PORT`) для managed `llama-server`.
 
 ## Статус (на 2026-07-12)
-Сделан весь план **M0–M9** плюс обширный пост-M9 (в `main`). **992 юнит-теста
-зелёные, 44 `#[ignore]`-смоука** (крупнейший счётчик — журнал ниже; последнее
-направление — мультиязычность служебного каркаса, Ярус 2 группа 2a (перевод
-инструментов notes + self_model), ветка `feat/i18n-tools-notes`).
+Сделан весь план **M0–M9** плюс обширный пост-M9 (в `main`). **996 юнит-тестов
+зелёные, 45 `#[ignore]`-смоуков** (крупнейший счётчик — журнал ниже; последнее
+направление — мультиязычность служебного каркаса, Ярус 2 группа 2b (перевод
+инструментов rag + web + fetch), ветка `feat/i18n-tools-rag-web`).
 Историческая сводка `#[ignore]` прогнана на живой связке
 **Gemma 4 31B (q4) + bge-m3** (`llama-server`, external, `--jinja`) — 25/25 зелёные
 (~370с): базовые смоуки Gemma (стриминг, EOS-анти-самообрыв, tool-calling, «мысли»,
@@ -4868,10 +4868,43 @@ web-поиск и Python под выключателями, экран наст�
   кириллицы в результатах инструментов нет. Регрессия ru зелёная
   (`self_model_gate_e2e_live` — ворота «Похожие наблюдения …» и «Заметка замещена: …»
   байт-в-байт русские). Критерий go/no-go Яруса 2 — **go**.
-- **Осталось (следующие PR)**: 2b (rag + web + fetch — `web.rs` блок «Содержимое:»,
-  `fetch.rs` промпт саммаризации), 2c (introspection + fs + python + calc + datetime +
-  subagent + control; **камень**: `present.rs::parse_console` парсит вывод python по
-  русским меткам — локализация меток требует синхронной правки парсера). Инструкция —
+- **Осталось (следующие PR)**: 2b (rag + web + fetch), 2c (introspection + fs + python +
+  утилиты + control + subagent). Инструкция — [docs/i18n-continuation.md](docs/i18n-continuation.md).
+
+### Пост-M9: i18n Ярус 2 — группа 2b: перевод инструментов rag + web + fetch (сделано)
+- **4 инструмента группы 2b переведены** (ветка `feat/i18n-tools-rag-web`, docs/i18n.md
+  Ярус 2): `rag_add`/`rag_search` (`rag.rs`), `web_search` (`web.rs`), `fetch_url`
+  (`fetch.rs`). Описания, JSON-схемы (описания полей), тексты результатов, блоки
+  («Заметки со ссылкой на эти источники», «Результаты поиска (N):», «Содержимое:»),
+  **промпт саммаризации `fetch_url`** (system + задача с/без `focus`) и все ошибки,
+  уходящие модели, вынесены в ключи бандла (`locales/ru.json` **байт-в-байт** +
+  `locales/en.json`). Маркер `[о себе]` в `rag_search` — общий ключ `notes.mark.self`
+  (из 2a).
+- **Проводка `loc`**: `_loc`→`loc` во всех impl; методы `web::WebSearch::fetch` и
+  `fetch::FetchUrl::fetch_text` получили параметр `&Locale` — их `anyhow`-контексты
+  (сетевые ошибки провайдеров / загрузки страницы) всплывают модели в результате при
+  полном отказе, поэтому тоже локализованы. `summarize_text`/`invoke` берут `ctx.loc`.
+  Порядок подстановки в `tf` для шаблона задачи саммаризации выбран так, что `{text}`
+  (контент страницы) подставляется последним — контент с литеральными `{url}`/`{f}` не
+  ре-подставляется.
+- **Не переведены (осознанно)**: `ui_label` инструментов (ось B — UI-хром настроек) и
+  tracing-логи `web.rs` (файловые логи, §2.3 docs/i18n.md) — остаются русскими.
+- **Тесты**: ru байт-в-байт → существующие ru-ассерты не менялись (testkit = `Lang::Ru`).
+  Добавлены per-locale: `rag_tool_descriptions_are_localized`,
+  `web_search_description_is_localized`,
+  `fetch_url_description_and_summary_system_localized` (en≠ru + без кириллицы),
+  `rag_add_result_localized_for_all_langs`. Гейты key/placeholder parity +
+  `en_bundle_has_no_cyrillic` покрывают полноту. **996 юнит-тестов зелёные** (+4),
+  **45 `#[ignore]`** (+1), clippy `-D warnings`/fmt чисты.
+- **Живой прогон — GO** (Gemma 4 31B q4 + bge-m3, `llama-server`): смоук `rag_en_e2e_live`
+  (en-профиль + RAG-инструменты) — модель добавила факт (`rag_add` → «Chunks added: 1.»)
+  и нашла его (`rag_search` → «Fragments found: 1 …») — **результаты rag-инструментов на
+  английском**, кириллицы нет. Регрессия ru покрыта юнит-тестами
+  (`add_then_search_returns_relevant_chunk` и др. — байт-в-байт русские результаты).
+- **Осталось (следующий PR)**: 2c — introspection + fs + python + calc + datetime +
+  subagent + control. **Камень**: `present.rs::parse_console` парсит вывод `python_exec`
+  по русским меткам («код возврата:»/«stdout:»/«stderr:») — при локализации меток в
+  `python.rs::format_output_parts` синхронно править парсер. Инструкция —
   [docs/i18n-continuation.md](docs/i18n-continuation.md).
 
 ### Отложено за пределы M3

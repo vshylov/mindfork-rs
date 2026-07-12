@@ -78,15 +78,15 @@ impl Tool for RagAdd {
     fn ui_label(&self) -> &'static str {
         "добавить в базу знаний"
     }
-    fn description(&self, _loc: &crate::shared::i18n::Locale) -> String {
-        "Добавить текст в базу знаний для последующего семантического поиска.".into()
+    fn description(&self, loc: &crate::shared::i18n::Locale) -> String {
+        loc.t("tool.rag_add.desc").into()
     }
-    fn parameters(&self, _loc: &crate::shared::i18n::Locale) -> serde_json::Value {
+    fn parameters(&self, loc: &crate::shared::i18n::Locale) -> serde_json::Value {
         serde_json::json!({
             "type": "object",
             "properties": {
                 "text": {"type": "string"},
-                "source": {"type": "string", "description": "Источник (имя/URL)"}
+                "source": {"type": "string", "description": loc.t("tool.rag_add.param.source")}
             },
             "required": ["text"]
         })
@@ -95,20 +95,20 @@ impl Tool for RagAdd {
         let text = args
             .get("text")
             .and_then(|v| v.as_str())
-            .ok_or_else(|| anyhow::anyhow!("ожидается строковое поле text"))?;
+            .ok_or_else(|| anyhow::anyhow!(ctx.loc.t("tool.rag_add.err.text_string")))?;
         let source = args
             .get("source")
             .and_then(|v| v.as_str())
-            .unwrap_or("(без источника)")
-            .to_string();
+            .map(str::to_string)
+            .unwrap_or_else(|| ctx.loc.t("tool.rag_add.no_source").to_string());
 
         let chunks = chunk_text(text, ctx.chunk_params);
         if chunks.is_empty() {
-            anyhow::bail!("text не содержит контента для индексации");
+            anyhow::bail!(ctx.loc.t("tool.rag_add.err.no_content"));
         }
         let embeddings = ctx.embedder.embed(chunks.clone()).await?;
         if embeddings.len() != chunks.len() {
-            anyhow::bail!("эмбеддер вернул неверное число векторов");
+            anyhow::bail!(ctx.loc.t("tool.rag_add.err.embed_count"));
         }
         for (chunk, embedding) in chunks.iter().zip(embeddings) {
             let doc = RagDocument::new(ctx.profile_id, &source, chunk, embedding);
@@ -119,9 +119,9 @@ impl Tool for RagAdd {
         ctx.storage
             .db()
             .rag_source_append(ctx.profile_id, &source, text, chrono::Utc::now())?;
-        Ok(ToolOutcome::text(format!(
-            "Добавлено чанков: {}.",
-            chunks.len()
+        Ok(ToolOutcome::text(ctx.loc.tf(
+            "tool.rag_add.result.added",
+            &[("n", &chunks.len().to_string())],
         )))
     }
 }
@@ -140,8 +140,8 @@ impl Tool for RagSearch {
     fn ui_label(&self) -> &'static str {
         "поиск в базе знаний"
     }
-    fn description(&self, _loc: &crate::shared::i18n::Locale) -> String {
-        "Найти релевантные фрагменты в базе знаний по смысловому запросу.".into()
+    fn description(&self, loc: &crate::shared::i18n::Locale) -> String {
+        loc.t("tool.rag_search.desc").into()
     }
     fn parameters(&self, _loc: &crate::shared::i18n::Locale) -> serde_json::Value {
         serde_json::json!({
@@ -158,7 +158,7 @@ impl Tool for RagSearch {
             .get("query")
             .and_then(|v| v.as_str())
             .filter(|s| !s.trim().is_empty())
-            .ok_or_else(|| anyhow::anyhow!("ожидается непустое поле query"))?;
+            .ok_or_else(|| anyhow::anyhow!(ctx.loc.t("tool.rag_search.err.query_empty")))?;
         let k = args
             .get("top_k")
             .and_then(|v| v.as_u64())
@@ -168,15 +168,21 @@ impl Tool for RagSearch {
         let mut embeddings = ctx.embedder.embed(vec![query.to_string()]).await?;
         let query_vec = embeddings
             .pop()
-            .ok_or_else(|| anyhow::anyhow!("эмбеддер не вернул вектор запроса"))?;
+            .ok_or_else(|| anyhow::anyhow!(ctx.loc.t("tool.rag_search.err.no_query_vec")))?;
         let hits = ctx.storage.db().rag_search(ctx.profile_id, &query_vec, k)?;
         if hits.is_empty() {
-            return Ok(ToolOutcome::text("В базе знаний ничего не найдено."));
+            return Ok(ToolOutcome::text(ctx.loc.t("tool.rag_search.result.empty")));
         }
         // Склеиваем соседние чанки одного источника (по заложенному перекрытию):
         // экономит контекст и не путает модель повтором (см. [`stitch_hits`]).
         let passages = stitch_hits(hits);
-        let mut out = format!("Найдено фрагментов: {}\n", passages.len());
+        let mut out = format!(
+            "{}\n",
+            ctx.loc.tf(
+                "tool.rag_search.result.header",
+                &[("n", &passages.len().to_string())]
+            )
+        );
         for p in &passages {
             out.push_str(&format!("- [{}] {}\n", p.source, p.text));
         }
@@ -196,15 +202,17 @@ impl Tool for RagSearch {
                     continue;
                 }
                 let mark = if super::notes::is_self_note(&n) {
-                    "[о себе] "
+                    format!("{} ", ctx.loc.t("notes.mark.self"))
                 } else {
-                    ""
+                    String::new()
                 };
                 linked.push(format!("- {mark}(id={}) {}", n.id, n.content));
             }
         }
         if !linked.is_empty() {
-            out.push_str("\nЗаметки со ссылкой на эти источники:\n");
+            out.push('\n');
+            out.push_str(ctx.loc.t("tool.rag_search.block.linked_notes"));
+            out.push_str(":\n");
             out.push_str(&linked.join("\n"));
             out.push('\n');
         }
@@ -578,6 +586,47 @@ mod tests {
     use super::super::testkit::ctx_with_storage;
     use super::*;
     use uuid::Uuid;
+
+    /// Нет ли кириллицы в строке (прокси «переведено на en»).
+    fn no_cyr(s: &str) -> bool {
+        !s.chars()
+            .any(|c| ('а'..='я').contains(&c) || ('А'..='Я').contains(&c))
+    }
+
+    #[test]
+    fn rag_tool_descriptions_are_localized() {
+        // Описания rag-инструментов различны на ru/en (ловит забытый `_loc`), en без
+        // кириллицы. §3.5 docs/i18n.md.
+        use crate::shared::i18n::{Lang, locale};
+        let (ru, en) = (locale(Lang::Ru), locale(Lang::En));
+        for (r, e) in [
+            (RagAdd.description(ru), RagAdd.description(en)),
+            (RagSearch.description(ru), RagSearch.description(en)),
+        ] {
+            assert_ne!(r, e, "описание не локализовано: {r}");
+            assert!(no_cyr(&e), "кириллица в en-описании: {e}");
+        }
+    }
+
+    #[tokio::test]
+    async fn rag_add_result_localized_for_all_langs() {
+        // Подтверждение «добавлено чанков» рендерится на каждом вшитом языке.
+        use crate::shared::i18n::{Lang, locale};
+        for &lang in Lang::ALL {
+            let (_d, _s, mut ctx) = ctx_with_storage(Uuid::new_v4());
+            ctx.loc = locale(lang);
+            let out = RagAdd
+                .invoke(&ctx, serde_json::json!({"text": "hello world alpha beta"}))
+                .await
+                .unwrap();
+            let prefix = locale(lang)
+                .t("tool.rag_add.result.added")
+                .split("{n}")
+                .next()
+                .unwrap();
+            assert!(out.result.starts_with(prefix), "{lang:?}: {}", out.result);
+        }
+    }
 
     #[test]
     fn chunking_groups_small_paragraphs() {

@@ -80,6 +80,95 @@ async fn i18n_en_profile_title_e2e_live() {
     );
 }
 
+/// Живой смоук Яруса 2 i18n (docs/i18n.md, группа 2b): en-профиль + RAG-инструменты.
+/// Модель добавляет факт (`rag_add`) и ищет его (`rag_search`); **результаты
+/// rag-инструментов должны быть на английском** (без кириллицы) — критерий 2b
+/// (результаты инструментов локализованы). Нужен реальный эмбеддер (`MINDFORK_EMBED_URL`).
+/// Запуск:
+/// `MINDFORK_ENGINE_URL=…/v1 MINDFORK_EMBED_URL=…/v1 cargo test rag_en_e2e_live -- --ignored --nocapture --test-threads=1`.
+#[tokio::test]
+#[ignore = "requires a running OpenAI-compatible server (MINDFORK_ENGINE_URL)"]
+async fn rag_en_e2e_live() {
+    use crate::features::tools::all_tool_ids;
+    let Some((_d, cmd_tx, mut evt_rx, handle)) = spawn_orch_live() else {
+        eprintln!("skip: MINDFORK_ENGINE_URL not set");
+        return;
+    };
+    cmd_tx
+        .send(AppCommand::CreateProfile {
+            name: "English".into(),
+            system_message: "You are a helpful assistant. Reply in English.".into(),
+        })
+        .unwrap();
+    let pl = wait_for(
+        &mut evt_rx,
+        |e| matches!(e, AppEvent::ProfileList(v) if v.len() >= 2),
+    )
+    .await
+    .unwrap();
+    let pid = match pl {
+        AppEvent::ProfileList(v) => v.last().unwrap().id,
+        _ => unreachable!(),
+    };
+    cmd_tx
+        .send(AppCommand::UpdateProfile {
+            id: pid,
+            edit: Box::new(ProfileEdit {
+                language: Some(crate::shared::i18n::Lang::En),
+                enabled_tools: Some(all_tool_ids()),
+                ..Default::default()
+            }),
+        })
+        .unwrap();
+    cmd_tx
+        .send(AppCommand::NewChat {
+            profile_id: Some(pid),
+        })
+        .unwrap();
+    wait_for(&mut evt_rx, |e| matches!(e, AppEvent::ChatActivated { .. }))
+        .await
+        .unwrap();
+
+    let (_t1, calls1) = run_turn_capture(
+        &cmd_tx,
+        &mut evt_rx,
+        "Add this fact to the knowledge base via rag_add: the capital of France is Paris.",
+    )
+    .await;
+    let (_t2, calls2) = run_turn_capture(
+        &cmd_tx,
+        &mut evt_rx,
+        "Now search the knowledge base via rag_search for: capital of France.",
+    )
+    .await;
+
+    cmd_tx.send(AppCommand::Quit).unwrap();
+    handle.await.unwrap();
+
+    let all: Vec<(String, String)> = calls1.into_iter().chain(calls2).collect();
+    eprintln!("rag calls: {all:#?}");
+    let has_cyr = |s: &str| {
+        s.chars()
+            .any(|c| ('а'..='я').contains(&c) || ('А'..='Я').contains(&c))
+    };
+    // Результаты rag-инструментов — на английском (каркас переведён, Ярус 2 2b).
+    for (n, r) in &all {
+        if n == "rag_add" || n == "rag_search" {
+            assert!(!has_cyr(r), "rag tool {n} result has cyrillic: {r:?}");
+        }
+    }
+    assert!(
+        all.iter().any(|(n, _)| n == "rag_add"),
+        "expected rag_add call"
+    );
+    // Английские маркеры результатов (если инструмент отработал).
+    assert!(
+        all.iter()
+            .any(|(n, r)| n == "rag_add" && r.contains("Chunks added")),
+        "expected English rag_add result: {all:?}"
+    );
+}
+
 /// End-to-end на живой модели: с включённым `send_followup_message` ассистент
 /// пишет **второе сообщение** отдельным пузырём. Проверяем и сигнал UI
 /// (`AssistantContinue`), и итоговую структуру чата (`Message.new_bubble`).
