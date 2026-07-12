@@ -78,10 +78,10 @@ impl Tool for RagAdd {
     fn ui_label(&self) -> &'static str {
         "добавить в базу знаний"
     }
-    fn description(&self) -> String {
+    fn description(&self, _loc: &crate::shared::i18n::Locale) -> String {
         "Добавить текст в базу знаний для последующего семантического поиска.".into()
     }
-    fn parameters(&self) -> serde_json::Value {
+    fn parameters(&self, _loc: &crate::shared::i18n::Locale) -> serde_json::Value {
         serde_json::json!({
             "type": "object",
             "properties": {
@@ -140,10 +140,10 @@ impl Tool for RagSearch {
     fn ui_label(&self) -> &'static str {
         "поиск в базе знаний"
     }
-    fn description(&self) -> String {
+    fn description(&self, _loc: &crate::shared::i18n::Locale) -> String {
         "Найти релевантные фрагменты в базе знаний по смысловому запросу.".into()
     }
-    fn parameters(&self) -> serde_json::Value {
+    fn parameters(&self, _loc: &crate::shared::i18n::Locale) -> serde_json::Value {
         serde_json::json!({
             "type": "object",
             "properties": {

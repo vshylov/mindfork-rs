@@ -118,13 +118,13 @@ impl Tool for FetchUrl {
     fn gate(&self) -> Option<crate::features::tools::meta::ToolGate> {
         Some(crate::features::tools::meta::ToolGate::Web)
     }
-    fn description(&self) -> String {
+    fn description(&self, _loc: &crate::shared::i18n::Locale) -> String {
         "Загрузить веб-страницу по URL и вернуть её краткое содержание. Передай focus, \
          чтобы сосредоточиться на конкретном вопросе. summarize=false вернёт извлечённый \
          текст без саммаризации."
             .into()
     }
-    fn parameters(&self) -> serde_json::Value {
+    fn parameters(&self, _loc: &crate::shared::i18n::Locale) -> serde_json::Value {
         serde_json::json!({
             "type": "object",
             "properties": {

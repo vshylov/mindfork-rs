@@ -17,10 +17,10 @@ impl Tool for NoteRecall {
     fn ui_label(&self) -> &'static str {
         "найти заметки"
     }
-    fn description(&self) -> String {
+    fn description(&self, _loc: &crate::shared::i18n::Locale) -> String {
         "Найти ранее сохранённые заметки по тексту и/или тегам.".into()
     }
-    fn parameters(&self) -> serde_json::Value {
+    fn parameters(&self, _loc: &crate::shared::i18n::Locale) -> serde_json::Value {
         serde_json::json!({
             "type": "object",
             "properties": {

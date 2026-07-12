@@ -180,19 +180,22 @@ impl ToolOutcome {
 pub trait Tool: Send + Sync {
     /// Уникальное имя (совпадает с именем функции в OpenAI-схеме).
     fn id(&self) -> ToolId;
-    /// Человекочитаемое описание для модели.
-    fn description(&self) -> String;
-    /// JSON Schema объекта параметров.
-    fn parameters(&self) -> serde_json::Value;
+    /// Человекочитаемое описание для модели **на языке служебного каркаса** `loc`
+    /// (ось A, docs/i18n.md). Инструменты, ещё не переведённые (Ярус 2 идёт по
+    /// группам), возвращают русский текст независимо от `loc`.
+    fn description(&self, loc: &crate::shared::i18n::Locale) -> String;
+    /// JSON Schema объекта параметров (описания полей — на языке `loc`).
+    fn parameters(&self, loc: &crate::shared::i18n::Locale) -> serde_json::Value;
     /// Исполняет вызов. `args` — распарсенный JSON аргументов модели.
     async fn invoke(&self, ctx: &ToolContext, args: serde_json::Value) -> Result<ToolOutcome>;
 
-    /// Схема для передачи серверу (по умолчанию из `id`/`description`/`parameters`).
-    fn schema(&self) -> ToolSchema {
+    /// Схема для передачи серверу (по умолчанию из `id`/`description`/`parameters`)
+    /// на языке `loc`.
+    fn schema(&self, loc: &crate::shared::i18n::Locale) -> ToolSchema {
         ToolSchema {
             name: self.id(),
-            description: self.description(),
-            parameters: self.parameters(),
+            description: self.description(loc),
+            parameters: self.parameters(loc),
         }
     }
 
@@ -447,11 +450,15 @@ impl ToolRegistry {
 
     /// Схемы для подмножества включённых инструментов (профиль ∩ глобально), с
     /// сохранением порядка `enabled`. Неизвестные имена игнорируются.
-    pub fn schemas_for(&self, enabled: &[ToolId]) -> Vec<ToolSchema> {
+    pub fn schemas_for(
+        &self,
+        enabled: &[ToolId],
+        loc: &crate::shared::i18n::Locale,
+    ) -> Vec<ToolSchema> {
         enabled
             .iter()
             .filter_map(|id| self.tools.get(id))
-            .map(|t| t.schema())
+            .map(|t| t.schema(loc))
             .collect()
     }
 
@@ -549,10 +556,10 @@ mod tests {
         fn id(&self) -> ToolId {
             "echo".into()
         }
-        fn description(&self) -> String {
+        fn description(&self, _loc: &crate::shared::i18n::Locale) -> String {
             "Возвращает аргумент text".into()
         }
-        fn parameters(&self) -> serde_json::Value {
+        fn parameters(&self, _loc: &crate::shared::i18n::Locale) -> serde_json::Value {
             serde_json::json!({
                 "type": "object",
                 "properties": {"text": {"type": "string"}},
@@ -603,7 +610,14 @@ mod tests {
             assert!(reg.get(&id).is_some(), "инструмент {id} не зарегистрирован");
         }
         // Схемы для полного каталога покрывают все id.
-        assert_eq!(reg.schemas_for(&all_tool_ids()).len(), all_tool_ids().len());
+        assert_eq!(
+            reg.schemas_for(
+                &all_tool_ids(),
+                crate::shared::i18n::locale(crate::shared::i18n::Lang::Ru)
+            )
+            .len(),
+            all_tool_ids().len()
+        );
     }
 
     #[test]
@@ -718,9 +732,18 @@ mod tests {
         let mut reg = ToolRegistry::new();
         reg.register(Arc::new(Echo));
         // Только включённые имена попадают в схемы; неизвестные игнорируются.
-        let schemas = reg.schemas_for(&["echo".into(), "missing".into()]);
+        let schemas = reg.schemas_for(
+            &["echo".into(), "missing".into()],
+            crate::shared::i18n::locale(crate::shared::i18n::Lang::Ru),
+        );
         assert_eq!(schemas.len(), 1);
         assert_eq!(schemas[0].name, "echo");
-        assert!(reg.schemas_for(&[]).is_empty());
+        assert!(
+            reg.schemas_for(
+                &[],
+                crate::shared::i18n::locale(crate::shared::i18n::Lang::Ru)
+            )
+            .is_empty()
+        );
     }
 }

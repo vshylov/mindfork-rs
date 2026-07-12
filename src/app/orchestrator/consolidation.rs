@@ -139,7 +139,9 @@ impl Orchestrator {
             ),
             messages: vec![ApiMessage::user(overview)],
             sampling,
-            tools: self.registry.schemas_for(&allowed),
+            tools: self
+                .registry
+                .schemas_for(&allowed, crate::shared::i18n::locale(lang)),
         };
 
         // Спавним задачу и фиксируем слот (флаг «идёт» + тихий индикатор в статус-баре).

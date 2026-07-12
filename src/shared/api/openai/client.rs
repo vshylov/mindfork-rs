@@ -549,7 +549,13 @@ mod ignored_smoke {
                 max_tokens: Some(512),
                 ..Default::default()
             },
-            tools: vec![SendFollowupMessage.schema(), RewriteCurrentMessage.schema()],
+            tools: {
+                let loc = crate::shared::i18n::locale(crate::shared::i18n::Lang::Ru);
+                vec![
+                    SendFollowupMessage.schema(loc),
+                    RewriteCurrentMessage.schema(loc),
+                ]
+            },
         };
         let mut stream = client.chat_stream(req, Default::default()).await.unwrap();
         let mut acc = ToolCallAccumulator::default();

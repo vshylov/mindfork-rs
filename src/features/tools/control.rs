@@ -67,13 +67,13 @@ impl Tool for SendFollowupMessage {
     fn enabled_by_default(&self) -> bool {
         false
     }
-    fn description(&self) -> String {
+    fn description(&self, _loc: &crate::shared::i18n::Locale) -> String {
         "Разрешает написать ещё одно сообщение сразу после текущего (отдельной \
          репликой). Сначала допиши текущее сообщение до конца, затем вызови этот \
          инструмент — после него можно написать вторую реплику."
             .into()
     }
-    fn parameters(&self) -> serde_json::Value {
+    fn parameters(&self, _loc: &crate::shared::i18n::Locale) -> serde_json::Value {
         serde_json::json!({ "type": "object", "properties": {} })
     }
     async fn invoke(&self, _ctx: &ToolContext, _args: serde_json::Value) -> Result<ToolOutcome> {
@@ -101,7 +101,7 @@ impl Tool for RewriteCurrentMessage {
     fn enabled_by_default(&self) -> bool {
         false
     }
-    fn description(&self) -> String {
+    fn description(&self, _loc: &crate::shared::i18n::Locale) -> String {
         "Отменяет сообщение, которое ты пишешь прямо сейчас (в текущем ходе), и \
          позволяет написать его заново. Касается ТОЛЬКО твоей собственной текущей \
          реплики — не сообщения пользователя и не твоих прошлых ответов. Вызови, \
@@ -109,7 +109,7 @@ impl Tool for RewriteCurrentMessage {
          отброшен, а следующая реплика заменит его."
             .into()
     }
-    fn parameters(&self) -> serde_json::Value {
+    fn parameters(&self, _loc: &crate::shared::i18n::Locale) -> serde_json::Value {
         serde_json::json!({ "type": "object", "properties": {} })
     }
     async fn invoke(&self, _ctx: &ToolContext, _args: serde_json::Value) -> Result<ToolOutcome> {

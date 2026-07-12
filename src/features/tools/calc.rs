@@ -26,14 +26,14 @@ impl Tool for Calculate {
     fn ui_label(&self) -> &'static str {
         "калькулятор"
     }
-    fn description(&self) -> String {
+    fn description(&self, _loc: &crate::shared::i18n::Locale) -> String {
         "Вычислить математическое выражение и вернуть число. Поддерживает + - * / % ^, \
          скобки, константы (pi, e, tau) и функции (sqrt, cbrt, abs, exp, ln, log, log2, \
          sin, cos, tan, asin, acos, atan, atan2, sinh, cosh, tanh, floor, ceil, round, \
          min, max, pow). Углы тригонометрии — в радианах."
             .into()
     }
-    fn parameters(&self) -> serde_json::Value {
+    fn parameters(&self, _loc: &crate::shared::i18n::Locale) -> serde_json::Value {
         serde_json::json!({
             "type": "object",
             "properties": {

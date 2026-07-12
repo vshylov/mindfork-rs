@@ -187,14 +187,14 @@ impl Tool for ConsolidateNotes {
     fn ui_label(&self) -> &'static str {
         "консолидация заметок"
     }
-    fn description(&self) -> String {
+    fn description(&self, _loc: &crate::shared::i18n::Locale) -> String {
         "Обзор базы знаний для консолидации: похожие пары (возможные дубли), связи \
          contradicts, заметки без связей — и что с этим делать. Точка входа: дальше \
          слей дубли (note_merge), перепиши/замести устаревшее (note_revise/\
          note_supersede), свяжи родственное (note_link)."
             .into()
     }
-    fn parameters(&self) -> serde_json::Value {
+    fn parameters(&self, _loc: &crate::shared::i18n::Locale) -> serde_json::Value {
         serde_json::json!({ "type": "object", "properties": {} })
     }
     async fn invoke(&self, ctx: &ToolContext, _args: serde_json::Value) -> Result<ToolOutcome> {

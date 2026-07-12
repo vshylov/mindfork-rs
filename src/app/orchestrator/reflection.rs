@@ -246,7 +246,9 @@ impl Orchestrator {
             system: Some(reflect_system_message(crate::shared::i18n::locale(lang))),
             messages: vec![ApiMessage::user(digest)],
             sampling,
-            tools: self.registry.schemas_for(&allowed),
+            tools: self
+                .registry
+                .schemas_for(&allowed, crate::shared::i18n::locale(lang)),
         };
 
         // Спавним задачу и фиксируем слот (флаг «идёт» + тихий индикатор в статус-баре).

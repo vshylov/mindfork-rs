@@ -193,12 +193,12 @@ impl Tool for GetSelfModel {
     fn enabled_by_default(&self) -> bool {
         false
     }
-    fn description(&self) -> String {
+    fn description(&self, _loc: &crate::shared::i18n::Locale) -> String {
         "Прочитать твою текущую «модель себя» целиком: описание себя, цели (с #id для \
          отметки выполненных/неактуальных), представление о собеседнике и наблюдения."
             .into()
     }
-    fn parameters(&self) -> serde_json::Value {
+    fn parameters(&self, _loc: &crate::shared::i18n::Locale) -> serde_json::Value {
         serde_json::json!({ "type": "object", "properties": {} })
     }
     async fn invoke(&self, ctx: &ToolContext, _args: serde_json::Value) -> Result<ToolOutcome> {
@@ -226,13 +226,13 @@ impl Tool for Reflect {
     fn enabled_by_default(&self) -> bool {
         false
     }
-    fn description(&self) -> String {
+    fn description(&self, _loc: &crate::shared::i18n::Locale) -> String {
         "Поразмышлять над недавним разговором: получить текущую «модель себя» и \
          вопросы для саморефлексии. Если по итогам что-то изменилось — обнови \
          модель через update_self_model / update_user_model."
             .into()
     }
-    fn parameters(&self) -> serde_json::Value {
+    fn parameters(&self, _loc: &crate::shared::i18n::Locale) -> serde_json::Value {
         serde_json::json!({ "type": "object", "properties": {} })
     }
     async fn invoke(&self, ctx: &ToolContext, _args: serde_json::Value) -> Result<ToolOutcome> {
@@ -291,7 +291,7 @@ impl Tool for AddInsight {
     fn enabled_by_default(&self) -> bool {
         false
     }
-    fn description(&self) -> String {
+    fn description(&self, _loc: &crate::shared::i18n::Locale) -> String {
         "Записать короткое наблюдение/инсайт о себе, разговоре или собеседнике в свой \
          нарратив (историю «я во времени»). Сюда же — событийные выводы «что и когда я \
          понял(а)», разрешённые вопросы, эпизоды, замеченные противоречия — ДАЖЕ ЕСЛИ они \
@@ -299,7 +299,7 @@ impl Tool for AddInsight {
          себя (в отличие от summary). Используй для того, что стоит помнить со временем."
             .into()
     }
-    fn parameters(&self) -> serde_json::Value {
+    fn parameters(&self, _loc: &crate::shared::i18n::Locale) -> serde_json::Value {
         serde_json::json!({
             "type": "object",
             "properties": {
@@ -357,7 +357,7 @@ impl Tool for UpdateSelfModel {
     fn enabled_by_default(&self) -> bool {
         false
     }
-    fn description(&self) -> String {
+    fn description(&self, _loc: &crate::shared::i18n::Locale) -> String {
         "Обновить «модель себя»: уточнить описание себя (summary — компактный снимок: \
          кто ты, что ценишь, как работаешь; интегрируй и СОКРАЩАЙ, а не только дописывай; \
          событийные выводы «что и когда понял» — в add_insight, не сюда), добавить цели \
@@ -366,7 +366,7 @@ impl Tool for UpdateSelfModel {
          достигнутые, не только ставь новые."
             .into()
     }
-    fn parameters(&self) -> serde_json::Value {
+    fn parameters(&self, _loc: &crate::shared::i18n::Locale) -> serde_json::Value {
         serde_json::json!({
             "type": "object",
             "properties": {
@@ -526,7 +526,7 @@ impl Tool for UpdateUserModel {
     fn enabled_by_default(&self) -> bool {
         false
     }
-    fn description(&self) -> String {
+    fn description(&self, _loc: &crate::shared::i18n::Locale) -> String {
         "Обновить устойчивую, интегрированную модель собеседника (через все разговоры, \
          не снимок текущего настроения). Списки правятся ПО ЧАСТЯМ и не перетираются: \
          add_traits/remove_traits (черты), add_interests/remove_interests (интересы); \
@@ -538,7 +538,7 @@ impl Tool for UpdateUserModel {
          или противоречие (запиши наблюдением add_insight), а не копи обе молча."
             .into()
     }
-    fn parameters(&self) -> serde_json::Value {
+    fn parameters(&self, _loc: &crate::shared::i18n::Locale) -> serde_json::Value {
         serde_json::json!({
             "type": "object",
             "properties": {
@@ -763,7 +763,8 @@ mod tests {
     fn update_self_model_description_routes_events_to_insights() {
         // Описание инструмента направляет событийные выводы в add_insight, а summary
         // держит компактным снимком.
-        let d = UpdateSelfModel.description();
+        let d =
+            UpdateSelfModel.description(crate::shared::i18n::locale(crate::shared::i18n::Lang::Ru));
         assert!(d.contains("снимок"));
         assert!(d.contains("add_insight"));
     }

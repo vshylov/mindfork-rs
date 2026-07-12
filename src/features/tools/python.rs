@@ -153,7 +153,7 @@ impl Tool for PythonExec {
     fn gate(&self) -> Option<crate::features::tools::meta::ToolGate> {
         Some(crate::features::tools::meta::ToolGate::Python)
     }
-    fn description(&self) -> String {
+    fn description(&self, _loc: &crate::shared::i18n::Locale) -> String {
         match self.mode {
             PythonMode::Local => "Исполнить код Python и вернуть stdout/stderr \
                  (локальный интерпретатор). Есть таймаут и лимит вывода."
@@ -172,7 +172,7 @@ impl Tool for PythonExec {
             }
         }
     }
-    fn parameters(&self) -> serde_json::Value {
+    fn parameters(&self, _loc: &crate::shared::i18n::Locale) -> serde_json::Value {
         serde_json::json!({
             "type": "object",
             "properties": {"code": {"type": "string"}},
@@ -350,18 +350,18 @@ mod tests {
     fn description_varies_by_mode_and_net() {
         assert!(
             local(None)
-                .description()
+                .description(crate::shared::i18n::locale(crate::shared::i18n::Lang::Ru))
                 .contains("локальный интерпретатор")
         );
         let sb: Arc<dyn SandboxRunner> = Arc::new(MockSandbox::missing("x"));
         assert!(
             wasmer(sb.clone(), true)
-                .description()
+                .description(crate::shared::i18n::locale(crate::shared::i18n::Lang::Ru))
                 .contains("есть доступ в сеть")
         );
         assert!(
             wasmer(sb, false)
-                .description()
+                .description(crate::shared::i18n::locale(crate::shared::i18n::Lang::Ru))
                 .contains("без доступа в сеть")
         );
     }

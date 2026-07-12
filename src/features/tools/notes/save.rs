@@ -17,10 +17,10 @@ impl Tool for NoteSave {
     fn ui_label(&self) -> &'static str {
         "сохранить заметку"
     }
-    fn description(&self) -> String {
+    fn description(&self, _loc: &crate::shared::i18n::Locale) -> String {
         "Сохранить заметку о пользователе/контексте для будущих диалогов.".into()
     }
-    fn parameters(&self) -> serde_json::Value {
+    fn parameters(&self, _loc: &crate::shared::i18n::Locale) -> serde_json::Value {
         serde_json::json!({
             "type": "object",
             "properties": {

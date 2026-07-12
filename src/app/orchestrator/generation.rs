@@ -201,7 +201,9 @@ impl Orchestrator {
             self.config.tools.fs_enabled,
             self.config.engine.mode.cloud_provider(),
         );
-        let schemas = self.registry.schemas_for(&allowed);
+        let schemas = self
+            .registry
+            .schemas_for(&allowed, crate::shared::i18n::locale(profile_lang));
 
         // «Модель себя» профиля на начало хода. Инъекция в системный промпт — только
         // если профиль включил get_self_model (opt-in); сама инъекция (наблюдения по
