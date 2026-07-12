@@ -33,7 +33,7 @@ type RowCache = Option<(usize, u64, Vec<VisualRow>)>;
 const UNDO_CAP: usize = 200;
 
 /// Снимок содержимого для отмены/повтора: строки + позиция курсора. См.
-/// [`InputBox::record_undo`], docs/input-selection-undo-mouse.md §C.
+/// [`InputBox::record_undo`], docs/history/input-selection-undo-mouse.md §C.
 #[derive(Clone)]
 struct Snapshot {
     lines: Vec<Vec<char>>,
@@ -112,7 +112,7 @@ pub struct InputBox {
     /// из позиций в лексикографическом порядке `(строка, столбец)`). `None` — выделения
     /// нет; курсор — существующие `(row, col)`. Движение с `Shift` ставит якорь и
     /// растит выделение, обычное движение — снимает; любая правка содержимого снимает
-    /// (через [`Self::touch`]). См. [`Self::selection_span`], docs/input-selection-undo-mouse.md.
+    /// (через [`Self::touch`]). См. [`Self::selection_span`], docs/history/input-selection-undo-mouse.md.
     anchor: Option<(usize, usize)>,
     /// Внутренняя область текста последней отрисовки (после рамки и колонки `❯`).
     /// Нужна маппингу клика мыши (экранные координаты → позиция в тексте): клик/драг
@@ -313,7 +313,7 @@ impl InputBox {
     /// Хоткей «удалить весь текст ввода» (`Ctrl+K`, spec §11.5). Записывает снимок в
     /// историю отмены и очищает содержимое, **не** трогая историю — так `Ctrl+Z`
     /// возвращает текст (общая модель отмены; прежняя toggle-семантика удалена, см.
-    /// docs/input-selection-undo-mouse.md §C). Пустое поле — no-op.
+    /// docs/history/input-selection-undo-mouse.md §C). Пустое поле — no-op.
     pub fn clear_undoable(&mut self) {
         if self.is_empty() {
             return;
@@ -590,7 +590,7 @@ impl InputBox {
     // ---------- выделение ----------
 
     /// Есть ли непустое выделение (якорь стоит и не совпал с курсором). Нужен
-    /// консьюмерам для копирования/вырезания (docs/input-selection-undo-mouse.md §B).
+    /// консьюмерам для копирования/вырезания (docs/history/input-selection-undo-mouse.md §B).
     pub fn has_selection(&self) -> bool {
         matches!(self.anchor, Some(a) if a != (self.row, self.col))
     }
@@ -608,7 +608,7 @@ impl InputBox {
     }
 
     /// Текст выделения (строки через `\n`), либо `None`. Для копирования/вырезания
-    /// (консьюмеры, docs/input-selection-undo-mouse.md §B).
+    /// (консьюмеры, docs/history/input-selection-undo-mouse.md §B).
     pub fn selected_text(&self) -> Option<String> {
         let ((sr, sc), (er, ec)) = self.selection_span()?;
         let mut out = String::new();
@@ -1089,7 +1089,7 @@ impl InputBox {
     /// (политику отправки/переноса задаёт вызывающий слой). Различие `Edited`/`Moved`
     /// нужно вызывающему, чтобы не помечать ввод «грязным» на голой навигации.
     ///
-    /// **Выделение** (etape A, docs/input-selection-undo-mouse.md): `Shift`+навигация
+    /// **Выделение** (etape A, docs/history/input-selection-undo-mouse.md): `Shift`+навигация
     /// растит выделение (ставит якорь), обычная навигация — снимает; `Ctrl+A` выделяет
     /// всё; правка при активном выделении сперва удаляет его (ввод/`Backspace`/`Delete`
     /// поверх выделения заменяют/удаляют его целиком). Копирование/вырезание —

@@ -288,7 +288,7 @@ impl SelfModelScreen {
             }
             return None;
         }
-        // Выход переехал на Ctrl+Q/F10 (Ctrl+C освобождён). См. docs/input-selection-undo-mouse.md §B.
+        // Выход переехал на Ctrl+Q/F10 (Ctrl+C освобождён). См. docs/history/input-selection-undo-mouse.md §B.
         if ctrl && phys == 'q' {
             return Some(SelfModelIntent::Quit);
         }
