@@ -10,8 +10,8 @@
 //! - каталог-«песочница» файловых инструментов (`config.tools.fs_root`) — **только
 //!   если** он лежит внутри корня данных.
 //!
-//! Исключаются `backups/`, `logs/` и сам файл-маркер `location.json` (он — про
-//! установку, а не пользовательские данные).
+//! Исключаются `backups/`, `logs/` и файлы установочных умолчаний `defaults.json`/
+//! `location.json` (они — про установку, а не пользовательские данные).
 //!
 //! **Восстановление транзакционно.** Сначала архив валидируется (до любых
 //! разрушительных действий). Если в корне уже есть данные — они автоматически
@@ -305,7 +305,8 @@ fn extract_archive(paths: &Paths, archive: &Path) -> Result<()> {
 }
 
 /// Удаляет пользовательские данные из корня, **сохраняя** `backups/`, `logs/` и
-/// `location.json`. Очищается ровно тот же набор, что входит в резервную копию.
+/// файлы умолчаний `defaults.json`/`location.json`. Очищается ровно тот же набор,
+/// что входит в резервную копию.
 fn clear_user_data(paths: &Paths, fs_root: Option<&Path>) -> Result<()> {
     let root = paths.root();
 
@@ -405,6 +406,11 @@ mod tests {
         fs::write(root.join("logs").join("mindfork.log"), b"log").unwrap();
         fs::create_dir_all(root.join("backups")).unwrap();
         fs::write(root.join("location.json"), b"{\"mode\":\"portable\"}").unwrap();
+        fs::write(
+            root.join("defaults.json"),
+            b"{\"mode\":\"portable\",\"default_language\":\"ru\"}",
+        )
+        .unwrap();
     }
 
     fn archive_names(archive: &Path) -> Vec<String> {
@@ -439,10 +445,11 @@ mod tests {
                 "нет {expected} в {names:?}"
             );
         }
-        // Логи, каталог backups и маркер режима не попадают.
+        // Логи, каталог backups и файлы умолчаний не попадают.
         assert!(!names.iter().any(|n| n.starts_with("logs/")));
         assert!(!names.iter().any(|n| n.starts_with("backups/")));
         assert!(!names.contains(&"location.json".to_string()));
+        assert!(!names.contains(&"defaults.json".to_string()));
     }
 
     #[test]

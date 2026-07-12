@@ -10,12 +10,15 @@ use super::Orchestrator;
 impl Orchestrator {
     /// Создаёт новый профиль (валидирует имя), сохраняет и обновляет список.
     pub(super) fn handle_create_profile(&mut self, name: String, system_message: String) {
-        let Some(profile) = crate::features::profiles::create(&name, system_message) else {
+        let Some(mut profile) = crate::features::profiles::create(&name, system_message) else {
             let _ = self
                 .evt_tx
                 .send(AppEvent::Error("Имя профиля не может быть пустым".into()));
             return;
         };
+        // Новый профиль создаётся на языке каркаса по умолчанию (defaults.json); пока
+        // у него нет данных, язык можно сменить в настройках. См. docs/i18n.md.
+        profile.language = self.default_language;
         if let Err(err) = self.storage.json().upsert_profile(&profile) {
             let _ = self.evt_tx.send(AppEvent::Error(format!(
                 "Не удалось создать профиль: {err}"

@@ -102,6 +102,7 @@ async fn model_change_restarts_chat_server_debounced() {
         storage,
         config: AppConfig::default(),
         supervisor: sup.clone(),
+        default_language: crate::shared::i18n::Lang::default(),
     }));
     wait_for(&mut evt_rx, |e| matches!(e, AppEvent::Settings { .. }))
         .await

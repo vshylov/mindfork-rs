@@ -54,6 +54,7 @@ fn spawn_orch_cfg(
         storage,
         config,
         supervisor: Arc::new(MockSupervisor::with_backend(backend)),
+        default_language: crate::shared::i18n::Lang::default(),
     };
     let handle = tokio::spawn(run(deps));
     (dir, cmd_tx, evt_rx, handle)
@@ -127,6 +128,7 @@ fn bare_orch_rx() -> (tempfile::TempDir, Orchestrator, UnboundedReceiver<AppEven
         consolidate_counts: std::collections::HashMap::new(),
         saves: SaveQueue::default(),
         restarts: RestartQueue::default(),
+        default_language: crate::shared::i18n::Lang::default(),
     };
     (dir, orch, evt_rx)
 }
@@ -199,6 +201,7 @@ fn spawn_orch_live() -> Option<OrchHandle> {
             Some(backend),
             embedder,
         )),
+        default_language: crate::shared::i18n::Lang::default(),
     };
     let handle = tokio::spawn(run(deps));
     Some((dir, cmd_tx, evt_rx, handle))

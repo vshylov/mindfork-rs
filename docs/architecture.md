@@ -289,7 +289,7 @@ src/
    ├─ server.rs            ServerStatus (статус сервера для UI)
    ├─ sandbox.rs           SandboxRunner (за трейтом) + WasmerSandbox: сайдкар `wasmer`
    │                       для `python_exec` в режиме песочницы (WASIX-изоляция, §8)
-   ├─ paths.rs             расположение данных: портативно / ОС-папка / путь (location.json)
+   ├─ paths.rs             расположение данных (defaults.json) + язык каркаса новых профилей (Lang)
    ├─ instance.rs          single-instance
    └─ logging.rs           tracing в файл (stdout занят TUI)
 ```
@@ -1447,10 +1447,12 @@ flowchart TB
   подкаталоге `data/` рядом с бинарником (в dev — `target/debug/data/`; подкаталог
   отделяет данные от служебных файлов/кэшей сборки): `settings.json`,
   `profiles.json`, `chats/`, `data.db`, `personal_dictionary.txt`, `dictionaries/`,
-  `backups/`, `logs/`. Файл-маркер `location.json` рядом с бинарником (всегда вне
-  `data/`; `DataLocation`: `portable`/`system`/`path`) переключает корень в
-  стандартную ОС-папку (крейт `directories`) или произвольный каталог; нет маркера →
-  портативный режим. **Резервное копирование** (`features/backup.rs`): zip с
+  `backups/`, `logs/`. Файл `defaults.json` рядом с бинарником (всегда вне `data/`;
+  `Defaults` = `DataLocation` `portable`/`system`/`path` + `default_language`)
+  переключает корень в стандартную ОС-папку (крейт `directories`) или произвольный
+  каталог и задаёт язык каркаса новых профилей (ось A — docs/i18n.md); нет файла →
+  портативный режим + `ru` (для совместимости читается старый `location.json`).
+  **Резервное копирование** (`features/backup.rs`): zip с
   настраиваемым сжатием (chats/dictionaries/data.db/profiles/settings/personal +
   `*.bak` + `fs_root`, если внутри корня); восстановление транзакционно (валидация →
   pre-restore копия в `backups/` → очистка → распаковка → откат при сбое).

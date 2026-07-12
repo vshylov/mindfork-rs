@@ -116,9 +116,10 @@ Env для выбора бэкенда: `MINDFORK_ENGINE_URL` (external, люб�
 `MINDFORK_PORT`) для managed `llama-server`.
 
 ## Статус (на 2026-07-12)
-Сделан весь план **M0–M9** плюс обширный пост-M9 (в `main`). **982 юнит-теста
+Сделан весь план **M0–M9** плюс обширный пост-M9 (в `main`). **988 юнит-тестов
 зелёные, 43 `#[ignore]`-смоука** (крупнейший счётчик — журнал ниже; последнее
-направление — мультиязычность служебного каркаса, Ярус 1, ветка `feat/i18n-core`).
+направление — мультиязычность служебного каркаса, Ярус 1 + `defaults.json`, ветка
+`feat/i18n-core`).
 Историческая сводка `#[ignore]` прогнана на живой связке
 **Gemma 4 31B (q4) + bge-m3** (`llama-server`, external, `--jinja`) — 25/25 зелёные
 (~370с): базовые смоуки Gemma (стриминг, EOS-анти-самообрыв, tool-calling, «мысли»,
@@ -4791,6 +4792,34 @@ web-поиск и Python под выключателями, экран наст�
 - **Дальше**: Ярус 2 — `Tool::description(loc)`/`parameters(loc)`/`schemas_for(…, loc)`
   + перевод по группам (notes+self_model → rag+web+fetch → introspection+fs+python+…);
   Ярус 3 — внешние `data/locales/*.json`; ось B (UI) — отдельное направление.
+
+### Пост-M9: язык по умолчанию для новых профилей в `defaults.json` (сделано)
+- **`location.json` переименован в `defaults.json`** (`shared/paths.rs`) и расширен полем
+  `default_language` — язык **служебного каркаса** (ось A), на котором создаётся первый
+  (bootstrap) профиль и новые профили (`CreateProfile`). Мотив (запрос пользователя):
+  создавать профиль всегда на хардкод-`Ru` — плохая практика; язык должен задаваться
+  установкой. Когда появится инсталлятор, он заполнит `default_language` по выбору
+  пользователя, и первый профиль создастся на нужном языке (устраняет «bootstrap-профиль
+  всегда русский» из Яруса 1).
+- **Формат** (`Defaults` = `DataLocation` + `default_language`): `#[serde(flatten)]` на
+  режиме хранения → JSON плоский (`{"mode":"path","path":"…","default_language":"en"}`),
+  **байт-совместим** со старым `location.json` (`{"mode":…}` читается, язык = дефолт).
+  **Обратная совместимость**: нет `defaults.json` → читается старый `location.json`
+  (только режим хранения); нет обоих → портативно + `ru`. Повреждённый JSON — ошибка
+  запуска (как раньше). `Defaults::read(exe_dir)` — единая точка чтения; прежний
+  `DataLocation::read` удалён (тесты переведены на `Defaults::read`).
+- **Проводка**: `Paths` несёт `default_language` (`Paths::default_language()`); `main.rs`
+  прокидывает его в `OrchestratorDeps.default_language` → `Orchestrator.default_language`
+  → `bootstrap` (`default_profile(self.default_language)`) и `handle_create_profile`
+  (новый профиль `.language = default_language`, пока данных нет — редактируем в
+  настройках). `backup.rs` исключает и `defaults.json`, и legacy `location.json` (файлы
+  установки, не пользовательские данные — они и так вне include-whitelist).
+- **Тесты** (`paths.rs`): `Defaults::read` — режим+язык из `defaults.json`; отсутствие →
+  портативно+`ru`; **fallback** на legacy `location.json`; `defaults.json` приоритетнее
+  legacy; повреждённый → ошибка; `#[serde(flatten)]` round-trip режимов; `with_root`
+  дефолт `ru`; backup-тест исключает `defaults.json`; OrchestratorDeps-фикстуры несут
+  `default_language`. **988 юнит-тестов зелёные** (+6), clippy `-D warnings`/fmt чисты.
+  Чистый рефактор конфигурации установки — живой прогон не требуется.
 
 ### Отложено за пределы M3
 - **Сворачивание/выделение per-message** и tool-блоки в ленте — сейчас «мысли»

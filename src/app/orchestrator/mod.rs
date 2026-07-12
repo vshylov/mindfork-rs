@@ -89,6 +89,9 @@ pub struct OrchestratorDeps {
     pub config: AppConfig,
     /// Супервайзер серверов инференса/эмбеддингов (real или mock в тестах).
     pub supervisor: Arc<dyn ServerSupervisor>,
+    /// Язык служебного каркаса новых профилей (из `defaults.json`, ось A). В тестах —
+    /// `Lang::default()` (`ru`). См. docs/i18n.md, `shared::paths::Defaults`.
+    pub default_language: crate::shared::i18n::Lang,
 }
 
 /// Главный цикл оркестратора. Завершается при закрытии канала команд или
@@ -100,6 +103,7 @@ pub async fn run(deps: OrchestratorDeps) {
         storage,
         config,
         supervisor,
+        default_language,
     } = deps;
 
     let (done_tx, mut done_rx) = unbounded_channel::<GenResult>();
@@ -138,6 +142,7 @@ pub async fn run(deps: OrchestratorDeps) {
         consolidate_counts: HashMap::new(),
         saves: SaveQueue::default(),
         restarts: RestartQueue::default(),
+        default_language,
     };
 
     // Поднимаем серверы по конфигу и эмитим стартовые события/настройки.
@@ -279,6 +284,9 @@ struct Orchestrator {
     /// Очередь отложенного (пере)запуска серверов при правках настроек движка
     /// (дебаунс: серия быстрых правок полей коалесится в один рестарт).
     restarts: RestartQueue,
+    /// Язык служебного каркаса новых профилей (из `defaults.json`, ось A —
+    /// docs/i18n.md): bootstrap первого профиля и `CreateProfile` создаются на нём.
+    default_language: crate::shared::i18n::Lang,
 }
 
 impl Orchestrator {
@@ -301,7 +309,9 @@ impl Orchestrator {
             }
         }
         if self.profiles.is_empty() {
-            let mut profile = default_profile(crate::shared::i18n::Lang::default());
+            // Первый профиль — на языке каркаса из defaults.json (инсталлятор
+            // заполняет его по выбору пользователя). См. docs/i18n.md.
+            let mut profile = default_profile(self.default_language);
             // Включаем все базовые инструменты в дефолтном профиле.
             crate::features::profiles::reconcile_tools(&mut profile);
             self.storage.json().upsert_profile(&profile)?;
