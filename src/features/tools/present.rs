@@ -159,7 +159,17 @@ fn present_result(name: &str, args: Option<&Value>, result: &str) -> Vec<ToolBlo
     }
 }
 
-/// Разбирает вывод `python_exec` (см. `python::format_output`) в секции stdout/
+/// Метка кода возврата (`python.console.exit`) во всех вшитых локалях. Формат вывода
+/// `python::format_output_parts` локализован (ось A), поэтому парсер распознаёт метку
+/// на любом языке профиля. Метки `stdout:`/`stderr:` универсальны (не переводятся).
+fn exit_labels() -> Vec<&'static str> {
+    crate::shared::i18n::Lang::ALL
+        .iter()
+        .map(|&l| crate::shared::i18n::locale(l).t("python.console.exit"))
+        .collect()
+}
+
+/// Разбирает вывод `python_exec` (см. `python::format_output_parts`) в секции stdout/
 /// stderr/код возврата. `None` — если текст не похож на этот формат (сообщения об
 /// ошибке запуска, «(пустой вывод, успех)») → показываем его плоским текстом.
 fn parse_console(result: &str) -> Option<Console> {
@@ -169,28 +179,26 @@ fn parse_console(result: &str) -> Option<Console> {
         Stdout,
         Stderr,
     }
+    let exit_labels = exit_labels();
     let mut c = Console::default();
     let mut sec = Sec::None;
     let mut out: Vec<&str> = Vec::new();
     let mut err: Vec<&str> = Vec::new();
     for line in result.lines() {
-        match line {
-            "stdout:" => sec = Sec::Stdout,
-            "stderr:" => sec = Sec::Stderr,
-            l if l.starts_with("код возврата:") => {
-                c.exit = l
-                    .trim_start_matches("код возврата:")
-                    .trim()
-                    .parse::<i32>()
-                    .ok();
-                sec = Sec::None;
-            }
-            l => match sec {
-                Sec::Stdout => out.push(l),
-                Sec::Stderr => err.push(l),
+        if line == "stdout:" {
+            sec = Sec::Stdout;
+        } else if line == "stderr:" {
+            sec = Sec::Stderr;
+        } else if let Some(rest) = exit_labels.iter().find_map(|lbl| line.strip_prefix(lbl)) {
+            c.exit = rest.trim().parse::<i32>().ok();
+            sec = Sec::None;
+        } else {
+            match sec {
+                Sec::Stdout => out.push(line),
+                Sec::Stderr => err.push(line),
                 // Строка вне известной секции → это не наш формат.
                 Sec::None => return None,
-            },
+            }
         }
     }
     if out.is_empty() && err.is_empty() && c.exit.is_none() {
@@ -309,6 +317,17 @@ mod tests {
             vec![ToolBlock::Plain("(пустой вывод, успех)".into())]
         );
         assert!(parse_console("Не удалось запустить Python (python): нет").is_none());
+    }
+
+    #[test]
+    fn python_console_parses_localized_exit_label() {
+        // Формат вывода локализован (ось A) — parse_console распознаёт метку кода
+        // возврата на любом языке (здесь en «exit code:»).
+        let en = crate::shared::i18n::locale(crate::shared::i18n::Lang::En);
+        let out = format!("stdout:\nok\n\n{} 1", en.t("python.console.exit"));
+        let c = parse_console(&out).unwrap();
+        assert_eq!(c.stdout, "ok");
+        assert_eq!(c.exit, Some(1));
     }
 
     #[test]

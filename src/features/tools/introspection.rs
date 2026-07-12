@@ -44,10 +44,11 @@ impl Tool for GetSampling {
     fn ui_label(&self) -> &'static str {
         "показать семплинг"
     }
-    fn description(&self, _loc: &crate::shared::i18n::Locale) -> String {
+    fn description(&self, loc: &crate::shared::i18n::Locale) -> String {
         format!(
-            "Вернуть текущие параметры семплинга. {}",
-            scope_note(self.provider)
+            "{} {}",
+            loc.t("tool.get_sampling.desc"),
+            scope_note(loc, self.provider)
         )
     }
     fn parameters(&self, _loc: &crate::shared::i18n::Locale) -> serde_json::Value {
@@ -85,11 +86,11 @@ impl Tool for SetSampling {
     fn ui_label(&self) -> &'static str {
         "изменить семплинг"
     }
-    fn description(&self, _loc: &crate::shared::i18n::Locale) -> String {
+    fn description(&self, loc: &crate::shared::i18n::Locale) -> String {
         format!(
-            "Изменить параметры семплинга чата. Указанные поля переопределяют текущие; \
-             применяется со следующего ответа. {}",
-            scope_note(self.provider)
+            "{} {}",
+            loc.t("tool.set_sampling.desc"),
+            scope_note(loc, self.provider)
         )
     }
     fn parameters(&self, _loc: &crate::shared::i18n::Locale) -> serde_json::Value {
@@ -111,7 +112,10 @@ impl Tool for SetSampling {
             serde_json::Value::Object(map) => map,
             serde_json::Value::Null => serde_json::Map::new(),
             other => {
-                anyhow::bail!("неверные аргументы set_sampling: ожидался объект, получено {other}")
+                anyhow::bail!(ctx.loc.tf(
+                    "tool.set_sampling.err.not_object",
+                    &[("other", &other.to_string())]
+                ))
             }
         };
         let mut dropped: Vec<String> = obj
@@ -124,16 +128,23 @@ impl Tool for SetSampling {
 
         // Разбираем частичный конфиг (все поля Option, отсутствующие = None).
         let patch: SamplingConfig = serde_json::from_value(serde_json::Value::Object(obj))
-            .map_err(|e| anyhow::anyhow!("неверные аргументы set_sampling: {e}"))?;
+            .map_err(|e| {
+                anyhow::anyhow!(
+                    ctx.loc
+                        .tf("tool.set_sampling.err.parse", &[("e", &e.to_string())])
+                )
+            })?;
         let merged = merge_sampling(&ctx.effective_sampling, &patch);
         // В результат кладём только поля, доступные в текущем режиме — иначе в ленту
         // (и модели) уезжает полный конфиг с десятками `null`, сбивая с толку.
         let json = serde_json::to_string(&filter_to_supported(&merged, self.provider)?)?;
-        let mut result = format!("Семплинг обновлён: {json}");
+        let mut result = ctx
+            .loc
+            .tf("tool.set_sampling.result.updated", &[("json", &json)]);
         if !dropped.is_empty() {
-            result.push_str(&format!(
-                ". Проигнорированы недоступные в текущем режиме поля: {}",
-                dropped.join(", ")
+            result.push_str(&ctx.loc.tf(
+                "tool.set_sampling.result.dropped",
+                &[("list", &dropped.join(", "))],
             ));
         }
         Ok(ToolOutcome::with_effects(
@@ -143,13 +154,13 @@ impl Tool for SetSampling {
     }
 }
 
-/// Подсказка модели о доступном наборе полей в текущем режиме.
-fn scope_note(provider: Option<CloudProvider>) -> String {
+/// Подсказка модели о доступном наборе полей в текущем режиме (на языке `loc`).
+fn scope_note(loc: &crate::shared::i18n::Locale, provider: Option<CloudProvider>) -> String {
     match provider {
-        None => "Доступны все параметры (temperature, top_k, min_p и т.д.).".into(),
-        Some(_) => format!(
-            "В текущем режиме доступны только: {}.",
-            supported_sampling_fields(provider).join(", ")
+        None => loc.t("tool.sampling.scope.all").to_string(),
+        Some(_) => loc.tf(
+            "tool.sampling.scope.limited",
+            &[("fields", &supported_sampling_fields(provider).join(", "))],
         ),
     }
 }
@@ -229,8 +240,8 @@ impl Tool for GetSystemMessage {
     fn ui_label(&self) -> &'static str {
         "показать сис. сообщение"
     }
-    fn description(&self, _loc: &crate::shared::i18n::Locale) -> String {
-        "Вернуть текущее системное сообщение чата.".into()
+    fn description(&self, loc: &crate::shared::i18n::Locale) -> String {
+        loc.t("tool.get_system_message.desc").into()
     }
     fn parameters(&self, _loc: &crate::shared::i18n::Locale) -> serde_json::Value {
         empty_object()
@@ -254,8 +265,8 @@ impl Tool for SetSystemMessage {
     fn ui_label(&self) -> &'static str {
         "изменить сис. сообщение"
     }
-    fn description(&self, _loc: &crate::shared::i18n::Locale) -> String {
-        "Изменить системное сообщение чата. Применяется со следующего ответа.".into()
+    fn description(&self, loc: &crate::shared::i18n::Locale) -> String {
+        loc.t("tool.set_system_message.desc").into()
     }
     fn parameters(&self, _loc: &crate::shared::i18n::Locale) -> serde_json::Value {
         serde_json::json!({
@@ -264,14 +275,14 @@ impl Tool for SetSystemMessage {
             "required": ["system_message"]
         })
     }
-    async fn invoke(&self, _ctx: &ToolContext, args: serde_json::Value) -> Result<ToolOutcome> {
+    async fn invoke(&self, ctx: &ToolContext, args: serde_json::Value) -> Result<ToolOutcome> {
         let msg = args
             .get("system_message")
             .and_then(|v| v.as_str())
-            .ok_or_else(|| anyhow::anyhow!("ожидается строковое поле system_message"))?
+            .ok_or_else(|| anyhow::anyhow!(ctx.loc.t("tool.set_system_message.err.string")))?
             .to_string();
         Ok(ToolOutcome::with_effects(
-            "Системное сообщение обновлено.",
+            ctx.loc.t("tool.set_system_message.result.updated"),
             vec![ChatEffect::SetSystemMessage(msg)],
         ))
     }
@@ -291,22 +302,27 @@ impl Tool for GetLastUserMessageTime {
     fn ui_label(&self) -> &'static str {
         "время посл. сообщения"
     }
-    fn description(&self, _loc: &crate::shared::i18n::Locale) -> String {
-        "Вернуть время последнего сообщения пользователя (ISO 8601) и сколько прошло.".into()
+    fn description(&self, loc: &crate::shared::i18n::Locale) -> String {
+        loc.t("tool.get_last_user_message_time.desc").into()
     }
     fn parameters(&self, _loc: &crate::shared::i18n::Locale) -> serde_json::Value {
         empty_object()
     }
     async fn invoke(&self, ctx: &ToolContext, _args: serde_json::Value) -> Result<ToolOutcome> {
         let result = match ctx.last_user_message_at {
-            None => "Пользователь ещё не отправлял сообщений в этом чате.".to_string(),
+            None => ctx
+                .loc
+                .t("tool.get_last_user_message_time.result.none")
+                .to_string(),
             Some(ts) => {
                 let elapsed = Utc::now().signed_duration_since(ts);
                 let secs = elapsed.num_seconds().max(0);
-                format!(
-                    "Последнее сообщение пользователя: {} ({} назад).",
-                    ts.to_rfc3339(),
-                    humanize(secs)
+                ctx.loc.tf(
+                    "tool.get_last_user_message_time.result.last",
+                    &[
+                        ("ts", &ts.to_rfc3339()),
+                        ("elapsed", &humanize(secs, ctx.loc)),
+                    ],
                 )
             }
         };
@@ -359,17 +375,18 @@ fn empty_object() -> serde_json::Value {
     serde_json::json!({"type": "object", "properties": {}})
 }
 
-/// Грубое человекочитаемое представление длительности в секундах.
-fn humanize(secs: i64) -> String {
-    if secs < 60 {
-        format!("{secs} с")
+/// Грубое человекочитаемое представление длительности в секундах (на языке `loc`).
+fn humanize(secs: i64, loc: &crate::shared::i18n::Locale) -> String {
+    let (key, n) = if secs < 60 {
+        ("time.dur.seconds", secs)
     } else if secs < 3600 {
-        format!("{} мин", secs / 60)
+        ("time.dur.minutes", secs / 60)
     } else if secs < 86400 {
-        format!("{} ч", secs / 3600)
+        ("time.dur.hours", secs / 3600)
     } else {
-        format!("{} дн", secs / 86400)
-    }
+        ("time.dur.days", secs / 86400)
+    };
+    loc.tf(key, &[("n", &n.to_string())])
 }
 
 #[cfg(test)]

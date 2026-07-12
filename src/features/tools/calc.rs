@@ -9,6 +9,7 @@
 use anyhow::Result;
 
 use crate::entities::profile::ToolId;
+use crate::shared::i18n::Locale;
 
 use super::{Tool, ToolContext, ToolOutcome};
 
@@ -26,48 +27,45 @@ impl Tool for Calculate {
     fn ui_label(&self) -> &'static str {
         "калькулятор"
     }
-    fn description(&self, _loc: &crate::shared::i18n::Locale) -> String {
-        "Вычислить математическое выражение и вернуть число. Поддерживает + - * / % ^, \
-         скобки, константы (pi, e, tau) и функции (sqrt, cbrt, abs, exp, ln, log, log2, \
-         sin, cos, tan, asin, acos, atan, atan2, sinh, cosh, tanh, floor, ceil, round, \
-         min, max, pow). Углы тригонометрии — в радианах."
-            .into()
+    fn description(&self, loc: &crate::shared::i18n::Locale) -> String {
+        loc.t("tool.calculate.desc").into()
     }
-    fn parameters(&self, _loc: &crate::shared::i18n::Locale) -> serde_json::Value {
+    fn parameters(&self, loc: &crate::shared::i18n::Locale) -> serde_json::Value {
         serde_json::json!({
             "type": "object",
             "properties": {
                 "expression": {
                     "type": "string",
-                    "description": "Выражение, например: (2 + 3) * sqrt(16) или sin(pi/2)"
+                    "description": loc.t("tool.calculate.param.expression")
                 }
             },
             "required": ["expression"]
         })
     }
-    async fn invoke(&self, _ctx: &ToolContext, args: serde_json::Value) -> Result<ToolOutcome> {
+    async fn invoke(&self, ctx: &ToolContext, args: serde_json::Value) -> Result<ToolOutcome> {
         let expr = args
             .get("expression")
             .and_then(|v| v.as_str())
             .filter(|s| !s.trim().is_empty())
-            .ok_or_else(|| anyhow::anyhow!("ожидается непустое поле expression"))?;
+            .ok_or_else(|| anyhow::anyhow!(ctx.loc.t("tool.calculate.err.expr_empty")))?;
 
-        match eval(expr) {
+        match eval(expr, ctx.loc) {
             Ok(value) => Ok(ToolOutcome::text(format!(
                 "{expr} = {}",
-                format_number(value)
+                format_number(value, ctx.loc)
             ))),
-            Err(err) => Ok(ToolOutcome::text(format!(
-                "Не удалось вычислить «{expr}»: {err}"
+            Err(err) => Ok(ToolOutcome::text(ctx.loc.tf(
+                "tool.calculate.result.failed",
+                &[("expr", expr), ("err", &err.to_string())],
             ))),
         }
     }
 }
 
 /// Форматирует результат: целые — без дробной части, иначе с обрезкой хвостовых нулей.
-fn format_number(v: f64) -> String {
+fn format_number(v: f64, loc: &crate::shared::i18n::Locale) -> String {
     if v.is_nan() {
-        return "не число (NaN)".to_string();
+        return loc.t("calc.number.nan").to_string();
     }
     if v.is_infinite() {
         return if v > 0.0 { "∞" } else { "-∞" }.to_string();
@@ -98,8 +96,8 @@ enum Token {
     Comma,
 }
 
-/// Разбивает строку на токены. Ошибка на неизвестном символе.
-fn tokenize(input: &str) -> Result<Vec<Token>> {
+/// Разбивает строку на токены. Ошибка на неизвестном символе. `loc` — язык ошибок.
+fn tokenize(input: &str, loc: &Locale) -> Result<Vec<Token>> {
     let chars: Vec<char> = input.chars().collect();
     let mut tokens = Vec::new();
     let mut i = 0;
@@ -161,7 +159,7 @@ fn tokenize(input: &str) -> Result<Vec<Token>> {
                 let s: String = chars[start..i].iter().collect();
                 let n = s
                     .parse::<f64>()
-                    .map_err(|_| anyhow::anyhow!("неверное число «{s}»"))?;
+                    .map_err(|_| anyhow::anyhow!(loc.tf("calc.err.bad_number", &[("s", &s)])))?;
                 tokens.push(Token::Number(n));
             }
             c if c.is_alphabetic() || c == '_' => {
@@ -172,7 +170,7 @@ fn tokenize(input: &str) -> Result<Vec<Token>> {
                 let s: String = chars[start..i].iter().collect();
                 tokens.push(Token::Ident(s.to_lowercase()));
             }
-            other => anyhow::bail!("неизвестный символ «{other}»"),
+            other => anyhow::bail!(loc.tf("calc.err.unknown_char", &[("c", &other.to_string())])),
         }
     }
     Ok(tokens)
@@ -180,12 +178,13 @@ fn tokenize(input: &str) -> Result<Vec<Token>> {
 
 // ------------------------- Парсер/вычислитель -------------------------
 
-struct Parser {
+struct Parser<'a> {
     tokens: Vec<Token>,
     pos: usize,
+    loc: &'a Locale,
 }
 
-impl Parser {
+impl Parser<'_> {
     fn peek(&self) -> Option<&Token> {
         self.tokens.get(self.pos)
     }
@@ -286,44 +285,61 @@ impl Parser {
                         args.push(self.expr()?);
                     }
                     self.expect(Token::RParen)?;
-                    apply_function(&name, &args)
+                    apply_function(&name, &args, self.loc)
                 } else {
-                    constant(&name)
+                    constant(&name, self.loc)
                 }
             }
-            other => anyhow::bail!("неожиданный токен: {other:?}"),
+            other => {
+                anyhow::bail!(self.loc.tf(
+                    "calc.err.unexpected_token",
+                    &[("token", &format!("{other:?}"))]
+                ))
+            }
         }
     }
 
     fn expect(&mut self, want: Token) -> Result<()> {
         match self.next() {
             Some(t) if t == want => Ok(()),
-            other => anyhow::bail!("ожидалось {want:?}, найдено {other:?}"),
+            other => anyhow::bail!(self.loc.tf(
+                "calc.err.expected",
+                &[
+                    ("want", &format!("{want:?}")),
+                    ("found", &format!("{other:?}"))
+                ]
+            )),
         }
     }
 }
 
 /// Значение именованной константы.
-fn constant(name: &str) -> Result<f64> {
+fn constant(name: &str, loc: &Locale) -> Result<f64> {
     match name {
         "pi" => Ok(std::f64::consts::PI),
         "e" => Ok(std::f64::consts::E),
         "tau" => Ok(std::f64::consts::TAU),
-        other => anyhow::bail!("неизвестная константа/имя «{other}»"),
+        other => anyhow::bail!(loc.tf("calc.err.unknown_const", &[("name", other)])),
     }
 }
 
-/// Применяет функцию к аргументам (проверяя арность).
-fn apply_function(name: &str, args: &[f64]) -> Result<f64> {
+/// Применяет функцию к аргументам (проверяя арность). `loc` — язык ошибок.
+fn apply_function(name: &str, args: &[f64], loc: &Locale) -> Result<f64> {
     let one = |a: &[f64]| -> Result<f64> {
         if a.len() != 1 {
-            anyhow::bail!("функция «{name}» ожидает 1 аргумент, дано {}", a.len());
+            anyhow::bail!(loc.tf(
+                "calc.err.arity_one",
+                &[("name", name), ("n", &a.len().to_string())]
+            ));
         }
         Ok(a[0])
     };
     let two = |a: &[f64]| -> Result<(f64, f64)> {
         if a.len() != 2 {
-            anyhow::bail!("функция «{name}» ожидает 2 аргумента, дано {}", a.len());
+            anyhow::bail!(loc.tf(
+                "calc.err.arity_two",
+                &[("name", name), ("n", &a.len().to_string())]
+            ));
         }
         Ok((a[0], a[1]))
     };
@@ -364,30 +380,34 @@ fn apply_function(name: &str, args: &[f64]) -> Result<f64> {
         }
         "min" => {
             if args.is_empty() {
-                anyhow::bail!("функция «min» ожидает аргументы");
+                anyhow::bail!(loc.tf("calc.err.needs_args", &[("name", "min")]));
             }
             args.iter().copied().fold(f64::INFINITY, f64::min)
         }
         "max" => {
             if args.is_empty() {
-                anyhow::bail!("функция «max» ожидает аргументы");
+                anyhow::bail!(loc.tf("calc.err.needs_args", &[("name", "max")]));
             }
             args.iter().copied().fold(f64::NEG_INFINITY, f64::max)
         }
-        other => anyhow::bail!("неизвестная функция «{other}»"),
+        other => anyhow::bail!(loc.tf("calc.err.unknown_func", &[("name", other)])),
     })
 }
 
-/// Вычисляет выражение в `f64`. Чистая функция (без I/O) — тестируема напрямую.
-pub fn eval(input: &str) -> Result<f64> {
-    let tokens = tokenize(input)?;
+/// Вычисляет выражение в `f64`. Тексты ошибок — на языке каркаса `loc`.
+pub fn eval(input: &str, loc: &Locale) -> Result<f64> {
+    let tokens = tokenize(input, loc)?;
     if tokens.is_empty() {
-        anyhow::bail!("пустое выражение");
+        anyhow::bail!(loc.t("calc.err.empty").to_string());
     }
-    let mut parser = Parser { tokens, pos: 0 };
+    let mut parser = Parser {
+        tokens,
+        pos: 0,
+        loc,
+    };
     let value = parser.expr()?;
     if parser.pos != parser.tokens.len() {
-        anyhow::bail!("лишние токены после выражения");
+        anyhow::bail!(loc.t("calc.err.extra_tokens").to_string());
     }
     Ok(value)
 }
@@ -397,6 +417,19 @@ mod tests {
     use super::super::testkit::ctx_with_storage;
     use super::*;
     use uuid::Uuid;
+
+    /// Референсная локаль (ru) для чистых вычислений в тестах.
+    fn ru() -> &'static Locale {
+        crate::shared::i18n::locale(crate::shared::i18n::Lang::Ru)
+    }
+    /// Тонкие обёртки: тесты зовут `eval`/`format_number` без явной локали (шэдоуят
+    /// одноимённые функции модуля через `super::`). Пинят ru-бандл.
+    fn eval(s: &str) -> Result<f64> {
+        super::eval(s, ru())
+    }
+    fn format_number(v: f64) -> String {
+        super::format_number(v, ru())
+    }
 
     fn approx(a: f64, b: f64) -> bool {
         (a - b).abs() < 1e-9

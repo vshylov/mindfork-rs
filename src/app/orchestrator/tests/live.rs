@@ -80,6 +80,76 @@ async fn i18n_en_profile_title_e2e_live() {
     );
 }
 
+/// Живой смоук Яруса 2 i18n (docs/i18n.md, группа 2c): en-профиль + `current_time`.
+/// Результат инструмента должен нести английскую метку «Local time:» и не содержать
+/// кириллицы (утилитарные инструменты локализованы). Сети/песочницы не требует.
+/// Запуск:
+/// `MINDFORK_ENGINE_URL=…/v1 cargo test utils_en_e2e_live -- --ignored --nocapture --test-threads=1`.
+#[tokio::test]
+#[ignore = "requires a running OpenAI-compatible server (MINDFORK_ENGINE_URL)"]
+async fn utils_en_e2e_live() {
+    use crate::features::tools::all_tool_ids;
+    let Some((_d, cmd_tx, mut evt_rx, handle)) = spawn_orch_live() else {
+        eprintln!("skip: MINDFORK_ENGINE_URL not set");
+        return;
+    };
+    cmd_tx
+        .send(AppCommand::CreateProfile {
+            name: "English".into(),
+            system_message: "You are a helpful assistant. Reply in English.".into(),
+        })
+        .unwrap();
+    let pl = wait_for(
+        &mut evt_rx,
+        |e| matches!(e, AppEvent::ProfileList(v) if v.len() >= 2),
+    )
+    .await
+    .unwrap();
+    let pid = match pl {
+        AppEvent::ProfileList(v) => v.last().unwrap().id,
+        _ => unreachable!(),
+    };
+    cmd_tx
+        .send(AppCommand::UpdateProfile {
+            id: pid,
+            edit: Box::new(ProfileEdit {
+                language: Some(crate::shared::i18n::Lang::En),
+                enabled_tools: Some(all_tool_ids()),
+                ..Default::default()
+            }),
+        })
+        .unwrap();
+    cmd_tx
+        .send(AppCommand::NewChat {
+            profile_id: Some(pid),
+        })
+        .unwrap();
+    wait_for(&mut evt_rx, |e| matches!(e, AppEvent::ChatActivated { .. }))
+        .await
+        .unwrap();
+
+    let (_t, calls) = run_turn_capture(
+        &cmd_tx,
+        &mut evt_rx,
+        "What is the current date and time? Use the current_time tool.",
+    )
+    .await;
+    cmd_tx.send(AppCommand::Quit).unwrap();
+    handle.await.unwrap();
+    eprintln!("utils calls: {calls:#?}");
+
+    let has_cyr = |s: &str| {
+        s.chars()
+            .any(|c| ('а'..='я').contains(&c) || ('А'..='Я').contains(&c))
+    };
+    let ct: Vec<&(String, String)> = calls.iter().filter(|(n, _)| n == "current_time").collect();
+    assert!(!ct.is_empty(), "expected current_time call: {calls:?}");
+    for (_, r) in &ct {
+        assert!(!has_cyr(r), "current_time result has cyrillic: {r:?}");
+        assert!(r.contains("Local time:"), "expected English label: {r:?}");
+    }
+}
+
 /// Живой смоук Яруса 2 i18n (docs/i18n.md, группа 2b): en-профиль + RAG-инструменты.
 /// Модель добавляет факт (`rag_add`) и ищет его (`rag_search`); **результаты
 /// rag-инструментов должны быть на английском** (без кириллицы) — критерий 2b

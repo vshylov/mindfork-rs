@@ -116,10 +116,11 @@ Env для выбора бэкенда: `MINDFORK_ENGINE_URL` (external, люб�
 `MINDFORK_PORT`) для managed `llama-server`.
 
 ## Статус (на 2026-07-12)
-Сделан весь план **M0–M9** плюс обширный пост-M9 (в `main`). **996 юнит-тестов
-зелёные, 45 `#[ignore]`-смоуков** (крупнейший счётчик — журнал ниже; последнее
-направление — мультиязычность служебного каркаса, Ярус 2 группа 2b (перевод
-инструментов rag + web + fetch), ветка `feat/i18n-tools-rag-web`).
+Сделан весь план **M0–M9** плюс обширный пост-M9 (в `main`). **998 юнит-тестов
+зелёные, 46 `#[ignore]`-смоуков** (крупнейший счётчик — журнал ниже; последнее
+направление — мультиязычность служебного каркаса, Ярус 2 группа 2c (перевод
+остальных инструментов), ветка `feat/i18n-tools-rest`). **Ярус 2 (перевод
+инструментов) завершён — все 35 инструментов локализованы.**
 Историческая сводка `#[ignore]` прогнана на живой связке
 **Gemma 4 31B (q4) + bge-m3** (`llama-server`, external, `--jinja`) — 25/25 зелёные
 (~370с): базовые смоуки Gemma (стриминг, EOS-анти-самообрыв, tool-calling, «мысли»,
@@ -4869,7 +4870,7 @@ web-поиск и Python под выключателями, экран наст�
   (`self_model_gate_e2e_live` — ворота «Похожие наблюдения …» и «Заметка замещена: …»
   байт-в-байт русские). Критерий go/no-go Яруса 2 — **go**.
 - **Осталось (следующие PR)**: 2b (rag + web + fetch), 2c (introspection + fs + python +
-  утилиты + control + subagent). Инструкция — [docs/i18n-continuation.md](docs/i18n-continuation.md).
+  утилиты + control + subagent). См. [docs/i18n.md](docs/i18n.md).
 
 ### Пост-M9: i18n Ярус 2 — группа 2b: перевод инструментов rag + web + fetch (сделано)
 - **4 инструмента группы 2b переведены** (ветка `feat/i18n-tools-rag-web`, docs/i18n.md
@@ -4902,10 +4903,45 @@ web-поиск и Python под выключателями, экран наст�
   английском**, кириллицы нет. Регрессия ru покрыта юнит-тестами
   (`add_then_search_returns_relevant_chunk` и др. — байт-в-байт русские результаты).
 - **Осталось (следующий PR)**: 2c — introspection + fs + python + calc + datetime +
-  subagent + control. **Камень**: `present.rs::parse_console` парсит вывод `python_exec`
-  по русским меткам («код возврата:»/«stdout:»/«stderr:») — при локализации меток в
-  `python.rs::format_output_parts` синхронно править парсер. Инструкция —
-  [docs/i18n-continuation.md](docs/i18n-continuation.md).
+  subagent + control.
+
+### Пост-M9: i18n Ярус 2 — группа 2c: перевод остальных инструментов (сделано)
+- **Заключительная группа Яруса 2** (ветка `feat/i18n-tools-rest`): переведены
+  `get/set_sampling`, `get/set_system_message`, `get_last_user_message_time`
+  (`introspection.rs`); `fs_read`/`fs_write`/`fs_list` (`fs.rs`); `python_exec`
+  (`python.rs`); `calculate` (`calc.rs`); `current_time` (`datetime.rs`);
+  `call_subagent` (`subagent.rs`); `send_followup_message`/`rewrite_current_message`
+  (`control.rs`). Описания, схемы, результаты, все валидационные/сетевые/файловые
+  ошибки, вывод вычислителя и разрешения control-инструментов вынесены в ключи бандла
+  (ru байт-в-байт + en). Плюс три строки agentic-loop (`generation.rs`: инструмент
+  выключен / пропущен при переписывании / ошибка инструмента — `loop.*`).
+- **Проводка `loc` в глубину**: где инструменты не имели `ctx` в хелперах — `loc`
+  протянут параметром: `fs::FsRoot::resolve`/`arg_path`/`truncate_chars`,
+  `python::run_local`/`run_wasmer`/`format_output_parts`/`truncate`,
+  `datetime::render`, `introspection::scope_note`/`humanize`,
+  **весь рекурсивно-нисходящий вычислитель `calc`** (`eval`/`tokenize`/`Parser`/
+  `apply_function`/`constant`), `control::control_permission_text` (стал `-> String`,
+  вызывается и петлёй в `generation.rs`).
+- **Камень `present.rs::parse_console` решён**: метка кода возврата python вынесена в
+  ключ `python.console.exit` (ru «код возврата:» / en «exit code:»); формат вывода
+  локализован (`format_output_parts` берёт `loc`), а парсер (`exit_labels()`)
+  распознаёт метку **по всем вшитым локалям**. Метки `stdout:`/`stderr:` универсальны —
+  не переводятся. Осознанно русскими остались `ui_label` инструментов (ось B) и
+  символы `∞`/`-∞` (языко-нейтральны).
+- **Тесты**: ru байт-в-байт → прежние ассерты не менялись (шэдоу-обёртки `eval`/
+  `format_number` в calc и `ru()`-локаль в datetime/python дают нулевой churn call
+  sites). Добавлен **сильный общий гейт** `all_tool_descriptions_localized_to_en`
+  (`mod.rs`): описание КАЖДОГО инструмента реестра на en без кириллицы и ≠ ru —
+  ловит забытый `_loc` в любой группе; `python_console_parses_localized_exit_label`
+  (`present.rs`: парсер распознаёт en-метку). **998 юнит-тестов зелёные** (+2),
+  **46 `#[ignore]`** (+1), clippy `-D warnings`/fmt чисты.
+- **Живой прогон — GO** (Gemma 4 31B q4, `llama-server`): смоук `utils_en_e2e_live`
+  (en-профиль) — модель вызвала `current_time`, результат «Local time: 2026-07-13 …\n
+  UTC: …» — **английская метка, без кириллицы**. Регрессия ru покрыта юнит-тестами
+  (метки/ошибки инструментов байт-в-байт русские).
+- **Ярус 2 завершён**: все 35 инструментов локализованы (2a notes+self_model, 2b rag+
+  web+fetch, 2c остальное). Осталось направление i18n: Ярус 3 (внешние `data/locales/
+  *.json`) и **ось B** (UI-хром для человека) — отдельные будущие направления.
 
 ### Отложено за пределы M3
 - **Сворачивание/выделение per-message** и tool-блоки в ленте — сейчас «мысли»

@@ -544,22 +544,25 @@ fn spawn_generation(spawn: GenSpawn) {
                     let is_control = control::is_control_tool(&call.name);
                     let result = if !allowed_has(&call.name) {
                         // Защита: инструмент выключен глобально/в профиле.
-                        format!("Инструмент {} недоступен (выключен).", call.name)
+                        ctx.loc.tf("loop.tool_disabled", &[("name", &call.name)])
                     } else if is_control {
                         // Управляющий инструмент: результат — «разрешение» (его
                         // увидит модель в следующем раунде). Исполняется петлёй, не
                         // через registry.
-                        control::control_permission_text(&call.name).to_string()
+                        control::control_permission_text(&call.name, ctx.loc)
                     } else if rewrite {
                         // Этот раунд отбрасывается — побочные инструменты не исполняем.
-                        "(сообщение переписывается — вызов пропущен)".to_string()
+                        ctx.loc.t("loop.rewrite_skipped").to_string()
                     } else {
                         match registry.invoke(&call.name, &ctx, args.clone()).await {
                             Ok(outcome) => {
                                 effects.extend(outcome.effects);
                                 outcome.result
                             }
-                            Err(err) => format!("Ошибка инструмента {}: {err}", call.name),
+                            Err(err) => ctx.loc.tf(
+                                "loop.tool_error",
+                                &[("name", &call.name), ("err", &err.to_string())],
+                            ),
                         }
                     };
                     // UI tool-блок — только для обычных исполненных вызовов
