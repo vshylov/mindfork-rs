@@ -467,6 +467,106 @@ async fn self_model_gate_e2e_live() {
     );
 }
 
+/// Живой смоук Яруса 2 i18n (docs/i18n.md, группа 2a): en-зеркало
+/// [`self_model_gate_e2e_live`]. Профиль с языком каркаса `En` + все инструменты; ход
+/// на английском записывает наблюдение, почти-дубль поднимает ворота `add_insight` —
+/// **и текст ворот, и весь результат инструмента должны быть на английском** (ключевой
+/// критерий Яруса 2: результаты инструментов локализованы, без кириллицы). Реальный
+/// эмбеддер (`MINDFORK_EMBED_URL`) нужен, чтобы ворота сработали. Запуск:
+/// `MINDFORK_ENGINE_URL=…/v1 MINDFORK_EMBED_URL=…/v1 cargo test self_model_gate_en_e2e_live -- --ignored --nocapture --test-threads=1`.
+#[tokio::test]
+#[ignore = "requires a running OpenAI-compatible server (MINDFORK_ENGINE_URL)"]
+async fn self_model_gate_en_e2e_live() {
+    use crate::features::tools::all_tool_ids;
+    let Some((_d, cmd_tx, mut evt_rx, handle)) = spawn_orch_live() else {
+        eprintln!("skip: MINDFORK_ENGINE_URL not set");
+        return;
+    };
+    // Свежий профиль (bootstrap-профиль залочен на Ru) → ставим язык каркаса En.
+    cmd_tx
+        .send(AppCommand::CreateProfile {
+            name: "English".into(),
+            system_message: "You are a helpful assistant. Reply in English.".into(),
+        })
+        .unwrap();
+    let pl = wait_for(
+        &mut evt_rx,
+        |e| matches!(e, AppEvent::ProfileList(v) if v.len() >= 2),
+    )
+    .await
+    .unwrap();
+    let pid = match pl {
+        AppEvent::ProfileList(v) => v.last().unwrap().id,
+        _ => unreachable!(),
+    };
+    cmd_tx
+        .send(AppCommand::UpdateProfile {
+            id: pid,
+            edit: Box::new(ProfileEdit {
+                language: Some(crate::shared::i18n::Lang::En),
+                enabled_tools: Some(all_tool_ids()),
+                ..Default::default()
+            }),
+        })
+        .unwrap();
+    cmd_tx
+        .send(AppCommand::NewChat {
+            profile_id: Some(pid),
+        })
+        .unwrap();
+    wait_for(&mut evt_rx, |e| matches!(e, AppEvent::ChatActivated { .. }))
+        .await
+        .unwrap();
+
+    // Ход 1: записываем наблюдение (add_insight → self-заметка).
+    let (_t1, tools1) = run_turn_live(
+        &cmd_tx,
+        &mut evt_rx,
+        "Record an observation about me (call add_insight): I tend to ask for concise answers.",
+    )
+    .await;
+    eprintln!("turn 1 tools: {tools1:?}");
+
+    // Ход 2: почти-дубль — ворота add_insight показывают наблюдение #1 (по-английски).
+    let (t2, calls2) = run_turn_capture(
+        &cmd_tx,
+        &mut evt_rx,
+        "Record another very similar observation (call add_insight): the user prefers brief, \
+         concise replies. If the tool shows a similar observation, decide yourself whether to \
+         rewrite it (note_revise/note_supersede) or keep both.",
+    )
+    .await;
+    eprintln!("turn 2 text={t2:?}\ncalls={calls2:#?}");
+
+    cmd_tx.send(AppCommand::Quit).unwrap();
+    handle.await.unwrap();
+
+    assert!(
+        tools1.iter().any(|t| t == "add_insight"),
+        "turn 1: expected add_insight call"
+    );
+    // Результаты инструментов не содержат кириллицы (каркас переведён, Ярус 2).
+    let has_cyr = |s: &str| {
+        s.chars()
+            .any(|c| ('а'..='я').contains(&c) || ('А'..='Я').contains(&c))
+    };
+    for (n, r) in &calls2 {
+        assert!(!has_cyr(r), "tool {n} result has cyrillic: {r:?}");
+    }
+    // Ворота (реальный эмбеддер): текст — английский шаблон «Similar observations …».
+    let gate_fired = calls2
+        .iter()
+        .any(|(n, r)| n == "add_insight" && r.contains("Similar observations"));
+    let real_embedder = std::env::var("MINDFORK_EMBED_URL").is_ok();
+    eprintln!("gate fired (English): {gate_fired}; real embedder: {real_embedder}");
+    if real_embedder && calls2.iter().any(|(n, _)| n == "add_insight") {
+        assert!(
+            gate_fired,
+            "en gate should have surfaced a similar observation in English: {calls2:?}"
+        );
+    }
+}
+
 /// End-to-end зонд **ворот размера summary** (этап 2, docs/summary-as-snapshot.md):
 /// в БД сеется раздутое описание себя (сверх ориентира по умолчанию 1000 симв.);
 /// модель видит подсказку сократить и в пассивной инъекции, и в `get_self_model`.

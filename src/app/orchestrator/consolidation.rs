@@ -112,7 +112,11 @@ impl Orchestrator {
         };
         // Все гейты пройдены — сбрасываем счётчик и запускаем.
         self.consolidate_counts.insert(chat_id, 0);
-        let overview = notes::build_consolidation_overview(&self.storage, profile_id);
+        let overview = notes::build_consolidation_overview(
+            &self.storage,
+            profile_id,
+            crate::shared::i18n::locale(lang),
+        );
 
         let ctx = ToolContext::new(
             self.tool_deps(backend.clone()),

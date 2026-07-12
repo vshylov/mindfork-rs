@@ -17,51 +17,60 @@ impl Tool for NoteLink {
     fn ui_label(&self) -> &'static str {
         "связать заметки"
     }
-    fn description(&self, _loc: &crate::shared::i18n::Locale) -> String {
-        "Связать две заметки (по id из note_recall/note_save) направленной связью: \
-         supports (подтверждает), contradicts (противоречит), refines (уточняет), \
-         relates (связано по теме). Помогает помнить, как заметки соотносятся."
-            .into()
+    fn description(&self, loc: &crate::shared::i18n::Locale) -> String {
+        loc.t("tool.note_link.desc").into()
     }
-    fn parameters(&self, _loc: &crate::shared::i18n::Locale) -> serde_json::Value {
+    fn parameters(&self, loc: &crate::shared::i18n::Locale) -> serde_json::Value {
         serde_json::json!({
             "type": "object",
             "properties": {
-                "from_id": {"type": "string", "description": "id заметки-источника"},
-                "to_id": {"type": "string", "description": "id заметки-цели"},
-                "relation": {"type": "string", "enum": RELATIONS, "description": "тип связи"}
+                "from_id": {"type": "string", "description": loc.t("tool.note_link.param.from_id")},
+                "to_id": {"type": "string", "description": loc.t("tool.note_link.param.to_id")},
+                "relation": {"type": "string", "enum": RELATIONS, "description": loc.t("tool.note_link.param.relation")}
             },
             "required": ["from_id", "to_id", "relation"]
         })
     }
     async fn invoke(&self, ctx: &ToolContext, args: serde_json::Value) -> Result<ToolOutcome> {
-        let from = parse_id(&args, "from_id")?;
-        let to = parse_id(&args, "to_id")?;
+        let from = parse_id(&args, "from_id", ctx.loc)?;
+        let to = parse_id(&args, "to_id", ctx.loc)?;
         let relation = args
             .get("relation")
             .and_then(|v| v.as_str())
             .unwrap_or_default()
             .trim();
         if !RELATIONS.contains(&relation) {
-            anyhow::bail!("неизвестный тип связи: {relation} (допустимо: {RELATIONS:?})");
+            anyhow::bail!(ctx.loc.tf(
+                "notes.err.unknown_relation",
+                &[
+                    ("relation", relation),
+                    ("allowed", &format!("{RELATIONS:?}"))
+                ]
+            ));
         }
         if from == to {
-            anyhow::bail!("нельзя связать заметку с самой собой");
+            anyhow::bail!(ctx.loc.t("tool.note_link.err.self"));
         }
         let db = ctx.storage.db();
         if !db.note_is_active(ctx.profile_id, from)? || !db.note_is_active(ctx.profile_id, to)? {
             return Ok(ToolOutcome::text(
-                "Одна из заметок не найдена (или замещена).".to_string(),
+                ctx.loc.t("tool.note_link.result.missing"),
             ));
         }
         let created = db.note_link_insert(ctx.profile_id, from, to, relation)?;
         let verb = if created {
-            "Связь создана"
+            ctx.loc.t("tool.note_link.result.created")
         } else {
-            "Связь уже существовала"
+            ctx.loc.t("tool.note_link.result.existed")
         };
-        Ok(ToolOutcome::text(format!(
-            "{verb}: {from} —{relation}→ {to}."
+        Ok(ToolOutcome::text(ctx.loc.tf(
+            "tool.note_link.result.line",
+            &[
+                ("verb", verb),
+                ("from", &from.to_string()),
+                ("relation", relation),
+                ("to", &to.to_string()),
+            ],
         )))
     }
 }
@@ -80,23 +89,21 @@ impl Tool for NoteNeighbors {
     fn ui_label(&self) -> &'static str {
         "связи заметки"
     }
-    fn description(&self, _loc: &crate::shared::i18n::Locale) -> String {
-        "Показать заметки, связанные с данной (по id), с типом и направлением связи. \
-         Опционально — только связи указанного типа (supports/contradicts/refines/relates)."
-            .into()
+    fn description(&self, loc: &crate::shared::i18n::Locale) -> String {
+        loc.t("tool.note_neighbors.desc").into()
     }
-    fn parameters(&self, _loc: &crate::shared::i18n::Locale) -> serde_json::Value {
+    fn parameters(&self, loc: &crate::shared::i18n::Locale) -> serde_json::Value {
         serde_json::json!({
             "type": "object",
             "properties": {
-                "id": {"type": "string", "description": "id заметки"},
-                "relation": {"type": "string", "enum": RELATIONS, "description": "фильтр по типу связи (опц.)"}
+                "id": {"type": "string", "description": loc.t("tool.note_neighbors.param.id")},
+                "relation": {"type": "string", "enum": RELATIONS, "description": loc.t("tool.note_neighbors.param.relation")}
             },
             "required": ["id"]
         })
     }
     async fn invoke(&self, ctx: &ToolContext, args: serde_json::Value) -> Result<ToolOutcome> {
-        let id = parse_id(&args, "id")?;
+        let id = parse_id(&args, "id", ctx.loc)?;
         let relation = args
             .get("relation")
             .and_then(|v| v.as_str())
@@ -105,16 +112,27 @@ impl Tool for NoteNeighbors {
         if let Some(r) = relation
             && !RELATIONS.contains(&r)
         {
-            anyhow::bail!("неизвестный тип связи: {r} (допустимо: {RELATIONS:?})");
+            anyhow::bail!(ctx.loc.tf(
+                "notes.err.unknown_relation",
+                &[("relation", r), ("allowed", &format!("{RELATIONS:?}"))]
+            ));
         }
         let nb = ctx
             .storage
             .db()
             .note_neighbors(ctx.profile_id, id, relation)?;
         if nb.is_empty() {
-            return Ok(ToolOutcome::text("Связанных заметок нет."));
+            return Ok(ToolOutcome::text(
+                ctx.loc.t("tool.note_neighbors.result.empty"),
+            ));
         }
-        let mut out = format!("Связи заметки {id}:\n");
+        let mut out = format!(
+            "{}\n",
+            ctx.loc.tf(
+                "tool.note_neighbors.result.header",
+                &[("id", &id.to_string())]
+            )
+        );
         for (note, rel, outgoing) in &nb {
             let arrow = if *outgoing { "→" } else { "←" };
             out.push_str(&format!(

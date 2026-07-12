@@ -91,9 +91,9 @@ pub(crate) fn self_related_block(ctx: &ToolContext, shown: &[Uuid]) -> Option<St
             // Кросс-органный сосед (пользовательская заметка) помечается — чтение
             // «модели себя» видит связь наблюдения с фактом «о собеседнике».
             let mark = if is_self_note(&note) {
-                ""
+                String::new()
             } else {
-                "[заметка] "
+                format!("{} ", ctx.loc.t("notes.mark.note"))
             };
             // Соседа вне показанного набора приводим с текстом (spreading activation).
             let tail = if shown_set.contains(&note.id) {
@@ -114,7 +114,11 @@ pub(crate) fn self_related_block(ctx: &ToolContext, shown: &[Uuid]) -> Option<St
     if lines.is_empty() {
         None
     } else {
-        Some(format!("\nСвязи наблюдений:\n{}", lines.join("\n")))
+        Some(format!(
+            "\n{}:\n{}",
+            ctx.loc.t("notes.block.self_related"),
+            lines.join("\n")
+        ))
     }
 }
 

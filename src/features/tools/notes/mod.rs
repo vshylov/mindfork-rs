@@ -56,14 +56,20 @@ pub(crate) fn is_self_note(note: &Note) -> bool {
     note.tags.iter().any(|t| t == SELF_NOTE_TAG)
 }
 
-/// Парсит uuid из строкового поля аргументов с понятной ошибкой.
-fn parse_id(args: &serde_json::Value, key: &str) -> Result<Uuid> {
+/// Парсит uuid из строкового поля аргументов с понятной ошибкой (на языке `loc`).
+fn parse_id(
+    args: &serde_json::Value,
+    key: &str,
+    loc: &crate::shared::i18n::Locale,
+) -> Result<Uuid> {
     let raw = args
         .get(key)
         .and_then(|v| v.as_str())
         .unwrap_or_default()
         .trim();
-    Uuid::parse_str(raw).map_err(|_| anyhow::anyhow!("некорректный id ({key}): {raw}"))
+    Uuid::parse_str(raw).map_err(|_| {
+        anyhow::anyhow!(loc.tf("notes.err.bad_id_field", &[("key", key), ("raw", raw)]))
+    })
 }
 
 /// Косинусная близость двух векторов (0 при разной длине/нулевой норме).

@@ -18,18 +18,15 @@ impl Tool for NoteRevise {
     fn ui_label(&self) -> &'static str {
         "переписать заметку"
     }
-    fn description(&self, _loc: &crate::shared::i18n::Locale) -> String {
-        "Переписать существующую заметку на месте (по id из note_recall/note_save): \
-         новое содержимое замещает прежнее. Используй, когда заметка устарела, \
-         уточнилась или дублируется, — вместо создания почти-копии."
-            .into()
+    fn description(&self, loc: &crate::shared::i18n::Locale) -> String {
+        loc.t("tool.note_revise.desc").into()
     }
-    fn parameters(&self, _loc: &crate::shared::i18n::Locale) -> serde_json::Value {
+    fn parameters(&self, loc: &crate::shared::i18n::Locale) -> serde_json::Value {
         serde_json::json!({
             "type": "object",
             "properties": {
-                "id": {"type": "string", "description": "id заметки (из note_recall/note_save)"},
-                "content": {"type": "string", "description": "Новое содержимое заметки"}
+                "id": {"type": "string", "description": loc.t("tool.note_revise.param.id")},
+                "content": {"type": "string", "description": loc.t("tool.note_revise.param.content")}
             },
             "required": ["id", "content"]
         })
@@ -40,25 +37,27 @@ impl Tool for NoteRevise {
             .and_then(|v| v.as_str())
             .unwrap_or_default()
             .trim();
-        let uuid =
-            Uuid::parse_str(id).map_err(|_| anyhow::anyhow!("некорректный id заметки: {id}"))?;
+        let uuid = Uuid::parse_str(id).map_err(|_| {
+            anyhow::anyhow!(ctx.loc.tf("tool.note_revise.err.bad_id", &[("id", id)]))
+        })?;
         let content = args
             .get("content")
             .and_then(|v| v.as_str())
-            .ok_or_else(|| anyhow::anyhow!("ожидается строковое поле content"))?
+            .ok_or_else(|| anyhow::anyhow!(ctx.loc.t("notes.err.content_string")))?
             .trim()
             .to_string();
         if content.is_empty() {
-            anyhow::bail!("content не может быть пустым");
+            anyhow::bail!(ctx.loc.t("notes.err.content_empty"));
         }
         if !ctx
             .storage
             .db()
             .note_update(uuid, ctx.profile_id, &content)?
         {
-            return Ok(ToolOutcome::text(format!(
-                "Заметка не найдена (id={uuid})."
-            )));
+            return Ok(ToolOutcome::text(
+                ctx.loc
+                    .tf("notes.result.not_found", &[("id", &uuid.to_string())]),
+            ));
         }
         // Переэмбеддинг (best-effort): семантический поиск должен видеть новое содержимое.
         if let Ok(vecs) = ctx.embedder.embed(vec![content.clone()]).await
@@ -69,7 +68,9 @@ impl Tool for NoteRevise {
                 .db()
                 .note_vector_upsert(uuid, ctx.profile_id, &emb);
         }
-        let mut msg = format!("Заметка переписана (id={uuid}).");
+        let mut msg = ctx
+            .loc
+            .tf("tool.note_revise.result.done", &[("id", &uuid.to_string())]);
         // Предупреждение целостности графа: правка на месте не трогает связи, но если
         // изменился СМЫСЛ, входящие рёбра (напр. contradicts) могут стать неверными —
         // для смысловой переработки честнее note_supersede (сохранит замещённую
@@ -77,11 +78,10 @@ impl Tool for NoteRevise {
         if let Ok(links) = ctx.storage.db().note_link_count(ctx.profile_id, uuid)
             && links > 0
         {
-            msg.push_str(&format!(
-                "\n⚠ У заметки есть связи ({links}). Они не изменились вместе с текстом: \
-                 если смысл стал другим, входящие связи (например contradicts) могут \
-                 теперь лгать. Для смысловой переработки используй note_supersede — \
-                 он сохранит прежнюю версию как замещённую, к которой относились связи."
+            msg.push('\n');
+            msg.push_str(&ctx.loc.tf(
+                "tool.note_revise.warn.links",
+                &[("links", &links.to_string())],
             ));
         }
         Ok(ToolOutcome::text(msg))
@@ -102,37 +102,35 @@ impl Tool for NoteSupersede {
     fn ui_label(&self) -> &'static str {
         "заместить заметку"
     }
-    fn description(&self, _loc: &crate::shared::i18n::Locale) -> String {
-        "Заместить устаревшую заметку новой версией (по id из note_recall): создаётся \
-         новая заметка, старая помечается замещённой (скрывается из поиска, но \
-         хранится для следа изменения). Для простой правки на месте — note_revise."
-            .into()
+    fn description(&self, loc: &crate::shared::i18n::Locale) -> String {
+        loc.t("tool.note_supersede.desc").into()
     }
-    fn parameters(&self, _loc: &crate::shared::i18n::Locale) -> serde_json::Value {
+    fn parameters(&self, loc: &crate::shared::i18n::Locale) -> serde_json::Value {
         serde_json::json!({
             "type": "object",
             "properties": {
-                "old_id": {"type": "string", "description": "id замещаемой заметки"},
-                "content": {"type": "string", "description": "Содержимое новой версии"}
+                "old_id": {"type": "string", "description": loc.t("tool.note_supersede.param.old_id")},
+                "content": {"type": "string", "description": loc.t("tool.note_supersede.param.content")}
             },
             "required": ["old_id", "content"]
         })
     }
     async fn invoke(&self, ctx: &ToolContext, args: serde_json::Value) -> Result<ToolOutcome> {
-        let old_id = parse_id(&args, "old_id")?;
+        let old_id = parse_id(&args, "old_id", ctx.loc)?;
         let content = args
             .get("content")
             .and_then(|v| v.as_str())
-            .ok_or_else(|| anyhow::anyhow!("ожидается строковое поле content"))?
+            .ok_or_else(|| anyhow::anyhow!(ctx.loc.t("notes.err.content_string")))?
             .trim()
             .to_string();
         if content.is_empty() {
-            anyhow::bail!("content не может быть пустым");
+            anyhow::bail!(ctx.loc.t("notes.err.content_empty"));
         }
         if !ctx.storage.db().note_is_active(ctx.profile_id, old_id)? {
-            return Ok(ToolOutcome::text(format!(
-                "Заметка не найдена (id={old_id})."
-            )));
+            return Ok(ToolOutcome::text(
+                ctx.loc
+                    .tf("notes.result.not_found", &[("id", &old_id.to_string())]),
+            ));
         }
         // Новая версия наследует теги замещаемой (в т.ч. @self — иначе self-заметка
         // при замещении «выпала» бы в пользовательскую выдачу).
@@ -146,8 +144,12 @@ impl Tool for NoteSupersede {
         ctx.storage
             .db()
             .note_supersede_mark(ctx.profile_id, old_id, new_id)?;
-        Ok(ToolOutcome::text(format!(
-            "Заметка замещена: {old_id} → новая (id={new_id})."
+        Ok(ToolOutcome::text(ctx.loc.tf(
+            "tool.note_supersede.result.done",
+            &[
+                ("old_id", &old_id.to_string()),
+                ("new_id", &new_id.to_string()),
+            ],
         )))
     }
 }
@@ -166,18 +168,15 @@ impl Tool for NoteMerge {
     fn ui_label(&self) -> &'static str {
         "слить заметки"
     }
-    fn description(&self, _loc: &crate::shared::i18n::Locale) -> String {
-        "Свести несколько заметок (ids из note_recall) в одну: создаётся новая с \
-         объединённым содержимым, исходные помечаются замещёнными (скрываются, но \
-         хранятся). Используй для консолидации дублей/осколков по одной теме."
-            .into()
+    fn description(&self, loc: &crate::shared::i18n::Locale) -> String {
+        loc.t("tool.note_merge.desc").into()
     }
-    fn parameters(&self, _loc: &crate::shared::i18n::Locale) -> serde_json::Value {
+    fn parameters(&self, loc: &crate::shared::i18n::Locale) -> serde_json::Value {
         serde_json::json!({
             "type": "object",
             "properties": {
-                "ids": {"type": "array", "items": {"type": "string"}, "minItems": 2, "description": "id объединяемых заметок"},
-                "content": {"type": "string", "description": "Объединённое содержимое"}
+                "ids": {"type": "array", "items": {"type": "string"}, "minItems": 2, "description": loc.t("tool.note_merge.param.ids")},
+                "content": {"type": "string", "description": loc.t("tool.note_merge.param.content")}
             },
             "required": ["ids", "content"]
         })
@@ -186,11 +185,11 @@ impl Tool for NoteMerge {
         let content = args
             .get("content")
             .and_then(|v| v.as_str())
-            .ok_or_else(|| anyhow::anyhow!("ожидается строковое поле content"))?
+            .ok_or_else(|| anyhow::anyhow!(ctx.loc.t("notes.err.content_string")))?
             .trim()
             .to_string();
         if content.is_empty() {
-            anyhow::bail!("content не может быть пустым");
+            anyhow::bail!(ctx.loc.t("notes.err.content_empty"));
         }
         let ids: Vec<Uuid> = args
             .get("ids")
@@ -208,7 +207,7 @@ impl Tool for NoteMerge {
             .filter(|id| db.note_is_active(ctx.profile_id, *id).unwrap_or(false))
             .collect();
         if active.len() < 2 {
-            anyhow::bail!("нужно минимум две существующие заметки для объединения");
+            anyhow::bail!(ctx.loc.t("tool.note_merge.err.min_two"));
         }
         // Объединённая заметка наследует union тегов исходных (в т.ч. @self —
         // слияние self-заметок остаётся self-заметкой, скрытой из recall).
@@ -232,9 +231,12 @@ impl Tool for NoteMerge {
                 .db()
                 .note_links_retarget(ctx.profile_id, *old, new_id)?;
         }
-        Ok(ToolOutcome::text(format!(
-            "Объединено заметок: {} → новая (id={new_id}).",
-            active.len()
+        Ok(ToolOutcome::text(ctx.loc.tf(
+            "tool.note_merge.result.done",
+            &[
+                ("n", &active.len().to_string()),
+                ("new_id", &new_id.to_string()),
+            ],
         )))
     }
 }

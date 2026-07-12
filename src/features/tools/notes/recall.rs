@@ -17,14 +17,14 @@ impl Tool for NoteRecall {
     fn ui_label(&self) -> &'static str {
         "найти заметки"
     }
-    fn description(&self, _loc: &crate::shared::i18n::Locale) -> String {
-        "Найти ранее сохранённые заметки по тексту и/или тегам.".into()
+    fn description(&self, loc: &crate::shared::i18n::Locale) -> String {
+        loc.t("tool.note_recall.desc").into()
     }
-    fn parameters(&self, _loc: &crate::shared::i18n::Locale) -> serde_json::Value {
+    fn parameters(&self, loc: &crate::shared::i18n::Locale) -> serde_json::Value {
         serde_json::json!({
             "type": "object",
             "properties": {
-                "query": {"type": "string", "description": "Подстрока для поиска по содержимому"},
+                "query": {"type": "string", "description": loc.t("tool.note_recall.param.query")},
                 "tags": {"type": "array", "items": {"type": "string"}},
                 "limit": {"type": "integer", "minimum": 1}
             }
@@ -52,7 +52,7 @@ impl Tool for NoteRecall {
             None => list_user_notes(ctx, None, &tags, limit)?,
         };
 
-        let mut outcome = format_notes(&notes);
+        let mut outcome = format_notes(&notes, ctx.loc);
         // Spreading activation: подмешиваем связанные по графу заметки (Ярус 2),
         // чтобы припоминание поднимало кластер, а не одиночные атомы.
         if let Some(block) = related_block(ctx, &notes) {
@@ -93,9 +93,9 @@ pub(crate) fn related_block(ctx: &ToolContext, hits: &[Note]) -> Option<String> 
             // Кросс-органный сосед (наблюдение «о себе») помечается — так модель видит
             // связь заметки с наблюдением, не смешивая органы в общей выдаче.
             let mark = if is_self_note(&note) {
-                "[о себе] "
+                format!("{} ", ctx.loc.t("notes.mark.self"))
             } else {
-                ""
+                String::new()
             };
             lines.push(format!(
                 "- {arrow}{relation} {mark}(id={}) {}",
@@ -112,7 +112,11 @@ pub(crate) fn related_block(ctx: &ToolContext, hits: &[Note]) -> Option<String> 
     if lines.is_empty() {
         None
     } else {
-        Some(format!("\nСвязанные заметки:\n{}", lines.join("\n")))
+        Some(format!(
+            "\n{}:\n{}",
+            ctx.loc.t("notes.block.related"),
+            lines.join("\n")
+        ))
     }
 }
 
@@ -129,13 +133,20 @@ pub(crate) fn cited_sources_block(ctx: &ToolContext, note_ids: &[Uuid]) -> Optio
             .note_cited_sources(ctx.profile_id, *id)
             .unwrap_or_default();
         for s in srcs {
-            lines.push(format!("- (id={id}) → источник «{s}»"));
+            lines.push(ctx.loc.tf(
+                "notes.block.cited_sources.item",
+                &[("id", &id.to_string()), ("s", &s)],
+            ));
         }
     }
     if lines.is_empty() {
         None
     } else {
-        Some(format!("\nСсылки на источники:\n{}", lines.join("\n")))
+        Some(format!(
+            "\n{}:\n{}",
+            ctx.loc.t("notes.block.cited_sources"),
+            lines.join("\n")
+        ))
     }
 }
 
@@ -212,16 +223,22 @@ pub(crate) async fn semantic_recall(
 /// Наблюдения «о себе» (`@self`, попадают в выдачу лишь при `recall_includes_self` —
 /// Ярус 3, Путь 2) помечаются префиксом `[о себе]`, а служебный тег `@self` из
 /// показа тегов убирается (пометка его заменяет).
-pub(crate) fn format_notes(notes: &[Note]) -> ToolOutcome {
+pub(crate) fn format_notes(notes: &[Note], loc: &crate::shared::i18n::Locale) -> ToolOutcome {
     if notes.is_empty() {
-        return ToolOutcome::text("Заметки не найдены.");
+        return ToolOutcome::text(loc.t("tool.note_recall.result.empty"));
     }
-    let mut out = format!("Найдено заметок: {}\n", notes.len());
+    let mut out = format!(
+        "{}\n",
+        loc.tf(
+            "tool.note_recall.result.header",
+            &[("n", &notes.len().to_string())]
+        )
+    );
     for n in notes {
         let mark = if is_self_note(n) {
-            "[о себе] "
+            format!("{} ", loc.t("notes.mark.self"))
         } else {
-            ""
+            String::new()
         };
         out.push_str(&format!("- (id={}) {mark}{}", n.id, n.content));
         // Служебный тег @self скрываем — его роль играет пометка [о себе].
