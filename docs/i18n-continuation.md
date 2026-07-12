@@ -46,12 +46,13 @@
 
 ## Порядок групп (из docs/i18n.md)
 
-> **Статус: группа 2a СДЕЛАНА** (ветка `feat/i18n-tools-notes`, 992 юнит-теста, живой
-> GO — `self_model_gate_en_e2e_live`). Следующие — 2b (rag+web+fetch), 2c (остальное).
-> Все три подводных камня ниже относятся к 2a — учтены (заголовки блоков `overview.rs`
-> на ключах, согласованы с промптами; ворота `add_insight` в `self_model.rs` на ключе
-> `tool.add_insight.gate.similar`; `present.rs::parse_console` — камень **2c**, python
-> ещё не трогали).
+> **Статус: группы 2a + 2b СДЕЛАНЫ.** 2a — ветка `feat/i18n-tools-notes` (влита),
+> живой GO `self_model_gate_en_e2e_live`. 2b — ветка `feat/i18n-tools-rag-web`, живой
+> смоук `rag_en_e2e_live`. Осталась **2c** (introspection + fs + python + calc +
+> datetime + subagent + control). **Камень 2c:** `present.rs::parse_console` парсит
+> вывод python по русским меткам («код возврата:»/«stdout:»/«stderr:») — при
+> локализации меток в `python.rs::format_output_parts` синхронно править парсер (или
+> держать метки на общих ключах). Проверить тестом.
 
 ### 2a — notes + self_model (самое ценное и связанное) — СДЕЛАНО
 Файлы: `src/features/tools/notes/{save,recall,edit,graph,cite,overview}.rs` (9
@@ -72,10 +73,14 @@ update_self_model/update_user_model/add_insight).
   `cited_sources_block`), показываются и в `note_recall`, и в `get_self_model`
   (`render_self_read`).
 
-### 2b — rag + web + fetch
-`src/features/tools/{rag,web,fetch}.rs`. `fetch.rs` — промпт саммаризации (system +
-задача с/без focus) + описание. `web.rs` — блок «Содержимое:». `rag.rs` — rag_add/
-rag_search результаты.
+### 2b — rag + web + fetch — СДЕЛАНО
+(ветка `feat/i18n-tools-rag-web`.) `rag.rs` (rag_add/rag_search: описания/схемы/
+результаты/блок «Заметки со ссылкой…»/`[о себе]` через общий `notes.mark.self`),
+`web.rs` (web_search: описание/`fetch_content`/заголовок «Результаты поиска (N):»/
+«Содержимое:»/ошибки провайдеров — `fetch` получил параметр `loc`), `fetch.rs`
+(fetch_url: описание/параметры/промпт саммаризации system+task с/без focus/ошибки
+загрузки — `fetch_text` получил `loc`). Все результаты/ошибки, уходящие модели,
+локализованы; `ui_label` и tracing-логи — русские (ось B / логи, §2.3).
 
 ### 2c — introspection + fs + python + utilities + control + subagent
 `src/features/tools/{introspection,fs,python,calc,datetime,subagent,control}.rs`.

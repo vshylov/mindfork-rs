@@ -172,12 +172,19 @@ impl WebSearch {
 
     /// Один HTTP-запрос к провайдеру: `Ok(Some(html))` — нормальная страница;
     /// `Ok(None)` — анти-бот троттлинг (202/anomaly/403/429); `Err` — сеть/прочий HTTP.
-    async fn fetch(&self, provider: &Provider, query: &str) -> Result<Option<String>> {
+    /// `loc` — язык каркаса для текстов ошибок (уходят модели при полном отказе).
+    async fn fetch(
+        &self,
+        provider: &Provider,
+        query: &str,
+        loc: &crate::shared::i18n::Locale,
+    ) -> Result<Option<String>> {
         let req = match provider.method {
             Method::PostForm => self.http.post(provider.url).form(&[("q", query)]),
             Method::GetQuery => {
-                let mut url = reqwest::Url::parse(provider.url)
-                    .with_context(|| format!("разбор URL {}", provider.name))?;
+                let mut url = reqwest::Url::parse(provider.url).with_context(|| {
+                    loc.tf("tool.web_search.err.url_parse", &[("name", provider.name)])
+                })?;
                 url.query_pairs_mut().append_pair("q", query);
                 self.http.get(url)
             }
@@ -186,17 +193,20 @@ impl WebSearch {
             .header(reqwest::header::USER_AGENT, USER_AGENT)
             .send()
             .await
-            .with_context(|| format!("запрос к {}", provider.name))?;
+            .with_context(|| loc.tf("tool.web_search.err.request", &[("name", provider.name)]))?;
         let status = resp.status();
         let body = resp
             .text()
             .await
-            .with_context(|| format!("чтение ответа {}", provider.name))?;
+            .with_context(|| loc.tf("tool.web_search.err.read", &[("name", provider.name)]))?;
         if is_throttled(status, &body) {
             return Ok(None);
         }
         if !status.is_success() {
-            anyhow::bail!("{} вернул статус {status}", provider.name);
+            anyhow::bail!(loc.tf(
+                "tool.web_search.err.status",
+                &[("name", provider.name), ("status", &status.to_string())]
+            ));
         }
         Ok(Some(body))
     }
@@ -403,13 +413,10 @@ impl Tool for WebSearch {
     fn gate(&self) -> Option<crate::features::tools::meta::ToolGate> {
         Some(crate::features::tools::meta::ToolGate::Web)
     }
-    fn description(&self, _loc: &crate::shared::i18n::Locale) -> String {
-        "Искать в интернете. Возвращает заголовки, ссылки, сниппеты и (по умолчанию) \
-         извлечённый текст страниц, переупорядоченный по релевантности запросу. \
-         Передай fetch_content=false для быстрого поиска без загрузки страниц."
-            .into()
+    fn description(&self, loc: &crate::shared::i18n::Locale) -> String {
+        loc.t("tool.web_search.desc").into()
     }
-    fn parameters(&self, _loc: &crate::shared::i18n::Locale) -> serde_json::Value {
+    fn parameters(&self, loc: &crate::shared::i18n::Locale) -> serde_json::Value {
         serde_json::json!({
             "type": "object",
             "properties": {
@@ -417,7 +424,7 @@ impl Tool for WebSearch {
                 "max_results": {"type": "integer", "minimum": 1, "maximum": MAX_RESULTS_CAP},
                 "fetch_content": {
                     "type": "boolean",
-                    "description": "Загружать страницы, извлекать текст и переупорядочивать по релевантности (по умолчанию true)."
+                    "description": loc.t("tool.web_search.param.fetch_content")
                 }
             },
             "required": ["query"]
@@ -428,7 +435,7 @@ impl Tool for WebSearch {
             .get("query")
             .and_then(|v| v.as_str())
             .filter(|s| !s.trim().is_empty())
-            .ok_or_else(|| anyhow::anyhow!("ожидается непустое поле query"))?;
+            .ok_or_else(|| anyhow::anyhow!(ctx.loc.t("tool.web_search.err.query_empty")))?;
         let max = args
             .get("max_results")
             .and_then(|v| v.as_u64())
@@ -448,7 +455,7 @@ impl Tool for WebSearch {
         let mut last_err: Option<anyhow::Error> = None;
         let mut results = Vec::new();
         for provider in PROVIDERS {
-            match self.fetch(provider, query).await {
+            match self.fetch(provider, query, ctx.loc).await {
                 Ok(Some(html)) => {
                     got_clean_page = true;
                     let r = parse_results(
@@ -479,18 +486,19 @@ impl Tool for WebSearch {
         if results.is_empty() {
             if got_clean_page {
                 // Нормальная страница без результатов — это действительно пусто.
-                return Ok(ToolOutcome::text("Поиск не дал результатов."));
+                return Ok(ToolOutcome::text(
+                    ctx.loc.t("tool.web_search.result.no_results"),
+                ));
             }
             // Ни один провайдер не отдал нормальную страницу: троттлинг и/или
             // сетевые ошибки. Возвращаем ошибку (а не «нет результатов»), чтобы
             // модель повторила запрос позже, а не сообщила, что ничего не нашла.
             if let Some(err) = last_err {
-                return Err(err.context("все поисковые провайдеры недоступны"));
+                return Err(
+                    err.context(ctx.loc.t("tool.web_search.err.all_unavailable").to_string())
+                );
             }
-            anyhow::bail!(
-                "Поиск временно недоступен: все поисковики включили анти-бот троттлинг. \
-                 Повтори запрос через несколько секунд."
-            );
+            anyhow::bail!(ctx.loc.t("tool.web_search.err.throttled"));
         }
         // Извлечение контента + реранкинг (если не отключено аргументом).
         // Загрузка страниц и эмбеддинги — «лучшее усилие»: при сбое остаётся
@@ -500,14 +508,22 @@ impl Tool for WebSearch {
             rerank_by_embeddings(ctx.embedder.as_ref(), query, &mut results).await;
         }
 
-        let mut out = format!("Результаты поиска ({}):\n", results.len());
+        let mut out = format!(
+            "{}\n",
+            ctx.loc.tf(
+                "tool.web_search.result.header",
+                &[("n", &results.len().to_string())]
+            )
+        );
         for (i, r) in results.iter().enumerate() {
             out.push_str(&format!("{}. {} — {}\n", i + 1, r.title, r.url));
             if !r.snippet.is_empty() {
                 out.push_str(&format!("   {}\n", r.snippet));
             }
             if !r.content.is_empty() {
-                out.push_str("   Содержимое:\n");
+                out.push_str("   ");
+                out.push_str(ctx.loc.t("tool.web_search.result.content_label"));
+                out.push('\n');
                 out.push_str(&r.content);
                 out.push('\n');
             }
@@ -629,6 +645,22 @@ fn collapse_ws(s: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn web_search_description_is_localized() {
+        // Описание web_search различно на ru/en (ловит забытый `_loc`), en без
+        // кириллицы. §3.5 docs/i18n.md.
+        use crate::shared::i18n::{Lang, locale};
+        let tool = WebSearch::new(true);
+        let (ru, en) = (locale(Lang::Ru), locale(Lang::En));
+        assert_ne!(tool.description(ru), tool.description(en));
+        let e = tool.description(en);
+        assert!(
+            !e.chars()
+                .any(|c| ('а'..='я').contains(&c) || ('А'..='Я').contains(&c)),
+            "кириллица в en-описании: {e}"
+        );
+    }
 
     const FIXTURE: &str = r#"
         <html><body><table>

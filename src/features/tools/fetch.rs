@@ -49,8 +49,9 @@ impl FetchUrl {
         Self { http }
     }
 
-    /// Загружает страницу и извлекает читаемый текст. Ошибка → понятное сообщение.
-    async fn fetch_text(&self, url: &str) -> Result<String> {
+    /// Загружает страницу и извлекает читаемый текст. Ошибка → понятное сообщение
+    /// (на языке каркаса `loc` — уходит модели в результате `fetch_url`).
+    async fn fetch_text(&self, url: &str, loc: &crate::shared::i18n::Locale) -> Result<String> {
         let resp = self
             .http
             .get(url)
@@ -59,10 +60,13 @@ impl FetchUrl {
             .header(reqwest::header::ACCEPT_LANGUAGE, ACCEPT_LANGUAGE)
             .send()
             .await
-            .with_context(|| format!("запрос к {url}"))?;
+            .with_context(|| loc.tf("tool.fetch_url.err.request", &[("url", url)]))?;
         let status = resp.status();
         if !status.is_success() {
-            anyhow::bail!("страница вернула статус {status}");
+            anyhow::bail!(loc.tf(
+                "tool.fetch_url.err.status",
+                &[("status", &status.to_string())]
+            ));
         }
         // Content-Type читаем ДО поглощения тела (`resp.text()` забирает resp).
         let content_type = resp
@@ -71,9 +75,12 @@ impl FetchUrl {
             .and_then(|v| v.to_str().ok())
             .unwrap_or("")
             .to_string();
-        let body = resp.text().await.with_context(|| format!("чтение {url}"))?;
+        let body = resp
+            .text()
+            .await
+            .with_context(|| loc.tf("tool.fetch_url.err.read", &[("url", url)]))?;
         body_to_text(&content_type, &body)
-            .ok_or_else(|| anyhow::anyhow!("со страницы не удалось извлечь читаемый текст"))
+            .ok_or_else(|| anyhow::anyhow!(loc.t("tool.fetch_url.err.no_text").to_string()))
     }
 }
 
@@ -118,24 +125,21 @@ impl Tool for FetchUrl {
     fn gate(&self) -> Option<crate::features::tools::meta::ToolGate> {
         Some(crate::features::tools::meta::ToolGate::Web)
     }
-    fn description(&self, _loc: &crate::shared::i18n::Locale) -> String {
-        "Загрузить веб-страницу по URL и вернуть её краткое содержание. Передай focus, \
-         чтобы сосредоточиться на конкретном вопросе. summarize=false вернёт извлечённый \
-         текст без саммаризации."
-            .into()
+    fn description(&self, loc: &crate::shared::i18n::Locale) -> String {
+        loc.t("tool.fetch_url.desc").into()
     }
-    fn parameters(&self, _loc: &crate::shared::i18n::Locale) -> serde_json::Value {
+    fn parameters(&self, loc: &crate::shared::i18n::Locale) -> serde_json::Value {
         serde_json::json!({
             "type": "object",
             "properties": {
-                "url": {"type": "string", "description": "Адрес страницы (http/https)"},
+                "url": {"type": "string", "description": loc.t("tool.fetch_url.param.url")},
                 "focus": {
                     "type": "string",
-                    "description": "На чём сосредоточиться при саммаризации (необязательно)"
+                    "description": loc.t("tool.fetch_url.param.focus")
                 },
                 "summarize": {
                     "type": "boolean",
-                    "description": "Саммаризировать моделью (по умолчанию true); false — вернуть извлечённый текст"
+                    "description": loc.t("tool.fetch_url.param.summarize")
                 }
             },
             "required": ["url"]
@@ -147,9 +151,9 @@ impl Tool for FetchUrl {
             .and_then(|v| v.as_str())
             .map(str::trim)
             .filter(|s| !s.is_empty())
-            .ok_or_else(|| anyhow::anyhow!("ожидается непустое поле url"))?;
+            .ok_or_else(|| anyhow::anyhow!(ctx.loc.t("tool.fetch_url.err.url_empty")))?;
         if !(url.starts_with("http://") || url.starts_with("https://")) {
-            anyhow::bail!("url должен начинаться с http:// или https://");
+            anyhow::bail!(ctx.loc.t("tool.fetch_url.err.url_scheme"));
         }
         let focus = args
             .get("focus")
@@ -161,18 +165,20 @@ impl Tool for FetchUrl {
             .and_then(|v| v.as_bool())
             .unwrap_or(true);
 
-        let text = match self.fetch_text(url).await {
+        let text = match self.fetch_text(url, ctx.loc).await {
             Ok(t) => t,
             Err(err) => {
-                return Ok(ToolOutcome::text(format!(
-                    "Не удалось загрузить {url}: {err}"
+                return Ok(ToolOutcome::text(ctx.loc.tf(
+                    "tool.fetch_url.result.fetch_failed",
+                    &[("url", url), ("err", &err.to_string())],
                 )));
             }
         };
 
         if !summarize {
             return Ok(ToolOutcome::text(format!(
-                "Содержимое {url}:\n{}",
+                "{}\n{}",
+                ctx.loc.tf("tool.fetch_url.result.content", &[("url", url)]),
                 truncate_chars(&text, MAX_CONTENT_CHARS)
             )));
         }
@@ -182,7 +188,9 @@ impl Tool for FetchUrl {
             // Саммаризация не удалась/пуста → отдаём извлечённый текст (мягкая
             // деградация: модель всё равно получит контент страницы).
             _ => Ok(ToolOutcome::text(format!(
-                "Содержимое {url} (саммаризация недоступна):\n{}",
+                "{}\n{}",
+                ctx.loc
+                    .tf("tool.fetch_url.result.content_no_summary", &[("url", url)]),
                 truncate_chars(&text, MAX_CONTENT_CHARS)
             ))),
         }
@@ -197,16 +205,16 @@ async fn summarize_text(
     focus: Option<&str>,
     text: &str,
 ) -> Result<String> {
-    let system = "Ты кратко и точно пересказываешь содержимое веб-страниц. Выдели \
-         главное по существу, без воды и домыслов. Если в тексте нет ответа — скажи об этом."
-        .to_string();
+    let system = ctx.loc.t("tool.fetch_url.summarize.system").to_string();
     let task = match focus {
-        Some(f) => {
-            format!("Страница: {url}\n\nСосредоточься на вопросе: {f}\n\nТекст страницы:\n{text}")
-        }
-        None => {
-            format!("Страница: {url}\n\nКратко перескажи содержимое.\n\nТекст страницы:\n{text}")
-        }
+        Some(f) => ctx.loc.tf(
+            "tool.fetch_url.summarize.task_focus",
+            &[("url", url), ("f", f), ("text", text)],
+        ),
+        None => ctx.loc.tf(
+            "tool.fetch_url.summarize.task",
+            &[("url", url), ("text", text)],
+        ),
     };
 
     let sampling = SamplingConfig {
@@ -246,7 +254,7 @@ async fn summarize_text(
         Ok(res) => res,
         Err(_) => {
             cancel.cancel();
-            anyhow::bail!("саммаризация превысила лимит времени");
+            anyhow::bail!(ctx.loc.t("tool.fetch_url.err.summary_timeout"));
         }
     }
 }
@@ -288,6 +296,26 @@ mod tests {
         let (dir, _storage, ctx) =
             super::super::testkit::ctx_with_backends(Uuid::new_v4(), engine, embedder);
         (dir, ctx)
+    }
+
+    #[test]
+    fn fetch_url_description_and_summary_system_localized() {
+        // Описание и системный промпт саммаризации локализованы (en≠ru, без
+        // кириллицы). §3.5 docs/i18n.md.
+        use crate::shared::i18n::{Lang, locale};
+        let tool = FetchUrl::new();
+        let (ru, en) = (locale(Lang::Ru), locale(Lang::En));
+        let no_cyr = |s: &str| {
+            !s.chars()
+                .any(|c| ('а'..='я').contains(&c) || ('А'..='Я').contains(&c))
+        };
+        assert_ne!(tool.description(ru), tool.description(en));
+        assert!(no_cyr(&tool.description(en)));
+        assert_ne!(
+            ru.t("tool.fetch_url.summarize.system"),
+            en.t("tool.fetch_url.summarize.system")
+        );
+        assert!(no_cyr(en.t("tool.fetch_url.summarize.system")));
     }
 
     #[tokio::test]
