@@ -97,7 +97,7 @@ pub enum ChatIntent {
     SetMouseCapture(bool),
     /// Записать текст в системный буфер обмена (`Ctrl+C` копировать / `Ctrl+X`
     /// вырезать выделение поля ввода). Side-effect UI-слоя — `runtime` пишет через
-    /// `arboard` (не идёт в оркестратор: текст уже у UI). См. docs/input-selection-undo-mouse.md §B.
+    /// `arboard` (не идёт в оркестратор: текст уже у UI). См. docs/history/input-selection-undo-mouse.md §B.
     CopyToClipboard(String),
 }
 

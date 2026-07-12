@@ -177,7 +177,7 @@ impl ChatListState {
         if ctrl && let KeyCode::Char(c) = key.code {
             return match keys::physical_char(c) {
                 // Выход работает и из списка чатов; переехал на Ctrl+Q/F10 (Ctrl+C
-                // освобождён). См. docs/input-selection-undo-mouse.md §B.
+                // освобождён). См. docs/history/input-selection-undo-mouse.md §B.
                 'q' => ChatListAction::Quit,
                 'n' => ChatListAction::New,
                 'd' => match self.selected_id() {

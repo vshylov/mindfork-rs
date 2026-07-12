@@ -4055,7 +4055,7 @@ web-поиск и Python под выключателями, экран наст�
 
 ### Пост-M9: доводка markdown-рендера (LaTeX + writer + кэш ленты) (сделано)
 - Шесть сфокусированных этапов по плану
-  [docs/markdown-refinements.md](docs/markdown-refinements.md) (ветка
+  [docs/history/markdown-refinements.md](docs/history/markdown-refinements.md) (ветка
   `feat/markdown-refinements`, коммит на этап): дефекты walker'а событий, зазоры
   unicode-аппроксимации LaTeX на реальном выводе LLM, ложные срабатывания
   math-расширения и отсутствие кэша рендера в ленте. Только `shared/markdown/`
@@ -4215,7 +4215,7 @@ web-поиск и Python под выключателями, экран наст�
 
 ### Пост-M9: InputBox — выделение текста (этап A плана п.8–10) (сделано)
 - Первый из четырёх этапов направления «выделение/undo/мышь»
-  ([docs/input-selection-undo-mouse.md](docs/input-selection-undo-mouse.md), этап A);
+  ([docs/history/input-selection-undo-mouse.md](docs/history/input-selection-undo-mouse.md), этап A);
   ветка `feat/input-selection`. **Только виджет** `widgets/input_box.rs` (+ тесты) —
   выделение теперь доступно **всем пяти** потребителям `InputBox` (чат, переименование
   чата, поля настроек, редактор модели себя, поиск) через общий `on_key`. Копирование/
@@ -4259,7 +4259,7 @@ web-поиск и Python под выключателями, экран наст�
 
 ### Пост-M9: InputBox — копирование/вырезание + перенос выхода (этап B п.8–10) (сделано)
 - Второй этап направления «выделение/undo/мышь»
-  ([docs/input-selection-undo-mouse.md](docs/input-selection-undo-mouse.md), этап B);
+  ([docs/history/input-selection-undo-mouse.md](docs/history/input-selection-undo-mouse.md), этап B);
   ветка `feat/input-clipboard`. Опирается на этап A (выделение). Развилки решены
   пользователем: `Ctrl+C` копировать / `Ctrl+X` вырезать; **выход переезжает с
   `Ctrl+C` на `Ctrl+Q` + `F10`** (`Ctrl+C` освобождён); `Ctrl+K` заменяется общим
@@ -4305,7 +4305,7 @@ web-поиск и Python под выключателями, экран наст�
 
 ### Пост-M9: InputBox — отмена/повтор (этап C п.8–10) (сделано)
 - Третий этап направления «выделение/undo/мышь»
-  ([docs/input-selection-undo-mouse.md](docs/input-selection-undo-mouse.md), этап C);
+  ([docs/history/input-selection-undo-mouse.md](docs/history/input-selection-undo-mouse.md), этап C);
   ветка `feat/input-undo`. **Только виджет** `widgets/input_box.rs` + консьюмеры
   (замена `Ctrl+K`). Общая модель отмены во **всех пяти** потребителях `InputBox`.
 - **Модель — стек снимков** `(строки, курсор)` с коалесингом (не операционные записи —
@@ -4349,7 +4349,7 @@ web-поиск и Python под выключателями, экран наст�
 
 ### Пост-M9: InputBox — мышь в поле (этап D п.8–10) (сделано)
 - Финальный этап направления «выделение/undo/мышь»
-  ([docs/input-selection-undo-mouse.md](docs/input-selection-undo-mouse.md), этап D);
+  ([docs/history/input-selection-undo-mouse.md](docs/history/input-selection-undo-mouse.md), этап D);
   ветка `feat/input-mouse` (от `feat/input-undo`). Опирается на этап A (драг растит
   выделение). Клик левой кнопкой в поле ввода **чата** ставит курсор, драг — выделяет.
   **Только при захвате мыши `Ctrl+W`** (иначе crossterm событий мыши не получает —
@@ -4394,7 +4394,7 @@ web-поиск и Python под выключателями, экран наст�
   направления (A–D). **Направление «выделение/undo/мышь» (этапы A–D) завершено.**
 
 ### Пост-M9: перенос строки на unix-терминалах — kitty-протокол + Alt+Enter (п.11 аудита) (сделано)
-- Закрыт **п.11 аудита InputBox** (задел из docs/input-selection-undo-mouse.md §9):
+- Закрыт **п.11 аудита InputBox** (задел из docs/history/input-selection-undo-mouse.md §9):
   на «голом» unix-терминале legacy-кодировка шлёт для `Shift+Enter` и `Enter` **один и
   тот же CR**, поэтому перенос строки в поле ввода там был недоступен вовсе (Windows не
   затронут — Console API сообщает модификаторы). Слой runtime, не виджет.
@@ -4423,7 +4423,7 @@ web-поиск и Python под выключателями, экран наст�
   `Shift+Enter` и так работает, так что overlap безвреден.
 - **Доки**: spec §11.5 (протокол + `Alt+Enter`) и §11.7 (таблица клавиш), README,
   оверлей помощи (`F1`/`?`: «Shift+Enter / Alt+Enter — перенос строки»),
-  docs/input-selection-undo-mouse.md §9 (задел закрыт).
+  docs/history/input-selection-undo-mouse.md §9 (задел закрыт).
 - **Тесты**: чат (`shift_and_alt_enter_insert_newline_not_send` — оба переносят,
   голый Enter шлёт весь многострочный ввод), настройки
   (`alt_enter_also_inserts_newline_in_multiline_editor`), модель себя

@@ -69,7 +69,7 @@
 - Горизонтальный скролл широких таблиц (вместо клипа) — возможная доработка;
   текущий клип достаточен.
 - **Доводка LaTeX-аппроксимации и writer'а (2026-07, сделано)** — план
-  [docs/markdown-refinements.md](../markdown-refinements.md):
+  [docs/history/markdown-refinements.md](../history/markdown-refinements.md):
   - **Окружения** `\begin{…}…\end{…}` (aligned/cases/pmatrix/…) снимаются; `\\` →
     перенос строки (по режиму: блочная `$$…$$` — реальный, строчная `$…$` — «; »),
     `&` (выравнивание) и служебные `\label{…}`/`\hline`/`\notag`/… удаляются. Введён

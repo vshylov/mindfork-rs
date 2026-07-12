@@ -69,7 +69,7 @@ impl ChatScreen {
         {
             match keys::physical_char(c) {
                 // Выход переехал на Ctrl+Q/F10 (F10 — в матче кодов ниже); Ctrl+C
-                // освобождён под копирование. См. docs/input-selection-undo-mouse.md §B.
+                // освобождён под копирование. См. docs/history/input-selection-undo-mouse.md §B.
                 'q' => return Some(ChatIntent::Quit),
                 // Копировать выделение в буфер обмена (Ctrl+C). Запись — side-effect
                 // runtime (`AppCommand` не нужен, текст у UI). Без выделения — no-op.

@@ -17,7 +17,7 @@ impl SettingsScreen {
         // Выход из приложения (`Ctrl+Q`/`F10`), откуда угодно на экране настроек (в
         // т.ч. из редактора поля). Ctrl+Q матчим по «физической» латинской клавише —
         // работает при любой раскладке (см. shared::keys). Выход переехал с `Ctrl+C`
-        // (освобождён), см. docs/input-selection-undo-mouse.md §B.
+        // (освобождён), см. docs/history/input-selection-undo-mouse.md §B.
         if key.code == KeyCode::F(10)
             || (key.modifiers.contains(KeyModifiers::CONTROL)
                 && matches!(key.code, KeyCode::Char(c) if keys::physical_char(c) == 'q'))
