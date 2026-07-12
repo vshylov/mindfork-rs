@@ -44,13 +44,13 @@ impl Tool for GetSampling {
     fn ui_label(&self) -> &'static str {
         "показать семплинг"
     }
-    fn description(&self) -> String {
+    fn description(&self, _loc: &crate::shared::i18n::Locale) -> String {
         format!(
             "Вернуть текущие параметры семплинга. {}",
             scope_note(self.provider)
         )
     }
-    fn parameters(&self) -> serde_json::Value {
+    fn parameters(&self, _loc: &crate::shared::i18n::Locale) -> serde_json::Value {
         empty_object()
     }
     async fn invoke(&self, ctx: &ToolContext, _args: serde_json::Value) -> Result<ToolOutcome> {
@@ -85,14 +85,14 @@ impl Tool for SetSampling {
     fn ui_label(&self) -> &'static str {
         "изменить семплинг"
     }
-    fn description(&self) -> String {
+    fn description(&self, _loc: &crate::shared::i18n::Locale) -> String {
         format!(
             "Изменить параметры семплинга чата. Указанные поля переопределяют текущие; \
              применяется со следующего ответа. {}",
             scope_note(self.provider)
         )
     }
-    fn parameters(&self) -> serde_json::Value {
+    fn parameters(&self, _loc: &crate::shared::i18n::Locale) -> serde_json::Value {
         // Схема несёт только поля, принимаемые движком текущего режима.
         let supported = supported_sampling_fields(self.provider);
         let mut props = serde_json::Map::new();
@@ -229,10 +229,10 @@ impl Tool for GetSystemMessage {
     fn ui_label(&self) -> &'static str {
         "показать сис. сообщение"
     }
-    fn description(&self) -> String {
+    fn description(&self, _loc: &crate::shared::i18n::Locale) -> String {
         "Вернуть текущее системное сообщение чата.".into()
     }
-    fn parameters(&self) -> serde_json::Value {
+    fn parameters(&self, _loc: &crate::shared::i18n::Locale) -> serde_json::Value {
         empty_object()
     }
     async fn invoke(&self, ctx: &ToolContext, _args: serde_json::Value) -> Result<ToolOutcome> {
@@ -254,10 +254,10 @@ impl Tool for SetSystemMessage {
     fn ui_label(&self) -> &'static str {
         "изменить сис. сообщение"
     }
-    fn description(&self) -> String {
+    fn description(&self, _loc: &crate::shared::i18n::Locale) -> String {
         "Изменить системное сообщение чата. Применяется со следующего ответа.".into()
     }
-    fn parameters(&self) -> serde_json::Value {
+    fn parameters(&self, _loc: &crate::shared::i18n::Locale) -> serde_json::Value {
         serde_json::json!({
             "type": "object",
             "properties": {"system_message": {"type": "string"}},
@@ -291,10 +291,10 @@ impl Tool for GetLastUserMessageTime {
     fn ui_label(&self) -> &'static str {
         "время посл. сообщения"
     }
-    fn description(&self) -> String {
+    fn description(&self, _loc: &crate::shared::i18n::Locale) -> String {
         "Вернуть время последнего сообщения пользователя (ISO 8601) и сколько прошло.".into()
     }
-    fn parameters(&self) -> serde_json::Value {
+    fn parameters(&self, _loc: &crate::shared::i18n::Locale) -> serde_json::Value {
         empty_object()
     }
     async fn invoke(&self, ctx: &ToolContext, _args: serde_json::Value) -> Result<ToolOutcome> {
@@ -502,7 +502,8 @@ mod tests {
     #[test]
     fn set_sampling_schema_reflects_mode() {
         // Локально — полная схема (все настраиваемые поля).
-        let local = SetSampling::new(None).parameters();
+        let local = SetSampling::new(None)
+            .parameters(crate::shared::i18n::locale(crate::shared::i18n::Lang::Ru));
         let local_props = local["properties"].as_object().unwrap();
         assert_eq!(
             local_props.len(),
@@ -510,7 +511,8 @@ mod tests {
         );
         assert!(local_props.contains_key("top_k"));
         // Claude — max_tokens + reasoning (thinking/reasoning_effort), но не расширения.
-        let claude = SetSampling::new(Some(CloudProvider::Claude)).parameters();
+        let claude = SetSampling::new(Some(CloudProvider::Claude))
+            .parameters(crate::shared::i18n::locale(crate::shared::i18n::Lang::Ru));
         let claude_props = claude["properties"].as_object().unwrap();
         assert!(claude_props.contains_key("max_tokens"));
         assert!(claude_props.contains_key("thinking"));

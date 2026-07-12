@@ -60,12 +60,12 @@ impl Tool for CallSubagent {
     fn ui_label(&self) -> &'static str {
         "запрос суб-агенту"
     }
-    fn description(&self) -> String {
+    fn description(&self, _loc: &crate::shared::i18n::Locale) -> String {
         "Спросить независимого саб-агента (с заданным ему системным сообщением) для \
          альтернативного мнения. У саб-агента нет истории этого чата и нет инструментов."
             .into()
     }
-    fn parameters(&self) -> serde_json::Value {
+    fn parameters(&self, _loc: &crate::shared::i18n::Locale) -> serde_json::Value {
         serde_json::json!({
             "type": "object",
             "properties": {

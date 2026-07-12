@@ -30,6 +30,19 @@ impl SettingsScreen {
                 let opts: Vec<String> = self.profiles.iter().map(|p| p.name.clone()).collect();
                 (!opts.is_empty()).then_some((opts, self.profile_idx))
             }
+            // Язык каркаса профиля (ось A): варианты — все вшитые языки.
+            FieldId::PLanguage => {
+                let p = self.profiles.get(self.profile_idx)?;
+                let opts: Vec<String> = crate::shared::i18n::Lang::ALL
+                    .iter()
+                    .map(|l| l.label().to_string())
+                    .collect();
+                let cur = crate::shared::i18n::Lang::ALL
+                    .iter()
+                    .position(|l| *l == p.language)
+                    .unwrap_or(0);
+                Some((opts, cur))
+            }
             _ => None,
         }
     }
@@ -93,7 +106,11 @@ impl SettingsScreen {
     /// Поля текущей секции/подсекции, построенные из **дефолтного** конфига (для
     /// маркера «изменено» и сброса). Профили — те же (у них нет config-дефолта).
     pub(super) fn default_fields(&self) -> Vec<FieldRow> {
-        let mut tmp = SettingsScreen::new(AppConfig::default(), self.profiles.clone());
+        let mut tmp = SettingsScreen::new(
+            AppConfig::default(),
+            self.profiles.clone(),
+            self.language_locked.clone(),
+        );
         tmp.section_idx = self.section_idx;
         tmp.model_sub = self.model_sub;
         tmp.sampling_sub = self.sampling_sub;

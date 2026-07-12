@@ -181,6 +181,12 @@ impl Orchestrator {
             return;
         };
         let profile_id = chat_ref.profile_id;
+        let profile_lang = self
+            .profiles
+            .iter()
+            .find(|p| p.id == profile_id)
+            .map(|p| p.language)
+            .unwrap_or_default();
         let enabled = self
             .profiles
             .iter()
@@ -195,7 +201,9 @@ impl Orchestrator {
             self.config.tools.fs_enabled,
             self.config.engine.mode.cloud_provider(),
         );
-        let schemas = self.registry.schemas_for(&allowed);
+        let schemas = self
+            .registry
+            .schemas_for(&allowed, crate::shared::i18n::locale(profile_lang));
 
         // «Модель себя» профиля на начало хода. Инъекция в системный промпт — только
         // если профиль включил get_self_model (opt-in); сама инъекция (наблюдения по
@@ -238,6 +246,7 @@ impl Orchestrator {
                 system_message: chat.system_message.clone(),
                 effective_sampling: sampling,
                 last_user_message_at: last_user_message_at(chat),
+                lang: profile_lang,
             };
             ctx = ToolContext::new(
                 self.tool_deps(backend.clone()),
@@ -412,6 +421,7 @@ fn spawn_generation(spawn: GenSpawn) {
                 &self_model_params,
                 chrono::Utc::now(),
                 &recent,
+                ctx.loc,
             );
         }
         // Оценка токенов промпта (после инъекции модели себя) — точное число придёт из
@@ -828,6 +838,7 @@ pub(super) async fn injection_recent(
 /// `get_self_model`) либо подмешивать нечего (пустая модель и протокол выключен).
 /// Протокол подмешивается даже при пустой модели — чтобы модель начала её вести.
 /// Чистая функция — тестируема без движка.
+#[allow(clippy::too_many_arguments)]
 pub(super) fn inject_self_model(
     system: Option<String>,
     model: Option<&crate::entities::self_model::SelfModel>,
@@ -836,6 +847,7 @@ pub(super) fn inject_self_model(
     params: &crate::entities::self_model::SelfModelParams,
     now: chrono::DateTime<chrono::Utc>,
     recent: &[crate::entities::self_model::NarrativeSegment],
+    loc: &crate::shared::i18n::Locale,
 ) -> Option<String> {
     if !enabled {
         return system;
@@ -851,7 +863,13 @@ pub(super) fn inject_self_model(
             &empty
         }
     };
-    let block = m.render_for_prompt(params.prompt_cap, params.narrative_in_prompt, now, recent);
+    let block = m.render_for_prompt(
+        params.prompt_cap,
+        params.narrative_in_prompt,
+        now,
+        recent,
+        loc,
+    );
     // Собираем подмешиваемые части: рендер модели (если есть) + протокол (если включён).
     let mut parts: Vec<String> = Vec::new();
     if let Some(b) = block {
@@ -860,11 +878,13 @@ pub(super) fn inject_self_model(
     if maintenance_protocol {
         // Протокол ведения собирается из единого POLICY_CORE (этап 6) — те же
         // правила, что у фоновой авто-рефлексии.
-        parts.push(crate::features::tools::self_model::maintenance_protocol());
+        parts.push(crate::features::tools::self_model::maintenance_protocol(
+            loc,
+        ));
         // Data-aware приписка: если описание себя разрослось сверх ориентира —
         // конкретная подсказка сократить (статичный протокол становится предметным,
         // когда summary действительно раздут). См. docs/summary-as-snapshot.md (этап 2).
-        if let Some(hint) = m.summary_fill_hint(params.summary_target_chars) {
+        if let Some(hint) = m.summary_fill_hint(params.summary_target_chars, loc) {
             parts.push(format!("({hint})"));
         }
     }

@@ -282,12 +282,14 @@ src/
    │  ├─ table.rs          TableBuilder + render_table (раскладка/отрисовка таблиц)
    │  └─ latex.rs          LaTeX→unicode: нормализация разделителей + конвертер команд
    ├─ wrap.rs              перенос слов по колонкам (unicode-width)
+   ├─ i18n.rs              язык служебного каркаса агента (ось A): Lang/Locale/t/tf,
+   │                       вшитые бандлы locales/{ru,en}.json (docs/i18n.md, Ярус 1)
    ├─ theme.rs             Palette (роли user/assistant/tool/…), auto/dark/light
    ├─ keys.rs              раскладко-независимые Ctrl-шорткаты (ЙЦУКЕН→латиница)
    ├─ server.rs            ServerStatus (статус сервера для UI)
    ├─ sandbox.rs           SandboxRunner (за трейтом) + WasmerSandbox: сайдкар `wasmer`
    │                       для `python_exec` в режиме песочницы (WASIX-изоляция, §8)
-   ├─ paths.rs             расположение данных: портативно / ОС-папка / путь (location.json)
+   ├─ paths.rs             расположение данных (defaults.json) + язык каркаса новых профилей (Lang)
    ├─ instance.rs          single-instance
    └─ logging.rs           tracing в файл (stdout занят TUI)
 ```
@@ -656,6 +658,7 @@ erDiagram
     PROFILE {
         Uuid id
         string name
+        Lang language
         string default_system_message
         string impersonation_system_message
         Option_SamplingConfig default_sampling
@@ -1444,10 +1447,12 @@ flowchart TB
   подкаталоге `data/` рядом с бинарником (в dev — `target/debug/data/`; подкаталог
   отделяет данные от служебных файлов/кэшей сборки): `settings.json`,
   `profiles.json`, `chats/`, `data.db`, `personal_dictionary.txt`, `dictionaries/`,
-  `backups/`, `logs/`. Файл-маркер `location.json` рядом с бинарником (всегда вне
-  `data/`; `DataLocation`: `portable`/`system`/`path`) переключает корень в
-  стандартную ОС-папку (крейт `directories`) или произвольный каталог; нет маркера →
-  портативный режим. **Резервное копирование** (`features/backup.rs`): zip с
+  `backups/`, `logs/`. Файл `defaults.json` рядом с бинарником (всегда вне `data/`;
+  `Defaults` = `DataLocation` `portable`/`system`/`path` + `default_language`)
+  переключает корень в стандартную ОС-папку (крейт `directories`) или произвольный
+  каталог и задаёт язык каркаса новых профилей (ось A — docs/i18n.md); нет файла →
+  портативный режим + `ru` (для совместимости читается старый `location.json`).
+  **Резервное копирование** (`features/backup.rs`): zip с
   настраиваемым сжатием (chats/dictionaries/data.db/profiles/settings/personal +
   `*.bak` + `fs_root`, если внутри корня); восстановление транзакционно (валидация →
   pre-restore копия в `backups/` → очистка → распаковка → откат при сбое).

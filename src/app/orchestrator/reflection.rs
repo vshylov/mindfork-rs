@@ -59,24 +59,10 @@ const REFLECT_TOOL_IDS: &[&str] = &[
 /// Системное сообщение фоновой саморефлексии: обрамление + единый `POLICY_CORE`
 /// (этап 6 — те же правила, что у протокола ведения). Строится в рантайме, поскольку
 /// склеивает `const`-фрагмент с константой правил.
-fn reflect_system_message() -> String {
-    format!(
-        "Ты проводишь тихую фоновую саморефлексию. Ниже — фрагмент недавнего разговора. \
-         Сначала вызови get_self_model (там цели с #id, наблюдения с полным id и уже \
-         имеющиеся связи). Затем: {} Если два наблюдения соотносятся — противоречат, \
-         уточняют друг друга или об одном — свяжи их (note_link по полному id: \
-         contradicts/refines/relates), чтобы память была связной, а не россыпью. Если \
-         наблюдение «о себе» соотносится с фактом «о собеседнике» — найди факт через \
-         note_recall (он даёт id заметок) и свяжи их note_link (наблюдение из \
-         get_self_model, заметку из note_recall): память о себе и о собеседнике не \
-         изолированы. Если ниже есть блок «Обзор наблюдений для консолидации» — используй \
-         его: сливай похожие пары (note_merge/note_supersede), проверяй связи contradicts, \
-         связывай наблюдения без связей (note_link). Если \
-         ниже есть блок «Поведенческие сигналы» — учти их как свидетельства о \
-         собеседнике (update_user_model) или наблюдение (add_insight): это факты \
-         поведения, а не осуждение. Меняй только действительно изменившееся; нечего — \
-         не вызывай ничего. Не пиши ответ пользователю — только вызывай инструменты.",
-        self_model::POLICY_CORE
+fn reflect_system_message(loc: &crate::shared::i18n::Locale) -> String {
+    loc.tf(
+        "prompt.reflect.system",
+        &[("core", self_model::policy_core(loc))],
     )
 }
 
@@ -98,7 +84,11 @@ pub(super) fn reflect_window(messages: &[Message], reflected_upto: Option<usize>
 /// не устроил») и сколько раз сам ассистент переписывал реплику. `None`, если сигналов
 /// нет. Даёт рефлексии реальное поведение вместо одних самоописаний. Записи без причины
 /// (старые) не считаются. Чистая функция — тестируема.
-pub(super) fn behavior_markers(chat: &Chat, since: Option<DateTime<Utc>>) -> Option<String> {
+pub(super) fn behavior_markers(
+    chat: &Chat,
+    since: Option<DateTime<Utc>>,
+    loc: &crate::shared::i18n::Locale,
+) -> Option<String> {
     let (mut regen, mut del, mut rewrite) = (0u32, 0u32, 0u32);
     for d in &chat.deleted {
         if let Some(s) = since
@@ -120,16 +110,14 @@ pub(super) fn behavior_markers(chat: &Chat, since: Option<DateTime<Utc>>) -> Opt
     // (переписывание) — их нельзя приписывать собеседнику.
     let mut about_user: Vec<String> = Vec::new();
     if regen > 0 {
-        about_user.push(format!(
-            "перегенерировал твой ответ ×{regen} (вероятно, ответ не устроил)"
-        ));
+        about_user.push(loc.tf("reflect.behavior.regen", &[("n", &regen.to_string())]));
     }
     if del > 0 {
-        about_user.push(format!("удалил обмен ×{del}"));
+        about_user.push(loc.tf("reflect.behavior.deleted", &[("n", &del.to_string())]));
     }
     let mut out = String::new();
     if !about_user.is_empty() {
-        out.push_str("Поведенческие сигналы собеседника за окно: ");
+        out.push_str(loc.t("reflect.behavior.header"));
         out.push_str(&about_user.join("; "));
         out.push('.');
     }
@@ -137,7 +125,7 @@ pub(super) fn behavior_markers(chat: &Chat, since: Option<DateTime<Utc>>) -> Opt
         if !out.is_empty() {
             out.push(' ');
         }
-        out.push_str(&format!("Ты сам переписывал свой ответ ×{rewrite}."));
+        out.push_str(&loc.tf("reflect.behavior.rewrite", &[("n", &rewrite.to_string())]));
     }
     Some(out)
 }
@@ -157,6 +145,7 @@ impl Orchestrator {
 
         // Снимок данных чата/профиля (борроу освобождается до правок полей self).
         let profile_id;
+        let lang; // язык служебного каркаса профиля (ось A)
         let system_message;
         let last_user;
         let mut digest;
@@ -170,6 +159,7 @@ impl Orchestrator {
             let Some(profile) = self.profiles.iter().find(|p| p.id == profile_id) else {
                 return;
             };
+            lang = profile.language;
             // Гейт: профиль включает инструменты модели себя (как и инъекция в промпт).
             if !profile
                 .enabled_tools
@@ -191,17 +181,18 @@ impl Orchestrator {
                 .collect();
             system_message = chat.system_message.clone();
             last_user = last_user_message_at(chat);
+            let loc = crate::shared::i18n::locale(lang);
             // Дайджест — только по окну (не по всей истории): иначе каждый цикл
             // перечитывал бы уже отрефлексированное и плодил дубли инсайтов.
             let Some(d) =
-                crate::features::rename_chat::build_conversation_digest(&chat.messages[wm..])
+                crate::features::rename_chat::build_conversation_digest(&chat.messages[wm..], loc)
             else {
                 return; // переписки в окне недостаточно — ватермарк не трогаем
             };
             // Поведенческие сигналы за окно (перегенерации/удаления с прошлой
             // рефлексии) — пища для модели собеседника. `since` = прежний `reflected_at`
             // (ещё не перезаписан спавном ниже).
-            digest = match behavior_markers(chat, chat.reflected_at) {
+            digest = match behavior_markers(chat, chat.reflected_at, loc) {
                 Some(markers) => format!("{d}\n\n{markers}"),
                 None => d,
             };
@@ -243,6 +234,7 @@ impl Orchestrator {
                 system_message,
                 effective_sampling: SamplingConfig::default(),
                 last_user_message_at: last_user,
+                lang,
             },
         );
         let sampling = SamplingConfig {
@@ -251,10 +243,12 @@ impl Orchestrator {
             ..Default::default()
         };
         let request = ChatRequest {
-            system: Some(reflect_system_message()),
+            system: Some(reflect_system_message(crate::shared::i18n::locale(lang))),
             messages: vec![ApiMessage::user(digest)],
             sampling,
-            tools: self.registry.schemas_for(&allowed),
+            tools: self
+                .registry
+                .schemas_for(&allowed, crate::shared::i18n::locale(lang)),
         };
 
         // Спавним задачу и фиксируем слот (флаг «идёт» + тихий индикатор в статус-баре).
@@ -283,17 +277,45 @@ mod tests {
         Chat, DeletedCause, Message, behavior_markers, reflect_system_message, reflect_window,
     };
 
+    /// Референсная локаль (ru) для ассертов на русские подстроки (пинят ru-бандл).
+    fn ru() -> &'static crate::shared::i18n::Locale {
+        crate::shared::i18n::locale(crate::shared::i18n::Lang::Ru)
+    }
+
     #[test]
     fn reflect_system_message_composes_from_policy_core() {
-        let msg = reflect_system_message();
+        let msg = reflect_system_message(ru());
         // Собрано из единого POLICY_CORE (те же правила, что у протокола ведения).
-        assert!(msg.contains(crate::features::tools::self_model::POLICY_CORE));
+        assert!(msg.contains(crate::features::tools::self_model::policy_core(ru())));
         // Плюс рефлексия-специфичное обрамление.
         assert!(msg.contains("get_self_model"));
         assert!(msg.contains("Поведенческие сигналы"));
         assert!(msg.contains("только вызывай инструменты"));
         // Ярус 2: рефлексии предложено связывать наблюдения (граф).
         assert!(msg.contains("note_link"));
+    }
+
+    /// Per-language (§3.5 docs/i18n.md): системное сообщение рефлексии собирается на
+    /// КАЖДОМ вшитом языке, встраивает `policy_core` того же языка, плейсхолдер
+    /// `{core}` подставлен (без остатка), и несёт tool-имена (стабильны, не переводятся).
+    #[test]
+    fn reflect_system_message_localized_for_all_langs() {
+        for &lang in crate::shared::i18n::Lang::ALL {
+            let l = crate::shared::i18n::locale(lang);
+            let msg = reflect_system_message(l);
+            assert!(
+                msg.contains(crate::features::tools::self_model::policy_core(l)),
+                "{lang:?}: policy_core не встроен"
+            );
+            assert!(
+                !msg.contains("{core}"),
+                "{lang:?}: плейсхолдер не подставлен"
+            );
+            assert!(
+                msg.contains("get_self_model") && msg.contains("note_link"),
+                "{lang:?}"
+            );
+        }
     }
 
     #[test]
@@ -310,7 +332,7 @@ mod tests {
     fn reflect_message_nudges_cross_organ_linking() {
         // Ярус 3: рефлексии предложено связывать наблюдение «о себе» с фактом «о
         // собеседнике» (кросс-органное ребро через note_recall + note_link).
-        let msg = super::reflect_system_message();
+        let msg = super::reflect_system_message(ru());
         assert!(msg.contains("note_recall"));
         assert!(msg.contains("о собеседнике"));
         // Обзор self-консолидации: рефлексии указано использовать его блок.
@@ -345,16 +367,16 @@ mod tests {
             },
         ];
         // since = 4 ч назад → последние 3 (2 regen + 1 delete); rewrite (5 дн.) отсечён.
-        let out = behavior_markers(&chat, Some(base - Duration::hours(4))).unwrap();
+        let out = behavior_markers(&chat, Some(base - Duration::hours(4)), ru()).unwrap();
         assert!(out.contains("перегенерировал твой ответ ×2"));
         assert!(out.contains("удалил обмен ×1"));
         assert!(!out.contains("переписывал"));
         // since=None → учитываем всё, собственное поведение (rewrite) — отдельной фразой.
-        let all = behavior_markers(&chat, None).unwrap();
+        let all = behavior_markers(&chat, None, ru()).unwrap();
         assert!(all.contains("Ты сам переписывал свой ответ ×1"));
         // Нет сигналов → None.
         let empty = Chat::from_profile(&p, "t2");
-        assert!(behavior_markers(&empty, None).is_none());
+        assert!(behavior_markers(&empty, None, ru()).is_none());
     }
 
     #[test]

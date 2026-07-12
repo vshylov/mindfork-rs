@@ -17,13 +17,13 @@ impl Tool for NoteLink {
     fn ui_label(&self) -> &'static str {
         "связать заметки"
     }
-    fn description(&self) -> String {
+    fn description(&self, _loc: &crate::shared::i18n::Locale) -> String {
         "Связать две заметки (по id из note_recall/note_save) направленной связью: \
          supports (подтверждает), contradicts (противоречит), refines (уточняет), \
          relates (связано по теме). Помогает помнить, как заметки соотносятся."
             .into()
     }
-    fn parameters(&self) -> serde_json::Value {
+    fn parameters(&self, _loc: &crate::shared::i18n::Locale) -> serde_json::Value {
         serde_json::json!({
             "type": "object",
             "properties": {
@@ -80,12 +80,12 @@ impl Tool for NoteNeighbors {
     fn ui_label(&self) -> &'static str {
         "связи заметки"
     }
-    fn description(&self) -> String {
+    fn description(&self, _loc: &crate::shared::i18n::Locale) -> String {
         "Показать заметки, связанные с данной (по id), с типом и направлением связи. \
          Опционально — только связи указанного типа (supports/contradicts/refines/relates)."
             .into()
     }
-    fn parameters(&self) -> serde_json::Value {
+    fn parameters(&self, _loc: &crate::shared::i18n::Locale) -> serde_json::Value {
         serde_json::json!({
             "type": "object",
             "properties": {

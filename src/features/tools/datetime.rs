@@ -25,12 +25,12 @@ impl Tool for CurrentTime {
     fn ui_label(&self) -> &'static str {
         "текущее время"
     }
-    fn description(&self) -> String {
+    fn description(&self, _loc: &crate::shared::i18n::Locale) -> String {
         "Получить текущие дату и время (локальная зона и UTC). Опционально передай \
          format — строку формата strftime (например %Y-%m-%d или %H:%M)."
             .into()
     }
-    fn parameters(&self) -> serde_json::Value {
+    fn parameters(&self, _loc: &crate::shared::i18n::Locale) -> serde_json::Value {
         serde_json::json!({
             "type": "object",
             "properties": {

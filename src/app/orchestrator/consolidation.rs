@@ -38,15 +38,6 @@ const CONSOLIDATE_TOOL_IDS: &[&str] = &[
     notes::NOTE_NEIGHBORS_ID,
 ];
 
-/// Системное сообщение фоновой консолидации.
-const CONSOLIDATE_SYSTEM_MESSAGE: &str = "Ты проводишь тихую фоновую консолидацию своей базы знаний (заметок). Ниже — обзор: \
-     похожие пары (возможные дубли), связи contradicts, заметки без связей. Слей явные \
-     дубли (note_merge), мелкое поправь (note_revise) или для смысловой переработки \
-     замести (note_supersede, сохранит «шрам»), свяжи родственное (note_link). При \
-     сомнении свериться через note_recall/note_neighbors. Действуй консервативно: \
-     объединяй только действительно дублирующее, не теряй нюансы. Если всё в порядке — \
-     не вызывай ничего. Не пиши ответ пользователю — только вызывай инструменты.";
-
 impl Orchestrator {
     /// Вызывается после успешной генерации (`handle_done`): считает ответы ассистента
     /// и при достижении порога запускает фоновую консолидацию. Тихо ничего не делает,
@@ -59,6 +50,7 @@ impl Orchestrator {
         }
 
         let profile_id;
+        let lang; // язык служебного каркаса профиля (ось A)
         let system_message;
         let last_user;
         let allowed: Vec<ToolId>;
@@ -70,6 +62,7 @@ impl Orchestrator {
             let Some(profile) = self.profiles.iter().find(|p| p.id == profile_id) else {
                 return;
             };
+            lang = profile.language;
             // Гейт: профиль включает консолидацию (note_merge — ядро операции).
             if !profile
                 .enabled_tools
@@ -130,6 +123,7 @@ impl Orchestrator {
                 system_message,
                 effective_sampling: SamplingConfig::default(),
                 last_user_message_at: last_user,
+                lang,
             },
         );
         let sampling = SamplingConfig {
@@ -138,10 +132,16 @@ impl Orchestrator {
             ..Default::default()
         };
         let request = ChatRequest {
-            system: Some(CONSOLIDATE_SYSTEM_MESSAGE.to_string()),
+            system: Some(
+                crate::shared::i18n::locale(lang)
+                    .t("prompt.consolidate.system")
+                    .to_string(),
+            ),
             messages: vec![ApiMessage::user(overview)],
             sampling,
-            tools: self.registry.schemas_for(&allowed),
+            tools: self
+                .registry
+                .schemas_for(&allowed, crate::shared::i18n::locale(lang)),
         };
 
         // Спавним задачу и фиксируем слот (флаг «идёт» + тихий индикатор в статус-баре).

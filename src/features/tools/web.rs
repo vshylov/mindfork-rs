@@ -403,13 +403,13 @@ impl Tool for WebSearch {
     fn gate(&self) -> Option<crate::features::tools::meta::ToolGate> {
         Some(crate::features::tools::meta::ToolGate::Web)
     }
-    fn description(&self) -> String {
+    fn description(&self, _loc: &crate::shared::i18n::Locale) -> String {
         "Искать в интернете. Возвращает заголовки, ссылки, сниппеты и (по умолчанию) \
          извлечённый текст страниц, переупорядоченный по релевантности запросу. \
          Передай fetch_content=false для быстрого поиска без загрузки страниц."
             .into()
     }
-    fn parameters(&self) -> serde_json::Value {
+    fn parameters(&self, _loc: &crate::shared::i18n::Locale) -> serde_json::Value {
         serde_json::json!({
             "type": "object",
             "properties": {

@@ -130,6 +130,8 @@ fn main() -> anyhow::Result<()> {
         storage,
         config,
         supervisor: Arc::new(LlamaSupervisor),
+        // Язык каркаса новых профилей — из defaults.json (ось A, docs/i18n.md).
+        default_language: paths.default_language(),
     }));
 
     // Словари спелл-чека грузит сам `runtime` в фоне по настройкам интерфейса

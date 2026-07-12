@@ -481,7 +481,7 @@ fn with_confirm() -> ChatScreen {
     let mut s = ChatScreen::new();
     let mut cfg = AppConfig::default();
     cfg.interface.confirm_destructive_keys = true;
-    s.set_settings(cfg, Vec::new());
+    s.set_settings(cfg, Vec::new(), Vec::new());
     s
 }
 
@@ -697,7 +697,7 @@ fn settings_event_updates_theme_palette() {
     assert_eq!(s.palette, Palette::for_theme(Theme::Auto));
     let mut cfg = AppConfig::default();
     cfg.interface.theme = Theme::Dark;
-    s.set_settings(cfg, vec![]);
+    s.set_settings(cfg, vec![], Vec::new());
     assert_eq!(s.palette, Palette::for_theme(Theme::Dark));
 }
 
@@ -709,7 +709,11 @@ fn ctrl_p_opens_settings_only_with_snapshot() {
         s.handle_key(KeyEvent::new(KeyCode::Char('p'), KeyModifiers::CONTROL)),
         None
     );
-    s.set_settings(AppConfig::default(), vec![Profile::new("P", "sys")]);
+    s.set_settings(
+        AppConfig::default(),
+        vec![Profile::new("P", "sys")],
+        Vec::new(),
+    );
     assert_eq!(
         s.handle_key(KeyEvent::new(KeyCode::Char('p'), KeyModifiers::CONTROL)),
         Some(ChatIntent::OpenSettings)
@@ -721,7 +725,11 @@ fn ctrl_shortcuts_work_under_cyrillic_layout() {
     // При русской раскладке физические клавиши дают кириллицу: Ctrl+з (физ. P),
     // Ctrl+й (физ. Q) — шорткаты обязаны срабатывать.
     let mut s = ChatScreen::new();
-    s.set_settings(AppConfig::default(), vec![Profile::new("P", "sys")]);
+    s.set_settings(
+        AppConfig::default(),
+        vec![Profile::new("P", "sys")],
+        Vec::new(),
+    );
     assert_eq!(
         s.handle_key(KeyEvent::new(KeyCode::Char('з'), KeyModifiers::CONTROL)),
         Some(ChatIntent::OpenSettings),

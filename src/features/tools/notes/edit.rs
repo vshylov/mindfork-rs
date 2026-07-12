@@ -18,13 +18,13 @@ impl Tool for NoteRevise {
     fn ui_label(&self) -> &'static str {
         "переписать заметку"
     }
-    fn description(&self) -> String {
+    fn description(&self, _loc: &crate::shared::i18n::Locale) -> String {
         "Переписать существующую заметку на месте (по id из note_recall/note_save): \
          новое содержимое замещает прежнее. Используй, когда заметка устарела, \
          уточнилась или дублируется, — вместо создания почти-копии."
             .into()
     }
-    fn parameters(&self) -> serde_json::Value {
+    fn parameters(&self, _loc: &crate::shared::i18n::Locale) -> serde_json::Value {
         serde_json::json!({
             "type": "object",
             "properties": {
@@ -102,13 +102,13 @@ impl Tool for NoteSupersede {
     fn ui_label(&self) -> &'static str {
         "заместить заметку"
     }
-    fn description(&self) -> String {
+    fn description(&self, _loc: &crate::shared::i18n::Locale) -> String {
         "Заместить устаревшую заметку новой версией (по id из note_recall): создаётся \
          новая заметка, старая помечается замещённой (скрывается из поиска, но \
          хранится для следа изменения). Для простой правки на месте — note_revise."
             .into()
     }
-    fn parameters(&self) -> serde_json::Value {
+    fn parameters(&self, _loc: &crate::shared::i18n::Locale) -> serde_json::Value {
         serde_json::json!({
             "type": "object",
             "properties": {
@@ -166,13 +166,13 @@ impl Tool for NoteMerge {
     fn ui_label(&self) -> &'static str {
         "слить заметки"
     }
-    fn description(&self) -> String {
+    fn description(&self, _loc: &crate::shared::i18n::Locale) -> String {
         "Свести несколько заметок (ids из note_recall) в одну: создаётся новая с \
          объединённым содержимым, исходные помечаются замещёнными (скрываются, но \
          хранятся). Используй для консолидации дублей/осколков по одной теме."
             .into()
     }
-    fn parameters(&self) -> serde_json::Value {
+    fn parameters(&self, _loc: &crate::shared::i18n::Locale) -> serde_json::Value {
         serde_json::json!({
             "type": "object",
             "properties": {

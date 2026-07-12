@@ -1,23 +1,34 @@
-//! Расположение пользовательских данных. По умолчанию — портативный режим: данные
-//! лежат в подкаталоге `data/` рядом с исполняемым файлом (подкаталог отделяет данные
-//! от служебных файлов/кэшей сборки, особенно в dev — `target/debug/data/`). Файл-
-//! маркер `location.json` рядом с бинарником может переключить хранение в стандартную
-//! ОС-папку или в произвольный каталог. См. spec §5.2 (расположение данных) и §12.1.
+//! Расположение пользовательских данных и установочные умолчания. По умолчанию —
+//! портативный режим: данные лежат в подкаталоге `data/` рядом с исполняемым файлом
+//! (подкаталог отделяет данные от служебных файлов/кэшей сборки, особенно в dev —
+//! `target/debug/data/`). Файл-маркер `defaults.json` рядом с бинарником может
+//! переключить хранение в стандартную ОС-папку или произвольный каталог **и** задать
+//! язык служебного каркаса новых профилей (`default_language`, ось A — docs/i18n.md;
+//! инсталлятор заполнит его по выбору пользователя при установке). Для обратной
+//! совместимости читается и старый маркер `location.json` (только режим хранения).
+//! См. spec §5.2 (расположение данных) и §12.1.
 
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 
-/// Имя файла-маркера режима хранения (всегда лежит рядом с бинарником, не в `data/`).
-pub const LOCATION_MARKER: &str = "location.json";
+use crate::shared::i18n::Lang;
+
+/// Имя файла установочных умолчаний (всегда лежит рядом с бинарником, не в `data/`).
+pub const DEFAULTS_MARKER: &str = "defaults.json";
+
+/// Устаревшее имя файла-маркера (только режим хранения) — читается для обратной
+/// совместимости, если `defaults.json` отсутствует.
+pub const LEGACY_LOCATION_MARKER: &str = "location.json";
 
 /// Подкаталог данных в портативном режиме (рядом с бинарником).
 pub const PORTABLE_DATA_SUBDIR: &str = "data";
 
-/// Режим хранения пользовательских данных, заданный файлом-маркером `location.json`
-/// рядом с исполняемым файлом. Отсутствие/пустой маркер → [`DataLocation::Portable`]
-/// (обратная совместимость: существующие установки держат данные рядом с бинарником).
+/// Режим хранения пользовательских данных, заданный файлом умолчаний `defaults.json`
+/// рядом с исполняемым файлом (поле `mode`, при `path` — ещё `path`). Отсутствие/пустой
+/// маркер → [`DataLocation::Portable`] (обратная совместимость: существующие установки
+/// держат данные рядом с бинарником).
 #[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(tag = "mode", rename_all = "lowercase")]
 pub enum DataLocation {
@@ -32,19 +43,6 @@ pub enum DataLocation {
 }
 
 impl DataLocation {
-    /// Читает маркер режима хранения по пути `marker`. Файла нет → `Portable`.
-    /// Повреждённый JSON — **ошибка** (а не молчаливый откат к портативному), чтобы
-    /// опечатка в пути не привела к работе с пустым набором данных не там, где надо.
-    pub fn read(marker: &Path) -> Result<Self> {
-        match std::fs::read(marker) {
-            Ok(bytes) if bytes.iter().all(u8::is_ascii_whitespace) => Ok(Self::Portable),
-            Ok(bytes) => serde_json::from_slice(&bytes)
-                .with_context(|| format!("разбор файла-маркера {}", marker.display())),
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(Self::Portable),
-            Err(e) => Err(e).with_context(|| format!("чтение файла-маркера {}", marker.display())),
-        }
-    }
-
     /// Корневой каталог данных для этого режима. `exe_dir` — каталог бинарника
     /// (в портативном режиме корень = `exe_dir/data`).
     pub fn root_dir(&self, exe_dir: &Path) -> Result<PathBuf> {
@@ -59,9 +57,49 @@ impl DataLocation {
                 let trimmed = path.trim();
                 anyhow::ensure!(
                     !trimmed.is_empty(),
-                    "в режиме \"path\" файл-маркер {LOCATION_MARKER} должен задавать непустой путь"
+                    "в режиме \"path\" файл {DEFAULTS_MARKER} должен задавать непустой путь"
                 );
                 Ok(PathBuf::from(trimmed))
+            }
+        }
+    }
+}
+
+/// Установочные умолчания из файла `defaults.json` рядом с бинарником: режим хранения
+/// данных (`mode`/`path`, плоско — совместимо со старым `location.json`) **и** язык
+/// служебного каркаса новых профилей (`default_language`, ось A — docs/i18n.md).
+/// Заполняется инсталлятором (или вручную). Отсутствие полей → дефолты (портативно, `ru`).
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub struct Defaults {
+    /// Режим хранения (плоско в JSON: `mode`/`path` на верхнем уровне — байт-совместимо
+    /// с прежним `location.json`).
+    #[serde(flatten, default)]
+    pub location: DataLocation,
+    /// Язык служебного каркаса, на котором создаётся **первый** профиль (bootstrap) и
+    /// новые профили. Не язык интерфейса и не язык ответа модели. См. docs/i18n.md.
+    #[serde(default)]
+    pub default_language: Lang,
+}
+
+impl Defaults {
+    /// Читает установочные умолчания рядом с бинарником: сначала `defaults.json`, при
+    /// его отсутствии — устаревший `location.json` (только режим хранения; язык =
+    /// дефолт). Нет обоих/пустой файл → дефолты. Повреждённый JSON — **ошибка** (а не
+    /// молчаливый откат), чтобы опечатка не увела на пустой набор данных не туда.
+    pub fn read(exe_dir: &Path) -> Result<Self> {
+        let primary = exe_dir.join(DEFAULTS_MARKER);
+        let marker = if primary.exists() {
+            primary
+        } else {
+            exe_dir.join(LEGACY_LOCATION_MARKER)
+        };
+        match std::fs::read(&marker) {
+            Ok(bytes) if bytes.iter().all(u8::is_ascii_whitespace) => Ok(Self::default()),
+            Ok(bytes) => serde_json::from_slice(&bytes)
+                .with_context(|| format!("разбор файла умолчаний {}", marker.display())),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(Self::default()),
+            Err(e) => {
+                Err(e).with_context(|| format!("чтение файла умолчаний {}", marker.display()))
             }
         }
     }
@@ -70,37 +108,52 @@ impl DataLocation {
 /// Набор путей к данным приложения, вычисленных от корневого каталога.
 ///
 /// В продакшене корень — каталог исполняемого файла (портативный режим);
-/// в тестах используется временный каталог через [`Paths::with_root`].
+/// в тестах используется временный каталог через [`Paths::with_root`]. Несёт также
+/// язык каркаса новых профилей (`default_language`) из `defaults.json`.
 #[derive(Debug, Clone)]
 pub struct Paths {
     root: PathBuf,
+    default_language: Lang,
 }
 
 impl Paths {
-    /// Определяет корень данных по файлу-маркеру `location.json` рядом с бинарником.
-    /// Нет маркера → портативный режим (корень = `data/` рядом с бинарником). Корень
-    /// при необходимости создаётся (в т.ч. портативный подкаталог `data/`).
+    /// Определяет корень данных и умолчания по файлу `defaults.json` рядом с бинарником
+    /// (fallback — устаревший `location.json`). Нет файла → портативный режим (корень =
+    /// `data/` рядом с бинарником), язык каркаса = дефолт (`ru`). Корень при
+    /// необходимости создаётся (в т.ч. портативный подкаталог `data/`).
     pub fn discover() -> Result<Self> {
         let exe = std::env::current_exe().context("cannot resolve current executable path")?;
         let exe_dir = exe
             .parent()
             .context("cannot determine executable directory")?;
 
-        let location = DataLocation::read(&exe_dir.join(LOCATION_MARKER))?;
-        let root = location.root_dir(exe_dir)?;
+        let defaults = Defaults::read(exe_dir)?;
+        let root = defaults.location.root_dir(exe_dir)?;
         std::fs::create_dir_all(&root)
             .with_context(|| format!("создание каталога данных {}", root.display()))?;
-        Ok(Self::with_root(root))
+        let mut paths = Self::with_root(root);
+        paths.default_language = defaults.default_language;
+        Ok(paths)
     }
 
-    /// Создаёт набор путей от произвольного корня (используется в тестах).
+    /// Создаёт набор путей от произвольного корня (используется в тестах). Язык
+    /// каркаса новых профилей — дефолт (`ru`).
     pub fn with_root(root: impl Into<PathBuf>) -> Self {
-        Self { root: root.into() }
+        Self {
+            root: root.into(),
+            default_language: Lang::default(),
+        }
     }
 
     /// Корневой каталог данных.
     pub fn root(&self) -> &Path {
         &self.root
+    }
+
+    /// Язык служебного каркаса новых профилей (из `defaults.json`, ось A). Bootstrap
+    /// первого профиля и создание профилей берут его. См. docs/i18n.md.
+    pub fn default_language(&self) -> Lang {
+        self.default_language
     }
 
     /// Глобальная конфигурация (`settings.json`).
@@ -195,7 +248,7 @@ mod tests {
     #[test]
     fn missing_marker_is_portable() {
         let dir = tempfile::tempdir().unwrap();
-        let loc = DataLocation::read(&dir.path().join(LOCATION_MARKER)).unwrap();
+        let loc = Defaults::read(dir.path()).unwrap().location;
         assert_eq!(loc, DataLocation::Portable);
         // Портативный режим: корень = подкаталог `data/` рядом с бинарником.
         assert_eq!(
@@ -207,9 +260,11 @@ mod tests {
     #[test]
     fn whitespace_marker_is_portable() {
         let dir = tempfile::tempdir().unwrap();
-        let marker = dir.path().join(LOCATION_MARKER);
-        std::fs::write(&marker, "  \n\t").unwrap();
-        assert_eq!(DataLocation::read(&marker).unwrap(), DataLocation::Portable);
+        std::fs::write(dir.path().join(DEFAULTS_MARKER), "  \n\t").unwrap();
+        assert_eq!(
+            Defaults::read(dir.path()).unwrap().location,
+            DataLocation::Portable
+        );
     }
 
     #[test]
@@ -225,9 +280,8 @@ mod tests {
             ),
         ] {
             let dir = tempfile::tempdir().unwrap();
-            let marker = dir.path().join(LOCATION_MARKER);
-            std::fs::write(&marker, json).unwrap();
-            assert_eq!(DataLocation::read(&marker).unwrap(), expect);
+            std::fs::write(dir.path().join(DEFAULTS_MARKER), json).unwrap();
+            assert_eq!(Defaults::read(dir.path()).unwrap().location, expect);
         }
     }
 
@@ -252,9 +306,8 @@ mod tests {
     #[test]
     fn corrupted_marker_errors() {
         let dir = tempfile::tempdir().unwrap();
-        let marker = dir.path().join(LOCATION_MARKER);
-        std::fs::write(&marker, "{ not valid json").unwrap();
-        assert!(DataLocation::read(&marker).is_err());
+        std::fs::write(dir.path().join(DEFAULTS_MARKER), "{ not valid json").unwrap();
+        assert!(Defaults::read(dir.path()).is_err());
     }
 
     #[test]
@@ -263,5 +316,77 @@ mod tests {
         // указывать на каталог приложения.
         let root = DataLocation::System.root_dir(Path::new("/exe")).unwrap();
         assert!(root.to_string_lossy().contains("mindfork-rs"));
+    }
+
+    #[test]
+    fn defaults_reads_storage_and_language() {
+        // defaults.json несёт режим хранения (плоско) + язык каркаса.
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            dir.path().join(DEFAULTS_MARKER),
+            r#"{"mode":"path","path":"D:\\data","default_language":"en"}"#,
+        )
+        .unwrap();
+        let d = Defaults::read(dir.path()).unwrap();
+        assert_eq!(
+            d.location,
+            DataLocation::Path {
+                path: "D:\\data".into()
+            }
+        );
+        assert_eq!(d.default_language, Lang::En);
+    }
+
+    #[test]
+    fn defaults_missing_is_portable_ru() {
+        let dir = tempfile::tempdir().unwrap();
+        let d = Defaults::read(dir.path()).unwrap();
+        assert_eq!(d, Defaults::default());
+        assert_eq!(d.location, DataLocation::Portable);
+        assert_eq!(d.default_language, Lang::Ru);
+    }
+
+    #[test]
+    fn defaults_falls_back_to_legacy_location_marker() {
+        // Нет defaults.json → читается старый location.json (только режим; язык дефолт).
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            dir.path().join(LEGACY_LOCATION_MARKER),
+            r#"{"mode":"system"}"#,
+        )
+        .unwrap();
+        let d = Defaults::read(dir.path()).unwrap();
+        assert_eq!(d.location, DataLocation::System);
+        assert_eq!(d.default_language, Lang::Ru);
+    }
+
+    #[test]
+    fn defaults_json_takes_precedence_over_legacy() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            dir.path().join(DEFAULTS_MARKER),
+            r#"{"mode":"portable","default_language":"en"}"#,
+        )
+        .unwrap();
+        std::fs::write(
+            dir.path().join(LEGACY_LOCATION_MARKER),
+            r#"{"mode":"system"}"#,
+        )
+        .unwrap();
+        let d = Defaults::read(dir.path()).unwrap();
+        assert_eq!(d.location, DataLocation::Portable);
+        assert_eq!(d.default_language, Lang::En);
+    }
+
+    #[test]
+    fn defaults_corrupted_errors() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join(DEFAULTS_MARKER), "{ bad json").unwrap();
+        assert!(Defaults::read(dir.path()).is_err());
+    }
+
+    #[test]
+    fn with_root_defaults_to_ru_language() {
+        assert_eq!(Paths::with_root("r").default_language(), Lang::Ru);
     }
 }

@@ -9,6 +9,7 @@ use chrono::Utc;
 
 use crate::entities::profile::ToolId;
 use crate::entities::self_model::{GoalMatch, GoalStatus, NarrativeSegment, SelfModel};
+use crate::shared::i18n::Locale;
 
 use super::{Tool, ToolContext, ToolOutcome, notes};
 
@@ -36,33 +37,24 @@ pub fn is_self_model_tool(name: &str) -> bool {
     ALL_IDS.contains(&name)
 }
 
-/// Канонические правила ведения «модели себя» — **единственный источник** формулировок,
-/// из которого собираются оба текста, инструктирующих модель: протокол ведения
-/// (пассивная инъекция в промпт хода, [`maintenance_protocol`]) и системное сообщение
-/// фоновой авто-рефлексии (`orchestrator::reflection`). Раньше эти правила
-/// дублировались в двух местах и уже слегка разъехались; здесь они одни (этап 6
-/// доводки). Интерактивная рубрика инструмента `reflect` намеренно **не** отсюда — она
-/// иного жанра (вопросы, а не императив), но покрывает те же темы.
-pub const POLICY_CORE: &str = "Куда что писать. summary (update_self_model) — компактный \
-     рабочий снимок: кто ты, что ценишь, как работаешь; держи его кратким, при правке \
-     интегрируй и СОКРАЩАЙ, а не только дописывай, и перед правкой прочти его целиком \
-     через get_self_model (в промпте он может быть усечён). Событийные выводы — что и \
-     когда ты понял(а), разрешённые вопросы, эпизоды, противоречия — записывай add_insight, \
-     ДАЖЕ ЕСЛИ они устойчивы: наблюдение не теряется (всплывает по релевантности к теме), \
-     связывается и консолидируется, а описание себя не раздувается. Мимолётное (настроение, \
-     разовая реакция) — тоже в add_insight, не в модель собеседника. Цели веди по #id — \
-     закрывай выполненные и неактуальные (update_self_model), а не только ставь новые. \
-     Черты/интересы собеседника — update_user_model (add_/remove_, не перетирая прежнее). \
-     Если наблюдение почти повторяет прежнее (add_insight покажет похожие) — перепиши то \
-     через note_revise или замести note_supersede, а не плоди почти-дубль. Точность важнее \
-     угодливости: фиксируй то, что верно, а не что польстит.";
+/// Канонические правила ведения «модели себя» на языке служебного каркаса (`loc`) —
+/// ключ `selfmodel.policy_core`. **Единственный источник** формулировок, из которого
+/// собираются протокол ведения ([`maintenance_protocol`]) и системное сообщение
+/// авто-рефлексии (`orchestrator::reflection`). Интерактивная рубрика `reflect` —
+/// намеренно не отсюда (иной жанр). Локализация — ось A, см. docs/i18n.md.
+pub fn policy_core(loc: &Locale) -> &str {
+    loc.t("selfmodel.policy_core")
+}
 
-/// Нейтральный к персоне «протокол ведения модели» — [`POLICY_CORE`] в обрамлении «ты
+/// Нейтральный к персоне «протокол ведения модели» — [`policy_core`] в обрамлении «ты
 /// сам ведёшь эту модель». Подмешивается в системный промпт хода поверх любой персоны
 /// профиля (см. `orchestrator::generation::inject_self_model`), делая использование
 /// SelfModel-инструментов предсказуемым независимо от персоны.
-pub fn maintenance_protocol() -> String {
-    format!("(Ты сам ведёшь эту «модель себя». {POLICY_CORE})")
+pub fn maintenance_protocol(loc: &Locale) -> String {
+    loc.tf(
+        "selfmodel.maintenance_wrapper",
+        &[("core", policy_core(loc))],
+    )
 }
 
 /// Загружает модель профиля из хранилища (или пустую, если ещё не создавалась).
@@ -101,7 +93,7 @@ fn recent_segments(ctx: &ToolContext) -> Vec<NarrativeSegment> {
 fn render_self_read(ctx: &ToolContext, m: &SelfModel) -> String {
     let recent = recent_segments(ctx);
     let ids: Vec<uuid::Uuid> = recent.iter().map(|s| s.id).collect();
-    let mut out = m.render_full(Utc::now(), &recent);
+    let mut out = m.render_full(Utc::now(), &recent, ctx.loc);
     if let Some(block) = notes::self_related_block(ctx, &ids) {
         out.push_str(&block);
     }
@@ -111,7 +103,7 @@ fn render_self_read(ctx: &ToolContext, m: &SelfModel) -> String {
     // Мягкие ворота размера описания (этап 2): если summary разрослось — подсказка
     // сократить. Видна в get_self_model/reflect и авто-рефлексии (та начинает с
     // get_self_model). См. docs/summary-as-snapshot.md.
-    if let Some(hint) = m.summary_fill_hint(ctx.self_model_params.summary_target_chars) {
+    if let Some(hint) = m.summary_fill_hint(ctx.self_model_params.summary_target_chars, ctx.loc) {
         out.push_str("\n\n");
         out.push_str(&hint);
     }
@@ -201,12 +193,12 @@ impl Tool for GetSelfModel {
     fn enabled_by_default(&self) -> bool {
         false
     }
-    fn description(&self) -> String {
+    fn description(&self, _loc: &crate::shared::i18n::Locale) -> String {
         "Прочитать твою текущую «модель себя» целиком: описание себя, цели (с #id для \
          отметки выполненных/неактуальных), представление о собеседнике и наблюдения."
             .into()
     }
-    fn parameters(&self) -> serde_json::Value {
+    fn parameters(&self, _loc: &crate::shared::i18n::Locale) -> serde_json::Value {
         serde_json::json!({ "type": "object", "properties": {} })
     }
     async fn invoke(&self, ctx: &ToolContext, _args: serde_json::Value) -> Result<ToolOutcome> {
@@ -234,13 +226,13 @@ impl Tool for Reflect {
     fn enabled_by_default(&self) -> bool {
         false
     }
-    fn description(&self) -> String {
+    fn description(&self, _loc: &crate::shared::i18n::Locale) -> String {
         "Поразмышлять над недавним разговором: получить текущую «модель себя» и \
          вопросы для саморефлексии. Если по итогам что-то изменилось — обнови \
          модель через update_self_model / update_user_model."
             .into()
     }
-    fn parameters(&self) -> serde_json::Value {
+    fn parameters(&self, _loc: &crate::shared::i18n::Locale) -> serde_json::Value {
         serde_json::json!({ "type": "object", "properties": {} })
     }
     async fn invoke(&self, ctx: &ToolContext, _args: serde_json::Value) -> Result<ToolOutcome> {
@@ -299,7 +291,7 @@ impl Tool for AddInsight {
     fn enabled_by_default(&self) -> bool {
         false
     }
-    fn description(&self) -> String {
+    fn description(&self, _loc: &crate::shared::i18n::Locale) -> String {
         "Записать короткое наблюдение/инсайт о себе, разговоре или собеседнике в свой \
          нарратив (историю «я во времени»). Сюда же — событийные выводы «что и когда я \
          понял(а)», разрешённые вопросы, эпизоды, замеченные противоречия — ДАЖЕ ЕСЛИ они \
@@ -307,7 +299,7 @@ impl Tool for AddInsight {
          себя (в отличие от summary). Используй для того, что стоит помнить со временем."
             .into()
     }
-    fn parameters(&self) -> serde_json::Value {
+    fn parameters(&self, _loc: &crate::shared::i18n::Locale) -> serde_json::Value {
         serde_json::json!({
             "type": "object",
             "properties": {
@@ -365,7 +357,7 @@ impl Tool for UpdateSelfModel {
     fn enabled_by_default(&self) -> bool {
         false
     }
-    fn description(&self) -> String {
+    fn description(&self, _loc: &crate::shared::i18n::Locale) -> String {
         "Обновить «модель себя»: уточнить описание себя (summary — компактный снимок: \
          кто ты, что ценишь, как работаешь; интегрируй и СОКРАЩАЙ, а не только дописывай; \
          событийные выводы «что и когда понял» — в add_insight, не сюда), добавить цели \
@@ -374,7 +366,7 @@ impl Tool for UpdateSelfModel {
          достигнутые, не только ставь новые."
             .into()
     }
-    fn parameters(&self) -> serde_json::Value {
+    fn parameters(&self, _loc: &crate::shared::i18n::Locale) -> serde_json::Value {
         serde_json::json!({
             "type": "object",
             "properties": {
@@ -401,6 +393,7 @@ impl Tool for UpdateSelfModel {
         let mut completed: Vec<uuid::Uuid> = Vec::new();
         let mut abandoned: Vec<uuid::Uuid> = Vec::new();
         let params = ctx.self_model_params;
+        let loc = ctx.loc; // &'static — копируем, чтобы не заимствовать ctx в closure
         let (model, changed) = ctx.storage.db().self_model_update(ctx.profile_id, |m| {
             let mut changed = false;
             if let Some(s) = args.get("summary").and_then(|v| v.as_str()) {
@@ -449,7 +442,7 @@ impl Tool for UpdateSelfModel {
             // Свёртка старых закрытых целей: fold возвращает шрамы (тексты) — их
             // запишем self-заметками после атомарной правки (потолок закрытых целей:
             // структура не растёт, «биография» сохраняется наблюдением).
-            scars = m.fold_closed_goals(params.max_closed_goals);
+            scars = m.fold_closed_goals(params.max_closed_goals, loc);
             if !scars.is_empty() {
                 changed = true;
             }
@@ -533,7 +526,7 @@ impl Tool for UpdateUserModel {
     fn enabled_by_default(&self) -> bool {
         false
     }
-    fn description(&self) -> String {
+    fn description(&self, _loc: &crate::shared::i18n::Locale) -> String {
         "Обновить устойчивую, интегрированную модель собеседника (через все разговоры, \
          не снимок текущего настроения). Списки правятся ПО ЧАСТЯМ и не перетираются: \
          add_traits/remove_traits (черты), add_interests/remove_interests (интересы); \
@@ -545,7 +538,7 @@ impl Tool for UpdateUserModel {
          или противоречие (запиши наблюдением add_insight), а не копи обе молча."
             .into()
     }
-    fn parameters(&self) -> serde_json::Value {
+    fn parameters(&self, _loc: &crate::shared::i18n::Locale) -> serde_json::Value {
         serde_json::json!({
             "type": "object",
             "properties": {
@@ -725,31 +718,53 @@ mod tests {
         assert!(!is_self_model_tool("web_search"));
     }
 
+    /// Референсная локаль (ru) — ассерты на русские подстроки пинят ru-бандл.
+    fn ru() -> &'static Locale {
+        crate::shared::i18n::locale(crate::shared::i18n::Lang::Ru)
+    }
+
     #[test]
     fn maintenance_protocol_wraps_policy_core() {
-        let p = maintenance_protocol();
+        let p = maintenance_protocol(ru());
         // Обрамление «ты сам ведёшь» + весь POLICY_CORE (с ключевой фразой против лести).
         assert!(p.contains("Ты сам ведёшь эту «модель себя»"));
-        assert!(p.contains(POLICY_CORE));
+        assert!(p.contains(policy_core(ru())));
         assert!(p.contains("угодливости"));
+    }
+
+    /// Per-language (§3.5): протокол ведения оборачивает `policy_core` того же языка на
+    /// каждом вшитом языке; плейсхолдер `{core}` подставлен.
+    #[test]
+    fn maintenance_protocol_localized_for_all_langs() {
+        for &lang in crate::shared::i18n::Lang::ALL {
+            let l = crate::shared::i18n::locale(lang);
+            let p = maintenance_protocol(l);
+            assert!(
+                p.contains(policy_core(l)),
+                "{lang:?}: policy_core не встроен"
+            );
+            assert!(!p.contains("{core}"), "{lang:?}: плейсхолдер не подставлен");
+        }
     }
 
     #[test]
     fn policy_core_routes_events_to_insights() {
         // Этап 1 (summary — снимок, не летопись): жанровая граница проведена по оси
         // «состояние → summary, событие-вывод → add_insight (даже устойчивое)».
-        assert!(POLICY_CORE.contains("снимок"));
-        assert!(POLICY_CORE.contains("СОКРАЩАЙ"));
-        assert!(POLICY_CORE.contains("ДАЖЕ ЕСЛИ"));
+        let core = policy_core(ru());
+        assert!(core.contains("снимок"));
+        assert!(core.contains("СОКРАЩАЙ"));
+        assert!(core.contains("ДАЖЕ ЕСЛИ"));
         // Явный шаг «прочти целиком перед правкой» (защита от правки с усечённого вида).
-        assert!(POLICY_CORE.contains("прочти его целиком через get_self_model"));
+        assert!(core.contains("прочти его целиком через get_self_model"));
     }
 
     #[test]
     fn update_self_model_description_routes_events_to_insights() {
         // Описание инструмента направляет событийные выводы в add_insight, а summary
         // держит компактным снимком.
-        let d = UpdateSelfModel.description();
+        let d =
+            UpdateSelfModel.description(crate::shared::i18n::locale(crate::shared::i18n::Lang::Ru));
         assert!(d.contains("снимок"));
         assert!(d.contains("add_insight"));
     }

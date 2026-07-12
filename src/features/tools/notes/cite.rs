@@ -19,7 +19,7 @@ impl Tool for NoteCiteSource {
     fn ui_label(&self) -> &'static str {
         "сослаться на источник"
     }
-    fn description(&self) -> String {
+    fn description(&self, _loc: &crate::shared::i18n::Locale) -> String {
         "Связать заметку (по id из note_recall/note_save) с источником из базы знаний \
          (RAG): указывает, что заметка/наблюдение опирается на этот источник. Имя \
          источника — как в выдаче rag_search (в квадратных скобках). Потом при \
@@ -27,7 +27,7 @@ impl Tool for NoteCiteSource {
          ссылающиеся заметки."
             .into()
     }
-    fn parameters(&self) -> serde_json::Value {
+    fn parameters(&self, _loc: &crate::shared::i18n::Locale) -> serde_json::Value {
         serde_json::json!({
             "type": "object",
             "properties": {

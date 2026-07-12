@@ -13,7 +13,7 @@ impl ChatScreen {
     /// задана.
     pub(super) fn model_meta(&self) -> String {
         use crate::shared::config::ServerMode;
-        let Some((cfg, _)) = &self.settings_snapshot else {
+        let Some((cfg, _, _)) = &self.settings_snapshot else {
             return String::new();
         };
         let Some(name) = cfg.engine.active_model_name() else {

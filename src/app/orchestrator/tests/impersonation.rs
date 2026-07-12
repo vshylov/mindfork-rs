@@ -17,6 +17,7 @@ fn impersonation_request_swaps_roles_and_sets_system() {
         "",
         SamplingConfig::default(),
         None,
+        crate::shared::i18n::locale(crate::shared::i18n::Lang::Ru),
     );
 
     assert_eq!(req.system.as_deref(), Some("Ты — пользователь"));
@@ -57,6 +58,7 @@ fn impersonation_request_disables_reasoning() {
             ..Default::default()
         },
         None,
+        crate::shared::i18n::locale(crate::shared::i18n::Lang::Ru),
     );
     assert_eq!(req.sampling.thinking, Some(false));
     assert_eq!(req.sampling.reasoning_budget, Some(0));
@@ -76,6 +78,7 @@ fn impersonation_request_with_seed_adds_continuation_hint() {
         "Мне нужно ",
         SamplingConfig::default(),
         None,
+        crate::shared::i18n::locale(crate::shared::i18n::Lang::Ru),
     );
     let system = req.system.unwrap();
     assert!(system.contains("Ты — пользователь"));
@@ -92,6 +95,7 @@ fn impersonation_request_includes_user_hint() {
         "",
         SamplingConfig::default(),
         Some("Известное о человеке: черты — скептик"),
+        crate::shared::i18n::locale(crate::shared::i18n::Lang::Ru),
     );
     let system = req.system.unwrap();
     assert!(system.contains("Ты — пользователь"));
