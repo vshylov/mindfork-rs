@@ -19,12 +19,6 @@ use crate::shared::api::{ApiMessage, ChatChunk, ChatRequest, EngineBackend, Fini
 
 use super::Orchestrator;
 
-/// Дефолтное системное сообщение режима имперсонации (когда у профиля поле пустое):
-/// модель пишет короткую естественную реплику от лица пользователя.
-const DEFAULT_IMPERSONATION_SYSTEM_MESSAGE: &str = "Ты — пользователь в этом диалоге. Напиши следующее сообщение от лица \
-     пользователя: естественное, по теме разговора, без пояснений и кавычек. \
-     Выведи только текст сообщения.";
-
 /// Лимит времени на одну имперсонацию (страховка от зависшей задачи). Щедрый:
 /// на медленном локальном `llama-server` одна только обработка промпта может занять
 /// ~минуту, плюс генерация на CPU идёт ~5 ток/с — при 120с реплику резало на полуслове
@@ -61,11 +55,12 @@ impl Orchestrator {
         let Some(chat) = self.chats.iter().find(|c| c.id == active_id) else {
             return;
         };
+        let loc = self.profile_locale(chat.profile_id);
         let profile = self.profiles.iter().find(|p| p.id == chat.profile_id);
         let imp_system = profile
             .map(|p| p.impersonation_system_message.trim().to_string())
             .filter(|s| !s.is_empty())
-            .unwrap_or_else(|| DEFAULT_IMPERSONATION_SYSTEM_MESSAGE.to_string());
+            .unwrap_or_else(|| loc.t("prompt.impersonation.default").to_string());
         // Модель собеседника подмешивается в промпт имперсонации (агент пишет ЗА
         // человека) — но только если профиль включил модель себя (тот же opt-in-гейт,
         // что у пассивной инъекции в обычный ход).
@@ -95,6 +90,7 @@ impl Orchestrator {
             &seed,
             self.config.impersonation_sampling.clone(),
             user_hint.as_deref(),
+            loc,
         );
 
         let id = Uuid::new_v4();
@@ -146,6 +142,7 @@ pub(super) fn build_impersonation_request(
     seed: &str,
     mut sampling: SamplingConfig,
     user_hint: Option<&str>,
+    loc: &crate::shared::i18n::Locale,
 ) -> ChatRequest {
     // Имперсонация пишет реплику в поле ввода и **отбрасывает** «мысли» (Thoughts
     // в `spawn_impersonation` игнорируются), поэтому reasoning ей не нужен. Ключевое
@@ -166,11 +163,8 @@ pub(super) fn build_impersonation_request(
     let messages = chat.messages.iter().filter_map(swap_role_message).collect();
     let seed = seed.trim();
     if !seed.is_empty() {
-        system.push_str(&format!(
-            "\n\nПользователь уже начал писать своё сообщение: «{seed}». \
-             Продолжи эту реплику естественно и выведи ТОЛЬКО продолжение, \
-             без повтора уже написанного начала."
-        ));
+        system.push_str("\n\n");
+        system.push_str(&loc.tf("prompt.impersonation.continue", &[("seed", seed)]));
     }
     ChatRequest {
         system: Some(system),

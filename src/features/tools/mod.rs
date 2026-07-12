@@ -69,6 +69,10 @@ pub struct ToolContext {
     /// Показывать ли self-заметки (`@self`) в общем `note_recall` (Ярус 3, Путь 2).
     /// Из `config.notes.recall_includes_self`; по умолчанию `false` (self скрыты).
     pub recall_includes_self: bool,
+    /// Язык **служебного каркаса** для этого хода (из `Profile.language`, ось A,
+    /// docs/i18n.md). Тексты, которые читает модель (каркас «модели себя», результаты
+    /// инструментов), локализуются им. `&'static` — вшитый бандл.
+    pub loc: &'static crate::shared::i18n::Locale,
 }
 
 /// Долгоживущие разделяемые зависимости инструментов (пучок `Arc`; меняется при
@@ -109,6 +113,8 @@ pub struct TurnInfo {
     pub system_message: String,
     pub effective_sampling: SamplingConfig,
     pub last_user_message_at: Option<DateTime<Utc>>,
+    /// Язык служебного каркаса хода (из `Profile.language`, ось A).
+    pub lang: crate::shared::i18n::Lang,
 }
 
 impl ToolContext {
@@ -128,6 +134,7 @@ impl ToolContext {
             chunk_params: params.chunk_params,
             self_model_params: params.self_model_params,
             recall_includes_self: params.recall_includes_self,
+            loc: crate::shared::i18n::locale(turn.lang),
         }
     }
 }
@@ -488,6 +495,7 @@ pub(crate) mod testkit {
             system_message: "системное сообщение".into(),
             effective_sampling: SamplingConfig::default(),
             last_user_message_at: None,
+            lang: crate::shared::i18n::Lang::Ru,
         }
     }
 

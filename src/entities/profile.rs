@@ -4,6 +4,7 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use crate::entities::sampling::SamplingConfig;
+use crate::shared::i18n::Lang;
 
 /// Идентификатор инструмента (на M5 может стать перечислением).
 pub type ToolId = String;
@@ -32,6 +33,15 @@ pub struct Profile {
     pub id: Uuid,
     pub name: String,
     pub default_system_message: String,
+    /// Язык **служебного каркаса** агента (промпты фоновых задач, каркас «модели
+    /// себя», результаты инструментов — тексты, которые читает *модель*; ось A,
+    /// см. docs/i18n.md). НЕ управляет языком ответа модели (это территория
+    /// `default_system_message`) и НЕ связан с языком интерфейса (ось B). Выбирается
+    /// при создании профиля и **фиксируется**, как только у профиля появляются данные
+    /// (чаты / «модель себя» / заметки) — чтобы вся память профиля была на одном
+    /// языке. Старые `profiles.json` читаются как `Ru` (их данные русские).
+    #[serde(default)]
+    pub language: Lang,
     /// Системное сообщение для режима имперсонации: описывает персону пользователя,
     /// от лица которого модель пишет реплику (`Ctrl+U`). Пусто — используется
     /// общий дефолт. Инструментов в этом режиме нет. См. spec §11.8.
@@ -64,6 +74,7 @@ impl Profile {
             id: Uuid::new_v4(),
             name: name.into(),
             default_system_message: system_message.into(),
+            language: Lang::default(),
             impersonation_system_message: String::new(),
             character_names: CharacterNames::default(),
             greeting: None,

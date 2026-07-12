@@ -41,7 +41,13 @@ impl Orchestrator {
         let Some(chat) = self.chats.iter().find(|c| c.id == id) else {
             return;
         };
-        let Some(digest) = crate::features::rename_chat::build_conversation_digest(&chat.messages)
+        // Язык служебного каркаса — из профиля чата (ось A): дайджест и системное
+        // сообщение авто-названия локализуются им (заголовок всё равно просят «на
+        // языке переписки», см. `prompt.title.system`). Ошибки — для человека (ось B),
+        // остаются на русском.
+        let loc = self.profile_locale(chat.profile_id);
+        let Some(digest) =
+            crate::features::rename_chat::build_conversation_digest(&chat.messages, loc)
         else {
             let _ = self.evt_tx.send(AppEvent::ChatListError(
                 "Недостаточно сообщений для авто-названия".into(),
@@ -74,7 +80,7 @@ impl Orchestrator {
             ..Default::default()
         };
         let request = ChatRequest {
-            system: Some(crate::features::rename_chat::TITLE_SYSTEM_MESSAGE.to_string()),
+            system: Some(crate::features::rename_chat::title_system_message(loc)),
             messages: vec![ApiMessage::user(digest)],
             sampling,
             tools: Vec::new(),

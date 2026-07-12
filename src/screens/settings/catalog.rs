@@ -6,8 +6,13 @@ use super::helpers::*;
 use super::*;
 
 impl SettingsScreen {
-    /// Создаёт экран из снимка настроек (конфиг + видимые профили).
-    pub fn new(config: AppConfig, profiles: Vec<Profile>) -> Self {
+    /// Создаёт экран из снимка настроек (конфиг + видимые профили + профили с
+    /// заблокированным языком каркаса).
+    pub fn new(
+        config: AppConfig,
+        profiles: Vec<Profile>,
+        language_locked: Vec<uuid::Uuid>,
+    ) -> Self {
         Self {
             config,
             profiles,
@@ -26,6 +31,7 @@ impl SettingsScreen {
                 embed: ServerStatus::NotConfigured,
                 impersonation: ServerStatus::NotConfigured,
             },
+            language_locked,
         }
     }
 
@@ -37,9 +43,15 @@ impl SettingsScreen {
 
     /// Обновляет рабочую копию из переэмита настроек (после create/delete профиля
     /// или эха правки). Навигация и активный редактор сохраняются.
-    pub fn refresh(&mut self, config: AppConfig, profiles: Vec<Profile>) {
+    pub fn refresh(
+        &mut self,
+        config: AppConfig,
+        profiles: Vec<Profile>,
+        language_locked: Vec<uuid::Uuid>,
+    ) {
         self.config = config;
         self.profiles = profiles;
+        self.language_locked = language_locked;
         if !self.profiles.is_empty() && self.profile_idx >= self.profiles.len() {
             self.profile_idx = self.profiles.len() - 1;
         }
@@ -678,9 +690,23 @@ impl SettingsScreen {
         ];
         match profile_sub {
             Subsection::Assistant => {
+                // Язык служебного каркаса (ось A): Choice; блокируется, когда у
+                // профиля появились данные (`language_locked`). См. docs/i18n.md.
+                let lang_locked = self.language_locked.contains(&p.id);
+                let mut lang_row = row(
+                    FieldId::PLanguage,
+                    "Язык каркаса",
+                    FieldKind::Choice(p.language.label().to_string()),
+                )
+                .describe(DESC_PROFILE_LANGUAGE);
+                if lang_locked {
+                    lang_row.warn = true;
+                    lang_row.hint = Some("зафиксирован: у профиля есть данные");
+                }
                 rows.extend(grouped(
                     "Персона",
                     vec![
+                        lang_row,
                         row(
                             FieldId::PSystem,
                             "Системное сообщение",

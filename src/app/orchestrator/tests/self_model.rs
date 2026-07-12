@@ -20,41 +20,117 @@ fn inject_self_model_respects_flag_and_emptiness() {
 
     // Выключено → система не меняется (протокол тоже не подмешивается).
     assert_eq!(
-        inject_self_model(Some("S".into()), Some(&m), false, true, &pp, now, &[]),
+        inject_self_model(
+            Some("S".into()),
+            Some(&m),
+            false,
+            true,
+            &pp,
+            now,
+            &[],
+            crate::shared::i18n::locale(crate::shared::i18n::Lang::Ru)
+        ),
         Some("S".into())
     );
     // Включено, протокол выкл, непустая модель → блок дописывается, протокола нет.
-    let out = inject_self_model(Some("S".into()), Some(&m), true, false, &pp, now, &[]).unwrap();
+    let out = inject_self_model(
+        Some("S".into()),
+        Some(&m),
+        true,
+        false,
+        &pp,
+        now,
+        &[],
+        crate::shared::i18n::locale(crate::shared::i18n::Lang::Ru),
+    )
+    .unwrap();
     assert!(out.starts_with("S\n\n"));
     assert!(out.contains("ценю ясность"));
     assert!(!out.contains("угодливости"));
     // Включено, протокол выкл, модели нет, наблюдений нет → без изменений.
     assert_eq!(
-        inject_self_model(Some("S".into()), None, true, false, &pp, now, &[]),
+        inject_self_model(
+            Some("S".into()),
+            None,
+            true,
+            false,
+            &pp,
+            now,
+            &[],
+            crate::shared::i18n::locale(crate::shared::i18n::Lang::Ru)
+        ),
         Some("S".into())
     );
     // Модели нет, но есть наблюдения (self-заметки) → инъекция всё равно происходит.
     let obs = [seg("заметил склонность к краткости")];
-    let only_obs = inject_self_model(None, None, true, false, &pp, now, &obs).unwrap();
+    let only_obs = inject_self_model(
+        None,
+        None,
+        true,
+        false,
+        &pp,
+        now,
+        &obs,
+        crate::shared::i18n::locale(crate::shared::i18n::Lang::Ru),
+    )
+    .unwrap();
     assert!(only_obs.contains("Недавние наблюдения:"));
     assert!(only_obs.contains("склонность к краткости"));
     // Пустая модель + пустые наблюдения, system=None → нечего подмешивать → None.
     let empty = SelfModel::new(Uuid::new_v4());
     assert_eq!(
-        inject_self_model(None, Some(&empty), true, false, &pp, now, &[]),
+        inject_self_model(
+            None,
+            Some(&empty),
+            true,
+            false,
+            &pp,
+            now,
+            &[],
+            crate::shared::i18n::locale(crate::shared::i18n::Lang::Ru)
+        ),
         None
     );
     // Пустой system + непустая модель (протокол выкл) → блок становится системой.
-    let only = inject_self_model(None, Some(&m), true, false, &pp, now, &[]).unwrap();
+    let only = inject_self_model(
+        None,
+        Some(&m),
+        true,
+        false,
+        &pp,
+        now,
+        &[],
+        crate::shared::i18n::locale(crate::shared::i18n::Lang::Ru),
+    )
+    .unwrap();
     assert!(only.contains("О себе: ценю ясность"));
 
     // Протокол вкл + пустая модель → протокол всё равно подмешивается (bootstrap).
-    let boot =
-        inject_self_model(Some("S".into()), Some(&empty), true, true, &pp, now, &[]).unwrap();
+    let boot = inject_self_model(
+        Some("S".into()),
+        Some(&empty),
+        true,
+        true,
+        &pp,
+        now,
+        &[],
+        crate::shared::i18n::locale(crate::shared::i18n::Lang::Ru),
+    )
+    .unwrap();
     assert!(boot.starts_with("S\n\n"));
     assert!(boot.contains("угодливости"));
     // Протокол вкл + непустая модель → и рендер, и протокол.
-    let both = inject_self_model(None, Some(&m), true, true, &pp, now, &[]).unwrap();
+    let both = inject_self_model(
+        None,
+        Some(&m),
+        true,
+        true,
+        &pp,
+        now,
+        &[],
+        crate::shared::i18n::locale(crate::shared::i18n::Lang::Ru),
+    )
+    .unwrap();
     assert!(both.contains("ценю ясность"));
     assert!(both.contains("угодливости"));
 }
@@ -78,10 +154,30 @@ fn inject_self_model_appends_summary_hint_when_bloated() {
     let now = chrono::Utc::now();
 
     // Протокол вкл → подсказка присутствует.
-    let with = inject_self_model(None, Some(&m), true, true, &params, now, &[]).unwrap();
+    let with = inject_self_model(
+        None,
+        Some(&m),
+        true,
+        true,
+        &params,
+        now,
+        &[],
+        crate::shared::i18n::locale(crate::shared::i18n::Lang::Ru),
+    )
+    .unwrap();
     assert!(with.contains("Описание себя разрослось"));
     // Протокол выкл → протокола и подсказки нет (только рендер модели).
-    let without = inject_self_model(None, Some(&m), true, false, &params, now, &[]).unwrap();
+    let without = inject_self_model(
+        None,
+        Some(&m),
+        true,
+        false,
+        &params,
+        now,
+        &[],
+        crate::shared::i18n::locale(crate::shared::i18n::Lang::Ru),
+    )
+    .unwrap();
     assert!(!without.contains("Описание себя разрослось"));
 }
 

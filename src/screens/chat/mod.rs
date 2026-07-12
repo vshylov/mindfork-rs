@@ -225,9 +225,10 @@ pub struct ChatScreen {
     /// Индекс последнего выделения в попапе эмодзи — восстанавливается при следующем
     /// открытии (попап «помнит» выбор).
     emoji_last: usize,
-    /// Последний снимок настроек (конфиг + полные профили) — для открытия экрана
-    /// настроек по `Ctrl+P`. Заполняется событием `Settings`. См. spec §11.6.
-    settings_snapshot: Option<(AppConfig, Vec<Profile>)>,
+    /// Последний снимок настроек (конфиг + полные профили + id профилей с
+    /// заблокированным языком каркаса) — для открытия экрана настроек по `Ctrl+P`.
+    /// Заполняется событием `Settings`. См. spec §11.6, docs/i18n.md.
+    settings_snapshot: Option<(AppConfig, Vec<Profile>, Vec<uuid::Uuid>)>,
     /// Показан ли оверлей помощи по клавишам (`F1`/`?`). См. spec §11.7.
     show_help: bool,
     /// Прокрутка оверлея помощи (первый видимый ряд списка клавиш) — для коротких
@@ -309,24 +310,29 @@ impl ChatScreen {
     /// Сохраняет снимок настроек (для открытия экрана настроек по `Ctrl+P`) и
     /// обновляет палитру темы (вместе с режимом совместимости терминала) и
     /// параметры отрисовки ленты (разделители строк таблиц).
-    pub fn set_settings(&mut self, config: AppConfig, profiles: Vec<Profile>) {
+    pub fn set_settings(
+        &mut self,
+        config: AppConfig,
+        profiles: Vec<Profile>,
+        language_locked: Vec<uuid::Uuid>,
+    ) {
         self.palette = Palette::for_theme(config.interface.theme)
             .with_compat(config.interface.terminal_compat);
         self.confirm_destructive = config.interface.confirm_destructive_keys;
         self.feed_view
             .set_table_row_separators(config.interface.table_row_separators);
-        self.settings_snapshot = Some((config, profiles));
+        self.settings_snapshot = Some((config, profiles, language_locked));
     }
 
     /// Снимок настроек для создания экрана настроек (`None`, пока не получен).
-    pub fn settings_snapshot(&self) -> Option<(AppConfig, Vec<Profile>)> {
+    pub fn settings_snapshot(&self) -> Option<(AppConfig, Vec<Profile>, Vec<uuid::Uuid>)> {
         self.settings_snapshot.clone()
     }
 
     /// Текущие настройки спелл-чека `(включён, выбранные словари)` из последнего
     /// снимка настроек — для (пере)загрузки словарей в `app/runtime.rs`. См. spec §11.6.
     pub fn spell_config(&self) -> Option<(bool, &[String])> {
-        self.settings_snapshot.as_ref().map(|(c, _)| {
+        self.settings_snapshot.as_ref().map(|(c, _, _)| {
             (
                 c.interface.spellcheck_enabled,
                 c.interface.selected_dictionaries.as_slice(),

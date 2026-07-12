@@ -8,7 +8,7 @@ use crate::shared::config::{FlashAttn, PythonMode, SpecType};
 fn screen() -> SettingsScreen {
     let mut p = Profile::new("Базовый", "Ты — ассистент.");
     p.enabled_tools = default_tool_ids();
-    SettingsScreen::new(AppConfig::default(), vec![p])
+    SettingsScreen::new(AppConfig::default(), vec![p], vec![])
 }
 
 fn key(code: KeyCode) -> KeyEvent {
@@ -133,7 +133,7 @@ fn python_group_visibility_follows_mode() {
     cfg.tools.python_mode = PythonMode::Local;
     let mut p = Profile::new("Базовый", "Ты — ассистент.");
     p.enabled_tools = default_tool_ids();
-    let mut s = SettingsScreen::new(cfg, vec![p]);
+    let mut s = SettingsScreen::new(cfg, vec![p], vec![]);
     goto_section(&mut s, Section::Tools);
     let ids: Vec<FieldId> = s.fields().iter().map(|f| f.id).collect();
     assert!(ids.contains(&FieldId::TPythonMode));
@@ -421,11 +421,15 @@ fn toggling_profile_tool_emits_save_profile() {
 fn profile_select_cycles() {
     let mut p2 = Profile::new("Второй", "sys2");
     p2.enabled_tools = default_tool_ids();
-    let mut s = SettingsScreen::new(AppConfig::default(), {
-        let mut p1 = Profile::new("Первый", "sys1");
-        p1.enabled_tools = default_tool_ids();
-        vec![p1, p2]
-    });
+    let mut s = SettingsScreen::new(
+        AppConfig::default(),
+        {
+            let mut p1 = Profile::new("Первый", "sys1");
+            p1.enabled_tools = default_tool_ids();
+            vec![p1, p2]
+        },
+        vec![],
+    );
     goto_section(&mut s, Section::Profiles);
     goto_field(&mut s, FieldId::PSelect); // селектор профиля (после таб-стрипа)
     assert_eq!(s.profile_idx, 0);
@@ -1285,7 +1289,7 @@ fn all_labels_fit_alignment_cap() {
     cfg.engine.managed.spec_type = SpecType::DraftMtp;
     let mut p = Profile::new("Базовый", "Ты — ассистент.");
     p.enabled_tools = default_tool_ids();
-    let s = SettingsScreen::new(cfg, vec![p]);
+    let s = SettingsScreen::new(cfg, vec![p], vec![]);
     let mut all: Vec<(&str, Vec<FieldRow>)> = vec![
         ("Инструменты", s.tool_fields()),
         ("Память", s.memory_fields()),

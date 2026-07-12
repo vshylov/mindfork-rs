@@ -77,7 +77,25 @@ impl Orchestrator {
 
     /// Применяет правки профиля (не затрагивает уже созданные чаты — у них свои
     /// копии, spec §10). Сохраняет и переэмитит список профилей/настройки.
-    pub(super) fn handle_update_profile(&mut self, id: Uuid, edit: ProfileEdit) {
+    pub(super) fn handle_update_profile(&mut self, id: Uuid, mut edit: ProfileEdit) {
+        // Авторитетный гейт смены языка каркаса (ось A, docs/i18n.md): если у профиля
+        // уже есть данные, реальная смена языка отклоняется (страховка поверх
+        // блокировки поля в UI). Правку языка при этом гасим, остальные — применяем.
+        if let Some(new_lang) = edit.language {
+            let current = self
+                .profiles
+                .iter()
+                .find(|p| p.id == id)
+                .map(|p| p.language);
+            if current == Some(new_lang) {
+                edit.language = None; // язык не меняется — гейт неактуален
+            } else if self.profile_has_data(id) {
+                edit.language = None;
+                let _ = self.evt_tx.send(AppEvent::Error(
+                    "Нельзя сменить язык профиля: у него уже есть данные (чаты / модель себя / заметки)".into(),
+                ));
+            }
+        }
         let Some(profile) = self.profiles.iter_mut().find(|p| p.id == id) else {
             return;
         };

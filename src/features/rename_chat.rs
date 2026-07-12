@@ -2,6 +2,7 @@
 //! пересказа переписки для авто-названия моделью. См. spec §11.2.
 
 use crate::entities::message::{Message, MessageRole};
+use crate::shared::i18n::Locale;
 
 /// Максимальная длина заголовка чата (в символах). Лишнее обрезается.
 pub const MAX_TITLE_LEN: usize = 100;
@@ -11,25 +12,27 @@ pub const MAX_TITLE_LEN: usize = 100;
 /// но может смещаться к концу разговора). См. spec §11.2.
 pub const TITLE_CONTEXT_BUDGET: usize = 4000;
 
-/// Системное сообщение модели для авто-названия чата по переписке.
-pub const TITLE_SYSTEM_MESSAGE: &str = "Ты придумываешь короткий заголовок для переписки между пользователем и \
-ассистентом. Прочитай переписку и ответь ТОЛЬКО заголовком из 2–6 слов на языке \
-переписки: без кавычек, без точки в конце, без пояснений и без префиксов вроде \
-«Заголовок:». Заголовок должен отражать главную тему разговора.";
+/// Системное сообщение модели для авто-названия чата на языке служебного каркаса
+/// (`loc`, ось A). Заголовок всё равно просят «на языке переписки» — поэтому язык
+/// каркаса не навязывает язык заголовка (docs/i18n.md, развилка 6).
+pub fn title_system_message(loc: &Locale) -> String {
+    loc.t("prompt.title.system").to_string()
+}
 
 /// Собирает компактный пересказ переписки для запроса авто-названия: помечает
-/// роли, пропускает системные/инструментальные и пустые сообщения. Если суммарный
-/// объём превышает [`TITLE_CONTEXT_BUDGET`], берёт начало и конец (середина
-/// выкидывается). Возвращает `None`, если содержательных сообщений нет.
-pub fn build_conversation_digest(messages: &[Message]) -> Option<String> {
+/// роли (на языке каркаса `loc`), пропускает системные/инструментальные и пустые
+/// сообщения. Если суммарный объём превышает [`TITLE_CONTEXT_BUDGET`], берёт начало
+/// и конец (середина выкидывается). Возвращает `None`, если содержательных
+/// сообщений нет.
+pub fn build_conversation_digest(messages: &[Message], loc: &Locale) -> Option<String> {
     let lines: Vec<String> = messages
         .iter()
         .filter(|m| matches!(m.role, MessageRole::User | MessageRole::Assistant))
         .filter(|m| !m.text.trim().is_empty())
         .map(|m| {
             let who = match m.role {
-                MessageRole::User => "Пользователь",
-                _ => "Ассистент",
+                MessageRole::User => loc.t("digest.role.user"),
+                _ => loc.t("digest.role.assistant"),
             };
             format!("{who}: {}", m.text.trim())
         })
@@ -96,6 +99,11 @@ pub fn sanitize_title(input: &str) -> Option<String> {
 mod tests {
     use super::*;
 
+    /// Референсная локаль (ru) — ассерты на русские роли пинят ru-бандл.
+    fn ru() -> &'static Locale {
+        crate::shared::i18n::locale(crate::shared::i18n::Lang::Ru)
+    }
+
     #[test]
     fn trims_and_keeps_text() {
         assert_eq!(sanitize_title("  Мой чат  ").as_deref(), Some("Мой чат"));
@@ -130,8 +138,21 @@ mod tests {
             Message::assistant("хорошо"),
             Message::new(MessageRole::Tool, "tool output"),
         ];
-        let digest = build_conversation_digest(&msgs).unwrap();
+        let digest = build_conversation_digest(&msgs, ru()).unwrap();
         assert_eq!(digest, "Пользователь: как дела?\nАссистент: хорошо");
+    }
+
+    /// Per-language (§3.5): роли в дайджесте — из бандла активного языка (en-профиль
+    /// получает «User:/Assistant:», а не русские роли).
+    #[test]
+    fn digest_roles_localized_for_all_langs() {
+        let msgs = vec![Message::user("hi"), Message::assistant("yo")];
+        for &lang in crate::shared::i18n::Lang::ALL {
+            let l = crate::shared::i18n::locale(lang);
+            let d = build_conversation_digest(&msgs, l).unwrap();
+            assert!(d.contains(l.t("digest.role.user")), "{lang:?}: {d}");
+            assert!(d.contains(l.t("digest.role.assistant")), "{lang:?}: {d}");
+        }
     }
 
     #[test]
@@ -140,7 +161,7 @@ mod tests {
             Message::new(MessageRole::System, "sys"),
             Message::user("   "),
         ];
-        assert!(build_conversation_digest(&msgs).is_none());
+        assert!(build_conversation_digest(&msgs, ru()).is_none());
     }
 
     #[test]
@@ -148,7 +169,7 @@ mod tests {
         // Длинное сообщение пользователя — должно усечься с маркером середины.
         let long = "слово ".repeat(2000); // ~12000 символов
         let msgs = vec![Message::user(long)];
-        let digest = build_conversation_digest(&msgs).unwrap();
+        let digest = build_conversation_digest(&msgs, ru()).unwrap();
         assert!(digest.chars().count() <= TITLE_CONTEXT_BUDGET + 16);
         assert!(digest.contains('…'), "маркер усечения середины");
         assert!(digest.starts_with("Пользователь:"));

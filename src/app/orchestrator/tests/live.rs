@@ -3,6 +3,83 @@
 
 use super::*;
 
+/// Ярус 1 i18n (docs/i18n.md, go/no-go): профиль с языком служебного каркаса `En` —
+/// авто-название англоязычной переписки английское, БЕЗ кириллицы. Свежий профиль
+/// (bootstrap-профиль залочен: у него уже есть дефолтный чат), ставим ему En, заводим
+/// чат, гоняем английский ход и авто-название. `#[ignore]`, вручную против живой модели.
+#[tokio::test]
+#[ignore = "requires a running OpenAI-compatible server (MINDFORK_ENGINE_URL)"]
+async fn i18n_en_profile_title_e2e_live() {
+    let Some((_d, cmd_tx, mut evt_rx, handle)) = spawn_orch_live() else {
+        eprintln!("skip: MINDFORK_ENGINE_URL not set");
+        return;
+    };
+    // Свежий профиль (у bootstrap-профиля есть дефолтный чат → его язык залочен).
+    cmd_tx
+        .send(AppCommand::CreateProfile {
+            name: "English".into(),
+            system_message: "You are a helpful assistant. Reply in English.".into(),
+        })
+        .unwrap();
+    let pl = wait_for(
+        &mut evt_rx,
+        |e| matches!(e, AppEvent::ProfileList(v) if v.len() >= 2),
+    )
+    .await
+    .unwrap();
+    let pid = match pl {
+        AppEvent::ProfileList(v) => v.last().unwrap().id,
+        _ => unreachable!(),
+    };
+    // Язык каркаса En (профиль свежий, без данных → смена разрешена).
+    cmd_tx
+        .send(AppCommand::UpdateProfile {
+            id: pid,
+            edit: Box::new(ProfileEdit {
+                language: Some(crate::shared::i18n::Lang::En),
+                ..Default::default()
+            }),
+        })
+        .unwrap();
+    // Новый чат под этим профилем (станет активным).
+    cmd_tx
+        .send(AppCommand::NewChat {
+            profile_id: Some(pid),
+        })
+        .unwrap();
+    let act = wait_for(&mut evt_rx, |e| matches!(e, AppEvent::ChatActivated { .. }))
+        .await
+        .unwrap();
+    let chat_id = match act {
+        AppEvent::ChatActivated { id, .. } => id,
+        _ => unreachable!(),
+    };
+    // Английский ход.
+    let (reply, _) =
+        run_turn_live(&cmd_tx, &mut evt_rx, "Tell me a fun fact about the Moon.").await;
+    eprintln!("en reply: {:?}", reply.chars().take(80).collect::<String>());
+    // Авто-название по переписке (дайджест/системное сообщение — на языке каркаса).
+    cmd_tx.send(AppCommand::AutoRenameChat(chat_id)).unwrap();
+    let renamed = wait_for(&mut evt_rx, |e| matches!(e, AppEvent::ChatRenamed { .. }))
+        .await
+        .unwrap();
+    let title = match renamed {
+        AppEvent::ChatRenamed { title, .. } => title,
+        _ => unreachable!(),
+    };
+    cmd_tx.send(AppCommand::Quit).unwrap();
+    handle.await.unwrap();
+    eprintln!("en auto-title: {title:?}");
+    let has_cyr = title
+        .chars()
+        .any(|c| ('а'..='я').contains(&c) || ('А'..='Я').contains(&c));
+    assert!(!title.trim().is_empty(), "пустой заголовок");
+    assert!(
+        !has_cyr,
+        "заголовок англоязычной переписки содержит кириллицу: {title:?}"
+    );
+}
+
 /// End-to-end на живой модели: с включённым `send_followup_message` ассистент
 /// пишет **второе сообщение** отдельным пузырём. Проверяем и сигнал UI
 /// (`AssistantContinue`), и итоговую структуру чата (`Message.new_bubble`).

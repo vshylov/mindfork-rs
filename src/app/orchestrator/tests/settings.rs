@@ -9,7 +9,10 @@ async fn bootstrap_emits_settings_snapshot() {
     let ev = wait_for(&mut evt_rx, |e| matches!(e, AppEvent::Settings { .. }))
         .await
         .unwrap();
-    if let AppEvent::Settings { config, profiles } = ev {
+    if let AppEvent::Settings {
+        config, profiles, ..
+    } = ev
+    {
         assert_eq!(config.schema_version, AppConfig::default().schema_version);
         assert_eq!(profiles.len(), 1, "дефолтный профиль в снимке");
     }

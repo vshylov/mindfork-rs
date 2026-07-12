@@ -87,6 +87,11 @@ pub struct ProfileEdit {
     /// `Some(None)` — убрать дефолты семплинга профиля.
     pub default_sampling: Option<Option<SamplingConfig>>,
     pub enabled_tools: Option<Vec<ToolId>>,
+    /// Язык служебного каркаса (ось A, docs/i18n.md). Правка разрешена только пока у
+    /// профиля нет данных — гейт **авторитетно** проверяет оркестратор перед
+    /// применением (`handle_update_profile`), а UI дополнительно рисует поле
+    /// заблокированным.
+    pub language: Option<crate::shared::i18n::Lang>,
 }
 
 /// Применяет правки к профилю. Возвращает `false`, если имя задано, но пустое
@@ -120,6 +125,9 @@ pub fn apply_edit(profile: &mut Profile, edit: ProfileEdit) -> bool {
     }
     if let Some(tools) = edit.enabled_tools {
         profile.enabled_tools = tools;
+    }
+    if let Some(lang) = edit.language {
+        profile.language = lang;
     }
     true
 }

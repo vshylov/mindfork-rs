@@ -65,9 +65,18 @@ use self::restart_queue::RestartQueue;
 use self::save_queue::SaveQueue;
 use self::title::TitleResult;
 
-/// Системное сообщение профиля по умолчанию (создаётся при пустом хранилище).
-const DEFAULT_SYSTEM_MESSAGE: &str =
-    "Ты — полезный ассистент. Отвечай ясно и по существу на языке пользователя.";
+/// Дефолтный профиль на языке `lang` (bootstrap при пустом хранилище / защитный
+/// fallback). Имя и системное сообщение — из бандла служебного каркаса
+/// (`defaults.*`, ось A, docs/i18n.md); язык проставляется в профиль.
+fn default_profile(lang: crate::shared::i18n::Lang) -> Profile {
+    let loc = crate::shared::i18n::locale(lang);
+    let mut profile = Profile::new(
+        loc.t("defaults.profile_name"),
+        loc.t("defaults.system_message"),
+    );
+    profile.language = lang;
+    profile
+}
 
 /// Параметры запуска оркестратора. Серверы (chat/embedding) и реестр инструментов
 /// оркестратор настраивает сам из [`AppConfig`] через [`ServerSupervisor`] — это
@@ -292,7 +301,7 @@ impl Orchestrator {
             }
         }
         if self.profiles.is_empty() {
-            let mut profile = Profile::new("Ассистент", DEFAULT_SYSTEM_MESSAGE);
+            let mut profile = default_profile(crate::shared::i18n::Lang::default());
             // Включаем все базовые инструменты в дефолтном профиле.
             crate::features::profiles::reconcile_tools(&mut profile);
             self.storage.json().upsert_profile(&profile)?;
@@ -455,10 +464,11 @@ impl Orchestrator {
         // возвращает шрамы, которые пишем self-заметками после правки.
         let params =
             crate::entities::self_model::SelfModelParams::from_settings(&self.config.self_model);
+        let loc = self.profile_locale(pid);
         let mut scars: Vec<String> = Vec::new();
         let _ = self.storage.db().self_model_update(pid, |m| {
             let mut changed = m.apply_edit(edit);
-            scars = m.fold_closed_goals(params.max_closed_goals);
+            scars = m.fold_closed_goals(params.max_closed_goals, loc);
             if !scars.is_empty() {
                 changed = true;
             }
@@ -488,22 +498,65 @@ impl Orchestrator {
             .filter(|p| !p.is_hidden)
             .cloned()
             .collect();
+        let language_locked: Vec<Uuid> = visible
+            .iter()
+            .filter(|p| self.profile_has_data(p.id))
+            .map(|p| p.id)
+            .collect();
         let _ = self.evt_tx.send(AppEvent::Settings {
             config: Box::new(self.config.clone()),
             profiles: visible,
+            language_locked,
         });
+    }
+
+    /// Есть ли у профиля данные, «привязывающие» его к текущему языку каркаса (ось A,
+    /// docs/i18n.md): видимые чаты, непустая «модель себя» или заметки (в т.ч.
+    /// наблюдения `@self`). RAG-документы намеренно не учитываются — язык файлов базы
+    /// знаний задаёт пользователь, не агент. Пока `false` — язык профиля редактируем.
+    pub(super) fn profile_has_data(&self, profile_id: Uuid) -> bool {
+        if self
+            .chats
+            .iter()
+            .any(|c| !c.is_hidden && c.profile_id == profile_id)
+        {
+            return true;
+        }
+        let db = self.storage.db();
+        if let Ok(Some(m)) = db.self_model_get(profile_id)
+            && !m.is_empty()
+        {
+            return true;
+        }
+        db.note_list(profile_id, None, &[], None)
+            .map(|v| !v.is_empty())
+            .unwrap_or(false)
     }
 
     // ---------- вспомогательное (общее для подмодулей) ----------
 
-    /// Создаёт новый чат из профиля (по `id` или первого) с приветствием.
+    /// Локаль служебного каркаса профиля (ось A, docs/i18n.md) по `profile_id`.
+    /// Неизвестный профиль → референсный язык (`Lang::default`).
+    pub(super) fn profile_locale(&self, profile_id: Uuid) -> &'static crate::shared::i18n::Locale {
+        let lang = self
+            .profiles
+            .iter()
+            .find(|p| p.id == profile_id)
+            .map(|p| p.language)
+            .unwrap_or_default();
+        crate::shared::i18n::locale(lang)
+    }
+
+    /// Создаёт новый чат из профиля (по `id` или первого) с приветствием. Заголовок
+    /// «новый чат» — на языке служебного каркаса профиля (ось A).
     fn new_chat_value(&self, profile_id: Option<Uuid>) -> Chat {
         let profile = profile_id
             .and_then(|id| self.profiles.iter().find(|p| p.id == id))
             .or_else(|| self.profiles.first())
             .cloned()
-            .unwrap_or_else(|| Profile::new("Ассистент", DEFAULT_SYSTEM_MESSAGE));
-        let mut chat = Chat::from_profile(&profile, "Новый чат");
+            .unwrap_or_else(|| default_profile(crate::shared::i18n::Lang::default()));
+        let title = crate::shared::i18n::locale(profile.language).t("defaults.chat_title");
+        let mut chat = Chat::from_profile(&profile, title);
         if let Some(greeting) = &profile.greeting
             && !greeting.is_empty()
         {

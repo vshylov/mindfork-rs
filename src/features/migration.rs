@@ -200,6 +200,8 @@ fn configuration_to_profile(name: &str, cfg: &LlConfiguration) -> Profile {
         id,
         name: name.to_string(),
         default_system_message: system,
+        // Импортированные из LameLLaMA данные русские → язык каркаса `Ru` (по умолчанию).
+        language: crate::shared::i18n::Lang::default(),
         // Имперсонация в LameLLaMA не переносится — пусто (общий дефолт).
         impersonation_system_message: String::new(),
         character_names: map_characters(cfg.characters_config.as_ref()),

@@ -318,6 +318,21 @@ impl SettingsScreen {
                 }
                 None
             }
+            // Язык каркаса профиля (ось A): цикл по вшитым языкам; заблокирован, если
+            // у профиля появились данные (страховка поверх орк-гейта). См. docs/i18n.md.
+            FieldId::PLanguage => {
+                let p = self.profiles.get(self.profile_idx)?;
+                if self.language_locked.contains(&p.id) {
+                    return None; // язык зафиксирован
+                }
+                let cur = p.language;
+                let all = crate::shared::i18n::Lang::ALL;
+                let i = all.iter().position(|l| *l == cur).unwrap_or(0) as i32;
+                let n = all.len() as i32;
+                let next = all[(((i + dir) % n + n) % n) as usize];
+                self.profiles[self.profile_idx].language = next;
+                Some(self.save_profile())
+            }
             _ => None,
         }
     }
@@ -414,6 +429,9 @@ impl SettingsScreen {
                 character_names: Some(p.character_names.clone()),
                 default_sampling: Some(p.default_sampling.clone()),
                 enabled_tools: Some(p.enabled_tools.clone()),
+                // Язык каркаса шлём всегда; оркестратор авторитетно гасит смену, если
+                // у профиля есть данные (совпадение с текущим — тоже no-op). docs/i18n.md.
+                language: Some(p.language),
             }),
         }
     }

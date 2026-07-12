@@ -282,6 +282,8 @@ src/
    │  ├─ table.rs          TableBuilder + render_table (раскладка/отрисовка таблиц)
    │  └─ latex.rs          LaTeX→unicode: нормализация разделителей + конвертер команд
    ├─ wrap.rs              перенос слов по колонкам (unicode-width)
+   ├─ i18n.rs              язык служебного каркаса агента (ось A): Lang/Locale/t/tf,
+   │                       вшитые бандлы locales/{ru,en}.json (docs/i18n.md, Ярус 1)
    ├─ theme.rs             Palette (роли user/assistant/tool/…), auto/dark/light
    ├─ keys.rs              раскладко-независимые Ctrl-шорткаты (ЙЦУКЕН→латиница)
    ├─ server.rs            ServerStatus (статус сервера для UI)
@@ -656,6 +658,7 @@ erDiagram
     PROFILE {
         Uuid id
         string name
+        Lang language
         string default_system_message
         string impersonation_system_message
         Option_SamplingConfig default_sampling

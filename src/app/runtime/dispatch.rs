@@ -42,10 +42,14 @@ pub(super) fn apply_event(
         // про `arboard`).
         AppEvent::CopyToClipboard(text) => deliver_clipboard(screen, active, clipboard, &text),
         AppEvent::ProfileList(profiles) => screen.set_profile_list(profiles),
-        AppEvent::Settings { config, profiles } => {
+        AppEvent::Settings {
+            config,
+            profiles,
+            language_locked,
+        } => {
             match active {
                 ActiveScreen::Settings(settings) => {
-                    settings.refresh((*config).clone(), profiles.clone())
+                    settings.refresh((*config).clone(), profiles.clone(), language_locked.clone())
                 }
                 // Тема/режим совместимости могли смениться — обновим палитру
                 // открытых overlay-экранов (список/модель себя) одним broadcast.
@@ -54,7 +58,7 @@ pub(super) fn apply_event(
                         .with_compat(config.interface.terminal_compat),
                 ),
             }
-            screen.set_settings(*config, profiles);
+            screen.set_settings(*config, profiles, language_locked);
         }
         AppEvent::ChatActivated {
             id,
@@ -216,8 +220,8 @@ pub(super) fn dispatch(
         ChatIntent::RagList => AppCommand::RagList,
         ChatIntent::RagRebuild => AppCommand::RagRebuild,
         ChatIntent::OpenSettings => {
-            if let Some((config, profiles)) = screen.settings_snapshot() {
-                let mut settings = SettingsScreen::new(config, profiles);
+            if let Some((config, profiles, language_locked)) = screen.settings_snapshot() {
+                let mut settings = SettingsScreen::new(config, profiles, language_locked);
                 // Начальный снимок статусов серверов (чипы в секции «Модель/сервер»);
                 // дальше их обновляет `apply_event` из события `ServerStatus`.
                 settings.set_server_statuses(screen.server_statuses());
