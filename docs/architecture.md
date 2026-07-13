@@ -282,8 +282,9 @@ src/
    │  ├─ table.rs          TableBuilder + render_table (раскладка/отрисовка таблиц)
    │  └─ latex.rs          LaTeX→unicode: нормализация разделителей + конвертер команд
    ├─ wrap.rs              перенос слов по колонкам (unicode-width)
-   ├─ i18n.rs              язык служебного каркаса агента (ось A): Lang/Locale/t/tf,
-   │                       вшитые бандлы locales/{ru,en}.json (docs/i18n.md, Ярус 1)
+   ├─ i18n.rs              язык каркаса агента (ось A) + UI (ось B): Lang(Ru/En/Ext)/
+   │                       Locale/t/tf, вшитые locales/{ru,en}.json + внешние
+   │                       data/locales/*.json (init/реестр, docs/i18n-external-locales.md)
    ├─ theme.rs             Palette (роли user/assistant/tool/…), auto/dark/light
    ├─ keys.rs              раскладко-независимые Ctrl-шорткаты (ЙЦУКЕН→латиница)
    ├─ server.rs            ServerStatus (статус сервера для UI)
@@ -1307,6 +1308,14 @@ palette, loc)`; stateless-виджеты (`status_bar`/`message_feed`/`chat_list
 резолвит UI-локаль (`ui_locale()`) для текстов ошибок/уведомлений и `chat_export`. Тексты —
 ключи `ui.*` в `locales/{ru,en}.json` (общий механизм с осью A). Результаты инструментов
 и рендер «модели себя» в ленте следуют языку **агента** (ось A).
+
+**Внешние локали (Ярус 3, docs/i18n-external-locales.md).** `Lang` — enum `Ru`/`En`/
+`Ext(&'static str)` (внешние коды интернированы `Box::leak`). При старте `i18n::init(
+paths.locales_dir())` (в `main.rs`, до `Storage::open`) наполняет реестр (`OnceLock`):
+вшитые бандлы + `data/locales/*.json` поверх них (override по ключам того же кода / новый
+язык; битый файл → warn+skip). Без `init` (тесты) — только вшитые (`BUILTIN` LazyLock),
+поведение неизменно. UI-селекторы языка и `present.rs::exit_labels` берут реестр-осведомлённый
+`Lang::all()`; гейт-тесты — вшитый `Lang::ALL`.
 
 Перечисления экранов сведены к **каноничным местам**: broadcast палитры/локали (смена
 темы/языка) — `ActiveScreen::set_theme`, маршрутизация вставки из буфера — `ActiveScreen::handle_paste`

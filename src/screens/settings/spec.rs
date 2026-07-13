@@ -135,13 +135,15 @@ pub(super) fn field_spec(id: FieldId) -> Option<FieldSpec> {
             |c, loc| index_menu(&THEMES, c.interface.theme, |t| theme_label(t, loc)),
         ),
         // Язык интерфейса (ось B): каждый язык — в собственном названии (`Lang::label`),
-        // не переводится языком UI. Циклится по `Lang::ALL`.
+        // не переводится языком UI. Список — все известные (вшитые + внешние).
         ILanguage => choice(
             |c, dir| c.interface.language = cycle_lang(c.interface.language, dir),
             |c, _loc| {
-                index_menu(crate::shared::i18n::Lang::ALL, c.interface.language, |l| {
-                    l.label().to_string()
-                })
+                index_menu(
+                    &crate::shared::i18n::Lang::all(),
+                    c.interface.language,
+                    |l| l.label().to_string(),
+                )
             },
         ),
 

@@ -38,17 +38,13 @@ impl SettingsScreen {
                 let opts: Vec<String> = self.profiles.iter().map(|p| p.name.clone()).collect();
                 (!opts.is_empty()).then_some((opts, self.profile_idx))
             }
-            // Язык каркаса профиля (ось A): варианты — все вшитые языки.
+            // Язык каркаса профиля (ось A): варианты — все известные языки (вшитые +
+            // внешние из data/locales/).
             FieldId::PLanguage => {
                 let p = self.profiles.get(self.profile_idx)?;
-                let opts: Vec<String> = crate::shared::i18n::Lang::ALL
-                    .iter()
-                    .map(|l| l.label().to_string())
-                    .collect();
-                let cur = crate::shared::i18n::Lang::ALL
-                    .iter()
-                    .position(|l| *l == p.language)
-                    .unwrap_or(0);
+                let all = crate::shared::i18n::Lang::all();
+                let opts: Vec<String> = all.iter().map(|l| l.label().to_string()).collect();
+                let cur = all.iter().position(|l| *l == p.language).unwrap_or(0);
                 Some((opts, cur))
             }
             _ => None,
