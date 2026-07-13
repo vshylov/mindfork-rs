@@ -159,11 +159,12 @@ fn present_result(name: &str, args: Option<&Value>, result: &str) -> Vec<ToolBlo
     }
 }
 
-/// Метка кода возврата (`python.console.exit`) во всех вшитых локалях. Формат вывода
-/// `python::format_output_parts` локализован (ось A), поэтому парсер распознаёт метку
-/// на любом языке профиля. Метки `stdout:`/`stderr:` универсальны (не переводятся).
+/// Метка кода возврата (`python.console.exit`) во всех известных локалях (вшитые +
+/// внешние). Формат вывода `python::format_output_parts` локализован (ось A), поэтому
+/// парсер распознаёт метку на любом языке профиля, включая добавленные внешне. Метки
+/// `stdout:`/`stderr:` универсальны (не переводятся).
 fn exit_labels() -> Vec<&'static str> {
-    crate::shared::i18n::Lang::ALL
+    crate::shared::i18n::Lang::all()
         .iter()
         .map(|&l| crate::shared::i18n::locale(l).t("python.console.exit"))
         .collect()

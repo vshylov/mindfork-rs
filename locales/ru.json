@@ -827,5 +827,7 @@
   "ui.err.rag_profiles_check": "проверка профилей: {err}",
   "ui.err.rag_clear_chunks": "очистка прежних чанков: {err}",
   "ui.err.rag_reset_vectors": "сброс таблицы векторов: {err}",
-  "ui.err.rag_wrong_vector_count": "эмбеддер вернул неверное число векторов"
+  "ui.err.rag_wrong_vector_count": "эмбеддер вернул неверное число векторов",
+
+  "ui.lang.name": "Русский"
 }

@@ -77,6 +77,11 @@ fn main() -> anyhow::Result<()> {
     let paths = Paths::discover().context("resolving data paths")?;
     let _logging = logging::init(&paths).context("initializing logging")?;
 
+    // Внешние локали (`data/locales/*.json`) грузятся один раз до первого обращения к
+    // бандлам: переопределяют вшитые ru/en или добавляют новые языки без пересборки
+    // (docs/i18n-external-locales.md). Нет каталога/файлов — работают вшитые бандлы.
+    shared::i18n::init(&paths.locales_dir());
+
     // CLI-подкоманды выполняются без TUI и завершают процесс. См. spec §12.2, §12.3.
     match cli.command {
         Some(Command::ImportLamellama { dir }) => return run_import(&paths, &dir),

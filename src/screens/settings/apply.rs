@@ -327,7 +327,7 @@ impl SettingsScreen {
                     return None; // язык зафиксирован
                 }
                 let cur = p.language;
-                let all = crate::shared::i18n::Lang::ALL;
+                let all = crate::shared::i18n::Lang::all();
                 let i = all.iter().position(|l| *l == cur).unwrap_or(0) as i32;
                 let n = all.len() as i32;
                 let next = all[(((i + dir) % n + n) % n) as usize];

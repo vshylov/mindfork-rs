@@ -133,6 +133,10 @@ impl Paths {
             .with_context(|| format!("создание каталога данных {}", root.display()))?;
         let mut paths = Self::with_root(root);
         paths.default_language = defaults.default_language;
+        // Каталог внешних локалей создаётся для обнаруживаемости (пустой каталог
+        // сигналит «клади файлы сюда»); ошибку создания не эскалируем — внешние
+        // локали опциональны, при их отсутствии работают вшитые бандлы.
+        let _ = std::fs::create_dir_all(paths.locales_dir());
         Ok(paths)
     }
 
@@ -184,6 +188,13 @@ impl Paths {
     /// Каталог Hunspell-словарей (`dictionaries/`).
     pub fn dictionaries_dir(&self) -> PathBuf {
         self.root.join("dictionaries")
+    }
+
+    /// Каталог внешних локалей (`locales/`): `<code>.json` переопределяет вшитый бандл
+    /// того же языка или добавляет новый язык без пересборки (ось A/B, Ярус 3 —
+    /// docs/i18n-external-locales.md). Загружается один раз при старте.
+    pub fn locales_dir(&self) -> PathBuf {
+        self.root.join("locales")
     }
 
     /// Персональный словарь спелл-чекера (`personal_dictionary.txt`).
@@ -243,6 +254,13 @@ mod tests {
         let p = Paths::with_root("data-root");
         assert!(p.backups_dir().ends_with("backups"));
         assert_eq!(p.backups_dir().parent(), Some(p.root()));
+    }
+
+    #[test]
+    fn locales_dir_under_root() {
+        let p = Paths::with_root("data-root");
+        assert!(p.locales_dir().ends_with("locales"));
+        assert_eq!(p.locales_dir().parent(), Some(p.root()));
     }
 
     #[test]

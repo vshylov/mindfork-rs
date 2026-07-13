@@ -786,9 +786,10 @@ pub(super) fn cycle_theme(t: Theme) -> Theme {
     }
 }
 
-/// Циклический сдвиг языка интерфейса по `Lang::ALL` (с учётом направления `dir`).
+/// Циклический сдвиг языка интерфейса по всем известным языкам (вшитые + внешние,
+/// `Lang::all()`) с учётом направления `dir`.
 pub(super) fn cycle_lang(l: crate::shared::i18n::Lang, dir: i32) -> crate::shared::i18n::Lang {
-    let all = crate::shared::i18n::Lang::ALL;
+    let all = crate::shared::i18n::Lang::all();
     let idx = all.iter().position(|&x| x == l).unwrap_or(0) as i32;
     let n = all.len() as i32;
     all[(((idx + dir) % n + n) % n) as usize]

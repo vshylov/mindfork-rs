@@ -5,7 +5,8 @@
 //! корня данных):
 //! - файлы `settings.json`, `profiles.json`, `data.db` (+ sidecar `-wal`/`-shm`,
 //!   если есть), `personal_dictionary.txt`;
-//! - каталоги `chats/` и `dictionaries/` (рекурсивно — попадают и их `*.bak`);
+//! - каталоги `chats/`, `dictionaries/` и `locales/` (рекурсивно — попадают и их
+//!   `*.bak`; `locales/` — пользовательские override служебных/UI-текстов);
 //! - все `*.bak` в корне (`settings.bak`, `profiles.bak`);
 //! - каталог-«песочница» файловых инструментов (`config.tools.fs_root`) — **только
 //!   если** он лежит внутри корня данных.
@@ -42,7 +43,7 @@ const TOP_FILES: &[&str] = &[
 ];
 
 /// Каталоги, входящие в резервную копию целиком (рекурсивно).
-const TOP_DIRS: &[&str] = &["chats", "dictionaries"];
+const TOP_DIRS: &[&str] = &["chats", "dictionaries", "locales"];
 
 /// Запись для упаковки: абсолютный путь источника + имя внутри архива (со `/`).
 struct Entry {
@@ -401,6 +402,8 @@ mod tests {
         fs::write(root.join("chats").join("a.bak"), b"{}").unwrap();
         fs::create_dir_all(root.join("dictionaries")).unwrap();
         fs::write(root.join("dictionaries").join("en.dic"), b"x").unwrap();
+        fs::create_dir_all(root.join("locales")).unwrap();
+        fs::write(root.join("locales").join("en.json"), b"{}").unwrap();
         // Не должно попасть в копию:
         fs::create_dir_all(root.join("logs")).unwrap();
         fs::write(root.join("logs").join("mindfork.log"), b"log").unwrap();
@@ -439,6 +442,7 @@ mod tests {
             "chats/a.json",
             "chats/a.bak",
             "dictionaries/en.dic",
+            "locales/en.json",
         ] {
             assert!(
                 names.contains(&expected.to_string()),

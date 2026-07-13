@@ -827,5 +827,7 @@
   "ui.err.rag_profiles_check": "profile check: {err}",
   "ui.err.rag_clear_chunks": "clearing previous chunks: {err}",
   "ui.err.rag_reset_vectors": "resetting the vector table: {err}",
-  "ui.err.rag_wrong_vector_count": "the embedder returned the wrong number of vectors"
+  "ui.err.rag_wrong_vector_count": "the embedder returned the wrong number of vectors",
+
+  "ui.lang.name": "English"
 }
