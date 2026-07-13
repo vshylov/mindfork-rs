@@ -46,6 +46,21 @@ impl ToolGroup {
         ToolGroup::SelfModel,
     ];
 
+    /// Ключ бандла UI-заголовка группы (ось B, резолвится в слое настроек).
+    /// [`Self::title`] остаётся русским `&'static` fallback-ом.
+    pub fn i18n_key(&self) -> &'static str {
+        match self {
+            ToolGroup::Introspection => "ui.tool.group.introspection",
+            ToolGroup::Memory => "ui.tool.group.memory",
+            ToolGroup::ExternalWorld => "ui.tool.group.external_world",
+            ToolGroup::Files => "ui.tool.group.files",
+            ToolGroup::Utils => "ui.tool.group.utils",
+            ToolGroup::Subagent => "ui.tool.group.subagent",
+            ToolGroup::Conversation => "ui.tool.group.conversation",
+            ToolGroup::SelfModel => "ui.tool.group.self_model",
+        }
+    }
+
     /// Человекочитаемый заголовок группы.
     pub fn title(&self) -> &'static str {
         match self {
@@ -94,6 +109,26 @@ mod tests {
                 "чужая группа у {}",
                 info.id
             );
+        }
+    }
+
+    #[test]
+    fn ui_label_and_group_keys_exist_in_all_bundles() {
+        // Динамические ключи `ui.tool.label.{id}` / `ui.tool.group.*` собираются
+        // `format!`/`i18n_key()` в слое настроек и НЕ ловятся общим сканером кода
+        // (`all_ui_keys_referenced_in_code_exist_in_bundle`). Прямой гейт полноты:
+        // у каждого инструмента каталога есть label-ключ в обоих вшитых языках, у
+        // каждой группы — её `i18n_key`.
+        use crate::shared::i18n::{Lang, locale};
+        for &lang in Lang::ALL {
+            let loc = locale(lang);
+            for info in tool_catalog() {
+                let k = format!("ui.tool.label.{}", info.id);
+                assert!(loc.has_key(&k), "{lang:?}: нет ключа {k}");
+            }
+            for g in ToolGroup::ALL {
+                assert!(loc.has_key(g.i18n_key()), "{lang:?}: нет {}", g.i18n_key());
+            }
         }
     }
 

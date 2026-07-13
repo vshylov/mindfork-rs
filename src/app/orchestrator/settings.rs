@@ -65,15 +65,16 @@ impl Orchestrator {
     /// правке, так что серия правок даёт один рестарт с итоговыми значениями.
     pub(super) fn flush_restarts(&mut self) {
         let (chat, embed, imp) = self.restarts.take();
+        let loc = self.ui_locale();
         if chat {
-            self.engines.apply_chat(&self.config.engine);
+            self.engines.apply_chat(&self.config.engine, loc);
         }
         if embed {
             self.engines.apply_embed(&self.config.embed);
         }
         if imp {
             self.engines
-                .apply_impersonation(&self.config.impersonation_engine);
+                .apply_impersonation(&self.config.impersonation_engine, loc);
         }
         if chat || embed || imp {
             self.emit_server_status();
@@ -84,7 +85,8 @@ impl Orchestrator {
     /// Немедленный путь стартового подъёма (до петли `run`); правки настроек
     /// идут через дебаунс-очередь `restarts` → [`Self::flush_restarts`].
     pub(super) fn apply_chat_settings(&mut self) {
-        self.engines.apply_chat(&self.config.engine);
+        let loc = self.ui_locale();
+        self.engines.apply_chat(&self.config.engine, loc);
         self.emit_server_status();
     }
 
@@ -98,8 +100,9 @@ impl Orchestrator {
     /// (Пере)поднимает сервер имперсонации по `config.impersonation_engine`. В режиме
     /// `shared` отдельный сервер не нужен — переиспользуется chat-сервер ассистента.
     pub(super) fn apply_impersonation_settings(&mut self) {
+        let loc = self.ui_locale();
         self.engines
-            .apply_impersonation(&self.config.impersonation_engine);
+            .apply_impersonation(&self.config.impersonation_engine, loc);
         self.emit_server_status();
     }
 }

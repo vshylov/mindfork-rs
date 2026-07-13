@@ -694,12 +694,15 @@ impl SettingsScreen {
                     let gate = info.gate;
                     let gated_off = on && gate.is_some_and(|g| self.gate_disabled(g));
                     let mut r = row(FieldId::PTool(idx), &info.id, FieldKind::Toggle(on));
-                    r.group = info.group.title();
+                    r.group = loc.get(info.group.i18n_key()).unwrap_or(info.group.title());
                     r.warn = gated_off;
                     r.hint = if gated_off {
                         gate.map(|g| gate_hint(g, loc))
                     } else {
-                        (!info.label.is_empty()).then_some(info.label)
+                        (!info.label.is_empty()).then_some(
+                            loc.get(&format!("ui.tool.label.{}", info.id))
+                                .unwrap_or(info.label),
+                        )
                     };
                     rows.push(r);
                 }
