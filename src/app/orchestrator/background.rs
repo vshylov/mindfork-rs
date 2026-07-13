@@ -10,6 +10,7 @@
 use tokio_util::sync::CancellationToken;
 
 use crate::app::events::{AppEvent, BackgroundKind};
+use crate::shared::i18n::Locale;
 
 use super::Orchestrator;
 
@@ -72,9 +73,10 @@ impl Orchestrator {
             let _ = self.evt_tx.send(AppEvent::SelfModelChanged);
         }
         if let Some(reason) = alert {
-            let _ = self.evt_tx.send(AppEvent::Error(format!(
-                "{} трижды подряд завершилась ошибкой: {reason}",
-                kind_label(kind)
+            let loc = self.ui_locale();
+            let _ = self.evt_tx.send(AppEvent::Error(loc.tf(
+                "ui.err.bg_failed",
+                &[("label", kind_label(loc, kind)), ("reason", &reason)],
             )));
         }
     }
@@ -95,11 +97,11 @@ impl Orchestrator {
     }
 }
 
-/// Человекочитаемая метка вида задачи — из неё собираются тексты ошибок (**байт-в-байт**
-/// с прежними `handle_reflect_done`/`handle_consolidate_done`; на них смотрят тесты).
-fn kind_label(kind: BackgroundKind) -> &'static str {
-    match kind {
-        BackgroundKind::Reflection => "Авто-рефлексия",
-        BackgroundKind::Consolidation => "Авто-консолидация",
-    }
+/// Человекочитаемая метка вида задачи (язык интерфейса, ось B) — из неё собираются
+/// тексты ошибок (**байт-в-байт** с прежними русскими формулировками).
+fn kind_label(loc: &'static Locale, kind: BackgroundKind) -> &'static str {
+    loc.t(match kind {
+        BackgroundKind::Reflection => "ui.err.bg_reflection",
+        BackgroundKind::Consolidation => "ui.err.bg_consolidation",
+    })
 }

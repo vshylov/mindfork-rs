@@ -8,18 +8,19 @@ use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::Paragraph;
 
+use crate::shared::i18n::Locale;
 use crate::shared::server::{ServerStatus, ServerStatuses};
 use crate::shared::theme::Palette;
 use crate::shared::wrap;
 
-/// Постоянные хоткеи статус-бара (после тумблера мыши `Ctrl+W`, чьё описание
-/// зависит от режима). «Клавиша» + описание; опасных нет.
+/// Ключи постоянных хоткеев статус-бара (после тумблера мыши `Ctrl+W`, чьё описание
+/// зависит от режима). «Клавиша» + ключ описания (локализуется в [`lines`]).
 const HOTKEYS: [(&str, &str); 5] = [
-    ("F1", "справка"),
-    ("Esc", "чаты"),
-    ("Ctrl+N", "новый"),
-    ("Ctrl+P", "настройки"),
-    ("Ctrl+Q", "выход"),
+    ("F1", "ui.status.hotkey.help"),
+    ("Esc", "ui.status.hotkey.chats"),
+    ("Ctrl+N", "ui.status.hotkey.new"),
+    ("Ctrl+P", "ui.status.hotkey.settings"),
+    ("Ctrl+Q", "ui.status.hotkey.quit"),
 ];
 
 /// Зазор между столбцами хоткеев и между пилюлей статуса и сеткой хоткеев.
@@ -48,15 +49,21 @@ pub struct StatusModel<'a> {
 /// Рисует статус-строку в `area`. Когда хоткеи не помещаются по ширине, они
 /// переносятся на следующие строки аккуратной сеткой (как в оверлее списка чатов);
 /// высоту под это отводит вызывающий через [`height`]. См. spec §11.1, §11.3.
-pub fn render(frame: &mut Frame, area: Rect, model: &StatusModel, palette: &Palette) {
-    let lines = lines(area.width as usize, model, palette);
+pub fn render(
+    frame: &mut Frame,
+    area: Rect,
+    model: &StatusModel,
+    palette: &Palette,
+    loc: &'static Locale,
+) {
+    let lines = lines(area.width as usize, model, palette, loc);
     frame.render_widget(Paragraph::new(lines), area);
 }
 
 /// Сколько строк займёт статус-бар при ширине `width` — вызывающий отводит под него
 /// ровно эту высоту (минимум 1). Хоткеи переносятся, когда не помещаются.
-pub fn height(width: usize, model: &StatusModel, palette: &Palette) -> u16 {
-    lines(width, model, palette)
+pub fn height(width: usize, model: &StatusModel, palette: &Palette, loc: &'static Locale) -> u16 {
+    lines(width, model, palette, loc)
         .len()
         .clamp(1, u16::MAX as usize) as u16
 }
@@ -97,7 +104,12 @@ pub fn hotkey_lines(
 /// её клавиши встают ровно под столбцами строки выше, не привлекая внимание к
 /// левой/средней части окна. Пилюля статуса делит верхнюю строку с сеткой. См.
 /// spec §11.1, §11.3.
-fn lines(width: usize, model: &StatusModel, palette: &Palette) -> Vec<Line<'static>> {
+fn lines(
+    width: usize,
+    model: &StatusModel,
+    palette: &Palette,
+    loc: &'static Locale,
+) -> Vec<Line<'static>> {
     // Поля Copy (ссылки/скаляры) — разворачиваем в локальные, тело ниже не меняется.
     let statuses = model.statuses;
     let generating = model.generating;
@@ -114,10 +126,14 @@ fn lines(width: usize, model: &StatusModel, palette: &Palette) -> Vec<Line<'stat
     // Чат-сервер показывается всегда (с причиной обрыва — он блокирует генерацию);
     // эмбеддинги и имперсонация — отдельными чипами и только когда настроены
     // (`NotConfigured`, в т.ч. имперсонация в `shared`, → чип скрыт).
-    let mut state = chat_chip(&statuses.chat, palette);
+    let mut state = chat_chip(&statuses.chat, palette, loc);
     for chip in [
-        secondary_chip("эмб", &statuses.embed, palette),
-        secondary_chip("имп", &statuses.impersonation, palette),
+        secondary_chip(loc.t("ui.status.chip.embed"), &statuses.embed, palette),
+        secondary_chip(
+            loc.t("ui.status.chip.imp"),
+            &statuses.impersonation,
+            palette,
+        ),
     ]
     .into_iter()
     .flatten()
@@ -129,7 +145,11 @@ fn lines(width: usize, model: &StatusModel, palette: &Palette) -> Vec<Line<'stat
     if generating {
         state.push(sep());
         state.push(Span::styled(
-            format!("{} генерация…", palette.glyphs().busy),
+            format!(
+                "{} {}",
+                palette.glyphs().busy,
+                loc.t("ui.status.generating")
+            ),
             palette.accent_style(),
         ));
     }
@@ -146,11 +166,18 @@ fn lines(width: usize, model: &StatusModel, palette: &Palette) -> Vec<Line<'stat
         };
         // Reasoning-токены («мысли») — отдельной пометкой, они входят в общий счёт.
         let reason = if reasoning > 0 {
-            format!(" (рассужд. {reasoning})")
+            loc.tf("ui.status.reasoning", &[("n", &reasoning.to_string())])
         } else {
             String::new()
         };
-        let label = format!("токены: {approx}{total}{reason}");
+        let label = loc.tf(
+            "ui.status.tokens",
+            &[
+                ("approx", approx),
+                ("total", &total.to_string()),
+                ("reason", &reason),
+            ],
+        );
         if generating {
             state.push(Span::styled(label, palette.accent_style()));
         } else {
@@ -170,12 +197,12 @@ fn lines(width: usize, model: &StatusModel, palette: &Palette) -> Vec<Line<'stat
 
     // Хоткеи: тумблер мыши `Ctrl+W` (описание = текущий режим) + постоянные.
     let mouse_desc = if mouse_scroll {
-        "мышь: прокрутка"
+        loc.t("ui.status.mouse.scroll")
     } else {
-        "мышь: выделение"
+        loc.t("ui.status.mouse.select")
     };
     let mut hotkeys: Vec<(&str, &str)> = vec![("Ctrl+W", mouse_desc)];
-    hotkeys.extend(HOTKEYS.iter().copied());
+    hotkeys.extend(HOTKEYS.iter().map(|(key, k)| (*key, loc.t(k))));
     let n = hotkeys.len();
     // В режиме «прокрутка» выделяем описание тумблера мыши (индекс 0) цветом
     // `accent` — тем же, которым подсвечиваются заголовки markdown в ленте.
@@ -245,12 +272,12 @@ fn chip(glyph: &'static str, label: String, color: Color) -> Vec<Span<'static>> 
 /// Чип чат-сервера — показывается всегда. Помимо глифа и метки несёт текст причины,
 /// когда сервер недоступен/не настроен: он блокирует генерацию, и пользователю
 /// нужно знать, почему (у вторичных серверов причина опущена ради компактности).
-fn chat_chip(status: &ServerStatus, palette: &Palette) -> Vec<Span<'static>> {
+fn chat_chip(status: &ServerStatus, palette: &Palette, loc: &'static Locale) -> Vec<Span<'static>> {
     let (glyph, color) = status_glyph(status, palette);
     let label = match status {
-        ServerStatus::Ready | ServerStatus::Connecting => "чат".to_string(),
-        ServerStatus::NotConfigured => "чат: не настроен".to_string(),
-        ServerStatus::Disconnected(why) => format!("чат: нет связи: {why}"),
+        ServerStatus::Ready | ServerStatus::Connecting => loc.t("ui.status.chip.chat").to_string(),
+        ServerStatus::NotConfigured => loc.t("ui.status.chip.chat_off").to_string(),
+        ServerStatus::Disconnected(why) => loc.tf("ui.status.chip.chat_down", &[("why", why)]),
     };
     chip(glyph, label, color)
 }
@@ -375,6 +402,10 @@ fn spans_width(spans: &[Span<'_>]) -> usize {
 mod tests {
     use super::*;
 
+    fn ru() -> &'static Locale {
+        crate::shared::i18n::locale(crate::shared::i18n::Lang::Ru)
+    }
+
     /// Снимок статусов: чат `chat`, эмбеддинги/имперсонация не настроены (чипы скрыты).
     fn only_chat(chat: ServerStatus) -> ServerStatuses {
         ServerStatuses {
@@ -427,7 +458,7 @@ mod tests {
             context_exact,
             mouse_scroll,
         );
-        lines(200, &m, &Palette::default())
+        lines(200, &m, &Palette::default(), ru())
             .iter()
             .flat_map(|l| l.spans.iter())
             .map(|s| s.content.as_ref())
@@ -445,6 +476,33 @@ mod tests {
         assert!(
             text(&only_chat(ServerStatus::Disconnected("boom".into())), false).contains("boom")
         );
+    }
+
+    #[test]
+    fn localized_for_all_langs() {
+        // Статус-бар (ось B) под каждым языком: чип чата и хоткей выхода — из бандла
+        // того же языка; en — латиница. Проверяем и отсутствие паники на разной
+        // ширине текста перевода.
+        let statuses = ready();
+        let m = model(&statuses, false, 0, None, false, false);
+        for &lang in crate::shared::i18n::Lang::ALL {
+            let loc = crate::shared::i18n::locale(lang);
+            let flat: String = lines(200, &m, &Palette::default(), loc)
+                .iter()
+                .flat_map(|l| l.spans.iter())
+                .map(|s| s.content.as_ref())
+                .collect();
+            assert!(
+                flat.contains(loc.t("ui.status.chip.chat")),
+                "{lang:?}: {flat}"
+            );
+            assert!(
+                flat.contains(loc.t("ui.status.hotkey.quit")),
+                "{lang:?}: {flat}"
+            );
+        }
+        let en = crate::shared::i18n::locale(crate::shared::i18n::Lang::En);
+        assert_eq!(en.t("ui.status.chip.chat"), "chat");
     }
 
     #[test]
@@ -484,7 +542,7 @@ mod tests {
                 mouse_scroll: false,
                 background: Some("рефлексия"),
             };
-            lines(200, &m, &compat)
+            lines(200, &m, &compat, ru())
                 .iter()
                 .flat_map(|l| l.spans.iter())
                 .map(|s| s.content.as_ref())
@@ -508,7 +566,7 @@ mod tests {
         let palette = Palette::default();
         // Цвет глифа (первый спан) по статусу: готов — success, обрыв — error.
         let glyph_fg = |status: ServerStatus| {
-            chat_chip(&status, &palette)
+            chat_chip(&status, &palette, ru())
                 .first()
                 .and_then(|s| s.style.fg)
                 .unwrap()
@@ -540,7 +598,7 @@ mod tests {
         let span_fg = |scroll, needle: &str| {
             let statuses = ready();
             let m = model(&statuses, false, 0, None, false, scroll);
-            lines(200, &m, &palette)
+            lines(200, &m, &palette, ru())
                 .iter()
                 .flat_map(|l| l.spans.clone())
                 .find(|s| s.content.contains(needle))
@@ -583,7 +641,7 @@ mod tests {
                 mouse_scroll: false,
                 background: None,
             };
-            lines(200, &m, &Palette::default())
+            lines(200, &m, &Palette::default(), ru())
                 .iter()
                 .flat_map(|l| l.spans.iter())
                 .map(|s| s.content.as_ref())
@@ -601,7 +659,7 @@ mod tests {
     fn hotkeys_fit_on_one_line_when_wide() {
         let statuses = ready();
         let m = model(&statuses, false, 0, None, false, false);
-        let n = lines(200, &m, &Palette::default()).len();
+        let n = lines(200, &m, &Palette::default(), ru()).len();
         assert_eq!(n, 1);
     }
 
@@ -610,13 +668,13 @@ mod tests {
         // Узкая ширина → хоткеи не помещаются и переносятся на следующие строки.
         let statuses = ready();
         let m = model(&statuses, false, 0, None, false, false);
-        let h = height(40, &m, &Palette::default());
+        let h = height(40, &m, &Palette::default(), ru());
         assert!(h > 1, "ожидался перенос хоткеев, высота = {h}");
         // Все хоткеи присутствуют, несмотря на перенос (включая тумблер мыши).
         let flat = flat(&ready(), false, 0, None, false, false);
         assert!(flat.contains("Ctrl+W") && flat.contains("мышь: выделение"));
         for (_, desc) in HOTKEYS {
-            assert!(flat.contains(desc));
+            assert!(flat.contains(ru().t(desc)));
         }
     }
 
@@ -627,9 +685,9 @@ mod tests {
         let p = Palette::default();
         let statuses = ready();
         let m = model(&statuses, false, 0, None, false, false);
-        let h = height(w as usize, &m, &p);
+        let h = height(w as usize, &m, &p, ru());
         let mut term = Terminal::new(TestBackend::new(w, h)).unwrap();
-        term.draw(|f| render(f, f.area(), &m, &p)).unwrap();
+        term.draw(|f| render(f, f.area(), &m, &p, ru())).unwrap();
         let buf = term.backend().buffer().clone();
         (0..buf.area.height)
             .map(|y| {
@@ -727,7 +785,7 @@ mod tests {
             mouse_scroll: true,
             background: Some("рефлексия"),
         };
-        term.draw(|f| render(f, f.area(), &m, &Palette::default()))
+        term.draw(|f| render(f, f.area(), &m, &Palette::default(), ru()))
             .unwrap();
     }
 }

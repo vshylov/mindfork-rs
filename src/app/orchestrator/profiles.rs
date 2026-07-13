@@ -11,18 +11,19 @@ impl Orchestrator {
     /// Создаёт новый профиль (валидирует имя), сохраняет и обновляет список.
     pub(super) fn handle_create_profile(&mut self, name: String, system_message: String) {
         let Some(mut profile) = crate::features::profiles::create(&name, system_message) else {
-            let _ = self
-                .evt_tx
-                .send(AppEvent::Error("Имя профиля не может быть пустым".into()));
+            let _ = self.evt_tx.send(AppEvent::Error(
+                self.ui_locale().t("ui.err.profile_name_empty").into(),
+            ));
             return;
         };
         // Новый профиль создаётся на языке каркаса по умолчанию (defaults.json); пока
         // у него нет данных, язык можно сменить в настройках. См. docs/i18n.md.
         profile.language = self.default_language;
         if let Err(err) = self.storage.json().upsert_profile(&profile) {
-            let _ = self.evt_tx.send(AppEvent::Error(format!(
-                "Не удалось создать профиль: {err}"
-            )));
+            let _ = self.evt_tx.send(AppEvent::Error(
+                self.ui_locale()
+                    .tf("ui.err.profile_create_failed", &[("err", &err.to_string())]),
+            ));
             return;
         }
         self.profiles.push(profile);
@@ -34,17 +35,18 @@ impl Orchestrator {
     pub(super) fn handle_delete_profile(&mut self, id: Uuid) {
         // Нельзя удалить последний профиль — иначе не из чего создавать чаты.
         if self.profiles.len() <= 1 {
-            let _ = self
-                .evt_tx
-                .send(AppEvent::Error("Нельзя удалить последний профиль".into()));
+            let _ = self.evt_tx.send(AppEvent::Error(
+                self.ui_locale().t("ui.err.profile_delete_last").into(),
+            ));
             return;
         }
         match self.storage.hide_profile_cascade(id) {
             Ok(false) => return,
             Err(err) => {
-                let _ = self.evt_tx.send(AppEvent::Error(format!(
-                    "Не удалось удалить профиль: {err}"
-                )));
+                let _ = self.evt_tx.send(AppEvent::Error(
+                    self.ui_locale()
+                        .tf("ui.err.profile_delete_failed", &[("err", &err.to_string())]),
+                ));
                 return;
             }
             Ok(true) => {}
@@ -95,7 +97,7 @@ impl Orchestrator {
             } else if self.profile_has_data(id) {
                 edit.language = None;
                 let _ = self.evt_tx.send(AppEvent::Error(
-                    "Нельзя сменить язык профиля: у него уже есть данные (чаты / модель себя / заметки)".into(),
+                    self.ui_locale().t("ui.err.profile_language_locked").into(),
                 ));
             }
         }
@@ -103,16 +105,17 @@ impl Orchestrator {
             return;
         };
         if !crate::features::profiles::apply_edit(profile, edit) {
-            let _ = self
-                .evt_tx
-                .send(AppEvent::Error("Имя профиля не может быть пустым".into()));
+            let _ = self.evt_tx.send(AppEvent::Error(
+                self.ui_locale().t("ui.err.profile_name_empty").into(),
+            ));
             return;
         }
         let profile = profile.clone();
         if let Err(err) = self.storage.json().upsert_profile(&profile) {
-            let _ = self.evt_tx.send(AppEvent::Error(format!(
-                "Не удалось сохранить профиль: {err}"
-            )));
+            let _ = self.evt_tx.send(AppEvent::Error(
+                self.ui_locale()
+                    .tf("ui.err.profile_save_failed", &[("err", &err.to_string())]),
+            ));
             return;
         }
         self.emit_profile_list();

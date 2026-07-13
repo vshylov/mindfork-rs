@@ -150,9 +150,10 @@ pub async fn run(deps: OrchestratorDeps) {
     orch.apply_impersonation_settings();
     orch.apply_embed_settings();
     if let Err(err) = orch.bootstrap() {
-        let _ = orch
-            .evt_tx
-            .send(AppEvent::Error(format!("Ошибка загрузки данных: {err}")));
+        let _ = orch.evt_tx.send(AppEvent::Error(
+            orch.ui_locale()
+                .tf("ui.err.load_data_failed", &[("err", &err.to_string())]),
+        ));
     }
     orch.emit_settings();
 
@@ -544,6 +545,12 @@ impl Orchestrator {
     }
 
     // ---------- вспомогательное (общее для подмодулей) ----------
+
+    /// Локаль **интерфейса** (ось B, docs/i18n-ui.md) — для текстов ошибок/уведомлений
+    /// оркестратора, видимых человеку. Независима от языка агентов (ось A).
+    pub(super) fn ui_locale(&self) -> &'static crate::shared::i18n::Locale {
+        crate::shared::i18n::locale(self.config.interface.language)
+    }
 
     /// Локаль служебного каркаса профиля (ось A, docs/i18n.md) по `profile_id`.
     /// Неизвестный профиль → референсный язык (`Lang::default`).

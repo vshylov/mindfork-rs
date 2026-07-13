@@ -55,7 +55,7 @@ impl SettingsScreen {
             match keys::physical_char(c) {
                 'n' => {
                     return Some(SettingsIntent::CreateProfile {
-                        name: "Новый профиль".into(),
+                        name: self.loc().t("ui.settings.new_profile_name").into(),
                         system_message: String::new(),
                     });
                 }
@@ -184,6 +184,7 @@ impl SettingsScreen {
     }
 
     pub(super) fn handle_editor_key(&mut self, key: KeyEvent) -> Option<SettingsIntent> {
+        let loc = self.loc();
         let editor = self.editor.as_mut()?;
         match (key.code, key.modifiers) {
             (KeyCode::Esc, _) => {
@@ -203,8 +204,8 @@ impl SettingsScreen {
                 let text = editor.input.text();
                 // Валидация без закрытия: невалидное числовое поле оставляет редактор
                 // открытым, подпись краснеет; исправление или Esc закрывают.
-                if let Some(err) = field_validation_error(editor.field, &text) {
-                    editor.error = Some(err);
+                if let Some(err_key) = field_validation_error(editor.field, &text) {
+                    editor.error = Some(loc.t(err_key));
                     return None;
                 }
                 let editor = self.editor.take().unwrap();

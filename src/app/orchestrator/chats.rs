@@ -28,9 +28,10 @@ impl Orchestrator {
         let chat = self.new_chat_value(profile_id);
         let id = chat.id;
         if let Err(err) = self.storage.json().save_chat(&chat) {
-            let _ = self
-                .evt_tx
-                .send(AppEvent::Error(format!("Не удалось создать чат: {err}")));
+            let _ = self.evt_tx.send(AppEvent::Error(
+                self.ui_locale()
+                    .tf("ui.err.chat_create_failed", &[("err", &err.to_string())]),
+            ));
             return;
         }
         self.chats.insert(0, chat);
@@ -72,14 +73,17 @@ impl Orchestrator {
         let now = chrono::Utc::now();
         let mut clone = src.clone();
         clone.id = Uuid::new_v4();
-        clone.title = format!("{} (копия)", src.title);
+        clone.title = self
+            .ui_locale()
+            .tf("ui.chat.clone_suffix", &[("orig", &src.title)]);
         clone.created_at = now;
         clone.modified_at = now;
         let new_id = clone.id;
         if let Err(err) = self.storage.json().save_chat(&clone) {
-            let _ = self.evt_tx.send(AppEvent::ChatListError(format!(
-                "Не удалось клонировать чат: {err}"
-            )));
+            let _ = self.evt_tx.send(AppEvent::ChatListError(
+                self.ui_locale()
+                    .tf("ui.err.chat_clone_failed", &[("err", &err.to_string())]),
+            ));
             return;
         }
         self.chats.insert(0, clone);
@@ -98,13 +102,14 @@ impl Orchestrator {
             &chat.title,
             &chat.messages,
             &self.config.copy,
+            self.ui_locale(),
         ) {
             Some(text) => {
                 let _ = self.evt_tx.send(AppEvent::CopyToClipboard(text));
             }
             None => {
                 let _ = self.evt_tx.send(AppEvent::ChatListError(
-                    "Нечего копировать — в чате нет сообщений".into(),
+                    self.ui_locale().t("ui.err.nothing_to_copy").into(),
                 ));
             }
         }
@@ -114,9 +119,10 @@ impl Orchestrator {
         match self.storage.json().hide_chat(id) {
             Ok(false) => return,
             Err(err) => {
-                let _ = self.evt_tx.send(AppEvent::ChatListError(format!(
-                    "Не удалось удалить чат: {err}"
-                )));
+                let _ = self.evt_tx.send(AppEvent::ChatListError(
+                    self.ui_locale()
+                        .tf("ui.err.chat_delete_failed", &[("err", &err.to_string())]),
+                ));
                 return;
             }
             Ok(true) => {}

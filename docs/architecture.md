@@ -1297,8 +1297,19 @@ flowchart LR
 сохраняет и **переэмитит** `SelfModelView` — открытый экран обновляется на месте
 (`set_model`, выделение сохраняется). См. [docs/self-model-mvp.md](history/self-model-mvp.md).
 
-Перечисления экранов сведены к **каноничным местам**: broadcast палитры (смена темы) —
-`ActiveScreen::set_palette`, маршрутизация вставки из буфера — `ActiveScreen::handle_paste`
+**Язык интерфейса (ось B, i18n).** UI-локаль `&'static Locale`
+(из `config.interface.language`, независима от языка агентов `Profile.language`)
+**зеркалит проводку `Palette`** (docs/history/i18n-ui.md): хранится полем в экранах
+(`ChatScreen`/`ChatListScreen`/`SelfModelScreen`, обновляется в `set_settings`/`set_loc`
+из события `Settings`), broadcast открытым overlay-экранам одним `ActiveScreen::set_theme(
+palette, loc)`; stateless-виджеты (`status_bar`/`message_feed`/`chat_list`/…) берут `loc`
+параметром render. Экран настроек вычисляет `self.loc()` из снимка конфига. Оркестратор
+резолвит UI-локаль (`ui_locale()`) для текстов ошибок/уведомлений и `chat_export`. Тексты —
+ключи `ui.*` в `locales/{ru,en}.json` (общий механизм с осью A). Результаты инструментов
+и рендер «модели себя» в ленте следуют языку **агента** (ось A).
+
+Перечисления экранов сведены к **каноничным местам**: broadcast палитры/локали (смена
+темы/языка) — `ActiveScreen::set_theme`, маршрутизация вставки из буфера — `ActiveScreen::handle_paste`
 (методы рядом с enum); снятое из активного экрана намерение диспетчеризуется единым
 `AnyIntent` + `dispatch_any` (одно владение вместо 4 параллельных `Option`); запись в
 буфер обмена — `deliver_clipboard` (`apply_event` не знает про `arboard`). Строка статуса

@@ -51,11 +51,12 @@ pub(super) fn apply_event(
                 ActiveScreen::Settings(settings) => {
                     settings.refresh((*config).clone(), profiles.clone(), language_locked.clone())
                 }
-                // Тема/режим совместимости могли смениться — обновим палитру
-                // открытых overlay-экранов (список/модель себя) одним broadcast.
-                other => other.set_palette(
+                // Тема/режим совместимости/язык UI могли смениться — обновим палитру
+                // и локаль открытых overlay-экранов (список/модель себя) одним broadcast.
+                other => other.set_theme(
                     Palette::for_theme(config.interface.theme)
                         .with_compat(config.interface.terminal_compat),
+                    crate::shared::i18n::locale(config.interface.language),
                 ),
             }
             screen.set_settings(*config, profiles, language_locked);
@@ -130,6 +131,7 @@ pub(super) fn apply_event(
                 *active = ActiveScreen::SelfModel(Box::new(SelfModelScreen::new(
                     *model,
                     screen.palette(),
+                    screen.loc(),
                 )))
             }
         },
@@ -235,6 +237,7 @@ pub(super) fn dispatch(
                 screen.chat_summaries(),
                 screen.active_chat(),
                 screen.palette(),
+                screen.loc(),
             )));
             return false;
         }

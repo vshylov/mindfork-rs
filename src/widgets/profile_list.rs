@@ -72,7 +72,13 @@ impl ProfileListState {
     }
 
     /// Рисует оверлей по центру `area`.
-    pub fn render(&self, frame: &mut Frame, area: Rect, palette: &Palette) {
+    pub fn render(
+        &self,
+        frame: &mut Frame,
+        area: Rect,
+        palette: &Palette,
+        loc: &'static crate::shared::i18n::Locale,
+    ) {
         let rows = (self.profiles.len() as u16 + 2).clamp(5, area.height);
         let popup = centered_rect(50, 30, rows, area);
         frame.render_widget(Clear, popup);
@@ -80,13 +86,14 @@ impl ProfileListState {
         let block = palette
             .panel(
                 format!(
-                    "{} Новый чат · выбор профиля",
-                    palette.glyphs().assistant_icon
+                    "{} {}",
+                    palette.glyphs().assistant_icon,
+                    loc.t("ui.profile_list.title")
                 ),
                 true,
             )
             .title_bottom(Line::from(Span::styled(
-                " ↑↓ выбор · Enter создать · Esc отмена ",
+                loc.t("ui.profile_list.footer"),
                 palette.muted_style(),
             )));
         let items: Vec<ListItem> = self
@@ -126,6 +133,10 @@ fn centered_rect(pct_x: u16, min_w: u16, height: u16, area: Rect) -> Rect {
 mod tests {
     use super::*;
     use ratatui::crossterm::event::KeyModifiers;
+
+    fn ru() -> &'static crate::shared::i18n::Locale {
+        crate::shared::i18n::locale(crate::shared::i18n::Lang::Ru)
+    }
 
     fn key(code: KeyCode) -> KeyEvent {
         KeyEvent::new(code, KeyModifiers::NONE)
@@ -170,7 +181,7 @@ mod tests {
         let s = ProfileListState::new(vec![profile("Альфа"), profile("Бета")]);
         for (w, h) in [(80u16, 24u16), (20, 6)] {
             let mut term = Terminal::new(TestBackend::new(w, h)).unwrap();
-            term.draw(|f| s.render(f, f.area(), &Palette::default()))
+            term.draw(|f| s.render(f, f.area(), &Palette::default(), ru()))
                 .unwrap();
         }
     }

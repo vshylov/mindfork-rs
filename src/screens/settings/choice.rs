@@ -16,16 +16,24 @@ impl SettingsScreen {
             ..
         }) = field_spec(id)
         {
-            return Some(options(&self.config));
+            return Some(options(&self.config, self.loc()));
         }
         match id {
             // Семплинг (Thinking/Reasoning/Verbosity) и выбор профиля — свои источники.
             FieldId::S(
                 p @ (SamplingParam::Thinking | SamplingParam::Reasoning | SamplingParam::Verbosity),
-            ) => Some(sampling_choice_menu(&self.config.default_sampling, p)),
+            ) => Some(sampling_choice_menu(
+                &self.config.default_sampling,
+                p,
+                self.loc(),
+            )),
             FieldId::IS(
                 p @ (SamplingParam::Thinking | SamplingParam::Reasoning | SamplingParam::Verbosity),
-            ) => Some(sampling_choice_menu(&self.config.impersonation_sampling, p)),
+            ) => Some(sampling_choice_menu(
+                &self.config.impersonation_sampling,
+                p,
+                self.loc(),
+            )),
             FieldId::PSelect => {
                 let opts: Vec<String> = self.profiles.iter().map(|p| p.name.clone()).collect();
                 (!opts.is_empty()).then_some((opts, self.profile_idx))
@@ -136,7 +144,7 @@ impl SettingsScreen {
             .find(|d| d.id == id)
             .map(|d| d.kind)?;
         // Уже совпадает с дефолтом — ничего не делаем.
-        if value_text(&cur_kind) == value_text(&default_kind) {
+        if value_text(&cur_kind, self.loc()) == value_text(&default_kind, self.loc()) {
             return None;
         }
         match default_kind {

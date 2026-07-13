@@ -21,9 +21,10 @@ pub(super) enum Access {
     /// Текст/число: парсит `trimmed` и присваивает (семантика парсинга — в самом сеттере).
     Text(fn(&mut AppConfig, &str)),
     /// Циклический выбор: шаг по направлению + список вариантов с индексом текущего.
+    /// `options` получает локаль — часть подписей (тема) локализуется.
     Choice {
         cycle: fn(&mut AppConfig, i32),
-        options: fn(&AppConfig) -> (Vec<String>, usize),
+        options: fn(&AppConfig, &'static Locale) -> (Vec<String>, usize),
     },
 }
 
@@ -88,19 +89,19 @@ pub(super) fn field_spec(id: FieldId) -> Option<FieldSpec> {
         // ---------- циклические выборы ----------
         XMode => choice(
             |c, dir| c.engine.mode = cycle_mode(c.engine.mode, dir),
-            |c| index_menu(&SERVER_MODES, c.engine.mode, mode_label),
+            |c, _loc| index_menu(&SERVER_MODES, c.engine.mode, mode_label),
         ),
         EMode => choice(
             |c, dir| c.embed.mode = cycle_mode(c.embed.mode, dir),
-            |c| index_menu(&SERVER_MODES, c.embed.mode, mode_label),
+            |c, _loc| index_menu(&SERVER_MODES, c.embed.mode, mode_label),
         ),
         IxMode => choice(
             |c, dir| c.impersonation_engine.mode = cycle_imp_mode(c.impersonation_engine.mode, dir),
-            |c| index_menu(&IMP_MODES, c.impersonation_engine.mode, imp_mode_label),
+            |c, _loc| index_menu(&IMP_MODES, c.impersonation_engine.mode, imp_mode_label),
         ),
         TPythonMode => choice(
             |c, dir| c.tools.python_mode = c.tools.python_mode.cycle(dir),
-            |c| {
+            |c, _loc| {
                 index_menu(&PythonMode::ALL, c.tools.python_mode, |x| {
                     x.label().to_string()
                 })
@@ -108,30 +109,40 @@ pub(super) fn field_spec(id: FieldId) -> Option<FieldSpec> {
         ),
         XFlashAttn => choice(
             |c, dir| c.engine.managed.flash_attn = c.engine.managed.flash_attn.cycle(dir),
-            |c| flash_menu(c.engine.managed.flash_attn),
+            |c, _loc| flash_menu(c.engine.managed.flash_attn),
         ),
         IxFlashAttn => choice(
             |c, dir| {
                 let m = &mut c.impersonation_engine.managed;
                 m.flash_attn = m.flash_attn.cycle(dir)
             },
-            |c| flash_menu(c.impersonation_engine.managed.flash_attn),
+            |c, _loc| flash_menu(c.impersonation_engine.managed.flash_attn),
         ),
         XSpecType => choice(
             |c, dir| c.engine.managed.spec_type = c.engine.managed.spec_type.cycle(dir),
-            |c| spec_menu(c.engine.managed.spec_type),
+            |c, _loc| spec_menu(c.engine.managed.spec_type),
         ),
         IxSpecType => choice(
             |c, dir| {
                 let m = &mut c.impersonation_engine.managed;
                 m.spec_type = m.spec_type.cycle(dir)
             },
-            |c| spec_menu(c.impersonation_engine.managed.spec_type),
+            |c, _loc| spec_menu(c.impersonation_engine.managed.spec_type),
         ),
         // Тема циклится в одну сторону — `dir` игнорируется (как в прежнем cycle_field).
         ITheme => choice(
             |c, _dir| c.interface.theme = cycle_theme(c.interface.theme),
-            |c| index_menu(&THEMES, c.interface.theme, theme_label),
+            |c, loc| index_menu(&THEMES, c.interface.theme, |t| theme_label(t, loc)),
+        ),
+        // Язык интерфейса (ось B): каждый язык — в собственном названии (`Lang::label`),
+        // не переводится языком UI. Циклится по `Lang::ALL`.
+        ILanguage => choice(
+            |c, dir| c.interface.language = cycle_lang(c.interface.language, dir),
+            |c, _loc| {
+                index_menu(crate::shared::i18n::Lang::ALL, c.interface.language, |l| {
+                    l.label().to_string()
+                })
+            },
         ),
 
         // ---------- текст: движок ассистента ----------

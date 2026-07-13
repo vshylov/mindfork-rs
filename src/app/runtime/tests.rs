@@ -210,8 +210,11 @@ fn self_model_changed_refreshes_open_screen_only() {
     assert!(cmd_rx.try_recv().is_err());
 
     // Экран `F3` открыт → перезапрос снимка.
-    let mut active =
-        ActiveScreen::SelfModel(Box::new(SelfModelScreen::new(None, screen.palette())));
+    let mut active = ActiveScreen::SelfModel(Box::new(SelfModelScreen::new(
+        None,
+        screen.palette(),
+        screen.loc(),
+    )));
     apply_event(
         &mut screen,
         &mut active,

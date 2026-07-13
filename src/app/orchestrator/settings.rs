@@ -17,9 +17,10 @@ impl Orchestrator {
         // настроек не стёрла память о чате.
         self.config.last_active_chat = old.last_active_chat;
         if let Err(err) = self.storage.json().save_config(&self.config) {
-            let _ = self.evt_tx.send(AppEvent::Error(format!(
-                "Не удалось сохранить настройки: {err}"
-            )));
+            let _ = self.evt_tx.send(AppEvent::Error(
+                self.ui_locale()
+                    .tf("ui.err.save_settings_failed", &[("err", &err.to_string())]),
+            ));
             self.config = old; // откат к прежнему состоянию
             return;
         }

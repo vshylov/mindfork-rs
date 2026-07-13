@@ -780,6 +780,13 @@ pub struct InterfaceSettings {
     /// разделитель только под заголовком); включение даёт «сеточный» вид.
     /// См. spec §11.4.
     pub table_row_separators: bool,
+    /// Язык **интерфейса** (ось B, docs/i18n-ui.md) — тексты для человека
+    /// (статус-бар, настройки, справка, заголовки ролей ленты). **Независим** от
+    /// языка агентов (`Profile.language`, ось A): русский UI + англоязычные агенты —
+    /// законная комбинация. По умолчанию `Ru` (старый `settings.json` без поля);
+    /// при свежей установке — из `defaults.json` (`main.rs`). Переиспользует
+    /// `i18n::Lang` (UI-язык — это «из какого бандла читать `ui.*`-ключи»).
+    pub language: crate::shared::i18n::Lang,
 }
 
 impl Default for InterfaceSettings {
@@ -791,6 +798,7 @@ impl Default for InterfaceSettings {
             confirm_destructive_keys: false,
             terminal_compat: false,
             table_row_separators: false,
+            language: crate::shared::i18n::Lang::default(),
         }
     }
 }
@@ -977,6 +985,9 @@ mod tests {
         assert!(!c.interface.terminal_compat);
         // Разделители строк Markdown-таблиц по умолчанию выключены.
         assert!(!c.interface.table_row_separators);
+        // Язык интерфейса (ось B) по умолчанию — русский (старый settings.json без
+        // поля; свежая установка ставит его из defaults.json в main.rs).
+        assert_eq!(c.interface.language, crate::shared::i18n::Lang::Ru);
         // Копирование переписки: по умолчанию только текст (все флаги выключены).
         assert!(!c.copy.copy_thoughts);
         assert!(!c.copy.copy_tool_calls);
@@ -1177,6 +1188,7 @@ mod tests {
                 confirm_destructive_keys: true,
                 terminal_compat: true,
                 table_row_separators: true,
+                language: crate::shared::i18n::Lang::Ru,
             },
             ..Default::default()
         };

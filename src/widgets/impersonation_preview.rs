@@ -10,6 +10,7 @@ use ratatui::layout::Rect;
 use ratatui::text::{Line, Text};
 use ratatui::widgets::{Block, Borders, Paragraph};
 
+use crate::shared::i18n::Locale;
 use crate::shared::theme::Palette;
 use crate::shared::wrap::wrap_ranges;
 
@@ -24,13 +25,17 @@ pub fn render(
     tick: usize,
     done: bool,
     palette: &Palette,
+    loc: &'static Locale,
 ) {
     let hint = if done {
-        " имперсонация · готово ".to_string()
+        loc.t("ui.impersonation.done").to_string()
     } else {
         let frames = palette.glyphs().spinner;
         let spinner = frames[(tick / 2) % frames.len()];
-        format!(" {spinner} имперсонация · Esc отмена ")
+        loc.tf(
+            "ui.impersonation.active",
+            &[("spinner", &spinner.to_string())],
+        )
     };
     let block = Block::default()
         .borders(Borders::ALL)

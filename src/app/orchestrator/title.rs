@@ -50,7 +50,7 @@ impl Orchestrator {
             crate::features::rename_chat::build_conversation_digest(&chat.messages, loc)
         else {
             let _ = self.evt_tx.send(AppEvent::ChatListError(
-                "Недостаточно сообщений для авто-названия".into(),
+                self.ui_locale().t("ui.err.title_not_enough").into(),
             ));
             return;
         };
@@ -85,7 +85,13 @@ impl Orchestrator {
             sampling,
             tools: Vec::new(),
         };
-        spawn_title(backend, request, id, self.title_tx.clone());
+        spawn_title(
+            backend,
+            request,
+            id,
+            self.ui_locale(),
+            self.title_tx.clone(),
+        );
     }
 
     /// Применяет результат фоновой генерации авто-названия: чистит/нормализует
@@ -95,7 +101,7 @@ impl Orchestrator {
             Ok(raw) => {
                 let Some(title) = crate::features::rename_chat::clean_generated_title(&raw) else {
                     let _ = self.evt_tx.send(AppEvent::ChatListError(
-                        "Модель не вернула название чата".into(),
+                        self.ui_locale().t("ui.err.title_empty").into(),
                     ));
                     return;
                 };
@@ -123,6 +129,7 @@ fn spawn_title(
     backend: Arc<dyn EngineBackend>,
     request: ChatRequest,
     chat_id: Uuid,
+    loc: &'static crate::shared::i18n::Locale,
     title_tx: UnboundedSender<TitleResult>,
 ) {
     tokio::spawn(async move {
@@ -148,10 +155,10 @@ fn spawn_title(
         };
         let text = match tokio::time::timeout(TITLE_TIMEOUT, collect).await {
             Ok(Ok((text, thoughts))) => Ok(salvage_title_source(text, thoughts)),
-            Ok(Err(err)) => Err(format!("Ошибка генерации названия: {err}")),
+            Ok(Err(err)) => Err(loc.tf("ui.err.title_gen_failed", &[("err", &err.to_string())])),
             Err(_) => {
                 cancel.cancel();
-                Err("Генерация названия превысила лимит времени".to_string())
+                Err(loc.t("ui.err.title_timeout").to_string())
             }
         };
         let _ = title_tx.send(TitleResult { chat_id, text });

@@ -88,13 +88,14 @@ impl SettingsScreen {
     /// Поля секции «Модель» для заданной подсекции (для перечисления при поиске —
     /// [`SettingsScreen::model_fields`] строит их для активной подсекции).
     pub(super) fn model_fields_for(&self, model_sub: ModelTab) -> Vec<FieldRow> {
+        let loc = self.loc();
         // Селектор подсекции (таб-стрип) — всегда поле 0; в списке он не рисуется.
         let sub = row(
             FieldId::ModelSub,
-            "Подсекция",
-            FieldKind::Choice(model_sub.label()),
+            loc.t("ui.settings.field.subsection"),
+            FieldKind::Choice(model_sub.label(loc)),
         )
-        .describe(DESC_SUBSECTION);
+        .describe(loc.t(DESC_SUBSECTION));
         match model_sub {
             ModelTab::Assistant => {
                 let x = &self.config.engine;
@@ -102,39 +103,44 @@ impl SettingsScreen {
                     sub,
                     row(
                         FieldId::XMode,
-                        "Режим",
+                        loc.t("ui.settings.field.mode"),
                         FieldKind::Choice(mode_label(x.mode)),
                     )
-                    .describe(DESC_MODE),
+                    .describe(loc.t(DESC_MODE)),
                 ];
                 // Видимость полей зависит от режима (ADR 0004): для облака показываем
                 // лишь модель/ключ/опц. base URL, для managed — параметры llama-server.
                 match x.mode {
                     ServerMode::Managed => {
-                        rows.extend(managed_rows(&x.managed, ASSISTANT_MANAGED_IDS))
+                        rows.extend(managed_rows(&x.managed, ASSISTANT_MANAGED_IDS, loc))
                     }
                     ServerMode::External => rows.extend(grouped(
-                        "Сервер",
+                        loc.t("ui.settings.group.server"),
                         vec![
                             text_row(FieldId::XUrl, "URL (external)", &x.external.url),
-                            text_row(FieldId::XModelName, "Модель (опц.)", &x.external.model_name)
-                                .describe(DESC_MODEL_NAME),
+                            text_row(
+                                FieldId::XModelName,
+                                loc.t("ui.settings.field.model_opt"),
+                                &x.external.model_name,
+                            )
+                            .describe(loc.t(DESC_MODEL_NAME)),
                             text_row(
                                 FieldId::XApiKeyEnv,
-                                "API-ключ (env, опц.)",
+                                loc.t("ui.settings.field.api_key_env_opt"),
                                 &x.external.api_key_env,
                             )
-                            .describe(DESC_EXT_API_KEY_ENV),
+                            .describe(loc.t(DESC_EXT_API_KEY_ENV)),
                         ],
                     )),
                     ServerMode::OpenAi | ServerMode::Gemini | ServerMode::Claude => {
                         rows.extend(grouped(
-                            "Провайдер",
+                            loc.t("ui.settings.group.provider"),
                             cloud_rows(
                                 x.cloud(),
                                 FieldId::XModelName,
                                 FieldId::XApiKeyEnv,
                                 FieldId::XUrl,
+                                loc,
                             ),
                         ))
                     }
@@ -147,44 +153,45 @@ impl SettingsScreen {
                     sub,
                     row(
                         FieldId::IxMode,
-                        "Режим",
+                        loc.t("ui.settings.field.mode"),
                         FieldKind::Choice(imp_mode_label(x.mode)),
                     )
-                    .describe(DESC_IMP_MODE),
+                    .describe(loc.t(DESC_IMP_MODE)),
                 ];
                 match x.mode {
                     // Shared переиспользует движок ассистента — собственных полей нет.
                     ImpersonationMode::Shared => {}
                     ImpersonationMode::Managed => {
-                        rows.extend(managed_rows(&x.managed, IMP_MANAGED_IDS))
+                        rows.extend(managed_rows(&x.managed, IMP_MANAGED_IDS, loc))
                     }
                     ImpersonationMode::External => rows.extend(grouped(
-                        "Сервер",
+                        loc.t("ui.settings.group.server"),
                         vec![
                             text_row(FieldId::IxUrl, "URL (external)", &x.external.url),
                             text_row(
                                 FieldId::IxModelName,
-                                "Модель (опц.)",
+                                loc.t("ui.settings.field.model_opt"),
                                 &x.external.model_name,
                             )
-                            .describe(DESC_MODEL_NAME),
+                            .describe(loc.t(DESC_MODEL_NAME)),
                             text_row(
                                 FieldId::IxApiKeyEnv,
-                                "API-ключ (env, опц.)",
+                                loc.t("ui.settings.field.api_key_env_opt"),
                                 &x.external.api_key_env,
                             )
-                            .describe(DESC_EXT_API_KEY_ENV),
+                            .describe(loc.t(DESC_EXT_API_KEY_ENV)),
                         ],
                     )),
                     ImpersonationMode::OpenAi
                     | ImpersonationMode::Gemini
                     | ImpersonationMode::Claude => rows.extend(grouped(
-                        "Провайдер",
+                        loc.t("ui.settings.group.provider"),
                         cloud_rows(
                             x.cloud(),
                             FieldId::IxModelName,
                             FieldId::IxApiKeyEnv,
                             FieldId::IxUrl,
+                            loc,
                         ),
                     )),
                 }
@@ -198,32 +205,48 @@ impl SettingsScreen {
                     sub,
                     row(
                         FieldId::EMode,
-                        "Режим",
+                        loc.t("ui.settings.field.mode"),
                         FieldKind::Choice(mode_label(e.mode)),
                     )
-                    .describe(DESC_MODE),
+                    .describe(loc.t(DESC_MODE)),
                 ];
                 match e.mode {
                     ServerMode::Managed => rows.extend(grouped(
-                        "Сервер",
+                        loc.t("ui.settings.group.server"),
                         vec![
-                            text_row(FieldId::EBinary, "Бинарник llama-server", &e.managed.binary),
-                            text_row(FieldId::EModel, "GGUF-модель (-m)", &e.managed.model_path),
-                            num_field(FieldId::EPort, "Порт", e.managed.port),
+                            text_row(
+                                FieldId::EBinary,
+                                loc.t("ui.settings.field.binary"),
+                                &e.managed.binary,
+                            ),
+                            text_row(
+                                FieldId::EModel,
+                                loc.t("ui.settings.field.gguf"),
+                                &e.managed.model_path,
+                            ),
+                            num_field(
+                                FieldId::EPort,
+                                loc.t("ui.settings.field.port"),
+                                e.managed.port,
+                            ),
                         ],
                     )),
                     ServerMode::External => rows.extend(grouped(
-                        "Сервер",
+                        loc.t("ui.settings.group.server"),
                         vec![
                             text_row(FieldId::EUrl, "URL (external)", &e.external.url),
-                            text_row(FieldId::EModelName, "Модель (опц.)", &e.external.model_name)
-                                .describe(DESC_MODEL_NAME),
+                            text_row(
+                                FieldId::EModelName,
+                                loc.t("ui.settings.field.model_opt"),
+                                &e.external.model_name,
+                            )
+                            .describe(loc.t(DESC_MODEL_NAME)),
                             text_row(
                                 FieldId::EApiKeyEnv,
-                                "API-ключ (env, опц.)",
+                                loc.t("ui.settings.field.api_key_env_opt"),
                                 &e.external.api_key_env,
                             )
-                            .describe(DESC_EXT_API_KEY_ENV),
+                            .describe(loc.t(DESC_EXT_API_KEY_ENV)),
                         ],
                     )),
                     // Claude поля показывает, но Anthropic не умеет embeddings —
@@ -232,13 +255,25 @@ impl SettingsScreen {
                         let none = CloudSettings::default();
                         let c = e.cloud().unwrap_or(&none);
                         rows.extend(grouped(
-                            "Провайдер",
+                            loc.t("ui.settings.group.provider"),
                             vec![
-                                text_row(FieldId::EModelName, "Модель", &c.model_name)
-                                    .describe(DESC_MODEL_NAME),
-                                text_row(FieldId::EApiKeyEnv, "API-ключ (env)", &c.api_key_env)
-                                    .describe(DESC_API_KEY_ENV),
-                                text_row(FieldId::EUrl, "Base URL (опц.)", &c.url),
+                                text_row(
+                                    FieldId::EModelName,
+                                    loc.t("ui.settings.field.model"),
+                                    &c.model_name,
+                                )
+                                .describe(loc.t(DESC_MODEL_NAME)),
+                                text_row(
+                                    FieldId::EApiKeyEnv,
+                                    loc.t("ui.settings.field.api_key_env"),
+                                    &c.api_key_env,
+                                )
+                                .describe(loc.t(DESC_API_KEY_ENV)),
+                                text_row(
+                                    FieldId::EUrl,
+                                    loc.t("ui.settings.field.base_url"),
+                                    &c.url,
+                                ),
                             ],
                         ))
                     }
@@ -254,13 +289,14 @@ impl SettingsScreen {
 
     /// Поля секции «Семплинг» для заданной подсекции (для перечисления при поиске).
     pub(super) fn sampling_fields_for(&self, sampling_sub: Subsection) -> Vec<FieldRow> {
+        let loc = self.loc();
         let mut rows = vec![
             row(
                 FieldId::SamplingSub,
-                "Подсекция",
-                FieldKind::Choice(sampling_sub.label()),
+                loc.t("ui.settings.field.subsection"),
+                FieldKind::Choice(sampling_sub.label(loc)),
             )
-            .describe(DESC_SUBSECTION),
+            .describe(loc.t(DESC_SUBSECTION)),
         ];
         let (s, imp) = match sampling_sub {
             Subsection::Assistant => (&self.config.default_sampling, false),
@@ -279,8 +315,8 @@ impl SettingsScreen {
                     None => true,
                 })
                 .map(|&p| {
-                    let mut r = sampling_row(mk(p), p, s);
-                    r.group = p.group();
+                    let mut r = sampling_row(mk(p), p, s, loc);
+                    r.group = p.group(loc);
                     r
                 }),
         );
@@ -288,138 +324,116 @@ impl SettingsScreen {
     }
 
     pub(super) fn tool_fields(&self) -> Vec<FieldRow> {
+        let loc = self.loc();
         let t = &self.config.tools;
         let mut rows = grouped(
-            "Агентный цикл",
+            loc.t("ui.settings.group.agentic"),
             vec![
                 row(
                     FieldId::MaxToolRounds,
-                    "Лимит раундов инструментов",
+                    loc.t("ui.settings.field.max_tool_rounds"),
                     FieldKind::Text(self.config.max_tool_rounds.to_string()),
                 )
-                .describe(
-                    "Максимум раундов клиентского agentic-loop за один ответ: сколько раз \
-                     модель может вызвать инструменты подряд, прежде чем цикл принудительно \
-                     завершится. Защита от зацикливания (по умолчанию 8).",
-                ),
+                .describe(loc.t("ui.settings.desc.max_tool_rounds")),
                 row(
                     FieldId::TSubMaxTokens,
-                    "Субагент: лимит токенов",
+                    loc.t("ui.settings.field.sub_max_tokens"),
                     FieldKind::Text(t.subagent_max_tokens.to_string()),
                 )
-                .describe(
-                    "Лимит токенов в ответе субагента (call_subagent) — независимого \
-                     одно-ходового запроса без истории и инструментов.",
-                ),
+                .describe(loc.t("ui.settings.desc.sub_max_tokens")),
                 row(
                     FieldId::TSubTimeout,
-                    "Субагент: таймаут (с)",
+                    loc.t("ui.settings.field.sub_timeout"),
                     FieldKind::Text(t.subagent_timeout_secs.to_string()),
                 )
-                .describe("Таймаут запроса субагента (call_subagent) в секундах."),
+                .describe(loc.t("ui.settings.desc.sub_timeout")),
             ],
         );
         rows.extend(grouped(
-            "Веб-поиск",
+            loc.t("ui.settings.group.websearch"),
             vec![
-                row(FieldId::TWeb, "Web-поиск", FieldKind::Toggle(t.web_enabled)).describe(
-                    "Разрешить инструменты web_search и fetch_url (сетевой доступ). \
-                     Мастер-гейт: при выключении оба инструмента недоступны модели \
-                     независимо от настроек профиля.",
-                ),
+                row(
+                    FieldId::TWeb,
+                    loc.t("ui.settings.field.web_search"),
+                    FieldKind::Toggle(t.web_enabled),
+                )
+                .describe(loc.t("ui.settings.desc.web_search")),
                 row(
                     FieldId::TWebFetch,
-                    "Загрузка страниц",
+                    loc.t("ui.settings.field.web_fetch"),
                     FieldKind::Toggle(t.web_fetch_content),
                 )
-                .describe(
-                    "Загружать страницы результатов web-поиска, извлекать читаемый текст и \
-                     переупорядочивать по релевантности запросу (эмбеддингами). Даёт модели \
-                     содержимое страниц, но добавляет задержку. Выкл — только заголовки/сниппеты.",
-                ),
+                .describe(loc.t("ui.settings.desc.web_fetch")),
             ],
         ));
         rows.extend(grouped("Python", {
             let mut py = vec![
                 row(
                     FieldId::TPythonMode,
-                    "Режим Python",
+                    loc.t("ui.settings.field.python_mode"),
                     FieldKind::Choice(t.python_mode.label().to_string()),
                 )
-                .describe(
-                    "Wasmer-песочница (по умолчанию): изолированное исполнение без доступа \
-                     к файлам машины, предустановленные пакеты (numpy, requests). Локальный \
-                     интерпретатор: код исполняется на вашей машине напрямую.",
-                ),
+                .describe(loc.t("ui.settings.desc.python_mode")),
                 row(
                     FieldId::TPython,
-                    "Python-исполнение",
+                    loc.t("ui.settings.field.python"),
                     FieldKind::Toggle(t.python_enabled),
                 )
-                .describe(
-                    "Разрешить инструмент python_exec. Выключено по умолчанию.",
-                ),
+                .describe(loc.t("ui.settings.desc.python")),
             ];
             match t.python_mode {
                 PythonMode::Local => py.push(
-                    text_row(FieldId::TPythonPath, "Путь к интерпретатору", &t.python_path).describe(
-                        "Путь к python/python3 (пусто → системный из PATH). Только локальный режим.",
-                    ),
+                    text_row(
+                        FieldId::TPythonPath,
+                        loc.t("ui.settings.field.python_path"),
+                        &t.python_path,
+                    )
+                    .describe(loc.t("ui.settings.desc.python_path")),
                 ),
                 PythonMode::Wasmer => {
                     py.push(
                         row(
                             FieldId::TPythonNet,
-                            "Сеть в песочнице",
+                            loc.t("ui.settings.field.python_net"),
                             FieldKind::Toggle(t.python_net_enabled),
                         )
-                        .describe(
-                            "Разрешить коду в песочнице доступ в сеть (--net; нужно для requests). \
-                             Включено по умолчанию.",
-                        ),
+                        .describe(loc.t("ui.settings.desc.python_net")),
                     );
                     py.push(
                         num_field(
                             FieldId::TPythonWasmTimeout,
-                            "Таймаут песочницы (с)",
+                            loc.t("ui.settings.field.python_timeout"),
                             t.python_wasm_timeout_secs,
                         )
-                        .describe("Лимит времени исполнения кода в песочнице (секунды)."),
+                        .describe(loc.t("ui.settings.desc.python_timeout")),
                     );
                     py.push(
                         num_row(
                             FieldId::TPythonWasmMemory,
-                            "Лимит памяти (МБ, 0=без)",
+                            loc.t("ui.settings.field.python_memory"),
                             t.python_wasm_memory_mb,
                         )
-                        .describe(
-                            "Жёсткий лимит памяти песочницы (защита хоста от OOM). Только \
-                             Windows; минимум ~1024 (меньше — песочница может не стартовать). \
-                             0/пусто — без лимита.",
-                        ),
+                        .describe(loc.t("ui.settings.desc.python_memory")),
                     );
                 }
             }
             py
         }));
         rows.extend(grouped(
-            "Файлы",
+            loc.t("ui.settings.group.files"),
             vec![
                 row(
                     FieldId::TFs,
-                    "Доступ к файлам",
+                    loc.t("ui.settings.field.fs"),
                     FieldKind::Toggle(t.fs_enabled),
                 )
-                .describe(
-                    "Разрешить инструменты чтения/записи/листинга локальных файлов \
-                     (fs_read/fs_write/fs_list). Выключено по умолчанию: инструмент может \
-                     прочитать или перезаписать любой файл. Ограничить можно каталогом-песочницей.",
-                ),
-                text_row(FieldId::TFsRoot, "Каталог-песочница", &t.fs_root).describe(
-                    "Каталог-«песочница» для файловых инструментов: если задан, доступ к файлам \
-                     ограничен этим каталогом и его подкаталогами (выход через .. блокируется). \
-                     Пусто — доступ ко всей файловой системе.",
-                ),
+                .describe(loc.t("ui.settings.desc.fs")),
+                text_row(
+                    FieldId::TFsRoot,
+                    loc.t("ui.settings.field.fs_root"),
+                    &t.fs_root,
+                )
+                .describe(loc.t("ui.settings.desc.fs_root")),
             ],
         ));
         rows
@@ -427,179 +441,135 @@ impl SettingsScreen {
 
     /// Секция «Память»: чанкинг базы знаний (RAG), заметки, «модель себя».
     pub(super) fn memory_fields(&self) -> Vec<FieldRow> {
+        let loc = self.loc();
         let mut rows = grouped(
-            "База знаний (RAG)",
+            loc.t("ui.settings.group.rag"),
             vec![
                 row(
                     FieldId::RagTarget,
-                    "Размер чанка (симв.)",
+                    loc.t("ui.settings.field.rag_target"),
                     FieldKind::Text(self.config.rag.chunk_target_chars.to_string()),
                 )
-                .describe(
-                    "Целевой размер фрагмента (чанка) базы знаний в символах. Меньше — точнее \
-                     попадание, но больше фрагментов; больше — шире контекст. Применяется при \
-                     индексации (/rag add) и реиндексации (/rag rebuild).",
-                ),
+                .describe(loc.t("ui.settings.desc.rag_target")),
                 row(
                     FieldId::RagOverlap,
-                    "Перекрытие (симв.)",
+                    loc.t("ui.settings.field.rag_overlap"),
                     FieldKind::Text(self.config.rag.chunk_overlap_chars.to_string()),
                 )
-                .describe(
-                    "Перекрытие соседних фрагментов в символах: хвост предыдущего повторяется \
-                     в начале следующего, чтобы запрос у границы не терял контекст. При \
-                     извлечении дубль снимается склейкой.",
-                ),
+                .describe(loc.t("ui.settings.desc.rag_overlap")),
                 row(
                     FieldId::RagMax,
-                    "Потолок чанка (симв.)",
+                    loc.t("ui.settings.field.rag_max"),
                     FieldKind::Text(self.config.rag.chunk_max_chars.to_string()),
                 )
-                .describe(
-                    "Жёсткий потолок неделимого фрагмента в символах (очень длинная \
-                     строка/слово без пунктуации). Не меньше целевого размера.",
-                ),
+                .describe(loc.t("ui.settings.desc.rag_max")),
             ],
         );
         rows.extend(grouped(
-            "Заметки",
+            loc.t("ui.settings.group.notes"),
             vec![
                 row(
                     FieldId::NotesAutoConsolidate,
-                    "Авто-консолидация (кажд. N)",
+                    loc.t("ui.settings.field.notes_auto_consolidate"),
                     FieldKind::Text(self.config.notes.auto_consolidate_every.to_string()),
                 )
-                .describe(
-                    "Авто-консолидация («сон»): каждые N ответов модель в фоне сама \
-                     пересматривает базу заметок — сливает дубли, переписывает устаревшее, \
-                     связывает родственное. 0 — выключено. Работает только в профилях с \
-                     включёнными инструментами заметок.",
-                ),
+                .describe(loc.t("ui.settings.desc.notes_auto_consolidate")),
                 row(
                     FieldId::NotesRecallIncludesSelf,
-                    "«О себе» в note_recall",
+                    loc.t("ui.settings.field.notes_recall_self"),
                     FieldKind::Toggle(self.config.notes.recall_includes_self),
                 )
-                .describe(
-                    "Показывать наблюдения «о себе» (@self) в общем note_recall — с пометкой \
-                     [о себе]. По умолчанию выключено: память о себе ≠ память о собеседнике. \
-                     Включение смешивает выдачу (модель увидит свои наблюдения при поиске заметок).",
-                ),
+                .describe(loc.t("ui.settings.desc.notes_recall_self")),
             ],
         ));
         rows.extend(grouped(
-            "Модель себя",
+            loc.t("ui.settings.group.self_model"),
             vec![
                 row(
                     FieldId::SmMaxNarrative,
-                    "Хранить инсайтов",
+                    loc.t("ui.settings.field.sm_max_narrative"),
                     FieldKind::Text(self.config.self_model.max_narrative.to_string()),
                 )
-                .describe(
-                    "Сколько инсайтов (наблюдений) хранить в нарративе «модели себя». При \
-                     переполнении старые вытесняются. Только для профилей с включёнными \
-                     инструментами модели себя.",
-                ),
+                .describe(loc.t("ui.settings.desc.sm_max_narrative")),
                 row(
                     FieldId::SmNarrativeInPrompt,
-                    "Инсайтов в промпт",
+                    loc.t("ui.settings.field.sm_narrative_in_prompt"),
                     FieldKind::Text(self.config.self_model.narrative_in_prompt.to_string()),
                 )
-                .describe(
-                    "Сколько самых свежих инсайтов подмешивать в системный промпт (новейшие \
-                     первыми). Больше — богаче контекст «я», но дороже по токенам.",
-                ),
+                .describe(loc.t("ui.settings.desc.sm_narrative_in_prompt")),
                 row(
                     FieldId::SmPromptCap,
-                    "Лимит инъекции (симв.)",
+                    loc.t("ui.settings.field.sm_prompt_cap"),
                     FieldKind::Text(self.config.self_model.prompt_cap.to_string()),
                 )
-                .describe(
-                    "Потолок символов компактного блока «модели себя», подмешиваемого в \
-                     системный промпт. Защита окна контекста: длинный блок усекается.",
-                ),
+                .describe(loc.t("ui.settings.desc.sm_prompt_cap")),
                 row(
                     FieldId::SmSummaryTarget,
-                    "Ориентир описания (симв.)",
+                    loc.t("ui.settings.field.sm_summary_target"),
                     FieldKind::Text(self.config.self_model.summary_target_chars.to_string()),
                 )
-                .describe(
-                    "Ориентир размера описания себя (summary) в символах. Сверх него \
-                     инструменты и протокол ведения мягко предлагают сократить описание, \
-                     вынеся событийное в наблюдения. Это ворота, а не потолок: данные не усекаются.",
-                ),
+                .describe(loc.t("ui.settings.desc.sm_summary_target")),
                 row(
                     FieldId::SmAutoReflect,
-                    "Авто-рефлексия (кажд. N)",
+                    loc.t("ui.settings.field.sm_auto_reflect"),
                     FieldKind::Text(self.config.self_model.auto_reflect_every.to_string()),
                 )
-                .describe(
-                    "Авто-рефлексия: каждые N ответов ассистента модель в фоне сама \
-                     пересматривает разговор и обновляет «модель себя». 0 — выключено. \
-                     Работает только в профилях с включёнными инструментами модели себя.",
-                ),
+                .describe(loc.t("ui.settings.desc.sm_auto_reflect")),
                 row(
                     FieldId::SmProtocol,
-                    "Протокол ведения",
+                    loc.t("ui.settings.field.sm_protocol"),
                     FieldKind::Toggle(self.config.self_model.maintenance_protocol),
                 )
-                .describe(
-                    "Подмешивать в системный промпт нейтральную к персоне инструкцию: когда \
-                     фиксировать изменения инструментами, «мимолётное — в наблюдения», \
-                     «точность важнее угодливости». Делает использование инструментов \
-                     предсказуемым независимо от персоны. Работает только в профилях с \
-                     включёнными инструментами модели себя.",
-                ),
+                .describe(loc.t("ui.settings.desc.sm_protocol")),
             ],
         ));
         rows
     }
 
     pub(super) fn interface_fields(&self) -> Vec<FieldRow> {
+        let loc = self.loc();
         let i = &self.config.interface;
         let mut rows = grouped(
-            "Оформление",
+            loc.t("ui.settings.group.appearance"),
             vec![
                 row(
                     FieldId::ITheme,
-                    "Тема",
-                    FieldKind::Choice(theme_label(i.theme)),
+                    loc.t("ui.settings.field.theme"),
+                    FieldKind::Choice(theme_label(i.theme, loc)),
                 ),
+                row(
+                    FieldId::ILanguage,
+                    loc.t("ui.settings.field.language"),
+                    FieldKind::Choice(i.language.label().to_string()),
+                )
+                .describe(loc.t("ui.settings.desc.language")),
                 row(
                     FieldId::ICompat,
-                    "Режим старого терминала",
+                    loc.t("ui.settings.field.compat"),
                     FieldKind::Toggle(i.terminal_compat),
                 )
-                .describe(
-                    "Режим совместимости со старыми эмуляторами терминала (conhost Windows 10 \
-                     и т.п.): эмодзи и редкие символы заменяются на простые глифы, рамки — \
-                     прямые, спиннер — ASCII, затемнение фона попапов — цветом. Включите, \
-                     если вместо иконок видны квадраты-«тофу».",
-                ),
+                .describe(loc.t("ui.settings.desc.compat")),
                 row(
                     FieldId::ITableSeparators,
-                    "Разделители строк таблиц",
+                    loc.t("ui.settings.field.table_separators"),
                     FieldKind::Toggle(i.table_row_separators),
                 )
-                .describe(
-                    "Горизонтальные линии между строками Markdown-таблиц в ленте («сеточный» \
-                     вид). Выключено — компактный вид: разделитель только под заголовком.",
-                ),
+                .describe(loc.t("ui.settings.desc.table_separators")),
             ],
         );
         rows.extend(grouped(
-            "Орфография",
+            loc.t("ui.settings.group.spelling"),
             vec![
                 row(
                     FieldId::ISpell,
-                    "Спелл-чек",
+                    loc.t("ui.settings.field.spell"),
                     FieldKind::Toggle(i.spellcheck_enabled),
                 ),
                 row(
                     FieldId::IDicts,
-                    "Словари (через запятую)",
+                    loc.t("ui.settings.field.dicts"),
                     FieldKind::Text(if i.selected_dictionaries.is_empty() {
-                        "(все)".to_string()
+                        loc.t("ui.settings.value.all").to_string()
                     } else {
                         i.selected_dictionaries.join(", ")
                     }),
@@ -607,53 +577,40 @@ impl SettingsScreen {
             ],
         ));
         rows.extend(grouped(
-            "Поведение",
+            loc.t("ui.settings.group.behavior"),
             vec![
                 row(
                     FieldId::IConfirmKeys,
-                    "Подтверждать Ctrl+R / Ctrl+E",
+                    loc.t("ui.settings.field.confirm_keys"),
                     FieldKind::Toggle(i.confirm_destructive_keys),
                 )
-                .describe(
-                    "Спрашивать подтверждение перед перегенерацией (Ctrl+R) и удалением \
-                     последнего обмена (Ctrl+E) — обе операции необратимы в UI. Выключено — \
-                     комбинации срабатывают сразу.",
-                ),
+                .describe(loc.t("ui.settings.desc.confirm_keys")),
             ],
         ));
         // Подписи читаются как продолжение заголовка группы («Копирование … —
         // с «мыслями»»): общий префикс «Копировать» ушёл в заголовок, чтобы
         // длинные имена не отгоняли колонку значений (см. LABEL_CAP).
         rows.extend(grouped(
-            "Копирование переписки (F5)",
+            loc.t("ui.settings.group.copy"),
             vec![
                 row(
                     FieldId::ICopyThoughts,
-                    "С «мыслями»",
+                    loc.t("ui.settings.field.copy_thoughts"),
                     FieldKind::Toggle(self.config.copy.copy_thoughts),
                 )
-                .describe(
-                    "При копировании переписки (F5) включать блок «мыслей» (CoT) ассистента. \
-                     По умолчанию копируется только текст сообщений.",
-                ),
+                .describe(loc.t("ui.settings.desc.copy_thoughts")),
                 row(
                     FieldId::ICopyToolCalls,
-                    "С параметрами инструментов",
+                    loc.t("ui.settings.field.copy_tool_calls"),
                     FieldKind::Toggle(self.config.copy.copy_tool_calls),
                 )
-                .describe(
-                    "При копировании переписки (F5) включать параметры вызовов инструментов \
-                     (имя инструмента и аргументы).",
-                ),
+                .describe(loc.t("ui.settings.desc.copy_tool_calls")),
                 row(
                     FieldId::ICopyToolResults,
-                    "С ответами инструментов",
+                    loc.t("ui.settings.field.copy_tool_results"),
                     FieldKind::Toggle(self.config.copy.copy_tool_results),
                 )
-                .describe(
-                    "При копировании переписки (F5) включать результаты (ответы) вызовов \
-                     инструментов.",
-                ),
+                .describe(loc.t("ui.settings.desc.copy_tool_results")),
             ],
         ));
         rows
@@ -665,11 +622,12 @@ impl SettingsScreen {
 
     /// Поля секции «Профили» для заданной подсекции (для перечисления при поиске).
     pub(super) fn profile_fields_for(&self, profile_sub: Subsection) -> Vec<FieldRow> {
+        let loc = self.loc();
         let Some(p) = self.profiles.get(self.profile_idx) else {
             return vec![row(
                 FieldId::PSelect,
-                "Профиль",
-                FieldKind::Choice("(нет профилей)".to_string()),
+                loc.t("ui.settings.field.profile"),
+                FieldKind::Choice(loc.t("ui.settings.value.no_profiles").to_string()),
             )];
         };
         // ProfileSub — селектор подсекции (таб-стрип, поле 0, в списке не рисуется);
@@ -677,16 +635,20 @@ impl SettingsScreen {
         let mut rows = vec![
             row(
                 FieldId::ProfileSub,
-                "Подсекция",
-                FieldKind::Choice(profile_sub.label()),
+                loc.t("ui.settings.field.subsection"),
+                FieldKind::Choice(profile_sub.label(loc)),
             )
-            .describe(DESC_SUBSECTION),
+            .describe(loc.t(DESC_SUBSECTION)),
             row(
                 FieldId::PSelect,
-                "Профиль",
+                loc.t("ui.settings.field.profile"),
                 FieldKind::Choice(p.name.clone()),
             ),
-            row(FieldId::PName, "Имя", FieldKind::Text(p.name.clone())),
+            row(
+                FieldId::PName,
+                loc.t("ui.settings.field.name"),
+                FieldKind::Text(p.name.clone()),
+            ),
         ];
         match profile_sub {
             Subsection::Assistant => {
@@ -695,26 +657,26 @@ impl SettingsScreen {
                 let lang_locked = self.language_locked.contains(&p.id);
                 let mut lang_row = row(
                     FieldId::PLanguage,
-                    "Язык каркаса",
+                    loc.t("ui.settings.field.language"),
                     FieldKind::Choice(p.language.label().to_string()),
                 )
-                .describe(DESC_PROFILE_LANGUAGE);
+                .describe(loc.t(DESC_PROFILE_LANGUAGE));
                 if lang_locked {
                     lang_row.warn = true;
-                    lang_row.hint = Some("зафиксирован: у профиля есть данные");
+                    lang_row.hint = Some(loc.t("ui.settings.hint.language_locked"));
                 }
                 rows.extend(grouped(
-                    "Персона",
+                    loc.t("ui.settings.group.persona"),
                     vec![
                         lang_row,
                         row(
                             FieldId::PSystem,
-                            "Системное сообщение",
+                            loc.t("ui.settings.field.system_message"),
                             FieldKind::Text(p.default_system_message.clone()),
                         ),
                         row(
                             FieldId::PGreeting,
-                            "Приветствие",
+                            loc.t("ui.settings.field.greeting"),
                             FieldKind::Text(p.greeting.clone().unwrap_or_default()),
                         ),
                     ],
@@ -735,7 +697,7 @@ impl SettingsScreen {
                     r.group = info.group.title();
                     r.warn = gated_off;
                     r.hint = if gated_off {
-                        gate.map(gate_hint)
+                        gate.map(|g| gate_hint(g, loc))
                     } else {
                         (!info.label.is_empty()).then_some(info.label)
                     };
@@ -745,10 +707,10 @@ impl SettingsScreen {
             // В имперсонации инструментов нет (spec §11.8) — только сис. сообщение.
             Subsection::Impersonation => {
                 rows.extend(grouped(
-                    "Персона",
+                    loc.t("ui.settings.group.persona"),
                     vec![row(
                         FieldId::PImpSystem,
-                        "Системное сообщение",
+                        loc.t("ui.settings.field.system_message"),
                         FieldKind::Text(p.impersonation_system_message.clone()),
                     )],
                 ));

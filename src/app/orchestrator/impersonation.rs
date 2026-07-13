@@ -37,9 +37,9 @@ impl Orchestrator {
             return;
         }
         let Some(active_id) = self.active_id else {
-            let _ = self
-                .evt_tx
-                .send(AppEvent::Error("Нет активного чата".into()));
+            let _ = self.evt_tx.send(AppEvent::Error(
+                self.ui_locale().t("ui.err.no_active_chat").into(),
+            ));
             return;
         };
         let backend = match self
@@ -105,6 +105,7 @@ impl Orchestrator {
             request,
             id,
             cancel,
+            self.ui_locale(),
             self.evt_tx.clone(),
             self.imp_done_tx.clone(),
         );
@@ -195,6 +196,7 @@ fn spawn_impersonation(
     request: ChatRequest,
     id: Uuid,
     cancel: CancellationToken,
+    loc: &'static crate::shared::i18n::Locale,
     evt_tx: UnboundedSender<AppEvent>,
     done_tx: UnboundedSender<(Uuid, FinishReason)>,
 ) {
@@ -233,7 +235,9 @@ fn spawn_impersonation(
         let reason = match tokio::time::timeout(IMPERSONATION_TIMEOUT, run).await {
             Ok(Ok(r)) => r,
             Ok(Err(err)) => {
-                let _ = evt_tx.send(AppEvent::Error(format!("Ошибка имперсонации: {err}")));
+                let _ = evt_tx.send(AppEvent::Error(
+                    loc.tf("ui.err.impersonation_failed", &[("err", &err.to_string())]),
+                ));
                 FinishReason::Error
             }
             Err(_) => {

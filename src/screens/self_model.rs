@@ -17,6 +17,7 @@ use ratatui::widgets::{Clear, Paragraph};
 use uuid::Uuid;
 
 use crate::entities::self_model::{GoalStatus, SelfModel, SelfModelEdit};
+use crate::shared::i18n::Locale;
 use crate::shared::keys;
 use crate::shared::theme::Palette;
 use crate::shared::ui::dim_background;
@@ -72,6 +73,8 @@ struct Editor {
 pub struct SelfModelScreen {
     model: Option<SelfModel>,
     palette: Palette,
+    /// Локаль интерфейса (обновляется при `Settings`). См. docs/i18n-ui.md.
+    loc: &'static Locale,
     selected: usize,
     /// Первый видимый визуальный ряд (для прокрутки длинного списка). Держится
     /// между кадрами; пересчитывается в [`Self::render`] так, чтобы выбранная строка
@@ -84,10 +87,11 @@ pub struct SelfModelScreen {
 
 impl SelfModelScreen {
     /// Открывает экран со снимком модели.
-    pub fn new(model: Option<SelfModel>, palette: Palette) -> Self {
+    pub fn new(model: Option<SelfModel>, palette: Palette, loc: &'static Locale) -> Self {
         Self {
             model,
             palette,
+            loc,
             selected: 0,
             scroll: 0,
             editor: None,
@@ -109,6 +113,11 @@ impl SelfModelScreen {
     /// Обновляет палитру темы (событие `AppEvent::Settings`).
     pub fn set_palette(&mut self, palette: Palette) {
         self.palette = palette;
+    }
+
+    /// Обновляет локаль интерфейса (событие `AppEvent::Settings`).
+    pub fn set_loc(&mut self, loc: &'static Locale) {
+        self.loc = loc;
     }
 
     /// Строит навигируемые строки (вид + цель действия). Базовые поля присутствуют
@@ -133,6 +142,7 @@ impl SelfModelScreen {
             )
         };
 
+        let loc = self.loc;
         // Описание себя.
         let summary = if m.summary.trim().is_empty() {
             dim("—".into())
@@ -140,7 +150,7 @@ impl SelfModelScreen {
             Span::raw(m.summary.trim().to_string())
         };
         rows.push((
-            Line::from(vec![label("О себе: "), summary]),
+            Line::from(vec![label(loc.t("ui.self_model.summary")), summary]),
             RowAction::Summary,
         ));
 
@@ -172,7 +182,7 @@ impl SelfModelScreen {
         }
         rows.push((
             Line::from(vec![Span::styled(
-                "＋ добавить цель".to_string(),
+                format!("＋ {}", loc.t("ui.self_model.add_goal")),
                 p.muted_style(),
             )]),
             RowAction::AddGoal,
@@ -180,7 +190,7 @@ impl SelfModelScreen {
 
         // Модель собеседника — отделена пустой строкой и заголовком от секции «о себе».
         rows.push(spacer());
-        rows.push(header("Собеседник"));
+        rows.push(header(loc.t("ui.self_model.interlocutor")));
         let u = &m.user_model;
         let join_or_dash = |v: &[String]| {
             if v.is_empty() {
@@ -190,12 +200,15 @@ impl SelfModelScreen {
             }
         };
         rows.push((
-            Line::from(vec![label("Черты: "), join_or_dash(&u.perceived_traits)]),
+            Line::from(vec![
+                label(loc.t("ui.self_model.traits")),
+                join_or_dash(&u.perceived_traits),
+            ]),
             RowAction::Traits,
         ));
         rows.push((
             Line::from(vec![
-                label("Интересы: "),
+                label(loc.t("ui.self_model.interests")),
                 join_or_dash(&u.current_interests),
             ]),
             RowAction::Interests,
@@ -206,7 +219,7 @@ impl SelfModelScreen {
             Span::raw(u.relationship_dynamic.trim().to_string())
         };
         rows.push((
-            Line::from(vec![label("Отношения: "), rel]),
+            Line::from(vec![label(loc.t("ui.self_model.relationship")), rel]),
             RowAction::Relationship,
         ));
 
@@ -214,7 +227,10 @@ impl SelfModelScreen {
         // заголовком, чтобы наблюдения не сливались с моделью собеседника.
         if !m.narrative.is_empty() {
             rows.push(spacer());
-            rows.push(header(&format!("Наблюдения ({})", m.narrative.len())));
+            rows.push(header(&loc.tf(
+                "ui.self_model.observations",
+                &[("n", &m.narrative.len().to_string())],
+            )));
         }
         for seg in m.narrative.iter().rev() {
             // Дата — в локальной зоне: `created_at` хранится в UTC, и без перевода
@@ -399,12 +415,14 @@ impl SelfModelScreen {
     /// Строка хоткеев экрана (пары «клавиша — описание — опасная ли»). Раскладывается
     /// в сетку общим хелпером [`Palette::hotkey_grid`] — та же логика переноса, что в
     /// оверлее списка чатов (слева-направо, столбцы совпадают по вертикали).
+    /// Пары «клавиша — ключ описания — опасная ли»; описания резолвятся через локаль
+    /// в [`Self::render`].
     const HOTKEYS: [(&'static str, &'static str, bool); 5] = [
-        ("Enter", "правка", false),
-        ("Space", "статус цели", false),
-        ("Del", "удалить", true),
-        ("Ctrl+K", "очистить", false),
-        ("Esc", "закрыть", false),
+        ("Enter", "ui.self_model.hk.edit", false),
+        ("Space", "ui.self_model.hk.goal_status", false),
+        ("Del", "ui.self_model.hk.delete", true),
+        ("Ctrl+K", "ui.self_model.hk.clear", false),
+        ("Esc", "ui.self_model.hk.close", false),
     ];
 
     /// Рисует экран во весь экран: список полей + строка хоткеев (под панелью, вне
@@ -416,7 +434,36 @@ impl SelfModelScreen {
         // Строка хоткеев — под панелью (вне рамки), переносится сеткой как в оверлее
         // списка чатов. При подтверждении очистки на её месте — предупреждение (1 ряд).
         // Высоту считаем заранее, чтобы отвести под неё ровно нужное число рядов.
-        let hotkeys = palette.hotkey_grid(&Self::HOTKEYS, area.width as usize);
+        // Локализуем описания хоткеев (клавиши и «опасность» — как в const).
+        let loc = self.loc;
+        let hk_items: [(&str, &str, bool); 5] = [
+            (
+                Self::HOTKEYS[0].0,
+                loc.t(Self::HOTKEYS[0].1),
+                Self::HOTKEYS[0].2,
+            ),
+            (
+                Self::HOTKEYS[1].0,
+                loc.t(Self::HOTKEYS[1].1),
+                Self::HOTKEYS[1].2,
+            ),
+            (
+                Self::HOTKEYS[2].0,
+                loc.t(Self::HOTKEYS[2].1),
+                Self::HOTKEYS[2].2,
+            ),
+            (
+                Self::HOTKEYS[3].0,
+                loc.t(Self::HOTKEYS[3].1),
+                Self::HOTKEYS[3].2,
+            ),
+            (
+                Self::HOTKEYS[4].0,
+                loc.t(Self::HOTKEYS[4].1),
+                Self::HOTKEYS[4].2,
+            ),
+        ];
+        let hotkeys = palette.hotkey_grid(&hk_items, area.width as usize);
         let status_h = if self.confirm_clear {
             1
         } else {
@@ -426,7 +473,11 @@ impl SelfModelScreen {
             Layout::vertical([Constraint::Min(3), Constraint::Length(status_h)]).areas(area);
 
         let block = palette.panel(
-            format!("{} Модель себя", palette.glyphs().assistant_icon),
+            format!(
+                "{} {}",
+                palette.glyphs().assistant_icon,
+                loc.t("ui.self_model.title")
+            ),
             true,
         );
         let inner = block.inner(panel_area);
@@ -501,10 +552,7 @@ impl SelfModelScreen {
         if self.confirm_clear {
             let warn = Style::new().fg(palette.warning);
             frame.render_widget(
-                Paragraph::new(Line::styled(
-                    "Очистить всю модель? Ctrl+K — да, любая клавиша — нет",
-                    warn,
-                )),
+                Paragraph::new(Line::styled(loc.t("ui.self_model.confirm_clear"), warn)),
                 status_area,
             );
         } else {
@@ -514,7 +562,7 @@ impl SelfModelScreen {
         // Редактор поверх — с реальным курсором. Везде многострочный (перенос текста).
         if let Some(editor) = self.editor.as_mut() {
             let popup = centered_rect(80, 50, area);
-            let title = "правка · Shift+Enter перенос · Enter ок · Esc отмена";
+            let title = loc.t("ui.editor.multiline_footer");
             dim_background(frame, &palette);
             frame.render_widget(Clear, popup);
             editor
@@ -596,6 +644,10 @@ mod tests {
     use ratatui::Terminal;
     use ratatui::backend::TestBackend;
 
+    fn ru() -> &'static Locale {
+        crate::shared::i18n::locale(crate::shared::i18n::Lang::Ru)
+    }
+
     fn key(code: KeyCode) -> KeyEvent {
         KeyEvent::new(code, KeyModifiers::NONE)
     }
@@ -623,7 +675,7 @@ mod tests {
 
     #[test]
     fn esc_closes_ctrl_q_and_f10_quit() {
-        let mut s = SelfModelScreen::new(None, Palette::default());
+        let mut s = SelfModelScreen::new(None, Palette::default(), ru());
         assert_eq!(
             s.handle_key(key(KeyCode::Esc)),
             Some(SelfModelIntent::Close)
@@ -640,7 +692,7 @@ mod tests {
 
     #[test]
     fn enter_on_summary_opens_editor_and_commits() {
-        let mut s = SelfModelScreen::new(Some(model()), Palette::default());
+        let mut s = SelfModelScreen::new(Some(model()), Palette::default(), ru());
         // Первая строка — описание себя.
         assert_eq!(s.handle_key(key(KeyCode::Enter)), None);
         assert!(s.editor.is_some());
@@ -658,7 +710,7 @@ mod tests {
     fn alt_enter_inserts_newline_in_editor() {
         // Запасной перенос строки для терминалов без kitty-протокола (Shift+Enter там
         // неотличим от Enter). См. п.11 аудита InputBox.
-        let mut s = SelfModelScreen::new(Some(model()), Palette::default());
+        let mut s = SelfModelScreen::new(Some(model()), Palette::default(), ru());
         s.handle_key(key(KeyCode::Enter)); // открыть редактор описания себя
         s.handle_key(key(KeyCode::Char('A')));
         s.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::ALT));
@@ -673,7 +725,7 @@ mod tests {
 
     #[test]
     fn space_cycles_goal_delete_removes() {
-        let mut s = SelfModelScreen::new(Some(model()), Palette::default());
+        let mut s = SelfModelScreen::new(Some(model()), Palette::default(), ru());
         s.handle_key(key(KeyCode::Down)); // на цель
         assert!(matches!(s.selected_action(), Some(RowAction::Goal(_))));
         let cycle = s.handle_key(key(KeyCode::Char(' '))).unwrap();
@@ -690,7 +742,7 @@ mod tests {
 
     #[test]
     fn add_goal_commits_and_empty_is_noop() {
-        let mut s = SelfModelScreen::new(None, Palette::default());
+        let mut s = SelfModelScreen::new(None, Palette::default(), ru());
         // Строки пустой модели: [Summary, AddGoal, ·spacer·, ·Собеседник·, Traits,
         // Interests, Relationship] — декорации курсор пропускает.
         s.selected = 1; // AddGoal
@@ -711,7 +763,7 @@ mod tests {
 
     #[test]
     fn ctrl_k_confirm_then_clear() {
-        let mut s = SelfModelScreen::new(Some(model()), Palette::default());
+        let mut s = SelfModelScreen::new(Some(model()), Palette::default(), ru());
         assert_eq!(
             s.handle_key(KeyEvent::new(KeyCode::Char('k'), KeyModifiers::CONTROL)),
             None
@@ -727,7 +779,7 @@ mod tests {
 
     #[test]
     fn ctrl_k_confirm_cancelled_by_other_key() {
-        let mut s = SelfModelScreen::new(Some(model()), Palette::default());
+        let mut s = SelfModelScreen::new(Some(model()), Palette::default(), ru());
         s.handle_key(KeyEvent::new(KeyCode::Char('k'), KeyModifiers::CONTROL));
         assert!(s.confirm_clear);
         assert_eq!(s.handle_key(key(KeyCode::Down)), None); // отмена
@@ -762,7 +814,7 @@ mod tests {
         // Модель с целью и инсайтом: между AddGoal и Traits — spacer+header,
         // между Relationship и инсайтом — ещё spacer+header. Курсор по `Down`
         // должен перескакивать декорации и не вставать на них.
-        let mut s = SelfModelScreen::new(Some(model()), Palette::default());
+        let mut s = SelfModelScreen::new(Some(model()), Palette::default(), ru());
         let mut seen = Vec::new();
         loop {
             seen.push(s.selected_action().unwrap());
@@ -784,9 +836,9 @@ mod tests {
     #[test]
     fn render_empty_and_populated_do_not_panic() {
         let mut term = Terminal::new(TestBackend::new(80, 24)).unwrap();
-        let mut empty = SelfModelScreen::new(None, Palette::default());
+        let mut empty = SelfModelScreen::new(None, Palette::default(), ru());
         term.draw(|f| empty.render(f)).unwrap();
-        let mut full = SelfModelScreen::new(Some(model()), Palette::default());
+        let mut full = SelfModelScreen::new(Some(model()), Palette::default(), ru());
         term.draw(|f| full.render(f)).unwrap();
     }
 
@@ -796,7 +848,7 @@ mod tests {
         // колонке 0 (левая рамка панели — символ рамки, поэтому её ряды не начинаются
         // с пробела). Считаем хвостовые ряды-хоткеи.
         let rows = |w: u16, h: u16| -> Vec<String> {
-            let mut s = SelfModelScreen::new(Some(model()), Palette::default());
+            let mut s = SelfModelScreen::new(Some(model()), Palette::default(), ru());
             let mut term = Terminal::new(TestBackend::new(w, h)).unwrap();
             term.draw(|f| s.render(f)).unwrap();
             let buf = term.backend().buffer().clone();
@@ -832,7 +884,7 @@ mod tests {
     #[test]
     fn confirm_clear_shows_prompt_in_status_area() {
         // Подтверждение очистки занимает нижнюю область (вне рамки) одной строкой.
-        let mut s = SelfModelScreen::new(Some(model()), Palette::default());
+        let mut s = SelfModelScreen::new(Some(model()), Palette::default(), ru());
         s.handle_key(KeyEvent::new(KeyCode::Char('k'), KeyModifiers::CONTROL));
         assert!(s.confirm_clear);
         let mut term = Terminal::new(TestBackend::new(80, 24)).unwrap();
@@ -866,7 +918,7 @@ mod tests {
         let mut m = SelfModel::new(Uuid::new_v4());
         m.summary = "описание".into();
         push_insight(&mut m, &"очень длинное наблюдение ".repeat(40));
-        let mut s = SelfModelScreen::new(Some(m), Palette::default());
+        let mut s = SelfModelScreen::new(Some(m), Palette::default(), ru());
         let mut term = Terminal::new(TestBackend::new(40, 8)).unwrap();
         term.draw(|f| s.render(f)).unwrap();
         // Перейдём в самый низ (на длинный инсайт) и перерисуем — прокрутка должна

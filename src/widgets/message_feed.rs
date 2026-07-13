@@ -15,6 +15,7 @@ use ratatui::widgets::{Block, Borders, Paragraph};
 
 use crate::entities::message::{Message, MessageRole};
 use crate::features::tools::present::{self, ToolBlock};
+use crate::shared::i18n::Locale;
 use crate::shared::markdown;
 use crate::shared::theme::Palette;
 use crate::shared::ui::render_scrollbar;
@@ -189,6 +190,9 @@ struct CacheKey {
     palette: Palette,
     show_thoughts: bool,
     table_row_separators: bool,
+    /// Язык интерфейса (ось B): заголовки ролей/пилюля «мысли»/плейсхолдер зависят
+    /// от него — смена языка обнуляет кэш блоков ленты.
+    lang: crate::shared::i18n::Lang,
 }
 
 /// Кэшированный вклад одного сообщения в ленту (уже перенесённые по ширине строки с
@@ -265,6 +269,9 @@ impl MessageFeed {
 
     /// Рисует ленту. `messages` — текущее содержимое активного чата. `meta` —
     /// правая подпись титула (напр. «gemma-4 · 16k ctx»; пусто — не показывать).
+    // Титул/мета/палитра/локаль — контекст отрисовки; собирать их в struct ради
+    // одного вызова из `chat/render.rs` не окупается.
+    #[allow(clippy::too_many_arguments)]
     pub fn render(
         &mut self,
         frame: &mut Frame,
@@ -273,6 +280,7 @@ impl MessageFeed {
         meta: &str,
         messages: &[FeedMessage],
         palette: &Palette,
+        loc: &'static Locale,
     ) {
         // Скруглённая панель: слева титул с маркером ◆, справа — мета (модель/ctx).
         let glyphs = palette.glyphs();
@@ -298,7 +306,7 @@ impl MessageFeed {
         // ниже остаётся row-based (см. shared::wrap, ADR 0001).
         let view_w = inner.width.max(1) as usize;
         let lines: Vec<Line> = self
-            .build_lines(messages, palette, view_w)
+            .build_lines(messages, palette, view_w, loc)
             .iter()
             .flat_map(|l| wrap::wrap_line(l, view_w))
             .collect();
@@ -340,20 +348,22 @@ impl MessageFeed {
         messages: &[FeedMessage],
         palette: &Palette,
         width: usize,
+        loc: &'static Locale,
     ) -> Vec<Line<'static>> {
         if messages.is_empty() {
             // Плейсхолдер пустой ленты не кэшируем.
             return vec![Line::from(Span::styled(
-                "Начните диалог — введите сообщение ниже.",
+                loc.t("ui.feed.empty").to_string(),
                 palette.muted_style(),
             ))];
         }
-        // Сброс кэша при смене ширины/палитры/показа мыслей (влияют на все блоки).
+        // Сброс кэша при смене ширины/палитры/показа мыслей/языка (влияют на блоки).
         let key = CacheKey {
             width,
             palette: *palette,
             show_thoughts: self.show_thoughts,
             table_row_separators: self.table_row_separators,
+            lang: loc.lang(),
         };
         if self.cache_key.as_ref() != Some(&key) {
             self.cache.clear();
@@ -374,6 +384,7 @@ impl MessageFeed {
                     width,
                     self.show_thoughts,
                     self.table_row_separators,
+                    loc,
                 );
                 let cb = CachedBlock {
                     fingerprint: fp,
@@ -401,6 +412,7 @@ fn build_message_block(
     width: usize,
     show_thoughts: bool,
     table_row_separators: bool,
+    loc: &'static Locale,
 ) -> Vec<Line<'static>> {
     // Ширина содержимого под рейл (рейл = 2 колонки).
     let inner = width.saturating_sub(RAIL.chars().count()).max(1);
@@ -415,17 +427,21 @@ fn build_message_block(
     match item.role {
         FeedRole::User => {
             body.push(role_header(
-                &format!("{} ВЫ", glyphs.user_icon),
+                &format!("{} {}", glyphs.user_icon, loc.t("ui.feed.role.user")),
                 palette.user_soft,
             ));
             push_body(&mut body, item, palette, inner, table_row_separators);
         }
         FeedRole::Assistant => {
             body.push(role_header(
-                &format!("{} АССИСТЕНТ", glyphs.assistant_icon),
+                &format!(
+                    "{} {}",
+                    glyphs.assistant_icon,
+                    loc.t("ui.feed.role.assistant")
+                ),
                 palette.assistant_soft,
             ));
-            push_thoughts(&mut body, &item.thoughts, show_thoughts, palette);
+            push_thoughts(&mut body, &item.thoughts, show_thoughts, palette, loc);
             push_assistant_body(&mut body, item, palette, inner, table_row_separators);
         }
         FeedRole::Note => push_body(&mut body, item, palette, inner, table_row_separators),
@@ -512,6 +528,7 @@ fn push_thoughts(
     thoughts: &str,
     expanded: bool,
     palette: &Palette,
+    loc: &'static Locale,
 ) {
     if thoughts.is_empty() {
         return;
@@ -522,8 +539,14 @@ fn push_thoughts(
         let count = thoughts.lines().count();
         lines.push(Line::from(vec![
             Span::styled(format!("{} ", glyphs.collapsed), muted),
-            Span::styled("мысли", muted.add_modifier(Modifier::ITALIC)),
-            Span::styled(format!(" · {count} стр. · "), muted),
+            Span::styled(
+                loc.t("ui.feed.thoughts").to_string(),
+                muted.add_modifier(Modifier::ITALIC),
+            ),
+            Span::styled(
+                loc.tf("ui.feed.thoughts_lines", &[("n", &count.to_string())]),
+                muted,
+            ),
             palette.keycap("Ctrl+T"),
         ]));
         return;
@@ -843,6 +866,10 @@ mod tests {
     use ratatui::Terminal;
     use ratatui::backend::TestBackend;
 
+    fn ru() -> &'static Locale {
+        crate::shared::i18n::locale(crate::shared::i18n::Lang::Ru)
+    }
+
     fn msg(role: FeedRole, text: &str, thoughts: &str) -> FeedMessage {
         FeedMessage {
             role,
@@ -863,13 +890,41 @@ mod tests {
             result: "Заметка сохранена".into(),
             text_offset: m.text.len(),
         });
-        let lines = feed.build_lines(&[m], &Palette::default(), 80);
+        let lines = feed.build_lines(&[m], &Palette::default(), 80, ru());
         let joined: String = lines
             .iter()
             .flat_map(|l| l.spans.iter().map(|s| s.content.as_ref()))
             .collect();
         assert!(joined.contains("⚒") && joined.contains("note_save"));
         assert!(joined.contains("Заметка сохранена"));
+    }
+
+    #[test]
+    fn role_headers_localized_for_all_langs() {
+        // Заголовки ролей ленты (ось B) следуют языку интерфейса: под `en` — «YOU»/
+        // «ASSISTANT», под `ru` — «ВЫ»/«АССИСТЕНТ» (без кириллицы в английском).
+        for &lang in crate::shared::i18n::Lang::ALL {
+            let loc = crate::shared::i18n::locale(lang);
+            let mut feed = MessageFeed::new();
+            let msgs = vec![
+                msg(FeedRole::User, "hi", ""),
+                msg(FeedRole::Assistant, "ok", ""),
+            ];
+            let lines = feed.build_lines(&msgs, &Palette::default(), 80, loc);
+            let joined: String = lines
+                .iter()
+                .flat_map(|l| l.spans.iter().map(|s| s.content.as_ref()))
+                .collect();
+            assert!(
+                joined.contains(loc.t("ui.feed.role.user"))
+                    && joined.contains(loc.t("ui.feed.role.assistant")),
+                "{lang:?}: заголовки ролей не из бандла"
+            );
+        }
+        // Явно: en-заголовки латиницей.
+        let en = crate::shared::i18n::locale(crate::shared::i18n::Lang::En);
+        assert_eq!(en.t("ui.feed.role.assistant"), "ASSISTANT");
+        assert_eq!(en.t("ui.feed.role.user"), "YOU");
     }
 
     #[test]
@@ -886,7 +941,7 @@ mod tests {
         });
         let user = msg(FeedRole::User, "привет", "");
         let compat = Palette::default().with_compat(true);
-        let lines = feed.build_lines(&[user, m], &compat, 80);
+        let lines = feed.build_lines(&[user, m], &compat, 80, ru());
         let joined: String = lines
             .iter()
             .flat_map(|l| l.spans.iter().map(|s| s.content.as_ref()))
@@ -915,7 +970,7 @@ mod tests {
             text_offset: m.text.len(),
         });
         let palette = Palette::for_theme(crate::shared::config::Theme::Dark);
-        let lines = feed.build_lines(&[m], &palette, 80);
+        let lines = feed.build_lines(&[m], &palette, 80, ru());
         let joined: String = lines
             .iter()
             .flat_map(|l| l.spans.iter().map(|s| s.content.as_ref()))
@@ -950,7 +1005,7 @@ mod tests {
             result: "stderr:\nTraceback here\n\nкод возврата: 1".into(),
             text_offset: 0,
         });
-        let lines = feed.build_lines(&[m], &palette, 80);
+        let lines = feed.build_lines(&[m], &palette, 80, ru());
         // Строка с текстом stderr окрашена цветом ошибки.
         let err_line = lines
             .iter()
@@ -982,7 +1037,7 @@ mod tests {
             result: "ясно".into(),
             text_offset: off,
         });
-        let lines = feed.build_lines(&[m], &Palette::default(), 80);
+        let lines = feed.build_lines(&[m], &Palette::default(), 80, ru());
         let rows: Vec<String> = lines
             .iter()
             .map(|l| l.spans.iter().map(|s| s.content.as_ref()).collect())
@@ -1021,7 +1076,7 @@ mod tests {
             result: String::new(),
             text_offset: "до".len(),
         });
-        let rows = row_texts(&feed.build_lines(&[m], &Palette::default(), 80));
+        let rows = row_texts(&feed.build_lines(&[m], &Palette::default(), 80, ru()));
         let i_before = rows.iter().position(|r| r.contains("до")).unwrap();
         let i_tool = rows.iter().position(|r| r.contains("note_save")).unwrap();
         let i_after = rows.iter().position(|r| r.contains("ПОСЛЕ")).unwrap();
@@ -1055,7 +1110,7 @@ mod tests {
             text_offset: "Считаю.".len(),
         });
         let next = msg(FeedRole::User, "дальше", "");
-        let rows = row_texts(&feed.build_lines(&[m, next], &Palette::default(), 60));
+        let rows = row_texts(&feed.build_lines(&[m, next], &Palette::default(), 60, ru()));
         let i_result = rows.iter().position(|r| r.contains('1')).unwrap();
         let i_next = rows.iter().position(|r| r.contains("дальше")).unwrap();
         // Между результатом и заголовком следующего сообщения — ровно одна пустая
@@ -1082,7 +1137,7 @@ mod tests {
                 text_offset: 0,
             });
         }
-        let rows = row_texts(&feed.build_lines(&[m], &Palette::default(), 80));
+        let rows = row_texts(&feed.build_lines(&[m], &Palette::default(), 80, ru()));
         let i1 = rows.iter().position(|r| r.contains("first_tool")).unwrap();
         let i2 = rows.iter().position(|r| r.contains("second_tool")).unwrap();
         // Между двумя подряд идущими вызовами — ровно одна пустая строка.
@@ -1105,7 +1160,7 @@ mod tests {
             result: long.trim_end().into(),
             text_offset: 0,
         });
-        let lines = feed.build_lines(&[m], &Palette::default(), 30);
+        let lines = feed.build_lines(&[m], &Palette::default(), 30, ru());
         // Результат не обрезан (нет «…») и разложен на несколько рядов (рейл + гуттер
         // `└`/отступ продолжения).
         let gutter_rows = lines
@@ -1204,6 +1259,7 @@ mod tests {
             &[msg(FeedRole::Assistant, "ответ", "секрет\nмысль")],
             &Palette::default(),
             80,
+            ru(),
         );
         let joined: String = lines
             .iter()
@@ -1221,6 +1277,7 @@ mod tests {
             &[msg(FeedRole::Assistant, "ответ", "секрет")],
             &Palette::default(),
             80,
+            ru(),
         );
         let joined: String = lines
             .iter()
@@ -1238,6 +1295,7 @@ mod tests {
             &[msg(FeedRole::User, "Привет!\nКак дела?", "")],
             &Palette::default(),
             80,
+            ru(),
         );
         let rows = row_texts(&lines);
         let i_first = rows.iter().position(|r| r.contains("Привет!")).unwrap();
@@ -1263,6 +1321,7 @@ mod tests {
             &[msg(FeedRole::Assistant, "формула $x^2$", "")],
             &Palette::default(),
             80,
+            ru(),
         );
         let joined: String = lines
             .iter()
@@ -1281,6 +1340,7 @@ mod tests {
             &[msg(FeedRole::Assistant, table, "")],
             &Palette::default(),
             80,
+            ru(),
         );
         for line in &lines {
             // Рейл — первый спан с символом «▌».
@@ -1309,10 +1369,10 @@ mod tests {
                 .filter(|l| l.spans.iter().any(|s| s.content.contains('├')))
                 .count()
         };
-        let off = feed.build_lines(&[msg(FeedRole::Assistant, table, "")], &palette, 80);
+        let off = feed.build_lines(&[msg(FeedRole::Assistant, table, "")], &palette, 80, ru());
         assert_eq!(mids(&off), 1, "по умолчанию: только под заголовком");
         feed.set_table_row_separators(true);
-        let on = feed.build_lines(&[msg(FeedRole::Assistant, table, "")], &palette, 80);
+        let on = feed.build_lines(&[msg(FeedRole::Assistant, table, "")], &palette, 80, ru());
         assert_eq!(
             mids(&on),
             2,
@@ -1362,6 +1422,7 @@ mod tests {
                 "gemma-4 · 16k ctx",
                 &messages,
                 &Palette::default(),
+                ru(),
             )
         })
         .unwrap();
@@ -1380,7 +1441,7 @@ mod tests {
         let mut feed = MessageFeed::new();
         let mut term = Terminal::new(TestBackend::new(30, 8)).unwrap();
         let short = vec![msg(FeedRole::User, "привет", "")];
-        term.draw(|f| feed.render(f, f.area(), "Чат", "", &short, &Palette::default()))
+        term.draw(|f| feed.render(f, f.area(), "Чат", "", &short, &Palette::default(), ru()))
             .unwrap();
         assert!(
             !right_col(&term).iter().any(|s| s == "█"),
@@ -1389,7 +1450,7 @@ mod tests {
         let many: Vec<FeedMessage> = (0..30)
             .map(|i| msg(FeedRole::User, &format!("строка {i}"), ""))
             .collect();
-        term.draw(|f| feed.render(f, f.area(), "Чат", "", &many, &Palette::default()))
+        term.draw(|f| feed.render(f, f.area(), "Чат", "", &many, &Palette::default(), ru()))
             .unwrap();
         assert!(
             right_col(&term).iter().any(|s| s == "█"),
@@ -1440,15 +1501,15 @@ mod tests {
                             warm.toggle_thoughts();
                         }
                         // прогреваем кэш повторными вызовами
-                        let _ = warm.build_lines(messages, &palette, width);
-                        let _ = warm.build_lines(messages, &palette, width);
-                        let warm_lines = warm.build_lines(messages, &palette, width);
+                        let _ = warm.build_lines(messages, &palette, width, ru());
+                        let _ = warm.build_lines(messages, &palette, width, ru());
+                        let warm_lines = warm.build_lines(messages, &palette, width, ru());
 
                         let mut fresh = MessageFeed::new();
                         if show {
                             fresh.toggle_thoughts();
                         }
-                        let fresh_lines = fresh.build_lines(messages, &palette, width);
+                        let fresh_lines = fresh.build_lines(messages, &palette, width, ru());
 
                         let w: Vec<_> = warm_lines.iter().map(line_sig).collect();
                         let f: Vec<_> = fresh_lines.iter().map(line_sig).collect();
@@ -1472,9 +1533,9 @@ mod tests {
             let mut m = msg(FeedRole::Assistant, &partial, "");
             m.streaming = true;
             let messages = vec![msg(FeedRole::User, "спроси", ""), m];
-            let warm_lines = warm.build_lines(&messages, &palette, 60);
+            let warm_lines = warm.build_lines(&messages, &palette, 60, ru());
             let mut fresh = MessageFeed::new();
-            let fresh_lines = fresh.build_lines(&messages, &palette, 60);
+            let fresh_lines = fresh.build_lines(&messages, &palette, 60, ru());
             let w: Vec<_> = warm_lines.iter().map(line_sig).collect();
             let f: Vec<_> = fresh_lines.iter().map(line_sig).collect();
             assert_eq!(w, f, "стрим-кэш разошёлся на end={end}");
@@ -1495,12 +1556,14 @@ mod tests {
             &[msg(FeedRole::Assistant, "первый вариант", "")],
             &palette,
             80,
+            ru(),
         );
         assert!(join(&l1).contains("первый вариант"));
         let l2 = feed.build_lines(
             &[msg(FeedRole::Assistant, "другой текст", "")],
             &palette,
             80,
+            ru(),
         );
         let j2 = join(&l2);
         assert!(j2.contains("другой текст"), "{j2}");
@@ -1519,10 +1582,10 @@ mod tests {
             msg(FeedRole::User, "два", ""),
             msg(FeedRole::Assistant, "ответ два", ""),
         ];
-        let _ = feed.build_lines(&long, &palette, 80);
-        let warm = feed.build_lines(&long[..2], &palette, 80);
+        let _ = feed.build_lines(&long, &palette, 80, ru());
+        let warm = feed.build_lines(&long[..2], &palette, 80, ru());
         let mut fresh = MessageFeed::new();
-        let fresh_lines = fresh.build_lines(&long[..2], &palette, 80);
+        let fresh_lines = fresh.build_lines(&long[..2], &palette, 80, ru());
         let w: Vec<_> = warm.iter().map(line_sig).collect();
         let f: Vec<_> = fresh_lines.iter().map(line_sig).collect();
         assert_eq!(w, f);

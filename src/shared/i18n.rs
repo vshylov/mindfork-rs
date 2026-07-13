@@ -67,6 +67,18 @@ pub struct Locale {
 }
 
 impl Locale {
+    /// Язык этой локали — для ключей кэша, зависящих от языка UI (напр. кэш ленты).
+    pub fn lang(&self) -> Lang {
+        self.lang
+    }
+
+    /// Есть ли ключ в бандле (без фолбэка) — для гейт-теста «код ссылается только на
+    /// существующие ключи».
+    #[cfg(test)]
+    pub fn has_key(&self, key: &str) -> bool {
+        self.map.contains_key(key)
+    }
+
     /// Значение ключа. Фолбэк: этот язык → референсный (`ru`) → сам ключ. Никогда не
     /// паникует — пропущенный ключ деградирует к референсу/ключу, а не роняет промпт.
     pub fn t<'a>(&'a self, key: &'a str) -> &'a str {
@@ -223,5 +235,63 @@ mod tests {
             let s = locale(lang).tf("selfmodel.age.days", &[("n", "3")]);
             assert!(s.contains('3') && !s.contains("{n}"), "{lang:?}: {s}");
         }
+    }
+
+    #[test]
+    fn all_ui_keys_referenced_in_code_exist_in_bundle() {
+        // Гейт против класса бага «код зовёт loc.t("ui.…"), а ключа нет в бандле»
+        // (тогда `t` молча возвращает сам ключ — в UI виден слаг вместо текста).
+        // Сканируем исходники на литералы `ui.*`-ключей и проверяем, что каждый есть
+        // в референсном (`ru`) бандле. Динамические ключи (собираемые `format!`)
+        // сюда не попадут — их немного и они покрыты render-тестами.
+        use std::path::Path;
+        // Литерал ключа: "ui." + сегменты из [a-z0-9_] через точки.
+        let key_re = |s: &str| -> Vec<String> {
+            let mut out = Vec::new();
+            let bytes = s.as_bytes();
+            let mut i = 0;
+            while let Some(p) = s[i..].find("\"ui.") {
+                let start = i + p + 1; // после кавычки
+                let mut j = start;
+                while j < bytes.len() {
+                    let c = bytes[j] as char;
+                    if c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_' || c == '.' {
+                        j += 1;
+                    } else {
+                        break;
+                    }
+                }
+                // Ключ валиден, если следом идёт закрывающая кавычка (литерал целиком).
+                if j < bytes.len() && bytes[j] as char == '"' {
+                    out.push(s[start..j].to_string());
+                }
+                i = j;
+            }
+            out
+        };
+        fn visit(dir: &Path, keys: &mut Vec<String>, key_re: &dyn Fn(&str) -> Vec<String>) {
+            for entry in std::fs::read_dir(dir).unwrap().flatten() {
+                let path = entry.path();
+                if path.is_dir() {
+                    visit(&path, keys, key_re);
+                } else if path.extension().is_some_and(|e| e == "rs") {
+                    let src = std::fs::read_to_string(&path).unwrap_or_default();
+                    keys.extend(key_re(&src));
+                }
+            }
+        }
+        let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+        let mut keys = Vec::new();
+        visit(&root, &mut keys, &key_re);
+        // Отсекаем вырожденные (напр. «ui.» из собственного regex-литерала этого теста).
+        keys.retain(|k| k.len() > 3 && !k.ends_with('.'));
+        keys.sort();
+        keys.dedup();
+        let ru = locale(Lang::Ru);
+        let missing: Vec<&String> = keys.iter().filter(|k| !ru.has_key(k)).collect();
+        assert!(
+            missing.is_empty(),
+            "ключи `ui.*` есть в коде, но отсутствуют в бандле: {missing:?}"
+        );
     }
 }
