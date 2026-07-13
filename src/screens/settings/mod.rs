@@ -26,6 +26,7 @@ use crate::shared::config::{
     AppConfig, CloudProvider, CloudSettings, FlashAttn, ImpersonationMode, ManagedSettings,
     PythonMode, ServerMode, SpecType, Theme,
 };
+use crate::shared::i18n::Locale;
 use crate::shared::keys;
 use crate::shared::server::{ServerStatus, ServerStatuses};
 use crate::shared::theme::Palette;
@@ -81,12 +82,12 @@ enum Subsection {
     Impersonation,
 }
 
-/// Подписи вкладок [`Subsection`] (порядок = дискриминанты).
-const SUB_TABS: [&str; 2] = ["Ассистент", "Имперсонация"];
+/// i18n-ключи подписей вкладок [`Subsection`] (порядок = дискриминанты).
+const SUB_TAB_KEYS: [&str; 2] = ["ui.settings.tab.assistant", "ui.settings.tab.impersonation"];
 
 impl Subsection {
-    fn label(self) -> String {
-        SUB_TABS[self as usize].to_string()
+    fn label(self, loc: &Locale) -> String {
+        loc.t(SUB_TAB_KEYS[self as usize]).to_string()
     }
 
     fn toggled(self) -> Self {
@@ -114,12 +115,16 @@ enum ModelTab {
     Embeddings,
 }
 
-/// Подписи вкладок [`ModelTab`] (порядок = дискриминанты).
-const MODEL_TABS: [&str; 3] = ["Ассистент", "Имперсонация", "Эмбеддинги"];
+/// i18n-ключи подписей вкладок [`ModelTab`] (порядок = дискриминанты).
+const MODEL_TAB_KEYS: [&str; 3] = [
+    "ui.settings.tab.assistant",
+    "ui.settings.tab.impersonation",
+    "ui.settings.tab.embeddings",
+];
 
 impl ModelTab {
-    fn label(self) -> String {
-        MODEL_TABS[self as usize].to_string()
+    fn label(self, loc: &Locale) -> String {
+        loc.t(MODEL_TAB_KEYS[self as usize]).to_string()
     }
 
     /// Все варианты (для перечисления полей всех подсекций при поиске).
@@ -142,15 +147,15 @@ impl ModelTab {
 }
 
 impl Section {
-    fn title(self) -> &'static str {
-        match self {
-            Section::Model => "Модель/сервер",
-            Section::Sampling => "Семплинг",
-            Section::Tools => "Инструменты",
-            Section::Memory => "Память",
-            Section::Profiles => "Профили",
-            Section::Interface => "Интерфейс",
-        }
+    fn title(self, loc: &'static Locale) -> &'static str {
+        loc.t(match self {
+            Section::Model => "ui.settings.section.model",
+            Section::Sampling => "ui.settings.section.sampling",
+            Section::Tools => "ui.settings.section.tools",
+            Section::Memory => "ui.settings.section.memory",
+            Section::Profiles => "ui.settings.section.profiles",
+            Section::Interface => "ui.settings.section.interface",
+        })
     }
 }
 
@@ -247,11 +252,13 @@ const SAMPLING_PARAMS: &[SamplingParam] = {
 };
 
 impl SamplingParam {
-    /// Подпись поля в UI.
-    fn label(self) -> &'static str {
+    /// Имя JSON-поля `SamplingConfig` (ASCII). Для большинства параметров совпадает
+    /// с UI-подписью; используется и для сверки с набором провайдера, и как
+    /// «нетранслируемая» подпись ([`SamplingParam::label`]).
+    fn json_name(self) -> &'static str {
         use SamplingParam::*;
         match self {
-            Temp => "Температура",
+            Temp => "temperature",
             DynatempRange => "dynatemp_range",
             DynatempExp => "dynatemp_exponent",
             TopK => "top_k",
@@ -278,23 +285,26 @@ impl SamplingParam {
             MaxTokens => "max_tokens",
             Seed => "seed",
             Samplers => "samplers",
-            Thinking => "Мысли (thinking)",
+            Thinking => "thinking",
             Reasoning => "reasoning_effort",
             Verbosity => "verbosity",
         }
     }
 
-    /// Имя JSON-поля `SamplingConfig` (для сверки с набором, доступным провайдеру).
-    fn field_name(self) -> &'static str {
+    /// Подпись поля в UI. Большинство параметров подписаны ASCII-именем JSON-поля
+    /// (не переводятся); переводятся только «Температура» и «Мысли (thinking)».
+    fn label(self, loc: &'static Locale) -> &'static str {
         use SamplingParam::*;
         match self {
-            Temp => "temperature",
-            Thinking => "thinking",
-            Reasoning => "reasoning_effort",
-            Verbosity => "verbosity",
-            // Остальные параметры подписаны именем своего JSON-поля.
-            _ => self.label(),
+            Temp => loc.t("ui.settings.sampling.temp"),
+            Thinking => loc.t("ui.settings.sampling.thinking"),
+            _ => self.json_name(),
         }
+    }
+
+    /// Имя JSON-поля `SamplingConfig` (для сверки с набором, доступным провайдеру).
+    fn field_name(self) -> &'static str {
+        self.json_name()
     }
 
     /// Числовой вид параметра для валидации редактора (`None` — не число: списки/
@@ -313,125 +323,60 @@ impl SamplingParam {
     }
 
     /// Смысловая группа параметра (заголовок группы в секции «Семплинг»).
-    fn group(self) -> &'static str {
+    fn group(self, loc: &'static Locale) -> &'static str {
         use SamplingParam::*;
         match self {
-            Temp | TopK | TopP | MaxTokens | Seed => "Основные",
-            DynatempRange | DynatempExp => "Динамическая температура",
+            Temp | TopK | TopP | MaxTokens | Seed => loc.t("ui.settings.sampling.group.basic"),
+            DynatempRange | DynatempExp => loc.t("ui.settings.sampling.group.dynatemp"),
             MinP | TopNSigma | TypicalP | AdaptiveTarget | AdaptiveDecay | XtcProbability
-            | XtcThreshold => "Разнообразие",
-            FreqPen | PresPen | RepeatPenalty | RepeatLastN => "Штрафы за повтор",
+            | XtcThreshold => loc.t("ui.settings.sampling.group.diversity"),
+            FreqPen | PresPen | RepeatPenalty | RepeatLastN => {
+                loc.t("ui.settings.sampling.group.penalty")
+            }
             DryMultiplier | DryBase | DryAllowedLength | DryPenaltyLastN | DrySeqBreakers => {
-                "DRY (анти-повтор)"
+                loc.t("ui.settings.sampling.group.dry")
             }
             Mirostat | MirostatTau | MirostatEta => "Mirostat",
-            Samplers => "Порядок семплеров",
-            Thinking | Reasoning | Verbosity => "Рассуждения",
+            Samplers => loc.t("ui.settings.sampling.group.samplers"),
+            Thinking | Reasoning | Verbosity => loc.t("ui.settings.sampling.group.reasoning"),
         }
     }
 
     /// Подсказка-описание (показывается под полем при фокусе). `None` — без подсказки.
-    fn description(self) -> Option<&'static str> {
+    fn description(self, loc: &'static Locale) -> Option<&'static str> {
         use SamplingParam::*;
-        Some(match self {
-            Temp => {
-                "Температура: разброс при выборе токенов. Выше — разнообразнее и \
-                 непредсказуемее, ниже — детерминированнее и точнее. 0 — почти \
-                 жадный выбор."
-            }
-            TopK => {
-                "top-k: выбирать только из K самых вероятных токенов. \
-                 0 — выключено (без ограничения числа кандидатов)."
-            }
-            TopP => {
-                "top-p (nucleus): выбор из наименьшего набора токенов, чья \
-                 суммарная вероятность ≥ p. 1.0 — выключено."
-            }
-            FreqPen => {
-                "Штраф за частоту: снижает вероятность токенов пропорционально \
-                 тому, как часто они уже встречались (борьба с повторами). \
-                 0 — выключено."
-            }
-            PresPen => {
-                "Штраф за присутствие: снижает вероятность уже встречавшихся \
-                 токенов (разово, без учёта частоты — подталкивает к новым темам). \
-                 0 — выключено."
-            }
-            DynatempRange => {
-                "Динамическая температура: ширина диапазона ± вокруг \
-                 температуры, подстраиваемого по энтропии на каждом токене. \
-                 0 — выключено. Расширение llama.cpp."
-            }
-            DynatempExp => "Динамическая температура: показатель кривой адаптации (обычно 1.0).",
-            AdaptiveTarget => {
-                "adaptive-p: целевая вероятность, около которой выбираются \
-                 токены. Отрицательное — выключено. Экспериментально (llama.cpp)."
-            }
-            AdaptiveDecay => "adaptive-p: скорость адаптации цели (0..0.99; меньше — реактивнее).",
-            DrySeqBreakers => {
-                "DRY: брейкеры через запятую (сброс учёта повтора). Пусто — \
-                 серверные по умолчанию. Эскейпы \\n \\t \\r поддержаны."
-            }
-            Samplers => {
-                "Порядок семплеров через «;» (напр. penalties;dry;top_k;top_p;\
-                 min_p;temperature). Пусто — порядок сервера. Не указанный \
-                 семплер отключается."
-            }
-            MinP => {
-                "min-p: отсекает токены с вероятностью ниже доли от самой \
-                     вероятной. 0 — выключено. Расширение llama.cpp."
-            }
-            TopNSigma => {
-                "Отсев токенов дальше N стандартных отклонений (σ) от \
-                          максимального логита. -1 — выключено. Расширение llama.cpp."
-            }
-            TypicalP => "Locally typical sampling. 1.0 — выключено. Расширение llama.cpp.",
-            RepeatPenalty => {
-                "Штраф за повтор токенов (отдельно от presence/frequency). \
-                              1.0 — выключено. Расширение llama.cpp."
-            }
-            RepeatLastN => {
-                "Сколько последних токенов учитывает repeat_penalty. \
-                            0 — выключено, -1 — весь контекст."
-            }
-            DryMultiplier => {
-                "DRY: сила штрафа за дословные повторы. 0 — выключено. \
-                              Расширение llama.cpp."
-            }
-            DryBase => "DRY: основание роста штрафа с длиной повтора.",
-            DryAllowedLength => "DRY: длина повтора, не штрафуемая (обычно 2).",
-            DryPenaltyLastN => "DRY: глубина сканирования в токенах. -1 — весь контекст.",
-            XtcProbability => {
-                "XTC: вероятность срезать вероятные токены ради \
-                               разнообразия. 0 — выключено. Расширение llama.cpp."
-            }
-            XtcThreshold => "XTC: порог вероятности для среза (обычно 0.1–0.2).",
-            Mirostat => {
-                "Mirostat: 0 — выкл, 1 или 2 — версия. Игнорирует top_k/top_p/\
-                         typical_p. Расширение llama.cpp."
-            }
-            MirostatTau => "Mirostat: целевая энтропия (τ).",
-            MirostatEta => "Mirostat: скорость адаптации (η).",
-            Seed => "RNG-seed на запрос: -1 — случайный. Расширение llama.cpp.",
-            MaxTokens => {
-                "Максимум токенов в ответе. Пусто — без явного лимита \
-                 (до EOS или конца контекста)."
-            }
-            Thinking => {
-                "«Мысли» (chain-of-thought): включает рассуждения модели до ответа \
-                 (для reasoning-моделей). Показываются отдельным сворачиваемым \
-                 блоком (Ctrl+T)."
-            }
-            Reasoning => {
-                "Усилие рассуждения для reasoning-моделей: none/minimal/low/medium/\
-                 high/xhigh. Выше — глубже размышляет перед ответом, но медленнее. \
-                 minimal/xhigh — расширенные ступени OpenAI (gpt-5.x)."
-            }
-            Verbosity => {
-                "Многословность ответа (OpenAI Responses): low/medium/high. Регулирует \
-                 длину ответа отдельно от температуры. Только для облака OpenAI."
-            }
-        })
+        Some(loc.t(match self {
+            Temp => "ui.settings.sampling.desc.temp",
+            TopK => "ui.settings.sampling.desc.topk",
+            TopP => "ui.settings.sampling.desc.topp",
+            FreqPen => "ui.settings.sampling.desc.freqpen",
+            PresPen => "ui.settings.sampling.desc.prespen",
+            DynatempRange => "ui.settings.sampling.desc.dynatemp_range",
+            DynatempExp => "ui.settings.sampling.desc.dynatemp_exp",
+            AdaptiveTarget => "ui.settings.sampling.desc.adaptive_target",
+            AdaptiveDecay => "ui.settings.sampling.desc.adaptive_decay",
+            DrySeqBreakers => "ui.settings.sampling.desc.dry_seq_breakers",
+            Samplers => "ui.settings.sampling.desc.samplers",
+            MinP => "ui.settings.sampling.desc.minp",
+            TopNSigma => "ui.settings.sampling.desc.top_n_sigma",
+            TypicalP => "ui.settings.sampling.desc.typical_p",
+            RepeatPenalty => "ui.settings.sampling.desc.repeat_penalty",
+            RepeatLastN => "ui.settings.sampling.desc.repeat_last_n",
+            DryMultiplier => "ui.settings.sampling.desc.dry_multiplier",
+            DryBase => "ui.settings.sampling.desc.dry_base",
+            DryAllowedLength => "ui.settings.sampling.desc.dry_allowed_length",
+            DryPenaltyLastN => "ui.settings.sampling.desc.dry_penalty_last_n",
+            XtcProbability => "ui.settings.sampling.desc.xtc_probability",
+            XtcThreshold => "ui.settings.sampling.desc.xtc_threshold",
+            Mirostat => "ui.settings.sampling.desc.mirostat",
+            MirostatTau => "ui.settings.sampling.desc.mirostat_tau",
+            MirostatEta => "ui.settings.sampling.desc.mirostat_eta",
+            Seed => "ui.settings.sampling.desc.seed",
+            MaxTokens => "ui.settings.sampling.desc.max_tokens",
+            Thinking => "ui.settings.sampling.desc.thinking",
+            Reasoning => "ui.settings.sampling.desc.reasoning",
+            Verbosity => "ui.settings.sampling.desc.verbosity",
+        }))
     }
 }
 
@@ -524,6 +469,8 @@ enum FieldId {
     NotesRecallIncludesSelf,
     // Интерфейс
     ITheme,
+    /// Язык интерфейса (ось B, docs/i18n-ui.md) — независим от языка агентов.
+    ILanguage,
     /// Режим совместимости со старыми терминалами (эмодзи → безопасные глифы).
     ICompat,
     /// Горизонтальные разделители между строками Markdown-таблиц в ленте.

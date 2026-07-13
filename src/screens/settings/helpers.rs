@@ -19,55 +19,37 @@ pub(super) fn cloud_supported_param(provider: CloudProvider, p: SamplingParam) -
     crate::entities::sampling::supported_sampling_fields(Some(provider)).contains(&p.field_name())
 }
 
-// ---------- описания полей (прикрепляются к строкам при построении, см.
-// `FieldRow::describe`) ----------
+// ---------- i18n-ключи описаний полей (прикрепляются к строкам при построении,
+// см. `FieldRow::describe`) ----------
 //
-// Описания, общие для нескольких мест построения строк, вынесены в `const` (единый
-// источник текста). Специфичные для одного поля — инлайн-литералом у места постройки
-// (catalog.rs / managed_rows). Ngl/Jinja различаются у ассистента и имперсонации —
-// их тексты несёт `ManagedFieldIds`. Параметры семплинга — `SamplingParam::description`.
+// Описания хранятся в бандлах `locales/*.json` (ось B, docs/i18n-ui.md). Здесь —
+// только ключи, общие для нескольких мест построения строк (единый источник ключа).
+// Специфичные для одного поля — инлайн-ключом у места постройки (catalog.rs /
+// managed_rows). Ngl/Jinja различаются у ассистента и имперсонации — их ключи несёт
+// `ManagedFieldIds`. Тексты резолвит `loc.t(...)` у места отрисовки.
 
-/// Режим движка (ассистента/эмбеддингов).
-pub(super) const DESC_MODE: &str = "managed — локальный llama-server (приложение запускает процесс); \
-     external — свой OpenAI-совместимый сервер по URL; openai/gemini — облако \
-     (нужны имя модели и API-ключ из env-переменной).";
-/// Режим движка имперсонации (добавляет `shared`).
-pub(super) const DESC_IMP_MODE: &str = "shared — тот же движок, что у ассистента (с семплингом имперсонации); \
-     managed — отдельный llama-server; external — отдельный удалённый сервер; \
-     openai/gemini — облако (имя модели + API-ключ из env).";
-/// Имя env-переменной с API-ключом (X/Ix/E).
-pub(super) const DESC_API_KEY_ENV: &str = "Имя переменной окружения с API-ключом (например OPENAI_API_KEY). Хранится \
-     только имя — сам ключ читается из окружения и на диск не пишется.";
-/// Имя облачной модели (X/Ix/E).
-pub(super) const DESC_MODEL_NAME: &str = "Имя модели у провайдера (например gpt-4o, gemini-2.5-pro, \
-     text-embedding-3-small). Для облака обязательно.";
-/// Имя env-переменной с ключом для external-сервера (опционально).
-pub(super) const DESC_EXT_API_KEY_ENV: &str = "Имя переменной окружения с Bearer-ключом для \
-     external-сервера (например прокси/шлюз, требующий авторизацию). Пусто — без ключа \
-     (локальный llama-server его не требует). Хранится имя, не секрет.";
-/// Селектор подсекции (таб-стрип Модель/Семплинг/Профили).
-pub(super) const DESC_SUBSECTION: &str = "Переключение между настройками ассистента и имперсонации (написание \
-     сообщения от лица пользователя, Ctrl+U). ←/→ или Enter.";
-
-/// Язык служебного каркаса профиля (ось A). Блокируется, когда у профиля появились
-/// данные — чтобы вся его память была на одном языке.
-pub(super) const DESC_PROFILE_LANGUAGE: &str = "Язык служебных промптов и каркаса «модели себя» этого агента (не язык \
-     ответов — их задаёт системное сообщение). Выберите при создании: сменить \
-     нельзя, как только у профиля появятся чаты, «модель себя» или заметки.";
-
-/// -ngl у движка ассистента (текст отличается от имперсонации).
-pub(super) const DESC_NGL_ASSISTANT: &str = "Сколько слоёв модели выгрузить на видеокарту (GPU). Больше слоёв — \
-     быстрее, но нужна видеопамять; 0 — считать только на процессоре, \
-     99 — вся модель на GPU.";
-/// -ngl у движка имперсонации.
-pub(super) const DESC_NGL_IMP: &str = "Сколько слоёв модели имперсонации выгрузить на видеокарту (GPU). \
-     0 — только процессор, 99 — вся модель на GPU.";
-/// --jinja у движка ассистента.
-pub(super) const DESC_JINJA_ASSISTANT: &str = "Использовать встроенный chat-шаблон модели (Jinja). Нужен для \
-     правильного формата сообщений и вызова инструментов — обычно держат включённым.";
-/// --jinja у движка имперсонации.
-pub(super) const DESC_JINJA_IMP: &str = "Использовать встроенный chat-шаблон модели (Jinja) для сервера \
-     имперсонации.";
+/// Ключ: режим движка (ассистента/эмбеддингов).
+pub(super) const DESC_MODE: &str = "ui.settings.desc.mode";
+/// Ключ: режим движка имперсонации (добавляет `shared`).
+pub(super) const DESC_IMP_MODE: &str = "ui.settings.desc.imp_mode";
+/// Ключ: имя env-переменной с API-ключом (X/Ix/E).
+pub(super) const DESC_API_KEY_ENV: &str = "ui.settings.desc.api_key_env";
+/// Ключ: имя облачной модели (X/Ix/E).
+pub(super) const DESC_MODEL_NAME: &str = "ui.settings.desc.model_name";
+/// Ключ: имя env-переменной с ключом для external-сервера (опционально).
+pub(super) const DESC_EXT_API_KEY_ENV: &str = "ui.settings.desc.ext_api_key_env";
+/// Ключ: селектор подсекции (таб-стрип Модель/Семплинг/Профили).
+pub(super) const DESC_SUBSECTION: &str = "ui.settings.desc.subsection";
+/// Ключ: язык служебного каркаса профиля (ось A).
+pub(super) const DESC_PROFILE_LANGUAGE: &str = "ui.settings.desc.profile_language";
+/// Ключ: -ngl у движка ассистента (текст отличается от имперсонации).
+pub(super) const DESC_NGL_ASSISTANT: &str = "ui.settings.desc.ngl_assistant";
+/// Ключ: -ngl у движка имперсонации.
+pub(super) const DESC_NGL_IMP: &str = "ui.settings.desc.ngl_imp";
+/// Ключ: --jinja у движка ассистента.
+pub(super) const DESC_JINJA_ASSISTANT: &str = "ui.settings.desc.jinja_assistant";
+/// Ключ: --jinja у движка имперсонации.
+pub(super) const DESC_JINJA_IMP: &str = "ui.settings.desc.jinja_imp";
 
 pub(super) fn row(id: FieldId, label: &str, kind: FieldKind) -> FieldRow {
     FieldRow {
@@ -171,94 +153,96 @@ pub(super) const IMP_MANAGED_IDS: ManagedFieldIds = ManagedFieldIds {
 /// Поля managed-сервера `llama-server` (общие для движка ассистента/имперсонации),
 /// разложенные по смысловым группам: Сервер / Модель / Производительность /
 /// Спекулятивное декодирование.
-pub(super) fn managed_rows(m: &ManagedSettings, ids: ManagedFieldIds) -> Vec<FieldRow> {
+pub(super) fn managed_rows(
+    m: &ManagedSettings,
+    ids: ManagedFieldIds,
+    loc: &'static Locale,
+) -> Vec<FieldRow> {
     let mut rows = grouped(
-        "Сервер",
+        loc.t("ui.settings.group.server"),
         vec![
-            text_row(ids.binary, "Бинарник llama-server", &m.binary),
+            text_row(ids.binary, loc.t("ui.settings.field.binary"), &m.binary),
             row(ids.host, "Host", FieldKind::Text(m.host.clone())),
-            num_field(ids.port, "Порт", m.port),
+            num_field(ids.port, loc.t("ui.settings.field.port"), m.port),
         ],
     );
     rows.extend(grouped(
-        "Модель",
+        loc.t("ui.settings.group.model"),
         vec![
-            text_row(ids.model, "GGUF-модель (-m)", &m.model_path),
-            num_field(ids.ctx, "Контекст (-c)", m.context_size),
-            row(ids.jinja, "Шаблон (--jinja)", FieldKind::Toggle(m.jinja)).describe(ids.jinja_desc),
+            text_row(ids.model, loc.t("ui.settings.field.gguf"), &m.model_path),
+            num_field(ids.ctx, loc.t("ui.settings.field.context"), m.context_size),
+            row(
+                ids.jinja,
+                loc.t("ui.settings.field.jinja"),
+                FieldKind::Toggle(m.jinja),
+            )
+            .describe(loc.t(ids.jinja_desc)),
         ],
     ));
     rows.extend(grouped(
-        "Производительность",
+        loc.t("ui.settings.group.performance"),
         vec![
-            num_field(ids.ngl, "GPU-слои (-ngl)", m.gpu_layers).describe(ids.ngl_desc),
+            num_field(ids.ngl, loc.t("ui.settings.field.ngl"), m.gpu_layers)
+                .describe(loc.t(ids.ngl_desc)),
             row(
                 ids.flash_attn,
                 "FlashAttn (--flash-attn)",
                 FieldKind::Choice(m.flash_attn.label().to_string()),
             )
-            .describe(
-                "FlashAttention — оптимизация механизма внимания: ускоряет генерацию и \
-                 экономит видеопамять на поддерживаемых GPU. auto — пусть llama.cpp решит \
-                 сам; on/off — включить/выключить принудительно.",
-            ),
+            .describe(loc.t("ui.settings.desc.flash_attn")),
             row(
                 ids.no_mmap,
                 "No-mmap (--no-mmap)",
                 FieldKind::Toggle(m.no_mmap),
             )
-            .describe(
-                "Грузить веса модели целиком в оперативную память вместо отображения \
-                 файла с диска (mmap). Помогает на сетевых и медленных дисках, но требует \
-                 больше свободной RAM.",
-            ),
+            .describe(loc.t("ui.settings.desc.no_mmap")),
         ],
     ));
     let mut spec = vec![
         row(
             ids.spec_type,
-            "Спек. декод. (--spec-type)",
+            loc.t("ui.settings.field.spec_type"),
             FieldKind::Choice(m.spec_type.label().to_string()),
         )
-        .describe(
-            "Спекулятивное декодирование ускоряет генерацию: «черновик» предлагает \
-             несколько токенов вперёд, основная модель их разом проверяет. draft-* — \
-             нужна отдельная черновая модель (-md); для MTP-моделей (mtp-gemma-…) — \
-             draft-mtp; ngram-* — без модели (черновик из контекста). none — выключено.",
-        ),
+        .describe(loc.t("ui.settings.desc.spec_type")),
     ];
     // Поля черновой модели показываем только для типов draft-* (им нужна модель);
     // ngram-* и none их не используют — не загромождаем секцию.
     if m.spec_type.needs_draft_model() {
         spec.push(
-            text_row(ids.draft_model, "Черновая модель (-md)", &m.draft_model).describe(
-                "Путь к «черновой» GGUF-модели для спекулятивного декодирования (-md). \
-                 Должна быть совместима с основной по словарю. Для MTP — путь к \
-                 соответствующему MTP-GGUF.",
-            ),
+            text_row(
+                ids.draft_model,
+                loc.t("ui.settings.field.draft_model"),
+                &m.draft_model,
+            )
+            .describe(loc.t("ui.settings.desc.draft_model")),
         );
         spec.push(
             num_row(
                 ids.draft_ngl,
-                "Черновик GPU-слои (-ngld)",
+                loc.t("ui.settings.field.draft_ngl"),
                 m.draft_gpu_layers,
             )
-            .describe("Сколько слоёв черновой модели выгрузить на GPU (-ngld). Пусто — авто."),
+            .describe(loc.t("ui.settings.desc.draft_ngl")),
         );
         spec.push(
-            num_row(ids.draft_n_max, "Черновик n-max", m.draft_n_max).describe(
-                "Сколько токенов черновая модель предлагает за один шаг \
-             (--spec-draft-n-max). Пусто — значение llama.cpp по умолчанию (3).",
-            ),
+            num_row(
+                ids.draft_n_max,
+                loc.t("ui.settings.field.draft_n_max"),
+                m.draft_n_max,
+            )
+            .describe(loc.t("ui.settings.desc.draft_n_max")),
         );
         spec.push(
-            num_row(ids.draft_n_min, "Черновик n-min", m.draft_n_min).describe(
-                "Минимум черновых токенов за шаг (--spec-draft-n-min). Пусто — по \
-             умолчанию (0).",
-            ),
+            num_row(
+                ids.draft_n_min,
+                loc.t("ui.settings.field.draft_n_min"),
+                m.draft_n_min,
+            )
+            .describe(loc.t("ui.settings.desc.draft_n_min")),
         );
     }
-    rows.extend(grouped("Спекулятивное декодирование", spec));
+    rows.extend(grouped(loc.t("ui.settings.group.spec"), spec));
     rows
 }
 
@@ -269,13 +253,20 @@ pub(super) fn cloud_rows(
     model_name: FieldId,
     api_key_env: FieldId,
     url: FieldId,
+    loc: &'static Locale,
 ) -> Vec<FieldRow> {
     let none = CloudSettings::default();
     let c = cloud.unwrap_or(&none);
     vec![
-        text_row(model_name, "Модель", &c.model_name).describe(DESC_MODEL_NAME),
-        text_row(api_key_env, "API-ключ (env)", &c.api_key_env).describe(DESC_API_KEY_ENV),
-        text_row(url, "Base URL (опц.)", &c.url),
+        text_row(model_name, loc.t("ui.settings.field.model"), &c.model_name)
+            .describe(loc.t(DESC_MODEL_NAME)),
+        text_row(
+            api_key_env,
+            loc.t("ui.settings.field.api_key_env"),
+            &c.api_key_env,
+        )
+        .describe(loc.t(DESC_API_KEY_ENV)),
+        text_row(url, loc.t("ui.settings.field.base_url"), &c.url),
     ]
 }
 
@@ -307,9 +298,14 @@ pub(super) fn num_row<T: ToString>(id: FieldId, label: &str, value: Option<T>) -
 
 /// Строка поля семплинга по параметру: числовые — текст (`num_row`),
 /// `Thinking`/`Reasoning` — циклический выбор.
-pub(super) fn sampling_row(id: FieldId, p: SamplingParam, s: &SamplingConfig) -> FieldRow {
+pub(super) fn sampling_row(
+    id: FieldId,
+    p: SamplingParam,
+    s: &SamplingConfig,
+    loc: &'static Locale,
+) -> FieldRow {
     use SamplingParam::*;
-    let label = p.label();
+    let label = p.label(loc);
     let mut r = match p {
         Temp => num_row(id, label, s.temperature),
         DynatempRange => num_row(id, label, s.dynatemp_range),
@@ -346,7 +342,11 @@ pub(super) fn sampling_row(id: FieldId, p: SamplingParam, s: &SamplingConfig) ->
             label,
             FieldKind::Text(join_list(s.samplers.as_deref(), ';')),
         ),
-        Thinking => row(id, label, FieldKind::Choice(opt_bool_label(s.thinking))),
+        Thinking => row(
+            id,
+            label,
+            FieldKind::Choice(opt_bool_label(s.thinking, loc)),
+        ),
         Reasoning => row(
             id,
             label,
@@ -356,7 +356,7 @@ pub(super) fn sampling_row(id: FieldId, p: SamplingParam, s: &SamplingConfig) ->
     };
     // Описание параметра — единый источник `SamplingParam::description` (одинаково для
     // обеих подсекций Ассистент/Имперсонация).
-    r.description = p.description();
+    r.description = p.description(loc);
     r
 }
 
@@ -428,12 +428,12 @@ pub(super) fn section_label_col(fields: &[FieldRow]) -> usize {
 
 /// Инлайн-подсказка для инструмента, выключенного глобальным гейтом («выкл.
 /// глобально: <выключатель>»). Показывается цветом предупреждения.
-pub(super) fn gate_hint(gate: ToolGate) -> &'static str {
-    match gate {
-        ToolGate::Web => "выкл. глобально: Web-поиск",
-        ToolGate::Python => "выкл. глобально: Python",
-        ToolGate::Fs => "выкл. глобально: файлы",
-    }
+pub(super) fn gate_hint(gate: ToolGate, loc: &'static Locale) -> &'static str {
+    loc.t(match gate {
+        ToolGate::Web => "ui.settings.gate.web",
+        ToolGate::Python => "ui.settings.gate.python",
+        ToolGate::Fs => "ui.settings.gate.fs",
+    })
 }
 
 /// Ширина спана в колонках терминала (для правого выравнивания чипа статуса).
@@ -448,31 +448,49 @@ pub(super) fn span_width(s: &Span) -> usize {
 pub(super) fn server_status_chip(
     status: &ServerStatus,
     label: &str,
+    loc: &'static Locale,
     palette: &Palette,
 ) -> Vec<Span<'static>> {
     let glyphs = palette.glyphs();
     let (glyph, color, text) = match status {
-        ServerStatus::Ready => ("●", palette.success, format!("{label}: готов")),
+        ServerStatus::Ready => (
+            "●",
+            palette.success,
+            loc.tf("ui.settings.chip.ready", &[("label", label)]),
+        ),
         ServerStatus::Connecting => (
             glyphs.status_connecting,
             palette.warning,
-            format!("{label}: подключение…"),
+            loc.tf("ui.settings.chip.connecting", &[("label", label)]),
         ),
         ServerStatus::NotConfigured => (
             glyphs.status_off,
             palette.muted,
-            format!("{label}: не настроен"),
+            loc.tf("ui.settings.chip.notconfigured", &[("label", label)]),
         ),
         ServerStatus::Disconnected(why) => (
             glyphs.status_off,
             palette.error,
-            format!("{label}: нет связи: {why}"),
+            loc.tf(
+                "ui.settings.chip.disconnected",
+                &[("label", label), ("why", why)],
+            ),
         ),
     };
     vec![
         Span::styled(glyph, Style::new().fg(color).bold()),
         Span::styled(format!(" {text} "), Style::new().fg(color)),
     ]
+}
+
+/// Локализованные подписи вкладок секции «Модель» (порядок = [`ModelTab`]).
+pub(super) fn model_tab_labels(loc: &'static Locale) -> Vec<&'static str> {
+    MODEL_TAB_KEYS.iter().map(|&k| loc.t(k)).collect()
+}
+
+/// Локализованные подписи вкладок подсекции «Ассистент»/«Имперсонация».
+pub(super) fn sub_tab_labels(loc: &'static Locale) -> Vec<&'static str> {
+    SUB_TAB_KEYS.iter().map(|&k| loc.t(k)).collect()
 }
 
 /// Является ли поле селектором подсекции (рисуется таб-стрипом, а не строкой списка).
@@ -484,9 +502,15 @@ pub(super) fn is_subsection(id: FieldId) -> bool {
 }
 
 /// Отображаемое значение поля (для крошки поиска).
-pub(super) fn value_text(kind: &FieldKind) -> String {
+pub(super) fn value_text(kind: &FieldKind, loc: &'static Locale) -> String {
     match kind {
-        FieldKind::Toggle(on) => (if *on { "вкл" } else { "выкл" }).to_string(),
+        FieldKind::Toggle(on) => loc
+            .t(if *on {
+                "ui.settings.bool.on"
+            } else {
+                "ui.settings.bool.off"
+            })
+            .to_string(),
         FieldKind::Choice(v) => v.clone(),
         FieldKind::Text(v) => v.clone(),
     }
@@ -502,10 +526,11 @@ pub(super) fn collect_hits(
     subsection: Option<usize>,
     sub_label: Option<&str>,
     fields: Vec<FieldRow>,
+    loc: &'static Locale,
 ) {
     let head = match sub_label {
-        Some(sub) => format!("{} · {}", section.title(), sub),
-        None => section.title().to_string(),
+        Some(sub) => format!("{} · {}", section.title(loc), sub),
+        None => section.title(loc).to_string(),
     };
     for (fi, f) in fields.iter().enumerate() {
         if is_subsection(f.id) {
@@ -517,7 +542,7 @@ pub(super) fn collect_hits(
         } else {
             format!("{head} › {} › {}", f.group, f.label)
         };
-        let value = value_text(&f.kind);
+        let value = value_text(&f.kind, loc);
         let haystack = format!(
             "{head} {} {} {} {}",
             f.group,
@@ -744,12 +769,13 @@ pub(super) fn cycle_imp_mode(m: ImpersonationMode, dir: i32) -> ImpersonationMod
     order[(((idx + dir) % n + n) % n) as usize]
 }
 
-pub(super) fn theme_label(t: Theme) -> String {
-    match t {
-        Theme::Auto => "авто".into(),
-        Theme::Dark => "тёмная".into(),
-        Theme::Light => "светлая".into(),
-    }
+pub(super) fn theme_label(t: Theme, loc: &'static Locale) -> String {
+    loc.t(match t {
+        Theme::Auto => "ui.settings.choice.theme_auto",
+        Theme::Dark => "ui.settings.choice.theme_dark",
+        Theme::Light => "ui.settings.choice.theme_light",
+    })
+    .to_string()
 }
 
 pub(super) fn cycle_theme(t: Theme) -> Theme {
@@ -760,11 +786,19 @@ pub(super) fn cycle_theme(t: Theme) -> Theme {
     }
 }
 
-pub(super) fn opt_bool_label(b: Option<bool>) -> String {
+/// Циклический сдвиг языка интерфейса по `Lang::ALL` (с учётом направления `dir`).
+pub(super) fn cycle_lang(l: crate::shared::i18n::Lang, dir: i32) -> crate::shared::i18n::Lang {
+    let all = crate::shared::i18n::Lang::ALL;
+    let idx = all.iter().position(|&x| x == l).unwrap_or(0) as i32;
+    let n = all.len() as i32;
+    all[(((idx + dir) % n + n) % n) as usize]
+}
+
+pub(super) fn opt_bool_label(b: Option<bool>, loc: &'static Locale) -> String {
     match b {
         None => "—".into(),
-        Some(true) => "вкл".into(),
-        Some(false) => "выкл".into(),
+        Some(true) => loc.t("ui.settings.bool.on").to_string(),
+        Some(false) => loc.t("ui.settings.bool.off").to_string(),
     }
 }
 
@@ -828,17 +862,18 @@ pub(super) fn field_num_kind(id: FieldId) -> Option<NumKind> {
     }
 }
 
-/// Ошибка валидации поля (`None` — валидно). Пустой ввод допустим (очистка/сохранение
-/// прежнего); непустой в числовом поле обязан парситься. Проверка «мягкая» (i64/f64),
-/// точный тип и диапазон досматривает `apply_text`.
+/// i18n-ключ ошибки валидации поля (`None` — валидно). Пустой ввод допустим
+/// (очистка/сохранение прежнего); непустой в числовом поле обязан парситься. Проверка
+/// «мягкая» (i64/f64), точный тип и диапазон досматривает `apply_text`. Возвращает
+/// **ключ** — текст резолвит вызывающий (`loc.t`) в локали интерфейса.
 pub(super) fn field_validation_error(id: FieldId, text: &str) -> Option<&'static str> {
     let t = text.trim();
     if t.is_empty() {
         return None;
     }
     match field_num_kind(id) {
-        Some(NumKind::Int) if t.parse::<i64>().is_err() => Some("нужно целое число"),
-        Some(NumKind::Float) if t.parse::<f64>().is_err() => Some("нужно число"),
+        Some(NumKind::Int) if t.parse::<i64>().is_err() => Some("ui.settings.err.int"),
+        Some(NumKind::Float) if t.parse::<f64>().is_err() => Some("ui.settings.err.float"),
         _ => None,
     }
 }
@@ -886,12 +921,16 @@ pub(super) fn spec_menu(cur: SpecType) -> (Vec<String>, usize) {
 
 /// Меню выбора для Choice-параметров семплинга (`Thinking`/`Reasoning`); порядок
 /// подписей совпадает с циклом `cycle_opt_bool`/`cycle_reasoning`.
-pub(super) fn sampling_choice_menu(s: &SamplingConfig, p: SamplingParam) -> (Vec<String>, usize) {
+pub(super) fn sampling_choice_menu(
+    s: &SamplingConfig,
+    p: SamplingParam,
+    loc: &'static Locale,
+) -> (Vec<String>, usize) {
     match p {
         SamplingParam::Thinking => {
             let opts = [None, Some(true), Some(false)]
                 .iter()
-                .map(|&b| opt_bool_label(b))
+                .map(|&b| opt_bool_label(b, loc))
                 .collect();
             let idx = match s.thinking {
                 None => 0,

@@ -16,6 +16,7 @@ use crate::entities::chat::ChatSummary;
 use crate::features::chat_search_sort::{SortMode, filter_and_sort};
 use crate::features::rename_chat::sanitize_title;
 use crate::features::spellcheck::SpellChecker;
+use crate::shared::i18n::Locale;
 use crate::shared::keys;
 use crate::shared::theme::Palette;
 use crate::shared::ui::render_scrollbar;
@@ -357,23 +358,31 @@ impl ChatListState {
         area: Rect,
         active: Option<Uuid>,
         palette: &Palette,
+        loc: &'static Locale,
     ) {
         frame.render_widget(Clear, area);
 
         // Снизу — строка статуса с «клавишами» (как на экране чата): аккуратная
         // сетка хоткеев (число строк зависит от ширины). Считаем её заранее, чтобы
         // отвести под неё ровно нужную высоту.
-        let status_lines = self.status_lines(palette, area.width as usize);
+        let status_lines = self.status_lines(palette, area.width as usize, loc);
         let status_h = (status_lines.len() as u16).max(1);
         let [main_area, status_area] =
             Layout::vertical([Constraint::Min(3), Constraint::Length(status_h)]).areas(area);
 
         // Панель со списком: скруглённая рамка, титул слева, число диалогов справа.
         let count = self.all.len();
-        let title = format!("{} Чаты", palette.glyphs().chats_icon);
+        let title = format!(
+            "{} {}",
+            palette.glyphs().chats_icon,
+            loc.t("ui.chatlist.title")
+        );
         let block = palette.panel(title, true).title(
             Line::from(Span::styled(
-                format!(" {count} диалог(ов) "),
+                format!(
+                    " {} ",
+                    loc.tf("ui.chatlist.count", &[("n", &count.to_string())])
+                ),
                 palette.muted_style(),
             ))
             .right_aligned(),
@@ -397,11 +406,11 @@ impl ChatListState {
             input.render(
                 frame,
                 search_area,
-                RenderOpts::focused("Переименование"),
+                RenderOpts::focused(loc.t("ui.chatlist.rename_title")),
                 palette,
             );
         } else {
-            self.render_search(frame, search_area, palette);
+            self.render_search(frame, search_area, palette, loc);
         }
 
         // --- список ---
@@ -411,7 +420,7 @@ impl ChatListState {
             .iter()
             .enumerate()
             .map(|(i, c)| {
-                ListItem::new(self.item_line(c, i == self.selected, active, palette, width))
+                ListItem::new(self.item_line(c, i == self.selected, active, palette, width, loc))
             })
             .collect();
         // Выделение — мягкая подложка (как тинт в макете), а не инверсия всей строки;
@@ -461,7 +470,13 @@ impl ChatListState {
     }
 
     /// Рисует строку поиска в рамке; справа — «клавиша» `/` (приглашение фокуса).
-    fn render_search(&self, frame: &mut Frame, area: Rect, palette: &Palette) {
+    fn render_search(
+        &self,
+        frame: &mut Frame,
+        area: Rect,
+        palette: &Palette,
+        loc: &'static Locale,
+    ) {
         let glyphs = palette.glyphs();
         let block = Block::default()
             .borders(Borders::ALL)
@@ -480,7 +495,10 @@ impl ChatListState {
             Span::styled(glyphs.caret, palette.muted_style()),
         ];
         if self.query.is_empty() {
-            spans.push(Span::styled("Поиск по чатам…", palette.muted_style()));
+            spans.push(Span::styled(
+                loc.t("ui.chatlist.search_placeholder"),
+                palette.muted_style(),
+            ));
         }
         frame.render_widget(Paragraph::new(Line::from(spans)), field);
         frame.render_widget(Paragraph::new(Line::from(palette.keycap("/"))), cap);
@@ -496,6 +514,7 @@ impl ChatListState {
         active: Option<Uuid>,
         palette: &Palette,
         width: usize,
+        loc: &'static Locale,
     ) -> Line<'static> {
         let is_active = active == Some(chat.id);
         // Рейл выделенной строки (2 колонки) + точка (2 колонки) = префикс.
@@ -515,7 +534,10 @@ impl ChatListState {
             Style::new().fg(palette.text)
         };
 
-        let count = format!("{} сообщ.", chat.message_count);
+        let count = loc.tf(
+            "ui.chatlist.messages",
+            &[("n", &chat.message_count.to_string())],
+        );
         let count_w = display_width_str(&count);
         const PREFIX_W: usize = 4; // рейл (2) + точка «● » (2)
         const TRAIL: usize = 1; // правый отступ
@@ -540,32 +562,42 @@ impl ChatListState {
     /// (столбцы совпадают по вертикали). Число строк подбирается под ширину `width`:
     /// берём максимум столбцов, влезающих в ширину (минимум строк). В режиме
     /// переименования — одна строка-подсказка.
-    fn status_lines(&self, palette: &Palette, width: usize) -> Vec<Line<'static>> {
+    fn status_lines(
+        &self,
+        palette: &Palette,
+        width: usize,
+        loc: &'static Locale,
+    ) -> Vec<Line<'static>> {
         if let Mode::Rename { .. } = self.mode {
             return vec![Line::from(vec![
                 palette.keycap("Enter"),
-                Span::styled(" сохранить   ", palette.muted_style()),
+                Span::styled(
+                    format!(" {}   ", loc.t("ui.chatlist.rename.save")),
+                    palette.muted_style(),
+                ),
                 palette.keycap("Esc"),
-                Span::styled(" отмена", palette.muted_style()),
+                Span::styled(
+                    format!(" {}", loc.t("ui.chatlist.rename.cancel")),
+                    palette.muted_style(),
+                ),
             ])];
         }
 
         // Пары «клавиша — описание — опасная ли» (порядок = чтение слева-направо,
         // сверху-вниз). `Tab` несёт текущий режим сортировки. Сетку выкладывает
         // общий хелпер `Palette::hotkey_grid` (тот же, что у статус-бара чата).
-        let sort = self.sort.label();
-        let sort_desc = format!("сортировка: {sort}");
+        let sort_desc = loc.tf("ui.chatlist.sort", &[("sort", sort_label(self.sort, loc))]);
         let items: [(&str, &str, bool); 11] = [
-            ("↑↓ PgUp/Dn Home/End", "выбор", false),
-            ("Enter", "открыть", false),
-            ("F2", "переименовать", false),
-            ("Ctrl+R", "авто-назв.", false),
-            ("Ctrl+N", "новый", false),
-            ("Ctrl+D", "копия", false),
-            ("F5", "в буфер", false),
-            ("Del", "удалить", true),
-            ("Esc", "назад", false),
-            ("Ctrl+Q", "выход", false),
+            ("↑↓ PgUp/Dn Home/End", loc.t("ui.chatlist.hk.select"), false),
+            ("Enter", loc.t("ui.chatlist.hk.open"), false),
+            ("F2", loc.t("ui.chatlist.hk.rename"), false),
+            ("Ctrl+R", loc.t("ui.chatlist.hk.autoname"), false),
+            ("Ctrl+N", loc.t("ui.chatlist.hk.new"), false),
+            ("Ctrl+D", loc.t("ui.chatlist.hk.clone"), false),
+            ("F5", loc.t("ui.chatlist.hk.copy"), false),
+            ("Del", loc.t("ui.chatlist.hk.delete"), true),
+            ("Esc", loc.t("ui.chatlist.hk.back"), false),
+            ("Ctrl+Q", loc.t("ui.chatlist.hk.quit"), false),
             ("Tab", sort_desc.as_str(), false),
         ];
         palette.hotkey_grid(&items, width)
@@ -575,6 +607,14 @@ impl ChatListState {
 /// Видимая ширина строки в колонках терминала.
 fn display_width_str(s: &str) -> usize {
     wrap::display_width(&s.chars().collect::<Vec<_>>())
+}
+
+/// Локализованная метка режима сортировки для индикатора (`Tab` в списке чатов).
+fn sort_label(sort: SortMode, loc: &'static Locale) -> &'static str {
+    match sort {
+        SortMode::Created => loc.t("ui.sort.created"),
+        SortMode::Modified => loc.t("ui.sort.modified"),
+    }
 }
 
 /// Усекает строку до ширины `max` колонок, добавляя «…» при усечении. Возвращает
@@ -608,6 +648,10 @@ fn truncate_to_width(s: &str, max: usize) -> (String, usize) {
 mod tests {
     use super::*;
     use chrono::Utc;
+
+    fn ru() -> &'static Locale {
+        crate::shared::i18n::locale(crate::shared::i18n::Lang::Ru)
+    }
 
     fn key(code: KeyCode) -> KeyEvent {
         KeyEvent::new(code, KeyModifiers::NONE)
@@ -942,7 +986,7 @@ mod tests {
         state.set_error("Недостаточно сообщений для авто-названия".into());
         for (w, h) in [(80u16, 24u16), (20, 6)] {
             let mut term = Terminal::new(TestBackend::new(w, h)).unwrap();
-            term.draw(|f| state.render(f, f.area(), None, &Palette::default()))
+            term.draw(|f| state.render(f, f.area(), None, &Palette::default(), ru()))
                 .unwrap();
         }
     }
@@ -960,12 +1004,12 @@ mod tests {
         // Ширина 72 — сетка хоткеев внизу в 2 колонки (не съедает высоту списка).
         let mut term = Terminal::new(TestBackend::new(72, 24)).unwrap();
         let mut short = ChatListState::new(vec![chat("A"), chat("B")], None);
-        term.draw(|f| short.render(f, f.area(), None, &Palette::default()))
+        term.draw(|f| short.render(f, f.area(), None, &Palette::default(), ru()))
             .unwrap();
         assert!(!has_thumb(&term), "короткий список — без бегунка");
         let chats: Vec<ChatSummary> = (0..40).map(|i| chat(&format!("Чат {i}"))).collect();
         let mut long = ChatListState::new(chats, None);
-        term.draw(|f| long.render(f, f.area(), None, &Palette::default()))
+        term.draw(|f| long.render(f, f.area(), None, &Palette::default(), ru()))
             .unwrap();
         assert!(has_thumb(&term), "длинный список — с бегунком");
     }
@@ -978,7 +1022,7 @@ mod tests {
         let mut state = ChatListState::new(vec![chat("Альфа"), chat("Бета")], None);
         for (w, h) in [(80u16, 24u16), (20, 6)] {
             let mut term = Terminal::new(TestBackend::new(w, h)).unwrap();
-            term.draw(|f| state.render(f, f.area(), None, &Palette::default()))
+            term.draw(|f| state.render(f, f.area(), None, &Palette::default(), ru()))
                 .unwrap();
         }
     }

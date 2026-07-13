@@ -278,6 +278,7 @@ impl Orchestrator {
             last_user,
             engine_mode: self.config.engine.mode,
             model_name: self.config.engine.active_model_name(),
+            ui_loc: self.ui_locale(),
             evt_tx: self.evt_tx.clone(),
             done_tx: self.done_tx.clone(),
         });
@@ -353,6 +354,8 @@ struct GenSpawn {
     /// Режим движка и имя модели — снимок в `Message.metadata` (spec §8.3).
     engine_mode: ServerMode,
     model_name: Option<String>,
+    /// Язык интерфейса (ось B) — для сообщений об ошибках, видимых человеку.
+    ui_loc: &'static crate::shared::i18n::Locale,
     evt_tx: UnboundedSender<AppEvent>,
     done_tx: UnboundedSender<GenResult>,
 }
@@ -395,6 +398,7 @@ fn spawn_generation(spawn: GenSpawn) {
         last_user,
         engine_mode,
         model_name,
+        ui_loc,
         evt_tx,
         done_tx,
     } = spawn;
@@ -460,6 +464,7 @@ fn spawn_generation(spawn: GenSpawn) {
                 &evt_tx,
                 total_tokens,
                 total_reasoning,
+                ui_loc,
             )
             .await;
             total_tokens += out.tokens;
@@ -489,6 +494,7 @@ fn spawn_generation(spawn: GenSpawn) {
                         &evt_tx,
                         total_tokens,
                         total_reasoning,
+                        ui_loc,
                     )
                     .await;
                     if let Some(mut m) =
@@ -642,6 +648,7 @@ fn spawn_generation(spawn: GenSpawn) {
 /// tool-вызовы и счётчик токенов. `base_tokens`/`base_reasoning` — токены/reasoning-
 /// токены, набранные предыдущими раундами; счётчик в UI растёт накопительно.
 /// Возвращает накопленный раунд.
+#[allow(clippy::too_many_arguments)]
 async fn stream_round(
     backend: &Arc<dyn EngineBackend>,
     request: ChatRequest,
@@ -650,6 +657,7 @@ async fn stream_round(
     evt_tx: &UnboundedSender<AppEvent>,
     base_tokens: u64,
     base_reasoning: u32,
+    ui_loc: &'static crate::shared::i18n::Locale,
 ) -> RoundOutput {
     let mut text = String::new();
     let mut thoughts = String::new();
@@ -732,7 +740,9 @@ async fn stream_round(
             }
         }
         Err(err) => {
-            let _ = evt_tx.send(AppEvent::Error(format!("Ошибка генерации: {err}")));
+            let _ = evt_tx.send(AppEvent::Error(
+                ui_loc.tf("ui.err.generation_failed", &[("err", &err.to_string())]),
+            ));
             reason = FinishReason::Error;
         }
     }

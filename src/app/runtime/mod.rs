@@ -59,14 +59,21 @@ impl ActiveScreen {
         matches!(self, ActiveScreen::Chat)
     }
 
-    /// Обновляет палитру открытого overlay-экрана (список чатов / модель себя) при
-    /// смене темы или режима совместимости. Экран настроек обновляется отдельно
-    /// (`refresh` шире палитры), чат — своей базой (`ChatScreen::set_settings`).
-    /// Каноничное место перечисления экранов для broadcast палитры.
-    fn set_palette(&mut self, palette: Palette) {
+    /// Обновляет палитру и локаль интерфейса открытого overlay-экрана (список чатов /
+    /// модель себя) при смене темы/режима совместимости/языка UI. Экран настроек
+    /// обновляется отдельно (`refresh` шире палитры), чат — своей базой
+    /// (`ChatScreen::set_settings`). Каноничное место перечисления экранов для
+    /// broadcast темы (палитра + локаль). См. docs/i18n-ui.md §3.3.
+    fn set_theme(&mut self, palette: Palette, loc: &'static crate::shared::i18n::Locale) {
         match self {
-            ActiveScreen::ChatList(list) => list.set_palette(palette),
-            ActiveScreen::SelfModel(view) => view.set_palette(palette),
+            ActiveScreen::ChatList(list) => {
+                list.set_palette(palette);
+                list.set_loc(loc);
+            }
+            ActiveScreen::SelfModel(view) => {
+                view.set_palette(palette);
+                view.set_loc(loc);
+            }
             ActiveScreen::Chat | ActiveScreen::Settings(_) => {}
         }
     }

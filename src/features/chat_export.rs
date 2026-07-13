@@ -3,6 +3,7 @@
 
 use crate::entities::message::{Message, MessageRole};
 use crate::shared::config::CopySettings;
+use crate::shared::i18n::Locale;
 
 /// Форматирует всю переписку чата в читаемый текст для буфера обмена: помечает
 /// роли (`Пользователь`/`Ассистент`), сохраняет многострочный текст, пропускает
@@ -17,6 +18,7 @@ pub fn format_conversation(
     title: &str,
     messages: &[Message],
     opts: &CopySettings,
+    loc: &'static Locale,
 ) -> Option<String> {
     let mut blocks: Vec<String> = Vec::new();
 
@@ -30,11 +32,11 @@ pub fn format_conversation(
             MessageRole::User => {
                 let text = m.text.trim();
                 if !text.is_empty() {
-                    blocks.push(format!("Пользователь:\n{text}"));
+                    blocks.push(format!("{}\n{text}", loc.t("ui.export.user")));
                 }
             }
             MessageRole::Assistant => {
-                if let Some(block) = format_assistant(m, opts) {
+                if let Some(block) = format_assistant(m, opts, loc) {
                     blocks.push(block);
                 }
             }
@@ -54,7 +56,7 @@ pub fn format_conversation(
 
 /// Собирает блок одного сообщения ассистента: опциональные «мысли», текст и
 /// опциональные tool-блоки. `None`, если после фильтрации блок пуст.
-fn format_assistant(m: &Message, opts: &CopySettings) -> Option<String> {
+fn format_assistant(m: &Message, opts: &CopySettings, loc: &'static Locale) -> Option<String> {
     let mut parts: Vec<String> = Vec::new();
 
     if opts.copy_thoughts
@@ -62,7 +64,7 @@ fn format_assistant(m: &Message, opts: &CopySettings) -> Option<String> {
     {
         let thoughts = thoughts.trim();
         if !thoughts.is_empty() {
-            parts.push(format!("[Мысли]\n{thoughts}"));
+            parts.push(format!("{}\n{thoughts}", loc.t("ui.export.thoughts")));
         }
     }
 
@@ -73,14 +75,14 @@ fn format_assistant(m: &Message, opts: &CopySettings) -> Option<String> {
 
     if opts.copy_tool_calls || opts.copy_tool_results {
         for tc in &m.tool_calls {
-            let mut lines = vec![format!("[Инструмент: {}]", tc.name)];
+            let mut lines = vec![loc.tf("ui.export.tool", &[("name", &tc.name)])];
             if opts.copy_tool_calls {
                 let args = serde_json::to_string(&tc.arguments).unwrap_or_default();
-                lines.push(format!("Аргументы: {args}"));
+                lines.push(loc.tf("ui.export.args", &[("args", &args)]));
             }
             if opts.copy_tool_results {
                 let result = tc.result.as_deref().unwrap_or("").trim();
-                lines.push(format!("Результат: {result}"));
+                lines.push(loc.tf("ui.export.result", &[("result", result)]));
             }
             parts.push(lines.join("\n"));
         }
@@ -89,13 +91,21 @@ fn format_assistant(m: &Message, opts: &CopySettings) -> Option<String> {
     if parts.is_empty() {
         return None;
     }
-    Some(format!("Ассистент:\n{}", parts.join("\n\n")))
+    Some(format!(
+        "{}\n{}",
+        loc.t("ui.export.assistant"),
+        parts.join("\n\n")
+    ))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::entities::message::ToolCallRecord;
+
+    fn ru() -> &'static Locale {
+        crate::shared::i18n::locale(crate::shared::i18n::Lang::Ru)
+    }
 
     /// Копирование только текста (поведение по умолчанию).
     fn plain() -> CopySettings {
@@ -125,7 +135,7 @@ mod tests {
             Message::assistant("хорошо"),
             Message::new(MessageRole::Tool, "tool output"),
         ];
-        let out = format_conversation("Мой чат", &msgs, &plain()).unwrap();
+        let out = format_conversation("Мой чат", &msgs, &plain(), ru()).unwrap();
         assert_eq!(
             out,
             "Мой чат\n\nПользователь:\nкак дела?\n\nАссистент:\nхорошо"
@@ -135,14 +145,14 @@ mod tests {
     #[test]
     fn empty_title_is_omitted() {
         let msgs = vec![Message::user("привет")];
-        let out = format_conversation("   ", &msgs, &plain()).unwrap();
+        let out = format_conversation("   ", &msgs, &plain(), ru()).unwrap();
         assert_eq!(out, "Пользователь:\nпривет");
     }
 
     #[test]
     fn multiline_text_is_preserved() {
         let msgs = vec![Message::assistant("строка 1\nстрока 2")];
-        let out = format_conversation("", &msgs, &plain()).unwrap();
+        let out = format_conversation("", &msgs, &plain(), ru()).unwrap();
         assert_eq!(out, "Ассистент:\nстрока 1\nстрока 2");
     }
 
@@ -154,14 +164,14 @@ mod tests {
             Message::user("   "),
             Message::new(MessageRole::Tool, "out"),
         ];
-        assert!(format_conversation("Заголовок", &msgs, &plain()).is_none());
-        assert!(format_conversation("", &[], &plain()).is_none());
+        assert!(format_conversation("Заголовок", &msgs, &plain(), ru()).is_none());
+        assert!(format_conversation("", &[], &plain(), ru()).is_none());
     }
 
     #[test]
     fn plain_omits_thoughts_and_tools() {
         // По умолчанию «мысли» и tool-блоки не копируются — только текст.
-        let out = format_conversation("", &[assistant_with_tool()], &plain()).unwrap();
+        let out = format_conversation("", &[assistant_with_tool()], &plain(), ru()).unwrap();
         assert_eq!(out, "Ассистент:\nответ");
     }
 
@@ -171,7 +181,7 @@ mod tests {
             copy_thoughts: true,
             ..Default::default()
         };
-        let out = format_conversation("", &[assistant_with_tool()], &opts).unwrap();
+        let out = format_conversation("", &[assistant_with_tool()], &opts, ru()).unwrap();
         assert_eq!(out, "Ассистент:\n[Мысли]\nя думаю\n\nответ");
     }
 
@@ -181,7 +191,7 @@ mod tests {
             copy_tool_calls: true,
             ..Default::default()
         };
-        let out = format_conversation("", &[assistant_with_tool()], &opts).unwrap();
+        let out = format_conversation("", &[assistant_with_tool()], &opts, ru()).unwrap();
         assert_eq!(
             out,
             "Ассистент:\nответ\n\n[Инструмент: note_save]\nАргументы: {\"text\":\"заметка\"}"
@@ -194,7 +204,7 @@ mod tests {
             copy_tool_results: true,
             ..Default::default()
         };
-        let out = format_conversation("", &[assistant_with_tool()], &opts).unwrap();
+        let out = format_conversation("", &[assistant_with_tool()], &opts, ru()).unwrap();
         assert_eq!(
             out,
             "Ассистент:\nответ\n\n[Инструмент: note_save]\nРезультат: сохранено"
@@ -208,7 +218,7 @@ mod tests {
             copy_tool_results: true,
             ..Default::default()
         };
-        let out = format_conversation("", &[assistant_with_tool()], &opts).unwrap();
+        let out = format_conversation("", &[assistant_with_tool()], &opts, ru()).unwrap();
         assert_eq!(
             out,
             "Ассистент:\nответ\n\n[Инструмент: note_save]\n\
@@ -231,7 +241,7 @@ mod tests {
             copy_tool_results: true,
             ..Default::default()
         };
-        let out = format_conversation("", &[m], &opts).unwrap();
+        let out = format_conversation("", &[m], &opts, ru()).unwrap();
         assert_eq!(out, "Ассистент:\n[Инструмент: calculate]\nРезультат: 4");
         // Но при выключенных опциях такое сообщение пропускается целиком.
         let mut m2 = Message::assistant("");
@@ -242,6 +252,6 @@ mod tests {
             arguments: serde_json::json!({}),
             result: Some("4".into()),
         }];
-        assert!(format_conversation("", &[m2], &plain()).is_none());
+        assert!(format_conversation("", &[m2], &plain(), ru()).is_none());
     }
 }

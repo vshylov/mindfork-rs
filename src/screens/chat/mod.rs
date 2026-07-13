@@ -26,6 +26,7 @@ use crate::features::rag_ingest::RagProgress;
 use crate::features::spellcheck::SpellChecker;
 use crate::shared::api::FinishReason;
 use crate::shared::config::AppConfig;
+use crate::shared::i18n::{Locale, locale};
 use crate::shared::keys;
 use crate::shared::server::{ServerStatus, ServerStatuses};
 use crate::shared::theme::Palette;
@@ -121,15 +122,11 @@ impl ConfirmAction {
         }
     }
 
-    /// Текст-вопрос попапа подтверждения.
-    fn prompt(self) -> &'static str {
+    /// Текст-вопрос попапа подтверждения (локализованный).
+    fn prompt(self, loc: &'static Locale) -> &'static str {
         match self {
-            ConfirmAction::Regenerate => {
-                "Перегенерировать последний ответ? Прежний ответ будет заменён."
-            }
-            ConfirmAction::DeleteExchange => {
-                "Удалить последний обмен? Ваше сообщение вернётся в поле ввода."
-            }
+            ConfirmAction::Regenerate => loc.t("ui.confirm.regenerate"),
+            ConfirmAction::DeleteExchange => loc.t("ui.confirm.delete_exchange"),
         }
     }
 }
@@ -237,6 +234,9 @@ pub struct ChatScreen {
     help_scroll: usize,
     /// Активная палитра темы (из `config.interface.theme`). См. spec §11.6.
     palette: Palette,
+    /// Локаль интерфейса (из `config.interface.language`, ось B — docs/i18n-ui.md).
+    /// `&'static` — вшитый бандл; обновляется вместе с палитрой в `set_settings`.
+    loc: &'static Locale,
     /// Включён ли захват мыши для прокрутки колесом (тумблер `Ctrl+W`). По
     /// умолчанию выключен — работает нативное выделение текста мышью. См. spec §11.3.
     mouse_scroll: bool,
@@ -297,6 +297,7 @@ impl ChatScreen {
             show_help: false,
             help_scroll: 0,
             palette: Palette::default(),
+            loc: locale(crate::shared::i18n::Lang::default()),
             mouse_scroll: false,
             reflecting: false,
             consolidating: false,
@@ -318,6 +319,7 @@ impl ChatScreen {
     ) {
         self.palette = Palette::for_theme(config.interface.theme)
             .with_compat(config.interface.terminal_compat);
+        self.loc = locale(config.interface.language);
         self.confirm_destructive = config.interface.confirm_destructive_keys;
         self.feed_view
             .set_table_row_separators(config.interface.table_row_separators);
@@ -382,9 +384,9 @@ impl ChatScreen {
     /// Метка активных фоновых задач для статус-бара (`None` — ничего не идёт).
     pub(super) fn background_hint(&self) -> Option<String> {
         match (self.reflecting, self.consolidating) {
-            (true, true) => Some("рефлексия · сон".into()),
-            (true, false) => Some("рефлексия".into()),
-            (false, true) => Some("сон заметок".into()),
+            (true, true) => Some(self.loc.t("ui.chat.bg.both").to_string()),
+            (true, false) => Some(self.loc.t("ui.chat.bg.reflect").to_string()),
+            (false, true) => Some(self.loc.t("ui.chat.bg.consolidate").to_string()),
             (false, false) => None,
         }
     }
@@ -410,6 +412,12 @@ impl ChatScreen {
     /// Текущая палитра темы — для отрисовки экрана списка чатов.
     pub fn palette(&self) -> Palette {
         self.palette
+    }
+
+    /// Текущая локаль интерфейса — для отрисовки overlay-экранов (список чатов /
+    /// модель себя) и broadcast при смене языка. См. docs/i18n-ui.md §3.3.
+    pub fn loc(&self) -> &'static Locale {
+        self.loc
     }
 }
 

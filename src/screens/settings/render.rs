@@ -14,28 +14,34 @@ impl SettingsScreen {
             .with_compat(self.config.interface.terminal_compat)
     }
 
+    /// Локаль интерфейса по рабочей копии конфига (ось B, docs/i18n-ui.md).
+    pub(super) fn loc(&self) -> &'static crate::shared::i18n::Locale {
+        crate::shared::i18n::locale(self.config.interface.language)
+    }
+
     pub fn render(&mut self, frame: &mut Frame) {
         let area = frame.area();
         let palette = self.palette();
+        let loc = self.loc();
         // Контекстный футер: базовые хоткеи + специфичные для секции. В «Профилях» —
         // создание/удаление профиля.
         let mut hints: Vec<(&str, &str)> = vec![
-            ("Tab", "секция"),
-            ("↑↓", "поля"),
-            ("Enter", "правка"),
-            ("Space", "тумблер"),
-            ("←→", "выбор"),
-            ("/", "поиск"),
+            ("Tab", loc.t("ui.settings.hint.section")),
+            ("↑↓", loc.t("ui.settings.hint.fields")),
+            ("Enter", loc.t("ui.settings.hint.edit")),
+            ("Space", loc.t("ui.settings.hint.toggle")),
+            ("←→", loc.t("ui.settings.hint.choose")),
+            ("/", loc.t("ui.settings.hint.search")),
         ];
         if self.focus == Focus::Fields {
-            hints.push(("Del", "сброс"));
+            hints.push(("Del", loc.t("ui.settings.hint.reset")));
         }
         if self.section() == Section::Profiles {
-            hints.push(("Ctrl+N", "новый"));
-            hints.push(("Ctrl+D", "удалить"));
+            hints.push(("Ctrl+N", loc.t("ui.settings.hint.new")));
+            hints.push(("Ctrl+D", loc.t("ui.settings.hint.delete")));
         }
-        hints.push(("Esc", "назад"));
-        hints.push(("Ctrl+Q", "выход"));
+        hints.push(("Esc", loc.t("ui.settings.hint.back")));
+        hints.push(("Ctrl+Q", loc.t("ui.settings.hint.quit")));
         // Строка хоткеев — под панелью (вне рамки), переносится сеткой по той же
         // логике, что статус-бар экрана чата (прижата вправо). Высоту считаем заранее.
         let hotkeys = status_bar::hotkey_lines(area.width as usize, &hints, &palette);
@@ -45,7 +51,14 @@ impl SettingsScreen {
         let [panel_area, status_area] =
             Layout::vertical([Constraint::Min(3), Constraint::Length(status_h)]).areas(area);
 
-        let block = palette.panel(format!("{}Настройки", palette.glyphs().settings_icon), true);
+        let block = palette.panel(
+            format!(
+                "{}{}",
+                palette.glyphs().settings_icon,
+                loc.t("ui.settings.ui.title")
+            ),
+            true,
+        );
         let inner = block.inner(panel_area);
         frame.render_widget(&block, panel_area);
         frame.render_widget(Paragraph::new(hotkeys), status_area);
@@ -66,12 +79,16 @@ impl SettingsScreen {
             // валидации титул несёт красное сообщение и редактор не закрывается.
             let err = editor.error;
             let base_title = if editor.multiline {
-                "правка · Shift+Enter перенос · Enter ок · Esc отмена"
+                loc.t("ui.editor.multiline_footer")
             } else {
-                "правка · Enter ок · Esc отмена"
+                loc.t("ui.settings.ui.editor_single")
             };
             let title = match err {
-                Some(e) => format!("{} {e} · Esc отмена", palette.glyphs().warn),
+                Some(e) => format!(
+                    "{} {e} {}",
+                    palette.glyphs().warn,
+                    loc.t("ui.settings.ui.esc_cancel")
+                ),
                 None => base_title.to_string(),
             };
             let popup = if editor.multiline {
@@ -131,7 +148,7 @@ impl SettingsScreen {
             })
             .collect();
         let block = palette
-            .panel("выбор · Enter · Esc", true)
+            .panel(self.loc().t("ui.settings.ui.choice_title"), true)
             .border_style(palette.border_style(true));
         let list = List::new(items)
             .block(block)
@@ -143,6 +160,7 @@ impl SettingsScreen {
 
     /// Рисует оверлей поиска: строка запроса + отфильтрованная выдача.
     pub(super) fn render_search(&mut self, frame: &mut Frame, area: Rect, palette: &Palette) {
+        let loc = self.loc();
         let popup = centered_rect(72, 50, (area.height * 3 / 4).max(8), area);
         dim_background(frame, palette);
         frame.render_widget(Clear, popup);
@@ -164,7 +182,13 @@ impl SettingsScreen {
             (rows, s.all.len(), s.selected)
         };
 
-        let title = format!("Поиск полей ({}/{})", results.len(), all_len);
+        let title = loc.tf(
+            "ui.settings.ui.search_title",
+            &[
+                ("found", &results.len().to_string()),
+                ("total", &all_len.to_string()),
+            ],
+        );
         self.search.as_mut().unwrap().input.render(
             frame,
             input_area,
@@ -176,7 +200,7 @@ impl SettingsScreen {
         let inner_w = list_area.width.saturating_sub(2) as usize;
         let items: Vec<ListItem> = if results.is_empty() {
             vec![ListItem::new(Line::styled(
-                "  ничего не найдено",
+                loc.t("ui.settings.ui.nothing_found"),
                 palette.muted_style(),
             ))]
         } else {
@@ -200,7 +224,7 @@ impl SettingsScreen {
                 .collect()
         };
         let block = palette
-            .panel("Enter — перейти · ↑↓ — выбор · Esc — отмена", false)
+            .panel(loc.t("ui.settings.ui.search_footer"), false)
             .border_style(palette.border_style(true));
         let list = List::new(items)
             .block(block)
@@ -267,6 +291,7 @@ impl SettingsScreen {
 
     pub(super) fn render_menu(&self, frame: &mut Frame, area: Rect, counts: &[usize]) {
         let palette = self.palette();
+        let loc = self.loc();
         let focused = self.focus == Focus::Menu;
         // Ширина под содержимое строки меню (минус правая рамка) — для правого
         // выравнивания счётчика полей.
@@ -284,13 +309,13 @@ impl SettingsScreen {
                     Span::styled("  ", Style::new())
                 };
                 let title = if active {
-                    Span::styled(s.title(), Style::new().fg(palette.text).bold())
+                    Span::styled(s.title(loc), Style::new().fg(palette.text).bold())
                 } else {
-                    Span::styled(s.title(), palette.muted_style())
+                    Span::styled(s.title(loc), palette.muted_style())
                 };
                 // Счётчик полей секции, прижатый к правому краю меню.
                 let count = counts.get(i).copied().unwrap_or(0).to_string();
-                let used = 2 + label_width(s.title()) + count.chars().count();
+                let used = 2 + label_width(s.title(loc)) + count.chars().count();
                 let pad = inner_w.saturating_sub(used).max(1);
                 ListItem::new(Line::from(vec![
                     bar,
@@ -305,9 +330,13 @@ impl SettingsScreen {
             .border_style(palette.border_style(false))
             .title(Span::styled(
                 if focused {
-                    format!(" {} Секции ", palette.glyphs().collapsed)
+                    format!(
+                        " {} {} ",
+                        palette.glyphs().collapsed,
+                        loc.t("ui.settings.ui.sections")
+                    )
                 } else {
-                    " Секции ".to_string()
+                    format!(" {} ", loc.t("ui.settings.ui.sections"))
                 },
                 palette.muted_style(),
             ));
@@ -330,21 +359,26 @@ impl SettingsScreen {
     /// Чип статуса сервера активной подсекции секции «Модель» (ассистент → чат,
     /// имперсонация → имперсонация, эмбеддинги → эмбеддинги).
     pub(super) fn model_server_chip(&self, palette: &Palette) -> Vec<Span<'static>> {
+        let loc = self.loc();
         let (status, label) = match self.model_sub {
-            ModelTab::Assistant => (&self.statuses.chat, "чат"),
-            ModelTab::Impersonation => (&self.statuses.impersonation, "имперсонация"),
-            ModelTab::Embeddings => (&self.statuses.embed, "эмбеддинги"),
+            ModelTab::Assistant => (&self.statuses.chat, loc.t("ui.settings.chip.chat")),
+            ModelTab::Impersonation => (
+                &self.statuses.impersonation,
+                loc.t("ui.settings.chip.impersonation"),
+            ),
+            ModelTab::Embeddings => (&self.statuses.embed, loc.t("ui.settings.chip.embeddings")),
         };
-        server_status_chip(status, label, palette)
+        server_status_chip(status, label, loc, palette)
     }
 
     /// Таб-стрип подсекции для текущей секции: (подписи вкладок, активная).
     /// `None` — секция без подсекций.
-    pub(super) fn subsection_tabs(&self) -> Option<(&'static [&'static str], usize)> {
+    pub(super) fn subsection_tabs(&self) -> Option<(Vec<&'static str>, usize)> {
+        let loc = self.loc();
         match self.section() {
-            Section::Model => Some((&MODEL_TABS, self.model_sub as usize)),
-            Section::Sampling => Some((&SUB_TABS, self.sampling_sub as usize)),
-            Section::Profiles => Some((&SUB_TABS, self.profile_sub as usize)),
+            Section::Model => Some((model_tab_labels(loc), self.model_sub as usize)),
+            Section::Sampling => Some((sub_tab_labels(loc), self.sampling_sub as usize)),
+            Section::Profiles => Some((sub_tab_labels(loc), self.profile_sub as usize)),
             _ => None,
         }
     }
@@ -359,6 +393,7 @@ impl SettingsScreen {
         // списка, а таб-стрипом над ним. Его позиция нужна для «фокуса на вкладках».
         let sub_pos = fields.iter().position(|f| is_subsection(f.id));
         let tabs = sub_pos.and(self.subsection_tabs());
+        let loc = self.loc();
 
         // Шапка: титул секции (всегда) + таб-стрип (если есть подсекции). Нижняя
         // панель (значение+описание) резервируется всегда при наличии полей.
@@ -377,7 +412,7 @@ impl SettingsScreen {
                 Style::new().fg(palette.assistant),
             ),
             Span::styled(
-                format!("{} ", self.section().title()),
+                format!("{} ", self.section().title(loc)),
                 Style::new().fg(palette.text).bold(),
             ),
         ];
@@ -396,7 +431,7 @@ impl SettingsScreen {
         let mut head_lines = vec![Line::from(title_spans)];
         if let Some((labels, active)) = tabs {
             let on_tabs = focused && sub_pos == Some(self.field_idx);
-            head_lines.push(tab_strip_line(labels, active, on_tabs, &palette));
+            head_lines.push(tab_strip_line(&labels, active, on_tabs, &palette));
         }
         frame.render_widget(Paragraph::new(head_lines), head_area);
 
@@ -454,7 +489,7 @@ impl SettingsScreen {
             let modified = default_fields
                 .iter()
                 .find(|d| d.id == f.id)
-                .map(|d| value_text(&d.kind) != value_text(&f.kind))
+                .map(|d| value_text(&d.kind, loc) != value_text(&f.kind, loc))
                 .unwrap_or(false);
             // Ширина под значение: минус маркер(2)+подпись+отступ и правый зазор.
             // Подпись длиннее колонки (> LABEL_CAP) сдвигает значение вправо —
@@ -536,9 +571,7 @@ impl SettingsScreen {
                 // предупреждения), чтобы честный гейт был понятен, а не только «⊘».
                 if f.warn {
                     lines.push(Line::styled(
-                        "Инструмент включён в профиле, но выключен глобальным \
-                         выключателем — он недоступен модели. Включите его в секции \
-                         «Инструменты».",
+                        loc.t("ui.settings.ui.gate_warn"),
                         Style::new().fg(palette.warning),
                     ));
                 }

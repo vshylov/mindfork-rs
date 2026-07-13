@@ -243,7 +243,7 @@ impl ChatScreen {
         self.generating = false;
         self.current_gen = None;
         if reason == FinishReason::Cancelled {
-            self.push_note("(генерация отменена)");
+            self.push_note(self.loc.t("ui.chat.gen_cancelled"));
         }
     }
 

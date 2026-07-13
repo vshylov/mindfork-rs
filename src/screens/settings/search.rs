@@ -10,6 +10,9 @@ impl SettingsScreen {
     /// Строит полный индекс полей всех секций/подсекций для поиска. Поля
     /// mode-зависимой видимости берутся по текущему режиму (managed/облако).
     pub(super) fn build_search_index(&self) -> Vec<SearchHit> {
+        let loc = self.loc();
+        let model_tabs = model_tab_labels(loc);
+        let sub_tabs = sub_tab_labels(loc);
         let mut out = Vec::new();
         for (sec_idx, sec) in SECTIONS.iter().enumerate() {
             match sec {
@@ -20,8 +23,9 @@ impl SettingsScreen {
                             sec_idx,
                             *sec,
                             Some(si),
-                            Some(MODEL_TABS[si]),
+                            Some(model_tabs[si]),
                             self.model_fields_for(*sub),
+                            loc,
                         );
                     }
                 }
@@ -32,8 +36,9 @@ impl SettingsScreen {
                             sec_idx,
                             *sec,
                             Some(si),
-                            Some(SUB_TABS[si]),
+                            Some(sub_tabs[si]),
                             self.sampling_fields_for(*sub),
+                            loc,
                         );
                     }
                 }
@@ -44,20 +49,33 @@ impl SettingsScreen {
                             sec_idx,
                             *sec,
                             Some(si),
-                            Some(SUB_TABS[si]),
+                            Some(sub_tabs[si]),
                             self.profile_fields_for(*sub),
+                            loc,
                         );
                     }
                 }
                 Section::Tools => {
-                    collect_hits(&mut out, sec_idx, *sec, None, None, self.tool_fields())
+                    collect_hits(&mut out, sec_idx, *sec, None, None, self.tool_fields(), loc)
                 }
-                Section::Memory => {
-                    collect_hits(&mut out, sec_idx, *sec, None, None, self.memory_fields())
-                }
-                Section::Interface => {
-                    collect_hits(&mut out, sec_idx, *sec, None, None, self.interface_fields())
-                }
+                Section::Memory => collect_hits(
+                    &mut out,
+                    sec_idx,
+                    *sec,
+                    None,
+                    None,
+                    self.memory_fields(),
+                    loc,
+                ),
+                Section::Interface => collect_hits(
+                    &mut out,
+                    sec_idx,
+                    *sec,
+                    None,
+                    None,
+                    self.interface_fields(),
+                    loc,
+                ),
             }
         }
         out

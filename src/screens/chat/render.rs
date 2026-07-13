@@ -84,6 +84,7 @@ impl ChatScreen {
             frame.area().width as usize,
             &self.status_model(background.as_deref()),
             &self.palette,
+            self.loc,
         );
         let [feed_area, banner_area, input_area, status_area] = Layout::vertical([
             Constraint::Min(3),
@@ -99,8 +100,15 @@ impl ChatScreen {
             self.title.clone()
         };
         let meta = self.model_meta();
-        self.feed_view
-            .render(frame, feed_area, &title, &meta, &self.feed, &self.palette);
+        self.feed_view.render(
+            frame,
+            feed_area,
+            &title,
+            &meta,
+            &self.feed,
+            &self.palette,
+            self.loc,
+        );
 
         if let Some(banner) = &self.rag {
             // Кадры спиннера — из набора глифов палитры (Брайль; компат — ASCII).
@@ -118,6 +126,7 @@ impl ChatScreen {
             status_area,
             &self.status_model(background.as_deref()),
             &self.palette,
+            self.loc,
         );
 
         // Во время имперсонации поле ввода скрыто — на его месте потоковый
@@ -130,12 +139,13 @@ impl ChatScreen {
                 imp.tick,
                 imp.done,
                 &self.palette,
+                self.loc,
             );
         } else {
             let input_title = if self.generating {
-                "ввод · генерация… Esc отмена"
+                self.loc.t("ui.chat.input.generating")
             } else {
-                "ввод · Enter отправить · Shift+Enter перенос"
+                self.loc.t("ui.chat.input.idle")
             };
             let focused = self.profile_overlay.is_none()
                 && self.suggest.is_none()
@@ -149,30 +159,30 @@ impl ChatScreen {
                     title: input_title,
                     focused,
                     command,
-                    placeholder: "введите сообщение…",
+                    placeholder: self.loc.t("ui.chat.input.placeholder"),
                 },
                 &self.palette,
             );
         }
 
         if let Some(overlay) = &self.profile_overlay {
-            overlay.render(frame, frame.area(), &self.palette);
+            overlay.render(frame, frame.area(), &self.palette, self.loc);
         }
         if let Some(popup) = &self.suggest {
             dim_background(frame, &self.palette);
-            render_suggest(frame, popup, &self.palette);
+            render_suggest(frame, popup, &self.palette, self.loc);
         }
         if let Some(picker) = &self.emoji {
             dim_background(frame, &self.palette);
-            picker.render(frame, frame.area(), &self.palette);
+            picker.render(frame, frame.area(), &self.palette, self.loc);
         }
         if let Some(action) = self.confirm {
             dim_background(frame, &self.palette);
-            render_confirm(frame, action, &self.palette);
+            render_confirm(frame, action, &self.palette, self.loc);
         }
         if self.show_help {
             dim_background(frame, &self.palette);
-            render_help(frame, &mut self.help_scroll, &self.palette);
+            render_help(frame, &mut self.help_scroll, &self.palette, self.loc);
         }
     }
 }

@@ -115,16 +115,22 @@ impl EmojiPickerState {
     }
 
     /// Рисует попап по центру `area`: сетка эмодзи, выделенная ячейка — reversed.
-    pub fn render(&self, frame: &mut Frame, area: Rect, palette: &Palette) {
+    pub fn render(
+        &self,
+        frame: &mut Frame,
+        area: Rect,
+        palette: &Palette,
+        loc: &'static crate::shared::i18n::Locale,
+    ) {
         let rows = EMOJIS.len().div_ceil(COLS) as u16;
         let width = COLS as u16 * CELL_W + 2; // +2 — рамка
         let popup = centered_rect(width, rows + 2, area);
         frame.render_widget(Clear, popup);
 
         let block = palette
-            .panel("☺ Эмодзи", true)
+            .panel(format!("☺ {}", loc.t("ui.emoji.title")), true)
             .title_bottom(Line::from(Span::styled(
-                " ←↑↓→ выбор · Enter вставить · Esc отмена ",
+                loc.t("ui.emoji.footer"),
                 palette.muted_style(),
             )));
         let inner = block.inner(popup);
@@ -175,6 +181,10 @@ fn centered_rect(width: u16, height: u16, area: Rect) -> Rect {
 mod tests {
     use super::*;
     use ratatui::crossterm::event::KeyModifiers;
+
+    fn ru() -> &'static crate::shared::i18n::Locale {
+        crate::shared::i18n::locale(crate::shared::i18n::Lang::Ru)
+    }
 
     fn key(code: KeyCode) -> KeyEvent {
         KeyEvent::new(code, KeyModifiers::NONE)
@@ -254,7 +264,7 @@ mod tests {
         let s = EmojiPickerState::new();
         for (w, h) in [(80u16, 24u16), (20, 6)] {
             let mut term = Terminal::new(TestBackend::new(w, h)).unwrap();
-            term.draw(|f| s.render(f, f.area(), &Palette::default()))
+            term.draw(|f| s.render(f, f.area(), &Palette::default(), ru()))
                 .unwrap();
         }
     }

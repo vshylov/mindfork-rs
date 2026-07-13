@@ -14,6 +14,7 @@ use uuid::Uuid;
 
 use crate::entities::chat::ChatSummary;
 use crate::features::spellcheck::SpellChecker;
+use crate::shared::i18n::Locale;
 use crate::shared::theme::Palette;
 use crate::widgets::chat_list::{ChatListAction, ChatListState};
 
@@ -48,6 +49,8 @@ pub struct ChatListScreen {
     active: Option<Uuid>,
     /// Палитра темы для отрисовки (обновляется при `Settings`).
     palette: Palette,
+    /// Локаль интерфейса (обновляется при `Settings`). См. docs/i18n-ui.md.
+    loc: &'static Locale,
     /// Ждём активации только что созданного чата (`Ctrl+N`): список остаётся на
     /// экране до прихода его `ChatActivated`, чтобы не мигнуть прежним чатом
     /// перед новым. Гасится в `take_pending_new_chat`. См. spec §11.2.
@@ -56,11 +59,17 @@ pub struct ChatListScreen {
 
 impl ChatListScreen {
     /// Открывает экран со снимком списка; выделение — на активном чате.
-    pub fn new(chats: Vec<ChatSummary>, active: Option<Uuid>, palette: Palette) -> Self {
+    pub fn new(
+        chats: Vec<ChatSummary>,
+        active: Option<Uuid>,
+        palette: Palette,
+        loc: &'static Locale,
+    ) -> Self {
         Self {
             state: ChatListState::new(chats, active),
             active,
             palette,
+            loc,
             pending_new_chat: false,
         }
     }
@@ -92,6 +101,11 @@ impl ChatListScreen {
     /// Обновляет палитру темы (событие `AppEvent::Settings`).
     pub fn set_palette(&mut self, palette: Palette) {
         self.palette = palette;
+    }
+
+    /// Обновляет локаль интерфейса (событие `AppEvent::Settings`).
+    pub fn set_loc(&mut self, loc: &'static Locale) {
+        self.loc = loc;
     }
 
     /// Показывает ошибку операции списка в его области статуса (гаснет по нажатию).
@@ -138,7 +152,7 @@ impl ChatListScreen {
     /// [`InputBox`](crate::widgets::input_box::InputBox), которому нужен `&mut`.
     pub fn render(&mut self, frame: &mut Frame) {
         self.state
-            .render(frame, frame.area(), self.active, &self.palette);
+            .render(frame, frame.area(), self.active, &self.palette, self.loc);
     }
 }
 
@@ -147,6 +161,10 @@ mod tests {
     use super::*;
     use chrono::Utc;
     use ratatui::crossterm::event::{KeyCode, KeyModifiers};
+
+    fn ru() -> &'static Locale {
+        crate::shared::i18n::locale(crate::shared::i18n::Lang::Ru)
+    }
 
     fn chat(title: &str) -> ChatSummary {
         ChatSummary {
@@ -168,13 +186,13 @@ mod tests {
 
     #[test]
     fn esc_maps_to_close() {
-        let mut s = ChatListScreen::new(vec![chat("A")], None, Palette::default());
+        let mut s = ChatListScreen::new(vec![chat("A")], None, Palette::default(), ru());
         assert_eq!(s.handle_key(key(KeyCode::Esc)), Some(ChatListIntent::Close));
     }
 
     #[test]
     fn ctrl_q_and_f10_map_to_quit() {
-        let mut s = ChatListScreen::new(vec![chat("A")], None, Palette::default());
+        let mut s = ChatListScreen::new(vec![chat("A")], None, Palette::default(), ru());
         assert_eq!(
             s.handle_key(ctrl(KeyCode::Char('q'))),
             Some(ChatListIntent::Quit)
@@ -189,7 +207,7 @@ mod tests {
     fn enter_maps_to_switch_of_selected() {
         let chats = vec![chat("A")];
         let id = chats[0].id;
-        let mut s = ChatListScreen::new(chats, Some(id), Palette::default());
+        let mut s = ChatListScreen::new(chats, Some(id), Palette::default(), ru());
         assert_eq!(
             s.handle_key(key(KeyCode::Enter)),
             Some(ChatListIntent::Switch(id))
@@ -198,7 +216,7 @@ mod tests {
 
     #[test]
     fn ctrl_n_maps_to_new_chat() {
-        let mut s = ChatListScreen::new(vec![chat("A")], None, Palette::default());
+        let mut s = ChatListScreen::new(vec![chat("A")], None, Palette::default(), ru());
         assert_eq!(
             s.handle_key(ctrl(KeyCode::Char('n'))),
             Some(ChatListIntent::NewChat)
@@ -207,15 +225,19 @@ mod tests {
 
     #[test]
     fn typing_filters_and_returns_none() {
-        let mut s =
-            ChatListScreen::new(vec![chat("Альфа"), chat("Бета")], None, Palette::default());
+        let mut s = ChatListScreen::new(
+            vec![chat("Альфа"), chat("Бета")],
+            None,
+            Palette::default(),
+            ru(),
+        );
         // Печать символа в строку поиска — обработана внутри (нет намерения).
         assert_eq!(s.handle_key(key(KeyCode::Char('Б'))), None);
     }
 
     #[test]
     fn pending_new_chat_flag_set_and_taken_once() {
-        let mut s = ChatListScreen::new(vec![chat("A")], None, Palette::default());
+        let mut s = ChatListScreen::new(vec![chat("A")], None, Palette::default(), ru());
         assert!(!s.take_pending_new_chat());
         s.set_pending_new_chat();
         // Забирается ровно один раз (сбрасывается) — вторая активация закрыть не должна.
@@ -227,7 +249,7 @@ mod tests {
     fn render_does_not_panic() {
         use ratatui::Terminal;
         use ratatui::backend::TestBackend;
-        let mut s = ChatListScreen::new(vec![chat("Альфа")], None, Palette::default());
+        let mut s = ChatListScreen::new(vec![chat("Альфа")], None, Palette::default(), ru());
         let mut term = Terminal::new(TestBackend::new(80, 24)).unwrap();
         term.draw(|f| s.render(f)).unwrap();
     }

@@ -11,7 +11,9 @@ impl ChatScreen {
         match progress {
             RagProgress::Started { total } => {
                 self.rag = Some(RagBanner {
-                    text: format!("найдено файлов: {total}, начинаю индексацию…"),
+                    text: self
+                        .loc
+                        .tf("ui.rag.started", &[("total", &total.to_string())]),
                     tick: 0,
                 });
             }
@@ -24,9 +26,17 @@ impl ChatScreen {
                 let location = if dir.is_empty() {
                     String::new()
                 } else {
-                    format!(" из {dir}")
+                    self.loc.tf("ui.rag.from", &[("dir", &dir)])
                 };
-                let text = format!("индексация {name}{location} ({index}/{total})");
+                let text = self.loc.tf(
+                    "ui.rag.indexing",
+                    &[
+                        ("name", &name),
+                        ("location", &location),
+                        ("index", &index.to_string()),
+                        ("total", &total.to_string()),
+                    ],
+                );
                 match &mut self.rag {
                     Some(banner) => banner.text = text,
                     None => self.rag = Some(RagBanner { text, tick: 0 }),
@@ -40,29 +50,43 @@ impl ChatScreen {
             } => {
                 self.rag = None;
                 let mut msg = if cancelled {
-                    format!("RAG: индексация прервана — фрагментов добавлено: {chunks}")
+                    self.loc.tf(
+                        "ui.rag.finished_cancelled",
+                        &[("chunks", &chunks.to_string())],
+                    )
                 } else {
-                    format!("RAG: индексация завершена — файлов: {files}, фрагментов: {chunks}")
+                    self.loc.tf(
+                        "ui.rag.finished",
+                        &[
+                            ("files", &files.to_string()),
+                            ("chunks", &chunks.to_string()),
+                        ],
+                    )
                 };
                 if errors > 0 {
-                    msg.push_str(&format!(", с ошибками: {errors}"));
+                    msg.push_str(
+                        &self
+                            .loc
+                            .tf("ui.rag.errors_suffix", &[("errors", &errors.to_string())]),
+                    );
                 }
                 self.push_note(&msg);
             }
             RagProgress::Removed { chunks } => {
                 let msg = if chunks == 0 {
-                    "RAG: по указанному пути ничего не найдено в базе".to_string()
+                    self.loc.t("ui.rag.removed_none").to_string()
                 } else {
-                    format!("RAG: удалено фрагментов: {chunks}")
+                    self.loc
+                        .tf("ui.rag.removed", &[("chunks", &chunks.to_string())])
                 };
                 self.push_note(&msg);
             }
             RagProgress::Listed { sources } => {
-                self.push_note(&format_rag_sources(&sources));
+                self.push_note(&format_rag_sources(&sources, self.loc));
             }
             RagProgress::Failed(err) => {
                 self.rag = None;
-                self.push_error(&format!("RAG: {err}"));
+                self.push_error(&self.loc.tf("ui.rag.failed", &[("err", &err)]));
             }
         }
     }
@@ -74,20 +98,34 @@ impl ChatScreen {
     }
 }
 
-pub(super) fn format_rag_sources(sources: &[crate::entities::rag::RagSourceInfo]) -> String {
+pub(super) fn format_rag_sources(
+    sources: &[crate::entities::rag::RagSourceInfo],
+    loc: &'static Locale,
+) -> String {
     if sources.is_empty() {
-        return "RAG: база знаний пуста".to_string();
+        return loc.t("ui.rag.list_empty").to_string();
     }
     let total: usize = sources.iter().map(|s| s.chunks).sum();
-    let mut out = format!("RAG: источников: {}, фрагментов: {total}", sources.len());
+    let mut out = loc.tf(
+        "ui.rag.list_header",
+        &[
+            ("n", &sources.len().to_string()),
+            ("total", &total.to_string()),
+        ],
+    );
     for s in sources {
-        out.push_str(&format!(
-            "\n• {} — {} фрагм. ({})",
-            s.source,
-            s.chunks,
-            s.created_at
-                .with_timezone(&chrono::Local)
-                .format("%Y-%m-%d")
+        let date = s
+            .created_at
+            .with_timezone(&chrono::Local)
+            .format("%Y-%m-%d")
+            .to_string();
+        out.push_str(&loc.tf(
+            "ui.rag.list_item",
+            &[
+                ("source", &s.source),
+                ("chunks", &s.chunks.to_string()),
+                ("date", &date),
+            ],
         ));
     }
     out

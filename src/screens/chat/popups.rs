@@ -119,58 +119,71 @@ impl ChatScreen {
     }
 }
 
-/// Список горячих клавиш для оверлея помощи (`F1`/`?`). См. spec §11.7.
+/// Список горячих клавиш для оверлея помощи (`F1`/`?`). Пары `(keycap, desc_key)`:
+/// `keycap` — литеральная «клавиша» (ASCII, универсальна) **или** `ui.*`-ключ там,
+/// где сам ярлык содержит слова (мышь, `<путь>`); `desc_key` — всегда `ui.*`-ключ
+/// описания. Оба резолвятся через локаль в [`render_help`]. См. spec §11.7,
+/// docs/i18n-ui.md.
 pub(super) const HELP_KEYS: &[(&str, &str)] = &[
-    ("Enter", "отправить сообщение"),
-    ("Shift+Enter / Alt+Enter", "перенос строки"),
-    ("Shift+←/→/↑/↓", "выделить текст"),
-    ("Ctrl+A", "выделить весь ввод"),
-    ("Ctrl+C", "копировать выделение"),
-    ("Ctrl+X", "вырезать выделение"),
-    ("Ctrl+V", "вставить текст из буфера (многострочно)"),
-    ("Esc", "список чатов · закрыть · отмена генерации"),
-    ("Ctrl+N", "новый чат (выбор профиля)"),
-    ("F3", "модель себя (просмотр/правка)"),
-    ("F5", "копировать переписку чата"),
-    ("Ctrl+R", "перегенерировать ответ"),
-    ("Ctrl+E", "удалить последний обмен (правка)"),
-    ("Ctrl+U", "написать сообщение за пользователя"),
-    ("Ctrl+K", "удалить весь текст ввода (возврат — Ctrl+Z)"),
-    ("Ctrl+Z / Ctrl+Y", "отмена / повтор правки"),
-    ("Ctrl+←/→", "курсор по словам"),
-    ("Ctrl+Backspace/Delete", "удалить слово слева/справа"),
-    ("Ctrl+Home/End", "в начало/конец текста ввода"),
-    ("Ctrl+P", "экран настроек"),
-    ("Ctrl+T", "свернуть/развернуть «мысли»"),
-    ("Ctrl+G", "подсказки орфографии"),
-    ("Ctrl+B", "вставить эмодзи"),
-    ("Ctrl+W", "колесо мыши ↔ выделение текста"),
-    (
-        "клик/драг мышью",
-        "курсор/выделение в поле (при захвате Ctrl+W)",
-    ),
-    ("/rag add <путь> [-r]", "индексировать файлы в RAG"),
-    ("/rag remove <путь>", "удалить файлы из RAG"),
-    ("/rag list", "источники в базе знаний"),
-    ("/rag rebuild", "реиндексировать базу знаний"),
-    ("PageUp/PageDown", "прокрутка ленты"),
-    ("F1 / ?", "эта справка"),
-    ("Ctrl+Q / F10", "выход"),
+    ("Enter", "ui.help.send"),
+    ("Shift+Enter / Alt+Enter", "ui.help.newline"),
+    ("Shift+←/→/↑/↓", "ui.help.select"),
+    ("Ctrl+A", "ui.help.select_all"),
+    ("Ctrl+C", "ui.help.copy"),
+    ("Ctrl+X", "ui.help.cut"),
+    ("Ctrl+V", "ui.help.paste"),
+    ("Esc", "ui.help.esc"),
+    ("Ctrl+N", "ui.help.new_chat"),
+    ("F3", "ui.help.self_model"),
+    ("F5", "ui.help.copy_chat"),
+    ("Ctrl+R", "ui.help.regenerate"),
+    ("Ctrl+E", "ui.help.delete_exchange"),
+    ("Ctrl+U", "ui.help.impersonate"),
+    ("Ctrl+K", "ui.help.clear_input"),
+    ("Ctrl+Z / Ctrl+Y", "ui.help.undo_redo"),
+    ("Ctrl+←/→", "ui.help.word_move"),
+    ("Ctrl+Backspace/Delete", "ui.help.word_delete"),
+    ("Ctrl+Home/End", "ui.help.doc_move"),
+    ("Ctrl+P", "ui.help.settings"),
+    ("Ctrl+T", "ui.help.thoughts"),
+    ("Ctrl+G", "ui.help.spell"),
+    ("Ctrl+B", "ui.help.emoji"),
+    ("Ctrl+W", "ui.help.mouse_toggle"),
+    ("ui.help.k.mouse", "ui.help.mouse_action"),
+    ("ui.help.k.rag_add", "ui.help.rag_add"),
+    ("ui.help.k.rag_remove", "ui.help.rag_remove"),
+    ("/rag list", "ui.help.rag_list"),
+    ("/rag rebuild", "ui.help.rag_rebuild"),
+    ("PageUp/PageDown", "ui.help.scroll"),
+    ("F1 / ?", "ui.help.help"),
+    ("Ctrl+Q / F10", "ui.help.quit"),
 ];
 
 /// Рисует оверлей помощи по центру экрана: «клавиши» + приглушённые описания.
 /// На коротком терминале список не помещается и прокручивается (`↑↓`/`PgUp`/
 /// `PgDn` в `handle_key`) со скроллбаром на правой рамке; `scroll` клампится
 /// здесь — только при отрисовке известна фактическая высота попапа.
-pub(super) fn render_help(frame: &mut Frame, scroll: &mut usize, palette: &Palette) {
-    let rows = (HELP_KEYS.len() as u16 + 2).min(frame.area().height);
-    let key_width = HELP_KEYS
+pub(super) fn render_help(
+    frame: &mut Frame,
+    scroll: &mut usize,
+    palette: &Palette,
+    loc: &'static Locale,
+) {
+    // Резолвим клавиши и описания через локаль заранее (ширины и цвет команды
+    // считаем от локализованных строк). Литеральный keycap (ASCII) → сам себя
+    // (фолбэк `t` на отсутствующий ключ); `ui.*`-ключ → перевод.
+    let resolved: Vec<(String, String)> = HELP_KEYS
+        .iter()
+        .map(|(k, d)| (loc.t(k).to_string(), loc.t(d).to_string()))
+        .collect();
+    let rows = (resolved.len() as u16 + 2).min(frame.area().height);
+    let key_width = resolved
         .iter()
         .map(|(k, _)| k.chars().count())
         .max()
         .unwrap_or(0)
         + 4;
-    let desc_width = HELP_KEYS
+    let desc_width = resolved
         .iter()
         .map(|(_, d)| d.chars().count())
         .max()
@@ -180,28 +193,28 @@ pub(super) fn render_help(frame: &mut Frame, scroll: &mut usize, palette: &Palet
     let area = centered_rect(width, rows, frame.area());
     frame.render_widget(Clear, area);
 
-    let total = HELP_KEYS.len();
+    let total = resolved.len();
     let view_h = area.height.saturating_sub(2) as usize; // минус рамка
     *scroll = (*scroll).min(total.saturating_sub(view_h));
     let hint = if total > view_h {
-        " ↑↓ прокрутка · Esc — закрыть "
+        loc.t("ui.help.footer.scroll")
     } else {
-        " Esc или любая клавиша — закрыть "
+        loc.t("ui.help.footer.any")
     };
     let block = palette
         .panel(
-            format!("{}Горячие клавиши", palette.glyphs().help_icon),
+            format!("{}{}", palette.glyphs().help_icon, loc.t("ui.help.title")),
             true,
         )
         .title_bottom(Line::from(Span::styled(hint, palette.muted_style())).centered());
-    let lines: Vec<Line> = HELP_KEYS
+    let lines: Vec<Line> = resolved
         .iter()
         .map(|(k, d)| {
             // Команды (`/rag …`) красим как команду, обычные клавиши — «клавишей».
             let key_span = if k.starts_with('/') {
                 Span::styled(format!(" {k} "), Style::new().fg(palette.warning))
             } else {
-                palette.keycap(*k)
+                palette.keycap(k.clone())
             };
             Line::from(vec![
                 Span::raw("  "),
@@ -228,7 +241,12 @@ pub(super) fn render_help(frame: &mut Frame, scroll: &mut usize, palette: &Palet
 }
 
 /// Рисует попап подсказок орфографии по центру экрана.
-pub(super) fn render_suggest(frame: &mut Frame, popup: &SuggestPopup, palette: &Palette) {
+pub(super) fn render_suggest(
+    frame: &mut Frame,
+    popup: &SuggestPopup,
+    palette: &Palette,
+    loc: &'static Locale,
+) {
     let rows = (popup.items.len() as u16 + 2).min(frame.area().height);
     let area = centered_rect(40, rows, frame.area());
     frame.render_widget(Clear, area);
@@ -236,7 +254,7 @@ pub(super) fn render_suggest(frame: &mut Frame, popup: &SuggestPopup, palette: &
     let block = palette
         .panel(popup.word.clone(), true)
         .title_bottom(Line::from(Span::styled(
-            " Enter — применить · Esc — отмена ",
+            loc.t("ui.suggest.footer"),
             palette.muted_style(),
         )));
     let items: Vec<ListItem> = popup
@@ -249,7 +267,7 @@ pub(super) fn render_suggest(frame: &mut Frame, popup: &SuggestPopup, palette: &
                 }
                 SuggestItem::AddToDictionary => Line::from(
                     Span::styled(
-                        format!("{} Добавить в словарь", palette.glyphs().add),
+                        format!("{} {}", palette.glyphs().add, loc.t("ui.suggest.add")),
                         palette.success_style(),
                     )
                     .italic(),
@@ -269,19 +287,24 @@ pub(super) fn render_suggest(frame: &mut Frame, popup: &SuggestPopup, palette: &
 
 /// Рисует модальный попап подтверждения необратимой операции (`Ctrl+R`/`Ctrl+E`)
 /// по центру экрана. См. spec §11.7.
-pub(super) fn render_confirm(frame: &mut Frame, action: ConfirmAction, palette: &Palette) {
+pub(super) fn render_confirm(
+    frame: &mut Frame,
+    action: ConfirmAction,
+    palette: &Palette,
+    loc: &'static Locale,
+) {
     let width = 56u16.min(frame.area().width);
     let area = centered_rect(width, 5, frame.area());
     frame.render_widget(Clear, area);
-    let block = palette.panel("Подтверждение", true).title_bottom(
+    let block = palette.panel(loc.t("ui.confirm.title"), true).title_bottom(
         Line::from(Span::styled(
-            " Enter — да · Esc — нет ",
+            loc.t("ui.confirm.footer"),
             palette.muted_style(),
         ))
         .centered(),
     );
     let body = Paragraph::new(Line::from(Span::styled(
-        action.prompt(),
+        action.prompt(loc),
         Style::new().fg(palette.text),
     )))
     .block(block)

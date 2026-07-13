@@ -75,6 +75,22 @@ fn esc_closes() {
 }
 
 #[test]
+fn interface_language_field_cycles_and_relocalizes() {
+    use crate::shared::i18n::Lang;
+    let mut s = screen();
+    assert_eq!(s.config.interface.language, Lang::Ru);
+    // Поле «Язык интерфейса» присутствует и имеет описание.
+    assert!(field_desc(&s, FieldId::ILanguage).is_some());
+    // Циклическая правка (←→) меняет язык интерфейса.
+    goto_section(&mut s, Section::Interface);
+    goto_field(&mut s, FieldId::ILanguage);
+    s.handle_key(key(KeyCode::Right));
+    assert_eq!(s.config.interface.language, Lang::En);
+    // Экран настроек перерисовывается в новом языке: секция «Интерфейс» → «Interface».
+    assert_eq!(s.loc().t("ui.settings.section.interface"), "Interface");
+}
+
+#[test]
 fn ctrl_q_and_f10_quit() {
     let mut s = screen();
     assert_eq!(s.handle_key(ctrl('q')), Some(SettingsIntent::Quit));
@@ -1365,13 +1381,11 @@ fn sampling_extensions_have_descriptions() {
     for &p in SAMPLING_PARAMS {
         assert!(
             field_desc(&s, FieldId::S(p)).is_some(),
-            "нет подсказки для {:?} (Ассистент)",
-            p.label()
+            "нет подсказки для {p:?} (Ассистент)",
         );
         assert!(
             field_desc(&s, FieldId::IS(p)).is_some(),
-            "нет подсказки для {:?} (Имперсонация)",
-            p.label()
+            "нет подсказки для {p:?} (Имперсонация)",
         );
     }
 }

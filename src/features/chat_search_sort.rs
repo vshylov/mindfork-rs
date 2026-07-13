@@ -21,14 +21,6 @@ impl SortMode {
             SortMode::Modified => SortMode::Created,
         }
     }
-
-    /// Короткая подпись для индикатора активного режима.
-    pub fn label(self) -> &'static str {
-        match self {
-            SortMode::Created => "по созданию",
-            SortMode::Modified => "по изменению",
-        }
-    }
 }
 
 /// Фильтрует чаты по вхождению `query` в название (без учёта регистра) и

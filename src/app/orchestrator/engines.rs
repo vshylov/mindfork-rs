@@ -16,6 +16,7 @@ use crate::shared::api::{Embedder, EngineBackend, ServerHandle};
 use crate::shared::config::{
     EmbedSettings, EngineSettings, ImpersonationEngineSettings, ImpersonationMode,
 };
+use crate::shared::i18n::Locale;
 
 pub(super) struct EngineManager {
     /// Супервайзер серверов (для перезапуска при смене модели/сервера).
@@ -85,7 +86,7 @@ impl EngineManager {
     /// (Пере)поднимает chat-сервер по настройкам: гасит прежний managed-процесс,
     /// просит супервайзер настроить новый, сохраняет немедленный статус. Снимок
     /// статусов для UI вызывающий берёт через [`Self::statuses`].
-    pub(super) fn apply_chat(&mut self, settings: &EngineSettings) {
+    pub(super) fn apply_chat(&mut self, settings: &EngineSettings, loc: &'static Locale) {
         self.chat_handle = None; // drop старого managed-процесса (kill_on_drop)
         // Инвалидируем probe прежнего сервера и заводим новый токен.
         if let Some(tok) = self.chat_probe_cancel.take() {
@@ -95,7 +96,7 @@ impl EngineManager {
         self.chat_probe_cancel = Some(cancel.clone());
         let setup = self
             .supervisor
-            .apply_chat(settings, cancel, self.status_tx.clone());
+            .apply_chat(settings, cancel, self.status_tx.clone(), loc);
         self.backend = setup.backend;
         self.chat_handle = setup.handle;
         self.server_status = setup.status;
@@ -112,7 +113,11 @@ impl EngineManager {
 
     /// (Пере)поднимает сервер имперсонации. В режиме `shared` отдельный сервер не
     /// нужен — переиспользуется chat-сервер ассистента.
-    pub(super) fn apply_impersonation(&mut self, settings: &ImpersonationEngineSettings) {
+    pub(super) fn apply_impersonation(
+        &mut self,
+        settings: &ImpersonationEngineSettings,
+        loc: &'static Locale,
+    ) {
         self.imp_handle = None; // drop прежнего managed-процесса (kill_on_drop)
         // Инвалидируем probe прежнего сервера имперсонации (как у chat-сервера).
         if let Some(tok) = self.imp_probe_cancel.take() {
@@ -130,6 +135,7 @@ impl EngineManager {
                     settings,
                     cancel,
                     self.imp_status_tx.clone(),
+                    loc,
                 );
                 self.imp_backend = setup.backend;
                 self.imp_handle = setup.handle;

@@ -20,6 +20,7 @@ use crate::shared::config::{
     CloudProvider, EmbedSettings, EngineSettings, ImpersonationEngineSettings, ImpersonationMode,
     ManagedSettings, ServerMode,
 };
+use crate::shared::i18n::Locale;
 use crate::shared::server::ServerStatus;
 
 /// Щедрый таймаут готовности managed-сервера: загрузка модели может занять минуты.
@@ -57,6 +58,7 @@ pub trait ServerSupervisor: Send + Sync {
         settings: &EngineSettings,
         cancel: CancellationToken,
         status_tx: UnboundedSender<ServerStatus>,
+        loc: &'static Locale,
     ) -> ChatSetup;
 
     /// (Пере)подключается к embedding-серверу (RAG ленив — без probe).
@@ -65,12 +67,14 @@ pub trait ServerSupervisor: Send + Sync {
     /// (Пере)подключается/запускает сервер имперсонации для режимов `managed`/
     /// `external`. Для `shared` НЕ вызывается оркестратором (он переиспользует
     /// chat-сервер ассистента); если всё же вызван — `NotConfigured`. См. spec §11.8.
-    /// `cancel` — как у [`Self::apply_chat`] (инвалидация устаревшего probe).
+    /// `cancel` — как у [`Self::apply_chat`] (инвалидация устаревшего probe). `loc` —
+    /// язык интерфейса для отображаемых причин недоступности (облачные режимы).
     fn apply_impersonation(
         &self,
         settings: &ImpersonationEngineSettings,
         cancel: CancellationToken,
         status_tx: UnboundedSender<ServerStatus>,
+        loc: &'static Locale,
     ) -> ChatSetup;
 }
 
@@ -84,6 +88,7 @@ impl ServerSupervisor for LlamaSupervisor {
         settings: &EngineSettings,
         cancel: CancellationToken,
         status_tx: UnboundedSender<ServerStatus>,
+        loc: &'static Locale,
     ) -> ChatSetup {
         match settings.mode {
             ServerMode::External => external_chat_setup(
@@ -102,6 +107,7 @@ impl ServerSupervisor for LlamaSupervisor {
                     cloud.url.as_deref(),
                     cloud.api_key_env.as_deref(),
                     cloud.model_name.as_deref(),
+                    loc,
                 )
             }
         }
@@ -112,6 +118,7 @@ impl ServerSupervisor for LlamaSupervisor {
         settings: &ImpersonationEngineSettings,
         cancel: CancellationToken,
         status_tx: UnboundedSender<ServerStatus>,
+        loc: &'static Locale,
     ) -> ChatSetup {
         match settings.mode {
             // `shared` обслуживается оркестратором (chat-сервер ассистента).
@@ -132,6 +139,7 @@ impl ServerSupervisor for LlamaSupervisor {
                     cloud.url.as_deref(),
                     cloud.api_key_env.as_deref(),
                     cloud.model_name.as_deref(),
+                    loc,
                 )
             }
         }
@@ -300,14 +308,22 @@ fn managed_config(s: &ManagedSettings) -> ManagedConfig {
     }
 }
 
-/// Резолвит API-ключ из env-переменной по её имени. `Err` с понятным сообщением,
-/// если имя не задано или переменная отсутствует в окружении. Секрет на диск не
-/// пишется (ADR 0004) — хранится только имя переменной.
-fn resolve_api_key(api_key_env: Option<&str>) -> Result<String, String> {
+/// Структурированная ошибка резолва API-ключа (без локали — вызывающий локализует
+/// сам, см. [`cloud_chat_setup`]). `NoName` — не задано имя env-переменной;
+/// `Missing` несёт имя переменной, отсутствующей в окружении.
+pub(super) enum ApiKeyError {
+    NoName,
+    Missing(String),
+}
+
+/// Резолвит API-ключ из env-переменной по её имени. `Err` со структурированной
+/// причиной, если имя не задано или переменная отсутствует в окружении. Секрет на
+/// диск не пишется (ADR 0004) — хранится только имя переменной.
+fn resolve_api_key(api_key_env: Option<&str>) -> Result<String, ApiKeyError> {
     let var = api_key_env
         .filter(|v| !v.is_empty())
-        .ok_or_else(|| "не задано имя env-переменной с API-ключом".to_string())?;
-    std::env::var(var).map_err(|_| format!("переменная окружения {var} не задана"))
+        .ok_or(ApiKeyError::NoName)?;
+    std::env::var(var).map_err(|_| ApiKeyError::Missing(var.to_string()))
 }
 
 /// Строит облачный chat-backend (OpenAI/Gemini-compat): базовый URL провайдера (с
@@ -320,6 +336,7 @@ fn cloud_chat_setup(
     url_override: Option<&str>,
     api_key_env: Option<&str>,
     model_name: Option<&str>,
+    loc: &'static Locale,
 ) -> ChatSetup {
     let disconnected = |msg: String| ChatSetup {
         backend: None,
@@ -327,11 +344,16 @@ fn cloud_chat_setup(
         status: ServerStatus::Disconnected(msg),
     };
     let Some(model) = model_name.filter(|m| !m.is_empty()) else {
-        return disconnected("укажите имя модели для облачного провайдера".into());
+        return disconnected(loc.t("ui.err.server.no_model").into());
     };
     let key = match resolve_api_key(api_key_env) {
         Ok(k) => k,
-        Err(e) => return disconnected(e),
+        Err(ApiKeyError::NoName) => {
+            return disconnected(loc.t("ui.err.server.no_api_key_env").into());
+        }
+        Err(ApiKeyError::Missing(var)) => {
+            return disconnected(loc.tf("ui.err.server.env_missing", &[("var", &var)]));
+        }
     };
     // Чат-URL — нативный путь провайдера (у Gemini `…/v1beta`, не compat-эмбеддинги).
     let base = url_override
@@ -479,6 +501,7 @@ impl ServerSupervisor for MockSupervisor {
         _settings: &EngineSettings,
         _cancel: CancellationToken,
         _status_tx: UnboundedSender<ServerStatus>,
+        _loc: &'static Locale,
     ) -> ChatSetup {
         self.chat_calls
             .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
@@ -503,6 +526,7 @@ impl ServerSupervisor for MockSupervisor {
         _settings: &ImpersonationEngineSettings,
         _cancel: CancellationToken,
         _status_tx: UnboundedSender<ServerStatus>,
+        _loc: &'static Locale,
     ) -> ChatSetup {
         // Mock отдаёт тот же backend готовым сразу (как apply_chat) — для тестов
         // managed/external режимов имперсонации.
@@ -536,6 +560,12 @@ mod tests {
     use super::*;
     use tokio::sync::mpsc::unbounded_channel;
 
+    /// Референсная (русская) локаль для отображаемых причин недоступности: ассерты на
+    /// русские подстроки завязаны на ru-байт-в-байт.
+    fn ru() -> &'static Locale {
+        crate::shared::i18n::locale(crate::shared::i18n::Lang::Ru)
+    }
+
     fn external(url: Option<&str>) -> EngineSettings {
         EngineSettings {
             mode: ServerMode::External,
@@ -554,6 +584,7 @@ mod tests {
             &external(Some("http://127.0.0.1:9/v1")),
             CancellationToken::new(),
             tx,
+            ru(),
         );
         assert!(setup.backend.is_some());
         assert!(setup.handle.is_none());
@@ -578,7 +609,7 @@ mod tests {
     #[tokio::test]
     async fn external_without_url_is_not_configured() {
         let (tx, _rx) = unbounded_channel();
-        let setup = LlamaSupervisor.apply_chat(&external(None), CancellationToken::new(), tx);
+        let setup = LlamaSupervisor.apply_chat(&external(None), CancellationToken::new(), tx, ru());
         assert!(setup.backend.is_none());
         assert_eq!(setup.status, ServerStatus::NotConfigured);
     }
@@ -590,7 +621,7 @@ mod tests {
             mode: ServerMode::Managed,
             ..Default::default()
         };
-        let setup = LlamaSupervisor.apply_chat(&s, CancellationToken::new(), tx);
+        let setup = LlamaSupervisor.apply_chat(&s, CancellationToken::new(), tx, ru());
         assert_eq!(setup.status, ServerStatus::NotConfigured);
     }
 
@@ -605,7 +636,7 @@ mod tests {
             },
             ..Default::default()
         };
-        let setup = LlamaSupervisor.apply_chat(&s, CancellationToken::new(), tx);
+        let setup = LlamaSupervisor.apply_chat(&s, CancellationToken::new(), tx, ru());
         assert!(setup.backend.is_none());
         assert!(matches!(setup.status, ServerStatus::Disconnected(_)));
     }
@@ -625,7 +656,7 @@ mod tests {
             },
             ..Default::default()
         };
-        let setup = LlamaSupervisor.apply_chat(&s, CancellationToken::new(), tx);
+        let setup = LlamaSupervisor.apply_chat(&s, CancellationToken::new(), tx, ru());
         assert!(setup.backend.is_none());
         match setup.status {
             ServerStatus::Disconnected(msg) => assert!(msg.contains("файл модели"), "{msg}"),
@@ -637,12 +668,11 @@ mod tests {
     fn resolve_api_key_reads_env_and_reports_missing() {
         // PATH задана в любой ОС — гарантированный положительный случай без мутации env.
         assert!(resolve_api_key(Some("PATH")).is_ok());
-        assert!(resolve_api_key(None).is_err());
-        assert!(
-            resolve_api_key(Some("MINDFORK_DEFINITELY_UNSET_VAR_42"))
-                .unwrap_err()
-                .contains("MINDFORK_DEFINITELY_UNSET_VAR_42")
-        );
+        assert!(matches!(resolve_api_key(None), Err(ApiKeyError::NoName)));
+        match resolve_api_key(Some("MINDFORK_DEFINITELY_UNSET_VAR_42")) {
+            Err(ApiKeyError::Missing(var)) => assert_eq!(var, "MINDFORK_DEFINITELY_UNSET_VAR_42"),
+            _ => panic!("ожидался ApiKeyError::Missing"),
+        }
     }
 
     #[tokio::test]
@@ -657,7 +687,7 @@ mod tests {
             ..Default::default()
         };
         match LlamaSupervisor
-            .apply_chat(&s, CancellationToken::new(), tx)
+            .apply_chat(&s, CancellationToken::new(), tx, ru())
             .status
         {
             ServerStatus::Disconnected(m) => assert!(m.contains("модел"), "{m}"),
@@ -678,7 +708,7 @@ mod tests {
             ..Default::default()
         };
         match LlamaSupervisor
-            .apply_chat(&s, CancellationToken::new(), tx)
+            .apply_chat(&s, CancellationToken::new(), tx, ru())
             .status
         {
             ServerStatus::Disconnected(m) => {
@@ -701,7 +731,7 @@ mod tests {
             },
             ..Default::default()
         };
-        let setup = LlamaSupervisor.apply_chat(&s, CancellationToken::new(), tx);
+        let setup = LlamaSupervisor.apply_chat(&s, CancellationToken::new(), tx, ru());
         assert!(setup.backend.is_some());
         assert!(setup.handle.is_none(), "облако без дочернего процесса");
         assert_eq!(setup.status, ServerStatus::Ready);
@@ -721,7 +751,7 @@ mod tests {
             },
             ..Default::default()
         };
-        let setup = LlamaSupervisor.apply_chat(&s, CancellationToken::new(), tx);
+        let setup = LlamaSupervisor.apply_chat(&s, CancellationToken::new(), tx, ru());
         assert!(setup.backend.is_some());
         assert!(setup.handle.is_none());
         assert_eq!(setup.status, ServerStatus::Ready);

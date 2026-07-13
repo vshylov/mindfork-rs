@@ -12,6 +12,7 @@ use uuid::Uuid;
 use crate::app::events::{AppEvent, RagProgress};
 use crate::features::tools::rag::ChunkParams;
 use crate::shared::api::Embedder;
+use crate::shared::i18n::Locale;
 use crate::shared::storage::Storage;
 
 use super::Orchestrator;
@@ -40,7 +41,7 @@ impl Orchestrator {
             return;
         }
         let Some(profile_id) = self.active_profile_id() else {
-            self.fail_rag("нет активного чата");
+            self.fail_rag(self.ui_locale().t("ui.err.rag_no_active_chat"));
             return;
         };
 
@@ -53,6 +54,7 @@ impl Orchestrator {
             recursive,
             params: self.chunk_params(),
             cancel,
+            loc: self.ui_locale(),
             evt_tx: self.evt_tx.clone(),
         });
     }
@@ -69,7 +71,7 @@ impl Orchestrator {
             return;
         }
         let Some(profile_id) = self.active_profile_id() else {
-            self.fail_rag("нет активного чата");
+            self.fail_rag(self.ui_locale().t("ui.err.rag_no_active_chat"));
             return;
         };
         let p = std::path::Path::new(&path);
@@ -80,7 +82,10 @@ impl Orchestrator {
         };
         let progress = match self.storage.db().rag_delete_under(profile_id, &needle) {
             Ok(chunks) => RagProgress::Removed { chunks },
-            Err(err) => RagProgress::Failed(format!("удаление не удалось: {err}")),
+            Err(err) => RagProgress::Failed(
+                self.ui_locale()
+                    .tf("ui.err.rag_delete_failed", &[("err", &err.to_string())]),
+            ),
         };
         let _ = self.evt_tx.send(AppEvent::RagProgress(progress));
     }
@@ -89,12 +94,15 @@ impl Orchestrator {
     /// по каждому источнику — число чанков и дата. Быстрая операция БД на месте.
     pub(super) fn handle_rag_list(&mut self) {
         let Some(profile_id) = self.active_profile_id() else {
-            self.fail_rag("нет активного чата");
+            self.fail_rag(self.ui_locale().t("ui.err.rag_no_active_chat"));
             return;
         };
         let progress = match self.storage.db().rag_list_sources(profile_id) {
             Ok(sources) => RagProgress::Listed { sources },
-            Err(err) => RagProgress::Failed(format!("не удалось прочитать базу знаний: {err}")),
+            Err(err) => RagProgress::Failed(
+                self.ui_locale()
+                    .tf("ui.err.rag_read_kb_failed", &[("err", &err.to_string())]),
+            ),
         };
         let _ = self.evt_tx.send(AppEvent::RagProgress(progress));
     }
@@ -106,7 +114,7 @@ impl Orchestrator {
     /// предыдущую RAG-операцию (одна за раз).
     pub(super) fn handle_rag_rebuild(&mut self) {
         let Some(profile_id) = self.active_profile_id() else {
-            self.fail_rag("нет активного чата");
+            self.fail_rag(self.ui_locale().t("ui.err.rag_no_active_chat"));
             return;
         };
         let cancel = self.reset_rag_cancel();
@@ -116,6 +124,7 @@ impl Orchestrator {
             profile_id,
             params: self.chunk_params(),
             cancel,
+            loc: self.ui_locale(),
             evt_tx: self.evt_tx.clone(),
         });
     }
@@ -147,6 +156,8 @@ struct RagIngest {
     recursive: bool,
     params: ChunkParams,
     cancel: CancellationToken,
+    /// Язык интерфейса (ось B) — для сообщений о прогрессе/ошибках, видимых человеку.
+    loc: &'static Locale,
     evt_tx: tokio::sync::mpsc::UnboundedSender<AppEvent>,
 }
 
@@ -163,6 +174,7 @@ fn spawn_rag_ingest(task: RagIngest) {
         recursive,
         params,
         cancel,
+        loc,
         evt_tx,
     } = task;
 
@@ -175,20 +187,24 @@ fn spawn_rag_ingest(task: RagIngest) {
         let files = match crate::features::rag_ingest::scan(&root, recursive) {
             Ok(files) => files,
             Err(err) => {
-                send(RagProgress::Failed(format!("путь недоступен: {err}")));
+                send(RagProgress::Failed(loc.tf(
+                    "ui.err.rag_path_unavailable",
+                    &[("err", &err.to_string())],
+                )));
                 return;
             }
         };
         if files.is_empty() {
-            send(RagProgress::Failed(
-                "не найдено файлов .txt/.md для индексации".into(),
-            ));
+            send(RagProgress::Failed(loc.t("ui.err.rag_no_files").into()));
             return;
         }
 
         // 2. Предпроверка эмбеддера — быстрый понятный отказ, если RAG не настроен.
         if let Err(err) = embedder.embed(vec!["ping".into()]).await {
-            send(RagProgress::Failed(format!("эмбеддер недоступен: {err}")));
+            send(RagProgress::Failed(loc.tf(
+                "ui.err.rag_embedder_unavailable",
+                &[("err", &err.to_string())],
+            )));
             return;
         }
 
@@ -208,7 +224,7 @@ fn spawn_rag_ingest(task: RagIngest) {
                 name,
                 dir,
             });
-            match index_file(&embedder, &storage, profile_id, file, params).await {
+            match index_file(&embedder, &storage, profile_id, file, params, loc).await {
                 Ok(n) => chunks_total += n,
                 Err(err) => {
                     errors += 1;
@@ -233,6 +249,8 @@ struct RagRebuild {
     profile_id: Uuid,
     params: ChunkParams,
     cancel: CancellationToken,
+    /// Язык интерфейса (ось B) — для сообщений о прогрессе/ошибках, видимых человеку.
+    loc: &'static Locale,
     evt_tx: tokio::sync::mpsc::UnboundedSender<AppEvent>,
 }
 
@@ -247,6 +265,7 @@ fn spawn_rag_rebuild(task: RagRebuild) {
         profile_id,
         params,
         cancel,
+        loc,
         evt_tx,
     } = task;
 
@@ -259,20 +278,22 @@ fn spawn_rag_rebuild(task: RagRebuild) {
         let infos = match storage.db().rag_list_sources(profile_id) {
             Ok(v) => v,
             Err(err) => {
-                send(RagProgress::Failed(format!("чтение базы знаний: {err}")));
+                send(RagProgress::Failed(
+                    loc.tf("ui.err.rag_read_kb", &[("err", &err.to_string())]),
+                ));
                 return;
             }
         };
         if infos.is_empty() {
-            send(RagProgress::Failed(
-                "база знаний пуста — нечего реиндексировать".into(),
-            ));
+            send(RagProgress::Failed(loc.t("ui.err.rag_kb_empty").into()));
             return;
         }
         let stored: HashMap<String, String> = match storage.db().rag_stored_sources(profile_id) {
             Ok(v) => v.into_iter().map(|s| (s.source, s.content)).collect(),
             Err(err) => {
-                send(RagProgress::Failed(format!("чтение исходников: {err}")));
+                send(RagProgress::Failed(
+                    loc.tf("ui.err.rag_read_sources", &[("err", &err.to_string())]),
+                ));
                 return;
             }
         };
@@ -300,9 +321,7 @@ fn spawn_rag_rebuild(task: RagRebuild) {
         }
         if sources.is_empty() {
             send(RagProgress::Failed(
-                "не удалось получить исходный текст ни одного источника \
-                 (нет сохранённого текста и файлов на диске)"
-                    .into(),
+                loc.t("ui.err.rag_no_source_text").into(),
             ));
             return;
         }
@@ -311,12 +330,15 @@ fn spawn_rag_rebuild(task: RagRebuild) {
         let new_dim = match embedder.embed(vec!["ping".into()]).await {
             Ok(v) => v.first().map(|e| e.len()).unwrap_or(0),
             Err(err) => {
-                send(RagProgress::Failed(format!("эмбеддер недоступен: {err}")));
+                send(RagProgress::Failed(loc.tf(
+                    "ui.err.rag_embedder_unavailable",
+                    &[("err", &err.to_string())],
+                )));
                 return;
             }
         };
         if new_dim == 0 {
-            send(RagProgress::Failed("эмбеддер вернул пустой вектор".into()));
+            send(RagProgress::Failed(loc.t("ui.err.rag_empty_vector").into()));
             return;
         }
 
@@ -328,17 +350,15 @@ fn spawn_rag_rebuild(task: RagRebuild) {
         if dim_changed {
             match storage.db().rag_other_profiles_have_docs(profile_id) {
                 Ok(true) => {
-                    send(RagProgress::Failed(
-                        "сменилась размерность embedding-модели, но базу знаний \
-                         используют и другие профили — реиндексируйте их или очистите \
-                         сначала их базы"
-                            .into(),
-                    ));
+                    send(RagProgress::Failed(loc.t("ui.err.rag_dim_conflict").into()));
                     return;
                 }
                 Ok(false) => {}
                 Err(err) => {
-                    send(RagProgress::Failed(format!("проверка профилей: {err}")));
+                    send(RagProgress::Failed(loc.tf(
+                        "ui.err.rag_profiles_check",
+                        &[("err", &err.to_string())],
+                    )));
                     return;
                 }
             }
@@ -347,14 +367,15 @@ fn spawn_rag_rebuild(task: RagRebuild) {
         // 5. Сносим прежние чанки профиля (исходники сохраняем); при смене размерности
         //    дополнительно сбрасываем таблицу векторов (пересоздастся при первой вставке).
         if let Err(err) = storage.db().rag_delete_all_for_profile(profile_id) {
-            send(RagProgress::Failed(format!(
-                "очистка прежних чанков: {err}"
-            )));
+            send(RagProgress::Failed(
+                loc.tf("ui.err.rag_clear_chunks", &[("err", &err.to_string())]),
+            ));
             return;
         }
         if dim_changed && let Err(err) = storage.db().rag_reset_vectors() {
-            send(RagProgress::Failed(format!(
-                "сброс таблицы векторов: {err}"
+            send(RagProgress::Failed(loc.tf(
+                "ui.err.rag_reset_vectors",
+                &[("err", &err.to_string())],
             )));
             return;
         }
@@ -374,7 +395,11 @@ fn spawn_rag_rebuild(task: RagRebuild) {
                 name: source_display(source),
                 dir: String::new(),
             });
-            match index_source(&embedder, &storage, profile_id, source, content, params).await {
+            match index_source(
+                &embedder, &storage, profile_id, source, content, params, loc,
+            )
+            .await
+            {
                 Ok(n) => chunks_total += n,
                 Err(err) => {
                     errors += 1;
@@ -400,12 +425,16 @@ async fn index_file(
     profile_id: Uuid,
     path: &std::path::Path,
     params: ChunkParams,
+    loc: &'static Locale,
 ) -> anyhow::Result<usize> {
     let content = crate::features::rag_ingest::read_text(path)?;
     // Каноничный ключ источника + идемпотентность: при повторном добавлении того же
     // файла заменяем его прежние чанки, а не плодим дубли (см. [`index_source`]).
     let source = crate::features::rag_ingest::canonical_source(path);
-    index_source(embedder, storage, profile_id, &source, &content, params).await
+    index_source(
+        embedder, storage, profile_id, &source, &content, params, loc,
+    )
+    .await
 }
 
 /// Чанкует/эмбеддит/пишет один источник как единое целое (заменяя его прежние
@@ -419,6 +448,7 @@ async fn index_source(
     source: &str,
     content: &str,
     params: ChunkParams,
+    loc: &'static Locale,
 ) -> anyhow::Result<usize> {
     let chunks = if is_markdown_source(source) {
         crate::features::tools::rag::chunk_markdown(content, params)
@@ -436,7 +466,7 @@ async fn index_source(
     }
     let embeddings = embedder.embed(chunks.clone()).await?;
     if embeddings.len() != chunks.len() {
-        anyhow::bail!("эмбеддер вернул неверное число векторов");
+        anyhow::bail!("{}", loc.t("ui.err.rag_wrong_vector_count"));
     }
     for (chunk, embedding) in chunks.iter().zip(embeddings) {
         let doc = crate::entities::rag::RagDocument::new(profile_id, source, chunk, embedding);

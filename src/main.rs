@@ -121,7 +121,14 @@ fn main() -> anyhow::Result<()> {
 
     // Конфиг из settings.json + посев переменными окружения (dev-workflow contract §9).
     // Серверы инференса/эмбеддингов оркестратор поднимает сам через супервайзер.
+    // Свежая установка (нет settings.json) → язык интерфейса из defaults.json
+    // (ось B, docs/i18n-ui.md §3.2); старый settings.json без поля → Ru через
+    // serde-default (пользователь видел русский UI). Определяем свежесть ДО load.
+    let fresh_config = !paths.settings_file().exists();
     let mut config = storage.json().load_config().unwrap_or_default();
+    if fresh_config {
+        config.interface.language = paths.default_language();
+    }
     apply_env_overrides(&mut config);
 
     runtime.spawn(orchestrator::run(OrchestratorDeps {
