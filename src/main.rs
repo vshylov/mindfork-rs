@@ -59,6 +59,25 @@ enum Command {
         #[command(subcommand)]
         action: SandboxAction,
     },
+    /// Локали интерфейса и служебного каркаса (внешние `data/locales/*.json`).
+    Locales {
+        #[command(subcommand)]
+        action: LocalesAction,
+    },
+}
+
+#[derive(Subcommand)]
+enum LocalesAction {
+    /// Экспортировать бандл языка в файл-шаблон для правки/перевода без пересборки.
+    /// `ru`/`en` дают исходный бандл дословно; новый код — полный набор ключей со
+    /// значениями референса (ru) как заготовку перевода.
+    Export {
+        /// Код языка-источника (`ru`, `en` или уже добавленный внешний).
+        code: String,
+        /// Файл назначения. Существующий файл не перезаписывается (укажите новый путь).
+        #[arg(short, long)]
+        output: PathBuf,
+    },
 }
 
 #[derive(Subcommand)]
@@ -91,6 +110,7 @@ fn main() -> anyhow::Result<()> {
         }) => return run_backup(&paths, output, compression),
         Some(Command::Restore { archive }) => return run_restore(&paths, &archive),
         Some(Command::Sandbox { action }) => return run_sandbox(&paths, action),
+        Some(Command::Locales { action }) => return run_locales(action),
         None => {}
     }
 
@@ -282,6 +302,35 @@ fn run_sandbox_setup(paths: &Paths, force: bool) -> anyhow::Result<()> {
         |msg| println!("{msg}"),
     ))?;
     Ok(())
+}
+
+/// CLI: экспорт бандла локали в файл-шаблон. `i18n::init` уже вызван в `main` (реестр
+/// с внешними готов). Вывод — в stdout (TUI не запущен).
+fn run_locales(action: LocalesAction) -> anyhow::Result<()> {
+    match action {
+        LocalesAction::Export { code, output } => {
+            if output.exists() {
+                bail!(
+                    "файл уже существует: {} — укажите другой путь (вшитые бандлы не перезаписываем)",
+                    output.display()
+                );
+            }
+            let lang = shared::i18n::Lang::from_code(&code);
+            let content = shared::i18n::export_bundle(lang);
+            if let Some(parent) = output.parent().filter(|p| !p.as_os_str().is_empty()) {
+                std::fs::create_dir_all(parent)
+                    .with_context(|| format!("создание каталога {}", parent.display()))?;
+            }
+            std::fs::write(&output, content)
+                .with_context(|| format!("запись {}", output.display()))?;
+            println!(
+                "Бандл языка «{}» экспортирован в {}.",
+                code,
+                output.display()
+            );
+            Ok(())
+        }
+    }
 }
 
 /// Одноразовый импорт данных LameLLaMA (.NET) в хранилище mindfork (spec §12.2).

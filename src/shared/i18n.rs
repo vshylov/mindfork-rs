@@ -12,11 +12,18 @@
 //! найден»; промпты — функциональность, не украшение).
 //!
 //! **Внешние локали (Ярус 3, [docs/i18n-external-locales.md]).** При старте
-//! [`init`] сканирует `data/locales/*.json`: файл `<code>.json` мержится **поверх**
-//! вшитого бандла того же кода (частичный override — переопределяются только
-//! присутствующие ключи), а файл с новым кодом добавляет **новый язык** ([`Lang::Ext`])
-//! без пересборки (недостающие ключи → фолбэк к референсу `ru`). Битый/нечитаемый
-//! внешний файл — предупреждение в лог + пропуск (мягкая деградация: вшитое цело).
+//! [`init`] сканирует `data/locales/*.json`: файл `<code>.json` (код BCP-47-подобный
+//! — `de`, `pt-br`, `zh-tw`) мержится **поверх** вшитого бандла того же кода
+//! (частичный override — переопределяются только присутствующие ключи), а файл с
+//! новым кодом добавляет **новый язык** ([`Lang::Ext`]) без пересборки. Недостающие
+//! ключи резолвятся по цепочке: свой бандл → заявленный мета-ключом `_fallback`
+//! (напр. `"_fallback":"en"` для языка, переведённого с английского) → референс `ru`
+//! → сам ключ. Битый/нечитаемый файл или недопустимое имя — предупреждение в лог +
+//! пропуск (мягкая деградация: вшитое цело); содержимое дополнительно валидируется
+//! против референса (неизвестные ключи, расхождение плейсхолдеров → warn, не отбраковка).
+//! Исчерпание цепочки (ключа нет нигде → в вывод уходит слаг) логируется один раз на
+//! ключ — единственный сигнал этого дефекта для внешних локалей без гейт-тестов.
+//! Экспорт бандла-шаблона — [`export_bundle`] (CLI `mindfork locales export`).
 //! Без `init` (тесты) — только вшитые бандлы, поведение неизменно.
 //!
 //! **Формат бандла.** JSON `{"ключ": значение}`, где значение — строка **или массив
@@ -69,6 +76,27 @@ fn intern(code: &str) -> &'static str {
     leaked
 }
 
+/// Уже пожаловавшиеся `(язык, ключ)` — чтобы исчерпание фолбэка логировалось один раз
+/// на ключ, а не на каждый рендер кадра (`t` на горячем пути).
+static WARNED_MISSING: LazyLock<Mutex<HashSet<(Lang, String)>>> =
+    LazyLock::new(|| Mutex::new(HashSet::new()));
+
+/// Логирует «ключ исчерпал цепочку фолбэка → в вывод уходит слаг» один раз на ключ.
+/// Вызывается только на реально пропущенном ключе (редкий путь), лок не мешает
+/// happy-path `t`.
+fn warn_missing_key_once(lang: Lang, key: &str) {
+    let mut warned = WARNED_MISSING
+        .lock()
+        .expect("набор предупреждений отравлен");
+    if warned.insert((lang, key.to_string())) {
+        tracing::warn!(
+            lang = lang.code(),
+            key,
+            "i18n: ключ отсутствует во всех бандлах цепочки — в вывод уйдёт сам ключ (слаг)"
+        );
+    }
+}
+
 impl Lang {
     /// Вшитые языки — для гейт-тестов полноты и per-locale структурных тестов (они
     /// проверяют **вшитые** бандлы; внешние — пользовательский контент, не гейтятся).
@@ -116,6 +144,7 @@ impl Lang {
         };
         locale_exact(self)
             .and_then(|l| l.get("ui.lang.name"))
+            .filter(|s| !s.is_empty()) // пустой override не должен дать пустую метку
             .unwrap_or(fallback)
     }
 
@@ -164,9 +193,26 @@ fn sort_langs(v: &mut [Lang]) {
 pub struct Locale {
     lang: Lang,
     map: HashMap<String, String>,
+    /// Заявленный язык-фолбэк из мета-ключа `_fallback` внешнего файла (напр. немецкая
+    /// локаль, переведённая с английского, ставит `"_fallback": "en"` — недостающие
+    /// ключи берутся из en, а не из русского референса). `None` у вшитых. Цепочка
+    /// резолва: свой бандл → этот фолбэк → референс (`ru`) → сам ключ.
+    fallback: Option<Lang>,
 }
 
 impl Locale {
+    /// Строит локаль из сырой карты, извлекая мета-ключ `_fallback` (он не
+    /// переводится и не участвует в гейтах/выдаче). Единственная точка сборки
+    /// `Locale` — так `_fallback` обрабатывается одинаково для вшитых и внешних.
+    fn from_map(lang: Lang, mut map: HashMap<String, String>) -> Locale {
+        let fallback = map.remove("_fallback").map(|c| Lang::from_code(c.trim()));
+        Locale {
+            lang,
+            map,
+            fallback,
+        }
+    }
+
     /// Язык этой локали — для ключей кэша, зависящих от языка UI (напр. кэш ленты).
     pub fn lang(&self) -> Lang {
         self.lang
@@ -179,17 +225,30 @@ impl Locale {
         self.map.contains_key(key)
     }
 
-    /// Значение ключа. Фолбэк: этот язык → референсный (`ru`) → сам ключ. Никогда не
-    /// паникует — пропущенный ключ деградирует к референсу/ключу, а не роняет промпт.
+    /// Значение ключа. Фолбэк: этот язык → заявленный `_fallback` → референсный
+    /// (`ru`) → сам ключ. Никогда не паникует — пропущенный ключ деградирует, а не
+    /// роняет промпт. Штатный фолбэк неполного бандла (ключ есть в референсе) молчит;
+    /// **исчерпание** цепочки (ключа нет нигде → в вывод уйдёт слаг) логируется один
+    /// раз на ключ — единственный сигнал этого дефекта для внешних локалей без гейтов.
     pub fn t<'a>(&'a self, key: &'a str) -> &'a str {
         if let Some(v) = self.map.get(key) {
             return v;
         }
+        // Заявленный язык-фолбэк (мета `_fallback`), затем референс — прямым доступом к
+        // их картам (без рекурсии через `t`): один переход к каждому, не цепочка вызовов.
+        if let Some(fb) = self.fallback
+            && fb != self.lang
+            && let Some(v) = locale(fb).map.get(key)
+        {
+            return v;
+        }
         if self.lang != REFERENCE
+            && self.fallback != Some(REFERENCE)
             && let Some(v) = locale(REFERENCE).map.get(key)
         {
             return v;
         }
+        warn_missing_key_once(self.lang, key);
         key
     }
 
@@ -201,16 +260,103 @@ impl Locale {
         self.map.get(key).map(|s| s.as_str())
     }
 
-    /// Значение с подстановкой именованных плейсхолдеров `{name}`. Простая
-    /// текстовая замена (без plural-правил — существующие формулировки нейтральны к
-    /// числу: «×{n}», «заметок: {n}»).
+    /// Значение с подстановкой именованных плейсхолдеров `{name}`. **Однопроходная**
+    /// замена: значение аргумента подставляется дословно и НЕ пере-сканируется,
+    /// поэтому `{плейсхолдер}` внутри значения не раскрывается (устраняет каскадную
+    /// ре-подстановку — критично, когда значение содержит `{…}`: контент страницы у
+    /// `fetch_url`, текст `policy_core` в `{core}`). Без plural-правил — формулировки
+    /// нейтральны к числу («×{n}», «заметок: {n}»).
     pub fn tf(&self, key: &str, args: &[(&str, &str)]) -> String {
-        let mut s = self.t(key).to_string();
-        for (k, v) in args {
-            s = s.replace(&format!("{{{k}}}"), v);
-        }
-        s
+        let (out, unused) = substitute(self.t(key), args);
+        // Дрейф код↔бандл: переданный аргумент, которого нет в шаблоне — почти всегда
+        // переименованный/забытый плейсхолдер (в бандле `{count}`, код шлёт `{n}`).
+        // В release проверка скомпилирована прочь.
+        debug_assert!(
+            unused.is_empty(),
+            "tf(\"{key}\"): аргументы не встретились в шаблоне: {unused:?} — плейсхолдер переименован?"
+        );
+        out
     }
+}
+
+/// Однопроходная подстановка `{name}` из `args`. Возвращает результат и имена
+/// аргументов, не встретившихся в шаблоне (для debug-проверки дрейфа в [`Locale::tf`]).
+/// Неизвестный/битый `{…}` копируется дословно (мягкая деградация).
+fn substitute<'a>(template: &str, args: &'a [(&'a str, &'a str)]) -> (String, Vec<&'a str>) {
+    let mut used = vec![false; args.len()];
+    let mut out = String::with_capacity(template.len());
+    let mut rest = template;
+    while let Some(open) = rest.find('{') {
+        out.push_str(&rest[..open]);
+        let after = &rest[open + 1..];
+        // Имя плейсхолдера — до ближайшей `}`, без вложенной `{` (иначе это не он).
+        match after.find('}') {
+            Some(close) if !after[..close].contains('{') && !after[..close].is_empty() => {
+                let name = &after[..close];
+                match args.iter().position(|(k, _)| *k == name) {
+                    Some(idx) => {
+                        out.push_str(args[idx].1);
+                        used[idx] = true;
+                    }
+                    // Плейсхолдер без аргумента — оставляем дословно `{name}`.
+                    None => {
+                        out.push('{');
+                        out.push_str(name);
+                        out.push('}');
+                    }
+                }
+                rest = &after[close + 1..];
+            }
+            // Одинокая `{` без пары — копируем и идём дальше.
+            _ => {
+                out.push('{');
+                rest = after;
+            }
+        }
+    }
+    out.push_str(rest);
+    let unused = args
+        .iter()
+        .zip(&used)
+        .filter(|(_, u)| !**u)
+        .map(|((k, _), _)| *k)
+        .collect();
+    (out, unused)
+}
+
+/// Мета-ключ внешнего файла, задающий язык-фолбэк (не переводимый ключ; извлекается
+/// в [`Locale::from_map`], исключается из валидации/гейтов/экспорта).
+const FALLBACK_META_KEY: &str = "_fallback";
+
+/// Множество имён плейсхолдеров `{name}` в строке — для gate-теста и рантайм-валидации
+/// внешних файлов (набор плейсхолдеров переопределённого ключа обязан совпадать с
+/// референсом, иначе `tf` оставит дыру/проигнорирует аргумент).
+fn placeholders(s: &str) -> std::collections::BTreeSet<String> {
+    let mut out = std::collections::BTreeSet::new();
+    let mut rest = s;
+    while let Some(i) = rest.find('{') {
+        if let Some(j) = rest[i..].find('}') {
+            out.insert(rest[i + 1..i + j].to_string());
+            rest = &rest[i + j + 1..];
+        } else {
+            break;
+        }
+    }
+    out
+}
+
+/// Валиден ли код языка для имени файла внешней локали. BCP-47-подобный: строчные
+/// латинские буквы, цифры и дефис-разделители подтегов; начинается с буквы, не
+/// оканчивается дефисом, без двойных дефисов (`de`, `pt-br`, `zh-tw`, `sr-latn`).
+fn is_valid_lang_code(code: &str) -> bool {
+    let bytes = code.as_bytes();
+    if bytes.is_empty() || !bytes[0].is_ascii_lowercase() || *bytes.last().unwrap() == b'-' {
+        return false;
+    }
+    bytes.windows(2).all(|w| w != b"--")
+        && bytes
+            .iter()
+            .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || *b == b'-')
 }
 
 /// Разбирает JSON-бандл в плоскую таблицу «ключ → текст». Значение-массив
@@ -256,10 +402,8 @@ fn build_builtin_registry() -> HashMap<Lang, &'static Locale> {
     Lang::ALL
         .iter()
         .map(|&lang| {
-            let loc: &'static Locale = Box::leak(Box::new(Locale {
-                lang,
-                map: builtin_map(lang),
-            }));
+            let loc: &'static Locale =
+                Box::leak(Box::new(Locale::from_map(lang, builtin_map(lang))));
             (lang, loc)
         })
         .collect()
@@ -278,6 +422,16 @@ fn overlay_external(maps: &mut HashMap<Lang, HashMap<String, String>>, dir: &Pat
         Ok(e) => e,
         Err(_) => return,
     };
+    // Снимок референса (ru) для содержательной валидации внешних файлов: множество
+    // ключей + плейсхолдеры каждого. Берём до цикла (в цикле `maps` мутируется).
+    let ref_placeholders: HashMap<String, std::collections::BTreeSet<String>> = maps
+        .get(&REFERENCE)
+        .map(|m| {
+            m.iter()
+                .map(|(k, v)| (k.clone(), placeholders(v)))
+                .collect()
+        })
+        .unwrap_or_default();
     for entry in entries.flatten() {
         let path = entry.path();
         if path.extension().and_then(|e| e.to_str()) != Some("json") {
@@ -286,12 +440,12 @@ fn overlay_external(maps: &mut HashMap<Lang, HashMap<String, String>>, dir: &Pat
         let Some(stem) = path.file_stem().and_then(|s| s.to_str()) else {
             continue;
         };
-        // Код языка — непустая строка из строчных латинских букв (устойчиво к
-        // случайным именам вроде `EN.json`/`readme.json`).
-        if stem.is_empty() || !stem.bytes().all(|b| b.is_ascii_lowercase()) {
+        // Код языка — BCP-47-подобный (строчные буквы/цифры/дефис, начинается с буквы):
+        // устойчиво к случайным именам (`EN.json`/`readme.json`), допускает `pt-br`.
+        if !is_valid_lang_code(stem) {
             tracing::warn!(
                 file = %path.display(),
-                "внешняя локаль: недопустимое имя (код языка — строчные латинские буквы), пропуск"
+                "внешняя локаль: недопустимое имя (код языка — строчные латинские буквы/цифры/дефис, с буквы), пропуск"
             );
             continue;
         }
@@ -309,6 +463,10 @@ fn overlay_external(maps: &mut HashMap<Lang, HashMap<String, String>>, dir: &Pat
                 continue;
             }
         };
+        // Содержательная валидация против референса (зеркало gate-тестов parity —
+        // единственная категория бандлов без тестового покрытия): предупреждаем, но
+        // не отбрасываем (пользователь мог править экспериментально).
+        validate_external_map(&path, &ext_map, &ref_placeholders);
         let lang = Lang::from_code(stem);
         let count = ext_map.len();
         let is_new = !maps.contains_key(&lang);
@@ -332,6 +490,40 @@ fn overlay_external(maps: &mut HashMap<Lang, HashMap<String, String>>, dir: &Pat
     }
 }
 
+/// Проверяет внешний бандл против референса и логирует проблемы (не отбрасывает):
+/// (1) ключ, отсутствующий в референсе, — вероятная опечатка: он ничего не
+/// переопределяет и мёртв (для нового языка тоже: недостающих ключей быть не должно,
+/// а лишних — тем более); (2) переопределённый ключ с другим набором `{плейсхолдеров}`,
+/// чем в референсе, — сломает `tf` (дыра/проигнорированный аргумент). Мета-ключ
+/// `_fallback` из проверки исключён.
+fn validate_external_map(
+    path: &Path,
+    ext_map: &HashMap<String, String>,
+    ref_placeholders: &HashMap<String, std::collections::BTreeSet<String>>,
+) {
+    for (k, v) in ext_map {
+        if k == FALLBACK_META_KEY {
+            continue;
+        }
+        match ref_placeholders.get(k) {
+            None => tracing::warn!(
+                file = %path.display(), key = %k,
+                "внешняя локаль: ключа нет в референсе (опечатка? ключ ничего не переопределяет)"
+            ),
+            Some(want) => {
+                let got = placeholders(v);
+                if &got != want {
+                    tracing::warn!(
+                        file = %path.display(), key = %k,
+                        want = ?want, got = ?got,
+                        "внешняя локаль: набор плейсхолдеров расходится с референсом (сломает подстановку tf)"
+                    );
+                }
+            }
+        }
+    }
+}
+
 /// Загружает внешние локали из каталога и фиксирует полный реестр. Вызывается один
 /// раз при старте (`main.rs`) **до** первого обращения к [`locale`]. Повторный вызов
 /// игнорируется. Нет каталога/файлов — реестр = вшитые бандлы.
@@ -342,7 +534,7 @@ pub fn init(dir: &Path) {
     let registry: HashMap<Lang, &'static Locale> = maps
         .into_iter()
         .map(|(lang, map)| {
-            let loc: &'static Locale = Box::leak(Box::new(Locale { lang, map }));
+            let loc: &'static Locale = Box::leak(Box::new(Locale::from_map(lang, map)));
             (lang, loc)
         })
         .collect();
@@ -372,6 +564,31 @@ pub fn locale(lang: Lang) -> &'static Locale {
 /// показал бы русское имя у чужого языка.
 fn locale_exact(lang: Lang) -> Option<&'static Locale> {
     registry().get(&lang).copied()
+}
+
+/// Содержимое бандла для экспорта в файл-шаблон (CLI `mindfork locales export`).
+/// Вшитые `ru`/`en` — исходный JSON **дословно** (сохраняет массивы/форматирование,
+/// удобно править). Иначе — полный набор ключей референса со значениями, разрешёнными
+/// для языка (JSON, ключи отсортированы): для зарегистрированного внешнего языка это
+/// его значения + ru-дыры, для нового кода — целиком ru (шаблон для перевода).
+pub fn export_bundle(lang: Lang) -> String {
+    if let Lang::Ru | Lang::En = lang {
+        return lang.bundle_src().to_string();
+    }
+    let reference = locale(REFERENCE);
+    let target = locale(lang);
+    let mut keys: Vec<&String> = reference.map.keys().collect();
+    keys.sort();
+    let obj: serde_json::Map<String, serde_json::Value> = keys
+        .into_iter()
+        .map(|k| {
+            (
+                k.clone(),
+                serde_json::Value::String(target.t(k).to_string()),
+            )
+        })
+        .collect();
+    serde_json::to_string_pretty(&serde_json::Value::Object(obj)).unwrap_or_default()
 }
 
 #[cfg(test)]
@@ -407,20 +624,8 @@ mod tests {
     #[test]
     fn placeholder_sets_match_across_languages() {
         // Набор плейсхолдеров {…} каждого ключа одинаков во всех языках — иначе
-        // подстановка `tf` оставит дыру или проигнорирует аргумент.
-        fn placeholders(s: &str) -> std::collections::BTreeSet<String> {
-            let mut out = std::collections::BTreeSet::new();
-            let mut rest = s;
-            while let Some(i) = rest.find('{') {
-                if let Some(j) = rest[i..].find('}') {
-                    out.insert(rest[i + 1..i + j].to_string());
-                    rest = &rest[i + j + 1..];
-                } else {
-                    break;
-                }
-            }
-            out
-        }
+        // подстановка `tf` оставит дыру или проигнорирует аргумент. Используем
+        // модульный `placeholders` (та же логика питает рантайм-валидацию внешних).
         for (key, val) in &locale(REFERENCE).map {
             let want = placeholders(val);
             for &lang in Lang::ALL {
@@ -439,9 +644,9 @@ mod tests {
         // кириллицы. Ловит случайно оставленный русский текст в переводе. tool-имена
         // и ключи — ASCII, так что чистый en-бандл сплошь латиница/пунктуация.
         for (key, val) in &locale(Lang::En).map {
-            let cyr = val
-                .chars()
-                .find(|c| ('а'..='я').contains(c) || ('А'..='Я').contains(c));
+            let cyr = val.chars().find(|&c| {
+                ('а'..='я').contains(&c) || ('А'..='Я').contains(&c) || c == 'ё' || c == 'Ё'
+            });
             assert!(
                 cyr.is_none(),
                 "ключ {key}: кириллица в en-переводе: {val:?}"
@@ -465,61 +670,105 @@ mod tests {
         }
     }
 
-    #[test]
-    fn all_ui_keys_referenced_in_code_exist_in_bundle() {
-        // Гейт против класса бага «код зовёт loc.t("ui.…"), а ключа нет в бандле»
-        // (тогда `t` молча возвращает сам ключ — в UI виден слаг вместо текста).
-        // Сканируем исходники на литералы `ui.*`-ключей и проверяем, что каждый есть
-        // в референсном (`ru`) бандле. Динамические ключи (собираемые `format!`)
-        // сюда не попадут — их немного и они покрыты render-тестами.
+    /// Собирает все строковые литералы вида `"<seg>.<seg>…"` (2+ сегмента из
+    /// `[a-z0-9_]`, разделённых точками, целиком между кавычками) из всех `.rs` под
+    /// `src/`. Общий сканер для прямого и обратного гейтов ключей.
+    fn dotted_literals_in_src() -> std::collections::BTreeSet<String> {
         use std::path::Path;
-        // Литерал ключа: "ui." + сегменты из [a-z0-9_] через точки.
-        let key_re = |s: &str| -> Vec<String> {
-            let mut out = Vec::new();
+        fn scan(s: &str, out: &mut std::collections::BTreeSet<String>) {
             let bytes = s.as_bytes();
             let mut i = 0;
-            while let Some(p) = s[i..].find("\"ui.") {
-                let start = i + p + 1; // после кавычки
+            while i < bytes.len() {
+                let Some(p) = s[i..].find('"') else { break };
+                let start = i + p + 1; // за открывающей кавычкой; всегда > i (прогресс)
                 let mut j = start;
+                let mut dots = 0usize;
                 while j < bytes.len() {
                     let c = bytes[j] as char;
-                    if c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_' || c == '.' {
+                    if c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_' {
+                        j += 1;
+                    } else if c == '.' {
+                        dots += 1;
                         j += 1;
                     } else {
                         break;
                     }
                 }
-                // Ключ валиден, если следом идёт закрывающая кавычка (литерал целиком).
-                if j < bytes.len() && bytes[j] as char == '"' {
-                    out.push(s[start..j].to_string());
+                // Литерал целиком (следом кавычка), ≥2 сегмента, не оканчивается точкой.
+                if j < bytes.len()
+                    && bytes[j] as char == '"'
+                    && dots >= 1
+                    && bytes[j - 1] as char != '.'
+                {
+                    out.insert(s[start..j].to_string());
                 }
-                i = j;
+                i = j; // j ≥ start > прежний i — цикл всегда продвигается
             }
-            out
-        };
-        fn visit(dir: &Path, keys: &mut Vec<String>, key_re: &dyn Fn(&str) -> Vec<String>) {
+        }
+        fn visit(dir: &Path, out: &mut std::collections::BTreeSet<String>) {
             for entry in std::fs::read_dir(dir).unwrap().flatten() {
                 let path = entry.path();
                 if path.is_dir() {
-                    visit(&path, keys, key_re);
+                    visit(&path, out);
                 } else if path.extension().is_some_and(|e| e == "rs") {
-                    let src = std::fs::read_to_string(&path).unwrap_or_default();
-                    keys.extend(key_re(&src));
+                    scan(&std::fs::read_to_string(&path).unwrap_or_default(), out);
                 }
             }
         }
-        let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
-        let mut keys = Vec::new();
-        visit(&root, &mut keys, &key_re);
-        // Отсекаем вырожденные (напр. «ui.» из собственного regex-литерала этого теста).
-        keys.retain(|k| k.len() > 3 && !k.ends_with('.'));
-        keys.sort();
-        keys.dedup();
+        let mut out = std::collections::BTreeSet::new();
+        visit(&Path::new(env!("CARGO_MANIFEST_DIR")).join("src"), &mut out);
+        out
+    }
+
+    /// Верхнеуровневые префиксы (`ui`, `tool`, …), реально присутствующие в бандле —
+    /// по ним отличаем ключи локали от прочих дотированных литералов (пути и т. п.).
+    fn bundle_prefixes() -> std::collections::BTreeSet<String> {
+        locale(REFERENCE)
+            .map
+            .keys()
+            .filter_map(|k| k.split('.').next().map(str::to_string))
+            .collect()
+    }
+
+    #[test]
+    fn all_bundle_key_references_in_code_exist() {
+        // Гейт против класса бага «код зовёт loc.t("tool.…"/"ui.…"), а ключа нет в
+        // бандле» (тогда `t` молча возвращает сам ключ — слаг в промпт модели / UI).
+        // Раньше покрывались только `ui.*`; теперь — ВСЯ ось A (`tool.`/`selfmodel.`/
+        // `notes.`/`prompt.`/…). Динамические ключи (`format!`) — не литералы, покрыты
+        // отдельно (meta.rs). Имена файлов с бандл-префиксом — в whitelist.
+        const NON_KEY: &[&str] = &["defaults.json", "python.webc"];
+        let prefixes = bundle_prefixes();
         let ru = locale(Lang::Ru);
-        let missing: Vec<&String> = keys.iter().filter(|k| !ru.has_key(k)).collect();
+        let missing: Vec<String> = dotted_literals_in_src()
+            .into_iter()
+            .filter(|k| {
+                prefixes.contains(k.split('.').next().unwrap()) && !NON_KEY.contains(&k.as_str())
+            })
+            .filter(|k| !ru.has_key(k))
+            .collect();
         assert!(
             missing.is_empty(),
-            "ключи `ui.*` есть в коде, но отсутствуют в бандле: {missing:?}"
+            "ключи есть в коде, но отсутствуют в бандле: {missing:?}"
+        );
+    }
+
+    #[test]
+    fn bundle_keys_are_not_dead() {
+        // Обратный гейт: каждый ключ бандла реально упомянут в коде (литералом), иначе
+        // это мёртвый ключ (опечатка/остаток рефактора). Динамические семейства
+        // (`ui.tool.label.<id>` — собираются `format!`) исключены whitelist-префиксом.
+        const DYNAMIC_PREFIX: &[&str] = &["ui.tool.label."];
+        let literals = dotted_literals_in_src();
+        let dead: Vec<&String> = locale(REFERENCE)
+            .map
+            .keys()
+            .filter(|k| !literals.contains(*k))
+            .filter(|k| !DYNAMIC_PREFIX.iter().any(|p| k.starts_with(p)))
+            .collect();
+        assert!(
+            dead.is_empty(),
+            "ключи бандла нигде не используются в коде (мёртвые?): {dead:?}"
         );
     }
 
@@ -616,6 +865,136 @@ mod tests {
         );
     }
 
+    // ------- Однопроходная подстановка `tf` / `substitute` -------
+
+    #[test]
+    fn substitute_is_single_pass_no_cascade() {
+        // Значение аргумента `a` содержит плейсхолдер `{b}` — он НЕ должен раскрыться
+        // (иначе контент страницы/`policy_core` с `{…}` вызвал бы каскад).
+        let (out, unused) = substitute("{a}{b}", &[("a", "{b}"), ("b", "X")]);
+        assert_eq!(out, "{b}X");
+        assert!(unused.is_empty());
+    }
+
+    #[test]
+    fn substitute_leaves_unknown_placeholder_verbatim() {
+        let (out, unused) = substitute("{x} {a} {", &[("a", "1")]);
+        assert_eq!(out, "{x} 1 {"); // неизвестный `{x}` и одинокая `{` — дословно
+        assert!(unused.is_empty());
+    }
+
+    #[test]
+    fn substitute_reports_unused_args() {
+        // Переданный аргумент, которого нет в шаблоне (дрейф код↔бандл) — в `unused`.
+        let (_out, unused) = substitute("{a}", &[("a", "1"), ("z", "2")]);
+        assert_eq!(unused, vec!["z"]);
+    }
+
+    #[test]
+    fn tf_does_not_cascade_on_real_key() {
+        // `selfmodel.maintenance_wrapper` = "(… {core})"; подставляем значение с `{n}` —
+        // оно не должно раскрыться (нет каскада), `core` использован (нет unused).
+        let ru = locale(Lang::Ru);
+        let s = ru.tf("selfmodel.maintenance_wrapper", &[("core", "A {n} B")]);
+        assert!(s.contains("A {n} B"), "{s}");
+    }
+
+    // ------- Код языка / внешние локали -------
+
+    #[test]
+    fn is_valid_lang_code_accepts_bcp47_and_rejects_junk() {
+        for ok in ["de", "en", "pt-br", "zh-tw", "sr-latn", "x9"] {
+            assert!(is_valid_lang_code(ok), "должен принять: {ok}");
+        }
+        for bad in ["", "EN", "e n", "-de", "de-", "d--e", "1de", "de.json"] {
+            assert!(!is_valid_lang_code(bad), "должен отвергнуть: {bad}");
+        }
+    }
+
+    #[test]
+    fn from_map_extracts_fallback_meta() {
+        let mut m = HashMap::new();
+        m.insert("_fallback".to_string(), "en".to_string());
+        m.insert("k".to_string(), "v".to_string());
+        let loc = Locale::from_map(Lang::Ext("de"), m);
+        assert_eq!(loc.fallback, Some(Lang::En));
+        assert!(!loc.map.contains_key("_fallback")); // мета-ключ не в переводимых
+        assert_eq!(loc.map.get("k").map(String::as_str), Some("v"));
+    }
+
+    #[test]
+    fn external_fallback_meta_drives_t_before_reference() {
+        // Локаль `de` с `_fallback: en` и пустыми переводами: ключ, отсутствующий у
+        // неё, должен браться из EN (глобальный BUILTIN), а НЕ из русского референса.
+        let mut m = HashMap::new();
+        m.insert("_fallback".to_string(), "en".to_string());
+        let de = Locale::from_map(Lang::Ext("de"), m);
+        let key = "ui.feed.role.user"; // ru "ВЫ" ≠ en "YOU"
+        assert_eq!(de.t(key), locale(Lang::En).t(key));
+        assert_ne!(de.t(key), locale(Lang::Ru).t(key));
+    }
+
+    #[test]
+    fn label_filters_empty_override() {
+        // Внешний override `"ui.lang.name": ""` не должен дать пустую метку —
+        // фильтр отбрасывает пустое значение (механизм, на который опирается `label`).
+        let mut m = HashMap::new();
+        m.insert("ui.lang.name".to_string(), String::new());
+        let loc: &'static Locale = Box::leak(Box::new(Locale::from_map(Lang::Ext("de"), m)));
+        assert_eq!(loc.get("ui.lang.name").filter(|s| !s.is_empty()), None);
+    }
+
+    #[test]
+    fn overlay_validation_is_non_fatal() {
+        // Внешний файл с неизвестным ключом (нет в референсе) и расходящимися
+        // плейсхолдерами: `validate_external_map` предупреждает (лог), но overlay
+        // всё равно мержит содержимое (валидация — совет, не отбраковка).
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            dir.path().join("de.json"),
+            r#"{"totally.unknown.key":"x","selfmodel.age.days":"vor {tagen} Tagen"}"#,
+        )
+        .unwrap();
+        let mut maps = builtin_maps();
+        overlay_external(&mut maps, dir.path());
+        let de = &maps[&Lang::Ext("de")];
+        assert_eq!(de.get("totally.unknown.key").map(String::as_str), Some("x"));
+        assert!(de.contains_key("selfmodel.age.days")); // смёржено несмотря на warn
+    }
+
+    #[test]
+    fn overlay_accepts_bcp47_named_file() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            dir.path().join("pt-br.json"),
+            r#"{"ui.lang.name":"Português (BR)"}"#,
+        )
+        .unwrap();
+        let mut maps = builtin_maps();
+        overlay_external(&mut maps, dir.path());
+        assert!(maps.contains_key(&Lang::Ext("pt-br")));
+    }
+
+    // ------- Экспорт бандла (CLI locales export) -------
+
+    #[test]
+    fn export_builtin_is_raw_source() {
+        // Вшитый язык экспортируется дословным исходником (сохраняет массивы).
+        assert_eq!(export_bundle(Lang::Ru), Lang::Ru.bundle_src());
+        assert_eq!(export_bundle(Lang::En), Lang::En.bundle_src());
+    }
+
+    #[test]
+    fn export_unknown_code_yields_reference_template() {
+        // Незарегистрированный код → шаблон: полный набор ключей референса со
+        // значениями ru (валидный JSON-объект, все ключи на месте).
+        let json = export_bundle(Lang::Ext("zz"));
+        let obj: HashMap<String, String> = serde_json::from_str(&json).unwrap();
+        let ru = locale(Lang::Ru);
+        assert_eq!(obj.len(), ru.map.len());
+        assert_eq!(obj.get("ui.lang.name"), ru.map.get("ui.lang.name"));
+    }
+
     #[test]
     fn code_and_from_code_round_trip() {
         assert_eq!(Lang::from_code("ru"), Lang::Ru);
@@ -659,7 +1038,7 @@ mod tests {
         let reg: HashMap<Lang, &'static Locale> = maps
             .into_iter()
             .map(|(lang, map)| {
-                let loc: &'static Locale = Box::leak(Box::new(Locale { lang, map }));
+                let loc: &'static Locale = Box::leak(Box::new(Locale::from_map(lang, map)));
                 (lang, loc)
             })
             .collect();
