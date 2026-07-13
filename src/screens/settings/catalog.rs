@@ -657,7 +657,7 @@ impl SettingsScreen {
                 let lang_locked = self.language_locked.contains(&p.id);
                 let mut lang_row = row(
                     FieldId::PLanguage,
-                    loc.t("ui.settings.field.language"),
+                    loc.t("ui.settings.field.profile_language"),
                     FieldKind::Choice(p.language.label().to_string()),
                 )
                 .describe(loc.t(DESC_PROFILE_LANGUAGE));

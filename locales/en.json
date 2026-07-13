@@ -724,7 +724,7 @@
   "ui.settings.field.copy_tool_results": "With tool results",
   "ui.settings.field.profile": "Profile",
   "ui.settings.field.name": "Name",
-  "ui.settings.field.language": "Framework language",
+  "ui.settings.field.profile_language": "Framework language",
   "ui.settings.field.system_message": "System message",
   "ui.settings.field.greeting": "Greeting",
 
