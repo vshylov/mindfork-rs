@@ -724,7 +724,7 @@
   "ui.settings.field.copy_tool_results": "С ответами инструментов",
   "ui.settings.field.profile": "Профиль",
   "ui.settings.field.name": "Имя",
-  "ui.settings.field.language": "Язык каркаса",
+  "ui.settings.field.profile_language": "Язык каркаса",
   "ui.settings.field.system_message": "Системное сообщение",
   "ui.settings.field.greeting": "Приветствие",
 
