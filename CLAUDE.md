@@ -116,18 +116,21 @@ Env для выбора бэкенда: `MINDFORK_ENGINE_URL` (external, люб�
 `MINDFORK_PORT`) для managed `llama-server`.
 
 ## Статус (на 2026-07-14)
-Сделан весь план **M0–M9** плюс обширный пост-M9 (в `main`). **1046 юнит-тестов
-зелёные, 46 `#[ignore]`-смоуков** (крупнейший счётчик — журнал ниже; последнее
-направление — **i18n CLI** (весь текст CLI/`main.rs`/фич в бандлах, свой парсер вместо
-`clap`), этапы 1–2 из 3: ветки `feat/cli-i18n-bootstrap` + `feat/cli-i18n-features`).
+Сделан весь план **M0–M9** плюс обширный пост-M9 (в `main`). **1049 юнит-тестов
+зелёные, 48 `#[ignore]`-смоуков** (крупнейший счётчик — журнал ниже; последнее
+направление — **i18n CLI** (весь текст CLI/`main.rs`/фич/хвоста движка в бандлах, свой
+парсер вместо `clap`) — **завершено**, этапы 1–3: ветки `feat/cli-i18n-bootstrap` +
+`feat/cli-i18n-features` + `feat/i18n-engine-tail`).
 **Направление i18n завершено целиком:** ось A (язык агента, Ярусы 1–2, все 35
 инструментов), **Ярус 3** (внешние `data/locales/*.json` поверх вшитых + новые языки
 без пересборки — `Lang::Ext`, реестр `init(dir)`), ось B (язык интерфейса, весь
 UI-хром: статус-бар, лента, настройки со всеми полями/группами/метками инструментов,
 список чатов, попапы/справка, «модель себя», ошибки оркестратора и **отображаемые
 reasons супервайзера**, экспорт; поле «Язык интерфейса», независимое от языка агентов).
-Осталось лишь технические probe-ошибки движка (`shared/api/managed`, логоподобные — не
-UI). Историческая сводка `#[ignore]` прогнана на живой связке
+**i18n CLI завершён** (этапы 1–3): весь текст CLI (`main.rs`/справка/парсер вместо
+`clap`), CLI-фич (`backup`/`sandbox_setup`/`migration`) и хвоста движка (`managed.rs`
+probe → статус-чип; `shared/sandbox.rs` → результат `python_exec`/warmup) — в бандлах.
+Историческая сводка `#[ignore]` прогнана на живой связке
 **Gemma 4 31B (q4) + bge-m3** (`llama-server`, external, `--jinja`) — 25/25 зелёные
 (~370с): базовые смоуки Gemma (стриминг, EOS-анти-самообрыв, tool-calling, «мысли»,
 расширения семплинга, control-инструменты) + end-to-end модели себя/заметок/нарратива
@@ -5233,6 +5236,54 @@ web-поиск и Python под выключателями, экран наст�
   clippy `-D warnings`/fmt чисты.
 - **Дальше:** этап 3 (`feat/i18n-engine-tail`) — `managed.rs` (probe-ошибки → статус-чип)
   + `shared/sandbox.rs` (результат `python_exec` — язык профиля; warmup — язык UI).
+
+### Пост-M9: i18n CLI — этап 3 (хвост движка: managed.rs + shared/sandbox.rs) (сделано)
+- **Заключительный этап** плана [docs/i18n-cli.md](docs/i18n-cli.md)
+  (`feat/i18n-engine-tail`, стекается на этап 2): локализованы отображаемые ошибки
+  слоя движка/песочницы. **Направление i18n CLI завершено** (этапы 1–3). Механика —
+  плейбук Яруса 2c (протяжка `loc`, ru байт-в-байт → существующие ассерты подстрок
+  целы). Живой прогон не требуется (чистая локализация текста ошибок; успешные пути
+  исполнения не изменены).
+- **`shared/api/managed.rs`** (5 ключей `ui.err.managed.*`, **ось B** — статус-чип):
+  предполётные проверки (`model_not_found`/`draft_not_found`), контекст `spawn`, и
+  probe-ошибки `wait_until_ready` (`early_exit`/`timeout`) всплывают в супервайзере как
+  `ServerStatus::Disconnected(msg)` → чип сервера. `ServerHandle::launch(cfg, loc)` и
+  `wait_until_ready(..., loc)` получили `loc: &'static Locale`; супервайзер протянул
+  UI-локаль (`managed_chat_setup`/`external_chat_setup`/`spawn_probe` — из
+  `apply_chat`/`apply_impersonation`, у которых `loc` уже был с оси B). `ManagedConfig`
+  **не** трогали (его `Debug`-derive не дружит с `Locale`) — `loc` идёт параметром.
+  Эмбеддинг-сервер (`apply_embed` без `loc`, ошибка лишь в лог) передаёт **референсную**
+  локаль (`Lang::default()`) — текст остаётся логовым.
+- **`shared/sandbox.rs`** (7 ключей `sandbox.err.*`, **двойная аудитория**):
+  `SandboxRunner::availability(loc)` и `run(..., loc)` получили `loc`. Причина
+  недоступности (`not_installed`) и ошибки запуска (`busy`/`not_found`/`job_dir`/
+  `write_script`/`spawn`/`wait`) прежде встраивались `python_exec` как сырой `{why}`/
+  `{e}` в локализованную обёртку — на en-профиле обёртка английская, а вложенный текст
+  оставался русским. Теперь `python_exec` передаёт `ctx.loc` (**ось A**, язык профиля),
+  а warmup провизии (`sandbox_setup::warmup`, этап 2) — язык UI (**ось B**). `MockSandbox`
+  игнорирует `loc`.
+- **Границы** (docs/i18n-cli.md §7, обновлён i18n.md §2.3): **обёртки HTTP-клиентов**
+  (`shared/api/{openai,anthropic,gemini}`) — не локализуются (содержимое = тело ошибки
+  сервера / строка ОС, непереводимо; локализация обвязки не окупает протяжку локали во
+  все клиенты). Пре-language контексты `paths.rs`/`resolve` — английские (этап 1).
+- **Тесты**: +2 per-locale регрессионных против забытого `loc` (`managed.rs`:
+  `launch_error_is_localized` — en «model file not found» без кириллицы; `sandbox.rs`:
+  `busy_error_is_localized` — en «busy» без кириллицы). Существующие ассерты подстрок
+  (`msg.contains("файл модели")` в супервайзере, `contains("занята")`/`("wasmer")` в
+  sandbox) целы (ru байт-в-байт). i18n-гейты накрыли 12 новых ключей автоматически.
+  Плюс **en-профильные смоуки `python_exec`** (testkit-хелпер `ctx_with_storage_lang`
+  для en-ctx): `en_sandbox_missing_is_localized` (не-ignored — недоступность песочницы
+  по-английски без утечки русского, реального `wasmer` не требует) + два `#[ignore]`
+  (`en_sandbox_output_and_exit_label_localized`, `en_sandbox_timeout_localized`).
+  **1049 юнит-тестов зелёные** (+3), **48 `#[ignore]`** (+2), clippy `-D warnings`/fmt чисты.
+- **Живой прогон en-профиля — GO** (провизионированная песочница `data/sandbox/`,
+  реальный `wasmer` 7.2.0 + python.webc): на en-ctx реальное исполнение
+  (`print`+`sys.exit(3)` → вывод + **английская метка `exit code:`**; `while True: pass`
+  → английское «exceeded the time limit») — **без кириллицы**; недоступность песочницы
+  объясняется по-английски (обёртка + вложенная причина из `sandbox.rs`). Регрессия ru
+  зелёная (`numpy_in_sandbox`/`cyrillic_print_in_sandbox`/`timeout_kills_sandbox` —
+  реальное numpy-исполнение и русские метки целы). Стадия-3 смена сигнатур
+  `run`/`availability` ru-путь не сломала.
 
 ### Отложено за пределы M3
 - **Сворачивание/выделение per-message** и tool-блоки в ленте — сейчас «мысли»

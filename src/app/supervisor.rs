@@ -96,9 +96,10 @@ impl ServerSupervisor for LlamaSupervisor {
                 settings.external.api_key_env.as_deref(),
                 cancel,
                 status_tx,
+                loc,
             ),
             ServerMode::Managed => {
-                managed_chat_setup(managed_config(&settings.managed), cancel, status_tx)
+                managed_chat_setup(managed_config(&settings.managed), cancel, status_tx, loc)
             }
             ServerMode::OpenAi | ServerMode::Gemini | ServerMode::Claude => {
                 let cloud = settings.cloud().expect("облачный режим");
@@ -128,9 +129,10 @@ impl ServerSupervisor for LlamaSupervisor {
                 settings.external.api_key_env.as_deref(),
                 cancel,
                 status_tx,
+                loc,
             ),
             ImpersonationMode::Managed => {
-                managed_chat_setup(managed_config(&settings.managed), cancel, status_tx)
+                managed_chat_setup(managed_config(&settings.managed), cancel, status_tx, loc)
             }
             ImpersonationMode::OpenAi | ImpersonationMode::Gemini | ImpersonationMode::Claude => {
                 let cloud = settings.cloud().expect("облачный режим");
@@ -187,7 +189,13 @@ impl ServerSupervisor for LlamaSupervisor {
                         port: m.port,
                         extra_args: vec![],
                     };
-                    match ServerHandle::launch(&cfg) {
+                    // Эмбеддинг-сервер не имеет UI-локали (у `apply_embed` нет `loc`) и
+                    // его ошибка идёт лишь в лог (RAG недоступен, не в статус-чип) —
+                    // передаём референсную локаль (ru), текст остаётся логовым.
+                    match ServerHandle::launch(
+                        &cfg,
+                        crate::shared::i18n::locale(crate::shared::i18n::Lang::default()),
+                    ) {
                         Ok(handle) => EmbedSetup {
                             embedder: Arc::new(OpenAiClient::new(handle.base_url())),
                             handle: Some(handle),
@@ -228,6 +236,7 @@ fn external_chat_setup(
     api_key_env: Option<&str>,
     cancel: CancellationToken,
     status_tx: UnboundedSender<ServerStatus>,
+    loc: &'static Locale,
 ) -> ChatSetup {
     match url {
         Some(url) if !url.is_empty() => {
@@ -239,6 +248,7 @@ fn external_chat_setup(
                 None,
                 cancel,
                 status_tx,
+                loc,
             );
             ChatSetup {
                 backend: Some(client),
@@ -256,11 +266,12 @@ fn managed_chat_setup(
     cfg: ManagedConfig,
     cancel: CancellationToken,
     status_tx: UnboundedSender<ServerStatus>,
+    loc: &'static Locale,
 ) -> ChatSetup {
     if cfg.binary.as_os_str().is_empty() {
         return not_configured();
     }
-    match ServerHandle::launch(&cfg) {
+    match ServerHandle::launch(&cfg, loc) {
         Ok(handle) => {
             let client = Arc::new(OpenAiClient::new(handle.base_url()));
             spawn_probe(
@@ -269,6 +280,7 @@ fn managed_chat_setup(
                 Some(handle.exited()),
                 cancel,
                 status_tx,
+                loc,
             );
             ChatSetup {
                 backend: Some(client),
@@ -430,12 +442,13 @@ fn spawn_probe(
     exited: Option<CancellationToken>,
     cancel: CancellationToken,
     status_tx: UnboundedSender<ServerStatus>,
+    loc: &'static Locale,
 ) {
     tokio::spawn(async move {
         let status = tokio::select! {
             biased;
             _ = cancel.cancelled() => return,
-            res = wait_until_ready(&client, timeout, exited) => match res {
+            res = wait_until_ready(&client, timeout, exited, loc) => match res {
                 Ok(()) => ServerStatus::Ready,
                 Err(err) => ServerStatus::Disconnected(err.to_string()),
             },
@@ -599,7 +612,7 @@ mod tests {
         let (tx, mut rx) = unbounded_channel();
         let cancel = CancellationToken::new();
         cancel.cancel(); // probe устарел ещё до старта фоновой задачи
-        let setup = external_chat_setup(Some("http://127.0.0.1:9/v1"), None, cancel, tx);
+        let setup = external_chat_setup(Some("http://127.0.0.1:9/v1"), None, cancel, tx, ru());
         assert_eq!(setup.status, ServerStatus::Connecting); // немедленный статус как обычно
         // Даём фоновой задаче шанс выполниться; устаревший probe ничего не присылает.
         tokio::time::sleep(Duration::from_millis(50)).await;

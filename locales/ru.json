@@ -806,6 +806,12 @@
   "ui.err.generation_failed": "Ошибка генерации: {err}",
   "ui.err.load_data_failed": "Ошибка загрузки данных: {err}",
   "ui.err.save_settings_failed": "Не удалось сохранить настройки: {err}",
+  "ui.err.managed.model_not_found": "файл модели не найден или недоступен: {path}",
+  "ui.err.managed.draft_not_found": "файл черновой модели не найден или недоступен: {path}",
+  "ui.err.managed.spawn": "запуск llama-server ({path})",
+  "ui.err.managed.early_exit": "llama-server завершился до готовности (битый GGUF или нехватка памяти? — см. логи)",
+  "ui.err.managed.timeout": "сервер инференса не вышел в готовность за {timeout}",
+
   "ui.err.server.no_model": "укажите имя модели для облачного провайдера",
   "ui.err.server.no_api_key_env": "не задано имя env-переменной с API-ключом",
   "ui.err.server.env_missing": "переменная окружения {var} не задана",
@@ -828,6 +834,14 @@
   "ui.err.rag_clear_chunks": "очистка прежних чанков: {err}",
   "ui.err.rag_reset_vectors": "сброс таблицы векторов: {err}",
   "ui.err.rag_wrong_vector_count": "эмбеддер вернул неверное число векторов",
+
+  "sandbox.err.not_installed": "бинарь `wasmer` не найден — установите песочницу (`mindfork sandbox setup`) или задайте путь через переменную окружения MINDFORK_SANDBOX_WASMER",
+  "sandbox.err.busy": "песочница занята другой задачей — дождитесь её завершения",
+  "sandbox.err.not_found": "бинарь wasmer не найден",
+  "sandbox.err.job_dir": "создание временного каталога задачи",
+  "sandbox.err.write_script": "запись скрипта задачи",
+  "sandbox.err.spawn": "запуск wasmer ({path})",
+  "sandbox.err.wait": "ожидание процесса wasmer",
 
   "sandbox.setup.mkdir": "создание каталога песочницы {path}",
   "sandbox.setup.done": "Готово. Песочница Python установлена.",

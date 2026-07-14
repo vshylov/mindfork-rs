@@ -117,12 +117,16 @@ impl PythonExec {
     /// Режим песочницы Wasmer. Возвращает уже отформатированный текст результата на
     /// языке `loc`.
     async fn run_wasmer(&self, code: &str, loc: &crate::shared::i18n::Locale) -> String {
-        match self.sandbox.availability() {
+        match self.sandbox.availability(loc) {
             SandboxAvailability::Missing(why) => {
                 loc.tf("tool.python_exec.err.sandbox_missing", &[("why", &why)])
             }
             SandboxAvailability::Ready => {
-                match self.sandbox.run(code, self.net, self.wasm_timeout).await {
+                match self
+                    .sandbox
+                    .run(code, self.net, self.wasm_timeout, loc)
+                    .await
+                {
                     Ok(out) if out.timed_out => loc.tf(
                         "tool.python_exec.err.timeout",
                         &[("secs", &self.wasm_timeout.as_secs().to_string())],
@@ -242,10 +246,17 @@ fn truncate(s: &str, max: usize, loc: &crate::shared::i18n::Locale) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::super::testkit::ctx_with_storage;
+    use super::super::testkit::{ctx_with_storage, ctx_with_storage_lang};
     use super::*;
+    use crate::shared::i18n::Lang;
     use crate::shared::sandbox::{MockSandbox, SandboxOutput};
     use uuid::Uuid;
+
+    /// Нет ли кириллицы в строке (утечка русского на en-профиле).
+    fn no_cyrillic(s: &str) -> bool {
+        !s.chars()
+            .any(|c| ('а'..='я').contains(&c) || ('А'..='Я').contains(&c) || c == 'ё' || c == 'Ё')
+    }
 
     /// Референсная локаль (ru) для прямых вызовов форматирования вывода.
     fn ru() -> &'static crate::shared::i18n::Locale {
@@ -588,6 +599,71 @@ mod tests {
             .await
             .unwrap();
         assert!(out.result.contains("499500"), "got: {}", out.result);
+    }
+
+    /// На en-профиле недоступность песочницы объясняется **по-английски** (ось A):
+    /// обёртка `python_exec` + вложенная причина из `sandbox.rs` — обе английские, без
+    /// утечки русского. Не-ignored (реального `wasmer` не требует — путь Missing).
+    #[tokio::test]
+    async fn en_sandbox_missing_is_localized() {
+        use crate::shared::sandbox::WasmerSandbox;
+        if std::env::var_os("MINDFORK_SANDBOX_WASMER").is_some() {
+            return; // окружение задаёт бинарь — путь Missing не воспроизведётся
+        }
+        let empty = tempfile::tempdir().unwrap();
+        let tool = PythonExec::new(
+            PythonMode::Wasmer,
+            None,
+            Arc::new(WasmerSandbox::new(Some(empty.path().to_path_buf()))),
+            false,
+            Duration::from_secs(30),
+        );
+        let (_d, _s, ctx) = ctx_with_storage_lang(Uuid::new_v4(), Lang::En);
+        let out = tool
+            .invoke(&ctx, serde_json::json!({"code": "print(1)"}))
+            .await
+            .unwrap();
+        let r = &out.result;
+        assert!(r.contains("The Python sandbox is unavailable"), "{r}");
+        assert!(r.contains("`wasmer` binary not found"), "{r}");
+        assert!(no_cyrillic(r), "cyrillic leaked on en-profile: {r}");
+    }
+
+    /// На en-профиле вывод и **метка кода возврата** — английские (ось A). Реальная
+    /// песочница (провизионированная): `print` + ненулевой `sys.exit`.
+    #[tokio::test]
+    #[ignore = "requires a provisioned sandbox (MINDFORK_SANDBOX_DIR)"]
+    async fn en_sandbox_output_and_exit_label_localized() {
+        let Some(tool) = provisioned(false, 60) else {
+            return;
+        };
+        let (_d, _s, ctx) = ctx_with_storage_lang(Uuid::new_v4(), Lang::En);
+        let code = "print('hello'); import sys; sys.exit(3)";
+        let out = tool
+            .invoke(&ctx, serde_json::json!({ "code": code }))
+            .await
+            .unwrap();
+        let r = &out.result;
+        assert!(r.contains("hello"), "{r}");
+        assert!(r.contains("exit code:"), "en-метка кода возврата: {r}");
+        assert!(no_cyrillic(r), "cyrillic leaked on en-profile: {r}");
+    }
+
+    /// На en-профиле сообщение таймаута — английское (ось A). Реальная песочница.
+    #[tokio::test]
+    #[ignore = "requires a provisioned sandbox (MINDFORK_SANDBOX_DIR)"]
+    async fn en_sandbox_timeout_localized() {
+        let Some(tool) = provisioned(false, 3) else {
+            return;
+        };
+        let (_d, _s, ctx) = ctx_with_storage_lang(Uuid::new_v4(), Lang::En);
+        let out = tool
+            .invoke(&ctx, serde_json::json!({"code": "while True: pass"}))
+            .await
+            .unwrap();
+        let r = &out.result;
+        assert!(r.contains("exceeded the time limit"), "{r}");
+        assert!(no_cyrillic(r), "cyrillic leaked on en-profile: {r}");
     }
 
     /// Реальное локальное исполнение (вручную, если установлен Python).

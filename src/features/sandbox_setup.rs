@@ -179,7 +179,7 @@ async fn warmup(dir: &Path, loc: &Locale, progress: &mut impl FnMut(&str)) {
     // `import pandas` тянет и интерпретатор, и нативные модули numpy/pandas (самый
     // тяжёлый путь компиляции); даже при сбое импорта интерпретатор уже в кэше.
     match sb
-        .run("import pandas", false, Duration::from_secs(300))
+        .run("import pandas", false, Duration::from_secs(300), loc)
         .await
     {
         Ok(out) if out.exit_code == Some(0) => progress(loc.t("sandbox.setup.warmup.ok")),

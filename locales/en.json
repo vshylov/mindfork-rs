@@ -806,6 +806,12 @@
   "ui.err.generation_failed": "Generation error: {err}",
   "ui.err.load_data_failed": "Data load error: {err}",
   "ui.err.save_settings_failed": "Failed to save settings: {err}",
+  "ui.err.managed.model_not_found": "model file not found or inaccessible: {path}",
+  "ui.err.managed.draft_not_found": "draft model file not found or inaccessible: {path}",
+  "ui.err.managed.spawn": "spawning llama-server ({path})",
+  "ui.err.managed.early_exit": "llama-server exited before becoming ready (corrupt GGUF or out of memory? — see logs)",
+  "ui.err.managed.timeout": "the inference server did not become ready within {timeout}",
+
   "ui.err.server.no_model": "specify the model name for the cloud provider",
   "ui.err.server.no_api_key_env": "no API key env variable name set",
   "ui.err.server.env_missing": "environment variable {var} is not set",
@@ -828,6 +834,14 @@
   "ui.err.rag_clear_chunks": "clearing previous chunks: {err}",
   "ui.err.rag_reset_vectors": "resetting the vector table: {err}",
   "ui.err.rag_wrong_vector_count": "the embedder returned the wrong number of vectors",
+
+  "sandbox.err.not_installed": "`wasmer` binary not found — install the sandbox (`mindfork sandbox setup`) or set the path via the MINDFORK_SANDBOX_WASMER environment variable",
+  "sandbox.err.busy": "the sandbox is busy with another task — wait for it to finish",
+  "sandbox.err.not_found": "wasmer binary not found",
+  "sandbox.err.job_dir": "creating the task's temporary directory",
+  "sandbox.err.write_script": "writing the task script",
+  "sandbox.err.spawn": "launching wasmer ({path})",
+  "sandbox.err.wait": "waiting for the wasmer process",
 
   "sandbox.setup.mkdir": "creating sandbox directory {path}",
   "sandbox.setup.done": "Done. Python sandbox installed.",
