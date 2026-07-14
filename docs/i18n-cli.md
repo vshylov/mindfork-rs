@@ -209,13 +209,14 @@ InputBox (ADR 0001). Цена: переписывание работающего
 
 ## 5. Этапы (ветки/PR)
 
-1. **`feat/cli-i18n-bootstrap`** — механизм: `Paths::resolve()`/`ensure_dirs()`,
-   `cli_lang()`, ранний `i18n::init` с возвратом предупреждений,
+1. **`feat/cli-i18n-bootstrap`** ✅ **сделано** — механизм: `Paths::resolve()`/
+   `ensure_dirs()`, `cli_lang()`, ранний `i18n::init` с возвратом предупреждений,
    `main() -> ExitCode` + `cli_error_line`, парсер по развилке 1, все тексты
    `main.rs` + `paths`/`instance`/`logging` → `cli.*`. Самый содержательный этап.
-2. **`feat/cli-i18n-features`** — протяжка `loc` в `backup` / `sandbox_setup`
-   (включая прогресс) / `migration`; их `bail!`/`context` → ключи. Механика по
-   плейбуку Яруса 2c, ru байт-в-байт.
+2. **`feat/cli-i18n-features`** ✅ **сделано** — протяжка `loc` в `backup` /
+   `sandbox_setup` (включая прогресс) / `migration`; их `bail!`/`context`/прогресс →
+   ключи (`backup.*` 17, `sandbox.setup.*` 37, `migration.*` 4). Механика по плейбуку
+   Яруса 2c, ru байт-в-байт. +3 per-locale регрессионных теста.
 3. **`feat/i18n-engine-tail`** (по развилке 5) — `managed.rs` + `shared/sandbox.rs`;
    обновить границы в i18n.md §2.3 (снять «probe-ошибки» из остатков, вписать
    «обёртки HTTP-клиентов»).

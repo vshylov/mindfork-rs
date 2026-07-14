@@ -20,6 +20,7 @@ use crate::entities::profile::{CharacterNames, Profile};
 use crate::entities::sampling::SamplingConfig;
 use crate::features::tools::default_tool_ids;
 use crate::shared::config::Theme;
+use crate::shared::i18n::Locale;
 
 /// Пространство имён для детерминированных id профилей (UUIDv5 от имени конфигурации).
 /// Фиксированное — чтобы повторный импорт давал те же id (идемпотентность).
@@ -149,10 +150,11 @@ struct LlConversation {
 /// Парсит `Settings.json`: профили из `Configurations` + глобальные семплинг/
 /// интерфейс. Профили получают **детерминированный** id (по имени) — повторный
 /// импорт даёт те же id.
-pub fn parse_settings(json: &str) -> Result<ImportResult> {
+pub fn parse_settings(json: &str, loc: &Locale) -> Result<ImportResult> {
     // .NET пишет UTF-8 с BOM — отбрасываем его перед парсингом.
     let json = json.trim_start_matches('\u{feff}');
-    let s: LlSettings = serde_json::from_str(json).context("parsing LameLLaMA Settings.json")?;
+    let s: LlSettings = serde_json::from_str(json)
+        .with_context(|| loc.t("migration.ctx.parse_settings").to_string())?;
 
     let mut profiles = Vec::new();
     if let Some(nc) = &s.new_conversation_config {
@@ -257,17 +259,18 @@ fn conversation_to_chat(conv: &LlConversation, profile_id: Uuid) -> Chat {
 /// `Conversations/*.json` (чаты; `*.deleted` пропускаются). Все чаты привязываются
 /// к первому импортированному профилю (у чата своя копия system/имён, поэтому
 /// привязка влияет лишь на изоляцию notes/RAG, которых в источнике нет).
-pub fn import_dir(dir: &Path) -> Result<ImportResult> {
+pub fn import_dir(dir: &Path, loc: &Locale) -> Result<ImportResult> {
     let mut result = match fs::read(dir.join("Settings.json")) {
-        Ok(bytes) => parse_settings(&String::from_utf8_lossy(&bytes))?,
+        Ok(bytes) => parse_settings(&String::from_utf8_lossy(&bytes), loc)?,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => ImportResult::default(),
-        Err(e) => return Err(e).context("reading Settings.json"),
+        Err(e) => return Err(e).with_context(|| loc.t("migration.ctx.read_settings").to_string()),
     };
 
-    // Если профилей нет — создаём детерминированный профиль-приёмник для чатов.
+    // Если профилей нет — создаём детерминированный профиль-приёмник для чатов. Имя —
+    // на языке CLI (язык в момент создания данных); id детерминирован по имени.
     if result.profiles.is_empty() {
         result.profiles.push(configuration_to_profile(
-            "Импортировано",
+            loc.t("migration.import.default_profile"),
             &LlConfiguration {
                 characters_config: None,
                 message_history: Vec::new(),
@@ -279,14 +282,24 @@ pub fn import_dir(dir: &Path) -> Result<ImportResult> {
     let conv_dir = dir.join("Conversations");
     if conv_dir.is_dir() {
         let mut entries: Vec<_> = fs::read_dir(&conv_dir)
-            .with_context(|| format!("reading {}", conv_dir.display()))?
+            .with_context(|| {
+                loc.tf(
+                    "migration.ctx.read",
+                    &[("path", &conv_dir.display().to_string())],
+                )
+            })?
             .filter_map(|e| e.ok().map(|e| e.path()))
             .filter(|p| p.extension().and_then(|x| x.to_str()) == Some("json"))
             .collect();
         // Детерминированный порядок (для воспроизводимости).
         entries.sort();
         for path in entries {
-            let bytes = fs::read(&path).with_context(|| format!("reading {}", path.display()))?;
+            let bytes = fs::read(&path).with_context(|| {
+                loc.tf(
+                    "migration.ctx.read",
+                    &[("path", &path.display().to_string())],
+                )
+            })?;
             match serde_json::from_slice::<LlConversation>(strip_bom(&bytes)) {
                 Ok(conv) => result
                     .chats
@@ -388,6 +401,12 @@ fn strip_bom(bytes: &[u8]) -> &[u8] {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::shared::i18n::{Lang, locale};
+
+    /// Референсная локаль для тестов (тексты ошибок не проверяются — ru байт-в-байт).
+    fn ru() -> &'static Locale {
+        locale(Lang::Ru)
+    }
 
     const SETTINGS: &str = r#"{
       "ConversationEngineConfig": {
@@ -429,7 +448,7 @@ mod tests {
 
     #[test]
     fn parses_configuration_into_profile() {
-        let r = parse_settings(SETTINGS).unwrap();
+        let r = parse_settings(SETTINGS, ru()).unwrap();
         assert_eq!(r.profiles.len(), 1);
         let p = &r.profiles[0];
         assert_eq!(p.name, "Carlos");
@@ -441,7 +460,7 @@ mod tests {
 
     #[test]
     fn maps_supported_sampling_drops_rest() {
-        let r = parse_settings(SETTINGS).unwrap();
+        let r = parse_settings(SETTINGS, ru()).unwrap();
         let s = r.sampling.unwrap();
         assert_eq!(s.temperature, Some(0.8));
         assert_eq!(s.top_k, Some(64));
@@ -454,7 +473,7 @@ mod tests {
 
     #[test]
     fn maps_interface_and_theme() {
-        let r = parse_settings(SETTINGS).unwrap();
+        let r = parse_settings(SETTINGS, ru()).unwrap();
         let i = r.interface.unwrap();
         assert!(i.spellcheck_enabled);
         assert_eq!(i.dictionaries, vec!["en_US", "ru_RU"]);
@@ -462,9 +481,21 @@ mod tests {
     }
 
     #[test]
+    fn parse_settings_error_is_localized() {
+        // Регрессия против забытого `loc`: контекст разбора на языке локали.
+        let en = parse_settings("{ not json", locale(Lang::En))
+            .unwrap_err()
+            .to_string();
+        assert!(en.contains("parsing LameLLaMA"), "{en}");
+        assert!(!en.chars().any(|c| ('а'..='я').contains(&c)), "{en}");
+        let r = parse_settings("{ not json", ru()).unwrap_err().to_string();
+        assert!(r.contains("Settings.json"), "{r}");
+    }
+
+    #[test]
     fn profile_id_is_deterministic() {
-        let a = parse_settings(SETTINGS).unwrap().profiles[0].id;
-        let b = parse_settings(SETTINGS).unwrap().profiles[0].id;
+        let a = parse_settings(SETTINGS, ru()).unwrap().profiles[0].id;
+        let b = parse_settings(SETTINGS, ru()).unwrap().profiles[0].id;
         assert_eq!(a, b, "повторный импорт даёт тот же id (идемпотентность)");
     }
 
@@ -496,7 +527,7 @@ mod tests {
         fs::write(conv_dir.join("b.json.deleted"), CONVERSATION).unwrap();
         fs::write(conv_dir.join("c.json"), "{ not json").unwrap();
 
-        let r = import_dir(dir.path()).unwrap();
+        let r = import_dir(dir.path(), ru()).unwrap();
         assert_eq!(r.profiles.len(), 1);
         assert_eq!(r.chats.len(), 1, "только валидный .json");
         assert_eq!(r.chats[0].profile_id, r.profiles[0].id);
@@ -510,8 +541,8 @@ mod tests {
         fs::create_dir(&conv_dir).unwrap();
         fs::write(conv_dir.join("a.json"), CONVERSATION).unwrap();
 
-        let r1 = import_dir(dir.path()).unwrap();
-        let r2 = import_dir(dir.path()).unwrap();
+        let r1 = import_dir(dir.path(), ru()).unwrap();
+        let r2 = import_dir(dir.path(), ru()).unwrap();
         assert_eq!(r1.profiles[0].id, r2.profiles[0].id);
         assert_eq!(r1.chats[0].id, r2.chats[0].id);
     }
