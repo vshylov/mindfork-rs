@@ -12,6 +12,7 @@ use tokio::process::{Child, Command};
 use tokio_util::sync::CancellationToken;
 
 use crate::shared::api::OpenAiClient;
+use crate::shared::i18n::Locale;
 
 /// Конфигурация запуска managed-сервера `llama-server` (llama.cpp).
 #[derive(Debug, Clone)]
@@ -160,8 +161,10 @@ impl ServerHandle {
         self.exited.clone()
     }
 
-    /// Запускает дочерний процесс `llama-server` (без ожидания готовности).
-    pub fn launch(cfg: &ManagedConfig) -> Result<Self> {
+    /// Запускает дочерний процесс `llama-server` (без ожидания готовности). `loc` —
+    /// язык интерфейса для текста ошибки (супервайзер показывает её в статус-чипе как
+    /// `ServerStatus::Disconnected`; для эмбеддинг-сервера ошибка идёт лишь в лог).
+    pub fn launch(cfg: &ManagedConfig, loc: &'static Locale) -> Result<Self> {
         // Предполётная проверка файла модели. `spawn` ниже успешен даже при
         // отсутствующем GGUF — `llama-server` лишь потом падает на загрузке и
         // выходит, а фоновый probe (`wait_until_ready`) этого не замечает и
@@ -171,7 +174,10 @@ impl ServerHandle {
         if let Some(model) = &cfg.model_path
             && !std::path::Path::new(model).is_file()
         {
-            bail!("файл модели не найден или недоступен: {model}");
+            bail!(
+                "{}",
+                loc.tf("ui.err.managed.model_not_found", &[("path", model)])
+            );
         }
         // Та же предполётная проверка для черновой модели спекулятивного
         // декодирования (`-md`): иначе `llama-server` так же тихо упадёт на её
@@ -179,7 +185,10 @@ impl ServerHandle {
         if let Some(draft) = &cfg.draft_model
             && !std::path::Path::new(draft).is_file()
         {
-            bail!("файл черновой модели не найден или недоступен: {draft}");
+            bail!(
+                "{}",
+                loc.tf("ui.err.managed.draft_not_found", &[("path", draft)])
+            );
         }
 
         let args = build_args(cfg);
@@ -191,7 +200,12 @@ impl ServerHandle {
             .stderr(Stdio::piped())
             .kill_on_drop(true)
             .spawn()
-            .with_context(|| format!("spawning llama-server at {}", cfg.binary.display()))?;
+            .with_context(|| {
+                loc.tf(
+                    "ui.err.managed.spawn",
+                    &[("path", &cfg.binary.display().to_string())],
+                )
+            })?;
 
         // Читаем вывод процесса, чтобы (а) не переполнить пайп, (б) видеть прогресс загрузки.
         if let Some(out) = child.stdout.take() {
@@ -248,6 +262,7 @@ pub async fn wait_until_ready(
     client: &OpenAiClient,
     timeout: Duration,
     exited: Option<CancellationToken>,
+    loc: &'static Locale,
 ) -> Result<()> {
     let deadline = tokio::time::Instant::now() + timeout;
     loop {
@@ -256,15 +271,19 @@ pub async fn wait_until_ready(
         }
         // Дочерний процесс умер в ходе загрузки — не ждём таймаут.
         if exited.as_ref().is_some_and(|e| e.is_cancelled()) {
-            bail!(
-                "llama-server завершился до готовности (битый GGUF или нехватка памяти? — см. логи)"
-            );
+            bail!("{}", loc.t("ui.err.managed.early_exit"));
         }
         if tokio::time::Instant::now() >= deadline {
             // Generic-сообщение: проба обслуживает не только managed `llama-server`,
             // но и external/облачные OpenAI-совместимые серверы (vLLM, Gemini-compat
             // и т.п.) — поэтому не привязываем текст к конкретному движку.
-            bail!("сервер инференса не вышел в готовность за {timeout:?}");
+            bail!(
+                "{}",
+                loc.tf(
+                    "ui.err.managed.timeout",
+                    &[("timeout", &format!("{timeout:?}"))]
+                )
+            );
         }
         // Спим до следующей пробы, но просыпаемся сразу, если процесс умер —
         // тогда следующая итерация увидит `exited` и завершится с ошибкой.
@@ -298,6 +317,12 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::shared::i18n::{Lang, locale};
+
+    /// Референсная локаль для тестов (ru байт-в-байт — прежние ассерты подстрок целы).
+    fn ru() -> &'static Locale {
+        locale(Lang::Ru)
+    }
 
     fn base_cfg() -> ManagedConfig {
         ManagedConfig {
@@ -428,7 +453,7 @@ mod tests {
             draft_model: Some("definitely/missing/draft-xyz.gguf".into()),
             ..base_cfg()
         };
-        let err = match ServerHandle::launch(&cfg) {
+        let err = match ServerHandle::launch(&cfg, ru()) {
             Err(e) => e,
             Ok(_) => panic!("ожидалась ошибка отсутствующего файла черновой модели"),
         };
@@ -458,11 +483,26 @@ mod tests {
             model_path: Some("definitely/missing/model-xyz.gguf".into()),
             ..base_cfg()
         };
-        let err = match ServerHandle::launch(&cfg) {
+        let err = match ServerHandle::launch(&cfg, ru()) {
             Err(e) => e,
             Ok(_) => panic!("ожидалась ошибка отсутствующего файла модели"),
         };
         assert!(err.to_string().contains("файл модели"), "{err}");
+    }
+
+    #[test]
+    fn launch_error_is_localized() {
+        // Регрессия против забытого `loc`: en-сообщение без кириллицы, ru — русское.
+        let cfg = ManagedConfig {
+            model_path: Some("definitely/missing/model-xyz.gguf".into()),
+            ..base_cfg()
+        };
+        let en = match ServerHandle::launch(&cfg, locale(Lang::En)) {
+            Err(e) => e.to_string(),
+            Ok(_) => panic!("ожидалась ошибка отсутствующего файла модели"),
+        };
+        assert!(en.contains("model file not found"), "{en}");
+        assert!(!en.chars().any(|c| ('а'..='я').contains(&c)), "{en}");
     }
 
     #[tokio::test]
@@ -472,7 +512,7 @@ mod tests {
         let client = OpenAiClient::new("http://127.0.0.1:1/v1");
         let exited = CancellationToken::new();
         exited.cancel();
-        let err = wait_until_ready(&client, Duration::from_secs(600), Some(exited))
+        let err = wait_until_ready(&client, Duration::from_secs(600), Some(exited), ru())
             .await
             .expect_err("ожидалась ошибка раннего выхода");
         assert!(

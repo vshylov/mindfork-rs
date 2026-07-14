@@ -20,6 +20,8 @@ use anyhow::{Context, Result};
 use tokio::sync::Semaphore;
 use uuid::Uuid;
 
+use crate::shared::i18n::Locale;
+
 /// Имя бинаря `wasmer` в каталоге песочницы (по платформе).
 const WASMER_BIN: &str = if cfg!(windows) {
     "wasmer.exe"
@@ -81,13 +83,23 @@ pub enum SandboxAvailability {
 /// (`features/tools/python.rs`) и заменяемости реализации.
 #[async_trait::async_trait]
 pub trait SandboxRunner: Send + Sync {
-    /// Проверка готовности (наличие бинаря `wasmer`). Без запуска процесса.
-    fn availability(&self) -> SandboxAvailability;
+    /// Проверка готовности (наличие бинаря `wasmer`). Без запуска процесса. `loc` —
+    /// язык причины недоступности (её показывает вызывающий: `python_exec` — на языке
+    /// профиля, ось A; warmup провизии — на языке интерфейса).
+    fn availability(&self, loc: &Locale) -> SandboxAvailability;
 
     /// Исполнить `code` (Python) в песочнице с сетью `net` и таймаутом `timeout`.
     /// По таймауту процесс убивается, возвращается `timed_out = true`. Ошибка —
-    /// только на уровне запуска процесса (не на ненулевом коде возврата гостя).
-    async fn run(&self, code: &str, net: bool, timeout: Duration) -> Result<SandboxOutput>;
+    /// только на уровне запуска процесса (не на ненулевом коде возврата гостя). `loc` —
+    /// язык текста ошибки (её встраивает вызывающий: `python_exec` — язык профиля,
+    /// warmup — язык интерфейса).
+    async fn run(
+        &self,
+        code: &str,
+        net: bool,
+        timeout: Duration,
+        loc: &Locale,
+    ) -> Result<SandboxOutput>;
 }
 
 /// Реальная песочница: драйвит бандленный `wasmer` как дочерний процесс.
@@ -160,34 +172,36 @@ impl WasmerSandbox {
 
 #[async_trait::async_trait]
 impl SandboxRunner for WasmerSandbox {
-    fn availability(&self) -> SandboxAvailability {
+    fn availability(&self, loc: &Locale) -> SandboxAvailability {
         match self.resolve_wasmer() {
             Some(_) => SandboxAvailability::Ready,
-            None => SandboxAvailability::Missing(
-                "бинарь `wasmer` не найден — установите песочницу \
-                 (`mindfork sandbox setup`) или задайте путь через переменную \
-                 окружения MINDFORK_SANDBOX_WASMER"
-                    .into(),
-            ),
+            None => SandboxAvailability::Missing(loc.t("sandbox.err.not_installed").to_string()),
         }
     }
 
-    async fn run(&self, code: &str, net: bool, timeout: Duration) -> Result<SandboxOutput> {
+    async fn run(
+        &self,
+        code: &str,
+        net: bool,
+        timeout: Duration,
+        loc: &Locale,
+    ) -> Result<SandboxOutput> {
         // Гейт «одна задача»: параллельный запуск сразу отклоняется (до спавна).
-        let _permit = self.gate.try_acquire().map_err(|_| {
-            anyhow::anyhow!("песочница занята другой задачей — дождитесь её завершения")
-        })?;
+        let _permit = self
+            .gate
+            .try_acquire()
+            .map_err(|_| anyhow::anyhow!("{}", loc.t("sandbox.err.busy")))?;
         let wasmer = self
             .resolve_wasmer()
-            .ok_or_else(|| anyhow::anyhow!("бинарь wasmer не найден"))?;
+            .ok_or_else(|| anyhow::anyhow!("{}", loc.t("sandbox.err.not_found")))?;
         let python = self.resolve_python();
 
         // Скрипт задачи в уникальном временном каталоге (авто-очистка через Drop).
-        let job = JobDir::create().context("создание временного каталога задачи")?;
+        let job = JobDir::create().with_context(|| loc.t("sandbox.err.job_dir").to_string())?;
         let script = job.path.join("job.py");
         tokio::fs::write(&script, build_wrapper(code))
             .await
-            .context("запись скрипта задачи")?;
+            .with_context(|| loc.t("sandbox.err.write_script").to_string())?;
 
         // Монтируем рабочий каталог и (если есть) site-packages; PYTHONPATH на гостя.
         let mut mounts: Vec<(PathBuf, &str)> = vec![(job.path.clone(), GUEST_WORK)];
@@ -220,7 +234,7 @@ impl SandboxRunner for WasmerSandbox {
 
         let child = cmd
             .spawn()
-            .with_context(|| format!("запуск wasmer ({})", wasmer.to_string_lossy()))?;
+            .with_context(|| loc.tf("sandbox.err.spawn", &[("path", &wasmer.to_string_lossy())]))?;
 
         // Жёсткий лимит памяти (Windows Job Object) — сразу после спавна, до того как
         // V8 закоммитит существенную память. «Лучшее усилие»: сбой лишь логируется.
@@ -235,7 +249,7 @@ impl SandboxRunner for WasmerSandbox {
                 exit_code: out.status.code(),
                 timed_out: false,
             }),
-            Ok(Err(e)) => Err(e).context("ожидание процесса wasmer"),
+            Ok(Err(e)) => Err(e).with_context(|| loc.t("sandbox.err.wait").to_string()),
             Err(_) => Ok(SandboxOutput {
                 stdout: String::new(),
                 stderr: String::new(),
@@ -416,11 +430,17 @@ impl MockSandbox {
 #[cfg(test)]
 #[async_trait::async_trait]
 impl SandboxRunner for MockSandbox {
-    fn availability(&self) -> SandboxAvailability {
+    fn availability(&self, _loc: &Locale) -> SandboxAvailability {
         self.availability.clone()
     }
 
-    async fn run(&self, code: &str, net: bool, _timeout: Duration) -> Result<SandboxOutput> {
+    async fn run(
+        &self,
+        code: &str,
+        net: bool,
+        _timeout: Duration,
+        _loc: &Locale,
+    ) -> Result<SandboxOutput> {
         self.calls.lock().unwrap().push((code.to_string(), net));
         Ok(self.output.clone())
     }
@@ -429,6 +449,12 @@ impl SandboxRunner for MockSandbox {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::shared::i18n::{Lang, locale};
+
+    /// Референсная локаль для тестов (ru байт-в-байт — прежние ассерты подстрок целы).
+    fn ru() -> &'static Locale {
+        locale(Lang::Ru)
+    }
 
     #[test]
     fn wrapper_prepends_setsockopt_shim() {
@@ -514,7 +540,10 @@ mod tests {
         }
         let dir = tempfile::tempdir().unwrap();
         let sb = WasmerSandbox::new(Some(dir.path().to_path_buf()));
-        assert!(matches!(sb.availability(), SandboxAvailability::Missing(_)));
+        assert!(matches!(
+            sb.availability(ru()),
+            SandboxAvailability::Missing(_)
+        ));
     }
 
     #[test]
@@ -525,7 +554,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         std::fs::write(dir.path().join(WASMER_BIN), b"stub").unwrap();
         let sb = WasmerSandbox::new(Some(dir.path().to_path_buf()));
-        assert_eq!(sb.availability(), SandboxAvailability::Ready);
+        assert_eq!(sb.availability(ru()), SandboxAvailability::Ready);
     }
 
     #[tokio::test]
@@ -536,10 +565,25 @@ mod tests {
         let _held = sb.gate.try_acquire().unwrap();
         // Второй запуск отклоняется мгновенно (до resolve_wasmer/спавна процесса).
         let err = sb
-            .run("print(1)", false, Duration::from_secs(5))
+            .run("print(1)", false, Duration::from_secs(5), ru())
             .await
             .unwrap_err();
         assert!(err.to_string().contains("занята"), "got: {err}");
+    }
+
+    #[tokio::test]
+    async fn busy_error_is_localized() {
+        // Регрессия против забытого `loc`: причина «занята» на языке локали.
+        let dir = tempfile::tempdir().unwrap();
+        let sb = WasmerSandbox::new(Some(dir.path().to_path_buf()));
+        let _held = sb.gate.try_acquire().unwrap();
+        let en = sb
+            .run("print(1)", false, Duration::from_secs(5), locale(Lang::En))
+            .await
+            .unwrap_err()
+            .to_string();
+        assert!(en.contains("busy"), "{en}");
+        assert!(!en.chars().any(|c| ('а'..='я').contains(&c)), "{en}");
     }
 
     #[tokio::test]
@@ -552,12 +596,12 @@ mod tests {
             return; // окружение задаёт бинарь — этот тест про отсутствие бинаря
         }
         let e1 = sb
-            .run("print(1)", false, Duration::from_secs(5))
+            .run("print(1)", false, Duration::from_secs(5), ru())
             .await
             .unwrap_err();
         assert!(e1.to_string().contains("wasmer"), "got: {e1}");
         let e2 = sb
-            .run("print(1)", false, Duration::from_secs(5))
+            .run("print(1)", false, Duration::from_secs(5), ru())
             .await
             .unwrap_err();
         assert!(e2.to_string().contains("wasmer"), "got: {e2}");

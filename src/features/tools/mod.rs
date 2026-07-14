@@ -509,6 +509,15 @@ pub(crate) mod testkit {
     /// Контекст инструмента поверх временного хранилища. Возвращает также
     /// `TempDir` (держать живым) и `Arc<Storage>` (для проверок в тесте).
     pub fn ctx_with_storage(profile_id: Uuid) -> (tempfile::TempDir, Arc<Storage>, ToolContext) {
+        ctx_with_storage_lang(profile_id, crate::shared::i18n::Lang::Ru)
+    }
+
+    /// Как [`ctx_with_storage`], но с явным языком каркаса (для проверки локализации
+    /// результатов инструментов — напр. `python_exec` на en-профиле).
+    pub fn ctx_with_storage_lang(
+        profile_id: Uuid,
+        lang: crate::shared::i18n::Lang,
+    ) -> (tempfile::TempDir, Arc<Storage>, ToolContext) {
         let dir = tempfile::tempdir().unwrap();
         let storage = Arc::new(Storage::open(Paths::with_root(dir.path())).unwrap());
         let deps = ToolDeps {
@@ -516,7 +525,9 @@ pub(crate) mod testkit {
             engine: Arc::new(MockBackend::scripted(vec![])),
             embedder: Arc::new(MockEmbedder::new(16)),
         };
-        let ctx = ToolContext::new(deps, test_params(), test_turn(profile_id));
+        let mut turn = test_turn(profile_id);
+        turn.lang = lang;
+        let ctx = ToolContext::new(deps, test_params(), turn);
         (dir, storage, ctx)
     }
 
