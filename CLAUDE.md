@@ -116,10 +116,10 @@ Env для выбора бэкенда: `MINDFORK_ENGINE_URL` (external, люб�
 `MINDFORK_PORT`) для managed `llama-server`.
 
 ## Статус (на 2026-07-14)
-Сделан весь план **M0–M9** плюс обширный пост-M9 (в `main`). **1043 юнит-теста
+Сделан весь план **M0–M9** плюс обширный пост-M9 (в `main`). **1046 юнит-тестов
 зелёные, 46 `#[ignore]`-смоуков** (крупнейший счётчик — журнал ниже; последнее
-направление — **i18n CLI** (весь текст CLI/`main.rs` в бандлах, свой парсер вместо
-`clap`), ветка `feat/cli-i18n-bootstrap`, этап 1 из 3).
+направление — **i18n CLI** (весь текст CLI/`main.rs`/фич в бандлах, свой парсер вместо
+`clap`), этапы 1–2 из 3: ветки `feat/cli-i18n-bootstrap` + `feat/cli-i18n-features`).
 **Направление i18n завершено целиком:** ось A (язык агента, Ярусы 1–2, все 35
 инструментов), **Ярус 3** (внешние `data/locales/*.json` поверх вшитых + новые языки
 без пересборки — `Lang::Ext`, реестр `init(dir)`), ось B (язык интерфейса, весь
@@ -5197,6 +5197,42 @@ web-поиск и Python под выключателями, экран наст�
 - **Дальше:** этап 2 (`feat/cli-i18n-features`) — протяжка `loc` в `backup`/
   `sandbox_setup`/`migration` (внутренние `bail!`/`context` + прогресс); этап 3
   (`feat/i18n-engine-tail`) — `managed.rs` (probe в статус-чип) + `shared/sandbox.rs`.
+
+### Пост-M9: i18n CLI — этап 2 (локализация backup / sandbox_setup / migration) (сделано)
+- **Этап 2** плана [docs/i18n-cli.md](docs/i18n-cli.md) (`feat/cli-i18n-features`,
+  стекается на этап 1): внутренние `bail!`/`context`/прогресс трёх CLI-фич переехали в
+  бандлы локалей. Механика — плейбук Яруса 2c (протяжка `loc: &Locale` параметром в
+  дерево функций, ru байт-в-байт с прежними строками → существующие тесты не правились,
+  лишь call sites получили `ru()`-локаль). Живой прогон не требуется (движок/память не
+  затронуты); ручная проверка бинарника — локализованная ошибка restore на ru и en.
+- **`features/backup.rs`** (17 ключей `backup.*`): `create_backup`/`restore_backup`
+  получили `loc`, протянут во **все** helpers с anyhow-контекстами (`gather_entries`/
+  `collect_dir`/`write_zip`/`validate_archive`/`extract_archive`/`clear_user_data`/
+  `remove_file_if_exists`/`remove_dir_if_exists`). Контексты создания архива/чтения
+  каталога/упаковки/распаковки/удаления + `backup.err.unsafe_entry` (zip-slip) — из
+  бандла.
+- **`features/sandbox_setup.rs`** (37 ключей `sandbox.setup.*`): `setup(dir, opts,
+  loc, progress)` — **все прогресс-строки** (Скачивание/Распаковка/Прогрев/Готово) и
+  контексты ошибок (`ensure_wasmer`/`ensure_python_webc`/`ensure_wheels`/`warmup`/
+  `download_to_file`/`download_bytes`/`verify_sha256`/`extract_targz`/`unpack_wheel`/
+  `http_client`) локализованы. Сигнатура колбэка `FnMut(&str)` не менялась — строки
+  идут через `loc.tf`.
+- **`features/migration.rs`** (4 ключа `migration.*`): `parse_settings`/`import_dir`
+  получили `loc`; прежние **английские** контексты (`parsing LameLLaMA Settings.json`
+  и т.п.) теперь из бандла. Имя профиля-приёмника при импорте без конфигураций
+  (`«Импортировано»`) локализовано по языку CLI (язык в момент создания данных;
+  UUIDv5-id детерминирован по имени — идемпотентность в пределах одного языка цела).
+- **Все три `loc`-параметра** протянуты и в `main.rs` (call sites этапа 1 уже имели
+  `loc`). Тесты фич получили `fn ru() -> &'static Locale` и `ru()` в call sites.
+- **Тесты**: +3 per-locale регрессионных против забытого `loc` (`backup`:
+  `corrupt_archive_error_is_localized` — контекст «повреждён»/«corrupted» + en без
+  кириллицы; `sandbox_setup`: `sha_mismatch_error_is_localized`; `migration`:
+  `parse_settings_error_is_localized`). Существующие i18n-гейты (key/placeholder
+  parity, `en_bundle_has_no_cyrillic`, ключ-есть-в-коде, нет-мёртвых) накрыли все 58
+  новых ключей автоматически. **1046 юнит-тестов зелёные** (+3), 46 `#[ignore]`,
+  clippy `-D warnings`/fmt чисты.
+- **Дальше:** этап 3 (`feat/i18n-engine-tail`) — `managed.rs` (probe-ошибки → статус-чип)
+  + `shared/sandbox.rs` (результат `python_exec` — язык профиля; warmup — язык UI).
 
 ### Отложено за пределы M3
 - **Сворачивание/выделение per-message** и tool-блоки в ленте — сейчас «мысли»

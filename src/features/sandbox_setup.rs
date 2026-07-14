@@ -18,6 +18,7 @@ use futures_util::StreamExt;
 use sha2::{Digest, Sha256};
 use tokio::io::AsyncWriteExt;
 
+use crate::shared::i18n::Locale;
 use crate::shared::sandbox::{SandboxRunner, WasmerSandbox, locate_wasmer};
 
 /// Версия `wasmer`, к которой привязан lock-список (GitHub release tag `v<...>`).
@@ -144,17 +145,26 @@ pub struct SetupOptions {
 
 /// Провизия всей песочницы в каталог `dir` (`data/sandbox/`). `progress` — колбэк
 /// строк для stdout. Идемпотентно: уже установленное пропускается (кроме `force`).
-pub async fn setup(dir: &Path, opts: &SetupOptions, mut progress: impl FnMut(&str)) -> Result<()> {
-    std::fs::create_dir_all(dir)
-        .with_context(|| format!("создание каталога песочницы {}", dir.display()))?;
-    let client = http_client()?;
+pub async fn setup(
+    dir: &Path,
+    opts: &SetupOptions,
+    loc: &Locale,
+    mut progress: impl FnMut(&str),
+) -> Result<()> {
+    std::fs::create_dir_all(dir).with_context(|| {
+        loc.tf(
+            "sandbox.setup.mkdir",
+            &[("path", &dir.display().to_string())],
+        )
+    })?;
+    let client = http_client(loc)?;
 
-    let wasmer = ensure_wasmer(&client, dir, opts, &mut progress).await?;
-    ensure_python_webc(dir, &wasmer, opts, &mut progress).await?;
-    ensure_wheels(&client, dir, opts, &mut progress).await?;
-    warmup(dir, &mut progress).await;
+    let wasmer = ensure_wasmer(&client, dir, opts, loc, &mut progress).await?;
+    ensure_python_webc(dir, &wasmer, opts, loc, &mut progress).await?;
+    ensure_wheels(&client, dir, opts, loc, &mut progress).await?;
+    warmup(dir, loc, &mut progress).await;
 
-    progress("Готово. Песочница Python установлена.");
+    progress(loc.t("sandbox.setup.done"));
     Ok(())
 }
 
@@ -163,8 +173,8 @@ pub async fn setup(dir: &Path, opts: &SetupOptions, mut progress: impl FnMut(&st
 /// тёплым — без многосекундной компиляции на глазах у пользователя (заменяет «баннер
 /// первого запуска»). «Лучшее усилие»: сбой прогрева не проваливает установку. Идёт
 /// через реальный [`WasmerSandbox`], так что кэш и пути совпадают с рантаймом.
-async fn warmup(dir: &Path, progress: &mut impl FnMut(&str)) {
-    progress("Прогрев кэша компиляции (может занять время)…");
+async fn warmup(dir: &Path, loc: &Locale, progress: &mut impl FnMut(&str)) {
+    progress(loc.t("sandbox.setup.warmup.start"));
     let sb = WasmerSandbox::new(Some(dir.to_path_buf()));
     // `import pandas` тянет и интерпретатор, и нативные модули numpy/pandas (самый
     // тяжёлый путь компиляции); даже при сбое импорта интерпретатор уже в кэше.
@@ -172,9 +182,9 @@ async fn warmup(dir: &Path, progress: &mut impl FnMut(&str)) {
         .run("import pandas", false, Duration::from_secs(300))
         .await
     {
-        Ok(out) if out.exit_code == Some(0) => progress("Кэш прогрет."),
-        Ok(_) => progress("Прогрев завершён частично (не критично)."),
-        Err(e) => progress(&format!("Прогрев пропущен: {e} (не критично).")),
+        Ok(out) if out.exit_code == Some(0) => progress(loc.t("sandbox.setup.warmup.ok")),
+        Ok(_) => progress(loc.t("sandbox.setup.warmup.partial")),
+        Err(e) => progress(&loc.tf("sandbox.setup.warmup.skipped", &[("err", &e.to_string())])),
     }
 }
 
@@ -188,41 +198,57 @@ async fn ensure_wasmer(
     client: &reqwest::Client,
     dir: &Path,
     opts: &SetupOptions,
+    loc: &Locale,
     progress: &mut impl FnMut(&str),
 ) -> Result<PathBuf> {
     if !opts.force
         && let Some(bin) = locate_wasmer(dir)
     {
-        progress(&format!("wasmer уже установлен: {}", bin.display()));
+        progress(&loc.tf(
+            "sandbox.setup.wasmer.present",
+            &[("path", &bin.display().to_string())],
+        ));
         return Ok(bin);
     }
     let arch = archive_for(std::env::consts::OS, std::env::consts::ARCH).ok_or_else(|| {
         anyhow::anyhow!(
-            "автоскачивание wasmer недоступно для платформы {}/{} — установите wasmer \
-             вручную (https://wasmer.io) и задайте MINDFORK_SANDBOX_WASMER",
-            std::env::consts::OS,
-            std::env::consts::ARCH
+            "{}",
+            loc.tf(
+                "sandbox.setup.wasmer.no_platform",
+                &[
+                    ("os", std::env::consts::OS),
+                    ("arch", std::env::consts::ARCH),
+                ],
+            )
         )
     })?;
 
     let archive_path = dir.join("wasmer.tar.gz");
-    progress(&format!(
-        "Скачивание wasmer {WASMER_VERSION} ({}/{})…",
-        arch.os, arch.arch
+    progress(&loc.tf(
+        "sandbox.setup.wasmer.downloading",
+        &[
+            ("version", WASMER_VERSION),
+            ("os", arch.os),
+            ("arch", arch.arch),
+        ],
     ));
-    download_to_file(client, arch.url, &archive_path, arch.sha256, progress).await?;
+    download_to_file(client, arch.url, &archive_path, arch.sha256, loc, progress).await?;
 
     let dist = dir.join("wasmer-dist");
-    progress("Распаковка wasmer…");
+    progress(loc.t("sandbox.setup.wasmer.extracting"));
     // Чистая переустановка каталога распаковки (устойчиво к прерванной прошлой).
     let _ = std::fs::remove_dir_all(&dist);
-    extract_targz(&archive_path, &dist).context("распаковка архива wasmer")?;
+    extract_targz(&archive_path, &dist, loc)
+        .with_context(|| loc.t("sandbox.setup.wasmer.extract_ctx").to_string())?;
     let _ = std::fs::remove_file(&archive_path);
 
     locate_wasmer(dir).ok_or_else(|| {
         anyhow::anyhow!(
-            "бинарь wasmer не найден после распаковки в {}",
-            dist.display()
+            "{}",
+            loc.tf(
+                "sandbox.setup.wasmer.not_found",
+                &[("path", &dist.display().to_string())],
+            )
         )
     })
 }
@@ -232,14 +258,15 @@ async fn ensure_python_webc(
     dir: &Path,
     wasmer: &Path,
     opts: &SetupOptions,
+    loc: &Locale,
     progress: &mut impl FnMut(&str),
 ) -> Result<()> {
     let webc = dir.join("python.webc");
     if webc.is_file() && !opts.force {
-        progress("python.webc уже на месте.");
+        progress(loc.t("sandbox.setup.webc.present"));
         return Ok(());
     }
-    progress(&format!("Скачивание {PYTHON_PACKAGE} (python.webc)…"));
+    progress(&loc.tf("sandbox.setup.webc.downloading", &[("pkg", PYTHON_PACKAGE)]));
     // Дом/кэш wasmer — под каталогом песочницы (самодостаточно, не в ~/.wasmer).
     let home = dir.join("wasmer-home");
     std::fs::create_dir_all(&home).ok();
@@ -253,14 +280,26 @@ async fn ensure_python_webc(
         .arg(&home)
         .output()
         .await
-        .with_context(|| format!("запуск {}", wasmer.display()))?;
+        .with_context(|| {
+            loc.tf(
+                "sandbox.setup.webc.run",
+                &[("path", &wasmer.display().to_string())],
+            )
+        })?;
     if !out.status.success() {
         bail!(
-            "wasmer package download завершился с ошибкой:\n{}",
-            String::from_utf8_lossy(&out.stderr).trim()
+            "{}",
+            loc.tf(
+                "sandbox.setup.webc.failed",
+                &[("stderr", String::from_utf8_lossy(&out.stderr).trim())],
+            )
         );
     }
-    anyhow::ensure!(webc.is_file(), "python.webc не создан");
+    anyhow::ensure!(
+        webc.is_file(),
+        "{}",
+        loc.t("sandbox.setup.webc.not_created")
+    );
     Ok(())
 }
 
@@ -269,29 +308,32 @@ async fn ensure_wheels(
     client: &reqwest::Client,
     dir: &Path,
     opts: &SetupOptions,
+    loc: &Locale,
     progress: &mut impl FnMut(&str),
 ) -> Result<()> {
     let site = dir.join("site-packages");
-    std::fs::create_dir_all(&site).context("создание site-packages")?;
+    std::fs::create_dir_all(&site)
+        .with_context(|| loc.t("sandbox.setup.wheels.mksite").to_string())?;
     for w in WHEELS {
         if site.join(w.dir).exists() && !opts.force {
-            progress(&format!("{} уже установлен.", w.dir));
+            progress(&loc.tf("sandbox.setup.wheels.present", &[("name", w.dir)]));
             continue;
         }
-        progress(&format!("Скачивание {}…", w.dir));
-        let bytes = download_bytes(client, w.url, w.sha256).await?;
-        progress(&format!("Распаковка {}…", w.dir));
-        unpack_wheel(&bytes, &site).with_context(|| format!("распаковка колеса {}", w.dir))?;
+        progress(&loc.tf("sandbox.setup.wheels.downloading", &[("name", w.dir)]));
+        let bytes = download_bytes(client, w.url, w.sha256, loc).await?;
+        progress(&loc.tf("sandbox.setup.wheels.extracting", &[("name", w.dir)]));
+        unpack_wheel(&bytes, &site, loc)
+            .with_context(|| loc.tf("sandbox.setup.wheels.unpack", &[("name", w.dir)]))?;
     }
     Ok(())
 }
 
 /// HTTP-клиент с User-Agent (rustls, как в остальном проекте).
-fn http_client() -> Result<reqwest::Client> {
+fn http_client(loc: &Locale) -> Result<reqwest::Client> {
     reqwest::Client::builder()
         .user_agent(USER_AGENT)
         .build()
-        .context("создание HTTP-клиента")
+        .with_context(|| loc.t("sandbox.setup.http_client").to_string())
 }
 
 /// Скачивает `url` в файл `dest` потоком (крупные архивы не буферим в память),
@@ -301,65 +343,93 @@ async fn download_to_file(
     url: &str,
     dest: &Path,
     expected: &str,
+    loc: &Locale,
     progress: &mut impl FnMut(&str),
 ) -> Result<()> {
     let resp = client
         .get(url)
         .send()
         .await
-        .with_context(|| format!("запрос {url}"))?
+        .with_context(|| loc.tf("sandbox.setup.request", &[("url", url)]))?
         .error_for_status()
-        .with_context(|| format!("скачивание {url}"))?;
+        .with_context(|| loc.tf("sandbox.setup.download", &[("url", url)]))?;
     let total = resp.content_length();
-    let mut file = tokio::fs::File::create(dest)
-        .await
-        .with_context(|| format!("создание {}", dest.display()))?;
+    let mut file = tokio::fs::File::create(dest).await.with_context(|| {
+        loc.tf(
+            "sandbox.setup.create_file",
+            &[("path", &dest.display().to_string())],
+        )
+    })?;
     let mut hasher = Sha256::new();
     let mut stream = resp.bytes_stream();
     let mut done: u64 = 0;
     let mut next_report: u64 = 32 * 1024 * 1024; // отчёт каждые ~32 МБ
     while let Some(chunk) = stream.next().await {
-        let chunk = chunk.context("чтение потока загрузки")?;
+        let chunk = chunk.with_context(|| loc.t("sandbox.setup.read_stream").to_string())?;
         hasher.update(&chunk);
-        file.write_all(&chunk).await.context("запись файла")?;
+        file.write_all(&chunk)
+            .await
+            .with_context(|| loc.t("sandbox.setup.write_file").to_string())?;
         done += chunk.len() as u64;
         if done >= next_report {
             match total {
-                Some(t) => progress(&format!("  {} / {} МБ", done >> 20, t >> 20)),
-                None => progress(&format!("  {} МБ", done >> 20)),
+                Some(t) => progress(&loc.tf(
+                    "sandbox.setup.progress_bytes",
+                    &[
+                        ("done", &(done >> 20).to_string()),
+                        ("total", &(t >> 20).to_string()),
+                    ],
+                )),
+                None => progress(&loc.tf(
+                    "sandbox.setup.progress_bytes_unknown",
+                    &[("done", &(done >> 20).to_string())],
+                )),
             }
             next_report += 32 * 1024 * 1024;
         }
     }
-    file.flush().await.context("сброс файла на диск")?;
-    verify_sha256(&hasher.finalize(), expected, url)
+    file.flush()
+        .await
+        .with_context(|| loc.t("sandbox.setup.flush").to_string())?;
+    verify_sha256(&hasher.finalize(), expected, url, loc)
 }
 
 /// Скачивает `url` целиком в память (небольшие колёса), сверяет sha256.
-async fn download_bytes(client: &reqwest::Client, url: &str, expected: &str) -> Result<Vec<u8>> {
+async fn download_bytes(
+    client: &reqwest::Client,
+    url: &str,
+    expected: &str,
+    loc: &Locale,
+) -> Result<Vec<u8>> {
     let bytes = client
         .get(url)
         .send()
         .await
-        .with_context(|| format!("запрос {url}"))?
+        .with_context(|| loc.tf("sandbox.setup.request", &[("url", url)]))?
         .error_for_status()
-        .with_context(|| format!("скачивание {url}"))?
+        .with_context(|| loc.tf("sandbox.setup.download", &[("url", url)]))?
         .bytes()
         .await
-        .context("чтение тела ответа")?;
+        .with_context(|| loc.t("sandbox.setup.read_body").to_string())?;
     let mut hasher = Sha256::new();
     hasher.update(&bytes);
-    verify_sha256(&hasher.finalize(), expected, url)?;
+    verify_sha256(&hasher.finalize(), expected, url, loc)?;
     Ok(bytes.to_vec())
 }
 
 /// Сверяет хэш (сырые байты дайджеста) с ожидаемым hex; ошибка — с указанием URL.
-fn verify_sha256(digest: &[u8], expected: &str, url: &str) -> Result<()> {
+fn verify_sha256(digest: &[u8], expected: &str, url: &str, loc: &Locale) -> Result<()> {
     let got = hex_lower(digest);
     if got.eq_ignore_ascii_case(expected) {
         Ok(())
     } else {
-        bail!("sha256 не совпал для {url}: ожидалось {expected}, получено {got}")
+        bail!(
+            "{}",
+            loc.tf(
+                "sandbox.setup.sha_mismatch",
+                &[("url", url), ("expected", expected), ("got", &got)],
+            )
+        )
     }
 }
 
@@ -374,25 +444,37 @@ fn hex_lower(bytes: &[u8]) -> String {
 }
 
 /// Распаковывает tar.gz-архив в каталог `dest`.
-fn extract_targz(archive: &Path, dest: &Path) -> Result<()> {
-    let file = std::fs::File::open(archive)
-        .with_context(|| format!("открытие архива {}", archive.display()))?;
+fn extract_targz(archive: &Path, dest: &Path, loc: &Locale) -> Result<()> {
+    let file = std::fs::File::open(archive).with_context(|| {
+        loc.tf(
+            "sandbox.setup.open_archive",
+            &[("path", &archive.display().to_string())],
+        )
+    })?;
     let gz = flate2::read::GzDecoder::new(std::io::BufReader::new(file));
     let mut ar = tar::Archive::new(gz);
     std::fs::create_dir_all(dest)?;
-    ar.unpack(dest)
-        .with_context(|| format!("распаковка в {}", dest.display()))?;
+    ar.unpack(dest).with_context(|| {
+        loc.tf(
+            "sandbox.setup.extract_to",
+            &[("path", &dest.display().to_string())],
+        )
+    })?;
     Ok(())
 }
 
 /// Распаковывает колесо (zip) в каталог `site` (защита от zip-slip через
 /// `enclosed_name`, как в `features::backup`).
-fn unpack_wheel(bytes: &[u8], site: &Path) -> Result<()> {
-    let mut zip = zip::ZipArchive::new(Cursor::new(bytes)).context("открытие zip колеса")?;
+fn unpack_wheel(bytes: &[u8], site: &Path, loc: &Locale) -> Result<()> {
+    let mut zip = zip::ZipArchive::new(Cursor::new(bytes))
+        .with_context(|| loc.t("sandbox.setup.open_wheel").to_string())?;
     for i in 0..zip.len() {
         let mut entry = zip.by_index(i)?;
         let Some(rel) = entry.enclosed_name() else {
-            bail!("небезопасный путь в колесе: {}", entry.name());
+            bail!(
+                "{}",
+                loc.tf("sandbox.setup.unsafe_wheel", &[("name", entry.name())])
+            );
         };
         let out = site.join(rel);
         if entry.is_dir() {
@@ -412,6 +494,12 @@ fn unpack_wheel(bytes: &[u8], site: &Path) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::shared::i18n::{Lang, locale};
+
+    /// Референсная локаль для тестов (тексты ошибок не проверяются — ru байт-в-байт).
+    fn ru() -> &'static Locale {
+        locale(Lang::Ru)
+    }
 
     #[test]
     fn archive_selection_by_platform() {
@@ -433,9 +521,24 @@ mod tests {
     fn verify_sha256_matches_case_insensitively() {
         let digest = Sha256::digest(b"hello");
         let hex = hex_lower(&digest);
-        assert!(verify_sha256(&digest, &hex, "u").is_ok());
-        assert!(verify_sha256(&digest, &hex.to_uppercase(), "u").is_ok());
-        assert!(verify_sha256(&digest, "deadbeef", "u").is_err());
+        assert!(verify_sha256(&digest, &hex, "u", ru()).is_ok());
+        assert!(verify_sha256(&digest, &hex.to_uppercase(), "u", ru()).is_ok());
+        assert!(verify_sha256(&digest, "deadbeef", "u", ru()).is_err());
+    }
+
+    #[test]
+    fn sha_mismatch_error_is_localized() {
+        // Регрессия против забытого `loc`: en-сообщение без кириллицы, ru — русское.
+        let digest = Sha256::digest(b"hello");
+        let en = verify_sha256(&digest, "deadbeef", "u", locale(Lang::En))
+            .unwrap_err()
+            .to_string();
+        assert!(en.contains("sha256 mismatch"), "{en}");
+        assert!(!en.chars().any(|c| ('а'..='я').contains(&c)), "{en}");
+        let r = verify_sha256(&digest, "deadbeef", "u", ru())
+            .unwrap_err()
+            .to_string();
+        assert!(r.contains("не совпал"), "{r}");
     }
 
     #[test]
@@ -468,7 +571,7 @@ mod tests {
             w.finish().unwrap();
         }
         let dir = tempfile::tempdir().unwrap();
-        unpack_wheel(&buf, dir.path()).unwrap();
+        unpack_wheel(&buf, dir.path(), ru()).unwrap();
         assert!(dir.path().join("mypkg/__init__.py").is_file());
         assert!(dir.path().join("mypkg-1.0.dist-info/METADATA").is_file());
     }
@@ -493,7 +596,7 @@ mod tests {
         let apath = archive.path().join("a.tar.gz");
         std::fs::write(&apath, &gz).unwrap();
         let dest = tempfile::tempdir().unwrap();
-        extract_targz(&apath, dest.path()).unwrap();
+        extract_targz(&apath, dest.path(), ru()).unwrap();
         assert!(dest.path().join("bin/wasmer").is_file());
     }
 }

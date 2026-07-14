@@ -287,7 +287,7 @@ fn run_backup(
 ) -> anyhow::Result<()> {
     let _instance = acquire_cli_guard(loc, loc.t("cli.guard.action.backup"))?;
     let fs_root = config_fs_root(paths);
-    let out = backup::create_backup(paths, output, compression, fs_root.as_deref())
+    let out = backup::create_backup(paths, output, compression, fs_root.as_deref(), loc)
         .with_context(|| loc.t("cli.ctx.backup").to_string())?;
     println!(
         "{}",
@@ -306,7 +306,7 @@ fn run_restore(paths: &Paths, archive: &Path, loc: &Locale) -> anyhow::Result<()
     let fs_root = config_fs_root(paths);
 
     // Err только до разрушительных действий (нет файла / повреждён / небезопасен).
-    let outcome = backup::restore_backup(paths, archive, fs_root.as_deref())?;
+    let outcome = backup::restore_backup(paths, archive, fs_root.as_deref(), loc)?;
 
     match outcome {
         RestoreOutcome::Restored { pre_restore } => {
@@ -404,6 +404,7 @@ fn run_sandbox_setup(paths: &Paths, force: bool, loc: &Locale) -> anyhow::Result
     runtime.block_on(features::sandbox_setup::setup(
         &dir,
         &features::sandbox_setup::SetupOptions { force },
+        loc,
         |msg| println!("{msg}"),
     ))?;
     Ok(())
@@ -453,7 +454,7 @@ fn run_locales_export(code: &str, output: &Path, loc: &Locale) -> anyhow::Result
 fn run_import(paths: &Paths, dir: &Path, loc: &Locale) -> anyhow::Result<()> {
     let storage =
         Storage::open(paths.clone()).with_context(|| loc.t("cli.ctx.open_storage").to_string())?;
-    let result = features::migration::import_dir(dir)
+    let result = features::migration::import_dir(dir, loc)
         .with_context(|| loc.tf("cli.ctx.import", &[("dir", &dir.display().to_string())]))?;
 
     for profile in &result.profiles {

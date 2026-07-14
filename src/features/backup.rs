@@ -30,6 +30,7 @@ use chrono::Local;
 use zip::write::SimpleFileOptions;
 use zip::{CompressionMethod, ZipArchive, ZipWriter};
 
+use crate::shared::i18n::Locale;
 use crate::shared::paths::Paths;
 
 /// Файлы верхнего уровня, входящие в резервную копию (отсутствующие пропускаются).
@@ -81,14 +82,19 @@ pub fn create_backup(
     output: Option<PathBuf>,
     level: i64,
     fs_root: Option<&Path>,
+    loc: &Locale,
 ) -> Result<PathBuf> {
-    let entries = gather_entries(paths, fs_root)?;
+    let entries = gather_entries(paths, fs_root, loc)?;
     let out_path = match output {
         Some(p) => p,
         None => default_backup_path(paths, "mindfork-backup"),
     };
-    write_zip(&out_path, &entries, level)
-        .with_context(|| format!("создание архива {}", out_path.display()))?;
+    write_zip(&out_path, &entries, level, loc).with_context(|| {
+        loc.tf(
+            "backup.ctx.create_archive",
+            &[("path", &out_path.display().to_string())],
+        )
+    })?;
     Ok(out_path)
 }
 
@@ -102,9 +108,15 @@ pub fn restore_backup(
     paths: &Paths,
     archive: &Path,
     fs_root: Option<&Path>,
+    loc: &Locale,
 ) -> Result<RestoreOutcome> {
     // 1. Валидация архива до любых разрушительных действий.
-    validate_archive(archive).with_context(|| format!("проверка архива {}", archive.display()))?;
+    validate_archive(archive, loc).with_context(|| {
+        loc.tf(
+            "backup.ctx.validate",
+            &[("path", &archive.display().to_string())],
+        )
+    })?;
 
     // 2. Авто-копия прежних данных, если они есть.
     let pre_restore = if has_existing_data(paths) {
@@ -113,8 +125,9 @@ pub fn restore_backup(
             Some(default_backup_path(paths, "pre-restore")),
             9,
             fs_root,
+            loc,
         )
-        .context("создание pre-restore копии прежних данных")?;
+        .with_context(|| loc.t("backup.ctx.pre_restore").to_string())?;
         Some(path)
     } else {
         None
@@ -122,8 +135,8 @@ pub fn restore_backup(
 
     // 3. Очистка + распаковка.
     let attempt = (|| -> Result<()> {
-        clear_user_data(paths, fs_root)?;
-        extract_archive(paths, archive)
+        clear_user_data(paths, fs_root, loc)?;
+        extract_archive(paths, archive, loc)
     })();
 
     match attempt {
@@ -132,8 +145,8 @@ pub fn restore_backup(
             // 4. Откат к только что созданной pre-restore копии.
             Some(backup) => {
                 let rollback = (|| -> Result<()> {
-                    clear_user_data(paths, fs_root)?;
-                    extract_archive(paths, backup)
+                    clear_user_data(paths, fs_root, loc)?;
+                    extract_archive(paths, backup, loc)
                 })();
                 match rollback {
                     Ok(()) => Ok(RestoreOutcome::RolledBack {
@@ -157,7 +170,7 @@ pub fn restore_backup(
 }
 
 /// Собирает список файлов для упаковки (с дедупликацией по имени в архиве).
-fn gather_entries(paths: &Paths, fs_root: Option<&Path>) -> Result<Vec<Entry>> {
+fn gather_entries(paths: &Paths, fs_root: Option<&Path>, loc: &Locale) -> Result<Vec<Entry>> {
     let root = paths.root();
     let mut out: Vec<Entry> = Vec::new();
 
@@ -188,12 +201,12 @@ fn gather_entries(paths: &Paths, fs_root: Option<&Path>) -> Result<Vec<Entry>> {
     }
 
     for d in TOP_DIRS {
-        collect_dir(&root.join(d), d, &mut out)?;
+        collect_dir(&root.join(d), d, &mut out, loc)?;
     }
 
     // Песочница файловых инструментов — только если внутри корня данных.
     if let Some((abs, prefix)) = fs_root_under_root(root, fs_root) {
-        collect_dir(&abs, &prefix, &mut out)?;
+        collect_dir(&abs, &prefix, &mut out, loc)?;
     }
 
     // Дедуп по имени в архиве (на случай пересечения fs_root с другими путями).
@@ -203,11 +216,16 @@ fn gather_entries(paths: &Paths, fs_root: Option<&Path>) -> Result<Vec<Entry>> {
 }
 
 /// Рекурсивно собирает файлы каталога `abs` под префиксом имени `prefix` (со `/`).
-fn collect_dir(abs: &Path, prefix: &str, out: &mut Vec<Entry>) -> Result<()> {
+fn collect_dir(abs: &Path, prefix: &str, out: &mut Vec<Entry>, loc: &Locale) -> Result<()> {
     if !abs.is_dir() {
         return Ok(());
     }
-    let rd = fs::read_dir(abs).with_context(|| format!("чтение каталога {}", abs.display()))?;
+    let rd = fs::read_dir(abs).with_context(|| {
+        loc.tf(
+            "backup.ctx.read_dir",
+            &[("path", &abs.display().to_string())],
+        )
+    })?;
     for entry in rd {
         let entry = entry?;
         let ft = entry.file_type()?;
@@ -221,7 +239,7 @@ fn collect_dir(abs: &Path, prefix: &str, out: &mut Vec<Entry>) -> Result<()> {
             format!("{prefix}/{name}")
         };
         if ft.is_dir() {
-            collect_dir(&child_abs, &child_name, out)?;
+            collect_dir(&child_abs, &child_name, out, loc)?;
         } else if ft.is_file() {
             out.push(Entry {
                 abs: child_abs,
@@ -233,13 +251,21 @@ fn collect_dir(abs: &Path, prefix: &str, out: &mut Vec<Entry>) -> Result<()> {
 }
 
 /// Записывает архив со списком записей и заданной степенью сжатия.
-fn write_zip(out_path: &Path, entries: &[Entry], level: i64) -> Result<()> {
+fn write_zip(out_path: &Path, entries: &[Entry], level: i64, loc: &Locale) -> Result<()> {
     if let Some(parent) = out_path.parent() {
-        fs::create_dir_all(parent)
-            .with_context(|| format!("создание каталога {}", parent.display()))?;
+        fs::create_dir_all(parent).with_context(|| {
+            loc.tf(
+                "backup.ctx.create_dir",
+                &[("path", &parent.display().to_string())],
+            )
+        })?;
     }
-    let file =
-        File::create(out_path).with_context(|| format!("создание файла {}", out_path.display()))?;
+    let file = File::create(out_path).with_context(|| {
+        loc.tf(
+            "backup.ctx.create_file",
+            &[("path", &out_path.display().to_string())],
+        )
+    })?;
     let mut zip = ZipWriter::new(file);
 
     let level = level.clamp(0, 9);
@@ -253,25 +279,36 @@ fn write_zip(out_path: &Path, entries: &[Entry], level: i64) -> Result<()> {
 
     for e in entries {
         zip.start_file(e.name.as_str(), options)
-            .with_context(|| format!("запись {} в архив", e.name))?;
-        let mut src =
-            File::open(&e.abs).with_context(|| format!("открытие {}", e.abs.display()))?;
-        io::copy(&mut src, &mut zip).with_context(|| format!("упаковка {}", e.abs.display()))?;
+            .with_context(|| loc.tf("backup.ctx.write_entry", &[("name", &e.name)]))?;
+        let mut src = File::open(&e.abs).with_context(|| {
+            loc.tf("backup.ctx.open", &[("path", &e.abs.display().to_string())])
+        })?;
+        io::copy(&mut src, &mut zip).with_context(|| {
+            loc.tf("backup.ctx.pack", &[("path", &e.abs.display().to_string())])
+        })?;
     }
-    zip.finish().context("финализация архива")?;
+    zip.finish()
+        .with_context(|| loc.t("backup.ctx.finalize").to_string())?;
     Ok(())
 }
 
 /// Проверяет, что архив открывается и все его записи — безопасные относительные пути
 /// (без `..`/абсолютных, защита от zip-slip).
-fn validate_archive(archive: &Path) -> Result<()> {
-    let file =
-        File::open(archive).with_context(|| format!("открытие архива {}", archive.display()))?;
-    let mut zip = ZipArchive::new(file).context("архив повреждён или не является zip")?;
+fn validate_archive(archive: &Path, loc: &Locale) -> Result<()> {
+    let file = File::open(archive).with_context(|| {
+        loc.tf(
+            "backup.ctx.open_archive",
+            &[("path", &archive.display().to_string())],
+        )
+    })?;
+    let mut zip = ZipArchive::new(file).with_context(|| loc.t("backup.ctx.corrupt").to_string())?;
     for i in 0..zip.len() {
         let entry = zip.by_index(i)?;
         if entry.enclosed_name().is_none() {
-            bail!("небезопасное имя записи в архиве: {}", entry.name());
+            bail!(
+                "{}",
+                loc.tf("backup.err.unsafe_entry", &[("name", entry.name())])
+            );
         }
     }
     Ok(())
@@ -279,28 +316,53 @@ fn validate_archive(archive: &Path) -> Result<()> {
 
 /// Распаковывает архив в корень данных (имена записей уже считаются безопасными —
 /// `enclosed_name` отсекает выход за пределы корня).
-fn extract_archive(paths: &Paths, archive: &Path) -> Result<()> {
-    let file =
-        File::open(archive).with_context(|| format!("открытие архива {}", archive.display()))?;
-    let mut zip = ZipArchive::new(file).context("чтение архива")?;
+fn extract_archive(paths: &Paths, archive: &Path, loc: &Locale) -> Result<()> {
+    let file = File::open(archive).with_context(|| {
+        loc.tf(
+            "backup.ctx.open_archive",
+            &[("path", &archive.display().to_string())],
+        )
+    })?;
+    let mut zip =
+        ZipArchive::new(file).with_context(|| loc.t("backup.ctx.read_archive").to_string())?;
     for i in 0..zip.len() {
         let mut entry = zip.by_index(i)?;
-        let rel = entry
-            .enclosed_name()
-            .ok_or_else(|| anyhow!("небезопасное имя записи в архиве: {}", entry.name()))?;
+        let rel = entry.enclosed_name().ok_or_else(|| {
+            anyhow!(
+                "{}",
+                loc.tf("backup.err.unsafe_entry", &[("name", entry.name())])
+            )
+        })?;
         let dest = paths.root().join(&rel);
         if entry.is_dir() {
-            fs::create_dir_all(&dest)
-                .with_context(|| format!("создание каталога {}", dest.display()))?;
+            fs::create_dir_all(&dest).with_context(|| {
+                loc.tf(
+                    "backup.ctx.create_dir",
+                    &[("path", &dest.display().to_string())],
+                )
+            })?;
             continue;
         }
         if let Some(parent) = dest.parent() {
-            fs::create_dir_all(parent)
-                .with_context(|| format!("создание каталога {}", parent.display()))?;
+            fs::create_dir_all(parent).with_context(|| {
+                loc.tf(
+                    "backup.ctx.create_dir",
+                    &[("path", &parent.display().to_string())],
+                )
+            })?;
         }
-        let mut out =
-            File::create(&dest).with_context(|| format!("создание файла {}", dest.display()))?;
-        io::copy(&mut entry, &mut out).with_context(|| format!("распаковка {}", dest.display()))?;
+        let mut out = File::create(&dest).with_context(|| {
+            loc.tf(
+                "backup.ctx.create_file",
+                &[("path", &dest.display().to_string())],
+            )
+        })?;
+        io::copy(&mut entry, &mut out).with_context(|| {
+            loc.tf(
+                "backup.ctx.extract",
+                &[("path", &dest.display().to_string())],
+            )
+        })?;
     }
     Ok(())
 }
@@ -308,42 +370,52 @@ fn extract_archive(paths: &Paths, archive: &Path) -> Result<()> {
 /// Удаляет пользовательские данные из корня, **сохраняя** `backups/`, `logs/` и
 /// файлы умолчаний `defaults.json`/`location.json`. Очищается ровно тот же набор,
 /// что входит в резервную копию.
-fn clear_user_data(paths: &Paths, fs_root: Option<&Path>) -> Result<()> {
+fn clear_user_data(paths: &Paths, fs_root: Option<&Path>, loc: &Locale) -> Result<()> {
     let root = paths.root();
 
     for f in TOP_FILES {
-        remove_file_if_exists(&root.join(f))?;
+        remove_file_if_exists(&root.join(f), loc)?;
     }
     if let Ok(rd) = fs::read_dir(root) {
         for entry in rd.flatten() {
             let path = entry.path();
             if path.is_file() && path.extension().is_some_and(|e| e == "bak") {
-                remove_file_if_exists(&path)?;
+                remove_file_if_exists(&path, loc)?;
             }
         }
     }
     for d in TOP_DIRS {
-        remove_dir_if_exists(&root.join(d))?;
+        remove_dir_if_exists(&root.join(d), loc)?;
     }
     if let Some((abs, _)) = fs_root_under_root(root, fs_root) {
-        remove_dir_if_exists(&abs)?;
+        remove_dir_if_exists(&abs, loc)?;
     }
     Ok(())
 }
 
-fn remove_file_if_exists(path: &Path) -> Result<()> {
+fn remove_file_if_exists(path: &Path, loc: &Locale) -> Result<()> {
     match fs::remove_file(path) {
         Ok(()) => Ok(()),
         Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(()),
-        Err(e) => Err(e).with_context(|| format!("удаление {}", path.display())),
+        Err(e) => Err(e).with_context(|| {
+            loc.tf(
+                "backup.ctx.remove_file",
+                &[("path", &path.display().to_string())],
+            )
+        }),
     }
 }
 
-fn remove_dir_if_exists(path: &Path) -> Result<()> {
+fn remove_dir_if_exists(path: &Path, loc: &Locale) -> Result<()> {
     match fs::remove_dir_all(path) {
         Ok(()) => Ok(()),
         Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(()),
-        Err(e) => Err(e).with_context(|| format!("удаление каталога {}", path.display())),
+        Err(e) => Err(e).with_context(|| {
+            loc.tf(
+                "backup.ctx.remove_dir",
+                &[("path", &path.display().to_string())],
+            )
+        }),
     }
 }
 
@@ -389,6 +461,13 @@ fn default_backup_path(paths: &Paths, prefix: &str) -> PathBuf {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::shared::i18n::{Lang, locale};
+
+    /// Референсная локаль для тестов (тексты ошибок не проверяются — важна лишь
+    /// сигнатура; ru байт-в-байт с прежними строками).
+    fn ru() -> &'static Locale {
+        locale(Lang::Ru)
+    }
 
     /// Готовит корень с типичным набором пользовательских данных.
     fn seed_data(root: &Path) {
@@ -429,7 +508,7 @@ mod tests {
         seed_data(dir.path());
         let paths = Paths::with_root(dir.path());
 
-        let out = create_backup(&paths, None, 9, None).unwrap();
+        let out = create_backup(&paths, None, 9, None, ru()).unwrap();
         assert!(out.starts_with(paths.backups_dir()));
         let names = archive_names(&out);
 
@@ -465,7 +544,7 @@ mod tests {
         fs::create_dir_all(&inside).unwrap();
         fs::write(inside.join("note.txt"), b"hi").unwrap();
         let paths = Paths::with_root(dir.path());
-        let out = create_backup(&paths, None, 9, Some(&inside)).unwrap();
+        let out = create_backup(&paths, None, 9, Some(&inside), ru()).unwrap();
         assert!(archive_names(&out).contains(&"sandbox/note.txt".to_string()));
 
         // Снаружи корня — не включается.
@@ -474,7 +553,7 @@ mod tests {
         fs::write(outside.path().join("secret.txt"), b"no").unwrap();
         seed_data(outside_root.path());
         let paths2 = Paths::with_root(outside_root.path());
-        let out2 = create_backup(&paths2, None, 0, Some(outside.path())).unwrap();
+        let out2 = create_backup(&paths2, None, 0, Some(outside.path()), ru()).unwrap();
         assert!(
             !archive_names(&out2)
                 .iter()
@@ -490,7 +569,7 @@ mod tests {
         fs::write(src.path().join("settings.json"), b"{\"v\":42}").unwrap();
         let src_paths = Paths::with_root(src.path());
         let archive_path = src.path().join("backups").join("snap.zip");
-        create_backup(&src_paths, Some(archive_path.clone()), 9, None).unwrap();
+        create_backup(&src_paths, Some(archive_path.clone()), 9, None, ru()).unwrap();
 
         // Цель с другими данными.
         let dst = tempfile::tempdir().unwrap();
@@ -499,7 +578,7 @@ mod tests {
         fs::write(dst.path().join("chats").join("stale.json"), b"{}").unwrap();
         let dst_paths = Paths::with_root(dst.path());
 
-        let outcome = restore_backup(&dst_paths, &archive_path, None).unwrap();
+        let outcome = restore_backup(&dst_paths, &archive_path, None, ru()).unwrap();
         match outcome {
             RestoreOutcome::Restored { pre_restore } => {
                 // Прежние данные были, значит pre-restore копия создана.
@@ -528,7 +607,7 @@ mod tests {
         let bad = dst.path().join("bad.zip");
         fs::write(&bad, b"this is not a zip file").unwrap();
 
-        let err = restore_backup(&paths, &bad, None);
+        let err = restore_backup(&paths, &bad, None, ru());
         assert!(
             err.is_err(),
             "повреждённый архив должен дать Err до очистки"
@@ -548,12 +627,13 @@ mod tests {
             Some(archive.clone()),
             9,
             None,
+            ru(),
         )
         .unwrap();
 
         let dst = tempfile::tempdir().unwrap();
         let paths = Paths::with_root(dst.path());
-        let outcome = restore_backup(&paths, &archive, None).unwrap();
+        let outcome = restore_backup(&paths, &archive, None, ru()).unwrap();
         match outcome {
             RestoreOutcome::Restored { pre_restore } => assert!(pre_restore.is_none()),
             _ => panic!("ожидался Restored без pre-restore"),
@@ -588,7 +668,7 @@ mod tests {
         fs::create_dir_all(dst.path().join("blocker")).unwrap();
 
         let paths = Paths::with_root(dst.path());
-        let outcome = restore_backup(&paths, &archive, None).unwrap();
+        let outcome = restore_backup(&paths, &archive, None, ru()).unwrap();
         match outcome {
             RestoreOutcome::RolledBack { pre_restore, .. } => assert!(pre_restore.exists()),
             _ => panic!("ожидался RolledBack при сбое распаковки"),
@@ -602,12 +682,27 @@ mod tests {
     }
 
     #[test]
+    fn corrupt_archive_error_is_localized() {
+        // Регрессия против забытого `loc`: контекст ошибки на языке локали.
+        let dir = tempfile::tempdir().unwrap();
+        let bad = dir.path().join("bad.zip");
+        fs::write(&bad, b"this is not a zip file").unwrap();
+        let en = validate_archive(&bad, locale(Lang::En))
+            .unwrap_err()
+            .to_string();
+        assert!(en.contains("corrupted"), "{en}");
+        assert!(!en.chars().any(|c| ('а'..='я').contains(&c)), "{en}");
+        let r = validate_archive(&bad, ru()).unwrap_err().to_string();
+        assert!(r.contains("повреждён"), "{r}");
+    }
+
+    #[test]
     fn store_level_zero_produces_readable_archive() {
         let dir = tempfile::tempdir().unwrap();
         seed_data(dir.path());
         let paths = Paths::with_root(dir.path());
-        let out = create_backup(&paths, None, 0, None).unwrap();
+        let out = create_backup(&paths, None, 0, None, ru()).unwrap();
         // Архив валиден и открывается.
-        validate_archive(&out).unwrap();
+        validate_archive(&out, ru()).unwrap();
     }
 }
