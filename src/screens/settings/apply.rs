@@ -320,7 +320,7 @@ impl SettingsScreen {
                 None
             }
             // Язык каркаса профиля (ось A): цикл по вшитым языкам; заблокирован, если
-            // у профиля появились данные (страховка поверх орк-гейта). См. docs/i18n.md.
+            // у профиля появились данные (страховка поверх орк-гейта). См. docs/history/i18n.md.
             FieldId::PLanguage => {
                 let p = self.profiles.get(self.profile_idx)?;
                 if self.language_locked.contains(&p.id) {
@@ -431,7 +431,7 @@ impl SettingsScreen {
                 default_sampling: Some(p.default_sampling.clone()),
                 enabled_tools: Some(p.enabled_tools.clone()),
                 // Язык каркаса шлём всегда; оркестратор авторитетно гасит смену, если
-                // у профиля есть данные (совпадение с текущим — тоже no-op). docs/i18n.md.
+                // у профиля есть данные (совпадение с текущим — тоже no-op). docs/history/i18n.md.
                 language: Some(p.language),
             }),
         }

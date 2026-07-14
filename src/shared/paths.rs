@@ -3,7 +3,7 @@
 //! (подкаталог отделяет данные от служебных файлов/кэшей сборки, особенно в dev —
 //! `target/debug/data/`). Файл-маркер `defaults.json` рядом с бинарником может
 //! переключить хранение в стандартную ОС-папку или произвольный каталог **и** задать
-//! язык служебного каркаса новых профилей (`default_language`, ось A — docs/i18n.md;
+//! язык служебного каркаса новых профилей (`default_language`, ось A — docs/history/i18n.md;
 //! инсталлятор заполнит его по выбору пользователя при установке). Для обратной
 //! совместимости читается и старый маркер `location.json` (только режим хранения).
 //! См. spec §5.2 (расположение данных) и §12.1.
@@ -50,7 +50,7 @@ impl DataLocation {
             Self::Portable => Ok(exe_dir.join(PORTABLE_DATA_SUBDIR)),
             Self::System => {
                 // Контекст на английском: эта ошибка возникает в `Paths::resolve` до
-                // определения языка CLI (docs/i18n-cli.md §7 — граница «до знания языка»).
+                // определения языка CLI (docs/history/i18n-cli.md §7 — граница «до знания языка»).
                 let dirs = directories::ProjectDirs::from("", "", "mindfork-rs")
                     .context("cannot determine the standard OS data folder")?;
                 Ok(dirs.data_dir().to_path_buf())
@@ -69,7 +69,7 @@ impl DataLocation {
 
 /// Установочные умолчания из файла `defaults.json` рядом с бинарником: режим хранения
 /// данных (`mode`/`path`, плоско — совместимо со старым `location.json`) **и** язык
-/// служебного каркаса новых профилей (`default_language`, ось A — docs/i18n.md).
+/// служебного каркаса новых профилей (`default_language`, ось A — docs/history/i18n.md).
 /// Заполняется инсталлятором (или вручную). Отсутствие полей → дефолты (портативно, `ru`).
 #[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub struct Defaults {
@@ -78,7 +78,7 @@ pub struct Defaults {
     #[serde(flatten, default)]
     pub location: DataLocation,
     /// Язык служебного каркаса, на котором создаётся **первый** профиль (bootstrap) и
-    /// новые профили. Не язык интерфейса и не язык ответа модели. См. docs/i18n.md.
+    /// новые профили. Не язык интерфейса и не язык ответа модели. См. docs/history/i18n.md.
     #[serde(default)]
     pub default_language: Lang,
 }
@@ -86,7 +86,7 @@ pub struct Defaults {
 impl Defaults {
     /// Присутствует ли файл умолчаний (`defaults.json`) или устаревший `location.json`
     /// рядом с бинарником. Нужно, чтобы отличить «инсталлятор задал язык» от «свежий
-    /// бинарь без конфигурации» при выборе языка CLI (docs/i18n-cli.md §3.1): при
+    /// бинарь без конфигурации» при выборе языка CLI (docs/history/i18n-cli.md §3.1): при
     /// отсутствии обоих serde-дефолт `default_language=Ru` — это дефолт ланга **каркаса**
     /// (ось A), а не сигнал языка отображения, поэтому язык CLI падает до `En`.
     pub fn marker_present(exe_dir: &Path) -> bool {
@@ -105,7 +105,7 @@ impl Defaults {
             exe_dir.join(LEGACY_LOCATION_MARKER)
         };
         // Контексты на английском: `Defaults::read` вызывается из `Paths::resolve` до
-        // определения языка CLI (docs/i18n-cli.md §7 — граница «до знания языка»).
+        // определения языка CLI (docs/history/i18n-cli.md §7 — граница «до знания языка»).
         match std::fs::read(&marker) {
             Ok(bytes) if bytes.iter().all(u8::is_ascii_whitespace) => Ok(Self::default()),
             Ok(bytes) => serde_json::from_slice(&bytes)
@@ -131,7 +131,7 @@ impl Paths {
     /// Вычисляет корень данных и умолчания по файлу `defaults.json` рядом с бинарником
     /// (fallback — устаревший `location.json`) **без создания каталогов** — для ранней
     /// «peek»-фазы CLI, где нужно узнать язык/корень до разбора аргументов, но `--help`
-    /// не должен трогать диск (docs/i18n-cli.md §3.2). Возвращает пути и признак
+    /// не должен трогать диск (docs/history/i18n-cli.md §3.2). Возвращает пути и признак
     /// «файл умолчаний присутствовал» (для выбора языка CLI — см. [`Defaults::marker_present`]).
     /// Создание каталогов — отдельно [`Paths::ensure_dirs`].
     pub fn resolve() -> Result<(Self, bool)> {
@@ -175,7 +175,7 @@ impl Paths {
     }
 
     /// Язык служебного каркаса новых профилей (из `defaults.json`, ось A). Bootstrap
-    /// первого профиля и создание профилей берут его. См. docs/i18n.md.
+    /// первого профиля и создание профилей берут его. См. docs/history/i18n.md.
     pub fn default_language(&self) -> Lang {
         self.default_language
     }
@@ -212,7 +212,7 @@ impl Paths {
 
     /// Каталог внешних локалей (`locales/`): `<code>.json` переопределяет вшитый бандл
     /// того же языка или добавляет новый язык без пересборки (ось A/B, Ярус 3 —
-    /// docs/i18n-external-locales.md). Загружается один раз при старте.
+    /// docs/history/i18n-external-locales.md). Загружается один раз при старте.
     pub fn locales_dir(&self) -> PathBuf {
         self.root.join("locales")
     }

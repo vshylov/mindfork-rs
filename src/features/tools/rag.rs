@@ -596,7 +596,7 @@ mod tests {
     #[test]
     fn rag_tool_descriptions_are_localized() {
         // Описания rag-инструментов различны на ru/en (ловит забытый `_loc`), en без
-        // кириллицы. §3.5 docs/i18n.md.
+        // кириллицы. §3.5 docs/history/i18n.md.
         use crate::shared::i18n::{Lang, locale};
         let (ru, en) = (locale(Lang::Ru), locale(Lang::En));
         for (r, e) in [

@@ -1,7 +1,7 @@
 //! mindfork-rs — консольное (TUI) приложение ИИ-чата.
 //! Точка входа: «peek»-фаза (язык/корень до разбора аргументов) → разбор CLI →
 //! single-instance → логирование → tokio-рантайм → оркестратор → TUI.
-//! См. spec §4.2, §4.4, plan M1 и docs/i18n-cli.md (весь текст CLI — в бандлах локалей).
+//! См. spec §4.2, §4.4, plan M1 и docs/history/i18n-cli.md (весь текст CLI — в бандлах локалей).
 
 mod app;
 mod entities;
@@ -30,7 +30,7 @@ use crate::shared::{instance, logging, paths::Paths};
 
 fn main() -> ExitCode {
     // «Peek»-фаза: определить корень данных и язык CLI **до** разбора аргументов и без
-    // создания каталогов (`--help`/`--version` не должны трогать диск — docs/i18n-cli.md
+    // создания каталогов (`--help`/`--version` не должны трогать диск — docs/history/i18n-cli.md
     // §3.2). Язык нужен раньше всего, чтобы даже справка и ошибки разбора были на нём.
     let (paths, lang) = match Paths::resolve() {
         Ok((paths, defaults_present)) => {
@@ -193,7 +193,7 @@ fn run_tui(paths: &Paths, loc: &Locale) -> anyhow::Result<ExitCode> {
         storage,
         config,
         supervisor: Arc::new(LlamaSupervisor),
-        // Язык каркаса новых профилей — из defaults.json (ось A, docs/i18n.md).
+        // Язык каркаса новых профилей — из defaults.json (ось A, docs/history/i18n.md).
         default_language: paths.default_language(),
     }));
 

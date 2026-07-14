@@ -224,7 +224,7 @@ pub struct ChatScreen {
     emoji_last: usize,
     /// Последний снимок настроек (конфиг + полные профили + id профилей с
     /// заблокированным языком каркаса) — для открытия экрана настроек по `Ctrl+P`.
-    /// Заполняется событием `Settings`. См. spec §11.6, docs/i18n.md.
+    /// Заполняется событием `Settings`. См. spec §11.6, docs/history/i18n.md.
     settings_snapshot: Option<(AppConfig, Vec<Profile>, Vec<uuid::Uuid>)>,
     /// Показан ли оверлей помощи по клавишам (`F1`/`?`). См. spec §11.7.
     show_help: bool,

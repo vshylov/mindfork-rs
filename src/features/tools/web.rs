@@ -649,7 +649,7 @@ mod tests {
     #[test]
     fn web_search_description_is_localized() {
         // Описание web_search различно на ru/en (ловит забытый `_loc`), en без
-        // кириллицы. §3.5 docs/i18n.md.
+        // кириллицы. §3.5 docs/history/i18n.md.
         use crate::shared::i18n::{Lang, locale};
         let tool = WebSearch::new(true);
         let (ru, en) = (locale(Lang::Ru), locale(Lang::En));

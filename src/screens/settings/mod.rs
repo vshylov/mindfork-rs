@@ -488,7 +488,7 @@ enum FieldId {
     // Профили (динамические)
     PSelect,
     PName,
-    /// Язык служебного каркаса профиля (ось A, docs/i18n.md). Choice ru/en;
+    /// Язык служебного каркаса профиля (ось A, docs/history/i18n.md). Choice ru/en;
     /// блокируется при появлении данных у профиля.
     PLanguage,
     PSystem,
@@ -613,7 +613,7 @@ pub struct SettingsScreen {
     statuses: ServerStatuses,
     /// Id профилей с заблокированным языком каркаса (у профиля появились данные —
     /// поле «Язык» рисуется заблокированным, правка гасится). Из снимка `Settings`
-    /// (считает оркестратор). См. docs/i18n.md.
+    /// (считает оркестратор). См. docs/history/i18n.md.
     language_locked: Vec<uuid::Uuid>,
 }
 

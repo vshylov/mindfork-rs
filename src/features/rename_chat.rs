@@ -14,7 +14,7 @@ pub const TITLE_CONTEXT_BUDGET: usize = 4000;
 
 /// Системное сообщение модели для авто-названия чата на языке служебного каркаса
 /// (`loc`, ось A). Заголовок всё равно просят «на языке переписки» — поэтому язык
-/// каркаса не навязывает язык заголовка (docs/i18n.md, развилка 6).
+/// каркаса не навязывает язык заголовка (docs/history/i18n.md, развилка 6).
 pub fn title_system_message(loc: &Locale) -> String {
     loc.t("prompt.title.system").to_string()
 }
