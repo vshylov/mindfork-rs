@@ -8,6 +8,7 @@ use anyhow::{Context, Result};
 use tracing_appender::non_blocking::WorkerGuard;
 use tracing_subscriber::EnvFilter;
 
+use crate::shared::i18n::Locale;
 use crate::shared::paths::Paths;
 
 /// Держатель фонового потока записи логов.
@@ -17,10 +18,15 @@ pub struct LogGuard {
     _worker: WorkerGuard,
 }
 
-/// Инициализирует подсистему логирования.
-pub fn init(paths: &Paths) -> Result<LogGuard> {
-    std::fs::create_dir_all(paths.log_dir())
-        .with_context(|| format!("creating log dir {}", paths.log_dir().display()))?;
+/// Инициализирует подсистему логирования. `loc` — язык интерфейса для
+/// пользовательского текста ошибки (создание каталога логов).
+pub fn init(paths: &Paths, loc: &Locale) -> Result<LogGuard> {
+    std::fs::create_dir_all(paths.log_dir()).with_context(|| {
+        loc.tf(
+            "cli.ctx.log_dir",
+            &[("path", &paths.log_dir().display().to_string())],
+        )
+    })?;
 
     let file_appender = tracing_appender::rolling::daily(paths.log_dir(), "mindfork.log");
     let (non_blocking, worker) = tracing_appender::non_blocking(file_appender);

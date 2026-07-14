@@ -1,6 +1,7 @@
 //! mindfork-rs — консольное (TUI) приложение ИИ-чата.
-//! Точка входа: single-instance → логирование → tokio-рантайм → оркестратор → TUI.
-//! См. spec §4.2, §4.4 и plan M1.
+//! Точка входа: «peek»-фаза (язык/корень до разбора аргументов) → разбор CLI →
+//! single-instance → логирование → tokio-рантайм → оркестратор → TUI.
+//! См. spec §4.2, §4.4, plan M1 и docs/i18n-cli.md (весь текст CLI — в бандлах локалей).
 
 mod app;
 mod entities;
@@ -10,124 +11,154 @@ mod shared;
 mod widgets;
 
 use std::path::{Path, PathBuf};
+use std::process::ExitCode;
 use std::sync::Arc;
 use std::time::Duration;
 
-use anyhow::{Context, bail};
-use clap::{Parser, Subcommand};
+use anyhow::{Context, anyhow, bail};
 use tokio::sync::mpsc::unbounded_channel;
 
 use crate::app::events::{AppCommand, AppEvent};
 use crate::app::orchestrator::{self, OrchestratorDeps};
 use crate::app::supervisor::LlamaSupervisor;
 use crate::features::backup::{self, RestoreOutcome};
+use crate::features::cli::{self, CliCommand};
 use crate::shared::config::{AppConfig, ServerMode};
+use crate::shared::i18n::{self, Lang, Locale};
 use crate::shared::storage::{JsonStore, Storage};
 use crate::shared::{instance, logging, paths::Paths};
 
-/// Аргументы командной строки. Без подкоманды запускается обычный TUI.
-#[derive(Parser)]
-#[command(name = "mindfork-rs", about = "Консольный (TUI) ИИ-чат", version)]
-struct Cli {
-    #[command(subcommand)]
-    command: Option<Command>,
-}
+fn main() -> ExitCode {
+    // «Peek»-фаза: определить корень данных и язык CLI **до** разбора аргументов и без
+    // создания каталогов (`--help`/`--version` не должны трогать диск — docs/i18n-cli.md
+    // §3.2). Язык нужен раньше всего, чтобы даже справка и ошибки разбора были на нём.
+    let (paths, lang) = match Paths::resolve() {
+        Ok((paths, defaults_present)) => {
+            let settings_lang = try_settings_language(&paths.settings_file());
+            let lang = cli_lang(settings_lang, defaults_present, paths.default_language());
+            (paths, lang)
+        }
+        // Сбой resolve (реалистично — только битый `defaults.json`): язык неизвестен →
+        // полная неопределённость → печать на английском (решение пользователя).
+        Err(err) => {
+            print_error(Lang::En, &err);
+            return ExitCode::FAILURE;
+        }
+    };
 
-#[derive(Subcommand)]
-enum Command {
-    /// Создать резервную копию пользовательских данных (zip-архив).
-    Backup {
-        /// Путь к создаваемому архиву (по умолчанию `backups/mindfork-backup-<дата>.zip`).
-        #[arg(short, long)]
-        output: Option<PathBuf>,
-        /// Степень сжатия `0..=9` (0 — без сжатия).
-        #[arg(short, long, default_value_t = 9, value_parser = clap::value_parser!(i64).range(0..=9))]
-        compression: i64,
-    },
-    /// Восстановить пользовательские данные из резервной копии.
-    Restore {
-        /// Путь к архиву резервной копии.
-        archive: PathBuf,
-    },
-    /// Одноразовый импорт данных из LameLLaMA (.NET).
-    ImportLamellama {
-        /// Каталог с данными LameLLaMA.
-        dir: PathBuf,
-    },
-    /// Управление песочницей Python (Wasmer/WASIX).
-    Sandbox {
-        #[command(subcommand)]
-        action: SandboxAction,
-    },
-    /// Локали интерфейса и служебного каркаса (внешние `data/locales/*.json`).
-    Locales {
-        #[command(subcommand)]
-        action: LocalesAction,
-    },
-}
+    // Внешние локали (`data/locales/*.json`) сканируются до разбора, чтобы `--help`
+    // уважал их override/новые языки. `init` идёт до `logging::init`, поэтому
+    // предупреждения о битых файлах возвращаются и логируются позже (в `real_main`);
+    // на путях раннего выхода (`--help`) молча отбрасываются.
+    let locale_warnings = i18n::init(&paths.locales_dir());
+    let loc = i18n::locale(lang);
 
-#[derive(Subcommand)]
-enum LocalesAction {
-    /// Экспортировать бандл языка в файл-шаблон для правки/перевода без пересборки.
-    /// `ru`/`en` дают исходный бандл дословно; новый код — полный набор ключей со
-    /// значениями референса (ru) как заготовку перевода.
-    Export {
-        /// Код языка-источника (`ru`, `en` или уже добавленный внешний).
-        code: String,
-        /// Файл назначения. Существующий файл не перезаписывается (укажите новый путь).
-        #[arg(short, long)]
-        output: PathBuf,
-    },
-}
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    let command = match cli::parse(&args, loc) {
+        Ok(cmd) => cmd,
+        // `Err` — уже готовое к печати локализованное сообщение (§ features/cli).
+        Err(msg) => {
+            eprintln!("{msg}");
+            return ExitCode::from(2);
+        }
+    };
 
-#[derive(Subcommand)]
-enum SandboxAction {
-    /// Установить/обновить песочницу: скачать `wasmer`, `python.webc` и пакеты
-    /// (numpy, requests и др.) в `data/sandbox/`.
-    Setup {
-        /// Перекачать/переустановить всё, даже если уже на месте.
-        #[arg(short, long)]
-        force: bool,
-    },
-}
-
-fn main() -> anyhow::Result<()> {
-    let cli = Cli::parse();
-    let paths = Paths::discover().context("resolving data paths")?;
-    let _logging = logging::init(&paths).context("initializing logging")?;
-
-    // Внешние локали (`data/locales/*.json`) грузятся один раз до первого обращения к
-    // бандлам: переопределяют вшитые ru/en или добавляют новые языки без пересборки
-    // (docs/i18n-external-locales.md). Нет каталога/файлов — работают вшитые бандлы.
-    shared::i18n::init(&paths.locales_dir());
-
-    // CLI-подкоманды выполняются без TUI и завершают процесс. См. spec §12.2, §12.3.
-    match cli.command {
-        Some(Command::ImportLamellama { dir }) => return run_import(&paths, &dir),
-        Some(Command::Backup {
-            output,
-            compression,
-        }) => return run_backup(&paths, output, compression),
-        Some(Command::Restore { archive }) => return run_restore(&paths, &archive),
-        Some(Command::Sandbox { action }) => return run_sandbox(&paths, action),
-        Some(Command::Locales { action }) => return run_locales(action),
-        None => {}
+    // Быстрый путь без побочных эффектов: справка/версия не создают каталогов и логов.
+    match command {
+        CliCommand::Help { topic } => {
+            println!("{}", cli::render_help(topic, loc));
+            return ExitCode::SUCCESS;
+        }
+        CliCommand::Version => {
+            println!(
+                "{}",
+                loc.tf(
+                    "cli.version.line",
+                    &[("version", env!("CARGO_PKG_VERSION"))]
+                )
+            );
+            return ExitCode::SUCCESS;
+        }
+        _ => {}
     }
 
+    match real_main(command, &paths, loc, &locale_warnings) {
+        Ok(code) => code,
+        Err(err) => {
+            print_error(lang, &err);
+            ExitCode::FAILURE
+        }
+    }
+}
+
+/// Стороне-эффектные команды: создаёт каталоги, поднимает логи, диспетчеризует.
+/// Ошибки печатаются вызывающим (`main`) через [`print_error`] — единый локализованный
+/// префикс + однострочная цепочка причин (`{:#}`), без английского `Error:`/`Caused by:`.
+fn real_main(
+    command: CliCommand,
+    paths: &Paths,
+    loc: &Locale,
+    locale_warnings: &[String],
+) -> anyhow::Result<ExitCode> {
+    paths.ensure_dirs().with_context(|| {
+        loc.tf(
+            "cli.ctx.ensure_dirs",
+            &[("path", &paths.root().display().to_string())],
+        )
+    })?;
+    let _logging =
+        logging::init(paths, loc).with_context(|| loc.t("cli.ctx.init_logging").to_string())?;
+    // Предупреждения о внешних локалях (собраны до установки лог-подписчика).
+    for w in locale_warnings {
+        tracing::warn!("{w}");
+    }
+
+    match command {
+        CliCommand::ImportLamellama { dir } => {
+            run_import(paths, &dir, loc)?;
+            Ok(ExitCode::SUCCESS)
+        }
+        CliCommand::Backup {
+            output,
+            compression,
+        } => {
+            run_backup(paths, output, compression, loc)?;
+            Ok(ExitCode::SUCCESS)
+        }
+        CliCommand::Restore { archive } => {
+            run_restore(paths, &archive, loc)?;
+            Ok(ExitCode::SUCCESS)
+        }
+        CliCommand::SandboxSetup { force } => {
+            run_sandbox_setup(paths, force, loc)?;
+            Ok(ExitCode::SUCCESS)
+        }
+        CliCommand::LocalesExport { code, output } => {
+            run_locales_export(&code, &output, loc)?;
+            Ok(ExitCode::SUCCESS)
+        }
+        CliCommand::Run => run_tui(paths, loc),
+        CliCommand::Help { .. } | CliCommand::Version => unreachable!("обработаны в main"),
+    }
+}
+
+/// Запуск основного TUI (команда без подкоманды).
+fn run_tui(paths: &Paths, loc: &Locale) -> anyhow::Result<ExitCode> {
     // Единственный экземпляр на машину/сеанс: второй запуск завершается с понятным
-    // сообщением (не сырым дампом ошибки) ещё до старта рантайма/TUI. См. spec §1.4.
+    // сообщением ещё до старта рантайма/TUI. См. spec §1.4.
     let _instance = match instance::acquire() {
         Ok(guard) => guard,
         Err(instance::InstanceError::AlreadyRunning) => {
-            eprintln!(
-                "mindfork-rs уже запущен на этом компьютере. \
-                 Закройте предыдущий экземпляр и попробуйте снова."
-            );
+            eprintln!("{}", loc.t("cli.instance.already_running"));
             tracing::warn!("отказ запуска: другой экземпляр приложения уже работает");
-            return Ok(());
+            return Ok(ExitCode::SUCCESS);
         }
-        Err(err @ instance::InstanceError::Init(_)) => {
-            return Err(anyhow::Error::new(err).context("single-instance check"));
+        // Структурная ошибка → локализуем здесь (Display варианта — не для пользователя).
+        Err(instance::InstanceError::Init(e)) => {
+            return Err(anyhow!(
+                "{}",
+                loc.tf("cli.instance.init_failed", &[("err", e.as_str())])
+            ));
         }
     };
     tracing::info!(root = %paths.root().display(), "mindfork-rs starting");
@@ -135,20 +166,20 @@ fn main() -> anyhow::Result<()> {
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()
-        .context("building tokio runtime")?;
+        .with_context(|| loc.t("cli.ctx.build_runtime").to_string())?;
 
     // Хранилище (JSON + SQLite) рядом с бинарником. Единственный писатель —
     // оркестратор (spec §4.4.2). Arc — нужен инструментам в ToolContext.
-    let storage = Arc::new(Storage::open(paths.clone()).context("opening storage")?);
+    let storage = Arc::new(
+        Storage::open(paths.clone()).with_context(|| loc.t("cli.ctx.open_storage").to_string())?,
+    );
 
     let (cmd_tx, cmd_rx) = unbounded_channel::<AppCommand>();
     let (evt_tx, evt_rx) = unbounded_channel::<AppEvent>();
 
     // Конфиг из settings.json + посев переменными окружения (dev-workflow contract §9).
-    // Серверы инференса/эмбеддингов оркестратор поднимает сам через супервайзер.
-    // Свежая установка (нет settings.json) → язык интерфейса из defaults.json
-    // (ось B, docs/i18n-ui.md §3.2); старый settings.json без поля → Ru через
-    // serde-default (пользователь видел русский UI). Определяем свежесть ДО load.
+    // Свежая установка (нет settings.json) → язык интерфейса из defaults.json (ось B,
+    // docs/i18n-ui.md §3.2); старый settings.json без поля → Ru через serde-default.
     let fresh_config = !paths.settings_file().exists();
     let mut config = storage.json().load_config().unwrap_or_default();
     if fresh_config {
@@ -182,21 +213,58 @@ fn main() -> anyhow::Result<()> {
         Ok(()) => tracing::info!("mindfork-rs exited cleanly"),
         Err(err) => tracing::error!(error = %err, "mindfork-rs exited with error"),
     }
-    result
+    result.map(|()| ExitCode::SUCCESS)
+}
+
+/// Язык интерфейса CLI: `settings.json` → `defaults.json` (если присутствует) → `En`.
+/// Полная неопределённость (нет ни того, ни другого) → английский (решение
+/// пользователя): свежий бинарь без конфигурации печатает на международном дефолте.
+/// `default_language` при отсутствии `defaults.json` — это дефолт ланга **каркаса**
+/// (ось A), а не сигнал языка отображения, поэтому в неопределённости он не участвует.
+fn cli_lang(
+    settings_language: Option<Lang>,
+    defaults_present: bool,
+    default_language: Lang,
+) -> Lang {
+    settings_language
+        .or(defaults_present.then_some(default_language))
+        .unwrap_or(Lang::En)
+}
+
+/// Язык интерфейса из `settings.json`, если файл существует и парсится. `None` при
+/// отсутствии/повреждении (та же терпимость, что `load_config().unwrap_or_default()`,
+/// но отличает «файла нет» от «есть» — нужно для выбора языка CLI).
+fn try_settings_language(settings_file: &Path) -> Option<Lang> {
+    let bytes = std::fs::read(settings_file).ok()?;
+    let cfg: AppConfig = serde_json::from_slice(&bytes).ok()?;
+    Some(cfg.interface.language)
+}
+
+/// Печатает ошибку на заданном языке: `{локализованный префикс}: {цепочка причин}`
+/// одной строкой (`{:#}`) — вместо английского `Error:`/`Caused by:` от std/anyhow.
+fn print_error(lang: Lang, err: &anyhow::Error) {
+    eprintln!("{}", cli_error_line(i18n::locale(lang), err));
+}
+
+/// Строка ошибки CLI (тестируемо, без запуска бинарника).
+fn cli_error_line(loc: &Locale, err: &anyhow::Error) -> String {
+    format!("{}: {err:#}", loc.t("cli.err.prefix"))
 }
 
 /// Захватывает блокировку единственного экземпляра для CLI-операции над данными
-/// (бэкап/восстановление). Если приложение запущено — отказ (защита целостности
-/// `data.db` от гонки с работающим оркестратором).
-fn acquire_cli_guard(action: &str) -> anyhow::Result<instance::InstanceGuard> {
+/// (бэкап/восстановление/песочница). Если приложение запущено — отказ (защита
+/// целостности `data.db` от гонки с работающим оркестратором). `action` — уже
+/// локализованное название действия (подставляется в сообщение).
+fn acquire_cli_guard(loc: &Locale, action: &str) -> anyhow::Result<instance::InstanceGuard> {
     match instance::acquire() {
         Ok(guard) => Ok(guard),
         Err(instance::InstanceError::AlreadyRunning) => {
-            bail!("mindfork-rs запущен — закройте приложение, прежде чем {action}")
+            bail!("{}", loc.tf("cli.guard.busy", &[("action", action)]))
         }
-        Err(err @ instance::InstanceError::Init(_)) => {
-            Err(anyhow::Error::new(err).context("single-instance check"))
-        }
+        Err(instance::InstanceError::Init(e)) => Err(anyhow!(
+            "{}",
+            loc.tf("cli.instance.init_failed", &[("err", e.as_str())])
+        )),
     }
 }
 
@@ -211,19 +279,30 @@ fn config_fs_root(paths: &Paths) -> Option<PathBuf> {
 }
 
 /// CLI: создание резервной копии. Вывод — в stdout (TUI не запущен).
-fn run_backup(paths: &Paths, output: Option<PathBuf>, compression: i64) -> anyhow::Result<()> {
-    let _instance = acquire_cli_guard("создавать резервную копию")?;
+fn run_backup(
+    paths: &Paths,
+    output: Option<PathBuf>,
+    compression: i64,
+    loc: &Locale,
+) -> anyhow::Result<()> {
+    let _instance = acquire_cli_guard(loc, loc.t("cli.guard.action.backup"))?;
     let fs_root = config_fs_root(paths);
     let out = backup::create_backup(paths, output, compression, fs_root.as_deref())
-        .context("создание резервной копии")?;
-    println!("Резервная копия создана: {}", out.display());
+        .with_context(|| loc.t("cli.ctx.backup").to_string())?;
+    println!(
+        "{}",
+        loc.tf(
+            "cli.backup.created",
+            &[("path", &out.display().to_string())]
+        )
+    );
     Ok(())
 }
 
 /// CLI: восстановление из резервной копии (транзакционно, с pre-restore копией и
 /// откатом при сбое). Вывод — в stdout/stderr (TUI не запущен).
-fn run_restore(paths: &Paths, archive: &Path) -> anyhow::Result<()> {
-    let _instance = acquire_cli_guard("восстанавливать данные")?;
+fn run_restore(paths: &Paths, archive: &Path, loc: &Locale) -> anyhow::Result<()> {
+    let _instance = acquire_cli_guard(loc, loc.t("cli.guard.action.restore"))?;
     let fs_root = config_fs_root(paths);
 
     // Err только до разрушительных действий (нет файла / повреждён / небезопасен).
@@ -233,12 +312,21 @@ fn run_restore(paths: &Paths, archive: &Path) -> anyhow::Result<()> {
         RestoreOutcome::Restored { pre_restore } => {
             if let Some(pre) = pre_restore {
                 println!(
-                    "Прежние данные сохранены в резервную копию: {}",
-                    pre.display()
+                    "{}",
+                    loc.tf(
+                        "cli.restore.pre_saved",
+                        &[("path", &pre.display().to_string())]
+                    )
                 );
-                println!("Пользовательские данные очищены.");
+                println!("{}", loc.t("cli.restore.cleared"));
             }
-            println!("Восстановление из {} завершено.", archive.display());
+            println!(
+                "{}",
+                loc.tf(
+                    "cli.restore.done",
+                    &[("path", &archive.display().to_string())]
+                )
+            );
             Ok(())
         }
         RestoreOutcome::RolledBack {
@@ -246,14 +334,23 @@ fn run_restore(paths: &Paths, archive: &Path) -> anyhow::Result<()> {
             restore_error,
         } => {
             eprintln!(
-                "Не удалось восстановить {}: {restore_error:#}",
-                archive.display()
+                "{}",
+                loc.tf(
+                    "cli.restore.failed",
+                    &[
+                        ("path", &archive.display().to_string()),
+                        ("err", &format!("{restore_error:#}")),
+                    ],
+                )
             );
             eprintln!(
-                "Выполнен откат: прежние данные восстановлены из {}.",
-                pre_restore.display()
+                "{}",
+                loc.tf(
+                    "cli.restore.rolled_back",
+                    &[("path", &pre_restore.display().to_string())]
+                )
             );
-            bail!("восстановление не выполнено (прежние данные возвращены)")
+            bail!("{}", loc.t("cli.restore.err_rolled_back"))
         }
         RestoreOutcome::Failed {
             pre_restore,
@@ -261,41 +358,49 @@ fn run_restore(paths: &Paths, archive: &Path) -> anyhow::Result<()> {
             rollback_error,
         } => {
             eprintln!(
-                "Не удалось восстановить {}: {restore_error:#}",
-                archive.display()
+                "{}",
+                loc.tf(
+                    "cli.restore.failed",
+                    &[
+                        ("path", &archive.display().to_string()),
+                        ("err", &format!("{restore_error:#}")),
+                    ],
+                )
             );
             if let Some(rb) = rollback_error {
-                eprintln!("Откат к прежним данным тоже не удался: {rb:#}");
+                eprintln!(
+                    "{}",
+                    loc.tf(
+                        "cli.restore.rollback_failed",
+                        &[("err", &format!("{rb:#}"))]
+                    )
+                );
             }
             match pre_restore {
                 Some(pre) => bail!(
-                    "данные в несогласованном состоянии; восстановите вручную из {}",
-                    pre.display()
+                    "{}",
+                    loc.tf(
+                        "cli.restore.err_inconsistent",
+                        &[("path", &pre.display().to_string())]
+                    )
                 ),
-                None => bail!("восстановление не выполнено"),
+                None => bail!("{}", loc.t("cli.restore.err_failed")),
             }
         }
     }
 }
 
-/// CLI: управление песочницей Python. Вывод — в stdout (TUI не запущен).
-fn run_sandbox(paths: &Paths, action: SandboxAction) -> anyhow::Result<()> {
-    match action {
-        SandboxAction::Setup { force } => run_sandbox_setup(paths, force),
-    }
-}
-
 /// CLI: установка/обновление песочницы Python (скачивание wasmer + python.webc +
 /// пакетов в `data/sandbox/`). Требует собственный tokio-рантайм (сетевой async).
-fn run_sandbox_setup(paths: &Paths, force: bool) -> anyhow::Result<()> {
+fn run_sandbox_setup(paths: &Paths, force: bool, loc: &Locale) -> anyhow::Result<()> {
     // Гард единственного экземпляра: не переустанавливаем песочницу, пока приложение
     // работает (могло бы читать заменяемый бинарь/ассеты во время индексации/запуска).
-    let _instance = acquire_cli_guard("устанавливать песочницу")?;
+    let _instance = acquire_cli_guard(loc, loc.t("cli.guard.action.sandbox"))?;
     let dir = paths.sandbox_dir();
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()
-        .context("building tokio runtime")?;
+        .with_context(|| loc.t("cli.ctx.build_runtime").to_string())?;
     runtime.block_on(features::sandbox_setup::setup(
         &dir,
         &features::sandbox_setup::SetupOptions { force },
@@ -306,40 +411,50 @@ fn run_sandbox_setup(paths: &Paths, force: bool) -> anyhow::Result<()> {
 
 /// CLI: экспорт бандла локали в файл-шаблон. `i18n::init` уже вызван в `main` (реестр
 /// с внешними готов). Вывод — в stdout (TUI не запущен).
-fn run_locales(action: LocalesAction) -> anyhow::Result<()> {
-    match action {
-        LocalesAction::Export { code, output } => {
-            if output.exists() {
-                bail!(
-                    "файл уже существует: {} — укажите другой путь (вшитые бандлы не перезаписываем)",
-                    output.display()
-                );
-            }
-            let lang = shared::i18n::Lang::from_code(&code);
-            let content = shared::i18n::export_bundle(lang);
-            if let Some(parent) = output.parent().filter(|p| !p.as_os_str().is_empty()) {
-                std::fs::create_dir_all(parent)
-                    .with_context(|| format!("создание каталога {}", parent.display()))?;
-            }
-            std::fs::write(&output, content)
-                .with_context(|| format!("запись {}", output.display()))?;
-            println!(
-                "Бандл языка «{}» экспортирован в {}.",
-                code,
-                output.display()
-            );
-            Ok(())
-        }
+fn run_locales_export(code: &str, output: &Path, loc: &Locale) -> anyhow::Result<()> {
+    if output.exists() {
+        bail!(
+            "{}",
+            loc.tf(
+                "cli.locales.file_exists",
+                &[("path", &output.display().to_string())]
+            )
+        );
     }
+    let lang = Lang::from_code(code);
+    let content = i18n::export_bundle(lang);
+    if let Some(parent) = output.parent().filter(|p| !p.as_os_str().is_empty()) {
+        std::fs::create_dir_all(parent).with_context(|| {
+            loc.tf(
+                "cli.ctx.create_dir",
+                &[("path", &parent.display().to_string())],
+            )
+        })?;
+    }
+    std::fs::write(output, content).with_context(|| {
+        loc.tf(
+            "cli.ctx.write_file",
+            &[("path", &output.display().to_string())],
+        )
+    })?;
+    println!(
+        "{}",
+        loc.tf(
+            "cli.locales.exported",
+            &[("code", code), ("path", &output.display().to_string())]
+        )
+    );
+    Ok(())
 }
 
 /// Одноразовый импорт данных LameLLaMA (.NET) в хранилище mindfork (spec §12.2).
 /// Идемпотентно (детерминированные id), исходные файлы только читаются. Вывод —
 /// в stdout (TUI не запущен), не в лог.
-fn run_import(paths: &Paths, dir: &std::path::Path) -> anyhow::Result<()> {
-    let storage = Storage::open(paths.clone()).context("opening storage")?;
+fn run_import(paths: &Paths, dir: &Path, loc: &Locale) -> anyhow::Result<()> {
+    let storage =
+        Storage::open(paths.clone()).with_context(|| loc.t("cli.ctx.open_storage").to_string())?;
     let result = features::migration::import_dir(dir)
-        .with_context(|| format!("importing LameLLaMA data from {}", dir.display()))?;
+        .with_context(|| loc.tf("cli.ctx.import", &[("dir", &dir.display().to_string())]))?;
 
     for profile in &result.profiles {
         storage.json().upsert_profile(profile)?;
@@ -361,9 +476,14 @@ fn run_import(paths: &Paths, dir: &std::path::Path) -> anyhow::Result<()> {
     storage.json().save_config(&config)?;
 
     println!(
-        "Импорт LameLLaMA завершён: профилей {}, чатов {}.",
-        result.profiles.len(),
-        result.chats.len()
+        "{}",
+        loc.tf(
+            "cli.import.done",
+            &[
+                ("profiles", &result.profiles.len().to_string()),
+                ("chats", &result.chats.len().to_string()),
+            ]
+        )
     );
     Ok(())
 }
@@ -421,5 +541,35 @@ fn apply_env_overrides(config: &mut AppConfig) {
         {
             config.embed.managed.port = port;
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn cli_lang_prefers_settings_then_defaults_then_en() {
+        // Явный язык из settings.json — сильнейший сигнал.
+        assert_eq!(cli_lang(Some(Lang::Ru), true, Lang::En), Lang::Ru);
+        assert_eq!(cli_lang(Some(Lang::En), false, Lang::Ru), Lang::En);
+        // Нет settings, но defaults.json присутствует → его default_language.
+        assert_eq!(cli_lang(None, true, Lang::Ru), Lang::Ru);
+        assert_eq!(cli_lang(None, true, Lang::En), Lang::En);
+        // Полная неопределённость (нет обоих) → английский.
+        assert_eq!(cli_lang(None, false, Lang::Ru), Lang::En);
+    }
+
+    #[test]
+    fn cli_error_line_is_localized_single_line() {
+        let err = anyhow!("outer").context("wrapper");
+        let en = cli_error_line(i18n::locale(Lang::En), &err);
+        // Локализованный префикс + однострочная цепочка причин (нет многострочного Debug).
+        assert!(en.starts_with("Error: "), "{en}");
+        assert!(en.contains("wrapper") && en.contains("outer"), "{en}");
+        assert!(!en.contains('\n'), "{en}");
+        // Русский префикс на ru-локали.
+        let ru = cli_error_line(i18n::locale(Lang::Ru), &err);
+        assert!(ru.starts_with("Ошибка: "), "{ru}");
     }
 }

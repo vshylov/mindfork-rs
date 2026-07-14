@@ -49,15 +49,17 @@ impl DataLocation {
         match self {
             Self::Portable => Ok(exe_dir.join(PORTABLE_DATA_SUBDIR)),
             Self::System => {
+                // Контекст на английском: эта ошибка возникает в `Paths::resolve` до
+                // определения языка CLI (docs/i18n-cli.md §7 — граница «до знания языка»).
                 let dirs = directories::ProjectDirs::from("", "", "mindfork-rs")
-                    .context("не удалось определить стандартную ОС-папку для данных")?;
+                    .context("cannot determine the standard OS data folder")?;
                 Ok(dirs.data_dir().to_path_buf())
             }
             Self::Path { path } => {
                 let trimmed = path.trim();
                 anyhow::ensure!(
                     !trimmed.is_empty(),
-                    "в режиме \"path\" файл {DEFAULTS_MARKER} должен задавать непустой путь"
+                    "in \"path\" mode the {DEFAULTS_MARKER} file must specify a non-empty path"
                 );
                 Ok(PathBuf::from(trimmed))
             }
@@ -82,6 +84,15 @@ pub struct Defaults {
 }
 
 impl Defaults {
+    /// Присутствует ли файл умолчаний (`defaults.json`) или устаревший `location.json`
+    /// рядом с бинарником. Нужно, чтобы отличить «инсталлятор задал язык» от «свежий
+    /// бинарь без конфигурации» при выборе языка CLI (docs/i18n-cli.md §3.1): при
+    /// отсутствии обоих serde-дефолт `default_language=Ru` — это дефолт ланга **каркаса**
+    /// (ось A), а не сигнал языка отображения, поэтому язык CLI падает до `En`.
+    pub fn marker_present(exe_dir: &Path) -> bool {
+        exe_dir.join(DEFAULTS_MARKER).exists() || exe_dir.join(LEGACY_LOCATION_MARKER).exists()
+    }
+
     /// Читает установочные умолчания рядом с бинарником: сначала `defaults.json`, при
     /// его отсутствии — устаревший `location.json` (только режим хранения; язык =
     /// дефолт). Нет обоих/пустой файл → дефолты. Повреждённый JSON — **ошибка** (а не
@@ -93,14 +104,14 @@ impl Defaults {
         } else {
             exe_dir.join(LEGACY_LOCATION_MARKER)
         };
+        // Контексты на английском: `Defaults::read` вызывается из `Paths::resolve` до
+        // определения языка CLI (docs/i18n-cli.md §7 — граница «до знания языка»).
         match std::fs::read(&marker) {
             Ok(bytes) if bytes.iter().all(u8::is_ascii_whitespace) => Ok(Self::default()),
             Ok(bytes) => serde_json::from_slice(&bytes)
-                .with_context(|| format!("разбор файла умолчаний {}", marker.display())),
+                .with_context(|| format!("parsing defaults file {}", marker.display())),
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(Self::default()),
-            Err(e) => {
-                Err(e).with_context(|| format!("чтение файла умолчаний {}", marker.display()))
-            }
+            Err(e) => Err(e).with_context(|| format!("reading defaults file {}", marker.display())),
         }
     }
 }
@@ -117,27 +128,36 @@ pub struct Paths {
 }
 
 impl Paths {
-    /// Определяет корень данных и умолчания по файлу `defaults.json` рядом с бинарником
-    /// (fallback — устаревший `location.json`). Нет файла → портативный режим (корень =
-    /// `data/` рядом с бинарником), язык каркаса = дефолт (`ru`). Корень при
-    /// необходимости создаётся (в т.ч. портативный подкаталог `data/`).
-    pub fn discover() -> Result<Self> {
+    /// Вычисляет корень данных и умолчания по файлу `defaults.json` рядом с бинарником
+    /// (fallback — устаревший `location.json`) **без создания каталогов** — для ранней
+    /// «peek»-фазы CLI, где нужно узнать язык/корень до разбора аргументов, но `--help`
+    /// не должен трогать диск (docs/i18n-cli.md §3.2). Возвращает пути и признак
+    /// «файл умолчаний присутствовал» (для выбора языка CLI — см. [`Defaults::marker_present`]).
+    /// Создание каталогов — отдельно [`Paths::ensure_dirs`].
+    pub fn resolve() -> Result<(Self, bool)> {
         let exe = std::env::current_exe().context("cannot resolve current executable path")?;
         let exe_dir = exe
             .parent()
             .context("cannot determine executable directory")?;
 
+        let present = Defaults::marker_present(exe_dir);
         let defaults = Defaults::read(exe_dir)?;
         let root = defaults.location.root_dir(exe_dir)?;
-        std::fs::create_dir_all(&root)
-            .with_context(|| format!("создание каталога данных {}", root.display()))?;
         let mut paths = Self::with_root(root);
         paths.default_language = defaults.default_language;
+        Ok((paths, present))
+    }
+
+    /// Создаёт каталоги данных (корень + каталог внешних локалей). Вызывается перед
+    /// работой с данными (не для `--help`/`--version`). Идемпотентно. Локализованный
+    /// контекст ошибки добавляет вызывающий (`main`) — здесь наружу идёт сырая io-ошибка.
+    pub fn ensure_dirs(&self) -> Result<()> {
+        std::fs::create_dir_all(&self.root)?;
         // Каталог внешних локалей создаётся для обнаруживаемости (пустой каталог
         // сигналит «клади файлы сюда»); ошибку создания не эскалируем — внешние
         // локали опциональны, при их отсутствии работают вшитые бандлы.
-        let _ = std::fs::create_dir_all(paths.locales_dir());
-        Ok(paths)
+        let _ = std::fs::create_dir_all(self.locales_dir());
+        Ok(())
     }
 
     /// Создаёт набор путей от произвольного корня (используется в тестах). Язык

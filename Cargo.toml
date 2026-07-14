@@ -15,8 +15,6 @@ async-stream = "0.3.6"
 async-trait = "0.1.89"
 bytemuck = "1.25.0"
 chrono = { version = "0.4.45", features = ["serde"] }
-# Разбор CLI-подкоманд (backup/restore/import-lamellama).
-clap = { version = "4.5.51", features = ["derive"] }
 crossterm = "0.29.0"
 # Стандартные ОС-папки для непортабельного режима хранения данных
 # (Windows %APPDATA%\mindfork-rs, Linux ~/.local/share/mindfork-rs). См. shared/paths.rs.
