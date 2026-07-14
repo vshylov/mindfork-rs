@@ -653,7 +653,7 @@ impl SettingsScreen {
         match profile_sub {
             Subsection::Assistant => {
                 // Язык служебного каркаса (ось A): Choice; блокируется, когда у
-                // профиля появились данные (`language_locked`). См. docs/i18n.md.
+                // профиля появились данные (`language_locked`). См. docs/history/i18n.md.
                 let lang_locked = self.language_locked.contains(&p.id);
                 let mut lang_row = row(
                     FieldId::PLanguage,

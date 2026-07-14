@@ -41,7 +41,7 @@ pub fn is_self_model_tool(name: &str) -> bool {
 /// ключ `selfmodel.policy_core`. **Единственный источник** формулировок, из которого
 /// собираются протокол ведения ([`maintenance_protocol`]) и системное сообщение
 /// авто-рефлексии (`orchestrator::reflection`). Интерактивная рубрика `reflect` —
-/// намеренно не отсюда (иной жанр). Локализация — ось A, см. docs/i18n.md.
+/// намеренно не отсюда (иной жанр). Локализация — ось A, см. docs/history/i18n.md.
 pub fn policy_core(loc: &Locale) -> &str {
     loc.t("selfmodel.policy_core")
 }
@@ -703,7 +703,7 @@ mod tests {
     #[test]
     fn self_model_tool_descriptions_are_localized() {
         // Каждый инструмент «модели себя» возвращает РАЗНЫЙ текст на ru/en (ловит
-        // забытый `_loc`), en — без кириллицы. §3.5 docs/i18n.md.
+        // забытый `_loc`), en — без кириллицы. §3.5 docs/history/i18n.md.
         use crate::shared::i18n::{Lang, locale};
         let (r, e) = (locale(Lang::Ru), locale(Lang::En));
         let no_cyr = |s: &str| {

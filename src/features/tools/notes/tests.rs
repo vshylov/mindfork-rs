@@ -18,7 +18,7 @@ fn no_cyrillic(s: &str) -> bool {
 #[test]
 fn note_tool_descriptions_are_localized() {
     // Каждый note-инструмент возвращает РАЗНЫЙ текст на ru/en (ловит забытый `_loc`),
-    // а en-описание — без кириллицы. §3.5 docs/i18n.md.
+    // а en-описание — без кириллицы. §3.5 docs/history/i18n.md.
     use crate::shared::i18n::{Lang, locale};
     let (ru, en) = (locale(Lang::Ru), locale(Lang::En));
     let pairs: Vec<(String, String)> = vec![

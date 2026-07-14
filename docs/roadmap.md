@@ -25,7 +25,7 @@
 
 ## Мультиязычность (i18n)
 
-> **Направление завершено** (ось A Ярусы 1–3 + ось B + i18n CLI этапы 1–3): язык агента ([docs/i18n.md](i18n.md)) и внешние локали ([docs/i18n-external-locales.md](i18n-external-locales.md)), язык интерфейса ([docs/history/i18n-ui.md](history/i18n-ui.md)), весь текст CLI ([docs/i18n-cli.md](i18n-cli.md)). Ниже — только оставшиеся заделы.
+> **Направление завершено** (ось A Ярусы 1–3 + ось B + i18n CLI этапы 1–3): язык агента ([docs/history/i18n.md](history/i18n.md)) и внешние локали ([docs/history/i18n-external-locales.md](history/i18n-external-locales.md)), язык интерфейса ([docs/history/i18n-ui.md](history/i18n-ui.md)), весь текст CLI ([docs/history/i18n-cli.md](history/i18n-cli.md)). Ниже — только оставшиеся заделы.
 
 - **Hot-reload внешних локалей** — правка `data/locales/*.json` применяется при перезапуске (реестр — `&'static`-леак); перечитывание на лету потребовало бы иной модели владения.
 - **Определение языка по системной локали ОС** — при свежей установке язык берётся из `defaults.json` (его заполнит инсталлятор), автоопределения нет.

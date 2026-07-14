@@ -301,7 +301,7 @@ mod tests {
     #[test]
     fn fetch_url_description_and_summary_system_localized() {
         // Описание и системный промпт саммаризации локализованы (en≠ru, без
-        // кириллицы). §3.5 docs/i18n.md.
+        // кириллицы). §3.5 docs/history/i18n.md.
         use crate::shared::i18n::{Lang, locale};
         let tool = FetchUrl::new();
         let (ru, en) = (locale(Lang::Ru), locale(Lang::En));

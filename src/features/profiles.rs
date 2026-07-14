@@ -87,7 +87,7 @@ pub struct ProfileEdit {
     /// `Some(None)` — убрать дефолты семплинга профиля.
     pub default_sampling: Option<Option<SamplingConfig>>,
     pub enabled_tools: Option<Vec<ToolId>>,
-    /// Язык служебного каркаса (ось A, docs/i18n.md). Правка разрешена только пока у
+    /// Язык служебного каркаса (ось A, docs/history/i18n.md). Правка разрешена только пока у
     /// профиля нет данных — гейт **авторитетно** проверяет оркестратор перед
     /// применением (`handle_update_profile`), а UI дополнительно рисует поле
     /// заблокированным.

@@ -70,7 +70,7 @@ pub struct ToolContext {
     /// Из `config.notes.recall_includes_self`; по умолчанию `false` (self скрыты).
     pub recall_includes_self: bool,
     /// Язык **служебного каркаса** для этого хода (из `Profile.language`, ось A,
-    /// docs/i18n.md). Тексты, которые читает модель (каркас «модели себя», результаты
+    /// docs/history/i18n.md). Тексты, которые читает модель (каркас «модели себя», результаты
     /// инструментов), локализуются им. `&'static` — вшитый бандл.
     pub loc: &'static crate::shared::i18n::Locale,
 }
@@ -181,7 +181,7 @@ pub trait Tool: Send + Sync {
     /// Уникальное имя (совпадает с именем функции в OpenAI-схеме).
     fn id(&self) -> ToolId;
     /// Человекочитаемое описание для модели **на языке служебного каркаса** `loc`
-    /// (ось A, docs/i18n.md). Инструменты, ещё не переведённые (Ярус 2 идёт по
+    /// (ось A, docs/history/i18n.md). Инструменты, ещё не переведённые (Ярус 2 идёт по
     /// группам), возвращают русский текст независимо от `loc`.
     fn description(&self, loc: &crate::shared::i18n::Locale) -> String;
     /// JSON Schema объекта параметров (описания полей — на языке `loc`).
@@ -633,7 +633,7 @@ mod tests {
 
     #[test]
     fn all_tool_descriptions_localized_to_en() {
-        // Сильный гейт (§3.5 docs/i18n.md): описание КАЖДОГО инструмента на en не
+        // Сильный гейт (§3.5 docs/history/i18n.md): описание КАЖДОГО инструмента на en не
         // содержит кириллицы и отличается от ru — ловит забытый `_loc` в любой группе.
         use crate::shared::i18n::{Lang, locale};
         let reg = standard_registry(&ToolConfig::default());

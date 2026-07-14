@@ -17,7 +17,7 @@ impl Orchestrator {
             return;
         };
         // Новый профиль создаётся на языке каркаса по умолчанию (defaults.json); пока
-        // у него нет данных, язык можно сменить в настройках. См. docs/i18n.md.
+        // у него нет данных, язык можно сменить в настройках. См. docs/history/i18n.md.
         profile.language = self.default_language;
         if let Err(err) = self.storage.json().upsert_profile(&profile) {
             let _ = self.evt_tx.send(AppEvent::Error(
@@ -83,7 +83,7 @@ impl Orchestrator {
     /// Применяет правки профиля (не затрагивает уже созданные чаты — у них свои
     /// копии, spec §10). Сохраняет и переэмитит список профилей/настройки.
     pub(super) fn handle_update_profile(&mut self, id: Uuid, mut edit: ProfileEdit) {
-        // Авторитетный гейт смены языка каркаса (ось A, docs/i18n.md): если у профиля
+        // Авторитетный гейт смены языка каркаса (ось A, docs/history/i18n.md): если у профиля
         // уже есть данные, реальная смена языка отклоняется (страховка поверх
         // блокировки поля в UI). Правку языка при этом гасим, остальные — применяем.
         if let Some(new_lang) = edit.language {

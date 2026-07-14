@@ -286,7 +286,7 @@ src/
    ├─ wrap.rs              перенос слов по колонкам (unicode-width)
    ├─ i18n.rs              язык каркаса агента (ось A) + UI (ось B): Lang(Ru/En/Ext)/
    │                       Locale/t/tf, вшитые locales/{ru,en}.json + внешние
-   │                       data/locales/*.json (init/реестр, docs/i18n-external-locales.md)
+   │                       data/locales/*.json (init/реестр, docs/history/i18n-external-locales.md)
    ├─ theme.rs             Palette (роли user/assistant/tool/…), auto/dark/light
    ├─ keys.rs              раскладко-независимые Ctrl-шорткаты (ЙЦУКЕН→латиница)
    ├─ server.rs            ServerStatus (статус сервера для UI)
@@ -1311,7 +1311,7 @@ palette, loc)`; stateless-виджеты (`status_bar`/`message_feed`/`chat_list
 ключи `ui.*` в `locales/{ru,en}.json` (общий механизм с осью A). Результаты инструментов
 и рендер «модели себя» в ленте следуют языку **агента** (ось A).
 
-**Внешние локали (Ярус 3, docs/i18n-external-locales.md).** `Lang` — enum `Ru`/`En`/
+**Внешние локали (Ярус 3, docs/history/i18n-external-locales.md).** `Lang` — enum `Ru`/`En`/
 `Ext(&'static str)` (внешние коды интернированы `Box::leak`). При старте `i18n::init(
 paths.locales_dir())` (в `main.rs`, до `Storage::open`) наполняет реестр (`OnceLock`):
 вшитые бандлы + `data/locales/*.json` поверх них (override по ключам того же кода / новый
@@ -1443,7 +1443,7 @@ flowchart TB
   логирование (в файл) и `tokio`, поднимает `ratatui`, запускает оркестратор и
   петлю. **CLI — собственный микро-парсер `features/cli.rs`** (не `clap`), чтобы весь
   текст CLI (справка, ошибки разбора, сообщения команд) жил в бандлах локалей i18n
-  (ось B, docs/i18n-cli.md): `import-lamellama <dir>` (импортёр), `backup [-o FILE]
+  (ось B, docs/history/i18n-cli.md): `import-lamellama <dir>` (импортёр), `backup [-o FILE]
   [-c 0..9]`/`restore <archive>` (резервное копирование/восстановление,
   `features/backup.rs`; берут single-instance), `sandbox setup [--force]`, `locales
   export <code> -o FILE`. Подкоманды выполняются без TUI и завершают процесс.
@@ -1485,7 +1485,7 @@ flowchart TB
   `backups/`, `logs/`. Файл `defaults.json` рядом с бинарником (всегда вне `data/`;
   `Defaults` = `DataLocation` `portable`/`system`/`path` + `default_language`)
   переключает корень в стандартную ОС-папку (крейт `directories`) или произвольный
-  каталог и задаёт язык каркаса новых профилей (ось A — docs/i18n.md); нет файла →
+  каталог и задаёт язык каркаса новых профилей (ось A — docs/history/i18n.md); нет файла →
   портативный режим + `ru` (для совместимости читается старый `location.json`).
   **Резервное копирование** (`features/backup.rs`): zip с
   настраиваемым сжатием (chats/dictionaries/data.db/profiles/settings/personal +
@@ -1496,7 +1496,7 @@ flowchart TB
   `pulldown-cmark` + `syntect` + `ansi-to-tui`, `spellbook`, `arboard`, `scraper`,
   `serde`/`serde_json`, `uuid`, `chrono`, `tracing`, `zip` + `directories`
   (резервное копирование и режим хранения). CLI разбирается **своим** парсером
-  (`features/cli.rs`), не крейтом — `clap` удалён (docs/i18n-cli.md). Приложение **не
+  (`features/cli.rs`), не крейтом — `clap` удалён (docs/history/i18n-cli.md). Приложение **не
   зависит от ML-стека** — это ключевое упрощение сборки.
 - **Релиз**: `[profile.release]` с LTO/strip/`opt-level=3`, `panic=unwind`.
 

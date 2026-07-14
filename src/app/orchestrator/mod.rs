@@ -67,7 +67,7 @@ use self::title::TitleResult;
 
 /// Дефолтный профиль на языке `lang` (bootstrap при пустом хранилище / защитный
 /// fallback). Имя и системное сообщение — из бандла служебного каркаса
-/// (`defaults.*`, ось A, docs/i18n.md); язык проставляется в профиль.
+/// (`defaults.*`, ось A, docs/history/i18n.md); язык проставляется в профиль.
 fn default_profile(lang: crate::shared::i18n::Lang) -> Profile {
     let loc = crate::shared::i18n::locale(lang);
     let mut profile = Profile::new(
@@ -90,7 +90,7 @@ pub struct OrchestratorDeps {
     /// Супервайзер серверов инференса/эмбеддингов (real или mock в тестах).
     pub supervisor: Arc<dyn ServerSupervisor>,
     /// Язык служебного каркаса новых профилей (из `defaults.json`, ось A). В тестах —
-    /// `Lang::default()` (`ru`). См. docs/i18n.md, `shared::paths::Defaults`.
+    /// `Lang::default()` (`ru`). См. docs/history/i18n.md, `shared::paths::Defaults`.
     pub default_language: crate::shared::i18n::Lang,
 }
 
@@ -286,7 +286,7 @@ struct Orchestrator {
     /// (дебаунс: серия быстрых правок полей коалесится в один рестарт).
     restarts: RestartQueue,
     /// Язык служебного каркаса новых профилей (из `defaults.json`, ось A —
-    /// docs/i18n.md): bootstrap первого профиля и `CreateProfile` создаются на нём.
+    /// docs/history/i18n.md): bootstrap первого профиля и `CreateProfile` создаются на нём.
     default_language: crate::shared::i18n::Lang,
 }
 
@@ -311,7 +311,7 @@ impl Orchestrator {
         }
         if self.profiles.is_empty() {
             // Первый профиль — на языке каркаса из defaults.json (инсталлятор
-            // заполняет его по выбору пользователя). См. docs/i18n.md.
+            // заполняет его по выбору пользователя). См. docs/history/i18n.md.
             let mut profile = default_profile(self.default_language);
             // Включаем все базовые инструменты в дефолтном профиле.
             crate::features::profiles::reconcile_tools(&mut profile);
@@ -522,7 +522,7 @@ impl Orchestrator {
     }
 
     /// Есть ли у профиля данные, «привязывающие» его к текущему языку каркаса (ось A,
-    /// docs/i18n.md): видимые чаты, непустая «модель себя» или заметки (в т.ч.
+    /// docs/history/i18n.md): видимые чаты, непустая «модель себя» или заметки (в т.ч.
     /// наблюдения `@self`). RAG-документы намеренно не учитываются — язык файлов базы
     /// знаний задаёт пользователь, не агент. Пока `false` — язык профиля редактируем.
     pub(super) fn profile_has_data(&self, profile_id: Uuid) -> bool {
@@ -552,7 +552,7 @@ impl Orchestrator {
         crate::shared::i18n::locale(self.config.interface.language)
     }
 
-    /// Локаль служебного каркаса профиля (ось A, docs/i18n.md) по `profile_id`.
+    /// Локаль служебного каркаса профиля (ось A, docs/history/i18n.md) по `profile_id`.
     /// Неизвестный профиль → референсный язык (`Lang::default`).
     pub(super) fn profile_locale(&self, profile_id: Uuid) -> &'static crate::shared::i18n::Locale {
         let lang = self
