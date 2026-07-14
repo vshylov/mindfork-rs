@@ -415,12 +415,18 @@ static REGISTRY: OnceLock<HashMap<Lang, &'static Locale>> = OnceLock::new();
 
 /// Мержит внешние `data/locales/*.json` в owned-карты бандлов: `<code>.json` поверх
 /// вшитого того же кода (override по ключам) или новым языком. Нечитаемый/битый файл,
-/// недопустимое имя → предупреждение в лог + пропуск (вшитое цело). Нет каталога —
-/// no-op (только вшитые).
-fn overlay_external(maps: &mut HashMap<Lang, HashMap<String, String>>, dir: &Path) {
+/// недопустимое имя → предупреждение + пропуск (вшитое цело). Нет каталога — no-op
+/// (только вшитые). Возвращает предупреждения (проблемные файлы/ключи): [`init`]
+/// вызывается **до** установки лог-подписчика, поэтому предупреждения не пишутся в
+/// `tracing` здесь, а возвращаются вызывающему и логируются им после `logging::init`
+/// (ветки раннего выхода — `--help` — их молча отбрасывают). Информационные события
+/// (добавлен язык/переопределены ключи) остаются `tracing::info!` (не критичны, если
+/// потеряны при раннем старте).
+fn overlay_external(maps: &mut HashMap<Lang, HashMap<String, String>>, dir: &Path) -> Vec<String> {
+    let mut warnings = Vec::new();
     let entries = match std::fs::read_dir(dir) {
         Ok(e) => e,
-        Err(_) => return,
+        Err(_) => return warnings,
     };
     // Снимок референса (ru) для содержательной валидации внешних файлов: множество
     // ключей + плейсхолдеры каждого. Берём до цикла (в цикле `maps` мутируется).
@@ -443,30 +449,36 @@ fn overlay_external(maps: &mut HashMap<Lang, HashMap<String, String>>, dir: &Pat
         // Код языка — BCP-47-подобный (строчные буквы/цифры/дефис, начинается с буквы):
         // устойчиво к случайным именам (`EN.json`/`readme.json`), допускает `pt-br`.
         if !is_valid_lang_code(stem) {
-            tracing::warn!(
-                file = %path.display(),
-                "внешняя локаль: недопустимое имя (код языка — строчные латинские буквы/цифры/дефис, с буквы), пропуск"
-            );
+            warnings.push(format!(
+                "внешняя локаль {}: недопустимое имя (код языка — строчные латинские буквы/цифры/дефис, с буквы), пропуск",
+                path.display()
+            ));
             continue;
         }
         let src = match std::fs::read_to_string(&path) {
             Ok(s) => s,
             Err(e) => {
-                tracing::warn!(file = %path.display(), error = %e, "внешняя локаль: чтение не удалось, пропуск");
+                warnings.push(format!(
+                    "внешняя локаль {}: чтение не удалось ({e}), пропуск",
+                    path.display()
+                ));
                 continue;
             }
         };
         let ext_map = match json_to_map(&src) {
             Ok(m) => m,
             Err(e) => {
-                tracing::warn!(file = %path.display(), error = %e, "внешняя локаль: разбор не удался, пропуск");
+                warnings.push(format!(
+                    "внешняя локаль {}: разбор не удался ({e}), пропуск",
+                    path.display()
+                ));
                 continue;
             }
         };
         // Содержательная валидация против референса (зеркало gate-тестов parity —
         // единственная категория бандлов без тестового покрытия): предупреждаем, но
         // не отбрасываем (пользователь мог править экспериментально).
-        validate_external_map(&path, &ext_map, &ref_placeholders);
+        warnings.extend(validate_external_map(&path, &ext_map, &ref_placeholders));
         let lang = Lang::from_code(stem);
         let count = ext_map.len();
         let is_new = !maps.contains_key(&lang);
@@ -488,49 +500,59 @@ fn overlay_external(maps: &mut HashMap<Lang, HashMap<String, String>>, dir: &Pat
             );
         }
     }
+    warnings
 }
 
-/// Проверяет внешний бандл против референса и логирует проблемы (не отбрасывает):
-/// (1) ключ, отсутствующий в референсе, — вероятная опечатка: он ничего не
-/// переопределяет и мёртв (для нового языка тоже: недостающих ключей быть не должно,
+/// Проверяет внешний бандл против референса и возвращает предупреждения (не
+/// отбрасывает): (1) ключ, отсутствующий в референсе, — вероятная опечатка: он ничего
+/// не переопределяет и мёртв (для нового языка тоже: недостающих ключей быть не должно,
 /// а лишних — тем более); (2) переопределённый ключ с другим набором `{плейсхолдеров}`,
 /// чем в референсе, — сломает `tf` (дыра/проигнорированный аргумент). Мета-ключ
-/// `_fallback` из проверки исключён.
+/// `_fallback` из проверки исключён. Возвращает строки для логирования вызывающим
+/// (см. [`overlay_external`] — предупреждения не пишутся здесь, т.к. `init` идёт до
+/// установки лог-подписчика).
 fn validate_external_map(
     path: &Path,
     ext_map: &HashMap<String, String>,
     ref_placeholders: &HashMap<String, std::collections::BTreeSet<String>>,
-) {
+) -> Vec<String> {
+    let mut warnings = Vec::new();
     for (k, v) in ext_map {
         if k == FALLBACK_META_KEY {
             continue;
         }
         match ref_placeholders.get(k) {
-            None => tracing::warn!(
-                file = %path.display(), key = %k,
-                "внешняя локаль: ключа нет в референсе (опечатка? ключ ничего не переопределяет)"
-            ),
+            None => warnings.push(format!(
+                "внешняя локаль {} ключ {k}: нет в референсе (опечатка? ключ ничего не переопределяет)",
+                path.display()
+            )),
             Some(want) => {
                 let got = placeholders(v);
                 if &got != want {
-                    tracing::warn!(
-                        file = %path.display(), key = %k,
-                        want = ?want, got = ?got,
-                        "внешняя локаль: набор плейсхолдеров расходится с референсом (сломает подстановку tf)"
-                    );
+                    warnings.push(format!(
+                        "внешняя локаль {} ключ {k}: набор плейсхолдеров расходится с референсом (want {want:?}, got {got:?}) — сломает подстановку tf",
+                        path.display()
+                    ));
                 }
             }
         }
     }
+    warnings
 }
 
 /// Загружает внешние локали из каталога и фиксирует полный реестр. Вызывается один
 /// раз при старте (`main.rs`) **до** первого обращения к [`locale`]. Повторный вызов
 /// игнорируется. Нет каталога/файлов — реестр = вшитые бандлы.
-pub fn init(dir: &Path) {
+///
+/// Возвращает предупреждения о проблемных внешних файлах/ключах: `init` идёт **до**
+/// установки лог-подписчика (`logging::init`), поэтому `tracing::warn!` здесь бы
+/// потерялся — вызывающий логирует их сам после инициализации логов (ветки раннего
+/// выхода вроде `--help` отбрасывают). Повторный вызов возвращает пустой список.
+#[must_use]
+pub fn init(dir: &Path) -> Vec<String> {
     let mut maps: HashMap<Lang, HashMap<String, String>> =
         Lang::ALL.iter().map(|&l| (l, builtin_map(l))).collect();
-    overlay_external(&mut maps, dir);
+    let warnings = overlay_external(&mut maps, dir);
     let registry: HashMap<Lang, &'static Locale> = maps
         .into_iter()
         .map(|(lang, map)| {
@@ -538,7 +560,10 @@ pub fn init(dir: &Path) {
             (lang, loc)
         })
         .collect();
-    let _ = REGISTRY.set(registry);
+    if REGISTRY.set(registry).is_err() {
+        return Vec::new();
+    }
+    warnings
 }
 
 /// Активный реестр: полный (после [`init`]) либо только вшитый (тесты/до init).

@@ -127,8 +127,9 @@ flowchart TD
 
 ```
 src/
-├─ main.rs                  тонкая точка входа: конфиг, env-overrides, single-instance,
-│                           tokio, ratatui::init, импорт LameLLaMA (CLI-флаг)
+├─ main.rs                  тонкая точка входа: «peek»-фаза (язык/корень до разбора),
+│                           разбор CLI (features/cli), single-instance, tokio,
+│                           ratatui::init; main() -> ExitCode с локализованной печатью ошибок
 │
 ├─ app/                     композиция: оркестрация, петля TUI, контракт, серверы
 │  ├─ orchestrator/         владелец состояния, расслоён по фичам (god-объект разбит,
@@ -233,6 +234,7 @@ src/
 │  ├─ chat_export.rs        format_conversation (копирование переписки)
 │  ├─ rag_command.rs        парсер /rag add|remove|list|rebuild
 │  ├─ rag_ingest.rs         scan, read_text, RagProgress (типы прогресса индексации)
+│  ├─ cli.rs                свой микро-парсер аргументов CLI (весь текст — в бандлах локалей)
 │  ├─ backup.rs             резервное копирование/восстановление данных (zip, транзакц.)
 │  ├─ sandbox_setup.rs      провизия песочницы Python (mindfork sandbox setup): wasmer +
 │  │                        python.webc + колёса по lock-списку (sha256); прогрев кэша
@@ -1439,10 +1441,23 @@ flowchart TB
 - **`main.rs`** — тонкая: грузит `AppConfig`, сеет его env-переменными
   (`apply_env_overrides` — dev-workflow), проверяет single-instance, инициализирует
   логирование (в файл) и `tokio`, поднимает `ratatui`, запускает оркестратор и
-  петлю. CLI на `clap` (подкоманды выполняются без TUI и выходят): `import-lamellama
-  <dir>` (импортёр), `backup [-o FILE] [-c 0..9]` и `restore <archive>` (резервное
-  копирование/восстановление, `features/backup.rs`; берут single-instance, чтобы не
-  конкурировать с работающим приложением за `data.db`).
+  петлю. **CLI — собственный микро-парсер `features/cli.rs`** (не `clap`), чтобы весь
+  текст CLI (справка, ошибки разбора, сообщения команд) жил в бандлах локалей i18n
+  (ось B, docs/i18n-cli.md): `import-lamellama <dir>` (импортёр), `backup [-o FILE]
+  [-c 0..9]`/`restore <archive>` (резервное копирование/восстановление,
+  `features/backup.rs`; берут single-instance), `sandbox setup [--force]`, `locales
+  export <code> -o FILE`. Подкоманды выполняются без TUI и завершают процесс.
+  - **«Peek»-фаза до разбора аргументов.** `Paths::resolve()` вычисляет корень/язык
+    **без создания каталогов** (`--help`/`--version` не трогают диск); `ensure_dirs`
+    создаёт каталоги только на путях, работающих с данными. Язык CLI —
+    `cli_lang(settings→defaults→En)`: `settings.json`.`interface.language`, иначе
+    `defaults.json`.`default_language` (если файл присутствует), иначе **английский**
+    (полная неопределённость → международный дефолт). Внешние локали (`i18n::init`)
+    сканируются до разбора, чтобы `--help` уважал их override; `init` возвращает
+    предупреждения (лог-подписчик ещё не поднят) — они логируются позже.
+  - **`main() -> ExitCode`.** Ошибки печатает сам (`{локализованный префикс}: {err:#}`,
+    однострочная цепочка) вместо английских `Error:`/`Caused by:` от std/anyhow.
+    Контексты `Paths::resolve` (до знания языка) — на английском (граница §7 доки).
 - **Конфигурация** (`shared/config.rs`): `AppConfig` с секциями `EngineSettings`,
   `EmbedSettings`, `ToolSettings`, `InterfaceSettings`, `ImpersonationEngineSettings`,
   `impersonation_sampling`, глобальный семплинг. Все поля под `#[serde(default)]` —
@@ -1479,9 +1494,10 @@ flowchart TB
 - **Зависимости** (см. [Cargo.toml](../Cargo.toml)): `ratatui` 0.30 + `crossterm`,
   `tokio`, `reqwest` (rustls), `rusqlite` (bundled) + `sqlite-vec`,
   `pulldown-cmark` + `syntect` + `ansi-to-tui`, `spellbook`, `arboard`, `scraper`,
-  `serde`/`serde_json`, `uuid`, `chrono`, `tracing`, `clap` (CLI), `zip` +
-  `directories` (резервное копирование и режим хранения). Приложение **не зависит от
-  ML-стека** — это ключевое упрощение сборки.
+  `serde`/`serde_json`, `uuid`, `chrono`, `tracing`, `zip` + `directories`
+  (резервное копирование и режим хранения). CLI разбирается **своим** парсером
+  (`features/cli.rs`), не крейтом — `clap` удалён (docs/i18n-cli.md). Приложение **не
+  зависит от ML-стека** — это ключевое упрощение сборки.
 - **Релиз**: `[profile.release]` с LTO/strip/`opt-level=3`, `panic=unwind`.
 
 ---
