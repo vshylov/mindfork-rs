@@ -1,5 +1,8 @@
 # mindfork-rs
 
+[![CI](https://github.com/vshylov/mindfork-rs/actions/workflows/ci.yml/badge.svg)](https://github.com/vshylov/mindfork-rs/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+
 **Консольное (TUI) приложение ИИ-чата на Rust.** Заточено под **локальные** модели
 **Gemma 3/4** и **Qwen 3.5/3.6** (через **llama.cpp `llama-server`**), но через единый
 контракт движка поддерживает и **облачные API**: **OpenAI**, **Google Gemini** и
