@@ -119,7 +119,7 @@ Env для выбора бэкенда: `MINDFORK_ENGINE_URL` (external, люб�
 `MINDFORK_LLAMA_BIN` (+ `MINDFORK_MODEL` GGUF, `MINDFORK_NGL`, `MINDFORK_CTX`,
 `MINDFORK_PORT`) для managed `llama-server`.
 
-## Статус (на 2026-07-14)
+## Статус (на 2026-07-15)
 Сделан весь план **M0–M9** плюс обширный пост-M9 (в `main`). **1049 юнит-тестов
 зелёные, 48 `#[ignore]`-смоуков** (крупнейший счётчик — журнал ниже; последнее
 направление — **i18n CLI** (весь текст CLI/`main.rs`/фич/хвоста движка в бандлах, свой
@@ -5288,6 +5288,39 @@ web-поиск и Python под выключателями, экран наст�
   зелёная (`numpy_in_sandbox`/`cyrillic_print_in_sandbox`/`timeout_kills_sandbox` —
   реальное numpy-исполнение и русские метки целы). Стадия-3 смена сигнатур
   `run`/`availability` ru-путь не сломала.
+
+### Пост-M9: релизная инженерия — этап 1 (CI-пайплайн + пин тулчейна + лицензия) (сделано)
+- **Первый этап направления «релизная инженерия»** (дизайн-план
+  [docs/release-engineering.md](docs/release-engineering.md), развилки подтверждены
+  пользователем 2026-07-15; ветка `feat/ci-pipeline`): версионирование, changelog,
+  CI и версионирование/миграции схем данных. Этап 1 закрывает **CI** — до него
+  гейты `fmt`/`clippy -D warnings`/`test` держались только на дисциплине агента, а
+  **Linux-сборка не проверялась вовсе** (разработка на Windows).
+- **`.github/workflows/ci.yml`**: джоб `lint` (ubuntu — `cargo fmt --check` +
+  `cargo clippy --all-targets -- -D warnings`) и джоб `test` (матрица
+  `ubuntu-latest` + `windows-latest` — `cargo test`). `#[ignore]`-смоуки
+  (движок/сеть/живая модель) без env-переменных тихо пропускаются — сети/живого
+  сервера CI не требует. Кэш `Swatinem/rust-cache`, `concurrency` с
+  `cancel-in-progress` по ref, триггеры `pull_request` + `push:main`.
+- **`rust-toolchain.toml`** — пин `1.96.0` + `rustfmt`/`clippy` (Ф4): гейт
+  `-D warnings` каждый новый stable ломал бы внезапно новыми линтами; обновление
+  тулчейна — осознанный отдельный PR.
+- **`LICENSE`** (MIT, файл добавлен — в `Cargo.toml` лицензия заявлена, файла не
+  было); бейджи CI + License в шапке README.
+- **Разведка платформенной переносимости тестов** (сабагент, very thorough scan
+  `src/`): **0 тестов способны покрасить Linux-CI** — код писался с расчётом на
+  Linux (сортировка для детерминизма, снятие verbatim-префикса `\\?\`, парные
+  `#[cfg(windows)]`/`#[cfg(not(windows))]`-варианты, толерантность к CRLF; спавны
+  в тестах гейтнуты `cfg!(windows)`, `.exe`-суффиксы кросс-платформенны через
+  константы). Остаточный риск — латентный Linux-only clippy-`-D warnings`
+  (проверяется только фактическим прогоном CI; ключевые `cfg(not(windows))`-ветки
+  проверены вручную — гейтнуты корректно). Живой прогон движка не требуется
+  (инфраструктура CI, движок/память/инструменты не затронуты).
+- Локальные гейты на Windows зелёные: **1049 юнит-тестов passed, 48 `#[ignore]`**,
+  clippy `-D warnings`/fmt чисты. Доки: [docs/release-engineering.md](docs/release-engineering.md).
+- **Дальше:** этап 2 (`feat/versioning-changelog` — bump `0.9.0`, `CHANGELOG.md`,
+  версия в справке/логе), этап 3–4 (миграции JSON/SQLite, ADR 0006), этап 5
+  (релизный пайплайн), опц. этап 6 (`cargo-deny`).
 
 ### Отложено за пределы M3
 - **Сворачивание/выделение per-message** и tool-блоки в ленте — сейчас «мысли»

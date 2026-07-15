@@ -1,0 +1,47 @@
+# CI: линты (fmt + clippy) на Linux + тесты на Linux и Windows.
+# Тулчейн берётся из rust-toolchain.toml (пин, release-engineering.md Ф4).
+# #[ignore]-смоуки (движок/сеть/живая модель) без env-переменных тихо пропускаются —
+# сети и живого сервера CI не требует. См. docs/release-engineering.md §3.3.
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+# Отменяем предыдущие прогоны того же ref (экономия минут раннера).
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  lint:
+    name: Линты (fmt + clippy)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Установить тулчейн (из rust-toolchain.toml)
+        run: rustup show
+      - uses: Swatinem/rust-cache@v2
+      - name: Форматирование
+        run: cargo fmt --check
+      - name: Clippy (все цели, warnings = ошибки)
+        run: cargo clippy --all-targets -- -D warnings
+
+  test:
+    name: Тесты (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Установить тулчейн (из rust-toolchain.toml)
+        run: rustup show
+      - uses: Swatinem/rust-cache@v2
+      - name: Тесты
+        run: cargo test
