@@ -7,7 +7,7 @@ repository = "https://github.com/vshylov/mindfork-rs"
 
 [dependencies]
 ansi-to-tui = "8.0.1"
-anyhow = "1.0.102"
+anyhow = "1.0.103"
 # Буфер обмена (Windows + Linux). `default-features = false` отключает image-data
 # (тянет крейт `image`): нам нужен только текст. См. копирование переписки чата.
 arboard = { version = "3.4.1", default-features = false }

@@ -168,7 +168,8 @@ Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>
    (`git push origin vX.Y.Z`). Агент теги/`main` сам не пушит (§5).
 4. Тег запускает **`.github/workflows/release.yml`**: сборка `--release` на
    `windows-latest` + `ubuntu-22.04` → архивы `mindfork-rs-vX.Y.Z-x86_64-{windows.zip,
-   linux.tar.gz}` (бинарник + README/CHANGELOG/LICENSE/install) + `sha256sums.txt` →
+   linux.tar.gz}` (бинарник + README/CHANGELOG/LICENSE/install + словари
+   `data/dictionaries/`) + `sha256sums.txt` →
    `gh release create` с нотами = раздел `[X.Y.Z]` из CHANGELOG.
 5. **Смоук артефакта**: скачать архив, `mindfork-rs --version` (совпадает с тегом),
    запуск TUI на копии данных.

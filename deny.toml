@@ -1,0 +1,46 @@
+# Конфигурация cargo-deny (advisory-аудит зависимостей). Прогон — workflow `audit.yml`
+# (еженедельно + вручную, не на PR → merge не блокирует). См. release-engineering.md Ф6.
+# Allow-список лицензий выверен прогоном `cargo deny check licenses` на текущем графе.
+
+[advisories]
+# База RustSec: уязвимости/unmaintained → ошибка (сигнал разобраться), yanked → warn.
+yanked = "warn"
+# Известные транзитивные advisory без доступного фикса — все приходят из `syntect`
+# (подсветка кода): он парсит **свои вшитые** синтаксисы/темы, не ввод пользователя,
+# поэтому DoS-риск для нас не реализуется. Снять, когда syntect обновит эти зависимости
+# (или при замене syntect). Аудит остаётся зелёным на известном наборе и краснеет на НОВЫХ.
+ignore = [
+    "RUSTSEC-2024-0320", # yaml-rust unmaintained (syntect)
+    "RUSTSEC-2025-0141", # bincode unmaintained (syntect)
+    "RUSTSEC-2026-0194", # quick-xml quadratic-time на дублирующихся атрибутах (syntect → plist)
+    "RUSTSEC-2026-0195", # quick-xml unbounded namespace-alloc DoS (syntect → plist)
+]
+
+[licenses]
+# Разрешённые SPDX-лицензии зависимостей. Всё вне списка → ошибка аудита.
+allow = [
+    "MIT",
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "ISC",
+    "Unicode-3.0",
+    "Unicode-DFS-2016",
+    "Zlib",
+    "MPL-2.0",
+    "CC0-1.0",
+    "BSL-1.0",
+    "CDLA-Permissive-2.0",
+]
+confidence-threshold = 0.8
+
+[bans]
+# Дубли версий одного крейта — предупреждение, не ошибка (норма для большого графа).
+multiple-versions = "warn"
+wildcards = "allow"
+
+[sources]
+# Все зависимости — из crates.io; сторонние реестры/git — ошибка.
+unknown-registry = "deny"
+unknown-git = "deny"
