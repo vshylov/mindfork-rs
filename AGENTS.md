@@ -145,3 +145,34 @@ Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>
 ```
 
 Мерж PR — за пользователем; агент не мержит и не пушит в `main` сам.
+
+## 6. Релиз
+
+Версионирование — **SemVer**, источник истины версии — `Cargo.toml`
+(`env!("CARGO_PKG_VERSION")`); релиз = git-тег `vX.Y.Z` на merge-коммите в `main`.
+Пока `0.x`: MINOR — фичи/направления, PATCH — фиксы. Полный процесс и решения —
+[docs/release-engineering.md](docs/release-engineering.md).
+
+**Дисциплина между релизами:** каждый PR с пользовательски-видимым эффектом или
+изменением формата данных добавляет пункт в `CHANGELOG.md` → `[Unreleased]` (§4).
+
+**Выпуск релиза** (чек-лист):
+
+1. **Релизный PR** (ветка `docs/release-X.Y.Z` или `chore/release-X.Y.Z`): bump
+   `Cargo.toml` (+ `Cargo.lock` пересобрать) до `X.Y.Z`; в `CHANGELOG.md` переименовать
+   `[Unreleased]` → `[X.Y.Z] — <дата>`, завести свежую пустую `[Unreleased]` и обновить
+   сравнительные ссылки внизу файла. Гейты (`fmt`/`clippy`/`test`) зелёные, CI на PR
+   зелёный.
+2. **Мерж** релизного PR (за пользователем).
+3. **Тег**: пользователь ставит `git tag vX.Y.Z <merge-commit>` и пушит
+   (`git push origin vX.Y.Z`). Агент теги/`main` сам не пушит (§5).
+4. Тег запускает **`.github/workflows/release.yml`**: сборка `--release` на
+   `windows-latest` + `ubuntu-22.04` → архивы `mindfork-rs-vX.Y.Z-x86_64-{windows.zip,
+   linux.tar.gz}` (бинарник + README/CHANGELOG/LICENSE/install) + `sha256sums.txt` →
+   `gh release create` с нотами = раздел `[X.Y.Z]` из CHANGELOG.
+5. **Смоук артефакта**: скачать архив, `mindfork-rs --version` (совпадает с тегом),
+   запуск TUI на копии данных.
+
+Промоция до **`1.0.0`** — когда направление доказано в бою (CI зелёный на обеих ОС +
+каркас миграций смержён + релизный пайплайн выпустил ≥1 релиз): с 1.0 «данные переживают
+обновления» становится контрактным обещанием.
