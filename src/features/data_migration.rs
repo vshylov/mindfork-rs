@@ -5,7 +5,7 @@
 //! файл), pre-migration бэкап и control-parse в типизированные структуры. Живёт в
 //! `features` (не в `shared`), потому что pre-migration бэкап — это `features::backup`,
 //! а `shared` не может зависеть от `features` (FSD). См.
-//! [docs/release-engineering.md](../../docs/release-engineering.md) §3.4 и ADR 0006.
+//! [docs/history/release-engineering.md](../../docs/history/release-engineering.md) §3.4 и ADR 0006.
 //!
 //! Поток (release-engineering.md Ф9–Ф11): прочитать каждый файл как `Value` → определить
 //! версию → `> current` — **отказ запуска** (данные новее приложения, Ф10); битый

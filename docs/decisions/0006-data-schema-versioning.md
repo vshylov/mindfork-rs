@@ -2,7 +2,7 @@
 
 **Статус:** принято (2026-07-15). Фиксирует этапы 3–4 направления «релизная инженерия»
 (версионирование схем сохраняемых данных + миграции JSON и SQLite). Дизайн и развилки —
-[docs/release-engineering.md](../release-engineering.md) §3.4 и §2 блок В (Ф7–Ф12).
+[docs/history/release-engineering.md](../history/release-engineering.md) §3.4 и §2 блок В (Ф7–Ф12).
 Реализация: [src/shared/storage/schema.rs](../../src/shared/storage/schema.rs) (чистый
 каркас + константы версий), [src/features/data_migration.rs](../../src/features/data_migration.rs)
 (оркестрация JSON+координация с SQLite) и

@@ -5293,7 +5293,7 @@ web-поиск и Python под выключателями, экран наст�
 
 ### Пост-M9: релизная инженерия — этап 1 (CI-пайплайн + пин тулчейна + лицензия) (сделано)
 - **Первый этап направления «релизная инженерия»** (дизайн-план
-  [docs/release-engineering.md](docs/release-engineering.md), развилки подтверждены
+  [docs/history/release-engineering.md](docs/history/release-engineering.md), развилки подтверждены
   пользователем 2026-07-15; ветка `feat/ci-pipeline`): версионирование, changelog,
   CI и версионирование/миграции схем данных. Этап 1 закрывает **CI** — до него
   гейты `fmt`/`clippy -D warnings`/`test` держались только на дисциплине агента, а
@@ -5319,14 +5319,14 @@ web-поиск и Python под выключателями, экран наст�
   проверены вручную — гейтнуты корректно). Живой прогон движка не требуется
   (инфраструктура CI, движок/память/инструменты не затронуты).
 - Локальные гейты на Windows зелёные: **1049 юнит-тестов passed, 48 `#[ignore]`**,
-  clippy `-D warnings`/fmt чисты. Доки: [docs/release-engineering.md](docs/release-engineering.md).
+  clippy `-D warnings`/fmt чисты. Доки: [docs/history/release-engineering.md](docs/history/release-engineering.md).
 - **Дальше:** этап 2 (`feat/versioning-changelog` — bump `0.9.0`, `CHANGELOG.md`,
   версия в справке/логе), этап 3–4 (миграции JSON/SQLite, ADR 0006), этап 5
   (релизный пайплайн), опц. этап 6 (`cargo-deny`).
 
 ### Пост-M9: релизная инженерия — этап 2 (версия 0.9.0 + CHANGELOG + показ версии) (сделано)
 - **Этап 2** направления «релизная инженерия»
-  ([docs/release-engineering.md](docs/release-engineering.md), ветка
+  ([docs/history/release-engineering.md](docs/history/release-engineering.md), ветка
   `feat/versioning-changelog`): версионирование приложения и changelog.
 - **Bump `0.1.0` → `0.9.0`** (`Cargo.toml` + `Cargo.lock`): сигнал «почти 1.0».
   `1.0.0` — после того как направление доказано в бою (CI + миграции + релизный
@@ -5346,14 +5346,14 @@ web-поиск и Python под выключателями, экран наст�
   `[Unreleased]`) + чек-пункт в **PR-шаблоне**.
 - Чистая инфраструктура/UI — **живой прогон движка не требуется**. Гейты зелёные;
   тестов на содержимое заголовка справки нет (проверено). Доки:
-  [docs/release-engineering.md](docs/release-engineering.md).
+  [docs/history/release-engineering.md](docs/history/release-engineering.md).
 - **Дальше:** этап 3 (`feat/json-schema-migrations` — каркас версий/миграций JSON,
   downgrade-guard, pre-migration бэкап, ADR 0006), этап 4 (SQLite `user_version`),
   этап 5 (релизный пайплайн `release.yml`).
 
 ### Пост-M9: релизная инженерия — этап 3 (версии схем + миграции JSON) (сделано)
 - **Этап 3** направления «релизная инженерия»
-  ([docs/release-engineering.md](docs/release-engineering.md) §3.4, Ф7–Ф12; ветка
+  ([docs/history/release-engineering.md](docs/history/release-engineering.md) §3.4, Ф7–Ф12; ветка
   `feat/json-schema-migrations`): версионирование схем сохраняемых данных и каркас
   миграций, чтобы обновление бинарника никогда не теряло данные. **ADR 0006**.
 - **Версии пер-артефакт** (Ф7): `SETTINGS_SCHEMA`/`PROFILES_SCHEMA`/`CHAT_SCHEMA`/
@@ -5395,7 +5395,7 @@ web-поиск и Python под выключателями, экран наст�
 
 ### Пост-M9: релизная инженерия — этап 4 (миграции схемы SQLite) (сделано)
 - **Этап 4** направления «релизная инженерия»
-  ([docs/release-engineering.md](docs/release-engineering.md) §3.4; ветка
+  ([docs/history/release-engineering.md](docs/history/release-engineering.md) §3.4; ветка
   `feat/db-schema-migrations`): версионирование и миграции схемы SQLite поверх
   каркаса этапа 3. **ADR 0006** (дополнен).
 - **`PRAGMA user_version`** как версия схемы БД (`DB_SCHEMA = 1`). `db/mod.rs::migrate`
@@ -5429,7 +5429,7 @@ web-поиск и Python под выключателями, экран наст�
 
 ### Пост-M9: релизная инженерия — этап 5 (релизный пайплайн + манифест бэкапа) (сделано)
 - **Финальный этап** направления «релизная инженерия»
-  ([docs/release-engineering.md](docs/release-engineering.md) §3.5; ветка
+  ([docs/history/release-engineering.md](docs/history/release-engineering.md) §3.5; ветка
   `feat/release-pipeline`). Направление завершено (этапы 1–5; опц. этап 6 — `cargo-deny`).
 - **`.github/workflows/release.yml`** (триггер — тег `v*`): job `build` (матрица
   `windows-latest` + **`ubuntu-22.04`** — старая glibc 2.35) собирает `cargo build
