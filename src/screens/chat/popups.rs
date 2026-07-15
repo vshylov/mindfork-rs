@@ -188,8 +188,18 @@ pub(super) fn render_help(
         .map(|(_, d)| d.chars().count())
         .max()
         .unwrap_or(0);
+    // Заголовок несёт версию приложения (release-engineering.md §3.1) — язык-нейтрально
+    // (имя+версия), рядом с локализованным «Горячие клавиши».
+    let title = format!(
+        "{}{} · mindfork-rs v{}",
+        palette.glyphs().help_icon,
+        loc.t("ui.help.title"),
+        env!("CARGO_PKG_VERSION"),
+    );
     // Ширина строки: "  " слева + поле клавиш + " " + описание + "  " справа + рамка (2).
-    let width = (2 + key_width + 1 + desc_width + 2 + 2) as u16;
+    // Не уже заголовка (иначе версия обрежется): +4 = рамка (2) + поля (2).
+    let width =
+        ((2 + key_width + 1 + desc_width + 2 + 2) as u16).max(title.chars().count() as u16 + 4);
     let area = centered_rect(width, rows, frame.area());
     frame.render_widget(Clear, area);
 
@@ -202,10 +212,7 @@ pub(super) fn render_help(
         loc.t("ui.help.footer.any")
     };
     let block = palette
-        .panel(
-            format!("{}{}", palette.glyphs().help_icon, loc.t("ui.help.title")),
-            true,
-        )
+        .panel(title, true)
         .title_bottom(Line::from(Span::styled(hint, palette.muted_style())).centered());
     let lines: Vec<Line> = resolved
         .iter()
