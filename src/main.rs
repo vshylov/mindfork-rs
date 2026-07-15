@@ -161,7 +161,11 @@ fn run_tui(paths: &Paths, loc: &Locale) -> anyhow::Result<ExitCode> {
             ));
         }
     };
-    tracing::info!(root = %paths.root().display(), "mindfork-rs starting");
+    tracing::info!(
+        version = env!("CARGO_PKG_VERSION"),
+        root = %paths.root().display(),
+        "mindfork-rs starting"
+    );
 
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
