@@ -16,6 +16,7 @@ use uuid::Uuid;
 use crate::entities::note::Note;
 use crate::entities::rag::{RagDocument, RagHit, RagSourceInfo, RagStoredSource};
 use crate::entities::self_model::SelfModel;
+use crate::shared::storage::schema::DB_SCHEMA;
 
 static REGISTER_VEC: Once = Once::new();
 
@@ -55,14 +56,92 @@ impl Db {
     }
 
     fn from_conn(conn: Connection) -> Result<Self> {
-        migrate(&conn)?;
+        let mut conn = conn;
+        migrate(&mut conn)?;
         Ok(Self {
             conn: Mutex::new(conn),
         })
     }
 }
 
-fn migrate(conn: &Connection) -> Result<()> {
+/// Приводит БД к текущей схеме (ADR 0006): additive-DDL (идемпотентный, каждый раз) +
+/// baseline-штамп `user_version` + breaking-шаги в транзакциях. Downgrade (БД новее
+/// приложения) — защитный `bail`; пользовательский локализованный отказ ставит
+/// [`crate::features::data_migration`] (peek `user_version` до открытия хранилища).
+fn migrate(conn: &mut Connection) -> Result<()> {
+    // CREATE ... IF NOT EXISTS выполняется КАЖДЫЙ раз — это механизм добавления новых
+    // таблиц/индексов существующим БД без bump версии (additive-политика, Ф12).
+    baseline_ddl(conn)?;
+
+    let from = read_user_version(conn)?;
+    if from > DB_SCHEMA {
+        bail!(
+            "data.db из более новой версии приложения (схема {from}, поддерживается {DB_SCHEMA})"
+        );
+    }
+    // Существующую/свежую БД (user_version = 0) штампуем baseline-версией. Это не
+    // миграция данных (DDL идемпотентен) — pre-migration бэкап не нужен.
+    if from == 0 {
+        set_user_version(conn, DB_SCHEMA)?;
+    }
+    apply_db_steps(conn, DB_STEPS, from)?;
+    Ok(())
+}
+
+/// Шаг миграции SQLite (breaking): трансформация схемы/данных в транзакции. Реестр
+/// `DB_STEPS` пока пуст (все схемы = 1); первый реальный breaking добавит шаг + фикстуру.
+#[allow(dead_code)] // конструируется первой реальной миграцией (и в тестах)
+struct DbStep {
+    to: u32,
+    summary: &'static str,
+    apply: fn(&Connection) -> Result<()>,
+}
+
+const DB_STEPS: &[DbStep] = &[];
+
+/// Прогоняет breaking-шаги `> from`: каждый в своей транзакции **вместе** с обновлением
+/// `user_version` — на ошибке откат целиком (ни схема, ни версия не меняются).
+fn apply_db_steps(conn: &mut Connection, steps: &[DbStep], from: u32) -> Result<()> {
+    // `from.max(1)`: baseline = 1, реальные шаги начинаются со 2 (штамп 0→1 — не шаг).
+    for step in steps.iter().filter(|s| s.to > from.max(1)) {
+        let tx = conn.transaction()?;
+        (step.apply)(&tx).with_context(|| format!("миграция data.db → v{}", step.to))?;
+        set_user_version(&tx, step.to)?;
+        tx.commit()?;
+    }
+    Ok(())
+}
+
+fn read_user_version(conn: &Connection) -> Result<u32> {
+    Ok(conn.pragma_query_value(None, "user_version", |r| r.get::<_, i64>(0))? as u32)
+}
+
+fn set_user_version(conn: &Connection, v: u32) -> Result<()> {
+    // `PRAGMA user_version = N` не принимает связанный параметр — форматируем (v: u32,
+    // инъекция невозможна). Внутри транзакции изменение атомарно с ней.
+    conn.execute_batch(&format!("PRAGMA user_version = {v};"))?;
+    Ok(())
+}
+
+/// Читает `PRAGMA user_version` файла БД (0 — файла нет / свежая). Для координации
+/// общего pre-migrate момента в [`crate::features::data_migration`]: downgrade-guard и
+/// решение о бэкапе принимаются до открытия хранилища.
+pub fn peek_user_version(path: &std::path::Path) -> Result<u32> {
+    if !path.exists() {
+        return Ok(0);
+    }
+    let conn = Connection::open(path).with_context(|| format!("opening {}", path.display()))?;
+    read_user_version(&conn)
+}
+
+/// Есть ли ожидающие **реальные** breaking-миграции БД. Baseline (0→1) не в счёт —
+/// он идемпотентен и бэкапа не требует. Определяет, включать ли БД в pre-migration бэкап.
+pub fn needs_step_migration(user_version: u32) -> bool {
+    DB_STEPS.iter().any(|s| s.to > user_version.max(1))
+}
+
+/// Идемпотентная схема БД (additive; см. [`migrate`]).
+fn baseline_ddl(conn: &Connection) -> Result<()> {
     conn.execute_batch(
         "CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
 
@@ -217,3 +296,99 @@ mod graph;
 mod notes;
 mod rag;
 mod self_model;
+
+#[cfg(test)]
+mod migrate_tests {
+    use super::*;
+
+    fn table_exists(conn: &Connection, name: &str) -> bool {
+        conn.query_row(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?1",
+            [name],
+            |_| Ok(()),
+        )
+        .optional()
+        .unwrap()
+        .is_some()
+    }
+
+    #[test]
+    fn baseline_stamps_fresh_db_to_v1() {
+        let db = Db::open_in_memory().unwrap();
+        let conn = db.conn.lock().unwrap();
+        assert_eq!(read_user_version(&conn).unwrap(), DB_SCHEMA);
+        // Схема применена (одна из таблиц baseline есть).
+        assert!(table_exists(&conn, "notes"));
+    }
+
+    #[test]
+    fn migrate_is_idempotent() {
+        let mut conn = Connection::open_in_memory().unwrap();
+        migrate(&mut conn).unwrap();
+        migrate(&mut conn).unwrap();
+        assert_eq!(read_user_version(&conn).unwrap(), DB_SCHEMA);
+    }
+
+    #[test]
+    fn migrate_refuses_downgrade() {
+        let mut conn = Connection::open_in_memory().unwrap();
+        set_user_version(&conn, DB_SCHEMA + 5).unwrap();
+        assert!(migrate(&mut conn).is_err());
+    }
+
+    #[test]
+    fn peek_user_version_zero_for_missing_file() {
+        let dir = tempfile::tempdir().unwrap();
+        assert_eq!(peek_user_version(&dir.path().join("nope.db")).unwrap(), 0);
+    }
+
+    #[test]
+    fn no_pending_step_migration_at_v1() {
+        // Реестр DB_STEPS пуст — реальных миграций (кроме baseline) нет.
+        assert!(!needs_step_migration(0));
+        assert!(!needs_step_migration(1));
+    }
+
+    #[test]
+    fn apply_db_steps_commits_and_rolls_back_transactionally() {
+        fn good(c: &Connection) -> Result<()> {
+            c.execute_batch("CREATE TABLE t_ok(x)")?;
+            Ok(())
+        }
+        fn bad(c: &Connection) -> Result<()> {
+            c.execute_batch("CREATE TABLE t_bad(x)")?;
+            bail!("умышленный сбой шага");
+        }
+
+        let mut conn = Connection::open_in_memory().unwrap();
+        set_user_version(&conn, 1).unwrap();
+
+        // Успешный шаг: таблица создана, версия = 2.
+        apply_db_steps(
+            &mut conn,
+            &[DbStep {
+                to: 2,
+                summary: "ok",
+                apply: good,
+            }],
+            1,
+        )
+        .unwrap();
+        assert_eq!(read_user_version(&conn).unwrap(), 2);
+        assert!(table_exists(&conn, "t_ok"));
+
+        // Падающий шаг: полный откат — таблицы нет, версия прежняя.
+        let res = apply_db_steps(
+            &mut conn,
+            &[DbStep {
+                to: 3,
+                summary: "bad",
+                apply: bad,
+            }],
+            2,
+        );
+        assert!(res.is_err());
+        assert_eq!(read_user_version(&conn).unwrap(), 2);
+        assert!(!table_exists(&conn, "t_bad"));
+    }
+}

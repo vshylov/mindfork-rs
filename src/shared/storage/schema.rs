@@ -25,9 +25,8 @@ pub const SETTINGS_SCHEMA: u32 = 1;
 pub const PROFILES_SCHEMA: u32 = 1;
 /// Версия схемы файла чата `chats/<id>.json`.
 pub const CHAT_SCHEMA: u32 = 1;
-/// Версия схемы SQLite (`PRAGMA user_version`). Потребитель — этап 4 (миграции БД),
-/// пока не подключён.
-#[allow(dead_code)]
+/// Версия схемы SQLite (`PRAGMA user_version`). Раннер миграций БД — в
+/// [`crate::shared::storage::db`] (baseline 0→1 + шаги в транзакциях).
 pub const DB_SCHEMA: u32 = 1;
 
 /// Шаг миграции JSON: чистая трансформация «версия `< to` → `to`».
