@@ -314,6 +314,18 @@ fn run_restore(paths: &Paths, archive: &Path, loc: &Locale) -> anyhow::Result<()
     let _instance = acquire_cli_guard(loc, loc.t("cli.guard.action.restore"))?;
     let fs_root = config_fs_root(paths);
 
+    // Предупреждение, если копия сделана более новой версией приложения: данные целы, но
+    // текущая версия может отказаться их открыть (downgrade-guard, ADR 0006). Ошибку
+    // чтения манифеста глотаем — старый бэкап без манифеста это нормально.
+    if let Ok(Some(m)) = backup::read_manifest(archive)
+        && m.is_newer_than_current()
+    {
+        eprintln!(
+            "{}",
+            loc.tf("backup.warn.newer_manifest", &[("version", &m.app_version)])
+        );
+    }
+
     // Err только до разрушительных действий (нет файла / повреждён / небезопасен).
     let outcome = backup::restore_backup(paths, archive, fs_root.as_deref(), loc)?;
 

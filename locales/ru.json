@@ -909,6 +909,7 @@
   "backup.ctx.remove_file": "удаление {path}",
   "backup.ctx.remove_dir": "удаление каталога {path}",
   "backup.err.unsafe_entry": "небезопасное имя записи в архиве: {name}",
+  "backup.warn.newer_manifest": "Внимание: резервная копия создана более новой версией mindfork ({version}). После восстановления текущая версия приложения может отказаться открыть эти данные — обновите приложение.",
 
   "cli.err.prefix": "Ошибка",
 

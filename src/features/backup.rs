@@ -12,7 +12,10 @@
 //!   если** он лежит внутри корня данных.
 //!
 //! Исключаются `backups/`, `logs/` и файлы установочных умолчаний `defaults.json`/
-//! `location.json` (они — про установку, а не пользовательские данные).
+//! `location.json` (они — про установку, а не пользовательские данные). Дополнительно в
+//! архив кладётся `manifest.json` (версии схем + версия приложения) — метаданные для
+//! предупреждения при восстановлении копии из более новой версии; в корень он **не**
+//! распаковывается. См. [`BackupManifest`].
 //!
 //! **Восстановление транзакционно.** Сначала архив валидируется (до любых
 //! разрушительных действий). Если в корне уже есть данные — они автоматически
@@ -27,11 +30,78 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result, anyhow, bail};
 use chrono::Local;
+use serde::{Deserialize, Serialize};
 use zip::write::SimpleFileOptions;
 use zip::{CompressionMethod, ZipArchive, ZipWriter};
 
 use crate::shared::i18n::Locale;
 use crate::shared::paths::Paths;
+use crate::shared::storage::schema::{CHAT_SCHEMA, DB_SCHEMA, PROFILES_SCHEMA, SETTINGS_SCHEMA};
+
+/// Имя файла-манифеста внутри архива (метаданные версий схем; не распаковывается
+/// в корень — читается отдельно [`read_manifest`]). См. release-engineering.md §3.4.
+const MANIFEST_NAME: &str = "manifest.json";
+
+/// Версии схем данных на момент создания копии (release-engineering.md Ф-манифест).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SchemaVersions {
+    pub settings: u32,
+    pub profiles: u32,
+    pub chat: u32,
+    pub db: u32,
+}
+
+/// Манифест резервной копии (`manifest.json` в архиве): версия приложения, версии схем
+/// и время создания. Нужен, чтобы при восстановлении копии, сделанной **более новой**
+/// версией mindfork, предупредить пользователя (данные целы; downgrade-guard на старте
+/// всё равно защитит — ADR 0006).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BackupManifest {
+    pub app_version: String,
+    pub schemas: SchemaVersions,
+    pub created_at: String,
+}
+
+impl BackupManifest {
+    /// Манифест для текущей сборки (версия приложения + текущие версии схем).
+    fn current() -> Self {
+        Self {
+            app_version: env!("CARGO_PKG_VERSION").to_string(),
+            schemas: SchemaVersions {
+                settings: SETTINGS_SCHEMA,
+                profiles: PROFILES_SCHEMA,
+                chat: CHAT_SCHEMA,
+                db: DB_SCHEMA,
+            },
+            created_at: Local::now().to_rfc3339(),
+        }
+    }
+
+    /// Есть ли в манифесте схема **новее** текущей (архив из более новой версии
+    /// приложения) — сигнал предупредить при восстановлении.
+    pub fn is_newer_than_current(&self) -> bool {
+        self.schemas.settings > SETTINGS_SCHEMA
+            || self.schemas.profiles > PROFILES_SCHEMA
+            || self.schemas.chat > CHAT_SCHEMA
+            || self.schemas.db > DB_SCHEMA
+    }
+}
+
+/// Читает `manifest.json` из архива. `None` — старый бэкап без манифеста (созданный до
+/// этапа 5). Ошибки чтения/парса — не фатальны для восстановления (вызывающий их глотает).
+pub fn read_manifest(archive: &Path) -> Result<Option<BackupManifest>> {
+    let file = File::open(archive)?;
+    let mut zip = ZipArchive::new(file)?;
+    match zip.by_name(MANIFEST_NAME) {
+        Ok(mut entry) => {
+            let mut buf = String::new();
+            io::Read::read_to_string(&mut entry, &mut buf)?;
+            Ok(Some(serde_json::from_str(&buf)?))
+        }
+        Err(zip::result::ZipError::FileNotFound) => Ok(None),
+        Err(err) => Err(err.into()),
+    }
+}
 
 /// Файлы верхнего уровня, входящие в резервную копию (отсутствующие пропускаются).
 const TOP_FILES: &[&str] = &[
@@ -287,6 +357,15 @@ fn write_zip(out_path: &Path, entries: &[Entry], level: i64, loc: &Locale) -> Re
             loc.tf("backup.ctx.pack", &[("path", &e.abs.display().to_string())])
         })?;
     }
+
+    // Манифест версий схем (метаданные, не пользовательский файл) — последней записью.
+    let manifest = serde_json::to_vec_pretty(&BackupManifest::current())
+        .context("serializing backup manifest")?;
+    zip.start_file(MANIFEST_NAME, options)
+        .with_context(|| loc.tf("backup.ctx.write_entry", &[("name", MANIFEST_NAME)]))?;
+    io::copy(&mut manifest.as_slice(), &mut zip)
+        .with_context(|| loc.tf("backup.ctx.pack", &[("path", MANIFEST_NAME)]))?;
+
     zip.finish()
         .with_context(|| loc.t("backup.ctx.finalize").to_string())?;
     Ok(())
@@ -333,6 +412,10 @@ fn extract_archive(paths: &Paths, archive: &Path, loc: &Locale) -> Result<()> {
                 loc.tf("backup.err.unsafe_entry", &[("name", entry.name())])
             )
         })?;
+        // Манифест — метаданные архива, не пользовательские данные: в корень не пишем.
+        if rel == Path::new(MANIFEST_NAME) {
+            continue;
+        }
         let dest = paths.root().join(&rel);
         if entry.is_dir() {
             fs::create_dir_all(&dest).with_context(|| {
@@ -704,5 +787,68 @@ mod tests {
         let out = create_backup(&paths, None, 0, None, ru()).unwrap();
         // Архив валиден и открывается.
         validate_archive(&out, ru()).unwrap();
+    }
+
+    #[test]
+    fn backup_writes_manifest_and_read_manifest_roundtrips() {
+        let dir = tempfile::tempdir().unwrap();
+        seed_data(dir.path());
+        let paths = Paths::with_root(dir.path());
+        let out = create_backup(&paths, None, 9, None, ru()).unwrap();
+
+        assert!(archive_names(&out).contains(&MANIFEST_NAME.to_string()));
+        let m = read_manifest(&out).unwrap().expect("манифест должен быть");
+        assert_eq!(m.app_version, env!("CARGO_PKG_VERSION"));
+        assert_eq!(m.schemas.settings, SETTINGS_SCHEMA);
+        assert_eq!(m.schemas.db, DB_SCHEMA);
+        assert!(
+            !m.is_newer_than_current(),
+            "текущие схемы не новее самих себя"
+        );
+    }
+
+    #[test]
+    fn manifest_detects_newer_schema() {
+        let m = BackupManifest {
+            app_version: "9.9.9".into(),
+            schemas: SchemaVersions {
+                settings: SETTINGS_SCHEMA + 1,
+                profiles: PROFILES_SCHEMA,
+                chat: CHAT_SCHEMA,
+                db: DB_SCHEMA,
+            },
+            created_at: "2030-01-01T00:00:00+00:00".into(),
+        };
+        assert!(m.is_newer_than_current());
+    }
+
+    #[test]
+    fn read_manifest_none_for_archive_without_it() {
+        // Собираем архив вручную без манифеста (эмуляция старого бэкапа).
+        let dir = tempfile::tempdir().unwrap();
+        let archive = dir.path().join("old.zip");
+        {
+            let mut zip = ZipWriter::new(File::create(&archive).unwrap());
+            zip.start_file("settings.json", SimpleFileOptions::default())
+                .unwrap();
+            io::copy(&mut b"{}".as_slice(), &mut zip).unwrap();
+            zip.finish().unwrap();
+        }
+        assert!(read_manifest(&archive).unwrap().is_none());
+    }
+
+    #[test]
+    fn restore_does_not_extract_manifest_into_root() {
+        let src = tempfile::tempdir().unwrap();
+        seed_data(src.path());
+        let out = create_backup(&Paths::with_root(src.path()), None, 9, None, ru()).unwrap();
+
+        let dst = tempfile::tempdir().unwrap();
+        let paths = Paths::with_root(dst.path());
+        let outcome = restore_backup(&paths, &out, None, ru()).unwrap();
+        assert!(matches!(outcome, RestoreOutcome::Restored { .. }));
+        // Данные восстановлены, а служебный манифест в корень не попал.
+        assert!(dst.path().join("settings.json").exists());
+        assert!(!dst.path().join(MANIFEST_NAME).exists());
     }
 }

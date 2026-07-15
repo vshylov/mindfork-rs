@@ -1,0 +1,101 @@
+# Релиз: по тегу `vX.Y.Z` собирает бинарники (Windows + Linux glibc 2.35),
+# упаковывает архивы + sha256sums.txt и публикует GitHub Release с нотами из
+# соответствующего раздела CHANGELOG.md. См. docs/release-engineering.md §3.5.
+#
+# Тег ставит пользователь после мержа релизного PR (bump версии + CHANGELOG).
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  # Сборка бинарника на каждой платформе; упаковка централизована в job release
+  # (на Linux есть и tar, и zip — избегаем различий шелла Windows).
+  build:
+    name: Сборка (${{ matrix.artifact }})
+    strategy:
+      fail-fast: true
+      matrix:
+        include:
+          - os: ubuntu-22.04       # старая glibc 2.35 — бинарь работает на большинстве дистрибутивов
+            bin: mindfork-rs
+            artifact: linux
+          - os: windows-latest
+            bin: mindfork-rs.exe
+            artifact: windows
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Установить тулчейн (из rust-toolchain.toml)
+        run: rustup show
+      - uses: Swatinem/rust-cache@v2
+      - name: Сборка релиза
+        run: cargo build --release --locked
+      - name: Выгрузить бинарник
+        uses: actions/upload-artifact@v4
+        with:
+          name: bin-${{ matrix.artifact }}
+          path: target/release/${{ matrix.bin }}
+          if-no-files-found: error
+
+  release:
+    name: Публикация релиза
+    needs: build
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: write        # нужно gh release create
+    steps:
+      - uses: actions/checkout@v4
+      - name: Скачать бинарники
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+      - name: Собрать архивы + sha256 + ноты
+        run: |
+          set -euo pipefail
+          TAG="${GITHUB_REF_NAME}"        # напр. v0.9.0
+          VERSION="${TAG#v}"
+          mkdir -p dist
+
+          # Общий набор доков в каждый архив.
+          DOCS=(README.md CHANGELOG.md LICENSE docs/install.md)
+
+          # Linux: tar.gz
+          mkdir -p stage-linux
+          cp "artifacts/bin-linux/mindfork-rs" stage-linux/
+          chmod +x stage-linux/mindfork-rs
+          cp "${DOCS[@]}" stage-linux/
+          tar -C stage-linux -czf "dist/mindfork-rs-${TAG}-x86_64-linux.tar.gz" .
+
+          # Windows: zip
+          mkdir -p stage-win
+          cp "artifacts/bin-windows/mindfork-rs.exe" stage-win/
+          cp "${DOCS[@]}" stage-win/
+          (cd stage-win && zip -qr "../dist/mindfork-rs-${TAG}-x86_64-windows.zip" .)
+
+          # Контрольные суммы (по обоим архивам).
+          (cd dist && sha256sum ./* > sha256sums.txt)
+
+          # Ноты релиза = раздел CHANGELOG для этой версии (без заголовка).
+          awk -v ver="$VERSION" '
+            $0 ~ "^## \\[" ver "\\]" { found=1; next }
+            found && /^## \[/ { exit }
+            found { print }
+          ' CHANGELOG.md > notes.md
+          if [ ! -s notes.md ]; then
+            echo "Релиз ${TAG}." > notes.md
+          fi
+
+          echo "Артефакты:"; ls -l dist
+      - name: Создать GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "${GITHUB_REF_NAME}" dist/* \
+            --title "mindfork-rs ${GITHUB_REF_NAME}" \
+            --notes-file notes.md \
+            --verify-tag

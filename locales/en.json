@@ -909,6 +909,7 @@
   "backup.ctx.remove_file": "removing {path}",
   "backup.ctx.remove_dir": "removing directory {path}",
   "backup.err.unsafe_entry": "unsafe entry name in archive: {name}",
+  "backup.warn.newer_manifest": "Warning: this backup was created by a newer version of mindfork ({version}). After restoring, the current app version may refuse to open the data — update the app.",
 
   "cli.err.prefix": "Error",
 

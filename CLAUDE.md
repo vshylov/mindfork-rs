@@ -121,7 +121,7 @@ Env для выбора бэкенда: `MINDFORK_ENGINE_URL` (external, люб�
 `MINDFORK_PORT`) для managed `llama-server`.
 
 ## Статус (на 2026-07-15)
-Сделан весь план **M0–M9** плюс обширный пост-M9 (в `main`). **1067 юнит-тестов
+Сделан весь план **M0–M9** плюс обширный пост-M9 (в `main`). **1071 юнит-тестов
 зелёные, 48 `#[ignore]`-смоуков** (крупнейший счётчик — журнал ниже; текущее
 направление — **релизная инженерия** (версии/CHANGELOG/CI/миграции схем данных); прежнее
 направление — **i18n CLI** (весь текст CLI/`main.rs`/фич/хвоста движка в бандлах, свой
@@ -5426,6 +5426,36 @@ web-поиск и Python под выключателями, экран наст�
   architecture §6/§7.
 - **Дальше:** этап 5 (`feat/release-pipeline` — `release.yml` на тег, архивы+sha256,
   манифест версий в бэкап-zip, AGENTS.md §6 «Релиз»), опц. этап 6 (`cargo-deny`).
+
+### Пост-M9: релизная инженерия — этап 5 (релизный пайплайн + манифест бэкапа) (сделано)
+- **Финальный этап** направления «релизная инженерия»
+  ([docs/release-engineering.md](docs/release-engineering.md) §3.5; ветка
+  `feat/release-pipeline`). Направление завершено (этапы 1–5; опц. этап 6 — `cargo-deny`).
+- **`.github/workflows/release.yml`** (триггер — тег `v*`): job `build` (матрица
+  `windows-latest` + **`ubuntu-22.04`** — старая glibc 2.35) собирает `cargo build
+  --release --locked` и выгружает бинарник артефактом; job `release` (ubuntu, `contents:
+  write`) скачивает оба, **упаковывает на Linux** (там есть и `tar`, и `zip` — избегаем
+  различий шелла Windows) в `mindfork-rs-vX.Y.Z-x86_64-{windows.zip,linux.tar.gz}`
+  (бинарник + README/CHANGELOG/LICENSE/install), считает `sha256sums.txt`, извлекает
+  ноты = раздел `[X.Y.Z]` из CHANGELOG (`awk`), `gh release create --verify-tag`.
+- **Манифест версий схем в бэкап-zip** (`features/backup.rs`): `BackupManifest`
+  (`app_version` + `SchemaVersions{settings,profiles,chat,db}` + `created_at`) пишется
+  записью `manifest.json` в каждый архив (`create_backup`); при распаковке **не
+  извлекается** в корень (метаданные, не данные — `extract_archive` пропускает).
+  `read_manifest` читает его (None — старый бэкап). `mindfork restore` предупреждает
+  (локализованно, `backup.warn.newer_manifest`), если `is_newer_than_current` — копия из
+  более новой версии приложения (данные целы; downgrade-guard на старте всё равно
+  защитит).
+- **AGENTS.md §6 «Релиз»**: чек-лист выпуска (релизный PR bump+CHANGELOG → мерж → тег
+  пользователем → `release.yml` → смоук артефакта) + условие промоции до `1.0.0`.
+- **Тесты**: манифест в архиве + round-trip `read_manifest`; `is_newer_than_current`;
+  None для архива без манифеста; restore не извлекает манифест в корень. **1071
+  юнит-тестов зелёные** (+4), 48 `#[ignore]`, clippy `-D warnings`/fmt чисты. YAML обоих
+  workflow валиден. `release.yml` проверяется только фактическим тегом (на PR не
+  триггерится) — **первый тег `v0.9.0` после мержа** и есть его живой прогон + смоук
+  артефактов. Доки: CHANGELOG, AGENTS §6, install.md.
+- **Дальше (заделы, вне направления):** первый тег `v0.9.0`; промоция до `1.0.0`; опц.
+  `cargo-deny` (этап 6); self-update/инсталляторы/musl — см. release-engineering.md §5.
 
 ### Отложено за пределы M3
 - **Сворачивание/выделение per-message** и tool-блоки в ленте — сейчас «мысли»
