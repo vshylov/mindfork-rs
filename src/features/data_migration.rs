@@ -28,8 +28,8 @@ use crate::features::backup;
 use crate::shared::config::AppConfig;
 use crate::shared::i18n::Locale;
 use crate::shared::paths::Paths;
-use crate::shared::storage::json;
 use crate::shared::storage::schema::{self, Assessment, JsonArtifact};
+use crate::shared::storage::{db, json};
 
 /// Мигрирует данные приложения при старте (реальный реестр схем). Вызывается из
 /// `main.rs` перед открытием хранилища (TUI и CLI `import`).
@@ -115,7 +115,17 @@ fn run_with(
         }
     }
 
-    if plan.is_empty() {
+    // Координация с SQLite: downgrade-guard + учёт в общем pre-migrate моменте. Саму
+    // миграцию БД (baseline/шаги) выполняет позже `Db::open`; здесь лишь заглядываем в
+    // `user_version`, чтобы ОДИН бэкап покрыл и JSON, и БД (ADR 0006). БД в этот момент
+    // ещё не открыта (quiescent) → бэкап-архив её файлов согласован без SQLite backup API.
+    let db_uv = db::peek_user_version(&paths.data_db())?;
+    if db_uv > schema::DB_SCHEMA {
+        bail!(downgrade_msg(loc, "data.db", db_uv, schema::DB_SCHEMA));
+    }
+    let db_needs_migration = db::needs_step_migration(db_uv);
+
+    if plan.is_empty() && !db_needs_migration {
         tracing::debug!("миграция данных не требуется");
         return Ok(());
     }
@@ -315,6 +325,19 @@ mod tests {
             err.contains("настроек") && err.contains("повреждён"),
             "{err}"
         );
+    }
+
+    #[test]
+    fn run_refuses_db_downgrade() {
+        let dir = tempfile::tempdir().unwrap();
+        let paths = Paths::with_root(dir.path());
+        // data.db из «более новой» версии приложения (user_version = 999).
+        {
+            let conn = rusqlite::Connection::open(paths.data_db()).unwrap();
+            conn.execute_batch("PRAGMA user_version = 999;").unwrap();
+        }
+        let err = run(&paths, ru()).unwrap_err().to_string();
+        assert!(err.contains("более новой"), "{err}");
     }
 
     #[test]

@@ -271,7 +271,8 @@ src/
    │  │  │                 God-object разбит по доменам (docs/history/refactoring-god-objects.md,
    │  │  │                 этап 5; `impl Db` — несколько блоков, схема/хелперы в mod.rs;
    │  │  │                 тесты домена — в `mod tests` своего подфайла, локальный `db()`):
-   │  │  ├─ mod.rs         struct Db, open/from_conn, migrate() (схема), ensure_vec_table/
+   │  │  ├─ mod.rs         struct Db, open/from_conn, version-aware migrate() (baseline_ddl
+   │  │  │                 каждый раз + user_version + DB_STEPS в транзакциях), ensure_vec_table/
    │  │  │                 vec_dim, общие хелперы (row_to_note/parse_uuid/parse_dt/cosine)
    │  │  ├─ notes.rs       заметки: вставка/список/правка/удаление + эмбеддинги/семантика
    │  │  ├─ graph.rs       граф связей + замещение + цитирование источников
@@ -758,8 +759,18 @@ flowchart LR
 - **упрочнение чтения**: битый `settings.json`/`profiles.json` → отказ запуска; битый
   `chats/<id>.json` → пропуск с `warn`, файл не тронут (`json.rs::load_chats`);
 - пока все схемы = 1 план всегда пуст (путь дормантный, покрыт тестом на синтетическом
-  артефакте `current = 2`). SQLite-миграции (`PRAGMA user_version`) — задел, `DB_SCHEMA`
-  зарезервирован.
+  артефакте `current = 2`).
+
+SQLite-ветка (`db/mod.rs::migrate`, version-aware): `baseline_ddl` (`CREATE … IF NOT
+EXISTS`) выполняется **каждый раз** — additive-механизм добавления таблиц/индексов **без**
+bump (additive-DDL и `user_version` независимы). БД с `user_version = 0` штампуется
+`DB_SCHEMA = 1` (не миграция данных → бэкапа нет); breaking-шаги `DB_STEPS` (пуст)
+прогоняет `apply_db_steps` — **каждый в своей транзакции вместе с `user_version`**, откат
+целиком при ошибке; downgrade — `bail`. `data_migration` координирует SQLite с JSON в
+единый pre-migrate момент: `db::peek_user_version` + `db::needs_step_migration` до
+открытия хранилища дают downgrade-guard и общий бэкап (JSON **или** БД нужна миграция),
+сама миграция БД — позже в `Db::open`. БД в момент бэкапа ещё не открыта (quiescent) → её
+файлы (`data.db`+`-wal`+`-shm`) в общем zip согласованы **без** `rusqlite::backup`.
 
 ### Трёхуровневый семплинг (`entities/sampling.rs`)
 
