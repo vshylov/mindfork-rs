@@ -8,9 +8,11 @@
 - **[CLAUDE.md](../CLAUDE.md)** — ориентир и журнал реализованного (M0–M9 + пост-M9);
 - **[docs/decisions/](decisions/)** — ADR (зафиксированные технические решения),
   включая [0004](decisions/0004-engine-contract-multi-provider.md) — границы
-  `shared/api` и мульти-провайдерный инференс без крейт-сплита; и
+  `shared/api` и мульти-провайдерный инференс без крейт-сплита;
   [0005](decisions/0005-python-sandbox-wasmer.md) — Python-песочница сайдкаром
-  `wasmer`/WASIX за `shared/sandbox.rs`;
+  `wasmer`/WASIX за `shared/sandbox.rs`; и
+  [0006](decisions/0006-data-schema-versioning.md) — версионирование схем данных и
+  каркас JSON-миграций;
 - **[docs/install.md](install.md)** — установка/запуск, движок, env.
 
 > Терминология: **движок** = провайдер инференса за трейтом `EngineBackend` —
@@ -236,6 +238,8 @@ src/
 │  ├─ rag_ingest.rs         scan, read_text, RagProgress (типы прогресса индексации)
 │  ├─ cli.rs                свой микро-парсер аргументов CLI (весь текст — в бандлах локалей)
 │  ├─ backup.rs             резервное копирование/восстановление данных (zip, транзакц.)
+│  ├─ data_migration.rs     оркестрация миграций схем на старте (ADR 0006): гейты
+│  │                        downgrade/битости, pre-migration бэкап, control-parse
 │  ├─ sandbox_setup.rs      провизия песочницы Python (mindfork sandbox setup): wasmer +
 │  │                        python.webc + колёса по lock-списку (sha256); прогрев кэша
 │  └─ migration.rs          импортёр LameLLaMA (.NET): профили + чаты
@@ -260,6 +264,8 @@ src/
    │  ├─ thoughts.rs        потоковый парсер <think> (fallback к reasoning_content)
    │  └─ mock.rs            mock-движок для тестов (#[cfg(test)])
    ├─ storage/              хранилище
+   │  ├─ schema.rs          версии схем (SETTINGS/PROFILES/CHAT/DB_SCHEMA) + чистый каркас
+   │  │                     JSON-миграций (Step/JsonArtifact/Assessment, ADR 0006)
    │  ├─ json.rs            атомарная запись (write-rename + .bak) конфиг/профили/чаты
    │  ├─ db/               SQLite + sqlite-vec: notes/RAG, изоляция по profile_id.
    │  │  │                 God-object разбит по доменам (docs/history/refactoring-god-objects.md,
@@ -722,6 +728,38 @@ flowchart LR
   `save_deadline` + множество `dirty`); запись атомарна (write-rename), бэкап `.bak`.
 - **Размерность эмбеддингов** фиксируется по первому ответу `/v1/embeddings` и
   хранится в схеме sqlite-vec (`meta.rag_dim`).
+
+### Версионирование схем и миграции ([ADR 0006](decisions/0006-data-schema-versioning.md))
+
+У каждого артефакта своя версия схемы (пер-артефакт — они меняются с разной скоростью;
+все = 1). Карта ответственности:
+
+- **`shared/storage/schema.rs`** — чистый Value-уровневый каркас (без I/O): константы
+  `SETTINGS_SCHEMA`/`PROFILES_SCHEMA`/`CHAT_SCHEMA`/`DB_SCHEMA`, `Step`
+  (`fn(Value)->Result<Value>`), `JsonArtifact` (`current` + структурный `detect` +
+  цепочка `steps`), вердикт `Assessment` (`UpToDate`/`Migrate`/`Downgrade`), реестр.
+- **`features/data_migration.rs`** — оркестрация: файловый I/O, гейты, pre-migration
+  бэкап, control-parse. `run(paths, loc)` вызывается из `main.rs` **перед** открытием
+  хранилища (TUI и CLI `import`). В `features` (не `shared`), т.к. pre-migration бэкап —
+  `features::backup`, а `shared` не может зависеть от `features` (FSD). Отклонение от
+  дизайн-дока (миграция не внутри `Storage::open`) — чтобы не пробрасывать `loc` через
+  ~30 тест-сайтов `Storage::open`; каркас/константы всё равно живут в `shared`.
+
+Инварианты:
+
+- **определение версии структурное** (формат не меняется, ноль churn): `settings.json` —
+  поле `schema_version`; `profiles.json` — голый массив → 1, иначе `schema_version`;
+  `chats/<id>.json` — поле `v` (не пишется, пока схема = 1);
+- **eager на старте**: план = файлы с версией `< current`; непуст → **один**
+  pre-migration бэкап (`backups/pre-migrate-<дата>.zip`) до любой записи → шаги →
+  control-parse (мигрированное не парсится → отказ, файл не перезаписан) → атомарная
+  запись мигрированного `Value` (`json::write_json`, `pub(crate)`);
+- **downgrade-guard**: версия новее приложения → отказ запуска (локализовано);
+- **упрочнение чтения**: битый `settings.json`/`profiles.json` → отказ запуска; битый
+  `chats/<id>.json` → пропуск с `warn`, файл не тронут (`json.rs::load_chats`);
+- пока все схемы = 1 план всегда пуст (путь дормантный, покрыт тестом на синтетическом
+  артефакте `current = 2`). SQLite-миграции (`PRAGMA user_version`) — задел, `DB_SCHEMA`
+  зарезервирован.
 
 ### Трёхуровневый семплинг (`entities/sampling.rs`)
 

@@ -881,6 +881,12 @@
   "sandbox.setup.open_wheel": "открытие zip колеса",
   "sandbox.setup.unsafe_wheel": "небезопасный путь в колесе: {name}",
 
+  "migrate.err.settings_corrupt": "Файл настроек повреждён и не читается: {path}. Восстановите его из резервной копии или удалите, чтобы создать заново.",
+  "migrate.err.profiles_corrupt": "Файл профилей повреждён и не читается: {path}. Восстановите его из резервной копии.",
+  "migrate.err.downgrade": "Данные ({file}) созданы более новой версией mindfork (схема {found}, поддерживается {current}). Обновите приложение или восстановите резервную копию.",
+  "migrate.err.backup_failed": "Не удалось создать резервную копию перед миграцией данных: {err}. Миграция отменена, данные не изменены.",
+  "migrate.err.control_parse": "Миграция файла {file} дала непарсимый результат — файл не изменён. Это ошибка миграции; сообщите разработчику.",
+
   "migration.ctx.parse_settings": "разбор Settings.json (LameLLaMA)",
   "migration.ctx.read_settings": "чтение Settings.json",
   "migration.ctx.read": "чтение {path}",

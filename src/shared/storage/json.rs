@@ -91,10 +91,19 @@ impl JsonStore {
         let mut chats = Vec::new();
         for entry in fs::read_dir(&dir).with_context(|| format!("reading {}", dir.display()))? {
             let path = entry?.path();
-            if path.extension().and_then(|e| e.to_str()) == Some("json")
-                && let Some(chat) = read_json::<Chat>(&path)?
-            {
-                chats.push(chat);
+            if path.extension().and_then(|e| e.to_str()) != Some("json") {
+                continue;
+            }
+            // Повреждённый файл чата пропускаем с предупреждением, а не валим весь запуск
+            // (release-engineering.md Ф11): один битый JSON не должен блокировать
+            // приложение и не должен молча теряться — файл остаётся на диске для ремонта.
+            match read_json::<Chat>(&path) {
+                Ok(Some(chat)) => chats.push(chat),
+                Ok(None) => {}
+                Err(err) => {
+                    tracing::warn!(file = %path.display(), error = %err,
+                        "пропущен повреждённый файл чата");
+                }
             }
         }
         Ok(chats)
@@ -124,8 +133,10 @@ impl JsonStore {
     }
 }
 
-/// Читает и десериализует JSON-файл; `None`, если файла нет.
-fn read_json<T: serde::de::DeserializeOwned>(path: &Path) -> Result<Option<T>> {
+/// Читает и десериализует JSON-файл; `None`, если файла нет. `pub(crate)` — миграции
+/// (`features::data_migration`) читают файлы как `serde_json::Value` для определения
+/// версии, отличая «нет файла» (`Ok(None)`) от «повреждён» (`Err`).
+pub(crate) fn read_json<T: serde::de::DeserializeOwned>(path: &Path) -> Result<Option<T>> {
     match fs::read(path) {
         Ok(bytes) => {
             let value = serde_json::from_slice(&bytes)
@@ -138,7 +149,9 @@ fn read_json<T: serde::de::DeserializeOwned>(path: &Path) -> Result<Option<T>> {
 }
 
 /// Атомарно записывает значение в JSON: бэкап существующего → temp → rename.
-fn write_json<T: serde::Serialize>(path: &Path, value: &T) -> Result<()> {
+/// `pub(crate)` — миграции пишут мигрированное `serde_json::Value` тем же атомарным
+/// путём (с `.bak` прежней версии).
+pub(crate) fn write_json<T: serde::Serialize>(path: &Path, value: &T) -> Result<()> {
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent).with_context(|| format!("creating dir {}", parent.display()))?;
     }

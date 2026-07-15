@@ -453,7 +453,7 @@ fn fs_root_under_root(root: &Path, fs_root: Option<&Path>) -> Option<(PathBuf, S
 }
 
 /// Авто-имя архива в `backups/`: `<prefix>-YYYYMMDD-HHMMSS.zip`.
-fn default_backup_path(paths: &Paths, prefix: &str) -> PathBuf {
+pub(crate) fn default_backup_path(paths: &Paths, prefix: &str) -> PathBuf {
     let stamp = Local::now().format("%Y%m%d-%H%M%S");
     paths.backups_dir().join(format!("{prefix}-{stamp}.zip"))
 }
