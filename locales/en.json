@@ -881,6 +881,12 @@
   "sandbox.setup.open_wheel": "opening wheel zip",
   "sandbox.setup.unsafe_wheel": "unsafe path in wheel: {name}",
 
+  "migrate.err.settings_corrupt": "The settings file is corrupted and cannot be read: {path}. Restore it from a backup or delete it to recreate.",
+  "migrate.err.profiles_corrupt": "The profiles file is corrupted and cannot be read: {path}. Restore it from a backup.",
+  "migrate.err.downgrade": "Data ({file}) was created by a newer version of mindfork (schema {found}, supported {current}). Update the app or restore a backup.",
+  "migrate.err.backup_failed": "Could not create a backup before migrating data: {err}. Migration aborted, data unchanged.",
+  "migrate.err.control_parse": "Migrating {file} produced an unparseable result — the file was left unchanged. This is a migration bug; please report it.",
+
   "migration.ctx.parse_settings": "parsing LameLLaMA Settings.json",
   "migration.ctx.read_settings": "reading Settings.json",
   "migration.ctx.read": "reading {path}",

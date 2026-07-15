@@ -167,6 +167,11 @@ fn run_tui(paths: &Paths, loc: &Locale) -> anyhow::Result<ExitCode> {
         "mindfork-rs starting"
     );
 
+    // Миграция схем данных при старте (до открытия хранилища): downgrade-guard,
+    // упрочнение битых файлов, pre-migration бэкап при непустом плане. Ошибка —
+    // уже локализованное сообщение (features/data_migration). См. release-engineering.md §3.4.
+    features::data_migration::run(paths, loc)?;
+
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()
@@ -456,6 +461,9 @@ fn run_locales_export(code: &str, output: &Path, loc: &Locale) -> anyhow::Result
 /// Идемпотентно (детерминированные id), исходные файлы только читаются. Вывод —
 /// в stdout (TUI не запущен), не в лог.
 fn run_import(paths: &Paths, dir: &Path, loc: &Locale) -> anyhow::Result<()> {
+    // Существующие данные могут требовать миграции (или быть из более новой версии) —
+    // мигрируем перед открытием хранилища, как при обычном старте (release-engineering.md §3.4).
+    features::data_migration::run(paths, loc)?;
     let storage =
         Storage::open(paths.clone()).with_context(|| loc.t("cli.ctx.open_storage").to_string())?;
     let result = features::migration::import_dir(dir, loc)

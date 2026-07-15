@@ -4,6 +4,7 @@
 
 pub mod db;
 pub mod json;
+pub mod schema;
 
 use anyhow::Result;
 use uuid::Uuid;
