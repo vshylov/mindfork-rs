@@ -6,7 +6,7 @@
 //! прогон шагов); файловый I/O, бэкап и control-parse в типизированные структуры —
 //! в [`crate::features::data_migration`] (оркестрация; `shared` не может зависеть от
 //! `features`, а pre-migration бэкап живёт в `features::backup`). См.
-//! [docs/release-engineering.md](../../../docs/release-engineering.md) §3.4 и ADR 0006.
+//! [docs/history/release-engineering.md](../../../docs/history/release-engineering.md) §3.4 и ADR 0006.
 //!
 //! **Политика bump'а** (release-engineering.md Ф12): additive-изменение (новое поле с
 //! `#[serde(default)]`, новая таблица/колонка с дефолтом) — **без bump**, как раньше;
