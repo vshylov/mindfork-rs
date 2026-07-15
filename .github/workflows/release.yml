@@ -64,17 +64,27 @@ jobs:
           # Общий набор доков в каждый архив.
           DOCS=(README.md CHANGELOG.md LICENSE docs/install.md)
 
+          # Словари спелл-чека кладём в data/dictionaries/ — портативную раскладку,
+          # которую приложение читает рядом с бинарником (data/ рядом с exe → spell-чек
+          # из коробки). См. build.rs / shared/paths.rs.
+          stage_data() {
+            mkdir -p "$1/data/dictionaries"
+            cp dictionaries/*.aff dictionaries/*.dic "$1/data/dictionaries/"
+          }
+
           # Linux: tar.gz
           mkdir -p stage-linux
           cp "artifacts/bin-linux/mindfork-rs" stage-linux/
           chmod +x stage-linux/mindfork-rs
           cp "${DOCS[@]}" stage-linux/
+          stage_data stage-linux
           tar -C stage-linux -czf "dist/mindfork-rs-${TAG}-x86_64-linux.tar.gz" .
 
           # Windows: zip
           mkdir -p stage-win
           cp "artifacts/bin-windows/mindfork-rs.exe" stage-win/
           cp "${DOCS[@]}" stage-win/
+          stage_data stage-win
           (cd stage-win && zip -qr "../dist/mindfork-rs-${TAG}-x86_64-windows.zip" .)
 
           # Контрольные суммы (по обоим архивам).

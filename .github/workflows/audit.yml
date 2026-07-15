@@ -1,0 +1,23 @@
+# Аудит зависимостей (cargo-deny): уязвимости (advisories), лицензии, дубли версий,
+# источники. Запускается по расписанию (еженедельно) и вручную — НЕ на pull_request,
+# поэтому merge не блокирует (advisory-режим, release-engineering.md Ф6). Конфигурация —
+# deny.toml в корне репозитория.
+name: Audit
+
+on:
+  schedule:
+    - cron: "0 6 * * 1" # понедельник 06:00 UTC
+  workflow_dispatch: {}
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  cargo-deny:
+    name: cargo-deny
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: EmbarkStudios/cargo-deny-action@v2
+        with:
+          command: check advisories licenses bans sources
