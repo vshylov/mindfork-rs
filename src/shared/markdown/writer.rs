@@ -40,6 +40,15 @@ pub(super) struct Writer {
     pub(super) soft_break_as_newline: bool,
     /// Горизонтальные разделители между строками тела таблиц. См. [`RenderOpts`].
     pub(super) table_row_separators: bool,
+    /// Рендерить ```mermaid-блоки диаграммой. См. [`RenderOpts`] и подмодуль
+    /// [`super::mermaid`].
+    pub(super) render_mermaid: bool,
+    /// Активный сбор ```mermaid-блока: `(инфо-строка забора, исходник)`.
+    /// Пока `Some`, события `Text` копятся сюда (по образцу [`TableBuilder`]), а
+    /// решение «диаграмма или фолбэк-исходник» принимает [`Writer::end_codeblock`].
+    /// Инфо-строка хранится целиком (` ```mermaid title=x `) — фолбэк печатает её
+    /// в заборе байт-в-байт, как прежний путь.
+    mermaid: Option<(String, String)>,
 }
 
 impl Writer {
@@ -60,6 +69,8 @@ impl Writer {
             item_marker_open: false,
             soft_break_as_newline: false,
             table_row_separators: false,
+            render_mermaid: false,
+            mermaid: None,
         }
     }
 
@@ -309,6 +320,14 @@ impl Writer {
         // Инфо-строка может нести не только язык: ` ```rust,no_run `, ` ```py title=x `.
         // Синтаксис резолвим по первому токену, а в заборчик печатаем метку целиком.
         let lang = info.split([',', ' ', '\t']).next().unwrap_or("");
+        // ```mermaid-блок при включённом рендере диаграмм НЕ печатается сразу:
+        // содержимое копится в буфер (как ячейки таблицы в TableBuilder), а забор/
+        // подсветка не трогаются — решение «диаграмма или исходник» принимает
+        // end_codeblock, когда виден весь блок. См. super::mermaid и spec §11.4.
+        if self.render_mermaid && lang.eq_ignore_ascii_case("mermaid") && self.table.is_none() {
+            self.mermaid = Some((info.to_string(), String::new()));
+            return;
+        }
         if let Some(syntax) = resolve_syntax(lang) {
             let theme = code_theme(&self.palette);
             self.code_highlighter = Some(HighlightLines::new(syntax, theme));
@@ -324,6 +343,22 @@ impl Writer {
     }
 
     pub(super) fn end_codeblock(&mut self) {
+        // Буферизованный ```mermaid-блок: пробуем диаграмму, при любом отказе
+        // (тип вне whitelist / парсер / ширина) — исходник код-блоком, как при
+        // выключенном рендере. Забор/подсветка этого пути не открывались, поэтому
+        // обычное закрытие ниже не выполняется.
+        if let Some((info, src)) = self.mermaid.take() {
+            match render_mermaid_block(&src, self.width, &self.palette) {
+                Some(lines) => {
+                    for line in lines {
+                        self.push_line(line);
+                    }
+                }
+                None => self.emit_fenced_source(&info, &src),
+            }
+            self.needs_newline = true;
+            return;
+        }
         self.push_line(Line::from("```").add_modifier(Modifier::DIM));
         self.needs_newline = true;
         if self.code_highlighter.take().is_none() {
@@ -331,7 +366,28 @@ impl Writer {
         }
     }
 
+    /// Печатает исходник код-блока в прежнем «неподсвеченном» виде (реверс-стиль,
+    /// DIM-заборы с инфо-строкой) — фолбэк ```mermaid-блока. Вид байт-в-байт
+    /// повторяет старый путь `start_codeblock`(без синтаксиса)+`text`+`end_codeblock`,
+    /// см. golden-тест `mermaid_fallback_matches_disabled_render`.
+    fn emit_fenced_source(&mut self, info: &str, src: &str) {
+        self.line_styles.push(code_style());
+        self.push_line(Line::from(format!("```{info}")).add_modifier(Modifier::DIM));
+        for line in src.lines() {
+            self.push_line(Line::default());
+            self.push_span(Span::styled(line.to_string(), Style::default()));
+        }
+        self.push_line(Line::from("```").add_modifier(Modifier::DIM));
+        self.line_styles.pop();
+    }
+
     pub(super) fn text(&mut self, text: CowStr<'_>) {
+        // Сбор ```mermaid-блока: копим исходник как есть (с переводами строк —
+        // устойчиво к любому дроблению текста на события парсером).
+        if let Some((_, buf)) = &mut self.mermaid {
+            buf.push_str(&text);
+            return;
+        }
         if let Some(highlighter) = &mut self.code_highlighter {
             // На ошибку syntect/ansi строку не выбрасываем, а показываем плоской
             // (`highlight_line_or_plain`) — иначе строка кода молча пропадала бы.
@@ -749,6 +805,100 @@ mod tests {
         let c = rendered_text("товар $5-$10 или $5/$7");
         assert!(c.contains("$5-$10"), "{c}");
         assert!(c.contains("$5/$7"), "{c}");
+    }
+
+    /// Рендер с включённым флагом mermaid (остальные флаги дефолтные).
+    fn render_mermaid_on(input: &str, width: usize) -> Text<'static> {
+        render_with(
+            input,
+            width,
+            &Palette::default(),
+            RenderOpts {
+                render_mermaid: true,
+                ..Default::default()
+            },
+        )
+    }
+
+    /// Валидный mermaid-блок при включённом рендере — диаграмма вместо исходника:
+    /// box-drawing рамки есть, заборов ``` и сырых `-->` нет.
+    #[test]
+    fn mermaid_block_renders_diagram_when_enabled() {
+        let md = "до\n\n```mermaid\nsequenceDiagram\n    participant A\n    participant B\n    A->>B: hi\n```\n\nпосле";
+        let text = render_mermaid_on(md, 90);
+        let joined: String = text
+            .lines
+            .iter()
+            .map(|l| {
+                l.spans
+                    .iter()
+                    .map(|s| s.content.as_ref())
+                    .collect::<String>()
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(joined.contains('┌'), "нет рамок диаграммы:\n{joined}");
+        assert!(
+            !joined.contains("```"),
+            "забор не должен печататься:\n{joined}"
+        );
+        assert!(!joined.contains("->>"), "исходник утёк в ленту:\n{joined}");
+        assert!(
+            joined.contains("до") && joined.contains("после"),
+            "{joined}"
+        );
+    }
+
+    /// Golden-фолбэк: при любом отказе (мусор / тип вне whitelist / не влезло по
+    /// ширине) вывод с включённым флагом **побайтно равен** выводу с выключенным —
+    /// строки И стили (Line: PartialEq). Гарантия «худший случай = прежнее поведение».
+    #[test]
+    fn mermaid_fallback_matches_disabled_render() {
+        let cases = [
+            // мусор в блоке (LLM недописал/сломал синтаксис)
+            ("```mermaid\nпросто текст без диаграммы\n```", 90),
+            // тип вне whitelist (pie)
+            ("```mermaid\npie title X\n    \"A\" : 1\n```", 90),
+            // валидная, но не влезает в узкую панель
+            (
+                "```mermaid\nsequenceDiagram\n    participant Client\n    participant Server\n    Client->>Server: GET /api/data\n```",
+                20,
+            ),
+            // инфо-строка с хвостом после языка сохраняется в заборе фолбэка
+            ("```mermaid title=x\nне диаграмма\n```", 90),
+        ];
+        for (md, w) in cases {
+            let on = render_mermaid_on(md, w);
+            let off = render(md, w, &Palette::default());
+            assert_eq!(
+                on.lines, off.lines,
+                "фолбэк разошёлся с прежним видом (w={w}):\n{md}"
+            );
+        }
+    }
+
+    /// Выключенный флаг (Default) — прежнее поведение: исходник код-блоком.
+    #[test]
+    fn mermaid_flag_off_keeps_source() {
+        let md = "```mermaid\nsequenceDiagram\n    A->>B: hi\n```";
+        let joined = rendered_text(md);
+        assert!(joined.contains("```mermaid"), "{joined}");
+        assert!(joined.contains("A->>B: hi"), "{joined}");
+    }
+
+    /// Кириллический flowchart рендерится диаграммой (регрессия апстрима 0.56.0 —
+    /// паника/порча подписей на многобайтовом вводе; наш фикс #29/#30).
+    #[test]
+    fn mermaid_cyrillic_flowchart_renders() {
+        let md = "```mermaid\nflowchart LR\n    A[Старт] -->|да| B[Конец]\n```";
+        let text = render_mermaid_on(md, 90);
+        let joined: String = text
+            .lines
+            .iter()
+            .flat_map(|l| l.spans.iter().map(|s| s.content.as_ref()))
+            .collect();
+        assert!(joined.contains("Конец"), "{joined}");
+        assert!(!joined.contains("[Конец]"), "порча подписи: {joined}");
     }
 
     /// Настоящая математика по-прежнему конвертируется (доллары сняты).

@@ -323,6 +323,8 @@ impl ChatScreen {
         self.confirm_destructive = config.interface.confirm_destructive_keys;
         self.feed_view
             .set_table_row_separators(config.interface.table_row_separators);
+        self.feed_view
+            .set_render_mermaid(config.interface.render_mermaid);
         self.settings_snapshot = Some((config, profiles, language_locked));
     }
 

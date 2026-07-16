@@ -780,6 +780,14 @@ pub struct InterfaceSettings {
     /// разделитель только под заголовком); включение даёт «сеточный» вид.
     /// См. spec §11.4.
     pub table_row_separators: bool,
+    /// Рендерить ```mermaid-блоки ленты диаграммой (Unicode/ASCII-графика,
+    /// крейт `mermaid-text`) вместо исходника. Только flowchart/sequence
+    /// (whitelist); при любом сбое (не распарсилось / не влезло по ширине / тип
+    /// вне whitelist) — жёсткий фолбэк на исходник код-блоком, как при
+    /// выключенном тумблере. Благодаря фолбэку по умолчанию **включён** (худший
+    /// случай = прежнее поведение). См. spec §11.4 и
+    /// docs/research/mermaid-ascii-rendering.md.
+    pub render_mermaid: bool,
     /// Язык **интерфейса** (ось B, docs/i18n-ui.md) — тексты для человека
     /// (статус-бар, настройки, справка, заголовки ролей ленты). **Независим** от
     /// языка агентов (`Profile.language`, ось A): русский UI + англоязычные агенты —
@@ -798,6 +806,7 @@ impl Default for InterfaceSettings {
             confirm_destructive_keys: false,
             terminal_compat: false,
             table_row_separators: false,
+            render_mermaid: true,
             language: crate::shared::i18n::Lang::default(),
         }
     }
@@ -985,6 +994,9 @@ mod tests {
         assert!(!c.interface.terminal_compat);
         // Разделители строк Markdown-таблиц по умолчанию выключены.
         assert!(!c.interface.table_row_separators);
+        // Рендер mermaid-диаграмм по умолчанию включён (жёсткий фолбэк на исходник
+        // делает включение безопасным: худший случай = прежнее поведение).
+        assert!(c.interface.render_mermaid);
         // Язык интерфейса (ось B) по умолчанию — русский (старый settings.json без
         // поля; свежая установка ставит его из defaults.json в main.rs).
         assert_eq!(c.interface.language, crate::shared::i18n::Lang::Ru);
@@ -1188,6 +1200,7 @@ mod tests {
                 confirm_destructive_keys: true,
                 terminal_compat: true,
                 table_row_separators: true,
+                render_mermaid: false,
                 language: crate::shared::i18n::Lang::Ru,
             },
             ..Default::default()

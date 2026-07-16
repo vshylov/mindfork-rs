@@ -72,6 +72,7 @@ pub(super) fn field_spec(id: FieldId) -> Option<FieldSpec> {
         ITableSeparators => {
             toggle(|c| c.interface.table_row_separators = !c.interface.table_row_separators)
         }
+        IMermaid => toggle(|c| c.interface.render_mermaid = !c.interface.render_mermaid),
         ISpell => toggle(|c| c.interface.spellcheck_enabled = !c.interface.spellcheck_enabled),
         IConfirmKeys => {
             toggle(|c| c.interface.confirm_destructive_keys = !c.interface.confirm_destructive_keys)

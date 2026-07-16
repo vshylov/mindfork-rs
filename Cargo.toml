@@ -24,6 +24,11 @@ eventsource-stream = "0.2.3"
 # Python). flate2 — чистый Rust (miniz_oxide, без C-зависимостей), tar — чистый Rust.
 flate2 = "1.0"
 futures-util = "0.3.32"
+# Рендер ```mermaid-блоков ленты в Unicode/ASCII-графику (flowchart/sequence,
+# whitelist + жёсткий фолбэк на исходник). Чистый Rust (net-new только ascii-dag);
+# ≥0.56.1 обязательно — 0.56.0 паниковал/портил подписи на кириллице (наш апстрим-фикс,
+# leboiko/markdown-reader#29/#30). См. docs/research/mermaid-ascii-rendering.md.
+mermaid-text = "0.56.1"
 pulldown-cmark = { version = "0.13.4", default-features = false }
 ratatui = "0.30.1"
 reqwest = { version = "0.13.4", default-features = false, features = ["json", "stream", "rustls", "form"] }

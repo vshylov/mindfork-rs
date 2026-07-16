@@ -46,6 +46,12 @@ pub struct RenderOpts {
     /// «сеточный» вид. `false` — компактный: разделитель только под заголовком.
     /// Управляется настройкой `interface.table_row_separators` (см. spec §11.4).
     pub table_row_separators: bool,
+    /// Рендерить ```mermaid-блоки диаграммой (Unicode/ASCII, крейт `mermaid-text`)
+    /// вместо исходника. Только flowchart/sequence; при любом сбое — фолбэк на
+    /// исходник код-блоком (см. [`mermaid`]-подмодуль). Управляется настройкой
+    /// `interface.render_mermaid` (spec §11.4); `false` (Default) — прежнее
+    /// поведение, исходник.
+    pub render_mermaid: bool,
 }
 
 /// Рендерит markdown-строку в владеющий [`Text`] (готовый к показу/кэшированию)
@@ -83,6 +89,7 @@ pub fn render_with(
     let mut writer = Writer::new(*palette, width);
     writer.soft_break_as_newline = opts.soft_break_as_newline;
     writer.table_row_separators = opts.table_row_separators;
+    writer.render_mermaid = opts.render_mermaid;
     writer.run(parser);
     Text::from(writer.lines)
 }
@@ -179,13 +186,14 @@ fn code_theme(palette: &Palette) -> &'static Theme {
 
 mod code;
 mod latex;
+mod mermaid;
 mod table;
 mod writer;
 
 // Внутренняя проводка: Writer (writer) + подсветка (code) + таблицы (table) +
-// LaTeX (latex) видны друг другу и mod.rs через реэкспорт (внешняя поверхность —
-// только render/render_with, определены здесь).
-use self::{code::*, latex::*, table::*, writer::*};
+// LaTeX (latex) + диаграммы (mermaid) видны друг другу и mod.rs через реэкспорт
+// (внешняя поверхность — только render/render_with, определены здесь).
+use self::{code::*, latex::*, mermaid::*, table::*, writer::*};
 
 /// Общие тест-хелперы рендера, используемые тестами нескольких подмодулей
 /// (code/latex/table/writer). См. docs/history/refactoring-god-objects.md.
