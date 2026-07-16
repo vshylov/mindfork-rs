@@ -947,6 +947,70 @@ fn globally_disabled_tool_is_marked_gated() {
 }
 
 #[test]
+fn mcp_tools_extend_profile_toggles_with_honest_gate() {
+    use crate::features::tools::meta::{ToolGate, ToolGroup, ToolInfo};
+    // Динамический каталог MCP (снимок из Settings) дописывается к статическому:
+    // тумблер в группе «Плагины (MCP)», включённый при выключенном мастер-гейте —
+    // помечен честным гейтом; переключение пишет id в профиль.
+    let mut s = screen();
+    s.config.mcp.enabled = false;
+    s.profiles[0]
+        .enabled_tools
+        .push("mcp__fs__read_text_file".into());
+    s.set_mcp_tools(vec![ToolInfo {
+        id: "mcp__fs__read_text_file".into(),
+        group: ToolGroup::Plugins,
+        label: "read_text_file",
+        gate: Some(ToolGate::Mcp),
+        enabled_by_default: false,
+    }]);
+    goto_section(&mut s, Section::Profiles);
+    let fields = s.profile_fields();
+    let idx = s
+        .tool_catalog()
+        .iter()
+        .position(|i| i.id == "mcp__fs__read_text_file")
+        .unwrap();
+    let row = fields.iter().find(|r| r.id == FieldId::PTool(idx)).unwrap();
+    assert!(matches!(row.kind, FieldKind::Toggle(true)));
+    assert!(row.warn, "MCP выключен глобально — честный гейт");
+    assert!(row.hint.unwrap().contains("MCP"));
+    // Мастер-гейт включён → обычная подсказка (имя инструмента).
+    s.config.mcp.enabled = true;
+    let fields = s.profile_fields();
+    let row = fields.iter().find(|r| r.id == FieldId::PTool(idx)).unwrap();
+    assert!(!row.warn);
+    assert_eq!(row.hint, Some("read_text_file"));
+    // Переключение тумблера убирает id из профиля (и обратно).
+    s.toggle_profile_tool(idx).unwrap();
+    assert!(
+        !s.profiles[0]
+            .enabled_tools
+            .iter()
+            .any(|t| t == "mcp__fs__read_text_file")
+    );
+    s.toggle_profile_tool(idx).unwrap();
+    assert!(
+        s.profiles[0]
+            .enabled_tools
+            .iter()
+            .any(|t| t == "mcp__fs__read_text_file")
+    );
+}
+
+#[test]
+fn mcp_master_toggle_lives_in_tools_section() {
+    // Тумблер «MCP-серверы» в секции «Инструменты»: переключение пишет конфиг.
+    let mut s = screen();
+    assert!(!s.config.mcp.enabled);
+    goto_section(&mut s, Section::Tools);
+    goto_field(&mut s, FieldId::TMcpEnabled);
+    s.handle_key(key(KeyCode::Char(' ')));
+    assert!(s.config.mcp.enabled, "Space включает мастер-гейт MCP");
+    assert!(field_desc(&s, FieldId::TMcpEnabled).is_some());
+}
+
+#[test]
 fn group_header_shows_toggle_count() {
     // Заголовок группы с ≥2 тумблерами несёт счётчик «вкл/всего»; одиночный — нет.
     let palette = Palette::default();

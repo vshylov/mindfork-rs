@@ -445,6 +445,9 @@ enum FieldId {
     TPythonWasmMemory,
     TFs,
     TFsRoot,
+    /// Мастер-выключатель MCP-хоста (`config.mcp.enabled`); серверы правятся в
+    /// `settings.json` (Р6), их статусы/описания в UI — этап 3b.
+    TMcpEnabled,
     TSubMaxTokens,
     TSubTimeout,
     EMode,
@@ -617,6 +620,10 @@ pub struct SettingsScreen {
     /// поле «Язык» рисуется заблокированным, правка гасится). Из снимка `Settings`
     /// (считает оркестратор). См. docs/history/i18n.md.
     language_locked: Vec<uuid::Uuid>,
+    /// Динамический каталог инструментов MCP-серверов (из снимка `Settings`) —
+    /// дописывается к статическому `tool_catalog()` для тумблеров профиля.
+    /// Пуст, пока серверы не поднялись/MCP выключен. См. spec §9.3.
+    mcp_tools: Vec<ToolInfo>,
 }
 
 // ---------- подмодули (разбор god-object'а: docs/history/refactoring-god-objects.md) ----------

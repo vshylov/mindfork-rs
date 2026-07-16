@@ -376,6 +376,9 @@
   "loop.tool_disabled": "Инструмент {name} недоступен (выключен).",
   "loop.rewrite_skipped": "(сообщение переписывается — вызов пропущен)",
   "loop.tool_error": "Ошибка инструмента {name}: {err}",
+  "loop.tool_cancelled": "Вызов инструмента отменён пользователем.",
+  "tool.mcp.result_truncated": "[результат усечён]",
+  "tool.mcp.error_empty": "(инструмент вернул ошибку без описания)",
 
   "ui.feed.empty": "Начните диалог — введите сообщение ниже.",
   "ui.feed.role.user": "ВЫ",
@@ -549,6 +552,9 @@
   "ui.settings.gate.web": "выкл. глобально: Web-поиск",
   "ui.settings.gate.python": "выкл. глобально: Python",
   "ui.settings.gate.fs": "выкл. глобально: файлы",
+  "ui.settings.gate.mcp": "выкл. глобально: MCP-серверы",
+  "ui.settings.field.mcp_enabled": "MCP-серверы",
+  "ui.settings.desc.mcp_enabled": "Мастер-выключатель плагинов-инструментов (MCP). Серверы описываются в settings.json (секция mcp.servers: команда, аргументы, env-имена); их инструменты появляются в тумблерах профиля и включаются вручную (двойной opt-in). MCP-сервер — произвольная программа с правами пользователя: включайте только доверенные.",
 
   "ui.settings.sampling.temp": "Температура",
   "ui.settings.sampling.thinking": "Мысли (thinking)",
@@ -635,6 +641,7 @@
   "ui.tool.group.subagent": "Субагент",
   "ui.tool.group.conversation": "Управление беседой",
   "ui.tool.group.self_model": "Модель себя",
+  "ui.tool.group.plugins": "Плагины (MCP)",
 
   "ui.tool.label.get_sampling": "показать семплинг",
   "ui.tool.label.set_sampling": "изменить семплинг",

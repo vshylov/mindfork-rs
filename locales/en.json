@@ -376,6 +376,9 @@
   "loop.tool_disabled": "Tool {name} is unavailable (disabled).",
   "loop.rewrite_skipped": "(the message is being rewritten — the call was skipped)",
   "loop.tool_error": "Tool {name} error: {err}",
+  "loop.tool_cancelled": "The tool call was cancelled by the user.",
+  "tool.mcp.result_truncated": "[result truncated]",
+  "tool.mcp.error_empty": "(the tool returned an error without a description)",
 
   "ui.feed.empty": "Start a conversation — type a message below.",
   "ui.feed.role.user": "YOU",
@@ -549,6 +552,9 @@
   "ui.settings.gate.web": "disabled globally: Web search",
   "ui.settings.gate.python": "disabled globally: Python",
   "ui.settings.gate.fs": "disabled globally: files",
+  "ui.settings.gate.mcp": "disabled globally: MCP servers",
+  "ui.settings.field.mcp_enabled": "MCP servers",
+  "ui.settings.desc.mcp_enabled": "Master switch for plugin tools (MCP). Servers are configured in settings.json (mcp.servers section: command, arguments, env names); their tools appear among the profile toggles and are enabled manually (double opt-in). An MCP server is an arbitrary program running with your privileges: enable only trusted ones.",
 
   "ui.settings.sampling.temp": "Temperature",
   "ui.settings.sampling.thinking": "Thinking",
@@ -635,6 +641,7 @@
   "ui.tool.group.subagent": "Subagent",
   "ui.tool.group.conversation": "Conversation control",
   "ui.tool.group.self_model": "Self-model",
+  "ui.tool.group.plugins": "Plugins (MCP)",
 
   "ui.tool.label.get_sampling": "show sampling",
   "ui.tool.label.set_sampling": "change sampling",

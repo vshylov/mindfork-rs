@@ -68,6 +68,7 @@ pub(super) fn field_spec(id: FieldId) -> Option<FieldSpec> {
         TPython => toggle(|c| c.tools.python_enabled = !c.tools.python_enabled),
         TPythonNet => toggle(|c| c.tools.python_net_enabled = !c.tools.python_net_enabled),
         TFs => toggle(|c| c.tools.fs_enabled = !c.tools.fs_enabled),
+        TMcpEnabled => toggle(|c| c.mcp.enabled = !c.mcp.enabled),
         ICompat => toggle(|c| c.interface.terminal_compat = !c.interface.terminal_compat),
         ITableSeparators => {
             toggle(|c| c.interface.table_row_separators = !c.interface.table_row_separators)

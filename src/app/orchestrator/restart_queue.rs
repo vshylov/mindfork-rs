@@ -24,6 +24,8 @@ pub(super) struct RestartQueue {
     embed: bool,
     /// Ожидает ли (пере)запуска сервер имперсонации (`config.impersonation_engine`).
     impersonation: bool,
+    /// Ожидают ли (пере)поднятия MCP-серверы (`config.mcp`).
+    mcp: bool,
     /// Момент срабатывания (продлевается каждой пометкой — дебаунс от последней).
     deadline: Option<Instant>,
 }
@@ -47,6 +49,12 @@ impl RestartQueue {
         self.bump();
     }
 
+    /// Помечает MCP-серверы для отложенного (пере)поднятия и продлевает дедлайн.
+    pub(super) fn mark_mcp(&mut self) {
+        self.mcp = true;
+        self.bump();
+    }
+
     fn bump(&mut self) {
         self.deadline = Some(Instant::now() + RESTART_DEBOUNCE);
     }
@@ -56,13 +64,14 @@ impl RestartQueue {
         self.deadline
     }
 
-    /// Забирает флаги `(chat, embed, impersonation)` и сбрасывает очередь.
-    pub(super) fn take(&mut self) -> (bool, bool, bool) {
+    /// Забирает флаги `(chat, embed, impersonation, mcp)` и сбрасывает очередь.
+    pub(super) fn take(&mut self) -> (bool, bool, bool, bool) {
         self.deadline = None;
-        let out = (self.chat, self.embed, self.impersonation);
+        let out = (self.chat, self.embed, self.impersonation, self.mcp);
         self.chat = false;
         self.embed = false;
         self.impersonation = false;
+        self.mcp = false;
         out
     }
 }
@@ -80,10 +89,15 @@ mod tests {
         q.mark_chat();
         q.mark_chat();
         q.mark_impersonation();
+        q.mark_mcp();
         assert!(q.deadline().is_some());
-        assert_eq!(q.take(), (true, false, true));
+        assert_eq!(q.take(), (true, false, true, true));
         assert!(q.deadline().is_none(), "take сбрасывает дедлайн");
-        assert_eq!(q.take(), (false, false, false), "повторный take пуст");
+        assert_eq!(
+            q.take(),
+            (false, false, false, false),
+            "повторный take пуст"
+        );
     }
 
     /// Каждая пометка продлевает дедлайн — рестарт идёт от последней правки,
@@ -97,6 +111,6 @@ mod tests {
         q.mark_embed();
         let d2 = q.deadline().unwrap();
         assert_eq!(d2 - d1, Duration::from_millis(500), "дедлайн продлён");
-        assert_eq!(q.take(), (true, true, false));
+        assert_eq!(q.take(), (true, true, false, false));
     }
 }

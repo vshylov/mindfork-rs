@@ -13,6 +13,7 @@ pub mod datetime;
 pub mod fetch;
 pub mod fs;
 pub mod introspection;
+pub mod mcp;
 pub mod meta;
 pub mod notes;
 pub mod present;
@@ -73,6 +74,12 @@ pub struct ToolContext {
     /// docs/history/i18n.md). Тексты, которые читает модель (каркас «модели себя», результаты
     /// инструментов), локализуются им. `&'static` — вшитый бандл.
     pub loc: &'static crate::shared::i18n::Locale,
+    /// Токен отмены хода (Esc пользователя / таймаут фоновой задачи): долгий
+    /// инструмент (MCP `tools/call`, сеть) обязан прерываться по нему, а не
+    /// блокировать отмену. Agentic-loop дополнительно оборачивает `invoke` в
+    /// `select!` с этим же токеном — страховка для инструментов, которые токен
+    /// не читают. См. docs/research/plugin-system.md §4.4 (п. «Отмена»).
+    pub cancel: tokio_util::sync::CancellationToken,
 }
 
 /// Долгоживущие разделяемые зависимости инструментов (пучок `Arc`; меняется при
@@ -115,6 +122,8 @@ pub struct TurnInfo {
     pub last_user_message_at: Option<DateTime<Utc>>,
     /// Язык служебного каркаса хода (из `Profile.language`, ось A).
     pub lang: crate::shared::i18n::Lang,
+    /// Токен отмены хода (клон токена задачи генерации / фоновой петли).
+    pub cancel: tokio_util::sync::CancellationToken,
 }
 
 impl ToolContext {
@@ -135,6 +144,7 @@ impl ToolContext {
             self_model_params: params.self_model_params,
             recall_includes_self: params.recall_includes_self,
             loc: crate::shared::i18n::locale(turn.lang),
+            cancel: turn.cancel,
         }
     }
 }
@@ -274,11 +284,14 @@ pub fn all_tool_ids() -> Vec<ToolId> {
 /// отключаются, если в текущем режиме движка нет ни одного доступного параметра
 /// (`sampling_provider`, см. [`supported_sampling_fields`]) — это динамический гейт по
 /// провайдеру, поэтому обрабатывается отдельно от статических [`meta::ToolGate`].
+/// Инструменты MCP-серверов (id с префиксом `mcp__`) гейтятся `mcp_enabled` **по
+/// префиксу**: они динамические и в статическом [`CATALOG`] отсутствуют.
 pub fn effective_tool_ids(
     enabled: &[ToolId],
     web_enabled: bool,
     python_enabled: bool,
     fs_enabled: bool,
+    mcp_enabled: bool,
     sampling_provider: Option<CloudProvider>,
 ) -> Vec<ToolId> {
     let sampling_available = !supported_sampling_fields(sampling_provider).is_empty();
@@ -289,10 +302,14 @@ pub fn effective_tool_ids(
             if id.as_str() == GET_SAMPLING_ID || id.as_str() == SET_SAMPLING_ID {
                 return sampling_available;
             }
+            if id.starts_with(mcp::MCP_TOOL_PREFIX) {
+                return mcp_enabled;
+            }
             match gate_of(id) {
                 Some(meta::ToolGate::Web) => web_enabled,
                 Some(meta::ToolGate::Python) => python_enabled,
                 Some(meta::ToolGate::Fs) => fs_enabled,
+                Some(meta::ToolGate::Mcp) => mcp_enabled,
                 None => true,
             }
         })
@@ -503,6 +520,7 @@ pub(crate) mod testkit {
             effective_sampling: SamplingConfig::default(),
             last_user_message_at: None,
             lang: crate::shared::i18n::Lang::Ru,
+            cancel: tokio_util::sync::CancellationToken::new(),
         }
     }
 
@@ -706,7 +724,7 @@ mod tests {
             );
         }
         // DB-only: проходят эффективный набор без глобальных гейтов.
-        let eff = effective_tool_ids(&all_tool_ids(), false, false, false, None);
+        let eff = effective_tool_ids(&all_tool_ids(), false, false, false, false, None);
         assert!(eff.iter().any(|t| t == self_model::GET_SELF_MODEL_ID));
         assert!(eff.iter().any(|t| t == self_model::UPDATE_SELF_MODEL_ID));
     }
@@ -715,13 +733,13 @@ mod tests {
     fn effective_tool_ids_gates_external_tools() {
         let enabled = default_tool_ids();
         // web on, python off, fs off → есть web_search/fetch_url, нет python/fs.
-        let eff = effective_tool_ids(&enabled, true, false, false, None);
+        let eff = effective_tool_ids(&enabled, true, false, false, false, None);
         assert!(eff.iter().any(|t| t == WEB_SEARCH_ID));
         assert!(eff.iter().any(|t| t == FETCH_URL_ID));
         assert!(!eff.iter().any(|t| t == PYTHON_EXEC_ID));
         assert!(!eff.iter().any(|t| t == fs::FS_READ_ID));
         // всё off → ни одного внешнего/файлового, но внутренние остаются.
-        let eff = effective_tool_ids(&enabled, false, false, false, None);
+        let eff = effective_tool_ids(&enabled, false, false, false, false, None);
         assert!(!eff.iter().any(|t| t == WEB_SEARCH_ID || t == FETCH_URL_ID));
         assert!(
             !eff.iter()
@@ -732,7 +750,7 @@ mod tests {
         assert!(eff.iter().any(|t| t == "calculate"));
         assert!(eff.iter().any(|t| t == "current_time"));
         // fs on → файловые инструменты появляются.
-        let eff = effective_tool_ids(&enabled, false, false, true, None);
+        let eff = effective_tool_ids(&enabled, false, false, true, false, None);
         assert!(eff.iter().any(|t| t == fs::FS_READ_ID));
         assert!(eff.iter().any(|t| t == fs::FS_WRITE_ID));
         assert!(eff.iter().any(|t| t == fs::FS_LIST_ID));
@@ -749,13 +767,25 @@ mod tests {
             Some(CloudProvider::Gemini),
             Some(CloudProvider::Claude),
         ] {
-            let eff = effective_tool_ids(&enabled, false, false, false, provider);
+            let eff = effective_tool_ids(&enabled, false, false, false, false, provider);
             assert!(
                 eff.iter().any(|t| t == GET_SAMPLING_ID),
                 "get_sampling должен быть доступен для {provider:?}"
             );
             assert!(eff.iter().any(|t| t == SET_SAMPLING_ID));
         }
+    }
+
+    #[test]
+    fn effective_tool_ids_gates_mcp_tools_by_prefix() {
+        // Инструменты MCP (динамические, вне CATALOG) гейтятся мастер-выключателем
+        // по префиксу `mcp__`; внутренние инструменты от него не зависят.
+        let enabled: Vec<ToolId> = vec!["note_save".into(), "mcp__fs__read_text_file".into()];
+        let eff = effective_tool_ids(&enabled, false, false, false, false, None);
+        assert!(!eff.iter().any(|t| t.starts_with(mcp::MCP_TOOL_PREFIX)));
+        assert!(eff.iter().any(|t| t == "note_save"));
+        let eff = effective_tool_ids(&enabled, false, false, false, true, None);
+        assert!(eff.iter().any(|t| t == "mcp__fs__read_text_file"));
     }
 
     #[test]

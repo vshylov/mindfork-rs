@@ -46,10 +46,12 @@ pub(super) fn apply_event(
             config,
             profiles,
             language_locked,
+            mcp_tools,
         } => {
             match active {
                 ActiveScreen::Settings(settings) => {
-                    settings.refresh((*config).clone(), profiles.clone(), language_locked.clone())
+                    settings.refresh((*config).clone(), profiles.clone(), language_locked.clone());
+                    settings.set_mcp_tools(mcp_tools.clone());
                 }
                 // Тема/режим совместимости/язык UI могли смениться — обновим палитру
                 // и локаль открытых overlay-экранов (список/модель себя) одним broadcast.
@@ -59,7 +61,7 @@ pub(super) fn apply_event(
                     crate::shared::i18n::locale(config.interface.language),
                 ),
             }
-            screen.set_settings(*config, profiles, language_locked);
+            screen.set_settings(*config, profiles, language_locked, mcp_tools);
         }
         AppEvent::ChatActivated {
             id,
@@ -222,11 +224,15 @@ pub(super) fn dispatch(
         ChatIntent::RagList => AppCommand::RagList,
         ChatIntent::RagRebuild => AppCommand::RagRebuild,
         ChatIntent::OpenSettings => {
-            if let Some((config, profiles, language_locked)) = screen.settings_snapshot() {
+            if let Some((config, profiles, language_locked, mcp_tools)) = screen.settings_snapshot()
+            {
                 let mut settings = SettingsScreen::new(config, profiles, language_locked);
                 // Начальный снимок статусов серверов (чипы в секции «Модель/сервер»);
                 // дальше их обновляет `apply_event` из события `ServerStatus`.
                 settings.set_server_statuses(screen.server_statuses());
+                // Динамический каталог инструментов MCP-серверов (тумблеры профиля);
+                // дальше его обновляет `apply_event` из события `Settings`.
+                settings.set_mcp_tools(mcp_tools);
                 *active = ActiveScreen::Settings(Box::new(settings));
             }
             return false;

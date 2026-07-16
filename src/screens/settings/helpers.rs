@@ -433,6 +433,7 @@ pub(super) fn gate_hint(gate: ToolGate, loc: &'static Locale) -> &'static str {
         ToolGate::Web => "ui.settings.gate.web",
         ToolGate::Python => "ui.settings.gate.python",
         ToolGate::Fs => "ui.settings.gate.fs",
+        ToolGate::Mcp => "ui.settings.gate.mcp",
     })
 }
 

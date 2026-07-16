@@ -47,6 +47,15 @@ const WHEEL_SCROLL: usize = 3;
 /// Задержка дебаунса спелл-чека: слово не флагуется, пока пользователь печатает.
 const SPELL_DEBOUNCE: Duration = Duration::from_millis(300);
 
+/// Снимок настроек из события `Settings`: конфиг + полные профили + id профилей с
+/// заблокированным языком каркаса + динамический каталог инструментов MCP-серверов.
+pub type SettingsSnapshot = (
+    AppConfig,
+    Vec<Profile>,
+    Vec<uuid::Uuid>,
+    Vec<crate::features::tools::meta::ToolInfo>,
+);
+
 /// Намерение пользователя, которое исполняет `app` (транслирует в `AppCommand`).
 #[derive(Debug, Clone, PartialEq)]
 pub enum ChatIntent {
@@ -223,9 +232,10 @@ pub struct ChatScreen {
     /// открытии (попап «помнит» выбор).
     emoji_last: usize,
     /// Последний снимок настроек (конфиг + полные профили + id профилей с
-    /// заблокированным языком каркаса) — для открытия экрана настроек по `Ctrl+P`.
-    /// Заполняется событием `Settings`. См. spec §11.6, docs/history/i18n.md.
-    settings_snapshot: Option<(AppConfig, Vec<Profile>, Vec<uuid::Uuid>)>,
+    /// заблокированным языком каркаса + динамический MCP-каталог) — для открытия
+    /// экрана настроек по `Ctrl+P`. Заполняется событием `Settings`.
+    /// См. spec §11.6, docs/history/i18n.md.
+    settings_snapshot: Option<SettingsSnapshot>,
     /// Показан ли оверлей помощи по клавишам (`F1`/`?`). См. spec §11.7.
     show_help: bool,
     /// Прокрутка оверлея помощи (первый видимый ряд списка клавиш) — для коротких
@@ -310,12 +320,14 @@ impl ChatScreen {
 
     /// Сохраняет снимок настроек (для открытия экрана настроек по `Ctrl+P`) и
     /// обновляет палитру темы (вместе с режимом совместимости терминала) и
-    /// параметры отрисовки ленты (разделители строк таблиц).
+    /// параметры отрисовки ленты (разделители строк таблиц). `mcp_tools` —
+    /// динамический каталог инструментов MCP-серверов (тумблеры профиля).
     pub fn set_settings(
         &mut self,
         config: AppConfig,
         profiles: Vec<Profile>,
         language_locked: Vec<uuid::Uuid>,
+        mcp_tools: Vec<crate::features::tools::meta::ToolInfo>,
     ) {
         self.palette = Palette::for_theme(config.interface.theme)
             .with_compat(config.interface.terminal_compat);
@@ -325,18 +337,18 @@ impl ChatScreen {
             .set_table_row_separators(config.interface.table_row_separators);
         self.feed_view
             .set_render_mermaid(config.interface.render_mermaid);
-        self.settings_snapshot = Some((config, profiles, language_locked));
+        self.settings_snapshot = Some((config, profiles, language_locked, mcp_tools));
     }
 
     /// Снимок настроек для создания экрана настроек (`None`, пока не получен).
-    pub fn settings_snapshot(&self) -> Option<(AppConfig, Vec<Profile>, Vec<uuid::Uuid>)> {
+    pub fn settings_snapshot(&self) -> Option<SettingsSnapshot> {
         self.settings_snapshot.clone()
     }
 
     /// Текущие настройки спелл-чека `(включён, выбранные словари)` из последнего
     /// снимка настроек — для (пере)загрузки словарей в `app/runtime.rs`. См. spec §11.6.
     pub fn spell_config(&self) -> Option<(bool, &[String])> {
-        self.settings_snapshot.as_ref().map(|(c, _, _)| {
+        self.settings_snapshot.as_ref().map(|(c, _, _, _)| {
             (
                 c.interface.spellcheck_enabled,
                 c.interface.selected_dictionaries.as_slice(),

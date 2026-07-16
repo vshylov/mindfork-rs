@@ -8,10 +8,6 @@ pub mod instance;
 pub mod keys;
 pub mod logging;
 pub mod markdown;
-/// Мини-клиент MCP — **зонд** направления «плагины» (docs/research/plugin-system.md
-/// §7, этап 2). Пока только в тест-сборках (юнит-тесты протокола + живой смоук);
-/// в бинарь войдёт на этапе 3 (`feat/mcp-host`) после GO.
-#[cfg(test)]
 pub mod mcp;
 pub mod paths;
 pub mod sandbox;

@@ -110,6 +110,7 @@ fn bare_orch_rx() -> (tempfile::TempDir, Orchestrator, UnboundedReceiver<AppEven
     let orch = Orchestrator {
         evt_tx,
         engines,
+        mcp: McpManager::new(unbounded_channel().0),
         imp_cancel: None,
         imp_gen: None,
         imp_done_tx,
@@ -186,6 +187,12 @@ type OrchHandle = (
 /// из `MINDFORK_EMBED_URL` (реальный сервер; иначе детерминированный `MockEmbedder`).
 /// `None`, если `MINDFORK_ENGINE_URL` не задан (смоук пропускается).
 fn spawn_orch_live() -> Option<OrchHandle> {
+    spawn_orch_live_cfg(AppConfig::default())
+}
+
+/// Как [`spawn_orch_live`], но с явной конфигурацией (напр. включённый MCP-хост
+/// с реальным сервером для e2e-смоука).
+fn spawn_orch_live_cfg(config: AppConfig) -> Option<OrchHandle> {
     let backend = live_backend()?;
     let embedder = live_embedder();
     let dir = tempfile::tempdir().unwrap();
@@ -196,7 +203,7 @@ fn spawn_orch_live() -> Option<OrchHandle> {
         cmd_rx,
         evt_tx,
         storage,
-        config: AppConfig::default(),
+        config,
         supervisor: Arc::new(MockSupervisor::with_backend_and_embedder(
             Some(backend),
             embedder,
@@ -305,6 +312,7 @@ mod chats;
 mod generation;
 mod impersonation;
 mod live;
+mod mcp;
 mod profiles;
 mod rag;
 mod reflection;

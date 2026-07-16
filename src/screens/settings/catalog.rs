@@ -32,6 +32,7 @@ impl SettingsScreen {
                 impersonation: ServerStatus::NotConfigured,
             },
             language_locked,
+            mcp_tools: Vec::new(),
         }
     }
 
@@ -62,10 +63,20 @@ impl SettingsScreen {
     }
 
     /// Каталог всех известных инструментов (для тумблеров в профиле) — включая
-    /// опциональные (по умолчанию выключенные). Метаданные (группа/лейбл/гейт)
+    /// опциональные (по умолчанию выключенные) и **динамические** инструменты
+    /// MCP-серверов (снимок из события `Settings`, дописываются в конец — индексы
+    /// `PTool` статической части стабильны). Метаданные (группа/лейбл/гейт)
     /// снимаются с самих инструментов (единый источник — трейт `Tool`). См. spec §9.3.
-    pub(super) fn tool_catalog() -> Vec<ToolInfo> {
-        crate::features::tools::tool_catalog()
+    pub(super) fn tool_catalog(&self) -> Vec<ToolInfo> {
+        let mut catalog = crate::features::tools::tool_catalog();
+        catalog.extend(self.mcp_tools.iter().cloned());
+        catalog
+    }
+
+    /// Обновляет динамический каталог инструментов MCP-серверов (из события
+    /// `Settings`; пуст, пока серверы не поднялись/выключены).
+    pub fn set_mcp_tools(&mut self, tools: Vec<ToolInfo>) {
+        self.mcp_tools = tools;
     }
 
     // ---------- построение полей текущей секции ----------
@@ -436,6 +447,17 @@ impl SettingsScreen {
                 .describe(loc.t("ui.settings.desc.fs_root")),
             ],
         ));
+        rows.extend(grouped(
+            loc.t("ui.tool.group.plugins"),
+            vec![
+                row(
+                    FieldId::TMcpEnabled,
+                    loc.t("ui.settings.field.mcp_enabled"),
+                    FieldKind::Toggle(self.config.mcp.enabled),
+                )
+                .describe(loc.t("ui.settings.desc.mcp_enabled")),
+            ],
+        ));
         rows
     }
 
@@ -693,7 +715,7 @@ impl SettingsScreen {
                 // `toggle_profile_tool`); порядок ПОКАЗА группируем стабильной
                 // сортировкой по `ToolGroup` (Ord), не трогая индексы.
                 let mut indexed: Vec<(usize, ToolInfo)> =
-                    Self::tool_catalog().into_iter().enumerate().collect();
+                    self.tool_catalog().into_iter().enumerate().collect();
                 indexed.sort_by_key(|(_, info)| info.group);
                 for (idx, info) in indexed {
                     let on = p.enabled_tools.iter().any(|t| t == &info.id);
@@ -735,6 +757,7 @@ impl SettingsScreen {
             ToolGate::Web => !self.config.tools.web_enabled,
             ToolGate::Python => !self.config.tools.python_enabled,
             ToolGate::Fs => !self.config.tools.fs_enabled,
+            ToolGate::Mcp => !self.config.mcp.enabled,
         }
     }
 
