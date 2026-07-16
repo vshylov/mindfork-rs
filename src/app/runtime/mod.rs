@@ -102,6 +102,7 @@ pub fn run(
     cmd_tx: UnboundedSender<AppCommand>,
     evt_rx: UnboundedReceiver<AppEvent>,
     dict_dir: PathBuf,
+    bundled_dict_dir: Option<PathBuf>,
     personal: PathBuf,
 ) -> Result<()> {
     let mut terminal = ratatui::init();
@@ -155,7 +156,14 @@ pub fn run(
         let _ = execute!(stdout(), PopKeyboardEnhancementFlags);
         prev_hook(info);
     }));
-    let result = run_loop(&mut terminal, &cmd_tx, evt_rx, dict_dir, personal);
+    let result = run_loop(
+        &mut terminal,
+        &cmd_tx,
+        evt_rx,
+        dict_dir,
+        bundled_dict_dir,
+        personal,
+    );
     // Снимаем режимы на выходе (безвредно, если уже выключены).
     let _ = execute!(
         stdout(),
@@ -176,6 +184,9 @@ pub fn run(
 /// `Settings`); `generation` отбрасывает устаревшие результаты. См. spec §11.6.
 struct SpellLoader {
     dict_dir: PathBuf,
+    /// Резервный каталог словарей рядом с бинарником (П1) — источник при не-портативном
+    /// режиме хранения, когда словарей в корне данных нет.
+    bundled_dir: Option<PathBuf>,
     personal: PathBuf,
     tx: Sender<(u64, SpellChecker)>,
     rx: Receiver<(u64, SpellChecker)>,
@@ -186,10 +197,11 @@ struct SpellLoader {
 }
 
 impl SpellLoader {
-    fn new(dict_dir: PathBuf, personal: PathBuf) -> Self {
+    fn new(dict_dir: PathBuf, bundled_dir: Option<PathBuf>, personal: PathBuf) -> Self {
         let (tx, rx) = channel();
         Self {
             dict_dir,
+            bundled_dir,
             personal,
             tx,
             rx,
@@ -209,15 +221,22 @@ impl SpellLoader {
         }
         self.generation += 1;
         let generation = self.generation;
-        let (dir, personal, tx) = (
+        let (dir, bundled, personal, tx) = (
             self.dict_dir.clone(),
+            self.bundled_dir.clone(),
             self.personal.clone(),
             self.tx.clone(),
         );
         let selected = selected.to_vec();
         let sel_for_thread = selected.clone();
         std::thread::spawn(move || {
-            let checker = dict::load(&dir, &personal, enabled, &sel_for_thread);
+            let checker = dict::load(
+                &dir,
+                bundled.as_deref(),
+                &personal,
+                enabled,
+                &sel_for_thread,
+            );
             let _ = tx.send((generation, checker));
         });
         self.applied = Some((enabled, selected));
@@ -240,6 +259,7 @@ fn run_loop(
     cmd_tx: &UnboundedSender<AppCommand>,
     mut evt_rx: UnboundedReceiver<AppEvent>,
     dict_dir: PathBuf,
+    bundled_dict_dir: Option<PathBuf>,
     personal: PathBuf,
 ) -> Result<()> {
     let mut screen = ChatScreen::new();
@@ -249,7 +269,7 @@ fn run_loop(
     // Буфер обмена создаётся лениво при первом копировании (на headless-Linux без
     // X11/Wayland конструктор может упасть — тогда показываем ошибку, не паникуем).
     let mut clipboard: Option<arboard::Clipboard> = None;
-    let mut spell = SpellLoader::new(dict_dir, personal);
+    let mut spell = SpellLoader::new(dict_dir, bundled_dict_dir, personal);
     let mut quit = false;
     // Перерисовываем ТОЛЬКО при изменениях (флаг `dirty`), а не на каждый тик.
     // Иначе `terminal.draw` зовётся ~20 раз/сек и каждый раз переставляет курсор

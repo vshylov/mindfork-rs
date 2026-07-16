@@ -169,10 +169,16 @@ Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>
 4. Тег запускает **`.github/workflows/release.yml`**: сборка `--release` на
    `windows-latest` + `ubuntu-22.04` → архивы `mindfork-rs-vX.Y.Z-x86_64-{windows.zip,
    linux.tar.gz}` (бинарник + README/CHANGELOG/LICENSE/install + словари
-   `data/dictionaries/`) + `sha256sums.txt` →
-   `gh release create` с нотами = раздел `[X.Y.Z]` из CHANGELOG.
+   `data/dictionaries/`) + **Linux-пакеты** (`nfpm` из `packaging/nfpm.yaml`:
+   `mindfork-rs_X.Y.Z-1_amd64.deb`, `mindfork-rs-X.Y.Z-1.x86_64.rpm`,
+   `mindfork-rs-X.Y.Z-1-x86_64.pkg.tar.zst`) + **Windows-инсталлятор**
+   (`mindfork-rs-vX.Y.Z-x86_64-setup.exe`, Inno Setup из `packaging/windows/mindfork.iss`)
+   + `sha256sums.txt` → `gh release create` с нотами = раздел `[X.Y.Z]` из CHANGELOG.
+   Правки пакетирования (`packaging/**`) валидируются на PR отдельным `packaging.yml`
+   (Linux: сборка пакетов + смоук установки в контейнерах Ubuntu/Fedora/Arch; Windows:
+   компиляция `.iss`).
 5. **Смоук артефакта**: скачать архив, `mindfork-rs --version` (совпадает с тегом),
-   запуск TUI на копии данных.
+   запуск TUI на копии данных; при желании — установка пакета/инсталлятора в ВМ.
 
 Промоция до **`1.0.0`** — когда направление доказано в бою (CI зелёный на обеих ОС +
 каркас миграций смержён + релизный пайплайн выпустил ≥1 релиз): с 1.0 «данные переживают

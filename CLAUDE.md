@@ -120,10 +120,15 @@ Env для выбора бэкенда: `MINDFORK_ENGINE_URL` (external, люб�
 `MINDFORK_LLAMA_BIN` (+ `MINDFORK_MODEL` GGUF, `MINDFORK_NGL`, `MINDFORK_CTX`,
 `MINDFORK_PORT`) для managed `llama-server`.
 
-## Статус (на 2026-07-15)
-Сделан весь план **M0–M9** плюс обширный пост-M9 (в `main`). **1071 юнит-тестов
+## Статус (на 2026-07-16)
+Сделан весь план **M0–M9** плюс обширный пост-M9 (в `main`). **1077 юнит-тестов
 зелёные, 48 `#[ignore]`-смоуков** (крупнейший счётчик — журнал ниже; текущее
-направление — **релизная инженерия** (версии/CHANGELOG/CI/миграции схем данных); прежнее
+направление — **инсталляторы** (Windows Inno Setup + Linux nfpm; план
+`docs/history/installers.md`) — **завершено** (этапы 1–3; подпись кода отложена):
+линейный стек этапов — этап 1 «предпосылки в коде» (`feat/installed-mode-prereqs`),
+этап 2 «Linux-пакеты» (`feat/linux-packages`), этап 3 «Windows-инсталлятор»
+(`feat/windows-installer`); прежнее направление — **релизная инженерия**
+(версии/CHANGELOG/CI/миграции схем данных) — завершено; ещё прежнее
 направление — **i18n CLI** (весь текст CLI/`main.rs`/фич/хвоста движка в бандлах, свой
 парсер вместо `clap`) — **завершено**, этапы 1–3: ветки `feat/cli-i18n-bootstrap` +
 `feat/cli-i18n-features` + `feat/i18n-engine-tail`).
@@ -5487,6 +5492,177 @@ web-поиск и Python под выключателями, экран наст�
   валиден (на PR не триггерится — прогон по `workflow_dispatch`/`cron` после мержа).
 - **Направление «релизная инженерия» полностью закрыто** (этапы 1–6 + релиз v0.9.0 +
   план в `docs/history/`).
+
+### Пост-M9: инсталляторы — исследование + этап 1 (предпосылки в коде) (сделано)
+- **Новое направление «инсталляторы»** (заказ: Windows msi/exe + Linux deb/rpm/
+  pkg.tar.zst; при установке — выбор языка интерфейса и расположения данных, см.
+  `defaults.json`; открытый вопрос подписи кода). **Исследование** —
+  [docs/history/installers.md](docs/history/installers.md) (три параллельных веб-обзора
+  по первоисточникам, июль 2026): Windows — **Inno Setup 6.7.x (exe)**, а не MSI (все
+  «особые» требования — штатные `CreateInputOptionPage`/`CreateInputDirPage`/
+  `SaveStringsToUTF8File`/официальный `Russian.isl`; MSI = дни-недели обходных приёмов);
+  Linux — **nfpm** (один YAML → все три формата), раскладка `/usr/lib/mindfork-rs/` +
+  симлинк `/usr/bin` (на Linux `current_exe` резолвит симлинк в реальный путь — резолв
+  путей приложения работает **без правок**); deb/rpm/pacman неинтерактивны → язык на
+  Linux определяется приложением по локали ОС. **Подпись кода**: без подписи репутация
+  SmartScreen обнуляется каждым релизом, EV больше не даёт мгновенной репутации;
+  варианты — SignPath Foundation (бесплатно, публичный OSS), Certum Open Source
+  (~€69/€29, физлицо), Azure Artifact Signing ($9.99/мес, география ограничена).
+  **Развилки Р1–Р9 подтверждены пользователем 2026-07-16 по рекомендациям; подпись (Р8)
+  отложена** — репозиторий приватный, нет сайта/логотипа/иконки (вернуться при
+  подготовке к публичному открытию). Ветка исследования — `docs/installers-research`.
+- **Этап 1 «предпосылки в коде»** (ветка `feat/installed-mode-prereqs`) — три additive-
+  правки, готовящие приложение к установленному (не портативному) виду; миграций нет
+  (`#[serde(default)]`), движок/память не затронуты.
+  - **П1 — fallback словарей рядом с бинарником.** `dict::load` получил параметр
+    `bundled_dir: Option<&Path>`: словари ищутся сперва в корне данных (`dict_dir`),
+    затем в портативной раскладке `exe_dir/data/dictionaries` (`Paths::
+    bundled_dictionaries_dir`, из нового поля `Paths.exe_dir`). Пара, уже загруженная
+    из корня, из bundled **не** перегружается (`loaded: HashSet` по базовому имени —
+    пользовательский словарь того же имени выигрывает); в портативном режиме bundled ==
+    dict_dir → второй проход no-op. Раньше при `mode=system`/`path` словарей в корне
+    данных нет → спелл-чек молча выключался; теперь их подхватывает bundled (куда их
+    кладёт инсталлятор/пакет). Общая логика вынесена в `load_dir(dir, selected, loaded,
+    dicts)`. Проброшено `SpellLoader`/`runtime::run`/`run_loop` → `main.rs`
+    (`paths.bundled_dictionaries_dir()`).
+  - **П2 — автоопределение языка по локали ОС.** `Defaults.default_language:
+    Lang` → `Option<Lang>` (`#[serde(default)]` → None при отсутствии поля; deb/rpm-
+    пакет пишет только `{"mode":"system"}`). `Paths::resolve` резолвит
+    `default_language.unwrap_or_else(i18n::detect_os_language)`; `detect_os_language`
+    делегирует чистой `lang_for_locale(Option<&str>)` (первичный субтег `ru*`→Ru, иначе
+    En; тестируемо) над `sys_locale::get_locale()` (новая зависимость `sys-locale`,
+    кросс-платформенная, чистый Rust). Резолв **до** разбора CLI (peek-фаза), поэтому
+    язык всегда конкретен → `cli_lang` упрощён до `settings.unwrap_or(default_language)`
+    (убраны `defaults_present`/`Defaults::marker_present`, `resolve() -> Self` без
+    bool). Меняет поведение только свежих установок (сегодня — всегда Ru при отсутствии
+    поля). Закрывает задел roadmap «Определение языка по локали ОС».
+  - **П3 — терпимость `defaults.json` к UTF-8 BOM** (`strip_bom` до whitespace-проверки
+    и парса — прецеденты `rag_ingest::read_text`, импортёр LameLLaMA). Инсталлятор/
+    редактор мог записать файл с BOM → запуск падал.
+- **Тесты**: paths (Option-язык при наличии/отсутствии поля/legacy-fallback; BOM;
+  `bundled_dictionaries_dir` None в `with_root`); dict (bundled поставляет
+  недостающие; словарь корня выигрывает у bundled без дубля); i18n
+  (`lang_for_locale` — субтеги/None); main (`cli_lang` — settings ∨ resolved).
+  **1077 юнит-тестов зелёные** (+6), 48 `#[ignore]`, clippy `-D warnings`/fmt чисты.
+  **Живой прогон**: движок/память не затронуты; на реальном бинарнике подтверждены
+  peek-фаза (`--version`/`--help` локализованы), **BOM-терпимость** (`defaults.json` с
+  BOM + `mode:system` → запуск ок) и отказ на битом `defaults.json` (код выхода 1).
+  Полный TUI-смоук словарей — интерактивный (нужен терминал); логика покрыта
+  юнит-тестом `bundled_dir_supplies_missing_dictionaries`.
+- **Дальше:** этап 2 `feat/linux-packages` (nfpm → deb/rpm/archlinux + CI-смоук
+  установки), этап 3 `feat/windows-installer` (Inno Setup), опц. этап 4 «Подпись»
+  (отложена). Плейбук/раскладка/DoD — `docs/history/installers.md` §8.
+
+### Пост-M9: инсталляторы — этап 2 (Linux-пакеты deb/rpm/pkg.tar.zst) (сделано)
+- **Этап 2** направления «инсталляторы» (`docs/history/installers.md` §4, §8; ветка
+  `feat/linux-packages`, **стек на `feat/installed-mode-prereqs`** — пакеты кладут
+  словари в `/usr/lib/mindfork-rs/data/dictionaries`, а находит их fallback П1 из
+  этапа 1). Только упаковка/CI — исходный код приложения не менялся (нулевой прирост
+  юнит-тестов, движок/память не затронуты).
+- **`packaging/nfpm.yaml`** — один конфиг nfpm → **три формата** (`--packager
+  deb|rpm|archlinux`; nfpm ставит его на все три, cargo-инструменты Arch не покрывают).
+  Раскладка §4.2: реальный бинарь `/usr/lib/mindfork-rs/mindfork-rs` + `defaults.json`
+  (`{"mode":"system"}`, `type: config|noreplace` → правка переживёт апгрейд) + словари
+  `/usr/lib/mindfork-rs/data/dictionaries/` + **симлинк** `/usr/bin/mindfork-rs`
+  (`type: symlink`) + доки в `/usr/share/doc/mindfork-rs/`. `defaults.json` в `/usr/bin`
+  класть нельзя (FHS); симлинк-раскладка работает **без правок кода** —
+  `current_exe()` на Linux резолвит `/proc/self/exe` в реальный путь, приложение
+  находит соседние `defaults.json`/словари. Зависимости вручную (nfpm не вычисляет):
+  deb — `libc6 (>= 2.35)`, rpm/arch — ничего (glibc в базе; стек rustls + bundled
+  SQLite + x11rb).
+- **`packaging/linux/build-packages.sh`** — стейджит бинарь в `dist/stage/` и гонит
+  nfpm трижды с конвенционными именами (`mindfork-rs_X.Y.Z-1_amd64.deb`,
+  `-X.Y.Z-1.x86_64.rpm`, `-X.Y.Z-1-x86_64.pkg.tar.zst`). Общий скрипт для CI и локали.
+- **CI**: (1) новый **`packaging.yml`** (на `pull_request`/`push:main`, задевающий
+  `packaging/**`, + `workflow_dispatch`): job `build` (cargo build --release → nfpm
+  через apt-репозиторий goreleaser → 3 пакета артефактом) + job `smoke` (матрица
+  контейнеров `ubuntu:24.04`/`fedora:latest`/`archlinux:latest`: ставит пакет своим
+  менеджером, проверяет раскладку/симлинк/`defaults.json`, запускает `mindfork-rs
+  --version` **под обычным пользователем** — peek-фаза каталогов не создаёт). Это и
+  есть CI-смоук установки (валидирует на PR — единственный способ проверить nfpm/
+  контейнеры, т.к. разработка на Windows). (2) **`release.yml`** получил job
+  `linux-packages` (из готового `bin-linux` через тот же скрипт) + `release` теперь
+  `needs: [build, linux-packages]` и кладёт пакеты в `dist/` (попадают в
+  `sha256sums.txt` и GitHub Release).
+- **Идиоматичный Arch — задел**: `.pkg.tar.zst` на Releases для `pacman -U` есть; AUR
+  `mindfork-rs-bin` (PKGBUILD + .SRCINFO на Releases) — отдельный небольшой шаг после
+  первого релиза пакетов.
+- **Проверки**: `cargo fmt/clippy/test` не затронуты (кода нет; **1077 юнит-тестов**
+  как в этапе 1); YAML nfpm/обоих workflow валиден (структура/типы `config|noreplace`/
+  `symlink`/пути сверены). **Живой прогон**: nfpm и контейнерные установки **на Windows
+  локально невоспроизводимы** — их прогонит `packaging.yml` на PR (сборка пакетов +
+  смоук установки в трёх дистрибутивах); это и есть верификация DoD этапа.
+- **Дальше:** этап 3 `feat/windows-installer` (Inno Setup), опц. этап 4 «Подпись»
+  (отложена пользователем).
+
+### Пост-M9: инсталляторы — этап 3 (Windows-инсталлятор Inno Setup) (сделано)
+- **Этап 3** направления «инсталляторы» (`docs/history/installers.md` §3.3, §8; ветка
+  `feat/windows-installer`, **линейный стек на `feat/linux-packages`** — оба этапа
+  правят `release.yml`, линейная цепочка `1→2→3` избегает конфликта по файлу; опирается
+  на П1/П3 этапа 1: пишет `defaults.json` с UTF-8 BOM и кладёт словари рядом с бинарём).
+  Только упаковка/CI — исходный код приложения не менялся.
+- **`packaging/windows/mindfork.iss`** — Inno Setup 6.7.x, формат exe (не MSI: все
+  требования — штатные возможности Inno). Две **кастомные страницы мастера**:
+  «Язык приложения» (радио Русский/English, `CreateInputOptionPage(Exclusive)`) и
+  «Расположение данных» (радио: стандартная ОС-папка / портативно / произвольная папка
+  через `CreateInputDirPage`). Выбор пишется в `{app}\defaults.json` на `ssPostInstall`
+  (`{"mode":…,"default_language":…}`, `SaveStringsToUTF8File` — с BOM, отбрасывается П3;
+  кириллические пути в JSON эскейпятся). **Не перезаписывается при апгрейде**
+  (`if not FileExists` + `ShouldSkipPage` прячет обе страницы, если `defaults.json`
+  уже есть). Двуязычный UI: `[Languages]` en+`Russian.isl` (официальный), тексты
+  страниц — `[CustomMessages]` с `ru.`/`en.` + `CustomMessage()`. Per-user без UAC
+  (`PrivilegesRequired=lowest` + `…OverridesAllowed=dialog`, `{autopf}`→
+  `%LOCALAPPDATA%\Programs`); портативный вариант скрыт при установке per-machine
+  (в Program Files данные рядом с exe писать нельзя). Словари — в `{app}\data\
+  dictionaries` (резерв П1). Деинсталлятор чистит только `defaults.json` +
+  установленное; данные пользователя (`%APPDATA%`/портативные) не трогает.
+  **Файл сохранён как UTF-8 с BOM** — иначе Inno на en-US-раннере испортит кириллицу.
+- **CI**: (1) в `packaging.yml` добавлен job `windows-installer` (windows-раннер):
+  ставит Inno через choco, **компилирует `.iss` с заглушкой-бинарником** — валидация
+  синтаксиса `.iss` и Pascal-`[Code]` на PR (реальную сборку тут не делаем; поиск
+  `ISCC.exe` устойчив к версии/пути Inno 6/7). (2) `release.yml` получил job
+  `windows-installer` (компилирует настоящий `setup.exe` из готового `bin-windows`);
+  `release` теперь `needs: [build, linux-packages, windows-installer]` и кладёт
+  инсталлятор в `dist/` (→ `sha256sums.txt` + GitHub Release).
+- **Фикс краша `{app}` в `ShouldSkipPage` (найден живым GUI-прогоном).** Первая версия
+  проверяла апгрейд через `ExpandConstant('{app}\defaults.json')` — но `{app}` на этапе
+  показа страниц мастера **ещё не инициализирована**, и её раскрытие роняло **любую
+  интерактивную установку** в диалог «Runtime error: An attempt was made to expand the
+  "app" constant before it was initialized». Тихая установка это **не** ловила
+  (`ShouldSkipPage` при ней не вызывается; `CurStepChanged`/`ssPostInstall` использует
+  `{app}` уже корректно) — поэтому баг проявился только на GUI. Фикс: путь через
+  `AddBackslash(WizardDirValue) + 'defaults.json'` (текущее значение поля каталога,
+  валидно во время мастера). Урок: **тихая установка не заменяет GUI-прогон** для
+  Inno-`[Code]`, зависящего от `{app}`/страниц.
+- **Проверки**: кода на Rust нет → **1077 юнит-тестов** как в этапах 1–2, fmt чист;
+  YAML обоих workflow валиден. **Живой прогон — GO** (реальный **Inno Setup 6.7.3** на
+  машине разработки): (1) `.iss` **компилируется** (`ISCC.exe` — Pascal-`[Code]`, все
+  `[Files]`, пути `SourcePath`, кириллица) → `setup.exe`; (2) **GUI-мастер запускается
+  без краша** — окно `TWizardForm` «Setup - mindfork-rs version 0.9.0», диалога Runtime
+  error нет (до фикса — только он); (3) **тихая установка** (`/VERYSILENT /CURRENTUSER
+  /LANG=en`) пишет `defaults.json` кодом мастера — ровно
+  `{"mode":"system","default_language":"en"}` (BOM `EF BB BF`, отбрасывается П3);
+  (4) **режим «своя папка» (`mode:path`)** проверен исполнением того же `[Code]`
+  (`DataPage`=custom + кириллический путь) → `{"mode":"path","path":"C:\\Users\\…\\
+  данные-path\\sub","default_language":"ru"}` — **эскейп `\`→`\\`** (`JsonEscape`),
+  **кириллица** (UTF-8), `/LANG=ru`→`"ru"`; (5) **установленный бинарник читает** оба
+  `defaults.json` (`--version`→`0.9.0`, exit 0 → JSON валиден, режимы `system`/`path`
+  резолвятся — полный round-trip инсталлятор↔приложение); (6) **апгрейд не
+  перезаписывает** `defaults.json` (повторная установка `/LANG=ru` поверх → файл остался
+  `…"default_language":"en"`); (7) **деинсталляция чистая** (файлы, запись реестра HKCU
+  Uninstall, ярлык). Все тестовые артефакты удалены. (8) **Живой GUI-мастер + скриншоты**
+  (`Graphics.CopyFromScreen` по rect `TWizardForm`): обе кастомные страницы рендерятся
+  корректно в **обеих локалях** — «Application language / Язык приложения» (радио
+  Русский/English) и «Data location / Расположение данных» (система/портативно/своя
+  папка), заголовок «Setup - mindfork-rs version 0.9.0». **Клики по контролам GUI не
+  автоматизировались**: контролы Inno (custom VCL) не в дереве UI Automation, а Win32
+  `SendMessage` синхронно блокируется — навигация шла клавишей Enter (кнопка по
+  умолчанию), выбор режима `mode:path` проверен исполнением `[Code]` тихой установкой.
+- **Направление «инсталляторы» — завершено** (этапы 1–3: исследование + предпосылки в
+  коде + Linux-пакеты + Windows-инсталлятор; план переехал в `docs/history/installers.md`).
+  Опц. этап 4 «Подпись» отложен пользователем (приватный репо, нет сайта/иконки). Заделы:
+  winget-манифест (до подписи — portable-zip), AUR `mindfork-rs-bin`, MSI под GPO/Intune
+  при спросе.
 
 ### Отложено за пределы M3
 - **Сворачивание/выделение per-message** и tool-блоки в ленте — сейчас «мысли»

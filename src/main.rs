@@ -33,9 +33,9 @@ fn main() -> ExitCode {
     // создания каталогов (`--help`/`--version` не должны трогать диск — docs/history/i18n-cli.md
     // §3.2). Язык нужен раньше всего, чтобы даже справка и ошибки разбора были на нём.
     let (paths, lang) = match Paths::resolve() {
-        Ok((paths, defaults_present)) => {
+        Ok(paths) => {
             let settings_lang = try_settings_language(&paths.settings_file());
-            let lang = cli_lang(settings_lang, defaults_present, paths.default_language());
+            let lang = cli_lang(settings_lang, paths.default_language());
             (paths, lang)
         }
         // Сбой resolve (реалистично — только битый `defaults.json`): язык неизвестен →
@@ -207,11 +207,14 @@ fn run_tui(paths: &Paths, loc: &Locale) -> anyhow::Result<ExitCode> {
     }));
 
     // Словари спелл-чека грузит сам `runtime` в фоне по настройкам интерфейса
-    // (вкл/выкл + выбор словарей) и перегружает при их изменении.
+    // (вкл/выкл + выбор словарей) и перегружает при их изменении. Резервный каталог
+    // (рядом с бинарником) нужен, когда данные не портативны (`system`/`path`): словари
+    // положены инсталлятором/пакетом рядом с бинарём, а не в корень данных (П1).
     let dict_dir = paths.dictionaries_dir();
+    let bundled_dict_dir = paths.bundled_dictionaries_dir();
     let personal = paths.personal_dictionary();
 
-    let result = app::runtime::run(cmd_tx.clone(), evt_rx, dict_dir, personal);
+    let result = app::runtime::run(cmd_tx.clone(), evt_rx, dict_dir, bundled_dict_dir, personal);
 
     // Останавливаем оркестратор; managed-серверы он гасит сам (kill_on_drop при
     // завершении его задачи). Даём фоновым задачам завершиться.
@@ -225,19 +228,12 @@ fn run_tui(paths: &Paths, loc: &Locale) -> anyhow::Result<ExitCode> {
     result.map(|()| ExitCode::SUCCESS)
 }
 
-/// Язык интерфейса CLI: `settings.json` → `defaults.json` (если присутствует) → `En`.
-/// Полная неопределённость (нет ни того, ни другого) → английский (решение
-/// пользователя): свежий бинарь без конфигурации печатает на международном дефолте.
-/// `default_language` при отсутствии `defaults.json` — это дефолт ланга **каркаса**
-/// (ось A), а не сигнал языка отображения, поэтому в неопределённости он не участвует.
-fn cli_lang(
-    settings_language: Option<Lang>,
-    defaults_present: bool,
-    default_language: Lang,
-) -> Lang {
-    settings_language
-        .or(defaults_present.then_some(default_language))
-        .unwrap_or(Lang::En)
+/// Язык интерфейса CLI: явный из `settings.json` (сильнейший сигнал), иначе —
+/// разрешённый язык умолчаний (`default_language` из `defaults.json`, а при его
+/// отсутствии — определённый по локали ОС в [`Paths::resolve`]). Свежий бинарь без
+/// конфигурации печатает на языке системы (по-английски, если локаль не `ru`).
+fn cli_lang(settings_language: Option<Lang>, default_language: Lang) -> Lang {
+    settings_language.unwrap_or(default_language)
 }
 
 /// Язык интерфейса из `settings.json`, если файл существует и парсится. `None` при
@@ -574,15 +570,14 @@ mod tests {
     use super::*;
 
     #[test]
-    fn cli_lang_prefers_settings_then_defaults_then_en() {
-        // Явный язык из settings.json — сильнейший сигнал.
-        assert_eq!(cli_lang(Some(Lang::Ru), true, Lang::En), Lang::Ru);
-        assert_eq!(cli_lang(Some(Lang::En), false, Lang::Ru), Lang::En);
-        // Нет settings, но defaults.json присутствует → его default_language.
-        assert_eq!(cli_lang(None, true, Lang::Ru), Lang::Ru);
-        assert_eq!(cli_lang(None, true, Lang::En), Lang::En);
-        // Полная неопределённость (нет обоих) → английский.
-        assert_eq!(cli_lang(None, false, Lang::Ru), Lang::En);
+    fn cli_lang_prefers_settings_then_resolved_default() {
+        // Явный язык из settings.json — сильнейший сигнал (перекрывает умолчание).
+        assert_eq!(cli_lang(Some(Lang::Ru), Lang::En), Lang::Ru);
+        assert_eq!(cli_lang(Some(Lang::En), Lang::Ru), Lang::En);
+        // Нет settings → разрешённый язык умолчаний (явный из defaults.json ИЛИ
+        // определённый по локали ОС в Paths::resolve — сюда приходит уже готовым).
+        assert_eq!(cli_lang(None, Lang::Ru), Lang::Ru);
+        assert_eq!(cli_lang(None, Lang::En), Lang::En);
     }
 
     #[test]
