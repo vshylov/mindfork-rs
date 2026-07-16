@@ -33,7 +33,7 @@ jobs:
     name: Собрать пакеты
     runs-on: ubuntu-22.04  # glibc 2.35 — бинарь работает на большинстве дистрибутивов
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - name: Установить тулчейн (из rust-toolchain.toml)
         run: rustup show
       - uses: Swatinem/rust-cache@v2
@@ -49,7 +49,7 @@ jobs:
         run: |
           VERSION="$(grep -m1 '^version' Cargo.toml | sed -E 's/.*"([^"]+)".*/\1/')"
           bash packaging/linux/build-packages.sh target/release/mindfork-rs "$VERSION" dist
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v5
         with:
           name: linux-packages
           path: |
@@ -71,7 +71,7 @@ jobs:
           - archlinux:latest
     container: ${{ matrix.image }}
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v5
         with:
           name: linux-packages
           path: dist
@@ -119,7 +119,7 @@ jobs:
     name: Инсталлятор Windows (компиляция .iss)
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - name: Установить Inno Setup
         run: choco install innosetup --no-progress -y
       - name: Заглушка бинарника + компиляция инсталлятора
@@ -136,7 +136,7 @@ jobs:
           }
           if (-not $iscc) { throw "ISCC.exe не найден" }
           & $iscc "/DAppVersion=0.0.0" "/DBinDir=$PWD\stage" packaging\windows\mindfork.iss
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v5
         with:
           name: windows-installer-ci
           path: dist\*.exe

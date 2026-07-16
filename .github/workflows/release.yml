@@ -29,14 +29,14 @@ jobs:
             artifact: windows
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - name: Установить тулчейн (из rust-toolchain.toml)
         run: rustup show
       - uses: Swatinem/rust-cache@v2
       - name: Сборка релиза
         run: cargo build --release --locked
       - name: Выгрузить бинарник
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: bin-${{ matrix.artifact }}
           path: target/release/${{ matrix.bin }}
@@ -48,9 +48,9 @@ jobs:
     needs: build
     runs-on: ubuntu-22.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - name: Скачать бинарник Linux
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v5
         with:
           name: bin-linux
           path: bin
@@ -65,7 +65,7 @@ jobs:
           VERSION="${GITHUB_REF_NAME#v}"   # напр. v0.9.0 → 0.9.0
           chmod +x bin/mindfork-rs
           bash packaging/linux/build-packages.sh bin/mindfork-rs "$VERSION" dist
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v5
         with:
           name: linux-packages
           path: |
@@ -80,9 +80,9 @@ jobs:
     needs: build
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - name: Скачать бинарник Windows
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v5
         with:
           name: bin-windows
           path: bin
@@ -99,7 +99,7 @@ jobs:
           }
           if (-not $iscc) { throw "ISCC.exe не найден" }
           & $iscc "/DAppVersion=$ver" "/DBinDir=$PWD\bin" packaging\windows\mindfork.iss
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v5
         with:
           name: windows-installer
           path: dist\*.exe
@@ -112,9 +112,9 @@ jobs:
     permissions:
       contents: write        # нужно gh release create
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - name: Скачать бинарники
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v5
         with:
           path: artifacts
       - name: Собрать архивы + sha256 + ноты
