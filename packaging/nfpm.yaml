@@ -1,0 +1,76 @@
+# nfpm-конфиг для Linux-пакетов: один файл → deb + rpm + archlinux (.pkg.tar.zst)
+# через `nfpm package --packager deb|rpm|archlinux`. Раскладка — §4.2
+# docs/history/installers.md.
+#
+# Ключевое: реальный бинарь кладётся НЕ в /usr/bin (туда нельзя класть соседние
+# данные — FHS/Debian Policy), а в /usr/lib/mindfork-rs/ рядом с defaults.json и
+# словарями; из /usr/bin туда ведёт симлинк. `std::env::current_exe()` на Linux
+# резолвит симлинк в реальный путь (/proc/self/exe), поэтому приложение находит
+# соседние ресурсы — правок кода не требуется. Словари при mode=system в каталоге
+# данных отсутствуют → берутся из /usr/lib/mindfork-rs/data/dictionaries (fallback П1).
+#
+# Версию и путь к бинарнику подставляет packaging/linux/build-packages.sh через env.
+name: mindfork-rs
+arch: amd64
+platform: linux
+version: "${VERSION}"
+release: "1"
+section: utils
+priority: optional
+maintainer: "Vladimir Shylov <vladimir.shylov@outlook.com>"
+vendor: "Vladimir Shylov"
+homepage: "https://github.com/vshylov/mindfork-rs"
+license: "MIT"
+description: |
+  Console (TUI) AI chat application.
+  Local models (Gemma/Qwen via llama.cpp) and cloud providers (OpenAI,
+  Gemini, Anthropic). Notes/RAG memory, client-side tools, multi-language UI.
+
+# Зависимости заданы вручную — nfpm их не вычисляет. Стек: rustls (без OpenSSL) +
+# bundled SQLite + x11rb (буфер обмена) → фактическая зависимость лишь glibc.
+overrides:
+  deb:
+    depends:
+      - libc6 (>= 2.35)
+  # rpm/archlinux: glibc — часть базовой системы, явно не указываем.
+
+contents:
+  # Реальный бинарь (сайдкар в /usr/lib/<pkg>/, не в /usr/bin).
+  - src: ./dist/stage/mindfork-rs
+    dst: /usr/lib/mindfork-rs/mindfork-rs
+    file_info:
+      mode: 0755
+
+  # Вендорское умолчание установки: данные — в стандартной ОС-папке пользователя
+  # (~/.local/share/mindfork-rs). config|noreplace → правка пользователя переживёт
+  # апгрейд (deb-conffile / rpm %config(noreplace) / pacman backup).
+  - src: ./packaging/linux/defaults.json
+    dst: /usr/lib/mindfork-rs/defaults.json
+    type: "config|noreplace"
+    file_info:
+      mode: 0644
+
+  # Словари спелл-чека (портативная раскладка рядом с бинарём — резерв П1).
+  - src: ./dictionaries/*.aff
+    dst: /usr/lib/mindfork-rs/data/dictionaries/
+    file_info:
+      mode: 0644
+  - src: ./dictionaries/*.dic
+    dst: /usr/lib/mindfork-rs/data/dictionaries/
+    file_info:
+      mode: 0644
+
+  # Пользовательская точка входа: симлинк из PATH на реальный бинарь.
+  - src: /usr/lib/mindfork-rs/mindfork-rs
+    dst: /usr/bin/mindfork-rs
+    type: symlink
+
+  # Документация.
+  - src: ./README.md
+    dst: /usr/share/doc/mindfork-rs/README.md
+  - src: ./CHANGELOG.md
+    dst: /usr/share/doc/mindfork-rs/CHANGELOG.md
+  - src: ./LICENSE
+    dst: /usr/share/doc/mindfork-rs/LICENSE
+  - src: ./docs/install.md
+    dst: /usr/share/doc/mindfork-rs/install.md

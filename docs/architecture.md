@@ -299,7 +299,8 @@ src/
    ├─ server.rs            ServerStatus (статус сервера для UI)
    ├─ sandbox.rs           SandboxRunner (за трейтом) + WasmerSandbox: сайдкар `wasmer`
    │                       для `python_exec` в режиме песочницы (WASIX-изоляция, §8)
-   ├─ paths.rs             расположение данных (defaults.json) + язык каркаса новых профилей (Lang)
+   ├─ paths.rs             расположение данных (defaults.json) + язык каркаса/интерфейса
+   │                       (Option<Lang>: явный или по локали ОС) + резерв словарей рядом с бинарём
    ├─ instance.rs          single-instance
    └─ logging.rs           tracing в файл (stdout занят TUI)
 ```

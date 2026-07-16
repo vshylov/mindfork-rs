@@ -1,0 +1,141 @@
+# Валидация упаковки на PR и push в main. Linux: собирает пакеты (deb/rpm/archlinux)
+# через nfpm и проверяет установку в контейнерах Ubuntu/Fedora/Arch (смоук: раскладка +
+# запуск `--version` под обычным пользователем). Windows: компилирует Inno Setup-скрипт
+# инсталлятора (проверка синтаксиса .iss + [Code], без реальной сборки бинарника).
+# Реальный публичный релиз собирает и прикладывает артефакты отдельно — release.yml.
+# См. docs/history/installers.md §8.
+name: Packaging
+
+on:
+  pull_request:
+    paths:
+      - "packaging/**"
+      - ".github/workflows/packaging.yml"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - "dictionaries/**"
+  push:
+    branches: [main]
+    paths:
+      - "packaging/**"
+      - ".github/workflows/packaging.yml"
+  workflow_dispatch:
+
+concurrency:
+  group: packaging-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+    name: Собрать пакеты
+    runs-on: ubuntu-22.04  # glibc 2.35 — бинарь работает на большинстве дистрибутивов
+    steps:
+      - uses: actions/checkout@v4
+      - name: Установить тулчейн (из rust-toolchain.toml)
+        run: rustup show
+      - uses: Swatinem/rust-cache@v2
+      - name: Сборка релиза
+        run: cargo build --release --locked
+      - name: Установить nfpm
+        run: |
+          echo 'deb [trusted=yes] https://repo.goreleaser.com/apt/ /' \
+            | sudo tee /etc/apt/sources.list.d/goreleaser.list
+          sudo apt-get update
+          sudo apt-get install -y nfpm
+      - name: Собрать deb/rpm/archlinux
+        run: |
+          VERSION="$(grep -m1 '^version' Cargo.toml | sed -E 's/.*"([^"]+)".*/\1/')"
+          bash packaging/linux/build-packages.sh target/release/mindfork-rs "$VERSION" dist
+      - uses: actions/upload-artifact@v4
+        with:
+          name: linux-packages
+          path: |
+            dist/*.deb
+            dist/*.rpm
+            dist/*.pkg.tar.zst
+          if-no-files-found: error
+
+  smoke:
+    name: Смоук установки (${{ matrix.image }})
+    needs: build
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        image:
+          - ubuntu:24.04
+          - fedora:latest
+          - archlinux:latest
+    container: ${{ matrix.image }}
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: linux-packages
+          path: dist
+      - name: Установить пакет и проверить раскладку
+        shell: sh
+        run: |
+          set -eu
+          # Установка нужным менеджером по наличию бинарника.
+          if command -v apt-get >/dev/null 2>&1; then
+            apt-get update -qq
+            apt-get install -y ./dist/*.deb
+          elif command -v dnf >/dev/null 2>&1; then
+            dnf install -y ./dist/*.rpm
+          elif command -v pacman >/dev/null 2>&1; then
+            pacman -U --noconfirm ./dist/*.pkg.tar.zst
+          else
+            echo "нет поддерживаемого пакетного менеджера"; exit 1
+          fi
+
+          # Раскладка: реальный бинарь + defaults.json + словари в /usr/lib/<pkg>/.
+          test -f /usr/lib/mindfork-rs/mindfork-rs
+          test -f /usr/lib/mindfork-rs/defaults.json
+          test -d /usr/lib/mindfork-rs/data/dictionaries
+          ls /usr/lib/mindfork-rs/data/dictionaries/*.dic >/dev/null
+
+          # Симлинк из PATH резолвится в реальный бинарь → рядом виден defaults.json.
+          real="$(readlink -f /usr/bin/mindfork-rs)"
+          test "$real" = /usr/lib/mindfork-rs/mindfork-rs
+          test -f "$(dirname "$real")/defaults.json"
+          grep -q '"mode"' /usr/lib/mindfork-rs/defaults.json
+
+          # Запуск под обычным (не root) пользователем: бинарь исполним, ресурсы
+          # читаемы. `--version` — peek-фаза, каталогов данных не создаёт.
+          if command -v useradd >/dev/null 2>&1; then
+            useradd -m tester
+            su tester -c 'mindfork-rs --version'
+          else
+            mindfork-rs --version
+          fi
+          echo "СМОУК OK: ${{ matrix.image }}"
+
+  windows-installer:
+    name: Инсталлятор Windows (компиляция .iss)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Установить Inno Setup
+        run: choco install innosetup --no-progress -y
+      - name: Заглушка бинарника + компиляция инсталлятора
+        shell: pwsh
+        run: |
+          # Реальный бинарник тут не собираем — проверяем только, что .iss (и его
+          # Pascal-код) компилируется. Заглушка удовлетворяет [Files].
+          New-Item -ItemType Directory -Force stage | Out-Null
+          Set-Content -Path stage\mindfork-rs.exe -Value "dummy"
+          $iscc = (Get-Command ISCC.exe -ErrorAction SilentlyContinue).Source
+          if (-not $iscc) {
+            $iscc = Get-ChildItem "C:\Program Files*\Inno Setup*\ISCC.exe" -ErrorAction SilentlyContinue |
+                    Select-Object -First 1 -ExpandProperty FullName
+          }
+          if (-not $iscc) { throw "ISCC.exe не найден" }
+          & $iscc "/DAppVersion=0.0.0" "/DBinDir=$PWD\stage" packaging\windows\mindfork.iss
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows-installer-ci
+          path: dist\*.exe
+          if-no-files-found: error

@@ -42,9 +42,72 @@ jobs:
           path: target/release/${{ matrix.bin }}
           if-no-files-found: error
 
+  # Linux-пакеты из уже собранного бинарника (bin-linux) через nfpm.
+  linux-packages:
+    name: Linux-пакеты (deb/rpm/archlinux)
+    needs: build
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Скачать бинарник Linux
+        uses: actions/download-artifact@v4
+        with:
+          name: bin-linux
+          path: bin
+      - name: Установить nfpm
+        run: |
+          echo 'deb [trusted=yes] https://repo.goreleaser.com/apt/ /' \
+            | sudo tee /etc/apt/sources.list.d/goreleaser.list
+          sudo apt-get update
+          sudo apt-get install -y nfpm
+      - name: Собрать пакеты
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"   # напр. v0.9.0 → 0.9.0
+          chmod +x bin/mindfork-rs
+          bash packaging/linux/build-packages.sh bin/mindfork-rs "$VERSION" dist
+      - uses: actions/upload-artifact@v4
+        with:
+          name: linux-packages
+          path: |
+            dist/*.deb
+            dist/*.rpm
+            dist/*.pkg.tar.zst
+          if-no-files-found: error
+
+  # Windows-инсталлятор (Inno Setup) из уже собранного бинарника (bin-windows).
+  windows-installer:
+    name: Windows-инсталлятор (Inno Setup)
+    needs: build
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Скачать бинарник Windows
+        uses: actions/download-artifact@v4
+        with:
+          name: bin-windows
+          path: bin
+      - name: Установить Inno Setup
+        run: choco install innosetup --no-progress -y
+      - name: Скомпилировать инсталлятор
+        shell: pwsh
+        run: |
+          $ver = "${env:GITHUB_REF_NAME}" -replace '^v', ''   # v0.9.0 → 0.9.0
+          $iscc = (Get-Command ISCC.exe -ErrorAction SilentlyContinue).Source
+          if (-not $iscc) {
+            $iscc = Get-ChildItem "C:\Program Files*\Inno Setup*\ISCC.exe" -ErrorAction SilentlyContinue |
+                    Select-Object -First 1 -ExpandProperty FullName
+          }
+          if (-not $iscc) { throw "ISCC.exe не найден" }
+          & $iscc "/DAppVersion=$ver" "/DBinDir=$PWD\bin" packaging\windows\mindfork.iss
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows-installer
+          path: dist\*.exe
+          if-no-files-found: error
+
   release:
     name: Публикация релиза
-    needs: build
+    needs: [build, linux-packages, windows-installer]
     runs-on: ubuntu-22.04
     permissions:
       contents: write        # нужно gh release create
@@ -87,7 +150,12 @@ jobs:
           stage_data stage-win
           (cd stage-win && zip -qr "../dist/mindfork-rs-${TAG}-x86_64-windows.zip" .)
 
-          # Контрольные суммы (по обоим архивам).
+          # Linux-пакеты (deb/rpm/archlinux) и Windows-инсталлятор, собранные
+          # отдельными job'ами.
+          cp artifacts/linux-packages/* dist/
+          cp artifacts/windows-installer/* dist/
+
+          # Контрольные суммы (по всем артефактам: архивы + пакеты + инсталлятор).
           (cd dist && sha256sum ./* > sha256sums.txt)
 
           # Ноты релиза = раздел CHANGELOG для этой версии (без заголовка).

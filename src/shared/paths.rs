@@ -70,7 +70,8 @@ impl DataLocation {
 /// Установочные умолчания из файла `defaults.json` рядом с бинарником: режим хранения
 /// данных (`mode`/`path`, плоско — совместимо со старым `location.json`) **и** язык
 /// служебного каркаса новых профилей (`default_language`, ось A — docs/history/i18n.md).
-/// Заполняется инсталлятором (или вручную). Отсутствие полей → дефолты (портативно, `ru`).
+/// Заполняется инсталлятором (или вручную). Отсутствие полей → дефолты (портативно, язык
+/// определяется по локали ОС — см. [`Paths::resolve`]).
 #[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub struct Defaults {
     /// Режим хранения (плоско в JSON: `mode`/`path` на верхнем уровне — байт-совместимо
@@ -78,25 +79,28 @@ pub struct Defaults {
     #[serde(flatten, default)]
     pub location: DataLocation,
     /// Язык служебного каркаса, на котором создаётся **первый** профиль (bootstrap) и
-    /// новые профили. Не язык интерфейса и не язык ответа модели. См. docs/history/i18n.md.
+    /// новые профили, **и** язык интерфейса при свежей установке. Не язык ответа модели.
+    /// `Some(..)` — задан инсталлятором явно (Windows); `None` (поле отсутствует —
+    /// напр. deb/rpm-пакет пишет только `{"mode":"system"}`, §4.3 installers.md) →
+    /// [`Paths::resolve`] определяет язык по локали ОС. См. docs/history/i18n.md.
     #[serde(default)]
-    pub default_language: Lang,
+    pub default_language: Option<Lang>,
+}
+
+/// Отбрасывает ведущий UTF-8 BOM (`EF BB BF`), если он есть. Инсталляторы и редакторы
+/// (Pascal-хелперы Inno, ряд Windows-редакторов) могут записать `defaults.json` с BOM —
+/// `serde_json::from_slice` на нём падает. Прецеденты отбрасывания в проекте:
+/// `rag_ingest::read_text`, импортёр LameLLaMA.
+fn strip_bom(bytes: &[u8]) -> &[u8] {
+    bytes.strip_prefix(&[0xEF, 0xBB, 0xBF]).unwrap_or(bytes)
 }
 
 impl Defaults {
-    /// Присутствует ли файл умолчаний (`defaults.json`) или устаревший `location.json`
-    /// рядом с бинарником. Нужно, чтобы отличить «инсталлятор задал язык» от «свежий
-    /// бинарь без конфигурации» при выборе языка CLI (docs/history/i18n-cli.md §3.1): при
-    /// отсутствии обоих serde-дефолт `default_language=Ru` — это дефолт ланга **каркаса**
-    /// (ось A), а не сигнал языка отображения, поэтому язык CLI падает до `En`.
-    pub fn marker_present(exe_dir: &Path) -> bool {
-        exe_dir.join(DEFAULTS_MARKER).exists() || exe_dir.join(LEGACY_LOCATION_MARKER).exists()
-    }
-
     /// Читает установочные умолчания рядом с бинарником: сначала `defaults.json`, при
-    /// его отсутствии — устаревший `location.json` (только режим хранения; язык =
-    /// дефолт). Нет обоих/пустой файл → дефолты. Повреждённый JSON — **ошибка** (а не
-    /// молчаливый откат), чтобы опечатка не увела на пустой набор данных не туда.
+    /// его отсутствии — устаревший `location.json` (только режим хранения; язык = `None`).
+    /// Нет обоих/пустой файл → дефолты. Повреждённый JSON — **ошибка** (а не молчаливый
+    /// откат), чтобы опечатка не увела на пустой набор данных не туда. Ведущий UTF-8 BOM
+    /// отбрасывается ([`strip_bom`]).
     pub fn read(exe_dir: &Path) -> Result<Self> {
         let primary = exe_dir.join(DEFAULTS_MARKER);
         let marker = if primary.exists() {
@@ -107,9 +111,15 @@ impl Defaults {
         // Контексты на английском: `Defaults::read` вызывается из `Paths::resolve` до
         // определения языка CLI (docs/history/i18n-cli.md §7 — граница «до знания языка»).
         match std::fs::read(&marker) {
-            Ok(bytes) if bytes.iter().all(u8::is_ascii_whitespace) => Ok(Self::default()),
-            Ok(bytes) => serde_json::from_slice(&bytes)
-                .with_context(|| format!("parsing defaults file {}", marker.display())),
+            Ok(bytes) => {
+                let bytes = strip_bom(&bytes);
+                if bytes.iter().all(u8::is_ascii_whitespace) {
+                    Ok(Self::default())
+                } else {
+                    serde_json::from_slice(bytes)
+                        .with_context(|| format!("parsing defaults file {}", marker.display()))
+                }
+            }
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(Self::default()),
             Err(e) => Err(e).with_context(|| format!("reading defaults file {}", marker.display())),
         }
@@ -125,27 +135,36 @@ impl Defaults {
 pub struct Paths {
     root: PathBuf,
     default_language: Lang,
+    /// Каталог исполняемого файла (на Linux — реальный путь: `current_exe` резолвит
+    /// `/proc/self/exe`, т.е. цель симлинка `/usr/bin/…` → `/usr/lib/<pkg>/…`). Нужен,
+    /// чтобы найти read-only ресурсы, положенные рядом с бинарником (словари, §4.2
+    /// installers.md), когда корень данных — не портативный (`system`/`path`). `None` в
+    /// тестах (`with_root`).
+    exe_dir: Option<PathBuf>,
 }
 
 impl Paths {
     /// Вычисляет корень данных и умолчания по файлу `defaults.json` рядом с бинарником
     /// (fallback — устаревший `location.json`) **без создания каталогов** — для ранней
     /// «peek»-фазы CLI, где нужно узнать язык/корень до разбора аргументов, но `--help`
-    /// не должен трогать диск (docs/history/i18n-cli.md §3.2). Возвращает пути и признак
-    /// «файл умолчаний присутствовал» (для выбора языка CLI — см. [`Defaults::marker_present`]).
-    /// Создание каталогов — отдельно [`Paths::ensure_dirs`].
-    pub fn resolve() -> Result<(Self, bool)> {
+    /// не должен трогать диск (docs/history/i18n-cli.md §3.2). Язык каркаса/интерфейса:
+    /// явный из `defaults.json` (`Some`) или определённый по локали ОС (`None` — свежая
+    /// установка, §4.3 installers.md). Создание каталогов — отдельно [`Paths::ensure_dirs`].
+    pub fn resolve() -> Result<Self> {
         let exe = std::env::current_exe().context("cannot resolve current executable path")?;
         let exe_dir = exe
             .parent()
-            .context("cannot determine executable directory")?;
+            .context("cannot determine executable directory")?
+            .to_path_buf();
 
-        let present = Defaults::marker_present(exe_dir);
-        let defaults = Defaults::read(exe_dir)?;
-        let root = defaults.location.root_dir(exe_dir)?;
+        let defaults = Defaults::read(&exe_dir)?;
+        let root = defaults.location.root_dir(&exe_dir)?;
         let mut paths = Self::with_root(root);
-        paths.default_language = defaults.default_language;
-        Ok((paths, present))
+        paths.default_language = defaults
+            .default_language
+            .unwrap_or_else(crate::shared::i18n::detect_os_language);
+        paths.exe_dir = Some(exe_dir);
+        Ok(paths)
     }
 
     /// Создаёт каталоги данных (корень + каталог внешних локалей). Вызывается перед
@@ -161,11 +180,12 @@ impl Paths {
     }
 
     /// Создаёт набор путей от произвольного корня (используется в тестах). Язык
-    /// каркаса новых профилей — дефолт (`ru`).
+    /// каркаса новых профилей — дефолт (`ru`); каталог бинарника неизвестен (`None`).
     pub fn with_root(root: impl Into<PathBuf>) -> Self {
         Self {
             root: root.into(),
             default_language: Lang::default(),
+            exe_dir: None,
         }
     }
 
@@ -205,9 +225,21 @@ impl Paths {
         self.root.join("data.db")
     }
 
-    /// Каталог Hunspell-словарей (`dictionaries/`).
+    /// Каталог Hunspell-словарей (`dictionaries/`) в корне данных.
     pub fn dictionaries_dir(&self) -> PathBuf {
         self.root.join("dictionaries")
+    }
+
+    /// Резервный каталог словарей в **портативной раскладке рядом с бинарником**
+    /// (`<exe_dir>/data/dictionaries`) — источник read-only ресурсов, положенных
+    /// инсталлятором/пакетом, когда корень данных не портативный (`system`/`path`) и
+    /// словарей в нём нет. В портативном режиме совпадает с [`dictionaries_dir`]
+    /// (fallback ничего не добавляет — дубли отсеиваются по имени). `None`, когда
+    /// каталог бинарника неизвестен (тесты). См. §4.2 / П1 docs/history/installers.md.
+    pub fn bundled_dictionaries_dir(&self) -> Option<PathBuf> {
+        self.exe_dir
+            .as_ref()
+            .map(|d| d.join(PORTABLE_DATA_SUBDIR).join("dictionaries"))
     }
 
     /// Каталог внешних локалей (`locales/`): `<code>.json` переопределяет вшитый бандл
@@ -372,21 +404,32 @@ mod tests {
                 path: "D:\\data".into()
             }
         );
-        assert_eq!(d.default_language, Lang::En);
+        assert_eq!(d.default_language, Some(Lang::En));
     }
 
     #[test]
-    fn defaults_missing_is_portable_ru() {
+    fn defaults_missing_has_no_explicit_language() {
+        // Нет файла → дефолты: портативно + язык не задан (определится по локали ОС).
         let dir = tempfile::tempdir().unwrap();
         let d = Defaults::read(dir.path()).unwrap();
         assert_eq!(d, Defaults::default());
         assert_eq!(d.location, DataLocation::Portable);
-        assert_eq!(d.default_language, Lang::Ru);
+        assert_eq!(d.default_language, None);
+    }
+
+    #[test]
+    fn defaults_without_language_field_is_none() {
+        // Пакет пишет только режим (§4.3 installers.md) → язык None → детект по локали.
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join(DEFAULTS_MARKER), r#"{"mode":"system"}"#).unwrap();
+        let d = Defaults::read(dir.path()).unwrap();
+        assert_eq!(d.location, DataLocation::System);
+        assert_eq!(d.default_language, None);
     }
 
     #[test]
     fn defaults_falls_back_to_legacy_location_marker() {
-        // Нет defaults.json → читается старый location.json (только режим; язык дефолт).
+        // Нет defaults.json → читается старый location.json (только режим; язык None).
         let dir = tempfile::tempdir().unwrap();
         std::fs::write(
             dir.path().join(LEGACY_LOCATION_MARKER),
@@ -395,7 +438,7 @@ mod tests {
         .unwrap();
         let d = Defaults::read(dir.path()).unwrap();
         assert_eq!(d.location, DataLocation::System);
-        assert_eq!(d.default_language, Lang::Ru);
+        assert_eq!(d.default_language, None);
     }
 
     #[test]
@@ -413,7 +456,19 @@ mod tests {
         .unwrap();
         let d = Defaults::read(dir.path()).unwrap();
         assert_eq!(d.location, DataLocation::Portable);
-        assert_eq!(d.default_language, Lang::En);
+        assert_eq!(d.default_language, Some(Lang::En));
+    }
+
+    #[test]
+    fn defaults_tolerates_utf8_bom() {
+        // Инсталлятор/редактор мог записать файл с BOM — не должен ронять запуск (П3).
+        let dir = tempfile::tempdir().unwrap();
+        let mut bytes = vec![0xEF, 0xBB, 0xBF];
+        bytes.extend_from_slice(br#"{"mode":"system","default_language":"en"}"#);
+        std::fs::write(dir.path().join(DEFAULTS_MARKER), bytes).unwrap();
+        let d = Defaults::read(dir.path()).unwrap();
+        assert_eq!(d.location, DataLocation::System);
+        assert_eq!(d.default_language, Some(Lang::En));
     }
 
     #[test]
@@ -426,5 +481,11 @@ mod tests {
     #[test]
     fn with_root_defaults_to_ru_language() {
         assert_eq!(Paths::with_root("r").default_language(), Lang::Ru);
+    }
+
+    #[test]
+    fn with_root_has_no_bundled_dictionaries() {
+        // Каталог бинарника неизвестен в тестовом конструкторе → fallback-словарей нет.
+        assert_eq!(Paths::with_root("r").bundled_dictionaries_dir(), None);
     }
 }

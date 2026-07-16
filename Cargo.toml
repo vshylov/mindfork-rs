@@ -36,6 +36,9 @@ sha2 = "0.10"
 single-instance = "0.3.3"
 spellbook = "0.4.2"
 sqlite-vec = "0.1.9"
+# Определение языка по локали ОС при свежей установке (нет defaults.json/settings.json).
+# Кросс-платформенный (Windows/Linux), чистый Rust. См. shared/i18n::detect_os_language.
+sys-locale = "0.3"
 syntect = "5.3.0"
 # Распаковка tar-архива `wasmer` (см. flate2 выше). Чистый Rust.
 tar = "0.4"

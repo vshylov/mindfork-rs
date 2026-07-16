@@ -134,7 +134,7 @@ fn collect_press_drops_release_events() {
 #[test]
 fn spell_loader_reloads_only_on_change() {
     let dir = tempfile::tempdir().unwrap();
-    let mut loader = SpellLoader::new(dir.path().to_path_buf(), dir.path().join("p.txt"));
+    let mut loader = SpellLoader::new(dir.path().to_path_buf(), None, dir.path().join("p.txt"));
 
     loader.maybe_reload(true, &[]);
     assert_eq!(loader.generation, 1);

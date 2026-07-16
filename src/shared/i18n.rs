@@ -189,6 +189,28 @@ fn sort_langs(v: &mut [Lang]) {
     });
 }
 
+/// Язык по строке локали ОС (напр. `"ru-RU"`, `"en_US.UTF-8"`): берётся первичный
+/// субтег (до `-`/`_`/`.`), `ru` → [`Lang::Ru`], всё прочее (в т.ч. `None`) → [`Lang::En`]
+/// как международный дефолт. Вынесено чистой функцией ради тестируемости (сам вызов
+/// `get_locale` от ОС не воспроизводим в тесте). Внешние языки (Ярус 3) здесь пока не
+/// распознаются — реестр на момент вызова ([`Paths::resolve`] в peek-фазе) ещё не
+/// инициализирован; расширение — задел (docs/roadmap.md, «Определение языка по локали ОС»).
+pub fn lang_for_locale(locale: Option<&str>) -> Lang {
+    let primary = locale.and_then(|l| l.split(['-', '_', '.']).next());
+    match primary.map(str::to_ascii_lowercase).as_deref() {
+        Some("ru") => Lang::Ru,
+        _ => Lang::En,
+    }
+}
+
+/// Язык интерфейса по локали ОС — для свежей установки без `defaults.json`/`settings.json`
+/// (голый портативный zip, deb/rpm-пакет, где выбор языка при установке невозможен, §4.3
+/// docs/history/installers.md). Делегирует [`lang_for_locale`]; при недоступной локали —
+/// `En`.
+pub fn detect_os_language() -> Lang {
+    lang_for_locale(sys_locale::get_locale().as_deref())
+}
+
 /// Загруженный бандл одного языка: плоская таблица «ключ → текст».
 pub struct Locale {
     lang: Lang,
@@ -626,6 +648,19 @@ mod tests {
         for &lang in Lang::ALL {
             let _ = locale(lang);
         }
+    }
+
+    #[test]
+    fn lang_for_locale_maps_primary_subtag() {
+        // Русская локаль в разных формах → Ru; всё прочее и None → En (межд. дефолт).
+        assert_eq!(lang_for_locale(Some("ru")), Lang::Ru);
+        assert_eq!(lang_for_locale(Some("ru-RU")), Lang::Ru);
+        assert_eq!(lang_for_locale(Some("ru_RU.UTF-8")), Lang::Ru);
+        assert_eq!(lang_for_locale(Some("RU")), Lang::Ru);
+        assert_eq!(lang_for_locale(Some("en-US")), Lang::En);
+        assert_eq!(lang_for_locale(Some("de-DE")), Lang::En);
+        assert_eq!(lang_for_locale(Some("")), Lang::En);
+        assert_eq!(lang_for_locale(None), Lang::En);
     }
 
     #[test]
