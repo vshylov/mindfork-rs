@@ -32,8 +32,9 @@ pub enum CliCommand {
     },
     /// Восстановить из резервной копии (`restore <archive>`).
     Restore { archive: PathBuf },
-    /// Импорт данных LameLLaMA (`import-lamellama <dir>`).
-    ImportLamellama { dir: PathBuf },
+    /// Импорт из файла формата mindfork-import (`import <file>`).
+    /// Спецификация формата — docs/import-format.md.
+    Import { file: PathBuf },
     /// Установка песочницы Python (`sandbox setup [--force]`).
     SandboxSetup { force: bool },
     /// Экспорт бандла локали (`locales export <code> --output <file>`).
@@ -49,7 +50,7 @@ pub enum CliCommand {
 pub enum HelpTopic {
     Backup,
     Restore,
-    ImportLamellama,
+    Import,
     Sandbox,
     SandboxSetup,
     Locales,
@@ -68,7 +69,11 @@ pub fn parse(args: &[String], loc: &Locale) -> Result<CliCommand, String> {
         "-V" | "--version" => Ok(CliCommand::Version),
         "backup" => parse_backup(rest, loc),
         "restore" => parse_restore(rest, loc),
-        "import-lamellama" => parse_import(rest, loc),
+        "import" => parse_import(rest, loc),
+        // Команда удалена (этап 1 направления «плагины»): импорт LameLLaMA теперь
+        // выполняет внешний конвертер, эмитящий файл mindfork-import. Подсказываем
+        // замену вместо генерического «неизвестная команда».
+        "import-lamellama" => Err(err_line(loc, "cli.import.lamellama_removed", &[])),
         "sandbox" => parse_sandbox(rest, loc),
         "locales" => parse_locales(rest, loc),
         other if other.starts_with('-') => Err(unknown_option(loc, other)),
@@ -114,12 +119,12 @@ fn parse_restore(toks: &[&str], loc: &Locale) -> Result<CliCommand, String> {
 }
 
 fn parse_import(toks: &[&str], loc: &Locale) -> Result<CliCommand, String> {
-    match single_positional(toks, loc, HelpTopic::ImportLamellama, "<dir>")? {
+    match single_positional(toks, loc, HelpTopic::Import, "<file>")? {
         Positional::Help => Ok(CliCommand::Help {
-            topic: Some(HelpTopic::ImportLamellama),
+            topic: Some(HelpTopic::Import),
         }),
-        Positional::Value(dir) => Ok(CliCommand::ImportLamellama {
-            dir: PathBuf::from(dir),
+        Positional::Value(file) => Ok(CliCommand::Import {
+            file: PathBuf::from(file),
         }),
     }
 }
@@ -332,7 +337,7 @@ pub fn render_help(topic: Option<HelpTopic>, loc: &Locale) -> String {
             cb = loc.t("cli.help.cmd.backup"),
             r = "  restore",
             cr = loc.t("cli.help.cmd.restore"),
-            im = "  import-lamellama",
+            im = "  import",
             ci = loc.t("cli.help.cmd.import"),
             sb = "  sandbox",
             cs = loc.t("cli.help.cmd.sandbox"),
@@ -359,12 +364,12 @@ pub fn render_help(topic: Option<HelpTopic>, loc: &Locale) -> String {
             a = "  <ARCHIVE>",
             ca = loc.t("cli.help.arg.restore.archive"),
         ),
-        Some(HelpTopic::ImportLamellama) => format!(
-            "{d}\n\n{usage} mindfork-rs import-lamellama <DIR>\n\n{arguments}\n\
+        Some(HelpTopic::Import) => format!(
+            "{d}\n\n{usage} mindfork-rs import <FILE>\n\n{arguments}\n\
              {a:<12}{ca}",
             d = loc.t("cli.help.cmd.import"),
-            a = "  <DIR>",
-            ca = loc.t("cli.help.arg.import.dir"),
+            a = "  <FILE>",
+            ca = loc.t("cli.help.arg.import.file"),
         ),
         Some(HelpTopic::Sandbox) => format!(
             "{d}\n\n{usage} mindfork-rs sandbox <COMMAND>\n\n{commands}\n{s:<12}{cs}",
@@ -469,14 +474,23 @@ mod tests {
     }
 
     #[test]
-    fn import_requires_dir() {
+    fn import_requires_file() {
         assert_eq!(
-            p(&["import-lamellama", "d"]).unwrap(),
-            CliCommand::ImportLamellama {
-                dir: PathBuf::from("d")
+            p(&["import", "f.json"]).unwrap(),
+            CliCommand::Import {
+                file: PathBuf::from("f.json")
             }
         );
-        assert!(p(&["import-lamellama"]).is_err());
+        assert!(p(&["import"]).is_err());
+    }
+
+    #[test]
+    fn import_lamellama_hints_replacement() {
+        // Удалённая команда даёт подсказку про внешний конвертер + `import`,
+        // а не генерическое «неизвестная команда».
+        let err = p(&["import-lamellama", "d"]).unwrap_err();
+        assert!(err.contains("import"), "{err}");
+        assert!(err.contains("mindfork-import"), "{err}");
     }
 
     #[test]
@@ -546,7 +560,7 @@ mod tests {
             None,
             Some(HelpTopic::Backup),
             Some(HelpTopic::Restore),
-            Some(HelpTopic::ImportLamellama),
+            Some(HelpTopic::Import),
             Some(HelpTopic::Sandbox),
             Some(HelpTopic::SandboxSetup),
             Some(HelpTopic::Locales),
@@ -568,9 +582,9 @@ mod tests {
         // Регрессия: самое длинное имя команды/опции не должно слипаться с описанием
         // (ширина колонки > длины имени). Гэп языко-независим — проверяем на ru.
         let loc = locale(Lang::Ru);
-        // Общая справка: `import-lamellama` — самое длинное имя команды.
+        // Общая справка: `restore`/`sandbox`/`locales` — самые длинные имена команд.
         assert!(
-            render_help(None, loc).contains("import-lamellama  "),
+            render_help(None, loc).contains("restore  "),
             "имя команды слиплось с описанием"
         );
         // Экспорт локали: `-o, --output <FILE>` — самая длинная опция.

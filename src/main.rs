@@ -114,8 +114,8 @@ fn real_main(
     }
 
     match command {
-        CliCommand::ImportLamellama { dir } => {
-            run_import(paths, &dir, loc)?;
+        CliCommand::Import { file } => {
+            run_import(paths, &file, loc)?;
             Ok(ExitCode::SUCCESS)
         }
         CliCommand::Backup {
@@ -465,17 +465,17 @@ fn run_locales_export(code: &str, output: &Path, loc: &Locale) -> anyhow::Result
     Ok(())
 }
 
-/// Одноразовый импорт данных LameLLaMA (.NET) в хранилище mindfork (spec §12.2).
-/// Идемпотентно (детерминированные id), исходные файлы только читаются. Вывод —
-/// в stdout (TUI не запущен), не в лог.
-fn run_import(paths: &Paths, dir: &Path, loc: &Locale) -> anyhow::Result<()> {
+/// Одноразовый импорт из файла формата mindfork-import (spec §12.2,
+/// docs/import-format.md). Идемпотентно (детерминированные id), исходный файл
+/// только читается. Вывод — в stdout (TUI не запущен), не в лог.
+fn run_import(paths: &Paths, file: &Path, loc: &Locale) -> anyhow::Result<()> {
     // Существующие данные могут требовать миграции (или быть из более новой версии) —
     // мигрируем перед открытием хранилища, как при обычном старте (release-engineering.md §3.4).
     features::data_migration::run(paths, loc)?;
     let storage =
         Storage::open(paths.clone()).with_context(|| loc.t("cli.ctx.open_storage").to_string())?;
-    let result = features::migration::import_dir(dir, loc)
-        .with_context(|| loc.tf("cli.ctx.import", &[("dir", &dir.display().to_string())]))?;
+    let result = features::import::import_file(file, loc)
+        .with_context(|| loc.tf("cli.ctx.import", &[("file", &file.display().to_string())]))?;
 
     for profile in &result.profiles {
         storage.json().upsert_profile(profile)?;
@@ -484,15 +484,22 @@ fn run_import(paths: &Paths, dir: &Path, loc: &Locale) -> anyhow::Result<()> {
         storage.json().save_chat(chat)?;
     }
 
-    // Переносим глобальный семплинг и настройки интерфейса источника.
+    // Переносим глобальные настройки источника (только заданные поля — частичный
+    // перенос не затирает настройки пользователя).
     let mut config = storage.json().load_config().unwrap_or_default();
     if let Some(sampling) = result.sampling {
         config.default_sampling = sampling;
     }
     if let Some(interface) = result.interface {
-        config.interface.spellcheck_enabled = interface.spellcheck_enabled;
-        config.interface.selected_dictionaries = interface.dictionaries;
-        config.interface.theme = interface.theme;
+        if let Some(v) = interface.spellcheck_enabled {
+            config.interface.spellcheck_enabled = v;
+        }
+        if let Some(v) = interface.dictionaries {
+            config.interface.selected_dictionaries = v;
+        }
+        if let Some(v) = interface.theme {
+            config.interface.theme = v;
+        }
     }
     storage.json().save_config(&config)?;
 

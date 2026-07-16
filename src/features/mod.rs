@@ -9,7 +9,7 @@ pub mod chat_export;
 pub mod chat_search_sort;
 pub mod cli;
 pub mod data_migration;
-pub mod migration;
+pub mod import;
 pub mod profiles;
 pub mod rag_command;
 pub mod rag_ingest;
