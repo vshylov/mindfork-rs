@@ -292,6 +292,9 @@ src/
    │  ├─ code.rs           подсветка блоков кода (syntect: синтаксис + тема из палитры)
    │  ├─ table.rs          TableBuilder + render_table (раскладка/отрисовка таблиц)
    │  └─ latex.rs          LaTeX→unicode: нормализация разделителей + конвертер команд
+   ├─ mcp.rs               мини-клиент MCP (stdio, tools-only) — зонд направления
+   │                       «плагины» (GO); пока `#[cfg(test)]`, в бинарь войдёт на
+   │                       этапе feat/mcp-host. См. docs/research/plugin-system.md §9
    ├─ wrap.rs              перенос слов по колонкам (unicode-width)
    ├─ i18n.rs              язык каркаса агента (ось A) + UI (ось B): Lang(Ru/En/Ext)/
    │                       Locale/t/tf, вшитые locales/{ru,en}.json + внешние
