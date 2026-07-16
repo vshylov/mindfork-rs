@@ -555,6 +555,12 @@ impl SettingsScreen {
                     FieldKind::Toggle(i.table_row_separators),
                 )
                 .describe(loc.t("ui.settings.desc.table_separators")),
+                row(
+                    FieldId::IMermaid,
+                    loc.t("ui.settings.field.mermaid"),
+                    FieldKind::Toggle(i.render_mermaid),
+                )
+                .describe(loc.t("ui.settings.desc.mermaid")),
             ],
         );
         rows.extend(grouped(

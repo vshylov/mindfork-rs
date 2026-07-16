@@ -475,6 +475,8 @@ enum FieldId {
     ICompat,
     /// Горизонтальные разделители между строками Markdown-таблиц в ленте.
     ITableSeparators,
+    /// Рендер ```mermaid-блоков ленты диаграммой (фолбэк — исходник).
+    IMermaid,
     ISpell,
     IDicts,
     /// Подтверждение перед `Ctrl+R`/`Ctrl+E` (необратимые операции).

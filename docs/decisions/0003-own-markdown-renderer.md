@@ -91,8 +91,18 @@
   сверка по фингерпринту полей `FeedMessage`) пересчитывает лишь изменившееся; golden-
   эквивалентность тёплого кэша и свежего рендера покрыта тестами. Ортогонален самому
   рендереру.
-- **Рендер Mermaid-диаграмм в ленте (2026-07-14) — зонд пройден, вердикт NO-GO,
-  отложено** — [docs/research/mermaid-ascii-rendering.md](../research/mermaid-ascii-rendering.md).
+- **Рендер Mermaid-диаграмм в ленте — реализован (2026-07-16)** после фикса
+  апстрима: `mermaid-text` 0.56.1 закрыл многобайтовость (наш баг-репорт + PR —
+  [issue #29](https://github.com/leboiko/markdown-reader/issues/29) /
+  [PR #30](https://github.com/leboiko/markdown-reader/pull/30); перепроверка
+  зондом — 0 паник, порча подписей ушла). Реализация по плану исследования:
+  буферизация блока в `Writer` (по образцу `TableBuilder`), whitelist
+  flowchart/sequence по `detect`, **наш** пост-чек ширины (`max_width` крейта —
+  подсказка, не бюджет), **жёсткий фолбэк на исходник** байт-в-байт (golden-тест),
+  ASCII-режим в компат-палитре, тумблер `interface.render_mermaid` (default-on —
+  фолбэк делает худший случай равным прежнему поведению). История зонда ниже.
+- **Зонд рендера Mermaid (2026-07-14) — вердикт NO-GO на 0.56.0, было отложено** —
+  [docs/research/mermaid-ascii-rendering.md](../research/mermaid-ascii-rendering.md).
   Сейчас ` ```mermaid `-блок печатается исходником (syntect его не знает) — это
   корректно, боли нет. Кандидат на рендер — `mermaid-text` 0.56.0 (MIT, pure Rust,
   net-new всего 2 крейта; API ложится на `Writer` без натяжек, латинские

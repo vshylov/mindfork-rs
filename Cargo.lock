@@ -87,6 +87,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "ascii-dag"
+version = "0.9.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "cd898d2dcffeeb51015c511a2849a8637c894b833afc946936d48b1e5c8aa6ec"
+
+[[package]]
 name = "async-stream"
 version = "0.3.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1528,6 +1534,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "mermaid-text"
+version = "0.56.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "fb5a7e92777d1bcf11a71978d6a1e574c5ff0d04fdb29c86646d7f19680973d0"
+dependencies = [
+ "ascii-dag",
+ "chrono",
+ "unicode-width",
+]
+
+[[package]]
 name = "mindfork-rs"
 version = "0.9.0"
 dependencies = [
@@ -1543,6 +1560,7 @@ dependencies = [
  "eventsource-stream",
  "flate2",
  "futures-util",
+ "mermaid-text",
  "pulldown-cmark",
  "ratatui",
  "reqwest",

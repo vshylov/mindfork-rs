@@ -245,6 +245,20 @@ fn interface_has_table_separators_toggle() {
 }
 
 #[test]
+fn interface_has_mermaid_toggle() {
+    let mut s = screen();
+    // Поле есть в секции «Интерфейс» (группа «Оформление»).
+    let rows = s.interface_fields();
+    assert!(rows.iter().any(|r| r.id == FieldId::IMermaid));
+    // По умолчанию включено; переключение сохраняет конфиг со снятым флагом.
+    match s.toggle_field(FieldId::IMermaid) {
+        Some(SettingsIntent::SaveConfig(c)) => assert!(!c.interface.render_mermaid),
+        other => panic!("ожидался SaveConfig, получено {other:?}"),
+    }
+    assert!(field_desc(&s, FieldId::IMermaid).is_some());
+}
+
+#[test]
 fn cycle_mode_changes_server_mode() {
     let mut s = screen();
     s.handle_key(key(KeyCode::Enter)); // фокус на поля (ModelSub)
