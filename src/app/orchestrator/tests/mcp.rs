@@ -128,6 +128,17 @@ async fn mcp_filesystem_e2e_live() {
         return;
     };
 
+    // ProfileList эмитится при bootstrap — забираем ДО ожидания MCP-каталога:
+    // `wait_for` дренирует все события по пути, и более раннее ProfileList
+    // было бы поглощено ожиданием более позднего Settings (тест бы завис).
+    let pl = wait_for(&mut evt_rx, |e| matches!(e, AppEvent::ProfileList(_)))
+        .await
+        .unwrap();
+    let pid = match pl {
+        AppEvent::ProfileList(v) => v[0].id,
+        _ => unreachable!(),
+    };
+
     // Ждём готовности сервера: снимок Settings с непустым MCP-каталогом
     // (npx качает пакет при первом запуске — таймаут щедрый).
     let settings = tokio::time::timeout(
@@ -147,13 +158,6 @@ async fn mcp_filesystem_e2e_live() {
     assert!(mcp_tools.iter().all(|t| t.id.starts_with("mcp__fs__")));
 
     // Профиль включает MCP-инструменты (двойной opt-in: мастер-гейт уже вкл).
-    let pl = wait_for(&mut evt_rx, |e| matches!(e, AppEvent::ProfileList(_)))
-        .await
-        .unwrap();
-    let pid = match pl {
-        AppEvent::ProfileList(v) => v[0].id,
-        _ => unreachable!(),
-    };
     let mut enabled = default_tool_ids();
     enabled.extend(mcp_tools.iter().map(|t| t.id.clone()));
     cmd_tx
