@@ -84,7 +84,9 @@ jobs:
             apt-get update -qq
             apt-get install -y ./dist/*.deb
           elif command -v dnf >/dev/null 2>&1; then
-            dnf install -y ./dist/*.rpm
+            # util-linux даёт `su` (в минимальном fedora:latest его нет) — нужен
+            # ниже для запуска под обычным пользователем.
+            dnf install -y util-linux ./dist/*.rpm
           elif command -v pacman >/dev/null 2>&1; then
             pacman -U --noconfirm ./dist/*.pkg.tar.zst
           else
