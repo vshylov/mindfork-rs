@@ -174,8 +174,10 @@ impl Tool for RagSearch {
             return Ok(ToolOutcome::text(ctx.loc.t("tool.rag_search.result.empty")));
         }
         // Склеиваем соседние чанки одного источника (по заложенному перекрытию):
-        // экономит контекст и не путает модель повтором (см. [`stitch_hits`]).
-        let passages = stitch_hits(hits);
+        // экономит контекст и не путает модель повтором (см. [`stitch_hits`]). Затем
+        // убираем почти-идентичные пассажи из РАЗНЫХ источников (повтор одного контента),
+        // чтобы не кормить модель дублем; порядок ранжирования сохраняется (см. [`dedup_passages`]).
+        let passages = dedup_passages(stitch_hits(hits));
         let mut out = format!(
             "{}\n",
             ctx.loc.tf(
@@ -511,6 +513,38 @@ pub(crate) fn stitch_hits(hits: Vec<RagHit>) -> Vec<StitchedPassage> {
     passages
 }
 
+/// Убирает почти-идентичные пассажи (обычно один и тот же контент, проиндексированный
+/// из РАЗНЫХ источников): в порядке ранжирования (по возрастанию distance) оставляет
+/// пассаж, только если его нормализованный текст НЕ равен и НЕ содержится целиком в
+/// тексте уже оставленного пассажа. Так модель не получает повтор. Детерминированно,
+/// без эмбеддера/порога (dedup по тексту — hot path rag_search). Источнико-агностично
+/// (главный случай — кросс-источниковый дубль, но внутриисточниковый повтор тоже шум).
+/// См. docs/rag-sources-retrieval.md §B2b.
+pub(crate) fn dedup_passages(passages: Vec<StitchedPassage>) -> Vec<StitchedPassage> {
+    let mut kept: Vec<StitchedPassage> = Vec::with_capacity(passages.len());
+    let mut kept_norms: Vec<String> = Vec::with_capacity(passages.len());
+    for p in passages {
+        let norm = normalize_passage(&p.text);
+        // Отбрасываем, если равен уже оставленному (выше по рангу) или целиком в него
+        // входит (текущий пассаж — избыточное подмножество более релевантного).
+        if kept_norms.iter().any(|k| k.contains(&norm)) {
+            continue;
+        }
+        kept_norms.push(norm);
+        kept.push(p);
+    }
+    kept
+}
+
+/// Нормализует текст пассажа для сравнения: нижний регистр (Unicode-aware, работает
+/// и для кириллицы) + схлопывание любых пробельных прогонов в один пробел + трим.
+fn normalize_passage(text: &str) -> String {
+    text.to_lowercase()
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
 /// Ищет первую пару частей `(i, j)`, которые можно склеить (конец `i` совпадает с
 /// началом `j`); возвращает индексы, объединённый текст и лучшее расстояние.
 fn find_mergeable(items: &[(String, f32)]) -> Option<(usize, usize, String, f32)> {
@@ -759,6 +793,84 @@ mod tests {
             mk("b.txt", "никак не связанный текст два"),
         ]);
         assert_eq!(out.len(), 2, "разные источники не склеиваются");
+    }
+
+    fn passage(source: &str, text: &str, distance: f32) -> StitchedPassage {
+        StitchedPassage {
+            source: source.into(),
+            text: text.into(),
+            distance,
+        }
+    }
+
+    #[test]
+    fn dedup_drops_identical_from_different_sources_keeps_higher_ranked() {
+        let out = dedup_passages(vec![
+            passage("a.txt", "столица франции — париж", 0.1),
+            passage("b.txt", "столица франции — париж", 0.3),
+        ]);
+        assert_eq!(out.len(), 1, "идентичный дубль из другого источника снят");
+        assert_eq!(
+            out[0].source, "a.txt",
+            "остаётся более релевантный (меньший distance)"
+        );
+    }
+
+    #[test]
+    fn dedup_drops_passage_contained_in_higher_ranked() {
+        let out = dedup_passages(vec![
+            passage("a.txt", "полный текст с деталями про париж и францию", 0.1),
+            passage("b.txt", "париж и францию", 0.4),
+        ]);
+        assert_eq!(
+            out.len(),
+            1,
+            "подмножество более релевантного пассажа снято"
+        );
+        assert_eq!(out[0].source, "a.txt");
+    }
+
+    #[test]
+    fn dedup_keeps_distinct_passages_in_order() {
+        let out = dedup_passages(vec![
+            passage("a.txt", "первый совершенно уникальный текст", 0.1),
+            passage("b.txt", "второй никак не связанный текст", 0.2),
+        ]);
+        assert_eq!(out.len(), 2, "различные пассажи не трогаем");
+        assert_eq!(out[0].source, "a.txt");
+        assert_eq!(out[1].source, "b.txt");
+    }
+
+    #[test]
+    fn dedup_is_whitespace_and_case_insensitive() {
+        let out = dedup_passages(vec![
+            passage("a.txt", "Столица  Франции —\nПариж", 0.1),
+            passage("b.txt", "столица франции — париж", 0.3),
+        ]);
+        assert_eq!(
+            out.len(),
+            1,
+            "равны с точностью до регистра/пробелов → дедуп"
+        );
+        assert_eq!(out[0].source, "a.txt");
+    }
+
+    #[test]
+    fn dedup_keeps_lower_ranked_superset() {
+        // A (выше по рангу) содержится в B (ниже по рангу): отбрасываем только пассаж,
+        // входящий в РАНЕЕ оставленный, поэтому оба выживают (без потери информации).
+        let out = dedup_passages(vec![
+            passage("a.txt", "париж", 0.1),
+            passage("b.txt", "париж — столица франции и крупный город", 0.3),
+        ]);
+        assert_eq!(out.len(), 2, "надмножество ниже по рангу не снимается");
+        assert_eq!(out[0].source, "a.txt");
+        assert_eq!(out[1].source, "b.txt");
+    }
+
+    #[test]
+    fn dedup_empty_input_empty_output() {
+        assert!(dedup_passages(Vec::new()).is_empty());
     }
 
     #[tokio::test]
