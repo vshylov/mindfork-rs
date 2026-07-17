@@ -90,7 +90,9 @@ pub fn render_with(
     writer.soft_break_as_newline = opts.soft_break_as_newline;
     writer.table_row_separators = opts.table_row_separators;
     writer.render_mermaid = opts.render_mermaid;
-    writer.run(parser);
+    // Итератор с байтовыми диапазонами: Writer по исходнику отличает закрытый
+    // код-блок от оборванного стримом (mermaid-путь, см. fenced_block_is_closed).
+    writer.run(&normalized, parser.into_offset_iter());
     Text::from(writer.lines)
 }
 

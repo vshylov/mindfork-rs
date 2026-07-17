@@ -49,6 +49,15 @@ pub(super) struct Writer {
     /// Инфо-строка хранится целиком (` ```mermaid title=x `) — фолбэк печатает её
     /// в заборе байт-в-байт, как прежний путь.
     mermaid: Option<(String, String)>,
+    /// Закрыт ли забор код-блока, который сейчас открывается (выставляется в
+    /// [`Writer::run`] перед каждым `Start(CodeBlock)` по исходнику, см.
+    /// [`fenced_block_is_closed`]). Нужен только mermaid-пути: pulldown-cmark
+    /// закрывает незакрытый забор в конце документа сам, поэтому недописанный
+    /// стримом блок по событиям неотличим от полного — а рендерить диаграмму из
+    /// огрызка нельзя (мерцание «частичная диаграмма ↔ исходник» по мере прихода
+    /// чанков). Незакрытый блок идёт путём исходника; когда закрывающий забор
+    /// доедет, кэш ленты пересчитает сообщение и подменит исходник диаграммой.
+    codeblock_closed: bool,
 }
 
 impl Writer {
@@ -71,11 +80,23 @@ impl Writer {
             table_row_separators: false,
             render_mermaid: false,
             mermaid: None,
+            codeblock_closed: true,
         }
     }
 
-    pub(super) fn run<'a, I: Iterator<Item = Event<'a>>>(&mut self, iter: I) {
-        for event in iter {
+    /// Прогоняет поток событий с байтовыми диапазонами (`Parser::into_offset_iter`
+    /// над `src`). Диапазоны нужны единственной проверке — закрыт ли забор
+    /// открываемого код-блока (у `Start(Tag)` диапазон покрывает элемент целиком);
+    /// сама проверка делается только при включённом рендере mermaid.
+    pub(super) fn run<'a, I: Iterator<Item = (Event<'a>, std::ops::Range<usize>)>>(
+        &mut self,
+        src: &str,
+        iter: I,
+    ) {
+        for (event, range) in iter {
+            if self.render_mermaid && matches!(event, Event::Start(Tag::CodeBlock(_))) {
+                self.codeblock_closed = fenced_block_is_closed(src, &range);
+            }
             self.handle_event(event);
         }
     }
@@ -323,8 +344,15 @@ impl Writer {
         // ```mermaid-блок при включённом рендере диаграмм НЕ печатается сразу:
         // содержимое копится в буфер (как ячейки таблицы в TableBuilder), а забор/
         // подсветка не трогаются — решение «диаграмма или исходник» принимает
-        // end_codeblock, когда виден весь блок. См. super::mermaid и spec §11.4.
-        if self.render_mermaid && lang.eq_ignore_ascii_case("mermaid") && self.table.is_none() {
+        // end_codeblock, когда виден весь блок. Блок с незакрытым забором
+        // (стримящийся хвост ответа) в буфер НЕ берётся — идёт обычным путём
+        // исходника, пока сервер не допишет закрывающий забор (иначе частичная
+        // диаграмма мерцала бы). См. super::mermaid и spec §11.4.
+        if self.render_mermaid
+            && self.codeblock_closed
+            && lang.eq_ignore_ascii_case("mermaid")
+            && self.table.is_none()
+        {
             self.mermaid = Some((info.to_string(), String::new()));
             return;
         }
@@ -533,6 +561,41 @@ impl Writer {
             self.push_line(Line::from(vec![span]));
         }
     }
+}
+
+/// Закрыт ли fenced-код-блок в исходнике. `range` — байтовый диапазон **всего**
+/// блока из `OffsetIter` pulldown-cmark (у `Start(CodeBlock)` диапазон покрывает
+/// элемент целиком). CommonMark дотягивает незакрытый забор до конца документа,
+/// поэтому по событиям парсера обрыв стрима неотличим от полного блока — смотрим
+/// в исходник: у закрытого последняя строка диапазона — закрывающий забор (та же
+/// литера, не короче открывающего), у оборванного — строка содержимого.
+///
+/// Проверка нарочно простая (точность CommonMark не нужна): блок, за которым в
+/// документе есть ещё текст, закрыт по построению; ложное «закрыт» на экзотике
+/// (контентная строка, неотличимая от забора) лишь приведёт к попытке рендера,
+/// которая упадёт парсером диаграммы → штатный фолбэк на исходник.
+pub(super) fn fenced_block_is_closed(src: &str, range: &std::ops::Range<usize>) -> bool {
+    if range.end < src.len() {
+        return true; // за блоком есть текст — забор закрыт (обрыв тянулся бы до конца)
+    }
+    let block = &src[range.clone()];
+    let mut lines = block.lines();
+    let Some(open) = lines.next() else {
+        return false;
+    };
+    // Префикс контейнера (цитата `> `) и отступ забора (≤3 пробелов) не мешают.
+    let open = open.trim_start_matches(['>', ' ', '\t']);
+    let Some(fence @ ('`' | '~')) = open.chars().next() else {
+        return true; // indented-блок без забора — «закрывать» нечего
+    };
+    let open_len = open.chars().take_while(|&c| c == fence).count();
+    let Some(last) = lines.last() else {
+        return false; // одна строка — только открывающий забор
+    };
+    let last = last.trim_start_matches(['>', ' ', '\t']);
+    let close_len = last.chars().take_while(|&c| c == fence).count();
+    // Литеры забора — ASCII, срез по счётчику символов безопасен.
+    close_len >= open_len && last[close_len..].trim().is_empty()
 }
 
 /// Эвристика «это диапазон/дробь цен, а не формула»: `$5-$10` парсер math отдаёт
@@ -884,6 +947,61 @@ mod tests {
         let joined = rendered_text(md);
         assert!(joined.contains("```mermaid"), "{joined}");
         assert!(joined.contains("A->>B: hi"), "{joined}");
+    }
+
+    /// Стрим: блок с незакрытым забором (сервер ещё дописывает диаграмму)
+    /// печатается исходником **байт-в-байт как при выключенном рендере** — без
+    /// мерцания «частичная диаграмма ↔ исходник» по мере прихода чанков.
+    /// Регрессия: pulldown-cmark дотягивает незакрытый забор до конца документа,
+    /// и синтаксически валидный огрызок (первый кейс) рендерился диаграммой.
+    #[test]
+    fn mermaid_unclosed_fence_streams_as_source() {
+        let cases = [
+            // валидный огрызок: без проверки закрытости отрендерился бы диаграммой
+            "текст\n\n```mermaid\nflowchart LR\n    A[Старт] --> B[Конец]",
+            // то же с хвостовым переводом строки
+            "```mermaid\nsequenceDiagram\n    A->>B: hi\n",
+            // обрыв на полуслове
+            "```mermaid\nsequenceDiagram\n    participant Ser",
+            // только открывающий забор
+            "```mermaid",
+            // тильда-забор
+            "~~~mermaid\nflowchart LR\n    A --> B",
+            // закрывающий короче открывающего — блок НЕ закрыт
+            "````mermaid\nflowchart LR\n    A --> B\n```",
+        ];
+        for md in cases {
+            let on = render_mermaid_on(md, 90);
+            let off = render(md, 90, &Palette::default());
+            assert_eq!(
+                on.lines, off.lines,
+                "незакрытый блок должен идти исходником:\n{md}"
+            );
+        }
+    }
+
+    /// Закрывающий забор доехал — блок рендерится диаграммой, даже когда после
+    /// него сообщение продолжает стримиться (закрытость — свойство блока, не
+    /// конца сообщения). Тильда-забор равноправен.
+    #[test]
+    fn mermaid_closed_fence_renders_even_while_tail_streams() {
+        for md in [
+            "```mermaid\nflowchart LR\n    A[Старт] --> B[Конец]\n```\n\nа дальше стримится тек",
+            "~~~mermaid\nflowchart LR\n    A[Старт] --> B[Конец]\n~~~",
+        ] {
+            let text = render_mermaid_on(md, 90);
+            let joined: String = text
+                .lines
+                .iter()
+                .flat_map(|l| l.spans.iter().map(|s| s.content.as_ref()))
+                .collect();
+            assert!(joined.contains("Старт"), "{joined}");
+            assert!(
+                !joined.contains("```") && !joined.contains("~~~"),
+                "забор не должен печататься: {joined}"
+            );
+            assert!(!joined.contains("-->"), "исходник утёк в ленту: {joined}");
+        }
     }
 
     /// Кириллический flowchart рендерится диаграммой (регрессия апстрима 0.56.0 —
