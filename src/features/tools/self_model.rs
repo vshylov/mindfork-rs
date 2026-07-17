@@ -234,10 +234,32 @@ impl Tool for Reflect {
         let m = load(ctx)?;
         // Обзор наблюдений для консолидации (похожие пары / contradicts / без связей) —
         // конкретные данные под рубрику ниже. Пусто, если наблюдений < 2.
-        let overview =
+        let mut overview =
             notes::build_self_consolidation_overview(&ctx.storage, ctx.profile_id, ctx.loc)
-                .map(|o| format!("\n\n{o}"))
                 .unwrap_or_default();
+        // A2: семантическое совпадение абзацев описания себя (summary) с наблюдениями —
+        // эмбеддинг абзацев на лету (у summary нет хранимых векторов). См.
+        // docs/self-model-consolidation.md §A2.
+        if let Some(section) = notes::summary_observation_overlaps(
+            &ctx.storage,
+            ctx.embedder.as_ref(),
+            ctx.profile_id,
+            ctx.loc,
+        )
+        .await
+        {
+            if overview.is_empty() {
+                overview = section;
+            } else {
+                overview.push_str("\n\n");
+                overview.push_str(&section);
+            }
+        }
+        let overview = if overview.is_empty() {
+            String::new()
+        } else {
+            format!("\n\n{overview}")
+        };
         let out = format!(
             "{}\n{}{overview}\n\n{}",
             ctx.loc.t("tool.reflect.rubric.header"),

@@ -199,6 +199,14 @@ impl Orchestrator {
             profile_id,
             kind: BackgroundKind::SelfConsolidation,
             done_tx: self.bg_done_tx.clone(),
+            // A2: семантика summary↔наблюдения (эмбеддинг абзацев summary на лету в
+            // задаче). См. docs/self-model-consolidation.md §A2.
+            summary_semantics: Some(tool_loop::SummarySemantics {
+                embedder: self.engines.embedder(),
+                storage: self.storage.clone(),
+                profile_id,
+                loc,
+            }),
         });
         self.begin_bg(BackgroundKind::SelfConsolidation, cancel);
     }

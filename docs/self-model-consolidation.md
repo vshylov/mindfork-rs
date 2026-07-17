@@ -1,7 +1,9 @@
 # План: консолидация «модели себя» (авто-«сон» + семантика summary + старение интересов)
 
-> Статус: **этап A1 — сделано** (ветка `feat/self-model-auto-consolidate`; журнал —
-> CLAUDE.md пост-M9); A2/A3 — план. Направление продолжает
+> Статус: **этапы A1, A2 — сделано** (ветки `feat/self-model-auto-consolidate`,
+> `feat/self-model-summary-semantics`; журнал — CLAUDE.md пост-M9; порог A2
+> `SUMMARY_OBS_SIMILARITY=0.62` откалиброван на живом bge-m3); A3 — план.
+> Направление продолжает
 > [summary-as-snapshot](history/summary-as-snapshot.md) («Вне объёма») и
 > [refinements](history/refinements.md); закрывает три задела roadmap раздела
 > «Память, модель себя, знания». При финализации документ переезжает в

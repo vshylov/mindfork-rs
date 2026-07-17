@@ -1393,3 +1393,139 @@ async fn note_cite_source_e2e_live() {
         "сессия 2: ожидали rag_search/note_cite_source"
     );
 }
+
+/// **Калибровочный** смоук порога A2 (`SUMMARY_OBS_SIMILARITY` в `overview.rs`): против
+/// РЕАЛЬНОГО эмбеддера (bge-m3 через `MINDFORK_EMBED_URL`) эмбеддит размеченные пары
+/// «абзац описания себя ↔ наблюдение» и **печатает** их косинусы, чтобы родитель выбрал
+/// порог по числам (как `TRAIT_SIMILARITY`). Жёсткого порога не ассертит — лишь что
+/// перефразы в среднем ближе несвязанных пар. `#[ignore]`, вручную:
+/// `MINDFORK_EMBED_URL=…/v1 cargo test summary_obs_calibration_e2e_live -- --ignored --nocapture --test-threads=1`.
+#[tokio::test]
+#[ignore = "requires a running embedding server (MINDFORK_EMBED_URL)"]
+async fn summary_obs_calibration_e2e_live() {
+    use crate::features::tools::notes::cosine;
+    let Some(embedder) = live_embedder() else {
+        eprintln!("skip: MINDFORK_EMBED_URL not set");
+        return;
+    };
+    // Перефразы одного и того же факта о себе (should-match).
+    let should_match: &[(&str, &str)] = &[
+        (
+            "Я ценю ясность и краткость: предпочитаю давать сжатые, по существу ответы без воды.",
+            "Замечаю за собой склонность отвечать лаконично и по делу, избегая многословия.",
+        ),
+        (
+            "Мне важно быть честным даже когда это неудобно — точность выше угодливости.",
+            "Стараюсь говорить правду прямо, не смягчая её ради того, чтобы понравиться.",
+        ),
+        (
+            "Я склонен глубоко погружаться в задачу и доводить рассуждение до конца.",
+            "Мне свойственно тщательно и до конца прорабатывать проблему, не бросая на полпути.",
+        ),
+    ];
+    // Абзац описания себя vs несвязанное наблюдение (should-NOT-match).
+    let should_not: &[(&str, &str)] = &[
+        (
+            "Я ценю ясность и краткость в своих ответах, стремлюсь к сжатости изложения.",
+            "Пользователь увлекается альпинизмом и любит длинные горные походы по выходным.",
+        ),
+        (
+            "Мне важно быть честным даже когда это неудобно, точность важнее удобства.",
+            "Собеседник программирует на Rust и предпочитает крепкий кофе по утрам.",
+        ),
+        (
+            "Я склонен глубоко и вдумчиво погружаться в поставленную задачу.",
+            "На выходных мы обсуждали рецепты домашней выпечки и уход за садом.",
+        ),
+    ];
+    let mut match_sum = 0.0f32;
+    for (a, b) in should_match {
+        let v = embedder
+            .embed(vec![a.to_string(), b.to_string()])
+            .await
+            .unwrap();
+        let c = cosine(&v[0], &v[1]);
+        match_sum += c;
+        eprintln!("MATCH?  cos={c:.2}  {a:?} ~ {b:?}");
+    }
+    let mut nonmatch_sum = 0.0f32;
+    for (a, b) in should_not {
+        let v = embedder
+            .embed(vec![a.to_string(), b.to_string()])
+            .await
+            .unwrap();
+        let c = cosine(&v[0], &v[1]);
+        nonmatch_sum += c;
+        eprintln!("MATCH?  cos={c:.2}  {a:?} ~ {b:?}");
+    }
+    let m = match_sum / should_match.len() as f32;
+    let n = nonmatch_sum / should_not.len() as f32;
+    eprintln!("среднее: совпадения={m:.2}  не-совпадения={n:.2}  (порог между ними)");
+    assert!(
+        m > n,
+        "перефразы должны быть в среднем ближе несвязанных пар: {m:.2} vs {n:.2}"
+    );
+}
+
+/// End-to-end зонд поведения A2: описание себя с абзацем, дублирующим (иными словами)
+/// хранимое наблюдение (`@self`); против РЕАЛЬНОГО эмбеддера
+/// `summary_observation_overlaps` возвращает `Some` и называет наблюдение. Печатает
+/// измеренный косинус (для калибровки). `#[ignore]`, вручную:
+/// `MINDFORK_EMBED_URL=…/v1 cargo test summary_obs_overlap_e2e_live -- --ignored --nocapture --test-threads=1`.
+#[tokio::test]
+#[ignore = "requires a running embedding server (MINDFORK_EMBED_URL)"]
+async fn summary_obs_overlap_e2e_live() {
+    use crate::entities::note::Note;
+    use crate::entities::self_model::SelfModel;
+    use crate::features::tools::notes::{SELF_NOTE_TAG, cosine, summary_observation_overlaps};
+    let Some(embedder) = live_embedder() else {
+        eprintln!("skip: MINDFORK_EMBED_URL not set");
+        return;
+    };
+    let loc = crate::shared::i18n::locale(crate::shared::i18n::Lang::Ru);
+    let dir = tempfile::tempdir().unwrap();
+    let storage = Storage::open(Paths::with_root(dir.path())).unwrap();
+    let profile = Uuid::new_v4();
+
+    let para = "Я ценю ясность и краткость: предпочитаю давать сжатые, по существу ответы без лишней воды.";
+    let obs_text = "Замечаю за собой склонность отвечать лаконично и по делу, избегая многословия.";
+    let mut model = SelfModel::new(profile);
+    model.summary = para.to_string();
+    storage.db().self_model_upsert(&model).unwrap();
+
+    // Наблюдение (@self) с реальным эмбеддингом в БД.
+    let obs = Note::new(profile, obs_text, vec![SELF_NOTE_TAG.to_string()]);
+    storage.db().note_insert(&obs).unwrap();
+    let ov = embedder
+        .embed(vec![obs_text.to_string()])
+        .await
+        .unwrap()
+        .into_iter()
+        .next()
+        .unwrap();
+    storage
+        .db()
+        .note_vector_upsert(obs.id, profile, &ov)
+        .unwrap();
+
+    // Измеренный косинус (диагностика для калибровки порога).
+    let pv = embedder
+        .embed(vec![para.to_string()])
+        .await
+        .unwrap()
+        .into_iter()
+        .next()
+        .unwrap();
+    eprintln!(
+        "измеренный cos(абзац summary, наблюдение) = {:.2}",
+        cosine(&pv, &ov)
+    );
+
+    let out = summary_observation_overlaps(&storage, embedder.as_ref(), profile, loc).await;
+    eprintln!("секция summary↔наблюдения: {out:?}");
+    let out = out.expect("ожидали секцию совпадения summary↔наблюдение");
+    assert!(
+        out.contains(&obs.id.to_string()),
+        "секция должна называть наблюдение (id): {out}"
+    );
+}

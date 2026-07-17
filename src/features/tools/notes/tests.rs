@@ -471,6 +471,121 @@ async fn self_consolidation_overview_covers_self_only() {
     assert!(ov.contains("Связи contradicts среди наблюдений: 1"));
 }
 
+#[tokio::test]
+async fn summary_obs_overlap_surfaces_match_not_unrelated() {
+    // A2: абзац описания себя (summary), совпадающий с наблюдением, поднимается парой;
+    // несвязанный абзац/наблюдение — нет. Вектора наблюдений задаём вручную, чтобы тест
+    // был устойчив к порогу (совпадение cosine=1.0, не-совпадения=0.0).
+    use crate::entities::self_model::SelfModel;
+    let profile = Uuid::new_v4();
+    let (_d, storage, ctx) = ctx_with_storage(profile);
+
+    // Абзацы summary (по пустой строке): P_match (все «a») + несвязанный P_unrel (все «b»);
+    // оба ≥ 40 символов. MockEmbedder — мешок символов, поэтому их эмбеддинги ортогональны.
+    let p_match = "a".repeat(50);
+    let p_unrel = "b".repeat(50);
+    let mut model = SelfModel::new(profile);
+    model.summary = format!("{p_match}\n\n{p_unrel}");
+    storage.db().self_model_upsert(&model).unwrap();
+
+    // Наблюдение, совпадающее с P_match: его вектор = эмбеддинг P_match (cosine = 1.0).
+    let match_vec = ctx
+        .embedder
+        .embed(vec![p_match.clone()])
+        .await
+        .unwrap()
+        .into_iter()
+        .next()
+        .unwrap();
+    let obs_match = Note::new(profile, "MARKER_MATCH", vec![SELF_NOTE_TAG.to_string()]);
+    storage.db().note_insert(&obs_match).unwrap();
+    storage
+        .db()
+        .note_vector_upsert(obs_match.id, profile, &match_vec)
+        .unwrap();
+
+    // Несвязанное наблюдение: вектор на неиспользуемом измерении (cosine = 0 с обоими).
+    let mut other_vec = vec![0.0_f32; match_vec.len()];
+    other_vec[5] = 1.0;
+    let obs_other = Note::new(profile, "MARKER_OTHER", vec![SELF_NOTE_TAG.to_string()]);
+    storage.db().note_insert(&obs_other).unwrap();
+    storage
+        .db()
+        .note_vector_upsert(obs_other.id, profile, &other_vec)
+        .unwrap();
+
+    let out = summary_observation_overlaps(&storage, ctx.embedder.as_ref(), profile, ru())
+        .await
+        .expect("должна быть секция совпадения summary↔наблюдение");
+    assert!(out.contains("совпадающие с наблюдениями")); // заголовок раздела
+    assert!(out.contains("MARKER_MATCH"));
+    assert!(out.contains(&obs_match.id.to_string())); // полный id наблюдения
+    // Несвязанное наблюдение и несвязанный абзац не поднимаются.
+    assert!(!out.contains("MARKER_OTHER"));
+    assert!(!out.contains(&"b".repeat(10)));
+    // Ровно одна пара (одна строка-элемент «\n- …» под заголовком).
+    assert_eq!(out.matches("\n- ").count(), 1);
+}
+
+#[tokio::test]
+async fn summary_obs_overlap_soft_degrades() {
+    // A2, мягкая деградация: нет наблюдений / пустой summary / эмбеддер с нестыковкой
+    // числа векторов → секции нет (None), паники нет.
+    use crate::entities::self_model::SelfModel;
+    let profile = Uuid::new_v4();
+    let (_d, storage, ctx) = ctx_with_storage(profile);
+
+    // Есть summary, но наблюдений нет → None.
+    let mut model = SelfModel::new(profile);
+    model.summary = "a".repeat(50);
+    storage.db().self_model_upsert(&model).unwrap();
+    assert!(
+        summary_observation_overlaps(&storage, ctx.embedder.as_ref(), profile, ru())
+            .await
+            .is_none()
+    );
+
+    // Добавляем наблюдение с вектором — теперь есть что сравнивать.
+    let match_vec = ctx
+        .embedder
+        .embed(vec!["a".repeat(50)])
+        .await
+        .unwrap()
+        .into_iter()
+        .next()
+        .unwrap();
+    let obs = Note::new(profile, "obs", vec![SELF_NOTE_TAG.to_string()]);
+    storage.db().note_insert(&obs).unwrap();
+    storage
+        .db()
+        .note_vector_upsert(obs.id, profile, &match_vec)
+        .unwrap();
+
+    // Эмбеддер возвращает неверное число векторов → None (нестыковка).
+    struct BadCountEmbedder;
+    #[async_trait::async_trait]
+    impl crate::shared::api::Embedder for BadCountEmbedder {
+        async fn embed(&self, _texts: Vec<String>) -> anyhow::Result<Vec<Vec<f32>>> {
+            Ok(Vec::new()) // 0 векторов на любой вход — нестыковка
+        }
+    }
+    assert!(
+        summary_observation_overlaps(&storage, &BadCountEmbedder, profile, ru())
+            .await
+            .is_none()
+    );
+
+    // Пустой summary → None (даже при наличии наблюдений и рабочего эмбеддера).
+    let mut empty = SelfModel::new(profile);
+    empty.summary = String::new();
+    storage.db().self_model_upsert(&empty).unwrap();
+    assert!(
+        summary_observation_overlaps(&storage, ctx.embedder.as_ref(), profile, ru())
+            .await
+            .is_none()
+    );
+}
+
 #[test]
 fn migrate_self_narrative_moves_and_is_idempotent() {
     use crate::entities::self_model::{NarrativeSegment, SelfModel};

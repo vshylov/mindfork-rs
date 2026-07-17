@@ -203,6 +203,95 @@ pub(crate) fn build_self_consolidation_overview(
     Some(out.trim_end().to_string())
 }
 
+/// Порог косинусной близости, при котором абзац описания себя (`summary`) считается
+/// семантически совпадающим с наблюдением (`@self`-заметкой) — раздел A2 обзора
+/// self-консолидации. **Откалибровано на живом bge-m3** (как `TRAIT_SIMILARITY` в
+/// `self_model.rs`, смоук `summary_obs_calibration_e2e_live`): перефразы «абзац ↔
+/// наблюдение» дали 0.69–0.80, несвязанные пары — 0.48–0.51; чистый разрыв 0.51→0.69.
+/// Порог 0.62 (в разрыве, с запасом в обе стороны) ловит все перефразы и отсекает
+/// несвязанные. Абзацы длиннее коротких черт, поэтому перефразы чуть ниже, чем у
+/// ворот черт (0.73–0.83). См. docs/self-model-consolidation.md §A2.
+const SUMMARY_OBS_SIMILARITY: f32 = 0.62;
+
+/// Минимальная длина абзаца `summary` (в символах) для участия в сравнении: более
+/// короткий фрагмент слишком мал для осмысленного совпадения.
+const SUMMARY_PARAGRAPH_MIN_CHARS: usize = 40;
+
+/// Семантическое совпадение абзацев описания себя (`summary`) с наблюдениями
+/// (`@self`-заметками) — раздел A2 обзора self-консолидации. У наблюдений вектора уже
+/// в БД, а у `summary` их нет (свободный текст) — поэтому абзацы эмбеддятся **на лету**
+/// одним запросом (прямое зеркало ворот черт `self_model::near_duplicate_traits`).
+/// Возвращает секцию с парами «абзац ≈ наблюдение X → вынеси/сшей», или `None`, если
+/// совпадений нет / нет наблюдений / пустой summary. **Мягкая деградация**: эмбеддер
+/// недоступен, вернул пусто или нестыковку числа векторов → `None` (как реранкинг
+/// RAG/web). Изоляция по `profile_id`. См. docs/self-model-consolidation.md §A2.
+pub(crate) async fn summary_observation_overlaps(
+    storage: &crate::shared::storage::Storage,
+    embedder: &dyn crate::shared::api::Embedder,
+    profile_id: Uuid,
+    loc: &crate::shared::i18n::Locale,
+) -> Option<String> {
+    // Описание себя (summary) профиля.
+    let model = storage.db().self_model_get(profile_id).ok().flatten()?;
+    let summary = model.summary.trim();
+    if summary.is_empty() {
+        return None;
+    }
+    // Абзацы summary (по пустым строкам), отбрасывая слишком короткие.
+    let paragraphs: Vec<String> = summary
+        .split("\n\n")
+        .map(|p| p.trim().to_string())
+        .filter(|p| p.chars().count() >= SUMMARY_PARAGRAPH_MIN_CHARS)
+        .collect();
+    if paragraphs.is_empty() {
+        return None;
+    }
+    // Наблюдения (@self) с хранимыми векторами — с ними и сравниваем.
+    let mut obs = storage
+        .db()
+        .notes_with_vectors(profile_id)
+        .unwrap_or_default();
+    obs.retain(|(n, _)| is_self_note(n));
+    if obs.is_empty() {
+        return None;
+    }
+    // Эмбеддим абзацы одним запросом (у summary нет хранимых векторов — на лету).
+    // Мягкая деградация: ошибка/нестыковка числа векторов → секции нет.
+    let Ok(vecs) = embedder.embed(paragraphs.clone()).await else {
+        return None;
+    };
+    if vecs.len() != paragraphs.len() {
+        return None;
+    }
+    let mut lines: Vec<String> = Vec::new();
+    for (p, pv) in paragraphs.iter().zip(&vecs) {
+        // Ближайшее наблюдение выше порога (одно на абзац — не шумим).
+        let mut best: Option<(f32, &Note)> = None;
+        for (n, nv) in &obs {
+            let s = cosine(pv, nv);
+            if s >= SUMMARY_OBS_SIMILARITY && best.map(|(bs, _)| s > bs).unwrap_or(true) {
+                best = Some((s, n));
+            }
+        }
+        if let Some((_, n)) = best {
+            lines.push(format!(
+                "- {} ≈ (id={}) {}",
+                clip(p, 60),
+                n.id,
+                clip(&n.content, 60)
+            ));
+        }
+    }
+    if lines.is_empty() {
+        return None;
+    }
+    Some(format!(
+        "{}\n{}",
+        loc.t("notes.self_overview.summary_obs"),
+        lines.join("\n")
+    ))
+}
+
 /// `consolidate_notes` — обзор базы знаний + рубрика для консолидации (entry-point,
 /// как `reflect` у SelfModel). Ничего не меняет: дальше модель сама зовёт
 /// merge/supersede/revise/link.
