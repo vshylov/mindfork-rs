@@ -435,6 +435,7 @@
   "ui.rag.started": "files found: {total}, starting indexing…",
   "ui.rag.from": " from {dir}",
   "ui.rag.indexing": "indexing {name}{location} ({index}/{total})",
+  "ui.rag.chunks": " · chunks {done}/{total}",
   "ui.rag.finished": "RAG: indexing finished — files: {files}, chunks: {chunks}",
   "ui.rag.finished_cancelled": "RAG: indexing interrupted — chunks added: {chunks}",
   "ui.rag.errors_suffix": ", with errors: {errors}",

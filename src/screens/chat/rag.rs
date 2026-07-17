@@ -22,13 +22,15 @@ impl ChatScreen {
                 total,
                 name,
                 dir,
+                chunks_done,
+                chunks_total,
             } => {
                 let location = if dir.is_empty() {
                     String::new()
                 } else {
                     self.loc.tf("ui.rag.from", &[("dir", &dir)])
                 };
-                let text = self.loc.tf(
+                let mut text = self.loc.tf(
                     "ui.rag.indexing",
                     &[
                         ("name", &name),
@@ -37,6 +39,17 @@ impl ChatScreen {
                         ("total", &total.to_string()),
                     ],
                 );
+                // Прогресс по чанкам показываем, только когда файл уже чанкован
+                // (chunks_total>0). Иначе (файл только начат) — вид как раньше.
+                if chunks_total > 0 {
+                    text.push_str(&self.loc.tf(
+                        "ui.rag.chunks",
+                        &[
+                            ("done", &chunks_done.to_string()),
+                            ("total", &chunks_total.to_string()),
+                        ],
+                    ));
+                }
                 match &mut self.rag {
                     Some(banner) => banner.text = text,
                     None => self.rag = Some(RagBanner { text, tick: 0 }),

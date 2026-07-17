@@ -17,6 +17,12 @@ use crate::shared::storage::Storage;
 
 use super::Orchestrator;
 
+/// Максимум чанков в одном запросе к эмбеддеру. Ограничивает размер каждого запроса
+/// и даёт прогресс по мере готовности чанков (баннер двигается *в ходе* эмбеддинга
+/// крупного файла). Файл с ≤16 чанками по-прежнему эмбеддится одним запросом (как
+/// раньше) — поведение для маленьких файлов не меняется.
+const EMBED_BATCH_CHUNKS: usize = 16;
+
 impl Orchestrator {
     /// Профиль активного чата (RAG изолирован по `profile_id`, §9.5). `None` — нет
     /// активного чата.
@@ -218,13 +224,28 @@ fn spawn_rag_ingest(task: RagIngest) {
                 break;
             }
             let (name, dir) = display_parts(file);
+            // Файл начат (чанкинг ещё впереди) — chunks_total=0 (баннер как раньше).
             send(RagProgress::Indexing {
                 index: i + 1,
                 total,
-                name,
-                dir,
+                name: name.clone(),
+                dir: dir.clone(),
+                chunks_done: 0,
+                chunks_total: 0,
             });
-            match index_file(&embedder, &storage, profile_id, file, params, loc).await {
+            // Прогресс по чанкам: клонируем имя/папку в замыкание (FnMut вызывается
+            // многократно, а `send` заимствует `evt_tx`).
+            let progress = |done: usize, tot: usize| {
+                let _ = evt_tx.send(AppEvent::RagProgress(RagProgress::Indexing {
+                    index: i + 1,
+                    total,
+                    name: name.clone(),
+                    dir: dir.clone(),
+                    chunks_done: done,
+                    chunks_total: tot,
+                }));
+            };
+            match index_file(&embedder, &storage, profile_id, file, params, loc, progress).await {
                 Ok(n) => chunks_total += n,
                 Err(err) => {
                     errors += 1;
@@ -389,14 +410,29 @@ fn spawn_rag_rebuild(task: RagRebuild) {
             if cancel.is_cancelled() {
                 break;
             }
+            let name = source_display(source);
+            // Источник начат (чанкинг впереди) — chunks_total=0 (баннер как раньше).
             send(RagProgress::Indexing {
                 index: i + 1,
                 total,
-                name: source_display(source),
+                name: name.clone(),
                 dir: String::new(),
+                chunks_done: 0,
+                chunks_total: 0,
             });
+            // Прогресс по чанкам (см. spawn_rag_ingest): rebuild зовёт index_source напрямую.
+            let progress = |done: usize, tot: usize| {
+                let _ = evt_tx.send(AppEvent::RagProgress(RagProgress::Indexing {
+                    index: i + 1,
+                    total,
+                    name: name.clone(),
+                    dir: String::new(),
+                    chunks_done: done,
+                    chunks_total: tot,
+                }));
+            };
             match index_source(
-                &embedder, &storage, profile_id, source, content, params, loc,
+                &embedder, &storage, profile_id, source, content, params, loc, progress,
             )
             .await
             {
@@ -442,13 +478,14 @@ async fn index_file(
     path: &std::path::Path,
     params: ChunkParams,
     loc: &'static Locale,
+    progress: impl FnMut(usize, usize),
 ) -> anyhow::Result<usize> {
     let content = read_source_text(path)?;
     // Каноничный ключ источника + идемпотентность: при повторном добавлении того же
     // файла заменяем его прежние чанки, а не плодим дубли (см. [`index_source`]).
     let source = crate::features::rag_ingest::canonical_source(path);
     index_source(
-        embedder, storage, profile_id, &source, &content, params, loc,
+        embedder, storage, profile_id, &source, &content, params, loc, progress,
     )
     .await
 }
@@ -457,6 +494,14 @@ async fn index_file(
 /// чанки и сохранённый текст). Markdown (`*.md`) чанкуется семантически (по
 /// заголовкам), прочее — текстовым чанкером. Возвращает число записанных чанков.
 /// Общая логика файловой индексации (`/rag add`) и реиндексации (`/rag rebuild`).
+///
+/// Эмбеддинг идёт под-батчами по [`EMBED_BATCH_CHUNKS`]: после каждого батча
+/// вызывается `progress(chunks_done, chunks_total)`, так что баннер двигается *в
+/// ходе* эмбеддинга крупного файла. Файл с ≤16 чанками — по-прежнему один запрос.
+// Аргументы когезивны (зависимости индексации + колбэк прогресса) и передаются
+// позиционно из двух вызывающих; выделять пучок ради одного лишнего параметра —
+// лишний churn.
+#[allow(clippy::too_many_arguments)]
 async fn index_source(
     embedder: &Arc<dyn Embedder>,
     storage: &Arc<Storage>,
@@ -465,6 +510,7 @@ async fn index_source(
     content: &str,
     params: ChunkParams,
     loc: &'static Locale,
+    mut progress: impl FnMut(usize, usize),
 ) -> anyhow::Result<usize> {
     let chunks = if is_markdown_source(source) {
         crate::features::tools::rag::chunk_markdown(content, params)
@@ -478,17 +524,27 @@ async fn index_source(
         .db()
         .rag_source_upsert(profile_id, source, content, chrono::Utc::now())?;
     if chunks.is_empty() {
+        progress(0, 0);
         return Ok(0);
     }
-    let embeddings = embedder.embed(chunks.clone()).await?;
-    if embeddings.len() != chunks.len() {
-        anyhow::bail!("{}", loc.t("ui.err.rag_wrong_vector_count"));
+    let total = chunks.len();
+    progress(0, total);
+    // Эмбеддим и пишем под-батчами: каждый запрос ограничен EMBED_BATCH_CHUNKS, и
+    // прогресс двигается по мере готовности батчей (у крупных файлов — плавно).
+    let mut done = 0usize;
+    for batch in chunks.chunks(EMBED_BATCH_CHUNKS) {
+        let embeddings = embedder.embed(batch.to_vec()).await?;
+        if embeddings.len() != batch.len() {
+            anyhow::bail!("{}", loc.t("ui.err.rag_wrong_vector_count"));
+        }
+        for (chunk, embedding) in batch.iter().zip(embeddings) {
+            let doc = crate::entities::rag::RagDocument::new(profile_id, source, chunk, embedding);
+            storage.db().rag_insert(&doc)?;
+        }
+        done += batch.len();
+        progress(done, total);
     }
-    for (chunk, embedding) in chunks.iter().zip(embeddings) {
-        let doc = crate::entities::rag::RagDocument::new(profile_id, source, chunk, embedding);
-        storage.db().rag_insert(&doc)?;
-    }
-    Ok(chunks.len())
+    Ok(total)
 }
 
 /// Источник — markdown (чанкуется по заголовкам)? Решаем по расширению `*.md`.
@@ -563,5 +619,93 @@ mod tests {
         let body = "<p>это не HTML</p>\nобычный текст с угловыми скобками";
         std::fs::write(&txt, body).unwrap();
         assert_eq!(read_source_text(&txt).unwrap(), body);
+    }
+
+    /// Файловое хранилище на tempdir + детерминированный эмбеддер для тестов
+    /// индексации. Guard каталога возвращается — держать его живым на время теста
+    /// (Storage хранит открытое соединение с файлом БД внутри каталога).
+    fn test_deps() -> (tempfile::TempDir, Arc<Storage>, Arc<dyn Embedder>) {
+        let dir = tempfile::tempdir().unwrap();
+        let storage =
+            Arc::new(Storage::open(crate::shared::paths::Paths::with_root(dir.path())).unwrap());
+        let embedder: Arc<dyn Embedder> = Arc::new(crate::shared::api::mock::MockEmbedder::new(16));
+        (dir, storage, embedder)
+    }
+
+    #[tokio::test]
+    async fn index_source_reports_chunk_progress_in_subbatches() {
+        let (_dir, storage, embedder) = test_deps();
+        let profile_id = Uuid::new_v4();
+        // Мелкий целевой размер → много чанков (> EMBED_BATCH_CHUNKS), чтобы эмбеддинг
+        // шёл несколькими под-батчами и прогресс двигался по ходу.
+        let params = ChunkParams::from_settings(&crate::shared::config::RagSettings {
+            chunk_target_chars: 60,
+            chunk_overlap_chars: 10,
+            chunk_max_chars: 120,
+        });
+        let content = "Короткое предложение для проверки чанкинга номер. ".repeat(40);
+
+        let mut ticks: Vec<(usize, usize)> = Vec::new();
+        let n = index_source(
+            &embedder,
+            &storage,
+            profile_id,
+            "kb.txt",
+            &content,
+            params,
+            crate::shared::i18n::locale(crate::shared::i18n::Lang::Ru),
+            |done, total| ticks.push((done, total)),
+        )
+        .await
+        .unwrap();
+
+        assert!(
+            n > EMBED_BATCH_CHUNKS,
+            "тест должен произвести > {EMBED_BATCH_CHUNKS} чанков, получено {n}"
+        );
+        // Первый тик — (0, N), последний — (N, N).
+        assert_eq!(
+            ticks.first(),
+            Some(&(0, n)),
+            "первый тик — (0, N): {ticks:?}"
+        );
+        assert_eq!(
+            ticks.last(),
+            Some(&(n, n)),
+            "последний тик — (N, N): {ticks:?}"
+        );
+        // `done` монотонно не убывает, `total` постоянен и равен возвращённому N.
+        for w in ticks.windows(2) {
+            assert!(w[1].0 >= w[0].0, "done не убывает: {ticks:?}");
+            assert_eq!(w[0].1, n, "total постоянен и равен N");
+        }
+        // Под-батчинг ничего не потерял: все N чанков записаны и находятся поиском
+        // (rag_search — тот же примитив БД, что и инструмент RagSearch).
+        assert_eq!(storage.db().rag_count(profile_id).unwrap(), n);
+        let mut q = embedder.embed(vec!["предложение".into()]).await.unwrap();
+        let query = q.remove(0);
+        let hits = storage.db().rag_search(profile_id, &query, 5).unwrap();
+        assert!(!hits.is_empty(), "поиск находит записанные чанки");
+    }
+
+    #[tokio::test]
+    async fn index_source_empty_content_single_zero_tick() {
+        let (_dir, storage, embedder) = test_deps();
+        let profile_id = Uuid::new_v4();
+        let mut ticks: Vec<(usize, usize)> = Vec::new();
+        let n = index_source(
+            &embedder,
+            &storage,
+            profile_id,
+            "empty.txt",
+            "",
+            ChunkParams::default(),
+            crate::shared::i18n::locale(crate::shared::i18n::Lang::Ru),
+            |done, total| ticks.push((done, total)),
+        )
+        .await
+        .unwrap();
+        assert_eq!(n, 0, "у пустого источника нет чанков");
+        assert_eq!(ticks, vec![(0, 0)], "ровно один тик (0,0): {ticks:?}");
     }
 }
