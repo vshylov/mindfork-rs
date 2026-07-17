@@ -473,6 +473,7 @@ enum FieldId {
     SmPromptCap,
     SmSummaryTarget,
     SmAutoReflect,
+    SmAutoConsolidate,
     SmProtocol,
     NotesAutoConsolidate,
     NotesRecallIncludesSelf,

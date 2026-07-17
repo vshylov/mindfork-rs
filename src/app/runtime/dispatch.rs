@@ -147,6 +147,7 @@ pub(super) fn apply_event(
         AppEvent::BackgroundTask { kind, active: on } => match kind {
             BackgroundKind::Reflection => screen.set_reflecting(on),
             BackgroundKind::Consolidation => screen.set_consolidating(on),
+            BackgroundKind::SelfConsolidation => screen.set_self_consolidating(on),
         },
         AppEvent::Error(message) => screen.push_error(&message),
     }

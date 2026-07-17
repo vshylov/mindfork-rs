@@ -559,6 +559,12 @@ impl SettingsScreen {
                 )
                 .describe(loc.t("ui.settings.desc.sm_auto_reflect")),
                 row(
+                    FieldId::SmAutoConsolidate,
+                    loc.t("ui.settings.field.sm_auto_consolidate"),
+                    FieldKind::Text(self.config.self_model.auto_consolidate_every.to_string()),
+                )
+                .describe(loc.t("ui.settings.desc.sm_auto_consolidate")),
+                row(
                     FieldId::SmProtocol,
                     loc.t("ui.settings.field.sm_protocol"),
                     FieldKind::Toggle(self.config.self_model.maintenance_protocol),

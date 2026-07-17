@@ -127,6 +127,7 @@ fn bare_orch_rx() -> (tempfile::TempDir, Orchestrator, UnboundedReceiver<AppEven
         bg: std::collections::HashMap::new(),
         bg_done_tx: unbounded_channel().0,
         consolidate_counts: std::collections::HashMap::new(),
+        self_consolidate_counts: std::collections::HashMap::new(),
         saves: SaveQueue::default(),
         restarts: RestartQueue::default(),
         default_language: crate::shared::i18n::Lang::default(),
@@ -306,6 +307,39 @@ fn orch_ready_for_reflection() -> (tempfile::TempDir, Orchestrator, Uuid) {
     (dir, orch, chat_id)
 }
 
+/// Готовит оркестратор с чатом (user+assistant), профилем с включённой моделью себя и
+/// двумя наблюдениями-заметками (`@self`) в БД (сигнал «есть что консолидировать»);
+/// `auto_consolidate_every=1`. Возвращает `(dir, orch, chat_id)`.
+/// См. docs/self-model-consolidation.md (этап A1).
+fn orch_ready_for_self_consolidation() -> (tempfile::TempDir, Orchestrator, Uuid) {
+    use crate::entities::note::Note;
+    use crate::features::tools::notes::SELF_NOTE_TAG;
+    use crate::features::tools::self_model::GET_SELF_MODEL_ID;
+    let (dir, mut orch) = bare_orch();
+    orch.config.self_model.auto_consolidate_every = 1;
+    let mut profile = Profile::new("P", "sys");
+    profile.enabled_tools = vec![
+        GET_SELF_MODEL_ID.into(),
+        "note_merge".into(),
+        "update_self_model".into(),
+    ];
+    let pid = profile.id;
+    let mut chat = Chat::from_profile(&profile, "t");
+    chat.push_message(Message::user("привет"));
+    chat.push_message(Message::assistant("здравствуй"));
+    let chat_id = chat.id;
+    // Два наблюдения-заметки (@self) — обзор self-консолидации непуст (наблюдений ≥ 2).
+    for text in ["я ценю краткость", "пользователь любит лаконичность"]
+    {
+        let note = Note::new(pid, text, vec![SELF_NOTE_TAG.to_string()]);
+        orch.storage.db().note_insert(&note).unwrap();
+    }
+    orch.profiles.push(profile);
+    orch.chats.push(chat);
+    orch.active_id = Some(chat_id);
+    (dir, orch, chat_id)
+}
+
 // ---------- подмодули тестов (разбор god-object: docs/history/refactoring-god-objects.md, этап 3) ----------
 
 mod chats;
@@ -317,6 +351,7 @@ mod profiles;
 mod rag;
 mod reflection;
 mod request;
+mod self_consolidation;
 mod self_model;
 mod settings;
 mod title;

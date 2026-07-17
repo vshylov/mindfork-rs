@@ -524,6 +524,106 @@ async fn auto_reflect_e2e_live() {
     );
 }
 
+/// End-to-end авто-консолидации «модели себя» (этап A1) на живой модели:
+/// `auto_consolidate_every=1` → после ответа, когда наблюдений (`@self`) ≥ 2, в фоне
+/// запускается «сон» модели себя, который сам сводит дубли наблюдений (`note_merge`/
+/// `note_supersede`) и/или сжимает раздутое описание. «Сон» молчалив (нет UI-события) —
+/// наблюдаем результат опросом БД. Ассертим **механизм** (наблюдения создаются); факт
+/// сведения дублей печатаем для go/no-go (поведение нестабильно). `#[ignore]`, вручную:
+/// `MINDFORK_ENGINE_URL=…/v1 MINDFORK_EMBED_URL=…/v1 cargo test self_consolidation_e2e_live -- --ignored --nocapture --test-threads=1`.
+#[tokio::test]
+#[ignore = "requires a running OpenAI-compatible server (MINDFORK_ENGINE_URL)"]
+async fn self_consolidation_e2e_live() {
+    use crate::features::tools::notes::SELF_NOTE_TAG;
+    let mut config = AppConfig::default();
+    config.self_model.auto_consolidate_every = 1; // «сон» после каждого ответа
+    let Some(backend) = live_backend() else {
+        eprintln!("skip: MINDFORK_ENGINE_URL not set");
+        return;
+    };
+    // Собираем оркестратор с включённым «сном» + (по возможности) реальным эмбеддером.
+    let embedder = live_embedder();
+    let dir = tempfile::tempdir().unwrap();
+    let storage = Arc::new(Storage::open(Paths::with_root(dir.path())).unwrap());
+    let (cmd_tx, cmd_rx) = unbounded_channel();
+    let (evt_tx, mut evt_rx) = unbounded_channel();
+    let deps = OrchestratorDeps {
+        cmd_rx,
+        evt_tx,
+        storage,
+        config,
+        supervisor: Arc::new(MockSupervisor::with_backend_and_embedder(
+            Some(backend),
+            embedder,
+        )),
+        default_language: crate::shared::i18n::Lang::default(),
+    };
+    let handle = tokio::spawn(run(deps));
+    let root = dir.path().to_path_buf();
+    let pid = enable_all_tools(&cmd_tx, &mut evt_rx).await;
+
+    // Два похожих наблюдения (кандидаты в дубли) — записываем, пока НЕ объединяя.
+    let (_t1, tools1) = run_turn_live(
+        &cmd_tx,
+        &mut evt_rx,
+        "Запиши наблюдение (add_insight): я ценю краткость в ответах. Просто запиши.",
+    )
+    .await;
+    let (_t2, tools2) = run_turn_live(
+        &cmd_tx,
+        &mut evt_rx,
+        "Запиши ещё одно наблюдение (add_insight): пользователь предпочитает лаконичные, \
+         краткие ответы. Просто запиши, оба оставь.",
+    )
+    .await;
+    eprintln!("наблюдения: {tools1:?} + {tools2:?}");
+
+    // После второго ответа наблюдений ≥ 2 → фоновый «сон» модели себя должен запуститься
+    // и, возможно, свести дубли. Опрос БД до ~90с: считаем self-заметки.
+    let count_self = |root: &std::path::Path| -> usize {
+        Storage::open(Paths::with_root(root))
+            .unwrap()
+            .db()
+            .note_list(pid, None, &[SELF_NOTE_TAG.to_string()], None)
+            .unwrap()
+            .len()
+    };
+    // Дожидаемся ≥2 наблюдений (обе записи легли), затем следим, не сведёт ли их «сон».
+    let mut before = 0usize;
+    for _ in 0..180 {
+        before = count_self(&root);
+        if before >= 2 {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+    }
+    // Триггерим ещё один ход (на случай, если «сон» после turn2 не успел из-за каденции):
+    // каждый ответ инкрементирует счётчик, every=1 → «сон» пробуется снова.
+    let _ = run_turn_live(&cmd_tx, &mut evt_rx, "Спасибо, коротко подтверди.").await;
+    let mut after = before;
+    for _ in 0..180 {
+        after = count_self(&root);
+        if after < before {
+            break; // дубли сведены «сном»
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+    }
+
+    cmd_tx.send(AppCommand::Quit).unwrap();
+    handle.await.unwrap();
+
+    eprintln!(
+        "self-заметок: до={before}, после={after} (сведение дублей «сном»: {})",
+        after < before
+    );
+    // Механизм: наблюдения-заметки созданы (add_insight отработал).
+    assert!(
+        before >= 1,
+        "ожидали хотя бы одно наблюдение (@self) от add_insight"
+    );
+    let _ = (tools1, tools2);
+}
+
 /// End-to-end зонд **ворот** (ядро гипотезы Яруса 1 «нарратив как заметки»): модель
 /// записывает наблюдение (`add_insight` → self-заметка @self), затем почти-дубль —
 /// ворота `add_insight` показывают похожее существующее наблюдение с подсказкой

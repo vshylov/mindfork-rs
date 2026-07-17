@@ -254,6 +254,9 @@ pub struct ChatScreen {
     reflecting: bool,
     /// Идёт ли фоновая авто-консолидация заметок («сон»; тихий индикатор).
     consolidating: bool,
+    /// Идёт ли фоновая авто-консолидация «модели себя» («сон» модели себя; тихий
+    /// индикатор). См. docs/self-model-consolidation.md.
+    self_consolidating: bool,
     /// Индикатор фоновой индексации RAG (`/rag add`); `None` — индексация не идёт.
     rag: Option<RagBanner>,
     /// Состояние имперсонации (`Ctrl+U`); `None` — не идёт. См. spec §11.8.
@@ -311,6 +314,7 @@ impl ChatScreen {
             mouse_scroll: false,
             reflecting: false,
             consolidating: false,
+            self_consolidating: false,
             rag: None,
             impersonation: None,
             pending_text_sep: false,
@@ -395,14 +399,26 @@ impl ChatScreen {
         self.consolidating = active;
     }
 
+    /// Ставит/снимает флаг активной авто-консолидации «модели себя» («сон» модели себя).
+    pub fn set_self_consolidating(&mut self, active: bool) {
+        self.self_consolidating = active;
+    }
+
     /// Метка активных фоновых задач для статус-бара (`None` — ничего не идёт).
+    /// Собирается из меток активных задач (`·`-разделитель) — обобщается на любое их
+    /// число (рефлексия / сон заметок / сон модели себя могут идти параллельно).
     pub(super) fn background_hint(&self) -> Option<String> {
-        match (self.reflecting, self.consolidating) {
-            (true, true) => Some(self.loc.t("ui.chat.bg.both").to_string()),
-            (true, false) => Some(self.loc.t("ui.chat.bg.reflect").to_string()),
-            (false, true) => Some(self.loc.t("ui.chat.bg.consolidate").to_string()),
-            (false, false) => None,
+        let mut parts: Vec<&str> = Vec::new();
+        if self.reflecting {
+            parts.push(self.loc.t("ui.chat.bg.reflect"));
         }
+        if self.consolidating {
+            parts.push(self.loc.t("ui.chat.bg.consolidate"));
+        }
+        if self.self_consolidating {
+            parts.push(self.loc.t("ui.chat.bg.self_consolidate"));
+        }
+        (!parts.is_empty()).then(|| parts.join(" · "))
     }
 
     pub fn set_chat_list(&mut self, chats: Vec<ChatSummary>) {

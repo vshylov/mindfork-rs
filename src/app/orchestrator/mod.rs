@@ -33,6 +33,7 @@ mod reflection;
 mod request;
 mod restart_queue;
 mod save_queue;
+mod self_consolidation;
 mod settings;
 mod title;
 mod tool_loop;
@@ -145,6 +146,7 @@ pub async fn run(deps: OrchestratorDeps) {
         bg: HashMap::new(),
         bg_done_tx,
         consolidate_counts: HashMap::new(),
+        self_consolidate_counts: HashMap::new(),
         saves: SaveQueue::default(),
         restarts: RestartQueue::default(),
         default_language,
@@ -290,9 +292,13 @@ struct Orchestrator {
     bg: HashMap<BackgroundKind, BgSlot>,
     /// Единый канал исхода «тихих» фоновых задач (`(вид, Ok/Err(причина))` → петля).
     bg_done_tx: UnboundedSender<(BackgroundKind, Result<(), String>)>,
-    /// Счётчики ответов ассистента с прошлой авто-консолидации (по чату). Данные
-    /// каденции консолидации (не жизненный цикл задачи — тот в `bg`).
+    /// Счётчики ответов ассистента с прошлой авто-консолидации заметок (по чату).
+    /// Данные каденции консолидации (не жизненный цикл задачи — тот в `bg`).
     consolidate_counts: HashMap<Uuid, u32>,
+    /// Счётчики ответов ассистента с прошлой авто-консолидации «модели себя» (по чату).
+    /// Данные каденции «сна» модели себя (не жизненный цикл — тот в `bg`).
+    /// См. docs/self-model-consolidation.md (этап A1).
+    self_consolidate_counts: HashMap<Uuid, u32>,
     /// Очередь отложенного сохранения чатов (дебаунс; выделено в Фазе 3).
     saves: SaveQueue,
     /// Очередь отложенного (пере)запуска серверов при правках настроек движка
