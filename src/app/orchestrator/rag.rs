@@ -453,19 +453,31 @@ fn spawn_rag_rebuild(task: RagRebuild) {
     });
 }
 
-/// Читает исходник для индексации: для `.html`/`.htm` извлекает читаемый текст
-/// (переиспользует web::extract_readable — отбрасывает nav/header/footer/aside/
-/// скрипты), для прочего — как есть. RAG чанкует источник целиком, поэтому
-/// извлечение без усечения (usize::MAX). BOM снимает read_text.
-fn read_source_text(path: &std::path::Path) -> std::io::Result<String> {
-    let raw = crate::features::rag_ingest::read_text(path)?;
-    if crate::features::rag_ingest::is_html(path) {
+/// Читает исходник для индексации, извлекая простой текст по формату:
+/// - `.html`/`.htm` — читаемый текст (переиспользует `web::extract_readable`,
+///   отбрасывает nav/header/footer/aside/скрипты; RAG чанкует источник целиком,
+///   поэтому без усечения — `usize::MAX`);
+/// - `.pdf` — крейт `pdf-extract` (качество «лучшее усилие»);
+/// - `.docx` — ZIP + `word/document.xml` (`features/doc_extract.rs`);
+/// - прочее (txt/md) — как есть (BOM снимает `read_text`).
+///
+/// Бинарные форматы (pdf/docx) читаются сырыми байтами (`fs::read`), а не через
+/// `read_text` (тот декодирует как UTF-8). Извлечение может завершиться ошибкой с
+/// контекстом (вызывающий пропускает такой источник).
+fn read_source_text(path: &std::path::Path) -> anyhow::Result<String> {
+    use crate::features::{doc_extract, rag_ingest};
+    if rag_ingest::is_html(path) {
+        let raw = rag_ingest::read_text(path)?;
         Ok(crate::features::tools::web::extract_readable(
             &raw,
             usize::MAX,
         ))
+    } else if rag_ingest::is_pdf(path) {
+        doc_extract::extract_pdf(&std::fs::read(path)?)
+    } else if rag_ingest::is_docx(path) {
+        doc_extract::extract_docx(&std::fs::read(path)?)
     } else {
-        Ok(raw)
+        Ok(rag_ingest::read_text(path)?)
     }
 }
 
@@ -619,6 +631,36 @@ mod tests {
         let body = "<p>это не HTML</p>\nобычный текст с угловыми скобками";
         std::fs::write(&txt, body).unwrap();
         assert_eq!(read_source_text(&txt).unwrap(), body);
+    }
+
+    #[test]
+    fn read_source_text_routes_docx_and_pdf() {
+        use std::io::Write;
+        let dir = tempfile::tempdir().unwrap();
+
+        // DOCX: собираем минимальный архив с word/document.xml и извлекаем текст абзаца.
+        let docx = dir.path().join("doc.docx");
+        let xml = "<?xml version=\"1.0\"?>\
+             <w:document xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\">\
+             <w:body><w:p><w:r><w:t>Абзац из DOCX-документа</w:t></w:r></w:p></w:body></w:document>";
+        let mut zip = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
+        let opts: zip::write::FileOptions<'_, ()> = zip::write::FileOptions::default();
+        zip.start_file("word/document.xml", opts).unwrap();
+        zip.write_all(xml.as_bytes()).unwrap();
+        std::fs::write(&docx, zip.finish().unwrap().into_inner()).unwrap();
+        assert_eq!(
+            read_source_text(&docx).unwrap(),
+            "Абзац из DOCX-документа",
+            "DOCX должен маршрутизироваться через извлечение текста"
+        );
+
+        // PDF: та же фикстура, что и в doc_extract — маршрутизируется через extract_pdf.
+        let pdf = dir.path().join("doc.pdf");
+        std::fs::write(&pdf, include_bytes!("../../../tests/fixtures/hello.pdf")).unwrap();
+        assert!(
+            read_source_text(&pdf).unwrap().contains("Hello World"),
+            "PDF должен маршрутизироваться через извлечение текста"
+        );
     }
 
     /// Файловое хранилище на tempdir + детерминированный эмбеддер для тестов

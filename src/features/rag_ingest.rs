@@ -1,8 +1,8 @@
 //! Сканирование файлов для индексации в базу знаний (RAG, команда `/rag add`).
 //! Чистая, тестируемая файловая логика: обход пути, отбор поддерживаемых
-//! расширений (txt/md/html), опциональная рекурсия и чтение содержимого. Сам
-//! процесс индексации (эмбеддинг + запись) ведёт фоновая задача оркестратора. См.
-//! spec §9.3. Извлечение читаемого текста из HTML — обязанность слоя `app`
+//! расширений (txt/md/html/pdf/docx), опциональная рекурсия и чтение содержимого.
+//! Сам процесс индексации (эмбеддинг + запись) ведёт фоновая задача оркестратора.
+//! См. spec §9.3. Извлечение текста из HTML/PDF/DOCX — обязанность слоя `app`
 //! (`orchestrator/rag.rs`), а не этого модуля (иначе `features → features/tools` —
 //! боковой импорт, запрещённый FSD); здесь лишь опознаётся расширение.
 //!
@@ -12,9 +12,10 @@
 
 use std::path::{Path, PathBuf};
 
-/// Поддерживаемые расширения файлов (нижний регистр, без точки): текст, markdown и
-/// HTML (из HTML извлекается читаемый текст на слое `app`, см. `orchestrator/rag.rs`).
-pub const SUPPORTED_EXTENSIONS: &[&str] = &["txt", "md", "html", "htm"];
+/// Поддерживаемые расширения файлов (нижний регистр, без точки): текст, markdown,
+/// HTML, PDF и DOCX. Из HTML/PDF/DOCX извлекается простой текст на слое `app`
+/// (`orchestrator/rag.rs`), этот модуль лишь опознаёт расширение.
+pub const SUPPORTED_EXTENSIONS: &[&str] = &["txt", "md", "html", "htm", "pdf", "docx"];
 
 /// Прогресс фоновой индексации файлов в RAG. Шлётся задачей оркестратора и
 /// отображается экраном чата (баннер со спиннером + итоговая заметка).
@@ -62,13 +63,29 @@ pub fn is_supported(path: &Path) -> bool {
         .is_some_and(|e| SUPPORTED_EXTENSIONS.contains(&e.to_ascii_lowercase().as_str()))
 }
 
+/// Совпадает ли расширение пути с `ext` (регистронезависимо)?
+fn has_ext(path: &Path, ext: &str) -> bool {
+    path.extension()
+        .and_then(|e| e.to_str())
+        .is_some_and(|e| e.eq_ignore_ascii_case(ext))
+}
+
 /// HTML-файл по расширению (`html`/`htm`, регистронезависимо)? Слой `app` по этому
 /// признаку решает, извлекать ли читаемый текст (иначе читает содержимое как есть).
 pub fn is_html(path: &Path) -> bool {
-    path.extension().and_then(|e| e.to_str()).is_some_and(|e| {
-        let e = e.to_ascii_lowercase();
-        e == "html" || e == "htm"
-    })
+    has_ext(path, "html") || has_ext(path, "htm")
+}
+
+/// PDF-файл по расширению (`pdf`, регистронезависимо)? Слой `app` извлекает из него
+/// текст крейтом `pdf-extract` (см. `orchestrator/rag.rs`, `features/doc_extract.rs`).
+pub fn is_pdf(path: &Path) -> bool {
+    has_ext(path, "pdf")
+}
+
+/// DOCX-файл по расширению (`docx`, регистронезависимо)? Слой `app` извлекает из него
+/// текст (ZIP + `word/document.xml`, см. `features/doc_extract.rs`).
+pub fn is_docx(path: &Path) -> bool {
+    has_ext(path, "docx")
 }
 
 /// Собирает список поддерживаемых файлов по пути:
@@ -159,8 +176,30 @@ mod tests {
         assert!(is_supported(Path::new("a.txt")));
         assert!(is_supported(Path::new("a.MD")));
         assert!(is_supported(Path::new("dir/b.Md")));
-        assert!(!is_supported(Path::new("a.pdf")));
+        assert!(!is_supported(Path::new("a.rtf")));
         assert!(!is_supported(Path::new("noext")));
+    }
+
+    #[test]
+    fn is_supported_and_helpers_match_pdf_and_docx_case_insensitively() {
+        // PDF/DOCX поддержаны наравне с txt/md/html.
+        assert!(is_supported(Path::new("doc.pdf")));
+        assert!(is_supported(Path::new("dir/report.DOCX")));
+        assert!(is_supported(Path::new("a.PDF")));
+        // is_pdf/is_docx выделяют именно свои расширения (регистронезависимо)...
+        assert!(is_pdf(Path::new("doc.pdf")));
+        assert!(is_pdf(Path::new("dir/doc.PDF")));
+        assert!(is_docx(Path::new("report.docx")));
+        assert!(is_docx(Path::new("dir/report.DocX")));
+        // ...и не срабатывают на чужих/неподдержанных расширениях.
+        assert!(!is_pdf(Path::new("report.docx")));
+        assert!(!is_pdf(Path::new("a.txt")));
+        assert!(!is_docx(Path::new("doc.pdf")));
+        assert!(!is_docx(Path::new("a.md")));
+        assert!(!is_pdf(Path::new("noext")));
+        // .doc (legacy) намеренно не поддержан.
+        assert!(!is_supported(Path::new("old.doc")));
+        assert!(!is_docx(Path::new("old.doc")));
     }
 
     #[test]
@@ -198,7 +237,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         write(&dir.path().join("a.txt"), "a");
         write(&dir.path().join("b.md"), "b");
-        write(&dir.path().join("c.pdf"), "c"); // не поддержан
+        write(&dir.path().join("c.rtf"), "c"); // не поддержан
         write(&dir.path().join("sub/d.txt"), "d"); // в подпапке
 
         let found = scan(dir.path(), false).unwrap();
