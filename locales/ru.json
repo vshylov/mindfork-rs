@@ -889,10 +889,17 @@
   "migrate.err.backup_failed": "Не удалось создать резервную копию перед миграцией данных: {err}. Миграция отменена, данные не изменены.",
   "migrate.err.control_parse": "Миграция файла {file} дала непарсимый результат — файл не изменён. Это ошибка миграции; сообщите разработчику.",
 
-  "migration.ctx.parse_settings": "разбор Settings.json (LameLLaMA)",
-  "migration.ctx.read_settings": "чтение Settings.json",
-  "migration.ctx.read": "чтение {path}",
-  "migration.import.default_profile": "Импортировано",
+  "import.ctx.parse": "разбор файла формата mindfork-import",
+  "import.ctx.read": "чтение {path}",
+  "import.err.not_import_file": "это не файл формата mindfork-import: поле format = {found} (см. docs/import-format.md)",
+  "import.err.no_version": "отсутствует или неверно поле version (ожидается число ≥ 1)",
+  "import.err.newer_version": "файл формата версии {version}, приложение поддерживает до {supported} — обновите приложение",
+  "import.err.profile_empty_key": "пустой key у профиля #{index}",
+  "import.err.chat_empty_key": "пустой key у чата #{index}",
+  "import.err.dup_profile_key": "дублирующийся key профиля: {key}",
+  "import.err.dup_chat_key": "дублирующийся key чата: {key}",
+  "import.err.unknown_profile_key": "чат {chat} ссылается на неизвестный профиль: profile_key = {profile_key} (профиль должен быть в этом же файле)",
+  "import.err.bad_role": "чат {chat}, сообщение #{index}: неизвестная роль «{role}» (допустимы user/assistant/system)",
 
   "backup.ctx.create_archive": "создание архива {path}",
   "backup.ctx.validate": "проверка архива {path}",
@@ -923,7 +930,7 @@
   "cli.help.try_help": "Подробнее — «mindfork-rs --help».",
   "cli.help.cmd.backup": "Создать резервную копию пользовательских данных (zip-архив).",
   "cli.help.cmd.restore": "Восстановить пользовательские данные из резервной копии.",
-  "cli.help.cmd.import": "Одноразовый импорт данных из LameLLaMA (.NET).",
+  "cli.help.cmd.import": "Импорт профилей и чатов из файла формата mindfork-import (JSON).",
   "cli.help.cmd.sandbox": "Управление песочницей Python (Wasmer/WASIX).",
   "cli.help.cmd.sandbox.setup": "Установить/обновить песочницу: wasmer, python.webc и пакеты.",
   "cli.help.cmd.locales": "Локали интерфейса и служебного каркаса (внешние data/locales/*.json).",
@@ -935,7 +942,7 @@
   "cli.help.opt.sandbox.force": "Перекачать/переустановить всё, даже если уже на месте.",
   "cli.help.opt.locales.output": "Файл назначения (существующий не перезаписывается).",
   "cli.help.arg.restore.archive": "Путь к архиву резервной копии.",
-  "cli.help.arg.import.dir": "Каталог с данными LameLLaMA.",
+  "cli.help.arg.import.file": "Файл формата mindfork-import (см. docs/import-format.md).",
   "cli.help.arg.locales.code": "Код языка-источника (ru, en или уже добавленный внешний).",
 
   "cli.parse.unknown_command": "неизвестная команда «{cmd}»",
@@ -963,7 +970,7 @@
   "cli.ctx.build_runtime": "создание среды выполнения tokio",
   "cli.ctx.open_storage": "открытие хранилища",
   "cli.ctx.backup": "создание резервной копии",
-  "cli.ctx.import": "импорт данных LameLLaMA из {dir}",
+  "cli.ctx.import": "импорт из {file}",
   "cli.ctx.create_dir": "создание каталога {path}",
   "cli.ctx.write_file": "запись {path}",
 
@@ -982,7 +989,8 @@
   "cli.locales.file_exists": "файл уже существует: {path} — укажите другой путь (вшитые бандлы не перезаписываем)",
   "cli.locales.exported": "Бандл языка «{code}» экспортирован в {path}.",
 
-  "cli.import.done": "Импорт LameLLaMA завершён: профилей {profiles}, чатов {chats}.",
+  "cli.import.done": "Импорт завершён: профилей {profiles}, чатов {chats}.",
+  "cli.import.lamellama_removed": "команда import-lamellama удалена: импорт LameLLaMA теперь выполняет внешний конвертер, создающий файл формата mindfork-import (см. docs/import-format.md); затем: mindfork-rs import <файл>",
 
   "ui.lang.name": "Русский"
 }

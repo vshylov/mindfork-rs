@@ -242,7 +242,9 @@ src/
 │  │                        downgrade/битости, pre-migration бэкап, control-parse
 │  ├─ sandbox_setup.rs      провизия песочницы Python (mindfork sandbox setup): wasmer +
 │  │                        python.webc + колёса по lock-списку (sha256); прогрев кэша
-│  └─ migration.rs          импортёр LameLLaMA (.NET): профили + чаты
+│  └─ import.rs             импорт из нейтрального формата mindfork-import
+│                           (docs/import-format.md): профили + чаты от внешних
+│                           конвертеров, идемпотентно (UUIDv5 от ключей)
 │
 ├─ entities/                доменные типы (без I/O); serde-сериализуемы
 │  ├─ chat.rs               Chat, ChatSummary, CharacterNames, Chat::from_profile, draft
@@ -1493,7 +1495,9 @@ flowchart TB
   логирование (в файл) и `tokio`, поднимает `ratatui`, запускает оркестратор и
   петлю. **CLI — собственный микро-парсер `features/cli.rs`** (не `clap`), чтобы весь
   текст CLI (справка, ошибки разбора, сообщения команд) жил в бандлах локалей i18n
-  (ось B, docs/history/i18n-cli.md): `import-lamellama <dir>` (импортёр), `backup [-o FILE]
+  (ось B, docs/history/i18n-cli.md): `import <file>` (импорт из нейтрального формата
+  mindfork-import, `features/import.rs`; прежний `import-lamellama` удалён —
+  подсказывает замену), `backup [-o FILE]
   [-c 0..9]`/`restore <archive>` (резервное копирование/восстановление,
   `features/backup.rs`; берут single-instance), `sandbox setup [--force]`, `locales
   export <code> -o FILE`. Подкоманды выполняются без TUI и завершают процесс.

@@ -889,10 +889,17 @@
   "migrate.err.backup_failed": "Could not create a backup before migrating data: {err}. Migration aborted, data unchanged.",
   "migrate.err.control_parse": "Migrating {file} produced an unparseable result — the file was left unchanged. This is a migration bug; please report it.",
 
-  "migration.ctx.parse_settings": "parsing LameLLaMA Settings.json",
-  "migration.ctx.read_settings": "reading Settings.json",
-  "migration.ctx.read": "reading {path}",
-  "migration.import.default_profile": "Imported",
+  "import.ctx.parse": "parsing mindfork-import file",
+  "import.ctx.read": "reading {path}",
+  "import.err.not_import_file": "not a mindfork-import file: format field = {found} (see docs/import-format.md)",
+  "import.err.no_version": "missing or invalid version field (a number >= 1 expected)",
+  "import.err.newer_version": "file format version {version}, this application supports up to {supported} — update the application",
+  "import.err.profile_empty_key": "empty key on profile #{index}",
+  "import.err.chat_empty_key": "empty key on chat #{index}",
+  "import.err.dup_profile_key": "duplicate profile key: {key}",
+  "import.err.dup_chat_key": "duplicate chat key: {key}",
+  "import.err.unknown_profile_key": "chat {chat} references an unknown profile: profile_key = {profile_key} (the profile must be in the same file)",
+  "import.err.bad_role": "chat {chat}, message #{index}: unknown role \"{role}\" (allowed: user/assistant/system)",
 
   "backup.ctx.create_archive": "creating archive {path}",
   "backup.ctx.validate": "validating archive {path}",
@@ -923,7 +930,7 @@
   "cli.help.try_help": "For more information, try 'mindfork-rs --help'.",
   "cli.help.cmd.backup": "Create a backup of user data (zip archive).",
   "cli.help.cmd.restore": "Restore user data from a backup.",
-  "cli.help.cmd.import": "One-time import of data from LameLLaMA (.NET).",
+  "cli.help.cmd.import": "Import profiles and chats from a mindfork-import file (JSON).",
   "cli.help.cmd.sandbox": "Manage the Python sandbox (Wasmer/WASIX).",
   "cli.help.cmd.sandbox.setup": "Install/update the sandbox: wasmer, python.webc and packages.",
   "cli.help.cmd.locales": "Interface and scaffold locales (external data/locales/*.json).",
@@ -935,7 +942,7 @@
   "cli.help.opt.sandbox.force": "Re-download/reinstall everything, even if already present.",
   "cli.help.opt.locales.output": "Destination file (an existing file is not overwritten).",
   "cli.help.arg.restore.archive": "Path to the backup archive.",
-  "cli.help.arg.import.dir": "Directory with LameLLaMA data.",
+  "cli.help.arg.import.file": "A mindfork-import file (see docs/import-format.md).",
   "cli.help.arg.locales.code": "Source language code (ru, en, or an already-added external one).",
 
   "cli.parse.unknown_command": "unknown command '{cmd}'",
@@ -963,7 +970,7 @@
   "cli.ctx.build_runtime": "building the tokio runtime",
   "cli.ctx.open_storage": "opening storage",
   "cli.ctx.backup": "creating the backup",
-  "cli.ctx.import": "importing LameLLaMA data from {dir}",
+  "cli.ctx.import": "importing from {file}",
   "cli.ctx.create_dir": "creating directory {path}",
   "cli.ctx.write_file": "writing {path}",
 
@@ -982,7 +989,8 @@
   "cli.locales.file_exists": "file already exists: {path} — specify another path (built-in bundles are not overwritten)",
   "cli.locales.exported": "Language bundle '{code}' exported to {path}.",
 
-  "cli.import.done": "LameLLaMA import complete: {profiles} profiles, {chats} chats.",
+  "cli.import.done": "Import complete: {profiles} profiles, {chats} chats.",
+  "cli.import.lamellama_removed": "the import-lamellama command has been removed: LameLLaMA import is now done by an external converter that emits a mindfork-import file (see docs/import-format.md); then run: mindfork-rs import <file>",
 
   "ui.lang.name": "English"
 }

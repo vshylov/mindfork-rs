@@ -34,7 +34,7 @@
 - **Честная плюрализация/грамматика** — формулировки намеренно число-нейтральные (простой `tf` без грамматики); настоящая плюрализация нужна только оси B.
 
 ## Прочее
-- **Generic-импорт (`mindfork import`)** — документированный формат обмена `mindfork-import.json` + CLI; знание о непубличной LameLLaMA уезжает в приватный внешний конвертер (этап 1 направления «плагины», [исследование §5](research/plugin-system.md)).
+- ~~**Generic-импорт (`mindfork import`)**~~ — **сделано** (этап 1 направления «плагины», `feat/generic-import`): формат [mindfork-import](import-format.md) + CLI `import`; знание о непубличной LameLLaMA уехало в приватный внешний конвертер (пишется вне этого репозитория). Развилки Р1–Р8 приняты (2026-07-17), следующий этап — зонд `spike/mcp-client`.
 - **Инсталляторы — сделано** ([docs/history/installers.md](history/installers.md)): Windows — **Inno Setup** (`setup.exe`, выбор языка и расположения данных в мастере, двуязычный UI), Linux — **nfpm** (deb/rpm/pkg.tar.zst, раскладка `/usr/lib` + симлинк). Прилагаются к релизам (`release.yml`), валидируются на PR (`packaging.yml`). **Заделы:** подпись кода Windows (отложена до публичного открытия — SignPath/Certum/Azure Artifact Signing, §5 дока); winget-манифест (до подписи — portable-zip); AUR `mindfork-rs-bin`; MSI под GPO/Intune при спросе.
 - **Авто-обновление** — self-update, musl-static и arm64-сборки, уведомление «доступна новая версия» в TUI. Заделы завершённого направления «релизная инженерия» ([docs/history/release-engineering.md](history/release-engineering.md) §5); релизный пайплайн (тег → архивы + sha256 + пакеты + инсталлятор на GitHub Releases) уже есть.
 - **Голосовой ввод/вывод** (STT/TTS) — амбициозно, но для TUI-чата заметная фича.
