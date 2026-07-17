@@ -216,6 +216,6 @@ pub enum BackgroundKind {
     /// Авто-консолидация заметок («сон»).
     Consolidation,
     /// Авто-консолидация «модели себя» («сон» модели себя): слить дубли наблюдений,
-    /// сжать раздутое описание, связать противоречия. См. docs/self-model-consolidation.md.
+    /// сжать раздутое описание, связать противоречия. См. docs/history/self-model-consolidation.md.
     SelfConsolidation,
 }

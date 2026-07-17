@@ -6043,7 +6043,7 @@ web-поиск и Python под выключателями, экран наст�
 
 ### Пост-M9: консолидация модели себя — этап A1 (фоновый «сон» по таймеру) (сделано)
 - **Первый этап направления «консолидация модели себя»** (дизайн-план
-  [docs/self-model-consolidation.md](docs/self-model-consolidation.md), ветка
+  [docs/history/self-model-consolidation.md](docs/history/self-model-consolidation.md), ветка
   `feat/self-model-auto-consolidate`): периодический фоновый «сон» именно памяти «о
   себе» — зеркало `notes.auto_consolidate_every`. Раньше консолидация модели себя шла
   только через авто-рефлексию/интерактивный `reflect`; A1 добавляет **отдельную**
@@ -6091,7 +6091,7 @@ web-поиск и Python под выключателями, экран наст�
 
 ### Пост-M9: консолидация модели себя — этап A2 (семантика summary↔наблюдения) (сделано)
 - **Второй этап направления** (дизайн-план
-  [docs/self-model-consolidation.md](docs/self-model-consolidation.md) §A2, ветка
+  [docs/history/self-model-consolidation.md](docs/history/self-model-consolidation.md) §A2, ветка
   `feat/self-model-summary-semantics`): обзор self-консолидации получил раздел
   «абзац описания себя (`summary`) семантически совпадает с наблюдением X → вынеси/
   сшей». Наблюдения (`@self`-заметки) хранят вектора в БД, а у `summary` их нет
@@ -6132,7 +6132,7 @@ web-поиск и Python под выключателями, экран наст�
 
 ### Пост-M9: консолидация модели себя — этап A3-лёгкий (старение интересов) (сделано)
 - **Заключительный этап направления** (дизайн-план
-  [docs/self-model-consolidation.md](docs/self-model-consolidation.md) §A3, ветка
+  [docs/history/self-model-consolidation.md](docs/history/self-model-consolidation.md) §A3, ветка
   `feat/self-model-interests-aging`): `current_interests` собеседника — плоский
   `Vec<String>`, ничто их не вымывало. Выбран **лёгкий путь** (без изменения схемы/
   конфига, в духе проекта «интеграция силами модели»): **нудж** в канонический
@@ -6155,7 +6155,7 @@ web-поиск и Python под выключателями, экран наст�
 
 ### Пост-M9: RAG — индексация HTML-источников (этап B1a) (сделано)
 - **Первый этап направления «RAG: источники и извлечение»** (дизайн-план
-  [docs/rag-sources-retrieval.md](docs/rag-sources-retrieval.md) §B1a, ветка
+  [docs/history/rag-sources-retrieval.md](docs/history/rag-sources-retrieval.md) §B1a, ветка
   `feat/rag-html-sources`): `/rag add` индексирует `.html`/`.htm` наравне с
   `.txt`/`.md`. **Без новых зависимостей** — читаемый текст извлекается уже
   существующим `web::extract_readable` (scraper: абзацы `<article>`/`<main>`,
@@ -6181,7 +6181,7 @@ web-поиск и Python под выключателями, экран наст�
 
 ### Пост-M9: RAG — прогресс индексации по чанкам (этап B2a) (сделано)
 - **Второй этап направления «RAG: источники и извлечение»** (дизайн-план
-  [docs/rag-sources-retrieval.md](docs/rag-sources-retrieval.md) §B2a, ветка
+  [docs/history/rag-sources-retrieval.md](docs/history/rag-sources-retrieval.md) §B2a, ветка
   `feat/rag-chunk-progress`): раньше `RagProgress::Indexing` был **по файлу**, а
   `index_source` эмбеддил все чанки файла **одним батчем** — на крупном файле баннер
   замирал до конца эмбеддинга. Теперь эмбеддинг идёт **под-батчами** и прогресс
@@ -6212,7 +6212,7 @@ web-поиск и Python под выключателями, экран наст�
 
 ### Пост-M9: RAG — индексация PDF/DOCX (этап B1b) (сделано)
 - **Продолжение направления «RAG: источники и извлечение»** (дизайн-план
-  [docs/rag-sources-retrieval.md](docs/rag-sources-retrieval.md) §B1b, ветка
+  [docs/history/rag-sources-retrieval.md](docs/history/rag-sources-retrieval.md) §B1b, ветка
   `feat/rag-pdf-docx`): `/rag add` индексирует `.pdf` и `.docx` наравне с
   `.txt`/`.md`/`.html`. Извлечённый простой текст → `chunk_text` (структуры
   заголовков нет). Извлечение — «лучшее усилие»: сканированный PDF без текстового
@@ -6254,7 +6254,7 @@ web-поиск и Python под выключателями, экран наст�
 
 ### Пост-M9: RAG — кросс-источниковый дедуп результатов поиска (этап B2b) (сделано)
 - **Заключительный этап направления «RAG: источники и извлечение»** (дизайн-план
-  [docs/rag-sources-retrieval.md](docs/rag-sources-retrieval.md) §B2b, ветка
+  [docs/history/rag-sources-retrieval.md](docs/history/rag-sources-retrieval.md) §B2b, ветка
   `feat/rag-cross-source-dedup`): `rag_search` убирает почти-идентичные пассажи из
   **разных** источников (один и тот же контент, проиндексированный из двух файлов),
   чтобы не кормить модель повтором.

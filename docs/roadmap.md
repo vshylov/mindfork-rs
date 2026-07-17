@@ -5,33 +5,17 @@
 > Компактная сводка недавно закрытого — в конце файла.
 
 ## Память, модель себя, знания
-Флагманское направление проекта (модель себя / заметки / связность / RAG). Ядро
-сделано (см. журнал CLAUDE.md и `docs/history/`), ниже — оставшиеся заделы. **Планы
-оформлены** — см. дизайн-доки [self-model-consolidation](self-model-consolidation.md)
-(модель себя), [rag-sources-retrieval](rag-sources-retrieval.md) (RAG),
-[notes-vec0](notes-vec0.md) (vec0).
-- **Фоновая авто-консолидация «модели себя» по таймеру** — сейчас консолидация
-  идёт только через авто-рефлексию / интерактивный `reflect`; ворота размера
-  `summary` уже дают сигнал «раздулось», осталась периодическая фоновая задача
-  (зеркало `notes.auto_consolidate_every`). План:
-  [self-model-consolidation §A1](self-model-consolidation.md) (каркас фоновых задач
-  уже готов — SOLID-этап 2). ⭐ ближайший кандидат.
-- **Семантическое сравнение абзацев `summary` с `@self`-наблюдениями** в обзоре
-  self-консолидации (задел из [summary-as-snapshot](history/summary-as-snapshot.md)).
-  План: [self-model-consolidation §A2](self-model-consolidation.md).
-- **Старение `current_interests`** — устаревшие интересы собеседника не вымываются
-  (задел оттуда же). План: [self-model-consolidation §A3](self-model-consolidation.md)
-  (лёгкий нудж vs тяжёлая схема с временными метками).
-- **RAG: другие форматы источников** — pdf/docx/html (сейчас только `*.txt`/`*.md`).
-  План: [rag-sources-retrieval §B1](rag-sources-retrieval.md) (html без новых
-  зависимостей, pdf/docx — с проверкой лицензий).
-- **RAG: ранкинг/дедуп между источниками** и прогресс индексации по чанкам.
-  План: [rag-sources-retrieval §B2](rag-sources-retrieval.md).
+Флагманское направление проекта (модель себя / заметки / связность / RAG). Ядро и
+направления **консолидации модели себя** (A) и **RAG: источники и извлечение** (B)
+завершены (см. «Недавно закрыто» ниже и `docs/history/`). Остался один **отложенный**
+задел:
 - **vec0 для заметок и наблюдений при росте числа** — сейчас косинус считается
-  brute-force в Rust (`db::cosine`, `note_search_semantic`); для десятков–сотен
-  заметок это дёшево, но при кратном росте стоит перейти на sqlite-vec (как у RAG).
-  План: [notes-vec0](notes-vec0.md) (перф, условно; vec0 ускоряет только query-путь,
-  не попарную консолидацию).
+  brute-force в Rust (`db::cosine`, `note_search_semantic`); для десятков–сотен (и
+  вплоть до тысяч) заметок это дёшево (единицы мс на `note_recall`). **Отложено**
+  (преждевременная оптимизация, решение 2026-07): vec0 ускорит **только query-путь**,
+  не O(n²)-консолидацию, а реализация тянет схему-миграцию ради стабильного
+  integer-rowid (заметки на `TEXT` uuid-PK). Вернуться **по факту роста числа заметок
+  до тысяч**. План готов: [notes-vec0](notes-vec0.md).
 
 ## Контекст и токены
 - **Компрессия истории / скользящее резюме** — сейчас вся переписка шлётся каждый
@@ -147,6 +131,10 @@
 
 ## Недавно закрыто
 Компактная сводка (подробности — в [CLAUDE.md](../CLAUDE.md) и [docs/history/](history/)):
+- **Консолидация «модели себя»** (авто-«сон» по таймеру + семантика summary↔наблюдения
+  + старение интересов) — [self-model-consolidation.md](history/self-model-consolidation.md).
+- **RAG: источники и извлечение** (html/pdf/docx + прогресс индексации по чанкам +
+  кросс-источниковый дедуп) — [rag-sources-retrieval.md](history/rag-sources-retrieval.md).
 - **Плагины / MCP-хост** + generic-импорт (`mindfork import`, формат
   [mindfork-import](import-format.md)) — [ADR 0007](decisions/0007-plugins-mcp-host-import-format.md).
 - **Инсталляторы** (Windows Inno Setup + Linux nfpm) — [installers.md](history/installers.md).

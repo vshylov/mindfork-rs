@@ -310,7 +310,7 @@ fn orch_ready_for_reflection() -> (tempfile::TempDir, Orchestrator, Uuid) {
 /// Готовит оркестратор с чатом (user+assistant), профилем с включённой моделью себя и
 /// двумя наблюдениями-заметками (`@self`) в БД (сигнал «есть что консолидировать»);
 /// `auto_consolidate_every=1`. Возвращает `(dir, orch, chat_id)`.
-/// См. docs/self-model-consolidation.md (этап A1).
+/// См. docs/history/self-model-consolidation.md (этап A1).
 fn orch_ready_for_self_consolidation() -> (tempfile::TempDir, Orchestrator, Uuid) {
     use crate::entities::note::Note;
     use crate::features::tools::notes::SELF_NOTE_TAG;

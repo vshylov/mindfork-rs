@@ -272,7 +272,7 @@ impl Orchestrator {
             kind: BackgroundKind::Reflection,
             done_tx: self.bg_done_tx.clone(),
             // A2: семантика summary↔наблюдения (эмбеддинг абзацев summary на лету в
-            // задаче). См. docs/self-model-consolidation.md §A2.
+            // задаче). См. docs/history/self-model-consolidation.md §A2.
             summary_semantics: Some(tool_loop::SummarySemantics {
                 embedder: self.engines.embedder(),
                 storage: self.storage.clone(),

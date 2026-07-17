@@ -330,7 +330,7 @@ impl Orchestrator {
         }
         // После успешного ответа — возможно, пора фоновой авто-рефлексии (Tier 3),
         // авто-консолидации заметок («сон», Ярус 3) и/или авто-консолидации «модели
-        // себя» («сон» модели себя, этап A1 — docs/self-model-consolidation.md).
+        // себя» («сон» модели себя, этап A1 — docs/history/self-model-consolidation.md).
         self.maybe_auto_reflect(res.chat_id);
         self.maybe_auto_consolidate(res.chat_id);
         self.maybe_auto_self_consolidate(res.chat_id);
