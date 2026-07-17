@@ -1413,6 +1413,37 @@ mod tests {
     }
 
     #[test]
+    fn streamed_mermaid_stays_source_until_fence_closes() {
+        // Симуляция стрима: пока закрывающий забор не доехал, блок показывается
+        // исходником (не мерцающим огрызком диаграммы); с приходом забора
+        // фингерпринт сообщения меняется, кэш пересчитывает блок → диаграмма.
+        let mut feed = MessageFeed::new();
+        let palette = Palette::default();
+        let joined = |lines: &[Line<'static>]| -> String {
+            lines
+                .iter()
+                .flat_map(|l| l.spans.iter().map(|s| s.content.as_ref()))
+                .collect()
+        };
+        // Чанк 1: незакрытый, но синтаксически валидный огрызок.
+        let partial = "```mermaid\nflowchart LR\n    A[Start] --> B[End]";
+        let mid = feed.build_lines(&[msg(FeedRole::Assistant, partial, "")], &palette, 90, ru());
+        assert!(
+            joined(&mid).contains("```mermaid") && !joined(&mid).contains('┌'),
+            "во время стрима — исходник, не диаграмма: {}",
+            joined(&mid)
+        );
+        // Чанк 2: доехал закрывающий забор — то же сообщение, текст дописан.
+        let full = "```mermaid\nflowchart LR\n    A[Start] --> B[End]\n```";
+        let done = feed.build_lines(&[msg(FeedRole::Assistant, full, "")], &palette, 90, ru());
+        assert!(
+            joined(&done).contains('┌') && !joined(&done).contains("```"),
+            "по дописывании забора — диаграмма: {}",
+            joined(&done)
+        );
+    }
+
+    #[test]
     fn scroll_up_disables_follow() {
         let mut feed = MessageFeed::new();
         assert!(feed.follow);
