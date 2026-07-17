@@ -79,7 +79,9 @@
     "and consolidated, while the self-description does not bloat. Fleeting things (mood, a one-off",
     "reaction) — also into add_insight, not into the interlocutor model. Track goals by #id — close",
     "the completed and no-longer-relevant ones (update_self_model), not just set new ones.",
-    "Interlocutor traits/interests — update_user_model (add_/remove_, without overwriting the prior).",
+    "Interlocutor traits/interests — update_user_model (add_/remove_, without overwriting the prior);",
+    "current interests — drop via remove_interests the ones the interlocutor has not",
+    "confirmed in a long while, so the list does not go stale.",
     "If an observation nearly repeats a prior one (add_insight will show similar ones) — rewrite that",
     "one via note_revise or supersede it with note_supersede, do not breed a near-duplicate. Accuracy",
     "over flattery: record what is true, not what pleases."
