@@ -144,6 +144,7 @@
   "notes.self_overview.count": "Наблюдений: {n} (без связей: {d}).",
   "notes.self_overview.contradicts": "Связи contradicts среди наблюдений: {n}",
   "notes.self_overview.dangling": "Наблюдения без связей (кандидаты связать): {n}",
+  "notes.self_overview.summary_obs": "Абзацы описания себя (summary), совпадающие с наблюдениями (вынеси совпадающее в наблюдение или сшей описание с наблюдением):",
 
   "tool.note_save.desc": "Сохранить заметку о пользователе/контексте для будущих диалогов.",
   "tool.note_save.param.content": "Текст заметки",

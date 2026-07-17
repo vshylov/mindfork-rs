@@ -19,8 +19,21 @@ use crate::app::events::BackgroundKind;
 use crate::entities::profile::ToolId;
 use crate::features::tools::{ToolContext, ToolRegistry};
 use crate::shared::api::{
-    ApiMessage, ChatChunk, ChatRequest, EngineBackend, FinishReason, ToolCallAccumulator,
+    ApiMessage, ChatChunk, ChatRequest, Embedder, EngineBackend, FinishReason, ToolCallAccumulator,
 };
+use crate::shared::i18n::Locale;
+use crate::shared::storage::Storage;
+
+/// Async-надстройка дайджеста фоновой задачи (раздел A2): семантическое сравнение
+/// абзацев описания себя (`summary`) с наблюдениями (`@self`). Вычисляется **в
+/// задаче** до петли — эмбеддинг абзацев summary недоступен в синхронном хендлере
+/// оркестратора. См. docs/self-model-consolidation.md §A2.
+pub(super) struct SummarySemantics {
+    pub embedder: Arc<dyn Embedder>,
+    pub storage: Arc<Storage>,
+    pub profile_id: Uuid,
+    pub loc: &'static Locale,
+}
 
 /// Пора ли запускать периодическую фоновую задачу: фича включена (`every > 0`) и
 /// накоплено достаточно ответов. Чистая функция — тестируема. Общая для рефлексии и
@@ -51,6 +64,11 @@ pub(super) struct SilentLoop {
     /// Единый канал исхода: `(вид, Ok(()))` при успехе, `(вид, Err(причина))` при
     /// ошибке/таймауте.
     pub done_tx: UnboundedSender<(BackgroundKind, Result<(), String>)>,
+    /// Опциональная async-надстройка дайджеста, вычисляемая в задаче ДО петли
+    /// (эмбеддинг абзацев summary недоступен в синхронном хендлере): результат
+    /// дописывается к первому user-сообщению запроса. См.
+    /// docs/self-model-consolidation.md §A2.
+    pub summary_semantics: Option<SummarySemantics>,
 }
 
 /// Запускает тихую фоновую задачу: мини agentic-loop под таймаутом. По завершении
@@ -70,9 +88,26 @@ pub(super) fn spawn_silent_loop(spawn: SilentLoop) {
         profile_id,
         kind,
         done_tx,
+        summary_semantics,
     } = spawn;
 
     tokio::spawn(async move {
+        // A2: async-надстройка дайджеста (семантика summary↔наблюдения) — считаем ДО
+        // петли и дописываем к первому user-сообщению (эмбеддинг абзацев summary в
+        // синхронном хендлере недоступен). См. docs/self-model-consolidation.md §A2.
+        if let Some(ss) = &summary_semantics
+            && let Some(section) = crate::features::tools::notes::summary_observation_overlaps(
+                &ss.storage,
+                ss.embedder.as_ref(),
+                ss.profile_id,
+                ss.loc,
+            )
+            .await
+            && let Some(first) = request.messages.first_mut()
+        {
+            first.content.push_str("\n\n");
+            first.content.push_str(&section);
+        }
         let run = run_rounds(
             &backend,
             &registry,

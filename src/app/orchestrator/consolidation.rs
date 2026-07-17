@@ -165,6 +165,9 @@ impl Orchestrator {
             profile_id,
             kind: BackgroundKind::Consolidation,
             done_tx: self.bg_done_tx.clone(),
+            // Консолидация заметок — про пользовательские заметки, не про summary модели
+            // себя; семантика summary↔наблюдения к ней неприменима.
+            summary_semantics: None,
         });
         self.begin_bg(BackgroundKind::Consolidation, cancel);
     }

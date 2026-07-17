@@ -143,6 +143,7 @@
   "notes.self_overview.count": "Observations: {n} (unlinked: {d}).",
   "notes.self_overview.contradicts": "contradicts links among observations: {n}",
   "notes.self_overview.dangling": "Observations without links (candidates to link): {n}",
+  "notes.self_overview.summary_obs": "Self-description (summary) paragraphs matching observations (extract the matching content into an observation, or stitch the description with the observation):",
 
   "tool.note_save.desc": "Save a note about the user/context for future conversations.",
   "tool.note_save.param.content": "Note text",
