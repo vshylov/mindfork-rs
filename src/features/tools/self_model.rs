@@ -823,6 +823,15 @@ mod tests {
     }
 
     #[test]
+    fn policy_core_nudges_interest_aging() {
+        // A3-light: нудж на старение интересов через существующий remove_interests.
+        let core = policy_core(ru());
+        assert!(core.contains("remove_interests"));
+        assert!(core.contains("устаревал"));
+        assert!(core.contains("давно не"));
+    }
+
+    #[test]
     fn update_self_model_description_routes_events_to_insights() {
         // Описание инструмента направляет событийные выводы в add_insight, а summary
         // держит компактным снимком.
