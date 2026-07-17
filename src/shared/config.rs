@@ -704,6 +704,13 @@ pub struct SelfModelSettings {
     /// чате (модель сама обновляет «модель себя»). `0` — выключено (по умолчанию).
     /// Срабатывает только в профилях с включёнными инструментами модели себя.
     pub auto_reflect_every: usize,
+    /// Авто-консолидация «модели себя» («сон»): запускать фоновую консолидацию каждые
+    /// N ответов ассистента в чате (модель сама сливает дубли наблюдений, сжимает
+    /// раздутое описание, связывает противоречия). `0` — выключено (по умолчанию).
+    /// Отдельная от `auto_reflect_every` (свой тумблер точнее — гейты/данные модели
+    /// себя и заметок уже разведены). Срабатывает только в профилях с включёнными
+    /// инструментами модели себя. См. docs/self-model-consolidation.md (этап A1).
+    pub auto_consolidate_every: usize,
     /// Подмешивать ли в системный промпт нейтральный к персоне «протокол ведения
     /// модели» (когда фиксировать изменения, «мимолётное — в наблюдения», «точность
     /// важнее угодливости»). Стабилизирует использование инструментов независимо от
@@ -721,6 +728,7 @@ impl Default for SelfModelSettings {
             max_closed_goals: DEFAULT_SELF_MODEL_MAX_CLOSED_GOALS,
             summary_target_chars: DEFAULT_SELF_MODEL_SUMMARY_TARGET,
             auto_reflect_every: 0,
+            auto_consolidate_every: 0,
             maintenance_protocol: DEFAULT_SELF_MODEL_MAINTENANCE_PROTOCOL,
         }
     }
@@ -1080,9 +1088,11 @@ mod tests {
             c.self_model.summary_target_chars,
             DEFAULT_SELF_MODEL_SUMMARY_TARGET
         );
-        // Протокол ведения модели себя включён по умолчанию, авто-рефлексия — нет.
+        // Протокол ведения модели себя включён по умолчанию, авто-рефлексия и
+        // авто-консолидация «модели себя» — нет.
         assert!(c.self_model.maintenance_protocol);
         assert_eq!(c.self_model.auto_reflect_every, 0);
+        assert_eq!(c.self_model.auto_consolidate_every, 0);
         // Заметки: авто-консолидация выкл, self-заметки в recall скрыты (Ярус 3, Путь 2).
         assert_eq!(c.notes.auto_consolidate_every, 0);
         assert!(!c.notes.recall_includes_self);

@@ -52,6 +52,18 @@
     "user — only call tools."
   ],
 
+  "prompt.self_consolidate.system": [
+    "You are performing a quiet background consolidation of your «self-model» («sleep»). First",
+    "call get_self_model (it has the summary, goals with #id, observations with full id and links).",
+    "Then: {core} If there is a block «Observation consolidation overview» below — use",
+    "it: merge similar observation pairs (note_merge/note_supersede), check contradicts",
+    "links, link observations without links (note_link by full id). If there is a hint",
+    "below that the self-description (summary) has grown too large — shrink it via",
+    "update_self_model, moving episodic content into observations (add_insight is not needed here).",
+    "Act conservatively: merge only what truly duplicates, do not lose nuance. Nothing to",
+    "change — call nothing. Do not write a reply to the user — only call tools."
+  ],
+
   "reflect.behavior.header": "Behavioral signals from the interlocutor this window: ",
   "reflect.behavior.regen": "regenerated your reply ×{n} (the reply likely did not satisfy)",
   "reflect.behavior.deleted": "deleted the exchange ×{n}",
@@ -405,9 +417,9 @@
   "ui.chat.input.generating": "input · generating… Esc cancel",
   "ui.chat.input.idle": "input · Enter send · Shift+Enter newline",
   "ui.chat.input.placeholder": "type a message…",
-  "ui.chat.bg.both": "reflection · sleep",
   "ui.chat.bg.reflect": "reflection",
   "ui.chat.bg.consolidate": "notes sleep",
+  "ui.chat.bg.self_consolidate": "self sleep",
   "ui.chat.gen_cancelled": "(generation cancelled)",
 
   "ui.export.user": "User:",
@@ -735,6 +747,7 @@
   "ui.settings.field.sm_prompt_cap": "Injection limit (chars)",
   "ui.settings.field.sm_summary_target": "Summary target (chars)",
   "ui.settings.field.sm_auto_reflect": "Auto-reflection (every N)",
+  "ui.settings.field.sm_auto_consolidate": "Auto-consolidation (every N)",
   "ui.settings.field.sm_protocol": "Maintenance protocol",
   "ui.settings.field.theme": "Theme",
   "ui.settings.field.language": "Interface language",
@@ -782,6 +795,7 @@
   "ui.settings.desc.sm_prompt_cap": "Character cap of the compact «self-model» block blended into the system prompt. Context-window protection: a long block is truncated.",
   "ui.settings.desc.sm_summary_target": "Target size of the self description (summary) in characters. Beyond it the tools and the maintenance protocol softly suggest shortening the description, moving the episodic into observations. It's a gate, not a cap: data is not truncated.",
   "ui.settings.desc.sm_auto_reflect": "Auto-reflection: every N assistant replies the model reviews the conversation in the background on its own and updates the «self-model». 0 — off. Works only in profiles with self-model tools enabled.",
+  "ui.settings.desc.sm_auto_consolidate": "Self-model auto-consolidation («sleep»): every N replies the model in the background merges duplicate observations, shrinks an oversized description, and links contradictions. 0 — off. Works only in profiles with self-model tools enabled.",
   "ui.settings.desc.sm_protocol": "Blend a persona-neutral instruction into the system prompt: when to record changes with tools, «the episodic — into observations», «accuracy over sycophancy». Makes tool use predictable regardless of the persona. Works only in profiles with self-model tools enabled.",
   "ui.settings.desc.compat": "Compatibility mode for legacy terminal emulators (conhost Windows 10 etc.): emoji and rare characters are replaced with simple glyphs, borders — straight, the spinner — ASCII, popup background dimming — by color. Enable if you see «tofu» boxes instead of icons.",
   "ui.settings.desc.table_separators": "Horizontal lines between Markdown-table rows in the feed («grid» look). Off — compact look: a separator only under the header.",
@@ -845,6 +859,7 @@
   "ui.err.bg_failed": "{label} failed three times in a row: {reason}",
   "ui.err.bg_reflection": "Auto-reflection",
   "ui.err.bg_consolidation": "Auto-consolidation",
+  "ui.err.bg_self_consolidation": "Self-model auto-consolidation",
   "ui.err.rag_no_active_chat": "no active chat",
   "ui.err.rag_delete_failed": "deletion failed: {err}",
   "ui.err.rag_read_kb_failed": "failed to read the knowledge base: {err}",

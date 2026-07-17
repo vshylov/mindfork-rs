@@ -328,10 +328,12 @@ impl Orchestrator {
         if self_model_touched {
             let _ = self.evt_tx.send(AppEvent::SelfModelChanged);
         }
-        // После успешного ответа — возможно, пора фоновой авто-рефлексии (Tier 3)
-        // и/или авто-консолидации заметок («сон», Ярус 3).
+        // После успешного ответа — возможно, пора фоновой авто-рефлексии (Tier 3),
+        // авто-консолидации заметок («сон», Ярус 3) и/или авто-консолидации «модели
+        // себя» («сон» модели себя, этап A1 — docs/self-model-consolidation.md).
         self.maybe_auto_reflect(res.chat_id);
         self.maybe_auto_consolidate(res.chat_id);
+        self.maybe_auto_self_consolidate(res.chat_id);
     }
 }
 

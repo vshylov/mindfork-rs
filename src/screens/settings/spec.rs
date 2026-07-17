@@ -360,6 +360,11 @@ pub(super) fn field_spec(id: FieldId) -> Option<FieldSpec> {
                 c.self_model.auto_reflect_every = v;
             }
         }),
+        SmAutoConsolidate => int(|c, t| {
+            if let Ok(v) = t.parse() {
+                c.self_model.auto_consolidate_every = v;
+            }
+        }),
         NotesAutoConsolidate => int(|c, t| {
             if let Ok(v) = t.parse() {
                 c.notes.auto_consolidate_every = v;

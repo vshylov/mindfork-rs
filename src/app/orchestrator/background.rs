@@ -44,10 +44,10 @@ impl Orchestrator {
     /// Общий обработчик исхода фоновой задачи (бывшие `handle_reflect_done`/
     /// `handle_consolidate_done`): снимает флаг «идёт», гасит индикатор, ведёт серию
     /// неудач (на пороге — одна ошибка в UI, наблюдаемость без спама). При успехе
-    /// **рефлексии** дополнительно шлёт `SelfModelChanged` (открытый экран `F3`
-    /// перезапросит свежий снимок); консолидация — нет (меняет заметки, не «модель
-    /// себя»). Инструменты задачи уже записали изменения в `Storage`; чат/ленту это
-    /// не трогает.
+    /// **рефлексии** или **консолидации «модели себя»** дополнительно шлёт
+    /// `SelfModelChanged` (открытый экран `F3` перезапросит свежий снимок);
+    /// консолидация *заметок* — нет (меняет заметки, не «модель себя»). Инструменты
+    /// задачи уже записали изменения в `Storage`; чат/ленту это не трогает.
     pub(super) fn handle_bg_done(&mut self, kind: BackgroundKind, result: Result<(), String>) {
         // Мутируем слот и вычисляем, нужна ли ошибка-оповещение, ДО отправки событий
         // (заём `self.bg` не пересекается с `self.evt_tx` при отправке ниже).
@@ -69,7 +69,12 @@ impl Orchestrator {
             kind,
             active: false,
         });
-        if result.is_ok() && kind == BackgroundKind::Reflection {
+        if result.is_ok()
+            && matches!(
+                kind,
+                BackgroundKind::Reflection | BackgroundKind::SelfConsolidation
+            )
+        {
             let _ = self.evt_tx.send(AppEvent::SelfModelChanged);
         }
         if let Some(reason) = alert {
@@ -103,5 +108,6 @@ fn kind_label(loc: &'static Locale, kind: BackgroundKind) -> &'static str {
     loc.t(match kind {
         BackgroundKind::Reflection => "ui.err.bg_reflection",
         BackgroundKind::Consolidation => "ui.err.bg_consolidation",
+        BackgroundKind::SelfConsolidation => "ui.err.bg_self_consolidation",
     })
 }

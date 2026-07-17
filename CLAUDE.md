@@ -6041,6 +6041,53 @@ web-поиск и Python под выключателями, экран наст�
   движка — прецедент mermaid-render/markdown-refinements); поведение покрыто
   golden-тестами. Доки: spec §11.4, CHANGELOG (Исправлено).
 
+### Пост-M9: консолидация модели себя — этап A1 (фоновый «сон» по таймеру) (сделано)
+- **Первый этап направления «консолидация модели себя»** (дизайн-план
+  [docs/self-model-consolidation.md](docs/self-model-consolidation.md), ветка
+  `feat/self-model-auto-consolidate`): периодический фоновый «сон» именно памяти «о
+  себе» — зеркало `notes.auto_consolidate_every`. Раньше консолидация модели себя шла
+  только через авто-рефлексию/интерактивный `reflect`; A1 добавляет **отдельную**
+  периодическую задачу, которая сама сливает дубли наблюдений (`@self`-заметок),
+  сжимает раздутый `summary`, связывает противоречия. Каркас был **специально
+  подготовлен** SOLID-этапом 2 («задача №3 семейства не трогает `run()`/`Quit`») —
+  добавление свелось к зеркалированию `consolidation.rs`/`reflection.rs`.
+- **Мини agentic-loop, как рефлексия/консолидация заметок** (`app/orchestrator/
+  self_consolidation.rs`, новый): `maybe_auto_self_consolidate` вызывается в
+  `handle_done`; гейты — фича включена (`self_model.auto_consolidate_every`, 0=выкл),
+  профиль включил инструменты модели себя (`get_self_model`), **есть что
+  консолидировать** (наблюдений `@self` ≥ 2 **или** `summary` сверх
+  `summary_target_chars` через `summary_fill_hint`), «сон» не идёт, сервер `Ready`.
+  Каденция по счётчику `self_consolidate_counts` (сброс только при фактическом
+  спавне — пропуск по гейту не теряет цикл, как у сиблингов). Набор инструментов
+  (пересечение с профилем): `get/update_self_model`/`update_user_model` +
+  `note_revise`/`supersede`/`merge`/`link`/`neighbors` над `@self`; **`note_recall`
+  не даём** (скрывает `@self`; полные id — из `get_self_model`). Дайджест —
+  `build_self_consolidation_overview` + строка `summary_fill_hint`. Системное
+  сообщение `prompt.self_consolidate.system` собрано из `self_model::policy_core`
+  (единый источник правил, как `reflect_system_message`). DB-only, инвариант
+  «единственный владелец `Chat`» цел.
+- **Наблюдаемость** (`background.rs`): `handle_bg_done` теперь при успехе **и
+  рефлексии, и `SelfConsolidation`** эмитит `SelfModelChanged` (открытый `F3`
+  перезапрашивает снимок); серия неудач → `ui.err.bg_self_consolidation`. Новый
+  `BackgroundKind::SelfConsolidation` (events.rs) → `dispatch.rs` →
+  `ChatScreen::set_self_consolidating` → тихий чип статус-бара. **`background_hint`
+  обобщён** с match по 2 флагам на join меток активных задач через `·` (масштаб на
+  N задач; убран ключ `ui.chat.bg.both`, добавлен `ui.chat.bg.self_consolidate`).
+- **Конфиг/UI**: `SelfModelSettings.auto_consolidate_every` (`#[serde(default)]`,
+  дефолт 0 — без миграции; зеркало `auto_reflect_every`); поле `SmAutoConsolidate` в
+  секции «Память» → «Модель себя» (catalog/mod/spec), i18n-ключи полей/описаний.
+- **Отдельный тумблер, не общий** (решение пользователя): гейты/данные модели себя и
+  заметок уже разведены, свой счётчик точнее. **A2** (семантика summary↔наблюдения) и
+  **A3** (старение интересов) — сознательно НЕ в этом PR (следующие этапы).
+- **Тесты**: интеграционные (`orchestrator/tests/self_consolidation.rs` — спавн при
+  пороге + сброс счётчика; счётчик цел при неготовом сервере; гейт при выключенной
+  фиче; гейт «нечего консолидировать» с сохранением счётчика; успех →
+  `SelfModelChanged`); юнит (система из `policy_core` + per-locale; набор инструментов
+  без `note_recall`). **1136 юнит-тестов зелёные** (+8), 51 `#[ignore]`, clippy
+  `-D warnings`/fmt/i18n-гейты чисты. Живой смоук `self_consolidation_e2e_live`
+  (`#[ignore]`, зеркало `auto_reflect_e2e_live`) — прогон на реальной Gemma 4 + bge-m3
+  ручной шаг.
+
 ### Отложено за пределы M3
 - **Сворачивание/выделение per-message** и tool-блоки в ленте — сейчас «мысли»
   сворачиваются глобально (`Ctrl+T`); выделение сообщений и tool-блоки — на M5.
