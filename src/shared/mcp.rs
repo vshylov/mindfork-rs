@@ -525,6 +525,11 @@ fn spawn_monitor(
     exited: CancellationToken,
 ) {
     tokio::spawn(async move {
+        // Job-хэндл живёт до конца задачи: его закрытие (уже после завершения
+        // ребёнка) добьёт kill-on-close'ом всё дерево процессов (Windows; на
+        // прочих ОС — пустышка). Привязка вместо `drop(job)` в конце — на unix
+        // у пустышки нет Drop, и явный drop ловил бы clippy::drop_non_drop.
+        let _job = job;
         tokio::select! {
             status = child.wait() => {
                 match status {
@@ -542,7 +547,6 @@ fn spawn_monitor(
             }
         }
         exited.cancel();
-        drop(job); // закрыть Job-хэндл → kill-on-close добьёт дерево (Windows)
     });
 }
 
