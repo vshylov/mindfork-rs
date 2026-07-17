@@ -868,7 +868,7 @@
   "ui.err.rag_delete_failed": "удаление не удалось: {err}",
   "ui.err.rag_read_kb_failed": "не удалось прочитать базу знаний: {err}",
   "ui.err.rag_path_unavailable": "путь недоступен: {err}",
-  "ui.err.rag_no_files": "не найдено файлов .txt/.md для индексации",
+  "ui.err.rag_no_files": "не найдено файлов .txt/.md/.html для индексации",
   "ui.err.rag_embedder_unavailable": "эмбеддер недоступен: {err}",
   "ui.err.rag_read_kb": "чтение базы знаний: {err}",
   "ui.err.rag_kb_empty": "база знаний пуста — нечего реиндексировать",

@@ -1,7 +1,10 @@
 //! Сканирование файлов для индексации в базу знаний (RAG, команда `/rag add`).
 //! Чистая, тестируемая файловая логика: обход пути, отбор поддерживаемых
-//! расширений (txt/md), опциональная рекурсия и чтение содержимого. Сам процесс
-//! индексации (эмбеддинг + запись) ведёт фоновая задача оркестратора. См. spec §9.3.
+//! расширений (txt/md/html), опциональная рекурсия и чтение содержимого. Сам
+//! процесс индексации (эмбеддинг + запись) ведёт фоновая задача оркестратора. См.
+//! spec §9.3. Извлечение читаемого текста из HTML — обязанность слоя `app`
+//! (`orchestrator/rag.rs`), а не этого модуля (иначе `features → features/tools` —
+//! боковой импорт, запрещённый FSD); здесь лишь опознаётся расширение.
 //!
 //! Здесь же живёт [`RagProgress`] — тип прогресса индексации. Он определён в слое
 //! `features`, чтобы им могли пользоваться и `app` (эмитит события), и `screens`
@@ -9,9 +12,9 @@
 
 use std::path::{Path, PathBuf};
 
-/// Поддерживаемые расширения файлов (нижний регистр, без точки). Пока — текст и
-/// markdown (см. постановку задачи).
-pub const SUPPORTED_EXTENSIONS: &[&str] = &["txt", "md"];
+/// Поддерживаемые расширения файлов (нижний регистр, без точки): текст, markdown и
+/// HTML (из HTML извлекается читаемый текст на слое `app`, см. `orchestrator/rag.rs`).
+pub const SUPPORTED_EXTENSIONS: &[&str] = &["txt", "md", "html", "htm"];
 
 /// Прогресс фоновой индексации файлов в RAG. Шлётся задачей оркестратора и
 /// отображается экраном чата (баннер со спиннером + итоговая заметка).
@@ -51,6 +54,15 @@ pub fn is_supported(path: &Path) -> bool {
     path.extension()
         .and_then(|e| e.to_str())
         .is_some_and(|e| SUPPORTED_EXTENSIONS.contains(&e.to_ascii_lowercase().as_str()))
+}
+
+/// HTML-файл по расширению (`html`/`htm`, регистронезависимо)? Слой `app` по этому
+/// признаку решает, извлекать ли читаемый текст (иначе читает содержимое как есть).
+pub fn is_html(path: &Path) -> bool {
+    path.extension().and_then(|e| e.to_str()).is_some_and(|e| {
+        let e = e.to_ascii_lowercase();
+        e == "html" || e == "htm"
+    })
 }
 
 /// Собирает список поддерживаемых файлов по пути:
@@ -143,6 +155,22 @@ mod tests {
         assert!(is_supported(Path::new("dir/b.Md")));
         assert!(!is_supported(Path::new("a.pdf")));
         assert!(!is_supported(Path::new("noext")));
+    }
+
+    #[test]
+    fn is_supported_and_is_html_match_html_case_insensitively() {
+        // HTML поддержан наравне с txt/md.
+        assert!(is_supported(Path::new("page.html")));
+        assert!(is_supported(Path::new("page.htm")));
+        assert!(is_supported(Path::new("page.HTML")));
+        // is_html выделяет именно HTML-расширения (регистронезависимо)...
+        assert!(is_html(Path::new("page.html")));
+        assert!(is_html(Path::new("dir/page.Htm")));
+        assert!(is_html(Path::new("page.HTML")));
+        // ...и не срабатывает на прочих поддержанных/неподдержанных расширениях.
+        assert!(!is_html(Path::new("a.txt")));
+        assert!(!is_html(Path::new("a.md")));
+        assert!(!is_html(Path::new("noext")));
     }
 
     #[test]

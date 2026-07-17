@@ -183,7 +183,7 @@ fn spawn_rag_ingest(task: RagIngest) {
             let _ = evt_tx.send(AppEvent::RagProgress(p));
         };
 
-        // 1. Сканируем файлы (txt/md). Ошибка пути / пустой результат — понятный отказ.
+        // 1. Сканируем файлы (txt/md/html). Ошибка пути / пустой результат — понятный отказ.
         let files = match crate::features::rag_ingest::scan(&root, recursive) {
             Ok(files) => files,
             Err(err) => {
@@ -310,7 +310,7 @@ fn spawn_rag_rebuild(task: RagRebuild) {
             let path = std::path::Path::new(&info.source);
             if path.is_file()
                 && crate::features::rag_ingest::is_supported(path)
-                && let Ok(content) = crate::features::rag_ingest::read_text(path)
+                && let Ok(content) = read_source_text(path)
             {
                 sources.push((info.source.clone(), content));
             } else {
@@ -417,6 +417,22 @@ fn spawn_rag_rebuild(task: RagRebuild) {
     });
 }
 
+/// Читает исходник для индексации: для `.html`/`.htm` извлекает читаемый текст
+/// (переиспользует web::extract_readable — отбрасывает nav/header/footer/aside/
+/// скрипты), для прочего — как есть. RAG чанкует источник целиком, поэтому
+/// извлечение без усечения (usize::MAX). BOM снимает read_text.
+fn read_source_text(path: &std::path::Path) -> std::io::Result<String> {
+    let raw = crate::features::rag_ingest::read_text(path)?;
+    if crate::features::rag_ingest::is_html(path) {
+        Ok(crate::features::tools::web::extract_readable(
+            &raw,
+            usize::MAX,
+        ))
+    } else {
+        Ok(raw)
+    }
+}
+
 /// Индексирует один файл: читает текст, чанкует, эмбеддит и пишет документы в
 /// хранилище (изоляция по `profile_id`). Возвращает число записанных чанков.
 async fn index_file(
@@ -427,7 +443,7 @@ async fn index_file(
     params: ChunkParams,
     loc: &'static Locale,
 ) -> anyhow::Result<usize> {
-    let content = crate::features::rag_ingest::read_text(path)?;
+    let content = read_source_text(path)?;
     // Каноничный ключ источника + идемпотентность: при повторном добавлении того же
     // файла заменяем его прежние чанки, а не плодим дубли (см. [`index_source`]).
     let source = crate::features::rag_ingest::canonical_source(path);
@@ -502,4 +518,50 @@ fn display_parts(path: &std::path::Path) -> (String, String) {
         .map(|p| p.display().to_string())
         .unwrap_or_default();
     (name, dir)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn read_source_text_extracts_html_and_passes_through_plain() {
+        let dir = tempfile::tempdir().unwrap();
+
+        // HTML: boilerplate (nav/header/script) отбрасывается, извлекается абзац статьи.
+        let html = dir.path().join("page.html");
+        std::fs::write(
+            &html,
+            "<html><head><script>var secret = 'скриптовый мусор';</script></head>\
+             <body><nav>навигационное меню сайта здесь</nav>\
+             <header>шапка страницы с логотипом</header>\
+             <article><p>Осмысленный абзац содержимого статьи, достаточно длинный, \
+             чтобы пройти порог отсева коротких фрагментов извлечения.</p></article>\
+             </body></html>",
+        )
+        .unwrap();
+        let extracted = read_source_text(&html).unwrap();
+        assert!(
+            extracted.contains("Осмысленный абзац содержимого статьи"),
+            "извлечённый текст должен содержать абзац статьи: {extracted:?}"
+        );
+        assert!(
+            !extracted.contains("навигационное меню"),
+            "nav не должен попадать в извлечённый текст: {extracted:?}"
+        );
+        assert!(
+            !extracted.contains("шапка страницы"),
+            "header не должен попадать в извлечённый текст: {extracted:?}"
+        );
+        assert!(
+            !extracted.contains("скриптовый мусор"),
+            "script не должен попадать в извлечённый текст: {extracted:?}"
+        );
+
+        // Не-HTML: содержимое возвращается дословно (BOM снимает read_text).
+        let txt = dir.path().join("note.txt");
+        let body = "<p>это не HTML</p>\nобычный текст с угловыми скобками";
+        std::fs::write(&txt, body).unwrap();
+        assert_eq!(read_source_text(&txt).unwrap(), body);
+    }
 }
