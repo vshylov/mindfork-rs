@@ -52,6 +52,9 @@ pub enum SettingsIntent {
     },
     /// Удалить профиль.
     DeleteProfile(Uuid),
+    /// Подтвердить изменившийся каталог инструментов MCP-сервера (TOFU,
+    /// Enter на строке сервера с пометкой «каталог изменился»). См. spec §9.6.
+    ConfirmMcpCatalog(String),
 }
 
 /// Секции настроек (левое меню). См. spec §11.6.
@@ -446,8 +449,11 @@ enum FieldId {
     TFs,
     TFsRoot,
     /// Мастер-выключатель MCP-хоста (`config.mcp.enabled`); серверы правятся в
-    /// `settings.json` (Р6), их статусы/описания в UI — этап 3b.
+    /// `settings.json` (Р6).
     TMcpEnabled,
+    /// Строка статуса MCP-сервера по индексу в снимке `mcp.servers` (read-only;
+    /// Enter при «каталог изменился» подтверждает новый каталог — TOFU).
+    TMcpServer(usize),
     TSubMaxTokens,
     TSubTimeout,
     EMode,
@@ -528,7 +534,9 @@ struct FieldRow {
     /// Человекопонятное описание поля (нижняя панель настроек + ловушка поиска).
     /// Живёт рядом с подписью — задаётся при построении строки через [`FieldRow::describe`]
     /// (раньше — отдельный match `field_description(id)`). `None` — без описания.
-    description: Option<&'static str>,
+    /// `String` (не `&'static`): описания MCP-инструментов — динамический текст
+    /// сервера (полный показ — антидот tool-poisoning, spec §9.6).
+    description: Option<String>,
     /// Значение и подсказку рисовать цветом предупреждения — инструмент включён в
     /// профиле, но выключен глобальным гейтом (недоступен модели).
     warn: bool,
@@ -536,8 +544,8 @@ struct FieldRow {
 
 impl FieldRow {
     /// Прикрепляет описание поля (builder-стиль: `row(...).describe("…")`).
-    fn describe(mut self, d: &'static str) -> Self {
-        self.description = Some(d);
+    fn describe(mut self, d: impl Into<String>) -> Self {
+        self.description = Some(d.into());
         self
     }
 }
@@ -620,10 +628,11 @@ pub struct SettingsScreen {
     /// поле «Язык» рисуется заблокированным, правка гасится). Из снимка `Settings`
     /// (считает оркестратор). См. docs/history/i18n.md.
     language_locked: Vec<uuid::Uuid>,
-    /// Динамический каталог инструментов MCP-серверов (из снимка `Settings`) —
-    /// дописывается к статическому `tool_catalog()` для тумблеров профиля.
-    /// Пуст, пока серверы не поднялись/MCP выключен. См. spec §9.3.
-    mcp_tools: Vec<ToolInfo>,
+    /// Снимок MCP-хоста (из события `Settings`): динамический каталог инструментов
+    /// (дописывается к статическому `tool_catalog()` для тумблеров профиля) +
+    /// статусы серверов (строки в секции «Инструменты», TOFU-подтверждение).
+    /// Пуст, пока серверы не поднялись/MCP выключен. См. spec §9.6.
+    mcp: crate::features::tools::mcp::McpSnapshot,
 }
 
 // ---------- подмодули (разбор god-object'а: docs/history/refactoring-god-objects.md) ----------

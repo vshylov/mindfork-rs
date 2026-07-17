@@ -48,12 +48,12 @@ const WHEEL_SCROLL: usize = 3;
 const SPELL_DEBOUNCE: Duration = Duration::from_millis(300);
 
 /// Снимок настроек из события `Settings`: конфиг + полные профили + id профилей с
-/// заблокированным языком каркаса + динамический каталог инструментов MCP-серверов.
+/// заблокированным языком каркаса + снимок MCP-хоста (каталог + статусы серверов).
 pub type SettingsSnapshot = (
     AppConfig,
     Vec<Profile>,
     Vec<uuid::Uuid>,
-    Vec<crate::features::tools::meta::ToolInfo>,
+    crate::features::tools::mcp::McpSnapshot,
 );
 
 /// Намерение пользователя, которое исполняет `app` (транслирует в `AppCommand`).
@@ -320,14 +320,14 @@ impl ChatScreen {
 
     /// Сохраняет снимок настроек (для открытия экрана настроек по `Ctrl+P`) и
     /// обновляет палитру темы (вместе с режимом совместимости терминала) и
-    /// параметры отрисовки ленты (разделители строк таблиц). `mcp_tools` —
-    /// динамический каталог инструментов MCP-серверов (тумблеры профиля).
+    /// параметры отрисовки ленты (разделители строк таблиц). `mcp` — снимок
+    /// MCP-хоста (динамический каталог инструментов + статусы серверов).
     pub fn set_settings(
         &mut self,
         config: AppConfig,
         profiles: Vec<Profile>,
         language_locked: Vec<uuid::Uuid>,
-        mcp_tools: Vec<crate::features::tools::meta::ToolInfo>,
+        mcp: crate::features::tools::mcp::McpSnapshot,
     ) {
         self.palette = Palette::for_theme(config.interface.theme)
             .with_compat(config.interface.terminal_compat);
@@ -337,7 +337,7 @@ impl ChatScreen {
             .set_table_row_separators(config.interface.table_row_separators);
         self.feed_view
             .set_render_mermaid(config.interface.render_mermaid);
-        self.settings_snapshot = Some((config, profiles, language_locked, mcp_tools));
+        self.settings_snapshot = Some((config, profiles, language_locked, mcp));
     }
 
     /// Снимок настроек для создания экрана настроек (`None`, пока не получен).

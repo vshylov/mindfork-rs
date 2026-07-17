@@ -10,9 +10,10 @@
   включая [0004](decisions/0004-engine-contract-multi-provider.md) — границы
   `shared/api` и мульти-провайдерный инференс без крейт-сплита;
   [0005](decisions/0005-python-sandbox-wasmer.md) — Python-песочница сайдкаром
-  `wasmer`/WASIX за `shared/sandbox.rs`; и
+  `wasmer`/WASIX за `shared/sandbox.rs`;
   [0006](decisions/0006-data-schema-versioning.md) — версионирование схем данных и
-  каркас JSON-миграций;
+  каркас JSON-миграций; и [0007](decisions/0007-plugins-mcp-host-import-format.md) —
+  плагины: MCP-хост инструментов + нейтральный формат обмена импорта;
 - **[docs/install.md](install.md)** — установка/запуск, движок, env.
 
 > Терминология: **движок** = провайдер инференса за трейтом `EngineBackend` —
@@ -150,6 +151,8 @@ src/
 │  │  ├─ title.rs           авто-название чата (фоновая задача)
 │  │  ├─ impersonation.rs   реплика «за пользователя» (фоновая задача)
 │  │  ├─ rag.rs             индексация/удаление файлов в базе знаний
+│  │  ├─ mcp.rs             McpManager: жизненный цикл MCP-серверов (спавн/статусы/
+│  │  │                     рестарт-бюджет/TOFU-пиннинг каталога), события с epoch
 │  │  ├─ reflection.rs      авто-рефлексия «модели себя» (окно/ватермарк, сигналы)
 │  │  ├─ consolidation.rs   авто-консолидация заметок («сон»)
 │  │  ├─ tool_loop.rs       общий «тихий» agentic-loop фоновых задач (рефлексия/консолидация)
@@ -206,6 +209,8 @@ src/
 │  ├─ tools/                реестр и реализации инструментов (client-side)
 │  │  ├─ mod.rs             Tool, ToolContext, ToolOutcome/ChatEffect, ToolRegistry, ToolConfig
 │  │  ├─ meta.rs            метаданные каталога для UI: группа/описание/гейт инструмента
+│  │  ├─ mcp.rs             McpTool: обёртка инструмента MCP-сервера (id mcp__srv__tool,
+│  │  │                     клип/таймаут/отмена) + McpSnapshot/catalog_hash (TOFU)
 │  │  ├─ present.rs         презентация вызова для ленты (ToolPresentation): подсвеч.
 │  │  │                     код / консоль python / компактный заголовок вместо JSON
 │  │  ├─ rag.rs             rag_add/rag_search: чанкинг, эмбеддинг, kNN, склейка
@@ -292,9 +297,10 @@ src/
    │  ├─ code.rs           подсветка блоков кода (syntect: синтаксис + тема из палитры)
    │  ├─ table.rs          TableBuilder + render_table (раскладка/отрисовка таблиц)
    │  └─ latex.rs          LaTeX→unicode: нормализация разделителей + конвертер команд
-   ├─ mcp.rs               мини-клиент MCP (stdio, tools-only) — зонд направления
-   │                       «плагины» (GO); пока `#[cfg(test)]`, в бинарь войдёт на
-   │                       этапе feat/mcp-host. См. docs/research/plugin-system.md §9
+   ├─ mcp.rs               мини-клиент MCP (stdio, tools-only, ревизия 2025-11-25):
+   │                       McpConnection (транспорт, тестируем на duplex) + McpClient
+   │                       (подпроцесс: монитор kill/exited, Job Object kill-on-close,
+   │                       запрет .bat/.cmd). См. spec §9.6, ADR 0007
    ├─ wrap.rs              перенос слов по колонкам (unicode-width)
    ├─ i18n.rs              язык каркаса агента (ось A) + UI (ось B): Lang(Ru/En/Ext)/
    │                       Locale/t/tf, вшитые locales/{ru,en}.json + внешние
@@ -843,6 +849,7 @@ agentic-loop **гейтит и сам вызов** (выключенный ин�
 | Осознанность   | `call_subagent` (без истории/инструментов, запрет вложенности) |
 | Управление беседой | `send_followup_message` / `rewrite_current_message` — **control-flow** (опц., по умолч. выкл): распознаются agentic-loop'ом, а не `Tool::invoke` |
 | Модель себя    | `get_self_model`, `reflect`, `update_self_model`, `update_user_model`, `add_insight` — **опц., по умолч. выкл**: пер-профильная «модель себя» в SQLite (описание + цели + модель собеседника), пишут напрямую через `storage` (не через `ChatEffect`). Наблюдения («нарратив») переехали в заметки `@self` — их консолидируют note-инструменты (`consolidate_narrative` удалён). **Подробно — §9** |
+| Плагины (MCP)  | `mcp__<server>__<tool>` — **динамические** обёртки `McpTool` над инструментами внешних MCP-серверов (`features/tools/mcp.rs`; описание/схема — снимок сервера, per-call таймаут + отмена `ctx.cancel`, клип результата). В статический `CATALOG` не входят: реестр пересобирается по событиям `McpManager` (`rebuild_registry`), каталог для UI едет снимком `McpSnapshot` в `AppEvent::Settings`; гейт в `effective_tool_ids` — по префиксу `mcp__` + `config.mcp.enabled`. Двойной opt-in + TOFU-пиннинг каталога. См. spec §9.6, ADR 0007 |
 
 Особенности реализации:
 
@@ -868,6 +875,19 @@ agentic-loop **гейтит и сам вызов** (выключенный ин�
   `default_tool_ids`, есть в каталоге `all_tool_ids` — тумблеры профиля). Live-стрим
   ↔ перезагрузка синхронизируются событиями `AppEvent::AssistantContinue`/
   `AssistantRewrite`. См. spec §9.3.3.
+- **Инструменты MCP-серверов** — плагины-инструменты через внешние stdio-подпроцессы
+  (направление «плагины», docs/research/plugin-system.md §4, ADR 0007). Мини-клиент
+  протокола — `shared/mcp.rs` (tools-only подмножество 2025-11-25: транспорт
+  `McpConnection` поверх любых `AsyncRead`/`AsyncWrite` — тестируем на duplex;
+  `McpClient` — подпроцесс с монитор-задачей kill/exited по паттерну `managed.rs` +
+  Job Object kill-on-close на Windows; запрет `.bat`/`.cmd` — BatBadBut). Жизненный
+  цикл — `McpManager` (`app/orchestrator/mcp.rs`, зеркало `EngineManager`): фоновые
+  задачи спавна шлют события `Ready`/`Failed`/`Exited` с `epoch`-гардом во внутренний
+  канал петли `run`; рестарт-бюджет (3 краха/5 мин); TOFU-пиннинг каталога
+  (sha256 имена+описания+схемы; изменение → инструменты придержаны до подтверждения
+  в настройках, пин — `config.mcp.servers[].pinned_catalog`, пишет оркестратор).
+  Отмена вызова — `ToolContext.cancel` (клон токена хода; agentic-loop дополнительно
+  оборачивает `invoke` любого инструмента в `select!` с ним — Esc не блокируется).
 - **`web_search`** — фоллбэк по провайдерам (DDG lite → DDG html → Mojeek →
   Ecosia); распознаёт анти-бот троттлинг (HTTP 202/403/429) и переключает
   провайдера, а не парсит пустую выдачу.

@@ -102,6 +102,12 @@ pub struct ToolInfo {
     pub label: &'static str,
     pub gate: Option<ToolGate>,
     pub enabled_by_default: bool,
+    /// Полное описание инструмента для нижней панели настроек. Заполняется только
+    /// у динамических MCP-инструментов (текст сервера — показ полного описания в
+    /// UI обязателен как антидот tool-poisoning, docs/research/plugin-system.md
+    /// §4.5); у встроенных — `None` (их описания LLM-ориентированы и живут в
+    /// бандлах локалей).
+    pub description: Option<String>,
 }
 
 #[cfg(test)]

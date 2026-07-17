@@ -32,7 +32,7 @@ impl SettingsScreen {
                 impersonation: ServerStatus::NotConfigured,
             },
             language_locked,
-            mcp_tools: Vec::new(),
+            mcp: Default::default(),
         }
     }
 
@@ -69,14 +69,14 @@ impl SettingsScreen {
     /// снимаются с самих инструментов (единый источник — трейт `Tool`). См. spec §9.3.
     pub(super) fn tool_catalog(&self) -> Vec<ToolInfo> {
         let mut catalog = crate::features::tools::tool_catalog();
-        catalog.extend(self.mcp_tools.iter().cloned());
+        catalog.extend(self.mcp.tools.iter().cloned());
         catalog
     }
 
-    /// Обновляет динамический каталог инструментов MCP-серверов (из события
-    /// `Settings`; пуст, пока серверы не поднялись/выключены).
-    pub fn set_mcp_tools(&mut self, tools: Vec<ToolInfo>) {
-        self.mcp_tools = tools;
+    /// Обновляет снимок MCP-хоста (из события `Settings`: динамический каталог
+    /// инструментов + статусы серверов; пуст, пока серверы не поднялись/выключены).
+    pub fn set_mcp(&mut self, mcp: crate::features::tools::mcp::McpSnapshot) {
+        self.mcp = mcp;
     }
 
     // ---------- построение полей текущей секции ----------
@@ -447,17 +447,38 @@ impl SettingsScreen {
                 .describe(loc.t("ui.settings.desc.fs_root")),
             ],
         ));
-        rows.extend(grouped(
-            loc.t("ui.tool.group.plugins"),
-            vec![
+        rows.extend(grouped(loc.t("ui.tool.group.plugins"), {
+            let mut mcp_rows = vec![
                 row(
                     FieldId::TMcpEnabled,
                     loc.t("ui.settings.field.mcp_enabled"),
                     FieldKind::Toggle(self.config.mcp.enabled),
                 )
                 .describe(loc.t("ui.settings.desc.mcp_enabled")),
-            ],
-        ));
+            ];
+            // Строки статусов серверов (read-only): готов/подключение/причина
+            // отказа; «каталог изменился» подсвечивается предупреждением, Enter
+            // подтверждает новый каталог (TOFU-переподтверждение, spec §9.6).
+            for (idx, srv) in self.mcp.servers.iter().enumerate() {
+                let status = match &srv.status {
+                    ServerStatus::Ready => loc.tf(
+                        "ui.settings.mcp.ready",
+                        &[("n", &srv.tool_count.to_string())],
+                    ),
+                    ServerStatus::Connecting => loc.t("ui.settings.mcp.connecting").into(),
+                    ServerStatus::NotConfigured => loc.t("ui.settings.mcp.not_configured").into(),
+                    ServerStatus::Disconnected(reason) => reason.clone(),
+                };
+                let mut r = row(FieldId::TMcpServer(idx), &srv.id, FieldKind::Text(status))
+                    .describe(loc.t("ui.settings.desc.mcp_server"));
+                if srv.pending_catalog {
+                    r.warn = true;
+                    r.hint = Some(loc.t("ui.settings.mcp.confirm_hint"));
+                }
+                mcp_rows.push(r);
+            }
+            mcp_rows
+        }));
         rows
     }
 
@@ -732,6 +753,10 @@ impl SettingsScreen {
                                 .unwrap_or(info.label),
                         )
                     };
+                    // Полное описание MCP-инструмента (текст сервера) — в нижнюю
+                    // панель при фокусе: обязательная видимость описаний — антидот
+                    // tool-poisoning (spec §9.6).
+                    r.description = info.description.clone();
                     rows.push(r);
                 }
             }

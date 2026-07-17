@@ -16,6 +16,17 @@ impl Orchestrator {
         // значение (например `None` со старта) — сохраняем актуальное, чтобы правка
         // настроек не стёрла память о чате.
         self.config.last_active_chat = old.last_active_chat;
+        // TOFU-пины каталогов MCP — тоже свойство оркестратора (persist_mcp_pin),
+        // в UI не редактируются: наследуем по id сервера, если снимок из UI их не
+        // несёт (устаревшая копия) — правка настроек не сбрасывает доверие и не
+        // провоцирует ложный diff `config.mcp` (лишний рестарт серверов).
+        for srv in &mut self.config.mcp.servers {
+            if srv.pinned_catalog.is_none()
+                && let Some(prev) = old.mcp.servers.iter().find(|s| s.id == srv.id)
+            {
+                srv.pinned_catalog = prev.pinned_catalog.clone();
+            }
+        }
         if let Err(err) = self.storage.json().save_config(&self.config) {
             let _ = self.evt_tx.send(AppEvent::Error(
                 self.ui_locale()
@@ -113,7 +124,8 @@ impl Orchestrator {
     /// [`super::mcp::McpManager`]). Реестр пересобирается сразу — обёртки прежнего
     /// поколения (мёртвые соединения) уходят из него немедленно.
     pub(super) fn apply_mcp_settings(&mut self) {
-        self.mcp.apply(&self.config.mcp);
+        let loc = self.ui_locale();
+        self.mcp.apply(&self.config.mcp, loc);
         self.rebuild_registry();
     }
 }

@@ -58,16 +58,78 @@ async fn mcp_ready_registers_tools_and_rides_settings_snapshot() {
     // Обёртка в реестре (ход сможет её вызвать), стандартные инструменты целы.
     assert!(orch.registry.get("mcp__fs__read_text_file").is_some());
     assert!(orch.registry.get("note_save").is_some());
-    // Снимок Settings несёт динамический каталог для тумблеров профиля.
+    // TOFU: первый подъём авто-пиннит каталог, пин персистится в settings.json.
+    let pin = orch.config.mcp.servers[0].pinned_catalog.clone();
+    assert!(pin.is_some(), "пин не записан в конфиг");
+    let saved = orch.storage.json().load_config().unwrap();
+    assert_eq!(saved.mcp.servers[0].pinned_catalog, pin, "пин не сохранён");
+    // Снимок Settings несёт динамический каталог и статус сервера.
     let evt = wait_for(&mut evt_rx, |e| matches!(e, AppEvent::Settings { .. }))
         .await
         .unwrap();
-    let AppEvent::Settings { mcp_tools, .. } = evt else {
+    let AppEvent::Settings { mcp, .. } = evt else {
         unreachable!()
     };
-    assert_eq!(mcp_tools.len(), 1);
-    assert_eq!(mcp_tools[0].id, "mcp__fs__read_text_file");
-    assert!(!mcp_tools[0].enabled_by_default, "двойной opt-in");
+    assert_eq!(mcp.tools.len(), 1);
+    assert_eq!(mcp.tools[0].id, "mcp__fs__read_text_file");
+    assert!(!mcp.tools[0].enabled_by_default, "двойной opt-in");
+    assert_eq!(mcp.tools[0].description.as_deref(), Some("Read a file"));
+    assert_eq!(mcp.servers.len(), 1);
+    assert_eq!(mcp.servers[0].tool_count, 1);
+}
+
+#[tokio::test]
+async fn changed_catalog_requires_confirmation_before_registering() {
+    let (_dir, mut orch, mut evt_rx) = bare_orch_rx();
+    let mut config = mcp_config();
+    // Пин «прежнего» каталога (другое описание) — Ready с изменившимся не пройдёт.
+    config.servers[0].pinned_catalog =
+        Some(crate::features::tools::mcp::catalog_hash(&[McpToolInfo {
+            name: "read_text_file".into(),
+            description: "старое описание".into(),
+            input_schema: serde_json::json!({ "type": "object" }),
+        }]));
+    orch.config.mcp = config;
+    orch.apply_mcp_settings();
+    orch.handle_mcp_event(ready_event(&orch));
+
+    // Инструменты придержаны: в реестр не попали, снимок помечает pending.
+    assert!(orch.registry.get("mcp__fs__read_text_file").is_none());
+    let evt = wait_for(&mut evt_rx, |e| matches!(e, AppEvent::Settings { .. }))
+        .await
+        .unwrap();
+    let AppEvent::Settings { mcp, .. } = evt else {
+        unreachable!()
+    };
+    assert!(mcp.servers[0].pending_catalog);
+    assert!(mcp.tools.is_empty());
+
+    // Подтверждение (Enter в настройках → команда): инструменты в реестре,
+    // новый пин персистится.
+    let old_pin = orch.config.mcp.servers[0].pinned_catalog.clone();
+    orch.handle_confirm_mcp_catalog("fs".into());
+    assert!(orch.registry.get("mcp__fs__read_text_file").is_some());
+    let new_pin = orch.config.mcp.servers[0].pinned_catalog.clone();
+    assert_ne!(new_pin, old_pin, "пин обновлён на новый каталог");
+    let saved = orch.storage.json().load_config().unwrap();
+    assert_eq!(saved.mcp.servers[0].pinned_catalog, new_pin);
+}
+
+#[tokio::test]
+async fn update_config_inherits_mcp_pins_from_stale_ui_snapshot() {
+    // Снимок конфига из UI может не нести пины (устаревшая копия) — правка
+    // настроек не должна сбрасывать доверие и провоцировать рестарт серверов.
+    let (_dir, mut orch) = bare_orch();
+    orch.config.mcp = mcp_config();
+    orch.config.mcp.servers[0].pinned_catalog = Some("abc123".into());
+    let mut ui_copy = orch.config.clone();
+    ui_copy.mcp.servers[0].pinned_catalog = None; // устаревший снимок без пина
+    orch.handle_update_config(ui_copy);
+    assert_eq!(
+        orch.config.mcp.servers[0].pinned_catalog.as_deref(),
+        Some("abc123"),
+        "пин унаследован по id сервера"
+    );
 }
 
 /// Живой e2e-смоук этапа 3a (docs/research/plugin-system.md §7): полный путь через
@@ -145,21 +207,21 @@ async fn mcp_filesystem_e2e_live() {
         std::time::Duration::from_secs(120),
         wait_for(
             &mut evt_rx,
-            |e| matches!(e, AppEvent::Settings { mcp_tools, .. } if !mcp_tools.is_empty()),
+            |e| matches!(e, AppEvent::Settings { mcp, .. } if !mcp.tools.is_empty()),
         ),
     )
     .await
     .expect("MCP-сервер не поднялся за 120с")
     .unwrap();
-    let AppEvent::Settings { mcp_tools, .. } = settings else {
+    let AppEvent::Settings { mcp, .. } = settings else {
         unreachable!()
     };
-    eprintln!("MCP-инструментов в каталоге: {}", mcp_tools.len());
-    assert!(mcp_tools.iter().all(|t| t.id.starts_with("mcp__fs__")));
+    eprintln!("MCP-инструментов в каталоге: {}", mcp.tools.len());
+    assert!(mcp.tools.iter().all(|t| t.id.starts_with("mcp__fs__")));
 
     // Профиль включает MCP-инструменты (двойной opt-in: мастер-гейт уже вкл).
     let mut enabled = default_tool_ids();
-    enabled.extend(mcp_tools.iter().map(|t| t.id.clone()));
+    enabled.extend(mcp.tools.iter().map(|t| t.id.clone()));
     cmd_tx
         .send(AppCommand::UpdateProfile {
             id: pid,

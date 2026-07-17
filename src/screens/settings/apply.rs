@@ -148,6 +148,11 @@ impl SettingsScreen {
             }
             KeyCode::Enter => {
                 let f = fields.get(self.field_idx)?;
+                // Строка MCP-сервера — read-only статус; Enter при «каталог
+                // изменился» подтверждает новый каталог (TOFU, spec §9.6).
+                if let FieldId::TMcpServer(idx) = f.id {
+                    return self.confirm_mcp_catalog(idx);
+                }
                 match &f.kind {
                     FieldKind::Toggle(_) => self.toggle_field(f.id),
                     // Choice (в т.ч. выбор профиля PSelect) — попап списка вариантов.
@@ -268,6 +273,15 @@ impl SettingsScreen {
             return Some(self.save_config());
         }
         None
+    }
+
+    /// Подтверждение изменившегося каталога MCP-сервера (Enter на его строке):
+    /// намерение уходит оркестратору только когда сервер реально ждёт
+    /// подтверждения (`pending_catalog`); иначе — no-op (строка read-only).
+    pub(super) fn confirm_mcp_catalog(&self, idx: usize) -> Option<SettingsIntent> {
+        let srv = self.mcp.servers.get(idx)?;
+        srv.pending_catalog
+            .then(|| SettingsIntent::ConfirmMcpCatalog(srv.id.clone()))
     }
 
     pub(super) fn toggle_profile_tool(&mut self, idx: usize) -> Option<SettingsIntent> {

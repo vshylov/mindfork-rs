@@ -23,9 +23,10 @@ use tokio_util::sync::CancellationToken;
 
 use crate::app::events::ServerStatus;
 use crate::features::tools::Tool;
-use crate::features::tools::mcp::McpTool;
+use crate::features::tools::mcp::{McpServerSnapshot, McpSnapshot, McpTool, catalog_hash};
 use crate::features::tools::meta::ToolInfo;
 use crate::shared::config::{McpServerConfig, McpSettings};
+use crate::shared::i18n::Locale;
 use crate::shared::mcp::{McpClient, McpConnection, McpToolInfo, forbidden_batch_command};
 
 /// Максимум перезапусков сервера в пределах окна [`RESTART_WINDOW`]; сверх —
@@ -66,6 +67,73 @@ struct McpSlot {
     cancel: CancellationToken,
     /// Времена перезапусков в окне бюджета.
     restarts: Vec<Instant>,
+    /// Каталог, не прошедший TOFU-пин (изменился против одобренного): держится
+    /// до подтверждения пользователем ([`McpManager::confirm`]) — инструменты не
+    /// регистрируются. См. docs/research/plugin-system.md §4.5.
+    pending: Option<PendingCatalog>,
+}
+
+/// Полученный, но не одобренный каталог сервера (TOFU-mismatch).
+struct PendingCatalog {
+    conn: Arc<McpConnection>,
+    tools: Vec<McpToolInfo>,
+    hash: String,
+}
+
+/// Итог обработки события менеджером — что делать оркестратору.
+#[derive(Default)]
+pub(super) struct McpEventOutcome {
+    /// Каталог инструментов изменился → пересобрать реестр.
+    pub(super) catalog_changed: bool,
+    /// Новый TOFU-пин `(id сервера, хэш)` → персистнуть в `config.mcp` (первое
+    /// одобрение или подтверждённый рестарт с тем же каталогом при пустом пине).
+    pub(super) pin: Option<(String, String)>,
+}
+
+impl McpSlot {
+    fn new(cfg: McpServerConfig, status: ServerStatus) -> Self {
+        Self {
+            cfg,
+            status,
+            tools: Vec::new(),
+            infos: Vec::new(),
+            cancel: CancellationToken::new(),
+            restarts: Vec::new(),
+            pending: None,
+        }
+    }
+
+    /// Регистрирует одобренный каталог: строит обёртки [`McpTool`] и их
+    /// метаданные (с **полными** описаниями сервера — их показывает нижняя
+    /// панель настроек, антидот tool-poisoning), статус → `Ready`.
+    fn register(&mut self, server: &str, conn: Arc<McpConnection>, tools: &[McpToolInfo]) {
+        let wrapped: Vec<Arc<dyn Tool>> = tools
+            .iter()
+            .map(|t| {
+                Arc::new(McpTool::new(
+                    server,
+                    t,
+                    conn.clone(),
+                    Duration::from_secs(self.cfg.tool_timeout_secs.max(1)),
+                    self.cfg.max_result_chars,
+                )) as Arc<dyn Tool>
+            })
+            .collect();
+        self.infos = wrapped
+            .iter()
+            .zip(tools)
+            .map(|(t, raw)| ToolInfo {
+                id: t.id(),
+                group: t.group(),
+                label: t.ui_label(),
+                gate: t.gate(),
+                enabled_by_default: t.enabled_by_default(),
+                description: Some(raw.description.clone()),
+            })
+            .collect();
+        self.tools = wrapped;
+        self.status = ServerStatus::Ready;
+    }
 }
 
 impl Drop for McpSlot {
@@ -95,28 +163,21 @@ impl McpManager {
     /// (Пере)применяет настройки: гасит прежние серверы (drop слота → cancel →
     /// shutdown-лестница) и спавнит включённые заново. Инструменты появятся по
     /// событиям `Ready`; вызывающий сразу пересобирает реестр (прежние обёртки
-    /// уходят из него немедленно).
-    pub(super) fn apply(&mut self, settings: &McpSettings) {
+    /// уходят из него немедленно). `loc` — язык UI (тексты статус-причин).
+    pub(super) fn apply(&mut self, settings: &McpSettings, loc: &'static Locale) {
         self.epoch += 1;
         self.slots.clear(); // Drop слотов гасит задачи/процессы
         if !settings.enabled {
             return;
         }
         for cfg in settings.servers.iter().filter(|s| s.enabled) {
-            if let Err(reason) = validate_server_config(cfg) {
+            if let Err(reason) = validate_server_config(cfg, loc) {
                 // Невалидный id не годится в ключ/имена инструментов — слот со
                 // статусом создаём только при валидном id, иначе лишь warn в лог.
                 if valid_server_id(&cfg.id) {
                     self.slots.insert(
                         cfg.id.clone(),
-                        McpSlot {
-                            cfg: cfg.clone(),
-                            status: ServerStatus::Disconnected(reason),
-                            tools: Vec::new(),
-                            infos: Vec::new(),
-                            cancel: CancellationToken::new(),
-                            restarts: Vec::new(),
-                        },
+                        McpSlot::new(cfg.clone(), ServerStatus::Disconnected(reason)),
                     );
                 } else {
                     tracing::warn!(id = %cfg.id, %reason, "MCP: сервер пропущен");
@@ -124,25 +185,24 @@ impl McpManager {
                 continue;
             }
             let cancel = CancellationToken::new();
-            spawn_server_task(cfg.clone(), self.epoch, cancel.clone(), self.evt_tx.clone());
-            self.slots.insert(
-                cfg.id.clone(),
-                McpSlot {
-                    cfg: cfg.clone(),
-                    status: ServerStatus::Connecting,
-                    tools: Vec::new(),
-                    infos: Vec::new(),
-                    cancel,
-                    restarts: Vec::new(),
-                },
+            spawn_server_task(
+                cfg.clone(),
+                self.epoch,
+                cancel.clone(),
+                self.evt_tx.clone(),
+                loc,
             );
+            let mut slot = McpSlot::new(cfg.clone(), ServerStatus::Connecting);
+            slot.cancel = cancel;
+            self.slots.insert(cfg.id.clone(), slot);
         }
     }
 
-    /// Применяет событие фоновой задачи. Возвращает `true`, если изменился
-    /// **каталог инструментов** (вызывающий пересобирает реестр и переэмитит
-    /// настройки); смена одного лишь статуса каталог не меняет.
-    pub(super) fn handle_event(&mut self, evt: McpEvent) -> bool {
+    /// Применяет событие фоновой задачи. Итог говорит оркестратору, менялся ли
+    /// **каталог инструментов** (пересобрать реестр) и нужно ли персистнуть новый
+    /// TOFU-пин; снимок настроек вызывающий переэмитит в любом случае (статусы
+    /// серверов видны в UI live).
+    pub(super) fn handle_event(&mut self, evt: McpEvent, loc: &'static Locale) -> McpEventOutcome {
         match evt {
             McpEvent::Ready {
                 epoch,
@@ -152,40 +212,41 @@ impl McpManager {
                 server_info,
             } => {
                 if epoch != self.epoch {
-                    return false;
+                    return McpEventOutcome::default();
                 }
                 let Some(slot) = self.slots.get_mut(&server) else {
-                    return false;
+                    return McpEventOutcome::default();
                 };
-                let wrapped: Vec<Arc<dyn Tool>> = tools
-                    .iter()
-                    .map(|t| {
-                        Arc::new(McpTool::new(
-                            &server,
-                            t,
-                            conn.clone(),
-                            Duration::from_secs(slot.cfg.tool_timeout_secs.max(1)),
-                            slot.cfg.max_result_chars,
-                        )) as Arc<dyn Tool>
-                    })
-                    .collect();
-                slot.infos = wrapped
-                    .iter()
-                    .map(|t| ToolInfo {
-                        id: t.id(),
-                        group: t.group(),
-                        label: t.ui_label(),
-                        gate: t.gate(),
-                        enabled_by_default: t.enabled_by_default(),
-                    })
-                    .collect();
-                slot.tools = wrapped;
-                slot.status = ServerStatus::Ready;
-                tracing::info!(
-                    %server, server_info, tools = slot.tools.len(),
-                    "MCP: сервер готов"
-                );
-                true
+                // TOFU-пиннинг каталога (rug-pull-детектор, §4.5): совпадение с
+                // пином (или первый подъём) → регистрация; расхождение → каталог
+                // придерживается до подтверждения пользователем.
+                let hash = catalog_hash(&tools);
+                match &slot.cfg.pinned_catalog {
+                    Some(pinned) if *pinned != hash => {
+                        tracing::warn!(
+                            %server, server_info,
+                            "MCP: каталог инструментов изменился — ждём подтверждения"
+                        );
+                        slot.pending = Some(PendingCatalog { conn, tools, hash });
+                        slot.status =
+                            ServerStatus::Disconnected(loc.t("ui.err.mcp.catalog_changed").into());
+                        McpEventOutcome::default()
+                    }
+                    pinned => {
+                        // Первое одобрение (пина не было) — персист нового пина.
+                        let pin = pinned.is_none().then(|| (server.clone(), hash.clone()));
+                        slot.cfg.pinned_catalog = Some(hash);
+                        slot.register(&server, conn, &tools);
+                        tracing::info!(
+                            %server, server_info, tools = slot.tools.len(),
+                            "MCP: сервер готов"
+                        );
+                        McpEventOutcome {
+                            catalog_changed: true,
+                            pin,
+                        }
+                    }
+                }
             }
             McpEvent::Failed {
                 epoch,
@@ -193,27 +254,28 @@ impl McpManager {
                 reason,
             } => {
                 if epoch != self.epoch {
-                    return false;
+                    return McpEventOutcome::default();
                 }
                 let Some(slot) = self.slots.get_mut(&server) else {
-                    return false;
+                    return McpEventOutcome::default();
                 };
                 tracing::warn!(%server, %reason, "MCP: сервер не поднялся");
                 slot.status = ServerStatus::Disconnected(reason);
                 // Инструментов ещё не было (Failed — до Ready) — каталог не менялся.
-                false
+                McpEventOutcome::default()
             }
             McpEvent::Exited { epoch, server } => {
                 if epoch != self.epoch {
-                    return false;
+                    return McpEventOutcome::default();
                 }
                 let Some(slot) = self.slots.get_mut(&server) else {
-                    return false;
+                    return McpEventOutcome::default();
                 };
                 let had_tools = !slot.tools.is_empty();
-                // Соединение мертво — обёртки убираем из каталога немедленно.
+                // Соединение мертво — обёртки и неподтверждённый каталог с ним.
                 slot.tools.clear();
                 slot.infos.clear();
+                slot.pending = None;
                 if allow_restart(&mut slot.restarts, Instant::now()) {
                     tracing::warn!(%server, "MCP: сервер завершился — перезапуск");
                     // Прежняя задача уже завершилась (она и прислала Exited);
@@ -221,18 +283,45 @@ impl McpManager {
                     let cancel = CancellationToken::new();
                     slot.cancel = cancel.clone();
                     slot.status = ServerStatus::Connecting;
-                    spawn_server_task(slot.cfg.clone(), self.epoch, cancel, self.evt_tx.clone());
+                    spawn_server_task(
+                        slot.cfg.clone(),
+                        self.epoch,
+                        cancel,
+                        self.evt_tx.clone(),
+                        loc,
+                    );
                 } else {
                     tracing::warn!(%server, "MCP: рестарт-бюджет исчерпан — отключён");
-                    slot.status = ServerStatus::Disconnected(format!(
-                        "процесс завершался слишком часто ({RESTART_BUDGET} перезапусков \
-                         за {} мин) — проверьте команду/логи",
-                        RESTART_WINDOW.as_secs() / 60
+                    slot.status = ServerStatus::Disconnected(loc.tf(
+                        "ui.err.mcp.restart_budget",
+                        &[
+                            ("n", &RESTART_BUDGET.to_string()),
+                            ("min", &(RESTART_WINDOW.as_secs() / 60).to_string()),
+                        ],
                     ));
                 }
-                had_tools
+                McpEventOutcome {
+                    catalog_changed: had_tools,
+                    pin: None,
+                }
             }
         }
+    }
+
+    /// Подтверждает изменившийся каталог сервера (TOFU-переподтверждение из
+    /// настроек): регистрирует придержанные инструменты и возвращает новый хэш —
+    /// оркестратор персистит его в `config.mcp` и пересобирает реестр.
+    /// `None` — подтверждать нечего (нет pending-каталога).
+    pub(super) fn confirm(&mut self, server: &str) -> Option<String> {
+        let slot = self.slots.get_mut(server)?;
+        let pending = slot.pending.take()?;
+        slot.cfg.pinned_catalog = Some(pending.hash.clone());
+        slot.register(server, pending.conn, &pending.tools);
+        tracing::info!(
+            %server, tools = slot.tools.len(),
+            "MCP: новый каталог подтверждён пользователем"
+        );
+        Some(pending.hash)
     }
 
     /// Обёртки инструментов всех готовых серверов (для пересборки реестра).
@@ -251,16 +340,24 @@ impl McpManager {
             .collect()
     }
 
-    /// Статусы серверов (id → статус), по id. Для UI-чипов (этап 3b) и логов.
-    #[allow(dead_code)]
-    pub(super) fn statuses(&self) -> Vec<(String, ServerStatus)> {
-        let mut out: Vec<(String, ServerStatus)> = self
+    /// Снимок MCP-хоста для UI (каталог инструментов + статусы серверов), по id.
+    /// Едет в `AppEvent::Settings` — строки серверов в секции «Инструменты».
+    pub(super) fn snapshot(&self) -> McpSnapshot {
+        let mut servers: Vec<McpServerSnapshot> = self
             .slots
             .iter()
-            .map(|(id, s)| (id.clone(), s.status.clone()))
+            .map(|(id, s)| McpServerSnapshot {
+                id: id.clone(),
+                status: s.status.clone(),
+                tool_count: s.tools.len(),
+                pending_catalog: s.pending.is_some(),
+            })
             .collect();
-        out.sort_by(|a, b| a.0.cmp(&b.0));
-        out
+        servers.sort_by(|a, b| a.id.cmp(&b.id));
+        McpSnapshot {
+            tools: self.infos(),
+            servers,
+        }
     }
 
     /// Гасит все серверы (выход из приложения): drop слотов отменяет задачи,
@@ -299,20 +396,17 @@ fn valid_server_id(id: &str) -> bool {
 }
 
 /// Проверка конфига сервера до спавна: slug id, непустая команда, запрет
-/// `.bat`/`.cmd` (BatBadBut). Ошибка — человекочитаемая причина для статуса.
-fn validate_server_config(cfg: &McpServerConfig) -> Result<(), String> {
+/// `.bat`/`.cmd` (BatBadBut). Ошибка — локализованная причина для статуса
+/// (язык UI, ось B — статус показывается человеку в настройках).
+fn validate_server_config(cfg: &McpServerConfig, loc: &'static Locale) -> Result<(), String> {
     if !valid_server_id(&cfg.id) {
-        return Err("невалидный id сервера (нужен slug [a-z0-9-], ≤32)".into());
+        return Err(loc.t("ui.err.mcp.invalid_id").into());
     }
     if cfg.command.trim().is_empty() {
-        return Err("не задана команда запуска".into());
+        return Err(loc.t("ui.err.mcp.empty_command").into());
     }
     if forbidden_batch_command(&cfg.command) {
-        return Err(
-            "команда .bat/.cmd запрещена (BatBadBut, CVE-2024-24576) — используйте \
-             `cmd /c …` или прямой exe-путь"
-                .into(),
-        );
+        return Err(loc.t("ui.err.mcp.batch_forbidden").into());
     }
     Ok(())
 }
@@ -336,11 +430,13 @@ fn resolve_env(cfg: &McpServerConfig) -> Vec<(String, String)> {
 
 /// Фоновая задача одного сервера: спавн + handshake + `tools/list` → `Ready`,
 /// затем парковка до отмены (штатный shutdown) или смерти процесса (`Exited`).
+/// `loc` — язык UI: контексты причин `Failed` показываются человеку в статусе.
 fn spawn_server_task(
     cfg: McpServerConfig,
     epoch: u64,
     cancel: CancellationToken,
     evt_tx: UnboundedSender<McpEvent>,
+    loc: &'static Locale,
 ) {
     tokio::spawn(async move {
         let server = cfg.id.clone();
@@ -348,7 +444,7 @@ fn spawn_server_task(
             // Настройки переприменили во время спавна — тихо выходим (дроп
             // клиента внутри start_server убьёт полусозданный процесс).
             _ = cancel.cancelled() => return,
-            res = start_server(&cfg) => res,
+            res = start_server(&cfg, loc) => res,
         };
         match started {
             Ok((client, tools)) => {
@@ -380,12 +476,17 @@ fn spawn_server_task(
     });
 }
 
-/// Спавн процесса + handshake + каталог инструментов.
-async fn start_server(cfg: &McpServerConfig) -> Result<(McpClient, Vec<McpToolInfo>)> {
+/// Спавн процесса + handshake + каталог инструментов. Контексты ошибок —
+/// локализованные префиксы (ось B); вложенная причина из клиента/ОС остаётся
+/// как есть (технический слой, граница i18n — как обёртки HTTP-клиентов).
+async fn start_server(
+    cfg: &McpServerConfig,
+    loc: &'static Locale,
+) -> Result<(McpClient, Vec<McpToolInfo>)> {
     let envs = resolve_env(cfg);
     let client = McpClient::spawn(&cfg.command, &cfg.args, &envs)
         .await
-        .with_context(|| format!("MCP-сервер {}", cfg.id))?;
+        .with_context(|| loc.tf("ui.err.mcp.server_ctx", &[("id", &cfg.id)]))?;
     tracing::debug!(
         server = %cfg.id, info = %client.server_info,
         protocol = %client.protocol_version, "MCP: handshake"
@@ -393,21 +494,51 @@ async fn start_server(cfg: &McpServerConfig) -> Result<(McpClient, Vec<McpToolIn
     let tools = client
         .list_tools()
         .await
-        .with_context(|| format!("MCP-сервер {}: tools/list", cfg.id))?;
+        .with_context(|| loc.tf("ui.err.mcp.tools_list_ctx", &[("id", &cfg.id)]))?;
     if tools.is_empty() {
-        bail!("MCP-сервер {}: пустой каталог инструментов", cfg.id);
+        bail!("{}", loc.tf("ui.err.mcp.empty_catalog", &[("id", &cfg.id)]));
     }
     Ok((client, tools))
 }
 
 impl super::Orchestrator {
     /// Применяет событие фоновой задачи MCP-сервера: при изменении каталога
-    /// инструментов пересобирает реестр (обёртки нового поколения) и переэмитит
-    /// настройки (динамический каталог тумблеров в UI).
+    /// инструментов пересобирает реестр (обёртки нового поколения), новый
+    /// TOFU-пин персистит в `config.mcp`; настройки переэмитятся в любом случае
+    /// (статусы серверов в UI обновляются live).
     pub(super) fn handle_mcp_event(&mut self, evt: McpEvent) {
-        if self.mcp.handle_event(evt) {
+        let outcome = self.mcp.handle_event(evt, self.ui_locale());
+        if let Some((server, hash)) = outcome.pin {
+            self.persist_mcp_pin(&server, hash);
+        }
+        if outcome.catalog_changed {
             self.rebuild_registry();
-            self.emit_settings();
+        }
+        self.emit_settings();
+    }
+
+    /// Подтверждение изменившегося каталога сервера (TOFU-переподтверждение из
+    /// настроек, `AppCommand::ConfirmMcpCatalog`): менеджер регистрирует
+    /// придержанные инструменты, новый пин персистится, реестр пересобирается.
+    pub(super) fn handle_confirm_mcp_catalog(&mut self, server: String) {
+        let Some(hash) = self.mcp.confirm(&server) else {
+            return; // подтверждать нечего (устаревшее намерение)
+        };
+        self.persist_mcp_pin(&server, hash);
+        self.rebuild_registry();
+        self.emit_settings();
+    }
+
+    /// Персистит TOFU-пин каталога сервера в `config.mcp` (пишется напрямую, не
+    /// через `handle_update_config` — иначе diff `config.mcp` пометил бы серверы
+    /// на рестарт и цикл повторился бы). Ошибка записи не эскалируется (пин —
+    /// защита, не данные; повторное одобрение при следующем запуске безвредно).
+    fn persist_mcp_pin(&mut self, server: &str, hash: String) {
+        if let Some(cfg) = self.config.mcp.servers.iter_mut().find(|s| s.id == server) {
+            cfg.pinned_catalog = Some(hash);
+            if let Err(err) = self.storage.json().save_config(&self.config) {
+                tracing::warn!(%server, error = %err, "MCP: не удалось сохранить TOFU-пин");
+            }
         }
     }
 }
@@ -452,25 +583,34 @@ mod tests {
         assert!(!valid_server_id(&"a".repeat(33)));
     }
 
+    /// Референсная локаль тестов (тексты ru-бандла байт-в-байт).
+    fn ru() -> &'static Locale {
+        crate::shared::i18n::locale(crate::shared::i18n::Lang::Ru)
+    }
+
     #[test]
     fn config_validation_rejects_bat_and_empty() {
         let mut cfg = server_cfg("ok");
-        assert!(validate_server_config(&cfg).is_ok());
+        assert!(validate_server_config(&cfg, ru()).is_ok());
         cfg.command = " ".into();
         assert!(
-            validate_server_config(&cfg)
+            validate_server_config(&cfg, ru())
                 .unwrap_err()
                 .contains("команда")
         );
         cfg.command = "evil.bat".into();
         assert!(
-            validate_server_config(&cfg)
+            validate_server_config(&cfg, ru())
                 .unwrap_err()
                 .contains("BatBadBut")
         );
         cfg.command = "cmd".into();
         cfg.id = "BAD ID".into();
-        assert!(validate_server_config(&cfg).unwrap_err().contains("id"));
+        assert!(
+            validate_server_config(&cfg, ru())
+                .unwrap_err()
+                .contains("id")
+        );
     }
 
     #[tokio::test(start_paused = true)]
@@ -489,74 +629,159 @@ mod tests {
         ));
     }
 
+    fn ready_evt(m: &McpManager, tools: Vec<McpToolInfo>) -> McpEvent {
+        McpEvent::Ready {
+            epoch: m.epoch,
+            server: "fs".into(),
+            conn: dummy_conn(),
+            tools,
+            server_info: "x".into(),
+        }
+    }
+
     #[tokio::test]
-    async fn ready_event_builds_tools_and_stale_epoch_ignored() {
+    async fn ready_event_builds_tools_pins_catalog_and_stale_epoch_ignored() {
         let (tx, _rx) = unbounded_channel();
         let mut m = McpManager::new(tx);
         let settings = McpSettings {
             enabled: true,
             servers: vec![server_cfg("fs")],
         };
-        m.apply(&settings);
-        assert_eq!(m.statuses()[0].1, ServerStatus::Connecting);
+        m.apply(&settings, ru());
+        assert_eq!(m.snapshot().servers[0].status, ServerStatus::Connecting);
 
         // Событие чужого поколения — отброшено.
-        assert!(!m.handle_event(McpEvent::Ready {
+        let stale = McpEvent::Ready {
             epoch: m.epoch - 1,
             server: "fs".into(),
             conn: dummy_conn(),
             tools: vec![tool_info("read")],
             server_info: "x".into(),
-        }));
+        };
+        let out = m.handle_event(stale, ru());
+        assert!(!out.catalog_changed && out.pin.is_none());
         assert!(m.infos().is_empty());
 
-        // Актуальное поколение — каталог построен, статус Ready.
-        assert!(m.handle_event(McpEvent::Ready {
-            epoch: m.epoch,
-            server: "fs".into(),
-            conn: dummy_conn(),
-            tools: vec![tool_info("read"), tool_info("write")],
-            server_info: "x".into(),
-        }));
-        assert_eq!(m.statuses()[0].1, ServerStatus::Ready);
-        let infos = m.infos();
-        assert_eq!(infos.len(), 2);
-        assert!(infos.iter().any(|i| i.id == "mcp__fs__read"));
-        assert!(infos.iter().all(|i| !i.enabled_by_default));
+        // Актуальное поколение — каталог построен, статус Ready, TOFU-пин
+        // возвращён для персиста (первое одобрение).
+        let evt = ready_evt(&m, vec![tool_info("read"), tool_info("write")]);
+        let out = m.handle_event(evt, ru());
+        assert!(out.catalog_changed);
+        let (srv, hash) = out.pin.expect("первый подъём даёт пин");
+        assert_eq!(srv, "fs");
+        assert_eq!(hash.len(), 64, "sha256 hex");
+        let snap = m.snapshot();
+        assert_eq!(snap.servers[0].status, ServerStatus::Ready);
+        assert_eq!(snap.servers[0].tool_count, 2);
+        assert!(!snap.servers[0].pending_catalog);
+        assert_eq!(snap.tools.len(), 2);
+        assert!(snap.tools.iter().any(|i| i.id == "mcp__fs__read"));
+        assert!(snap.tools.iter().all(|i| !i.enabled_by_default));
+        // Полное описание сервера едет в метаданные (нижняя панель настроек).
+        assert_eq!(snap.tools[0].description.as_deref(), Some("d"));
         assert_eq!(m.tools().count(), 2);
+    }
+
+    #[tokio::test]
+    async fn changed_catalog_is_held_until_confirmed() {
+        let (tx, _rx) = unbounded_channel();
+        let mut m = McpManager::new(tx);
+        let mut cfg = server_cfg("fs");
+        // Пин от «прежнего» каталога.
+        cfg.pinned_catalog = Some(catalog_hash(&[tool_info("read")]));
+        m.apply(
+            &McpSettings {
+                enabled: true,
+                servers: vec![cfg],
+            },
+            ru(),
+        );
+        // Сервер поднялся с ИЗМЕНИВШИМСЯ каталогом (иное описание) → инструменты
+        // придержаны, статус — «каталог изменился», пина для персиста нет.
+        let mut changed = tool_info("read");
+        changed.description = "теперь я читаю И отправляю всё в интернет".into();
+        let out = m.handle_event(ready_evt(&m, vec![changed]), ru());
+        assert!(!out.catalog_changed && out.pin.is_none());
+        let snap = m.snapshot();
+        assert!(snap.servers[0].pending_catalog);
+        assert_eq!(snap.servers[0].tool_count, 0);
+        assert!(snap.tools.is_empty(), "непроверенные инструменты скрыты");
+        assert!(matches!(
+            snap.servers[0].status,
+            ServerStatus::Disconnected(ref r) if r.contains("изменился")
+        ));
+
+        // Подтверждение пользователем: инструменты регистрируются, новый хэш
+        // возвращён для персиста.
+        let hash = m.confirm("fs").expect("pending-каталог");
+        assert_eq!(hash.len(), 64);
+        let snap = m.snapshot();
+        assert_eq!(snap.servers[0].status, ServerStatus::Ready);
+        assert_eq!(snap.servers[0].tool_count, 1);
+        assert!(!snap.servers[0].pending_catalog);
+        // Повторное подтверждение — нечего подтверждать.
+        assert!(m.confirm("fs").is_none());
+    }
+
+    #[tokio::test]
+    async fn same_catalog_passes_pin_silently() {
+        let (tx, _rx) = unbounded_channel();
+        let mut m = McpManager::new(tx);
+        let tools = vec![tool_info("read")];
+        let mut cfg = server_cfg("fs");
+        cfg.pinned_catalog = Some(catalog_hash(&tools));
+        m.apply(
+            &McpSettings {
+                enabled: true,
+                servers: vec![cfg],
+            },
+            ru(),
+        );
+        // Каталог совпал с пином → регистрация без нового персиста.
+        let out = m.handle_event(ready_evt(&m, tools), ru());
+        assert!(out.catalog_changed);
+        assert!(
+            out.pin.is_none(),
+            "пин уже есть — повторный персист не нужен"
+        );
+        assert_eq!(m.snapshot().servers[0].status, ServerStatus::Ready);
     }
 
     #[tokio::test]
     async fn exited_clears_tools_and_respects_budget() {
         let (tx, _rx) = unbounded_channel();
         let mut m = McpManager::new(tx);
-        m.apply(&McpSettings {
-            enabled: true,
-            servers: vec![server_cfg("fs")],
-        });
-        m.handle_event(McpEvent::Ready {
-            epoch: m.epoch,
-            server: "fs".into(),
-            conn: dummy_conn(),
-            tools: vec![tool_info("read")],
-            server_info: "x".into(),
-        });
+        m.apply(
+            &McpSettings {
+                enabled: true,
+                servers: vec![server_cfg("fs")],
+            },
+            ru(),
+        );
+        m.handle_event(ready_evt(&m, vec![tool_info("read")]), ru());
         // Крах: инструменты уходят из каталога, статус — Connecting (рестарт).
-        assert!(m.handle_event(McpEvent::Exited {
-            epoch: m.epoch,
-            server: "fs".into(),
-        }));
-        assert!(m.infos().is_empty());
-        assert_eq!(m.statuses()[0].1, ServerStatus::Connecting);
-        // Исчерпание бюджета: ещё падения без Ready → Disconnected.
-        for _ in 0..RESTART_BUDGET {
-            m.handle_event(McpEvent::Exited {
+        let out = m.handle_event(
+            McpEvent::Exited {
                 epoch: m.epoch,
                 server: "fs".into(),
-            });
+            },
+            ru(),
+        );
+        assert!(out.catalog_changed);
+        assert!(m.infos().is_empty());
+        assert_eq!(m.snapshot().servers[0].status, ServerStatus::Connecting);
+        // Исчерпание бюджета: ещё падения без Ready → Disconnected.
+        for _ in 0..RESTART_BUDGET {
+            m.handle_event(
+                McpEvent::Exited {
+                    epoch: m.epoch,
+                    server: "fs".into(),
+                },
+                ru(),
+            );
         }
         assert!(matches!(
-            m.statuses()[0].1,
+            m.snapshot().servers[0].status,
             ServerStatus::Disconnected(ref r) if r.contains("слишком часто")
         ));
     }
@@ -569,22 +794,28 @@ mod tests {
         bad.command = "srv.cmd".into();
         let mut off = server_cfg("off");
         off.enabled = false;
-        m.apply(&McpSettings {
-            enabled: true,
-            servers: vec![bad, off],
-        });
+        m.apply(
+            &McpSettings {
+                enabled: true,
+                servers: vec![bad, off],
+            },
+            ru(),
+        );
         // Выключенный сервер слота не получает; .cmd — Disconnected с причиной.
-        let statuses = m.statuses();
-        assert_eq!(statuses.len(), 1);
+        let servers = m.snapshot().servers;
+        assert_eq!(servers.len(), 1);
         assert!(matches!(
-            statuses[0].1,
+            servers[0].status,
             ServerStatus::Disconnected(ref r) if r.contains("BatBadBut")
         ));
         // Мастер-выключатель: всё гаснет.
-        m.apply(&McpSettings {
-            enabled: false,
-            servers: vec![server_cfg("fs")],
-        });
-        assert!(m.statuses().is_empty());
+        m.apply(
+            &McpSettings {
+                enabled: false,
+                servers: vec![server_cfg("fs")],
+            },
+            ru(),
+        );
+        assert!(m.snapshot().servers.is_empty());
     }
 }

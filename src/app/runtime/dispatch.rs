@@ -46,12 +46,12 @@ pub(super) fn apply_event(
             config,
             profiles,
             language_locked,
-            mcp_tools,
+            mcp,
         } => {
             match active {
                 ActiveScreen::Settings(settings) => {
                     settings.refresh((*config).clone(), profiles.clone(), language_locked.clone());
-                    settings.set_mcp_tools(mcp_tools.clone());
+                    settings.set_mcp(mcp.clone());
                 }
                 // Тема/режим совместимости/язык UI могли смениться — обновим палитру
                 // и локаль открытых overlay-экранов (список/модель себя) одним broadcast.
@@ -61,7 +61,7 @@ pub(super) fn apply_event(
                     crate::shared::i18n::locale(config.interface.language),
                 ),
             }
-            screen.set_settings(*config, profiles, language_locked, mcp_tools);
+            screen.set_settings(*config, profiles, language_locked, mcp);
         }
         AppEvent::ChatActivated {
             id,
@@ -224,15 +224,14 @@ pub(super) fn dispatch(
         ChatIntent::RagList => AppCommand::RagList,
         ChatIntent::RagRebuild => AppCommand::RagRebuild,
         ChatIntent::OpenSettings => {
-            if let Some((config, profiles, language_locked, mcp_tools)) = screen.settings_snapshot()
-            {
+            if let Some((config, profiles, language_locked, mcp)) = screen.settings_snapshot() {
                 let mut settings = SettingsScreen::new(config, profiles, language_locked);
                 // Начальный снимок статусов серверов (чипы в секции «Модель/сервер»);
                 // дальше их обновляет `apply_event` из события `ServerStatus`.
                 settings.set_server_statuses(screen.server_statuses());
-                // Динамический каталог инструментов MCP-серверов (тумблеры профиля);
+                // Снимок MCP-хоста (каталог инструментов + статусы серверов);
                 // дальше его обновляет `apply_event` из события `Settings`.
-                settings.set_mcp_tools(mcp_tools);
+                settings.set_mcp(mcp);
                 *active = ActiveScreen::Settings(Box::new(settings));
             }
             return false;
@@ -351,6 +350,7 @@ pub(super) fn dispatch_settings(
             system_message,
         },
         SettingsIntent::DeleteProfile(id) => AppCommand::DeleteProfile(id),
+        SettingsIntent::ConfirmMcpCatalog(server) => AppCommand::ConfirmMcpCatalog(server),
     };
     let _ = cmd_tx.send(command);
     false

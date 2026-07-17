@@ -843,6 +843,14 @@ pub struct McpServerConfig {
     pub tool_timeout_secs: u64,
     /// Клип результата инструмента (символы) — ограничение входа в промпт.
     pub max_result_chars: usize,
+    /// TOFU-пин каталога инструментов (sha256 от имён+описаний+схем): ставится
+    /// автоматически при первом подъёме сервера; при **изменении** каталога
+    /// (rug-pull-детектор, tool poisoning) инструменты не регистрируются, пока
+    /// пользователь не переподтвердит новый каталог в настройках. Пишется
+    /// приложением (не редактируется в UI); ручное удаление поля = сброс доверия.
+    /// См. docs/research/plugin-system.md §4.5 (Р7).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub pinned_catalog: Option<String>,
 }
 
 impl Default for McpServerConfig {
@@ -855,6 +863,7 @@ impl Default for McpServerConfig {
             enabled: true,
             tool_timeout_secs: DEFAULT_MCP_TOOL_TIMEOUT_SECS,
             max_result_chars: DEFAULT_MCP_MAX_RESULT_CHARS,
+            pinned_catalog: None,
         }
     }
 }

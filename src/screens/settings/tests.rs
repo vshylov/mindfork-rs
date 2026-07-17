@@ -34,7 +34,7 @@ fn goto_section(s: &mut SettingsScreen, sec: Section) {
 /// Описание живёт на `FieldRow` (прикрепляется при построении — см. этап 3.1), а не
 /// в отдельном match; поэтому оно есть только у **видимых** строк (draft-поля нужно
 /// сделать видимыми, задав spec_type=draft-*).
-fn field_desc(s: &SettingsScreen, id: FieldId) -> Option<&'static str> {
+fn field_desc(s: &SettingsScreen, id: FieldId) -> Option<String> {
     let mut rows = Vec::new();
     for mt in [
         ModelTab::Assistant,
@@ -957,13 +957,17 @@ fn mcp_tools_extend_profile_toggles_with_honest_gate() {
     s.profiles[0]
         .enabled_tools
         .push("mcp__fs__read_text_file".into());
-    s.set_mcp_tools(vec![ToolInfo {
-        id: "mcp__fs__read_text_file".into(),
-        group: ToolGroup::Plugins,
-        label: "read_text_file",
-        gate: Some(ToolGate::Mcp),
-        enabled_by_default: false,
-    }]);
+    s.set_mcp(crate::features::tools::mcp::McpSnapshot {
+        tools: vec![ToolInfo {
+            id: "mcp__fs__read_text_file".into(),
+            group: ToolGroup::Plugins,
+            label: "read_text_file",
+            gate: Some(ToolGate::Mcp),
+            enabled_by_default: false,
+            description: Some("Read the complete contents of a file".into()),
+        }],
+        servers: Vec::new(),
+    });
     goto_section(&mut s, Section::Profiles);
     let fields = s.profile_fields();
     let idx = s
@@ -975,12 +979,17 @@ fn mcp_tools_extend_profile_toggles_with_honest_gate() {
     assert!(matches!(row.kind, FieldKind::Toggle(true)));
     assert!(row.warn, "MCP выключен глобально — честный гейт");
     assert!(row.hint.unwrap().contains("MCP"));
-    // Мастер-гейт включён → обычная подсказка (имя инструмента).
+    // Мастер-гейт включён → обычная подсказка (имя инструмента) + ПОЛНОЕ
+    // описание сервера в нижней панели (антидот tool-poisoning, spec §9.6).
     s.config.mcp.enabled = true;
     let fields = s.profile_fields();
     let row = fields.iter().find(|r| r.id == FieldId::PTool(idx)).unwrap();
     assert!(!row.warn);
     assert_eq!(row.hint, Some("read_text_file"));
+    assert_eq!(
+        row.description.as_deref(),
+        Some("Read the complete contents of a file")
+    );
     // Переключение тумблера убирает id из профиля (и обратно).
     s.toggle_profile_tool(idx).unwrap();
     assert!(
@@ -995,6 +1004,59 @@ fn mcp_tools_extend_profile_toggles_with_honest_gate() {
             .enabled_tools
             .iter()
             .any(|t| t == "mcp__fs__read_text_file")
+    );
+}
+
+#[test]
+fn mcp_server_rows_show_status_and_confirm_changed_catalog() {
+    use crate::features::tools::mcp::{McpServerSnapshot, McpSnapshot};
+    use crate::shared::server::ServerStatus;
+    // Строки серверов в группе «Плагины (MCP)»: готовый показывает число
+    // инструментов; сервер с изменившимся каталогом — warn + Enter подтверждает.
+    let mut s = screen();
+    s.config.mcp.enabled = true;
+    s.set_mcp(McpSnapshot {
+        tools: Vec::new(),
+        servers: vec![
+            McpServerSnapshot {
+                id: "fs".into(),
+                status: ServerStatus::Ready,
+                tool_count: 14,
+                pending_catalog: false,
+            },
+            McpServerSnapshot {
+                id: "github".into(),
+                status: ServerStatus::Disconnected("каталог изменился".into()),
+                tool_count: 0,
+                pending_catalog: true,
+            },
+        ],
+    });
+    goto_section(&mut s, Section::Tools);
+    let fields = s.tool_fields();
+    let fs = fields
+        .iter()
+        .find(|r| r.id == FieldId::TMcpServer(0))
+        .unwrap();
+    assert!(matches!(&fs.kind, FieldKind::Text(v) if v.contains("14")));
+    assert!(!fs.warn);
+    let gh = fields
+        .iter()
+        .find(|r| r.id == FieldId::TMcpServer(1))
+        .unwrap();
+    assert!(gh.warn, "изменившийся каталог — предупреждение");
+    assert!(gh.hint.unwrap().contains("Enter"));
+    // Enter на готовом сервере — no-op; на изменившемся — намерение подтвердить.
+    assert!(s.confirm_mcp_catalog(0).is_none());
+    assert_eq!(
+        s.confirm_mcp_catalog(1),
+        Some(SettingsIntent::ConfirmMcpCatalog("github".into()))
+    );
+    // Enter через handle_key доходит до подтверждения.
+    goto_field(&mut s, FieldId::TMcpServer(1));
+    assert_eq!(
+        s.handle_key(key(KeyCode::Enter)),
+        Some(SettingsIntent::ConfirmMcpCatalog("github".into()))
     );
 }
 

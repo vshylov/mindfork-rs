@@ -409,6 +409,7 @@ impl Orchestrator {
             AppCommand::RagRebuild => self.handle_rag_rebuild(),
             AppCommand::RequestSelfModel => self.handle_request_self_model(),
             AppCommand::UpdateSelfModel(edit) => self.handle_update_self_model(edit),
+            AppCommand::ConfirmMcpCatalog(server) => self.handle_confirm_mcp_catalog(server),
         }
         false
     }
@@ -532,7 +533,7 @@ impl Orchestrator {
             config: Box::new(self.config.clone()),
             profiles: visible,
             language_locked,
-            mcp_tools: self.mcp.infos(),
+            mcp: self.mcp.snapshot(),
         });
     }
 

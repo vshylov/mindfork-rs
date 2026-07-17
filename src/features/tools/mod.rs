@@ -461,6 +461,7 @@ impl ToolRegistry {
                 label: t.ui_label(),
                 gate: t.gate(),
                 enabled_by_default: t.enabled_by_default(),
+                description: None,
             })
             .collect()
     }

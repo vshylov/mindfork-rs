@@ -17,11 +17,60 @@ use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Duration;
 
 use anyhow::Result;
+use sha2::{Digest, Sha256};
 
 use super::{Tool, ToolContext, ToolOutcome, meta};
 use crate::entities::profile::ToolId;
 use crate::shared::i18n::Locale;
 use crate::shared::mcp::{McpConnection, McpToolInfo};
+use crate::shared::server::ServerStatus;
+
+/// Снимок MCP-хоста для UI (едет в `AppEvent::Settings`): динамический каталог
+/// инструментов (тумблеры профиля) + статусы серверов (строки в секции
+/// «Инструменты»). FSD: живёт в `features` — `screens` не импортирует `app`.
+#[derive(Debug, Clone, Default)]
+pub struct McpSnapshot {
+    /// Метаданные инструментов всех готовых серверов (с полными описаниями).
+    pub tools: Vec<meta::ToolInfo>,
+    /// Статусы серверов (по id).
+    pub servers: Vec<McpServerSnapshot>,
+}
+
+/// Снимок одного MCP-сервера для UI.
+#[derive(Debug, Clone)]
+pub struct McpServerSnapshot {
+    pub id: String,
+    pub status: ServerStatus,
+    /// Число зарегистрированных инструментов (0 — сервер не готов).
+    pub tool_count: usize,
+    /// Каталог сервера изменился против TOFU-пина — инструменты не
+    /// зарегистрированы, ждём подтверждения пользователя (Enter в настройках).
+    pub pending_catalog: bool,
+}
+
+/// TOFU-хэш каталога инструментов сервера: sha256 по отсортированным
+/// (имя, описание, JSON-схема) — любое изменение любого поля (rug-pull, tool
+/// poisoning через описания/схемы) меняет хэш. Детерминизм: инструменты
+/// сортируются по имени, ключи JSON-объектов у `serde_json` упорядочены (BTreeMap).
+pub fn catalog_hash(tools: &[McpToolInfo]) -> String {
+    let mut sorted: Vec<&McpToolInfo> = tools.iter().collect();
+    sorted.sort_by(|a, b| a.name.cmp(&b.name));
+    let mut hasher = Sha256::new();
+    for t in sorted {
+        hasher.update(t.name.as_bytes());
+        hasher.update([0]);
+        hasher.update(t.description.as_bytes());
+        hasher.update([0]);
+        hasher.update(t.input_schema.to_string().as_bytes());
+        hasher.update([0xff]);
+    }
+    let digest = hasher.finalize();
+    let mut out = String::with_capacity(64);
+    for b in digest {
+        out.push_str(&format!("{b:02x}"));
+    }
+    out
+}
 
 /// Префикс id инструментов MCP-серверов. По нему [`super::effective_tool_ids`]
 /// гейтит их мастер-выключателем `config.mcp.enabled` (инструменты динамические —
