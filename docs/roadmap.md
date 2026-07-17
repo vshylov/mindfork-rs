@@ -6,20 +6,32 @@
 
 ## Память, модель себя, знания
 Флагманское направление проекта (модель себя / заметки / связность / RAG). Ядро
-сделано (см. журнал CLAUDE.md и `docs/history/`), ниже — оставшиеся заделы.
-- **vec0 для заметок и наблюдений при росте числа** — сейчас косинус считается
-  brute-force в Rust (`db::cosine`, `note_search_semantic`); для десятков–сотен
-  заметок это дёшево, но при кратном росте стоит перейти на sqlite-vec (как у RAG).
+сделано (см. журнал CLAUDE.md и `docs/history/`), ниже — оставшиеся заделы. **Планы
+оформлены** — см. дизайн-доки [self-model-consolidation](self-model-consolidation.md)
+(модель себя), [rag-sources-retrieval](rag-sources-retrieval.md) (RAG),
+[notes-vec0](notes-vec0.md) (vec0).
 - **Фоновая авто-консолидация «модели себя» по таймеру** — сейчас консолидация
   идёт только через авто-рефлексию / интерактивный `reflect`; ворота размера
   `summary` уже дают сигнал «раздулось», осталась периодическая фоновая задача
-  (зеркало `notes.auto_consolidate_every`).
+  (зеркало `notes.auto_consolidate_every`). План:
+  [self-model-consolidation §A1](self-model-consolidation.md) (каркас фоновых задач
+  уже готов — SOLID-этап 2). ⭐ ближайший кандидат.
 - **Семантическое сравнение абзацев `summary` с `@self`-наблюдениями** в обзоре
   self-консолидации (задел из [summary-as-snapshot](history/summary-as-snapshot.md)).
+  План: [self-model-consolidation §A2](self-model-consolidation.md).
 - **Старение `current_interests`** — устаревшие интересы собеседника не вымываются
-  (задел оттуда же).
+  (задел оттуда же). План: [self-model-consolidation §A3](self-model-consolidation.md)
+  (лёгкий нудж vs тяжёлая схема с временными метками).
 - **RAG: другие форматы источников** — pdf/docx/html (сейчас только `*.txt`/`*.md`).
+  План: [rag-sources-retrieval §B1](rag-sources-retrieval.md) (html без новых
+  зависимостей, pdf/docx — с проверкой лицензий).
 - **RAG: ранкинг/дедуп между источниками** и прогресс индексации по чанкам.
+  План: [rag-sources-retrieval §B2](rag-sources-retrieval.md).
+- **vec0 для заметок и наблюдений при росте числа** — сейчас косинус считается
+  brute-force в Rust (`db::cosine`, `note_search_semantic`); для десятков–сотен
+  заметок это дёшево, но при кратном росте стоит перейти на sqlite-vec (как у RAG).
+  План: [notes-vec0](notes-vec0.md) (перф, условно; vec0 ускоряет только query-путь,
+  не попарную консолидацию).
 
 ## Контекст и токены
 - **Компрессия истории / скользящее резюме** — сейчас вся переписка шлётся каждый
