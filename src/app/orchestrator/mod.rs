@@ -26,6 +26,7 @@ mod consolidation;
 mod engines;
 mod generation;
 mod impersonation;
+mod mcp;
 mod profiles;
 mod rag;
 mod reflection;
@@ -61,6 +62,7 @@ use crate::shared::storage::Storage;
 use self::background::BgSlot;
 use self::engines::EngineManager;
 use self::generation::GenResult;
+use self::mcp::{McpEvent, McpManager};
 use self::restart_queue::RestartQueue;
 use self::save_queue::SaveQueue;
 use self::title::TitleResult;
@@ -120,10 +122,13 @@ pub async fn run(deps: OrchestratorDeps) {
     // Единый канал исхода «тихих» фоновых задач (авто-рефлексия/консолидация): задача
     // шлёт `(вид, Ok/Err(причина))`, петля — одной веткой в `handle_bg_done`.
     let (bg_done_tx, mut bg_done_rx) = unbounded_channel::<(BackgroundKind, Result<(), String>)>();
+    // Внутренний канал событий MCP-серверов (фоновые задачи спавна/монитора).
+    let (mcp_evt_tx, mut mcp_evt_rx) = unbounded_channel::<McpEvent>();
     let registry = Arc::new(build_registry(&config, storage.json().sandbox_dir()));
     let mut orch = Orchestrator {
         evt_tx,
         engines: EngineManager::new(supervisor, status_tx, imp_status_tx),
+        mcp: McpManager::new(mcp_evt_tx),
         imp_cancel: None,
         imp_gen: None,
         imp_done_tx,
@@ -149,6 +154,7 @@ pub async fn run(deps: OrchestratorDeps) {
     orch.apply_chat_settings();
     orch.apply_impersonation_settings();
     orch.apply_embed_settings();
+    orch.apply_mcp_settings();
     if let Err(err) = orch.bootstrap() {
         let _ = orch.evt_tx.send(AppEvent::Error(
             orch.ui_locale()
@@ -197,6 +203,11 @@ pub async fn run(deps: OrchestratorDeps) {
             done = bg_done_rx.recv() => {
                 if let Some((kind, res)) = done {
                     orch.handle_bg_done(kind, res);
+                }
+            }
+            evt = mcp_evt_rx.recv() => {
+                if let Some(evt) = evt {
+                    orch.handle_mcp_event(evt);
                 }
             }
             _ = sleep_until_opt(deadline) => orch.flush_saves(),
@@ -248,6 +259,8 @@ struct Orchestrator {
     evt_tx: UnboundedSender<AppEvent>,
     /// Серверы инференса/эмбеддингов и их готовность (выделено в Фазе 3).
     engines: EngineManager,
+    /// MCP-серверы (плагины-инструменты) и их каталог/статусы (см. [`mcp`]).
+    mcp: McpManager,
     /// Токен отмены текущей имперсонации и её generation_id (`None` — не идёт).
     imp_cancel: Option<tokio_util::sync::CancellationToken>,
     imp_gen: Option<Uuid>,
@@ -362,6 +375,7 @@ impl Orchestrator {
                     token.cancel();
                 }
                 self.cancel_all_bg();
+                self.mcp.shutdown();
                 return true;
             }
             AppCommand::Cancel => {
@@ -395,6 +409,7 @@ impl Orchestrator {
             AppCommand::RagRebuild => self.handle_rag_rebuild(),
             AppCommand::RequestSelfModel => self.handle_request_self_model(),
             AppCommand::UpdateSelfModel(edit) => self.handle_update_self_model(edit),
+            AppCommand::ConfirmMcpCatalog(server) => self.handle_confirm_mcp_catalog(server),
         }
         false
     }
@@ -518,6 +533,7 @@ impl Orchestrator {
             config: Box::new(self.config.clone()),
             profiles: visible,
             language_locked,
+            mcp: self.mcp.snapshot(),
         });
     }
 
@@ -584,6 +600,18 @@ impl Orchestrator {
 
     fn chat_mut(&mut self, id: Uuid) -> Option<&mut Chat> {
         self.chats.iter_mut().find(|c| c.id == id)
+    }
+
+    /// Пересобирает реестр инструментов: стандартный набор из конфига + живые
+    /// обёртки инструментов MCP-серверов (динамические — берутся из [`McpManager`]).
+    /// Единственный путь пересборки: любой сайт (правка настроек, событие MCP)
+    /// обязан идти через него, иначе MCP-инструменты выпадут из реестра.
+    pub(super) fn rebuild_registry(&mut self) {
+        let mut reg = build_registry(&self.config, self.storage.json().sandbox_dir());
+        for tool in self.mcp.tools() {
+            reg.register(tool);
+        }
+        self.registry = Arc::new(reg);
     }
 
     /// Собирает пучок разделяемых зависимостей инструментов для указанного

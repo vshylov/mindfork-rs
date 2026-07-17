@@ -32,6 +32,7 @@ impl SettingsScreen {
                 impersonation: ServerStatus::NotConfigured,
             },
             language_locked,
+            mcp: Default::default(),
         }
     }
 
@@ -62,10 +63,20 @@ impl SettingsScreen {
     }
 
     /// Каталог всех известных инструментов (для тумблеров в профиле) — включая
-    /// опциональные (по умолчанию выключенные). Метаданные (группа/лейбл/гейт)
+    /// опциональные (по умолчанию выключенные) и **динамические** инструменты
+    /// MCP-серверов (снимок из события `Settings`, дописываются в конец — индексы
+    /// `PTool` статической части стабильны). Метаданные (группа/лейбл/гейт)
     /// снимаются с самих инструментов (единый источник — трейт `Tool`). См. spec §9.3.
-    pub(super) fn tool_catalog() -> Vec<ToolInfo> {
-        crate::features::tools::tool_catalog()
+    pub(super) fn tool_catalog(&self) -> Vec<ToolInfo> {
+        let mut catalog = crate::features::tools::tool_catalog();
+        catalog.extend(self.mcp.tools.iter().cloned());
+        catalog
+    }
+
+    /// Обновляет снимок MCP-хоста (из события `Settings`: динамический каталог
+    /// инструментов + статусы серверов; пуст, пока серверы не поднялись/выключены).
+    pub fn set_mcp(&mut self, mcp: crate::features::tools::mcp::McpSnapshot) {
+        self.mcp = mcp;
     }
 
     // ---------- построение полей текущей секции ----------
@@ -436,6 +447,38 @@ impl SettingsScreen {
                 .describe(loc.t("ui.settings.desc.fs_root")),
             ],
         ));
+        rows.extend(grouped(loc.t("ui.tool.group.plugins"), {
+            let mut mcp_rows = vec![
+                row(
+                    FieldId::TMcpEnabled,
+                    loc.t("ui.settings.field.mcp_enabled"),
+                    FieldKind::Toggle(self.config.mcp.enabled),
+                )
+                .describe(loc.t("ui.settings.desc.mcp_enabled")),
+            ];
+            // Строки статусов серверов (read-only): готов/подключение/причина
+            // отказа; «каталог изменился» подсвечивается предупреждением, Enter
+            // подтверждает новый каталог (TOFU-переподтверждение, spec §9.6).
+            for (idx, srv) in self.mcp.servers.iter().enumerate() {
+                let status = match &srv.status {
+                    ServerStatus::Ready => loc.tf(
+                        "ui.settings.mcp.ready",
+                        &[("n", &srv.tool_count.to_string())],
+                    ),
+                    ServerStatus::Connecting => loc.t("ui.settings.mcp.connecting").into(),
+                    ServerStatus::NotConfigured => loc.t("ui.settings.mcp.not_configured").into(),
+                    ServerStatus::Disconnected(reason) => reason.clone(),
+                };
+                let mut r = row(FieldId::TMcpServer(idx), &srv.id, FieldKind::Text(status))
+                    .describe(loc.t("ui.settings.desc.mcp_server"));
+                if srv.pending_catalog {
+                    r.warn = true;
+                    r.hint = Some(loc.t("ui.settings.mcp.confirm_hint"));
+                }
+                mcp_rows.push(r);
+            }
+            mcp_rows
+        }));
         rows
     }
 
@@ -693,7 +736,7 @@ impl SettingsScreen {
                 // `toggle_profile_tool`); порядок ПОКАЗА группируем стабильной
                 // сортировкой по `ToolGroup` (Ord), не трогая индексы.
                 let mut indexed: Vec<(usize, ToolInfo)> =
-                    Self::tool_catalog().into_iter().enumerate().collect();
+                    self.tool_catalog().into_iter().enumerate().collect();
                 indexed.sort_by_key(|(_, info)| info.group);
                 for (idx, info) in indexed {
                     let on = p.enabled_tools.iter().any(|t| t == &info.id);
@@ -710,6 +753,10 @@ impl SettingsScreen {
                                 .unwrap_or(info.label),
                         )
                     };
+                    // Полное описание MCP-инструмента (текст сервера) — в нижнюю
+                    // панель при фокусе: обязательная видимость описаний — антидот
+                    // tool-poisoning (spec §9.6).
+                    r.description = info.description.clone();
                     rows.push(r);
                 }
             }
@@ -735,6 +782,7 @@ impl SettingsScreen {
             ToolGate::Web => !self.config.tools.web_enabled,
             ToolGate::Python => !self.config.tools.python_enabled,
             ToolGate::Fs => !self.config.tools.fs_enabled,
+            ToolGate::Mcp => !self.config.mcp.enabled,
         }
     }
 

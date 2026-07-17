@@ -4,7 +4,7 @@
 use crate::app::events::AppEvent;
 use crate::shared::config::AppConfig;
 
-use super::{Orchestrator, build_registry};
+use super::Orchestrator;
 
 impl Orchestrator {
     /// Применяет правки конфигурации: сохраняет, перезапускает сервер/реестр при
@@ -16,6 +16,17 @@ impl Orchestrator {
         // значение (например `None` со старта) — сохраняем актуальное, чтобы правка
         // настроек не стёрла память о чате.
         self.config.last_active_chat = old.last_active_chat;
+        // TOFU-пины каталогов MCP — тоже свойство оркестратора (persist_mcp_pin),
+        // в UI не редактируются: наследуем по id сервера, если снимок из UI их не
+        // несёт (устаревшая копия) — правка настроек не сбрасывает доверие и не
+        // провоцирует ложный diff `config.mcp` (лишний рестарт серверов).
+        for srv in &mut self.config.mcp.servers {
+            if srv.pinned_catalog.is_none()
+                && let Some(prev) = old.mcp.servers.iter().find(|s| s.id == srv.id)
+            {
+                srv.pinned_catalog = prev.pinned_catalog.clone();
+            }
+        }
         if let Err(err) = self.storage.json().save_config(&self.config) {
             let _ = self.evt_tx.send(AppEvent::Error(
                 self.ui_locale()
@@ -35,10 +46,7 @@ impl Orchestrator {
             // провайдер немедленно (дёшево, in-memory; схема должна быть
             // актуальна уже со следующего хода).
             if self.config.engine.mode.cloud_provider() != old.engine.mode.cloud_provider() {
-                self.registry = std::sync::Arc::new(build_registry(
-                    &self.config,
-                    self.storage.json().sandbox_dir(),
-                ));
+                self.rebuild_registry();
             }
         }
         // Смена настроек сервера имперсонации — отложенное пере-подключение.
@@ -49,12 +57,14 @@ impl Orchestrator {
         if self.config.embed != old.embed {
             self.restarts.mark_embed();
         }
+        // Смена настроек MCP-серверов — отложенное пере-поднятие (дебаунс, как
+        // движки): гашение/спавн процессов — дорогая операция.
+        if self.config.mcp != old.mcp {
+            self.restarts.mark_mcp();
+        }
         // Смена параметров инструментов — пересборка реестра (python_path, лимиты).
         if self.config.tools != old.tools {
-            self.registry = std::sync::Arc::new(build_registry(
-                &self.config,
-                self.storage.json().sandbox_dir(),
-            ));
+            self.rebuild_registry();
         }
         self.emit_settings();
     }
@@ -64,7 +74,7 @@ impl Orchestrator {
     /// статусов. Читает **финальный** `self.config` — конфиг заменяется ещё при
     /// правке, так что серия правок даёт один рестарт с итоговыми значениями.
     pub(super) fn flush_restarts(&mut self) {
-        let (chat, embed, imp) = self.restarts.take();
+        let (chat, embed, imp, mcp) = self.restarts.take();
         let loc = self.ui_locale();
         if chat {
             self.engines.apply_chat(&self.config.engine, loc);
@@ -75,6 +85,9 @@ impl Orchestrator {
         if imp {
             self.engines
                 .apply_impersonation(&self.config.impersonation_engine, loc);
+        }
+        if mcp {
+            self.apply_mcp_settings();
         }
         if chat || embed || imp {
             self.emit_server_status();
@@ -104,5 +117,15 @@ impl Orchestrator {
         self.engines
             .apply_impersonation(&self.config.impersonation_engine, loc);
         self.emit_server_status();
+    }
+
+    /// (Пере)поднимает MCP-серверы по `config.mcp`: прежние гасятся, включённые
+    /// спавнятся заново; их инструменты придут событиями `Ready` (см.
+    /// [`super::mcp::McpManager`]). Реестр пересобирается сразу — обёртки прежнего
+    /// поколения (мёртвые соединения) уходят из него немедленно.
+    pub(super) fn apply_mcp_settings(&mut self) {
+        let loc = self.ui_locale();
+        self.mcp.apply(&self.config.mcp, loc);
+        self.rebuild_registry();
     }
 }

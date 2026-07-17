@@ -199,6 +199,7 @@ impl Orchestrator {
             self.config.tools.web_enabled,
             self.config.tools.python_enabled,
             self.config.tools.fs_enabled,
+            self.config.mcp.enabled,
             self.config.engine.mode.cloud_provider(),
         );
         let schemas = self
@@ -220,6 +221,10 @@ impl Orchestrator {
             crate::features::tools::notes::migrate_self_narrative(&self.storage, profile_id);
         }
         let self_model = self.storage.db().self_model_get(profile_id).ok().flatten();
+
+        // Токен отмены хода создаётся до контекста инструментов: его клон едет в
+        // `ToolContext.cancel` (долгие инструменты — MCP/сеть — прерываются по Esc).
+        let cancel = CancellationToken::new();
 
         // Строим запрос/контекст + берём последнюю реплику пользователя (для
         // релевантной инъекции наблюдений в задаче).
@@ -247,6 +252,7 @@ impl Orchestrator {
                 effective_sampling: sampling,
                 last_user_message_at: last_user_message_at(chat),
                 lang: profile_lang,
+                cancel: cancel.clone(),
             };
             ctx = ToolContext::new(
                 self.tool_deps(backend.clone()),
@@ -256,7 +262,6 @@ impl Orchestrator {
         }
 
         let id = Uuid::new_v4();
-        let cancel = CancellationToken::new();
         let _ = self
             .evt_tx
             .send(AppEvent::GenerationStarted { generation_id: id });
@@ -560,12 +565,21 @@ fn spawn_generation(spawn: GenSpawn) {
                         // Этот раунд отбрасывается — побочные инструменты не исполняем.
                         ctx.loc.t("loop.rewrite_skipped").to_string()
                     } else {
-                        match registry.invoke(&call.name, &ctx, args.clone()).await {
-                            Ok(outcome) => {
+                        // Исполнение под `select!` с токеном отмены: Esc не ждёт
+                        // завершения долгого инструмента (MCP/сеть). Инструменты,
+                        // читающие `ctx.cancel`, завершаются сами (MCP шлёт серверу
+                        // notifications/cancelled); прочим — эта страховка.
+                        let invoked = tokio::select! {
+                            _ = cancel.cancelled() => None,
+                            res = registry.invoke(&call.name, &ctx, args.clone()) => Some(res),
+                        };
+                        match invoked {
+                            None => ctx.loc.t("loop.tool_cancelled").to_string(),
+                            Some(Ok(outcome)) => {
                                 effects.extend(outcome.effects);
                                 outcome.result
                             }
-                            Err(err) => ctx.loc.tf(
+                            Some(Err(err)) => ctx.loc.tf(
                                 "loop.tool_error",
                                 &[("name", &call.name), ("err", &err.to_string())],
                             ),
@@ -617,6 +631,12 @@ fn spawn_generation(spawn: GenSpawn) {
                         pending_new_bubble = true;
                         let _ = evt_tx.send(AppEvent::AssistantContinue { generation_id: id });
                     }
+                }
+                // Ход отменён во время исполнения инструментов — накопленное уже
+                // сохранено выше, следующий раунд не запускаем.
+                if cancel.is_cancelled() {
+                    reason = FinishReason::Cancelled;
+                    break;
                 }
                 continue;
             }

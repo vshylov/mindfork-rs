@@ -17,6 +17,11 @@ pub enum ToolGate {
     Web,
     Python,
     Fs,
+    /// Мастер-выключатель MCP-хоста (`config.mcp.enabled`). Гейтит все
+    /// инструменты MCP-серверов (id с префиксом `mcp__`). В
+    /// [`super::effective_tool_ids`] проверяется по префиксу id (инструменты
+    /// динамические — в статическом `CATALOG` их нет).
+    Mcp,
 }
 
 /// Смысловая группа инструмента (заголовок группы в тумблерах профиля). Порядок
@@ -31,11 +36,13 @@ pub enum ToolGroup {
     Subagent,
     Conversation,
     SelfModel,
+    /// Инструменты MCP-серверов (плагины, docs/research/plugin-system.md §4).
+    Plugins,
 }
 
 impl ToolGroup {
     /// Все группы в порядке показа.
-    pub const ALL: [ToolGroup; 8] = [
+    pub const ALL: [ToolGroup; 9] = [
         ToolGroup::Introspection,
         ToolGroup::Memory,
         ToolGroup::ExternalWorld,
@@ -44,6 +51,7 @@ impl ToolGroup {
         ToolGroup::Subagent,
         ToolGroup::Conversation,
         ToolGroup::SelfModel,
+        ToolGroup::Plugins,
     ];
 
     /// Ключ бандла UI-заголовка группы (ось B, резолвится в слое настроек).
@@ -58,6 +66,7 @@ impl ToolGroup {
             ToolGroup::Subagent => "ui.tool.group.subagent",
             ToolGroup::Conversation => "ui.tool.group.conversation",
             ToolGroup::SelfModel => "ui.tool.group.self_model",
+            ToolGroup::Plugins => "ui.tool.group.plugins",
         }
     }
 
@@ -72,13 +81,14 @@ impl ToolGroup {
             ToolGroup::Subagent => "Субагент",
             ToolGroup::Conversation => "Управление беседой",
             ToolGroup::SelfModel => "Модель себя",
+            ToolGroup::Plugins => "Плагины (MCP)",
         }
     }
 }
 
 /// Заголовки всех групп в порядке показа (для проверки принадлежности в UI/тестах).
 #[allow(dead_code)]
-pub fn group_titles() -> [&'static str; 8] {
+pub fn group_titles() -> [&'static str; 9] {
     ToolGroup::ALL.map(|g| g.title())
 }
 
@@ -92,6 +102,12 @@ pub struct ToolInfo {
     pub label: &'static str,
     pub gate: Option<ToolGate>,
     pub enabled_by_default: bool,
+    /// Полное описание инструмента для нижней панели настроек. Заполняется только
+    /// у динамических MCP-инструментов (текст сервера — показ полного описания в
+    /// UI обязателен как антидот tool-poisoning, docs/research/plugin-system.md
+    /// §4.5); у встроенных — `None` (их описания LLM-ориентированы и живут в
+    /// бандлах локалей).
+    pub description: Option<String>,
 }
 
 #[cfg(test)]

@@ -356,7 +356,7 @@ pub(super) fn sampling_row(
     };
     // Описание параметра — единый источник `SamplingParam::description` (одинаково для
     // обеих подсекций Ассистент/Имперсонация).
-    r.description = p.description(loc);
+    r.description = p.description(loc).map(String::from);
     r
 }
 
@@ -433,6 +433,7 @@ pub(super) fn gate_hint(gate: ToolGate, loc: &'static Locale) -> &'static str {
         ToolGate::Web => "ui.settings.gate.web",
         ToolGate::Python => "ui.settings.gate.python",
         ToolGate::Fs => "ui.settings.gate.fs",
+        ToolGate::Mcp => "ui.settings.gate.mcp",
     })
 }
 
@@ -536,7 +537,7 @@ pub(super) fn collect_hits(
         if is_subsection(f.id) {
             continue;
         }
-        let desc = f.description.unwrap_or("");
+        let desc = f.description.as_deref().unwrap_or("");
         let crumb = if f.group.is_empty() {
             format!("{head} › {}", f.label)
         } else {

@@ -228,6 +228,8 @@ impl Orchestrator {
         }
         self.mark_dirty(chat_id);
 
+        // Токен отмены — до контекста: его клон едет в `ToolContext.cancel`.
+        let cancel = CancellationToken::new();
         let ctx = ToolContext::new(
             self.tool_deps(backend.clone()),
             ToolParams::from_config(&self.config),
@@ -238,6 +240,7 @@ impl Orchestrator {
                 effective_sampling: SamplingConfig::default(),
                 last_user_message_at: last_user,
                 lang,
+                cancel: cancel.clone(),
             },
         );
         let sampling = SamplingConfig {
@@ -255,7 +258,6 @@ impl Orchestrator {
         };
 
         // Спавним задачу и фиксируем слот (флаг «идёт» + тихий индикатор в статус-баре).
-        let cancel = CancellationToken::new();
         tool_loop::spawn_silent_loop(tool_loop::SilentLoop {
             backend,
             registry: self.registry.clone(),

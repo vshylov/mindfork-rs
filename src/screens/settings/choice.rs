@@ -115,6 +115,9 @@ impl SettingsScreen {
             self.profiles.clone(),
             self.language_locked.clone(),
         );
+        // Снимок MCP копируем: иначе PTool-строки MCP-инструментов не нашли бы
+        // пары в дефолтном наборе полей.
+        tmp.mcp = self.mcp.clone();
         tmp.section_idx = self.section_idx;
         tmp.model_sub = self.model_sub;
         tmp.sampling_sub = self.sampling_sub;

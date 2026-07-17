@@ -812,6 +812,75 @@ impl Default for InterfaceSettings {
     }
 }
 
+/// Таймаут одного вызова инструмента MCP-сервера по умолчанию (секунды).
+pub const DEFAULT_MCP_TOOL_TIMEOUT_SECS: u64 = 60;
+/// Потолок символов результата MCP-инструмента по умолчанию (клип входа в промпт —
+/// прецедент Claude Code: cap ~25k токенов). См. docs/research/plugin-system.md §4.4.
+pub const DEFAULT_MCP_MAX_RESULT_CHARS: usize = 20_000;
+
+/// Конфигурация одного MCP-сервера (stdio-подпроцесс,
+/// docs/research/plugin-system.md §4.4). Серверы добавляются правкой
+/// `settings.json` (развилка Р6); UI настроек показывает статусы и тумблеры.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct McpServerConfig {
+    /// Короткий идентификатор (slug `[a-z0-9-]`, ≤32) — часть id инструментов
+    /// `mcp__<id>__<tool>`. Пустой/невалидный — сервер не запускается.
+    pub id: String,
+    /// Команда запуска. `.bat`/`.cmd` запрещены (BatBadBut, CVE-2024-24576);
+    /// `npx`-серверы на Windows — `cmd /c npx …` либо прямой exe-путь.
+    pub command: String,
+    /// Аргументы команды.
+    pub args: Vec<String>,
+    /// Окружение ребёнка: переменная → **имя** переменной-источника в окружении
+    /// приложения (сам секрет в `settings.json` не пишется — прецедент
+    /// `api_key_env`, развилка Р8). Отсутствующий источник — warn в лог, пропуск.
+    pub env: std::collections::BTreeMap<String, String>,
+    /// Включён ли сервер (выключенный не запускается, его инструменты недоступны).
+    pub enabled: bool,
+    /// Таймаут одного вызова инструмента (секунды). Стартовый handshake держит
+    /// свой таймаут (константа клиента).
+    pub tool_timeout_secs: u64,
+    /// Клип результата инструмента (символы) — ограничение входа в промпт.
+    pub max_result_chars: usize,
+    /// TOFU-пин каталога инструментов (sha256 от имён+описаний+схем): ставится
+    /// автоматически при первом подъёме сервера; при **изменении** каталога
+    /// (rug-pull-детектор, tool poisoning) инструменты не регистрируются, пока
+    /// пользователь не переподтвердит новый каталог в настройках. Пишется
+    /// приложением (не редактируется в UI); ручное удаление поля = сброс доверия.
+    /// См. docs/research/plugin-system.md §4.5 (Р7).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub pinned_catalog: Option<String>,
+}
+
+impl Default for McpServerConfig {
+    fn default() -> Self {
+        Self {
+            id: String::new(),
+            command: String::new(),
+            args: Vec::new(),
+            env: std::collections::BTreeMap::new(),
+            enabled: true,
+            tool_timeout_secs: DEFAULT_MCP_TOOL_TIMEOUT_SECS,
+            max_result_chars: DEFAULT_MCP_MAX_RESULT_CHARS,
+            pinned_catalog: None,
+        }
+    }
+}
+
+/// Настройки MCP-хоста (плагины-инструменты, docs/research/plugin-system.md §4).
+/// Мастер-выключатель **выключен по умолчанию** (как Python): MCP-сервер —
+/// произвольная программа с правами пользователя; включение — осознанный opt-in,
+/// а инструменты дополнительно opt-in per profile (двойной opt-in, развилка Р7).
+#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub struct McpSettings {
+    /// Мастер-выключатель MCP-хоста.
+    pub enabled: bool,
+    /// Список серверов (правится в `settings.json`).
+    pub servers: Vec<McpServerConfig>,
+}
+
 /// Что включать при копировании всей переписки чата в буфер обмена (`F5`, spec
 /// §11.2). По умолчанию копируется только текст сообщений (`Default` — все флаги
 /// `false`); опционально добавляются «мысли» (CoT), параметры вызовов инструментов
@@ -856,6 +925,8 @@ pub struct AppConfig {
     pub interface: InterfaceSettings,
     /// Что включать при копировании переписки чата в буфер обмена (`F5`).
     pub copy: CopySettings,
+    /// MCP-хост: плагины-инструменты через внешние MCP-серверы (stdio).
+    pub mcp: McpSettings,
     /// Последний открытый чат — восстанавливается при следующем запуске. Пишется
     /// оркестратором (не редактируется через экран настроек). `None` — нет памяти
     /// (первый запуск/чат удалён) → открывается самый недавний.
@@ -888,6 +959,7 @@ impl Default for AppConfig {
             notes: NotesSettings::default(),
             interface: InterfaceSettings::default(),
             copy: CopySettings::default(),
+            mcp: McpSettings::default(),
             last_active_chat: None,
         }
     }
@@ -937,6 +1009,34 @@ mod tests {
         // Пустое имя трактуется как незаданное.
         e.openai.model_name = Some(String::new());
         assert_eq!(e.active_model_name(), None);
+    }
+
+    #[test]
+    fn mcp_server_config_roundtrip_and_partial_defaults() {
+        // Частичная запись сервера (как в реальном settings.json) наполняется
+        // дефолтами: enabled=true, таймаут/клип — константы.
+        let c: AppConfig = serde_json::from_str(
+            r#"{"mcp":{"enabled":true,"servers":[{
+                "id":"fs","command":"cmd","args":["/c","npx","-y","srv"],
+                "env":{"TOKEN":"MINDFORK_FS_TOKEN"}}]}}"#,
+        )
+        .unwrap();
+        assert!(c.mcp.enabled);
+        let s = &c.mcp.servers[0];
+        assert_eq!(s.id, "fs");
+        assert_eq!(s.command, "cmd");
+        assert_eq!(s.args, vec!["/c", "npx", "-y", "srv"]);
+        assert_eq!(
+            s.env.get("TOKEN").map(String::as_str),
+            Some("MINDFORK_FS_TOKEN")
+        );
+        assert!(s.enabled);
+        assert_eq!(s.tool_timeout_secs, DEFAULT_MCP_TOOL_TIMEOUT_SECS);
+        assert_eq!(s.max_result_chars, DEFAULT_MCP_MAX_RESULT_CHARS);
+        // Round-trip: сериализация → чтение даёт то же значение.
+        let json = serde_json::to_string(&c.mcp).unwrap();
+        let back: McpSettings = serde_json::from_str(&json).unwrap();
+        assert_eq!(back, c.mcp);
     }
 
     #[test]
@@ -1004,6 +1104,9 @@ mod tests {
         assert!(!c.copy.copy_thoughts);
         assert!(!c.copy.copy_tool_calls);
         assert!(!c.copy.copy_tool_results);
+        // MCP-хост: мастер-выключатель выкл, серверов нет (двойной opt-in, Р7).
+        assert!(!c.mcp.enabled);
+        assert!(c.mcp.servers.is_empty());
         // Имперсонация наполняется дефолтами при отсутствии в файле.
         assert_eq!(c.impersonation_engine.mode, ImpersonationMode::Shared);
         assert_eq!(

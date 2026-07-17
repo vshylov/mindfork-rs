@@ -564,7 +564,7 @@ impl SettingsScreen {
                         lines.push(Line::styled(preview, Style::new().fg(palette.text)));
                     }
                 }
-                if let Some(text) = f.description {
+                if let Some(text) = f.description.clone() {
                     lines.push(Line::styled(text, palette.muted_style()));
                 }
                 // Выключенный глобально инструмент — развёрнутое пояснение (цветом
