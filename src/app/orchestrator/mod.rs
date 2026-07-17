@@ -297,7 +297,7 @@ struct Orchestrator {
     consolidate_counts: HashMap<Uuid, u32>,
     /// Счётчики ответов ассистента с прошлой авто-консолидации «модели себя» (по чату).
     /// Данные каденции «сна» модели себя (не жизненный цикл — тот в `bg`).
-    /// См. docs/self-model-consolidation.md (этап A1).
+    /// См. docs/history/self-model-consolidation.md (этап A1).
     self_consolidate_counts: HashMap<Uuid, u32>,
     /// Очередь отложенного сохранения чатов (дебаунс; выделено в Фазе 3).
     saves: SaveQueue,

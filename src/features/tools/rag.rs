@@ -519,7 +519,7 @@ pub(crate) fn stitch_hits(hits: Vec<RagHit>) -> Vec<StitchedPassage> {
 /// тексте уже оставленного пассажа. Так модель не получает повтор. Детерминированно,
 /// без эмбеддера/порога (dedup по тексту — hot path rag_search). Источнико-агностично
 /// (главный случай — кросс-источниковый дубль, но внутриисточниковый повтор тоже шум).
-/// См. docs/rag-sources-retrieval.md §B2b.
+/// См. docs/history/rag-sources-retrieval.md §B2b.
 pub(crate) fn dedup_passages(passages: Vec<StitchedPassage>) -> Vec<StitchedPassage> {
     let mut kept: Vec<StitchedPassage> = Vec::with_capacity(passages.len());
     let mut kept_norms: Vec<String> = Vec::with_capacity(passages.len());

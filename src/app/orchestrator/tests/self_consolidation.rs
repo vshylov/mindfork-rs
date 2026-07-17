@@ -1,6 +1,6 @@
 //! Тесты оркестратора — авто-консолидация «модели себя» («сон» модели себя, этап A1):
 //! каденция/гейты, оповещение об исходе. Часть модуля [`super`] (фикстуры в mod.rs).
-//! См. docs/self-model-consolidation.md (этап A1).
+//! См. docs/history/self-model-consolidation.md (этап A1).
 
 use super::*;
 

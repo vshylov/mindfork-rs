@@ -255,7 +255,7 @@ pub struct ChatScreen {
     /// Идёт ли фоновая авто-консолидация заметок («сон»; тихий индикатор).
     consolidating: bool,
     /// Идёт ли фоновая авто-консолидация «модели себя» («сон» модели себя; тихий
-    /// индикатор). См. docs/self-model-consolidation.md.
+    /// индикатор). См. docs/history/self-model-consolidation.md.
     self_consolidating: bool,
     /// Индикатор фоновой индексации RAG (`/rag add`); `None` — индексация не идёт.
     rag: Option<RagBanner>,

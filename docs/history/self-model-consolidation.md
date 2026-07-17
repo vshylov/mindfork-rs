@@ -5,10 +5,9 @@
 > `feat/self-model-interests-aging`; журнал — CLAUDE.md пост-M9; порог A2
 > `SUMMARY_OBS_SIMILARITY=0.62` откалиброван на живом bge-m3; A3-лёгкий — нудж в
 > `selfmodel.policy_core`. Направление продолжает
-> [summary-as-snapshot](history/summary-as-snapshot.md) («Вне объёма») и
-> [refinements](history/refinements.md); закрывает три задела roadmap раздела
-> «Память, модель себя, знания». При финализации документ переезжает в
-> `docs/history/`.
+> [summary-as-snapshot](summary-as-snapshot.md) («Вне объёма») и
+> [refinements](refinements.md); закрыло три задела roadmap раздела
+> «Память, модель себя, знания». **Архивировано** (направление завершено).
 
 ## Нерв задачи
 
@@ -168,7 +167,7 @@
   интересы; давно не подтверждаемые — убери через `remove_interests`» в системное
   сообщение A1/рефлексии и «протокол ведения» (`policy_core`). Согласуется с
   философией проекта (интеграция силами модели) и прямой рекомендацией
-  [summary-as-snapshot](history/summary-as-snapshot.md) («лечится теми же
+  [summary-as-snapshot](summary-as-snapshot.md) («лечится теми же
   воротами/рефлексией»). Стоимость — тексты бандлов. Сделать в рамках A1.
 - **A3-тяжёлый (задел).** `current_interests: Vec<Interest { text, updated_at }>` —
   настоящее старение по времени. Ломает плоский `Vec<String>` и трогает ~десяток
@@ -182,7 +181,7 @@
 ## Вне объёма (задел)
 
 - **A3-тяжёлый** (структура интересов с временными метками) — если лёгкого мало.
-- **Старение перенести в vec0** — не связано; см. [notes-vec0](notes-vec0.md).
+- **Старение перенести в vec0** — не связано; см. [notes-vec0](../notes-vec0.md).
 - **Consolidation модели собеседника отдельным органом** — сейчас `user_model`
   ведётся merge-семантикой + шрамами; отдельного «сна» ему не заводим.
 

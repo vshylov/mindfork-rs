@@ -210,7 +210,7 @@ pub(crate) fn build_self_consolidation_overview(
 /// наблюдение» дали 0.69–0.80, несвязанные пары — 0.48–0.51; чистый разрыв 0.51→0.69.
 /// Порог 0.62 (в разрыве, с запасом в обе стороны) ловит все перефразы и отсекает
 /// несвязанные. Абзацы длиннее коротких черт, поэтому перефразы чуть ниже, чем у
-/// ворот черт (0.73–0.83). См. docs/self-model-consolidation.md §A2.
+/// ворот черт (0.73–0.83). См. docs/history/self-model-consolidation.md §A2.
 const SUMMARY_OBS_SIMILARITY: f32 = 0.62;
 
 /// Минимальная длина абзаца `summary` (в символах) для участия в сравнении: более
@@ -224,7 +224,7 @@ const SUMMARY_PARAGRAPH_MIN_CHARS: usize = 40;
 /// Возвращает секцию с парами «абзац ≈ наблюдение X → вынеси/сшей», или `None`, если
 /// совпадений нет / нет наблюдений / пустой summary. **Мягкая деградация**: эмбеддер
 /// недоступен, вернул пусто или нестыковку числа векторов → `None` (как реранкинг
-/// RAG/web). Изоляция по `profile_id`. См. docs/self-model-consolidation.md §A2.
+/// RAG/web). Изоляция по `profile_id`. См. docs/history/self-model-consolidation.md §A2.
 pub(crate) async fn summary_observation_overlaps(
     storage: &crate::shared::storage::Storage,
     embedder: &dyn crate::shared::api::Embedder,

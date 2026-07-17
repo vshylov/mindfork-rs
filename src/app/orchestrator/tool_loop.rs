@@ -27,7 +27,7 @@ use crate::shared::storage::Storage;
 /// Async-надстройка дайджеста фоновой задачи (раздел A2): семантическое сравнение
 /// абзацев описания себя (`summary`) с наблюдениями (`@self`). Вычисляется **в
 /// задаче** до петли — эмбеддинг абзацев summary недоступен в синхронном хендлере
-/// оркестратора. См. docs/self-model-consolidation.md §A2.
+/// оркестратора. См. docs/history/self-model-consolidation.md §A2.
 pub(super) struct SummarySemantics {
     pub embedder: Arc<dyn Embedder>,
     pub storage: Arc<Storage>,
@@ -67,7 +67,7 @@ pub(super) struct SilentLoop {
     /// Опциональная async-надстройка дайджеста, вычисляемая в задаче ДО петли
     /// (эмбеддинг абзацев summary недоступен в синхронном хендлере): результат
     /// дописывается к первому user-сообщению запроса. См.
-    /// docs/self-model-consolidation.md §A2.
+    /// docs/history/self-model-consolidation.md §A2.
     pub summary_semantics: Option<SummarySemantics>,
 }
 
@@ -94,7 +94,7 @@ pub(super) fn spawn_silent_loop(spawn: SilentLoop) {
     tokio::spawn(async move {
         // A2: async-надстройка дайджеста (семантика summary↔наблюдения) — считаем ДО
         // петли и дописываем к первому user-сообщению (эмбеддинг абзацев summary в
-        // синхронном хендлере недоступен). См. docs/self-model-consolidation.md §A2.
+        // синхронном хендлере недоступен). См. docs/history/self-model-consolidation.md §A2.
         if let Some(ss) = &summary_semantics
             && let Some(section) = crate::features::tools::notes::summary_observation_overlaps(
                 &ss.storage,

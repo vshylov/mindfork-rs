@@ -239,7 +239,7 @@ impl Tool for Reflect {
                 .unwrap_or_default();
         // A2: семантическое совпадение абзацев описания себя (summary) с наблюдениями —
         // эмбеддинг абзацев на лету (у summary нет хранимых векторов). См.
-        // docs/self-model-consolidation.md §A2.
+        // docs/history/self-model-consolidation.md §A2.
         if let Some(section) = notes::summary_observation_overlaps(
             &ctx.storage,
             ctx.embedder.as_ref(),

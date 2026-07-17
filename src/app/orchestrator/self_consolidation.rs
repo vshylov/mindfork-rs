@@ -7,7 +7,7 @@
 //! мутируется, в UI ничего не стримится — «сон» молчалив и опционален
 //! (`config.self_model.auto_consolidate_every`, по умолчанию выкл). Отдельный тумблер
 //! от авто-рефлексии: гейты/данные модели себя и заметок уже разведены, свой счётчик
-//! точнее. См. docs/self-model-consolidation.md (этап A1).
+//! точнее. См. docs/history/self-model-consolidation.md (этап A1).
 
 use std::time::Duration;
 
@@ -38,7 +38,7 @@ const SELF_CONSOLIDATE_TIMEOUT: Duration = Duration::from_secs(180);
 /// (сжать раздутый `summary`) и `update_user_model` (привести собеседника).
 /// `get_self_model` даёт полные id наблюдений и текущий `summary`. `note_recall`
 /// **не даём** — он скрывает `@self`; полные id модель берёт из `get_self_model`
-/// (как рефлексия). См. docs/self-model-consolidation.md (этап A1).
+/// (как рефлексия). См. docs/history/self-model-consolidation.md (этап A1).
 const SELF_CONSOLIDATE_TOOL_IDS: &[&str] = &[
     self_model::GET_SELF_MODEL_ID,
     self_model::UPDATE_SELF_MODEL_ID,
@@ -200,7 +200,7 @@ impl Orchestrator {
             kind: BackgroundKind::SelfConsolidation,
             done_tx: self.bg_done_tx.clone(),
             // A2: семантика summary↔наблюдения (эмбеддинг абзацев summary на лету в
-            // задаче). См. docs/self-model-consolidation.md §A2.
+            // задаче). См. docs/history/self-model-consolidation.md §A2.
             summary_semantics: Some(tool_loop::SummarySemantics {
                 embedder: self.engines.embedder(),
                 storage: self.storage.clone(),
