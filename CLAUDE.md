@@ -6210,6 +6210,48 @@ web-поиск и Python под выключателями, экран наст�
   churn). Задел направления: **B1b** (pdf/docx), **B2b** (ранкинг/дедуп между
   источниками).
 
+### Пост-M9: RAG — индексация PDF/DOCX (этап B1b) (сделано)
+- **Продолжение направления «RAG: источники и извлечение»** (дизайн-план
+  [docs/rag-sources-retrieval.md](docs/rag-sources-retrieval.md) §B1b, ветка
+  `feat/rag-pdf-docx`): `/rag add` индексирует `.pdf` и `.docx` наравне с
+  `.txt`/`.md`/`.html`. Извлечённый простой текст → `chunk_text` (структуры
+  заголовков нет). Извлечение — «лучшее усилие»: сканированный PDF без текстового
+  слоя даёт пусто (0 чанков), битый файл пропускается с `warn` (существующий цикл
+  ingest ловит ошибку файла).
+- **Новый модуль `features/doc_extract.rs`** (чистые функции над байтами,
+  внешние крейты, без кросс-слойных импортов — FSD): `extract_pdf(&[u8])` (крейт
+  `pdf-extract`), `extract_docx(&[u8])` (DOCX = deflate-ZIP; читаем
+  `word/document.xml` через уже имеющиеся `zip` + `quick-xml`, собираем текст
+  `<w:t>` по **локальному** имени, `</w:p>`→`\n`, `<w:tab/>`→`\t`, `<w:br/>`→`\n`).
+  **Нюанс quick-xml 0.39**: сущности (`&amp;`) приходят отдельным событием
+  `GeneralRef` (имя без `&;`) — восстанавливаем и снимаем эскейп
+  `quick_xml::escape::unescape`.
+- **Диспетчеризация — в слое `app`** (как B1a): `orchestrator/rag.rs::read_source_text`
+  стал `anyhow::Result<String>` и ветвит html→`web::extract_readable`,
+  pdf/docx→`doc_extract` (сырые **байты** через `fs::read`, не `read_text`),
+  прочее→`read_text`. `rag_ingest` лишь получил расширения (`SUPPORTED_EXTENSIONS`
+  += pdf/docx) и хелперы `is_pdf`/`is_docx`. `index_source` не тронут (pdf/docx —
+  не markdown → `chunk_text`).
+- **Зависимости**: `pdf-extract 0.12` (MIT, **чистый Rust**, без C/`*-sys`; тянет
+  lopdf + парсеры шрифтов/CFF/CMap + RustCrypto для шифрованных PDF — **~28 новых
+  транзитивных крейтов**, все с пермиссивными лицензиями из allowlist);
+  `quick-xml 0.39.4` промоутнут из транзитивного в прямой (пришпилен к версии в
+  Cargo.lock — без дубля). `cargo deny` чист: добавлен один ignore
+  `RUSTSEC-2026-0192` (ttf-parser unmaintained — advisory о заброшенности, не
+  уязвимость; локальные файлы пользователя, best-effort) + расширен рационал у
+  quick-xml DoS-advisories (теперь и прямое использование для DOCX). Лицензии
+  allowlist не менялись (всё покрыто). Warn-level дубль `thiserror 1.x/2.x`
+  (pdf-extract тянет 1.x) — не блокер.
+- **Тесты**: doc_extract (DOCX: абзацы через `\n`, кириллица, раскрытие `&amp;`,
+  теги не протекают, `<w:tab/>`/`<w:br/>`, битый/не-ZIP → `Err`; PDF: извлечение из
+  **чек-ин фикстуры** `tests/fixtures/hello.pdf` — минимальный валидный PDF 587 б с
+  корректным xref, не-PDF → `Err`); rag_ingest (`is_supported`/`is_pdf`/`is_docx`);
+  `read_source_text_routes_docx_and_pdf` (маршрутизация через извлечение, txt
+  дословно). **1151 юнит-тест зелёный** (+8), clippy `-D warnings`/fmt/i18n/
+  **`cargo deny`** чисты. Живой прогон не требуется (извлечение офлайн-тестируемо,
+  embed-путь не менялся — проверен в B2a). Задел: **B2b** (ранкинг/дедуп между
+  источниками).
+
 ### Отложено за пределы M3
 - **Сворачивание/выделение per-message** и tool-блоки в ленте — сейчас «мысли»
   сворачиваются глобально (`Ctrl+T`); выделение сообщений и tool-блоки — на M5.

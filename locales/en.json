@@ -868,7 +868,7 @@
   "ui.err.rag_delete_failed": "deletion failed: {err}",
   "ui.err.rag_read_kb_failed": "failed to read the knowledge base: {err}",
   "ui.err.rag_path_unavailable": "path unavailable: {err}",
-  "ui.err.rag_no_files": "no .txt/.md/.html files found to index",
+  "ui.err.rag_no_files": "no .txt/.md/.html/.pdf/.docx files found to index",
   "ui.err.rag_embedder_unavailable": "embedder unavailable: {err}",
   "ui.err.rag_read_kb": "reading the knowledge base: {err}",
   "ui.err.rag_kb_empty": "the knowledge base is empty — nothing to reindex",
