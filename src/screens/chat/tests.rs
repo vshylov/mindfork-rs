@@ -1058,13 +1058,35 @@ fn rag_progress_banner_lifecycle() {
     assert!(!s.is_rag_active());
     s.set_rag_progress(RagProgress::Started { total: 3 });
     assert!(s.is_rag_active());
+    // Файл только начат (chunks_total=0) — суффикса чанков в баннере нет.
     s.set_rag_progress(RagProgress::Indexing {
         index: 1,
         total: 3,
         name: "a.txt".into(),
         dir: "d:\\docs".into(),
+        chunks_done: 0,
+        chunks_total: 0,
     });
     assert!(s.is_rag_active());
+    assert!(
+        !s.rag.as_ref().unwrap().text.contains("чанки"),
+        "без chunks_total суффикса чанков быть не должно: {:?}",
+        s.rag.as_ref().unwrap().text
+    );
+    // Прогресс по чанкам (chunks_total>0) — баннер несёт счётчик чанков.
+    s.set_rag_progress(RagProgress::Indexing {
+        index: 1,
+        total: 3,
+        name: "a.txt".into(),
+        dir: "d:\\docs".into(),
+        chunks_done: 16,
+        chunks_total: 42,
+    });
+    let banner = s.rag.as_ref().unwrap().text.clone();
+    assert!(
+        banner.contains("16") && banner.contains("42"),
+        "баннер должен показывать чанки 16/42: {banner:?}"
+    );
     s.set_rag_progress(RagProgress::Finished {
         files: 3,
         chunks: 9,

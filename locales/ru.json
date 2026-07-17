@@ -436,6 +436,7 @@
   "ui.rag.started": "найдено файлов: {total}, начинаю индексацию…",
   "ui.rag.from": " из {dir}",
   "ui.rag.indexing": "индексация {name}{location} ({index}/{total})",
+  "ui.rag.chunks": " · чанки {done}/{total}",
   "ui.rag.finished": "RAG: индексация завершена — файлов: {files}, фрагментов: {chunks}",
   "ui.rag.finished_cancelled": "RAG: индексация прервана — фрагментов добавлено: {chunks}",
   "ui.rag.errors_suffix": ", с ошибками: {errors}",

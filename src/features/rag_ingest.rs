@@ -23,11 +23,17 @@ pub enum RagProgress {
     /// Сканирование завершено — начинаем индексацию `total` файлов.
     Started { total: usize },
     /// Индексируется файл `index` из `total` (1-based) с именем `name` из `dir`.
+    /// `chunks_done`/`chunks_total` — прогресс эмбеддинга **внутри** этого файла:
+    /// сколько чанков уже эмбеддировано и записано и сколько всего (эмбеддинг идёт
+    /// под-батчами, см. `orchestrator/rag.rs::EMBED_BATCH_CHUNKS`). `chunks_total == 0`
+    /// — файл только начат (ещё не чанкован) либо у него нет чанков.
     Indexing {
         index: usize,
         total: usize,
         name: String,
         dir: String,
+        chunks_done: usize,
+        chunks_total: usize,
     },
     /// Индексация завершена (или прервана при `cancelled`).
     Finished {
