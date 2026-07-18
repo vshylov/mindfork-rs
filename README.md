@@ -1,4 +1,9 @@
-# mindfork-rs
+<h1>
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="artwork/mindfork-wordmark-dark.svg">
+    <img src="artwork/mindfork-wordmark-light.svg" alt="mindfork-rs" width="320">
+  </picture>
+</h1>
 
 [![CI](https://github.com/vshylov/mindfork-rs/actions/workflows/ci.yml/badge.svg)](https://github.com/vshylov/mindfork-rs/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
