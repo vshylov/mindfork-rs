@@ -82,11 +82,12 @@ jobs:
           # Установка нужным менеджером по наличию бинарника.
           if command -v apt-get >/dev/null 2>&1; then
             apt-get update -qq
-            apt-get install -y ./dist/*.deb
+            # desktop-file-utils даёт desktop-file-validate — проверка записи меню.
+            apt-get install -y ./dist/*.deb desktop-file-utils
           elif command -v dnf >/dev/null 2>&1; then
             # util-linux даёт `su` (в минимальном fedora:latest его нет) — нужен
             # ниже для запуска под обычным пользователем.
-            dnf install -y util-linux ./dist/*.rpm
+            dnf install -y util-linux desktop-file-utils ./dist/*.rpm
           elif command -v pacman >/dev/null 2>&1; then
             pacman -U --noconfirm ./dist/*.pkg.tar.zst
           else
@@ -104,6 +105,27 @@ jobs:
           test "$real" = /usr/lib/mindfork-rs/mindfork-rs
           test -f "$(dirname "$real")/defaults.json"
           grep -q '"mode"' /usr/lib/mindfork-rs/defaults.json
+
+          # Запись в меню приложений и иконки темы (docs/branding.md §4.2).
+          desktop=/usr/share/applications/mindfork-rs.desktop
+          test -f "$desktop"
+          # Terminal=true критичен: без него запуск из меню не даст терминала.
+          grep -q '^Terminal=true$' "$desktop"
+          grep -q '^Exec=mindfork-rs$' "$desktop"
+          grep -q '^Icon=mindfork-rs$' "$desktop"
+          # Имя файла иконки обязано совпадать с ключом Icon=.
+          for size in 16x16 32x32 48x48 64x64 128x128 256x256; do
+            test -f "/usr/share/icons/hicolor/$size/apps/mindfork-rs.png"
+          done
+          test -f /usr/share/icons/hicolor/scalable/apps/mindfork-rs.svg
+
+          # Штатный валидатор — если есть в образе (ставить ради него не будем).
+          if command -v desktop-file-validate >/dev/null 2>&1; then
+            desktop-file-validate "$desktop"
+            echo "desktop-file-validate: OK"
+          else
+            echo "desktop-file-validate отсутствует — пропуск"
+          fi
 
           # Запуск под обычным (не root) пользователем: бинарь исполним, ресурсы
           # читаемы. `--version` — peek-фаза, каталогов данных не создаёт.

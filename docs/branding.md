@@ -190,12 +190,32 @@ Comment=Console AI chat with local and cloud models
 Exec=mindfork-rs
 Icon=mindfork-rs
 Terminal=true
-Categories=Utility;ConsoleOnly;Chat;
+Categories=Utility;ConsoleOnly;
 ```
 
-Смоук установки в `packaging.yml` (контейнеры Ubuntu/Fedora/Arch) расширяется
-проверкой наличия `.desktop` и хотя бы одной иконки темы; при наличии
-`desktop-file-validate` в образе — прогнать и его.
+`Chat` в категориях **намеренно нет**: по спецификации эта additional-категория
+требует основной `Network`, иначе `desktop-file-validate` выдаёт предупреждение.
+Файл несёт ещё локализованные `GenericName[ru]`/`Comment[ru]`/`Keywords[ru]` —
+интерфейс двуязычный, меню логично тоже.
+
+Смоук установки в `packaging.yml` (контейнеры Ubuntu/Fedora/Arch) расширен
+проверками: `.desktop` на месте и несёт `Terminal=true`/`Exec=`/`Icon=`; все шесть
+растровых иконок и `scalable` лежат под именем `mindfork-rs` (обязано совпадать с
+ключом `Icon=`). Штатный `desktop-file-validate` ставится в Ubuntu/Fedora
+(`desktop-file-utils` — рядом с самим пакетом, бесплатно) и прогоняется; в Arch
+пропускается по `command -v`.
+
+**Скриптлеты обновления кэшей не добавляем**: и Debian (триггер
+`update-icon-caches`), и Fedora (file trigger на `/usr/share/icons/hicolor`)
+делают это сами — лишний код в пакете только добавил бы риска.
+
+**Проверено локально (2026-07-18)**, насколько это возможно на Windows: YAML
+`nfpm.yaml`/`packaging.yml`/`release.yml` валиден; все `src` из `contents`
+существуют (кроме `dist/stage/mindfork-rs` — его создаёт `build-packages.sh`);
+`.desktop` — UTF-8 без BOM, только LF, есть основная категория `Utility`,
+additional-категорий без своей основной нет, `Categories` оканчивается на `;`.
+Настоящие `nfpm` и установка в контейнерах на Windows невоспроизводимы —
+их валидирует `packaging.yml` на PR (как и в этапе 2 «инсталляторов»).
 
 ---
 
@@ -285,7 +305,7 @@ Mermaid (не влезает → фолбэк). Точное размещени�
 |---|---|---|---|
 | **1** | `feat/brand-assets` | ассеты в git; ~~Р1 (текст в кривые)~~ ✅; ~~`artwork/README.md`~~ ✅; остаётся — вордмарк в шапке README | не требуется (ассеты/доки). SVG проверены растеризацией и сверкой с эталоном (§2) |
 | **2** ✅ | `feat/windows-icon` | `winresource` в `build.rs`; `SetupIconFile` + `WizardSmallImageFile` в `.iss`; `cargo deny` на новую зависимость | **сделано**: иконка извлечена из `.exe` и `setup.exe` (цвета сверены), `.iss` скомпилирован, мастер снят скриншотом |
-| **3** | `feat/linux-desktop-entry` | `.desktop` + hicolor-иконки в `nfpm.yaml`; проверки в смоуке `packaging.yml` | контейнерный смоук в CI (локально на Windows невоспроизводим — как и в этапе 2 «инсталляторов») |
+| **3** ✅ | `feat/linux-desktop-entry` | `.desktop` + hicolor-иконки в `nfpm.yaml`; проверки в смоуке `packaging.yml` | **сделано**: локально проверены YAML/пути/структура `.desktop`; установка в контейнерах — за `packaging.yml` на PR |
 | **4** | `feat/tui-logo` | `widgets/logo.rs` (half-block 16×8) + размещение по Р2 + гейт-тест «код ≡ SVG» | не требуется (чистый UI, `TestBackend`) — по AGENTS.md §3 отметить явно |
 
 Этап 1 идёт первым: пока вордмарк не переносим, а `artwork/` не в git, остальные
