@@ -3,7 +3,10 @@
 
 use super::render::centered_rect;
 use super::*;
-use crate::widgets::logo::{LOGO_COLS, LOGO_ROWS, logo_lines};
+use crate::widgets::logo::{LOCKUP_COLS, LOCKUP_ROWS, lockup_lines};
+
+/// Отступ лockup'а слева — тот же, с которого начинается список клавиш.
+const LOGO_INDENT: u16 = 2;
 
 impl ChatScreen {
     /// Открывает попап подсказок для слова с ошибкой под курсором (если есть).
@@ -177,14 +180,6 @@ pub(super) fn render_help(
         .iter()
         .map(|(k, d)| (loc.t(k).to_string(), loc.t(d).to_string()))
         .collect();
-    // Логотип в шапке — только при реальном запасе высоты (docs/branding.md §5):
-    // список клавиш длинный, и на невысоком терминале попап уже прокручивается —
-    // логотип отодвинул бы клавиши и добавил лишней прокрутки. Та же деградация,
-    // что у скроллбара (нет переполнения → не рисуем) и Mermaid (не влезло → фолбэк).
-    let logo_block = LOGO_ROWS + 1; // строки глифа + отбивка
-    let show_logo = frame.area().height >= resolved.len() as u16 + 2 + logo_block;
-    let content_rows = resolved.len() as u16 + if show_logo { logo_block } else { 0 };
-    let rows = (content_rows + 2).min(frame.area().height);
     let key_width = resolved
         .iter()
         .map(|(k, _)| k.chars().count())
@@ -208,14 +203,27 @@ pub(super) fn render_help(
     // Не уже заголовка (иначе версия обрежется): +4 = рамка (2) + поля (2).
     let width =
         ((2 + key_width + 1 + desc_width + 2 + 2) as u16).max(title.chars().count() as u16 + 4);
+    // Лockup в шапке — только при реальном запасе места (docs/branding.md §5): список
+    // клавиш длинный, и на невысоком терминале попап уже прокручивается — логотип
+    // отодвинул бы клавиши и добавил лишней прокрутки. Ширину под лockup специально
+    // не растягиваем (попап меряется списком клавиш) — не влез, значит не рисуем. Та
+    // же деградация, что у скроллбара (нет переполнения → не рисуем) и Mermaid.
+    let logo_block = LOCKUP_ROWS + 2; // отбивка сверху + лockup + отбивка снизу
+    let show_logo = frame.area().height >= resolved.len() as u16 + 2 + logo_block
+        && width >= LOCKUP_COLS + LOGO_INDENT + 4; // + рамка (2) и поле справа (2)
+    let content_rows = resolved.len() as u16 + if show_logo { logo_block } else { 0 };
+    let rows = (content_rows + 2).min(frame.area().height);
     let area = centered_rect(width, rows, frame.area());
     frame.render_widget(Clear, area);
 
     let mut lines: Vec<Line> = Vec::with_capacity(content_rows as usize);
     if show_logo {
-        // Глиф центрируем по ширине попапа; отбивка отделяет его от списка клавиш.
-        let pad = " ".repeat(((width.saturating_sub(LOGO_COLS + 2)) / 2) as usize);
-        lines.extend(logo_lines().into_iter().map(|line| {
+        // Лockup выравнен влево по тому же полю, что и список клавиш ниже, — знак
+        // читается как шапка блока, а не как отдельная центрированная картинка.
+        // Отбивки сверху и снизу отделяют его от рамки и от клавиш.
+        let pad = " ".repeat(LOGO_INDENT as usize);
+        lines.push(Line::raw(""));
+        lines.extend(lockup_lines(palette.text).into_iter().map(|line| {
             let mut spans = vec![Span::raw(pad.clone())];
             spans.extend(line.spans);
             Line::from(spans)
