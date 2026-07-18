@@ -1225,11 +1225,11 @@ fn render_does_not_panic() {
     term.draw(|f| s.render(f)).unwrap();
 }
 
-/// Логотип в шапке справки рисуется, когда высота терминала позволяет показать и
-/// глиф, и весь список клавиш (docs/branding.md §5).
+/// Лockup в шапке справки рисуется, когда высота терминала позволяет показать и
+/// знак, и весь список клавиш; знак прижат влево по полю списка (docs/branding.md §5).
 #[test]
 fn help_shows_logo_when_terminal_is_tall() {
-    use crate::widgets::logo::LOGO_ROWS;
+    use crate::widgets::logo::{LOCKUP_ROWS, LOGO_COLS};
     use ratatui::Terminal;
     use ratatui::backend::TestBackend;
     use ratatui::style::Color;
@@ -1237,24 +1237,48 @@ fn help_shows_logo_when_terminal_is_tall() {
 
     let mut s = ChatScreen::new();
     s.handle_key(KeyEvent::new(KeyCode::F(1), KeyModifiers::NONE));
-    // Запас: рамка (2) + все клавиши + блок логотипа.
-    let tall = HELP_KEYS.len() as u16 + 2 + LOGO_ROWS + 1;
+    // Запас: рамка (2) + все клавиши + блок лockup'а (отбивки сверху и снизу).
+    let tall = HELP_KEYS.len() as u16 + 2 + LOCKUP_ROWS + 2;
     let mut term = Terminal::new(TestBackend::new(90, tall)).unwrap();
     term.draw(|f| s.render(f)).unwrap();
 
     let buf = term.backend().buffer();
-    let mut orange = 0;
+    let mut orange: Vec<(u16, u16)> = Vec::new();
     for y in buf.area.top()..buf.area.bottom() {
         for x in buf.area.left()..buf.area.right() {
             let c = &buf[(x, y)];
             if c.style().fg == Some(ORANGE) || c.style().bg == Some(ORANGE) {
-                orange += 1;
+                orange.push((x, y));
             }
         }
     }
+    // Ствол глифа фирменного цвета есть в каждой его строке, плюс «fork» в слове.
     assert!(
-        orange >= LOGO_ROWS as usize,
-        "ствол логотипа фирменного цвета есть в каждой его строке (найдено {orange})"
+        orange.len() > LOCKUP_ROWS as usize,
+        "фирменного цвета слишком мало — знак не нарисован (найдено {})",
+        orange.len()
+    );
+    // Левая рамка попапа: скруглённый угол (палитра по умолчанию — Auto). Панели
+    // самого чата рисуются во всю ширину, т.е. их углы — в колонке 0; попап
+    // центрирован и вставлен внутрь, поэтому его угол — самый правый из найденных.
+    let corner = (buf.area.top()..buf.area.bottom())
+        .flat_map(|y| (buf.area.left()..buf.area.right()).map(move |x| (x, y)))
+        .filter(|&(x, y)| buf[(x, y)].symbol() == "╭")
+        .max_by_key(|&(x, _)| x)
+        .expect("рамка попапа");
+    // Знак прижат влево: ствол глифа (колонки 4–5 его чернил) стоит ровно на поле
+    // списка клавиш — рамка + два пробела. При центрировании он уехал бы вправо.
+    let left = orange.iter().map(|(x, _)| *x).min().unwrap();
+    assert_eq!(
+        left,
+        corner.0 + 1 + 2 + 4,
+        "ствол глифа не на левом поле списка клавиш"
+    );
+    // «fork» вордмарка — справа от глифа, за его правым краем.
+    let right = orange.iter().map(|(x, _)| *x).max().unwrap();
+    assert!(
+        right > corner.0 + 1 + 2 + LOGO_COLS,
+        "«fork» вордмарка не нарисован справа от глифа"
     );
 }
 
