@@ -3,6 +3,7 @@
 
 use super::render::centered_rect;
 use super::*;
+use crate::widgets::logo::{LOGO_COLS, LOGO_ROWS, logo_lines};
 
 impl ChatScreen {
     /// Открывает попап подсказок для слова с ошибкой под курсором (если есть).
@@ -176,7 +177,14 @@ pub(super) fn render_help(
         .iter()
         .map(|(k, d)| (loc.t(k).to_string(), loc.t(d).to_string()))
         .collect();
-    let rows = (resolved.len() as u16 + 2).min(frame.area().height);
+    // Логотип в шапке — только при реальном запасе высоты (docs/branding.md §5):
+    // список клавиш длинный, и на невысоком терминале попап уже прокручивается —
+    // логотип отодвинул бы клавиши и добавил лишней прокрутки. Та же деградация,
+    // что у скроллбара (нет переполнения → не рисуем) и Mermaid (не влезло → фолбэк).
+    let logo_block = LOGO_ROWS + 1; // строки глифа + отбивка
+    let show_logo = frame.area().height >= resolved.len() as u16 + 2 + logo_block;
+    let content_rows = resolved.len() as u16 + if show_logo { logo_block } else { 0 };
+    let rows = (content_rows + 2).min(frame.area().height);
     let key_width = resolved
         .iter()
         .map(|(k, _)| k.chars().count())
@@ -203,7 +211,32 @@ pub(super) fn render_help(
     let area = centered_rect(width, rows, frame.area());
     frame.render_widget(Clear, area);
 
-    let total = resolved.len();
+    let mut lines: Vec<Line> = Vec::with_capacity(content_rows as usize);
+    if show_logo {
+        // Глиф центрируем по ширине попапа; отбивка отделяет его от списка клавиш.
+        let pad = " ".repeat(((width.saturating_sub(LOGO_COLS + 2)) / 2) as usize);
+        lines.extend(logo_lines().into_iter().map(|line| {
+            let mut spans = vec![Span::raw(pad.clone())];
+            spans.extend(line.spans);
+            Line::from(spans)
+        }));
+        lines.push(Line::raw(""));
+    }
+    lines.extend(resolved.iter().map(|(k, d)| {
+        // Команды (`/rag …`) красим как команду, обычные клавиши — «клавишей».
+        let key_span = if k.starts_with('/') {
+            Span::styled(format!(" {k} "), Style::new().fg(palette.warning))
+        } else {
+            palette.keycap(k.clone())
+        };
+        Line::from(vec![
+            Span::raw("  "),
+            key_span,
+            Span::styled(format!(" {d}"), Style::new().fg(palette.text)),
+        ])
+    }));
+    let total = lines.len();
+
     let view_h = area.height.saturating_sub(2) as usize; // минус рамка
     *scroll = (*scroll).min(total.saturating_sub(view_h));
     let hint = if total > view_h {
@@ -214,22 +247,6 @@ pub(super) fn render_help(
     let block = palette
         .panel(title, true)
         .title_bottom(Line::from(Span::styled(hint, palette.muted_style())).centered());
-    let lines: Vec<Line> = resolved
-        .iter()
-        .map(|(k, d)| {
-            // Команды (`/rag …`) красим как команду, обычные клавиши — «клавишей».
-            let key_span = if k.starts_with('/') {
-                Span::styled(format!(" {k} "), Style::new().fg(palette.warning))
-            } else {
-                palette.keycap(k.clone())
-            };
-            Line::from(vec![
-                Span::raw("  "),
-                key_span,
-                Span::styled(format!(" {d}"), Style::new().fg(palette.text)),
-            ])
-        })
-        .collect();
     frame.render_widget(
         Paragraph::new(Text::from(lines))
             .block(block)

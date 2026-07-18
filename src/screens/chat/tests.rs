@@ -1224,3 +1224,60 @@ fn render_does_not_panic() {
     let mut term = Terminal::new(TestBackend::new(50, 16)).unwrap();
     term.draw(|f| s.render(f)).unwrap();
 }
+
+/// Логотип в шапке справки рисуется, когда высота терминала позволяет показать и
+/// глиф, и весь список клавиш (docs/branding.md §5).
+#[test]
+fn help_shows_logo_when_terminal_is_tall() {
+    use crate::widgets::logo::LOGO_ROWS;
+    use ratatui::Terminal;
+    use ratatui::backend::TestBackend;
+    use ratatui::style::Color;
+    const ORANGE: Color = Color::Rgb(0xc2, 0x5a, 0x27);
+
+    let mut s = ChatScreen::new();
+    s.handle_key(KeyEvent::new(KeyCode::F(1), KeyModifiers::NONE));
+    // Запас: рамка (2) + все клавиши + блок логотипа.
+    let tall = HELP_KEYS.len() as u16 + 2 + LOGO_ROWS + 1;
+    let mut term = Terminal::new(TestBackend::new(90, tall)).unwrap();
+    term.draw(|f| s.render(f)).unwrap();
+
+    let buf = term.backend().buffer();
+    let mut orange = 0;
+    for y in buf.area.top()..buf.area.bottom() {
+        for x in buf.area.left()..buf.area.right() {
+            let c = &buf[(x, y)];
+            if c.style().fg == Some(ORANGE) || c.style().bg == Some(ORANGE) {
+                orange += 1;
+            }
+        }
+    }
+    assert!(
+        orange >= LOGO_ROWS as usize,
+        "ствол логотипа фирменного цвета есть в каждой его строке (найдено {orange})"
+    );
+}
+
+/// На невысоком терминале логотип не рисуется вовсе — список клавиш не сдвигается
+/// и не требует лишней прокрутки (жёсткая деградация, docs/branding.md §5).
+#[test]
+fn help_hides_logo_when_terminal_is_short() {
+    use ratatui::Terminal;
+    use ratatui::backend::TestBackend;
+    use ratatui::style::Color;
+    const ORANGE: Color = Color::Rgb(0xc2, 0x5a, 0x27);
+
+    let mut s = ChatScreen::new();
+    s.handle_key(KeyEvent::new(KeyCode::F(1), KeyModifiers::NONE));
+    let mut term = Terminal::new(TestBackend::new(90, 20)).unwrap();
+    term.draw(|f| s.render(f)).unwrap();
+
+    let buf = term.backend().buffer();
+    for y in buf.area.top()..buf.area.bottom() {
+        for x in buf.area.left()..buf.area.right() {
+            let c = &buf[(x, y)];
+            assert_ne!(c.style().fg, Some(ORANGE), "логотип не должен рисоваться");
+            assert_ne!(c.style().bg, Some(ORANGE), "логотип не должен рисоваться");
+        }
+    }
+}
