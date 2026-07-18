@@ -1,0 +1,20 @@
+[Desktop Entry]
+Version=1.0
+Type=Application
+Name=mindfork-rs
+GenericName=AI Chat
+GenericName[ru]=ИИ-чат
+Comment=Console AI chat with local and cloud models
+Comment[ru]=Консольный ИИ-чат с локальными и облачными моделями
+Exec=mindfork-rs
+Icon=mindfork-rs
+# Обязательно: приложение — TUI, stdout занят интерфейсом. Без Terminal=true
+# запуск из меню не даст терминала и окно мгновенно закроется.
+Terminal=true
+# Utility — основная категория; ConsoleOnly помечает текстовый интерфейс.
+# Chat намеренно не берём: по спецификации он требует основной категории Network,
+# иначе desktop-file-validate выдаёт предупреждение.
+Categories=Utility;ConsoleOnly;
+Keywords=AI;LLM;chat;llama;gemma;qwen;openai;claude;gemini;TUI;terminal;
+Keywords[ru]=ИИ;чат;нейросеть;модель;терминал;
+StartupNotify=false

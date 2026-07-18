@@ -65,6 +65,47 @@ contents:
     dst: /usr/bin/mindfork-rs
     type: symlink
 
+  # Запись в меню приложений. Terminal=true обязателен — приложение TUI
+  # (см. docs/branding.md §4.2). Exec ссылается на симлинк в PATH.
+  - src: ./packaging/linux/mindfork-rs.desktop
+    dst: /usr/share/applications/mindfork-rs.desktop
+    file_info:
+      mode: 0644
+
+  # Иконки темы hicolor. Имя файла обязано совпадать с ключом Icon= в .desktop
+  # (mindfork-rs), поэтому исходники переименовываются при установке.
+  # Скриптлеты обновления кэша не добавляем: и Debian (триггер update-icon-caches),
+  # и Fedora (file trigger на /usr/share/icons/hicolor) делают это сами.
+  - src: ./artwork/mindfork-icon-16.png
+    dst: /usr/share/icons/hicolor/16x16/apps/mindfork-rs.png
+    file_info:
+      mode: 0644
+  - src: ./artwork/mindfork-icon-32.png
+    dst: /usr/share/icons/hicolor/32x32/apps/mindfork-rs.png
+    file_info:
+      mode: 0644
+  - src: ./artwork/mindfork-icon-48.png
+    dst: /usr/share/icons/hicolor/48x48/apps/mindfork-rs.png
+    file_info:
+      mode: 0644
+  - src: ./artwork/mindfork-icon-64.png
+    dst: /usr/share/icons/hicolor/64x64/apps/mindfork-rs.png
+    file_info:
+      mode: 0644
+  - src: ./artwork/mindfork-icon-128.png
+    dst: /usr/share/icons/hicolor/128x128/apps/mindfork-rs.png
+    file_info:
+      mode: 0644
+  - src: ./artwork/mindfork-icon-256.png
+    dst: /usr/share/icons/hicolor/256x256/apps/mindfork-rs.png
+    file_info:
+      mode: 0644
+  # Векторный вариант — с подложкой, как у растровых (единый вид в меню).
+  - src: ./artwork/mindfork-icon.svg
+    dst: /usr/share/icons/hicolor/scalable/apps/mindfork-rs.svg
+    file_info:
+      mode: 0644
+
   # Документация.
   - src: ./README.md
     dst: /usr/share/doc/mindfork-rs/README.md
