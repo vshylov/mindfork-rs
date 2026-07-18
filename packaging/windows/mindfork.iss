@@ -38,6 +38,12 @@ SolidCompression=yes
 WizardStyle=modern
 UninstallDisplayName=mindfork-rs
 UninstallDisplayIcon={app}\mindfork-rs.exe
+; Брендинг (docs/branding.md §4.1). Иконка самого setup.exe и логотип в шапке
+; мастера. PNG проверен на Inno 6 — принимается наравне с BMP и в 35 раз легче.
+; Иконку установленного .exe вшивает build.rs (winresource), поэтому ярлыки
+; [Icons] и UninstallDisplayIcon получают её без дополнительных настроек.
+SetupIconFile={#SourcePath}..\..\artwork\mindfork.ico
+WizardSmallImageFile={#SourcePath}..\..\artwork\mindfork-wizard-small.png
 
 [Languages]
 Name: "en"; MessagesFile: "compiler:Default.isl"

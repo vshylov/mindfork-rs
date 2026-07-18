@@ -115,35 +115,60 @@ flowchart TB
 
 Ресурс иконки вшивается в `.exe` на этапе сборки крейтом **`winresource`**
 (поддерживаемый форк заброшенного `winres`), из уже готового `mindfork.ico`.
-`build.rs` в проекте есть (копирует словари) — добавляется ветка под
-`#[cfg(windows)]`/`CARGO_CFG_TARGET_OS`:
+`build.rs` в проекте есть (копирует словари) — добавляется `embed_windows_icon()`
+в двух вариантах по хосту (почему именно так — ниже):
 
 ```rust
-// только под Windows-таргет; на Linux-сборке ветка не выполняется
-if env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("windows") {
-    winresource::WindowsResource::new()
-        .set_icon("artwork/mindfork.ico")
-        .compile()?; // ошибку — в cargo:warning, не в панику
+#[cfg(windows)] // Windows-хост: крейт доступен
+fn embed_windows_icon() {
+    if env::var("CARGO_CFG_TARGET_OS").as_deref() != Ok("windows") {
+        return; // хост Windows, но таргет другой — ресурс неприменим
+    }
+    let mut res = winresource::WindowsResource::new();
+    res.set_icon(".../artwork/mindfork.ico");
+    if let Err(err) = res.compile() {
+        println!("cargo:warning=не удалось вшить иконку в .exe: {err}");
+    }
 }
+
+#[cfg(not(windows))] // Linux/macOS-хост: крейта нет
+fn embed_windows_icon() { /* предупреждаем, если таргет — Windows */ }
 ```
 
 Побочный эффект: `UninstallDisplayIcon={app}\mindfork-rs.exe` в
 `packaging/windows/mindfork.iss` (уже прописан) и ярлыки из `[Icons]`
 **автоматически** начинают показывать иконку — правок там не нужно.
 
-Отдельно в `[Setup]` добавляется `SetupIconFile` (иконка самого `setup.exe`) и —
-по желанию — `WizardImageFile`/`WizardSmallImageFile` (брендинг мастера).
+Отдельно в `[Setup]` добавлены `SetupIconFile` (иконка самого `setup.exe`) и
+`WizardSmallImageFile` — логотип в шапке страниц мастера
+(`artwork/mindfork-wizard-small.png`, 138×140 — размер modern-стиля при 100% DPI,
+белый фон под белую шапку Inno). Большой `WizardImageFile` (панель на странице
+«Завершение») **не делаем** — это отдельная композиция, а welcome-страница в Inno 6
+по умолчанию отключена; задел.
 
-**Риски, проверяемые только в CI:**
-- `winresource` на MSVC-таргете вызывает `rc.exe` из Windows SDK. На
-  `windows-latest` GitHub Actions SDK есть, но это надо **подтвердить прогоном**,
-  а не считать данностью; сборку не должно ломать при его отсутствии (fallback —
-  предупреждение вместо ошибки).
-- Новая зависимость проходит через `cargo deny` (лицензия + advisories) — как
-  делалось для `pdf-extract`/`quick-xml`.
-- Картинки мастера Inno 6 исторически требуют **BMP**, а не PNG. Нужно
-  проверить по документации конкретной 6.7.x, поддерживается ли PNG; если нет —
-  сгенерировать BMP. **Не принимать на веру.**
+**Двойной гейт в `build.rs` (важно).** `winresource` объявлен в
+`[target.'cfg(windows)'.build-dependencies]`, а у **build**-зависимостей `cfg`
+вычисляется по **хосту** (скрипт исполняется на нём) — на Linux-хосте крейта нет и
+обращение к нему не скомпилируется. Поэтому нужны оба гейта: `#[cfg(windows)]` по
+хосту (есть ли крейт) и `CARGO_CFG_TARGET_OS` по таргету (нужна ли иконка).
+Следствие: кросс-сборка Linux → Windows иконку не вошьёт — там печатается
+`cargo:warning`, чтобы не выдать `.exe` без иконки молча. Штатный путь не страдает:
+релизный workflow собирает Windows на windows-раннере.
+
+**Проверено (2026-07-18):**
+- `rc.exe` из Windows SDK нашёлся, сборка без предупреждений; иконка извлечена из
+  собранного `.exe` и `setup.exe` — обе идентичны и несут ровно брендовые
+  `#09090b`/`#5c6370`/`#c25a27`.
+- `cargo deny check` — `advisories/bans/licenses/sources ok` (winresource тянет 7
+  build-only крейтов: toml-стек + winnow).
+- **Inno 6 принимает PNG** для `WizardSmallImageFile` (проверено тест-компиляцией
+  обоих форматов) — прежнее опасение «только BMP» не подтвердилось; PNG выбран, он
+  в 35 раз легче (1.6 КБ против 58 КБ).
+- Живой мастер: иконка в заголовке окна и логотип в шапке страницы рисуются
+  (скриншот, установка не выполнялась).
+
+Сбой вшивания намеренно **не валит сборку**, а уходит в `cargo:warning` — иконка
+косметическая, приложение должно собираться и без Windows SDK.
 
 ### 4.2 Linux — запись в меню приложений и иконки темы
 
@@ -259,7 +284,7 @@ Mermaid (не влезает → фолбэк). Точное размещени�
 | Этап | Ветка | Содержание | Живой прогон |
 |---|---|---|---|
 | **1** | `feat/brand-assets` | ассеты в git; ~~Р1 (текст в кривые)~~ ✅; ~~`artwork/README.md`~~ ✅; остаётся — вордмарк в шапке README | не требуется (ассеты/доки). SVG проверены растеризацией и сверкой с эталоном (§2) |
-| **2** | `feat/windows-icon` | `winresource` в `build.rs`; `SetupIconFile` + картинки мастера в `.iss`; `cargo deny` на новую зависимость | сборка `.exe` и осмотр иконки в Проводнике; компиляция `.iss` (в проекте уже есть прецедент прогона ISCC локально) |
+| **2** ✅ | `feat/windows-icon` | `winresource` в `build.rs`; `SetupIconFile` + `WizardSmallImageFile` в `.iss`; `cargo deny` на новую зависимость | **сделано**: иконка извлечена из `.exe` и `setup.exe` (цвета сверены), `.iss` скомпилирован, мастер снят скриншотом |
 | **3** | `feat/linux-desktop-entry` | `.desktop` + hicolor-иконки в `nfpm.yaml`; проверки в смоуке `packaging.yml` | контейнерный смоук в CI (локально на Windows невоспроизводим — как и в этапе 2 «инсталляторов») |
 | **4** | `feat/tui-logo` | `widgets/logo.rs` (half-block 16×8) + размещение по Р2 + гейт-тест «код ≡ SVG» | не требуется (чистый UI, `TestBackend`) — по AGENTS.md §3 отметить явно |
 
