@@ -1146,8 +1146,9 @@ fn every_feed_mutator_marks_content_change() {
 #[test]
 fn suggest_popup_actions_request_full_redraw() {
     // Тот же класс, что у попапа эмодзи: пункт «➕ добавить в словарь» несёт широкий
-    // глиф, выделенная строка списка рисуется подложкой, а её хвостовую ячейку diff
-    // не перерисовывает → на conhost оставался бы след подсветки.
+    // глиф. При ЗАКРЫТИИ попапа его хвостовую ячейку diff шлёт только у стилизованной
+    // строки, поэтому страхуемся полной перерисовкой; при сдвиге выделения она пользы
+    // не даёт (сентинел пропускает хвост широкого глифа, ratatui#2651).
     let mut s = ChatScreen::new();
     s.set_spellchecker(mk_checker());
     type_str(&mut s, "helo");
@@ -1155,10 +1156,13 @@ fn suggest_popup_actions_request_full_redraw() {
     assert!(s.suggest.is_some(), "попап подсказок открылся");
     s.take_full_redraw(); // сбросить флаг от набора текста
 
-    // Сдвиг выделения — подложка уезжает с прежней строки.
+    // Сдвиг выделения перерисовки НЕ требует: глиф остаётся широким, сентинел обязан
+    // пропускать его хвост (ratatui#2651) — подсветку снимает перепечатка глифа.
     s.handle_key(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE));
-    assert!(s.take_full_redraw(), "сдвиг выделения требует перерисовки");
-    assert!(!s.take_full_redraw(), "флаг забирается однократно");
+    assert!(
+        !s.take_full_redraw(),
+        "сдвиг выделения перерисовку не требует"
+    );
 
     // Клавиша, которая попап не меняет, перерисовку не просит.
     s.handle_key(KeyEvent::new(KeyCode::Left, KeyModifiers::NONE));
@@ -1186,9 +1190,10 @@ fn suggest_popup_actions_request_full_redraw() {
 #[test]
 fn emoji_picker_actions_request_full_redraw() {
     // Широкий глиф эмодзи оставляет на conhost «висячую» хвостовую половину, когда
-    // уходит с прежнего места: поячеечный diff её не перерисовывает (канарейка на
-    // механику — в `widgets::emoji_picker`). Поэтому и закрытие попапа, и сдвиг
-    // выделения просят у петли полную перерисовку терминала.
+    // ИСЧЕЗАЕТ с экрана: хвосты нестилизованных глифов сетки diff не шлёт (канарейка
+    // на границу апстрим-фикса — в `widgets::emoji_picker`). Поэтому полную
+    // перерисовку просит закрытие попапа — но не сдвиг выделения, где глиф остаётся
+    // широким и сентинел его хвост пропускает (ratatui#2651).
     let mut s = ChatScreen::new();
     assert!(!s.take_full_redraw(), "без попапа перерисовка не нужна");
 
@@ -1199,10 +1204,13 @@ fn emoji_picker_actions_request_full_redraw() {
         "открытие попапа перерисовку не требует"
     );
 
-    // Сдвиг выделения — подложка уезжает с прежней ячейки.
+    // Сдвиг выделения перерисовки НЕ требует: глиф остаётся широким, сентинел обязан
+    // пропускать его хвост (ratatui#2651) — подложку снимает перепечатка глифа.
     s.handle_key(KeyEvent::new(KeyCode::Right, KeyModifiers::NONE));
-    assert!(s.take_full_redraw(), "сдвиг выделения требует перерисовки");
-    assert!(!s.take_full_redraw(), "флаг забирается однократно");
+    assert!(
+        !s.take_full_redraw(),
+        "сдвиг выделения перерисовку не требует"
+    );
 
     // Закрытие вставкой (`Enter`).
     s.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
@@ -1211,6 +1219,7 @@ fn emoji_picker_actions_request_full_redraw() {
         s.take_full_redraw(),
         "вставка закрывает попап → перерисовка"
     );
+    assert!(!s.take_full_redraw(), "флаг забирается однократно");
 
     // Закрытие отменой (`Esc`).
     s.handle_key(KeyEvent::new(KeyCode::Char('b'), KeyModifiers::CONTROL));
