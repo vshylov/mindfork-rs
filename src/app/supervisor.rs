@@ -47,6 +47,12 @@ pub struct EmbedSetup {
 
 /// (Пере)подключение/запуск серверов по настройкам. За трейтом — ради mock-теста
 /// перезапуска при смене модели.
+///
+/// `stored_key` у всех методов — уже расшифрованный сохранённый API-ключ активного
+/// облачного провайдера (`AppConfig::api_keys`, см. `shared::secrets`); резолвом
+/// владеет [`super::orchestrator`], супервайзер про формат хранения не знает.
+/// `None` — ключ не сохранён на этой машине, тогда работает env-фолбэк
+/// (`api_key_env`). См. docs/research/api-key-storage.md.
 pub trait ServerSupervisor: Send + Sync {
     /// (Пере)подключается к chat-серверу. Возвращает движок и статус немедленно
     /// (`Connecting`/`NotConfigured`/`Disconnected`), а готовность managed/external
@@ -56,13 +62,14 @@ pub trait ServerSupervisor: Send + Sync {
     fn apply_chat(
         &self,
         settings: &EngineSettings,
+        stored_key: Option<&str>,
         cancel: CancellationToken,
         status_tx: UnboundedSender<ServerStatus>,
         loc: &'static Locale,
     ) -> ChatSetup;
 
     /// (Пере)подключается к embedding-серверу (RAG ленив — без probe).
-    fn apply_embed(&self, settings: &EmbedSettings) -> EmbedSetup;
+    fn apply_embed(&self, settings: &EmbedSettings, stored_key: Option<&str>) -> EmbedSetup;
 
     /// (Пере)подключается/запускает сервер имперсонации для режимов `managed`/
     /// `external`. Для `shared` НЕ вызывается оркестратором (он переиспользует
@@ -72,6 +79,7 @@ pub trait ServerSupervisor: Send + Sync {
     fn apply_impersonation(
         &self,
         settings: &ImpersonationEngineSettings,
+        stored_key: Option<&str>,
         cancel: CancellationToken,
         status_tx: UnboundedSender<ServerStatus>,
         loc: &'static Locale,
@@ -86,6 +94,7 @@ impl ServerSupervisor for LlamaSupervisor {
     fn apply_chat(
         &self,
         settings: &EngineSettings,
+        stored_key: Option<&str>,
         cancel: CancellationToken,
         status_tx: UnboundedSender<ServerStatus>,
         loc: &'static Locale,
@@ -106,6 +115,7 @@ impl ServerSupervisor for LlamaSupervisor {
                 cloud_chat_setup(
                     settings.mode.cloud_provider().expect("облачный режим"),
                     cloud.url.as_deref(),
+                    stored_key,
                     cloud.api_key_env.as_deref(),
                     cloud.model_name.as_deref(),
                     loc,
@@ -117,6 +127,7 @@ impl ServerSupervisor for LlamaSupervisor {
     fn apply_impersonation(
         &self,
         settings: &ImpersonationEngineSettings,
+        stored_key: Option<&str>,
         cancel: CancellationToken,
         status_tx: UnboundedSender<ServerStatus>,
         loc: &'static Locale,
@@ -139,6 +150,7 @@ impl ServerSupervisor for LlamaSupervisor {
                 cloud_chat_setup(
                     settings.mode.cloud_provider().expect("облачный режим"),
                     cloud.url.as_deref(),
+                    stored_key,
                     cloud.api_key_env.as_deref(),
                     cloud.model_name.as_deref(),
                     loc,
@@ -147,7 +159,7 @@ impl ServerSupervisor for LlamaSupervisor {
         }
     }
 
-    fn apply_embed(&self, settings: &EmbedSettings) -> EmbedSetup {
+    fn apply_embed(&self, settings: &EmbedSettings, stored_key: Option<&str>) -> EmbedSetup {
         match settings.mode {
             ServerMode::External => match settings.external.url.as_deref() {
                 Some(url) if !url.is_empty() => EmbedSetup {
@@ -157,7 +169,7 @@ impl ServerSupervisor for LlamaSupervisor {
                                 .external
                                 .api_key_env
                                 .as_deref()
-                                .and_then(|e| resolve_api_key(Some(e)).ok()),
+                                .and_then(|e| resolve_api_key(None, Some(e)).ok()),
                         ),
                     ),
                     handle: None,
@@ -214,6 +226,7 @@ impl ServerSupervisor for LlamaSupervisor {
                 cloud_embed_setup(
                     settings.mode.cloud_provider().expect("облачный режим"),
                     cloud.url.as_deref(),
+                    stored_key,
                     cloud.api_key_env.as_deref(),
                     cloud.model_name.as_deref(),
                 )
@@ -230,7 +243,10 @@ impl ServerSupervisor for LlamaSupervisor {
 /// External chat-setup: подключение по URL (любой OpenAI-совместимый сервер), фоновый
 /// probe. Опциональный `api_key_env` — имя env-переменной с Bearer-ключом (для
 /// OpenAI-совместимого прокси/шлюза с авторизацией); отсутствие/нерезолвимость ключа
-/// не ошибка (локальный `llama-server` ключа не требует).
+/// не ошибка (локальный `llama-server` ключа не требует). Сохранённые ключи
+/// (`shared::secrets`) — только для облачных провайдеров: у external произвольный
+/// URL, привязать его к провайдеру нельзя, поэтому здесь остаётся env-путь
+/// (docs/research/api-key-storage.md, развилка Р4).
 fn external_chat_setup(
     url: Option<&str>,
     api_key_env: Option<&str>,
@@ -240,7 +256,7 @@ fn external_chat_setup(
 ) -> ChatSetup {
     match url {
         Some(url) if !url.is_empty() => {
-            let key = api_key_env.and_then(|e| resolve_api_key(Some(e)).ok());
+            let key = api_key_env.and_then(|e| resolve_api_key(None, Some(e)).ok());
             let client = Arc::new(OpenAiClient::new(url).with_api_key(key));
             spawn_probe(
                 client.clone(),
@@ -321,17 +337,27 @@ fn managed_config(s: &ManagedSettings) -> ManagedConfig {
 }
 
 /// Структурированная ошибка резолва API-ключа (без локали — вызывающий локализует
-/// сам, см. [`cloud_chat_setup`]). `NoName` — не задано имя env-переменной;
-/// `Missing` несёт имя переменной, отсутствующей в окружении.
+/// сам, см. [`cloud_chat_setup`]). `NoName` — ключ не сохранён и имя env-переменной
+/// не задано; `Missing` несёт имя переменной, отсутствующей в окружении.
+#[derive(Debug)]
 pub(super) enum ApiKeyError {
     NoName,
     Missing(String),
 }
 
-/// Резолвит API-ключ из env-переменной по её имени. `Err` со структурированной
-/// причиной, если имя не задано или переменная отсутствует в окружении. Секрет на
-/// диск не пишется (ADR 0004) — хранится только имя переменной.
-fn resolve_api_key(api_key_env: Option<&str>) -> Result<String, ApiKeyError> {
+/// Резолвит API-ключ. Порядок (docs/research/api-key-storage.md §5, развилка Р3):
+///
+/// 1. **сохранённый ключ этой машины** (`stored`, уже расшифрован вызывающим) —
+///    он введён явным действием в настройках, целевой пользователь env не видит;
+/// 2. фолбэк — env-переменная по имени `api_key_env` (CI, power users, системы
+///    без machine-id).
+///
+/// Сам секрет по-прежнему не лежит на диске открытым текстом: сохранённый ключ
+/// зашифрован машинным ключом (`shared::secrets`), в конфиге — шифротекст.
+fn resolve_api_key(stored: Option<&str>, api_key_env: Option<&str>) -> Result<String, ApiKeyError> {
+    if let Some(key) = stored.filter(|k| !k.is_empty()) {
+        return Ok(key.to_string());
+    }
     let var = api_key_env
         .filter(|v| !v.is_empty())
         .ok_or(ApiKeyError::NoName)?;
@@ -346,6 +372,7 @@ fn resolve_api_key(api_key_env: Option<&str>) -> Result<String, ApiKeyError> {
 fn cloud_chat_setup(
     provider: CloudProvider,
     url_override: Option<&str>,
+    stored_key: Option<&str>,
     api_key_env: Option<&str>,
     model_name: Option<&str>,
     loc: &'static Locale,
@@ -358,10 +385,10 @@ fn cloud_chat_setup(
     let Some(model) = model_name.filter(|m| !m.is_empty()) else {
         return disconnected(loc.t("ui.err.server.no_model").into());
     };
-    let key = match resolve_api_key(api_key_env) {
+    let key = match resolve_api_key(stored_key, api_key_env) {
         Ok(k) => k,
         Err(ApiKeyError::NoName) => {
-            return disconnected(loc.t("ui.err.server.no_api_key_env").into());
+            return disconnected(loc.t("ui.err.server.no_api_key").into());
         }
         Err(ApiKeyError::Missing(var)) => {
             return disconnected(loc.tf("ui.err.server.env_missing", &[("var", &var)]));
@@ -393,12 +420,13 @@ fn cloud_chat_setup(
 fn cloud_embed_setup(
     provider: CloudProvider,
     url_override: Option<&str>,
+    stored_key: Option<&str>,
     api_key_env: Option<&str>,
     model_name: Option<&str>,
 ) -> EmbedSetup {
     let (Some(model), Ok(key)) = (
         model_name.filter(|m| !m.is_empty()),
-        resolve_api_key(api_key_env),
+        resolve_api_key(stored_key, api_key_env),
     ) else {
         tracing::warn!("облачные эмбеддинги не настроены (модель/ключ); RAG недоступен");
         return unavailable_embed();
@@ -512,6 +540,7 @@ impl ServerSupervisor for MockSupervisor {
     fn apply_chat(
         &self,
         _settings: &EngineSettings,
+        _stored_key: Option<&str>,
         _cancel: CancellationToken,
         _status_tx: UnboundedSender<ServerStatus>,
         _loc: &'static Locale,
@@ -537,6 +566,7 @@ impl ServerSupervisor for MockSupervisor {
     fn apply_impersonation(
         &self,
         _settings: &ImpersonationEngineSettings,
+        _stored_key: Option<&str>,
         _cancel: CancellationToken,
         _status_tx: UnboundedSender<ServerStatus>,
         _loc: &'static Locale,
@@ -556,7 +586,7 @@ impl ServerSupervisor for MockSupervisor {
         }
     }
 
-    fn apply_embed(&self, _settings: &EmbedSettings) -> EmbedSetup {
+    fn apply_embed(&self, _settings: &EmbedSettings, _stored_key: Option<&str>) -> EmbedSetup {
         let embedder = self.embedder.clone().unwrap_or_else(|| {
             Arc::new(crate::shared::api::mock::MockEmbedder::new(self.embed_dim))
         });
@@ -595,6 +625,7 @@ mod tests {
         let (tx, _rx) = unbounded_channel();
         let setup = LlamaSupervisor.apply_chat(
             &external(Some("http://127.0.0.1:9/v1")),
+            None,
             CancellationToken::new(),
             tx,
             ru(),
@@ -622,7 +653,8 @@ mod tests {
     #[tokio::test]
     async fn external_without_url_is_not_configured() {
         let (tx, _rx) = unbounded_channel();
-        let setup = LlamaSupervisor.apply_chat(&external(None), CancellationToken::new(), tx, ru());
+        let setup =
+            LlamaSupervisor.apply_chat(&external(None), None, CancellationToken::new(), tx, ru());
         assert!(setup.backend.is_none());
         assert_eq!(setup.status, ServerStatus::NotConfigured);
     }
@@ -634,7 +666,7 @@ mod tests {
             mode: ServerMode::Managed,
             ..Default::default()
         };
-        let setup = LlamaSupervisor.apply_chat(&s, CancellationToken::new(), tx, ru());
+        let setup = LlamaSupervisor.apply_chat(&s, None, CancellationToken::new(), tx, ru());
         assert_eq!(setup.status, ServerStatus::NotConfigured);
     }
 
@@ -649,7 +681,7 @@ mod tests {
             },
             ..Default::default()
         };
-        let setup = LlamaSupervisor.apply_chat(&s, CancellationToken::new(), tx, ru());
+        let setup = LlamaSupervisor.apply_chat(&s, None, CancellationToken::new(), tx, ru());
         assert!(setup.backend.is_none());
         assert!(matches!(setup.status, ServerStatus::Disconnected(_)));
     }
@@ -669,7 +701,7 @@ mod tests {
             },
             ..Default::default()
         };
-        let setup = LlamaSupervisor.apply_chat(&s, CancellationToken::new(), tx, ru());
+        let setup = LlamaSupervisor.apply_chat(&s, None, CancellationToken::new(), tx, ru());
         assert!(setup.backend.is_none());
         match setup.status {
             ServerStatus::Disconnected(msg) => assert!(msg.contains("файл модели"), "{msg}"),
@@ -680,12 +712,62 @@ mod tests {
     #[test]
     fn resolve_api_key_reads_env_and_reports_missing() {
         // PATH задана в любой ОС — гарантированный положительный случай без мутации env.
-        assert!(resolve_api_key(Some("PATH")).is_ok());
-        assert!(matches!(resolve_api_key(None), Err(ApiKeyError::NoName)));
-        match resolve_api_key(Some("MINDFORK_DEFINITELY_UNSET_VAR_42")) {
+        assert!(resolve_api_key(None, Some("PATH")).is_ok());
+        assert!(matches!(
+            resolve_api_key(None, None),
+            Err(ApiKeyError::NoName)
+        ));
+        match resolve_api_key(None, Some("MINDFORK_DEFINITELY_UNSET_VAR_42")) {
             Err(ApiKeyError::Missing(var)) => assert_eq!(var, "MINDFORK_DEFINITELY_UNSET_VAR_42"),
             _ => panic!("ожидался ApiKeyError::Missing"),
         }
+    }
+
+    /// Сохранённый ключ приоритетнее env (развилка Р3) и работает сам по себе —
+    /// без имени env-переменной, чего целевой пользователь не задаёт вовсе.
+    #[test]
+    fn stored_key_wins_over_env_and_works_without_it() {
+        // Есть и сохранённый, и env → берём сохранённый.
+        assert_eq!(
+            resolve_api_key(Some("sk-stored"), Some("PATH")).unwrap(),
+            "sk-stored"
+        );
+        // Только сохранённый (env-переменная не задана вовсе) → он и используется.
+        assert_eq!(
+            resolve_api_key(Some("sk-stored"), None).unwrap(),
+            "sk-stored"
+        );
+        // Отсутствующая env-переменная не мешает сохранённому ключу.
+        assert_eq!(
+            resolve_api_key(Some("sk-stored"), Some("MINDFORK_DEFINITELY_UNSET_VAR_42")).unwrap(),
+            "sk-stored"
+        );
+        // Пустой сохранённый ключ равнозначен отсутствию → фолбэк на env.
+        assert!(resolve_api_key(Some(""), Some("PATH")).is_ok());
+        assert!(matches!(
+            resolve_api_key(Some(""), None),
+            Err(ApiKeyError::NoName)
+        ));
+    }
+
+    /// Облачный режим поднимается на одном сохранённом ключе — без `api_key_env`
+    /// (главный сценарий фичи: пользователь ввёл ключ в настройках).
+    #[tokio::test]
+    async fn cloud_chat_with_stored_key_and_no_env_is_ready() {
+        let (tx, _rx) = unbounded_channel();
+        let s = EngineSettings {
+            mode: ServerMode::OpenAi,
+            openai: crate::shared::config::CloudSettings {
+                model_name: Some("gpt-5.5".into()),
+                api_key_env: None, // имя env-переменной не задано вовсе
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let setup =
+            LlamaSupervisor.apply_chat(&s, Some("sk-stored"), CancellationToken::new(), tx, ru());
+        assert_eq!(setup.status, ServerStatus::Ready);
+        assert!(setup.backend.is_some());
     }
 
     #[tokio::test]
@@ -700,7 +782,7 @@ mod tests {
             ..Default::default()
         };
         match LlamaSupervisor
-            .apply_chat(&s, CancellationToken::new(), tx, ru())
+            .apply_chat(&s, None, CancellationToken::new(), tx, ru())
             .status
         {
             ServerStatus::Disconnected(m) => assert!(m.contains("модел"), "{m}"),
@@ -721,7 +803,7 @@ mod tests {
             ..Default::default()
         };
         match LlamaSupervisor
-            .apply_chat(&s, CancellationToken::new(), tx, ru())
+            .apply_chat(&s, None, CancellationToken::new(), tx, ru())
             .status
         {
             ServerStatus::Disconnected(m) => {
@@ -744,7 +826,7 @@ mod tests {
             },
             ..Default::default()
         };
-        let setup = LlamaSupervisor.apply_chat(&s, CancellationToken::new(), tx, ru());
+        let setup = LlamaSupervisor.apply_chat(&s, None, CancellationToken::new(), tx, ru());
         assert!(setup.backend.is_some());
         assert!(setup.handle.is_none(), "облако без дочернего процесса");
         assert_eq!(setup.status, ServerStatus::Ready);
@@ -764,7 +846,7 @@ mod tests {
             },
             ..Default::default()
         };
-        let setup = LlamaSupervisor.apply_chat(&s, CancellationToken::new(), tx, ru());
+        let setup = LlamaSupervisor.apply_chat(&s, None, CancellationToken::new(), tx, ru());
         assert!(setup.backend.is_some());
         assert!(setup.handle.is_none());
         assert_eq!(setup.status, ServerStatus::Ready);
@@ -783,7 +865,7 @@ mod tests {
             ..Default::default()
         };
         let err = LlamaSupervisor
-            .apply_embed(&s)
+            .apply_embed(&s, None)
             .embedder
             .embed(vec!["x".into()])
             .await
@@ -802,7 +884,7 @@ mod tests {
             },
             ..Default::default()
         };
-        let setup = LlamaSupervisor.apply_embed(&s);
+        let setup = LlamaSupervisor.apply_embed(&s, None);
         let err = setup.embedder.embed(vec!["x".into()]).await.unwrap_err();
         assert!(err.to_string().contains("не настроен"));
     }
@@ -817,7 +899,7 @@ mod tests {
             },
             ..Default::default()
         };
-        let setup = LlamaSupervisor.apply_embed(&s);
+        let setup = LlamaSupervisor.apply_embed(&s, None);
         assert!(setup.handle.is_none());
         // Источник эмбеддингов сконфигурирован (не UnavailableEmbedder).
         // Проверяем косвенно: embed на «мёртвый» URL вернёт ошибку соединения,
@@ -828,7 +910,7 @@ mod tests {
 
     #[tokio::test]
     async fn embed_unconfigured_is_unavailable() {
-        let setup = LlamaSupervisor.apply_embed(&EmbedSettings::default());
+        let setup = LlamaSupervisor.apply_embed(&EmbedSettings::default(), None);
         let err = setup.embedder.embed(vec!["x".into()]).await.unwrap_err();
         assert!(err.to_string().contains("не настроен"));
     }

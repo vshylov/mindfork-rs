@@ -14,6 +14,11 @@ arboard = { version = "3.4.1", default-features = false }
 async-stream = "0.3.6"
 async-trait = "0.1.89"
 bytemuck = "1.25.0"
+# AEAD-шифрование сохранённых API-ключей на Linux (схема `machine-key-v1`: ключ
+# выводится из /etc/machine-id через HKDF). RustCrypto, чистый Rust. На Windows
+# та же задача решается системным DPAPI (windows-sys ниже). См. shared/secrets.rs,
+# docs/research/api-key-storage.md.
+chacha20poly1305 = "0.10.1"
 chrono = { version = "0.4.45", features = ["serde"] }
 crossterm = "0.29.0"
 # Стандартные ОС-папки для непортабельного режима хранения данных
@@ -24,6 +29,9 @@ eventsource-stream = "0.2.3"
 # Python). flate2 — чистый Rust (miniz_oxide, без C-зависимостей), tar — чистый Rust.
 flate2 = "1.0"
 futures-util = "0.3.32"
+# Вывод ключа шифрования API-ключей из machine-id (HKDF-SHA256; `sha2` уже есть).
+# Паттерн предписан документацией systemd — machine-id не используется сырым.
+hkdf = "0.12.4"
 # Рендер ```mermaid-блоков ленты в Unicode/ASCII-графику (flowchart/sequence,
 # whitelist + жёсткий фолбэк на исходник). Чистый Rust (net-new только ascii-dag);
 # ≥0.56.1 обязательно — 0.56.0 паниковал/портил подписи на кириллице (наш апстрим-фикс,
@@ -71,12 +79,16 @@ uuid = { version = "1.23.3", features = ["v4", "v5", "serde"] }
 # (нативные C-зависимости) — нужен только deflate + store. См. features/backup.rs.
 zip = { version = "2.2.2", default-features = false, features = ["deflate"] }
 
-# OS-level лимит памяти песочницы Python через Windows Job Object
-# (`JOB_OBJECT_LIMIT_PROCESS_MEMORY`) — защита хоста от OOM при рантайм-скрипте.
-# Только Windows: на Unix rlimit ненадёжен с бэкендом V8 (он резервирует большое
-# виртуальное адресное пространство). См. ADR 0005 / features/tools/python.rs.
+# Windows-специфика:
+# * `Win32_System_JobObjects` — OS-level лимит памяти песочницы Python через Job
+#   Object (`JOB_OBJECT_LIMIT_PROCESS_MEMORY`), защита хоста от OOM при рантайм-
+#   скрипте. Только Windows: на Unix rlimit ненадёжен с бэкендом V8 (он резервирует
+#   большое виртуальное адресное пространство). См. ADR 0005 / features/tools/python.rs.
+# * `Win32_Security_Cryptography` — DPAPI (`CryptProtectData`/`CryptUnprotectData`)
+#   для машинно-привязанного шифрования сохранённых API-ключей. См. shared/secrets.rs,
+#   docs/research/api-key-storage.md.
 [target.'cfg(windows)'.dependencies]
-windows-sys = { version = "0.61", features = ["Win32_System_JobObjects", "Win32_Foundation", "Win32_Security"] }
+windows-sys = { version = "0.61", features = ["Win32_System_JobObjects", "Win32_Foundation", "Win32_Security", "Win32_Security_Cryptography"] }
 
 [target.'cfg(windows)'.build-dependencies]
 winresource = "0.1.31"

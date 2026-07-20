@@ -2,7 +2,7 @@
 //! [`ServerSupervisor`]. Оркестратор — единственный писатель в `settings.json`.
 
 use crate::app::events::AppEvent;
-use crate::shared::config::AppConfig;
+use crate::shared::config::{AppConfig, CloudProvider};
 
 use super::Orchestrator;
 
@@ -16,6 +16,10 @@ impl Orchestrator {
         // значение (например `None` со старта) — сохраняем актуальное, чтобы правка
         // настроек не стёрла память о чате.
         self.config.last_active_chat = old.last_active_chat;
+        // Сохранённые API-ключи — тоже свойство оркестратора (`handle_set_api_key`):
+        // экран настроек шлёт сам ключ отдельной командой, а в снимке конфига их
+        // не несёт. Без восстановления правка любой настройки стёрла бы ключи.
+        self.config.api_keys = old.api_keys.clone();
         // TOFU-пины каталогов MCP — тоже свойство оркестратора (persist_mcp_pin),
         // в UI не редактируются: наследуем по id сервера, если снимок из UI их не
         // несёт (устаревшая копия) — правка настроек не сбрасывает доверие и не
@@ -69,6 +73,59 @@ impl Orchestrator {
         self.emit_settings();
     }
 
+    /// Сохраняет введённый в настройках API-ключ провайдера: шифрует машинным
+    /// ключом (`shared::secrets`) и кладёт в `config.api_keys` записью **этой**
+    /// машины. Пустой ключ — удаление. Затрагивает все слоты (чат/имперсонация/
+    /// эмбеддинги), у которых активен этот провайдер: они помечаются на отложенный
+    /// (пере)подъём — ключ подхватится следующим `flush_restarts`.
+    ///
+    /// Плейнтекст живёт только в аргументе и в HTTP-клиенте: на диск уходит
+    /// шифротекст, в UI-снимок конфига ключи не попадают вовсе (UI получает лишь
+    /// признак «настроен»). См. docs/research/api-key-storage.md.
+    pub(super) fn handle_set_api_key(&mut self, provider: CloudProvider, key: String) {
+        let old = self.config.api_keys.clone();
+        let label = || {
+            format!(
+                "{} · {}",
+                crate::shared::secrets::machine_label(),
+                chrono::Local::now().format("%Y-%m-%d")
+            )
+        };
+        if let Err(err) = crate::shared::secrets::put_key(
+            &mut self.config.api_keys,
+            provider.key(),
+            key.trim(),
+            label,
+        ) {
+            let _ = self.evt_tx.send(AppEvent::Error(
+                self.ui_locale()
+                    .tf("ui.err.api_key_save_failed", &[("err", &err.to_string())]),
+            ));
+            return;
+        }
+        if let Err(err) = self.storage.json().save_config(&self.config) {
+            let _ = self.evt_tx.send(AppEvent::Error(
+                self.ui_locale()
+                    .tf("ui.err.save_settings_failed", &[("err", &err.to_string())]),
+            ));
+            self.config.api_keys = old; // откат к прежнему состоянию
+            return;
+        }
+        // Пере-поднимаем только те серверы, чей активный провайдер сменил ключ
+        // (дебаунс тот же, что у правок движка — см. `flush_restarts`).
+        let p = Some(provider);
+        if self.config.engine.mode.cloud_provider() == p {
+            self.restarts.mark_chat();
+        }
+        if self.config.impersonation_engine.mode.cloud_provider() == p {
+            self.restarts.mark_impersonation();
+        }
+        if self.config.embed.mode.cloud_provider() == p {
+            self.restarts.mark_embed();
+        }
+        self.emit_settings();
+    }
+
     /// Применяет отложенные дебаунсом (пере)запуски серверов (дедлайн истёк):
     /// по одному `apply_*` на каждый помеченный сервер и один общий снимок
     /// статусов. Читает **финальный** `self.config` — конфиг заменяется ещё при
@@ -77,14 +134,19 @@ impl Orchestrator {
         let (chat, embed, imp, mcp) = self.restarts.take();
         let loc = self.ui_locale();
         if chat {
-            self.engines.apply_chat(&self.config.engine, loc);
+            self.engines
+                .apply_chat(&self.config.engine, &self.config.api_keys, loc);
         }
         if embed {
-            self.engines.apply_embed(&self.config.embed);
+            self.engines
+                .apply_embed(&self.config.embed, &self.config.api_keys);
         }
         if imp {
-            self.engines
-                .apply_impersonation(&self.config.impersonation_engine, loc);
+            self.engines.apply_impersonation(
+                &self.config.impersonation_engine,
+                &self.config.api_keys,
+                loc,
+            );
         }
         if mcp {
             self.apply_mcp_settings();
@@ -99,14 +161,16 @@ impl Orchestrator {
     /// идут через дебаунс-очередь `restarts` → [`Self::flush_restarts`].
     pub(super) fn apply_chat_settings(&mut self) {
         let loc = self.ui_locale();
-        self.engines.apply_chat(&self.config.engine, loc);
+        self.engines
+            .apply_chat(&self.config.engine, &self.config.api_keys, loc);
         self.emit_server_status();
     }
 
     /// (Пере)поднимает embedding-сервер по `config.embed` и эмитит снимок статусов
     /// (чип эмбеддингов в строке статуса появляется/исчезает по настройке).
     pub(super) fn apply_embed_settings(&mut self) {
-        self.engines.apply_embed(&self.config.embed);
+        self.engines
+            .apply_embed(&self.config.embed, &self.config.api_keys);
         self.emit_server_status();
     }
 
@@ -114,8 +178,11 @@ impl Orchestrator {
     /// `shared` отдельный сервер не нужен — переиспользуется chat-сервер ассистента.
     pub(super) fn apply_impersonation_settings(&mut self) {
         let loc = self.ui_locale();
-        self.engines
-            .apply_impersonation(&self.config.impersonation_engine, loc);
+        self.engines.apply_impersonation(
+            &self.config.impersonation_engine,
+            &self.config.api_keys,
+            loc,
+        );
         self.emit_server_status();
     }
 

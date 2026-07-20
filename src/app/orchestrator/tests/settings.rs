@@ -3,6 +3,8 @@
 
 use super::*;
 
+use crate::shared::config::CloudProvider;
+
 #[tokio::test]
 async fn bootstrap_emits_settings_snapshot() {
     let (_d, cmd_tx, mut evt_rx, handle) = spawn_orch(None);
@@ -157,6 +159,138 @@ async fn model_change_restarts_chat_server_debounced() {
         "две правки движка → один отложенный перезапуск сервера"
     );
 
+    cmd_tx.send(AppCommand::Quit).unwrap();
+    handle.await.unwrap();
+}
+
+/// Ключ, введённый в настройках, сохраняется **зашифрованным**: в `settings.json`
+/// нет плейнтекста, но приложение читает его обратно (запись этой машины).
+/// Главный инвариант безопасности фичи — см. docs/research/api-key-storage.md.
+#[tokio::test]
+async fn set_api_key_persists_encrypted_and_reads_back() {
+    if !crate::shared::secrets::scheme_available() {
+        return; // не-systemd Linux без machine-id: сохранение ключей не поддержано
+    }
+    let (_d, cmd_tx, mut evt_rx, handle) = spawn_orch(None);
+    let root = _d.path().to_path_buf();
+    wait_for(&mut evt_rx, |e| matches!(e, AppEvent::Settings { .. }))
+        .await
+        .unwrap();
+
+    cmd_tx
+        .send(AppCommand::SetApiKey {
+            provider: CloudProvider::OpenAi,
+            key: "sk-super-secret-42".into(),
+        })
+        .unwrap();
+    wait_for(
+        &mut evt_rx,
+        |e| matches!(e, AppEvent::Settings { config, .. } if !config.api_keys.is_empty()),
+    )
+    .await
+    .unwrap();
+
+    cmd_tx.send(AppCommand::Quit).unwrap();
+    handle.await.unwrap();
+
+    // На диске — шифротекст, не секрет.
+    let raw = std::fs::read_to_string(root.join("settings.json")).unwrap();
+    assert!(
+        !raw.contains("sk-super-secret-42"),
+        "плейнтекст ключа утёк в settings.json"
+    );
+    assert!(raw.contains("api_keys"), "запись ключей не сохранена");
+    // Приложение читает ключ обратно (эта же машина).
+    let reopened = Storage::open(Paths::with_root(&root)).unwrap();
+    let cfg = reopened.json().load_config().unwrap();
+    assert_eq!(
+        crate::shared::secrets::stored_key(&cfg.api_keys, CloudProvider::OpenAi.key()).as_deref(),
+        Some("sk-super-secret-42")
+    );
+}
+
+/// Правка любой настройки не стирает сохранённые ключи: снимок конфига из UI их
+/// не несёт, оркестратор восстанавливает своё значение (как `last_active_chat`).
+#[tokio::test]
+async fn update_config_preserves_stored_api_keys() {
+    if !crate::shared::secrets::scheme_available() {
+        return;
+    }
+    let (_d, cmd_tx, mut evt_rx, handle) = spawn_orch(None);
+    let root = _d.path().to_path_buf();
+    wait_for(&mut evt_rx, |e| matches!(e, AppEvent::Settings { .. }))
+        .await
+        .unwrap();
+
+    cmd_tx
+        .send(AppCommand::SetApiKey {
+            provider: CloudProvider::Claude,
+            key: "sk-ant-keep-me".into(),
+        })
+        .unwrap();
+    wait_for(
+        &mut evt_rx,
+        |e| matches!(e, AppEvent::Settings { config, .. } if !config.api_keys.is_empty()),
+    )
+    .await
+    .unwrap();
+
+    // Снимок из UI (ключей не несёт вовсе) — как коммит любого поля настроек.
+    cmd_tx
+        .send(AppCommand::UpdateConfig(Box::new(AppConfig {
+            max_tool_rounds: 5,
+            ..Default::default()
+        })))
+        .unwrap();
+    wait_for(
+        &mut evt_rx,
+        |e| matches!(e, AppEvent::Settings { config, .. } if config.max_tool_rounds == 5),
+    )
+    .await
+    .unwrap();
+
+    cmd_tx.send(AppCommand::Quit).unwrap();
+    handle.await.unwrap();
+
+    let reopened = Storage::open(Paths::with_root(&root)).unwrap();
+    let cfg = reopened.json().load_config().unwrap();
+    assert_eq!(
+        crate::shared::secrets::stored_key(&cfg.api_keys, CloudProvider::Claude.key()).as_deref(),
+        Some("sk-ant-keep-me"),
+        "правка настроек стёрла сохранённый ключ"
+    );
+}
+
+/// Пустой ключ удаляет сохранённое значение (в UI — очистка поля).
+#[tokio::test]
+async fn set_empty_api_key_removes_stored_entry() {
+    if !crate::shared::secrets::scheme_available() {
+        return;
+    }
+    let (_d, cmd_tx, mut evt_rx, handle) = spawn_orch(None);
+    wait_for(&mut evt_rx, |e| matches!(e, AppEvent::Settings { .. }))
+        .await
+        .unwrap();
+    for key in ["sk-temp", ""] {
+        cmd_tx
+            .send(AppCommand::SetApiKey {
+                provider: CloudProvider::Gemini,
+                key: key.into(),
+            })
+            .unwrap();
+    }
+    let ev = wait_for(
+        &mut evt_rx,
+        |e| matches!(e, AppEvent::Settings { config, .. } if config.api_keys.is_empty()),
+    )
+    .await
+    .unwrap();
+    if let AppEvent::Settings { config, .. } = ev {
+        assert!(
+            crate::shared::secrets::stored_key(&config.api_keys, CloudProvider::Gemini.key())
+                .is_none()
+        );
+    }
     cmd_tx.send(AppCommand::Quit).unwrap();
     handle.await.unwrap();
 }

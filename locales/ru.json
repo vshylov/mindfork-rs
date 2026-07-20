@@ -852,6 +852,7 @@
   "ui.err.generation_failed": "Ошибка генерации: {err}",
   "ui.err.load_data_failed": "Ошибка загрузки данных: {err}",
   "ui.err.save_settings_failed": "Не удалось сохранить настройки: {err}",
+  "ui.err.api_key_save_failed": "Не удалось сохранить API-ключ: {err}",
   "ui.err.managed.model_not_found": "файл модели не найден или недоступен: {path}",
   "ui.err.managed.draft_not_found": "файл черновой модели не найден или недоступен: {path}",
   "ui.err.managed.spawn": "запуск llama-server ({path})",
@@ -859,7 +860,7 @@
   "ui.err.managed.timeout": "сервер инференса не вышел в готовность за {timeout}",
 
   "ui.err.server.no_model": "укажите имя модели для облачного провайдера",
-  "ui.err.server.no_api_key_env": "не задано имя env-переменной с API-ключом",
+  "ui.err.server.no_api_key": "API-ключ не задан: введите его в настройках или укажите переменную окружения",
   "ui.err.server.env_missing": "переменная окружения {var} не задана",
   "ui.err.bg_failed": "{label} трижды подряд завершилась ошибкой: {reason}",
   "ui.err.bg_reflection": "Авто-рефлексия",

@@ -11,6 +11,7 @@ pub mod markdown;
 pub mod mcp;
 pub mod paths;
 pub mod sandbox;
+pub mod secrets;
 pub mod server;
 pub mod storage;
 pub mod theme;
