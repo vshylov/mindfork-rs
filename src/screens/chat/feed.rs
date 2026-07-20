@@ -4,6 +4,31 @@
 use super::*;
 
 impl ChatScreen {
+    /// Помечает, что содержимое ленты изменилось (стрим, новое сообщение, заметка,
+    /// правка): если в ленте есть глифы группы риска, следующий кадр рисуем **полной
+    /// перерисовкой** — иначе на legacy-терминалах остаются артефакты от изменившихся
+    /// строк с эмодзи. См. [`is_risky_glyph`], [`crate::shared::ui::prime_full_redraw`].
+    ///
+    /// Вызывается **мутаторами**, а не по факту рендера: артефакт нельзя показывать
+    /// даже на кадр. Определение «есть риск» по факту отрисовки опаздывало бы на кадр
+    /// (промах кэша виден только там), и артефакт успевал мелькнуть — спрятать это за
+    /// синхронизированный вывод нельзя, conhost режим 2026 игнорирует.
+    ///
+    /// Флаг риска кэшируется и **только накапливается**: правки всегда затрагивают
+    /// последний блок, поэтому проверяем его, а полную пересборку ленты
+    /// ([`Self::activate_chat`]) пересчитывает с нуля. Пере-оценка в большую сторону
+    /// безопасна — лишняя перерисовка не видна, пропущенная оставляет артефакт.
+    pub(super) fn mark_feed_changed(&mut self) {
+        if !self.feed_has_risky
+            && let Some(last) = self.feed.last()
+        {
+            self.feed_has_risky = feed_msg_has_risky_glyph(last);
+        }
+        if self.feed_has_risky {
+            self.full_redraw = true;
+        }
+    }
+
     /// Обновляет заголовок чата в проекции (после ручного/авто-переименования).
     /// Меняет заголовок в шапке ленты, если это активный чат. Список и оверлей
     /// дополнительно обновляются событием `ChatList` (`set_chat_list`).
@@ -32,6 +57,10 @@ impl ChatScreen {
         self.gen_reasoning = 0;
         // Склейка раундов agentic-loop в один блок «Ассистент:» с инлайн tool-блоками.
         self.feed = FeedMessage::from_messages(messages);
+        // Лента заменена целиком — пересчитываем «есть риск» с нуля (дальше флаг
+        // только накапливается по последнему блоку).
+        self.feed_has_risky = self.feed.iter().any(feed_msg_has_risky_glyph);
+        self.mark_feed_changed();
         self.feed_view.scroll_to_bottom();
         // Загружаем сохранённый черновик чата в поле ввода (пустой у нового чата).
         // НЕ помечаем `draft_dirty` — иначе тут же отправили бы его обратно тем же
@@ -63,6 +92,7 @@ impl ChatScreen {
             tools: Vec::new(),
             streaming: false,
         });
+        self.mark_feed_changed();
         self.feed_view.scroll_to_bottom();
     }
 
@@ -82,6 +112,7 @@ impl ChatScreen {
             tools: Vec::new(),
             streaming: true,
         });
+        self.mark_feed_changed();
         self.feed_view.scroll_to_bottom();
     }
 
@@ -108,6 +139,7 @@ impl ChatScreen {
             // Текст/мысли следующего раунда отделяем разделителем (как при перезагрузке).
             self.pending_text_sep = true;
             self.pending_thoughts_sep = true;
+            self.mark_feed_changed();
             self.feed_view.scroll_to_bottom();
         }
     }
@@ -133,6 +165,7 @@ impl ChatScreen {
             tools: Vec::new(),
             streaming: true,
         });
+        self.mark_feed_changed();
         self.feed_view.scroll_to_bottom();
     }
 
@@ -151,6 +184,7 @@ impl ChatScreen {
         }
         self.pending_text_sep = false;
         self.pending_thoughts_sep = false;
+        self.mark_feed_changed();
         self.feed_view.scroll_to_bottom();
     }
 
@@ -191,6 +225,7 @@ impl ChatScreen {
             }
             last.text.push_str(text);
         }
+        self.mark_feed_changed();
     }
 
     pub fn push_thoughts(&mut self, generation_id: Uuid, text: &str) {
@@ -207,6 +242,7 @@ impl ChatScreen {
             }
             last.thoughts.push_str(text);
         }
+        self.mark_feed_changed();
     }
 
     /// Обновляет счётчик токенов текущей генерации (live). Игнорирует устаревшие
@@ -256,6 +292,7 @@ impl ChatScreen {
     /// чатов, когда экран списка уже закрыт — поздний ответ авто-названия/копии).
     pub fn push_note(&mut self, text: &str) {
         self.feed.push(FeedMessage::note(text));
+        self.mark_feed_changed();
         self.feed_view.scroll_to_bottom();
     }
 }

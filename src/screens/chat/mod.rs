@@ -231,6 +231,10 @@ pub struct ChatScreen {
     /// Индекс последнего выделения в попапе эмодзи — восстанавливается при следующем
     /// открытии (попап «помнит» выбор).
     emoji_last: usize,
+    /// Есть ли в ленте глифы группы риска (эмодзи, чья отрисовка на legacy-
+    /// терминалах расходится с моделью). Кэш: пересчитывается при полной замене
+    /// ленты, иначе только накапливается. См. [`ChatScreen::mark_feed_changed`].
+    feed_has_risky: bool,
     /// Запрошена полная перерисовка терминала следующим кадром (петля `app/runtime`
     /// забирает флаг через [`ChatScreen::take_full_redraw`]). Нужна там, где с экрана
     /// исчезает **широкий** глиф (эмодзи): его хвостовую половину поячеечный diff
@@ -309,6 +313,7 @@ impl ChatScreen {
             suggest: None,
             emoji: None,
             emoji_last: 0,
+            feed_has_risky: false,
             full_redraw: false,
             confirm: None,
             confirm_destructive: false,

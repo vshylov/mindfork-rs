@@ -169,9 +169,6 @@ pub struct MessageFeed {
     /// ячейке, которую поячеечный diff ratatui больше не затрагивает. Полная
     /// перерисовка (`terminal.clear`) гарантированно её стирает. См. spec §11.3.
     scrolled: bool,
-    /// Флаг «содержимое перерисовано заново» (промах кэша блока при последнем
-    /// рендере). Забирается экраном — см. [`MessageFeed::take_content_changed`].
-    content_changed: bool,
     /// Горизонтальные разделители между строками Markdown-таблиц (настройка
     /// `interface.table_row_separators`; экран чата прокидывает её из снимка
     /// настроек через [`MessageFeed::set_table_row_separators`]).
@@ -223,7 +220,6 @@ impl MessageFeed {
             follow: true,
             show_thoughts: false,
             scrolled: false,
-            content_changed: false,
             // Зеркало дефолтов конфига (`InterfaceSettings::default`): до прихода
             // первого снимка настроек лента рисует как дефолтный конфиг.
             table_row_separators: false,
@@ -244,15 +240,6 @@ impl MessageFeed {
     /// `interface.render_mermaid`). Смена значения инвалидирует кэш через [`CacheKey`].
     pub fn set_render_mermaid(&mut self, on: bool) {
         self.render_mermaid = on;
-    }
-
-    /// Забирает (и сбрасывает) флаг «содержимое ленты перерисовано заново» (промах
-    /// кэша блока: стрим, новая заметка, правка истории). Экран по нему заказывает
-    /// полную перерисовку терминала, когда в ленте есть глифы из группы риска —
-    /// иначе на legacy-терминалах остаются артефакты от изменившихся строк с эмодзи
-    /// (прокрутка их «чинила», потому что была единственным триггером). См. spec §11.3.
-    pub fn take_content_changed(&mut self) -> bool {
-        std::mem::take(&mut self.content_changed)
     }
 
     /// Забирает (и сбрасывает) флаг «прокручено пользователем». Петля `app/runtime`
@@ -410,10 +397,6 @@ impl MessageFeed {
             let fp = message_fingerprint(item);
             let hit = self.cache.get(idx).is_some_and(|c| c.fingerprint == fp);
             if !hit {
-                // Содержимое блока изменилось (стрим, новая заметка, правка) — экран
-                // по этому флагу закажет полную перерисовку, если в ленте есть глифы
-                // из группы риска. См. [`Self::take_content_changed`].
-                self.content_changed = true;
                 // Стримящееся/изменённое сообщение — пересчитываем только его блок.
                 let block =
                     build_message_block(item, palette, width, self.show_thoughts, opts, loc);

@@ -1077,12 +1077,10 @@ fn feed_content_change_requests_full_redraw_only_with_risky_glyphs() {
     let id = gen_id();
     emoji.begin_generation(id);
     emoji.push_chunk(id, "смотри: 😀");
-    draw(&mut emoji, &mut term);
     assert!(
-        emoji.has_pending_full_redraw(),
-        "изменение ленты с эмодзи заказывает перерисовку"
+        emoji.take_full_redraw(),
+        "изменение ленты с эмодзи заказывает перерисовку — ДО отрисовки, чтобы          артефакт не мелькнул даже на кадр"
     );
-    assert!(emoji.take_full_redraw(), "запрос забирается");
     assert!(!emoji.take_full_redraw(), "флаг забирается однократно");
 
     // Повторная отрисовка без изменений — запрос не возобновляется (иначе петля
@@ -1100,6 +1098,49 @@ fn feed_content_change_requests_full_redraw_only_with_risky_glyphs() {
         emoji.take_full_redraw(),
         "добавленная заметка заказывает перерисовку"
     );
+}
+
+#[test]
+fn every_feed_mutator_marks_content_change() {
+    // Гейт на подход «флаг ставят мутаторы»: забытый вызов `mark_feed_changed` вернул
+    // бы мелькающий артефакт на legacy-терминалах. Лента с самого начала содержит
+    // эмодзи, поэтому ЛЮБОЕ изменение обязано заказать полную перерисовку.
+    let mut s = ChatScreen::new();
+    let id = gen_id();
+
+    s.activate_chat(id, "Чат".into(), &[Message::assistant("привет 😀")], "");
+    assert!(s.take_full_redraw(), "activate_chat");
+
+    s.push_user_message("вопрос".into());
+    assert!(s.take_full_redraw(), "push_user_message");
+
+    s.begin_generation(id);
+    assert!(s.take_full_redraw(), "begin_generation");
+
+    s.push_chunk(id, "ответ");
+    assert!(s.take_full_redraw(), "push_chunk");
+
+    s.push_thoughts(id, "мысль");
+    assert!(s.take_full_redraw(), "push_thoughts");
+
+    s.push_tool_call(id, "web_search".into(), "{}".into(), "ок".into());
+    assert!(s.take_full_redraw(), "push_tool_call");
+
+    s.continue_assistant(id);
+    assert!(s.take_full_redraw(), "continue_assistant");
+
+    s.rewrite_assistant(id);
+    assert!(s.take_full_redraw(), "rewrite_assistant");
+
+    s.push_note("заметка");
+    assert!(s.take_full_redraw(), "push_note");
+
+    s.push_error("ошибка");
+    assert!(s.take_full_redraw(), "push_error");
+
+    // Сворачивание «мыслей» (`Ctrl+T`) перекраивает все блоки — тоже изменение.
+    s.handle_key(KeyEvent::new(KeyCode::Char('t'), KeyModifiers::CONTROL));
+    assert!(s.take_full_redraw(), "Ctrl+T (сворачивание мыслей)");
 }
 
 #[test]

@@ -1,7 +1,6 @@
 //! Экран чата — отрисовка экрана чата. Часть модуля [`super`]; разбито из
 //! монолита chat.rs (см. docs/history/refactoring-god-objects.md, этап 2).
 
-use super::feed::feed_msg_has_risky_glyph;
 use super::popups::{render_confirm, render_help, render_suggest};
 use super::*;
 
@@ -110,14 +109,6 @@ impl ChatScreen {
             &self.palette,
             self.loc,
         );
-        // Содержимое ленты перерисовано заново (стрим, новая заметка, правка) — если в
-        // ней есть глифы из группы риска, следующий кадр делаем полной перерисовкой:
-        // на legacy-терминалах изменившиеся строки с эмодзи иначе оставляют артефакты
-        // (раньше их «чинила» только прокрутка — единственный триггер). Флаг ленты
-        // забираем всегда, чтобы он не протёк в следующий кадр. См. spec §11.3.
-        if self.feed_view.take_content_changed() && self.feed.iter().any(feed_msg_has_risky_glyph) {
-            self.full_redraw = true;
-        }
 
         if let Some(banner) = &self.rag {
             // Кадры спиннера — из набора глифов палитры (Брайль; компат — ASCII).
