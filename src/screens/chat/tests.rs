@@ -910,6 +910,36 @@ fn type_str(s: &mut ChatScreen, text: &str) {
 }
 
 #[test]
+fn input_with_risky_glyph_requests_full_redraw() {
+    // Правка ЛЕВЕЕ VS16-эмодзи в поле ввода двигает его на место чужого символа:
+    // diff шлёт хвостовую половину, бэкенд печатает её без `MoveTo` и ряд едет
+    // вправо (ratatui#2651, механика — в `shared::ui`). Поэтому поле с таким глифом
+    // рисуется полной перерисовкой; на обычном тексте — нет.
+    let mut s = ChatScreen::new();
+    type_str(&mut s, "hello");
+    assert!(
+        !s.take_full_redraw(),
+        "обычный текст полной перерисовки не требует"
+    );
+
+    type_str(&mut s, "\u{2764}\u{FE0F}");
+    assert!(s.take_full_redraw(), "поле с ❤️ требует полной перерисовки");
+
+    // И последующие правки тоже — глиф всё ещё в поле.
+    type_str(&mut s, "x");
+    assert!(s.take_full_redraw(), "правка при живом глифе — тоже");
+
+    // Очистка поля снимает требование.
+    s.handle_key(KeyEvent::new(KeyCode::Char('k'), KeyModifiers::CONTROL));
+    s.take_full_redraw();
+    type_str(&mut s, "plain");
+    assert!(
+        !s.take_full_redraw(),
+        "после очистки обычный текст перерисовки не требует"
+    );
+}
+
+#[test]
 fn ctrl_g_opens_suggestions_for_misspelled_word() {
     let mut s = ChatScreen::new();
     s.set_spellchecker(mk_checker());
