@@ -255,6 +255,15 @@ fn feed_scroll_requests_clear_only_with_vs16_emoji() {
     );
     // без новой прокрутки повторно не запрашиваем
     assert!(!emoji.take_feed_scrolled());
+
+    // Петля забирает флаг обобщённым `take_full_redraw` — источник ленты входит в него
+    // (иначе фикс VS16-артефакта тихо отвалился бы при добавлении второго источника).
+    emoji.handle_key(KeyEvent::new(KeyCode::PageUp, KeyModifiers::NONE));
+    assert!(
+        emoji.take_full_redraw(),
+        "прокрутка ленты с VS16 входит в take_full_redraw"
+    );
+    assert!(!emoji.take_full_redraw());
 }
 
 #[test]
@@ -1014,6 +1023,201 @@ fn esc_closes_emoji_picker_without_quitting() {
     assert_eq!(intent, None);
     assert!(s.emoji.is_none());
     assert!(s.input.is_empty(), "при отмене эмодзи не вставлен");
+}
+
+#[test]
+fn risky_glyph_detector_covers_emoji_classes_but_not_plain_text() {
+    use super::feed::is_risky_glyph;
+    // Классы риска: VS16, ZWJ, тон кожи, supplementary-пиктограммы, BMP-эмодзи ширины 2.
+    for c in [
+        '\u{FE0F}',
+        '\u{200D}',
+        '\u{1F3FD}',
+        '😀',
+        '🔥',
+        '✅',
+        '⭐',
+        '✨',
+    ] {
+        assert!(is_risky_glyph(c), "{c:?} должен считаться рискованным");
+    }
+    // Обычный текст, пунктуация, типографика и CJK — нет (иначе полная перерисовка
+    // гонялась бы на каждый чанк китайского/японского текста без всякой пользы).
+    for c in ['a', 'я', ' ', '·', '—', '→', '│', '█', '中', 'あ'] {
+        assert!(!is_risky_glyph(c), "{c:?} рискованным быть не должен");
+    }
+}
+
+#[test]
+fn feed_content_change_requests_full_redraw_only_with_risky_glyphs() {
+    use ratatui::Terminal;
+    use ratatui::backend::TestBackend;
+
+    // Артефакты на legacy-терминалах появлялись при ИЗМЕНЕНИИ содержимого (стрим,
+    // добавленная заметка), а «чинила» их только прокрутка — она была единственным
+    // триггером полной перерисовки. Теперь триггером стало и изменение ленты.
+    let draw = |s: &mut ChatScreen, term: &mut Terminal<TestBackend>| {
+        term.draw(|f| s.render(f)).unwrap();
+    };
+
+    // Чистый текст: стрим не требует полной перерисовки.
+    let mut plain = ChatScreen::new();
+    let mut term = Terminal::new(TestBackend::new(60, 16)).unwrap();
+    let id = gen_id();
+    plain.begin_generation(id);
+    plain.push_chunk(id, "обычный текст");
+    draw(&mut plain, &mut term);
+    assert!(
+        !plain.take_full_redraw(),
+        "на чистом тексте изменение ленты перерисовку не требует"
+    );
+
+    // Эмодзи в ленте: стрим требует.
+    let mut emoji = ChatScreen::new();
+    let id = gen_id();
+    emoji.begin_generation(id);
+    emoji.push_chunk(id, "смотри: 😀");
+    assert!(
+        emoji.take_full_redraw(),
+        "изменение ленты с эмодзи заказывает перерисовку — ДО отрисовки, чтобы          артефакт не мелькнул даже на кадр"
+    );
+    assert!(!emoji.take_full_redraw(), "флаг забирается однократно");
+
+    // Повторная отрисовка без изменений — запрос не возобновляется (иначе петля
+    // перерисовывала бы экран целиком вечно).
+    draw(&mut emoji, &mut term);
+    assert!(
+        !emoji.take_full_redraw(),
+        "без изменения содержимого перерисовка не нужна"
+    );
+
+    // Заметка в ленту (F5 «Переписка скопирована…») — тоже изменение содержимого.
+    emoji.push_note("Переписка скопирована в буфер обмена");
+    draw(&mut emoji, &mut term);
+    assert!(
+        emoji.take_full_redraw(),
+        "добавленная заметка заказывает перерисовку"
+    );
+}
+
+#[test]
+fn every_feed_mutator_marks_content_change() {
+    // Гейт на подход «флаг ставят мутаторы»: забытый вызов `mark_feed_changed` вернул
+    // бы мелькающий артефакт на legacy-терминалах. Лента с самого начала содержит
+    // эмодзи, поэтому ЛЮБОЕ изменение обязано заказать полную перерисовку.
+    let mut s = ChatScreen::new();
+    let id = gen_id();
+
+    s.activate_chat(id, "Чат".into(), &[Message::assistant("привет 😀")], "");
+    assert!(s.take_full_redraw(), "activate_chat");
+
+    s.push_user_message("вопрос".into());
+    assert!(s.take_full_redraw(), "push_user_message");
+
+    s.begin_generation(id);
+    assert!(s.take_full_redraw(), "begin_generation");
+
+    s.push_chunk(id, "ответ");
+    assert!(s.take_full_redraw(), "push_chunk");
+
+    s.push_thoughts(id, "мысль");
+    assert!(s.take_full_redraw(), "push_thoughts");
+
+    s.push_tool_call(id, "web_search".into(), "{}".into(), "ок".into());
+    assert!(s.take_full_redraw(), "push_tool_call");
+
+    s.continue_assistant(id);
+    assert!(s.take_full_redraw(), "continue_assistant");
+
+    s.rewrite_assistant(id);
+    assert!(s.take_full_redraw(), "rewrite_assistant");
+
+    s.push_note("заметка");
+    assert!(s.take_full_redraw(), "push_note");
+
+    s.push_error("ошибка");
+    assert!(s.take_full_redraw(), "push_error");
+
+    // Сворачивание «мыслей» (`Ctrl+T`) перекраивает все блоки — тоже изменение.
+    s.handle_key(KeyEvent::new(KeyCode::Char('t'), KeyModifiers::CONTROL));
+    assert!(s.take_full_redraw(), "Ctrl+T (сворачивание мыслей)");
+}
+
+#[test]
+fn suggest_popup_actions_request_full_redraw() {
+    // Тот же класс, что у попапа эмодзи: пункт «➕ добавить в словарь» несёт широкий
+    // глиф, выделенная строка списка рисуется подложкой, а её хвостовую ячейку diff
+    // не перерисовывает → на conhost оставался бы след подсветки.
+    let mut s = ChatScreen::new();
+    s.set_spellchecker(mk_checker());
+    type_str(&mut s, "helo");
+    s.open_suggestions();
+    assert!(s.suggest.is_some(), "попап подсказок открылся");
+    s.take_full_redraw(); // сбросить флаг от набора текста
+
+    // Сдвиг выделения — подложка уезжает с прежней строки.
+    s.handle_key(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE));
+    assert!(s.take_full_redraw(), "сдвиг выделения требует перерисовки");
+    assert!(!s.take_full_redraw(), "флаг забирается однократно");
+
+    // Клавиша, которая попап не меняет, перерисовку не просит.
+    s.handle_key(KeyEvent::new(KeyCode::Left, KeyModifiers::NONE));
+    assert!(
+        !s.take_full_redraw(),
+        "no-op клавиша перерисовку не требует"
+    );
+
+    // Закрытие отменой (`Esc`).
+    s.handle_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
+    assert!(s.suggest.is_none());
+    assert!(s.take_full_redraw(), "отмена закрывает попап → перерисовка");
+
+    // Закрытие применением подсказки (`Enter`).
+    s.open_suggestions();
+    s.take_full_redraw();
+    s.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+    assert!(s.suggest.is_none());
+    assert!(
+        s.take_full_redraw(),
+        "применение закрывает попап → перерисовка"
+    );
+}
+
+#[test]
+fn emoji_picker_actions_request_full_redraw() {
+    // Широкий глиф эмодзи оставляет на conhost «висячую» хвостовую половину, когда
+    // уходит с прежнего места: поячеечный diff её не перерисовывает (канарейка на
+    // механику — в `widgets::emoji_picker`). Поэтому и закрытие попапа, и сдвиг
+    // выделения просят у петли полную перерисовку терминала.
+    let mut s = ChatScreen::new();
+    assert!(!s.take_full_redraw(), "без попапа перерисовка не нужна");
+
+    // Открытие само по себе перерисовки не требует — глиф ниоткуда не уходит.
+    s.handle_key(KeyEvent::new(KeyCode::Char('b'), KeyModifiers::CONTROL));
+    assert!(
+        !s.take_full_redraw(),
+        "открытие попапа перерисовку не требует"
+    );
+
+    // Сдвиг выделения — подложка уезжает с прежней ячейки.
+    s.handle_key(KeyEvent::new(KeyCode::Right, KeyModifiers::NONE));
+    assert!(s.take_full_redraw(), "сдвиг выделения требует перерисовки");
+    assert!(!s.take_full_redraw(), "флаг забирается однократно");
+
+    // Закрытие вставкой (`Enter`).
+    s.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+    assert!(s.emoji.is_none());
+    assert!(
+        s.take_full_redraw(),
+        "вставка закрывает попап → перерисовка"
+    );
+
+    // Закрытие отменой (`Esc`).
+    s.handle_key(KeyEvent::new(KeyCode::Char('b'), KeyModifiers::CONTROL));
+    s.take_full_redraw();
+    s.handle_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
+    assert!(s.emoji.is_none());
+    assert!(s.take_full_redraw(), "отмена закрывает попап → перерисовка");
 }
 
 #[test]

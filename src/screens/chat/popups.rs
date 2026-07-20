@@ -71,8 +71,15 @@ impl ChatScreen {
                 popup.selected = (popup.selected + 1).min(popup.items.len().saturating_sub(1));
             }
             KeyCode::Enter => self.apply_suggestion(),
-            _ => {}
+            // Прочие клавиши попап не меняют (и не закрывают) — перерисовка не нужна.
+            _ => return,
         }
+        // Действие сдвинуло выделение или закрыло попап, а значит подложка выделения
+        // ушла с широкого глифа «➕» пункта «добавить в словарь»: его хвостовую ячейку
+        // поячеечный diff не перерисовывает (подложка `List` на неё не попадает —
+        // проверено), и на conhost остаётся половина подсветки. См.
+        // [`Self::request_full_redraw`] — там разобрана механика.
+        self.request_full_redraw();
     }
 
     /// Применяет выбранный пункт попапа подсказок и закрывает его.
@@ -104,15 +111,24 @@ impl ChatScreen {
         let Some(picker) = &mut self.emoji else {
             return;
         };
-        match picker.on_key(key) {
+        let action = picker.on_key(key);
+        // Выделение читаем сразу (после `on_key` — оно могло сдвинуться), чтобы заём
+        // `self.emoji` закончился здесь и ниже был доступен весь `self`.
+        let selected = picker.selected();
+        // Любое действие в попапе убирает широкий глиф эмодзи с прежнего места
+        // (закрытие — весь попап, стрелки — подложку выделения), а хвостовую половину
+        // такого глифа поячеечный diff не перерисовывает → на conhost остаётся
+        // артефакт. Просим полную перерисовку. См. [`Self::request_full_redraw`].
+        self.request_full_redraw();
+        match action {
             EmojiPickerAction::None => {}
             EmojiPickerAction::Cancel => {
                 // Запоминаем выделение и при отмене (попап помнит, где был курсор).
-                self.emoji_last = picker.selected();
+                self.emoji_last = selected;
                 self.emoji = None;
             }
             EmojiPickerAction::Pick(emoji) => {
-                self.emoji_last = picker.selected();
+                self.emoji_last = selected;
                 self.emoji = None;
                 // insert_str безопасен для многоскалярных эмодзи (`❤️`, `👍🏽`) и
                 // ставит курсор за вставленным.
