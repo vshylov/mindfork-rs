@@ -278,6 +278,10 @@ fn run_loop(
     // и неровно, хотя CPU ~0% (diff буфера пустой). Анимаций по таймеру в рендере
     // нет, поэтому простаивающие тики перерисовки не нужны. См. spec §11.
     let mut dirty = true;
+    // Какой экран был НАРИСОВАН прошлым кадром: смена требует полной перерисовки
+    // (см. ниже, у `prime_full_redraw`). Считаем именно по факту отрисовки —
+    // переключение «туда и обратно» между кадрами визуально ничего не меняет.
+    let mut last_screen = std::mem::discriminant(&active);
     while !quit {
         while let Ok(event) = evt_rx.try_recv() {
             apply_event(&mut screen, &mut active, &mut clipboard, cmd_tx, event);
@@ -336,31 +340,45 @@ fn run_loop(
             // незнакомый приватный режим — мягкая деградация (прыжок остаётся,
             // как раньше). Ошибка draw пробрасывается ПОСЛЕ снятия режима, чтобы
             // терминал не остался в буферизации. См. spec §4.4.1.
+            // ПОЛНАЯ перерисовка нужна там, где широкий глиф уходит с места или
+            // появляется на новом, оставляя «висячий» артефакт: поячеечный diff в
+            // одних случаях не шлёт хвостовую половину такого глифа, в других шлёт её
+            // без `MoveTo` и сдвигает ряд (открытый ratatui#2651). Нужно переписать
+            // КАЖДУЮ ячейку явно, включая пробелы в пустых местах.
+            //
+            // Механика «как» — в `ui::prime_full_redraw` (маркер в буфер +
+            // `swap_buffers` без вывода на экран, вместо `terminal.clear()` с его
+            // мигающим `ESC[2J`). Внутренний swap в `draw` восстанавливает инвариант
+            // «задний буфер = экран».
+            //
+            // Два заказчика:
+            //  * экран чата — прокрутка/изменение ленты с глифами группы риска и
+            //    закрытие попапов эмодзи/орфографии (`take_full_redraw`);
+            //  * СМЕНА ЭКРАНА — кадр целиком меняет содержимое, и VS16-глиф
+            //    (`❤️`, `🗂️`) на новом экране оказывается на месте чужого символа.
+            //    Тогда diff шлёт его хвост (символ-то изменился), бэкенд печатает
+            //    половину без `MoveTo`, и остаток ряда едет вправо — после ленты с
+            //    `❤️` возврат из списка чатов/`F3` давал лишний пробел, пропадавший
+            //    только по прокрутке (она эту же перерисовку и заказывает).
+            //    Проверено `ui::screen_switch_emits_vs16_tail_without_full_redraw`.
+            //
+            // Вне этих случаев на чистом тексте всё идёт обычным diff'ом.
+            // См. spec §11.3, §11.5.
+            let requested = if matches!(active, ActiveScreen::Chat) {
+                screen.take_full_redraw()
+            } else {
+                false
+            };
+            let now_screen = std::mem::discriminant(&active);
+            let switched = now_screen != last_screen;
+            last_screen = now_screen;
+            if requested || switched {
+                crate::shared::ui::prime_full_redraw(terminal.current_buffer_mut());
+                terminal.swap_buffers();
+            }
             let _ = execute!(stdout(), BeginSynchronizedUpdate);
             let drawn = match &mut active {
-                ActiveScreen::Chat => {
-                    // ПОЛНАЯ перерисовка нужна там, где широкий глиф уходит с места и
-                    // оставляет «висячий» артефакт: прокрутка ленты с VS16-эмодзи
-                    // (`🕸️`/`🗂️`) и действия в попапах эмодзи/орфографии (хвостовую
-                    // половину такого глифа поячеечный diff не перерисовывает — см.
-                    // `ChatScreen::request_full_redraw`). Нужно переписать КАЖДУЮ
-                    // ячейку явно, включая пробелы в пустых местах.
-                    //
-                    // Механика «как» — в `ui::prime_full_redraw` (маркер в буфер +
-                    // `swap_buffers` без вывода на экран, вместо `terminal.clear()` с
-                    // его мигающим `ESC[2J`). Внутренний swap в `draw` восстанавливает
-                    // инвариант «задний буфер = экран».
-                    //
-                    // Делаем это только когда артефакт реально возможен
-                    // (`take_full_redraw` — прокрутка ленты с VS16 либо действие в
-                    // попапе); на чистом тексте прокрутка не перерисовывает всё.
-                    // См. spec §11.3, §11.5.
-                    if screen.take_full_redraw() {
-                        crate::shared::ui::prime_full_redraw(terminal.current_buffer_mut());
-                        terminal.swap_buffers();
-                    }
-                    terminal.draw(|frame| screen.render(frame))
-                }
+                ActiveScreen::Chat => terminal.draw(|frame| screen.render(frame)),
                 ActiveScreen::ChatList(list) => terminal.draw(|frame| list.render(frame)),
                 ActiveScreen::Settings(settings) => terminal.draw(|frame| settings.render(frame)),
                 ActiveScreen::SelfModel(view) => terminal.draw(|frame| view.render(frame)),

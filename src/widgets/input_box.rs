@@ -261,6 +261,13 @@ impl InputBox {
             .find(|c| !c.is_whitespace())
     }
 
+    /// Есть ли в поле символ, удовлетворяющий предикату. Потоково, без сборки
+    /// `text()` — зовётся на каждую правку (см. `ChatScreen::mark_input_changed`).
+    /// Предикат передаёт вызывающий, поэтому виджет не знает про верхние слои (FSD).
+    pub fn any_char(&self, pred: impl Fn(char) -> bool) -> bool {
+        self.lines.iter().flat_map(|l| l.iter()).copied().any(pred)
+    }
+
     /// Число логических строк. Высоту поля теперь считает [`Self::visual_line_count`]
     /// (учитывает перенос); метод оставлен как естественный аккомпанемент и для тестов.
     #[allow(dead_code)]

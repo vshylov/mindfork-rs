@@ -334,55 +334,99 @@ mod tests {
     }
 
     #[test]
-    fn wide_glyph_trailing_cell_is_not_repainted_by_plain_diff() {
-        // Канарейка на корневую причину «висячего» артефакта попапа: широкий эмодзи
-        // занимает ДВЕ ячейки — свою и хвостовую, которую ratatui сбрасывает в дефолт.
-        // Когда попап закрывается, поячеечный diff видит хвостовую ячейку неизменной
-        // (дефолт → дефолт) и НЕ шлёт её терминалу, а conhost вторую половину широкого
-        // глифа сам не чистит → на экране остаётся её кусок (заметен по фону выделения).
-        // Отсюда — запрос полной перерисовки в `ChatScreen::handle_emoji_key`.
+    fn upstream_repaints_styled_tail_on_close_but_not_on_selection_move() {
+        // Канарейка на границу апстрим-фикса. Широкий эмодзи занимает ДВЕ ячейки —
+        // свою (`символ`) и хвостовую, которую ratatui сбрасывает в дефолт. conhost
+        // вторую половину сам не чистит, поэтому её обязан переписать diff.
         //
-        // Если тест упадёт: апстрим (ratatui) стал перерисовывать хвостовые ячейки сам —
-        // обходной путь с полной перерисовкой можно пересмотреть.
+        // ratatui-core 0.1.2 (ratatui#2585) научился слать хвост, но ТОЛЬКО когда
+        // широкий глиф сменился более узким содержимым И нёс стиль, заметный на
+        // пустой ячейке (фон, REVERSED/UNDERLINED/BLINK/CROSSED_OUT). Тест пинит обе
+        // стороны этой границы:
+        //
+        //   (A) закрытие попапа — фикс работает, хвост выделенной ячейки приходит;
+        //   (B) сдвиг выделения — глиф остаётся широким (`prev_width > next_width`
+        //       не выполняется), хвост НЕ приходит; фон уезжает с прежней ячейки, а
+        //       её половина остаётся на conhost.
+        //
+        // Из-за (B) `ChatScreen::handle_emoji_key` по-прежнему просит полную
+        // перерисовку. Если упадёт часть (B) — апстрим закрыл и этот случай, обходной
+        // путь можно снимать. Если упадёт (A) — апстрим регрессировал.
         use ratatui::Terminal;
         use ratatui::backend::TestBackend;
         use ratatui::buffer::Buffer;
+        use ratatui::style::Color;
 
-        let picker = EmojiPickerState::new();
-        let mut term = Terminal::new(TestBackend::new(60, 10)).unwrap();
-        term.draw(|f| picker.render(f, f.area(), &Palette::default(), ru()))
-            .unwrap();
-        let painted = term.backend().buffer().clone();
+        let render = |state: &EmojiPickerState| {
+            let mut term = Terminal::new(TestBackend::new(60, 10)).unwrap();
+            term.draw(|f| state.render(f, f.area(), &Palette::default(), ru()))
+                .unwrap();
+            term.backend().buffer().clone()
+        };
+
+        let painted = render(&EmojiPickerState::new());
         let area = painted.area;
 
-        // Ячейка широкого эмодзи (выделенного — у него ещё и фон) и её хвост.
+        // Выделенная ячейка: широкий эмодзи с фоном подложки.
         let (x, y) = (area.top()..area.bottom())
             .flat_map(|y| (area.left()..area.right()).map(move |x| (x, y)))
             .find(|&(x, y)| painted[(x, y)].symbol() == EMOJIS[0])
             .expect("эмодзи не найден в отрисованной сетке");
+        assert_ne!(painted[(x, y)].bg, Color::Reset, "выделение несёт фон");
         assert_eq!(
             painted[(x + 1, y)].symbol(),
             " ",
             "хвостовая ячейка широкого глифа сброшена в дефолт"
         );
 
-        // Кадр после закрытия попапа — пустой экран.
+        // (A) Закрытие попапа: глиф сменился пустотой → апстрим шлёт хвост сам.
         let closed = Buffer::empty(area);
-        let plain = painted.diff(&closed);
         assert!(
-            !plain.iter().any(|&(ux, uy, _)| (ux, uy) == (x + 1, y)),
-            "хвостовую ячейку обычный diff не перерисовывает — отсюда артефакт"
-        );
-
-        // Полная перерисовка (буфер-сентинел «\0», как в `app/runtime`) её достаёт.
-        let mut sentinel = painted.clone();
-        crate::shared::ui::prime_full_redraw(&mut sentinel);
-        assert!(
-            sentinel
+            painted
                 .diff(&closed)
                 .iter()
                 .any(|&(ux, uy, _)| (ux, uy) == (x + 1, y)),
-            "полная перерисовка обязана переписать хвостовую ячейку"
+            "ratatui ≥ 0.1.2 обязан слать хвост исчезнувшего стилизованного глифа"
+        );
+
+        // (B) Сдвиг выделения: глиф на месте и остаётся широким — хвост не придёт.
+        let moved = render(&EmojiPickerState::with_selected(1));
+        assert_eq!(
+            moved[(x, y)].bg,
+            Color::Reset,
+            "ячейка потеряла подложку выделения"
+        );
+        assert!(
+            !painted
+                .diff(&moved)
+                .iter()
+                .any(|&(ux, uy, _)| (ux, uy) == (x + 1, y)),
+            "апстрим закрыл и сдвиг выделения — полную перерисовку можно снимать"
+        );
+
+        // Что даёт полная перерисовка (буфер-сентинел, как в `app/runtime`):
+        let tail_after_full_redraw = |next: &Buffer| {
+            let mut sentinel = painted.clone();
+            crate::shared::ui::prime_full_redraw(&mut sentinel);
+            sentinel
+                .diff(next)
+                .iter()
+                .any(|&(ux, uy, _)| (ux, uy) == (x + 1, y))
+        };
+        // при закрытии — достаёт хвост (в т.ч. у НЕстилизованных глифов, которых
+        // апстрим не шлёт): страховка сверх фикса 0.1.2;
+        assert!(
+            tail_after_full_redraw(&closed),
+            "полная перерисовка обязана переписать хвостовую ячейку при закрытии"
+        );
+        // при сдвиге — НЕ достаёт: глиф остался широким, а писать во вторую половину
+        // широкого глифа сентинелу нельзя (бэкенд напечатал бы её без `MoveTo` и
+        // сдвинул ряд — ratatui#2651). Значит для сдвига полная перерисовка ничего
+        // не добавляет к обычному diff'у: подложку снимает перепечатка самого глифа
+        // в ячейке `x`, которая приходит и так.
+        assert!(
+            !tail_after_full_redraw(&moved),
+            "сентинел не пишет во вторую половину широкого глифа (ratatui#2651)"
         );
     }
 
