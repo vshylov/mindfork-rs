@@ -258,6 +258,61 @@ mod tests {
     }
 
     #[test]
+    fn wide_glyph_trailing_cell_is_not_repainted_by_plain_diff() {
+        // Канарейка на корневую причину «висячего» артефакта попапа: широкий эмодзи
+        // занимает ДВЕ ячейки — свою и хвостовую, которую ratatui сбрасывает в дефолт.
+        // Когда попап закрывается, поячеечный diff видит хвостовую ячейку неизменной
+        // (дефолт → дефолт) и НЕ шлёт её терминалу, а conhost вторую половину широкого
+        // глифа сам не чистит → на экране остаётся её кусок (заметен по фону выделения).
+        // Отсюда — запрос полной перерисовки в `ChatScreen::handle_emoji_key`.
+        //
+        // Если тест упадёт: апстрим (ratatui) стал перерисовывать хвостовые ячейки сам —
+        // обходной путь с полной перерисовкой можно пересмотреть.
+        use ratatui::Terminal;
+        use ratatui::backend::TestBackend;
+        use ratatui::buffer::Buffer;
+
+        let picker = EmojiPickerState::new();
+        let mut term = Terminal::new(TestBackend::new(60, 10)).unwrap();
+        term.draw(|f| picker.render(f, f.area(), &Palette::default(), ru()))
+            .unwrap();
+        let painted = term.backend().buffer().clone();
+        let area = painted.area;
+
+        // Ячейка широкого эмодзи (выделенного — у него ещё и фон) и её хвост.
+        let (x, y) = (area.top()..area.bottom())
+            .flat_map(|y| (area.left()..area.right()).map(move |x| (x, y)))
+            .find(|&(x, y)| painted[(x, y)].symbol() == EMOJIS[0])
+            .expect("эмодзи не найден в отрисованной сетке");
+        assert_eq!(
+            painted[(x + 1, y)].symbol(),
+            " ",
+            "хвостовая ячейка широкого глифа сброшена в дефолт"
+        );
+
+        // Кадр после закрытия попапа — пустой экран.
+        let closed = Buffer::empty(area);
+        let plain = painted.diff(&closed);
+        assert!(
+            !plain.iter().any(|&(ux, uy, _)| (ux, uy) == (x + 1, y)),
+            "хвостовую ячейку обычный diff не перерисовывает — отсюда артефакт"
+        );
+
+        // Полная перерисовка (буфер-сентинел «\0», как в `app/runtime`) её достаёт.
+        let mut sentinel = painted.clone();
+        for cell in sentinel.content.iter_mut() {
+            cell.set_symbol("\u{0}");
+        }
+        assert!(
+            sentinel
+                .diff(&closed)
+                .iter()
+                .any(|&(ux, uy, _)| (ux, uy) == (x + 1, y)),
+            "полная перерисовка обязана переписать хвостовую ячейку"
+        );
+    }
+
+    #[test]
     fn render_does_not_panic() {
         use ratatui::Terminal;
         use ratatui::backend::TestBackend;

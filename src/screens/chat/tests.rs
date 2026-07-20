@@ -255,6 +255,15 @@ fn feed_scroll_requests_clear_only_with_vs16_emoji() {
     );
     // без новой прокрутки повторно не запрашиваем
     assert!(!emoji.take_feed_scrolled());
+
+    // Петля забирает флаг обобщённым `take_full_redraw` — источник ленты входит в него
+    // (иначе фикс VS16-артефакта тихо отвалился бы при добавлении второго источника).
+    emoji.handle_key(KeyEvent::new(KeyCode::PageUp, KeyModifiers::NONE));
+    assert!(
+        emoji.take_full_redraw(),
+        "прокрутка ленты с VS16 входит в take_full_redraw"
+    );
+    assert!(!emoji.take_full_redraw());
 }
 
 #[test]
@@ -1014,6 +1023,43 @@ fn esc_closes_emoji_picker_without_quitting() {
     assert_eq!(intent, None);
     assert!(s.emoji.is_none());
     assert!(s.input.is_empty(), "при отмене эмодзи не вставлен");
+}
+
+#[test]
+fn emoji_picker_actions_request_full_redraw() {
+    // Широкий глиф эмодзи оставляет на conhost «висячую» хвостовую половину, когда
+    // уходит с прежнего места: поячеечный diff её не перерисовывает (канарейка на
+    // механику — в `widgets::emoji_picker`). Поэтому и закрытие попапа, и сдвиг
+    // выделения просят у петли полную перерисовку терминала.
+    let mut s = ChatScreen::new();
+    assert!(!s.take_full_redraw(), "без попапа перерисовка не нужна");
+
+    // Открытие само по себе перерисовки не требует — глиф ниоткуда не уходит.
+    s.handle_key(KeyEvent::new(KeyCode::Char('b'), KeyModifiers::CONTROL));
+    assert!(
+        !s.take_full_redraw(),
+        "открытие попапа перерисовку не требует"
+    );
+
+    // Сдвиг выделения — подложка уезжает с прежней ячейки.
+    s.handle_key(KeyEvent::new(KeyCode::Right, KeyModifiers::NONE));
+    assert!(s.take_full_redraw(), "сдвиг выделения требует перерисовки");
+    assert!(!s.take_full_redraw(), "флаг забирается однократно");
+
+    // Закрытие вставкой (`Enter`).
+    s.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+    assert!(s.emoji.is_none());
+    assert!(
+        s.take_full_redraw(),
+        "вставка закрывает попап → перерисовка"
+    );
+
+    // Закрытие отменой (`Esc`).
+    s.handle_key(KeyEvent::new(KeyCode::Char('b'), KeyModifiers::CONTROL));
+    s.take_full_redraw();
+    s.handle_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
+    assert!(s.emoji.is_none());
+    assert!(s.take_full_redraw(), "отмена закрывает попап → перерисовка");
 }
 
 #[test]
