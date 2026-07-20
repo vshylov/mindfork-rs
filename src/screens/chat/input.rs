@@ -1,7 +1,7 @@
 //! Экран чата — обработка клавиш/мыши/вставки, черновик, орфография, команды. Часть модуля [`super`]; разбито из
 //! монолита chat.rs (см. docs/history/refactoring-god-objects.md, этап 2).
 
-use super::feed::feed_msg_has_vs16;
+use super::feed::feed_msg_has_risky_glyph;
 use super::*;
 
 impl ChatScreen {
@@ -293,7 +293,17 @@ impl ChatScreen {
         if !self.feed_view.take_scrolled() {
             return false;
         }
-        self.feed.iter().any(feed_msg_has_vs16)
+        self.feed.iter().any(feed_msg_has_risky_glyph)
+    }
+
+    /// Ждёт ли экран полной перерисовки следующим кадром (не забирая запрос).
+    ///
+    /// Нужен петле `app/runtime`: запрос от **изменения содержимого** ленты ставится
+    /// уже в ходе отрисовки кадра (промах кэша виден только там), поэтому исполнить
+    /// его можно лишь следующим кадром. Без этого «пробуждения» последний чанк стрима
+    /// оставил бы артефакт до ближайшего постороннего события.
+    pub fn has_pending_full_redraw(&self) -> bool {
+        self.full_redraw
     }
 
     /// Запрашивает полную перерисовку терминала следующим кадром.

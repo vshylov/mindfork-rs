@@ -1026,6 +1026,83 @@ fn esc_closes_emoji_picker_without_quitting() {
 }
 
 #[test]
+fn risky_glyph_detector_covers_emoji_classes_but_not_plain_text() {
+    use super::feed::is_risky_glyph;
+    // Классы риска: VS16, ZWJ, тон кожи, supplementary-пиктограммы, BMP-эмодзи ширины 2.
+    for c in [
+        '\u{FE0F}',
+        '\u{200D}',
+        '\u{1F3FD}',
+        '😀',
+        '🔥',
+        '✅',
+        '⭐',
+        '✨',
+    ] {
+        assert!(is_risky_glyph(c), "{c:?} должен считаться рискованным");
+    }
+    // Обычный текст, пунктуация, типографика и CJK — нет (иначе полная перерисовка
+    // гонялась бы на каждый чанк китайского/японского текста без всякой пользы).
+    for c in ['a', 'я', ' ', '·', '—', '→', '│', '█', '中', 'あ'] {
+        assert!(!is_risky_glyph(c), "{c:?} рискованным быть не должен");
+    }
+}
+
+#[test]
+fn feed_content_change_requests_full_redraw_only_with_risky_glyphs() {
+    use ratatui::Terminal;
+    use ratatui::backend::TestBackend;
+
+    // Артефакты на legacy-терминалах появлялись при ИЗМЕНЕНИИ содержимого (стрим,
+    // добавленная заметка), а «чинила» их только прокрутка — она была единственным
+    // триггером полной перерисовки. Теперь триггером стало и изменение ленты.
+    let draw = |s: &mut ChatScreen, term: &mut Terminal<TestBackend>| {
+        term.draw(|f| s.render(f)).unwrap();
+    };
+
+    // Чистый текст: стрим не требует полной перерисовки.
+    let mut plain = ChatScreen::new();
+    let mut term = Terminal::new(TestBackend::new(60, 16)).unwrap();
+    let id = gen_id();
+    plain.begin_generation(id);
+    plain.push_chunk(id, "обычный текст");
+    draw(&mut plain, &mut term);
+    assert!(
+        !plain.take_full_redraw(),
+        "на чистом тексте изменение ленты перерисовку не требует"
+    );
+
+    // Эмодзи в ленте: стрим требует.
+    let mut emoji = ChatScreen::new();
+    let id = gen_id();
+    emoji.begin_generation(id);
+    emoji.push_chunk(id, "смотри: 😀");
+    draw(&mut emoji, &mut term);
+    assert!(
+        emoji.has_pending_full_redraw(),
+        "изменение ленты с эмодзи заказывает перерисовку"
+    );
+    assert!(emoji.take_full_redraw(), "запрос забирается");
+    assert!(!emoji.take_full_redraw(), "флаг забирается однократно");
+
+    // Повторная отрисовка без изменений — запрос не возобновляется (иначе петля
+    // перерисовывала бы экран целиком вечно).
+    draw(&mut emoji, &mut term);
+    assert!(
+        !emoji.take_full_redraw(),
+        "без изменения содержимого перерисовка не нужна"
+    );
+
+    // Заметка в ленту (F5 «Переписка скопирована…») — тоже изменение содержимого.
+    emoji.push_note("Переписка скопирована в буфер обмена");
+    draw(&mut emoji, &mut term);
+    assert!(
+        emoji.take_full_redraw(),
+        "добавленная заметка заказывает перерисовку"
+    );
+}
+
+#[test]
 fn suggest_popup_actions_request_full_redraw() {
     // Тот же класс, что у попапа эмодзи: пункт «➕ добавить в словарь» несёт широкий
     // глиф, выделенная строка списка рисуется подложкой, а её хвостовую ячейку diff
