@@ -306,6 +306,9 @@ src/
    │                       McpConnection (транспорт, тестируем на duplex) + McpClient
    │                       (подпроцесс: монитор kill/exited, Job Object kill-on-close,
    │                       запрет .bat/.cmd). См. spec §9.6, ADR 0007
+   ├─ ui.rs                мелкие помощники отрисовки: dim_background, скроллбар,
+   │                       prime_full_redraw (сентинел полной перерисовки — пробел +
+   │                       модификатор-маркер, не трогает хвосты широких глифов)
    ├─ wrap.rs              перенос слов по колонкам (unicode-width)
    ├─ i18n.rs              язык каркаса агента (ось A) + UI (ось B): Lang(Ru/En/Ext)/
    │                       Locale/t/tf, вшитые locales/{ru,en}.json + внешние

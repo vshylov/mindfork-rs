@@ -319,9 +319,7 @@ mod tests {
             .unwrap();
         let painted = term.backend().buffer().clone();
         let mut sentinel = painted.clone();
-        for cell in sentinel.content.iter_mut() {
-            cell.set_symbol("\u{0}");
-        }
+        crate::shared::ui::prime_full_redraw(&mut sentinel);
         for (x, y, _) in sentinel.diff(&painted) {
             if x == 0 {
                 continue;
@@ -378,9 +376,7 @@ mod tests {
 
         // Полная перерисовка (буфер-сентинел «\0», как в `app/runtime`) её достаёт.
         let mut sentinel = painted.clone();
-        for cell in sentinel.content.iter_mut() {
-            cell.set_symbol("\u{0}");
-        }
+        crate::shared::ui::prime_full_redraw(&mut sentinel);
         assert!(
             sentinel
                 .diff(&closed)

@@ -2,6 +2,7 @@
 //! не зависящие от верхних слоёв.
 
 use ratatui::Frame;
+use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
 use ratatui::style::Modifier;
 use ratatui::widgets::{Scrollbar, ScrollbarOrientation, ScrollbarState};
@@ -35,6 +36,42 @@ pub fn dim_background(frame: &mut Frame, palette: &Palette) {
         }
     }
 }
+
+/// Готовит буфер к **полной перерисовке** следующего кадра: делает каждую ячейку
+/// заведомо отличной от того, что нарисует кадр, чтобы поячеечный diff `ratatui`
+/// переписал экран целиком — включая пробелы в пустых местах — и стёр «висячие»
+/// артефакты терминала.
+///
+/// Вызывается на буфере, который затем уходит в задний через `swap_buffers()`
+/// **без вывода на экран**: сам маркер на терминал не попадает, он лишь база для
+/// diff'а. Обычной очисткой (`terminal.clear()`) не пользуемся — она шлёт `ESC[2J`,
+/// и экран на миг гаснет (мигание).
+///
+/// **Почему пробел + `HIDDEN`, а не символ-заглушка.** Раньше маркером был символ
+/// `"\0"`, но это ломало ряды с VS16-эмодзи (`🗂️`, `❤️`): для такого кластера
+/// `ratatui` **дополнительно шлёт его хвостовую ячейку** (их обход терминалов, не
+/// очищающих вторую половину широкого глифа), причём **только если её символ
+/// изменился** — а `"\0"` менял его всегда. Бэкенд `crossterm` при этом ведёт
+/// позицию по номеру ячейки, без учёта ширины глифа (`x == last.x + 1` → без
+/// `MoveTo`), поэтому такой хвост печатался колонкой правее и сдвигал остаток ряда:
+/// у следующего широкого глифа затиралась правая половина (терминал гасил его
+/// целиком), рамка панели уезжала наружу.
+///
+/// Пробел совпадает с содержимым хвостовой ячейки (её `ratatui` сбрасывает в
+/// дефолт), поэтому такие ячейки в diff не попадают — и сдвига не возникает. Всё
+/// остальное отличается модификатором [`SENTINEL_MODIFIER`], которого в интерфейсе
+/// не бывает (закреплено тестом), так что полнота перерисовки не страдает.
+pub fn prime_full_redraw(buf: &mut Buffer) {
+    for cell in buf.content.iter_mut() {
+        cell.set_symbol(" ");
+        cell.modifier = SENTINEL_MODIFIER;
+    }
+}
+
+/// Модификатор-маркер для [`prime_full_redraw`]: в интерфейсе не используется
+/// (палитра и виджеты обходятся `DIM`/`BOLD`/`ITALIC`/`UNDERLINED`/`REVERSED`),
+/// поэтому ни одна ячейка реального кадра с ним не совпадёт.
+const SENTINEL_MODIFIER: Modifier = Modifier::HIDDEN;
 
 /// Рисует вертикальный скроллбар в **правой колонке** `area`, когда содержимое
 /// не помещается по высоте (`total > viewport`); иначе — no-op (бар не рисуется,
@@ -163,6 +200,72 @@ mod tests {
             render_scrollbar(f, zero, 10, 2, 0, false, &palette);
         })
         .unwrap();
+    }
+
+    #[test]
+    fn prime_full_redraw_repaints_all_but_wide_glyph_tails() {
+        // Гейт на устройство сентинела (регрессия «ряд съезжает вправо на VS16»).
+        // Кадр: VS16-эмодзи с текстом после него — как в ленте.
+        use ratatui::style::Style;
+        use ratatui::text::{Line, Span};
+        use ratatui::widgets::{Paragraph, Widget};
+        use unicode_width::UnicodeWidthStr;
+
+        let area = Rect::new(0, 0, 20, 2);
+        let mut frame = Buffer::empty(area);
+        Paragraph::new(Line::from(vec![Span::styled(
+            "a 🗂\u{FE0F} хвост",
+            Style::new().fg(ratatui::style::Color::Blue),
+        )]))
+        .render(area, &mut frame);
+
+        let mut sentinel = frame.clone();
+        prime_full_redraw(&mut sentinel);
+        let updates = sentinel.diff(&frame);
+
+        // (1) Ни одно обновление не целится во вторую половину широкого глифа —
+        // иначе бэкенд напечатал бы его без `MoveTo` и сдвинул остаток ряда.
+        for &(x, y, _) in &updates {
+            if x == 0 {
+                continue;
+            }
+            let left = frame[(x - 1, y)].symbol();
+            assert!(
+                left.width() < 2,
+                "обновление в ({x},{y}) целится во вторую половину глифа {left:?}"
+            );
+        }
+
+        // (2) Перерисовано всё остальное: непокрытыми остаются ровно хвостовые
+        // половины широких глифов (их закрывает сам глиф) — дыр в перерисовке нет.
+        for y in area.top()..area.bottom() {
+            for x in area.left()..area.right() {
+                if updates.iter().any(|&(ux, uy, _)| (ux, uy) == (x, y)) {
+                    continue;
+                }
+                let is_tail = x > 0 && frame[(x - 1, y)].symbol().width() == 2;
+                assert!(is_tail, "ячейка ({x},{y}) не перерисована и не хвостовая");
+            }
+        }
+    }
+
+    #[test]
+    fn sentinel_modifier_is_unused_by_ui() {
+        // Маркер обязан не встречаться в реальных кадрах, иначе совпавшая ячейка не
+        // попадёт в diff и останется непрокрашенной. Палитра обходится
+        // DIM/BOLD/ITALIC/UNDERLINED/REVERSED — проверяем, что маркер не из них.
+        for used in [
+            Modifier::DIM,
+            Modifier::BOLD,
+            Modifier::ITALIC,
+            Modifier::UNDERLINED,
+            Modifier::REVERSED,
+        ] {
+            assert!(
+                !SENTINEL_MODIFIER.intersects(used),
+                "маркер сентинела пересекается с используемым в UI {used:?}"
+            );
+        }
     }
 
     #[test]
