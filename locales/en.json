@@ -851,6 +851,7 @@
   "ui.err.generation_failed": "Generation error: {err}",
   "ui.err.load_data_failed": "Data load error: {err}",
   "ui.err.save_settings_failed": "Failed to save settings: {err}",
+  "ui.err.api_key_save_failed": "Failed to save the API key: {err}",
   "ui.err.managed.model_not_found": "model file not found or inaccessible: {path}",
   "ui.err.managed.draft_not_found": "draft model file not found or inaccessible: {path}",
   "ui.err.managed.spawn": "spawning llama-server ({path})",
@@ -858,7 +859,7 @@
   "ui.err.managed.timeout": "the inference server did not become ready within {timeout}",
 
   "ui.err.server.no_model": "specify the model name for the cloud provider",
-  "ui.err.server.no_api_key_env": "no API key env variable name set",
+  "ui.err.server.no_api_key": "no API key: enter one in settings or set an environment variable",
   "ui.err.server.env_missing": "environment variable {var} is not set",
   "ui.err.bg_failed": "{label} failed three times in a row: {reason}",
   "ui.err.bg_reflection": "Auto-reflection",

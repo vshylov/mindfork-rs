@@ -318,6 +318,9 @@ src/
    ├─ server.rs            ServerStatus (статус сервера для UI)
    ├─ sandbox.rs           SandboxRunner (за трейтом) + WasmerSandbox: сайдкар `wasmer`
    │                       для `python_exec` в режиме песочницы (WASIX-изоляция, §8)
+   ├─ secrets.rs           машинно-привязанное хранение API-ключей (ApiKeyEntry — запись
+   │                       на машину, put_key/stored_key/is_ours): DPAPI (Windows) и
+   │                       HKDF(machine-id)+ChaCha20-Poly1305 (Linux). См. §12
    ├─ paths.rs             расположение данных (defaults.json) + язык каркаса/интерфейса
    │                       (Option<Lang>: явный или по локали ОС) + резерв словарей рядом с бинарём
    ├─ instance.rs          single-instance
@@ -596,8 +599,10 @@ classDiagram
 ```
 
 Провайдер выбирается в настройках единым селектором режима (`managed`/`external`/
-`openai`/`gemini`/`claude`); API-ключ хранится **именем env-переменной** (секрет не
-на диске). Поле `model` для облака обязательно — его подставляет сам бэкенд (доменный
+`openai`/`gemini`/`claude`); API-ключ либо **вводится в настройках** (хранится
+зашифрованным машинным ключом, `shared/secrets.rs` — см. §12), либо задаётся
+**именем env-переменной** (фолбэк); открытым текстом секрет на диск не попадает.
+Поле `model` для облака обязательно — его подставляет сам бэкенд (доменный
 `ChatRequest` модель не несёт). Соответствие режима и бэкенда/протокола:
 
 | Режим | Бэкенд | Протокол | Сэмплинг (`supported_sampling_fields`) |
@@ -1580,6 +1585,20 @@ flowchart TB
     поля спекулятивного декодирования (`spec_type: SpecType` + `draft_model`/
     `draft_gpu_layers`/`draft_n_max`/`draft_n_min`); черновые поля в UI видны только
     для типов `draft-*` — для MTP-моделей (`mtp-gemma-…`) это `draft-mtp`.
+- **API-ключи облаков** (`shared/secrets.rs`, docs/research/api-key-storage.md):
+  ключ можно **ввести в настройках** — он шифруется **машинным ключом** и лежит в
+  `settings.json` (`AppConfig::api_keys`) шифротекстом. Записи **пер-машинные**:
+  конфиг переносим, на другой машине запись не расшифруется (ключ вводится заново
+  своей записью), при возврате на прежнюю — читается. Схемы: **DPAPI** (Windows,
+  ключ пользователя, которым управляет ОС) и **`machine-key-v1`** (Linux: HKDF-SHA256
+  над `/etc/machine-id` + ChaCha20-Poly1305, привязка per-user через `info`);
+  «наша» запись опознаётся расшифровкой пробы `check` (machine-id в файле не светим).
+  Резолв — `EngineManager` (`stored_key`), супервайзеру уходит уже расшифрованный
+  `stored_key: Option<&str>`; порядок **сохранённый → env-фолбэк** (`api_key_env`
+  остаётся для CI/power users и external-прокси). Пишет ключи только оркестратор
+  (`AppCommand::SetApiKey`), в снимок конфига для UI они не попадают.
+  Защищают **файл** (перенос/бэкап/синхронизация), не машину: локальный код под тем
+  же пользователем выведет тот же ключ — как в Chrome/Git Credential Manager.
 - **Расположение данных** (`shared/paths.rs`): по умолчанию **портативно** — в
   подкаталоге `data/` рядом с бинарником (в dev — `target/debug/data/`; подкаталог
   отделяет данные от служебных файлов/кэшей сборки): `settings.json`,
@@ -1597,7 +1616,9 @@ flowchart TB
   `tokio`, `reqwest` (rustls), `rusqlite` (bundled) + `sqlite-vec`,
   `pulldown-cmark` + `syntect` + `ansi-to-tui`, `spellbook`, `arboard`, `scraper`,
   `serde`/`serde_json`, `uuid`, `chrono`, `tracing`, `zip` + `directories`
-  (резервное копирование и режим хранения). CLI разбирается **своим** парсером
+  (резервное копирование и режим хранения), `chacha20poly1305` + `hkdf`
+  (шифрование сохранённых API-ключей; на Windows — системный DPAPI через
+  `windows-sys`). CLI разбирается **своим** парсером
   (`features/cli.rs`), не крейтом — `clap` удалён (docs/history/i18n-cli.md). Приложение **не
   зависит от ML-стека** — это ключевое упрощение сборки.
 - **Релиз**: `[profile.release]` с LTO/strip/`opt-level=3`, `panic=unwind`.

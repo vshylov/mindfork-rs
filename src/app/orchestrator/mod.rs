@@ -416,6 +416,7 @@ impl Orchestrator {
             AppCommand::RequestSelfModel => self.handle_request_self_model(),
             AppCommand::UpdateSelfModel(edit) => self.handle_update_self_model(edit),
             AppCommand::ConfirmMcpCatalog(server) => self.handle_confirm_mcp_catalog(server),
+            AppCommand::SetApiKey { provider, key } => self.handle_set_api_key(provider, key),
         }
         false
     }

@@ -63,6 +63,18 @@ impl CloudProvider {
             CloudProvider::OpenAi | CloudProvider::Claude => self.base_url(),
         }
     }
+
+    /// Стабильный строковый ключ провайдера — им индексируются сохранённые API-ключи
+    /// (`AppConfig::api_keys`, см. `shared::secrets`). Ключ **общий** для чата,
+    /// имперсонации и эмбеддингов этого провайдера. Значения персистятся в
+    /// `settings.json` — не переименовывать.
+    pub fn key(self) -> &'static str {
+        match self {
+            CloudProvider::OpenAi => "openai",
+            CloudProvider::Gemini => "gemini",
+            CloudProvider::Claude => "claude",
+        }
+    }
 }
 
 impl ServerMode {
@@ -939,6 +951,14 @@ pub struct AppConfig {
     /// оркестратором (не редактируется через экран настроек). `None` — нет памяти
     /// (первый запуск/чат удалён) → открывается самый недавний.
     pub last_active_chat: Option<uuid::Uuid>,
+    /// Сохранённые API-ключи облачных провайдеров — **по записи на машину**,
+    /// зашифрованы машинным ключом (Windows DPAPI / Linux HKDF(machine-id)+AEAD).
+    /// Конфиг остаётся переносимым: чужая запись не расшифруется (ключ вводится
+    /// заново своей записью), при возврате на прежнюю машину её запись читается.
+    /// Пишется оркестратором (`AppCommand::SetApiKey`), в UI не редактируется —
+    /// экран настроек шлёт сам ключ, а не эту структуру. См. `shared::secrets`.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub api_keys: Vec<crate::shared::secrets::ApiKeyEntry>,
 }
 
 impl Default for AppConfig {
@@ -969,6 +989,7 @@ impl Default for AppConfig {
             copy: CopySettings::default(),
             mcp: McpSettings::default(),
             last_active_chat: None,
+            api_keys: Vec::new(),
         }
     }
 }

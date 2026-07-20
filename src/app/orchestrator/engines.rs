@@ -14,9 +14,18 @@ use crate::app::events::{ServerStatus, ServerStatuses};
 use crate::app::supervisor::ServerSupervisor;
 use crate::shared::api::{Embedder, EngineBackend, ServerHandle};
 use crate::shared::config::{
-    EmbedSettings, EngineSettings, ImpersonationEngineSettings, ImpersonationMode,
+    CloudProvider, EmbedSettings, EngineSettings, ImpersonationEngineSettings, ImpersonationMode,
 };
 use crate::shared::i18n::Locale;
+use crate::shared::secrets::ApiKeyEntry;
+
+/// Расшифровывает сохранённый ключ провайдера (запись **этой** машины). `None` —
+/// локальный режим (провайдера нет), ключ не сохранён или запись чужая → супервайзер
+/// возьмёт env-фолбэк. Резолв живёт здесь, чтобы супервайзер не знал про формат
+/// хранения секретов (`shared::secrets`). См. docs/research/api-key-storage.md.
+fn stored_key(api_keys: &[ApiKeyEntry], provider: Option<CloudProvider>) -> Option<String> {
+    crate::shared::secrets::stored_key(api_keys, provider?.key())
+}
 
 pub(super) struct EngineManager {
     /// Супервайзер серверов (для перезапуска при смене модели/сервера).
@@ -85,8 +94,14 @@ impl EngineManager {
 
     /// (Пере)поднимает chat-сервер по настройкам: гасит прежний managed-процесс,
     /// просит супервайзер настроить новый, сохраняет немедленный статус. Снимок
-    /// статусов для UI вызывающий берёт через [`Self::statuses`].
-    pub(super) fn apply_chat(&mut self, settings: &EngineSettings, loc: &'static Locale) {
+    /// статусов для UI вызывающий берёт через [`Self::statuses`]. `api_keys` —
+    /// сохранённые ключи из конфига (см. [`stored_key`]).
+    pub(super) fn apply_chat(
+        &mut self,
+        settings: &EngineSettings,
+        api_keys: &[ApiKeyEntry],
+        loc: &'static Locale,
+    ) {
         self.chat_handle = None; // drop старого managed-процесса (kill_on_drop)
         // Инвалидируем probe прежнего сервера и заводим новый токен.
         if let Some(tok) = self.chat_probe_cancel.take() {
@@ -94,18 +109,24 @@ impl EngineManager {
         }
         let cancel = CancellationToken::new();
         self.chat_probe_cancel = Some(cancel.clone());
-        let setup = self
-            .supervisor
-            .apply_chat(settings, cancel, self.status_tx.clone(), loc);
+        let key = stored_key(api_keys, settings.mode.cloud_provider());
+        let setup = self.supervisor.apply_chat(
+            settings,
+            key.as_deref(),
+            cancel,
+            self.status_tx.clone(),
+            loc,
+        );
         self.backend = setup.backend;
         self.chat_handle = setup.handle;
         self.server_status = setup.status;
     }
 
     /// (Пере)поднимает embedding-сервер по настройкам.
-    pub(super) fn apply_embed(&mut self, settings: &EmbedSettings) {
+    pub(super) fn apply_embed(&mut self, settings: &EmbedSettings, api_keys: &[ApiKeyEntry]) {
         self.embed_handle = None;
-        let setup = self.supervisor.apply_embed(settings);
+        let key = stored_key(api_keys, settings.mode.cloud_provider());
+        let setup = self.supervisor.apply_embed(settings, key.as_deref());
         self.embedder = setup.embedder;
         self.embed_handle = setup.handle;
         self.embed_status = setup.status;
@@ -116,6 +137,7 @@ impl EngineManager {
     pub(super) fn apply_impersonation(
         &mut self,
         settings: &ImpersonationEngineSettings,
+        api_keys: &[ApiKeyEntry],
         loc: &'static Locale,
     ) {
         self.imp_handle = None; // drop прежнего managed-процесса (kill_on_drop)
@@ -131,8 +153,10 @@ impl EngineManager {
             _ => {
                 let cancel = CancellationToken::new();
                 self.imp_probe_cancel = Some(cancel.clone());
+                let key = stored_key(api_keys, settings.mode.cloud_provider());
                 let setup = self.supervisor.apply_impersonation(
                     settings,
+                    key.as_deref(),
                     cancel,
                     self.imp_status_tx.clone(),
                     loc,
