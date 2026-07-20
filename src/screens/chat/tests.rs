@@ -1026,6 +1026,46 @@ fn esc_closes_emoji_picker_without_quitting() {
 }
 
 #[test]
+fn suggest_popup_actions_request_full_redraw() {
+    // Тот же класс, что у попапа эмодзи: пункт «➕ добавить в словарь» несёт широкий
+    // глиф, выделенная строка списка рисуется подложкой, а её хвостовую ячейку diff
+    // не перерисовывает → на conhost оставался бы след подсветки.
+    let mut s = ChatScreen::new();
+    s.set_spellchecker(mk_checker());
+    type_str(&mut s, "helo");
+    s.open_suggestions();
+    assert!(s.suggest.is_some(), "попап подсказок открылся");
+    s.take_full_redraw(); // сбросить флаг от набора текста
+
+    // Сдвиг выделения — подложка уезжает с прежней строки.
+    s.handle_key(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE));
+    assert!(s.take_full_redraw(), "сдвиг выделения требует перерисовки");
+    assert!(!s.take_full_redraw(), "флаг забирается однократно");
+
+    // Клавиша, которая попап не меняет, перерисовку не просит.
+    s.handle_key(KeyEvent::new(KeyCode::Left, KeyModifiers::NONE));
+    assert!(
+        !s.take_full_redraw(),
+        "no-op клавиша перерисовку не требует"
+    );
+
+    // Закрытие отменой (`Esc`).
+    s.handle_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
+    assert!(s.suggest.is_none());
+    assert!(s.take_full_redraw(), "отмена закрывает попап → перерисовка");
+
+    // Закрытие применением подсказки (`Enter`).
+    s.open_suggestions();
+    s.take_full_redraw();
+    s.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+    assert!(s.suggest.is_none());
+    assert!(
+        s.take_full_redraw(),
+        "применение закрывает попап → перерисовка"
+    );
+}
+
+#[test]
 fn emoji_picker_actions_request_full_redraw() {
     // Широкий глиф эмодзи оставляет на conhost «висячую» хвостовую половину, когда
     // уходит с прежнего места: поячеечный diff её не перерисовывает (канарейка на
