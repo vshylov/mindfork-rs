@@ -106,6 +106,12 @@ pub fn run(
     personal: PathBuf,
 ) -> Result<()> {
     let mut terminal = ratatui::init();
+    // Заголовок окна терминала = имя программы. На Windows это работает через
+    // Console API (`SetConsoleTitle` за `SetTitle` crossterm). На unix заголовок
+    // консольного приложения (вне графического эмулятора) не меняется, поэтому
+    // ставим только на Windows.
+    #[cfg(windows)]
+    let _ = execute!(stdout(), ratatui::crossterm::terminal::SetTitle("mindfork"));
     // На unix включаем bracketed paste: crossterm отдаёт вставку из буфера ОДНИМ
     // событием `Event::Paste` (целиком, переводы строк — текстом, не Enter). На
     // Windows этого режима у crossterm нет (ввод читается через Console API), там
