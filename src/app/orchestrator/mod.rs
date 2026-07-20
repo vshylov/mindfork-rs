@@ -57,7 +57,7 @@ use crate::entities::message::Message;
 use crate::entities::profile::Profile;
 use crate::entities::sampling::SamplingConfig;
 use crate::shared::api::FinishReason;
-use crate::shared::config::AppConfig;
+use crate::shared::config::{AppConfig, CloudProvider};
 use crate::shared::storage::Storage;
 
 use self::background::BgSlot;
@@ -536,11 +536,25 @@ impl Orchestrator {
             .filter(|p| self.profile_has_data(p.id))
             .map(|p| p.id)
             .collect();
+        // Какие ключи сохранены на **этой** машине (для поля-статуса в настройках).
+        let api_keys_present: Vec<CloudProvider> = [
+            CloudProvider::OpenAi,
+            CloudProvider::Gemini,
+            CloudProvider::Claude,
+        ]
+        .into_iter()
+        .filter(|p| crate::shared::secrets::stored_key(&self.config.api_keys, p.key()).is_some())
+        .collect();
+        // Секреты в UI не уезжают даже шифротекстом: снимок конфига идёт без них
+        // (обратно их держит `handle_update_config`). См. docs/research/api-key-storage.md.
+        let mut config = self.config.clone();
+        config.api_keys.clear();
         let _ = self.evt_tx.send(AppEvent::Settings {
-            config: Box::new(self.config.clone()),
+            config: Box::new(config),
             profiles: visible,
             language_locked,
             mcp: self.mcp.snapshot(),
+            api_keys_present,
         });
     }
 

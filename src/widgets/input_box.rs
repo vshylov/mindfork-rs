@@ -32,6 +32,10 @@ type RowCache = Option<(usize, u64, Vec<VisualRow>)>;
 /// Потолок глубины стека отмены (единиц). Самые старые вытесняются.
 const UNDO_CAP: usize = 200;
 
+/// Символ маскированного режима (ввод секрета). Ширина — 1 колонка (WGL4-безопасен,
+/// в режиме совместимости со старым терминалом отдельной замены не требует).
+const MASK_CHAR: char = '•';
+
 /// Снимок содержимого для отмены/повтора: строки + позиция курсора. См.
 /// [`InputBox::record_undo`], docs/history/input-selection-undo-mouse.md §C.
 #[derive(Clone)]
@@ -71,6 +75,13 @@ pub struct InputBox {
     /// логически одна строка (URL, путь, число). По умолчанию выключен —
     /// чат-ввод многострочный. См. spec §11.6.
     single_line: bool,
+    /// Маскированный режим (ввод секрета: API-ключ): каждый символ рисуется как
+    /// [`MASK_CHAR`], а [`Self::selected_text`] не отдаёт содержимое наружу.
+    /// Включение переводит поле в однострочный режим (секрет — одна строка) и
+    /// гарантирует, что маска не обойдётся многострочным путём отрисовки.
+    /// Спелл-чек к такому полю не применяется (звёздочки — не слова).
+    /// См. [`Self::set_mask`], spec §11.6.
+    mask: bool,
     /// Горизонтальный скролл в колонках (только однострочный режим): первая видимая
     /// колонка. Держит курсор в видимой области по аналогии с вертикальным `scroll`.
     hscroll: usize,
@@ -195,6 +206,7 @@ impl InputBox {
             col: 0,
             scroll: 0,
             single_line: false,
+            mask: false,
             hscroll: 0,
             last_width: 0,
             goal_col: None,
@@ -233,6 +245,25 @@ impl InputBox {
             self.goal_col = None;
             self.touch();
         }
+    }
+
+    /// Включает маскированный режим (ввод секрета: API-ключ в настройках): символы
+    /// рисуются как `•`, [`Self::selected_text`] пуст (секрет не утекает копированием).
+    /// Заодно включает однострочный режим — иначе многострочный путь отрисовки показал
+    /// бы содержимое открытым. Правка/навигация/вставка работают как обычно.
+    /// См. поле [`Self::mask`], spec §11.6.
+    pub fn set_mask(&mut self, on: bool) {
+        self.mask = on;
+        if on {
+            self.set_single_line(true);
+        }
+    }
+
+    /// Маскирован ли ввод (режим секрета). Потребители — тесты (проверка, что поле
+    /// ключа открылось маскированным); в продакшн-путях маска только выставляется.
+    #[allow(dead_code)]
+    pub fn is_masked(&self) -> bool {
+        self.mask
     }
 
     /// Текст поля (строки через `\n`).
@@ -616,7 +647,14 @@ impl InputBox {
 
     /// Текст выделения (строки через `\n`), либо `None`. Для копирования/вырезания
     /// (консьюмеры, docs/history/input-selection-undo-mouse.md §B).
+    ///
+    /// В маскированном режиме (ввод секрета) всегда `None`: содержимое не должно
+    /// утекать копированием в буфер обмена. Удаление выделения при этом работает —
+    /// оно идёт через `remove_selection`, а не через этот метод.
     pub fn selected_text(&self) -> Option<String> {
+        if self.mask {
+            return None;
+        }
         let ((sr, sc), (er, ec)) = self.selection_span()?;
         let mut out = String::new();
         if sr == er {
@@ -1233,7 +1271,9 @@ impl InputBox {
         // Запоминаем для маппинга клика мыши (экран → позиция в тексте).
         self.last_area = Some(inner);
 
-        if self.single_line {
+        // Маска идёт однострочным путём всегда — он единственный, где она применяется
+        // (страховка на случай, если поле включили маской при `single_line == false`).
+        if self.single_line || self.mask {
             self.render_single_line(frame, inner, focused, command, placeholder, palette);
             return;
         }
@@ -1316,7 +1356,17 @@ impl InputBox {
     ) {
         let view_w = inner.width.max(1) as usize;
         self.last_width = view_w;
-        let line = &self.lines[0];
+        // Маска подменяет символы **до** всех расчётов ширины: у `•` ширина 1, поэтому
+        // курсор и горизонтальный скролл считаются по тому, что реально видно (иначе
+        // широкий глиф в секрете — эмодзи из буфера — сдвинул бы курсор). Длина в
+        // символах совпадает с оригиналом, так что `col`/выделение остаются валидны.
+        let masked: Vec<char>;
+        let line: &[char] = if self.mask {
+            masked = vec![MASK_CHAR; self.lines[0].len()];
+            &masked
+        } else {
+            &self.lines[0]
+        };
         let cursor_vw = wrap::display_width(&line[..self.col]);
 
         // Горизонтальный скролл держит курсор в видимой области.
@@ -2052,6 +2102,68 @@ mod tests {
             )
         })
         .unwrap();
+    }
+
+    /// Маска: на экране только `•`, самого секрета в буфере нет; выделение не
+    /// отдаётся наружу (копирование секрета запрещено), а правка/удаление работают.
+    #[test]
+    fn mask_hides_content_on_screen_and_from_clipboard() {
+        use ratatui::Terminal;
+        use ratatui::backend::TestBackend;
+
+        let mut ib = InputBox::new();
+        ib.set_mask(true);
+        assert!(ib.is_masked());
+        assert!(ib.single_line, "маска переводит поле в однострочный режим");
+        ib.set_text("sk-secret");
+
+        let mut term = Terminal::new(TestBackend::new(30, 3)).unwrap();
+        term.draw(|f| {
+            ib.render(
+                f,
+                f.area(),
+                RenderOpts::focused("ключ"),
+                &Palette::default(),
+            )
+        })
+        .unwrap();
+        let screen: String = term
+            .backend()
+            .buffer()
+            .content()
+            .iter()
+            .map(|c| c.symbol())
+            .collect();
+        assert!(
+            !screen.contains("sk-secret"),
+            "секрет виден на экране: {screen}"
+        );
+        assert_eq!(
+            screen.matches(MASK_CHAR).count(),
+            "sk-secret".chars().count(),
+            "каждый символ секрета должен быть замаскирован"
+        );
+
+        // Выделение всего поля не отдаёт содержимое (Ctrl+C консьюмера получит None).
+        ib.select_all();
+        assert!(ib.has_selection());
+        assert_eq!(ib.selected_text(), None);
+        // Но удалить выделенное можно — правка не ломается.
+        ib.backspace();
+        assert_eq!(ib.text(), "");
+    }
+
+    /// Маскированное поле считает ширину по `•` (1 колонка), поэтому широкий глиф в
+    /// секрете (эмодзи из буфера) не сдвигает курсор относительно видимого текста.
+    #[test]
+    fn mask_keeps_cursor_aligned_with_wide_glyphs() {
+        let mut ib = InputBox::new();
+        ib.set_mask(true);
+        ib.set_text("aXb");
+        ib.insert_str("😀"); // ширина 2 в оригинале, 1 под маской
+        render_at(&mut ib, 20);
+        assert_eq!(ib.text().chars().count(), 4);
+        assert_eq!(ib.hscroll, 0, "короткое значение не должно скроллиться");
     }
 
     #[test]

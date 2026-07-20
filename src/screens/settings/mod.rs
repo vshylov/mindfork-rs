@@ -55,6 +55,13 @@ pub enum SettingsIntent {
     /// Подтвердить изменившийся каталог инструментов MCP-сервера (TOFU,
     /// Enter на строке сервера с пометкой «каталог изменился»). См. spec §9.6.
     ConfirmMcpCatalog(String),
+    /// Сохранить введённый API-ключ облачного провайдера (пустой — удалить).
+    /// Оркестратор зашифрует его машинным ключом; в конфиге экрана ключей нет.
+    /// См. `shared::secrets`, docs/research/api-key-storage.md.
+    SetApiKey {
+        provider: crate::shared::config::CloudProvider,
+        key: String,
+    },
 }
 
 /// Секции настроек (левое меню). См. spec §11.6.
@@ -399,6 +406,11 @@ enum FieldId {
     XModelName,
     /// Имя env-переменной с API-ключом (облако).
     XApiKeyEnv,
+    /// Сам API-ключ облачного провайдера (вводится в настройках, хранится
+    /// зашифрованным машинным ключом). Значение поля — **статус** «настроен/не
+    /// задан», не секрет; правка открывает пустой маскированный редактор.
+    /// См. `shared::secrets`, docs/research/api-key-storage.md.
+    XApiKey,
     XNgl,
     XCtx,
     XFlashAttn,
@@ -418,6 +430,8 @@ enum FieldId {
     IxModel,
     IxModelName,
     IxApiKeyEnv,
+    /// API-ключ облака для движка имперсонации (см. [`FieldId::XApiKey`]).
+    IxApiKey,
     IxNgl,
     IxCtx,
     IxFlashAttn,
@@ -462,6 +476,8 @@ enum FieldId {
     EModel,
     EModelName,
     EApiKeyEnv,
+    /// API-ключ облака для embedding-сервера (см. [`FieldId::XApiKey`]).
+    EApiKey,
     EPort,
     // RAG (чанкинг базы знаний)
     RagTarget,
@@ -634,6 +650,10 @@ pub struct SettingsScreen {
     /// статусы серверов (строки в секции «Инструменты», TOFU-подтверждение).
     /// Пуст, пока серверы не поднялись/MCP выключен. См. spec §9.6.
     mcp: crate::features::tools::mcp::McpSnapshot,
+    /// Провайдеры, чей API-ключ сохранён на **этой** машине (из снимка `Settings`).
+    /// Поле «API-ключ» показывает по нему статус; самих ключей у экрана нет.
+    /// См. `shared::secrets`, docs/research/api-key-storage.md.
+    api_keys_present: Vec<crate::shared::config::CloudProvider>,
 }
 
 // ---------- подмодули (разбор god-object'а: docs/history/refactoring-god-objects.md) ----------

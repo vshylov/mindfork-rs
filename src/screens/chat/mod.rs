@@ -54,6 +54,7 @@ pub type SettingsSnapshot = (
     Vec<Profile>,
     Vec<uuid::Uuid>,
     crate::features::tools::mcp::McpSnapshot,
+    Vec<crate::shared::config::CloudProvider>,
 );
 
 /// Намерение пользователя, которое исполняет `app` (транслирует в `AppCommand`).
@@ -343,6 +344,7 @@ impl ChatScreen {
         profiles: Vec<Profile>,
         language_locked: Vec<uuid::Uuid>,
         mcp: crate::features::tools::mcp::McpSnapshot,
+        api_keys_present: Vec<crate::shared::config::CloudProvider>,
     ) {
         self.palette = Palette::for_theme(config.interface.theme)
             .with_compat(config.interface.terminal_compat);
@@ -352,7 +354,7 @@ impl ChatScreen {
             .set_table_row_separators(config.interface.table_row_separators);
         self.feed_view
             .set_render_mermaid(config.interface.render_mermaid);
-        self.settings_snapshot = Some((config, profiles, language_locked, mcp));
+        self.settings_snapshot = Some((config, profiles, language_locked, mcp, api_keys_present));
     }
 
     /// Снимок настроек для создания экрана настроек (`None`, пока не получен).
@@ -363,7 +365,7 @@ impl ChatScreen {
     /// Текущие настройки спелл-чека `(включён, выбранные словари)` из последнего
     /// снимка настроек — для (пере)загрузки словарей в `app/runtime.rs`. См. spec §11.6.
     pub fn spell_config(&self) -> Option<(bool, &[String])> {
-        self.settings_snapshot.as_ref().map(|(c, _, _, _)| {
+        self.settings_snapshot.as_ref().map(|(c, _, _, _, _)| {
             (
                 c.interface.spellcheck_enabled,
                 c.interface.selected_dictionaries.as_slice(),

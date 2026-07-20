@@ -132,11 +132,17 @@ pub enum AppEvent {
     /// профиля + статусы серверов для строк в секции «Инструменты»); в статический
     /// `tool_catalog()` MCP-инструменты не входят. Пуст, пока серверы не
     /// поднялись/выключены.
+    /// `api_keys_present` — провайдеры, чей API-ключ сохранён **на этой машине**
+    /// (поле-статус «настроен» в облачных подсекциях). Сами ключи в снимок не
+    /// попадают: `config.api_keys` очищается при эмите — UI не таскает секреты даже
+    /// шифротекстом, а обратно их восстанавливает оркестратор (`handle_update_config`).
+    /// См. `shared::secrets`, docs/research/api-key-storage.md.
     Settings {
         config: Box<AppConfig>,
         profiles: Vec<Profile>,
         language_locked: Vec<uuid::Uuid>,
         mcp: crate::features::tools::mcp::McpSnapshot,
+        api_keys_present: Vec<crate::shared::config::CloudProvider>,
     },
     /// Активный чат сменился — UI перестраивает ленту из его сообщений и загружает
     /// сохранённый черновик в поле ввода (`draft`; пустой у нового чата).

@@ -33,6 +33,7 @@ impl SettingsScreen {
             },
             language_locked,
             mcp: Default::default(),
+            api_keys_present: Vec::new(),
         }
     }
 
@@ -77,6 +78,31 @@ impl SettingsScreen {
     /// инструментов + статусы серверов; пуст, пока серверы не поднялись/выключены).
     pub fn set_mcp(&mut self, mcp: crate::features::tools::mcp::McpSnapshot) {
         self.mcp = mcp;
+    }
+
+    /// Обновляет список провайдеров с сохранённым на этой машине API-ключом (из
+    /// снимка `Settings`) — по нему поле «API-ключ» показывает статус. Сами ключи в
+    /// UI не передаются. См. `shared::secrets`.
+    pub fn set_api_keys_present(&mut self, present: Vec<CloudProvider>) {
+        self.api_keys_present = present;
+    }
+
+    /// Сохранён ли на этой машине ключ провайдера (для статуса поля «API-ключ»).
+    pub(super) fn api_key_present(&self, provider: Option<CloudProvider>) -> bool {
+        provider.is_some_and(|p| self.api_keys_present.contains(&p))
+    }
+
+    /// Провайдер, к которому относится поле ввода API-ключа (по активному режиму
+    /// соответствующего движка), либо `None` — это не поле ключа. Ключ общий для
+    /// чата/имперсонации/эмбеддингов одного провайдера, поэтому важен именно
+    /// провайдер, а не слот. См. docs/research/api-key-storage.md.
+    pub(super) fn api_key_field_provider(&self, id: FieldId) -> Option<CloudProvider> {
+        match id {
+            FieldId::XApiKey => self.config.engine.mode.cloud_provider(),
+            FieldId::IxApiKey => self.config.impersonation_engine.mode.cloud_provider(),
+            FieldId::EApiKey => self.config.embed.mode.cloud_provider(),
+            _ => None,
+        }
     }
 
     // ---------- построение полей текущей секции ----------
@@ -149,8 +175,10 @@ impl SettingsScreen {
                             cloud_rows(
                                 x.cloud(),
                                 FieldId::XModelName,
+                                FieldId::XApiKey,
                                 FieldId::XApiKeyEnv,
                                 FieldId::XUrl,
+                                self.api_key_present(x.mode.cloud_provider()),
                                 loc,
                             ),
                         ))
@@ -200,8 +228,10 @@ impl SettingsScreen {
                         cloud_rows(
                             x.cloud(),
                             FieldId::IxModelName,
+                            FieldId::IxApiKey,
                             FieldId::IxApiKeyEnv,
                             FieldId::IxUrl,
+                            self.api_key_present(x.mode.cloud_provider()),
                             loc,
                         ),
                     )),
@@ -274,6 +304,11 @@ impl SettingsScreen {
                                     &c.model_name,
                                 )
                                 .describe(loc.t(DESC_MODEL_NAME)),
+                                api_key_row(
+                                    FieldId::EApiKey,
+                                    self.api_key_present(e.mode.cloud_provider()),
+                                    loc,
+                                ),
                                 text_row(
                                     FieldId::EApiKeyEnv,
                                     loc.t("ui.settings.field.api_key_env"),

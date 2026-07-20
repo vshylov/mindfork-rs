@@ -183,10 +183,9 @@ async fn set_api_key_persists_encrypted_and_reads_back() {
             key: "sk-super-secret-42".into(),
         })
         .unwrap();
-    wait_for(
-        &mut evt_rx,
-        |e| matches!(e, AppEvent::Settings { config, .. } if !config.api_keys.is_empty()),
-    )
+    wait_for(&mut evt_rx, |e| {
+        matches!(e, AppEvent::Settings { api_keys_present, .. } if !api_keys_present.is_empty())
+    })
     .await
     .unwrap();
 
@@ -228,10 +227,9 @@ async fn update_config_preserves_stored_api_keys() {
             key: "sk-ant-keep-me".into(),
         })
         .unwrap();
-    wait_for(
-        &mut evt_rx,
-        |e| matches!(e, AppEvent::Settings { config, .. } if !config.api_keys.is_empty()),
-    )
+    wait_for(&mut evt_rx, |e| {
+        matches!(e, AppEvent::Settings { api_keys_present, .. } if !api_keys_present.is_empty())
+    })
     .await
     .unwrap();
 
@@ -271,24 +269,68 @@ async fn set_empty_api_key_removes_stored_entry() {
     wait_for(&mut evt_rx, |e| matches!(e, AppEvent::Settings { .. }))
         .await
         .unwrap();
-    for key in ["sk-temp", ""] {
-        cmd_tx
-            .send(AppCommand::SetApiKey {
-                provider: CloudProvider::Gemini,
-                key: key.into(),
-            })
-            .unwrap();
-    }
-    let ev = wait_for(
+    cmd_tx
+        .send(AppCommand::SetApiKey {
+            provider: CloudProvider::Gemini,
+            key: "sk-temp".into(),
+        })
+        .unwrap();
+    wait_for(&mut evt_rx, |e| {
+        matches!(e, AppEvent::Settings { api_keys_present, .. } if !api_keys_present.is_empty())
+    })
+    .await
+    .unwrap();
+    // Пустой ключ — удаление: флаг «настроен» гаснет.
+    cmd_tx
+        .send(AppCommand::SetApiKey {
+            provider: CloudProvider::Gemini,
+            key: String::new(),
+        })
+        .unwrap();
+    wait_for(
         &mut evt_rx,
-        |e| matches!(e, AppEvent::Settings { config, .. } if config.api_keys.is_empty()),
+        |e| matches!(e, AppEvent::Settings { api_keys_present, .. } if api_keys_present.is_empty()),
     )
     .await
     .unwrap();
-    if let AppEvent::Settings { config, .. } = ev {
+    cmd_tx.send(AppCommand::Quit).unwrap();
+    handle.await.unwrap();
+}
+
+/// Снимок настроек для UI не несёт ключей (даже шифротекстом) — только флаги
+/// «настроен на этой машине». См. docs/research/api-key-storage.md §5.
+#[tokio::test]
+async fn settings_snapshot_carries_flags_not_secrets() {
+    if !crate::shared::secrets::scheme_available() {
+        return;
+    }
+    let (_d, cmd_tx, mut evt_rx, handle) = spawn_orch(None);
+    wait_for(&mut evt_rx, |e| matches!(e, AppEvent::Settings { .. }))
+        .await
+        .unwrap();
+
+    cmd_tx
+        .send(AppCommand::SetApiKey {
+            provider: CloudProvider::OpenAi,
+            key: "sk-in-snapshot-test".into(),
+        })
+        .unwrap();
+    let ev = wait_for(&mut evt_rx, |e| {
+        matches!(e, AppEvent::Settings { api_keys_present, .. } if !api_keys_present.is_empty())
+    })
+    .await
+    .unwrap();
+
+    if let AppEvent::Settings {
+        config,
+        api_keys_present,
+        ..
+    } = ev
+    {
+        assert_eq!(api_keys_present, vec![CloudProvider::OpenAi]);
         assert!(
-            crate::shared::secrets::stored_key(&config.api_keys, CloudProvider::Gemini.key())
-                .is_none()
+            config.api_keys.is_empty(),
+            "снимок для UI не должен нести записи ключей"
         );
     }
     cmd_tx.send(AppCommand::Quit).unwrap();
