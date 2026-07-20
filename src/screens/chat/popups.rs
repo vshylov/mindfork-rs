@@ -80,8 +80,9 @@ impl ChatScreen {
         }
         // Попап закрылся, а с ним ушёл широкий глиф «➕» пункта «добавить в словарь»:
         // его хвостовую ячейку diff шлёт только когда глиф нёс заметный на пустой
-        // ячейке стиль (у выделенной строки — `REVERSED`), поэтому страхуемся полной
-        // перерисовкой. На **сдвиг выделения** её не просим — глиф остаётся широким, и
+        // ячейке стиль (у выделенной строки — подложка `keycap_bg`), поэтому
+        // страхуемся полной перерисовкой. На **сдвиг выделения** её не просим — глиф
+        // остаётся широким, и
         // сентинел обязан пропускать его хвост (ratatui#2651), т.е. пользы там нет:
         // подсветку снимает перепечатка самого глифа. См. [`Self::request_full_redraw`].
         self.request_full_redraw();
@@ -317,31 +318,40 @@ pub(super) fn render_suggest(
             loc.t("ui.suggest.footer"),
             palette.muted_style(),
         )));
+    let selected = popup.selected.min(popup.items.len().saturating_sub(1));
     let items: Vec<ListItem> = popup
         .items
         .iter()
-        .map(|item| {
-            ListItem::new(match item {
+        .enumerate()
+        .map(|(i, item)| {
+            // Рейл выделенной строки (2 колонки), как в списке чатов и настройках;
+            // у прочих строк — отступ той же ширины, чтобы текст не «прыгал».
+            let rail = if i == selected {
+                Span::styled("▌ ", Style::new().fg(palette.success))
+            } else {
+                Span::raw("  ")
+            };
+            let body = match item {
                 SuggestItem::Replace(word) => {
-                    Line::from(Span::styled(word.clone(), Style::new().fg(palette.text)))
+                    Span::styled(word.clone(), Style::new().fg(palette.text))
                 }
-                SuggestItem::AddToDictionary => Line::from(
-                    Span::styled(
-                        format!("{} {}", palette.glyphs().add, loc.t("ui.suggest.add")),
-                        palette.success_style(),
-                    )
-                    .italic(),
-                ),
-            })
+                SuggestItem::AddToDictionary => Span::styled(
+                    format!("{} {}", palette.glyphs().add, loc.t("ui.suggest.add")),
+                    palette.success_style(),
+                )
+                .italic(),
+            };
+            ListItem::new(Line::from(vec![rail, body]))
         })
         .collect();
+    // Выделение — мягкая подложка (как в списке чатов, настройках и «модели себя»),
+    // а не инверсия всей строки: реверс свапает fg↔bg у каждого спана по отдельности,
+    // из-за чего рейл `▌` (левый полублок) расползается, а спаны получают разный фон.
     let list = List::new(items)
         .block(block)
-        .highlight_style(Style::new().reversed());
+        .highlight_style(Style::new().bg(palette.keycap_bg));
     let mut state = ListState::default();
-    state.select(Some(
-        popup.selected.min(popup.items.len().saturating_sub(1)),
-    ));
+    state.select(Some(selected));
     frame.render_stateful_widget(list, area, &mut state);
 }
 
