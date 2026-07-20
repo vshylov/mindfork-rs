@@ -1015,6 +1015,46 @@ fn render_with_suggestions_does_not_panic() {
 }
 
 #[test]
+fn suggest_popup_selection_matches_other_lists() {
+    // Выделение в попапе орфографии — как в списке чатов, настройках и «модели
+    // себя»: мягкая подложка `keycap_bg` + зелёный рейл `▌`, а не инверсия строки.
+    use ratatui::Terminal;
+    use ratatui::backend::TestBackend;
+    use ratatui::style::Modifier;
+    let mut s = ChatScreen::new();
+    s.set_spellchecker(mk_checker());
+    type_str(&mut s, "helo");
+    s.open_suggestions();
+    let palette = s.palette;
+    let mut term = Terminal::new(TestBackend::new(50, 16)).unwrap();
+    term.draw(|f| s.render(f)).unwrap();
+    let buf = term.backend().buffer();
+
+    let rail = (0..buf.area.height)
+        .flat_map(|y| (0..buf.area.width).map(move |x| (x, y)))
+        .find(|&(x, y)| buf[(x, y)].symbol() == "▌")
+        .expect("у выделенной строки попапа должен быть рейл `▌`");
+    let cell = &buf[rail];
+    assert_eq!(cell.style().fg, Some(palette.success), "рейл — зелёный");
+    assert_eq!(
+        cell.style().bg,
+        Some(palette.keycap_bg),
+        "выделение — подложка keycap_bg"
+    );
+    // Инверсии в выделенной строке быть не должно (реверс свапал бы fg↔bg поспаново).
+    let (_, row) = rail;
+    for x in 0..buf.area.width {
+        assert!(
+            !buf[(x, row)]
+                .style()
+                .add_modifier
+                .contains(Modifier::REVERSED),
+            "выделенная строка не должна инвертироваться"
+        );
+    }
+}
+
+#[test]
 fn ctrl_b_opens_emoji_picker_and_enter_inserts_at_cursor() {
     let mut s = ChatScreen::new();
     type_str(&mut s, "ab");
