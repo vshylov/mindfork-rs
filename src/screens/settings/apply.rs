@@ -171,6 +171,12 @@ impl SettingsScreen {
                         );
                         let mut input = InputBox::new();
                         input.set_single_line(!multiline);
+                        // Поле секрета: маска (`•`) + **пустая** затравка — показать
+                        // сохранённый ключ нельзя (его нет даже у экрана), правка =
+                        // ввод заново. См. docs/research/api-key-storage.md.
+                        if is_api_key_field(f.id) {
+                            input.set_mask(true);
+                        }
                         // Не показываем плейсхолдеры «(все)»/«—» как значение.
                         let seed = self.field_seed(f.id, value);
                         input.set_text(&seed);
@@ -250,6 +256,9 @@ impl SettingsScreen {
     /// Значение для затравки редактора (без плейсхолдеров).
     pub(super) fn field_seed(&self, id: FieldId, shown: &str) -> String {
         match id {
+            // Поле секрета: значение строки — статус («настроен»), не ключ; редактор
+            // всегда открывается пустым (сохранённый ключ недоступен для показа).
+            _ if is_api_key_field(id) => String::new(),
             FieldId::IDicts => self.config.interface.selected_dictionaries.join(", "),
             // «—» для пустых числовых — затравка пустой.
             _ if shown == "—" => String::new(),
@@ -381,6 +390,14 @@ impl SettingsScreen {
     /// Применяет текст из редактора к полю и возвращает намерение сохранения.
     pub(super) fn apply_text(&mut self, id: FieldId, text: &str) -> Option<SettingsIntent> {
         let trimmed = text.trim();
+        // Секрет в рабочей копии конфига не хранится — уходит отдельным намерением
+        // (оркестратор зашифрует машинным ключом). Пустой ввод = удалить ключ.
+        if let Some(provider) = self.api_key_field_provider(id) {
+            return Some(SettingsIntent::SetApiKey {
+                provider,
+                key: trimmed.to_string(),
+            });
+        }
         match id {
             // Параметры семплинга — свой дескриптор (`SamplingParam`), не в таблице.
             FieldId::S(p) => apply_sampling_text(&mut self.config.default_sampling, p, trimmed),

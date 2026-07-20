@@ -47,11 +47,13 @@ pub(super) fn apply_event(
             profiles,
             language_locked,
             mcp,
+            api_keys_present,
         } => {
             match active {
                 ActiveScreen::Settings(settings) => {
                     settings.refresh((*config).clone(), profiles.clone(), language_locked.clone());
                     settings.set_mcp(mcp.clone());
+                    settings.set_api_keys_present(api_keys_present.clone());
                 }
                 // Тема/режим совместимости/язык UI могли смениться — обновим палитру
                 // и локаль открытых overlay-экранов (список/модель себя) одним broadcast.
@@ -61,7 +63,7 @@ pub(super) fn apply_event(
                     crate::shared::i18n::locale(config.interface.language),
                 ),
             }
-            screen.set_settings(*config, profiles, language_locked, mcp);
+            screen.set_settings(*config, profiles, language_locked, mcp, api_keys_present);
         }
         AppEvent::ChatActivated {
             id,
@@ -225,7 +227,9 @@ pub(super) fn dispatch(
         ChatIntent::RagList => AppCommand::RagList,
         ChatIntent::RagRebuild => AppCommand::RagRebuild,
         ChatIntent::OpenSettings => {
-            if let Some((config, profiles, language_locked, mcp)) = screen.settings_snapshot() {
+            if let Some((config, profiles, language_locked, mcp, api_keys)) =
+                screen.settings_snapshot()
+            {
                 let mut settings = SettingsScreen::new(config, profiles, language_locked);
                 // Начальный снимок статусов серверов (чипы в секции «Модель/сервер»);
                 // дальше их обновляет `apply_event` из события `ServerStatus`.
@@ -233,6 +237,8 @@ pub(super) fn dispatch(
                 // Снимок MCP-хоста (каталог инструментов + статусы серверов);
                 // дальше его обновляет `apply_event` из события `Settings`.
                 settings.set_mcp(mcp);
+                // Какие ключи сохранены на этой машине (поле-статус «API-ключ»).
+                settings.set_api_keys_present(api_keys);
                 *active = ActiveScreen::Settings(Box::new(settings));
             }
             return false;
@@ -352,6 +358,7 @@ pub(super) fn dispatch_settings(
         },
         SettingsIntent::DeleteProfile(id) => AppCommand::DeleteProfile(id),
         SettingsIntent::ConfirmMcpCatalog(server) => AppCommand::ConfirmMcpCatalog(server),
+        SettingsIntent::SetApiKey { provider, key } => AppCommand::SetApiKey { provider, key },
     };
     let _ = cmd_tx.send(command);
     false

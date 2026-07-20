@@ -12,8 +12,10 @@
   [0005](decisions/0005-python-sandbox-wasmer.md) — Python-песочница сайдкаром
   `wasmer`/WASIX за `shared/sandbox.rs`;
   [0006](decisions/0006-data-schema-versioning.md) — версионирование схем данных и
-  каркас JSON-миграций; и [0007](decisions/0007-plugins-mcp-host-import-format.md) —
-  плагины: MCP-хост инструментов + нейтральный формат обмена импорта;
+  каркас JSON-миграций; [0007](decisions/0007-plugins-mcp-host-import-format.md) —
+  плагины: MCP-хост инструментов + нейтральный формат обмена импорта; и
+  [0008](decisions/0008-api-key-storage.md) — ввод API-ключей в настройках с
+  машинно-привязанным шифрованием в конфиге;
 - **[docs/install.md](install.md)** — установка/запуск, движок, env.
 
 > Терминология: **движок** = провайдер инференса за трейтом `EngineBackend` —

@@ -132,6 +132,16 @@ impl SettingsScreen {
         if is_profile_field(id) {
             return None;
         }
+        // Поле секрета: «сброс» = удалить сохранённый ключ (пустое значение). Сравнение
+        // с дефолтом ниже не годится — значением строки служит статус, а не величина.
+        if let Some(provider) = self.api_key_field_provider(id) {
+            return self
+                .api_key_present(Some(provider))
+                .then(|| SettingsIntent::SetApiKey {
+                    provider,
+                    key: String::new(),
+                });
+        }
         let cur_kind = self
             .fields()
             .into_iter()

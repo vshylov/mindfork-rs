@@ -1529,3 +1529,115 @@ fn sampling_extensions_have_descriptions() {
         );
     }
 }
+
+/// Поле «API-ключ» есть только в облачных режимах и показывает **статус**, а не
+/// секрет; сохранённый ключ отражается значением «настроен».
+#[test]
+fn api_key_field_shows_status_in_cloud_modes_only() {
+    let mut s = screen();
+    goto_section(&mut s, Section::Model);
+    let has_key_field = |s: &SettingsScreen| s.fields().iter().any(|f| f.id == FieldId::XApiKey);
+    // Локальный managed — поля ключа нет (облачного провайдера не существует).
+    assert!(!has_key_field(&s));
+
+    s.config.engine.mode = ServerMode::OpenAi;
+    assert!(has_key_field(&s));
+    let value = |s: &SettingsScreen| {
+        s.fields()
+            .into_iter()
+            .find(|f| f.id == FieldId::XApiKey)
+            .map(|f| value_text(&f.kind, s.loc()))
+            .unwrap()
+    };
+    let unset = value(&s);
+    // Ключ этого провайдера сохранён на машине → статус меняется.
+    s.set_api_keys_present(vec![CloudProvider::OpenAi]);
+    let set = value(&s);
+    assert_ne!(unset, set, "статус поля не отражает наличие ключа");
+    // Ключ другого провайдера на статус OpenAI не влияет.
+    s.set_api_keys_present(vec![CloudProvider::Claude]);
+    assert_eq!(value(&s), unset);
+    // Сам секрет в значении поля не появляется ни при каком статусе.
+    assert!(!set.contains("sk-"));
+}
+
+/// Правка поля ключа открывает **пустой** маскированный редактор (сохранённый ключ
+/// показать нельзя), а коммит уходит отдельным намерением — не в конфиг экрана.
+#[test]
+fn api_key_editor_is_masked_empty_and_commits_intent() {
+    let mut s = screen();
+    s.config.engine.mode = ServerMode::Claude;
+    s.set_api_keys_present(vec![CloudProvider::Claude]); // ключ уже сохранён
+    goto_section(&mut s, Section::Model);
+    goto_field(&mut s, FieldId::XApiKey);
+
+    s.handle_key(key(KeyCode::Enter));
+    let editor = s.editor.as_ref().expect("редактор поля ключа открыт");
+    assert_eq!(editor.input.text(), "", "затравка должна быть пустой");
+    assert!(
+        editor.input.is_masked(),
+        "поле секрета должно быть маскировано"
+    );
+
+    for c in "sk-ant-123".chars() {
+        s.handle_key(key(KeyCode::Char(c)));
+    }
+    let intent = s.handle_key(key(KeyCode::Enter));
+    assert_eq!(
+        intent,
+        Some(SettingsIntent::SetApiKey {
+            provider: CloudProvider::Claude,
+            key: "sk-ant-123".into()
+        })
+    );
+    // Секрет не осел в рабочей копии конфига.
+    let json = serde_json::to_string(&s.config).unwrap();
+    assert!(
+        !json.contains("sk-ant-123"),
+        "ключ утёк в конфиг экрана: {json}"
+    );
+}
+
+/// `Del` на поле ключа удаляет сохранённый ключ (пустое значение намерения);
+/// если ключа нет — no-op (нечего удалять).
+#[test]
+fn del_on_api_key_field_removes_stored_key() {
+    let mut s = screen();
+    s.config.engine.mode = ServerMode::Gemini;
+    goto_section(&mut s, Section::Model);
+    goto_field(&mut s, FieldId::XApiKey);
+    // Ключа нет — сброс ничего не делает.
+    assert_eq!(s.handle_key(key(KeyCode::Delete)), None);
+
+    s.set_api_keys_present(vec![CloudProvider::Gemini]);
+    assert_eq!(
+        s.handle_key(key(KeyCode::Delete)),
+        Some(SettingsIntent::SetApiKey {
+            provider: CloudProvider::Gemini,
+            key: String::new()
+        })
+    );
+}
+
+/// Поле ключа есть у всех трёх слотов и адресует провайдера **своего** движка:
+/// ключ общий для чата/имперсонации/эмбеддингов одного провайдера.
+#[test]
+fn api_key_field_targets_provider_of_its_slot() {
+    let mut s = screen();
+    s.config.engine.mode = ServerMode::OpenAi;
+    s.config.impersonation_engine.mode = ImpersonationMode::Claude;
+    s.config.embed.mode = ServerMode::Gemini;
+    assert_eq!(
+        s.api_key_field_provider(FieldId::XApiKey),
+        Some(CloudProvider::OpenAi)
+    );
+    assert_eq!(
+        s.api_key_field_provider(FieldId::IxApiKey),
+        Some(CloudProvider::Claude)
+    );
+    assert_eq!(
+        s.api_key_field_provider(FieldId::EApiKey),
+        Some(CloudProvider::Gemini)
+    );
+    assert_eq!(s.api_key_field_provider(FieldId::XUrl), None);
+}

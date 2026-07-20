@@ -34,6 +34,8 @@ pub(super) const DESC_MODE: &str = "ui.settings.desc.mode";
 pub(super) const DESC_IMP_MODE: &str = "ui.settings.desc.imp_mode";
 /// Ключ: имя env-переменной с API-ключом (X/Ix/E).
 pub(super) const DESC_API_KEY_ENV: &str = "ui.settings.desc.api_key_env";
+/// Описание поля «API-ключ» (сам секрет, хранится зашифрованным для этой машины).
+pub(super) const DESC_API_KEY: &str = "ui.settings.desc.api_key";
 /// Ключ: имя облачной модели (X/Ix/E).
 pub(super) const DESC_MODEL_NAME: &str = "ui.settings.desc.model_name";
 /// Ключ: имя env-переменной с ключом для external-сервера (опционально).
@@ -246,13 +248,17 @@ pub(super) fn managed_rows(
     rows
 }
 
-/// Поля облачного провайдера (модель/API-ключ-env/base URL). `cloud` — настройки
-/// активного провайдера (`None` маловероятен в облачном режиме — тогда пустые поля).
+/// Поля облачного провайдера (модель/API-ключ/API-ключ-env/base URL). `cloud` —
+/// настройки активного провайдера (`None` маловероятен в облачном режиме — тогда
+/// пустые поля). `key_present` — сохранён ли ключ провайдера на этой машине
+/// (значение поля «API-ключ» — статус, не секрет).
 pub(super) fn cloud_rows(
     cloud: Option<&CloudSettings>,
     model_name: FieldId,
+    api_key: FieldId,
     api_key_env: FieldId,
     url: FieldId,
+    key_present: bool,
     loc: &'static Locale,
 ) -> Vec<FieldRow> {
     let none = CloudSettings::default();
@@ -260,6 +266,7 @@ pub(super) fn cloud_rows(
     vec![
         text_row(model_name, loc.t("ui.settings.field.model"), &c.model_name)
             .describe(loc.t(DESC_MODEL_NAME)),
+        api_key_row(api_key, key_present, loc),
         text_row(
             api_key_env,
             loc.t("ui.settings.field.api_key_env"),
@@ -268,6 +275,36 @@ pub(super) fn cloud_rows(
         .describe(loc.t(DESC_API_KEY_ENV)),
         text_row(url, loc.t("ui.settings.field.base_url"), &c.url),
     ]
+}
+
+/// Поле ввода самого API-ключа (не имени env-переменной)? У таких полей особое
+/// поведение: пустая затравка, маскированный редактор, коммит отдельным намерением
+/// и `Del` как удаление ключа. См. [`SettingsScreen::api_key_field_provider`].
+pub(super) fn is_api_key_field(id: FieldId) -> bool {
+    matches!(id, FieldId::XApiKey | FieldId::IxApiKey | FieldId::EApiKey)
+}
+
+/// Строка поля «API-ключ»: значение — **статус**, а не секрет («настроен (этот
+/// компьютер)» / «не задан»; если машина не поддерживает шифрование — «недоступно»,
+/// остаётся env-путь). Правка открывает пустой маскированный редактор: сохранённый
+/// ключ показать нельзя, ввод = замена. См. docs/research/api-key-storage.md.
+pub(super) fn api_key_row(id: FieldId, present: bool, loc: &'static Locale) -> FieldRow {
+    let (value, desc) = if !crate::shared::secrets::scheme_available() {
+        (
+            loc.t("ui.settings.value.key_unsupported"),
+            loc.t("ui.settings.desc.api_key_unsupported"),
+        )
+    } else if present {
+        (loc.t("ui.settings.value.key_set"), loc.t(DESC_API_KEY))
+    } else {
+        (loc.t("ui.settings.value.key_unset"), loc.t(DESC_API_KEY))
+    };
+    row(
+        id,
+        loc.t("ui.settings.field.api_key"),
+        FieldKind::Text(value.to_string()),
+    )
+    .describe(desc)
 }
 
 /// Парсит редактируемое значение опционального числа: пусто → `None` (очистить),
