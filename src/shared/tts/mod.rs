@@ -8,16 +8,13 @@
 //! - [`openai`] — `POST /v1/audio/speech`: облако OpenAI **и** любой сторонний
 //!   OpenAI-совместимый TTS-сервер (разные base URL/ключ/формат ответа);
 //! - [`gemini`] — нативный `generateContent` c `responseModalities:["AUDIO"]`;
-//! - [`playback`] — воспроизведение: очередь источников `rodio` + отмена;
-//! - [`sidecar`] — локальный движок (managed): сайдкар `piper` из `data/tts/`,
-//!   без сети и ключей (ADR 0009).
+//! - [`playback`] — воспроизведение: очередь источников `rodio` + отмена.
+//!
+//! Локальный сайдкар (managed-режим) — этап 2 направления.
 
 pub mod gemini;
 pub mod openai;
 pub mod playback;
-pub mod sidecar;
-
-use std::path::Path;
 
 use anyhow::Result;
 use tokio_util::sync::CancellationToken;
@@ -74,29 +71,17 @@ pub enum TtsSetupError {
     ApiKey,
     /// Не задан URL внешнего сервера.
     Url,
-    /// Локальный движок не установлен (нет бинаря `piper`) — нужен `tts setup`.
-    Binary,
-    /// Голос локального движка не найден (нет `*.onnx` или его `*.onnx.json`).
-    Voice,
 }
 
 /// Строит клиент озвучивания из снимка настроек. `stored_key` — сохранённый ключ
 /// провайдера (ADR 0008): он уже расшифрован вызывающим; при его отсутствии
-/// ключ читается из env-переменной, имя которой задано в настройках. `tts_dir` —
-/// каталог локального движка (`data/tts/`), нужен только режиму `managed`.
+/// ключ читается из env-переменной, имя которой задано в настройках.
 pub fn engine_from_config(
     tts: &TtsSettings,
     stored_key: Option<String>,
-    tts_dir: Option<&Path>,
 ) -> std::result::Result<Box<dyn TtsEngine>, TtsSetupError> {
     let speed = tts.speed;
     match tts.mode {
-        TtsMode::Managed => Ok(Box::new(sidecar::PiperTts::new(
-            tts_dir,
-            tts.managed.binary.as_deref(),
-            tts.managed.voice.as_deref(),
-            speed,
-        )?)),
         TtsMode::OpenAi | TtsMode::Gemini => {
             let cloud = tts.cloud().ok_or(TtsSetupError::Model)?;
             let model = non_empty(cloud.model_name.clone()).ok_or(TtsSetupError::Model)?;
@@ -186,17 +171,17 @@ mod tests {
             ..Default::default()
         };
         assert_eq!(
-            engine_from_config(&tts, Some("sk-x".into()), None).err(),
+            engine_from_config(&tts, Some("sk-x".into())).err(),
             Some(TtsSetupError::Model)
         );
         tts.openai.model_name = Some("gpt-4o-mini-tts".into());
         // Ключа нет ни сохранённого, ни в env → понятная структурная ошибка.
         assert_eq!(
-            engine_from_config(&tts, None, None).err(),
+            engine_from_config(&tts, None).err(),
             Some(TtsSetupError::ApiKey)
         );
         // Сохранённый ключ (ADR 0008) достаточен — вводить заново ничего не нужно.
-        assert!(engine_from_config(&tts, Some("sk-x".into()), None).is_ok());
+        assert!(engine_from_config(&tts, Some("sk-x".into())).is_ok());
     }
 
     #[test]
@@ -207,7 +192,7 @@ mod tests {
             ..Default::default()
         };
         assert_eq!(
-            engine_from_config(&tts, None, None).err(),
+            engine_from_config(&tts, None).err(),
             Some(TtsSetupError::Url)
         );
         let tts = TtsSettings {
@@ -219,7 +204,7 @@ mod tests {
             ..Default::default()
         };
         // Локальному серверу ключ и модель не нужны.
-        assert!(engine_from_config(&tts, None, None).is_ok());
+        assert!(engine_from_config(&tts, None).is_ok());
     }
 
     #[test]
@@ -232,7 +217,7 @@ mod tests {
             ..Default::default()
         };
         assert_eq!(
-            engine_from_config(&tts, Some("sk-x".into()), None).err(),
+            engine_from_config(&tts, Some("sk-x".into())).err(),
             Some(TtsSetupError::Model)
         );
     }

@@ -305,16 +305,13 @@ pub(super) fn field_spec(id: FieldId) -> Option<FieldSpec> {
                 cl.model_name = opt(t);
             }
         }),
-        TtsVoice => text(|c, t| match c.tts.mode {
-            crate::shared::config::TtsMode::Managed => c.tts.managed.voice = opt(t),
-            crate::shared::config::TtsMode::External => c.tts.external.voice = opt(t),
-            _ => {
-                if let Some(cl) = c.tts.cloud_mut() {
-                    cl.voice = opt(t);
-                }
+        TtsVoice => text(|c, t| {
+            if c.tts.mode == crate::shared::config::TtsMode::External {
+                c.tts.external.voice = opt(t);
+            } else if let Some(cl) = c.tts.cloud_mut() {
+                cl.voice = opt(t);
             }
         }),
-        TtsBinary => text(|c, t| c.tts.managed.binary = opt(t)),
         TtsInstructions => text(|c, t| {
             if let Some(cl) = c.tts.cloud_mut() {
                 cl.instructions = opt(t);

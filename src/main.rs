@@ -133,10 +133,6 @@ fn real_main(
             run_sandbox_setup(paths, force, loc)?;
             Ok(ExitCode::SUCCESS)
         }
-        CliCommand::TtsSetup { force, voices } => {
-            run_tts_setup(paths, force, voices, loc)?;
-            Ok(ExitCode::SUCCESS)
-        }
         CliCommand::LocalesExport { code, output } => {
             run_locales_export(&code, &output, loc)?;
             Ok(ExitCode::SUCCESS)
@@ -425,31 +421,6 @@ fn run_sandbox_setup(paths: &Paths, force: bool, loc: &Locale) -> anyhow::Result
     runtime.block_on(features::sandbox_setup::setup(
         &dir,
         &features::sandbox_setup::SetupOptions { force },
-        loc,
-        |msg| println!("{msg}"),
-    ))?;
-    Ok(())
-}
-
-/// CLI: установка/обновление локального озвучивания (скачивание бинаря `piper` и
-/// голосов в `data/tts/`). Требует собственный tokio-рантайм (сетевой async).
-fn run_tts_setup(
-    paths: &Paths,
-    force: bool,
-    voices: Vec<String>,
-    loc: &Locale,
-) -> anyhow::Result<()> {
-    // Гард единственного экземпляра: не заменяем бинарь/голоса, пока приложение
-    // работает (оно может как раз озвучивать сообщение).
-    let _instance = acquire_cli_guard(loc, loc.t("cli.guard.action.tts"))?;
-    let dir = paths.tts_dir();
-    let runtime = tokio::runtime::Builder::new_multi_thread()
-        .enable_all()
-        .build()
-        .with_context(|| loc.t("cli.ctx.build_runtime").to_string())?;
-    runtime.block_on(features::tts_setup::setup(
-        &dir,
-        &features::tts_setup::SetupOptions { force, voices },
         loc,
         |msg| println!("{msg}"),
     ))?;

@@ -76,9 +76,7 @@ impl Orchestrator {
             .mode
             .cloud_provider()
             .and_then(|p| crate::shared::secrets::stored_key(&self.config.api_keys, p.key()));
-        // Каталог локального движка (`data/tts/`) нужен только режиму `managed`.
-        let tts_dir = self.storage.json().tts_dir();
-        let engine = match engine_from_config(&self.config.tts, stored, Some(&tts_dir)) {
+        let engine = match engine_from_config(&self.config.tts, stored) {
             Ok(engine) => engine,
             Err(err) => {
                 self.fail_tts(self.ui_locale().t(setup_error_key(err)));
@@ -142,8 +140,6 @@ fn setup_error_key(err: TtsSetupError) -> &'static str {
         TtsSetupError::Model => "ui.err.tts_no_model",
         TtsSetupError::ApiKey => "ui.err.tts_no_api_key",
         TtsSetupError::Url => "ui.err.tts_no_url",
-        TtsSetupError::Binary => "ui.err.tts_no_binary",
-        TtsSetupError::Voice => "ui.err.tts_no_voice",
     }
 }
 
@@ -506,8 +502,6 @@ mod tests {
             TtsSetupError::Model,
             TtsSetupError::ApiKey,
             TtsSetupError::Url,
-            TtsSetupError::Binary,
-            TtsSetupError::Voice,
         ] {
             let key = setup_error_key(err);
             assert!(ru().has_key(key), "ключ {key} должен быть в бандле");

@@ -15,9 +15,7 @@
   каркас JSON-миграций; [0007](decisions/0007-plugins-mcp-host-import-format.md) —
   плагины: MCP-хост инструментов + нейтральный формат обмена импорта; и
   [0008](decisions/0008-api-key-storage.md) — ввод API-ключей в настройках с
-  машинно-привязанным шифрованием в конфиге; и
-  [0009](decisions/0009-tts-speech-synthesis.md) — озвучивание сообщений
-  (независимый слот провайдера, локальный сайдкар `piper`, воспроизведение `rodio`);
+  машинно-привязанным шифрованием в конфиге;
 - **[docs/install.md](install.md)** — установка/запуск, движок, env.
 
 > Терминология: **движок** = провайдер инференса за трейтом `EngineBackend` —
@@ -257,12 +255,8 @@ src/
 │  ├─ backup.rs             резервное копирование/восстановление данных (zip, транзакц.)
 │  ├─ data_migration.rs     оркестрация миграций схем на старте (ADR 0006): гейты
 │  │                        downgrade/битости, pre-migration бэкап, control-parse
-│  ├─ provision.rs          общая механика провизии: скачивание (поток/память), сверка
-│  │                        sha256, распаковка tar.gz/zip (её делят обе setup-команды)
 │  ├─ sandbox_setup.rs      провизия песочницы Python (mindfork sandbox setup): wasmer +
 │  │                        python.webc + колёса по lock-списку (sha256); прогрев кэша
-│  ├─ tts_setup.rs          провизия озвучивания (mindfork tts setup): бинарь piper +
-│  │                        голоса ru/en по lock-списку (sha256). См. ADR 0009
 │  └─ import.rs             импорт из нейтрального формата mindfork-import
 │                           (docs/import-format.md): профили + чаты от внешних
 │                           конвертеров, идемпотентно (UUIDv5 от ключей)
@@ -329,10 +323,8 @@ src/
    ├─ server.rs            ServerStatus (статус сервера для UI)
    ├─ tts/                 озвучивание (TTS): контракт `TtsEngine` + `AudioClip`,
    │                       клиенты `openai` (`/v1/audio/speech`, он же external) и
-   │                       `gemini` (generateContent + AUDIO), `sidecar` (локальный
-   │                       `piper`: текст через stdin, сырой PCM из stdout),
-   │                       `playback` (очередь rodio, ленивое открытие устройства).
-   │                       См. spec §11.9, ADR 0009
+   │                       `gemini` (generateContent + AUDIO), `playback` (очередь
+   │                       rodio, ленивое открытие устройства). См. spec §11.9
    ├─ sandbox.rs           SandboxRunner (за трейтом) + WasmerSandbox: сайдкар `wasmer`
    │                       для `python_exec` в режиме песочницы (WASIX-изоляция, §8)
    ├─ secrets.rs           машинно-привязанное хранение API-ключей (ApiKeyEntry — запись
