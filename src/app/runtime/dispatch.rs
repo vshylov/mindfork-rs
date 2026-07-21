@@ -146,7 +146,6 @@ pub(super) fn apply_event(
                 let _ = cmd_tx.send(AppCommand::RequestSelfModel);
             }
         }
-        AppEvent::TtsActive(on) => screen.set_speaking(on),
         AppEvent::BackgroundTask { kind, active: on } => match kind {
             BackgroundKind::Reflection => screen.set_reflecting(on),
             BackgroundKind::Consolidation => screen.set_consolidating(on),
@@ -227,8 +226,6 @@ pub(super) fn dispatch(
         ChatIntent::RagDelete { path } => AppCommand::RagDelete { path },
         ChatIntent::RagList => AppCommand::RagList,
         ChatIntent::RagRebuild => AppCommand::RagRebuild,
-        ChatIntent::Tts(scope) => AppCommand::Tts(scope),
-        ChatIntent::TtsStop => AppCommand::TtsStop,
         ChatIntent::OpenSettings => {
             if let Some((config, profiles, language_locked, mcp, api_keys)) =
                 screen.settings_snapshot()

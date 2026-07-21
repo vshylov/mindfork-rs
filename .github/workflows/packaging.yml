@@ -37,9 +37,6 @@ jobs:
       - name: Установить тулчейн (из rust-toolchain.toml)
         run: rustup show
       - uses: Swatinem/rust-cache@v2
-      # ALSA нужна Linux-сборке (rodio/cpal — воспроизведение речи /tts).
-      - name: Системные зависимости (ALSA)
-        run: sudo apt-get update && sudo apt-get install -y libasound2-dev
       - name: Сборка релиза
         run: cargo build --release --locked
       - name: Установить nfpm
@@ -92,10 +89,6 @@ jobs:
             # ниже для запуска под обычным пользователем.
             dnf install -y util-linux desktop-file-utils ./dist/*.rpm
           elif command -v pacman >/dev/null 2>&1; then
-            # `pacman -U` зависимости из репозиториев НЕ тянет (в отличие от apt/dnf),
-            # поэтому рантайм-зависимости ставим сами: alsa-lib нужна воспроизведению
-            # речи (`/tts`) — бинарь линкуется с libasound.
-            pacman -Sy --noconfirm alsa-lib
             pacman -U --noconfirm ./dist/*.pkg.tar.zst
           else
             echo "нет поддерживаемого пакетного менеджера"; exit 1

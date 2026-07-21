@@ -281,10 +281,7 @@ pub(super) fn cloud_rows(
 /// поведение: пустая затравка, маскированный редактор, коммит отдельным намерением
 /// и `Del` как удаление ключа. См. [`SettingsScreen::api_key_field_provider`].
 pub(super) fn is_api_key_field(id: FieldId) -> bool {
-    matches!(
-        id,
-        FieldId::XApiKey | FieldId::IxApiKey | FieldId::EApiKey | FieldId::TtsApiKey
-    )
+    matches!(id, FieldId::XApiKey | FieldId::IxApiKey | FieldId::EApiKey)
 }
 
 /// Строка поля «API-ключ»: значение — **статус**, а не секрет («настроен (этот

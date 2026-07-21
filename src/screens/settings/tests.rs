@@ -40,7 +40,6 @@ fn field_desc(s: &SettingsScreen, id: FieldId) -> Option<String> {
         ModelTab::Assistant,
         ModelTab::Impersonation,
         ModelTab::Embeddings,
-        ModelTab::Tts,
     ] {
         rows.extend(s.model_fields_for(mt));
     }
@@ -305,73 +304,6 @@ fn model_subsection_third_tab_is_embeddings() {
     // В «Инструментах» эмбеддингов больше нет.
     goto_section(&mut s, Section::Tools);
     assert!(!s.fields().iter().any(|f| f.id == FieldId::EMode));
-}
-
-#[test]
-fn model_subsection_fourth_tab_is_tts_with_mode_driven_fields() {
-    // Четвёртая вкладка секции «Модель» — «Озвучивание» (spec §11.9): облачный
-    // режим показывает модель/голос/указания/ключ, external — URL вместо ключа.
-    let mut s = screen();
-    s.handle_key(key(KeyCode::Enter)); // ModelSub (таб-стрип)
-    for _ in 0..3 {
-        s.handle_key(key(KeyCode::Right));
-    }
-    assert_eq!(s.model_sub, ModelTab::Tts);
-    let ids: Vec<FieldId> = s.fields().iter().map(|f| f.id).collect();
-    // Облако (дефолт — OpenAI): модель/голос/указания/ключ + поведение.
-    assert!(ids.contains(&FieldId::TtsMode));
-    assert!(ids.contains(&FieldId::TtsModelName));
-    assert!(ids.contains(&FieldId::TtsVoice));
-    assert!(ids.contains(&FieldId::TtsInstructions));
-    assert!(ids.contains(&FieldId::TtsApiKey));
-    assert!(ids.contains(&FieldId::TtsSpeakRoles));
-    assert!(ids.contains(&FieldId::TtsStopOnSwitch));
-    assert!(ids.contains(&FieldId::TtsStopOnGeneration));
-
-    // Переключаем режим на external: появляется URL, исчезают ключ и указания
-    // (их поддерживает только облако OpenAI).
-    s.config.tts.mode = crate::shared::config::TtsMode::External;
-    let ids: Vec<FieldId> = s.fields().iter().map(|f| f.id).collect();
-    assert!(ids.contains(&FieldId::TtsUrl));
-    assert!(
-        !ids.contains(&FieldId::TtsApiKey),
-        "у external ключа-статуса нет"
-    );
-    assert!(
-        !ids.contains(&FieldId::TtsInstructions),
-        "instructions — только облако OpenAI"
-    );
-}
-
-#[test]
-fn tts_toggles_and_mode_are_saved() {
-    // Тумблеры поведения и цикл режима правят конфиг и отдают намерение сохранения.
-    // Вкладку ставим полем (`goto_field` ожидает фокус в меню, а прогон таб-стрипа
-    // клавишами оставил бы его на полях).
-    let mut s = screen();
-    goto_section(&mut s, Section::Model);
-    s.model_sub = ModelTab::Tts;
-    goto_field(&mut s, FieldId::TtsMode);
-    s.handle_key(key(KeyCode::Right));
-    assert_eq!(
-        s.config.tts.mode,
-        crate::shared::config::TtsMode::Gemini,
-        "цикл режима идёт по TtsMode::ALL"
-    );
-
-    let mut s = screen();
-    goto_section(&mut s, Section::Model);
-    s.model_sub = ModelTab::Tts;
-    goto_field(&mut s, FieldId::TtsSpeakRoles);
-    let intent = s.handle_key(key(KeyCode::Char(' ')));
-    assert!(matches!(intent, Some(SettingsIntent::SaveConfig(_))));
-    assert!(
-        s.config.tts.speak_roles,
-        "тумблер «Озвучивать роли» включился"
-    );
-    // Описание у полей озвучивания есть (нижняя панель + ловушка поиска).
-    assert!(field_desc(&s, FieldId::TtsMode).is_some());
-    assert!(field_desc(&s, FieldId::TtsSpeakRoles).is_some());
 }
 
 #[test]

@@ -33,10 +33,6 @@ jobs:
       - name: Установить тулчейн (из rust-toolchain.toml)
         run: rustup show
       - uses: Swatinem/rust-cache@v2
-      # ALSA нужна только Linux-сборке (rodio/cpal — воспроизведение речи /tts).
-      - name: Системные зависимости (ALSA)
-        if: runner.os == 'Linux'
-        run: sudo apt-get update && sudo apt-get install -y libasound2-dev
       - name: Сборка релиза
         run: cargo build --release --locked
       - name: Выгрузить бинарник

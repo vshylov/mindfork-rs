@@ -302,7 +302,7 @@ fn segment_units(text: &str, params: ChunkParams) -> Vec<String> {
 
 /// Делит абзац на предложения по завершающей пунктуации (`. ! ? …` и их
 /// CJK-аналоги), сохраняя её. Граница — пунктуация, за которой пробел/конец.
-pub(crate) fn split_sentences(paragraph: &str) -> Vec<String> {
+fn split_sentences(paragraph: &str) -> Vec<String> {
     let chars: Vec<char> = paragraph.chars().collect();
     let mut out = Vec::new();
     let mut start = 0;

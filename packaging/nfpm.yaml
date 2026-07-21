@@ -27,29 +27,12 @@ description: |
   Gemini, Anthropic). Notes/RAG memory, client-side tools, multi-language UI.
 
 # Зависимости заданы вручную — nfpm их не вычисляет. Стек: rustls (без OpenSSL) +
-# bundled SQLite + x11rb (буфер обмена) → из системного остаётся glibc и ALSA
-# (libasound — воспроизведение речи `/tts`; на PipeWire/PulseAudio работает через
-# штатный pipewire-alsa). Без звука приложение не падает: команда `/tts` покажет
-# «звук недоступен» (docs/research/tts.md §6).
+# bundled SQLite + x11rb (буфер обмена) → фактическая зависимость лишь glibc.
 overrides:
   deb:
     depends:
       - libc6 (>= 2.35)
-      # Альтернатива обязательна, а не косметика: после time_t64-перехода
-      # (Ubuntu 24.04+/Debian trixie) настоящая ALSA называется `libasound2t64`, а
-      # старое имя `libasound2` осталось лишь **виртуальным** — и apt удовлетворяет
-      # его OSS-шимом `liboss4-salsa-asound2`, в котором нет части символов
-      # (`snd_device_name_get_hint`), т.е. приложение падает при запуске. Поймано
-      # контейнерным смоуком packaging.yml на ubuntu:24.04. Первая альтернатива
-      # предпочитается, на старых системах (bookworm) остаётся вторая.
-      - libasound2t64 | libasound2
-  rpm:
-    depends:
-      - alsa-lib
-  archlinux:
-    depends:
-      - alsa-lib
-  # glibc в rpm/archlinux — часть базовой системы, явно не указываем.
+  # rpm/archlinux: glibc — часть базовой системы, явно не указываем.
 
 contents:
   # Реальный бинарь (сайдкар в /usr/lib/<pkg>/, не в /usr/bin).

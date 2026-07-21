@@ -26,8 +26,6 @@ jobs:
       - name: Установить тулчейн (из rust-toolchain.toml)
         run: rustup show
       - uses: Swatinem/rust-cache@v2
-      - name: Системные зависимости (ALSA — воспроизведение речи /tts)
-        run: sudo apt-get update && sudo apt-get install -y libasound2-dev
       - name: Форматирование
         run: cargo fmt --check
       - name: Clippy (все цели, warnings = ошибки)
@@ -45,9 +43,5 @@ jobs:
       - name: Установить тулчейн (из rust-toolchain.toml)
         run: rustup show
       - uses: Swatinem/rust-cache@v2
-      # ALSA нужна только Linux-сборке (rodio/cpal); на Windows — чистый windows-rs.
-      - name: Системные зависимости (ALSA — воспроизведение речи /tts)
-        if: runner.os == 'Linux'
-        run: sudo apt-get update && sudo apt-get install -y libasound2-dev
       - name: Тесты
         run: cargo test

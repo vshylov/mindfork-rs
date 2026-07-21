@@ -13,10 +13,6 @@ anyhow = "1.0.103"
 arboard = { version = "3.4.1", default-features = false }
 async-stream = "0.3.6"
 async-trait = "0.1.89"
-# Декодирование аудио из ответов TTS-провайдеров (Gemini отдаёт PCM в base64
-# внутри `inlineData.data`). Уже в графе транзитивно; версия пришпилена к той, что
-# в Cargo.lock, чтобы не плодить дубль (прецедент — quick-xml). См. shared/tts.
-base64 = "0.22.1"
 bytemuck = "1.25.0"
 # AEAD-шифрование сохранённых API-ключей на Linux (схема `machine-key-v1`: ключ
 # выводится из /etc/machine-id через HKDF). RustCrypto, чистый Rust. На Windows
@@ -52,13 +48,6 @@ pulldown-cmark = { version = "0.13.4", default-features = false }
 # Cargo.lock, чтобы не плодить дубль. См. features/doc_extract.rs.
 quick-xml = "0.39.4"
 ratatui = "0.30.1"
-# Воспроизведение синтезированной речи (`/tts`) в процессе приложения: очередь
-# источников (`Player::append`) даёт конвейер «синтез чанка N+1 во время
-# проигрывания N» и мгновенную отмену. `default-features = false` — только нужные
-# декодеры (сырой PCM облаков идёт мимо декодера, `SamplesBuffer`). Единственная
-# новая системная зависимость — ALSA на Linux (`libasound2-dev` при сборке).
-# См. docs/research/tts.md §6.
-rodio = { version = "0.22.0", default-features = false, features = ["playback", "wav", "mp3"] }
 reqwest = { version = "0.13.4", default-features = false, features = ["json", "stream", "rustls", "form"] }
 rusqlite = { version = "0.40.1", features = ["bundled"] }
 scraper = "0.27.0"

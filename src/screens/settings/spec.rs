@@ -287,65 +287,6 @@ pub(super) fn field_spec(id: FieldId) -> Option<FieldSpec> {
         }),
         EBinary => text(|c, t| c.embed.managed.binary = opt(t)),
         EModel => text(|c, t| c.embed.managed.model_path = opt(t)),
-        // ── Озвучивание (TTS) ──────────────────────────────────────────────
-        TtsMode => choice(
-            |c, dir| c.tts.mode = c.tts.mode.cycle(dir),
-            |c, _loc| {
-                index_menu(&crate::shared::config::TtsMode::ALL, c.tts.mode, |m| {
-                    m.label().to_string()
-                })
-            },
-        ),
-        // Текстовые поля маршрутизируются по режиму: external — своя под-структура,
-        // облако — под-структура активного провайдера (как у движка).
-        TtsModelName => text(|c, t| {
-            if c.tts.mode == crate::shared::config::TtsMode::External {
-                c.tts.external.model_name = opt(t);
-            } else if let Some(cl) = c.tts.cloud_mut() {
-                cl.model_name = opt(t);
-            }
-        }),
-        TtsVoice => text(|c, t| {
-            if c.tts.mode == crate::shared::config::TtsMode::External {
-                c.tts.external.voice = opt(t);
-            } else if let Some(cl) = c.tts.cloud_mut() {
-                cl.voice = opt(t);
-            }
-        }),
-        TtsInstructions => text(|c, t| {
-            if let Some(cl) = c.tts.cloud_mut() {
-                cl.instructions = opt(t);
-            }
-        }),
-        TtsApiKeyEnv => text(|c, t| {
-            if c.tts.mode == crate::shared::config::TtsMode::External {
-                c.tts.external.api_key_env = opt(t);
-            } else if let Some(cl) = c.tts.cloud_mut() {
-                cl.api_key_env = opt(t);
-            }
-        }),
-        TtsUrl => text(|c, t| {
-            if c.tts.mode == crate::shared::config::TtsMode::External {
-                c.tts.external.url = opt(t);
-            } else if let Some(cl) = c.tts.cloud_mut() {
-                cl.url = opt(t);
-            }
-        }),
-        TtsSpeed => spec(
-            Access::Text(|c, t| {
-                if let Ok(v) = t.parse::<f32>()
-                    && v > 0.0
-                {
-                    c.tts.speed = v;
-                }
-            }),
-            Some(NumKind::Float),
-        ),
-        TtsSpeakRoles => toggle(|c| c.tts.speak_roles = !c.tts.speak_roles),
-        TtsStopOnSwitch => toggle(|c| c.tts.stop_on_chat_switch = !c.tts.stop_on_chat_switch),
-        TtsStopOnGeneration => {
-            toggle(|c| c.tts.stop_on_generation_start = !c.tts.stop_on_generation_start)
-        }
         EPort => int(|c, t| {
             if let Ok(p) = t.parse() {
                 c.embed.managed.port = p;

@@ -42,7 +42,6 @@ impl ChatScreen {
             reasoning: self.gen_reasoning,
             mouse_scroll: self.mouse_scroll,
             background,
-            speaking: self.speaking,
         }
     }
 

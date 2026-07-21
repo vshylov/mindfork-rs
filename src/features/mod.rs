@@ -18,4 +18,3 @@ pub mod rename_chat;
 pub mod sandbox_setup;
 pub mod spellcheck;
 pub mod tools;
-pub mod tts_command;

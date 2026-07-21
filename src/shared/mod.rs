@@ -16,6 +16,5 @@ pub mod server;
 pub mod storage;
 pub mod theme;
 pub mod tokens;
-pub mod tts;
 pub mod ui;
 pub mod wrap;

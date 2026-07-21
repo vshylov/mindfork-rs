@@ -85,8 +85,6 @@ impl Orchestrator {
         if !self.gen_state.is_idle() {
             return;
         }
-        // Безусловно (не настройка): озвучиваемый ответ сейчас исчезнет.
-        self.stop_tts();
         let Some(active_id) = self.active_id else {
             return;
         };
@@ -127,8 +125,6 @@ impl Orchestrator {
         if !self.gen_state.is_idle() {
             return;
         }
-        // Безусловно (не настройка): озвучиваемый обмен сейчас исчезнет.
-        self.stop_tts();
         let Some(active_id) = self.active_id else {
             return;
         };
@@ -179,11 +175,6 @@ impl Orchestrator {
     /// добавлено сообщение пользователя или усечён старый ответ). Общая часть для
     /// отправки нового сообщения и перегенерации.
     fn start_generation(&mut self, active_id: Uuid, backend: Arc<dyn EngineBackend>) {
-        // Озвучивание прерываем по настройке (по умолчанию — нет: слушать ответ,
-        // пока пишется следующий, законно). См. spec §11.9.
-        if self.config.tts.stop_on_generation_start {
-            self.stop_tts();
-        }
         // Снимок на начало хода: семплинг, доступные инструменты, контекст.
         let sampling = self.effective_sampling(active_id);
         let Some(chat_ref) = self.chats.iter().find(|c| c.id == active_id) else {

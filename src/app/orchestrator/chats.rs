@@ -43,11 +43,6 @@ impl Orchestrator {
         if self.active_id == Some(id) {
             return;
         }
-        // Озвучивание прерываем по настройке (по умолчанию — да: слушать чужой
-        // чат неожиданно). См. spec §11.9.
-        if self.config.tts.stop_on_chat_switch {
-            self.stop_tts();
-        }
         // Если идёт генерация — отменяем её (частичный ответ сохранится для
         // исходного чата по приходу GenResult).
         if let Some(token) = self.gen_state.request_cancel() {
@@ -121,10 +116,6 @@ impl Orchestrator {
     }
 
     pub(super) fn handle_delete(&mut self, id: Uuid) {
-        // Безусловно (не настройка): озвучиваемого чата сейчас не станет.
-        if self.active_id == Some(id) {
-            self.stop_tts();
-        }
         match self.storage.json().hide_chat(id) {
             Ok(false) => return,
             Err(err) => {

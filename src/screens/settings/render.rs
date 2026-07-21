@@ -367,9 +367,6 @@ impl SettingsScreen {
                 loc.t("ui.settings.chip.impersonation"),
             ),
             ModelTab::Embeddings => (&self.statuses.embed, loc.t("ui.settings.chip.embeddings")),
-            // У озвучивания нет сервера/пробы: клиенты stateless, строятся на вызов
-            // (docs/research/tts.md §8) — чип показывать нечему.
-            ModelTab::Tts => return Vec::new(),
         };
         server_status_chip(status, label, loc, palette)
     }

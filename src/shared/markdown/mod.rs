@@ -189,14 +189,8 @@ fn code_theme(palette: &Palette) -> &'static Theme {
 mod code;
 mod latex;
 mod mermaid;
-mod speak;
 mod table;
 mod writer;
-
-// Речевой экстрактор (TTS, docs/research/tts.md §5) — второй потребитель тех же
-// событий парсера, поэтому живёт рядом с рендером; наружу — одна функция.
-#[allow(unused_imports)]
-pub use self::speak::speakable_text;
 
 // Внутренняя проводка: Writer (writer) + подсветка (code) + таблицы (table) +
 // LaTeX (latex) + диаграммы (mermaid) видны друг другу и mod.rs через реэкспорт
