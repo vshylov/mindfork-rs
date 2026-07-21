@@ -395,6 +395,13 @@
   "tool.mcp.result_truncated": "[result truncated]",
   "tool.mcp.error_empty": "(the tool returned an error without a description)",
 
+  "speak.skip.code": "(code block skipped)",
+  "speak.skip.mermaid": "(diagram skipped)",
+  "speak.skip.table": "(table skipped)",
+  "speak.skip.formula": "(formula skipped)",
+  "speak.skip.image": "(image)",
+  "speak.link": "link: {domain}",
+
   "ui.feed.empty": "Start a conversation — type a message below.",
   "ui.feed.role.user": "YOU",
   "ui.feed.role.assistant": "ASSISTANT",
