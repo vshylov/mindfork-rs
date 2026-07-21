@@ -1599,3 +1599,71 @@ async fn tts_speaks_chat_e2e_live() {
     cmd_tx.send(AppCommand::Quit).unwrap();
     let _ = handle.await;
 }
+
+/// Живой e2e озвучивания **локальным сайдкаром** (managed-режим, ADR 0009): та же
+/// цепочка через оркестратор, но без сети и ключей — синтез бинарём `piper` из
+/// `data/tts/`. Каталог задаётся `MINDFORK_TTS_DIR` (после `mindfork-rs tts setup`);
+/// бинарь и голос передаются полными путями, т.к. у тестового оркестратора свой
+/// временный корень данных.
+#[tokio::test]
+#[ignore = "требует установленный piper (MINDFORK_TTS_DIR) и звуковую карту"]
+async fn tts_speaks_chat_managed_e2e_live() {
+    use crate::features::tts_command::TtsScope;
+    use crate::shared::config::TtsMode;
+
+    let Ok(dir) = std::env::var("MINDFORK_TTS_DIR") else {
+        eprintln!("skip: MINDFORK_TTS_DIR не задан (выполните `mindfork-rs tts setup`)");
+        return;
+    };
+    let dir = std::path::PathBuf::from(dir);
+    let bin = dir
+        .join("piper")
+        .join(if cfg!(windows) { "piper.exe" } else { "piper" });
+    let voice = dir.join("voices").join("ru_RU-dmitri-medium.onnx");
+    assert!(bin.is_file() && voice.is_file(), "нужен `tts setup`");
+
+    let mut config = AppConfig::default();
+    config.tts.mode = TtsMode::Managed;
+    config.tts.managed.binary = Some(bin.display().to_string());
+    config.tts.managed.voice = Some(voice.display().to_string());
+    config.tts.speak_roles = true;
+
+    let backend: Arc<dyn EngineBackend> = Arc::new(MockBackend::scripted(vec![
+        ChatChunk::Text(
+            "Локальная озвучка работает. Вот код:\n\n```rust\nfn main() {}\n```\n\n\
+             А это латинская вставка: llama-server, JSON."
+                .into(),
+        ),
+        ChatChunk::Finished(crate::shared::api::FinishReason::Stop),
+    ]));
+    let (_dir, cmd_tx, mut evt_rx, handle) = spawn_orch_cfg(Some(backend), config);
+    wait_for(&mut evt_rx, |e| matches!(e, AppEvent::ChatActivated { .. })).await;
+    cmd_tx
+        .send(AppCommand::SendMessage("проверка связи".into()))
+        .unwrap();
+    wait_for(&mut evt_rx, |e| matches!(e, AppEvent::Finished { .. })).await;
+
+    let started = std::time::Instant::now();
+    cmd_tx.send(AppCommand::Tts(TtsScope::Recent(2))).unwrap();
+    assert!(
+        wait_for(&mut evt_rx, |e| matches!(e, AppEvent::TtsActive(true)))
+            .await
+            .is_some(),
+        "озвучивание должно стартовать"
+    );
+    let done = tokio::time::timeout(
+        std::time::Duration::from_secs(120),
+        wait_for(&mut evt_rx, |e| {
+            matches!(e, AppEvent::TtsActive(false) | AppEvent::Error(_))
+        }),
+    )
+    .await
+    .expect("озвучивание должно завершиться за 120 с");
+    match done {
+        Some(AppEvent::Error(msg)) => panic!("озвучивание завершилось ошибкой: {msg}"),
+        Some(AppEvent::TtsActive(false)) => eprintln!("озвучено за {:?}", started.elapsed()),
+        other => panic!("неожиданный исход: {other:?}"),
+    }
+    cmd_tx.send(AppCommand::Quit).unwrap();
+    let _ = handle.await;
+}

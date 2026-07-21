@@ -269,6 +269,13 @@ impl Paths {
     pub fn sandbox_dir(&self) -> PathBuf {
         self.root.join("sandbox")
     }
+
+    /// Каталог локального озвучивания (`tts/`): бинарь `piper`, голоса
+    /// (`voices/*.onnx` + `.onnx.json`). Наполняется командой `mindfork tts setup`
+    /// (этап 2 направления TTS, docs/research/tts.md §4).
+    pub fn tts_dir(&self) -> PathBuf {
+        self.root.join("tts")
+    }
 }
 
 #[cfg(test)]

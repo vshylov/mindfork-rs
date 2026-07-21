@@ -29,6 +29,12 @@ impl JsonStore {
         self.paths.sandbox_dir()
     }
 
+    /// Каталог локального озвучивания (`tts/`) — для managed-режима TTS
+    /// (сайдкар `piper`). См. [`Paths::tts_dir`].
+    pub fn tts_dir(&self) -> std::path::PathBuf {
+        self.paths.tts_dir()
+    }
+
     // ---------- конфигурация ----------
 
     /// Загружает конфиг; если файла нет — возвращает дефолтный.

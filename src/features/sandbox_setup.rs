@@ -9,15 +9,14 @@
 //! бинаря после распаковки совпадает с тем, что ищет `shared::sandbox` (общий
 //! резолвер [`crate::shared::sandbox::locate_wasmer`]).
 
-use std::io::{Cursor, Read};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use anyhow::{Context, Result, bail};
-use futures_util::StreamExt;
-use sha2::{Digest, Sha256};
-use tokio::io::AsyncWriteExt;
 
+use crate::features::provision::{
+    download_bytes, download_to_file, extract_targz, http_client, unpack_zip,
+};
 use crate::shared::i18n::Locale;
 use crate::shared::sandbox::{SandboxRunner, WasmerSandbox, locate_wasmer};
 
@@ -157,7 +156,7 @@ pub async fn setup(
             &[("path", &dir.display().to_string())],
         )
     })?;
-    let client = http_client(loc)?;
+    let client = http_client(USER_AGENT, loc)?;
 
     let wasmer = ensure_wasmer(&client, dir, opts, loc, &mut progress).await?;
     ensure_python_webc(dir, &wasmer, opts, loc, &mut progress).await?;
@@ -322,171 +321,8 @@ async fn ensure_wheels(
         progress(&loc.tf("sandbox.setup.wheels.downloading", &[("name", w.dir)]));
         let bytes = download_bytes(client, w.url, w.sha256, loc).await?;
         progress(&loc.tf("sandbox.setup.wheels.extracting", &[("name", w.dir)]));
-        unpack_wheel(&bytes, &site, loc)
+        unpack_zip(&bytes, &site, loc)
             .with_context(|| loc.tf("sandbox.setup.wheels.unpack", &[("name", w.dir)]))?;
-    }
-    Ok(())
-}
-
-/// HTTP-клиент с User-Agent (rustls, как в остальном проекте).
-fn http_client(loc: &Locale) -> Result<reqwest::Client> {
-    reqwest::Client::builder()
-        .user_agent(USER_AGENT)
-        .build()
-        .with_context(|| loc.t("sandbox.setup.http_client").to_string())
-}
-
-/// Скачивает `url` в файл `dest` потоком (крупные архивы не буферим в память),
-/// считая sha256 на лету; сверяет с `expected`.
-async fn download_to_file(
-    client: &reqwest::Client,
-    url: &str,
-    dest: &Path,
-    expected: &str,
-    loc: &Locale,
-    progress: &mut impl FnMut(&str),
-) -> Result<()> {
-    let resp = client
-        .get(url)
-        .send()
-        .await
-        .with_context(|| loc.tf("sandbox.setup.request", &[("url", url)]))?
-        .error_for_status()
-        .with_context(|| loc.tf("sandbox.setup.download", &[("url", url)]))?;
-    let total = resp.content_length();
-    let mut file = tokio::fs::File::create(dest).await.with_context(|| {
-        loc.tf(
-            "sandbox.setup.create_file",
-            &[("path", &dest.display().to_string())],
-        )
-    })?;
-    let mut hasher = Sha256::new();
-    let mut stream = resp.bytes_stream();
-    let mut done: u64 = 0;
-    let mut next_report: u64 = 32 * 1024 * 1024; // отчёт каждые ~32 МБ
-    while let Some(chunk) = stream.next().await {
-        let chunk = chunk.with_context(|| loc.t("sandbox.setup.read_stream").to_string())?;
-        hasher.update(&chunk);
-        file.write_all(&chunk)
-            .await
-            .with_context(|| loc.t("sandbox.setup.write_file").to_string())?;
-        done += chunk.len() as u64;
-        if done >= next_report {
-            match total {
-                Some(t) => progress(&loc.tf(
-                    "sandbox.setup.progress_bytes",
-                    &[
-                        ("done", &(done >> 20).to_string()),
-                        ("total", &(t >> 20).to_string()),
-                    ],
-                )),
-                None => progress(&loc.tf(
-                    "sandbox.setup.progress_bytes_unknown",
-                    &[("done", &(done >> 20).to_string())],
-                )),
-            }
-            next_report += 32 * 1024 * 1024;
-        }
-    }
-    file.flush()
-        .await
-        .with_context(|| loc.t("sandbox.setup.flush").to_string())?;
-    verify_sha256(&hasher.finalize(), expected, url, loc)
-}
-
-/// Скачивает `url` целиком в память (небольшие колёса), сверяет sha256.
-async fn download_bytes(
-    client: &reqwest::Client,
-    url: &str,
-    expected: &str,
-    loc: &Locale,
-) -> Result<Vec<u8>> {
-    let bytes = client
-        .get(url)
-        .send()
-        .await
-        .with_context(|| loc.tf("sandbox.setup.request", &[("url", url)]))?
-        .error_for_status()
-        .with_context(|| loc.tf("sandbox.setup.download", &[("url", url)]))?
-        .bytes()
-        .await
-        .with_context(|| loc.t("sandbox.setup.read_body").to_string())?;
-    let mut hasher = Sha256::new();
-    hasher.update(&bytes);
-    verify_sha256(&hasher.finalize(), expected, url, loc)?;
-    Ok(bytes.to_vec())
-}
-
-/// Сверяет хэш (сырые байты дайджеста) с ожидаемым hex; ошибка — с указанием URL.
-fn verify_sha256(digest: &[u8], expected: &str, url: &str, loc: &Locale) -> Result<()> {
-    let got = hex_lower(digest);
-    if got.eq_ignore_ascii_case(expected) {
-        Ok(())
-    } else {
-        bail!(
-            "{}",
-            loc.tf(
-                "sandbox.setup.sha_mismatch",
-                &[("url", url), ("expected", expected), ("got", &got)],
-            )
-        )
-    }
-}
-
-/// Байты → строка hex (нижний регистр), без крейта `hex`.
-fn hex_lower(bytes: &[u8]) -> String {
-    use std::fmt::Write;
-    let mut s = String::with_capacity(bytes.len() * 2);
-    for b in bytes {
-        let _ = write!(s, "{b:02x}");
-    }
-    s
-}
-
-/// Распаковывает tar.gz-архив в каталог `dest`.
-fn extract_targz(archive: &Path, dest: &Path, loc: &Locale) -> Result<()> {
-    let file = std::fs::File::open(archive).with_context(|| {
-        loc.tf(
-            "sandbox.setup.open_archive",
-            &[("path", &archive.display().to_string())],
-        )
-    })?;
-    let gz = flate2::read::GzDecoder::new(std::io::BufReader::new(file));
-    let mut ar = tar::Archive::new(gz);
-    std::fs::create_dir_all(dest)?;
-    ar.unpack(dest).with_context(|| {
-        loc.tf(
-            "sandbox.setup.extract_to",
-            &[("path", &dest.display().to_string())],
-        )
-    })?;
-    Ok(())
-}
-
-/// Распаковывает колесо (zip) в каталог `site` (защита от zip-slip через
-/// `enclosed_name`, как в `features::backup`).
-fn unpack_wheel(bytes: &[u8], site: &Path, loc: &Locale) -> Result<()> {
-    let mut zip = zip::ZipArchive::new(Cursor::new(bytes))
-        .with_context(|| loc.t("sandbox.setup.open_wheel").to_string())?;
-    for i in 0..zip.len() {
-        let mut entry = zip.by_index(i)?;
-        let Some(rel) = entry.enclosed_name() else {
-            bail!(
-                "{}",
-                loc.tf("sandbox.setup.unsafe_wheel", &[("name", entry.name())])
-            );
-        };
-        let out = site.join(rel);
-        if entry.is_dir() {
-            std::fs::create_dir_all(&out)?;
-            continue;
-        }
-        if let Some(parent) = out.parent() {
-            std::fs::create_dir_all(parent)?;
-        }
-        let mut buf = Vec::with_capacity(entry.size() as usize);
-        entry.read_to_end(&mut buf)?;
-        std::fs::write(&out, &buf)?;
     }
     Ok(())
 }
@@ -494,12 +330,6 @@ fn unpack_wheel(bytes: &[u8], site: &Path, loc: &Locale) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::shared::i18n::{Lang, locale};
-
-    /// Референсная локаль для тестов (тексты ошибок не проверяются — ru байт-в-байт).
-    fn ru() -> &'static Locale {
-        locale(Lang::Ru)
-    }
 
     #[test]
     fn archive_selection_by_platform() {
@@ -510,35 +340,6 @@ mod tests {
         // Неизвестная платформа — нет автоскачивания.
         assert!(archive_for("plan9", "x86_64").is_none());
         assert!(archive_for("windows", "riscv64").is_none());
-    }
-
-    #[test]
-    fn hex_encoding_is_lowercase() {
-        assert_eq!(hex_lower(&[0x00, 0x0f, 0xff, 0xa5]), "000fffa5");
-    }
-
-    #[test]
-    fn verify_sha256_matches_case_insensitively() {
-        let digest = Sha256::digest(b"hello");
-        let hex = hex_lower(&digest);
-        assert!(verify_sha256(&digest, &hex, "u", ru()).is_ok());
-        assert!(verify_sha256(&digest, &hex.to_uppercase(), "u", ru()).is_ok());
-        assert!(verify_sha256(&digest, "deadbeef", "u", ru()).is_err());
-    }
-
-    #[test]
-    fn sha_mismatch_error_is_localized() {
-        // Регрессия против забытого `loc`: en-сообщение без кириллицы, ru — русское.
-        let digest = Sha256::digest(b"hello");
-        let en = verify_sha256(&digest, "deadbeef", "u", locale(Lang::En))
-            .unwrap_err()
-            .to_string();
-        assert!(en.contains("sha256 mismatch"), "{en}");
-        assert!(!en.chars().any(|c| ('а'..='я').contains(&c)), "{en}");
-        let r = verify_sha256(&digest, "deadbeef", "u", ru())
-            .unwrap_err()
-            .to_string();
-        assert!(r.contains("не совпал"), "{r}");
     }
 
     #[test]
@@ -554,49 +355,5 @@ mod tests {
             assert!(w.url.starts_with("https://"), "{}", w.url);
             assert_eq!(w.sha256.len(), 64, "{}", w.dir);
         }
-    }
-
-    #[test]
-    fn unpack_wheel_extracts_into_site_packages() {
-        // Крафт-zip как «колесо»: файл пакета + dist-info.
-        let mut buf = Vec::new();
-        {
-            let mut w = zip::ZipWriter::new(Cursor::new(&mut buf));
-            let opts = zip::write::SimpleFileOptions::default();
-            use std::io::Write as _;
-            w.start_file("mypkg/__init__.py", opts).unwrap();
-            w.write_all(b"x = 1\n").unwrap();
-            w.start_file("mypkg-1.0.dist-info/METADATA", opts).unwrap();
-            w.write_all(b"Name: mypkg\n").unwrap();
-            w.finish().unwrap();
-        }
-        let dir = tempfile::tempdir().unwrap();
-        unpack_wheel(&buf, dir.path(), ru()).unwrap();
-        assert!(dir.path().join("mypkg/__init__.py").is_file());
-        assert!(dir.path().join("mypkg-1.0.dist-info/METADATA").is_file());
-    }
-
-    #[test]
-    fn extract_targz_roundtrip() {
-        // Собираем маленький tar.gz с файлом bin/wasmer и распаковываем.
-        let mut gz = Vec::new();
-        {
-            let enc = flate2::write::GzEncoder::new(&mut gz, flate2::Compression::default());
-            let mut tb = tar::Builder::new(enc);
-            let data = b"#!fake wasmer\n";
-            let mut header = tar::Header::new_gnu();
-            header.set_size(data.len() as u64);
-            header.set_mode(0o755);
-            header.set_cksum();
-            tb.append_data(&mut header, "bin/wasmer", &data[..])
-                .unwrap();
-            tb.into_inner().unwrap().finish().unwrap();
-        }
-        let archive = tempfile::tempdir().unwrap();
-        let apath = archive.path().join("a.tar.gz");
-        std::fs::write(&apath, &gz).unwrap();
-        let dest = tempfile::tempdir().unwrap();
-        extract_targz(&apath, dest.path(), ru()).unwrap();
-        assert!(dest.path().join("bin/wasmer").is_file());
     }
 }

@@ -488,6 +488,8 @@ enum FieldId {
     TtsMode,
     TtsModelName,
     TtsVoice,
+    /// Путь к бинарю `piper` (managed-режим; обычно пусто).
+    TtsBinary,
     TtsInstructions,
     TtsSpeed,
     /// API-ключ облачного провайдера озвучивания (общий с чатом, ADR 0008).
