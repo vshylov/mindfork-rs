@@ -35,7 +35,14 @@ overrides:
   deb:
     depends:
       - libc6 (>= 2.35)
-      - libasound2
+      # Альтернатива обязательна, а не косметика: после time_t64-перехода
+      # (Ubuntu 24.04+/Debian trixie) настоящая ALSA называется `libasound2t64`, а
+      # старое имя `libasound2` осталось лишь **виртуальным** — и apt удовлетворяет
+      # его OSS-шимом `liboss4-salsa-asound2`, в котором нет части символов
+      # (`snd_device_name_get_hint`), т.е. приложение падает при запуске. Поймано
+      # контейнерным смоуком packaging.yml на ubuntu:24.04. Первая альтернатива
+      # предпочитается, на старых системах (bookworm) остаётся вторая.
+      - libasound2t64 | libasound2
   rpm:
     depends:
       - alsa-lib
