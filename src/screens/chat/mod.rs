@@ -95,6 +95,10 @@ pub enum ChatIntent {
     RagList,
     /// Реиндексировать базу знаний (команда `/rag rebuild`).
     RagRebuild,
+    /// Озвучить сообщения чата (команда `/tts`, `/tts N`, `/tts all`). См. spec §11.9.
+    Tts(crate::features::tts_command::TtsScope),
+    /// Остановить озвучивание (команда `/tts stop`).
+    TtsStop,
     /// Открыть экран настроек (`Ctrl+P`). `app` создаёт его из снимка настроек.
     OpenSettings,
     /// Открыть экран списка чатов (`Esc`). `app` создаёт его из снимка списка.
@@ -267,6 +271,8 @@ pub struct ChatScreen {
     /// Идёт ли фоновая авто-консолидация «модели себя» («сон» модели себя; тихий
     /// индикатор). См. docs/history/self-model-consolidation.md.
     self_consolidating: bool,
+    /// Идёт ли озвучивание (`/tts`) — тихий чип «♪ озвучка» в статус-баре.
+    speaking: bool,
     /// Индикатор фоновой индексации RAG (`/rag add`); `None` — индексация не идёт.
     rag: Option<RagBanner>,
     /// Состояние имперсонации (`Ctrl+U`); `None` — не идёт. См. spec §11.8.
@@ -327,6 +333,7 @@ impl ChatScreen {
             reflecting: false,
             consolidating: false,
             self_consolidating: false,
+            speaking: false,
             rag: None,
             impersonation: None,
             pending_text_sep: false,
@@ -415,6 +422,11 @@ impl ChatScreen {
     /// Ставит/снимает флаг активной авто-консолидации «модели себя» («сон» модели себя).
     pub fn set_self_consolidating(&mut self, active: bool) {
         self.self_consolidating = active;
+    }
+
+    /// Ставит/снимает флаг идущего озвучивания (`/tts`) — чип в статус-баре.
+    pub fn set_speaking(&mut self, active: bool) {
+        self.speaking = active;
     }
 
     /// Метка активных фоновых задач для статус-бара (`None` — ничего не идёт).

@@ -24,7 +24,7 @@ use crate::features::profiles::ProfileEdit;
 use crate::features::tools::meta::{ToolGate, ToolInfo};
 use crate::shared::config::{
     AppConfig, CloudProvider, CloudSettings, FlashAttn, ImpersonationMode, ManagedSettings,
-    PythonMode, ServerMode, SpecType, Theme,
+    PythonMode, ServerMode, SpecType, Theme, TtsCloudSettings, TtsMode,
 };
 use crate::shared::i18n::Locale;
 use crate::shared::keys;
@@ -123,13 +123,17 @@ enum ModelTab {
     Assistant,
     Impersonation,
     Embeddings,
+    /// Озвучивание (TTS) — независимый слот: у Anthropic TTS нет вовсе, поэтому
+    /// провайдер выбирается отдельно от chat-движка. См. spec §11.9.
+    Tts,
 }
 
 /// i18n-ключи подписей вкладок [`ModelTab`] (порядок = дискриминанты).
-const MODEL_TAB_KEYS: [&str; 3] = [
+const MODEL_TAB_KEYS: [&str; 4] = [
     "ui.settings.tab.assistant",
     "ui.settings.tab.impersonation",
     "ui.settings.tab.embeddings",
+    "ui.settings.tab.tts",
 ];
 
 impl ModelTab {
@@ -138,10 +142,11 @@ impl ModelTab {
     }
 
     /// Все варианты (для перечисления полей всех подсекций при поиске).
-    const ALL: [ModelTab; 3] = [
+    const ALL: [ModelTab; 4] = [
         ModelTab::Assistant,
         ModelTab::Impersonation,
         ModelTab::Embeddings,
+        ModelTab::Tts,
     ];
 
     /// Циклический сдвиг вкладки (←/→ по таб-стрипу).
@@ -479,6 +484,19 @@ enum FieldId {
     /// API-ключ облака для embedding-сервера (см. [`FieldId::XApiKey`]).
     EApiKey,
     EPort,
+    // Озвучивание (TTS, вкладка «Озвучивание» секции «Модель»). См. spec §11.9.
+    TtsMode,
+    TtsModelName,
+    TtsVoice,
+    TtsInstructions,
+    TtsSpeed,
+    /// API-ключ облачного провайдера озвучивания (общий с чатом, ADR 0008).
+    TtsApiKey,
+    TtsApiKeyEnv,
+    TtsUrl,
+    TtsSpeakRoles,
+    TtsStopOnSwitch,
+    TtsStopOnGeneration,
     // RAG (чанкинг базы знаний)
     RagTarget,
     RagOverlap,
