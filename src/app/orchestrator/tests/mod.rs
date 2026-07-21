@@ -358,3 +358,4 @@ mod self_consolidation;
 mod self_model;
 mod settings;
 mod title;
+mod tts;

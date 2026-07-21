@@ -27,12 +27,22 @@ description: |
   Gemini, Anthropic). Notes/RAG memory, client-side tools, multi-language UI.
 
 # Зависимости заданы вручную — nfpm их не вычисляет. Стек: rustls (без OpenSSL) +
-# bundled SQLite + x11rb (буфер обмена) → фактическая зависимость лишь glibc.
+# bundled SQLite + x11rb (буфер обмена) → из системного остаётся glibc и ALSA
+# (libasound — воспроизведение речи `/tts`; на PipeWire/PulseAudio работает через
+# штатный pipewire-alsa). Без звука приложение не падает: команда `/tts` покажет
+# «звук недоступен» (docs/research/tts.md §6).
 overrides:
   deb:
     depends:
       - libc6 (>= 2.35)
-  # rpm/archlinux: glibc — часть базовой системы, явно не указываем.
+      - libasound2
+  rpm:
+    depends:
+      - alsa-lib
+  archlinux:
+    depends:
+      - alsa-lib
+  # glibc в rpm/archlinux — часть базовой системы, явно не указываем.
 
 contents:
   # Реальный бинарь (сайдкар в /usr/lib/<pkg>/, не в /usr/bin).
