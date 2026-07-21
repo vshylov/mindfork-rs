@@ -120,6 +120,51 @@ mod tests {
         assert!(pcm_s16le_to_f32(&[0x01]).is_empty());
     }
 
+    /// Живой смоук воспроизведения (нужна звуковая карта): синтезируем тон 440 Гц
+    /// в том же формате, что отдают облака (PCM s16le 24 кГц mono), ставим в
+    /// очередь и ждём, пока доиграет. Проверяет самый рискованный стык — PCM→rodio
+    /// (частота, знаковость, конверсия в f32) и то, что очередь реально
+    /// опустошается **в реальном времени**, а не мгновенно. Звучание (тон должен
+    /// быть слышен ~0.4 с) — ручная проверка.
+    #[test]
+    #[ignore = "требует звуковую карту (слышен короткий тон)"]
+    fn plays_generated_tone_live() {
+        let rate = 24_000u32;
+        let secs = 0.4f32;
+        let samples = (rate as f32 * secs) as usize;
+        let mut bytes = Vec::with_capacity(samples * 2);
+        for i in 0..samples {
+            let t = i as f32 / rate as f32;
+            let amp = (t * 440.0 * std::f32::consts::TAU).sin() * 0.25;
+            bytes.extend_from_slice(&((amp * i16::MAX as f32) as i16).to_le_bytes());
+        }
+
+        let playback = Playback::open().expect("нужна звуковая карта");
+        let started = std::time::Instant::now();
+        playback
+            .enqueue(AudioClip::Pcm {
+                sample_rate: rate,
+                channels: 1,
+                bytes,
+            })
+            .expect("PCM должен приниматься очередью");
+        assert_eq!(playback.queued(), 1, "клип встал в очередь");
+        while !playback.is_drained() && started.elapsed() < std::time::Duration::from_secs(5) {
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        }
+        let elapsed = started.elapsed();
+        assert!(
+            playback.is_drained(),
+            "очередь должна опустеть: {elapsed:?}"
+        );
+        // Проигрывание идёт в реальном времени: не мгновенно и не бесконечно.
+        assert!(
+            elapsed >= std::time::Duration::from_millis(300),
+            "клип проигран слишком быстро ({elapsed:?}) — вероятно, ушёл в никуда"
+        );
+        eprintln!("тон 440 Гц проигран за {elapsed:?} (ожидалось ~{secs} с)");
+    }
+
     /// В CI/headless звука нет — важно, что открытие устройства возвращает
     /// **ошибку, а не панику** (мягкая деградация). На машине со звуком
     /// устройство открывается и очередь стартует пустой; оба исхода допустимы.

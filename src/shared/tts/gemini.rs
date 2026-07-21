@@ -19,6 +19,9 @@ const GEMINI_MAX_INPUT_CHARS: usize = 2000;
 /// Частота дискретизации, если `mimeType` её не сообщил (документированный дефолт).
 const DEFAULT_PCM_RATE: u32 = 24_000;
 
+/// Директива по умолчанию, если пользователь не задал «Указания» (см. [`GeminiTts::prompt`]).
+const DEFAULT_DIRECTIVE: &str = "Read this text aloud verbatim";
+
 /// Клиент нативного `generateContent` в режиме аудио-ответа.
 pub struct GeminiTts {
     http: reqwest::Client,
@@ -51,13 +54,19 @@ impl GeminiTts {
         }
     }
 
-    /// Текст запроса: указания по стилю (если заданы) идут префиксом к фразе —
-    /// отдельного поля для них в API нет.
+    /// Текст запроса: указание по стилю идёт **префиксом** к фразе — отдельного
+    /// поля для него в API нет (канонический вид из доков провайдера:
+    /// `Say cheerfully: …`).
+    ///
+    /// Префикс обязателен, а не косметичен: без него Gemini трактует короткую
+    /// реплику как задание, на которое надо ответить, и отвечает `400 Model tried
+    /// to generate text, but it should only be used for TTS` (поймано живым
+    /// смоуком e2e на фразе «проверка связи»). Поэтому при пустых «Указаниях»
+    /// подставляем нейтральную директиву. Язык директивы на язык речи не влияет —
+    /// он определяется по самому транскрипту.
     fn prompt(&self, text: &str) -> String {
-        match &self.instructions {
-            Some(style) => format!("{style}: {text}"),
-            None => text.to_string(),
-        }
+        let style = self.instructions.as_deref().unwrap_or(DEFAULT_DIRECTIVE);
+        format!("{style}: {text}")
     }
 
     fn body(&self, text: &str) -> GenerateRequest {
@@ -253,7 +262,10 @@ mod tests {
     fn request_asks_for_audio_modality_and_voice() {
         let e = engine();
         let v = serde_json::to_value(e.body("привет")).unwrap();
-        assert_eq!(v["contents"][0]["parts"][0]["text"], "привет");
+        assert_eq!(
+            v["contents"][0]["parts"][0]["text"],
+            format!("{DEFAULT_DIRECTIVE}: привет")
+        );
         assert_eq!(v["generationConfig"]["responseModalities"][0], "AUDIO");
         assert_eq!(
             v["generationConfig"]["speechConfig"]["voiceConfig"]["prebuiltVoiceConfig"]["voiceName"],
@@ -264,6 +276,17 @@ mod tests {
         assert_eq!(
             e.base_url,
             "https://generativelanguage.googleapis.com/v1beta"
+        );
+    }
+
+    #[test]
+    fn text_always_carries_read_directive() {
+        // Без «Указаний» подставляется дефолтная директива: без префикса Gemini
+        // отвечает 400 «Model tried to generate text» (см. `prompt`).
+        let v = serde_json::to_value(engine().body("проверка связи")).unwrap();
+        assert_eq!(
+            v["contents"][0]["parts"][0]["text"],
+            format!("{DEFAULT_DIRECTIVE}: проверка связи")
         );
     }
 
