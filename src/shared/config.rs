@@ -911,16 +911,20 @@ pub const DEFAULT_TTS_OPENAI_VOICE: &str = "marin";
 pub const DEFAULT_TTS_GEMINI_MODEL: &str = "gemini-2.5-flash-preview-tts";
 /// Голос Gemini по умолчанию (из 30 prebuilt-голосов).
 pub const DEFAULT_TTS_GEMINI_VOICE: &str = "Kore";
+/// Голос локального сайдкара по умолчанию: русский piper-голос, **данные CC0**
+/// (запасной — `ru_RU-denis-medium`, тоже CC0; `irina` — лицензия неизвестна,
+/// `ruslan` — CC BY-NC-SA, в permissive-набор не берутся). См. docs/research/tts.md §4.
+pub const DEFAULT_TTS_MANAGED_VOICE: &str = "ru_RU-dmitri-medium";
 
 /// Режим озвучивания (TTS) — независимый «серверный слот», как эмбеддинги
 /// (ADR 0002): у Anthropic TTS нет вовсе, поэтому провайдер озвучивания
-/// конфигурируется отдельно от chat-движка. Локальный сайдкар (`managed`) —
-/// этап 2 направления; в селектор он попадёт вместе с реализацией (прецедент:
-/// `Claude` не показывали, пока не появился `AnthropicClient`).
-/// См. docs/research/tts.md §8.
+/// конфигурируется отдельно от chat-движка. См. docs/research/tts.md §8 и ADR 0009.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum TtsMode {
+    /// Локальный сайдкар `piper` из `data/tts/` (`mindfork tts setup`) — без сети
+    /// и без ключей. См. `shared::tts::sidecar`.
+    Managed,
     /// Облако OpenAI (`POST /v1/audio/speech`).
     #[default]
     OpenAi,
@@ -933,11 +937,17 @@ pub enum TtsMode {
 
 impl TtsMode {
     /// Все варианты в порядке перебора UI (Choice-поле).
-    pub const ALL: [TtsMode; 3] = [TtsMode::OpenAi, TtsMode::Gemini, TtsMode::External];
+    pub const ALL: [TtsMode; 4] = [
+        TtsMode::Managed,
+        TtsMode::OpenAi,
+        TtsMode::Gemini,
+        TtsMode::External,
+    ];
 
     /// Подпись для UI (Choice-поле).
     pub fn label(self) -> &'static str {
         match self {
+            TtsMode::Managed => "managed",
             TtsMode::OpenAi => "openai",
             TtsMode::Gemini => "gemini",
             TtsMode::External => "external",
@@ -950,7 +960,7 @@ impl TtsMode {
         match self {
             TtsMode::OpenAi => Some(CloudProvider::OpenAi),
             TtsMode::Gemini => Some(CloudProvider::Gemini),
-            TtsMode::External => None,
+            TtsMode::Managed | TtsMode::External => None,
         }
     }
 
@@ -983,6 +993,18 @@ pub struct TtsCloudSettings {
     pub url: Option<String>,
 }
 
+/// Настройки локального сайдкара озвучивания (`piper` из `data/tts/`). Ни ключей,
+/// ни URL: всё, что нужно, — установленный бинарь и голос. См. docs/research/tts.md §4.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct TtsManagedSettings {
+    /// Голос: имя файла в `data/tts/voices/` (без расширения) либо полный путь
+    /// к `*.onnx`. Рядом обязан лежать `*.onnx.json`.
+    pub voice: Option<String>,
+    /// Путь к бинарю `piper` (опционально — обычно он берётся из `data/tts/`).
+    pub binary: Option<String>,
+}
+
 /// Настройки внешнего (локального/стороннего) OpenAI-совместимого TTS-сервера.
 /// Общий знаменатель параметров таких серверов — `model`+`input`+`voice`+
 /// `response_format`+`speed`, причём `voice` у каждого свой, а `model` многие
@@ -1008,6 +1030,7 @@ pub struct TtsExternalSettings {
 pub struct TtsSettings {
     /// Провайдер озвучивания.
     pub mode: TtsMode,
+    pub managed: TtsManagedSettings,
     pub openai: TtsCloudSettings,
     pub gemini: TtsCloudSettings,
     pub external: TtsExternalSettings,
@@ -1027,6 +1050,10 @@ impl Default for TtsSettings {
     fn default() -> Self {
         Self {
             mode: TtsMode::default(),
+            managed: TtsManagedSettings {
+                voice: Some(DEFAULT_TTS_MANAGED_VOICE.into()),
+                binary: None,
+            },
             openai: TtsCloudSettings {
                 model_name: Some(DEFAULT_TTS_OPENAI_MODEL.into()),
                 voice: Some(DEFAULT_TTS_OPENAI_VOICE.into()),
@@ -1324,6 +1351,13 @@ mod tests {
             c.tts.gemini.model_name.as_deref(),
             Some(DEFAULT_TTS_GEMINI_MODEL)
         );
+        // Локальный сайдкар: голос по умолчанию — русский CC0 (ADR 0009); он же
+        // ставится командой `tts setup`.
+        assert_eq!(
+            c.tts.managed.voice.as_deref(),
+            Some(DEFAULT_TTS_MANAGED_VOICE)
+        );
+        assert!(c.tts.managed.binary.is_none(), "бинарь ищется в data/tts/");
         assert_eq!(c.tts.speed, 1.0);
         assert!(!c.tts.speak_roles);
         assert!(c.tts.stop_on_chat_switch);

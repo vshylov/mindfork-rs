@@ -344,6 +344,50 @@ fn model_subsection_fourth_tab_is_tts_with_mode_driven_fields() {
 }
 
 #[test]
+fn tts_managed_mode_shows_local_engine_fields_only() {
+    // Локальный сайдкар (ADR 0009): голос + путь к бинарю; ни ключа, ни URL, ни
+    // модели/указаний (их нет у piper).
+    let mut s = screen();
+    goto_section(&mut s, Section::Model);
+    s.model_sub = ModelTab::Tts;
+    s.config.tts.mode = crate::shared::config::TtsMode::Managed;
+    let ids: Vec<FieldId> = s.fields().iter().map(|f| f.id).collect();
+    assert!(ids.contains(&FieldId::TtsVoice), "{ids:?}");
+    assert!(ids.contains(&FieldId::TtsBinary), "{ids:?}");
+    for absent in [
+        FieldId::TtsApiKey,
+        FieldId::TtsApiKeyEnv,
+        FieldId::TtsUrl,
+        FieldId::TtsModelName,
+        FieldId::TtsInstructions,
+    ] {
+        assert!(!ids.contains(&absent), "лишнее поле {absent:?}");
+    }
+    // Скорость и поведение остаются общими для всех режимов.
+    assert!(ids.contains(&FieldId::TtsSpeed));
+    assert!(ids.contains(&FieldId::TtsSpeakRoles));
+    assert!(field_desc(&s, FieldId::TtsBinary).is_some());
+
+    // Правка голоса маршрутизируется в managed-под-структуру, не в облачную.
+    goto_field(&mut s, FieldId::TtsVoice);
+    s.handle_key(key(KeyCode::Enter));
+    s.handle_key(ctrl('k')); // редактор открыт с текущим значением
+    for ch in "ru_RU-denis-medium".chars() {
+        s.handle_key(key(KeyCode::Char(ch)));
+    }
+    s.handle_key(key(KeyCode::Enter));
+    assert_eq!(
+        s.config.tts.managed.voice.as_deref(),
+        Some("ru_RU-denis-medium")
+    );
+    assert_eq!(
+        s.config.tts.openai.voice.as_deref(),
+        Some(crate::shared::config::DEFAULT_TTS_OPENAI_VOICE),
+        "облачный голос не затронут"
+    );
+}
+
+#[test]
 fn tts_toggles_and_mode_are_saved() {
     // Тумблеры поведения и цикл режима правят конфиг и отдают намерение сохранения.
     // Вкладку ставим полем (`goto_field` ожидает фокус в меню, а прогон таб-стрипа

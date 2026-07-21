@@ -37,6 +37,8 @@ pub enum CliCommand {
     Import { file: PathBuf },
     /// Установка песочницы Python (`sandbox setup [--force]`).
     SandboxSetup { force: bool },
+    /// Установка локального озвучивания (`tts setup [--force] [--voice NAME]`).
+    TtsSetup { force: bool, voices: Vec<String> },
     /// Экспорт бандла локали (`locales export <code> --output <file>`).
     LocalesExport { code: String, output: PathBuf },
     /// Показать справку (общую или по подкоманде).
@@ -53,6 +55,8 @@ pub enum HelpTopic {
     Import,
     Sandbox,
     SandboxSetup,
+    Tts,
+    TtsSetup,
     Locales,
     LocalesExport,
 }
@@ -75,6 +79,7 @@ pub fn parse(args: &[String], loc: &Locale) -> Result<CliCommand, String> {
         // замену вместо генерического «неизвестная команда».
         "import-lamellama" => Err(err_line(loc, "cli.import.lamellama_removed", &[])),
         "sandbox" => parse_sandbox(rest, loc),
+        "tts" => parse_tts(rest, loc),
         "locales" => parse_locales(rest, loc),
         other if other.starts_with('-') => Err(unknown_option(loc, other)),
         other => Err(unknown_command(loc, other)),
@@ -158,6 +163,44 @@ fn parse_sandbox_setup(toks: &[&str], loc: &Locale) -> Result<CliCommand, String
         }
     }
     Ok(CliCommand::SandboxSetup { force })
+}
+
+fn parse_tts(toks: &[&str], loc: &Locale) -> Result<CliCommand, String> {
+    let Some((&sub, rest)) = toks.split_first() else {
+        return Err(missing_subcommand(loc, "tts"));
+    };
+    match sub {
+        "-h" | "--help" => Ok(CliCommand::Help {
+            topic: Some(HelpTopic::Tts),
+        }),
+        "setup" => parse_tts_setup(rest, loc),
+        other if other.starts_with('-') => Err(unknown_option(loc, other)),
+        other => Err(unknown_subcommand(loc, other, "tts")),
+    }
+}
+
+fn parse_tts_setup(toks: &[&str], loc: &Locale) -> Result<CliCommand, String> {
+    let mut force = false;
+    let mut voices = Vec::new();
+    let mut i = 0;
+    while i < toks.len() {
+        let a = toks[i];
+        if a == "-h" || a == "--help" {
+            return Ok(CliCommand::Help {
+                topic: Some(HelpTopic::TtsSetup),
+            });
+        } else if a == "-f" || a == "--force" {
+            force = true;
+            i += 1;
+        } else if let Some(v) = opt_value(toks, &mut i, loc, &["-v", "--voice"])? {
+            voices.push(v.to_string());
+        } else if a.starts_with('-') {
+            return Err(unknown_option(loc, a));
+        } else {
+            return Err(unexpected_arg(loc, a));
+        }
+    }
+    Ok(CliCommand::TtsSetup { force, voices })
 }
 
 fn parse_locales(toks: &[&str], loc: &Locale) -> Result<CliCommand, String> {
@@ -330,7 +373,7 @@ pub fn render_help(topic: Option<HelpTopic>, loc: &Locale) -> String {
     match topic {
         None => format!(
             "{about}\n\n{usage} mindfork-rs [COMMAND]\n\n{commands}\n\
-             {b:<20}{cb}\n{r:<20}{cr}\n{im:<20}{ci}\n{sb:<20}{cs}\n{lc:<20}{cl}\n\n\
+             {b:<20}{cb}\n{r:<20}{cr}\n{im:<20}{ci}\n{sb:<20}{cs}\n{tt:<20}{ct}\n{lc:<20}{cl}\n\n\
              {options}\n  -h, --help     {oh}\n  -V, --version  {ov}",
             about = loc.t("cli.help.about"),
             b = "  backup",
@@ -341,6 +384,8 @@ pub fn render_help(topic: Option<HelpTopic>, loc: &Locale) -> String {
             ci = loc.t("cli.help.cmd.import"),
             sb = "  sandbox",
             cs = loc.t("cli.help.cmd.sandbox"),
+            tt = "  tts",
+            ct = loc.t("cli.help.cmd.tts"),
             lc = "  locales",
             cl = loc.t("cli.help.cmd.locales"),
             oh = loc.t("cli.help.opt.help"),
@@ -383,6 +428,34 @@ pub fn render_help(topic: Option<HelpTopic>, loc: &Locale) -> String {
             d = loc.t("cli.help.cmd.sandbox.setup"),
             f = "  -f, --force",
             cf = loc.t("cli.help.opt.sandbox.force"),
+            h = "  -h, --help",
+            ch = loc.t("cli.help.opt.help"),
+        ),
+        Some(HelpTopic::Tts) => format!(
+            "{d}
+
+{usage} mindfork-rs tts <COMMAND>
+
+{commands}
+{s:<12}{cs}",
+            d = loc.t("cli.help.cmd.tts"),
+            s = "  setup",
+            cs = loc.t("cli.help.cmd.tts.setup"),
+        ),
+        Some(HelpTopic::TtsSetup) => format!(
+            "{d}
+
+{usage} mindfork-rs tts setup [OPTIONS]
+
+{options}
+             {f:<24}{cf}
+{v:<24}{cv}
+{h:<24}{ch}",
+            d = loc.t("cli.help.cmd.tts.setup"),
+            f = "  -f, --force",
+            cf = loc.t("cli.help.opt.tts.force"),
+            v = "  -v, --voice <NAME>",
+            cv = loc.t("cli.help.opt.tts.voice"),
             h = "  -h, --help",
             ch = loc.t("cli.help.opt.help"),
         ),
@@ -505,6 +578,40 @@ mod tests {
         );
         assert!(p(&["sandbox"]).is_err()); // нет подкоманды
         assert!(p(&["sandbox", "teardown"]).is_err()); // неизвестная подкоманда
+    }
+
+    #[test]
+    fn tts_setup_force_and_voices() {
+        assert_eq!(
+            p(&["tts", "setup"]).unwrap(),
+            CliCommand::TtsSetup {
+                force: false,
+                voices: vec![]
+            }
+        );
+        // `--voice` можно повторять (обе формы записи значения).
+        assert_eq!(
+            p(&[
+                "tts",
+                "setup",
+                "-f",
+                "--voice",
+                "ru_RU-denis-medium",
+                "--voice=en_GB-alan-medium"
+            ])
+            .unwrap(),
+            CliCommand::TtsSetup {
+                force: true,
+                voices: vec![
+                    "ru_RU-denis-medium".to_string(),
+                    "en_GB-alan-medium".to_string()
+                ]
+            }
+        );
+        assert!(p(&["tts"]).is_err()); // нет подкоманды
+        assert!(p(&["tts", "remove"]).is_err()); // неизвестная подкоманда
+        assert!(p(&["tts", "setup", "--voice"]).is_err()); // нет значения опции
+        assert!(p(&["tts", "setup", "лишнее"]).is_err()); // позиционных нет
     }
 
     #[test]

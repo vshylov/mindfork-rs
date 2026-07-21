@@ -342,6 +342,22 @@ impl SettingsScreen {
                     .describe(loc.t("ui.settings.desc.tts_mode")),
                 ];
                 let mut engine = match t.mode {
+                    // Локальный сайдкар: ни ключа, ни URL — только голос (и, при
+                    // ручной установке, путь к бинарю). См. ADR 0009.
+                    TtsMode::Managed => vec![
+                        text_row(
+                            FieldId::TtsVoice,
+                            loc.t("ui.settings.field.voice"),
+                            &t.managed.voice,
+                        )
+                        .describe(loc.t("ui.settings.desc.tts_voice_managed")),
+                        text_row(
+                            FieldId::TtsBinary,
+                            loc.t("ui.settings.field.tts_binary"),
+                            &t.managed.binary,
+                        )
+                        .describe(loc.t("ui.settings.desc.tts_binary")),
+                    ],
                     TtsMode::External => vec![
                         text_row(FieldId::TtsUrl, "URL (external)", &t.external.url),
                         text_row(
