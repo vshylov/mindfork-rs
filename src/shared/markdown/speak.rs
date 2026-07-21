@@ -26,9 +26,6 @@ use crate::shared::i18n::Locale;
 /// блоках — это часть речевого контента, а не UI-хром.
 ///
 /// Пустой/пробельный вход даёт пустую строку (вызывающему нечего синтезировать).
-// Потребители (команда `/tts`, оркестрация озвучивания) появятся следующими
-// этапами направления TTS; пока функцию зовут только тесты — как фасад `render`.
-#[allow(dead_code)]
 pub fn speakable_text(markdown: &str, loc: &'static Locale) -> String {
     let normalized = normalize_delimiters(markdown);
     let mut opts = Options::empty();

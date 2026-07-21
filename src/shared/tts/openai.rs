@@ -232,7 +232,12 @@ mod tests {
                 eprintln!("получено PCM: {} байт", bytes.len());
                 assert!(bytes.len() > 10_000, "клип подозрительно короткий");
             }
-            other => panic!("облако OpenAI должно отдавать сырой PCM, получено {other:?}"),
+            AudioClip::Encoded(bytes) => {
+                panic!(
+                    "облако OpenAI должно отдавать сырой PCM, получен контейнер ({} байт)",
+                    bytes.len()
+                )
+            }
         }
     }
 
@@ -261,7 +266,10 @@ mod tests {
                 eprintln!("получено wav: {} байт", bytes.len());
                 assert!(bytes.len() > 1000, "клип подозрительно короткий");
             }
-            other => panic!("сторонний сервер должен отдавать контейнер, получено {other:?}"),
+            AudioClip::Pcm { bytes, .. } => panic!(
+                "сторонний сервер должен отдавать контейнер, получен сырой PCM ({} байт)",
+                bytes.len()
+            ),
         }
     }
 }
