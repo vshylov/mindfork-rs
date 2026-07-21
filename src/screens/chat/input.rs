@@ -210,6 +210,21 @@ impl ChatScreen {
                         }
                     };
                 }
+                // Slash-команда озвучивания (`/tts …`) — тоже не сообщение и тоже
+                // работает во время генерации (озвучивается снимок). См. spec §11.9.
+                if let Some(parsed) = crate::features::tts_command::parse(&text) {
+                    use crate::features::tts_command::TtsCommand;
+                    self.input.clear();
+                    self.mark_input_changed();
+                    return match parsed {
+                        Ok(TtsCommand::Speak(scope)) => Some(ChatIntent::Tts(scope)),
+                        Ok(TtsCommand::Stop) => Some(ChatIntent::TtsStop),
+                        Err(arg) => {
+                            self.push_note(&self.loc.tf("ui.tts.bad_arg", &[("arg", &arg)]));
+                            None
+                        }
+                    };
+                }
                 if !self.generating {
                     self.input.clear();
                     self.mark_input_changed();
@@ -398,14 +413,18 @@ impl ChatScreen {
         true
     }
 
-    /// Является ли текущий ввод командой (`/rag …`). Такой текст подсвечивается
+    /// Является ли текущий ввод командой (`/rag …`, `/tts …`). Такой текст подсвечивается
     /// жёлтым и не проверяется орфографией. См. spec §11.5. Проверяется каждый кадр,
     /// поэтому сперва — дешёвый предохранитель: команда всегда начинается с `/`
     /// (первый непробельный символ), и лишь тогда парсим полный текст (аллокация
     /// `text()` + разбор). Для обычного ввода (буквы, кириллица) `text()` не строится.
     pub(super) fn input_is_command(&self) -> bool {
-        self.input.first_non_whitespace() == Some('/')
-            && crate::features::rag_command::parse(&self.input.text()).is_some()
+        if self.input.first_non_whitespace() != Some('/') {
+            return false;
+        }
+        let text = self.input.text();
+        crate::features::rag_command::parse(&text).is_some()
+            || crate::features::tts_command::parse(&text).is_some()
     }
 
     /// Запускает необратимую операцию (`Ctrl+R`/`Ctrl+E`): сразу отдаёт намерение,

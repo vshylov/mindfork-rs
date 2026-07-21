@@ -153,6 +153,8 @@ src/
 │  │  ├─ title.rs           авто-название чата (фоновая задача)
 │  │  ├─ impersonation.rs   реплика «за пользователя» (фоновая задача)
 │  │  ├─ rag.rs             индексация/удаление файлов в базе знаний
+│  │  ├─ tts.rs             озвучивание сообщений: снимок переписки → чанки →
+│  │  │                     конвейер синтеза/воспроизведения, точки остановки
 │  │  ├─ mcp.rs             McpManager: жизненный цикл MCP-серверов (спавн/статусы/
 │  │  │                     рестарт-бюджет/TOFU-пиннинг каталога), события с epoch
 │  │  ├─ reflection.rs      авто-рефлексия «модели себя» (окно/ватермарк, сигналы)
@@ -247,6 +249,7 @@ src/
 │  ├─ rename_chat.rs        авто-название (digest, чистка), переименование
 │  ├─ chat_export.rs        format_conversation (копирование переписки)
 │  ├─ rag_command.rs        парсер /rag add|remove|list|rebuild
+│  ├─ tts_command.rs        парсер /tts [N|all|stop] (озвучивание, spec §11.9)
 │  ├─ rag_ingest.rs         scan, read_text, RagProgress (типы прогресса индексации)
 │  ├─ cli.rs                свой микро-парсер аргументов CLI (весь текст — в бандлах локалей)
 │  ├─ backup.rs             резервное копирование/восстановление данных (zip, транзакц.)
@@ -318,6 +321,10 @@ src/
    ├─ theme.rs             Palette (роли user/assistant/tool/…), auto/dark/light
    ├─ keys.rs              раскладко-независимые Ctrl-шорткаты (ЙЦУКЕН→латиница)
    ├─ server.rs            ServerStatus (статус сервера для UI)
+   ├─ tts/                 озвучивание (TTS): контракт `TtsEngine` + `AudioClip`,
+   │                       клиенты `openai` (`/v1/audio/speech`, он же external) и
+   │                       `gemini` (generateContent + AUDIO), `playback` (очередь
+   │                       rodio, ленивое открытие устройства). См. spec §11.9
    ├─ sandbox.rs           SandboxRunner (за трейтом) + WasmerSandbox: сайдкар `wasmer`
    │                       для `python_exec` в режиме песочницы (WASIX-изоляция, §8)
    ├─ secrets.rs           машинно-привязанное хранение API-ключей (ApiKeyEntry — запись
@@ -365,7 +372,7 @@ flowchart LR
 `RegenerateLast`, `DeleteLastExchange`, `Cancel`, `Impersonate`/
 `CancelImpersonation`, `NewChat`, `SwitchChat`, `RenameChat`/`AutoRenameChat`,
 `CloneChat`, `CopyChat`, `DeleteChat`, `CreateProfile`/`DeleteProfile`,
-`UpdateConfig`/`UpdateProfile`, `RagAdd`/`RagDelete`, `Quit`.
+`UpdateConfig`/`UpdateProfile`, `RagAdd`/`RagDelete`, `Tts`/`TtsStop`, `Quit`.
 
 `AppEvent` (оркестратор → UI) включает: `ServerStatus`, `ChatList`,
 `ChatRenamed`, `ChatListError`, `CopyToClipboard`, `ProfileList`, `Settings`,
@@ -374,7 +381,8 @@ flowchart LR
 (управляющие инструменты беседы — §8), `Finished`,
 `Impersonation{Started,Chunk,Finished}`, `RagProgress`, `SelfModelView`,
 `SelfModelChanged` (лёгкий сигнал «модель себя изменилась» — открытый экран `F3`
-перезапрашивает снимок; §9.7), `BackgroundTask{kind,active}` (тихий индикатор
+перезапрашивает снимок; §9.7), `TtsActive` (идёт озвучивание — чип в статус-баре),
+`BackgroundTask{kind,active}` (тихий индикатор
 фоновой рефлексии/консолидации в статус-баре), `Error`.
 
 `TokenUsage { completion, context, context_exact, reasoning }` — live-счётчик токенов:

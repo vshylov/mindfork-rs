@@ -44,7 +44,12 @@ pub struct StatusModel<'a> {
     pub reasoning: u32,
     pub mouse_scroll: bool,
     pub background: Option<&'a str>,
+    /// Идёт озвучивание (`/tts`) — тихий чип «озвучка». См. spec §11.9.
+    pub speaking: bool,
 }
+
+/// Глиф индикатора озвучивания (WGL4, ширина 1 колонка — сетка хоткеев не «съезжает»).
+const SPEAKING_GLYPH: char = '♪';
 
 /// Рисует статус-строку в `area`. Когда хоткеи не помещаются по ширине, они
 /// переносятся на следующие строки аккуратной сеткой (как в оверлее списка чатов);
@@ -119,6 +124,7 @@ fn lines(
     let reasoning = model.reasoning;
     let mouse_scroll = model.mouse_scroll;
     let background = model.background;
+    let speaking = model.speaking;
     let sep = || Span::styled("  │  ", Style::new().fg(palette.border));
     let muted = palette.muted_style();
 
@@ -190,6 +196,16 @@ fn lines(
         state.push(sep());
         state.push(Span::styled(
             format!("{} {hint}", palette.glyphs().background),
+            muted,
+        ));
+    }
+    // Тихий индикатор озвучивания — тем же приглушённым стилем. Нота `♪` (U+266A)
+    // входит в WGL4 и шириной 1 колонка, поэтому в компат-режиме не заменяется
+    // (как `▌`-рейлы ленты и `█` скроллбара). См. spec §11.9.
+    if speaking {
+        state.push(sep());
+        state.push(Span::styled(
+            format!("{SPEAKING_GLYPH} {}", loc.t("ui.status.speaking")),
             muted,
         ));
     }
@@ -438,6 +454,7 @@ mod tests {
             reasoning: 0,
             mouse_scroll,
             background: None,
+            speaking: false,
         }
     }
 
@@ -541,6 +558,7 @@ mod tests {
                 reasoning: 0,
                 mouse_scroll: false,
                 background: Some("рефлексия"),
+                speaking: false,
             };
             lines(200, &m, &compat, ru())
                 .iter()
@@ -640,6 +658,7 @@ mod tests {
                 reasoning,
                 mouse_scroll: false,
                 background: None,
+                speaking: false,
             };
             lines(200, &m, &Palette::default(), ru())
                 .iter()
@@ -784,6 +803,7 @@ mod tests {
             reasoning: 0,
             mouse_scroll: true,
             background: Some("рефлексия"),
+            speaking: true,
         };
         term.draw(|f| render(f, f.area(), &m, &Palette::default(), ru()))
             .unwrap();
