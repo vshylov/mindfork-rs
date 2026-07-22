@@ -101,6 +101,7 @@ impl SettingsScreen {
             FieldId::XApiKey => self.config.engine.mode.cloud_provider(),
             FieldId::IxApiKey => self.config.impersonation_engine.mode.cloud_provider(),
             FieldId::EApiKey => self.config.embed.mode.cloud_provider(),
+            FieldId::TtsApiKey => self.config.tts.mode.cloud_provider(),
             _ => None,
         }
     }
@@ -324,6 +325,113 @@ impl SettingsScreen {
                         ))
                     }
                 }
+                rows
+            }
+            ModelTab::Tts => {
+                // Озвучивание — независимый слот (у Anthropic TTS нет): свой
+                // провайдер, свои модель/голос. Ключ облака — общий с чатом
+                // (ADR 0008), вводить заново не нужно. См. spec §11.9.
+                let t = &self.config.tts;
+                let mut rows = vec![
+                    sub,
+                    row(
+                        FieldId::TtsMode,
+                        loc.t("ui.settings.field.mode"),
+                        FieldKind::Choice(t.mode.label().to_string()),
+                    )
+                    .describe(loc.t("ui.settings.desc.tts_mode")),
+                ];
+                let mut engine = match t.mode {
+                    TtsMode::External => vec![
+                        text_row(FieldId::TtsUrl, "URL (external)", &t.external.url),
+                        text_row(
+                            FieldId::TtsModelName,
+                            loc.t("ui.settings.field.model_opt"),
+                            &t.external.model_name,
+                        )
+                        .describe(loc.t("ui.settings.desc.tts_model")),
+                        text_row(
+                            FieldId::TtsVoice,
+                            loc.t("ui.settings.field.voice"),
+                            &t.external.voice,
+                        )
+                        .describe(loc.t("ui.settings.desc.tts_voice")),
+                        text_row(
+                            FieldId::TtsApiKeyEnv,
+                            loc.t("ui.settings.field.api_key_env_opt"),
+                            &t.external.api_key_env,
+                        )
+                        .describe(loc.t(DESC_EXT_API_KEY_ENV)),
+                    ],
+                    _ => {
+                        let none = TtsCloudSettings::default();
+                        let c = t.cloud().unwrap_or(&none);
+                        vec![
+                            text_row(
+                                FieldId::TtsModelName,
+                                loc.t("ui.settings.field.model"),
+                                &c.model_name,
+                            )
+                            .describe(loc.t("ui.settings.desc.tts_model")),
+                            text_row(
+                                FieldId::TtsVoice,
+                                loc.t("ui.settings.field.voice"),
+                                &c.voice,
+                            )
+                            .describe(loc.t("ui.settings.desc.tts_voice")),
+                            text_row(
+                                FieldId::TtsInstructions,
+                                loc.t("ui.settings.field.tts_instructions"),
+                                &c.instructions,
+                            )
+                            .describe(loc.t("ui.settings.desc.tts_instructions")),
+                            api_key_row(
+                                FieldId::TtsApiKey,
+                                self.api_key_present(t.mode.cloud_provider()),
+                                loc,
+                            ),
+                            text_row(
+                                FieldId::TtsApiKeyEnv,
+                                loc.t("ui.settings.field.api_key_env"),
+                                &c.api_key_env,
+                            )
+                            .describe(loc.t(DESC_API_KEY_ENV)),
+                            text_row(FieldId::TtsUrl, loc.t("ui.settings.field.base_url"), &c.url),
+                        ]
+                    }
+                };
+                engine.push(
+                    row(
+                        FieldId::TtsSpeed,
+                        loc.t("ui.settings.field.tts_speed"),
+                        FieldKind::Text(t.speed.to_string()),
+                    )
+                    .describe(loc.t("ui.settings.desc.tts_speed")),
+                );
+                rows.extend(grouped(loc.t("ui.settings.group.engine"), engine));
+                rows.extend(grouped(
+                    loc.t("ui.settings.group.behavior"),
+                    vec![
+                        row(
+                            FieldId::TtsSpeakRoles,
+                            loc.t("ui.settings.field.tts_speak_roles"),
+                            FieldKind::Toggle(t.speak_roles),
+                        )
+                        .describe(loc.t("ui.settings.desc.tts_speak_roles")),
+                        row(
+                            FieldId::TtsStopOnSwitch,
+                            loc.t("ui.settings.field.tts_stop_switch"),
+                            FieldKind::Toggle(t.stop_on_chat_switch),
+                        )
+                        .describe(loc.t("ui.settings.desc.tts_stop_switch")),
+                        row(
+                            FieldId::TtsStopOnGeneration,
+                            loc.t("ui.settings.field.tts_stop_generation"),
+                            FieldKind::Toggle(t.stop_on_generation_start),
+                        )
+                        .describe(loc.t("ui.settings.desc.tts_stop_generation")),
+                    ],
+                ));
                 rows
             }
         }
