@@ -12,7 +12,7 @@ use ratatui::Frame;
 use ratatui::crossterm::event::{
     KeyCode, KeyEvent, KeyEventKind, KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
 };
-use ratatui::layout::{Constraint, Flex, Layout, Margin, Rect};
+use ratatui::layout::{Constraint, Flex, Layout, Rect};
 use ratatui::style::Style;
 use ratatui::style::Stylize;
 use ratatui::text::{Line, Span, Text};
@@ -158,6 +158,83 @@ enum SuggestItem {
     AddToDictionary,
 }
 
+/// Вкладка диалога справки/«О программе» (`F1`/`?`) в стиле KDE/Qt. См. spec §11.7.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum HelpTab {
+    /// Имя/автор/версия и ссылки (сайт, репозиторий, крейт).
+    About,
+    /// Список горячих клавиш.
+    Hotkeys,
+    /// Команды поля ввода (`/rag …`, `/tts …`).
+    Commands,
+    /// Текст лицензии приложения (MIT).
+    License,
+    /// Сторонние компоненты, их версии и лицензии.
+    Components,
+}
+
+impl HelpTab {
+    /// Вкладки в порядке показа (порядок таб-стрипа).
+    pub(super) const ALL: [HelpTab; 5] = [
+        Self::About,
+        Self::Hotkeys,
+        Self::Commands,
+        Self::License,
+        Self::Components,
+    ];
+
+    /// Позиция вкладки в [`Self::ALL`].
+    fn index(self) -> usize {
+        Self::ALL.iter().position(|&t| t == self).unwrap()
+    }
+
+    /// Ключ локали имени вкладки (для таб-стрипа).
+    pub(super) fn label_key(self) -> &'static str {
+        match self {
+            Self::About => "ui.help.tab.about",
+            Self::Hotkeys => "ui.help.tab.hotkeys",
+            Self::Commands => "ui.help.tab.commands",
+            Self::License => "ui.help.tab.license",
+            Self::Components => "ui.help.tab.components",
+        }
+    }
+}
+
+/// Вкладка, на которой диалог справки открывается по умолчанию (и до первого
+/// запоминания выбора): `F1`/`?` — привычная клавиша справки, и «Горячие клавиши» —
+/// самое востребованное содержимое; «О программе» — соседняя вкладка.
+pub(super) const DEFAULT_HELP_TAB: HelpTab = HelpTab::Hotkeys;
+
+/// Состояние диалога справки: активная вкладка + прокрутка её содержимого
+/// (сбрасывается при смене вкладки). Открывается по `F1`/`?`. См. spec §11.7.
+pub(super) struct HelpState {
+    pub(super) tab: HelpTab,
+    /// Первый видимый ряд содержимого активной вкладки (клампится в `render_help`).
+    pub(super) scroll: usize,
+}
+
+impl HelpState {
+    /// Открыть на заданной вкладке (при повторном открытии — на последней выбранной,
+    /// [`ChatScreen::help_last_tab`]).
+    pub(super) fn open(tab: HelpTab) -> Self {
+        Self { tab, scroll: 0 }
+    }
+
+    /// Следующая вкладка (по кругу); прокрутка сбрасывается.
+    pub(super) fn next_tab(&mut self) {
+        let n = HelpTab::ALL.len();
+        self.tab = HelpTab::ALL[(self.tab.index() + 1) % n];
+        self.scroll = 0;
+    }
+
+    /// Предыдущая вкладка (по кругу); прокрутка сбрасывается.
+    pub(super) fn prev_tab(&mut self) {
+        let n = HelpTab::ALL.len();
+        self.tab = HelpTab::ALL[(self.tab.index() + n - 1) % n];
+        self.scroll = 0;
+    }
+}
+
 /// Попап подсказок орфографии для слова под курсором. См. spec §11.5.
 struct SuggestPopup {
     word: String,
@@ -254,12 +331,12 @@ pub struct ChatScreen {
     /// экрана настроек по `Ctrl+P`. Заполняется событием `Settings`.
     /// См. spec §11.6, docs/history/i18n.md.
     settings_snapshot: Option<SettingsSnapshot>,
-    /// Показан ли оверлей помощи по клавишам (`F1`/`?`). См. spec §11.7.
-    show_help: bool,
-    /// Прокрутка оверлея помощи (первый видимый ряд списка клавиш) — для коротких
-    /// терминалов, где весь список не помещается. Сбрасывается при открытии;
-    /// клампится к максимуму в `render_help` (высота попапа известна там).
-    help_scroll: usize,
+    /// Диалог справки/«О программе» (`F1`/`?`): вкладки + прокрутка активной
+    /// вкладки; `None` — закрыт. См. spec §11.7.
+    help: Option<HelpState>,
+    /// Последняя открытая вкладка диалога справки — восстанавливается при повторном
+    /// открытии (попап «помнит» выбор, как эмодзи-пикер).
+    help_last_tab: HelpTab,
     /// Активная палитра темы (из `config.interface.theme`). См. spec §11.6.
     palette: Palette,
     /// Локаль интерфейса (из `config.interface.language`, ось B — docs/i18n-ui.md).
@@ -329,8 +406,8 @@ impl ChatScreen {
             confirm: None,
             confirm_destructive: false,
             settings_snapshot: None,
-            show_help: false,
-            help_scroll: 0,
+            help: None,
+            help_last_tab: DEFAULT_HELP_TAB,
             palette: Palette::default(),
             loc: locale(crate::shared::i18n::Lang::default()),
             mouse_scroll: false,

@@ -627,52 +627,84 @@ fn ctrl_c_copies_selection_ctrl_x_cuts() {
 }
 
 #[test]
-fn f1_opens_and_any_key_closes_help() {
+fn f1_opens_help_and_esc_closes() {
     let mut s = ChatScreen::new();
-    assert!(!s.show_help);
+    assert!(s.help.is_none());
     s.handle_key(KeyEvent::new(KeyCode::F(1), KeyModifiers::NONE));
-    assert!(s.show_help);
-    // Любая клавиша закрывает справку и не делает ничего другого.
+    assert!(s.help.is_some());
+    // Открывается на вкладке «Горячие клавиши».
+    assert_eq!(s.help.as_ref().unwrap().tab, HelpTab::Hotkeys);
+    // Прочая клавиша не закрывает диалог (в нём вкладки/навигация) и не печатается.
     let intent = s.handle_key(KeyEvent::new(KeyCode::Char('x'), KeyModifiers::NONE));
     assert_eq!(intent, None);
-    assert!(!s.show_help);
-    assert!(s.input.is_empty(), "ввод не печатался при закрытии справки");
+    assert!(s.help.is_some(), "прочая клавиша не закрывает диалог");
+    assert!(s.input.is_empty(), "ввод не печатался при открытом диалоге");
+    // Esc закрывает.
+    s.handle_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
+    assert!(s.help.is_none());
 }
 
 #[test]
 fn question_mark_opens_help_only_when_input_empty() {
     let mut s = ChatScreen::new();
-    // Пустой ввод → `?` открывает справку.
+    // Пустой ввод → `?` открывает диалог.
     s.handle_key(KeyEvent::new(KeyCode::Char('?'), KeyModifiers::NONE));
-    assert!(s.show_help);
+    assert!(s.help.is_some());
     s.handle_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE)); // закрыть
-    // Непустой ввод → `?` печатается, справка не открывается.
+    // Непустой ввод → `?` печатается, диалог не открывается.
     type_str(&mut s, "abc");
     s.handle_key(KeyEvent::new(KeyCode::Char('?'), KeyModifiers::NONE));
-    assert!(!s.show_help);
+    assert!(s.help.is_none());
     assert_eq!(s.input.text(), "abc?");
 }
 
 #[test]
-fn help_arrow_keys_scroll_without_closing() {
+fn help_navigation_scrolls_and_switches_tabs() {
     let mut s = ChatScreen::new();
     s.handle_key(KeyEvent::new(KeyCode::F(1), KeyModifiers::NONE));
-    assert!(s.show_help);
-    // ↑↓/PgUp/PgDn прокручивают, не закрывая справку.
+    // ↑↓/PgUp/PgDn прокручивают активную вкладку, не закрывая диалог.
     s.handle_key(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE));
     s.handle_key(KeyEvent::new(KeyCode::PageDown, KeyModifiers::NONE));
-    assert!(s.show_help, "прокрутка не должна закрывать справку");
-    assert_eq!(s.help_scroll, 1 + PAGE_SCROLL);
+    assert!(s.help.is_some(), "прокрутка не должна закрывать диалог");
+    assert_eq!(s.help.as_ref().unwrap().scroll, 1 + PAGE_SCROLL);
     s.handle_key(KeyEvent::new(KeyCode::Up, KeyModifiers::NONE));
-    assert_eq!(s.help_scroll, PAGE_SCROLL);
-    s.handle_key(KeyEvent::new(KeyCode::PageUp, KeyModifiers::NONE));
-    assert_eq!(s.help_scroll, 0);
-    // Прочая клавиша закрывает; повторное открытие сбрасывает прокрутку.
-    s.help_scroll = 5;
+    assert_eq!(s.help.as_ref().unwrap().scroll, PAGE_SCROLL);
+    s.handle_key(KeyEvent::new(KeyCode::Home, KeyModifiers::NONE));
+    assert_eq!(s.help.as_ref().unwrap().scroll, 0);
+    // Прокрутим и переключим вкладку → прокрутка сбрасывается (Tab — следующая,
+    // порядок About/Hotkeys/Commands/License/Components: следующая за Hotkeys — Commands).
+    s.handle_key(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE));
+    s.handle_key(KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE));
+    let h = s.help.as_ref().unwrap();
+    assert_eq!(h.tab, HelpTab::Commands);
+    assert_eq!(h.scroll, 0, "смена вкладки сбрасывает прокрутку");
+    // ← возвращает на предыдущую вкладку.
+    s.handle_key(KeyEvent::new(KeyCode::Left, KeyModifiers::NONE));
+    assert_eq!(s.help.as_ref().unwrap().tab, HelpTab::Hotkeys);
+    // Esc закрывает; повторное открытие — на той же вкладке (запоминается), с нулём
+    // прокрутки. Здесь вернулись на Hotkeys, значит и откроется на Hotkeys.
     s.handle_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
-    assert!(!s.show_help);
+    assert!(s.help.is_none());
     s.handle_key(KeyEvent::new(KeyCode::F(1), KeyModifiers::NONE));
-    assert_eq!(s.help_scroll, 0, "открытие справки сбрасывает прокрутку");
+    let h = s.help.as_ref().unwrap();
+    assert_eq!((h.tab, h.scroll), (HelpTab::Hotkeys, 0));
+}
+
+/// Диалог справки запоминает последнюю выбранную вкладку и открывается на ней.
+#[test]
+fn help_remembers_last_tab() {
+    let mut s = ChatScreen::new();
+    // Открываем (Hotkeys по умолчанию), переключаемся на «Компоненты», закрываем.
+    s.handle_key(KeyEvent::new(KeyCode::F(1), KeyModifiers::NONE));
+    // About ← Hotkeys ← ... : два `←` от Hotkeys → Components (по кругу: Hotkeys→About→Components).
+    s.handle_key(KeyEvent::new(KeyCode::Left, KeyModifiers::NONE));
+    s.handle_key(KeyEvent::new(KeyCode::Left, KeyModifiers::NONE));
+    assert_eq!(s.help.as_ref().unwrap().tab, HelpTab::Components);
+    s.handle_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
+    assert!(s.help.is_none());
+    // Повторное открытие — снова на «Компонентах».
+    s.handle_key(KeyEvent::new(KeyCode::F(1), KeyModifiers::NONE));
+    assert_eq!(s.help.as_ref().unwrap().tab, HelpTab::Components);
 }
 
 #[test]
@@ -681,11 +713,15 @@ fn help_scroll_clamps_and_draws_scrollbar_on_short_terminal() {
     use ratatui::backend::TestBackend;
     let mut s = ChatScreen::new();
     s.handle_key(KeyEvent::new(KeyCode::F(1), KeyModifiers::NONE));
-    s.help_scroll = 10_000; // «перекручено» — рендер клампит к максимуму
+    s.help.as_mut().unwrap().scroll = 10_000; // «перекручено» — рендер клампит
     let mut term = Terminal::new(TestBackend::new(90, 12)).unwrap();
     term.draw(|f| s.render(f)).unwrap();
-    // Попап занял весь экран по высоте (12), внутри видно 10 рядов.
-    assert_eq!(s.help_scroll, HELP_KEYS.len() - 10);
+    // Список «Горячих клавиш» не помещается в невысокий диалог → прокрутка клампится
+    // к максимуму (заведомо меньше запрошенного) и рисуется бегунок скроллбара.
+    assert!(
+        s.help.as_ref().unwrap().scroll < HELP_KEYS.len(),
+        "прокрутка клампится к максимуму"
+    );
     let buf = term.backend().buffer();
     let mut thumb = false;
     for y in buf.area.top()..buf.area.bottom() {
@@ -892,7 +928,7 @@ fn ctrl_w_toggles_mouse_capture_intent() {
 #[test]
 fn mouse_wheel_ignored_while_overlay_open() {
     let mut s = ChatScreen::new();
-    s.show_help = true;
+    s.help = Some(HelpState::open(DEFAULT_HELP_TAB));
     s.handle_mouse(wheel(MouseEventKind::ScrollUp));
     assert!(
         s.feed_view.is_following(),
@@ -1578,7 +1614,9 @@ fn help_hides_logo_when_terminal_is_short() {
 
     let mut s = ChatScreen::new();
     s.handle_key(KeyEvent::new(KeyCode::F(1), KeyModifiers::NONE));
-    let mut term = Terminal::new(TestBackend::new(90, 20)).unwrap();
+    // Диалог высотой 13 (внутри 11 рядов) не вмещает лockup с отбивками → он не
+    // рисуется, вкладки не сдвигаются вниз.
+    let mut term = Terminal::new(TestBackend::new(90, 13)).unwrap();
     term.draw(|f| s.render(f)).unwrap();
 
     let buf = term.backend().buffer();
@@ -1589,4 +1627,79 @@ fn help_hides_logo_when_terminal_is_short() {
             assert_ne!(c.style().bg, Some(ORANGE), "логотип не должен рисоваться");
         }
     }
+}
+/// Каждая вкладка диалога справки рисует своё характерное содержимое, а таб-стрип —
+/// все четыре вкладки.
+#[test]
+fn help_tabs_render_distinct_content() {
+    use ratatui::Terminal;
+    use ratatui::backend::TestBackend;
+
+    let text_for = |tab: HelpTab| -> String {
+        let mut s = ChatScreen::new();
+        s.handle_key(KeyEvent::new(KeyCode::F(1), KeyModifiers::NONE));
+        s.help.as_mut().unwrap().tab = tab;
+        let mut term = Terminal::new(TestBackend::new(90, 40)).unwrap();
+        term.draw(|f| s.render(f)).unwrap();
+        let buf = term.backend().buffer();
+        let mut out = String::new();
+        for y in buf.area.top()..buf.area.bottom() {
+            for x in buf.area.left()..buf.area.right() {
+                out.push_str(buf[(x, y)].symbol());
+            }
+            out.push('\n');
+        }
+        out
+    };
+
+    // Таб-стрип на любой вкладке несёт все пять ярлыков.
+    let about = text_for(HelpTab::About);
+    for label in [
+        "О программе",
+        "Горячие клавиши",
+        "Команды",
+        "Лицензия",
+        "Компоненты",
+    ] {
+        assert!(about.contains(label), "нет ярлыка вкладки «{label}»");
+    }
+    // «О программе»: бренд-имя, автор, версия, ссылки.
+    assert!(about.contains("Vladimir Shylov"), "нет автора");
+    assert!(about.contains(env!("CARGO_PKG_VERSION")), "нет версии");
+    assert!(about.contains("https://mindfork.io"), "нет ссылки на сайт");
+    assert!(
+        about.contains("https://crates.io/crates/mindfork"),
+        "нет ссылки на крейт"
+    );
+
+    // «Горячие клавиши»: подпись из HELP_KEYS, но НЕ команды (они на своей вкладке).
+    let hotkeys = text_for(HelpTab::Hotkeys);
+    assert!(
+        hotkeys.contains("отправить сообщение"),
+        "нет описания клавиши"
+    );
+    assert!(
+        !hotkeys.contains("/rag add"),
+        "команды не должны быть на вкладке горячих клавиш"
+    );
+
+    // «Команды»: команды поля ввода.
+    let commands = text_for(HelpTab::Commands);
+    assert!(commands.contains("/rag add"), "нет команды /rag add");
+    assert!(commands.contains("/tts"), "нет команды /tts");
+
+    // «Лицензия»: текст MIT.
+    let license = text_for(HelpTab::License);
+    assert!(license.contains("MIT License"), "нет заголовка лицензии");
+    assert!(license.contains("WARRANTY"), "нет тела лицензии");
+
+    // «Компоненты»: имя, версия и лицензия (берём из начала списка — он длинный и
+    // прокручивается, дальние крейты за пределами экрана).
+    let components = text_for(HelpTab::Components);
+    assert!(components.contains("ansi-to-tui"), "нет компонента");
+    assert!(components.contains("8.0.1"), "нет версии компонента");
+    assert!(
+        components.contains("Zlib OR Apache-2.0 OR MIT"),
+        "нет лицензии компонента"
+    );
 }

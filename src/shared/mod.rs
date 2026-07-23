@@ -3,6 +3,7 @@
 
 pub mod api;
 pub mod config;
+pub mod credits;
 pub mod i18n;
 pub mod instance;
 pub mod keys;

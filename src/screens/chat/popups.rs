@@ -1,8 +1,11 @@
 //! Экран чата — попапы: подсказки орфографии, подтверждение, эмодзи, справка. Часть модуля [`super`]; разбито из
 //! монолита chat.rs (см. docs/history/refactoring-god-objects.md, этап 2).
 
+use ratatui::style::Color;
+
 use super::render::centered_rect;
 use super::*;
+use crate::shared::credits;
 use crate::widgets::logo::{LOCKUP_COLS, LOCKUP_ROWS, lockup_lines};
 
 /// Отступ лockup'а слева — тот же, с которого начинается список клавиш.
@@ -152,11 +155,11 @@ impl ChatScreen {
     }
 }
 
-/// Список горячих клавиш для оверлея помощи (`F1`/`?`). Пары `(keycap, desc_key)`:
+/// Горячие клавиши для вкладки «Горячие клавиши» (`F1`/`?`). Пары `(keycap, desc_key)`:
 /// `keycap` — литеральная «клавиша» (ASCII, универсальна) **или** `ui.*`-ключ там,
-/// где сам ярлык содержит слова (мышь, `<путь>`); `desc_key` — всегда `ui.*`-ключ
-/// описания. Оба резолвятся через локаль в [`render_help`]. См. spec §11.7,
-/// docs/i18n-ui.md.
+/// где сам ярлык содержит слова (мышь); `desc_key` — всегда `ui.*`-ключ описания. Оба
+/// резолвятся через локаль в [`key_lines`]. Команды поля ввода (`/…`) вынесены в
+/// [`HELP_COMMANDS`] (отдельная вкладка). См. spec §11.7, docs/i18n-ui.md.
 pub(super) const HELP_KEYS: &[(&str, &str)] = &[
     ("Enter", "ui.help.send"),
     ("Shift+Enter / Alt+Enter", "ui.help.newline"),
@@ -183,6 +186,15 @@ pub(super) const HELP_KEYS: &[(&str, &str)] = &[
     ("Ctrl+B", "ui.help.emoji"),
     ("Ctrl+W", "ui.help.mouse_toggle"),
     ("ui.help.k.mouse", "ui.help.mouse_action"),
+    ("PageUp/PageDown", "ui.help.scroll"),
+    ("F1 / ?", "ui.help.help"),
+    ("Ctrl+Q / F10", "ui.help.quit"),
+];
+
+/// Команды поля ввода для вкладки «Команды» (`F1`/`?`). Формат — как у [`HELP_KEYS`];
+/// ярлык-команда (`/…`) рисуется цветом команды. Вынесены из клавиш, чтобы не мешать
+/// их чтению. См. spec §11.7.
+pub(super) const HELP_COMMANDS: &[(&str, &str)] = &[
     ("ui.help.k.rag_add", "ui.help.rag_add"),
     ("ui.help.k.rag_remove", "ui.help.rag_remove"),
     ("/rag list", "ui.help.rag_list"),
@@ -190,118 +202,290 @@ pub(super) const HELP_KEYS: &[(&str, &str)] = &[
     ("ui.help.k.tts", "ui.help.tts"),
     ("/tts stop", "ui.help.tts_stop"),
     ("/tts pause · resume", "ui.help.tts_pause"),
-    ("PageUp/PageDown", "ui.help.scroll"),
-    ("F1 / ?", "ui.help.help"),
-    ("Ctrl+Q / F10", "ui.help.quit"),
 ];
 
-/// Рисует оверлей помощи по центру экрана: «клавиши» + приглушённые описания.
-/// На коротком терминале список не помещается и прокручивается (`↑↓`/`PgUp`/
-/// `PgDn` в `handle_key`) со скроллбаром на правой рамке; `scroll` клампится
-/// здесь — только при отрисовке известна фактическая высота попапа.
+/// Ширина диалога справки/«О программе» в колонках (без рамки) — комфортная и
+/// стабильная между вкладками, чтобы окно не «прыгало» при переключении.
+const HELP_WIDTH: u16 = 76;
+/// Высота диалога в строках (без рамки).
+const HELP_HEIGHT: u16 = 34;
+
+/// Рисует диалог справки/«О программе» по центру экрана (в стиле KDE/Qt): лockup
+/// логотипа, таб-стрип вкладок и прокручиваемое содержимое активной вкладки со
+/// скроллбаром на правой рамке. Навигация — в [`ChatScreen::handle_key`]; `scroll`
+/// клампится здесь (высота попапа известна только при отрисовке). См. spec §11.7.
 pub(super) fn render_help(
     frame: &mut Frame,
-    scroll: &mut usize,
+    help: &mut HelpState,
     palette: &Palette,
     loc: &'static Locale,
 ) {
-    // Резолвим клавиши и описания через локаль заранее (ширины и цвет команды
-    // считаем от локализованных строк). Литеральный keycap (ASCII) → сам себя
-    // (фолбэк `t` на отсутствующий ключ); `ui.*`-ключ → перевод.
-    let resolved: Vec<(String, String)> = HELP_KEYS
-        .iter()
-        .map(|(k, d)| (loc.t(k).to_string(), loc.t(d).to_string()))
-        .collect();
-    let key_width = resolved
-        .iter()
-        .map(|(k, _)| k.chars().count())
-        .max()
-        .unwrap_or(0)
-        + 4;
-    let desc_width = resolved
-        .iter()
-        .map(|(_, d)| d.chars().count())
-        .max()
-        .unwrap_or(0);
-    // Заголовок несёт версию приложения (release-engineering.md §3.1) — язык-нейтрально
-    // (имя+версия), рядом с локализованным «Горячие клавиши».
-    let title = format!(
-        "{}{} · mindfork-rs v{}",
-        palette.glyphs().help_icon,
-        loc.t("ui.help.title"),
-        env!("CARGO_PKG_VERSION"),
-    );
-    // Ширина строки: "  " слева + поле клавиш + " " + описание + "  " справа + рамка (2).
-    // Не уже заголовка (иначе версия обрежется): +4 = рамка (2) + поля (2).
-    let width =
-        ((2 + key_width + 1 + desc_width + 2 + 2) as u16).max(title.chars().count() as u16 + 4);
-    // Лockup в шапке — только при реальном запасе места (docs/branding.md §5): список
-    // клавиш длинный, и на невысоком терминале попап уже прокручивается — логотип
-    // отодвинул бы клавиши и добавил лишней прокрутки. Ширину под лockup специально
-    // не растягиваем (попап меряется списком клавиш) — не влез, значит не рисуем. Та
-    // же деградация, что у скроллбара (нет переполнения → не рисуем) и Mermaid.
-    let logo_block = LOCKUP_ROWS + 2; // отбивка сверху + лockup + отбивка снизу
-    let show_logo = frame.area().height >= resolved.len() as u16 + 2 + logo_block
-        && width >= LOCKUP_COLS + LOGO_INDENT + 4; // + рамка (2) и поле справа (2)
-    let content_rows = resolved.len() as u16 + if show_logo { logo_block } else { 0 };
-    let rows = (content_rows + 2).min(frame.area().height);
-    let area = centered_rect(width, rows, frame.area());
+    let full = frame.area();
+    let area = centered_rect(HELP_WIDTH + 2, HELP_HEIGHT + 2, full);
     frame.render_widget(Clear, area);
 
-    let mut lines: Vec<Line> = Vec::with_capacity(content_rows as usize);
+    // Заголовок несёт бренд-имя+версию (язык-нейтрально) рядом с локализованным
+    // титулом; футер — навигация по вкладкам/прокрутке/закрытию.
+    let title = format!(
+        "{}{} · {} v{}",
+        palette.glyphs().help_icon,
+        loc.t("ui.help.title"),
+        credits::APP_NAME,
+        env!("CARGO_PKG_VERSION"),
+    );
+    let block = palette.panel(title, true).title_bottom(
+        Line::from(Span::styled(
+            loc.t("ui.help.footer.tabs"),
+            palette.muted_style(),
+        ))
+        .centered(),
+    );
+    let inner = block.inner(area);
+    frame.render_widget(block, area);
+    if inner.width == 0 || inner.height == 0 {
+        return;
+    }
+    let inner_w = inner.width as usize;
+
+    // Шапка: (опц. лockup + отбивка) + таб-стрип + разделительная линия. Лockup
+    // рисуется только при запасе места (docs/branding.md §5) — на тесном терминале
+    // он отодвинул бы вкладки; жёсткая деградация, как у скроллбара/Mermaid.
+    let show_logo = inner.height >= LOCKUP_ROWS + 6 && inner.width > LOCKUP_COLS + LOGO_INDENT;
+    let mut header: Vec<Line> = Vec::new();
     if show_logo {
-        // Лockup выравнен влево по тому же полю, что и список клавиш ниже, — знак
-        // читается как шапка блока, а не как отдельная центрированная картинка.
-        // Отбивки сверху и снизу отделяют его от рамки и от клавиш.
         let pad = " ".repeat(LOGO_INDENT as usize);
-        lines.push(Line::raw(""));
-        lines.extend(lockup_lines(palette.text).into_iter().map(|line| {
+        header.push(Line::raw("")); // отбивка над логотипом
+        header.extend(lockup_lines(palette.text).into_iter().map(|line| {
             let mut spans = vec![Span::raw(pad.clone())];
             spans.extend(line.spans);
             Line::from(spans)
         }));
-        lines.push(Line::raw(""));
+        header.push(Line::raw(""));
     }
-    lines.extend(resolved.iter().map(|(k, d)| {
-        // Команды (`/rag …`) красим как команду, обычные клавиши — «клавишей».
-        let key_span = if k.starts_with('/') {
-            Span::styled(format!(" {k} "), Style::new().fg(palette.warning))
-        } else {
-            palette.keycap(k.clone())
-        };
-        Line::from(vec![
-            Span::raw("  "),
-            key_span,
-            Span::styled(format!(" {d}"), Style::new().fg(palette.text)),
-        ])
-    }));
-    let total = lines.len();
+    header.push(help_tab_strip(help.tab, palette, loc));
+    header.push(Line::styled(
+        "─".repeat(inner_w),
+        palette.border_style(false),
+    ));
+    let header_h = header.len() as u16;
 
-    let view_h = area.height.saturating_sub(2) as usize; // минус рамка
-    *scroll = (*scroll).min(total.saturating_sub(view_h));
-    let hint = if total > view_h {
-        loc.t("ui.help.footer.scroll")
-    } else {
-        loc.t("ui.help.footer.any")
+    let [head_area, body_area] =
+        Layout::vertical([Constraint::Length(header_h), Constraint::Min(0)]).areas(inner);
+    frame.render_widget(Paragraph::new(header), head_area);
+
+    // Содержимое активной вкладки (язык-нейтральные данные — лицензия/компоненты —
+    // берутся из `shared::credits` напрямую, минуя локали).
+    let content = match help.tab {
+        HelpTab::About => about_lines(palette, loc),
+        HelpTab::Hotkeys => key_lines(HELP_KEYS, palette, loc),
+        HelpTab::Commands => key_lines(HELP_COMMANDS, palette, loc),
+        HelpTab::License => license_lines(palette, inner_w),
+        HelpTab::Components => component_lines(palette, loc),
     };
-    let block = palette
-        .panel(title, true)
-        .title_bottom(Line::from(Span::styled(hint, palette.muted_style())).centered());
+    let total = content.len();
+    let view_h = body_area.height as usize;
+    help.scroll = help.scroll.min(total.saturating_sub(view_h));
     frame.render_widget(
-        Paragraph::new(Text::from(lines))
-            .block(block)
-            .scroll((*scroll as u16, 0)),
-        area,
+        Paragraph::new(Text::from(content)).scroll((help.scroll as u16, 0)),
+        body_area,
     );
-    render_scrollbar(
-        frame,
-        area.inner(Margin::new(0, 1)),
-        total,
-        view_h,
-        *scroll,
-        true, // рамка попапа — в фокусном цвете (panel(_, true))
-        palette,
-    );
+    // Скроллбар — на правой линии рамки вдоль области содержимого (не всей высоты,
+    // чтобы бегунок не заезжал на шапку с вкладками).
+    let bar_area = Rect {
+        x: area.x,
+        y: body_area.y,
+        width: area.width,
+        height: body_area.height,
+    };
+    render_scrollbar(frame, bar_area, total, view_h, help.scroll, true, palette);
+}
+
+/// Таб-стрип вкладок диалога справки: `О программе │ Горячие клавиши │ …`. Активная
+/// вкладка — на приглушённой подложке жирным (как выделенная вкладка настроек);
+/// разделитель `│` и содержимое WGL4-безопасны. Диалог всегда модальный (в фокусе),
+/// поэтому подсветка активной вкладки всегда «фокусная».
+fn help_tab_strip(active: HelpTab, palette: &Palette, loc: &'static Locale) -> Line<'static> {
+    let mut spans: Vec<Span<'static>> = vec![Span::raw(" ")];
+    for (i, tab) in HelpTab::ALL.iter().enumerate() {
+        if i > 0 {
+            spans.push(Span::styled(" │", palette.border_style(false)));
+        }
+        let label = loc.t(tab.label_key());
+        let style = if *tab == active {
+            Style::new().fg(palette.text).bg(palette.keycap_bg).bold()
+        } else {
+            palette.muted_style()
+        };
+        spans.push(Span::styled(format!(" {label} "), style));
+    }
+    Line::from(spans)
+}
+
+/// Отступ содержимого вкладок слева (та же колонка, что у лockup'а).
+const HELP_PAD: &str = "  ";
+
+/// Вкладка «О программе»: имя/описание + автор, версия и ссылки (сайт/репозиторий/
+/// крейт). Ссылки — цветом акцента (как «клавиши-команды»), подписи — приглушённо.
+fn about_lines(palette: &Palette, loc: &'static Locale) -> Vec<Line<'static>> {
+    let rows: [(&str, String, Color); 5] = [
+        (
+            loc.t("ui.about.author"),
+            credits::AUTHOR.to_string(),
+            palette.text,
+        ),
+        (
+            loc.t("ui.about.version"),
+            env!("CARGO_PKG_VERSION").to_string(),
+            palette.text,
+        ),
+        (
+            loc.t("ui.about.site"),
+            credits::SITE_URL.to_string(),
+            palette.accent,
+        ),
+        (
+            loc.t("ui.about.repo"),
+            credits::REPO_URL.to_string(),
+            palette.accent,
+        ),
+        (
+            loc.t("ui.about.crate"),
+            credits::CRATE_URL.to_string(),
+            palette.accent,
+        ),
+    ];
+    // Ширина колонки подписей (с двоеточием), чтобы значения выровнялись.
+    let label_w = rows
+        .iter()
+        .map(|(l, _, _)| l.chars().count() + 1)
+        .max()
+        .unwrap_or(0);
+    let mut lines = vec![
+        Line::raw(""),
+        Line::from(Span::styled(
+            format!("{HELP_PAD}{}", credits::APP_NAME),
+            Style::new().fg(palette.assistant).bold(),
+        )),
+        Line::from(Span::styled(
+            format!("{HELP_PAD}{}", loc.t("ui.about.desc")),
+            palette.muted_style(),
+        )),
+    ];
+    // Пункты через пустую строку — список «дышит» (просьба: промежутки между элементами).
+    for (label, value, color) in rows {
+        lines.push(Line::raw(""));
+        let field = format!("{label}:");
+        let pad = " ".repeat((label_w + 1).saturating_sub(field.chars().count()));
+        lines.push(Line::from(vec![
+            Span::raw(HELP_PAD),
+            Span::styled(field, palette.muted_style()),
+            Span::raw(pad),
+            Span::styled(value, Style::new().fg(color)),
+        ]));
+    }
+    lines
+}
+
+/// Вкладки «Горячие клавиши»/«Команды»: список пар `(ярлык, описание)` — «клавиша» +
+/// описание (ярлык-команда `/…` — цветом команды). Локаль резолвит и ярлыки-ключи, и
+/// описания. Общий для обеих вкладок ([`HELP_KEYS`]/[`HELP_COMMANDS`]).
+fn key_lines(
+    entries: &[(&str, &str)],
+    palette: &Palette,
+    loc: &'static Locale,
+) -> Vec<Line<'static>> {
+    let mut lines = vec![Line::raw("")];
+    for (k, d) in entries {
+        let key = loc.t(k).to_string();
+        let desc = loc.t(d).to_string();
+        let key_span = if key.starts_with('/') {
+            Span::styled(format!(" {key} "), Style::new().fg(palette.warning))
+        } else {
+            palette.keycap(key)
+        };
+        lines.push(Line::from(vec![
+            Span::raw(HELP_PAD),
+            key_span,
+            Span::styled(format!(" {desc}"), Style::new().fg(palette.text)),
+        ]));
+    }
+    lines
+}
+
+/// Вкладка «Лицензия»: текст лицензии приложения (MIT). Абзацы (в файле разделены
+/// пустой строкой) собираются заново и переносятся по словам под ширину содержимого
+/// `width` — исходный жёсткий перенос под ~76 колонок иначе клипался бы справа, а
+/// построчный перенос оставлял бы «сироты»-слова. Перенос даёт логические строки,
+/// поэтому модель прокрутки/скроллбара (по числу строк) не ломается. Сборка по
+/// `lines()` устойчива к CRLF.
+fn license_lines(palette: &Palette, width: usize) -> Vec<Line<'static>> {
+    let body_w = width.saturating_sub(HELP_PAD.len()).max(1);
+    // Собираем абзацы: непустые строки склеиваются пробелом, пустая — граница.
+    let mut paras: Vec<String> = Vec::new();
+    let mut cur = String::new();
+    for raw in credits::LICENSE_TEXT.lines() {
+        if raw.trim().is_empty() {
+            if !cur.is_empty() {
+                paras.push(std::mem::take(&mut cur));
+            }
+        } else {
+            if !cur.is_empty() {
+                cur.push(' ');
+            }
+            cur.push_str(raw.trim());
+        }
+    }
+    if !cur.is_empty() {
+        paras.push(cur);
+    }
+
+    let mut lines = vec![Line::raw("")];
+    for para in paras {
+        let src = Line::from(Span::styled(para, Style::new().fg(palette.text)));
+        for wrapped in crate::shared::wrap::wrap_line(&src, body_w) {
+            let mut spans = vec![Span::raw(HELP_PAD)];
+            spans.extend(wrapped.spans);
+            lines.push(Line::from(spans));
+        }
+        lines.push(Line::raw("")); // отбивка между абзацами
+    }
+    lines
+}
+
+/// Вкладка «Компоненты»: имя (выровнено в колонку), версия и лицензия. Имя — основным
+/// цветом, версия и лицензия — приглушённо, столбцы выровнены.
+fn component_lines(palette: &Palette, loc: &'static Locale) -> Vec<Line<'static>> {
+    let mut lines = vec![
+        Line::raw(""),
+        Line::from(Span::styled(
+            format!("{HELP_PAD}{}", loc.t("ui.components.intro")),
+            palette.muted_style(),
+        )),
+        Line::raw(""),
+    ];
+    let name_w = credits::COMPONENTS
+        .iter()
+        .map(|(n, ..)| n.chars().count())
+        .max()
+        .unwrap_or(0);
+    let ver_w = credits::COMPONENTS
+        .iter()
+        .map(|(_, v, _)| v.chars().count())
+        .max()
+        .unwrap_or(0);
+    for (name, version, license) in credits::COMPONENTS {
+        let name_pad = " ".repeat(name_w + 2 - name.chars().count());
+        let ver_pad = " ".repeat(ver_w + 2 - version.chars().count());
+        lines.push(Line::from(vec![
+            Span::raw(HELP_PAD),
+            Span::styled((*name).to_string(), Style::new().fg(palette.text)),
+            Span::raw(name_pad),
+            Span::styled((*version).to_string(), palette.muted_style()),
+            Span::raw(ver_pad),
+            Span::styled((*license).to_string(), palette.muted_style()),
+        ]));
+    }
+    lines
 }
 
 /// Рисует попап подсказок орфографии по центру экрана.
