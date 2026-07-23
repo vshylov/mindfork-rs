@@ -299,6 +299,9 @@ src/
    │  │  └─ rag.rs         RAG: документы/поиск/источники/размерность + удаление по пути
    │  └─ mod.rs             фасад Storage (потокобезопасный)
    ├─ config.rs            AppConfig и секции (Engine/Embed/Tool/Interface/Impersonation…)
+   ├─ credits.rs           метаданные приложения для диалога «О программе» (F1): бренд-имя,
+   │                       автор, ссылки, текст лицензии (MIT), компоненты (имя/версия/
+   │                       лицензия) + гейты (имена ↔ Cargo.toml, версии ↔ Cargo.lock)
    ├─ markdown/            свой рендерер на pulldown-cmark (ADR 0003): таблицы + LaTeX +
    │  │                    тема. God-object разбит по подсистемам (docs/refactoring-god-
    │  │                    objects.md, этап 6; внутренняя проводка через реэкспорт; тесты

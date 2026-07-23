@@ -181,9 +181,9 @@ impl ChatScreen {
             dim_background(frame, &self.palette);
             render_confirm(frame, action, &self.palette, self.loc);
         }
-        if self.show_help {
+        if let Some(help) = &mut self.help {
             dim_background(frame, &self.palette);
-            render_help(frame, &mut self.help_scroll, &self.palette, self.loc);
+            render_help(frame, help, &self.palette, self.loc);
         }
     }
 }

@@ -13,18 +13,34 @@ impl ChatScreen {
         if key.kind != KeyEventKind::Press {
             return None;
         }
-        // Оверлей помощи перехватывает ввод: ↑↓/PgUp/PgDn прокручивают список
-        // (на коротком терминале он не помещается), любая другая клавиша
-        // закрывает. Кламп прокрутки — в `render_help`.
-        if self.show_help {
+        // Диалог справки/«О программе» (`F1`/`?`) перехватывает ввод: `Tab`/`←→`
+        // переключают вкладки, `↑↓`/`PgUp`/`PgDn`/`Home` прокручивают активную
+        // вкладку, `Esc` (и повторный `F1`/`?`) закрывают, `Ctrl+Q`/`F10` — выход.
+        // Прочие клавиши игнорируются (не закрывают — иначе навигация путалась бы).
+        // Кламп прокрутки — в `render_help`. См. spec §11.7.
+        if let Some(help) = &mut self.help {
+            // Выход пробивает диалог (раскладко-независимо), как в попапе подтверждения.
+            if key.code == KeyCode::F(10)
+                || (key.modifiers.contains(KeyModifiers::CONTROL)
+                    && matches!(key.code, KeyCode::Char(c) if keys::physical_char(c) == 'q'))
+            {
+                self.help = None;
+                return Some(ChatIntent::Quit);
+            }
             match key.code {
-                KeyCode::Up => self.help_scroll = self.help_scroll.saturating_sub(1),
-                KeyCode::Down => self.help_scroll = self.help_scroll.saturating_add(1),
-                KeyCode::PageUp => self.help_scroll = self.help_scroll.saturating_sub(PAGE_SCROLL),
-                KeyCode::PageDown => {
-                    self.help_scroll = self.help_scroll.saturating_add(PAGE_SCROLL)
+                KeyCode::Tab | KeyCode::Right => help.next_tab(),
+                KeyCode::BackTab | KeyCode::Left => help.prev_tab(),
+                KeyCode::Up => help.scroll = help.scroll.saturating_sub(1),
+                KeyCode::Down => help.scroll = help.scroll.saturating_add(1),
+                KeyCode::PageUp => help.scroll = help.scroll.saturating_sub(PAGE_SCROLL),
+                KeyCode::PageDown => help.scroll = help.scroll.saturating_add(PAGE_SCROLL),
+                KeyCode::Home => help.scroll = 0,
+                KeyCode::Esc | KeyCode::F(1) | KeyCode::Char('?') => {
+                    // Запоминаем вкладку, чтобы восстановить при следующем открытии.
+                    self.help_last_tab = help.tab;
+                    self.help = None;
                 }
-                _ => self.show_help = false,
+                _ => {}
             }
             return None;
         }
@@ -141,16 +157,14 @@ impl ChatScreen {
             // Выход — Ctrl+Q (выше) или F10 (второй вариант, если терминал перехватит
             // Ctrl+Q; F10 часто открывает меню эмулятора в Linux-DE, но отключается).
             (KeyCode::F(10), _) => Some(ChatIntent::Quit),
-            // Помощь по клавишам: F1 всегда; `?` — только при пустом вводе (иначе
-            // символ печатается). См. spec §11.7.
+            // Справка/«О программе»: F1 всегда; `?` — только при пустом вводе (иначе
+            // символ печатается). Открываем на последней выбранной вкладке. См. spec §11.7.
             (KeyCode::F(1), _) => {
-                self.show_help = true;
-                self.help_scroll = 0;
+                self.help = Some(HelpState::open(self.help_last_tab));
                 None
             }
             (KeyCode::Char('?'), KeyModifiers::NONE) if self.input.is_empty() => {
-                self.show_help = true;
-                self.help_scroll = 0;
+                self.help = Some(HelpState::open(self.help_last_tab));
                 None
             }
             // Просмотр «модели себя» активного профиля (read-only вид).
@@ -253,7 +267,7 @@ impl ChatScreen {
     /// при открытой справке/попапе/оверлее (их однострочные поля) — no-op. Вставка
     /// не отправляет сообщение даже с переносами внутри. См. spec §11.5.
     pub fn handle_paste(&mut self, text: &str) {
-        if self.show_help
+        if self.help.is_some()
             || self.suggest.is_some()
             || self.emoji.is_some()
             || self.profile_overlay.is_some()
@@ -275,7 +289,7 @@ impl ChatScreen {
     /// неожиданны). Клик/драг вне области поля (в ленту) — no-op (выделение ленты —
     /// отдельное направление). См. spec §11.3, §11.5.
     pub fn handle_mouse(&mut self, mouse: MouseEvent) {
-        if self.show_help
+        if self.help.is_some()
             || self.suggest.is_some()
             || self.emoji.is_some()
             || self.profile_overlay.is_some()
