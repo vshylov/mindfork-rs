@@ -1,48 +1,48 @@
-# Айдентика mindfork
+# mindfork brand identity
 
-Исходники логотипа и вордмарка. План интеграции в приложение, пакетирование и
-документацию — [docs/branding.md](../docs/branding.md).
+Logo and wordmark source files. Integration plan for the app, packaging, and
+documentation — [docs/branding.md](../docs/branding.md).
 
-## Файлы
+## Files
 
-| Файл | Назначение |
+| File | Purpose |
 |---|---|
-| `mindfork-icon.svg` | иконка со скруглённой тёмной подложкой — основная |
-| `mindfork-icon-transparent.svg` | глиф без подложки — для светлых фонов, TUI, ч/б |
-| `mindfork-icon-{16,32,48,64,128,256}.png` | растр для тем иконок Linux (hicolor) |
-| `mindfork.ico` | Windows: иконка `.exe` и инсталлятора (6 размеров, 16–256) |
-| `mindfork-wordmark.svg` | горизонтальный лockup — основной (= `-dark`) |
-| `mindfork-wordmark-dark.svg` | для тёмного фона («mind» — светлый) |
-| `mindfork-wordmark-light.svg` | для светлого фона («mind» — тёмный) |
-| `mindfork-wordmark-mono.svg` | одноцветный, `currentColor` — наследует цвет текста |
-| `mindfork-wordmark-stacked.svg` | вертикальный лockup: иконка сверху, слово снизу |
-| `mindfork-wordmark-tagline.svg` | горизонтальный + тэглайн `TUI · RUST · LOCAL LLM` |
-| `wordmark-example.png` | **эталон**, по которому восстановлены шрифт и пропорции |
-| `build-wordmarks.py` | генератор вордмарков (текст → кривые) |
+| `mindfork-icon.svg` | icon with a rounded dark backplate — primary |
+| `mindfork-icon-transparent.svg` | glyph with no backplate — for light backgrounds, TUI, b/w |
+| `mindfork-icon-{16,32,48,64,128,256}.png` | raster for Linux icon themes (hicolor) |
+| `mindfork.ico` | Windows: `.exe` and installer icon (6 sizes, 16-256) |
+| `mindfork-wordmark.svg` | horizontal lockup — primary (= `-dark`) |
+| `mindfork-wordmark-dark.svg` | for a dark background ("mind" is light) |
+| `mindfork-wordmark-light.svg` | for a light background ("mind" is dark) |
+| `mindfork-wordmark-mono.svg` | single-color, `currentColor` — inherits the text color |
+| `mindfork-wordmark-stacked.svg` | vertical lockup: icon on top, word below |
+| `mindfork-wordmark-tagline.svg` | horizontal + tagline `TUI · RUST · LOCAL LLM` |
+| `wordmark-example.png` | **reference** used to reconstruct the font and proportions |
+| `build-wordmarks.py` | wordmark generator (text → curves) |
 
-## Палитра
+## Palette
 
-| Роль | HEX | Где |
+| Role | HEX | Where |
 |---|---|---|
-| Акцент | `#c25a27` | «fork», ствол глифа |
-| Ветви | `#5c6370` | ответвления глифа |
-| Подложка | `#09090b` | скруглённый квадрат иконки |
-| Текст на тёмном | `#e4e4e7` | «mind» в `-dark` |
-| Текст на светлом | `#18181b` | «mind» в `-light` |
-| Тэглайн | `#71717a` | подпись под словом |
+| Accent | `#c25a27` | "fork," the glyph's trunk |
+| Branches | `#5c6370` | the glyph's branches |
+| Backplate | `#09090b` | the icon's rounded square |
+| Text on dark | `#e4e4e7` | "mind" in `-dark` |
+| Text on light | `#18181b` | "mind" in `-light` |
+| Tagline | `#71717a` | the caption under the word |
 
-Палитра бренда **намеренно не совпадает** с палитрой интерфейса
-(`src/shared/theme.rs`): там `accent` означает «активность» (генерация, счётчик
-токенов), и перекрашивать его в бренд-оранжевый нельзя — сломается семантика.
-Логотип всегда рисуется своими цветами (кроме `-mono`). См. развилку Р3
-[docs/branding.md](../docs/branding.md).
+The brand palette **intentionally does not match** the interface palette
+(`src/shared/theme.rs`): there `accent` means "activity" (generation, the token
+counter), and recoloring it to the brand orange isn't possible — it would break
+the semantics. The logo is always drawn in its own colors (except `-mono`). See
+decision point D3 in [docs/branding.md](../docs/branding.md).
 
-## Глиф
+## Glyph
 
-Иконка — пиксель-арт на сетке **16×16** из пяти прямоугольников (чернила
-занимают x = 3…13, y = 2…14):
+The icon is pixel art on a **16x16** grid made of five rectangles (the ink
+occupies x = 3...13, y = 2...14):
 
-| x | y | w | h | цвет |
+| x | y | w | h | color |
 |---|---|---|---|---|
 | 7 | 2 | 2 | 12 | `#c25a27` |
 | 11 | 2 | 2 | 5 | `#5c6370` |
@@ -50,71 +50,77 @@
 | 3 | 7 | 2 | 5 | `#5c6370` |
 | 5 | 10 | 2 | 2 | `#5c6370` |
 
-Пиксельная природа — не случайность: она позволяет рисовать логотип **прямо в
-терминале** символами полублока (`▀`, 16 колонок × 8 строк), см. `widgets/logo.rs`
-и §5 [docs/branding.md](../docs/branding.md). Единственный источник истины
-геометрии — `mindfork-icon-transparent.svg`; таблица в коде сверяется с ним тестом.
+The pixel nature isn't an accident — it lets the logo be drawn **directly in the
+terminal** with half-block characters (`▀`, 16 columns x 8 rows), see
+`widgets/logo.rs` and §5 of [docs/branding.md](../docs/branding.md). The single
+source of truth for the geometry is `mindfork-icon-transparent.svg`; the table in
+the code is checked against it by a test.
 
-Радиус скругления подложки — `0.1875 × размер` (7.5 при 40, 12 при 64).
+Backplate corner radius is `0.1875 x size` (7.5 at 40, 12 at 64).
 
-## Шрифт
+## Font
 
 **JetBrains Mono ExtraBold**, [SIL Open Font License 1.1](https://github.com/JetBrains/JetBrainsMono/blob/master/OFL.txt).
 
-Шрифт определён по эталону `wordmark-example.png` подгонкой метрик, а не на глаз:
-восстановленный кегль (277.7 px) и трекинг (−0.035 em) воспроизводят эталон
-**с точностью до пикселя** — суммарная ширина слова 1249 px в эталоне и в
-пересборке, зазор «иконка → текст» 213 px в обоих. Подтверждающая деталь: выносной
-вылет `o`/`d` (−10 единиц шрифта) предсказывает нижнюю кромку этих букв ровно на
-измеренные 348 px.
+The font was identified from the `wordmark-example.png` reference by fitting
+metrics, not by eye: the reconstructed point size (277.7 px) and tracking
+(-0.035 em) reproduce the reference **to pixel accuracy** — the word's total
+width is 1249 px in both the reference and the rebuild, and the "icon → text"
+gap is 213 px in both. A confirming detail: the `o`/`d` descender overshoot
+(-10 font units) predicts the bottom edge of those letters at exactly the
+measured 348 px.
 
-Метрики лockup'а (доли от размера иконки `S`), измерены с эталона:
+Lockup metrics (fractions of the icon size `S`), measured from the reference:
 
-| Величина | Доля от `S` |
+| Value | Fraction of `S` |
 |---|---|
-| Высота выносного элемента (`d`,`f`,`k`) | `0.5227` |
-| Зазор «правый край иконки → чернила текста» | `0.3608` |
-| Базовая линия ниже верха иконки | `0.7418` |
-| Трекинг | `−35` единиц шрифта (`−0.035 em`) |
+| Ascender height (`d`,`f`,`k`) | `0.5227` |
+| Gap "icon's right edge → text ink" | `0.3608` |
+| Baseline below the icon's top | `0.7418` |
+| Tracking | `-35` font units (`-0.035 em`) |
 
-Вертикальный (`-stacked`) лockup эталона не имеет — его пропорции выведены:
-ширина слова = `2 × S` (иначе моноширинное слово из 8 букв уходит в `3.2 × S` и
-композиция становится нижне-тяжёлой), вертикальный зазор — в той же доле от высоты
-выносного элемента, что и горизонтальный.
+The vertical (`-stacked`) lockup has no reference — its proportions were
+derived: word width = `2 x S` (otherwise the 8-letter monospace word runs out
+to `3.2 x S` and the composition becomes bottom-heavy), the vertical gap uses
+the same fraction of the ascender height as the horizontal one.
 
-### Почему текст переведён в кривые
+### Why the text was converted to curves
 
-Первая версия вордмарков содержала `<text class="wm">` **без `<style>` и без
-`font-family`** — классы нигде не определялись, и файлы рендерились дефолтным
-шрифтом с засечками. Даже с `font-family` это не чинится: у зрителя (GitHub, чужой
-браузер, просмотрщик в Linux) нужного моноширинного шрифта нет, и начертание
-подменяется. Поэтому глифы переведены в `<path>` — SVG самодостаточен.
+The first version of the wordmarks contained `<text class="wm">` **with no
+`<style>` and no `font-family`** — the classes were never defined anywhere, and
+the files rendered in a default serif font. Even with `font-family` this
+wouldn't be fixed: the viewer (GitHub, someone else's browser, a Linux
+previewer) doesn't have the needed monospace font, and the typeface gets
+substituted. So the glyphs were converted to `<path>` — the SVG is
+self-contained.
 
-OFL разрешает использовать шрифт для создания артворка и распространять полученные
-кривые. Сам файл шрифта в репозиторий **не кладём** — он нужен только для
-перегенерации.
+OFL permits using the font to create artwork and distributing the resulting
+curves. We do **not** put the font file itself in the repository — it's only
+needed for regeneration.
 
-## Перегенерация вордмарков
+## Regenerating the wordmarks
 
 ```
 pip install fonttools
 python artwork/build-wordmarks.py
 ```
 
-Скрипт ищет `JetBrainsMono-ExtraBold.ttf` в системных шрифтах и в бандлах IDE
-JetBrains; иначе — путь через `--font`. Скачать:
+The script looks for `JetBrainsMono-ExtraBold.ttf` in the system fonts and in
+JetBrains IDE bundles; otherwise pass a path via `--font`. Download from:
 [JetBrains/JetBrainsMono/releases](https://github.com/JetBrains/JetBrainsMono/releases).
 
-Правки палитры, трекинга и пропорций лockup'а вносятся **в константы скрипта**, а
-не в SVG руками, — иначе варианты разъедутся между собой.
+Edits to the palette, tracking, and lockup proportions go **into the script's
+constants**, not into the SVGs by hand — otherwise the variants would drift
+apart from each other.
 
-## Правила применения
+## Usage rules
 
-- **Охранное поле** вокруг лockup'а — не меньше высоты глифа `f` (≈ `0.5 × S`).
-- Иконку и слово **не переставлять и не перемасштабировать по отдельности** —
-  пропорции заданы лockup'ом; масштабируется файл целиком.
-- Слово **не перекрашивать** произвольно: на цветном фоне — `-mono` с
-  `currentColor`, не подбор цвета вручную.
-- Минимальный кегль горизонтального лockup'а — **~100 px по ширине**; ниже
-  использовать иконку без слова.
-- «mind» и «fork» — **одно слово без пробела**, разделение только цветом.
+- **Clear space** around the lockup — no less than the height of the `f` glyph
+  (≈ `0.5 x S`).
+- Do **not** reposition or rescale the icon and the word separately — the
+  proportions are set by the lockup; scale the file as a whole.
+- Do **not** recolor the word arbitrarily: on a colored background use `-mono`
+  with `currentColor`, not a hand-picked color.
+- Minimum size for the horizontal lockup — **~100 px wide**; below that, use
+  the icon without the word.
+- "mind" and "fork" are **one word with no space**, separated only by color.

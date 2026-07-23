@@ -1,206 +1,237 @@
-# Возможный Roadmap
+# Possible Roadmap
 
-> Живой список идей. Реализованное сюда не возвращается — история направлений
-> живёт в [CLAUDE.md](../CLAUDE.md) (журнал пост-M9) и [docs/history/](history/).
-> Компактная сводка недавно закрытого — в конце файла.
+> Live list of ideas. Implemented items don't come back here — track history
+> lives in [CLAUDE.md](../CLAUDE.md) (post-M9 journal) and [docs/history/](history/).
+> A compact summary of what recently closed is at the end of the file.
 
-## Наиболее ценное дальше
-Не приоритезированный список ниже — идейный банк равного веса; эти пять выделены как
-направления с наибольшей отдачей (реальная боль пользователя / прямая экономия):
-1. **Компрессия истории / скользящее резюме** (§Контекст и токены) — упирается в
-   потолок 8k-контекста локальных моделей уже сейчас.
-2. **Prompt caching** (§Контекст и токены) — прямая экономия токенов/латентности,
-   разблокирована стабильной суточной инъекцией «модели себя».
-3. **Retry/backoff на облачные ошибки** (§Движок и надёжность) — надёжность облака.
-4. **Подтверждение опасных инструментов** (§Инструменты) — human-in-the-loop перед
-   `python_exec`/файловыми/деструктивными MCP-вызовами.
-5. **Мультимодальность (изображения)** (§Движок и надёжность) — крупная фича со спросом.
+## Most valuable next
+The unprioritized list below is an idea bank of equal weight; these five are
+called out as the highest-payoff tracks (real user pain / direct savings):
+1. **History compression / rolling summary** (§Context and tokens) — already
+   hits the 8k-context ceiling of local models.
+2. **Prompt caching** (§Context and tokens) — direct token/latency savings,
+   unlocked by the stable daily self-model injection.
+3. **Retry/backoff on cloud errors** (§Engine and reliability) — cloud
+   reliability.
+4. **Confirmation for dangerous tools** (§Tools) — human-in-the-loop before
+   `python_exec`/file/destructive MCP calls.
+5. **Multimodality (images)** (§Engine and reliability) — a big feature with
+   demand.
 
-## Память, модель себя, знания
-Флагманское направление проекта (модель себя / заметки / связность / RAG). Ядро и
-направления **консолидации модели себя** (A) и **RAG: источники и извлечение** (B)
-завершены (см. «Недавно закрыто» ниже и `docs/history/`). Остался один **отложенный**
-задел:
-- **vec0 для заметок и наблюдений при росте числа** — сейчас косинус считается
-  brute-force в Rust (`db::cosine`, `note_search_semantic`); для десятков–сотен (и
-  вплоть до тысяч) заметок это дёшево (единицы мс на `note_recall`). **Отложено**
-  (преждевременная оптимизация, решение 2026-07): vec0 ускорит **только query-путь**,
-  не O(n²)-консолидацию, а реализация тянет схему-миграцию ради стабильного
-  integer-rowid (заметки на `TEXT` uuid-PK). Вернуться **по факту роста числа заметок
-  до тысяч**. План готов: [notes-vec0](notes-vec0.md).
+## Memory, self-model, knowledge
+The project's flagship track (self-model / notes / connectivity / RAG). The core
+and the **self-model consolidation** (A) and **RAG: sources and retrieval** (B)
+tracks are done (see "Recently closed" below and `docs/history/`). One
+**deferred** groundwork item remains:
+- **vec0 for notes and observations as their count grows** — cosine is
+  currently computed brute-force in Rust (`db::cosine`, `note_search_semantic`);
+  for tens–hundreds (and up to thousands) of notes this is cheap (single-digit
+  ms per `note_recall`). **Deferred** (premature optimization, decision
+  2026-07): vec0 would only speed up the **query path**, not the O(n²)
+  consolidation, and the implementation requires a schema migration for a
+  stable integer rowid (notes have a `TEXT` uuid PK). Revisit **once the note
+  count actually grows into the thousands**. Plan ready:
+  [notes-vec0](notes-vec0.md).
 
-## Контекст и токены
-- **Компрессия истории / скользящее резюме** — сейчас вся переписка шлётся каждый
-  запрос (`build_conversation_digest` есть только для заголовков). Для локальных
-  моделей с 8k-контекстом это упирается в потолок; кандидат — авто-суммаризация
-  старых сообщений по порогу токенов, рядом с уже существующим счётчиком.
+## Context and tokens
+- **History compression / rolling summary** — right now the whole conversation
+  is sent on every request (`build_conversation_digest` only exists for
+  titles). For local models with 8k context this hits a ceiling; a candidate
+  is auto-summarizing old messages past a token threshold, next to the
+  existing token counter.
 - **Prompt caching** — `cache_control` (Anthropic) / `cached_tokens` +
-  `prompt_cache_key` (OpenAI) в коде нет. Инъекция «модели себя» в `system`
-  стабильна в пределах дня — прямой кандидат на кэш промпта (экономия токенов и
-  латентности). См. заделы в [openai-responses-client](research/openai-responses-client.md).
-- **`cached_tokens` в счётчике токенов** — показывать долю попаданий в кэш.
+  `prompt_cache_key` (OpenAI) aren't in the code. The self-model injection
+  into `system` is stable within a day — a direct candidate for prompt
+  caching (token and latency savings). See groundwork in
+  [openai-responses-client](research/openai-responses-client.md).
+- **`cached_tokens` in the token counter** — show the cache-hit share.
 
-## Инструменты (tools)
-- **MCP-хост — заделы** (ядро **сделано**: спека §9.6,
-  [ADR 0007](decisions/0007-plugins-mcp-host-import-format.md); серверы из
-  `settings.json`, двойной opt-in, TOFU-пиннинг, статусы/описания в настройках):
-  - HTTP-транспорт (сейчас только stdio).
-  - resources/prompts (сейчас только tools).
-  - `notifications/tools/list_changed` — пересписок каталога на лету.
-  - deferred-схемы («tool search») — контекст-бюджет при многих серверах.
-  - потолок числа инструментов на сервер.
-  - UI-редактор серверов (сейчас — правка `settings.json` вручную).
-  - server `instructions` → системный промпт.
-  - не-текстовые блоки результата (сейчас — плейсхолдер).
-  - WASM-песочница для недоверенных инструментов.
-  - локализация wire-ошибок клиента (сейчас — технический слой).
-- **Подтверждение опасных инструментов** — интерактивный prompt перед
-  `python_exec`/файловыми операциями/деструктивными MCP-вызовами (human-in-the-loop;
-  annotations `destructiveHint` MCP-серверов — недоверенные, но годятся как
-  подсказка). Переиспользует попап `ConfirmAction` (тот же механизм, что уже
-  подключён к `interface.confirm_destructive_keys` для `Ctrl+R`/`Ctrl+E`).
+## Tools
+- **MCP host — groundwork** (core is **done**: spec §9.6,
+  [ADR 0007](decisions/0007-plugins-mcp-host-import-format.md); servers from
+  `settings.json`, double opt-in, TOFU pinning, statuses/descriptions in
+  settings):
+  - HTTP transport (currently stdio only).
+  - resources/prompts (currently tools only).
+  - `notifications/tools/list_changed` — live catalog re-listing.
+  - deferred schemas ("tool search") — context budget with many servers.
+  - per-server tool count ceiling.
+  - server editor UI (currently — edit `settings.json` by hand).
+  - server `instructions` → system prompt.
+  - non-text result blocks (currently — a placeholder).
+  - WASM sandbox for untrusted tools.
+  - localization of client wire errors (currently — a technical layer).
+- **Confirmation for dangerous tools** — an interactive prompt before
+  `python_exec`/file operations/destructive MCP calls (human-in-the-loop;
+  `destructiveHint` annotations from MCP servers — untrusted, but usable as a
+  hint). Reuses the `ConfirmAction` popup (the same mechanism already wired
+  to `interface.confirm_destructive_keys` for `Ctrl+R`/`Ctrl+E`).
 
-## Лента и UI чата
-- **Per-message сворачивание/выделение/копирование** — явно отложено за M3, с
-  пометкой «учесть тумблер мыши `Ctrl+W`». Выделение отдельного сообщения,
-  копирование одного блока.
-- **Горизонтальный скролл широких таблиц** (вместо текущего клипа с «…») — задел из
-  ADR 0003.
-- **Mermaid: расширение whitelist** — flowchart/sequence уже рендерятся
-  ([реализовано](research/mermaid-ascii-rendering.md) после нашего апстрим-фикса
-  `mermaid-text` 0.56.1); stateDiagram/class/er — кандидаты, когда их текстовый
-  рендер станет читаемым. Плюс задел апстрима: `max_width` как жёсткий бюджет (issue
-  обещан мейнтейнеру).
-- **Широкие глифы на conhost: половина фона** (апстрим,
-  [ratatui#2652](https://github.com/ratatui/ratatui/issues/2652) — заведено нами с
-  байтовым репро). Хвостовая ячейка широкого глифа несёт дефолтный стиль и помечена
-  `skip`, поэтому при правке **только стиля** (глиф остаётся широким — например с него
-  уезжает подложка выделения) diff шлёт лишь ведущую ячейку, а во второй половине
-  остаётся прежний фон. Не VS16-специфично: воспроизводится и на `😀`. **Локально не
-  чинится** — единственный обход требует писать во вторую половину широкого глифа,
-  а это ровно то, что делает небезопасным
-  [ratatui#2651](https://github.com/ratatui/ratatui/issues/2651) (`last_pos` без учёта
-  ширины → запись уезжает на колонку и сдвигает ряд). Закрытие #2651 (ведение
-  `last_pos` по ширине) заодно снимет наши обходные пути: полную перерисовку на смену
-  экрана / закрытие попапов и замену VS16-эмодзи в сетке. Механика и
-  терминало-независимые пробы — в `shared::ui` и `widgets::emoji_picker`.
-- **Поиск по тексту внутри ленты** (`/`-поиск с подсветкой и переходами).
-- **Регенерация с вариациями** — не просто `Ctrl+R` тем же запросом, а с другим
-  семплингом / выбор из нескольких вариантов ответа.
-- **Редактирование любого (не только последнего) сообщения** с ветвлением истории.
+## Feed and chat UI
+- **Per-message collapse/select/copy** — explicitly deferred past M3, noted
+  "account for the mouse toggle `Ctrl+W`". Selecting a single message,
+  copying a single block.
+- **Horizontal scroll for wide tables** (instead of the current clip with
+  "…") — groundwork from ADR 0003.
+- **Mermaid: whitelist expansion** — flowchart/sequence already render
+  ([implemented](research/mermaid-ascii-rendering.md) after our upstream fix
+  to `mermaid-text` 0.56.1); stateDiagram/class/er are candidates once their
+  text rendering becomes readable. Plus upstream groundwork: `max_width` as
+  a hard budget (issue promised to the maintainer).
+- **Wide glyphs on conhost: half-background** (upstream,
+  [ratatui#2652](https://github.com/ratatui/ratatui/issues/2652) — filed by
+  us with a byte-level repro). The trailing cell of a wide glyph carries the
+  default style and is marked `skip`, so on a **style-only** edit (the glyph
+  stays wide — e.g. the selection background moves off it) the diff only
+  emits the leading cell, and the old background stays in the second half.
+  Not VS16-specific: also reproduces on `😀`. **Can't be fixed locally** — the
+  only workaround requires writing into the second half of the wide glyph,
+  and that's exactly what
+  [ratatui#2651](https://github.com/ratatui/ratatui/issues/2651) makes unsafe
+  (`last_pos` ignoring width → the write drifts a column and shifts the row).
+  Closing #2651 (tracking `last_pos` by width) would also remove our
+  workarounds: the full redraw on screen switch / popup close and the VS16
+  emoji swap in the grid. The mechanics and terminal-independent probes are
+  in `shared::ui` and `widgets::emoji_picker`.
+- **In-feed text search** (`/`-search with highlighting and jumps).
+- **Regeneration with variations** — not just `Ctrl+R` with the same request,
+  but with different sampling / picking from several response variants.
+- **Editing any (not just the last) message** with history branching.
 
-## Управление чатами и профилями
-- **Папки/теги для чатов** — группировка в списке (`Esc`).
-- **Экспорт чата в файл** (Markdown/JSON) — сейчас есть только копирование в буфер
-  (`F5`); добавить сохранение на диск.
-- **Pin / закрепление важных чатов** наверху списка.
-- **Шаблоны промптов / сниппеты** — быстрые вставки часто используемых системных
-  сообщений или затравок.
-- **Поиск по содержимому чатов** (а не только по заголовку) — полнотекстовый поиск
-  через SQLite FTS.
+## Chat and profile management
+- **Folders/tags for chats** — grouping in the list (`Esc`).
+- **Export chat to a file** (Markdown/JSON) — currently there's only
+  clipboard copy (`F5`); add saving to disk.
+- **Pin important chats** at the top of the list.
+- **Prompt templates / snippets** — quick inserts of frequently used system
+  messages or seeds.
+- **Search within chat content** (not just the title) — full-text search via
+  SQLite FTS.
 
-## Движок и надёжность
-- **Мосты провайдеров** — задокументировать в install.md паттерн «любой
-  OpenAI-совместимый endpoint» (external + LiteLLM/OpenRouter); опц.
-  managed-custom-command (супервайзер поднимает произвольный сайдкар-прокси) — по
-  спросу. См. [исследование плагинов §6](research/plugin-system.md).
-- **API-ключи: расширения хранения** (ADR 0008) — OS-кейчейн как дополнительная
-  `scheme`; тот же механизм для external-прокси и env-карт MCP-серверов; UI-управление
-  записями других компьютеров («забыть компьютер»).
-- **Retry/backoff на сетевые ошибки облачных провайдеров** — клиенты сейчас отдают
-  тело ошибки, но не ретраят (транзиентные 429/5xx/таймауты).
-- **Переключение моделей на лету** без полного перезапуска секции настроек (быстрый
-  селектор модели прямо в чате).
-- **Поддержка мультимодальности** (изображения) — если модель/`llama-server`
-  поддерживает vision; передача картинок из буфера/файла.
+## Engine and reliability
+- **Provider bridges** — document in install.md the "any OpenAI-compatible
+  endpoint" pattern (external + LiteLLM/OpenRouter); optional
+  managed-custom-command (supervisor launches an arbitrary sidecar proxy) —
+  on demand. See [plugin research §6](research/plugin-system.md).
+- **API keys: storage extensions** (ADR 0008) — an OS keychain as an
+  additional `scheme`; the same mechanism for the external proxy and MCP
+  server env maps; UI management of other machines' entries ("forget this
+  computer").
+- **Retry/backoff on cloud provider network errors** — clients currently
+  surface the error body but don't retry (transient 429/5xx/timeouts).
+- **On-the-fly model switching** without a full settings-section restart (a
+  quick model selector right in the chat).
+- **Multimodality support** (images) — if the model/`llama-server` supports
+  vision; passing images from clipboard/file.
 
-## Тестирование, CI, качество
-- **Живые `#[ignore]`-смоуки в CI** — сейчас 50 смоуков (движок/сеть/живая модель)
-  тихо пропускаются без env-переменных. Гонять по расписанию против managed-модели
-  или облака по ключу (отдельный workflow, не блокирует PR).
-- **Бенчмарки горячих путей** — рендер ленты (кэш markdown+syntect), перенос строк,
-  brute-force косинус памяти — регресс-детектор производительности.
+## Testing, CI, quality
+- **Live `#[ignore]` smokes in CI** — currently 50 smokes (engine/network/
+  live model) are silently skipped without env vars. Run them on a schedule
+  against a managed model or the cloud by key (a separate workflow, doesn't
+  block the PR).
+- **Hot-path benchmarks** — feed rendering (markdown+syntect cache), line
+  wrapping, brute-force memory cosine — a performance regression detector.
 
-## Мультиязычность (i18n)
+## Multilingualism (i18n)
 
-> **Направление завершено** (ось A Ярусы 1–3 + ось B + i18n CLI этапы 1–3): язык
-> агента ([docs/history/i18n.md](history/i18n.md)) и внешние локали
-> ([docs/history/i18n-external-locales.md](history/i18n-external-locales.md)), язык
-> интерфейса ([docs/history/i18n-ui.md](history/i18n-ui.md)), весь текст CLI
-> ([docs/history/i18n-cli.md](history/i18n-cli.md)). Ниже — только оставшиеся заделы.
+> **Track finished** (axis A tiers 1–3 + axis B + i18n CLI stages 1–3): agent
+> language ([docs/history/i18n.md](history/i18n.md)) and external locales
+> ([docs/history/i18n-external-locales.md](history/i18n-external-locales.md)),
+> interface language ([docs/history/i18n-ui.md](history/i18n-ui.md)), all CLI
+> text ([docs/history/i18n-cli.md](history/i18n-cli.md)). Below — only the
+> remaining groundwork.
 
-- **Hot-reload внешних локалей** — правка `data/locales/*.json` применяется при
-  перезапуске (реестр — `&'static`-леак); перечитывание на лету потребовало бы иной
-  модели владения.
+- **Hot-reload of external locales** — editing `data/locales/*.json` applies
+  on restart (the registry is `&'static`-leaked); reloading live would
+  require a different ownership model.
 
-> **Не-roadmap, зафиксировано как решение:** имена CLI-подкоманд/флагов **не
-> локализуются** (часть протокола — плохая практика переводить `backup`→`бэкап`,
-> тем более при переходе на английский исходник). Плюрализация намеренно
-> число-нейтральная (простой `tf` без грамматики) — реальная грамматика нужна
-> только оси B, если появится язык со сложной плюрализацией.
+> **Not-roadmap, recorded as a decision:** CLI subcommand/flag names are
+> **not** localized (part of the protocol — translating a command like
+> `backup` into the interface language is bad practice, especially now that
+> the source itself is English). Pluralization is intentionally
+> number-neutral (a plain `tf` without grammar) — real grammar is only
+> needed on axis B, if a language with complex pluralization shows up.
 
-## Прочее
-- **Инсталляторы — заделы** (ядро **сделано**,
-  [docs/history/installers.md](history/installers.md): Windows Inno Setup + Linux
-  nfpm, прилагаются к релизам): подпись кода Windows (отложена до публичного
-  открытия — SignPath/Certum/Azure Artifact Signing, §5 дока); winget-манифест (до
-  подписи — portable-zip); AUR `mindfork-rs-bin`; MSI под GPO/Intune при спросе.
-- **Авто-обновление** — self-update, musl-static и arm64-сборки, уведомление
-  «доступна новая версия» в TUI. Заделы завершённого направления «релизная
-  инженерия» ([docs/history/release-engineering.md](history/release-engineering.md)
-  §5); релизный пайплайн (тег → архивы + sha256 + пакеты + инсталлятор на GitHub
-  Releases) уже есть.
-- **Озвучивание сообщений (TTS)** — **этап `feat/tts` реализован** (2026-07-23,
-  [research/tts.md §13](research/tts.md), [CLAUDE.md](../CLAUDE.md)): команда `/tts`
-  (`/tts N`/`all`/`stop`), речевой экстрактор Markdown (`shared/markdown/speak.rs` —
-  код/mermaid/таблицы/формулы с голосовой пометкой), плеер `rodio`, точки остановки,
-  вкладка настроек «Озвучивание». **Основной движок — OpenAI TTS**
-  (`gpt-4o-mini-tts`, голос `onyx`) — не новый vendor (ключ уже хранится, ADR 0008);
-  плюс `gemini` и `external` (любой OpenAI-совместимый сервер). Заделы: **локальный
-  движок** (vosk-tts + свой русский Rust-фронтенд, managed-сайдкар `mindfork tts
-  setup` по образцу ADR 0005 — для offline/не-OpenAI аудитории; ElevenLabs/Azure не
-  берём — своя регистрация); **склейка чанков через границы речевых блоков** (ещё более
-  гладкая многоабзацная озвучка); SSE-стриминг внутри чанка; кэш аудио; авто-выбор
-  голоса по языку сообщения; **нативный мульти-спикер Gemini** (один запрос, несколько
-  голосов — сейчас разные голоса ролей сделаны двумя запросами/движками, работает у
-  всех провайдеров); ОС-TTS.
-- **Голосовой ввод (STT)** — вторая половина «голоса»; для TUI-чата заметная фича.
-- **Кастомная раскладка клавиш** — в «Интерфейсе» уже есть поле под это (помечено
-  как задел с M9), но фактическое применение кастом-биндингов не сделано.
-- **Применение темы из конфигурации цветов** — пользовательская палитра поверх
-  auto/dark/light.
+## Other
+- **Installers — groundwork** (core is **done**,
+  [docs/history/installers.md](history/installers.md): Windows Inno Setup +
+  Linux nfpm, shipped with releases): Windows code signing (deferred until
+  public launch — SignPath/Certum/Azure Artifact Signing, §5 of the doc);
+  winget manifest (portable-zip until signing); AUR `mindfork-rs-bin`; MSI
+  for GPO/Intune on demand.
+- **Auto-update** — self-update, musl-static and arm64 builds, an "a new
+  version is available" notice in the TUI. Groundwork from the finished
+  "release engineering" track
+  ([docs/history/release-engineering.md](history/release-engineering.md) §5);
+  the release pipeline (tag → archives + sha256 + packages + installer on
+  GitHub Releases) already exists.
+- **Message playback (TTS)** — **the `feat/tts` stage is implemented**
+  (2026-07-23, [research/tts.md §13](research/tts.md),
+  [CLAUDE.md](../CLAUDE.md)): the `/tts` command (`/tts N`/`all`/`stop`), a
+  Markdown speech extractor (`shared/markdown/speak.rs` — code/mermaid/tables/
+  formulas get a voice note), the `rodio` player, stop points, a "Playback"
+  settings tab. **Primary engine — OpenAI TTS** (`gpt-4o-mini-tts`, `onyx`
+  voice) — not a new vendor (the key is already stored, ADR 0008); plus
+  `gemini` and `external` (any OpenAI-compatible server). Groundwork: a
+  **local engine** (vosk-tts + our own Russian Rust frontend, a managed
+  sidecar `mindfork tts setup` modeled on ADR 0005 — for an offline/non-OpenAI
+  audience; ElevenLabs/Azure are skipped — they'd need their own signup);
+  **stitching chunks across speech-block boundaries** (even smoother
+  multi-paragraph playback); SSE streaming within a chunk; audio caching;
+  auto voice selection by message language; **native Gemini multi-speaker**
+  (one request, several voices — right now different voices per role are done
+  with two requests/engines, which works across all providers); OS TTS.
+- **Voice input (STT)** — the other half of "voice"; a notable feature for a
+  TUI chat.
+- **Custom keyboard layout** — there's already a field for this under
+  "Interface" (marked as groundwork since M9), but actual custom-binding
+  application isn't done.
+- **Applying a theme from a color configuration** — a user palette layered
+  over auto/dark/light.
 
-## Английский исходник (подготовка к opensource)
-Проект готовится к открытию, поэтому исходный язык кода и документации переходит с
-русского на английский. Это **не** отмена i18n: пользовательские строки остаются
-локализуемыми через оси A/B (в т.ч. русский UI/агент) — на английский переходит только
-язык *разработки*. Порядок (от самого ценного для внешнего читателя к рутине):
-1. **Документация** — `docs/` (spec, architecture, ADR, roadmap, install, research),
-   README, CHANGELOG, AGENTS.md, CLAUDE.md. Ключевой артефакт для нового контрибьютора.
-2. **Комментарии и доки в коде** — инкрементально, по мере правки модулей (не отдельным
-   мегакоммитом — иначе шумный диф и конфликты с текущей работой).
-3. **Флип конвенции** — заменить в CLAUDE.md/AGENTS.md правило «Комментарии и доки — на
-   русском» на английское; после этого весь новый код/доки пишутся по-английски.
-Отдельные направления (не блокеры opensource): именование тестов, сообщения коммитов,
-имена веток — уже преимущественно англоязычны/нейтральны.
+## English source (prep for open source)
+The project is preparing to go open, so the source language of code and
+documentation is moving from Russian to English. This is **not** a reversal
+of i18n: user-facing strings remain localizable via axes A/B (Russian
+UI/agent included) — only the *development* language is switching to
+English. Order (from most valuable for an outside reader to routine):
+1. **Documentation** — `docs/` (spec, architecture, ADR, roadmap, install,
+   research), README, CHANGELOG, AGENTS.md, CLAUDE.md. The key artifact for a
+   new contributor.
+2. **In-code comments and docs** — incrementally, as modules get touched (not
+   as one giant commit — that would be a noisy diff and conflict with ongoing
+   work).
+3. **Flip the convention** — replace the rule "comments and docs — in
+   Russian" in CLAUDE.md/AGENTS.md with the English one; after that all new
+   code/docs are written in English.
+Separate tracks (not open-source blockers): test naming, commit messages,
+branch names — already mostly English/neutral.
 
 ---
 
-## Недавно закрыто
-Компактная сводка (подробности — в [CLAUDE.md](../CLAUDE.md) и [docs/history/](history/)):
-- **API-ключи в настройках** (ввод в окне настроек, машинно-привязанное шифрование в
-  конфиге, пер-машинные записи) — [ADR 0008](decisions/0008-api-key-storage.md),
-  исследование [api-key-storage.md](research/api-key-storage.md).
-- **Консолидация «модели себя»** (авто-«сон» по таймеру + семантика summary↔наблюдения
-  + старение интересов) — [self-model-consolidation.md](history/self-model-consolidation.md).
-- **RAG: источники и извлечение** (html/pdf/docx + прогресс индексации по чанкам +
-  кросс-источниковый дедуп) — [rag-sources-retrieval.md](history/rag-sources-retrieval.md).
-- **Плагины / MCP-хост** + generic-импорт (`mindfork import`, формат
-  [mindfork-import](import-format.md)) — [ADR 0007](decisions/0007-plugins-mcp-host-import-format.md).
-- **Инсталляторы** (Windows Inno Setup + Linux nfpm) — [installers.md](history/installers.md).
-- **Релизная инженерия** (версии/CHANGELOG/CI/миграции схем) —
+## Recently closed
+A compact summary (details — in [CLAUDE.md](../CLAUDE.md) and
+[docs/history/](history/)):
+- **API keys in settings** (entry in the settings window, machine-bound
+  encryption in the config, per-machine entries) —
+  [ADR 0008](decisions/0008-api-key-storage.md), research
+  [api-key-storage.md](research/api-key-storage.md).
+- **Self-model consolidation** (auto-"sleep" on a timer + summary↔observation
+  semantics + interest aging) —
+  [self-model-consolidation.md](history/self-model-consolidation.md).
+- **RAG: sources and retrieval** (html/pdf/docx + per-chunk indexing progress +
+  cross-source dedup) —
+  [rag-sources-retrieval.md](history/rag-sources-retrieval.md).
+- **Plugins / MCP host** + generic import (`mindfork import`, the
+  [mindfork-import](import-format.md) format) —
+  [ADR 0007](decisions/0007-plugins-mcp-host-import-format.md).
+- **Installers** (Windows Inno Setup + Linux nfpm) —
+  [installers.md](history/installers.md).
+- **Release engineering** (versions/CHANGELOG/CI/schema migrations) —
   [release-engineering.md](history/release-engineering.md).
-- **Мультиязычность** (ось A, ось B, CLI) — [i18n.md](history/i18n.md) и соседние.
-- **Определение языка по системной локали ОС** (`i18n::detect_os_language`) — этап 1
-  инсталляторов.
-- **Рендер Mermaid** (flowchart/sequence) — [mermaid-ascii-rendering.md](research/mermaid-ascii-rendering.md).
+- **Multilingualism** (axis A, axis B, CLI) — [i18n.md](history/i18n.md) and
+  neighbors.
+- **OS-locale language detection** (`i18n::detect_os_language`) — installer
+  stage 1.
+- **Mermaid rendering** (flowchart/sequence) —
+  [mermaid-ascii-rendering.md](research/mermaid-ascii-rendering.md).

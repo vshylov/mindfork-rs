@@ -1,103 +1,112 @@
-# ADR 0007 — Плагины: MCP-хост для инструментов + нейтральный формат обмена импорта
+# ADR 0007 — Plugins: MCP host for tools + a neutral import exchange format
 
-**Статус:** принято (2026-07-17). Фиксирует архитектуру направления «система
-плагинов» (этапы 1–3). Исследование, развилки Р1–Р8 и результаты зонда —
-[docs/research/plugin-system.md](../research/plugin-system.md). Родственно
+**Status:** accepted (2026-07-17). Fixes the architecture of the "plugin
+system" track (stages 1–3). Research, decision points R1–R8, and probe results
+— [docs/research/plugin-system.md](../research/plugin-system.md). Related to
 [ADR 0002](0002-embeddings-dedicated-server.md)/[ADR 0005](0005-python-sandbox-wasmer.md)
-(внешний процесс за трейтом/контрактом) и [ADR 0004](0004-engine-contract-multi-provider.md)
-(границы движка).
+(external process behind a trait/contract) and
+[ADR 0004](0004-engine-contract-multi-provider.md) (engine boundaries).
 
-## Контекст
+## Context
 
-Запрос: «система плагинов» — импортёр непубличной LameLLaMA вне монолита,
-пользовательские инструменты модели без пересборки приложения, подключаемые
-облачные провайдеры. Исследование показало: это **три разные поверхности с разной
-природой**, и единый in-process plugin-API (dylib) — худший вариант (у Rust нет
-стабильного ABI; `abi_stable` мёртв; Bevy удалил dynamic plugins как unsound).
+The request: a "plugin system" — the non-public LameLLaMA importer out of the
+monolith, user-defined model tools without rebuilding the app, pluggable cloud
+providers. Research showed this is **three surfaces of different nature**, and
+a single in-process plugin API (a dylib) is the worst option (Rust has no
+stable ABI; `abi_stable` is dead; Bevy removed dynamic plugins as unsound).
 
-## Решение
+## Decision
 
-### 1. Инструменты — MCP-хост (stdio-подпроцессы), свой микро-клиент
+### 1. Tools — an MCP host (stdio subprocesses), our own micro-client
 
-- **MCP** (Model Context Protocol) — де-факто стандарт AI-инструментов: тысячи
-  готовых серверов, конвенция жанра терминальных чат-клиентов (Р1). Свой протокол
-  дал бы ноль готовых инструментов.
-- **Свой микро-клиент** (`shared/mcp.rs`), не `rmcp` (Р2): tools-only + stdio
-  подмножество ревизии 2025-11-25 wire-стабильно с 2024-11-05, новых зависимостей
-  ноль, тексты локализуемы; churn `rmcp` (breaking в минорах) не окупается.
-  Транспорт (`McpConnection`) отделён от процесса (`McpClient`) — протокол
-  тестируется на `tokio::io::duplex` без процессов. Встречная версия протокола
-  принимается любая (подтверждено зондом на живом сервере).
-- **Жизненный цикл** — `McpManager` в оркестраторе (зеркало `EngineManager`):
-  фоновые задачи спавна → события `Ready`/`Failed`/`Exited` с `epoch`-гардом;
-  рестарт-бюджет 3 краха за 5 минут (паттерн VS Code LSP); дебаунс правок
-  настроек через `RestartQueue`. Инструменты сервера — обёртки `McpTool: Tool`
-  (`mcp__<server>__<tool>`, нормализация ≤64) в общем реестре; вызываются штатным
-  agentic-loop, результат клипуется (`max_result_chars`).
-- **Отмена как контракт**: `ToolContext.cancel` (клон токена хода) + `select!`
-  вокруг `invoke` любого инструмента в agentic-loop — Esc не блокируется долгим
-  вызовом; MCP-вызов шлёт серверу `notifications/cancelled`.
+- **MCP** (Model Context Protocol) is the de facto standard for AI tools:
+  thousands of ready-made servers, the genre convention among terminal chat
+  clients (R1). A custom protocol would give zero ready-made tools.
+- **Our own micro-client** (`shared/mcp.rs`), not `rmcp` (R2): the tools-only +
+  stdio subset of the 2025-11-25 revision is wire-stable back to 2024-11-05,
+  zero new dependencies, texts are localizable; `rmcp`'s churn (breaking
+  changes in minor releases) doesn't pay off. The transport (`McpConnection`)
+  is decoupled from the process (`McpClient`) — the protocol is tested over
+  `tokio::io::duplex` with no processes. Any counterparty protocol version is
+  accepted (confirmed by the probe against a live server).
+- **Lifecycle** — `McpManager` in the orchestrator (mirroring `EngineManager`):
+  background spawn tasks → `Ready`/`Failed`/`Exited` events with an `epoch`
+  guard; a restart budget of 3 crashes per 5 minutes (the VS Code LSP
+  pattern); settings-change debounce via `RestartQueue`. A server's tools are
+  `McpTool: Tool` wrappers (`mcp__<server>__<tool>`, normalized ≤64 chars) in
+  the shared registry; called by the standard agentic loop, results clipped
+  (`max_result_chars`).
+- **Cancellation as a contract**: `ToolContext.cancel` (a clone of the turn's
+  token) + `select!` around `invoke` for any tool in the agentic loop — Esc
+  isn't blocked by a long-running call; an MCP call sends the server
+  `notifications/cancelled`.
 
-### 2. Безопасность: двойной opt-in + TOFU-пиннинг каталога (Р7, Р8)
+### 2. Security: double opt-in + TOFU catalog pinning (R7, R8)
 
-MCP-сервер = произвольная программа с правами пользователя (эквивалент установки
-софта; песочницы нет — как у goose/Zed/Claude Code). Митигации:
+An MCP server is an arbitrary program with the user's privileges (equivalent
+to installing software; there is no sandbox — same as goose/Zed/Claude Code).
+Mitigations:
 
-- мастер-выключатель `config.mcp.enabled = false` по умолчанию; серверы
-  конфигурируются только пользователем правкой `settings.json` (Р6);
-  инструменты **выключены в профилях по умолчанию** → двойной opt-in;
-- **TOFU-пиннинг каталога** (rug-pull-детектор, tool poisoning): sha256 от
-  имён+описаний+схем инструментов пиннится при первом подъёме
-  (`pinned_catalog`); изменение каталога → инструменты придержаны до
-  переподтверждения в настройках (Enter на строке сервера);
-- **полные описания инструментов видимы** в UI (нижняя панель настроек) —
-  описания идут в системный промпт каждого хода;
-- секреты — **именами env-переменных** в карте `env` (Р8, прецедент
-  `api_key_env`); сами значения в `settings.json` не пишутся;
-- запрет `.bat`/`.cmd`-команд (BatBadBut, CVE-2024-24576; `cmd /c npx …` —
-  разрешён), `CREATE_NO_WINDOW`, Job Object kill-on-close (дерево процессов
-  `cmd /c npx → node` не переживает выход/крах приложения), клипы результатов и
-  per-call таймауты, stderr сервера — только в файловый лог.
+- master switch `config.mcp.enabled = false` by default; servers are
+  configured only by the user editing `settings.json` (R6); tools are
+  **disabled in profiles by default** → a double opt-in;
+- **TOFU catalog pinning** (rug-pull detector, tool poisoning): a sha256 of
+  the tools' names+descriptions+schemas is pinned on first startup
+  (`pinned_catalog`); if the catalog changes, the tools are held back until
+  reconfirmed in settings (Enter on the server's row);
+- **full tool descriptions are visible** in the UI (the settings screen's
+  bottom panel) — descriptions go into the system prompt on every turn;
+- secrets — **env variable names** in the `env` map (R8, the `api_key_env`
+  precedent); the actual values are never written to `settings.json`;
+- `.bat`/`.cmd` commands are forbidden (BatBadBut, CVE-2024-24576; `cmd /c
+  npx …` is allowed), `CREATE_NO_WINDOW`, Job Object kill-on-close (the
+  `cmd /c npx → node` process tree does not survive the app exiting or
+  crashing), clipped results and per-call timeouts, server stderr only goes
+  to the file log.
 
-### 3. Импортёры — нейтральный документированный формат, не плагин-процесс (Р3, Р4)
+### 3. Importers — a neutral documented format, not a plugin process (R3, R4)
 
-Импорт — разовая batch-операция: протокол = **файл**. Формат `mindfork-import` v1
-([docs/import-format.md](../import-format.md)): плоский JSON с профилями/чатами/
-настройками, идемпотентность через UUIDv5 от стабильных `key`, строгая валидация
-структуры при терпимости к неизвестным полям. CLI `mindfork import <file>`;
-`import-lamellama` **удалён** — знание о непубличной LameLLaMA уехало в приватный
-внешний конвертер. Альтернатива «доменные сущности as-is» отклонена: внешний
-контракт зафиксировал бы внутреннюю схему целиком.
+Import is a one-off batch operation: the protocol *is* a **file**. The
+`mindfork-import` v1 format
+([docs/import-format.md](../import-format.md)): flat JSON with
+profiles/chats/settings, idempotent via UUIDv5 derived from stable `key`s,
+strict validation of structure while tolerating unknown fields. CLI `mindfork
+import <file>`; `import-lamellama` **was removed** — knowledge of the
+non-public LameLLaMA moved into a private external converter. The alternative
+"domain entities as-is" was rejected: an external contract would have fixed
+the internal schema wholesale.
 
-### 4. Облачные провайдеры — external-режим и есть plugin-API (Р5)
+### 4. Cloud providers — the external mode already is the plugin API (R5)
 
-OpenAI-совместимый endpoint — индустриальная граница подключения провайдеров;
-наш режим external (url + `api_key_env` + model) уже покрывает её, мосты
-LiteLLM/OpenRouter дают «любую экзотику». Провайдеры с уникальными возможностями
-(мысли/подписи/effort) добавляются нативными реализациями трейта (ADR 0004) —
-осознанно не плагины. Plugin-API движка отклонён.
+An OpenAI-compatible endpoint is the industry boundary for plugging in
+providers; our `external` mode (url + `api_key_env` + model) already covers
+it, and bridges like LiteLLM/OpenRouter give "any exotic option." Providers
+with unique capabilities (thoughts/signatures/effort) are added as native
+trait implementations (ADR 0004) — deliberately not plugins. An engine plugin
+API was rejected.
 
-## Последствия
+## Consequences
 
-- Новая группа инструментов «Плагины (MCP)» — динамическая: обёртки не входят в
-  статический `CATALOG`, реестр пересобирается по событиям (`rebuild_registry`),
-  каталог для UI едет снимком `McpSnapshot` в `AppEvent::Settings`; гейт в
-  `effective_tool_ids` — по префиксу `mcp__`.
-- Контекст-бюджет — главное системное ограничение (схемы 5–6 серверов ≈ 15k+
-  токенов): спасает per-profile opt-in каждого инструмента; потолок инструментов
-  на сервер и deferred-схемы — заделы.
-- Границы i18n: описания/схемы/результаты инструментов — текст сервера
-  (не локализуются); статус-причины менеджера — ось B; wire-ошибки клиента —
-  технический слой (как обёртки HTTP-клиентов).
-- Заделы (roadmap): HTTP-транспорт, resources/prompts,
-  `notifications/tools/list_changed`, per-call подтверждение деструктивных
-  вызовов, deferred-схемы («tool search»), UI-редактор серверов, WASM-песочница
-  для недоверенных инструментов, server `instructions` → системный промпт.
+- A new "Plugins (MCP)" tool group is dynamic: wrappers are not part of the
+  static `CATALOG`, the registry is rebuilt on events (`rebuild_registry`),
+  the catalog for the UI travels as an `McpSnapshot` inside
+  `AppEvent::Settings`; the `effective_tool_ids` gate matches by the `mcp__`
+  prefix.
+- The context budget is the main systemic constraint (schemas for 5–6 servers
+  ≈ 15k+ tokens): mitigated by per-profile opt-in for each tool; a per-server
+  tool cap and deferred schemas are groundwork.
+- i18n boundaries: tool descriptions/schemas/results — server text (not
+  localized); manager status reasons — axis B; client wire errors — a
+  technical layer (like the HTTP client wrappers).
+- Groundwork (roadmap): HTTP transport, resources/prompts,
+  `notifications/tools/list_changed`, per-call confirmation for destructive
+  calls, deferred schemas ("tool search"), a UI server editor, a WASM sandbox
+  for untrusted tools, server `instructions` → system prompt.
 
-## Проверка
+## Verification
 
-Зонд (этап 2) и живые e2e-смоуки (этап 3): Gemma 4 31B + реальный
-`npx @modelcontextprotocol/server-filesystem` — модель вызывает
-`mcp__fs__read_text_file` первым раундом и использует результат; 14 инструментов
-≈ 7 КиБ схем не разваливают 16k-контекст; TOFU/отмена/бюджет покрыты юнит-тестами
-(duplex-фейки, paused time).
+The probe (stage 2) and live e2e smokes (stage 3): Gemma 4 31B + a real `npx
+@modelcontextprotocol/server-filesystem` — the model calls
+`mcp__fs__read_text_file` on the first round and uses the result; 14 tools ≈ 7
+KiB of schemas don't blow out a 16k context; TOFU/cancellation/budget are
+covered by unit tests (duplex fakes, paused time).

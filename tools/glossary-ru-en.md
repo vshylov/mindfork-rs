@@ -131,6 +131,16 @@ demoted to a CONTRIBUTING terminology note) once the migration lands.
 | по образцу X | modeled on X |
 | в духе проекта | in the project's spirit |
 
+## Proper technical names
+| RU | EN |
+|---|---|
+| ЙЦУКЕН (раскладка) | JCUKEN (the Russian keyboard layout; its QWERTY analogue) |
+
+In `shared/keys.rs` the Cyrillic **character-literal** key-mapping data (e.g.
+`'й' => 'q'`) is physical-key data and **stays Cyrillic** (like a test fixture);
+translate only the comments. The scanner allows Cyrillic inside `'…'` char
+literals in `.rs`.
+
 ## Do NOT translate (keep verbatim)
 - Rust identifiers, type/field/method/module names, macros, attributes.
 - CLI subcommands & flags: `backup`, `restore`, `import`, `sandbox setup`,

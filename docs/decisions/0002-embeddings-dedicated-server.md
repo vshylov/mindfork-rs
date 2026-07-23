@@ -1,53 +1,57 @@
-# ADR 0002 — Эмбеддинги RAG: выделенный embedding-сервер
+# ADR 0002 — RAG embeddings: dedicated embedding server
 
-**Статус:** принято (2026-06-14). Закрывает `[R]` «Эмбеддинги xinfer» из
+**Status:** accepted (2026-06-14). Closes the `[R]` "xinfer embeddings" from
 [plan.md §M5](../history/plan.md).
 
-**Контекст:** для RAG (`rag_add`/`rag_search`) и семантического `note_recall`
-нужны эмбеддинги. OpenAI-совместимый сервер отдаёт `/v1/embeddings` на **уже
-загруженной chat-модели**, что технически снимает нужду во втором процессе. Но
-качество эмбеддингов из авторегрессионной chat-модели обычно ниже, чем у
-специализированной embedding-модели.
+**Context:** RAG (`rag_add`/`rag_search`) and semantic `note_recall` need
+embeddings. An OpenAI-compatible server can serve `/v1/embeddings` off the
+**already-loaded chat model**, which technically removes the need for a second
+process. But embedding quality from an autoregressive chat model is usually
+lower than from a specialized embedding model.
 
-## Решение
+## Decision
 
-**Выделенный embedding-сервер.** Эмбеддинги берутся не из chat-движка, а из
-**отдельного процесса** `xinfer`, запущенного с embedding-моделью на отдельном
-порту. В коде это отражено разделением трейтов:
+**Dedicated embedding server.** Embeddings are not taken from the chat engine,
+but from a **separate** `xinfer` process, launched with an embedding model on
+a separate port. In code this is reflected by a trait split:
 
-- `EngineBackend` (chat) — только `chat_stream`.
-- **`Embedder`** (новый) — только `embed`. Реализуется тем же `XinferClient`, но
-  нацеленным на порт embedding-сервера.
+- `EngineBackend` (chat) — only `chat_stream`.
+- **`Embedder`** (new) — only `embed`. Implemented by the same `XinferClient`,
+  but pointed at the embedding server's port.
 
-`ToolContext` несёт `Arc<dyn Embedder>` отдельно от `Arc<dyn EngineBackend>`.
+`ToolContext` carries `Arc<dyn Embedder>` separately from `Arc<dyn EngineBackend>`.
 
-### Жизненный цикл
+### Lifecycle
 
-- Embedding-сервер настраивается через env (`MINDFORK_EMBED_URL` — внешний;
-  `MINDFORK_EMBED_BIN`/`MINDFORK_EMBED_MODEL`/`MINDFORK_EMBED_PORT` — managed) и,
-  если задан, поднимается при старте приложения через тот же супервайзер, что и
-  chat-сервер (`ServerHandle::launch`), и держится живым до выхода (kill on drop).
-- Если embedding-сервер не настроен — используется `UnavailableEmbedder`: RAG-
-  инструменты возвращают понятную ошибку (не падают), остальное работает.
-- Отклонение от формулировки плана «использовать и остановить после каждого
-  вызова»: повторная загрузка модели стоит минуты, поэтому держим процесс живым.
-  Полностью ленивый старт «при первом `rag_*`» и UI-настройки — на M8.
+- The embedding server is configured via env (`MINDFORK_EMBED_URL` — external;
+  `MINDFORK_EMBED_BIN`/`MINDFORK_EMBED_MODEL`/`MINDFORK_EMBED_PORT` — managed)
+  and, if set, is launched at app startup through the same supervisor as the
+  chat server (`ServerHandle::launch`), and stays alive until exit (kill on
+  drop).
+- If the embedding server is not configured — `UnavailableEmbedder` is used:
+  RAG tools return a clear error (they don't panic), everything else works.
+- Deviation from the plan's wording "use and stop after each call": reloading
+  the model costs a minute, so we keep the process alive. A fully lazy start
+  "on first `rag_*`" and UI settings — for M8.
 
-### Размерность
+### Dimensionality
 
-Фиксируется по первому ответу `/v1/embeddings` и хранится в схеме sqlite-vec
-(`meta.rag_dim`) — уже реализовано в `shared/storage/db.rs`. Смена embedding-модели
-с другой размерностью потребует переиндексации (вне M5).
+Fixed from the first `/v1/embeddings` response and stored in the sqlite-vec
+schema (`meta.rag_dim`) — already implemented in `shared/storage/db.rs`.
+Switching the embedding model to a different dimensionality requires
+reindexing (out of scope for M5).
 
-### Тестируемость
+### Testability
 
-Для юнит-тестов инструментов RAG используется детерминированный in-process
-двойник `MockEmbedder` (bag-of-chars + L2-нормализация) — это **не** продакшн-путь,
-а тестовая подстановка через `Arc<dyn Embedder>`.
+For RAG tool unit tests, a deterministic in-process double `MockEmbedder`
+(bag-of-chars + L2 normalization) is used — this is **not** the production
+path, but a test substitution via `Arc<dyn Embedder>`.
 
-## Последствия
+## Consequences
 
-- Плюс: качество поиска выше, изоляция от chat-модели (можно менять независимо).
-- Минус: второй процесс и память; конфигурация модели/порта эмбеддингов (env на
-  M5, секция настроек — M8).
-- Транспорт (`XinferClient::embed`, `/v1/embeddings`) уже готов с M1.
+- Plus: better search quality, isolation from the chat model (can be changed
+  independently).
+- Minus: a second process and memory; embedding model/port configuration (env
+  in M5, settings section — M8).
+- Transport (`XinferClient::embed`, `/v1/embeddings`) has already been ready
+  since M1.

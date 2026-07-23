@@ -1,112 +1,125 @@
-# ADR 0005 — Python-песочница: сайдкар `wasmer`/WASIX за `shared/sandbox.rs`
+# ADR 0005 — Python sandbox: `wasmer`/WASIX sidecar behind `shared/sandbox.rs`
 
-**Статус:** принято (2026-07-12). Фиксирует архитектуру изолированного исполнения
-`python_exec` (Фазы 0–3). Исследование и журнал —
+**Status:** accepted (2026-07-12). Fixes the architecture for isolated execution of
+`python_exec` (Phases 0–3). Research and log —
 [docs/research/python-wasmer-sandbox.md](../research/python-wasmer-sandbox.md).
-Родственно [ADR 0002](0002-embeddings-dedicated-server.md) (выделенный внешний
-процесс за трейтом) и позиции безопасности [spec §13.2](../../spec.md).
+Related to [ADR 0002](0002-embeddings-dedicated-server.md) (dedicated external
+process behind a trait) and the security posture of [spec §13.2](../../spec.md).
 
-## Контекст
+## Context
 
-`python_exec` изначально запускал **системный** Python отдельным процессом — без
-изоляции (полный доступ к ФС/сети/процессам пользователя), поэтому по умолчанию
-выключен и требует установленного Python. Возникла задача: дать инструменту
-**изолированную** среду с предустановленными пакетами (numpy, requests, …) для
-относительно сложных задач, а изолированный код **вынести из основного бинаря**
-(отдельный артефакт рядом).
+`python_exec` originally launched the **system** Python as a separate process —
+with no isolation (full access to the user's FS/network/processes), so it was
+disabled by default and required Python to be installed. The task: give the tool
+an **isolated** environment with preinstalled packages (numpy, requests, …) for
+moderately complex tasks, while **keeping the isolated code out of the main
+binary** (a separate artifact alongside it).
 
-## Решение
+## Decision
 
-### 1. Движок песочницы — Wasmer/WASIX, единственный жизнеспособный путь
+### 1. Sandbox engine — Wasmer/WASIX, the only viable path
 
-Под связку требований «numpy + requests + изоляция + Windows/Linux + не тянуть ML/JS-
-стек в приложение» альтернативы отпали (Фаза 0, §2.2 исследования): официальный
-CPython-WASI (wasmtime) — без сокетов/тредов/динлинковки → нет ни requests, ни numpy;
-Pyodide — только браузер/Node; RustPython/MicroPython — без CPython C-API.
-**Wasmer 7 (янв. 2026) + WASIX** дал динамическую линковку (нативные `.so` numpy),
-сокеты (requests), CPython 3.13. Подтверждено вживую (numpy 2.3.2, requests HTTPS 200,
-прерывание process-kill).
+Under the combined requirement "numpy + requests + isolation + Windows/Linux +
+don't pull an ML/JS stack into the app," the alternatives fell away (Phase 0,
+research §2.2): official CPython-WASI (wasmtime) — no sockets/threads/dynamic
+linking → neither requests nor numpy; Pyodide — browser/Node only;
+RustPython/MicroPython — no CPython C API. **Wasmer 7 (Jan 2026) + WASIX**
+delivers dynamic linking (native numpy `.so`), sockets (requests), CPython 3.13.
+Confirmed live (numpy 2.3.2, requests HTTPS 200, process-kill interruption).
 
-### 2. Сайдкар-процесс `wasmer`, а не embed рантайма в dll
+### 2. `wasmer` sidecar process, not runtime embed in a dll
 
-Заказ предполагал отдельную dll с встроенным рантаймом. Фаза 0 вскрыла, что на
-**Windows работает только бэкенд V8** (cranelift/singlepass падают на exception-ABI),
-а его **embed тянет в нашу сборку LLVM/libclang + статик-V8**. Поэтому вместо embed —
-**бандленный бинарь `wasmer` как сайдкар-процесс** за контрактом `shared/sandbox.rs`:
+The request assumed a separate dll with an embedded runtime. Phase 0 revealed
+that on **Windows only the V8 backend works** (cranelift/singlepass fail on the
+exception ABI), and **embedding it pulls LLVM/libclang + static V8 into our
+build**. So instead of embedding — a **bundled `wasmer` binary as a sidecar
+process** behind the `shared/sandbox.rs` contract:
 
-- в основном exe **ноль Wasmer** (дух заказа «отдельный артефакт рядом» сохранён —
-  им стал сам `wasmer[.exe]` в `data/sandbox/`, а не dll);
-- **прерывание — kill процесса** (чисто и быстро, ~360 мс; python исполняется
-  in-process внутри wasmer/V8, отдельного дочернего процесса нет);
-- **изоляция сбоев**: паника/OOM рантайма живут в сайдкаре, не роняют TUI;
-- обновление рантайма — замена бинаря; сборка приложения не растёт.
+- the main exe has **zero Wasmer** (the spirit of "a separate artifact
+  alongside it" is preserved — that role goes to `wasmer[.exe]` itself in
+  `data/sandbox/`, not a dll);
+- **interruption = process kill** (clean and fast, ~360 ms; python runs
+  in-process inside wasmer/V8, there is no separate child process);
+- **failure isolation**: runtime panics/OOM live in the sidecar, they don't
+  bring down the TUI;
+- runtime updates = replacing the binary; the app build doesn't grow.
 
-### 3. Контракт `shared/sandbox.rs` за трейтом (как `EngineBackend`)
+### 3. `shared/sandbox.rs` contract behind a trait (like `EngineBackend`)
 
-`SandboxRunner` (`availability`/`run`) с реальным `WasmerSandbox` и `MockSandbox` в
-тестах. Чистые тестируемые `build_wrapper`/`build_args`; единый резолвер бинаря
-`locate_wasmer` (общий для рантайма и провизии). `python_exec` (`features/tools/python.rs`)
-— тонкий диспетчер по режиму; **id инструмента и его схема (`{ code }`) от режима не
-зависят** — модель видит один инструмент, реализацию можно менять без изменения
-протокола.
+`SandboxRunner` (`availability`/`run`) with a real `WasmerSandbox` and
+`MockSandbox` in tests. Clean, testable `build_wrapper`/`build_args`; a single
+binary resolver `locate_wasmer` (shared by both the runtime and provisioning).
+`python_exec` (`features/tools/python.rs`) — a thin dispatcher by mode; **the
+tool id and its schema (`{ code }`) are mode-independent** — the model sees one
+tool, the implementation can change without changing the protocol.
 
-### 4. Провизия — `mindfork sandbox setup` по lock-списку (авто-скачивание)
+### 4. Provisioning — `mindfork sandbox setup` from a lock list (auto-download)
 
-Отдельная clap-подкоманда (как `backup`) скачивает в `data/sandbox/`: бинарь `wasmer`
-(платформенный tar.gz с GitHub), `python.webc` (через сам `wasmer package download`),
-колёса (numpy с wasix-индекса, requests-стек с PyPI) — по **lock-списку с точными
-URL + sha256** в репозитории (устойчиво к «latest»). Ассеты в репозиторий **не
-входят** (как словари Hunspell). Провизия идемпотентна; кэш компиляции прогревается
-на установке (`warmup`), поэтому первый реальный вызов тёплый.
+A separate clap subcommand (like `backup`) downloads into `data/sandbox/`: the
+`wasmer` binary (platform tar.gz from GitHub), `python.webc` (via `wasmer
+package download` itself), wheels (numpy from the wasix index, the requests
+stack from PyPI) — from a **lock list with exact URLs + sha256** checked into
+the repo (resistant to "latest"). Assets are **not** checked into the repo
+(like the Hunspell dictionaries). Provisioning is idempotent; the compilation
+cache is warmed on setup (`warmup`), so the first real call is warm.
 
-### 5. Позиция безопасности
+### 5. Security posture
 
-- **ФС**: гость видит только смонтированный tmp-каталог со скриптом + read-only
-  `site-packages`; **ни одного хост-каталога** по умолчанию.
-- **Сеть**: `--net` не передаётся, пока пользователь не включит `python_net_enabled`
-  (тумблер, по умолчанию **вкл** — ради requests; но включение самого инструмента —
-  отдельный opt-in). Без флага сокетов физически нет.
-- **CPU/зависание**: таймаут → kill; **гейт «одна задача за раз»** (защита в глубину
-  от утечки процессов; в штатном agentic-loop вызовы и так последовательны).
-- **RAM**: жёсткий лимит — **опционально, только Windows** (Job Object
-  `JOB_OBJECT_LIMIT_PROCESS_MEMORY`; `tools.python_wasm_memory_mb`, по умолчанию
-  выключен). Процесс `wasmer` помещается в job сразу после спавна; превышение
-  **убивает процесс** (защита хоста от OOM) — сбой не graceful (V8 падает с «Fatal
-  out of memory», текст попадает в stderr результата), но хост защищён. Минимум
-  ~1024 МБ (V8+CPython требует ~768 МБ на старт; ниже — песочница не стартует). CLI
-  `wasmer` флага памяти не даёт, поэтому лимит ставится через winapi (`windows-sys`,
-  target-dep). **На Unix не применяется**: `rlimit`/`RLIMIT_AS` ненадёжен с V8 — он
-  резервирует большое виртуальное адресное пространство, и низкий лимит ломает сам
-  старт (cgroups требуют root/systemd — вне объёма). Там посадка — таймаут + wasm32
-  (~4 ГБ). Хэндл job'а закрывается сразу после `AssignProcessToJobObject` (лимит
-  держится, пока процесс — член job'а), поэтому raw-HANDLE не удерживается через
-  `await` (фьюча остаётся `Send`). Проверено вживую (§9.6 исследования).
-- **`tools.python_enabled` остаётся `false` по умолчанию.** Песочница снимает
-  исходную причину (нет OS-песочницы), но «включён, но ассеты не установлены» хуже
-  «выключен»; включение — осознанный шаг после `sandbox setup`. Пересмотр — по мере
-  обкатки.
+- **FS**: the guest sees only the mounted tmp directory with the script + a
+  read-only `site-packages`; **no host directories** by default.
+- **Network**: `--net` is not passed until the user enables
+  `python_net_enabled` (a toggle, **on** by default — for requests; but
+  enabling the tool itself is a separate opt-in). Without the flag there are
+  physically no sockets.
+- **CPU/hangs**: timeout → kill; **"one task at a time" gate** (defense in
+  depth against process leaks; in the normal agentic loop calls are already
+  sequential).
+- **RAM**: a hard cap — **optional, Windows only** (Job Object
+  `JOB_OBJECT_LIMIT_PROCESS_MEMORY`; `tools.python_wasm_memory_mb`, off by
+  default). The `wasmer` process is placed into a job right after spawning;
+  exceeding the cap **kills the process** (protects the host from OOM) — the
+  failure is not graceful (V8 dies with "Fatal out of memory", the text lands
+  in the result's stderr), but the host is protected. Minimum ~1024 MB
+  (V8+CPython needs ~768 MB to start; below that the sandbox won't start). The
+  `wasmer` CLI has no memory flag, so the cap is set via winapi (`windows-sys`,
+  target-dep). **Not applied on Unix**: `rlimit`/`RLIMIT_AS` is unreliable with
+  V8 — it reserves a large virtual address space, and a low limit breaks the
+  start itself (cgroups need root/systemd — out of scope). There the posture
+  is timeout + wasm32 (~4 GB). The job handle is closed right after
+  `AssignProcessToJobObject` (the limit holds as long as the process is a
+  member of the job), so the raw HANDLE isn't held across an `await` (the
+  future stays `Send`). Confirmed live (research §9.6).
+- **`tools.python_enabled` stays `false` by default.** The sandbox removes the
+  original reason (no OS sandbox), but "enabled but assets not installed" is
+  worse than "disabled"; enabling is a deliberate step after `sandbox setup`.
+  Revisit as it gets more field use.
 
-### 6. Шим совместимости
+### 6. Compatibility shim
 
-Враппер кода несёт шим `setsockopt`: WASIX не реализует `TCP_NODELAY` (`EINVAL`), а
-`http.client`/requests его всегда ставят — без шима сеть в песочнице не работала бы
-(находка Фазы 0). Обёрнут в функцию, не сорит именами в пространстве пользователя.
+The code wrapper carries a `setsockopt` shim: WASIX doesn't implement
+`TCP_NODELAY` (`EINVAL`), and `http.client`/requests always set it — without
+the shim, network access in the sandbox wouldn't work (a Phase 0 finding).
+Wrapped in a function so it doesn't litter the user's namespace.
 
-## Последствия
+## Consequences
 
-- Слои выше `shared/sandbox.rs` (оркестратор, agentic-loop, UI) — не затронуты.
-- Новые зависимости — только у провизии: `flate2`/`tar` (распаковка), `sha2`
-  (проверка) — все чистый Rust, без C.
-- Кросс-платформенно; на неподдержанной автоскачиванием платформе — понятная
-  инструкция + `MINDFORK_SANDBOX_WASMER`.
-- Тестируемость: чистое ядро (аргументы/враппер/lock-список/распаковка) — юнит-тесты;
-  реальные прогоны — `#[ignore]`-смоуки (numpy/requests/кириллица/таймаут).
+- Layers above `shared/sandbox.rs` (orchestrator, agentic loop, UI) — not
+  affected.
+- New dependencies — provisioning only: `flate2`/`tar` (unpacking), `sha2`
+  (verification) — all pure Rust, no C.
+- Cross-platform; on a platform not covered by auto-download — a clear
+  instruction + `MINDFORK_SANDBOX_WASMER`.
+- Testability: the clean core (args/wrapper/lock list/unpacking) — unit tests;
+  real runs — `#[ignore]` smokes (numpy/requests/Cyrillic/timeout).
 
-## Альтернативы (отклонены)
+## Alternatives (rejected)
 
-- **Embed V8 в cdylib** — LLVM/libclang + статик-V8 в нашей сборке; process-kill
-  сайдкара надёжнее in-process terminate (Фаза 0, §9.7).
-- **Официальный CPython-WASI / Pyodide / RustPython** — нет numpy+requests+изоляции
-  вместе (§2.2 исследования).
-- **Контейнеры (docker/WSL)** — тяжёлая внешняя зависимость против духа портативного TUI.
-- **Metering/fuel для прерывания** — у Wasmer нет; process-kill проще и доказанно чист.
+- **Embedding V8 in a cdylib** — LLVM/libclang + static V8 in our build;
+  sidecar process-kill is more reliable than in-process terminate (Phase 0,
+  §9.7).
+- **Official CPython-WASI / Pyodide / RustPython** — no numpy+requests+isolation
+  together (research §2.2).
+- **Containers (docker/WSL)** — a heavy external dependency, against the
+  spirit of a portable TUI.
+- **Metering/fuel for interruption** — Wasmer has none; process-kill is
+  simpler and proven clean.

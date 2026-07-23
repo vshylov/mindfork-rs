@@ -1,65 +1,67 @@
-# Архитектура mindfork-rs
+# mindfork-rs architecture
 
-Документ описывает **как устроен** `mindfork-rs` — консольное (TUI) приложение
-ИИ-чата на Rust. Это карта кода и потоков данных: слои, модули, контракты,
-жизненные циклы и инварианты. Дополняет, но не заменяет источники истины:
+This document describes **how `mindfork-rs` is built** — a console (TUI) AI chat
+application in Rust. It's a map of the code and data flows: layers, modules,
+contracts, lifecycles, and invariants. It complements, but does not replace, the
+sources of truth:
 
-- **[spec.md](../spec.md)** — инженерная спецификация («что» и «почему»);
-- **[CLAUDE.md](../CLAUDE.md)** — ориентир и журнал реализованного (M0–M9 + пост-M9);
-- **[docs/decisions/](decisions/)** — ADR (зафиксированные технические решения),
-  включая [0004](decisions/0004-engine-contract-multi-provider.md) — границы
-  `shared/api` и мульти-провайдерный инференс без крейт-сплита;
-  [0005](decisions/0005-python-sandbox-wasmer.md) — Python-песочница сайдкаром
-  `wasmer`/WASIX за `shared/sandbox.rs`;
-  [0006](decisions/0006-data-schema-versioning.md) — версионирование схем данных и
-  каркас JSON-миграций; [0007](decisions/0007-plugins-mcp-host-import-format.md) —
-  плагины: MCP-хост инструментов + нейтральный формат обмена импорта;
-  [0008](decisions/0008-api-key-storage.md) — ввод API-ключей в настройках с
-  машинно-привязанным шифрованием в конфиге; и
-  [0009](decisions/0009-tts-speech-synthesis.md) — озвучивание (TTS): облачный
-  провайдер, свой речевой экстрактор, плеер `rodio` в процессе;
-- **[docs/install.md](install.md)** — установка/запуск, движок, env.
+- **[spec.md](../spec.md)** — engineering specification ("what" and "why");
+- **[CLAUDE.md](../CLAUDE.md)** — orientation guide and implementation log (M0–M9 + post-M9);
+- **[docs/decisions/](decisions/)** — ADRs (recorded technical decisions),
+  including [0004](decisions/0004-engine-contract-multi-provider.md) — `shared/api`
+  boundaries and multi-provider inference without a crate split;
+  [0005](decisions/0005-python-sandbox-wasmer.md) — Python sandbox via a
+  `wasmer`/WASIX sidecar behind `shared/sandbox.rs`;
+  [0006](decisions/0006-data-schema-versioning.md) — data schema versioning and the
+  JSON migration scaffold; [0007](decisions/0007-plugins-mcp-host-import-format.md) —
+  plugins: MCP tool host + neutral import exchange format;
+  [0008](decisions/0008-api-key-storage.md) — API key entry in settings with
+  machine-bound encryption in the config; and
+  [0009](decisions/0009-tts-speech-synthesis.md) — speech synthesis (TTS): cloud
+  provider, our own speakable-text extractor, in-process `rodio` player;
+- **[docs/install.md](install.md)** — install/run, engine, env.
 
-> Терминология: **движок** = провайдер инференса за трейтом `EngineBackend` —
-> локальный OpenAI-совместимый сервер (llama.cpp `llama-server`) **или** облако
-> (OpenAI / Gemini / Anthropic, [ADR 0004](decisions/0004-engine-contract-multi-provider.md));
-> **приложение** = `mindfork-rs`, HTTP-клиент движка. Agentic-loop **клиентский** —
-> его исполняет оркестратор приложения.
+> Terminology: **engine** = the inference provider behind the `EngineBackend`
+> trait — a local OpenAI-compatible server (llama.cpp `llama-server`) **or** the
+> cloud (OpenAI / Gemini / Anthropic, [ADR 0004](decisions/0004-engine-contract-multi-provider.md));
+> **application** = `mindfork-rs`, the engine's HTTP client. The agentic loop is
+> **client-side** — the application's orchestrator runs it.
 
 ---
 
-## 1. Картина в целом
+## 1. The big picture
 
-`mindfork-rs` — единый бинарный крейт на Rust (edition 2024), организованный по
-**Feature-Sliced Design (FSD)**. Приложение само по себе **не содержит ML-стека**:
-инференс делает внешний движок — локальный процесс `llama-server` (managed-подпроцесс
-или external) либо облачный API (OpenAI / Gemini / Anthropic), — а приложение
-общается с ним по HTTP (SSE-стриминг, `/v1/embeddings` для RAG; см. §6 и ADR 0004).
+`mindfork-rs` is a single Rust binary crate (edition 2024) organized by
+**Feature-Sliced Design (FSD)**. The application itself **contains no ML stack**:
+inference is done by an external engine — a local `llama-server` process (managed
+subprocess or external) or a cloud API (OpenAI / Gemini / Anthropic) — and the
+application talks to it over HTTP (SSE streaming, `/v1/embeddings` for RAG; see
+§6 and ADR 0004).
 
-Три «оси», вокруг которых построена система:
+Three "axes" the system is built around:
 
-1. **Один владелец состояния.** Оркестратор (`app/orchestrator.rs`) единолично
-   владеет доменным состоянием (профили, чаты, `Storage`) и единственный пишет на
-   диск. UI держит только read-only-проекцию.
-2. **Однонаправленный поток.** UI шлёт вверх команды `AppCommand`, оркестратор
-   шлёт вниз события `AppEvent`. Никаких разделяемых мутабельных локов на `Chat` —
-   значит, дедлок невозможен по построению.
-3. **Транспорт за трейтом.** Всё, что зависит от сервера инференса, спрятано за
-   `EngineBackend`/`Embedder` (`shared/api`) — отсюда тестируемость (mock/replay)
-   и заменяемость движка.
+1. **A single owner of state.** The orchestrator (`app/orchestrator.rs`) solely
+   owns the domain state (profiles, chats, `Storage`) and is the only writer to
+   disk. The UI holds only a read-only projection.
+2. **Unidirectional flow.** The UI sends `AppCommand`s upward, the orchestrator
+   sends `AppEvent`s downward. No shared mutable locks on `Chat` — so deadlock is
+   impossible by construction.
+3. **Transport behind a trait.** Everything that depends on the inference server
+   is hidden behind `EngineBackend`/`Embedder` (`shared/api`) — hence testability
+   (mock/replay) and engine swappability.
 
 ```mermaid
 flowchart TB
-    subgraph TERM["Терминал (главный поток)"]
+    subgraph TERM["Terminal (main thread)"]
         UI["ratatui render loop<br/>(app/runtime.rs)"]
     end
     subgraph TOKIO["tokio runtime"]
-        ORCH["Оркестратор<br/>(app/orchestrator.rs)<br/>владелец состояния + автомат генерации"]
-        SUP["Супервайзер серверов<br/>(app/supervisor.rs)"]
-        TOOLS["Инструменты<br/>(features/tools)"]
+        ORCH["Orchestrator<br/>(app/orchestrator.rs)<br/>state owner + generation state machine"]
+        SUP["Server supervisor<br/>(app/supervisor.rs)"]
+        TOOLS["Tools<br/>(features/tools)"]
         STORE["Storage<br/>(shared/storage: JSON + SQLite)"]
     end
-    subgraph EXT["Внешние процессы"]
+    subgraph EXT["External processes"]
         LLM["llama-server (chat)<br/>OpenAI /v1"]
         EMB["llama-server (embeddings)<br/>/v1/embeddings"]
     end
@@ -77,16 +79,16 @@ flowchart TB
 
 ---
 
-## 2. Слои FSD
+## 2. FSD layers
 
-Зависимости направлены **строго вниз**: `app → screens → widgets → features →
-entities → shared`. Слой не импортирует «вбок» и «вверх». Кросс-срезовая
-инфраструктура (движок, хранилище) живёт в `shared` за трейтами.
+Dependencies point **strictly downward**: `app → screens → widgets → features →
+entities → shared`. A layer never imports "sideways" or "upward". Cross-cutting
+infrastructure (engine, storage) lives in `shared` behind traits.
 
 ```mermaid
 flowchart TD
-    app["app/<br/>оркестратор, runtime-петля, события, супервайзер"]
-    screens["screens/<br/>chat, settings — целостные экраны + Intent"]
+    app["app/<br/>orchestrator, runtime loop, events, supervisor"]
+    screens["screens/<br/>chat, settings — full screens + Intent"]
     widgets["widgets/<br/>message_feed, input_box, chat_list, status_bar, …"]
     features["features/<br/>tools, spellcheck, profiles, migration, rag_*, …"]
     entities["entities/<br/>chat, message, profile, note, rag, sampling"]
@@ -109,16 +111,17 @@ flowchart TD
     entities --> shared
 ```
 
-**Ключевой инвариант FSD в коде:** `screens`/`widgets` **не импортируют `app`**.
-Экран не знает про `AppCommand` — он возвращает собственное намерение
-(`ChatIntent`/`ChatListIntent`/`SettingsIntent`; виджет списка отдаёт экрану
-`ChatListAction`), а `app/runtime.rs` транслирует его в `AppCommand`. Аналогично терминальные side-effect'ы (захват мыши, запись в
-буфер обмена) экран не делает сам — он сигнализирует намерением, исполняет
-`runtime`.
+**Key FSD invariant in the code:** `screens`/`widgets` **never import `app`**.
+A screen doesn't know about `AppCommand` — it returns its own intent
+(`ChatIntent`/`ChatListIntent`/`SettingsIntent`; the chat list widget hands the
+screen a `ChatListAction`), and `app/runtime.rs` translates it into an
+`AppCommand`. Likewise, a screen never performs terminal side effects (mouse
+capture, clipboard writes) itself — it signals an intent, and `runtime` executes
+it.
 
-### Соответствие слоям попытки №1 (`lamellama-rs`)
+### Layer mapping from attempt #1 (`lamellama-rs`)
 
-| lamellama-rs (крейт) | mindfork-rs (слой/модуль)        |
+| lamellama-rs (crate) | mindfork-rs (layer/module)       |
 |----------------------|----------------------------------|
 | `llama-core`         | `entities/`                      |
 | `llama-app`          | `app/orchestrator.rs` + `features/` |
@@ -130,239 +133,241 @@ flowchart TD
 
 ---
 
-## 3. Карта модулей
+## 3. Module map
 
 ```
 src/
-├─ main.rs                  тонкая точка входа: «peek»-фаза (язык/корень до разбора),
-│                           разбор CLI (features/cli), single-instance, tokio,
-│                           ratatui::init; main() -> ExitCode с локализованной печатью ошибок
+├─ main.rs                  thin entry point: "peek" phase (language/root before
+│                           parsing), CLI parsing (features/cli), single-instance,
+│                           tokio, ratatui::init; main() -> ExitCode with localized
+│                           error printing
 │
-├─ app/                     композиция: оркестрация, петля TUI, контракт, серверы
-│  ├─ orchestrator/         владелец состояния, расслоён по фичам (god-объект разбит,
-│  │  │                     владелец `Chat` остался один — см. ниже §11):
-│  │  ├─ mod.rs             каркас: Orchestrator (17 полей), петля run(), диспетчер
-│  │  │                     команд, общие хелперы (эмиттеры, chat_mut, mark_dirty)
-│  │  ├─ engines.rs         EngineManager: жизненный цикл серверов, готовность,
+├─ app/                     composition: orchestration, TUI loop, contract, servers
+│  ├─ orchestrator/         state owner, split by feature (god object broken up,
+│  │  │                     `Chat` still has a single owner — see §11 below):
+│  │  ├─ mod.rs             scaffold: Orchestrator (17 fields), run() loop, command
+│  │  │                     dispatcher, shared helpers (emitters, chat_mut, mark_dirty)
+│  │  ├─ engines.rs         EngineManager: server lifecycle, readiness,
 │  │  │                     apply_chat/embed/impersonation, backend_if_ready
-│  │  ├─ save_queue.rs      SaveQueue: дебаунс-очередь отложенного сохранения чатов
-│  │  ├─ restart_queue.rs   RestartQueue: дебаунс (пере)запуска серверов при
-│  │  │                     правках настроек движка (серия правок → один рестарт)
-│  │  ├─ generation.rs      отправка/перегенерация/удаление обмена + задача agentic-loop
-│  │  ├─ chats.rs           список чатов (new/switch/rename/clone/copy/delete) + черновик
-│  │  ├─ profiles.rs        создание/правка/удаление профилей
-│  │  ├─ settings.rs        конфиг + (пере)запуск серверов через супервайзер
-│  │  ├─ title.rs           авто-название чата (фоновая задача)
-│  │  ├─ impersonation.rs   реплика «за пользователя» (фоновая задача)
-│  │  ├─ rag.rs             индексация/удаление файлов в базе знаний
-│  │  ├─ tts.rs             озвучивание сообщений: снимок переписки → чанки →
-│  │  │                     конвейер синтеза/воспроизведения, точки остановки (§11.9)
-│  │  ├─ mcp.rs             McpManager: жизненный цикл MCP-серверов (спавн/статусы/
-│  │  │                     рестарт-бюджет/TOFU-пиннинг каталога), события с epoch
-│  │  ├─ reflection.rs      авто-рефлексия «модели себя» (окно/ватермарк, сигналы)
-│  │  ├─ consolidation.rs   авто-консолидация заметок («сон»)
-│  │  ├─ tool_loop.rs       общий «тихий» agentic-loop фоновых задач (рефлексия/консолидация)
-│  │  ├─ background.rs      реестр слотов тихих фоновых задач (BgSlot по BackgroundKind)
-│  │  ├─ request.rs         маппинг доменных сообщений в формат движка
-│  │  └─ tests/             тесты оркестратора, разбиты по фичам (mod.rs — фикстуры;
+│  │  ├─ save_queue.rs      SaveQueue: debounced queue for deferred chat saves
+│  │  ├─ restart_queue.rs   RestartQueue: debounces server (re)starts on engine
+│  │  │                     settings edits (a series of edits → one restart)
+│  │  ├─ generation.rs      send/regenerate/delete exchange + the agentic-loop task
+│  │  ├─ chats.rs           chat list (new/switch/rename/clone/copy/delete) + draft
+│  │  ├─ profiles.rs        create/edit/delete profiles
+│  │  ├─ settings.rs        config + server (re)start via the supervisor
+│  │  ├─ title.rs           chat auto-title (background task)
+│  │  ├─ impersonation.rs   "on behalf of the user" reply (background task)
+│  │  ├─ rag.rs             indexing/removing files in the knowledge base
+│  │  ├─ tts.rs             speech synthesis: conversation snapshot → chunks →
+│  │  │                     synth/playback pipeline, stop points (§11.9)
+│  │  ├─ mcp.rs             McpManager: MCP server lifecycle (spawn/status/
+│  │  │                     restart budget/TOFU catalog pinning), epoch-tagged events
+│  │  ├─ reflection.rs      self-model auto-reflection (window/watermark, signals)
+│  │  ├─ consolidation.rs   note auto-consolidation ("sleep")
+│  │  ├─ tool_loop.rs       shared "silent" agentic loop for background tasks (reflection/consolidation)
+│  │  ├─ background.rs      slot registry for silent background tasks (BgSlot by BackgroundKind)
+│  │  ├─ request.rs         mapping domain messages to the engine wire format
+│  │  └─ tests/             orchestrator tests, split by feature (mod.rs — fixtures;
 │  │                        generation/chats/profiles/settings/title/impersonation/
 │  │                        self_model/reflection/rag/request + live.rs #[ignore])
-│  ├─ gen_state.rs          GenState: чистый автомат Idle/Generating/Cancelling
-│  │                        (переходы begin/request_cancel/finish, без I/O)
-│  ├─ events.rs             AppCommand (UI→оркестр.) и AppEvent (оркестр.→UI)
-│  ├─ runtime/              мост tokio↔TUI. God-object разбит (docs/refactoring-god-
-│  │  │                     objects.md, этап 7; внешняя поверхность — только run):
-│  │  ├─ mod.rs             run/run_loop (петля, dirty-перерисовка), ActiveScreen, SpellLoader
-│  │  ├─ input.rs           батчинг ввода + вставка из буфера (Windows-путь): Chunk, коалесинг
-│  │  ├─ dispatch.rs        apply_event (AppEvent→экран) + трансляция Intent→AppCommand
-│  │  └─ clipboard.rs       чтение/запись системного буфера обмена (arboard)
-│  └─ supervisor.rs         ServerSupervisor: (пере)запуск managed / подключение external
+│  ├─ gen_state.rs          GenState: pure Idle/Generating/Cancelling state machine
+│  │                        (begin/request_cancel/finish transitions, no I/O)
+│  ├─ events.rs             AppCommand (UI→orchestrator) and AppEvent (orchestrator→UI)
+│  ├─ runtime/              tokio↔TUI bridge. God object broken up (docs/refactoring-god-
+│  │  │                     objects.md, stage 7; external surface — only run):
+│  │  ├─ mod.rs             run/run_loop (the loop, dirty redraw), ActiveScreen, SpellLoader
+│  │  ├─ input.rs           input batching + clipboard paste (Windows path): Chunk, coalescing
+│  │  ├─ dispatch.rs        apply_event (AppEvent→screen) + Intent→AppCommand translation
+│  │  └─ clipboard.rs       read/write the system clipboard (arboard)
+│  └─ supervisor.rs         ServerSupervisor: (re)start managed / connect to external
 │
-├─ screens/                 целостные экраны (FSD "pages"); НЕ зависят от app
-│  ├─ chat/                 ChatScreen: состояние UI чата. God-object разбит
-│  │  │                     (docs/history/refactoring-god-objects.md, этап 2):
-│  │  ├─ mod.rs             ChatIntent, типы попапов, struct ChatScreen, аксессоры
-│  │  ├─ feed.rs            проекция AppEvent в ленту (сообщения/генерация/tool/токены)
-│  │  ├─ input.rs           обработка клавиш/мыши/вставки, черновик, орфография, команды
-│  │  ├─ popups.rs          попапы: орфография, подтверждение, эмодзи, справка
-│  │  ├─ impersonation.rs   предпросмотр реплики за пользователя (Ctrl+U)
-│  │  ├─ rag.rs             баннер прогресса индексации RAG
-│  │  └─ render.rs          отрисовка экрана
-│  ├─ chat_list.rs          ChatListScreen: полноэкранный список чатов (Esc), → ChatListIntent
-│  └─ settings/             SettingsScreen: секции (Модель/Семплинг/Инструменты/Память/
-│     │                     Профили/Интерфейс) с группами полей, подсекции Ассистент/Имперсонация.
-│     │                     God-object разбит (docs/history/refactoring-god-objects.md, этап 1):
-│     ├─ mod.rs             SettingsIntent, enum'ы секций/подсекций, типы полей
+├─ screens/                 full screens (FSD "pages"); do NOT depend on app
+│  ├─ chat/                 ChatScreen: chat UI state. God object broken up
+│  │  │                     (docs/history/refactoring-god-objects.md, stage 2):
+│  │  ├─ mod.rs             ChatIntent, popup types, struct ChatScreen, accessors
+│  │  ├─ feed.rs            projects AppEvent into the feed (messages/generation/tool/tokens)
+│  │  ├─ input.rs           key/mouse/paste handling, draft, spellcheck, commands
+│  │  ├─ popups.rs          popups: spellcheck, confirmation, emoji, help
+│  │  ├─ impersonation.rs   preview of the reply written on the user's behalf (Ctrl+U)
+│  │  ├─ rag.rs             RAG indexing progress banner
+│  │  └─ render.rs          screen rendering
+│  ├─ chat_list.rs          ChatListScreen: full-screen chat list (Esc), → ChatListIntent
+│  └─ settings/             SettingsScreen: sections (Model/Sampling/Tools/Memory/
+│     │                     Profiles/Interface) with field groups, Assistant/Impersonation subsections.
+│     │                     God object broken up (docs/history/refactoring-god-objects.md, stage 1):
+│     ├─ mod.rs             SettingsIntent, section/subsection enums, field types
 │     │                     (FieldId/FieldRow/Editor/…), struct SettingsScreen
-│     ├─ catalog.rs         построители полей секций/подсекций + гейты доступности
-│     ├─ apply.rs           обработка клавиш, редактор поля, тумблеры/циклы, сохранение
-│     ├─ spec.rs            field_spec: таблица доступа к значению config-поля (get/set/цикл/num)
-│     ├─ choice.rs          попап выбора Choice-поля + сброс поля к дефолту
-│     ├─ search.rs          оверлей поиска по полям (`/`): индекс/фильтр/прыжок
-│     ├─ render.rs          отрисовка: меню, таб-стрип, список полей, попапы
-│     └─ helpers.rs         свободные функции: построители строк, описания, парсеры
+│     ├─ catalog.rs         section/subsection field builders + availability gates
+│     ├─ apply.rs           key handling, field editor, toggles/cycles, saving
+│     ├─ spec.rs            field_spec: access table for a config field's value (get/set/cycle/num)
+│     ├─ choice.rs          Choice-field selection popup + reset field to default
+│     ├─ search.rs          field search overlay (`/`): index/filter/jump
+│     ├─ render.rs          rendering: menu, tab strip, field list, popups
+│     └─ helpers.rs         free functions: row builders, descriptions, parsers
 │
-├─ widgets/                 составные UI-блоки (FSD "widgets")
-│  ├─ message_feed.rs       лента: markdown, мысли, инлайн tool-блоки, скролл, перенос
-│  ├─ input_box.rs          свой multiline-ввод (ADR 0001): курсор, перенос, спелл-чек,
-│  │                        однострочный режим (поля настроек), визуальная навигация
-│  ├─ logo.rs               знак бренда ячейками терминала (половинные блоки
-│  │                        `▀`/`▄`/`█`): глиф 10×6 + вордмарк своим пиксельным
-│  │                        шрифтом → горизонтальный лockup 65×6, влево в шапке
-│  │                        оверлея помощи. Цвета фирменные (кроме `mind` — он
-│  │                        темозависим по бренду), docs/branding.md §5
-│  ├─ chat_list.rs          виджет списка чатов (поиск/сортировка/F2/F5); обёрнут ChatListScreen
-│  ├─ status_bar.rs         модель/токены/профиль/состояние сервера/режим мыши
-│  ├─ profile_list.rs       оверлей выбора профиля при создании чата
-│  └─ impersonation_preview.rs  потоковый предпросмотр реплики (Ctrl+U)
+├─ widgets/                 composite UI blocks (FSD "widgets")
+│  ├─ message_feed.rs       feed: markdown, thoughts, inline tool blocks, scroll, wrap
+│  ├─ input_box.rs          our own multiline input (ADR 0001): cursor, wrap, spellcheck,
+│  │                        single-line mode (settings fields), visual navigation
+│  ├─ logo.rs               brand mark drawn with terminal cells (half blocks
+│  │                        `▀`/`▄`/`█`): 10×6 glyph + wordmark in our own pixel
+│  │                        font → 65×6 horizontal lockup, left-aligned in the
+│  │                        help overlay header. Brand colors (except `mind` —
+│  │                        theme-dependent per the brand), docs/branding.md §5
+│  ├─ chat_list.rs          chat list widget (search/sort/F2/F5); wrapped by ChatListScreen
+│  ├─ status_bar.rs         model/tokens/profile/server status/mouse mode
+│  ├─ profile_list.rs       profile selection overlay when creating a chat
+│  └─ impersonation_preview.rs  streaming preview of the reply (Ctrl+U)
 │
-├─ features/                пользовательские сценарии (FSD "features")
-│  ├─ tools/                реестр и реализации инструментов (client-side)
+├─ features/                user-facing scenarios (FSD "features")
+│  ├─ tools/                tool registry and implementations (client-side)
 │  │  ├─ mod.rs             Tool, ToolContext, ToolOutcome/ChatEffect, ToolRegistry, ToolConfig
-│  │  ├─ meta.rs            метаданные каталога для UI: группа/описание/гейт инструмента
-│  │  ├─ mcp.rs             McpTool: обёртка инструмента MCP-сервера (id mcp__srv__tool,
-│  │  │                     клип/таймаут/отмена) + McpSnapshot/catalog_hash (TOFU)
-│  │  ├─ present.rs         презентация вызова для ленты (ToolPresentation): подсвеч.
-│  │  │                     код / консоль python / компактный заголовок вместо JSON
-│  │  ├─ rag.rs             rag_add/rag_search: чанкинг, эмбеддинг, kNN, склейка
-│  │  ├─ notes/             заметки. God-object разбит (docs/history/refactoring-god-objects.md,
-│  │  │                     этап 4; внешняя поверхность `notes::*` сохранена реэкспортом
-│  │  │                     `pub(crate) use <submod>::*` из mod.rs):
-│  │  │  ├─ mod.rs          ID-константы, пороги, SELF_NOTE_TAG, is_self_note/parse_*/
-│  │  │  │                  clip/cosine, реэкспорты
-│  │  │  ├─ save.rs         note_save + create_note/ensure_note_vectors/ворота похожести
-│  │  │  ├─ recall.rs       note_recall + семантический путь, связанные блоки, формат
+│  │  ├─ meta.rs            catalog metadata for the UI: tool group/description/gate
+│  │  ├─ mcp.rs             McpTool: wrapper for an MCP server tool (id mcp__srv__tool,
+│  │  │                     clip/timeout/cancel) + McpSnapshot/catalog_hash (TOFU)
+│  │  ├─ present.rs         call presentation for the feed (ToolPresentation): highlighted
+│  │  │                     code / python console / compact header instead of raw JSON
+│  │  ├─ rag.rs             rag_add/rag_search: chunking, embedding, kNN, stitching
+│  │  ├─ notes/             notes. God object broken up (docs/history/refactoring-god-objects.md,
+│  │  │                     stage 4; external surface `notes::*` preserved via re-export
+│  │  │                     `pub(crate) use <submod>::*` from mod.rs):
+│  │  │  ├─ mod.rs          ID constants, thresholds, SELF_NOTE_TAG, is_self_note/parse_*/
+│  │  │  │                  clip/cosine, re-exports
+│  │  │  ├─ save.rs         note_save + create_note/ensure_note_vectors/similarity gate
+│  │  │  ├─ recall.rs       note_recall + semantic path, related blocks, formatting
 │  │  │  ├─ edit.rs         note_revise/note_supersede/note_merge
-│  │  │  ├─ graph.rs        note_link/note_neighbors (типизированный граф связей)
-│  │  │  ├─ cite.rs         note_cite_source (ссылка заметки на источник RAG)
-│  │  │  ├─ overview.rs     consolidate_notes + обзоры консолидации (польз./@self)
-│  │  │  └─ self_notes.rs   подсистема self-заметок (@self): свежие/релевантные, граф
+│  │  │  ├─ graph.rs        note_link/note_neighbors (typed link graph)
+│  │  │  ├─ cite.rs         note_cite_source (note→RAG source citation)
+│  │  │  ├─ overview.rs     consolidate_notes + consolidation overviews (user/@self)
+│  │  │  └─ self_notes.rs   self-note (@self) subsystem: recent/relevant, graph
 │  │  ├─ introspection.rs   get/set_sampling, get/set_system_message, get_last_user_message_time
-│  │  ├─ python.rs          python_exec (subprocess, таймаут)
-│  │  ├─ web.rs             web_search (мульти-провайдер DDG/Mojeek/Ecosia + анти-бот)
-│  │  ├─ fetch.rs           fetch_url (загрузка страницы + саммаризация через движок)
-│  │  ├─ calc.rs            calculate (свой вычислитель математических выражений)
-│  │  ├─ datetime.rs        current_time (дата/время, chrono)
-│  │  ├─ fs.rs              fs_read/fs_write/fs_list (файлы; гейт fs_enabled + песочница)
-│  │  └─ subagent.rs        call_subagent (без истории/инструментов, запрет вложенности)
-│  ├─ spellcheck/           check, segment, dict, mod — Hunspell + сегментатор + личн. словарь
-│  ├─ profiles.rs           чистые операции над профилями (sanitize_name, ProfileEdit)
-│  ├─ chat_search_sort.rs   фильтр/сортировка списка чатов
-│  ├─ rename_chat.rs        авто-название (digest, чистка), переименование
-│  ├─ chat_export.rs        format_conversation (копирование переписки)
-│  ├─ rag_command.rs        парсер /rag add|remove|list|rebuild
-│  ├─ tts_command.rs        парсер /tts [N|all|stop] (озвучивание, spec §11.9)
-│  ├─ rag_ingest.rs         scan, read_text, RagProgress (типы прогресса индексации)
-│  ├─ cli.rs                свой микро-парсер аргументов CLI (весь текст — в бандлах локалей)
-│  ├─ backup.rs             резервное копирование/восстановление данных (zip, транзакц.)
-│  ├─ data_migration.rs     оркестрация миграций схем на старте (ADR 0006): гейты
-│  │                        downgrade/битости, pre-migration бэкап, control-parse
-│  ├─ sandbox_setup.rs      провизия песочницы Python (mindfork sandbox setup): wasmer +
-│  │                        python.webc + колёса по lock-списку (sha256); прогрев кэша
-│  └─ import.rs             импорт из нейтрального формата mindfork-import
-│                           (docs/import-format.md): профили + чаты от внешних
-│                           конвертеров, идемпотентно (UUIDv5 от ключей)
+│  │  ├─ python.rs          python_exec (subprocess, timeout)
+│  │  ├─ web.rs             web_search (multi-provider DDG/Mojeek/Ecosia + anti-bot)
+│  │  ├─ fetch.rs           fetch_url (page fetch + summarization via the engine)
+│  │  ├─ calc.rs            calculate (our own math expression evaluator)
+│  │  ├─ datetime.rs        current_time (date/time, chrono)
+│  │  ├─ fs.rs              fs_read/fs_write/fs_list (files; fs_enabled gate + sandbox)
+│  │  └─ subagent.rs        call_subagent (no history/tools, nesting forbidden)
+│  ├─ spellcheck/           check, segment, dict, mod — Hunspell + segmenter + personal dictionary
+│  ├─ profiles.rs           pure profile operations (sanitize_name, ProfileEdit)
+│  ├─ chat_search_sort.rs   chat list filter/sort
+│  ├─ rename_chat.rs        auto-title (digest, cleanup), renaming
+│  ├─ chat_export.rs        format_conversation (copy the conversation)
+│  ├─ rag_command.rs        /rag add|remove|list|rebuild parser
+│  ├─ tts_command.rs        /tts [N|all|stop] parser (speech synthesis, spec §11.9)
+│  ├─ rag_ingest.rs         scan, read_text, RagProgress (indexing progress types)
+│  ├─ cli.rs                our own micro CLI argument parser (all text lives in locale bundles)
+│  ├─ backup.rs             data backup/restore (zip, transactional)
+│  ├─ data_migration.rs     schema migration orchestration at startup (ADR 0006): downgrade/
+│  │                        corruption gates, pre-migration backup, control-parse
+│  ├─ sandbox_setup.rs      Python sandbox provisioning (mindfork sandbox setup): wasmer +
+│  │                        python.webc + wheels from a lock list (sha256); cache warmup
+│  └─ import.rs             import from the neutral mindfork-import format
+│                           (docs/import-format.md): profiles + chats from external
+│                           converters, idempotent (UUIDv5 from keys)
 │
-├─ entities/                доменные типы (без I/O); serde-сериализуемы
+├─ entities/                domain types (no I/O); serde-serializable
 │  ├─ chat.rs               Chat, ChatSummary, CharacterNames, Chat::from_profile, draft
 │  ├─ message.rs            Message, MessageRole, ToolCallRecord, MessageMetadata
 │  ├─ profile.rs            Profile, ProfileSummary, ToolId
 │  ├─ note.rs               Note
 │  ├─ rag.rs                RagDocument / RagHit
-│  └─ sampling.rs           SamplingConfig, ReasoningEffort, resolve (трёхуровневый приоритет)
+│  └─ sampling.rs           SamplingConfig, ReasoningEffort, resolve (three-tier priority)
 │
-└─ shared/                  инфраструктура и утилиты (FSD "shared")
-   ├─ api/                  слой движка инференса (контракт + реализации по семействам, ADR 0004)
-   │  ├─ contract.rs        EngineBackend, Embedder, ChatRequest/Chunk, ThinkingRef, ToolCallAccumulator (агностичный)
-   │  ├─ openai/            семейство OpenAI:
-   │  │  ├─ client.rs+wire.rs   Chat Completions: OpenAiClient (reqwest+SSE, probe /health, embed; local/external/прокси; диалекта нет — сэмплинг как есть)
-   │  │  └─ responses/          Responses API: ResponsesClient + wire (облако OpenAI, /v1/responses — резюме рассуждений, effort, verbosity)
-   │  ├─ gemini/            нативный Gemini: client.rs + wire.rs (generateContent, x-goog-api-key — резюме «мыслей», thinkingLevel/Budget, thoughtSignature per-tool-call)
+└─ shared/                  infrastructure and utilities (FSD "shared")
+   ├─ api/                  inference engine layer (contract + per-family implementations, ADR 0004)
+   │  ├─ contract.rs        EngineBackend, Embedder, ChatRequest/Chunk, ThinkingRef, ToolCallAccumulator (agnostic)
+   │  ├─ openai/            OpenAI family:
+   │  │  ├─ client.rs+wire.rs   Chat Completions: OpenAiClient (reqwest+SSE, /health probe, embed; local/external/proxy; no dialect — sampling sent as-is)
+   │  │  └─ responses/          Responses API: ResponsesClient + wire (OpenAI cloud, /v1/responses — reasoning summaries, effort, verbosity)
+   │  ├─ gemini/            native Gemini: client.rs + wire.rs (generateContent, x-goog-api-key — thought summaries, thinkingLevel/Budget, per-tool-call thoughtSignature)
    │  ├─ anthropic/         Anthropic Messages API: client.rs + wire.rs (Claude, /v1/messages)
-   │  ├─ managed.rs         ServerHandle (managed-процесс llama-server), ManagedConfig, wait_until_ready
-   │  ├─ thoughts.rs        потоковый парсер <think> (fallback к reasoning_content)
-   │  └─ mock.rs            mock-движок для тестов (#[cfg(test)])
-   ├─ storage/              хранилище
-   │  ├─ schema.rs          версии схем (SETTINGS/PROFILES/CHAT/DB_SCHEMA) + чистый каркас
-   │  │                     JSON-миграций (Step/JsonArtifact/Assessment, ADR 0006)
-   │  ├─ json.rs            атомарная запись (write-rename + .bak) конфиг/профили/чаты
-   │  ├─ db/               SQLite + sqlite-vec: notes/RAG, изоляция по profile_id.
-   │  │  │                 God-object разбит по доменам (docs/history/refactoring-god-objects.md,
-   │  │  │                 этап 5; `impl Db` — несколько блоков, схема/хелперы в mod.rs;
-   │  │  │                 тесты домена — в `mod tests` своего подфайла, локальный `db()`):
+   │  ├─ managed.rs         ServerHandle (managed llama-server process), ManagedConfig, wait_until_ready
+   │  ├─ thoughts.rs        streaming <think> parser (falls back to reasoning_content)
+   │  └─ mock.rs            mock engine for tests (#[cfg(test)])
+   ├─ storage/              storage
+   │  ├─ schema.rs          schema versions (SETTINGS/PROFILES/CHAT/DB_SCHEMA) + pure
+   │  │                     JSON migration scaffold (Step/JsonArtifact/Assessment, ADR 0006)
+   │  ├─ json.rs            atomic write (write-rename + .bak) for config/profiles/chats
+   │  ├─ db/               SQLite + sqlite-vec: notes/RAG, isolated by profile_id.
+   │  │  │                 God object broken up by domain (docs/history/refactoring-god-objects.md,
+   │  │  │                 stage 5; `impl Db` — several blocks, schema/helpers in mod.rs;
+   │  │  │                 domain tests — in that submodule's `mod tests`, local `db()`):
    │  │  ├─ mod.rs         struct Db, open/from_conn, version-aware migrate() (baseline_ddl
-   │  │  │                 каждый раз + user_version + DB_STEPS в транзакциях), ensure_vec_table/
-   │  │  │                 vec_dim, общие хелперы (row_to_note/parse_uuid/parse_dt/cosine)
-   │  │  ├─ notes.rs       заметки: вставка/список/правка/удаление + эмбеддинги/семантика
-   │  │  ├─ graph.rs       граф связей + замещение + цитирование источников
-   │  │  ├─ self_model.rs  модель себя: get/upsert/атомарный update
-   │  │  └─ rag.rs         RAG: документы/поиск/источники/размерность + удаление по пути
-   │  └─ mod.rs             фасад Storage (потокобезопасный)
-   ├─ config.rs            AppConfig и секции (Engine/Embed/Tool/Interface/Impersonation…)
-   ├─ credits.rs           метаданные приложения для диалога «О программе» (F1): бренд-имя,
-   │                       автор, ссылки, текст лицензии (MIT), компоненты (имя/версия/
-   │                       лицензия) + гейты (имена ↔ Cargo.toml, версии ↔ Cargo.lock)
-   ├─ markdown/            свой рендерер на pulldown-cmark (ADR 0003): таблицы + LaTeX +
-   │  │                    тема. God-object разбит по подсистемам (docs/refactoring-god-
-   │  │                    objects.md, этап 6; внутренняя проводка через реэкспорт; тесты
-   │  │                    подсистемы — в `mod tests` подфайла, общие хелперы — `mod testkit`):
-   │  ├─ mod.rs            render/render_with + highlight_code (подсветка без ``` —
-   │  │                    для tool-карточек ленты) + стили из палитры
-   │  ├─ writer.rs         Writer: walker событий pulldown-cmark → строки
-   │  ├─ code.rs           подсветка блоков кода (syntect: синтаксис + тема из палитры)
-   │  ├─ table.rs          TableBuilder + render_table (раскладка/отрисовка таблиц)
-   │  ├─ latex.rs          LaTeX→unicode: нормализация разделителей + конвертер команд
-   │  └─ speak.rs          speakable_text: речевой текст для TTS (код/mermaid/таблицы/
-   │                       блочные формулы → голосовая пометка; §11.9)
-   ├─ mcp.rs               мини-клиент MCP (stdio, tools-only, ревизия 2025-11-25):
-   │                       McpConnection (транспорт, тестируем на duplex) + McpClient
-   │                       (подпроцесс: монитор kill/exited, Job Object kill-on-close,
-   │                       запрет .bat/.cmd). См. spec §9.6, ADR 0007
-   ├─ ui.rs                мелкие помощники отрисовки: dim_background, скроллбар,
-   │                       prime_full_redraw (сентинел полной перерисовки — пробел +
-   │                       модификатор-маркер, не трогает хвосты широких глифов)
-   ├─ wrap.rs              перенос слов по колонкам (unicode-width)
-   ├─ i18n.rs              язык каркаса агента (ось A) + UI (ось B): Lang(Ru/En/Ext)/
-   │                       Locale/t/tf, вшитые locales/{ru,en}.json + внешние
-   │                       data/locales/*.json (init/реестр, docs/history/i18n-external-locales.md)
-   ├─ theme.rs             Palette (роли user/assistant/tool/…), auto/dark/light
-   ├─ keys.rs              раскладко-независимые Ctrl-шорткаты (ЙЦУКЕН→латиница)
-   ├─ server.rs            ServerStatus (статус сервера для UI)
-   ├─ tts/                 озвучивание (TTS): контракт `TtsEngine` + `AudioClip`,
-   │                       клиенты `openai` (`/audio/speech`, он же external) и
-   │                       `gemini` (generateContent + AUDIO), `playback` (очередь
-   │                       rodio, ленивое открытие устройства). См. spec §11.9
-   ├─ sandbox.rs           SandboxRunner (за трейтом) + WasmerSandbox: сайдкар `wasmer`
-   │                       для `python_exec` в режиме песочницы (WASIX-изоляция, §8)
-   ├─ secrets.rs           машинно-привязанное хранение API-ключей (ApiKeyEntry — запись
-   │                       на машину, put_key/stored_key/is_ours): DPAPI (Windows) и
-   │                       HKDF(machine-id)+ChaCha20-Poly1305 (Linux). См. §12
-   ├─ paths.rs             расположение данных (defaults.json) + язык каркаса/интерфейса
-   │                       (Option<Lang>: явный или по локали ОС) + резерв словарей рядом с бинарём
+   │  │  │                 every time + user_version + DB_STEPS inside transactions), ensure_vec_table/
+   │  │  │                 vec_dim, shared helpers (row_to_note/parse_uuid/parse_dt/cosine)
+   │  │  ├─ notes.rs       notes: insert/list/edit/delete + embeddings/semantics
+   │  │  ├─ graph.rs       link graph + supersession + source citation
+   │  │  ├─ self_model.rs  self-model: get/upsert/atomic update
+   │  │  └─ rag.rs         RAG: documents/search/sources/dimensionality + delete by path
+   │  └─ mod.rs             Storage facade (thread-safe)
+   ├─ config.rs            AppConfig and its sections (Engine/Embed/Tool/Interface/Impersonation…)
+   ├─ credits.rs           app metadata for the "About" dialog (F1): brand name,
+   │                       author, links, license text (MIT), components (name/version/
+   │                       license) + gates (names ↔ Cargo.toml, versions ↔ Cargo.lock)
+   ├─ markdown/            our own pulldown-cmark renderer (ADR 0003): tables + LaTeX +
+   │  │                    theme. God object broken up by subsystem (docs/refactoring-god-
+   │  │                    objects.md, stage 6; internal wiring via re-export; subsystem
+   │  │                    tests in each submodule's `mod tests`, shared helpers in `mod testkit`):
+   │  ├─ mod.rs            render/render_with + highlight_code (highlighting without ``` —
+   │  │                    for feed tool cards) + styles from the palette
+   │  ├─ writer.rs         Writer: pulldown-cmark event walker → lines
+   │  ├─ code.rs           code block highlighting (syntect: syntax + theme from the palette)
+   │  ├─ table.rs          TableBuilder + render_table (table layout/rendering)
+   │  ├─ latex.rs          LaTeX→unicode: delimiter normalization + command converter
+   │  └─ speak.rs          speakable_text: TTS-ready text (code/mermaid/tables/
+   │                       display-math → a spoken-aside note; §11.9)
+   ├─ mcp.rs               minimal MCP client (stdio, tools-only, 2025-11-25 revision):
+   │                       McpConnection (transport, testable over a duplex) + McpClient
+   │                       (subprocess: kill/exited monitor, Job Object kill-on-close,
+   │                       .bat/.cmd forbidden). See spec §9.6, ADR 0007
+   ├─ ui.rs                small rendering helpers: dim_background, scrollbar,
+   │                       prime_full_redraw (full-redraw sentinel — space +
+   │                       marker modifier, doesn't touch wide-glyph tail cells)
+   ├─ wrap.rs              word wrap by column (unicode-width)
+   ├─ i18n.rs              agent scaffold language (axis A) + UI (axis B): Lang(Ru/En/Ext)/
+   │                       Locale/t/tf, built-in locales/{ru,en}.json + external
+   │                       data/locales/*.json (init/registry, docs/history/i18n-external-locales.md)
+   ├─ theme.rs             Palette (user/assistant/tool/… roles), auto/dark/light
+   ├─ keys.rs              layout-independent Ctrl shortcuts (Cyrillic JCUKEN→Latin)
+   ├─ server.rs            ServerStatus (server status for the UI)
+   ├─ tts/                 speech synthesis (TTS): `TtsEngine` + `AudioClip` contract,
+   │                       `openai` client (`/audio/speech`, also used for external) and
+   │                       `gemini` client (generateContent + AUDIO), `playback` (rodio
+   │                       queue, lazy device open). See spec §11.9
+   ├─ sandbox.rs           SandboxRunner (behind a trait) + WasmerSandbox: `wasmer`
+   │                       sidecar for `python_exec` in sandbox mode (WASIX isolation, §8)
+   ├─ secrets.rs           machine-bound API key storage (ApiKeyEntry — one record
+   │                       per machine, put_key/stored_key/is_ours): DPAPI (Windows) and
+   │                       HKDF(machine-id)+ChaCha20-Poly1305 (Linux). See §12
+   ├─ paths.rs             data location (defaults.json) + scaffold/interface language
+   │                       (Option<Lang>: explicit or from the OS locale) + dictionary fallback next to the binary
    ├─ instance.rs          single-instance
-   └─ logging.rs           tracing в файл (stdout занят TUI)
+   └─ logging.rs           tracing to a file (stdout is used by the TUI)
 ```
 
 ---
 
-## 4. Поток данных UI ↔ оркестратор
+## 4. UI ↔ orchestrator data flow
 
-Сердце архитектуры — однонаправленный поток через два `mpsc`-канала. Контракт
-описан в [`app/events.rs`](../src/app/events.rs).
+The heart of the architecture is a unidirectional flow through two `mpsc`
+channels. The contract is described in
+[`app/events.rs`](../src/app/events.rs).
 
 ```mermaid
 flowchart LR
-    subgraph MAIN["Главный поток — петля рендеринга (runtime.rs)"]
-        POLL["poll input<br/>(crossterm, таймаут)"]
-        BATCH["батчинг событий<br/>process_input_batch (вставка)"]
+    subgraph MAIN["Main thread — render loop (runtime.rs)"]
+        POLL["poll input<br/>(crossterm, timeout)"]
+        BATCH["event batching<br/>process_input_batch (paste)"]
         SCREEN["ChatScreen / SettingsScreen<br/>handle_key → Intent"]
-        VIEW["view-model<br/>(read-only проекция)"]
-        DRAW["ratatui draw<br/>(по флагу dirty)"]
+        VIEW["view model<br/>(read-only projection)"]
+        DRAW["ratatui draw<br/>(gated by dirty flag)"]
     end
-    subgraph TASK["tokio — задача оркестратора"]
+    subgraph TASK["tokio — orchestrator task"]
         LOOP["select!: cmd_rx / done / status / title / imp / rag"]
         STATE["State: Idle / Generating{id} / Cancelling{id}"]
-        DOMAIN["профили, чаты, active_id, Storage"]
+        DOMAIN["profiles, chats, active_id, Storage"]
     end
 
     POLL --> BATCH --> SCREEN
@@ -373,205 +378,222 @@ flowchart LR
     VIEW --> DRAW
 ```
 
-### Команды и события (контракт)
+### Commands and events (the contract)
 
-`AppCommand` (UI → оркестратор) включает: `SendMessage`, `SetDraft`,
+`AppCommand` (UI → orchestrator) includes: `SendMessage`, `SetDraft`,
 `RegenerateLast`, `DeleteLastExchange`, `Cancel`, `Impersonate`/
 `CancelImpersonation`, `NewChat`, `SwitchChat`, `RenameChat`/`AutoRenameChat`,
 `CloneChat`, `CopyChat`, `DeleteChat`, `CreateProfile`/`DeleteProfile`,
 `UpdateConfig`/`UpdateProfile`, `RagAdd`/`RagDelete`, `Tts`/`TtsStop`, `Quit`.
 
-`AppEvent` (оркестратор → UI) включает: `ServerStatus`, `ChatList`,
+`AppEvent` (orchestrator → UI) includes: `ServerStatus`, `ChatList`,
 `ChatRenamed`, `ChatListError`, `CopyToClipboard`, `ProfileList`, `Settings`,
 `ChatActivated`, `UserMessage`, `RestoreInput`, `GenerationStarted`, `Chunk`,
 `Thoughts`, `TokenUsage`, `ToolCall`, `AssistantContinue`/`AssistantRewrite`
-(управляющие инструменты беседы — §8), `Finished`,
+(conversation control tools — §8), `Finished`,
 `Impersonation{Started,Chunk,Finished}`, `RagProgress`, `SelfModelView`,
-`SelfModelChanged` (лёгкий сигнал «модель себя изменилась» — открытый экран `F3`
-перезапрашивает снимок; §9.7), `BackgroundTask{kind,active}` (тихий индикатор
-фоновой рефлексии/консолидации в статус-баре), `TtsActive` (идёт озвучивание — чип
-«♪ озвучка» в статус-баре; §11.9), `Error`.
+`SelfModelChanged` (a lightweight "self-model changed" signal — an open `F3`
+screen re-requests the snapshot; §9.7), `BackgroundTask{kind,active}` (a quiet
+status-bar indicator for background reflection/consolidation), `TtsActive`
+(speech synthesis is running — a "♪ speaking" chip in the status bar; §11.9),
+`Error`.
 
-`TokenUsage { completion, context, context_exact, reasoning }` — live-счётчик токенов:
-ответ (`completion`, накопительно по раундам agentic-loop) и переписка/промпт
-(`context`). Источник двойной: live-приближение по числу потоковых дельт + точное число
-из блока `usage` сервера (его просим через `stream_options.include_usage=true`; приходит
-финальным чанком как `ChatChunk::Usage`). До прихода `usage` переписка показывается
-клиентской оценкой (`shared/tokens.rs`, эвристика «байты UTF-8 / 4»), помеченной `~`;
-точное `prompt_tokens` её заменяет. Статус-бар показывает сумму одним числом.
-`reasoning` — reasoning-токены «мыслей» (входят в `completion`), известны только из
-`usage` (`None` — не трогать прежнее); их отдают reasoning-провайдеры (OpenAI Responses
-`output_tokens_details.reasoning_tokens`, OpenAI-compat/llama.cpp
-`completion_tokens_details.reasoning_tokens`; Anthropic не разделяет → `0`). Статус-бар
-при `>0` показывает пометку «(рассужд. N)» рядом с суммой.
+`TokenUsage { completion, context, context_exact, reasoning }` — the live token
+counter: the reply (`completion`, accumulated across agentic-loop rounds) and the
+conversation/prompt (`context`). Dual source: a live approximation from the number
+of streamed deltas, plus an exact count from the server's `usage` block (requested
+via `stream_options.include_usage=true`; arrives as a final `ChatChunk::Usage`
+chunk). Before `usage` arrives, the conversation count is shown as a client-side
+estimate (`shared/tokens.rs`, a "UTF-8 bytes / 4" heuristic) marked `~`; the exact
+`prompt_tokens` replaces it. The status bar shows the sum as a single number.
+`reasoning` is the reasoning-token count for "thoughts" (included in `completion`),
+known only from `usage` (`None` — leave the previous value alone); reasoning
+providers supply it (OpenAI Responses `output_tokens_details.reasoning_tokens`,
+OpenAI-compat/llama.cpp `completion_tokens_details.reasoning_tokens`; Anthropic
+doesn't split it out → `0`). When `>0` the status bar shows a "(reasoning N)" note
+next to the sum.
 
-### Инварианты потока
+### Flow invariants
 
-- **Сериализация команд.** Оркестратор — одна `tokio`-задача с `select!` по
-  каналам; команды обрабатываются строго последовательно. Гонок памяти нет —
-  через каналы передаются владеемые значения (клоны/снимки).
-- **`generation_id`.** Каждый запуск генерации получает `Uuid`; все стрим-события
-  несут его. События с неактуальным id UI отбрасывает — классическая гонка «Stop →
-  сразу Send/Regenerate → долетели хвосты старого стрима» закрыта.
-- **dirty-перерисовка.** `runtime.rs` рисует кадр только по изменениям
-  (применённое событие, ввод/мышь/ресайз, перезагрузка словаря, пересчёт
-  орфографии). На простое экран не перерисовывается — иначе `ratatui` каждый тик
-  переставлял бы курсор и сбивал фазу его мигания. Тело петли при этом крутится
-  каждый тик и пробуждает отложенные по дебаунсу действия (перепроверку
-  орфографии, анимацию спиннеров RAG/имперсонации).
-- **Атомарный кадр (DEC 2026).** Каждый `terminal.draw` обёрнут в
-  `BeginSynchronizedUpdate`/`EndSynchronizedUpdate` (CSI `?2026h`/`?2026l`):
-  терминал применяет кадр целиком, и аппаратный курсор не виден на промежуточных
-  состояниях записи diff'а. Иначе при стриме/анимациях он «прыгал» между полем
-  ввода и последней записанной ячейкой (счётчик токенов / спиннер RAG) — ratatui
-  возвращает курсор на место отдельными записями уже после diff'а. Терминалы без
-  поддержки 2026 (conhost) игнорируют режим — мягкая деградация; `?2026l`
-  продублирован в panic-hook и на выходе. См. spec §4.4.1.
-- **Полная перерисовка (широкие глифы).** Широкий эмодзи занимает две ячейки —
-  свою и **хвостовую**, которую `ratatui` сбрасывает в дефолт. Когда глиф исчезает,
-  хвост в обоих буферах остаётся дефолтным пробелом, diff считает его неизменным и
-  пропускает, а conhost вторую половину сам не чистит → «висячий» артефакт. Лечится
-  полной перерисовкой: `prime_full_redraw` (`shared/ui.rs`) метит буфер, петля
-  переписывает каждую ячейку. Заказчики — изменение/прокрутка ленты с глифами группы
-  риска (`ChatScreen::mark_feed_changed`, `feed::is_risky_glyph`) и **закрытие**
-  попапов эмодзи/орфографии.
-  **Граница с апстримом:** `ratatui-core` 0.1.2 (ratatui#2585) шлёт хвост сам, но
-  только когда широкий глиф сменился более узким содержимым И нёс заметный на пустой
-  ячейке стиль (фон, `REVERSED`/`UNDERLINED`/`BLINK`/`CROSSED_OUT`) — нестилизованные
-  глифы остаются за нами. На **сдвиг выделения** перерисовку не заказываем: глиф
-  остаётся широким, а писать в его хвост сентинелу нельзя (бэкенд напечатает половину
-  без `MoveTo` и сдвинет ряд — открытый ratatui#2651), т.е. пользы там нет — подложку
-  снимает перепечатка самого глифа. Обе границы закреплены канарейкой
+- **Command serialization.** The orchestrator is a single `tokio` task with a
+  `select!` over its channels; commands are processed strictly sequentially. No
+  memory races — owned values (clones/snapshots) are passed through the channels.
+- **`generation_id`.** Every generation run gets a `Uuid`; every streaming event
+  carries it. The UI drops events with a stale id — closing the classic race
+  "Stop → immediately Send/Regenerate → the old stream's tail arrives late".
+- **dirty redraw.** `runtime.rs` draws a frame only on change (an applied event,
+  input/mouse/resize, a dictionary reload, a spellcheck recompute). Nothing is
+  redrawn while idle — otherwise `ratatui` would reposition the cursor every tick
+  and throw off its blink phase. The loop body still spins every tick and wakes
+  debounced deferred actions (spellcheck recheck, RAG/impersonation spinner
+  animation).
+- **Atomic frame (DEC 2026).** Every `terminal.draw` is wrapped in
+  `BeginSynchronizedUpdate`/`EndSynchronizedUpdate` (CSI `?2026h`/`?2026l`): the
+  terminal applies the frame as a whole, so the hardware cursor is never visible
+  in an intermediate state while the diff is being written. Without this, during
+  streaming/animations it would "jump" between the input box and the last written
+  cell (the token counter / RAG spinner) — ratatui repositions the cursor with
+  separate writes after the diff. Terminals without 2026 support (conhost) ignore
+  the mode — a graceful degradation; `?2026l` is duplicated in the panic hook and
+  on exit. See spec §4.4.1.
+- **Full redraw (wide glyphs).** A wide emoji occupies two cells — its own and a
+  **tail** cell, which `ratatui` resets to default. When the glyph disappears, the
+  tail stays a default space in both buffers, the diff considers it unchanged and
+  skips it, and conhost doesn't clear the second half itself → a "dangling"
+  artifact. Fixed by a full redraw: `prime_full_redraw` (`shared/ui.rs`) marks the
+  buffer, and the loop rewrites every cell. Triggers are: a feed change/scroll
+  involving risk-group glyphs (`ChatScreen::mark_feed_changed`,
+  `feed::is_risky_glyph`) and **closing** the emoji/spellcheck popups.
+  **Boundary with upstream:** `ratatui-core` 0.1.2 (ratatui#2585) sends the tail
+  itself, but only when a wide glyph is replaced by narrower content AND it carried
+  a style visible on an empty cell (background, `REVERSED`/`UNDERLINED`/`BLINK`/
+  `CROSSED_OUT`) — unstyled glyphs remain our responsibility. We don't trigger a
+  redraw on **selection move**: the glyph stays wide, and the sentinel can't write
+  into its tail (the backend would print the second half without a `MoveTo` and
+  shift the row — open ratatui#2651), so there's no benefit there — reprinting the
+  glyph itself clears the background. Both boundaries are pinned by the canary
   `widgets::emoji_picker::upstream_repaints_styled_tail_on_close_but_not_on_selection_move`:
-  её падение означает, что апстрим сдвинул границу и обходной путь пора пересмотреть.
-- **Батчинг ввода.** Крупная вставка из буфера на Windows приходит обычными
-  `KeyEvent` посимвольно (bracketed paste у crossterm работает только на unix);
-  `process_input_batch` коалесит серию текстовых клавиш (≥2) в `Chunk::Paste`,
-  чиня и торможение, и ложную отправку по `Enter` внутри вставки.
+  if it fails, upstream moved the boundary and the workaround needs revisiting.
+- **Input batching.** A large clipboard paste on Windows arrives as ordinary
+  character-by-character `KeyEvent`s (crossterm's bracketed paste only works on
+  unix); `process_input_batch` coalesces a run of text keys (≥2) into
+  `Chunk::Paste`, fixing both the slowdown and a spurious send on `Enter` inside a
+  paste.
 
 ---
 
-## 5. Жизненный цикл генерации и клиентский agentic-loop
+## 5. Generation lifecycle and the client-side agentic loop
 
-Автомат на активный чат — выделен в `GenState` ([`app/gen_state.rs`](../src/app/gen_state.rs)):
-чистый тип с валидными по построению переходами (`begin`/`request_cancel`/
-`finish`), оркестратор лишь вызывает их и исполняет side-effect'ы вокруг.
+The per-active-chat state machine lives in `GenState`
+([`app/gen_state.rs`](../src/app/gen_state.rs)): a pure type with
+correct-by-construction transitions (`begin`/`request_cancel`/`finish`); the
+orchestrator only calls them and runs the side effects around them.
 
 ```mermaid
 stateDiagram-v2
     [*] --> Idle
-    Idle --> Generating: SendMessage / RegenerateLast / Impersonate<br/>(гейт: сервер Ready)
+    Idle --> Generating: SendMessage / RegenerateLast / Impersonate<br/>(gate: server Ready)
     Generating --> Cancelling: Cancel
     Generating --> Idle: Finished (Stop/Length/Error)
-    Cancelling --> Idle: задача завершилась (частичный ответ сохранён)
-    Idle --> Idle: команды списка/настроек/RAG (не зависят от генерации)
+    Cancelling --> Idle: task finished (partial reply preserved)
+    Idle --> Idle: list/settings/RAG commands (don't depend on generation)
 ```
 
-Сама генерация исполняется в **отдельной `tokio`-задаче**, которая стримит
-`AppEvent` в UI напрямую, а итог (новые доменные сообщения + эффекты инструментов)
-возвращает оркестратору через внутренний канал `done_tx` (тип `GenResult`).
-Оркестратор — единственный владелец `Chat` — дописывает сообщения и применяет
-эффекты сам.
+Generation itself runs in a **separate `tokio` task**, which streams
+`AppEvent`s to the UI directly and returns the result (new domain messages +
+tool effects) to the orchestrator through an internal `done_tx` channel (type
+`GenResult`). The orchestrator — the sole owner of `Chat` — appends the
+messages and applies the effects itself.
 
-**Клиентский agentic-loop** (spec §6.3): сервер не исполняет наши инструменты,
-цикл ведёт оркестратор между HTTP-раундами.
+**Client-side agentic loop** (spec §6.3): the server doesn't execute our tools,
+so the orchestrator drives the loop between HTTP rounds.
 
 ```mermaid
 sequenceDiagram
     participant UI
-    participant ORCH as Оркестратор (gen task)
+    participant ORCH as Orchestrator (gen task)
     participant LLM as llama-server
     participant REG as ToolRegistry
 
     UI->>ORCH: SendMessage(text)
-    Note over ORCH: проверка State::Idle + сервер Ready
+    Note over ORCH: check State::Idle + server Ready
     ORCH->>UI: GenerationStarted{id}
     loop round < max_tool_rounds
         ORCH->>LLM: chat_stream(req, cancel)
         LLM-->>ORCH: Text / Thoughts / ToolCall / Usage deltas
-        ORCH->>UI: Chunk / Thoughts / TokenUsage (по generation_id)
+        ORCH->>UI: Chunk / Thoughts / TokenUsage (by generation_id)
         alt finish = Stop / Length / Cancelled
             ORCH->>UI: Finished{reason}
-            Note over ORCH: зафиксировать ответ, выйти
+            Note over ORCH: finalize the reply, exit
         else finish = ToolCalls
             ORCH->>REG: invoke(name, args, &ToolContext)
             REG-->>ORCH: ToolOutcome{result, effects}
             ORCH->>UI: ToolCall{name,args,result}
-            Note over ORCH: applied: tool-message в историю,<br/>effects применяются оркестратором
+            Note over ORCH: applied: tool message goes into history,<br/>effects are applied by the orchestrator
         end
     end
-    ORCH-->>UI: (через done_tx) новые Message + ChatEffect
+    ORCH-->>UI: (via done_tx) new Message + ChatEffect
 ```
 
-Детали:
+Details:
 
-- `max_tool_rounds` (по умолчанию **8**) — защита от зацикливания.
-- **Гейт готовности сервера.** Отправка/регенерация/имперсонация стартуют только в
-  `ServerStatus::Ready`. Проба бьёт в `/health` (вне `/v1`): `200` — готов, `503
-  Loading model` — ещё грузится (не готов), `404` — сервер без `/health`, считаем
-  живым. Это не даёт первому запросу уйти на ещё загружающийся managed-сервер и
-  упасть на `503`. При неготовности отправки текст возвращается в поле ввода
+- `max_tool_rounds` (default **8**) — protects against looping forever.
+- **Server readiness gate.** Sending/regenerating/impersonating only start in
+  `ServerStatus::Ready`. The probe hits `/health` (outside `/v1`): `200` —
+  ready, `503 Loading model` — still loading (not ready), `404` — a server
+  without `/health`, treated as alive. This keeps the first request from going
+  to a still-loading managed server and failing with `503`. When not ready, the
+  text is put back into the input box
   (`RestoreInput`).
-- **«Мысли» (CoT).** llama.cpp: `delta.reasoning_content` (`llama-server
-  --reasoning-format`) → `ChatChunk::Thoughts`; запасной путь — потоковый парсер
-  `<think>…</think>` (`shared/api/thoughts.rs`), склеивающий теги на границе чанка.
-  **Anthropic (Claude):** `wire::build_request` шлёт `thinking:{type:"adaptive",
-  display:"summarized"}` при `sampling.thinking==Some(true)` (+ `output_config.effort`
-  из `reasoning_effort`); `budget_tokens`/`reasoning_budget` **не шлём** — модели 4.x
-  их отвергают (`400`). `thinking_delta`→`Thoughts`, `signature_delta`→
-  `ChatChunk::ThoughtsSignature`. **OpenAI Responses:** `reasoning.summary` (шлём
-  `"detailed"` — надёжнее `"auto"`) → `response.reasoning_summary_text.delta` (и
-  `response.reasoning_text.delta`) → `Thoughts`; глубину задаёт `reasoning.effort`
-  (`ReasoningEffort` включает `minimal`/`xhigh`). **Резюме отдаётся только
-  верифицированным организациям OpenAI** — иначе поток «мыслей» пуст (сырой CoT не
-  отдаётся никогда). `supported_sampling_fields(OpenAi)` =
+- **"Thoughts" (CoT).** llama.cpp: `delta.reasoning_content` (`llama-server
+  --reasoning-format`) → `ChatChunk::Thoughts`; the fallback path is a streaming
+  parser for `<think>…</think>` (`shared/api/thoughts.rs`), which stitches the
+  tags across chunk boundaries. **Anthropic (Claude):** `wire::build_request`
+  sends `thinking:{type:"adaptive", display:"summarized"}` when
+  `sampling.thinking==Some(true)` (+ `output_config.effort` from
+  `reasoning_effort`); we **don't** send `budget_tokens`/`reasoning_budget` — the
+  4.x models reject them (`400`). `thinking_delta`→`Thoughts`,
+  `signature_delta`→`ChatChunk::ThoughtsSignature`. **OpenAI Responses:**
+  `reasoning.summary` (we send `"detailed"` — more reliable than `"auto"`) →
+  `response.reasoning_summary_text.delta` (and `response.reasoning_text.delta`) →
+  `Thoughts`; depth is set via `reasoning.effort` (`ReasoningEffort` includes
+  `minimal`/`xhigh`). **Summaries are only delivered to verified OpenAI
+  organizations** — otherwise the "thoughts" stream is empty (raw CoT is never
+  delivered). `supported_sampling_fields(OpenAi)` =
   `max_tokens`+`thinking`+`reasoning_effort`+`verbosity`.
-  **Gemini (нативный `generateContent`):** `generationConfig.thinkingConfig.
-  includeThoughts:true` → части `{text, thought:true}` → `Thoughts`; глубина —
-  `thinkingLevel` (3.x: `minimal/low/medium/high`) или `thinkingBudget` (2.5, токены),
-  инференс поколения по имени модели; `reasoning_budget==0` глушит (2.5 Flash — `0`,
-  2.5 Pro — минимум `128`, 3.x — `minimal`). `usageMetadata.thoughtsTokenCount` →
-  `reasoning_tokens`. `supported_sampling_fields(Gemini)` = `temperature`/`top_p`/
-  `top_k`/`max_tokens`/`seed`/`frequency_penalty`/`presence_penalty`+`thinking`/
-  `reasoning_effort`. Блокировки (`promptFeedback.blockReason`, `finishReason` вроде
-  `SAFETY`/`RECITATION`) сюрфейсятся заметкой в ленту, а не молчаливым пустым `Stop`.
-- **Переотправка рассуждения при tool-use** (общий механизм для Anthropic и OpenAI
-  Responses). Оба провайдера требуют вернуть рассуждение вместе с вызовом инструмента в
-  том же ходе (иначе `400`/просадка): `ChatChunk::ThoughtsSignature(ThinkingRef{id,
-  signature})` — `id` несёт только OpenAI (reasoning-элемент `rs_…`), у Anthropic
-  `None`. Agentic-loop копит `ThinkingRef` раунда и крепит `ApiMessage.thinking`
-  (`with_thinking`, `ThinkingBlock{text,signature,id}`) к ходу с вызовами. Anthropic:
-  `build_messages` ставит `AntBlock::Thinking` **первым** в assistant-ходе; OpenAI
-  Responses: `build_input` ставит reasoning-элемент (`id`+`encrypted_content`)
-  **перед** его `function_call`. Живёт только в памяти хода (между ходами оба провайдера
-  авто-отбрасывают старые thinking → не персистится). `supported_sampling_fields(Claude)`
-  = `max_tokens`+`thinking`+`reasoning_effort`.
-- **Подписи мыслей Gemini — per-tool-call и персистятся** (отличие от механизма выше).
-  У Gemini `thoughtSignature` привязана к **конкретному** `functionCall`, а не одна на
-  ход, и для Gemini 3 **обязательна** на исторических вызовах (иначе `400`). Поэтому не
-  используется `ThinkingRef`/`ThinkingBlock`, а поле `thought_signature` живёт на самом
-  вызове: `ToolCallDelta`→`ApiToolCall` (клиент кладёт из части, accumulator копит по
-  индексу) и **персистится** в `ToolCallRecord` (`#[serde(default,skip_serializing_if)]`,
-  без миграции). Внутри генерации подпись едет через `out.calls`, между генерациями —
-  через персист (`record_to_api`); `wire::build_contents` переотправляет её соседом
-  `functionCall`. Подтверждено на живом Gemini 3.1 Pro (round-trip без `400`).
-- **EOS.** Остановка строго по token-id спец-токенов модели (на стороне сервера);
-  строковые `stop` по тексту EOS приложение **не отправляет** (анти-самообрыв).
-- **Регенерация** усекает историю по последнее сообщение пользователя
-  включительно и перезапускает `start_generation`; **удаление последнего обмена**
-  снимает последний user+assistant и возвращает текст пользователя в ввод.
+  **Gemini (native `generateContent`):** `generationConfig.thinkingConfig.
+  includeThoughts:true` → parts `{text, thought:true}` → `Thoughts`; depth is
+  `thinkingLevel` (3.x: `minimal/low/medium/high`) or `thinkingBudget` (2.5,
+  tokens), generation inferred from the model name; `reasoning_budget==0` mutes it
+  (2.5 Flash — `0`, 2.5 Pro — minimum `128`, 3.x — `minimal`).
+  `usageMetadata.thoughtsTokenCount` → `reasoning_tokens`.
+  `supported_sampling_fields(Gemini)` = `temperature`/`top_p`/`top_k`/`max_tokens`/
+  `seed`/`frequency_penalty`/`presence_penalty`+`thinking`/`reasoning_effort`.
+  Blocks (`promptFeedback.blockReason`, a `finishReason` like `SAFETY`/
+  `RECITATION`) surface as a note in the feed, instead of a silently empty `Stop`.
+- **Reasoning re-send on tool use** (a shared mechanism for Anthropic and OpenAI
+  Responses). Both providers require the reasoning to be sent back along with the
+  tool call in the same turn (otherwise `400`/quality drop):
+  `ChatChunk::ThoughtsSignature(ThinkingRef{id, signature})` — only OpenAI carries
+  an `id` (the `rs_…` reasoning element); Anthropic's is `None`. The agentic loop
+  accumulates the round's `ThinkingRef` and attaches `ApiMessage.thinking`
+  (`with_thinking`, `ThinkingBlock{text,signature,id}`) to the turn with the calls.
+  Anthropic: `build_messages` puts `AntBlock::Thinking` **first** in the assistant
+  turn; OpenAI Responses: `build_input` puts the reasoning element
+  (`id`+`encrypted_content`) **before** its `function_call`. It only lives in the
+  turn's memory (between turns both providers auto-drop old thinking → not
+  persisted). `supported_sampling_fields(Claude)` = `max_tokens`+`thinking`+
+  `reasoning_effort`.
+- **Gemini thought signatures are per-tool-call and persisted** (unlike the
+  mechanism above). For Gemini, `thoughtSignature` is bound to a **specific**
+  `functionCall`, not one per turn, and for Gemini 3 it's **required** on
+  historical calls (otherwise `400`). So `ThinkingRef`/`ThinkingBlock` aren't used
+  — instead a `thought_signature` field lives on the call itself:
+  `ToolCallDelta`→`ApiToolCall` (the client fills it from the part, the
+  accumulator collects it by index) and it's **persisted** in `ToolCallRecord`
+  (`#[serde(default,skip_serializing_if)]`, no migration). Within one generation
+  the signature travels through `out.calls`; between generations, through
+  persistence (`record_to_api`); `wire::build_contents` resends it alongside
+  `functionCall`. Confirmed against live Gemini 3.1 Pro (round trip without
+  `400`).
+- **EOS.** Stopping is strictly by the model's special-token id (server-side); the
+  application **doesn't send** a text-based EOS `stop` string (anti-self-abort).
+- **Regeneration** truncates history through the last user message inclusive
+  and restarts `start_generation`; **deleting the last exchange** removes the
+  last user+assistant pair and returns the user's text to the input box.
 
 ---
 
-## 6. Слой движка (`shared/api`)
+## 6. Engine layer (`shared/api`)
 
-Транспорт спрятан за двумя трейтами — это даёт замену движка, мульти-провайдерность
-и mock в тестах. Модуль разложен по семействам ([ADR 0004](decisions/0004-engine-contract-multi-provider.md)):
-**`contract`** (провайдеро-агностичные трейты и типы), **`openai`** (два протокола
-семейства: `client`+`wire` — Chat Completions для локального/external `llama-server`/
-прокси; `responses` — Responses API для облака OpenAI), **`gemini`** (нативный
-`generateContent` для облака Google Gemini), **`anthropic`** (Claude, Messages API),
-**`managed`** (запуск дочернего `llama-server`).
+The transport is hidden behind two traits — this gives engine swappability,
+multi-provider support, and mocking in tests. The module is laid out by family
+([ADR 0004](decisions/0004-engine-contract-multi-provider.md)): **`contract`**
+(provider-agnostic traits and types), **`openai`** (two protocols in the
+family: `client`+`wire` — Chat Completions for local/external `llama-server`/
+a proxy; `responses` — the Responses API for the OpenAI cloud), **`gemini`**
+(native `generateContent` for the Google Gemini cloud), **`anthropic`**
+(Claude, Messages API), **`managed`** (launching a child `llama-server`).
 
 ```mermaid
 classDiagram
@@ -586,11 +608,11 @@ classDiagram
     class OpenAiClient {
         openai/: Chat Completions, reqwest + SSE
         +probe() /health
-        local/external/прокси, Bearer, embed
+        local/external/proxy, Bearer, embed
     }
     class ResponsesClient {
         openai/responses/: /v1/responses
-        Bearer, событийный SSE, reasoning/verbosity
+        Bearer, event-based SSE, reasoning/verbosity
     }
     class GeminiClient {
         gemini/: generateContent, SSE
@@ -598,10 +620,10 @@ classDiagram
     }
     class AnthropicClient {
         anthropic/: /v1/messages
-        x-api-key, событийный SSE
+        x-api-key, event-based SSE
     }
     class UnavailableEmbedder {
-        RAG не настроен → ошибка
+        RAG not configured → error
     }
     class MockBackend {
         #[cfg(test)]
@@ -615,112 +637,126 @@ classDiagram
     Embedder <|.. UnavailableEmbedder
 ```
 
-Провайдер выбирается в настройках единым селектором режима (`managed`/`external`/
-`openai`/`gemini`/`claude`); API-ключ либо **вводится в настройках** (хранится
-зашифрованным машинным ключом, `shared/secrets.rs` — см. §12), либо задаётся
-**именем env-переменной** (фолбэк); открытым текстом секрет на диск не попадает.
-Поле `model` для облака обязательно — его подставляет сам бэкенд (доменный
-`ChatRequest` модель не несёт). Соответствие режима и бэкенда/протокола:
+The provider is picked in settings via a single mode selector (`managed`/
+`external`/`openai`/`gemini`/`claude`); the API key is either **entered in
+settings** (stored encrypted with the machine key, `shared/secrets.rs` — see
+§12) or given as an **env-variable name** (fallback); the secret never lands on
+disk in plaintext. The `model` field is required for the cloud — the backend
+itself fills it in (the domain `ChatRequest` doesn't carry a model). Mapping
+between mode and backend/protocol:
 
-| Режим | Бэкенд | Протокол | Сэмплинг (`supported_sampling_fields`) |
+| Mode | Backend | Protocol | Sampling (`supported_sampling_fields`) |
 |---|---|---|---|
-| managed / external | `OpenAiClient` | Chat Completions | весь набор (расширения llama.cpp) |
-| **gemini** | **`GeminiClient`** | **нативный `generateContent`** | `temperature`/`top_p`/`top_k`/penalties/`seed`/`max_tokens`+`thinking`/`reasoning_effort` |
+| managed / external | `OpenAiClient` | Chat Completions | the full set (llama.cpp extensions) |
+| **gemini** | **`GeminiClient`** | **native `generateContent`** | `temperature`/`top_p`/`top_k`/penalties/`seed`/`max_tokens`+`thinking`/`reasoning_effort` |
 | **openai** | **`ResponsesClient`** | **Responses (`/v1/responses`)** | `max_tokens`+`thinking`+`reasoning_effort`+`verbosity` |
 | claude | `AnthropicClient` | Messages (`/v1/messages`) | `max_tokens`+`thinking`+`reasoning_effort` |
 
-**Сэмплинг Chat Completions** (`OpenAiClient`): диалекта/фильтрации больше нет — все
-поля шлются как есть (llama.cpp игнорирует незнакомое; облака ушли на свои протоколы,
-`WireDialect` удалён). Облако **OpenAI** — на Responses (`ResponsesClient`): системное
-сообщение → top-level `instructions`, история → массив `input` из элементов,
-`max_tokens`→`max_output_tokens`, `store:false`, function-tool плоский со `strict:false`;
-резюме рассуждений/`effort`/`verbosity` (см. «Мысли (CoT)»). Облако **Gemini** — на
-нативном `generateContent` (`GeminiClient`): system → top-level `systemInstruction`,
-роли `user`/`model` (tool-результат → `functionResponse` в user), вызов → `functionCall`
-(args-объект, без `call_id`), `thinkingConfig`; подпись мысли `thoughtSignature`
-per-tool-call (персист). `AnthropicClient` из сэмплинга шлёт `max_tokens` +
-extended thinking (`thinking`/`reasoning_effort` → adaptive; Claude 4.x отвергает
-temperature/top_p/top_k и `budget_tokens`). У Anthropic и Responses нет embeddings —
-`Embedder` реализует только `OpenAiClient` (RAG берёт отдельный, ADR 0002). External
-получил опциональный `api_key_env` (Bearer-ключ для OpenAI-совместимого прокси/шлюза).
+**Chat Completions sampling** (`OpenAiClient`): there's no more dialect/filtering
+— all fields are sent as-is (llama.cpp ignores what it doesn't know; the clouds
+moved to their own protocols, `WireDialect` was removed). The **OpenAI** cloud
+runs on Responses (`ResponsesClient`): the system message → top-level
+`instructions`, history → an `input` array of elements,
+`max_tokens`→`max_output_tokens`, `store:false`, a flat function-tool with
+`strict:false`; reasoning summary/`effort`/`verbosity` (see "Thoughts (CoT)").
+The **Gemini** cloud runs on native `generateContent` (`GeminiClient`): system →
+top-level `systemInstruction`, `user`/`model` roles (a tool result →
+`functionResponse` in user), a call → `functionCall` (an args object, no
+`call_id`), `thinkingConfig`; the `thoughtSignature` thought signature is
+per-tool-call (persisted). `AnthropicClient` sends only `max_tokens` from
+sampling + extended thinking (`thinking`/`reasoning_effort` → adaptive; Claude
+4.x rejects temperature/top_p/top_k and `budget_tokens`). Anthropic and
+Responses have no embeddings — only `OpenAiClient` implements `Embedder` (RAG
+uses a separate one, ADR 0002). External gained an optional `api_key_env`
+(a Bearer key for an OpenAI-compatible proxy/gateway).
 
-- **`ChatRequest`** = `system` + `messages` (user/assistant/tool, включая
-  `tool_calls` и tool-результаты) + `sampling` + `tools`. История append-only →
-  локальный сервер переиспользует prefix cache. Каждый бэкенд транслирует в свой
-  wire-формат (OpenAI Chat Completions либо Anthropic Messages: system → top-level,
-  tool-результаты → `tool_result`-блоки в user, склейка соседних ролей).
+- **`ChatRequest`** = `system` + `messages` (user/assistant/tool, including
+  `tool_calls` and tool results) + `sampling` + `tools`. History is append-only →
+  a local server reuses the prefix cache. Each backend translates it into its
+  own wire format (OpenAI Chat Completions or Anthropic Messages: system →
+  top-level, tool results → `tool_result` blocks in user, adjacent roles
+  merged).
 - **`ChatChunk`** = `Text` | `Thoughts` | `ThoughtsSignature(ThinkingRef)` |
-  `ToolCall(ToolCallDelta)` | `Usage(TokenUsage)` | `Finished`. `ToolCallAccumulator` собирает разрезанные по
-  чанкам вызовы по `index`; `Usage` (`prompt_tokens`/`completion_tokens`) приходит
-  финальным чанком при `stream_options.include_usage=true` — счётчик токенов.
-  `ThoughtsSignature` эмитят **Anthropic** (подпись thinking-блока) и **OpenAI Responses**
-  (reasoning-элемент `id`+`encrypted_content`) — подпись одна на ход. **Gemini** подпись
-  не шлёт через `ThoughtsSignature`: она per-tool-call, едет полем
-  `ToolCallDelta.thought_signature`→`ApiToolCall`→`ToolCallRecord` (персист). Прочие
-  бэкенды подписи не эмитят.
-- **`ServerHandle`** (`managed.rs`) владеет дочерним `llama-server`: `Child` отдан
-  **монитор-задаче** (`spawn_monitor`), которая `select!`-ит между его выходом (взвод
-  `exited`-токена) и сигналом `kill` (взводится в `Drop` хэндла → `start_kill`;
-  `kill_on_drop` оставлен подстраховкой). `build_args` собирает CLI (`-m`, `-ngl`,
-  `-c`, `--jinja`, `--no-mmap`, `--flash-attn`; спекулятивное декодирование
-  `--spec-type` + черновые `-md`/`-ngld`/`--spec-draft-n-max`/`-n-min`; для
-  эмбеддингов — `--embeddings -ub <ctx> -b <ctx>`). Опциональные флаги добавляются
-  только когда заданы (незаданное → дефолт llama.cpp); `FlashAttn`/`SpecType` —
-  enum'ы в `shared/config`, в `ManagedConfig` приходят примитивами (как
-  `reasoning_format`), enum→строку конвертирует супервайзер.
-  **Предполёт:** если `model_path` (или черновой `-md`) задан, но файла нет — `bail!` до `spawn`.
-  **Ранний выход:** если файл валиден, но процесс умирает уже *в ходе* загрузки
-  (битый GGUF, OOM), монитор взводит `exited`, а `wait_until_ready(..., exited)`
-  прекращает поллинг сразу с понятной ошибкой — не ждёт таймаут (иначе зависание в
-  «подключение…» до `MANAGED_READY_TIMEOUT=600с`).
+  `ToolCall(ToolCallDelta)` | `Usage(TokenUsage)` | `Finished`.
+  `ToolCallAccumulator` collects calls split across chunks by `index`; `Usage`
+  (`prompt_tokens`/`completion_tokens`) arrives as a final chunk when
+  `stream_options.include_usage=true` — the token counter. `ThoughtsSignature`
+  is emitted by **Anthropic** (a thinking-block signature) and **OpenAI
+  Responses** (a reasoning element `id`+`encrypted_content`) — one signature per
+  turn. **Gemini** doesn't send its signature through `ThoughtsSignature`: it's
+  per-tool-call, riding the `ToolCallDelta.thought_signature`→`ApiToolCall`→
+  `ToolCallRecord` field (persisted). Other backends don't emit signatures.
+- **`ServerHandle`** (`managed.rs`) owns the child `llama-server`: the `Child`
+  is handed to a **monitor task** (`spawn_monitor`), which `select!`s between
+  its exit (raising an `exited` token) and a `kill` signal (raised in the
+  handle's `Drop` → `start_kill`; `kill_on_drop` is kept as a backstop).
+  `build_args` assembles the CLI (`-m`, `-ngl`, `-c`, `--jinja`, `--no-mmap`,
+  `--flash-attn`; speculative decoding `--spec-type` + draft `-md`/`-ngld`/
+  `--spec-draft-n-max`/`-n-min`; for embeddings — `--embeddings -ub <ctx> -b
+  <ctx>`). Optional flags are added only when set (unset → llama.cpp default);
+  `FlashAttn`/`SpecType` are enums in `shared/config`, arriving in
+  `ManagedConfig` as primitives (like `reasoning_format`) — the supervisor
+  converts the enum to a string.
+  **Preflight:** if `model_path` (or the draft `-md`) is set but the file
+  doesn't exist — `bail!` before `spawn`.
+  **Early exit:** if the file is valid but the process dies *while* loading
+  (a corrupt GGUF, OOM), the monitor raises `exited`, and
+  `wait_until_ready(..., exited)` stops polling right away with a clear error —
+  instead of waiting out the timeout (which would otherwise hang in
+  "connecting…" until `MANAGED_READY_TIMEOUT=600s`).
 
-### Управление серверами — `ServerSupervisor` (`app/supervisor.rs`)
+### Server management — `ServerSupervisor` (`app/supervisor.rs`)
 
-Супервайзер живёт в `app` (композиционный клей, знающий и про `shared/config`, и
-про `shared/api`). За трейтом — ради `MockSupervisor` в тестах (отдаёт `Ready`
-синхронно, чтобы тесты не зависели от гонки статуса).
+The supervisor lives in `app` (composition glue that knows about both
+`shared/config` and `shared/api`). It's behind a trait for `MockSupervisor` in
+tests (returns `Ready` synchronously, so tests don't depend on a status race).
 
-Со стороны оркестратора жизненный цикл серверов инкапсулирован в **`EngineManager`**
-(`app/orchestrator/engines.rs`, Фаза 3): владеет движками (`backend`/`imp_backend`/
-`embedder`), опорами на managed-процессы, статусами готовности и каналами probe;
-экспонирует `apply_chat/embed/impersonation`, `backend_if_ready`,
-`impersonation_backend_if_ready`, `embedder()`. Это убрало ~11 полей из
-`Orchestrator` (27 → 16), не затронув инвариант «единственный владелец `Chat`».
+On the orchestrator side, server lifecycle is encapsulated in
+**`EngineManager`** (`app/orchestrator/engines.rs`, Phase 3): it owns the
+engines (`backend`/`imp_backend`/`embedder`), handles for managed processes,
+readiness statuses and probe channels; it exposes `apply_chat/embed/
+impersonation`, `backend_if_ready`, `impersonation_backend_if_ready`,
+`embedder()`. This removed ~11 fields from `Orchestrator` (27 → 16) without
+affecting the "sole owner of `Chat`" invariant.
 
 ```mermaid
 flowchart TB
     CFG["AppConfig<br/>(EngineSettings / EmbedSettings / ImpersonationEngineSettings)"]
     SUP["ServerSupervisor (LlamaSupervisor)"]
     CFG --> SUP
-    SUP -->|apply_chat| CHAT["chat backend + ServerHandle + status<br/>фоновый probe → status_tx"]
-    SUP -->|apply_embed| EMB["embedder + ServerHandle (RAG ленив, без probe)"]
-    SUP -->|apply_impersonation| IMP["managed/external сервер имперсонации<br/>(shared → переиспользует chat-сервер)"]
+    SUP -->|apply_chat| CHAT["chat backend + ServerHandle + status<br/>background probe → status_tx"]
+    SUP -->|apply_embed| EMB["embedder + ServerHandle (RAG is lazy, no probe)"]
+    SUP -->|apply_impersonation| IMP["managed/external impersonation server<br/>(shared → reuses the chat server)"]
 ```
 
-Два режима из настроек: **managed** (приложение запускает дочерний `llama-server`,
-ждёт `/health`, при выходе — kill) и **external** (подключение к уже запущенному
-любому OpenAI-совместимому серверу). Смена модели в настройках = перезапуск
-сервера; смена настроек эмбеддингов — пере-поднятие embedding-сервера. Рестарт
-**дебаунсится** (`orchestrator/restart_queue.rs`, 1.2 с тишины): экран настроек
-применяет правку при коммите каждого поля, и серия «бинарник → модель → -ngl»
-коалесится в один рестарт с итоговыми значениями; конфиг при этом сохраняется и
-переэмитится в UI сразу. Стартовый подъём серверов — немедленный, без дебаунса.
+Two modes from settings: **managed** (the application launches a child
+`llama-server`, waits for `/health`, kills it on exit) and **external**
+(connects to any already-running OpenAI-compatible server). Changing the model
+in settings = restarting the server; changing embeddings settings re-launches
+the embedding server. Restarts are **debounced**
+(`orchestrator/restart_queue.rs`, 1.2s of quiet): the settings screen applies
+an edit on every field commit, and a series of "binary → model → -ngl" edits
+coalesces into one restart with the final values; the config is still saved
+and re-emitted to the UI right away. The initial server startup is immediate,
+no debounce.
 
-**Эмбеддинги — выделенный сервер** ([ADR 0002](decisions/0002-embeddings-dedicated-server.md)):
-отдельный процесс/порт, трейт `Embedder` отделён от `EngineBackend`. Не настроен →
-`UnavailableEmbedder` (RAG отдаёт понятную ошибку, не падает).
+**Embeddings run on a dedicated server**
+([ADR 0002](decisions/0002-embeddings-dedicated-server.md)): a separate
+process/port, with the `Embedder` trait split off from `EngineBackend`. Not
+configured → `UnavailableEmbedder` (RAG returns a clear error instead of
+crashing).
 
 ---
 
-## 7. Доменная модель и хранение
+## 7. Domain model and storage
 
-Доменные типы (`entities/`) — без I/O, serde-сериализуемы.
+Domain types (`entities/`) — no I/O, serde-serializable.
 
 ```mermaid
 erDiagram
     PROFILE ||--o{ CHAT : "profile_id"
-    PROFILE ||--o{ NOTE : "profile_id (изоляция)"
-    PROFILE ||--o{ RAG_DOCUMENT : "profile_id (изоляция)"
+    PROFILE ||--o{ NOTE : "profile_id (isolation)"
+    PROFILE ||--o{ RAG_DOCUMENT : "profile_id (isolation)"
     CHAT ||--o{ MESSAGE : "messages[]"
     MESSAGE ||--o{ TOOL_CALL_RECORD : "tool_calls[]"
 
@@ -755,21 +791,21 @@ erDiagram
     TOOL_CALL_RECORD { string id }
 ```
 
-### Двухуровневое хранение (`shared/storage`)
+### Two-tier storage (`shared/storage`)
 
 ```mermaid
 flowchart LR
-    STORE["Storage (фасад, потокобезопасный)"]
-    subgraph JSON["JSON (json.rs) — атомарно write-rename + .bak"]
+    STORE["Storage (facade, thread-safe)"]
+    subgraph JSON["JSON (json.rs) — atomic write-rename + .bak"]
         SET["settings.json"]
         PRO["profiles.json"]
         CHATS["chats/{id}.json"]
     end
     subgraph DB["SQLite + sqlite-vec (db.rs)"]
         NOTES["notes (profile_id)"]
-        NV["note_vectors (note_id PK)<br/>эмбеддинг заметки, косинус в Rust"]
-        NL["note_links (граф связей)<br/>from/to/relation, изоляция по profile_id"]
-        NSUP["note_superseded (note_id PK)<br/>«шрам» замещения, скрыт из выдачи"]
+        NV["note_vectors (note_id PK)<br/>note embedding, cosine in Rust"]
+        NL["note_links (link graph)<br/>from/to/relation, isolated by profile_id"]
+        NSUP["note_superseded (note_id PK)<br/>supersession scar, hidden from results"]
         RAGD["rag_documents (profile_id)"]
         VEC["rag_vectors vec0 (rowid)"]
         SELF["self_models (profile_id PK)"]
@@ -778,201 +814,226 @@ flowchart LR
     STORE --> DB
 ```
 
-Инварианты хранения:
+Storage invariants:
 
-- **Изоляция по `profile_id`** — обязательный `WHERE profile_id = ?` во всех
-  запросах notes/RAG (покрыто негативными тестами).
-- **Мягкое удаление** (`is_hidden`) везде: скрытие профиля каскадно скрывает его
-  чаты и исключает заметки/RAG из выборок. Физического удаления нет.
-- **Один писатель** — оркестратор. Чаты сохраняются с дебаунсом (800 мс,
-  `save_deadline` + множество `dirty`); запись атомарна (write-rename), бэкап `.bak`.
-- **Размерность эмбеддингов** фиксируется по первому ответу `/v1/embeddings` и
-  хранится в схеме sqlite-vec (`meta.rag_dim`).
+- **Isolation by `profile_id`** — a mandatory `WHERE profile_id = ?` in every
+  notes/RAG query (covered by negative tests).
+- **Soft delete** (`is_hidden`) everywhere: hiding a profile cascades to hide
+  its chats and excludes notes/RAG from result sets. There's no physical
+  delete.
+- **A single writer** — the orchestrator. Chats are saved debounced (800ms,
+  `save_deadline` + a `dirty` set); the write is atomic (write-rename), with a
+  `.bak` backup.
+- **Embedding dimensionality** is fixed by the first `/v1/embeddings`
+  response and stored in the sqlite-vec schema (`meta.rag_dim`).
 
-### Версионирование схем и миграции ([ADR 0006](decisions/0006-data-schema-versioning.md))
+### Schema versioning and migrations ([ADR 0006](decisions/0006-data-schema-versioning.md))
 
-У каждого артефакта своя версия схемы (пер-артефакт — они меняются с разной скоростью;
-все = 1). Карта ответственности:
+Each artifact has its own schema version (per-artifact — they change at
+different rates; all are currently 1). Ownership map:
 
-- **`shared/storage/schema.rs`** — чистый Value-уровневый каркас (без I/O): константы
-  `SETTINGS_SCHEMA`/`PROFILES_SCHEMA`/`CHAT_SCHEMA`/`DB_SCHEMA`, `Step`
-  (`fn(Value)->Result<Value>`), `JsonArtifact` (`current` + структурный `detect` +
-  цепочка `steps`), вердикт `Assessment` (`UpToDate`/`Migrate`/`Downgrade`), реестр.
-- **`features/data_migration.rs`** — оркестрация: файловый I/O, гейты, pre-migration
-  бэкап, control-parse. `run(paths, loc)` вызывается из `main.rs` **перед** открытием
-  хранилища (TUI и CLI `import`). В `features` (не `shared`), т.к. pre-migration бэкап —
-  `features::backup`, а `shared` не может зависеть от `features` (FSD). Отклонение от
-  дизайн-дока (миграция не внутри `Storage::open`) — чтобы не пробрасывать `loc` через
-  ~30 тест-сайтов `Storage::open`; каркас/константы всё равно живут в `shared`.
+- **`shared/storage/schema.rs`** — a pure Value-level scaffold (no I/O):
+  constants `SETTINGS_SCHEMA`/`PROFILES_SCHEMA`/`CHAT_SCHEMA`/`DB_SCHEMA`,
+  `Step` (`fn(Value)->Result<Value>`), `JsonArtifact` (`current` + structural
+  `detect` + a `steps` chain), the `Assessment` verdict (`UpToDate`/`Migrate`/
+  `Downgrade`), a registry.
+- **`features/data_migration.rs`** — orchestration: file I/O, gates,
+  pre-migration backup, control-parse. `run(paths, loc)` is called from
+  `main.rs` **before** opening storage (for both the TUI and the CLI
+  `import`). It lives in `features` (not `shared`) because the pre-migration
+  backup is `features::backup`, and `shared` can't depend on `features`
+  (FSD). This deviates from the design doc (migration doesn't live inside
+  `Storage::open`) — to avoid threading `loc` through ~30 `Storage::open`
+  test sites; the scaffold/constants still live in `shared`.
 
-Инварианты:
+Invariants:
 
-- **определение версии структурное** (формат не меняется, ноль churn): `settings.json` —
-  поле `schema_version`; `profiles.json` — голый массив → 1, иначе `schema_version`;
-  `chats/<id>.json` — поле `v` (не пишется, пока схема = 1);
-- **eager на старте**: план = файлы с версией `< current`; непуст → **один**
-  pre-migration бэкап (`backups/pre-migrate-<дата>.zip`) до любой записи → шаги →
-  control-parse (мигрированное не парсится → отказ, файл не перезаписан) → атомарная
-  запись мигрированного `Value` (`json::write_json`, `pub(crate)`);
-- **downgrade-guard**: версия новее приложения → отказ запуска (локализовано);
-- **упрочнение чтения**: битый `settings.json`/`profiles.json` → отказ запуска; битый
-  `chats/<id>.json` → пропуск с `warn`, файл не тронут (`json.rs::load_chats`);
-- пока все схемы = 1 план всегда пуст (путь дормантный, покрыт тестом на синтетическом
-  артефакте `current = 2`).
+- **version detection is structural** (format doesn't change, zero churn):
+  `settings.json` — the `schema_version` field; `profiles.json` — a bare
+  array → 1, otherwise `schema_version`; `chats/<id>.json` — the `v` field
+  (not written while the schema is 1);
+- **eager at startup**: the plan = files with a version `< current`;
+  non-empty → **one** pre-migration backup (`backups/pre-migrate-<date>.zip`)
+  before any write → steps → control-parse (the migrated result fails to
+  parse → abort, the file isn't overwritten) → an atomic write of the
+  migrated `Value` (`json::write_json`, `pub(crate)`);
+- **downgrade guard**: a version newer than the app → refuse to start
+  (localized);
+- **hardened reads**: a corrupt `settings.json`/`profiles.json` → refuse to
+  start; a corrupt `chats/<id>.json` → skipped with a `warn`, the file is left
+  untouched (`json.rs::load_chats`);
+- while all schemas are 1 the plan is always empty (a dormant path, covered
+  by a test against a synthetic `current = 2` artifact).
 
-SQLite-ветка (`db/mod.rs::migrate`, version-aware): `baseline_ddl` (`CREATE … IF NOT
-EXISTS`) выполняется **каждый раз** — additive-механизм добавления таблиц/индексов **без**
-bump (additive-DDL и `user_version` независимы). БД с `user_version = 0` штампуется
-`DB_SCHEMA = 1` (не миграция данных → бэкапа нет); breaking-шаги `DB_STEPS` (пуст)
-прогоняет `apply_db_steps` — **каждый в своей транзакции вместе с `user_version`**, откат
-целиком при ошибке; downgrade — `bail`. `data_migration` координирует SQLite с JSON в
-единый pre-migrate момент: `db::peek_user_version` + `db::needs_step_migration` до
-открытия хранилища дают downgrade-guard и общий бэкап (JSON **или** БД нужна миграция),
-сама миграция БД — позже в `Db::open`. БД в момент бэкапа ещё не открыта (quiescent) → её
-файлы (`data.db`+`-wal`+`-shm`) в общем zip согласованы **без** `rusqlite::backup`.
+The SQLite branch (`db/mod.rs::migrate`, version-aware): `baseline_ddl`
+(`CREATE … IF NOT EXISTS`) runs **every time** — an additive mechanism for
+adding tables/indexes **without** a bump (additive DDL and `user_version` are
+independent). A DB with `user_version = 0` is stamped with `DB_SCHEMA = 1`
+(not a data migration → no backup); breaking steps `DB_STEPS` (empty) run
+through `apply_db_steps` — **each in its own transaction alongside
+`user_version`**, rolled back entirely on error; downgrade — `bail`.
+`data_migration` coordinates SQLite with JSON at a single pre-migrate point:
+`db::peek_user_version` + `db::needs_step_migration` before storage opens
+give the downgrade guard and the shared backup (JSON **or** the DB needs
+migration); the actual DB migration happens later, in `Db::open`. The DB
+isn't open yet (quiescent) at backup time → its files (`data.db`+`-wal`+
+`-shm`) are consistent in the shared zip **without** `rusqlite::backup`.
 
-### Трёхуровневый семплинг (`entities/sampling.rs`)
+### Three-tier sampling (`entities/sampling.rs`)
 
-`resolve` разрешает приоритет **во время запроса** (не снимком при создании):
-`Chat.sampling_override` → `Profile.default_sampling` → глобальный
-`settings.json`. Снимок фактически применённого — в `Message.metadata`: режим
-движка (`mode`), имя модели (`model`) и семплинг, **урезанный до полей, доступных в
-этом режиме** (`SamplingConfig::retain_supported`, зеркало wire-диалекта — движок
-недоступное поле всё равно не принял бы, поэтому в снимок «что применилось» оно не
-попадает).
+`resolve` resolves priority **at request time** (not as a snapshot at
+creation): `Chat.sampling_override` → `Profile.default_sampling` → the global
+`settings.json`. A snapshot of what was actually applied goes into
+`Message.metadata`: the engine mode (`mode`), the model name (`model`), and
+the sampling, **trimmed down to the fields available in that mode**
+(`SamplingConfig::retain_supported`, mirroring the wire dialect — the engine
+wouldn't have accepted an unavailable field anyway, so it's excluded from the
+"what was applied" snapshot).
 
 ---
 
-## 8. Система инструментов (`features/tools`)
+## 8. Tool system (`features/tools`)
 
-Контракт инструмента — read-only-снимок + возврат эффектов (без локов на `Chat`).
+The tool contract: a read-only snapshot + returned effects (no locks on
+`Chat`).
 
 ```mermaid
 flowchart TB
-    REG["ToolRegistry<br/>schemas_for = профиль ∩ реестр · invoke(name,args,ctx)"]
-    CTX["ToolContext (снимок на начало хода)<br/>profile_id, chat_id, system_message,<br/>effective_sampling, last_user_message_at,<br/>storage: Arc&lt;Storage&gt;, engine, embedder, self_model_params"]
+    REG["ToolRegistry<br/>schemas_for = profile ∩ registry · invoke(name,args,ctx)"]
+    CTX["ToolContext (snapshot at the start of the turn)<br/>profile_id, chat_id, system_message,<br/>effective_sampling, last_user_message_at,<br/>storage: Arc&lt;Storage&gt;, engine, embedder, self_model_params"]
     OUT["ToolOutcome { result: String, effects: Vec&lt;ChatEffect&gt; }"]
     EFF["ChatEffect: SetSystemMessage | SetSamplingOverride"]
 
     REG --> CTX
     CTX --> OUT
     OUT --> EFF
-    EFF -. "применяет оркестратор (владелец Chat)" .-> ORCH["Chat"]
+    EFF -. "applied by the orchestrator (owner of Chat)" .-> ORCH["Chat"]
 ```
 
-Реестр строится из `ToolConfig` (`standard_registry(&ToolConfig)`) и
-пересобирается при правках `config.tools`. Эффективный набор инструментов =
-`Profile.enabled_tools` ∩ глобальные выключатели (`effective_tool_ids`);
-agentic-loop **гейтит и сам вызов** (выключенный инструмент отклоняется).
+The registry is built from `ToolConfig` (`standard_registry(&ToolConfig)`)
+and rebuilt on `config.tools` edits. The effective tool set =
+`Profile.enabled_tools` ∩ global toggles (`effective_tool_ids`); the agentic
+loop **also gates the call itself** (a disabled tool is rejected).
 
-**Сборка `ToolContext`** идёт через `ToolContext::new(deps, params, turn)` из трёх
-строительных блоков (плоские публичные поля контекста сохранены — код инструментов
-`ctx.storage`/`ctx.chunk_params`/… не меняется): `ToolDeps` (разделяемые
-`Arc`-зависимости — storage/engine/embedder; в оркестраторе собирается хелпером
-`tool_deps`), `ToolParams` (снимок параметров из конфига; **единственное** место
-маппинга `AppConfig` → параметры — `ToolParams::from_config`) и `TurnInfo` (снимок
-хода: идентичность + поля `Chat`). Так новое поле контекста правит один файл
-(`tools/mod.rs`), а не каждый сайт сборки. См. docs/history/refactoring-solid.md §3.
+**`ToolContext` construction** goes through `ToolContext::new(deps, params,
+turn)` from three building blocks (the context's flat public fields are kept
+— tool code like `ctx.storage`/`ctx.chunk_params`/… doesn't change):
+`ToolDeps` (shared `Arc` dependencies — storage/engine/embedder; assembled in
+the orchestrator via the `tool_deps` helper), `ToolParams` (a snapshot of
+config parameters; the **only** place that maps `AppConfig` → parameters is
+`ToolParams::from_config`), and `TurnInfo` (a turn snapshot: identity +
+`Chat` fields). This way a new context field only touches one file
+(`tools/mod.rs`) instead of every construction site. See
+docs/history/refactoring-solid.md §3.
 
-**Метаданные каталога** (смысловая группа, короткий лейбл тумблера, глобальный гейт,
-«включён по умолчанию») объявляет **сам инструмент** через трейт `Tool`
-(`group()`/`ui_label()` — обязательные, без дефолта, → новый инструмент невозможно
-добавить без группы и лейбла; `gate()`/`enabled_by_default()` — с дефолтами
-`None`/`true`). `meta.rs` несёт только типы (`ToolGroup`/`ToolGate`/`ToolInfo`), не
-значения. Каталог для UI — статик `CATALOG` (снимок `ToolRegistry::infos()` на
-дефолтном `ToolConfig`, т.к. метаданные от конфига не зависят); `default_tool_ids`/
-`all_tool_ids`/`tool_catalog`/`effective_tool_ids` выводятся из него, `screens/settings`
-потребляет `Vec<ToolInfo>` (FSD: без живого `Arc<dyn Tool>`). Порядок каталога —
-алфавитный по id (реестр — `BTreeMap`); UI пересортировывает тумблеры по `ToolGroup`
-(`Ord`).
+**Catalog metadata** (semantic group, short toggle label, global gate,
+"enabled by default") is declared by **the tool itself** via the `Tool` trait
+(`group()`/`ui_label()` — required, no default, → a new tool can't be added
+without a group and label; `gate()`/`enabled_by_default()` — with defaults of
+`None`/`true`). `meta.rs` carries only types (`ToolGroup`/`ToolGate`/
+`ToolInfo`), not values. The UI catalog is a static `CATALOG` (a snapshot of
+`ToolRegistry::infos()` on the default `ToolConfig`, since metadata doesn't
+depend on config); `default_tool_ids`/`all_tool_ids`/`tool_catalog`/
+`effective_tool_ids` are derived from it, and `screens/settings` consumes a
+`Vec<ToolInfo>` (FSD: no live `Arc<dyn Tool>`). The catalog is ordered
+alphabetically by id (the registry is a `BTreeMap`); the UI re-sorts toggles
+by `ToolGroup` (`Ord`).
 
-| Группа         | Инструменты                                                   |
-|----------------|---------------------------------------------------------------|
-| Память/знания  | `note_save` (эмбеддит + ворота совместимости), `note_recall` (семантический поиск + spreading activation по графу, откат на подстроку; **скрывает self-заметки** `@self`), `note_revise` (правка на месте), `note_link`/`note_neighbors` (типизированный граф связей), `note_supersede`/`note_merge` (замещение со «шрамом» / слияние с переносом связей; **наследуют теги**, в т.ч. `@self`), `consolidate_notes` (обзор для консолидации), `rag_add`, `rag_search`. Связность заметок (накопление → интеграция) + авто-«сон»: см. [docs/notes-connectivity.md](history/notes-connectivity.md). Наблюдения «модели себя» — обычные заметки с тегом `@self` ([docs/narrative-as-notes.md](history/narrative-as-notes.md), §9) |
-| Интроспекция   | `get_sampling`, `set_sampling`, `get_system_message`, `set_system_message`, `get_last_user_message_time` |
-| Внешние        | `web_search` (мульти-провайдер + анти-бот), `fetch_url` (загрузка+саммаризация), `python_exec` (subprocess) — гейтятся `web_enabled`/`python_enabled` |
-| Файлы          | `fs_read`, `fs_write`, `fs_list` — гейтятся `fs_enabled`, опциональная песочница `fs_root` |
-| Утилиты        | `calculate` (свой вычислитель выражений), `current_time` (chrono) — без I/O, не гейтятся |
-| Осознанность   | `call_subagent` (без истории/инструментов, запрет вложенности) |
-| Управление беседой | `send_followup_message` / `rewrite_current_message` — **control-flow** (опц., по умолч. выкл): распознаются agentic-loop'ом, а не `Tool::invoke` |
-| Модель себя    | `get_self_model`, `reflect`, `update_self_model`, `update_user_model`, `add_insight` — **опц., по умолч. выкл**: пер-профильная «модель себя» в SQLite (описание + цели + модель собеседника), пишут напрямую через `storage` (не через `ChatEffect`). Наблюдения («нарратив») переехали в заметки `@self` — их консолидируют note-инструменты (`consolidate_narrative` удалён). **Подробно — §9** |
-| Плагины (MCP)  | `mcp__<server>__<tool>` — **динамические** обёртки `McpTool` над инструментами внешних MCP-серверов (`features/tools/mcp.rs`; описание/схема — снимок сервера, per-call таймаут + отмена `ctx.cancel`, клип результата). В статический `CATALOG` не входят: реестр пересобирается по событиям `McpManager` (`rebuild_registry`), каталог для UI едет снимком `McpSnapshot` в `AppEvent::Settings`; гейт в `effective_tool_ids` — по префиксу `mcp__` + `config.mcp.enabled`. Двойной opt-in + TOFU-пиннинг каталога. См. spec §9.6, ADR 0007 |
+| Group          | Tools                                                          |
+|----------------|-----------------------------------------------------------------|
+| Memory/knowledge  | `note_save` (embeds + a compatibility gate), `note_recall` (semantic search + spreading activation over the graph, falls back to substring match; **hides `@self` self-notes**), `note_revise` (in-place edit), `note_link`/`note_neighbors` (typed link graph), `note_supersede`/`note_merge` (supersession with a scar / merge with link transfer; **inherit tags**, including `@self`), `consolidate_notes` (a consolidation overview), `rag_add`, `rag_search`. Notes connectivity (accumulation → integration) + auto "sleep": see [docs/notes-connectivity.md](history/notes-connectivity.md). Self-model observations are ordinary notes tagged `@self` ([docs/narrative-as-notes.md](history/narrative-as-notes.md), §9) |
+| Introspection  | `get_sampling`, `set_sampling`, `get_system_message`, `set_system_message`, `get_last_user_message_time` |
+| External       | `web_search` (multi-provider + anti-bot), `fetch_url` (fetch+summarize), `python_exec` (subprocess) — gated by `web_enabled`/`python_enabled` |
+| Files          | `fs_read`, `fs_write`, `fs_list` — gated by `fs_enabled`, optional `fs_root` sandbox |
+| Utilities      | `calculate` (our own expression evaluator), `current_time` (chrono) — no I/O, not gated |
+| Awareness      | `call_subagent` (no history/tools, nesting forbidden) |
+| Conversation control | `send_followup_message` / `rewrite_current_message` — **control flow** (optional, off by default): recognized by the agentic loop, not `Tool::invoke` |
+| Self-model     | `get_self_model`, `reflect`, `update_self_model`, `update_user_model`, `add_insight` — **optional, off by default**: a per-profile "self-model" in SQLite (description + goals + a model of the interlocutor), written directly through `storage` (not via `ChatEffect`). Observations ("narrative") moved into `@self` notes — they're consolidated by note tools (`consolidate_narrative` was removed). **Details in §9** |
+| Plugins (MCP)  | `mcp__<server>__<tool>` — **dynamic** `McpTool` wrappers around external MCP servers' tools (`features/tools/mcp.rs`; description/schema is a snapshot of the server, per-call timeout + `ctx.cancel` cancellation, result clipping). Not part of the static `CATALOG`: the registry is rebuilt on `McpManager` events (`rebuild_registry`), and the UI catalog rides an `McpSnapshot` inside `AppEvent::Settings`; the `effective_tool_ids` gate is by the `mcp__` prefix + `config.mcp.enabled`. Double opt-in + TOFU catalog pinning. See spec §9.6, ADR 0007 |
 
-Особенности реализации:
+Implementation notes:
 
-- **Презентация вызова в ленте** (`present.rs`, чистый слой без ratatui) — как
-  показать аргументы/результат конкретного инструмента вместо сырого JSON:
-  `present(name, arguments, result) → ToolPresentation` (компактный суффикс
-  заголовка + блоки `Code`/`Console`/`Markdown`/`Plain`). `python_exec` — код
-  подсвеченным Python-блоком + консоль (stdout/stderr/код возврата раздельными
-  цветами); `fs_read`/`fs_write` — содержимое подсвечено по расширению пути;
-  проза-инструменты (`web_search`/`fetch_url`/`rag_search`/`note_recall`) —
-  markdown; короткие аргументы — `name(значение)` / `name(k=v, …)`. Знание про
-  инструменты живёт здесь (слой tools), виджет `message_feed` остаётся generic и
-  рендерит блоки, переиспользуя `markdown::highlight_code`. См. spec §11.3–11.4.
-- **`call_subagent`** — независимый одно-ходовый запрос через `ctx.engine`:
-  заданное `system`, единственное `user`-сообщение, `tools: []` (запрет
-  рекурсии), лимит токенов и таймаут.
-- **Управляющие инструменты беседы** (`send_followup_message` / `rewrite_current_message`,
-  `features/tools/control.rs`) — не обычные инструменты, а **control-flow**: их
-  распознаёт сам agentic-loop (`generation.rs`), а `Tool`-реализации нужны лишь для
-  схемы/регистрации/гейтинга. `send_followup_message` начинает второе сообщение
-  отдельным пузырём (флаг `Message.new_bubble`); `rewrite_current_message` отбрасывает
-  начатый раунд в `Chat.deleted` и пишет ответ заново. Опциональны (нет в
-  `default_tool_ids`, есть в каталоге `all_tool_ids` — тумблеры профиля). Live-стрим
-  ↔ перезагрузка синхронизируются событиями `AppEvent::AssistantContinue`/
-  `AssistantRewrite`. См. spec §9.3.3.
-- **Инструменты MCP-серверов** — плагины-инструменты через внешние stdio-подпроцессы
-  (направление «плагины», docs/research/plugin-system.md §4, ADR 0007). Мини-клиент
-  протокола — `shared/mcp.rs` (tools-only подмножество 2025-11-25: транспорт
-  `McpConnection` поверх любых `AsyncRead`/`AsyncWrite` — тестируем на duplex;
-  `McpClient` — подпроцесс с монитор-задачей kill/exited по паттерну `managed.rs` +
-  Job Object kill-on-close на Windows; запрет `.bat`/`.cmd` — BatBadBut). Жизненный
-  цикл — `McpManager` (`app/orchestrator/mcp.rs`, зеркало `EngineManager`): фоновые
-  задачи спавна шлют события `Ready`/`Failed`/`Exited` с `epoch`-гардом во внутренний
-  канал петли `run`; рестарт-бюджет (3 краха/5 мин); TOFU-пиннинг каталога
-  (sha256 имена+описания+схемы; изменение → инструменты придержаны до подтверждения
-  в настройках, пин — `config.mcp.servers[].pinned_catalog`, пишет оркестратор).
-  Отмена вызова — `ToolContext.cancel` (клон токена хода; agentic-loop дополнительно
-  оборачивает `invoke` любого инструмента в `select!` с ним — Esc не блокируется).
-- **`web_search`** — фоллбэк по провайдерам (DDG lite → DDG html → Mojeek →
-  Ecosia); распознаёт анти-бот троттлинг (HTTP 202/403/429) и переключает
-  провайдера, а не парсит пустую выдачу.
-- **RAG** — умный чанкинг с перекрытием (`chunk_text`/`chunk_markdown`, размеры
-  конфигурируемы через `config.rag`/`ChunkParams`), при извлечении — склейка соседних
-  чанков по дословному перекрытию (`stitch_hits`). Команды `/rag add|remove|list|
-  rebuild`: загрузка/удаление файлов (фоновая индексация, отменяемая), просмотр
-  источников (счётчик чанков+дата) и реиндексация. Исходный текст источников хранится
-  в `rag_sources` → `/rag rebuild` перечанковывает/переэмбеддивает без файлов на диске
-  (смена размеров чанка или embedding-модели; при смене размерности вектора таблица
-  векторов пересоздаётся, если базу не делят другие профили). Всё с изоляцией по
-  профилю.
-- **Модель себя (SelfModel)** — пер-профильная «модель себя» агента (описание + цели +
-  модель собеседника + нарратив) в SQLite; мутаторы пишут напрямую через `ctx.storage`
-  (без `ChatEffect`), оркестратор подмешивает снимок в системный промпт. Это отдельный
-  сквозной механизм — **подробно, с диаграммами, в §9** (доменная модель, цикл
-  чтение/запись, семантика инструментов, протокол ведения, авто-рефлексия, направления
-  развития).
+- **Call presentation in the feed** (`present.rs`, a pure layer with no
+  ratatui) — how to show a specific tool's arguments/result instead of raw
+  JSON: `present(name, arguments, result) → ToolPresentation` (a compact
+  header suffix + `Code`/`Console`/`Markdown`/`Plain` blocks). `python_exec` —
+  code as a highlighted Python block + a console (stdout/stderr/exit code in
+  separate colors); `fs_read`/`fs_write` — content highlighted by the path's
+  extension; prose tools (`web_search`/`fetch_url`/`rag_search`/
+  `note_recall`) — markdown; short arguments — `name(value)` /
+  `name(k=v, …)`. Tool-specific knowledge lives here (the tools layer); the
+  `message_feed` widget stays generic and renders the blocks, reusing
+  `markdown::highlight_code`. See spec §11.3–11.4.
+- **`call_subagent`** — an independent single-turn request through
+  `ctx.engine`: a given `system`, a single `user` message, `tools: []`
+  (nesting forbidden), a token limit and a timeout.
+- **Conversation control tools** (`send_followup_message` /
+  `rewrite_current_message`, `features/tools/control.rs`) — not ordinary
+  tools but **control flow**: recognized by the agentic loop itself
+  (`generation.rs`), with the `Tool` implementations needed only for schema/
+  registration/gating. `send_followup_message` starts a second message as a
+  separate bubble (the `Message.new_bubble` flag); `rewrite_current_message`
+  discards the started round into `Chat.deleted` and writes the reply again.
+  Optional (not in `default_tool_ids`, present in the `all_tool_ids` catalog
+  — profile toggles). The live stream ↔ reload cases are kept in sync via
+  `AppEvent::AssistantContinue`/`AssistantRewrite`. See spec §9.3.3.
+- **MCP server tools** — plugin tools over external stdio subprocesses (the
+  "plugins" track, docs/research/plugin-system.md §4, ADR 0007). The protocol
+  mini-client is `shared/mcp.rs` (the tools-only subset of the 2025-11-25
+  revision: the `McpConnection` transport works over any `AsyncRead`/
+  `AsyncWrite` — testable over a duplex; `McpClient` is a subprocess with a
+  kill/exited monitor task modeled on `managed.rs` + a Job Object
+  kill-on-close on Windows; `.bat`/`.cmd` forbidden — BatBadBut). Lifecycle is
+  `McpManager` (`app/orchestrator/mcp.rs`, mirroring `EngineManager`):
+  background spawn tasks send `Ready`/`Failed`/`Exited` events, epoch-guarded,
+  into the loop's internal channel `run`; a restart budget (3 crashes/5 min);
+  TOFU catalog pinning (sha256 of names+descriptions+schemas; a change →
+  tools are held back until confirmed in settings, the pin is
+  `config.mcp.servers[].pinned_catalog`, written by the orchestrator). Call
+  cancellation is `ToolContext.cancel` (a clone of the turn's token; the
+  agentic loop additionally wraps any tool's `invoke` in a `select!` with it
+  — Esc is never blocked).
+- **`web_search`** — falls back across providers (DDG lite → DDG html →
+  Mojeek → Ecosia); recognizes anti-bot throttling (HTTP 202/403/429) and
+  switches providers instead of parsing an empty result set.
+- **RAG** — smart overlapping chunking (`chunk_text`/`chunk_markdown`, sizes
+  configurable via `config.rag`/`ChunkParams`); on retrieval, adjacent chunks
+  are stitched together by their verbatim overlap (`stitch_hits`). Commands
+  `/rag add|remove|list|rebuild`: add/remove files (background, cancellable
+  indexing), view sources (chunk count+date), and reindex. Sources' original
+  text is stored in `rag_sources` → `/rag rebuild` re-chunks/re-embeds
+  without needing the files on disk (a chunk-size or embedding-model change;
+  on a vector-dimensionality change the vector table is recreated, if no
+  other profile shares the database). All isolated by profile.
+- **Self-model (SelfModel)** — a per-profile "self-model" for the agent
+  (description + goals + a model of the interlocutor + narrative) in SQLite;
+  mutators write directly through `ctx.storage` (no `ChatEffect`), and the
+  orchestrator mixes a snapshot into the system prompt. This is a separate
+  cross-cutting mechanism — **covered in detail, with diagrams, in §9**
+  (domain model, the read/write cycle, tool semantics, the maintenance
+  protocol, auto-reflection, future directions).
 
 ---
 
-## 9. Модель себя (SelfModel)
+## 9. Self-model (SelfModel)
 
-**«Модель себя»** — пер-профильное, персистентное представление агента о себе, своих
-целях и собеседнике, живущее **между чатами**. Цель — дать модели **непрерывность и
-идентичность**: чтобы во втором чате того же профиля она помнила, кто её собеседник, к
-чему стремится и что о себе поняла. Механизм вырос из банка идей
-([docs/self-model.md](history/self-model.md)) через реализуемый зонд
-([docs/self-model-mvp.md](history/self-model-mvp.md)) и два раунда правок по живому
-тестированию на Opus 4.8 (журнал — в [CLAUDE.md](../CLAUDE.md)).
+**The "self-model"** is a per-profile, persistent representation of the
+agent's sense of itself, its goals, and the interlocutor, living **across
+chats**. The goal is to give the model **continuity and identity**: so that
+in a second chat of the same profile it remembers who its interlocutor is,
+what it's working toward, and what it's realized about itself. The mechanism
+grew from an idea bank ([docs/self-model.md](history/self-model.md)) through
+a shipped probe ([docs/self-model-mvp.md](history/self-model-mvp.md)) and two
+rounds of fixes based on live testing on Opus 4.8 (log in
+[CLAUDE.md](../CLAUDE.md)).
 
-Ключевая архитектурная позиция: **модель себя — пер-профильные данные в SQLite (как
-notes/RAG), а не состояние `Chat`.** Поэтому инструменты-мутаторы пишут её **напрямую**
-через `ctx.storage` (не через `ChatEffect`), и инвариант «единственный владелец `Chat`»
-(§11) не затрагивается — новых вариантов `ChatEffect` нет. Вся группа **опциональна**
-(по умолчанию выключена).
+Key architectural stance: **the self-model is per-profile data in SQLite
+(like notes/RAG), not `Chat` state.** So mutator tools write it **directly**
+through `ctx.storage` (not via `ChatEffect`), and the "sole owner of `Chat`"
+invariant (§11) isn't affected — there are no new `ChatEffect` variants. The
+whole group is **optional** (off by default).
 
-### 9.1 Доменная модель (`entities/self_model.rs`)
+### 9.1 Domain model (`entities/self_model.rs`)
 
 ```mermaid
 classDiagram
@@ -983,10 +1044,10 @@ classDiagram
         Vec~Goal~ goals
         UserModel user_model
         Vec~NarrativeSegment~ narrative
-        +render_for_prompt() компактно
-        +render_full() детально
-        +match_goal() резолвер
-        +match_insight() резолвер
+        +render_for_prompt() compact
+        +render_full() detailed
+        +match_goal() resolver
+        +match_insight() resolver
     }
     class Goal {
         Uuid id
@@ -1018,460 +1079,530 @@ classDiagram
     Goal --> GoalStatus
 ```
 
-Четыре органа, у каждого своя роль:
+Four organs, each with its own role:
 
-- **`summary`** — свободный текст «о себе»: связное самоописание (кто я, что ценю, как
-  себя веду). Правится **интеграцией** (уточняется), а не перезаписью с нуля.
-- **`goals`** — долгосрочные намерения с **жизненным циклом** (`Active` →
-  `Completed`/`Abandoned`). Закрытые **не удаляются** — хранятся как «шрам»
-  достигнутого/оставленного и показываются в полном чтении.
-- **`user_model`** — устойчивая, интегрированная модель собеседника:
-  `perceived_traits`/`current_interests` (списки, правятся **merge**: add/remove с
-  дедупом) + `relationship_dynamic` (свободный текст; **замена непустой** динамики —
-  существенный пересмотр, просит `note`-шрам, как удаление черт). Это **снимок текущих
-  выводов**, не летопись настроения. Подмешивается и в **имперсонацию** (`Ctrl+U`,
-  `UserModel::render_for_impersonation`): агент пишет реплику *за* человека, а это
-  буквально модель того человека — тот же opt-in-гейт (`get_self_model`).
-- **`narrative`** — «биография я во времени»: короткие инсайты/наблюдения (включая
-  замеченные противоречия и **шрамы ревизий** — прозой). Именно наблюдения, а не
-  структурные поля, хранят «что и почему менялось». **Наблюдения переехали в заметки**
-  (тег `@self`, Ярус 1 [narrative-as-notes.md](history/narrative-as-notes.md)): поле
-  `narrative` в блобе оставлено лишь для одноразового бэкфилла и реконструкции снимка
-  `F3`; запись/чтение идут через заметки (эмбеддинги, ворота дублей, замещение, «сон»).
+- **`summary`** — free-form "about me" text: a coherent self-description
+  (who I am, what I value, how I behave). Edited by **integration** (refined),
+  not overwritten from scratch.
+- **`goals`** — long-term intentions with a **lifecycle** (`Active` →
+  `Completed`/`Abandoned`). Closed goals are **not deleted** — kept as a
+  "scar" of what was achieved/abandoned and shown in the full read.
+- **`user_model`** — a stable, integrated model of the interlocutor:
+  `perceived_traits`/`current_interests` (lists, edited by **merge**:
+  add/remove with dedup) + `relationship_dynamic` (free text; **replacing a
+  non-empty** dynamic is a significant revision, prompting a `note` scar,
+  like removing traits). This is a **snapshot of current conclusions**, not a
+  mood diary. It's also mixed into **impersonation** (`Ctrl+U`,
+  `UserModel::render_for_impersonation`): the agent writes a reply *on behalf
+  of* the human, and this is literally a model of that human — the same
+  opt-in gate (`get_self_model`).
+- **`narrative`** — a "biography of self over time": short insights/
+  observations (including noticed contradictions and **revision scars** — in
+  prose). It's the observations, not structured fields, that hold "what
+  changed and why". **Observations moved into notes** (the `@self` tag, Tier
+  1 [narrative-as-notes.md](history/narrative-as-notes.md)): the `narrative`
+  field in the blob is kept only for one-time backfill and reconstructing the
+  `F3` snapshot; writing/reading goes through notes (embeddings, duplicate
+  gates, supersession, "sleep").
 
-**Два режима рендера** (важное различие, выведенное живым тестом): оба принимают
-наблюдения параметром `recent: &[NarrativeSegment]` (self-заметки готовит вызывающий —
-`notes::self_notes_recent`; рендер перестал быть чистым по нарративу).
+**Two render modes** (an important distinction found via live testing): both
+take observations as a `recent: &[NarrativeSegment]` parameter (the caller
+prepares self-notes via `notes::self_notes_recent`; the render is no longer
+pure with respect to the narrative).
 
-- `render_for_prompt(cap, n, now, recent)` — **компактный, усечённый** (по `prompt_cap`),
-  только активные цели, `n` свежих наблюдений. Для **пассивной инъекции** в системный
-  промпт (экономия окна контекста). **Посекционный бюджет** (summary-as-snapshot,
-  этап 3): секция «О себе» усекается до **половины** лимита (`truncate_chars_word` — по
-  границе слова), чтобы раздутый `summary` не вытеснял из инъекции цели/собеседника/
-  наблюдения; финальное усечение всего блока — страховка.
-- `render_full(now, recent)` — **без усечения**: цели с коротким `#id` и статусом (+
-  недавние закрытые), все наблюдения с **полным** id (наблюдения — заметки, их
-  переписывает/замещает `note_revise`/`note_supersede` по полному id). Для **чтения
-  инструментами** (`get_self_model`/`reflect`). **Эхо правок** (`update_self_model`/
-  `update_user_model`) полный рендер **не** использует — оно дельта-компактно (этап 4,
-  ниже §9.4).
+- `render_for_prompt(cap, n, now, recent)` — **compact, truncated** (per
+  `prompt_cap`), active goals only, `n` recent observations. For **passive
+  injection** into the system prompt (saving context window). **Per-section
+  budget** (summary-as-snapshot, stage 3): the "About me" section is truncated
+  to **half** the limit (`truncate_chars_word` — on a word boundary) so a
+  bloated `summary` doesn't crowd goals/the interlocutor/observations out of
+  the injection; a final truncation of the whole block is a backstop.
+- `render_full(now, recent)` — **untruncated**: goals with a short `#id` and
+  status (+ recently closed ones), all observations with a **full** id
+  (observations are notes; `note_revise`/`note_supersede` rewrites/supersedes
+  them by full id). For **tool reads** (`get_self_model`/`reflect`). The
+  **edit echo** (`update_self_model`/`update_user_model`) does **not** use
+  the full render — it's delta-compact (stage 4, §9.4 below).
 
-**`summary` — снимок, а не летопись** (summary-as-snapshot,
-[docs/history/summary-as-snapshot.md](history/summary-as-snapshot.md)): `summary` держится
-компактным рабочим снимком («кто я, что ценю, как работаю»), а событийные выводы («что и
-когда понял») уходят в наблюдения `add_insight` **даже устойчивые** — там их защищают
-ворота дублей, граф и релевантная инъекция. Дисциплину задают **мягкие ворота размера**
-(`SelfModel::summary_fill_hint(target)`, порог `SelfModelSettings.summary_target_chars`,
-дефолт 1000): при разрастании подсказка «сократи, вынеси событийное в наблюдения»
-показывается в чтении (`render_self_read`), в инъекции (data-aware приписка к протоколу
-ведения) и в эхе правки (строка размера). Ворота, не потолок — данные не усекаются;
-решение сокращать за моделью. Ось маршрутизации в `POLICY_CORE` — «состояние → `summary`,
-событие-вывод → `add_insight`» (§9.5).
+**`summary` is a snapshot, not a chronicle** (summary-as-snapshot,
+[docs/history/summary-as-snapshot.md](history/summary-as-snapshot.md)):
+`summary` is kept a compact working snapshot ("who I am, what I value, how I
+work"), while event-driven conclusions ("what I realized and when") go into
+observations via `add_insight` **even the durable ones** — there they're
+protected by duplicate gates, the graph, and relevance-based injection.
+Discipline comes from **soft size gates** (`SelfModel::summary_fill_hint(target)`,
+threshold `SelfModelSettings.summary_target_chars`, default 1000): once it
+grows too large, a "shrink me, move event-driven content into observations"
+hint shows up on read (`render_self_read`), in injection (a data-aware note
+appended to the maintenance protocol), and in the edit echo (a size line). A
+gate, not a cap — data isn't truncated; the decision to shrink is left to the
+model. The routing axis in `POLICY_CORE` is "state → `summary`, event
+conclusion → `add_insight`" (§9.5).
 
-Оба режима показывают **метки возраста** (`age_label(at, now)`, сутки-гранулярность:
-сегодня/вчера/N дн./нед./мес./г.) у целей (закрытые — от `Goal.closed_at`) и наблюдений.
-FIFO-потолок нарратива исчез (наблюдения — заметки, роста блоба нет); остался потолок
-закрытых целей — свёртка старейших в наблюдение-шрам «[архив цели] …»
-(`fold_closed_goals` возвращает шрамы, вызывающий пишет их @self-заметками;
-`SelfModelSettings.max_closed_goals`).
+Both modes show **age labels** (`age_label(at, now)`, day-granularity:
+today/yesterday/N days/weeks/months/years) on goals (closed ones from
+`Goal.closed_at`) and observations. The narrative's FIFO cap is gone
+(observations are notes now, no blob growth); the closed-goals cap remains —
+folding the oldest into a scar observation "[goal archive] …"
+(`fold_closed_goals` returns the scars, the caller writes them as @self
+notes; `SelfModelSettings.max_closed_goals`).
 
-**Короткие `#id`** (`short_hex` = первые 6 hex UUID) и общий резолвер `resolve_handle`
-(за `match_goal`/`match_insight`: принимает `#id`-префикс или полный UUID, ловит
-неоднозначность) — низкое трение для модели: ей не нужно копировать 36-символьные UUID.
+**Short `#id`s** (`short_hex` = the first 6 hex chars of the UUID) and a
+shared resolver, `resolve_handle` (behind `match_goal`/`match_insight`:
+accepts an `#id` prefix or a full UUID, catches ambiguity) — low friction for
+the model: it doesn't need to copy 36-character UUIDs.
 
-### 9.2 Хранение (`shared/storage/db.rs`)
+### 9.2 Storage (`shared/storage/db.rs`)
 
-Одна таблица, JSON-блоб всей модели:
+One table, a JSON blob for the whole model:
 
 ```sql
 CREATE TABLE IF NOT EXISTS self_models (
-    profile_id TEXT PRIMARY KEY,   -- изоляция по профилю (как notes/RAG)
-    data       TEXT NOT NULL,      -- serde JSON всей SelfModel
-    version    INTEGER NOT NULL,   -- растёт при upsert (счётчик ведёт хранилище)
+    profile_id TEXT PRIMARY KEY,   -- isolated by profile (like notes/RAG)
+    data       TEXT NOT NULL,      -- serde JSON of the whole SelfModel
+    version    INTEGER NOT NULL,   -- incremented on upsert (counted by storage)
     updated_at TEXT NOT NULL
 );
 ```
 
 `self_model_get(profile_id)` / `self_model_upsert(&model)` (INSERT OR REPLACE,
-`version`+1). **Миграций нет:** модель — JSON-блоб + `#[serde(default)]` на новых полях,
-поэтому эволюция формы (новые поля/инструменты) читает старые записи без миграции —
-форму хранения не меняли ни в одном ярусе.
+`version`+1). **No migrations:** the model is a JSON blob + `#[serde(default)]`
+on new fields, so shape evolution (new fields/tools) reads old records
+without migration — the storage shape hasn't changed at any tier.
 
-### 9.3 Цикл «чтение ↔ запись» за ход
+### 9.3 The read ↔ write cycle per turn
 
 ```mermaid
 flowchart TB
-    subgraph READ["Чтение — пассивно, каждый ход"]
-        SNAP["start_generation:<br/>self_model_get(profile_id) → снимок в ToolContext"]
-        INJ["inject_self_model:<br/>render_for_prompt (компактно) + протокол ведения"]
-        SYS["system-промпт хода"]
+    subgraph READ["Read — passive, every turn"]
+        SNAP["start_generation:<br/>self_model_get(profile_id) → a snapshot into ToolContext"]
+        INJ["inject_self_model:<br/>render_for_prompt (compact) + the maintenance protocol"]
+        SYS["the turn's system prompt"]
         SNAP --> INJ --> SYS
     end
-    subgraph WRITE["Запись — активно, инструментами"]
-        RD["get_self_model / reflect (чтение)"]
-        WR["update_self_model / update_user_model<br/>add_insight / consolidate_narrative (запись)"]
+    subgraph WRITE["Write — active, via tools"]
+        RD["get_self_model / reflect (read)"]
+        WR["update_self_model / update_user_model<br/>add_insight / consolidate_narrative (write)"]
     end
-    DB[("self_models (SQLite)<br/>изоляция по profile_id")]
-    SYS -.->|"агент видит себя, решает вызвать"| RD
+    DB[("self_models (SQLite)<br/>isolated by profile_id")]
+    SYS -.->|"the agent sees itself, decides to call"| RD
     SYS -.-> WR
-    WR -->|"пишут напрямую через ctx.storage"| DB
-    DB -.->|"следующий ход перечитывает"| SNAP
-    DB -.->|"мутатор перечитывает свежее в ходе"| RD
+    WR -->|"write directly via ctx.storage"| DB
+    DB -.->|"the next turn re-reads"| SNAP
+    DB -.->|"a mutator re-reads the latest mid-turn"| RD
 ```
 
-Два независимых пути обращения:
+Two independent access paths:
 
-- **Чтение — пассивное, каждый ход.** «Модель себя» **компактно** подмешивается в
-  `system`-промпт через `generation::inject_self_model` — но только если профиль
-  **включил** `get_self_model` (opt-in-гейт). Так агент «видит себя» на каждом ходу без
-  явного вызова инструмента. Наблюдения (self-заметки) идут в промпт **по релевантности
-  к последней реплике** пользователя (эмбеддинг реплики → близкие наблюдения) **плюс
-  гарантия свежайшего** — старое, но относящееся к теме наблюдение всплывает, когда
-  тема возвращается (Ярус 2, [narrative-as-notes.md](history/narrative-as-notes.md)):
-  `notes::self_notes_relevant` + `blend_self_notes` → `injection_recent`; мягкая
-  деградация к свежести без эмбеддера. Инъекция **делается в async-задаче генерации**
-  (`spawn_generation`, а не в sync `start_generation`) — релевантность требует
-  async-эмбеддинга, а command-handler синхронный.
-- **Запись — активная, инструментами.** Мутаторы пишут напрямую в `self_models` под
-  `ctx.profile_id`. Снимок в `ToolContext` намеренно может устареть в пределах хода (как
-  у notes) — мутаторы перечитывают свежее из БД, а следующий ход берёт новый снимок.
+- **Reading — passive, every turn.** The self-model is mixed **compactly**
+  into the `system` prompt via `generation::inject_self_model` — but only if
+  the profile has **enabled** `get_self_model` (an opt-in gate). This way the
+  agent "sees itself" on every turn without an explicit tool call.
+  Observations (self-notes) go into the prompt **by relevance to the user's
+  last message** (embed the message → find close observations) **plus a
+  guarantee of the most recent one** — an old but on-topic observation
+  surfaces when the topic comes back (Tier 2,
+  [narrative-as-notes.md](history/narrative-as-notes.md)):
+  `notes::self_notes_relevant` + `blend_self_notes` → `injection_recent`; a
+  graceful degradation to recency without an embedder. Injection **happens
+  inside the generation's async task** (`spawn_generation`, not the sync
+  `start_generation`) — relevance requires async embedding, and the command
+  handler is synchronous.
+- **Writing — active, via tools.** Mutators write directly into
+  `self_models` under `ctx.profile_id`. The `ToolContext` snapshot may
+  intentionally go stale within a turn (as with notes) — mutators re-read the
+  latest from the DB, and the next turn picks up a fresh snapshot.
 
-**Запись атомарна** (`Db::self_model_update(profile_id, |m| -> bool)`): чтение-правка-
-запись под **одним** захватом мьютекса соединения. Это закрывает гонку load-modify-write
-между тремя параллельными писателями — инструментами хода, **фоновой авто-рефлексией**
-(§9.6, работает одновременно с пользователем) и ручной правкой `F3`; иначе рефлексия
-могла записать свою версию поверх только что сохранённой правки `F3`. Публичные
-`get`/`upsert` делегируют приватным `*_conn`-хелперам; closure `mutate` не может звать
-методы `Db` (нереентерабельный `Mutex` → дедлок) — это чистая правка значения.
+**Writes are atomic** (`Db::self_model_update(profile_id, |m| -> bool)`):
+read-modify-write under a **single** connection mutex hold. This closes a
+load-modify-write race between three concurrent writers — the turn's tools,
+**background auto-reflection** (§9.6, runs concurrently with the user), and a
+manual `F3` edit; otherwise reflection could write its own version over a
+just-saved `F3` edit. The public `get`/`upsert` delegate to private `*_conn`
+helpers; the `mutate` closure can't call `Db` methods (a non-reentrant
+`Mutex` → deadlock) — it's a pure value edit.
 
-**Трейд-офф prefix cache (осознанный).** Инъекция «модели себя» живёт в начале
-`system`-промпта, поэтому каждое обновление модели меняет `system` следующего хода и
-локальный `llama-server` пере-обрабатывает контекст с нуля. Это **принятая цена** за
-возможности механизма (решение 2026-07-03): перенос блока в конец истории ради
-сохранения кэша не делаем. Смягчение: метки возраста в рендере имеют **сутки-
-гранулярность** (`age_label`), поэтому сам по себе ход времени не дёргает промпт чаще
-раза в день — инвалидация происходит только на реальных правках модели.
+**Prefix-cache trade-off (deliberate).** The self-model injection lives at
+the start of the `system` prompt, so every model update changes the next
+turn's `system` and the local `llama-server` reprocesses the context from
+scratch. This is an **accepted cost** for the mechanism's capabilities
+(decision 2026-07-03): we don't move the block to the end of history to
+preserve the cache. Mitigation: age labels in the render have **day
+granularity** (`age_label`), so the mere passage of time doesn't perturb the
+prompt more than once a day — invalidation happens only on real model edits.
 
-### 9.4 Инструменты и их семантика
+### 9.4 Tools and their semantics
 
-Шесть инструментов (все **опциональны**: в `all_tool_ids`, не в `default_tool_ids`;
-DB-only → проходят `effective_tool_ids` через `_ => true`; тумблеры в профиле). Их
-семантика — не «CRUD над полями», а **два выведенных принципа**: *интеграция вместо
-накопления* (от связности заметок) и *текущий снимок + шрам в нарративе*.
+Six tools (all **optional**: in `all_tool_ids`, not in `default_tool_ids`;
+DB-only → pass `effective_tool_ids` through `_ => true`; toggled per
+profile). Their semantics aren't "CRUD over fields" but **two derived
+principles**: *integration instead of accumulation* (from notes
+connectivity) and *a current snapshot + a scar in the narrative*.
 
-| Инструмент | Роль | Ключевая семантика |
+| Tool | Role | Key semantics |
 |---|---|---|
-| `get_self_model` | чтение | `render_full` + блок «Связи наблюдений» (`render_self_read`) — модель целиком, цели с `#id`, наблюдения с полным id, **рёбра графа наблюдений** (Ярус 2), без усечения; при разросшемся `summary` — подсказка сократить (ворота размера, §9.1) |
-| `reflect` | чтение + рубрика | текущая модель (+ связи) + **обзор self-консолидации** (похожие пары / `contradicts` / без связей при ≥2 наблюдений) + вопросы (цели по `#id`, merge, консолидация наблюдений через note_revise/supersede, **связать соотносящиеся note_link**, **не разрослось ли описание** — событийное в наблюдения) |
-| `update_self_model` | описание + цели | `summary` — **интеграция и сокращение** (снимок, не летопись — §9.1); цели — жизненный цикл по `#id` (complete/abandon), не только add. **Эхо — дельты** (этап 4): строка размера summary + добавленные/закрытые цели с `#id` + число свёрнутых, без полного `render_full` |
-| `update_user_model` | собеседник | списки — **merge** (add_/remove_, дедуп); `note` → **шрам** @self-заметкой; напоминание при удалении черт **или замене непустой динамики** без `note`; **ворота родственных черт** (Ярус 2/C): близкая по теме черта уже есть → показать, модель решает «дубль (слить) или противоречие (add_insight)»; эмбеддинг черт на лету, порог 0.72 (калибровка bge-m3), зеркало ворот `add_insight`. **Эхо — дельты** (этап 4): компактные итоговые списки + подтверждение шрама, без полного `render_full` |
-| `add_insight` | наблюдение | `create_note(@self)` + **ворота** (похожие наблюдения → перепиши через note_revise/supersede, а не плоди дубль) |
+| `get_self_model` | read | `render_full` + a "Observation links" block (`render_self_read`) — the whole model, goals with `#id`, observations with a full id, **observation graph edges** (Tier 2), no truncation; when `summary` has grown too large — a hint to shrink it (the size gate, §9.1) |
+| `reflect` | read + rubric | the current model (+ links) + a **self-consolidation overview** (similar pairs / `contradicts` / unlinked, once there are ≥2 observations) + questions (manage goals by `#id`, merge, consolidate observations via note_revise/supersede, **link related observations via note_link**, **has the description grown too large** — event-driven content into observations) |
+| `update_self_model` | description + goals | `summary` — **integrate and shrink** (a snapshot, not a chronicle — §9.1); goals — lifecycle by `#id` (complete/abandon), not just add. **The echo is deltas** (stage 4): a summary size line + added/closed goals with `#id` + a count of folded ones, no full `render_full` |
+| `update_user_model` | interlocutor | lists — **merge** (add_/remove_, dedup); `note` → a **scar** as an @self note; a reminder is issued when removing traits **or replacing a non-empty dynamic** without a `note`; **related-trait gate** (Tier 2/C): a topically close trait already exists → shown, the model decides "a duplicate (merge)" or "a contradiction (add_insight)"; traits embedded on the fly, threshold 0.72 (calibrated on bge-m3), mirroring the `add_insight` gate. **The echo is deltas** (stage 4): compact final lists + a scar confirmation, no full `render_full` |
+| `add_insight` | observation | `create_note(@self)` + a **gate** (similar observations → rewrite via note_revise/supersede instead of creating a duplicate) |
 
-Наблюдения-заметки консолидируют **note-инструменты** (`note_revise`/`note_supersede`/
-`note_merge` — замещение со «шрамом»); прежний `consolidate_narrative` удалён (Ярус 1,
-[narrative-as-notes.md](history/narrative-as-notes.md)). **Граф над наблюдениями** (Ярус 2):
-`note_link`/`note_neighbors` связывают соотносящиеся наблюдения (`contradicts`/`refines`/
-`relates`); связи показываются в `get_self_model`/`reflect` (`self_related_block`).
-**Кросс-органные связи** (Ярус 3, Путь 1): наблюдение «о себе» можно связать с
-пользовательской заметкой «о собеседнике» — такое ребро **показывается** в чтении
-«модели себя» (`[заметка]`) и в `note_recall` (`[о себе]`); авто-рефлексии даны
-`note_link`/`note_neighbors` + `note_recall` (id заметок) для кросс-связывания
-(`REFLECT_TOOL_IDS`). **Связь с RAG** (Ярус 3, Путь 3): `note_cite_source(note_id,
-source)` привязывает заметку/наблюдение к источнику базы знаний (по **имени** источника —
-стабильно к `/rag rebuild`); двунаправленно — `note_recall`/`get_self_model` показывают
-«Ссылки на источники», `rag_search` — «Заметки со ссылкой на эти источники».
+Observation notes are consolidated by **note tools** (`note_revise`/
+`note_supersede`/`note_merge` — supersession with a scar); the former
+`consolidate_narrative` was removed (Tier 1,
+[narrative-as-notes.md](history/narrative-as-notes.md)). **A graph over
+observations** (Tier 2): `note_link`/`note_neighbors` link related
+observations (`contradicts`/`refines`/`relates`); links are shown in
+`get_self_model`/`reflect` (`self_related_block`). **Cross-organ links**
+(Tier 3, Path 1): a "self" observation can be linked to a user note "about
+the interlocutor" — such an edge is **shown** in the self-model read
+(`[note]`) and in `note_recall` (`[self]`); auto-reflection is given
+`note_link`/`note_neighbors` + `note_recall` (note ids) for cross-linking
+(`REFLECT_TOOL_IDS`). **Linking to RAG** (Tier 3, Path 3):
+`note_cite_source(note_id, source)` binds a note/observation to a
+knowledge-base source (by the source's **name** — stable across
+`/rag rebuild`); bidirectional — `note_recall`/`get_self_model` show "Source
+links", `rag_search` shows "Notes citing these sources".
 
-**Обзор self-консолидации** (Ярус 3, отложен в Ярусе 2 до подтверждения пользы
-связывания — GO): `notes::build_self_consolidation_overview(storage, profile_id)` —
-чистое чтение БД над **только** `@self`-наблюдениями (зеркало
-`build_consolidation_overview` для пользовательских заметок): похожие пары (дубли по
-косинусу ≥ `CONSOLIDATE_SIMILARITY`), связи `contradicts` среди наблюдений, наблюдения
-без связей; `None` при < 2 наблюдений. Подмешивается в `reflect` (между моделью и
-рубрикой) и в дайджест авто-рефлексии — «сон» памяти «о себе» получает **конкретные
-данные**, а не только рубрику; `reflect_system_message` нуджит сливать похожие пары,
-проверять `contradicts`, связывать несвязанные. Изоляция по `profile_id`, без миграций.
+**Self-consolidation overview** (Tier 3, deferred in Tier 2 until the value
+of linking was confirmed — GO):
+`notes::build_self_consolidation_overview(storage, profile_id)` — a pure DB
+read over **only** `@self` observations (mirroring
+`build_consolidation_overview` for user notes): similar pairs (duplicates by
+cosine ≥ `CONSOLIDATE_SIMILARITY`), `contradicts` links among observations,
+unlinked observations; `None` when there are < 2 observations. Mixed into
+`reflect` (between the model and the rubric) and into the auto-reflection
+digest — the self-memory "sleep" gets **concrete data**, not just a rubric;
+`reflect_system_message` nudges merging similar pairs, checking
+`contradicts`, and linking unlinked ones. Isolated by `profile_id`, no
+migrations.
 
-Почему именно так (уроки живого теста, см. CLAUDE.md):
+Why it's built this way (lessons from live testing, see CLAUDE.md):
 
-- **`get_self_model` не усекает** — раньше отдавал ту же компактную инъекцию с «…», и
-  модель на «…» жаловалась.
-- **Цели ведутся по `#id`** — раньше id не показывались нигде, и модель физически не
-  могла закрыть цель (write-once → «заполнила один раз и забыла»).
-- **`update_user_model` мёржит** — раньше заменял списки целиком, и «настроение»
-  перетирало накопленное («добрейший» ↔ «беспощадный»).
-- **Шрам — в нарративе, а не на черте** — черты плоские (текущий снимок), а «биография
-  изменения» (что/почему) живёт в нарративе; `note` при удалении/замене черты оставляет
-  след, `remove_*` без `note` получает напоминание.
-- **Консолидация** лечит зеркальную болезнь накопления — раздувание/дрейф: устойчивое
-  поднимается в `summary`/черты, сырые дубли сворачиваются. Зеркало
-  `note_merge`/`consolidate_notes`, но **без графа** (нарратив ≈ self-directed notes).
+- **`get_self_model` doesn't truncate** — it used to return the same compact
+  injection with a "…", and the model would complain about the "…".
+- **Goals are tracked by `#id`** — ids used to not be shown anywhere, and the
+  model was physically unable to close a goal (write-once → "filled it in
+  once and forgot").
+- **`update_user_model` merges** — it used to replace lists wholesale, and
+  "mood" would overwrite what had accumulated ("kindest" ↔ "merciless").
+- **The scar lives in the narrative, not on the trait** — traits are flat (a
+  current snapshot), while the "biography of change" (what/why) lives in the
+  narrative; a `note` on removing/replacing a trait leaves a trace,
+  `remove_*` without a `note` gets a reminder.
+- **Consolidation** cures the mirror-image disease of accumulation — bloat/
+  drift: durable content rises into `summary`/traits, raw duplicates are
+  folded. Mirrors `note_merge`/`consolidate_notes`, but **without a graph**
+  (the narrative is like self-directed notes).
 
-Жизненный цикл целей — «шрам» во внутренней идиоме модели себя (закрытые хранятся):
+The goal lifecycle — a "scar" in the self-model's internal idiom (closed
+ones are kept):
 
 ```mermaid
 stateDiagram-v2
     [*] --> Active: add_goals
-    Active --> Completed: complete_goals по id
-    Active --> Abandoned: abandon_goals по id
-    Completed --> Active: реактивация (правка F3)
+    Active --> Completed: complete_goals by id
+    Active --> Abandoned: abandon_goals by id
+    Completed --> Active: reactivation (F3 edit)
     note right of Completed
-        Закрытые НЕ удаляются —
-        видны в render_full (жизненный цикл)
+        Closed goals are NOT deleted —
+        visible in render_full (the lifecycle)
     end note
 ```
 
-### 9.5 Протокол ведения и предсказуемость независимо от персоны
+### 9.5 Maintenance protocol and predictability regardless of persona
 
-Наблюдение живого теста: спонтанное использование SelfModel-инструментов **зависит от
-персоны** профиля (добрая-осознавшая — переиспользует и льстит; «экспериментальный ИИ» —
-недоиспользует без напоминаний). Два рычага отвязывают поведение от персоны:
+A live-testing observation: spontaneous use of SelfModel tools **depends on
+the profile's persona** (a kind, self-aware one — overuses it and flatters;
+an "experimental AI" one — underuses it without reminders). Two levers
+decouple behavior from the persona:
 
-1. **Нейтральный к персоне «протокол ведения»** (`self_model::maintenance_protocol()`)
-   подмешивается в системный промпт **поверх** персоны профиля: когда фиксировать
-   изменения, «мимолётное — в наблюдения», и ключевое **«точность важнее угодливости»**
-   (прямой контр-приём против лести доброй персоны). Тумблер
-   `config.self_model.maintenance_protocol` (по умолчанию **вкл**); подмешивается даже
-   при пустой модели (bootstrap первой записи).
-2. **Фоновая авто-рефлексия** (§9.6) — детерминированный пишущий путь, не зависящий от
-   того, вспомнит ли модель вызвать инструмент сама.
+1. **A persona-neutral "maintenance protocol"** (`self_model::maintenance_protocol()`)
+   is mixed into the system prompt **on top of** the profile's persona: when
+   to record changes, "the fleeting goes into observations", and the key
+   **"accuracy matters more than agreeableness"** (a direct counter-measure
+   against a kind persona's flattery). A toggle,
+   `config.self_model.maintenance_protocol` (default **on**); mixed in even
+   for an empty model (bootstrapping the first entry).
+2. **Background auto-reflection** (§9.6) — a deterministic writing path that
+   doesn't depend on the model remembering to call the tool on its own.
 
-**Единый источник правил** (этап 6 доводки): формулировки протокола ведения и системного
-сообщения авто-рефлексии собираются из одной константы `self_model::POLICY_CORE` (раньше
-дублировались и уже слегка разъехались). `maintenance_protocol()` = `POLICY_CORE` в
-обрамлении «ты сам ведёшь», `reflection::reflect_system_message()` = преамбула рефлексии +
-`POLICY_CORE` + пояснение о поведенческих сигналах. Интерактивная рубрика инструмента
-`reflect` намеренно **не** отсюда — иной жанр (вопросы, а не императив), покрывает те же
-темы.
+**A single source of truth for the rules** (refinement stage 6): the wording
+of the maintenance protocol and the auto-reflection system message are both
+assembled from a single constant, `self_model::POLICY_CORE` (they used to be
+duplicated and had already drifted slightly apart). `maintenance_protocol()`
+= `POLICY_CORE` framed as "you maintain yourself";
+`reflection::reflect_system_message()` = a reflection preamble +
+`POLICY_CORE` + an explanation of behavioral signals. The interactive
+`reflect` tool's rubric is deliberately **not** built from this — it's a
+different genre (questions, not an imperative), but covers the same topics.
 
-**Ось маршрутизации материала** (summary-as-snapshot, §9.1): `POLICY_CORE` делит по оси
-**«состояние → `summary`, событие-вывод → `add_insight`»**, а не «устойчивое/мимолётное».
-`summary` — компактный снимок (кто я, что ценю, как работаю), при правке «интегрируй **и
-СОКРАЩАЙ**» + «прочти целиком перед правкой (в промпте усечён)»; событийные выводы («что и
-когда понял», разрешённые вопросы, противоречия) — в наблюдения **даже устойчивые** (там
-их защищают ворота дублей, граф, релевантная инъекция — материал извлекаем по теме, а
-описание не раздувается). Это лечило корневую причину раздувания: раньше устойчивый
-инсайт по букве правила законно оседал абзацем в `summary`.
+**The material-routing axis** (summary-as-snapshot, §9.1): `POLICY_CORE`
+splits along **"state → `summary`, event conclusion → `add_insight`"**, not
+"durable/fleeting". `summary` is a compact snapshot (who I am, what I value,
+how I work); on edit, "integrate **and SHRINK**" + "read it in full before
+editing (it's truncated in the prompt)"; event-driven conclusions ("what I
+realized and when", answered questions, contradictions) go into observations
+**even the durable ones** (there they're protected by duplicate gates, the
+graph, relevance-based injection — material is retrievable by topic, and the
+description doesn't bloat). This fixed the root cause of the bloat: a
+durable insight used to legitimately settle as a paragraph in `summary`,
+following the letter of the old rule.
 
-### 9.6 Авто-рефлексия (фоновый мини agentic-loop)
+### 9.6 Auto-reflection (a background mini agentic loop)
 
 ```mermaid
 sequenceDiagram
-    participant ORCH as Оркестратор (handle_done)
-    participant TASK as Фоновая задача рефлексии
-    participant LLM as Движок
+    participant ORCH as Orchestrator (handle_done)
+    participant TASK as Background reflection task
+    participant LLM as Engine
     participant DB as self_models (SQLite)
-    Note over ORCH: каждые N ответов (auto_reflect_every ≥ 1)<br/>гейты: профиль включил модель себя, сервер Ready, одна за раз
-    ORCH->>TASK: spawn(digest переписки + REFLECT_SYSTEM_MESSAGE)
-    loop до REFLECT_MAX_ROUNDS=6 раундов, таймаут 120с
+    Note over ORCH: every N replies (auto_reflect_every ≥ 1)<br/>gates: profile enabled the self-model, server Ready, one at a time
+    ORCH->>TASK: spawn(conversation digest + REFLECT_SYSTEM_MESSAGE)
+    loop up to REFLECT_MAX_ROUNDS=6 rounds, 120s timeout
         TASK->>LLM: chat_stream(tools = SelfModel)
         LLM-->>TASK: ToolCall(update_self_model / … / consolidate_narrative)
-        TASK->>DB: инструмент пишет напрямую
+        TASK->>DB: the tool writes directly
     end
-    TASK-->>ORCH: bg_done (вид, исход) → handle_bg_done снимает флаг «идёт»
-    Note over ORCH,DB: чат/лента НЕ трогаются — рефлексия молчалива
+    TASK-->>ORCH: bg_done (kind, outcome) → handle_bg_done clears the "running" flag
+    Note over ORCH,DB: the chat/feed are NOT touched — reflection is silent
 ```
 
-`orchestrator/reflection.rs`: каждые `config.self_model.auto_reflect_every` ответов
-ассистента (0 = **выкл по умолчанию** — фоновые вызовы облачного API стоят токенов)
-фоновая задача просит модель **самой** пересмотреть недавний разговор (дайджест
-переписки) и обновить «модель себя». В отличие от авто-названия (одноходовый запрос без
-инструментов) это **мини agentic-loop**: модели даны SelfModel-инструменты
-(`REFLECT_TOOL_IDS`, включая `consolidate_narrative`), и петля **исполняет** её вызовы,
-пишущие в `Storage`. Чат/лента **не трогаются** — рефлексия молчалива. Гейты: профиль
-включил инструменты модели себя, сервер `Ready`, одна рефлексия за раз, переписки
-достаточно.
+`orchestrator/reflection.rs`: every `config.self_model.auto_reflect_every`
+assistant replies (0 = **off by default** — background calls to a cloud API
+cost tokens), a background task asks the model to review the recent
+conversation (a conversation digest) **itself** and update the self-model.
+Unlike auto-titling (a single-turn request with no tools), this is a **mini
+agentic loop**: the model is given SelfModel tools (`REFLECT_TOOL_IDS`,
+including `consolidate_narrative`), and the loop **executes** its calls,
+which write into `Storage`. The chat/feed are **not touched** — reflection is
+silent. Gates: the profile has enabled the self-model tools, the server is
+`Ready`, only one reflection at a time, there's enough conversation.
 
-Само тело мини agentic-loop (стрим → аккумулятор вызовов → исполнение → раунд) —
-**общее** для рефлексии и авто-консолидации заметок: `tool_loop::spawn_silent_loop`
-(`orchestrator/tool_loop.rs`, этап 6 доводки). Раньше оно дублировалось дословно в двух
-модулях; теперь оба строят `SilentLoop { backend, request, allowed, max_rounds, timeout,
-label, done_tx, … }` и различаются лишь параметрами (набор инструментов, лимиты, метка
-лога) и системным сообщением. Общий и предикат каденции `tool_loop::due`. Основную петлю
-генерации (§5) сознательно **не** влили — у неё стриминг в UI, control-flow-инструменты,
-thinking-подписи Anthropic, usage, эффекты; её сложность не окупает общий сток.
+The mini agentic loop's body itself (stream → call accumulator → execution →
+round) is **shared** between reflection and note auto-consolidation:
+`tool_loop::spawn_silent_loop` (`orchestrator/tool_loop.rs`, refinement stage
+6). It used to be duplicated verbatim across two modules; now both build a
+`SilentLoop { backend, request, allowed, max_rounds, timeout, label,
+done_tx, … }` and differ only in parameters (the tool set, limits, log
+label) and the system message. The cadence predicate `tool_loop::due` is
+also shared. The main generation loop (§5) was deliberately **not** folded
+in — it has UI streaming, control-flow tools, Anthropic thinking signatures,
+usage, effects; its complexity doesn't pay off the shared drain.
 
-**Каденция — ватермарк, а не in-memory счётчик** (этап 3 доводки,
-[refinements.md](history/refinements.md)). `Chat.reflected_upto: Option<usize>` — индекс-
-водораздел: сколько первых сообщений уже охвачено рефлексией. `reflect_window` считает
-ответы ассистента **только в окне `messages[wm..]`** (кламп ватермарка к длине истории →
-устойчив к усечению `Ctrl+R`/`Ctrl+E`), и дайджест строится по тому же окну — иначе
-каждый цикл перечитывал бы уже отрефлексированное и плодил дубли инсайтов. Ватермарк
-(`reflected_upto`/`reflected_at`, `#[serde(default)]` → без миграции, живут с чатом →
-переживают рестарт) продвигается **только при фактическом спавне** — пропуск по гейту
-(сервер не готов, рефлексия уже идёт) не теряет накопленный цикл. `modified_at` при этом
-не трогается (рефлексия не поднимает чат в списке). Авто-консолидация заметок (§ниже)
-осталась на in-memory счётчике, но с тем же исправлением: сброс — только при спавне.
+**Cadence is a watermark, not an in-memory counter** (refinement stage 3,
+[refinements.md](history/refinements.md)). `Chat.reflected_upto: Option<usize>`
+is a watershed index: how many of the first messages are already covered by
+reflection. `reflect_window` counts assistant replies **only within the
+window `messages[wm..]`** (the watermark is clamped to history length →
+resilient to `Ctrl+R`/`Ctrl+E` truncation), and the digest is built over that
+same window — otherwise every cycle would re-read what was already reflected
+on and spawn duplicate insights. The watermark (`reflected_upto`/
+`reflected_at`, `#[serde(default)]` → no migration, lives with the chat →
+survives a restart) only advances **when the task is actually spawned** —
+skipping on a gate (server not ready, reflection already running) doesn't
+lose the accumulated cycle. `modified_at` is left untouched (reflection
+doesn't bump the chat up in the list). Note auto-consolidation (below) stayed
+on an in-memory counter, but got the same fix: reset only on actual spawn.
 
-**Поведенческие сигналы собеседника в дайджест** (этап 4): `Ctrl+R` (перегенерация =
-«ответ не устроил»), `Ctrl+E` (удаление обмена) и rewrite-раунды уже архивируются в
-`Chat.deleted` — теперь с меткой `DeletedCause`. `behavior_markers(chat, since)` (где
-`since` = прежний `reflected_at`) считает эти удаления за окно и дописывает к дайджесту
-блок «Поведенческие сигналы собеседника: …» — рефлексия получает **реальное поведение**,
-а не одни самоописания (перегенерация/удаление приписываются собеседнику, rewrite —
-собственному поведению агента; записи без `cause` — старые — не считаются).
+**Behavioral signals about the interlocutor in the digest** (stage 4):
+`Ctrl+R` (regeneration = "the reply didn't work"), `Ctrl+E` (deleting an
+exchange), and rewrite rounds are already archived into `Chat.deleted` — now
+tagged with `DeletedCause`. `behavior_markers(chat, since)` (where `since` =
+the previous `reflected_at`) counts these deletions within the window and
+appends a "Behavioral signals about the interlocutor: …" block to the digest
+— reflection gets **actual behavior**, not just self-descriptions
+(regeneration/deletion are attributed to the interlocutor, rewrite — to the
+agent's own behavior; entries without a `cause` — old ones — aren't counted).
 
-**Наблюдаемость фоновых задач** (этап 5): рефлексия и консолидация — молчаливые
-фоновые задачи, поэтому их отказы легко не заметить (протухший облачный ключ → фича
-месяцами «не работает»). Внутренний done-канал несёт **исход** (`Result<(), String>`);
-оркестратор считает подряд идущие неудачи и на пороге (`BACKGROUND_FAILURE_ALERT=3`)
-**один раз** эмитит `AppEvent::Error`, дальше молчит до первого успеха (сброс) —
-наблюдаемость без спама; ошибки логируются на уровне `warn` с `profile_id`. Пока задача
-идёт, `BackgroundTask{active}` рисует тихий индикатор в статус-баре (`✻ рефлексия`/
-`✻ сон заметок`). После **успешной** рефлексии — `SelfModelChanged` (открытый `F3`
-перезапросит снимок; §9.7); то же — из `handle_done`, если модель правила себя своими
-инструментами в ходу (детект по `self_model::is_self_model_tool`).
+**Background task observability** (stage 5): reflection and consolidation
+are silent background tasks, so their failures are easy to miss (a stale
+cloud key → the feature "doesn't work" for months). The internal done
+channel carries an **outcome** (`Result<(), String>`); the orchestrator
+counts consecutive failures and at the threshold
+(`BACKGROUND_FAILURE_ALERT=3`) emits `AppEvent::Error` **once**, then stays
+quiet until the first success (reset) — observability without spam; errors
+are logged at `warn` level with `profile_id`. While a task is running,
+`BackgroundTask{active}` draws a quiet indicator in the status bar
+("✻ reflecting"/"✻ notes sleeping"). After a **successful** reflection —
+`SelfModelChanged` (an open `F3` re-requests the snapshot; §9.7); the same
+from `handle_done` if the model edited itself with its own tools mid-turn
+(detected via `self_model::is_self_model_tool`).
 
-### 9.7 UI: просмотр и правка (`F3`)
+### 9.7 UI: view and edit (`F3`)
 
-Экран «Модель себя» (`screens/self_model.rs`, `ActiveScreen::SelfModel`, см. §10) —
-просмотр и **ручная правка** описания/целей/собеседника/нарратива. Данными владеет
-оркестратор, поэтому `F3` не открывает экран сразу: `OpenSelfModel` →
-`AppCommand::RequestSelfModel` → ответ `AppEvent::SelfModelView` (снимок модели активного
-профиля). Правки: `SelfModelIntent::Edit` → `AppCommand::UpdateSelfModel` → оркестратор
-применяет (`SelfModel::apply_edit`), сохраняет и **переэмитит** `SelfModelView` (открытый
-экран обновляется на месте). Ручная правка списков заменяет их целиком — там человек (в
-отличие от merge-семантики инструментов). Когда модель меняется **не** через этот экран
-(фоновая рефлексия, инструменты хода), приходит лёгкий `SelfModelChanged` — runtime, если
-экран `F3` открыт, шлёт `RequestSelfModel` и обновляет его свежим снимком; при закрытом
-экране сигнал игнорируется (не открывает его, в отличие от `SelfModelView`). Размеры/
-инъекция/протокол/авто-рефлексия — поля секции «Инструменты» настроек (`Sm*`).
+The "Self-model" screen (`screens/self_model.rs`, `ActiveScreen::SelfModel`,
+see §10) — viewing and **manual editing** of the description/goals/
+interlocutor/narrative. The orchestrator owns the data, so `F3` doesn't open
+the screen right away: `OpenSelfModel` → `AppCommand::RequestSelfModel` → a
+reply `AppEvent::SelfModelView` (the active profile's model snapshot).
+Edits: `SelfModelIntent::Edit` → `AppCommand::UpdateSelfModel` → the
+orchestrator applies it (`SelfModel::apply_edit`), saves, and
+**re-emits** `SelfModelView` (an open screen updates in place). Manual list
+edits replace them wholesale — there's a human there (unlike the tools'
+merge semantics). When the model changes **outside** this screen (background
+reflection, tools mid-turn), a lightweight `SelfModelChanged` arrives — if
+the `F3` screen is open, runtime sends `RequestSelfModel` and updates it with
+a fresh snapshot; when the screen is closed, the signal is ignored (it
+doesn't open the screen, unlike `SelfModelView`). Sizes/injection/protocol/
+auto-reflection are fields in the "Tools" settings section (`Sm*`).
 
-### 9.8 Инварианты
+### 9.8 Invariants
 
-- **Единственный владелец `Chat` не затронут:** мутаторы пишут пер-профильные данные
-  напрямую через `storage`, `ChatEffect` не участвует.
-- **Изоляция по `profile_id`** — как notes/RAG (PK таблицы).
-- **Миграций нет** — JSON-блоб + `#[serde(default)]`.
-- **Opt-in** — вся группа выключена по умолчанию; инъекция и авто-рефлексия гейтятся
-  включённостью `get_self_model` в профиле.
-- **Снимок в ходе может устаревать** — источник истины БД; мутатор перечитывает свежее,
-  следующий ход берёт новый снимок.
+- **The sole owner of `Chat` is unaffected:** mutators write per-profile
+  data directly through `storage`, `ChatEffect` isn't involved.
+- **Isolated by `profile_id`** — like notes/RAG (a table PK).
+- **No migrations** — a JSON blob + `#[serde(default)]`.
+- **Opt-in** — the whole group is off by default; injection and
+  auto-reflection are gated by `get_self_model` being enabled in the
+  profile.
+- **A mid-turn snapshot can go stale** — the DB is the source of truth; a
+  mutator re-reads the latest, the next turn picks up a fresh snapshot.
 
-### 9.9 Направления развития
+### 9.9 Future directions
 
 ```mermaid
 flowchart LR
-    Y1["Ярус 1 (зонд)<br/>сущность + 5 инструментов + инъекция<br/>summary / goals / user_model / narrative"]
-    Y2["Ярус 2 (по живому тесту)<br/>render_full + #id целей + merge user_model<br/>протокол ведения + шрам ревизии + consolidate_narrative"]
-    F1["Авто-консолидация по таймеру<br/>(как notes.auto_consolidate_every)"]
-    F2["Унификация: narrative → notes (@self)<br/>Ярус 1 сделан; далее ↔ RAG"]
-    F3["Структурные черты с жизненным циклом<br/>(при необходимости; нужна миграция)"]
+    Y1["Tier 1 (probe)<br/>entity + 5 tools + injection<br/>summary / goals / user_model / narrative"]
+    Y2["Tier 2 (based on live testing)<br/>render_full + goal #id + merge user_model<br/>maintenance protocol + revision scar + consolidate_narrative"]
+    F1["Timer-based auto-consolidation<br/>(like notes.auto_consolidate_every)"]
+    F2["Unification: narrative → notes (@self)<br/>Tier 1 done; next ↔ RAG"]
+    F3["Structured traits with a lifecycle<br/>(if needed; requires a migration)"]
     Y1 --> Y2
     Y2 --> F1
     Y2 --> F2
-    Y2 -.->|отклонено сейчас| F3
+    Y2 -.->|rejected for now| F3
 ```
 
-Две философии, на которых стоит механизм и которые задают вектор:
+Two philosophies the mechanism stands on, and that set its direction:
 
-- **Интеграция вместо накопления** (родственно
-  [notes-connectivity](history/notes-connectivity.md)): и перезапись (теряет прошлое), и чистое
-  накопление (раздувание/дрейф) — болезни; ответ — merge + шрам + консолидация.
-- **Текущий снимок + биография-шрам:** структурные поля = рабочий снимок выводов;
-  нарратив = биография, помнящая, что менялась.
+- **Integration instead of accumulation** (related to
+  [notes-connectivity](history/notes-connectivity.md)): both overwriting
+  (loses the past) and pure accumulation (bloat/drift) are diseases; the
+  answer is merge + scar + consolidation.
+- **A current snapshot + a scar biography:** structured fields = a working
+  snapshot of conclusions; the narrative = a biography that remembers what
+  changed.
 
-Ближайшие развилки (осознанно отложены):
+Near-term decision points (deliberately deferred):
 
-- **Авто-консолидация модели себя по таймеру** — как `notes.auto_consolidate_every`:
-  детерминированный «сон», сворачивающий раздувание без явного вызова. Сейчас
-  консолидация ручная / через авто-рефлексию — последняя уже получает **обзор
-  self-консолидации** (`build_self_consolidation_overview`: похожие пары / `contradicts` /
-  без связей), так что «сон» идёт с конкретными данными; отдельного таймера пока нет.
-- **Унификация органов памяти** — нарратив был **вторым, слабым экземпляром заметок**
-  (append-only, FIFO-потолок, без графа). **Ярус 1 сделан**: наблюдения переехали в
-  заметки `@self` ([narrative-as-notes.md](history/narrative-as-notes.md)) — получили эмбеддинги,
-  ворота дублей, замещение со «шрамом», «сон». **Ярус 2 сделан** (структура): инъекция
-  наблюдений **по релевантности** к реплике (`injection_recent`), **граф** над
-  наблюдениями (`note_link`/`note_neighbors` + блок «Связи наблюдений», граф-смоук —
-  GO), **семантические ворота родственных черт** `user_model` (шаг C, порог 0.72). **Ярус
-  3 сделан целиком** (Пути 1–3, все GO). **Путь 1** (кросс-органные связи): рёбра
-  self-заметка ↔ пользовательская заметка **показываются** в выдаче с пометками
-  `[о себе]`/`[заметка]`, а `note_recall` выводит id (адресуемость); механика графа была
-  кросс-органна и раньше, Ярус 3 снял фильтры в выдаче. **Путь 2** (смешение выдачи):
-  тумблер `notes.recall_includes_self` (по умолчанию выкл) показывает self-заметки в общем
-  `note_recall` с пометкой `[о себе]` — на живом тесте загрязнения нет (модель по пометке
-  чисто разделяет «о себе»/«о собеседнике»). **Путь 3** (RAG ↔ заметки): заметка/наблюдение
-  ссылается на **источник** RAG (`note_cite_source`, по имени источника — стабильно к
-  переиндексации), поиск работает через оба органа (`note_recall`/`get_self_model` →
-  «Ссылки на источники»; `rag_search` → «Заметки со ссылкой на эти источники»). Органы
-  остаются РАЗДЕЛЬНЫМИ по хранению — связаны явными рёбрами/ссылками. Направление
-  «нарратив как заметки» **завершено**.
-- **Структурные черты с жизненным циклом** (как у целей: `active`/`retired` + причина) —
-  рассматривались и **отклонены** в пользу «плоские черты + шрам в нарративе»: изменение
-  черты по форме — маленькая история, ей естественнее прозой. Вернуться стоит, только
-  если появится потребность в машинном обходе истории черт (потребует миграции
+- **Timer-based auto-consolidation of the self-model** — like
+  `notes.auto_consolidate_every`: a deterministic "sleep" that folds bloat
+  without an explicit call. Right now consolidation is manual / via
+  auto-reflection — the latter already gets a **self-consolidation
+  overview** (`build_self_consolidation_overview`: similar pairs /
+  `contradicts` / unlinked), so "sleep" already has concrete data to work
+  with; there's no separate timer yet.
+- **Unifying the memory organs** — the narrative used to be a **second,
+  weaker copy of notes** (append-only, a FIFO cap, no graph). **Tier 1
+  done**: observations moved into `@self` notes
+  ([narrative-as-notes.md](history/narrative-as-notes.md)) — gaining
+  embeddings, duplicate gates, supersession with a scar, "sleep". **Tier 2
+  done** (structure): injecting observations **by relevance** to the message
+  (`injection_recent`), a **graph** over observations
+  (`note_link`/`note_neighbors` + an "Observation links" block, the graph
+  smoke test — GO), **semantic gates for related `user_model` traits** (step
+  C, threshold 0.72). **Tier 3 done in full** (Paths 1–3, all GO). **Path 1**
+  (cross-organ links): self-note ↔ user-note edges are **shown** in results
+  with `[self]`/`[note]` markers, and `note_recall` outputs ids
+  (addressability); the graph mechanics were already cross-organ, Tier 3
+  just removed the filters on the results. **Path 2** (mixed results): the
+  `notes.recall_includes_self` toggle (off by default) shows self-notes in
+  general `note_recall` results with a `[self]` marker — live testing shows
+  no contamination (the model cleanly separates "about self"/"about the
+  interlocutor" by the marker). **Path 3** (RAG ↔ notes): a note/observation
+  cites a RAG **source** (`note_cite_source`, by the source's name — stable
+  across reindexing), and search works through both organs
+  (`note_recall`/`get_self_model` → "Source links"; `rag_search` → "Notes
+  citing these sources"). The organs remain SEPARATE in storage — linked by
+  explicit edges/citations. The "narrative as notes" track is **complete**.
+- **Structured traits with a lifecycle** (like goals: `active`/`retired` +
+  a reason) — considered and **rejected** in favor of "flat traits + a scar
+  in the narrative": a trait's change is, in form, a small story, and prose
+  suits it more naturally. Worth revisiting only if there's a need for
+  machine traversal of trait history (would require migrating
   `Vec<String>` → `Vec<Trait>`).
-- **Сознательно НЕ делаем** (наследие банка идей): `beliefs` с числовыми `strength`,
-  `contradictions` с `severity`/detect/resolve — провоцируют бессмысленные числа;
-  противоречия живут прозой в нарративе.
+- **Deliberately NOT doing** (a leftover from the idea bank): `beliefs` with
+  numeric `strength`, `contradictions` with `severity`/detect/resolve —
+  these invite meaningless numbers; contradictions live as prose in the
+  narrative.
 
 ---
 
-## 10. UI: экраны, виджеты, рендеринг
+## 10. UI: screens, widgets, rendering
 
-`runtime.rs` держит один базовый `ChatScreen` (лента/генерация/ввод) и enum
-`ActiveScreen { Chat | ChatList | Settings | SelfModel }` — экран, открытый поверх
-чата. Открытый список/настройки/просмотр получают ввод и рисуются вместо чата;
-событие `OpenChatList`/`OpenSettings` от чата создаёт их, `Close` (Esc) — возвращает
-к `Chat`. Список чатов держит снимок актуальным через `AppEvent::ChatList` (его
-`app` применяет и к чату, и к открытому списку). **«Модель себя»** (`F3`,
-просмотр+правка) — данными владеет оркестратор, поэтому `OpenSelfModel` не открывает
-экран сразу, а шлёт `AppCommand::RequestSelfModel`; экран создаётся по ответному
-событию `AppEvent::SelfModelView` (снимок модели активного профиля). Правки экран
-отдаёт `SelfModelIntent::Edit` → `AppCommand::UpdateSelfModel`; оркестратор применяет,
-сохраняет и **переэмитит** `SelfModelView` — открытый экран обновляется на месте
-(`set_model`, выделение сохраняется). См. [docs/self-model-mvp.md](history/self-model-mvp.md).
+`runtime.rs` holds one base `ChatScreen` (feed/generation/input) and an
+`ActiveScreen { Chat | ChatList | Settings | SelfModel }` enum — the screen
+open on top of the chat. An open list/settings/view gets input and is drawn
+instead of the chat; the `OpenChatList`/`OpenSettings` event from the chat
+creates them, `Close` (Esc) returns to `Chat`. The chat list keeps its
+snapshot current via `AppEvent::ChatList` (`app` applies it both to the chat
+and to an open list). **"Self-model"** (`F3`, view+edit) — the orchestrator
+owns the data, so `OpenSelfModel` doesn't open the screen right away; it
+sends `AppCommand::RequestSelfModel`; the screen is created on the reply
+event `AppEvent::SelfModelView` (the active profile's model snapshot).
+Edits are handed off by the screen as `SelfModelIntent::Edit` →
+`AppCommand::UpdateSelfModel`; the orchestrator applies it, saves, and
+**re-emits** `SelfModelView` — the open screen updates in place (`set_model`,
+selection is preserved). See [docs/self-model-mvp.md](history/self-model-mvp.md).
 
-**Язык интерфейса (ось B, i18n).** UI-локаль `&'static Locale`
-(из `config.interface.language`, независима от языка агентов `Profile.language`)
-**зеркалит проводку `Palette`** (docs/history/i18n-ui.md): хранится полем в экранах
-(`ChatScreen`/`ChatListScreen`/`SelfModelScreen`, обновляется в `set_settings`/`set_loc`
-из события `Settings`), broadcast открытым overlay-экранам одним `ActiveScreen::set_theme(
-palette, loc)`; stateless-виджеты (`status_bar`/`message_feed`/`chat_list`/…) берут `loc`
-параметром render. Экран настроек вычисляет `self.loc()` из снимка конфига. Оркестратор
-резолвит UI-локаль (`ui_locale()`) для текстов ошибок/уведомлений и `chat_export`. Тексты —
-ключи `ui.*` в `locales/{ru,en}.json` (общий механизм с осью A). Результаты инструментов
-и рендер «модели себя» в ленте следуют языку **агента** (ось A).
+**Interface language (axis B, i18n).** The UI locale, `&'static Locale`
+(from `config.interface.language`, independent of the agents' language
+`Profile.language`)
+**mirrors the `Palette` plumbing** (docs/history/i18n-ui.md): stored as a
+field in the screens (`ChatScreen`/`ChatListScreen`/`SelfModelScreen`,
+updated in `set_settings`/`set_loc` from the `Settings` event), broadcast to
+open overlay screens by a single `ActiveScreen::set_theme(palette, loc)`;
+stateless widgets (`status_bar`/`message_feed`/`chat_list`/…) take `loc` as a
+render parameter. The settings screen computes `self.loc()` from its config
+snapshot. The orchestrator resolves the UI locale (`ui_locale()`) for error/
+notification text and `chat_export`. Text lives as `ui.*` keys in
+`locales/{ru,en}.json` (the same mechanism as axis A). Tool results and the
+self-model render in the feed follow the **agent's** language (axis A).
 
-**Внешние локали (Ярус 3, docs/history/i18n-external-locales.md).** `Lang` — enum `Ru`/`En`/
-`Ext(&'static str)` (внешние коды интернированы `Box::leak`). При старте `i18n::init(
-paths.locales_dir())` (в `main.rs`, до `Storage::open`) наполняет реестр (`OnceLock`):
-вшитые бандлы + `data/locales/*.json` поверх них (override по ключам того же кода / новый
-язык; битый файл → warn+skip). Без `init` (тесты) — только вшитые (`BUILTIN` LazyLock),
-поведение неизменно. UI-селекторы языка и `present.rs::exit_labels` берут реестр-осведомлённый
-`Lang::all()`; гейт-тесты — вшитый `Lang::ALL`.
+**External locales (Tier 3, docs/history/i18n-external-locales.md).** `Lang` is an
+enum `Ru`/`En`/`Ext(&'static str)` (external codes are interned via
+`Box::leak`). At startup, `i18n::init(paths.locales_dir())` (in `main.rs`,
+before `Storage::open`) populates the registry (`OnceLock`): built-in bundles
++ `data/locales/*.json` layered on top (an override by keys of the same code
+/ a new language; a corrupt file → warn+skip). Without `init` (tests) — only
+the built-ins (`BUILTIN` LazyLock), behavior unchanged. UI language selectors
+and `present.rs::exit_labels` use the registry-aware `Lang::all()`; gate
+tests use the built-in `Lang::ALL`.
 
-Перечисления экранов сведены к **каноничным местам**: broadcast палитры/локали (смена
-темы/языка) — `ActiveScreen::set_theme`, маршрутизация вставки из буфера — `ActiveScreen::handle_paste`
-(методы рядом с enum); снятое из активного экрана намерение диспетчеризуется единым
-`AnyIntent` + `dispatch_any` (одно владение вместо 4 параллельных `Option`); запись в
-буфер обмена — `deliver_clipboard` (`apply_event` не знает про `arboard`). Строка статуса
-получает снимок `status_bar::StatusModel` (собирается `ChatScreen::status_model`) — новый
-индикатор добавляет поле, а не расширяет сигнатуры `render`/`height`. Сам per-событийный
-`match` в `apply_event` осознанно остаётся (enum-диспетчеризация идиоматична). См.
-docs/history/refactoring-solid.md §6.
+Screen enumerations are consolidated into **canonical places**: broadcasting
+the palette/locale (a theme/language change) — `ActiveScreen::set_theme`,
+routing a clipboard paste — `ActiveScreen::handle_paste` (methods next to
+the enum); an intent taken from the active screen is dispatched through a
+single `AnyIntent` + `dispatch_any` (single ownership instead of 4 parallel
+`Option`s); a clipboard write — `deliver_clipboard` (`apply_event` doesn't
+know about `arboard`). The status line receives a `status_bar::StatusModel`
+snapshot (assembled by `ChatScreen::status_model`) — a new indicator adds a
+field instead of extending the `render`/`height` signatures. The per-event
+`match` in `apply_event` itself deliberately stays as is (enum dispatch is
+idiomatic here). See docs/history/refactoring-solid.md §6.
 
 ```mermaid
 flowchart TB
-    RT["runtime.rs (петля)<br/>ChatScreen + enum ActiveScreen"]
-    subgraph SC["screens (отдают Intent, не AppCommand)"]
-        CHAT["ChatScreen<br/>handle_key→ChatIntent, мутаторы-проекция AppEvent"]
-        CLS["ChatListScreen<br/>обёртка chat_list → ChatListIntent"]
-        SET["SettingsScreen<br/>секции/поля → SettingsIntent"]
+    RT["runtime.rs (loop)<br/>ChatScreen + enum ActiveScreen"]
+    subgraph SC["screens (return an Intent, not AppCommand)"]
+        CHAT["ChatScreen<br/>handle_key→ChatIntent, mutators project AppEvent"]
+        CLS["ChatListScreen<br/>wraps chat_list → ChatListIntent"]
+        SET["SettingsScreen<br/>sections/fields → SettingsIntent"]
     end
     subgraph WG["widgets"]
         FEED["message_feed"]
         INP["input_box"]
-        CL["chat_list (виджет списка)"]
+        CL["chat_list (list widget)"]
         SB["status_bar"]
-        PL["profile_list (оверлей)"]
+        PL["profile_list (overlay)"]
         IP["impersonation_preview"]
     end
-    subgraph SH["shared (рендер)"]
+    subgraph SH["shared (rendering)"]
         MD["markdown (pulldown-cmark)"]
-        WR["wrap (перенос по колонкам)"]
+        WR["wrap (column-based wrapping)"]
         TH["theme (Palette)"]
-        KEY["keys (раскладко-независимость)"]
+        KEY["keys (layout independence)"]
     end
 
     RT --> CHAT
@@ -1486,43 +1617,45 @@ flowchart TB
     CHAT & SET & CL --> KEY
 ```
 
-Решения, закреплённые ADR:
+Decisions recorded in ADRs:
 
-- **Свой `InputBox`** ([ADR 0001](decisions/0001-ui-crates-ratatui-030.md)):
-  `tui-textarea`/`ratatui-textarea` несовместимы с ratatui 0.30 и не дают
-  подсветки произвольных диапазонов. Свой виджет даёт полный контроль над
-  `Enter`/`Shift+Enter`, скроллом, подчёркиванием орфографии (per-span
-  `UNDERLINED`), визуальной навигацией `↑/↓` по рядам переноса, однострочным
-  режимом для полей настроек.
-- **Свой markdown-рендерер** ([ADR 0003](decisions/0003-own-markdown-renderer.md)):
-  walker по событиям `pulldown-cmark` (`render(input, width, palette)`).
-  Поддерживает таблицы (box-drawing, раскладка колонок «водоналивом»),
-  delimiter-scoped LaTeX→unicode (только внутри `$…$`/`$$…$$`), тему (`Palette`),
-  подсветку кода (`syntect` + `ansi-to-tui`).
-- **Перенос слов** (`shared/wrap.rs`) считается **до** `Paragraph` (ширина в
-  колонках через `unicode-width`) — это сохраняет row-based скролл/«хвост» в ленте
-  и точный маппинг курсора во вводе. `Paragraph::wrap` сознательно не используется.
-- **Спелл-чек** (`features/spellcheck`): Hunspell (`spellbook`) + свой сегментатор
-  + личный словарь; слово верно, если принято хотя бы одним активным словарём;
-  загрузка словарей — в фоне по настройкам интерфейса.
-- **Раскладко-независимость** (`shared/keys.rs`): Ctrl-символ нормализуется в
-  «физическую» латинскую клавишу (таблица ЙЦУКЕН), поэтому шорткаты работают и при
-  кириллической раскладке.
+- **Our own `InputBox`** ([ADR 0001](decisions/0001-ui-crates-ratatui-030.md)):
+  `tui-textarea`/`ratatui-textarea` are incompatible with ratatui 0.30 and
+  don't support highlighting arbitrary ranges. Our own widget gives full
+  control over `Enter`/`Shift+Enter`, scrolling, spellcheck underlining
+  (per-span `UNDERLINED`), visual `↑/↓` navigation across wrapped rows, and a
+  single-line mode for settings fields.
+- **Our own markdown renderer** ([ADR 0003](decisions/0003-own-markdown-renderer.md)):
+  a walker over `pulldown-cmark` events (`render(input, width, palette)`).
+  Supports tables (box-drawing, "water-fill" column layout), delimiter-scoped
+  LaTeX→unicode (only inside `$…$`/`$$…$$`), the theme (`Palette`), code
+  highlighting (`syntect` + `ansi-to-tui`).
+- **Word wrap** (`shared/wrap.rs`) is computed **before** `Paragraph` (width
+  in columns via `unicode-width`) — this preserves row-based scroll/"tail"
+  behavior in the feed and exact cursor mapping in the input. `Paragraph::wrap`
+  is deliberately not used.
+- **Spellcheck** (`features/spellcheck`): Hunspell (`spellbook`) + our own
+  segmenter + a personal dictionary; a word is correct if accepted by at
+  least one active dictionary; dictionaries are loaded in the background per
+  interface settings.
+- **Layout independence** (`shared/keys.rs`): a Ctrl character is normalized
+  to a "physical" Latin key (a Cyrillic JCUKEN lookup table), so shortcuts
+  work under a Cyrillic layout too.
 
 ---
 
-## 11. Конкурентность и владение
+## 11. Concurrency and ownership
 
 ```mermaid
 flowchart TB
-    subgraph MAIN["Главный поток"]
-        L["render loop (синхронный)"]
+    subgraph MAIN["Main thread"]
+        L["render loop (synchronous)"]
     end
     subgraph RUNTIME["tokio runtime"]
-        O["задача оркестратора (1 шт.)"]
-        G["задача генерации (на время хода)"]
-        T["фоновые задачи: авто-название, имперсонация, RAG-индексация, авто-рефлексия, авто-консолидация заметок"]
-        P["фоновый probe готовности сервера"]
+        O["orchestrator task (1)"]
+        G["generation task (for the duration of the turn)"]
+        T["background tasks: auto-title, impersonation, RAG indexing, auto-reflection, note auto-consolidation"]
+        P["background server-readiness probe"]
     end
     L <-->|"cmd_tx / evt_tx (mpsc)"| O
     O -->|"spawn + done_tx"| G
@@ -1530,143 +1663,167 @@ flowchart TB
     O -->|"status_tx / imp_status_tx"| P
 ```
 
-Принципы:
+Principles:
 
-- **Единственный владелец `Chat`** — оркестратор. Инструменты получают
-  неизменяемый снимок (`ToolContext`) и возвращают `effects` значением; никакого
-  канала `ChatEffect` и реентерабельных локов — дедлок невозможен по построению
-  (упрощение относительно серверного agentic-loop попытки №1).
-- **Внутренние каналы** оркестратора (`done_tx`, `status_tx`, `title_tx`,
-  `imp_done_tx`, `imp_status_tx`, `bg_done_tx`) собирают результаты фоновых задач
-  обратно в главный `select!`-цикл, сохраняя единую точку записи состояния.
-- **Семейство «тихих» фоновых задач** (авто-рефлексия/консолидация — мини
-  agentic-loop без UI, общий раннер `tool_loop::spawn_silent_loop`) обслуживается
-  **реестром слотов** `bg: HashMap<BackgroundKind, BgSlot>` (`orchestrator/background.rs`):
-  слот = токен активного запуска («идёт», одна за раз) + серия неудач. Один канал
-  `bg_done_tx` несёт `(вид, исход)`, одна ветка `select!` зовёт `handle_bg_done` (общий
-  жизненный цикл: гашение индикатора, серия неудач → одна ошибка на пороге, у рефлексии
-  при успехе — `SelfModelChanged`); `Quit` отменяет все слоты через `cancel_all_bg`.
-  Так задача №3 семейства (авто-консолидация «модели себя», §9.9) не трогает каркас
-  `run()`/`Quit`. Каденция консолидации (`consolidate_counts`) — отдельные данные, не
-  жизненный цикл. См. docs/history/refactoring-solid.md §4.
-- **Отмена** — `CancellationToken` прерывает HTTP-стрим/фоновую задачу; частичный
-  ответ фиксируется; новая задача того же рода отменяет предыдущую (RAG,
-  имперсонация).
-- **Восстановление терминала** — `ratatui::init` ставит panic-hook; захват мыши
-  всегда снимается на выходе и при панике. `panic = "unwind"` в релизе сохранён
-  намеренно ради drop-guard'ов.
-
----
-
-## 12. Точка входа, конфигурация, сборка
-
-- **`main.rs`** — тонкая: грузит `AppConfig`, сеет его env-переменными
-  (`apply_env_overrides` — dev-workflow), проверяет single-instance, инициализирует
-  логирование (в файл) и `tokio`, поднимает `ratatui`, запускает оркестратор и
-  петлю. **CLI — собственный микро-парсер `features/cli.rs`** (не `clap`), чтобы весь
-  текст CLI (справка, ошибки разбора, сообщения команд) жил в бандлах локалей i18n
-  (ось B, docs/history/i18n-cli.md): `import <file>` (импорт из нейтрального формата
-  mindfork-import, `features/import.rs`; прежний `import-lamellama` удалён —
-  подсказывает замену), `backup [-o FILE]
-  [-c 0..9]`/`restore <archive>` (резервное копирование/восстановление,
-  `features/backup.rs`; берут single-instance), `sandbox setup [--force]`, `locales
-  export <code> -o FILE`. Подкоманды выполняются без TUI и завершают процесс.
-  - **«Peek»-фаза до разбора аргументов.** `Paths::resolve()` вычисляет корень/язык
-    **без создания каталогов** (`--help`/`--version` не трогают диск); `ensure_dirs`
-    создаёт каталоги только на путях, работающих с данными. Язык CLI —
-    `cli_lang(settings→defaults→En)`: `settings.json`.`interface.language`, иначе
-    `defaults.json`.`default_language` (если файл присутствует), иначе **английский**
-    (полная неопределённость → международный дефолт). Внешние локали (`i18n::init`)
-    сканируются до разбора, чтобы `--help` уважал их override; `init` возвращает
-    предупреждения (лог-подписчик ещё не поднят) — они логируются позже.
-  - **`main() -> ExitCode`.** Ошибки печатает сам (`{локализованный префикс}: {err:#}`,
-    однострочная цепочка) вместо английских `Error:`/`Caused by:` от std/anyhow.
-    Контексты `Paths::resolve` (до знания языка) — на английском (граница §7 доки).
-- **Конфигурация** (`shared/config.rs`): `AppConfig` с секциями `EngineSettings`,
-  `EmbedSettings`, `ToolSettings`, `InterfaceSettings`, `ImpersonationEngineSettings`,
-  `impersonation_sampling`, глобальный семплинг. Все поля под `#[serde(default)]` —
-  старые `settings.json` читаются без миграции. Выбор бэкенда — через настройки или
-  env (`MINDFORK_ENGINE_URL` external / `MINDFORK_LLAMA_BIN` + `MINDFORK_MODEL`…
-  managed; аналогично `MINDFORK_EMBED_*`).
-  - **Конфиг движка вложенный по режимам/провайдерам:** `EngineSettings`/
-    `ImpersonationEngineSettings`/`EmbedSettings` несут `mode` + под-секции
-    `managed: ManagedSettings`, `external: ExternalSettings` и по `CloudSettings` на
-    каждого облачного провайдера (`openai`/`gemini`/`claude`; у эмбеддингов managed —
-    `ManagedEmbedSettings`). У каждого режима свои поля, поэтому переключение режима/
-    провайдера не теряет чужих значений. Аксессоры `cloud()`/`cloud_mut()` отдают
-    активную облачную под-структуру по `mode`. Экран настроек показывает поля только
-    выбранного режима и скрывает неподдержанные облаком параметры сэмплинга (фильтр
-    `cloud_supported_param`; значения сохраняются для локальных моделей). Шапка чата
-    (`screens/chat::model_meta`) показывает модель активного режима. См. ADR 0004.
-    `ManagedSettings` дополнительно несёт `flash_attn: FlashAttn` (`--flash-attn`) и
-    поля спекулятивного декодирования (`spec_type: SpecType` + `draft_model`/
-    `draft_gpu_layers`/`draft_n_max`/`draft_n_min`); черновые поля в UI видны только
-    для типов `draft-*` — для MTP-моделей (`mtp-gemma-…`) это `draft-mtp`.
-- **API-ключи облаков** (`shared/secrets.rs`, docs/research/api-key-storage.md):
-  ключ можно **ввести в настройках** — он шифруется **машинным ключом** и лежит в
-  `settings.json` (`AppConfig::api_keys`) шифротекстом. Записи **пер-машинные**:
-  конфиг переносим, на другой машине запись не расшифруется (ключ вводится заново
-  своей записью), при возврате на прежнюю — читается. Схемы: **DPAPI** (Windows,
-  ключ пользователя, которым управляет ОС) и **`machine-key-v1`** (Linux: HKDF-SHA256
-  над `/etc/machine-id` + ChaCha20-Poly1305, привязка per-user через `info`);
-  «наша» запись опознаётся расшифровкой пробы `check` (machine-id в файле не светим).
-  Резолв — `EngineManager` (`stored_key`), супервайзеру уходит уже расшифрованный
-  `stored_key: Option<&str>`; порядок **сохранённый → env-фолбэк** (`api_key_env`
-  остаётся для CI/power users и external-прокси). Пишет ключи только оркестратор
-  (`AppCommand::SetApiKey`), в снимок конфига для UI они не попадают.
-  Защищают **файл** (перенос/бэкап/синхронизация), не машину: локальный код под тем
-  же пользователем выведет тот же ключ — как в Chrome/Git Credential Manager.
-- **Расположение данных** (`shared/paths.rs`): по умолчанию **портативно** — в
-  подкаталоге `data/` рядом с бинарником (в dev — `target/debug/data/`; подкаталог
-  отделяет данные от служебных файлов/кэшей сборки): `settings.json`,
-  `profiles.json`, `chats/`, `data.db`, `personal_dictionary.txt`, `dictionaries/`,
-  `backups/`, `logs/`. Файл `defaults.json` рядом с бинарником (всегда вне `data/`;
-  `Defaults` = `DataLocation` `portable`/`system`/`path` + `default_language`)
-  переключает корень в стандартную ОС-папку (крейт `directories`) или произвольный
-  каталог и задаёт язык каркаса новых профилей (ось A — docs/history/i18n.md); нет файла →
-  портативный режим + `ru` (для совместимости читается старый `location.json`).
-  **Резервное копирование** (`features/backup.rs`): zip с
-  настраиваемым сжатием (chats/dictionaries/data.db/profiles/settings/personal +
-  `*.bak` + `fs_root`, если внутри корня); восстановление транзакционно (валидация →
-  pre-restore копия в `backups/` → очистка → распаковка → откат при сбое).
-- **Зависимости** (см. [Cargo.toml](../Cargo.toml)): `ratatui` 0.30 + `crossterm`,
-  `tokio`, `reqwest` (rustls), `rusqlite` (bundled) + `sqlite-vec`,
-  `pulldown-cmark` + `syntect` + `ansi-to-tui`, `spellbook`, `arboard`, `scraper`,
-  `serde`/`serde_json`, `uuid`, `chrono`, `tracing`, `zip` + `directories`
-  (резервное копирование и режим хранения), `chacha20poly1305` + `hkdf`
-  (шифрование сохранённых API-ключей; на Windows — системный DPAPI через
-  `windows-sys`). CLI разбирается **своим** парсером
-  (`features/cli.rs`), не крейтом — `clap` удалён (docs/history/i18n-cli.md). Приложение **не
-  зависит от ML-стека** — это ключевое упрощение сборки.
-- **Релиз**: `[profile.release]` с LTO/strip/`opt-level=3`, `panic=unwind`.
+- **The sole owner of `Chat`** is the orchestrator. Tools get an immutable
+  snapshot (`ToolContext`) and return `effects` by value; there's no
+  `ChatEffect` channel and no reentrant locks — deadlock is impossible by
+  construction (a simplification relative to the server-side agentic loop of
+  attempt #1).
+- **Internal channels** of the orchestrator (`done_tx`, `status_tx`,
+  `title_tx`, `imp_done_tx`, `imp_status_tx`, `bg_done_tx`) feed the results
+  of background tasks back into the main `select!` loop, keeping a single
+  point of state writes.
+- **The "silent" background task family** (auto-reflection/consolidation — a
+  mini agentic loop with no UI, sharing a runner,
+  `tool_loop::spawn_silent_loop`) is served by a **slot registry**,
+  `bg: HashMap<BackgroundKind, BgSlot>` (`orchestrator/background.rs`): a
+  slot = the active run's token ("running", one at a time) + a failure
+  streak. One channel `bg_done_tx` carries `(kind, outcome)`, one `select!`
+  branch calls `handle_bg_done` (the shared lifecycle: clearing the
+  indicator, a failure streak → a single error at the threshold, for
+  reflection a success → `SelfModelChanged`); `Quit` cancels all slots via
+  `cancel_all_bg`. This way the family's 3rd task (self-model
+  auto-consolidation, §9.9) doesn't touch the `run()`/`Quit` scaffold.
+  Consolidation cadence (`consolidate_counts`) is separate data, not
+  lifecycle. See docs/history/refactoring-solid.md §4.
+- **Cancellation** — a `CancellationToken` interrupts an HTTP stream/
+  background task; a partial reply is preserved; a new task of the same kind
+  cancels the previous one (RAG, impersonation).
+- **Terminal restoration** — `ratatui::init` installs a panic hook; mouse
+  capture is always released on exit and on panic. `panic = "unwind"` is
+  kept deliberately in the release profile, for drop guards.
 
 ---
 
-## 13. Тестируемость
+## 12. Entry point, configuration, build
 
-Архитектура спроектирована тестируемой без сервера/GPU/сети:
-
-- **Движок** — за трейтом `EngineBackend`; в тестах `MockBackend` (replay потока
-  чанков). Реальный сервер — `#[ignore]`-смоуки (анти-самообрыв, tool-calling,
-  «мысли» — проверены на Gemma 4 и Qwen).
-- **Инструменты** — на `MockEmbedder` (bag-of-chars + L2) и mock-`Storage`:
-  корректность результата, возврат `effects` (а не мутация), валидность JSON-схем.
-- **Хранилище** — `tempfile` + SQLite `:memory:`: изоляция по `profile_id`
-  (негативные тесты), мягкое удаление/каскад, атомарность, kNN.
-- **Оркестратор** — без UI и модели: автомат, гонки (spam Send, Stop→Send,
-  отбрасывание по `generation_id`), agentic-loop, `max_tool_rounds`, приоритеты
-  семплинга, логика «удалить последнее».
-- **UI** — чистая логика: применение последовательности `AppEvent` к проекции,
-  рендер markdown/LaTeX, чистые функции (`chunk_batch`, `format_conversation`,
-  `rag_command::parse`, перенос слов).
-
-Статус (CLAUDE.md): план M0–M9 + обширный пост-M9 выполнен; **729 юнит-тестов
-зелёные**, **25 `#[ignore]`-смоуков** прогнаны на живой связке Gemma 4 31B + bge-m3
-(`llama-server`) — 25/25 зелёные (базовые смоуки Gemma + end-to-end модели себя/
-заметок/нарратива).
+- **`main.rs`** — thin: loads `AppConfig`, seeds it with env variables
+  (`apply_env_overrides` — a dev workflow), checks single-instance,
+  initializes logging (to a file) and `tokio`, brings up `ratatui`, starts
+  the orchestrator and the loop. **The CLI is our own micro-parser,
+  `features/cli.rs`** (not `clap`), so that all CLI text (help, parse
+  errors, command messages) lives in i18n locale bundles (axis B,
+  docs/history/i18n-cli.md): `import <file>` (import from the neutral
+  mindfork-import format, `features/import.rs`; the former
+  `import-lamellama` was removed — it hints at the replacement),
+  `backup [-o FILE] [-c 0..9]`/`restore <archive>` (backup/restore,
+  `features/backup.rs`; take single-instance), `sandbox setup [--force]`,
+  `locales export <code> -o FILE`. Subcommands run without the TUI and exit
+  the process.
+  - **A "peek" phase before argument parsing.** `Paths::resolve()` computes
+    the root/language **without creating directories** (`--help`/
+    `--version` never touch the disk); `ensure_dirs` creates directories
+    only on paths that work with data. The CLI language is
+    `cli_lang(settings→defaults→En)`: `settings.json`.`interface.language`,
+    otherwise `defaults.json`.`default_language` (if the file is present),
+    otherwise **English** (full uncertainty → an international default).
+    External locales (`i18n::init`) are scanned before parsing, so `--help`
+    honors their override; `init` returns warnings (there's no log
+    subscriber yet) — they're logged later.
+  - **`main() -> ExitCode`.** It prints errors itself
+    (`{localized prefix}: {err:#}`, a single-line chain) instead of std/
+    anyhow's English `Error:`/`Caused by:`. `Paths::resolve` contexts (before
+    the language is known) are in English (the boundary noted in §7 above).
+- **Configuration** (`shared/config.rs`): `AppConfig` with sections
+  `EngineSettings`, `EmbedSettings`, `ToolSettings`, `InterfaceSettings`,
+  `ImpersonationEngineSettings`, `impersonation_sampling`, global sampling.
+  All fields under `#[serde(default)]` — old `settings.json` files are read
+  without migration. Backend choice via settings or env
+  (`MINDFORK_ENGINE_URL` external / `MINDFORK_LLAMA_BIN` + `MINDFORK_MODEL`…
+  managed; similarly `MINDFORK_EMBED_*`).
+  - **The engine config is nested by mode/provider:** `EngineSettings`/
+    `ImpersonationEngineSettings`/`EmbedSettings` carry `mode` + subsections
+    `managed: ManagedSettings`, `external: ExternalSettings`, and one
+    `CloudSettings` per cloud provider (`openai`/`gemini`/`claude`; for
+    embeddings' managed mode — `ManagedEmbedSettings`). Each mode has its
+    own fields, so switching mode/provider doesn't lose the other's values.
+    `cloud()`/`cloud_mut()` accessors return the active cloud substructure
+    by `mode`. The settings screen shows only the fields of the selected
+    mode and hides sampling parameters the cloud doesn't support (the
+    `cloud_supported_param` filter; values are kept for local models). The
+    chat header (`screens/chat::model_meta`) shows the active mode's model.
+    See ADR 0004. `ManagedSettings` additionally carries
+    `flash_attn: FlashAttn` (`--flash-attn`) and speculative-decoding
+    fields (`spec_type: SpecType` + `draft_model`/`draft_gpu_layers`/
+    `draft_n_max`/`draft_n_min`); draft fields are only shown in the UI for
+    `draft-*` types — for MTP models (`mtp-gemma-…`) that's `draft-mtp`.
+- **Cloud API keys** (`shared/secrets.rs`, docs/research/api-key-storage.md):
+  a key can be **entered in settings** — it's encrypted with a **machine
+  key** and stored in `settings.json` (`AppConfig::api_keys`) as ciphertext.
+  Records are **per-machine**: the config is portable, on another machine
+  the record won't decrypt (the key must be re-entered as its own record),
+  and it reads back on returning to the original machine. Schemes: **DPAPI**
+  (Windows, a user key managed by the OS) and **`machine-key-v1`** (Linux:
+  HKDF-SHA256 over `/etc/machine-id` + ChaCha20-Poly1305, per-user binding
+  via `info`); "our" record is recognized by decrypting the `check` probe
+  (we never store the machine id itself in the file). Resolution happens in
+  `EngineManager` (`stored_key`); the supervisor gets an already-decrypted
+  `stored_key: Option<&str>`; the order is **stored → env fallback**
+  (`api_key_env` remains for CI/power users and an external proxy). Only
+  the orchestrator writes keys (`AppCommand::SetApiKey`); they never land
+  in the config snapshot sent to the UI. This protects the **file**
+  (transfer/backup/sync), not the machine: local code running as the same
+  user can derive the same key — as with Chrome/Git Credential Manager.
+- **Data location** (`shared/paths.rs`): **portable** by default — in a
+  `data/` subdirectory next to the binary (in dev, `target/debug/data/`; the
+  subdirectory separates data from build artifacts/caches): `settings.json`,
+  `profiles.json`, `chats/`, `data.db`, `personal_dictionary.txt`,
+  `dictionaries/`, `backups/`, `logs/`. A `defaults.json` file next to the
+  binary (always outside `data/`; `Defaults` = `DataLocation`
+  `portable`/`system`/`path` + `default_language`) switches the root to a
+  standard OS folder (the `directories` crate) or a custom directory, and
+  sets the scaffold language for new profiles (axis A —
+  docs/history/i18n.md); no file → portable mode + `ru` (the old
+  `location.json` is read for backward compatibility). **Backups**
+  (`features/backup.rs`): a zip with configurable compression (chats/
+  dictionaries/data.db/profiles/settings/personal + `*.bak` + `fs_root` if
+  it's inside the root); restore is transactional (validation → a
+  pre-restore copy in `backups/` → cleanup → extraction → rollback on
+  failure).
+- **Dependencies** (see [Cargo.toml](../Cargo.toml)): `ratatui` 0.30 +
+  `crossterm`, `tokio`, `reqwest` (rustls), `rusqlite` (bundled) +
+  `sqlite-vec`, `pulldown-cmark` + `syntect` + `ansi-to-tui`, `spellbook`,
+  `arboard`, `scraper`, `serde`/`serde_json`, `uuid`, `chrono`, `tracing`,
+  `zip` + `directories` (backups and the storage mode), `chacha20poly1305`
+  + `hkdf` (encrypting stored API keys; on Windows — the system DPAPI via
+  `windows-sys`). The CLI is parsed by **our own** parser
+  (`features/cli.rs`), not a crate — `clap` was removed
+  (docs/history/i18n-cli.md). The application **doesn't depend on an ML
+  stack** — that's a key build simplification.
+- **Release**: `[profile.release]` with LTO/strip/`opt-level=3`,
+  `panic=unwind`.
 
 ---
 
-*Документ описывает реализацию `mindfork-rs`. Источник истины по «что/почему» —
-[spec.md](../spec.md); зафиксированные решения — [ADR](decisions/); журнал
-реализации и актуальный статус — [CLAUDE.md](../CLAUDE.md).*
+## 13. Testability
+
+The architecture is designed to be testable without a server/GPU/network:
+
+- **The engine** — behind the `EngineBackend` trait; tests use `MockBackend`
+  (replaying a stream of chunks). The real server — `#[ignore]` smoke tests
+  (anti-self-abort, tool calling, "thoughts" — verified against Gemma 4 and
+  Qwen).
+- **Tools** — against `MockEmbedder` (bag-of-chars + L2) and a mock
+  `Storage`: result correctness, returning `effects` (not mutation), JSON
+  schema validity.
+- **Storage** — `tempfile` + an in-memory SQLite: isolation by
+  `profile_id` (negative tests), soft delete/cascade, atomicity, kNN.
+- **The orchestrator** — no UI or model: the state machine, races (spamming
+  Send, Stop→Send, dropping by `generation_id`), the agentic loop,
+  `max_tool_rounds`, sampling priorities, "delete the last exchange" logic.
+- **UI** — pure logic: applying an `AppEvent` sequence to the projection,
+  markdown/LaTeX rendering, pure functions (`chunk_batch`,
+  `format_conversation`, `rag_command::parse`, word wrap).
+
+Status (CLAUDE.md): the M0–M9 plan plus extensive post-M9 work is done;
+**729 unit tests green**, **25 `#[ignore]` smoke tests** run against a live
+Gemma 4 31B + bge-m3 stack (`llama-server`) — 25/25 green (basic Gemma smoke
+tests + end-to-end self-model/notes/narrative tests).
+
+---
+
+*This document describes the implementation of `mindfork-rs`. The source of
+truth for "what/why" is [spec.md](../spec.md); recorded decisions are in
+[ADR](decisions/); the implementation log and current status are in
+[CLAUDE.md](../CLAUDE.md).*

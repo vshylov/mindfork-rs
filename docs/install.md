@@ -1,28 +1,28 @@
-# Установка и запуск mindfork-rs
+# Installing and running mindfork-rs
 
-Консольное (TUI) приложение ИИ-чата. Платформы: **Windows** и **Linux**.
-По умолчанию все данные — **рядом с бинарником** (портативно): отдельная папка/флешка
-самодостаточна. Режим хранения можно сменить (§2.1), а данные — резервно копировать и
-восстанавливать (§2.2).
+A console (TUI) AI chat app. Platforms: **Windows** and **Linux**.
+By default all data lives **next to the binary** (portable): a separate folder/flash
+drive is self-contained. The storage mode can be changed (§2.1), and data can be
+backed up and restored (§2.2).
 
-## 1. Установка
+## 1. Installation
 
-### Готовые сборки (релизы)
+### Prebuilt binaries (releases)
 
-Собранные бинарники для **Windows** и **Linux** публикуются на
-[GitHub Releases](https://github.com/vshylov/mindfork-rs/releases): скачайте архив
-`mindfork-rs-vX.Y.Z-x86_64-{windows.zip,linux.tar.gz}`, при желании сверьте контрольную
-сумму по `sha256sums.txt`, распакуйте и запустите бинарник (`mindfork-rs --version`
-покажет версию). Linux-сборка собрана против glibc 2.35 (`ubuntu-22.04`) и работает на
-большинстве актуальных дистрибутивов (Ubuntu 22.04+, Debian 12+, Fedora 36+, Arch;
-RHEL/Rocky 9 с glibc 2.34 — **не** поддержаны).
+Prebuilt binaries for **Windows** and **Linux** are published on
+[GitHub Releases](https://github.com/vshylov/mindfork-rs/releases): download the
+`mindfork-rs-vX.Y.Z-x86_64-{windows.zip,linux.tar.gz}` archive, optionally verify the
+checksum against `sha256sums.txt`, unpack it, and run the binary (`mindfork-rs --version`
+prints the version). The Linux build is built against glibc 2.35 (`ubuntu-22.04`) and
+runs on most current distros (Ubuntu 22.04+, Debian 12+, Fedora 36+, Arch;
+RHEL/Rocky 9 with glibc 2.34 is **not** supported).
 
-Портативный архив хранит данные **рядом с бинарником** (в `data/`); это самодостаточная
-папка/флешка. Для «установленного» варианта — пакеты ниже.
+The portable archive keeps data **next to the binary** (in `data/`); it's a
+self-contained folder/flash drive. For an "installed" setup — see the packages below.
 
-### Linux-пакеты (deb / rpm / pkg.tar.zst)
+### Linux packages (deb / rpm / pkg.tar.zst)
 
-К каждому релизу прилагаются системные пакеты:
+Each release ships system packages:
 
 ```bash
 sudo apt install ./mindfork-rs_X.Y.Z-1_amd64.deb        # Debian/Ubuntu
@@ -30,50 +30,51 @@ sudo dnf install ./mindfork-rs-X.Y.Z-1.x86_64.rpm       # Fedora
 sudo pacman -U  ./mindfork-rs-X.Y.Z-1-x86_64.pkg.tar.zst # Arch
 ```
 
-Пакеты кладут бинарь в `/usr/lib/mindfork-rs/` (симлинк `/usr/bin/mindfork-rs`), словари
-рядом с ним, а данные хранят в **стандартной ОС-папке** (`~/.local/share/mindfork-rs` —
-задаётся файлом `/usr/lib/mindfork-rs/defaults.json` с `{"mode":"system"}`). Язык
-интерфейса при первом запуске определяется по локали системы. Пакеты не подписаны —
-целостность сверяйте по `sha256sums.txt` релиза.
+The packages place the binary in `/usr/lib/mindfork-rs/` (symlinked from
+`/usr/bin/mindfork-rs`), the dictionaries next to it, and keep data in the
+**standard OS folder** (`~/.local/share/mindfork-rs` — set by the
+`/usr/lib/mindfork-rs/defaults.json` file with `{"mode":"system"}`). The interface
+language on first run is detected from the system locale. Packages are unsigned —
+verify integrity against the release's `sha256sums.txt`.
 
-### Windows-инсталлятор
+### Windows installer
 
-К каждому релизу прилагается `mindfork-rs-vX.Y.Z-x86_64-setup.exe` (Inno Setup).
-Устанавливается **для текущего пользователя без прав администратора** (можно выбрать «для
-всех»). В мастере два шага: **язык приложения** (Русский/English) и **расположение
-данных** — стандартная ОС-папка (`%APPDATA%\mindfork-rs\data`, рекомендуется), портативно
-(рядом с программой) или произвольная папка. Выбор записывается в `defaults.json` рядом с
-бинарником и **не перезаписывается при обновлении**. Тихая установка:
+Each release ships `mindfork-rs-vX.Y.Z-x86_64-setup.exe` (Inno Setup). It installs
+**for the current user without administrator rights** (an "all users" option is
+available). The wizard has two custom steps: **application language**
+(Russian/English) and **data location** — the standard OS folder
+(`%APPDATA%\mindfork-rs\data`, recommended), portable (next to the app), or a custom
+folder. The choice is written to `defaults.json` next to the binary and **is not
+overwritten on upgrade**. Silent install:
 `setup.exe /VERYSILENT /NORESTART`.
 
-Инсталлятор **не подписан** — при первом запуске Windows SmartScreen покажет
-предупреждение («Windows защитила ваш компьютер» → «Подробнее» → «Выполнить в любом
-случае»). Целостность файла можно сверить по `sha256sums.txt` релиза. Как альтернатива —
-портативный `windows.zip` (без установки).
+The installer is **unsigned** — on first run Windows SmartScreen will show a warning
+("Windows protected your PC" → "More info" → "Run anyway"). File integrity can be
+verified against the release's `sha256sums.txt`. As an alternative — the portable
+`windows.zip` (no install).
 
-### Сборка из исходников
+### Building from source
 
-Нужен **Rust** (edition 2024, свежий стабильный toolchain). На **Linux**
-дополнительно нужны заголовки ALSA — воспроизведение речи (`/tts`, §4.3) собирается
-через `rodio`/`cpal`:
+You need **Rust** (edition 2024, a recent stable toolchain). On **Linux** you also
+need the ALSA headers — speech playback (`/tts`, §4.3) is built via `rodio`/`cpal`:
 
 ```bash
 sudo apt-get install -y libasound2-dev     # Debian/Ubuntu
 sudo dnf install -y alsa-lib-devel         # Fedora
 ```
 
-На Windows ничего ставить не нужно (WASAPI через `windows-rs`). Готовые пакеты
-тянут рантайм-библиотеку сами (`libasound2t64`/`libasound2` / `alsa-lib`).
+On Windows nothing extra is needed (WASAPI via `windows-rs`). The prebuilt packages
+pull in the runtime library themselves (`libasound2t64`/`libasound2` / `alsa-lib`).
 
 ```bash
-cargo build --release        # бинарник в target/release/
+cargo build --release        # binary in target/release/
 ```
 
-Релизный профиль включает LTO и `strip` (меньше размер, выше скорость). Профиль
-сохраняет `panic = unwind` — это нужно для гарантированного восстановления
-терминала при панике.
+The release profile enables LTO and `strip` (smaller size, higher speed). The
+profile keeps `panic = unwind` — needed for guaranteed terminal restoration on
+panic.
 
-Проверки перед коммитом (зелёные на обеих платформах):
+Checks before committing (green on both platforms):
 
 ```bash
 cargo fmt --check
@@ -81,428 +82,440 @@ cargo clippy --all-targets -- -D warnings
 cargo test
 ```
 
-## 2. Где лежат данные (портативно)
+## 2. Where the data lives (portable)
 
-В подкаталоге `data/` рядом с исполняемым файлом (отделяет данные от служебных
-файлов/кэшей сборки; в dev — `target/debug/data/`) создаются:
+In the `data/` subdirectory next to the executable (separates data from build
+tooling/caches; in dev — `target/debug/data/`), the following are created:
 
-| Путь | Назначение |
+| Path | Purpose |
 |---|---|
-| `settings.json` | глобальная конфигурация (модель/сервер, семплинг, инструменты, интерфейс) |
-| `profiles.json` | профили ИИ-собеседника |
-| `chats/{id}.json` | чаты (+ `.bak` — бэкап при перезаписи) |
-| `data.db` | заметки и RAG (SQLite + sqlite-vec), изоляция по профилю |
-| `dictionaries/` | словари спелл-чека (Hunspell) |
-| `personal_dictionary.txt` | персональный словарь |
-| `backups/` | резервные копии (см. §2.2) |
-| `logs/` | логи (stdout занят TUI) |
+| `settings.json` | global configuration (model/server, sampling, tools, interface) |
+| `profiles.json` | AI companion profiles |
+| `chats/{id}.json` | chats (+ `.bak` — backup on overwrite) |
+| `data.db` | notes and RAG (SQLite + sqlite-vec), isolated by profile |
+| `dictionaries/` | spellcheck dictionaries (Hunspell) |
+| `personal_dictionary.txt` | personal dictionary |
+| `backups/` | backups (see §2.2) |
+| `logs/` | logs (stdout is occupied by the TUI) |
 
-В dev-сборке это `target/debug/data/` рядом с бинарником.
+In a dev build this is `target/debug/data/` next to the binary.
 
-### 2.1. Установочные умолчания (`defaults.json`)
+### 2.1. Installation defaults (`defaults.json`)
 
-По умолчанию данные хранятся в подкаталоге `data/` **рядом с бинарником**
-(портативно). Это можно изменить файлом `defaults.json` **рядом с исполняемым
-файлом** (сам файл всегда лежит рядом с бинарником, **не** в `data/` — он про
-установку, а не пользовательские данные; в резервную копию не входит):
+By default, data is stored in a `data/` subdirectory **next to the binary**
+(portable). This can be changed with a `defaults.json` file **next to the
+executable** (the file itself always lives next to the binary, **not** inside
+`data/` — it's about installation, not user data; it's not included in backups):
 
 ```jsonc
-{ "mode": "portable" }                 // подкаталог data/ рядом с бинарником (по умолчанию)
-{ "mode": "system" }                   // стандартная ОС-папка пользователя
-{ "mode": "path", "path": "D:\\mindfork-data" }  // произвольный каталог
-{ "mode": "portable", "default_language": "en" } // + язык каркаса новых профилей
+{ "mode": "portable" }                 // data/ subdirectory next to the binary (default)
+{ "mode": "system" }                   // standard OS user folder
+{ "mode": "path", "path": "D:\\mindfork-data" }  // arbitrary directory
+{ "mode": "portable", "default_language": "en" } // + new-profile scaffold language
 ```
 
-- **`mode`** — режим хранения: **`system`** → Windows `%APPDATA%\mindfork-rs\data`,
-  Linux `~/.local/share/mindfork-rs`; **`path`** → указанный каталог (создаётся при
-  необходимости; **без** под-папки `data/`).
-- **`default_language`** — язык **служебного каркаса** (промпты, каркас «модели себя»,
-  результаты инструментов), на котором создаётся первый профиль и новые профили, **и**
-  язык интерфейса при свежей установке: `ru` или `en`. Это **не** язык ответа модели
-  (его задаёт системное сообщение профиля). Инсталлятор заполнит это поле по выбору
-  языка при установке. **Поле необязательное:** если его нет (напр. deb/rpm-пакет пишет
-  только `{"mode":"system"}`), язык определяется **по локали ОС** — русская локаль →
-  русский, иначе английский. См. [docs/history/i18n.md](history/i18n.md).
-- Нет файла или он пуст → **портативный** режим + язык по локали ОС. Для обратной
-  совместимости читается и старый файл **`location.json`** (только режим хранения),
-  если `defaults.json` отсутствует.
-- Файл читается и с UTF-8 BOM. Повреждённый JSON — ошибка запуска (чтобы опечатка в
-  пути не привела к работе с пустым набором данных не там, где надо).
-- **Словари спелл-чека** при не-портативном режиме (`system`/`path`) ищутся сперва в
-  каталоге данных, а затем в портативной раскладке **рядом с бинарником**
-  (`data/dictionaries/` — туда их кладёт инсталлятор/пакет), так что орфография
-  работает и при системной установке.
+- **`mode`** — storage mode: **`system`** → Windows `%APPDATA%\mindfork-rs\data`,
+  Linux `~/.local/share/mindfork-rs`; **`path`** → the given directory (created if
+  needed; **without** a `data/` subfolder).
+- **`default_language`** — the **agent-scaffold language** (prompts, self-model
+  scaffold, tool results) the first profile and new profiles are created with, **and**
+  the interface language on a fresh install: `ru` or `en`. This is **not** the
+  language the model responds in (that's set by the profile's system message). The
+  installer fills this field in based on the language chosen during setup. **The
+  field is optional:** if it's absent (e.g. the deb/rpm package writes only
+  `{"mode":"system"}`), the language is determined **from the OS locale** — a
+  Russian locale → Russian, otherwise English. See [docs/history/i18n.md](history/i18n.md).
+- No file, or an empty one → **portable** mode + language from the OS locale. For
+  backward compatibility, the old **`location.json`** file (storage mode only) is
+  also read if `defaults.json` is absent.
+- The file is read with a UTF-8 BOM too. A corrupted JSON file is a startup error
+  (so a typo in the path doesn't silently leave you working with an empty data set
+  in the wrong place).
+- **Spellcheck dictionaries** in a non-portable mode (`system`/`path`) are looked up
+  first in the data directory, then in the portable layout **next to the binary**
+  (`data/dictionaries/` — where the installer/package places them), so spellcheck
+  works under a system install too.
 
-### 2.2. Резервное копирование и восстановление
+### 2.2. Backup and restore
 
-Команды выполняются без TUI (приложение должно быть закрыто) и завершаются:
+The commands run without the TUI (the app must be closed) and exit:
 
 ```bash
-# Создать копию (zip). Без -o имя авто-генерируется в backups/.
+# Create a copy (zip). Without -o, the name is auto-generated under backups/.
 mindfork backup
-mindfork backup -o D:\copy.zip -c 6     # путь и степень сжатия 0..9 (0 — без сжатия)
+mindfork backup -o D:\copy.zip -c 6     # path and compression level 0..9 (0 — no compression)
 
-# Восстановить из копии.
+# Restore from a copy.
 mindfork restore D:\copy.zip
 ```
 
-В архив входят: `chats/`, `dictionaries/`, `locales/`, `data.db`,
-`personal_dictionary.txt`, `profiles.json`, `settings.json`, все `*.bak`, а также
-каталог-«песочница» файловых инструментов (`tools.fs_root`) — **только если** он
-лежит внутри каталога данных. Исключаются `backups/`, `logs/` и файлы умолчаний
-`defaults.json`/`location.json`.
+The archive includes: `chats/`, `dictionaries/`, `locales/`, `data.db`,
+`personal_dictionary.txt`, `profiles.json`, `settings.json`, all `*.bak` files, and
+the file tools' "sandbox" directory (`tools.fs_root`) — **only if** it's inside the
+data directory. `backups/`, `logs/`, and the defaults files `defaults.json`/
+`location.json` are excluded.
 
-**Восстановление транзакционно.** Архив сначала проверяется; если в каталоге данных
-уже что-то есть, оно автоматически сохраняется в `backups/` (pre-restore копия),
-затем данные очищаются и распаковывается указанный архив. Если распаковка не удалась
-(например, архив повреждён на полпути), выполняется **откат** к pre-restore копии — о
-всех действиях сообщается в консоль.
+**Restoration is transactional.** The archive is validated first; if the data
+directory already has something in it, it's automatically saved to `backups/` (a
+pre-restore copy), then the data is cleared and the given archive is unpacked. If
+unpacking fails (e.g. the archive is corrupted partway through), a **rollback** to
+the pre-restore copy is performed — all actions are reported to the console.
 
-### 2.3. Внешние локали (`data/locales/`) — правка текстов и новые языки
+### 2.3. External locales (`data/locales/`) — editing text and new languages
 
-Все служебные тексты (промпты, каркас «модели себя», результаты инструментов — ось A)
-и весь UI-хром (ось B) хранятся в JSON-бандлах, **вшитых** в бинарь (`ru`/`en`). При
-старте приложение дополнительно сканирует каталог **`data/locales/`** и накладывает
-найденные файлы **поверх** вшитых — можно править тексты и добавлять языки **без
-пересборки**. Каталог создаётся автоматически (пустой).
+All scaffold text (prompts, self-model scaffold, tool results — axis A) and all UI
+chrome (axis B) is stored in JSON bundles **baked into** the binary (`ru`/`en`). On
+startup the app additionally scans the **`data/locales/`** directory and layers any
+files found **on top of** the baked-in ones — you can edit text and add languages
+**without rebuilding**. The directory is created automatically (empty).
 
-- **Шаблон для правки.** Экспортируйте вшитый бандл в файл командой (TUI не нужен):
+- **Template for editing.** Export a baked-in bundle to a file with a command (no
+  TUI needed):
   ```bash
-  mindfork locales export en -o data/locales/en.json    # правка английского
-  mindfork locales export ru -o data/locales/de.json    # заготовка нового языка (перевести)
+  mindfork locales export en -o data/locales/en.json    # edit English
+  mindfork locales export ru -o data/locales/de.json    # a stub for a new language (translate it)
   ```
-  `ru`/`en` выгружаются **дословным исходником** (с массивами-строками — удобно
-  править). Существующий файл не перезаписывается — укажите новый путь. Полный список
-  ключей всегда можно взять так, не имея исходников проекта.
-- **Правка существующего языка.** Положите `data/locales/en.json` (или `ru.json`) —
-  файл-**override**: переопределяются только присутствующие в нём ключи, всё
-  остальное берётся из вшитого бандла. Держите в файле **только** правимые ключи
-  (спарсный override) — так будущие улучшения вшитых текстов не «затираются» вашей
-  полной копией. Пример — переписать один UI-заголовок:
+  `ru`/`en` are exported as **verbatim source** (with string arrays — convenient to
+  edit). An existing file is not overwritten — point to a new path. The full list of
+  keys can always be obtained this way, without having the project's source.
+- **Editing an existing language.** Place `data/locales/en.json` (or `ru.json`) — an
+  **override** file: only the keys present in it are overridden, everything else is
+  taken from the baked-in bundle. Keep **only** the keys you're changing in the file
+  (a sparse override) — this way future improvements to the baked-in text aren't
+  "shadowed" by your full copy. Example — rewriting one UI heading:
   ```json
   { "ui.feed.role.assistant": "AI" }
   ```
-- **Новый язык.** Положите `data/locales/<code>.json`, где `<code>` — код языка
-  (BCP-47-подобный: строчные латинские буквы, цифры и дефис-разделители — `de`, `fr`,
-  `pt-br`, `zh-tw`). Язык появится в селекторах «Язык каркаса» (профиль, ось A) и
-  «Язык интерфейса» (ось B). Зарезервированный ключ `ui.lang.name` задаёт название
-  языка в его же написании для селектора (иначе показывается код).
-- **Цепочка фолбэка недостающих ключей.** По умолчанию недостающие ключи берутся из
-  русского референса. Если язык переведён с английского, укажите мета-ключ
-  `"_fallback": "en"` — тогда дыры заполнятся из английского, а не из русского. Полная
-  цепочка: свой файл → `_fallback` → `ru` → сам ключ (в логе — предупреждение о
-  недостающем ключе один раз на ключ).
-- **Число-нейтральные формулировки.** Плюрализации (грамматические формы по числу)
-  в движке **нет** by design — все шаблоны сформулированы нейтрально («заметок: {n}»,
-  «×{n}»). Для языков со сложным согласованием по числу (польский, чешский…)
-  придерживайтесь того же стиля.
-- **Отказоустойчивость.** Битый/нечитаемый файл или недопустимое имя — предупреждение
-  в лог (`logs/`) и **пропуск** (вшитые тексты остаются рабочими). Содержимое
-  дополнительно сверяется с референсом: неизвестный ключ (опечатка) или расхождение
-  плейсхолдеров `{…}` — предупреждение в лог. Изменения файлов применяются при
-  **перезапуске** приложения.
+- **A new language.** Place `data/locales/<code>.json`, where `<code>` is a language
+  code (BCP-47-like: lowercase Latin letters, digits, and hyphen separators — `de`,
+  `fr`, `pt-br`, `zh-tw`). The language will appear in the "Scaffold language"
+  (profile, axis A) and "Interface language" (axis B) selectors. The reserved key
+  `ui.lang.name` sets the language's name in its own script for the selector
+  (otherwise the code is shown).
+- **Missing-key fallback chain.** By default, missing keys fall back to the Russian
+  reference. If the language was translated from English, add the meta key
+  `"_fallback": "en"` — then gaps are filled from English instead of Russian. The
+  full chain: your file → `_fallback` → `ru` → the key itself (a warning is logged
+  once per missing key).
+- **Number-neutral wording.** The engine has **no** pluralization (grammatical
+  number agreement) by design — all templates are phrased neutrally ("notes: {n}",
+  "×{n}"). For languages with complex number agreement (Polish, Czech, …), stick to
+  the same style.
+- **Fault tolerance.** A corrupted/unreadable file, or an invalid name, gets a
+  warning in the log (`logs/`) and is **skipped** (the baked-in text keeps working).
+  Content is additionally checked against the reference: an unknown key (a typo) or
+  a mismatch in `{…}` placeholders gets a warning in the log. File changes take
+  effect on **restart**.
 
-## 3. Движок инференса (llama.cpp `llama-server`)
+## 3. Inference engine (llama.cpp `llama-server`)
 
-Приложение — **HTTP-клиент** к локальному **OpenAI-совместимому** серверу. Протокол
-универсален, поэтому в external-режиме подойдёт любой такой сервер (llama.cpp
-`llama-server`, vLLM, LM Studio, Ollama …). Рекомендуемый и проверенный бэкенд —
-**llama.cpp `llama-server`** (готовые сборки под Windows/CUDA). Вся цепочка
-(стриминг, остановка по EOS, tool-calling, «мысли») проверена на Gemma 4 E4B-it.
+The app is an **HTTP client** to a local **OpenAI-compatible** server. The protocol
+is universal, so in external mode any such server works (llama.cpp `llama-server`,
+vLLM, LM Studio, Ollama …). The recommended and verified backend is
+**llama.cpp `llama-server`** (prebuilt Windows/CUDA binaries). The whole chain
+(streaming, EOS stop, tool-calling, "thoughts") is verified on Gemma 4 E4B-it.
 
-> Исходно проектировался под `xinfer`, но он оказался слишком сырым (бессвязный
-> вывод на Gemma 4, плохо собирается под Windows). Протокол — стандартный
-> OpenAI-совместимый (`/v1/chat/completions` со стримингом по SSE, `/v1/embeddings`),
-> на котором говорят и llama.cpp, и vLLM/LM Studio/Ollama; ключевые поля и
-> особенности (`reasoning_content`, `tool_calls`, EOS) описаны ниже и в разделах
-> «Движок инференса» / «Параметры семплинга» спецификации ([spec.md](../spec.md)).
+> Originally designed around `xinfer`, but it turned out too raw (incoherent
+> output on Gemma 4, builds poorly on Windows). The protocol is the standard
+> OpenAI-compatible one (`/v1/chat/completions` streamed over SSE, `/v1/embeddings`),
+> spoken by llama.cpp as well as vLLM/LM Studio/Ollama; key fields and quirks
+> (`reasoning_content`, `tool_calls`, EOS) are described below and in the "Inference
+> engine" / "Sampling parameters" sections of the spec ([spec.md](../spec.md)).
 
-Два режима (настраиваются на экране настроек, `Ctrl+P`, секция «Модель/сервер»):
+Two modes (configured on the settings screen, `Ctrl+P`, "Model/server" section):
 
-- **managed** — приложение само запускает дочерний `llama-server` (путь к бинарнику
-  + GGUF-модель `-m`, `-ngl`, `-c`, `--jinja`, `--no-mmap`, host/порт). `--no-mmap`
-  грузит веса целиком в RAM вместо отображения файла с диска — помогает на сетевых/
-  медленных дисках, но требует больше памяти (по умолчанию выключен). Смена модели в настройках
-  **перезапускает** сервер. Перед запуском проверяется наличие файла модели: если
-  GGUF не найден или недоступен, в статус-баре сразу показывается понятная ошибка
-  («файл модели не найден или недоступен …»), а не зависание в «подключение…».
-  - **FlashAttention** (`--flash-attn`): `auto`/`on`/`off` (по умолчанию `auto` —
-    решает llama.cpp). Ускоряет внимание и экономит видеопамять на поддерживаемых GPU.
-  - **Спекулятивное декодирование** (`--spec-type`): ускоряет генерацию «черновиком»
-    наперёд. `draft-*` требуют отдельную черновую модель (`-md`, плюс `-ngld`,
-    `--spec-draft-n-max/-n-min`); для **MTP-моделей** (`mtp-gemma-4-12B-it.gguf`) —
-    `draft-mtp`; `ngram-*` модели не требуют. Черновые поля в настройках видны лишь для
-    типов `draft-*`; путь черновой модели тоже проверяется перед запуском.
-- **external** — подключение к уже запущенному серверу по URL.
+- **managed** — the app itself launches a child `llama-server` (path to the binary
+  + GGUF model `-m`, `-ngl`, `-c`, `--jinja`, `--no-mmap`, host/port). `--no-mmap`
+  loads the weights fully into RAM instead of mapping the file from disk — helps on
+  network/slow drives, but needs more memory (off by default). Changing the model in
+  settings **restarts** the server. Before launch the model file's presence is
+  checked: if the GGUF isn't found or isn't accessible, the status bar immediately
+  shows a clear error ("model file not found or inaccessible …") instead of hanging
+  in "connecting…".
+  - **FlashAttention** (`--flash-attn`): `auto`/`on`/`off` (default `auto` — llama.cpp
+    decides). Speeds up attention and saves VRAM on supported GPUs.
+  - **Speculative decoding** (`--spec-type`): speeds up generation with a "draft"
+    running ahead. `draft-*` requires a separate draft model (`-md`, plus `-ngld`,
+    `--spec-draft-n-max/-n-min`); for **MTP models** (`mtp-gemma-4-12B-it.gguf`) —
+    `draft-mtp`; `ngram-*` don't require one. Draft-model fields in settings are
+    shown only for `draft-*` types; the draft model's path is also checked before
+    launch.
+- **external** — connects to an already-running server by URL.
 
-Пример ручного запуска (external):
+Example of a manual launch (external):
 
 ```bash
 llama-server -m google_gemma-4-E4B-it-Q4_1.gguf \
   --host 0.0.0.0 --port 8000 \
   -ngl 99 -c 8192 \
-  --jinja          # встроенный chat-template модели — обязателен для корректного
-                   # формата Gemma и для tool-calling
+  --jinja          # the model's built-in chat template — required for correct
+                   # Gemma formatting and for tool-calling
 ```
 
-«Мысли» (`reasoning_content`) у `llama-server` включаются флагом `--reasoning-format`
-(например `auto`) для thinking-моделей; иначе mindfork подхватывает `<think>…</think>`
-из текста фолбэком.
+"Thoughts" (`reasoning_content`) are enabled on `llama-server` with the
+`--reasoning-format` flag (e.g. `auto`) for thinking models; otherwise mindfork
+falls back to parsing `<think>…</think>` from the text.
 
-### 3.1. Облачные провайдеры и API-ключи
+### 3.1. Cloud providers and API keys
 
-Кроме локального сервера, движком может быть облако: **OpenAI**, **Google Gemini**
-или **Claude** (Anthropic). Режим выбирается в настройках (`Ctrl+P` → «Модель/сервер»
-→ поле «Режим»), там же задаётся имя модели.
+Besides a local server, the engine can be a cloud: **OpenAI**, **Google Gemini**, or
+**Claude** (Anthropic). The mode is chosen in settings (`Ctrl+P` → "Model/server" →
+"Mode" field), where the model name is also set.
 
-**Ключ вводится прямо в настройках** — поле «API-ключ» под именем модели: `Enter`
-открывает пустой ввод (символы скрыты `•`), `Enter` сохраняет, `Del` удаляет. Ключ
-хранится в `settings.json` **зашифрованным и привязанным к этому компьютеру**
-(Windows — системный DPAPI; Linux — ключ, выведенный из `/etc/machine-id`), поэтому:
+**The key is entered right in settings** — the "API key" field under the model
+name: `Enter` opens a blank input (characters hidden as `•`), `Enter` saves, `Del`
+removes it. The key is stored in `settings.json` **encrypted and bound to this
+computer** (Windows — the system DPAPI; Linux — a key derived from
+`/etc/machine-id`), so:
 
-- файл настроек можно **переносить между компьютерами** — на новом ключ не
-  расшифруется и его нужно ввести заново (он ляжет отдельной записью), а при
-  возврате на прежний компьютер прежний ключ снова читается;
-- сохранённый ключ **нельзя посмотреть или скопировать** из приложения — правка
-  означает ввод заново; поле показывает лишь «настроен (этот компьютер)»;
-- один ключ обслуживает **чат, имперсонацию и эмбеддинги** этого провайдера.
+- the settings file can be **moved between computers** — on a new one the key won't
+  decrypt and needs to be entered again (it will land as a separate entry), and
+  moving back to the original computer the original key reads again;
+- a saved key **cannot be viewed or copied** from the app — editing means re-entering
+  it; the field only shows "configured (this computer)";
+- one key serves **chat, impersonation, and embeddings** for that provider.
 
-Ключ защищён от переноса/копирования файла, но не от программ, запущенных под вашей
-учётной записью на этом же компьютере (так же устроены менеджеры паролей браузеров).
+The key is protected against moving/copying the file, but not against programs
+running under your own user account on the same computer (this is how browser
+password managers work too).
 
-**Альтернатива — переменная окружения** (для CI, скриптов и систем без `machine-id`):
-поле «API-ключ (env)» хранит **имя** переменной, например `OPENAI_API_KEY`, а сам
-ключ читается из окружения. Введённый в настройках ключ имеет приоритет; env
-используется, если ключ не введён.
+**Alternative — an environment variable** (for CI, scripts, and systems without
+`machine-id`): the "API key (env)" field stores the **name** of the variable, e.g.
+`OPENAI_API_KEY`, and the key itself is read from the environment. A key entered in
+settings takes priority; the env one is used if no key was entered.
 
-### Быстрый старт через переменные окружения (dev)
+### Quick start via environment variables (dev)
 
-Env имеет приоритет над `settings.json` (удобно для смоук-прогонов), затрагивает
-только серверы инференса/эмбеддингов:
+Env takes priority over `settings.json` (handy for smoke runs), affecting only the
+inference/embedding servers:
 
 ```powershell
-# external chat-сервер (любой OpenAI-совместимый)
+# external chat server (any OpenAI-compatible one)
 $env:MINDFORK_ENGINE_URL = "http://127.0.0.1:8000/v1"
-# или managed llama-server:
+# or a managed llama-server:
 $env:MINDFORK_LLAMA_BIN = "C:\path\to\llama-server.exe"
 $env:MINDFORK_MODEL     = "C:\GGUF\google_gemma-4-E4B-it-Q4_1.gguf"
-$env:MINDFORK_NGL       = "99"     # GPU-слои (опц.)
-$env:MINDFORK_CTX       = "8192"   # контекст (опц.)
-$env:MINDFORK_PORT      = "8000"   # опц.
+$env:MINDFORK_NGL       = "99"     # GPU layers (opt.)
+$env:MINDFORK_CTX       = "8192"   # context (opt.)
+$env:MINDFORK_PORT      = "8000"   # opt.
 ```
 
-Эмбеддинги для RAG — **выделенный** сервер (ADR 0002):
-`MINDFORK_EMBED_URL` (external) либо `MINDFORK_EMBED_BIN` + `MINDFORK_EMBED_MODEL`
-+ `MINDFORK_EMBED_PORT` (managed). Если не настроен — RAG отдаёт ошибку, но
-приложение не падает.
+Embeddings for RAG — a **dedicated** server (ADR 0002):
+`MINDFORK_EMBED_URL` (external) or `MINDFORK_EMBED_BIN` + `MINDFORK_EMBED_MODEL`
++ `MINDFORK_EMBED_PORT` (managed). If not configured — RAG returns an error, but the
+app doesn't crash.
 
-> **Физический батч эмбеддера.** Эмбеддинг-модели non-causal: весь вход должен
-> поместиться в один **физический батч** (`n_ubatch`). По умолчанию у llama-server
-> `n_ubatch=512`, и он приравнивает к нему `n_batch` — поэтому чанк длиннее ~512
-> токенов (для кириллицы/кода это лишь сотни символов) отвергается с «input is too
-> large to process. increase the physical batch size», и файл не индексируется.
-> В **managed**-режиме приложение запускает embedding-сервер с `-ub`/`-b` по размеру
-> контекста — крупные чанки принимаются целиком. Для **external** embedding-сервера
-> поднимите батч сами, например:
+> **Embedder physical batch size.** Embedding models are non-causal: the whole input
+> must fit into a single **physical batch** (`n_ubatch`). By default llama-server's
+> `n_ubatch=512`, and it sets `n_batch` to match — so a chunk longer than ~512
+> tokens (for Cyrillic/code that's only a few hundred characters) is rejected with
+> "input is too large to process. increase the physical batch size", and the file
+> doesn't get indexed. In **managed** mode the app launches the embedding server
+> with `-ub`/`-b` sized to the context — large chunks are accepted whole. For an
+> **external** embedding server, raise the batch yourself, e.g.:
 > `llama-server -m bge-m3-Q8_0.gguf --embeddings --host 0.0.0.0 --port 8001 -ngl 99 -c 8192 -ub 8192 -b 8192`.
 
-### Загрузка файлов в базу знаний (RAG)
+### Loading files into the knowledge base (RAG)
 
-Помимо инструмента `rag_add` (которым пользуется модель), файлы и директории можно
-проиндексировать вручную — командами прямо в поле ввода чата:
+Besides the `rag_add` tool (used by the model), files and directories can be
+indexed manually — with commands right in the chat input box:
 
 ```
-/rag add d:\dir\file.txt        # один файл
-/rag add d:\docs                # все .txt/.md в папке (без вложенных)
-/rag add d:\docs -r             # рекурсивно, включая вложенные папки
-/rag remove d:\docs\file.txt    # убрать файл из базы
-/rag remove d:\docs             # убрать всю папку (со всем, что под ней)
-/rag list                       # источники в базе (счётчик чанков, дата)
-/rag rebuild                    # реиндексировать базу (после смены настроек/модели)
+/rag add d:\dir\file.txt        # a single file
+/rag add d:\docs                # all .txt/.md in the folder (no subfolders)
+/rag add d:\docs -r             # recursively, including subfolders
+/rag remove d:\docs\file.txt    # remove a file from the base
+/rag remove d:\docs             # remove a whole folder (with everything under it)
+/rag list                       # sources in the base (chunk count, date)
+/rag rebuild                    # reindex the base (after changing settings/model)
 ```
 
-- Поддерживаются пока только `*.txt` и `*.md`. Путь может быть в кавычках, если
-  содержит пробелы.
-- **Размеры чанка/перекрытия** настраиваются в секции «Инструменты» экрана
-  настроек (`Ctrl+P`): «RAG: размер чанка», «RAG: перекрытие», «RAG: потолок чанка»
-  (в символах).
-- **`/rag list`** показывает источники базы знаний активного профиля — по каждому
-  число фрагментов и дату индексации.
-- **`/rag rebuild`** реиндексирует базу заново текущими размерами чанка и
-  embedding-моделью. Исходный текст каждого источника хранится в базе, поэтому
-  реиндексация **не требует исходных файлов на диске** (а если текст почему-то не
-  сохранён — например, источник добавлен старой версией — делается попытка перечитать
-  файл по пути). Нужна после смены размеров чанка **или** embedding-модели с другой
-  размерностью вектора (которая раньше требовала ручной переиндексации). Если базу
-  делят несколько профилей и сменилась размерность, реиндексацию нужно выполнить под
-  каждым профилем (размерность вектора — общая на всю базу).
-- Индексация идёт **в фоне** с индикатором прогресса и спиннером; повторное
-  добавление того же файла **заменяет** его фрагменты, а не плодит дубликаты.
-- **Чанкинг** — по best practices: нарезка по границам предложений/слов с
-  **перекрытием** (запрос у границы чанка не теряет контекст), мелкие абзацы
-  группируются. `*.md` режется **семантически** — по заголовкам, с защитой блоков
-  кода (`#` внутри ``` не считается заголовком). При поиске соседние фрагменты
-  одного источника **склеиваются** по перекрытию, без дубля.
-- Документы пишутся в RAG **активного профиля** (изоляция). Нужен настроенный
-  embedding-сервер (см. выше) — иначе команда сообщит, что эмбеддер недоступен.
-- Удаление работает по сохранённому пути и **не требует**, чтобы файл ещё был на
-  диске. Командный ввод подсвечивается жёлтым и не проверяется орфографией.
+- Only `*.txt` and `*.md` are supported so far. The path can be quoted if it
+  contains spaces.
+- **Chunk/overlap sizes** are configurable in the "Tools" section of the settings
+  screen (`Ctrl+P`): "RAG: chunk size", "RAG: overlap", "RAG: chunk cap" (in
+  characters).
+- **`/rag list`** shows the active profile's knowledge base sources — the fragment
+  count and indexing date for each.
+- **`/rag rebuild`** reindexes the base from scratch with the current chunk sizes
+  and embedding model. Each source's original text is stored in the base, so
+  reindexing **doesn't require the source files on disk** (and if the text somehow
+  wasn't saved — e.g. the source was added by an older version — an attempt is made
+  to re-read the file by its path). Needed after changing the chunk sizes **or** the
+  embedding model to one with a different vector dimensionality (which used to
+  require manual reindexing). If several profiles share the base and the
+  dimensionality changed, reindexing needs to be run under each profile (the vector
+  dimensionality is shared by the whole base).
+- Indexing runs **in the background** with a progress indicator and spinner;
+  re-adding the same file **replaces** its fragments instead of creating
+  duplicates.
+- **Chunking** — follows best practices: splitting at sentence/word boundaries with
+  **overlap** (a query near a chunk boundary doesn't lose context), small paragraphs
+  are grouped together. `*.md` is split **semantically** — by headings, protecting
+  code blocks (a `#` inside ``` doesn't count as a heading). During search, adjacent
+  fragments from the same source are **stitched** together by their overlap, without
+  duplication.
+- Documents are written to the **active profile's** RAG (isolation). A configured
+  embedding server is required (see above) — otherwise the command reports the
+  embedder as unavailable.
+- Removal works by the stored path and **doesn't require** the file to still be on
+  disk. Command input is highlighted yellow and not spellchecked.
 
-## 4. Словари спелл-чека
+## 4. Spellcheck dictionaries
 
-Приложение читает словари из `dictionaries/` **в каталоге данных** (портативно —
-`data/dictionaries/`). Положите Hunspell-пары `*.aff` + `*.dic` (`en_US.*`,
-`en_GB.*`, `ru_RU.*`) в `dictionaries/` корня проекта — `build.rs` при сборке
-копирует их в `<profile>/data/dictionaries/`, чтобы `cargo run` сразу видел
-спелл-чек. Нет каталога → спелл-чек просто выключен. Выбор активных словарей — на
-экране настроек (секция «Интерфейс»).
+The app reads dictionaries from `dictionaries/` **in the data directory**
+(portable — `data/dictionaries/`). Place Hunspell pairs `*.aff` + `*.dic`
+(`en_US.*`, `en_GB.*`, `ru_RU.*`) into the project root's `dictionaries/` —
+`build.rs` copies them into `<profile>/data/dictionaries/` at build time, so
+`cargo run` sees spellcheck right away. No directory → spellcheck is simply off.
+Active dictionary selection is on the settings screen ("Interface" section).
 
-## 4.1. Песочница Python (`python_exec`)
+## 4.1. Python sandbox (`python_exec`)
 
-Инструмент `python_exec` работает в двух режимах (настройка «Инструменты» → «Python»):
+The `python_exec` tool works in two modes ("Tools" setting → "Python"):
 
-- **Wasmer-песочница** (по умолчанию) — код исполняется изолированно в WASIX (нет
-  доступа к файлам машины; сеть — по тумблеру), с предустановленными пакетами (numpy,
-  requests, …). Не требует Python на машине.
-- **Локальный интерпретатор** — системный `python`/`python3` (прежнее поведение, без
-  изоляции; путь настраивается).
+- **Wasmer sandbox** (default) — code runs isolated in WASIX (no access to the
+  machine's files; network is a toggle), with preinstalled packages (numpy,
+  requests, …). Doesn't need Python on the machine.
+- **Local interpreter** — the system `python`/`python3` (the previous behavior, no
+  isolation; the path is configurable).
 
-Для режима песочницы один раз установите её (скачает `wasmer` ~206 МБ, `python.webc`
-и пакеты в `data/sandbox/`; ~300 МБ на диске):
+For the sandbox mode, set it up once (downloads `wasmer` ~206 MB, `python.webc`,
+and packages into `data/sandbox/`; ~300 MB on disk):
 
 ```bash
-mindfork-rs sandbox setup          # --force — перекачать заново
+mindfork-rs sandbox setup          # --force — re-download
 ```
 
-Провизия идёт по lock-списку с проверкой sha256; в конце **прогревается кэш
-компиляции** (`python.wasm` + numpy), поэтому первый реальный вызов инструмента уже
-тёплый. Команда не запускает TUI. Инструмент
-включается мастер-выключателем «Python-исполнение» (по умолчанию **выключен**). Если
-песочница не установлена, инструмент вернёт понятное сообщение (можно переключиться на
-локальный режим). Свой бинарь `wasmer` можно задать переменной
-`MINDFORK_SANDBOX_WASMER`.
+Provisioning follows a lock list with sha256 verification; at the end the
+**compilation cache is warmed up** (`python.wasm` + numpy), so the first real tool
+call is already warm. The command doesn't launch the TUI. The tool is enabled by
+the master toggle "Python execution" (**off** by default). If the sandbox isn't
+set up, the tool returns a clear message (you can switch to local mode instead).
+A custom `wasmer` binary can be set via the `MINDFORK_SANDBOX_WASMER` env variable.
 
-## 4.2. Инструменты MCP-серверов (плагины)
+## 4.2. MCP server tools (plugins)
 
-Пользовательские инструменты модели подключаются внешними **MCP-серверами** (stdio;
-подойдёт любой сервер экосистемы Model Context Protocol). Серверы описываются в
-`settings.json` (секция `mcp`; файл — в корне данных, см. §2), включение — в два
-шага (двойной opt-in):
+Custom model tools are attached via external **MCP servers** (stdio; any server
+from the Model Context Protocol ecosystem works). Servers are described in
+`settings.json` (the `mcp` section; the file is in the data root, see §2), and
+enabling them takes two steps (double opt-in):
 
 ```jsonc
 "mcp": {
-  "enabled": true,                  // мастер-выключатель (по умолчанию false)
+  "enabled": true,                  // master switch (false by default)
   "servers": [{
-    "id": "fs",                     // slug [a-z0-9-] — часть имён инструментов mcp__fs__*
-    "command": "cmd",               // Windows: npx — это .cmd-шим, запускать через cmd /c
+    "id": "fs",                     // slug [a-z0-9-] — part of tool names mcp__fs__*
+    "command": "cmd",               // Windows: npx is a .cmd shim, run it via cmd /c
     "args": ["/c", "npx", "-y", "@modelcontextprotocol/server-filesystem", "D:/work"],
     // Linux/macOS: "command": "npx", "args": ["-y", "@modelcontextprotocol/server-filesystem", "/home/me/work"]
-    "env": { "GITHUB_TOKEN": "MINDFORK_GITHUB_PAT" },  // переменная ребёнка → ИМЯ переменной-источника (секреты не в файле)
+    "env": { "GITHUB_TOKEN": "MINDFORK_GITHUB_PAT" },  // child variable → NAME of the source variable (secrets aren't in the file)
     "enabled": true,
-    "tool_timeout_secs": 60,        // таймаут одного вызова
-    "max_result_chars": 20000       // клип результата (вход в промпт)
+    "tool_timeout_secs": 60,        // timeout for one call
+    "max_result_chars": 20000       // result clip (goes into the prompt)
   }]
 }
 ```
 
-1. Включите мастер-тумблер «MCP-серверы» (настройки → «Инструменты» → «Плагины
-   (MCP)») — там же видны статусы серверов;
-2. включите нужные инструменты в профиле (настройки → «Профили», группа «Плагины
-   (MCP)»; при фокусе на тумблере внизу показывается **полное описание**
-   инструмента от сервера).
+1. Turn on the "MCP servers" master toggle (settings → "Tools" → "Plugins
+   (MCP)") — server statuses are shown there too;
+2. turn on the desired tools in the profile (settings → "Profiles", "Plugins
+   (MCP)" group; focusing the toggle shows the tool's **full description** from
+   the server at the bottom).
 
-Замечания:
+Notes:
 
-- **`.bat`/`.cmd` как команда сервера запрещены** (уязвимость BatBadBut);
-  `npx`/`uvx`-серверы на Windows запускаются как `cmd /c npx …` или прямым
-  exe-путём.
-- **Каталог инструментов пиннится при первом подъёме** (защита от подмены): если
-  сервер после обновления изменил набор/описания инструментов, они не будут
-  доступны модели, пока вы не подтвердите новый каталог (Enter на строке сервера
-  в настройках).
-- MCP-сервер — обычная программа с правами пользователя: подключайте только
-  доверенные. Часто падающий сервер (3 краха за 5 минут) отключается до правки
-  настроек; stderr сервера пишется в `logs/`.
+- **`.bat`/`.cmd` as the server command are forbidden** (the BatBadBut
+  vulnerability); `npx`/`uvx` servers on Windows are launched as `cmd /c npx …` or
+  via a direct exe path.
+- **The tool catalog is pinned on first startup** (protection against tampering):
+  if a server changes its tool set/descriptions after an update, they won't be
+  available to the model until you confirm the new catalog (Enter on the server's
+  row in settings).
+- An MCP server is an ordinary program running with your user's rights: only
+  connect trusted ones. A server that crashes often (3 crashes in 5 minutes) is
+  disabled until you fix the settings; server stderr is written to `logs/`.
 
-## 4.3. Озвучивание сообщений (`/tts`)
+## 4.3. Speaking messages aloud (`/tts`)
 
-Команда в поле ввода читает сообщения вслух (см. spec §11.9):
+An input-box command reads messages aloud (see spec §11.9):
 
 ```
-/tts            последнее сообщение
-/tts N          последние N сообщений
-/tts all        вся переписка чата
-/tts stop       остановить
+/tts            the last message
+/tts N          the last N messages
+/tts all        the whole chat conversation
+/tts stop       stop
 ```
 
-Провайдер настраивается **отдельно от чата** — вкладка «Озвучивание» секции
-«Модель» (`Ctrl+P`), потому что у Anthropic озвучивания нет вовсе:
+The provider is configured **separately from the chat** — the "Speech" tab of the
+"Model" section (`Ctrl+P`), because Anthropic has no speech synthesis at all:
 
-| Режим | Что нужно указать |
+| Mode | What to set |
 |---|---|
-| `openai` (по умолчанию) | модель (`gpt-4o-mini-tts`), голос (`onyx`, `cedar`, …) — ключ **общий с чатом** (ADR 0008) |
-| `gemini` | модель (`gemini-2.5-flash-preview-tts`), голос (`Kore`, `Puck`, …) — ключ общий с чатом |
-| `external` | URL любого OpenAI-совместимого TTS-сервера (`http://127.0.0.1:8880/v1`), опц. модель/голос |
+| `openai` (default) | model (`gpt-4o-mini-tts`), voice (`onyx`, `cedar`, …) — key **shared with chat** (ADR 0008) |
+| `gemini` | model (`gemini-2.5-flash-preview-tts`), voice (`Kore`, `Puck`, …) — key shared with chat |
+| `external` | URL of any OpenAI-compatible TTS server (`http://127.0.0.1:8880/v1`), opt. model/voice |
 
-Ключ OpenAI **тот же, что для чата** — если он уже введён (в настройках или через
-env-переменную), озвучивание OpenAI заработает без дополнительной настройки.
-Скорость у модели `gpt-4o-mini-tts` задаётся **словами** в поле «Указания» («говори
-по-русски, спокойно, чуть медленнее») — параметр `speed` эта модель де-факто
-игнорирует. Локального движка без сервера (managed-сайдкар) пока нет — это задел; для
-offline/не-OpenAI звучания используйте режим `external` с любым из Kokoro-FastAPI /
-speaches / LocalAI.
+The OpenAI key is **the same as for chat** — if it's already entered (in settings
+or via an env variable), OpenAI speech works with no extra setup. Speed for the
+`gpt-4o-mini-tts` model is set with **words** in the "Instructions" field ("speak in
+Russian, calmly, a bit slower") — that model de facto ignores the `speed` param.
+There's no local engine without a server (a managed sidecar) yet — that's future
+work; for offline/non-OpenAI speech use `external` mode with any of
+Kokoro-FastAPI / speaches / LocalAI.
 
-Из markdown озвучивается только «речевой» текст: код, ` ```mermaid `-диаграммы,
-таблицы и блочные формулы пропускаются с короткой пометкой, «мысли» и вызовы
-инструментов не читаются. Нет звуковой карты (headless/SSH) — команда покажет
-«звук недоступен», приложение продолжит работать.
+Only the "speakable" text from markdown is read aloud: code, ` ```mermaid `
+diagrams, tables, and block formulas are skipped with a short note; "thoughts" and
+tool calls aren't read. No sound card (headless/SSH) — the command shows "audio
+unavailable", the app keeps running.
 
-## 5. Импорт из других приложений
+## 5. Importing from other apps
 
-Одноразовый идемпотентный импорт профилей и чатов из файла нейтрального формата
-**mindfork-import** (спецификация — [docs/import-format.md](import-format.md)):
+A one-off idempotent import of profiles and chats from a file in the neutral
+**mindfork-import** format (spec — [docs/import-format.md](import-format.md)):
 
 ```bash
 mindfork-rs import path/to/export.json
 ```
 
-Файл эмитит **внешний конвертер**, знающий формат исходного приложения (для
-непубличных приложений, вроде LameLLaMA, конвертер живёт в отдельном приватном
-репозитории). Импортируются профили, чаты и (опционально) глобальный семплинг /
-настройки интерфейса; неизвестные поля игнорируются, файл из более новой версии
-формата отклоняется. Команда не запускает TUI и завершает процесс; повторный
-запуск не создаёт дубликатов (детерминированные id от стабильных ключей).
+The file is emitted by an **external converter** that knows the source app's
+format (for non-public apps, like LameLLaMA, the converter lives in a separate
+private repository). Profiles, chats, and (optionally) global sampling/interface
+settings are imported; unknown fields are ignored, a file from a newer format
+version is rejected. The command doesn't launch the TUI and exits the process;
+re-running it doesn't create duplicates (deterministic ids from stable keys).
 
-> Прежняя команда `import-lamellama <dir>` удалена — её роль выполняет связка
-> «внешний конвертер → `mindfork-rs import`».
+> The former `import-lamellama <dir>` command has been removed — its role is now
+> played by the "external converter → `mindfork-rs import`" combo.
 
-## 6. Запуск
+## 6. Running
 
 ```bash
 cargo run            # dev
-./target/release/mindfork-rs   # релиз
+./target/release/mindfork-rs   # release
 ```
 
-Нужен **настоящий терминал** (TUI). В headless-окружении приложение «висит» —
-это нормально. Базовые клавиши: `F1` — справка, `Ctrl+P` — настройки, `Esc` —
-список чатов (открыть/закрыть) и отмена генерации, `Ctrl+N` — новый чат,
-`Ctrl+U` — написать сообщение от лица пользователя (имперсонация), `Ctrl+C` — выход.
-Прокрутка ленты — `PageUp`/`PageDown` или колесо мыши; захват мыши под колесо —
-тумблер `Ctrl+W` (по умолчанию выключен, чтобы работало нативное выделение текста;
-при включённом захвате текст выделяется с зажатым `Shift`).
-Ctrl-шорткаты работают при любой раскладке клавиатуры (в т.ч. русской).
+Needs a **real terminal** (TUI). In a headless environment the app "hangs" — that's
+normal. Basic keys: `F1` — help, `Ctrl+P` — settings, `Esc` — chat list
+(open/close) and cancel generation, `Ctrl+N` — new chat,
+`Ctrl+U` — write a message as the user (impersonation), `Ctrl+C` — quit.
+Scrolling the feed — `PageUp`/`PageDown` or the mouse wheel; mouse capture for the
+wheel is a toggle, `Ctrl+W` (off by default, so native text selection works;
+with capture on, text is selected while holding `Shift`).
+Ctrl shortcuts work under any keyboard layout (including Russian).
 
-## 7. Смоук-тесты на живой модели
+## 7. Live-model smoke tests
 
-Юнит-тесты сервер не требуют. Сценарии против реального сервера помечены
-`#[ignore]` и запускаются вручную с заданным `MINDFORK_ENGINE_URL`:
+Unit tests don't need a server. Scenarios against a real server are marked
+`#[ignore]` and run manually with `MINDFORK_ENGINE_URL` set:
 
 ```powershell
 $env:MINDFORK_ENGINE_URL = "http://127.0.0.1:8000/v1"
 cargo test ignored_smoke -- --ignored --nocapture --test-threads=1
 ```
 
-Покрывают: стриминг/финиш, **анти-самообрыв на тексте EOS** (`<|im_end|>` Qwen и
-`<end_of_turn>` Gemma), **tool-calling** (`finish_reason=tool_calls` + разбор
-`delta.tool_calls`) и **«мысли»** (`reasoning_content` → `Thoughts`). Проверено
-зелёным на `google_gemma-4-E4B-it-Q4_1.gguf` через `llama-server`.
+Covers: streaming/finish, **anti-self-termination on EOS text** (Qwen's
+`<|im_end|>` and Gemma's `<end_of_turn>`), **tool-calling**
+(`finish_reason=tool_calls` + `delta.tool_calls` parsing), and **"thoughts"**
+(`reasoning_content` → `Thoughts`). Verified green on
+`google_gemma-4-E4B-it-Q4_1.gguf` via `llama-server`.

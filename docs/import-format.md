@@ -1,163 +1,166 @@
-# Формат обмена `mindfork-import` (v1)
+# `mindfork-import` exchange format (v1)
 
-Документированный **нейтральный формат импорта** данных в mindfork-rs: профили и
-чаты из сторонних приложений. Внешний (возможно, приватный) **конвертер** читает
-формат исходного приложения и эмитит один JSON-файл этого формата; приложение
-импортирует его командой:
+The documented **neutral import format** for mindfork-rs data: profiles and
+chats from third-party apps. An external (possibly private) **converter**
+reads the source app's format and emits a single JSON file in this format;
+the app imports it with:
 
 ```
-mindfork-rs import <файл.json>
+mindfork-rs import <file.json>
 ```
 
-Паттерн «внешний конвертер → документированный нейтральный файл → импорт» выбран
-исследованием [docs/research/plugin-system.md §5](research/plugin-system.md)
-(прецеденты: beancount/beangulp, KeePass, Netscape bookmarks). Знание о
-непубличных исходных приложениях (например, LameLLaMA) живёт в конвертерах, а не
-в mindfork-rs.
+The "external converter → documented neutral file → import" pattern was
+chosen by research [docs/research/plugin-system.md §5](research/plugin-system.md)
+(precedents: beancount/beangulp, KeePass, Netscape bookmarks). Knowledge of
+non-public source apps (e.g. LameLLaMA) lives in the converters, not in
+mindfork-rs.
 
-## Свойства
+## Properties
 
-- **Идемпотентность.** Идентификаторы сущностей детерминированы (§Идентификаторы):
-  повторный импорт того же файла перезаписывает те же профили/чаты, а не плодит
-  дубликаты.
-- **Строгость к структуре, терпимость к расширению.** Неизвестные поля молча
-  игнорируются (совместимое расширение формата не требует bump'а версии);
-  нарушение описанной структуры (неверный `format`, дубликаты ключей, ссылка на
-  отсутствующий профиль, неизвестная роль) — ошибка с пояснением.
-- **Downgrade-guard.** `version` больше поддерживаемой приложением → отказ с
-  просьбой обновить приложение (тихая порча хуже отказа).
-- Файл читается в UTF-8; ведущий BOM допускается и отбрасывается.
+- **Idempotency.** Entity ids are deterministic (§Identifiers): re-importing
+  the same file overwrites the same profiles/chats instead of creating
+  duplicates.
+- **Strict about structure, tolerant of extension.** Unknown fields are
+  silently ignored (a compatible format extension doesn't require a version
+  bump); a violation of the described structure (wrong `format`, duplicate
+  keys, a reference to a missing profile, an unknown role) is an error with
+  an explanation.
+- **Downgrade guard.** `version` newer than the app supports → refusal asking
+  you to update the app (silent corruption is worse than a refusal).
+- The file is read as UTF-8; a leading BOM is allowed and stripped.
 
-## Структура
+## Structure
 
 ```jsonc
 {
-  "format": "mindfork-import",     // обязательно, ровно эта строка
-  "version": 1,                    // обязательно; поддерживается 1
+  "format": "mindfork-import",     // required, exactly this string
+  "version": 1,                    // required; 1 is supported
 
-  "profiles": [                    // опционально (по умолчанию пусто)
+  "profiles": [                    // optional (empty by default)
     {
-      "key": "assistant-anna",     // обязательно, непусто, уникально среди профилей
-      "name": "Anna",              // обязательно
-      "id": null,                  // опц.: явный UUID вместо детерминированного
-      "language": "ru",            // опц.: язык служебного каркаса ("ru"/"en"/код
-                                   // внешней локали); нет → язык по умолчанию
-      "system_message": "…",       // опц.: системное сообщение профиля
-      "greeting": null,            // опц.: приветствие ассистента в новом чате
-      "character_names": {         // опц.; отсутствующие поля — значения по умолчанию
+      "key": "assistant-anna",     // required, non-empty, unique among profiles
+      "name": "Anna",              // required
+      "id": null,                  // opt.: explicit UUID instead of the deterministic one
+      "language": "ru",            // opt.: agent-scaffold language ("ru"/"en"/an
+                                   // external locale code); absent → default language
+      "system_message": "…",       // opt.: the profile's system message
+      "greeting": null,            // opt.: assistant greeting in a new chat
+      "character_names": {         // opt.; missing fields fall back to defaults
         "user": "…", "assistant": "…", "system": "…"
       },
-      "sampling": {                // опц.: дефолтный семплинг профиля.
-        "temperature": 0.8         // Поддержанное подмножество полей mindfork
-      }                            // (см. ниже); неизвестные поля игнорируются
+      "sampling": {                // opt.: the profile's default sampling.
+        "temperature": 0.8         // Supported subset of mindfork fields
+      }                            // (see below); unknown fields are ignored
     }
   ],
 
-  "chats": [                       // опционально (по умолчанию пусто)
+  "chats": [                       // optional (empty by default)
     {
-      "key": "conv-123",           // обязательно, непусто, уникально среди чатов
-      "profile_key": "assistant-anna",  // обязательно: key профиля из ЭТОГО файла
-      "id": null,                  // опц.: явный UUID вместо детерминированного
-      "title": "…",                // опц. (пусто — допустимо)
-      "created_at": "2026-06-14T23:47:46+03:00",  // опц., RFC 3339
-      "modified_at": "2026-06-14T20:51:05Z",      // опц., RFC 3339
-      "system_message": "…",       // опц.; нет → берётся первое system-сообщение
-      "character_names": { … },    // опц. (как у профиля)
+      "key": "conv-123",           // required, non-empty, unique among chats
+      "profile_key": "assistant-anna",  // required: a profile key from THIS file
+      "id": null,                  // opt.: explicit UUID instead of the deterministic one
+      "title": "…",                // opt. (empty is fine)
+      "created_at": "2026-06-14T23:47:46+03:00",  // opt., RFC 3339
+      "modified_at": "2026-06-14T20:51:05Z",      // opt., RFC 3339
+      "system_message": "…",       // opt.; absent → taken from the first system message
+      "character_names": { … },    // opt. (same as the profile's)
       "messages": [
         {
-          "role": "user",          // user | assistant | system (без учёта регистра)
+          "role": "user",          // user | assistant | system (case-insensitive)
           "text": "…",
-          "thoughts": null,        // опц.: блок рассуждений (CoT) ассистента
-          "timestamp": "…"         // опц., RFC 3339
+          "thoughts": null,        // opt.: the assistant's chain-of-thought (CoT) block
+          "timestamp": "…"         // opt., RFC 3339
         }
       ]
     }
   ],
 
-  "settings": {                    // опционально: глобальные настройки источника
-    "sampling": { … },             // глобальный семплинг по умолчанию
+  "settings": {                    // optional: the source's global settings
+    "sampling": { … },             // default global sampling
     "interface": {
-      "spellcheck_enabled": true,  // опц.
-      "dictionaries": ["ru_RU"],   // опц.: включённые словари спелл-чека
-      "theme": "auto"              // опц.: auto | dark | light
+      "spellcheck_enabled": true,  // opt.
+      "dictionaries": ["ru_RU"],   // opt.: enabled spellcheck dictionaries
+      "theme": "auto"              // opt.: auto | dark | light
     }
   }
 }
 ```
 
-## Семантика
+## Semantics
 
-### Идентификаторы (идемпотентность)
+### Identifiers (idempotency)
 
-Идентификатор сущности выводится **детерминированно** из `key` — UUIDv5 от байтов
-ключа в фиксированном пространстве имён:
+An entity's id is derived **deterministically** from `key` — a UUIDv5 over
+the key's bytes in a fixed namespace:
 
-| Сущность | Пространство имён UUIDv5 |
+| Entity | UUIDv5 namespace |
 |---|---|
-| профиль | `6d696e64-666f-726b-696d-706f72740001` |
-| чат | `6d696e64-666f-726b-696d-706f72740002` |
+| profile | `6d696e64-666f-726b-696d-706f72740001` |
+| chat | `6d696e64-666f-726b-696d-706f72740002` |
 
-(`6d696e64 666f726b 696d706f7274` = ASCII `mindfork import`; хвост — тег сущности.)
+(`6d696e64 666f726b 696d706f7274` = ASCII `mindfork import`; the tail is the
+entity tag.)
 
-Конвертер должен выводить `key` из **стабильного** признака источника (имя
-конфигурации, id разговора) — тогда повторный импорт обновляет те же сущности.
+The converter should derive `key` from a **stable** source attribute
+(configuration name, conversation id) — then re-importing updates the same
+entities.
 
-Опциональное поле `id` (канонический UUID строкой) **переопределяет** выведенный
-идентификатор — для конвертеров, которым нужна непрерывность с данными,
-импортированными ранее другими путями (например, прежней командой
-`import-lamellama`, писавшей чаты под их исходными id).
+The optional `id` field (a canonical UUID string) **overrides** the derived
+identifier — for converters that need continuity with data imported earlier
+by another path (e.g. the former `import-lamellama` command, which wrote
+chats under their original ids).
 
-### Профили и чаты
+### Profiles and chats
 
-- `profile_key` чата обязан ссылаться на профиль **из этого же файла** (иначе
-  ошибка). Импортированный профиль получает стандартный набор инструментов
-  mindfork.
-- `system_message` чата: явное поле приоритетно; при его отсутствии используется
-  **первое** сообщение с ролью `system` из `messages`. Сообщения с ролью `system`
-  в историю чата **не** попадают (системное сообщение в mindfork хранится
-  отдельно от истории).
-- Роли сообщений: `user`, `assistant`, `system` (регистр не важен). Любая другая
-  роль — ошибка (с ключом чата и индексом сообщения): служебные сообщения
-  (tool-вызовы и т.п.) в формат v1 не переносятся — конвертер должен их
-  отбрасывать или сводить к тексту.
-- Временные метки — RFC 3339. Отсутствующие/нечитаемые метки не считаются
-  ошибкой: `created_at`/`modified_at` падают на «эпоху» (1970-01-01),
-  `timestamp` сообщения — на момент импорта.
+- A chat's `profile_key` must reference a profile **from the same file**
+  (otherwise an error). An imported profile gets mindfork's standard tool set.
+- A chat's `system_message`: the explicit field takes priority; if absent,
+  the **first** message with role `system` in `messages` is used. Messages
+  with role `system` are **not** added to the chat history (in mindfork the
+  system message is stored separately from the history).
+- Message roles: `user`, `assistant`, `system` (case-insensitive). Any other
+  role is an error (with the chat key and message index): service messages
+  (tool calls etc.) are not carried into format v1 — the converter must drop
+  them or flatten them to text.
+- Timestamps are RFC 3339. Missing/unreadable timestamps are not an error:
+  `created_at`/`modified_at` fall back to the "epoch" (1970-01-01), a
+  message's `timestamp` falls back to the import moment.
 
-### Семплинг
+### Sampling
 
-Объект `sampling` (у профиля и в `settings`) читается в конфигурацию семплинга
-mindfork: переносятся только известные приложению поля (например `temperature`,
-`top_k`, `top_p`, `min_p`, `max_tokens`, `frequency_penalty`, `presence_penalty`,
-`seed`, `thinking`, `reasoning_effort` и другие поля `SamplingConfig`);
-неизвестные поля молча игнорируются. Все поля опциональны — незаданные остаются
-на значениях по умолчанию.
+The `sampling` object (on a profile and in `settings`) is read into
+mindfork's sampling config: only fields known to the app are carried over
+(e.g. `temperature`, `top_k`, `top_p`, `min_p`, `max_tokens`,
+`frequency_penalty`, `presence_penalty`, `seed`, `thinking`,
+`reasoning_effort`, and other `SamplingConfig` fields); unknown fields are
+silently ignored. All fields are optional — unset ones stay at their defaults.
 
-### Настройки
+### Settings
 
-`settings.sampling` заменяет глобальный семплинг по умолчанию;
-`settings.interface` применяет спелл-чек/словари/тему. Раздел опционален и может
-отсутствовать целиком.
+`settings.sampling` replaces the default global sampling;
+`settings.interface` applies the spellcheck/dictionaries/theme. The section
+is optional and may be absent entirely.
 
-## Эволюция формата
+## Format evolution
 
-- **Совместимые расширения** (новые опциональные поля) добавляются без смены
-  `version` — старые приложения их игнорируют.
-- **Ломающее изменение** (переименование/смена семантики/обязательные поля) —
-  `version` + 1; приложение отвергает файлы с версией новее поддерживаемой.
+- **Compatible extensions** (new optional fields) are added without a
+  `version` bump — old apps ignore them.
+- **Breaking changes** (renaming/semantic change/new required fields) —
+  `version` + 1; the app rejects files whose version is newer than it
+  supports.
 
-## Минимальный пример
+## Minimal example
 
 ```json
 {
   "format": "mindfork-import",
   "version": 1,
-  "profiles": [{ "key": "p1", "name": "Ассистент" }],
+  "profiles": [{ "key": "p1", "name": "Assistant" }],
   "chats": [{
-    "key": "c1", "profile_key": "p1", "title": "Первый чат",
+    "key": "c1", "profile_key": "p1", "title": "First chat",
     "messages": [
-      { "role": "user", "text": "Привет!" },
-      { "role": "assistant", "text": "Здравствуйте!" }
+      { "role": "user", "text": "Hi!" },
+      { "role": "assistant", "text": "Hello!" }
     ]
   }]
 }

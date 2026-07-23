@@ -1,185 +1,194 @@
-# AGENTS.md — процесс ведения задачи для ИИ-агентов
+# AGENTS.md — task workflow for AI agents
 
-Обязательные правила для ИИ-агентов (Claude Code и любых других), ведущих
-разработку в этом репозитории. Ориентир по проекту (что это, архитектура, журнал
-сделанного) — [CLAUDE.md](CLAUDE.md) и [docs/architecture.md](docs/architecture.md);
-здесь — **как вести задачу**: от постановки до PR. Правила выведены из реальной
-практики проекта (см. журнал «Пост-M9» в CLAUDE.md) — следуй им, а не изобретай
-процесс заново.
+Mandatory rules for AI agents (Claude Code and any others) working on this
+repository. Project orientation (what this is, architecture, changelog of what's
+done) — [CLAUDE.md](CLAUDE.md) and [docs/architecture.md](docs/architecture.md);
+here — **how to run a task**: from spec to PR. The rules are derived from the
+project's actual practice (see the "Post-M9" journal in CLAUDE.md) — follow them
+instead of reinventing the process.
 
-## Чек-лист готовности (Definition of Done)
+## Definition of Done checklist
 
-Задача не считается завершённой, пока не выполнено всё:
+A task isn't considered complete until all of this is done:
 
-- [ ] работа велась в **отдельной ветке** с именем по конвенции (§2), не в `main`;
-- [ ] для сложной задачи есть **дизайн-док/исследование**, развилки подтверждены
-      пользователем **до** реализации (§1);
+- [ ] work was done in a **separate branch** named per convention (§2), not in `main`;
+- [ ] for a complex task, there's a **design doc/research**, with forks confirmed
+      by the user **before** implementation (§1);
 - [ ] `cargo fmt --check` + `cargo clippy --all-targets -- -D warnings` +
-      `cargo test` — зелёные;
-- [ ] тесты написаны рядом с кодом по ходу; функциональность, трогающая
-      движок/память/инструменты, покрыта `#[ignore]`-смоуком и **прогнана на живой
-      связке** (§3); для чистого UI/рефактора — явно отмечено, что живой прогон
-      не требуется;
-- [ ] документация обновлена по таблице §4 (минимум — запись в журнале CLAUDE.md);
-- [ ] коммиты несут трейлер с **фактической моделью**, в описании PR — раздел
-      «Модели» (§5).
+      `cargo test` — green;
+- [ ] tests written alongside the code as it's written; functionality touching
+      the engine/memory/tools is covered by an `#[ignore]` smoke test and **run
+      against a live stack** (§3); for pure UI/refactor — explicitly noted that a
+      live run isn't required;
+- [ ] documentation updated per the table in §4 (at minimum — an entry in the
+      CLAUDE.md journal);
+- [ ] commits carry a trailer with the **actual model**, PR description has a
+      "Models" section (§5).
 
-## 1. Ориентация и дизайн (до кода)
+## 1. Orientation and design (before code)
 
-**Читать перед работой:** [CLAUDE.md](CLAUDE.md) (ориентир + журнал),
-[docs/architecture.md](docs/architecture.md) (карта кода — затронутые §),
-релевантные [ADR](docs/decisions/) и разделы [spec.md](spec.md) по теме.
+**Read before working:** [CLAUDE.md](CLAUDE.md) (orientation + journal),
+[docs/architecture.md](docs/architecture.md) (code map — affected §s),
+relevant [ADRs](docs/decisions/) and sections of [spec.md](spec.md) on the topic.
 
-**Сложная задача → сначала документ, потом код.** Признаки сложной (достаточно
-одного): направление на несколько этапов/PR; архитектурное решение или новая
-внешняя технология/протокол/крейт; неочевидные развилки, требующие выбора
-пользователя; изменение контрактов между слоями. Простым задачам (баг-фикс,
-доводка, механический рефактор по готовому плейбуку) документ не нужен —
-достаточно ветки и записи в журнале.
+**Complex task → write a doc first, then code.** Signs of a complex task
+(one is enough): a multi-stage/PR track; an architectural decision or new
+external technology/protocol/crate; non-obvious forks requiring the user's
+choice; a change to contracts between layers. Simple tasks (bug fix, polish,
+mechanical refactor per an existing playbook) don't need a doc — a branch and
+a journal entry is enough.
 
-| Жанр | Куда | Прецеденты |
+| Genre | Where | Precedents |
 |---|---|---|
-| Исследование технологии/протокола (до решения) | `docs/research/<тема>.md` | `python-wasmer-sandbox.md`, `openai-responses-client.md` |
-| Дизайн-план направления (этапы, объём, развилки) | `docs/<тема>.md`; по завершении направления — переезд в `docs/history/` | `summary-as-snapshot.md`, `input-selection-undo-mouse.md` |
-| Принятое архитектурное решение (итог) | `docs/decisions/NNNN-<slug>.md` (ADR) | `0005-python-sandbox-wasmer.md` |
+| Technology/protocol research (pre-decision) | `docs/research/<topic>.md` | `python-wasmer-sandbox.md`, `openai-responses-client.md` |
+| Track design plan (stages, scope, forks) | `docs/<topic>.md`; once the track is done — moves to `docs/history/` | `summary-as-snapshot.md`, `input-selection-undo-mouse.md` |
+| Adopted architectural decision (outcome) | `docs/decisions/NNNN-<slug>.md` (ADR) | `0005-python-sandbox-wasmer.md` |
 
-Правила дизайн-дока:
-- **Развилки выписываются явно** (списком, с вариантами и рекомендацией) и
-  **подтверждаются пользователем до реализации**; принятое фиксируется в доке
-  («решение пользователя: …», с датой для важных).
-- Крупное направление начинается с **MVP-зонда** с критерием **go/no-go** на
-  живой модели (паттерн self-model / notes-connectivity); ярусы — после go.
-- Этапы направления — отдельными ветками/PR. Завершённое направление: план
-  переезжает в `docs/history/` отдельной docs-веткой, ссылки на него в
-  CLAUDE.md/architecture.md обновляются.
+Design doc rules:
+- **Forks are spelled out explicitly** (as a list, with options and a
+  recommendation) and **confirmed by the user before implementation**; what's
+  adopted is recorded (`"user's decision: …"`, with a date for important ones).
+- A big track starts with an **MVP probe** with a **go/no-go** criterion
+  against a live model (self-model / notes-connectivity pattern); tiers come
+  after go.
+- Track stages get separate branches/PRs. A finished track: the plan moves to
+  `docs/history/` in a dedicated docs branch, references to it in
+  CLAUDE.md/architecture.md get updated.
 
-## 2. Ветка (до первого коммита)
+## 2. Branch (before the first commit)
 
-В `main` напрямую не коммитим. Ветка создаётся от свежего `main` **до первого
-коммита**:
+We don't commit directly to `main`. The branch is created off fresh `main`
+**before the first commit**:
 
-| Префикс | Для чего |
+| Prefix | For |
 |---|---|
-| `feat/<slug>` | новая функциональность |
-| `fix/<slug>` | исправление дефекта |
-| `refactor/<slug>` | рефактор без изменения поведения |
-| `docs/<slug>` | только документация |
-| `spike/<slug>` | зонд/эксперимент |
+| `feat/<slug>` | new functionality |
+| `fix/<slug>` | defect fix |
+| `refactor/<slug>` | refactor without behavior change |
+| `docs/<slug>` | docs only |
+| `spike/<slug>` | probe/experiment |
 
-Slug — короткий английский kebab-case (`feat/input-mouse`,
-`refactor/db-module-split`). Один PR = одна задача или один этап направления.
-**Механический рефактор и изменение поведения не смешиваются** в одном PR.
+Slug — short English kebab-case (`feat/input-mouse`,
+`refactor/db-module-split`). One PR = one task or one track stage.
+**Mechanical refactor and behavior change don't mix** in one PR.
 
-## 3. Разработка
+## 3. Development
 
-Конвенции кода — в [CLAUDE.md §Конвенции](CLAUDE.md); ключевое и дополнения:
+Code conventions are in [CLAUDE.md §Conventions](CLAUDE.md); key points and
+additions:
 
-- **Перед каждым коммитом**: `cargo fmt`, `cargo clippy --all-targets -- -D warnings`,
-  `cargo test` — всё зелёное.
-- Тесты рядом с кодом (`#[cfg(test)]`) **по ходу**, не в конце; реальный
-  сервер/модель — `#[ignore]`-смоуки (без нужной env-переменной тихо пропускаются).
-- **Живой прогон обязателен** для функциональности, трогающей движок / память /
-  инструменты / протоколы провайдеров: прогнать релевантные `#[ignore]`-смоуки на
-  живой связке (`cargo test -- --ignored --nocapture --test-threads=1`; env — см.
-  CLAUDE.md §Команды) и зафиксировать в журнале **модель/связку и исход**
-  (паттерн «Смоук — GO»). Чистый UI/рефактор живого прогона не требует — отметить
-  это явно.
-- **FSD**: зависимости строго вниз (`app → screens → widgets → features →
-  entities → shared`); `screens`/`widgets` не импортируют `app`.
-- Новые поля конфига/сущностей — `#[serde(default)]` (старые JSON читаются без
-  миграции); схема SQLite — `CREATE TABLE IF NOT EXISTS`.
-- Комментарии и доки — **на русском**; ссылки на разделы spec/architecture.
-- Ошибки: `anyhow` в прикладных слоях, `thiserror` в `shared`. Логи — только в
-  файл (`logs/`), никаких `println!` (stdout занят TUI).
-- Новые клавиши/команды — сразу в оверлей помощи (`F1`/`?`, `HELP_KEYS`) и
-  таблицы клавиш README / spec §11.7.
-- Плейбук механических разборов крупных файлов —
+- **Before every commit**: `cargo fmt`, `cargo clippy --all-targets -- -D warnings`,
+  `cargo test` — all green.
+- Tests alongside the code (`#[cfg(test)]`) **as you go**, not at the end; a
+  real server/model — `#[ignore]` smokes (silently skipped without the needed
+  env var).
+- **A live run is mandatory** for functionality touching the engine / memory /
+  tools / provider protocols: run the relevant `#[ignore]` smokes against a
+  live stack (`cargo test -- --ignored --nocapture --test-threads=1`; env —
+  see CLAUDE.md §Commands) and record in the journal the **model/stack and
+  outcome** ("Smoke — GO" pattern). A pure UI/refactor doesn't need a live
+  run — say so explicitly.
+- **FSD**: dependencies strictly downward (`app → screens → widgets →
+  features → entities → shared`); `screens`/`widgets` don't import `app`.
+- New config/entity fields — `#[serde(default)]` (old JSON reads without
+  migration); SQLite schema — `CREATE TABLE IF NOT EXISTS`.
+- Comments and docs — **in English**; reference spec/architecture sections.
+- Errors: `anyhow` in application layers, `thiserror` in `shared`. Logs —
+  file only (`logs/`), no `println!` (stdout is taken by the TUI).
+- New keys/commands — go straight into the help overlay (`F1`/`?`,
+  `HELP_KEYS`) and the key tables in README / spec §11.7.
+- Playbook for mechanically splitting large files —
   [docs/history/refactoring-god-objects.md](docs/history/refactoring-god-objects.md).
 
-## 4. Финализация: документация
+## 4. Finalization: documentation
 
-Перед PR обнови документацию по таблице (это часть задачи, не «потом»):
+Before the PR, update the docs per the table (this is part of the task, not
+"later"):
 
-| Что менялось | Что обновить |
+| What changed | What to update |
 |---|---|
-| Любая завершённая задача | **CLAUDE.md** — запись в журнале (`### Пост-M9: <тема> (сделано)`: что/почему/ключевые решения/число тестов) + счётчик тестов и дата в шапке «## Статус» |
-| Пользовательски-видимый эффект (фича/изменение/фикс/удаление, влияющие на пользователя; изменение формата данных) | **CHANGELOG.md** — пункт в секции `[Unreleased]`, рубрика Добавлено/Изменено/Исправлено/Удалено/**Данные**/Безопасность; одна-две строки языком пользователя (не журнал внутренностей). Чисто внутренний рефактор/тесты — пропустить. См. docs/history/release-engineering.md §3.2 |
-| Структура кода, модули, потоки, инварианты | **docs/architecture.md** — затронутые § |
-| Поведение, контракты, «что и почему» | **spec.md** — затронутые § |
-| Пользовательская функциональность (клавиши, команды, настройки) | **README.md** (+ оверлей помощи в коде, см. §3) |
-| Установка, запуск, env, движок | **docs/install.md** |
-| Принято архитектурное решение | новый ADR в `docs/decisions/` + ссылки из CLAUDE.md и architecture.md |
-| Закрыт задел / появился новый | **docs/roadmap.md** |
-| Завершено направление с дизайн-планом | план → `docs/history/`, ссылки обновить (§1) |
+| Any completed task | **CLAUDE.md** — journal entry (`### Post-M9: <topic> (done)`: what/why/key decisions/test count) + test count and date in the "## Status" header |
+| User-visible effect (feature/change/fix/removal affecting the user; data format change) | **CHANGELOG.md** — item in the `[Unreleased]` section, category Added/Changed/Fixed/Removed/**Data**/Security; one to two lines in user language (not an internals log). Purely internal refactor/tests — skip. See docs/history/release-engineering.md §3.2 |
+| Code structure, modules, flows, invariants | **docs/architecture.md** — affected §s |
+| Behavior, contracts, "what and why" | **spec.md** — affected §s |
+| User-facing functionality (keys, commands, settings) | **README.md** (+ the help overlay in code, see §3) |
+| Install, run, env, engine | **docs/install.md** |
+| An architectural decision was adopted | new ADR in `docs/decisions/` + links from CLAUDE.md and architecture.md |
+| A groundwork item was closed / a new one appeared | **docs/roadmap.md** |
+| A track with a design plan finished | plan → `docs/history/`, references updated (§1) |
 
-Если раздел таблицы не затронут — ничего не выдумывать; но CLAUDE.md-журнал
-обновляется **всегда** (кроме чисто документационных PR — там достаточно
-поправить сами доки и ссылки).
+If a row in the table isn't affected — don't invent anything; but the
+CLAUDE.md journal is updated **always** (except pure documentation PRs —
+there it's enough to fix the docs themselves and the links).
 
-## 5. Коммит и PR: атрибуция моделей
+## 5. Commit and PR: model attribution
 
-**Коммиты**: сообщение на русском, в стиле conventional commits
-(`feat(tools): …`, `fix: …`, `refactor: …`, `docs: …`). Последняя строка —
-трейлер с **фактической моделью, писавшей код** (модель указана в системном
-промпте агента — не угадывай и не копируй чужой трейлер):
+**Commits**: message in English, conventional-commits style
+(`feat(tools): …`, `fix: …`, `refactor: …`, `docs: …`). The last line — a
+trailer with the **actual model that wrote the code** (the model is named in
+the agent's system prompt — don't guess and don't copy someone else's
+trailer):
 
 ```
 Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>
 ```
 
-Если код в коммите писали несколько моделей — несколько трейлеров.
+If multiple models wrote code in the commit — multiple trailers.
 
-**PR**: тело — по шаблону [.github/pull_request_template.md](.github/pull_request_template.md).
-Обязательные части:
-- что сделано и зачем, со ссылкой на дизайн-док/исследование/ADR (если есть);
-- итог тестов (число зелёных юнит-тестов, `#[ignore]`; какие живые смоуки
-  прогнаны и на какой связке);
-- чек-лист документации (зеркало таблицы §4);
-- раздел **«Модели»** — все модели, которыми агенты писали код/тесты/доки в этом
-  PR, с ролью каждой. Пример:
+**PR**: body — per the template [.github/pull_request_template.md](.github/pull_request_template.md).
+Required parts:
+- what was done and why, linking the design doc/research/ADR (if any);
+- test summary (number of green unit tests, `#[ignore]`; which live smokes
+  were run and against what stack);
+- documentation checklist (mirrors the table in §4);
+- a **"Models"** section — every model that wrote code/tests/docs in this
+  PR, with each one's role. Example:
 
 ```
-## Модели
-- Claude Fable 5 — реализация и тесты
-- Claude Opus 4.8 — дизайн-док, ревью
+## Models
+- Claude Fable 5 — implementation and tests
+- Claude Opus 4.8 — design doc, review
 ```
 
-Мерж PR — за пользователем; агент не мержит и не пушит в `main` сам.
+Merging the PR is up to the user; the agent doesn't merge or push to `main`
+itself.
 
-## 6. Релиз
+## 6. Release
 
-Версионирование — **SemVer**, источник истины версии — `Cargo.toml`
-(`env!("CARGO_PKG_VERSION")`); релиз = git-тег `vX.Y.Z` на merge-коммите в `main`.
-Пока `0.x`: MINOR — фичи/направления, PATCH — фиксы. Полный процесс и решения —
+Versioning — **SemVer**, the version's source of truth is `Cargo.toml`
+(`env!("CARGO_PKG_VERSION")`); a release = git tag `vX.Y.Z` on the merge
+commit into `main`. While at `0.x`: MINOR — features/tracks, PATCH — fixes.
+Full process and decisions —
 [docs/history/release-engineering.md](docs/history/release-engineering.md).
 
-**Дисциплина между релизами:** каждый PR с пользовательски-видимым эффектом или
-изменением формата данных добавляет пункт в `CHANGELOG.md` → `[Unreleased]` (§4).
+**Discipline between releases:** every PR with a user-visible effect or a
+data format change adds an item to `CHANGELOG.md` → `[Unreleased]` (§4).
 
-**Выпуск релиза** (чек-лист):
+**Release checklist**:
 
-1. **Релизный PR** (ветка `docs/release-X.Y.Z` или `chore/release-X.Y.Z`): bump
-   `Cargo.toml` (+ `Cargo.lock` пересобрать) до `X.Y.Z`; в `CHANGELOG.md` переименовать
-   `[Unreleased]` → `[X.Y.Z] — <дата>`, завести свежую пустую `[Unreleased]` и обновить
-   сравнительные ссылки внизу файла. Гейты (`fmt`/`clippy`/`test`) зелёные, CI на PR
-   зелёный.
-2. **Мерж** релизного PR (за пользователем).
-3. **Тег**: пользователь ставит `git tag vX.Y.Z <merge-commit>` и пушит
-   (`git push origin vX.Y.Z`). Агент теги/`main` сам не пушит (§5).
-4. Тег запускает **`.github/workflows/release.yml`**: сборка `--release` на
-   `windows-latest` + `ubuntu-22.04` → архивы `mindfork-rs-vX.Y.Z-x86_64-{windows.zip,
-   linux.tar.gz}` (бинарник + README/CHANGELOG/LICENSE/install + словари
-   `data/dictionaries/`) + **Linux-пакеты** (`nfpm` из `packaging/nfpm.yaml`:
+1. **Release PR** (branch `docs/release-X.Y.Z` or `chore/release-X.Y.Z`): bump
+   `Cargo.toml` (+ rebuild `Cargo.lock`) to `X.Y.Z`; in `CHANGELOG.md` rename
+   `[Unreleased]` → `[X.Y.Z] — <date>`, start a fresh empty `[Unreleased]`, and
+   update the comparison links at the bottom of the file. Gates
+   (`fmt`/`clippy`/`test`) green, CI on the PR green.
+2. **Merge** the release PR (up to the user).
+3. **Tag**: the user sets `git tag vX.Y.Z <merge-commit>` and pushes
+   (`git push origin vX.Y.Z`). The agent doesn't push tags/`main` itself (§5).
+4. The tag triggers **`.github/workflows/release.yml`**: `--release` build on
+   `windows-latest` + `ubuntu-22.04` → archives `mindfork-rs-vX.Y.Z-x86_64-{windows.zip,
+   linux.tar.gz}` (binary + README/CHANGELOG/LICENSE/install + dictionaries
+   `data/dictionaries/`) + **Linux packages** (`nfpm` from `packaging/nfpm.yaml`:
    `mindfork-rs_X.Y.Z-1_amd64.deb`, `mindfork-rs-X.Y.Z-1.x86_64.rpm`,
-   `mindfork-rs-X.Y.Z-1-x86_64.pkg.tar.zst`) + **Windows-инсталлятор**
-   (`mindfork-rs-vX.Y.Z-x86_64-setup.exe`, Inno Setup из `packaging/windows/mindfork.iss`)
-   + `sha256sums.txt` → `gh release create` с нотами = раздел `[X.Y.Z]` из CHANGELOG.
-   Правки пакетирования (`packaging/**`) валидируются на PR отдельным `packaging.yml`
-   (Linux: сборка пакетов + смоук установки в контейнерах Ubuntu/Fedora/Arch; Windows:
-   компиляция `.iss`).
-5. **Смоук артефакта**: скачать архив, `mindfork-rs --version` (совпадает с тегом),
-   запуск TUI на копии данных; при желании — установка пакета/инсталлятора в ВМ.
+   `mindfork-rs-X.Y.Z-1-x86_64.pkg.tar.zst`) + **Windows installer**
+   (`mindfork-rs-vX.Y.Z-x86_64-setup.exe`, Inno Setup from `packaging/windows/mindfork.iss`)
+   + `sha256sums.txt` → `gh release create` with notes = the `[X.Y.Z]` section from the CHANGELOG.
+   Packaging changes (`packaging/**`) are validated on the PR by a separate `packaging.yml`
+   (Linux: package build + install smoke in Ubuntu/Fedora/Arch containers; Windows:
+   `.iss` compilation).
+5. **Artifact smoke test**: download the archive, `mindfork-rs --version` (matches
+   the tag), run the TUI on a copy of the data; optionally — install the package/
+   installer in a VM.
 
-Промоция до **`1.0.0`** — когда направление доказано в бою (CI зелёный на обеих ОС +
-каркас миграций смержён + релизный пайплайн выпустил ≥1 релиз): с 1.0 «данные переживают
-обновления» становится контрактным обещанием.
+Promotion to **`1.0.0`** — once the track is proven in production (CI green on
+both OSes + migration scaffolding merged + release pipeline has shipped ≥1
+release): from 1.0 "data survives updates" becomes a contractual promise.

@@ -1,36 +1,36 @@
-<!-- Процесс и критерии готовности — AGENTS.md в корне репозитория. -->
+<!-- Process and readiness criteria — AGENTS.md at the repo root. -->
 
-## Что сделано
+## What was done
 
-<!-- Суть изменений, 2–6 пунктов. Ссылка на дизайн-док / исследование / ADR, если есть. -->
+<!-- The gist of the change, 2-6 bullets. Link the design doc / research / ADR, if any. -->
 
-## Тесты
+## Tests
 
-<!-- Итог: N юнит-тестов зелёные, M #[ignore]. Живые смоуки: какие, на какой связке
-     (модель/сервер/ключ), исход. Если живой прогон не требуется (чистый UI/рефактор) —
-     сказать явно. -->
+<!-- Bottom line: N unit tests green, M #[ignore]. Live smokes: which ones, against what
+     setup (model/server/key), outcome. If a live run isn't needed (pure UI/refactor) —
+     say so explicitly. -->
 
 - [ ] `cargo fmt --check`
 - [ ] `cargo clippy --all-targets -- -D warnings`
 - [ ] `cargo test`
 
-## Документация
+## Documentation
 
-<!-- Отметить обновлённое; неприменимые пункты удалить. Таблица «что менялось →
-     что обновить» — AGENTS.md §4. -->
+<!-- Check off what was updated; delete inapplicable items. "What changed → what to
+     update" table — AGENTS.md §4. -->
 
-- [ ] CLAUDE.md — запись в журнале + счётчик тестов в «Статусе»
-- [ ] CHANGELOG.md — пункт в `[Unreleased]` (если есть пользовательски-видимый эффект / изменение формата данных)
-- [ ] docs/architecture.md — затронутые §
-- [ ] spec.md — затронутые §
-- [ ] README.md — пользовательская функциональность
-- [ ] docs/install.md — установка/запуск/env
-- [ ] docs/decisions/ — ADR (принятое архитектурное решение)
-- [ ] docs/roadmap.md — заделы
+- [ ] CLAUDE.md — a changelog entry + the test count in "Status"
+- [ ] CHANGELOG.md — an entry in `[Unreleased]` (if there's a user-visible effect / a data format change)
+- [ ] docs/architecture.md — the affected §§
+- [ ] spec.md — the affected §§
+- [ ] README.md — user-facing functionality
+- [ ] docs/install.md — install/run/env
+- [ ] docs/decisions/ — an ADR (an accepted architectural decision)
+- [ ] docs/roadmap.md — groundwork
 
-## Модели
+## Models
 
-<!-- Все модели, которыми агенты писали код/тесты/доки в этом PR, с ролью. Например:
-- Claude Fable 5 — реализация и тесты
-- Claude Opus 4.8 — дизайн-док, ревью
+<!-- All models that wrote code/tests/docs for this PR, with their role. For example:
+- Claude Fable 5 — implementation and tests
+- Claude Opus 4.8 — design doc, review
 -->
