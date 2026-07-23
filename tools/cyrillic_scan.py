@@ -21,6 +21,18 @@ CYR = re.compile(r"[Ѐ-ӿ]")
 STRLIT = re.compile(r'"[^"]*[Ѐ-ӿ][^"]*"')
 TEST_MARKER = re.compile(r"#\[cfg\(test\)\]|mod tests|#\[test\]|#\[tokio::test")
 
+# Physical-key data (always kept): a modifier + a single Cyrillic letter (the
+# char crossterm reports under a Cyrillic layout, e.g. `Ctrl+и`), and single
+# Cyrillic char literals / backtick spans (the JCUKEN key-mapping table in
+# keys.rs). These carry no prose, so stripping them cannot mask an untranslated
+# sentence (a Russian word has 2+ letters and survives the strip).
+_KEY_MOD = re.compile(r"(?i)(Ctrl|Alt|Shift|Cmd|Win|Super|Meta)\+[Ѐ-ӿ]")
+_KEY_LIT = re.compile(r"['`][Ѐ-ӿ]['`]")
+
+
+def strip_key_data(s: str) -> str:
+    return _KEY_LIT.sub("", _KEY_MOD.sub("", s))
+
 # Whole files that legitimately keep Cyrillic and are skipped entirely.
 SKIP_EXT = (".png", ".ico", ".dic", ".aff")
 SKIP_FILES = {"locales/ru.json"}
@@ -35,6 +47,9 @@ def is_skipped(path: str) -> bool:
 
 def allowed_line(path: str, line: str, in_test: bool) -> bool:
     """True when this Cyrillic line is intentionally kept."""
+    # Physical-key data (modifier+Cyrillic, single-char literals) always stays.
+    if not CYR.search(strip_key_data(line)):
+        return True
     stripped = line.lstrip()
     if path.endswith(".rs"):
         # Comments always translate; a Cyrillic *string literal* inside a test
