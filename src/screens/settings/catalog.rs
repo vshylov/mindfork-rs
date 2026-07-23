@@ -357,6 +357,12 @@ impl SettingsScreen {
                         )
                         .describe(loc.t("ui.settings.desc.tts_voice")),
                         text_row(
+                            FieldId::TtsUserVoice,
+                            loc.t("ui.settings.field.tts_user_voice"),
+                            &t.external.user_voice,
+                        )
+                        .describe(loc.t("ui.settings.desc.tts_user_voice")),
+                        text_row(
                             FieldId::TtsApiKeyEnv,
                             loc.t("ui.settings.field.api_key_env_opt"),
                             &t.external.api_key_env,
@@ -379,6 +385,12 @@ impl SettingsScreen {
                                 &c.voice,
                             )
                             .describe(loc.t("ui.settings.desc.tts_voice")),
+                            text_row(
+                                FieldId::TtsUserVoice,
+                                loc.t("ui.settings.field.tts_user_voice"),
+                                &c.user_voice,
+                            )
+                            .describe(loc.t("ui.settings.desc.tts_user_voice")),
                             text_row(
                                 FieldId::TtsInstructions,
                                 loc.t("ui.settings.field.tts_instructions"),

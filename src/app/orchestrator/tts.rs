@@ -21,7 +21,7 @@ use crate::app::events::AppEvent;
 use crate::entities::message::{Message, MessageRole};
 use crate::features::tts_command::TtsScope;
 use crate::shared::i18n::Locale;
-use crate::shared::tts::{TtsEngine, TtsSetupError, engine_from_config, playback::Playback};
+use crate::shared::tts::{TtsEngine, TtsSetupError, engines_from_config, playback::Playback};
 
 use super::Orchestrator;
 
@@ -76,8 +76,10 @@ impl Orchestrator {
             .mode
             .cloud_provider()
             .and_then(|p| crate::shared::secrets::stored_key(&self.config.api_keys, p.key()));
-        let engine = match engine_from_config(&self.config.tts, stored) {
-            Ok(engine) => engine,
+        // Два движка: ассистента и (опц.) пользователя — если задан отдельный
+        // «Голос пользователя» (spec §11.9). Оба одного провайдера → лимит общий.
+        let (engine, user_engine) = match engines_from_config(&self.config.tts, stored) {
+            Ok(pair) => pair,
             Err(err) => {
                 self.fail_tts(self.ui_locale().t(setup_error_key(err)));
                 return;
@@ -113,6 +115,7 @@ impl Orchestrator {
         let _ = self.evt_tx.send(AppEvent::TtsActive(true));
         spawn_tts(TtsTask {
             engine,
+            user_engine,
             chunks,
             cancel,
             task_id,
@@ -193,7 +196,7 @@ pub(super) fn build_utterances(
     scope: TtsScope,
     speak_roles: bool,
     loc: &'static Locale,
-) -> Option<Vec<String>> {
+) -> Option<Vec<(MessageRole, String)>> {
     let spoken: Vec<&Message> = messages
         .iter()
         .filter(|m| matches!(m.role, MessageRole::User | MessageRole::Assistant))
@@ -205,7 +208,9 @@ pub(super) fn build_utterances(
         TtsScope::All => spoken.len(),
     };
     let start = spoken.len().saturating_sub(take);
-    let out: Vec<String> = spoken[start..]
+    // Роль сохраняется вместе с текстом: по ней многоголосая озвучка (`/tts all`)
+    // выбирает голос пользователя/ассистента (spec §11.9).
+    let out: Vec<(MessageRole, String)> = spoken[start..]
         .iter()
         .filter_map(|m| {
             // «Мысли» (CoT) и tool-блоки не озвучиваются никогда: первые лежат в
@@ -214,14 +219,16 @@ pub(super) fn build_utterances(
             if text.is_empty() {
                 return None;
             }
-            if !speak_roles {
-                return Some(text);
-            }
-            let role = match m.role {
-                MessageRole::User => loc.t("speak.role.user"),
-                _ => loc.t("speak.role.assistant"),
+            let text = if speak_roles {
+                let role = match m.role {
+                    MessageRole::User => loc.t("speak.role.user"),
+                    _ => loc.t("speak.role.assistant"),
+                };
+                format!("{role} {text}")
+            } else {
+                text
             };
-            Some(format!("{role} {text}"))
+            Some((m.role, text))
         })
         .collect();
     (!out.is_empty()).then_some(out)
@@ -231,16 +238,22 @@ pub(super) fn build_utterances(
 /// предложений (переиспользуем чанкер RAG), чтобы стык чанков не приходился на
 /// середину фразы. Реплики не склеиваются между собой: граница сообщения — это
 /// и естественная пауза, и точка отмены.
-pub(super) fn chunk_utterances(utterances: &[String], max_chars: usize) -> Vec<String> {
+pub(super) fn chunk_utterances(
+    utterances: &[(MessageRole, String)],
+    max_chars: usize,
+) -> Vec<(MessageRole, String)> {
     let max = max_chars.max(1);
     let mut out = Vec::new();
-    for utterance in utterances {
+    for (role, utterance) in utterances {
         for block in utterance.lines() {
             let block = block.trim();
             if block.is_empty() {
                 continue;
             }
-            pack_sentences(block, max, &mut out);
+            let mut chunks = Vec::new();
+            pack_sentences(block, max, &mut chunks);
+            // Все чанки блока наследуют роль исходного сообщения.
+            out.extend(chunks.into_iter().map(|c| (*role, c)));
         }
     }
     out
@@ -308,8 +321,13 @@ fn split_long(sentence: &str, max: usize) -> Vec<String> {
 
 /// Параметры фоновой задачи озвучивания.
 struct TtsTask {
+    /// Движок голоса ассистента (и всех реплик, если отдельный голос пользователя
+    /// не задан).
     engine: Box<dyn TtsEngine>,
-    chunks: Vec<String>,
+    /// Движок голоса пользователя (`Some` — только при заданном «Голосе пользователя»).
+    user_engine: Option<Box<dyn TtsEngine>>,
+    /// Чанки с ролью-источником — по ней выбирается движок.
+    chunks: Vec<(MessageRole, String)>,
     cancel: CancellationToken,
     /// Поколение задачи — по нему оркестратор отличает свой `done` от устаревшего.
     task_id: Uuid,
@@ -328,6 +346,7 @@ struct TtsTask {
 fn spawn_tts(task: TtsTask) {
     let TtsTask {
         engine,
+        user_engine,
         chunks,
         cancel,
         task_id,
@@ -342,7 +361,7 @@ fn spawn_tts(task: TtsTask) {
             let _ = evt_tx.send(AppEvent::Error(msg));
         };
 
-        for chunk in chunks {
+        for (role, chunk) in chunks {
             if cancel.is_cancelled() {
                 break;
             }
@@ -353,7 +372,13 @@ fn spawn_tts(task: TtsTask) {
             if cancel.is_cancelled() {
                 break;
             }
-            match engine.synthesize(&chunk, &cancel).await {
+            // Реплики пользователя — своим голосом, если он задан; иначе (и для
+            // ассистента) — основной движок.
+            let active: &dyn TtsEngine = match role {
+                MessageRole::User => user_engine.as_deref().unwrap_or(engine.as_ref()),
+                _ => engine.as_ref(),
+            };
+            match active.synthesize(&chunk, &cancel).await {
                 Ok(clip) if !clip.is_empty() => {
                     if let Err(err) = playback.enqueue(clip) {
                         fail(loc.tf("ui.err.tts_playback", &[("err", &err.to_string())]));
@@ -408,21 +433,39 @@ mod tests {
         ]
     }
 
+    /// Тексты реплик без ролей — для проверок, где роль не важна.
+    fn texts(v: Vec<(MessageRole, String)>) -> Vec<String> {
+        v.into_iter().map(|(_, s)| s).collect()
+    }
+
+    /// Реплика ассистента для входа чанкера (роль там не важна, но нужна типу).
+    fn asst(s: &str) -> (MessageRole, String) {
+        (MessageRole::Assistant, s.to_string())
+    }
+
+    /// Тексты чанков без ролей.
+    fn chunk_texts(chunks: &[(MessageRole, String)]) -> Vec<String> {
+        chunks.iter().map(|(_, s)| s.clone()).collect()
+    }
+
     #[test]
     fn last_scope_takes_only_final_message() {
         let out = build_utterances(&chat_messages(), TtsScope::Last, false, ru()).unwrap();
-        assert_eq!(out, vec!["второй ответ.".to_string()]);
+        assert_eq!(
+            out,
+            vec![(MessageRole::Assistant, "второй ответ.".to_string())]
+        );
     }
 
     #[test]
     fn recent_scope_takes_tail_in_chronological_order() {
         let out = build_utterances(&chat_messages(), TtsScope::Recent(3), false, ru()).unwrap();
         assert_eq!(out.len(), 3);
-        assert!(
-            out[0].contains("первый ответ"),
-            "порядок хронологический: {out:?}"
-        );
-        assert!(out[2].contains("второй ответ"));
+        // Порядок хронологический, и роли сохранены (для многоголосой озвучки).
+        assert_eq!(out[0].0, MessageRole::Assistant);
+        assert!(out[0].1.contains("первый ответ"), "порядок: {out:?}");
+        assert_eq!(out[1].0, MessageRole::User);
+        assert!(out[2].1.contains("второй ответ"));
         // Запрос больше, чем есть, отдаёт всё (кламп, а не ошибка).
         let all = build_utterances(&chat_messages(), TtsScope::Recent(99), false, ru()).unwrap();
         assert_eq!(all.len(), 4);
@@ -444,7 +487,7 @@ mod tests {
         ];
         let out = build_utterances(&messages, TtsScope::All, false, ru()).unwrap();
         assert_eq!(out.len(), 1, "озвучиваются только user/assistant: {out:?}");
-        assert!(out[0].contains("настоящий ответ"));
+        assert!(out[0].1.contains("настоящий ответ"));
         // Совсем нечего озвучивать — None (вызывающий покажет понятную ошибку).
         assert!(build_utterances(&[], TtsScope::All, false, ru()).is_none());
         assert!(
@@ -461,12 +504,13 @@ mod tests {
     #[test]
     fn role_prefixes_apply_to_every_scope_including_single() {
         // Тумблер «Озвучивать роли» действует и при одиночном `/tts` (решение Р6).
-        let one = build_utterances(&chat_messages(), TtsScope::Last, true, ru()).unwrap();
+        let one = texts(build_utterances(&chat_messages(), TtsScope::Last, true, ru()).unwrap());
         assert!(
             one[0].starts_with(ru().t("speak.role.assistant")),
             "префикс роли и у одного сообщения: {one:?}"
         );
-        let many = build_utterances(&chat_messages(), TtsScope::Recent(2), true, ru()).unwrap();
+        let many =
+            texts(build_utterances(&chat_messages(), TtsScope::Recent(2), true, ru()).unwrap());
         assert!(many[0].starts_with(ru().t("speak.role.user")));
         assert!(many[1].starts_with(ru().t("speak.role.assistant")));
     }
@@ -478,56 +522,72 @@ mod tests {
         let messages = vec![Message::assistant("```rust\nfn main() {}\n```")];
         let out = build_utterances(&messages, TtsScope::All, false, ru()).unwrap();
         assert_eq!(out.len(), 1);
-        assert!(out[0].contains(ru().t("speak.skip.code")), "{out:?}");
+        assert!(out[0].1.contains(ru().t("speak.skip.code")), "{out:?}");
+    }
+
+    #[test]
+    fn chunk_inherits_role_of_source_message() {
+        // Роль реплики передаётся всем её чанкам — по ней выбирается голос.
+        let src = vec![
+            (MessageRole::User, "Раз. Два.".to_string()),
+            (MessageRole::Assistant, "Три. Четыре.".to_string()),
+        ];
+        let chunks = chunk_utterances(&src, 6);
+        assert!(chunks.iter().all(|(_, c)| c.chars().count() <= 6));
+        // Первые чанки — пользователя, последние — ассистента.
+        assert_eq!(chunks.first().unwrap().0, MessageRole::User);
+        assert_eq!(chunks.last().unwrap().0, MessageRole::Assistant);
     }
 
     #[test]
     fn chunking_respects_limit_and_sentence_boundaries() {
-        let text = "Первое предложение. Второе предложение! Третье предложение?".to_string();
-        let chunks = chunk_utterances(&[text], 25);
+        let text = "Первое предложение. Второе предложение! Третье предложение?";
+        let chunks = chunk_utterances(&[asst(text)], 25);
+        let ch = chunk_texts(&chunks);
         assert!(
-            chunks.iter().all(|c| c.chars().count() <= 25),
-            "лимит соблюдён: {chunks:?}"
+            ch.iter().all(|c| c.chars().count() <= 25),
+            "лимит соблюдён: {ch:?}"
         );
         // Границы — по предложениям (пунктуация сохранена в конце чанка).
         assert!(
-            chunks
-                .iter()
+            ch.iter()
                 .all(|c| c.ends_with('.') || c.ends_with('!') || c.ends_with('?')),
-            "чанк заканчивается концом предложения: {chunks:?}"
+            "чанк заканчивается концом предложения: {ch:?}"
         );
         // Ничего не потеряно.
-        assert_eq!(
-            chunks.join(" ").replace("  ", " "),
-            "Первое предложение. Второе предложение! Третье предложение?"
-        );
+        assert_eq!(ch.join(" ").replace("  ", " "), text);
     }
 
     #[test]
     fn short_text_stays_single_chunk() {
-        let chunks = chunk_utterances(&["Коротко.".to_string()], 4096);
-        assert_eq!(chunks, vec!["Коротко.".to_string()]);
+        let chunks = chunk_utterances(&[asst("Коротко.")], 4096);
+        assert_eq!(chunk_texts(&chunks), vec!["Коротко.".to_string()]);
     }
 
     #[test]
     fn utterances_are_not_merged_across_messages() {
         // Граница сообщения — естественная пауза и точка отмены: не склеиваем даже
         // короткие реплики.
-        let chunks = chunk_utterances(&["Раз.".to_string(), "Два.".to_string()], 4096);
-        assert_eq!(chunks, vec!["Раз.".to_string(), "Два.".to_string()]);
+        let chunks = chunk_utterances(&[asst("Раз."), asst("Два.")], 4096);
+        assert_eq!(
+            chunk_texts(&chunks),
+            vec!["Раз.".to_string(), "Два.".to_string()]
+        );
     }
 
     #[test]
     fn overlong_sentence_is_split_by_words_then_chars() {
         let long_words = "слово ".repeat(20);
-        let chunks = chunk_utterances(&[long_words.trim().to_string()], 20);
-        assert!(chunks.iter().all(|c| c.chars().count() <= 20), "{chunks:?}");
-        assert!(chunks.len() > 1);
+        let chunks = chunk_utterances(&[asst(long_words.trim())], 20);
+        let ch = chunk_texts(&chunks);
+        assert!(ch.iter().all(|c| c.chars().count() <= 20), "{ch:?}");
+        assert!(ch.len() > 1);
         // Одно слово длиннее лимита режется посимвольно, а не теряется.
         let giant = "я".repeat(50);
-        let chunks = chunk_utterances(std::slice::from_ref(&giant), 20);
-        assert!(chunks.iter().all(|c| c.chars().count() <= 20), "{chunks:?}");
-        assert_eq!(chunks.concat().chars().count(), giant.chars().count());
+        let chunks = chunk_utterances(&[asst(&giant)], 20);
+        let ch = chunk_texts(&chunks);
+        assert!(ch.iter().all(|c| c.chars().count() <= 20), "{ch:?}");
+        assert_eq!(ch.concat().chars().count(), giant.chars().count());
     }
 
     #[test]

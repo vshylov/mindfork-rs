@@ -973,8 +973,12 @@ impl TtsMode {
 pub struct TtsCloudSettings {
     /// Имя TTS-модели у провайдера.
     pub model_name: Option<String>,
-    /// Голос (имена свои у каждого провайдера).
+    /// Голос ассистента (имена свои у каждого провайдера).
     pub voice: Option<String>,
+    /// Голос **пользователя** для многосообщенческой озвучки (`/tts all`, `/tts N`):
+    /// когда задан, реплики пользователя читаются им, а ассистента — `voice`.
+    /// `None` → все реплики одним голосом `voice` (поведение по умолчанию).
+    pub user_voice: Option<String>,
     /// Указания по тону/языку/скорости естественным языком. У OpenAI это поле
     /// `instructions` (и единственный рабочий способ задать скорость —
     /// `speed` у `gpt-4o-mini-tts` де-факто игнорируется); у Gemini — префикс
@@ -997,8 +1001,11 @@ pub struct TtsExternalSettings {
     pub url: Option<String>,
     /// Имя модели (опционально — многие серверы игнорируют).
     pub model_name: Option<String>,
-    /// Голос — свободное текстовое поле (имена зависят от сервера).
+    /// Голос ассистента — свободное текстовое поле (имена зависят от сервера).
     pub voice: Option<String>,
+    /// Голос **пользователя** для многосообщенческой озвучки (см. одноимённое поле
+    /// [`TtsCloudSettings::user_voice`]). `None` → один голос `voice`.
+    pub user_voice: Option<String>,
     /// Имя env-переменной с Bearer-ключом (опционально; локальный сервер не требует).
     pub api_key_env: Option<String>,
 }
@@ -1059,6 +1066,20 @@ impl TtsSettings {
             CloudProvider::Gemini => Some(&self.gemini),
             CloudProvider::Claude => None,
         }
+    }
+
+    /// Голоса активного режима: `(ассистент, пользователь)`. Пустые поля → `None`.
+    /// Голос пользователя используется многосообщенческой озвучкой (`/tts all`); при
+    /// `None` реплики пользователя читаются голосом ассистента.
+    pub fn active_voices(&self) -> (Option<&str>, Option<&str>) {
+        fn nonblank(v: &Option<String>) -> Option<&str> {
+            v.as_deref().map(str::trim).filter(|s| !s.is_empty())
+        }
+        let (voice, user) = match self.cloud() {
+            Some(c) => (&c.voice, &c.user_voice),
+            None => (&self.external.voice, &self.external.user_voice),
+        };
+        (nonblank(voice), nonblank(user))
     }
 
     /// Изменяемые настройки активного облачного провайдера (`None` — external).
@@ -1175,6 +1196,27 @@ mod tests {
     fn default_has_current_schema_version() {
         assert_eq!(AppConfig::default().schema_version, SCHEMA_VERSION);
         assert_eq!(AppConfig::default().max_tool_rounds, 8);
+    }
+
+    #[test]
+    fn tts_active_voices_reads_mode_and_treats_blank_as_unset() {
+        let mut tts = TtsSettings {
+            mode: TtsMode::OpenAi,
+            openai: TtsCloudSettings {
+                voice: Some("onyx".into()),
+                user_voice: Some("nova".into()),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        assert_eq!(tts.active_voices(), (Some("onyx"), Some("nova")));
+        // Пустой голос пользователя → None (не заводит второй движок).
+        tts.openai.user_voice = Some("  ".into());
+        assert_eq!(tts.active_voices(), (Some("onyx"), None));
+        // Активный режим external — читаются его поля, а не openai.
+        tts.mode = TtsMode::External;
+        tts.external.voice = Some("bella".into());
+        assert_eq!(tts.active_voices(), (Some("bella"), None));
     }
 
     #[test]

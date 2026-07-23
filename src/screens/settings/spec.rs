@@ -312,6 +312,13 @@ pub(super) fn field_spec(id: FieldId) -> Option<FieldSpec> {
                 cl.voice = opt(t);
             }
         }),
+        TtsUserVoice => text(|c, t| {
+            if c.tts.mode == crate::shared::config::TtsMode::External {
+                c.tts.external.user_voice = opt(t);
+            } else if let Some(cl) = c.tts.cloud_mut() {
+                cl.user_voice = opt(t);
+            }
+        }),
         TtsInstructions => text(|c, t| {
             if let Some(cl) = c.tts.cloud_mut() {
                 cl.instructions = opt(t);

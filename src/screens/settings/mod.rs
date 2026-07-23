@@ -488,6 +488,7 @@ enum FieldId {
     TtsMode,
     TtsModelName,
     TtsVoice,
+    TtsUserVoice,
     TtsInstructions,
     TtsSpeed,
     /// API-ключ облачного провайдера озвучивания (общий с чатом, ADR 0008).

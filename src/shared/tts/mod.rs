@@ -75,12 +75,37 @@ pub enum TtsSetupError {
     Url,
 }
 
-/// Строит клиент озвучивания из снимка настроек. `stored_key` — сохранённый ключ
-/// провайдера (ADR 0008): он уже расшифрован вызывающим; при его отсутствии
-/// ключ читается из env-переменной, имя которой задано в настройках.
-pub fn engine_from_config(
+/// Пара движков озвучки: голос ассистента (всегда) и опц. голос пользователя.
+pub type TtsEnginePair = (Box<dyn TtsEngine>, Option<Box<dyn TtsEngine>>);
+
+/// Движки для многоголосой озвучки: `(ассистент, опц. пользователь)`. `stored_key` —
+/// сохранённый ключ провайдера (ADR 0008): уже расшифрован вызывающим; при его
+/// отсутствии ключ читается из env-переменной. Второй движок строится **только**
+/// если в активном режиме задан отдельный «Голос пользователя» и он отличается от
+/// голоса ассистента — тогда `/tts all`/`/tts N` читают реплики пользователя им
+/// (spec §11.9). Иначе `None` → всё одним голосом.
+pub fn engines_from_config(
     tts: &TtsSettings,
     stored_key: Option<String>,
+) -> std::result::Result<TtsEnginePair, TtsSetupError> {
+    let (assistant_voice, user_voice) = tts.active_voices();
+    let assistant = build_engine(tts, stored_key.clone(), None)?;
+    let user = match user_voice {
+        Some(uv) if Some(uv) != assistant_voice => {
+            Some(build_engine(tts, stored_key, Some(uv.to_string()))?)
+        }
+        _ => None,
+    };
+    Ok((assistant, user))
+}
+
+/// Общий конструктор клиента. `voice_override` (`Some`) заменяет голос из настроек —
+/// так строится второй движок для реплик пользователя, не дублируя резолвинг
+/// модели/ключа/базы.
+fn build_engine(
+    tts: &TtsSettings,
+    stored_key: Option<String>,
+    voice_override: Option<String>,
 ) -> std::result::Result<Box<dyn TtsEngine>, TtsSetupError> {
     let speed = tts.speed;
     match tts.mode {
@@ -94,7 +119,7 @@ pub fn engine_from_config(
             let provider = tts.mode.cloud_provider().ok_or(TtsSetupError::Model)?;
             let base = non_empty(cloud.url.clone())
                 .unwrap_or_else(|| provider.chat_base_url().to_string());
-            let voice = non_empty(cloud.voice.clone());
+            let voice = voice_override.or_else(|| non_empty(cloud.voice.clone()));
             let instructions = non_empty(cloud.instructions.clone());
             Ok(match tts.mode {
                 TtsMode::Gemini => Box::new(gemini::GeminiTts::new(
@@ -121,7 +146,7 @@ pub fn engine_from_config(
                 url,
                 env_key(tts.external.api_key_env.as_deref()),
                 non_empty(tts.external.model_name.clone()),
-                non_empty(tts.external.voice.clone()),
+                voice_override.or_else(|| non_empty(tts.external.voice.clone())),
                 speed,
             )))
         }
@@ -173,17 +198,17 @@ mod tests {
             ..Default::default()
         };
         assert_eq!(
-            engine_from_config(&tts, Some("sk-x".into())).err(),
+            engines_from_config(&tts, Some("sk-x".into())).err(),
             Some(TtsSetupError::Model)
         );
         tts.openai.model_name = Some("gpt-4o-mini-tts".into());
         // Ключа нет ни сохранённого, ни в env → понятная структурная ошибка.
         assert_eq!(
-            engine_from_config(&tts, None).err(),
+            engines_from_config(&tts, None).err(),
             Some(TtsSetupError::ApiKey)
         );
         // Сохранённый ключ (ADR 0008) достаточен — вводить заново ничего не нужно.
-        assert!(engine_from_config(&tts, Some("sk-x".into())).is_ok());
+        assert!(engines_from_config(&tts, Some("sk-x".into())).is_ok());
     }
 
     #[test]
@@ -194,7 +219,7 @@ mod tests {
             ..Default::default()
         };
         assert_eq!(
-            engine_from_config(&tts, None).err(),
+            engines_from_config(&tts, None).err(),
             Some(TtsSetupError::Url)
         );
         let tts = TtsSettings {
@@ -206,7 +231,7 @@ mod tests {
             ..Default::default()
         };
         // Локальному серверу ключ и модель не нужны.
-        assert!(engine_from_config(&tts, None).is_ok());
+        assert!(engines_from_config(&tts, None).is_ok());
     }
 
     #[test]
@@ -219,9 +244,36 @@ mod tests {
             ..Default::default()
         };
         assert_eq!(
-            engine_from_config(&tts, Some("sk-x".into())).err(),
+            engines_from_config(&tts, Some("sk-x".into())).err(),
             Some(TtsSetupError::Model)
         );
+    }
+
+    #[test]
+    fn second_engine_built_only_when_user_voice_set_and_differs() {
+        let base = TtsSettings {
+            openai: TtsCloudSettings {
+                model_name: Some("gpt-4o-mini-tts".into()),
+                voice: Some("onyx".into()),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        // Голоса пользователя нет → один движок.
+        let (_a, user) = engines_from_config(&base, Some("sk-x".into())).unwrap();
+        assert!(user.is_none(), "без user_voice второй движок не строится");
+
+        // Задан и отличается → строится второй.
+        let mut with_user = base.clone();
+        with_user.openai.user_voice = Some("nova".into());
+        let (_a, user) = engines_from_config(&with_user, Some("sk-x".into())).unwrap();
+        assert!(user.is_some(), "отдельный user_voice → второй движок");
+
+        // Совпадает с голосом ассистента → второй не нужен.
+        let mut same = base.clone();
+        same.openai.user_voice = Some("onyx".into());
+        let (_a, user) = engines_from_config(&same, Some("sk-x".into())).unwrap();
+        assert!(user.is_none(), "совпадающий голос — один движок");
     }
 
     #[test]
