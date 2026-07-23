@@ -370,6 +370,7 @@ fn about_lines(palette: &Palette, loc: &'static Locale) -> Vec<Line<'static>> {
             format!("{HELP_PAD}{}", loc.t("ui.about.desc")),
             palette.muted_style(),
         )),
+        Line::raw(""),
     ];
     // Пункты через пустую строку — список «дышит» (просьба: промежутки между элементами).
     for (label, value, color) in rows {
