@@ -155,8 +155,10 @@ Linux, логотип в справке; план [docs/branding.md](docs/brandi
 implementation is substantially yours») → перепроверка зондом (GO, 0 паник) →
 реализация: whitelist flowchart/sequence, жёсткий фолбэк на исходник (golden-тест
 «худший случай = прежнее поведение»), тумблер `interface.render_mermaid`
-default-on, ASCII в компат-режиме; в апстриме открыт feature request #32
-(`max_width` как жёсткий бюджет); прежнее направление — **инсталляторы**
+default-on, ASCII в компат-режиме; наш feature request #32 (`max_width` как жёсткий
+бюджет) закрыт в апстриме релизом 0.57.0 (`RenderOptions::max_width_strict` →
+`Error::TooWide`) — обновились до 0.57.0, но strict-режим НЕ используем (наш пост-чек
+по `display_width` точнее); прежнее направление — **инсталляторы**
 (Windows Inno Setup + Linux nfpm; план `docs/history/installers.md`) —
 **завершено** (этапы 1–3; подпись кода отложена): линейный стек этапов — этап 1
 «предпосылки в коде» (`feat/installed-mode-prereqs`), этап 2 «Linux-пакеты»
@@ -5755,8 +5757,11 @@ web-поиск и Python под выключателями, экран наст�
   markdown-refinements); поведение крейта на реальных LLM-диаграммах проверено
   зондом (корпус 31 кейса, включая 17 реальных из architecture.md).
 - **Заделы**: расширение whitelist (state/class/er — когда их текстовый рендер станет
-  читаемым); `max_width` как жёсткий бюджет — feature request в апстрим (мейнтейнер
-  сам попросил завести отдельно).
+  читаемым). `max_width` как жёсткий бюджет — **закрыто**: наш feature request #32
+  реализован апстримом в 0.57.0 (`RenderOptions::max_width_strict` → `Error::TooWide`);
+  обновились до 0.57.0, но strict-режим НЕ адаптировали — наш пост-чек по
+  `display_width` точнее (учитывает CJK/эмодзи, совпадает с переносом в `message_feed`),
+  а `render_with_width` уже ужимает зазоры под ширину.
 
 ### Пост-M9: плагины — этап 1: generic-импорт (формат mindfork-import) (сделано)
 - **Первый этап направления «система плагинов»** (исследование

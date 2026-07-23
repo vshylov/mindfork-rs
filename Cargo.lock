@@ -1874,9 +1874,9 @@ dependencies = [
 
 [[package]]
 name = "mermaid-text"
-version = "0.56.1"
+version = "0.57.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "fb5a7e92777d1bcf11a71978d6a1e574c5ff0d04fdb29c86646d7f19680973d0"
+checksum = "830067de2eb67eff2201ad257af77099a32de25126dd06b0848f677589e13862"
 dependencies = [
  "ascii-dag",
  "chrono",
