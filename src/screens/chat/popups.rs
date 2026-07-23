@@ -344,13 +344,13 @@ fn about_lines(palette: &Palette, loc: &'static Locale) -> Vec<Line<'static>> {
             palette.accent,
         ),
         (
-            loc.t("ui.about.repo"),
-            credits::REPO_URL.to_string(),
+            loc.t("ui.about.crate"),
+            credits::CRATE_URL.to_string(),
             palette.accent,
         ),
         (
-            loc.t("ui.about.crate"),
-            credits::CRATE_URL.to_string(),
+            loc.t("ui.about.repo"),
+            credits::REPO_URL.to_string(),
             palette.accent,
         ),
     ];
