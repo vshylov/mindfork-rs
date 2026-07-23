@@ -13,6 +13,8 @@
 
 ## [Unreleased]
 
+## [0.9.2] — 2026-07-23
+
 ### Добавлено
 
 - **Озвучивание сообщений чата** — команда `/tts` в поле ввода: `/tts` читает
@@ -251,6 +253,7 @@
   (заметки/RAG/«модель себя», sqlite-vec, изоляция по профилю). Формат схем — v1;
   версионирование и миграции схем оформляются в следующих релизах.
 
-[Unreleased]: https://github.com/vshylov/mindfork-rs/compare/v0.9.1...HEAD
+[Unreleased]: https://github.com/vshylov/mindfork-rs/compare/v0.9.2...HEAD
+[0.9.2]: https://github.com/vshylov/mindfork-rs/compare/v0.9.1...v0.9.2
 [0.9.1]: https://github.com/vshylov/mindfork-rs/compare/v0.9.0...v0.9.1
 [0.9.0]: https://github.com/vshylov/mindfork-rs/releases/tag/v0.9.0
