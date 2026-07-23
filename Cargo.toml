@@ -39,8 +39,10 @@ hkdf = "0.12.4"
 # Рендер ```mermaid-блоков ленты в Unicode/ASCII-графику (flowchart/sequence,
 # whitelist + жёсткий фолбэк на исходник). Чистый Rust (net-new только ascii-dag);
 # ≥0.56.1 обязательно — 0.56.0 паниковал/портил подписи на кириллице (наш апстрим-фикс,
-# leboiko/markdown-reader#29/#30). См. docs/research/mermaid-ascii-rendering.md.
-mermaid-text = "0.56.1"
+# leboiko/markdown-reader#29/#30). 0.57.0 закрыл наш feature request #32 (max_width как
+# жёсткий бюджет: RenderOptions::max_width_strict + Error::TooWide) — мы его НЕ используем,
+# наш пост-чек по display_width точнее (см. mermaid.rs). См. docs/research/mermaid-ascii-rendering.md.
+mermaid-text = "0.57.0"
 # Извлечение текста из PDF для индексации в RAG (`/rag add`, этап B1b). Чистый Rust
 # (lopdf + парсеры шрифтов/CFF/CMap, без C-зависимостей); качество извлечения
 # «лучшее усилие» — сканированный/картиночный PDF даёт пустой текст, это допустимо.
