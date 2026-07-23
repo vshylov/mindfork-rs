@@ -19,8 +19,12 @@ pub enum TtsScope {
 pub enum TtsCommand {
     /// Озвучить выбранный объём (прерывает текущее воспроизведение).
     Speak(TtsScope),
-    /// Остановить воспроизведение.
+    /// Остановить воспроизведение (сбросить очередь).
     Stop,
+    /// Приостановить воспроизведение, сохранив очередь (`/tts resume` продолжит).
+    Pause,
+    /// Продолжить приостановленное воспроизведение.
+    Resume,
 }
 
 /// Пытается разобрать строку ввода как команду озвучивания.
@@ -45,6 +49,12 @@ pub fn parse(input: &str) -> Option<Result<TtsCommand, String>> {
     }
     if arg.eq_ignore_ascii_case("stop") {
         return Some(Ok(TtsCommand::Stop));
+    }
+    if arg.eq_ignore_ascii_case("pause") {
+        return Some(Ok(TtsCommand::Pause));
+    }
+    if arg.eq_ignore_ascii_case("resume") {
+        return Some(Ok(TtsCommand::Resume));
     }
     // Число: сколько последних сообщений озвучить. Ноль бессмыслен — это ошибка,
     // а не «ничего не делать» (иначе опечатка выглядела бы как молчаливый no-op).
@@ -82,12 +92,16 @@ mod tests {
         assert_eq!(parse("/tts 1"), speak(TtsScope::Recent(1)));
         assert_eq!(parse("/tts all"), speak(TtsScope::All));
         assert_eq!(parse("/tts stop"), Some(Ok(TtsCommand::Stop)));
+        assert_eq!(parse("/tts pause"), Some(Ok(TtsCommand::Pause)));
+        assert_eq!(parse("/tts resume"), Some(Ok(TtsCommand::Resume)));
     }
 
     #[test]
     fn command_and_args_are_case_insensitive() {
         assert_eq!(parse("/TTS ALL"), speak(TtsScope::All));
         assert_eq!(parse("/Tts Stop"), Some(Ok(TtsCommand::Stop)));
+        assert_eq!(parse("/Tts Pause"), Some(Ok(TtsCommand::Pause)));
+        assert_eq!(parse("/TTS RESUME"), Some(Ok(TtsCommand::Resume)));
     }
 
     #[test]

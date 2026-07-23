@@ -219,6 +219,8 @@ impl ChatScreen {
                     return match parsed {
                         Ok(TtsCommand::Speak(scope)) => Some(ChatIntent::Tts(scope)),
                         Ok(TtsCommand::Stop) => Some(ChatIntent::TtsStop),
+                        Ok(TtsCommand::Pause) => Some(ChatIntent::TtsPause),
+                        Ok(TtsCommand::Resume) => Some(ChatIntent::TtsResume),
                         Err(arg) => {
                             self.push_note(&self.loc.tf("ui.tts.bad_arg", &[("arg", &arg)]));
                             None

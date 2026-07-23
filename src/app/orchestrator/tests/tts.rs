@@ -127,6 +127,27 @@ fn stop_command_is_idempotent() {
 }
 
 #[test]
+fn pause_resume_without_active_playback_are_safe_noops() {
+    // Звука в CI нет, поэтому `tts_playback` не заводится — проверяем, что команды
+    // pause/resume при отсутствии активной озвучки не паникуют и не шлют событий.
+    let (_dir, mut orch, mut rx) = bare_orch_rx();
+    orch.handle_tts_pause();
+    orch.handle_tts_resume();
+    assert!(orch.tts_playback.is_none());
+    assert!(rx.try_recv().is_err(), "no-op не шлёт событий");
+
+    // Пометка «идёт» без реального устройства: pause/resume всё равно безопасны
+    // (хэндла нет), а `stop_tts` снимает паузу и гасит чип.
+    let token = mark_speaking(&mut orch);
+    orch.handle_tts_pause();
+    orch.handle_tts_resume();
+    assert!(!token.is_cancelled(), "pause/resume не отменяют задачу");
+    orch.stop_tts();
+    assert!(token.is_cancelled());
+    assert!(matches!(rx.try_recv(), Ok(AppEvent::TtsActive(false))));
+}
+
+#[test]
 fn late_done_of_cancelled_task_does_not_hide_new_indicator() {
     // Гонка «остановили старую → запустили новую»: поздний `done` устаревшей задачи
     // не должен гасить чип текущей.

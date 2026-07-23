@@ -99,6 +99,10 @@ pub enum ChatIntent {
     Tts(crate::features::tts_command::TtsScope),
     /// Остановить озвучивание (команда `/tts stop`).
     TtsStop,
+    /// Приостановить озвучивание (команда `/tts pause`).
+    TtsPause,
+    /// Продолжить озвучивание (команда `/tts resume`).
+    TtsResume,
     /// Открыть экран настроек (`Ctrl+P`). `app` создаёт его из снимка настроек.
     OpenSettings,
     /// Открыть экран списка чатов (`Esc`). `app` создаёт его из снимка списка.

@@ -189,6 +189,7 @@ pub(super) const HELP_KEYS: &[(&str, &str)] = &[
     ("/rag rebuild", "ui.help.rag_rebuild"),
     ("ui.help.k.tts", "ui.help.tts"),
     ("/tts stop", "ui.help.tts_stop"),
+    ("/tts pause · resume", "ui.help.tts_pause"),
     ("PageUp/PageDown", "ui.help.scroll"),
     ("F1 / ?", "ui.help.help"),
     ("Ctrl+Q / F10", "ui.help.quit"),

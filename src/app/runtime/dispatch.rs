@@ -229,6 +229,8 @@ pub(super) fn dispatch(
         ChatIntent::RagRebuild => AppCommand::RagRebuild,
         ChatIntent::Tts(scope) => AppCommand::Tts(scope),
         ChatIntent::TtsStop => AppCommand::TtsStop,
+        ChatIntent::TtsPause => AppCommand::TtsPause,
+        ChatIntent::TtsResume => AppCommand::TtsResume,
         ChatIntent::OpenSettings => {
             if let Some((config, profiles, language_locked, mcp, api_keys)) =
                 screen.settings_snapshot()

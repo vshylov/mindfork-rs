@@ -150,6 +150,7 @@ pub async fn run(deps: OrchestratorDeps) {
         rag_cancel: None,
         tts_cancel: None,
         tts_gen: None,
+        tts_playback: None,
         tts_done_tx,
         bg: HashMap::new(),
         bg_done_tx,
@@ -302,6 +303,10 @@ struct Orchestrator {
     /// Точки остановки собраны в [`Orchestrator::stop_tts`] (см. [`tts`]).
     tts_cancel: Option<tokio_util::sync::CancellationToken>,
     tts_gen: Option<Uuid>,
+    /// Хэндл текущего аудио-устройства озвучки (общий с фоновой задачей через `Arc`;
+    /// `Playback` — `Send+Sync`). Оркестратор держит его ради `/tts pause`/`resume`,
+    /// применяемых мгновенно; `None` — озвучка не идёт. Дроп закрывает устройство.
+    tts_playback: Option<std::sync::Arc<crate::shared::tts::playback::Playback>>,
     /// Канал «озвучивание завершилось» (фоновая задача → петля).
     tts_done_tx: UnboundedSender<Uuid>,
     /// Реестр слотов «тихих» фоновых задач (авто-рефлексия/консолидация): по слоту на
@@ -437,6 +442,8 @@ impl Orchestrator {
             AppCommand::RagRebuild => self.handle_rag_rebuild(),
             AppCommand::Tts(scope) => self.handle_tts(scope),
             AppCommand::TtsStop => self.stop_tts(),
+            AppCommand::TtsPause => self.handle_tts_pause(),
+            AppCommand::TtsResume => self.handle_tts_resume(),
             AppCommand::RequestSelfModel => self.handle_request_self_model(),
             AppCommand::UpdateSelfModel(edit) => self.handle_update_self_model(edit),
             AppCommand::ConfirmMcpCatalog(server) => self.handle_confirm_mcp_catalog(server),

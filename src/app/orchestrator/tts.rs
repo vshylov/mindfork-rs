@@ -89,20 +89,54 @@ impl Orchestrator {
             return;
         }
 
+        // Устройство открываем здесь (а не в задаче), чтобы разделить `Arc<Playback>`
+        // с оркестратором ради мгновенных `/tts pause`/`resume`. Открытие всё ещё
+        // **ленивое** — по команде `/tts`, а не на старте приложения (cpal#384). Нет
+        // звука → понятная заметка, задача не спавнится.
+        let playback = match Playback::open() {
+            Ok(p) => std::sync::Arc::new(p),
+            Err(err) => {
+                self.fail_tts(
+                    &self
+                        .ui_locale()
+                        .tf("ui.err.tts_no_audio", &[("err", &err.to_string())]),
+                );
+                return;
+            }
+        };
+
         let cancel = CancellationToken::new();
         let task_id = Uuid::new_v4();
         self.tts_cancel = Some(cancel.clone());
         self.tts_gen = Some(task_id);
+        self.tts_playback = Some(playback.clone());
         let _ = self.evt_tx.send(AppEvent::TtsActive(true));
         spawn_tts(TtsTask {
             engine,
             chunks,
             cancel,
             task_id,
+            playback,
             loc: self.ui_locale(),
             evt_tx: self.evt_tx.clone(),
             done_tx: self.tts_done_tx.clone(),
         });
+    }
+
+    /// Приостанавливает текущее воспроизведение (`/tts pause`), сохраняя очередь.
+    /// No-op, если озвучка не идёт. Возобновляется через [`Self::handle_tts_resume`].
+    pub(super) fn handle_tts_pause(&mut self) {
+        if let Some(pb) = &self.tts_playback {
+            pb.pause();
+        }
+    }
+
+    /// Продолжает приостановленное воспроизведение (`/tts resume`). No-op, если
+    /// озвучка не идёт или уже играет.
+    pub(super) fn handle_tts_resume(&mut self) {
+        if let Some(pb) = &self.tts_playback {
+            pb.resume();
+        }
     }
 
     /// Останавливает озвучивание (команда `/tts stop` и все точки остановки).
@@ -110,6 +144,11 @@ impl Orchestrator {
     pub(super) fn stop_tts(&mut self) {
         if let Some(token) = self.tts_cancel.take() {
             token.cancel();
+        }
+        // Отпускаем хэндл устройства (задача держит свой `Arc` до завершения). Заодно
+        // снимаем паузу: иначе приостановленная задача не дренилась бы после отмены.
+        if let Some(pb) = self.tts_playback.take() {
+            pb.resume();
         }
         // Гасим чип сразу и забываем поколение: поздний `done` уже отменённой
         // задачи будет отброшен (иначе он погасил бы чип новой озвучки).
@@ -124,6 +163,7 @@ impl Orchestrator {
         if self.tts_gen == Some(task_id) {
             self.tts_gen = None;
             self.tts_cancel = None;
+            self.tts_playback = None;
             let _ = self.evt_tx.send(AppEvent::TtsActive(false));
         }
     }
@@ -273,20 +313,25 @@ struct TtsTask {
     cancel: CancellationToken,
     /// Поколение задачи — по нему оркестратор отличает свой `done` от устаревшего.
     task_id: Uuid,
+    /// Аудио-устройство, открытое обработчиком и разделяемое с оркестратором
+    /// (`Arc`, ради `/tts pause`/`resume`). При завершении задачи её `Arc` дропается.
+    playback: std::sync::Arc<Playback>,
     /// Язык интерфейса (ось B) — тексты ошибок для человека.
     loc: &'static Locale,
     evt_tx: tokio::sync::mpsc::UnboundedSender<AppEvent>,
     done_tx: tokio::sync::mpsc::UnboundedSender<Uuid>,
 }
 
-/// Запускает фоновую озвучку: открывает аудио-устройство, затем синтезирует чанки
-/// в очередь воспроизведения, придерживая синтез, пока очередь заполнена.
+/// Запускает фоновую озвучку: синтезирует чанки в переданную очередь
+/// воспроизведения, придерживая синтез, пока очередь заполнена. Устройство уже
+/// открыто обработчиком (`Playback::open` — по команде `/tts`, разделяется `Arc`).
 fn spawn_tts(task: TtsTask) {
     let TtsTask {
         engine,
         chunks,
         cancel,
         task_id,
+        playback,
         loc,
         evt_tx,
         done_tx,
@@ -295,17 +340,6 @@ fn spawn_tts(task: TtsTask) {
     tokio::spawn(async move {
         let fail = |msg: String| {
             let _ = evt_tx.send(AppEvent::Error(msg));
-        };
-        // Устройство открываем **лениво** (по команде, а не на старте приложения):
-        // на Linux libasound шумит в stderr при энумерации (cpal#384), а stdout/
-        // stderr заняты TUI. Нет звука → понятная заметка, не паника.
-        let playback = match Playback::open() {
-            Ok(p) => p,
-            Err(err) => {
-                fail(loc.tf("ui.err.tts_no_audio", &[("err", &err.to_string())]));
-                let _ = done_tx.send(task_id);
-                return;
-            }
         };
 
         for chunk in chunks {

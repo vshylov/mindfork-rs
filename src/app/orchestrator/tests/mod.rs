@@ -116,6 +116,7 @@ fn bare_orch_rx() -> (tempfile::TempDir, Orchestrator, UnboundedReceiver<AppEven
         imp_done_tx,
         tts_cancel: None,
         tts_gen: None,
+        tts_playback: None,
         tts_done_tx: unbounded_channel().0,
         storage,
         config,
