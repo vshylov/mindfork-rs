@@ -901,6 +901,197 @@ pub struct McpSettings {
     pub servers: Vec<McpServerConfig>,
 }
 
+/// Модель озвучивания OpenAI по умолчанию (актуальная dedicated-TTS, `tts-1*` —
+/// легаси). См. docs/research/tts.md §3.1.
+pub const DEFAULT_TTS_OPENAI_MODEL: &str = "gpt-4o-mini-tts";
+/// Голос OpenAI по умолчанию. `onyx` — глубокий мужской, **проверен живым спайком**
+/// (docs/research/tts.md §13.9): ударения корректны, дрейфа нет; `marin`/`cedar` —
+/// рекомендованные экспрессивные альтернативы (в спайке не отслушаны).
+pub const DEFAULT_TTS_OPENAI_VOICE: &str = "onyx";
+/// Модель озвучивания Gemini по умолчанию (GA-моделей TTS у Gemini нет — все
+/// preview; берём flash: дешевле и есть бесплатный тир). См. docs/research/tts.md §3.2.
+pub const DEFAULT_TTS_GEMINI_MODEL: &str = "gemini-2.5-flash-preview-tts";
+/// Голос Gemini по умолчанию (из 30 prebuilt-голосов).
+pub const DEFAULT_TTS_GEMINI_VOICE: &str = "Kore";
+
+/// Режим озвучивания (TTS) — независимый «серверный слот», как эмбеддинги
+/// (ADR 0002): у Anthropic TTS нет вовсе, поэтому провайдер озвучивания
+/// конфигурируется отдельно от chat-движка. Локальный движок (managed-сайдкар) —
+/// **задел**: живой спайк (docs/research/tts.md §13) показал, что локальные движки
+/// либо NO-GO по русскому (Qwen3-TTS/Supertonic 3), либо требуют своего Rust-
+/// фронтенда (vosk-tts); основной путь — облако (OpenAI), для offline — external.
+/// См. docs/research/tts.md §8.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum TtsMode {
+    /// Облако OpenAI (`POST /v1/audio/speech`).
+    #[default]
+    OpenAi,
+    /// Облако Google Gemini (нативный `generateContent` c `responseModalities:["AUDIO"]`).
+    Gemini,
+    /// Любой локальный/сторонний OpenAI-совместимый TTS-сервер (Kokoro-FastAPI,
+    /// speaches, LocalAI, …). См. docs/research/tts.md §3.4.
+    External,
+}
+
+impl TtsMode {
+    /// Все варианты в порядке перебора UI (Choice-поле).
+    pub const ALL: [TtsMode; 3] = [TtsMode::OpenAi, TtsMode::Gemini, TtsMode::External];
+
+    /// Подпись для UI (Choice-поле).
+    pub fn label(self) -> &'static str {
+        match self {
+            TtsMode::OpenAi => "openai",
+            TtsMode::Gemini => "gemini",
+            TtsMode::External => "external",
+        }
+    }
+
+    /// Облачный провайдер режима (`None` — external). Им индексируется общий
+    /// сохранённый API-ключ (ADR 0008): ключ, введённый для чата, доступен и TTS.
+    pub fn cloud_provider(self) -> Option<CloudProvider> {
+        match self {
+            TtsMode::OpenAi => Some(CloudProvider::OpenAi),
+            TtsMode::Gemini => Some(CloudProvider::Gemini),
+            TtsMode::External => None,
+        }
+    }
+
+    /// Циклический перебор с учётом направления (`dir` = +1/-1).
+    pub fn cycle(self, dir: i32) -> Self {
+        let idx = Self::ALL.iter().position(|x| *x == self).unwrap_or(0) as i32;
+        let n = Self::ALL.len() as i32;
+        Self::ALL[(((idx + dir) % n + n) % n) as usize]
+    }
+}
+
+/// Настройки облачного провайдера озвучивания (OpenAI/Gemini). Хранятся отдельно
+/// на каждого, чтобы переключение режима не теряло чужих значений (как
+/// [`CloudSettings`] у движка).
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct TtsCloudSettings {
+    /// Имя TTS-модели у провайдера.
+    pub model_name: Option<String>,
+    /// Голос ассистента (имена свои у каждого провайдера).
+    pub voice: Option<String>,
+    /// Голос **пользователя** для многосообщенческой озвучки (`/tts all`, `/tts N`):
+    /// когда задан, реплики пользователя читаются им, а ассистента — `voice`.
+    /// `None` → все реплики одним голосом `voice` (поведение по умолчанию).
+    pub user_voice: Option<String>,
+    /// Указания по тону/языку/скорости естественным языком. У OpenAI это поле
+    /// `instructions` (и единственный рабочий способ задать скорость —
+    /// `speed` у `gpt-4o-mini-tts` де-факто игнорируется); у Gemini — префикс
+    /// к тексту запроса. См. docs/research/tts.md §3.
+    pub instructions: Option<String>,
+    /// Имя env-переменной с API-ключом (фолбэк, если ключ не введён в настройках).
+    pub api_key_env: Option<String>,
+    /// Переопределение базового URL провайдера (опционально).
+    pub url: Option<String>,
+}
+
+/// Настройки внешнего (локального/стороннего) OpenAI-совместимого TTS-сервера.
+/// Общий знаменатель параметров таких серверов — `model`+`input`+`voice`+
+/// `response_format`+`speed`, причём `voice` у каждого свой, а `model` многие
+/// игнорируют → шлём только заданное. См. docs/research/tts.md §3.4.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct TtsExternalSettings {
+    /// URL сервера (например `http://127.0.0.1:8880/v1`).
+    pub url: Option<String>,
+    /// Имя модели (опционально — многие серверы игнорируют).
+    pub model_name: Option<String>,
+    /// Голос ассистента — свободное текстовое поле (имена зависят от сервера).
+    pub voice: Option<String>,
+    /// Голос **пользователя** для многосообщенческой озвучки (см. одноимённое поле
+    /// [`TtsCloudSettings::user_voice`]). `None` → один голос `voice`.
+    pub user_voice: Option<String>,
+    /// Имя env-переменной с Bearer-ключом (опционально; локальный сервер не требует).
+    pub api_key_env: Option<String>,
+}
+
+/// Настройки озвучивания сообщений чата (команда `/tts`, spec §11.9).
+/// Всё через `#[serde(default)]` — старые `settings.json` читаются без миграции.
+/// См. docs/research/tts.md §8.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct TtsSettings {
+    /// Провайдер озвучивания.
+    pub mode: TtsMode,
+    pub openai: TtsCloudSettings,
+    pub gemini: TtsCloudSettings,
+    pub external: TtsExternalSettings,
+    /// Скорость речи (где поддержана). У `gpt-4o-mini-tts` игнорируется — там
+    /// скорость просят словами в `instructions`.
+    pub speed: f32,
+    /// Озвучивать префиксы ролей («Пользователь.»/«Ассистент.») — во **всех**
+    /// вариантах команды, включая одиночное `/tts` (решение пользователя, Р6).
+    pub speak_roles: bool,
+    /// Прерывать озвучивание при переключении чата.
+    pub stop_on_chat_switch: bool,
+    /// Прерывать озвучивание при начале генерации ответа.
+    pub stop_on_generation_start: bool,
+}
+
+impl Default for TtsSettings {
+    fn default() -> Self {
+        Self {
+            mode: TtsMode::default(),
+            openai: TtsCloudSettings {
+                model_name: Some(DEFAULT_TTS_OPENAI_MODEL.into()),
+                voice: Some(DEFAULT_TTS_OPENAI_VOICE.into()),
+                ..Default::default()
+            },
+            gemini: TtsCloudSettings {
+                model_name: Some(DEFAULT_TTS_GEMINI_MODEL.into()),
+                voice: Some(DEFAULT_TTS_GEMINI_VOICE.into()),
+                ..Default::default()
+            },
+            external: TtsExternalSettings::default(),
+            speed: 1.0,
+            speak_roles: false,
+            // Прерывать при переключении чата — да; при начале генерации — нет
+            // (решение пользователя, Р8).
+            stop_on_chat_switch: true,
+            stop_on_generation_start: false,
+        }
+    }
+}
+
+impl TtsSettings {
+    /// Настройки активного облачного провайдера (`None` — external).
+    pub fn cloud(&self) -> Option<&TtsCloudSettings> {
+        match self.mode.cloud_provider()? {
+            CloudProvider::OpenAi => Some(&self.openai),
+            CloudProvider::Gemini => Some(&self.gemini),
+            CloudProvider::Claude => None,
+        }
+    }
+
+    /// Голоса активного режима: `(ассистент, пользователь)`. Пустые поля → `None`.
+    /// Голос пользователя используется многосообщенческой озвучкой (`/tts all`); при
+    /// `None` реплики пользователя читаются голосом ассистента.
+    pub fn active_voices(&self) -> (Option<&str>, Option<&str>) {
+        fn nonblank(v: &Option<String>) -> Option<&str> {
+            v.as_deref().map(str::trim).filter(|s| !s.is_empty())
+        }
+        let (voice, user) = match self.cloud() {
+            Some(c) => (&c.voice, &c.user_voice),
+            None => (&self.external.voice, &self.external.user_voice),
+        };
+        (nonblank(voice), nonblank(user))
+    }
+
+    /// Изменяемые настройки активного облачного провайдера (`None` — external).
+    pub fn cloud_mut(&mut self) -> Option<&mut TtsCloudSettings> {
+        match self.mode.cloud_provider()? {
+            CloudProvider::OpenAi => Some(&mut self.openai),
+            CloudProvider::Gemini => Some(&mut self.gemini),
+            CloudProvider::Claude => None,
+        }
+    }
+}
+
 /// Что включать при копировании всей переписки чата в буфер обмена (`F5`, spec
 /// §11.2). По умолчанию копируется только текст сообщений (`Default` — все флаги
 /// `false`); опционально добавляются «мысли» (CoT), параметры вызовов инструментов
@@ -947,6 +1138,8 @@ pub struct AppConfig {
     pub copy: CopySettings,
     /// MCP-хост: плагины-инструменты через внешние MCP-серверы (stdio).
     pub mcp: McpSettings,
+    /// Озвучивание сообщений чата (команда `/tts`, spec §11.9).
+    pub tts: TtsSettings,
     /// Последний открытый чат — восстанавливается при следующем запуске. Пишется
     /// оркестратором (не редактируется через экран настроек). `None` — нет памяти
     /// (первый запуск/чат удалён) → открывается самый недавний.
@@ -988,6 +1181,7 @@ impl Default for AppConfig {
             interface: InterfaceSettings::default(),
             copy: CopySettings::default(),
             mcp: McpSettings::default(),
+            tts: TtsSettings::default(),
             last_active_chat: None,
             api_keys: Vec::new(),
         }
@@ -1002,6 +1196,27 @@ mod tests {
     fn default_has_current_schema_version() {
         assert_eq!(AppConfig::default().schema_version, SCHEMA_VERSION);
         assert_eq!(AppConfig::default().max_tool_rounds, 8);
+    }
+
+    #[test]
+    fn tts_active_voices_reads_mode_and_treats_blank_as_unset() {
+        let mut tts = TtsSettings {
+            mode: TtsMode::OpenAi,
+            openai: TtsCloudSettings {
+                voice: Some("onyx".into()),
+                user_voice: Some("nova".into()),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        assert_eq!(tts.active_voices(), (Some("onyx"), Some("nova")));
+        // Пустой голос пользователя → None (не заводит второй движок).
+        tts.openai.user_voice = Some("  ".into());
+        assert_eq!(tts.active_voices(), (Some("onyx"), None));
+        // Активный режим external — читаются его поля, а не openai.
+        tts.mode = TtsMode::External;
+        tts.external.voice = Some("bella".into());
+        assert_eq!(tts.active_voices(), (Some("bella"), None));
     }
 
     #[test]
@@ -1138,6 +1353,26 @@ mod tests {
         // MCP-хост: мастер-выключатель выкл, серверов нет (двойной opt-in, Р7).
         assert!(!c.mcp.enabled);
         assert!(c.mcp.servers.is_empty());
+        // Озвучивание (TTS): режим по умолчанию — OpenAI с осмысленными моделью и
+        // голосом («не настроено» = нет ключа), скорость 1.0; из поведения включено
+        // только прерывание при переключении чата (Р6/Р8).
+        assert_eq!(c.tts.mode, TtsMode::OpenAi);
+        assert_eq!(
+            c.tts.openai.model_name.as_deref(),
+            Some(DEFAULT_TTS_OPENAI_MODEL)
+        );
+        assert_eq!(
+            c.tts.openai.voice.as_deref(),
+            Some(DEFAULT_TTS_OPENAI_VOICE)
+        );
+        assert_eq!(
+            c.tts.gemini.model_name.as_deref(),
+            Some(DEFAULT_TTS_GEMINI_MODEL)
+        );
+        assert_eq!(c.tts.speed, 1.0);
+        assert!(!c.tts.speak_roles);
+        assert!(c.tts.stop_on_chat_switch);
+        assert!(!c.tts.stop_on_generation_start);
         // Имперсонация наполняется дефолтами при отсутствии в файле.
         assert_eq!(c.impersonation_engine.mode, ImpersonationMode::Shared);
         assert_eq!(

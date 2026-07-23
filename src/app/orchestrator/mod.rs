@@ -18,6 +18,7 @@
 //! - [`title`] — авто-название чата (фоновая задача);
 //! - [`impersonation`] — написание реплики «за пользователя» (фоновая задача);
 //! - [`rag`] — индексация/удаление файлов в базе знаний;
+//! - [`tts`] — озвучивание сообщений чата (команда `/tts`);
 //! - [`request`] — маппинг доменных сообщений в формат движка.
 
 mod background;
@@ -37,6 +38,7 @@ mod self_consolidation;
 mod settings;
 mod title;
 mod tool_loop;
+mod tts;
 
 #[cfg(test)]
 mod tests;
@@ -123,6 +125,9 @@ pub async fn run(deps: OrchestratorDeps) {
     // Единый канал исхода «тихих» фоновых задач (авто-рефлексия/консолидация): задача
     // шлёт `(вид, Ok/Err(причина))`, петля — одной веткой в `handle_bg_done`.
     let (bg_done_tx, mut bg_done_rx) = unbounded_channel::<(BackgroundKind, Result<(), String>)>();
+    // Внутренний канал «озвучивание завершилось» (фоновая задача → петля): по
+    // поколению задачи петля отличает свой исход от устаревшего.
+    let (tts_done_tx, mut tts_done_rx) = unbounded_channel::<Uuid>();
     // Внутренний канал событий MCP-серверов (фоновые задачи спавна/монитора).
     let (mcp_evt_tx, mut mcp_evt_rx) = unbounded_channel::<McpEvent>();
     let registry = Arc::new(build_registry(&config, storage.json().sandbox_dir()));
@@ -143,6 +148,10 @@ pub async fn run(deps: OrchestratorDeps) {
         gen_state: GenState::Idle,
         done_tx,
         rag_cancel: None,
+        tts_cancel: None,
+        tts_gen: None,
+        tts_playback: None,
+        tts_done_tx,
         bg: HashMap::new(),
         bg_done_tx,
         consolidate_counts: HashMap::new(),
@@ -205,6 +214,11 @@ pub async fn run(deps: OrchestratorDeps) {
             done = bg_done_rx.recv() => {
                 if let Some((kind, res)) = done {
                     orch.handle_bg_done(kind, res);
+                }
+            }
+            done = tts_done_rx.recv() => {
+                if let Some(task_id) = done {
+                    orch.handle_tts_done(task_id);
                 }
             }
             evt = mcp_evt_rx.recv() => {
@@ -285,6 +299,16 @@ struct Orchestrator {
     /// Токен отмены текущей фоновой индексации RAG (`/rag add`); `None` — не идёт.
     /// Снимается/отменяется при новой индексации и при завершении работы.
     rag_cancel: Option<tokio_util::sync::CancellationToken>,
+    /// Токен отмены текущей озвучки (`/tts`) и её поколение (`None` — не идёт).
+    /// Точки остановки собраны в [`Orchestrator::stop_tts`] (см. [`tts`]).
+    tts_cancel: Option<tokio_util::sync::CancellationToken>,
+    tts_gen: Option<Uuid>,
+    /// Хэндл текущего аудио-устройства озвучки (общий с фоновой задачей через `Arc`;
+    /// `Playback` — `Send+Sync`). Оркестратор держит его ради `/tts pause`/`resume`,
+    /// применяемых мгновенно; `None` — озвучка не идёт. Дроп закрывает устройство.
+    tts_playback: Option<std::sync::Arc<crate::shared::tts::playback::Playback>>,
+    /// Канал «озвучивание завершилось» (фоновая задача → петля).
+    tts_done_tx: UnboundedSender<Uuid>,
     /// Реестр слотов «тихих» фоновых задач (авто-рефлексия/консолидация): по слоту на
     /// [`BackgroundKind`] — флаг «идёт» (токен отмены) + серия неудач. Жизненный цикл —
     /// в [`background`](self::background). Каденция рефлексии ведётся ватермарком
@@ -380,6 +404,9 @@ impl Orchestrator {
                 if let Some(token) = &self.imp_cancel {
                     token.cancel();
                 }
+                if let Some(token) = &self.tts_cancel {
+                    token.cancel();
+                }
                 self.cancel_all_bg();
                 self.mcp.shutdown();
                 return true;
@@ -413,6 +440,10 @@ impl Orchestrator {
             AppCommand::RagDelete { path } => self.handle_rag_delete(path),
             AppCommand::RagList => self.handle_rag_list(),
             AppCommand::RagRebuild => self.handle_rag_rebuild(),
+            AppCommand::Tts(scope) => self.handle_tts(scope),
+            AppCommand::TtsStop => self.stop_tts(),
+            AppCommand::TtsPause => self.handle_tts_pause(),
+            AppCommand::TtsResume => self.handle_tts_resume(),
             AppCommand::RequestSelfModel => self.handle_request_self_model(),
             AppCommand::UpdateSelfModel(edit) => self.handle_update_self_model(edit),
             AppCommand::ConfirmMcpCatalog(server) => self.handle_confirm_mcp_catalog(server),

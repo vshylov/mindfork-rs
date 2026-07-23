@@ -114,6 +114,10 @@ fn bare_orch_rx() -> (tempfile::TempDir, Orchestrator, UnboundedReceiver<AppEven
         imp_cancel: None,
         imp_gen: None,
         imp_done_tx,
+        tts_cancel: None,
+        tts_gen: None,
+        tts_playback: None,
+        tts_done_tx: unbounded_channel().0,
         storage,
         config,
         registry,
@@ -355,3 +359,4 @@ mod self_consolidation;
 mod self_model;
 mod settings;
 mod title;
+mod tts;
