@@ -1,13 +1,13 @@
-//! Экран настроек — каталог полей: конструктор, построители полей секций и
-//! подсекций (модель/семплинг/инструменты/память/интерфейс/профили), гейты
-//! доступности. Часть модуля [`super`]; разбито из settings.rs.
+//! Settings screen — the field catalog: the constructor, field builders for
+//! sections and subsections (model/sampling/tools/memory/interface/profiles), and
+//! availability gates. Part of the [`super`] module; split out of settings.rs.
 
 use super::helpers::*;
 use super::*;
 
 impl SettingsScreen {
-    /// Создаёт экран из снимка настроек (конфиг + видимые профили + профили с
-    /// заблокированным языком каркаса).
+    /// Creates the screen from a settings snapshot (config + visible profiles + profiles
+    /// with a locked scaffold language).
     pub fn new(
         config: AppConfig,
         profiles: Vec<Profile>,
@@ -37,14 +37,14 @@ impl SettingsScreen {
         }
     }
 
-    /// Обновляет снимок статусов серверов (чипы в секции «Модель/сервер»). Вызывается
-    /// `app` при создании экрана и по событию `ServerStatus`.
+    /// Updates the server-status snapshot (chips in the "Model/server" section). Called
+    /// by `app` when creating the screen and on the `ServerStatus` event.
     pub fn set_server_statuses(&mut self, statuses: ServerStatuses) {
         self.statuses = statuses;
     }
 
-    /// Обновляет рабочую копию из переэмита настроек (после create/delete профиля
-    /// или эха правки). Навигация и активный редактор сохраняются.
+    /// Updates the working copy from a settings re-emit (after create/delete of a
+    /// profile or an echoed edit). Navigation and the active editor are preserved.
     pub fn refresh(
         &mut self,
         config: AppConfig,
@@ -63,39 +63,39 @@ impl SettingsScreen {
         SECTIONS[self.section_idx]
     }
 
-    /// Каталог всех известных инструментов (для тумблеров в профиле) — включая
-    /// опциональные (по умолчанию выключенные) и **динамические** инструменты
-    /// MCP-серверов (снимок из события `Settings`, дописываются в конец — индексы
-    /// `PTool` статической части стабильны). Метаданные (группа/лейбл/гейт)
-    /// снимаются с самих инструментов (единый источник — трейт `Tool`). См. spec §9.3.
+    /// The catalog of all known tools (for profile toggles) — including optional ones
+    /// (off by default) and **dynamic** MCP-server tools (a snapshot from the
+    /// `Settings` event, appended at the end — the static part's `PTool` indices stay
+    /// stable). Metadata (group/label/gate) is taken from the tools themselves (a single
+    /// source — the `Tool` trait). See spec §9.3.
     pub(super) fn tool_catalog(&self) -> Vec<ToolInfo> {
         let mut catalog = crate::features::tools::tool_catalog();
         catalog.extend(self.mcp.tools.iter().cloned());
         catalog
     }
 
-    /// Обновляет снимок MCP-хоста (из события `Settings`: динамический каталог
-    /// инструментов + статусы серверов; пуст, пока серверы не поднялись/выключены).
+    /// Updates the MCP-host snapshot (from the `Settings` event: the dynamic tool
+    /// catalog + server statuses; empty until servers come up/while MCP is off).
     pub fn set_mcp(&mut self, mcp: crate::features::tools::mcp::McpSnapshot) {
         self.mcp = mcp;
     }
 
-    /// Обновляет список провайдеров с сохранённым на этой машине API-ключом (из
-    /// снимка `Settings`) — по нему поле «API-ключ» показывает статус. Сами ключи в
-    /// UI не передаются. См. `shared::secrets`.
+    /// Updates the list of providers with an API key stored on this machine (from the
+    /// `Settings` snapshot) — the "API key" field shows its status from this. The keys
+    /// themselves never reach the UI. See `shared::secrets`.
     pub fn set_api_keys_present(&mut self, present: Vec<CloudProvider>) {
         self.api_keys_present = present;
     }
 
-    /// Сохранён ли на этой машине ключ провайдера (для статуса поля «API-ключ»).
+    /// Whether the provider's key is stored on this machine (for the "API key" field's status).
     pub(super) fn api_key_present(&self, provider: Option<CloudProvider>) -> bool {
         provider.is_some_and(|p| self.api_keys_present.contains(&p))
     }
 
-    /// Провайдер, к которому относится поле ввода API-ключа (по активному режиму
-    /// соответствующего движка), либо `None` — это не поле ключа. Ключ общий для
-    /// чата/имперсонации/эмбеддингов одного провайдера, поэтому важен именно
-    /// провайдер, а не слот. См. docs/research/api-key-storage.md.
+    /// The provider the API-key input field belongs to (by the corresponding engine's
+    /// active mode), or `None` — not a key field. The key is shared across
+    /// chat/impersonation/embeddings of one provider, so it's the provider that matters,
+    /// not the slot. See docs/research/api-key-storage.md.
     pub(super) fn api_key_field_provider(&self, id: FieldId) -> Option<CloudProvider> {
         match id {
             FieldId::XApiKey => self.config.engine.mode.cloud_provider(),
@@ -106,7 +106,7 @@ impl SettingsScreen {
         }
     }
 
-    // ---------- построение полей текущей секции ----------
+    // ---------- building the current section's fields ----------
 
     pub(super) fn fields(&self) -> Vec<FieldRow> {
         match self.section() {
@@ -123,11 +123,11 @@ impl SettingsScreen {
         self.model_fields_for(self.model_sub)
     }
 
-    /// Поля секции «Модель» для заданной подсекции (для перечисления при поиске —
-    /// [`SettingsScreen::model_fields`] строит их для активной подсекции).
+    /// The "Model" section's fields for a given subsection (for enumeration during
+    /// search — [`SettingsScreen::model_fields`] builds them for the active subsection).
     pub(super) fn model_fields_for(&self, model_sub: ModelTab) -> Vec<FieldRow> {
         let loc = self.loc();
-        // Селектор подсекции (таб-стрип) — всегда поле 0; в списке он не рисуется.
+        // The subsection selector (tab strip) — always field 0; not drawn as a list row.
         let sub = row(
             FieldId::ModelSub,
             loc.t("ui.settings.field.subsection"),
@@ -146,8 +146,8 @@ impl SettingsScreen {
                     )
                     .describe(loc.t(DESC_MODE)),
                 ];
-                // Видимость полей зависит от режима (ADR 0004): для облака показываем
-                // лишь модель/ключ/опц. base URL, для managed — параметры llama-server.
+                // Field visibility depends on mode (ADR 0004): for cloud we show only
+                // model/key/opt. base URL, for managed — llama-server parameters.
                 match x.mode {
                     ServerMode::Managed => {
                         rows.extend(managed_rows(&x.managed, ASSISTANT_MANAGED_IDS, loc))
@@ -199,7 +199,7 @@ impl SettingsScreen {
                     .describe(loc.t(DESC_IMP_MODE)),
                 ];
                 match x.mode {
-                    // Shared переиспользует движок ассистента — собственных полей нет.
+                    // Shared reuses the assistant's engine — no fields of its own.
                     ImpersonationMode::Shared => {}
                     ImpersonationMode::Managed => {
                         rows.extend(managed_rows(&x.managed, IMP_MANAGED_IDS, loc))
@@ -240,8 +240,8 @@ impl SettingsScreen {
                 rows
             }
             ModelTab::Embeddings => {
-                // Эмбеддинги — выделенный сервер (память/RAG). Поля по режиму
-                // (managed → llama-server; external/облако → URL/модель/ключ).
+                // Embeddings — a dedicated server (memory/RAG). Fields by mode
+                // (managed → llama-server; external/cloud → URL/model/key).
                 let e = &self.config.embed;
                 let mut rows = vec![
                     sub,
@@ -291,8 +291,8 @@ impl SettingsScreen {
                             .describe(loc.t(DESC_EXT_API_KEY_ENV)),
                         ],
                     )),
-                    // Claude поля показывает, но Anthropic не умеет embeddings —
-                    // супервайзер вернёт «недоступно» (RAG отключится). ADR 0004.
+                    // Claude shows fields, but Anthropic doesn't do embeddings —
+                    // the supervisor will return "unavailable" (RAG turns off). ADR 0004.
                     ServerMode::OpenAi | ServerMode::Gemini | ServerMode::Claude => {
                         let none = CloudSettings::default();
                         let c = e.cloud().unwrap_or(&none);
@@ -328,9 +328,9 @@ impl SettingsScreen {
                 rows
             }
             ModelTab::Tts => {
-                // Озвучивание — независимый слот (у Anthropic TTS нет): свой
-                // провайдер, свои модель/голос. Ключ облака — общий с чатом
-                // (ADR 0008), вводить заново не нужно. См. spec §11.9.
+                // Speech — an independent slot (Anthropic has no TTS): its own
+                // provider, its own model/voice. The cloud key is shared with chat
+                // (ADR 0008), no need to enter it again. See spec §11.9.
                 let t = &self.config.tts;
                 let mut rows = vec![
                     sub,
@@ -453,7 +453,7 @@ impl SettingsScreen {
         self.sampling_fields_for(self.sampling_sub)
     }
 
-    /// Поля секции «Семплинг» для заданной подсекции (для перечисления при поиске).
+    /// The "Sampling" section's fields for a given subsection (for enumeration during search).
     pub(super) fn sampling_fields_for(&self, sampling_sub: Subsection) -> Vec<FieldRow> {
         let loc = self.loc();
         let mut rows = vec![
@@ -469,9 +469,9 @@ impl SettingsScreen {
             Subsection::Impersonation => (&self.config.impersonation_sampling, true),
         };
         let mk = |p: SamplingParam| if imp { FieldId::IS(p) } else { FieldId::S(p) };
-        // В облачном режиме показываем только параметры, которые провайдер реально
-        // принимает (расширения llama.cpp и reasoning-поля скрыты — ADR 0004).
-        // Значения скрытых параметров сохраняются и заработают на локальной модели.
+        // In cloud mode we show only parameters the provider actually accepts
+        // (llama.cpp extensions and reasoning fields are hidden — ADR 0004).
+        // Hidden parameters' values are preserved and will work on a local model.
         let provider = self.sampling_cloud_provider(imp);
         rows.extend(
             SAMPLING_PARAMS
@@ -537,7 +537,7 @@ impl SettingsScreen {
                 row(
                     FieldId::TPythonMode,
                     loc.t("ui.settings.field.python_mode"),
-                    FieldKind::Choice(t.python_mode.label().to_string()),
+                    FieldKind::Choice(python_mode_label(t.python_mode, loc)),
                 )
                 .describe(loc.t("ui.settings.desc.python_mode")),
                 row(
@@ -611,9 +611,9 @@ impl SettingsScreen {
                 )
                 .describe(loc.t("ui.settings.desc.mcp_enabled")),
             ];
-            // Строки статусов серверов (read-only): готов/подключение/причина
-            // отказа; «каталог изменился» подсвечивается предупреждением, Enter
-            // подтверждает новый каталог (TOFU-переподтверждение, spec §9.6).
+            // Server-status rows (read-only): ready/connecting/failure
+            // reason; "catalog changed" is highlighted as a warning, Enter
+            // confirms the new catalog (TOFU reconfirmation, spec §9.6).
             for (idx, srv) in self.mcp.servers.iter().enumerate() {
                 let status = match &srv.status {
                     ServerStatus::Ready => loc.tf(
@@ -637,7 +637,7 @@ impl SettingsScreen {
         rows
     }
 
-    /// Секция «Память»: чанкинг базы знаний (RAG), заметки, «модель себя».
+    /// The "Memory" section: knowledge-base chunking (RAG), notes, "self-model".
     pub(super) fn memory_fields(&self) -> Vec<FieldRow> {
         let loc = self.loc();
         let mut rows = grouped(
@@ -797,9 +797,9 @@ impl SettingsScreen {
                 .describe(loc.t("ui.settings.desc.confirm_keys")),
             ],
         ));
-        // Подписи читаются как продолжение заголовка группы («Копирование … —
-        // с «мыслями»»): общий префикс «Копировать» ушёл в заголовок, чтобы
-        // длинные имена не отгоняли колонку значений (см. LABEL_CAP).
+        // Labels read as a continuation of the group header ("Copy conversation … —
+        // with thoughts"): the shared "Copy" prefix moved into the header so
+        // long names don't push away the value column (see LABEL_CAP).
         rows.extend(grouped(
             loc.t("ui.settings.group.copy"),
             vec![
@@ -830,7 +830,7 @@ impl SettingsScreen {
         self.profile_fields_for(self.profile_sub)
     }
 
-    /// Поля секции «Профили» для заданной подсекции (для перечисления при поиске).
+    /// The "Profiles" section's fields for a given subsection (for enumeration during search).
     pub(super) fn profile_fields_for(&self, profile_sub: Subsection) -> Vec<FieldRow> {
         let loc = self.loc();
         let Some(p) = self.profiles.get(self.profile_idx) else {
@@ -840,8 +840,8 @@ impl SettingsScreen {
                 FieldKind::Choice(loc.t("ui.settings.value.no_profiles").to_string()),
             )];
         };
-        // ProfileSub — селектор подсекции (таб-стрип, поле 0, в списке не рисуется);
-        // выбор профиля и имя — секционные (общие для обеих подсекций).
+        // ProfileSub — the subsection selector (tab strip, field 0, not drawn as a
+        // list row); profile selection and the name — section-level (shared by both subsections).
         let mut rows = vec![
             row(
                 FieldId::ProfileSub,
@@ -862,8 +862,8 @@ impl SettingsScreen {
         ];
         match profile_sub {
             Subsection::Assistant => {
-                // Язык служебного каркаса (ось A): Choice; блокируется, когда у
-                // профиля появились данные (`language_locked`). См. docs/history/i18n.md.
+                // Scaffold language (axis A): Choice; locked once the profile has
+                // data (`language_locked`). See docs/history/i18n.md.
                 let lang_locked = self.language_locked.contains(&p.id);
                 let mut lang_row = row(
                     FieldId::PLanguage,
@@ -891,11 +891,11 @@ impl SettingsScreen {
                         ),
                     ],
                 ));
-                // Тумблеры инструментов: раскладываем по смысловым группам
-                // (`ToolInfo.group`), с коротким описанием и честным гейтом.
-                // Индекс `PTool` — позиция в `tool_catalog()` (источник истины для
-                // `toggle_profile_tool`); порядок ПОКАЗА группируем стабильной
-                // сортировкой по `ToolGroup` (Ord), не трогая индексы.
+                // Tool toggles: laid out by semantic group
+                // (`ToolInfo.group`), with a short description and an honest gate.
+                // The `PTool` index is the position in `tool_catalog()` (the source of
+                // truth for `toggle_profile_tool`); we group the DISPLAY order by a stable
+                // sort on `ToolGroup` (Ord), without touching indices.
                 let mut indexed: Vec<(usize, ToolInfo)> =
                     self.tool_catalog().into_iter().enumerate().collect();
                 indexed.sort_by_key(|(_, info)| info.group);
@@ -914,14 +914,14 @@ impl SettingsScreen {
                                 .unwrap_or(info.label),
                         )
                     };
-                    // Полное описание MCP-инструмента (текст сервера) — в нижнюю
-                    // панель при фокусе: обязательная видимость описаний — антидот
-                    // tool-poisoning (spec §9.6).
+                    // The full description of an MCP tool (the server's own text) — in
+                    // the bottom panel when focused: mandatory description visibility is an
+                    // antidote to tool-poisoning (spec §9.6).
                     r.description = info.description.clone();
                     rows.push(r);
                 }
             }
-            // В имперсонации инструментов нет (spec §11.8) — только сис. сообщение.
+            // Impersonation has no tools (spec §11.8) — only the system message.
             Subsection::Impersonation => {
                 rows.extend(grouped(
                     loc.t("ui.settings.group.persona"),
@@ -936,8 +936,8 @@ impl SettingsScreen {
         rows
     }
 
-    /// Выключен ли глобальный гейт инструмента (тогда инструмент недоступен модели,
-    /// даже если включён в профиле).
+    /// Whether the tool's global gate is off (then the tool is unavailable to the
+    /// model, even if enabled in the profile).
     pub(super) fn gate_disabled(&self, gate: ToolGate) -> bool {
         match gate {
             ToolGate::Web => !self.config.tools.web_enabled,
@@ -947,8 +947,8 @@ impl SettingsScreen {
         }
     }
 
-    /// Облачный провайдер сэмплинга подсекции (`None` — локальный движок). Для
-    /// имперсонации в режиме `shared` эффективный провайдер — движок ассистента.
+    /// The subsection's sampling cloud provider (`None` — a local engine). For
+    /// impersonation in `shared` mode, the effective provider is the assistant's engine.
     pub(super) fn sampling_cloud_provider(&self, imp: bool) -> Option<CloudProvider> {
         if imp {
             match self.config.impersonation_engine.mode {

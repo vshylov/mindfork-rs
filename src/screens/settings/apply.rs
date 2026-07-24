@@ -1,43 +1,43 @@
-//! Экран настроек — обработка клавиш и мутации рабочей копии: диспетчер ввода,
-//! редактор поля, тумблеры, циклы значений, применение текста, сохранение.
-//! Часть модуля [`super`]; разбито из settings.rs.
+//! Settings screen — key handling and working-copy mutations: the input dispatcher,
+//! the field editor, toggles, value cycles, applying text, saving.
+//! Part of the [`super`] module; split out of settings.rs.
 
 use super::helpers::*;
 use super::spec::{Access, FieldSpec, field_spec};
 use super::*;
 
 impl SettingsScreen {
-    // ---------- обработка клавиш ----------
+    // ---------- key handling ----------
 
-    /// Обрабатывает нажатие, возвращая намерение для `app` (или `None`).
+    /// Handles a keypress, returning an intent for `app` (or `None`).
     pub fn handle_key(&mut self, key: KeyEvent) -> Option<SettingsIntent> {
         if key.kind != KeyEventKind::Press {
             return None;
         }
-        // Выход из приложения (`Ctrl+Q`/`F10`), откуда угодно на экране настроек (в
-        // т.ч. из редактора поля). Ctrl+Q матчим по «физической» латинской клавише —
-        // работает при любой раскладке (см. shared::keys). Выход переехал с `Ctrl+C`
-        // (освобождён), см. docs/history/input-selection-undo-mouse.md §B.
+        // Quit the app (`Ctrl+Q`/`F10`), from anywhere on the settings screen
+        // (including a field editor). `Ctrl+Q` is matched by the "physical" Latin key —
+        // works under any layout (see shared::keys). Quit moved off `Ctrl+C`
+        // (freed up), see docs/history/input-selection-undo-mouse.md §B.
         if key.code == KeyCode::F(10)
             || (key.modifiers.contains(KeyModifiers::CONTROL)
                 && matches!(key.code, KeyCode::Char(c) if keys::physical_char(c) == 'q'))
         {
             return Some(SettingsIntent::Quit);
         }
-        // Оверлей поиска перехватывает ввод (кроме выхода выше).
+        // The search overlay intercepts input (except for quit above).
         if self.search.is_some() {
             return self.handle_search_key(key);
         }
-        // Попап выбора Choice-поля.
+        // The Choice-field picker popup.
         if self.choice.is_some() {
             return self.handle_choice_key(key);
         }
         if self.editor.is_some() {
             return self.handle_editor_key(key);
         }
-        // `/` открывает поиск по полям (в редакторе `/` — обычный символ, обработан
-        // выше). Матчим по «физической» клавише `/` — при русской раскладке та же
-        // клавиша отдаёт `.` (см. shared::keys::is_slash_key).
+        // `/` opens field search (inside the editor `/` is a plain character, handled
+        // above). Matched by the "physical" `/` key — under a Russian layout the same
+        // key sends `.` (see shared::keys::is_slash_key).
         if let KeyCode::Char(c) = key.code
             && keys::is_slash_key(c)
             && !key.modifiers.contains(KeyModifiers::CONTROL)
@@ -46,8 +46,8 @@ impl SettingsScreen {
             self.open_search();
             return None;
         }
-        // Создать/удалить профиль (в секции «Профили»). Матчим по «физической»
-        // латинской клавише — шорткаты работают при любой раскладке (см. shared::keys).
+        // Create/delete a profile (in the "Profiles" section). Matched by the
+        // "physical" Latin key — shortcuts work under any layout (see shared::keys).
         if key.modifiers.contains(KeyModifiers::CONTROL)
             && self.section() == Section::Profiles
             && let KeyCode::Char(c) = key.code
@@ -106,7 +106,7 @@ impl SettingsScreen {
         let fields = self.fields();
         match key.code {
             KeyCode::Left => {
-                // ←: для Choice — переключение значения, иначе уход в меню.
+                // ←: for Choice — cycle the value, otherwise go back to the menu.
                 if let Some(f) = fields.get(self.field_idx)
                     && matches!(f.kind, FieldKind::Choice(_))
                 {
@@ -141,43 +141,42 @@ impl SettingsScreen {
                 }
                 None
             }
-            // Del — сброс поля к значению по умолчанию (config-поля; профильные — no-op).
+            // Del — reset the field to its default value (config fields; profile fields — no-op).
             KeyCode::Delete => {
                 let id = fields.get(self.field_idx)?.id;
                 self.reset_field(id)
             }
             KeyCode::Enter => {
                 let f = fields.get(self.field_idx)?;
-                // Строка MCP-сервера — read-only статус; Enter при «каталог
-                // изменился» подтверждает новый каталог (TOFU, spec §9.6).
+                // The MCP-server row — a read-only status; Enter when "catalog
+                // changed" confirms the new catalog (TOFU, spec §9.6).
                 if let FieldId::TMcpServer(idx) = f.id {
                     return self.confirm_mcp_catalog(idx);
                 }
                 match &f.kind {
                     FieldKind::Toggle(_) => self.toggle_field(f.id),
-                    // Choice (в т.ч. выбор профиля PSelect) — попап списка вариантов.
+                    // Choice (incl. profile selection PSelect) — an option-list popup.
                     FieldKind::Choice(_) => {
                         self.open_choice(f.id);
                         None
                     }
                     FieldKind::Text(value) => {
-                        // Системное сообщение и приветствие — многострочные
-                        // (перенос + переводы строк); прочие поля — однострочные
-                        // (горизонтальный скролл, без переноса на невидимый ряд).
-                        // См. spec §11.6.
+                        // The system message and greeting are multiline (wrapping +
+                        // line breaks); other fields are single-line (horizontal
+                        // scroll, no wrap onto an invisible row). See spec §11.6.
                         let multiline = matches!(
                             f.id,
                             FieldId::PSystem | FieldId::PGreeting | FieldId::PImpSystem
                         );
                         let mut input = InputBox::new();
                         input.set_single_line(!multiline);
-                        // Поле секрета: маска (`•`) + **пустая** затравка — показать
-                        // сохранённый ключ нельзя (его нет даже у экрана), правка =
-                        // ввод заново. См. docs/research/api-key-storage.md.
+                        // Secret field: masking (`•`) + an **empty** seed — a stored
+                        // key can't be shown (not even the screen has it); editing =
+                        // entering it again. See docs/research/api-key-storage.md.
                         if is_api_key_field(f.id) {
                             input.set_mask(true);
                         }
-                        // Не показываем плейсхолдеры «(все)»/«—» как значение.
+                        // Don't show the "(all)"/"—" placeholders as a value.
                         let seed = self.field_seed(f.id, value);
                         input.set_text(&seed);
                         self.editor = Some(Editor {
@@ -202,9 +201,9 @@ impl SettingsScreen {
                 self.editor = None;
                 None
             }
-            // Многострочный редактор (системное сообщение/приветствие): Shift+Enter
-            // (или Alt+Enter — запасной вариант для терминалов без kitty-протокола,
-            // см. п.11) — перевод строки, Enter — коммит (как в чат-вводе, spec §11.7).
+            // The multiline editor (system message/greeting): `Shift+Enter` (or
+            // `Alt+Enter` — a fallback for terminals without the kitty protocol,
+            // see item 11) — a line break, Enter — commit (as in chat input, spec §11.7).
             (KeyCode::Enter, m)
                 if editor.multiline && m.intersects(KeyModifiers::SHIFT | KeyModifiers::ALT) =>
             {
@@ -213,8 +212,8 @@ impl SettingsScreen {
             }
             (KeyCode::Enter, _) => {
                 let text = editor.input.text();
-                // Валидация без закрытия: невалидное числовое поле оставляет редактор
-                // открытым, подпись краснеет; исправление или Esc закрывают.
+                // Validation without closing: an invalid numeric field leaves the editor
+                // open, the title turns red; fixing it or Esc closes it.
                 if let Some(err_key) = field_validation_error(editor.field, &text) {
                     editor.error = Some(loc.t(err_key));
                     return None;
@@ -222,19 +221,19 @@ impl SettingsScreen {
                 let editor = self.editor.take().unwrap();
                 self.apply_text(editor.field, &text)
             }
-            // Все Ctrl-комбинации поля (очистка `Ctrl+K` с возвратом по `Ctrl+Z`,
-            // пословная навигация/удаление, отмена/повтор) обрабатывает сам `InputBox`
-            // в `on_key` (раскладко-независимо); `editor.error` сбрасываем ниже.
+            // All Ctrl combos on the field (`Ctrl+K` clear with `Ctrl+Z` to restore,
+            // word-wise navigation/deletion, undo/redo) are handled by `InputBox` itself
+            // in `on_key` (layout-independent); we clear `editor.error` below.
             _ => {
                 editor.input.on_key(key);
-                editor.error = None; // правка сбрасывает прежнюю ошибку
+                editor.error = None; // an edit clears the previous error
                 None
             }
         }
     }
 
-    /// Вставка из буфера обмена (bracketed paste): осмысленна только когда открыт
-    /// текстовый редактор поля (например, путь к модели) — иначе no-op. См. spec §11.5.
+    /// Clipboard paste (bracketed paste): meaningful only when a field's text editor
+    /// is open (e.g. a model path) — otherwise a no-op. See spec §11.5.
     pub fn handle_paste(&mut self, text: &str) {
         if let Some(search) = self.search.as_mut() {
             search.input.insert_str(text);
@@ -251,28 +250,28 @@ impl SettingsScreen {
         self.focus = Focus::Menu;
     }
 
-    // ---------- применение правок ----------
+    // ---------- applying edits ----------
 
-    /// Значение для затравки редактора (без плейсхолдеров).
+    /// The editor's seed value (no placeholders).
     pub(super) fn field_seed(&self, id: FieldId, shown: &str) -> String {
         match id {
-            // Поле секрета: значение строки — статус («настроен»), не ключ; редактор
-            // всегда открывается пустым (сохранённый ключ недоступен для показа).
+            // Secret field: the row's value is a status ("configured"), not the key;
+            // the editor always opens empty (a stored key can't be shown).
             _ if is_api_key_field(id) => String::new(),
             FieldId::IDicts => self.config.interface.selected_dictionaries.join(", "),
-            // «—» для пустых числовых — затравка пустой.
+            // "—" for empty numbers — the seed is empty.
             _ if shown == "—" => String::new(),
             _ => shown.to_string(),
         }
     }
 
-    /// Переключает булев тумблер и возвращает соответствующее намерение.
+    /// Flips a boolean toggle and returns the corresponding intent.
     pub(super) fn toggle_field(&mut self, id: FieldId) -> Option<SettingsIntent> {
-        // Тумблеры инструментов профиля — над `profiles[idx]`, не над `AppConfig`.
+        // Profile-tool toggles — over `profiles[idx]`, not over `AppConfig`.
         if let FieldId::PTool(idx) = id {
             return self.toggle_profile_tool(idx);
         }
-        // Config-тумблеры — через таблицу доступа (единый источник, см. spec.rs).
+        // Config toggles — via the access table (single source, see spec.rs).
         if let Some(FieldSpec {
             access: Access::Toggle(flip),
             ..
@@ -284,9 +283,9 @@ impl SettingsScreen {
         None
     }
 
-    /// Подтверждение изменившегося каталога MCP-сервера (Enter на его строке):
-    /// намерение уходит оркестратору только когда сервер реально ждёт
-    /// подтверждения (`pending_catalog`); иначе — no-op (строка read-only).
+    /// Confirming a changed MCP-server catalog (Enter on its row): the intent goes to
+    /// the orchestrator only when the server is actually awaiting confirmation
+    /// (`pending_catalog`); otherwise — a no-op (the row is read-only).
     pub(super) fn confirm_mcp_catalog(&self, idx: usize) -> Option<SettingsIntent> {
         let srv = self.mcp.servers.get(idx)?;
         srv.pending_catalog
@@ -305,9 +304,9 @@ impl SettingsScreen {
         Some(self.save_profile())
     }
 
-    /// Циклически меняет значение Choice-поля.
+    /// Cyclically changes a Choice field's value.
     pub(super) fn cycle_field(&mut self, id: FieldId, dir: i32) -> Option<SettingsIntent> {
-        // Config Choice-поля (режимы/flash-attn/spec-type/тема) — через таблицу доступа.
+        // Config Choice fields (mode/flash-attn/spec-type/theme) — via the access table.
         if let Some(FieldSpec {
             access: Access::Choice { cycle, .. },
             ..
@@ -317,8 +316,8 @@ impl SettingsScreen {
             return Some(self.save_config());
         }
         match id {
-            // Переключение подсекций (таб-стрип) — чисто навигация, без сохранения.
-            // Модель — три вкладки с учётом направления; Семплинг/Профили — две.
+            // Switching subsections (tab strip) — pure navigation, no save.
+            // Model — three tabs, direction-aware; Sampling/Profiles — two.
             FieldId::ModelSub => {
                 self.model_sub = self.model_sub.cycle(dir);
                 None
@@ -331,10 +330,10 @@ impl SettingsScreen {
                 self.profile_sub = self.profile_sub.toggled();
                 None
             }
-            // Параметры семплинга — свой дескриптор (`SamplingParam`), не в таблице.
+            // Sampling parameters — their own descriptor (`SamplingParam`), not in the table.
             FieldId::S(p) => self.cycle_sampling_field(false, p),
             FieldId::IS(p) => self.cycle_sampling_field(true, p),
-            // Выбор профиля — навигация по `profiles`, без сохранения конфига.
+            // Profile selection — navigation over `profiles`, no config save.
             FieldId::PSelect => {
                 if !self.profiles.is_empty() {
                     let n = self.profiles.len() as i32;
@@ -342,12 +341,13 @@ impl SettingsScreen {
                 }
                 None
             }
-            // Язык каркаса профиля (ось A): цикл по вшитым языкам; заблокирован, если
-            // у профиля появились данные (страховка поверх орк-гейта). См. docs/history/i18n.md.
+            // Profile scaffold language (axis A): cycles over built-in languages; locked
+            // if the profile has data (a safety net on top of the orchestrator gate).
+            // See docs/history/i18n.md.
             FieldId::PLanguage => {
                 let p = self.profiles.get(self.profile_idx)?;
                 if self.language_locked.contains(&p.id) {
-                    return None; // язык зафиксирован
+                    return None; // the language is locked
                 }
                 let cur = p.language;
                 let all = crate::shared::i18n::Lang::all();
@@ -361,9 +361,9 @@ impl SettingsScreen {
         }
     }
 
-    /// Циклически меняет Choice-параметр семплинга (`Thinking`/`Reasoning`) в нужной
-    /// подсекции. Для числовых параметров — no-op (`None`), чтобы ←/→ над текстовым
-    /// полем не порождали лишнего сохранения.
+    /// Cyclically changes a Choice sampling parameter (`Thinking`/`Reasoning`) in the
+    /// right subsection. For numeric parameters — a no-op (`None`), so ←/→ over a text
+    /// field don't cause a redundant save.
     pub(super) fn cycle_sampling_field(
         &mut self,
         imp: bool,
@@ -387,11 +387,11 @@ impl SettingsScreen {
         Some(self.save_config())
     }
 
-    /// Применяет текст из редактора к полю и возвращает намерение сохранения.
+    /// Applies text from the editor to a field and returns a save intent.
     pub(super) fn apply_text(&mut self, id: FieldId, text: &str) -> Option<SettingsIntent> {
         let trimmed = text.trim();
-        // Секрет в рабочей копии конфига не хранится — уходит отдельным намерением
-        // (оркестратор зашифрует машинным ключом). Пустой ввод = удалить ключ.
+        // The secret isn't stored in the config working copy — it goes as a separate
+        // intent (the orchestrator encrypts it with the machine key). Empty input = delete the key.
         if let Some(provider) = self.api_key_field_provider(id) {
             return Some(SettingsIntent::SetApiKey {
                 provider,
@@ -399,17 +399,17 @@ impl SettingsScreen {
             });
         }
         match id {
-            // Параметры семплинга — свой дескриптор (`SamplingParam`), не в таблице.
+            // Sampling parameters — their own descriptor (`SamplingParam`), not in the table.
             FieldId::S(p) => apply_sampling_text(&mut self.config.default_sampling, p, trimmed),
             FieldId::IS(p) => {
                 apply_sampling_text(&mut self.config.impersonation_sampling, p, trimmed)
             }
-            // Поля профиля — над `profiles[idx]`, не над `AppConfig`.
+            // Profile fields — over `profiles[idx]`, not over `AppConfig`.
             FieldId::PName | FieldId::PSystem | FieldId::PGreeting | FieldId::PImpSystem => {
                 return self.apply_profile_text(id, trimmed);
             }
-            // Config-поля — через таблицу доступа (сеттер сам парсит и маршрутизирует
-            // по режиму external/cloud; см. spec.rs).
+            // Config fields — via the access table (the setter itself parses and routes
+            // by external/cloud mode; see spec.rs).
             _ => {
                 let Some(FieldSpec {
                     access: Access::Text(set),
@@ -429,7 +429,7 @@ impl SettingsScreen {
         match id {
             FieldId::PName => {
                 if text.is_empty() {
-                    return None; // пустое имя не применяем
+                    return None; // we don't apply an empty name
                 }
                 p.name = text.to_string();
             }
@@ -443,12 +443,12 @@ impl SettingsScreen {
         Some(self.save_profile())
     }
 
-    /// Намерение сохранить текущую рабочую конфигурацию.
+    /// The intent to save the current working configuration.
     pub(super) fn save_config(&self) -> SettingsIntent {
         SettingsIntent::SaveConfig(Box::new(self.config.clone()))
     }
 
-    /// Намерение сохранить выбранный профиль (полный снимок его полей).
+    /// The intent to save the selected profile (a full snapshot of its fields).
     pub(super) fn save_profile(&self) -> SettingsIntent {
         let p = &self.profiles[self.profile_idx];
         SettingsIntent::SaveProfile {
@@ -461,8 +461,9 @@ impl SettingsScreen {
                 character_names: Some(p.character_names.clone()),
                 default_sampling: Some(p.default_sampling.clone()),
                 enabled_tools: Some(p.enabled_tools.clone()),
-                // Язык каркаса шлём всегда; оркестратор авторитетно гасит смену, если
-                // у профиля есть данные (совпадение с текущим — тоже no-op). docs/history/i18n.md.
+                // The scaffold language is always sent; the orchestrator authoritatively
+                // vetoes a switch if the profile has data (matching the current
+                // value is also a no-op). docs/history/i18n.md.
                 language: Some(p.language),
             }),
         }

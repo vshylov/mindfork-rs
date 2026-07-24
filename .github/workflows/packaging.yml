@@ -1,9 +1,9 @@
-# Валидация упаковки на PR и push в main. Linux: собирает пакеты (deb/rpm/archlinux)
-# через nfpm и проверяет установку в контейнерах Ubuntu/Fedora/Arch (смоук: раскладка +
-# запуск `--version` под обычным пользователем). Windows: компилирует Inno Setup-скрипт
-# инсталлятора (проверка синтаксиса .iss + [Code], без реальной сборки бинарника).
-# Реальный публичный релиз собирает и прикладывает артефакты отдельно — release.yml.
-# См. docs/history/installers.md §8.
+# Validates packaging on PRs and pushes to main. Linux: builds packages (deb/rpm/archlinux)
+# via nfpm and checks the install in Ubuntu/Fedora/Arch containers (a smoke: the layout +
+# running `--version` as a regular user). Windows: compiles the Inno Setup installer
+# script (a syntax check for the .iss + [Code], without building a real binary).
+# The real public release builds and attaches artifacts separately — release.yml.
+# See docs/history/installers.md §8.
 name: Packaging
 
 on:
@@ -30,25 +30,25 @@ env:
 
 jobs:
   build:
-    name: Собрать пакеты
-    runs-on: ubuntu-22.04  # glibc 2.35 — бинарь работает на большинстве дистрибутивов
+    name: Build packages
+    runs-on: ubuntu-22.04  # glibc 2.35 — the binary works on most distributions
     steps:
       - uses: actions/checkout@v5
-      - name: Установить тулчейн (из rust-toolchain.toml)
+      - name: Install the toolchain (from rust-toolchain.toml)
         run: rustup show
       - uses: Swatinem/rust-cache@v2
-      # ALSA нужна Linux-сборке (rodio/cpal — воспроизведение речи /tts).
-      - name: Системные зависимости (ALSA)
+      # ALSA is needed by the Linux build (rodio/cpal — speech playback /tts).
+      - name: System dependencies (ALSA)
         run: sudo apt-get update && sudo apt-get install -y libasound2-dev
-      - name: Сборка релиза
+      - name: Release build
         run: cargo build --release --locked
-      - name: Установить nfpm
+      - name: Install nfpm
         run: |
           echo 'deb [trusted=yes] https://repo.goreleaser.com/apt/ /' \
             | sudo tee /etc/apt/sources.list.d/goreleaser.list
           sudo apt-get update
           sudo apt-get install -y nfpm
-      - name: Собрать deb/rpm/archlinux
+      - name: Build deb/rpm/archlinux
         run: |
           VERSION="$(grep -m1 '^version' Cargo.toml | sed -E 's/.*"([^"]+)".*/\1/')"
           bash packaging/linux/build-packages.sh target/release/mindfork-rs "$VERSION" dist
@@ -62,7 +62,7 @@ jobs:
           if-no-files-found: error
 
   smoke:
-    name: Смоук установки (${{ matrix.image }})
+    name: Install smoke (${{ matrix.image }})
     needs: build
     runs-on: ubuntu-latest
     strategy:
@@ -78,84 +78,84 @@ jobs:
         with:
           name: linux-packages
           path: dist
-      - name: Установить пакет и проверить раскладку
+      - name: Install the package and check the layout
         shell: sh
         run: |
           set -eu
-          # Установка нужным менеджером по наличию бинарника.
+          # Install with the appropriate manager, by which binary is present.
           if command -v apt-get >/dev/null 2>&1; then
             apt-get update -qq
-            # desktop-file-utils даёт desktop-file-validate — проверка записи меню.
+            # desktop-file-utils provides desktop-file-validate — checking the menu entry.
             apt-get install -y ./dist/*.deb desktop-file-utils
           elif command -v dnf >/dev/null 2>&1; then
-            # util-linux даёт `su` (в минимальном fedora:latest его нет) — нужен
-            # ниже для запуска под обычным пользователем.
+            # util-linux provides `su` (absent in the minimal fedora:latest) — needed
+            # below to launch as a regular user.
             dnf install -y util-linux desktop-file-utils ./dist/*.rpm
           elif command -v pacman >/dev/null 2>&1; then
-            # `pacman -U` зависимости из репозиториев НЕ тянет (в отличие от apt/dnf),
-            # поэтому рантайм-зависимости ставим сами: alsa-lib нужна воспроизведению
-            # речи (`/tts`) — бинарь линкуется с libasound.
+            # `pacman -U` does NOT pull dependencies from repositories (unlike apt/dnf),
+            # so we install the runtime dependencies ourselves: alsa-lib is needed for speech
+            # playback (`/tts`) — the binary links against libasound.
             pacman -Sy --noconfirm alsa-lib
             pacman -U --noconfirm ./dist/*.pkg.tar.zst
           else
-            echo "нет поддерживаемого пакетного менеджера"; exit 1
+            echo "no supported package manager"; exit 1
           fi
 
-          # Раскладка: реальный бинарь + defaults.json + словари в /usr/lib/<pkg>/.
+          # Layout: the real binary + defaults.json + dictionaries in /usr/lib/<pkg>/.
           test -f /usr/lib/mindfork-rs/mindfork-rs
           test -f /usr/lib/mindfork-rs/defaults.json
           test -d /usr/lib/mindfork-rs/data/dictionaries
           ls /usr/lib/mindfork-rs/data/dictionaries/*.dic >/dev/null
 
-          # Симлинк из PATH резолвится в реальный бинарь → рядом виден defaults.json.
+          # The symlink from PATH resolves to the real binary → defaults.json is visible next to it.
           real="$(readlink -f /usr/bin/mindfork-rs)"
           test "$real" = /usr/lib/mindfork-rs/mindfork-rs
           test -f "$(dirname "$real")/defaults.json"
           grep -q '"mode"' /usr/lib/mindfork-rs/defaults.json
 
-          # Запись в меню приложений и иконки темы (docs/branding.md §4.2).
+          # The application-menu entry and theme icons (docs/branding.md §4.2).
           desktop=/usr/share/applications/mindfork-rs.desktop
           test -f "$desktop"
-          # Terminal=true критичен: без него запуск из меню не даст терминала.
+          # Terminal=true is critical: without it, launching from the menu gives no terminal.
           grep -q '^Terminal=true$' "$desktop"
           grep -q '^Exec=mindfork-rs$' "$desktop"
           grep -q '^Icon=mindfork-rs$' "$desktop"
-          # Имя файла иконки обязано совпадать с ключом Icon=.
+          # The icon file name must match the Icon= key.
           for size in 16x16 32x32 48x48 64x64 128x128 256x256; do
             test -f "/usr/share/icons/hicolor/$size/apps/mindfork-rs.png"
           done
           test -f /usr/share/icons/hicolor/scalable/apps/mindfork-rs.svg
 
-          # Штатный валидатор — если есть в образе (ставить ради него не будем).
+          # The standard validator — if present in the image (won't install it just for this).
           if command -v desktop-file-validate >/dev/null 2>&1; then
             desktop-file-validate "$desktop"
             echo "desktop-file-validate: OK"
           else
-            echo "desktop-file-validate отсутствует — пропуск"
+            echo "desktop-file-validate is absent — skipping"
           fi
 
-          # Запуск под обычным (не root) пользователем: бинарь исполним, ресурсы
-          # читаемы. `--version` — peek-фаза, каталогов данных не создаёт.
+          # Launch as a regular (non-root) user: the binary is executable, resources are
+          # readable. `--version` — the peek phase, creates no data directories.
           if command -v useradd >/dev/null 2>&1; then
             useradd -m tester
             su tester -c 'mindfork-rs --version'
           else
             mindfork-rs --version
           fi
-          echo "СМОУК OK: ${{ matrix.image }}"
+          echo "SMOKE OK: ${{ matrix.image }}"
 
   windows-installer:
-    name: Инсталлятор Windows (компиляция .iss)
+    name: Windows installer (compile .iss)
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v5
-      - name: Установить Inno Setup
+      - name: Install Inno Setup
         run: choco install innosetup --no-progress -y
-      - name: Заглушка бинарника + компиляция инсталлятора
+      - name: Stub binary + compile the installer
         shell: pwsh
         run: |
-          # Реальный бинарник тут не собираем — проверяем только, что .iss (и его
-          # Pascal-код) компилируется. Заглушка удовлетворяет [Files].
+          # We don't build a real binary here — we only check that the .iss (and its
+          # Pascal code) compiles. The stub satisfies [Files].
           New-Item -ItemType Directory -Force stage | Out-Null
           Set-Content -Path stage\mindfork-rs.exe -Value "dummy"
           $iscc = (Get-Command ISCC.exe -ErrorAction SilentlyContinue).Source
@@ -163,7 +163,7 @@ jobs:
             $iscc = Get-ChildItem "C:\Program Files*\Inno Setup*\ISCC.exe" -ErrorAction SilentlyContinue |
                     Select-Object -First 1 -ExpandProperty FullName
           }
-          if (-not $iscc) { throw "ISCC.exe не найден" }
+          if (-not $iscc) { throw "ISCC.exe not found" }
           & $iscc "/DAppVersion=0.0.0" "/DBinDir=$PWD\stage" packaging\windows\mindfork.iss
       - uses: actions/upload-artifact@v5
         with:

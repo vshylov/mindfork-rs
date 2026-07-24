@@ -1,512 +1,514 @@
-# Исследование: инсталляторы Windows и Linux
+# Research: Windows and Linux installers
 
-**Статус: направление ЗАВЕРШЕНО** (исследование 2026-07-15; развилки Р1–Р9 подтверждены
-пользователем 2026-07-16 по рекомендациям [рек.]; этапы 1–3 реализованы и проверены,
-2026-07-16). План переехал в `docs/history/`. Итог: **предпосылки в коде** (fallback
-словарей, язык по локали, BOM — ветка `feat/installed-mode-prereqs`), **Linux-пакеты**
-deb/rpm/pkg.tar.zst через nfpm (`feat/linux-packages`), **Windows-инсталлятор** на Inno
-Setup (`feat/windows-installer`) — все проверены (Windows-инсталлятор — живым прогоном на
-реальном Inno Setup 6.7.3: компиляция, GUI-мастер, режимы `system`/`portable`/`path` с
-эскейпом кириллического пути, round-trip чтения бинарником, апгрейд, деинсталляция; в
-ходе живого прогона найден и исправлен краш `{app}` в `ShouldSkipPage`). **Этап 4
-«Подпись кода» отложен** по решению пользователя — репозиторий приватный, сайта/логотипа/
-иконки ещё нет; вернуться при подготовке к публичному открытию (тогда откроется путь (a)
-SignPath Foundation). Заделы: winget-манифест (до подписи — portable-zip), AUR
-`mindfork-rs-bin`, MSI под GPO/Intune при спросе.
+**Status: track COMPLETE** (research 2026-07-15; decision points R1–R9 confirmed by
+the user 2026-07-16 per the recommendations [rec.]; stages 1–3 implemented and verified,
+2026-07-16). The plan moved to `docs/history/`. Outcome: **code prerequisites** (dictionary
+fallback, locale-driven language, BOM — branch `feat/installed-mode-prereqs`), **Linux
+packages** deb/rpm/pkg.tar.zst via nfpm (`feat/linux-packages`), **Windows installer** on
+Inno Setup (`feat/windows-installer`) — all verified (Windows installer — a live run against
+a real Inno Setup 6.7.3: compilation, the GUI wizard, `system`/`portable`/`path` modes with
+Cyrillic-path escaping, a round trip of reading via the binary, an upgrade, uninstall; during
+the live run, a `{app}` crash in `ShouldSkipPage` was found and fixed). **Stage 4 "Code
+signing" deferred** by the user's decision — the repository is private, there's no site/logo/
+icon yet; revisit when preparing for a public launch (that will open path (a) SignPath
+Foundation). Groundwork: a winget manifest (portable zip until signing), an AUR
+`mindfork-rs-bin`, an MSI for GPO/Intune if demand arises.
 
-Заказ был: инсталляторы **Windows** (msi или exe) и **Linux** (deb, rpm, pkg.tar.zst);
-там, где формат это поддерживает, при установке выбираются **язык интерфейса** и
-**расположение пользовательских файлов** (см. `defaults.json`); открытый вопрос — нужна
-ли подпись Windows-бинарника и инсталлятора сертификатом и где его брать (§5).
+The order was: **Windows** installers (msi or exe) and **Linux** (deb, rpm, pkg.tar.zst);
+where the format supports it, installation lets the user pick the **interface language**
+and the **user-data location** (see `defaults.json`); an open question — whether the
+Windows binary and installer need to be signed with a certificate and where to get one
+(§5).
 
-Связанные документы: [docs/history/release-engineering.md](../history/release-engineering.md)
-(релизный пайплайн; инсталляторы — его задел §5), [docs/install.md](../install.md)
-(портативная установка сегодня), [spec §5.2, §12.1](../../spec.md) (расположение
-данных, `defaults.json`), [docs/roadmap.md](../roadmap.md) («Авто-обновление /
-инсталляторы»). Веб-факты сверены тремя параллельными обзорами (Windows-инструменты,
-Linux-пакетирование, подпись кода) по первоисточникам — ключевые ссылки в §10.
-
----
-
-## 1. Задача и текущее положение
-
-Сегодня релиз (`release.yml`, тег `v*`) собирает **портативные архивы**
-`mindfork-rs-vX.Y.Z-x86_64-{windows.zip,linux.tar.gz}` (бинарник + доки + словари в
-`data/dictionaries/`) + `sha256sums.txt`. Установки как таковой нет: пользователь
-распаковывает архив, данные живут рядом с бинарником (портативный режим по
-умолчанию).
-
-`defaults.json` рядом с бинарником ([shared/paths.rs](../../src/shared/paths.rs))
-уже спроектирован **под инсталлятор** (комментарий в коде: «инсталлятор заполнит его
-по выбору пользователя при установке»):
-
-- `mode` — режим хранения данных: `portable` (подкаталог `data/` рядом с бинарником,
-  дефолт) / `system` (Windows `%APPDATA%\mindfork-rs\data`, Linux
-  `~/.local/share/mindfork-rs`) / `path` (произвольный каталог);
-- `default_language` — язык, с которым создаются новые профили (ось A), **и** язык
-  интерфейса при свежей установке (нет `settings.json` → `config.interface.language`
-  берётся отсюда, `main.rs`), и язык CLI до появления настроек. Один выбор при
-  установке покрывает всё это — ровно то, что просит заказ («выбрать язык
-  интерфейса»).
-
-Инсталляторы — это, по сути, доставка бинарника + словарей + **правильного
-`defaults.json`** + регистрация в системе (Add/Remove Programs, деинсталлятор,
-апгрейды).
+Related documents: [docs/history/release-engineering.md](../history/release-engineering.md)
+(the release pipeline; installers are its groundwork item §5), [docs/install.md](../install.md)
+(the portable install today), [spec §5.2, §12.1](../../spec.md) (data location,
+`defaults.json`), [docs/roadmap.md](../roadmap.md) ("Auto-update / installers"). Web facts
+cross-checked by three parallel surveys (Windows tools, Linux packaging, code signing)
+against primary sources — key links in §10.
 
 ---
 
-## 2. Факты о приложении, определяющие дизайн установки
+## 1. The task and current state
 
-1. **Портативный дефолт несовместим с системной установкой.** Без `defaults.json`
-   приложение пишет данные в `exe_dir/data` — в `C:\Program Files\…` и `/usr/bin`
-   это невозможно (нет прав) → `ensure_dirs` падает при старте. Значит, каждый
-   инсталлятор/пакет **обязан** класть `defaults.json` рядом с бинарником (обычно
+Today's release (`release.yml`, tag `v*`) builds **portable archives**
+`mindfork-rs-vX.Y.Z-x86_64-{windows.zip,linux.tar.gz}` (the binary + docs + dictionaries in
+`data/dictionaries/`) + `sha256sums.txt`. There's no installation as such: the user unpacks
+the archive, data lives next to the binary (portable mode by default).
+
+`defaults.json` next to the binary ([shared/paths.rs](../../src/shared/paths.rs)) is already
+designed **for an installer** (a code comment: "the installer will fill it in per the user's
+choice at install time"):
+
+- `mode` — the data-storage mode: `portable` (a `data/` subdirectory next to the binary,
+  the default) / `system` (Windows `%APPDATA%\mindfork-rs\data`, Linux
+  `~/.local/share/mindfork-rs`) / `path` (an arbitrary directory);
+- `default_language` — the language new profiles are created with (axis A), **and** the
+  interface language on a fresh install (no `settings.json` → `config.interface.language`
+  is taken from here, `main.rs`), and the CLI language before settings exist. One choice at
+  install time covers all of this — exactly what the order asks for ("choose the interface
+  language").
+
+Installers are, essentially, delivering the binary + dictionaries + a **correct
+`defaults.json`** + registering with the system (Add/Remove Programs, an uninstaller,
+upgrades).
+
+---
+
+## 2. Application facts that drive the install design
+
+1. **The portable default is incompatible with a system-wide install.** With no
+   `defaults.json`, the app writes data to `exe_dir/data` — impossible in
+   `C:\Program Files\…` or `/usr/bin` (no permissions) → `ensure_dirs` fails at startup. So
+   every installer/package **must** place `defaults.json` next to the binary (typically
    `{"mode":"system"}`).
-2. **Словари спелл-чека грузятся только из каталога данных**
+2. **Spellcheck dictionaries load only from the data directory**
    (`paths.dictionaries_dir()` = `<root>/dictionaries`,
-   [features/spellcheck/dict.rs](../../src/features/spellcheck/dict.rs)). В
-   портативном режиме `root = exe_dir/data`, и релизный архив кладёт словари туда.
-   При `mode=system` root — пользовательская папка, куда пакет файлы положить не
-   может (а Linux-пакет — тем более, для всех пользователей сразу). Без доработки
-   спелл-чек в установленном виде **молча выключен**. → Предпосылка П1 (§6):
-   fallback-поиск словарей в `exe_dir/data/dictionaries` (портативная раскладка как
-   источник read-only ресурсов).
-3. **Зависимости бинарника тривиальны**: reqwest на `rustls` (без OpenSSL), rusqlite
-   `bundled` (SQLite внутри), arboard на `x11rb` (чистый Rust). Linux-бинарь зависит
-   фактически только от glibc (+libgcc) — Depends пакетов пишутся одной строкой.
-4. **Резолв путей идёт от `std::env::current_exe()`.** На Linux это `/proc/self/exe`
-   — возвращается путь **реального файла**, а не симлинка, через который программу
-   запустили ([rust-lang/rust#43617](https://github.com/rust-lang/rust/issues/43617)).
-   Это делает законной раскладку «реальный бинарь + сайдкары в `/usr/lib/<pkg>/`,
-   симлинк из `/usr/bin`» **без правок кода** (§4.2).
-5. **`defaults.json` должен переживать апгрейд** — это выбор пользователя при
-   установке; повторная установка/обновление не должны его перезаписывать.
-6. **Uninstall не трогает пользовательские данные** (`%APPDATA%`/XDG) — удаляется
-   только установленное. Портативные данные (`{app}\data`) Inno и так не удалит
-   (удаляет лишь то, что ставил).
-7. `Defaults::read` сегодня **не терпит UTF-8 BOM** (whitespace-проверка + прямой
-   `serde_json::from_slice`) — файл, записанный «с BOM» (некоторые редакторы,
-   Pascal-хелперы Inno), уронит запуск. В проекте BOM уже отбрасывается в двух местах
-   (`rag_ingest::read_text`, импортёр LameLLaMA) → Предпосылка П3 (§6).
+   [features/spellcheck/dict.rs](../../src/features/spellcheck/dict.rs)). In portable mode
+   `root = exe_dir/data`, and the release archive puts dictionaries there. With
+   `mode=system` root is a user folder that a package can't place files into (a Linux
+   package even less so, for all users at once). Without a fix, spellcheck in an installed
+   setup is **silently disabled**. → Prerequisite P1 (§6): a fallback dictionary lookup in
+   `exe_dir/data/dictionaries` (the portable layout as a source of read-only resources).
+3. **The binary's dependencies are trivial**: reqwest on `rustls` (no OpenSSL), rusqlite
+   `bundled` (SQLite inside), arboard on `x11rb` (pure Rust). The Linux binary effectively
+   only depends on glibc (+libgcc) — package Depends can be written in one line.
+4. **Path resolution goes through `std::env::current_exe()`.** On Linux this is
+   `/proc/self/exe` — it returns the path of the **real file**, not the symlink the program
+   was launched through ([rust-lang/rust#43617](https://github.com/rust-lang/rust/issues/43617)).
+   This legitimizes the layout "the real binary + sidecars in `/usr/lib/<pkg>/`, a symlink
+   from `/usr/bin`" **with no code changes** (§4.2).
+5. **`defaults.json` must survive an upgrade** — it's the user's choice at install time; a
+   reinstall/update must not overwrite it.
+6. **Uninstall doesn't touch user data** (`%APPDATA%`/XDG) — only what was installed gets
+   removed. Portable data (`{app}\data`) isn't removed by Inno either way (it only removes
+   what it installed).
+7. **`Defaults::read` today doesn't tolerate a UTF-8 BOM** (a whitespace check + a direct
+   `serde_json::from_slice`) — a file written "with a BOM" (some editors, Inno's Pascal
+   helpers) would crash the startup. The project already drops the BOM in two places
+   (`rag_ingest::read_text`, the LameLLaMA importer) → Prerequisite P3 (§6).
 
 ---
 
-## 3. Windows: exe (Inno Setup) против msi (WiX)
+## 3. Windows: exe (Inno Setup) vs. msi (WiX)
 
-### 3.1 Ландшафт (июль 2026)
+### 3.1 Landscape (July 2026)
 
-| Инструмент | Версия | Статус | На GHA `windows-latest` |
+| Tool | Version | Status | On GHA `windows-latest` |
 |---|---|---|---|
-| **Inno Setup 6** | 6.7.3 (2026-05) | активен; для OSS бесплатен (с 6.5.0 есть *добровольная* коммерческая лицензия) | **да** (6.7.1; надёжнее ставить `choco install innosetup`) |
-| Inno Setup 7 | 7.0.2 (2026-07-13) | только вышел; «full backward compatibility» с 6 | нет |
-| **WiX Toolset** | v7.0.0 (2026-04) | активен; **v3/v4 — EOL с 02.2025**; с v6 — Open Source Maintenance Fee (EULA-плата для зарабатывающих) | только **v3.14** (EOL-линия) |
-| NSIS | 3.11 (2025-03) | живой, редкие релизы | нет (удалён из образа windows-2025) |
-| cargo-wix | 0.3.9 (2025-03) | живой; по умолчанию целится в WiX v3 | — |
-| cargo-dist | 0.32.0 (2026-05) | релизы идут, но компания axo.dev свернулась (домен продаётся) — риск сопровождения | — |
-| cargo-packager | 0.11.8 (2024-11) | **стагнация ~1.5 года** | — |
+| **Inno Setup 6** | 6.7.3 (2026-05) | active; free for OSS (since 6.5.0 there's an *optional* commercial license) | **yes** (6.7.1; more reliable to install via `choco install innosetup`) |
+| Inno Setup 7 | 7.0.2 (2026-07-13) | just released; "full backward compatibility" with 6 | no |
+| **WiX Toolset** | v7.0.0 (2026-04) | active; **v3/v4 — EOL since 02.2025**; since v6 — an Open Source Maintenance Fee (an EULA fee for paying users) | only **v3.14** (the EOL line) |
+| NSIS | 3.11 (2025-03) | alive, infrequent releases | no (removed from the windows-2025 image) |
+| cargo-wix | 0.3.9 (2025-03) | alive; targets WiX v3 by default | — |
+| cargo-dist | 0.32.0 (2026-05) | releases keep shipping, but axo.dev has wound down (the domain is for sale) — a maintenance risk | — |
+| cargo-packager | 0.11.8 (2024-11) | **stalled for ~1.5 years** | — |
 
-Rust-обёртки (cargo-dist / cargo-packager / tauri-bundler) делают **шаблонные**
-инсталляторы: кастомные wizard-страницы «язык + папка данных» и запись
-`defaults.json` по выбору пользователя они не выражают (либо требуют написать весь
-шаблон .nsi/.wxs руками — выгода обёртки исчезает). Как основной инструмент не
-подходят.
+Rust wrappers (cargo-dist / cargo-packager / tauri-bundler) produce **templated**
+installers: custom wizard pages "language + data folder" and writing `defaults.json` per the
+user's choice aren't expressible through them (or they'd require writing the whole
+.nsi/.wxs template by hand — the wrapper's benefit disappears). Not suitable as the primary
+tool.
 
-### 3.2 Наши пять «особых» требований — построчно
+### 3.2 Our five "special" requirements, line by line
 
-| Требование | Inno Setup | WiX/MSI |
+| Requirement | Inno Setup | WiX/MSI |
 |---|---|---|
-| Страница «язык приложения» (радио) | штатно: `CreateInputOptionPage(Exclusive:=True)` | свой Dialog + RadioButtonGroup + правка publish-графа WixUI |
-| Страница «папка данных» (radio + folder picker для папки ≠ каталога установки) | штатно: `CreateInputDirPage` | болезненно: `BrowseDlg` через косвенное `_BrowseProperty` + фиктивная Directory-запись |
-| Запись `defaults.json` по выбору | `[Code]`: `SaveStrings…File` на `ssPostInstall` | deferred CustomAction (PowerShell/cmd/DTF) или стороннее расширение; штатного `util:JsonFile` нет ([wix#7711](https://github.com/orgs/wixtoolset/discussions/7711)) |
-| Не перезаписывать при апгрейде | `if not FileExists(...)` — одна строка | доп. логика в CustomAction против компонентных правил MSI |
-| Двуязычный UI инсталлятора (ru+en) | штатно: `[Languages]` + `ShowLanguageDialog`; **Russian.isl — официальный перевод** (с 6.5.0) | MSI однокультурный: либо 2 msi, либо трюк со встраиванием language transforms (torch); штатной поддержки нет ([wix#7544](https://github.com/wixtoolset/issues/issues/7544)) |
+| An "application language" page (radio buttons) | built in: `CreateInputOptionPage(Exclusive:=True)` | a custom Dialog + RadioButtonGroup + editing the WixUI publish graph |
+| A "data folder" page (radio + a folder picker for a folder ≠ the install directory) | built in: `CreateInputDirPage` | painful: `BrowseDlg` via an indirect `_BrowseProperty` + a dummy Directory entry |
+| Writing `defaults.json` per the choice | `[Code]`: `SaveStrings…File` in `ssPostInstall` | a deferred CustomAction (PowerShell/cmd/DTF) or a third-party extension; there's no built-in `util:JsonFile` ([wix#7711](https://github.com/orgs/wixtoolset/discussions/7711)) |
+| Don't overwrite on upgrade | `if not FileExists(...)` — one line | extra logic in a CustomAction against MSI's component rules |
+| A bilingual installer UI (ru+en) | built in: `[Languages]` + `ShowLanguageDialog`; **Russian.isl — an official translation** (since 6.5.0) | MSI is single-culture: either 2 msi's or a trick embedding language transforms (torch); no built-in support ([wix#7544](https://github.com/wixtoolset/issues/issues/7544)) |
 
-Плюс у Inno: per-user установка без UAC (`PrivilegesRequired=lowest`,
-`{autopf}` → `%LOCALAPPDATA%\Programs`), диалог «для меня / для всех»
-(`PrivilegesRequiredOverridesAllowed=dialog`), тихий режим
-(`/VERYSILENT /DIR= /LANG=` + свои `{param:…}`), апгрейд по тому же `AppId` с
-`UsePrevious*`. winget принимает `InstallerType: inno` и сам знает тихие ключи.
+A plus for Inno: a per-user install with no UAC (`PrivilegesRequired=lowest`,
+`{autopf}` → `%LOCALAPPDATA%\Programs`), a "for me / for everyone" dialog
+(`PrivilegesRequiredOverridesAllowed=dialog`), a silent mode
+(`/VERYSILENT /DIR= /LANG=` + custom `{param:…}`), upgrading under the same `AppId` with
+`UsePrevious*`. winget accepts `InstallerType: inno` and already knows its silent flags.
 
-**Оценка трудоёмкости: Inno — 1–2 дня на скрипт + CI; MSI — дни-недели** (UI-диалоги,
-CustomAction с откатом, мультиязычие трансформами, dual-context per-user капризен,
-и вилка «EOL v3 бесплатно vs v6/v7 с Maintenance-Fee-EULA»).
+**Effort estimate: Inno — 1–2 days for the script + CI; MSI — days to weeks** (UI dialogs,
+a CustomAction with rollback, multilingualism via transforms, dual-context per-user is
+finicky, and the fork "EOL v3 free vs. v6/v7 with a Maintenance-Fee EULA").
 
-### 3.3 Рекомендация и эскиз дизайна (Р1, Р2)
+### 3.3 Recommendation and design sketch (R1, R2)
 
-**Inno Setup 6.7.x, формат exe** (Р1). MSI добавлять только при реальном спросе на
-корпоративную доставку (GPO/Intune) — задел. NSIS — запасной вариант без
-преимуществ. (Нюанс winget для неподписанного exe — см. §5.4.)
+**Inno Setup 6.7.x, exe format** (R1). Add MSI only if there's real demand for
+enterprise delivery (GPO/Intune) — groundwork. NSIS — a fallback option with no advantages.
+(The winget nuance for an unsigned exe — see §5.4.)
 
-Эскиз `packaging/windows/mindfork.iss`:
+Sketch of `packaging/windows/mindfork.iss`:
 
 - `[Setup]`: `AppId={{…GUID…}}`, `DefaultDirName={autopf}\mindfork-rs`,
   `PrivilegesRequired=lowest`, `PrivilegesRequiredOverridesAllowed=dialog`,
-  `ArchitecturesInstallIn64BitMode=x64compatible`; версия — `/DAppVersion=X.Y.Z` из
-  тега в CI; `OutputBaseFilename=mindfork-rs-vX.Y.Z-x86_64-setup`.
-- `[Languages]`: `en` + `ru` (официальный `Russian.isl`; на случай отсутствия в
-  GHA-дистрибутиве — вендорим .isl в `packaging/windows/`).
+  `ArchitecturesInstallIn64BitMode=x64compatible`; version — `/DAppVersion=X.Y.Z` from
+  the tag in CI; `OutputBaseFilename=mindfork-rs-vX.Y.Z-x86_64-setup`.
+- `[Languages]`: `en` + `ru` (the official `Russian.isl`; in case it's absent from the
+  GHA distribution, we vendor the .isl into `packaging/windows/`).
 - `[Files]`: `mindfork-rs.exe`, `README/CHANGELOG/LICENSE/install.md` → `{app}`;
-  словари → `{app}\data\dictionaries` (портативная раскладка = источник read-only
-  ресурсов, П1).
-- **Страница 1 «Язык приложения»** (радио: Русский / English; дефолт — язык
-  инсталлятора). Пишется в `default_language`.
-- **Страница 2 «Где хранить данные»** (радио): «Стандартная папка пользователя
-  (рекомендуется)» → `system`; «Портативно, рядом с программой» → `portable`
-  (**скрывается при установке per-machine** — Program Files не для данных); «Другая
-  папка…» → `path` + `CreateInputDirPage`.
-- Обе страницы **пропускаются при апгрейде** (`ShouldSkipPage`, если
-  `{app}\defaults.json` уже существует).
-- `CurStepChanged(ssPostInstall)`: если `defaults.json` не существует — собрать JSON
-  (эскейп `\` → `\\` в пути) и записать UTF-8 (`SaveStringsToUTF8File`; BOM
-  нейтрализуется предпосылкой П3).
-- Тихий режим: `/VERYSILENT /LANG=russian /DataMode=system|portable|path
-  /DataDir="…" /AppLang=ru|en` (чтение через `{param:…}`; дефолты — system + язык
-  инсталлятора) — нужно и для winget.
-- Uninstall: удаляет `{app}` (бинарь, словари, `defaults.json`); данные в
-  `%APPDATA%`/кастомном пути не трогает; портативные `{app}\data` Inno сам не
-  удалит (не ставил их) — упомянуть в финальной странице/README.
+  dictionaries → `{app}\data\dictionaries` (the portable layout as a source of read-only
+  resources, P1).
+- **Page 1 "Application language"** (radio buttons: Russian / English — the installer's
+  language as the default). Written to `default_language`.
+- **Page 2 "Where to store data"** (radio buttons): "Standard user folder
+  (recommended)" → `system`; "Portable, next to the program" → `portable`
+  (**hidden for a per-machine install** — Program Files isn't for data); "Another
+  folder…" → `path` + `CreateInputDirPage`.
+- Both pages **are skipped on an upgrade** (`ShouldSkipPage`, if `{app}\defaults.json`
+  already exists).
+- `CurStepChanged(ssPostInstall)`: if `defaults.json` doesn't exist — assemble the JSON
+  (escaping `\` → `\\` in the path) and write it as UTF-8 (`SaveStringsToUTF8File`; the BOM
+  is neutralized by prerequisite P3).
+- Silent mode: `/VERYSILENT /LANG=russian /DataMode=system|portable|path
+  /DataDir="…" /AppLang=ru|en` (read via `{param:…}`; defaults — system + the installer's
+  language) — also needed for winget.
+- Uninstall: removes `{app}` (the binary, dictionaries, `defaults.json`); doesn't touch
+  data in `%APPDATA%`/a custom path; Inno doesn't remove portable `{app}\data` on its own
+  (it didn't install them) — mention this on the final page/in the README.
 
 ### 3.4 CI
 
-Новый job в `release.yml` (после `build`): windows-раннер → скачать артефакт
-бинарника → `iscc packaging\windows\mindfork.iss /DAppVersion=%VERSION%` → артефакт
-`…-setup.exe` → в общий `release`-job (архивы остаются — портативный сценарий
-никуда не девается, это наш дефолтный жанр). `sha256sums.txt` накрывает новые
-артефакты автоматически.
+A new job in `release.yml` (after `build`): a windows runner → download the binary
+artifact → `iscc packaging\windows\mindfork.iss /DAppVersion=%VERSION%` → an artifact
+`…-setup.exe` → into the shared `release` job (the archives stay — the portable scenario
+isn't going anywhere, it's our default flavor). `sha256sums.txt` covers the new artifacts
+automatically.
 
 ---
 
 ## 4. Linux: deb + rpm + pkg.tar.zst
 
-### 4.1 Инструменты (июль 2026)
+### 4.1 Tools (July 2026)
 
-| Инструмент | Версия | Форматы | Авто-Depends | Примечание |
+| Tool | Version | Formats | Auto-Depends | Note |
 |---|---|---|---|---|
-| **nfpm** (goreleaser) | v2.47.0 (2026-06) | **deb, rpm, archlinux (.pkg.tar.zst)**, apk, ipk | нет (руками) | один YAML → все форматы; `type: symlink`/`config|noreplace` из коробки; один Go-бинарь |
-| cargo-deb | 3.7.0 (2026-05) | deb | да (`dpkg-shlibdeps`) | метаданные в Cargo.toml; `--no-build` для готового бинаря |
-| cargo-generate-rpm | 0.21.0 (2026-05) | rpm | да (`--auto-req`) | без rpmbuild, чистый Rust |
-| cargo-aur | 1.7.1 (2024-03) | PKGBUILD (-bin) | — | только AUR-рецепт, не .pkg.tar.zst |
+| **nfpm** (goreleaser) | v2.47.0 (2026-06) | **deb, rpm, archlinux (.pkg.tar.zst)**, apk, ipk | no (by hand) | one YAML → all formats; `type: symlink`/`config|noreplace` out of the box; a single Go binary |
+| cargo-deb | 3.7.0 (2026-05) | deb | yes (`dpkg-shlibdeps`) | metadata in Cargo.toml; `--no-build` for a ready binary |
+| cargo-generate-rpm | 0.21.0 (2026-05) | rpm | yes (`--auto-req`) | no rpmbuild, pure Rust |
+| cargo-aur | 1.7.1 (2024-03) | a PKGBUILD (-bin) | — | only an AUR recipe, not a .pkg.tar.zst |
 
-**Рекомендация (Р4): nfpm один на все три формата.** Аргументы: у нас уже есть
-prebuilt-бинарь из `release.yml` (nfpm ровно для этого); **идентичная раскладка** во
-всех трёх форматах описывается один раз (включая archlinux, который cargo-инструменты
-не покрывают); авто-Depends не нужен — стек «rustls + bundled SQLite + x11rb» сводит
-зависимости к `libc6 (>= 2.35)` в deb (rpm/arch можно не указывать). Альтернатива
-«cargo-deb + cargo-generate-rpm (+ что-то для arch)» легитимна ради метаданных в
-Cargo.toml и честного `dpkg-shlibdeps`, но это три конфига вместо одного при
-однострочном выигрыше.
+**Recommendation (R4): one nfpm for all three formats.** Arguments: we already have a
+prebuilt binary from `release.yml` (exactly what nfpm is for); the **identical layout**
+across all three formats is described once (including archlinux, which the cargo tools
+don't cover); auto-Depends isn't needed — the "rustls + bundled SQLite + x11rb" stack
+narrows dependencies down to `libc6 (>= 2.35)` in deb (rpm/arch need not declare it at
+all). The alternative "cargo-deb + cargo-generate-rpm (+ something for arch)" is
+legitimate for Cargo.toml metadata and honest `dpkg-shlibdeps`, but that's three configs
+instead of one for a one-line payoff.
 
-### 4.2 Раскладка пакета: `defaults.json` нельзя в `/usr/bin`
+### 4.2 Package layout: `defaults.json` can't go in `/usr/bin`
 
-FHS 3.0/Debian Policy запрещают данные в `/usr/bin` (плоское пространство имён
-исполняемых команд; generic-имя `defaults.json` там немыслимо). Проверенный паттерн:
+FHS 3.0/Debian Policy forbid data in `/usr/bin` (a flat namespace for executable commands;
+a generic name like `defaults.json` there is unthinkable). A proven pattern:
 
 ```
-/usr/lib/mindfork-rs/mindfork-rs          реальный бинарь
+/usr/lib/mindfork-rs/mindfork-rs          the real binary
 /usr/lib/mindfork-rs/defaults.json        {"mode":"system"} (config|noreplace)
-/usr/lib/mindfork-rs/data/dictionaries/   словари (.aff/.dic; читаются через П1)
-/usr/bin/mindfork-rs -> ../lib/mindfork-rs/mindfork-rs    (type: symlink в nfpm)
+/usr/lib/mindfork-rs/data/dictionaries/   dictionaries (.aff/.dic; read via P1)
+/usr/bin/mindfork-rs -> ../lib/mindfork-rs/mindfork-rs    (type: symlink in nfpm)
 /usr/share/doc/mindfork-rs/               README, CHANGELOG, LICENSE, install.md
 ```
 
-Работает **без правок кода резолва путей**: `current_exe()` на Linux возвращает
-target симлинка (§2 п.4) → `exe_dir = /usr/lib/mindfork-rs` → `defaults.json`
-найден → данные в `~/.local/share/mindfork-rs`. Debian Policy §9.1.1 явно допускает
-подкаталог `/usr/lib/<pkg>` со смешанным (в т.ч. арх-независимым) содержимым;
-прецедент «вендорские дефолты как данные под /usr/lib» — `/usr/lib/os-release`.
-`defaults.json` помечаем `config|noreplace` (nfpm: deb-conffile / rpm
-`%config(noreplace)`) — правка пользователя переживёт апгрейд. Словари кладём в
-`data/dictionaries` рядом с бинарём — та же портативная раскладка, что у zip и у
-Windows-инсталлятора (один инвариант на все платформы, П1).
+Works **with no changes to path-resolution code**: `current_exe()` on Linux returns the
+symlink's target (§2 item 4) → `exe_dir = /usr/lib/mindfork-rs` → `defaults.json` is
+found → data goes into `~/.local/share/mindfork-rs`. Debian Policy §9.1.1 explicitly
+permits a `/usr/lib/<pkg>` subdirectory with mixed (including architecture-independent)
+content; a precedent for "vendor defaults as data under /usr/lib" is `/usr/lib/os-release`.
+`defaults.json` is marked `config|noreplace` (nfpm: deb-conffile / rpm
+`%config(noreplace)`) — a user edit survives an upgrade. Dictionaries go into
+`data/dictionaries` next to the binary — the same portable layout as the zip and the
+Windows installer (one invariant across all platforms, P1).
 
-Альтернатива (Р5b): бинарь остаётся в `/usr/bin`, а приложение учится читать
-`/etc/mindfork-rs/defaults.json` (+ словари из `/usr/share/mindfork-rs/`). FHS-чище
-и «правильный» conffile, но добавляет платформенную ветку в резолв путей и второй
-механизм поиска — при том, что симлинк-раскладка полностью штатна. Не рекомендую.
+Alternative (R5b): the binary stays in `/usr/bin`, and the app learns to read
+`/etc/mindfork-rs/defaults.json` (+ dictionaries from `/usr/share/mindfork-rs/`).
+FHS-cleaner and a "proper" conffile, but adds a platform-specific branch to path resolution
+and a second lookup mechanism — while the symlink layout is fully standard. Not
+recommended.
 
-### 4.3 Интерактивных выборов на Linux не бывает
+### 4.3 There are no interactive choices on Linux
 
-deb/rpm/pacman ставятся **неинтерактивно** (debconf — для системной конфигурации и
-прямо не предназначен для пер-пользовательских предпочтений; у rpm/pacman механизма
-нет вовсе). Требование заказа «выбор языка и расположения» здесь неприменимо —
-пакеты фиксируют `{"mode":"system"}`, а язык решается приложением при первом
-запуске. Сегодня «нет `default_language` в `defaults.json`» = `ru` (serde-дефолт) —
-для международного пользователя deb/rpm это плохой дефолт. → Предпосылка П2 (§6):
-автоопределение языка по локали ОС (закрывает и задел из roadmap «Определение языка
-по системной локали»).
+deb/rpm/pacman install **non-interactively** (debconf — for system configuration and not
+really meant for per-user preferences; rpm/pacman have no such mechanism at all). The
+order's requirement "choose language and location" doesn't apply here — packages fix
+`{"mode":"system"}`, and the language is decided by the app on first launch. Today "no
+`default_language` in `defaults.json`" = `ru` (the serde default) — a bad default for an
+international user of deb/rpm. → Prerequisite P2 (§6): auto-detect the language from the
+OS locale (also closes the roadmap groundwork item "Detect language from the system OS
+locale").
 
-### 4.4 Базлайн glibc (Р9)
+### 4.4 The glibc baseline (R9)
 
-Сборка на `ubuntu-22.04` = glibc **2.35**: Ubuntu 22.04+/Debian 12+/Fedora 36+/
-RHEL 10 — да; **RHEL/Rocky/Alma 9 (glibc 2.34) — нет**. Рекомендация: принять и
-задекларировать (ниша TUI-приложения — Fedora/Ubuntu/Arch-десктопы; EL9-десктоп
-экзотичен). Альтернативы, если EL9 понадобится: `cargo-zigbuild` с пином
-`x86_64-unknown-linux-gnu.2.34` (не проверялось) или musl-static (осторожно:
-аллокатор musl деградирует многопоточный tokio в разы — нужен mimalloc; crossterm
-при этом terminfo не требует, musl-статике ничего не мешает).
+A build on `ubuntu-22.04` = glibc **2.35**: Ubuntu 22.04+/Debian 12+/Fedora 36+/RHEL 10 —
+yes; **RHEL/Rocky/Alma 9 (glibc 2.34) — no**. Recommendation: accept and declare this
+(the niche of a TUI app — Fedora/Ubuntu/Arch desktops; an EL9 desktop is exotic).
+Alternatives if EL9 is needed: `cargo-zigbuild` pinned to
+`x86_64-unknown-linux-gnu.2.34` (not verified) or a static musl build (careful: musl's
+allocator degrades multithreaded tokio several-fold — mimalloc is needed; crossterm
+doesn't need terminfo, so nothing about static musl gets in the way there).
 
-### 4.5 Подпись пакетов не нужна; контрольные суммы уже есть
+### 4.5 No package signing needed; checksums already exist
 
-`dpkg -i`/`apt install ./x.deb` подписи **не проверяют** (доверие в deb-мире — на
-уровне репозитория; `dpkg-sig` вообще удалён из Debian 12+); `rpm` проверяет только
-при импортированном ключе; `pacman -U` с дефолтным `LocalFileSigLevel = Optional`
-ставит неподписанное. Практика OSS для GitHub Releases — контрольные суммы (у нас
-`sha256sums.txt` уже есть; GitHub с 2025 сам показывает digest ассетов). Опционально
-и дёшево: **GitHub Artifact Attestations** (`actions/attest-build-provenance`,
-Sigstore-провенанс, бесплатно для публичных реп; проверка `gh attestation verify`).
-GPG-подписи заводить не стоит, пока нет собственного apt/dnf-репозитория.
+`dpkg -i`/`apt install ./x.deb` don't verify signatures at all (trust in the deb world
+lives at the repository level; `dpkg-sig` was removed from Debian 12+ entirely); `rpm`
+only verifies with an imported key; `pacman -U` with the default
+`LocalFileSigLevel = Optional` installs unsigned packages. OSS practice for GitHub
+Releases is checksums (we already have `sha256sums.txt`; GitHub itself shows asset
+digests since 2025). Optional and cheap: **GitHub Artifact Attestations**
+(`actions/attest-build-provenance`, Sigstore provenance, free for public repos;
+verified via `gh attestation verify`). Not worth setting up GPG signing until we have our
+own apt/dnf repository.
 
-### 4.6 Arch: .pkg.tar.zst + AUR как задел
+### 4.6 Arch: .pkg.tar.zst + AUR as groundwork
 
-nfpm собирает archlinux-пакет, который ставится `pacman -U` (систематических жалоб
-в трекере nfpm нет; сам nfpm распространяется через AUR `nfpm-bin`). Перед первым
-релизом — одноразовый смоук в контейнере `archlinux:latest` (легко автоматизировать
-в CI — §8, DoD). **Идиоматичный канал для Arch — всё же AUR** (`mindfork-rs-bin`:
-PKGBUILD + .SRCINFO, указывающие на GitHub Releases; суффикс `-bin` обязателен по
-правилам AUR; обновления пользователю приносит AUR-хелпер, а `sha256sums` PKGBUILD
-заодно верифицируют наши артефакты) — отдельный небольшой задел после первого
-релиза пакетов.
+nfpm builds an archlinux package that installs via `pacman -U` (no systematic complaints
+in nfpm's tracker; nfpm itself is distributed via AUR as `nfpm-bin`). Before the first
+release — a one-off smoke test in an `archlinux:latest` container (easy to automate in CI
+— §8, DoD). **The idiomatic channel for Arch is still AUR** (`mindfork-rs-bin`: a
+PKGBUILD + .SRCINFO pointing at GitHub Releases; the `-bin` suffix is mandatory under AUR
+rules; updates reach the user via an AUR helper, and the PKGBUILD's `sha256sums` also
+verify our artifacts) — a separate small groundwork item after the first package release.
 
 ---
 
-## 5. Подпись кода Windows (открытый вопрос заказа)
+## 5. Windows code signing (the order's open question)
 
-### 5.1 Что происходит без подписи
+### 5.1 What happens without signing
 
-Два слоя фрикции: браузер (Edge/Chrome «isn't commonly downloaded» → Keep → Keep
-anyway) и запуск (Mark-of-the-Web → SmartScreen «Windows protected your PC», кнопка
-«Run anyway» спрятана за «More info», издатель — «Unknown publisher»). Ключевая
-механика (Microsoft, 2026): **без подписи репутация копится на хэш файла и
-обнуляется каждым релизом**; с подписью — копится на сертификат и переносится между
-релизами. Порог не публикуется («несколько недель и сотни чистых установок»).
-Ужесточение: **Smart App Control** на свежих Windows 11 блокирует неподписанное
-**без** кнопки обхода. Для нишевой TUI-аудитории (разработчики) неподписанный старт
-— обычная практика, но каждый релиз будет «жёлтым».
+Two layers of friction: the browser (Edge/Chrome "isn't commonly downloaded" → Keep → Keep
+anyway) and launching (Mark-of-the-Web → SmartScreen "Windows protected your PC", the
+"Run anyway" button hidden behind "More info", the publisher shown as "Unknown
+publisher"). Key mechanics (Microsoft, 2026): **without signing, reputation accrues
+against the file hash and resets with every release**; with signing, it accrues against
+the certificate and carries across releases. The threshold isn't published ("a few weeks
+and hundreds of clean installs"). A tightening: **Smart App Control** on recent Windows 11
+blocks unsigned binaries with **no** bypass button. For a niche TUI audience
+(developers), launching unsigned is standard practice, but every release will be
+"yellow."
 
-### 5.2 Ландшафт 2026: что изменилось
+### 5.2 The 2026 landscape: what's changed
 
-- С 06.2023 (CA/B Forum) ключ подписи обязан жить в FIPS-железе/HSM — «просто .pfx
-  в секретах CI» больше не существует; с 03.2026 максимальный срок сертификата —
-  **460 дней** (ежегодное продление — норма).
-- **EV больше не даёт мгновенной репутации SmartScreen** — Microsoft документировала
-  это явно (изменение ~2024): «Paying a premium for EV solely to avoid SmartScreen
-  warnings is no longer justified». OV = EV с точки зрения SmartScreen. EV к тому же
-  продаётся только юрлицам.
-- Timestamping (RFC 3161) обязателен всегда — подпись живёт после истечения
-  сертификата.
+- Since 06.2023 (CA/B Forum) a signing key must live in FIPS-certified hardware/an HSM —
+  "just a .pfx in CI secrets" no longer exists; since 03.2026 the maximum certificate
+  lifetime is **460 days** (annual renewal is the norm).
+- **EV no longer gives instant SmartScreen reputation** — Microsoft has explicitly
+  documented this (a change ~2024): "Paying a premium for EV solely to avoid SmartScreen
+  warnings is no longer justified." OV = EV from SmartScreen's point of view. EV is also
+  only sold to legal entities.
+- Timestamping (RFC 3161) is always mandatory — the signature survives after the
+  certificate expires.
 
-### 5.3 Варианты (где брать сертификат)
+### 5.3 Options (where to get a certificate)
 
-| Вариант | Цена/год | Кому доступен | CI (GitHub Actions) | Примечания |
+| Option | Price/year | Available to | CI (GitHub Actions) | Notes |
 |---|---|---|---|---|
-| **Без подписи** | 0 | всем | — | репутация с нуля каждый релиз; Smart App Control блокирует; для winget см. §5.4 |
-| **SignPath Foundation** | **0** | **публичные OSS-проекты** (OSI-лицензия, публичный репозиторий, релизы, MFA, «code signing policy» на странице проекта) | официальный Action; подписываются только сборки из доверенного CI; **ручное одобрение каждого релиза** | издатель в диалогах — «SignPath Foundation» (не ваше имя); **официально рекомендован Microsoft** для OSS |
-| **Certum Open Source** | ~€69 первый год, **~€29 продление** (+€35 за физ. карту, облако SimplySign — без неё) | **физлица почти из любой страны** (видеоверификация ~2 дня) | возможен, но костыльно (SimplySign: интерактивный OTP → TOTP-скрипт/контейнер; сессия ~2 ч) | subject: «Open Source Developer, &lt;Имя&gt;»; лимит 5000 подписей/мес; самый дешёвый «свой» сертификат |
-| **Azure Artifact Signing** (экс-Trusted Signing; GA 01.2026) | $9.99/мес (≈$120/год) | **физлица: только США/Канада**; организации: США/Канада/ЕС/UK (+ платная Azure-подписка) | отличный: официальный Action, OIDC, подписывает всё, что умеет signtool | короткоживущие сертификаты из managed HSM; identity = ваше имя; географию обещают расширять — перепроверять |
-| Коммерческий OV | ~$150–300 | физлица/организации, worldwide | токен — только self-hosted; облачные (eSigner/KeyLocker) — да, с доплатой | репутация копится, начальные предупреждения будут |
-| EV | ~$280–700 | только юрлица (D-U-N-S) | как OV | **преимущества перед OV больше нет** — не покупать |
+| **No signing** | 0 | everyone | — | reputation from scratch every release; Smart App Control blocks it; for winget see §5.4 |
+| **SignPath Foundation** | **0** | **public OSS projects** (an OSI license, a public repo, releases, MFA, a "code signing policy" on the project page) | an official Action; only builds from a trusted CI get signed; **manual approval of every release** | the publisher shown in dialogs is "SignPath Foundation" (not your name); **officially recommended by Microsoft** for OSS |
+| **Certum Open Source** | ~€69 the first year, **~€29 renewal** (+€35 for a physical card, or the SimplySign cloud — without it) | **individuals from almost any country** (video verification, ~2 days) | possible, but hacky (SimplySign: an interactive OTP → a TOTP script/container; a session ~2 h) | subject: "Open Source Developer, &lt;Name&gt;"; a limit of 5000 signatures/month; the cheapest "your own" certificate |
+| **Azure Artifact Signing** (formerly Trusted Signing; GA 01.2026) | $9.99/mo (≈$120/year) | **individuals: US/Canada only**; organizations: US/Canada/EU/UK (+ a paid Azure subscription) | excellent: an official Action, OIDC, signs anything signtool can | short-lived certificates from a managed HSM; identity = your name; geography is promised to expand — recheck |
+| Commercial OV | ~$150–300 | individuals/organizations, worldwide | a token — self-hosted only; cloud (eSigner/KeyLocker) — yes, at extra cost | reputation accrues, initial warnings will still appear |
+| EV | ~$280–700 | legal entities only (D-U-N-S) | same as OV | **no longer has an advantage over OV** — don't buy |
 
-### 5.4 Нюанс winget
+### 5.4 The winget nuance
 
-winget **не требует** подписи (манифесты пинят SHA256, валидация гоняет
-антивирусы), но и **не обходит** SmartScreen: свежий кейс (halloy, 06.2026) —
-`winget install` неподписанного **Inno-exe** виснет на SmartScreen-блокировке;
-с MSI/portable-zip такого нет. Практический вывод: до появления подписи в winget
-публиковать **портативный zip** (тип `zip`/`portable` — он у нас уже есть), а не
-inno-exe; с подписью — можно и exe.
+winget **doesn't require** signing (manifests pin SHA256, validation runs antivirus
+scans), but it also **doesn't bypass** SmartScreen: a recent case (halloy, 06.2026) —
+`winget install` of an unsigned **Inno exe** hangs on a SmartScreen block; this doesn't
+happen with MSI/portable-zip. Practical conclusion: until signing is in place for
+winget, publish a **portable zip** (type `zip`/`portable` — we already have this), not
+an inno-exe; once signed — an exe works too.
 
-### 5.5 Рекомендация (Р8)
+### 5.5 Recommendation (R8)
 
-Подпись — **не блокер** первых релизов инсталлятора, но желательна как отдельный
-этап. Дерево решения:
+Signing is **not a blocker** for the first installer releases, but is desirable as a
+separate stage. Decision tree:
 
-1. Репозиторий публичный (или готовы сделать публичным) → **SignPath Foundation**:
-   бесплатно, рекомендовано Microsoft; цена — «SignPath Foundation» вместо личного
-   имени в диалогах + ручное одобрение релиза + требования к процессу (MFA,
-   политика подписи на странице проекта).
-2. Нужен сертификат **на своё имя**, физлицо вне США/Канады → **Certum Open Source**
-   (~€69/€29) — единственный дешёвый путь; автоматизация в CI возможна, но через
-   обходные приёмы.
-3. **Azure Artifact Signing** — лучший по цене/автоматизации, **как только** станет
-   доступен по географии (физлицо США/Канада или юрлицо ЕС/UK/США/Канады);
-   статус региональности перепроверять.
-4. EV не покупать. В любом варианте: RFC3161-timestamp, подписывать каждый релиз
-   одним identity, подписывать и `mindfork-rs.exe`, и сам setup (у Inno —
-   `SignTool=`-директива подпишет и деинсталлятор).
-
----
-
-## 6. Предпосылки в коде приложения (маленькие, до инсталляторов)
-
-- **П1. Fallback словарей на портативную раскладку рядом с бинарником.**
-  `dict::load` принимает один каталог; добавить второй источник —
-  `exe_dir/data/dictionaries` (когда root ≠ `exe_dir/data`): пары, чьё базовое имя
-  не найдено в каталоге данных, догружаются из exe-каталога (пользовательский
-  словарь того же имени выигрывает). Один инвариант на все платформы: релизный zip,
-  Windows-инсталлятор и Linux-пакеты кладут словари одинаково. (~30 строк +
-  `Paths::bundled_dictionaries_dir()` + тесты.)
-- **П2. Автоопределение языка по локали ОС** при отсутствии явного
-  `default_language`: `Defaults.default_language: Lang` → `Option<Lang>`; `None` →
-  детект по локали (крейт `sys-locale`, чистый и крошечный; `ru*` → `Ru`, иначе
-  `En`; расширяемо на внешние локали Ярусa 3). Меняет поведение только свежих
-  установок и новых профилей при отсутствии поля (сегодня — всегда `Ru`); Windows-
-  инсталлятор пишет язык явно, Linux-пакеты и голый zip получают разумный дефолт.
-  Закрывает задел roadmap «Определение языка по системной локали ОС».
-- **П3. Терпимость `Defaults::read` к UTF-8 BOM** (отбрасывать до парса — прецеденты
-  `rag_ingest::read_text`, импортёр LameLLaMA). Защищает от Pascal-хелперов Inno и
-  ручной правки файла редакторами, пишущими BOM. (2 строки + тест.)
-
-Все три — additive, без миграций (ADR 0006 не задевается).
+1. The repository is public (or we're willing to make it public) → **SignPath Foundation**:
+   free, recommended by Microsoft; the cost — "SignPath Foundation" instead of a personal
+   name in dialogs + manual release approval + process requirements (MFA, a signing policy
+   on the project page).
+2. A certificate is needed **in your own name**, an individual outside the US/Canada →
+   **Certum Open Source** (~€69/€29) — the only cheap path; automation in CI is possible,
+   but via workarounds.
+3. **Azure Artifact Signing** — the best price/automation, **as soon as** it's available
+   for the relevant geography (an individual in the US/Canada, or an organization in
+   EU/UK/US/Canada); recheck the regional status.
+4. Don't buy EV. In any variant: an RFC3161 timestamp, sign every release with one
+   identity, sign both `mindfork-rs.exe` and the setup itself (with Inno, a
+   `SignTool=` directive signs the uninstaller too).
 
 ---
 
-## 7. Развилки (подтвердить до реализации)
+## 6. Prerequisites in the app's code (small, ahead of the installers)
 
-- **Р1. Формат Windows-инсталлятора.**
-  - (a) **[рек.]** Inno Setup 6.7.x (exe): все пять особых требований — штатные
-    возможности, 1–2 дня работы, официальный русский перевод, бесплатен для OSS,
-    есть на GHA. MSI — задел при спросе на GPO/Intune.
-  - (b) WiX MSI: «настоящий» установочный формат Windows, но каждое наше требование
-    — обходной приём (кастомные диалоги, JSON через CustomAction, мультиязычие
-    трансформами), дни-недели работы + вилка EOL-v3/платный-v6.
-  - (c) Оба сразу — двойная стоимость сопровождения без спроса.
-- **Р2. Режим установки Windows.**
-  - (a) **[рек.]** per-user по умолчанию (`PrivilegesRequired=lowest`, без UAC,
-    `%LOCALAPPDATA%\Programs`) + диалог «для меня / для всех»
-    (`…OverridesAllowed=dialog`). При per-machine вариант «портативно» скрывается.
-  - (b) только per-machine (Program Files, UAC) — портативный вариант данных
-    становится недоступен, а выгоды нет.
-- **Р3. Что пишет инсталлятор в `default_language`.**
-  - (a) **[рек.]** отдельная страница «язык приложения» с дефолтом от языка
-    инсталлятора (выбор языка инсталлятора ≠ обязательный выбор языка приложения,
-    но хороший дефолт).
-  - (b) молча взять язык инсталлятора без страницы — меньше кликов, но выбор
-    неявный.
-- **Р4. Инструмент Linux-пакетов.**
-  - (a) **[рек.]** nfpm: один YAML → deb+rpm+archlinux, идентичная раскладка,
-    symlink/config|noreplace из коробки, активнейшее сопровождение.
-  - (b) cargo-deb + cargo-generate-rpm (+ отдельное решение для arch): метаданные в
-    Cargo.toml и авто-Depends, но три конфига и arch не покрыт.
-- **Р5. Раскладка Linux-пакета.**
-  - (a) **[рек.]** `/usr/lib/mindfork-rs/` (бинарь + `defaults.json` +
-    `data/dictionaries`) + симлинк `/usr/bin/mindfork-rs` — ноль правок кода
-    резолва путей, Policy-совместимо.
-  - (b) бинарь в `/usr/bin` + приложение учится читать `/etc/mindfork-rs/defaults.json`
-    и `/usr/share/mindfork-rs/` — FHS-пуризм ценой второй механики поиска в коде.
-- **Р6. Язык при неинтерактивной установке (П2).**
-  - (a) **[рек.]** `default_language: Option<Lang>` + автоопределение по локали ОС
-    при `None` (Linux-пакеты и zip получают язык системы; закрывает задел roadmap).
-  - (b) Linux-пакеты пишут фиксированный `"en"` — предсказуемо, но русскоязычная
-    система получит английский первый профиль.
-  - (c) оставить как есть (`ru` при отсутствии поля) — плохой дефолт для
-    международных пакетов.
-- **Р7. Словари в установленном виде (П1).**
-  - (a) **[рек.]** fallback-каталог `exe_dir/data/dictionaries` (read-only ресурсы
-    рядом с бинарником; пакеты и инсталлятор кладут словари туда).
-  - (b) копировать словари в каталог данных при первом запуске — дубли на диске,
-    устаревание копий.
-  - (c) не решать — в установленном виде спелл-чек молча выключен (текущее
-    поведение).
-- **Р8. Подпись Windows.**
-  - (a) **[рек. при публичном репозитории]** SignPath Foundation (бесплатно,
-    рекомендация Microsoft; издатель «SignPath Foundation», ручное одобрение
-    релизов).
-  - (b) **[рек. иначе / «своё имя»]** стартовать без подписи, отдельным этапом —
-    Certum Open Source (~€69/€29, физлицо любой страны); в winget до подписи
-    отдавать портативный zip, не inno-exe (§5.4).
-  - (c) Azure Artifact Signing $9.99/мес — когда пройдёт по географии
-    (физлицо: США/Канада; юрлицо: +ЕС/UK); перепроверять статус.
-  - (d) коммерческий OV (~$150–300) / EV — EV не даёт больше ничего, не брать.
-- **Р9. Базлайн glibc для deb/rpm.**
-  - (a) **[рек.]** оставить `ubuntu-22.04` (glibc 2.35), честно задекларировав
-    «RHEL/Rocky 9 не поддержан» (как сейчас в install.md).
-  - (b) `cargo-zigbuild` с пином glibc 2.34 ради EL9 (не проверялось).
-  - (c) musl-static (нужен mimalloc против деградации аллокатора).
+- **P1. A dictionary fallback onto the portable layout next to the binary.**
+  `dict::load` takes one directory; add a second source —
+  `exe_dir/data/dictionaries` (when root ≠ `exe_dir/data`): pairs whose base name isn't
+  found in the data directory are loaded from the exe directory (a user dictionary of the
+  same name wins). One invariant across all platforms: the release zip, the Windows
+  installer, and Linux packages all place dictionaries the same way. (~30 lines +
+  `Paths::bundled_dictionaries_dir()` + tests.)
+- **P2. Auto-detect the language from the OS locale** when `default_language` isn't set
+  explicitly: `Defaults.default_language: Lang` → `Option<Lang>`; `None` → detect from the
+  locale (crate `sys-locale`, tiny and clean; `ru*` → `Ru`, else `En`; extensible to
+  Tier 3's external locales). Only changes the behavior of fresh installs and new profiles
+  when the field is absent (today — always `Ru`); the Windows installer writes the
+  language explicitly, Linux packages and a bare zip get a sensible default. Closes the
+  roadmap groundwork item "Detect language from the OS system locale."
+- **P3. Make `Defaults::read` tolerant of a UTF-8 BOM** (drop it before parsing —
+  precedents `rag_ingest::read_text`, the LameLLaMA importer). Guards against Inno's
+  Pascal helpers and manual file edits by editors that write a BOM. (2 lines + a test.)
 
-Микро-решения, которые предлагаю зафиксировать без развилки (сказать, если не так):
-страницы выбора пропускаются при апгрейде (`defaults.json` существует);
-деинсталлятор данные не трогает; артефакты называются
-`mindfork-rs-vX.Y.Z-x86_64-setup.exe` + конвенционные имена пакетов
-(`mindfork-rs_X.Y.Z-1_amd64.deb`, `mindfork-rs-X.Y.Z-1.x86_64.rpm`,
-`mindfork-rs-X.Y.Z-1-x86_64.pkg.tar.zst`); всё попадает в `sha256sums.txt`.
+All three are additive, no migrations (ADR 0006 isn't touched).
 
 ---
 
-## 8. План этапов (после подтверждения развилок; этап = ветка/PR)
+## 7. Decision points (confirm before implementation)
 
-| Этап | Ветка | Содержимое | DoD |
+- **R1. Windows installer format.**
+  - (a) **[rec.]** Inno Setup 6.7.x (exe): all five special requirements are built-in
+    features, 1–2 days of work, an official Russian translation, free for OSS, available
+    on GHA. MSI — groundwork if there's demand for GPO/Intune.
+  - (b) WiX MSI: the "real" Windows installer format, but every one of our requirements
+    is a workaround (custom dialogs, JSON via a CustomAction, multilingualism via
+    transforms), days-to-weeks of work + the fork EOL-v3/paid-v6.
+  - (c) Both at once — double the maintenance cost with no demand for it.
+- **R2. Windows install mode.**
+  - (a) **[rec.]** per-user by default (`PrivilegesRequired=lowest`, no UAC,
+    `%LOCALAPPDATA%\Programs`) + a "for me / for everyone" dialog
+    (`…OverridesAllowed=dialog`). With per-machine, the "portable" option is hidden.
+  - (b) per-machine only (Program Files, UAC) — the portable data option becomes
+    unavailable, with no benefit.
+- **R3. What the installer writes to `default_language`.**
+  - (a) **[rec.]** a separate "application language" page, defaulting to the installer's
+    language (the installer's language choice ≠ a mandatory app-language choice, but a
+    good default).
+  - (b) silently take the installer's language with no page — fewer clicks, but an
+    implicit choice.
+- **R4. Linux packaging tool.**
+  - (a) **[rec.]** nfpm: one YAML → deb+rpm+archlinux, an identical layout,
+    symlink/config|noreplace out of the box, very active maintenance.
+  - (b) cargo-deb + cargo-generate-rpm (+ a separate solution for arch): metadata in
+    Cargo.toml and auto-Depends, but three configs and arch isn't covered.
+- **R5. Linux package layout.**
+  - (a) **[rec.]** `/usr/lib/mindfork-rs/` (the binary + `defaults.json` +
+    `data/dictionaries`) + a symlink `/usr/bin/mindfork-rs` — zero changes to
+    path-resolution code, Policy-compatible.
+  - (b) the binary in `/usr/bin` + the app learns to read
+    `/etc/mindfork-rs/defaults.json` and `/usr/share/mindfork-rs/` — FHS purism at the
+    cost of a second lookup mechanism in the code.
+- **R6. Language for a non-interactive install (P2).**
+  - (a) **[rec.]** `default_language: Option<Lang>` + auto-detect from the OS locale on
+    `None` (Linux packages and the zip get the system's language; closes the roadmap
+    groundwork item).
+  - (b) Linux packages write a fixed `"en"` — predictable, but a Russian-language system
+    gets an English first profile.
+  - (c) leave it as-is (`ru` when the field is absent) — a bad default for international
+    packages.
+- **R7. Dictionaries in an installed setup (P1).**
+  - (a) **[rec.]** a fallback directory `exe_dir/data/dictionaries` (read-only resources
+    next to the binary; packages and the installer place dictionaries there).
+  - (b) copy dictionaries into the data directory on first launch — duplicates on disk,
+    copies going stale.
+  - (c) don't fix it — spellcheck stays silently disabled in an installed setup (current
+    behavior).
+- **R8. Windows signing.**
+  - (a) **[rec. if the repository is public]** SignPath Foundation (free, a Microsoft
+    recommendation; the publisher shows as "SignPath Foundation", manual release
+    approval).
+  - (b) **[rec. otherwise / "your own name"]** start with no signing, as a separate
+    stage — Certum Open Source (~€69/€29, an individual from any country); publish a
+    portable zip in winget until signing is in place, not the inno-exe (§5.4).
+  - (c) Azure Artifact Signing $9.99/mo — once it clears geographically (an individual in
+    the US/Canada; an organization +EU/UK); recheck the status.
+  - (d) commercial OV (~$150–300) / EV — EV gives nothing extra, don't get it.
+- **R9. glibc baseline for deb/rpm.**
+  - (a) **[rec.]** keep `ubuntu-22.04` (glibc 2.35), honestly declaring "RHEL/Rocky 9 not
+    supported" (as install.md already does).
+  - (b) `cargo-zigbuild` pinned to glibc 2.34 for EL9 (not verified).
+  - (c) a static musl build (needs mimalloc against allocator degradation).
+
+Micro-decisions I propose locking in without a decision point (say if this is wrong): the
+choice pages are skipped on an upgrade (`defaults.json` exists); the uninstaller doesn't
+touch data; artifacts are named `mindfork-rs-vX.Y.Z-x86_64-setup.exe` + conventional
+package names (`mindfork-rs_X.Y.Z-1_amd64.deb`, `mindfork-rs-X.Y.Z-1.x86_64.rpm`,
+`mindfork-rs-X.Y.Z-1-x86_64.pkg.tar.zst`); everything ends up in `sha256sums.txt`.
+
+---
+
+## 8. Stage plan (after decision points are confirmed; a stage = a branch/PR)
+
+| Stage | Branch | Contents | DoD |
 |---|---|---|---|
-| 1. Предпосылки в коде | `feat/installed-mode-prereqs` | П1 (fallback словарей) + П2 (`Option<Lang>` + автодетект локали) + П3 (BOM) + доки (install.md §2.1, spec §5.2) | юнит-тесты; ручной смоук: бинарь + `defaults.json {"mode":"system"}` в чистом каталоге → словари подхвачены из `data/`, язык по локали |
-| 2. Linux-пакеты | `feat/linux-packages` | `packaging/nfpm.yaml` (раскладка §4.2), job в `release.yml` (nfpm → deb/rpm/archlinux → артефакты + sha256) | **CI-смоук установки**: контейнеры `ubuntu:24.04` (`apt install ./…deb`), `fedora:latest` (`dnf install ./…rpm`), `archlinux:latest` (`pacman -U`) → `mindfork-rs --version` под обычным пользователем; `defaults.json` виден через симлинк |
-| 3. Windows-инсталлятор | `feat/windows-installer` | `packaging/windows/mindfork.iss` (дизайн §3.3), job в `release.yml` (iscc → setup.exe) | ручной смоук на Windows: свежая установка per-user (обе страницы, все 3 режима данных), апгрейд поверх (страницы пропущены, `defaults.json` цел), тихая установка, uninstall не трогает данные |
-| 4. (опц.) Подпись | `feat/windows-signing` | по Р8: SignPath/Certum-интеграция в `release.yml` (подпись exe + setup, timestamp) | подписанный артефакт: `signtool verify /pa`, свойства файла показывают издателя |
-| 5. (заделы) | — | winget-манифест (до подписи — zip, §5.4), AUR `mindfork-rs-bin`, GitHub Artifact Attestations, MSI при спросе, apt/COPR-репозитории | — |
+| 1. Code prerequisites | `feat/installed-mode-prereqs` | P1 (dictionary fallback) + P2 (`Option<Lang>` + locale auto-detect) + P3 (BOM) + docs (install.md §2.1, spec §5.2) | unit tests; a manual smoke: the binary + `defaults.json {"mode":"system"}` in a clean directory → dictionaries picked up from `data/`, language from the locale |
+| 2. Linux packages | `feat/linux-packages` | `packaging/nfpm.yaml` (layout §4.2), a job in `release.yml` (nfpm → deb/rpm/archlinux → artifacts + sha256) | **CI install smoke**: containers `ubuntu:24.04` (`apt install ./…deb`), `fedora:latest` (`dnf install ./…rpm`), `archlinux:latest` (`pacman -U`) → `mindfork-rs --version` as a regular user; `defaults.json` visible through the symlink |
+| 3. Windows installer | `feat/windows-installer` | `packaging/windows/mindfork.iss` (design §3.3), a job in `release.yml` (iscc → setup.exe) | a manual smoke on Windows: a fresh per-user install (both pages, all 3 data modes), an upgrade on top (pages skipped, `defaults.json` intact), a silent install, uninstall doesn't touch data |
+| 4. (opt.) Signing | `feat/windows-signing` | per R8: a SignPath/Certum integration in `release.yml` (signing the exe + setup, timestamp) | a signed artifact: `signtool verify /pa`, file properties show the publisher |
+| 5. (groundwork) | — | a winget manifest (zip until signing, §5.4), AUR `mindfork-rs-bin`, GitHub Artifact Attestations, MSI on demand, apt/COPR repositories | — |
 
-Живой прогон движка направлению не нужен (движок/память/инструменты не
-затрагиваются) — вместо него смоуки установки из DoD. Документация по AGENTS.md §4:
-install.md (новые способы установки), README (бейджи/ссылки), roadmap (задел
-закрыт), CHANGELOG (`[Unreleased]` → Добавлено), журнал CLAUDE.md.
-
----
-
-## 9. Вне объёма
-
-- Авто-обновление (self-update) и уведомление «доступна новая версия» в TUI —
-  отдельное направление (release-engineering §5).
-- macOS (dmg/homebrew), arm64-сборки, flatpak/snap/AppImage.
-- Собственные репозитории (apt PPA, dnf COPR, pacman-репо) — тогда же и GPG.
-- Локализация инсталлятора сверх ru/en (Inno умеет 30+ языков — добавляется парой
-  строк, когда появятся внешние локали приложения на этих языках).
+The track needs no live engine run (the engine/memory/tools aren't touched) — install
+smokes from the DoD stand in for it. Docs per AGENTS.md §4: install.md (new install
+methods), README (badges/links), roadmap (groundwork item closed), CHANGELOG
+(`[Unreleased]` → Added), the CLAUDE.md journal.
 
 ---
 
-## 10. Ключевые источники (проверено 2026-07-15)
+## 9. Out of scope
 
-**Windows-инструменты:** [Inno Setup downloads](https://jrsoftware.org/isdl.php) ·
-[официальные переводы (Russian.isl)](https://jrsoftware.org/files/istrans/) ·
+- Auto-update (self-update) and an "a new version is available" notice in the TUI — a
+  separate track (release-engineering §5).
+- macOS (dmg/homebrew), arm64 builds, flatpak/snap/AppImage.
+- Our own repositories (an apt PPA, a dnf COPR, a pacman repo) — GPG then too.
+- Installer localization beyond ru/en (Inno supports 30+ languages — a couple of lines to
+  add once external app locales exist for those languages).
+
+---
+
+## 10. Key sources (checked 2026-07-15)
+
+**Windows tools:** [Inno Setup downloads](https://jrsoftware.org/isdl.php) ·
+[official translations (Russian.isl)](https://jrsoftware.org/files/istrans/) ·
 [CreateInputOptionPage](https://jrsoftware.org/ishelp/topic_isxfunc_createinputoptionpage.htm) /
 [CreateInputDirPage](https://jrsoftware.org/ishelp/topic_isxfunc_createinputdirpage.htm) /
-[события скрипта](https://jrsoftware.org/ishelp/topic_scriptevents.htm) ·
+[script events](https://jrsoftware.org/ishelp/topic_scriptevents.htm) ·
 [PrivilegesRequiredOverridesAllowed](https://jrsoftware.org/ishelp/topic_setup_privilegesrequiredoverridesallowed.htm) ·
 [Setup Command Line](https://jrsoftware.org/ishelp/topic_setupcmdline.htm) ·
-[коммерческие лицензии Inno (6.5.0+)](https://jrsoftware.org/isorder.php) ·
+[Inno commercial licenses (6.5.0+)](https://jrsoftware.org/isorder.php) ·
 [WiX releases](https://github.com/wixtoolset/wix/releases) ·
 [EOL WiX v3/v4](https://www.firegiant.com/blog/2025/2/6/wix-v3-and-wix-v4-are-no-longer-in-community-support/) ·
 [WiX Maintenance Fee](https://www.firegiant.com/blog/2025/4/7/wix-v600-available/) ·
-[нет util:JsonFile](https://github.com/orgs/wixtoolset/discussions/7711) ·
-[мультиязычный MSI — WIP](https://github.com/wixtoolset/issues/issues/7544) ·
-[состав GHA windows-2025](https://github.com/actions/runner-images/blob/main/images/windows/Windows2025-Readme.md) ·
+[no util:JsonFile](https://github.com/orgs/wixtoolset/discussions/7711) ·
+[multilingual MSI — WIP](https://github.com/wixtoolset/issues/issues/7544) ·
+[GHA windows-2025 contents](https://github.com/actions/runner-images/blob/main/images/windows/Windows2025-Readme.md) ·
 [cargo-wix](https://github.com/volks73/cargo-wix/releases) ·
 [cargo-dist](https://github.com/axodotdev/cargo-dist/releases) ·
 [cargo-packager](https://github.com/crabnebula-dev/cargo-packager/releases) ·
-[winget: манифесты/типы](https://learn.microsoft.com/en-us/windows/package-manager/package/manifest)
+[winget: manifests/types](https://learn.microsoft.com/en-us/windows/package-manager/package/manifest)
 
-**Linux-пакетирование:** [nfpm: конфигурация/форматы](https://nfpm.goreleaser.com/docs/configuration/) ·
+**Linux packaging:** [nfpm: configuration/formats](https://nfpm.goreleaser.com/docs/configuration/) ·
 [nfpm releases](https://github.com/goreleaser/nfpm/releases) ·
 [cargo-deb](https://github.com/kornelski/cargo-deb) ·
 [cargo-generate-rpm](https://github.com/cat-in-136/cargo-generate-rpm) ·
 [FHS 3.0 /usr/bin](https://refspecs.linuxfoundation.org/FHS_3.0/fhs/ch04s04.html) /
 [/usr/lib](https://refspecs.linuxfoundation.org/FHS_3.0/fhs/ch04s06.html) ·
 [Debian Policy §9.1.1](https://www.debian.org/doc/debian-policy/ch-opersys.html) ·
-[current_exe резолвит симлинк на Linux](https://github.com/rust-lang/rust/issues/43617) ·
+[current_exe resolves a symlink on Linux](https://github.com/rust-lang/rust/issues/43617) ·
 [AUR submission guidelines (-bin)](https://wiki.archlinux.org/title/AUR_submission_guidelines) ·
-[debconf-devel(7): не реестр](https://manpages.debian.org/unstable/debconf-doc/debconf-devel.7.en.html) ·
-[Securing Debian: подпись deb](https://www.debian.org/doc/manuals/securing-debian-manual/deb-pack-sign.en.html) ·
+[debconf-devel(7): not a registry](https://manpages.debian.org/unstable/debconf-doc/debconf-devel.7.en.html) ·
+[Securing Debian: signing a deb](https://www.debian.org/doc/manuals/securing-debian-manual/deb-pack-sign.en.html) ·
 [pacman SigLevel](https://wiki.archlinux.org/title/Pacman/Package_signing) ·
 [Artifact Attestations GA](https://github.blog/changelog/2024-06-25-artifact-attestations-is-generally-available/) ·
 [glibc RHEL10/2.39](https://lwn.net/Articles/1021827/) ·
-[musl-аллокатор и производительность](https://nickb.dev/blog/default-musl-allocator-considered-harmful-to-performance/)
+[the musl allocator and performance](https://nickb.dev/blog/default-musl-allocator-considered-harmful-to-performance/)
 
-**Подпись кода:** [SmartScreen reputation (MS, 2026)](https://learn.microsoft.com/en-us/windows/apps/package-and-deploy/smartscreen-reputation) ·
-[Code signing options (MS, 2026; рекомендация SignPath для OSS)](https://learn.microsoft.com/en-us/windows/apps/package-and-deploy/code-signing-options) ·
-[Artifact Signing FAQ (география)](https://learn.microsoft.com/en-us/azure/artifact-signing/faq) ·
+**Code signing:** [SmartScreen reputation (MS, 2026)](https://learn.microsoft.com/en-us/windows/apps/package-and-deploy/smartscreen-reputation) ·
+[Code signing options (MS, 2026; recommends SignPath for OSS)](https://learn.microsoft.com/en-us/windows/apps/package-and-deploy/code-signing-options) ·
+[Artifact Signing FAQ (geography)](https://learn.microsoft.com/en-us/azure/artifact-signing/faq) ·
 [azure/artifact-signing-action](https://github.com/Azure/trusted-signing-action) ·
-[SignPath Foundation: условия](https://signpath.org/terms.html) ·
+[SignPath Foundation: terms](https://signpath.org/terms.html) ·
 [SignPath GitHub Action](https://github.com/SignPath/github-action-submit-signing-request) ·
 [Certum Open Source](https://www.certum.eu/en/code-signing-certificates/) ·
-[hands-on Certum 10.2025 (цены)](https://piers.rocks/2025/10/30/certum-open-source-code-sign.html) ·
-[CA/B: аппаратные ключи с 06.2023](https://cabforum.org/working-groups/code-signing/requirements/) ·
-[CSC-31: 460 дней с 03.2026](https://cabforum.org/2025/11/17/ballot-csc-31-maximum-validity-reduction/) ·
-[EV не обходит SmartScreen (ToDesktop)](https://www.todesktop.com/blog/posts/windows-apps-psa-ev-certs-do-not-grant-immediate-reputation-anymore) ·
-[winget: подпись не требуется](https://github.com/microsoft/winget-cli/discussions/4327) ·
-[кейс halloy: неподписанный inno-exe в winget](https://github.com/microsoft/winget-pkgs/issues/385483)
+[hands-on Certum 10.2025 (pricing)](https://piers.rocks/2025/10/30/certum-open-source-code-sign.html) ·
+[CA/B: hardware keys since 06.2023](https://cabforum.org/working-groups/code-signing/requirements/) ·
+[CSC-31: 460 days since 03.2026](https://cabforum.org/2025/11/17/ballot-csc-31-maximum-validity-reduction/) ·
+[EV doesn't bypass SmartScreen (ToDesktop)](https://www.todesktop.com/blog/posts/windows-apps-psa-ev-certs-do-not-grant-immediate-reputation-anymore) ·
+[winget: signing not required](https://github.com/microsoft/winget-cli/discussions/4327) ·
+[the halloy case: an unsigned inno-exe in winget](https://github.com/microsoft/winget-pkgs/issues/385483)

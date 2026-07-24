@@ -1,47 +1,53 @@
-//! Markdown — рендер ```mermaid-блоков диаграммой (крейт `mermaid-text`). Часть
-//! модуля [`super`]; см. spec §11.4 и docs/research/mermaid-ascii-rendering.md.
+//! Markdown — rendering ```mermaid blocks as a diagram (the `mermaid-text`
+//! crate). Part of module [`super`]; see spec §11.4 and
+//! docs/research/mermaid-ascii-rendering.md.
 //!
-//! Философия — **жёсткий фолбэк вместо клипа** (в отличие от таблиц, где при
-//! нехватке ширины допустим горизонтальный клип с «…»): диаграмма с оборванными
-//! стрелками нечитаема, поэтому правило бинарное — либо целая диаграмма, либо
-//! `None`, и вызывающий ([`Writer::end_codeblock`]) печатает исходник код-блоком,
-//! байт-в-байт как при выключенном тумблере. Худший случай = прежнее поведение.
+//! Philosophy — **a hard fallback instead of clipping** (unlike tables, where
+//! horizontal clipping with "…" is acceptable when width is short): a
+//! diagram with cut-off arrows is unreadable, so the rule is binary — either
+//! the whole diagram, or `None`, and the caller
+//! ([`Writer::end_codeblock`]) prints the source as a code block,
+//! byte-for-byte as with the toggle disabled. Worst case = previous behavior.
 //!
-//! Требуется `mermaid-text` ≥ 0.56.1: 0.56.0 паниковал и молча портил подписи на
-//! многобайтовом (кириллическом) вводе — наш апстрим-фикс
-//! (leboiko/markdown-reader#29/#30). 0.57.0 закрыл наш feature request #32 (жёсткий
-//! бюджет ширины через `RenderOptions::max_width_strict` → `Error::TooWide`); мы его
-//! сознательно НЕ используем — наш пост-чек по [`wrap::display_width`] точнее
-//! (учитывает двойную ширину CJK/эмодзи и совпадает с переносом в `message_feed`),
-//! а `render_with_width` уже сам ужимает зазоры под ширину. Панику здесь сознательно НЕ ловим
-//! (`catch_unwind`): panic-hook приложения восстанавливает терминал на любую
-//! панику (в том числе пойманную), так что «поймать и продолжить» оставило бы TUI
-//! в сломанном состоянии; полагаемся на аудит апстрима + узкий whitelist.
+//! Requires `mermaid-text` ≥ 0.56.1: 0.56.0 panicked and silently corrupted
+//! labels on multibyte (Cyrillic) input — our upstream fix
+//! (leboiko/markdown-reader#29/#30). 0.57.0 closed our feature request #32 (a
+//! hard width budget via `RenderOptions::max_width_strict` →
+//! `Error::TooWide`); we deliberately do NOT use it — our post-check via
+//! [`wrap::display_width`] is more accurate (accounts for the double width of
+//! CJK/emoji and matches the wrap in `message_feed`), and `render_with_width`
+//! already tightens the gaps to the width. We deliberately do NOT catch a
+//! panic here (`catch_unwind`): the app's panic hook restores the terminal on
+//! any panic (including a caught one), so "catch and continue" would leave
+//! the TUI in a broken state; we rely on the upstream audit + the narrow
+//! whitelist.
 
 use mermaid_text::detect::{DiagramKind, detect};
 
 use super::*;
 
-/// Рендерит содержимое ```mermaid-блока в строки диаграммы. `None` — «не берёмся»
-/// (тип вне whitelist / не распарсилось / не влезло по ширине): вызывающий обязан
-/// показать исходник. Ширина проверяется **нашим** пост-чеком: `max_width` крейта —
-/// мягкая подсказка, а не бюджет (sequence/pie её игнорируют целиком), тогда как
-/// инвариант ленты «строка ≤ ширины панели» жёсткий — иначе повторный перенос в
-/// `message_feed` разорвал бы рамки диаграммы.
+/// Renders a ```mermaid block's content into diagram lines. `None` — "not
+/// taking this on" (a type outside the whitelist / didn't parse / didn't fit
+/// the width): the caller must show the source instead. Width is checked by
+/// **our own** post-check: the crate's `max_width` is a soft hint, not a
+/// budget (sequence/pie ignore it entirely), whereas the feed's invariant
+/// "line ≤ panel width" is hard — otherwise the feed's re-wrap
+/// (`message_feed`) would break the diagram's frames.
 pub(super) fn render_mermaid_block(
     src: &str,
     width: usize,
     palette: &Palette,
 ) -> Option<Vec<Line<'static>>> {
-    // Whitelist: flowchart/graph + sequence. Остальные типы (pie/gantt/mindmap/
-    // class/state/…) в текстовой графике почти всегда убоги — честнее исходник.
+    // Whitelist: flowchart/graph + sequence. Other types (pie/gantt/mindmap/
+    // class/state/…) are almost always poor as text graphics — the source is
+    // more honest.
     if !matches!(
         detect(src),
         Ok(DiagramKind::Flowchart | DiagramKind::Sequence)
     ) {
         return None;
     }
-    // Компат-режим (conhost/WGL4, spec §11.6) — ASCII-глифы вместо box-drawing.
+    // Compat mode (conhost/WGL4, spec §11.6) — ASCII glyphs instead of box-drawing.
     let rendered = if palette.compat {
         mermaid_text::render_ascii_with_width(src, Some(width))
     } else {
@@ -53,14 +59,15 @@ pub(super) fn render_mermaid_block(
     for l in rendered.lines() {
         let chars: Vec<char> = l.chars().collect();
         if wrap::display_width(&chars) > width {
-            return None; // пост-чек ширины: не влезло → целиком фолбэк
+            return None; // width post-check: didn't fit → fall back entirely
         }
         lines.push(Line::from(Span::styled(
             l.trim_end().to_string(),
             Style::new().fg(palette.text),
         )));
     }
-    // Хвостовые пустые строки крейта не нужны — межблочные отступы даёт Writer.
+    // Trailing empty lines from the crate aren't needed — Writer already gives
+    // inter-block spacing.
     while lines
         .last()
         .is_some_and(|l| l.spans.iter().all(|s| s.content.trim().is_empty()))
@@ -68,7 +75,7 @@ pub(super) fn render_mermaid_block(
         lines.pop();
     }
     if lines.is_empty() {
-        return None; // пустой рендер — нечего показывать, пусть будет исходник
+        return None; // an empty render — nothing to show, let it fall back to the source
     }
     Some(lines)
 }
@@ -77,41 +84,40 @@ pub(super) fn render_mermaid_block(
 mod tests {
     use super::*;
 
-    /// Валидная sequence-диаграмма (латиница — как на типичном «объясни HTTP»).
+    /// A valid sequence diagram (Latin — as in a typical "explain HTTP").
     const SEQ: &str = "sequenceDiagram\n    participant Client\n    participant Server\n    Client->>Server: GET /api/data\n    Server-->>Client: 200 OK\n";
-    /// Валидный кириллический flowchart (основной язык проекта).
+    /// A valid Cyrillic flowchart (the project's main language).
     const FLOW_RU: &str = "flowchart TD\n    A[Пользователь] --> B{Есть токен?}\n    B -->|Да| C[Доступ разрешён]\n    B -->|Нет| D[Форма входа]\n";
 
     #[test]
     fn renders_sequence_diagram() {
-        let lines =
-            render_mermaid_block(SEQ, 90, &Palette::default()).expect("должна отрендериться");
+        let lines = render_mermaid_block(SEQ, 90, &Palette::default()).expect("should render");
         let joined: String = lines
             .iter()
             .flat_map(|l| l.spans.iter().map(|s| s.content.as_ref()))
             .collect();
         assert!(joined.contains("Client"), "{joined}");
-        assert!(joined.contains('┌'), "нет box-drawing рамок: {joined}");
+        assert!(joined.contains('┌'), "no box-drawing frames: {joined}");
     }
 
     #[test]
     fn renders_cyrillic_flowchart_without_mangling() {
-        // Регрессия апстрима (0.56.0 портил подписи): узлы целы, скобки не текут.
-        let lines = render_mermaid_block(FLOW_RU, 90, &Palette::default()).expect("рендер");
+        // Upstream regression (0.56.0 corrupted labels): nodes intact, no bracket leaks.
+        let lines = render_mermaid_block(FLOW_RU, 90, &Palette::default()).expect("render");
         let joined: String = lines
             .iter()
             .flat_map(|l| l.spans.iter().map(|s| s.content.as_ref()))
             .collect();
-        assert!(joined.contains("Форма входа"), "узел потерян: {joined}");
+        assert!(joined.contains("Форма входа"), "node lost: {joined}");
         assert!(
             !joined.contains("[Доступ"),
-            "скобка утекла в подпись: {joined}"
+            "a bracket leaked into a label: {joined}"
         );
     }
 
     #[test]
     fn too_narrow_width_falls_back() {
-        // Диаграмма не влезает в 20 колонок → None (фолбэк на исходник), не клип.
+        // The diagram doesn't fit into 20 columns → None (fall back to the source), not a clip.
         assert!(render_mermaid_block(SEQ, 20, &Palette::default()).is_none());
     }
 
@@ -127,8 +133,8 @@ mod tests {
     fn garbage_and_stream_stub_fall_back() {
         assert!(render_mermaid_block("просто текст", 90, &Palette::default()).is_none());
         assert!(render_mermaid_block("", 90, &Palette::default()).is_none());
-        // Обрубок стрима: заголовок есть, тело оборвано — Ok или None, но не паника;
-        // если отрендерился огрызок, его заменит полный блок по дописывании.
+        // A stream stub: the header is there, the body cut off — Ok or None, but not a panic;
+        // if a stub rendered, the complete block will replace it once finished.
         let _ = render_mermaid_block(
             "sequenceDiagram\n    participant Ser",
             90,
@@ -140,14 +146,14 @@ mod tests {
     fn compat_palette_renders_ascii_frames() {
         use crate::shared::config::Theme;
         let p = Palette::for_theme(Theme::Auto).with_compat(true);
-        let lines = render_mermaid_block(SEQ, 90, &p).expect("ascii-рендер");
+        let lines = render_mermaid_block(SEQ, 90, &p).expect("ascii render");
         let joined: String = lines
             .iter()
             .flat_map(|l| l.spans.iter().map(|s| s.content.as_ref()))
             .collect();
         assert!(
             !joined.contains('┌') && !joined.contains('│'),
-            "в компат-режиме не должно быть box-drawing: {joined}"
+            "there should be no box-drawing in compat mode: {joined}"
         );
     }
 
@@ -160,13 +166,13 @@ mod tests {
                     let chars: Vec<char> = s.chars().collect();
                     assert!(
                         wrap::display_width(&chars) <= w,
-                        "строка шире бюджета {w}: {s:?}"
+                        "line wider than the budget {w}: {s:?}"
                     );
                 }
             }
         }
     }
 
-    // Интеграция через полный рендер markdown — см. тесты writer.rs
-    // (mermaid_block_renders_diagram / fallback / выключенный флаг).
+    // Integration via a full markdown render — see the writer.rs tests
+    // (mermaid_block_renders_diagram / fallback / flag disabled).
 }

@@ -1,18 +1,20 @@
-//! Озвучивание текста (TTS): контракт синтеза + клиенты провайдеров +
-//! воспроизведение. Слот озвучивания **независим от chat-движка** (у Anthropic TTS
-//! нет вовсе), поэтому провайдер конфигурируется отдельно — как выделенный
-//! embedding-сервер (ADR 0002). Клиенты **stateless**: строятся из снимка конфига
-//! на вызов, менеджер-слот не нужен.
+//! Speech synthesis (TTS): the synthesis contract + provider clients +
+//! playback. The speech slot is **independent of the chat engine** (Anthropic
+//! has no TTS at all), so the provider is configured separately — like the
+//! dedicated embedding server (ADR 0002). Clients are **stateless**: built from
+//! a config snapshot per call, no manager slot is needed.
 //!
-//! Раскладка (docs/research/tts.md §8):
-//! - [`openai`] — `POST /v1/audio/speech`: облако OpenAI **и** любой сторонний
-//!   OpenAI-совместимый TTS-сервер (разные base URL/ключ/формат ответа);
-//! - [`gemini`] — нативный `generateContent` c `responseModalities:["AUDIO"]`;
-//! - [`playback`] — воспроизведение: очередь источников `rodio` + отмена.
+//! Layout (docs/research/tts.md §8):
+//! - [`openai`] — `POST /v1/audio/speech`: the OpenAI cloud **and** any
+//!   third-party OpenAI-compatible TTS server (different base URL/key/response
+//!   format);
+//! - [`gemini`] — native `generateContent` with `responseModalities:["AUDIO"]`;
+//! - [`playback`] — playback: an `rodio` source queue + cancellation.
 //!
-//! Локальный сайдкар (managed-режим) — **задел** (спайк: локальные движки NO-GO по
-//! русскому либо требуют своего фронтенда; docs/research/tts.md §13). Основной путь —
-//! облако (OpenAI); offline — `external` (свой OpenAI-совместимый сервер).
+//! A local sidecar (managed mode) is **future work** (a spike: local engines
+//! are NO-GO for Russian, or need their own frontend; docs/research/tts.md
+//! §13). The primary path is the cloud (OpenAI); offline — `external` (your own
+//! OpenAI-compatible server).
 
 pub mod gemini;
 pub mod openai;
@@ -23,26 +25,27 @@ use tokio_util::sync::CancellationToken;
 
 use crate::shared::config::{TtsMode, TtsSettings};
 
-/// Синтезированный фрагмент речи.
+/// A synthesized speech fragment.
 ///
-/// Облака отдают **сырой PCM без заголовка** (OpenAI `response_format:"pcm"` —
-/// 24 кГц s16le mono; Gemini `audio/L16;codec=pcm;rate=…`), поэтому декодер им не
-/// нужен вовсе — сэмплы идут прямо в буфер воспроизведения. Сторонние серверы
-/// отвечают контейнером (`wav` — самый переносимый), его разбирает декодер.
+/// Clouds return **raw PCM with no header** (OpenAI `response_format:"pcm"` —
+/// 24 kHz s16le mono; Gemini `audio/L16;codec=pcm;rate=…`), so they need no
+/// decoder at all — samples go straight into the playback buffer. Third-party
+/// servers respond with a container (`wav` — the most portable), parsed by the
+/// decoder.
 #[derive(Debug, Clone, PartialEq)]
 pub enum AudioClip {
-    /// Сырой знаковый 16-битный little-endian PCM без заголовка.
+    /// Raw signed 16-bit little-endian PCM with no header.
     Pcm {
         sample_rate: u32,
         channels: u16,
         bytes: Vec<u8>,
     },
-    /// Аудио в контейнере (wav/mp3) — с заголовком, разбирается декодером.
+    /// Audio in a container (wav/mp3) — with a header, parsed by the decoder.
     Encoded(Vec<u8>),
 }
 
 impl AudioClip {
-    /// Пустой ли клип (нечего проигрывать).
+    /// Whether the clip is empty (nothing to play).
     pub fn is_empty(&self) -> bool {
         match self {
             AudioClip::Pcm { bytes, .. } => bytes.len() < 2,
@@ -51,39 +54,42 @@ impl AudioClip {
     }
 }
 
-/// Провайдер синтеза речи. Реализации — тонкие HTTP-клиенты (см. модуль).
+/// A speech-synthesis provider. Implementations are thin HTTP clients (see the
+/// module).
 #[async_trait::async_trait]
 pub trait TtsEngine: Send + Sync {
-    /// Синтезирует речь для куска текста. Отменяемо: по `cancel` запрос
-    /// прерывается (ошибкой), накопленное не используется.
+    /// Synthesizes speech for a piece of text. Cancellable: on `cancel` the
+    /// request is aborted (with an error), accumulated output is not used.
     async fn synthesize(&self, text: &str, cancel: &CancellationToken) -> Result<AudioClip>;
 
-    /// Потолок длины текста одного запроса (символов) — по нему режется текст на
-    /// чанки. Жёсткий лимит провайдера, а не предпочтение.
+    /// The ceiling on a single request's text length (characters) — text is
+    /// cut into chunks by it. A hard provider limit, not a preference.
     fn max_input_chars(&self) -> usize;
 }
 
-/// Почему озвучивание не настроено. Структурная ошибка (не текст): сообщение
-/// формирует UI на языке интерфейса — ось B, прецедент `supervisor::ApiKeyError`.
+/// Why speech isn't configured. A structured error (not text): the message is
+/// built by the UI in the interface language — axis B, a precedent from
+/// `supervisor::ApiKeyError`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TtsSetupError {
-    /// Не задано имя модели.
+    /// No model name set.
     Model,
-    /// Нет API-ключа (ни введённого в настройках, ни в env-переменной).
+    /// No API key (neither entered in settings nor in an env variable).
     ApiKey,
-    /// Не задан URL внешнего сервера.
+    /// No external server URL set.
     Url,
 }
 
-/// Пара движков озвучки: голос ассистента (всегда) и опц. голос пользователя.
+/// A pair of speech engines: the assistant's voice (always) and an optional
+/// user voice.
 pub type TtsEnginePair = (Box<dyn TtsEngine>, Option<Box<dyn TtsEngine>>);
 
-/// Движки для многоголосой озвучки: `(ассистент, опц. пользователь)`. `stored_key` —
-/// сохранённый ключ провайдера (ADR 0008): уже расшифрован вызывающим; при его
-/// отсутствии ключ читается из env-переменной. Второй движок строится **только**
-/// если в активном режиме задан отдельный «Голос пользователя» и он отличается от
-/// голоса ассистента — тогда `/tts all`/`/tts N` читают реплики пользователя им
-/// (spec §11.9). Иначе `None` → всё одним голосом.
+/// Engines for multi-voice speech: `(assistant, opt. user)`. `stored_key` — the
+/// provider's stored key (ADR 0008): already decrypted by the caller; if
+/// absent, the key is read from an env variable. The second engine is built
+/// **only** if the active mode has a separate "user voice" set and it differs
+/// from the assistant's voice — then `/tts all`/`/tts N` read the user's turns
+/// with it (spec §11.9). Otherwise `None` → everything in one voice.
 pub fn engines_from_config(
     tts: &TtsSettings,
     stored_key: Option<String>,
@@ -99,9 +105,9 @@ pub fn engines_from_config(
     Ok((assistant, user))
 }
 
-/// Общий конструктор клиента. `voice_override` (`Some`) заменяет голос из настроек —
-/// так строится второй движок для реплик пользователя, не дублируя резолвинг
-/// модели/ключа/базы.
+/// Shared client constructor. `voice_override` (`Some`) replaces the voice from
+/// settings — this is how the second engine for user turns is built, without
+/// duplicating model/key/base resolution.
 fn build_engine(
     tts: &TtsSettings,
     stored_key: Option<String>,
@@ -129,7 +135,7 @@ fn build_engine(
                     voice,
                     instructions,
                 )),
-                // OpenAI (облако): просим сырой PCM — декодер не нужен.
+                // OpenAI (cloud): ask for raw PCM — no decoder needed.
                 _ => Box::new(openai::OpenAiTts::cloud(
                     base,
                     key,
@@ -153,7 +159,7 @@ fn build_engine(
     }
 }
 
-/// Значение env-переменной по её имени (фолбэк к ключу из настроек, ADR 0008).
+/// An env variable's value by name (falls back to the settings key, ADR 0008).
 fn env_key(var: Option<&str>) -> Option<String> {
     let var = var?.trim();
     if var.is_empty() {
@@ -162,24 +168,26 @@ fn env_key(var: Option<&str>) -> Option<String> {
     std::env::var(var).ok().filter(|v| !v.is_empty())
 }
 
-/// Непустая строка или `None` (в настройках пустое поле хранится как `Some("")`).
+/// A non-empty string, or `None` (an empty field in settings is stored as
+/// `Some("")`).
 fn non_empty(value: Option<String>) -> Option<String> {
     value
         .map(|v| v.trim().to_string())
         .filter(|v| !v.is_empty())
 }
 
-/// Не глотает тело ошибки провайдера: статус + причина логируются и попадают в
-/// текст ошибки (обрезка до 500 символов) — как в клиентах движка (ADR 0004).
+/// Doesn't swallow the provider's error body: the status + reason are logged
+/// and land in the error text (truncated to 500 chars) — as in the engine
+/// clients (ADR 0004).
 pub(crate) async fn error_body(what: &str, resp: reqwest::Response) -> anyhow::Error {
     let status = resp.status();
     let body = resp.text().await.unwrap_or_default();
     let detail: String = body.trim().chars().take(500).collect();
-    tracing::warn!(%status, body = %detail, "{what} вернул статус ошибки");
+    tracing::warn!(%status, body = %detail, "{what} returned an error status");
     if detail.is_empty() {
-        anyhow::anyhow!("{what}: статус {status}")
+        anyhow::anyhow!("{what}: status {status}")
     } else {
-        anyhow::anyhow!("{what}: статус {status}: {detail}")
+        anyhow::anyhow!("{what}: status {status}: {detail}")
     }
 }
 
@@ -202,12 +210,12 @@ mod tests {
             Some(TtsSetupError::Model)
         );
         tts.openai.model_name = Some("gpt-4o-mini-tts".into());
-        // Ключа нет ни сохранённого, ни в env → понятная структурная ошибка.
+        // No key at all, neither stored nor in env → a clear structured error.
         assert_eq!(
             engines_from_config(&tts, None).err(),
             Some(TtsSetupError::ApiKey)
         );
-        // Сохранённый ключ (ADR 0008) достаточен — вводить заново ничего не нужно.
+        // A stored key (ADR 0008) is enough — nothing needs re-entering.
         assert!(engines_from_config(&tts, Some("sk-x".into())).is_ok());
     }
 
@@ -230,7 +238,7 @@ mod tests {
             },
             ..Default::default()
         };
-        // Локальному серверу ключ и модель не нужны.
+        // A local server needs neither a key nor a model.
         assert!(engines_from_config(&tts, None).is_ok());
     }
 
@@ -259,21 +267,21 @@ mod tests {
             },
             ..Default::default()
         };
-        // Голоса пользователя нет → один движок.
+        // No user voice → a single engine.
         let (_a, user) = engines_from_config(&base, Some("sk-x".into())).unwrap();
-        assert!(user.is_none(), "без user_voice второй движок не строится");
+        assert!(user.is_none(), "no user_voice → no second engine is built");
 
-        // Задан и отличается → строится второй.
+        // Set and differs → the second one is built.
         let mut with_user = base.clone();
         with_user.openai.user_voice = Some("nova".into());
         let (_a, user) = engines_from_config(&with_user, Some("sk-x".into())).unwrap();
-        assert!(user.is_some(), "отдельный user_voice → второй движок");
+        assert!(user.is_some(), "a separate user_voice → a second engine");
 
-        // Совпадает с голосом ассистента → второй не нужен.
+        // Matches the assistant's voice → no second one needed.
         let mut same = base.clone();
         same.openai.user_voice = Some("onyx".into());
         let (_a, user) = engines_from_config(&same, Some("sk-x".into())).unwrap();
-        assert!(user.is_none(), "совпадающий голос — один движок");
+        assert!(user.is_none(), "matching voice — a single engine");
     }
 
     #[test]

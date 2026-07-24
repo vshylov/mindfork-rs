@@ -1,9 +1,10 @@
-//! Потоковый предпросмотр имперсонируемой реплики (`Ctrl+U`, spec §11.8).
+//! Streaming preview of the impersonated reply (`Ctrl+U`, spec §11.8).
 //!
-//! Во время написания сообщения «за пользователя» поле ввода прячется, а на его
-//! месте показывается этот нередактируемый виджет: в него потоково печатается
-//! генерируемый текст. По завершении (если не отменено) текст вставляется в поле
-//! ввода. Внешне виджет похож на поле ввода (рамка + текст), но без курсора.
+//! While a message is being written "on the user's behalf", the input box is
+//! hidden and this non-editable widget is shown in its place: the generated
+//! text streams into it. On completion (if not cancelled) the text is inserted
+//! into the input box. Visually the widget looks like an input box (a border +
+//! text), but with no cursor.
 
 use ratatui::Frame;
 use ratatui::layout::Rect;
@@ -14,10 +15,10 @@ use crate::shared::i18n::Locale;
 use crate::shared::theme::Palette;
 use crate::shared::wrap::wrap_ranges;
 
-/// Рисует предпросмотр имперсонации в `area`. `text` — накопленный текст реплики,
-/// `tick` — счётчик кадров для анимации спиннера, `done` — генерация завершена
-/// (спиннер гаснет, подсказка меняется). Кадры спиннера — из набора глифов
-/// палитры (Брайль; в режиме совместимости — ASCII).
+/// Draws the impersonation preview in `area`. `text` — the accumulated reply
+/// text, `tick` — a frame counter for the spinner animation, `done` — generation
+/// finished (the spinner stops, the hint changes). Spinner frames come from the
+/// palette's glyph set (Braille; ASCII in compatibility mode).
 pub fn render(
     frame: &mut Frame,
     area: Rect,
@@ -43,9 +44,9 @@ pub fn render(
         .border_style(palette.accent_style())
         .title(Line::from(hint).style(palette.accent_style()));
 
-    // Переносим текст по словам сами (как в `message_feed`/`input_box`), чтобы знать
-    // точное число визуальных рядов и прокрутить ленту к хвосту — иначе при длинной
-    // реплике виден только её начало, а дописываемый конец уходит за нижнюю границу.
+    // We word-wrap the text ourselves (as in `message_feed`/`input_box`) so we know
+    // the exact number of visual rows and can scroll the feed to the tail — otherwise
+    // a long reply only shows its start, and the growing tail runs off the bottom edge.
     let inner_w = area.width.saturating_sub(2) as usize;
     let inner_h = area.height.saturating_sub(2) as usize;
     let mut rows: Vec<Line<'static>> = Vec::new();
@@ -55,7 +56,7 @@ pub fn render(
             rows.push(Line::from(chars[s..e].iter().collect::<String>()));
         }
     }
-    // Скролл к хвосту: показываем последние `inner_h` рядов.
+    // Scroll to the tail: show the last `inner_h` rows.
     let scroll = (rows.len().saturating_sub(inner_h)) as u16;
 
     let para = Paragraph::new(Text::from(rows))

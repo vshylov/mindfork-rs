@@ -1,22 +1,22 @@
-//! Раскладко-независимые горячие клавиши.
+//! Layout-independent hotkeys.
 //!
-//! Crossterm в обычном режиме отдаёт символ **активной раскладки**, а не
-//! физическую клавишу: при русской ЙЦУКЕН нажатие физической клавиши `L` даёт
-//! `KeyCode::Char('д')`, а не `'l'`, поэтому матчинг шорткатов вида `Ctrl+L`
-//! ломается. [`physical_char`] переводит кириллический символ в латинскую букву
-//! той же физической клавиши, чтобы `Ctrl+<буква>` срабатывали при любой
-//! раскладке. Ввод текста при этом не трогаем — нормализуем только для матчинга
-//! шорткатов (под `Ctrl`). См. spec §11.7.
+//! Crossterm in normal mode reports the character of the **active layout**, not
+//! the physical key: on the Russian JCUKEN layout, pressing physical key `L`
+//! gives `KeyCode::Char('д')`, not `'l'`, so matching a shortcut like `Ctrl+L`
+//! breaks. [`physical_char`] translates a Cyrillic character to the Latin letter
+//! on the same physical key, so `Ctrl+<letter>` works under any layout. Text
+//! input itself is left alone — normalization is only for shortcut matching
+//! (under `Ctrl`). See spec §11.7.
 
-/// Возвращает «физическую» латинскую букву (в нижнем регистре) для символа `c`.
+/// Returns the "physical" Latin letter (lowercase) for character `c`.
 ///
-/// Для латиницы — просто `c` в нижнем регистре. Для кириллицы — буква на той же
-/// клавише стандартной русской раскладки ЙЦУКЕН (`й`→`q`, `д`→`l`, `с`→`c`, …).
-/// Прочие символы возвращаются как есть (в нижнем регистре).
+/// For Latin — just `c` lowercased. For Cyrillic — the letter on the same key
+/// of the standard Russian JCUKEN layout (`й`→`q`, `д`→`l`, `с`→`c`, …). Other
+/// characters pass through as-is (lowercased).
 pub fn physical_char(c: char) -> char {
     let lower = c.to_lowercase().next().unwrap_or(c);
     match lower {
-        // верхний буквенный ряд: ЙЦУКЕНГШЩЗ → QWERTYUIOP
+        // top letter row: `й``ц``у``к``е``н``г``ш``щ``з` → QWERTYUIOP
         'й' => 'q',
         'ц' => 'w',
         'у' => 'e',
@@ -27,7 +27,7 @@ pub fn physical_char(c: char) -> char {
         'ш' => 'i',
         'щ' => 'o',
         'з' => 'p',
-        // средний ряд: ФЫВАПРОЛД → ASDFGHJKL
+        // middle row: `ф``ы``в``а``п``р``о``л``д` → ASDFGHJKL
         'ф' => 'a',
         'ы' => 's',
         'в' => 'd',
@@ -37,7 +37,7 @@ pub fn physical_char(c: char) -> char {
         'о' => 'j',
         'л' => 'k',
         'д' => 'l',
-        // нижний ряд: ЯЧСМИТЬ → ZXCVBNM
+        // bottom row: `я``ч``с``м``и``т``ь` → ZXCVBNM
         'я' => 'z',
         'ч' => 'x',
         'с' => 'c',
@@ -49,15 +49,15 @@ pub fn physical_char(c: char) -> char {
     }
 }
 
-/// Возвращает `true`, если символ соответствует физической клавише `/`
-/// (открытие поиска).
+/// Returns `true` if the character corresponds to the physical `/` key
+/// (opening search).
 ///
-/// На латинской раскладке это `/`. На русской ЙЦУКЕН физическая клавиша `/?`
-/// без Shift отдаёт `.`, поэтому её тоже принимаем — иначе поиск `/` не открыть
-/// при активной кириллице. Символ `.` неоднозначен (на латинице он на отдельной
-/// клавише `.>`), но там, где используется этот шорткат — на верхнем уровне
-/// экрана, вне редактора/оверлея — `.` больше ничего не делает, так что ложное
-/// срабатывание на латинском `.` безвредно (поиск закрывается по `Esc`).
+/// On a Latin layout that's `/`. On Russian JCUKEN the physical `/?` key
+/// without Shift gives `.`, so we accept that too — otherwise `/` search can't
+/// be opened under active Cyrillic input. `.` is ambiguous (on Latin it's on a
+/// separate `.>` key), but where this shortcut is used — at the top level of a
+/// screen, outside an editor/overlay — `.` does nothing else, so a false
+/// trigger on Latin `.` is harmless (search closes via `Esc`).
 pub fn is_slash_key(c: char) -> bool {
     c == '/' || c == '.'
 }
@@ -75,20 +75,20 @@ mod tests {
 
     #[test]
     fn cyrillic_maps_to_physical_qwerty_key() {
-        // Ключевые для приложения шорткаты: L, N, C, G, T, P.
+        // Shortcuts key to the app: L, N, C, G, T, P.
         assert_eq!(physical_char('д'), 'l');
         assert_eq!(physical_char('т'), 'n');
         assert_eq!(physical_char('с'), 'c');
         assert_eq!(physical_char('п'), 'g');
         assert_eq!(physical_char('е'), 't');
         assert_eq!(physical_char('з'), 'p');
-        // регистр кириллицы тоже нормализуется
+        // Cyrillic case is normalized too
         assert_eq!(physical_char('Д'), 'l');
     }
 
     #[test]
     fn slash_key_accepts_latin_and_cyrillic_layout() {
-        // Латинская раскладка отдаёт `/`; русская ЙЦУКЕН на той же клавише — `.`.
+        // Latin layout gives `/`; Russian JCUKEN on the same key gives `.`.
         assert!(is_slash_key('/'));
         assert!(is_slash_key('.'));
         assert!(!is_slash_key(','));

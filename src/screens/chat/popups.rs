@@ -1,5 +1,6 @@
-//! Экран чата — попапы: подсказки орфографии, подтверждение, эмодзи, справка. Часть модуля [`super`]; разбито из
-//! монолита chat.rs (см. docs/history/refactoring-god-objects.md, этап 2).
+//! Chat screen — popups: spellcheck suggestions, confirmation, emoji, help. Part
+//! of the [`super`] module; split out of the chat.rs monolith (see
+//! docs/history/refactoring-god-objects.md, stage 2).
 
 use ratatui::style::Color;
 
@@ -8,11 +9,11 @@ use super::*;
 use crate::shared::credits;
 use crate::widgets::logo::{LOCKUP_COLS, LOCKUP_ROWS, lockup_lines};
 
-/// Отступ лockup'а слева — тот же, с которого начинается список клавиш.
+/// Left indent of the lockup — matches where the hotkey list starts.
 const LOGO_INDENT: u16 = 2;
 
 impl ChatScreen {
-    /// Открывает попап подсказок для слова с ошибкой под курсором (если есть).
+    /// Opens the suggestions popup for the misspelled word under the cursor (if any).
     pub(super) fn open_suggestions(&mut self) {
         let Some(spell) = &self.spell else { return };
         let (row, col) = self.input.cursor();
@@ -37,12 +38,13 @@ impl ChatScreen {
         });
     }
 
-    /// Обрабатывает клавишу модального попапа подтверждения: `Enter` подтверждает
-    /// (отдаёт намерение), `Esc` отменяет, прочие клавиши игнорируются. Подтверждение
-    /// гасится при попадании в генерацию (намерение всё равно гейтит оркестратор).
+    /// Handles a key in the modal confirmation popup: `Enter` confirms (returns
+    /// the intent), `Esc` cancels, other keys are ignored. Confirmation is
+    /// suppressed while generation is running (the orchestrator gates the intent
+    /// anyway).
     pub(super) fn handle_confirm_key(&mut self, key: KeyEvent) -> Option<ChatIntent> {
         let action = self.confirm?;
-        // Ctrl+Q/F10 пробивают попап на выход (раскладко-независимо). См. spec §11.7.
+        // Ctrl+Q/F10 punch through the popup to quit (layout-independent). See spec §11.7.
         if key.code == KeyCode::F(10)
             || (key.modifiers.contains(KeyModifiers::CONTROL)
                 && matches!(key.code, KeyCode::Char(c) if keys::physical_char(c) == 'q'))
@@ -78,20 +80,21 @@ impl ChatScreen {
                 return;
             }
             KeyCode::Enter => self.apply_suggestion(),
-            // Прочие клавиши попап не меняют (и не закрывают) — перерисовка не нужна.
+            // Other keys don't change (or close) the popup — no redraw needed.
             _ => return,
         }
-        // Попап закрылся, а с ним ушёл широкий глиф «➕» пункта «добавить в словарь»:
-        // его хвостовую ячейку diff шлёт только когда глиф нёс заметный на пустой
-        // ячейке стиль (у выделенной строки — подложка `keycap_bg`), поэтому
-        // страхуемся полной перерисовкой. На **сдвиг выделения** её не просим — глиф
-        // остаётся широким, и
-        // сентинел обязан пропускать его хвост (ratatui#2651), т.е. пользы там нет:
-        // подсветку снимает перепечатка самого глифа. См. [`Self::request_full_redraw`].
+        // Closing the popup also removes the wide glyph "➕" of the "add to
+        // dictionary" item: diff only sends its trailing cell when the glyph
+        // carried a style visible on an empty cell (the selected row's
+        // `keycap_bg` backdrop), so we play it safe with a full redraw. We don't
+        // request one on a **selection shift** — the glyph stays wide, and the
+        // full-redraw sentinel must skip its trailing cell (ratatui#2651), so
+        // there's no benefit there: the highlight is cleared by the glyph itself
+        // being reprinted. See [`Self::request_full_redraw`].
         self.request_full_redraw();
     }
 
-    /// Применяет выбранный пункт попапа подсказок и закрывает его.
+    /// Applies the selected suggestion-popup item and closes it.
     pub(super) fn apply_suggestion(&mut self) {
         let Some(popup) = self.suggest.take() else {
             return;
@@ -105,7 +108,7 @@ impl ChatScreen {
                 if let Some(spell) = &mut self.spell
                     && let Err(err) = spell.add_to_personal(&popup.word)
                 {
-                    tracing::warn!(error = %err, "не удалось дописать персональный словарь");
+                    tracing::warn!(error = %err, "failed to append to the personal dictionary");
                 }
             }
             None => {}
@@ -113,31 +116,35 @@ impl ChatScreen {
         self.mark_input_changed();
     }
 
-    /// Обрабатывает клавишу попапа выбора эмодзи: `Enter` вставляет выбранный
-    /// эмодзи в поле ввода на месте курсора и закрывает попап, `Esc` — закрывает
-    /// без вставки. См. spec §11.5.
+    /// Handles a key in the emoji-picker popup: `Enter` inserts the selected
+    /// emoji into the input box at the cursor and closes the popup, `Esc` closes
+    /// it without inserting. See spec §11.5.
     pub(super) fn handle_emoji_key(&mut self, key: KeyEvent) {
         let Some(picker) = &mut self.emoji else {
             return;
         };
         let action = picker.on_key(key);
-        // Выделение читаем сразу (после `on_key` — оно могло сдвинуться), чтобы заём
-        // `self.emoji` закончился здесь и ниже был доступен весь `self`.
+        // Read the selection right away (after `on_key` — it may have shifted),
+        // so the borrow of `self.emoji` ends here and the whole of `self` is
+        // available below.
         let selected = picker.selected();
-        // Закрытие попапа убирает широкие глифы эмодзи с экрана, а хвостовые половины
-        // НЕстилизованных глифов сетки поячеечный diff не шлёт (ratatui ≥ 0.1.2 шлёт
-        // только у тех, что несли фон/REVERSED) → просим полную перерисовку.
+        // Closing the popup removes wide emoji glyphs from the screen, and the
+        // per-cell diff doesn't send the trailing half of UNstyled grid glyphs
+        // (ratatui ≥ 0.1.2 only sends it for ones carrying a background/REVERSED)
+        // → request a full redraw.
         //
-        // На **сдвиг выделения** перерисовку не просим: глиф остаётся широким, и
-        // сентинел полной перерисовки обязан пропускать его хвост (иначе бэкенд
-        // напечатает половину без `MoveTo` и сдвинет ряд — ratatui#2651). То есть для
-        // сдвига она провабельно ничего не даёт — подложку снимает перепечатка самого
-        // глифа, которая приходит обычным diff'ом. Канарейка на обе границы — в
-        // `widgets::emoji_picker`. См. [`Self::request_full_redraw`].
+        // We don't request one on a **selection shift**: the glyph stays wide,
+        // and the full-redraw sentinel must skip its trailing cell (otherwise the
+        // backend would print half of it with no `MoveTo` and shift the row —
+        // ratatui#2651). I.e. for a shift it provably does nothing — the backdrop
+        // is cleared by the glyph itself being reprinted through a normal diff. A
+        // canary pinning both boundaries lives in `widgets::emoji_picker`. See
+        // [`Self::request_full_redraw`].
         match action {
             EmojiPickerAction::None => {}
             EmojiPickerAction::Cancel => {
-                // Запоминаем выделение и при отмене (попап помнит, где был курсор).
+                // Remember the selection on cancel too (the popup recalls where
+                // the cursor was).
                 self.emoji_last = selected;
                 self.emoji = None;
                 self.request_full_redraw();
@@ -146,8 +153,8 @@ impl ChatScreen {
                 self.emoji_last = selected;
                 self.emoji = None;
                 self.request_full_redraw();
-                // insert_str безопасен для многоскалярных эмодзи (`❤️`, `👍🏽`) и
-                // ставит курсор за вставленным.
+                // insert_str is safe for multi-scalar emoji (`❤️`, `👍🏽`) and
+                // places the cursor right after the inserted text.
                 self.input.insert_str(&emoji);
                 self.mark_input_changed();
             }
@@ -155,11 +162,12 @@ impl ChatScreen {
     }
 }
 
-/// Горячие клавиши для вкладки «Горячие клавиши» (`F1`/`?`). Пары `(keycap, desc_key)`:
-/// `keycap` — литеральная «клавиша» (ASCII, универсальна) **или** `ui.*`-ключ там,
-/// где сам ярлык содержит слова (мышь); `desc_key` — всегда `ui.*`-ключ описания. Оба
-/// резолвятся через локаль в [`key_lines`]. Команды поля ввода (`/…`) вынесены в
-/// [`HELP_COMMANDS`] (отдельная вкладка). См. spec §11.7, docs/i18n-ui.md.
+/// Hotkeys for the "Hotkeys" tab (`F1`/`?`). Pairs `(keycap, desc_key)`: `keycap`
+/// is a literal "key" (ASCII, universal) **or** a `ui.*` key where the label
+/// itself has words (mouse); `desc_key` is always a `ui.*` description key. Both
+/// are resolved through the locale in [`key_lines`]. Input-box commands (`/…`)
+/// are split out into [`HELP_COMMANDS`] (a separate tab). See spec §11.7,
+/// docs/i18n-ui.md.
 pub(super) const HELP_KEYS: &[(&str, &str)] = &[
     ("Enter", "ui.help.send"),
     ("Shift+Enter / Alt+Enter", "ui.help.newline"),
@@ -191,9 +199,9 @@ pub(super) const HELP_KEYS: &[(&str, &str)] = &[
     ("Ctrl+Q / F10", "ui.help.quit"),
 ];
 
-/// Команды поля ввода для вкладки «Команды» (`F1`/`?`). Формат — как у [`HELP_KEYS`];
-/// ярлык-команда (`/…`) рисуется цветом команды. Вынесены из клавиш, чтобы не мешать
-/// их чтению. См. spec §11.7.
+/// Input-box commands for the "Commands" tab (`F1`/`?`). Same format as
+/// [`HELP_KEYS`]; a command label (`/…`) is drawn in the command color. Split out
+/// of the hotkeys so they don't clutter reading them. See spec §11.7.
 pub(super) const HELP_COMMANDS: &[(&str, &str)] = &[
     ("ui.help.k.rag_add", "ui.help.rag_add"),
     ("ui.help.k.rag_remove", "ui.help.rag_remove"),
@@ -204,16 +212,17 @@ pub(super) const HELP_COMMANDS: &[(&str, &str)] = &[
     ("/tts pause · resume", "ui.help.tts_pause"),
 ];
 
-/// Ширина диалога справки/«О программе» в колонках (без рамки) — комфортная и
-/// стабильная между вкладками, чтобы окно не «прыгало» при переключении.
+/// Width of the help/"About" dialog in columns (excluding the border) —
+/// comfortable and stable across tabs, so the window doesn't "jump" on switching.
 const HELP_WIDTH: u16 = 76;
-/// Высота диалога в строках (без рамки).
+/// Dialog height in rows (excluding the border).
 const HELP_HEIGHT: u16 = 34;
 
-/// Рисует диалог справки/«О программе» по центру экрана (в стиле KDE/Qt): лockup
-/// логотипа, таб-стрип вкладок и прокручиваемое содержимое активной вкладки со
-/// скроллбаром на правой рамке. Навигация — в [`ChatScreen::handle_key`]; `scroll`
-/// клампится здесь (высота попапа известна только при отрисовке). См. spec §11.7.
+/// Draws the help/"About" dialog centered on screen (KDE/Qt-style): the logo
+/// lockup, a tab strip, and scrollable content for the active tab with a
+/// scrollbar on the right border. Navigation lives in [`ChatScreen::handle_key`];
+/// `scroll` is clamped here (the popup's height is only known at render time).
+/// See spec §11.7.
 pub(super) fn render_help(
     frame: &mut Frame,
     help: &mut HelpState,
@@ -224,8 +233,8 @@ pub(super) fn render_help(
     let area = centered_rect(HELP_WIDTH + 2, HELP_HEIGHT + 2, full);
     frame.render_widget(Clear, area);
 
-    // Заголовок несёт бренд-имя+версию (язык-нейтрально) рядом с локализованным
-    // титулом; футер — навигация по вкладкам/прокрутке/закрытию.
+    // The title carries the brand name+version (language-neutral) next to the
+    // localized title; the footer covers tab/scroll/close navigation.
     let title = format!(
         "{}{} · {} v{}",
         palette.glyphs().help_icon,
@@ -247,14 +256,15 @@ pub(super) fn render_help(
     }
     let inner_w = inner.width as usize;
 
-    // Шапка: (опц. лockup + отбивка) + таб-стрип + разделительная линия. Лockup
-    // рисуется только при запасе места (docs/branding.md §5) — на тесном терминале
-    // он отодвинул бы вкладки; жёсткая деградация, как у скроллбара/Mermaid.
+    // Header: (optional lockup + spacer) + tab strip + separator line. The
+    // lockup is drawn only when there's room to spare (docs/branding.md §5) —
+    // on a cramped terminal it would push the tabs aside; a hard degradation,
+    // like the scrollbar/Mermaid.
     let show_logo = inner.height >= LOCKUP_ROWS + 6 && inner.width > LOCKUP_COLS + LOGO_INDENT;
     let mut header: Vec<Line> = Vec::new();
     if show_logo {
         let pad = " ".repeat(LOGO_INDENT as usize);
-        header.push(Line::raw("")); // отбивка над логотипом
+        header.push(Line::raw("")); // spacer above the logo
         header.extend(lockup_lines(palette.text).into_iter().map(|line| {
             let mut spans = vec![Span::raw(pad.clone())];
             spans.extend(line.spans);
@@ -273,8 +283,8 @@ pub(super) fn render_help(
         Layout::vertical([Constraint::Length(header_h), Constraint::Min(0)]).areas(inner);
     frame.render_widget(Paragraph::new(header), head_area);
 
-    // Содержимое активной вкладки (язык-нейтральные данные — лицензия/компоненты —
-    // берутся из `shared::credits` напрямую, минуя локали).
+    // Content for the active tab (language-neutral data — license/components —
+    // is read straight from `shared::credits`, bypassing locales).
     let content = match help.tab {
         HelpTab::About => about_lines(palette, loc),
         HelpTab::Hotkeys => key_lines(HELP_KEYS, palette, loc),
@@ -289,8 +299,8 @@ pub(super) fn render_help(
         Paragraph::new(Text::from(content)).scroll((help.scroll as u16, 0)),
         body_area,
     );
-    // Скроллбар — на правой линии рамки вдоль области содержимого (не всей высоты,
-    // чтобы бегунок не заезжал на шапку с вкладками).
+    // The scrollbar sits on the right border line along the content area (not
+    // the full height, so the thumb doesn't intrude on the tab header).
     let bar_area = Rect {
         x: area.x,
         y: body_area.y,
@@ -300,10 +310,10 @@ pub(super) fn render_help(
     render_scrollbar(frame, bar_area, total, view_h, help.scroll, true, palette);
 }
 
-/// Таб-стрип вкладок диалога справки: `О программе │ Горячие клавиши │ …`. Активная
-/// вкладка — на приглушённой подложке жирным (как выделенная вкладка настроек);
-/// разделитель `│` и содержимое WGL4-безопасны. Диалог всегда модальный (в фокусе),
-/// поэтому подсветка активной вкладки всегда «фокусная».
+/// Tab strip for the help dialog: `About │ Hotkeys │ …`. The active tab sits on
+/// a muted backdrop, bold (like the selected settings tab); the `│` separator
+/// and the content are WGL4-safe. The dialog is always modal (in focus), so the
+/// active tab's highlight is always the "focused" one.
 fn help_tab_strip(active: HelpTab, palette: &Palette, loc: &'static Locale) -> Line<'static> {
     let mut spans: Vec<Span<'static>> = vec![Span::raw(" ")];
     for (i, tab) in HelpTab::ALL.iter().enumerate() {
@@ -321,11 +331,12 @@ fn help_tab_strip(active: HelpTab, palette: &Palette, loc: &'static Locale) -> L
     Line::from(spans)
 }
 
-/// Отступ содержимого вкладок слева (та же колонка, что у лockup'а).
+/// Left indent of the tab content (the same column as the lockup).
 const HELP_PAD: &str = "  ";
 
-/// Вкладка «О программе»: имя/описание + автор, версия и ссылки (сайт/репозиторий/
-/// крейт). Ссылки — цветом акцента (как «клавиши-команды»), подписи — приглушённо.
+/// The "About" tab: name/description + author, version, and links
+/// (site/repository/crate). Links use the accent color (like "command keys"),
+/// labels are muted.
 fn about_lines(palette: &Palette, loc: &'static Locale) -> Vec<Line<'static>> {
     let rows: [(&str, String, Color); 5] = [
         (
@@ -354,7 +365,7 @@ fn about_lines(palette: &Palette, loc: &'static Locale) -> Vec<Line<'static>> {
             palette.accent,
         ),
     ];
-    // Ширина колонки подписей (с двоеточием), чтобы значения выровнялись.
+    // Label column width (with the colon), so values line up.
     let label_w = rows
         .iter()
         .map(|(l, _, _)| l.chars().count() + 1)
@@ -372,7 +383,8 @@ fn about_lines(palette: &Palette, loc: &'static Locale) -> Vec<Line<'static>> {
         )),
         Line::raw(""),
     ];
-    // Пункты через пустую строку — список «дышит» (просьба: промежутки между элементами).
+    // Items separated by a blank line — the list "breathes" (requested: spacing
+    // between items).
     for (label, value, color) in rows {
         lines.push(Line::raw(""));
         let field = format!("{label}:");
@@ -387,9 +399,10 @@ fn about_lines(palette: &Palette, loc: &'static Locale) -> Vec<Line<'static>> {
     lines
 }
 
-/// Вкладки «Горячие клавиши»/«Команды»: список пар `(ярлык, описание)` — «клавиша» +
-/// описание (ярлык-команда `/…` — цветом команды). Локаль резолвит и ярлыки-ключи, и
-/// описания. Общий для обеих вкладок ([`HELP_KEYS`]/[`HELP_COMMANDS`]).
+/// The "Hotkeys"/"Commands" tabs: a list of `(label, description)` pairs — a
+/// "key" + a description (a command label `/…` uses the command color). The
+/// locale resolves both label keys and descriptions. Shared by both tabs
+/// ([`HELP_KEYS`]/[`HELP_COMMANDS`]).
 fn key_lines(
     entries: &[(&str, &str)],
     palette: &Palette,
@@ -413,15 +426,16 @@ fn key_lines(
     lines
 }
 
-/// Вкладка «Лицензия»: текст лицензии приложения (MIT). Абзацы (в файле разделены
-/// пустой строкой) собираются заново и переносятся по словам под ширину содержимого
-/// `width` — исходный жёсткий перенос под ~76 колонок иначе клипался бы справа, а
-/// построчный перенос оставлял бы «сироты»-слова. Перенос даёт логические строки,
-/// поэтому модель прокрутки/скроллбара (по числу строк) не ломается. Сборка по
-/// `lines()` устойчива к CRLF.
+/// The "License" tab: the app's license text (MIT). Paragraphs (separated by a
+/// blank line in the file) are reassembled and word-wrapped to the content width
+/// `width` — the source's hard wrap at ~76 columns would otherwise clip on the
+/// right, while wrapping line-by-line would leave orphaned words. Wrapping
+/// produces logical lines, so the scroll/scrollbar model (by line count) isn't
+/// broken. Assembly via `lines()` is CRLF-safe.
 fn license_lines(palette: &Palette, width: usize) -> Vec<Line<'static>> {
     let body_w = width.saturating_sub(HELP_PAD.len()).max(1);
-    // Собираем абзацы: непустые строки склеиваются пробелом, пустая — граница.
+    // Assemble paragraphs: non-empty lines are joined with a space, an empty one
+    // is a boundary.
     let mut paras: Vec<String> = Vec::new();
     let mut cur = String::new();
     for raw in credits::LICENSE_TEXT.lines() {
@@ -448,13 +462,14 @@ fn license_lines(palette: &Palette, width: usize) -> Vec<Line<'static>> {
             spans.extend(wrapped.spans);
             lines.push(Line::from(spans));
         }
-        lines.push(Line::raw("")); // отбивка между абзацами
+        lines.push(Line::raw("")); // spacer between paragraphs
     }
     lines
 }
 
-/// Вкладка «Компоненты»: имя (выровнено в колонку), версия и лицензия. Имя — основным
-/// цветом, версия и лицензия — приглушённо, столбцы выровнены.
+/// The "Components" tab: name (aligned into a column), version, and license.
+/// The name uses the main text color, version and license are muted, columns
+/// line up.
 fn component_lines(palette: &Palette, loc: &'static Locale) -> Vec<Line<'static>> {
     let mut lines = vec![
         Line::raw(""),
@@ -489,7 +504,7 @@ fn component_lines(palette: &Palette, loc: &'static Locale) -> Vec<Line<'static>
     lines
 }
 
-/// Рисует попап подсказок орфографии по центру экрана.
+/// Draws the spellcheck-suggestion popup centered on screen.
 pub(super) fn render_suggest(
     frame: &mut Frame,
     popup: &SuggestPopup,
@@ -512,8 +527,9 @@ pub(super) fn render_suggest(
         .iter()
         .enumerate()
         .map(|(i, item)| {
-            // Рейл выделенной строки (2 колонки), как в списке чатов и настройках;
-            // у прочих строк — отступ той же ширины, чтобы текст не «прыгал».
+            // Rail for the selected row (2 columns), like in the chat list and
+            // settings; other rows get an indent of the same width so the text
+            // doesn't "jump".
             let rail = if i == selected {
                 Span::styled("▌ ", Style::new().fg(palette.success))
             } else {
@@ -532,9 +548,10 @@ pub(super) fn render_suggest(
             ListItem::new(Line::from(vec![rail, body]))
         })
         .collect();
-    // Выделение — мягкая подложка (как в списке чатов, настройках и «модели себя»),
-    // а не инверсия всей строки: реверс свапает fg↔bg у каждого спана по отдельности,
-    // из-за чего рейл `▌` (левый полублок) расползается, а спаны получают разный фон.
+    // The selection uses a soft backdrop (as in the chat list, settings, and the
+    // "self-model" screen), not inverting the whole line: reverse video swaps
+    // fg↔bg per span independently, which smears the `▌` rail (a left
+    // half-block) and gives spans different backgrounds.
     let list = List::new(items)
         .block(block)
         .highlight_style(Style::new().bg(palette.keycap_bg));
@@ -543,8 +560,8 @@ pub(super) fn render_suggest(
     frame.render_stateful_widget(list, area, &mut state);
 }
 
-/// Рисует модальный попап подтверждения необратимой операции (`Ctrl+R`/`Ctrl+E`)
-/// по центру экрана. См. spec §11.7.
+/// Draws the modal confirmation popup for an irreversible operation
+/// (`Ctrl+R`/`Ctrl+E`) centered on screen. See spec §11.7.
 pub(super) fn render_confirm(
     frame: &mut Frame,
     action: ConfirmAction,

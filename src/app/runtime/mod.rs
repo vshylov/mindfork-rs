@@ -1,10 +1,11 @@
-//! Петля рендеринга TUI и мост к оркестратору. См. spec §4.4.1, §11.
+//! The TUI render loop and the bridge to the orchestrator. See spec §4.4.1, §11.
 //!
-//! Петля синхронная (на главном потоке): опрашивает ввод с таймаутом,
-//! неблокирующе дренирует события оркестратора и перерисовывает [`ChatScreen`].
-//! `app` — единственный, кто знает обе стороны контракта: входящие [`AppEvent`]
-//! применяются к экрану мутаторами, исходящие [`ChatIntent`] транслируются в
-//! [`AppCommand`]. Сам экран про `app`/каналы не знает (FSD, зависимости вниз).
+//! The loop is synchronous (on the main thread): it polls input with a timeout,
+//! non-blockingly drains orchestrator events, and repaints [`ChatScreen`].
+//! `app` is the only one that knows both sides of the contract: incoming [`AppEvent`]
+//! is applied to the screen by mutators, outgoing [`ChatIntent`] is translated into
+//! [`AppCommand`]. The screen itself knows nothing about `app`/channels (FSD,
+//! dependencies point downward).
 
 use std::io::stdout;
 use std::path::PathBuf;
@@ -36,34 +37,35 @@ use crate::screens::self_model::{SelfModelIntent, SelfModelScreen};
 use crate::screens::settings::{SettingsIntent, SettingsScreen};
 use crate::shared::theme::Palette;
 
-/// Экран, открытый поверх чата. `ChatScreen` всегда существует как база (лента,
-/// генерация, поле ввода); поверх него может быть открыт список чатов (`Esc`) или
-/// настройки (`Ctrl+P`). См. архитектуру UI (architecture.md §9): три экрана.
+/// The screen open on top of the chat. `ChatScreen` always exists as the base (the
+/// feed, generation, the input box); the chat list (`Esc`) or settings (`Ctrl+P`) can
+/// be open on top of it. See the UI architecture (architecture.md §9): three screens.
 enum ActiveScreen {
-    /// Только чат — наложенного экрана нет.
+    /// Chat only — no overlaid screen.
     Chat,
-    /// Полноэкранный список чатов. Боксируем — экраны крупные, держать их инлайн в
-    /// enum-варианте раздувает каждое значение (clippy::large_enum_variant).
+    /// A fullscreen chat list. Boxed — screens are large, keeping them inline in the
+    /// enum variant would bloat every value (clippy::large_enum_variant).
     ChatList(Box<ChatListScreen>),
-    /// Экран настроек.
+    /// The settings screen.
     Settings(Box<SettingsScreen>),
-    /// Экран просмотра «модели себя» (read-only, `F3`).
+    /// The "self-model" viewer screen (read-only, `F3`).
     SelfModel(Box<SelfModelScreen>),
 }
 
 impl ActiveScreen {
-    /// На переднем плане сам чат (а не список/настройки)? Гейтит работу, которая
-    /// относится только к чату: перепроверку орфографии, анимацию спиннеров,
-    /// прокрутку колесом.
+    /// Is the chat itself in front (not the list/settings)? Gates work that only
+    /// applies to the chat: the spellcheck recheck, spinner animation, wheel
+    /// scrolling.
     fn is_chat(&self) -> bool {
         matches!(self, ActiveScreen::Chat)
     }
 
-    /// Обновляет палитру и локаль интерфейса открытого overlay-экрана (список чатов /
-    /// модель себя) при смене темы/режима совместимости/языка UI. Экран настроек
-    /// обновляется отдельно (`refresh` шире палитры), чат — своей базой
-    /// (`ChatScreen::set_settings`). Каноничное место перечисления экранов для
-    /// broadcast темы (палитра + локаль). См. docs/i18n-ui.md §3.3.
+    /// Updates the palette and interface locale of an open overlay screen (chat list /
+    /// self-model) on a theme/compatibility-mode/UI-language change. The settings
+    /// screen is updated separately (`refresh` is broader than the palette), the chat
+    /// — via its own base (`ChatScreen::set_settings`). The canonical place
+    /// enumerating screens for the theme broadcast (palette + locale). See
+    /// docs/i18n-ui.md §3.3.
     fn set_theme(&mut self, palette: Palette, loc: &'static crate::shared::i18n::Locale) {
         match self {
             ActiveScreen::ChatList(list) => {
@@ -78,9 +80,10 @@ impl ActiveScreen {
         }
     }
 
-    /// Направляет вставку из буфера в целевой экран: настройки/список/модель себя —
-    /// в свои поля; базовый чат — в поле ввода. Каноничное место маршрутизации
-    /// вставки по экранам. `chat` — базовый экран (нужен для варианта `Chat`).
+    /// Routes a clipboard paste to the target screen: settings/list/self-model —
+    /// into their own fields; the base chat — into the input box. The canonical place
+    /// routing pastes across screens. `chat` — the base screen (needed for the `Chat`
+    /// variant).
     fn handle_paste(&mut self, chat: &mut ChatScreen, text: &str) {
         match self {
             ActiveScreen::Settings(settings) => settings.handle_paste(text),
@@ -91,13 +94,13 @@ impl ActiveScreen {
     }
 }
 
-/// Период опроса ввода (тик перерисовки).
+/// The input polling period (the repaint tick).
 const TICK: Duration = Duration::from_millis(50);
 
-/// Инициализирует терминал, запускает петлю и восстанавливает терминал на выходе
-/// (в т.ч. при панике — `ratatui::init` ставит panic hook). Словари спелл-чека
-/// `app` грузит сам в фоне по настройкам (`dict_dir`/`personal`) и перегружает при
-/// их изменении.
+/// Initializes the terminal, runs the loop, and restores the terminal on exit
+/// (including on panic — `ratatui::init` sets a panic hook). `app` loads the
+/// spellcheck dictionaries itself in the background per settings
+/// (`dict_dir`/`personal`) and reloads them when they change.
 pub fn run(
     cmd_tx: UnboundedSender<AppCommand>,
     evt_rx: UnboundedReceiver<AppEvent>,
@@ -106,11 +109,11 @@ pub fn run(
     personal: PathBuf,
 ) -> Result<()> {
     let mut terminal = ratatui::init();
-    // Заголовок окна терминала = бренд-имя + версия (совпадает с заголовком попапа
-    // «О программе», `F1`). На Windows это работает через Console API
-    // (`SetConsoleTitle` за `SetTitle` crossterm). На unix заголовок консольного
-    // приложения (вне графического эмулятора) не меняется, поэтому ставим только на
-    // Windows.
+    // The terminal window title = the brand name + version (matches the "About"
+    // popup's title, `F1`). On Windows this works via the Console API
+    // (`SetConsoleTitle` behind crossterm's `SetTitle`). On unix a console
+    // application's title (outside a graphical emulator) doesn't change, so we set it
+    // only on Windows.
     #[cfg(windows)]
     let _ = execute!(
         stdout(),
@@ -120,24 +123,25 @@ pub fn run(
             env!("CARGO_PKG_VERSION"),
         )),
     );
-    // На unix включаем bracketed paste: crossterm отдаёт вставку из буфера ОДНИМ
-    // событием `Event::Paste` (целиком, переводы строк — текстом, не Enter). На
-    // Windows этого режима у crossterm нет (ввод читается через Console API), там
-    // вставка приходит пачкой обычных key-событий — её собираем в петле
-    // (`process_input_batch`), поэтому включать тут нечего. См. spec §11.5.
+    // On unix we enable bracketed paste: crossterm delivers a clipboard paste as ONE
+    // `Event::Paste` event (whole, with line breaks as text, not Enter). Windows has no
+    // such mode in crossterm (input is read via the Console API), there a paste arrives
+    // as a batch of regular key events — we collect it in the loop
+    // (`process_input_batch`), so there's nothing to enable here. See spec §11.5.
     //
-    // Здесь же (unix) включаем kitty keyboard protocol на уровне «disambiguate»:
-    // legacy-кодировка терминала шлёт для `Shift+Enter` и `Enter` один и тот же CR,
-    // поэтому перенос строки в поле ввода на «голом» unix-терминале был недоступен.
-    // С `DISAMBIGUATE_ESCAPE_CODES` терминал сообщает модификаторы у спец-клавиш
-    // (Enter/стрелки/…), и `Shift+Enter` становится отличим от `Enter` (а `Shift`+
-    // стрелки — от голых стрелок, что оживляет выделение с клавиатуры). Пушим только
-    // если терминал поддерживает протокол (иначе no-op); снимаем на выходе и в
-    // panic-hook. Печатный ввод и одиночный `Shift`+символ этот флаг не трогает
-    // (текст идёт как есть), поэтому раскладко-независимый разбор Ctrl-шорткатов
-    // (`shared::keys`) и ввод `?`/эмодзи не регрессируют. На Windows не нужно —
-    // Console API и так сообщает модификаторы. `Alt+Enter` в поле ввода — запасной
-    // перенос строки для терминалов без этого протокола (см. spec §11.5, п.11 аудита).
+    // Here (unix) we also enable the kitty keyboard protocol at the "disambiguate"
+    // level: the terminal's legacy encoding sends the same CR for `Shift+Enter` and
+    // `Enter`, so a line break in the input box was unavailable on a "bare" unix
+    // terminal. With `DISAMBIGUATE_ESCAPE_CODES` the terminal reports modifiers for
+    // special keys (Enter/arrows/…), and `Shift+Enter` becomes distinguishable from
+    // `Enter` (and `Shift`+arrows — from bare arrows, which enables keyboard-driven
+    // selection). We push it only if the terminal supports the protocol (otherwise a
+    // no-op); we pop it on exit and in the panic hook. Text input and a lone
+    // `Shift`+character don't touch this flag (text arrives as is), so
+    // layout-independent parsing of Ctrl shortcuts (`shared::keys`) and typing
+    // `?`/emoji don't regress. Not needed on Windows — the Console API already reports
+    // modifiers. `Alt+Enter` in the input box is a fallback line break for terminals
+    // without this protocol (see spec §11.5, audit item 11).
     #[cfg(unix)]
     {
         let _ = execute!(stdout(), EnableBracketedPaste);
@@ -148,15 +152,16 @@ pub fn run(
             );
         }
     }
-    // Захват мыши по умолчанию ВЫКЛЮЧЕН: тогда работает нативное выделение текста
-    // мышью. Прокрутка ленты колесом включается тумблером (`Ctrl+W`) — он шлёт
-    // `EnableMouseCapture`/`DisableMouseCapture` (см. `dispatch`). Дополняем
-    // panic-hook ratatui выключением мыши и bracketed paste: иначе после паники с
-    // включёнными режимами терминал продолжит слать escape-коды в шелл. Здесь же
-    // снимаем синхронизированный вывод (DEC 2026, см. петлю): паника внутри
-    // `terminal.draw` случается между `?2026h` и `?2026l`, и без снятия терминал
-    // держал бы кадр замороженным (сообщение паники не видно) до своего таймаута.
-    // DECRST невзведённого режима — no-op, лишний `?2026l` безвреден.
+    // Mouse capture is OFF by default: then native mouse text selection works. Feed
+    // wheel scrolling is enabled via a toggle (`Ctrl+W`) — it sends
+    // `EnableMouseCapture`/`DisableMouseCapture` (see `dispatch`). We augment ratatui's
+    // panic hook by disabling the mouse and bracketed paste: otherwise after a panic
+    // with these modes still on, the terminal would keep sending escape codes to the
+    // shell. We also lift synchronized output here (DEC 2026, see the loop): a panic
+    // inside `terminal.draw` happens between `?2026h` and `?2026l`, and without lifting
+    // it the terminal would hold the frame frozen (the panic message not visible) until
+    // its own timeout. DECRST of an unset mode is a no-op, the extra `?2026l` is
+    // harmless.
     let prev_hook = std::panic::take_hook();
     std::panic::set_hook(Box::new(move |info| {
         let _ = execute!(
@@ -165,7 +170,7 @@ pub fn run(
             DisableMouseCapture,
             DisableBracketedPaste
         );
-        // Снимаем kitty-протокол, если пушили (unix); безвредно при пустом стеке.
+        // Pop the kitty protocol if we pushed it (unix); harmless on an empty stack.
         #[cfg(unix)]
         let _ = execute!(stdout(), PopKeyboardEnhancementFlags);
         prev_hook(info);
@@ -178,7 +183,7 @@ pub fn run(
         bundled_dict_dir,
         personal,
     );
-    // Снимаем режимы на выходе (безвредно, если уже выключены).
+    // Lift the modes on exit (harmless if already off).
     let _ = execute!(
         stdout(),
         EndSynchronizedUpdate,
@@ -188,25 +193,25 @@ pub fn run(
     #[cfg(unix)]
     let _ = execute!(stdout(), PopKeyboardEnhancementFlags);
     ratatui::restore();
-    // Просим оркестратор остановиться (на случай выхода не по Quit-команде).
+    // Ask the orchestrator to stop (in case of exiting other than via the Quit command).
     let _ = cmd_tx.send(AppCommand::Quit);
     result
 }
 
-/// Состояние фоновой (пере)загрузки словарей спелл-чека. Перезагрузка запускается
-/// при изменении `interface.spellcheck_enabled`/`selected_dictionaries` (событие
-/// `Settings`); `generation` отбрасывает устаревшие результаты. См. spec §11.6.
+/// The state of the background (re)loading of spellcheck dictionaries. A reload is
+/// triggered by a change to `interface.spellcheck_enabled`/`selected_dictionaries`
+/// (the `Settings` event); `generation` drops stale results. See spec §11.6.
 struct SpellLoader {
     dict_dir: PathBuf,
-    /// Резервный каталог словарей рядом с бинарником (П1) — источник при не-портативном
-    /// режиме хранения, когда словарей в корне данных нет.
+    /// A fallback dictionary directory next to the binary (P1) — the source in
+    /// non-portable storage mode, when there are no dictionaries in the data root.
     bundled_dir: Option<PathBuf>,
     personal: PathBuf,
     tx: Sender<(u64, SpellChecker)>,
     rx: Receiver<(u64, SpellChecker)>,
-    /// Последние применённые настройки `(включён, словари)` (None — ещё не грузили).
+    /// The last applied settings `(enabled, dictionaries)` (None — not loaded yet).
     applied: Option<(bool, Vec<String>)>,
-    /// Номер последней запущенной загрузки (применяем только её результат).
+    /// The number of the last started load (only its result is applied).
     generation: u64,
 }
 
@@ -224,7 +229,7 @@ impl SpellLoader {
         }
     }
 
-    /// Если настройки спелл-чека изменились — запускает фоновую (пере)загрузку.
+    /// If spellcheck settings changed — starts a background (re)load.
     fn maybe_reload(&mut self, enabled: bool, selected: &[String]) {
         let changed = self
             .applied
@@ -256,7 +261,7 @@ impl SpellLoader {
         self.applied = Some((enabled, selected));
     }
 
-    /// Готовый чекер последней загрузки (устаревшие отбрасываются), если есть.
+    /// The finished checker of the latest load (stale ones are dropped), if any.
     fn poll(&self) -> Option<SpellChecker> {
         let mut latest = None;
         while let Ok((generation, checker)) = self.rx.try_recv() {
@@ -277,107 +282,111 @@ fn run_loop(
     personal: PathBuf,
 ) -> Result<()> {
     let mut screen = ChatScreen::new();
-    // Поверх чата может быть открыт список чатов (Esc) или настройки (Ctrl+P).
-    // События оркестратора продолжают применяться к чату (генерация не прерывается).
+    // The chat list (Esc) or settings (Ctrl+P) can be open on top of the chat.
+    // Orchestrator events keep applying to the chat (generation isn't interrupted).
     let mut active = ActiveScreen::Chat;
-    // Буфер обмена создаётся лениво при первом копировании (на headless-Linux без
-    // X11/Wayland конструктор может упасть — тогда показываем ошибку, не паникуем).
+    // The clipboard is created lazily on the first copy (on headless Linux without
+    // X11/Wayland the constructor may fail — then we show an error, not panic).
     let mut clipboard: Option<arboard::Clipboard> = None;
     let mut spell = SpellLoader::new(dict_dir, bundled_dict_dir, personal);
     let mut quit = false;
-    // Перерисовываем ТОЛЬКО при изменениях (флаг `dirty`), а не на каждый тик.
-    // Иначе `terminal.draw` зовётся ~20 раз/сек и каждый раз переставляет курсор
-    // (`frame.set_cursor_position`), а терминал (особенно Windows Terminal)
-    // сбрасывает фазу мигания на каждое перемещение курсора → курсор мигает чаще
-    // и неровно, хотя CPU ~0% (diff буфера пустой). Анимаций по таймеру в рендере
-    // нет, поэтому простаивающие тики перерисовки не нужны. См. spec §11.
+    // We repaint ONLY on change (the `dirty` flag), not on every tick.
+    // Otherwise `terminal.draw` is called ~20 times/sec and repositions the cursor
+    // every time (`frame.set_cursor_position`), and the terminal (especially Windows
+    // Terminal) resets the blink phase on every cursor move → the cursor blinks more
+    // often and unevenly, even though CPU stays ~0% (the buffer diff is empty). There
+    // are no timer-driven animations in rendering, so idle ticks don't need to
+    // repaint. See spec §11.
     let mut dirty = true;
-    // Какой экран был НАРИСОВАН прошлым кадром: смена требует полной перерисовки
-    // (см. ниже, у `prime_full_redraw`). Считаем именно по факту отрисовки —
-    // переключение «туда и обратно» между кадрами визуально ничего не меняет.
+    // Which screen was DRAWN in the previous frame: a switch requires a full
+    // repaint (see below, at `prime_full_redraw`). We track this by the actual draw —
+    // switching "there and back" between frames changes nothing visually.
     let mut last_screen = std::mem::discriminant(&active);
     while !quit {
         while let Ok(event) = evt_rx.try_recv() {
             apply_event(&mut screen, &mut active, &mut clipboard, cmd_tx, event);
             dirty = true;
         }
-        // Настройки спелл-чека получены/изменились — (пере)грузим словари в фоне.
+        // Spellcheck settings received/changed — (re)load dictionaries in the background.
         if let Some((enabled, selected)) = screen.spell_config() {
             spell.maybe_reload(enabled, selected);
         }
-        // Готовая (пере)загрузка — подключаем чекер (отключённый ничего не флагует).
+        // A finished (re)load — plug in the checker (a disabled one flags nothing).
         if let Some(checker) = spell.poll() {
             screen.set_spellchecker(checker);
             dirty = true;
         }
-        // Дебаунс-перепроверка орфографии: петля крутится каждый тик (таймаут
-        // `poll`), даже когда не рисует, поэтому здесь и обеспечивается пробуждение
-        // по истечении дебаунса. Перерисовываем только когда подсветка реально
-        // пересчитана. На экране настроек ввод чата не активен — пропускаем.
+        // A debounced spellcheck recheck: the loop runs every tick (the `poll`
+        // timeout) even when it isn't drawing, so this is exactly where the debounce
+        // wakeup happens. We repaint only when the highlighting actually got
+        // recomputed. Chat input isn't active on the settings screen — skip it.
         if active.is_chat() && screen.maybe_recheck_spelling() {
             dirty = true;
         }
-        // На экране списка чатов поле переименования (`F2`) тоже проверяется
-        // орфографией — чекер одалживаем у экрана чата (владельца). См. spec §11.5.
+        // The rename field (`F2`) on the chat-list screen is also spellchecked — the
+        // checker is borrowed from the chat screen (the owner). See spec §11.5.
         if let ActiveScreen::ChatList(list) = &mut active
             && let Some(spell) = screen.spellchecker()
             && list.recheck_spelling(spell)
         {
             dirty = true;
         }
-        // Пока идёт фоновая индексация RAG или имперсонация — перерисовываем каждый
-        // тик для анимации спиннера (вне них простаивающие тики не рисуют — `dirty`).
+        // While background RAG indexing or impersonation is running — repaint every
+        // tick for the spinner animation (outside them, idle ticks don't repaint —
+        // `dirty`).
         if active.is_chat() && (screen.is_rag_active() || screen.is_impersonating()) {
             dirty = true;
         }
-        // Черновик поля ввода изменился — сохраняем его в активном чате (оркестратор
-        // пишет на диск с дебаунсом). Перерисовку это не требует. См. spec §11.7.
+        // The input-box draft changed — save it on the active chat (the orchestrator
+        // writes it to disk with a debounce). This doesn't need a repaint. See spec §11.7.
         if let Some(draft) = screen.take_dirty_draft() {
             let _ = cmd_tx.send(AppCommand::SetDraft(draft));
         }
         if dirty {
-            // Кадр обёрнут в синхронизированный вывод (DEC private mode 2026):
-            // `?2026h` до отрисовки, `?2026l` после — терминал буферизует всё
-            // между ними и применяет кадр АТОМАРНО. Без этого аппаратный курсор
-            // был виден на промежуточных состояниях записи: ratatui пишет diff
-            // при видимом курсоре (курсор терминала = позиция записи) и
-            // возвращает его в поле ввода отдельными записями ПОСЛЕ diff'а
-            // (`show_cursor`/`set_cursor_position` у CrosstermBackend — это
-            // `execute!` с немедленным flush; крупный diff вдобавок дробится
-            // маленьким буфером stdout). Windows Terminal рендерит асинхронно и
-            // успевал показать курсор на последней записанной ячейке diff'а: при
-            // генерации это счётчик токенов (нижние строки статус-бара пишутся
-            // последними), при индексации RAG — спиннер баннера. Курсор «прыгал»
-            // между полем ввода и этими ячейками с частотой кадров (~20/с).
+            // The frame is wrapped in synchronized output (DEC private mode 2026):
+            // `?2026h` before drawing, `?2026l` after — the terminal buffers everything
+            // in between and applies the frame ATOMICALLY. Without this, the hardware
+            // cursor was visible at intermediate write states: ratatui writes the diff
+            // with the cursor visible (the terminal cursor = the write position) and
+            // returns it to the input box via separate writes AFTER the diff
+            // (`show_cursor`/`set_cursor_position` on CrosstermBackend are `execute!`
+            // with an immediate flush; a large diff is also chopped up by stdout's small
+            // buffer). Windows Terminal renders asynchronously and would show the cursor
+            // at the diff's last written cell: during generation that's the token
+            // counter (the status bar's bottom lines are written last), during RAG
+            // indexing — the banner spinner. The cursor "jumped" between the input box
+            // and these cells at the frame rate (~20/s).
             //
-            // Терминалы без поддержки 2026 (conhost компат-режима) игнорируют
-            // незнакомый приватный режим — мягкая деградация (прыжок остаётся,
-            // как раньше). Ошибка draw пробрасывается ПОСЛЕ снятия режима, чтобы
-            // терминал не остался в буферизации. См. spec §4.4.1.
-            // ПОЛНАЯ перерисовка нужна там, где широкий глиф уходит с места или
-            // появляется на новом, оставляя «висячий» артефакт: поячеечный diff в
-            // одних случаях не шлёт хвостовую половину такого глифа, в других шлёт её
-            // без `MoveTo` и сдвигает ряд (открытый ratatui#2651). Нужно переписать
-            // КАЖДУЮ ячейку явно, включая пробелы в пустых местах.
+            // Terminals without 2026 support (conhost's compat mode) ignore the
+            // unfamiliar private mode — graceful degradation (the jump stays, as
+            // before). The draw error is propagated AFTER lifting the mode, so the
+            // terminal doesn't stay in buffering mode. See spec §4.4.1.
+            // A FULL repaint is needed wherever a wide glyph leaves its spot or
+            // appears at a new one, leaving a "hanging" artifact: a cell-by-cell diff
+            // sometimes doesn't send that glyph's trailing half, sometimes sends it
+            // without `MoveTo` and shifts the row (open upstream issue ratatui#2651).
+            // Every cell needs to be explicitly rewritten, including spaces in empty
+            // spots.
             //
-            // Механика «как» — в `ui::prime_full_redraw` (маркер в буфер +
-            // `swap_buffers` без вывода на экран, вместо `terminal.clear()` с его
-            // мигающим `ESC[2J`). Внутренний swap в `draw` восстанавливает инвариант
-            // «задний буфер = экран».
+            // The "how" mechanics — in `ui::prime_full_redraw` (a sentinel in the
+            // buffer + `swap_buffers` without flushing to the screen, instead of
+            // `terminal.clear()` with its flickering `ESC[2J`). The internal swap
+            // inside `draw` restores the invariant "back buffer = screen".
             //
-            // Два заказчика:
-            //  * экран чата — прокрутка/изменение ленты с глифами группы риска и
-            //    закрытие попапов эмодзи/орфографии (`take_full_redraw`);
-            //  * СМЕНА ЭКРАНА — кадр целиком меняет содержимое, и VS16-глиф
-            //    (`❤️`, `🗂️`) на новом экране оказывается на месте чужого символа.
-            //    Тогда diff шлёт его хвост (символ-то изменился), бэкенд печатает
-            //    половину без `MoveTo`, и остаток ряда едет вправо — после ленты с
-            //    `❤️` возврат из списка чатов/`F3` давал лишний пробел, пропадавший
-            //    только по прокрутке (она эту же перерисовку и заказывает).
-            //    Проверено `ui::screen_switch_emits_vs16_tail_without_full_redraw`.
+            // Two triggers:
+            //  * the chat screen — scrolling/a feed change with risk-group glyphs and
+            //    closing the emoji/spellcheck popups (`take_full_redraw`);
+            //  * SCREEN SWITCH — the frame's content changes wholesale, and a VS16
+            //    glyph (`❤️`, `🗂️`) on the new screen lands where a foreign character
+            //    used to be. Then the diff sends its trailing half (the character did
+            //    change), the backend prints half without `MoveTo`, and the rest of
+            //    the row shifts right — after a feed with `❤️`, returning from the
+            //    chat list/`F3` left an extra space, which only went away on scroll
+            //    (which triggers this same repaint). Confirmed by
+            //    `ui::screen_switch_emits_vs16_tail_without_full_redraw`.
             //
-            // Вне этих случаев на чистом тексте всё идёт обычным diff'ом.
-            // См. spec §11.3, §11.5.
+            // Outside these cases, plain text always goes through the regular diff.
+            // See spec §11.3, §11.5.
             let requested = if matches!(active, ActiveScreen::Chat) {
                 screen.take_full_redraw()
             } else {
@@ -402,21 +411,23 @@ fn run_loop(
             dirty = false;
         }
         if event::poll(TICK)? {
-            // Любое терминальное событие (ввод, скролл, ресайз) может изменить вид.
+            // Any terminal event (input, scroll, resize) may change the view.
             dirty = true;
-            // Дренируем ВСЕ доступные сейчас события разом. На Windows вставка из
-            // буфера приходит пачкой обычных key-событий (Event::Paste там нет —
-            // см. выше). Без батчинга это перерисовка на символ (тормоза), а Enter
-            // внутри текста = отправка. Пачку коалесим в `process_input_batch`.
+            // Drain ALL currently available events at once. On Windows a clipboard
+            // paste arrives as a batch of regular key events (there's no Event::Paste
+            // there — see above). Without batching this is a repaint per character
+            // (laggy), and an Enter inside the text = a send. We coalesce the batch in
+            // `process_input_batch`.
             let mut batch = Vec::new();
             collect_press(&mut batch, event::read()?);
             while event::poll(Duration::ZERO)? {
                 collect_press(&mut batch, event::read()?);
             }
-            // Похоже на вставку (всплеск событий за один дренаж) — добираем её хвост
-            // с короткой паузой-детектором (`PASTE_GAP`), чтобы крупная вставка из
-            // нескольких консольных порций собралась в ОДНУ пачку. Иначе на стыке
-            // порций серия рвётся и одиночный `Enter` уезжает как отправка (Windows).
+            // Looks like a paste (a burst of events in one drain) — we chase its tail
+            // with a short pause-detector (`PASTE_GAP`), so a large paste made of
+            // several console chunks gets collected into ONE batch. Otherwise a chunk
+            // boundary breaks the run and a lone `Enter` slips through as a send
+            // (Windows).
             if batch.len() >= PASTE_BURST {
                 while event::poll(PASTE_GAP)? {
                     collect_press(&mut batch, event::read()?);
@@ -430,14 +441,14 @@ fn run_loop(
     Ok(())
 }
 
-// ---------- подмодули (разбор god-object: docs/history/refactoring-god-objects.md, этап 7) ----------
+// ---------- submodules (god-object breakup: docs/history/refactoring-god-objects.md, stage 7) ----------
 
 mod clipboard;
 mod dispatch;
 mod input;
 
-// Внутренняя проводка: run_loop зовёт батчинг ввода (input), применение событий и
-// диспетчеризацию (dispatch), буфер обмена (clipboard). Внешняя поверхность — run.
+// Internal wiring: run_loop calls input batching (input), event application and
+// dispatch (dispatch), the clipboard (clipboard). The external surface is run.
 use self::{clipboard::*, dispatch::*, input::*};
 
 #[cfg(test)]

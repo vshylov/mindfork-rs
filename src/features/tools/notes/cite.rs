@@ -1,11 +1,13 @@
-//! Заметки — note_cite_source (ссылка заметки на источник RAG). Часть модуля [`super`]; разбито из монолита
-//! notes.rs (см. docs/history/refactoring-god-objects.md, этап 4).
+//! Notes — note_cite_source (a note's link to a RAG source). Part of the [`super`]
+//! module; split out of the notes.rs monolith (see
+//! docs/history/refactoring-god-objects.md, stage 4).
 
 use super::*;
 
-/// `note_cite_source` — связывает заметку с RAG-источником (Ярус 3, Путь 3: связывание
-/// органов памяти). Ссылка ведётся на **имя источника** (стабильно к переиндексации, в
-/// отличие от id чанков). Источник должен реально существовать в базе знаний профиля.
+/// `note_cite_source` — links a note to a RAG source (Tier 3, Path 3: linking the
+/// memory organs). The link targets the **source's name** (stable across
+/// reindexing, unlike chunk ids). The source must actually exist in the profile's
+/// knowledge base.
 pub struct NoteCiteSource;
 
 #[async_trait::async_trait]
@@ -17,7 +19,7 @@ impl Tool for NoteCiteSource {
         crate::features::tools::meta::ToolGroup::Memory
     }
     fn ui_label(&self) -> &'static str {
-        "сослаться на источник"
+        "cite source"
     }
     fn description(&self, loc: &crate::shared::i18n::Locale) -> String {
         loc.t("tool.note_cite_source.desc").into()

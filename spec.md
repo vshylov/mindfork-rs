@@ -1,265 +1,265 @@
-# Спецификация mindfork-rs
+# mindfork-rs Specification
 
-Инженерная спецификация **mindfork-rs** — консольного (TUI) приложения ИИ-чата на Rust для живого, осмысленного общения с локальными моделями **Gemma** и **Qwen**.
+Engineering specification for **mindfork-rs** — a console (TUI) AI chat application in Rust for live, meaningful conversation with local **Gemma** and **Qwen** models.
 
-Это **попытка №2**. Попытка №1 (`lamellama-rs`, GUI на `gpui` + `gpui-component`, движок `mistral.rs`) уперлась в две сложности: сырость `gpui` (построение действительно красивого интерфейса очень трудоёмко) и слабую поддержку Gemma 4 в `mistral.rs`. Поэтому решение отложено, а вместо него строится **консольное приложение** на `ratatui`, инференс — через локальный OpenAI-совместимый сервер (**llama.cpp `llama-server`**; исходно планировался `xinfer`, см. историческую записку выше).
+This is **attempt #2**. Attempt #1 (`lamellama-rs`, a `gpui` + `gpui-component` GUI, `mistral.rs` engine) ran into two roadblocks: the rawness of `gpui` (building a genuinely nice interface is very labor-intensive) and weak Gemma 4 support in `mistral.rs`. So that path was shelved, and instead a **console application** is built on `ratatui`, with inference through a local OpenAI-compatible server (**llama.cpp `llama-server`**; `xinfer` was the original plan — see the historical note above).
 
-Документ — производная от спецификации `lamellama-rs` (`D:\Projects\lamellama-rs\next_version_spec.md`): доменная модель, профили, изоляция памяти по профилю, дисциплина владения состоянием, обработка EOS, перечень инструментов и стратегия тестирования **переносятся как концепции**. Изменяются слой UI (`ratatui` вместо `gpui`) и слой инференса (локальный OpenAI-совместимый сервер вместо встроенного SDK `mistral.rs`), что влечёт ряд архитектурных следствий, зафиксированных ниже.
+The document is derived from the `lamellama-rs` specification (`D:\Projects\lamellama-rs\next_version_spec.md`): the domain model, profiles, per-profile memory isolation, state-ownership discipline, EOS handling, the tool roster, and the testing strategy **carry over as concepts**. The UI layer (`ratatui` instead of `gpui`) and the inference layer (a local OpenAI-compatible server instead of the embedded `mistral.rs` SDK) change, which entails a number of architectural consequences fixed below.
 
-Назначение документа — основа для реализации; фиксирует принятые решения и открытые вопросы.
+The document's purpose is to serve as the implementation baseline; it records the decisions made and the open questions.
 
-> ⚠️ **Историческая записка о движке.** Спецификация изначально писалась под библиотеку
-> **`xinfer`**, но она оказалась слишком сырой (бессвязный вывод на Gemma 4, плохо
-> собирается под Windows). Проект переведён на **llama.cpp `llama-server`**; в
-> external-режиме подходит **любой OpenAI-совместимый сервер** (vLLM, LM Studio,
-> Ollama, …). Транспорт — тот же OpenAI-протокол, поэтому весь дизайн ниже
-> (стриминг, семплинг, EOS, «мысли», клиентский agentic-loop, контракт инструментов)
-> остался в силе и уже приведён к актуальному движку. Конкретика: managed-сервер —
-> `llama-server` (`-m`/`-ngl`/`-c`/`--jinja`/`--reasoning-format`), клиент —
-> `OpenAiClient`, супервайзер — `LlamaSupervisor`, настройки — `EngineSettings`.
-> Запуск — в [docs/install.md §3](docs/install.md); см. решение #1 в [§16.1](#161-принятые-решения).
-
----
-
-## Оглавление
-
-1. [Обзор, цели и отличия от попытки №1](#1-обзор-цели-и-отличия-от-попытки-1)
-2. [Технологический стек и зависимости](#2-технологический-стек-и-зависимости)
-3. [Поддерживаемые модели и движок инференса](#3-поддерживаемые-модели-и-движок-инференса)
-4. [Архитектура решения (FSD-inspired)](#4-архитектура-решения-fsd-inspired)
-5. [Доменная модель и хранение данных](#5-доменная-модель-и-хранение-данных)
-6. [Движок инференса и клиентский agentic-loop](#6-движок-инференса-и-клиентский-agentic-loop)
-7. [Обработка EOS и стоп-токенов](#7-обработка-eos-и-стоп-токенов)
-8. [Параметры семплинга](#8-параметры-семплинга)
-9. [Система инструментов (tools)](#9-система-инструментов-tools)
-10. [Профили ИИ-собеседника](#10-профили-ии-собеседника)
-11. [TUI: интерфейс и взаимодействие](#11-tui-интерфейс-и-взаимодействие)
-12. [Конфигурация, портативность, миграция](#12-конфигурация-портативность-миграция)
-13. [Безопасность](#13-безопасность)
-14. [Стратегия тестирования](#14-стратегия-тестирования)
-15. [Этапы реализации и критерии готовности](#15-этапы-реализации-и-критерии-готовности)
-16. [Принятые решения и открытые вопросы](#16-принятые-решения-и-открытые-вопросы)
-17. [Модель себя (SelfModel)](#17-модель-себя-selfmodel)
+> ⚠️ **Historical note on the engine.** The specification was originally written for
+> the **`xinfer`** library, but it turned out too raw (incoherent output on Gemma 4,
+> builds poorly on Windows). The project switched to **llama.cpp `llama-server`**; in
+> external mode **any OpenAI-compatible server** works (vLLM, LM Studio,
+> Ollama, …). The transport is the same OpenAI protocol, so the entire design below
+> (streaming, sampling, EOS, "thoughts", client-side agentic loop, tool contract)
+> remains valid and has already been brought up to date with the current engine. Specifics: the managed server is
+> `llama-server` (`-m`/`-ngl`/`-c`/`--jinja`/`--reasoning-format`), the client is
+> `OpenAiClient`, the supervisor is `LlamaSupervisor`, the settings are `EngineSettings`.
+> Startup — in [docs/install.md §3](docs/install.md); see decision #1 in [§16.1](#161-accepted-decisions).
 
 ---
 
-## 1. Обзор, цели и отличия от попытки №1
+## Table of Contents
 
-### 1.1. Видение
+1. [Overview, goals, and differences from attempt #1](#1-overview-goals-and-differences-from-attempt-1)
+2. [Technology stack and dependencies](#2-technology-stack-and-dependencies)
+3. [Supported models and inference engine](#3-supported-models-and-inference-engine)
+4. [Solution architecture (FSD-inspired)](#4-solution-architecture-fsd-inspired)
+5. [Domain model and data storage](#5-domain-model-and-data-storage)
+6. [Inference engine and the client-side agentic loop](#6-inference-engine-and-the-client-side-agentic-loop)
+7. [EOS and stop-token handling](#7-eos-and-stop-token-handling)
+8. [Sampling parameters](#8-sampling-parameters)
+9. [Tool system](#9-tool-system)
+10. [AI-companion profiles](#10-ai-companion-profiles)
+11. [TUI: interface and interaction](#11-tui-interface-and-interaction)
+12. [Configuration, portability, migration](#12-configuration-portability-migration)
+13. [Security](#13-security)
+14. [Testing strategy](#14-testing-strategy)
+15. [Implementation stages and readiness criteria](#15-implementation-stages-and-readiness-criteria)
+16. [Accepted decisions and open questions](#16-accepted-decisions-and-open-questions)
+17. [Self-model (SelfModel)](#17-self-model-selfmodel)
 
-`mindfork-rs` — кроссплатформенное (**Windows, Linux**) консольное приложение для общения с локальными LLM семейств **Gemma** (3, 4) и **Qwen** (3.5, 3.6). Ключевая идея сохраняется из попытки №1: вместо широкой поверхностной поддержки моделей — **узкая, но качественная** поддержка двух семейств, и набор **инструментов**, делающих ассистента умнее, осознаннее и «живее»: RAG, заметки, исполнение Python, интернет-поиск (DuckDuckGo), интроспекция (чтение/изменение собственного системного сообщения и параметров семплинга, ощущение времени) и — самое главное — `call_subagent` (создание временного саб-агента ради альтернативного мнения).
+---
 
-Почему TUI: интерфейс получается быстрым, предсказуемым и переносимым; приложение можно запускать в обычном терминале и в терминале **JupyterLab**. Поэтому рендеринг markdown — **только текстовый** (без рендеринга в изображения), с **unicode-аппроксимацией LaTeX** (стрелки и простые формулы читаемы). Mermaid-диаграммы пока не требуются.
+## 1. Overview, goals, and differences from attempt #1
 
-### 1.2. Цели
+### 1.1. Vision
 
-1. **Качественная поддержка Gemma 3/4 и Qwen 3.5/3.6** — корректные шаблоны чата, токенизация, надёжная остановка генерации, устойчивость к «самообрыву» на тексте EOS-токена.
-2. **Консольный UI на `ratatui`** — список чатов, лента сообщений с markdown, многострочный ввод/редактирование, спелл-чек ru/en.
-3. **Инференс через локальный OpenAI-совместимый сервер** (llama.cpp `llama-server`), к которому приложение подключается по HTTP.
-4. **Расширяемая система инструментов**, исполняемая **клиентским agentic-loop** (RAG, заметки, Python, web, интроспекция, `call_subagent`).
-5. **Профили ИИ-собеседника** с уникальным идентификатором; заметки и RAG-данные хранятся **раздельно для каждого профиля**.
-6. **Повышение «осознанности» ответа** через `call_subagent` и самостоятельную смену системного сообщения ассистентом.
+`mindfork-rs` is a cross-platform (**Windows, Linux**) console application for talking to local LLMs from the **Gemma** (3, 4) and **Qwen** (3.5, 3.6) families. The key idea carries over from attempt #1: instead of broad, shallow model support — **narrow but high-quality** support for two families, plus a set of **tools** that make the assistant smarter, more self-aware, and "more alive": RAG, notes, Python execution, web search (DuckDuckGo), introspection (reading/changing its own system message and sampling parameters, a sense of time) and — most importantly — `call_subagent` (spinning up a temporary sub-agent for a second opinion).
 
-### 1.3. Отличия от попытки №1 (`lamellama-rs`)
+Why TUI: the interface ends up fast, predictable, and portable; the application can run in an ordinary terminal and in a **JupyterLab** terminal. That's why markdown rendering is **text-only** (no rendering to images), with **unicode approximation of LaTeX** (arrows and simple formulas stay readable). Mermaid diagrams aren't required yet.
 
-| Аспект | lamellama-rs (попытка №1) | mindfork-rs (попытка №2) |
+### 1.2. Goals
+
+1. **Quality support for Gemma 3/4 and Qwen 3.5/3.6** — correct chat templates, tokenization, reliable generation stopping, resistance to "self-truncation" on EOS-token text.
+2. **Console UI on `ratatui`** — chat list, message feed with markdown, multiline input/editing, ru/en spellcheck.
+3. **Inference through a local OpenAI-compatible server** (llama.cpp `llama-server`), which the application connects to over HTTP.
+4. **Extensible tool system**, executed by a **client-side agentic loop** (RAG, notes, Python, web, introspection, `call_subagent`).
+5. **AI-companion profiles** with a unique identifier; notes and RAG data are stored **separately per profile**.
+6. **Increasing response "self-awareness"** through `call_subagent` and the assistant independently changing its own system message.
+
+### 1.3. Differences from attempt #1 (`lamellama-rs`)
+
+| Aspect | lamellama-rs (attempt #1) | mindfork-rs (attempt #2) |
 |---|---|---|
-| UI-фреймворк | `gpui` + `gpui-component` (GUI) | `ratatui` + `crossterm` (TUI) |
-| Ввод/редактирование | `Input`/`TextInput` gpui-component | **собственный** multiline-виджет ([ADR 0001](docs/decisions/0001-ui-crates-ratatui-030.md)) |
-| Markdown | Markdown-рендеринг gpui-component (в т.ч. графика) | **собственный** рендерер на `pulldown-cmark` (только текст) + unicode-LaTeX ([ADR 0003](docs/decisions/0003-own-markdown-renderer.md)) |
-| Спелл-чек | `spellbook` + `diagnostics_mut` gpui-component | `spellbook` + собственная отрисовка/попап в TUI |
-| Движок инференса | `mistralrs` (встроенный Rust SDK) | llama.cpp `llama-server` (внешний OpenAI-совместимый **сервер**) |
-| Tool-calling | **серверный** agentic-loop mistral.rs (Rust-колбэки в процессе) | **клиентский** agentic-loop в оркестраторе |
-| Web search / Python | встроенные инструменты mistral.rs | **собственные** реализации (reqwest+DDG, subprocess) |
-| Эмбеддинги (RAG) | `EmbeddingModelBuilder` mistral.rs (в процессе) | `/v1/embeddings` на **выделенном** embedding-сервере (ADR 0002) |
-| Архитектурный стиль | Cargo-workspace по Clean Architecture (`llama-*`) | **FSD-inspired** модульная структура (см. [раздел 4](#4-архитектура-решения-fsd-inspired)) |
-| Платформы | десктоп (gpui) | Windows + Linux (терминал, в т.ч. JupyterLab) |
+| UI framework | `gpui` + `gpui-component` (GUI) | `ratatui` + `crossterm` (TUI) |
+| Input/editing | `Input`/`TextInput` gpui-component | **own** multiline widget ([ADR 0001](docs/decisions/0001-ui-crates-ratatui-030.md)) |
+| Markdown | gpui-component markdown rendering (incl. graphics) | **own** renderer on `pulldown-cmark` (text only) + unicode-LaTeX ([ADR 0003](docs/decisions/0003-own-markdown-renderer.md)) |
+| Spellcheck | `spellbook` + gpui-component `diagnostics_mut` | `spellbook` + own TUI rendering/popup |
+| Inference engine | `mistralrs` (embedded Rust SDK) | llama.cpp `llama-server` (external OpenAI-compatible **server**) |
+| Tool-calling | mistral.rs **server-side** agentic loop (Rust callbacks in-process) | **client-side** agentic loop in the orchestrator |
+| Web search / Python | built-in mistral.rs tools | **our own** implementations (reqwest+DDG, subprocess) |
+| Embeddings (RAG) | mistral.rs `EmbeddingModelBuilder` (in-process) | `/v1/embeddings` on a **dedicated** embedding server (ADR 0002) |
+| Architectural style | Cargo workspace, Clean Architecture (`llama-*`) | **FSD-inspired** modular structure (see [section 4](#4-solution-architecture-fsd-inspired)) |
+| Platforms | desktop (gpui) | Windows + Linux (terminal, incl. JupyterLab) |
 
-### 1.4. Что переносится из попытки №1 без изменений (как концепции)
+### 1.4. What carries over unchanged from attempt #1 (as concepts)
 
-- Доменные понятия: чат как список сообщений; роли `System`/`User`/`Assistant`/`Tool`; поле «мыслей» (CoT); режим Markdown на сообщение; снимок параметров генерации в `Message.metadata`.
-- Сущность `Profile` с `Uuid`, собственным системным сообщением, отображаемыми именами ролей, приветствием и набором включённых инструментов.
-- **Изоляция заметок/RAG по `profile_id`** (инвариант хранилища).
-- **Дисциплина владения состоянием**: единственный владелец `Chat` — оркестратор; инструменты читают неизменяемый снимок и не мутируют чат напрямую; однонаправленный поток данных UI ↔ бэкенд; `generation_id` против устаревших стрим-событий; автомат состояний `Idle/Generating/Cancelling`.
-- Обработка EOS **по token-id**, а не по подстроке; отсутствие строковых стоп-последовательностей по умолчанию.
-- Перечень инструментов и семантика `call_subagent` (альтернативное мнение, запрет вложенности).
-- Операции над чатом: создать, переименовать, клонировать, удалить (мягко), регенерировать последний ответ, удалить последнее сообщение (с переносом текста в поле ввода), редактирование сообщения по месту.
-- Профильно-семплинговые приоритеты (`Chat.sampling_override` → `Profile.default_sampling` → глобальный дефолт).
-- Мягкое удаление (`is_hidden`), портативное хранение рядом с бинарником, бэкап при сохранении, single instance, спелл-чек (en_US, en_GB, ru_RU).
+- Domain concepts: a chat as a list of messages; `System`/`User`/`Assistant`/`Tool` roles; a "thoughts" (CoT) field; a per-message Markdown mode; a snapshot of generation parameters in `Message.metadata`.
+- The `Profile` entity with a `Uuid`, its own system message, display role names, a greeting, and a set of enabled tools.
+- **Notes/RAG isolation by `profile_id`** (a storage invariant).
+- **State-ownership discipline**: the orchestrator is the sole owner of `Chat`; tools read an immutable snapshot and never mutate the chat directly; a unidirectional UI ↔ backend data flow; `generation_id` guards against stale streaming events; the `Idle/Generating/Cancelling` state machine.
+- EOS handling **by token id**, not by substring; no string stop sequences by default.
+- The tool roster and `call_subagent` semantics (second opinion, no nesting allowed).
+- Chat operations: create, rename, clone, (soft-)delete, regenerate the last response, delete the last message (with the text returned to the input box), edit a message in place.
+- Per-profile sampling override priority (`Chat.sampling_override` → `Profile.default_sampling` → global default).
+- Soft delete (`is_hidden`), portable storage next to the binary, a backup on save, single-instance enforcement, spellcheck (en_US, en_GB, ru_RU).
 
-### 1.5. Что удаляется/не переносится
+### 1.5. What is dropped / not carried over
 
-- GUI (`gpui`/`gpui-component`) и графический рендеринг markdown (LaTeX/mermaid в изображения).
-- ~~Имперсонация пользователя~~ — в попытке №1 отсутствовала и сюда изначально не планировалась, но **позже реализована** в mindfork-rs (`Ctrl+U`, см. [§11.8](#118-имперсонация-написание-сообщения-за-пользователя)).
-- Дисковый KV-кэш (полагаемся на prefix caching сервера инференса).
-- LoRA в первой версии.
-- Встроенные web/Python инструменты движка (реализуем сами, т.к. сервер инференса внешний).
+- GUI (`gpui`/`gpui-component`) and graphical markdown rendering (LaTeX/mermaid to images).
+- ~~User impersonation~~ — absent in attempt #1 and not originally planned here either, but **later implemented** in mindfork-rs (`Ctrl+U`, see [§11.8](#118-impersonation-writing-a-message-as-the-user)).
+- An on-disk KV cache (we rely on the inference server's prefix caching).
+- LoRA in the first version.
+- The engine's built-in web/Python tools (we implement our own, since the inference server is external).
 
 ---
 
-## 2. Технологический стек и зависимости
+## 2. Technology stack and dependencies
 
-### 2.1. Базовый стек
+### 2.1. Base stack
 
-- **Язык**: Rust (edition 2024). Скелет уже создан (`cargo new`, `mindfork-rs`).
-- **Async runtime**: `tokio` (HTTP-клиент к серверу инференса, фоновые задачи инференса/инструментов, управление дочерним процессом сервера).
-- **TUI**: `ratatui` + `crossterm` (бэкенд терминала; кроссплатформенный, Windows + Linux).
-- **Инференс**: **локальный OpenAI-совместимый сервер** (`llama.cpp llama-server`; `/v1/...`), приложение общается с ним по HTTP. См. [раздел 3](#3-поддерживаемые-модели-и-движок-инференса).
+- **Language**: Rust (edition 2024). The skeleton already exists (`cargo new`, `mindfork-rs`).
+- **Async runtime**: `tokio` (HTTP client to the inference server, background inference/tool tasks, managing the inference server child process).
+- **TUI**: `ratatui` + `crossterm` (terminal backend; cross-platform, Windows + Linux).
+- **Inference**: a **local OpenAI-compatible server** (`llama.cpp llama-server`; `/v1/...`); the application talks to it over HTTP. See [section 3](#3-supported-models-and-inference-engine).
 
-### 2.2. Вспомогательные крейты (предварительный список)
+### 2.2. Supporting crates (preliminary list)
 
-| Назначение | Крейт | Примечание |
+| Purpose | Crate | Note |
 |---|---|---|
-| Многострочный ввод/редактор | **свой виджет** (`widgets/input_box.rs`) | Поле ввода и правка сообщений по месту. Готовые `tui-textarea`/`ratatui-textarea` несовместимы с ratatui 0.30 и не дают подсветки произвольных диапазонов → [ADR 0001](docs/decisions/0001-ui-crates-ratatui-030.md). |
-| Markdown в TUI | **свой рендерер** (`pulldown-cmark` + `syntect`) | Markdown с таблицами, подсветкой кода и темой; `ratatui-markdown`/`tui-markdown` не подошли (нет таблиц/math, игнор темы) → [ADR 0003](docs/decisions/0003-own-markdown-renderer.md). Скролл ленты — `tui-scrollview`. |
-| Сегментация слов | `unicode-segmentation` | Разбиение на слова для спелл-чека (Unicode word boundaries) и для unicode-LaTeX. |
-| Спелл-чекер | `spellbook` | Hunspell-совместимый, чистый Rust. |
-| HTTP-клиент к LLM | `async-openai` / `reqwest` | OpenAI-совместимый клиент; расширяется под нестандартные поля сервера (`reasoning_content`/`reasoning_effort`) через `serde`. По факту выбран `reqwest` + свои типы (`OpenAiClient`). |
-| HTTP (web-инструмент) | `reqwest` | Интернет-поиск DuckDuckGo и загрузка страниц. |
-| Извлечение контента страниц | `scraper` / `readability`-крейт | «Читаемый» текст веб-страниц для web-инструмента (точный крейт — при реализации). |
-| Сериализация | `serde`, `serde_json` | Конфиг и чаты в JSON; схемы инструментов; тело запросов. |
-| Идентификаторы | `uuid` (v4) | `Profile.id`, `Chat.id`, `Message.id`, `generation_id`. |
-| Дата/время | `chrono` | Таймстемпы; инструмент времени. |
-| БД (заметки/RAG) | `rusqlite` + `sqlite-vec` | Встроенное векторное хранилище. |
-| Ошибки | `anyhow` (приложение), `thiserror` (внутренние модули-библиотеки) | |
-| Логирование | `tracing` + `tracing-subscriber` | Лог в файл рядом с бинарником (в TUI stdout занят интерфейсом). |
-| Async-стримы | `futures` / `tokio-stream` | Стриминг чанков от сервера инференса в UI. |
-| Отмена | `tokio_util::sync::CancellationToken` | Остановка генерации. |
-| Single instance | `single-instance` (или lock-файл/именованный мьютекс) | Запуск в единственном экземпляре. |
+| Multiline input/editor | **own widget** (`widgets/input_box.rs`) | The input box and in-place message editing. Off-the-shelf `tui-textarea`/`ratatui-textarea` are incompatible with ratatui 0.30 and don't support highlighting arbitrary ranges → [ADR 0001](docs/decisions/0001-ui-crates-ratatui-030.md). |
+| Markdown in the TUI | **own renderer** (`pulldown-cmark` + `syntect`) | Markdown with tables, code highlighting, and theming; `ratatui-markdown`/`tui-markdown` didn't fit (no tables/math, ignores the theme) → [ADR 0003](docs/decisions/0003-own-markdown-renderer.md). Feed scrolling — `tui-scrollview`. |
+| Word segmentation | `unicode-segmentation` | Splitting into words for spellcheck (Unicode word boundaries) and for unicode-LaTeX. |
+| Spellchecker | `spellbook` | Hunspell-compatible, pure Rust. |
+| HTTP client to the LLM | `async-openai` / `reqwest` | OpenAI-compatible client; extended for the server's non-standard fields (`reasoning_content`/`reasoning_effort`) via `serde`. In practice `reqwest` + our own types (`OpenAiClient`) were chosen. |
+| HTTP (web tool) | `reqwest` | DuckDuckGo web search and page fetching. |
+| Page content extraction | `scraper` / a `readability` crate | "Readable" web page text for the web tool (exact crate — at implementation time). |
+| Serialization | `serde`, `serde_json` | Config and chats in JSON; tool schemas; request bodies. |
+| Identifiers | `uuid` (v4) | `Profile.id`, `Chat.id`, `Message.id`, `generation_id`. |
+| Date/time | `chrono` | Timestamps; the time tool. |
+| DB (notes/RAG) | `rusqlite` + `sqlite-vec` | Embedded vector storage. |
+| Errors | `anyhow` (application), `thiserror` (internal library modules) | |
+| Logging | `tracing` + `tracing-subscriber` | Logging to a file next to the binary (stdout is occupied by the TUI). |
+| Async streams | `futures` / `tokio-stream` | Streaming chunks from the inference server into the UI. |
+| Cancellation | `tokio_util::sync::CancellationToken` | Stopping generation. |
+| Single instance | `single-instance` (or a lock file/named mutex) | Enforcing a single running instance. |
 
-> Точные версии фиксируются командой `cargo add` на момент реализации. LaTeX→unicode (см. [11.4](#114-markdown-cot-и-tool-блоки-latex)) реализуется собственной таблицей подстановок либо лёгким крейтом — уточняется при реализации.
+> Exact versions are pinned via `cargo add` at implementation time. LaTeX→unicode (see [11.4](#114-markdown-cot-and-tool-blocks-latex)) is implemented via a custom substitution table or a lightweight crate — to be decided during implementation.
 
-### 2.3. Опциональные фичи
+### 2.3. Optional features
 
-- **GPU/CUDA** — относится к сборке/запуску **сервера инференса** (`llama-server`), а не к нашему приложению: наше приложение — HTTP-клиент и от ML-стека не зависит. Это важное упрощение по сравнению с попыткой №1 (где `mistralrs` тянулся в процесс с CUDA-сборкой). Сборка/установка самого сервера с CUDA/Metal — на стороне пользователя/инсталлятора.
-
----
-
-## 3. Поддерживаемые модели и движок инференса
-
-### 3.1. Объём поддержки моделей
-
-Целевые семейства (по требованиям — **обязательны**):
-
-- **Qwen** — 3.5, 3.6 (dense и MoE-варианты).
-- **Gemma** — 3, 4 (включая мультимодальные чекпойнты — используется только текстовый чат).
-
-llama.cpp поддерживает оба семейства нативно (а также LLaMa, Mistral, GLM4, DeepSeek, Phi и др. — всё, что есть в GGUF). Остальные модели — «как бонус», только если работают без дополнительных усилий со стороны нашего приложения (оно модельно-агностично на уровне OpenAI API). Сужение до Gemma/Qwen касается **качества проверки** (шаблоны, EOS, tool-calling, «мысли»), а не жёсткого запрета прочих моделей.
-
-Форматы и квантизация — **целиком на стороне сервера инференса**: GGUF (все типы квантизации), для llama.cpp — встроенный chat-template модели (`--jinja`). Наше приложение их не реализует; оно лишь передаёт пользователю параметры запуска сервера (см. [3.4](#34-управление-жизненным-циклом-сервера)).
-
-### 3.2. Движок как локальный сервер, а не встроенный SDK
-
-**Ключевое архитектурное решение.** Движок — это **standalone HTTP-сервер** (`llama.cpp llama-server`; порт по умолчанию `8000`), отдающий **OpenAI-совместимый API** (`/v1/chat/completions`, `/v1/embeddings`, токенайзер-эндпоинты). Встраивание модели в наш процесс (rlib с candle/CUDA) сознательно **не используется** — это вернуло бы ровно ту сложность сборки под Windows, от которой проект уходит. Поддерживаемый путь — именно сервер (CLI `llama-server -m <model.gguf> -ngl <n> --jinja`).
-
-Поэтому `mindfork-rs`:
-
-- **запускает/использует сервер инференса локально** и общается с ним по HTTP (`http://127.0.0.1:<port>/v1`);
-- **agentic-loop для инструментов выполняется на стороне клиента** (в нашем оркестраторе), а не сервером. Это отличие от попытки №1, где `mistral.rs` исполнял Rust-колбэки инструментов внутри своего процесса.
-
-Преимущества решения:
-
-- **Чистое разделение**: приложение не тянет ML-стек (candle/CUDA) в свой бинарник; быстрая сборка, простая кроссплатформенность, CI без GPU.
-- **Полный контроль над agentic-loop**: нужен для stateful-инструментов с контекстом профиля/чата (`profile_id`, снимок чата, эффекты к оркестратору), для `call_subagent` и для изоляции памяти — всё это неудобно реализовать как внешние MCP-серверы.
-- **Гибкость источника модели**: можно подключиться и к уже запущенному вручную серверу (например, на другой машине/порту), причём к любому OpenAI-совместимому (vLLM/LM Studio/Ollama).
-
-Недостатки и их компенсация:
-
-- Накладные расходы HTTP/локального стриминга — пренебрежимо малы на localhost.
-- Сервер инференса нужно установить отдельно (или поставлять рядом) — решается настройкой пути к бинарнику и режимом «подключиться к запущенному».
-- Встроенные в `mistral.rs` инструменты (web/Python) недоступны — **реализуем сами** (см. [раздел 9](#9-система-инструментов-tools)).
-
-> **Примечание:** слой движка (`shared/api`) спрятан за трейтом `EngineBackend`, поэтому транспорт можно сменить (другой сервер, теоретически in-process API) без затрагивания оркестратора — agentic-loop у нас и так клиентский.
-
-### 3.3. Шаблоны чата, «мысли», tool-calling
-
-- **Шаблоны чата** применяет сервер инференса (для GGUF — встроенный chat-template из файла модели, флаг `--jinja`). Мы передаём сообщения структурно (`messages` с ролями `system`/`user`/`assistant`/`tool`), форматирование — на сервере.
-- **«Мысли» (CoT)**: для Qwen3/Gemma выделяются либо из специального поля стрима (`reasoning_content`; у `llama-server` включается `--reasoning-format`), либо парсингом разметки `<think>…</think>` из основного потока. Парсер «мыслей» — на стороне движкового слоя при стриминге (умеет склеивать теги, разрезанные по границе чанка). См. [6.5](#65-разбор-мыслей-cot).
-- **Tool-calling**: сервер поддерживает OpenAI-совместимый tool-calling (структурированные `tool_calls` в ответе) и constrained/structured outputs (JSON Schema). Мы передаём `tools` (OpenAI-схемы) и `tool_choice`, получаем `tool_calls`, **исполняем их сами** и продолжаем диалог (см. [6.3](#63-клиентский-agentic-loop)).
-
-### 3.4. Управление жизненным циклом сервера
-
-Два режима (выбираются в настройках):
-
-1. **Managed (по умолчанию)** — приложение само запускает дочерний процесс `llama-server` с нужными аргументами (`-m` GGUF, `-ngl`, `-c`, `--jinja`, `--port`, `--no-mmap` и т.п. из настроек модели), ждёт готовности (поллинг `/health`), подключается. При выходе приложения — корректно останавливает дочерний процесс. Смена модели = перезапуск сервера. Прогресс загрузки модели отображается в UI (парсинг stdout/stderr сервера в лог-панель — аналог «View Init Logs» попытки №1). **Предполёт:** перед запуском проверяется наличие файла модели — `spawn` дочернего процесса успешен и без GGUF (падает лишь при отсутствии самого бинарника), сервер тогда умер бы на загрузке, а probe готовности впустую ждал бы до таймаута; поэтому отсутствующий/недоступный файл сразу даёт `Disconnected` с понятным сообщением, а не зависание в «подключение…». **Ранний выход:** если файл валиден, но процесс умирает уже *в ходе* загрузки (битый GGUF, нехватка памяти), монитор-задача дочернего процесса взводит сигнал `exited`, который видит probe готовности — он прекращает поллинг сразу с понятной ошибкой, не дожидаясь таймаута.
-2. **External** — подключение к уже запущенному серверу (URL/порт в настройках; любой OpenAI-совместимый); приложение его жизненным циклом не управляет.
-
-Параметры:
-
-- Путь к бинарнику `llama-server` (managed-режим) — в настройках; по умолчанию ищется в `PATH` и рядом с бинарником приложения.
-- Один загруженный экземпляр модели, **один контекст генерации за раз** (целевое железо — потребительский ПК; параллельные генерации не нужны).
+- **GPU/CUDA** — pertains to building/running the **inference server** (`llama-server`), not our application: our application is an HTTP client and has no dependency on the ML stack. This is a significant simplification compared to attempt #1 (where `mistralrs` was pulled into the process with a CUDA build). Building/installing the server itself with CUDA/Metal is the user's/installer's responsibility.
 
 ---
 
-## 4. Архитектура решения (FSD-inspired)
+## 3. Supported models and inference engine
 
-### 4.1. Выбор стиля
+### 3.1. Scope of model support
 
-По требованиям предпочтителен **Feature-Sliced Design (FSD)** — он удобен для разработки ИИ-агентами за счёт явных, узких «срезов» с однонаправленными зависимостями. FSD — методология фронтенда, поэтому здесь применяется **в адаптированном виде**: слои организуют **модули внутри одного бинарного крейта** (простая сборка — важно для итеративной агентной разработки), а тяжёлые/независимые части при необходимости позже выносятся в крейты воркспейса без изменения границ.
+Target families (per requirements — **mandatory**):
 
-### 4.2. Слои (сверху вниз; зависимости направлены только вниз)
+- **Qwen** — 3.5, 3.6 (dense and MoE variants).
+- **Gemma** — 3, 4 (including multimodal checkpoints — only text chat is used).
+
+llama.cpp natively supports both families (as well as LLaMa, Mistral, GLM4, DeepSeek, Phi, and others — anything available as GGUF). Other models are "bonus" support, only if they work without extra effort on our application's part (it's model-agnostic at the OpenAI-API level). Narrowing to Gemma/Qwen concerns **verification quality** (templates, EOS, tool-calling, "thoughts"), not a hard ban on other models.
+
+Formats and quantization are **entirely the inference server's responsibility**: GGUF (all quantization types), for llama.cpp — the model's built-in chat template (`--jinja` flag). Our application doesn't implement any of that; it only passes the user the server-launch parameters (see [3.4](#34-managing-the-server-lifecycle)).
+
+### 3.2. The engine as a local server, not an embedded SDK
+
+**Key architectural decision.** The engine is a **standalone HTTP server** (`llama.cpp llama-server`; default port `8000`) that serves an **OpenAI-compatible API** (`/v1/chat/completions`, `/v1/embeddings`, tokenizer endpoints). Embedding the model into our process (an rlib with candle/CUDA) is deliberately **not used** — that would bring back exactly the Windows build complexity the project is escaping. The supported path is precisely a server (CLI `llama-server -m <model.gguf> -ngl <n> --jinja`).
+
+So `mindfork-rs`:
+
+- **launches/uses the inference server locally** and talks to it over HTTP (`http://127.0.0.1:<port>/v1`);
+- **runs the tool agentic loop on the client side** (in our orchestrator), not on the server. This differs from attempt #1, where `mistral.rs` executed Rust tool callbacks inside its own process.
+
+Advantages of the decision:
+
+- **Clean separation**: the application doesn't pull the ML stack (candle/CUDA) into its binary; a fast build, simple cross-platform support, GPU-free CI.
+- **Full control over the agentic loop**: needed for stateful tools with profile/chat context (`profile_id`, a chat snapshot, effects sent back to the orchestrator), for `call_subagent`, and for memory isolation — all of these are awkward to implement as external MCP servers.
+- **Model-source flexibility**: it's possible to connect to an already-running server (e.g. on another machine/port), and to any OpenAI-compatible one (vLLM/LM Studio/Ollama).
+
+Drawbacks and how they're offset:
+
+- HTTP/local streaming overhead — negligible on localhost.
+- The inference server has to be installed separately (or shipped alongside) — addressed by configuring the binary path and a "connect to a running server" mode.
+- `mistral.rs`'s built-in tools (web/Python) aren't available — **we implement our own** (see [section 9](#9-tool-system)).
+
+> **Note:** the engine layer (`shared/api`) is hidden behind an `EngineBackend` trait, so the transport can be swapped (a different server, theoretically an in-process API) without touching the orchestrator — our agentic loop is already client-side.
+
+### 3.3. Chat templates, "thoughts", tool-calling
+
+- **Chat templates** are applied by the inference server (for GGUF — the model file's built-in chat template, `--jinja` flag). We pass messages structurally (`messages` with `system`/`user`/`assistant`/`tool` roles); formatting happens on the server.
+- **"Thoughts" (CoT)**: for Qwen3/Gemma these are extracted either from a dedicated streaming field (`reasoning_content`; enabled in `llama-server` via `--reasoning-format`), or by parsing `<think>…</think>` markup out of the main stream. The "thoughts" parser lives in the engine layer during streaming (it can stitch tags split across a chunk boundary). See [6.5](#65-parsing-thoughts-cot).
+- **Tool-calling**: the server supports OpenAI-compatible tool-calling (structured `tool_calls` in the response) and constrained/structured outputs (JSON Schema). We pass `tools` (OpenAI schemas) and `tool_choice`, get back `tool_calls`, **execute them ourselves**, and continue the dialogue (see [6.3](#63-client-side-agentic-loop)).
+
+### 3.4. Managing the server lifecycle
+
+Two modes (chosen in settings):
+
+1. **Managed (default)** — the application launches a `llama-server` child process itself with the necessary arguments (`-m` GGUF, `-ngl`, `-c`, `--jinja`, `--port`, `--no-mmap`, etc. from the model settings), waits for readiness (polling `/health`), connects. On application exit — cleanly stops the child process. Changing the model = restarting the server. Model-load progress is shown in the UI (parsing the server's stdout/stderr into a log panel — an analog of attempt #1's "View Init Logs"). **Preflight:** before launching, the model file's presence is checked — `spawn` of the child process succeeds even without the GGUF (it only fails if the binary itself is missing), and the server would then die during loading while the readiness probe waited pointlessly until timeout; so a missing/inaccessible file immediately yields `Disconnected` with a clear message instead of hanging in "connecting…". **Early exit:** if the file is valid but the process dies *during* loading (a corrupt GGUF, out of memory), the child-process monitor task raises an `exited` signal that the readiness probe watches — it stops polling immediately with a clear error, instead of waiting for the timeout.
+2. **External** — connect to an already-running server (URL/port in settings; any OpenAI-compatible one); the application doesn't manage its lifecycle.
+
+Parameters:
+
+- Path to the `llama-server` binary (managed mode) — in settings; by default it's looked up in `PATH` and next to the application binary.
+- One loaded model instance, **one generation context at a time** (the target hardware is a consumer PC; parallel generations aren't needed).
+
+---
+
+## 4. Solution architecture (FSD-inspired)
+
+### 4.1. Choice of style
+
+Per requirements, **Feature-Sliced Design (FSD)** is preferred — it's convenient for development by AI agents thanks to explicit, narrow "slices" with one-directional dependencies. FSD is a frontend methodology, so here it's applied **in adapted form**: the layers organize **modules inside a single binary crate** (a simple build matters for iterative agent-driven development), and heavy/independent parts can later be split out into workspace crates without changing the boundaries.
+
+### 4.2. Layers (top to bottom; dependencies point only downward)
 
 ```
 src/
-├─ main.rs                  # тонкая точка входа: init терминала, tokio, single-instance, app::run()
-├─ app/                     # композиция: event-loop TUI, роутинг экранов, DI, оркестратор сессии
-│  ├─ orchestrator.rs       #   владелец доменного состояния (SessionState), автомат генерации, agentic-loop
-│  ├─ events.rs             #   AppCommand (UI→оркестратор), AppEvent (оркестратор→UI)
-│  └─ runtime.rs            #   мост tokio ↔ TUI-петля (каналы), управление сервером инференса
-├─ screens/                 # (FSD "pages") целостные экраны
-│  ├─ chat.rs               #   экран чата
-│  └─ settings.rs           #   экран настроек
-├─ widgets/                 # (FSD "widgets") составные UI-блоки
-│  ├─ chat_list.rs          #   список чатов: поиск, сортировка, переименование
-│  ├─ message_feed.rs       #   лента сообщений: markdown, мысли, tool-блоки, скролл, перенос слов
-│  ├─ input_box.rs          #   свой multiline-ввод (ADR 0001): перенос слов, курсор, индикация спелл-чека
-│  ├─ status_bar.rs         #   модель/токены/профиль/состояние сервера
-│  └─ dialogs.rs            #   модалки: подтверждения, выбор профиля, попап подсказок орфографии
-├─ features/                # (FSD "features") пользовательские сценарии (по одному действию)
+├─ main.rs                  # thin entry point: terminal init, tokio, single-instance, app::run()
+├─ app/                     # composition: the TUI event loop, screen routing, DI, the session orchestrator
+│  ├─ orchestrator.rs       #   owner of the domain state (SessionState), the generation state machine, the agentic loop
+│  ├─ events.rs             #   AppCommand (UI→orchestrator), AppEvent (orchestrator→UI)
+│  └─ runtime.rs            #   the tokio ↔ TUI-loop bridge (channels), inference-server management
+├─ screens/                 # (FSD "pages") whole screens
+│  ├─ chat.rs               #   the chat screen
+│  └─ settings.rs           #   the settings screen
+├─ widgets/                 # (FSD "widgets") composite UI blocks
+│  ├─ chat_list.rs          #   the chat list: search, sorting, renaming
+│  ├─ message_feed.rs       #   the message feed: markdown, thoughts, tool blocks, scrolling, word wrap
+│  ├─ input_box.rs          #   our own multiline input (ADR 0001): word wrap, cursor, spellcheck indication
+│  ├─ status_bar.rs         #   model/tokens/profile/server state
+│  └─ dialogs.rs            #   modals: confirmations, profile picker, spellcheck-suggestion popup
+├─ features/                # (FSD "features") user scenarios (one action each)
 │  ├─ send_message.rs       │  regenerate.rs        │  delete_last.rs
 │  ├─ edit_message.rs       │  chat_search_sort.rs  │  rename_chat.rs
-│  ├─ spellcheck/           #   сегментация, проверка, подсказки, персональный словарь
-│  └─ tools/                #   реестр и реализации инструментов (client-side)
+│  ├─ spellcheck/           #   segmentation, checking, suggestions, personal dictionary
+│  └─ tools/                #   the registry and tool implementations (client-side)
 │     ├─ registry.rs        │  rag.rs   │  notes.rs   │  python.rs   │  web.rs
 │     ├─ introspection.rs   │  subagent.rs
-├─ entities/                # (FSD "entities") доменные типы (без I/O)
+├─ entities/                # (FSD "entities") domain types (no I/O)
 │  ├─ profile.rs  │ chat.rs │ message.rs │ note.rs │ rag.rs │ sampling.rs
-└─ shared/                  # (FSD "shared") инфраструктура и утилиты
-   ├─ api/                  #   движок: OpenAI-клиент (трейт EngineBackend + HTTP-реализация)
-   ├─ storage/              #   репозитории: JSON (конфиг/чаты/профили) + SQLite (заметки/RAG)
-   ├─ config.rs             #   settings.json, версионирование схемы
-   ├─ markdown.rs           #   рендер markdown + unicode-LaTeX-аппроксимация
-   ├─ wrap.rs               #   перенос слов по колонкам (unicode-width) для ленты/ввода
+└─ shared/                  # (FSD "shared") infrastructure and utilities
+   ├─ api/                  #   the engine: the OpenAI client (the EngineBackend trait + HTTP implementation)
+   ├─ storage/               #   repositories: JSON (config/chats/profiles) + SQLite (notes/RAG)
+   ├─ config.rs             #   settings.json, schema versioning
+   ├─ markdown.rs            #   markdown rendering + unicode-LaTeX approximation
+   ├─ wrap.rs                #   column-based word wrap (unicode-width) for the feed/input
    ├─ keymap.rs  │ theme.rs │ paths.rs │ error.rs
 ```
 
-Правило зависимостей FSD: `app → screens → widgets → features → entities → shared`. Слой не импортирует «вбок» и «вверх». Кросс-срезовая инфраструктура (движок, хранилище) живёт в `shared` и доступна оркестратору/фичам через трейты.
+FSD dependency rule: `app → screens → widgets → features → entities → shared`. A layer never imports "sideways" or "upward". Cross-cutting infrastructure (the engine, storage) lives in `shared` and is exposed to the orchestrator/features via traits.
 
-> Замечание: «движок» и «хранилище» — это backend-ядро в `shared/api` и `shared/storage`. Чистый FSD таких слоёв не знает; здесь это осознанная адаптация. При желании их легко вынести в отдельные крейты воркспейса (`mindfork-engine`, `mindfork-storage`, `mindfork-spell`) — границы это допускают.
+> Note: the "engine" and "storage" are backend cores living in `shared/api` and `shared/storage`. Pure FSD doesn't have such layers; this is a deliberate adaptation here. If desired, they can easily be split out into separate workspace crates (`mindfork-engine`, `mindfork-storage`, `mindfork-spell`) — the boundaries allow it.
 
-### 4.3. Соответствие слоям попытки №1
+### 4.3. Mapping to attempt #1's layers
 
-| lamellama-rs (крейт) | mindfork-rs (слой/модуль) |
+| lamellama-rs (crate) | mindfork-rs (layer/module) |
 |---|---|
 | `llama-core` | `entities/` |
-| `llama-app` (оркестрация) | `app/orchestrator.rs` + `features/` |
+| `llama-app` (orchestration) | `app/orchestrator.rs` + `features/` |
 | `llama-engine` (`mistralrs`) | `shared/api/` (`OpenAiClient`) |
 | `llama-tools` | `features/tools/` |
 | `llama-storage` | `shared/storage/` |
 | `llama-spell` | `features/spellcheck/` |
 | `llama-ui` (`gpui`) | `screens/` + `widgets/` |
 
-### 4.4. Потоки выполнения и состояние UI ↔ бэкенд
+### 4.4. Execution flows and UI ↔ backend state
 
-Дисциплина из попытки №1 сохраняется (она UI-агностична), но **мост проще**: у `ratatui` нет собственного executor'а — есть один поток рендеринга и обычный `tokio`-рантайм.
+The discipline from attempt #1 carries over (it's UI-agnostic), but **the bridge is simpler**: `ratatui` has no executor of its own — there's one rendering thread and an ordinary `tokio` runtime.
 
-1. **Единственный источник истины** — оркестратор (`app/orchestrator.rs`): владеет `SessionState` (чаты, профили, статусы генераций), единолично пишет в `shared/storage`. UI держит read-only-проекцию, обновляемую только событиями `AppEvent`.
-2. **Однонаправленный поток**: UI → оркестратор шлёт `AppCommand` (SendMessage, Cancel, RegenerateLast, DeleteLast, EditMessage, SwitchChat, RenameChat, DeleteChat, …); оркестратор → UI шлёт `AppEvent` (ChatUpdated, GenerationStarted/Chunk/Thoughts/ToolProgress/Finished/Cancelled, Error, ServerStatus, …).
-3. **Сериализация команд**: оркестратор — одна `tokio`-задача с очередью `mpsc`; команды обрабатываются строго последовательно.
-4. **`generation_id`**: каждый запуск генерации получает `Uuid`; все стрим-события несут `(chat_id, generation_id)`; события с неактуальным id отбрасываются (классическая гонка «Stop → сразу Regenerate → долетели хвосты старого стрима» закрыта). Автомат на чат: `Idle → Generating{id} → Cancelling → Idle`.
-5. **Валидация команд по состоянию** (defense in depth): UI блокирует недопустимые действия по статусу, оркестратор дополнительно отклоняет неприменимые команды.
+1. **Single source of truth** — the orchestrator (`app/orchestrator.rs`): it owns `SessionState` (chats, profiles, generation statuses), and is the sole writer to `shared/storage`. The UI holds a read-only projection, updated only by `AppEvent`s.
+2. **Unidirectional flow**: UI → orchestrator sends `AppCommand` (SendMessage, Cancel, RegenerateLast, DeleteLast, EditMessage, SwitchChat, RenameChat, DeleteChat, …); orchestrator → UI sends `AppEvent` (ChatUpdated, GenerationStarted/Chunk/Thoughts/ToolProgress/Finished/Cancelled, Error, ServerStatus, …).
+3. **Command serialization**: the orchestrator is a single `tokio` task with an `mpsc` queue; commands are processed strictly sequentially.
+4. **`generation_id`**: each generation run gets a `Uuid`; every streaming event carries `(chat_id, generation_id)`; events with a stale id are dropped (the classic "Stop → immediately Regenerate → the old stream's tail arrives late" race is closed). Per-chat state machine: `Idle → Generating{id} → Cancelling → Idle`.
+5. **State-based command validation** (defense in depth): the UI blocks disallowed actions based on status, and the orchestrator additionally rejects inapplicable commands.
 
-#### 4.4.1. Петля TUI и асинхронность
+#### 4.4.1. The TUI loop and asynchrony
 
 ```
             ┌──────────────── main thread (render loop) ─────────────────┐
@@ -271,33 +271,33 @@ crossterm   │  poll input → AppCommand (mpsc → orchestrator)             �
                          │                              ▼
             ┌──────────────────── tokio runtime ────────────────────────┐
             │  orchestrator task: state machine, agentic-loop            │
-            │   ├─ EngineBackend (HTTP-стрим к серверу /v1/chat/...)      │
+            │   ├─ EngineBackend (HTTP stream to the server /v1/chat/...) │
             │   ├─ tools (rag/notes/python/web/introspection/subagent)   │
             │   └─ storage (JSON + SQLite)                                │
-            │  llama-server child-process supervisor (managed-режим)     │
+            │  llama-server child-process supervisor (managed mode)      │
             └────────────────────────────────────────────────────────────┘
 ```
 
-- Петля рендеринга **не блокируется**: ввод опрашивается с таймаутом (`crossterm::event::poll`), события дренируются неблокирующе (`try_recv`). Отрисовка — **по изменениям** (флаг `dirty`): кадр выдаётся только когда применилось событие оркестратора, пришло терминальное событие (ввод/мышь/ресайз), перезагрузился словарь или пересчиталась подсветка орфографии. На простое экран не перерисовывается — иначе `ratatui` каждый тик переставлял бы курсор (`frame.set_cursor_position`), а терминал (особенно Windows Terminal) сбрасывает фазу мигания на каждое перемещение → курсор мигал бы чаще и неровно. Тело петли при этом всё равно крутится каждый тик (таймаут `poll`), что и обеспечивает пробуждение отложенных по дебаунсу действий (перепроверка орфографии): они исполняются в петле, а `dirty` поднимается лишь когда результат реально изменился. Анимаций по таймеру в рендере нет.
-- Кадр применяется **атомарно** — синхронизированный вывод (DEC private mode 2026): `run_loop` обёртывает `terminal.draw` в `BeginSynchronizedUpdate`/`EndSynchronizedUpdate` (CSI `?2026h`/`?2026l`), терминал буферизует всё между ними и показывает кадр целиком. Без этого аппаратный курсор «прыгал» при стриминге/анимациях: ratatui пишет diff кадра при видимом курсоре (курсор терминала = позиция записи) и лишь потом отдельными записями возвращает его в поле ввода (`show_cursor`/`set_cursor_position` бэкенда — `execute!` с немедленным flush; крупный diff вдобавок дробится маленьким буфером stdout), поэтому асинхронный рендер терминала успевал показать курсор на последней записанной ячейке diff'а — счётчике токенов при генерации (статус-бар внизу пишется последним) или спиннере RAG-баннера. Поддержка: Windows Terminal ≥ 1.18 и все современные эмуляторы; терминалы без поддержки (conhost режима совместимости) игнорируют незнакомый приватный режим — мягкая деградация (прыжок остаётся, как раньше). Ошибка draw пробрасывается после снятия режима; `?2026l` продублирован в panic-hook и на выходе (паника внутри `draw` не оставит кадр замороженным). Остаточное поведение: `ratatui` шлёт `show`+`MoveTo` каждый кадр безусловно, а WT сбрасывает фазу мигания на каждое перемещение — при активном стриме курсор в поле ввода выглядит «твёрдым» (не мигает); это прежнее поведение, прыжков больше нет.
-- Инференс и инструменты — в `tokio`-задачах; в UI приходят только владеемые значения (клоны/снимки) — гонок памяти нет по построению (`Send`-границы каналов).
-- Отмена — `CancellationToken`, прерывающий HTTP-стрим; частичный ответ фиксируется.
+- The render loop **is never blocked**: input is polled with a timeout (`crossterm::event::poll`), events are drained non-blockingly (`try_recv`). Rendering is **change-driven** (a `dirty` flag): a frame is produced only when an orchestrator event was applied, a terminal event arrived (input/mouse/resize), a dictionary reloaded, or spellcheck highlighting was recomputed. Nothing is redrawn while idle — otherwise `ratatui` would reposition the cursor (`frame.set_cursor_position`) on every tick, and terminals (especially Windows Terminal) reset the blink phase on every move → the cursor would blink more often and unevenly. The loop body still runs every tick regardless (the `poll` timeout), which is what wakes up debounced deferred actions (the spellcheck recheck): they run inside the loop, and `dirty` is only raised when the result actually changed. There are no timer-driven animations in the rendering.
+- A frame is applied **atomically** — synchronized output (DEC private mode 2026): `run_loop` wraps `terminal.draw` in `BeginSynchronizedUpdate`/`EndSynchronizedUpdate` (CSI `?2026h`/`?2026l`); the terminal buffers everything in between and shows the frame as a whole. Without this the hardware cursor would "jump" during streaming/animations: ratatui writes the frame diff while the cursor is visible (the terminal cursor is the write position) and only afterward, in separate writes, moves it back to the input box (the backend's `show_cursor`/`set_cursor_position` are `execute!` calls with an immediate flush; a large diff is also chunked by stdout's small buffer), so the terminal's asynchronous rendering could show the cursor on the diff's last-written cell — the token counter during generation (the status bar at the bottom is written last) or the RAG banner's spinner. Support: Windows Terminal ≥ 1.18 and all modern emulators; terminals without support (conhost compat mode) ignore the unknown private mode — a graceful degradation (the jump remains, as before). Draw errors are propagated after the mode is lifted; `?2026l` is duplicated in the panic hook and on exit (a panic inside `draw` won't leave a frame frozen). Residual behavior: `ratatui` unconditionally sends `show`+`MoveTo` every frame, and WT resets the blink phase on every move — during an active stream the cursor in the input box looks "solid" (not blinking); this is prior behavior, with the jumps gone.
+- Inference and tools run in `tokio` tasks; only owned values (clones/snapshots) reach the UI — there are no memory races by construction (`Send` bounds on the channels).
+- Cancellation — a `CancellationToken` that aborts the HTTP stream; the partial response is captured.
 
-#### 4.4.2. Владение `Chat` и инструменты (упрощение относительно попытки №1)
+#### 4.4.2. `Chat` ownership and tools (a simplification vs. attempt #1)
 
-Поскольку **agentic-loop клиентский** и его исполняет сам оркестратор (последовательно, между HTTP-раундами), сложная защита от дедлоков из попытки №1 (канал `ChatEffect`, недопустимость реентерабельных локов при серверных колбэках) **упрощается**:
+Because the **agentic loop is client-side** and is run by the orchestrator itself (sequentially, between HTTP rounds), the elaborate deadlock protection from attempt #1 (the `ChatEffect` channel, the ban on reentrant locks during server callbacks) **is simplified**:
 
-- Инструменты не имеют доступа к `Chat`. Они получают **неизменяемый снимок** `ToolContext` (см. [9.2](#92-контракт-инструмента)) и возвращают `ToolOutcome { result: String, effects: Vec<ChatEffect> }`.
-- Оркестратор вызывает инструмент `await`-ом, получает результат, **сам применяет эффекты** к `Chat` вне всяких локов (он единственный владелец) и продолжает цикл. Канал `ChatEffect` не нужен — эффекты возвращаются значением.
-- Свойство отсутствия дедлоков сохраняется тривиально: никаких разделяемых мутабельных локов на `Chat` не существует; цикл «движок → инструмент → лок чата» невозможен.
+- Tools have no access to `Chat`. They receive an **immutable snapshot** `ToolContext` (see [9.2](#92-the-tool-contract)) and return `ToolOutcome { result: String, effects: Vec<ChatEffect> }`.
+- The orchestrator invokes the tool with `await`, gets the result, **applies the effects to `Chat` itself** outside any locks (it's the sole owner), and continues the loop. The `ChatEffect` channel isn't needed — effects are returned by value.
+- The deadlock-freedom property is trivially preserved: no shared mutable locks on `Chat` exist; the cycle "engine → tool → chat lock" is impossible.
 
 ---
 
-## 5. Доменная модель и хранение данных
+## 5. Domain model and data storage
 
-### 5.1. Основные сущности (`entities/`)
+### 5.1. Core entities (`entities/`)
 
-Концептуальные определения (точные имена полей — при реализации); типы `serde`-сериализуемы. Идентичны попытке №1 (раздел 5 её спецификации):
+Conceptual definitions (exact field names — at implementation time); types are `serde`-serializable. Identical to attempt #1 (section 5 of its specification):
 
 ```rust
 pub enum MessageRole { System, User, Assistant, Tool }
@@ -306,16 +306,16 @@ pub struct Message {
     pub id: Uuid,
     pub role: MessageRole,
     pub text: String,
-    pub thoughts: Option<String>,           // блок рассуждений (CoT)
-    pub tool_calls: Vec<ToolCallRecord>,    // вызовы инструментов в этом сообщении (для сворачиваемых блоков)
+    pub thoughts: Option<String>,           // the reasoning (CoT) block
+    pub tool_calls: Vec<ToolCallRecord>,    // tool calls in this message (for collapsible blocks)
     pub timestamp: DateTime<Utc>,
     pub is_markdown: bool,
-    pub metadata: Option<MessageMetadata>,  // снимок применённых параметров генерации
-    pub tool_call_id: Option<String>,       // для роли Tool
+    pub metadata: Option<MessageMetadata>,  // a snapshot of the applied generation parameters
+    pub tool_call_id: Option<String>,       // for the Tool role
     pub tool_name: Option<String>,
 }
 
-pub struct ToolCallRecord {                 // для отображения сворачиваемых tool-блоков
+pub struct ToolCallRecord {                 // for rendering collapsible tool blocks
     pub id: String,
     pub name: String,
     pub arguments: serde_json::Value,
@@ -328,11 +328,11 @@ pub struct Chat {
     pub title: String,
     pub created_at: DateTime<Utc>,
     pub modified_at: DateTime<Utc>,
-    pub system_message: String,             // активное системное сообщение чата (ассистент может менять)
+    pub system_message: String,             // the chat's active system message (the assistant can change it)
     pub character_names: CharacterNames,
     pub messages: Vec<Message>,
     pub sampling_override: Option<SamplingConfig>,
-    pub is_hidden: bool,                     // мягкое удаление
+    pub is_hidden: bool,                     // soft delete
 }
 
 pub struct Profile {
@@ -340,7 +340,7 @@ pub struct Profile {
     pub name: String,
     pub default_system_message: String,
     pub character_names: CharacterNames,
-    pub greeting: Option<String>,           // приветствие ассистента (первое сообщение)
+    pub greeting: Option<String>,           // the assistant's greeting (the first message)
     pub enabled_tools: Vec<ToolId>,
     pub default_sampling: Option<SamplingConfig>,
     pub is_hidden: bool,
@@ -355,209 +355,209 @@ pub struct RagDocument { pub id: Uuid, pub profile_id: Uuid, pub source: String,
                          pub chunk_text: String, pub embedding: Vec<f32>, pub created_at: DateTime<Utc> }
 ```
 
-Как и в попытке №1, **системное сообщение вынесено в явное поле `Chat.system_message`** (а не «первое System-сообщение истории»), потому что ассистент может менять его инструментом.
+As in attempt #1, **the system message is held in an explicit `Chat.system_message` field** (rather than "the first System message in history"), because the assistant can change it via a tool.
 
-### 5.2. Хранение данных
+### 5.2. Data storage
 
-Двухуровневое (как в попытке №1):
+Two-tier (as in attempt #1):
 
-1. **JSON-файлы** (человекочитаемо, легко бэкапить):
-   - `settings.json` — глобальная конфигурация (модель/запуск сервера, инференс, семплинг по умолчанию, UI-тема, спелл-чек, инструменты).
-   - `profiles.json` — список профилей.
-   - `chats/{chat_id}.json` — отдельный файл на чат.
-2. **SQLite** (`data.db`) — заметки и RAG (нужны запросы и векторный поиск):
+1. **JSON files** (human-readable, easy to back up):
+   - `settings.json` — global configuration (model/server launch, inference, default sampling, UI theme, spellcheck, tools).
+   - `profiles.json` — the list of profiles.
+   - `chats/{chat_id}.json` — one file per chat.
+2. **SQLite** (`data.db`) — notes and RAG (need queries and vector search):
    - `notes(id, profile_id, content, tags, created_at, updated_at)`.
-   - `rag_documents(id, profile_id, source, chunk_text, created_at)` + виртуальная таблица `sqlite-vec` для эмбеддингов (связь по `id`/`rowid`).
-   - **Изоляция по профилю** — обязательный `WHERE profile_id = ?` во всех запросах заметок/RAG (инвариант репозиториев).
+   - `rag_documents(id, profile_id, source, chunk_text, created_at)` + a `sqlite-vec` virtual table for embeddings (linked by `id`/`rowid`).
+   - **Per-profile isolation** — a mandatory `WHERE profile_id = ?` on every notes/RAG query (a repository invariant).
 
-**Мягкое удаление**: `is_hidden` у чатов и профилей; скрытие профиля каскадно скрывает его чаты и исключает его заметки/RAG из выборок (`WHERE is_hidden = 0`). Физического удаления нет.
+**Soft delete**: `is_hidden` on chats and profiles; hiding a profile cascades to hide its chats and excludes its notes/RAG from result sets (`WHERE is_hidden = 0`). There's no hard delete.
 
-**Расположение данных**: по умолчанию в подкаталоге `data/` **рядом с исполняемым файлом** (портативно); файл `defaults.json` может перенести в ОС-папку/каталог и задать язык каркаса/интерфейса (см. [§12.1](#121-конфигурация)). Поле `default_language` необязательно: при его отсутствии (свежая установка, deb/rpm-пакет) язык определяется по локали ОС (`ru*` → русский, иначе английский). Файл терпит UTF-8 BOM. При не-портативном режиме read-only ресурсы (словари спелл-чека) ищутся и в портативной раскладке рядом с бинарником — их туда кладёт инсталлятор/пакет.
+**Data location**: by default, in a `data/` subdirectory **next to the executable** (portable); a `defaults.json` file can move it to an OS folder/custom directory and set the scaffold/interface language (see [§12.1](#121-configuration)). The `default_language` field is optional: when absent (a fresh install, a deb/rpm package), the language is detected from the OS locale (`ru*` → Russian, otherwise English). The file tolerates a UTF-8 BOM. In non-portable mode, read-only resources (spellcheck dictionaries) are also looked up in the portable layout next to the binary — an installer/package puts them there.
 
-**Запись без гонок**: единственный писатель — оркестратор; сохранение чата — после применения мутаций и по дебаунс-таймеру для промежуточных состояний; запись атомарна (write-rename), бэкап файла чата сохраняется.
+**Race-free writes**: the orchestrator is the sole writer; a chat is saved after mutations are applied and on a debounce timer for intermediate states; writes are atomic (write-rename), and a backup of the chat file is kept.
 
-**Версионирование схем**: у каждого артефакта своя версия схемы (`SETTINGS_SCHEMA`/`PROFILES_SCHEMA`/`CHAT_SCHEMA`/`DB_SCHEMA`, все = 1) — они меняются с разной скоростью; определение версии структурное (см. [§12.2](#122-версионирование-схем-и-миграция)), поэтому существующие файлы не переписываются. **Упрочнение чтения**: битый `settings.json`/`profiles.json` → отказ запуска (раньше молча затирался дефолтами); битый `chats/<id>.json` → пропуск с `warn`, файл на диске не тронут (раньше один битый файл валил весь запуск).
+**Schema versioning**: every artifact has its own schema version (`SETTINGS_SCHEMA`/`PROFILES_SCHEMA`/`CHAT_SCHEMA`/`DB_SCHEMA`, all = 1) — they change at different rates; version detection is structural (see [§12.2](#122-schema-versioning-and-migration)), so existing files aren't rewritten. **Read hardening**: a corrupt `settings.json`/`profiles.json` → startup refuses (it used to be silently overwritten with defaults); a corrupt `chats/<id>.json` → skipped with a `warn`, the file on disk is left untouched (previously one corrupt file would take down the whole startup).
 
 ---
 
-## 6. Движок инференса и клиентский agentic-loop
+## 6. Inference engine and the client-side agentic loop
 
-### 6.1. Слой движка (`shared/api`)
+### 6.1. The engine layer (`shared/api`)
 
-За трейтом `EngineBackend` скрывается всё, что зависит от конкретного сервера/HTTP — это даёт тестируемость (mock/replay) и возможность позже сменить транспорт без затрагивания оркестратора.
+Everything that depends on the specific server/HTTP is hidden behind an `EngineBackend` trait — this gives testability (mock/replay) and the option to swap the transport later without touching the orchestrator.
 
 ```rust
 pub trait EngineBackend: Send + Sync {
-    /// Одноходовый стриминговый запрос. Возвращает поток чанков.
+    /// A single-turn streaming request. Returns a stream of chunks.
     async fn chat_stream(&self, req: ChatRequest, cancel: CancellationToken)
         -> Result<BoxStream<'static, ChatChunk>>;
 
-    /// Эмбеддинги (RAG). Может поднимать вторичный сервер по требованию (см. 6.6).
+    /// Embeddings (RAG). May spin up a secondary server on demand (see 6.6).
     async fn embed(&self, texts: Vec<String>) -> Result<Vec<Vec<f32>>>;
 }
 
 pub struct ChatRequest {
     pub system: String,
     pub messages: Vec<ApiMessage>,          // user/assistant/tool
-    pub tools: Vec<ToolSchema>,             // OpenAI-схемы включённых инструментов
-    pub tool_choice: ToolChoice,            // по умолчанию Auto
-    pub sampling: SamplingParams,           // см. раздел 8
+    pub tools: Vec<ToolSchema>,             // OpenAI schemas of the enabled tools
+    pub tool_choice: ToolChoice,            // Auto by default
+    pub sampling: SamplingParams,           // see section 8
 }
 
 pub enum ChatChunk {
-    Text(String),                           // дельта основного текста
-    Thoughts(String),                       // дельта «мыслей» (reasoning_content или <think>)
-    ToolCallDelta(ToolCallDelta),           // накопление tool_calls
+    Text(String),                           // a delta of the main text
+    Thoughts(String),                       // a delta of "thoughts" (reasoning_content or <think>)
+    ToolCallDelta(ToolCallDelta),           // accumulating tool_calls
     Finished { reason: FinishReason },      // Stop | ToolCalls | Length | Cancelled
 }
 ```
 
-Реализация по умолчанию — HTTP к OpenAI-совместимому серверу (`OpenAiClient` на `reqwest` + свои типы), стриминг по SSE.
+The default implementation is HTTP to an OpenAI-compatible server (`OpenAiClient` on `reqwest` + our own types), streaming over SSE.
 
-### 6.2. Построение запроса
+### 6.2. Building the request
 
-1. Системное сообщение = `Chat.system_message` (актуальное на момент запроса).
-2. Диалог = `Chat.messages` → `messages` с ролями `system`/`user`/`assistant`/`tool` (включая записи tool-результатов).
-3. Инструменты профиля (`Profile.enabled_tools` ∩ глобально включённые) → `tools` (OpenAI-схемы), `tool_choice = auto`.
-4. Семплинг — по приоритету `Chat.sampling_override` → `Profile.default_sampling` → глобальный дефолт (см. [раздел 8](#8-параметры-семплинга)).
-5. **Никаких строковых `stop`** по тексту EOS (см. [раздел 7](#7-обработка-eos-и-стоп-токенов)).
+1. The system message = `Chat.system_message` (as of the moment of the request).
+2. The dialogue = `Chat.messages` → `messages` with `system`/`user`/`assistant`/`tool` roles (including tool-result entries).
+3. The profile's tools (`Profile.enabled_tools` ∩ globally enabled) → `tools` (OpenAI schemas), `tool_choice = auto`.
+4. Sampling — by priority `Chat.sampling_override` → `Profile.default_sampling` → the global default (see [section 8](#8-sampling-parameters)).
+5. **No string `stop`** for EOS text (see [section 7](#7-eos-and-stop-token-handling)).
 
-История append-only — сервер переиспользует prefix cache (см. [6.6](#66-kv-кэш-и-prefix-caching)).
+History is append-only — the server reuses the prefix cache (see [6.6](#66-kv-cache-and-prefix-caching)).
 
-### 6.3. Клиентский agentic-loop
+### 6.3. Client-side agentic loop
 
-Так как сервер не исполняет наши инструменты, цикл ведёт оркестратор:
+Since the server doesn't execute our tools, the orchestrator runs the loop:
 
 ```
 round = 0
 loop:
-    chunks = engine.chat_stream(req, cancel)            # стрим в UI: Text/Thoughts/ToolProgress
+    chunks = engine.chat_stream(req, cancel)            # stream into the UI: Text/Thoughts/ToolProgress
     accumulate(assistant_text, thoughts, tool_calls)
     match finish_reason:
-        Stop | Length        -> зафиксировать ответ, выйти
-        Cancelled            -> зафиксировать частичный ответ, выйти
+        Stop | Length        -> record the response, exit
+        Cancelled            -> record the partial response, exit
         ToolCalls:
             round += 1
-            if round > max_tool_rounds: добавить системную пометку «лимит», выйти
-            append assistant-message(tool_calls) в req.messages
-            for tc in tool_calls:                        # клиент может исполнить все вызовы раунда
+            if round > max_tool_rounds: append a system note "limit reached", exit
+            append assistant-message(tool_calls) to req.messages
+            for tc in tool_calls:                        # the client can execute every call of a round
                 outcome = registry.invoke(tc.name, tc.arguments, &tool_ctx).await
-                apply(outcome.effects)                   # оркестратор мутирует Chat (он владелец)
-                append tool-message(tc.id, outcome.result) в req.messages
-            продолжить цикл (новый запрос с дополненной историей)
+                apply(outcome.effects)                   # the orchestrator mutates Chat (it's the owner)
+                append tool-message(tc.id, outcome.result) to req.messages
+            continue the loop (a new request with the extended history)
 ```
 
-- `max_tool_rounds` — защита от зацикливания; по умолчанию **8**, настраивается. В отличие от `mistral.rs` (исполнял только первый tool-call за ход), клиентский цикл может исполнить все вызовы раунда; описания инструментов всё равно проектируем под «один логический вызов за раунд» для предсказуемости.
-- Каждый tool-call отображается в UI как **сворачиваемый блок** (имя, аргументы, результат) + индикатор «ассистент использует инструмент…».
-- `tool_ctx` — снимок на начало хода (см. [9.2](#92-контракт-инструмента)).
+- `max_tool_rounds` — a safeguard against infinite loops; **8** by default, configurable. Unlike `mistral.rs` (which executed only the first tool call per turn), the client-side loop can execute every call in a round; tool descriptions are still designed for "one logical call per round" for predictability.
+- Each tool call is shown in the UI as a **collapsible block** (name, arguments, result) + an "assistant is using a tool…" indicator.
+- `tool_ctx` — a snapshot taken at the start of the turn (see [9.2](#92-the-tool-contract)).
 
-### 6.4. Отмена, регенерация, продолжение, удаление
+### 6.4. Cancellation, regeneration, continuation, deletion
 
-- **Отмена**: `CancellationToken` прерывает текущий HTTP-стрим; частичный ответ сохраняется; чат `Cancelling → Idle`.
-- **Регенерация последнего ответа**: удалить последнее сообщение ассистента (и связанные tool-сообщения этого хода) и повторить запрос с тем же контекстом (новый seed, если включён случайный seed).
-- **Продолжение ответа**: дозапросить продолжение последнего ответа ассистента (опционально; полезно при `finish_reason = Length`).
-- **Удаление последнего сообщения**: по требованию — удаляется **последнее сообщение Ассистента**, вместе с ним **последнее сообщение Пользователя**, а его текст **переносится в поле ввода**; если поле не пустое — текст удалённого сообщения **дописывается в начало** существующего. (Если последнее сообщение — пользовательское без ответа, удаляется оно одно с переносом текста.)
+- **Cancellation**: a `CancellationToken` aborts the current HTTP stream; the partial response is kept; the chat goes `Cancelling → Idle`.
+- **Regenerating the last response**: delete the last assistant message (and any tool messages from that turn) and repeat the request with the same context (a new seed, if a random seed is enabled).
+- **Continuing a response**: request a continuation of the assistant's last response (optional; useful when `finish_reason = Length`).
+- **Deleting the last message**: on request — the **last Assistant message** is deleted along with the **last User message**, and its text is **returned to the input box**; if the box isn't empty, the deleted message's text is **prepended** to what's already there. (If the last message is a user message with no reply, only it is deleted, with its text returned.)
 
-### 6.5. Разбор «мыслей» (CoT)
+### 6.5. Parsing "thoughts" (CoT)
 
-> **Зафиксировано:** сервер отдаёт reasoning **отдельным полем `delta.reasoning_content`** (у `llama-server` — при запуске с `--reasoning-format`, например `auto`). Иначе reasoning приходит инлайн в `content`, и применяется запасной парсинг `<think>` (ниже).
+> **Confirmed:** the server sends reasoning in a **dedicated `delta.reasoning_content` field** (in `llama-server` — when started with `--reasoning-format`, e.g. `auto`). Otherwise reasoning arrives inline in `content`, and the fallback `<think>` parsing kicks in (below).
 
-- **Основной путь**: reasoning приходит в `delta.reasoning_content` → напрямую в `ChatChunk::Thoughts`. Включается `thinking: true` (+ `reasoning_effort`) в запросе.
-- **Запасной путь** (external-режим без переменной окружения): потоковый парсер выделяет `<think>…</think>` из `content`, корректно обрабатывая теги, **разрезанные по границе чанка** (буфер незавершённого тега). Покрывается юнит-тестами в обоих режимах.
-- «Мысли» сохраняются в `Message.thoughts` и показываются в **сворачиваемом блоке** ленты.
+- **Primary path**: reasoning arrives in `delta.reasoning_content` → directly into `ChatChunk::Thoughts`. Enabled via `thinking: true` (+ `reasoning_effort`) in the request.
+- **Fallback path** (external mode without the environment variable): a streaming parser extracts `<think>…</think>` from `content`, correctly handling tags **split across a chunk boundary** (an unfinished-tag buffer). Covered by unit tests in both modes.
+- "Thoughts" are stored in `Message.thoughts` and shown in a **collapsible block** in the feed.
 
-### 6.6. KV-кэш и prefix caching
+### 6.6. KV cache and prefix caching
 
-- Дисковый кэш состояния не используется. Полагаемся на **автоматический prefix caching сервера** (переиспользование KV-блоков при совпадающем префиксе запроса) — между ходами и между раундами agentic-loop история append-only, поэтому префилл идёт только для новых токенов.
-- **Внутри хода** добавление tool-результатов лишь дописывает токены — переобработки префикса нет.
-- **Изменение системного сообщения** (пользователем или инструментом `set_system_message`) меняет начало префикса → полная переобработка на следующем ходу (оправдано). Внутри текущего хода изменение `system_message` **не применяется** (действует старый префикс) — это сохраняет согласованность и кэш текущей генерации.
-- KV-сжатие и прочие оптимизации — конфигурируются на стороне сервера инференса, прозрачны для приложения.
-
----
-
-## 7. Обработка EOS и стоп-токенов
-
-### 7.1. Требование
-
-Генерация **не должна обрываться**, когда модель *упоминает* текст EOS-токена в ответе (печатает строку `<|im_end|>` или `<end_of_turn>` как часть текста). Сложная защита от prompt injection не нужна — достаточно, чтобы генерация продолжалась.
-
-### 7.2. Решение
-
-- Остановка — **строго по token-id реальных спец-токенов** модели (EOG/EOS из словаря), что обеспечивает чат-шаблон/токенайзер на стороне сервера. Если модель семплирует литеральный текст `<|im_end|>` обычными токенами — это не конец хода, текст просто попадает в ответ.
-- **Не передаём строковые `stop`-последовательности**, совпадающие с текстом EOS (иначе вернётся проблема обрыва). По умолчанию `stop` в запросе пуст.
-- Если когда-либо понадобятся строковые стоп-строки (например, имя собеседника как разделитель) — это настраивается отдельно и осознанно, с предупреждением в UI.
-
-### 7.3. Нюансы
-
-- Реальные EOG/EOS-токены: Qwen — `<|im_end|>`, `<|endoftext|>`; Gemma — `<end_of_turn>`, `<eos>`. Их обработку как спец-токенов берёт на себя сервер.
-- Дефолтная EOS-логика сервера (остановка по token-id из токенайзера/шаблона) уже корректна и удовлетворяет требованию анти-самообрыва; передавать строковые `stop` по тексту EOS не нужно (и не делаем).
-- Инвариант клиента: поле `stop` в запросе по умолчанию пусто. Анти-самообрыв проверяется `#[ignore]`-смоук-тестом на живой модели (Qwen `<|im_end|>` + Gemma `<end_of_turn>`).
+- No on-disk state cache is used. We rely on **the server's automatic prefix caching** (reusing KV blocks on a matching request prefix) — between turns and between agentic-loop rounds the history is append-only, so prefill only happens for the new tokens.
+- **Within a turn**, adding tool results only appends tokens — there's no re-processing of the prefix.
+- **Changing the system message** (by the user or by the `set_system_message` tool) changes the start of the prefix → full reprocessing on the next turn (expected). Within the current turn, a `system_message` change is **not applied** (the old prefix keeps acting) — this preserves consistency and the current generation's cache.
+- KV compression and other optimizations are configured on the inference-server side and are transparent to the application.
 
 ---
 
-## 8. Параметры семплинга
+## 7. EOS and stop-token handling
 
-### 8.1. Маппинг на OpenAI-совместимый API
+### 7.1. Requirement
 
-`SamplingConfig` сериализуется в тело `POST /v1/chat/completions`. Помимо стандартных OpenAI-полей (`temperature`, `top_k`, `top_p`, `frequency_penalty`, `presence_penalty`, `max_tokens`, `thinking`/`reasoning_effort`/`reasoning_budget`) модель несёт **расширения llama.cpp `llama-server`**: `dynatemp_range`/`dynatemp_exponent` (динамическая температура), `min_p`, `top_n_sigma`, `typical_p`, `adaptive_target`/`adaptive_decay` (adaptive-p, экспериментально), `repeat_penalty`, `repeat_last_n`, `dry_multiplier`/`dry_base`/`dry_allowed_length`/`dry_penalty_last_n`/`dry_sequence_breakers`, `xtc_probability`/`xtc_threshold`, `mirostat`/`mirostat_tau`/`mirostat_eta`, `seed`, `samplers` (порядок семплеров). Эти поля `llama-server` принимает прямо в теле запроса (а не только как CLI-флаги), поэтому они работают и в managed-, и в external-llama.cpp без перезапуска сервера и резолвятся по уровням 8.3. Каждое поле — `Option`, **шлётся только когда задано** (`skip_serializing_if`): незаданные расширения не попадают в JSON, так что строгий сторонний OpenAI-сервер по умолчанию не затрагивается, а llama.cpp-несовместимое поле он бы либо проигнорировал, либо отверг (риск только если пользователь сам выставит расширение на строгом сервере). Списочные поля (`dry_sequence_breakers`, `samplers`) сериализуются JSON-массивом и **не отправляются пустыми** (пустой `samplers` сервер истолковал бы как «отключить все семплеры»).
+Generation **must not stop** when the model *mentions* the EOS-token text in its response (printing the string `<|im_end|>` or `<end_of_turn>` as part of the text). Elaborate prompt-injection protection isn't needed — it's enough for generation to keep going.
 
-| Параметр | HTTP-поле | Статус |
+### 7.2. Solution
+
+- Stopping is done **strictly by the token id of the model's actual special tokens** (EOG/EOS from the vocabulary), which the chat template/tokenizer on the server side takes care of. If the model samples the literal text `<|im_end|>` as ordinary tokens — that's not the end of the turn, the text just ends up in the response.
+- **We don't send string `stop` sequences** matching the EOS text (otherwise the truncation bug returns). By default `stop` in the request is empty.
+- If string stop sequences are ever needed (e.g. the companion's name as a separator) — that's configured separately and deliberately, with a UI warning.
+
+### 7.3. Nuances
+
+- Real EOG/EOS tokens: Qwen — `<|im_end|>`, `<|endoftext|>`; Gemma — `<end_of_turn>`, `<eos>`. Handling them as special tokens is the server's job.
+- The server's default EOS logic (stopping by token id from the tokenizer/template) is already correct and satisfies the anti-truncation requirement; sending string `stop` for EOS text isn't needed (and isn't done).
+- Client invariant: the `stop` field in the request is empty by default. Anti-self-truncation is verified by an `#[ignore]` smoke test against a live model (Qwen `<|im_end|>` + Gemma `<end_of_turn>`).
+
+---
+
+## 8. Sampling parameters
+
+### 8.1. Mapping onto the OpenAI-compatible API
+
+`SamplingConfig` serializes into the `POST /v1/chat/completions` body. Besides the standard OpenAI fields (`temperature`, `top_k`, `top_p`, `frequency_penalty`, `presence_penalty`, `max_tokens`, `thinking`/`reasoning_effort`/`reasoning_budget`), the model carries **llama.cpp `llama-server` extensions**: `dynatemp_range`/`dynatemp_exponent` (dynamic temperature), `min_p`, `top_n_sigma`, `typical_p`, `adaptive_target`/`adaptive_decay` (adaptive-p, experimental), `repeat_penalty`, `repeat_last_n`, `dry_multiplier`/`dry_base`/`dry_allowed_length`/`dry_penalty_last_n`/`dry_sequence_breakers`, `xtc_probability`/`xtc_threshold`, `mirostat`/`mirostat_tau`/`mirostat_eta`, `seed`, `samplers` (sampler order). `llama-server` accepts these fields directly in the request body (not only as CLI flags), so they work in both managed and external llama.cpp setups without restarting the server, and are resolved through the levels in 8.3. Every field is an `Option`, **sent only when set** (`skip_serializing_if`): unset extensions never make it into the JSON, so a strict third-party OpenAI server is unaffected by default, and an llama.cpp-incompatible field would either be ignored or rejected by it (a risk only if the user explicitly sets an extension against a strict server). List fields (`dry_sequence_breakers`, `samplers`) are serialized as JSON arrays and **are never sent empty** (an empty `samplers` would be read by the server as "disable all samplers").
+
+| Parameter | HTTP field | Status |
 |---|---|---|
-| `Temperature` | `temperature` | ✅ переносится |
-| `TopK` | `top_k` | ✅ переносится |
-| `TopP` | `top_p` | ✅ переносится |
-| `AlphaFrequency` | `frequency_penalty` | ✅ переносится |
-| `AlphaPresence` | `presence_penalty` | ✅ переносится |
-| `MaxTokens` | `max_tokens` | ✅ переносится |
-| reasoning | `thinking` + `reasoning_effort` + `reasoning_budget` | ✅ вкл./уровень/бюджет reasoning |
-| `MinP` | `min_p` | ✅ **расширение llama.cpp** |
-| `RepeatPenalty` / `RepeatLastN` | `repeat_penalty` / `repeat_last_n` | ✅ **расширение llama.cpp** |
-| `Seed` | `seed` | ✅ **на запрос** (`-1` = случайный) |
-| `TypicalP`, `TopNSigma` | `typical_p`, `top_n_sigma` | ✅ **расширение llama.cpp** |
-| Mirostat* | `mirostat`/`mirostat_tau`/`mirostat_eta` | ✅ **расширение llama.cpp** |
-| DRY*, XTC* | `dry_*` (вкл. `dry_sequence_breakers`), `xtc_*` | ✅ **расширение llama.cpp** |
-| Dynatemp* | `dynatemp_range`/`dynatemp_exponent` | ✅ **расширение llama.cpp** (динамич. температура) |
-| Adaptive-p | `adaptive_target`/`adaptive_decay` | ✅ **расширение llama.cpp** (экспериментально) |
-| Порядок семплеров | `samplers` (массив имён) | ✅ **расширение llama.cpp** |
-| `MaxRetriesToRegenerateInvalidOutput` | — | не нужен (structured outputs снижают «битый» вывод) |
+| `Temperature` | `temperature` | ✅ carried over |
+| `TopK` | `top_k` | ✅ carried over |
+| `TopP` | `top_p` | ✅ carried over |
+| `AlphaFrequency` | `frequency_penalty` | ✅ carried over |
+| `AlphaPresence` | `presence_penalty` | ✅ carried over |
+| `MaxTokens` | `max_tokens` | ✅ carried over |
+| reasoning | `thinking` + `reasoning_effort` + `reasoning_budget` | ✅ reasoning on/level/budget |
+| `MinP` | `min_p` | ✅ **llama.cpp extension** |
+| `RepeatPenalty` / `RepeatLastN` | `repeat_penalty` / `repeat_last_n` | ✅ **llama.cpp extension** |
+| `Seed` | `seed` | ✅ **per request** (`-1` = random) |
+| `TypicalP`, `TopNSigma` | `typical_p`, `top_n_sigma` | ✅ **llama.cpp extension** |
+| Mirostat* | `mirostat`/`mirostat_tau`/`mirostat_eta` | ✅ **llama.cpp extension** |
+| DRY*, XTC* | `dry_*` (incl. `dry_sequence_breakers`), `xtc_*` | ✅ **llama.cpp extension** |
+| Dynatemp* | `dynatemp_range`/`dynatemp_exponent` | ✅ **llama.cpp extension** (dynamic temperature) |
+| Adaptive-p | `adaptive_target`/`adaptive_decay` | ✅ **llama.cpp extension** (experimental) |
+| Sampler order | `samplers` (array of names) | ✅ **llama.cpp extension** |
+| `MaxRetriesToRegenerateInvalidOutput` | — | not needed (structured outputs reduce "broken" output) |
 
-### 8.2. Следствия
+### 8.2. Consequences
 
-- В модель `SamplingConfig` и UI настроек семплинга (секция «Семплинг», подсекции «Ассистент»/«Имперсонация») входят все перечисленные выше поля. Расширения llama.cpp по умолчанию `None` — для старых `settings.json` и сторонних серверов поведение не меняется, пока пользователь их не задаст.
-- **Случайный seed на запрос** теперь доступен через поле `seed` (`-1` = случайный); вариативность регенерации по-прежнему можно получать и через `temperature > 0`.
-- Снимок фактически применённых параметров сохраняется в `Message.metadata`.
-- **Облачные диалекты** ([ADR 0004](docs/decisions/0004-engine-contract-multi-provider.md)) принимают лишь подмножество полей (`supported_sampling_fields`): OpenAI/Gemini чистят расширения llama.cpp и reasoning-сигналы; **Claude** поддерживает `max_tokens` + extended thinking (`thinking`/`reasoning_effort` → `{type:"adaptive", display:"summarized"}` + `output_config.effort`), но **отвергает** `temperature`/`top_p`/`top_k` и `budget_tokens`/`reasoning_budget` (модели 4.x «зафиксировали» сэмплинг). При tool-use Claude требует возвращать thinking-блок с подписью (`signature`) в том же ходе — это ведёт agentic-loop в памяти, без персиста. UI настроек и `get/set_sampling` показывают по режиму только доступные поля.
+- The `SamplingConfig` model and the sampling settings UI (the "Sampling" section, "Assistant"/"Impersonation" subsections) include all the fields listed above. The llama.cpp extensions default to `None` — for old `settings.json` files and third-party servers behavior doesn't change until the user sets them.
+- **A per-request random seed** is now available through the `seed` field (`-1` = random); regeneration variability can still also come from `temperature > 0`.
+- A snapshot of the actually applied parameters is saved into `Message.metadata`.
+- **Cloud dialects** ([ADR 0004](docs/decisions/0004-engine-contract-multi-provider.md)) accept only a subset of fields (`supported_sampling_fields`): OpenAI/Gemini strip llama.cpp extensions and reasoning signals; **Claude** supports `max_tokens` + extended thinking (`thinking`/`reasoning_effort` → `{type:"adaptive", display:"summarized"}` + `output_config.effort`), but **rejects** `temperature`/`top_p`/`top_k` and `budget_tokens`/`reasoning_budget` (the 4.x models have "locked in" sampling). During tool use, Claude requires returning the thinking block with its signature in the same turn — this is handled by the agentic loop in memory, without persisting it. The settings UI and `get/set_sampling` show only the fields available for the current mode.
 
-### 8.3. Уровни переопределения
+### 8.3. Override levels
 
-Приоритет (высший → низший): `Chat.sampling_override` (в т.ч. изменённый ассистентом через `set_sampling`) → `Profile.default_sampling` → глобальный `settings.json`.
+Priority (highest → lowest): `Chat.sampling_override` (incl. changes made by the assistant via `set_sampling`) → `Profile.default_sampling` → the global `settings.json`.
 
 ---
 
-## 9. Система инструментов (tools)
+## 9. Tool system
 
-### 9.1. Общая модель
+### 9.1. General model
 
-- Инструменты исполняются **клиентским agentic-loop** ([6.3](#63-клиентский-agentic-loop)). Каждый описывается OpenAI-схемой (`name`, `description`, `parameters` (JSON Schema), `strict`).
-- В запрос к серверу передаётся список схем включённых инструментов; сервер (с constrained generation) возвращает синтаксически валидные `tool_calls`.
-- Результат инструмента — строка (или JSON-строка), добавляется в историю как `tool`-сообщение.
-- В отличие от попытки №1, web-поиск и Python **реализуем сами** (движок их не предоставляет).
+- Tools are executed by the **client-side agentic loop** ([6.3](#63-client-side-agentic-loop)). Each is described by an OpenAI schema (`name`, `description`, `parameters` (JSON Schema), `strict`).
+- The list of schemas of the enabled tools is sent to the server; the server (with constrained generation) returns syntactically valid `tool_calls`.
+- A tool's result is a string (or a JSON string), added to the history as a `tool` message.
+- Unlike attempt #1, web search and Python are **implemented by us** (the engine doesn't provide them).
 
-### 9.2. Контракт инструмента
+### 9.2. The tool contract
 
 ```rust
-/// Неизменяемый снимок состояния на начало хода. Без разделяемых локов.
+/// An immutable snapshot of state at the start of the turn. No shared locks.
 pub struct ToolContext {
     pub profile_id: Uuid,
     pub chat_id: Uuid,
-    pub system_message: String,             // снимок Chat.system_message
-    pub effective_sampling: SamplingConfig, // действующий семплинг (после приоритетов 8.3)
+    pub system_message: String,             // a snapshot of Chat.system_message
+    pub effective_sampling: SamplingConfig, // the effective sampling (after the 8.3 priorities)
     pub last_user_message_at: DateTime<Utc>,
-    pub storage: Arc<Storage>,              // notes/rag (внутренняя синхронизация, изоляция по profile_id)
-    pub engine: Arc<dyn EngineBackend>,     // для call_subagent
+    pub storage: Arc<Storage>,              // notes/rag (internal synchronization, isolation by profile_id)
+    pub engine: Arc<dyn EngineBackend>,     // for call_subagent
 }
 
-pub enum ChatEffect {                       // возвращается инструментом, применяется оркестратором
+pub enum ChatEffect {                       // returned by a tool, applied by the orchestrator
     SetSystemMessage(String),
     SetSamplingOverride(PartialSamplingConfig),
 }
@@ -571,893 +571,908 @@ pub trait Tool: Send + Sync {
 }
 ```
 
-`ToolRegistry` хранит включённые инструменты, отдаёт схемы движку и связывает имена с реализациями. Мутирующие инструменты возвращают `effects` (а не трогают `Chat`); оркестратор применяет их сам (см. [4.4.2](#442-владение-chat-и-инструменты-упрощение-относительно-попытки-1)).
+`ToolRegistry` holds the enabled tools, hands schemas to the engine, and maps names to implementations. Mutating tools return `effects` (rather than touching `Chat`); the orchestrator applies them itself (see [4.4.2](#442-chat-ownership-and-tools-a-simplification-vs-attempt-1)).
 
-### 9.3. Перечень инструментов
+### 9.3. Tool roster
 
-Семантика и сигнатуры — как в попытке №1 (раздел 9.3 её спецификации). Кратко:
+Semantics and signatures — as in attempt #1 (section 9.3 of its specification). In brief:
 
-| Инструмент | Аргументы | Поведение |
+| Tool | Arguments | Behavior |
 |---|---|---|
-| `rag_search` | `{ query, top_k? }` | Эмбеддинг запроса → kNN в `rag_documents` (sqlite-vec, фильтр `profile_id`) → топ-N фрагментов с источниками. |
-| `rag_add` | `{ text, source? }` | Чанкинг → эмбеддинг → запись в `rag_documents` (`profile_id`). Возвращает число чанков. |
-| `note_save` | `{ content, tags? }` | Запись в `notes` (`profile_id`). Возвращает id. |
-| `note_recall` | `{ query?, tags?, limit? }` | Поиск по заметкам (текст/теги; опц. семантически), фильтр `profile_id`. |
-| `python_exec` | `{ code }` | Исполнение Python в изолированной песочнице Wasmer/WASIX (по умолчанию) либо локальном интерпретаторе — см. [13.2](#132-исполнение-python). Возвращает stdout/stderr/ошибку. Под глобальным выключателем (по умолчанию выключен). |
-| `web_search` | `{ query, max_results? }` | Поиск в DuckDuckGo (наш `reqwest`-клиент) + извлечение читаемого контента страниц. Под глобальным выключателем. См. [9.3.1](#931-web-инструмент-собственная-реализация). |
-| `fetch_url` | `{ url, focus?, summarize? }` | Загрузить страницу (`reqwest` + readability `web::extract_readable`) и саммаризировать через `ctx.engine` (одно-ходовый запрос, как `call_subagent`). `summarize=false` → извлечённый текст без модели. Под глобальным выключателем `web_enabled` (сетевой доступ). |
-| `calculate` | `{ expression }` | Вычислить математическое выражение собственным рекурсивно-нисходящим вычислителем (арифметика, `^`, скобки, константы `pi`/`e`/`tau`, функции `sqrt`/`sin`/`log`/`min`/`max`/…). Без I/O, не гейтится. |
-| `current_time` | `{ format? }` | Текущие дата/время (локальная зона + UTC через `chrono`); `format` — строка `strftime`. Без I/O, не гейтится. |
-| `fs_read` / `fs_write` / `fs_list` | `{ path, … }` | Чтение/запись/листинг локальных файлов. Под глобальным выключателем `fs_enabled` (по умолчанию выключены, как Python); опциональная песочница `fs_root` ограничивает доступ каталогом. |
-| `get_sampling` | `{}` | Возвращает `ctx.effective_sampling` (JSON), ограниченный полями, доступными в текущем режиме движка (`supported_sampling_fields`). |
-| `set_sampling` | частичный `SamplingConfig` | Возвращает `ChatEffect::SetSamplingOverride`; применяется со следующего хода. Схема и применяемые поля ограничены доступными в текущем режиме (облако отвергло бы прочие); недоступные ключи отбрасываются с уведомлением модели. Если в режиме нет ни одного доступного параметра, `get_sampling`/`set_sampling` модели не предлагаются. |
-| `get_system_message` | `{}` | Возвращает `ctx.system_message`. |
-| `set_system_message` | `{ system_message }` | Возвращает `ChatEffect::SetSystemMessage`; применяется со следующего построения запроса. Единственный инструмент, инвалидирующий prefix-кэш чата (оправдано). |
-| `get_last_user_message_time` | `{}` | Возвращает таймстемп последнего user-сообщения (ISO 8601) + прошедшее время. |
-| `call_subagent` | `{ system_message, message }` | **Ключевая фича** — см. [9.3.2](#932-call_subagent). |
-| `send_followup_message` | `{}` | **Управляющий** (опц., по умолч. выкл) — написать ещё одно сообщение отдельной репликой. См. [9.3.3](#933-управляющие-инструменты-беседы). |
-| `rewrite_current_message` | `{}` | **Управляющий** (опц., по умолч. выкл) — отменить текущее (пишущееся) сообщение и написать заново. См. [9.3.3](#933-управляющие-инструменты-беседы). |
+| `rag_search` | `{ query, top_k? }` | Embed the query → kNN in `rag_documents` (sqlite-vec, filtered by `profile_id`) → top-N fragments with sources. |
+| `rag_add` | `{ text, source? }` | Chunking → embedding → written to `rag_documents` (`profile_id`). Returns the number of chunks. |
+| `note_save` | `{ content, tags? }` | Written to `notes` (`profile_id`). Returns the id. |
+| `note_recall` | `{ query?, tags?, limit? }` | Search notes (text/tags; optionally semantic), filtered by `profile_id`. |
+| `python_exec` | `{ code }` | Executes Python in an isolated Wasmer/WASIX sandbox (by default) or a local interpreter — see [13.2](#132-python-execution). Returns stdout/stderr/error. Behind a global switch (disabled by default). |
+| `web_search` | `{ query, max_results? }` | Searches DuckDuckGo (our own `reqwest` client) + extracts readable page content. Behind a global switch. See [9.3.1](#931-the-web-tool-our-own-implementation). |
+| `fetch_url` | `{ url, focus?, summarize? }` | Fetch a page (`reqwest` + readability `web::extract_readable`) and summarize it via `ctx.engine` (a one-turn request, like `call_subagent`). `summarize=false` → the extracted text with no model involved. Behind the `web_enabled` global switch (network access). |
+| `calculate` | `{ expression }` | Evaluates a math expression with our own recursive-descent evaluator (arithmetic, `^`, parens, `pi`/`e`/`tau` constants, `sqrt`/`sin`/`log`/`min`/`max`/… functions). No I/O, not gated. |
+| `current_time` | `{ format? }` | Current date/time (local zone + UTC via `chrono`); `format` — a `strftime` string. No I/O, not gated. |
+| `fs_read` / `fs_write` / `fs_list` | `{ path, … }` | Read/write/list local files. Behind the `fs_enabled` global switch (disabled by default, like Python); an optional `fs_root` sandbox confines access to a directory. |
+| `get_sampling` | `{}` | Returns `ctx.effective_sampling` (JSON), restricted to the fields available in the current engine mode (`supported_sampling_fields`). |
+| `set_sampling` | a partial `SamplingConfig` | Returns `ChatEffect::SetSamplingOverride`; applied starting from the next turn. The schema and the applicable fields are restricted to those available in the current mode (a cloud provider would reject the rest); unsupported keys are dropped, with the model notified. If no parameter is available in the current mode, `get_sampling`/`set_sampling` aren't offered to the model at all. |
+| `get_system_message` | `{}` | Returns `ctx.system_message`. |
+| `set_system_message` | `{ system_message }` | Returns `ChatEffect::SetSystemMessage`; applied starting from the next request build. The only tool that invalidates the chat's prefix cache (justified). |
+| `get_last_user_message_time` | `{}` | Returns the last user message's timestamp (ISO 8601) + elapsed time. |
+| `call_subagent` | `{ system_message, message }` | **The key feature** — see [9.3.2](#932-call_subagent). |
+| `send_followup_message` | `{}` | **Control** (opt., off by default) — write one more message as a separate reply. See [9.3.3](#933-conversation-control-tools). |
+| `rewrite_current_message` | `{}` | **Control** (opt., off by default) — discard the current (in-progress) message and write it again. See [9.3.3](#933-conversation-control-tools). |
 
-> **Жизненный цикл эмбеддингов**: используется **выделенный** embedding-сервер (ADR 0002) — отдельный процесс на своём порту, поднимается при старте и держится живым; не настроен → RAG отдаёт понятную ошибку. См. [решение #4](#161-принятые-решения).
+> **Embedding lifecycle**: a **dedicated** embedding server is used (ADR 0002) — a separate process on its own port, started at launch and kept alive; if not configured, RAG returns a clear error. See [decision #4](#161-accepted-decisions).
 
-#### 9.3.1. Web-инструмент (собственная реализация)
+#### 9.3.1. The web tool (our own implementation)
 
-Так как сервер инференса не предоставляет встроенного web-поиска, реализуем сами:
+Since the inference server doesn't provide built-in web search, we implement it ourselves:
 
-- **Поиск**: мульти-провайдер с фоллбэком (DuckDuckGo lite/html → Mojeek → Ecosia) через `reqwest`; парсинг результатов (`scraper`); распознавание анти-бот троттлинга.
-- **Извлечение контента**: страницы результатов загружаются параллельно, из HTML извлекается «читаемый» текст (`scraper`: абзацы/списки из `<article>`/`<main>`, boilerplate `nav`/`header`/`footer`/`aside` отбрасывается). «Лучшее усилие» — сбой загрузки одной страницы не валит поиск.
-- **Реранкинг**: результаты переупорядочиваются эмбеддингами (`ctx.embedder`, ADR 0002) по косинусной близости контента к запросу; эмбеддер недоступен → остаётся порядок провайдера.
-- Под глобальным выключателем (приватность). Загрузка контента+реранк гейтятся аргументом вызова `fetch_content` (дефолт из `config.tools.web_fetch_content`, по умолчанию `true`); `false` → быстрый путь «только заголовки/сниппеты».
+- **Search**: a multi-provider fallback chain (DuckDuckGo lite/html → Mojeek → Ecosia) over `reqwest`; result parsing (`scraper`); anti-bot throttling detection.
+- **Content extraction**: result pages are fetched in parallel, and "readable" text is extracted from the HTML (`scraper`: paragraphs/lists from `<article>`/`<main>`, boilerplate `nav`/`header`/`footer`/`aside` discarded). "Best effort" — one page's fetch failure doesn't fail the whole search.
+- **Reranking**: results are reordered by embeddings (`ctx.embedder`, ADR 0002) by cosine similarity of the content to the query; if the embedder isn't available, the provider's original order is kept.
+- Behind a global switch (privacy). Content fetching + reranking are gated by the call's `fetch_content` argument (default from `config.tools.web_fetch_content`, `true` by default); `false` → the fast "titles/snippets only" path.
 
 #### 9.3.2. `call_subagent`
 
-- **Назначение**: получить **альтернативное мнение**. Основной агент сам задаёт саб-агенту системное сообщение → ответ отличается от собственной точки зрения, что (по гипотезе) повышает осознанность и качество.
-- **Поведение**: через `ctx.engine` — **независимый одно-ходовый** запрос к той же модели: `system = system_message` (заданный основным агентом), единственное user-сообщение = `message`. Саб-агент **не имеет истории основного чата**, **не имеет инструментов** и **не может создавать саб-агентов** (запрет вложенности → нет рекурсии). Ответ возвращается строкой-результатом tool-call.
-- **Лимиты**: ограничение токенов/времени на вызов; подчинение общему `max_tool_rounds`.
+- **Purpose**: get a **second opinion**. The main agent gives the sub-agent its own system message → the response differs from the agent's own point of view, which (by hypothesis) increases self-awareness and quality.
+- **Behavior**: via `ctx.engine` — an **independent single-turn** request to the same model: `system = system_message` (given by the main agent), a single user message = `message`. The sub-agent has **no access to the main chat's history**, **no tools**, and **cannot create sub-agents** (no nesting → no recursion). The response is returned as the tool call's string result.
+- **Limits**: a per-call token/time limit; subject to the overall `max_tool_rounds`.
 
-#### 9.3.3. Управляющие инструменты беседы (`send_followup_message` / `rewrite_current_message`)
+#### 9.3.3. Conversation control tools (`send_followup_message` / `rewrite_current_message`)
 
-В отличие от обычных инструментов (возвращают текстовый результат, не трогают структуру беседы), эти — **управляющие** (control-flow): их распознаёт сам клиентский agentic-loop оркестратора (`app/orchestrator/generation.rs`), а не `Tool::invoke`. Реализации `Tool` (`features/tools/control.rs`) нужны лишь для схемы/описания/регистрации/гейтинга. Оба **опциональны** и по умолчанию **выключены**: их нет в `default_tool_ids` (значит, `reconcile_tools` их не включает), но они есть в каталоге `all_tool_ids` — тумблеры в настройках профиля. Распознаются петлёй только если реально включены в профиле (иначе — обычный отказ).
+Unlike ordinary tools (which return a text result without touching the conversation's structure), these are **control-flow** tools: they're recognized by the orchestrator's client-side agentic loop itself (`app/orchestrator/generation.rs`), not by `Tool::invoke`. The `Tool` implementations (`features/tools/control.rs`) exist only for the schema/description/registration/gating. Both are **optional** and **disabled by default**: they're not in `default_tool_ids` (so `reconcile_tools` doesn't enable them), but they are in the `all_tool_ids` catalog — toggles in profile settings. The loop only recognizes them when they're actually enabled in the profile (otherwise it's an ordinary refusal).
 
-- **`send_followup_message`** («написать ещё сообщение»): ассистент может дописать текущее сообщение до конца, затем вызвать инструмент — после него он пишет **вторую реплику**, которая показывается **отдельным пузырём** сразу за первой. Реализация: петля финализирует текст текущего раунда как сообщение, кладёт tool-результат-«разрешение» и продолжает цикл; следующий раунд — второе сообщение. Альтернация и инференс штатные (`assistant(tool_call) → tool → assistant`), синтетический user не вводится. «Отдельный пузырь» обеспечивает флаг `Message.new_bubble` (его уважает `from_messages`, не склеивая с предыдущим блоком ассистента); служебный tool-блок управляющего инструмента в ленте скрыт.
-- **`rewrite_current_message`** («переписать своё текущее сообщение»): если по ходу написания ассистент понял, что ответил неправильно, он вызывает инструмент — накопленный текст текущего раунда **отбрасывается** (UI очищает пузырь под переписанный ответ), а следующий раунд пишет сообщение заново. Во время раунда переписывания запрос **содержит** прежний `assistant(partial + tool_call)` + tool-результат (модель видит «тебя попросили переписать»); по завершении отброшенный assistant и его tool-сообщение **уезжают в `Chat.deleted`** (как `Ctrl+E`/`Ctrl+R`, §11.7) — в инференсе/ленте больше не участвуют, но сохранены для ручного восстановления правкой JSON.
+- **`send_followup_message`** ("write another message"): the assistant can finish writing its current message, then call the tool — after which it writes a **second reply**, shown as a **separate bubble** right after the first one. Implementation: the loop finalizes the current round's text as a message, adds a tool-result "permission granted", and continues the loop; the next round is the second message. Alternation and inference are standard (`assistant(tool_call) → tool → assistant`), no synthetic user turn is inserted. The "separate bubble" is enforced by the `Message.new_bubble` flag (honored by `from_messages`, which doesn't merge it into the previous assistant block); the control tool's internal tool block is hidden in the feed.
+- **`rewrite_current_message`** ("rewrite my current message"): if, partway through writing, the assistant realizes it answered incorrectly, it calls the tool — the current round's accumulated text is **discarded** (the UI clears the bubble to be rewritten), and the next round writes the message from scratch. During the rewrite round, the request **includes** the prior `assistant(partial + tool_call)` + the tool result (the model sees "you were asked to rewrite"); once done, the discarded assistant message and its tool message **move into `Chat.deleted`** (like `Ctrl+E`/`Ctrl+R`, §11.7) — no longer part of inference/the feed, but preserved for manual recovery via JSON editing.
 
-Оба подчиняются `max_tool_rounds` (каждый вызов = раунд) — это бэкстоп от бесконечных «доп. сообщений»/«переписываний». Сигналы для UI — события `AppEvent::AssistantContinue`/`AssistantRewrite` (live-лента совпадает с перезагрузкой из истории).
+Both are subject to `max_tool_rounds` (each call = one round) — a backstop against endless "extra messages"/"rewrites". UI signals — the `AppEvent::AssistantContinue`/`AssistantRewrite` events (the live feed matches a reload from history).
 
-### 9.4. Включение инструментов
+### 9.4. Enabling tools
 
-- `Profile.enabled_tools` — какие инструменты доступны в чатах профиля (тумблеры в настройках профиля).
-- Глобальные «мастер-выключатели» для внешних инструментов (web — гейтит `web_search` и `fetch_url`; Python; доступ к файлам `fs_enabled` — гейтит `fs_read`/`fs_write`/`fs_list`) — в настройках инструментов (безопасность/приватность). Эффективный набор = `enabled_tools ∩ глобально включённые`. Безопасные инструменты (`calculate`, `current_time`) выключателей не имеют.
+- `Profile.enabled_tools` — which tools are available in a given profile's chats (toggles in profile settings).
+- Global "master switches" for external tools (web — gates `web_search` and `fetch_url`; Python; file access `fs_enabled` — gates `fs_read`/`fs_write`/`fs_list`) — in the tools settings (privacy/security). The effective set = `enabled_tools ∩ globally enabled`. Safe tools (`calculate`, `current_time`) have no switches.
 
-### 9.5. Изоляция по профилю
+### 9.5. Per-profile isolation
 
-Любой инструмент памяти/знаний (`rag_*`, `note_*`) получает `profile_id` из `ToolContext` и **обязан** фильтровать по нему — инвариант репозиториев (`shared/storage`), покрытый негативными тестами.
+Any memory/knowledge tool (`rag_*`, `note_*`) gets `profile_id` from `ToolContext` and **must** filter by it — a repository invariant (`shared/storage`), covered by negative tests.
 
-### 9.6. Инструменты MCP-серверов (плагины)
+### 9.6. MCP-server tools (plugins)
 
-Пользовательские инструменты подключаются **внешними MCP-серверами** (Model Context
-Protocol, stdio-подпроцессы) — направление «плагины», см. исследование
-[docs/research/plugin-system.md](docs/research/plugin-system.md) §4 и ADR 0007.
-Инструменты сервера становятся полноправными `Tool`-ами реестра (обёртка `McpTool`,
-`features/tools/mcp.rs`) и вызываются штатным agentic-loop.
+User-defined tools are connected via **external MCP servers** (Model Context
+Protocol, stdio subprocesses) — the "plugins" track, see the research doc
+[docs/research/plugin-system.md](docs/research/plugin-system.md) §4 and ADR 0007.
+A server's tools become full-fledged `Tool`s in the registry (the `McpTool` wrapper,
+`features/tools/mcp.rs`) and are invoked by the standard agentic loop.
 
-- **Протокол**: tools-only подмножество ревизии 2025-11-25 (wire-стабильно с
-  2024-11-05; встречная версия сервера принимается любая) — собственный мини-клиент
-  `shared/mcp.rs` (newline-delimited JSON-RPC 2.0, `initialize` → `tools/list` с
-  пагинацией → `tools/call`; ответ на `ping`, `-32601` на прочие запросы сервера,
-  `notifications/cancelled` при таймауте/отмене, скип мусорных строк stdout).
-- **Конфигурация** — секция `mcp` в `settings.json` (правится руками, развилка Р6):
-  мастер-выключатель `enabled` (**выключен по умолчанию**) + `servers[]`
-  (`id`-slug, `command`+`args` — `.bat`/`.cmd` запрещены (BatBadBut), `npx` на
-  Windows — `cmd /c npx …`; `env` — карта «переменная ребёнка → **имя**
-  переменной-источника» (секреты в `settings.json` не пишутся, Р8);
-  `tool_timeout_secs` — per-call таймаут; `max_result_chars` — клип результата).
-- **Жизненный цикл** — `McpManager` (`app/orchestrator/mcp.rs`, зеркало
-  `EngineManager`): спавн включённых серверов фоновыми задачами при старте/правке
-  настроек (через дебаунс `RestartQueue`); монитор процесса (kill/exited-токены,
-  Job Object kill-on-close на Windows — дерево процессов не переживает выход);
-  рестарт-бюджет — 3 краха за 5 минут, сверх → `Disconnected` до правки настроек;
-  события поколений (`epoch`) защищают от гонок при переприменении настроек.
-- **Идентификаторы**: `mcp__<server>__<tool>` (нормализация под лимиты провайдеров:
-  `[A-Za-z0-9_-]`, ≤64, усечение + hex-хвост). Id хранится в `Profile.enabled_tools`
-  как обычная строка; гейт в `effective_tool_ids` — по префиксу `mcp__` +
-  `config.mcp.enabled`.
-- **Двойной opt-in** (Р7): мастер-выключатель **и** тумблер per profile
-  (`enabled_by_default = false`, `reconcile_tools` не включает автоматически).
-- **TOFU-пиннинг каталога** (rug-pull-детектор): при первом подъёме сервера
-  sha256-хэш каталога (имена+описания+схемы инструментов) автоматически пиннится в
-  `config.mcp.servers[].pinned_catalog`; при **изменении** каталога инструменты не
-  регистрируются, строка сервера в настройках помечается «каталог изменился» —
-  Enter переподтверждает (новый пин персистится). Ручное удаление поля из
-  `settings.json` = сброс доверия.
-- **UI** (секция «Инструменты», группа «Плагины (MCP)»): мастер-тумблер + строки
-  статусов серверов (`готов · инструментов: N` / `подключение…` / причина отказа);
-  тумблеры инструментов — в профиле группой «Плагины (MCP)», **полное** описание
-  инструмента (текст сервера) показывается в нижней панели при фокусе — обязательная
-  видимость описаний как антидот tool-poisoning (описания идут в системный промпт).
-- **Границы i18n**: описания/схемы инструментов — текст сервера, не локализуются;
-  статус-причины менеджера локализованы (ось B); wire-ошибки клиента — технический
-  слой (как обёртки HTTP-клиентов, docs/history/i18n-cli.md §7).
-- **Вызов**: per-call таймаут + отмена через `ToolContext.cancel` (Esc шлёт серверу
-  `notifications/cancelled`); agentic-loop дополнительно оборачивает `invoke` любого
-  инструмента в `select!` с токеном отмены. Результат клипуется
-  (`max_result_chars`); `isError:true` → текст ошибки уходит модели результатом.
-  Не-текстовые блоки результата (image/audio/resource) — текстовый плейсхолдер.
-- **Заделы**: HTTP-транспорт, resources/prompts, `notifications/tools/list_changed`,
-  per-call подтверждение деструктивных вызовов, deferred-схемы, UI-редактор
-  серверов — см. docs/roadmap.md.
-
----
-
-## 10. Профили ИИ-собеседника
-
-Концепция полностью из попытки №1 (раздел 10 её спецификации):
-
-- **Уникальный `Profile.id: Uuid`**; чат привязан к профилю (`Chat.profile_id`).
-- **Изоляция данных**: заметки и RAG раздельны для каждого профиля (`WHERE profile_id = ?`).
-- **Создание чата из профиля**: копируются `default_system_message → Chat.system_message`, `character_names`, `greeting` (как первое сообщение ассистента), `default_sampling`.
-- **Редактирование профиля** не затрагивает уже созданные чаты (у них своя копия `system_message`).
-- **Удаление профиля** — мягкое (`is_hidden`), каскадно скрывает чаты и исключает заметки/RAG.
-
-Профиль содержит: уникальный идентификатор, системное сообщение и **опциональное приветственное сообщение** (некоторые модели интереснее, когда ассистент начинает первым) — прямое требование задачи.
-
-**Язык служебного каркаса** (`Profile.language: Lang`, i18n Ярус 1, [docs/history/i18n.md](docs/history/i18n.md)): язык промптов фоновых задач, каркаса «модели себя» и результатов инструментов — тексты, которые читает **модель** (ось A). Это **не** язык ответа модели (его задаёт системное сообщение) и **не** язык интерфейса (ось B, отдельно). Выбирается при создании профиля и **фиксируется**, как только у профиля появляются данные (видимые чаты / непустая «модель себя» / заметки) — чтобы вся память профиля была на одном языке; гейт авторитетно проверяет оркестратор (`profile_has_data`), UI рисует поле «Язык каркаса» заблокированным. Дефолтный (bootstrap) профиль создаётся с дефолтным чатом → сразу залочен на `Ru`; для другого языка создают новый профиль. Резолв — `profile.language` во время запроса; служебные тексты берутся через `shared/i18n` из вшитого бандла `locales/<lang>.json`, поверх которого при старте наложены внешние `data/locales/*.json` (Ярус 3 — override вшитых текстов и новые языки без пересборки, [docs/history/i18n-external-locales.md](docs/history/i18n-external-locales.md)). Ярусы 1–2 перевели горячее ядро и все 35 инструментов; `Lang` — `Ru`/`En`/`Ext(code)`.
+- **Protocol**: the tools-only subset of revision 2025-11-25 (wire-stable since
+  2024-11-05; any counterpart version reported by the server is accepted) — a
+  self-written mini-client `shared/mcp.rs` (newline-delimited JSON-RPC 2.0,
+  `initialize` → `tools/list` with pagination → `tools/call`; replying to `ping`,
+  `-32601` to other server-initiated requests, `notifications/cancelled` on timeout/
+  cancellation, skipping garbage stdout lines).
+- **Configuration** — the `mcp` section in `settings.json` (hand-edited, decision point R6):
+  a master switch `enabled` (**disabled by default**) + `servers[]`
+  (an `id` slug, `command`+`args` — `.bat`/`.cmd` forbidden (BatBadBut), `npx` on
+  Windows — `cmd /c npx …`; `env` — a map "the child's variable → the **name** of
+  the source environment variable" (secrets aren't written into `settings.json`, R8);
+  `tool_timeout_secs` — a per-call timeout; `max_result_chars` — result clipping).
+- **Lifecycle** — `McpManager` (`app/orchestrator/mcp.rs`, mirroring
+  `EngineManager`): spawns enabled servers as background tasks on startup/settings
+  changes (through the `RestartQueue` debounce); a process monitor (kill/exited
+  tokens, a Job Object kill-on-close on Windows — the process tree doesn't outlive
+  the app's exit); a restart budget — 3 crashes within 5 minutes, beyond that →
+  `Disconnected` until settings are fixed; generation (`epoch`) events guard against
+  races when settings are reapplied.
+- **Identifiers**: `mcp__<server>__<tool>` (normalized to provider limits:
+  `[A-Za-z0-9_-]`, ≤64, truncated + a hex tail). The id is stored in
+  `Profile.enabled_tools` as a plain string; gated in `effective_tool_ids` by the
+  `mcp__` prefix + `config.mcp.enabled`.
+- **Double opt-in** (R7): a master switch **and** a per-profile toggle
+  (`enabled_by_default = false`, `reconcile_tools` doesn't enable it automatically).
+- **TOFU catalog pinning** (a rug-pull detector): the first time a server comes up,
+  a sha256 hash of the catalog (tool names+descriptions+schemas) is automatically
+  pinned to `config.mcp.servers[].pinned_catalog`; if the catalog **changes**, the
+  tools aren't registered, and the server row in settings is marked "catalog
+  changed" — Enter reconfirms it (the new pin is persisted). Manually removing the
+  field from `settings.json` = resetting trust.
+- **UI** (the "Tools" section, "Plugins (MCP)" group): a master toggle + status rows
+  per server (`ready · tools: N` / `connecting…` / a failure reason);
+  tool toggles live in the profile under a "Plugins (MCP)" group, with the tool's
+  **full** description (server-supplied text) shown in the bottom panel on focus —
+  mandatory description visibility as an antidote to tool-poisoning (descriptions
+  go straight into the system prompt).
+- **i18n boundaries**: tool descriptions/schemas are server-supplied text and aren't
+  localized; the manager's status reasons are localized (axis B); the client's
+  wire-level errors are a technical layer (like the HTTP-client wrappers,
+  docs/history/i18n-cli.md §7).
+- **Invocation**: a per-call timeout + cancellation via `ToolContext.cancel` (Esc
+  sends the server `notifications/cancelled`); the agentic loop additionally wraps
+  every tool's `invoke` call in a `select!` with the cancellation token. The result
+  is clipped (`max_result_chars`); `isError:true` → the error text is returned to
+  the model as the result. Non-text result blocks (image/audio/resource) become a
+  text placeholder.
+- **Groundwork**: an HTTP transport, resources/prompts,
+  `notifications/tools/list_changed`, per-call confirmation of destructive calls,
+  deferred schemas, a server-editor UI — see docs/roadmap.md.
 
 ---
 
-## 11. TUI: интерфейс и взаимодействие
+## 10. AI-companion profiles
 
-### 11.1. Экраны и навигация
+A concept carried over in full from attempt #1 (section 10 of its specification):
 
-Два основных экрана + оверлеи (модалки):
+- **Unique `Profile.id: Uuid`**; a chat is tied to a profile (`Chat.profile_id`).
+- **Data isolation**: notes and RAG are separate per profile (`WHERE profile_id = ?`).
+- **Creating a chat from a profile**: `default_system_message → Chat.system_message`, `character_names`, `greeting` (as the assistant's first message), and `default_sampling` are copied over.
+- **Editing a profile** doesn't affect already-created chats (they have their own copy of `system_message`).
+- **Deleting a profile** is soft (`is_hidden`), cascading to hide its chats and exclude its notes/RAG.
+
+A profile holds: a unique identifier, a system message, and an **optional greeting message** (some models are more interesting when the assistant speaks first) — a direct requirement from the task.
+
+**Scaffold language** (`Profile.language: Lang`, i18n Tier 1, [docs/history/i18n.md](docs/history/i18n.md)): the language of background-task prompts, the "self-model" scaffold, and tool results — text that the **model** reads (axis A). This is **not** the language the model answers in (that's set by the system message) and **not** the interface language (axis B, separate). Chosen when the profile is created and then **locked** as soon as the profile has data (visible chats / a non-empty self-model / notes) — so that the entire profile's memory stays in one language; the gate is authoritatively checked by the orchestrator (`profile_has_data`), and the UI renders the "Scaffold language" field as locked. The default (bootstrap) profile is created together with a default chat → immediately locked to `Ru`; for a different language, a new profile is created instead. Resolution — `profile.language` at request time; scaffold text is fetched through `shared/i18n` from the built-in `locales/<lang>.json` bundle, with external `data/locales/*.json` layered on top at startup (Tier 3 — overriding built-in text and adding new languages with no rebuild, [docs/history/i18n-external-locales.md](docs/history/i18n-external-locales.md)). Tiers 1–2 translated the hot core and all 35 tools; `Lang` is `Ru`/`En`/`Ext(code)`.
+
+---
+
+## 11. TUI: interface and interaction
+
+### 11.1. Screens and navigation
+
+Two main screens + overlays (modals):
 
 ```
-┌──────────────────────────── Экран чата ─────────────────────────────┐
-│ ▸ список чатов (оверлей по Esc)           Заголовок: <чат> · <профиль>│
+┌──────────────────────────── Chat screen ─────────────────────────────┐
+│ ▸ chat list (overlay, Esc)                Title: <chat> · <profile>   │
 ├──────────────────────────────────────────────────────────────────────┤
-│  Лента сообщений (markdown, скролл)                                   │
-│   • роль/имя; ▸ свёрнутый блок «мысли»; ▸ свёрнутый блок tool-call    │
-│   • индикатор «ассистент использует инструмент…»                      │
+│  Message feed (markdown, scroll)                                      │
+│   • role/name; ▸ collapsed "thoughts" block; ▸ collapsed tool-call block │
+│   • "assistant is using a tool…" indicator                            │
 ├──────────────────────────────────────────────────────────────────────┤
-│  Поле ввода (свой multiline-виджет, спелл-чек)                        │
+│  Input box (our own multiline widget, spellcheck)                     │
 ├──────────────────────────────────────────────────────────────────────┤
-│ статус: модель · токены/контекст · профиль · состояние сервера        │
+│ status: model · tokens/context · profile · server state               │
 └──────────────────────────────────────────────────────────────────────┘
 ```
 
-- **Экран настроек** — отдельный экран (по `Ctrl+P`/кнопке) с секциями (см. [11.6](#116-экран-настроек)).
-- **Оверлеи**: список чатов, выбор профиля при создании чата, подтверждения, попап подсказок орфографии, помощь по клавишам (`?`), лог запуска сервера.
-- **Счётчик токенов** в статус-баре: суммарное число «переписка (промпт) + ответ»,
-  растёт live во время генерации и видно сразу при старте (а не «с единицы»).
-  Источник двойной: live-приближение по числу потоковых дельт + точное число из
-  блока `usage` сервера (запрашивается `stream_options.include_usage`; приходит в
-  конце хода). До прихода точного числа переписка показывается клиентской **оценкой**
-  (эвристика «байты UTF-8 / 4»), помеченной `~`; точный `prompt_tokens` её заменяет.
-  Счётчик ответа накопителен по раундам agentic-loop. Внешний сервер без поддержки
-  `usage` оставляет оценку + приближение (мягкая деградация).
-- **Состояние серверов** в статус-баре — компактные **чипы** (глиф + метка) по
-  серверам, т.к. их может быть несколько (чат / эмбеддинги / имперсонация). Глиф
-  кодирует статус: `●` готов (зелёный), `◐` подключение (янтарный), `✕` нет связи /
-  не настроен (красный/янтарный). **Чат-сервер показывается всегда** и при обрыве
-  несёт текст причины (`✕ чат: нет связи: <why>`) — он блокирует генерацию.
-  **Эмбеддинги и имперсонация** — отдельными чипами `эмб`/`имп` и **только когда
-  настроены** (`NotConfigured`, в т.ч. имперсонация в режиме `shared`, → чип скрыт),
-  без текста причины (компактно; детали — в логах/настройках). Снимок всех статусов
-  (`ServerStatuses`) эмитит оркестратор (`AppEvent::ServerStatus`) при любом
-  изменении любого из них. У эмбеддингов probe пока нет (RAG ленив) — их чип
-  двухзначен: настроен (зелёный) / скрыт.
+- **Settings screen** — a separate screen (via `Ctrl+P`/a button) with sections (see [11.6](#116-the-settings-screen)).
+- **Overlays**: the chat list, profile picker when creating a chat, confirmations, the spellcheck-suggestion popup, key-binding help (`?`), the server startup log.
+- **Token counter** in the status bar: the total "conversation (prompt) + response" count,
+  updates live during generation and is visible right from the start (not "starting from one").
+  There's a dual source: a live approximation from the number of streamed deltas + an exact
+  number from the server's `usage` block (requested via `stream_options.include_usage`; arrives
+  at the end of the turn). Until the exact number arrives, the conversation is shown as a client
+  **estimate** (the "UTF-8 bytes / 4" heuristic), marked with `~`; the exact `prompt_tokens`
+  replaces it. The response counter accumulates across agentic-loop rounds. An external server
+  without `usage` support keeps the estimate + the approximation (graceful degradation).
+- **Server state** in the status bar — compact **chips** (a glyph + a label) per
+  server, since there can be several (chat / embeddings / impersonation). The glyph
+  encodes the status: `●` ready (green), `◐` connecting (amber), `✕` no connection /
+  not configured (red/amber). **The chat server is always shown** and, on a
+  disconnect, carries the reason text (`✕ chat: no connection: <why>`) — it blocks
+  generation. **Embeddings and impersonation** are separate `emb`/`imp` chips shown
+  **only when configured** (`NotConfigured`, incl. impersonation in `shared` mode →
+  the chip is hidden), with no reason text (compact; details are in the logs/settings).
+  A snapshot of all statuses (`ServerStatuses`) is emitted by the orchestrator
+  (`AppEvent::ServerStatus`) on any change to any of them. There's no probe for
+  embeddings yet (RAG is lazy) — its chip is binary: configured (green) / hidden.
 
-### 11.2. Список чатов (оверлей)
+### 11.2. The chat list (an overlay)
 
-Прямое требование задачи:
+A direct requirement from the task:
 
-- Вызывается **клавишей `Esc`** (она же закрывает оверлей — переключение «список ↔ чат»). Выход из приложения — `Ctrl+Q`/`F10` (в т.ч. из этого оверлея).
-- **Поле поиска**: фильтрация списка по вхождению введённого текста в название.
-- **Два режима сортировки**: по дате создания и по дате последнего изменения (переключение клавишей; индикатор активного режима).
-- **Навигация по списку**: `↑`/`↓` — на строку, `PageUp`/`PageDown` — на страницу (фиксированный шаг, т.к. высота списка известна лишь при рендере), `Home`/`End` — к первому/последнему чату.
-- **Переименование** чата по месту (`F2`) — в **однострочном `InputBox`**
-  (`set_single_line`, см. [11.5](#115-ввод-и-редактирование-спелл-чек)/[11.6](#116-экран-настроек)),
-  поэтому доступны спелл-чек (подчёркивание ошибок), пословная навигация/удаление
-  (`Ctrl+←/→`, `Ctrl+Backspace/Delete`), `Ctrl+Home/End`, очистка/возврат (`Ctrl+K`),
-  вставка из буфера и горизонтальный скролл длинного названия. Спелл-чекер живёт в
-  экране чата; `app` одалживает его экрану списка для подсветки.
-- Контекстные действия: создать (с выбором профиля), клонировать, удалить (мягко).
-- **Копирование всей переписки** выделенного чата в системный буфер обмена (`F5`):
-  оверлей видит только сводку, поэтому текст формирует оркестратор (владелец `Chat`),
-  а запись в буфер — UI-слой (`arboard`). Подтверждение/ошибка показываются в области
-  статуса оверлея (успех зелёным, ошибка красным), оверлей не закрывается.
-  **Состав копии настраивается** (`config.copy`, секция «Интерфейс»): по умолчанию —
-  только текст сообщений; опционально включаются «мысли» (CoT), параметры вызовов
-  инструментов (имя + аргументы) и их результаты (берутся из `Message.tool_calls`).
-- Виртуализация длинного списка (рендер только видимых строк).
+- Invoked with the **`Esc`** key (the same key closes the overlay — toggling "list ↔ chat"). Quitting the application — `Ctrl+Q`/`F10` (including from this overlay).
+- **A search field**: filters the list by a substring match on the title.
+- **Two sort modes**: by creation date and by last-modified date (toggled with a key; the active mode is indicated).
+- **List navigation**: `↑`/`↓` — one row, `PageUp`/`PageDown` — one page (a fixed step, since the list height is only known at render time), `Home`/`End` — to the first/last chat.
+- **Renaming** a chat in place (`F2`) — in a **single-line `InputBox`**
+  (`set_single_line`, see [11.5](#115-input-and-editing-spellcheck)/[11.6](#116-the-settings-screen)),
+  which gives spellcheck (error underlining), word-wise navigation/deletion
+  (`Ctrl+←/→`, `Ctrl+Backspace/Delete`), `Ctrl+Home/End`, clear/restore (`Ctrl+K`),
+  clipboard paste, and horizontal scrolling of a long title. The spellchecker lives in
+  the chat screen; `app` lends it to the list screen for highlighting.
+- Contextual actions: create (with a profile picker), clone, delete (soft).
+- **Copying the entire conversation** of the selected chat to the system clipboard (`F5`):
+  the overlay only sees a summary, so the text is built by the orchestrator (the owner of `Chat`),
+  while writing to the clipboard is a UI-layer concern (`arboard`). Confirmation/error is shown in the
+  overlay's status area (success in green, an error in red); the overlay doesn't close.
+  **The copy's contents are configurable** (`config.copy`, the "Interface" section): by default —
+  only the message text; optionally includes "thoughts" (CoT), tool-call parameters
+  (name + arguments), and their results (taken from `Message.tool_calls`).
+- Virtualization of a long list (only visible rows are rendered).
 
-### 11.3. Лента сообщений
+### 11.3. The message feed
 
-- Инкрементальный стрим последнего ответа ассистента (текст + отдельный поток «мыслей»).
-- **Сворачиваемые блоки**: «мысли» (CoT) и каждый tool-call (имя, аргументы, результат) — раскрытие/сворачивание клавишей на выделенном блоке.
-- **Tool-карточки** (`⚒ имя(…)`) показывают аргументы/результат осмысленно, а не сырым JSON: презентер (`features/tools/present.rs`) даёт компактный заголовок (`name(значение)`/`name(k=v, …)`) и блоки — `python_exec` рисует код подсвеченным Python-блоком и консоль (stdout/stderr/код возврата раздельными цветами), `fs_read`/`fs_write` — содержимое с подсветкой по расширению пути, проза-инструменты (`web_search`/`fetch_url`/`rag_search`/`note_recall`) — markdown, короткие аргументы — inline. Знание про инструменты — в слое tools; `message_feed` generic, переиспользует `markdown::highlight_code`. Карточка получает **рейловый отступ снизу** (цветной гуттер `▌` продолжается под результатом) независимо от того, идёт ли дальше текст ассистента — так рейл не обрывается на результате, когда вызов завершает ход.
-- Per-message переключатель Markdown.
-- Действия над сообщением (контекстно): копировать мысли/сообщение/весь чат; **редактировать по месту** (user и assistant — прямое требование); регенерировать; удалить последнее.
-- **Прокрутка**: `PageUp`/`PageDown` (по `PAGE_SCROLL` строк) и **колесо мыши** (по `WHEEL_SCROLL` строк), с автоматическим «следованием за хвостом» при докрутке до низа. Захват мыши терминала — **тумблер** `Ctrl+W` (по умолчанию выключен, чтобы работало нативное выделение текста мышью; включённый захват отдаёт колесо приложению, а выделение остаётся доступно с `Shift`). Колесо и выделение делят один механизм mouse-reporting терминала, поэтому «только колесо» отдельно не включается. Текущий режим виден в статус-баре.
-- **Мышь в поле ввода** (при захвате `Ctrl+W`): клик левой кнопкой ставит курсор, драг — выделяет текст (курсор снапится к границе графемного кластера). Клик вне поля (в ленту) — no-op (выделение ленты — отдельное направление). См. §11.5.
-- **Полная перерисовка при эмодзи в ленте**: на legacy-терминалах строки с эмодзи оставляют «висячие» артефакты, поэтому перерисовку каждой ячейки запрашивают **два** события — прокрутка ленты и **изменение её содержимого** (стрим ответа, добавленная заметка, `Ctrl+T`; помечается самими мутаторами ленты — **до** отрисовки, чтобы артефакт не мелькнул даже на кадр: спрятать плохой кадр за синхронизированный вывод нельзя, conhost режим 2026 игнорирует). Гейт — глифы группы риска (`is_risky_glyph`: VS16, ZWJ-кластеры, тон кожи, пиктограммы supplementary, BMP-эмодзи ширины 2); CJK намеренно не входит (иероглифы терминалы рисуют согласованно). **Известное ограничение**: фон широкого глифа может закрашиваться наполовину — `ratatui` сбрасывает хвостовую ячейку в дефолтный стиль и в diff её не шлёт, а терминал атрибут второй половины сам не выставляет; лечится только в апстриме. Механизм перерисовки — механизм `shared/ui.rs::prime_full_redraw` (маркер в буфер + `swap_buffers` без вывода на экран; `terminal.clear()` не годится — его `ESC[2J` даёт мигание). Маркер — **пробел + модификатор `HIDDEN`**, а не символ-заглушка: пробел совпадает с содержимым хвостовой ячейки широкого глифа, поэтому `ratatui` не шлёт её терминалу. Иначе включался бы их обход для VS16 («дошли хвостовую ячейку»), а бэкенд `crossterm` ведёт позицию по номеру ячейки без учёта ширины глифа (`x == last.x + 1` → без `MoveTo`) — хвост печатался бы колонкой правее и сдвигал остаток ряда (соседний широкий глиф гаснет, правая рамка уезжает). `HIDDEN` в интерфейсе не используется, что закреплено тестом.
+- Incremental streaming of the assistant's latest response (the text and the "thoughts" stream separately).
+- **Collapsible blocks**: "thoughts" (CoT) and each tool call (name, arguments, result) — expand/collapse via a key on the selected block.
+- **Tool cards** (`⚒ name(…)`) show arguments/results meaningfully rather than as raw JSON: a presenter (`features/tools/present.rs`) produces a compact header (`name(value)`/`name(k=v, …)`) and blocks — `python_exec` draws a highlighted Python code block and a console (stdout/stderr/exit code in separate colors), `fs_read`/`fs_write` — content highlighted by the path's extension, prose tools (`web_search`/`fetch_url`/`rag_search`/`note_recall`) — markdown, short arguments — inline. Knowledge about tools lives in the tools layer; `message_feed` stays generic, reusing `markdown::highlight_code`. A card gets a **rail extension underneath it** (the colored `▌` gutter continues under the result) regardless of whether assistant text follows — so the rail doesn't cut off at the result when the call ends the turn.
+- A per-message Markdown toggle.
+- Contextual message actions: copy thoughts/message/the whole chat; **edit in place** (both user and assistant — a direct requirement); regenerate; delete last.
+- **Scrolling**: `PageUp`/`PageDown` (by `PAGE_SCROLL` lines) and the **mouse wheel** (by `WHEEL_SCROLL` lines), with automatic "tail-following" when scrolled to the bottom. Terminal mouse capture is a **toggle**, `Ctrl+W` (off by default, so native text selection with the mouse works; when captured, the wheel goes to the application, and selection stays available with `Shift`). The wheel and selection share one terminal mouse-reporting mechanism, so "wheel only" can't be enabled separately. The current mode is shown in the status bar.
+- **Mouse in the input box** (with `Ctrl+W` capture on): a left click places the cursor, a drag selects text (the cursor snaps to a grapheme-cluster boundary). A click outside the box (in the feed) is a no-op (feed selection is a separate track). See §11.5.
+- **Full redraw for emoji in the feed**: on legacy terminals, lines with emoji leave "hanging" artifacts, so a full per-cell redraw is requested by **two** events — scrolling the feed and **the feed's content changing** (a response streaming, a note added, `Ctrl+T`; flagged by the feed's own mutators — **before** rendering, so the artifact doesn't flash for even one frame: a bad frame can't be hidden behind synchronized output, since conhost ignores mode 2026). The gate is glyphs in the risk group (`is_risky_glyph`: VS16, ZWJ clusters, skin tone, supplementary pictographs, BMP emoji of width 2); CJK is deliberately excluded (terminals render ideographs consistently). **Known limitation**: a wide glyph's background can end up painted only halfway — `ratatui` resets the trailing cell to the default style and doesn't send it in the diff, and the terminal doesn't set the second half's attribute itself; this can only be fixed upstream. The redraw mechanism is `shared/ui.rs::prime_full_redraw` (a marker written into the buffer + `swap_buffers` with no screen output; `terminal.clear()` won't do — its `ESC[2J` causes flicker). The marker is a **space + the `HIDDEN` modifier**, not a placeholder character: a space matches the content of a wide glyph's trailing cell, so `ratatui` won't send it to the terminal. Otherwise their workaround for VS16 kicks in ("send the trailing cell too"), and the `crossterm` backend tracks position by cell number without accounting for glyph width (`x == last.x + 1` → no `MoveTo`) — the trailing cell would print one column to the right and shift the rest of the row (an adjacent wide glyph goes dark, the right border drifts). `HIDDEN` isn't otherwise used in the interface, which is pinned by a test.
 
-### 11.4. Markdown, CoT и tool-блоки, LaTeX
+### 11.4. Markdown, CoT and tool blocks, LaTeX
 
-> Реализация: **собственный рендерер на `pulldown-cmark`** (`shared/markdown.rs`),
-> см. [ADR 0003](docs/decisions/0003-own-markdown-renderer.md). От `tui-markdown`
-> (ADR 0001) отказались: он не поддерживает таблицы и math, игнорирует тему.
+> Implementation: **our own renderer on `pulldown-cmark`** (`shared/markdown.rs`),
+> see [ADR 0003](docs/decisions/0003-own-markdown-renderer.md). `tui-markdown`
+> (ADR 0001) was dropped: it doesn't support tables and math, and ignores the theme.
 
-- Рендеринг markdown — свой walker по событиям `pulldown-cmark` (`render(input,
-  width, palette)`). Только текст (без графики) — важно для совместимости с
-  терминалом JupyterLab. Цвета берутся из темы (`Palette`); подсветка блоков кода —
-  `syntect`, причём его тема **строится из той же `Palette`** (`build_code_theme`:
-  scope'ы → семантические роли, текст/комментарии — серым по светлоте фона
-  `Palette.dark`), так что подсветка согласована с dark/light/auto.
-- Поддерживается весь типичный markdown-вывод LLM: заголовки, списки, цитаты,
-  инлайн/блочный код с подсветкой, ссылки (автолинки `<url>` не дублируют URL),
-  изображения (alt + URL), **таблицы** (нативный рендер box-drawing с умной
-  раскладкой колонок «водоналивом» под ширину панели; перенос ячеек по словам,
-  при нехватке места — горизонтальный клип с «…»; `<br>` в ячейке — перенос;
-  опциональные **горизонтальные разделители между строками тела** `├─┼─┤` —
-  настройка `interface.table_row_separators`, тумблер в секции «Интерфейс»,
-  по умолчанию выключены (компактный вид с разделителем только под заголовком);
-  включение даёт «сеточный» вид). Инфо-строка код-блока (` ```rust,no_run `)
-  резолвит язык по первому токену; `---` тянется на ширину панели.
-- **Mermaid-диаграммы** (` ```mermaid `-блоки) рендерятся текстовой графикой
-  (крейт `mermaid-text` ≥ 0.56.1 — наш апстрим-фикс многобайтовости,
-  [исследование](docs/research/mermaid-ascii-rendering.md)) — настройка
-  `interface.render_mermaid`, тумблер в секции «Интерфейс», **по умолчанию
-  включена**. Правило — **жёсткий фолбэк вместо клипа** (диаграмма с оборванными
-  стрелками нечитаема, в отличие от обрезанной таблицы): рендерится только
-  whitelist flowchart/sequence, целиком влезающий в ширину панели (пост-чек —
-  `max_width` крейта лишь подсказка); любой сбой (мусор от модели, обрубок
-  стрима, иной тип, переполнение) печатает исходник код-блоком **байт-в-байт как
-  при выключенном тумблере** — худший случай = прежнее поведение. В компат-режиме
-  (§11.6) диаграмма рисуется ASCII-глифами. **Стрим — без мерцания**: блок с
-  незакрытым забором (сервер ещё дописывает диаграмму) показывается исходником —
-  закрытость забора проверяется по исходнику (CommonMark дотягивает незакрытый
-  забор до конца документа, поэтому по событиям парсера обрыв неотличим от
-  полного блока, и валидный огрызок иначе рендерился бы частичной диаграммой);
-  когда закрывающий забор доедет, кэш ленты пересчитывает сообщение и подменяет
-  исходник диаграммой — один переход «исходник → диаграмма» на блок.
-- **Unicode-аппроксимация LaTeX — только внутри математических разделителей**
-  (`$…$`/`$$…$$`; формы `\(…\)`/`\[…\]` нормализуются к ним; код-спаны и заборы
-  `` ``` ``/`~~~` пропускаются). Разделители снимает парсер. Подстановки: стрелки,
-  отношения/операторы, греческие буквы (в т.ч. `\var…`), дроби (`\frac`/`\dfrac`/
-  `\tfrac`→`a/b`), `\binom{n}{k}→C(n, k)`, корни (`\sqrt{x}→√(x)`, `\sqrt[3]{x}→∛(x)`),
-  начертания (`\mathbb{R}→ℝ`, `\mathcal`/`\mathfrak`; только BMP), текстовые обёртки
-  и акценты (`\text`/`\vec`/`\overset`/…→содержимое/базовый аргумент), операторные
-  имена (`\log`/`\sin`/…→словом), `\left`/`\right` (снимаются, «пустой» делимитер
-  `.` съедается), `\pmod{n}→(mod n)`, буквенные и числовые верхние/нижние индексы
-  (`x^2→x²`, `x_i→xᵢ`, `x^T→xᵀ`; несмапливаемая группа → `^(…)`/`_(…)`).
-  **Окружения** `\begin{aligned}…\end{aligned}` (и `cases`/`pmatrix`/…) снимаются:
-  `\\` — перенос строки (в блочной `$$…$$` — реальный, в строчной — «; »), `&`
-  (выравнивание) убирается, служебные `\label{…}`/`\hline`/… удаляются. Нераспознанная
-  brace-команда **сохраняет скобки** (`\boxed{x}` читаемо, не склеивается). «Голые»
-  команды вне разделителей **не трогаются**; диапазоны цен `$5-$10` не съедаются
-  math-расширением. Полный LaTeX и рендеринг в изображение — **не реализуются**.
-- **`highlight_code(code, lang, palette)`** — подсветка блока кода **без ограждающих
-  ` ``` `** и без переноса, той же тема-согласованной палитрой (`build_code_theme`),
-  что fenced-блоки. Используется tool-карточками ленты (§11.3) для аргументов/
-  результата инструментов (`python_exec`, `fs_read`/`fs_write`); нераспознанный
-  язык → текст без подсветки.
+- Markdown rendering is our own walker over `pulldown-cmark` events (`render(input,
+  width, palette)`). Text only (no graphics) — important for JupyterLab terminal
+  compatibility. Colors come from the theme (`Palette`); code-block highlighting is
+  `syntect`, whose theme **is itself built from the same `Palette`**
+  (`build_code_theme`: scopes → semantic roles, text/comments — gray, scaled by
+  background lightness `Palette.dark`), so highlighting stays consistent with
+  dark/light/auto.
+- The full typical LLM markdown output is supported: headings, lists, blockquotes,
+  inline/block code with highlighting, links (autolinks `<url>` don't duplicate the
+  URL), images (alt text + URL), **tables** (native box-drawing rendering with
+  "water-fill" smart column layout for the panel width; cell content wraps by word,
+  and if space is tight — a horizontal clip with "…"; `<br>` inside a cell — a line
+  break; optional **horizontal separators between body rows** `├─┼─┤` —
+  the `interface.table_row_separators` setting, a toggle in the "Interface" section,
+  off by default (a compact look, with a separator only under the header); enabling
+  it gives a "grid" look). A code block's info string (` ```rust,no_run `)
+  resolves the language from the first token; `---` stretches across the panel width.
+- **Mermaid diagrams** (` ```mermaid ` blocks) are rendered as text graphics
+  (the `mermaid-text` crate ≥ 0.56.1 — our own upstream multi-byte fix,
+  [research doc](docs/research/mermaid-ascii-rendering.md)) — the
+  `interface.render_mermaid` setting, a toggle in the "Interface" section, **on by
+  default**. The rule is a **hard fallback rather than clipping** (a diagram with
+  cut-off arrows is unreadable, unlike a clipped table): only a whitelist of
+  flowchart/sequence diagrams is rendered, and only when it fits entirely within the
+  panel width (the crate's `max_width` is only a post-check hint); any failure
+  (garbage from the model, a truncated stream, another type, overflow) prints the
+  source as a code block **byte-for-byte identical to the toggle being off** — the
+  worst case equals prior behavior. In compat mode (§11.6) the diagram is drawn with
+  ASCII glyphs. **Streaming without flicker**: a block with an unclosed fence (the
+  server is still writing the diagram) is shown as source — fence closure is checked
+  against the source itself (CommonMark extends an unclosed fence to the end of the
+  document, so at the parser-event level truncation is indistinguishable from a
+  complete block, and a valid-looking partial fragment would otherwise render as a
+  partial diagram); once the closing fence arrives, the feed cache recomputes the
+  message and swaps the source for the diagram — a single "source → diagram"
+  transition per block.
+- **Unicode approximation of LaTeX — only inside math delimiters**
+  (`$…$`/`$$…$$`; the `\(…\)`/`\[…\]` forms are normalized to these; code spans and
+  fences `` ``` ``/`~~~` are skipped). The parser strips the delimiters. Substitutions: arrows,
+  relations/operators, Greek letters (incl. `\var…`), fractions (`\frac`/`\dfrac`/
+  `\tfrac`→`a/b`), `\binom{n}{k}→C(n, k)`, roots (`\sqrt{x}→√(x)`, `\sqrt[3]{x}→∛(x)`),
+  fonts (`\mathbb{R}→ℝ`, `\mathcal`/`\mathfrak`; BMP only), text wrappers
+  and accents (`\text`/`\vec`/`\overset`/…→content/base argument), operator
+  names (`\log`/`\sin`/…→as a word), `\left`/`\right` (stripped, an "empty" delimiter
+  `.` is swallowed), `\pmod{n}→(mod n)`, letter and numeric super/subscripts
+  (`x^2→x²`, `x_i→xᵢ`, `x^T→xᵀ`; an unmappable group → `^(…)`/`_(…)`).
+  **Environments** `\begin{aligned}…\end{aligned}` (and `cases`/`pmatrix`/…) are stripped:
+  `\\` — a line break (a real one in block `$$…$$`, "; " in inline math), `&`
+  (alignment) is removed, boilerplate `\label{…}`/`\hline`/… is dropped. An unrecognized
+  brace command **keeps its braces** (`\boxed{x}` stays readable, isn't run together).
+  "Bare" commands outside the delimiters are **left untouched**; price ranges
+  `$5-$10` aren't swallowed by the math extension. Full LaTeX and image rendering are
+  **not implemented**.
+- **`highlight_code(code, lang, palette)`** — highlights a code block **without the
+  surrounding ` ``` `** and without wrapping, using the same theme-consistent palette
+  (`build_code_theme`) as fenced blocks. Used by the feed's tool cards (§11.3) for
+  tool arguments/results (`python_exec`, `fs_read`/`fs_write`); an unrecognized
+  language → plain text with no highlighting.
 
-### 11.5. Ввод и редактирование, спелл-чек
+### 11.5. Input and editing, spellcheck
 
-- **Ввод/редактирование**: **собственный multiline-виджет** (`widgets/input_box.rs`, [ADR 0001](docs/decisions/0001-ui-crates-ratatui-030.md)) — для нового сообщения и для правки существующих сообщений по месту. Готовые крейты (`tui-textarea`/`ratatui-textarea`) несовместимы с ratatui 0.30 и не дают подсветки произвольных диапазонов — поэтому виджет свой.
-- **Спелл-чек** (en_US, en_GB, ru_RU) — только в полях ввода/редактирования (лента не проверяется):
-  - Движок `spellbook` (Hunspell-словари из каталога `dictionaries/` в корне данных; при не-портативном режиме — с резервным поиском в портативной раскладке `data/dictionaries/` рядом с бинарником, куда их кладёт инсталлятор/пакет).
-  - Слово корректно, если принято **хотя бы одним** активным словарём (поддержка смешанного ru/en текста).
-  - Сегментация — `unicode-segmentation` (учёт апострофов/дефисов); проверка в фоне (`tokio`) с дебаунсом ~300 мс.
-  - **Отрисовка ошибок в TUI**: подсветка некорректных слов стилем (подчёркивание `UNDERLINED`/цвет) в области ввода; **попап подсказок** (горячая клавиша на слове под курсором) с вариантами из `Suggester` + пункт «Добавить в словарь».
-  - Персональный словарь — `personal_dictionary.txt` (глобальный), пополняется в рантайме (`Dictionary::add`).
-  - **Отрисовка подчёркиваний** — решена собственным виджетом ввода ([ADR 0001](docs/decisions/0001-ui-crates-ratatui-030.md)): ошибки рисуются per-span стилем `UNDERLINED`/цвет поверх своего `InputBox`, без зависимости от чужого API диагностик.
-- **Попап выбора эмодзи** (`Ctrl+B`): сетка популярных эмодзи, навигация стрелками, `Enter` вставляет выбранный в поле ввода на месте курсора (безопасно для многоскалярных кластеров `❤️`/`👍🏽`), `Esc` закрывает; попап помнит последний выбор. Любое действие в попапе (сдвиг выделения или закрытие) просит у петли **полную перерисовку** терминала: широкий эмодзи занимает две ячейки, и когда глиф уходит с места, его **хвостовую** ячейку поячеечный diff `ratatui` не перерисовывает (в обоих буферах она дефолтный пробел), а терминал вторую половину широкого глифа сам не чистит — на экране оставался «висячий» кусок (заметный по фону выделения). Полная перерисовка идёт тем же приёмом «буфер-сентинел», что и при прокрутке ленты с VS16-эмодзи (§11.3), — переписывает каждую ячейку без `ESC[2J`, то есть без мигания. **Сам набор эмодзи попапа держится без VS16-кластеров** (`❤️`/`✌️` заменены на `💖`/`🤞`; инвариант «ровно 2 колонки, без U+FE0F» закреплён гейт-тестом): для VS16 `ratatui` дополнительно шлёт терминалу хвостовую ячейку глифа, а бэкенд `crossterm` ведёт позицию по номеру ячейки без учёта его ширины — такой хвост печатается без `MoveTo`, попадает колонкой правее и сдвигает остаток ряда (соседний широкий эмодзи гаснет, рамка попапа уезжает). При полной перерисовке, где «изменившимися» становятся все ячейки, это проявляется на каждом кадре.
-- **Перенос строки на unix-терминалах**: legacy-кодировка шлёт для `Shift+Enter` и `Enter` один и тот же CR, поэтому на «голом» терминале перенос строки был недоступен. На unix `runtime` включает **kitty keyboard protocol** уровня `DISAMBIGUATE_ESCAPE_CODES` (`crossterm::event::PushKeyboardEnhancementFlags`), если терминал его поддерживает (`supports_keyboard_enhancement()`) — тогда модификаторы у спец-клавиш (`Enter`/стрелки/…) сообщаются, `Shift+Enter` отличим от `Enter`, а `Shift`+стрелки — от голых стрелок (оживляет выделение с клавиатуры). Флаги снимаются на выходе и в panic-hook. Печатный ввод и одиночный `Shift`+символ протокол не трогает (текст идёт как есть) → раскладко-независимый разбор Ctrl-шорткатов и ввод `?`/эмодзи не регрессируют. На Windows не нужно (Console API сообщает модификаторы). Для терминалов **без** протокола — **`Alt+Enter`** даёт тот же перенос строки (приходит как `Enter`+`ALT` через meta-префикс `ESC`, распознаётся и на legacy-терминалах); принят во всех многострочных полях (чат, системное сообщение/приветствие в настройках, редактор «модели себя»).
+- **Input/editing**: a **custom multiline widget** (`widgets/input_box.rs`, [ADR 0001](docs/decisions/0001-ui-crates-ratatui-030.md)) — for a new message and for editing existing messages in place. Off-the-shelf crates (`tui-textarea`/`ratatui-textarea`) are incompatible with ratatui 0.30 and don't support highlighting arbitrary ranges — hence a custom widget.
+  - The `spellbook` engine (Hunspell dictionaries from the `dictionaries/` directory at the data root; in non-portable mode — with a fallback lookup in the portable layout `data/dictionaries/` next to the binary, where an installer/package puts them).
+  - A word is correct if accepted by **at least one** active dictionary (support for mixed ru/en text).
+  - Segmentation — `unicode-segmentation` (accounting for apostrophes/hyphens); checking runs in the background (`tokio`) with a ~300 ms debounce.
+  - **Rendering errors in the TUI**: incorrect words are highlighted with a style (`UNDERLINED`/color) in the input area; a **suggestion popup** (a hotkey on the word under the cursor) offers options from `Suggester` + an "Add to dictionary" item.
+  - A personal dictionary — `personal_dictionary.txt` (global), grown at runtime (`Dictionary::add`).
+  - **Rendering underlines** — solved by our own input widget ([ADR 0001](docs/decisions/0001-ui-crates-ratatui-030.md)): errors are drawn per-span with `UNDERLINED`/color over our own `InputBox`, with no dependency on a third-party diagnostics API.
+- **Emoji picker popup** (`Ctrl+B`): a grid of popular emoji, arrow-key navigation, `Enter` inserts the selected one into the input box at the cursor (safe for multi-scalar clusters like `❤️`/`👍🏽`), `Esc` closes it; the popup remembers the last choice. Any action in the popup (moving the selection or closing it) requests a **full redraw** from the loop: a wide emoji occupies two cells, and when the glyph leaves its spot, `ratatui`'s per-cell diff doesn't repaint its **trailing** cell (in both buffers it's a default space), and the terminal doesn't clear the second half of a wide glyph itself — a "hanging" fragment was left on screen (visible via the selection background). The full redraw uses the same "sentinel buffer" technique as scrolling the feed with VS16 emoji (§11.3) — it rewrites every cell without `ESC[2J`, i.e. without flicker. **The popup's own emoji set is kept free of VS16 clusters** (`❤️`/`✌️` were replaced with `💖`/`🤞`; the "exactly 2 columns, no U+FE0F" invariant is pinned by a gate test): for VS16, `ratatui` additionally sends the glyph's trailing cell to the terminal, and the `crossterm` backend tracks position by cell number without accounting for its width — that trailing write happens without a `MoveTo`, lands one column to the right, and shifts the rest of the row (an adjacent wide emoji goes dark, the popup's border drifts). Under a full redraw, where "changed" cells are all of them, this shows up on every frame.
+- **Line breaks on unix terminals**: the legacy encoding sends the same CR for both `Shift+Enter` and `Enter`, so on a "bare" terminal a line break was unavailable. On unix, `runtime` enables the **kitty keyboard protocol** at the `DISAMBIGUATE_ESCAPE_CODES` level (`crossterm::event::PushKeyboardEnhancementFlags`) if the terminal supports it (`supports_keyboard_enhancement()`) — then modifiers on special keys (`Enter`/arrows/…) are reported, `Shift+Enter` is distinguishable from `Enter`, and `Shift`+arrows from plain arrows (bringing keyboard selection to life). Flags are cleared on exit and in the panic hook. Printable input and a lone `Shift`+character aren't touched by the protocol (text comes through as-is) → the layout-independent Ctrl-shortcut parsing and typing `?`/emoji don't regress. Not needed on Windows (the Console API reports modifiers). For terminals **without** the protocol — **`Alt+Enter`** gives the same line break (it arrives as `Enter`+`ALT` via the meta-prefix `ESC`, recognized even on legacy terminals); accepted in every multiline field (chat, the system message/greeting in settings, the self-model editor).
 
-### 11.6. Экран настроек
+### 11.6. The settings screen
 
-Секции (левое меню со счётчиком полей). Внутри секции поля разложены по
-**смысловым группам** (заголовок группы `Группа ────`, не навигируется); значения
-выравниваются **единой колонкой на всю секцию** — по самой длинной подписи секции,
-с полом и потолком: значения всех групп стоят на одной вертикали, а сверхдлинная
-подпись колонку не отгоняет (её значение встаёт сразу после подписи; текущие
-подписи держатся короче потолка — контекст уходит в заголовок группы).
-Под списком — **фиксированная панель**:
-полное значение выбранного поля (пути/URL, в списке усечены `…`) + описание-подсказка.
-Секции с **подсекциями** (Модель/Семплинг/Профили) показывают их **таб-стрипом** над
-полями (пиннед-строка `Ассистент │ Имперсонация │ …`, `←/→` переключают активную
-вкладку) — не строкой-полем в списке. Футер хоткеев **контекстный** (в «Профилях»
-добавляет `Ctrl+N`/`Ctrl+D`). **Поиск по полям `/`** — оверлей с плоской выдачей по
-всем секциям/подсекциям (совпадение по подписи/группе/описанию; крошка «Секция ·
-Подсекция › Группа › Поле  значение»), `↑/↓` выбор, `Enter` — прыжок к полю (со сменой
-секции и подсекции), `Esc` — отмена.
+Sections (a left-hand menu with a field count). Within a section, fields are laid out into
+**semantic groups** (a group header `Group ────`, not navigable); values are
+aligned in **one shared column across the whole section** — sized off the section's
+longest label, with a floor and a cap: every group's values sit on one vertical line,
+and an overly long label doesn't drag the column away (its value sits right after the
+label; current labels stay shorter than the cap — extra context moves into the group
+header). Below the list — a **fixed panel**:
+the selected field's full value (paths/URLs, truncated with `…` in the list) + a description hint.
+Sections with **subsections** (Model/Sampling/Profiles) show them as a **tab strip** above the
+fields (a pinned row `Assistant │ Impersonation │ …`, `←/→` switches the active
+tab) — not as a row-field in the list. The hotkey footer is **contextual** (in "Profiles"
+it adds `Ctrl+N`/`Ctrl+D`). **Field search `/`** — an overlay with a flat listing across
+every section/subsection (matching against label/group/description; a breadcrumb "Section ·
+Subsection › Group › Field  value"), `↑/↓` to select, `Enter` — jump to the field (switching
+section and subsection), `Esc` — cancel.
 
-- **Модель/сервер** — таб-стрип **Ассистент │ Имперсонация │ Эмбеддинги** (три
-  сервера приложения, зеркало чипов статус-бара); справа в заголовке секции — **чип
-  статуса** сервера активной подсекции (`● готов` / `◐ подключение…` / `✕ не настроен`
-  / нет связи с причиной): правишь движок и видишь эффект, не выходя в чат. Режим
-  (managed/external/openai/gemini/claude); для managed — группы *Сервер*
-  (бинарник `llama-server`, host, порт), *Модель* (GGUF `-m`, контекст `-c`,
-  `--jinja`), *Производительность* (`-ngl`, FlashAttn, `--no-mmap`),
-  *Спекулятивное декодирование* (`--spec-type` + черновые поля); для облака —
-  *Провайдер* (модель, API-ключ-env, base URL). Вкладка **Эмбеддинги** — выделенный
-  embedding-сервер для RAG/памяти (режим + параметры). **Смена модели = перезапуск
-  сервера** — с дебаунсом (~1.2 с тишины): серия быстрых правок полей движка
-  коалесится в один рестарт с итоговыми значениями, конфиг сохраняется сразу.
-- **Семплинг** (таб-стрип Ассистент/Имперсонация): параметры по группам
-  *Основные* (temperature, top-k/p, max_tokens, seed), *Динамическая температура*,
-  *Разнообразие* (min-p, top-n-sigma, typical-p, adaptive-p, XTC), *Штрафы за повтор*,
-  *DRY (анти-повтор)*, *Mirostat*, *Порядок семплеров*, *Рассуждения* (thinking,
-  reasoning_effort). В облачном режиме неподдерживаемые провайдером параметры скрыты.
-- **Инструменты**: только гейты/параметры инструментов — *Агентный цикл*
-  (`max_tool_rounds`, лимиты `call_subagent`), *Веб-поиск*, *Python* (выключатель +
-  путь), *Файлы* (доступ + каталог-песочница).
-- **Память**: *База знаний (RAG)* (размеры чанка/перекрытия/потолка), *Заметки*
-  (авто-консолидация, наблюдения «о себе» в `note_recall`), *Модель себя*
-  (хранение/инъекция инсайтов, ориентир описания, авто-рефлексия, протокол ведения).
-- **Профили** (таб-стрип Ассистент/Имперсонация): CRUD; выбор профиля, имя,
-  группа *Персона* (системное сообщение, приветствие) и **тумблеры инструментов,
-  разложенные по смысловым группам** (`features/tools/meta.rs`: Интроспекция /
-  Память и знания / Внешний мир / Файлы / Утилиты / Субагент / Управление беседой /
-  Модель себя) с коротким инлайн-описанием и счётчиком «вкл/всего» в заголовке
-  группы. Инструмент, **выключенный глобальным гейтом** (web/python/файлы), но
-  включённый в профиле, помечается цветом предупреждения и подсказкой «выкл.
-  глобально» — честно показывает, что он недоступен модели.
-- **Интерфейс**: группы *Оформление* (тема, **совместимость со старым терминалом** —
-  см. ниже), *Орфография* (спелл-чек вкл/выкл, выбор словарей), *Поведение*
-  (подтверждение `Ctrl+R`/`Ctrl+E`), *Копирование переписки (F5)* (состав копии).
+- **Model/server** — a tab strip **Assistant │ Impersonation │ Embeddings** (three
+  of the app's servers, mirroring the status-bar chips); on the right of the section
+  header — a **status chip** for the active subsection's server (`● ready` / `◐ connecting…`
+  / `✕ not configured` / no connection with a reason): tweak the engine and see the effect
+  without leaving to the chat. Mode (managed/external/openai/gemini/claude); for managed —
+  the *Server* group (the `llama-server` binary, host, port), *Model* (GGUF `-m`,
+  context `-c`, `--jinja`), *Performance* (`-ngl`, FlashAttn, `--no-mmap`),
+  *Speculative decoding* (`--spec-type` + draft-model fields); for cloud —
+  *Provider* (model, API-key-env, base URL). The **Embeddings** tab is the dedicated
+  embedding server for RAG/memory (mode + parameters). **Changing the model = restarting
+  the server** — with a debounce (~1.2 s of quiet): a burst of quick edits to engine
+  fields is coalesced into a single restart with the final values; the config saves
+  right away.
+- **Sampling** (a tab strip Assistant/Impersonation): parameters by group —
+  *Basics* (temperature, top-k/p, max_tokens, seed), *Dynamic temperature*,
+  *Diversity* (min-p, top-n-sigma, typical-p, adaptive-p, XTC), *Repeat penalties*,
+  *DRY (anti-repeat)*, *Mirostat*, *Sampler order*, *Reasoning* (thinking,
+  reasoning_effort). In a cloud mode, parameters unsupported by the provider are hidden.
+- **Tools**: only gates/parameters for tools — *Agentic loop*
+  (`max_tool_rounds`, `call_subagent` limits), *Web search*, *Python* (a switch +
+  the path), *Files* (access + a sandbox directory).
+- **Memory**: *Knowledge base (RAG)* (chunk/overlap/cap sizes), *Notes*
+  (auto-consolidation, "about self" observations in `note_recall`), *Self-model*
+  (insight storage/injection, description target size, auto-reflection, the maintenance
+  protocol).
+- **Profiles** (a tab strip Assistant/Impersonation): CRUD; profile picker, name,
+  the *Persona* group (system message, greeting) and **tool toggles grouped by
+  meaning** (`features/tools/meta.rs`: Introspection / Memory and Knowledge /
+  Outside World / Files / Utilities / Sub-agent / Conversation Control /
+  Self-Model) with a short inline description and an "on/total" count in the group
+  header. A tool that's **disabled by a global gate** (web/python/files) but
+  enabled in the profile is marked in the warning color with a "disabled
+  globally" hint — honestly showing that it's unavailable to the model.
+- **Interface**: the *Appearance* group (theme, **legacy-terminal compatibility** —
+  see below), *Spelling* (spellcheck on/off, dictionary selection), *Behavior*
+  (confirming `Ctrl+R`/`Ctrl+E`), *Conversation copy (F5)* (what's included).
 
-**Редактирование полей.** У полей-переключателей (`Choice`) `←/→` быстро перебирают
-значение, а `Enter` открывает **попап списка** всех вариантов (важно для `--spec-type`,
-режимов, тем, выбора профиля). Текстовые/числовые поля правятся в редакторе (`Enter`
-коммитит) с **валидацией**: невалидное число (буквы) не закрывает редактор, подпись
-краснеет с подсказкой; исправление или `Esc` закрывают. **Маркер `•`** (акцентным
-цветом) слева отмечает поле, значение которого отличается от дефолтного; **`Del`**
-сбрасывает поле к значению по умолчанию (профильные поля не затрагиваются).
+**Field editing.** For `Choice` toggle fields, `←/→` quickly cycles the value, while
+`Enter` opens a **list popup** of every option (important for `--spec-type`,
+modes, themes, the profile picker). Text/numeric fields are edited in an editor
+(`Enter` commits) with **validation**: an invalid number (letters) doesn't close the
+editor — the label turns red with a hint; a fix or `Esc` close it. An accent-colored
+**`•` marker** on the left flags a field whose value differs from the default;
+**`Del`** resets a field to its default (profile fields aren't affected).
 
-**Режим совместимости со старым терминалом** (`interface.terminal_compat`, по
-умолчанию **выключен**). Старые эмуляторы (conhost Windows 10 и т.п.) не умеют
-эмодзи и часть символов Юникода — вместо иконок рисуются квадраты-«тофу», а
-модификатор `DIM` игнорируется. При включённом режиме интерфейс переключается на
-безопасный набор глифов (`shared/theme.rs::GlyphSet`, ориентир — WGL4/ASCII:
-репертуар стандартных консольных шрифтов Consolas/Lucida Console): `✦ АССИСТЕНТ` →
-`* АССИСТЕНТ`, `❯` → `>`, tool-карточка `⚒` → `#`, «мысли» `▸/▾` → `►/▼`, статусы
-`◐/✕` → `○/×`, `✓/✗/⚠` → `√/×/!`, Брайль-спиннер → ASCII `|/-\`, скруглённые рамки
-(`╭╮╰╯`) → прямые, затемнение фона под попапами — приглушённым цветом вместо `DIM`.
-Глифы из WGL4 (`●`, `▌`-рейлы, box-drawing таблиц, `█` скроллбара, стрелки, `…`)
-не заменяются. Применяется на лету (палитра пересобирается из события `Settings`);
-эмодзи в **содержимом** сообщений не трогаются (это данные, не оформление).
+**Legacy-terminal compatibility mode** (`interface.terminal_compat`, off by
+default). Older emulators (Windows 10's conhost, etc.) can't do emoji or some
+Unicode characters — "tofu" squares are drawn instead of icons, and the `DIM`
+modifier is ignored. When enabled, the interface switches to a safe glyph set
+(`shared/theme.rs::GlyphSet`, targeting WGL4/ASCII: the standard console font
+repertoire of Consolas/Lucida Console): `✦ ASSISTANT` →
+`* ASSISTANT`, `❯` → `>`, the tool card's `⚒` → `#`, "thoughts" `▸/▾` → `►/▼`, statuses
+`◐/✕` → `○/×`, `✓/✗/⚠` → `√/×/!`, a Braille spinner → ASCII `|/-\`, rounded borders
+(`╭╮╰╯`) → straight ones, popup background dimming — a muted color rather than `DIM`.
+Glyphs from WGL4 (`●`, `▌` rails, table box-drawing, the `█` scrollbar, arrows, `…`)
+aren't replaced. Applies live (the palette is rebuilt from a `Settings` event);
+emoji in message **content** aren't touched (that's data, not styling).
 
-**Язык интерфейса** (`interface.language`, поле «Язык интерфейса» в секции
-«Интерфейс», Choice ru/en; по умолчанию `Ru`, при свежей установке — из
-`defaults.json`). Ось B мультиязычности (docs/history/i18n-ui.md): тексты для
-**человека** (статус-бар, лента — заголовки ролей/пилюли, настройки, список чатов,
-попапы/справка, экран «модели себя», ошибки в UI, экспорт `F5`) читаются из бандла
-`ui.*` выбранного языка. **Независим от языка агентов** (`Profile.language`, ось A):
-русский UI + англоязычные агенты — законная комбинация; никакого наследования между
-осями. Применяется на лету (экраны/виджеты получают `&'static Locale` вместе с
-палитрой из события `Settings`; каждый язык в селекторе показан в собственном
-названии). Результаты инструментов и рендер «модели себя» в ленте/`F3` следуют языку
-**агента** (ось A) — они в первую очередь для модели. Метки инструментов в тумблерах
-профиля (`ui.tool.label.*`/`ui.tool.group.*`, резолв в слое настроек) и отображаемые
-reasons недоступности сервера (`ui.err.server.*`) тоже локализованы; русскими остаются
-лишь технические probe-ошибки движка (`shared/api/managed.rs` — слой провайдера).
+**Interface language** (`interface.language`, the "Interface language" field in the
+"Interface" section, a Choice ru/en; `Ru` by default, from `defaults.json` on a fresh
+install). Axis B of the multilingual support (docs/history/i18n-ui.md): text for
+**people** (the status bar, feed — role headers/pills, settings, the chat list,
+popups/help, the self-model screen, UI errors, the `F5` export) is read from the
+selected language's `ui.*` bundle. **Independent of the agent language**
+(`Profile.language`, axis A): a Russian UI + English-speaking agents is a legitimate
+combination; there's no inheritance between the axes. Applied live (screens/widgets
+get an `&'static Locale` together with the palette from the `Settings` event; every
+language in the selector is shown in its own name). Tool results and the self-model
+rendering in the feed/`F3` follow the **agent's** language (axis A) — they're
+primarily for the model. Tool labels in the profile toggles
+(`ui.tool.label.*`/`ui.tool.group.*`, resolved in the settings layer) and displayed
+server-unavailability reasons (`ui.err.server.*`) are also localized; only the
+technical engine probe errors (`shared/api/managed.rs` — the provider layer) remain
+in Russian.
 
-**Редактирование полей**: текстовые/числовые поля правятся во всплывающем
-редакторе (`Enter` открывает, `Enter` коммитит, `Esc` отменяет). Значение поля —
-логически **одна строка** (URL, путь, число), поэтому редактор работает в
-**однострочном режиме** `InputBox` (`set_single_line`): без переноса по словам, с
-**горизонтальным скроллом** (длинное значение «уезжает» влево, курсор всегда виден),
-`↑/↓` отключены, `Home/End` — к началу/концу всего значения, переводы строк при
-вставке схлопываются в пробел. **Исключение — системное сообщение профиля**: оно
-многострочное по смыслу, поэтому правится в **крупном многострочном попапе** с
-переносом длинных строк, где `Shift+Enter` вставляет перевод строки, а `Enter`
-коммитит (как в чат-вводе, см. [11.5](#115-ввод-и-редактирование-спелл-чек)).
+**Field editing**: text/numeric fields are edited in a popup editor
+(`Enter` opens it, `Enter` commits, `Esc` cancels). A field's value is logically
+**a single line** (a URL, a path, a number), so the editor works in
+**single-line mode** `InputBox` (`set_single_line`): no word wrap, with
+**horizontal scrolling** (a long value "slides off" to the left, the cursor is always
+visible), `↑/↓` disabled, `Home/End` — to the start/end of the whole value,
+line breaks on paste collapse into a space. **Exception — the profile's system
+message**: it's multiline by nature, so it's edited in a **large multiline popup**
+with long-line wrapping, where `Shift+Enter` inserts a line break and `Enter`
+commits (like in the chat input box, see [11.5](#115-input-and-editing-spellcheck)).
 
-**Поле «API-ключ»** (облачные подсекции Модель/Имперсонация/Эмбеддинги) — особый
-случай текстового поля: его **значение — статус** («настроен (этот компьютер)» /
-«не задан»), а не секрет. `Enter` открывает **пустой** редактор в **маскированном
-режиме** `InputBox` (`set_mask`: символы рисуются как `•`, выделение не отдаётся в
-буфер обмена, поле однострочное) — сохранённый ключ показать нельзя, правка вводит
-его заново; `Del` удаляет. Коммит уходит намерением `SetApiKey` (не в рабочую копию
-конфига): оркестратор шифрует ключ машинным ключом и кладёт в `AppConfig::api_keys`
-записью **этой** машины, так что файл настроек остаётся переносимым — на другой
-машине ключ вводится заново, при возврате читается снова. Ключ **общий** для чата,
-имперсонации и эмбеддингов одного провайдера; поле «API-ключ (env)» рядом остаётся
-фолбэком (имя переменной окружения; используется, если ключ не введён). В снимок
-`Settings` ключи не попадают вовсе — только флаги «настроен» (`api_keys_present`).
-Если машина не поддерживает шифрование (Linux без `machine-id`), поле показывает
-«недоступно на этой системе» и остаётся env-путь. См. `shared::secrets`,
-docs/research/api-key-storage.md.
+**The "API Key" field** (the cloud Model/Impersonation/Embeddings subsections) — a
+special case of a text field: its **value is a status** ("configured (this
+computer)" / "not set"), not a secret. `Enter` opens an **empty** editor in
+**masked mode** `InputBox` (`set_mask`: characters are drawn as `•`, selection isn't
+sent to the clipboard, the field is single-line) — a saved key can't be shown, and
+editing enters a new one; `Del` removes it. Committing sends a `SetApiKey` intent
+(not into the working config copy): the orchestrator encrypts the key with a
+machine-bound key and stores it in `AppConfig::api_keys` as a record for **this**
+machine, so the settings file stays portable — on another machine the key is
+entered again, and it's read back when returning here. The key is **shared** across
+chat, impersonation, and embeddings for one provider; the adjacent "API key (env)"
+field remains a fallback (an environment variable name; used if no key is entered).
+Keys never appear in the `Settings` snapshot — only "configured" flags
+(`api_keys_present`). If the machine doesn't support encryption (Linux with no
+`machine-id`), the field shows "unavailable on this system" and the env path
+remains. See `shared::secrets`, docs/research/api-key-storage.md.
 
-### 11.7. Горячие клавиши (предварительно)
+### 11.7. Keybindings (preliminary)
 
-| Клавиша | Действие |
+| Key | Action |
 |---|---|
-| `Enter` | отправить сообщение (настраиваемо: `Enter`/`Ctrl+Enter`) |
-| `Shift+Enter` / `Alt+Enter` | перенос строки в поле ввода (`Alt+Enter` — запасной для терминалов без kitty-протокола) |
-| `Shift+←/→/↑/↓`, `Shift+Home/End` | выделить текст (`Ctrl+Shift+←/→` — по словам) |
-| `Ctrl+A` | выделить весь текст поля ввода |
-| `Ctrl+C` | копировать выделение в буфер обмена (без выделения — no-op) |
-| `Ctrl+X` | вырезать выделение в буфер обмена |
-| `Ctrl+V` | вставка из буфера обмена (одним куском, многострочно, без отправки) |
-| `Esc` | оверлей списка чатов (открыть/закрыть) · отмена генерации |
-| `Ctrl+Q` / `F10` | выход из приложения (в т.ч. из оверлея списка чатов) |
-| `Ctrl+N` | новый чат (выбор профиля) |
-| `Ctrl+P` | экран настроек |
-| `F2` | переименовать чат |
-| `F5` | копировать всю переписку чата в буфер обмена (активный чат / выделенный в списке) |
-| `Ctrl+R` | регенерировать последний ответ |
-| `Ctrl+U` | написать сообщение от имени пользователя (имперсонация, §11.8) |
-| `Ctrl+E` | удалить последний обмен (текст возвращается в поле ввода) |
-| `/tts [N\|all\|stop\|pause\|resume]` | озвучить сообщения чата / остановить / пауза / продолжить (§11.9) |
-| `Ctrl+K` | удалить весь текст поля ввода (возврат — `Ctrl+Z`) |
-| `Ctrl+Z` / `Ctrl+Y` | отмена / повтор правки поля ввода (снимки с коалесингом) |
-| `Ctrl+←`/`Ctrl+→` | курсор по словам (через границы строк) |
-| `Ctrl+Backspace`/`Ctrl+Delete` | удалить слово слева/справа от курсора |
-| `Ctrl+Home`/`Ctrl+End` | курсор в начало/конец текста поля ввода |
-| `Ctrl+W` | тумблер захвата мыши: колесо прокручивает ленту ↔ нативное выделение текста |
-| клик/драг мышью в поле | курсор / выделение текста (при захвате `Ctrl+W`) |
-| `Ctrl+B` | попап выбора эмодзи (вставка в поле ввода на месте курсора; помнит последний выбор) |
-| `PageUp`/`PageDown` / колесо мыши | прокрутка ленты |
-| `e` (на сообщении) | редактировать сообщение |
-| `Space`/`Tab` (на блоке) | свернуть/развернуть «мысли»/tool-блок |
-| `F1` / `?` | диалог справки/«О программе» (вкладки, см. ниже) |
+| `Enter` | send the message (configurable: `Enter`/`Ctrl+Enter`) |
+| `Shift+Enter` / `Alt+Enter` | line break in the input box (`Alt+Enter` — a fallback for terminals without the kitty protocol) |
+| `Shift+←/→/↑/↓`, `Shift+Home/End` | select text (`Ctrl+Shift+←/→` — by word) |
+| `Ctrl+A` | select all text in the input box |
+| `Ctrl+C` | copy the selection to the clipboard (no-op without a selection) |
+| `Ctrl+X` | cut the selection to the clipboard |
+| `Ctrl+V` | paste from the clipboard (as one chunk, multiline, without sending) |
+| `Esc` | the chat-list overlay (open/close) · cancel generation |
+| `Ctrl+Q` / `F10` | quit the application (also from the chat-list overlay) |
+| `Ctrl+N` | new chat (profile picker) |
+| `Ctrl+P` | the settings screen |
+| `F2` | rename the chat |
+| `F5` | copy the entire chat conversation to the clipboard (the active chat / the one selected in the list) |
+| `Ctrl+R` | regenerate the last response |
+| `Ctrl+U` | write a message as the user (impersonation, §11.8) |
+| `Ctrl+E` | delete the last exchange (the text is returned to the input box) |
+| `/tts [N\|all\|stop\|pause\|resume]` | speak the chat's messages / stop / pause / resume (§11.9) |
+| `Ctrl+K` | clear all text in the input box (undo it — `Ctrl+Z`) |
+| `Ctrl+Z` / `Ctrl+Y` | undo / redo an input-box edit (coalesced snapshots) |
+| `Ctrl+←`/`Ctrl+→` | move the cursor by word (across line boundaries) |
+| `Ctrl+Backspace`/`Ctrl+Delete` | delete the word left/right of the cursor |
+| `Ctrl+Home`/`Ctrl+End` | move the cursor to the start/end of the input box's text |
+| `Ctrl+W` | toggle mouse capture: the wheel scrolls the feed ↔ native text selection |
+| click/drag with the mouse in the box | place the cursor / select text (with `Ctrl+W` capture on) |
+| `Ctrl+B` | the emoji picker popup (inserted into the input box at the cursor; remembers the last choice) |
+| `PageUp`/`PageDown` / mouse wheel | scroll the feed |
+| `e` (on a message) | edit the message |
+| `Space`/`Tab` (on a block) | collapse/expand "thoughts"/a tool block |
+| `F1` / `?` | the help/"about" dialog (tabbed, see below) |
 
-**Диалог справки/«О программе» (`F1`/`?`)** — модальный попап в стиле KDE/Qt:
-логотип-лockup в шапке, таб-стрип вкладок и прокручиваемое содержимое активной
-вкладки со скроллбаром. Вкладки (в порядке показа): **«О программе»** (бренд-имя,
-описание, автор, версия, ссылки — сайт `mindfork.io`, репозиторий, крейт),
-**«Горячие клавиши»** (эта таблица), **«Команды»** (команды поля ввода `/rag …`/
-`/tts …` — вынесены из клавиш, чтобы не мешать их чтению), **«Лицензия»** (текст MIT),
-**«Компоненты»** (сторонние зависимости — **имя, версия, лицензия**; список сверяется
-с `Cargo.toml` (имена) и `Cargo.lock` (версии) гейт-тестами `shared::credits`).
-Открывается на вкладке «Горячие клавиши» (`F1`/`?` — привычная клавиша справки), а
-при повторном открытии — на **последней выбранной** вкладке (запоминается). Навигация:
-`Tab`/`←→` — вкладки, `↑↓`/`PgUp`/`PgDn`/`Home` — прокрутка активной вкладки, `Esc`
-(или повторный `F1`/`?`) — закрыть, `Ctrl+Q`/`F10` — выход. Логотип рисуется только
-при запасе высоты/ширины (жёсткая деградация, docs/branding.md §5); текст лицензии
-переносится по словам под ширину диалога. Данные вкладок «Лицензия»/«Компоненты»
-язык-нейтральны и берутся из `shared/credits.rs` напрямую, минуя локали. Заголовок
-попапа — `mindfork v<версия>` (бренд-имя `credits::APP_NAME`, а не пакет `mindfork-rs`);
-тот же текст ставится в **заголовок окна терминала** при старте (`SetTitle`, Windows).
+**The help/"about" dialog (`F1`/`?`)** — a modal popup in the KDE/Qt style:
+a logo lockup in the header, a tab strip, and scrollable content for the active
+tab with a scrollbar. Tabs (in the order shown): **"About"** (the brand name,
+description, author, version, links — the website `mindfork.io`, the repository, the crate),
+**"Hotkeys"** (this table), **"Commands"** (input-box commands `/rag …`/
+`/tts …` — kept out of the keybindings list so it doesn't clutter it), **"License"** (the MIT text),
+**"Components"** (third-party dependencies — **name, version, license**; the list is checked
+against `Cargo.toml` (names) and `Cargo.lock` (versions) by `shared::credits` gate tests).
+Opens on the "Hotkeys" tab (`F1`/`?` — the familiar help key), and on
+reopening — on the **last-selected** tab (remembered). Navigation:
+`Tab`/`←→` — switch tabs, `↑↓`/`PgUp`/`PgDn`/`Home` — scroll the active tab, `Esc`
+(or `F1`/`?` again) — close, `Ctrl+Q`/`F10` — quit. The logo is drawn only
+when there's enough height/width (a hard degradation, docs/branding.md §5); the license
+text wraps by word to the dialog's width. The "License"/"Components" tabs'
+data is language-neutral and comes straight from `shared/credits.rs`, bypassing the locale bundles.
+The popup's title is `mindfork v<version>` (the brand name `credits::APP_NAME`, not the
+package `mindfork-rs`); the same text is set as the **terminal window's title**
+at startup (`SetTitle`, Windows).
 
-Ctrl-шорткаты раскладко-независимы: символ нормализуется в «физическую»
-латинскую клавишу (`shared/keys.rs`, таблица русской ЙЦУКЕН), поэтому `Ctrl+Q`
-(выход) срабатывает и при активной кириллической раскладке (где приходит `Ctrl+й`).
+Ctrl-shortcuts are layout-independent: a character is normalized to the "physical"
+Latin key (`shared/keys.rs`, a JCUKEN lookup table for the Russian layout), so
+`Ctrl+Q` (quit) works even under an active Cyrillic layout (where the physical Q
+key delivers a Cyrillic `Ctrl` combo).
 
-**Выделение/копирование/отмена/выход** (см. [docs/history/input-selection-undo-mouse.md](docs/history/input-selection-undo-mouse.md)).
-Выделение и **отмена/повтор** живут в самом виджете `InputBox` — доступны во всех
-полях ввода (чат, переименование чата, поля настроек, модель себя). Копирование/
-вырезание в буфер обмена (`Ctrl+C`/`Ctrl+X`) — side-effect UI-слоя (`runtime` через
-`arboard`, текст у UI, оркестратор не задействован); пока проведено в поле ввода чата.
-**Отмена/повтор** (`Ctrl+Z`/`Ctrl+Y`) — стек снимков `(строки, курсор)` с коалесингом:
-подряд идущие правки одного класса (набор/удаление) сливаются в одну единицу отмены
-(набор рвётся по пробелу — word-granular), навигация/выделение/структурная правка
-(перевод строки, вставка) начинают новую; программная замена текста (`set_text`,
-отправка) чистит историю. **`Ctrl+K`** очищает поле (одна из единиц отмены — возврат
-`Ctrl+Z`; прежняя toggle-семантика удалена). **Выход переехал с `Ctrl+C` на `Ctrl+Q`
-+ `F10`** (`Ctrl+C` освобождён под копирование): `Ctrl+Q` надёжен в raw-mode (crossterm
-снимает XON/XOFF flow-control), `F10` — второй вариант на случай, если терминал/DE
-перехватит `Ctrl+Q` (сам `F10` в части Linux-DE открывает меню эмулятора, но
-отключается — клавиши взаимно страхуют).
+**Selection/copy/undo/quit** (see [docs/history/input-selection-undo-mouse.md](docs/history/input-selection-undo-mouse.md)).
+Selection and **undo/redo** live inside the `InputBox` widget itself — available in every
+input field (chat, chat renaming, settings fields, the self-model editor). Clipboard
+copy/cut (`Ctrl+C`/`Ctrl+X`) is a UI-layer side effect (`runtime` via
+`arboard`, the text is already at the UI, the orchestrator isn't involved); so far it's only wired up in the chat input box.
+**Undo/redo** (`Ctrl+Z`/`Ctrl+Y`) — a stack of `(lines, cursor)` snapshots with coalescing:
+consecutive edits of the same class (typing/deleting) merge into one undo unit
+(typing breaks at a space — word-granular), navigation/selection/a structural edit
+(a line break, a paste) start a new one; a programmatic text replacement (`set_text`,
+sending) clears the history. **`Ctrl+K`** clears the box (one of the undo units — undone by
+`Ctrl+Z`; the previous toggle semantics were removed). **Quit moved from `Ctrl+C` to
+`Ctrl+Q` + `F10`** (freeing `Ctrl+C` for copying): `Ctrl+Q` is reliable in raw mode (crossterm
+strips XON/XOFF flow control), `F10` is a second option in case the terminal/DE
+intercepts `Ctrl+Q` (`F10` itself opens the emulator's menu on some Linux DEs, but
+can be disabled — the two keys back each other up).
 
-**Мышь в поле ввода** (этап D). При включённом захвате мыши (`Ctrl+W`, §11.3) клик
-левой кнопкой ставит курсор в поле ввода чата, драг — растит выделение (курсор
-снапится к границе графемного кластера, чтобы не сесть в середину эмодзи). Виджет
-запоминает область текста последней отрисовки и инвертирует раскладку переноса
-(экранные координаты → позиция в тексте); клик ниже последнего ряда → конец текста,
-правее конца ряда → конец ряда. Клик/драг не меняют содержимое (не будят дебаунс
-орфографии/сохранение черновика) и не бампят ревизию кэша переноса. Клик вне поля
-(в ленту) — no-op. Двойной клик (выделение слова) — задел (crossterm его не даёт
-напрямую).
+**Mouse in the input box** (stage D). With mouse capture on (`Ctrl+W`, §11.3), a left
+click places the cursor in the chat input box, and a drag grows the selection (the cursor
+snaps to a grapheme-cluster boundary, so it doesn't land in the middle of an emoji). The widget
+remembers the area of its last render and inverts the wrap layout
+(screen coordinates → a position in the text); a click below the last row → the end of the text,
+a click right of a row's end → the end of that row. Click/drag never change the content (don't wake
+the spellcheck debounce/draft save) and don't bump the wrap cache's revision. A click outside the box
+(in the feed) is a no-op. Double-click (word selection) is groundwork (crossterm doesn't
+give it to us directly).
 
-**Сохранение удалённых обменов (`Ctrl+E`/`Ctrl+R`).** Удаление обмена (`Ctrl+E`) и
-перегенерация последнего ответа (`Ctrl+R`) необратимы в UI, но удалённое не
-теряется на диске: каждое такое удаление дописывает запись в коллекцию
-`Chat.deleted` (массив `DeletedExchange { deleted_at, messages, draft }` в файле
-чата). В запись попадают момент удаления (`deleted_at`), удалённые сообщения
-(`Ctrl+E` — сообщение пользователя и ответ ассистента; `Ctrl+R` — ответ
-ассистента и tool-сообщения раунда) и `draft` — содержимое поля ввода на момент
-удаления (до возврата текста пользователя для `Ctrl+E`). Новые записи добавляются
-в **начало** коллекции (свежие удаления искать быстрее). Восстановления через UI
-нет: коллекция существует лишь ради **ручной** правки JSON в редких случаях, когда
-удалили что-то важное. Поле сериализуется только когда непусто
+**Preserving deleted exchanges (`Ctrl+E`/`Ctrl+R`).** Deleting an exchange (`Ctrl+E`) and
+regenerating the last response (`Ctrl+R`) are irreversible in the UI, but nothing deleted this
+way is lost on disk: each such deletion appends an entry to the
+`Chat.deleted` collection (an array of `DeletedExchange { deleted_at, messages, draft }` in the chat
+file). An entry captures the moment of deletion (`deleted_at`), the deleted messages
+(`Ctrl+E` — the user message and the assistant's response; `Ctrl+R` — the assistant's
+response and the round's tool messages), and `draft` — the input box's contents at the
+moment of deletion (before the user's text is returned, for `Ctrl+E`). New entries are prepended
+to the collection (recent deletions are faster to find). There's no restoration via the UI:
+the collection exists only for **manual** JSON editing in rare cases where
+something important was deleted. The field is only serialized when non-empty
 (`skip_serializing_if`).
 
-**Подтверждение `Ctrl+E`/`Ctrl+R` (настраиваемое).** Поскольку обе операции
-необратимы в UI, их можно защитить подтверждением: настройка
-`interface.confirm_destructive_keys` (секция «Интерфейс», по умолчанию
-**выключена**). При включённой настройке `Ctrl+R`/`Ctrl+E` не срабатывают сразу, а
-открывают модальный попап «Подтверждение» (`Enter` — да, `Esc` — нет; `Ctrl+Q`/`F10`
-пробивают попап на выход из приложения; прочие клавиши игнорируются, попап остаётся
-открытым). При выключенной настройке —
-прежнее мгновенное поведение. Обе операции по-прежнему игнорируются во время
-генерации. Состояние попапа (`ConfirmAction`) живёт в экране чата; намерение
-(`RegenerateLast`/`DeleteLastExchange`) отдаётся только по `Enter`.
+**Confirming `Ctrl+E`/`Ctrl+R` (configurable).** Since both operations are
+irreversible in the UI, they can be protected with a confirmation: the
+`interface.confirm_destructive_keys` setting (the "Interface" section, off by
+default). With the setting on, `Ctrl+R`/`Ctrl+E` don't fire immediately but
+open a modal "Confirm" popup (`Enter` — yes, `Esc` — no; `Ctrl+Q`/`F10` still
+quit the application through the popup; other keys are ignored, and the popup stays
+open). With the setting off — the previous instant behavior. Both operations are still
+ignored while generation is running. The popup's state (`ConfirmAction`) lives in
+the chat screen; the intent (`RegenerateLast`/`DeleteLastExchange`) is only issued on `Enter`.
 
-### 11.8. Имперсонация (написание сообщения за пользователя)
+### 11.8. Impersonation (writing a message as the user)
 
-По `Ctrl+U` модель пишет следующее сообщение **от лица пользователя** в поле
-ввода. Алгоритм построения запроса:
+`Ctrl+U` makes the model write the next message **as the user** into the input
+box. The request-building algorithm:
 
-- системное сообщение чата (персона ассистента) заменяется на **имперсонационное
-  системное сообщение профиля** (`Profile.impersonation_system_message`; пусто →
-  общий дефолт);
-- в истории роли **user ↔ assistant меняются местами**, system/tool-сообщения и
-  пустые отбрасываются (инструментов в этом режиме нет);
-- семплинг берётся из подсекции «Имперсонация» (`AppConfig.impersonation_sampling`),
-  но reasoning в нём **принудительно выключается** (`reasoning_budget=0`): режим
-  отбрасывает «мысли», а у моделей со «вшитым» в шаблон thinking иначе весь бюджет
-  токенов уходит в `reasoning_content` и реплика приходит пустой (ср. §8).
+- the chat's system message (the assistant's persona) is replaced with the
+  profile's **impersonation system message** (`Profile.impersonation_system_message`;
+  empty → a shared default);
+- in the history, **user ↔ assistant roles are swapped**, and system/tool messages and
+  empty ones are dropped (there are no tools in this mode);
+- sampling comes from the "Impersonation" subsection (`AppConfig.impersonation_sampling`),
+  but reasoning is **forced off** within it (`reasoning_budget=0`): the mode
+  discards "thoughts", and for models with thinking "baked" into the chat template, otherwise
+  the entire token budget goes into `reasoning_content` and the reply comes back empty
+  (cf. §8).
 
-**Сервер имперсонации** (`AppConfig.impersonation_engine`) имеет три режима
-(`ImpersonationMode`): `shared` — тот же сервер, что у ассистента (managed или
-external), но с семплингом имперсонации; `managed` — отдельный дочерний
-`llama-server`; `external` — отдельный удалённый OpenAI-совместимый сервер.
+**The impersonation server** (`AppConfig.impersonation_engine`) has three modes
+(`ImpersonationMode`): `shared` — the same server as the assistant's (managed or
+external), but with impersonation sampling; `managed` — a separate `llama-server`
+child process; `external` — a separate remote OpenAI-compatible server.
 
-**UI:** на время написания поле ввода скрывается, на его месте — нередактируемый
-**потоковый предпросмотр** реплики со спиннером (`widgets/impersonation_preview`).
-По завершении (если не отменено `Esc`) текст вставляется в поле ввода; при отмене
-поле сохраняет исходный текст. Если поле ввода было непустым, текст передаётся как
-**затравка** — модель просят продолжить начатое (выводя только продолжение), и
-предпросмотр показывает затравку + сгенерированное продолжение.
+**UI:** while it's being written, the input box is hidden, and in its place is a
+non-editable **streaming preview** of the reply with a spinner (`widgets/impersonation_preview`).
+Once finished (unless cancelled with `Esc`), the text is placed into the input box; on
+cancellation the box keeps its original text. If the input box wasn't empty, its text is passed as a
+**seed** — the model is asked to continue what's there (outputting only the continuation), and
+the preview shows the seed + the generated continuation.
 
-**Настройки** (§11.6): секции «Модель/сервер», «Семплинг» и «Профили» получают
-селектор подсекции «Ассистент»/«Имперсонация». В подсекции профиля для
-имперсонации — только системное сообщение (инструментов нет).
+**Settings** (§11.6): the "Model/server", "Sampling", and "Profiles" sections get
+an "Assistant"/"Impersonation" subsection selector. In the profile's impersonation
+subsection there's only the system message (no tools).
 
 ---
 
-### 11.9. Озвучивание сообщений (TTS)
+### 11.9. Speaking messages aloud (TTS)
 
-Сообщения чата можно **озвучить** командой в поле ввода
-([docs/research/tts.md](docs/research/tts.md); основной движок — OpenAI TTS,
-решение 2026-07-23):
+Chat messages can be **spoken aloud** with an input-box command
+([docs/research/tts.md](docs/research/tts.md); the main engine is OpenAI TTS,
+decision 2026-07-23):
 
 ```
-/tts            озвучить последнее сообщение
-/tts N          озвучить последние N сообщений (пользователя и модели)
-/tts all        озвучить всю переписку чата
-/tts stop       остановить воспроизведение (сбросить очередь)
-/tts pause      приостановить (сохранить очередь)
-/tts resume     продолжить приостановленное
+/tts            speak the last message
+/tts N          speak the last N messages (user and model)
+/tts all        speak the entire chat conversation
+/tts stop       stop playback (drop the queue)
+/tts pause      pause (keep the queue)
+/tts resume     resume a paused playback
 ```
 
-**Разные голоса ролей.** Если в активном режиме задан отдельный «Голос
-пользователя» (`user_voice`) и он отличается от голоса ассистента, многосообщенческая
-озвучка (`/tts all`, `/tts N`) читает реплики пользователя им, а ассистента — основным
-голосом. Реализовано **двумя движками** одного провайдера (голос вшивается в клиент при
-создании): роль сохраняется через пайплайн (`build_utterances`/`chunk_utterances` несут
-`(MessageRole, String)`), задача выбирает движок по роли чанка. При пустом `user_voice`
-всё читается одним голосом. Независимо от тумблера «Озвучивать роли» (тот добавляет
-вербальные префиксы; голоса различают акустически).
+**Different voices per role.** If the active mode has a separate "User voice"
+(`user_voice`) set and it differs from the assistant's voice, a multi-message
+speak-out (`/tts all`, `/tts N`) reads the user's lines in that voice and the assistant's
+in the main voice. Implemented with **two engines** of the same provider (the voice is baked into
+the client at construction); the role travels through the pipeline (`build_utterances`/`chunk_utterances`
+carry `(MessageRole, String)`), and the task picks an engine per chunk's role. With an empty `user_voice`,
+everything is read in one voice. Independent of the "Speak roles" toggle
+(that one adds spoken prefixes; the voices differ acoustically).
 
-**Пауза/продолжение.** `/tts pause` приостанавливает воспроизведение, **сохраняя
-очередь** (в отличие от `stop`, который её сбрасывает), `/tts resume` — продолжает.
-Реализовано на `rodio::Player::pause`/`play`: устройство открывается обработчиком и
-разделяется с фоновой задачей через `Arc<Playback>` (`Send+Sync`), поэтому пауза
-применяется **мгновенно**. На паузе очередь не дренится → синтез вперёд сам
-придерживается, а задача не завершается, пока не возобновят. Полезно для длинного
-текста (`/tts all`).
+**Pause/resume.** `/tts pause` pauses playback, **keeping the
+queue** (unlike `stop`, which drops it), `/tts resume` — resumes it.
+Implemented with `rodio::Player::pause`/`play`: the device is opened by the handler and
+shared with the background task via an `Arc<Playback>` (`Send+Sync`), so pausing
+applies **instantly**. While paused, the queue isn't drained → synthesizing ahead
+naturally holds itself back, and the task doesn't finish until playback resumes. Useful for long
+text (`/tts all`).
 
-**Что озвучивается.** Сообщение = `user`/`assistant` с непустым текстом (system и
-tool-сообщения пропускаются — те же правила, что у копирования переписки `F5`),
-порядок хронологический. «Мысли» (CoT) не озвучиваются никогда: они лежат
-в отдельном поле `Message.thoughts`. Из markdown извлекается «речевой» текст
-(`shared/markdown/speak.rs::speakable_text` — второй потребитель событий
-`pulldown-cmark`, ADR 0003): блоки кода, ` ```mermaid `-диаграммы, таблицы и
-блочные формулы ($$…$$) **пропускаются с короткой голосовой пометкой** («блок кода
-пропущен»), inline-код читается текстом, inline-математика конвертируется в unicode
-(`latex_to_unicode`), у ссылки читается только текст (URL опущен). Пометки и
-опциональные префиксы ролей («Пользователь.»/«Ассистент.») — на **языке профиля**
-(ось A, [docs/history/i18n.md](docs/history/i18n.md)): это речевой контент, а не UI-хром.
+**What gets spoken.** A message = a `user`/`assistant` one with non-empty text (system and
+tool messages are skipped — the same rules as for the `F5` conversation copy),
+in chronological order. "Thoughts" (CoT) are never spoken: they live
+in the separate `Message.thoughts` field. "Speakable" text is extracted from markdown
+(`shared/markdown/speak.rs::speakable_text` — a second consumer of the
+`pulldown-cmark` events, ADR 0003): code blocks, ` ```mermaid ` diagrams, tables, and
+block formulas ($$…$$) are **skipped with a brief spoken note** ("code block
+skipped"), inline code is read as text, inline math is converted to unicode
+(`latex_to_unicode`), and a link is read as its text only (the URL is omitted). Notes and
+optional role prefixes ("User." / "Assistant.") are in **the profile's language**
+(axis A, [docs/history/i18n.md](docs/history/i18n.md)): this is spoken content, not UI chrome.
 
-**Провайдер** (`AppConfig.tts`, вкладка «Озвучивание» секции «Модель», §11.6) —
-независимый «серверный слот», как эмбеддинги (ADR 0002): у Anthropic TTS нет
-вовсе, поэтому озвучивание настраивается отдельно от chat-движка. Режимы
-(`TtsMode`): `openai` (по умолчанию, `POST {base}/audio/speech`, модель
-`gpt-4o-mini-tts`, голос `onyx` — оба проверены живым спайком), `gemini` (нативный
-`generateContent` с `responseModalities:["AUDIO"]`, модель
-`gemini-2.5-flash-preview-tts`, голос `Kore`) и `external` — любой сторонний
-OpenAI-совместимый TTS-сервер (offline/не-OpenAI аудитория; локальный managed-
-сайдкар — задел). API-ключ облака **общий** с чатом (ADR 0008) — вводить заново не
-нужно; не настроено → команда отвечает понятной подсказкой. У `gpt-4o-mini-tts`
-скорость задаётся **словами** в поле «Указания» (параметр `speed` эта модель
-де-факто игнорирует). Настройки поведения: «Озвучивать роли» (действует при
-**всех** вариантах команды), «Прерывать при смене чата» (вкл) и «Прерывать при
-генерации» (выкл).
+**The provider** (`AppConfig.tts`, the "Speech" tab in the "Model" section, §11.6) —
+an independent "server slot", like embeddings (ADR 0002): Anthropic has
+no TTS at all, so speech is configured separately from the chat engine. Modes
+(`TtsMode`): `openai` (default, `POST {base}/audio/speech`, model
+`gpt-4o-mini-tts`, voice `onyx` — both verified with a live spike), `gemini` (native
+`generateContent` with `responseModalities:["AUDIO"]`, model
+`gemini-2.5-flash-preview-tts`, voice `Kore`), and `external` — any third-party
+OpenAI-compatible TTS server (for offline/non-OpenAI users; a local managed
+sidecar is groundwork). The cloud API key is **shared** with chat (ADR 0008) — no need to
+re-enter it; if unconfigured → the command replies with a clear hint. For `gpt-4o-mini-tts`
+speed is set **in words** in the "Instructions" field (this model effectively
+ignores the `speed` parameter). Behavior settings: "Speak roles" (applies to
+**every** command variant), "Interrupt on chat switch" (on), and "Interrupt on
+generation" (off).
 
-**Исполнение.** Оркестратор (владелец `Chat`) берёт **снимок** переписки на момент
-команды — поэтому команда работает и во время генерации — и запускает отменяемую
-фоновую задачу. Текст режется на чанки по границам предложений (лимит провайдера:
-OpenAI 4096, Gemini/External 2000 символов) — короткое сообщение уходит **одним
-запросом**; задача идёт **конвейером**: пока играет чанк N, синтезируется N+1
-(первый звук приходит быстро). Воспроизведение — очередь `rodio` в процессе
-приложения; аудио-устройство отсутствует (headless/CI/нет звуковой карты) → заметка
-«звук недоступен», а не паника. Контракт: `AppCommand::Tts(TtsScope)`/`TtsStop`,
+**Execution.** The orchestrator (the owner of `Chat`) takes a **snapshot** of the conversation
+at the moment of the command — so the command also works during generation — and starts
+a cancellable background task. The text is cut into chunks along sentence boundaries (per the
+provider's limit: OpenAI 4096, Gemini/External 2000 characters) — a short message goes as a
+**single request**; the task runs as a **pipeline**: while chunk N is playing, N+1 is
+synthesized (the first sound arrives quickly). Playback — a `rodio` queue inside the
+process; when no audio device is available (headless/CI/no sound card) → a "audio unavailable"
+note, not a panic. Contract: `AppCommand::Tts(TtsScope)`/`TtsStop`,
 `AppEvent::TtsActive(bool)`.
 
-**Остановка** собрана в один хелпер оркестратора (`tts_cancel`): новая команда
-`/tts` прерывает предыдущую; `/tts stop` останавливает вручную; **по настройке** —
-переключение чата и начало генерации; **безусловно** (это инвариант, а не
-настройка) — удаление обмена (`Ctrl+E`), перегенерация (`Ctrl+R`) и удаление чата:
-текста, который озвучивается, больше не существует. Пока идёт синтез/воспроизведение,
-в статус-баре виден тихий чип «♪ озвучка».
+**Stopping** is centralized in one orchestrator helper (`tts_cancel`): a new `/tts`
+command interrupts the previous one; `/tts stop` stops manually; **per setting** —
+switching chats and starting generation; **unconditionally** (an invariant, not a
+setting) — deleting an exchange (`Ctrl+E`), regenerating (`Ctrl+R`), and deleting a chat:
+the text being spoken no longer exists. While synthesis/playback is in progress,
+a quiet "♪ speaking" chip is shown in the status bar.
 
 ---
 
-## 12. Конфигурация, портативность, миграция
+## 12. Configuration, portability, migration
 
-### 12.1. Конфигурация
+### 12.1. Configuration
 
-- `settings.json` (serde) с полем `schema_version` для будущих миграций.
-- Профили — `profiles.json`; чаты — `chats/{id}.json`; заметки/RAG — `data.db`; персональный словарь — `personal_dictionary.txt`; словари — `dictionaries/`; резервные копии — `backups/`. Всё в **каталоге данных**, по умолчанию портативном — подкаталог `data/` рядом с бинарником (отделяет данные от служебных файлов/кэшей сборки). Лог — `logs/` там же.
-- **Установочные умолчания** задаются файлом `defaults.json` рядом с бинарником (`Defaults` = `DataLocation` + `default_language`): режим хранения (`mode`/`path`: `portable` → `data/` рядом с бинарником; `system` → стандартная ОС-папка через крейт `directories`; `path` → произвольный каталог) **и** язык служебного каркаса новых профилей (`default_language`: `ru`/`en`, ось A — [docs/history/i18n.md](docs/history/i18n.md); инсталлятор заполнит по выбору при установке). Файл всегда лежит рядом с бинарником (вне каталога данных) — он про установку. Нет/пустой файл → портативный режим + язык `ru`; для обратной совместимости читается старый `location.json` (только режим хранения); повреждённый JSON — ошибка запуска.
+- `settings.json` (serde) with a `schema_version` field for future migrations.
+- Profiles — `profiles.json`; chats — `chats/{id}.json`; notes/RAG — `data.db`; the personal dictionary — `personal_dictionary.txt`; dictionaries — `dictionaries/`; backups — `backups/`. All in the **data directory**, portable by default — the `data/` subdirectory next to the binary (keeping data separate from build/service files/caches). Logs — `logs/` there as well.
+- **Installation defaults** are set by a `defaults.json` file next to the binary (`Defaults` = `DataLocation` + `default_language`): the storage mode (`mode`/`path`: `portable` → `data/` next to the binary; `system` → the standard OS folder via the `directories` crate; `path` → a custom directory) **and** the scaffold language for new profiles (`default_language`: `ru`/`en`, axis A — [docs/history/i18n.md](docs/history/i18n.md); an installer will fill this in based on the user's choice). The file always sits next to the binary (outside the data directory) — it's about the installation. No file / an empty one → portable mode + language `ru`; for backward compatibility the old `location.json` (storage mode only) is read; a corrupt JSON file → startup fails.
 
-### 12.2. Версионирование схем и миграция
+### 12.2. Schema versioning and migration
 
-**Каркас миграций JSON** ([ADR 0006](docs/decisions/0006-data-schema-versioning.md), release-engineering.md §3.4). Чистый Value-уровневый каркас — `shared/storage/schema.rs` (константы версий, `JsonArtifact` = `current` + `detect` + цепочка `Step`, вердикт `Assessment`); файловый I/O, гейты, pre-migration бэкап и control-parse — `features/data_migration.rs::run`, вызывается из `main.rs` перед открытием хранилища (пути TUI и CLI `import`). Оркестрация в `features` (не `shared`), т.к. pre-migration бэкап — `features::backup`, а `shared` не может зависеть от `features` (FSD).
+**The JSON migration framework** ([ADR 0006](docs/decisions/0006-data-schema-versioning.md), release-engineering.md §3.4). A clean Value-level framework — `shared/storage/schema.rs` (version constants, `JsonArtifact` = `current` + `detect` + a `Step` chain, an `Assessment` verdict); file I/O, gates, the pre-migration backup, and control-parsing — `features/data_migration.rs::run`, called from `main.rs` before opening storage (both the TUI and the CLI `import` path). The orchestration lives in `features` (not `shared`), since the pre-migration backup is `features::backup`, and `shared` can't depend on `features` (FSD).
 
-- **Определение версии — структурное** (формат сегодня не меняется): `settings.json` — по полю `schema_version` (нет → 1); `profiles.json` — голый массив → 1, иначе поле `schema_version`; `chats/<id>.json` — по полю `v` (нет → 1; не пишется, пока схема = 1) — ноль churn в существующих файлах.
-- **Момент — eager на старте**: `run` собирает план (файлы с версией `< current`); план непуст → **один** pre-migration бэкап (`backups/pre-migrate-<дата>.zip`) перед любой записью (не удался → миграция отменяется, данные не тронуты) → цепочка `Step` → **control-parse** в типизированную структуру (мигрированное не парсится → отказ, файл не перезаписывается) → атомарная запись мигрированного `Value` (temp+rename+`.bak`). Пока все схемы = 1 — план всегда пуст (путь дормантный, покрыт тестом на синтетическом артефакте).
-- **Downgrade-guard**: версия файла новее приложения → отказ запуска с локализованным сообщением (тихая порча хуже отказа).
-- **Политика bump'а**: additive-изменение (поле с `#[serde(default)]`, таблица/колонка с дефолтом) — без bump; breaking (переименование/перенос/смена семантики/удаление) — bump константы + шаг миграции + golden-фикстура старого формата + пункт CHANGELOG (рубрика «Данные»).
-- **SQLite** (`data.db`): версия схемы — `PRAGMA user_version` (`DB_SCHEMA = 1`), version-aware раннер `db/mod.rs::migrate`. Идемпотентный `baseline_ddl` (`CREATE … IF NOT EXISTS`) выполняется **каждый раз** — так новые таблицы/индексы добавляются существующим БД **без** bump версии (additive-DDL и `user_version` независимы; `user_version` отслеживает лишь breaking-шаги). Свежая/существующая БД с `user_version = 0` штампуется версией 1 (не миграция данных — бэкап не нужен). Breaking-шаги (`DB_STEPS`, пока пуст) прогоняются **каждый в своей транзакции вместе с обновлением `user_version`** (на ошибке — полный откат). Downgrade (`user_version` новее приложения) — отказ запуска. Downgrade-guard и решение об **общем** pre-migration бэкапе (JSON **или** БД требуют миграции) координируются с JSON в единый момент `data_migration::run` до открытия хранилища; сама миграция БД идёт позже в `Db::open`. БД в этот момент ещё не открыта (quiescent) → её файлы в общем zip-бэкапе согласованы без отдельного SQLite backup API.
+- **Version detection is structural** (the format doesn't change today): `settings.json` — by the `schema_version` field (absent → 1); `profiles.json` — a bare array → 1, otherwise the `schema_version` field; `chats/<id>.json` — by the `v` field (absent → 1; not written while the schema is 1) — zero churn on existing files.
+- **Timing — eager on startup**: `run` builds a plan (files with a version `< current`); if the plan is non-empty → **one** pre-migration backup (`backups/pre-migrate-<date>.zip`) before any write (failure → the migration is aborted, data untouched) → the `Step` chain → **control-parsing** into a typed struct (if the migrated data doesn't parse → refuse, the file isn't rewritten) → an atomic write of the migrated `Value` (temp+rename+`.bak`). While every schema is 1, the plan is always empty (the path is dormant, covered by a test on a synthetic artifact).
+- **Downgrade guard**: a file version newer than the application → startup refuses with a localized message (silent corruption is worse than a refusal).
+- **Bump policy**: an additive change (a field with `#[serde(default)]`, a table/column with a default) — no bump; a breaking change (a rename/move/semantic change/removal) — bump the constant + a migration step + a golden fixture of the old format + a CHANGELOG entry (the "Data" section).
+- **SQLite** (`data.db`): the schema version is `PRAGMA user_version` (`DB_SCHEMA = 1`), a version-aware runner in `db/mod.rs::migrate`. The idempotent `baseline_ddl` (`CREATE … IF NOT EXISTS`) runs **every time** — this way new tables/indexes are added to existing databases **without** bumping the version (additive DDL and `user_version` are independent; `user_version` only tracks breaking steps). A fresh/existing database with `user_version = 0` is stamped with version 1 (not a data migration — no backup needed). Breaking steps (`DB_STEPS`, currently empty) run **each in its own transaction together with the `user_version` update** (a full rollback on error). A downgrade (`user_version` newer than the application) — startup refuses. The downgrade guard and the decision about a **shared** pre-migration backup (whether JSON **or** the DB needs migrating) are coordinated with JSON in a single `data_migration::run` step before storage is opened; the actual DB migration happens later, in `Db::open`. At that moment the DB isn't open yet (quiescent) → its files in the shared zip backup are consistent without a separate SQLite backup API.
 
-**Импорт из внешних приложений** (разовый, не путать с миграцией схем):
+**Import from external applications** (a one-time operation, not to be confused with schema migration):
 
-- **Нейтральный формат обмена `mindfork-import`** ([docs/import-format.md](docs/import-format.md), этап 1 направления «плагины» — [docs/research/plugin-system.md §5](docs/research/plugin-system.md)): внешний (возможно, приватный) **конвертер** читает формат исходного приложения и эмитит один JSON-файл (профили + чаты + опц. глобальные семплинг/интерфейс); приложение импортирует его командой `mindfork import <file>` (`features/import.rs`). Знание о непубличных исходных приложениях (LameLLaMA) живёт в конвертерах, не в монолите. Свойства: **идемпотентность** (детерминированные UUIDv5 от стабильных ключей `key`; опц. явный `id` — непрерывность с ранее импортированным), строгость к структуре (неверный `format`/дубликаты ключей/ссылка на отсутствующий профиль/неизвестная роль → понятная ошибка) при терпимости к расширению (неизвестные поля игнорируются), downgrade-guard по `version`, терпимость к BOM. Настройки источника применяются частично (только заданные поля). Прежняя команда `import-lamellama` (импортёр в монолите) **удалена** — её роль у связки «конвертер → `import`».
+- **The neutral exchange format `mindfork-import`** ([docs/import-format.md](docs/import-format.md), stage 1 of the "plugins" track — [docs/research/plugin-system.md §5](docs/research/plugin-system.md)): an external (possibly private) **converter** reads the source application's format and emits one JSON file (profiles + chats + optional global sampling/interface settings); the application imports it via the `mindfork import <file>` command (`features/import.rs`). Knowledge of non-public source applications (LameLLaMA) lives in the converters, not in the monolith. Properties: **idempotency** (deterministic UUIDv5s derived from stable `key`s; an optional explicit `id` — continuity with what was previously imported), strictness about structure (a wrong `format`/duplicate keys/a reference to a missing profile/an unknown role → a clear error) with tolerance for extension (unknown fields are ignored), a downgrade guard on `version`, tolerance for a BOM. Source settings are applied partially (only the fields that are set). The former `import-lamellama` command (an importer baked into the monolith) has been **removed** — its role is now played by the "converter → `import`" pair.
 
-### 12.3. Бэкап и удаление
+### 12.3. Backup and deletion
 
-- **Мягкое удаление обязательно** (`is_hidden`; каскад профиль→чаты→заметки/RAG).
-- Бэкап файла чата при сохранении (атомарный write-rename).
-- **Резервное копирование/восстановление всех данных** — CLI без TUI (`features/backup.rs`): `mindfork backup [-o FILE] [-c 0..9]` (zip каталога данных: `chats/`, `dictionaries/`, `data.db`, `profiles.json`, `settings.json`, `personal_dictionary.txt`, все `*.bak` и `tools.fs_root`, если внутри каталога данных; исключая `backups/`/`logs/`/`defaults.json`/`location.json`; степень сжатия 0–9) и `mindfork restore <archive>`. Команды берут single-instance (защита `data.db` от гонки). **Восстановление транзакционно**: валидация архива (анти-zip-slip) до разрушительных действий → если данные есть, авто pre-restore копия в `backups/` → очистка → распаковка; при сбое распаковки — откат к pre-restore копии. Об исходе сообщается в консоль.
-
----
-
-## 13. Безопасность
-
-### 13.1. Устойчивость генерации
-
-- Намеренно умеренные требования: не строить сложную защиту от prompt injection. Достаточно: генерация не обрывается на тексте EOS ([раздел 7](#7-обработка-eos-и-стоп-токенов)); tool-calls синтаксически валидны (constrained generation на сервере).
-- Содержимое RAG/заметок/web подаётся как данные; web/Python — за глобальными выключателями.
-
-### 13.2. Исполнение Python
-
-`python_exec` — **собственная реализация** с двумя режимами ([ADR 0005](docs/decisions/0005-python-sandbox-wasmer.md)); мастер-выключатель `tools.python_enabled` (по умолчанию **выключен** — осознанный opt-in) гейтит инструмент целиком независимо от режима:
-
-- **Wasmer-песочница** (по умолчанию) — код исполняется изолированно в **WASIX** через сайдкар-процесс `wasmer` (бинарь рядом, в `data/sandbox/`, ставится `mindfork sandbox setup`). Гость **не видит хост-ФС** (только смонтированный tmp-каталог со скриптом + read-only `site-packages`), **сеть — по тумблеру** `python_net_enabled` (без него сокетов физически нет). Предустановлены пакеты (numpy, requests, …). Прерывание — **kill процесса** (python исполняется in-process внутри wasmer/V8); **таймаут** + гейт «одна задача за раз». Не требует Python на машине. Кросс-платформенно (Windows/Linux/macOS).
-- **Локальный интерпретатор** — запуск кода в **отдельном процессе** системного Python (путь в настройках; рекомендуется venv), захват stdout/stderr, **таймаут**, ограничение вывода. **Без OS-песочницы** (код исполняется на машине пользователя) — поэтому дефолтный режим именно песочница.
-- **Посадка ресурсов песочницы:** таймаут (CPU) + wasm32 (адресное пространство ~4 ГБ) + гейт «одна задача» + **опциональный жёсткий лимит RAM** (`tools.python_wasm_memory_mb`, по умолчанию выключен). Лимит RAM — **только Windows** (Job Object; превышение убивает процесс, защищая хост от OOM; минимум ~1024 МБ); на Unix не применяется (rlimit ненадёжен с V8). Контракт инструмента (`python_exec`, `{ code }`) от режима/реализации не зависит.
-
-### 13.3. Саб-агент и рекурсия
-
-- `call_subagent` не получает инструментов (в т.ч. себя), имеет лимиты токенов/времени, подчиняется `max_tool_rounds` ([9.3.2](#932-call_subagent)).
-
-### 13.4. Приватность
-
-- Все данные локальны (JSON + SQLite). Внешние каналы — только web-инструмент и (managed-режим) дочерний процесс сервера инференса на localhost. Web — под выключателем. Изоляция заметок/RAG по профилю — инвариант.
+- **Soft delete is mandatory** (`is_hidden`; cascading profile→chats→notes/RAG).
+- A chat-file backup on save (atomic write-rename).
+- **Backing up/restoring all data** — a TUI-free CLI (`features/backup.rs`): `mindfork backup [-o FILE] [-c 0..9]` (zips the data directory: `chats/`, `dictionaries/`, `data.db`, `profiles.json`, `settings.json`, `personal_dictionary.txt`, every `*.bak`, and `tools.fs_root` if it's inside the data directory; excluding `backups/`/`logs/`/`defaults.json`/`location.json`; compression level 0–9) and `mindfork restore <archive>`. The commands take the single-instance lock (protecting `data.db` from a race). **Restore is transactional**: archive validation (anti-zip-slip) before any destructive action → if data exists, an automatic pre-restore copy into `backups/` → clearing → unpacking; if unpacking fails — roll back to the pre-restore copy. The outcome is reported to the console.
 
 ---
 
-## 14. Стратегия тестирования
+## 13. Security
 
-Идиоматично для Rust: `cargo test`, юнит-тесты рядом с кодом (`#[cfg(test)]`), интеграционные — в `tests/`. Архитектура спроектирована тестируемой: оркестратор — без UI и без модели; инструменты — без сервера; хранилище — на временных файлах и in-memory SQLite.
+### 13.1. Generation robustness
 
-### 14.1. Принципы
+- Deliberately modest requirements: don't build elaborate prompt-injection protection. It's enough that: generation doesn't stop on EOS text ([section 7](#7-eos-and-stop-token-handling)); tool calls are syntactically valid (constrained generation on the server).
+- RAG/notes/web content is fed in as data; web/Python are behind global switches.
 
-- **Юнит-тесты не требуют сервера инференса, GPU и сети.** Всё, что зависит от движка, спрятано за трейтом `EngineBackend`; в тестах — mock/replay-реализация.
-- Async-тесты — `#[tokio::test]`; время (дебаунсы/таймауты) — `tokio::time::pause`.
-- Тесты с реальным сервером инференса — помечены `#[ignore]`, запускаются вручную (URL/путь через переменную окружения; проверено на Gemma 4 E4B-it через `llama-server`).
-- Тесты пишутся по ходу этапов, не отдельным финальным этапом.
+### 13.2. Python execution
 
-### 14.2. Покрытие по слоям
+`python_exec` — **our own implementation** with two modes ([ADR 0005](docs/decisions/0005-python-sandbox-wasmer.md)); the `tools.python_enabled` master switch (**off** by default — a deliberate opt-in) gates the tool entirely regardless of mode:
 
-| Слой | Что покрывается |
+- **The Wasmer sandbox** (default) — code runs isolated in **WASIX** via a `wasmer` sidecar process (the binary sits next to the app, in `data/sandbox/`, installed by `mindfork sandbox setup`). The guest **can't see the host filesystem** (only a mounted tmp directory with the script + a read-only `site-packages`), **network access is a toggle** (`python_net_enabled`; without it there are physically no sockets). Packages are pre-installed (numpy, requests, …). Interruption is a **process kill** (Python runs in-process inside wasmer/V8); a **timeout** + a "one task at a time" gate. Doesn't require Python on the machine. Cross-platform (Windows/Linux/macOS).
+- **The local interpreter** — running code in a **separate process** of the system Python (the path is in settings; a venv is recommended), capturing stdout/stderr, a **timeout**, output truncation. **No OS-level sandbox** (the code runs on the user's own machine) — hence the sandbox being the default mode.
+- **Sandbox resource limits:** a timeout (CPU) + wasm32 (~4 GB of address space) + a "one task" gate + an **optional hard RAM cap** (`tools.python_wasm_memory_mb`, off by default). The RAM cap is **Windows-only** (a Job Object; exceeding it kills the process, protecting the host from OOM; a minimum of ~1024 MB); not applied on Unix (rlimit is unreliable with V8). The tool's contract (`python_exec`, `{ code }`) doesn't depend on the mode/implementation.
+
+### 13.3. Sub-agent and recursion
+
+- `call_subagent` gets no tools (including itself), has token/time limits, and is subject to `max_tool_rounds` ([9.3.2](#932-call_subagent)).
+
+### 13.4. Privacy
+
+- All data is local (JSON + SQLite). External channels — only the web tool and (in managed mode) the inference server's child process on localhost. Web is behind a switch. Notes/RAG isolation by profile is an invariant.
+
+---
+
+## 14. Testing strategy
+
+Idiomatic for Rust: `cargo test`, unit tests next to the code (`#[cfg(test)]`), integration tests in `tests/`. The architecture is designed to be testable: the orchestrator — with no UI and no model; tools — with no server; storage — on temp files and in-memory SQLite.
+
+### 14.1. Principles
+
+- **Unit tests require no inference server, GPU, or network.** Everything that depends on the engine is hidden behind the `EngineBackend` trait; tests use a mock/replay implementation.
+- Async tests — `#[tokio::test]`; time (debounces/timeouts) — `tokio::time::pause`.
+- Tests against a real inference server are marked `#[ignore]`, run manually (a URL/path via an environment variable; verified on Gemma 4 E4B-it via `llama-server`).
+- Tests are written along the way, stage by stage, not as one final phase.
+
+### 14.2. Coverage by layer
+
+| Layer | What's covered |
 |---|---|
-| `entities` | Serde round-trip всех сущностей; `schema_version`; инварианты доменной модели. |
-| `shared/api` (движок) | Разбор «мыслей» (`<think>` и поле reasoning) на потоке чанков, включая теги на границе чанка; маппинг `SamplingConfig` → параметры запроса (отбрасывание неподдерживаемых); отсутствие строковых стопов по умолчанию ([раздел 7](#7-обработка-eos-и-стоп-токенов)). |
-| `features/tools` | Каждый инструмент на mock-`Storage`/mock-движке: корректность результата, возврат `effects` (а не мутация состояния), валидность JSON-схем; `call_subagent` — отсутствие инструментов/истории, лимиты. |
-| `shared/storage` | Репозитории на `tempfile` и SQLite `:memory:`; **изоляция по `profile_id`** (негативные тесты); мягкое удаление и каскад; атомарность write-rename; kNN sqlite-vec на малых векторах. |
-| `app/orchestrator` | **Важнейший блок**: автомат `Idle/Generating/Cancelling`; сценарии гонок (spam Send, Stop→Send, отбрасывание чанков по `generation_id`, удаление чата во время генерации); клиентский agentic-loop и применение `effects`; `max_tool_rounds`; приоритеты семплинга; сборка снимка `ToolContext`; логика «удалить последнее» (перенос текста в ввод, prepend). |
-| `features/spellcheck` | `check`/`suggest` на en_US и ru_RU; сегментация (апострофы/дефисы, смешанный текст); несколько словарей; персональный словарь. |
-| `screens`/`widgets` | Чистая логика view-model: применение последовательности `AppEvent` к проекции (включая «не тот» `generation_id`); рендер markdown/LaTeX-подстановок; свёрнутые/развёрнутые блоки. Опционально — снапшот-тесты `ratatui` через `TestBackend`/буфер. |
+| `entities` | Serde round-trip of every entity; `schema_version`; domain-model invariants. |
+| `shared/api` (the engine) | Parsing "thoughts" (`<think>` and the reasoning field) from a stream of chunks, including tags split across a chunk boundary; mapping `SamplingConfig` → request parameters (dropping unsupported ones); no string stops by default ([section 7](#7-eos-and-stop-token-handling)). |
+| `features/tools` | Every tool against a mock `Storage`/mock engine: result correctness, returning `effects` (rather than mutating state), JSON schema validity; `call_subagent` — no tools/history, limits. |
+| `shared/storage` | Repositories on `tempfile` and in-memory SQLite; **isolation by `profile_id`** (negative tests); soft delete and cascading; write-rename atomicity; sqlite-vec kNN on small vectors. |
+| `app/orchestrator` | **The most important block**: the `Idle/Generating/Cancelling` state machine; race scenarios (spamming Send, Stop→Send, dropping chunks by stale `generation_id`, deleting a chat mid-generation); the client-side agentic loop and applying `effects`; `max_tool_rounds`; sampling priorities; building the `ToolContext` snapshot; the "delete last" logic (returning text to the input box, prepending). |
+| `features/spellcheck` | `check`/`suggest` on en_US and ru_RU; segmentation (apostrophes/hyphens, mixed text); multiple dictionaries; the personal dictionary. |
+| `screens`/`widgets` | Pure view-model logic: applying a sequence of `AppEvent`s to a projection (including a "stale" `generation_id`); markdown/LaTeX-substitution rendering; collapsed/expanded blocks. Optional — `ratatui` snapshot tests via `TestBackend`/a buffer. |
 
-### 14.3. Интеграционные тесты
+### 14.3. Integration tests
 
-- **Replay без модели**: трейт `EngineBackend` позволяет записать поток событий реального сервера в JSON-фикстуру и детерминированно проигрывать его в тестах оркестратора/UI (сквозные сценарии: сообщение → стрим → tool-call → effect → финал → сохранение; регенерация; отмена).
-- **С реальным сервером** (`#[ignore]`): загрузка модели, стриминг, отмена посреди генерации; **анти-самообрыв** (промпт, провоцирующий печать `<|im_end|>`/`<end_of_turn>` — генерация не обрывается); полный agentic-цикл с тестовым инструментом и соблюдением `max_tool_rounds`; `call_subagent` без рекурсии; смоук prefix-caching (второй ход быстрее). Прогон на Gemma и Qwen.
-- **Хранилище/миграция**: полный жизненный цикл на временном каталоге (создать профиль→чат→сообщения→заметки/RAG→скрыть→переоткрыть); импортёр (фикстуры старых форматов; идемпотентность).
-- **TUI** (опционально): `ratatui::TestBackend` для проверки отрисовки экранов на фикстурных проекциях.
+- **Replay without a model**: the `EngineBackend` trait lets us record a real server's event stream into a JSON fixture and deterministically replay it in orchestrator/UI tests (end-to-end scenarios: message → stream → tool call → effect → final → save; regeneration; cancellation).
+- **With a real server** (`#[ignore]`): loading the model, streaming, cancelling mid-generation; **anti-self-truncation** (a prompt provoking `<|im_end|>`/`<end_of_turn>` output — generation doesn't stop); a full agentic cycle with a test tool respecting `max_tool_rounds`; `call_subagent` with no recursion; a prefix-caching smoke test (the second turn is faster). Run on Gemma and Qwen.
+- **Storage/migration**: a full lifecycle on a temp directory (create a profile→chat→messages→notes/RAG→hide→reopen); the importer (fixtures of old formats; idempotency).
+- **TUI** (optional): `ratatui::TestBackend` to verify screen rendering against fixture projections.
 
 ### 14.4. CI
 
-- На каждый push: `cargo fmt --check`, `cargo clippy -- -D warnings`, `cargo test --workspace` (юнит + интеграционные без сервера). Основной раннер — **Windows**; Linux — вторичный.
-- Тесты с реальным сервером в CI не выполняются — вручную перед закрытием этапов M1, M5, M6, M8.
+- On every push: `cargo fmt --check`, `cargo clippy -- -D warnings`, `cargo test --workspace` (unit + integration, no server). The primary runner is **Windows**; Linux is secondary.
+- Tests against a real server aren't run in CI — manually before closing stages M1, M5, M6, M8.
 
 ---
 
-## 15. Этапы реализации и критерии готовности
+## 15. Implementation stages and readiness criteria
 
-| Этап | Содержание | Критерий готовности |
+| Stage | Content | Readiness criterion |
 |---|---|---|
-| **M0. Каркас** | FSD-структура модулей, `tokio`, `ratatui`-петля, точка входа, single-instance, логирование в файл | `cargo build`; запускается пустой TUI; чисто закрывается (восстановление терминала) |
-| **M1. Инференс** | `shared/api`: managed-запуск `llama-server`, OpenAI-клиент, стриминг, отмена, разбор «мыслей» | Чат с Qwen без инструментов работает в минимальном TUI; Stop прерывает генерацию |
-| **M2. Доменка + хранение** | `entities`, `shared/storage` (JSON чаты/профили, SQLite) | CRUD чатов/профилей; данные сохраняются/читаются; мягкое удаление |
-| **M3. UI чата** | Экраны/виджеты: список чатов (поиск, 2 сортировки, переименование), лента (markdown, мысли, tool-блоки, скролл), собственный ввод-виджет, спелл-чек | Полный чат-цикл в TUI; операции над чатом; ошибки орфографии видны, подсказки работают (en+ru) |
-| **M4. Профили + изоляция** | `Profile` с id, привязка чатов, изоляция notes/rag, приветствие | Создание чата из профиля; данные изолированы по `profile_id` |
-| **M5. Инструменты (базовые)** | Реестр, клиентский agentic-loop, заметки + RAG (+ эмбеддинги по требованию) + интроспекция (sampling/system_message/время) | Ассистент сохраняет/извлекает заметки и знания, меняет system message и семплинг; tool-блоки в UI |
-| **M6. call_subagent** | Саб-агент с запретом вложенности и лимитами | Модель вызывает саб-агента, получает строку-результат; рекурсии нет |
-| **M7. Web + Python** | Собственный web-поиск (DuckDuckGo + извлечение контента) + Python (subprocess) | Поиск и исполнение кода под выключателями; на Windows Python выключен по умолчанию |
-| **M8. Экран настроек** | Все секции, профили CRUD, управление сервером/моделью | Настройки и параметры запуска `llama-server` редактируются; смена модели = перезапуск сервера |
-| **M9. Gemma + полировка** | Проверка Gemma 3/4 (шаблоны/EOS/tool-calling/«мысли»), темы, миграция, бэкапы, релизный билд | Чат и инструменты на Gemma работают как на Qwen; импорт старых данных; релиз для Windows и Linux |
+| **M0. Scaffold** | The FSD module structure, `tokio`, the `ratatui` loop, the entry point, single-instance, file logging | `cargo build`; an empty TUI launches; shuts down cleanly (terminal restored) |
+| **M1. Inference** | `shared/api`: managed launch of `llama-server`, the OpenAI client, streaming, cancellation, parsing "thoughts" | Chatting with Qwen with no tools works in a minimal TUI; Stop interrupts generation |
+| **M2. Domain + storage** | `entities`, `shared/storage` (JSON chats/profiles, SQLite) | CRUD for chats/profiles; data saves/loads; soft delete |
+| **M3. Chat UI** | Screens/widgets: the chat list (search, 2 sort modes, renaming), the feed (markdown, thoughts, tool blocks, scrolling), our own input widget, spellcheck | The full chat loop works in the TUI; chat operations; spelling errors are visible, suggestions work (en+ru) |
+| **M4. Profiles + isolation** | `Profile` with an id, chat linkage, notes/rag isolation, a greeting | A chat is created from a profile; data is isolated by `profile_id` |
+| **M5. Tools (basic)** | Registry, the client-side agentic loop, notes + RAG (+ embeddings on demand) + introspection (sampling/system_message/time) | The assistant saves/retrieves notes and knowledge, changes the system message and sampling; tool blocks in the UI |
+| **M6. call_subagent** | A sub-agent with no nesting and with limits | The model calls the sub-agent, gets a string result; no recursion |
+| **M7. Web + Python** | Our own web search (DuckDuckGo + content extraction) + Python (subprocess) | Search and code execution are behind switches; Python is off by default on Windows |
+| **M8. Settings screen** | All sections, profile CRUD, server/model management | Settings and `llama-server` launch parameters are editable; changing the model restarts the server |
+| **M9. Gemma + polish** | Verifying Gemma 3/4 (templates/EOS/tool-calling/"thoughts"), themes, migration, backups, a release build | Chat and tools work on Gemma the same as on Qwen; old data imports; a release for Windows and Linux |
 
-### 15.1. Сквозные критерии качества
+### 15.1. Cross-cutting quality criteria
 
-- Корректная остановка на Gemma и Qwen; отсутствие самообрыва на тексте EOS.
-- Изоляция заметок/RAG по профилю подтверждена тестами.
-- Отмена генерации не оставляет приложение/терминал в неконсистентном состоянии.
-- `call_subagent` не вызывает рекурсию и укладывается в лимиты.
-- Инвариант владения: у `Chat` один владелец (оркестратор); инструменты читают снимок и возвращают эффекты — дедлок невозможен по построению.
-- Быстрые действия пользователя (спам Send/Stop/Regenerate, переключение/удаление чатов во время стрима) не приводят к гонкам — покрыто тестами оркестратора (без UI и без модели).
+- Correct stopping on Gemma and Qwen; no self-truncation on EOS text.
+- Notes/RAG isolation by profile is confirmed by tests.
+- Cancelling generation never leaves the application/terminal in an inconsistent state.
+- `call_subagent` never causes recursion and stays within its limits.
+- The ownership invariant: `Chat` has one owner (the orchestrator); tools read a snapshot and return effects — a deadlock is impossible by construction.
+- Fast user actions (spamming Send/Stop/Regenerate, switching/deleting chats mid-stream) don't cause races — covered by orchestrator tests (no UI, no model).
 
 ---
 
-## 16. Принятые решения и открытые вопросы
+## 16. Accepted decisions and open questions
 
-### 16.1. Принятые решения
+### 16.1. Accepted decisions
 
-| # | Вопрос | Решение | Разделы |
+| # | Question | Decision | Sections |
 |---|---|---|---|
-| 1 | Форма интеграции движка | **Локальный OpenAI-совместимый сервер** (managed-подпроцесс по умолчанию + режим external); общение по HTTP; **agentic-loop клиентский**. **Сервер: llama.cpp `llama-server`** (исходно планировался `xinfer` — отвергнут как сырой по Gemma 4; external работает с любым OpenAI-сервером). | [3.2](#32-движок-как-локальный-сервер-а-не-встроенный-sdk), [6.3](#63-клиентский-agentic-loop), [install.md §3](docs/install.md) |
-| 2 | UI | TUI на `ratatui` 0.30 + `crossterm`; ввод/редактирование — **собственный виджет** (ADR 0001); markdown — **собственный рендерер** на `pulldown-cmark` (таблицы + тема, только текст) + unicode-LaTeX (ADR 0003); скролл — `tui-scrollview`. | [11](#11-tui-интерфейс-и-взаимодействие), [ADR 0001](docs/decisions/0001-ui-crates-ratatui-030.md), [ADR 0003](docs/decisions/0003-own-markdown-renderer.md) |
-| 3 | Архитектурный стиль | **FSD-inspired** модульная структура в одном бинарном крейте; backend-ядро в `shared/api` и `shared/storage` за трейтами; возможен вынос в крейты воркспейса позже. | [4](#4-архитектура-решения-fsd-inspired) |
-| 4 | Эмбеддинги (RAG) | **Выделенный** embedding-сервер (отдельный порт), endpoint `/v1/embeddings`; в managed — тот же `llama-server` с `--embeddings`. Без второго ML-стека в нашем процессе. (ADR 0002.) | [6.1](#61-слой-движка-sharedapi), [9.3](#93-перечень-инструментов) |
-| 5 | Web-инструмент | **Собственная** реализация: DuckDuckGo (`reqwest`) + извлечение читаемого контента. (Движок встроенного поиска не даёт.) | [9.3.1](#931-web-инструмент-собственная-реализация) |
-| 6 | Python-инструмент | **Собственный** subprocess-исполнитель; на Windows по умолчанию выключен (нет OS-песочницы). | [13.2](#132-исполнение-python) |
-| 7 | EOS/стоп | Остановка по token-id (на стороне сервера); **строковые стопы по тексту EOS не используются**. | [7](#7-обработка-eos-и-стоп-токенов) |
-| 8 | Владение `Chat`/инструменты | Один владелец — оркестратор; инструменты читают снимок и возвращают `ToolOutcome.effects` (без канала `ChatEffect` — упрощение, т.к. цикл клиентский). | [4.4.2](#442-владение-chat-и-инструменты-упрощение-относительно-попытки-1) |
-| 9 | Состояние UI ↔ бэкенд | Однонаправленный поток; оркестратор — источник истины и единственный писатель; `generation_id` против устаревших событий; автомат состояний. | [4.4](#44-потоки-выполнения-и-состояние-ui--бэкенд) |
-| 10 | Векторное хранилище | SQLite + sqlite-vec. | [5.2](#52-хранение-данных) |
-| 11 | `max_tool_rounds` | По умолчанию **8**, настраивается. | [6.3](#63-клиентский-agentic-loop) |
-| 12 | Расположение данных | По умолчанию `data/` рядом с бинарником (портативно); `defaults.json` → ОС-папка/каталог + язык каркаса профилей; CLI бэкап/restore. | [5.2](#52-хранение-данных) |
-| 13 | Мягкое удаление | Обязательно (`is_hidden`, каскад). | [12.3](#123-бэкап-и-удаление) |
-| 14 | Спелл-чек | `spellbook` (en_US/en_GB/ru_RU) + собственная индикация/попап в TUI; персональный словарь. | [11.5](#115-ввод-и-редактирование-спелл-чек) |
-| 15 | LoRA | Отложено. | [1.5](#15-что-удаляетсяне-переносится) |
-| 16 | «Модель себя» (SelfModel) | Пер-профильная «модель себя» агента (описание/цели/модель собеседника/нарратив) в SQLite; опц. инструменты (по умолч. выкл), компактная инъекция в системный промпт, фоновая авто-рефлексия, экран правки `F3`. Мутаторы пишут **напрямую** в `Storage` (не через `ChatEffect`). Без числовых «сил»/«severity» — противоречия прозой в нарративе. | [17](#17-модель-себя-selfmodel), [docs/self-model-mvp.md](docs/history/self-model-mvp.md) |
+| 1 | Engine integration form | **A local OpenAI-compatible server** (a managed subprocess by default + an external mode); HTTP communication; **a client-side agentic loop**. **Server: llama.cpp `llama-server`** (`xinfer` was the original plan — rejected as too raw on Gemma 4; external works with any OpenAI server). | [3.2](#32-the-engine-as-a-local-server-not-an-embedded-sdk), [6.3](#63-client-side-agentic-loop), [install.md §3](docs/install.md) |
+| 2 | UI | A TUI on `ratatui` 0.30 + `crossterm`; input/editing — a **custom widget** (ADR 0001); markdown — a **custom renderer** on `pulldown-cmark` (tables + theming, text only) + unicode-LaTeX (ADR 0003); scrolling — `tui-scrollview`. | [11](#11-tui-interface-and-interaction), [ADR 0001](docs/decisions/0001-ui-crates-ratatui-030.md), [ADR 0003](docs/decisions/0003-own-markdown-renderer.md) |
+| 3 | Architectural style | An **FSD-inspired** modular structure in a single binary crate; the backend core in `shared/api` and `shared/storage` behind traits; a split into workspace crates is possible later. | [4](#4-solution-architecture-fsd-inspired) |
+| 4 | Embeddings (RAG) | A **dedicated** embedding server (a separate port), the `/v1/embeddings` endpoint; in managed mode — the same `llama-server` with `--embeddings`. No second ML stack in our own process. (ADR 0002.) | [6.1](#61-the-engine-layer-sharedapi), [9.3](#93-tool-roster) |
+| 5 | The web tool | **Our own** implementation: DuckDuckGo (`reqwest`) + readable-content extraction. (The engine provides no built-in search.) | [9.3.1](#931-the-web-tool-our-own-implementation) |
+| 6 | The Python tool | **Our own** subprocess executor; off by default on Windows (no OS sandbox). | [13.2](#132-python-execution) |
+| 7 | EOS/stop | Stopping by token id (server-side); **no string stops for EOS text**. | [7](#7-eos-and-stop-token-handling) |
+| 8 | `Chat`/tool ownership | One owner — the orchestrator; tools read a snapshot and return `ToolOutcome.effects` (no `ChatEffect` channel needed — a simplification, since the loop is client-side). | [4.4.2](#442-chat-ownership-and-tools-a-simplification-vs-attempt-1) |
+| 9 | UI ↔ backend state | A unidirectional flow; the orchestrator is the source of truth and the sole writer; `generation_id` guards against stale events; a state machine. | [4.4](#44-execution-flows-and-ui--backend-state) |
+| 10 | Vector storage | SQLite + sqlite-vec. | [5.2](#52-data-storage) |
+| 11 | `max_tool_rounds` | **8** by default, configurable. | [6.3](#63-client-side-agentic-loop) |
+| 12 | Data location | `data/` next to the binary by default (portable); `defaults.json` → an OS folder/directory + the profiles' scaffold language; a CLI backup/restore. | [5.2](#52-data-storage) |
+| 13 | Soft delete | Mandatory (`is_hidden`, cascading). | [12.3](#123-backup-and-deletion) |
+| 14 | Spellcheck | `spellbook` (en_US/en_GB/ru_RU) + our own TUI indication/popup; a personal dictionary. | [11.5](#115-input-and-editing-spellcheck) |
+| 15 | LoRA | Deferred. | [1.5](#15-what-is-dropped--not-carried-over) |
+| 16 | The self-model (SelfModel) | A per-profile "self-model" for the agent (a description/goals/model of the companion/narrative) in SQLite; optional tools (off by default), a compact injection into the system prompt, background auto-reflection, the `F3` edit screen. Mutators write **directly** to `Storage` (not through `ChatEffect`). No numeric "strengths"/"severity" — contradictions are recorded as prose in the narrative. | [17](#17-self-model-selfmodel), [docs/self-model-mvp.md](docs/history/self-model-mvp.md) |
 
-### 16.2. Открытые вопросы (уточняются при реализации)
+### 16.2. Open questions (to be settled during implementation)
 
-- ✅ **Протокол движка** — **закрыто**: стандартный OpenAI-совместимый (`/v1/chat/completions` SSE, `/v1/embeddings`), на котором говорит llama.cpp `llama-server`. Поля семплинга — сокращённый набор ([8.1](#81-маппинг-на-openai-совместимый-api)); reasoning через `delta.reasoning_content` (`--reasoning-format`); tool-call’ы парсятся сервером (`finish_reason="tool_calls"`); готовность — поллинг `/health`. Запуск — [install.md §3](docs/install.md).
-- ✅ **Эмбеддинги** — **закрыто**: **выделенный** embedding-сервер на отдельном порту ([ADR 0002](docs/decisions/0002-embeddings-dedicated-server.md)); размерность фиксируется по первому ответу и хранится в схеме sqlite-vec. Не настроен → RAG отдаёт понятную ошибку.
-- ✅ **Отрисовка спелл-чека / выбор виджета ввода** — **закрыто** ([ADR 0001](docs/decisions/0001-ui-crates-ratatui-030.md)): `tui-textarea`/`ratatui-textarea` несовместимы с ratatui 0.30 → собственный виджет ввода, подчёркивания рисуем сами (per-span `UNDERLINED`).
-- ✅ **Markdown-крейт** — **закрыто** ([ADR 0003](docs/decisions/0003-own-markdown-renderer.md)): `ratatui-markdown`/`tui-markdown` не дают таблиц/math и игнорируют тему → собственный рендерер на `pulldown-cmark`.
-- **Качество `spellbook` на ru_RU** (сложные аффиксные правила) — проверено в M3 (работает).
-- **Поставка сервера инференса** (`llama-server`): документировать установку/путь к бинарнику; решить, поставлять ли рядом с приложением. M8.
-- **Качество «осознанности»**: эмпирически проверить гипотезу о `call_subagent` и `set_system_message` на Gemma/Qwen. M6/M9. ✅ **Развито пост-M9** — «модель себя» ([§17](#17-модель-себя-selfmodel)): проверено на живых Gemma 4 12B/31B (модель сама ведёт представление о себе/пользователе, кросс-чат припоминание, фоновая авто-рефлексия).
+- ✅ **The engine protocol** — **closed**: the standard OpenAI-compatible one (`/v1/chat/completions` SSE, `/v1/embeddings`), which llama.cpp `llama-server` speaks. Sampling fields — a reduced set ([8.1](#81-mapping-onto-the-openai-compatible-api)); reasoning via `delta.reasoning_content` (`--reasoning-format`); tool calls are parsed by the server (`finish_reason="tool_calls"`); readiness — polling `/health`. Startup — [install.md §3](docs/install.md).
+- ✅ **Embeddings** — **closed**: a **dedicated** embedding server on a separate port ([ADR 0002](docs/decisions/0002-embeddings-dedicated-server.md)); the dimensionality is fixed from the first response and stored in the sqlite-vec schema. If not configured, RAG returns a clear error.
+- ✅ **Spellcheck rendering / choosing the input widget** — **closed** ([ADR 0001](docs/decisions/0001-ui-crates-ratatui-030.md)): `tui-textarea`/`ratatui-textarea` are incompatible with ratatui 0.30 → a custom input widget, we draw underlines ourselves (per-span `UNDERLINED`).
+- ✅ **The markdown crate** — **closed** ([ADR 0003](docs/decisions/0003-own-markdown-renderer.md)): `ratatui-markdown`/`tui-markdown` don't give tables/math and ignore the theme → a custom renderer on `pulldown-cmark`.
+- **`spellbook` quality on ru_RU** (complex affix rules) — verified in M3 (works).
+- **Distributing the inference server** (`llama-server`): document installation/the binary path; decide whether to ship it alongside the application. M8.
+- **The quality of "self-awareness"**: empirically test the `call_subagent` and `set_system_message` hypothesis on Gemma/Qwen. M6/M9. ✅ **Developed post-M9** — the self-model ([§17](#17-self-model-selfmodel)): verified on live Gemma 4 12B/31B (the model maintains its own view of itself/the user, cross-chat recall, background auto-reflection).
 
 ---
 
-## 17. Модель себя (SelfModel)
+## 17. Self-model (SelfModel)
 
-Развитие линии «осознанности» ([§1.2](#12-цели) п.6, `call_subagent`, интроспекция):
-пер-профильное **представление агента о себе**, которое модель ведёт сама и которое
-влияет на её последующие ответы. Реализовано пост-M9 поэтапно (зонд → Tier 2/3);
-подробный план и решения — [docs/self-model-mvp.md](docs/history/self-model-mvp.md), журнал —
-[CLAUDE.md](CLAUDE.md). **Опционально и по умолчанию выключено.**
+An extension of the "self-awareness" thread ([§1.2](#12-goals) item 6, `call_subagent`, introspection):
+a per-profile **representation the agent holds of itself**, maintained by the model itself and
+influencing its subsequent responses. Implemented post-M9 in stages (a probe → Tier 2/3);
+the detailed plan and decisions — [docs/self-model-mvp.md](docs/history/self-model-mvp.md), the log —
+[CLAUDE.md](CLAUDE.md). **Optional, and off by default.**
 
-**Почему так:** малые локальные модели плохо заполняют богато-типизированные
-структуры (числовые «силы убеждений», `severity` противоречий, детект/резолв
-противоречий машинерией дают бессмысленные числа и шум). Поэтому модель намеренно
-**минимальна и человекочитаема**: свободный текст + простые списки; противоречия
-фиксируются прозой в нарративе, а не отдельным типом.
+**Why this way:** small local models fill richly-typed
+structures poorly (numeric "belief strengths", contradiction `severity`, contradiction
+detect/resolve machinery all produce meaningless numbers and noise). So the model is deliberately
+**minimal and human-readable**: free text + simple lists; contradictions
+are recorded as prose in the narrative rather than as a separate type.
 
-### 17.1. Состав и расположение
+### 17.1. Composition and location
 
-Сущность `SelfModel` (`entities/self_model.rs`), один экземпляр на профиль:
+The `SelfModel` entity (`entities/self_model.rs`), one instance per profile:
 
-- `summary` — свободный текст «о себе» (кто я, что ценю, как себя веду);
-- `goals: Vec<Goal>` — цели (`id`, `description`, `status`: `Active`/`Completed`/
-  `Abandoned`); рендерятся/учитываются как «информативные» только активные;
-- `user_model` — представление о собеседнике (`perceived_traits`,
-  `current_interests` — списки; `relationship_dynamic` — текст);
-- `narrative: Vec<NarrativeSegment>` — короткие инсайты/наблюдения с датой (включая
-  замеченные противоречия — прозой), append-only с потолком.
+- `summary` — free-form "about me" text (who I am, what I value, how I behave);
+- `goals: Vec<Goal>` — goals (`id`, `description`, `status`: `Active`/`Completed`/
+  `Abandoned`); only active ones are rendered/counted as "informative";
+- `user_model` — a representation of the companion (`perceived_traits`,
+  `current_interests` — lists; `relationship_dynamic` — text);
+- `narrative: Vec<NarrativeSegment>` — short dated insights/observations (including
+  noticed contradictions — as prose), append-only with a cap.
 
-**Изоляция по `profile_id`** — как заметки/RAG ([§9.5](#95-изоляция-по-профилю)).
+**Isolation by `profile_id`** — same as notes/RAG ([§9.5](#95-per-profile-isolation)).
 
-### 17.2. Хранение
+### 17.2. Storage
 
-Таблица `self_models(profile_id PK, data JSON, version, updated_at)` в SQLite
-([§5.2](#52-хранение-данных)). Создаётся `CREATE TABLE IF NOT EXISTS` — миграция не
-нужна, старые БД читаются. `version` ведёт хранилище (инкремент на каждый upsert).
+A `self_models(profile_id PK, data JSON, version, updated_at)` table in SQLite
+([§5.2](#52-data-storage)). Created with `CREATE TABLE IF NOT EXISTS` — no migration
+needed, old DBs read fine. Storage maintains `version` (incremented on every upsert).
 
-### 17.3. Инструменты
+### 17.3. Tools
 
-Группа SelfModel-инструментов (опциональны: **нет** в `default_tool_ids`, есть в
-`all_tool_ids` → тумблеры профиля, по умолчанию выкл):
+The SelfModel tool group (optional: **not** in `default_tool_ids`, present in
+`all_tool_ids` → profile toggles, off by default):
 
-| Инструмент | Назначение |
+| Tool | Purpose |
 |---|---|
-| `get_self_model` | Прочитать текущее состояние модели себя |
-| `reflect` | Вернуть текущую модель + рубрику саморефлексии (без записи; «точка входа») |
-| `update_self_model` | Описание себя + цели (добавить/выполнить/отказаться) |
-| `update_user_model` | Черты/интересы/динамика отношений собеседника |
-| `add_insight` | Записать наблюдение/инсайт (включая противоречие прозой) в нарратив |
+| `get_self_model` | Read the current state of the self-model |
+| `reflect` | Return the current model + a self-reflection rubric (no write; an "entry point") |
+| `update_self_model` | The self-description + goals (add/complete/abandon) |
+| `update_user_model` | The companion's traits/interests/relationship dynamic |
+| `add_insight` | Record an observation/insight (including a contradiction as prose) into the narrative |
 
-**Отступление от контракта инструмента ([§9.2](#92-контракт-инструмента)):** SelfModel
-— пер-профильные данные в SQLite, поэтому инструменты-мутаторы **пишут напрямую**
-через `ctx.storage` (как `note_save`), а не возвращают `ToolOutcome.effects`.
-`ChatEffect` существует только для мутаций `Chat`; `SelfModel` — не `Chat`, поэтому
-инвариант «единственный владелец `Chat`» ([§4.4.2](#442-владение-chat-и-инструменты-упрощение-относительно-попытки-1))
-не затрагивается.
+**A departure from the tool contract ([§9.2](#92-the-tool-contract)):** SelfModel
+is per-profile data in SQLite, so the mutator tools **write directly**
+through `ctx.storage` (like `note_save`), rather than returning `ToolOutcome.effects`.
+`ChatEffect` exists only for mutating `Chat`; `SelfModel` isn't `Chat`, so the
+"sole owner of `Chat`" invariant ([§4.4.2](#442-chat-ownership-and-tools-a-simplification-vs-attempt-1))
+isn't affected.
 
-### 17.4. Инъекция в системный промпт
+### 17.4. Injection into the system prompt
 
-В начале хода оркестратор читает снимок модели профиля и **компактно** подмешивает
-его в `system`-промпт (рендер активных целей, описания, модели собеседника и
-нескольких свежих инсайтов). Гейт: профиль включил `get_self_model` (opt-in). Так
-модель «помнит» себя и пользователя без явного вызова инструмента — это и есть
-основной механизм пользы (проверяется кросс-чат припоминанием).
+At the start of a turn, the orchestrator reads the profile's model snapshot and **compactly**
+injects it into the `system` prompt (rendering active goals, the description, the model of the
+companion, and a handful of recent insights). Gate: the profile enabled `get_self_model` (opt-in). This way
+the model "remembers" itself and the user without an explicit tool call — this is the
+main mechanism of value (verified through cross-chat recall).
 
-### 17.5. Параметры (настройки)
+### 17.5. Parameters (settings)
 
-`config.self_model: SelfModelSettings` (все под `#[serde(default)]` — без миграции):
+`config.self_model: SelfModelSettings` (all under `#[serde(default)]` — no migration needed):
 
-- `max_narrative` — потолок хранения инсайтов (старые вытесняются);
-- `narrative_in_prompt` — сколько свежих инсайтов идёт в промпт;
-- `prompt_cap` — потолок символов компактной инъекции (защита окна контекста);
-- `auto_reflect_every` — период авто-рефлексии (0 — выкл).
+- `max_narrative` — the cap on stored insights (older ones are evicted);
+- `narrative_in_prompt` — how many recent insights go into the prompt;
+- `prompt_cap` — the character cap for the compact injection (protecting the context window);
+- `auto_reflect_every` — the auto-reflection period (0 — off).
 
-`SelfModelParams::from_settings` санитизирует (хотя бы 1 инсайт; в промпт не больше,
-чем хранится; читаемый минимум символов). Правятся в секции «Память» экрана
-настроек ([§11.6](#116-экран-настроек)).
+`SelfModelParams::from_settings` sanitizes it (at least 1 insight; no more in the prompt
+than stored; a readable minimum character count). Edited in the "Memory" section of the settings
+screen ([§11.6](#116-the-settings-screen)).
 
-### 17.6. Авто-рефлексия (фоновая)
+### 17.6. Auto-reflection (background)
 
-При `auto_reflect_every > 0` каждые N ответов ассистента фоновая задача
-(`orchestrator/reflection.rs`) просит модель пересмотреть недавний разговор и **самой**
-обновить «модель себя». В отличие от авто-названия ([§11.2](#112-список-чатов-оверлей))
-это **мини agentic-loop**: рефлексии даются SelfModel-инструменты, и петля исполняет
-их вызовы (пишущие в `Storage`); до 6 раундов, таймаут. Чат/лента **не мутируются**,
-в UI ничего не стримится — рефлексия молчалива. Гейты: фича включена, профиль включил
-инструменты, рефлексия не идёт уже (одна за раз), сервер `Ready`, переписки достаточно.
+When `auto_reflect_every > 0`, every N assistant replies a background task
+(`orchestrator/reflection.rs`) asks the model to review the recent conversation and **update its own**
+"self-model" itself. Unlike auto-titling ([§11.2](#112-the-chat-list-an-overlay))
+this is a **mini agentic loop**: the reflection is given the SelfModel tools, and the loop executes
+their calls (writing to `Storage`); up to 6 rounds, with a timeout. The chat/feed **aren't mutated**,
+nothing is streamed to the UI — the reflection is silent. Gates: the feature is enabled, the profile enabled
+the tools, a reflection isn't already running (one at a time), the server is `Ready`, there's enough conversation.
 
-### 17.7. UI — экран «модели себя» (`F3`)
+### 17.7. UI — the self-model screen (`F3`)
 
-Полноэкранный экран (`screens/self_model.rs`), открывается из чата по **`F3`** —
-просмотр и **ручная правка**:
+A full-screen screen (`screens/self_model.rs`), opened from the chat with **`F3`** —
+for viewing and **manual editing**:
 
-- описание себя (многострочный редактор), цели (добавить / переименовать / `Space`
-  сменить статус / `Del` удалить), модель собеседника (черты/интересы списком через
-  запятую, динамика отношений), удаление инсайтов (`Del`), очистка всей модели
-  (`Ctrl+K` дважды — с подтверждением);
-- навигация `↑↓`/`Home`/`End`, `Enter` — правка, `Esc` — закрыть, `Ctrl+Q`/`F10` — выход.
+- the self-description (a multiline editor), goals (add / rename / `Space`
+  to change the status / `Del` to delete), the model of the companion (traits/interests as a comma-
+  separated list, the relationship dynamic), deleting insights (`Del`), clearing the whole model
+  (`Ctrl+K` twice — with confirmation);
+- navigation `↑↓`/`Home`/`End`, `Enter` — edit, `Esc` — close, `Ctrl+Q`/`F10` — quit.
 
-Список рисуется вручную по визуальным рядам (а не виджетом `List`): длинное
-многострочное значение переносится по словам, а пункт, не вмещающийся целиком в
-остаток высоты, показывается **частично** (видна его верхняя часть), а не пропускается
-(прокрутка `scroll` держит выбранную строку видимой, прижимая длинный пункт к верху).
+The list is drawn manually by visual rows (not with the `List` widget): a long
+multiline value wraps by word, and an item that doesn't fully fit in the
+remaining height is shown **partially** (its top part is visible) rather than skipped
+(scrolling keeps the selected row visible, pinning a long item to the top).
 
-Данными владеет оркестратор: `F3` → `RequestSelfModel` → ответный `SelfModelView`
-(снимок) открывает экран; правки → `SelfModelIntent::Edit` → `AppCommand::
-UpdateSelfModel` → оркестратор применяет (`apply_edit`), сохраняет и **переэмитит**
-`SelfModelView` — открытый экран обновляется на месте (выделение сохраняется). FSD
-соблюдён: экран не знает про `app`/`Storage`.
+The orchestrator owns the data: `F3` → `RequestSelfModel` → the reply `SelfModelView`
+(a snapshot) opens the screen; edits → `SelfModelIntent::Edit` → `AppCommand::
+UpdateSelfModel` → the orchestrator applies it (`apply_edit`), saves it, and **re-emits**
+`SelfModelView` — the open screen updates in place (the selection is preserved). FSD
+is respected: the screen doesn't know about `app`/`Storage`.
 
-### 17.8. Статус
+### 17.8. Status
 
-Реализовано и проверено на живых **Gemma 4 12B (Q8_0)** и **31B (QAT q4)**: модель
-сама вызывает `update_*`/`add_insight`, накапливает представление о себе и
-собеседнике, припоминает его в новом чате того же профиля (через инъекцию), а
-фоновая авто-рефлексия обновляет модель без явной просьбы. Возможные направления —
-ранкинг/конфигурируемость нарратива и более глубокие метакогнитивные инструменты —
-осознанно отложены (см. «вне зоны MVP» в [docs/self-model-mvp.md](docs/history/self-model-mvp.md)).
+Implemented and verified on live **Gemma 4 12B (Q8_0)** and **31B (QAT q4)**: the model
+calls `update_*`/`add_insight` on its own, builds up a representation of itself and
+the companion, recalls it in a new chat under the same profile (via the injection), while
+background auto-reflection updates the model with no explicit request. Possible further directions —
+ranking/configurability of the narrative and deeper metacognitive tools —
+are deliberately deferred (see "out of MVP scope" in [docs/self-model-mvp.md](docs/history/self-model-mvp.md)).
 
 ---
 
-*Документ — инженерная спецификация `mindfork-rs` (источник истины по «что» и «почему»). Движок — llama.cpp `llama-server` (OpenAI-протокол); UI-крейты и markdown-рендер уточнены ADR 0001/0003. Актуальный статус реализации — в [CLAUDE.md](CLAUDE.md).*
+*The document is the engineering specification for `mindfork-rs` (the source of truth for "what" and "why"). The engine — llama.cpp `llama-server` (the OpenAI protocol); the UI crates and the markdown renderer are detailed in ADR 0001/0003. The up-to-date implementation status is in [CLAUDE.md](CLAUDE.md).*

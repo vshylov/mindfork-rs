@@ -1,29 +1,29 @@
-//! Переименование чата: нормализация заголовка (чистая логика) и сборка
-//! пересказа переписки для авто-названия моделью. См. spec §11.2.
+//! Renaming a chat: title normalization (pure logic) and building a
+//! conversation digest for the model's auto-title. See spec §11.2.
 
 use crate::entities::message::{Message, MessageRole};
 use crate::shared::i18n::Locale;
 
-/// Максимальная длина заголовка чата (в символах). Лишнее обрезается.
+/// Maximum chat-title length (in characters). Anything past it is trimmed.
 pub const MAX_TITLE_LEN: usize = 100;
 
-/// Бюджет символов переписки, передаваемый модели для придумывания заголовка.
-/// Если переписка длиннее — берём начало и конец (тема обычно задаётся в начале,
-/// но может смещаться к концу разговора). См. spec §11.2.
+/// The conversation-character budget passed to the model for coming up with a title.
+/// If the conversation is longer — take the start and the end (the topic is usually set at the start,
+/// but may shift toward the end of the conversation). See spec §11.2.
 pub const TITLE_CONTEXT_BUDGET: usize = 4000;
 
-/// Системное сообщение модели для авто-названия чата на языке служебного каркаса
-/// (`loc`, ось A). Заголовок всё равно просят «на языке переписки» — поэтому язык
-/// каркаса не навязывает язык заголовка (docs/history/i18n.md, развилка 6).
+/// The model's system message for auto-titling a chat, in the agent-scaffold language
+/// (`loc`, axis A). The title is still requested "in the conversation's language" — so the
+/// scaffold's language doesn't force the title's language (docs/history/i18n.md, fork 6).
 pub fn title_system_message(loc: &Locale) -> String {
     loc.t("prompt.title.system").to_string()
 }
 
-/// Собирает компактный пересказ переписки для запроса авто-названия: помечает
-/// роли (на языке каркаса `loc`), пропускает системные/инструментальные и пустые
-/// сообщения. Если суммарный объём превышает [`TITLE_CONTEXT_BUDGET`], берёт начало
-/// и конец (середина выкидывается). Возвращает `None`, если содержательных
-/// сообщений нет.
+/// Builds a compact conversation digest for the auto-title request: tags
+/// roles (in the scaffold's language `loc`), skips system/tool and empty
+/// messages. If the total size exceeds [`TITLE_CONTEXT_BUDGET`], takes the start
+/// and the end (the middle is dropped). Returns `None` if there are no substantive
+/// messages.
 pub fn build_conversation_digest(messages: &[Message], loc: &Locale) -> Option<String> {
     let lines: Vec<String> = messages
         .iter()
@@ -43,8 +43,8 @@ pub fn build_conversation_digest(messages: &[Message], loc: &Locale) -> Option<S
     Some(truncate_middle(&lines.join("\n"), TITLE_CONTEXT_BUDGET))
 }
 
-/// Ограничивает строку `budget` символами (по Unicode-символам, не байтам): если
-/// длиннее — берёт начало (≈⅔ бюджета) и конец, заменяя середину маркером.
+/// Limits a string to `budget` characters (by Unicode scalar, not bytes): if
+/// longer — takes the start (≈⅔ of the budget) and the end, replacing the middle with a marker.
 fn truncate_middle(text: &str, budget: usize) -> String {
     let chars: Vec<char> = text.chars().collect();
     if chars.len() <= budget {
@@ -57,9 +57,9 @@ fn truncate_middle(text: &str, budget: usize) -> String {
     format!("{head_str}\n…\n{tail_str}")
 }
 
-/// Чистит сгенерированный моделью заголовок: берёт первую непустую строку, срезает
-/// обрамляющие кавычки/звёздочки/бэктики и нормализует через [`sanitize_title`].
-/// Возвращает `None`, если после очистки строка пуста.
+/// Cleans a model-generated title: takes the first non-empty line, strips
+/// surrounding quotes/asterisks/backticks, and normalizes via [`sanitize_title`].
+/// Returns `None` if the string is empty after cleaning.
 pub fn clean_generated_title(raw: &str) -> Option<String> {
     let first = raw.lines().map(str::trim).find(|l| !l.is_empty())?;
     let trimmed = first.trim_matches(|c: char| {
@@ -68,10 +68,10 @@ pub fn clean_generated_title(raw: &str) -> Option<String> {
     sanitize_title(trimmed)
 }
 
-/// Нормализует пользовательский ввод заголовка: убирает крайние пробелы,
-/// схлопывает внутренние переводы строк/табы в пробел и ограничивает длину.
-/// Возвращает `None`, если после нормализации строка пуста (переименование
-/// отклоняется — старый заголовок сохраняется).
+/// Normalizes user-entered title input: trims the outer whitespace,
+/// collapses internal line breaks/tabs into a space, and limits the length.
+/// Returns `None` if the string is empty after normalization (the rename
+/// is rejected — the old title is kept).
 pub fn sanitize_title(input: &str) -> Option<String> {
     let collapsed: String = input
         .chars()
@@ -81,7 +81,7 @@ pub fn sanitize_title(input: &str) -> Option<String> {
     if trimmed.is_empty() {
         return None;
     }
-    // Схлопываем повторяющиеся пробелы для опрятного заголовка.
+    // Collapse repeated spaces for a tidy title.
     let mut title = String::with_capacity(trimmed.len());
     let mut prev_space = false;
     for ch in trimmed.chars() {
@@ -99,7 +99,7 @@ pub fn sanitize_title(input: &str) -> Option<String> {
 mod tests {
     use super::*;
 
-    /// Референсная локаль (ru) — ассерты на русские роли пинят ru-бандл.
+    /// The reference locale (ru) — assertions on Russian roles pin the ru bundle.
     fn ru() -> &'static Locale {
         crate::shared::i18n::locale(crate::shared::i18n::Lang::Ru)
     }
@@ -142,8 +142,8 @@ mod tests {
         assert_eq!(digest, "Пользователь: как дела?\nАссистент: хорошо");
     }
 
-    /// Per-language (§3.5): роли в дайджесте — из бандла активного языка (en-профиль
-    /// получает «User:/Assistant:», а не русские роли).
+    /// Per-language (§3.5): digest roles come from the active language's bundle (an en profile
+    /// gets "User:/Assistant:", not the Russian roles).
     #[test]
     fn digest_roles_localized_for_all_langs() {
         let msgs = vec![Message::user("hi"), Message::assistant("yo")];
@@ -166,12 +166,12 @@ mod tests {
 
     #[test]
     fn digest_truncates_long_conversation_keeping_head_and_tail() {
-        // Длинное сообщение пользователя — должно усечься с маркером середины.
-        let long = "слово ".repeat(2000); // ~12000 символов
+        // A long user message — should be truncated with a middle marker.
+        let long = "слово ".repeat(2000); // ~12000 characters
         let msgs = vec![Message::user(long)];
         let digest = build_conversation_digest(&msgs, ru()).unwrap();
         assert!(digest.chars().count() <= TITLE_CONTEXT_BUDGET + 16);
-        assert!(digest.contains('…'), "маркер усечения середины");
+        assert!(digest.contains('…'), "the middle-truncation marker");
         assert!(digest.starts_with("Пользователь:"));
     }
 

@@ -1,7 +1,7 @@
-//! «Модель себя» агента — пер-профильное представление о себе, целях и
-//! собеседнике. Живёт в SQLite (как заметки/RAG), изолирована по `profile_id`.
-//! Минимальный MVP-зонд: свободный текст + цели + модель пользователя, без
-//! числовых «сил убеждений». См. [docs/history/self-model-mvp.md](../../docs/history/self-model-mvp.md).
+//! The agent's "self-model" — a per-profile representation of itself, its goals,
+//! and the interlocutor. Lives in SQLite (like notes/RAG), isolated by `profile_id`.
+//! A minimal MVP probe: free-form text + goals + a user model, no numeric
+//! "belief strengths". See [docs/history/self-model-mvp.md](../../docs/history/self-model-mvp.md).
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
@@ -10,25 +10,27 @@ use uuid::Uuid;
 use crate::shared::config::SelfModelSettings;
 use crate::shared::i18n::Locale;
 
-/// Параметры рендера/хранения «модели себя» (из `config.self_model`). Передаются в
-/// методы сущности вместо захардкоженных констант, чтобы пользователь мог
-/// регулировать размеры нарратива и объём инъекции в промпт. Аналог
-/// [`ChunkParams`](crate::features::tools::rag::ChunkParams) для RAG.
+/// Render/storage parameters for the "self-model" (from `config.self_model`). Passed
+/// into the entity's methods instead of hardcoded constants, so the user can tune
+/// the narrative size and the prompt-injection volume. An analogue of
+/// [`ChunkParams`](crate::features::tools::rag::ChunkParams) for RAG.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct SelfModelParams {
-    /// Сколько недавних наблюдений (self-заметок) поднимать при полном чтении модели
-    /// (`get_self_model`/`reflect`). Наблюдения переехали в заметки — FIFO-потолка
-    /// хранения больше нет; параметр лишь ограничивает объём чтения. Историческое имя
-    /// поля сохранено ради совместимости `settings.json`.
+    /// How many recent observations (self-notes) to pull in for a full model read
+    /// (`get_self_model`/`reflect`). Observations moved into notes — there's no
+    /// longer a FIFO storage cap; the parameter only bounds the read size. The
+    /// historical field name is kept for `settings.json` compatibility.
     pub max_narrative: usize,
-    /// Сколько свежих наблюдений идёт в системный промпт (инъекция).
+    /// How many fresh observations go into the system prompt (injection).
     pub narrative_in_prompt: usize,
-    /// Потолок символов рендера модели в системный промпт.
+    /// The character ceiling for rendering the model into the system prompt.
     pub prompt_cap: usize,
-    /// Сколько закрытых целей держать в структуре (старейшие сверх — в нарратив-шрам).
+    /// How many closed goals to keep in the structure (the oldest beyond this — into
+    /// a narrative scar).
     pub max_closed_goals: usize,
-    /// Ориентир размера описания себя (summary): сверх него [`SelfModel::summary_fill_hint`]
-    /// возвращает мягкую подсказку сократить. Ворота, не потолок.
+    /// A size target for the self-description (summary): beyond it,
+    /// [`SelfModel::summary_fill_hint`] returns a soft hint to shorten it. A gate,
+    /// not a ceiling.
     pub summary_target_chars: usize,
 }
 
@@ -39,9 +41,9 @@ impl Default for SelfModelParams {
 }
 
 impl SelfModelParams {
-    /// Строит параметры из настроек, санитизируя значения (защита от нулей и
-    /// несогласованности: хотя бы 1 инсайт хранится, в промпт не больше, чем хранится,
-    /// читаемый минимум символов промпта).
+    /// Builds parameters from settings, sanitizing values (protection against
+    /// zeros and inconsistency: at least 1 insight is stored, no more goes into the
+    /// prompt than is stored, a readable minimum prompt character count).
     pub fn from_settings(s: &SelfModelSettings) -> Self {
         let max_narrative = s.max_narrative.max(1);
         Self {
@@ -54,28 +56,28 @@ impl SelfModelParams {
     }
 }
 
-/// Представление агента о себе (один экземпляр на профиль).
+/// The agent's representation of itself (one instance per profile).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct SelfModel {
     pub profile_id: Uuid,
-    /// Растёт при каждом сохранении — грубый индикатор «насколько менялся».
+    /// Grows on every save — a rough indicator of "how much it's changed".
     #[serde(default)]
     pub version: u64,
-    /// Свободный текст «о себе» (кто я, что ценю, как себя веду).
+    /// Free-form "about me" text (who I am, what I value, how I behave).
     #[serde(default)]
     pub summary: String,
     #[serde(default)]
     pub goals: Vec<Goal>,
     #[serde(default)]
     pub user_model: UserModel,
-    /// Нарратив «я во времени»: короткие инсайты/наблюдения (включая замеченные
-    /// противоречия — простой прозой, без отдельного типа). Append-only с потолком.
+    /// A "self over time" narrative: short insights/observations (including noticed
+    /// contradictions — plain prose, no separate type). Append-only with a cap.
     #[serde(default)]
     pub narrative: Vec<NarrativeSegment>,
     pub updated_at: DateTime<Utc>,
 }
 
-/// Фрагмент нарратива: короткое наблюдение/инсайт агента с отметкой времени.
+/// A narrative fragment: a short observation/insight of the agent, timestamped.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct NarrativeSegment {
     pub id: Uuid,
@@ -83,16 +85,17 @@ pub struct NarrativeSegment {
     pub created_at: DateTime<Utc>,
 }
 
-/// Долгосрочная цель/намерение агента.
+/// A long-term goal/intention of the agent.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Goal {
     pub id: Uuid,
     pub description: String,
     pub status: GoalStatus,
     pub created_at: DateTime<Utc>,
-    /// Когда цель ушла из `Active` (для возраста закрытой цели и свёртки старых
-    /// закрытых). `None` у активных и у старых записей (без миграции —
-    /// `#[serde(default)]`). Возраст закрытой считается от неё, иначе — от `created_at`.
+    /// When the goal left `Active` (for a closed goal's age and folding old closed
+    /// ones). `None` for active goals and old records (no migration —
+    /// `#[serde(default)]`). A closed goal's age is counted from it, otherwise from
+    /// `created_at`.
     #[serde(default)]
     pub closed_at: Option<DateTime<Utc>>,
 }
@@ -104,40 +107,41 @@ pub enum GoalStatus {
     Abandoned,
 }
 
-/// Сколько недавних завершённых/неактуальных целей показывать в полном чтении
-/// (`render_full`) — виден жизненный цикл, но список не растёт бесконечно.
+/// How many recent completed/stale goals to show on a full read (`render_full`) —
+/// the lifecycle is visible, but the list doesn't grow without bound.
 const CLOSED_GOALS_SHOWN: usize = 5;
 
-/// Результат разрешения ссылки на цель по «ручке» (короткий `#id` или полный UUID).
-/// См. [`SelfModel::match_goal`].
+/// The result of resolving a goal reference by its "handle" (a short `#id` or a
+/// full UUID). See [`SelfModel::match_goal`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum GoalMatch {
-    /// Однозначно найдена цель.
+    /// A goal was found unambiguously.
     One(Uuid),
-    /// Совпадений нет.
+    /// No matches.
     None,
-    /// Префикс неоднозначен (совпало несколько целей).
+    /// The prefix is ambiguous (several goals matched).
     Ambiguous,
 }
 
-/// Короткий человекочитаемый id цели: первые 6 hex-символов UUID. Показывается в
-/// чтениях и принимается в `complete_goals`/`abandon_goals` (полный UUID тоже). На
-/// десятке целей коллизия практически невозможна, а `match_goal` всё равно ловит
-/// неоднозначность.
+/// A short human-readable goal id: the first 6 hex characters of the UUID. Shown in
+/// reads and accepted by `complete_goals`/`abandon_goals` (a full UUID too). At a
+/// handful of goals, a collision is virtually impossible, and `match_goal` catches
+/// ambiguity regardless.
 fn short_hex(id: &Uuid) -> String {
     id.simple().to_string()[..6].to_string()
 }
 
-/// Публичный короткий id для эха инструментов (первые 6 hex UUID, тот же формат, что
-/// `#id` в чтениях `render_full`). Обёртка над [`short_hex`] — чтобы дельта-эхо правок
-/// (этап 4, docs/summary-as-snapshot.md) называло цели теми же ручками, по которым их
-/// закрывают.
+/// A public short id for tool echoes (the first 6 hex chars of the UUID, the same
+/// format as `#id` in `render_full` reads). A wrapper over [`short_hex`] — so the
+/// edit-delta echo (stage 4, docs/summary-as-snapshot.md) refers to goals by the
+/// same handles they're closed with.
 pub fn short_id(id: &Uuid) -> String {
     short_hex(id)
 }
 
-/// Проставляет/снимает `closed_at` цели по её текущему статусу: при уходе из
-/// `Active` — ставит момент (если ещё не стоял), при возврате в `Active` — снимает.
+/// Sets/clears a goal's `closed_at` based on its current status: on leaving
+/// `Active` — stamps the moment (if not already stamped), on returning to `Active`
+/// — clears it.
 fn stamp_closed(g: &mut Goal) {
     match g.status {
         GoalStatus::Active => g.closed_at = None,
@@ -149,11 +153,11 @@ fn stamp_closed(g: &mut Goal) {
     }
 }
 
-/// Грубая человекочитаемая метка возраста записи (сутки-гранулярность). Внутри
-/// одного дня текст стабилен — значит инъекция «модели себя» в системный промпт не
-/// меняется от хода к ходу (prefix cache локальной модели страдает не чаще раза в
-/// день, сверх реальных правок модели). Отрицательная разница (часы вперёд из-за
-/// рассинхронизации) трактуется как «сегодня».
+/// A coarse human-readable age label for a record (day granularity). Within one
+/// day the text is stable — so the "self-model" injection into the system prompt
+/// doesn't change turn to turn (the local model's prefix cache suffers no more
+/// than once a day, beyond actual model edits). A negative difference (hours ahead
+/// due to clock skew) is treated as "today".
 fn age_label(at: DateTime<Utc>, now: DateTime<Utc>, loc: &Locale) -> String {
     let days = (now - at).num_days();
     match days {
@@ -166,14 +170,15 @@ fn age_label(at: DateTime<Utc>, now: DateTime<Utc>, loc: &Locale) -> String {
     }
 }
 
-/// Разрешает «ручку» (полный UUID или короткий hex-префикс, с ведущим `#` или без;
-/// регистронезависимо) среди набора id. Общая логика для целей и наблюдений.
+/// Resolves a "handle" (a full UUID or a short hex prefix, with or without a
+/// leading `#`; case-insensitive) among a set of ids. Shared logic for goals and
+/// observations.
 fn resolve_handle(handle: &str, ids: &[Uuid]) -> GoalMatch {
     let h = handle.trim().trim_start_matches('#').to_lowercase();
     if h.is_empty() {
         return GoalMatch::None;
     }
-    // Полный UUID (с дефисами или без).
+    // A full UUID (with or without dashes).
     if let Ok(u) = Uuid::parse_str(&h) {
         return if ids.contains(&u) {
             GoalMatch::One(u)
@@ -181,7 +186,7 @@ fn resolve_handle(handle: &str, ids: &[Uuid]) -> GoalMatch {
             GoalMatch::None
         };
     }
-    // Иначе — префикс hex-представления id (первые символы `simple()`).
+    // Otherwise — a prefix of the id's hex representation (the first `simple()` characters).
     let mut found: Option<Uuid> = None;
     for id in ids {
         if id.simple().to_string().starts_with(&h) {
@@ -194,33 +199,33 @@ fn resolve_handle(handle: &str, ids: &[Uuid]) -> GoalMatch {
     found.map_or(GoalMatch::None, GoalMatch::One)
 }
 
-/// Ручная правка «модели себя» из UI-редактора (`F3`). Применяется сущностью
-/// ([`SelfModel::apply_edit`]); сохраняет оркестратор. Контракт UI↔оркестратор.
+/// A manual edit to the "self-model" from the UI editor (`F3`). Applied by the
+/// entity ([`SelfModel::apply_edit`]); the orchestrator saves it. UI↔orchestrator contract.
 #[derive(Debug, Clone, PartialEq)]
 pub enum SelfModelEdit {
-    /// Заменить краткое описание себя.
+    /// Replace the short self-description.
     SetSummary(String),
-    /// Добавить новую активную цель.
+    /// Add a new active goal.
     AddGoal(String),
-    /// Изменить текст цели по id.
+    /// Change a goal's text by id.
     SetGoalText { id: Uuid, text: String },
-    /// Переключить статус цели (Active→Completed→Abandoned→Active).
+    /// Cycle a goal's status (Active→Completed→Abandoned→Active).
     CycleGoalStatus(Uuid),
-    /// Удалить цель по id.
+    /// Delete a goal by id.
     DeleteGoal(Uuid),
-    /// Заменить список воспринимаемых черт собеседника.
+    /// Replace the list of perceived interlocutor traits.
     SetTraits(Vec<String>),
-    /// Заменить список текущих интересов собеседника.
+    /// Replace the list of the interlocutor's current interests.
     SetInterests(Vec<String>),
-    /// Заменить описание динамики отношений.
+    /// Replace the relationship-dynamic description.
     SetRelationship(String),
-    /// Удалить инсайт нарратива по id.
+    /// Delete a narrative insight by id.
     DeleteInsight(Uuid),
-    /// Очистить всю модель (описание/цели/собеседник/нарратив).
+    /// Clear the whole model (description/goals/interlocutor/narrative).
     Clear,
 }
 
-/// Представление агента о собеседнике (свободные списки/текст, без id).
+/// The agent's representation of the interlocutor (free-form lists/text, no id).
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct UserModel {
     #[serde(default)]
@@ -232,7 +237,7 @@ pub struct UserModel {
 }
 
 impl SelfModel {
-    /// Пустая модель для профиля.
+    /// An empty model for a profile.
     pub fn new(profile_id: Uuid) -> Self {
         Self {
             profile_id,
@@ -245,24 +250,25 @@ impl SelfModel {
         }
     }
 
-    /// Пуста ли **структурная** часть модели: пустое описание, нет активных целей
-    /// (рендерятся только они) и пустая модель собеседника. Нарратив здесь **не
-    /// учитывается** — он переехал в заметки (`@self`, см. docs/history/narrative-as-notes.md)
-    /// и передаётся в рендер параметром `recent`; наличие наблюдений проверяет
-    /// вызывающий (`is_empty() && recent.is_empty()`). Завершённые цели сами по себе
-    /// «пустой» модель не делают информативной.
+    /// Whether the **structural** part of the model is empty: an empty description,
+    /// no active goals (only those are rendered), and an empty interlocutor model.
+    /// The narrative is **not accounted for** here — it moved into notes (`@self`,
+    /// see docs/history/narrative-as-notes.md) and is passed into the render via
+    /// the `recent` parameter; the caller checks for observations
+    /// (`is_empty() && recent.is_empty()`). Completed goals alone don't make an
+    /// otherwise "empty" model informative.
     pub fn is_empty(&self) -> bool {
         self.summary.trim().is_empty()
             && self.active_goals().next().is_none()
             && self.user_model.is_empty()
     }
 
-    /// Активные цели (для рендера/чтения).
+    /// Active goals (for rendering/reading).
     pub fn active_goals(&self) -> impl Iterator<Item = &Goal> {
         self.goals.iter().filter(|g| g.status == GoalStatus::Active)
     }
 
-    /// Добавляет новую активную цель.
+    /// Adds a new active goal.
     pub fn add_goal(&mut self, description: impl Into<String>) {
         let description = description.into().trim().to_string();
         if description.is_empty() {
@@ -277,8 +283,8 @@ impl SelfModel {
         });
     }
 
-    /// Переводит цель в статус (по id). Возвращает `true`, если цель найдена.
-    /// Проставляет/снимает `closed_at` при уходе из `Active`/реактивации.
+    /// Sets a goal's status (by id). Returns `true` if the goal was found.
+    /// Sets/clears `closed_at` on leaving `Active`/reactivation.
     pub fn set_goal_status(&mut self, id: Uuid, status: GoalStatus) -> bool {
         if let Some(g) = self.goals.iter_mut().find(|g| g.id == id) {
             g.status = status;
@@ -289,8 +295,8 @@ impl SelfModel {
         }
     }
 
-    /// Циклически переключает статус цели Active→Completed→Abandoned→Active (по id).
-    /// Возвращает `true`, если цель найдена.
+    /// Cycles a goal's status Active→Completed→Abandoned→Active (by id).
+    /// Returns `true` if the goal was found.
     pub fn cycle_goal_status(&mut self, id: Uuid) -> bool {
         if let Some(g) = self.goals.iter_mut().find(|g| g.id == id) {
             g.status = match g.status {
@@ -305,9 +311,9 @@ impl SelfModel {
         }
     }
 
-    /// Применяет ручную правку из UI-редактора (`F3`). Возвращает `true`, если
-    /// модель изменилась (оркестратору — стоит ли сохранять). Чистая логика —
-    /// тестируема без оркестратора. Списки черт/интересов заменяются целиком.
+    /// Applies a manual edit from the UI editor (`F3`). Returns `true` if the model
+    /// changed (whether the orchestrator should save it). Pure logic — testable
+    /// without an orchestrator. Trait/interest lists are replaced wholesale.
     pub fn apply_edit(&mut self, edit: SelfModelEdit) -> bool {
         match edit {
             SelfModelEdit::SetSummary(s) => {
@@ -381,12 +387,13 @@ impl SelfModel {
         }
     }
 
-    /// Сворачивает старые закрытые цели в «шрам»-наблюдения и убирает их из `goals`,
-    /// оставляя не более `keep` самых свежих закрытых (по `closed_at`/`created_at`).
-    /// **Возвращает** тексты шрамов («[архив цели] …») — вызывающий записывает их как
-    /// self-заметки (наблюдения переехали в заметки, см. docs/history/narrative-as-notes.md).
-    /// Активные цели не трогает. Это интеграция, а не потеря: закрытая цель уходит
-    /// наблюдением-шрамом, а не молча удаляется.
+    /// Folds old closed goals into "scar" observations and removes them from
+    /// `goals`, keeping no more than `keep` of the most recently closed (by
+    /// `closed_at`/`created_at`). **Returns** the scar texts ("[goal archive] …") —
+    /// the caller records them as self-notes (observations moved into notes, see
+    /// docs/history/narrative-as-notes.md). Doesn't touch active goals. This is
+    /// integration, not loss: a closed goal leaves as a scar observation rather
+    /// than being silently deleted.
     pub fn fold_closed_goals(&mut self, keep: usize, loc: &Locale) -> Vec<String> {
         let freshness = |g: &Goal| g.closed_at.unwrap_or(g.created_at);
         let mut closed: Vec<(Uuid, DateTime<Utc>)> = self
@@ -398,7 +405,7 @@ impl SelfModel {
         if closed.len() <= keep {
             return Vec::new();
         }
-        closed.sort_by_key(|(_, at)| std::cmp::Reverse(*at)); // новые первыми
+        closed.sort_by_key(|(_, at)| std::cmp::Reverse(*at)); // newest first
         let fold_ids: std::collections::HashSet<Uuid> =
             closed[keep..].iter().map(|(id, _)| *id).collect();
 
@@ -422,12 +429,12 @@ impl SelfModel {
         scars
     }
 
-    /// Мягкая подсказка о разросшемся описании себя: `None`, пока `summary` в
-    /// пределах ориентира `target`; иначе текст с текущим размером и ориентиром,
-    /// направляющий вынести событийное в наблюдения. Прямой аналог бывшего
-    /// `narrative_fill_hint`, но для `summary` — единственного органа, у которого не
-    /// было обратной связи о размере. Ворота, а не потолок: ничего не усекает и не
-    /// блокирует. См. docs/summary-as-snapshot.md (этап 2).
+    /// A soft hint about a bloated self-description: `None` while `summary` stays
+    /// within the target `target`; otherwise text with the current size and the
+    /// target, directing event-like content into observations. A direct analogue
+    /// of the former `narrative_fill_hint`, but for `summary` — the one organ that
+    /// had no size feedback. A gate, not a ceiling: doesn't truncate or block
+    /// anything. See docs/summary-as-snapshot.md (stage 2).
     pub fn summary_fill_hint(&self, target: usize, loc: &Locale) -> Option<String> {
         let n = self.summary.chars().count();
         (n > target).then(|| {
@@ -438,12 +445,12 @@ impl SelfModel {
         })
     }
 
-    /// Компактный человекочитаемый блок для инъекции в системный промпт.
-    /// `None`, если структурная часть пуста **и** нет наблюдений. Наблюдения
-    /// (`recent` — self-заметки, новейшие первыми, готовит вызывающий) идут в блок в
-    /// количестве `narrative_in_prompt` самых свежих; результат усекается до
-    /// `max_chars` символов. `now` — точка отсчёта для меток возраста (сутки-
-    /// гранулярность, стабильно в пределах дня — см. [`age_label`]).
+    /// A compact human-readable block for system-prompt injection.
+    /// `None` if the structural part is empty **and** there are no observations.
+    /// Observations (`recent` — self-notes, newest first, prepared by the caller)
+    /// go into the block, `narrative_in_prompt` freshest ones; the result is
+    /// truncated to `max_chars` characters. `now` — the reference point for age
+    /// labels (day granularity, stable within a day — see [`age_label`]).
     pub fn render_for_prompt(
         &self,
         max_chars: usize,
@@ -458,10 +465,10 @@ impl SelfModel {
         let mut out = format!("{}\n", loc.t("selfmodel.render.header"));
         if !self.summary.trim().is_empty() {
             out.push_str(loc.t("selfmodel.render.about"));
-            // Посекционный бюджет (этап 3): описание — не более половины лимита, чтобы
-            // раздутый summary не вытеснял из инъекции цели/собеседника/наблюдения.
-            // Финальное усечение всего блока ниже остаётся страховкой.
-            // См. docs/summary-as-snapshot.md.
+            // A per-section budget (stage 3): the description gets no more than half
+            // the limit, so a bloated summary doesn't crowd goals/interlocutor/
+            // observations out of the injection. The final truncation of the whole
+            // block below remains a safety net. See docs/summary-as-snapshot.md.
             out.push_str(&truncate_chars_word(self.summary.trim(), max_chars / 2));
             out.push('\n');
         }
@@ -498,21 +505,22 @@ impl SelfModel {
         Some(truncate_chars(out.trim_end(), max_chars))
     }
 
-    /// Разрешает ссылку на цель по «ручке»: полный UUID или короткий hex-префикс
-    /// (с ведущим `#` или без). Регистронезависимо. Ищет только среди целей модели.
+    /// Resolves a goal reference by "handle": a full UUID or a short hex prefix
+    /// (with or without a leading `#`). Case-insensitive. Searches only among the
+    /// model's goals.
     pub fn match_goal(&self, handle: &str) -> GoalMatch {
         let ids: Vec<Uuid> = self.goals.iter().map(|g| g.id).collect();
         resolve_handle(handle, &ids)
     }
 
-    /// Полное человекочитаемое чтение модели — для инструментов (`get_self_model`,
-    /// `reflect`, эхо после правок). В отличие от [`Self::render_for_prompt`]
-    /// (компактная инъекция) **ничего не усекает**, показывает все наблюдения
-    /// (`recent` — self-заметки, новейшие первыми, готовит вызывающий) и цели со
-    /// статусом. Цели — с коротким `#id` (их ведёт `update_self_model` резолвером);
-    /// наблюдения — с **полным** id (они заметки, их переписывает/замещает
-    /// note_revise/note_supersede по полному id). Пустую модель помечает явно.
-    /// См. docs/history/self-model-mvp.md, docs/history/narrative-as-notes.md.
+    /// A full human-readable read of the model — for tools (`get_self_model`,
+    /// `reflect`, an echo after edits). Unlike [`Self::render_for_prompt`] (a
+    /// compact injection), **truncates nothing**, shows all observations
+    /// (`recent` — self-notes, newest first, prepared by the caller) and goals with
+    /// their status. Goals — with a short `#id` (resolved by `update_self_model`'s
+    /// resolver); observations — with the **full** id (they're notes, rewritten/
+    /// replaced by note_revise/note_supersede using the full id). Marks an empty
+    /// model explicitly. See docs/history/self-model-mvp.md, docs/history/narrative-as-notes.md.
     pub fn render_full(
         &self,
         now: DateTime<Utc>,
@@ -548,8 +556,8 @@ impl SelfModel {
                 ));
                 out.push('\n');
             }
-            // Недавние закрытые — компактно, новейшие первыми. Возраст — от момента
-            // закрытия (`closed_at`), иначе от создания.
+            // Recent closed ones — compact, newest first. Age — from the moment of
+            // closing (`closed_at`), otherwise from creation.
             for g in closed.iter().rev().take(CLOSED_GOALS_SHOWN) {
                 let st = loc.t(match g.status {
                     GoalStatus::Completed => "selfmodel.status.completed",
@@ -572,8 +580,8 @@ impl SelfModel {
             }
         }
         render_user_model(&mut out, &self.user_model, loc);
-        // Наблюдения (self-заметки) целиком, новейшее первым — без усечения. Полный
-        // id: наблюдение переписывается/замещается note-инструментами по полному id.
+        // Observations (self-notes) in full, newest first — no truncation. Full id:
+        // an observation is rewritten/replaced by note tools using the full id.
         if !recent.is_empty() {
             out.push_str(&loc.tf(
                 "selfmodel.render.observations",
@@ -600,9 +608,10 @@ impl SelfModel {
     }
 }
 
-/// Блок «О собеседнике» — общий для [`SelfModel::render_for_prompt`] и
-/// [`SelfModel::render_full`] (в обоих байт-в-байт). Разделители `, ` и `;` —
-/// пунктуация, языко-нейтральны и остаются в коде; локализуются лишь метки-подписи.
+/// The "About the interlocutor" block — shared by [`SelfModel::render_for_prompt`]
+/// and [`SelfModel::render_full`] (byte-for-byte in both). The `, ` and `;`
+/// separators are punctuation, language-neutral and stay in the code; only the
+/// label captions are localized.
 fn render_user_model(out: &mut String, u: &UserModel, loc: &Locale) {
     if u.is_empty() {
         return;
@@ -632,53 +641,55 @@ impl UserModel {
             && self.relationship_dynamic.trim().is_empty()
     }
 
-    /// Компактная подсказка для имперсонации (`Ctrl+U`): агент пишет реплику **за**
-    /// человека, а `UserModel` — модель этого человека, поэтому подмешивание её в
-    /// системный промпт имперсонации делает голос точнее. `None`, если модель пуста;
-    /// результат усечён до `max_chars` символов.
-    pub fn render_for_impersonation(&self, max_chars: usize) -> Option<String> {
+    /// A compact hint for impersonation (`Ctrl+U`): the agent writes a reply **on
+    /// behalf of** the person, and `UserModel` is a model of that person, so mixing
+    /// it into the impersonation system prompt makes the voice more accurate. This
+    /// is a prompt fragment (text the *model* reads) — localized via `loc` in the
+    /// agent-scaffold language (axis A), like [`render_user_model`] above.
+    /// `None` if the model is empty; the result is truncated to `max_chars` characters.
+    pub fn render_for_impersonation(&self, max_chars: usize, loc: &Locale) -> Option<String> {
         if self.is_empty() {
             return None;
         }
-        let mut out = String::from("Известное о человеке, за которого ты пишешь:");
+        let mut out = loc.t("selfmodel.render.impersonation.intro").to_string();
         if !self.perceived_traits.is_empty() {
-            out.push_str(" черты — ");
+            out.push_str(loc.t("selfmodel.render.impersonation.traits"));
             out.push_str(&self.perceived_traits.join(", "));
             out.push(';');
         }
         if !self.current_interests.is_empty() {
-            out.push_str(" интересы — ");
+            out.push_str(loc.t("selfmodel.render.impersonation.interests"));
             out.push_str(&self.current_interests.join(", "));
             out.push(';');
         }
         if !self.relationship_dynamic.trim().is_empty() {
-            out.push_str(" отношения с собеседником — ");
+            out.push_str(loc.t("selfmodel.render.impersonation.relationship"));
             out.push_str(self.relationship_dynamic.trim());
         }
         Some(truncate_chars(out.trim_end_matches([';', ' ']), max_chars))
     }
 
-    /// Добавляет черты (дедуп без учёта регистра, пустые отбрасываются). Возвращает,
-    /// изменился ли список. **Merge, а не замена** — правка не перетирает прежнее.
+    /// Adds traits (case-insensitive dedup, empty ones dropped). Returns whether
+    /// the list changed. **Merge, not replace** — the edit doesn't overwrite prior data.
     pub fn add_traits(&mut self, items: Vec<String>) -> bool {
         merge_into(&mut self.perceived_traits, items)
     }
-    /// Убирает черты по совпадению (без учёта регистра). Возвращает, изменилось ли.
+    /// Removes traits by match (case-insensitive). Returns whether it changed.
     pub fn remove_traits(&mut self, items: &[String]) -> bool {
         remove_from(&mut self.perceived_traits, items)
     }
-    /// Добавляет интересы (дедуп без учёта регистра). Возвращает, изменилось ли.
+    /// Adds interests (case-insensitive dedup). Returns whether it changed.
     pub fn add_interests(&mut self, items: Vec<String>) -> bool {
         merge_into(&mut self.current_interests, items)
     }
-    /// Убирает интересы по совпадению (без учёта регистра). Возвращает, изменилось ли.
+    /// Removes interests by match (case-insensitive). Returns whether it changed.
     pub fn remove_interests(&mut self, items: &[String]) -> bool {
         remove_from(&mut self.current_interests, items)
     }
 }
 
-/// Добавляет элементы в список с дедупом без учёта регистра (Unicode). Пустые после
-/// trim отбрасываются. Возвращает `true`, если что-то добавилось.
+/// Adds items to a list with case-insensitive dedup (Unicode). Empty-after-trim
+/// items are dropped. Returns `true` if anything was added.
 fn merge_into(list: &mut Vec<String>, items: Vec<String>) -> bool {
     let mut changed = false;
     for it in items {
@@ -695,8 +706,8 @@ fn merge_into(list: &mut Vec<String>, items: Vec<String>) -> bool {
     changed
 }
 
-/// Убирает из списка элементы, совпадающие (без учёта регистра) с любым из `items`.
-/// Возвращает `true`, если список изменился.
+/// Removes items from the list matching (case-insensitive) any of `items`.
+/// Returns `true` if the list changed.
 fn remove_from(list: &mut Vec<String>, items: &[String]) -> bool {
     let targets: Vec<String> = items
         .iter()
@@ -711,7 +722,7 @@ fn remove_from(list: &mut Vec<String>, items: &[String]) -> bool {
     list.len() != before
 }
 
-/// Усечение по символам (не байтам — кириллица) с многоточием.
+/// Truncation by characters (not bytes — Cyrillic) with an ellipsis.
 fn truncate_chars(s: &str, max_chars: usize) -> String {
     if s.chars().count() <= max_chars {
         return s.to_string();
@@ -722,22 +733,23 @@ fn truncate_chars(s: &str, max_chars: usize) -> String {
     out
 }
 
-/// Усечение по границе слова: как [`truncate_chars`], но откатывается к последнему
-/// пробелу в пределах лимита, чтобы не рвать слово посреди («…» внутри слова читается
-/// как повреждённая память). Если пробела нет (одно длинное слово) — режет по символу.
-/// Результат, как и у [`truncate_chars`], не длиннее `max_chars` символов.
+/// Truncation at a word boundary: like [`truncate_chars`], but rolls back to the
+/// last space within the limit, so as not to tear a word mid-way ("…" inside a word
+/// reads as corrupted memory). If there's no space (one long word) — cuts by
+/// character. The result, like [`truncate_chars`]'s, is no longer than `max_chars`
+/// characters.
 fn truncate_chars_word(s: &str, max_chars: usize) -> String {
     if s.chars().count() <= max_chars {
         return s.to_string();
     }
     let take = max_chars.saturating_sub(1);
     let head: String = s.chars().take(take).collect();
-    // rfind даёт байтовый индекс пробела (на границе символа — валиден для среза).
+    // rfind gives the byte index of the space (valid for slicing at a char boundary).
     let base = match head.rfind(char::is_whitespace) {
         Some(idx) => head[..idx].trim_end(),
         None => head.as_str(),
     };
-    // Откат съел всё (лидирующий пробел) — падаем обратно на посимвольный head.
+    // The rollback ate everything (a leading space) — fall back to the char-wise head.
     let base = if base.is_empty() { head.as_str() } else { base };
     format!("{base}…")
 }
@@ -746,26 +758,26 @@ fn truncate_chars_word(s: &str, max_chars: usize) -> String {
 mod tests {
     use super::*;
 
-    /// Дефолтные параметры рендера/хранения для тестов.
+    /// Default render/storage parameters for tests.
     fn p() -> SelfModelParams {
         SelfModelParams::default()
     }
 
-    /// Точка отсчёта времени для тестов рендера (совпадает с моментом создания
-    /// записей → свежие показываются как «сегодня»).
+    /// A time reference point for render tests (matches the record-creation moment
+    /// → fresh ones show as "today").
     fn now() -> DateTime<Utc> {
         Utc::now()
     }
 
-    /// Референсная локаль (ru) для тестов рендера: ассерты на русские подстроки
-    /// одновременно пинят содержимое ru-бандла. Per-language проверки — ниже
+    /// A reference locale (ru) for render tests: asserting Russian substrings
+    /// simultaneously pins the ru bundle's content. Per-language checks — below
     /// (`render_localized_for_all_langs`, `age_label_localized_for_all_langs`).
     fn loc() -> &'static Locale {
         crate::shared::i18n::locale(crate::shared::i18n::Lang::Ru)
     }
 
-    /// Наблюдение (self-заметка) для тестов рендера: id + текст + «сейчас».
-    /// Наблюдения переехали в заметки и передаются в рендер параметром `recent`.
+    /// An observation (self-note) for render tests: id + text + "now".
+    /// Observations moved into notes and are passed into the render via the `recent` parameter.
     fn seg(text: &str) -> NarrativeSegment {
         NarrativeSegment {
             id: Uuid::new_v4(),
@@ -778,7 +790,7 @@ mod tests {
     fn empty_model_renders_none() {
         let m = SelfModel::new(Uuid::new_v4());
         assert!(m.is_empty());
-        // Пусто и структурно, и по наблюдениям → None.
+        // Empty both structurally and by observations → None.
         assert!(
             m.render_for_prompt(p().prompt_cap, p().narrative_in_prompt, now(), &[], loc())
                 .is_none()
@@ -787,7 +799,7 @@ mod tests {
 
     #[test]
     fn render_includes_recent_observations() {
-        // Только наблюдения (recent), структурная часть пуста → модель информативна.
+        // Only observations (recent), the structural part is empty → the model is informative.
         let m = SelfModel::new(Uuid::new_v4());
         let recent = [seg("заметил напряжение между «кратко» и «полно»")];
         let r = m
@@ -805,7 +817,7 @@ mod tests {
 
     #[test]
     fn render_for_prompt_takes_freshest_n() {
-        // recent — новейшие первыми; в промпт идут только narrative_in_prompt свежих.
+        // recent — newest first; only narrative_in_prompt freshest go into the prompt.
         let params = SelfModelParams::from_settings(&SelfModelSettings {
             narrative_in_prompt: 2,
             prompt_cap: 1000,
@@ -824,7 +836,7 @@ mod tests {
             )
             .unwrap();
         assert_eq!(r.matches("инсайт ").count(), 2);
-        // Первые два (новейшие) — «инсайт 9», «инсайт 8».
+        // The first two (newest) — indices 9 and 8.
         assert!(r.contains("инсайт 9"));
         assert!(r.contains("инсайт 8"));
     }
@@ -833,14 +845,14 @@ mod tests {
     fn add_and_complete_goals() {
         let mut m = SelfModel::new(Uuid::new_v4());
         m.add_goal("помочь с рефакторингом");
-        m.add_goal("  "); // пустую игнорируем
+        m.add_goal("  "); // empty one is ignored
         assert_eq!(m.goals.len(), 1);
         assert_eq!(m.active_goals().count(), 1);
 
         let id = m.goals[0].id;
         assert!(m.set_goal_status(id, GoalStatus::Completed));
         assert_eq!(m.active_goals().count(), 0);
-        // несуществующая цель
+        // a nonexistent goal
         assert!(!m.set_goal_status(Uuid::new_v4(), GoalStatus::Abandoned));
     }
 
@@ -865,7 +877,7 @@ mod tests {
 
     #[test]
     fn params_sanitize_inconsistent_settings() {
-        // Нулевой max → минимум 1; in_prompt не больше max; крошечный cap → пол.
+        // Zero max → a minimum of 1; in_prompt no more than max; a tiny cap → the floor.
         let params = SelfModelParams::from_settings(&SelfModelSettings {
             max_narrative: 0,
             narrative_in_prompt: 99,
@@ -879,7 +891,7 @@ mod tests {
 
     #[test]
     fn summary_target_sanitized_to_floor() {
-        // Крошечный ориентир → пол 200 (защита от бессмысленно малого значения).
+        // A tiny target → a floor of 200 (protection against a meaninglessly small value).
         let params = SelfModelParams::from_settings(&SelfModelSettings {
             summary_target_chars: 10,
             ..SelfModelSettings::default()
@@ -891,9 +903,9 @@ mod tests {
     fn summary_fill_hint_only_over_target() {
         let mut m = SelfModel::new(Uuid::new_v4());
         m.summary = "к".repeat(50);
-        // В пределах ориентира — подсказки нет.
+        // Within the target — no hint.
         assert!(m.summary_fill_hint(100, loc()).is_none());
-        // Сверх ориентира — подсказка с числами.
+        // Beyond the target — a hint with the numbers.
         m.summary = "к".repeat(150);
         let hint = m.summary_fill_hint(100, loc()).unwrap();
         assert!(hint.contains("150"));
@@ -907,7 +919,7 @@ mod tests {
         m.add_goal("старая цель");
         let id = m.goals[0].id;
         m.set_goal_status(id, GoalStatus::Completed);
-        // только завершённая цель → модель «пуста» для рендера
+        // only a completed goal → the model is "empty" for rendering
         assert!(m.is_empty());
         assert!(
             m.render_for_prompt(p().prompt_cap, p().narrative_in_prompt, now(), &[], loc())
@@ -920,7 +932,7 @@ mod tests {
         let mut m = SelfModel::new(Uuid::new_v4());
         assert!(m.apply_edit(SelfModelEdit::SetSummary("я краток".into())));
         assert_eq!(m.summary, "я краток");
-        // повтор того же — без изменений
+        // repeating the same — no change
         assert!(!m.apply_edit(SelfModelEdit::SetSummary("я краток".into())));
 
         assert!(m.apply_edit(SelfModelEdit::AddGoal("помочь".into())));
@@ -930,7 +942,7 @@ mod tests {
             text: "помочь лучше".into()
         }));
         assert_eq!(m.goals[0].description, "помочь лучше");
-        // цикл статуса: Active → Completed
+        // status cycle: Active → Completed
         assert!(m.apply_edit(SelfModelEdit::CycleGoalStatus(gid)));
         assert_eq!(m.goals[0].status, GoalStatus::Completed);
         assert!(m.apply_edit(SelfModelEdit::DeleteGoal(gid)));
@@ -941,48 +953,53 @@ mod tests {
         assert!(m.apply_edit(SelfModelEdit::SetRelationship("рабочие".into())));
         assert_eq!(m.user_model.perceived_traits, vec!["скептик".to_string()]);
 
-        // DeleteInsight в apply_edit работает над полем `narrative` (в проде
-        // оркестратор перехватывает его и удаляет self-заметку; поле оставлено для
-        // реконструкции снимка `F3` и совместимости). Наполняем поле напрямую.
+        // DeleteInsight in apply_edit operates on the `narrative` field (in
+        // production the orchestrator intercepts it and deletes the self-note; the
+        // field is kept for reconstructing the `F3` snapshot and compatibility).
+        // Populate the field directly.
         m.narrative.push(seg("наблюдение"));
         let iid = m.narrative[0].id;
         assert!(m.apply_edit(SelfModelEdit::DeleteInsight(iid)));
         assert!(m.narrative.is_empty());
 
-        // Clear сбрасывает всё; повторный Clear на пустой — no-op.
+        // Clear resets everything; a repeat Clear on an empty model — a no-op.
         assert!(m.apply_edit(SelfModelEdit::Clear));
         assert!(m.is_empty());
         assert!(!m.apply_edit(SelfModelEdit::Clear));
-        // несуществующие id — no-op
+        // nonexistent ids — a no-op
         assert!(!m.apply_edit(SelfModelEdit::DeleteGoal(Uuid::new_v4())));
     }
 
     #[test]
     fn bloated_summary_does_not_starve_sections() {
-        // Этап 3: раздутое описание не вытесняет из инъекции цели/собеседника/наблюдения
-        // (посекционный бюджет: summary ≤ половины лимита).
+        // Stage 3: a bloated description doesn't crowd goals/interlocutor/
+        // observations out of the injection (a per-section budget: summary ≤ half the limit).
         let mut m = SelfModel::new(Uuid::new_v4());
-        m.summary = "слово ".repeat(400); // ~2400 симв., много слов
+        m.summary = "слово ".repeat(400); // ~2400 chars, many words
         m.add_goal("активная цель");
         m.user_model.perceived_traits = vec!["внимательный".into()];
         let recent = [seg("свежее наблюдение о стиле")];
 
         let r = m.render_for_prompt(1200, 3, now(), &recent, loc()).unwrap();
-        // Все секции присутствуют, несмотря на раздутое описание.
-        assert!(r.contains("Активные цели:"), "цели вытеснены: {r}");
-        assert!(r.contains("О собеседнике:"), "собеседник вытеснен: {r}");
+        // All sections are present despite the bloated description.
+        assert!(r.contains("Активные цели:"), "goals crowded out: {r}");
+        assert!(
+            r.contains("О собеседнике:"),
+            "interlocutor crowded out: {r}"
+        );
         assert!(
             r.contains("Недавние наблюдения:"),
-            "наблюдения вытеснены: {r}"
+            "observations crowded out: {r}"
         );
-        // Блок в пределах лимита; описание усечено (сверх половины бюджета).
+        // The block is within the limit; the description is truncated (beyond half the budget).
         assert!(r.chars().count() <= 1200);
         assert!(r.contains("О себе: "));
     }
 
     #[test]
     fn small_summary_not_truncated() {
-        // Небольшое описание проходит без «…» (поведение прежнее для нераздутых моделей).
+        // A small description passes through with no "…" (unchanged behavior for
+        // non-bloated models).
         let mut m = SelfModel::new(Uuid::new_v4());
         m.summary = "ценю ясность и краткость".into();
         let r = m
@@ -994,16 +1011,16 @@ mod tests {
 
     #[test]
     fn truncate_word_does_not_split_word() {
-        // Усечение по границе слова не рвёт слово посреди.
+        // Truncation at a word boundary doesn't tear a word mid-way.
         let s = "первое второе третье четвёртое пятое";
         let out = truncate_chars_word(s, 20);
         assert!(out.ends_with('…'));
         assert!(out.chars().count() <= 20);
-        // Обрезка на границе слова: без «…» результат — префикс из целых слов.
+        // Trimming at a word boundary: without "…" the result is a prefix of whole words.
         let body = out.trim_end_matches('…');
         assert!(s.starts_with(body.trim_end()));
         assert!(!body.trim_end().is_empty());
-        // Одно длинное слово без пробелов — падаем на посимвольное усечение.
+        // One long word with no spaces — falls back to char-wise truncation.
         let long = "я".repeat(50);
         let out = truncate_chars_word(&long, 10);
         assert_eq!(out.chars().count(), 10);
@@ -1029,23 +1046,23 @@ mod tests {
         m.add_goal("завершённая цель");
         let done = m.goals[1].id;
         m.set_goal_status(done, GoalStatus::Completed);
-        // Много наблюдений (recent, новейшие первыми) — полное чтение показывает все.
+        // Many observations (recent, newest first) — a full read shows all of them.
         let recent: Vec<NarrativeSegment> =
             (0..12).rev().map(|i| seg(&format!("инсайт {i}"))).collect();
 
         let full = m.render_full(now(), &recent, loc());
-        assert!(!full.ends_with('…'), "полное чтение не усекается");
-        // Активная цель — с коротким #id, статусом и меткой возраста («сегодня»).
+        assert!(!full.ends_with('…'), "a full read isn't truncated");
+        // The active goal — with a short #id, status, and age label ("today").
         let short = short_hex(&m.goals[0].id);
         assert!(full.contains(&format!("#{short} (активна · сегодня) активная цель")));
-        // Завершённая тоже видна (жизненный цикл), с возрастом от закрытия.
+        // The completed one is also visible (lifecycle), with age from closing.
         assert!(full.contains("(выполнена · сегодня) завершённая цель"));
-        // Все наблюдения (не только narrative_in_prompt=3), с ПОЛНЫМ id (для
+        // All observations (not just narrative_in_prompt=3), with the FULL id (for
         // note_revise/note_supersede).
         assert_eq!(full.matches("инсайт ").count(), 12);
         assert!(full.contains("Наблюдения (12"));
         assert!(full.contains(&format!("(id={})", recent[0].id)));
-        // Полное описание себя целиком (не обрезано до prompt_cap).
+        // The full self-description in its entirety (not truncated to prompt_cap).
         assert!(full.contains(&"я".repeat(500)));
     }
 
@@ -1060,58 +1077,85 @@ mod tests {
         let mut m = SelfModel::new(Uuid::new_v4());
         m.add_goal("первая");
         let id = m.goals[0].id;
-        // Полный UUID.
+        // A full UUID.
         assert_eq!(m.match_goal(&id.to_string()), GoalMatch::One(id));
-        // Короткий hex-префикс, с ведущим '#'.
+        // A short hex prefix, with a leading '#'.
         let short = short_hex(&id);
         assert_eq!(m.match_goal(&format!("#{short}")), GoalMatch::One(id));
-        // Регистронезависимо.
+        // Case-insensitive.
         assert_eq!(m.match_goal(&short.to_uppercase()), GoalMatch::One(id));
-        // Несуществующий.
+        // A nonexistent one.
         assert_eq!(m.match_goal("zzzzzz"), GoalMatch::None);
         assert_eq!(m.match_goal(""), GoalMatch::None);
-        // Пустой префикс (после снятия '#') совпал бы со всеми → неоднозначно.
+        // An empty prefix (after stripping '#') would match everything → ambiguous.
         m.add_goal("вторая");
-        assert_eq!(m.match_goal("#"), GoalMatch::None); // пусто → None, не Ambiguous
+        assert_eq!(m.match_goal("#"), GoalMatch::None); // empty → None, not Ambiguous
     }
 
     #[test]
     fn user_model_merge_add_remove() {
         let mut u = UserModel::default();
         assert!(u.add_traits(vec!["добрый".into(), "Добрый".into(), "  ".into()]));
-        // Дедуп без учёта регистра + отброс пустого.
+        // Case-insensitive dedup + dropping the empty one.
         assert_eq!(u.perceived_traits, vec!["добрый".to_string()]);
-        // Новая правка не перетирает — merge.
+        // A new edit doesn't overwrite — merge.
         assert!(u.add_traits(vec!["прямолинейный".into()]));
         assert_eq!(u.perceived_traits.len(), 2);
-        // Повтор уже известного — без изменений.
+        // Repeating an already-known one — no change.
         assert!(!u.add_traits(vec!["добрый".into()]));
-        // Удаление по совпадению без учёта регистра.
+        // Removal by case-insensitive match.
         assert!(u.remove_traits(&["ДОБРЫЙ".into()]));
         assert_eq!(u.perceived_traits, vec!["прямолинейный".to_string()]);
-        // Удаление отсутствующего — no-op.
+        // Removing a nonexistent one — a no-op.
         assert!(!u.remove_traits(&["нет такого".into()]));
     }
 
     #[test]
     fn user_model_render_for_impersonation() {
-        // Пустая → None.
-        assert!(UserModel::default().render_for_impersonation(500).is_none());
+        // Empty → None.
+        assert!(
+            UserModel::default()
+                .render_for_impersonation(500, loc())
+                .is_none()
+        );
         let u = UserModel {
             perceived_traits: vec!["скептик".into(), "любопытный".into()],
             current_interests: vec!["Rust".into()],
             relationship_dynamic: "доверительные, на равных".into(),
         };
-        let r = u.render_for_impersonation(500).unwrap();
+        let r = u.render_for_impersonation(500, loc()).unwrap();
         assert!(r.contains("за которого ты пишешь"));
         assert!(r.contains("черты — скептик, любопытный"));
         assert!(r.contains("интересы — Rust"));
         assert!(r.contains("отношения с собеседником — доверительные, на равных"));
     }
 
-    /// Per-language покрытие (§3.5 docs/history/i18n.md): рендер под КАЖДЫМ вшитым языком —
-    /// секции/наблюдения помечены заголовками из бандла того же языка, плейсхолдеры
-    /// подставлены (ловит битый/неполный перевод и дыры `{…}` на конкретном языке).
+    /// Per-locale coverage (docs/history/i18n.md §3.5): rendering under EVERY built-in
+    /// language, no unsubstituted `{…}`, and no Cyrillic leaking into `en`.
+    #[test]
+    fn render_for_impersonation_localized_for_all_langs() {
+        let u = UserModel {
+            perceived_traits: vec!["skeptic".into()],
+            current_interests: vec!["Rust".into()],
+            relationship_dynamic: "trusting, as equals".into(),
+        };
+        for &lang in crate::shared::i18n::Lang::ALL {
+            let l = crate::shared::i18n::locale(lang);
+            let r = u.render_for_impersonation(500, l).unwrap();
+            assert!(!r.contains('{') && !r.contains('}'), "{lang:?}: {r}");
+            if lang == crate::shared::i18n::Lang::En {
+                assert!(
+                    !r.chars().any(|c| ('\u{0400}'..='\u{04FF}').contains(&c)),
+                    "Cyrillic leaked into en: {r}"
+                );
+            }
+        }
+    }
+
+    /// Per-language coverage (§3.5 docs/history/i18n.md): rendering under EVERY
+    /// built-in language — sections/observations are tagged with headers from that
+    /// language's bundle, placeholders are substituted (catches a broken/incomplete
+    /// translation and `{…}` gaps in a specific language).
     #[test]
     fn render_localized_for_all_langs() {
         for &lang in crate::shared::i18n::Lang::ALL {
@@ -1131,17 +1175,17 @@ mod tests {
                 r.contains(l.t("selfmodel.render.observations_recent")),
                 "{lang:?}"
             );
-            // Возраст «сегодня» подставлен без остатка `{…}`.
-            assert!(!r.contains('{'), "{lang:?}: остался плейсхолдер: {r}");
-            // Полное чтение под тем же языком — свой заголовок, без усечения.
+            // The "today" age is substituted with no leftover `{…}`.
+            assert!(!r.contains('{'), "{lang:?}: leftover placeholder: {r}");
+            // A full read in the same language — its own header, no truncation.
             let full = m.render_full(now(), &recent, l);
             assert!(full.contains(l.t("selfmodel.render.goals_ref")), "{lang:?}");
-            assert!(!full.contains('{'), "{lang:?}: плейсхолдер в full: {full}");
+            assert!(!full.contains('{'), "{lang:?}: placeholder in full: {full}");
         }
     }
 
-    /// Per-language метки возраста: каждый корзинный вариант подставляет `{n}` и не
-    /// оставляет плейсхолдера — на всех вшитых языках.
+    /// Per-language age labels: every bucket variant substitutes `{n}` and leaves
+    /// no placeholder — across all built-in languages.
     #[test]
     fn age_label_localized_for_all_langs() {
         use chrono::Duration;
@@ -1171,7 +1215,7 @@ mod tests {
         assert_eq!(age_label(ago(200), base, loc()), "6 мес.");
         assert_eq!(age_label(ago(365), base, loc()), "1 г.");
         assert_eq!(age_label(ago(800), base, loc()), "2 г.");
-        // Время «из будущего» (рассинхронизация часов) → «сегодня», не паника.
+        // A time "from the future" (clock skew) → falls back to the "today" bucket, not a panic.
         assert_eq!(age_label(base + Duration::hours(5), base, loc()), "сегодня");
     }
 
@@ -1180,14 +1224,14 @@ mod tests {
         let mut m = SelfModel::new(Uuid::new_v4());
         m.add_goal("цель");
         let id = m.goals[0].id;
-        assert!(m.goals[0].closed_at.is_none()); // активная — без отметки
+        assert!(m.goals[0].closed_at.is_none()); // active — no stamp
         m.set_goal_status(id, GoalStatus::Completed);
         let closed = m.goals[0].closed_at;
-        assert!(closed.is_some()); // закрытие проставило момент
-        // Повторное закрытие (в другой статус) момент не сдвигает.
+        assert!(closed.is_some()); // closing stamped the moment
+        // A repeat closing (to a different status) doesn't shift the moment.
         m.set_goal_status(id, GoalStatus::Abandoned);
         assert_eq!(m.goals[0].closed_at, closed);
-        // Реактивация снимает отметку.
+        // Reactivation clears the stamp.
         m.set_goal_status(id, GoalStatus::Active);
         assert!(m.goals[0].closed_at.is_none());
     }
@@ -1196,28 +1240,28 @@ mod tests {
     fn fold_closed_goals_returns_scars_beyond_keep() {
         use chrono::Duration;
         let mut m = SelfModel::new(Uuid::new_v4());
-        // Пять закрытых целей с разным временем закрытия + одна активная.
+        // Five closed goals with different closing times + one active.
         for i in 0..5 {
             m.add_goal(format!("закрытая {i}"));
         }
         m.add_goal("активная");
-        // Закрываем первые пять, проставляя разные closed_at (старые — раньше).
+        // Close the first five, stamping different closed_at (older ones — earlier).
         for i in 0..5 {
             let id = m.goals[i].id;
             m.set_goal_status(id, GoalStatus::Completed);
             m.goals[i].closed_at = Some(Utc::now() - Duration::days((5 - i) as i64));
         }
-        // Держим 2 самых свежих закрытых, остальные 3 → возвращаются шрамами (их
-        // вызывающий запишет как self-заметки).
+        // Keep the 2 freshest closed, the other 3 → come back as scars (the caller
+        // records them as self-notes).
         let scars = m.fold_closed_goals(2, loc());
         assert_eq!(scars.len(), 3);
-        // Активная не тронута; всего целей: 2 закрытых + 1 активная.
+        // The active one is untouched; total goals: 2 closed + 1 active.
         assert_eq!(m.goals.len(), 3);
         assert_eq!(m.active_goals().count(), 1);
-        // Шрамы — записи «[архив цели]»; самая старая закрытая среди них.
+        // Scars — "goal archive" entries; the oldest closed one is among them.
         assert!(scars.iter().all(|s| s.starts_with("[архив цели]")));
         assert!(scars.iter().any(|s| s.contains("закрытая 0")));
-        // Меньше keep закрытых → пусто.
+        // Fewer than keep closed → empty.
         assert!(m.fold_closed_goals(2, loc()).is_empty());
     }
 }

@@ -1,23 +1,23 @@
-//! Документ базы знаний (RAG): фрагмент текста с эмбеддингом. Изолируется по
-//! профилю. См. spec §5.1, §9.3.
+//! A knowledge-base document (RAG): a text fragment with an embedding. Isolated
+//! per profile. See spec §5.1, §9.3.
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-/// Фрагмент знаний с эмбеддингом, принадлежащий профилю.
+/// A knowledge fragment with an embedding, belonging to a profile.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct RagDocument {
     pub id: Uuid,
     pub profile_id: Uuid,
-    /// Источник (имя файла/URL/произвольный).
+    /// The source (a file name/URL/arbitrary label).
     pub source: String,
     pub chunk_text: String,
     pub embedding: Vec<f32>,
     pub created_at: DateTime<Utc>,
 }
 
-/// Результат RAG-поиска (без эмбеддинга; с расстоянием).
+/// A RAG search result (no embedding; carries the distance).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct RagHit {
     pub id: Uuid,
@@ -26,8 +26,8 @@ pub struct RagHit {
     pub distance: f32,
 }
 
-/// Сводка по источнику в базе знаний профиля (для `/rag list`): сколько чанков
-/// проиндексировано и дата (самого раннего чанка источника).
+/// A per-source summary in the profile's knowledge base (for `/rag list`): how many
+/// chunks are indexed and the date (of the source's earliest chunk).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct RagSourceInfo {
     pub source: String,
@@ -35,9 +35,9 @@ pub struct RagSourceInfo {
     pub created_at: DateTime<Utc>,
 }
 
-/// Сохранённый исходный текст индексированного источника (для `/rag rebuild`).
-/// Хранится отдельно от чанков, чтобы реиндексация (смена размера чанка/перекрытия
-/// или embedding-модели) не требовала исходного файла на диске. См. spec §9.3.
+/// The saved raw text of an indexed source (for `/rag rebuild`). Stored separately
+/// from the chunks so reindexing (changing the chunk size/overlap or the embedding
+/// model) doesn't require the source file on disk. See spec §9.3.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct RagStoredSource {
     pub source: String,

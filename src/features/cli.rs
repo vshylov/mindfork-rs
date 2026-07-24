@@ -1,51 +1,54 @@
-//! Собственный микро-парсер аргументов командной строки. Заменяет `clap`, чтобы
-//! **весь** текст CLI (справка, ошибки разбора) жил в бандлах локалей (i18n, ось B —
-//! docs/history/i18n-cli.md): `clap` не даёт локализовать сообщения об ошибках разбора, а его
-//! derive-атрибуты не принимают параметр-локаль (пришлось бы к глобальной локали
-//! процесса — ровно то, за что отвергли `rust-i18n`). Поверхность мала (5 подкоманд,
-//! несколько опций), поэтому свой парсер — по прецеденту markdown (ADR 0003), i18n,
-//! `calc`, InputBox (ADR 0001): своё решение, когда крейт мешает требованию.
+//! Our own micro command-line argument parser. Replaces `clap` so that
+//! **all** CLI text (help, parse errors) lives in the locale bundles (i18n,
+//! axis B — docs/history/i18n-cli.md): `clap` doesn't let us localize parse-error
+//! messages, and its derive attributes don't accept a locale parameter (we'd
+//! have had to fall back to a global process locale — exactly what we
+//! rejected `rust-i18n` for). The surface is small (5 subcommands, a handful
+//! of options), so a custom parser follows the precedent of markdown
+//! (ADR 0003), i18n, `calc`, InputBox (ADR 0001): our own solution when a
+//! crate gets in the way of a requirement.
 //!
-//! Локаль передаётся **параметром** (без глобалов): [`parse`] и [`render_help`]
-//! берут `&Locale`, все тексты — из бандла. `Err(String)` из [`parse`] — уже готовое
-//! к печати сообщение (префикс + причина + подсказка про `--help`).
+//! The locale is passed **as a parameter** (no globals): [`parse`] and
+//! [`render_help`] take `&Locale`, all text comes from the bundle. The
+//! `Err(String)` from [`parse`] is already a print-ready message (prefix +
+//! reason + a `--help` hint).
 //!
-//! **Не переводятся** имена подкоманд/флагов (`backup`, `--output`) — это протокол,
-//! как id инструментов и команды `/rag` (docs/history/i18n.md §2.3).
+//! Subcommand/flag names (`backup`, `--output`) are **not translated** — they
+//! are protocol, like tool ids and the `/rag` commands (docs/history/i18n.md §2.3).
 
 use std::path::PathBuf;
 
 use crate::shared::i18n::Locale;
 
-/// Степень сжатия бэкапа по умолчанию (совпадает с прежним `default_value_t = 9`).
+/// Default backup compression level (matches the previous `default_value_t = 9`).
 pub const DEFAULT_COMPRESSION: i64 = 9;
 
-/// Разобранная команда CLI. Без подкоманды → [`CliCommand::Run`] (запуск TUI).
+/// A parsed CLI command. No subcommand → [`CliCommand::Run`] (launch the TUI).
 #[derive(Debug, PartialEq, Eq)]
 pub enum CliCommand {
-    /// Запустить TUI (аргументов не было).
+    /// Launch the TUI (no arguments given).
     Run,
-    /// Создать резервную копию (`backup`).
+    /// Create a backup (`backup`).
     Backup {
         output: Option<PathBuf>,
         compression: i64,
     },
-    /// Восстановить из резервной копии (`restore <archive>`).
+    /// Restore from a backup (`restore <archive>`).
     Restore { archive: PathBuf },
-    /// Импорт из файла формата mindfork-import (`import <file>`).
-    /// Спецификация формата — docs/import-format.md.
+    /// Import from a mindfork-import format file (`import <file>`).
+    /// Format spec — docs/import-format.md.
     Import { file: PathBuf },
-    /// Установка песочницы Python (`sandbox setup [--force]`).
+    /// Install the Python sandbox (`sandbox setup [--force]`).
     SandboxSetup { force: bool },
-    /// Экспорт бандла локали (`locales export <code> --output <file>`).
+    /// Export a locale bundle (`locales export <code> --output <file>`).
     LocalesExport { code: String, output: PathBuf },
-    /// Показать справку (общую или по подкоманде).
+    /// Show help (general or for a subcommand).
     Help { topic: Option<HelpTopic> },
-    /// Показать версию (`-V`/`--version`).
+    /// Show the version (`-V`/`--version`).
     Version,
 }
 
-/// Тема справки: общая (`None` у [`CliCommand::Help`]) либо конкретная подкоманда.
+/// Help topic: general (`None` for [`CliCommand::Help`]) or a specific subcommand.
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
 pub enum HelpTopic {
     Backup,
@@ -57,8 +60,8 @@ pub enum HelpTopic {
     LocalesExport,
 }
 
-/// Разбирает аргументы (после имени программы). `Err` — уже готовое к печати
-/// локализованное сообщение (префикс + причина + подсказка про `--help`).
+/// Parses arguments (after the program name). `Err` — an already print-ready
+/// localized message (prefix + reason + a `--help` hint).
 pub fn parse(args: &[String], loc: &Locale) -> Result<CliCommand, String> {
     let toks: Vec<&str> = args.iter().map(String::as_str).collect();
     let Some((&first, rest)) = toks.split_first() else {
@@ -70,9 +73,10 @@ pub fn parse(args: &[String], loc: &Locale) -> Result<CliCommand, String> {
         "backup" => parse_backup(rest, loc),
         "restore" => parse_restore(rest, loc),
         "import" => parse_import(rest, loc),
-        // Команда удалена (этап 1 направления «плагины»): импорт LameLLaMA теперь
-        // выполняет внешний конвертер, эмитящий файл mindfork-import. Подсказываем
-        // замену вместо генерического «неизвестная команда».
+        // The command was removed (stage 1 of the "plugins" track): LameLLaMA
+        // import is now done by an external converter that emits a
+        // mindfork-import file. We hint at the replacement instead of a
+        // generic "unknown command".
         "import-lamellama" => Err(err_line(loc, "cli.import.lamellama_removed", &[])),
         "sandbox" => parse_sandbox(rest, loc),
         "locales" => parse_locales(rest, loc),
@@ -200,7 +204,7 @@ fn parse_locales_export(toks: &[&str], loc: &Locale) -> Result<CliCommand, Strin
     Ok(CliCommand::LocalesExport { code, output })
 }
 
-// -------- Разбор одиночного обязательного позиционного аргумента (restore/import) --------
+// -------- Parsing a single required positional argument (restore/import) --------
 
 enum Positional<'a> {
     Help,
@@ -231,12 +235,13 @@ fn single_positional<'a>(
     }
 }
 
-// -------- Опция со значением: `--opt value` и `--opt=value` (обе формы + короткая) --------
+// -------- An option with a value: `--opt value` and `--opt=value` (both forms + the short one) --------
 
-/// Если `toks[*i]` совпадает с одним из `aliases`, извлекает значение (следующий
-/// токен для формы `--opt value`, либо часть после `=` для `--opt=value`), продвигает
-/// `*i` и возвращает `Ok(Some(value))`. Если токен не совпал ни с одним алиасом —
-/// `Ok(None)` (индекс не двигается). Совпал, но значения нет — `Err`.
+/// If `toks[*i]` matches one of `aliases`, extracts the value (the next
+/// token for the `--opt value` form, or the part after `=` for
+/// `--opt=value`), advances `*i`, and returns `Ok(Some(value))`. If the token
+/// matched none of the aliases — `Ok(None)` (the index doesn't move). It
+/// matched but there's no value — `Err`.
 fn opt_value<'a>(
     toks: &[&'a str],
     i: &mut usize,
@@ -244,7 +249,7 @@ fn opt_value<'a>(
     aliases: &[&str],
 ) -> Result<Option<&'a str>, String> {
     let a = toks[*i];
-    // Форма `--opt value`: точное совпадение имени, значение — следующий токен.
+    // The `--opt value` form: an exact name match, the value is the next token.
     if aliases.contains(&a) {
         let display = aliases.last().copied().unwrap_or(a);
         let v = *toks
@@ -253,7 +258,7 @@ fn opt_value<'a>(
         *i += 2;
         return Ok(Some(v));
     }
-    // Форма `--opt=value` / `-o=value`.
+    // The `--opt=value` / `-o=value` form.
     for al in aliases {
         if let Some(v) = a.strip_prefix(al).and_then(|r| r.strip_prefix('=')) {
             *i += 1;
@@ -270,9 +275,9 @@ fn parse_compression(v: &str, loc: &Locale) -> Result<i64, String> {
     }
 }
 
-// -------- Конструкторы сообщений об ошибках (готовый к печати текст) --------
+// -------- Error-message constructors (print-ready text) --------
 
-/// Полная строка ошибки: `{префикс}: {причина}\n\n{подсказка про --help}`.
+/// The full error line: `{prefix}: {reason}\n\n{hint about --help}`.
 fn err_line(loc: &Locale, key: &str, args: &[(&str, &str)]) -> String {
     format!(
         "{}: {}\n\n{}",
@@ -318,10 +323,11 @@ fn missing_opt(loc: &Locale, opt: &str) -> String {
     err_line(loc, "cli.parse.missing_opt", &[("opt", opt)])
 }
 
-// -------- Справка --------
+// -------- Help --------
 
-/// Текст справки: общий (`topic == None`) либо по подкоманде. Все подписи — из бандла;
-/// имена команд/флагов и метки аргументов (`<archive>`) — протокол, не переводятся.
+/// Help text: general (`topic == None`) or for a subcommand. All labels come
+/// from the bundle; command/flag names and argument placeholders
+/// (`<archive>`) are protocol and aren't translated.
 pub fn render_help(topic: Option<HelpTopic>, loc: &Locale) -> String {
     let usage = loc.t("cli.help.usage");
     let commands = loc.t("cli.help.commands");
@@ -438,7 +444,7 @@ mod tests {
                 compression: DEFAULT_COMPRESSION
             }
         );
-        // Обе формы опций: `--opt value` и `--opt=value`, короткая `-o`.
+        // Both option forms: `--opt value` and `--opt=value`, plus the short `-o`.
         assert_eq!(
             p(&["backup", "-o", "a.zip", "-c", "3"]).unwrap(),
             CliCommand::Backup {
@@ -469,8 +475,8 @@ mod tests {
                 archive: PathBuf::from("a.zip")
             }
         );
-        assert!(p(&["restore"]).is_err()); // нет обязательного аргумента
-        assert!(p(&["restore", "a.zip", "b.zip"]).is_err()); // лишний аргумент
+        assert!(p(&["restore"]).is_err()); // no required argument
+        assert!(p(&["restore", "a.zip", "b.zip"]).is_err()); // extra argument
     }
 
     #[test]
@@ -486,8 +492,8 @@ mod tests {
 
     #[test]
     fn import_lamellama_hints_replacement() {
-        // Удалённая команда даёт подсказку про внешний конвертер + `import`,
-        // а не генерическое «неизвестная команда».
+        // The removed command hints at the external converter + `import`,
+        // rather than a generic "unknown command".
         let err = p(&["import-lamellama", "d"]).unwrap_err();
         assert!(err.contains("import"), "{err}");
         assert!(err.contains("mindfork-import"), "{err}");
@@ -503,8 +509,8 @@ mod tests {
             p(&["sandbox", "setup", "--force"]).unwrap(),
             CliCommand::SandboxSetup { force: true }
         );
-        assert!(p(&["sandbox"]).is_err()); // нет подкоманды
-        assert!(p(&["sandbox", "teardown"]).is_err()); // неизвестная подкоманда
+        assert!(p(&["sandbox"]).is_err()); // no subcommand
+        assert!(p(&["sandbox", "teardown"]).is_err()); // unknown subcommand
     }
 
     #[test]
@@ -516,8 +522,8 @@ mod tests {
                 output: PathBuf::from("de.json")
             }
         );
-        assert!(p(&["locales", "export", "de"]).is_err()); // нет обязательного --output
-        assert!(p(&["locales", "export"]).is_err()); // нет кода
+        assert!(p(&["locales", "export", "de"]).is_err()); // no required --output
+        assert!(p(&["locales", "export"]).is_err()); // no code
     }
 
     #[test]
@@ -551,7 +557,7 @@ mod tests {
 
     #[test]
     fn missing_option_value() {
-        assert!(p(&["backup", "-o"]).is_err()); // опция без значения
+        assert!(p(&["backup", "-o"]).is_err()); // option with no value
     }
 
     #[test]
@@ -571,7 +577,7 @@ mod tests {
             for topic in topics {
                 let text = render_help(topic, loc);
                 assert!(!text.contains("{"), "{lang:?} {topic:?}: {text}");
-                // Имена команд/флагов присутствуют (не потерялись при форматировании).
+                // Command/flag names are present (not lost during formatting).
                 assert!(text.contains("mindfork-rs"), "{lang:?} {topic:?}");
             }
         }
@@ -579,18 +585,19 @@ mod tests {
 
     #[test]
     fn help_columns_leave_gap_after_longest_names() {
-        // Регрессия: самое длинное имя команды/опции не должно слипаться с описанием
-        // (ширина колонки > длины имени). Гэп языко-независим — проверяем на ru.
+        // Regression: the longest command/option name must not run into its
+        // description (column width > name length). The gap is
+        // language-independent — checked on ru.
         let loc = locale(Lang::Ru);
-        // Общая справка: `restore`/`sandbox`/`locales` — самые длинные имена команд.
+        // General help: `restore`/`sandbox`/`locales` are the longest command names.
         assert!(
             render_help(None, loc).contains("restore  "),
-            "имя команды слиплось с описанием"
+            "the command name ran into its description"
         );
-        // Экспорт локали: `-o, --output <FILE>` — самая длинная опция.
+        // Locale export: `-o, --output <FILE>` is the longest option.
         assert!(
             render_help(Some(HelpTopic::LocalesExport), loc).contains("--output <FILE>  "),
-            "имя опции слиплось с описанием"
+            "the option name ran into its description"
         );
     }
 }

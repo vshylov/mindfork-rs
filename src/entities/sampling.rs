@@ -1,18 +1,19 @@
-//! Параметры семплинга (см. spec §8). Поля сериализуются в тело запроса
-//! `/v1/chat/completions`. Помимо стандартных OpenAI-полей (`temperature`,
-//! `top_p`, `frequency_penalty`, …) здесь есть расширения llama.cpp `llama-server`
-//! (`min_p`, `top_n_sigma`, DRY, XTC, `repeat_penalty`, `seed`, mirostat) — их
-//! `llama-server` принимает прямо в теле запроса; сервер, не понимающий поле,
-//! его просто игнорирует (а строгий сторонний OpenAI-сервер может отклонить —
-//! поэтому расширения остаются `None`, пока пользователь их не задаст).
+//! Sampling parameters (see spec §8). Fields are serialized into the
+//! `/v1/chat/completions` request body. Besides the standard OpenAI fields
+//! (`temperature`, `top_p`, `frequency_penalty`, …), this holds llama.cpp
+//! `llama-server` extensions (`min_p`, `top_n_sigma`, DRY, XTC, `repeat_penalty`,
+//! `seed`, mirostat) — `llama-server` accepts them straight in the request body;
+//! a server that doesn't understand a field simply ignores it (a strict
+//! third-party OpenAI server might reject it — hence the extensions stay `None`
+//! until the user sets them).
 
 use serde::{Deserialize, Serialize};
 
 use crate::shared::config::CloudProvider;
 
-/// Уровень reasoning-усилия. `Minimal`/`XHigh` — расширенные ступени OpenAI (gpt-5.x
-/// Responses API); локальные модели/Anthropic понимают `low`/`medium`/`high` (крайние
-/// ступени маппятся к ним при трансляции). Порядок вариантов = порядок цикла в UI.
+/// The reasoning-effort level. `Minimal`/`XHigh` — extended OpenAI tiers (gpt-5.x
+/// Responses API); local models/Anthropic understand `low`/`medium`/`high` (the
+/// extreme tiers map onto them during translation). Variant order = the UI cycle order.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum ReasoningEffort {
@@ -25,7 +26,7 @@ pub enum ReasoningEffort {
 }
 
 impl ReasoningEffort {
-    /// Строковое представление для HTTP-поля `reasoning_effort` / `reasoning.effort`.
+    /// The string representation for the HTTP field `reasoning_effort` / `reasoning.effort`.
     pub fn as_wire(self) -> &'static str {
         match self {
             ReasoningEffort::None => "none",
@@ -38,8 +39,8 @@ impl ReasoningEffort {
     }
 }
 
-/// Многословность ответа (OpenAI Responses `text.verbosity`): регулирует длину
-/// ответа отдельно от температуры. Только OpenAI-Responses; прочие бэкенды игнорируют.
+/// Reply verbosity (OpenAI Responses `text.verbosity`): controls reply length
+/// separately from temperature. OpenAI Responses only; other backends ignore it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Verbosity {
@@ -49,7 +50,7 @@ pub enum Verbosity {
 }
 
 impl Verbosity {
-    /// Строковое представление для HTTP-поля `text.verbosity`.
+    /// The string representation for the HTTP field `text.verbosity`.
     pub fn as_wire(self) -> &'static str {
         match self {
             Verbosity::Low => "low",
@@ -59,100 +60,101 @@ impl Verbosity {
     }
 }
 
-/// Конфигурация семплинга для запроса генерации.
+/// Sampling configuration for a generation request.
 #[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
 #[serde(default)]
 pub struct SamplingConfig {
     pub temperature: Option<f32>,
-    /// Динамическая температура (llama.cpp `dynatemp_range`): ширина диапазона
-    /// ± вокруг `temperature`, подстраиваемого по энтропии распределения на
-    /// каждом токене (уверенные позиции — холоднее, неоднозначные — горячее).
-    /// `0.0` = выключено (обычная статическая температура).
+    /// Dynamic temperature (llama.cpp `dynatemp_range`): the width of the ± range
+    /// around `temperature`, adapted per-token by the distribution's entropy
+    /// (confident positions — colder, ambiguous ones — hotter).
+    /// `0.0` = off (regular static temperature).
     pub dynatemp_range: Option<f32>,
-    /// Показатель кривой динамической температуры (llama.cpp
-    /// `dynatemp_exponent`, по умолчанию сервера `1.0`).
+    /// The dynamic-temperature curve exponent (llama.cpp
+    /// `dynatemp_exponent`, server default `1.0`).
     pub dynatemp_exponent: Option<f32>,
     pub top_k: Option<i64>,
     pub top_p: Option<f32>,
-    /// min-p (llama.cpp): отсекает токены с вероятностью ниже доли от максимальной.
+    /// min-p (llama.cpp): cuts off tokens with probability below a fraction of the maximum.
     pub min_p: Option<f32>,
-    /// top-n-sigma (llama.cpp `top_n_sigma`): отсев по числу σ от макс. логита
-    /// (`-1` = выключено).
+    /// top-n-sigma (llama.cpp `top_n_sigma`): cutoff by number of σ from the max
+    /// logit (`-1` = off).
     pub top_n_sigma: Option<f32>,
-    /// locally typical sampling (llama.cpp `typical_p`, `1.0` = выключено).
+    /// locally typical sampling (llama.cpp `typical_p`, `1.0` = off).
     pub typical_p: Option<f32>,
-    /// adaptive-p (llama.cpp `adaptive_target`, PR #17927): целевая энтропия,
-    /// около которой выбираются токены; отрицательное значение = выключено
-    /// (валидный диапазон `≤ 1.0`). Сверено по `server-schema.cpp` (плоский
-    /// ключ тела запроса). Семплер новый — поведение проверять на живой модели.
+    /// adaptive-p (llama.cpp `adaptive_target`, PR #17927): the target entropy
+    /// tokens are chosen around; a negative value = off (valid range `≤ 1.0`).
+    /// Checked against `server-schema.cpp` (a flat request-body key). A new
+    /// sampler — verify behavior against a live model.
     pub adaptive_target: Option<f32>,
-    /// adaptive-p (llama.cpp `adaptive_decay`): EMA-затухание адаптации цели
-    /// (hard-диапазон `0.0`..`0.99`; меньше — реактивнее, больше — стабильнее).
+    /// adaptive-p (llama.cpp `adaptive_decay`): EMA decay of the target's
+    /// adaptation (hard range `0.0`..`0.99`; lower — more reactive, higher — more
+    /// stable).
     pub adaptive_decay: Option<f32>,
     pub frequency_penalty: Option<f32>,
     pub presence_penalty: Option<f32>,
-    /// Штраф за повтор последовательности токенов (llama.cpp `repeat_penalty`,
-    /// `1.0` = выключено). Отдельно от OpenAI-штрафов presence/frequency.
+    /// Penalty for repeating a token sequence (llama.cpp `repeat_penalty`,
+    /// `1.0` = off). Separate from the OpenAI presence/frequency penalties.
     pub repeat_penalty: Option<f32>,
-    /// Сколько последних токенов учитывать для `repeat_penalty` (llama.cpp
-    /// `repeat_last_n`; `0` = выключено, `-1` = весь контекст).
+    /// How many recent tokens to account for `repeat_penalty` (llama.cpp
+    /// `repeat_last_n`; `0` = off, `-1` = the whole context).
     pub repeat_last_n: Option<i64>,
-    /// DRY: множитель штрафа (llama.cpp `dry_multiplier`, `0.0` = выключено).
+    /// DRY: the penalty multiplier (llama.cpp `dry_multiplier`, `0.0` = off).
     pub dry_multiplier: Option<f32>,
-    /// DRY: основание экспоненты (llama.cpp `dry_base`).
+    /// DRY: the exponent base (llama.cpp `dry_base`).
     pub dry_base: Option<f32>,
-    /// DRY: длина допустимого повтора до штрафа (llama.cpp `dry_allowed_length`).
+    /// DRY: the allowed repeat length before a penalty kicks in (llama.cpp `dry_allowed_length`).
     pub dry_allowed_length: Option<i64>,
-    /// DRY: сколько последних токенов сканировать (llama.cpp `dry_penalty_last_n`;
-    /// `0` = выключено, `-1` = весь контекст).
+    /// DRY: how many recent tokens to scan (llama.cpp `dry_penalty_last_n`;
+    /// `0` = off, `-1` = the whole context).
     pub dry_penalty_last_n: Option<i64>,
-    /// DRY: «брейкеры» — строки, сбрасывающие учёт повтора (llama.cpp
-    /// `dry_sequence_breakers`). `None`/пусто — серверные по умолчанию
-    /// (`\n`, `:`, `"`, `*`). Отправляется только когда непуст.
+    /// DRY: "breakers" — strings that reset repeat tracking (llama.cpp
+    /// `dry_sequence_breakers`). `None`/empty — the server defaults
+    /// (`\n`, `:`, `"`, `*`). Sent only when non-empty.
     pub dry_sequence_breakers: Option<Vec<String>>,
-    /// XTC: вероятность применения семплера (llama.cpp `xtc_probability`,
-    /// `0.0` = выключено).
+    /// XTC: the sampler's application probability (llama.cpp `xtc_probability`,
+    /// `0.0` = off).
     pub xtc_probability: Option<f32>,
-    /// XTC: порог вероятности (llama.cpp `xtc_threshold`).
+    /// XTC: the probability threshold (llama.cpp `xtc_threshold`).
     pub xtc_threshold: Option<f32>,
-    /// Mirostat: режим (llama.cpp `mirostat`; `0` = выключено, `1`/`2` = версии).
+    /// Mirostat: the mode (llama.cpp `mirostat`; `0` = off, `1`/`2` = versions).
     pub mirostat: Option<i64>,
-    /// Mirostat: целевая энтропия τ (llama.cpp `mirostat_tau`).
+    /// Mirostat: the target entropy τ (llama.cpp `mirostat_tau`).
     pub mirostat_tau: Option<f32>,
-    /// Mirostat: скорость обучения η (llama.cpp `mirostat_eta`).
+    /// Mirostat: the learning rate η (llama.cpp `mirostat_eta`).
     pub mirostat_eta: Option<f32>,
     pub max_tokens: Option<usize>,
-    /// RNG-seed на запрос (llama.cpp `seed`; `-1` = случайный). `None` — поле не
-    /// отправляется (сервер выбирает сам).
+    /// The RNG seed per request (llama.cpp `seed`; `-1` = random). `None` — the
+    /// field isn't sent (the server picks its own).
     pub seed: Option<i64>,
-    /// Порядок применения семплеров (llama.cpp `samplers`): имена семплеров в
-    /// нужном порядке (напр. `["penalties","dry","top_k","top_p","min_p",
-    /// "temperature"]`). `None` — серверный порядок по умолчанию. **Важно:**
-    /// семплер, не указанный в непустом списке, отключается — список должен быть
-    /// полным. Отправляется только когда непуст.
+    /// The sampler application order (llama.cpp `samplers`): sampler names in the
+    /// desired order (e.g. `["penalties","dry","top_k","top_p","min_p",
+    /// "temperature"]`). `None` — the server's default order. **Important:**
+    /// a sampler not listed in a non-empty list is disabled — the list must be
+    /// complete. Sent only when non-empty.
     pub samplers: Option<Vec<String>>,
-    /// Включить reasoning («мысли», `<think>`/`reasoning_content`).
+    /// Enable reasoning ("thoughts", `<think>`/`reasoning_content`).
     pub thinking: Option<bool>,
     pub reasoning_effort: Option<ReasoningEffort>,
-    /// Бюджет «мыслей» в токенах (llama.cpp `reasoning_budget`): `0` —
-    /// **полностью выключить** thinking даже для моделей со «вшитым» в шаблон
-    /// reasoning (Gemma `peg-gemma4`, Qwen), `-1` — без ограничения. `None` —
-    /// поле не отправляется (поведение сервера по умолчанию). См. spec §8.
+    /// The "thoughts" token budget (llama.cpp `reasoning_budget`): `0` —
+    /// **fully disable** thinking, even for models with reasoning "baked into"
+    /// the template (Gemma `peg-gemma4`, Qwen), `-1` — unlimited. `None` —
+    /// the field isn't sent (the server's default behavior). See spec §8.
     pub reasoning_budget: Option<i64>,
-    /// Многословность ответа (OpenAI Responses `text.verbosity`). `None` — поле не
-    /// отправляется (дефолт провайдера). Прочие бэкенды игнорируют.
+    /// Reply verbosity (OpenAI Responses `text.verbosity`). `None` — the field
+    /// isn't sent (the provider's default). Other backends ignore it.
     pub verbosity: Option<Verbosity>,
 }
 
 impl SamplingConfig {
-    /// Копия, где обнулены (`None`) все поля, **недоступные** в режиме движка
-    /// провайдера `provider` (см. [`supported_sampling_fields`]). Используется для
-    /// снимка в `Message.metadata`: движок недоступное поле всё равно не принял бы,
-    /// поэтому в «что применилось» оно не должно попадать. Список-поля
-    /// (`samplers`/`dry_sequence_breakers`) обрабатываются как обычные ключи.
+    /// A copy with every field **unavailable** in the engine mode of provider
+    /// `provider` zeroed out (`None`) (see [`supported_sampling_fields`]). Used for
+    /// the `Message.metadata` snapshot: the engine wouldn't have accepted an
+    /// unavailable field anyway, so it shouldn't land in "what was applied". List
+    /// fields (`samplers`/`dry_sequence_breakers`) are handled as regular keys.
     pub fn retain_supported(&self, provider: Option<CloudProvider>) -> SamplingConfig {
         let supported = supported_sampling_fields(provider);
-        // Сериализация нашего типа не падает; при неожиданности возвращаем как есть.
+        // Serializing our own type doesn't fail; on the unexpected, return as-is.
         let Ok(serde_json::Value::Object(mut map)) = serde_json::to_value(self) else {
             return self.clone();
         };
@@ -161,11 +163,11 @@ impl SamplingConfig {
     }
 }
 
-/// Разрешает фактический семплинг по приоритету (spec §8.3):
-/// `Chat.sampling_override` → `Profile.default_sampling` → глобальный.
+/// Resolves the actual sampling by priority (spec §8.3):
+/// `Chat.sampling_override` → `Profile.default_sampling` → global.
 ///
-/// Разрешение — **целиком по конфигу** (а не пофайлово): берётся первый
-/// заданный уровень. Снимок результата сохраняется в `Message.metadata`.
+/// Resolution is **whole-config** (not per-field): the first level that's set
+/// wins. A snapshot of the result is saved into `Message.metadata`.
 pub fn resolve(
     chat_override: Option<&SamplingConfig>,
     profile_default: Option<&SamplingConfig>,
@@ -177,9 +179,9 @@ pub fn resolve(
         .unwrap_or_else(|| global.clone())
 }
 
-/// Имена JSON-полей сэмплинга, которыми может управлять модель через инструмент
-/// `set_sampling` (порядок = порядок в JSON-схеме инструмента). Внутреннее
-/// `reasoning_budget` сюда **не** входит — оно не правится моделью.
+/// Names of the sampling JSON fields the model can control via the
+/// `set_sampling` tool (order = the tool's JSON-schema order). The internal
+/// `reasoning_budget` is **not** included here — it's not editable by the model.
 pub const SETTABLE_SAMPLING_FIELDS: &[&str] = &[
     "temperature",
     "dynatemp_range",
@@ -213,28 +215,28 @@ pub const SETTABLE_SAMPLING_FIELDS: &[&str] = &[
     "verbosity",
 ];
 
-/// Имена полей сэмплинга, которые движок данного режима реально принимает —
-/// зеркало wire-диалекта (`shared/api/openai/wire::restrict_to_strict` и
-/// `anthropic/wire`). `None` провайдер = локальный/external `llama.cpp`: принимает
-/// все поля (расширения он игнорирует, а не отвергает). Облако строгое:
+/// Names of the sampling fields the engine of the given mode actually accepts —
+/// a mirror of the wire dialect (`shared/api/openai/wire::restrict_to_strict` and
+/// `anthropic/wire`). `None` provider = local/external `llama.cpp`: accepts all
+/// fields (it ignores extensions rather than rejecting them). The cloud is strict:
 ///
 /// - **OpenAI** — `max_tokens` + reasoning (`thinking`/`reasoning_effort`) + `verbosity`.
-///   Режим ходит в **Responses API** (`ResponsesClient`), где нет
-///   `temperature`/`top_p`/`seed`/penalties (reasoning-модели их отвергают), но есть
-///   резюме рассуждений и `text.verbosity`. См. ADR 0004, docs/research/openai-responses-client.md;
-/// - **Gemini** (нативный `generateContent`, [`GeminiClient`](crate::shared::api::gemini::GeminiClient))
+///   The mode goes through the **Responses API** (`ResponsesClient`), which has no
+///   `temperature`/`top_p`/`seed`/penalties (reasoning models reject them), but has
+///   reasoning summaries and `text.verbosity`. See ADR 0004, docs/research/openai-responses-client.md;
+/// - **Gemini** (native `generateContent`, [`GeminiClient`](crate::shared::api::gemini::GeminiClient))
 ///   — `temperature`/`top_p`/`top_k`/`max_tokens`/`seed`/`frequency_penalty`/
-///   `presence_penalty` **+ reasoning** (`thinking`/`reasoning_effort`): нативный API
-///   принимает `top_k` (в отличие от прежнего compat) и даёт резюме «мыслей» +
-///   `thinkingLevel`/`thinkingBudget`. Нет `verbosity` (это OpenAI-Responses-специфика);
+///   `presence_penalty` **+ reasoning** (`thinking`/`reasoning_effort`): the native API
+///   accepts `top_k` (unlike the former compat path) and gives "thoughts" summaries
+///   + `thinkingLevel`/`thinkingBudget`. No `verbosity` (that's OpenAI-Responses-specific);
 /// - **Claude** — `max_tokens` + reasoning (`thinking`/`reasoning_effort`):
-///   модели 4.x «зафиксировали» сэмплинг (отвергают `temperature`/`top_p`/`top_k`),
-///   но поддерживают extended thinking (`{type:"adaptive"}` + `output_config.effort`).
-///   `reasoning_budget` сюда не входит — `budget_tokens` модели 4.x отвергают.
+///   4.x models have "locked in" sampling (reject `temperature`/`top_p`/`top_k`),
+///   but support extended thinking (`{type:"adaptive"}` + `output_config.effort`).
+///   `reasoning_budget` isn't included here — 4.x models reject `budget_tokens`.
 ///
-/// Это единый источник истины для UI настроек (`cloud_supported_param`) и
-/// инструментов `get_sampling`/`set_sampling` (показывать/менять только доступное).
-/// См. ADR 0004.
+/// This is the single source of truth for the settings UI (`cloud_supported_param`)
+/// and the `get_sampling`/`set_sampling` tools (show/change only what's available).
+/// See ADR 0004.
 pub fn supported_sampling_fields(provider: Option<CloudProvider>) -> &'static [&'static str] {
     match provider {
         None => SETTABLE_SAMPLING_FIELDS,
@@ -288,10 +290,10 @@ mod tests {
 
     #[test]
     fn supported_fields_mirror_wire_dialect() {
-        // Локально (None) — весь настраиваемый набор.
+        // Local (None) — the whole configurable set.
         assert_eq!(supported_sampling_fields(None), SETTABLE_SAMPLING_FIELDS);
-        // OpenAI — Responses API: max_tokens + reasoning + verbosity; нет
-        // temperature/top_p/seed/penalties (reasoning-модели их отвергают).
+        // OpenAI — Responses API: max_tokens + reasoning + verbosity; no
+        // temperature/top_p/seed/penalties (reasoning models reject them).
         let openai = supported_sampling_fields(Some(CloudProvider::OpenAi));
         assert!(openai.contains(&"max_tokens"));
         assert!(openai.contains(&"thinking"));
@@ -301,8 +303,8 @@ mod tests {
         assert!(!openai.contains(&"temperature"));
         assert!(!openai.contains(&"top_p"));
         assert!(!openai.contains(&"top_k"));
-        // Gemini (нативный generateContent): temperature/top_p/top_k/penalties/seed/
-        // max_tokens + reasoning (thinking/reasoning_effort), но без verbosity.
+        // Gemini (native generateContent): temperature/top_p/top_k/penalties/seed/
+        // max_tokens + reasoning (thinking/reasoning_effort), but no verbosity.
         let gemini = supported_sampling_fields(Some(CloudProvider::Gemini));
         assert!(gemini.contains(&"temperature"));
         assert!(gemini.contains(&"top_p"));
@@ -311,13 +313,13 @@ mod tests {
         assert!(gemini.contains(&"thinking"));
         assert!(gemini.contains(&"reasoning_effort"));
         assert!(!gemini.contains(&"verbosity"));
-        // Claude — max_tokens + reasoning (thinking/reasoning_effort), но не top_k.
+        // Claude — max_tokens + reasoning (thinking/reasoning_effort), but not top_k.
         let claude = supported_sampling_fields(Some(CloudProvider::Claude));
         assert!(claude.contains(&"max_tokens"));
         assert!(claude.contains(&"thinking"));
         assert!(claude.contains(&"reasoning_effort"));
         assert!(!claude.contains(&"top_k"));
-        // Подмножества облака — действительно подмножества полного набора.
+        // The cloud subsets are indeed subsets of the full set.
         for f in openai.iter().chain(gemini).chain(claude) {
             assert!(SETTABLE_SAMPLING_FIELDS.contains(f));
         }
@@ -333,30 +335,30 @@ mod tests {
             thinking: Some(true),
             ..Default::default()
         };
-        // Локально (None) — llama.cpp принимает всё настраиваемое: поля сохраняются.
+        // Local (None) — llama.cpp accepts everything configurable: fields are kept.
         let local = s.retain_supported(None);
         assert_eq!(local.temperature, Some(0.7));
         assert_eq!(local.top_k, Some(40));
         assert_eq!(local.min_p, Some(0.05));
         assert_eq!(local.thinking, Some(true));
-        // OpenAI (Responses): max_tokens + thinking остаются; temperature/top_k/min_p
-        // обнуляются (их нет в Responses API).
+        // OpenAI (Responses): max_tokens + thinking remain; temperature/top_k/min_p
+        // are zeroed (absent from the Responses API).
         let openai = s.retain_supported(Some(CloudProvider::OpenAi));
         assert_eq!(openai.max_tokens, Some(256));
         assert_eq!(openai.thinking, Some(true));
         assert_eq!(openai.temperature, None);
         assert_eq!(openai.top_k, None);
         assert_eq!(openai.min_p, None);
-        // Gemini (нативный) принимает temperature/top_k/thinking; min_p (расширение
-        // llama.cpp) обнуляется.
+        // Gemini (native) accepts temperature/top_k/thinking; min_p (a llama.cpp
+        // extension) is zeroed.
         let gemini = s.retain_supported(Some(CloudProvider::Gemini));
         assert_eq!(gemini.temperature, Some(0.7));
         assert_eq!(gemini.max_tokens, Some(256));
         assert_eq!(gemini.top_k, Some(40));
         assert_eq!(gemini.thinking, Some(true));
         assert_eq!(gemini.min_p, None);
-        // Claude — только max_tokens + reasoning: temperature/top_k обнуляются,
-        // thinking сохраняется.
+        // Claude — only max_tokens + reasoning: temperature/top_k are zeroed,
+        // thinking is kept.
         let claude = s.retain_supported(Some(CloudProvider::Claude));
         assert_eq!(claude.max_tokens, Some(256));
         assert_eq!(claude.thinking, Some(true));
@@ -379,11 +381,11 @@ mod tests {
             ..Default::default()
         };
 
-        // Все комбинации переопределений (spec §8.3).
+        // Every combination of overrides (spec §8.3).
         assert_eq!(resolve(Some(&chat), Some(&profile), &global), chat);
         assert_eq!(resolve(None, Some(&profile), &global), profile);
         assert_eq!(resolve(None, None, &global), global);
-        // Chat имеет приоритет над профилем, профиль — над глобальным.
+        // Chat takes priority over the profile, the profile — over the global.
         assert_eq!(resolve(Some(&chat), None, &global), chat);
     }
 }

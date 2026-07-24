@@ -1,14 +1,14 @@
-//! Импорт данных из нейтрального формата **mindfork-import** (spec §12.2):
-//! профили и чаты, эмитированные внешним конвертером. Спецификация формата —
-//! [docs/import-format.md]; выбор паттерна «внешний конвертер → документированный
-//! файл → импорт» — исследование plugin-system (docs/research). Одноразовый,
-//! **идемпотентный** (детерминированные UUIDv5 от стабильных ключей `key`),
-//! исходный файл только читается.
+//! Importing data from the neutral **mindfork-import** format (spec §12.2):
+//! profiles and chats emitted by an external converter. The format spec is
+//! [docs/import-format.md]; the choice of the "external converter →
+//! documented file → import" pattern comes from the plugin-system research
+//! (docs/research). One-shot, **idempotent** (deterministic UUIDv5 from
+//! stable `key`s), the source file is only ever read.
 //!
-//! Строгость к структуре (неверный `format`, дубликаты ключей, ссылка на
-//! отсутствующий профиль, неизвестная роль → понятная ошибка), терпимость к
-//! расширению (неизвестные поля игнорируются — совместимая эволюция без bump'а
-//! версии, зеркало политики `#[serde(default)]` у собственных схем).
+//! Strict about structure (a wrong `format`, duplicate keys, a reference to a
+//! missing profile, an unknown role → a clear error), tolerant of extension
+//! (unknown fields are ignored — compatible evolution with no version bump, a
+//! mirror of the `#[serde(default)]` policy of our own schemas).
 
 use std::collections::{HashMap, HashSet};
 use std::fs;
@@ -27,33 +27,33 @@ use crate::features::tools::default_tool_ids;
 use crate::shared::config::Theme;
 use crate::shared::i18n::{Lang, Locale};
 
-/// Максимальная поддерживаемая версия формата (см. docs/import-format.md).
+/// Maximum supported format version (see docs/import-format.md).
 pub const FORMAT_VERSION: u32 = 1;
-/// Обязательное значение поля `format`.
+/// The required value of the `format` field.
 const FORMAT_NAME: &str = "mindfork-import";
 
-/// Пространство имён UUIDv5 для id профилей: `UUIDv5(NS, key)`. ASCII
-/// `mindfork import` + тег `0001`. Фиксировано — повторный импорт даёт те же id
-/// (идемпотентность); константы задокументированы в docs/import-format.md.
+/// UUIDv5 namespace for profile ids: `UUIDv5(NS, key)`. ASCII
+/// `mindfork import` + tag `0001`. Fixed — a repeat import gives the same ids
+/// (idempotency); the constants are documented in docs/import-format.md.
 const PROFILE_NAMESPACE: Uuid = Uuid::from_u128(0x6d69_6e64_666f_726b_696d_706f_7274_0001_u128);
-/// Пространство имён UUIDv5 для id чатов (тег `0002`). Отдельное от профилей —
-/// одинаковый `key` профиля и чата не сталкивается в один UUID.
+/// UUIDv5 namespace for chat ids (tag `0002`). Separate from profiles — a
+/// matching `key` for a profile and a chat doesn't collide into one UUID.
 const CHAT_NAMESPACE: Uuid = Uuid::from_u128(0x6d69_6e64_666f_726b_696d_706f_7274_0002_u128);
 
-/// Результат импорта: профили, чаты и (опционально) глобальные настройки
-/// источника (семплинг/интерфейс) для применения к `AppConfig`.
+/// Import result: profiles, chats, and (optionally) the source's global
+/// settings (sampling/interface) to apply to `AppConfig`.
 #[derive(Debug, Default)]
 pub struct ImportResult {
     pub profiles: Vec<Profile>,
     pub chats: Vec<Chat>,
-    /// Глобальный семплинг источника (неизвестные поля отброшены при разборе).
+    /// The source's global sampling (unknown fields are dropped during parsing).
     pub sampling: Option<SamplingConfig>,
-    /// Настройки интерфейса источника; каждое поле опционально — применяется
-    /// только заданное (частичный перенос не затирает настройки пользователя).
+    /// The source's interface settings; every field is optional — only what's
+    /// set is applied (a partial transfer doesn't overwrite the user's settings).
     pub interface: Option<ImportedInterface>,
 }
 
-/// Перенесённые настройки интерфейса (все поля опциональны).
+/// Transferred interface settings (all fields optional).
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct ImportedInterface {
     pub spellcheck_enabled: Option<bool>,
@@ -61,7 +61,7 @@ pub struct ImportedInterface {
     pub theme: Option<Theme>,
 }
 
-// ---------- wire-типы формата (частичные; неизвестные поля игнорируются) ----------
+// ---------- format wire types (partial; unknown fields are ignored) ----------
 
 #[derive(Debug, Deserialize)]
 struct ImFile {
@@ -80,10 +80,10 @@ struct ImProfile {
     key: String,
     #[serde(default)]
     name: String,
-    /// Явный UUID вместо детерминированного (непрерывность с ранее
-    /// импортированными данными — см. docs/import-format.md §Идентификаторы).
+    /// An explicit UUID instead of a deterministic one (continuity with previously
+    /// imported data — see docs/import-format.md §Identifiers).
     id: Option<Uuid>,
-    /// Язык служебного каркаса (`ru`/`en`/код внешней локали, ось A).
+    /// Agent-scaffold language (`ru`/`en`/an external locale code, axis A).
     language: Option<String>,
     #[serde(default)]
     system_message: String,
@@ -105,13 +105,13 @@ struct ImChat {
     key: String,
     #[serde(default)]
     profile_key: String,
-    /// Явный UUID вместо детерминированного (как у профиля).
+    /// An explicit UUID instead of a deterministic one (as with a profile).
     id: Option<Uuid>,
     #[serde(default)]
     title: String,
     created_at: Option<String>,
     modified_at: Option<String>,
-    /// Явное системное сообщение; нет/пусто → первое system-сообщение из `messages`.
+    /// An explicit system message; missing/empty → the first system message from `messages`.
     system_message: Option<String>,
     character_names: Option<ImCharacters>,
     #[serde(default)]
@@ -141,11 +141,11 @@ struct ImInterface {
     theme: Option<String>,
 }
 
-// ---------- разбор (чистые функции, тестируемы на фикстурах) ----------
+// ---------- parsing (pure functions, testable on fixtures) ----------
 
-/// Разбирает файл формата mindfork-import (содержимое строкой). Валидация:
-/// `format`/`version`, непустые уникальные ключи, ссылки чатов на профили этого
-/// же файла, известные роли сообщений. Ведущий BOM отбрасывается.
+/// Parses a mindfork-import format file (content as a string). Validation:
+/// `format`/`version`, non-empty unique keys, chat references to profiles in this
+/// same file, known message roles. A leading BOM is dropped.
 pub fn parse_import(json: &str, loc: &Locale) -> Result<ImportResult> {
     let json = json.trim_start_matches('\u{feff}');
     let f: ImFile =
@@ -176,7 +176,7 @@ pub fn parse_import(json: &str, loc: &Locale) -> Result<ImportResult> {
         _ => bail!("{}", loc.t("import.err.no_version")),
     }
 
-    // Профили: непустые уникальные ключи → детерминированные id.
+    // Profiles: non-empty unique keys → deterministic ids.
     let mut profile_ids: HashMap<&str, Uuid> = HashMap::new();
     let mut profiles = Vec::new();
     for (i, p) in f.profiles.iter().enumerate() {
@@ -196,7 +196,7 @@ pub fn parse_import(json: &str, loc: &Locale) -> Result<ImportResult> {
         profiles.push(profile);
     }
 
-    // Чаты: непустые уникальные ключи + ссылка на профиль ЭТОГО файла.
+    // Chats: non-empty unique keys + a reference to a profile from THIS file.
     let mut chat_keys: HashSet<&str> = HashSet::new();
     let mut chats = Vec::new();
     for (i, c) in f.chats.iter().enumerate() {
@@ -234,16 +234,16 @@ pub fn parse_import(json: &str, loc: &Locale) -> Result<ImportResult> {
     })
 }
 
-/// Читает и разбирает файл формата mindfork-import с диска.
+/// Reads and parses a mindfork-import format file from disk.
 pub fn import_file(path: &Path, loc: &Locale) -> Result<ImportResult> {
     let bytes = fs::read(path)
         .with_context(|| loc.tf("import.ctx.read", &[("path", &path.display().to_string())]))?;
     parse_import(&String::from_utf8_lossy(&bytes), loc)
 }
 
-// ---------- маппинг в доменные сущности ----------
+// ---------- mapping into domain entities ----------
 
-/// Профиль формата → профиль mindfork. id детерминирован по `key` (или явный).
+/// A format profile → a mindfork profile. id is derived from `key` (or explicit).
 fn map_profile(p: &ImProfile) -> Profile {
     let id =
         p.id.unwrap_or_else(|| Uuid::new_v5(&PROFILE_NAMESPACE, p.key.as_bytes()));
@@ -256,13 +256,13 @@ fn map_profile(p: &ImProfile) -> Profile {
             .as_deref()
             .map(Lang::from_code)
             .unwrap_or_default(),
-        // Имперсонация форматом v1 не переносится — общий дефолт.
+        // Impersonation isn't carried over by format v1 — the shared default.
         impersonation_system_message: String::new(),
         character_names: map_characters(p.character_names.as_ref()),
         greeting: p.greeting.clone().filter(|g| !g.is_empty()),
-        // Импортированные профили получают стандартный набор инструментов;
-        // реестр известных = тот же набор (новые добавит reconcile_tools,
-        // не переоткрывая выключенные). См. spec §9.4.
+        // Imported profiles get the standard tool set;
+        // the "known" registry = the same set (new ones will be added by reconcile_tools,
+        // without re-enabling disabled ones). See spec §9.4.
         enabled_tools: default_tool_ids(),
         known_tools: default_tool_ids(),
         default_sampling: p.sampling.clone(),
@@ -270,9 +270,9 @@ fn map_profile(p: &ImProfile) -> Profile {
     }
 }
 
-/// Чат формата → чат mindfork, привязанный к `profile_id`. Системное сообщение:
-/// явное поле приоритетно, иначе первое system-сообщение истории; system-сообщения
-/// в историю не попадают (в mindfork системное хранится отдельно).
+/// A format chat → a mindfork chat, bound to `profile_id`. System message:
+/// the explicit field takes priority, else the first system message in the history; system messages
+/// don't go into the history (in mindfork the system one is stored separately).
 fn map_chat(c: &ImChat, profile_id: Uuid, loc: &Locale) -> Result<Chat> {
     let id =
         c.id.unwrap_or_else(|| Uuid::new_v5(&CHAT_NAMESPACE, c.key.as_bytes()));
@@ -354,7 +354,7 @@ fn parse_theme(s: &str) -> Theme {
     }
 }
 
-/// Временные метки — RFC 3339; нечитаемые не считаются ошибкой (см. формат §Семантика).
+/// Timestamps — RFC 3339; unreadable ones aren't treated as an error (see the format §Semantics).
 fn parse_time(s: Option<&str>) -> Option<DateTime<Utc>> {
     let s = s?;
     DateTime::parse_from_rfc3339(s)
@@ -371,13 +371,13 @@ mod tests {
     use super::*;
     use crate::shared::i18n::locale;
 
-    /// Референсная локаль для тестов (ru — байт-в-байт с бандлом).
+    /// The reference locale for tests (ru — byte-for-byte with the bundle).
     fn ru() -> &'static Locale {
         locale(Lang::Ru)
     }
 
-    /// Golden-фикстура формата v1 (зеркало docs/import-format.md; неизвестные
-    /// поля намеренно присутствуют — терпимость к расширению).
+    /// A golden fixture of format v1 (mirroring docs/import-format.md; unknown
+    /// fields are deliberately present — tolerance for extension).
     const FULL: &str = r#"{
       "format": "mindfork-import",
       "version": 1,
@@ -425,7 +425,7 @@ mod tests {
         assert_eq!(p.character_names.user, "Гайя");
         assert_eq!(p.character_names.system, CharacterNames::default().system);
         assert!(!p.enabled_tools.is_empty());
-        // Семплинг: известные поля перенесены, неизвестные игнорированы.
+        // Sampling: known fields are carried over, unknown ones are ignored.
         let s = p.default_sampling.as_ref().unwrap();
         assert_eq!(s.temperature, Some(0.8));
         assert_eq!(s.top_k, Some(64));
@@ -434,7 +434,7 @@ mod tests {
         let c = &r.chats[0];
         assert_eq!(c.profile_id, p.id);
         assert_eq!(c.title, "First");
-        // system из истории (явного поля нет); в сообщения не попал.
+        // system from the history (no explicit field); didn't end up in the messages.
         assert_eq!(c.system_message, "sys from msg");
         assert_eq!(c.messages.len(), 2);
         assert_eq!(c.messages[0].role, MessageRole::User);
@@ -446,7 +446,7 @@ mod tests {
         assert_eq!(c.messages[1].thoughts.as_deref(), Some("thinking"));
         assert!(c.created_at.timestamp() > 0);
 
-        // Настройки: частичный перенос (только заданное).
+        // Settings: a partial transfer (only what's set).
         assert_eq!(r.sampling.unwrap().temperature, Some(0.5));
         let i = r.interface.unwrap();
         assert_eq!(i.theme, Some(Theme::Dark));
@@ -456,8 +456,8 @@ mod tests {
 
     #[test]
     fn ids_deterministic_and_namespaced() {
-        // Одинаковый key у профиля и чата → РАЗНЫЕ id (раздельные namespace);
-        // повторный разбор → те же id (идемпотентность).
+        // The same key for a profile and a chat → DIFFERENT ids (separate namespaces);
+        // a repeat parse → the same ids (idempotency).
         let json = r#"{ "format": "mindfork-import", "version": 1,
           "profiles": [{ "key": "x", "name": "X" }],
           "chats": [{ "key": "x", "profile_key": "x" }] }"#;
@@ -517,7 +517,7 @@ mod tests {
         assert!(newer.contains('2'), "{newer}");
         assert!(
             parse_import(r#"{ "format": "mindfork-import" }"#, ru()).is_err(),
-            "версия обязательна"
+            "version is required"
         );
         assert!(parse_import(r#"{ "format": "mindfork-import", "version": 0 }"#, ru()).is_err());
     }
@@ -559,7 +559,7 @@ mod tests {
     #[test]
     fn import_file_tolerates_bom_and_reports_missing() {
         let dir = tempfile::tempdir().unwrap();
-        // Имя без префикса ключей бандла: гейт i18n сканирует дотированные литералы.
+        // A name without the bundle keys' prefix: the i18n gate scans dotted literals.
         let path = dir.path().join("import-file.json");
         let mut bytes = vec![0xEF, 0xBB, 0xBF];
         bytes.extend_from_slice(FULL.as_bytes());

@@ -1,14 +1,14 @@
-//! Маппинг доменных сообщений ([`Message`]) в формат запроса движка ([`ChatRequest`]).
+//! Maps domain messages ([`Message`]) into the engine request format ([`ChatRequest`]).
 
 use crate::entities::chat::Chat;
 use crate::entities::message::{Message, MessageRole, ToolCallRecord};
 use crate::entities::sampling::SamplingConfig;
 use crate::shared::api::{ApiMessage, ApiToolCall, ChatRequest};
 
-/// Конвертирует доменное сообщение в сообщение для модели. Системные сообщения
-/// передаются через [`ChatRequest::system`] (здесь — `None`). Assistant с
-/// tool-вызовами и tool-результаты восстанавливаются для корректной истории
-/// (строгая валидация порядка сервером, contract §3.2).
+/// Converts a domain message into a message for the model. System messages
+/// go through [`ChatRequest::system`] (here — `None`). Assistant messages with
+/// tool calls and tool results are rebuilt for a correct history
+/// (strict order validation by the server, contract §3.2).
 fn message_to_api(message: &Message) -> Option<ApiMessage> {
     match message.role {
         MessageRole::System => None,
@@ -28,19 +28,19 @@ fn message_to_api(message: &Message) -> Option<ApiMessage> {
     }
 }
 
-/// Доменная запись tool-вызова → форма для запроса (аргументы как JSON-строка).
+/// Domain tool-call record → the request-body form (arguments as a JSON string).
 fn record_to_api(rec: &ToolCallRecord) -> ApiToolCall {
     ApiToolCall {
         id: rec.id.clone(),
         name: rec.name.clone(),
         arguments: rec.arguments.to_string(),
-        // Подпись мысли (Gemini 3) сохранена в записи — переотправляем на реплее
-        // истории, иначе Gemini 3 вернёт 400 на исторический functionCall.
+        // A thought signature (Gemini 3) is preserved on the record — resent on
+        // history replay, otherwise Gemini 3 returns a 400 on a historical functionCall.
         thought_signature: rec.thought_signature.clone(),
     }
 }
 
-/// Время последнего user-сообщения чата (для `ToolContext`).
+/// Timestamp of the chat's last user message (for `ToolContext`).
 pub(super) fn last_user_message_at(chat: &Chat) -> Option<chrono::DateTime<chrono::Utc>> {
     chat.messages
         .iter()
@@ -49,7 +49,7 @@ pub(super) fn last_user_message_at(chat: &Chat) -> Option<chrono::DateTime<chron
         .map(|m| m.timestamp)
 }
 
-/// Строит запрос генерации из текущего состояния чата с набором схем инструментов.
+/// Builds a generation request from the chat's current state with a set of tool schemas.
 pub(super) fn build_request(
     chat: &Chat,
     sampling: SamplingConfig,

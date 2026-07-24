@@ -1,466 +1,531 @@
-# Исследование: полноценный клиент режима `gemini` (нативный generateContent)
+# Research: a full-fledged client for `gemini` mode (native generateContent)
 
-**Статус:** исследование (2026-07-10). Аналог
-[docs/research/openai-responses-client.md](openai-responses-client.md) для Gemini.
-Развивает [ADR 0004](../decisions/0004-engine-contract-multi-provider.md) (в котором
-нативный Gemini был явно помечен «вне объёма — берётся через OpenAI-compat»). Вывод:
-нативный клиент **реализуем и укладывается за трейт `EngineBackend`**, как Anthropic и
-OpenAI Responses, но у Gemini есть один структурный нюанс (**подписи мыслей — per-part и
-обязательны для Gemini 3 при tool-use**), которого нет у других провайдеров; он решает,
-персистить ли подпись в доменном `Message`.
+**Status:** research (2026-07-10). A counterpart to
+[docs/research/openai-responses-client.md](openai-responses-client.md) for Gemini.
+Extends [ADR 0004](../decisions/0004-engine-contract-multi-provider.md) (which
+explicitly marked native Gemini "out of scope — routed through OpenAI-compat").
+Conclusion: a native client is **feasible and fits behind the `EngineBackend`
+trait**, like Anthropic and OpenAI Responses, but Gemini has one structural
+wrinkle (**thought signatures are per-part and mandatory for Gemini 3 during
+tool-use**) that no other provider has; it determines whether the signature
+needs to be persisted on the domain `Message`.
 
-## 1. Проблема
+## 1. Problem
 
-Режим `ServerMode::Gemini` сегодня ходит в **OpenAI-совместимый Chat Completions**
-(`…/v1beta/openai/chat/completions`) тем же `OpenAiClient` с `WireDialect::Gemini`.
-Диалект строгий (`restrict_to_strict`) — **вычищает** reasoning-сигналы (`thinking`,
-`reasoning_effort`, `reasoning_budget`) и расширения llama.cpp, поэтому:
+`ServerMode::Gemini` mode currently hits the **OpenAI-compatible Chat
+Completions** endpoint (`…/v1beta/openai/chat/completions`) via the same
+`OpenAiClient` with `WireDialect::Gemini`. The dialect is strict
+(`restrict_to_strict`) — it **strips** reasoning signals (`thinking`,
+`reasoning_effort`, `reasoning_budget`) and llama.cpp extensions, so:
 
-- «мыслей» (CoT) в режиме `gemini` нет — `ChatChunk::Thoughts` не приходит;
-- `reasoning_effort` не отправляется — глубиной рассуждения управлять нельзя;
-- `supported_sampling_fields(Gemini)` = `temperature`/`top_p`/`frequency_penalty`/
-  `presence_penalty`/`seed`/`max_tokens` (даже `top_k`, который Gemini **принимает
-  нативно**, вырезан диалектом — это ограничение compat-протокола, не Gemini).
+- there are no "thoughts" (CoT) in `gemini` mode — `ChatChunk::Thoughts` never
+  arrives;
+- `reasoning_effort` isn't sent — reasoning depth can't be controlled;
+- `supported_sampling_fields(Gemini)` = `temperature`/`top_p`/
+  `frequency_penalty`/`presence_penalty`/`seed`/`max_tokens` (even `top_k`,
+  which Gemini **accepts natively**, is stripped by the dialect — a limitation
+  of the compat protocol, not of Gemini).
 
-У Claude (Фаза 2) и OpenAI (Responses) «мысли» и `reasoning_effort` есть — асимметрия
-видна пользователю прямо в секции «Семплинг».
+Claude (Phase 2) and OpenAI (Responses) have "thoughts" and `reasoning_effort`
+— the asymmetry is visible to the user right in the "Sampling" section.
 
-## 2. Что выяснено про API (сверено по docs, июль 2026)
+## 2. What we've learned about the API (verified against the docs, July 2026)
 
-### 2.1 У Gemini ДВА нативных API
+### 2.1 Gemini has TWO native APIs
 
-- **`generateContent` / `streamGenerateContent`** — зрелый, стабильный, хорошо
-  документированный REST (`…/v1beta/models/{model}:streamGenerateContent`). Это аналог
-  Chat Completions по «поколению»: `contents[]` + `generationConfig`. **Рекомендуемая
-  цель.**
-- **Interactions API** — новый (аналог OpenAI Responses): `generation_config.
-  thinking_level`/`thinking_summaries`, «шаги мыслей» с `signature`+`summary`. Свежий,
-  меньше документирован, есть отдельный гайд миграции. **Пока не берём** — незрелость
-  ради того же результата.
+- **`generateContent` / `streamGenerateContent`** — mature, stable, well
+  documented REST (`…/v1beta/models/{model}:streamGenerateContent`). This is
+  the counterpart to Chat Completions by "generation": `contents[]` +
+  `generationConfig`. **Recommended target.**
+- **Interactions API** — newer (an analogue of OpenAI Responses):
+  `generation_config.thinking_level`/`thinking_summaries`, "thought steps" with
+  `signature`+`summary`. Fresh, less documented, has a separate migration
+  guide. **Not taken yet** — immaturity for the same outcome.
 
-Берём `generateContent` (мысли через `thinkingConfig.includeThoughts`, стриминг через
-`:streamGenerateContent?alt=sse`).
+We go with `generateContent` (thoughts via `thinkingConfig.includeThoughts`,
+streaming via `:streamGenerateContent?alt=sse`).
 
-### 2.2 Reasoning живёт в `generationConfig.thinkingConfig`
+### 2.2 Reasoning lives in `generationConfig.thinkingConfig`
 
-- **Резюме мыслей** (не сырой CoT): `thinkingConfig.includeThoughts: true` → в ответе
-  появляются части `{"text": "...", "thought": true}` (при стриминге — инкрементально).
-  Это ровно наш `ChatChunk::Thoughts`.
-- **Глубина** зависит от поколения модели (ловушка, см. §3):
-  - **Gemini 3.x** — `thinkingConfig.thinkingLevel`: `minimal`|`low`|`medium`|`high`;
-  - **Gemini 2.5** — `thinkingConfig.thinkingBudget` (токены): `0` выключает (кроме
-    2.5 Pro — минимум 128, выключить нельзя), `-1` = динамически, иначе диапазон
-    (2.5 Flash `0–24576`, Pro `128–32768`).
-- `reasoning_effort` как отдельного поля в **нативном** API нет — есть `thinkingLevel`/
-  `thinkingBudget`. Наш `ReasoningEffort` (`none/minimal/low/medium/high/xhigh`) мапится
-  на `thinkingLevel` (3.x) или `thinkingBudget` (2.5).
-- **Токены мыслей**: `usageMetadata.thoughtsTokenCount` (уже входят в биллинг вывода) —
-  ложатся в наш `TokenUsage.reasoning_tokens`.
+- **Thought summaries** (not raw CoT): `thinkingConfig.includeThoughts: true`
+  → the response gets parts `{"text": "...", "thought": true}` (incrementally,
+  during streaming). This maps directly to our `ChatChunk::Thoughts`.
+- **Depth** depends on the model generation (a pitfall, see §3):
+  - **Gemini 3.x** — `thinkingConfig.thinkingLevel`:
+    `minimal`|`low`|`medium`|`high`;
+  - **Gemini 2.5** — `thinkingConfig.thinkingBudget` (tokens): `0` disables it
+    (except for 2.5 Pro — minimum 128, can't be disabled), `-1` = dynamic,
+    otherwise a range (2.5 Flash `0–24576`, Pro `128–32768`).
+- There's no separate `reasoning_effort` field in the **native** API — there's
+  `thinkingLevel`/`thinkingBudget`. Our `ReasoningEffort`
+  (`none/minimal/low/medium/high/xhigh`) maps to `thinkingLevel` (3.x) or
+  `thinkingBudget` (2.5).
+- **Thought tokens**: `usageMetadata.thoughtsTokenCount` (already included in
+  output billing) — feed our `TokenUsage.reasoning_tokens`.
 
-### 2.3 Подписи мыслей — per-part и обязательны для Gemini 3 (ключевой нюанс)
+### 2.3 Thought signatures — per-part and mandatory for Gemini 3 (the key wrinkle)
 
-Это то, что отличает Gemini от Anthropic (одна подпись на ход) и OpenAI (один
-reasoning-элемент на ход):
+This is what sets Gemini apart from Anthropic (one signature per turn) and
+OpenAI (one reasoning element per turn):
 
-- Подпись `thoughtSignature` — **зашифрованный опаковый токен, привязанный к
-  конкретной части** (`functionCall` или `text`), а не к ходу целиком.
-- **Gemini 3: обязательна.** Если в `contents` встречается `functionCall`-часть без
-  `thoughtSignature`, API возвращает `400`: *«Function call … in the N content block is
-  missing a thought_signature»*. Gemini 2.5 — опционально (без 400).
-- **Параллельные вызовы**: подпись только у **первой** `functionCall`-части хода.
-  **Последовательные** (в разных раундах хода): у каждой своя.
-- Правило: получил подпись — верни её **в той же части** при отправке истории.
+- The `thoughtSignature` — an **encrypted opaque token bound to a specific
+  part** (`functionCall` or `text`), not to the turn as a whole.
+- **Gemini 3: mandatory.** If a `functionCall` part appears in `contents`
+  without a `thoughtSignature`, the API returns `400`: *"Function call … in the
+  N content block is missing a thought_signature."* Gemini 2.5 — optional (no
+  400).
+- **Parallel calls**: only the **first** `functionCall` part of a turn carries
+  a signature. **Sequential** calls (in different rounds of a turn) each get
+  their own.
+- Rule: if you got a signature, return it **in the same part** when sending the
+  history.
 
 ```jsonc
-// ответ модели: подпись — сосед functionCall
+// model's response: the signature is a sibling of functionCall
 { "functionCall": { "name": "calc", "args": {"x": 1} },
   "thoughtSignature": "<opaque>" }
 ```
 
-**Почему это критично для нас.** `message_to_api` (`orchestrator/request.rs`)
-пересобирает историю из персистентного `Chat` **на каждой генерации**: прошлые
-assistant-ходы с tool-вызовами (`ApiMessage::assistant_tool_calls`) отправляются заново.
-У Anthropic это безопасно (сервер сам отбрасывает старые thinking и не требует подписи на
-исторических `tool_use`); у **Gemini 3** исторические `functionCall` без подписи → `400`.
-Значит для Gemini 3 подпись, скорее всего, **надо персистить** в доменном `Message`
-(в отличие от Anthropic/OpenAI, где она живёт только в памяти хода). Это единственная
-правка вне слоя движка, ради которой Gemini сложнее двух предыдущих провайдеров.
+**Why this matters to us.** `message_to_api` (`orchestrator/request.rs`)
+rebuilds the history from the persistent `Chat` **on every generation**: past
+assistant turns with tool calls (`ApiMessage::assistant_tool_calls`) are resent.
+For Anthropic this is safe (the server itself drops old thinking and doesn't
+require a signature on historical `tool_use`); for **Gemini 3**, historical
+`functionCall` parts without a signature → `400`. So for Gemini 3 the signature
+most likely **needs to be persisted** on the domain `Message` (unlike
+Anthropic/OpenAI, where it lives only in the turn's memory). This is the one
+change outside the engine layer that makes Gemini harder than the two prior
+providers.
 
-### 2.4 Формат протокола (нативный generateContent)
+### 2.4 Protocol format (native generateContent)
 
-| | Chat Completions (наш `OpenAiClient`) | Gemini generateContent |
+| | Chat Completions (our `OpenAiClient`) | Gemini generateContent |
 |---|---|---|
 | Endpoint | `/v1/chat/completions` | `…/v1beta/models/{model}:streamGenerateContent?alt=sse` |
 | Auth | `Authorization: Bearer` | `x-goog-api-key: <key>` |
-| Системное | `messages[0].role="system"` | top-level `systemInstruction:{parts:[{text}]}` |
-| История | `messages[]` (роли system/user/assistant/tool) | `contents:[{role:"user"|"model", parts:[…]}]` — **только `user`/`model`** |
-| Результат инструмента | `role:"tool"`, `tool_call_id` | часть `{functionResponse:{name, response:{…}}}` в **`role:"user"`**-контенте |
-| Вызов инструмента | `assistant.tool_calls[]` (`id`+`arguments`-строка) | часть `{functionCall:{name, args:{…}}}` (+ сосед `thoughtSignature`); **args — объект**, `id` **нет** |
-| Схема инструмента | `{type:"function", function:{name,description,parameters}}` | `tools:[{functionDeclarations:[{name,description,parameters}]}]` (OpenAPI-подмножество) |
-| Лимит токенов | `max_tokens` | `generationConfig.maxOutputTokens` |
-| Reasoning | (нет в compat) | `generationConfig.thinkingConfig.{thinkingLevel\|thinkingBudget, includeThoughts}` |
-| Причина остановки | `finish_reason` | `candidates[].finishReason` (`STOP`/`MAX_TOKENS`/`SAFETY`/…) |
+| System | `messages[0].role="system"` | top-level `systemInstruction:{parts:[{text}]}` |
+| History | `messages[]` (roles system/user/assistant/tool) | `contents:[{role:"user"|"model", parts:[…]}]` — **only `user`/`model`** |
+| Tool result | `role:"tool"`, `tool_call_id` | a `{functionResponse:{name, response:{…}}}` part inside a **`role:"user"`** content |
+| Tool call | `assistant.tool_calls[]` (`id`+`arguments`-string) | a `{functionCall:{name, args:{…}}}` part (+ a sibling `thoughtSignature`); **args is an object**, there's **no** `id` |
+| Tool schema | `{type:"function", function:{name,description,parameters}}` | `tools:[{functionDeclarations:[{name,description,parameters}]}]` (OpenAPI subset) |
+| Token limit | `max_tokens` | `generationConfig.maxOutputTokens` |
+| Reasoning | (none in compat) | `generationConfig.thinkingConfig.{thinkingLevel\|thinkingBudget, includeThoughts}` |
+| Stop reason | `finish_reason` | `candidates[].finishReason` (`STOP`/`MAX_TOKENS`/`SAFETY`/…) |
 | Usage | `prompt_tokens`/`completion_tokens` | `usageMetadata.{promptTokenCount, candidatesTokenCount, thoughtsTokenCount, totalTokenCount}` |
 
-**SSE**: `:streamGenerateContent?alt=sse` даёт строки `data: {…}`, где каждый объект —
-частичный `GenerateContentResponse` (`candidates[0].content.parts[]` с дельтами). Текст
-и части-мысли (`thought:true`) стримятся инкрементально; `functionCall`-часть обычно
-приходит целиком, `thoughtSignature` — на ней. Причину завершения выводит клиент по
-`finishReason` + наличию `functionCall`-частей.
+**SSE**: `:streamGenerateContent?alt=sse` gives `data: {…}` lines, where each
+object is a partial `GenerateContentResponse`
+(`candidates[0].content.parts[]` with deltas). Text and thought parts
+(`thought:true`) stream incrementally; a `functionCall` part usually arrives
+whole, `thoughtSignature` — on it. The client derives the stop reason from
+`finishReason` + the presence of `functionCall` parts.
 
-**Нет `id`/`call_id` у вызовов** — сопоставление `functionCall`↔`functionResponse` идёт
-**по имени и порядку** (в отличие от OpenAI/Anthropic с `tool_call_id`). Наши
-`ApiToolCall.id`/`ApiMessage.tool_call_id` для Gemini-wire не нужны; парность держится
-позиционно. Для agentic-loop это прозрачно (мы сами храним `id`), но wire его не шлёт.
+**No `id`/`call_id` for calls** — matching `functionCall`↔`functionResponse`
+goes **by name and order** (unlike OpenAI/Anthropic with `tool_call_id`). Our
+`ApiToolCall.id`/`ApiMessage.tool_call_id` aren't needed for the Gemini wire
+(pairing is positional), but we keep storing our own `id` — the agentic loop is
+transparent to this, wire just doesn't send it.
 
-## 3. Ловушки
+## 3. Pitfalls
 
-1. **`thinkingLevel` (3.x) ≠ `thinkingBudget` (2.5).** Клиент не знает поколение модели
-   без конфига. Варианты: (а) инференс по имени модели (`gemini-3*`→level,
-   `gemini-2.5*`→budget); (б) слать `thinkingLevel` по умолчанию (целясь во флагман
-   3.x) + документировать; (в) поле выбора в конфиге. Целясь в актуальный флагман,
-   разумный дефолт — `thinkingLevel`; на 2.5 при промахе — понятная ошибка API.
-2. **Полностью выключить мысли нельзя на 3.x и 2.5 Pro.** `reasoning_budget==0`
-   (импперсонация/авто-название) на Gemini 3 → максимум `thinkingLevel:"minimal"`, на
-   2.5 Pro → минимум 128 токенов. Как и у OpenAI (`effort:none` не у всех) — просто
-   **игнорируем текст мыслей** downstream (импперсонация/title уже так делают).
-3. **`maxOutputTokens` включает токены мыслей** — тот же класс бага, что «мысли съели
-   бюджет». Нужен щедрый дефолт или предупреждение; `Finished(Length)` по
-   `finishReason:"MAX_TOKENS"`.
-4. **Схема инструмента — OpenAPI-подмножество, Gemini придирчив.** Он не принимает
-   часть JSON-Schema (`$schema`, произвольные `additionalProperties`, некоторые
-   форматы). Наши схемы генерятся под OpenAI — вероятна **санитизация** (снять
-   `$schema`/неподдержанное) в `gemini/wire.rs`. Требует проверки на живых схемах
-   инструментов проекта.
-5. **`role:"model"`, не `"assistant"`; нет ролей `system`/`tool`.** system → top-level;
-   `tool`-результат → `functionResponse`-часть внутри `role:"user"`. Наш `ApiRole`
-   маппится в wire, как у Anthropic (там роль `tool` тоже сворачивается в user).
-6. **Подписи (см. §2.3).** Без персиста — риск `400` на Gemini 3 при реплее истории с
-   tool-вызовами. Решение — персистить подпись per-tool-call (см. §4.2).
-7. **Эмбеддинги** остаются на OpenAI-compat (`OpenAiClient`, `…/v1beta/openai/
-   embeddings`) — как OpenAI оставил `/v1/embeddings`. `cloud_embed_setup` не трогаем.
-   Нюанс: base URL для нативного чата (`…/v1beta`) и compat-эмбеддингов
-   (`…/v1beta/openai`) **разные** — развести в супервайзере/конфиге (см. §4.4).
-8. **Base URL.** `CloudProvider::Gemini.base_url()` сейчас `…/v1beta/openai` (для
-   compat). Нативный `GeminiClient` берёт `…/v1beta` и строит путь
-   `/models/{model}:streamGenerateContent`.
+1. **`thinkingLevel` (3.x) ≠ `thinkingBudget` (2.5).** The client doesn't know
+   the model's generation without a config. Options: (a) infer it from the
+   model name (`gemini-3*`→level, `gemini-2.5*`→budget); (b) default to sending
+   `thinkingLevel` (targeting the 3.x flagship) + document it; (c) a config
+   selection field. Targeting the current flagship, a sensible default is
+   `thinkingLevel`; on a miss with 2.5, a clear API error follows.
+2. **Thoughts can't be fully disabled on 3.x or 2.5 Pro.** `reasoning_budget==0`
+   (impersonation/auto-title) on Gemini 3 → at best `thinkingLevel:"minimal"`,
+   on 2.5 Pro → minimum 128 tokens. Same as OpenAI (`effort:none` isn't
+   available for all models) — we just **ignore the thought text** downstream
+   (impersonation/title already do this).
+3. **`maxOutputTokens` includes thought tokens** — the same class of bug as
+   "thoughts ate the budget." Needs a generous default or a warning;
+   `Finished(Length)` on `finishReason:"MAX_TOKENS"`.
+4. **Tool schema is an OpenAPI subset, Gemini is picky.** It doesn't accept
+   part of JSON Schema (`$schema`, arbitrary `additionalProperties`, some
+   formats). Our schemas are generated for OpenAI, so **sanitization** (stripping
+   `$schema`/unsupported bits) is likely needed in `gemini/wire.rs`. Needs
+   verification against the project's live tool schemas.
+5. **`role:"model"`, not `"assistant"`; no `system`/`tool` roles.** system →
+   top-level; a `tool` result → a `functionResponse` part inside `role:"user"`.
+   Our `ApiRole` maps to wire like Anthropic does (there the `tool` role also
+   collapses into user).
+6. **Signatures (see §2.3).** Without persistence — risk of `400` on Gemini 3
+   when replaying history with tool calls. Solution — persist the signature
+   per-tool-call (see §4.2).
+7. **Embeddings** stay on OpenAI-compat (`OpenAiClient`, `…/v1beta/openai/
+   embeddings`) — same as OpenAI kept `/v1/embeddings`. `cloud_embed_setup` is
+   untouched. Nuance: the base URL for native chat (`…/v1beta`) and compat
+   embeddings (`…/v1beta/openai`) are **different** — split it out in the
+   supervisor/config (see §4.4).
+8. **Base URL.** `CloudProvider::Gemini.base_url()` is currently
+   `…/v1beta/openai` (for compat). The native `GeminiClient` takes `…/v1beta`
+   and builds the path `/models/{model}:streamGenerateContent`.
 
-## 4. Архитектура: куда это ложится
+## 4. Architecture: where this lands
 
-Нативный Gemini — **другой протокол**, значит новая реализация `EngineBackend`, ровно
-как `AnthropicClient` и `ResponsesClient`. Слои выше движка (оркестратор, agentic-loop,
-инструменты, UI) не трогаются — **фича помещается за трейт** (главный вывод, как и в
-исследовании OpenAI).
+Native Gemini is a **different protocol**, so it's a new `EngineBackend`
+implementation, exactly like `AnthropicClient` and `ResponsesClient`. Layers
+above the engine (orchestrator, agentic loop, tools, UI) are untouched — **the
+feature sits behind the trait** (the main takeaway, as in the OpenAI research).
 
-Раскладка: `shared/api/gemini/{client.rs, wire.rs}` (рядом с `openai/`, `anthropic/`).
-`shared/api/mod.rs` реэкспортит `GeminiClient`.
+Layout: `shared/api/gemini/{client.rs, wire.rs}` (alongside `openai/`,
+`anthropic/`). `shared/api/mod.rs` re-exports `GeminiClient`.
 
-### 4.1 Развилка: нативный клиент (A) или расширить compat-диалект (B)?
+### 4.1 Fork: native client (A) or extend the compat dialect (B)?
 
-| Вариант | Плюсы | Минусы |
+| Option | Pros | Cons |
 |---|---|---|
-| **A. Нативный `GeminiClient` (generateContent)** | «Полноценность»: мысли, `reasoning_effort`, `top_k` назад, `thoughtsTokenCount`, подписи «как надо»; стабильный документированный протокол; симметрия с Claude/Responses | Отдельный wire-слой (роли/parts/подписи/санитизация схем); персист подписи для Gemini 3 |
-| B. Расширить `WireDialect::Gemini` (compat) | Дёшево: не чистить reasoning, слать `reasoning_effort` + `extra_body.google.thinking_config` | Compat **в бете**, недодокументирован по возврату резюме/подписей; **нестабилен** (Gemini 3 Preview отвергает `reasoning_effort:"medium"`); подписи через compat мутны → риск `400` на tool-use с Gemini 3. Инструменты у нас центральны — риск неприемлем |
+| **A. Native `GeminiClient` (generateContent)** | "Full-fledged": thoughts, `reasoning_effort`, `top_k` back, `thoughtsTokenCount`, "proper" signatures; a stable documented protocol; symmetric with Claude/Responses | A separate wire layer (roles/parts/signatures/schema sanitization); persisting the signature for Gemini 3 |
+| B. Extend `WireDialect::Gemini` (compat) | Cheap: stop stripping reasoning, send `reasoning_effort` + `extra_body.google.thinking_config` | Compat is **in beta**, under-documented on returning summaries/signatures; **unstable** (Gemini 3 Preview rejects `reasoning_effort:"medium"`); signatures via compat are murky → risk of `400` on tool-use with Gemini 3. Tools are central to us — the risk is unacceptable |
 
-**Рекомендация — A** (как и с OpenAI: полноценный клиент за трейт, а не хрупкая надстройка
-над compat). B годился бы как быстрый временный зонд «мыслей без tool-use», но не как цель.
+**Recommendation — A** (as with OpenAI: a full client behind the trait, not a
+fragile layer over compat). B would work as a quick temporary probe for
+"thoughts without tool-use," not as the goal.
 
-### 4.2 Правки контракта (главное отличие от OpenAI/Anthropic)
+### 4.2 Contract changes (the main difference from OpenAI/Anthropic)
 
-Подпись у Gemini — **per-tool-call**, а не одна на ход, поэтому существующий
-`ThinkingRef`/`ThinkingBlock` (один на ход) **не подходит**. Естественнее:
+Gemini's signature is **per-tool-call**, not one per turn, so the existing
+`ThinkingRef`/`ThinkingBlock` (one per turn) **doesn't fit**. More natural:
 
-- **`ApiToolCall.thought_signature: Option<String>`** и **`ToolCallDelta.
-  thought_signature`** — Gemini-клиент проставляет при разборе `functionCall`-части;
-  прочие бэкенды оставляют `None` (как `thinking`). `ToolCallAccumulator` копит подпись
-  вместе с вызовом.
-- **`ToolCallRecord.thought_signature: Option<String>`** (доменный `entities/message.rs`,
-  `#[serde(default, skip_serializing_if=Option::is_none)]` → без миграции) — **персист**
-  ради реплея истории на Gemini 3. Подпись опаковая/зашифрованная — хранить безопасно.
-  `record_to_api`/обратный маппинг протягивают её. Прочие провайдеры поле не читают.
-- Существующий `ThinkingBlock`/`ThoughtsSignature(ThinkingRef)` для Gemini **не нужен**
-  (мысли-как-текст стримятся частями `thought:true`; подпись едет на вызове). Трогать его
-  не надо — Gemini его просто не использует.
+- **`ApiToolCall.thought_signature: Option<String>`** and **`ToolCallDelta.
+  thought_signature`** — the Gemini client sets it when parsing a
+  `functionCall` part; other backends leave it `None` (like `thinking`).
+  `ToolCallAccumulator` accumulates the signature together with the call.
+- **`ToolCallRecord.thought_signature: Option<String>`** (domain
+  `entities/message.rs`, `#[serde(default, skip_serializing_if=Option::is_none)]`
+  → without migration) — **persisted** for replaying history on Gemini 3.
+  `record_to_api`/the reverse mapping thread it through. Other providers don't
+  read this field.
+- The existing `ThinkingBlock`/`ThoughtsSignature(ThinkingRef)` **isn't needed**
+  for Gemini (thoughts-as-text stream as parts with `thought:true`; the
+  signature rides on the call). No need to touch it — Gemini simply doesn't use
+  it.
 
-**Альтернатива (проще, но менее верно):** только Gemini 2.5 (подписи опциональны → не
-персистим, ветка как Anthropic). Отбрасывает флагман 3.x — не рекомендуется.
+**Alternative (simpler, but less correct):** Gemini 2.5 only (signatures
+optional → don't persist, a branch like Anthropic). Drops the 3.x flagship —
+not recommended.
 
-### 4.3 Правки семплинга
+### 4.3 Sampling changes
 
-- `supported_sampling_fields(Some(Gemini))` → `["temperature", "top_p", "top_k",
-  "max_tokens", "seed", "frequency_penalty", "presence_penalty", "thinking",
-  "reasoning_effort"]`. Отличия от текущего compat-набора: **+`top_k`** (Gemini
-  принимает нативно), **+`thinking`/`reasoning_effort`**. **Нет `verbosity`** (это
-  OpenAI-Responses-специфика). Это **единственная** правка для UI настроек и
-  `get/set_sampling` — всё выводится из неё (как было с Claude/OpenAI).
-- Маппинг в wire: `thinking:Some(true)`+`includeThoughts:true`; `reasoning_effort`→
-  `thinkingLevel` (3.x) / `thinkingBudget` (2.5); `reasoning_budget==Some(0)`→
-  минимальный уровень/`thinkingBudget:0` (см. ловушку 2); `max_tokens`→`maxOutputTokens`;
+- `supported_sampling_fields(Some(Gemini))` → `["temperature", "top_p",
+  "top_k", "max_tokens", "seed", "frequency_penalty", "presence_penalty",
+  "thinking", "reasoning_effort"]`. Differences from the current compat set:
+  **+`top_k`** (Gemini accepts it natively), **+`thinking`/
+  `reasoning_effort`**. **No `verbosity`** (that's OpenAI-Responses-specific).
+  This is the **only** change needed for the settings UI and `get/set_sampling`
+  — everything else follows from it (as it did with Claude/OpenAI).
+- Wire mapping: `thinking:Some(true)`+`includeThoughts:true`;
+  `reasoning_effort`→`thinkingLevel` (3.x) / `thinkingBudget` (2.5);
+  `reasoning_budget==Some(0)`→ minimum level/`thinkingBudget:0` (see pitfall 2);
+  `max_tokens`→`maxOutputTokens`;
   `temperature`/`top_p`/`top_k`/`seed`/`frequency_penalty`/`presence_penalty`→
   `generationConfig.*`.
 
-### 4.4 Супервайзер и очистка `WireDialect`
+### 4.4 Supervisor and cleaning up `WireDialect`
 
-- `cloud_chat_setup`: ветка `CloudProvider::Gemini` строит `GeminiClient` вместо
-  `OpenAiClient::with_dialect(WireDialect::Gemini)`.
-- После этого **`WireDialect::Gemini` становится мёртвым** (его единственный потребитель —
-  Gemini-облако). А `WireDialect::OpenAi` уже удалён (Responses). Останется единственный
-  вариант `LlamaCpp` → **`WireDialect` можно убрать целиком** вместе с `is_strict`/
-  `restrict_to_strict`; `openai/wire.rs` худеет, `OpenAiClient` остаётся для External +
-  эмбеддингов. Приятная симметричная зачистка (как удаление `OpenAi`-диалекта в Responses).
-- `cloud_embed_setup(Gemini)` **не трогаем** — эмбеддинги идут через compat
-  (`…/v1beta/openai/embeddings`). Развести base URL: чат-клиент — `…/v1beta`, эмбеддер —
-  `…/v1beta/openai` (либо `GeminiClient` сам строит путь от `…/v1beta`, а `base_url()`
-  оставить для эмбеддера; либо два аксессора).
+- `cloud_chat_setup`: the `CloudProvider::Gemini` branch builds a
+  `GeminiClient` instead of `OpenAiClient::with_dialect(WireDialect::Gemini)`.
+- After this, **`WireDialect::Gemini` becomes dead** (its only consumer was
+  Gemini cloud). And `WireDialect::OpenAi` is already removed (Responses).
+  With a single `LlamaCpp` variant left → **`WireDialect` can be removed
+  entirely** along with `is_strict`/`restrict_to_strict`; `openai/wire.rs`
+  gets slimmer, `OpenAiClient` remains for External + embeddings. A nice
+  symmetric cleanup (like removing the `OpenAi` dialect in Responses).
+- `cloud_embed_setup(Gemini)` is **untouched** — embeddings go through compat
+  (`…/v1beta/openai/embeddings`). Split the base URL: the chat client —
+  `…/v1beta`, the embedder — `…/v1beta/openai` (either `GeminiClient` builds
+  the path itself from `…/v1beta` while `base_url()` stays for the embedder;
+  or two accessors).
 
-## 5. Что ещё даёт нативный Gemini (сверх «мыслей» и effort)
+## 5. What else native Gemini gives us (beyond "thoughts" and effort)
 
-- **`top_k` назад** (compat его резал) — бесплатно из §4.3.
-- **`thoughtsTokenCount`** — в счётчик токенов (у нас уже есть `reasoning_tokens`).
+- **`top_k` back** (compat stripped it) — free from §4.3.
+- **`thoughtsTokenCount`** — into the token counter (we already have
+  `reasoning_tokens`).
 - **`stopSequences`, `responseMimeType`/`responseSchema` (structured output),
-  `candidateCount`, `safetySettings`** — задел, не в объёме.
-- **Мультимодальность** (изображения/аудио во `parts`) — крупное отдельное направление,
-  вне объёма.
-- **Google-инструменты** (`googleSearch`, `codeExecution`) — серверные аналоги наших
-  `web_search`/`python_exec`; конфликтуют с клиентским agentic-loop (как у OpenAI). Вне
-  объёма, задел.
+  `candidateCount`, `safetySettings`** — groundwork, out of scope.
+- **Multimodality** (images/audio in `parts`) — a large separate track, out of
+  scope.
+- **Google tools** (`googleSearch`, `codeExecution`) — server-side analogues of
+  our `web_search`/`python_exec`; conflict with the client-side agentic loop
+  (like OpenAI's). Out of scope, groundwork.
 
-## 6. Оценка объёма
+## 6. Scope estimate
 
-По образцу Anthropic/Responses (`wire.rs` ~500–580 строк + `client.rs` ~400, с тестами и
-смоуками):
+By the Anthropic/Responses precedent (`wire.rs` ~500–580 lines +
+`client.rs` ~400, with tests and smokes):
 
-- **Фаза A** (ядро, без подписей): `gemini/wire.rs` (сборка `contents`/`systemInstruction`/
-  `tools.functionDeclarations`/`generationConfig.thinkingConfig`; санитизация схем; разбор
-  SSE-частей — текст, `thought:true`, `functionCall`, `finishReason`, `usageMetadata`) +
-  `gemini/client.rs` (`EngineBackend`, `x-goog-api-key`, вывод `FinishReason`, usage) +
-  правки семплинга/супервайзера. Смоуки: генерация; поток `Thoughts` при `includeThoughts`;
-  `reasoning_effort`/`thinkingLevel` принимается; tool-call без подписей (Gemini 2.5 или
-  один раунд).
-- **Фаза B** (подписи для Gemini 3): `thought_signature` в `ApiToolCall`/`ToolCallDelta`/
-  `ToolCallRecord` (+персист), проброс в agentic-loop, эхо подписи на `functionCall`-части
-  в `build_contents`. Смоук: два раунда tool-use на **Gemini 3** без `400` (проверяет
-  наличие подписи в теле второго запроса) + реплей истории на следующей генерации.
-- **Фаза C** (опц.): точная санитизация схем под придирки Gemini; выбор `thinkingLevel`
-  vs `thinkingBudget` в UI/по имени модели.
+- **Phase A** (core, no signatures): `gemini/wire.rs` (building `contents`/
+  `systemInstruction`/`tools.functionDeclarations`/
+  `generationConfig.thinkingConfig`; schema sanitization; parsing SSE parts —
+  text, `thought:true`, `functionCall`, `finishReason`, `usageMetadata`) +
+  `gemini/client.rs` (`EngineBackend`, `x-goog-api-key`, deriving
+  `FinishReason`, usage) + sampling/supervisor changes. Smokes: generation;
+  `Thoughts` stream with `includeThoughts`; `reasoning_effort`/`thinkingLevel`
+  is accepted; a tool call without signatures (Gemini 2.5 or a single round).
+- **Phase B** (signatures for Gemini 3): `thought_signature` in `ApiToolCall`/
+  `ToolCallDelta`/`ToolCallRecord` (+persistence), threading through the
+  agentic loop, echoing the signature on `functionCall` parts in
+  `build_contents`. Smoke: two rounds of tool-use on **Gemini 3** without a
+  `400` (checks the presence of a signature in the body of the second request)
+  + replaying the history on the next generation.
+- **Phase C** (optional): precise schema sanitization for Gemini's pickiness;
+  choosing `thinkingLevel` vs `thinkingBudget` in the UI/by model name.
 
-Реалистично: A+B — один PR, сопоставимый с Claude/Responses, **плюс ~30 строк персиста
-подписи** (уникальная для Gemini добавка). Ripple вне `shared/api` — контракт (per-call
-подпись + персист), семплинг, супервайзер, generation.rs.
+Realistically: A+B is one PR, comparable in size to Claude/Responses, **plus
+~30 lines to persist the signature** (Gemini's unique addition). Ripple outside
+`shared/api` — the contract (per-call signature + persistence), sampling, the
+supervisor, generation.rs.
 
-**Риск-профиль**: средний. Слои выше `EngineBackend` не меняются; уникальный риск —
-подписи Gemini 3 (нужна живая проверка, §7). Откат = вернуть ветку супервайзера на
-`OpenAiClient` + Gemini-диалект (при этом придётся временно вернуть `WireDialect::Gemini`,
-если его уже удалили — учесть в порядке коммитов).
+**Risk profile**: medium. Layers above `EngineBackend` don't change; the
+unique risk is Gemini 3 signatures (needs a live check, §7). Rollback = point
+the supervisor branch back at `OpenAiClient` + the Gemini dialect (which would
+require temporarily bringing back `WireDialect::Gemini` if it's already been
+removed — account for this in the commit order).
 
-## 7. Открытые вопросы (требуют живого ключа)
+## 7. Open questions (need a live key)
 
-> **Живой прогон (Gemini 3.1 Pro Preview, 2026-07-10): GO.** Все 4 смоука зелёные
-> (`MINDFORK_GEMINI_MODEL=gemini-3.1-pro-preview`, ~17с): генерация, поток «мыслей»
-> (`includeThoughts`), один tool-раунд и `tool_use_round_trips_signature` — последний с
-> `thought_signature present: true` и успешной переотправкой подписи без `400`. Механизм
-> подписей работает; персист (Фаза B) — правильный и достаточный путь, оставлен.
+> **Live run (Gemini 3.1 Pro Preview, 2026-07-10): GO.** All 4 smokes green
+> (`MINDFORK_GEMINI_MODEL=gemini-3.1-pro-preview`, ~17s): generation, the
+> "thoughts" stream (`includeThoughts`), a single tool round, and
+> `tool_use_round_trips_signature` — the last one with
+> `thought_signature present: true` and a successful resend of the signature
+> without a `400`. The signature mechanism works; persistence (Phase B) is the
+> right and sufficient approach, kept.
 
-1. **Область валидации подписи на Gemini 3.** ~~Требует ли API подпись у **всех**
-   исторических `functionCall`, или только у самого свежего хода?~~ **Разрешено выбором
-   дизайна:** мы **всегда** переотправляем подпись (персистим её), поэтому failure-mode не
-   достигается ни при каком поведении сервера. Живой прогон подтвердил: подпись приходит и
-   принимается при переотправке (`present: true`, раунд-2 без `400`). Персист оставлен как
-   безопасный путь — снимать не требуется.
-2. **`thinkingLevel` vs `thinkingBudget` по имени модели.** Принимает ли 3.x
-   `thinkingBudget` (и наоборот)? Нужен ли инференс поколения, или один параметр
-   универсален.
-3. **Санитизация схем инструментов.** Какие именно ключи JSON-Schema наших инструментов
-   Gemini отвергает (`$schema`, `additionalProperties`, форматы) — увидеть на реальных
-   схемах проекта.
-4. **Формат `thoughtSignature` при параллельных вызовах** (только первая часть) —
-   подтвердить, что accumulator корректно кладёт подпись на нужный вызов.
-5. **`role` у `functionResponse`** — подтвердить `user` (а не `function`); и что несколько
-   `functionResponse` подряд можно слать одной `user`-частью (как склейка у Anthropic).
-6. **Приходит ли резюме мыслей без верификации организации** (у OpenAI резюме придержаны
-   до верификации — проверить, есть ли у Google аналогичный гейт; по докам — нет, но
-   увидеть на живом ключе).
+1. **Scope of signature validation on Gemini 3.** ~~Does the API require a
+   signature on **all** historical `functionCall` parts, or only on the most
+   recent turn?~~ **Resolved by design choice:** we **always** resend the
+   signature (we persist it), so the failure mode is unreachable regardless of
+   server behavior. The live run confirmed: the signature arrives and is
+   accepted on resend (`present: true`, round 2 with no `400`). Persistence
+   stays as the safe path — no need to remove it.
+2. **`thinkingLevel` vs `thinkingBudget` by model name.** Does 3.x accept
+   `thinkingBudget` (and vice versa)? Is generation inference needed, or is one
+   parameter universal.
+3. **Tool schema sanitization.** Which exact JSON Schema keys of our tools
+   Gemini rejects (`$schema`, `additionalProperties`, formats) — need to see
+   this against the project's live schemas.
+4. **`thoughtSignature` format for parallel calls** (only the first part) —
+   confirm the accumulator correctly places the signature on the right call.
+5. **`role` for `functionResponse`** — confirm it's `user` (not `function`);
+   and that several consecutive `functionResponse` parts can be sent in one
+   `user` part (like the Anthropic merge).
+6. **Does the thought summary arrive without organization verification** (for
+   OpenAI, summaries are held back until verification — check whether Google
+   has an analogous gate; per the docs — no, but need to see it with a live
+   key).
 
-Смоуки — по образцу Anthropic/OpenAI: `#[ignore]`, ключ из `MINDFORK_GEMINI_KEY`, модель
-из `MINDFORK_GEMINI_MODEL`.
+Smokes — modeled on Anthropic/OpenAI: `#[ignore]`, key from
+`MINDFORK_GEMINI_KEY`, model from `MINDFORK_GEMINI_MODEL`.
 
-## 8. План реализации (детальный)
+## 8. Implementation plan (detailed)
 
-Три фазы + опц. C. **A** доводится и мержится отдельно (мысли/effort без tool-use
-подписей — уже полезно), **B** добавляет подписи для Gemini 3, **C** — полировка.
-Порядок коммитов и точные правки:
+Three phases + optional C. **A** is finished and merged separately (thoughts/
+effort without tool-use signatures is already useful), **B** adds signatures
+for Gemini 3, **C** is polish. Commit order and precise changes:
 
-### Фаза A — ядро нативного клиента (мысли + reasoning, без подписей) — СДЕЛАНА
+### Phase A — native client core (thoughts + reasoning, no signatures) — DONE
 
-> **Статус (2026-07-10):** реализовано на ветке `feat/gemini-native-client`.
-> `shared/api/gemini/{wire,client,mod}.rs` (нативный `GeminiClient`); режим `gemini`
-> переключён с OpenAI-compat на нативный `generateContent`; `WireDialect` удалён целиком
-> (осиротел — `openai/wire.rs` худеет); `supported_sampling_fields(Gemini)` += `top_k`/
-> `thinking`/`reasoning_effort`, − `verbosity`; `CloudProvider::chat_base_url()` (нативный
-> `…/v1beta`, эмбеддинги остаются на compat `…/v1beta/openai`). Инференс поколения по имени
-> модели (`gemini-3*`→`thinkingLevel`, иначе `thinkingBudget`) внесён уже в Фазу A. **13
-> unit-тестов + 3 `#[ignore]`-смоука** (`MINDFORK_GEMINI_KEY`); fmt/clippy/test зелёные.
-> Живой прогон — за пользователем (нужен ключ). Далее — Фаза B (подписи Gemini 3).
+> **Status (2026-07-10):** implemented on branch `feat/gemini-native-client`.
+> `shared/api/gemini/{wire,client,mod}.rs` (native `GeminiClient`); `gemini`
+> mode switched from OpenAI-compat to native `generateContent`; `WireDialect`
+> removed entirely (orphaned — `openai/wire.rs` slims down);
+> `supported_sampling_fields(Gemini)` gains `top_k`/`thinking`/
+> `reasoning_effort`, loses `verbosity`; `CloudProvider::chat_base_url()`
+> (native `…/v1beta`, embeddings stay on compat `…/v1beta/openai`). Generation
+> inference by model name (`gemini-3*`→`thinkingLevel`, otherwise
+> `thinkingBudget`) was rolled into Phase A. **13 unit tests + 3 `#[ignore]`
+> smokes** (`MINDFORK_GEMINI_KEY`); fmt/clippy/test green. Live run — left to
+> the user (needs a key). Next — Phase B (Gemini 3 signatures).
 
-1. **`shared/api/gemini/wire.rs`** (новый; образец — `openai/responses/wire.rs`):
+1. **`shared/api/gemini/wire.rs`** (new; modeled on `openai/responses/wire.rs`):
    - `build_request(req, model, stream) -> GenRequest`:
-     - `systemInstruction: {parts:[{text}]}` из `req.system` (skip если пусто);
-     - `contents: Vec<Value>` из `build_contents(req)` (см. ниже);
+     - `systemInstruction: {parts:[{text}]}` from `req.system` (skip if empty);
+     - `contents: Vec<Value>` from `build_contents(req)` (see below);
      - `tools: [{functionDeclarations: [{name, description, parameters: sanitize(schema)}]}]`
-       (skip пустых); `sanitize_schema` снимает `$schema`/неподдержанное (Фаза C
-       уточняет — на A достаточно снять `$schema` и `additionalProperties` с корня);
-     - `generationConfig`: `maxOutputTokens`←`max_tokens`, `temperature`/`topP`←`top_p`/
-       `topK`←`top_k`/`seed`/`frequencyPenalty`/`presencePenalty` (все `skip_if None`),
-       `thinkingConfig` (см. ниже);
-     - `thinkingConfig`: `includeThoughts:true` при `thinking==Some(true)&&!force_off`;
-       глубина — `mapping(reasoning_effort)` (по умолчанию `thinkingLevel`; §3.1);
-       `force_off` (`reasoning_budget==Some(0)`) → минимальный уровень, `includeThoughts:false`.
-   - `build_contents(req)`: роль `User→"user"`, `Assistant→"model"`, `Tool→"user"` c
-     частью `functionResponse:{name, response:{...}}`. Склейка соседних одной роли
-     (как Anthropic). `functionCall`-часть: `{functionCall:{name, args}}` — `args`
-     из строки в объект (не-объект → `{}`, как Anthropic). System пропускается.
-     Часть-подпись `thoughtSignature` — **Фаза B** (на A не ставим).
-   - Serde-типы разбора SSE: `GenResponse { candidates:[{content:{parts:[Part]},
+       (skip if empty); `sanitize_schema` strips `$schema`/unsupported bits
+       (Phase C refines this — for A, stripping `$schema` and
+       `additionalProperties` from the root is enough);
+     - `generationConfig`: `maxOutputTokens`←`max_tokens`, `temperature`/
+       `topP`←`top_p`/`topK`←`top_k`/`seed`/`frequencyPenalty`/
+       `presencePenalty` (all `skip_if None`), `thinkingConfig` (see below);
+     - `thinkingConfig`: `includeThoughts:true` when
+       `thinking==Some(true)&&!force_off`; depth — `mapping(reasoning_effort)`
+       (defaulting to `thinkingLevel`; §3.1); `force_off`
+       (`reasoning_budget==Some(0)`) → minimum level, `includeThoughts:false`.
+   - `build_contents(req)`: role `User→"user"`, `Assistant→"model"`,
+     `Tool→"user"` with a `functionResponse:{name, response:{...}}` part.
+     Merges adjacent same-role messages (like Anthropic). `functionCall` part:
+     `{functionCall:{name, args}}` — `args` converted from a string to an
+     object (a non-object → `{}`, like Anthropic). System is skipped.
+     The signature part `thoughtSignature` is **Phase B** (not set in A).
+   - Serde types for SSE parsing: `GenResponse { candidates:[{content:{parts:[Part]},
      finishReason}], usageMetadata }`, `Part { text?, thought?:bool, functionCall?,
      thoughtSignature? }`, `usageMetadata { promptTokenCount, candidatesTokenCount,
-     thoughtsTokenCount, totalTokenCount }`. Тесты сборки/разбора — как в
+     thoughtsTokenCount, totalTokenCount }`. Build/parse tests — as in
      `responses/wire.rs`.
-2. **`shared/api/gemini/client.rs`** (новый; образец — `responses/client.rs`):
+2. **`shared/api/gemini/client.rs`** (new; modeled on `responses/client.rs`):
    - `GeminiClient { http, base_url, api_key, model }`; `chat_stream`:
-     `POST {base}/models/{model}:streamGenerateContent?alt=sse`, заголовок
-     `x-goog-api-key` (не `bearer_auth`); тело ошибки не глотаем; SSE через
-     `eventsource()`.
-   - Разбор частей потока → `ChatChunk`: `text`(без `thought`)→`Text`;
+     `POST {base}/models/{model}:streamGenerateContent?alt=sse`, header
+     `x-goog-api-key` (not `bearer_auth`); the error body isn't swallowed; SSE
+     via `eventsource()`.
+   - Parsing stream parts → `ChatChunk`: `text`(no `thought`)→`Text`;
      `text`+`thought:true`→`Thoughts`; `functionCall`→`ToolCall(ToolCallDelta{index,
-     id:name-based или пусто, name, arguments: args.to_string()})` (у Gemini `args` —
-     объект целиком в одном чанке; `index` = порядковый номер part); `finishReason`
-     → `Finished` (`STOP`+были вызовы→`ToolCalls`; `MAX_TOKENS`→`Length`; иначе `Stop`);
-     `usageMetadata`→`Usage(TokenUsage{prompt=promptTokenCount, completion=
-     candidatesTokenCount, reasoning=thoughtsTokenCount})`. Отмена — `select! cancel`.
-     - **Нюанс id**: у Gemini нет `call_id`. Клиент синтезирует стабильный `id` (напр.
-       `format!("{name}-{index}")`) — он нужен только нашей внутренней парности
-       `functionCall↔functionResponse`; в wire (Фаза A `build_contents`) `id` не
-       сериализуется (парность у Gemini позиционная).
-   - Смоуки `#[ignore]` (ключ `MINDFORK_GEMINI_KEY`, модель `MINDFORK_GEMINI_MODEL`,
-     дефолт `gemini-2.5-flash`): `simple_generation`; `thinking_streams_thoughts`
-     (includeThoughts→Thoughts); tool-call один раунд.
-3. **`shared/api/gemini/mod.rs`** + реэкспорт `GeminiClient` в `shared/api/mod.rs`.
-4. **Семплинг** (`entities/sampling.rs`): `supported_sampling_fields(Some(Gemini))` →
+     id: name-based or empty, name, arguments: args.to_string()})` (for Gemini
+     `args` is a whole object in a single chunk; `index` = the part's ordinal
+     number); `finishReason` → `Finished` (`STOP`+calls happened→`ToolCalls`;
+     `MAX_TOKENS`→`Length`; otherwise `Stop`); `usageMetadata`→
+     `Usage(TokenUsage{prompt=promptTokenCount, completion=
+     candidatesTokenCount, reasoning=thoughtsTokenCount})`. Cancellation —
+     `select! cancel`.
+     - **`id` nuance**: Gemini has no `call_id`. The client synthesizes a
+       stable `id` (e.g. `format!("{name}-{index}")`) — needed only for our own
+       internal `functionCall↔functionResponse` pairing; in the wire (Phase A
+       `build_contents`), `id` isn't serialized (Gemini's pairing is
+       positional).
+   - `#[ignore]` smokes (key `MINDFORK_GEMINI_KEY`, model
+     `MINDFORK_GEMINI_MODEL`, default `gemini-2.5-flash`): `simple_generation`;
+     `thinking_streams_thoughts` (includeThoughts→Thoughts); a tool call, one
+     round.
+3. **`shared/api/gemini/mod.rs`** + re-export `GeminiClient` in
+   `shared/api/mod.rs`.
+4. **Sampling** (`entities/sampling.rs`): `supported_sampling_fields(Some(Gemini))` →
    `["temperature","top_p","top_k","max_tokens","seed","frequency_penalty",
-   "presence_penalty","thinking","reasoning_effort"]`. Обновить тест
-   `supported_fields_mirror_wire_dialect` (Gemini теперь имеет `top_k`+reasoning, без
-   `verbosity`). Проверить `retain_supported`-тест.
-5. **Супервайзер** (`app/supervisor.rs`): `cloud_chat_setup` ветка
-   `CloudProvider::Gemini` → `GeminiClient::new(base, key, model)` вместо
-   `OpenAiClient::…with_dialect(Gemini)`. Base для чата — `…/v1beta` (не `…/openai`):
-   либо новый аксессор `CloudProvider::Gemini.chat_base_url()`, либо `GeminiClient`
-   строит путь от общего `…/v1beta`. `cloud_embed_setup(Gemini)` **не трогать**
-   (эмбеддинги через compat `…/v1beta/openai`). Импперсонация (`cloud_chat_setup`)
-   получает Gemini автоматически.
-6. **Удаление `WireDialect::Gemini`**: диалект осиротел → убрать вариант,
-   `is_strict`/`restrict_to_strict` и (раз остаётся один `LlamaCpp`) при желании
-   **весь `WireDialect`**. Осторожно с порядком: сделать в этом же PR **после** п.5,
-   иначе откат сложнее (см. §6). Обновить `openai/wire.rs`, реэкспорт в `mod.rs`,
-   тест `gemini_dialect_keeps_temp_and_strips_extensions` (удалить/заменить).
-7. **UI** (`screens/settings/`): проверить, что секция «Семплинг» для Gemini теперь
-   показывает `top_k`/`thinking`/`reasoning_effort` и прячет `verbosity` — всё
-   выводится из `supported_sampling_fields`, кода UI править не нужно (как было с
-   Claude/OpenAI). Прогнать settings-тесты.
-   → **Гейт A**: `cargo fmt`/`clippy -D warnings`/`test` зелёные; живой смоук
-   (генерация + мысли + один tool-раунд) на Gemini 2.5/3.
+   "presence_penalty","thinking","reasoning_effort"]`. Update the
+   `supported_fields_mirror_wire_dialect` test (Gemini now has `top_k`+
+   reasoning, no `verbosity`). Check the `retain_supported` test.
+5. **Supervisor** (`app/supervisor.rs`): `cloud_chat_setup` branch
+   `CloudProvider::Gemini` → `GeminiClient::new(base, key, model)` instead of
+   `OpenAiClient::…with_dialect(Gemini)`. Base URL for chat is `…/v1beta` (not
+   `…/openai`): either a new `CloudProvider::Gemini.chat_base_url()` accessor,
+   or `GeminiClient` builds the path from the common `…/v1beta`.
+   `cloud_embed_setup(Gemini)` **not touched** (embeddings via compat
+   `…/v1beta/openai`). Impersonation (`cloud_chat_setup`) picks up Gemini
+   automatically.
+6. **Removing `WireDialect::Gemini`**: the dialect is orphaned → remove the
+   variant, `is_strict`/`restrict_to_strict`, and (since a single `LlamaCpp`
+   remains) if desired **all of `WireDialect`**. Be careful with the order: do
+   this in the same PR **after** step 5, otherwise rollback is harder (see
+   §6). Update `openai/wire.rs`, the re-export in `mod.rs`, the
+   `gemini_dialect_keeps_temp_and_strips_extensions` test (remove/replace).
+7. **UI** (`screens/settings/`): check that the "Sampling" section for Gemini
+   now shows `top_k`/`thinking`/`reasoning_effort` and hides `verbosity` — it
+   all follows from `supported_sampling_fields`, no UI code changes needed
+   (as with Claude/OpenAI). Run the settings tests.
+   → **Gate A**: `cargo fmt`/`clippy -D warnings`/`test` green; a live smoke
+   (generation + thoughts + one tool round) on Gemini 2.5/3.
 
-### Фаза B — подписи мыслей (Gemini 3, tool-use round-trip) — СДЕЛАНА
+### Phase B — thought signatures (Gemini 3, tool-use round-trip) — DONE
 
-> **Статус (2026-07-10):** реализовано на ветке `feat/gemini-native-client`.
-> `thought_signature: Option<String>` добавлен в `ApiToolCall`/`ToolCallDelta` (контракт)
-> и `ToolCallRecord` (домен, **персист** `#[serde(default, skip_serializing_if)]` → без
-> миграции). Accumulator копит подпись по индексу; Gemini-клиент кладёт её из
-> `functionCall`-части; wire `build_contents` переотправляет соседом `functionCall`;
-> `generation.rs` персистит `call.thought_signature`, `record_to_api` протягивает на
-> реплее истории. Round-level `thinking_ref` (Anthropic/OpenAI) не тронут. **+3 unit-теста**
-> (эмит подписи в wire; проброс через accumulator; serde-роунд-трип записи) + `#[ignore]`
-> smoke `tool_use_round_trips_signature` (Gemini 3). fmt/clippy/test зелёные
-> (**851 passed**). **Живой прогон — GO** (Gemini 3.1 Pro Preview): подпись пришла
-> (`present: true`), раунд-2 с переотправкой прошёл без `400`; персист оставлен (§7-1).
+> **Status (2026-07-10):** implemented on branch `feat/gemini-native-client`.
+> `thought_signature: Option<String>` added to `ApiToolCall`/`ToolCallDelta`
+> (contract) and `ToolCallRecord` (domain, **persisted**
+> `#[serde(default, skip_serializing_if)]` → without migration). The
+> accumulator collects the signature by index; the Gemini client puts it in
+> from the `functionCall` part; wire `build_contents` resends it as a sibling
+> of `functionCall`; `generation.rs` persists `call.thought_signature`,
+> `record_to_api` threads it through on history replay. Turn-level
+> `thinking_ref` (Anthropic/OpenAI) untouched. **+3 unit tests** (signature
+> emitted in wire; threading through the accumulator; record serde round-trip)
+> + `#[ignore]` smoke `tool_use_round_trips_signature` (Gemini 3). fmt/clippy/
+> test green (**851 passed**). **Live run — GO** (Gemini 3.1 Pro Preview): the
+> signature arrived (`present: true`), round 2 with the resend passed without
+> a `400`; persistence kept (§7-1).
 
-Отличие Gemini от Anthropic/OpenAI: подпись **per-tool-call**, не одна на ход →
-существующий `ThinkingRef`/`ThinkingBlock` не переиспользуем, а добавляем поле в вызов.
+Difference between Gemini and Anthropic/OpenAI: the signature is
+**per-tool-call**, not one per turn → we don't reuse the existing
+`ThinkingRef`/`ThinkingBlock`, we add a field on the call instead.
 
-1. **Контракт** (`shared/api/contract.rs`):
-   - `ApiToolCall.thought_signature: Option<String>` (обновить `ApiToolCall {…}`
-     литералы: `record_to_api`, тесты, accumulator);
+1. **Contract** (`shared/api/contract.rs`):
+   - `ApiToolCall.thought_signature: Option<String>` (update `ApiToolCall {…}`
+     literals: `record_to_api`, tests, the accumulator);
    - `ToolCallDelta.thought_signature: Option<String>`;
-   - `ToolCallAccumulator::push` копит `thought_signature` в нужный вызов по `index`
-     (если `Some`). Прочие бэкенды поле не выставляют → `None`.
-2. **Домен** (`entities/message.rs`): `ToolCallRecord.thought_signature:
-   Option<String>` (`#[serde(default, skip_serializing_if=Option::is_none)]` → без
-   миграции). **Персист** ради реплея истории на Gemini 3 (см. §2.3, §7-1).
-3. **Gemini client** (`gemini/client.rs`): при разборе `functionCall`-части с
-   `thoughtSignature` — класть её в `ToolCallDelta.thought_signature` того же `index`.
-   (У параллельных вызовов подпись только у первого — accumulator это переживает,
-   остальные `None`.)
-4. **Gemini wire** (`gemini/wire.rs`, `build_contents`): для `functionCall`-части
-   ставить сосед `thoughtSignature` из `ApiToolCall.thought_signature` (skip если
-   `None`). Тест: подпись едет на нужной части.
-5. **generation.rs**: при построении `records` копировать `call.thought_signature` в
-   `ToolCallRecord` (одна строка в цикле, стр. ~542). `assistant_tool_calls(out.text,
-   out.calls)` уже несёт подписи в `out.calls` (accumulator) → wire их переотправит в
-   том же ходе. Round-level `thinking_ref`/`.with_thinking` **не трогаем** (это для
-   Anthropic/OpenAI; Gemini его не использует).
-6. **request.rs** (`record_to_api`): протянуть `thought_signature` из
-   `ToolCallRecord` в `ApiToolCall` — так исторические вызовы на **следующей**
-   генерации несут подпись (закрывает 400 Gemini 3 на реплее).
-   - **Текст-part подписи** (чисто-reasoning ход без вызова) — **не персистим**
-     (наш реплей assistant-текста их не несёт); по докам жёсткое требование — только
-     `functionCall`-части. Отметить known-limitation.
-   - Смоук `#[ignore]` `tool_use_round_trips_signature` на **Gemini 3**: раунд-1 даёт
-     вызов+подпись; раунд-2 переотправляет подпись на `functionCall` + результат — без
-     `400`. Плюс проверка реплея (третий запрос с историей из шага-2 — без `400`).
-   → **Гейт B**: как A + живой tool-round-trip на Gemini 3.
+   - `ToolCallAccumulator::push` collects `thought_signature` for the right
+     call by `index` (when `Some`). Other backends don't set this field →
+     `None`.
+2. **Domain** (`entities/message.rs`): `ToolCallRecord.thought_signature:
+   Option<String>` (`#[serde(default, skip_serializing_if=Option::is_none)]`
+   → without migration). **Persisted** for replaying history on Gemini 3
+   (see §2.3, §7-1).
+3. **Gemini client** (`gemini/client.rs`): when parsing a `functionCall` part
+   with `thoughtSignature` — put it into `ToolCallDelta.thought_signature` at
+   the same `index`. (For parallel calls only the first gets a signature — the
+   accumulator handles this fine, the rest stay `None`.)
+4. **Gemini wire** (`gemini/wire.rs`, `build_contents`): for a `functionCall`
+   part, set a sibling `thoughtSignature` from `ApiToolCall.thought_signature`
+   (skip if `None`). Test: the signature rides on the right part.
+5. **generation.rs**: when building `records`, copy `call.thought_signature`
+   into `ToolCallRecord` (one line in the loop, line ~542).
+   `assistant_tool_calls(out.text, out.calls)` already carries the signatures
+   in `out.calls` (the accumulator) → wire resends them in the same turn.
+   Turn-level `thinking_ref`/`.with_thinking` **untouched** (that's for
+   Anthropic/OpenAI; Gemini doesn't use it).
+6. **request.rs** (`record_to_api`): thread `thought_signature` from
+   `ToolCallRecord` into `ApiToolCall` — so historical calls carry the
+   signature on the **next** generation (closes the Gemini 3 `400` on replay).
+   - **Text-part signatures** (a pure-reasoning turn without a call) are
+     **not persisted** (our assistant-text replay doesn't carry them); per the
+     docs the hard requirement applies only to `functionCall` parts. Noted as
+     a known limitation.
+   - `#[ignore]` smoke `tool_use_round_trips_signature` on **Gemini 3**: round
+     1 gives a call+signature; round 2 resends the signature on `functionCall`
+     + the result — no `400`. Plus a replay check (a third request with the
+     history from step 2 — no `400`).
+   → **Gate B**: same as A + a live tool round-trip on Gemini 3.
 
-### Фаза C — полировка (опц.) — частично сделана
+### Phase C — polish (optional) — partially done
 
-> **Статус (2026-07-10):** сделаны два точечных фикса корректности; остальное отложено.
-> - **Кламп force-off на Gemini 2.5 Pro** (сделано): 2.5 Pro не умеет выключать мысли
->   (`thinkingBudget` минимум 128), поэтому `reasoning_budget==0` (импперсонация/авто-
->   название) слал `thinkingBudget:0` → `400`. Теперь для 2.5 Pro шлём `128`.
-> - **Сюрфейс блокировок** (сделано): `promptFeedback.blockReason` и блокирующие
->   `finishReason` (SAFETY/RECITATION/…) → заметка в ленту + `warn`, вместо молчаливого
->   пустого `Stop`.
-> - **Санитизация схем** (отложено): по сканированию схемы инструментов проекта чистые
->   (только `enum`, поддержан Gemini; нет `$ref`/`oneOf`/`nullable`/…) — риск ниже
->   ожидаемого; чинить точечно по реальным `400` живого прогона полного реестра.
-> - **Явный UI-выбор `thinkingLevel`/`thinkingBudget`** (отложено): инференс по имени
->   модели работает на текущих (3.x → level, 2.5 → budget); явный выбор — по надобности.
+> **Status (2026-07-10):** two targeted correctness fixes done; the rest
+> deferred.
+> - **Clamp force-off on Gemini 2.5 Pro** (done): 2.5 Pro can't disable
+>   thoughts (`thinkingBudget` minimum 128), so `reasoning_budget==0`
+>   (impersonation/auto-title) was sending `thinkingBudget:0` → `400`. Now we
+>   send `128` for 2.5 Pro.
+> - **Surfacing blocks** (done): `promptFeedback.blockReason` and blocking
+>   `finishReason` values (SAFETY/RECITATION/…) → a note in the feed + `warn`,
+>   instead of a silent empty `Stop`.
+> - **Schema sanitization** (deferred): scanning the project's tool schemas
+>   shows them clean (only `enum`, which Gemini supports; no
+>   `$ref`/`oneOf`/`nullable`/…) — the risk is lower than expected; fix
+>   surgically based on real `400`s from a live run of the full registry.
+> - **Explicit UI choice of `thinkingLevel`/`thinkingBudget`** (deferred):
+>   inference by model name works for current models (3.x → level, 2.5 →
+>   budget); explicit selection — as needed.
 
-- **Санитизация схем**: точный набор ключей, которые Gemini отвергает (`$schema`,
-  вложенные `additionalProperties`, форматы `date-time`/…) — по результату живого
-  прогона реальных схем инструментов проекта.
-- **`thinkingLevel` vs `thinkingBudget`**: инференс поколения по имени модели
-  (`gemini-3*`→level, `gemini-2.5*`→budget) либо явный выбор — если живой прогон
-  покажет, что один параметр не универсален.
-- Обновить `CLAUDE.md` (журнал), `ADR 0004` (Gemini native вместо «вне объёма»),
-  `architecture.md §9` при необходимости.
+- **Schema sanitization**: the exact set of keys Gemini rejects (`$schema`,
+  nested `additionalProperties`, `date-time`/… formats) — based on the
+  result of a live run against the project's actual tool schemas.
+- **`thinkingLevel` vs `thinkingBudget`**: inference by model name
+  (`gemini-3*`→level, `gemini-2.5*`→budget) or explicit selection — if a live
+  run shows one parameter isn't universal.
+- Update `CLAUDE.md` (the log), `ADR 0004` (native Gemini instead of "out of
+  scope"), `architecture.md §9` as needed.
 
-### Ripple вне `shared/api/gemini/` (сводка)
+### Ripple outside `shared/api/gemini/` (summary)
 
-`contract.rs` (+2 поля, accumulator), `entities/message.rs` (+1 поле персист),
-`entities/sampling.rs` (supported-набор), `app/supervisor.rs` (ветка + base URL),
-`openai/wire.rs`+`mod.rs` (удаление `WireDialect`), `orchestrator/request.rs`
-(+подпись), `orchestrator/generation.rs` (+1 строка records). UI/оркестратор/
-agentic-loop структурно не меняются. ~40 строк + новый модуль ~900 строк с тестами.
+`contract.rs` (+2 fields, the accumulator), `entities/message.rs` (+1
+persisted field), `entities/sampling.rs` (the supported set),
+`app/supervisor.rs` (branch + base URL), `openai/wire.rs`+`mod.rs` (removing
+`WireDialect`), `orchestrator/request.rs` (+signature),
+`orchestrator/generation.rs` (+1 line for records). UI/orchestrator/agentic
+loop are structurally unchanged. ~40 lines + a new module ~900 lines with
+tests.
 
-### Развилка, требующая живого ключа (решить до Фазы B)
+### Fork requiring a live key (decide before Phase B)
 
-Персист подписи (шаг B-2/B-6) — на случай, если Gemini 3 валидирует подпись у **всех**
-исторических `functionCall`. Если живой прогон покажет, что хватает подписи только у
-**текущего** хода (как Anthropic), персист (B-2/B-6) можно снять, оставив подпись лишь
-в памяти хода (проще). **По умолчанию проектируем с персистом** (безопаснее);
-подтвердить на `MINDFORK_GEMINI_KEY` перед финализацией B.
+Persisting the signature (steps B-2/B-6) — in case Gemini 3 validates the
+signature on **all** historical `functionCall` parts. If a live run shows it's
+enough to have a signature only on the **current** turn (like Anthropic),
+persistence (B-2/B-6) can be dropped, leaving the signature only in turn
+memory (simpler). **By default we design with persistence** (safer); confirm
+with `MINDFORK_GEMINI_KEY` before finalizing B.
 
 ---
 
-Источники: [thinking (generateContent)](https://ai.google.dev/gemini-api/docs/generate-content/thinking),
+Sources: [thinking (generateContent)](https://ai.google.dev/gemini-api/docs/generate-content/thinking),
 [thought signatures](https://ai.google.dev/gemini-api/docs/generate-content/thought-signatures),
 [generateContent reference](https://ai.google.dev/api/generate-content),
 [OpenAI compatibility](https://ai.google.dev/gemini-api/docs/openai.md.txt),

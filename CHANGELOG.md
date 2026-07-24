@@ -1,269 +1,314 @@
 # Changelog
 
-Все заметные изменения проекта фиксируются в этом файле.
+All notable changes to the project are tracked in this file.
 
-Формат основан на [Keep a Changelog](https://keepachangelog.com/ru/1.1.0/),
-проект следует [семантическому версионированию](https://semver.org/lang/ru/).
+Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
+the project follows [semantic versioning](https://semver.org/).
 
-Рубрики: **Добавлено** (новая функциональность), **Изменено** (в существующей),
-**Исправлено** (баги), **Удалено**, **Данные** (форматы хранения и миграции —
-пользователю важнее всего, что обновление не теряет данные), **Безопасность**.
+Sections: **Added** (new functionality), **Changed** (to existing functionality),
+**Fixed** (bugs), **Removed**, **Data** (storage formats and migrations — most
+important to users: an update should never lose data), **Security**.
 
-Подробная инженерная история — в журнале [CLAUDE.md](CLAUDE.md).
+Detailed engineering history lives in the [CLAUDE.md](CLAUDE.md) log.
 
 ## [Unreleased]
 
-### Изменено
+## [0.9.3] — 2026-07-24
 
-- **Диалог справки (`F1`/`?`) переработан в стиле KDE/Qt** — вместо одного длинного
-  списка клавиш теперь модальное окно с логотипом в шапке и вкладками: **«О программе»**
-  (автор, версия, ссылки на сайт/репозиторий/крейт), **«Горячие клавиши»**, **«Команды»**
-  (команды `/rag …`/`/tts …` вынесены из клавиш), **«Лицензия»** (текст MIT) и
-  **«Компоненты»** (сторонние зависимости с версиями и лицензиями). Переключение вкладок —
-  `Tab`/`←→`, прокрутка — `↑↓`/`PgUp`/`PgDn`, закрытие — `Esc`; последняя открытая вкладка
-  запоминается. Заголовок окна и попапа — `mindfork v<версия>`.
+### Changed
+
+- **The help dialog (`F1`/`?`) was redesigned in KDE/Qt style** — instead of one
+  long hotkey list, it's now a modal window with a logo in the header and tabs:
+  **"About"** (author, version, links to the site/repository/crate), **"Shortcuts"**,
+  **"Commands"** (the `/rag …`/`/tts …` commands, split out of the shortcuts list),
+  **"License"** (MIT text), and **"Components"** (third-party dependencies with
+  versions and licenses). Switching tabs — `Tab`/`←→`, scrolling — `↑↓`/`PgUp`/`PgDn`,
+  closing — `Esc`; the last open tab is remembered. The window and dialog title is
+  `mindfork v<version>`.
+- **The project's source language is now English** — all documentation, code
+  comments and internal diagnostics were translated from Russian, in
+  preparation for going open source. This is not an i18n rollback: user-facing
+  text stays localizable, and Russian remains a fully supported interface and
+  agent language.
+- **New profiles get English default character names** ("You"/"Assistant"/
+  "System") instead of Russian ones. Existing profiles keep their stored names
+  (no migration), and the names stay editable in the profile settings.
+
+### Fixed
+
+- **Several user-facing strings ignored the selected language** and always
+  appeared in Russian: server connection errors, `/rag` command errors and the
+  usage hint, the "conversation copied" confirmation, agentic-loop notices
+  (tool disabled, time limit, round limit), the interlocutor description used
+  for impersonation, and the Python-mode labels in the settings. All of them
+  now follow the interface or agent language, as appropriate.
+- **A failed `fs_read` was rendered as a highlighted code block** in the feed
+  for profiles in any language other than Russian — the failure was detected by
+  matching Russian text.
 
 ## [0.9.2] — 2026-07-23
 
-### Добавлено
+### Added
 
-- **Озвучивание сообщений чата** — команда `/tts` в поле ввода: `/tts` читает
-  последнее сообщение, `/tts N` — N последних, `/tts all` — всю переписку,
-  `/tts stop` — останавливает, `/tts pause`/`/tts resume` — пауза и продолжение
-  (удобно для длинного текста). Можно задать отдельный голос пользователя — тогда
-  `/tts all` читает реплики пользователя и ассистента разными голосами. Блоки кода,
-  mermaid-диаграммы, таблицы и формулы не
-  зачитываются — вместо них короткая пометка («блок кода пропущен»); «мысли» и
-  вызовы инструментов не озвучиваются вовсе. Провайдер выбирается отдельно от чата
-  на новой вкладке «Озвучивание» секции «Модель»: облако OpenAI (по умолчанию,
-  `gpt-4o-mini-tts`, голос `onyx`), облако Gemini или любой сторонний OpenAI-
-  совместимый TTS-сервер; API-ключ облака — тот же, что уже введён для чата. Там
-  же — голос, указания по тону, скорость и поведение (озвучивать роли; прерывать
-  при смене чата / при начале генерации). Воспроизведение идёт конвейером
-  (следующий кусок синтезируется, пока играет текущий). Пока идёт озвучка, в
-  строке состояния виден значок «♪ озвучка». Если звуковой карты нет (например,
-  вход по SSH), приложение об этом сообщит и продолжит работать.
-- **Ввод API-ключей прямо в настройках** — переменные окружения больше не нужны.
-  В облачных режимах (OpenAI / Gemini / Claude) появилось поле «API-ключ»: `Enter`
-  открывает скрытый ввод (символы показаны как `•`), `Del` удаляет ключ. Поле
-  показывает лишь статус — «настроен (этот компьютер)» или «не задан»; сохранённый
-  ключ нельзя посмотреть или скопировать, правка означает ввод заново. Один ключ
-  обслуживает чат, имперсонацию и эмбеддинги одного провайдера. Прежний способ —
-  поле «API-ключ (env)» с именем переменной окружения — остался как запасной и
-  используется, если ключ не введён.
-- **Иконка приложения на Windows**: `mindfork-rs.exe` теперь несёт собственную
-  иконку — она видна в Проводнике, на панели задач, в Alt+Tab и на ярлыках.
-  Установщик получил ту же иконку и логотип в шапке мастера.
-- **Запись в меню приложений на Linux**: пакеты (deb/rpm/pkg.tar.zst) ставят
-  `.desktop` и иконки темы, поэтому mindfork-rs появляется в меню с иконкой
-  (запускается в терминале).
-- **Логотип в справке**: оверлей помощи (`F1`) показывает знак mindfork символами
-  терминала — глиф и слово `mindfork` рядом, в шапке над списком клавиш. Рисуется,
-  если окно достаточно велико, чтобы уместить и знак, и весь список.
+- **Chat message text-to-speech (TTS)** — the `/tts` command in the input box:
+  `/tts` reads the last message aloud, `/tts N` — the last N, `/tts all` — the
+  whole conversation, `/tts stop` — stops it, `/tts pause`/`/tts resume` — pause
+  and resume (handy for long text). A separate voice can be set for the user —
+  then `/tts all` reads the user's and the assistant's lines in different voices.
+  Code blocks, mermaid diagrams, tables, and formulas are not read aloud — a short
+  note ("code block skipped") is spoken instead; "thoughts" and tool calls are
+  never voiced at all. The provider is chosen separately from the chat engine, on
+  the new "Speech" tab of the "Model" section: the OpenAI cloud (default,
+  `gpt-4o-mini-tts`, voice `onyx`), the Gemini cloud, or any third-party
+  OpenAI-compatible TTS server; the cloud API key is the same one already entered
+  for chat. The same tab holds the voice, tone instructions, speed, and behavior
+  (voice roles; stop on chat switch / on generation start). Playback is pipelined
+  (the next chunk is synthesized while the current one plays). While speech is
+  playing, a "♪ speaking" icon is shown in the status bar. If there's no sound
+  card (e.g. an SSH session), the app reports this and keeps working.
+- **Entering API keys directly in settings** — environment variables are no
+  longer required. In the cloud modes (OpenAI / Gemini / Claude) a new "API key"
+  field appeared: `Enter` opens a masked input (characters shown as `•`), `Del`
+  removes the key. The field only shows a status — "set (this computer)" or
+  "not set"; a stored key can't be viewed or copied, editing it means re-entering
+  it. One key serves chat, impersonation, and embeddings for a given provider. The
+  previous approach — the "API key (env)" field with an environment-variable name —
+  remains as a fallback and is used when no key has been entered.
+- **Application icon on Windows**: `mindfork-rs.exe` now carries its own icon —
+  visible in Explorer, the taskbar, Alt+Tab, and shortcuts. The installer got the
+  same icon and a logo in the wizard header.
+- **Application-menu entry on Linux**: the packages (deb/rpm/pkg.tar.zst) install
+  a `.desktop` file and theme icons, so mindfork-rs shows up in the menu with an
+  icon (launches in a terminal).
+- **Logo in the help dialog**: the help overlay (`F1`) shows the mindfork mark
+  using terminal glyphs — the glyph and the word `mindfork` side by side, in the
+  header above the hotkey list. It's drawn only when the window is large enough
+  to fit both the mark and the whole list.
 
-### Данные
+### Data
 
-- **Сохранённые API-ключи в `settings.json`**: введённые в приложении ключи
-  попадают в новую секцию `api_keys` — **зашифрованными и привязанными к этому
-  компьютеру**. Файл настроек можно переносить между машинами: на новой ключи
-  потребуется ввести заново, а по возвращении на прежнюю они снова читаются.
-  Формат дополняется без миграции — старые настройки читаются как есть.
+- **Stored API keys in `settings.json`**: keys entered in the app go into a new
+  `api_keys` section — **encrypted and tied to this computer**. The settings file
+  can still be moved between machines: on a new one the keys need to be re-entered,
+  and moving back to the original machine makes them readable again. The format is
+  extended without a migration — old settings are read as-is.
 
-### Безопасность
+### Security
 
-- Ключ хранится в конфиге только в зашифрованном виде (Windows — системный DPAPI,
-  Linux — ключ, выведенный из идентификатора машины) и не показывается в интерфейсе:
-  копия файла настроек, бэкап или синхронизация в облако не раскрывают ключ. От
-  программ, запущенных под вашей учётной записью на этом же компьютере, такая схема
-  не защищает — как и менеджеры паролей браузеров.
+- The key is stored in the config only in encrypted form (Windows — the system
+  DPAPI, Linux — a key derived from the machine identifier) and is never shown in
+  the UI: a copy of the settings file, a backup, or cloud sync does not expose the
+  key. This scheme does not protect against programs running under your own
+  account on the same computer — the same limitation browser password managers
+  have.
 
-### Изменено
+### Changed
 
-- **Заголовок окна терминала на Windows** теперь показывает имя программы —
-  «mindfork» (видно в панели задач и Alt+Tab).
-- **Единый вид выделения в попапе проверки орфографии (`Ctrl+G`)**: выбранный
-  вариант больше не подсвечивается инверсией всей строки, а выделяется так же, как
-  в списке чатов, настройках и «модели себя» — мягкой подложкой с зелёной чертой
-  слева.
+- **The terminal window title on Windows** now shows the program name —
+  "mindfork" (visible in the taskbar and Alt+Tab).
+- **Unified selection style in the spellcheck suggestions popup (`Ctrl+G`)**: the
+  selected option is no longer highlighted by inverting the whole line — it's now
+  highlighted the same way as in the chat list, settings, and the self-model
+  screen: a soft background with a green bar on the left.
 
-### Исправлено
+### Fixed
 
-- **Попап эмодзи (`Ctrl+B`) больше не оставляет след на экране**: после закрытия
-  окна на месте выделенного эмодзи оставался цветной «огрызок» — половина широкого
-  глифа, которую терминал не очищал. Теперь такой кадр перерисовывается целиком,
-  без мигания.
-- **Лишний пробел после `❤️` при возврате из списка чатов / «модели себя» (`F3`)**:
-  строка ленты с таким эмодзи съезжала на колонку вправо и выправлялась только после
-  прокрутки. Смена экрана теперь перерисовывает кадр целиком. Тот же перекос мог
-  появиться в поле ввода при правке текста левее эмодзи — тоже исправлено.
-- **Артефакты в ленте с эмодзи при потоковом выводе**: во время генерации ответа с
-  эмодзи (и после добавления заметки — например «Переписка скопирована в буфер
-  обмена» по `F5`) на старых терминалах оставались куски прежнего кадра; исчезали
-  только после прокрутки. Теперь полную перерисовку заказывает и само изменение
-  ленты, а не только прокрутка.
-- **Прокрутка ленты с эмодзи вроде `🗂️`/`🕸️` не сдвигает строки**: при полной
-  перерисовке хвост такой строки уезжал на колонку вправо — соседний широкий эмодзи
-  мог погаснуть, а правая рамка ленты — сместиться. Полная перерисовка переустроена
-  так, что вторую половину широкого глифа она больше не трогает.
-- **Попап подсказок орфографии (`Ctrl+G`) не оставляет след подсветки**: у пункта
-  «➕ добавить в словарь» после закрытия окна могла остаться половина подложки
-  выделения — тот же дефект, что и в окне эмодзи.
-- **Попап эмодзи: ряды больше не разъезжаются**: в сетке два эмодзи (`❤️`, `✌️`)
-  занимали в терминале колонку сверх расчёта, из-за чего соседний эмодзи мог
-  пропасть с экрана, а рамка окна — сдвинуться. Они заменены на равноширокие
-  `💖` и `🤞`; остальной набор прежний.
+- **The emoji popup (`Ctrl+B`) no longer leaves a mark on screen**: after closing
+  the window, a colored "leftover" remained where the selected emoji had been —
+  half of a wide glyph that the terminal didn't clear. Such a frame is now
+  redrawn in full, without flicker.
+- **Stray space after `❤️` when returning from the chat list / self-model screen
+  (`F3`)**: a feed line with such an emoji would drift one column to the right
+  and only straighten out after scrolling. Switching screens now redraws the
+  frame in full. The same drift could appear in the input box when editing text
+  to the left of an emoji — also fixed.
+- **Emoji feed artifacts during streaming**: while a reply with emoji was
+  streaming (and after adding a note — e.g. "Conversation copied to clipboard"
+  via `F5`), leftover pieces of the previous frame stuck around on older
+  terminals and disappeared only after scrolling. Now a feed content change also
+  triggers a full redraw, not just scrolling.
+- **Scrolling a feed with emoji like `🗂️`/`🕸️` no longer shifts lines**: during a
+  full redraw, the tail of such a line used to drift one column to the right —
+  a neighboring wide emoji could vanish and the feed's right border could shift.
+  The full redraw was reworked so it no longer touches the second half of a wide
+  glyph.
+- **The spellcheck suggestions popup (`Ctrl+G`) no longer leaves a highlight
+  trace**: the "➕ Add to dictionary" item could keep half of its selection
+  background after the popup closed — the same defect as in the emoji popup.
+- **Emoji popup: rows no longer drift**: two emoji in the grid (`❤️`, `✌️`) took
+  up an extra terminal column beyond what was accounted for, which could make a
+  neighboring emoji disappear and shift the popup's border. They were replaced
+  with the equal-width `💖` and `🤞`; the rest of the set is unchanged.
 
 ## [0.9.1] — 2026-07-18
 
-### Добавлено
+### Added
 
-- **RAG индексирует HTML** (`.html`/`.htm`): из страницы извлекается читаемый текст
-  (абзацы статьи, без навигации/шапки/подвала/скриптов) и добавляется в базу знаний
-  наравне с `.txt`/`.md` — командой `/rag add`. Новых зависимостей нет.
-- **RAG индексирует PDF и DOCX** (`.pdf`/`.docx`): из документа извлекается простой
-  текст и добавляется в базу знаний командой `/rag add` (сканированный/картиночный
-  PDF без текстового слоя даёт пусто — это ожидаемо). DOCX разбирается уже имеющимися
-  средствами; для PDF добавлена чистая-Rust зависимость `pdf-extract`.
-- **Прогресс индексации RAG по чанкам**: при добавлении крупного файла баннер теперь
-  показывает «чанки N/M» и двигается по ходу эмбеддинга, а не замирает до конца файла
-  (эмбеддинг идёт ограниченными по размеру батчами).
-- **RAG-поиск убирает дубли между источниками**: если один и тот же фрагмент
-  проиндексирован из разных файлов, в результатах поиска он показывается один раз
-  (модель не получает повтор). Порядок релевантности сохраняется.
-- **Авто-консолидация «модели себя» («сон»)**: каждые N ответов ассистента фоновая
-  задача сама наводит порядок в «модели себя» — сливает дубли наблюдений, сжимает
-  разросшееся описание, связывает противоречия (модель молча вызывает свои
-  инструменты, чат не трогается). Отдельный тумблер «Авто-консолидация (кажд. N)» в
-  секции «Память» → «Модель себя» (0 — выключено, по умолчанию; работает только в
-  профилях с включёнными инструментами модели себя). Тихий индикатор «сон себя» в
-  статус-баре во время работы. При консолидации/рефлексии модель дополнительно
-  видит, где абзац её описания себя семантически дублирует уже записанное
-  наблюдение, — чтобы вынести повтор в наблюдение или сшить описание с ним. Также
-  поддерживает список интересов собеседника «текущим», убирая давно не
-  подтверждаемые.
-- **Плагины: инструменты MCP-серверов** — подключение внешних инструментов
-  экосистемы Model Context Protocol (файлы, git, GitHub, базы, …) без пересборки
-  приложения: серверы описываются в `settings.json` (секция `mcp`), их инструменты
-  включаются тумблерами профиля группой «Плагины (MCP)»; статусы серверов и полные
-  описания инструментов видны в настройках. Отмена по Esc больше не блокируется
-  долгим вызовом любого инструмента. См. [docs/install.md §4.2](docs/install.md).
-- **Импорт из других приложений**: команда `mindfork import <file>` читает
-  документированный нейтральный формат [mindfork-import](docs/import-format.md)
-  (JSON с профилями и чатами). Файл готовит внешний конвертер из формата исходного
-  приложения; импорт идемпотентен (повторный запуск обновляет те же профили/чаты,
-  а не создаёт дубликаты), файл из более новой версии формата отклоняется.
-- **Mermaid-диаграммы в ленте**: ` ```mermaid `-блоки (flowchart и sequence)
-  рендерятся текстовой графикой вместо печати исходника. При любом сбое —
-  сломанный синтаксис, слишком широкая диаграмма, неподдержанный тип — блок
-  показывается исходником, как раньше. Тумблер «Диаграммы Mermaid» в секции
-  «Интерфейс» (по умолчанию включён); в режиме старого терминала диаграмма
-  рисуется ASCII-глифами.
-- Официальные сборки-релизы для **Windows** и **Linux** публикуются на GitHub Releases
-  (архивы с бинарником и документацией + файл контрольных сумм `sha256sums.txt`).
-- В релизные архивы добавлены **словари спелл-чека** (`data/dictionaries/`) — проверка
-  орфографии работает из коробки после распаковки.
-- **Автоопределение языка интерфейса по локали ОС** при свежей установке без
-  `settings.json`/`defaults.json` (голый портативный архив, deb/rpm-пакет): русская
-  локаль → русский интерфейс, иначе — английский. Явно заданный язык (`settings.json`
-  или `defaults.json`) по-прежнему сильнее.
-- **Linux-пакеты**: к релизам прилагаются `deb` (Debian/Ubuntu), `rpm` (Fedora) и
-  `pkg.tar.zst` (Arch). Устанавливают приложение системно (данные — в стандартной
-  ОС-папке пользователя), словари подхватываются из установленного каталога.
-- **Windows-инсталлятор** (`setup.exe`, Inno Setup): установка для пользователя без прав
-  администратора, выбор языка приложения и расположения данных в мастере, двуязычный
-  интерфейс (русский/английский). Инсталлятор не подписан (SmartScreen предупредит).
+- **RAG indexes HTML** (`.html`/`.htm`): readable text is extracted from the page
+  (article paragraphs, without nav/header/footer/scripts) and added to the
+  knowledge base alongside `.txt`/`.md` via the `/rag add` command. No new
+  dependencies.
+- **RAG indexes PDF and DOCX** (`.pdf`/`.docx`): plain text is extracted from the
+  document and added to the knowledge base via `/rag add` (a scanned/image-only
+  PDF with no text layer yields nothing — that's expected). DOCX is parsed with
+  existing tooling; a pure-Rust `pdf-extract` dependency was added for PDF.
+- **Chunk-level RAG indexing progress**: when adding a large file, the banner now
+  shows "chunks N/M" and advances as embedding proceeds, instead of freezing
+  until the whole file is done (embedding now runs in size-limited batches).
+- **RAG search removes duplicates across sources**: if the same passage was
+  indexed from different files, it's shown only once in search results (the
+  model doesn't get a repeat). Relevance order is preserved.
+- **Self-model auto-consolidation ("sleep")**: every N assistant replies, a
+  background task tidies up the self-model on its own — merges duplicate
+  observations, shrinks an oversized description, links contradictions (the
+  model silently calls its own tools; the chat is untouched). A separate
+  "Auto-consolidation (every N)" toggle lives in the "Memory" → "Self-model"
+  section (0 — off, by default; only works in profiles with self-model tools
+  enabled). A quiet "self sleep" indicator shows in the status bar while it
+  runs. During consolidation/reflection the model also sees where a paragraph of
+  its self-description semantically duplicates an already-recorded observation,
+  so it can move the repeat into an observation or merge the description with
+  it. It also keeps the interlocutor's interest list "current" by dropping ones
+  that haven't been confirmed in a while.
+- **Plugins: MCP server tools** — connect external tools from the Model Context
+  Protocol ecosystem (files, git, GitHub, databases, …) without rebuilding the
+  app: servers are described in `settings.json` (the `mcp` section), their tools
+  are enabled via profile toggles grouped under "Plugins (MCP)"; server statuses
+  and full tool descriptions are visible in settings. Cancelling with Esc is no
+  longer blocked by a long call to any tool. See
+  [docs/install.md §4.2](docs/install.md).
+- **Import from other apps**: the `mindfork import <file>` command reads the
+  documented, neutral [mindfork-import](docs/import-format.md) format (JSON with
+  profiles and chats). The file is produced by an external converter from the
+  source app's format; the import is idempotent (running it again updates the
+  same profiles/chats instead of creating duplicates), and a file from a newer
+  format version is rejected.
+- **Mermaid diagrams in the feed**: ` ```mermaid ` blocks (flowchart and
+  sequence) render as text art instead of printing the source. On any failure —
+  broken syntax, a diagram too wide, an unsupported type — the block falls back
+  to showing the source, as before. The "Mermaid diagrams" toggle is in the
+  "Interface" section (on by default); in old-terminal compatibility mode the
+  diagram is drawn with ASCII glyphs.
+- Official release builds for **Windows** and **Linux** are published on GitHub
+  Releases (archives with the binary and docs, plus a `sha256sums.txt` checksum
+  file).
+- **Spellcheck dictionaries** (`data/dictionaries/`) were added to the release
+  archives — spellcheck works out of the box after extraction.
+- **Auto-detecting the interface language from the OS locale** on a fresh
+  install with no `settings.json`/`defaults.json` (a bare portable archive, a
+  deb/rpm package): a Russian locale → Russian UI, otherwise English. An
+  explicitly set language (in `settings.json` or `defaults.json`) still takes
+  priority.
+- **Linux packages**: releases now ship `deb` (Debian/Ubuntu), `rpm` (Fedora),
+  and `pkg.tar.zst` (Arch). They install the app system-wide (data goes to the
+  standard OS user folder); dictionaries are picked up from the install
+  directory.
+- **Windows installer** (`setup.exe`, Inno Setup): a per-user install requiring
+  no administrator rights, a wizard for choosing the app language and data
+  location, a bilingual UI (Russian/English). The installer is unsigned
+  (SmartScreen will warn).
 
-### Изменено
+### Changed
 
-- Спелл-чек находит словари и в **портативной раскладке рядом с бинарником**
-  (`data/dictionaries/`), а не только в каталоге данных. При системной установке
-  (данные в папке пользователя) словари, положенные рядом с программой, теперь
-  подхватываются — раньше орфография в таком режиме молча не работала.
-- Файл установочных умолчаний `defaults.json` теперь читается и с UTF-8 BOM (его могут
-  добавить инсталлятор или редактор) — запуск больше не падает из-за метки-порядка байт.
+- Spellcheck now also finds dictionaries in the **portable layout next to the
+  binary** (`data/dictionaries/`), not only in the data directory. With a system
+  install (data in the user's folder), dictionaries placed next to the program
+  are now picked up — previously spellcheck silently didn't work in that mode.
+- The install-defaults file `defaults.json` is now read correctly even with a
+  UTF-8 BOM (an installer or an editor may add one) — startup no longer fails
+  because of the byte-order mark.
 
-### Исправлено
+### Fixed
 
-- Mermaid-диаграммы больше **не мерцают при стриминге ответа**: пока сервер не
-  дописал блок целиком (нет закрывающего ` ``` `), он показывается исходником, и
-  только затем рендерится диаграммой — раньше частично пришедший блок то
-  рендерился огрызком диаграммы, то откатывался к исходнику с каждым чанком.
-- Повреждённый `settings.json` больше не затирается молча значениями по умолчанию —
-  приложение сообщает об ошибке, не теряя файл.
-- Один повреждённый файл чата больше не блокирует запуск: он пропускается с
-  предупреждением в лог и остаётся на диске для ручного восстановления.
+- Mermaid diagrams no longer **flicker while a reply is streaming**: until the
+  server finishes the block (no closing ` ``` ` yet), it's shown as source, and
+  only then rendered as a diagram — previously a partially received block would
+  alternate between rendering as a truncated diagram and falling back to source
+  on every chunk.
+- A corrupted `settings.json` is no longer silently overwritten with defaults —
+  the app reports an error instead of losing the file.
+- A single corrupted chat file no longer blocks startup: it's skipped with a
+  warning logged, and stays on disk for manual recovery.
 
-### Удалено
+### Removed
 
-- Команда `import-lamellama`: импорт LameLLaMA теперь выполняет внешний конвертер,
-  эмитящий файл mindfork-import, + команда `import` (запуск старой команды
-  подсказывает замену). Ранее импортированные данные не затрагиваются.
+- The `import-lamellama` command: LameLLaMA import is now handled by an external
+  converter that emits a mindfork-import file, plus the `import` command
+  (running the old command prints a hint about the replacement). Previously
+  imported data is unaffected.
 
-### Данные
+### Data
 
-- Схемы сохраняемых данных (`settings.json`, `profiles.json`, `chats/*.json` и база
-  SQLite `data.db`) теперь версионируются, и при запуске приложение проверяет их
-  совместимость. Появился каркас миграций: при будущих изменениях формата данные
-  обновятся автоматически (миграции БД идут в транзакциях — прерванное обновление не
-  оставит базу в промежуточном состоянии), а перед миграцией создаётся резервная копия.
-- Данные, созданные **более новой** версией mindfork, больше не читаются «как
-  получится»: приложение сообщит, что нужно обновиться или восстановить резервную копию
-  (защита от тихой порчи при откате на старую версию).
-- В резервную копию добавлен манифест версий схем; при восстановлении копии, сделанной
-  более новой версией приложения, `mindfork restore` выводит предупреждение.
+- The schemas of stored data (`settings.json`, `profiles.json`, `chats/*.json`,
+  and the `data.db` SQLite database) are now versioned, and the app checks their
+  compatibility on startup. A migration framework is now in place: future format
+  changes will update the data automatically (DB migrations run in
+  transactions — an interrupted update won't leave the database in a partial
+  state), and a backup is created before migrating.
+- Data created by a **newer** version of mindfork is no longer read "as best it
+  can": the app will report that you need to update or restore a backup
+  (protection against silent corruption when rolling back to an older version).
+- A schema-version manifest was added to backups; when restoring a backup made
+  by a newer app version, `mindfork restore` prints a warning.
 
-### Безопасность
+### Security
 
-- MCP-серверы включаются **двойным opt-in** (мастер-выключатель, по умолчанию
-  выключен, + тумблер каждого инструмента в профиле); каталог инструментов сервера
-  **пиннится при первом одобрении** — если сервер после обновления изменил
-  набор/описания инструментов, они недоступны модели до переподтверждения
-  (защита от подмены инструментов). Секреты передаются серверам только именами
-  переменных окружения; `.bat`/`.cmd`-команды запрещены (BatBadBut).
-- Обновлён `anyhow` до 1.0.103 (устраняет RUSTSEC-2026-0190 — некорректность
-  `Error::downcast_mut`). Добавлен еженедельный аудит зависимостей (`cargo-deny`).
+- MCP servers are enabled via a **double opt-in** (a master switch, off by
+  default, plus a per-tool toggle in the profile); a server's tool catalog is
+  **pinned on first approval** — if a server changes its tool set/descriptions
+  after an update, they're unavailable to the model until reconfirmed
+  (protection against tool substitution). Secrets are passed to servers only as
+  environment-variable names; `.bat`/`.cmd` commands are forbidden (BatBadBut).
+- Updated `anyhow` to 1.0.103 (fixes RUSTSEC-2026-0190 — unsoundness in
+  `Error::downcast_mut`). Added a weekly dependency audit (`cargo-deny`).
 
 ## [0.9.0] — 2026-07-15
 
-Первый отслеживаемый релиз. Проект прошёл весь план M0–M9 и обширный пост-M9; ниже
-— сводка возможностей по направлениям (детальная история — журнал CLAUDE.md).
+First tracked release. The project completed the entire M0–M9 plan plus
+extensive post-M9 work; below is a summary of features by track (detailed
+history is in the CLAUDE.md log).
 
-### Добавлено
+### Added
 
-- **Чат с локальными и облачными моделями.** Локальные Gemma 3/4 и Qwen 3.5/3.6
-  через llama.cpp `llama-server` (managed-подпроцесс или external), а также облачные
-  API: OpenAI (Responses), Google Gemini (нативный `generateContent`) и Anthropic
-  (Claude, Messages) — единый селектор режима, ключ хранится именем env-переменной.
-- **Профили с изоляцией**, мульти-чат, черновики поля ввода, авто-название чатов,
-  перегенерация/удаление/правка последнего обмена, копирование переписки (`F5`).
-- **Клиентский agentic-loop с инструментами**: интроспекция (правка системного
-  сообщения и семплинга), заметки, RAG (база знаний с командами `/rag`), веб-поиск,
-  `fetch_url`, калькулятор, дата/время, файлы, саб-агент, «мысли» (CoT).
-- **«Модель себя» агента** (`F3`): самоописание, цели, модель собеседника, нарратив
-  наблюдений; ручная правка + авто-рефлексия. **Связность заметок**: семантический
-  поиск, граф связей, замещение со «шрамом», консолидация («сон»), кросс-органные
-  связи (заметки ↔ наблюдения ↔ RAG).
-- **Имперсонация** (`Ctrl+U`) — модель пишет реплику за пользователя.
-- **Python-песочница** (Wasmer/WASIX) для `python_exec` с изоляцией; установка
-  ассетов командой `mindfork sandbox setup` (numpy/pandas/requests из коробки).
-- **Мультиязычность**: язык агента (промпты/инструменты), язык интерфейса, внешние
-  локали (`data/locales/*.json`) и новые языки без пересборки; весь текст CLI — в
-  бандлах локалей.
-- **UI**: собственный markdown-рендерер (таблицы, LaTeX, подсветка кода), свой
-  multiline-ввод (выделение, undo/redo, мышь, эмодзи), темы (auto/dark/light), режим
-  совместимости со старым терминалом, спелл-чек, скроллбары, экран настроек с
-  группами полей и поиском.
-- **CLI**: резервное копирование/восстановление (`backup`/`restore`), импорт из
-  LameLLaMA (.NET), экспорт бандлов локалей.
-- **CI** (GitHub Actions): линты + тесты на Linux и Windows; пин тулчейна.
+- **Chat with local and cloud models.** Local Gemma 3/4 and Qwen 3.5/3.6 via
+  llama.cpp `llama-server` (managed subprocess or external), plus cloud APIs:
+  OpenAI (Responses), Google Gemini (native `generateContent`), and Anthropic
+  (Claude, Messages) — a single mode selector, the key stored as an
+  env-variable name.
+- **Isolated profiles**, multi-chat, input-box drafts, chat auto-naming,
+  regenerate/delete/edit of the last exchange, copying the conversation (`F5`).
+- **Client-side agentic loop with tools**: introspection (editing the system
+  message and sampling), notes, RAG (a knowledge base with `/rag` commands),
+  web search, `fetch_url`, a calculator, date/time, files, a sub-agent,
+  "thoughts" (CoT).
+- **Agent self-model** (`F3`): self-description, goals, a user model, an
+  observation narrative; manual editing + auto-reflection. **Notes
+  connectivity**: semantic search, a link graph, supersession with a "scar",
+  consolidation ("sleep"), cross-organ links (notes ↔ observations ↔ RAG).
+- **Impersonation** (`Ctrl+U`) — the model writes a line on the user's behalf.
+- **Python sandbox** (Wasmer/WASIX) for `python_exec` with isolation; assets
+  are installed with `mindfork sandbox setup` (numpy/pandas/requests out of the
+  box).
+- **Multi-language support**: agent language (prompts/tools), interface
+  language, external locales (`data/locales/*.json`) and new languages without
+  a rebuild; all CLI text lives in locale bundles.
+- **UI**: a custom markdown renderer (tables, LaTeX, code highlighting), a
+  custom multiline input box (selection, undo/redo, mouse, emoji), themes
+  (auto/dark/light), an old-terminal compatibility mode, spellcheck,
+  scrollbars, a settings screen with field groups and search.
+- **CLI**: backup/restore (`backup`/`restore`), import from LameLLaMA (.NET),
+  locale-bundle export.
+- **CI** (GitHub Actions): lint + tests on Linux and Windows; a pinned
+  toolchain.
 
-### Данные
+### Data
 
-- Хранение: JSON (конфиг/профили/чаты, атомарная запись + `.bak`) и SQLite
-  (заметки/RAG/«модель себя», sqlite-vec, изоляция по профилю). Формат схем — v1;
-  версионирование и миграции схем оформляются в следующих релизах.
+- Storage: JSON (config/profiles/chats, atomic writes + `.bak`) and SQLite
+  (notes/RAG/self-model, sqlite-vec, per-profile isolation). Schema format is
+  v1; schema versioning and migrations are formalized in later releases.
 
-[Unreleased]: https://github.com/vshylov/mindfork-rs/compare/v0.9.2...HEAD
+[Unreleased]: https://github.com/vshylov/mindfork-rs/compare/v0.9.3...HEAD
+[0.9.3]: https://github.com/vshylov/mindfork-rs/compare/v0.9.2...v0.9.3
 [0.9.2]: https://github.com/vshylov/mindfork-rs/compare/v0.9.1...v0.9.2
 [0.9.1]: https://github.com/vshylov/mindfork-rs/compare/v0.9.0...v0.9.1
 [0.9.0]: https://github.com/vshylov/mindfork-rs/releases/tag/v0.9.0

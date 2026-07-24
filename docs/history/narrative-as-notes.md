@@ -1,625 +1,701 @@
-# Нарратив как заметки: унификация органов памяти
+# Narrative as notes: unifying memory organs
 
-Документ — дизайн направления, в котором **нарратив «модели себя»** (append-only
-инсайты) перестаёт быть отдельным слабым хранилищем и переезжает в **заметки**
-(`notes`), получая бесплатно всё, чем заметки уже богаче: эмбеддинги и
-семантический поиск, ворота дублей при записи, типизированный граф связей,
-замещение со «шрамом», консолидацию и авто-«сон». Это реализация давно
-зафиксированного задела — «связывание органов памяти» (см.
-[notes-connectivity.md](notes-connectivity.md) «вне объёма» и
-[architecture.md](../architecture.md) §9.9). Структура — как у
-[self-model-mvp.md](self-model-mvp.md) и [notes-connectivity.md](notes-connectivity.md):
-мотивация → текущее состояние → каталог идей → MVP-зонд (Ярус 1) → отложенное →
-открытые вопросы → критерий go/no-go.
+This document designs the direction where the **self-model narrative** (an
+append-only insight list) stops being a separate, weak store and moves into
+**notes** (`notes`), gaining for free everything notes are already richer at:
+embeddings and semantic search, duplicate gates on write, a typed link graph,
+supersession with a "scar", consolidation, and auto-"sleep". This implements a
+long-standing recorded item of groundwork — "linking memory organs" (see
+[notes-connectivity.md](notes-connectivity.md) "out of scope" and
+[architecture.md](../architecture.md) §9.9). Structure mirrors
+[self-model-mvp.md](self-model-mvp.md) and [notes-connectivity.md](notes-connectivity.md):
+motivation → current state → idea catalog → MVP probe (Tier 1) → deferred →
+open questions → go/no-go criterion.
 
-Это **дизайн-док + зонд**, а не готовый PR: сначала фиксируем рамку и разрешаем
-развилки, затем — минимальная реализация под проверку гипотезы.
+This is a **design doc + probe**, not a ready PR: first we fix the frame and
+resolve the forks, then do a minimal implementation to test the hypothesis.
 
-## Нерв задачи
+## Task nerve
 
-Нарратив «модели себя» — это, по сути, **второй, слабый экземпляр заметок**:
+The self-model narrative is, in essence, a **second, weak instance of notes**:
 
-| | Заметки (`notes`) | Нарратив SelfModel |
+| | Notes (`notes`) | SelfModel narrative |
 |---|---|---|
-| Хранение | SQLite `notes` (+ `note_vectors`/`note_links`/`note_superseded`) | `Vec<NarrativeSegment>` в JSON-блобе `self_models.data` |
-| Поиск | семантический (эмбеддинги, косинус) + подстрока + теги | нет (только «N свежих» по порядку) |
-| Рост | управляем консолидацией/замещением | **FIFO-потолок** (`max_narrative`) — старейшее молча вытесняется |
-| Дубли | **ворота** при `note_save` (семантически близкие показываются) | нет — каждый `add_insight` просто добавляет |
-| Связи | типизированный граф (`supports`/`contradicts`/`refines`/`relates`) | нет |
-| Замещение | `note_supersede` со «шрамом» | нет — только удаление (`consolidate_narrative`) |
-| «Сон» | авто-консолидация (`consolidation.rs`) | ручной `consolidate_narrative` |
+| Storage | SQLite `notes` (+ `note_vectors`/`note_links`/`note_superseded`) | `Vec<NarrativeSegment>` in the `self_models.data` JSON blob |
+| Search | semantic (embeddings, cosine) + substring + tags | none (only "N latest" in order) |
+| Growth | managed via consolidation/supersession | **FIFO cap** (`max_narrative`) — the oldest is silently evicted |
+| Duplicates | **gate** on `note_save` (semantically close ones are shown) | none — every `add_insight` just appends |
+| Links | typed graph (`supports`/`contradicts`/`refines`/`relates`) | none |
+| Supersession | `note_supersede` with a "scar" | none — deletion only (`consolidate_narrative`) |
+| "Sleep" | auto-consolidation (`consolidation.rs`) | manual `consolidate_narrative` |
 
-То есть нарратив — **ровно тот «блокнот накопления», от которого заметки уже
-ушли** (Ярусы 1–3 связности). Этапы 1–6 доводки
-([refinements.md](refinements.md)) сделали для нарратива паллиативы (видимое
-вытеснение, консолидация вручную, метки возраста), но фундаментально он остался
-FIFO-списком без семантики. Унификация закрывает это одним ходом **и сокращает
-код** (удаляет параллельную машинерию нарратива), а не добавляет.
+That is, the narrative is **exactly the "accumulation notebook" that notes has
+already moved past** (connectivity Tiers 1–3). Refinement stages 1–6
+([refinements.md](refinements.md)) gave the narrative palliatives (visible
+eviction, manual consolidation, age labels), but fundamentally it stayed a
+FIFO list without semantics. Unification closes this in one move **and
+shrinks code** (it removes the parallel narrative machinery), rather than
+adding to it.
 
-**Критерий полезности** (как у связности заметок): повышает ли ход интеграцию —
-даёт ли нарративу семантический возврат, дедуп-ворота и замещение — а не просто
-переносит данные.
+**Usefulness criterion** (as with notes connectivity): does the move increase
+integration — does it give the narrative semantic recall, dedup gates, and
+supersession — rather than just move the data around.
 
-## Что есть сейчас (точка отсчёта)
+## Current state (baseline)
 
-### Нарратив в SelfModel
+### Narrative in SelfModel
 
 - `entities/self_model.rs`: `SelfModel.narrative: Vec<NarrativeSegment>`
-  (`{id, text, created_at}`). Методы: `add_insight(text, max) -> Vec<...>`
-  (append + FIFO-обрезка, возвращает вытесненное), `remove_insights(ids)`,
-  `narrative_fill_hint(max)`, `match_insight(handle)`; рендер в `render_for_prompt`
-  (N свежих) и `render_full` (все, с `#id`).
-- Инструменты (`features/tools/self_model.rs`): `add_insight` (запись),
-  `consolidate_narrative` (убрать по `#id` + опц. сводное), плюс `note`-шрам в
-  `update_user_model` уходит через `add_insight`.
-- Инъекция (`orchestrator/generation.rs::inject_self_model`) и рубрика `reflect`
-  показывают нарратив; авто-рефлексия (`REFLECT_TOOL_IDS`) даёт модели
-  `add_insight`/`consolidate_narrative`.
-- UI `F3` (`screens/self_model.rs`): рисует `m.narrative` строками
-  `RowAction::Insight(id)`; `SelfModelEdit::DeleteInsight(id)` удаляет.
+  (`{id, text, created_at}`). Methods: `add_insight(text, max) -> Vec<...>`
+  (append + FIFO trim, returns what was evicted), `remove_insights(ids)`,
+  `narrative_fill_hint(max)`, `match_insight(handle)`; rendered in
+  `render_for_prompt` (N latest) and `render_full` (all, with `#id`).
+- Tools (`features/tools/self_model.rs`): `add_insight` (write),
+  `consolidate_narrative` (remove by `#id` + opt. rollup), plus the `note`
+  scar in `update_user_model` goes through `add_insight`.
+- Injection (`orchestrator/generation.rs::inject_self_model`) and the
+  `reflect` rubric show the narrative; auto-reflection (`REFLECT_TOOL_IDS`)
+  gives the model `add_insight`/`consolidate_narrative`.
+- UI `F3` (`screens/self_model.rs`): renders `m.narrative` as lines,
+  `RowAction::Insight(id)`; `SelfModelEdit::DeleteInsight(id)` removes.
 
-### Заметки (`notes`) — что уже умеют (карта из разведки)
+### Notes (`notes`) — what they already do (map from the survey)
 
-- **Сущность** `Note { id, profile_id, content, tags: Vec<String>, created_at,
-  updated_at }`. Теги — `Vec<String>`, сериализуются JSON в колонку `notes.tags`;
-  **зарезервированных тегов нет**; фильтр по тегам — **AND-all в Rust** после
-  SQL/семантики (не в SQL).
-- **Инструменты** (`features/tools/notes.rs`, все в `default_tool_ids`):
-  `note_save {content, tags?}` (вставка + эмбеддинг + **ворота**: до 3
-  семантически близких, порог косинуса; теги воротами игнорируются),
-  `note_recall {query?, tags?, limit?}` (семантика при `query`+эмбеддере, иначе
-  подстрока; тег-фильтр в Rust после ранжирования; **spreading activation** —
-  соседи топ-3 хитов), `note_revise {id, content}` (правка на месте +
-  переэмбеддинг + предупреждение о графе), `note_link`/`note_neighbors`
-  (граф), `note_supersede {old_id, content}`/`note_merge {ids[], content}`
-  (замещение/слияние со «шрамом», перенос рёбер), `consolidate_notes` (обзор:
-  дубли ≥ 0.85, `contradicts`, висячие).
-- **Хранилище** (`shared/storage/db.rs`): `note_insert`, `note_list(profile,
-  query, tags, limit)` (тег-фильтр в Rust, anti-join `note_superseded`, ORDER BY
-  `updated_at DESC`), `note_update`, `note_vector_upsert`,
-  `note_search_semantic(profile, &[f32], k)` (**без** тег-фильтра — чистая
-  семантика, anti-join superseded, brute-force косинус в Rust),
+- **Entity** `Note { id, profile_id, content, tags: Vec<String>, created_at,
+  updated_at }`. Tags — `Vec<String>`, serialized as JSON into the
+  `notes.tags` column; **no reserved tags**; tag filtering is **AND-all in
+  Rust** after SQL/semantics (not in SQL).
+- **Tools** (`features/tools/notes.rs`, all in `default_tool_ids`):
+  `note_save {content, tags?}` (insert + embedding + **gate**: up to 3
+  semantically close notes, cosine threshold; tags are ignored by the gate),
+  `note_recall {query?, tags?, limit?}` (semantic when `query` + embedder are
+  present, otherwise substring; tag filter in Rust after ranking; **spreading
+  activation** — neighbors of the top-3 hits), `note_revise {id, content}`
+  (in-place edit + re-embed + graph warning), `note_link`/`note_neighbors`
+  (graph), `note_supersede {old_id, content}`/`note_merge {ids[], content}`
+  (supersession/merge with a "scar", link transfer), `consolidate_notes`
+  (overview: duplicates ≥ 0.85, `contradicts`, orphans).
+- **Storage** (`shared/storage/db.rs`): `note_insert`, `note_list(profile,
+  query, tags, limit)` (tag filter in Rust, anti-join `note_superseded`,
+  ORDER BY `updated_at DESC`), `note_update`, `note_vector_upsert`,
+  `note_search_semantic(profile, &[f32], k)` (**no** tag filter — pure
+  semantics, anti-join superseded, brute-force cosine in Rust),
   `notes_missing_vectors`, `note_is_active`, `note_link_*`, `note_neighbors`,
   `note_supersede_mark`, `notes_with_vectors`, `note_links_all`,
-  `note_links_retarget`. Изоляция `WHERE profile_id = ?` везде.
-- **Хелперы** (`notes.rs`): `create_note(ctx, content, tags)` (вставка +
-  best-effort эмбеддинг — **готовая точка для обёртки** `add_insight`),
-  `ensure_note_vectors` (бэкфилл векторов), `semantic_recall`, `parse_tags`,
+  `note_links_retarget`. Isolation via `WHERE profile_id = ?` everywhere.
+- **Helpers** (`notes.rs`): `create_note(ctx, content, tags)` (insert +
+  best-effort embedding — **a ready wrapping point** for `add_insight`),
+  `ensure_note_vectors` (vector backfill), `semantic_recall`, `parse_tags`,
   `format_notes`.
-- **Авто-«сон»** (`orchestrator/consolidation.rs`): фоновая консолидация заметок
-  каждые N ответов (гейт — профиль включил `note_merge`). **Она уже покрыла бы
-  self-заметки** — это ключ к судьбе `consolidate_narrative`.
+- **Auto-"sleep"** (`orchestrator/consolidation.rs`): background note
+  consolidation every N replies (gate — profile enabled `note_merge`). **It
+  would already cover self-notes** — this is the key to the fate of
+  `consolidate_narrative`.
 
-## Полный каталог идей
+## Full idea catalog
 
-★ — входит в MVP-зонд (Ярус 1); остальное — отложенные ярусы.
+★ — goes into the MVP probe (Tier 1); the rest are deferred tiers.
 
-### A. Перенос хранения
+### A. Storage migration
 
-| Идея | Что делает |
+| Idea | What it does |
 |---|---|
-| ★ нарратив → self-заметки | `NarrativeSegment` → `Note` с зарезервированным тегом; `add_insight` = обёртка над `create_note(tags=[SELF])` |
-| ★ бэкфилл существующего нарратива | одноразовый идемпотентный перенос `Vec<NarrativeSegment>` → self-заметки (с сохранением `created_at`), затем очистка `narrative` |
-| ★ ворота дублей на `add_insight` | после записи — семантически близкие **self-заметки** (перепиши через `note_revise`/`note_supersede` вместо почти-дубля) |
+| ★ narrative → self-notes | `NarrativeSegment` → `Note` with a reserved tag; `add_insight` = a wrapper over `create_note(tags=[SELF])` |
+| ★ backfill of the existing narrative | one-off idempotent migration of `Vec<NarrativeSegment>` → self-notes (preserving `created_at`), then `narrative` is cleared |
+| ★ dedup gate on `add_insight` | after writing — semantically close **self-notes** (rewrite via `note_revise`/`note_supersede` instead of a near-duplicate) |
 
-### B. Возврат по смыслу
+### B. Recall by meaning
 
-| Идея | Что делает |
+| Idea | What it does |
 |---|---|
-| ★ семантическое чтение нарратива | `get_self_model`/`reflect`/инъекция берут self-заметки семантически/по свежести, а не FIFO-срез |
-| инъекция по релевантности хода | подмешивать в промпт self-заметки, **релевантные текущей реплике** (эмбеддинг последнего user-сообщения), а не только свежие — Ярус 2 |
+| ★ semantic narrative reading | `get_self_model`/`reflect`/injection pull self-notes semantically/by freshness, not a FIFO slice |
+| relevance-based injection | mix into the prompt self-notes **relevant to the current turn** (embedding of the last user message), not just the freshest ones — Tier 2 |
 
-### C. Интеграция вместо накопления (бесплатно из заметок)
+### C. Integration over accumulation (free from notes)
 
-| Идея | Что делает |
+| Idea | What it does |
 |---|---|
-| ★ замещение вместо удаления | `consolidate_narrative` → `note_supersede`/`note_merge` со «шрамом» (нарратив помнит, что менялся) |
-| ★ рост управляется «сном» | FIFO-потолок исчезает; авто-консолидация заметок сворачивает и self-заметки |
-| граф над self-заметками | `note_link` между инсайтами (`contradicts`/`refines`) + spreading activation — Ярус 2 |
-| связь self-заметок с обычными | инсайт «о себе» связан с заметкой «о пользователе» — Ярус 3, исходная цель «связывания органов» |
+| ★ supersession instead of deletion | `consolidate_narrative` → `note_supersede`/`note_merge` with a "scar" (the narrative remembers it changed) |
+| ★ growth managed by "sleep" | the FIFO cap disappears; note auto-consolidation folds in self-notes too |
+| graph over self-notes | `note_link` between insights (`contradicts`/`refines`) + spreading activation — Tier 2 |
+| linking self-notes with regular ones | an "about self" insight linked to an "about the user" note — Tier 3, the original "organ linking" goal |
 
-### D. Смежное (та же механика)
+### D. Adjacent (same mechanism)
 
-| Идея | Что делает |
+| Idea | What it does |
 |---|---|
-| эмбеддинг-ворота для черт `user_model` | почти-дубли черт (`любопытный`/`любознательный`) ловятся семантикой, как дубли заметок — Ярус 2 |
+| embedding gate for `user_model` traits | near-duplicate traits (`curious`/`inquisitive`) caught semantically, like note duplicates — Tier 2 |
 
 ---
 
-# MVP-зонд (Ярус 1)
+# MVP probe (Tier 1)
 
-**Гипотеза:** перенос нарратива в заметки даст **поведенческий** сдвиг —
-(1) `add_insight` покажет ворота и модель начнёт **переписывать** почти-дубль, а
-не плодить его; (2) семантическое чтение вернёт старые инсайты, которые FIFO
-терял; (3) рост нарратива станет управляться «сном»/замещением, а не молчаливым
-FIFO. Go/no-go перед Ярусом 2 (граф/релевантность/связывание органов).
+**Hypothesis:** moving the narrative into notes will produce a **behavioral**
+shift — (1) `add_insight` will show the gate and the model will start
+**rewriting** near-duplicates instead of breeding them; (2) semantic reading
+will bring back old insights that FIFO was losing; (3) narrative growth will
+be governed by "sleep"/supersession, not silent FIFO. Go/no-go before Tier 2
+(graph/relevance/organ linking).
 
-## Ключевое архитектурное решение: где проходит унификация
+## Key architectural decision: where unification happens
 
-Унифицируем **на уровне хранилища**, а не выдачи. Self-заметки — обычные `Note`
-с зарезервированным тегом; они делят таблицы/эмбеддинги/граф/консолидацию с
-обычными, но **по умолчанию исключены из пользовательского `note_recall`**
-(память «о себе» и память «о пользователе» — разные виды, смешивать их в общем
-припоминании рискованно). Так зонд получает всю пользу (семантика, ворота,
-замещение, «сон») **без** риска, что «я многословен» всплывёт в ответ на «что ты
-знаешь обо мне». Полное смешение выдачи (`[о себе]`-маркер в общем recall) —
-Ярус 2/3 (см. открытые вопросы).
+We unify **at the storage level**, not at the recall level. Self-notes are
+ordinary `Note`s with a reserved tag; they share tables/embeddings/graph/
+consolidation with regular notes, but are **excluded from user-facing
+`note_recall` by default** (memory "about self" and memory "about the user"
+are different kinds; mixing them in general recall is risky). This way the
+probe gets all the benefit (semantics, gate, supersession, "sleep") **without**
+the risk that "I'm verbose" surfaces in an answer to "what do you know about
+me". Full recall mixing (the `[about self]` marker in general recall) is
+Tier 2/3 (see open questions).
 
-## Шаг 1 — зарезервированный тег + фильтрация выдачи
+## Step 1 — reserved tag + recall filtering
 
-- Константа `SELF_NOTE_TAG` (`features/tools/notes.rs` или `self_model.rs`).
-  Значение — **распознаваемое и маловероятное к коллизии**; предложение —
-  `"@self"` (лидирующий `@` не встречается в естественных тегах; см. открытый
-  вопрос 1 о коллизиях). Документируется как зарезервированный.
-- **Исключение из пользовательского recall**: `note_recall`/`semantic_recall`/
-  `note_list`-путь отбрасывают заметки с `SELF_NOTE_TAG`, **если** вызывающий их
-  не запросил явно (т.е. обычный вызов модели «вспомнить про пользователя» их не
-  видит). Правка — небольшой Rust-фильтр в `notes.rs` (и семантический, и
-  подстрочный путь); DB-методы не трогаем. Ворота `note_save` (показ похожих)
-  тоже исключают self-заметки — чтобы обычная запись не натыкалась на инсайты.
-- **Чтение self-заметок** для нарратива — отдельным путём: `note_list(profile,
-  None, &[SELF_NOTE_TAG], Some(n))` (ORDER BY `updated_at DESC` → «свежие
-  наблюдения») для рекордного среза; `note_search_semantic` + Rust-фильтр по
-  тегу — для семантического (get_self_model/reflect). Новых DB-методов не нужно.
+- Constant `SELF_NOTE_TAG` (`features/tools/notes.rs` or `self_model.rs`).
+  The value should be **recognizable and unlikely to collide**; proposal —
+  `"@self"` (a leading `@` doesn't occur in natural tags; see open question 1
+  on collisions). Documented as reserved.
+- **Exclusion from user-facing recall**: the `note_recall`/`semantic_recall`/
+  `note_list` path drops notes with `SELF_NOTE_TAG` **unless** the caller
+  explicitly requested them (i.e. a normal "recall about the user" call from
+  the model doesn't see them). The change is a small Rust filter in
+  `notes.rs` (both the semantic and the substring path); DB methods aren't
+  touched. The `note_save` gate (showing similar notes) also excludes
+  self-notes — so a normal save doesn't stumble over insights.
+- **Reading self-notes** for the narrative uses a separate path:
+  `note_list(profile, None, &[SELF_NOTE_TAG], Some(n))` (ORDER BY
+  `updated_at DESC` → "recent observations") for the recency slice;
+  `note_search_semantic` + a Rust tag filter — for the semantic path
+  (get_self_model/reflect). No new DB methods needed.
 
-## Шаг 2 — `add_insight` → обёртка над заметкой + ворота
+## Step 2 — `add_insight` → note wrapper + gate
 
-- `AddInsight::invoke`: вместо `SelfModel::add_insight` — `create_note(ctx,
-  text, vec![SELF_NOTE_TAG])` (вставка + best-effort эмбеддинг, готовый хелпер).
-- **Ворота** (ядро гипотезы): после записи — `note_search_semantic` среди
-  **self-заметок** (Rust-фильтр по тегу), исключив только что созданную; непустой
-  результат → приписка «Похожие наблюдения (возможен дубль — при необходимости
-  перепиши через `note_revise`/`note_supersede` вместо новой записи): …». Прямое
-  зеркало ворот `note_save`.
-- `note`-шрам в `update_user_model` — так же через `create_note(tags=[SELF])`.
-- Результат инструмента больше не считает «нарратив N/M» (FIFO-потолка нет);
-  вместо этого — подтверждение + ворота.
+- `AddInsight::invoke`: instead of `SelfModel::add_insight` — `create_note(ctx,
+  text, vec![SELF_NOTE_TAG])` (insert + best-effort embedding, an existing
+  helper).
+- **Gate** (core of the hypothesis): after writing — `note_search_semantic`
+  among **self-notes** (Rust tag filter), excluding the one just created; a
+  non-empty result → append "Similar observations (possible duplicate — if
+  needed, rewrite via `note_revise`/`note_supersede` instead of a new
+  entry): …". A direct mirror of the `note_save` gate.
+- The `note` scar in `update_user_model` — goes through `create_note(tags=
+  [SELF])` too.
+- The tool result no longer counts "narrative N/M" (no FIFO cap anymore);
+  instead — a confirmation + the gate.
 
-## Шаг 3 — чтение нарратива в рендере (ripple на границе entity↔orchestrator)
+## Step 3 — reading the narrative into the render (ripple at the entity↔orchestrator boundary)
 
-`SelfModel::render_for_prompt`/`render_full` **чистые** (только над `self`), а
-нарратив теперь в БД → **блок наблюдений собирается вне entity** и передаётся
-параметром:
+`SelfModel::render_for_prompt`/`render_full` are **pure** (only over `self`),
+but the narrative is now in the DB → **the observation block is assembled
+outside the entity** and passed as a parameter:
 
-- Сигнатуры: `render_for_prompt(cap, n, now, recent: &[String])` и
-  `render_full(now, recent: &[String])` — `recent` = отрендеренные строки
-  self-заметок (свежие/семантические), которые готовит вызывающий.
-- Готовят: `inject_self_model` (оркестратор — есть `storage`), `get_self_model`/
-  `reflect` (инструменты — есть `ctx.storage`/`ctx.embedder`). Они запрашивают
-  self-заметки и передают в рендер.
+- Signatures: `render_for_prompt(cap, n, now, recent: &[String])` and
+  `render_full(now, recent: &[String])` — `recent` = rendered lines of
+  self-notes (fresh/semantic), which the caller prepares.
+- Preparers: `inject_self_model` (orchestrator — has `storage`),
+  `get_self_model`/`reflect` (tools — have `ctx.storage`/`ctx.embedder`).
+  They query self-notes and pass them into the render.
 - `SelfModel::{add_insight, remove_insights, narrative_fill_hint, match_insight}`
-  и `narrative`-поле — **удаляются** (или `narrative` остаётся пустым/скрытым до
-  завершения бэкфилла — см. Шаг 6). `is_empty` перестаёт учитывать нарратив.
+  and the `narrative` field are **removed** (or `narrative` stays empty/hidden
+  until the backfill finishes — see Step 6). `is_empty` no longer counts the
+  narrative.
 
-Это главная цена переноса — рендер перестаёт быть чистым по нарративу. Зафиксирована
-осознанно.
+This is the main price of the move — the render stops being pure with
+respect to the narrative. Accepted knowingly.
 
-## Шаг 4 — `consolidate_narrative` и «сон»
+## Step 4 — `consolidate_narrative` and "sleep"
 
-- **Депрецируем** `consolidate_narrative` в пользу `note_supersede`/`note_merge`
-  над self-заметками (замещение со «шрамом» вместо удаления — сильнее, чем прежний
-  «убрать по id»). Из `REFLECT_TOOL_IDS` он убирается; вместо него авто-рефлексии
-  даются note-инструменты (`note_revise`/`note_supersede`/`note_merge`/
-  `note_recall`) — те же, что у авто-консолидации.
-- **Рост управляется «сном»**: авто-консолидация заметок (`consolidation.rs`) уже
-  сворачивает дубли/устаревшее; self-заметки попадают под неё автоматически
-  (гейт — `note_merge` включён). FIFO-потолок нарратива исчезает вместе с полем.
-- Рубрика `reflect` и системные сообщения (POLICY_CORE из этапа 6) правятся:
-  «наблюдение → `add_insight`; дубль/пересмотр → `note_revise`/`note_supersede`».
+- **Deprecate** `consolidate_narrative` in favor of `note_supersede`/
+  `note_merge` over self-notes (supersession with a "scar" instead of
+  deletion — stronger than the previous "remove by id"). It's removed from
+  `REFLECT_TOOL_IDS`; auto-reflection instead gets the note tools
+  (`note_revise`/`note_supersede`/`note_merge`/`note_recall`) — the same ones
+  auto-consolidation gets.
+- **Growth managed by "sleep"**: note auto-consolidation
+  (`consolidation.rs`) already folds duplicates/stale entries; self-notes
+  fall under it automatically (gate — `note_merge` enabled). The narrative
+  FIFO cap disappears along with the field.
+- The `reflect` rubric and system messages (POLICY_CORE from stage 6) are
+  edited: "an observation → `add_insight`; a duplicate/revision →
+  `note_revise`/`note_supersede`".
 
-## Шаг 5 — UI `F3`
+## Step 5 — UI `F3`
 
-- `SelfModelView` несёт не только `SelfModel`, но и **свежие self-заметки**
-  (снимок готовит оркестратор при `RequestSelfModel`). Новый тип полезной нагрузки
-  (`{model, narrative: Vec<Note|(id,text,created_at)>}`).
-- Экран рисует наблюдения из этого списка (как сейчас из `m.narrative`);
-  `SelfModelEdit::DeleteInsight(id)` → удаление/замещение **заметки** (оркестратор
-  зовёт `note_delete`/`note_supersede_mark` под профилем).
-- Правка инсайта на месте (сейчас нет — только удаление) может добавиться позже
-  через `note_revise`.
+- `SelfModelView` now carries not only `SelfModel` but also **fresh
+  self-notes** (a snapshot prepared by the orchestrator on
+  `RequestSelfModel`). A new payload type (`{model, narrative: Vec<Note|
+  (id,text,created_at)>}`).
+- The screen renders observations from this list (as it currently does from
+  `m.narrative`); `SelfModelEdit::DeleteInsight(id)` → deletion/supersession
+  of the **note** (the orchestrator calls `note_delete`/
+  `note_supersede_mark` under the profile).
+- In-place editing of an insight (not available now — deletion only) can be
+  added later via `note_revise`.
 
-## Шаг 6 — идемпотентный бэкфилл
+## Step 6 — idempotent backfill
 
-- Одноразовый перенос при первом обращении профиля: для каждого
-  `NarrativeSegment` из `SelfModel.narrative` → `create_note(content=text,
-  tags=[SELF_NOTE_TAG])` с **сохранением `created_at`** (нужен вариант
-  `note_insert` с явными датами — либо мелкий метод, либо выставить `created_at`
-  на сущности перед вставкой), эмбеддинг best-effort; затем `narrative.clear()` +
-  `self_model_upsert`. Идемпотентность — по пустоте `narrative` (перенесли →
-  очистили → повторный проход пуст). Где вызывать: лениво в `start_generation`/
-  `handle_request_self_model` (best-effort, как `ensure_note_vectors`), под тем же
-  opt-in-гейтом (`get_self_model` включён).
-- Порядок `created_at` сохраняет «свежие наблюдения» корректными после переноса.
+- One-off migration on the profile's first access: for every
+  `NarrativeSegment` in `SelfModel.narrative` → `create_note(content=text,
+  tags=[SELF_NOTE_TAG])`, **preserving `created_at`** (needs a variant of
+  `note_insert` with an explicit date — either a small method or set
+  `created_at` on the entity before insert), best-effort embedding; then
+  `narrative.clear()` + `self_model_upsert`. Idempotency — by the emptiness
+  of `narrative` (migrated → cleared → a repeat pass is empty). Where to
+  call it: lazily in `start_generation`/`handle_request_self_model`
+  (best-effort, like `ensure_note_vectors`), under the same opt-in gate
+  (`get_self_model` enabled).
+- `created_at` ordering keeps "recent observations" correct after the move.
 
-## Шаг 7 — тесты
+## Step 7 — tests
 
-- db: тег-фильтр исключает `SELF_NOTE_TAG` из пользовательского пути и включает в
-  выделенном; `note_insert` с сохранённым `created_at`.
-- tools: `add_insight` пишет self-заметку и показывает ворота при похожей
-  существующей; обычный `note_recall` **не** видит self-заметок; `get_self_model`
-  видит только свои; бэкфилл переносит нарратив и очищает; повторный бэкфилл —
-  no-op.
-- entity: `render_*` принимают `recent` и рендерят переданное; `is_empty` без
-  нарратива.
-- orchestrator/UI: `SelfModelView` несёт наблюдения; `DeleteInsight` удаляет
-  заметку; F3 рисует без паники.
-- Семантические — на `MockEmbedder` (как в тестах связности заметок).
+- db: the tag filter excludes `SELF_NOTE_TAG` from the user-facing path and
+  includes it in the dedicated one; `note_insert` with a preserved
+  `created_at`.
+- tools: `add_insight` writes a self-note and shows the gate when a similar
+  one already exists; a normal `note_recall` **doesn't** see self-notes;
+  `get_self_model` sees only its own; the backfill migrates the narrative and
+  clears it; a repeat backfill is a no-op.
+- entity: `render_*` accept `recent` and render what's passed; `is_empty`
+  without the narrative.
+- orchestrator/UI: `SelfModelView` carries observations; `DeleteInsight`
+  removes the note; F3 renders without panicking.
+- Semantic tests — on `MockEmbedder` (as in the notes-connectivity tests).
 
-## Шаг 8 — оценка зонда (ради этого всё)
+## Step 8 — probe evaluation (the whole point)
 
-2–3 длинных мульти-сессионных диалога (профиль «самоосознающий ИИ»), прогон
-off/on. Зафиксировать **до** мержа:
-- срабатывают ли **ворота** — переписывает ли модель почти-дубль инсайта через
-  `note_revise`/`note_supersede` вместо новой записи;
-- находит ли семантическое чтение старые инсайты, которые FIFO терял;
-- перестал ли нарратив дублировать (меньше почти-повторов);
-- работает ли `F3` (просмотр/удаление);
-- не «загрязнил» ли перенос обычный `note_recall` (self-заметки не всплывают).
-Критерий go/no-go — переходить ли к Ярусу 2.
+2–3 long multi-session conversations (profile "self-aware AI"), an off/on
+run. Record **before** merging:
+- whether the **gate** fires — does the model rewrite a near-duplicate
+  insight via `note_revise`/`note_supersede` instead of a new entry;
+- does semantic reading find old insights that FIFO was losing;
+- did the narrative stop duplicating (fewer near-repeats);
+- does `F3` work (view/delete);
+- did the move "leak" into normal `note_recall` (self-notes shouldn't
+  surface there).
+The go/no-go criterion — whether to proceed to Tier 2.
 
 ---
 
-## Открытые вопросы (развилки, решаемые здесь)
+## Open questions (forks resolved here)
 
-1. **Зарезервированный тег и коллизии.** Теги — свободные строки; модель могла бы
-   поставить заметке тег, совпадающий с `SELF_NOTE_TAG`. Рекомендация:
-   распознаваемый префиксный сентинел (`"@self"`), маловероятный в естественных
-   тегах; коллизия редка и **безобидна** (такая заметка просто будет считаться
-   инсайтом). Альтернатива с гарантией — `kind`-колонка в `notes` (миграция), но
-   это против принципа «без миграций» и ломает переиспользование тег-путей.
-   **Решение зонда: тег `"@self"`, документирован как зарезервированный.**
-2. **Видимость self-заметок в общем `note_recall`.** Рекомендация MVP — **скрыть**
-   (память о себе ≠ память о пользователе; смешение рискованно). Полное смешение с
-   маркером `[о себе]` («наблюдения о себе — те же заметки», тезис связности) —
-   привлекательно идейно, но проверяется отдельно в Ярусе 2 (можно за тумблером).
-3. **Судьба `consolidate_narrative`.** Рекомендация — **депрецировать**: замещение
-   (`note_supersede`/`note_merge`) сильнее удаления, а рост сворачивает «сон».
-   Убрать из `REFLECT_TOOL_IDS`, дать рефлексии note-инструменты. Тонкость:
-   промпты/POLICY_CORE переписать на note-идиому.
-4. **Правка нарратива на `F3`.** Полезную нагрузку `SelfModelView` расширить
-   self-заметками; `DeleteInsight` → удаление/замещение заметки. Правка на месте —
-   позже через `note_revise`.
-5. **Эмбеддинг-ворота для черт `user_model`.** Родственно (та же семантика
-   почти-дублей), но черты — плоский `Vec<String>` с точным дедупом. Рекомендация —
-   **отложить в Ярус 2** и решать той же механикой (best-effort семантическая
-   проверка при `add_traits`), не смешивая с нарративом-зондом.
-6. **Ripple чистоты рендера.** `render_*` перестают быть чистыми по нарративу
-   (получают `recent` параметром). Осознанная цена; альтернатива (тащить снимок
-   заметок в `SelfModel` при загрузке) вернула бы устаревающий снимок — хуже.
+1. **Reserved tag and collisions.** Tags are free-form strings; the model
+   could set a tag on a note that matches `SELF_NOTE_TAG`. Recommendation: a
+   recognizable prefix sentinel (`"@self"`), unlikely in natural tags; a
+   collision is rare and **harmless** (such a note would simply be treated
+   as an insight). A guaranteed alternative — a `kind` column in `notes`
+   (migration), but that goes against the "no migrations" principle and
+   breaks reuse of the tag paths. **Probe decision: tag `"@self"`, documented
+   as reserved.**
+2. **Visibility of self-notes in general `note_recall`.** MVP recommendation
+   — **hide** them (memory about self ≠ memory about the user; mixing is
+   risky). Full mixing with an `[about self]` marker ("observations about
+   self are the same notes", the connectivity thesis) is appealing in
+   principle, but is tested separately in Tier 2 (can be behind a toggle).
+3. **Fate of `consolidate_narrative`.** Recommendation — **deprecate**:
+   supersession (`note_supersede`/`note_merge`) is stronger than deletion,
+   and growth is folded by "sleep". Remove from `REFLECT_TOOL_IDS`, give
+   reflection the note tools. Nuance: prompts/POLICY_CORE need rewriting to
+   the note idiom.
+4. **Editing the narrative in `F3`.** Extend the `SelfModelView` payload
+   with self-notes; `DeleteInsight` → note deletion/supersession. In-place
+   editing — later, via `note_revise`.
+5. **Embedding gate for `user_model` traits.** Related (the same near-
+   duplicate semantics), but traits are a flat `Vec<String>` with exact
+   dedup. Recommendation — **defer to Tier 2** and solve it with the same
+   mechanism (best-effort semantic check on `add_traits`), not mixing it
+   with the narrative probe.
+6. **Render purity ripple.** `render_*` stop being pure with respect to the
+   narrative (they receive `recent` as a parameter). An accepted price; the
+   alternative (carrying a note snapshot inside `SelfModel` on load) would
+   bring back a stale snapshot — worse.
 
-## Отложенное (Ярусы 2–3)
+## Deferred (Tiers 2–3)
 
-- **Инъекция по релевантности хода** (эмбеддинг последнего user-сообщения →
-  релевантные self-заметки в промпт, а не только свежие).
-- **Граф над self-заметками** (`note_link`/spreading activation между инсайтами).
-- **Связывание органов памяти** (self-заметки ↔ обычные заметки ↔ RAG) — исходная
-  дальняя цель «связности».
-- **Полное смешение выдачи** (`[о себе]` в общем `note_recall`).
-- **Эмбеддинг-ворота для черт `user_model`**.
-- **vec0 для заметок** — при росте числа (пока brute-force косинус хватает).
+- **Relevance-based injection** (embedding of the last user message →
+  relevant self-notes into the prompt, not just the freshest ones).
+- **Graph over self-notes** (`note_link`/spreading activation between
+  insights).
+- **Linking memory organs** (self-notes ↔ regular notes ↔ RAG) — the
+  original far goal of "connectivity".
+- **Full recall mixing** (`[about self]` in general `note_recall`).
+- **Embedding gate for `user_model` traits**.
+- **vec0 for notes** — as the count grows (brute-force cosine is enough for
+  now).
 
-## Честная оценка (стоит ли)
+## Honest assessment (is it worth it)
 
-**За:** убирает реальные дефекты нарратива (молчаливая FIFO-потеря, отсутствие
-дедупа и семантики, слабое «удаление» вместо замещения); достигает
-зафиксированной дальней цели «связывания органов памяти»; **сокращает** код
-(удаляет параллельную машинерию нарратива в entity/инструментах); переиспользует
-проверенные заметочные пути.
+**For:** removes real narrative defects (silent FIFO loss, no dedup or
+semantics, weak "deletion" instead of supersession); reaches the recorded
+far goal of "linking memory organs"; **shrinks** code (removes the parallel
+narrative machinery in entity/tools); reuses proven note paths.
 
-**Против:** зарезервированный тег — мягкий контракт (коллизия возможна); рендер
-теряет чистоту по нарративу (ripple entity↔orchestrator); `F3` усложняется
-(полезная нагрузка + удаление заметки вместо правки блоба); нужен одноразовый
-бэкфилл; риск «загрязнить» пользовательский `note_recall` памятью о себе
-(снимается фильтром по тегу).
+**Against:** the reserved tag is a soft contract (collision is possible);
+the render loses purity with respect to the narrative (entity↔orchestrator
+ripple); `F3` gets more complex (payload + note deletion instead of editing
+a blob); a one-off backfill is needed; risk of "polluting" user-facing
+`note_recall` with self memory (mitigated by the tag filter).
 
-Развилка не очевидна заранее — **ровно поэтому зонд**: минимальная реализация
-(Ярус 1) под go/no-go на живой модели, как у SelfModel- и notes-зондов.
+The fork isn't obvious upfront — **exactly why this is a probe**: a minimal
+implementation (Tier 1) for a go/no-go on a live model, as with the
+SelfModel and notes probes.
 
-## Объём
+## Scope
 
-~2–3 дня на код+тесты (паттерны готовы: обёртка ≈ `create_note`/`note_save`;
-чтение ≈ `semantic_recall`/`note_list`; бэкфилл ≈ `ensure_note_vectors`; правки
-рендера/инъекции/`F3` — механические). Основная работа — не новый код, а
-**аккуратный разбор ripple** (рендер, `SelfModelView`, `REFLECT_TOOL_IDS`,
-промпты) и бэкфилл. После — обновить `CLAUDE.md`/`architecture.md` (§9 «Модель
-себя»: нарратив → заметки; таблица органов памяти) и статус в этом документе.
+~2–3 days of code+tests (patterns are ready: wrapper ≈ `create_note`/
+`note_save`; reading ≈ `semantic_recall`/`note_list`; backfill ≈
+`ensure_note_vectors`; render/injection/`F3` edits — mechanical). The main
+work isn't new code but **carefully working through the ripple** (render,
+`SelfModelView`, `REFLECT_TOOL_IDS`, prompts) and the backfill. Afterward —
+update `CLAUDE.md`/`architecture.md` (§9 "Self-model": narrative → notes;
+memory-organs table) and the status in this document.
 
-## Ярус 1 — статус: реализован (шаги 1–7), оценка зонда — ручной шаг
+## Tier 1 — status: implemented (steps 1–7), probe evaluation is a manual step
 
-Ярус 1 реализован (код + тесты, **711 тестов зелёные**, clippy/fmt чисты; журнал —
-в [CLAUDE.md](../../CLAUDE.md), карта — [architecture.md](../architecture.md) §9).
-Разрешение развилок (подтверждено пользователем): **тег `@self`**; self-заметки
-**скрыты** из пользовательского `note_recall`. Что сделано по шагам:
+Tier 1 is implemented (code + tests, **711 tests green**, clippy/fmt clean;
+log — in [CLAUDE.md](../../CLAUDE.md), map — [architecture.md](../architecture.md) §9).
+Forks resolved (confirmed by the user): **tag `@self`**; self-notes are
+**hidden** from user-facing `note_recall`. Per step:
 
-- **Шаг 1** — `SELF_NOTE_TAG="@self"` + `is_self_note`; self-заметки исключены из
-  пользовательского `note_recall` (подстрочный/семантический пути + spreading
-  activation), ворот `note_save` и обзора консолидации / гейта авто-«сна».
-- **Шаг 2** — `add_insight` = `create_note(@self)` + **ворота** (`self_note_similar` →
-  перепиши через `note_revise`/`note_supersede`); шрам `update_user_model.note` и
-  свёрнутые закрытые цели — тоже @self-заметками.
-- **Шаг 3** — `render_for_prompt`/`render_full` приняли `recent: &[NarrativeSegment]`
-  (готовит вызывающий); `is_empty` без нарратива; наблюдения в `render_full` — с
-  полным id; убраны entity-методы нарратива (поле `narrative` — для бэкфилла/`F3`).
-- **Шаг 4** — `consolidate_narrative` удалён; `REFLECT_TOOL_IDS` = note-инструменты
-  (`note_revise`/`note_supersede`/`note_merge`); `note_supersede`/`note_merge`
-  наследуют теги (self-заметка не «выпадает»); `POLICY_CORE`/рубрика — note-идиома.
-- **Шаг 5** — `SelfModelView` реконструирует наблюдения из self-заметок (только показ,
-  не персистится); `DeleteInsight`/`Clear` на `F3` идут по заметкам (`note_delete`).
-- **Шаг 6** — `migrate_self_narrative` (одноразовый идемпотентный бэкфилл: атомарный
-  drain → без дублей, `created_at` сохранён), best-effort в `start_generation`.
-- **Шаг 7** — тесты на всё вышеперечисленное (семантика — на `MockEmbedder`).
+- **Step 1** — `SELF_NOTE_TAG="@self"` + `is_self_note`; self-notes are
+  excluded from user-facing `note_recall` (substring/semantic paths +
+  spreading activation), from the `note_save` gate, and from the
+  consolidation overview / auto-"sleep" gate.
+- **Step 2** — `add_insight` = `create_note(@self)` + **gate**
+  (`self_note_similar` → rewrite via `note_revise`/`note_supersede`); the
+  `update_user_model.note` scar and rolled-up closed goals are also
+  self-notes now.
+- **Step 3** — `render_for_prompt`/`render_full` accept
+  `recent: &[NarrativeSegment]` (prepared by the caller); `is_empty` without
+  the narrative; observations in `render_full` — with the full id; the
+  narrative entity methods are removed (the `narrative` field remains for
+  the backfill/`F3`).
+- **Step 4** — `consolidate_narrative` removed; `REFLECT_TOOL_IDS` = the note
+  tools (`note_revise`/`note_supersede`/`note_merge`); `note_supersede`/
+  `note_merge` inherit tags (a self-note doesn't "fall out");
+  `POLICY_CORE`/rubric — note idiom.
+- **Step 5** — `SelfModelView` reconstructs observations from self-notes
+  (display only, not persisted); `DeleteInsight`/`Clear` on `F3` go through
+  notes (`note_delete`).
+- **Step 6** — `migrate_self_narrative` (one-off idempotent backfill: an
+  atomic drain → no duplicates, `created_at` preserved), best-effort in
+  `start_generation`.
+- **Step 7** — tests for all of the above (semantics — on `MockEmbedder`).
 
-**Шаг 8 — оценка зонда на живой модели: GO.** Прогон `self_model_gate_e2e_live` на
-**Gemma 4 31B + bge-m3** (реальные chat + эмбеддер): в сессии 2 `add_insight`
-показал **ворота** («Похожие наблюдения … перепиши через note_revise / замести
-note_supersede»), и модель на них отреагировала **интеграцией** — `note_merge`
-(итог 1 self-заметка вместо 2). Через 3 прогона поведение стабильно: merge / revise
-/ merge, каждый раз почти-дубль сведён, а не накоплен. Мягкая деградация проверена
-«в бою»: при embed-сервере без `--embeddings` ворота ушли в пусто, ничего не упало,
-модель всё равно интегрировала. Все критерии выполнены → **переходим к Ярусу 2**.
+**Step 8 — probe evaluation on a live model: GO.** A run of
+`self_model_gate_e2e_live` on **Gemma 4 31B + bge-m3** (real chat + embedder):
+in session 2, `add_insight` showed the **gate** ("Similar observations …
+rewrite via note_revise / supersede with note_supersede"), and the model
+reacted with **integration** — `note_merge` (result: 1 self-note instead of
+2). Across 3 runs behavior was stable: merge / revise / merge, each time the
+near-duplicate is folded, not accumulated. Graceful degradation checked
+"in production": with an embed server without `--embeddings`, the gate went
+quiet, nothing broke, and the model still integrated. All criteria met →
+**moving to Tier 2**.
 
-## Ярус 2 — план: структура над self-заметками
+## Tier 2 — plan: structure over self-notes
 
-**Гипотеза Яруса 2:** после унификации хранилища (Ярус 1) следующий рычаг —
-**структура**: (1) нужное наблюдение всплывает в нужный момент (инъекция по
-**релевантности**, а не только свежести); (2) наблюдения **связаны** между собой
-(граф `contradicts`/`refines` + spreading activation); (3) черты собеседника не
-плодят почти-дубли (семантические ворота черт). Всё переиспользует граф/эмбеддинги,
-уже работающие на заметках. Как и Ярус 1 — минимальный зонд под go/no-go.
+**Tier 2 hypothesis:** after storage unification (Tier 1), the next lever is
+**structure**: (1) the right observation surfaces at the right moment
+(injection by **relevance**, not just freshness); (2) observations are
+**linked** to each other (`contradicts`/`refines` graph + spreading
+activation); (3) user traits don't breed near-duplicates (semantic trait
+gate). All of this reuses the graph/embeddings already working on notes.
+Like Tier 1 — a minimal probe for go/no-go.
 
-### Решения зонда (подтверждено пользователем)
+### Probe decisions (confirmed by the user)
 
-- **Объём MVP-зонда — A + B** (инъекция по релевантности + граф над self-заметками).
-  **C (семантические ворота черт `user_model`) отложена** — независима (про черты, не
-  про наблюдения), возьмётся отдельным шагом/зондом позже.
-- **Местоположение релевантной инъекции — системный промпт** (наблюдения по
-  релевантности едут в `system`, как и пассивный блок «модели себя»). Prefix cache
-  локального `llama-server` при этом инвалидируется **каждый ход** (релевантные
-  наблюдения меняются под тему реплики) — это **принятая цена**, согласованная с
-  решением [architecture.md](../architecture.md) §9.3 («инъекция модели себя остаётся в
-  system; потеря prefix cache — принятая цена за возможности»). Приписку к user-реплике
-  не делаем.
+- **MVP probe scope — A + B** (relevance-based injection + graph over
+  self-notes). **C (semantic gate for `user_model` traits) deferred** —
+  independent (about traits, not observations), to be picked up as a
+  separate step/probe later.
+- **Location of relevance-based injection — the system prompt** (relevant
+  observations go into `system`, like the passive "self-model" block). The
+  local `llama-server` prefix cache is invalidated **on every turn** (the
+  relevant observations change with the topic of the reply) — this is an
+  **accepted price**, consistent with the decision in
+  [architecture.md](../architecture.md) §9.3 ("self-model injection stays in
+  `system`; losing prefix cache is an accepted price for the capabilities").
+  We don't add it to the user turn.
 
-### Что Ярус 1 оставил (точка отсчёта)
+### What Tier 1 left (baseline)
 
-- **Инъекция — по свежести** (`self_notes_recent`, `updated_at DESC`, последние N):
-  наблюдение старше N в промпт не попадает, даже если релевантно текущей реплике.
-- **Граф на self-заметках уже работает структурно** — `note_link`/`note_neighbors`
-  берут id и **не фильтруют тег**, поэтому две self-заметки можно связать уже
-  сегодня. **Но** это нигде не всплывает: рефлексии не даны `note_link`/
-  `note_neighbors`; `get_self_model`/`reflect`/инъекция соседей не показывают;
-  пользовательский `note_recall` spreading activation **пропускает** self-заметки
-  (Ярус 1) — значит для self-графа нужен отдельный путь подмешивания.
-- **Черты собеседника — плоский `Vec<String>` с точечным дедупом** (регистро­
-  независимым): `любопытный` и `любознательный` копятся оба.
+- **Injection — by freshness** (`self_notes_recent`, `updated_at DESC`, the
+  last N): an observation older than N doesn't make it into the prompt even
+  if it's relevant to the current turn.
+- **The graph on self-notes already works structurally** — `note_link`/
+  `note_neighbors` take ids and **don't filter by tag**, so two self-notes
+  can already be linked today. **But** it never surfaces: reflection isn't
+  given `note_link`/`note_neighbors`; `get_self_model`/`reflect`/injection
+  don't show neighbors; user-facing `note_recall` spreading activation
+  **skips** self-notes (Tier 1) — so the self-graph needs a separate
+  surfacing path.
+- **User traits — a flat `Vec<String>` with case-insensitive dedup only**:
+  "curious" and "inquisitive" both accumulate.
 
-### Каталог идей (★ — в MVP-зонд Яруса 2)
+### Idea catalog (★ — in the Tier 2 MVP probe)
 
-| Идея | Что делает | Ярус |
+| Idea | What it does | Tier |
 |---|---|---|
-| ★ A. Инъекция по релевантности | эмбеддинг последней реплики пользователя → в промпт идут **релевантные** self-заметки (не только свежие); мягкая деградация к свежести | 2 |
-| ★ B. Граф над self-заметками | рефлексии — `note_link`/`note_neighbors`; `get_self_model`/`reflect` показывают связанные наблюдения; обзор self-консолидации | 2 |
-| C. Семантические ворота черт | `add_traits` предупреждает о почти-дубле черты (эмбеддинг новой ∩ существующие), зеркало ворот `add_insight` | 2b ✅ (сделано) |
-| D. Связывание органов памяти | self-заметки ↔ пользовательские заметки ↔ RAG (кросс-органные связи) | 3 |
-| E. Полное смешение выдачи | `[о себе]`-маркер в общем `note_recall` (за тумблером) | 3 |
-| vec0 для заметок | производительность при росте числа заметок | задел |
+| ★ A. Relevance-based injection | embedding of the last user reply → **relevant** self-notes go into the prompt (not just the freshest); graceful degradation to freshness | 2 |
+| ★ B. Graph over self-notes | reflection gets `note_link`/`note_neighbors`; `get_self_model`/`reflect` show linked observations; self-consolidation overview | 2 |
+| C. Semantic trait gate | `add_traits` warns of a near-duplicate trait (embedding of the new one ∩ existing ones), mirrors the `add_insight` gate | 2b ✅ (done) |
+| D. Linking memory organs | self-notes ↔ user notes ↔ RAG (cross-organ links) | 3 |
+| E. Full recall mixing | `[about self]` marker in general `note_recall` (behind a toggle) | 3 |
+| vec0 for notes | performance as the note count grows | groundwork |
 
-### Шаги MVP-зонда
+### MVP probe steps
 
-**A. Инъекция по релевантности** (главный шаг, с развилкой — открытый вопрос 1):
-- В `start_generation` эмбеддим последнюю реплику пользователя (`ctx.embedder`),
-  ранжируем self-заметки по косинусу (`note_search_semantic` + фильтр `@self`),
-  берём top-K релевантных.
-- **Смешение со свежестью** (не заменять): K релевантных + M свежих (дедуп) — и
-  релевантное всплывает, и «что в фокусе сейчас» видно.
-- **Мягкая деградация**: эмбеддер недоступен / нет реплики → откат на чистую
-  свежесть (как Ярус 1).
-- **Развилка местоположения** (открытый вопрос 1): в системный промпт (инвалидирует
-  prefix cache каждый ход) vs приписка к последней user-реплике (кэш цел). Пассивный
-  блок «модели себя» (summary/цели/собеседник) остаётся в system; по релевантности
-  едут **только наблюдения**.
+**A. Relevance-based injection** (the main step, with a fork — open question 1):
+- In `start_generation`, embed the last user reply (`ctx.embedder`), rank
+  self-notes by cosine (`note_search_semantic` + `@self` filter), take the
+  top-K relevant ones.
+- **Mix with freshness** (don't replace): K relevant + M fresh (dedup) — so
+  both the relevant surfaces and "what's in focus right now" is visible.
+- **Graceful degradation**: embedder unavailable / no reply → fall back to
+  pure freshness (as in Tier 1).
+- **Location fork** (open question 1): the system prompt (invalidates the
+  prefix cache every turn) vs. appending to the last user turn (cache
+  intact). The passive "self-model" block (summary/goals/user) stays in
+  `system`; only **observations** go by relevance.
 
-**B. Граф над self-заметками**:
-- `REFLECT_TOOL_IDS` += `note_link`/`note_neighbors` — рефлексия связывает наблюдения
-  (`contradicts`/`refines`/`relates`).
-- `render_full` (`get_self_model`/`reflect`) подмешивает блок «Связанные наблюдения»
-  — соседи по графу (обе стороны), только self-заметки (по образцу `related_block`,
-  но не пропуская self).
-- Обзор self-консолидации для авто-рефлексии: аналог `build_consolidation_overview`,
-  но **над self-заметками** (похожие пары + `contradicts` среди наблюдений).
+**B. Graph over self-notes**:
+- `REFLECT_TOOL_IDS` += `note_link`/`note_neighbors` — reflection links
+  observations (`contradicts`/`refines`/`relates`).
+- `render_full` (`get_self_model`/`reflect`) mixes in a "Linked observations"
+  block — graph neighbors (both directions), self-notes only (modeled on
+  `related_block`, but not skipping self).
+- Self-consolidation overview for auto-reflection: an analogue of
+  `build_consolidation_overview`, but **over self-notes** (similar pairs +
+  `contradicts` among observations).
 
-**C. Семантические ворота черт**:
-- `update_user_model.add_traits`: перед добавлением — эмбеддинг новой черты, поиск
-  близких среди существующих (best-effort); при близком совпадении — приписка
-  «похоже на черту X — уточни/объедини, а не добавляй дубль». Мягкая деградация без
-  эмбеддера; черты остаются `Vec<String>` (без миграции); решение за моделью.
+**C. Semantic trait gate**:
+- `update_user_model.add_traits`: before adding — embed the new trait, look
+  for close ones among the existing (best-effort); on a close match — append
+  "looks like trait X — clarify/merge instead of adding a duplicate".
+  Graceful degradation without an embedder; traits stay `Vec<String>`
+  (no migration); the decision stays with the model.
 
-**Тесты**: db/tools на `MockEmbedder` (релевантный recall self-заметок; соседи
-self-графа; ворота черт); orchestrator (инъекция подмешивает релевантное + свежее;
-деградация к свежести). Живой смоук — как в Ярусе 1 (`spawn_orch_live`, реальный
-эмбеддер).
+**Tests**: db/tools on `MockEmbedder` (relevant self-note recall; self-graph
+neighbors; trait gate); orchestrator (injection mixes relevant + fresh;
+degradation to freshness). Live smoke — as in Tier 1 (`spawn_orch_live`,
+real embedder).
 
-### Открытые вопросы (развилки)
+### Open questions (forks)
 
-1. **Местоположение релевантной инъекции: система vs user-turn.** Инъекция в
-   system-промпт каждый ход меняла бы его под тему реплики → prefix cache локального
-   `llama-server` инвалидируется **каждый ход** (в отличие от Яруса 1, где system
-   меняется лишь на реальных правках, а возраст — суточный; см.
-   [architecture.md](../architecture.md) §9.3). Приписка релевантных наблюдений к
-   **последней user-реплике** сохраняет prefix cache и точнее семантически
-   («релевантно данному ходу»). **Рекомендация — user-turn.**
-2. **Релевантность vs свежесть: заменить или смешать.** Рекомендация — **смешать**
-   (K релевантных + M свежих, дедуп): чистая релевантность теряет «что в фокусе».
-3. **Объём графа в чтении.** Минимум — соседи в `get_self_model`/`reflect`; spreading
-   activation в самой инъекции — отложить (может зашуметь промпт). Рекомендация —
-   соседи в чтении.
-4. **Ворота черт — жёсткие или мягкие.** Рекомендация — **мягкие** (предупреждение),
-   как у наблюдений.
-5. **Кросс-органные связи (self↔user↔RAG) — Ярус 3.** В Ярусе 2 self-заметки
-   связываются только с self-заметками (изоляция органов сохраняется).
+1. **Location of relevance-based injection: system vs. user turn.**
+   Injecting into the system prompt every turn would change it with the
+   topic of the reply → the local `llama-server` prefix cache is invalidated
+   **every turn** (unlike Tier 1, where `system` only changes on real edits,
+   and age granularity is a day; see
+   [architecture.md](../architecture.md) §9.3). Appending relevant
+   observations to the **last user turn** preserves the prefix cache and is
+   semantically more precise ("relevant to this turn"). **Recommendation —
+   user turn.**
+2. **Relevance vs. freshness: replace or mix.** Recommendation — **mix**
+   (K relevant + M fresh, dedup): pure relevance loses "what's in focus".
+3. **Scope of the graph in reading.** Minimum — neighbors in
+   `get_self_model`/`reflect`; spreading activation in the injection itself
+   — defer (could clutter the prompt). Recommendation — neighbors in reading.
+4. **Trait gate — hard or soft.** Recommendation — **soft** (a warning), as
+   with observations.
+5. **Cross-organ links (self↔user↔RAG) — Tier 3.** In Tier 2, self-notes
+   link only to self-notes (organ isolation is preserved).
 
-### Критерий go/no-go
+### Go/no-go criterion
 
-Живой мульти-сессионный прогон (профиль с включёнными инструментами):
-- всплывает ли **старое, но релевантное** наблюдение, когда тема возвращается
-  (инъекция по релевантности) — то, что свежесть теряла;
-- связывает ли модель наблюдения (`contradicts`/`refines`) и использует ли соседей;
-- срабатывают ли **ворота черт** (объединяет ли модель почти-дубль черты);
-- приемлема ли латентность/инвалидация кэша (местоположение инъекции).
-Критерий — переходить ли к Ярусу 3 (связывание органов памяти).
+A live multi-session run (profile with the tools enabled):
+- does an **old but relevant** observation surface when a topic returns
+  (relevance-based injection) — something freshness was losing;
+- does the model link observations (`contradicts`/`refines`) and use
+  neighbors;
+- does the **trait gate** fire (does the model merge a near-duplicate trait);
+- is the latency/cache-invalidation cost of the injection location
+  acceptable.
+Criterion — whether to proceed to Tier 3 (linking memory organs).
 
-### Объём
+### Scope
 
-~2–3 дня. Основное — A (релевантная инъекция + местоположение) и B (surfacing графа
-+ обзор self-консолидации); C — мелкий. Граф-механика уже есть (переиспользуем
-`note_link`/`note_neighbors`/`note_search_semantic`). После — обновить
-`CLAUDE.md`/`architecture.md` §9 и статус в этом документе.
+~2–3 days. The main work is A (relevance injection + location) and B
+(surfacing the graph + self-consolidation overview); C is small. The graph
+mechanism already exists (we reuse `note_link`/`note_neighbors`/
+`note_search_semantic`). Afterward — update `CLAUDE.md`/`architecture.md` §9
+and the status in this document.
 
-### Ярус 2 — статус: A+B+C реализованы; граф — GO на живой модели
+### Tier 2 — status: A+B+C implemented; graph — GO on a live model
 
-Реализованы **A (инъекция по релевантности)**, **B (граф над наблюдениями)** и **C
-(семантические ворота черт)**. Журнал — [CLAUDE.md](../../CLAUDE.md), карта —
-[architecture.md](../architecture.md) §9. Гейт зелёный (718 тестов, 20 `#[ignore]`).
+**A (relevance-based injection)**, **B (graph over observations)**, and **C
+(semantic trait gate)** are all implemented. Log — [CLAUDE.md](../../CLAUDE.md),
+map — [architecture.md](../architecture.md) §9. Gate is green (718 tests,
+20 `#[ignore]`).
 
-- **A** — `self_notes_relevant` (эмбеддинг последней реплики → self-заметки по
-  косинусу) + `blend_self_notes` (K релевантных + гарантия свежайшего) собираются в
-  `injection_recent`; инъекция перенесена из sync `start_generation` в async-задачу
-  `spawn_generation` (релевантность требует async-эмбеддинга). Идёт в **system**
-  (подтверждено; prefix-cache цена принята, §9.3). Мягкая деградация к свежести.
-- **B** — рефлексии даны `note_link`/`note_neighbors` + нудж связывать наблюдения;
-  `get_self_model`/`reflect` показывают блок «Связи наблюдений» (рёбра графа,
-  self↔self, `self_related_block`). Пассивная инъекция граф не показывает
-  (компактность). Обзор self-консолидации был отложен (нужен, если зонд покажет
-  пользу связывания) — **включён в Ярусе 3** после GO графа (см. ниже). **Смоук
-  `self_model_graph_e2e_live` — GO** (Gemma 4 31B +
-  bge-m3): модель самостоятельно связала два противоречащих наблюдения ребром
-  `contradicts` (вызвала `note_link`, ребро появилось в графе).
-- **C** — ворота **родственных** черт `user_model` (зеркало ворот `add_insight`):
-  `add_traits` для каждой реально добавленной черты ищет ближайшую среди прежних выше
-  порога `TRAIT_SIMILARITY=0.72` и показывает её. У черт нет хранимых векторов —
-  эмбеддинг считается на лету (новые + прежние одним запросом); мягкая деградация без
-  эмбеддера. Мягкие ворота (решение за моделью). Черты остаются `Vec<String>` (без
-  миграции). **Порог откалиброван по живому тесту** (`trait_gate_e2e_live` на bge-m3):
-  исходные 0.85 пропускали настоящие перефразы (на bge-m3 короткие черты сжаты в узкую
-  полосу — «любит лаконичность» ↔ «ценит краткость» = 0.77). Калибровка: перефразы
-  0.73–0.83, не-родственные 0.51–0.69 → порог 0.72. **Ключевое:** bge-m3 сближает
-  черты по *измерению/теме*, не по направлению смысла, поэтому в полосу попадают и
-  антонимы (0.71) — ворота **переформулированы** с «почти-дубль» на «родственная черта
-  — проверь: дубль (слить через `remove_traits`) или противоречие (записать
-  наблюдением `add_insight`)». Согласуется с философией интеграции. **Смоук — GO**:
-  ворота срабатывают, модель распознаёт дубль и сводит к одной черте.
-- **Тесты**: `self_notes_relevant` (ранжирование/фильтр); `blend_self_notes` (политика
-  смешения); `injection_recent_surfaces_relevant_over_fresh` (старое релевантное
-  поднимается над свежим — детерминированно на `MockEmbedder`); `get_self_model`
-  показывает «Связи наблюдений»; `REFLECT_TOOL_IDS` содержит граф-инструменты;
-  `add_trait_gate_surfaces_near_duplicate`/`add_trait_gate_silent_for_dissimilar`
-  (ворота черт: близкая поднимает, непохожая молчит).
+- **A** — `self_notes_relevant` (embedding of the last reply → self-notes by
+  cosine) + `blend_self_notes` (K relevant + freshest guaranteed) assembled
+  into `injection_recent`; the injection was moved from the sync
+  `start_generation` into the async `spawn_generation` task (relevance needs
+  async embedding). Goes into **system** (confirmed; the prefix-cache price
+  is accepted, §9.3). Graceful degradation to freshness.
+- **B** — reflection is given `note_link`/`note_neighbors` + a nudge to link
+  observations; `get_self_model`/`reflect` show a "Observation links" block
+  (graph edges, self↔self, `self_related_block`). Passive injection doesn't
+  show the graph (compactness). The self-consolidation overview was deferred
+  (needed if the probe shows the value of linking) — **enabled in Tier 3**
+  after the graph GO (see below). **Smoke `self_model_graph_e2e_live` — GO**
+  (Gemma 4 31B + bge-m3): the model independently linked two contradicting
+  observations with a `contradicts` edge (called `note_link`, the edge
+  appeared in the graph).
+- **C** — a gate for **related** `user_model` traits (mirrors the
+  `add_insight` gate): for every trait actually added, `add_traits` looks
+  for the closest one among the prior ones above a `TRAIT_SIMILARITY=0.72`
+  threshold and shows it. Traits have no stored vectors — the embedding is
+  computed on the fly (new + prior in one request); graceful degradation
+  without an embedder. Soft gate (the decision stays with the model). Traits
+  stay `Vec<String>` (no migration). **The threshold was calibrated on a
+  live test** (`trait_gate_e2e_live` on bge-m3): the original 0.85 let real
+  rephrasings through (on bge-m3, short traits compress into a narrow band —
+  "prefers brevity" ↔ "values conciseness" = 0.77). Calibration: rephrasings
+  0.73–0.83, unrelated 0.51–0.69 → threshold 0.72. **Key finding:** bge-m3
+  brings traits close by *dimension/topic*, not by direction of meaning, so
+  antonyms fall into the band too (0.71) — the gate was **reworded** from
+  "near-duplicate" to "related trait — check: a duplicate (merge via
+  `remove_traits`) or a contradiction (record it as an observation with
+  `add_insight`)". Consistent with the integration philosophy. **Smoke —
+  GO**: the gate fires, the model recognizes the duplicate and merges it
+  into one trait.
+- **Tests**: `self_notes_relevant` (ranking/filter); `blend_self_notes`
+  (mixing policy); `injection_recent_surfaces_relevant_over_fresh` (an old
+  relevant one surfaces over a fresh one — deterministic on `MockEmbedder`);
+  `get_self_model` shows "Observation links"; `REFLECT_TOOL_IDS` contains
+  the graph tools; `add_trait_gate_surfaces_near_duplicate`/
+  `add_trait_gate_silent_for_dissimilar` (trait gate: a close one surfaces,
+  an unrelated one stays quiet).
 
-**Граф и ворота черт — GO на живой модели** (`self_model_graph_e2e_live`,
-`trait_gate_e2e_live` на Gemma 4 31B + bge-m3). **Осталось (ручной шаг):** живой
-мульти-сессионный прогон инъекции по релевантности — всплывает ли старое релевантное
-наблюдение, когда тема возвращается, и **пользуется** ли им модель. Критерий go/no-go
-Яруса 2 в целом — переходить ли к Ярусу 3 (связывание органов памяти self↔user↔RAG).
+**Graph and trait gate — GO on a live model** (`self_model_graph_e2e_live`,
+`trait_gate_e2e_live` on Gemma 4 31B + bge-m3). **Remaining (manual step):** a
+live multi-session run of relevance-based injection — does an old relevant
+observation surface when a topic returns, and does the model **use** it. The
+overall Tier 2 go/no-go criterion — whether to proceed to Tier 3 (linking
+memory organs self↔user↔RAG).
 
-## Ярус 3 — статус: Пути 1, 2 и 3 реализованы, GO
+## Tier 3 — status: Paths 1, 2 and 3 implemented, GO
 
-Исходная дальняя цель «связности» — **связывание органов памяти** (self-заметки ↔
-пользовательские заметки ↔ RAG). Реализованы **все три пути**: **Путь 1**
-(кросс-органные рёбра self↔user), **Путь 2** (смешение выдачи `[о себе]`-маркером, за
-тумблером) и **Путь 3** (RAG ↔ заметки). Все три — GO на живой модели.
+The original far goal of "connectivity" — **linking memory organs**
+(self-notes ↔ user notes ↔ RAG). **All three paths** are implemented:
+**Path 1** (cross-organ self↔user edges), **Path 2** (recall mixing with an
+`[about self]` marker, behind a toggle), and **Path 3** (RAG ↔ notes). All
+three are GO on a live model.
 
-**Ключевое:** механика графа (`note_link`/`note_neighbors`) **уже была кросс-органна**
-— берёт любые id без фильтра тега, так что связать self-заметку с пользовательской
-можно было и раньше. Ярус 3 (1) **показывает** такие рёбра в выдаче и (2) даёт модели
-**адресуемость** пользовательских заметок. Органы остаются РАЗДЕЛЬНЫМИ по хранению/
-поиску — всплывает лишь **намеренно созданное** моделью ребро (не «загрязнение»
-выдачи, в отличие от Пути 2).
+**Key point:** the graph mechanism (`note_link`/`note_neighbors`) **was
+already cross-organ** — it takes any ids without a tag filter, so a
+self-note could already be linked to a user note before. Tier 3 (1)
+**surfaces** such edges in recall and (2) gives the model **addressability**
+of user notes. The organs stay SEPARATE for storage/search — only an edge
+the model **deliberately created** surfaces (not "pollution" of recall,
+unlike Path 2).
 
-- **Показ кросс-рёбер**: `related_block` (пользовательский `note_recall`) больше не
-  пропускает соседей-наблюдения «о себе» — показывает их с пометкой **`[о себе]`**;
-  `self_related_block` (чтение «модели себя») показывает соседей-пользовательские
-  заметки с пометкой **`[заметка]`**. Обычный поиск self-заметки по-прежнему не тащит.
-- **Адресуемость**: `note_recall` (`format_notes`) теперь выводит **id** заметок —
-  иначе модель не сошлётся на пользовательскую заметку в `note_link` (заодно закрыт
-  давний разрыв: описание `note_link` обещало «id из note_recall», а id не выводился).
-- **Нудж**: `note_recall` добавлен в `REFLECT_TOOL_IDS` (id пользовательских заметок
-  для рефлексии); системное сообщение авто-рефлексии и рубрика интерактивного `reflect`
-  предлагают связывать наблюдение «о себе» с фактом «о собеседнике».
-- **Инварианты**: DB-only, изоляция по `profile_id`, без `ChatEffect`, без миграций.
-- **Тесты**: `recall_shows_note_ids`; `recall_surfaces_cross_organ_self_neighbor_marked`
-  (`[о себе]`); `self_related_block_surfaces_cross_organ_user_note_marked` (`[заметка]`);
-  `reflect_tools_include_graph` (+`note_recall`); `reflect_message_nudges_cross_organ_
-  linking`. **722 теста зелёные**, clippy/fmt чисты.
-- **Смоук Пути 1 — GO** (`cross_organ_link_e2e_live`, Gemma 4 31B + bge-m3): модель
-  записала факт «о собеседнике» (`note_save`) и наблюдение «о себе» (`add_insight`),
-  затем через `get_self_model` + `note_recall` (взяла id заметки) вызвала `note_link` →
-  создала **кросс-органное ребро** `contradicts` («наблюдение о многословности ↔
-  заметка о предпочтении краткости»). Модель пользуется кросс-связями осмысленно.
+- **Surfacing cross-organ edges**: `related_block` (user-facing
+  `note_recall`) no longer skips "about self" observation neighbors — it
+  shows them with an **`[about self]`** marker; `self_related_block`
+  (self-model reading) shows user-note neighbors with a **`[note]`** marker.
+  Regular search still doesn't pull in self-notes.
+- **Addressability**: `note_recall` (`format_notes`) now outputs note **ids**
+  — otherwise the model can't reference a user note in `note_link` (this
+  also closes a long-standing gap: the `note_link` description promised "id
+  from note_recall", but no id was output).
+- **Nudge**: `note_recall` was added to `REFLECT_TOOL_IDS` (user note ids for
+  reflection); the auto-reflection system message and the interactive
+  `reflect` rubric suggest linking an "about self" observation with an
+  "about the counterpart" fact.
+- **Invariants**: DB-only, isolated by `profile_id`, no `ChatEffect`, no
+  migrations.
+- **Tests**: `recall_shows_note_ids`;
+  `recall_surfaces_cross_organ_self_neighbor_marked` (`[about self]`);
+  `self_related_block_surfaces_cross_organ_user_note_marked` (`[note]`);
+  `reflect_tools_include_graph` (+`note_recall`);
+  `reflect_message_nudges_cross_organ_linking`. **722 tests green**,
+  clippy/fmt clean.
+- **Path 1 smoke — GO** (`cross_organ_link_e2e_live`, Gemma 4 31B + bge-m3):
+  the model saved a fact "about the counterpart" (`note_save`) and an
+  observation "about self" (`add_insight`), then via `get_self_model` +
+  `note_recall` (took the note id) called `note_link` → creating a
+  **cross-organ edge** `contradicts` ("observation about verbosity ↔ note
+  about a preference for brevity"). The model uses cross-links meaningfully.
 
-### Путь 2 — смешение выдачи (за тумблером)
+### Path 2 — recall mixing (behind a toggle)
 
-Тумблер `config.notes.recall_includes_self` (по умолчанию **выключен** — реверс
-сокрытия Яруса 1 опасен: память о себе ≠ память о собеседнике) включает показ
-self-заметок в общем `note_recall` с пометкой **`[о себе]`**. При выключенном —
-поведение Яруса 1 (self скрыты).
+The toggle `config.notes.recall_includes_self` (**off** by default —
+reversing Tier 1's hiding is risky: memory about self ≠ memory about the
+counterpart) enables showing self-notes in general `note_recall` with an
+**`[about self]`** marker. When off — Tier 1 behavior (self hidden).
 
-- `NotesSettings.recall_includes_self` (`#[serde(default)]` → без миграции) →
-  `ToolContext.recall_includes_self` (прокинут во всех местах конструирования).
-- Пути recall (`list_user_notes` подстрочный + `semantic_recall`) при включённом
-  тумблере не отбрасывают self-заметки; `format_notes` помечает их `[о себе]` и
-  **скрывает служебный тег `@self`** из показа тегов.
-- Тумблер в секции «Инструменты» экрана настроек (`FieldId::NotesRecallIncludesSelf`).
-- **Тесты**: `recall_includes_self_notes_when_enabled` (self в обеих ветках recall с
-  пометкой, без `@self`); дефолт выключен (`partial_json_fills_defaults`).
-- **Смоук — GO** (`recall_includes_self_e2e_live`, Gemma 4 31B + bge-m3): при
-  включённом тумблере `note_recall` вернул и заметку, и наблюдение «о себе» с пометкой
-  `[о себе]`, а модель в ответе **чисто разделила органы** («— О вас: любит краткость;
-  — О себе: склонен к многословию») — **загрязнения нет**, пометка работает.
+- `NotesSettings.recall_includes_self` (`#[serde(default)]` → no migration)
+  → `ToolContext.recall_includes_self` (threaded through every construction
+  site).
+- The recall paths (`list_user_notes` substring + `semantic_recall`) don't
+  drop self-notes when the toggle is on; `format_notes` marks them
+  `[about self]` and **hides the service tag `@self`** from the tag display.
+- Toggle in the "Tools" section of the settings screen
+  (`FieldId::NotesRecallIncludesSelf`).
+- **Tests**: `recall_includes_self_notes_when_enabled` (self shows up in
+  both recall branches, marked, without `@self`); default off
+  (`partial_json_fills_defaults`).
+- **Smoke — GO** (`recall_includes_self_e2e_live`, Gemma 4 31B + bge-m3):
+  with the toggle on, `note_recall` returned both the note and the "about
+  self" observation with the `[about self]` marker, and in its reply the
+  model **cleanly separated the organs** ("— About you: prefers brevity; —
+  About myself: tends to be verbose") — **no pollution**, the marker works.
 
-### Путь 3 — RAG ↔ заметки
+### Path 3 — RAG ↔ notes
 
-Третий орган памяти (база знаний RAG) связывается с заметками/наблюдениями: заметка
-может **сослаться на источник** RAG, и поиск работает **через оба органа**.
+The third memory organ (the RAG knowledge base) is linked to notes/
+observations: a note can **cite a source** in RAG, and search works
+**through both organs**.
 
-- **Ключевое решение**: ссылка ведётся на **имя источника** (path/label), а НЕ на id
-  чанка — id чанков **нестабильны** (`/rag rebuild` дропает и переиндексирует документы
-  с новыми uuid), а имя источника стабильно (`rag_sources`).
-- **Схема**: таблица `note_rag_links(profile_id, note_id, source)` (`CREATE TABLE IF NOT
-  EXISTS` → без миграции). DB-методы: `rag_source_exists` (валидация), `note_cite_source_
-  insert` (идемпотентно), `note_cited_sources` (прямое), `notes_citing_source` (обратное,
-  скрывает замещённые). `note_delete` чистит ссылки. Изоляция по `profile_id`.
-- **Инструмент** `note_cite_source(note_id, source)`: валидирует активность заметки +
-  существование источника; в `default_tool_ids` (`reconcile_tools` включит существующим
-  профилям).
-- **Двунаправленная выдача**: `note_recall` и `get_self_model` показывают блок «Ссылки на
-  источники» (заметка→источник); `rag_search` показывает «Заметки со ссылкой на эти
-  источники» (источник→заметки, self помечены `[о себе]`).
-- **Тесты**: db (двунаправленно + изоляция + чистка при удалении + скрытие замещённых);
-  tool (валидация источника/заметки, идемпотентность, показ в recall); rag_search
-  (обратное направление). **727 тестов зелёные**, clippy/fmt чисты.
-- **Смоук — GO** (`note_cite_source_e2e_live`, Gemma 4 31B + bge-m3): модель добавила
-  документ (`rag_add`), затем в одном ходу `rag_search` → `note_save` → `note_cite_source`,
-  связав вывод «Столица Франции — Париж» с источником «факты». Связь заметка↔источник
-  сформирована в БД; поиск через оба органа работает.
+- **Key decision**: the link points to the **source name** (path/label), NOT
+  a chunk id — chunk ids are **unstable** (`/rag rebuild` drops and
+  re-indexes documents with new uuids), while the source name is stable
+  (`rag_sources`).
+- **Schema**: table `note_rag_links(profile_id, note_id, source)`
+  (`CREATE TABLE IF NOT EXISTS` → no migration). DB methods:
+  `rag_source_exists` (validation), `note_cite_source_insert` (idempotent),
+  `note_cited_sources` (forward), `notes_citing_source` (reverse, hides
+  superseded). `note_delete` cleans up links. Isolated by `profile_id`.
+- **Tool** `note_cite_source(note_id, source)`: validates the note is active
+  + the source exists; in `default_tool_ids` (`reconcile_tools` enables it
+  for existing profiles).
+- **Bidirectional output**: `note_recall` and `get_self_model` show a
+  "Source citations" block (note→source); `rag_search` shows "Notes citing
+  these sources" (source→notes, self marked `[about self]`).
+- **Tests**: db (bidirectional + isolation + cleanup on delete + hiding
+  superseded); tool (source/note validation, idempotency, shown in recall);
+  rag_search (reverse direction). **727 tests green**, clippy/fmt clean.
+- **Smoke — GO** (`note_cite_source_e2e_live`, Gemma 4 31B + bge-m3): the
+  model added a document (`rag_add`), then in one turn `rag_search` →
+  `note_save` → `note_cite_source`, linking the output "The capital of
+  France is Paris" to the "facts" source. The note↔source link was formed
+  in the DB; search through both organs works.
 
-### Обзор self-консолидации (отложенный из Яруса 2 B — сделано)
+### Self-consolidation overview (deferred from Tier 2 B — done)
 
-Включён после GO графа (Ярус 3): авто-рефлексия и инструмент `reflect` получают
-**конкретные данные** к «сну» памяти «о себе», а не только рубрику.
-`notes::build_self_consolidation_overview(storage, profile_id)` — чистое чтение БД над
-**только** `@self`-наблюдениями (зеркало `build_consolidation_overview` для
-пользовательских заметок): похожие пары (дубли по косинусу ≥ `CONSOLIDATE_SIMILARITY`),
-связи `contradicts` среди наблюдений, наблюдения без связей; `None` при < 2 наблюдений.
-Подмешивается в `reflect` (между моделью и рубрикой) и в дайджест авто-рефлексии;
-`reflect_system_message` нуджит сливать похожие пары (`note_merge`/`note_supersede`),
-проверять `contradicts`, связывать несвязанные (`note_link`). Изоляция по `profile_id`,
-DB-only, без миграций. **Тесты**: `self_consolidation_overview_covers_self_only` (notes),
-`reflect_includes_self_consolidation_overview` (self_model). **729 тестов зелёные**,
-25 `#[ignore]`, clippy/fmt чисты. **Смоук — GO** (`self_consolidation_overview_e2e_live`,
-Gemma 4 + bge-m3): модель записала два похожих наблюдения, вызвала `reflect` (его
-результат нёс обзор с похожей парой, близость 0.89 на реальном эмбеддере) и свела дубли
-`note_merge` в одно наблюдение — полная цепочка отработала.
+Enabled after the graph GO (Tier 3): auto-reflection and the `reflect` tool
+get **concrete data** for the "sleep" of "about self" memory, not just the
+rubric. `notes::build_self_consolidation_overview(storage, profile_id)` —
+pure DB read over **only** `@self` observations (mirrors
+`build_consolidation_overview` for user notes): similar pairs (duplicates by
+cosine ≥ `CONSOLIDATE_SIMILARITY`), `contradicts` links among observations,
+observations without links; `None` when < 2 observations. Mixed into
+`reflect` (between the model and the rubric) and into the auto-reflection
+digest; `reflect_system_message` nudges merging similar pairs
+(`note_merge`/`note_supersede`), checking `contradicts`, and linking
+unlinked ones (`note_link`). Isolated by `profile_id`, DB-only, no
+migrations. **Tests**: `self_consolidation_overview_covers_self_only`
+(notes), `reflect_includes_self_consolidation_overview` (self_model).
+**729 tests green**, 25 `#[ignore]`, clippy/fmt clean. **Smoke — GO**
+(`self_consolidation_overview_e2e_live`, Gemma 4 + bge-m3): the model wrote
+two similar observations, called `reflect` (its result carried the overview
+with the similar pair, similarity 0.89 on the real embedder) and merged the
+duplicates with `note_merge` into one observation — the full chain worked.
 
-**Направление «нарратив как заметки» завершено** (Ярусы 1–3). **Отложено:** vec0 при
-росте числа заметок, нудж `note_cite_source` в рефлексии, авто-консолидация модели себя
-по таймеру (сейчас обзор идёт через авто-рефлексию/интерактивный `reflect`).
+**Direction "narrative as notes" is complete** (Tiers 1–3). **Deferred:**
+vec0 as the note count grows, a `note_cite_source` nudge in reflection,
+timed self-model auto-consolidation (currently the overview flows through
+auto-reflection/interactive `reflect`).

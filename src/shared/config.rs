@@ -1,38 +1,38 @@
-//! Глобальная конфигурация приложения (`settings.json`). См. spec §12.1.
-//! Версионируется полем `schema_version` для будущих миграций.
+//! Global application configuration (`settings.json`). See spec §12.1.
+//! Versioned via the `schema_version` field for future migrations.
 
 use serde::{Deserialize, Serialize};
 
 use crate::entities::sampling::SamplingConfig;
 
-/// Текущая версия схемы конфигурации.
+/// Current config schema version.
 pub const SCHEMA_VERSION: u32 = 1;
 
-/// Режим подключения к движку инференса. Локальные (`Managed`/`External`) и
-/// облачные провайдеры (`OpenAi`/`Gemini`) — равноправные варианты одного селектора
-/// (плоская таксономия, [ADR 0004](decisions/0004-engine-contract-multi-provider.md)).
-/// Claude добавляется на Фазе 2 (отдельный протокол `/v1/messages`).
+/// Inference-engine connection mode. Local (`Managed`/`External`) and cloud
+/// providers (`OpenAi`/`Gemini`) are equal-footing variants of a single selector
+/// (flat taxonomy, [ADR 0004](decisions/0004-engine-contract-multi-provider.md)).
+/// Claude is added in Phase 2 (a separate `/v1/messages` protocol).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum ServerMode {
-    /// Приложение само запускает дочерний процесс `llama-server`.
+    /// The app itself launches a child `llama-server` process.
     #[default]
     Managed,
-    /// Подключение к уже запущенному OpenAI-совместимому серверу (любой: llama.cpp,
-    /// vLLM, LM Studio…). Поля сэмплинга шлются «как есть» (lenient-диалект).
+    /// Connecting to an already-running OpenAI-compatible server (any: llama.cpp,
+    /// vLLM, LM Studio…). Sampling fields are sent as-is (lenient dialect).
     External,
-    /// Облако OpenAI (`platform.openai.com`). Строгий OpenAI-диалект + Bearer-ключ.
+    /// OpenAI cloud (`platform.openai.com`). Strict OpenAI dialect + Bearer key.
     #[serde(rename = "openai")]
     OpenAi,
-    /// Облако Google Gemini через OpenAI-совместимый endpoint. Строгий диалект + ключ.
+    /// Google Gemini cloud via an OpenAI-compatible endpoint. Strict dialect + key.
     Gemini,
-    /// Облако Anthropic (`platform.claude.com`). Отдельный протокол Messages API
-    /// (`/v1/messages`), `x-api-key`. См. ADR 0004, Фаза 2.
+    /// Anthropic cloud (`platform.claude.com`). A separate Messages API protocol
+    /// (`/v1/messages`), `x-api-key`. See ADR 0004, Phase 2.
     Claude,
 }
 
-/// Облачный провайдер инференса. `OpenAi`/`Gemini` говорят на OpenAI-протоколе,
-/// `Claude` — на Anthropic Messages API. Несёт базовый URL по умолчанию.
+/// Inference cloud provider. `OpenAi`/`Gemini` speak the OpenAI protocol,
+/// `Claude` — the Anthropic Messages API. Carries a default base URL.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CloudProvider {
     OpenAi,
@@ -41,22 +41,22 @@ pub enum CloudProvider {
 }
 
 impl CloudProvider {
-    /// Базовый URL для **эмбеддингов**/совместимого доступа (OpenAI-совместимый
-    /// endpoint). У Gemini это compat-путь `…/v1beta/openai` (эмбеддинги RAG идут
-    /// через него, `OpenAiClient`). Можно переопределить полем `url`.
+    /// Base URL for **embeddings**/compat access (an OpenAI-compatible
+    /// endpoint). For Gemini this is the compat path `…/v1beta/openai` (RAG
+    /// embeddings go through it, `OpenAiClient`). Overridable via the `url` field.
     pub fn base_url(self) -> &'static str {
         match self {
             CloudProvider::OpenAi => "https://api.openai.com/v1",
             CloudProvider::Gemini => "https://generativelanguage.googleapis.com/v1beta/openai",
-            // Anthropic-клиент сам добавляет `/v1/messages`, поэтому без суффикса.
+            // The Anthropic client appends `/v1/messages` itself, hence no suffix.
             CloudProvider::Claude => "https://api.anthropic.com",
         }
     }
 
-    /// Базовый URL для **чата** (нативный протокол клиента). У Gemini — `…/v1beta`
-    /// (нативный `GeminiClient` добавляет `/models/{model}:streamGenerateContent`), в
-    /// отличие от compat-пути эмбеддингов ([`base_url`](Self::base_url)). У OpenAI
-    /// (Responses) и Claude совпадает с `base_url`. Можно переопределить полем `url`.
+    /// Base URL for **chat** (the client's native protocol). For Gemini — `…/v1beta`
+    /// (the native `GeminiClient` appends `/models/{model}:streamGenerateContent`),
+    /// unlike the embeddings compat path ([`base_url`](Self::base_url)). For OpenAI
+    /// (Responses) and Claude it matches `base_url`. Overridable via the `url` field.
     pub fn chat_base_url(self) -> &'static str {
         match self {
             CloudProvider::Gemini => "https://generativelanguage.googleapis.com/v1beta",
@@ -64,10 +64,10 @@ impl CloudProvider {
         }
     }
 
-    /// Стабильный строковый ключ провайдера — им индексируются сохранённые API-ключи
-    /// (`AppConfig::api_keys`, см. `shared::secrets`). Ключ **общий** для чата,
-    /// имперсонации и эмбеддингов этого провайдера. Значения персистятся в
-    /// `settings.json` — не переименовывать.
+    /// Stable provider string key — indexes stored API keys
+    /// (`AppConfig::api_keys`, see `shared::secrets`). The key is **shared** across
+    /// chat, impersonation, and embeddings for this provider. Values persist in
+    /// `settings.json` — do not rename.
     pub fn key(self) -> &'static str {
         match self {
             CloudProvider::OpenAi => "openai",
@@ -78,7 +78,7 @@ impl CloudProvider {
 }
 
 impl ServerMode {
-    /// Облачный провайдер для этого режима (`None` — локальный managed/external).
+    /// Cloud provider for this mode (`None` — local managed/external).
     pub fn cloud_provider(self) -> Option<CloudProvider> {
         match self {
             ServerMode::OpenAi => Some(CloudProvider::OpenAi),
@@ -89,13 +89,13 @@ impl ServerMode {
     }
 }
 
-/// Число GPU-слоёв по умолчанию (`-ngl`): всё на GPU.
+/// Default number of GPU layers (`-ngl`): everything on GPU.
 pub const DEFAULT_GPU_LAYERS: i32 = 99;
-/// Размер контекста по умолчанию (`-c`).
+/// Default context size (`-c`).
 pub const DEFAULT_CONTEXT_SIZE: u32 = 8192;
 
-/// Режим FlashAttention (`--flash-attn`) managed-сервера llama.cpp. `Auto` — флаг
-/// не передаётся (llama.cpp решает сам, это его дефолт); `On`/`Off` — принудительно.
+/// FlashAttention mode (`--flash-attn`) for the managed llama.cpp server. `Auto` —
+/// the flag isn't passed (llama.cpp decides on its own, its default); `On`/`Off` — forced.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum FlashAttn {
@@ -106,10 +106,10 @@ pub enum FlashAttn {
 }
 
 impl FlashAttn {
-    /// Все варианты в порядке перебора UI (для Choice-попапа и цикла).
+    /// All variants in UI-cycle order (for the Choice popup and the cycle).
     pub const ALL: [FlashAttn; 3] = [FlashAttn::Auto, FlashAttn::On, FlashAttn::Off];
 
-    /// Значение для `--flash-attn`; `None` (Auto) — флаг не передавать.
+    /// Value for `--flash-attn`; `None` (Auto) — don't pass the flag.
     pub fn as_arg(self) -> Option<&'static str> {
         match self {
             FlashAttn::Auto => None,
@@ -118,7 +118,7 @@ impl FlashAttn {
         }
     }
 
-    /// Подпись для UI (Choice-поле).
+    /// UI label (Choice field).
     pub fn label(self) -> &'static str {
         match self {
             FlashAttn::Auto => "auto",
@@ -127,7 +127,7 @@ impl FlashAttn {
         }
     }
 
-    /// Циклический перебор с учётом направления (`dir` = +1/-1).
+    /// Cyclic iteration honoring direction (`dir` = +1/-1).
     pub fn cycle(self, dir: i32) -> Self {
         let idx = Self::ALL.iter().position(|x| *x == self).unwrap_or(0) as i32;
         let n = Self::ALL.len() as i32;
@@ -135,10 +135,10 @@ impl FlashAttn {
     }
 }
 
-/// Тип спекулятивного декодирования (`--spec-type`) managed-сервера llama.cpp.
-/// `None` — выключено (флаг не передаётся). Типы `draft-*` требуют черновую модель
-/// (`-md`) — для MTP-моделей (например `mtp-gemma-4-12B-it.gguf`) это `draft-mtp`;
-/// `ngram-*` отдельной модели не требуют (черновик берётся из истории контекста).
+/// Speculative-decoding type (`--spec-type`) for the managed llama.cpp server.
+/// `None` — off (the flag isn't passed). `draft-*` types need a draft model
+/// (`-md`) — for MTP models (e.g. `mtp-gemma-4-12B-it.gguf`) that's `draft-mtp`;
+/// `ngram-*` need no separate model (the draft comes from the context history).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum SpecType {
@@ -155,7 +155,7 @@ pub enum SpecType {
 }
 
 impl SpecType {
-    /// Все варианты в порядке перебора UI (для Choice-попапа и цикла).
+    /// All variants in UI-cycle order (for the Choice popup and the cycle).
     pub const ALL: [SpecType; 9] = [
         SpecType::None,
         SpecType::DraftSimple,
@@ -168,7 +168,7 @@ impl SpecType {
         SpecType::NgramCache,
     ];
 
-    /// Значение для `--spec-type`; `None` — флаг не передавать (выключено).
+    /// Value for `--spec-type`; `None` — don't pass the flag (off).
     pub fn as_arg(self) -> Option<&'static str> {
         match self {
             SpecType::None => Option::None,
@@ -183,7 +183,7 @@ impl SpecType {
         }
     }
 
-    /// Требует ли тип отдельную черновую модель (`-md`): только `draft-*`.
+    /// Whether the type needs a separate draft model (`-md`): only `draft-*`.
     pub fn needs_draft_model(self) -> bool {
         matches!(
             self,
@@ -191,12 +191,12 @@ impl SpecType {
         )
     }
 
-    /// Подпись для UI (Choice-поле).
+    /// UI label (Choice field).
     pub fn label(self) -> &'static str {
         self.as_arg().unwrap_or("none")
     }
 
-    /// Циклический перебор с учётом направления (`dir` = +1/-1).
+    /// Cyclic iteration honoring direction (`dir` = +1/-1).
     pub fn cycle(self, dir: i32) -> Self {
         let idx = Self::ALL.iter().position(|x| *x == self).unwrap_or(0) as i32;
         let n = Self::ALL.len() as i32;
@@ -204,43 +204,43 @@ impl SpecType {
     }
 }
 
-/// Настройки локального managed-сервера `llama-server` (llama.cpp): приложение
-/// запускает его дочерним процессом. Своя под-секция в каждом движке, чтобы
-/// переключение режима не теряло этих значений. См. docs/install.md §3.
+/// Settings for the local managed `llama-server` (llama.cpp): the app launches
+/// it as a child process. Its own sub-section in every engine, so switching modes
+/// doesn't lose these values. See docs/install.md §3.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct ManagedSettings {
-    /// Путь к бинарнику `llama-server`.
+    /// Path to the `llama-server` binary.
     pub binary: Option<String>,
-    /// Путь к GGUF-модели (`-m`).
+    /// Path to the GGUF model (`-m`).
     pub model_path: Option<String>,
-    /// Слои на GPU (`-ngl`).
+    /// GPU layers (`-ngl`).
     pub gpu_layers: i32,
-    /// Размер контекста (`-c`).
+    /// Context size (`-c`).
     pub context_size: u32,
-    /// Использовать встроенный chat-template модели (`--jinja`) — нужен для
-    /// корректного формата и tool-calling.
+    /// Use the model's built-in chat template (`--jinja`) — needed for correct
+    /// formatting and tool calling.
     pub jinja: bool,
-    /// Формат reasoning (`--reasoning-format`, например `auto`); `None` — не задавать.
+    /// Reasoning format (`--reasoning-format`, e.g. `auto`); `None` — leave unset.
     pub reasoning_format: Option<String>,
-    /// Не использовать mmap при загрузке модели (`--no-mmap`): веса грузятся в RAM
-    /// целиком. Помогает на сетевых/медленных дисках. По умолчанию выключено.
+    /// Don't use mmap when loading the model (`--no-mmap`): weights load into RAM
+    /// entirely. Helps on network/slow disks. Off by default.
     pub no_mmap: bool,
-    /// FlashAttention (`--flash-attn`): оптимизация внимания. По умолчанию `Auto`.
+    /// FlashAttention (`--flash-attn`): attention optimization. Default `Auto`.
     pub flash_attn: FlashAttn,
-    /// Тип спекулятивного декодирования (`--spec-type`). По умолчанию выключено.
+    /// Speculative-decoding type (`--spec-type`). Off by default.
     pub spec_type: SpecType,
-    /// Черновая модель для спекулятивного декодирования (`-md`/`--model-draft`).
-    /// Нужна для типов `draft-*`; для MTP-моделей — путь к соответствующему GGUF.
+    /// Draft model for speculative decoding (`-md`/`--model-draft`).
+    /// Needed for `draft-*` types; for MTP models — the path to the matching GGUF.
     pub draft_model: Option<String>,
-    /// GPU-слои черновой модели (`-ngld`); `None` — авто (флаг не передаётся).
+    /// Draft-model GPU layers (`-ngld`); `None` — auto (flag not passed).
     pub draft_gpu_layers: Option<i32>,
-    /// Сколько токенов набрасывать черновиком за шаг (`--spec-draft-n-max`); `None` —
-    /// дефолт llama.cpp (3).
+    /// How many tokens to draft per step (`--spec-draft-n-max`); `None` —
+    /// llama.cpp's default (3).
     pub draft_n_max: Option<u32>,
-    /// Минимум черновых токенов за шаг (`--spec-draft-n-min`); `None` — дефолт (0).
+    /// Minimum draft tokens per step (`--spec-draft-n-min`); `None` — default (0).
     pub draft_n_min: Option<u32>,
-    /// Интерфейс bind (`--host`), например `127.0.0.1` или `0.0.0.0`.
+    /// Bind interface (`--host`), e.g. `127.0.0.1` or `0.0.0.0`.
     pub host: String,
     pub port: u16,
 }
@@ -267,39 +267,39 @@ impl Default for ManagedSettings {
     }
 }
 
-/// Настройки external-режима: подключение к уже запущенному OpenAI-совместимому
-/// серверу (любой: llama.cpp, vLLM, LM Studio…).
+/// External-mode settings: connecting to an already-running OpenAI-compatible
+/// server (any: llama.cpp, vLLM, LM Studio…).
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct ExternalSettings {
-    /// URL сервера (например `http://127.0.0.1:8000/v1`).
+    /// Server URL (e.g. `http://127.0.0.1:8000/v1`).
     pub url: Option<String>,
-    /// Имя модели для мульти-модельного сервера (опционально).
+    /// Model name for a multi-model server (optional).
     pub model_name: Option<String>,
-    /// Имя env-переменной с Bearer-ключом (опционально) — для OpenAI-совместимого
-    /// прокси/шлюза, требующего авторизацию. Хранится **имя**, не секрет (ADR 0004).
-    /// `None`/пусто — без авторизации (локальный `llama-server` её не требует).
+    /// Env-variable name carrying a Bearer key (optional) — for an OpenAI-compatible
+    /// proxy/gateway that requires authorization. Stores the **name**, not the secret
+    /// (ADR 0004). `None`/empty — no authorization (a local `llama-server` doesn't need it).
     pub api_key_env: Option<String>,
 }
 
-/// Настройки одного облачного провайдера (OpenAI/Gemini/Claude). Хранятся
-/// отдельно на каждого, чтобы переключение провайдера не теряло чужих значений.
+/// Settings for a single cloud provider (OpenAI/Gemini/Claude). Stored
+/// separately per provider so switching providers doesn't lose the other's values.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct CloudSettings {
-    /// Имя модели у провайдера (`gpt-4o`, `gemini-2.5-pro`, `claude-opus-4-8`).
+    /// Provider's model name (`gpt-4o`, `gemini-2.5-pro`, `claude-opus-4-8`).
     pub model_name: Option<String>,
-    /// Имя env-переменной с API-ключом (например `OPENAI_API_KEY`). Хранится
-    /// **имя**, а не сам секрет — ключ читается из окружения (ADR 0004).
+    /// Env-variable name carrying the API key (e.g. `OPENAI_API_KEY`). Stores
+    /// the **name**, not the secret itself — the key is read from the environment (ADR 0004).
     pub api_key_env: Option<String>,
-    /// Переопределение базового URL провайдера (опционально); `None` — дефолт провайдера.
+    /// Override of the provider's base URL (optional); `None` — the provider's default.
     pub url: Option<String>,
 }
 
-/// Настройки chat-сервера инференса. Под-секция на каждый режим/провайдера
-/// (managed/external/openai/gemini/claude), чтобы переключение режима не теряло
-/// чужих значений. Транспорт — OpenAI-совместимый HTTP (кроме Claude — Messages
-/// API). См. docs/install.md §3, ADR 0004.
+/// Chat inference-server settings. A sub-section per mode/provider
+/// (managed/external/openai/gemini/claude), so switching modes doesn't lose the
+/// other's values. Transport — OpenAI-compatible HTTP (except Claude — Messages
+/// API). See docs/install.md §3, ADR 0004.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct EngineSettings {
@@ -312,7 +312,7 @@ pub struct EngineSettings {
 }
 
 impl EngineSettings {
-    /// Облачные настройки активного провайдера (`None` — локальный managed/external).
+    /// Active provider's cloud settings (`None` — local managed/external).
     pub fn cloud(&self) -> Option<&CloudSettings> {
         cloud_ref(
             self.mode.cloud_provider(),
@@ -322,7 +322,7 @@ impl EngineSettings {
         )
     }
 
-    /// Изменяемые облачные настройки активного провайдера (`None` — локальный).
+    /// Active provider's mutable cloud settings (`None` — local).
     pub fn cloud_mut(&mut self) -> Option<&mut CloudSettings> {
         cloud_mut(
             self.mode.cloud_provider(),
@@ -332,9 +332,9 @@ impl EngineSettings {
         )
     }
 
-    /// Имя активной модели для текущего режима (для снимка в `Message.metadata` и
-    /// подписи ленты). Managed — базовое имя GGUF без пути и расширения `.gguf`;
-    /// external/облако — заданное `model_name`. `None`, если модель не задана.
+    /// Active model name for the current mode (for the `Message.metadata` snapshot
+    /// and the feed caption). Managed — the GGUF's base name without the path/`.gguf`
+    /// extension; external/cloud — the configured `model_name`. `None` if unset.
     pub fn active_model_name(&self) -> Option<String> {
         match self.mode {
             ServerMode::Managed => self.managed.model_path.as_deref().and_then(|p| {
@@ -351,7 +351,7 @@ impl EngineSettings {
     }
 }
 
-/// Активная облачная под-структура по провайдеру (общий хелпер для всех движков).
+/// Active cloud sub-structure by provider (a shared helper for all engines).
 fn cloud_ref<'a>(
     provider: Option<CloudProvider>,
     openai: &'a CloudSettings,
@@ -378,30 +378,30 @@ fn cloud_mut<'a>(
     }
 }
 
-/// Режим сервера имперсонации (написание сообщения от имени пользователя).
-/// Отличается от [`ServerMode`] третьим вариантом `Shared`. См. spec §11.8.
+/// Impersonation-server mode (writing a message on the user's behalf).
+/// Differs from [`ServerMode`] by a third variant, `Shared`. See spec §11.8.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum ImpersonationMode {
-    /// Использовать тот же движок, что и для ответов ассистента (любой режим), но
-    /// с семплингом из подсекции «Имперсонация».
+    /// Use the same engine as for assistant replies (any mode), but
+    /// with sampling from the "Impersonation" subsection.
     #[default]
     Shared,
-    /// Поднять отдельный дочерний процесс `llama-server`.
+    /// Bring up a separate child `llama-server` process.
     Managed,
-    /// Подключиться к отдельному удалённому OpenAI-совместимому серверу.
+    /// Connect to a separate remote OpenAI-compatible server.
     External,
-    /// Облако OpenAI (отдельно от ассистента).
+    /// OpenAI cloud (separate from the assistant).
     #[serde(rename = "openai")]
     OpenAi,
-    /// Облако Google Gemini через OpenAI-совместимый endpoint.
+    /// Google Gemini cloud via an OpenAI-compatible endpoint.
     Gemini,
-    /// Облако Anthropic (Claude, Messages API).
+    /// Anthropic cloud (Claude, Messages API).
     Claude,
 }
 
 impl ImpersonationMode {
-    /// Облачный провайдер для этого режима (`None` — shared/managed/external).
+    /// Cloud provider for this mode (`None` — shared/managed/external).
     pub fn cloud_provider(self) -> Option<CloudProvider> {
         match self {
             ImpersonationMode::OpenAi => Some(CloudProvider::OpenAi),
@@ -414,12 +414,12 @@ impl ImpersonationMode {
     }
 }
 
-/// Порт по умолчанию для managed-сервера имперсонации (отдельный инстанс).
+/// Default port for the managed impersonation server (a separate instance).
 pub const DEFAULT_IMPERSONATION_PORT: u16 = 8002;
 
-/// Настройки сервера имперсонации. Под-секции идентичны [`EngineSettings`], но
-/// режим — [`ImpersonationMode`] (добавлен `shared`). В режиме `shared` под-секции
-/// не используются — берётся chat-сервер ассистента. См. spec §11.8.
+/// Impersonation-server settings. Sub-sections are identical to [`EngineSettings`],
+/// but the mode is [`ImpersonationMode`] (adds `shared`). In `shared` mode the
+/// sub-sections aren't used — the assistant's chat server is used instead. See spec §11.8.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct ImpersonationEngineSettings {
@@ -435,7 +435,7 @@ impl Default for ImpersonationEngineSettings {
     fn default() -> Self {
         Self {
             mode: ImpersonationMode::Shared,
-            // Отдельный managed-инстанс имперсонации слушает свой порт.
+            // A separate managed impersonation instance listens on its own port.
             managed: ManagedSettings {
                 port: DEFAULT_IMPERSONATION_PORT,
                 ..Default::default()
@@ -449,7 +449,7 @@ impl Default for ImpersonationEngineSettings {
 }
 
 impl ImpersonationEngineSettings {
-    /// Облачные настройки активного провайдера (`None` — shared/managed/external).
+    /// Active provider's cloud settings (`None` — shared/managed/external).
     pub fn cloud(&self) -> Option<&CloudSettings> {
         cloud_ref(
             self.mode.cloud_provider(),
@@ -459,7 +459,7 @@ impl ImpersonationEngineSettings {
         )
     }
 
-    /// Изменяемые облачные настройки активного провайдера (`None` — локальный).
+    /// Active provider's mutable cloud settings (`None` — local).
     pub fn cloud_mut(&mut self) -> Option<&mut CloudSettings> {
         cloud_mut(
             self.mode.cloud_provider(),
@@ -470,20 +470,20 @@ impl ImpersonationEngineSettings {
     }
 }
 
-/// Порт embedding-сервера по умолчанию.
+/// Default embedding-server port.
 pub const DEFAULT_EMBED_PORT: u16 = 8001;
 
-/// Настройки managed embedding-сервера: тот же `llama-server` с `--embeddings`.
-/// У эмбеддинг-сервера нет chat-template/host/no_mmap — супервайзер их фиксирует,
-/// поэтому полей меньше, чем у [`ManagedSettings`].
+/// Managed embedding-server settings: the same `llama-server` with `--embeddings`.
+/// The embedding server has no chat-template/host/no_mmap — the supervisor
+/// fixes those, hence fewer fields than [`ManagedSettings`].
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct ManagedEmbedSettings {
-    /// Путь к бинарнику `llama-server`.
+    /// Path to the `llama-server` binary.
     pub binary: Option<String>,
-    /// Путь к GGUF embedding-модели (`-m`).
+    /// Path to the GGUF embedding model (`-m`).
     pub model_path: Option<String>,
-    /// Слои на GPU (`-ngl`).
+    /// GPU layers (`-ngl`).
     pub gpu_layers: i32,
     pub port: u16,
 }
@@ -499,10 +499,10 @@ impl Default for ManagedEmbedSettings {
     }
 }
 
-/// Настройки выделенного embedding-сервера для RAG (ADR 0002). Отдельный
-/// процесс/порт; если не настроен (`UnavailableEmbedder`) — RAG отдаёт ошибку.
-/// Под-секция на режим/провайдера (как у [`EngineSettings`]); облачные эмбеддинги
-/// есть у OpenAI/Gemini (у Anthropic нет — RAG отключится). См. ADR 0004.
+/// Settings for the dedicated embedding server used by RAG (ADR 0002). A separate
+/// process/port; when unconfigured (`UnavailableEmbedder`) — RAG returns an error.
+/// A sub-section per mode/provider (like [`EngineSettings`]); cloud embeddings
+/// exist for OpenAI/Gemini (not Anthropic — RAG turns off). See ADR 0004.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct EmbedSettings {
@@ -515,7 +515,7 @@ pub struct EmbedSettings {
 }
 
 impl EmbedSettings {
-    /// Облачные настройки активного провайдера (`None` — локальный managed/external).
+    /// Active provider's cloud settings (`None` — local managed/external).
     pub fn cloud(&self) -> Option<&CloudSettings> {
         cloud_ref(
             self.mode.cloud_provider(),
@@ -525,7 +525,7 @@ impl EmbedSettings {
         )
     }
 
-    /// Изменяемые облачные настройки активного провайдера (`None` — локальный).
+    /// Active provider's mutable cloud settings (`None` — local).
     pub fn cloud_mut(&mut self) -> Option<&mut CloudSettings> {
         cloud_mut(
             self.mode.cloud_provider(),
@@ -536,42 +536,34 @@ impl EmbedSettings {
     }
 }
 
-/// Лимит токенов ответа саб-агента по умолчанию (`call_subagent`, spec §9.3.2).
+/// Default sub-agent response token limit (`call_subagent`, spec §9.3.2).
 pub const DEFAULT_SUBAGENT_MAX_TOKENS: usize = 1024;
-/// Лимит времени на один вызов саб-агента по умолчанию (секунды).
+/// Default time limit for one sub-agent call (seconds).
 pub const DEFAULT_SUBAGENT_TIMEOUT_SECS: u64 = 60;
-/// Таймаут исполнения кода в песочнице Wasmer по умолчанию (секунды). Щедрее, чем у
-/// локального интерпретатора (10с): WASM-интерпретация в ~2–5× медленнее нативной.
-/// См. docs/research/python-wasmer-sandbox.md.
+/// Default code-execution timeout in the Wasmer sandbox (seconds). More generous
+/// than the local interpreter's (10s): WASM interpretation is ~2–5× slower than native.
+/// See docs/research/python-wasmer-sandbox.md.
 pub const DEFAULT_PYTHON_WASM_TIMEOUT_SECS: u64 = 30;
 
-/// Режим исполнения `python_exec`: изолированная песочница Wasmer/WASIX (по
-/// умолчанию — нет доступа к файлам машины, предустановленные пакеты) либо локальный
-/// системный интерпретатор (прежнее поведение). См.
-/// docs/research/python-wasmer-sandbox.md (Фаза 0 → сайдкар `wasmer`).
+/// `python_exec` execution mode: an isolated Wasmer/WASIX sandbox (by
+/// default — no access to machine files, pre-installed packages) or the local
+/// system interpreter (previous behavior). See
+/// docs/research/python-wasmer-sandbox.md (Phase 0 → the `wasmer` sidecar).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum PythonMode {
-    /// Изолированная песочница на бандленном `wasmer` (сайдкар). Дефолт.
+    /// An isolated sandbox on the bundled `wasmer` (sidecar). Default.
     #[default]
     Wasmer,
-    /// Локальный системный интерпретатор (`python`/`python3`), без изоляции.
+    /// The local system interpreter (`python`/`python3`), no isolation.
     Local,
 }
 
 impl PythonMode {
-    /// Все варианты в порядке перебора UI (для Choice-попапа и цикла).
+    /// All variants in UI-cycle order (for the Choice popup and the cycle).
     pub const ALL: [PythonMode; 2] = [PythonMode::Wasmer, PythonMode::Local];
 
-    /// Подпись для UI (Choice-поле).
-    pub fn label(self) -> &'static str {
-        match self {
-            PythonMode::Wasmer => "Wasmer-песочница",
-            PythonMode::Local => "локальный интерпретатор",
-        }
-    }
-
-    /// Циклический перебор с учётом направления (`dir` = +1/-1).
+    /// Cyclic iteration honoring direction (`dir` = +1/-1).
     pub fn cycle(self, dir: i32) -> Self {
         let idx = Self::ALL.iter().position(|x| *x == self).unwrap_or(0) as i32;
         let n = Self::ALL.len() as i32;
@@ -579,52 +571,56 @@ impl PythonMode {
     }
 }
 
-/// Глобальные «мастер-выключатели» внешних инструментов (безопасность/приватность,
-/// spec §9.4, §13.2). Эффективный набор = `Profile.enabled_tools ∩ глобально вкл.`
+// UI label — `screens::settings::helpers::python_mode_label` (interface language,
+// axis B; mirrors `theme_label` for `Theme` — kept next to the other settings-screen
+// label helpers rather than on the type itself).
+
+/// Global "master switches" for external tools (security/privacy,
+/// spec §9.4, §13.2). Effective set = `Profile.enabled_tools ∩ globally enabled`.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct ToolSettings {
-    /// Web-поиск (DuckDuckGo). Включён по умолчанию (read-only).
+    /// Web search (DuckDuckGo). Enabled by default (read-only).
     pub web_enabled: bool,
-    /// Загружать страницы результатов, извлекать текст и переупорядочивать по
-    /// релевантности (`web_search`, spec §9.3.1). Включено по умолчанию; даёт модели
-    /// содержимое страниц, но добавляет задержку (загрузка до `max_results` страниц).
-    /// Аргумент `fetch_content` вызова переопределяет это значение.
+    /// Fetch result pages, extract text, and reorder by
+    /// relevance (`web_search`, spec §9.3.1). Enabled by default; gives the model
+    /// page content, but adds latency (fetching up to `max_results` pages).
+    /// The call's `fetch_content` argument overrides this value.
     pub web_fetch_content: bool,
-    /// Исполнение Python. Выключено по умолчанию (мастер-гейт инструмента).
+    /// Python execution. Off by default (the tool's master gate).
     pub python_enabled: bool,
-    /// Режим исполнения `python_exec`: песочница Wasmer (по умолчанию) или локальный
-    /// интерпретатор. См. [`PythonMode`].
+    /// `python_exec` execution mode: the Wasmer sandbox (default) or the local
+    /// interpreter. See [`PythonMode`].
     pub python_mode: PythonMode,
-    /// Путь к интерпретатору Python (`None` → системный `python3`/`python`).
-    /// Используется только в режиме [`PythonMode::Local`].
+    /// Path to the Python interpreter (`None` → system `python3`/`python`).
+    /// Used only in [`PythonMode::Local`] mode.
     pub python_path: Option<String>,
-    /// Разрешить сеть внутри песочницы Wasmer (`--net`). По умолчанию включено —
-    /// главная ценность предустановленного `requests`; но код в песочнице сможет
-    /// ходить в сеть. Режим [`PythonMode::Local`] это поле не использует (там сеть
-    /// всегда есть). См. docs/research/python-wasmer-sandbox.md §7.
+    /// Allow network access inside the Wasmer sandbox (`--net`). Enabled by default
+    /// — the main value of a pre-installed `requests`; but code in the sandbox will
+    /// be able to reach the network. [`PythonMode::Local`] mode doesn't use this field
+    /// (network is always available there). See docs/research/python-wasmer-sandbox.md §7.
     pub python_net_enabled: bool,
-    /// Таймаут исполнения в песочнице Wasmer (секунды). Локальный режим держит свой
-    /// (меньший) таймаут. См. [`DEFAULT_PYTHON_WASM_TIMEOUT_SECS`].
+    /// Execution timeout in the Wasmer sandbox (seconds). Local mode keeps its own
+    /// (shorter) timeout. See [`DEFAULT_PYTHON_WASM_TIMEOUT_SECS`].
     pub python_wasm_timeout_secs: u64,
-    /// Жёсткий OS-level лимит памяти песочницы Wasmer (МБ; `None`/0 — без лимита).
-    /// Защита хоста от OOM при рантайм-скрипте: при превышении процесс `wasmer`
-    /// убивается (не graceful — V8 падает с «Fatal out of memory»). **Только
-    /// Windows** (Job Object); на Unix не применяется (rlimit ненадёжен с V8, ADR
-    /// 0005). Минимум ~1024 (меньше — песочница может не стартовать: V8+CPython
-    /// требует ~768 МБ). По умолчанию без лимита (защита в глубину поверх таймаута
-    /// и wasm32 ~4 ГБ).
+    /// Hard OS-level memory limit for the Wasmer sandbox (MB; `None`/0 — no limit).
+    /// Protects the host from OOM on a runaway script: exceeding it kills the
+    /// `wasmer` process (not graceful — V8 fails with "Fatal out of memory"). **Windows
+    /// only** (Job Object); not applied on Unix (rlimit is unreliable with V8, ADR
+    /// 0005). Minimum ~1024 (less — the sandbox may fail to start: V8+CPython
+    /// needs ~768 MB). Unlimited by default (defense in depth on top of the timeout
+    /// and wasm32's ~4 GB).
     pub python_wasm_memory_mb: Option<u64>,
-    /// Доступ к локальным файлам (`fs_read`/`fs_write`/`fs_list`). Выключен по
-    /// умолчанию (инструмент может прочитать/перезаписать любой файл — приватность/
-    /// безопасность, как у Python). См. spec §9.3, §13.2.
+    /// Access to local files (`fs_read`/`fs_write`/`fs_list`). Off by
+    /// default (the tool can read/overwrite any file — privacy/
+    /// security, like Python). See spec §9.3, §13.2.
     pub fs_enabled: bool,
-    /// Каталог-«песочница» для файловых инструментов (`None` → без ограничения).
-    /// Если задан, все пути обязаны лежать внутри него (защита от выхода `..`).
+    /// "Sandbox" directory for file tools (`None` → no restriction).
+    /// If set, all paths must lie inside it (protection against `..` escape).
     pub fs_root: Option<String>,
-    /// Лимит токенов ответа саб-агента (`call_subagent`).
+    /// Sub-agent response token limit (`call_subagent`).
     pub subagent_max_tokens: usize,
-    /// Лимит времени на вызов саб-агента (секунды).
+    /// Time limit for a sub-agent call (seconds).
     pub subagent_timeout_secs: u64,
 }
 
@@ -647,24 +643,24 @@ impl Default for ToolSettings {
     }
 }
 
-/// Целевой («мягкий») размер чанка RAG в символах по умолчанию.
+/// Default target ("soft") RAG chunk size in characters.
 pub const DEFAULT_CHUNK_TARGET_CHARS: usize = 800;
-/// Перекрытие между соседними чанками RAG в символах по умолчанию.
+/// Default overlap between adjacent RAG chunks in characters.
 pub const DEFAULT_CHUNK_OVERLAP_CHARS: usize = 150;
-/// Жёсткий потолок неделимого прогона чанка RAG в символах по умолчанию.
+/// Default hard ceiling for an indivisible RAG chunk run in characters.
 pub const DEFAULT_CHUNK_MAX_CHARS: usize = 1200;
 
-/// Настройки чанкинга базы знаний (RAG). Влияют на нарезку при индексации
-/// (`/rag add`, инструмент `rag_add`) и реиндексации (`/rag rebuild`). Размеры — в
-/// символах (не байтах, корректно для кириллицы/Юникода). См. spec §9.3.
+/// Knowledge-base (RAG) chunking settings. Affect slicing at indexing time
+/// (`/rag add`, the `rag_add` tool) and reindexing (`/rag rebuild`). Sizes are in
+/// characters (not bytes — correct for Cyrillic/Unicode). See spec §9.3.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct RagSettings {
-    /// Целевой («мягкий») размер чанка: юниты пакуются до него.
+    /// Target ("soft") chunk size: units are packed up to it.
     pub chunk_target_chars: usize,
-    /// Перекрытие соседних чанков: хвост предыдущего повторяется в начале следующего.
+    /// Overlap between adjacent chunks: the previous one's tail repeats at the start of the next.
     pub chunk_overlap_chars: usize,
-    /// Жёсткий потолок неделимого прогона (очень длинное слово/строка без пунктуации).
+    /// Hard ceiling for an indivisible run (a very long word/line with no punctuation).
     pub chunk_max_chars: usize,
 }
 
@@ -678,56 +674,56 @@ impl Default for RagSettings {
     }
 }
 
-/// Потолок хранения нарратива «модели себя» (инсайтов) по умолчанию.
+/// Default storage ceiling for the self-model narrative (insights).
 pub const DEFAULT_SELF_MODEL_MAX_NARRATIVE: usize = 50;
-/// Сколько свежих инсайтов подмешивать в системный промпт по умолчанию.
+/// Default number of fresh insights to inject into the system prompt.
 pub const DEFAULT_SELF_MODEL_NARRATIVE_IN_PROMPT: usize = 3;
-/// Потолок символов рендера «модели себя» в системный промпт по умолчанию.
+/// Default character ceiling for rendering the self-model into the system prompt.
 pub const DEFAULT_SELF_MODEL_PROMPT_CAP: usize = 1200;
-/// Подмешивать ли нейтральный к персоне «протокол ведения модели» по умолчанию.
+/// Whether to inject a persona-neutral "self-model maintenance protocol" by default.
 pub const DEFAULT_SELF_MODEL_MAINTENANCE_PROTOCOL: bool = true;
-/// Сколько закрытых целей держать в структуре по умолчанию (старейшие сверх этого
-/// сворачиваются в нарратив-шрам и удаляются — потолок закрытых целей).
+/// Default number of closed goals to keep in the structure (the oldest beyond this
+/// are folded into a narrative scar and removed — the closed-goal ceiling).
 pub const DEFAULT_SELF_MODEL_MAX_CLOSED_GOALS: usize = 10;
-/// Ориентир размера описания себя (summary) в символах по умолчанию. Сверх него
-/// инструменты и протокол ведения мягко предлагают сократить описание (это ворота,
-/// а не потолок — данные не усекаются). См. docs/summary-as-snapshot.md (этап 2).
+/// Default target size of the self-description (summary) in characters. Beyond it
+/// tools and the maintenance protocol softly suggest shortening the description (this
+/// is a gate, not a ceiling — data isn't truncated). See docs/summary-as-snapshot.md (stage 2).
 pub const DEFAULT_SELF_MODEL_SUMMARY_TARGET: usize = 1000;
 
-/// Настройки «модели себя» (SelfModel): размеры нарратива и объём инъекции в
-/// системный промпт. См. [docs/history/self-model-mvp.md] и spec §9.3.
+/// Self-model settings (SelfModel): narrative sizes and the injection volume into
+/// the system prompt. See [docs/history/self-model-mvp.md] and spec §9.3.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct SelfModelSettings {
-    /// Сколько инсайтов хранить в нарративе (старые вытесняются при добавлении).
+    /// How many insights to keep in the narrative (old ones are evicted on add).
     pub max_narrative: usize,
-    /// Сколько свежих инсайтов подмешивать в системный промпт.
+    /// How many fresh insights to inject into the system prompt.
     pub narrative_in_prompt: usize,
-    /// Потолок символов компактного рендера модели в системный промпт.
+    /// Character ceiling for the compact model render injected into the system prompt.
     pub prompt_cap: usize,
-    /// Сколько закрытых (выполненных/неактуальных) целей держать в структуре;
-    /// старейшие сверх этого сворачиваются в нарратив-шрам и удаляются.
+    /// How many closed (completed/no-longer-relevant) goals to keep in the structure;
+    /// the oldest beyond this are folded into a narrative scar and removed.
     pub max_closed_goals: usize,
-    /// Ориентир размера описания себя (summary) в символах: сверх него инструменты и
-    /// протокол ведения мягко предлагают сократить описание. Ворота, не потолок —
-    /// данные не усекаются. См. docs/summary-as-snapshot.md (этап 2).
+    /// Target size of the self-description (summary) in characters: beyond it, tools and
+    /// the maintenance protocol softly suggest shortening the description. A gate, not a
+    /// ceiling — data isn't truncated. See docs/summary-as-snapshot.md (stage 2).
     pub summary_target_chars: usize,
-    /// Авто-рефлексия: запускать фоновую рефлексию каждые N ответов ассистента в
-    /// чате (модель сама обновляет «модель себя»). `0` — выключено (по умолчанию).
-    /// Срабатывает только в профилях с включёнными инструментами модели себя.
+    /// Auto-reflection: run background reflection every N assistant replies in a
+    /// chat (the model updates the "self-model" itself). `0` — off (default).
+    /// Fires only in profiles with self-model tools enabled.
     pub auto_reflect_every: usize,
-    /// Авто-консолидация «модели себя» («сон»): запускать фоновую консолидацию каждые
-    /// N ответов ассистента в чате (модель сама сливает дубли наблюдений, сжимает
-    /// раздутое описание, связывает противоречия). `0` — выключено (по умолчанию).
-    /// Отдельная от `auto_reflect_every` (свой тумблер точнее — гейты/данные модели
-    /// себя и заметок уже разведены). Срабатывает только в профилях с включёнными
-    /// инструментами модели себя. См. docs/history/self-model-consolidation.md (этап A1).
+    /// Self-model auto-consolidation ("sleep"): run background consolidation every
+    /// N assistant replies in a chat (the model merges duplicate observations, shrinks
+    /// a bloated description, links contradictions on its own). `0` — off (default).
+    /// Separate from `auto_reflect_every` (its own toggle is more precise — self-model
+    /// and notes gates/data are already kept apart). Fires only in profiles with
+    /// self-model tools enabled. See docs/history/self-model-consolidation.md (stage A1).
     pub auto_consolidate_every: usize,
-    /// Подмешивать ли в системный промпт нейтральный к персоне «протокол ведения
-    /// модели» (когда фиксировать изменения, «мимолётное — в наблюдения», «точность
-    /// важнее угодливости»). Стабилизирует использование инструментов независимо от
-    /// персоны профиля. По умолчанию включён; действует только когда профиль включил
-    /// инструменты модели себя.
+    /// Whether to inject a persona-neutral "self-model maintenance protocol" into the
+    /// system prompt (when to record changes, "transient — into observations",
+    /// "accuracy over agreeableness"). Stabilizes tool usage independent of the
+    /// profile's persona. On by default; applies only when the profile has enabled
+    /// self-model tools.
     pub maintenance_protocol: bool,
 }
 
@@ -746,74 +742,73 @@ impl Default for SelfModelSettings {
     }
 }
 
-/// Настройки заметок: авто-консолидация («сон»). См. docs/history/notes-connectivity.md (Ярус 3).
+/// Notes settings: auto-consolidation ("sleep"). See docs/history/notes-connectivity.md (Tier 3).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(default)]
 pub struct NotesSettings {
-    /// Авто-консолидация: запускать фоновую «спящую» консолидацию каждые N ответов
-    /// ассистента в чате (модель сама сливает дубли / переписывает устаревшее /
-    /// связывает родственное). `0` — выключено (по умолчанию). Срабатывает только в
-    /// профилях с включёнными инструментами заметок.
+    /// Auto-consolidation: run background "sleep" consolidation every N assistant
+    /// replies in a chat (the model merges duplicates / rewrites stale ones /
+    /// links related ones on its own). `0` — off (default). Fires only in
+    /// profiles with note tools enabled.
     pub auto_consolidate_every: usize,
-    /// Показывать ли наблюдения «о себе» (`@self`) в общем `note_recall` — с пометкой
-    /// `[о себе]`. По умолчанию **выключено**: память о себе ≠ память о собеседнике
-    /// (решение Яруса 1). Тумблер даёт «полное смешение выдачи» (Ярус 3, Путь 2) для
-    /// проверки, безопасно ли это; при выключенном self-заметки скрыты, как раньше.
-    /// См. docs/history/narrative-as-notes.md (Ярус 3, Путь 2).
+    /// Whether to show "about self" (`@self`) observations in general `note_recall` —
+    /// marked `[about self]`. **Off** by default: memory about oneself ≠ memory about
+    /// the interlocutor (Tier 1 decision). The toggle gives "full output mixing"
+    /// (Tier 3, Path 2) to validate whether that's safe; when off, self-notes stay
+    /// hidden, as before. See docs/history/narrative-as-notes.md (Tier 3, Path 2).
     pub recall_includes_self: bool,
 }
 
-/// Тема оформления TUI. Реальное применение в виджетах — на M9 (`shared/theme.rs`);
-/// здесь хранится выбор пользователя.
+/// TUI theme. Real application in widgets — at M9 (`shared/theme.rs`);
+/// here it just stores the user's choice.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Theme {
-    /// По системной настройке (по умолчанию).
+    /// Follow the system setting (default).
     #[default]
     Auto,
     Dark,
     Light,
 }
 
-/// Настройки интерфейса (тема, спелл-чек, словари). См. spec §11.6.
+/// Interface settings (theme, spellcheck, dictionaries). See spec §11.6.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct InterfaceSettings {
     pub theme: Theme,
-    /// Включён ли спелл-чек ввода (словари грузятся из `dictionaries/`).
+    /// Whether input spellcheck is enabled (dictionaries load from `dictionaries/`).
     pub spellcheck_enabled: bool,
-    /// Базовые имена выбранных словарей (например `en_US`, `ru_RU`). Пусто —
-    /// использовать все найденные в каталоге.
+    /// Base names of the selected dictionaries (e.g. `en_US`, `ru_RU`). Empty —
+    /// use all found in the directory.
     pub selected_dictionaries: Vec<String>,
-    /// Спрашивать подтверждение перед перегенерацией (`Ctrl+R`) и удалением
-    /// последнего обмена (`Ctrl+E`) — обе операции необратимы в UI. По умолчанию
-    /// выключено (комбинации срабатывают сразу). См. spec §11.7.
+    /// Ask for confirmation before regenerating (`Ctrl+R`) and deleting the
+    /// last exchange (`Ctrl+E`) — both operations are irreversible in the UI. Off
+    /// by default (the shortcuts fire immediately). See spec §11.7.
     pub confirm_destructive_keys: bool,
-    /// Режим совместимости со старыми эмуляторами терминала (conhost Windows 10
-    /// и т.п.): вместо эмодзи и редких символов Юникода — глифы из безопасного
-    /// набора (WGL4/ASCII), прямые рамки вместо скруглённых, ASCII-спиннер,
-    /// затемнение фона попапов цветом вместо `DIM`. По умолчанию выключен.
-    /// См. spec §11.6 и [`crate::shared::theme::GlyphSet`].
+    /// Compatibility mode for old terminal emulators (conhost Windows 10
+    /// and the like): instead of emoji and rare Unicode characters — glyphs from a
+    /// safe set (WGL4/ASCII), straight borders instead of rounded, an ASCII spinner,
+    /// dimming popup backgrounds by color instead of `DIM`. Off by default.
+    /// See spec §11.6 and [`crate::shared::theme::GlyphSet`].
     pub terminal_compat: bool,
-    /// Горизонтальные разделители между строками Markdown-таблиц в ленте
-    /// (`├───┼───┤`, «сеточный» вид). По умолчанию выключены (компактный вид —
-    /// разделитель только под заголовком); включение даёт «сеточный» вид.
-    /// См. spec §11.4.
+    /// Horizontal separators between Markdown-table rows in the feed
+    /// (`├───┼───┤`, a "grid" look). Off by default (a compact look — a separator
+    /// only below the header); enabling it gives a "grid" look. See spec §11.4.
     pub table_row_separators: bool,
-    /// Рендерить ```mermaid-блоки ленты диаграммой (Unicode/ASCII-графика,
-    /// крейт `mermaid-text`) вместо исходника. Только flowchart/sequence
-    /// (whitelist); при любом сбое (не распарсилось / не влезло по ширине / тип
-    /// вне whitelist) — жёсткий фолбэк на исходник код-блоком, как при
-    /// выключенном тумблере. Благодаря фолбэку по умолчанию **включён** (худший
-    /// случай = прежнее поведение). См. spec §11.4 и
+    /// Render ```mermaid blocks in the feed as a diagram (Unicode/ASCII graphics,
+    /// the `mermaid-text` crate) instead of the source. Only flowchart/sequence
+    /// (whitelist); on any failure (didn't parse / didn't fit the width / a type
+    /// outside the whitelist) — a hard fallback to the source as a code block, same
+    /// as with the toggle off. Thanks to the fallback, **on** by default (the worst
+    /// case = prior behavior). See spec §11.4 and
     /// docs/research/mermaid-ascii-rendering.md.
     pub render_mermaid: bool,
-    /// Язык **интерфейса** (ось B, docs/i18n-ui.md) — тексты для человека
-    /// (статус-бар, настройки, справка, заголовки ролей ленты). **Независим** от
-    /// языка агентов (`Profile.language`, ось A): русский UI + англоязычные агенты —
-    /// законная комбинация. По умолчанию `Ru` (старый `settings.json` без поля);
-    /// при свежей установке — из `defaults.json` (`main.rs`). Переиспользует
-    /// `i18n::Lang` (UI-язык — это «из какого бандла читать `ui.*`-ключи»).
+    /// **Interface** language (axis B, docs/i18n-ui.md) — text for the human
+    /// (status bar, settings, help, feed role headers). **Independent** of the
+    /// agent language (`Profile.language`, axis A): a Russian UI + English-speaking
+    /// agents is a legitimate combination. Defaults to `Ru` (an old `settings.json`
+    /// with no field); on a fresh install — from `defaults.json` (`main.rs`). Reuses
+    /// `i18n::Lang` (the UI language is "which bundle to read `ui.*` keys from").
     pub language: crate::shared::i18n::Lang,
 }
 
@@ -832,43 +827,43 @@ impl Default for InterfaceSettings {
     }
 }
 
-/// Таймаут одного вызова инструмента MCP-сервера по умолчанию (секунды).
+/// Default timeout for one MCP-server tool call (seconds).
 pub const DEFAULT_MCP_TOOL_TIMEOUT_SECS: u64 = 60;
-/// Потолок символов результата MCP-инструмента по умолчанию (клип входа в промпт —
-/// прецедент Claude Code: cap ~25k токенов). См. docs/research/plugin-system.md §4.4.
+/// Default character ceiling for an MCP-tool result (clipping prompt input — a
+/// precedent from Claude Code: a cap of ~25k tokens). See docs/research/plugin-system.md §4.4.
 pub const DEFAULT_MCP_MAX_RESULT_CHARS: usize = 20_000;
 
-/// Конфигурация одного MCP-сервера (stdio-подпроцесс,
-/// docs/research/plugin-system.md §4.4). Серверы добавляются правкой
-/// `settings.json` (развилка Р6); UI настроек показывает статусы и тумблеры.
+/// Configuration of a single MCP server (a stdio subprocess,
+/// docs/research/plugin-system.md §4.4). Servers are added by editing
+/// `settings.json` (decision point R6); the settings UI shows statuses and toggles.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct McpServerConfig {
-    /// Короткий идентификатор (slug `[a-z0-9-]`, ≤32) — часть id инструментов
-    /// `mcp__<id>__<tool>`. Пустой/невалидный — сервер не запускается.
+    /// Short identifier (slug `[a-z0-9-]`, ≤32) — part of the tool id
+    /// `mcp__<id>__<tool>`. Empty/invalid — the server doesn't start.
     pub id: String,
-    /// Команда запуска. `.bat`/`.cmd` запрещены (BatBadBut, CVE-2024-24576);
-    /// `npx`-серверы на Windows — `cmd /c npx …` либо прямой exe-путь.
+    /// The launch command. `.bat`/`.cmd` are forbidden (BatBadBut, CVE-2024-24576);
+    /// `npx` servers on Windows — `cmd /c npx …` or a direct exe path.
     pub command: String,
-    /// Аргументы команды.
+    /// Command arguments.
     pub args: Vec<String>,
-    /// Окружение ребёнка: переменная → **имя** переменной-источника в окружении
-    /// приложения (сам секрет в `settings.json` не пишется — прецедент
-    /// `api_key_env`, развилка Р8). Отсутствующий источник — warn в лог, пропуск.
+    /// Child environment: variable → **name** of the source variable in the app's
+    /// own environment (the secret itself isn't written to `settings.json` — the
+    /// `api_key_env` precedent, decision point R8). A missing source — a warn in the log, skipped.
     pub env: std::collections::BTreeMap<String, String>,
-    /// Включён ли сервер (выключенный не запускается, его инструменты недоступны).
+    /// Whether the server is enabled (a disabled one doesn't start, its tools are unavailable).
     pub enabled: bool,
-    /// Таймаут одного вызова инструмента (секунды). Стартовый handshake держит
-    /// свой таймаут (константа клиента).
+    /// Timeout for one tool call (seconds). The startup handshake keeps its own
+    /// timeout (a client constant).
     pub tool_timeout_secs: u64,
-    /// Клип результата инструмента (символы) — ограничение входа в промпт.
+    /// Tool-result clip (characters) — a limit on prompt input.
     pub max_result_chars: usize,
-    /// TOFU-пин каталога инструментов (sha256 от имён+описаний+схем): ставится
-    /// автоматически при первом подъёме сервера; при **изменении** каталога
-    /// (rug-pull-детектор, tool poisoning) инструменты не регистрируются, пока
-    /// пользователь не переподтвердит новый каталог в настройках. Пишется
-    /// приложением (не редактируется в UI); ручное удаление поля = сброс доверия.
-    /// См. docs/research/plugin-system.md §4.5 (Р7).
+    /// TOFU pin of the tool catalog (sha256 over names+descriptions+schemas): set
+    /// automatically on the server's first startup; on a **catalog change**
+    /// (a rug-pull detector, tool poisoning), tools aren't registered until
+    /// the user reconfirms the new catalog in settings. Written by the
+    /// app (not editable in the UI); manually removing the field = resetting trust.
+    /// See docs/research/plugin-system.md §4.5 (R7).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub pinned_catalog: Option<String>,
 }
@@ -888,57 +883,57 @@ impl Default for McpServerConfig {
     }
 }
 
-/// Настройки MCP-хоста (плагины-инструменты, docs/research/plugin-system.md §4).
-/// Мастер-выключатель **выключен по умолчанию** (как Python): MCP-сервер —
-/// произвольная программа с правами пользователя; включение — осознанный opt-in,
-/// а инструменты дополнительно opt-in per profile (двойной opt-in, развилка Р7).
+/// MCP-host settings (plugin tools, docs/research/plugin-system.md §4).
+/// The master switch is **off by default** (like Python): an MCP server is an
+/// arbitrary user-privileged program; enabling it is a deliberate opt-in,
+/// and tools are additionally opt-in per profile (double opt-in, decision point R7).
 #[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
 #[serde(default)]
 pub struct McpSettings {
-    /// Мастер-выключатель MCP-хоста.
+    /// MCP-host master switch.
     pub enabled: bool,
-    /// Список серверов (правится в `settings.json`).
+    /// List of servers (edited in `settings.json`).
     pub servers: Vec<McpServerConfig>,
 }
 
-/// Модель озвучивания OpenAI по умолчанию (актуальная dedicated-TTS, `tts-1*` —
-/// легаси). См. docs/research/tts.md §3.1.
+/// Default OpenAI speech model (the current dedicated TTS; `tts-1*` is
+/// legacy). See docs/research/tts.md §3.1.
 pub const DEFAULT_TTS_OPENAI_MODEL: &str = "gpt-4o-mini-tts";
-/// Голос OpenAI по умолчанию. `onyx` — глубокий мужской, **проверен живым спайком**
-/// (docs/research/tts.md §13.9): ударения корректны, дрейфа нет; `marin`/`cedar` —
-/// рекомендованные экспрессивные альтернативы (в спайке не отслушаны).
+/// Default OpenAI voice. `onyx` — a deep male voice, **verified by a live spike**
+/// (docs/research/tts.md §13.9): correct stress, no drift; `marin`/`cedar` are
+/// recommended expressive alternatives (not auditioned in the spike).
 pub const DEFAULT_TTS_OPENAI_VOICE: &str = "onyx";
-/// Модель озвучивания Gemini по умолчанию (GA-моделей TTS у Gemini нет — все
-/// preview; берём flash: дешевле и есть бесплатный тир). См. docs/research/tts.md §3.2.
+/// Default Gemini speech model (Gemini has no GA TTS models — all are
+/// preview; we take flash: cheaper and has a free tier). See docs/research/tts.md §3.2.
 pub const DEFAULT_TTS_GEMINI_MODEL: &str = "gemini-2.5-flash-preview-tts";
-/// Голос Gemini по умолчанию (из 30 prebuilt-голосов).
+/// Default Gemini voice (from 30 prebuilt voices).
 pub const DEFAULT_TTS_GEMINI_VOICE: &str = "Kore";
 
-/// Режим озвучивания (TTS) — независимый «серверный слот», как эмбеддинги
-/// (ADR 0002): у Anthropic TTS нет вовсе, поэтому провайдер озвучивания
-/// конфигурируется отдельно от chat-движка. Локальный движок (managed-сайдкар) —
-/// **задел**: живой спайк (docs/research/tts.md §13) показал, что локальные движки
-/// либо NO-GO по русскому (Qwen3-TTS/Supertonic 3), либо требуют своего Rust-
-/// фронтенда (vosk-tts); основной путь — облако (OpenAI), для offline — external.
-/// См. docs/research/tts.md §8.
+/// Speech (TTS) mode — an independent "server slot", like embeddings
+/// (ADR 0002): Anthropic has no TTS at all, so the speech provider is
+/// configured separately from the chat engine. A local engine (managed sidecar) is
+/// **future work**: a live spike (docs/research/tts.md §13) showed local engines are
+/// either NO-GO for Russian (Qwen3-TTS/Supertonic 3) or need their own Rust
+/// frontend (vosk-tts); the primary path is the cloud (OpenAI), external for offline.
+/// See docs/research/tts.md §8.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum TtsMode {
-    /// Облако OpenAI (`POST /v1/audio/speech`).
+    /// OpenAI cloud (`POST /v1/audio/speech`).
     #[default]
     OpenAi,
-    /// Облако Google Gemini (нативный `generateContent` c `responseModalities:["AUDIO"]`).
+    /// Google Gemini cloud (native `generateContent` with `responseModalities:["AUDIO"]`).
     Gemini,
-    /// Любой локальный/сторонний OpenAI-совместимый TTS-сервер (Kokoro-FastAPI,
-    /// speaches, LocalAI, …). См. docs/research/tts.md §3.4.
+    /// Any local/third-party OpenAI-compatible TTS server (Kokoro-FastAPI,
+    /// speaches, LocalAI, …). See docs/research/tts.md §3.4.
     External,
 }
 
 impl TtsMode {
-    /// Все варианты в порядке перебора UI (Choice-поле).
+    /// All variants in UI-cycle order (Choice field).
     pub const ALL: [TtsMode; 3] = [TtsMode::OpenAi, TtsMode::Gemini, TtsMode::External];
 
-    /// Подпись для UI (Choice-поле).
+    /// UI label (Choice field).
     pub fn label(self) -> &'static str {
         match self {
             TtsMode::OpenAi => "openai",
@@ -947,8 +942,8 @@ impl TtsMode {
         }
     }
 
-    /// Облачный провайдер режима (`None` — external). Им индексируется общий
-    /// сохранённый API-ключ (ADR 0008): ключ, введённый для чата, доступен и TTS.
+    /// The mode's cloud provider (`None` — external). Indexes the shared
+    /// stored API key (ADR 0008): a key entered for chat is available to TTS too.
     pub fn cloud_provider(self) -> Option<CloudProvider> {
         match self {
             TtsMode::OpenAi => Some(CloudProvider::OpenAi),
@@ -957,7 +952,7 @@ impl TtsMode {
         }
     }
 
-    /// Циклический перебор с учётом направления (`dir` = +1/-1).
+    /// Cyclic iteration honoring direction (`dir` = +1/-1).
     pub fn cycle(self, dir: i32) -> Self {
         let idx = Self::ALL.iter().position(|x| *x == self).unwrap_or(0) as i32;
         let n = Self::ALL.len() as i32;
@@ -965,71 +960,71 @@ impl TtsMode {
     }
 }
 
-/// Настройки облачного провайдера озвучивания (OpenAI/Gemini). Хранятся отдельно
-/// на каждого, чтобы переключение режима не теряло чужих значений (как
-/// [`CloudSettings`] у движка).
+/// Cloud speech-provider settings (OpenAI/Gemini). Stored separately
+/// per provider so switching modes doesn't lose the other's values (like
+/// [`CloudSettings`] for the engine).
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct TtsCloudSettings {
-    /// Имя TTS-модели у провайдера.
+    /// The provider's TTS model name.
     pub model_name: Option<String>,
-    /// Голос ассистента (имена свои у каждого провайдера).
+    /// The assistant's voice (names differ per provider).
     pub voice: Option<String>,
-    /// Голос **пользователя** для многосообщенческой озвучки (`/tts all`, `/tts N`):
-    /// когда задан, реплики пользователя читаются им, а ассистента — `voice`.
-    /// `None` → все реплики одним голосом `voice` (поведение по умолчанию).
+    /// The **user's** voice for multi-message speech (`/tts all`, `/tts N`):
+    /// when set, user turns are read in it, and the assistant's — in `voice`.
+    /// `None` → all turns in one voice `voice` (the default behavior).
     pub user_voice: Option<String>,
-    /// Указания по тону/языку/скорости естественным языком. У OpenAI это поле
-    /// `instructions` (и единственный рабочий способ задать скорость —
-    /// `speed` у `gpt-4o-mini-tts` де-факто игнорируется); у Gemini — префикс
-    /// к тексту запроса. См. docs/research/tts.md §3.
+    /// Natural-language instructions on tone/language/speed. For OpenAI this is
+    /// the `instructions` field (and the only working way to set speed —
+    /// `speed` is de facto ignored by `gpt-4o-mini-tts`); for Gemini — a prefix
+    /// to the request text. See docs/research/tts.md §3.
     pub instructions: Option<String>,
-    /// Имя env-переменной с API-ключом (фолбэк, если ключ не введён в настройках).
+    /// Env-variable name carrying the API key (a fallback if no key was entered in settings).
     pub api_key_env: Option<String>,
-    /// Переопределение базового URL провайдера (опционально).
+    /// Override of the provider's base URL (optional).
     pub url: Option<String>,
 }
 
-/// Настройки внешнего (локального/стороннего) OpenAI-совместимого TTS-сервера.
-/// Общий знаменатель параметров таких серверов — `model`+`input`+`voice`+
-/// `response_format`+`speed`, причём `voice` у каждого свой, а `model` многие
-/// игнорируют → шлём только заданное. См. docs/research/tts.md §3.4.
+/// Settings for an external (local/third-party) OpenAI-compatible TTS server.
+/// The common-denominator parameter set for such servers is `model`+`input`+`voice`+
+/// `response_format`+`speed`, where `voice` differs per server and many
+/// ignore `model` → we send only what's set. See docs/research/tts.md §3.4.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct TtsExternalSettings {
-    /// URL сервера (например `http://127.0.0.1:8880/v1`).
+    /// Server URL (e.g. `http://127.0.0.1:8880/v1`).
     pub url: Option<String>,
-    /// Имя модели (опционально — многие серверы игнорируют).
+    /// Model name (optional — many servers ignore it).
     pub model_name: Option<String>,
-    /// Голос ассистента — свободное текстовое поле (имена зависят от сервера).
+    /// Assistant's voice — a free-text field (names depend on the server).
     pub voice: Option<String>,
-    /// Голос **пользователя** для многосообщенческой озвучки (см. одноимённое поле
-    /// [`TtsCloudSettings::user_voice`]). `None` → один голос `voice`.
+    /// The **user's** voice for multi-message speech (see the identically-named field
+    /// [`TtsCloudSettings::user_voice`]). `None` → one voice `voice`.
     pub user_voice: Option<String>,
-    /// Имя env-переменной с Bearer-ключом (опционально; локальный сервер не требует).
+    /// Env-variable name carrying a Bearer key (optional; a local server doesn't need it).
     pub api_key_env: Option<String>,
 }
 
-/// Настройки озвучивания сообщений чата (команда `/tts`, spec §11.9).
-/// Всё через `#[serde(default)]` — старые `settings.json` читаются без миграции.
-/// См. docs/research/tts.md §8.
+/// Settings for speaking chat messages aloud (the `/tts` command, spec §11.9).
+/// All via `#[serde(default)]` — old `settings.json` files read without migration.
+/// See docs/research/tts.md §8.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct TtsSettings {
-    /// Провайдер озвучивания.
+    /// Speech provider.
     pub mode: TtsMode,
     pub openai: TtsCloudSettings,
     pub gemini: TtsCloudSettings,
     pub external: TtsExternalSettings,
-    /// Скорость речи (где поддержана). У `gpt-4o-mini-tts` игнорируется — там
-    /// скорость просят словами в `instructions`.
+    /// Speech speed (where supported). Ignored by `gpt-4o-mini-tts` — there
+    /// speed is requested via words in `instructions`.
     pub speed: f32,
-    /// Озвучивать префиксы ролей («Пользователь.»/«Ассистент.») — во **всех**
-    /// вариантах команды, включая одиночное `/tts` (решение пользователя, Р6).
+    /// Speak role prefixes ("User."/"Assistant.") — in **all**
+    /// command variants, including a bare `/tts` (user's decision, R6).
     pub speak_roles: bool,
-    /// Прерывать озвучивание при переключении чата.
+    /// Stop speech when switching chats.
     pub stop_on_chat_switch: bool,
-    /// Прерывать озвучивание при начале генерации ответа.
+    /// Stop speech when a reply starts generating.
     pub stop_on_generation_start: bool,
 }
 
@@ -1050,8 +1045,8 @@ impl Default for TtsSettings {
             external: TtsExternalSettings::default(),
             speed: 1.0,
             speak_roles: false,
-            // Прерывать при переключении чата — да; при начале генерации — нет
-            // (решение пользователя, Р8).
+            // Stop on chat switch — yes; on generation start — no
+            // (user's decision, R8).
             stop_on_chat_switch: true,
             stop_on_generation_start: false,
         }
@@ -1059,7 +1054,7 @@ impl Default for TtsSettings {
 }
 
 impl TtsSettings {
-    /// Настройки активного облачного провайдера (`None` — external).
+    /// Active cloud provider's settings (`None` — external).
     pub fn cloud(&self) -> Option<&TtsCloudSettings> {
         match self.mode.cloud_provider()? {
             CloudProvider::OpenAi => Some(&self.openai),
@@ -1068,9 +1063,9 @@ impl TtsSettings {
         }
     }
 
-    /// Голоса активного режима: `(ассистент, пользователь)`. Пустые поля → `None`.
-    /// Голос пользователя используется многосообщенческой озвучкой (`/tts all`); при
-    /// `None` реплики пользователя читаются голосом ассистента.
+    /// Active mode's voices: `(assistant, user)`. Blank fields → `None`.
+    /// The user's voice is used by multi-message speech (`/tts all`); at
+    /// `None`, user turns are read in the assistant's voice.
     pub fn active_voices(&self) -> (Option<&str>, Option<&str>) {
         fn nonblank(v: &Option<String>) -> Option<&str> {
             v.as_deref().map(str::trim).filter(|s| !s.is_empty())
@@ -1082,7 +1077,7 @@ impl TtsSettings {
         (nonblank(voice), nonblank(user))
     }
 
-    /// Изменяемые настройки активного облачного провайдера (`None` — external).
+    /// Active cloud provider's mutable settings (`None` — external).
     pub fn cloud_mut(&mut self) -> Option<&mut TtsCloudSettings> {
         match self.mode.cloud_provider()? {
             CloudProvider::OpenAi => Some(&mut self.openai),
@@ -1092,64 +1087,64 @@ impl TtsSettings {
     }
 }
 
-/// Что включать при копировании всей переписки чата в буфер обмена (`F5`, spec
-/// §11.2). По умолчанию копируется только текст сообщений (`Default` — все флаги
-/// `false`); опционально добавляются «мысли» (CoT), параметры вызовов инструментов
-/// (имя + аргументы) и их результаты.
+/// What to include when copying the whole chat conversation to the clipboard (`F5`,
+/// spec §11.2). By default only message text is copied (`Default` — all flags
+/// `false`); optionally "thoughts" (CoT), tool-call parameters
+/// (name + arguments), and their results are added.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(default)]
 pub struct CopySettings {
-    /// Включать блок «мыслей» (CoT) ассистента.
+    /// Include the assistant's "thoughts" (CoT) block.
     pub copy_thoughts: bool,
-    /// Включать параметры вызовов инструментов (имя инструмента + аргументы).
+    /// Include tool-call parameters (tool name + arguments).
     pub copy_tool_calls: bool,
-    /// Включать результаты (ответы) вызовов инструментов.
+    /// Include tool-call results (responses).
     pub copy_tool_results: bool,
 }
 
-/// Глобальная конфигурация приложения.
+/// Global application configuration.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct AppConfig {
     pub schema_version: u32,
     pub default_sampling: SamplingConfig,
-    /// Семплинг для режима имперсонации (написание сообщения от имени пользователя).
-    /// Применяется во всех режимах сервера имперсонации (в т.ч. `shared`). См. spec §11.8.
+    /// Sampling for impersonation mode (writing a message on the user's behalf).
+    /// Applies in every impersonation-server mode (including `shared`). See spec §11.8.
     pub impersonation_sampling: SamplingConfig,
-    /// Настройки chat-сервера инференса (llama.cpp managed или любой OpenAI external).
+    /// Chat inference-server settings (managed llama.cpp or any OpenAI external).
     pub engine: EngineSettings,
-    /// Настройки сервера имперсонации (shared/managed/external). См. spec §11.8.
+    /// Impersonation-server settings (shared/managed/external). See spec §11.8.
     pub impersonation_engine: ImpersonationEngineSettings,
-    /// Настройки выделенного embedding-сервера (RAG, ADR 0002).
+    /// Dedicated embedding-server settings (RAG, ADR 0002).
     pub embed: EmbedSettings,
-    /// Лимит раундов клиентского agentic-loop (spec §6.3).
+    /// Round limit for the client-side agentic loop (spec §6.3).
     pub max_tool_rounds: u32,
-    /// Глобальные выключатели внешних инструментов.
+    /// Global switches for external tools.
     pub tools: ToolSettings,
-    /// Настройки чанкинга базы знаний (RAG).
+    /// Knowledge-base (RAG) chunking settings.
     pub rag: RagSettings,
-    /// Настройки «модели себя» (нарратив, объём инъекции в промпт).
+    /// Self-model settings (narrative, prompt-injection volume).
     pub self_model: SelfModelSettings,
-    /// Настройки заметок (авто-консолидация «сон»).
+    /// Notes settings (auto-consolidation "sleep").
     pub notes: NotesSettings,
-    /// Настройки интерфейса (тема, спелл-чек, словари).
+    /// Interface settings (theme, spellcheck, dictionaries).
     pub interface: InterfaceSettings,
-    /// Что включать при копировании переписки чата в буфер обмена (`F5`).
+    /// What to include when copying the chat conversation to the clipboard (`F5`).
     pub copy: CopySettings,
-    /// MCP-хост: плагины-инструменты через внешние MCP-серверы (stdio).
+    /// MCP host: plugin tools via external MCP servers (stdio).
     pub mcp: McpSettings,
-    /// Озвучивание сообщений чата (команда `/tts`, spec §11.9).
+    /// Speaking chat messages aloud (the `/tts` command, spec §11.9).
     pub tts: TtsSettings,
-    /// Последний открытый чат — восстанавливается при следующем запуске. Пишется
-    /// оркестратором (не редактируется через экран настроек). `None` — нет памяти
-    /// (первый запуск/чат удалён) → открывается самый недавний.
+    /// Last-open chat — restored on the next launch. Written by the
+    /// orchestrator (not editable via the settings screen). `None` — no memory
+    /// (first launch/the chat was deleted) → the most recent one opens.
     pub last_active_chat: Option<uuid::Uuid>,
-    /// Сохранённые API-ключи облачных провайдеров — **по записи на машину**,
-    /// зашифрованы машинным ключом (Windows DPAPI / Linux HKDF(machine-id)+AEAD).
-    /// Конфиг остаётся переносимым: чужая запись не расшифруется (ключ вводится
-    /// заново своей записью), при возврате на прежнюю машину её запись читается.
-    /// Пишется оркестратором (`AppCommand::SetApiKey`), в UI не редактируется —
-    /// экран настроек шлёт сам ключ, а не эту структуру. См. `shared::secrets`.
+    /// Stored API keys for cloud providers — **one entry per machine**,
+    /// encrypted with a machine key (Windows DPAPI / Linux HKDF(machine-id)+AEAD).
+    /// The config stays portable: a foreign entry won't decrypt (the key gets
+    /// re-entered via its own entry), returning to the original machine re-reads its entry.
+    /// Written by the orchestrator (`AppCommand::SetApiKey`), not editable in the UI —
+    /// the settings screen sends the key itself, not this structure. See `shared::secrets`.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub api_keys: Vec<crate::shared::secrets::ApiKeyEntry>,
 }
@@ -1163,8 +1158,8 @@ impl Default for AppConfig {
                 thinking: Some(true),
                 ..Default::default()
             },
-            // Имперсонация пишет короткую реплику от лица пользователя — «мысли»
-            // ей не нужны (только съели бы бюджет), лимит токенов скромный.
+            // Impersonation writes a short reply on the user's behalf — "thoughts"
+            // would only eat the budget — a modest token limit.
             impersonation_sampling: SamplingConfig {
                 max_tokens: Some(1024),
                 thinking: Some(false),
@@ -1210,10 +1205,10 @@ mod tests {
             ..Default::default()
         };
         assert_eq!(tts.active_voices(), (Some("onyx"), Some("nova")));
-        // Пустой голос пользователя → None (не заводит второй движок).
+        // Blank user voice → None (doesn't spin up a second engine).
         tts.openai.user_voice = Some("  ".into());
         assert_eq!(tts.active_voices(), (Some("onyx"), None));
-        // Активный режим external — читаются его поля, а не openai.
+        // Active mode external — reads its own fields, not openai's.
         tts.mode = TtsMode::External;
         tts.external.voice = Some("bella".into());
         assert_eq!(tts.active_voices(), (Some("bella"), None));
@@ -1229,7 +1224,7 @@ mod tests {
 
     #[test]
     fn active_model_name_by_mode() {
-        // Managed — базовое имя GGUF без пути и расширения.
+        // Managed — the GGUF's base name without the path or extension.
         let mut e = EngineSettings {
             mode: ServerMode::Managed,
             managed: ManagedSettings {
@@ -1239,26 +1234,26 @@ mod tests {
             ..Default::default()
         };
         assert_eq!(e.active_model_name().as_deref(), Some("gemma-4-it"));
-        // Не задан путь → None.
+        // No path set → None.
         e.managed.model_path = None;
         assert_eq!(e.active_model_name(), None);
-        // External — имя модели как есть.
+        // External — the model name as-is.
         e.mode = ServerMode::External;
         e.external.model_name = Some("qwen-3.6".into());
         assert_eq!(e.active_model_name().as_deref(), Some("qwen-3.6"));
-        // Облако — имя из активной облачной подсекции.
+        // Cloud — the name from the active cloud subsection.
         e.mode = ServerMode::OpenAi;
         e.openai.model_name = Some("gpt-4o".into());
         assert_eq!(e.active_model_name().as_deref(), Some("gpt-4o"));
-        // Пустое имя трактуется как незаданное.
+        // An empty name is treated as unset.
         e.openai.model_name = Some(String::new());
         assert_eq!(e.active_model_name(), None);
     }
 
     #[test]
     fn mcp_server_config_roundtrip_and_partial_defaults() {
-        // Частичная запись сервера (как в реальном settings.json) наполняется
-        // дефолтами: enabled=true, таймаут/клип — константы.
+        // A partial server entry (as in a real settings.json) gets filled with
+        // defaults: enabled=true, timeout/clip — constants.
         let c: AppConfig = serde_json::from_str(
             r#"{"mcp":{"enabled":true,"servers":[{
                 "id":"fs","command":"cmd","args":["/c","npx","-y","srv"],
@@ -1277,7 +1272,7 @@ mod tests {
         assert!(s.enabled);
         assert_eq!(s.tool_timeout_secs, DEFAULT_MCP_TOOL_TIMEOUT_SECS);
         assert_eq!(s.max_result_chars, DEFAULT_MCP_MAX_RESULT_CHARS);
-        // Round-trip: сериализация → чтение даёт то же значение.
+        // Round-trip: serializing → reading gives the same value.
         let json = serde_json::to_string(&c.mcp).unwrap();
         let back: McpSettings = serde_json::from_str(&json).unwrap();
         assert_eq!(back, c.mcp);
@@ -1291,15 +1286,15 @@ mod tests {
         assert_eq!(c.engine.managed.port, 8000);
         assert_eq!(c.engine.managed.gpu_layers, DEFAULT_GPU_LAYERS);
         assert!(c.engine.managed.jinja);
-        // Новые секции наполняются дефолтами при их отсутствии в файле.
+        // New sections get filled with defaults when absent from the file.
         assert_eq!(c.embed.managed.port, DEFAULT_EMBED_PORT);
         assert_eq!(c.tools.subagent_max_tokens, DEFAULT_SUBAGENT_MAX_TOKENS);
         assert_eq!(c.tools.subagent_timeout_secs, DEFAULT_SUBAGENT_TIMEOUT_SECS);
-        // Файловые инструменты выключены по умолчанию (как Python).
+        // File tools are off by default (like Python).
         assert!(!c.tools.fs_enabled);
         assert_eq!(c.tools.fs_root, None);
-        // Python: инструмент выключен, режим — песочница Wasmer, сеть в песочнице
-        // включена, таймаст песочницы — дефолтный.
+        // Python: the tool is off, mode — the Wasmer sandbox, network in the
+        // sandbox is on, the sandbox timeout is the default.
         assert!(!c.tools.python_enabled);
         assert_eq!(c.tools.python_mode, PythonMode::Wasmer);
         assert!(c.tools.python_net_enabled);
@@ -1307,7 +1302,7 @@ mod tests {
             c.tools.python_wasm_timeout_secs,
             DEFAULT_PYTHON_WASM_TIMEOUT_SECS
         );
-        // Лимит памяти песочницы по умолчанию отключён (opt-in, только Windows).
+        // The sandbox memory limit is off by default (opt-in, Windows only).
         assert_eq!(c.tools.python_wasm_memory_mb, None);
         assert_eq!(c.rag.chunk_target_chars, DEFAULT_CHUNK_TARGET_CHARS);
         assert_eq!(c.self_model.max_narrative, DEFAULT_SELF_MODEL_MAX_NARRATIVE);
@@ -1324,38 +1319,38 @@ mod tests {
             c.self_model.summary_target_chars,
             DEFAULT_SELF_MODEL_SUMMARY_TARGET
         );
-        // Протокол ведения модели себя включён по умолчанию, авто-рефлексия и
-        // авто-консолидация «модели себя» — нет.
+        // The self-model maintenance protocol is on by default, auto-reflection and
+        // self-model auto-consolidation are not.
         assert!(c.self_model.maintenance_protocol);
         assert_eq!(c.self_model.auto_reflect_every, 0);
         assert_eq!(c.self_model.auto_consolidate_every, 0);
-        // Заметки: авто-консолидация выкл, self-заметки в recall скрыты (Ярус 3, Путь 2).
+        // Notes: auto-consolidation off, self-notes are hidden from recall (Tier 3, Path 2).
         assert_eq!(c.notes.auto_consolidate_every, 0);
         assert!(!c.notes.recall_includes_self);
         assert_eq!(c.rag.chunk_overlap_chars, DEFAULT_CHUNK_OVERLAP_CHARS);
         assert_eq!(c.rag.chunk_max_chars, DEFAULT_CHUNK_MAX_CHARS);
         assert!(c.interface.spellcheck_enabled);
         assert_eq!(c.interface.theme, Theme::Auto);
-        // Режим совместимости со старым терминалом по умолчанию выключен.
+        // Old-terminal compatibility mode is off by default.
         assert!(!c.interface.terminal_compat);
-        // Разделители строк Markdown-таблиц по умолчанию выключены.
+        // Markdown-table row separators are off by default.
         assert!(!c.interface.table_row_separators);
-        // Рендер mermaid-диаграмм по умолчанию включён (жёсткий фолбэк на исходник
-        // делает включение безопасным: худший случай = прежнее поведение).
+        // Mermaid diagram rendering is on by default (a hard fallback to the source
+        // makes enabling it safe: the worst case = prior behavior).
         assert!(c.interface.render_mermaid);
-        // Язык интерфейса (ось B) по умолчанию — русский (старый settings.json без
-        // поля; свежая установка ставит его из defaults.json в main.rs).
+        // Interface language (axis B) defaults to Russian (an old settings.json with
+        // no field; a fresh install sets it from defaults.json in main.rs).
         assert_eq!(c.interface.language, crate::shared::i18n::Lang::Ru);
-        // Копирование переписки: по умолчанию только текст (все флаги выключены).
+        // Copying the conversation: text only by default (all flags off).
         assert!(!c.copy.copy_thoughts);
         assert!(!c.copy.copy_tool_calls);
         assert!(!c.copy.copy_tool_results);
-        // MCP-хост: мастер-выключатель выкл, серверов нет (двойной opt-in, Р7).
+        // MCP host: master switch off, no servers (double opt-in, R7).
         assert!(!c.mcp.enabled);
         assert!(c.mcp.servers.is_empty());
-        // Озвучивание (TTS): режим по умолчанию — OpenAI с осмысленными моделью и
-        // голосом («не настроено» = нет ключа), скорость 1.0; из поведения включено
-        // только прерывание при переключении чата (Р6/Р8).
+        // Speech (TTS): the default mode is OpenAI with a sensible model and
+        // voice ("not configured" = no key), speed 1.0; of behavior only
+        // stopping on chat switch is enabled (R6/R8).
         assert_eq!(c.tts.mode, TtsMode::OpenAi);
         assert_eq!(
             c.tts.openai.model_name.as_deref(),
@@ -1373,14 +1368,14 @@ mod tests {
         assert!(!c.tts.speak_roles);
         assert!(c.tts.stop_on_chat_switch);
         assert!(!c.tts.stop_on_generation_start);
-        // Имперсонация наполняется дефолтами при отсутствии в файле.
+        // Impersonation is filled with defaults when absent from the file.
         assert_eq!(c.impersonation_engine.mode, ImpersonationMode::Shared);
         assert_eq!(
             c.impersonation_engine.managed.port,
             DEFAULT_IMPERSONATION_PORT
         );
         assert_eq!(c.impersonation_sampling.thinking, Some(false));
-        // Память о последнем открытом чате: по умолчанию пусто.
+        // Memory of the last-open chat: empty by default.
         assert_eq!(c.last_active_chat, None);
     }
 
@@ -1421,7 +1416,7 @@ mod tests {
         assert_eq!(FlashAttn::Auto.as_arg(), None);
         assert_eq!(FlashAttn::On.as_arg(), Some("on"));
         assert_eq!(FlashAttn::Off.as_arg(), Some("off"));
-        // Перебор по кругу в обе стороны.
+        // Cyclic iteration in both directions.
         assert_eq!(FlashAttn::Auto.cycle(1), FlashAttn::On);
         assert_eq!(FlashAttn::Auto.cycle(-1), FlashAttn::Off);
     }
@@ -1429,7 +1424,7 @@ mod tests {
     #[test]
     fn python_mode_default_cycle_and_serde() {
         assert_eq!(PythonMode::default(), PythonMode::Wasmer);
-        // Перебор по кругу (два варианта).
+        // Cyclic iteration (two variants).
         assert_eq!(PythonMode::Wasmer.cycle(1), PythonMode::Local);
         assert_eq!(PythonMode::Local.cycle(1), PythonMode::Wasmer);
         assert_eq!(PythonMode::Wasmer.cycle(-1), PythonMode::Local);
@@ -1449,7 +1444,7 @@ mod tests {
         assert_eq!(SpecType::None.as_arg(), None);
         assert_eq!(SpecType::DraftMtp.as_arg(), Some("draft-mtp"));
         assert_eq!(SpecType::NgramMapK4v.as_arg(), Some("ngram-map-k4v"));
-        // serde-имя совпадает с CLI-значением (kebab-case).
+        // The serde name matches the CLI value (kebab-case).
         assert_eq!(
             serde_json::to_string(&SpecType::DraftMtp).unwrap(),
             "\"draft-mtp\""
@@ -1458,7 +1453,7 @@ mod tests {
             serde_json::to_string(&SpecType::NgramMapK4v).unwrap(),
             "\"ngram-map-k4v\""
         );
-        // Черновая модель нужна только типам draft-*.
+        // A draft model is only needed by draft-* types.
         assert!(SpecType::DraftMtp.needs_draft_model());
         assert!(!SpecType::NgramSimple.needs_draft_model());
         assert!(!SpecType::None.needs_draft_model());
@@ -1491,7 +1486,7 @@ mod tests {
 
     #[test]
     fn per_provider_cloud_settings_are_independent() {
-        // Каждый провайдер хранит свои поля — переключение режима не теряет чужих.
+        // Each provider stores its own fields — switching modes doesn't lose the other's.
         let mut e = EngineSettings {
             mode: ServerMode::OpenAi,
             openai: CloudSettings {
@@ -1506,16 +1501,16 @@ mod tests {
             },
             ..Default::default()
         };
-        // Активный провайдер — OpenAI.
+        // Active provider — OpenAI.
         assert_eq!(e.cloud().unwrap().model_name.as_deref(), Some("gpt-4o"));
-        // Переключение на Gemini открывает его собственные поля, OpenAI цел.
+        // Switching to Gemini exposes its own fields, OpenAI stays intact.
         e.mode = ServerMode::Gemini;
         assert_eq!(
             e.cloud().unwrap().model_name.as_deref(),
             Some("gemini-2.5-pro")
         );
         assert_eq!(e.openai.model_name.as_deref(), Some("gpt-4o"));
-        // Локальные режимы — без облака.
+        // Local modes — no cloud.
         e.mode = ServerMode::Managed;
         assert!(e.cloud().is_none());
     }
@@ -1604,7 +1599,7 @@ mod tests {
         );
         assert_eq!(ServerMode::Managed.cloud_provider(), None);
         assert_eq!(ServerMode::External.cloud_provider(), None);
-        // Claude — облако, но не OpenAI-протокол.
+        // Claude — cloud, but not the OpenAI protocol.
         assert_eq!(
             serde_json::to_string(&ServerMode::Claude).unwrap(),
             "\"claude\""
@@ -1614,13 +1609,13 @@ mod tests {
             Some(CloudProvider::Claude)
         );
         assert!(CloudProvider::Claude.base_url().contains("anthropic"));
-        // Имперсонация: те же облачные провайдеры, прочие режимы — None.
+        // Impersonation: the same cloud providers, other modes — None.
         assert_eq!(
             ImpersonationMode::OpenAi.cloud_provider(),
             Some(CloudProvider::OpenAi)
         );
         assert_eq!(ImpersonationMode::Shared.cloud_provider(), None);
-        // Base URL провайдеров.
+        // Providers' base URLs.
         assert!(
             CloudProvider::OpenAi
                 .base_url()
@@ -1650,7 +1645,7 @@ mod tests {
         let json = serde_json::to_string_pretty(&c).unwrap();
         let back: AppConfig = serde_json::from_str(&json).unwrap();
         assert_eq!(c, back);
-        // Под-секции наполняются дефолтами при отсутствии в файле.
+        // Sub-sections get filled with defaults when absent from the file.
         let old: AppConfig = serde_json::from_str(r#"{"engine":{"mode":"managed"}}"#).unwrap();
         assert_eq!(old.engine.openai.model_name, None);
         assert_eq!(old.engine.openai.api_key_env, None);

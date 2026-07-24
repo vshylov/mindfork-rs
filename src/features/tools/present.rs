@@ -1,45 +1,45 @@
-//! Презентация вызовов инструментов для ленты (spec §11.3): как показать
-//! аргументы и результат конкретного инструмента — подсвеченный код, консольный
-//! вывод, компактный заголовок вместо сырого JSON.
+//! Tool-call presentation for the feed (spec §11.3): how to show a specific
+//! tool's arguments and result — highlighted code, console output,
+//! a compact header instead of raw JSON.
 //!
-//! **Чистый слой** (без ratatui): отдаёт структуру [`ToolPresentation`], которую
-//! рисует [`crate::widgets::message_feed`] (навешивая цвета/гуттеры/подсветку).
-//! Знание про конкретные инструменты (какое поле — код, на каком языке, как
-//! разобрать консольный вывод) живёт здесь, в слое инструментов; виджет остаётся
-//! generic. `arguments` приходит уже сериализованным JSON-текстом (как в
-//! [`crate::widgets::message_feed::FeedToolCall`]) — презентер парсит его сам, при
-//! сбое разбора мягко деградирует к прежнему inline-виду.
+//! **A pure layer** (no ratatui): returns the [`ToolPresentation`] structure, which
+//! [`crate::widgets::message_feed`] draws (attaching colors/gutters/highlighting).
+//! Knowledge about specific tools (which field is code, in what language, how to
+//! parse console output) lives here, in the tools layer; the widget stays
+//! generic. `arguments` arrives as already-serialized JSON text (as in
+//! [`crate::widgets::message_feed::FeedToolCall`]) — the presenter parses it itself; on a
+//! parse failure it gracefully degrades to the previous inline view.
 //!
-//! Имена инструментов сверяются строковыми литералами — это стабильный
-//! wire-протокол (их видит и модель), меняются крайне редко.
+//! Tool names are matched by string literals — this is a stable wire
+//! protocol (the model sees them too), changing extremely rarely.
 
 use serde_json::Value;
 
-/// Порог «крупного» строкового аргумента: многострочный ИЛИ длиннее этого числа
-/// символов — показывается отдельным блоком под заголовком, а не в `name(...)`.
+/// The threshold for a "large" string argument: multiline OR longer than this many
+/// characters — shown as a separate block under the header, not in `name(...)`.
 const BIG_ARG_CHARS: usize = 100;
-/// Потолок длины суффикса заголовка (символов) — длинное значение усекается «…».
+/// Ceiling on the header-suffix length (characters) — a long value is truncated with "…".
 const HEADER_MAX_CHARS: usize = 100;
 
-/// Инструменты, чей результат — структурированная проза (URL, пассажи, заметки):
-/// рендерим его как markdown, а не плоским текстом. Простые подтверждения
-/// («Заметка сохранена») сюда не входят — они остаются приглушённым `Plain`.
+/// Tools whose result is structured prose (URLs, passages, notes):
+/// render it as markdown, not as flat text. Plain confirmations
+/// ("Note saved") aren't included here — they stay muted `Plain`.
 const PROSE_RESULT_TOOLS: &[&str] = &["web_search", "fetch_url", "rag_search", "note_recall"];
 
-/// Блок содержимого tool-карточки (аргумент или результат).
+/// A content block of a tool card (an argument or a result).
 #[derive(Debug, Clone, PartialEq)]
 pub enum ToolBlock {
-    /// Подсвеченный код на языке `lang` (пустой `lang` → без подсветки).
+    /// Highlighted code in language `lang` (an empty `lang` → no highlighting).
     Code { lang: String, text: String },
-    /// Консольный вывод процесса (stdout/stderr/код возврата).
+    /// A process's console output (stdout/stderr/exit code).
     Console(Console),
-    /// Плоский текст (обёрнутый, приглушённый) — результат по умолчанию.
+    /// Flat text (wrapped, muted) — the default result.
     Plain(String),
-    /// Markdown-рендер (для текстовых результатов-прозы).
+    /// A markdown render (for prose text results).
     Markdown(String),
 }
 
-/// Разобранный консольный вывод `python_exec`.
+/// The parsed console output of `python_exec`.
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct Console {
     pub stdout: String,
@@ -47,18 +47,18 @@ pub struct Console {
     pub exit: Option<i32>,
 }
 
-/// Как показать вызов инструмента в ленте.
+/// How to show a tool call in the feed.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ToolPresentation {
-    /// Суффикс заголовка: `name(suffix)`. `None` → показываем просто `name`.
+    /// The header suffix: `name(suffix)`. `None` → show just `name`.
     pub header_suffix: Option<String>,
-    /// Блоки под заголовком (крупные аргументы — код/текст).
+    /// Blocks under the header (large arguments — code/text).
     pub args: Vec<ToolBlock>,
-    /// Блоки результата.
+    /// Result blocks.
     pub result: Vec<ToolBlock>,
 }
 
-/// Строит презентацию вызова `name` с сериализованными `arguments` и `result`.
+/// Builds the presentation of a call to `name` with serialized `arguments` and `result`.
 pub fn present(name: &str, arguments: &str, result: &str) -> ToolPresentation {
     let val: Option<Value> = serde_json::from_str(arguments).ok();
     let (header_suffix, args) = present_args(name, arguments, val.as_ref());
@@ -70,10 +70,10 @@ pub fn present(name: &str, arguments: &str, result: &str) -> ToolPresentation {
     }
 }
 
-/// Заголовок + блоки аргументов.
+/// The header + argument blocks.
 fn present_args(name: &str, raw: &str, val: Option<&Value>) -> (Option<String>, Vec<ToolBlock>) {
-    // Аргументы — не JSON-объект (сбой разбора, массив, скаляр): показываем сырой
-    // текст inline, как раньше, без блоков.
+    // The arguments aren't a JSON object (a parse failure, an array, a scalar): show the
+    // raw text inline, as before, with no blocks.
     let Some(Value::Object(map)) = val else {
         let t = raw.trim();
         return (
@@ -86,8 +86,8 @@ fn present_args(name: &str, raw: &str, val: Option<&Value>) -> (Option<String>, 
         );
     };
 
-    // Спец. «код-поле» инструмента: python — `code` (python), fs_write — `content`
-    // (язык по расширению `path`).
+    // A tool's special "code field": python — `code` (python), fs_write — `content`
+    // (language by `path`'s extension).
     let code_field: Option<(&str, String)> = match name {
         "python_exec" => Some(("code", "python".into())),
         "fs_write" => Some(("content", ext_lang(map.get("path")))),
@@ -106,8 +106,8 @@ fn present_args(name: &str, raw: &str, val: Option<&Value>) -> (Option<String>, 
         });
         consumed = Some((*field).to_string());
     }
-    // Нет спец. поля → крупное строковое поле показываем отдельным Plain-блоком
-    // (напр. `content` у note_save, `text` у rag_add).
+    // No special field → show the large string field as a separate Plain block
+    // (e.g. `content` for note_save, `text` for rag_add).
     if blocks.is_empty() {
         for (k, v) in map.iter() {
             if let Value::String(s) = v
@@ -120,7 +120,7 @@ fn present_args(name: &str, raw: &str, val: Option<&Value>) -> (Option<String>, 
         }
     }
 
-    // Оставшиеся короткие скалярные поля → компактный заголовок.
+    // The remaining short scalar fields → a compact header.
     let mut pairs: Vec<(String, String)> = Vec::new();
     for (k, v) in map.iter() {
         if consumed.as_deref() == Some(k.as_str()) {
@@ -135,7 +135,7 @@ fn present_args(name: &str, raw: &str, val: Option<&Value>) -> (Option<String>, 
     (header_from_pairs(&pairs), blocks)
 }
 
-/// Блоки результата.
+/// Result blocks.
 fn present_result(name: &str, args: Option<&Value>, result: &str) -> Vec<ToolBlock> {
     if result.trim().is_empty() {
         return Vec::new();
@@ -145,9 +145,17 @@ fn present_result(name: &str, args: Option<&Value>, result: &str) -> Vec<ToolBlo
             Some(c) => vec![ToolBlock::Console(c)],
             None => vec![ToolBlock::Plain(result.to_string())],
         },
-        // Результат `fs_read` — содержимое файла: подсвечиваем по расширению пути
-        // (кроме сообщений об ошибке).
-        "fs_read" if !result.starts_with("Не удалось") => {
+        // The `fs_read` result is a file's content: highlight it by the path's extension
+        // (except for error messages). The tool's output is localized per profile
+        // (axis A, `tool.fs_read.result.read_failed`), so recognizing a failure by a
+        // hardcoded Russian prefix broke for non-Russian profiles (a real
+        // pre-existing bug) — `fs_read_failure_prefixes` checks it across every
+        // known built-in/external locale, mirroring `exit_labels()` (below).
+        "fs_read"
+            if !fs_read_failure_prefixes()
+                .iter()
+                .any(|p| result.starts_with(p)) =>
+        {
             let lang = ext_lang(args.and_then(|v| v.get("path")));
             vec![ToolBlock::Code {
                 lang,
@@ -159,10 +167,10 @@ fn present_result(name: &str, args: Option<&Value>, result: &str) -> Vec<ToolBlo
     }
 }
 
-/// Метка кода возврата (`python.console.exit`) во всех известных локалях (вшитые +
-/// внешние). Формат вывода `python::format_output_parts` локализован (ось A), поэтому
-/// парсер распознаёт метку на любом языке профиля, включая добавленные внешне. Метки
-/// `stdout:`/`stderr:` универсальны (не переводятся).
+/// The exit-code label (`python.console.exit`) across all known locales (built-in +
+/// external). The output format of `python::format_output_parts` is localized (axis A), so
+/// the parser recognizes the label in any profile language, including externally added ones. The
+/// `stdout:`/`stderr:` labels are universal (not translated).
 fn exit_labels() -> Vec<&'static str> {
     crate::shared::i18n::Lang::all()
         .iter()
@@ -170,9 +178,27 @@ fn exit_labels() -> Vec<&'static str> {
         .collect()
 }
 
-/// Разбирает вывод `python_exec` (см. `python::format_output_parts`) в секции stdout/
-/// stderr/код возврата. `None` — если текст не похож на этот формат (сообщения об
-/// ошибке запуска, «(пустой вывод, успех)») → показываем его плоским текстом.
+/// The fixed prefix of `fs_read`'s localized failure message
+/// (`tool.fs_read.result.read_failed`, e.g. "Could not read {path}: {err}") across all
+/// known locales (built-in + external) — up to the first `{path}` placeholder. The
+/// tool's result is localized per profile (axis A), so recognizing a failure by a single
+/// hardcoded (Russian) prefix broke for non-Russian profiles; this mirrors
+/// `exit_labels()` above.
+fn fs_read_failure_prefixes() -> Vec<&'static str> {
+    crate::shared::i18n::Lang::all()
+        .iter()
+        .filter_map(|&l| {
+            crate::shared::i18n::locale(l)
+                .t("tool.fs_read.result.read_failed")
+                .split('{')
+                .next()
+        })
+        .collect()
+}
+
+/// Parses `python_exec`'s output (see `python::format_output_parts`) into stdout/
+/// stderr/exit-code sections. `None` — if the text doesn't look like this format (launch
+/// error messages, "(empty output, success)") → show it as flat text.
 fn parse_console(result: &str) -> Option<Console> {
     #[derive(PartialEq)]
     enum Sec {
@@ -197,7 +223,7 @@ fn parse_console(result: &str) -> Option<Console> {
             match sec {
                 Sec::Stdout => out.push(line),
                 Sec::Stderr => err.push(line),
-                // Строка вне известной секции → это не наш формат.
+                // A line outside a known section → this isn't our format.
                 Sec::None => return None,
             }
         }
@@ -205,13 +231,13 @@ fn parse_console(result: &str) -> Option<Console> {
     if out.is_empty() && err.is_empty() && c.exit.is_none() {
         return None;
     }
-    // Секции склеены через join("\n\n") — снимаем хвостовые пустые строки-разделители.
+    // Sections are joined via join("\n\n") — strip the trailing empty separator lines.
     c.stdout = join_trim(&out);
     c.stderr = join_trim(&err);
     Some(c)
 }
 
-/// Склеивает строки секции, отбрасывая хвостовые пустые (разделитель `\n\n`).
+/// Joins a section's lines, dropping trailing empty ones (the `\n\n` separator).
 fn join_trim(lines: &[&str]) -> String {
     let mut v = lines.to_vec();
     while v.last().is_some_and(|l| l.trim().is_empty()) {
@@ -220,8 +246,8 @@ fn join_trim(lines: &[&str]) -> String {
     v.join("\n")
 }
 
-/// Компактный заголовок из коротких пар: 0 — нет; 1 — только значение (путь/запрос/
-/// id — самодостаточны); ≥2 — `k=v, …` (иначе значения неоднозначны).
+/// A compact header from short pairs: 0 — none; 1 — just the value (a path/query/
+/// id is self-sufficient); ≥2 — `k=v, …` (otherwise the values would be ambiguous).
 fn header_from_pairs(pairs: &[(String, String)]) -> Option<String> {
     match pairs.len() {
         0 => None,
@@ -236,7 +262,7 @@ fn header_from_pairs(pairs: &[(String, String)]) -> Option<String> {
     }
 }
 
-/// Скалярное значение JSON в строку (объекты/массивы/null → `None`).
+/// A scalar JSON value as a string (objects/arrays/null → `None`).
 fn scalar_str(v: &Value) -> Option<String> {
     match v {
         Value::String(s) => Some(s.clone()),
@@ -246,12 +272,12 @@ fn scalar_str(v: &Value) -> Option<String> {
     }
 }
 
-/// «Крупная» ли строка (многострочная или длиннее порога).
+/// Whether the string is "large" (multiline or longer than the threshold).
 fn is_big(s: &str) -> bool {
     s.contains('\n') || s.chars().count() > BIG_ARG_CHARS
 }
 
-/// Расширение файла из JSON-значения `path` (нижним регистром; `""` — если нет).
+/// A file's extension from the JSON value `path` (lowercased; `""` if absent).
 fn ext_lang(path: Option<&Value>) -> String {
     path.and_then(Value::as_str)
         .and_then(|p| p.rsplit_once('.'))
@@ -259,7 +285,7 @@ fn ext_lang(path: Option<&Value>) -> String {
         .unwrap_or_default()
 }
 
-/// Однострочит и усекает суффикс заголовка до [`HEADER_MAX_CHARS`] символов.
+/// Flattens to one line and truncates the header suffix to [`HEADER_MAX_CHARS`] characters.
 fn truncate_header(s: &str) -> String {
     let flat: String = s.split_whitespace().collect::<Vec<_>>().join(" ");
     if flat.chars().count() <= HEADER_MAX_CHARS {
@@ -281,7 +307,10 @@ mod tests {
             r#"{"code":"print(1)\nx = 2"}"#,
             "stdout:\nhello\nworld",
         );
-        assert_eq!(p.header_suffix, None, "код уходит в блок, заголовок пуст");
+        assert_eq!(
+            p.header_suffix, None,
+            "the code goes into a block, the header is empty"
+        );
         assert_eq!(
             p.args,
             vec![ToolBlock::Code {
@@ -301,7 +330,7 @@ mod tests {
 
     #[test]
     fn python_console_parses_all_sections() {
-        // Формат `python::format_output`: секции через "\n\n".
+        // The `python::format_output` format: sections separated by "\n\n".
         let out = "stdout:\nok line\n\nstderr:\nTraceback\n\nкод возврата: 1";
         let c = parse_console(out).unwrap();
         assert_eq!(c.stdout, "ok line");
@@ -311,7 +340,7 @@ mod tests {
 
     #[test]
     fn python_non_console_result_is_plain() {
-        // «(пустой вывод, успех)» и сообщения об ошибке — не наш формат → Plain.
+        // "(empty output, success)" and error messages aren't our format → Plain.
         let p = present("python_exec", r#"{"code":"pass"}"#, "(пустой вывод, успех)");
         assert_eq!(
             p.result,
@@ -322,8 +351,8 @@ mod tests {
 
     #[test]
     fn python_console_parses_localized_exit_label() {
-        // Формат вывода локализован (ось A) — parse_console распознаёт метку кода
-        // возврата на любом языке (здесь en «exit code:»).
+        // The output format is localized (axis A) — parse_console recognizes the exit-code
+        // label in any language (here en "exit code:").
         let en = crate::shared::i18n::locale(crate::shared::i18n::Lang::En);
         let out = format!("stdout:\nok\n\n{} 1", en.t("python.console.exit"));
         let c = parse_console(&out).unwrap();
@@ -333,7 +362,7 @@ mod tests {
 
     #[test]
     fn python_console_preserves_blank_lines_inside_stdout() {
-        // Пустые строки ВНУТРИ stdout не должны обрывать секцию (парсер по меткам).
+        // Blank lines INSIDE stdout must not end the section (the parser goes by labels).
         let out = "stdout:\na\n\nb\n\nстрока";
         let c = parse_console(out).unwrap();
         assert_eq!(c.stdout, "a\n\nb\n\nстрока");
@@ -387,11 +416,24 @@ mod tests {
     }
 
     #[test]
+    fn fs_read_error_stays_plain_for_localized_prefix() {
+        // The tool's output is localized per profile (axis A) — the failure prefix
+        // must be recognized in any language, not just ru (here en).
+        let en = crate::shared::i18n::locale(crate::shared::i18n::Lang::En);
+        let msg = en.tf(
+            "tool.fs_read.result.read_failed",
+            &[("path", "a.py"), ("err", "not found")],
+        );
+        let p = present("fs_read", r#"{"path":"a.py"}"#, &msg);
+        assert!(matches!(p.result.as_slice(), [ToolBlock::Plain(_)]));
+    }
+
+    #[test]
     fn single_scalar_arg_becomes_header_value() {
         let p = present("web_search", r#"{"query":"погода в Москве"}"#, "результаты");
         assert_eq!(p.header_suffix.as_deref(), Some("погода в Москве"));
         assert!(p.args.is_empty());
-        // web_search — «проза» → markdown-результат.
+        // web_search is "prose" → a markdown result.
         assert_eq!(p.result, vec![ToolBlock::Markdown("результаты".into())]);
     }
 
@@ -402,7 +444,7 @@ mod tests {
             r#"{"from_id":"a","to_id":"b","relation":"supports"}"#,
             "Связь создана",
         );
-        // serde_json::Map (BTreeMap) → ключи отсортированы.
+        // serde_json::Map (BTreeMap) → keys are sorted.
         assert_eq!(
             p.header_suffix.as_deref(),
             Some("from_id=a, relation=supports, to_id=b")
@@ -412,10 +454,10 @@ mod tests {
 
     #[test]
     fn big_text_field_goes_to_block_short_fields_to_header() {
-        let long = "слово ".repeat(40); // >100 символов
+        let long = "слово ".repeat(40); // >100 characters
         let args = serde_json::json!({"content": long, "tags": "заметки"}).to_string();
         let p = present("note_save", &args, "Заметка сохранена");
-        // Крупное `content` уехало в блок; одиночное оставшееся поле — значением.
+        // The large `content` went into a block; the single remaining field — as a value.
         assert_eq!(p.header_suffix.as_deref(), Some("заметки"));
         assert_eq!(p.args, vec![ToolBlock::Plain(long.clone())]);
     }
@@ -438,7 +480,7 @@ mod tests {
 
     #[test]
     fn long_header_value_is_truncated() {
-        // Невалидный JSON → сырой аргумент inline; длинный усекается «…».
+        // Invalid JSON → the raw argument inline; a long one is truncated with "…".
         let raw = "a".repeat(HEADER_MAX_CHARS + 50);
         let p = present("whatever", &raw, "");
         let h = p.header_suffix.unwrap();
@@ -448,7 +490,7 @@ mod tests {
 
     #[test]
     fn long_single_line_arg_becomes_block_not_truncated() {
-        // Длинное однострочное текстовое поле уходит блоком целиком (не усекается).
+        // A long single-line text field goes into a block in full (not truncated).
         let long = "a".repeat(HEADER_MAX_CHARS + 50);
         let args = serde_json::json!({ "content": long }).to_string();
         let p = present("note_save", &args, "ок");

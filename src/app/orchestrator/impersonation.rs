@@ -1,6 +1,6 @@
-//! Имперсонация (`Ctrl+U`, spec §11.8): модель пишет следующее сообщение «за
-//! пользователя». Системное сообщение заменяется на имперсонационное, роли
-//! user/assistant в истории меняются местами. Фоновая задача стримит реплику.
+//! Impersonation (`Ctrl+U`, spec §11.8): the model writes the next message "on behalf
+//! of the user". The system message is replaced with the impersonation one, the
+//! user/assistant roles in history are swapped. A background task streams the reply.
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -19,19 +19,19 @@ use crate::shared::api::{ApiMessage, ChatChunk, ChatRequest, EngineBackend, Fini
 
 use super::Orchestrator;
 
-/// Лимит времени на одну имперсонацию (страховка от зависшей задачи). Щедрый:
-/// на медленном локальном `llama-server` одна только обработка промпта может занять
-/// ~минуту, плюс генерация на CPU идёт ~5 ток/с — при 120с реплику резало на полуслове
-/// (см. лог `srv stop: cancel task` ровно на 120с). По таймауту накопленный текст
-/// **не теряется** (отдаётся в поле как при достижении лимита) — см. `spawn_impersonation`.
+/// The time limit for one impersonation (a safety net against a stuck task). Generous:
+/// on a slow local `llama-server`, prompt processing alone can take ~a minute, plus
+/// generation on the CPU runs at ~5 tok/s — at 120s the reply would get cut off mid-word
+/// (see the log `srv stop: cancel task` at exactly 120s). On a timeout, the accumulated text
+/// **isn't lost** (handed to the field as if the limit were reached) — see `spawn_impersonation`.
 const IMPERSONATION_TIMEOUT: Duration = Duration::from_secs(600);
 
 impl Orchestrator {
-    /// Пишет сообщение от лица пользователя (имперсонация, `Ctrl+U`, spec §11.8):
-    /// системное сообщение ассистента заменяется на имперсонационное из профиля, а
-    /// роли user/assistant в истории меняются местами — модель продолжает диалог
-    /// «за пользователя». Текст стримится в предпросмотр поля ввода. Игнорируется
-    /// во время генерации/другой имперсонации.
+    /// Writes a message on behalf of the user (impersonation, `Ctrl+U`, spec §11.8):
+    /// the assistant's system message is replaced with the profile's impersonation one, and
+    /// the user/assistant roles in history are swapped — the model continues the
+    /// conversation "on behalf of the user". The text streams into the input-box preview. Ignored
+    /// during generation/another impersonation.
     pub(super) fn handle_impersonate(&mut self, seed: String) {
         if !self.gen_state.is_idle() || self.imp_gen.is_some() {
             return;
@@ -44,7 +44,7 @@ impl Orchestrator {
         };
         let backend = match self
             .engines
-            .impersonation_backend_if_ready(self.config.impersonation_engine.mode)
+            .impersonation_backend_if_ready(self.config.impersonation_engine.mode, self.ui_locale())
         {
             Ok(backend) => backend,
             Err(msg) => {
@@ -61,9 +61,9 @@ impl Orchestrator {
             .map(|p| p.impersonation_system_message.trim().to_string())
             .filter(|s| !s.is_empty())
             .unwrap_or_else(|| loc.t("prompt.impersonation.default").to_string());
-        // Модель собеседника подмешивается в промпт имперсонации (агент пишет ЗА
-        // человека) — но только если профиль включил модель себя (тот же opt-in-гейт,
-        // что у пассивной инъекции в обычный ход).
+        // The interlocutor model is mixed into the impersonation prompt (the agent writes ON BEHALF
+        // OF the human) — but only if the profile enabled the self-model (the same opt-in gate
+        // as passive injection into a regular turn).
         let user_hint = profile
             .filter(|p| {
                 p.enabled_tools
@@ -82,7 +82,7 @@ impl Orchestrator {
                     &self.config.self_model,
                 )
                 .prompt_cap;
-                m.user_model.render_for_impersonation(cap)
+                m.user_model.render_for_impersonation(cap, loc)
             });
         let request = build_impersonation_request(
             chat,
@@ -111,15 +111,15 @@ impl Orchestrator {
         );
     }
 
-    /// Отменяет текущую имперсонацию (`Esc` в предпросмотре). Завершение придёт
-    /// через `imp_done` и эмитит `ImpersonationFinished{Cancelled}`.
+    /// Cancels the current impersonation (`Esc` in the preview). Completion arrives
+    /// through `imp_done` and emits `ImpersonationFinished{Cancelled}`.
     pub(super) fn handle_cancel_impersonation(&mut self) {
         if let Some(token) = &self.imp_cancel {
             token.cancel();
         }
     }
 
-    /// Завершение фоновой задачи имперсонации: чистит состояние и эмитит финал.
+    /// Completion of the background impersonation task: clears the state and emits the final result.
     pub(super) fn handle_imp_done(&mut self, id: Uuid, reason: FinishReason) {
         if self.imp_gen != Some(id) {
             return;
@@ -133,10 +133,10 @@ impl Orchestrator {
     }
 }
 
-/// Строит запрос имперсонации (spec §11.8): системное сообщение — имперсонационное
-/// (персона пользователя), роли user/assistant в истории меняются местами (модель
-/// продолжает диалог «за пользователя»). Инструментов нет. Если `seed` не пуст,
-/// модель просят продолжить уже начатый текст.
+/// Builds the impersonation request (spec §11.8): the system message is the
+/// impersonation one (the user's persona), the user/assistant roles in history are swapped (the
+/// model continues the conversation "on behalf of the user"). No tools. If `seed` isn't empty,
+/// the model is asked to continue text that's already started.
 pub(super) fn build_impersonation_request(
     chat: &Chat,
     mut system: String,
@@ -145,18 +145,18 @@ pub(super) fn build_impersonation_request(
     user_hint: Option<&str>,
     loc: &crate::shared::i18n::Locale,
 ) -> ChatRequest {
-    // Имперсонация пишет реплику в поле ввода и **отбрасывает** «мысли» (Thoughts
-    // в `spawn_impersonation` игнорируются), поэтому reasoning ей не нужен. Ключевое
-    // — `reasoning_budget=0`: для моделей со «вшитым» в шаблон thinking (Gemma
-    // `peg-gemma4`, Qwen) только он реально гасит «мысли» (+ `enable_thinking=false`
-    // в `wire.rs`); поля `thinking`/`reasoning_effort` сервер для них игнорирует.
-    // Без этого модель тратила весь бюджет токенов на reasoning_content, а ответный
-    // `content` приходил пустым — предпросмотр оставался пустым (тот же класс бага,
-    // что у авто-названия чата, см. `title.rs`).
+    // Impersonation writes the reply into the input box and **discards** "thoughts" (Thoughts
+    // are ignored in `spawn_impersonation`), so it doesn't need reasoning. What actually
+    // matters — `reasoning_budget=0`: for models with thinking "baked into" the template (Gemma
+    // `peg-gemma4`, Qwen) only this field actually suppresses "thoughts" (+ `enable_thinking=false`
+    // in `wire.rs`); the server ignores the `thinking`/`reasoning_effort` fields for them.
+    // Without this the model would spend its whole token budget on reasoning_content, and the reply's
+    // `content` would come back empty — the preview stayed empty (the same bug class
+    // as auto-title, see `title.rs`).
     sampling.thinking = Some(false);
     sampling.reasoning_effort = Some(ReasoningEffort::None);
     sampling.reasoning_budget = Some(0);
-    // Подсказка о собеседнике (модель того, за кого пишем) — перед seed-продолжением.
+    // A hint about the interlocutor (a model of who we're writing on behalf of) — before the seed continuation.
     if let Some(hint) = user_hint.map(str::trim).filter(|s| !s.is_empty()) {
         system.push_str("\n\n");
         system.push_str(hint);
@@ -175,8 +175,8 @@ pub(super) fn build_impersonation_request(
     }
 }
 
-/// Меняет роль сообщения местами для имперсонации (user↔assistant). System/Tool и
-/// пустые сообщения отбрасываются (в режиме имперсонации инструментов нет).
+/// Swaps a message's role for impersonation (user↔assistant). System/Tool and
+/// empty messages are dropped (there are no tools in impersonation mode).
 pub(super) fn swap_role_message(message: &Message) -> Option<ApiMessage> {
     if message.text.trim().is_empty() {
         return None;
@@ -188,9 +188,9 @@ pub(super) fn swap_role_message(message: &Message) -> Option<ApiMessage> {
     }
 }
 
-/// Запускает фоновую задачу имперсонации: стримит текст реплики в предпросмотр
-/// (`ImpersonationChunk`), по завершении/таймауту/отмене шлёт `(id, reason)` в
-/// `done_tx`. «Мысли» и tool-вызовы игнорируются (в поле ввода идёт только текст).
+/// Starts the background impersonation task: streams the reply text into the preview
+/// (`ImpersonationChunk`), and on completion/timeout/cancellation sends `(id, reason)` into
+/// `done_tx`. "Thoughts" and tool calls are ignored (only text goes into the input box).
 fn spawn_impersonation(
     backend: Arc<dyn EngineBackend>,
     request: ChatRequest,
@@ -224,14 +224,14 @@ fn spawn_impersonation(
             }
             Ok::<FinishReason, anyhow::Error>(reason)
         };
-        // Различаем отмену пользователем и таймаут: при отмене (`Esc`) поток внутри
-        // `run` ловит `cancel.cancelled()` и сам отдаёт `Finished(Cancelled)` — она
-        // приходит сюда как `Ok(Ok(Cancelled))` и приводит к отбрасыванию текста
-        // (пользователь передумал). Таймаут — это `Err(_)`: серверную задачу мы
-        // прерываем (`cancel.cancel()`), но накопленный текст **сохраняем**, отдавая
-        // его как `Length` (модель писала валидную реплику, просто медленно). Прежний
-        // безусловный `if cancel.is_cancelled() { Cancelled }` оба случая сводил к
-        // отбрасыванию — из-за этого реплика, обрезанная таймаутом, исчезала.
+        // Distinguish a user cancellation from a timeout: on cancellation (`Esc`) the stream inside
+        // `run` catches `cancel.cancelled()` and itself returns `Finished(Cancelled)` — it
+        // arrives here as `Ok(Ok(Cancelled))` and leads to discarding the text
+        // (the user changed their mind). A timeout is `Err(_)`: we abort the server task
+        // (`cancel.cancel()`), but **keep** the accumulated text, returning it as
+        // `Length` (the model was writing a valid reply, just slowly). The old
+        // unconditional `if cancel.is_cancelled() { Cancelled }` collapsed both cases into
+        // discarding — which is why a timeout-truncated reply used to disappear.
         let reason = match tokio::time::timeout(IMPERSONATION_TIMEOUT, run).await {
             Ok(Ok(r)) => r,
             Ok(Err(err)) => {

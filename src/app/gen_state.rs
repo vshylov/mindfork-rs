@@ -1,32 +1,33 @@
-//! Автомат жизненного цикла генерации ответа ассистента (`Idle/Generating/
-//! Cancelling`) — выделен из оркестратора. Чистый тип без I/O: переходы валидны
-//! по построению, side-effect'ы (spawn задачи, отмена токена, рассылка событий,
-//! запись в `Chat`) остаются у оркестратора — единственного владельца состояния
-//! (spec §4.4, §4.4.2). Это держит автомат юнит-тестируемым без tokio-рантайма.
+//! Assistant-reply generation lifecycle state machine (`Idle/Generating/
+//! Cancelling`) — split out of the orchestrator. A pure type with no I/O: transitions
+//! are valid by construction, side effects (spawning tasks, cancelling the token,
+//! dispatching events, writing to `Chat`) stay with the orchestrator — the sole
+//! owner of the state (spec §4.4, §4.4.2). This keeps the state machine unit-testable
+//! without a tokio runtime.
 //!
-//! Имперсонация и RAG-индексация — отдельные конкурентные подсостояния
-//! оркестратора (`imp_gen`, `rag_cancel`), они **сознательно** не входят в этот
-//! автомат: он описывает только жизненный цикл ответа ассистента на активный чат.
+//! Impersonation and RAG indexing are separate concurrent sub-states of the
+//! orchestrator (`imp_gen`, `rag_cancel`); they **deliberately** aren't part of this
+//! state machine — it only describes the assistant reply lifecycle for the active chat.
 
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
-/// Состояние генерации (автомат на активный чат). Данные носят сами варианты:
-/// `id` генерации (для отбрасывания устаревших стрим-событий, spec §4.4) и токен
-/// отмены HTTP-стрима.
+/// Generation state (a state machine for the active chat). The variants themselves
+/// carry the data: the generation `id` (for dropping stale stream events, spec §4.4)
+/// and the HTTP-stream cancellation token.
 pub enum GenState {
-    /// Генерация не идёт; принимаются `SendMessage`/`RegenerateLast`/`Impersonate`.
+    /// No generation running; `SendMessage`/`RegenerateLast`/`Impersonate` are accepted.
     Idle,
-    /// Идёт генерация с данным `id`; `cancel` прерывает HTTP-стрим.
+    /// Generation with this `id` is running; `cancel` interrupts the HTTP stream.
     Generating { id: Uuid, cancel: CancellationToken },
-    /// Отмена запрошена, но задача ещё «доезжает»; частичный ответ сохранится по
-    /// приходу `GenResult` с тем же `id`.
+    /// Cancellation was requested, but the task is still "landing"; a partial reply
+    /// will be saved once `GenResult` arrives with the same `id`.
     Cancelling { id: Uuid },
 }
 
 impl GenState {
-    /// `id` текущей генерации (для гейта «применять только результат своего
-    /// запроса»). `None` в `Idle`.
+    /// The `id` of the current generation (for the "apply only the result of your own
+    /// request" gate). `None` in `Idle`.
     pub fn current_id(&self) -> Option<Uuid> {
         match self {
             GenState::Idle => None,
@@ -34,13 +35,14 @@ impl GenState {
         }
     }
 
-    /// `true`, если генерация не идёт (гейт отправки/перегенерации/имперсонации).
+    /// `true` if no generation is running (the send/regenerate/impersonate gate).
     pub fn is_idle(&self) -> bool {
         matches!(self, GenState::Idle)
     }
 
-    /// `Idle → Generating`. Возвращает `false` (без перехода), если автомат уже
-    /// занят — защита от параллельного запуска. Вызывается после гейта `is_idle`.
+    /// `Idle → Generating`. Returns `false` (no transition) if the state machine is
+    /// already busy — protection against a parallel start. Called after the `is_idle`
+    /// gate.
     pub fn begin(&mut self, id: Uuid, cancel: CancellationToken) -> bool {
         if !self.is_idle() {
             return false;
@@ -49,9 +51,9 @@ impl GenState {
         true
     }
 
-    /// `Generating → Cancelling`. Возвращает токен отмены (его дёргает
-    /// оркестратор — отмена это side-effect). `None`, если генерация не идёт или
-    /// отмена уже запрошена (повторный `Cancel` — no-op).
+    /// `Generating → Cancelling`. Returns the cancellation token (the orchestrator
+    /// actually triggers it — cancellation is a side effect). `None` if no generation
+    /// is running or cancellation was already requested (a repeat `Cancel` — a no-op).
     pub fn request_cancel(&mut self) -> Option<CancellationToken> {
         if let GenState::Generating { id, cancel } = self {
             let id = *id;
@@ -63,8 +65,8 @@ impl GenState {
         }
     }
 
-    /// Токен отмены текущей генерации, не меняя состояния (для `Quit` — глушим
-    /// стрим на выходе, переход в `Cancelling` не нужен).
+    /// The cancellation token of the current generation, without changing state (for
+    /// `Quit` — mute the stream on exit, no need to transition into `Cancelling`).
     pub fn active_cancel(&self) -> Option<&CancellationToken> {
         match self {
             GenState::Generating { cancel, .. } => Some(cancel),
@@ -72,9 +74,9 @@ impl GenState {
         }
     }
 
-    /// `Generating|Cancelling → Idle`, только если `id` совпал с текущей генерацией
-    /// (анти-устаревание: хвост старого стрима после `Stop → Send` не сбросит
-    /// новое состояние). Возвращает `true`, если переход случился.
+    /// `Generating|Cancelling → Idle`, only if `id` matches the current generation
+    /// (anti-staleness: the tail of an old stream after `Stop → Send` won't reset the
+    /// new state). Returns `true` if the transition happened.
     pub fn finish(&mut self, id: Uuid) -> bool {
         if self.current_id() == Some(id) {
             *self = GenState::Idle;
@@ -97,7 +99,7 @@ mod tests {
         assert_eq!(s.current_id(), Some(id));
         assert!(!s.is_idle());
 
-        // Повторный begin не перетирает идущую генерацию.
+        // A repeat begin doesn't overwrite the running generation.
         let other = Uuid::new_v4();
         assert!(!s.begin(other, CancellationToken::new()));
         assert_eq!(s.current_id(), Some(id));
@@ -106,23 +108,25 @@ mod tests {
     #[test]
     fn request_cancel_transitions_and_returns_token() {
         let mut s = GenState::Idle;
-        // В Idle отменять нечего.
+        // Nothing to cancel in Idle.
         assert!(s.request_cancel().is_none());
 
         let id = Uuid::new_v4();
         let token = CancellationToken::new();
         s.begin(id, token.clone());
 
-        let returned = s.request_cancel().expect("токен отмены из Generating");
+        let returned = s
+            .request_cancel()
+            .expect("a cancellation token from Generating");
         returned.cancel();
         assert!(
             token.is_cancelled(),
-            "вернулся именно живой токен генерации"
+            "the returned token is exactly the live generation token"
         );
         assert!(matches!(s, GenState::Cancelling { .. }));
         assert_eq!(s.current_id(), Some(id));
 
-        // Повторная отмена из Cancelling — no-op.
+        // A repeat cancel from Cancelling — a no-op.
         assert!(s.request_cancel().is_none());
     }
 
@@ -132,11 +136,11 @@ mod tests {
         let id = Uuid::new_v4();
         s.begin(id, CancellationToken::new());
 
-        // Устаревший id не сбрасывает состояние.
+        // A stale id doesn't reset the state.
         assert!(!s.finish(Uuid::new_v4()));
         assert!(!s.is_idle());
 
-        // Свой id завершает генерацию.
+        // Its own id finishes the generation.
         assert!(s.finish(id));
         assert!(s.is_idle());
     }
@@ -147,7 +151,7 @@ mod tests {
         let id = Uuid::new_v4();
         s.begin(id, CancellationToken::new());
         s.request_cancel();
-        // Частичный результат отменённой генерации всё равно завершает автомат.
+        // A partial result of a cancelled generation still finishes the state machine.
         assert!(s.finish(id));
         assert!(s.is_idle());
     }
@@ -166,7 +170,7 @@ mod tests {
         s.request_cancel();
         assert!(
             s.active_cancel().is_none(),
-            "в Cancelling токен не отдаётся"
+            "no token is returned in Cancelling"
         );
     }
 }

@@ -1,123 +1,140 @@
-# ADR 0003 — Собственный markdown-рендерер (таблицы + LaTeX + тема)
+# ADR 0003 — Own markdown renderer (tables + LaTeX + theming)
 
-**Статус:** принято (2026-06-16). Уточняет [ADR 0001](0001-ui-crates-ratatui-030.md)
-в части markdown-рендера.
-**Контекст:** `tui-markdown` 0.3.7 (выбран в ADR 0001) на практике оказался узким:
+**Status:** accepted (2026-06-16). Refines [ADR 0001](0001-ui-crates-ratatui-030.md)
+regarding markdown rendering.
+**Context:** `tui-markdown` 0.3.7 (chosen in ADR 0001) turned out to be narrow
+in practice:
 
-1. **Таблицы не поддерживаются вовсе** — парсер не включает `ENABLE_TABLES`, а
-   обработчики `Tag::Table*` пишут `warn!("not yet supported")`. GFM-таблицы
-   падали в ленту сырым текстом (`| … |`, `:---`).
-2. **LaTeX `$…$` не распознавался** (нет `ENABLE_MATH`), а наша
-   unicode-аппроксимация применялась **глобально** ко всему тексту: разделители
-   `$ $` не снимались (уродливые «$→$»), плюс ложные срабатывания в прозе/коде
-   (`x^2`, `a_b`).
-3. **Тема игнорировалась** — `tui-markdown` рендерит захардкоженным
-   `DefaultStyleSheet` (cyan-заголовки и т.п.), наша `Palette` (dark/light/auto)
-   на ленту не влияла.
+1. **Tables are not supported at all** — the parser doesn't enable
+   `ENABLE_TABLES`, and the `Tag::Table*` handlers write
+   `warn!("not yet supported")`. GFM tables fell into the feed as raw text
+   (`| … |`, `:---`).
+2. **LaTeX `$…$` was not recognized** (no `ENABLE_MATH`), and our unicode
+   approximation was applied **globally** to all text: the `$ $` delimiters
+   weren't stripped (ugly "$→$"), plus false positives in prose/code (`x^2`,
+   `a_b`).
+3. **Theme was ignored** — `tui-markdown` renders with a hardcoded
+   `DefaultStyleSheet` (cyan headings, etc.), our `Palette` (dark/light/auto)
+   had no effect on the feed.
 
-Готовой замены под `ratatui-core 0.1` (ratatui 0.30) с таблицами нет
-(`ratatui-markdown` лочит 0.29 — см. ADR 0001).
+There is no ready-made replacement under `ratatui-core 0.1` (ratatui 0.30)
+with tables and math (`ratatui-markdown` locks 0.29 — see ADR 0001).
 
-## Решение
+## Decision
 
-Рендерить markdown **собственным «писателем» (`Writer`) поверх
-`pulldown-cmark` 0.13** (он уже был в дереве транзитивно). `shared/markdown.rs`:
+Render markdown with our own "writer" (`Writer`) on top of `pulldown-cmark`
+0.13 (it was already in the tree transitively). `shared/markdown.rs`:
 `render(input, width, palette) -> Text<'static>`.
 
-- **Парсер**: `ENABLE_STRIKETHROUGH | TASKLISTS | MATH | TABLES`. Walker по
-  событиям (порт ядра `tui-markdown` + наши расширения): абзацы, заголовки,
-  списки, цитаты, код, правила, ссылки, выделение.
-- **Тема**: цвета (заголовки/ссылки/маркеры списков) берутся из `Palette`;
-  модификаторы (bold/italic/reversed/dim) тема-независимы. Подсветка блоков кода —
-  через `syntect` + `ansi-to-tui`, причём syntect-тема **строится из `Palette`**
-  (см. «Следствия»), а не берётся захардкоженной.
-- **LaTeX — delimiter-scoped** (как в .NET `LaTeXConverter`): `normalize_delimiters`
-  приводит `\(…\)`→`$…$`, `\[…\]`→`$$…$$` (пропуская код-спаны/блоки), парсер
-  отдаёт `InlineMath`/`DisplayMath`, и только их содержимое проходит
-  `latex_to_unicode`: `\frac`→`a/b`, `\sqrt{x}`→`√(x)`, `\pmod{n}`→`(mod n)`,
-  текстовые/шрифтовые обёртки и акценты (`\text`/`\mathrm`/`\vec`/`\hat`/…) → их
-  содержимое, операторные имена-функции (`\log`/`\sin`/`\lim`/`\max`/…) → словом,
-  размерные модификаторы скобок (`\left`/`\right`/`\big…`) снимаются, верхние/
-  нижние индексы, расширенная таблица символов. Разделители снимает парсер;
-  «голые» команды вне `$…$` не трогаются.
-- **Таблицы** — нативно: ячейки накапливаются между `Table*`-событиями, ширины
-  колонок подбираются «водоналивом» под `width` (баланс вместить×читаемость),
-  содержимое переносится по словам (`shared/wrap`), при нехватке места —
-  горизонтальный клип с «…». Таблица гарантированно ≤ ширины панели → повторный
-  перенос в `message_feed` безопасен.
+- **Parser**: `ENABLE_STRIKETHROUGH | TASKLISTS | MATH | TABLES`. Walker over
+  events (a port of `tui-markdown`'s core + our extensions): paragraphs,
+  headings, lists, quotes, code, rules, links, emphasis.
+- **Theme**: colors (headings/links/list markers) are taken from `Palette`;
+  modifiers (bold/italic/reversed/dim) are theme-independent. Code-block
+  highlighting — via `syntect` + `ansi-to-tui`, with the syntect theme
+  **built from `Palette`** (see "Consequences"), not hardcoded.
+- **LaTeX — delimiter-scoped** (as in the .NET `LaTeXConverter`):
+  `normalize_delimiters` converts `\(…\)`→`$…$`, `\[…\]`→`$$…$$` (skipping
+  code spans/blocks), the parser returns `InlineMath`/`DisplayMath`, and only
+  their content goes through `latex_to_unicode`: `\frac`→`a/b`, `\sqrt{x}`→
+  `√(x)`, `\pmod{n}`→`(mod n)`, text/font wrappers and accents (`\text`/
+  `\mathrm`/`\vec`/`\hat`/…) → their content, operator-name functions
+  (`\log`/`\sin`/`\lim`/`\max`/…) → as a word, sizing bracket modifiers
+  (`\left`/`\right`/`\big…`) are stripped, sub/superscripts, an extended
+  symbol table. Delimiters are stripped by the parser; "bare" commands
+  outside `$…$` are left alone.
+- **Tables** — native: cells accumulate between `Table*` events, column
+  widths are picked "water-fill" style to fit `width` (balancing fit ×
+  readability), content wraps by word (`shared/wrap`), on space shortage —
+  a horizontal clip with "…". The table is guaranteed ≤ panel width → a
+  second wrap pass in `message_feed` is safe.
 
-Зависимость `tui-markdown` удалена; добавлены прямые `pulldown-cmark`, `syntect`,
-`ansi-to-tui` (те же версии, что тянулись транзитивно).
+The `tui-markdown` dependency is removed; direct `pulldown-cmark`, `syntect`,
+`ansi-to-tui` are added (the same versions that were pulled transitively).
 
-## Следствия
+## Consequences
 
-- spec §11.4 уточняется этим ADR: рендер — свой, на `pulldown-cmark`; LaTeX
-  действует **только** внутри математических разделителей.
-- **Изменение поведения**: `\alpha`/`x^2` вне `$…$` больше не конвертируются
-  (меньше ложных срабатываний; формулы оборачивать в `$…$`/`\(…\)`).
-- **Подсветка кода — через тему (сделано).** Раньше syntect брал захардкоженную
-  `base16-ocean.dark`, не согласованную с dark/light/auto. Теперь
-  `shared/markdown.rs::build_code_theme(palette)` собирает syntect-`Theme` из
-  семантической `Palette`: scope'ы → роли (`keyword`→accent, `string`→success,
-  `constant.numeric`→warning, `entity.name.function`→user, `entity.name.type`→
-  assistant, теги→accent), текст «по умолчанию» и комментарии — абсолютным серым,
-  светлым на тёмном фоне и тёмным на светлом (новый флаг `Palette.dark`: `Auto`/
-  `Dark`→тёмный, `Light`→светлый). Именованные ANSI-цвета палитры приводятся к RGB
-  (Campbell) — пайплайн `as_24_bit_terminal_escaped(.., false)` всё равно эмитит
-  24-битный **цвет переднего плана** (фон/жирность/курсив не переносятся). Темы
-  кэшируются по палитре (`Box::leak`, число палитр конечно → `HighlightLines<'static>`).
-- Горизонтальный скролл широких таблиц (вместо клипа) — возможная доработка;
-  текущий клип достаточен.
-- **Доводка LaTeX-аппроксимации и writer'а (2026-07, сделано)** — план
+- spec §11.4 is amended by this ADR: rendering is our own, on
+  `pulldown-cmark`; LaTeX acts **only** inside math delimiters.
+- **Behavior change**: `\alpha`/`x^2` outside `$…$` are no longer converted
+  (fewer false positives; wrap formulas in `$…$`/`\(…\)`).
+- **Code highlighting — via theme (done).** Previously syntect took the
+  hardcoded `base16-ocean.dark`, not aligned with dark/light/auto. Now
+  `shared/markdown.rs::build_code_theme(palette)` builds a syntect `Theme`
+  from the semantic `Palette`: scopes → roles (`keyword`→accent,
+  `string`→success, `constant.numeric`→warning, `entity.name.function`→user,
+  `entity.name.type`→assistant, tags→accent), "default" text and comments —
+  an absolute gray, light on a dark background and dark on a light one (new
+  flag `Palette.dark`: `Auto`/`Dark`→dark, `Light`→light). Named ANSI colors
+  of the palette are converted to RGB (Campbell) — the
+  `as_24_bit_terminal_escaped(.., false)` pipeline still emits a 24-bit
+  **foreground color** (background/bold/italic are not carried over). Themes
+  are cached by palette (`Box::leak`, number of palettes finite →
+  `HighlightLines<'static>`).
+- Horizontal scrolling for wide tables (instead of clipping) — a possible
+  refinement; the current clip is sufficient.
+- **LaTeX approximation and writer refinements (2026-07, done)** — plan
   [docs/history/markdown-refinements.md](../history/markdown-refinements.md):
-  - **Окружения** `\begin{…}…\end{…}` (aligned/cases/pmatrix/…) снимаются; `\\` →
-    перенос строки (по режиму: блочная `$$…$$` — реальный, строчная `$…$` — «; »),
-    `&` (выравнивание) и служебные `\label{…}`/`\hline`/`\notag`/… удаляются. Введён
-    `MathMode { Inline, Display }` (два враппера `latex_to_unicode`/`_display`).
-  - **Смена поведения**: `\\` вне контекста теперь — разделитель строк (литеральный
-    бэкслеш — `\backslash`), а не `\` (был `a \\ b`→`a \ b`, стал `a; b`).
-  - Нераспознанная brace-команда **сохраняет скобки** (`\binom{n}{k}`/`\boxed{x}` не
-    склеиваются); пополнены таблица символов (~50), текст-обёртки, дроби
-    (`\dfrac`/`\binom`/`\sqrt[n]`), буквенные индексы (`x_i→xᵢ`), `\mathbb{R}→ℝ`
-    (BMP), фолбэк несмапленной группы `x^{q+}→x^(q+)`.
-  - **writer-дефекты**: `$$…$$` без двойного пропуска; DisplayMath в ячейке остаётся
-    в ячейке; автолинк не дублирует URL; ошибка syntect → плоская строка (не потеря);
-    `<br>`→перенос; инфо-строка языка по первому токену; `---` на всю ширину; URL
-    изображений; `~~~`-заборы и незакрытый `` ` `` в нормализации; эвристика «диапазон
-    цен `$5-$10` — не математика».
-- **Кэш рендера ленты (2026-07, сделано)** — `widgets/message_feed.rs`: `build_lines`
-  зовётся на каждый dirty-кадр (стрим/прокрутка) и заново прогонял markdown+syntect по
-  всей истории. Кэш по одному блоку на сообщение (ключ `width`/`palette`/`show_thoughts`,
-  сверка по фингерпринту полей `FeedMessage`) пересчитывает лишь изменившееся; golden-
-  эквивалентность тёплого кэша и свежего рендера покрыта тестами. Ортогонален самому
-  рендереру.
-- **Рендер Mermaid-диаграмм в ленте — реализован (2026-07-16)** после фикса
-  апстрима: `mermaid-text` 0.56.1 закрыл многобайтовость (наш баг-репорт + PR —
+  - **Environments** `\begin{…}…\end{…}` (aligned/cases/pmatrix/…) are
+    stripped; `\\` → a line break (by mode: block `$$…$$` — a real one,
+    inline `$…$` — "; "), `&` (alignment) and service commands
+    (`\label{…}`/`\hline`/`\notag`/…) are removed. Introduced
+    `MathMode { Inline, Display }` (two wrappers `latex_to_unicode`/`_display`).
+  - **Behavior change**: `\\` outside context is now a line separator
+    (literal backslash — `\backslash`), not `\` (was `a \\ b`→`a \ b`, now
+    `a; b`).
+  - An unrecognized brace command **keeps its braces** (`\binom{n}{k}`/
+    `\boxed{x}` no longer collapse together); the symbol table grew (~50),
+    plus text wrappers, fractions (`\dfrac`/`\binom`/`\sqrt[n]`), letter
+    subscripts (`x_i→xᵢ`), `\mathbb{R}→ℝ` (BMP), and a fallback for
+    unmapped groups `x^{q+}→x^(q+)`.
+  - **Writer defects**: `$$…$$` without a double blank line; DisplayMath in a
+    cell stays in the cell; autolinks don't duplicate the URL; a syntect
+    error → a plain line (not lost text); `<br>`→line break; the fence's info
+    string resolves syntax by its first token; `---` spans the full width;
+    image URLs; `~~~` fences and unclosed `` ` `` in normalization; a
+    heuristic for "a price range `$5-$10` — not math".
+- **Feed render cache (2026-07, done)** — `widgets/message_feed.rs`:
+  `build_lines` is called on every dirty frame (streaming/scrolling) and
+  re-ran markdown+syntect over the entire history each time. A per-message
+  block cache (key `width`/`palette`/`show_thoughts`, checked via a
+  fingerprint of `FeedMessage` fields) recomputes only what changed;
+  golden-equivalence of a warm cache vs. a fresh render is covered by tests.
+  Orthogonal to the renderer itself.
+- **Mermaid diagram rendering in the feed — implemented (2026-07-16)** after
+  an upstream fix: `mermaid-text` 0.56.1 closed the multibyte issue (our bug
+  report + PR —
   [issue #29](https://github.com/leboiko/markdown-reader/issues/29) /
-  [PR #30](https://github.com/leboiko/markdown-reader/pull/30); перепроверка
-  зондом — 0 паник, порча подписей ушла). Реализация по плану исследования:
-  буферизация блока в `Writer` (по образцу `TableBuilder`), whitelist
-  flowchart/sequence по `detect`, **наш** пост-чек ширины (`max_width` крейта —
-  подсказка, не бюджет), **жёсткий фолбэк на исходник** байт-в-байт (golden-тест),
-  ASCII-режим в компат-палитре, тумблер `interface.render_mermaid` (default-on —
-  фолбэк делает худший случай равным прежнему поведению). История зонда ниже.
-- **Зонд рендера Mermaid (2026-07-14) — вердикт NO-GO на 0.56.0, было отложено** —
+  [PR #30](https://github.com/leboiko/markdown-reader/pull/30); re-checked
+  with the probe — 0 panics, label corruption gone). Implementation per the
+  research plan: buffering the block in `Writer` (modeled on `TableBuilder`),
+  a flowchart/sequence whitelist via `detect`, **our own** post-check on
+  width (the crate's `max_width` is a hint, not a budget), a **hard fallback
+  to source** byte-for-byte (golden test), an ASCII mode in the compat
+  palette, the `interface.render_mermaid` toggle (default-on — the fallback
+  makes the worst case equal to prior behavior). Probe history below.
+- **Mermaid rendering probe (2026-07-14) — NO-GO verdict on 0.56.0, was
+  deferred** —
   [docs/research/mermaid-ascii-rendering.md](../research/mermaid-ascii-rendering.md).
-  Сейчас ` ```mermaid `-блок печатается исходником (syntect его не знает) — это
-  корректно, боли нет. Кандидат на рендер — `mermaid-text` 0.56.0 (MIT, pure Rust,
-  net-new всего 2 крейта; API ложится на `Writer` без натяжек, латинские
-  sequence-диаграммы рендерятся отлично). Блокер: крейт **не безопасен для
-  многобайтовых символов** — на кириллице (а) **паникует** в sequence/state-парсере
-  (байтовый слайс на не-границе символа), то есть русская диаграмма от модели уронила
-  бы приложение из UI-потока рендера; (б) **молча портит подписи** flowchart (байтовый
-  offset возвращается как char count → токенизатор перебегает: `A[Старт] -->|да|
-  B[Конец]` даёт подпись `[Конец]`, а узлы теряются). Обходного пути нет: 0 из 17
-  реальных диаграмм в `docs/architecture.md` — чисто-ASCII, так что ASCII-only гейт не
-  пропустил бы ни одной. Апстрим уведомлён (оба фикса однострочные):
+  At the time, a ` ```mermaid ` block printed as source (syntect doesn't know
+  it) — that was correct, no pain. Rendering candidate — `mermaid-text`
+  0.56.0 (MIT, pure Rust, only 2 net-new crates; the API fits `Writer`
+  without stretching, Latin sequence diagrams render great). Blocker: the
+  crate **is not multibyte-safe** — on Cyrillic it (a) **panics** in the
+  sequence/state parser (a byte slice on a non-char boundary), meaning a
+  Russian diagram from the model would crash the app from the UI render
+  thread; (b) **silently corrupts** flowchart labels (a byte offset is
+  returned as a char count → the tokenizer overruns on multibyte text: a
+  diagram such as `A[Start] -->|yes| B[End]` with Cyrillic labels yields a
+  truncated label like `[End]`, and nodes get lost). No workaround:
+  0 of 17 real diagrams in `docs/architecture.md` are pure-ASCII, so an
+  ASCII-only gate wouldn't have passed any of them. Upstream notified (both
+  fixes are one-liners):
   [leboiko/markdown-reader#29](https://github.com/leboiko/markdown-reader/issues/29).
-  План реализации провалидирован и готов (буферизация блока в `Writer` по образцу
-  `TableBuilder` → whitelist по `detect` → пост-чек ширины → **жёсткий фолбэк на
-  исходник**; клип, как у таблиц, здесь не годится — обрубленная диаграмма нечитаема,
-  в отличие от обрубленной таблицы). Вернуться после фикса апстрима.
-- Пересмотреть при появлении совместимого с ratatui 0.30 markdown-крейта с
-  таблицами и math (миграция не обязательна — наш рендерер самодостаточен).
+  The implementation plan was validated and is ready (buffer the block in
+  `Writer` modeled on `TableBuilder` → whitelist by `detect` → width
+  post-check → **hard fallback to source**; clipping, as with tables, isn't
+  suitable here — a truncated diagram is unreadable, unlike a truncated
+  table). Revisit after the upstream fix.
+- Revisit when a markdown crate compatible with ratatui 0.30, with tables and
+  math, appears (migration is not mandatory — our renderer is self-sufficient).

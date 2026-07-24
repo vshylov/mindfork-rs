@@ -1,11 +1,11 @@
-//! Тесты оркестратора — авто-название чата. Часть модуля [`super`]
-//! (фикстуры в mod.rs). См. docs/history/refactoring-god-objects.md, этап 3.
+//! Orchestrator tests — auto-titling a chat. Part of the [`super`] module
+//! (fixtures in mod.rs). See docs/history/refactoring-god-objects.md, stage 3.
 
 use super::*;
 
 #[tokio::test]
 async fn auto_rename_sets_title_from_model() {
-    // Первый запрос (отправка) → «ответ»; второй (авто-название) → заголовок.
+    // The first request (send) → a "reply"; the second (auto-title) → a title.
     let backend = Arc::new(MockBackend::sequence(vec![
         vec![
             ChatChunk::Text("ответ".into()),
@@ -25,7 +25,7 @@ async fn auto_rename_sets_title_from_model() {
         _ => unreachable!(),
     };
 
-    // Нужна хотя бы одна реплика, иначе нечего озаглавливать.
+    // Need at least one reply, otherwise there's nothing to title.
     cmd_tx
         .send(AppCommand::SendMessage("привет".into()))
         .unwrap();
@@ -43,7 +43,7 @@ async fn auto_rename_sets_title_from_model() {
     match renamed {
         AppEvent::ChatRenamed { id, title } => {
             assert_eq!(id, chat_id);
-            assert_eq!(title, "Тема разговора", "кавычки модели сняты");
+            assert_eq!(title, "Тема разговора", "the model's quotes are stripped");
         }
         _ => unreachable!(),
     }
@@ -54,17 +54,17 @@ async fn auto_rename_sets_title_from_model() {
 
 #[test]
 fn salvage_prefers_text_else_last_thought_line() {
-    // Есть основной ответ — берём его.
+    // There's a primary reply — take it.
     assert_eq!(
         salvage_title_source("Заголовок".into(), "мысли".into()),
         "Заголовок"
     );
-    // Ответ пуст — спасаем последнюю содержательную строку рассуждений.
+    // The reply is empty — salvage the last substantive line of the reasoning.
     assert_eq!(
         salvage_title_source("  ".into(), "рассуждаю\nитог: Планы\n\n".into()),
         "итог: Планы"
     );
-    // Совсем пусто — пустая строка (clean_generated_title вернёт None → ошибка).
+    // Entirely empty — an empty string (clean_generated_title returns None → an error).
     assert_eq!(salvage_title_source(String::new(), String::new()), "");
 }
 
@@ -72,22 +72,22 @@ fn salvage_prefers_text_else_last_thought_line() {
 fn auto_rename_without_messages_emits_error() {
     let (_d, mut orch, mut rx) = bare_orch_rx();
     let profile = Profile::new("P", "sys");
-    let chat = Chat::from_profile(&profile, "Новый чат"); // без сообщений
+    let chat = Chat::from_profile(&profile, "Новый чат"); // no messages
     let chat_id = chat.id;
     orch.profiles.push(profile);
     orch.chats.push(chat);
 
     orch.handle_auto_rename(chat_id);
-    // Пустой чат → ошибка в область списка чатов, фоновая задача не запускается.
+    // An empty chat → an error into the chat-list area, the background task doesn't start.
     let ev = rx.try_recv().unwrap();
     assert!(matches!(ev, AppEvent::ChatListError(_)));
 }
 
 #[test]
 fn auto_rename_when_server_not_ready_errors_into_chat_list() {
-    // Сервер ещё подключается: ошибка готовности должна идти в оверлей списка
-    // чатов (`ChatListError`), а не в ленту чата (`Error`) — иначе её скрыл бы
-    // полноэкранный оверлей списка.
+    // The server is still connecting: the readiness error must go into the chat-list
+    // overlay (`ChatListError`), not the chat feed (`Error`) — otherwise the
+    // full-screen list overlay would hide it.
     let (_d, mut orch, mut rx) = bare_orch_rx();
     orch.engines.server_status = ServerStatus::Connecting;
     let profile = Profile::new("P", "sys");
@@ -102,6 +102,6 @@ fn auto_rename_when_server_not_ready_errors_into_chat_list() {
     let ev = rx.try_recv().unwrap();
     assert!(
         matches!(ev, AppEvent::ChatListError(_)),
-        "ошибка неготовности при авто-названии должна идти в список чатов, было: {ev:?}"
+        "a not-ready error during auto-titling must go into the chat list, got: {ev:?}"
     );
 }

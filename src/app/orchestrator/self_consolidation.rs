@@ -1,13 +1,13 @@
-//! Авто-консолидация «модели себя» («сон» модели себя, этап A1): каждые N ответов
-//! ассистента в чате фоновая задача просит модель пересмотреть свою «модель себя» и
-//! **самой** её консолидировать — слить дубли наблюдений (`@self`-заметок), сжать
-//! раздутое описание (`summary`), связать противоречия. Как авто-рефлексия и
-//! авто-консолидация заметок, это **мини agentic-loop**: модель вызывает
-//! self-model/note-инструменты, петля их исполняет (пишут напрямую в `Storage`). Чат не
-//! мутируется, в UI ничего не стримится — «сон» молчалив и опционален
-//! (`config.self_model.auto_consolidate_every`, по умолчанию выкл). Отдельный тумблер
-//! от авто-рефлексии: гейты/данные модели себя и заметок уже разведены, свой счётчик
-//! точнее. См. docs/history/self-model-consolidation.md (этап A1).
+//! Self-model auto-consolidation (the self-model's "sleep", stage A1): every N
+//! assistant replies in a chat, a background task asks the model to review its own
+//! "self-model" and consolidate it **itself** — merge duplicate observations
+//! (`@self` notes), compress a bloated description (`summary`), link contradictions. Like
+//! auto-reflection and notes auto-consolidation, this is a **mini agentic loop**: the
+//! model calls self-model/note tools, the loop executes them (they write directly into
+//! `Storage`). The chat isn't mutated, nothing streams to the UI — the "sleep" is silent
+//! and opt-in (`config.self_model.auto_consolidate_every`, off by default). A separate
+//! toggle from auto-reflection: the self-model's and notes' gates/data are already kept
+//! apart, its own counter is more precise. See docs/history/self-model-consolidation.md (stage A1).
 
 use std::time::Duration;
 
@@ -24,21 +24,21 @@ use super::Orchestrator;
 use super::request::last_user_message_at;
 use super::tool_loop;
 
-/// Потолок токенов ответа на раунд «сна» модели себя (с запасом на «мысли» перед вызовом).
+/// The token ceiling for a self-model "sleep" round's reply (with margin for "thoughts" before the call).
 const SELF_CONSOLIDATE_MAX_TOKENS: usize = 2048;
-/// Лимит раундов мини agentic-loop «сна» модели себя (бэкстоп от зацикливания).
+/// The round limit for the self-model "sleep" mini agentic loop (a backstop against looping).
 const SELF_CONSOLIDATE_MAX_ROUNDS: u32 = 8;
-/// Лимит времени на всю консолидацию модели себя.
+/// The time limit for the whole self-model consolidation.
 const SELF_CONSOLIDATE_TIMEOUT: Duration = Duration::from_secs(180);
 
-/// Инструменты, доступные «сну» модели себя (пересекаются с набором профиля). Над
-/// наблюдениями-заметками (`@self`): переписать почти-дубль (`note_revise`), заместить
-/// со «шрамом» (`note_supersede`), слить (`note_merge`); граф — связать
-/// противоречащие/уточняющие (`note_link`/`note_neighbors`). Плюс `update_self_model`
-/// (сжать раздутый `summary`) и `update_user_model` (привести собеседника).
-/// `get_self_model` даёт полные id наблюдений и текущий `summary`. `note_recall`
-/// **не даём** — он скрывает `@self`; полные id модель берёт из `get_self_model`
-/// (как рефлексия). См. docs/history/self-model-consolidation.md (этап A1).
+/// Tools available to the self-model "sleep" (intersected with the profile's set). Over
+/// observation-notes (`@self`): rewrite a near-duplicate (`note_revise`), replace
+/// with a "scar" (`note_supersede`), merge (`note_merge`); the graph — link
+/// contradicting/refining ones (`note_link`/`note_neighbors`). Plus `update_self_model`
+/// (compress a bloated `summary`) and `update_user_model` (reconcile the interlocutor).
+/// `get_self_model` gives the full observation ids and the current `summary`. `note_recall`
+/// is **deliberately withheld** — it hides `@self`; the model takes full ids from `get_self_model`
+/// (like reflection). See docs/history/self-model-consolidation.md (stage A1).
 const SELF_CONSOLIDATE_TOOL_IDS: &[&str] = &[
     self_model::GET_SELF_MODEL_ID,
     self_model::UPDATE_SELF_MODEL_ID,
@@ -50,9 +50,9 @@ const SELF_CONSOLIDATE_TOOL_IDS: &[&str] = &[
     notes::NOTE_NEIGHBORS_ID,
 ];
 
-/// Системное сообщение фоновой консолидации модели себя: обрамление + единый
-/// `POLICY_CORE` (те же правила ведения, что у протокола/рефлексии). Строится в
-/// рантайме, поскольку склеивает `const`-фрагмент с константой правил.
+/// The system message for background self-model consolidation: framing + the shared
+/// `POLICY_CORE` (the same maintenance rules as the protocol/reflection). Built at
+/// runtime, since it splices a `const` fragment together with the rules constant.
 fn self_consolidate_system_message(loc: &crate::shared::i18n::Locale) -> String {
     loc.tf(
         "prompt.self_consolidate.system",
@@ -61,12 +61,12 @@ fn self_consolidate_system_message(loc: &crate::shared::i18n::Locale) -> String 
 }
 
 impl Orchestrator {
-    /// Вызывается после успешной генерации (`handle_done`): считает ответы ассистента
-    /// и при достижении порога запускает фоновую консолидацию «модели себя». Тихо
-    /// ничего не делает, если фича выключена, профиль не включил инструменты модели
-    /// себя, «сон» уже идёт, нечего консолидировать (наблюдений < 2 и `summary` не
-    /// раздут) или сервер не готов. Счётчик каденции сбрасывается **только при
-    /// фактическом спавне** — пропуск по гейту не теряет накопленный цикл.
+    /// Called after a successful generation (`handle_done`): counts assistant replies
+    /// and, once the threshold is reached, starts background "self-model" consolidation. Silently
+    /// does nothing if the feature is disabled, the profile hasn't enabled self-model
+    /// tools, "sleep" is already running, there's nothing to consolidate (observations < 2 and
+    /// `summary` isn't bloated), or the server isn't ready. The cadence counter is reset
+    /// **only on an actual spawn** — a gate skip doesn't lose the accumulated cycle.
     pub(super) fn maybe_auto_self_consolidate(&mut self, chat_id: uuid::Uuid) {
         let every = self.config.self_model.auto_consolidate_every;
         if every == 0 {
@@ -74,7 +74,7 @@ impl Orchestrator {
         }
 
         let profile_id;
-        let lang; // язык служебного каркаса профиля (ось A)
+        let lang; // the profile's agent-scaffold language (axis A)
         let system_message;
         let last_user;
         let allowed: Vec<ToolId>;
@@ -87,7 +87,7 @@ impl Orchestrator {
                 return;
             };
             lang = profile.language;
-            // Гейт: профиль включает инструменты модели себя (как и инъекция/рефлексия).
+            // Gate: the profile enables self-model tools (like injection/reflection).
             if !profile
                 .enabled_tools
                 .iter()
@@ -104,9 +104,9 @@ impl Orchestrator {
             last_user = last_user_message_at(chat);
         }
 
-        // Счётчик ответов с прошлого «сна»: инкремент; если порог не достигнут — выходим
-        // (счётчик копится дальше). Сброс — только при фактическом спавне (ниже), чтобы
-        // пропуск по гейту не терял накопленный цикл.
+        // The reply counter since the last "sleep": increment; if the threshold isn't reached — exit
+        // (the counter keeps accumulating). Reset — only on an actual spawn (below), so
+        // a gate skip doesn't lose the accumulated cycle.
         {
             let count = self.self_consolidate_counts.entry(chat_id).or_insert(0);
             *count += 1;
@@ -115,12 +115,12 @@ impl Orchestrator {
             }
         }
         if self.bg_running(BackgroundKind::SelfConsolidation) {
-            return; // уже идёт — пропускаем без сброса (повторим на след. ходу)
+            return; // already running — skip without a reset (we'll retry next turn)
         }
 
-        // Нечего консолидировать? Сигнал есть, если наблюдений (`@self`) ≥ 2 (обзор
-        // self-консолидации непуст) ИЛИ описание себя раздуто сверх ориентира. Иначе —
-        // выходим без сброса счётчика (повторим позже).
+        // Nothing to consolidate? There's a signal if observations (`@self`) ≥ 2 (the
+        // self-consolidation overview is non-empty) OR the self-description is bloated past the target. Otherwise —
+        // exit without resetting the counter (retry later).
         let loc = crate::shared::i18n::locale(lang);
         let params = SelfModelParams::from_settings(&self.config.self_model);
         let obs_count = self
@@ -140,25 +140,25 @@ impl Orchestrator {
             return;
         }
 
-        // Сервер готов? Иначе тихо пропускаем (счётчик не сброшен).
-        let Ok(backend) = self.engines.backend_if_ready() else {
+        // Is the server ready? Otherwise silently skip (the counter isn't reset).
+        let Ok(backend) = self.engines.backend_if_ready(self.ui_locale()) else {
             return;
         };
-        // Все гейты пройдены — сбрасываем счётчик и запускаем.
+        // All gates passed — reset the counter and spawn.
         self.self_consolidate_counts.insert(chat_id, 0);
 
-        // Дайджест: обзор self-консолидации (похожие пары наблюдений / contradicts / без
-        // связей; `None` при наблюдениях < 2) + подсказка о раздутом описании (если есть).
+        // The digest: the self-consolidation overview (similar observation pairs / contradicts / with no
+        // links; `None` when observations < 2) + a hint about a bloated description (if any).
         let overview = notes::build_self_consolidation_overview(&self.storage, profile_id, loc);
         let digest = match (overview, summary_hint) {
             (Some(o), Some(h)) => format!("{o}\n\n{h}"),
             (Some(o), None) => o,
             (None, Some(h)) => h,
-            // Гейт выше это исключает; защитно — нечего консолидировать.
+            // The gate above rules this out; a defensive branch — nothing to consolidate.
             (None, None) => return,
         };
 
-        // Токен отмены — до контекста: его клон едет в `ToolContext.cancel`.
+        // The cancellation token — before the context: its clone goes into `ToolContext.cancel`.
         let cancel = CancellationToken::new();
         let ctx = ToolContext::new(
             self.tool_deps(backend.clone()),
@@ -185,7 +185,7 @@ impl Orchestrator {
             tools: self.registry.schemas_for(&allowed, loc),
         };
 
-        // Спавним задачу и фиксируем слот (флаг «идёт» + тихий индикатор в статус-баре).
+        // Spawn the task and set the slot (the "running" flag + a quiet status-bar indicator).
         tool_loop::spawn_silent_loop(tool_loop::SilentLoop {
             backend,
             registry: self.registry.clone(),
@@ -195,12 +195,12 @@ impl Orchestrator {
             cancel: cancel.clone(),
             max_rounds: SELF_CONSOLIDATE_MAX_ROUNDS,
             timeout: SELF_CONSOLIDATE_TIMEOUT,
-            label: "авто-консолидация себя",
+            label: "auto self-consolidation",
             profile_id,
             kind: BackgroundKind::SelfConsolidation,
             done_tx: self.bg_done_tx.clone(),
-            // A2: семантика summary↔наблюдения (эмбеддинг абзацев summary на лету в
-            // задаче). См. docs/history/self-model-consolidation.md §A2.
+            // A2: summary↔observation semantics (embedding summary paragraphs on the fly in
+            // the task). See docs/history/self-model-consolidation.md §A2.
             summary_semantics: Some(tool_loop::SummarySemantics {
                 embedder: self.engines.embedder(),
                 storage: self.storage.clone(),
@@ -216,7 +216,7 @@ impl Orchestrator {
 mod tests {
     use super::self_consolidate_system_message;
 
-    /// Референсная локаль (ru) для ассертов на русские подстроки (пинят ru-бандл).
+    /// The reference locale (ru) for assertions on Russian substrings (pins the ru bundle).
     fn ru() -> &'static crate::shared::i18n::Locale {
         crate::shared::i18n::locale(crate::shared::i18n::Lang::Ru)
     }
@@ -224,17 +224,17 @@ mod tests {
     #[test]
     fn self_consolidate_system_message_composes_from_policy_core() {
         let msg = self_consolidate_system_message(ru());
-        // Собрано из единого POLICY_CORE (те же правила, что у протокола ведения).
+        // Composed from the shared POLICY_CORE (the same rules as the maintenance protocol).
         assert!(msg.contains(crate::features::tools::self_model::policy_core(ru())));
-        // Плюс специфичное обрамление «сна» модели себя.
+        // Plus the "sleep"-specific framing.
         assert!(msg.contains("get_self_model"));
         assert!(msg.contains("note_merge"));
         assert!(msg.contains("update_self_model"));
     }
 
-    /// Per-language (§3.5 docs/history/i18n.md): системное сообщение собирается на КАЖДОМ
-    /// вшитом языке, встраивает `policy_core` того же языка, плейсхолдер `{core}`
-    /// подставлен (без остатка), несёт tool-имена (стабильны, не переводятся).
+    /// Per-language (§3.5 docs/history/i18n.md): the system message is composed for EVERY
+    /// built-in language, embeds `policy_core` of the same language, the `{core}`
+    /// placeholder is substituted (with nothing left over), carries tool names (stable, not translated).
     #[test]
     fn self_consolidate_system_message_localized_for_all_langs() {
         for &lang in crate::shared::i18n::Lang::ALL {
@@ -242,11 +242,11 @@ mod tests {
             let msg = self_consolidate_system_message(l);
             assert!(
                 msg.contains(crate::features::tools::self_model::policy_core(l)),
-                "{lang:?}: policy_core не встроен"
+                "{lang:?}: policy_core is not embedded"
             );
             assert!(
                 !msg.contains("{core}"),
-                "{lang:?}: плейсхолдер не подставлен"
+                "{lang:?}: the placeholder wasn't substituted"
             );
             assert!(
                 msg.contains("get_self_model") && msg.contains("note_merge"),
@@ -259,7 +259,7 @@ mod tests {
     fn self_consolidate_tools_cover_observations_and_summary() {
         use super::SELF_CONSOLIDATE_TOOL_IDS;
         use crate::features::tools::{notes, self_model};
-        // Наблюдения (граф/слияние) + сжатие summary — есть; note_recall нет (скрывает @self).
+        // Observations (graph/merge) + summary compression — present; note_recall isn't (it hides @self).
         assert!(SELF_CONSOLIDATE_TOOL_IDS.contains(&notes::NOTE_MERGE_ID));
         assert!(SELF_CONSOLIDATE_TOOL_IDS.contains(&notes::NOTE_LINK_ID));
         assert!(SELF_CONSOLIDATE_TOOL_IDS.contains(&self_model::UPDATE_SELF_MODEL_ID));

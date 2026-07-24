@@ -1,27 +1,28 @@
-//! Резервное копирование и восстановление пользовательских данных в zip-архив.
+//! Backup and restore of user data into a zip archive.
 //!
-//! Запускается аргументами командной строки (`--backup` / `--restore`) без TUI и
-//! завершает процесс (см. `main.rs`). Состав архива (пути в архиве — относительно
-//! корня данных):
-//! - файлы `settings.json`, `profiles.json`, `data.db` (+ sidecar `-wal`/`-shm`,
-//!   если есть), `personal_dictionary.txt`;
-//! - каталоги `chats/`, `dictionaries/` и `locales/` (рекурсивно — попадают и их
-//!   `*.bak`; `locales/` — пользовательские override служебных/UI-текстов);
-//! - все `*.bak` в корне (`settings.bak`, `profiles.bak`);
-//! - каталог-«песочница» файловых инструментов (`config.tools.fs_root`) — **только
-//!   если** он лежит внутри корня данных.
+//! Launched via command-line arguments (`--backup` / `--restore`) with no TUI,
+//! and ends the process (see `main.rs`). Archive contents (paths in the archive
+//! are relative to the data root):
+//! - files `settings.json`, `profiles.json`, `data.db` (+ sidecar `-wal`/`-shm`,
+//!   if present), `personal_dictionary.txt`;
+//! - directories `chats/`, `dictionaries/`, and `locales/` (recursively — their
+//!   `*.bak` files are pulled in too; `locales/` — user overrides of the
+//!   scaffold/UI text);
+//! - all `*.bak` at the root (`settings.bak`, `profiles.bak`);
+//! - the file-tools "sandbox" directory (`config.tools.fs_root`) — **only if**
+//!   it lies inside the data root.
 //!
-//! Исключаются `backups/`, `logs/` и файлы установочных умолчаний `defaults.json`/
-//! `location.json` (они — про установку, а не пользовательские данные). Дополнительно в
-//! архив кладётся `manifest.json` (версии схем + версия приложения) — метаданные для
-//! предупреждения при восстановлении копии из более новой версии; в корень он **не**
-//! распаковывается. См. [`BackupManifest`].
+//! Excluded: `backups/`, `logs/`, and the install-defaults files `defaults.json`/
+//! `location.json` (they're about the install, not user data). Additionally, a
+//! `manifest.json` (schema versions + app version) is written into the archive —
+//! metadata for warning on restoring a backup made by a newer version; it is
+//! **not** extracted into the root. See [`BackupManifest`].
 //!
-//! **Восстановление транзакционно.** Сначала архив валидируется (до любых
-//! разрушительных действий). Если в корне уже есть данные — они автоматически
-//! сохраняются в `backups/` (pre-restore копия), и лишь затем корень очищается и
-//! распаковывается указанный архив. Если распаковка не удалась, а pre-restore копия
-//! была создана — выполняется откат к ней. См. spec §12.3.
+//! **Restore is transactional.** The archive is validated first (before any
+//! destructive action). If the root already has data, it is automatically
+//! saved into `backups/` (a pre-restore copy), and only then is the root
+//! cleared and the given archive unpacked. If unpacking fails and a
+//! pre-restore copy was created, a rollback to it is performed. See spec §12.3.
 
 use std::collections::HashSet;
 use std::fs::{self, File};
@@ -38,11 +39,12 @@ use crate::shared::i18n::Locale;
 use crate::shared::paths::Paths;
 use crate::shared::storage::schema::{CHAT_SCHEMA, DB_SCHEMA, PROFILES_SCHEMA, SETTINGS_SCHEMA};
 
-/// Имя файла-манифеста внутри архива (метаданные версий схем; не распаковывается
-/// в корень — читается отдельно [`read_manifest`]). См. release-engineering.md §3.4.
+/// Manifest file name inside the archive (schema-version metadata; not
+/// extracted into the root — read separately by [`read_manifest`]). See
+/// release-engineering.md §3.4.
 const MANIFEST_NAME: &str = "manifest.json";
 
-/// Версии схем данных на момент создания копии (release-engineering.md Ф-манифест).
+/// Data schema versions at backup creation time (release-engineering.md, the manifest deliverable).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SchemaVersions {
     pub settings: u32,
@@ -51,10 +53,10 @@ pub struct SchemaVersions {
     pub db: u32,
 }
 
-/// Манифест резервной копии (`manifest.json` в архиве): версия приложения, версии схем
-/// и время создания. Нужен, чтобы при восстановлении копии, сделанной **более новой**
-/// версией mindfork, предупредить пользователя (данные целы; downgrade-guard на старте
-/// всё равно защитит — ADR 0006).
+/// Backup manifest (`manifest.json` in the archive): app version, schema
+/// versions, and creation time. Needed so that when restoring a backup made
+/// by a **newer** mindfork version, the user gets a warning (data is intact;
+/// the startup downgrade guard protects it regardless — ADR 0006).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BackupManifest {
     pub app_version: String,
@@ -63,7 +65,7 @@ pub struct BackupManifest {
 }
 
 impl BackupManifest {
-    /// Манифест для текущей сборки (версия приложения + текущие версии схем).
+    /// Manifest for the current build (app version + current schema versions).
     fn current() -> Self {
         Self {
             app_version: env!("CARGO_PKG_VERSION").to_string(),
@@ -77,8 +79,8 @@ impl BackupManifest {
         }
     }
 
-    /// Есть ли в манифесте схема **новее** текущей (архив из более новой версии
-    /// приложения) — сигнал предупредить при восстановлении.
+    /// Does the manifest carry a schema **newer** than current (an archive
+    /// from a newer app version) — a signal to warn on restore.
     pub fn is_newer_than_current(&self) -> bool {
         self.schemas.settings > SETTINGS_SCHEMA
             || self.schemas.profiles > PROFILES_SCHEMA
@@ -87,8 +89,9 @@ impl BackupManifest {
     }
 }
 
-/// Читает `manifest.json` из архива. `None` — старый бэкап без манифеста (созданный до
-/// этапа 5). Ошибки чтения/парса — не фатальны для восстановления (вызывающий их глотает).
+/// Reads `manifest.json` from the archive. `None` — an old backup with no
+/// manifest (created before stage 5). Read/parse errors aren't fatal for
+/// restore (the caller swallows them).
 pub fn read_manifest(archive: &Path) -> Result<Option<BackupManifest>> {
     let file = File::open(archive)?;
     let mut zip = ZipArchive::new(file)?;
@@ -103,7 +106,7 @@ pub fn read_manifest(archive: &Path) -> Result<Option<BackupManifest>> {
     }
 }
 
-/// Файлы верхнего уровня, входящие в резервную копию (отсутствующие пропускаются).
+/// Top-level files included in the backup (missing ones are skipped).
 const TOP_FILES: &[&str] = &[
     "settings.json",
     "profiles.json",
@@ -113,27 +116,28 @@ const TOP_FILES: &[&str] = &[
     "personal_dictionary.txt",
 ];
 
-/// Каталоги, входящие в резервную копию целиком (рекурсивно).
+/// Directories included in the backup whole (recursively).
 const TOP_DIRS: &[&str] = &["chats", "dictionaries", "locales"];
 
-/// Запись для упаковки: абсолютный путь источника + имя внутри архива (со `/`).
+/// A packing entry: the source's absolute path + its name inside the archive (with `/`).
 struct Entry {
     abs: PathBuf,
     name: String,
 }
 
-/// Итог восстановления — что фактически произошло (для сообщений пользователю).
+/// Restore outcome — what actually happened (for user-facing messages).
 pub enum RestoreOutcome {
-    /// Архив успешно распакован. `pre_restore` — путь авто-копии прежних данных,
-    /// если они были и сохранялись.
+    /// The archive was unpacked successfully. `pre_restore` — the path of the
+    /// prior data's auto-copy, if one existed and was saved.
     Restored { pre_restore: Option<PathBuf> },
-    /// Распаковка не удалась, но прежние данные восстановлены из pre-restore копии.
+    /// Unpacking failed, but the prior data was restored from the pre-restore copy.
     RolledBack {
         pre_restore: PathBuf,
         restore_error: anyhow::Error,
     },
-    /// Распаковка не удалась и откат тоже (или откатывать было не из чего).
-    /// Пользователю нужно вмешаться вручную (`pre_restore` — где лежит копия).
+    /// Unpacking failed and so did the rollback (or there was nothing to roll
+    /// back to). The user needs to intervene manually (`pre_restore` — where
+    /// the copy lives).
     Failed {
         pre_restore: Option<PathBuf>,
         restore_error: anyhow::Error,
@@ -141,12 +145,13 @@ pub enum RestoreOutcome {
     },
 }
 
-/// Создаёт резервную копию пользовательских данных.
+/// Creates a backup of user data.
 ///
-/// `output` — путь к создаваемому архиву (`None` → авто-имя в `backups/`).
-/// `level` — степень сжатия `0..=9` (`0` → без сжатия, store). `fs_root` — каталог
-/// файловой песочницы из конфига (включается только если лежит внутри корня данных).
-/// Возвращает путь к созданному архиву.
+/// `output` — path to the archive to create (`None` → an auto-name in
+/// `backups/`). `level` — compression level `0..=9` (`0` → no compression,
+/// store). `fs_root` — the file-tool sandbox directory from the config
+/// (included only when it lies inside the data root). Returns the path to the
+/// created archive.
 pub fn create_backup(
     paths: &Paths,
     output: Option<PathBuf>,
@@ -168,19 +173,19 @@ pub fn create_backup(
     Ok(out_path)
 }
 
-/// Восстанавливает данные из архива `archive`, заменяя текущие.
+/// Restores data from archive `archive`, replacing the current data.
 ///
-/// Возвращает `Err` только при ошибке **до** разрушительных действий (нет файла,
-/// повреждён/небезопасный архив). После начала замены всегда возвращает
-/// `Ok(RestoreOutcome)`, описывающий исход (включая откат). `fs_root` — текущая
-/// песочница (очищается, если внутри корня).
+/// Returns `Err` only for an error **before** any destructive action (no
+/// file, a corrupted/unsafe archive). Once the replacement has started it
+/// always returns `Ok(RestoreOutcome)` describing the outcome (including a
+/// rollback). `fs_root` — the current sandbox (cleared if inside the root).
 pub fn restore_backup(
     paths: &Paths,
     archive: &Path,
     fs_root: Option<&Path>,
     loc: &Locale,
 ) -> Result<RestoreOutcome> {
-    // 1. Валидация архива до любых разрушительных действий.
+    // 1. Validate the archive before any destructive action.
     validate_archive(archive, loc).with_context(|| {
         loc.tf(
             "backup.ctx.validate",
@@ -188,7 +193,7 @@ pub fn restore_backup(
         )
     })?;
 
-    // 2. Авто-копия прежних данных, если они есть.
+    // 2. Auto-copy of the prior data, if any.
     let pre_restore = if has_existing_data(paths) {
         let path = create_backup(
             paths,
@@ -203,7 +208,7 @@ pub fn restore_backup(
         None
     };
 
-    // 3. Очистка + распаковка.
+    // 3. Clear + unpack.
     let attempt = (|| -> Result<()> {
         clear_user_data(paths, fs_root, loc)?;
         extract_archive(paths, archive, loc)
@@ -212,7 +217,7 @@ pub fn restore_backup(
     match attempt {
         Ok(()) => Ok(RestoreOutcome::Restored { pre_restore }),
         Err(restore_error) => match &pre_restore {
-            // 4. Откат к только что созданной pre-restore копии.
+            // 4. Roll back to the just-created pre-restore copy.
             Some(backup) => {
                 let rollback = (|| -> Result<()> {
                     clear_user_data(paths, fs_root, loc)?;
@@ -239,7 +244,7 @@ pub fn restore_backup(
     }
 }
 
-/// Собирает список файлов для упаковки (с дедупликацией по имени в архиве).
+/// Gathers the list of files to pack (deduplicated by archive name).
 fn gather_entries(paths: &Paths, fs_root: Option<&Path>, loc: &Locale) -> Result<Vec<Entry>> {
     let root = paths.root();
     let mut out: Vec<Entry> = Vec::new();
@@ -254,7 +259,7 @@ fn gather_entries(paths: &Paths, fs_root: Option<&Path>, loc: &Locale) -> Result
         }
     }
 
-    // Все `*.bak` верхнего уровня (settings.bak, profiles.bak и т.п.).
+    // All top-level `*.bak` files (settings.bak, profiles.bak, etc.).
     if let Ok(rd) = fs::read_dir(root) {
         for entry in rd.flatten() {
             let path = entry.path();
@@ -274,18 +279,18 @@ fn gather_entries(paths: &Paths, fs_root: Option<&Path>, loc: &Locale) -> Result
         collect_dir(&root.join(d), d, &mut out, loc)?;
     }
 
-    // Песочница файловых инструментов — только если внутри корня данных.
+    // The file-tool sandbox — only if inside the data root.
     if let Some((abs, prefix)) = fs_root_under_root(root, fs_root) {
         collect_dir(&abs, &prefix, &mut out, loc)?;
     }
 
-    // Дедуп по имени в архиве (на случай пересечения fs_root с другими путями).
+    // Dedup by archive name (in case fs_root overlaps another path).
     let mut seen = HashSet::new();
     out.retain(|e| seen.insert(e.name.clone()));
     Ok(out)
 }
 
-/// Рекурсивно собирает файлы каталога `abs` под префиксом имени `prefix` (со `/`).
+/// Recursively collects the files of directory `abs` under name prefix `prefix` (with `/`).
 fn collect_dir(abs: &Path, prefix: &str, out: &mut Vec<Entry>, loc: &Locale) -> Result<()> {
     if !abs.is_dir() {
         return Ok(());
@@ -301,7 +306,7 @@ fn collect_dir(abs: &Path, prefix: &str, out: &mut Vec<Entry>, loc: &Locale) -> 
         let ft = entry.file_type()?;
         let child_abs = entry.path();
         let Some(name) = entry.file_name().to_str().map(str::to_owned) else {
-            continue; // не-UTF-8 имя пропускаем
+            continue; // skip a non-UTF-8 name
         };
         let child_name = if prefix.is_empty() {
             name
@@ -320,7 +325,7 @@ fn collect_dir(abs: &Path, prefix: &str, out: &mut Vec<Entry>, loc: &Locale) -> 
     Ok(())
 }
 
-/// Записывает архив со списком записей и заданной степенью сжатия.
+/// Writes the archive from the entry list at the given compression level.
 fn write_zip(out_path: &Path, entries: &[Entry], level: i64, loc: &Locale) -> Result<()> {
     if let Some(parent) = out_path.parent() {
         fs::create_dir_all(parent).with_context(|| {
@@ -358,7 +363,7 @@ fn write_zip(out_path: &Path, entries: &[Entry], level: i64, loc: &Locale) -> Re
         })?;
     }
 
-    // Манифест версий схем (метаданные, не пользовательский файл) — последней записью.
+    // The schema-version manifest (metadata, not a user file) — written last.
     let manifest = serde_json::to_vec_pretty(&BackupManifest::current())
         .context("serializing backup manifest")?;
     zip.start_file(MANIFEST_NAME, options)
@@ -371,8 +376,8 @@ fn write_zip(out_path: &Path, entries: &[Entry], level: i64, loc: &Locale) -> Re
     Ok(())
 }
 
-/// Проверяет, что архив открывается и все его записи — безопасные относительные пути
-/// (без `..`/абсолютных, защита от zip-slip).
+/// Checks that the archive opens and all of its entries are safe relative
+/// paths (no `..`/absolute paths — zip-slip protection).
 fn validate_archive(archive: &Path, loc: &Locale) -> Result<()> {
     let file = File::open(archive).with_context(|| {
         loc.tf(
@@ -393,8 +398,8 @@ fn validate_archive(archive: &Path, loc: &Locale) -> Result<()> {
     Ok(())
 }
 
-/// Распаковывает архив в корень данных (имена записей уже считаются безопасными —
-/// `enclosed_name` отсекает выход за пределы корня).
+/// Unpacks the archive into the data root (entry names are already
+/// considered safe — `enclosed_name` rejects escaping outside the root).
 fn extract_archive(paths: &Paths, archive: &Path, loc: &Locale) -> Result<()> {
     let file = File::open(archive).with_context(|| {
         loc.tf(
@@ -412,7 +417,7 @@ fn extract_archive(paths: &Paths, archive: &Path, loc: &Locale) -> Result<()> {
                 loc.tf("backup.err.unsafe_entry", &[("name", entry.name())])
             )
         })?;
-        // Манифест — метаданные архива, не пользовательские данные: в корень не пишем.
+        // The manifest is archive metadata, not user data: not written into the root.
         if rel == Path::new(MANIFEST_NAME) {
             continue;
         }
@@ -450,9 +455,9 @@ fn extract_archive(paths: &Paths, archive: &Path, loc: &Locale) -> Result<()> {
     Ok(())
 }
 
-/// Удаляет пользовательские данные из корня, **сохраняя** `backups/`, `logs/` и
-/// файлы умолчаний `defaults.json`/`location.json`. Очищается ровно тот же набор,
-/// что входит в резервную копию.
+/// Removes user data from the root, **keeping** `backups/`, `logs/`, and the
+/// defaults files `defaults.json`/`location.json`. Clears exactly the set
+/// that goes into the backup.
 fn clear_user_data(paths: &Paths, fs_root: Option<&Path>, loc: &Locale) -> Result<()> {
     let root = paths.root();
 
@@ -502,7 +507,7 @@ fn remove_dir_if_exists(path: &Path, loc: &Locale) -> Result<()> {
     }
 }
 
-/// Есть ли в корне пользовательские данные (нужно ли делать pre-restore копию).
+/// Is there existing user data at the root (do we need a pre-restore copy).
 fn has_existing_data(paths: &Paths) -> bool {
     ["settings.json", "profiles.json", "data.db"]
         .iter()
@@ -514,8 +519,9 @@ fn dir_non_empty(dir: &Path) -> bool {
     fs::read_dir(dir).is_ok_and(|mut rd| rd.next().is_some())
 }
 
-/// Если `fs_root` задан и лежит внутри корня данных — возвращает (канонический путь,
-/// имя-префикс в архиве). Иначе `None` (вне корня → в копию не входит, не очищается).
+/// If `fs_root` is set and lies inside the data root, returns (canonical
+/// path, archive name-prefix). Otherwise `None` (outside the root → not
+/// included in the backup, not cleared).
 fn fs_root_under_root(root: &Path, fs_root: Option<&Path>) -> Option<(PathBuf, String)> {
     let fs_root = fs_root?;
     let root_c = fs::canonicalize(root).ok()?;
@@ -535,7 +541,7 @@ fn fs_root_under_root(root: &Path, fs_root: Option<&Path>) -> Option<(PathBuf, S
     Some((fs_c, prefix))
 }
 
-/// Авто-имя архива в `backups/`: `<prefix>-YYYYMMDD-HHMMSS.zip`.
+/// Auto-name for an archive in `backups/`: `<prefix>-YYYYMMDD-HHMMSS.zip`.
 pub(crate) fn default_backup_path(paths: &Paths, prefix: &str) -> PathBuf {
     let stamp = Local::now().format("%Y%m%d-%H%M%S");
     paths.backups_dir().join(format!("{prefix}-{stamp}.zip"))
@@ -546,13 +552,13 @@ mod tests {
     use super::*;
     use crate::shared::i18n::{Lang, locale};
 
-    /// Референсная локаль для тестов (тексты ошибок не проверяются — важна лишь
-    /// сигнатура; ru байт-в-байт с прежними строками).
+    /// Reference locale for tests (error text isn't checked here — only the
+    /// signature matters; ru byte-for-byte with the previous strings).
     fn ru() -> &'static Locale {
         locale(Lang::Ru)
     }
 
-    /// Готовит корень с типичным набором пользовательских данных.
+    /// Prepares a root with a typical set of user data.
     fn seed_data(root: &Path) {
         fs::write(root.join("settings.json"), b"{\"v\":1}").unwrap();
         fs::write(root.join("settings.bak"), b"{\"v\":0}").unwrap();
@@ -566,7 +572,7 @@ mod tests {
         fs::write(root.join("dictionaries").join("en.dic"), b"x").unwrap();
         fs::create_dir_all(root.join("locales")).unwrap();
         fs::write(root.join("locales").join("en.json"), b"{}").unwrap();
-        // Не должно попасть в копию:
+        // Must not end up in the backup:
         fs::create_dir_all(root.join("logs")).unwrap();
         fs::write(root.join("logs").join("mindfork.log"), b"log").unwrap();
         fs::create_dir_all(root.join("backups")).unwrap();
@@ -608,10 +614,10 @@ mod tests {
         ] {
             assert!(
                 names.contains(&expected.to_string()),
-                "нет {expected} в {names:?}"
+                "missing {expected} in {names:?}"
             );
         }
-        // Логи, каталог backups и файлы умолчаний не попадают.
+        // Logs, the backups directory, and the defaults files are not included.
         assert!(!names.iter().any(|n| n.starts_with("logs/")));
         assert!(!names.iter().any(|n| n.starts_with("backups/")));
         assert!(!names.contains(&"location.json".to_string()));
@@ -620,7 +626,7 @@ mod tests {
 
     #[test]
     fn fs_root_included_only_when_inside_root() {
-        // Внутри корня — включается.
+        // Inside the root — included.
         let dir = tempfile::tempdir().unwrap();
         seed_data(dir.path());
         let inside = dir.path().join("sandbox");
@@ -630,7 +636,7 @@ mod tests {
         let out = create_backup(&paths, None, 9, Some(&inside), ru()).unwrap();
         assert!(archive_names(&out).contains(&"sandbox/note.txt".to_string()));
 
-        // Снаружи корня — не включается.
+        // Outside the root — not included.
         let outside_root = tempfile::tempdir().unwrap();
         let outside = tempfile::tempdir().unwrap();
         fs::write(outside.path().join("secret.txt"), b"no").unwrap();
@@ -646,7 +652,7 @@ mod tests {
 
     #[test]
     fn restore_round_trip_replaces_data() {
-        // Источник.
+        // Source.
         let src = tempfile::tempdir().unwrap();
         seed_data(src.path());
         fs::write(src.path().join("settings.json"), b"{\"v\":42}").unwrap();
@@ -654,7 +660,7 @@ mod tests {
         let archive_path = src.path().join("backups").join("snap.zip");
         create_backup(&src_paths, Some(archive_path.clone()), 9, None, ru()).unwrap();
 
-        // Цель с другими данными.
+        // Target with different data.
         let dst = tempfile::tempdir().unwrap();
         seed_data(dst.path());
         fs::write(dst.path().join("settings.json"), b"{\"v\":999}").unwrap();
@@ -664,21 +670,21 @@ mod tests {
         let outcome = restore_backup(&dst_paths, &archive_path, None, ru()).unwrap();
         match outcome {
             RestoreOutcome::Restored { pre_restore } => {
-                // Прежние данные были, значит pre-restore копия создана.
-                let pre = pre_restore.expect("pre-restore копия должна быть создана");
+                // The prior data existed, so a pre-restore copy was created.
+                let pre = pre_restore.expect("a pre-restore copy should have been created");
                 assert!(pre.exists());
                 assert!(pre.starts_with(dst_paths.backups_dir()));
             }
-            _ => panic!("ожидался успешный Restored"),
+            _ => panic!("expected a successful Restored"),
         }
-        // Данные заменены содержимым архива.
+        // Data replaced with the archive's content.
         assert_eq!(
             fs::read(dst.path().join("settings.json")).unwrap(),
             b"{\"v\":42}"
         );
-        // Устаревший чат, которого нет в архиве, удалён очисткой.
+        // The stale chat absent from the archive was removed by the cleanup.
         assert!(!dst.path().join("chats").join("stale.json").exists());
-        // Каталог backups сохранён (там лежит pre-restore копия).
+        // The backups directory is preserved (it holds the pre-restore copy).
         assert!(dst.path().join("backups").exists());
     }
 
@@ -693,9 +699,9 @@ mod tests {
         let err = restore_backup(&paths, &bad, None, ru());
         assert!(
             err.is_err(),
-            "повреждённый архив должен дать Err до очистки"
+            "a corrupted archive should give Err before any cleanup"
         );
-        // Данные не тронуты.
+        // Data is untouched.
         assert!(dst.path().join("settings.json").exists());
         assert!(dst.path().join("chats").join("a.json").exists());
     }
@@ -719,7 +725,7 @@ mod tests {
         let outcome = restore_backup(&paths, &archive, None, ru()).unwrap();
         match outcome {
             RestoreOutcome::Restored { pre_restore } => assert!(pre_restore.is_none()),
-            _ => panic!("ожидался Restored без pre-restore"),
+            _ => panic!("expected a Restored with no pre-restore"),
         }
         assert!(dst.path().join("settings.json").exists());
     }
@@ -728,8 +734,9 @@ mod tests {
     fn restore_rolls_back_on_extraction_failure() {
         use std::io::Write;
 
-        // Архив валиден (проходит validate_archive), но запись `blocker` — файл,
-        // который на цели столкнётся с одноимённым каталогом → распаковка упадёт.
+        // The archive is valid (passes validate_archive), but the entry
+        // `blocker` is a file that will collide with a same-named directory
+        // at the target → unpacking will fail.
         let work = tempfile::tempdir().unwrap();
         let archive = work.path().join("evil.zip");
         {
@@ -746,17 +753,17 @@ mod tests {
         let dst = tempfile::tempdir().unwrap();
         seed_data(dst.path());
         fs::write(dst.path().join("settings.json"), b"{\"from\":\"original\"}").unwrap();
-        // Каталог `blocker` не входит в whitelist → переживает очистку и ломает
-        // распаковку одноимённого файла.
+        // The `blocker` directory isn't in the whitelist → it survives the
+        // cleanup and breaks unpacking the same-named file.
         fs::create_dir_all(dst.path().join("blocker")).unwrap();
 
         let paths = Paths::with_root(dst.path());
         let outcome = restore_backup(&paths, &archive, None, ru()).unwrap();
         match outcome {
             RestoreOutcome::RolledBack { pre_restore, .. } => assert!(pre_restore.exists()),
-            _ => panic!("ожидался RolledBack при сбое распаковки"),
+            _ => panic!("expected RolledBack on an unpack failure"),
         }
-        // Откат вернул исходные данные из pre-restore копии.
+        // The rollback restored the original data from the pre-restore copy.
         assert_eq!(
             fs::read(dst.path().join("settings.json")).unwrap(),
             b"{\"from\":\"original\"}"
@@ -766,7 +773,7 @@ mod tests {
 
     #[test]
     fn corrupt_archive_error_is_localized() {
-        // Регрессия против забытого `loc`: контекст ошибки на языке локали.
+        // Regression against a forgotten `loc`: the error context is in the locale's language.
         let dir = tempfile::tempdir().unwrap();
         let bad = dir.path().join("bad.zip");
         fs::write(&bad, b"this is not a zip file").unwrap();
@@ -785,7 +792,7 @@ mod tests {
         seed_data(dir.path());
         let paths = Paths::with_root(dir.path());
         let out = create_backup(&paths, None, 0, None, ru()).unwrap();
-        // Архив валиден и открывается.
+        // The archive is valid and opens.
         validate_archive(&out, ru()).unwrap();
     }
 
@@ -797,13 +804,15 @@ mod tests {
         let out = create_backup(&paths, None, 9, None, ru()).unwrap();
 
         assert!(archive_names(&out).contains(&MANIFEST_NAME.to_string()));
-        let m = read_manifest(&out).unwrap().expect("манифест должен быть");
+        let m = read_manifest(&out)
+            .unwrap()
+            .expect("a manifest should be present");
         assert_eq!(m.app_version, env!("CARGO_PKG_VERSION"));
         assert_eq!(m.schemas.settings, SETTINGS_SCHEMA);
         assert_eq!(m.schemas.db, DB_SCHEMA);
         assert!(
             !m.is_newer_than_current(),
-            "текущие схемы не новее самих себя"
+            "current schemas are not newer than themselves"
         );
     }
 
@@ -824,7 +833,7 @@ mod tests {
 
     #[test]
     fn read_manifest_none_for_archive_without_it() {
-        // Собираем архив вручную без манифеста (эмуляция старого бэкапа).
+        // Assemble the archive by hand with no manifest (emulating an old backup).
         let dir = tempfile::tempdir().unwrap();
         let archive = dir.path().join("old.zip");
         {
@@ -847,7 +856,7 @@ mod tests {
         let paths = Paths::with_root(dst.path());
         let outcome = restore_backup(&paths, &out, None, ru()).unwrap();
         assert!(matches!(outcome, RestoreOutcome::Restored { .. }));
-        // Данные восстановлены, а служебный манифест в корень не попал.
+        // Data was restored, but the internal manifest didn't land in the root.
         assert!(dst.path().join("settings.json").exists());
         assert!(!dst.path().join(MANIFEST_NAME).exists());
     }

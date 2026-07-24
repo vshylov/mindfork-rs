@@ -1,31 +1,32 @@
-//! Типы метаданных каталога инструментов для UI настроек (`screens/settings.rs`):
-//! смысловая группа [`ToolGroup`], глобальный гейт [`ToolGate`] и снимок [`ToolInfo`].
-//! Живут в `features/tools` (FSD: `screens` берёт их отсюда, а не хардкодит).
+//! Metadata types for the tool catalog for the settings UI (`screens/settings.rs`):
+//! the semantic group [`ToolGroup`], the global gate [`ToolGate`], and the
+//! [`ToolInfo`] snapshot. Live in `features/tools` (FSD: `screens` takes them from
+//! here rather than hardcoding).
 //!
-//! Сами значения (группа/лейбл/гейт/дефолт) объявляет каждый инструмент в трейте
-//! [`super::Tool`] — единый источник истины; каталог [`super::tool_catalog`] снимает
-//! их с реестра, а не из match-таблиц.
+//! Each tool declares the actual values (group/label/gate/default) in the
+//! [`super::Tool`] trait — the single source of truth; the [`super::tool_catalog`]
+//! catalog reads them off the registry, not from match tables.
 
 use crate::entities::profile::ToolId;
 
-/// Глобальный выключатель, гейтящий инструмент (зеркало [`super::effective_tool_ids`]).
-/// Инструмент недоступен модели, пока соответствующий выключатель выключен, даже
-/// если он включён в профиле. Человекочитаемое имя выключателя даёт UI-слой
+/// Global switch gating a tool (mirrors [`super::effective_tool_ids`]). A tool is
+/// unavailable to the model while the corresponding switch is off, even if it's
+/// enabled in the profile. The UI layer supplies the switch's human-readable name
 /// (`screens/settings.rs::gate_hint`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ToolGate {
     Web,
     Python,
     Fs,
-    /// Мастер-выключатель MCP-хоста (`config.mcp.enabled`). Гейтит все
-    /// инструменты MCP-серверов (id с префиксом `mcp__`). В
-    /// [`super::effective_tool_ids`] проверяется по префиксу id (инструменты
-    /// динамические — в статическом `CATALOG` их нет).
+    /// MCP-host master switch (`config.mcp.enabled`). Gates all MCP-server tools
+    /// (id with the `mcp__` prefix). Checked by id prefix in
+    /// [`super::effective_tool_ids`] (the tools are dynamic — absent from the
+    /// static `CATALOG`).
     Mcp,
 }
 
-/// Смысловая группа инструмента (заголовок группы в тумблерах профиля). Порядок
-/// вариантов = порядок показа групп (используется `Ord` для стабильной раскладки).
+/// Semantic group of a tool (the group heading in profile toggles). Variant order
+/// = the order groups are shown (uses `Ord` for stable layout).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum ToolGroup {
     Introspection,
@@ -36,12 +37,12 @@ pub enum ToolGroup {
     Subagent,
     Conversation,
     SelfModel,
-    /// Инструменты MCP-серверов (плагины, docs/research/plugin-system.md §4).
+    /// MCP-server tools (plugins, docs/research/plugin-system.md §4).
     Plugins,
 }
 
 impl ToolGroup {
-    /// Все группы в порядке показа.
+    /// All groups in display order.
     pub const ALL: [ToolGroup; 9] = [
         ToolGroup::Introspection,
         ToolGroup::Memory,
@@ -54,8 +55,8 @@ impl ToolGroup {
         ToolGroup::Plugins,
     ];
 
-    /// Ключ бандла UI-заголовка группы (ось B, резолвится в слое настроек).
-    /// [`Self::title`] остаётся русским `&'static` fallback-ом.
+    /// Bundle key for the group's UI header (axis B, resolved in the settings
+    /// layer). [`Self::title`] remains the Russian `&'static` fallback.
     pub fn i18n_key(&self) -> &'static str {
         match self {
             ToolGroup::Introspection => "ui.tool.group.introspection",
@@ -70,43 +71,44 @@ impl ToolGroup {
         }
     }
 
-    /// Человекочитаемый заголовок группы.
+    /// Human-readable group header.
     pub fn title(&self) -> &'static str {
         match self {
-            ToolGroup::Introspection => "Интроспекция",
-            ToolGroup::Memory => "Память и знания",
-            ToolGroup::ExternalWorld => "Внешний мир",
-            ToolGroup::Files => "Файлы",
-            ToolGroup::Utils => "Утилиты",
-            ToolGroup::Subagent => "Субагент",
-            ToolGroup::Conversation => "Управление беседой",
-            ToolGroup::SelfModel => "Модель себя",
-            ToolGroup::Plugins => "Плагины (MCP)",
+            ToolGroup::Introspection => "Introspection",
+            ToolGroup::Memory => "Memory and knowledge",
+            ToolGroup::ExternalWorld => "External world",
+            ToolGroup::Files => "Files",
+            ToolGroup::Utils => "Utilities",
+            ToolGroup::Subagent => "Subagent",
+            ToolGroup::Conversation => "Conversation control",
+            ToolGroup::SelfModel => "Self-model",
+            ToolGroup::Plugins => "Plugins (MCP)",
         }
     }
 }
 
-/// Заголовки всех групп в порядке показа (для проверки принадлежности в UI/тестах).
+/// Headers of all groups in display order (for membership checks in UI/tests).
 #[allow(dead_code)]
 pub fn group_titles() -> [&'static str; 9] {
     ToolGroup::ALL.map(|g| g.title())
 }
 
-/// Снимок метаданных одного инструмента (без живого `Arc<dyn Tool>`) — для
-/// FSD-чистого потребления UI-слоем. Строится [`super::tool_catalog`] из реестра.
+/// Metadata snapshot of a single tool (without a live `Arc<dyn Tool>`) — for
+/// FSD-clean consumption by the UI layer. Built by [`super::tool_catalog`] from
+/// the registry.
 #[derive(Debug, Clone)]
 pub struct ToolInfo {
     pub id: ToolId,
     pub group: ToolGroup,
-    /// Короткое (2–4 слова) описание для тумблеров профиля.
+    /// Short (2-4 word) description for the profile toggle.
     pub label: &'static str,
     pub gate: Option<ToolGate>,
     pub enabled_by_default: bool,
-    /// Полное описание инструмента для нижней панели настроек. Заполняется только
-    /// у динамических MCP-инструментов (текст сервера — показ полного описания в
-    /// UI обязателен как антидот tool-poisoning, docs/research/plugin-system.md
-    /// §4.5); у встроенных — `None` (их описания LLM-ориентированы и живут в
-    /// бандлах локалей).
+    /// Full tool description for the settings bottom panel. Only filled in for
+    /// dynamic MCP tools (server-supplied text — showing the full description in
+    /// the UI is mandatory as a tool-poisoning antidote,
+    /// docs/research/plugin-system.md §4.5); for built-in ones — `None` (their
+    /// descriptions are LLM-oriented and live in the locale bundles).
     pub description: Option<String>,
 }
 
@@ -119,10 +121,10 @@ mod tests {
     fn every_tool_has_group_and_label() {
         let titles = group_titles();
         for info in tool_catalog() {
-            assert!(!info.label.is_empty(), "нет описания для {}", info.id);
+            assert!(!info.label.is_empty(), "no description for {}", info.id);
             assert!(
                 titles.contains(&info.group.title()),
-                "чужая группа у {}",
+                "foreign group for {}",
                 info.id
             );
         }
@@ -130,20 +132,24 @@ mod tests {
 
     #[test]
     fn ui_label_and_group_keys_exist_in_all_bundles() {
-        // Динамические ключи `ui.tool.label.{id}` / `ui.tool.group.*` собираются
-        // `format!`/`i18n_key()` в слое настроек и НЕ ловятся общим сканером кода
-        // (`all_ui_keys_referenced_in_code_exist_in_bundle`). Прямой гейт полноты:
-        // у каждого инструмента каталога есть label-ключ в обоих вшитых языках, у
-        // каждой группы — её `i18n_key`.
+        // Dynamic keys `ui.tool.label.{id}` / `ui.tool.group.*` are assembled via
+        // `format!`/`i18n_key()` in the settings layer and are NOT caught by the
+        // generic code scanner (`all_ui_keys_referenced_in_code_exist_in_bundle`).
+        // A direct completeness gate: every catalog tool has a label key in both
+        // built-in languages, every group has its `i18n_key`.
         use crate::shared::i18n::{Lang, locale};
         for &lang in Lang::ALL {
             let loc = locale(lang);
             for info in tool_catalog() {
                 let k = format!("ui.tool.label.{}", info.id);
-                assert!(loc.has_key(&k), "{lang:?}: нет ключа {k}");
+                assert!(loc.has_key(&k), "{lang:?}: missing key {k}");
             }
             for g in ToolGroup::ALL {
-                assert!(loc.has_key(g.i18n_key()), "{lang:?}: нет {}", g.i18n_key());
+                assert!(
+                    loc.has_key(g.i18n_key()),
+                    "{lang:?}: missing {}",
+                    g.i18n_key()
+                );
             }
         }
     }

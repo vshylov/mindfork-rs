@@ -1,5 +1,5 @@
-//! Генерация ответа ассистента: команды отправки/перегенерации/удаления обмена,
-//! запуск хода и фоновая задача клиентского agentic-loop (spec §6.3).
+//! Assistant reply generation: send/regenerate/delete-exchange commands,
+//! starting a turn, and the background task for the client-side agentic loop (spec §6.3).
 
 use std::sync::Arc;
 
@@ -25,18 +25,18 @@ use crate::shared::tokens::estimate_prompt;
 use super::Orchestrator;
 use super::request::{build_request, last_user_message_at};
 
-/// Результат завершившейся задачи генерации (внутренний канал).
+/// Result of a completed generation task (internal channel).
 pub(super) struct GenResult {
     pub(super) id: Uuid,
     pub(super) chat_id: Uuid,
-    /// Новые доменные сообщения (assistant с tool_calls, tool-результаты, финал) —
-    /// в порядке появления; оркестратор дописывает их в `Chat`.
+    /// New domain messages (assistant with tool_calls, tool results, the final one) —
+    /// in order of appearance; the orchestrator appends them to `Chat`.
     pub(super) messages: Vec<Message>,
-    /// Эффекты инструментов (применяются оркестратором — владельцем `Chat`).
+    /// Tool effects (applied by the orchestrator — the owner of `Chat`).
     pub(super) effects: Vec<ChatEffect>,
-    /// Сообщения, отброшенные инструментом «переписать» (`rewrite_current_message`):
-    /// прежняя (неверная) версия + её tool-сообщение. Сохраняются в `Chat.deleted`
-    /// ради ручного восстановления; в инференсе/ленте не участвуют. См. spec §9.3.
+    /// Messages discarded by the "rewrite" tool (`rewrite_current_message`):
+    /// the previous (incorrect) version + its tool message. Kept in `Chat.deleted`
+    /// for manual recovery; not part of inference/the feed. See spec §9.3.
     pub(super) deleted: Vec<Message>,
 }
 
@@ -50,20 +50,20 @@ impl Orchestrator {
             return;
         }
         let Some(active_id) = self.active_id else {
-            let _ = self
-                .evt_tx
-                .send(AppEvent::Error("Нет активного чата".into()));
+            let _ = self.evt_tx.send(AppEvent::Error(
+                self.ui_locale().t("ui.err.no_active_chat").into(),
+            ));
             return;
         };
         let Some(backend) = self.ready_backend() else {
-            // Сервер не готов: поле ввода уже очищено экраном — возвращаем текст,
-            // чтобы пользователь не потерял сообщение (ошибка показана отдельно).
+            // Server not ready: the UI already cleared the input box — return the
+            // text so the user doesn't lose the message (the error is shown separately).
             let _ = self.evt_tx.send(AppEvent::RestoreInput(text));
             return;
         };
 
-        // Добавляем сообщение пользователя в историю и эхо в ленту. Поле ввода UI
-        // очистил при отправке — чистим и сохранённый черновик чата.
+        // Add the user's message to the history and echo it in the feed. The UI
+        // cleared the input box on send — also clear the chat's saved draft.
         {
             let Some(chat) = self.chat_mut(active_id) else {
                 return;
@@ -77,21 +77,22 @@ impl Orchestrator {
         self.start_generation(active_id, backend);
     }
 
-    /// Перегенерирует последний ответ ассистента (spec §11.7): удаляет всё после
-    /// последнего сообщения пользователя (старый ответ + tool-сообщения) и
-    /// запускает генерацию заново из того же запроса. Лента перестраивается через
-    /// переэмит `ChatActivated`. Во время генерации — игнорируется.
+    /// Regenerates the last assistant reply (spec §11.7): deletes everything after
+    /// the last user message (the old reply + tool messages) and starts generation
+    /// again from the same request. The feed is rebuilt via a re-emit of
+    /// `ChatActivated`. Ignored during generation.
     pub(super) fn handle_regenerate(&mut self) {
         if !self.gen_state.is_idle() {
             return;
         }
-        // Безусловно (не настройка): озвучиваемый ответ сейчас исчезнет.
+        // Unconditional (not a setting): the reply being spoken is about to vanish.
         self.stop_tts();
         let Some(active_id) = self.active_id else {
             return;
         };
-        // Готовность сервера проверяем ДО усечения истории: иначе на не-готовом
-        // сервере (загрузка модели) старый ответ был бы снесён, а новый не пришёл бы.
+        // Check server readiness BEFORE truncating the history: otherwise, on a
+        // not-yet-ready server (model loading), the old reply would be wiped out
+        // and the new one wouldn't arrive.
         let Some(backend) = self.ready_backend() else {
             return;
         };
@@ -104,30 +105,30 @@ impl Orchestrator {
                 .iter()
                 .rposition(|m| m.role == MessageRole::User)
             else {
-                return; // нет запроса пользователя — нечего перегенерировать
+                return; // no user message — nothing to regenerate
             };
-            // Сохраняем удалённое (ответ ассистента + tool-сообщения раунда) и
-            // черновик ввода ради ручного восстановления (spec §11.7).
+            // Save what's deleted (the assistant's reply + the round's tool messages)
+            // and the input draft, for manual recovery (spec §11.7).
             let draft = chat.draft.clone();
             let removed = chat.messages.split_off(idx + 1);
             chat.record_deleted(removed, draft, DeletedCause::Regenerate);
             chat.modified_at = chrono::Utc::now();
         }
         self.mark_dirty(active_id);
-        self.activate(active_id); // перестроить ленту без старого ответа
+        self.activate(active_id); // rebuild the feed without the old reply
         self.emit_chat_list();
         self.start_generation(active_id, backend);
     }
 
-    /// Удаляет последний обмен: ответ ассистента вместе с вызвавшим его сообщением
-    /// пользователя (spec §11.7). Текст пользователя возвращается в поле ввода
-    /// (`RestoreInput`), чтобы его можно было отредактировать и отправить заново.
-    /// Во время генерации — игнорируется.
+    /// Deletes the last exchange: the assistant's reply together with the user
+    /// message that triggered it (spec §11.7). The user's text is returned to the
+    /// input box (`RestoreInput`) so it can be edited and resent.
+    /// Ignored during generation.
     pub(super) fn handle_delete_last(&mut self) {
         if !self.gen_state.is_idle() {
             return;
         }
-        // Безусловно (не настройка): озвучиваемый обмен сейчас исчезнет.
+        // Unconditional (not a setting): the exchange being spoken is about to vanish.
         self.stop_tts();
         let Some(active_id) = self.active_id else {
             return;
@@ -142,31 +143,31 @@ impl Orchestrator {
                 .iter()
                 .rposition(|m| m.role == MessageRole::User)
             else {
-                return; // нет сообщения пользователя — удалять нечего
+                return; // no user message — nothing to delete
             };
             user_text = chat.messages[idx].text.clone();
-            // Сохраняем удалённое (сообщение пользователя + ответ ассистента) и
-            // черновик ввода ДО возврата текста пользователя в поле — ради ручного
-            // восстановления (spec §11.7).
+            // Save what's deleted (the user message + the assistant's reply) and the
+            // input draft BEFORE returning the user's text to the field — for manual
+            // recovery (spec §11.7).
             let draft = chat.draft.clone();
             let removed = chat.messages.split_off(idx);
             chat.record_deleted(removed, draft, DeletedCause::DeleteExchange);
             chat.modified_at = chrono::Utc::now();
         }
         self.mark_dirty(active_id);
-        self.activate(active_id); // перестроить ленту без удалённого обмена
+        self.activate(active_id); // rebuild the feed without the deleted exchange
         self.emit_chat_list();
         let _ = self.evt_tx.send(AppEvent::RestoreInput(user_text));
     }
 
-    /// Возвращает движок, если chat-сервер готов; иначе эмитит понятную ошибку в
-    /// ленту чата (`AppEvent::Error`) и возвращает `None`. Гейтит и отправку, и
-    /// перегенерацию — чтобы запрос не уходил на ещё загружающийся сервер (иначе
-    /// 503 → «engine returned an error status»). Для операций списка чатов
-    /// (авто-название) ошибка должна идти в оверлей — там используется
-    /// [`EngineManager::backend_if_ready`](super::engines::EngineManager) напрямую.
+    /// Returns the engine if the chat server is ready; otherwise emits a clear
+    /// error into the chat feed (`AppEvent::Error`) and returns `None`. Gates both
+    /// send and regenerate — so the request doesn't go to a still-loading server
+    /// (otherwise 503 → "engine returned an error status"). For chat-list
+    /// operations (auto-title) the error must go into the overlay — there
+    /// [`EngineManager::backend_if_ready`](super::engines::EngineManager) is used directly.
     pub(super) fn ready_backend(&self) -> Option<Arc<dyn EngineBackend>> {
-        match self.engines.backend_if_ready() {
+        match self.engines.backend_if_ready(self.ui_locale()) {
             Ok(backend) => Some(backend),
             Err(msg) => {
                 let _ = self.evt_tx.send(AppEvent::Error(msg));
@@ -175,16 +176,16 @@ impl Orchestrator {
         }
     }
 
-    /// Запускает генерацию из текущего состояния чата (история уже подготовлена:
-    /// добавлено сообщение пользователя или усечён старый ответ). Общая часть для
-    /// отправки нового сообщения и перегенерации.
+    /// Starts generation from the chat's current state (the history is already
+    /// prepared: either the user's message was appended, or the old reply was
+    /// truncated). The shared part for sending a new message and regenerating.
     fn start_generation(&mut self, active_id: Uuid, backend: Arc<dyn EngineBackend>) {
-        // Озвучивание прерываем по настройке (по умолчанию — нет: слушать ответ,
-        // пока пишется следующий, законно). См. spec §11.9.
+        // Speech stops per the setting (off by default: listening to the reply
+        // while the next one is being written is legitimate). See spec §11.9.
         if self.config.tts.stop_on_generation_start {
             self.stop_tts();
         }
-        // Снимок на начало хода: семплинг, доступные инструменты, контекст.
+        // A snapshot at the start of the turn: sampling, available tools, context.
         let sampling = self.effective_sampling(active_id);
         let Some(chat_ref) = self.chats.iter().find(|c| c.id == active_id) else {
             return;
@@ -202,7 +203,7 @@ impl Orchestrator {
             .find(|p| p.id == profile_id)
             .map(|p| p.enabled_tools.clone())
             .unwrap_or_default();
-        // Эффективный набор = профиль ∩ глобальные выключатели (spec §9.4).
+        // The effective set = profile ∩ global switches (spec §9.4).
         let allowed = effective_tool_ids(
             &enabled,
             self.config.tools.web_enabled,
@@ -215,28 +216,30 @@ impl Orchestrator {
             .registry
             .schemas_for(&allowed, crate::shared::i18n::locale(profile_lang));
 
-        // «Модель себя» профиля на начало хода. Инъекция в системный промпт — только
-        // если профиль включил get_self_model (opt-in); сама инъекция (наблюдения по
-        // релевантности к последней реплике + свежесть) происходит в задаче генерации
-        // (нужен async-эмбеддинг). См. docs/history/narrative-as-notes.md (Ярус 2).
+        // The profile's "self-model" at the start of the turn. Injection into the
+        // system prompt happens only if the profile enabled get_self_model (opt-in);
+        // the injection itself (observations by relevance to the last message +
+        // recency) happens in the generation task (needs async embedding). See
+        // docs/history/narrative-as-notes.md (Tier 2).
         let self_model_params =
             crate::entities::self_model::SelfModelParams::from_settings(&self.config.self_model);
         let inject_enabled = enabled
             .iter()
             .any(|t| t == crate::features::tools::self_model::GET_SELF_MODEL_ID);
-        // Одноразовый идемпотентный перенос старого нарратива «модели себя» в
-        // self-заметки (@self). Best-effort. См. docs/history/narrative-as-notes.md, шаг 6.
+        // A one-time idempotent migration of the old "self-model" narrative into
+        // self-notes (@self). Best-effort. See docs/history/narrative-as-notes.md, step 6.
         if inject_enabled {
             crate::features::tools::notes::migrate_self_narrative(&self.storage, profile_id);
         }
         let self_model = self.storage.db().self_model_get(profile_id).ok().flatten();
 
-        // Токен отмены хода создаётся до контекста инструментов: его клон едет в
-        // `ToolContext.cancel` (долгие инструменты — MCP/сеть — прерываются по Esc).
+        // The turn's cancellation token is created before the tool context: its
+        // clone goes into `ToolContext.cancel` (long-running tools — MCP/network —
+        // are interrupted via Esc).
         let cancel = CancellationToken::new();
 
-        // Строим запрос/контекст + берём последнюю реплику пользователя (для
-        // релевантной инъекции наблюдений в задаче).
+        // Build the request/context + take the last user message (for relevance-
+        // based injection of observations in the task).
         let request;
         let ctx;
         let last_user;
@@ -252,8 +255,8 @@ impl Orchestrator {
                 .find(|m| m.role == MessageRole::User)
                 .map(|m| m.text.clone())
                 .unwrap_or_default();
-            // `turn` строится последним обращением к `chat`; после этого borrow
-            // `chat` завершается, и можно читать `self` (deps/config) для `new`.
+            // `turn` is built by the last access to `chat`; after this the `chat`
+            // borrow ends and `self` (deps/config) can be read for `new`.
             let turn = TurnInfo {
                 profile_id,
                 chat_id: active_id,
@@ -299,8 +302,8 @@ impl Orchestrator {
     }
 
     pub(super) fn handle_done(&mut self, res: GenResult) {
-        // Применяем только результат текущей генерации (защита от устаревших):
-        // finish() переходит в Idle лишь при совпадении id.
+        // Apply only the result of the current generation (protection against
+        // stale ones): finish() transitions to Idle only on a matching id.
         if !self.gen_state.finish(res.id) {
             return;
         }
@@ -308,23 +311,23 @@ impl Orchestrator {
         if res.messages.is_empty() && res.effects.is_empty() && res.deleted.is_empty() {
             return;
         }
-        // Правила ли модель «модель себя» своими инструментами в этом ходу? Если да —
-        // просигналим `SelfModelChanged` (открытый экран `F3` перезапросит снимок).
+        // Did the model edit the "self-model" via its own tools this turn? If so —
+        // signal `SelfModelChanged` (an open `F3` screen will re-fetch the snapshot).
         let self_model_touched = res.messages.iter().any(|m| {
             m.tool_calls
                 .iter()
                 .any(|tc| crate::features::tools::self_model::is_self_model_tool(&tc.name))
         });
         if let Some(chat) = self.chat_mut(res.chat_id) {
-            // Отброшенное инструментом «переписать» — в архив удалённого (ручное
-            // восстановление правкой JSON), как Ctrl+E/Ctrl+R. См. spec §9.3, §11.7.
+            // Discarded by the "rewrite" tool — into the deleted archive (manual
+            // recovery by editing JSON), like Ctrl+E/Ctrl+R. See spec §9.3, §11.7.
             if !res.deleted.is_empty() {
                 chat.record_deleted(res.deleted, String::new(), DeletedCause::Rewrite);
             }
             for msg in res.messages {
                 chat.push_message(msg);
             }
-            // Эффекты инструментов применяет оркестратор (владелец Chat, §4.4.2).
+            // Tool effects are applied by the orchestrator (the owner of Chat, §4.4.2).
             for effect in res.effects {
                 match effect {
                     ChatEffect::SetSystemMessage(s) => chat.system_message = s,
@@ -337,16 +340,17 @@ impl Orchestrator {
         if self_model_touched {
             let _ = self.evt_tx.send(AppEvent::SelfModelChanged);
         }
-        // После успешного ответа — возможно, пора фоновой авто-рефлексии (Tier 3),
-        // авто-консолидации заметок («сон», Ярус 3) и/или авто-консолидации «модели
-        // себя» («сон» модели себя, этап A1 — docs/history/self-model-consolidation.md).
+        // After a successful reply — maybe it's time for background auto-reflection
+        // (Tier 3), notes auto-consolidation ("sleep", Tier 3), and/or self-model
+        // auto-consolidation ("sleep" for the self-model, stage A1 —
+        // docs/history/self-model-consolidation.md).
         self.maybe_auto_reflect(res.chat_id);
         self.maybe_auto_consolidate(res.chat_id);
         self.maybe_auto_self_consolidate(res.chat_id);
     }
 }
 
-/// Параметры запуска задачи генерации (agentic-loop).
+/// Parameters for launching the generation task (the agentic loop).
 struct GenSpawn {
     backend: Arc<dyn EngineBackend>,
     registry: Arc<ToolRegistry>,
@@ -356,46 +360,50 @@ struct GenSpawn {
     id: Uuid,
     chat_id: Uuid,
     max_rounds: u32,
-    /// Эффективно разрешённые инструменты (защита от вызова отключённых).
+    /// Effectively allowed tools (protection against calling a disabled one).
     allowed: Vec<ToolId>,
-    /// «Модель себя» профиля (снимок на начало хода) + параметры/флаги инъекции.
-    /// Инъекция в системный промпт делается в задаче (нужен async-эмбеддинг для
-    /// релевантной выборки наблюдений). См. docs/history/narrative-as-notes.md (Ярус 2).
+    /// The profile's "self-model" (a snapshot at the start of the turn) + injection
+    /// parameters/flags. Injection into the system prompt is done in the task (needs
+    /// async embedding for relevance-based selection of observations). See
+    /// docs/history/narrative-as-notes.md (Tier 2).
     self_model: Option<crate::entities::self_model::SelfModel>,
     self_model_params: crate::entities::self_model::SelfModelParams,
     inject_enabled: bool,
     maintenance_protocol: bool,
-    /// Последняя реплика пользователя — запрос для инъекции наблюдений по релевантности.
+    /// The last user message — the query for relevance-based injection of observations.
     last_user: String,
-    /// Режим движка и имя модели — снимок в `Message.metadata` (spec §8.3).
+    /// Engine mode and model name — a snapshot for `Message.metadata` (spec §8.3).
     engine_mode: ServerMode,
     model_name: Option<String>,
-    /// Язык интерфейса (ось B) — для сообщений об ошибках, видимых человеку.
+    /// Interface language (axis B) — for error messages shown to a human.
     ui_loc: &'static crate::shared::i18n::Locale,
     evt_tx: UnboundedSender<AppEvent>,
     done_tx: UnboundedSender<GenResult>,
 }
 
-/// Накопитель одного раунда стрима.
+/// Accumulator for a single stream round.
 struct RoundOutput {
     text: String,
     thoughts: String,
-    /// Ссылка на рассуждение (Anthropic-подпись / OpenAI reasoning-элемент): нужна для
-    /// переотправки thinking-блока в assistant-ходе с вызовом инструмента того же хода.
-    /// `None` у бэкендов без extended thinking (llama.cpp) или когда «мыслей» не было.
+    /// A reference to the reasoning (Anthropic signature / OpenAI reasoning item):
+    /// needed to resend the thinking block on an assistant turn with a tool call in
+    /// the same turn. `None` for backends with no extended thinking (llama.cpp) or
+    /// when there were no "thoughts".
     thinking_ref: Option<ThinkingRef>,
     calls: Vec<ApiToolCall>,
     reason: FinishReason,
-    /// Сгенерировано токенов за раунд: точное значение из `usage` сервера, иначе
-    /// число потоковых дельт (приближение — у llama-server одна дельта ≈ один токен).
+    /// Tokens generated in the round: the exact value from the server's `usage`, else
+    /// the count of streamed deltas (an approximation — for llama-server one delta ≈
+    /// one token).
     tokens: u64,
-    /// Reasoning-токены («мысли») за раунд из `usage` (`0` — провайдер не разделяет).
+    /// Reasoning tokens ("thoughts") for the round from `usage` (`0` — the provider
+    /// doesn't separate them).
     reasoning_tokens: u32,
 }
 
-/// Запускает задачу клиентского agentic-loop (spec §6.3): стрим → при
-/// `finish_reason=ToolCalls` исполнение инструментов → новый запрос, до
-/// `max_rounds`. Эффекты и новые сообщения возвращаются оркестратору.
+/// Launches the client-side agentic-loop task (spec §6.3): stream → on
+/// `finish_reason=ToolCalls` execute tools → a new request, up to
+/// `max_rounds`. Effects and new messages are returned to the orchestrator.
 fn spawn_generation(spawn: GenSpawn) {
     let GenSpawn {
         backend,
@@ -420,9 +428,10 @@ fn spawn_generation(spawn: GenSpawn) {
     } = spawn;
 
     tokio::spawn(async move {
-        // Инъекция «модели себя» в системный промпт (в задаче — нужен async-эмбеддинг
-        // последней реплики для выборки наблюдений по релевантности; Ярус 2). При
-        // выключенной инъекции `inject_self_model` вернёт system как есть.
+        // Injecting the "self-model" into the system prompt (in the task — needs
+        // async embedding of the last message for relevance-based selection of
+        // observations; Tier 2). With injection disabled, `inject_self_model`
+        // returns system as is.
         {
             let recent = injection_recent(
                 &ctx.storage,
@@ -444,8 +453,8 @@ fn spawn_generation(spawn: GenSpawn) {
                 ctx.loc,
             );
         }
-        // Оценка токенов промпта (после инъекции модели себя) — точное число придёт из
-        // `usage` сервера и заменит оценку. См. spec §11.1.
+        // Prompt-token estimate (after self-model injection) — the exact count will
+        // come from the server's `usage` and replace the estimate. See spec §11.1.
         let _ = evt_tx.send(AppEvent::TokenUsage {
             generation_id: id,
             completion: 0,
@@ -456,16 +465,16 @@ fn spawn_generation(spawn: GenSpawn) {
 
         let mut messages: Vec<Message> = Vec::new();
         let mut effects: Vec<ChatEffect> = Vec::new();
-        // Отброшенное инструментом «переписать» (для архива удалённого).
+        // Discarded by the "rewrite" tool (for the deleted archive).
         let mut deleted: Vec<Message> = Vec::new();
         let mut round: u32 = 0;
-        // Накопительный счётчик токенов ответа по всем раундам agentic-loop —
-        // live-индикатор продолжает расти от раунда к раунду.
+        // Cumulative reply-token counter across all agentic-loop rounds — the
+        // live indicator keeps growing from round to round.
         let mut total_tokens: u64 = 0;
-        // Накопительные reasoning-токены («мысли») по раундам.
+        // Cumulative reasoning tokens ("thoughts") across rounds.
         let mut total_reasoning: u32 = 0;
-        // Следующее доменное сообщение ассистента начинает новый пузырь (после
-        // `send_followup_message`). См. spec §9.3.
+        // The next domain assistant message starts a new bubble (after
+        // `send_followup_message`). See spec §9.3.
         let mut pending_new_bubble = false;
         let reason;
 
@@ -486,22 +495,24 @@ fn spawn_generation(spawn: GenSpawn) {
             total_tokens += out.tokens;
             total_reasoning += out.reasoning_tokens;
 
-            // Раунд с вызовами инструментов — исполняем и продолжаем цикл.
+            // A round with tool calls — execute and continue the loop.
             if out.reason == FinishReason::ToolCalls && !out.calls.is_empty() {
                 if round >= max_rounds {
-                    // Лимит достигнут: НЕ исполняем новые вызовы, а просим модель
-                    // свести итог из уже собранного — финальный раунд БЕЗ инструментов.
-                    // Иначе (прежнее поведение) `out` содержал лишь намерение вызвать
-                    // ещё инструменты с пустым текстом → `finalize_message` возвращал
-                    // `None`, и пользователь не получал ответа вовсе, хотя данных за
-                    // предыдущие раунды набрано достаточно. Тулы убираем из запроса,
-                    // так что модель обязана ответить текстом (стрим идёт в ленту).
-                    let _ = evt_tx.send(AppEvent::Error(format!(
-                        "Достигнут лимит раундов инструментов ({max_rounds}) — свожу итог из собранного."
+                    // Limit reached: DON'T execute new calls, ask the model instead
+                    // to sum up what's already been gathered — a final round WITHOUT
+                    // tools. Otherwise (the previous behavior) `out` would only
+                    // contain an intent to call more tools with empty text →
+                    // `finalize_message` returned `None`, and the user got no reply
+                    // at all, even though enough data had accumulated over the
+                    // previous rounds. Tools are removed from the request, so the
+                    // model must answer with text (the stream goes into the feed).
+                    let _ = evt_tx.send(AppEvent::Error(ctx.loc.tf(
+                        "loop.round_limit_reached",
+                        &[("max_rounds", &max_rounds.to_string())],
                     )));
                     request.tools.clear();
-                    // Счётчик токенов финального раунда `stream_round` эмитит сам
-                    // (от `base = total_*`); дальше `break`, накапливать не нужно.
+                    // The final round's token counter is emitted by `stream_round` itself
+                    // (from `base = total_*`); after that we `break`, no need to accumulate.
                     let final_out = stream_round(
                         &backend,
                         request.clone(),
@@ -519,16 +530,18 @@ fn spawn_generation(spawn: GenSpawn) {
                         m.new_bubble = pending_new_bubble;
                         messages.push(m);
                     }
-                    // Причина завершения — из финального раунда (обычно Stop; при отмене
-                    // пользователем/ошибке потока — Cancelled/Error), а не искусственный Stop.
+                    // The finish reason comes from the final round (usually Stop; on
+                    // user cancellation/a stream error — Cancelled/Error), not an
+                    // artificial Stop.
                     reason = final_out.reason;
                     break;
                 }
                 round += 1;
 
-                // Управляющие инструменты беседы (spec §9.3) распознаём только если
-                // они реально включены в профиле — иначе обычный отказ ниже.
-                // `rewrite` отбрасывает текущий раунд; `followup` начинает новый пузырь.
+                // Conversation control tools (spec §9.3) are recognized only if
+                // they're actually enabled in the profile — otherwise a plain
+                // refusal below. `rewrite` discards the current round; `followup`
+                // starts a new bubble.
                 let rewrite = out
                     .calls
                     .iter()
@@ -538,12 +551,13 @@ fn spawn_generation(spawn: GenSpawn) {
                     .iter()
                     .any(|c| c.name == control::SEND_FOLLOWUP_ID && allowed_has(&c.name));
 
-                // assistant-ход с вызовами — в историю запроса (нужен и для инференса
-                // следующего раунда продолжения/переписывания). При extended thinking
-                // (Anthropic) прикрепляем thinking-блок с подписью: его обязан нести
-                // assistant-ход с tool_use в этом же ходе, иначе следующий запрос → 400.
-                // Подпись есть только если модель реально вернула «мысли»; прочие
-                // бэкенды поле игнорируют.
+                // The assistant turn with calls — into the request history (also
+                // needed for inference in the next continuation/rewrite round). With
+                // extended thinking (Anthropic) we attach a thinking block with a
+                // signature: an assistant turn with tool_use in the same turn is
+                // required to carry it, otherwise the next request → 400. The
+                // signature exists only if the model actually returned "thoughts";
+                // other backends ignore the field.
                 let thinking = out.thinking_ref.clone().map(|r| ThinkingBlock {
                     text: out.thoughts.clone(),
                     signature: r.signature,
@@ -556,30 +570,31 @@ fn spawn_generation(spawn: GenSpawn) {
                 let mut records: Vec<ToolCallRecord> = Vec::new();
                 let mut tool_msgs: Vec<Message> = Vec::new();
                 for call in &out.calls {
-                    // Безаргументный вызов даёт пустую строку аргументов — храним как
-                    // пустой ОБЪЕКТ, а не `Null`: иначе сериализация записи в историю
-                    // даёт `"null"`, а строгие провайдеры (Anthropic) ждут объект в
-                    // `input` (см. shared/api/anthropic/wire.rs). Объект и для invoke
-                    // безопаснее (десериализация в struct из `null` падает).
+                    // A no-argument call gives an empty argument string — we store it
+                    // as an empty OBJECT, not `Null`: otherwise serializing the history
+                    // entry gives `"null"`, and strict providers (Anthropic) expect an
+                    // object in `input` (see shared/api/anthropic/wire.rs). An object is
+                    // also safer for invoke (deserializing a struct from `null` panics).
                     let args: serde_json::Value = serde_json::from_str(&call.arguments)
                         .unwrap_or_else(|_| serde_json::json!({}));
                     let is_control = control::is_control_tool(&call.name);
                     let result = if !allowed_has(&call.name) {
-                        // Защита: инструмент выключен глобально/в профиле.
+                        // Protection: the tool is disabled globally/in the profile.
                         ctx.loc.tf("loop.tool_disabled", &[("name", &call.name)])
                     } else if is_control {
-                        // Управляющий инструмент: результат — «разрешение» (его
-                        // увидит модель в следующем раунде). Исполняется петлёй, не
-                        // через registry.
+                        // A control tool: the result is "permission" (the model will
+                        // see it in the next round). Executed by the loop, not
+                        // through the registry.
                         control::control_permission_text(&call.name, ctx.loc)
                     } else if rewrite {
-                        // Этот раунд отбрасывается — побочные инструменты не исполняем.
+                        // This round is being discarded — side-effect tools aren't executed.
                         ctx.loc.t("loop.rewrite_skipped").to_string()
                     } else {
-                        // Исполнение под `select!` с токеном отмены: Esc не ждёт
-                        // завершения долгого инструмента (MCP/сеть). Инструменты,
-                        // читающие `ctx.cancel`, завершаются сами (MCP шлёт серверу
-                        // notifications/cancelled); прочим — эта страховка.
+                        // Execution under a `select!` with the cancellation token: Esc
+                        // doesn't wait for a long-running tool (MCP/network) to finish.
+                        // Tools that read `ctx.cancel` terminate themselves (MCP sends
+                        // the server notifications/cancelled); this is a safety net
+                        // for the rest.
                         let invoked = tokio::select! {
                             _ = cancel.cancelled() => None,
                             res = registry.invoke(&call.name, &ctx, args.clone()) => Some(res),
@@ -596,8 +611,8 @@ fn spawn_generation(spawn: GenSpawn) {
                             ),
                         }
                     };
-                    // UI tool-блок — только для обычных исполненных вызовов
-                    // (служебные followup/rewrite и пропущенные при переписывании — нет).
+                    // A UI tool block — only for regular executed calls (the internal
+                    // followup/rewrite ones, and ones skipped during a rewrite, don't get one).
                     if !is_control && !rewrite {
                         let _ = evt_tx.send(AppEvent::ToolCall {
                             generation_id: id,
@@ -612,13 +627,13 @@ fn spawn_generation(spawn: GenSpawn) {
                         name: call.name.clone(),
                         arguments: args,
                         result: Some(result.clone()),
-                        // Подпись мысли (Gemini 3) персистим — нужна на реплее истории.
+                        // The thought signature (Gemini 3) is persisted — needed on history replay.
                         thought_signature: call.thought_signature.clone(),
                     });
                     tool_msgs.push(tool_message(call, result));
                 }
 
-                // Доменное assistant-сообщение раунда (текст + мысли + tool-блоки).
+                // The round's domain assistant message (text + thoughts + tool blocks).
                 let mut am = Message::assistant(out.text.clone());
                 if !out.thoughts.is_empty() {
                     am.thoughts = Some(out.thoughts.clone());
@@ -626,25 +641,25 @@ fn spawn_generation(spawn: GenSpawn) {
                 am.tool_calls = records;
 
                 if rewrite {
-                    // Отбрасываем раунд: assistant + tool-сообщения → архив удалённого.
-                    // Live-лента очищает текущий пузырь под переписанный ответ.
-                    // `pending_new_bubble` намеренно не трогаем (его поглотит финал).
+                    // Discard the round: assistant + tool messages → the deleted archive.
+                    // The live feed clears the current bubble for the rewritten reply.
+                    // `pending_new_bubble` is deliberately left alone (the final round absorbs it).
                     deleted.push(am);
                     deleted.extend(tool_msgs);
                     let _ = evt_tx.send(AppEvent::AssistantRewrite { generation_id: id });
                 } else {
-                    // assistant ПЕРЕД tool-сообщениями этого раунда.
+                    // assistant BEFORE this round's tool messages.
                     am.new_bubble = std::mem::take(&mut pending_new_bubble);
                     messages.push(am);
                     messages.extend(tool_msgs);
                     if followup {
-                        // Следующее сообщение ассистента — отдельным пузырём.
+                        // The next assistant message — as a separate bubble.
                         pending_new_bubble = true;
                         let _ = evt_tx.send(AppEvent::AssistantContinue { generation_id: id });
                     }
                 }
-                // Ход отменён во время исполнения инструментов — накопленное уже
-                // сохранено выше, следующий раунд не запускаем.
+                // The turn was cancelled while tools were executing — what's
+                // accumulated is already saved above, don't start the next round.
                 if cancel.is_cancelled() {
                     reason = FinishReason::Cancelled;
                     break;
@@ -652,7 +667,7 @@ fn spawn_generation(spawn: GenSpawn) {
                 continue;
             }
 
-            // Финальный раунд (Stop/Length/Cancelled/Error или без вызовов).
+            // The final round (Stop/Length/Cancelled/Error, or no calls).
             if let Some(mut m) = finalize_message(&out, &ctx, engine_mode, &model_name) {
                 m.new_bubble = pending_new_bubble;
                 messages.push(m);
@@ -675,10 +690,10 @@ fn spawn_generation(spawn: GenSpawn) {
     });
 }
 
-/// Стримит один запрос, ретранслируя `Text`/`Thoughts` в UI, накапливая
-/// tool-вызовы и счётчик токенов. `base_tokens`/`base_reasoning` — токены/reasoning-
-/// токены, набранные предыдущими раундами; счётчик в UI растёт накопительно.
-/// Возвращает накопленный раунд.
+/// Streams a single request, relaying `Text`/`Thoughts` to the UI, accumulating
+/// tool calls and the token counter. `base_tokens`/`base_reasoning` — tokens/
+/// reasoning tokens accumulated by previous rounds; the UI counter grows
+/// cumulatively. Returns the accumulated round.
 #[allow(clippy::too_many_arguments)]
 async fn stream_round(
     backend: &Arc<dyn EngineBackend>,
@@ -696,15 +711,15 @@ async fn stream_round(
     let mut thoughts_id: Option<String> = None;
     let mut acc = ToolCallAccumulator::default();
     let mut reason = FinishReason::Stop;
-    // Live-счёт: число дельт ответа (≈ токенов). Точное значение из `usage`
-    // сервера, если придёт, заменяет приближение.
+    // Live count: the number of reply deltas (≈ tokens). If it arrives, the exact
+    // value from the server's `usage` replaces the approximation.
     let mut streamed: u64 = 0;
     let mut usage_tokens: Option<u64> = None;
-    // Reasoning-токены раунда (из `usage`; `0` — провайдер не разделяет).
+    // The round's reasoning tokens (from `usage`; `0` — the provider doesn't separate them).
     let mut round_reasoning: u32 = 0;
 
-    // Счётчик ответа: `context: None` оставляет прежнюю оценку переписки нетронутой
-    // (её эмитит start_generation); точный `context` приходит лишь из usage сервера.
+    // The reply counter: `context: None` leaves the prior conversation estimate
+    // untouched (emitted by start_generation); the exact `context` only comes from the server's usage.
     let emit_completion = |completion: u64| {
         let _ = evt_tx.send(AppEvent::TokenUsage {
             generation_id: id,
@@ -737,9 +752,10 @@ async fn stream_round(
                         });
                         emit_completion(base_tokens + streamed);
                     }
-                    // Ссылка на рассуждение (Anthropic-подпись / OpenAI reasoning-элемент)
-                    // — не в UI, копим для переотправки при tool-use. `id` несёт только
-                    // OpenAI Responses (reasoning `rs_…`); подпись/encrypted — оба.
+                    // A reference to the reasoning (Anthropic signature / OpenAI
+                    // reasoning item) — not shown in the UI, accumulated for resending
+                    // on tool use. `id` is carried only by OpenAI Responses (reasoning
+                    // `rs_…`); the signature/encrypted content — by both.
                     ChatChunk::ThoughtsSignature(r) => {
                         thoughts_signature
                             .get_or_insert_with(String::new)
@@ -750,9 +766,10 @@ async fn stream_round(
                     }
                     ChatChunk::ToolCall(delta) => acc.push(delta),
                     ChatChunk::Usage(u) => {
-                        // Точный счёт от сервера: и ответ, и переписку (prompt) —
-                        // заменяет приближение по дельтам и оценку переписки. Reasoning-
-                        // токены («мысли») — накопительно по раундам (base + текущий).
+                        // The exact count from the server: both the reply and the
+                        // conversation (prompt) — replaces the delta-based approximation
+                        // and the conversation estimate. Reasoning tokens ("thoughts") —
+                        // cumulative across rounds (base + current).
                         usage_tokens = Some(u.completion_tokens as u64);
                         round_reasoning = u.reasoning_tokens;
                         let _ = evt_tx.send(AppEvent::TokenUsage {
@@ -795,9 +812,10 @@ async fn stream_round(
     }
 }
 
-/// Клиентская оценка числа токенов промпта (всей переписки) для live-индикатора
-/// до прихода точного `usage.prompt_tokens` от сервера. Учитывает системное
-/// сообщение, тексты реплик и аргументы вызовов инструментов в истории.
+/// Client-side estimate of the prompt's token count (the whole conversation) for
+/// the live indicator before the server's exact `usage.prompt_tokens` arrives.
+/// Accounts for the system message, message texts, and tool-call arguments in
+/// the history.
 fn estimate_prompt_tokens(req: &ChatRequest) -> u64 {
     let mut parts: Vec<&str> = Vec::with_capacity(req.messages.len());
     for m in &req.messages {
@@ -809,10 +827,11 @@ fn estimate_prompt_tokens(req: &ChatRequest) -> u64 {
     estimate_prompt(req.system.as_deref(), parts)
 }
 
-/// Смешивает релевантные и свежие self-заметки для инъекции по релевантности
-/// (Ярус 2): сперва релевантные (по убыванию близости, до `n`), затем **гарантируем
-/// самое свежее наблюдение** (непрерывность «что я только что заметил») — потеснив
-/// последнюю релевантную, если места нет. Дедуп по id. Чистая функция — тестируема.
+/// Blends relevant and recent self-notes for relevance-based injection
+/// (Tier 2): first the relevant ones (in decreasing order of closeness, up to
+/// `n`), then **the freshest observation is guaranteed** (continuity of "what I
+/// just noticed") — bumping the last relevant one out if there's no room.
+/// Dedup by id. A pure function — testable.
 pub(super) fn blend_self_notes(
     relevant: Vec<crate::entities::note::Note>,
     fresh: &[crate::entities::note::Note],
@@ -839,11 +858,11 @@ pub(super) fn blend_self_notes(
     out
 }
 
-/// Собирает наблюдения (self-заметки) для инъекции в системный промпт (Ярус 2):
-/// **релевантные** последней реплике + гарантия свежайшего наблюдения, с откатом на
-/// чистую свежесть при недоступном эмбеддере/пустом запросе. Пусто, если инъекция
-/// выключена. Async (эмбеддинг запроса) — потому и вынесено из sync-обработчика в
-/// задачу генерации. Тестируется поверх temp-хранилища + `MockEmbedder`.
+/// Gathers observations (self-notes) for injection into the system prompt (Tier 2):
+/// **relevant** to the latest reply + a guaranteed freshest observation, with a fallback to
+/// plain recency when the embedder is unavailable/the query is empty. Empty if injection is
+/// disabled. Async (embedding the query) — that's why it's factored out of the sync handler into
+/// the generation task. Tested over a temp store + `MockEmbedder`.
 pub(super) async fn injection_recent(
     storage: &crate::shared::storage::Storage,
     embedder: &dyn crate::shared::api::Embedder,
@@ -858,7 +877,7 @@ pub(super) async fn injection_recent(
     use crate::features::tools::notes;
     let n = params.narrative_in_prompt;
     let fresh = notes::self_notes_recent(storage, profile_id, params.max_narrative);
-    // Релевантные последней реплике наблюдения; пусто → откат на свежесть.
+    // Observations relevant to the latest reply; empty → fall back to recency.
     let relevant = notes::self_notes_relevant(storage, embedder, profile_id, last_user, n).await;
     let picked = if relevant.is_empty() {
         fresh
@@ -875,13 +894,13 @@ pub(super) async fn injection_recent(
         .collect()
 }
 
-/// Подмешивает «модель себя» в системный промпт хода (SelfModel MVP, см.
-/// docs/history/self-model-mvp.md): компактный рендер текущей модели (если непуста) плюс,
-/// при `maintenance_protocol`, нейтральный к персоне протокол ведения. Возвращает
-/// прежний `system` без изменений, если инъекция выключена (профиль не включил
-/// `get_self_model`) либо подмешивать нечего (пустая модель и протокол выключен).
-/// Протокол подмешивается даже при пустой модели — чтобы модель начала её вести.
-/// Чистая функция — тестируема без движка.
+/// Mixes the "self-model" into the turn's system prompt (SelfModel MVP, see
+/// docs/history/self-model-mvp.md): a compact render of the current model (if non-empty) plus,
+/// when `maintenance_protocol` is on, a persona-neutral maintenance protocol. Returns
+/// the previous `system` unchanged if injection is disabled (the profile hasn't enabled
+/// `get_self_model`) or there's nothing to mix in (an empty model and the protocol is off).
+/// The protocol is mixed in even for an empty model — to get the model to start maintaining it.
+/// A pure function — testable with no engine.
 #[allow(clippy::too_many_arguments)]
 pub(super) fn inject_self_model(
     system: Option<String>,
@@ -896,9 +915,9 @@ pub(super) fn inject_self_model(
     if !enabled {
         return system;
     }
-    // Наблюдения (self-заметки) могут существовать без блоба модели — тогда рендерим
-    // пустую модель с наблюдениями. `render_for_prompt` вернёт None, если пусто и
-    // структурно, и по наблюдениям.
+    // Observations (self-notes) can exist without the model blob — then we render
+    // an empty model with observations. `render_for_prompt` returns None only if it's empty
+    // both structurally and in observations.
     let empty;
     let m = match model {
         Some(m) => m,
@@ -914,26 +933,26 @@ pub(super) fn inject_self_model(
         recent,
         loc,
     );
-    // Собираем подмешиваемые части: рендер модели (если есть) + протокол (если включён).
+    // Gather the parts to mix in: the model render (if any) + the protocol (if enabled).
     let mut parts: Vec<String> = Vec::new();
     if let Some(b) = block {
         parts.push(b);
     }
     if maintenance_protocol {
-        // Протокол ведения собирается из единого POLICY_CORE (этап 6) — те же
-        // правила, что у фоновой авто-рефлексии.
+        // The maintenance protocol is assembled from the shared POLICY_CORE (stage 6) — the same
+        // rules as the background auto-reflection.
         parts.push(crate::features::tools::self_model::maintenance_protocol(
             loc,
         ));
-        // Data-aware приписка: если описание себя разрослось сверх ориентира —
-        // конкретная подсказка сократить (статичный протокол становится предметным,
-        // когда summary действительно раздут). См. docs/summary-as-snapshot.md (этап 2).
+        // A data-aware note: if the self-description has grown past its target —
+        // a concrete hint to shorten it (the static protocol becomes specific once
+        // the summary is actually bloated). See docs/summary-as-snapshot.md (stage 2).
         if let Some(hint) = m.summary_fill_hint(params.summary_target_chars, loc) {
             parts.push(format!("({hint})"));
         }
     }
     if parts.is_empty() {
-        return system; // подмешивать нечего
+        return system; // nothing to mix in
     }
     let inject = parts.join("\n\n");
     Some(match system {
@@ -942,7 +961,7 @@ pub(super) fn inject_self_model(
     })
 }
 
-/// Доменное tool-сообщение (роль `Tool`) с привязкой к вызову.
+/// A domain tool message (role `Tool`) tied to the call.
 fn tool_message(call: &ApiToolCall, result: String) -> Message {
     let mut m = Message::new(MessageRole::Tool, result);
     m.tool_call_id = Some(call.id.clone());
@@ -950,9 +969,9 @@ fn tool_message(call: &ApiToolCall, result: String) -> Message {
     m
 }
 
-/// Финальное assistant-сообщение хода (если есть текст/мысли) со снимком
-/// метаданных: режим движка, имя модели и семплинг, **урезанный до полей,
-/// доступных в этом режиме** (движок недоступное поле не принял бы — spec §8.3).
+/// The turn's final assistant message (if there's text/thoughts) with a metadata
+/// snapshot: the engine mode, model name, and sampling, **pared down to the fields
+/// available in that mode** (the engine wouldn't accept an unavailable field — spec §8.3).
 fn finalize_message(
     out: &RoundOutput,
     ctx: &ToolContext,

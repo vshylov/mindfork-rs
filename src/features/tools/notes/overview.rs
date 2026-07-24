@@ -1,19 +1,22 @@
-//! Заметки — consolidate_notes + обзоры консолидации (пользовательские / @self). Часть модуля [`super`]; разбито из монолита
-//! notes.rs (см. docs/history/refactoring-god-objects.md, этап 4).
+//! Notes — consolidate_notes + consolidation overviews (user-facing / @self). Part
+//! of the [`super`] module; split out of the notes.rs monolith (see
+//! docs/history/refactoring-god-objects.md, stage 4).
 
 use super::*;
 
-/// Строит обзор базы знаний для консолидации: похожие пары (возможные дубли по
-/// косинусу), связи `contradicts`, заметки без связей. Только данные (без рубрики) —
-/// используется и инструментом `consolidate_notes`, и фоновой авто-консолидацией.
-/// Изоляция по `profile_id`. Чистое чтение БД (эмбеддер не нужен — вектора уже в БД).
+/// Builds a knowledge-base overview for consolidation: similar pairs (possible
+/// duplicates by cosine), `contradicts` links, notes with no links. Data only (no
+/// rubric) — used by both the `consolidate_notes` tool and background auto-
+/// consolidation. Isolation by `profile_id`. A pure DB read (no embedder needed —
+/// vectors are already in the DB).
 pub(crate) fn build_consolidation_overview(
     storage: &crate::shared::storage::Storage,
     profile_id: Uuid,
     loc: &crate::shared::i18n::Locale,
 ) -> String {
-    // Консолидация — только над пользовательскими заметками: self-заметки (@self)
-    // исключаем, чтобы «сон» не сливал память о себе с памятью о собеседнике.
+    // Consolidation — only over user-facing notes: self-notes (@self) are
+    // excluded, so "sleep" doesn't mix memory about oneself with memory about the
+    // interlocutor.
     let mut active = storage
         .db()
         .note_list(profile_id, None, &[], None)
@@ -29,7 +32,7 @@ pub(crate) fn build_consolidation_overview(
     with_vec.retain(|(n, _)| !is_self_note(n));
     let links = storage.db().note_links_all(profile_id).unwrap_or_default();
 
-    // Похожие пары (возможные дубли) по косинусу, по убыванию близости.
+    // Similar pairs (possible duplicates) by cosine, descending by similarity.
     let mut pairs: Vec<(f32, &Note, &Note)> = Vec::new();
     for i in 0..with_vec.len() {
         for j in (i + 1)..with_vec.len() {
@@ -103,20 +106,23 @@ pub(crate) fn build_consolidation_overview(
     out.trim_end().to_string()
 }
 
-/// Обзор **наблюдений «о себе»** (self-заметок `@self`) для консолидации: похожие пары
-/// (возможные дубли), связи `contradicts` среди наблюдений, наблюдения без связей.
-/// Аналог [`build_consolidation_overview`], но над памятью «о себе» — для авто-рефлексии
-/// и инструмента `reflect`. Обзор self-консолидации был отложен в Ярусе 2 «до
-/// подтверждения пользы связывания»; связывание подтвердилось (Ярус 3, GO) — включаем.
-/// `None`, если наблюдений < 2 (консолидировать нечего). Чистое чтение БД (вектора уже в
-/// БД). Изоляция по `profile_id`. См. docs/history/narrative-as-notes.md.
+/// Overview of **"about self" observations** (`@self` self-notes) for
+/// consolidation: similar pairs (possible duplicates), `contradicts` links among
+/// observations, observations with no links. An analogue of
+/// [`build_consolidation_overview`], but over "about self" memory — for auto-
+/// reflection and the `reflect` tool. The self-consolidation overview was deferred
+/// in Tier 2 "until the value of linking is confirmed"; linking was confirmed
+/// (Tier 3, GO) — enabling it. `None` if there are fewer than 2 observations
+/// (nothing to consolidate). A pure DB read (vectors already in the DB). Isolation
+/// by `profile_id`. See docs/history/narrative-as-notes.md.
 pub(crate) fn build_self_consolidation_overview(
     storage: &crate::shared::storage::Storage,
     profile_id: Uuid,
     loc: &crate::shared::i18n::Locale,
 ) -> Option<String> {
-    // Только наблюдения «о себе» (@self) — зеркально исключению self из обзора
-    // пользовательских заметок: «сон» наблюдений не трогает память о собеседнике.
+    // Only "about self" observations (@self) — mirroring the exclusion of self
+    // from the user-facing notes overview: observation "sleep" doesn't touch
+    // memory about the interlocutor.
     let active = storage
         .db()
         .note_list(profile_id, None, &[SELF_NOTE_TAG.to_string()], None)
@@ -132,7 +138,7 @@ pub(crate) fn build_self_consolidation_overview(
     with_vec.retain(|(n, _)| is_self_note(n));
     let links = storage.db().note_links_all(profile_id).unwrap_or_default();
 
-    // Похожие пары (возможные дубли наблюдений) по косинусу, по убыванию близости.
+    // Similar pairs (possible duplicate observations) by cosine, descending by similarity.
     let mut pairs: Vec<(f32, &Note, &Note)> = Vec::new();
     for i in 0..with_vec.len() {
         for j in (i + 1)..with_vec.len() {
@@ -144,7 +150,7 @@ pub(crate) fn build_self_consolidation_overview(
     }
     pairs.sort_by(|a, b| b.0.total_cmp(&a.0));
 
-    // contradicts среди наблюдений — оба конца @self (граф наблюдений).
+    // contradicts among observations — both ends @self (the observation graph).
     let contradicts: Vec<&(Uuid, Uuid, String)> = links
         .iter()
         .filter(|(f, t, r)| r == "contradicts" && self_ids.contains(f) && self_ids.contains(t))
@@ -203,41 +209,44 @@ pub(crate) fn build_self_consolidation_overview(
     Some(out.trim_end().to_string())
 }
 
-/// Порог косинусной близости, при котором абзац описания себя (`summary`) считается
-/// семантически совпадающим с наблюдением (`@self`-заметкой) — раздел A2 обзора
-/// self-консолидации. **Откалибровано на живом bge-m3** (как `TRAIT_SIMILARITY` в
-/// `self_model.rs`, смоук `summary_obs_calibration_e2e_live`): перефразы «абзац ↔
-/// наблюдение» дали 0.69–0.80, несвязанные пары — 0.48–0.51; чистый разрыв 0.51→0.69.
-/// Порог 0.62 (в разрыве, с запасом в обе стороны) ловит все перефразы и отсекает
-/// несвязанные. Абзацы длиннее коротких черт, поэтому перефразы чуть ниже, чем у
-/// ворот черт (0.73–0.83). См. docs/history/self-model-consolidation.md §A2.
+/// Cosine-similarity threshold above which a self-description (`summary`)
+/// paragraph counts as semantically matching an observation (`@self` note) — the
+/// A2 section of the self-consolidation overview. **Calibrated on live bge-m3**
+/// (like `TRAIT_SIMILARITY` in `self_model.rs`, the `summary_obs_calibration_e2e_live`
+/// smoke): "paragraph ↔ observation" paraphrases scored 0.69-0.80, unrelated pairs
+/// — 0.48-0.51; a clean gap 0.51→0.69. The 0.62 threshold (inside the gap, with
+/// margin on both sides) catches all paraphrases and filters out unrelated ones.
+/// Paragraphs are longer than short traits, so paraphrases score a bit lower than
+/// at the trait gate (0.73-0.83). See docs/history/self-model-consolidation.md §A2.
 const SUMMARY_OBS_SIMILARITY: f32 = 0.62;
 
-/// Минимальная длина абзаца `summary` (в символах) для участия в сравнении: более
-/// короткий фрагмент слишком мал для осмысленного совпадения.
+/// Minimum length of a `summary` paragraph (in characters) to participate in the
+/// comparison: a shorter fragment is too small for a meaningful match.
 const SUMMARY_PARAGRAPH_MIN_CHARS: usize = 40;
 
-/// Семантическое совпадение абзацев описания себя (`summary`) с наблюдениями
-/// (`@self`-заметками) — раздел A2 обзора self-консолидации. У наблюдений вектора уже
-/// в БД, а у `summary` их нет (свободный текст) — поэтому абзацы эмбеддятся **на лету**
-/// одним запросом (прямое зеркало ворот черт `self_model::near_duplicate_traits`).
-/// Возвращает секцию с парами «абзац ≈ наблюдение X → вынеси/сшей», или `None`, если
-/// совпадений нет / нет наблюдений / пустой summary. **Мягкая деградация**: эмбеддер
-/// недоступен, вернул пусто или нестыковку числа векторов → `None` (как реранкинг
-/// RAG/web). Изоляция по `profile_id`. См. docs/history/self-model-consolidation.md §A2.
+/// Semantic overlap between self-description (`summary`) paragraphs and
+/// observations (`@self` notes) — the A2 section of the self-consolidation
+/// overview. Observations already have vectors in the DB, but `summary` doesn't
+/// (free-form text) — so paragraphs are embedded **on the fly** in one request (a
+/// direct mirror of the trait gate `self_model::near_duplicate_traits`). Returns a
+/// section with pairs "paragraph ≈ observation X → extract/stitch", or `None` if
+/// there are no matches / no observations / an empty summary. **Graceful
+/// degradation**: the embedder is unavailable, returned empty, or gave a mismatched
+/// vector count → `None` (like RAG/web reranking). Isolation by `profile_id`. See
+/// docs/history/self-model-consolidation.md §A2.
 pub(crate) async fn summary_observation_overlaps(
     storage: &crate::shared::storage::Storage,
     embedder: &dyn crate::shared::api::Embedder,
     profile_id: Uuid,
     loc: &crate::shared::i18n::Locale,
 ) -> Option<String> {
-    // Описание себя (summary) профиля.
+    // The profile's self-description (summary).
     let model = storage.db().self_model_get(profile_id).ok().flatten()?;
     let summary = model.summary.trim();
     if summary.is_empty() {
         return None;
     }
-    // Абзацы summary (по пустым строкам), отбрасывая слишком короткие.
+    // Summary paragraphs (by blank lines), dropping ones that are too short.
     let paragraphs: Vec<String> = summary
         .split("\n\n")
         .map(|p| p.trim().to_string())
@@ -246,7 +255,7 @@ pub(crate) async fn summary_observation_overlaps(
     if paragraphs.is_empty() {
         return None;
     }
-    // Наблюдения (@self) с хранимыми векторами — с ними и сравниваем.
+    // Observations (@self) with stored vectors — we compare against those.
     let mut obs = storage
         .db()
         .notes_with_vectors(profile_id)
@@ -255,8 +264,8 @@ pub(crate) async fn summary_observation_overlaps(
     if obs.is_empty() {
         return None;
     }
-    // Эмбеддим абзацы одним запросом (у summary нет хранимых векторов — на лету).
-    // Мягкая деградация: ошибка/нестыковка числа векторов → секции нет.
+    // Embed the paragraphs in one request (summary has no stored vectors — on the fly).
+    // Graceful degradation: an error/mismatched vector count → no section.
     let Ok(vecs) = embedder.embed(paragraphs.clone()).await else {
         return None;
     };
@@ -265,7 +274,7 @@ pub(crate) async fn summary_observation_overlaps(
     }
     let mut lines: Vec<String> = Vec::new();
     for (p, pv) in paragraphs.iter().zip(&vecs) {
-        // Ближайшее наблюдение выше порога (одно на абзац — не шумим).
+        // The closest observation above the threshold (one per paragraph — no noise).
         let mut best: Option<(f32, &Note)> = None;
         for (n, nv) in &obs {
             let s = cosine(pv, nv);
@@ -292,9 +301,9 @@ pub(crate) async fn summary_observation_overlaps(
     ))
 }
 
-/// `consolidate_notes` — обзор базы знаний + рубрика для консолидации (entry-point,
-/// как `reflect` у SelfModel). Ничего не меняет: дальше модель сама зовёт
-/// merge/supersede/revise/link.
+/// `consolidate_notes` — a knowledge-base overview + a rubric for consolidation
+/// (an entry point, like SelfModel's `reflect`). Changes nothing: the model then
+/// calls merge/supersede/revise/link on its own.
 pub struct ConsolidateNotes;
 
 #[async_trait::async_trait]
@@ -306,7 +315,7 @@ impl Tool for ConsolidateNotes {
         crate::features::tools::meta::ToolGroup::Memory
     }
     fn ui_label(&self) -> &'static str {
-        "консолидация заметок"
+        "notes consolidation"
     }
     fn description(&self, loc: &crate::shared::i18n::Locale) -> String {
         loc.t("tool.consolidate_notes.desc").into()

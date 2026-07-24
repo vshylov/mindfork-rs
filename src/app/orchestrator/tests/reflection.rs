@@ -1,12 +1,12 @@
-//! Тесты оркестратора — авто-рефлексия: каденция/ватермарк, оповещение об ошибках. Часть модуля [`super`]
-//! (фикстуры в mod.rs). См. docs/history/refactoring-god-objects.md, этап 3.
+//! Orchestrator tests — auto-reflection: cadence/watermark, failure alerting. Part of the
+//! [`super`] module (fixtures in mod.rs). See docs/history/refactoring-god-objects.md, stage 3.
 
 use super::*;
 
 #[tokio::test]
 async fn auto_reflect_advances_watermark_on_spawn() {
     let (_d, mut orch, chat_id) = orch_ready_for_reflection();
-    // Готовый движок — рефлексия реально спавнится (пустой скрипт → задача завершится).
+    // A ready engine — reflection actually spawns (an empty script → the task finishes).
     orch.engines.backend = Some(Arc::new(MockBackend::scripted(vec![ChatChunk::Finished(
         FinishReason::Stop,
     )])) as Arc<dyn EngineBackend>);
@@ -14,7 +14,7 @@ async fn auto_reflect_advances_watermark_on_spawn() {
     orch.maybe_auto_reflect(chat_id);
 
     let chat = orch.chats.iter().find(|c| c.id == chat_id).unwrap();
-    // Ватермарк сдвинут на всю длину истории (окно охвачено), рефлексия запущена.
+    // The watermark shifted to the full length of the history (the window is covered), reflection is running.
     assert_eq!(chat.reflected_upto, Some(2));
     assert!(chat.reflected_at.is_some());
     assert!(orch.bg_running(BackgroundKind::Reflection));
@@ -23,11 +23,11 @@ async fn auto_reflect_advances_watermark_on_spawn() {
 #[tokio::test]
 async fn auto_reflect_keeps_watermark_when_server_not_ready() {
     let (_d, mut orch, chat_id) = orch_ready_for_reflection();
-    // Движок не задан → backend_if_ready вернёт Err → пропуск БЕЗ сдвига ватермарка.
+    // No engine set → backend_if_ready returns Err → a skip WITHOUT shifting the watermark.
     orch.maybe_auto_reflect(chat_id);
 
     let chat = orch.chats.iter().find(|c| c.id == chat_id).unwrap();
-    assert_eq!(chat.reflected_upto, None); // цикл не потерян — повторим позже
+    assert_eq!(chat.reflected_upto, None); // the cycle isn't lost — retry later
     assert!(!orch.bg_running(BackgroundKind::Reflection));
 }
 
@@ -43,15 +43,15 @@ async fn reflect_failures_alert_once_then_reset() {
         }
         seen
     };
-    // Две неудачи подряд — в UI ещё тихо (наблюдаемость без спама).
+    // Two consecutive failures — the UI is still quiet (observability without spam).
     orch.handle_bg_done(BackgroundKind::Reflection, Err("boom".into()));
     orch.handle_bg_done(BackgroundKind::Reflection, Err("boom".into()));
     assert!(!saw_error(&mut rx));
-    // Третья подряд — одна ошибка.
+    // The third in a row — one error.
     orch.handle_bg_done(BackgroundKind::Reflection, Err("boom".into()));
     assert!(saw_error(&mut rx));
     assert_eq!(orch.bg_failures(BackgroundKind::Reflection), 3);
-    // Успех сбрасывает серию и шлёт SelfModelChanged.
+    // Success resets the streak and sends SelfModelChanged.
     orch.handle_bg_done(BackgroundKind::Reflection, Ok(()));
     assert_eq!(orch.bg_failures(BackgroundKind::Reflection), 0);
     let mut changed = false;

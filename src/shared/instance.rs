@@ -1,48 +1,50 @@
-//! Запуск приложения в единственном экземпляре (single instance).
-//! См. spec §1.4 (single instance) и plan M0.
+//! Running the application as a single instance.
+//! See spec §1.4 (single instance) and plan M0.
 //!
-//! Блокировка — OS-уровня: именованный мьютекс на Windows, abstract unix-socket
-//! на Linux (деталь крейта `single-instance`). Имя без префикса попадает в
-//! пространство имён текущего сеанса входа — этого достаточно, чтобы один
-//! пользователь не запустил приложение дважды; путь к бинарнику на блокировку не
-//! влияет (две копии в разных каталогах всё равно конфликтуют по имени).
+//! The lock is OS-level: a named mutex on Windows, an abstract unix socket on
+//! Linux (a detail of the `single-instance` crate). The unprefixed name lands
+//! in the current login session's namespace — enough to keep one user from
+//! launching the app twice; the binary's path doesn't affect the lock (two
+//! copies in different directories still conflict by name).
 
 use single_instance::SingleInstance;
 use thiserror::Error;
 
-/// Уникальный идентификатор блокировки.
+/// Unique lock identifier.
 const INSTANCE_ID: &str = "mindfork-rs-single-instance";
 
-/// Держатель блокировки единственного экземпляра.
+/// Holder of the single-instance lock.
 ///
-/// Должен жить весь срок работы процесса: при его `drop` блокировка
-/// освобождается, и можно запустить новый экземпляр.
+/// Must live for the process's whole run: on its `drop` the lock is released
+/// and a new instance can be launched.
 pub struct InstanceGuard {
     _inner: SingleInstance,
 }
 
-/// Ошибка захвата блокировки единственного экземпляра.
+/// Error acquiring the single-instance lock.
 #[derive(Debug, Error)]
 pub enum InstanceError {
-    /// Приложение уже запущено в другом экземпляре — это не сбой, а отказ запуска.
-    #[error("приложение уже запущено")]
+    /// The application is already running as another instance — not a
+    /// failure, but a launch refusal.
+    #[error("application is already running")]
     AlreadyRunning,
-    /// Не удалось инициализировать блокировку (системная ошибка крейта).
-    #[error("не удалось инициализировать блокировку единственного экземпляра: {0}")]
+    /// Failed to initialize the lock (a system error from the crate).
+    #[error("failed to initialize the single-instance lock: {0}")]
     Init(String),
 }
 
-/// Пытается захватить блокировку единственного экземпляра.
+/// Attempts to acquire the single-instance lock.
 ///
-/// `Err(InstanceError::AlreadyRunning)` — приложение уже запущено (вызывающий
-/// должен показать сообщение и завершиться); `Err(InstanceError::Init)` —
-/// настоящий сбой инициализации.
+/// `Err(InstanceError::AlreadyRunning)` — the application is already running
+/// (the caller should show a message and exit); `Err(InstanceError::Init)` —
+/// a genuine initialization failure.
 pub fn acquire() -> Result<InstanceGuard, InstanceError> {
     acquire_named(INSTANCE_ID)
 }
 
-/// Реализация `acquire` с явным именем — для тестов (чтобы не конфликтовать с
-/// реальной блокировкой запущенного приложения на той же машине).
+/// Implementation of `acquire` with an explicit name — for tests (so as not
+/// to conflict with the real lock of a running app instance on the same
+/// machine).
 fn acquire_named(name: &str) -> Result<InstanceGuard, InstanceError> {
     let inner = SingleInstance::new(name).map_err(|e| InstanceError::Init(e.to_string()))?;
     if !inner.is_single() {
@@ -57,18 +59,18 @@ mod tests {
 
     #[test]
     fn second_acquire_reports_already_running() {
-        // Уникальное имя на тест — не задевает реальную блокировку приложения.
+        // A per-test unique name — doesn't touch the app's real lock.
         let name = "mindfork-rs-test-second-acquire-reports-already-running";
 
-        let first = acquire_named(name).expect("первый захват должен удаться");
+        let first = acquire_named(name).expect("first acquire should succeed");
         match acquire_named(name) {
             Err(InstanceError::AlreadyRunning) => {}
-            Err(other) => panic!("ожидался AlreadyRunning, получено: {other:?}"),
-            Ok(_) => panic!("второй захват не должен был удаться, пока жив первый"),
+            Err(other) => panic!("expected AlreadyRunning, got: {other:?}"),
+            Ok(_) => panic!("second acquire should not succeed while the first is alive"),
         }
 
-        // После освобождения первой блокировки захват снова возможен.
+        // After the first lock is released, acquiring again is possible.
         drop(first);
-        let _again = acquire_named(name).expect("после drop захват снова возможен");
+        let _again = acquire_named(name).expect("after drop, acquiring again is possible");
     }
 }

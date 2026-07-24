@@ -1,5 +1,5 @@
-//! Инструменты заметок: `note_save`, `note_recall`. Память ассистента о
-//! пользователе/контексте, **изолированная по `profile_id`** (spec §9.3, §9.5).
+//! Note tools: `note_save`, `note_recall`. The assistant's memory about the
+//! user/context, **isolated by `profile_id`** (spec §9.3, §9.5).
 
 use anyhow::Result;
 use uuid::Uuid;
@@ -9,54 +9,56 @@ use crate::entities::profile::ToolId;
 
 use super::{Tool, ToolContext, ToolOutcome};
 
-/// Имя инструмента припоминания заметок (нужно рефлексии для кросс-органных связей,
-/// Ярус 3 — id пользовательских заметок).
+/// Name of the note-recall tool (reflection needs it for cross-organ links,
+/// Tier 3 — ids of user notes).
 pub const NOTE_RECALL_ID: &str = "note_recall";
-/// Имя инструмента ревизии заметки (DB-only, гейтится набором профиля).
+/// Name of the note-revision tool (DB-only, gated by the profile's set).
 pub const NOTE_REVISE_ID: &str = "note_revise";
-/// Граф связей и ревизионная история (Ярус 2, DB-only, гейтятся набором профиля).
+/// The link graph and revision history (Tier 2, DB-only, gated by the profile's set).
 pub const NOTE_LINK_ID: &str = "note_link";
 pub const NOTE_NEIGHBORS_ID: &str = "note_neighbors";
 pub const NOTE_SUPERSEDE_ID: &str = "note_supersede";
 pub const NOTE_MERGE_ID: &str = "note_merge";
 pub const CONSOLIDATE_NOTES_ID: &str = "consolidate_notes";
-/// Связь заметки с RAG-источником (Ярус 3, Путь 3 — связывание органов памяти).
+/// A note's link to a RAG source (Tier 3, Path 3 — linking the memory organs).
 pub const NOTE_CITE_SOURCE_ID: &str = "note_cite_source";
 
-/// Порог косинусной близости, при котором две заметки считаются возможным дублем
-/// (для обзора консолидации). Подобран эмпирически — пары выше стоит рассмотреть.
+/// Cosine-similarity threshold above which two notes count as a possible
+/// duplicate (for the consolidation overview). Chosen empirically — pairs above
+/// it are worth considering.
 const CONSOLIDATE_SIMILARITY: f32 = 0.85;
-/// Сколько элементов максимум показывать в каждой секции обзора консолидации.
+/// Max number of items to show in each section of the consolidation overview.
 const CONSOLIDATE_LIST_CAP: usize = 8;
 
-/// Типы связей между заметками (направленные). Зеркалят схему инструмента `note_link`.
+/// Types of links between notes (directed). Mirror the `note_link` tool's schema.
 const RELATIONS: [&str; 4] = ["supports", "contradicts", "refines", "relates"];
 
-/// Сколько заметок отдаёт `note_recall` по умолчанию (если лимит не задан).
+/// How many notes `note_recall` returns by default (if no limit is given).
 const DEFAULT_RECALL: usize = 5;
 
-/// Размер батча при бэкфилле эмбеддингов «старых» заметок.
+/// Batch size when backfilling embeddings for "old" notes.
 const NOTE_BACKFILL_BATCH: usize = 32;
 
-/// Сколько связанных заметок максимум подмешивать в `note_recall` (spreading activation).
+/// Max number of related notes to mix into `note_recall` (spreading activation).
 const RELATED_IN_RECALL: usize = 5;
 
-/// Зарезервированный тег «заметок о себе»: нарратив «модели себя» переехал в обычные
-/// заметки (см. docs/history/narrative-as-notes.md, Ярус 1). Self-заметки делят таблицы,
-/// эмбеддинги, граф и консолидацию с обычными, но **скрыты** из пользовательского
-/// `note_recall`, ворот `note_save` и обзора консолидации фильтром по этому тегу —
-/// память о себе ≠ память о собеседнике, смешение выдачи рискованно. Лидирующий `@`
-/// не встречается в естественных тегах; коллизия редка и безобидна (такая заметка
-/// просто станет считаться инсайтом). Читаются self-заметки отдельным путём
-/// (`self_notes_recent`).
+/// The reserved "about-self notes" tag: the "self-model" narrative moved into
+/// regular notes (see docs/history/narrative-as-notes.md, Tier 1). Self-notes
+/// share tables, embeddings, the graph, and consolidation with regular ones, but
+/// are **hidden** from user-facing `note_recall`, the `note_save` gate, and the
+/// consolidation overview by filtering on this tag — memory about oneself ≠
+/// memory about the interlocutor, mixing the output is risky. A leading `@`
+/// doesn't occur in natural tags; a collision is rare and harmless (such a note
+/// would simply be treated as an insight). Self-notes are read via a separate
+/// path (`self_notes_recent`).
 pub const SELF_NOTE_TAG: &str = "@self";
 
-/// Несёт ли заметка зарезервированный тег [`SELF_NOTE_TAG`] («заметка о себе»).
+/// Does the note carry the reserved [`SELF_NOTE_TAG`] ("a note about self")?
 pub(crate) fn is_self_note(note: &Note) -> bool {
     note.tags.iter().any(|t| t == SELF_NOTE_TAG)
 }
 
-/// Парсит uuid из строкового поля аргументов с понятной ошибкой (на языке `loc`).
+/// Parses a uuid from a string argument field, with a clear error (in the language `loc`).
 fn parse_id(
     args: &serde_json::Value,
     key: &str,
@@ -72,9 +74,9 @@ fn parse_id(
     })
 }
 
-/// Косинусная близость двух векторов (0 при разной длине/нулевой норме).
-/// `pub(crate)` — переиспользуется воротами почти-дублей черт `user_model`
-/// (`self_model::UpdateUserModel`), где вектора черт эмбеддятся на лету.
+/// Cosine similarity of two vectors (0 for mismatched length/zero norm).
+/// `pub(crate)` — reused by the `user_model` near-duplicate-traits gate
+/// (`self_model::UpdateUserModel`), where trait vectors are embedded on the fly.
 pub(crate) fn cosine(a: &[f32], b: &[f32]) -> f32 {
     if a.len() != b.len() || a.is_empty() {
         return 0.0;
@@ -88,7 +90,7 @@ pub(crate) fn cosine(a: &[f32], b: &[f32]) -> f32 {
     dot / (na * nb)
 }
 
-/// Усечение строки по символам (для компактного обзора).
+/// Truncates a string by character (for a compact overview).
 fn clip(s: &str, n: usize) -> String {
     let s = s.trim();
     if s.chars().count() <= n {
@@ -99,7 +101,7 @@ fn clip(s: &str, n: usize) -> String {
     out
 }
 
-/// Извлекает массив строковых тегов из аргументов (пустой, если нет).
+/// Extracts a string-tag array from arguments (empty if missing).
 fn parse_tags(args: &serde_json::Value) -> Vec<String> {
     args.get("tags")
         .and_then(|v| v.as_array())
@@ -111,7 +113,7 @@ fn parse_tags(args: &serde_json::Value) -> Vec<String> {
         .unwrap_or_default()
 }
 
-// ---------- подмодули (разбор god-object: docs/history/refactoring-god-objects.md, этап 4) ----------
+// ---------- submodules (a god-object split: docs/history/refactoring-god-objects.md, stage 4) ----------
 
 mod cite;
 mod edit;
@@ -121,8 +123,8 @@ mod recall;
 mod save;
 mod self_notes;
 
-// Реэкспорт всей внешней поверхности `notes::*` (инструменты + pub(crate)-хелперы),
-// чтобы внешние `use crate::features::tools::notes::X` не менялись.
+// Re-export the whole `notes::*` external surface (tools + pub(crate) helpers),
+// so external `use crate::features::tools::notes::X` sites don't change.
 pub(crate) use self::{cite::*, edit::*, graph::*, overview::*, recall::*, save::*, self_notes::*};
 
 #[cfg(test)]

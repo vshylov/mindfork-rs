@@ -1,330 +1,361 @@
-# Релизная инженерия: версионирование, changelog, CI и миграции данных
+# Release engineering: versioning, changelog, CI, and data migrations
 
-Дизайн-план направления (жанр по AGENTS.md §1). Статус: **этапы 1–5 реализованы**
-(развилки подтверждены пользователем 2026-07-15 по рекомендациям [рек.] во всех блоках
-А–Г). Осталось: первый тег `v0.9.0` (живой прогон `release.yml` + смоук артефактов),
-опц. этап 6 (`cargo-deny`), затем переезд плана в `docs/history/`.
+Design plan for the track (genre per AGENTS.md §1). Status: **stages 1–5
+implemented** (forks confirmed by the user 2026-07-15 per the recommendations
+[rec.] in all blocks A–D). Remaining: the first tag `v0.9.0` (a live run of
+`release.yml` + an artifact smoke), optional stage 6 (`cargo-deny`), then
+moving the plan into `docs/history/`.
 
-Проект дошёл до стадии, когда нужны: нормальное версионирование приложения,
-changelog, CI и — главное — **версионирование схем всех сохраняемых данных с
-механизмом миграции**, чтобы обновление бинарника никогда не теряло данные
-пользователя.
+The project reached the point where it needs: proper application versioning,
+a changelog, CI, and — most importantly — **versioning the schemas of all
+saved data with a migration mechanism**, so a binary upgrade never loses
+user data.
 
 ---
 
-## 1. Аудит текущего состояния
+## 1. Audit of the current state
 
-| Область | Сейчас | Проблема |
+| Area | Now | Problem |
 |---|---|---|
-| Версия приложения | `Cargo.toml` = `0.1.0`, никогда не менялась; git-тегов нет; релизов нет | версия ни о чём не говорит; нет точек отката/сравнения |
-| Показ версии | `mindfork-rs --version` печатает `CARGO_PKG_VERSION` (ключ `cli.version.line`) | в TUI и в логе старта версии нет — диагностика «какой бинарь у пользователя» затруднена |
-| Changelog | нет | пользователю нечего читать при обновлении; журнал CLAUDE.md — для разработки, не для пользователя |
-| CI | нет (`.github/` — только PR-шаблон) | гейты `fmt`/`clippy -D warnings`/`test` держатся только на дисциплине агента; Linux-сборка вообще не проверяется (разработка идёт на Windows) |
-| Лицензия | `license = "MIT"` в Cargo.toml, файла `LICENSE` нет | формально код не лицензирован; релизные архивы нечем комплектовать |
-| `settings.json` | `AppConfig.schema_version: u32 = 1` — поле **есть, но никогда не проверяется**; при битом JSON `main.rs` делает `unwrap_or_default()` | версия-декорация; повреждённый файл **молча затирается дефолтами** при следующем сохранении (`.bak` при этом перезаписывается битой версией) |
-| `profiles.json` | голый `Vec<Profile>`, версии нет | breaking-изменение формата нечем обнаружить |
-| `chats/*.json` | объект `Chat`, версии нет; **один битый файл валит `load_chats()` целиком** | breaking нечем обнаружить; битый чат блокирует запуск приложения |
-| `data.db` (SQLite) | `migrate()` — только идемпотентный `CREATE TABLE IF NOT EXISTS`; `PRAGMA user_version` не используется (всегда 0); `meta.rag_dim` для размерности vec0 | additive-only: переименовать колонку/таблицу или изменить семантику невозможно без потери |
-| Политика изменений | «новые поля — `#[serde(default)]`, схема — `CREATE IF NOT EXISTS`» (AGENTS.md §3) | покрывает **только** additive; единственный breaking в истории (вложенная конфигурация движка) решён «без миграции» — пользователь вводил managed/ключи заново |
-| Бэкап | `mindfork backup/restore` — zip, транзакционный restore с pre-restore копией и откатом | механизм отличный, но **не связан** с обновлениями: перед миграцией данных автобэкапа нет; в архиве нет манифеста версий |
-| Даунгрейд | никак не обнаруживается | старый бинарь на новых данных «читает как получится» — тихая порча |
+| App version | `Cargo.toml` = `0.1.0`, never bumped; no git tags; no releases | the version says nothing; no rollback/comparison points |
+| Showing the version | `mindfork-rs --version` prints `CARGO_PKG_VERSION` (key `cli.version.line`) | no version in the TUI or the startup log — diagnosing "which binary does the user have" is hard |
+| Changelog | none | the user has nothing to read on upgrade; the CLAUDE.md journal is for development, not for users |
+| CI | none (`.github/` — just a PR template) | the `fmt`/`clippy -D warnings`/`test` gates rely only on agent discipline; the Linux build isn't checked at all (development happens on Windows) |
+| License | `license = "MIT"` in Cargo.toml, no `LICENSE` file | the code isn't formally licensed; release archives have nothing to bundle |
+| `settings.json` | `AppConfig.schema_version: u32 = 1` — the field **exists but is never checked**; on corrupt JSON `main.rs` does `unwrap_or_default()` | a decorative version; a corrupted file gets **silently overwritten with defaults** on the next save (the `.bak` then gets overwritten with the corrupted version too) |
+| `profiles.json` | a bare `Vec<Profile>`, no version | a breaking format change has nothing to detect it |
+| `chats/*.json` | a `Chat` object, no version; **one corrupt file crashes `load_chats()` entirely** | a breaking change has nothing to detect it; a corrupt chat blocks app startup |
+| `data.db` (SQLite) | `migrate()` — only idempotent `CREATE TABLE IF NOT EXISTS`; `PRAGMA user_version` isn't used (always 0); `meta.rag_dim` for vec0's dimensionality | additive-only: renaming a column/table or changing semantics is impossible without loss |
+| Change policy | "new fields — `#[serde(default)]`, schema — `CREATE IF NOT EXISTS`" (AGENTS.md §3) | covers **only** additive changes; the one breaking change in history (nested engine config) was resolved "without migration" — the user had to re-enter managed settings/keys |
+| Backup | `mindfork backup/restore` — zip, a transactional restore with a pre-restore copy and rollback | the mechanism is excellent, but **not tied** to upgrades: no auto-backup before data migration; no version manifest in the archive |
+| Downgrade | not detected at all | an old binary on newer data "reads it best-effort" — silent corruption |
 
-Прочие артефакты и их статус: `defaults.json` (маркер установки, flatten +
-терпимость + fallback на legacy `location.json` — уже версиеустойчив),
-`personal_dictionary.txt` (строки, схема тривиальна), `data/locales/*.json`
-(пользовательский контент, валидация уже есть), `data/sandbox/` (провизия,
-восстановимо `sandbox setup`), логи (не данные).
-
----
-
-## 2. Развилки
-
-Формат: варианты, **[рек.]** — рекомендация. Подтверждаются пользователем до
-реализации (AGENTS.md §1).
-
-### Блок А — версия и changelog
-
-- **Ф1. Стартовая версия и путь к 1.0.**
-  - (a) **[рек.]** SemVer; первый релиз **`v0.9.0`** (сигнал «почти 1.0»);
-    **`1.0.0`** — после того как направление доказано в бою: CI зелёный на обеих
-    платформах, миграционный каркас смержён, релизный пайплайн выпустил ≥1 релиз.
-    С 1.0 «данные переживают обновления» — контрактное обещание.
-  - (b) `1.0.0` сразу — M0–M9 давно сделаны; но обещание миграций ещё не подкреплено.
-  - (c) продолжать `0.1.x` — честно, но недооценивает зрелость.
-- **Ф2. Как ведётся changelog.**
-  - (a) **[рек.]** ручной `CHANGELOG.md` (Keep a Changelog 1.1, на русском),
-    секция `[Unreleased]` пополняется **в каждом PR с пользовательски-видимым
-    эффектом** (пункт в PR-шаблон и AGENTS.md §4). Коммиты проекта conventional,
-    но пишутся для разработчика (русские, с деталями внутренностей) — генератор
-    из них дал бы шумный лог, а не changelog для пользователя.
-  - (b) генерация `git-cliff` из conventional commits — меньше дисциплины, хуже текст.
-  - (c) гибрид (черновик генератором, ручная правка) — двойная работа.
-- **Ф3. Рубрики changelog** (мелкая): русские аналоги Keep a Changelog —
-  «Добавлено / Изменено / Исправлено / Удалено» + **своя рубрика «Данные»**
-  (изменения форматов хранения и миграции — пользователю это важнее всего) [рек.].
-
-### Блок Б — CI
-
-- **Ф4. Тулчейн: пин или плавающий stable.**
-  - (a) **[рек.]** пин минорной версии в `rust-toolchain.toml` (+ `rustfmt`,
-    `clippy` в components). Причина: гейт `clippy --all-targets -- -D warnings` —
-    каждый новый stable приносит новые линты и **ломал бы CI внезапно**. С пином
-    обновление тулчейна — осознанный отдельный PR («поднять до 1.NN», чинящий
-    новые линты), как обновление любой зависимости.
-  - (b) плавающий `stable` — всегда свежие линты, но красный CI по вторникам без
-    чьей-либо вины.
-- **Ф5. Матрица тестов.**
-  - (a) **[рек.]** `ubuntu-latest` + `windows-latest` (обе заявленные платформы;
-    Linux сейчас вообще не проверяется — первый прогон, вероятно, выявит
-    платформенные мелочи в тестах, чиним по факту в этом же этапе). Линт-джоб
-    (fmt+clippy) — один, на ubuntu (быстрее и дешевле, линты платформонезависимы,
-    `#[cfg(windows)]`-код проверяется clippy в windows-джобе не нужен — его
-    компилирует сам `cargo test` на windows).
-  - (b) только windows (текущая площадка разработки) — Linux остаётся слепой зоной.
-  - (c) только ubuntu — не проверяется основная площадка.
-- **Ф6. Аудит зависимостей** (`cargo audit`/`cargo deny`).
-  - (a) **[рек.]** отдельный опциональный этап в конце: `cargo-deny`
-    (advisories + licenses + дубликаты) по расписанию (weekly) и вручную,
-    **не блокирует** merge (advisory-джоб).
-  - (b) не вводить.
-
-### Блок В — версии схем и миграции
-
-- **Ф7. Гранулярность версий схем.**
-  - (a) **[рек.]** **пер-артефакт**: `SETTINGS_SCHEMA` / `PROFILES_SCHEMA` /
-    `CHAT_SCHEMA` / `DB_SCHEMA` (u32, стартуют с 1). Артефакты меняются с разной
-    скоростью; один глобальный номер заставлял бы «мигрировать» нетронутые файлы.
-  - (b) один глобальный номер на все данные — проще думать, грубее работает.
-- **Ф8. Механика JSON-миграций.**
-  - (a) **[рек.]** трансформации над `serde_json::Value`: шаг = чистая
-    `fn(Value) -> Result<Value>` «версия N → N+1», после цепочки — контрольный
-    парс в типизированную структуру и атомарная запись. Старые версии форматов
-    живут **только как golden-фикстуры в тестах** (сырые JSON-строки), а не как
-    зоопарк типов `SettingsV1/V2/…`.
-  - (b) типы-снапшоты каждой версии + `From`-цепочка — типобезопасно, но тащит
-    и замораживает все исторические структуры в код навсегда.
-- **Ф9. Момент миграции.**
-  - (a) **[рек.]** **eager на старте**, до первого чтения типизированных данных:
-    `Storage::open` строит план (какие файлы устарели, нужна ли DB-миграция);
-    план непуст → **один pre-migration бэкап** (переиспользуем
-    `features/backup::create_backup` → `backups/pre-migrate-<дата>.zip`; бэкап
-    не удался → миграция не начинается, данные не тронуты) → миграция всех
-    файлов → сводка в лог. 226+ чатов — мгновенно; одна точка во времени, одна
-    ментальная модель, один бэкап.
-  - (b) lazy при чтении каждого файла — размазывает момент, смешанные версии на
-    диске, бэкап «когда-нибудь по кусочку».
-- **Ф10. Данные новее приложения (даунгрейд).**
-  - (a) **[рек.]** отказ запуска с понятным локализованным сообщением
-    («данные созданы более новой версией mindfork; обновите приложение или
-    восстановите бэкап»). Тихая порча хуже отказа. Это же правило — в CLI-путях
-    (`import`, работа TUI); `restore` архива с более новым манифестом —
-    предупреждение (после восстановления старый бинарь честно откажется, данные
-    целы, новый бинарь их откроет).
-  - (b) best-effort чтение — источник трудноуловимой порчи.
-- **Ф11. Упрочнение чтения повреждённых файлов** (сопутствующее, тот же этап).
-  - `settings.json`/`profiles.json` битый → **отказ запуска** [рек.] (сейчас —
-    молчаливые дефолты с последующим затиранием; прецедент строгости — битый
-    `defaults.json` уже ошибка запуска).
-  - Битый `chats/<id>.json` → **пропустить с `warn` в лог, файл не трогать**
-    [рек.] (сейчас один битый файл валит весь запуск; но и терять чат молча
-    нельзя — файл остаётся на диске для ручного ремонта).
-- **Ф12. Политика «что считается bump'ом»** (фиксируется в AGENTS.md и ADR).
-  - **Additive** (новое поле с дефолтом, новая таблица/индекс/колонка с default)
-    — **без bump**, как сейчас: `#[serde(default)]` / `CREATE IF NOT EXISTS` /
-    `ALTER TABLE ADD COLUMN` в baseline не требуются. Ничего не переделываем.
-  - **Breaking** (переименование/перенос/смена семантики/удаление поля, смена
-    формата значения, реструктуризация таблиц) — **bump константы + шаг миграции
-    + golden-фикстура старого формата + пункт в changelog («Данные»)**.
-    Прошлый прецедент (вложенная конфигурация движка) при этом каркасе стал бы
-    миграцией, а не потерей настроек.
-
-### Блок Г — релизы
-
-- **Ф13. Сборка релизных артефактов.**
-  - (a) **[рек.]** свой workflow (`release.yml` на тег `v*`, ~80 строк):
-    `cargo build --release` на `windows-latest` и **`ubuntu-22.04`** (старая
-    glibc 2.35 — бинарь работает на большинстве живых дистрибутивов; musl-static
-    — задел), упаковка `mindfork-rs(.exe)` + `README.md` + `docs/install.md` +
-    `CHANGELOG.md` + `LICENSE` в `mindfork-rs-vX.Y.Z-x86_64-{windows.zip,linux.tar.gz}`
-    + файл `sha256sums.txt`, публикация `gh release create` с нотами = раздел
-    версии из CHANGELOG. Прецедент проекта — свои микро-решения вместо тяжёлых
-    инструментов.
-  - (b) `cargo-dist` — мощно (инсталляторы, updater), но своя экосистема
-    конфигов/апгрейдов ради двух артефактов.
-- **Ф14. Где живёт чек-лист релиза.**
-  - (a) **[рек.]** новый раздел **AGENTS.md §6 «Релиз»** — там весь процесс задачи,
-    релиз — его продолжение.
-  - (b) отдельный `docs/releasing.md`.
+Other artifacts and their status: `defaults.json` (the install marker,
+flatten + tolerance + a fallback to the legacy `location.json` — already
+version-resilient), `personal_dictionary.txt` (lines, a trivial schema),
+`data/locales/*.json` (user content, already validated), `data/sandbox/`
+(provisioning, recoverable via `sandbox setup`), logs (not data).
 
 ---
 
-## 3. Дизайн
+## 2. Forks
 
-### 3.1 Версионирование приложения
+Format: options, **[rec.]** — recommendation. Confirmed by the user before
+implementation (AGENTS.md §1).
 
-- **SemVer**, источник истины — `Cargo.toml` (`env!("CARGO_PKG_VERSION")` уже
-  используется в `--version`). Релиз = git-тег `vX.Y.Z` на merge-коммите в `main`.
-- Пока `0.x`: MINOR — фичи/направления, PATCH — фиксы. С `1.0.0` — полный SemVer,
-  где MAJOR зарезервирован под несовместимости, которые **не покрыты миграцией**
-  (цель — чтобы таких не было вовсе).
-- Версия ↔ схемы данных **независимы**: bump схемы возможен в любом MINOR
-  (миграция делает его безопасным), номер схемы в версию приложения не встраивается.
-- Показ версии: `--version` (есть) + титул оверлея помощи `F1`
-  (`mindfork-rs vX.Y.Z`) + `tracing::info!` при старте (`version = …` рядом с
-  `root = …`) — чтобы каждый лог начинался с версии бинаря.
+### Block A — version and changelog
+
+- **F1. Starting version and the path to 1.0.**
+  - (a) **[rec.]** SemVer; the first release is **`v0.9.0`** (a signal of
+    "almost 1.0"); **`1.0.0`** — once the track is proven in production: CI
+    green on both platforms, the migration framework merged, the release
+    pipeline has shipped ≥1 release. From 1.0 on, "data survives upgrades"
+    is a contractual promise.
+  - (b) `1.0.0` right away — M0–M9 have long been done; but the migration
+    promise isn't backed yet.
+  - (c) keep going with `0.1.x` — honest, but undersells the maturity.
+- **F2. How the changelog is maintained.**
+  - (a) **[rec.]** a manual `CHANGELOG.md` (Keep a Changelog 1.1, in
+    Russian), the `[Unreleased]` section is filled in **on every PR with a
+    user-visible effect** (a checklist item in the PR template and
+    AGENTS.md §4). The project's commits are conventional but written for
+    the developer (Russian, with implementation details) — generating from
+    them would give a noisy log, not a user changelog.
+  - (b) generating with `git-cliff` from conventional commits — less
+    discipline, worse text.
+  - (c) a hybrid (a generated draft, manually edited) — double the work.
+- **F3. Changelog rubrics** (minor): Russian analogues of Keep a Changelog —
+  "Added / Changed / Fixed / Removed" + **its own "Data" rubric** (storage
+  format changes and migrations — the thing users care about most) [rec.].
+
+### Block B — CI
+
+- **F4. Toolchain: pinned or floating stable.**
+  - (a) **[rec.]** pin a minor version in `rust-toolchain.toml` (+
+    `rustfmt`, `clippy` as components). Reason: the `clippy --all-targets
+    -- -D warnings` gate — every new stable brings new lints and **would
+    break CI out of nowhere**. With a pin, upgrading the toolchain is a
+    deliberate, separate PR ("bump to 1.NN", fixing the new lints), like
+    upgrading any dependency.
+  - (b) floating `stable` — always-fresh lints, but red CI on a random
+    Tuesday through nobody's fault.
+- **F5. Test matrix.**
+  - (a) **[rec.]** `ubuntu-latest` + `windows-latest` (both declared
+    platforms; Linux currently isn't checked at all — the first run will
+    likely surface platform-specific test issues, fixed on the spot in
+    this stage). One lint job (fmt+clippy) — on ubuntu (faster and
+    cheaper, lints are platform-independent, `#[cfg(windows)]` code being
+    checked by clippy on the windows job isn't needed — `cargo test`
+    itself compiles it on windows).
+  - (b) windows only (the current dev platform) — Linux stays a blind spot.
+  - (c) ubuntu only — the primary platform isn't checked.
+- **F6. Dependency audit** (`cargo audit`/`cargo deny`).
+  - (a) **[rec.]** a separate optional final stage: `cargo-deny`
+    (advisories + licenses + duplicates) on a schedule (weekly) and
+    manually, **doesn't block** merges (an advisory job).
+  - (b) don't introduce it.
+
+### Block C — schema versions and migrations
+
+- **F7. Schema-version granularity.**
+  - (a) **[rec.]** **per artifact**: `SETTINGS_SCHEMA` / `PROFILES_SCHEMA` /
+    `CHAT_SCHEMA` / `DB_SCHEMA` (u32, starting at 1). Artifacts change at
+    different rates; a single global number would force "migrating"
+    untouched files.
+  - (b) one global number for all data — simpler to think about, cruder to
+    work with.
+- **F8. JSON migration mechanics.**
+  - (a) **[rec.]** transformations over `serde_json::Value`: a step is a
+    pure `fn(Value) -> Result<Value>` "version N → N+1", followed by a
+    control-parse into a typed struct and an atomic write. Old format
+    versions live **only as golden fixtures in tests** (raw JSON strings),
+    not as a zoo of `SettingsV1/V2/…` types.
+  - (b) per-version snapshot types + a `From` chain — type-safe, but drags
+    in and freezes every historical struct into the code forever.
+- **F9. The migration moment.**
+  - (a) **[rec.]** **eager at startup**, before the first typed-data read:
+    `Storage::open` builds a plan (which files are stale, whether a DB
+    migration is needed); a non-empty plan → **one pre-migration backup**
+    (reusing `features/backup::create_backup` → `backups/pre-migrate-
+    <date>.zip`; a failed backup → the migration doesn't start, data is
+    untouched) → migrate all files → a summary in the log. 226+ chats —
+    instant; one point in time, one mental model, one backup.
+  - (b) lazy, on reading each file — smears the moment out, mixed versions
+    on disk, a backup "eventually, piecemeal".
+- **F10. Data newer than the app (downgrade).**
+  - (a) **[rec.]** refuse to start with a clear, localized message ("this
+    data was created by a newer mindfork version; upgrade the app or
+    restore a backup"). Silent corruption is worse than a refusal. Same
+    rule in the CLI paths (`import`, TUI operation); `restore`ing an
+    archive with a newer manifest — a warning (after restoring, the old
+    binary will honestly refuse to start, data is intact, the new binary
+    will open it).
+  - (b) best-effort reading — a source of hard-to-spot corruption.
+- **F11. Hardening reads of corrupted files** (a companion, same stage).
+  - `settings.json`/`profiles.json` corrupt → **refuse to start** [rec.]
+    (currently — silent defaults followed by an overwrite; a precedent of
+    strictness — a corrupt `defaults.json` is already a startup error).
+  - A corrupt `chats/<id>.json` → **skip with a `warn` in the log, leave
+    the file untouched** [rec.] (currently one corrupt file crashes the
+    whole startup; but silently losing a chat isn't acceptable either —
+    the file stays on disk for manual repair).
+- **F12. Policy on "what counts as a bump"** (locked in in AGENTS.md and
+  an ADR).
+  - **Additive** (a new field with a default, a new table/index/column
+    with a default) — **no bump**, as now: `#[serde(default)]` /
+    `CREATE IF NOT EXISTS` / `ALTER TABLE ADD COLUMN` in the baseline
+    aren't required. Nothing is redone.
+  - **Breaking** (renaming/moving/changing semantics/removing a field,
+    changing a value's format, restructuring tables) — **a constant bump +
+    a migration step + a golden fixture of the old format + a changelog
+    entry ("Data")**. The past precedent (nested engine config) would have
+    become a migration under this framework, rather than losing settings.
+
+### Block D — releases
+
+- **F13. Building release artifacts.**
+  - (a) **[rec.]** its own workflow (`release.yml` on tag `v*`, ~80 lines):
+    `cargo build --release` on `windows-latest` and **`ubuntu-22.04`**
+    (old glibc 2.35 — the binary runs on most live distros; a musl-static
+    build — groundwork), packaging `mindfork-rs(.exe)` + `README.md` +
+    `docs/install.md` + `CHANGELOG.md` + `LICENSE` into
+    `mindfork-rs-vX.Y.Z-x86_64-{windows.zip,linux.tar.gz}` + a
+    `sha256sums.txt` file, publishing via `gh release create` with notes =
+    the version's section from the CHANGELOG. A project precedent — its own
+    micro-solutions instead of heavy tooling.
+  - (b) `cargo-dist` — powerful (installers, an updater), but its own
+    config/upgrade ecosystem for just two artifacts.
+- **F14. Where the release checklist lives.**
+  - (a) **[rec.]** a new section, **AGENTS.md §6 "Release"** — the whole
+    task process lives there, a release is its continuation.
+  - (b) a separate `docs/releasing.md`.
+
+---
+
+## 3. Design
+
+### 3.1 Application versioning
+
+- **SemVer**, source of truth — `Cargo.toml` (`env!("CARGO_PKG_VERSION")` is
+  already used in `--version`). A release = a git tag `vX.Y.Z` on the merge
+  commit into `main`.
+- While `0.x`: MINOR — features/tracks, PATCH — fixes. From `1.0.0` on —
+  full SemVer, where MAJOR is reserved for incompatibilities **not covered
+  by a migration** (the goal — that there are none at all).
+- Version ↔ data schemas are **independent**: a schema bump can happen in
+  any MINOR (the migration makes it safe), the schema number isn't
+  embedded in the app version.
+- Showing the version: `--version` (exists) + the help overlay's title
+  `F1` (`mindfork-rs vX.Y.Z`) + `tracing::info!` at startup (`version = …`
+  next to `root = …`) — so every log starts with the binary's version.
 
 ### 3.2 CHANGELOG.md
 
-- Формат Keep a Changelog 1.1, на русском, рубрики: Добавлено / Изменено /
-  Исправлено / Удалено / **Данные** (форматы хранения, миграции) / Безопасность.
-- Всегда есть секция `[Unreleased]`; сравнительные ссылки GitHub
+- Format Keep a Changelog 1.1, in Russian, rubrics: Added / Changed /
+  Fixed / Removed / **Data** (storage formats, migrations) / Security.
+- There's always an `[Unreleased]` section; GitHub comparison links
   (`…/compare/v0.9.0...HEAD`).
-- **Дисциплина**: PR с пользовательски-видимым эффектом добавляет пункт в
-  `[Unreleased]` — новый чек-пункт в PR-шаблоне и строка в таблице AGENTS.md §4.
-  Один пункт = одна-две строки языком пользователя (не журнал CLAUDE.md).
-- Первичное наполнение: секция `[0.9.0]` — сжатая ретроспектива «что умеет
-  приложение» (15–25 строк, по направлениям), со ссылкой на журнал CLAUDE.md за
-  детальной историей. Весь журнал не переносится.
+- **Discipline**: a PR with a user-visible effect adds an item to
+  `[Unreleased]` — a new checklist item in the PR template and a row in
+  AGENTS.md §4's table. One item = one or two lines in user-facing
+  language (not the CLAUDE.md journal).
+- Initial fill-in: the `[0.9.0]` section — a condensed retrospective of
+  "what the app can do" (15–25 lines, by track), linking to the CLAUDE.md
+  journal for detailed history. The whole journal isn't carried over.
 
 ### 3.3 CI (GitHub Actions)
 
 `.github/workflows/ci.yml`:
 
-- Триггеры: `pull_request` + `push` в `main`; `concurrency` с
-  `cancel-in-progress` по ref.
-- Джобы:
-  - **lint** (ubuntu): `cargo fmt --check`, `cargo clippy --all-targets -- -D warnings`;
+- Triggers: `pull_request` + `push` to `main`; `concurrency` with
+  `cancel-in-progress` by ref.
+- Jobs:
+  - **lint** (ubuntu): `cargo fmt --check`, `cargo clippy --all-targets
+    -- -D warnings`;
   - **test** (matrix: `ubuntu-latest`, `windows-latest`): `cargo test`
-    (`#[ignore]`-смоуки без env-переменных тихо пропускаются — уже устроено так;
-    сеть/живой сервер CI не нужны; спавны в тестах кросс-платформенны —
-    `cmd /C exit` / `sh -c "exit 0"`).
-- Кэш — `Swatinem/rust-cache`; тулчейн — из `rust-toolchain.toml` (Ф4).
-- Бейдж CI в README.
-- Обновление тулчейна — отдельный периодический PR (пин поднимается, новые линты
-  чинятся в нём же).
+    (`#[ignore]` smokes are silently skipped without env variables —
+    already set up that way; CI needs no network/live server; spawns in
+    tests are cross-platform — `cmd /C exit` / `sh -c "exit 0"`).
+- Cache — `Swatinem/rust-cache`; toolchain — from `rust-toolchain.toml`
+  (F4).
+- A CI badge in the README.
+- Toolchain upgrades — a separate periodic PR (the pin bumps, new lints
+  get fixed in the same PR).
 
-Ожидаемые «первые грабли» Linux-прогона (чинить в этом же этапе): платформенные
-допущения в тестах путей/процессов; они и есть ценность матрицы.
+Expected "first pitfalls" of the Linux run (fix them in this same stage):
+platform assumptions in path/process tests; that's exactly the value of the
+matrix.
 
-### 3.4 Версионирование схем и миграции данных
+### 3.4 Data-schema versioning and migrations
 
-Новый модуль **`shared/storage/schema.rs`** — единственный дом констант версий и
-реестра миграций (ADR 0006 зафиксирует решение целиком).
+A new module — **`shared/storage/schema.rs`** — the sole home for version
+constants and the migration registry (ADR 0006 will lock in the decision as
+a whole).
 
-**Константы:** `SETTINGS_SCHEMA = 1`, `PROFILES_SCHEMA = 1`, `CHAT_SCHEMA = 1`,
-`DB_SCHEMA = 1`. Существующий `shared/config.rs::SCHEMA_VERSION` переезжает сюда
-(поле `AppConfig.schema_version` остаётся — оно уже в файлах).
+**Constants:** `SETTINGS_SCHEMA = 1`, `PROFILES_SCHEMA = 1`,
+`CHAT_SCHEMA = 1`, `DB_SCHEMA = 1`. The existing
+`shared/config.rs::SCHEMA_VERSION` moves here (the field
+`AppConfig.schema_version` stays — it's already in the files).
 
-**Определение версии файла — структурно, формат сегодня не меняется:**
+**Detecting a file's version — structural, the format doesn't change today:**
 
-| Артефакт | Как определяется версия |
+| Artifact | How the version is determined |
 |---|---|
-| `settings.json` | поле `schema_version` (отсутствует → 1) |
-| `profiles.json` | массив → 1; объект → его `schema_version` (форма-конверт появится при первом breaking) |
-| `chats/*.json` | поле `v` (отсутствует → 1) — поле **не** пишется, пока схема = 1 (ноль churn в существующих файлах) |
-| `data.db` | `PRAGMA user_version` (0 → легаси/свежая база, baseline ставит 1) |
+| `settings.json` | the `schema_version` field (absent → 1) |
+| `profiles.json` | an array → 1; an object → its `schema_version` (an envelope shape will appear at the first breaking change) |
+| `chats/*.json` | the `v` field (absent → 1) — the field is **not** written while the schema = 1 (zero churn in existing files) |
+| `data.db` | `PRAGMA user_version` (0 → legacy/fresh DB, baseline sets it to 1) |
 
-**JSON-каркас:**
+**JSON framework:**
 
 ```rust
 struct Step { to: u32, summary: &'static str, apply: fn(Value) -> Result<Value> }
 struct JsonArtifact { current: u32, detect: fn(&Value) -> u32, steps: &'static [Step] }
 ```
 
-Поток `Storage::open` (все точки открытия хранилища — TUI и CLI `import` — путь
-один): прочитать каждый файл в `Value` → `detect` →
+`Storage::open` flow (every storage-opening point — the TUI and the CLI
+`import` — is a single path): read each file into a `Value` → `detect` →
 
-- `v == current` → как сейчас;
-- `v > current` → **ошибка запуска** (Ф10), локализованный текст (ключи бандла);
-- `v < current` → файл в план миграции.
+- `v == current` → as now;
+- `v > current` → **a startup error** (F10), localized text (bundle keys);
+- `v < current` → the file goes into the migration plan.
 
-План непуст → pre-migration бэкап (Ф9) → для каждого файла: цепочка `steps`
-`v..current` → **контрольный парс в типизированную структуру** (миграция, после
-которой файл не парсится, — ошибка, файл не перезаписывается) → атомарная запись
-существующим `write_json` (temp + rename + `.bak`) → сводка в лог
-(`migrated settings.json 1→2; chats: 214 файлов 1→2`).
+A non-empty plan → a pre-migration backup (F9) → for each file: a `steps`
+chain `v..current` → **a control-parse into a typed struct** (a migration
+after which the file doesn't parse — an error, the file isn't overwritten)
+→ an atomic write via the existing `write_json` (temp + rename + `.bak`) →
+a summary in the log (`migrated settings.json 1→2; chats: 214 files 1→2`).
 
-**SQLite-каркас (`db/mod.rs::migrate`):**
+**SQLite framework (`db/mod.rs::migrate`):**
 
 ```rust
 let v = user_version(conn)?;                 // PRAGMA user_version
 if v > DB_SCHEMA { bail!(downgrade) }
-if v == 0 { baseline(conn)?; set_user_version(conn, 1)?; }  // существующий идемпотентный DDL
+if v == 0 { baseline(conn)?; set_user_version(conn, 1)?; }  // the existing idempotent DDL
 for step in DB_STEPS.iter().filter(|s| s.to > v) {
-    // каждый шаг — в транзакции; user_version обновляется внутри неё
+    // each step — in a transaction; user_version updates inside it
 }
 ```
 
-- Бэкап `data.db` перед шагами ≥2 — средствами SQLite backup API
-  (`rusqlite::backup`, корректно при любом journal mode) в `backups/`; вместе с
-  JSON-планом это один общий момент «pre-migrate» (порядок в `Storage::open`:
-  оценить JSON-план + заглянуть в `user_version` → общий бэкап → JSON-миграции →
-  `Db::open` со степами).
-- Виртуальная таблица vec0 не «мигрируется» ALTER'ом — при несовместимом
-  изменении шаг пересоздаёт её существующим путём (`rag_reset_vectors` +
-  переиндексация, прецедент `/rag rebuild`).
-- `meta.rag_dim` остаётся как есть (данные, не схема).
+- A `data.db` backup before steps ≥2 — via the SQLite backup API
+  (`rusqlite::backup`, correct under any journal mode) into `backups/`;
+  together with the JSON plan this is one shared "pre-migrate" moment
+  (order in `Storage::open`: assess the JSON plan + peek at `user_version`
+  → a shared backup → JSON migrations → `Db::open` with the steps).
+- The vec0 virtual table isn't "migrated" via ALTER — on an incompatible
+  change a step recreates it via the existing path
+  (`rag_reset_vectors` + reindexing, precedent `/rag rebuild`).
+- `meta.rag_dim` stays as is (data, not schema).
 
-**Упрочнение чтения (Ф11):** `main.rs` перестаёт глотать битый конфиг
-(`load_config().unwrap_or_default()` → ошибка запуска с текстом); битый чат-файл
-пропускается с `warn`, не блокируя запуск и не перезаписываясь.
+**Hardened reads (F11):** `main.rs` stops swallowing a corrupt config
+(`load_config().unwrap_or_default()` → a startup error with text); a
+corrupt chat file is skipped with a `warn`, without blocking startup and
+without being overwritten.
 
-**Тесты (сетка безопасности каркаса):**
+**Tests (the framework's safety net):**
 
-- golden-фикстуры: сырой JSON каждой исторической версии каждого артефакта
-  (пока — по одной «v1»-фикстуре; каждая будущая миграция обязана добавить
-  фикстуру своей старой версии) → после миграции парсится и семантически верен;
-- негативные: версия новее → ошибка, данные не тронуты; битый файл → политика Ф11;
-- миграция без плана → бэкап не создаётся; с планом → создаётся до записи;
-- DB: `user_version` 0→1 на существующей базе (идемпотентность baseline), шаг в
-  транзакции откатывается целиком при ошибке.
+- golden fixtures: raw JSON of every historical version of every artifact
+  (for now — one "v1" fixture each; every future migration must add a
+  fixture of its old version) → after migration it parses and is
+  semantically correct;
+- negative: a newer version → an error, data untouched; a corrupt file →
+  the F11 policy;
+- a migration with no plan → no backup is created; with a plan → created
+  before the write;
+- DB: `user_version` 0→1 on an existing DB (baseline idempotency), a step
+  fully rolls back in a transaction on error.
 
-**Политика в процессе:** AGENTS.md §3 — пункт «новые поля — `#[serde(default)]`»
-расширяется правилом Ф12 (additive без bump / breaking = шаг + bump + фикстура +
-changelog-рубрика «Данные»); PR-шаблон — чек-пункт «формат данных не менялся /
-изменение покрыто миграцией и фикстурой».
+**Policy in the process:** AGENTS.md §3 — the "new fields —
+`#[serde(default)]`" item is extended with the F12 policy (additive with
+no bump / breaking = a step + a bump + a fixture + a "Data" changelog
+entry); the PR template — a checklist item "the data format hasn't changed
+/ the change is covered by a migration and a fixture."
 
-**Манифест бэкапа (в релизном этапе):** `backup.rs` кладёт в zip
-`manifest.json { app_version, schemas: {settings, profiles, chat, db}, created_at }`;
-`restore` при манифесте новее текущих схем — предупреждение (данные целы,
-downgrade-guard на старте всё равно защитит).
+**Backup manifest (in the release stage):** `backup.rs` puts into the zip
+`manifest.json { app_version, schemas: {settings, profiles, chat, db},
+created_at }`; `restore`, when the manifest is newer than the current
+schemas — a warning (data is intact, the startup downgrade guard still
+protects it either way).
 
-### 3.5 Релизный процесс
+### 3.5 The release process
 
-Чек-лист (AGENTS.md §6, Ф14):
+Checklist (AGENTS.md §6, F14):
 
-1. Релизный PR: bump `Cargo.toml` (+`Cargo.lock`), `[Unreleased]` →
-   `[X.Y.Z] — дата`, свежая ссылка сравнения.
-2. Merge → пользователь ставит тег `vX.Y.Z` и пушит его (агент не пушит в `main`
-   и теги — AGENTS.md §5).
-3. Тег запускает `release.yml`: сборка → упаковка → sha256 → `gh release create`
-   с нотами из раздела CHANGELOG.
-4. Смоук на артефакте: скачать, `--version`, запуск TUI на копии данных.
+1. A release PR: bump `Cargo.toml` (+`Cargo.lock`), `[Unreleased]` →
+   `[X.Y.Z] — date`, a fresh comparison link.
+2. Merge → the user applies and pushes tag `vX.Y.Z` (the agent doesn't push
+   to `main` or push tags — AGENTS.md §5).
+3. The tag triggers `release.yml`: build → package → sha256 →
+   `gh release create` with notes from the CHANGELOG section.
+4. An artifact smoke: download, `--version`, run the TUI on a copy of the
+   data.
 
 ---
 
-## 4. План реализации (этапы = отдельные PR)
+## 4. Implementation plan (stages = separate PRs)
 
-Порядок: CI первым — он становится сеткой безопасности для всего остального.
+Order: CI first — it becomes the safety net for everything else.
 
-| Этап | Ветка | Содержимое | DoD |
+| Stage | Branch | Contents | DoD |
 |---|---|---|---|
-| 1. CI | `feat/ci-pipeline` | `rust-toolchain.toml` (пин), `.github/workflows/ci.yml` (lint ubuntu + test matrix win/linux), файл `LICENSE` (MIT), бейдж в README; починка платформенных тестов Linux по факту первого прогона | CI зелёный на PR в обеих ОС |
-| 2. Версия + changelog | `feat/versioning-changelog` | bump `0.9.0`; `CHANGELOG.md` (формат, seed `[0.9.0]`, `[Unreleased]`); версия в титуле справки `F1` + в лог старта; AGENTS.md §4 + PR-шаблон (чек-пункт changelog) | `--version`/`F1`/лог показывают 0.9.0; дисциплина зафиксирована в процессе |
-| 3. Миграции JSON | `feat/json-schema-migrations` | `shared/storage/schema.rs` (константы, `JsonArtifact`, раннер), downgrade-guard, eager-миграция с pre-migration бэкапом, упрочнение Ф11, golden-фикстуры, локализация ошибок (ключи бандла), **ADR 0006** (JSON+DB целиком), spec §5.2/§12 + architecture §7 | каркас в бою на «пустых» миграциях (все схемы = 1); фикстуры и негативные тесты зелёные; **ручной прогон на копии реальных данных** (226+ чатов) |
-| 4. Миграции SQLite | `feat/db-schema-migrations` | `PRAGMA user_version` + раннер шагов в транзакциях, baseline 0→1, бэкап через SQLite backup API, интеграция в общий pre-migrate план `Storage::open` | существующая база открывается с `user_version=1`; тесты транзакционности; ручной прогон на копии реальной `data.db` |
-| 5. Релизный пайплайн | `feat/release-pipeline` | `release.yml` (тег `v*` → сборка win/linux-22.04 → архивы + sha256 → gh release с нотами из CHANGELOG), AGENTS.md §6 «Релиз», манифест версий в бэкап-zip + предупреждение restore | тег `v0.9.0` (ставит пользователь) собирает публичный релиз с артефактами; смоук артефактов пройден |
-| 6. (опц.) Supply chain | `feat/supply-chain-audit` | `cargo-deny` (advisories/licenses/dupes), weekly + manual workflow, advisory-режим | джоб работает, merge не блокирует |
+| 1. CI | `feat/ci-pipeline` | `rust-toolchain.toml` (pin), `.github/workflows/ci.yml` (lint on ubuntu + a win/linux test matrix), a `LICENSE` file (MIT), a README badge; fix Linux platform tests as found on the first run | CI is green on a PR on both OSes |
+| 2. Version + changelog | `feat/versioning-changelog` | bump to `0.9.0`; `CHANGELOG.md` (format, seed `[0.9.0]`, `[Unreleased]`); the version in the `F1` help title + the startup log; AGENTS.md §4 + the PR template (a changelog checklist item) | `--version`/`F1`/the log show 0.9.0; the discipline is locked into the process |
+| 3. JSON migrations | `feat/json-schema-migrations` | `shared/storage/schema.rs` (constants, `JsonArtifact`, the runner), a downgrade guard, an eager migration with a pre-migration backup, the F11 hardening, golden fixtures, localized errors (bundle keys), **ADR 0006** (JSON+DB as a whole), spec §5.2/§12 + architecture §7 | the framework works in production on "empty" migrations (all schemas = 1); fixtures and negative tests are green; **a manual run on a copy of real data** (226+ chats) |
+| 4. SQLite migrations | `feat/db-schema-migrations` | `PRAGMA user_version` + a step runner in transactions, baseline 0→1, a backup via the SQLite backup API, integration into the shared pre-migrate plan in `Storage::open` | an existing DB opens with `user_version=1`; transactionality tests; a manual run on a copy of a real `data.db` |
+| 5. Release pipeline | `feat/release-pipeline` | `release.yml` (tag `v*` → build win/linux-22.04 → archives + sha256 → a gh release with notes from the CHANGELOG), AGENTS.md §6 "Release", a version manifest in the backup zip + a restore warning | tag `v0.9.0` (applied by the user) builds a public release with artifacts; the artifact smoke passes |
+| 6. (opt.) Supply chain | `feat/supply-chain-audit` | `cargo-deny` (advisories/licenses/dupes), weekly + manual workflow, advisory mode | the job works, doesn't block merges |
 
-Живые прогоны движка направлению не нужны (движок/память/инструменты не
-затрагиваются) — вместо них обязательные **ручные прогоны миграций на копиях
-реальных данных** (этапы 3–4) и смоук релизных артефактов (этап 5).
+The track needs no live engine runs (the engine/memory/tools aren't
+touched) — instead, mandatory **manual migration runs on copies of real
+data** (stages 3–4) and a release-artifact smoke (stage 5).
 
-## 5. Вне объёма (заделы)
+## 5. Out of scope (groundwork)
 
-- Авто-обновление приложения (self-update) и инсталляторы — отдельное направление
-  (`cargo-dist`/winget/deb — когда появится потребность).
-- musl-static Linux-бинарь; сборки под arm64.
-- Уведомление в TUI «доступна новая версия» (проверка GitHub Releases).
-- Генерация changelog из коммитов (git-cliff) — если ручная дисциплина станет тяжёлой.
-- Автоматическая чистка старых pre-migration бэкапов (ротация `backups/`).
+- App self-update and installers — a separate track (`cargo-dist`/
+  winget/deb — once there's demand).
+- A musl-static Linux binary; arm64 builds.
+- A TUI notification "a new version is available" (checking GitHub
+  Releases).
+- Generating the changelog from commits (git-cliff) — if manual discipline
+  becomes a burden.
+- Automatic cleanup of old pre-migration backups (`backups/` rotation).

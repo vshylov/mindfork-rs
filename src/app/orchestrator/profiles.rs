@@ -1,4 +1,4 @@
-//! Управление профилями: создание, мягкое удаление с каскадом, правка.
+//! Managing profiles: creation, soft deletion with cascade, editing.
 
 use uuid::Uuid;
 
@@ -8,7 +8,7 @@ use crate::features::profiles::ProfileEdit;
 use super::Orchestrator;
 
 impl Orchestrator {
-    /// Создаёт новый профиль (валидирует имя), сохраняет и обновляет список.
+    /// Creates a new profile (validates the name), saves it, and refreshes the list.
     pub(super) fn handle_create_profile(&mut self, name: String, system_message: String) {
         let Some(mut profile) = crate::features::profiles::create(&name, system_message) else {
             let _ = self.evt_tx.send(AppEvent::Error(
@@ -16,8 +16,8 @@ impl Orchestrator {
             ));
             return;
         };
-        // Новый профиль создаётся на языке каркаса по умолчанию (defaults.json); пока
-        // у него нет данных, язык можно сменить в настройках. См. docs/history/i18n.md.
+        // A new profile is created in the default scaffold language (defaults.json); while
+        // it has no data yet, the language can be changed in settings. See docs/history/i18n.md.
         profile.language = self.default_language;
         if let Err(err) = self.storage.json().upsert_profile(&profile) {
             let _ = self.evt_tx.send(AppEvent::Error(
@@ -30,10 +30,10 @@ impl Orchestrator {
         self.emit_profile_list();
     }
 
-    /// Мягко удаляет профиль с каскадом: скрываются его чаты, а заметки/RAG
-    /// становятся недостижимы (профиль скрыт). См. spec §10, §12.3.
+    /// Soft-deletes a profile with a cascade: its chats are hidden, and notes/RAG
+    /// become unreachable (the profile is hidden). See spec §10, §12.3.
     pub(super) fn handle_delete_profile(&mut self, id: Uuid) {
-        // Нельзя удалить последний профиль — иначе не из чего создавать чаты.
+        // Can't delete the last profile — otherwise there's nothing to create chats from.
         if self.profiles.len() <= 1 {
             let _ = self.evt_tx.send(AppEvent::Error(
                 self.ui_locale().t("ui.err.profile_delete_last").into(),
@@ -52,7 +52,7 @@ impl Orchestrator {
             Ok(true) => {}
         }
         self.profiles.retain(|p| p.id != id);
-        // Убираем из памяти чаты удалённого профиля.
+        // Remove the deleted profile's chats from memory.
         let removed: Vec<Uuid> = self
             .chats
             .iter()
@@ -65,7 +65,7 @@ impl Orchestrator {
         }
         self.emit_profile_list();
 
-        // Если активный чат принадлежал удалённому профилю — переключаемся.
+        // If the active chat belonged to the deleted profile — switch away.
         let active_removed = self.active_id.is_some_and(|a| removed.contains(&a));
         if active_removed {
             self.active_id = None;
@@ -80,12 +80,12 @@ impl Orchestrator {
         }
     }
 
-    /// Применяет правки профиля (не затрагивает уже созданные чаты — у них свои
-    /// копии, spec §10). Сохраняет и переэмитит список профилей/настройки.
+    /// Applies profile edits (doesn't touch already-created chats — they have their own
+    /// copies, spec §10). Saves and re-emits the profile list/settings.
     pub(super) fn handle_update_profile(&mut self, id: Uuid, mut edit: ProfileEdit) {
-        // Авторитетный гейт смены языка каркаса (ось A, docs/history/i18n.md): если у профиля
-        // уже есть данные, реальная смена языка отклоняется (страховка поверх
-        // блокировки поля в UI). Правку языка при этом гасим, остальные — применяем.
+        // The authoritative gate for changing the scaffold language (axis A, docs/history/i18n.md): if the profile
+        // already has data, an actual language change is rejected (a safety net on top
+        // of the UI's field lock). The language edit is dropped in that case, the rest are applied.
         if let Some(new_lang) = edit.language {
             let current = self
                 .profiles
@@ -93,7 +93,7 @@ impl Orchestrator {
                 .find(|p| p.id == id)
                 .map(|p| p.language);
             if current == Some(new_lang) {
-                edit.language = None; // язык не меняется — гейт неактуален
+                edit.language = None; // the language isn't changing — the gate doesn't apply
             } else if self.profile_has_data(id) {
                 edit.language = None;
                 let _ = self.evt_tx.send(AppEvent::Error(

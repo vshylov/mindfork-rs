@@ -1,191 +1,219 @@
-# ADR 0006 — Версионирование схем данных и каркас JSON-миграций
+# ADR 0006 — Data schema versioning and the JSON migration scaffold
 
-**Статус:** принято (2026-07-15). Фиксирует этапы 3–4 направления «релизная инженерия»
-(версионирование схем сохраняемых данных + миграции JSON и SQLite). Дизайн и развилки —
-[docs/history/release-engineering.md](../history/release-engineering.md) §3.4 и §2 блок В (Ф7–Ф12).
-Реализация: [src/shared/storage/schema.rs](../../src/shared/storage/schema.rs) (чистый
-каркас + константы версий), [src/features/data_migration.rs](../../src/features/data_migration.rs)
-(оркестрация JSON+координация с SQLite) и
-[src/shared/storage/db/mod.rs](../../src/shared/storage/db/mod.rs) (version-aware `migrate`
-через `PRAGMA user_version`). Родственно [ADR 0005](0005-python-sandbox-wasmer.md) по стилю
-(своё микро-решение вместо тяжёлого инструмента).
+**Status:** accepted (2026-07-15). Fixes stages 3–4 of the "release engineering"
+track (versioning schemas of persisted data + JSON and SQLite migrations).
+Design and decision points —
+[docs/history/release-engineering.md](../history/release-engineering.md) §3.4
+and §2 block B (F7–F12). Implementation:
+[src/shared/storage/schema.rs](../../src/shared/storage/schema.rs) (clean
+scaffold + version constants), [src/features/data_migration.rs](../../src/features/data_migration.rs)
+(JSON orchestration + coordination with SQLite), and
+[src/shared/storage/db/mod.rs](../../src/shared/storage/db/mod.rs) (version-aware
+`migrate` via `PRAGMA user_version`). Related to [ADR 0005](0005-python-sandbox-wasmer.md)
+in style (our own micro-solution instead of a heavy tool).
 
-## Контекст
+## Context
 
-Приложение хранит данные в JSON (`settings.json`/`profiles.json`/`chats/<id>.json`)
-и SQLite (`data.db`). До этого этапа версионирование было **декорацией**:
+The app stores data in JSON (`settings.json`/`profiles.json`/`chats/<id>.json`)
+and SQLite (`data.db`). Before this stage, versioning was **decorative**:
 
-- `AppConfig.schema_version` **никогда не проверялся**; битый `settings.json` `main.rs`
-  глотал через `unwrap_or_default()`, а следующее сохранение **молча затирало** данные
-  дефолтами (перезаписывая и `.bak` битой версией);
-- `profiles.json` и `chats/*.json` версии не имели — breaking-изменение формата нечем
-  обнаружить; один битый файл чата валил `load_chats()` **целиком** (блокировал запуск);
-- политика изменений покрывала только **additive** («новое поле — `#[serde(default)]`,
-  таблица — `CREATE IF NOT EXISTS`»); единственный breaking в истории (вложенная
-  конфигурация движка) решён «без миграции» — пользователь вводил данные заново;
-- данные из более новой версии приложения (даунгрейд) читались «как получится» — тихая
-  порча.
+- `AppConfig.schema_version` was **never checked**; `main.rs` swallowed a
+  corrupt `settings.json` via `unwrap_or_default()`, and the next save would
+  **silently overwrite** the data with defaults (overwriting `.bak` too with
+  the corrupt version);
+- `profiles.json` and `chats/*.json` had no version — a breaking format change
+  had no way to be detected; one corrupt chat file crashed `load_chats()`
+  **entirely** (blocking startup);
+- the change policy only covered **additive** changes ("a new field —
+  `#[serde(default)]`, a table — `CREATE IF NOT EXISTS`"); the single breaking
+  change in the project's history (nesting the engine config) was resolved
+  "without migration" — the user re-entered the data;
+- data from a newer app version (a downgrade) was read "as best it could" —
+  silent corruption.
 
-Задача: дать каждому артефакту версию схемы и **каркас миграции**, чтобы обновление
-бинарника никогда не теряло данные, а даунгрейд/повреждение обнаруживались явно.
+Goal: give every artifact a schema version and a **migration scaffold**, so a
+binary update never loses data, and a downgrade/corruption is detected
+explicitly.
 
-## Решение
+## Decision
 
-### 1. Версии схем — пер-артефакт (Ф7)
+### 1. Schema versions — per artifact (F7)
 
-Константы в `schema.rs`: `SETTINGS_SCHEMA` / `PROFILES_SCHEMA` / `CHAT_SCHEMA` /
-`DB_SCHEMA`, все = 1. Пер-артефакт (а не один глобальный номер), потому что артефакты
-меняются с разной скоростью — общий номер заставлял бы «мигрировать» нетронутые файлы.
-`SETTINGS_SCHEMA` привязан к существующему `config::SCHEMA_VERSION` (дефолт поля
-`AppConfig.schema_version`) — инвариант проверяется тестом. `DB_SCHEMA` (`PRAGMA
-user_version`, этап 4) — см. §10.
+Constants in `schema.rs`: `SETTINGS_SCHEMA` / `PROFILES_SCHEMA` / `CHAT_SCHEMA`
+/ `DB_SCHEMA`, all = 1. Per artifact (not a single global number), because
+artifacts change at different rates — a shared number would force "migrating"
+untouched files. `SETTINGS_SCHEMA` is tied to the existing
+`config::SCHEMA_VERSION` (the default of the `AppConfig.schema_version` field)
+— the invariant is checked by a test. `DB_SCHEMA` (`PRAGMA user_version`, stage
+4) — see §10.
 
-### 2. Определение версии — структурное (ноль churn существующих файлов)
+### 2. Version detection — structural (zero churn on existing files)
 
-Формат файлов сегодня **не меняется** (все схемы = 1), версия определяется по уже
-существующей форме:
+The file format is **unchanged** today (all schemas = 1); the version is
+detected from the shape the file already has:
 
-| Артефакт | Как определяется версия |
+| Artifact | How the version is detected |
 |---|---|
-| `settings.json` | поле `schema_version` (отсутствует → 1) |
-| `profiles.json` | голый массив → 1; объект → его `schema_version` (форма-конверт появится при первом breaking) |
-| `chats/<id>.json` | поле `v` (отсутствует → 1) — поле **не** пишется, пока схема = 1 |
-| `data.db` | `PRAGMA user_version` (0 → легаси/свежая база, baseline штампует 1; см. §10) |
+| `settings.json` | the `schema_version` field (missing → 1) |
+| `profiles.json` | a bare array → 1; an object → its `schema_version` (an envelope shape will appear at the first breaking change) |
+| `chats/<id>.json` | the `v` field (missing → 1) — the field is **not** written while the schema is 1 |
+| `data.db` | `PRAGMA user_version` (0 → legacy/fresh DB, baseline stamps 1; see §10) |
 
-### 3. Разделение по FSD: чистый каркас в `shared`, оркестрация в `features`
+### 3. FSD split: a clean scaffold in `shared`, orchestration in `features`
 
-- **`shared/storage/schema.rs`** — только Value-уровневая логика (без I/O): `Step`
-  (чистая `fn(Value) -> Result<Value>` «версия `< to` → `to`»), `JsonArtifact`
-  (`current` + `detect` + цепочка `steps`), `Assessment` (`UpToDate` / `Migrate{from}` /
-  `Downgrade{from}`), методы `assess`/`apply_steps` и реестр (`settings_artifact` и т.д.).
-  Единственный дом констант версий и реестра — замысел дизайн-дока «единый дом» соблюдён.
-- **`features/data_migration.rs`** — файловый I/O, гейты (downgrade / битость),
-  pre-migration бэкап и control-parse в типизированные структуры (`AppConfig` /
-  `Vec<Profile>` / `Chat`).
+- **`shared/storage/schema.rs`** — Value-level logic only (no I/O): `Step` (a
+  pure `fn(Value) -> Result<Value>` "version `< to` → `to`"), `JsonArtifact`
+  (`current` + `detect` + `steps` chain), `Assessment` (`UpToDate` /
+  `Migrate{from}` / `Downgrade{from}`), the `assess`/`apply_steps` methods, and
+  a registry (`settings_artifact` etc.). The single home for version constants
+  and the registry — the design doc's "single home" intent is honored.
+- **`features/data_migration.rs`** — file I/O, gates (downgrade / corruption),
+  the pre-migration backup, and control-parsing into typed structs
+  (`AppConfig` / `Vec<Profile>` / `Chat`).
 
-Оркестрация **не в `shared`**, потому что pre-migration бэкап — это `features::backup`, а
-`shared` не может зависеть от `features` (FSD «зависимости строго вниз»).
+Orchestration is **not in `shared`**, because the pre-migration backup is
+`features::backup`, and `shared` cannot depend on `features` (FSD
+"dependencies go strictly downward").
 
-**Отклонение от дизайн-дока** (там миграция вызывается внутри `Storage::open`): вместо
-этого `data_migration::run(paths, loc)` вызывается из `main.rs` **перед** открытием
-хранилища (в путях TUI и CLI `import`). Обоснование:
+**Deviation from the design doc** (there, migration is invoked inside
+`Storage::open`): instead, `data_migration::run(paths, loc)` is called from
+`main.rs` **before** the storage layer is opened (on both the TUI and the CLI
+`import` path). Rationale:
 
-- (а) проброс `loc` в `Storage::open` заchurnил бы ~30 тест-сайтов
+- (a) threading `loc` into `Storage::open` would churn ~30 test sites calling
   `Storage::open(Paths::with_root(...))`;
-- (б) миграция — стартовый концерн уровня границы приложения (`main.rs`), где `loc` уже
-  есть; каркас/реестр всё равно живут в `shared/storage/schema.rs`, так что замысел
-  «единого дома констант» не нарушен.
+- (b) migration is a startup-level, application-boundary concern (`main.rs`),
+  where `loc` is already available; the scaffold/registry still live in
+  `shared/storage/schema.rs`, so the "single home for constants" intent is not
+  broken.
 
-### 4. Downgrade-guard (Ф10)
+### 4. Downgrade guard (F10)
 
-`detect > current` (данные из более новой версии приложения) → **отказ запуска** с
-локализованным сообщением («данные созданы более новой версией mindfork; обновите
-приложение или восстановите бэкап»). Тихая порча хуже отказа. Правило действует и в
-CLI-путях.
+`detect > current` (data from a newer app version) → **refuse to start**, with
+a localized message ("this data was created by a newer version of mindfork;
+update the app or restore from a backup"). Silent corruption is worse than
+refusing to start. The rule applies on CLI paths too.
 
-### 5. Упрочнение чтения повреждённых файлов (Ф11)
+### 5. Hardening reads of corrupt files (F11)
 
-- битый `settings.json`/`profiles.json` → **отказ запуска** (раньше — молчаливые дефолты
-  с последующим затиранием `.bak`);
-- битый `chats/<id>.json` → **пропуск с `tracing::warn`**, файл на диске не тронут
-  (раньше один битый файл валил весь запуск). Исправлено прямо в `json.rs::load_chats`,
-  чтобы упрочнение было durable независимо от пути миграции.
+- a corrupt `settings.json`/`profiles.json` → **refuse to start** (previously —
+  silent defaults, followed by overwriting `.bak`);
+- a corrupt `chats/<id>.json` → **skip with `tracing::warn`**, the on-disk file
+  is left untouched (previously one corrupt file crashed the whole app).
+  Fixed directly in `json.rs::load_chats`, so the hardening is durable
+  regardless of the migration path.
 
-`read_json`/`write_json` (`json.rs`) стали `pub(crate)` — миграция читает файлы как
-`serde_json::Value` (отличая «нет файла» от «повреждён») и пишет мигрированное значение
-тем же атомарным путём.
+`read_json`/`write_json` (`json.rs`) became `pub(crate)` — migration reads
+files as `serde_json::Value` (distinguishing "no file" from "corrupt") and
+writes the migrated value through the same atomic path.
 
-### 6. Момент миграции — eager на старте + один pre-migration бэкап (Ф9)
+### 6. When migration runs — eager at startup + one pre-migration backup (F9)
 
-`run` собирает план (файлы с версией `< current`) **и** заглядывает в `user_version`
-БД (`db::peek_user_version` + `db::needs_step_migration`, см. §10) — так **один** бэкап
-покрывает и JSON, и SQLite. План/БД требуют миграции → **один** pre-migration бэкап
-**перед любой записью** (`backup::create_backup` с именем `backups/pre-migrate-<дата>.zip`
-через `default_backup_path(paths, "pre-migrate")`); бэкап не удался → миграция не
-начинается, данные не тронуты. `fs_root` песочницы в этот бэкап **не включается** (конфиг
-может сам требовать миграции — читать его ради `fs_root` преждевременно; критичные
-`settings`/`profiles`/`chats`/`db` бэкап и так захватывает).
+`run` builds a plan (files with version `< current`) **and** peeks at the DB's
+`user_version` (`db::peek_user_version` + `db::needs_step_migration`, see
+§10) — so **one** backup covers both JSON and SQLite. If the plan/DB need
+migration → **one** pre-migration backup **before any write**
+(`backup::create_backup` named `backups/pre-migrate-<date>.zip` via
+`default_backup_path(paths, "pre-migrate")`); if the backup fails, migration
+does not start, data stays untouched. The sandbox's `fs_root` is **not**
+included in this backup (the config itself may require migration — reading it
+just for `fs_root` would be premature; the critical `settings`/`profiles`/
+`chats`/`db` are already captured by the backup).
 
-Пока все схемы = 1, план всегда пуст → путь дормантный, но покрыт тестом на синтетическом
-артефакте (`current = 2` со ступенью `1→2`), проверяющим бэкап + запись на реальном I/O.
+While all schemas = 1, the plan is always empty → the path is dormant, but
+covered by a test on a synthetic artifact (`current = 2` with a `1→2` step)
+that verifies the backup + write over real I/O.
 
-### 7. Применение: цепочка шагов → control-parse → атомарная запись
+### 7. Applying: step chain → control-parse → atomic write
 
-`apply_steps` (цепочка чистых `fn(Value)->Result<Value>`) → **control-parse**
-(`serde_json::from_value` в типизированную структуру: валидация, что мигрированное
-парсится; при провале — отказ, файл **не** перезаписывается) → атомарная запись
-мигрированного `Value` (именно `Value`, не переспарсенной структуры — сохраняет точную
-мигрированную форму) через `json::write_json` (temp + rename + `.bak` прежней версии).
+`apply_steps` (a chain of pure `fn(Value)->Result<Value>`) → **control-parse**
+(`serde_json::from_value` into a typed struct: validating that the migrated
+data parses; on failure — refuse, the file is **not** overwritten) → an atomic
+write of the migrated `Value` (the `Value` itself, not the re-parsed struct —
+preserves the exact migrated shape) via `json::write_json` (temp + rename +
+`.bak` of the previous version).
 
-### 8. Политика bump'а (Ф12, зафиксирована в AGENTS.md §4)
+### 8. Bump policy (F12, fixed in AGENTS.md §4)
 
-- **additive** (новое поле с `#[serde(default)]`, новая таблица/колонка с дефолтом) —
-  **без bump**, как раньше;
-- **breaking** (переименование/перенос/смена семантики/удаление поля) — bump константы +
-  шаг миграции + golden-фикстура старого формата + пункт в CHANGELOG (рубрика «Данные»).
+- **additive** (a new field with `#[serde(default)]`, a new table/column with a
+  default) — **no bump**, as before;
+- **breaking** (rename/move/semantic change/field removal) — bump the constant
+  + a migration step + a golden fixture of the old format + a CHANGELOG entry
+  (the "Data" section).
 
-### 9. Локализация
+### 9. Localization
 
-5 ключей `migrate.err.{settings_corrupt, profiles_corrupt, downgrade, backup_failed,
-control_parse}` (бандлы `ru`+`en`). Логи хода миграции — русские (файловые, не
-локализуются).
+5 keys, `migrate.err.{settings_corrupt, profiles_corrupt, downgrade,
+backup_failed, control_parse}` (the `ru`+`en` bundles). Migration-progress logs
+stay Russian (file logs, not localized).
 
-### 10. Миграции SQLite (этап 4)
+### 10. SQLite migrations (stage 4)
 
-`data.db` версионируется `PRAGMA user_version`; `DB_SCHEMA = 1`. Раннер —
-version-aware `db/mod.rs::migrate` (порядок важен):
+`data.db` is versioned by `PRAGMA user_version`; `DB_SCHEMA = 1`. The runner —
+a version-aware `db/mod.rs::migrate` (order matters):
 
-- **`baseline_ddl` (весь `CREATE … IF NOT EXISTS`) выполняется КАЖДЫЙ раз** — это
-  механизм добавления новых таблиц/индексов существующим БД **без** bump версии
-  (additive-политика Ф12). Additive-DDL и `user_version` **независимы**: `user_version`
-  отслеживает только breaking-миграции (шаги), а не additive-DDL.
-- свежая/существующая БД с `user_version = 0` штампуется baseline-версией `DB_SCHEMA`
-  (`set_user_version`). Это **не** миграция данных (DDL идемпотентен) → pre-migration
-  бэкап не нужен, сообщений нет. Все сегодняшние базы (`user_version = 0`) при первом
-  запуске стадии 4 тихо получают штамп 1.
-- breaking-шаги реестра `DB_STEPS` (пока **пуст** — все схемы = 1) прогоняет
-  `apply_db_steps`: `DbStep { to, summary, apply: fn(&Connection) -> Result<()> }`,
-  фильтр `s.to > from.max(1)` (baseline = 1, реальные шаги начинаются со 2). **Каждый
-  шаг — в своей транзакции ВМЕСТЕ с обновлением `user_version`**; на ошибке — откат
-  целиком (ни схема, ни версия не меняются). Дормантно, пока `DB_STEPS` пуст.
-- downgrade (`user_version > DB_SCHEMA`) — защитный `bail` (для прямого открытия/тестов);
-  пользовательский локализованный отказ ставит `data_migration` (§6).
+- **`baseline_ddl` (all the `CREATE … IF NOT EXISTS`) runs EVERY time** — this
+  is the mechanism for adding new tables/indexes to an existing DB **without**
+  a version bump (the additive policy, F12). Additive DDL and `user_version`
+  are **independent**: `user_version` only tracks breaking migrations (steps),
+  not additive DDL.
+- a fresh/existing DB with `user_version = 0` gets stamped with the baseline
+  `DB_SCHEMA` version (`set_user_version`). This is **not** a data migration
+  (the DDL is idempotent) → no pre-migration backup, no message. All of
+  today's databases (`user_version = 0`) get silently stamped 1 on the first
+  run of stage 4.
+- breaking steps in the `DB_STEPS` registry (currently **empty** — all schemas
+  = 1) are run by `apply_db_steps`: `DbStep { to, summary, apply: fn(&Connection)
+  -> Result<()> }`, filtered by `s.to > from.max(1)` (baseline = 1, real steps
+  start at 2). **Each step runs in its own transaction TOGETHER WITH the
+  `user_version` update**; on error — a full rollback (neither the schema nor
+  the version changes). Dormant while `DB_STEPS` is empty.
+- downgrade (`user_version > DB_SCHEMA`) — a defensive `bail` (for direct opens
+  / tests); the user-facing localized refusal is issued by `data_migration`
+  (§6).
 
-**Единый pre-migrate момент JSON+SQLite** (`data_migration::run_with`): до открытия
-хранилища `db::peek_user_version(data.db)` (0, если файла нет) → downgrade-guard
-(`> DB_SCHEMA` → локализованный отказ, файл `data.db`) → `db::needs_step_migration(uv)`
-учитывается в решении об **одном** общем бэкапе (JSON-план **или** БД нужна миграция →
-бэкап). Саму миграцию БД (baseline/шаги) выполняет **позже** `Db::open` — здесь лишь
-заглядываем в `user_version`.
+**A single pre-migrate moment for JSON+SQLite** (`data_migration::run_with`):
+before the storage layer is opened, `db::peek_user_version(data.db)` (0 if
+there is no file) → the downgrade guard (`> DB_SCHEMA` → a localized refusal,
+for the `data.db` file) → `db::needs_step_migration(uv)` factors into the
+decision about **one** shared backup (the JSON plan **or** the DB needing
+migration → a backup). The actual DB migration (baseline/steps) is performed
+**later** by `Db::open` — here we only peek at `user_version`.
 
-**SQLite backup API НЕ используется** (отклонение от дизайн-дока §3.4, где предлагался
-`rusqlite::backup`): в момент общего бэкапа БД ещё **не открыта** (`Db::open` идёт
-после), т.е. quiescent, и файлы `data.db`+`-wal`+`-shm` уже включены в
-`backup::create_backup` — zip даёт согласованный снимок без отдельного backup API.
-Обоснование: quiescent-состояние + single-instance-guard.
+**The SQLite backup API is NOT used** (a deviation from the design doc §3.4,
+which proposed `rusqlite::backup`): at the moment of the shared backup, the DB
+is **not yet open** (`Db::open` happens afterward), i.e. it is quiescent, and
+the `data.db`+`-wal`+`-shm` files are already included in
+`backup::create_backup` — the zip gives a consistent snapshot without a
+separate backup API. Rationale: quiescent state + the single-instance guard.
 
-## Последствия
+## Consequences
 
-- Слои выше границы старта (оркестратор, UI, инструменты) — не затронуты; миграция —
-  разовый стартовый шаг перед открытием хранилища.
-- Каркас «в бою» на пустых миграциях: движок покрыт тестами на синтетическом артефакте,
-  а первый реальный breaking добавит лишь шаг + golden-фикстуру, не трогая раннер.
-- Битый конфиг/профили больше не затираются дефолтами; битый чат не блокирует запуск.
-- Даунгрейд обнаруживается явным отказом вместо тихой порчи.
-- Минус: control-parse дублирует парс (значение парсится и на валидации, и при штатной
-  загрузке) — цена невелика (раз на старте, только для мигрируемых файлов).
+- Layers above the startup boundary (orchestrator, UI, tools) — not affected;
+  migration is a one-time startup step before the storage layer is opened.
+- The scaffold is "in production" on empty migrations: the engine is covered
+  by tests on a synthetic artifact, and the first real breaking change will
+  only add a step + a golden fixture, without touching the runner.
+- A corrupt config/profiles is no longer overwritten with defaults; a corrupt
+  chat no longer blocks startup.
+- A downgrade is now detected with an explicit refusal instead of silent
+  corruption.
+- Downside: control-parse duplicates parsing (the value is parsed both for
+  validation and again on regular load) — the cost is small (once at startup,
+  only for files being migrated).
 
-### 11. Манифест резервной копии (этап 5)
+### 11. Backup manifest (stage 5)
 
-`create_backup` кладёт в архив `manifest.json` (`BackupManifest`: версия приложения +
-версии схем `SchemaVersions{settings,profiles,chat,db}` + время). При восстановлении он
-**не** распаковывается в корень (метаданные, не данные); `read_manifest` читает его
-отдельно, а `mindfork restore` предупреждает (`is_newer_than_current`), если копия
-сделана более новой версией приложения — данные целы, downgrade-guard на старте всё равно
-защитит. Старый бэкап без манифеста → `None` (предупреждения нет).
+`create_backup` puts a `manifest.json` in the archive (`BackupManifest`: app
+version + schema versions `SchemaVersions{settings,profiles,chat,db}` + a
+timestamp). On restore it is **not** unpacked into the root (metadata, not
+data); `read_manifest` reads it separately, and `mindfork restore` warns
+(`is_newer_than_current`) if the copy was made by a newer app version — the
+data is intact, and the downgrade guard at startup still protects it. An old
+backup without a manifest → `None` (no warning).
 
-**Отложено** (задел):
+**Deferred** (groundwork):
 
-- **Пересоздание vec0**: виртуальная таблица `rag_vectors` и `meta.rag_dim` не
-  «мигрируются» ALTER'ом — при несовместимом изменении будущий breaking-шаг пересоздаст
-  их существующим путём (`/rag rebuild`).
+- **vec0 recreation**: the `rag_vectors` virtual table and `meta.rag_dim` are
+  not "migrated" via ALTER — on an incompatible change, a future breaking step
+  will recreate them via the existing path (`/rag rebuild`).

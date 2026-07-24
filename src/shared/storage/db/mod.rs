@@ -1,10 +1,10 @@
-//! SQLite-хранилище заметок и RAG (с sqlite-vec). Изоляция по `profile_id`
-//! обязательна во всех запросах (инвариант, spec §10.3). См. spec §5.2.
+//! SQLite storage of notes and RAG (with sqlite-vec). Isolation by `profile_id`
+//! is mandatory in every query (invariant, spec §10.3). See spec §5.2.
 //!
-//! Вектор RAG хранится в виртуальной таблице `vec0` с **partition key**
-//! `profile_id` — это обеспечивает корректный per-profile kNN (а не «top-k по
-//! всем профилям с последующей фильтрацией»). Размерность вектора фиксируется
-//! при первой вставке (lazy).
+//! The RAG vector is stored in a `vec0` virtual table with a **partition key**
+//! of `profile_id` — this guarantees correct per-profile kNN (rather than "top-k
+//! across all profiles, then filtering"). The vector dimensionality is fixed on
+//! the first insert (lazy).
 
 use std::sync::{Mutex, Once};
 
@@ -20,10 +20,11 @@ use crate::shared::storage::schema::DB_SCHEMA;
 
 static REGISTER_VEC: Once = Once::new();
 
-/// Регистрирует расширение sqlite-vec (один раз на процесс).
+/// Registers the sqlite-vec extension (once per process).
 fn register_sqlite_vec() {
-    // Тип функции-точки входа задаётся выводом из сигнатуры sqlite3_auto_extension;
-    // аннотации transmute здесь только зашумят (это канонический паттерн sqlite-vec).
+    // The entry-point function's type is inferred from sqlite3_auto_extension's
+    // signature; transmute annotations here would only add noise (this is the
+    // canonical sqlite-vec pattern).
     #[allow(clippy::missing_transmute_annotations)]
     REGISTER_VEC.call_once(|| unsafe {
         rusqlite::ffi::sqlite3_auto_extension(Some(std::mem::transmute(
@@ -32,13 +33,13 @@ fn register_sqlite_vec() {
     });
 }
 
-/// SQLite-хранилище заметок и RAG.
+/// SQLite storage of notes and RAG.
 pub struct Db {
     conn: Mutex<Connection>,
 }
 
 impl Db {
-    /// Открывает БД по пути (создаёт при отсутствии) и применяет миграции.
+    /// Opens the DB at a path (creating it if absent) and applies migrations.
     pub fn open(path: &std::path::Path) -> Result<Self> {
         register_sqlite_vec();
         if let Some(parent) = path.parent() {
@@ -48,7 +49,7 @@ impl Db {
         Self::from_conn(conn)
     }
 
-    /// Открывает БД в памяти (для тестов).
+    /// Opens an in-memory DB (for tests).
     #[cfg(test)]
     pub fn open_in_memory() -> Result<Self> {
         register_sqlite_vec();
@@ -64,23 +65,22 @@ impl Db {
     }
 }
 
-/// Приводит БД к текущей схеме (ADR 0006): additive-DDL (идемпотентный, каждый раз) +
-/// baseline-штамп `user_version` + breaking-шаги в транзакциях. Downgrade (БД новее
-/// приложения) — защитный `bail`; пользовательский локализованный отказ ставит
-/// [`crate::features::data_migration`] (peek `user_version` до открытия хранилища).
+/// Brings the DB to the current schema (ADR 0006): additive DDL (idempotent, every
+/// time) + a baseline `user_version` stamp + breaking steps in transactions. Downgrade
+/// (a DB newer than the app) — a protective `bail`; the user-facing localized refusal
+/// is placed by [`crate::features::data_migration`] (peeking `user_version` before
+/// opening storage).
 fn migrate(conn: &mut Connection) -> Result<()> {
-    // CREATE ... IF NOT EXISTS выполняется КАЖДЫЙ раз — это механизм добавления новых
-    // таблиц/индексов существующим БД без bump версии (additive-политика, Ф12).
+    // CREATE ... IF NOT EXISTS runs EVERY time — this is the mechanism for adding new
+    // tables/indexes to an existing DB without a version bump (the additive policy, F12).
     baseline_ddl(conn)?;
 
     let from = read_user_version(conn)?;
     if from > DB_SCHEMA {
-        bail!(
-            "data.db из более новой версии приложения (схема {from}, поддерживается {DB_SCHEMA})"
-        );
+        bail!("data.db is from a newer app version (schema {from}, supported is {DB_SCHEMA})");
     }
-    // Существующую/свежую БД (user_version = 0) штампуем baseline-версией. Это не
-    // миграция данных (DDL идемпотентен) — pre-migration бэкап не нужен.
+    // An existing/fresh DB (user_version = 0) gets stamped with the baseline version.
+    // This is not a data migration (the DDL is idempotent) — no pre-migration backup needed.
     if from == 0 {
         set_user_version(conn, DB_SCHEMA)?;
     }
@@ -88,9 +88,10 @@ fn migrate(conn: &mut Connection) -> Result<()> {
     Ok(())
 }
 
-/// Шаг миграции SQLite (breaking): трансформация схемы/данных в транзакции. Реестр
-/// `DB_STEPS` пока пуст (все схемы = 1); первый реальный breaking добавит шаг + фикстуру.
-#[allow(dead_code)] // конструируется первой реальной миграцией (и в тестах)
+/// A breaking SQLite migration step: a schema/data transformation in a transaction. The
+/// `DB_STEPS` registry is empty for now (all schemas = 1); the first real breaking
+/// change will add a step + a fixture.
+#[allow(dead_code)] // constructed by the first real migration (and in tests)
 struct DbStep {
     to: u32,
     summary: &'static str,
@@ -99,13 +100,14 @@ struct DbStep {
 
 const DB_STEPS: &[DbStep] = &[];
 
-/// Прогоняет breaking-шаги `> from`: каждый в своей транзакции **вместе** с обновлением
-/// `user_version` — на ошибке откат целиком (ни схема, ни версия не меняются).
+/// Runs breaking steps `> from`: each in its own transaction **together** with the
+/// `user_version` update — on error, a full rollback (neither the schema nor the
+/// version changes).
 fn apply_db_steps(conn: &mut Connection, steps: &[DbStep], from: u32) -> Result<()> {
-    // `from.max(1)`: baseline = 1, реальные шаги начинаются со 2 (штамп 0→1 — не шаг).
+    // `from.max(1)`: baseline = 1, real steps start at 2 (the 0→1 stamp is not a step).
     for step in steps.iter().filter(|s| s.to > from.max(1)) {
         let tx = conn.transaction()?;
-        (step.apply)(&tx).with_context(|| format!("миграция data.db → v{}", step.to))?;
+        (step.apply)(&tx).with_context(|| format!("data.db migration → v{}", step.to))?;
         set_user_version(&tx, step.to)?;
         tx.commit()?;
     }
@@ -117,15 +119,16 @@ fn read_user_version(conn: &Connection) -> Result<u32> {
 }
 
 fn set_user_version(conn: &Connection, v: u32) -> Result<()> {
-    // `PRAGMA user_version = N` не принимает связанный параметр — форматируем (v: u32,
-    // инъекция невозможна). Внутри транзакции изменение атомарно с ней.
+    // `PRAGMA user_version = N` doesn't accept a bound parameter — we format
+    // it in (v: u32, injection is impossible). Inside a transaction the
+    // change is atomic with it.
     conn.execute_batch(&format!("PRAGMA user_version = {v};"))?;
     Ok(())
 }
 
-/// Читает `PRAGMA user_version` файла БД (0 — файла нет / свежая). Для координации
-/// общего pre-migrate момента в [`crate::features::data_migration`]: downgrade-guard и
-/// решение о бэкапе принимаются до открытия хранилища.
+/// Reads the `PRAGMA user_version` of a DB file (0 — file missing / fresh). For
+/// coordinating the shared pre-migrate moment in [`crate::features::data_migration`]:
+/// the downgrade guard and the backup decision are made before opening storage.
 pub fn peek_user_version(path: &std::path::Path) -> Result<u32> {
     if !path.exists() {
         return Ok(0);
@@ -134,13 +137,14 @@ pub fn peek_user_version(path: &std::path::Path) -> Result<u32> {
     read_user_version(&conn)
 }
 
-/// Есть ли ожидающие **реальные** breaking-миграции БД. Baseline (0→1) не в счёт —
-/// он идемпотентен и бэкапа не требует. Определяет, включать ли БД в pre-migration бэкап.
+/// Whether there are pending **real** breaking DB migrations. Baseline (0→1) doesn't
+/// count — it's idempotent and needs no backup. Determines whether the DB is included
+/// in the pre-migration backup.
 pub fn needs_step_migration(user_version: u32) -> bool {
     DB_STEPS.iter().any(|s| s.to > user_version.max(1))
 }
 
-/// Идемпотентная схема БД (additive; см. [`migrate`]).
+/// The idempotent DB schema (additive; see [`migrate`]).
 fn baseline_ddl(conn: &Connection) -> Result<()> {
     conn.execute_batch(
         "CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
@@ -218,7 +222,7 @@ fn baseline_ddl(conn: &Connection) -> Result<()> {
     Ok(())
 }
 
-/// Текущая размерность векторов RAG (если таблица векторов уже создана).
+/// The current RAG vector dimensionality (if the vector table already exists).
 fn vec_dim(conn: &Connection) -> Result<Option<usize>> {
     let dim: Option<String> = conn
         .query_row("SELECT value FROM meta WHERE key = 'rag_dim'", [], |r| {
@@ -228,7 +232,7 @@ fn vec_dim(conn: &Connection) -> Result<Option<usize>> {
     Ok(dim.map(|d| d.parse().unwrap_or(0)))
 }
 
-/// Создаёт виртуальную таблицу векторов под нужную размерность (один раз).
+/// Creates the virtual vector table for the needed dimensionality (once).
 fn ensure_vec_table(conn: &Connection, dim: usize) -> Result<()> {
     if dim == 0 {
         bail!("refusing to index an empty embedding");
@@ -266,7 +270,7 @@ fn row_to_note(r: &rusqlite::Row) -> rusqlite::Result<Note> {
     })
 }
 
-/// Косинусная близость двух векторов (0, если длины разнятся или нулевая норма).
+/// Cosine similarity of two vectors (0 if lengths differ or a norm is zero).
 fn cosine(a: &[f32], b: &[f32]) -> f32 {
     if a.len() != b.len() || a.is_empty() {
         return 0.0;
@@ -290,7 +294,7 @@ fn parse_dt(s: String) -> DateTime<Utc> {
         .unwrap_or_else(|_| Utc::now())
 }
 
-// ---------- подмодули по доменам (разбор god-object: docs/history/refactoring-god-objects.md, этап 5) ----------
+// ---------- domain submodules (god-object breakup: docs/history/refactoring-god-objects.md, stage 5) ----------
 
 mod graph;
 mod notes;
@@ -317,7 +321,7 @@ mod migrate_tests {
         let db = Db::open_in_memory().unwrap();
         let conn = db.conn.lock().unwrap();
         assert_eq!(read_user_version(&conn).unwrap(), DB_SCHEMA);
-        // Схема применена (одна из таблиц baseline есть).
+        // The schema was applied (one of the baseline tables exists).
         assert!(table_exists(&conn, "notes"));
     }
 
@@ -344,7 +348,7 @@ mod migrate_tests {
 
     #[test]
     fn no_pending_step_migration_at_v1() {
-        // Реестр DB_STEPS пуст — реальных миграций (кроме baseline) нет.
+        // The DB_STEPS registry is empty — there are no real migrations (besides baseline).
         assert!(!needs_step_migration(0));
         assert!(!needs_step_migration(1));
     }
@@ -357,13 +361,13 @@ mod migrate_tests {
         }
         fn bad(c: &Connection) -> Result<()> {
             c.execute_batch("CREATE TABLE t_bad(x)")?;
-            bail!("умышленный сбой шага");
+            bail!("deliberate step failure");
         }
 
         let mut conn = Connection::open_in_memory().unwrap();
         set_user_version(&conn, 1).unwrap();
 
-        // Успешный шаг: таблица создана, версия = 2.
+        // A successful step: the table is created, version = 2.
         apply_db_steps(
             &mut conn,
             &[DbStep {
@@ -377,7 +381,7 @@ mod migrate_tests {
         assert_eq!(read_user_version(&conn).unwrap(), 2);
         assert!(table_exists(&conn, "t_ok"));
 
-        // Падающий шаг: полный откат — таблицы нет, версия прежняя.
+        // A failing step: a full rollback — no table, the version is unchanged.
         let res = apply_db_steps(
             &mut conn,
             &[DbStep {

@@ -1,14 +1,14 @@
-//! Экран настроек — оверлей поиска по полям (`/`): индекс, фильтр, прыжок.
-//! Часть модуля [`super`]; разбито из settings.rs.
+//! Settings screen — field search overlay (`/`): index, filter, jump.
+//! Part of the [`super`] module; split out of settings.rs.
 
 use super::helpers::*;
 use super::*;
 
 impl SettingsScreen {
-    // ---------- поиск по полям (`/`) ----------
+    // ---------- field search (`/`) ----------
 
-    /// Строит полный индекс полей всех секций/подсекций для поиска. Поля
-    /// mode-зависимой видимости берутся по текущему режиму (managed/облако).
+    /// Builds the full index of fields across all sections/subsections for search.
+    /// Mode-dependent-visibility fields are taken for the current mode (managed/cloud).
     pub(super) fn build_search_index(&self) -> Vec<SearchHit> {
         let loc = self.loc();
         let model_tabs = model_tab_labels(loc);
@@ -94,7 +94,7 @@ impl SettingsScreen {
         });
     }
 
-    /// Пересчитывает выдачу по запросу (AND по словам-подстрокам, регистронезав.).
+    /// Recomputes the results for the query (AND over substring words, case-insensitive).
     pub(super) fn search_filter(&mut self) {
         if let Some(st) = &mut self.search {
             let q = st.input.text().to_lowercase();
@@ -112,7 +112,7 @@ impl SettingsScreen {
         }
     }
 
-    /// Прыжок к выбранному результату: секция, подсекция, поле, фокус на полях.
+    /// Jumps to the selected result: section, subsection, field, focus on fields.
     pub(super) fn jump_to_selected(&mut self) {
         let target = self.search.as_ref().and_then(|st| {
             st.results.get(st.selected).map(|&ai| {
@@ -152,8 +152,8 @@ impl SettingsScreen {
                     s.selected += 1;
                 }
             }
-            // Ctrl+K (очистка запроса, возврат — `Ctrl+Z`) и прочие Ctrl-комбинации
-            // поля обрабатывает сам `InputBox` в `on_key`; фильтр перезапускаем ниже.
+            // `Ctrl+K` (clear the query, restore via `Ctrl+Z`) and other Ctrl combos on
+            // the field are handled by `InputBox` itself in `on_key`; we rerun the filter below.
             _ => {
                 if let Some(s) = &mut self.search {
                     s.input.on_key(key);

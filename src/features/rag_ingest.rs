@@ -1,33 +1,34 @@
-//! Сканирование файлов для индексации в базу знаний (RAG, команда `/rag add`).
-//! Чистая, тестируемая файловая логика: обход пути, отбор поддерживаемых
-//! расширений (txt/md/html/pdf/docx), опциональная рекурсия и чтение содержимого.
-//! Сам процесс индексации (эмбеддинг + запись) ведёт фоновая задача оркестратора.
-//! См. spec §9.3. Извлечение текста из HTML/PDF/DOCX — обязанность слоя `app`
-//! (`orchestrator/rag.rs`), а не этого модуля (иначе `features → features/tools` —
-//! боковой импорт, запрещённый FSD); здесь лишь опознаётся расширение.
+//! Scans files to index into the knowledge base (RAG, the `/rag add` command).
+//! Pure, testable file logic: walking a path, selecting supported
+//! extensions (txt/md/html/pdf/docx), optional recursion, and reading content.
+//! The indexing process itself (embedding + writing) is driven by the
+//! orchestrator's background task. See spec §9.3. Extracting text from HTML/PDF/DOCX
+//! is the `app` layer's responsibility (`orchestrator/rag.rs`), not this module's
+//! (otherwise `features → features/tools` would be a sideways import,
+//! forbidden by FSD); here only the extension is recognized.
 //!
-//! Здесь же живёт [`RagProgress`] — тип прогресса индексации. Он определён в слое
-//! `features`, чтобы им могли пользоваться и `app` (эмитит события), и `screens`
-//! (рисует индикатор), не нарушая направление зависимостей FSD.
+//! [`RagProgress`] also lives here — the indexing-progress type. It's defined in the
+//! `features` layer so both `app` (emits events) and `screens`
+//! (renders the indicator) can use it, without breaking FSD's dependency direction.
 
 use std::path::{Path, PathBuf};
 
-/// Поддерживаемые расширения файлов (нижний регистр, без точки): текст, markdown,
-/// HTML, PDF и DOCX. Из HTML/PDF/DOCX извлекается простой текст на слое `app`
-/// (`orchestrator/rag.rs`), этот модуль лишь опознаёт расширение.
+/// Supported file extensions (lowercase, no dot): text, markdown,
+/// HTML, PDF, and DOCX. Plain text is extracted from HTML/PDF/DOCX at the `app` layer
+/// (`orchestrator/rag.rs`); this module only recognizes the extension.
 pub const SUPPORTED_EXTENSIONS: &[&str] = &["txt", "md", "html", "htm", "pdf", "docx"];
 
-/// Прогресс фоновой индексации файлов в RAG. Шлётся задачей оркестратора и
-/// отображается экраном чата (баннер со спиннером + итоговая заметка).
+/// Progress of background file indexing into RAG. Sent by the orchestrator's task and
+/// displayed by the chat screen (a spinner banner + a final note).
 #[derive(Debug, Clone, PartialEq)]
 pub enum RagProgress {
-    /// Сканирование завершено — начинаем индексацию `total` файлов.
+    /// Scanning finished — starting indexing of `total` files.
     Started { total: usize },
-    /// Индексируется файл `index` из `total` (1-based) с именем `name` из `dir`.
-    /// `chunks_done`/`chunks_total` — прогресс эмбеддинга **внутри** этого файла:
-    /// сколько чанков уже эмбеддировано и записано и сколько всего (эмбеддинг идёт
-    /// под-батчами, см. `orchestrator/rag.rs::EMBED_BATCH_CHUNKS`). `chunks_total == 0`
-    /// — файл только начат (ещё не чанкован) либо у него нет чанков.
+    /// Indexing file `index` of `total` (1-based) named `name` from `dir`.
+    /// `chunks_done`/`chunks_total` — embedding progress **within** this file:
+    /// how many chunks have already been embedded and written, and how many total (embedding runs
+    /// in sub-batches, see `orchestrator/rag.rs::EMBED_BATCH_CHUNKS`). `chunks_total == 0`
+    /// — the file has just started (not yet chunked) or has no chunks.
     Indexing {
         index: usize,
         total: usize,
@@ -36,64 +37,64 @@ pub enum RagProgress {
         chunks_done: usize,
         chunks_total: usize,
     },
-    /// Индексация завершена (или прервана при `cancelled`).
+    /// Indexing finished (or was interrupted, if `cancelled`).
     Finished {
         files: usize,
         chunks: usize,
         errors: usize,
         cancelled: bool,
     },
-    /// Удаление из базы завершено (`/rag remove`): снято `chunks` фрагментов
-    /// (0 — по указанному пути ничего не найдено).
+    /// Deletion from the base finished (`/rag remove`): removed `chunks` fragments
+    /// (0 — nothing found at the given path).
     Removed { chunks: usize },
-    /// Перечень источников базы знаний (`/rag list`): по источнику — счётчик чанков
-    /// и дата. Пустой список — база пуста.
+    /// The list of knowledge-base sources (`/rag list`): a chunk count and date per
+    /// source. An empty list — the base is empty.
     Listed {
         sources: Vec<crate::entities::rag::RagSourceInfo>,
     },
-    /// Не удалось выполнить операцию (путь недоступен, нет файлов, эмбеддер не
-    /// настроен и т.п.).
+    /// The operation failed (an inaccessible path, no files, the embedder isn't
+    /// configured, etc.).
     Failed(String),
 }
 
-/// Поддерживается ли файл по расширению (регистронезависимо).
+/// Is the file supported by extension (case-insensitive)?
 pub fn is_supported(path: &Path) -> bool {
     path.extension()
         .and_then(|e| e.to_str())
         .is_some_and(|e| SUPPORTED_EXTENSIONS.contains(&e.to_ascii_lowercase().as_str()))
 }
 
-/// Совпадает ли расширение пути с `ext` (регистронезависимо)?
+/// Does the path's extension match `ext` (case-insensitive)?
 fn has_ext(path: &Path, ext: &str) -> bool {
     path.extension()
         .and_then(|e| e.to_str())
         .is_some_and(|e| e.eq_ignore_ascii_case(ext))
 }
 
-/// HTML-файл по расширению (`html`/`htm`, регистронезависимо)? Слой `app` по этому
-/// признаку решает, извлекать ли читаемый текст (иначе читает содержимое как есть).
+/// Is it an HTML file by extension (`html`/`htm`, case-insensitive)? The `app` layer uses this
+/// flag to decide whether to extract readable text (otherwise reads the content as-is).
 pub fn is_html(path: &Path) -> bool {
     has_ext(path, "html") || has_ext(path, "htm")
 }
 
-/// PDF-файл по расширению (`pdf`, регистронезависимо)? Слой `app` извлекает из него
-/// текст крейтом `pdf-extract` (см. `orchestrator/rag.rs`, `features/doc_extract.rs`).
+/// Is it a PDF file by extension (`pdf`, case-insensitive)? The `app` layer extracts its
+/// text via the `pdf-extract` crate (see `orchestrator/rag.rs`, `features/doc_extract.rs`).
 pub fn is_pdf(path: &Path) -> bool {
     has_ext(path, "pdf")
 }
 
-/// DOCX-файл по расширению (`docx`, регистронезависимо)? Слой `app` извлекает из него
-/// текст (ZIP + `word/document.xml`, см. `features/doc_extract.rs`).
+/// Is it a DOCX file by extension (`docx`, case-insensitive)? The `app` layer extracts its
+/// text (ZIP + `word/document.xml`, see `features/doc_extract.rs`).
 pub fn is_docx(path: &Path) -> bool {
     has_ext(path, "docx")
 }
 
-/// Собирает список поддерживаемых файлов по пути:
-/// - путь-файл → он сам, если расширение поддерживается (иначе пусто);
-/// - путь-директория → все поддерживаемые файлы (рекурсивно при `recursive`).
+/// Collects the list of supported files at a path:
+/// - a file path → itself, if the extension is supported (otherwise empty);
+/// - a directory path → all supported files (recursively when `recursive`).
 ///
-/// Результат отсортирован для детерминизма. Ошибки чтения вложенных директорий
-/// пропускаются (обход устойчив), а недоступность корневого пути — это ошибка.
+/// The result is sorted for determinism. Errors reading nested directories are
+/// skipped (the walk is resilient), while the root path being inaccessible is an error.
 pub fn scan(root: &Path, recursive: bool) -> std::io::Result<Vec<PathBuf>> {
     let meta = std::fs::metadata(root)?;
     let mut out = Vec::new();
@@ -108,7 +109,7 @@ pub fn scan(root: &Path, recursive: bool) -> std::io::Result<Vec<PathBuf>> {
     Ok(out)
 }
 
-/// Рекурсивный обход директории (ошибки отдельных входов пропускаются).
+/// Recursive directory walk (errors on individual entries are skipped).
 fn collect_dir(dir: &Path, recursive: bool, out: &mut Vec<PathBuf>) {
     let Ok(entries) = std::fs::read_dir(dir) else {
         return;
@@ -128,11 +129,11 @@ fn collect_dir(dir: &Path, recursive: bool, out: &mut Vec<PathBuf>) {
     }
 }
 
-/// Канонический строковый ключ источника для записи в RAG: абсолютный путь без
-/// вербатим-префикса `\\?\` (Windows). Используется и при добавлении (стабильный
-/// `source`), и при удалении (тот же ключ независимо от того, как путь введён —
-/// относительно, иным регистром или разделителем). Если канонизация не удалась
-/// (файла уже нет на диске) — путь как есть (lossy).
+/// A canonical string source key for writing into RAG: an absolute path with no
+/// `\\?\` verbatim prefix (Windows). Used both when adding (a stable
+/// `source`) and when deleting (the same key regardless of how the path was entered —
+/// relatively, with a different case, or a different separator). If canonicalization
+/// failed (the file is already gone from disk) — the path as-is (lossy).
 pub fn canonical_source(path: &Path) -> String {
     match std::fs::canonicalize(path) {
         Ok(abs) => strip_verbatim(abs.to_string_lossy().into_owned()),
@@ -140,8 +141,8 @@ pub fn canonical_source(path: &Path) -> String {
     }
 }
 
-/// Снимает вербатим-префикс `\\?\`, который `canonicalize` добавляет на Windows
-/// (чтобы хранимый/показываемый путь был обычным).
+/// Strips the `\\?\` verbatim prefix that `canonicalize` adds on Windows
+/// (so the stored/displayed path is ordinary).
 fn strip_verbatim(s: String) -> String {
     match s.strip_prefix(r"\\?\") {
         Some(rest) => rest.to_string(),
@@ -149,8 +150,8 @@ fn strip_verbatim(s: String) -> String {
     }
 }
 
-/// Читает текстовый файл в строку, отбрасывая ведущий UTF-8 BOM. Не-UTF-8 или
-/// нечитаемый файл → ошибка (вызывающий пропускает такой файл).
+/// Reads a text file into a string, dropping a leading UTF-8 BOM. A non-UTF-8 or
+/// unreadable file → an error (the caller skips such a file).
 pub fn read_text(path: &Path) -> std::io::Result<String> {
     let mut content = std::fs::read_to_string(path)?;
     if content.starts_with('\u{feff}') {
@@ -182,37 +183,37 @@ mod tests {
 
     #[test]
     fn is_supported_and_helpers_match_pdf_and_docx_case_insensitively() {
-        // PDF/DOCX поддержаны наравне с txt/md/html.
+        // PDF/DOCX are supported alongside txt/md/html.
         assert!(is_supported(Path::new("doc.pdf")));
         assert!(is_supported(Path::new("dir/report.DOCX")));
         assert!(is_supported(Path::new("a.PDF")));
-        // is_pdf/is_docx выделяют именно свои расширения (регистронезависимо)...
+        // is_pdf/is_docx match exactly their own extensions (case-insensitively)...
         assert!(is_pdf(Path::new("doc.pdf")));
         assert!(is_pdf(Path::new("dir/doc.PDF")));
         assert!(is_docx(Path::new("report.docx")));
         assert!(is_docx(Path::new("dir/report.DocX")));
-        // ...и не срабатывают на чужих/неподдержанных расширениях.
+        // ...and don't trigger on someone else's/unsupported extensions.
         assert!(!is_pdf(Path::new("report.docx")));
         assert!(!is_pdf(Path::new("a.txt")));
         assert!(!is_docx(Path::new("doc.pdf")));
         assert!(!is_docx(Path::new("a.md")));
         assert!(!is_pdf(Path::new("noext")));
-        // .doc (legacy) намеренно не поддержан.
+        // .doc (legacy) is deliberately not supported.
         assert!(!is_supported(Path::new("old.doc")));
         assert!(!is_docx(Path::new("old.doc")));
     }
 
     #[test]
     fn is_supported_and_is_html_match_html_case_insensitively() {
-        // HTML поддержан наравне с txt/md.
+        // HTML is supported alongside txt/md.
         assert!(is_supported(Path::new("page.html")));
         assert!(is_supported(Path::new("page.htm")));
         assert!(is_supported(Path::new("page.HTML")));
-        // is_html выделяет именно HTML-расширения (регистронезависимо)...
+        // is_html matches exactly HTML extensions (case-insensitively)...
         assert!(is_html(Path::new("page.html")));
         assert!(is_html(Path::new("dir/page.Htm")));
         assert!(is_html(Path::new("page.HTML")));
-        // ...и не срабатывает на прочих поддержанных/неподдержанных расширениях.
+        // ...and doesn't trigger on other supported/unsupported extensions.
         assert!(!is_html(Path::new("a.txt")));
         assert!(!is_html(Path::new("a.md")));
         assert!(!is_html(Path::new("noext")));
@@ -226,7 +227,7 @@ mod tests {
         let found = scan(&file, false).unwrap();
         assert_eq!(found, vec![file]);
 
-        // Неподдерживаемый файл → пустой список (не ошибка).
+        // An unsupported file → an empty list (not an error).
         let other = dir.path().join("data.bin");
         write(&other, "x");
         assert!(scan(&other, false).unwrap().is_empty());
@@ -237,8 +238,8 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         write(&dir.path().join("a.txt"), "a");
         write(&dir.path().join("b.md"), "b");
-        write(&dir.path().join("c.rtf"), "c"); // не поддержан
-        write(&dir.path().join("sub/d.txt"), "d"); // в подпапке
+        write(&dir.path().join("c.rtf"), "c"); // not supported
+        write(&dir.path().join("sub/d.txt"), "d"); // in a subfolder
 
         let found = scan(dir.path(), false).unwrap();
         let names: Vec<_> = found
@@ -280,9 +281,9 @@ mod tests {
         write(&file, "x");
         let src = canonical_source(&file);
         assert!(!src.starts_with(r"\\?\"), "{src}");
-        // Каноничный ключ совпадает для одного и того же файла.
+        // The canonical key matches for the same file.
         assert_eq!(src, canonical_source(&file));
-        // Несуществующий путь → возвращается как есть (не паникует).
+        // A nonexistent path → returned as-is (doesn't panic).
         let missing = dir.path().join("nope.txt");
         assert_eq!(canonical_source(&missing), missing.to_string_lossy());
     }

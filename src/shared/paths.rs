@@ -1,12 +1,13 @@
-//! Расположение пользовательских данных и установочные умолчания. По умолчанию —
-//! портативный режим: данные лежат в подкаталоге `data/` рядом с исполняемым файлом
-//! (подкаталог отделяет данные от служебных файлов/кэшей сборки, особенно в dev —
-//! `target/debug/data/`). Файл-маркер `defaults.json` рядом с бинарником может
-//! переключить хранение в стандартную ОС-папку или произвольный каталог **и** задать
-//! язык служебного каркаса новых профилей (`default_language`, ось A — docs/history/i18n.md;
-//! инсталлятор заполнит его по выбору пользователя при установке). Для обратной
-//! совместимости читается и старый маркер `location.json` (только режим хранения).
-//! См. spec §5.2 (расположение данных) и §12.1.
+//! User-data location and installation defaults. Default — portable mode:
+//! data lives in a `data/` subdirectory next to the executable (the
+//! subdirectory separates data from build tooling files/caches, especially in
+//! dev — `target/debug/data/`). A `defaults.json` marker file next to the
+//! binary can switch storage to a standard OS folder or an arbitrary
+//! directory **and** set the agent-scaffold language for new profiles
+//! (`default_language`, axis A — docs/history/i18n.md; an installer will fill
+//! it in from the user's choice at install time). For backward compatibility
+//! the old `location.json` marker (storage mode only) is also read. See spec
+//! §5.2 (data location) and §12.1.
 
 use std::path::{Path, PathBuf};
 
@@ -15,42 +16,43 @@ use serde::{Deserialize, Serialize};
 
 use crate::shared::i18n::Lang;
 
-/// Имя файла установочных умолчаний (всегда лежит рядом с бинарником, не в `data/`).
+/// Name of the installation-defaults file (always lives next to the binary, not in `data/`).
 pub const DEFAULTS_MARKER: &str = "defaults.json";
 
-/// Устаревшее имя файла-маркера (только режим хранения) — читается для обратной
-/// совместимости, если `defaults.json` отсутствует.
+/// Legacy marker-file name (storage mode only) — read for backward
+/// compatibility if `defaults.json` is absent.
 pub const LEGACY_LOCATION_MARKER: &str = "location.json";
 
-/// Подкаталог данных в портативном режиме (рядом с бинарником).
+/// Data subdirectory in portable mode (next to the binary).
 pub const PORTABLE_DATA_SUBDIR: &str = "data";
 
-/// Режим хранения пользовательских данных, заданный файлом умолчаний `defaults.json`
-/// рядом с исполняемым файлом (поле `mode`, при `path` — ещё `path`). Отсутствие/пустой
-/// маркер → [`DataLocation::Portable`] (обратная совместимость: существующие установки
-/// держат данные рядом с бинарником).
+/// Storage mode for user data, set by the `defaults.json` defaults file next
+/// to the executable (the `mode` field, plus `path` for `path`). No/empty
+/// marker → [`DataLocation::Portable`] (backward compatibility: existing
+/// installs keep data next to the binary).
 #[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(tag = "mode", rename_all = "lowercase")]
 pub enum DataLocation {
-    /// Данные рядом с исполняемым файлом (портативная установка).
+    /// Data next to the executable (a portable install).
     #[default]
     Portable,
-    /// Данные в стандартной ОС-папке пользователя (Windows `%APPDATA%\mindfork-rs`,
-    /// Linux `~/.local/share/mindfork-rs`).
+    /// Data in the user's standard OS folder (Windows
+    /// `%APPDATA%\mindfork-rs`, Linux `~/.local/share/mindfork-rs`).
     System,
-    /// Данные в произвольном каталоге, указанном пользователем.
+    /// Data in an arbitrary user-specified directory.
     Path { path: String },
 }
 
 impl DataLocation {
-    /// Корневой каталог данных для этого режима. `exe_dir` — каталог бинарника
-    /// (в портативном режиме корень = `exe_dir/data`).
+    /// Root data directory for this mode. `exe_dir` — the binary's directory
+    /// (in portable mode the root = `exe_dir/data`).
     pub fn root_dir(&self, exe_dir: &Path) -> Result<PathBuf> {
         match self {
             Self::Portable => Ok(exe_dir.join(PORTABLE_DATA_SUBDIR)),
             Self::System => {
-                // Контекст на английском: эта ошибка возникает в `Paths::resolve` до
-                // определения языка CLI (docs/history/i18n-cli.md §7 — граница «до знания языка»).
+                // English context: this error occurs in `Paths::resolve` before
+                // the CLI language is known (docs/history/i18n-cli.md §7 — the
+                // "before the language is known" boundary).
                 let dirs = directories::ProjectDirs::from("", "", "mindfork-rs")
                     .context("cannot determine the standard OS data folder")?;
                 Ok(dirs.data_dir().to_path_buf())
@@ -67,40 +69,43 @@ impl DataLocation {
     }
 }
 
-/// Установочные умолчания из файла `defaults.json` рядом с бинарником: режим хранения
-/// данных (`mode`/`path`, плоско — совместимо со старым `location.json`) **и** язык
-/// служебного каркаса новых профилей (`default_language`, ось A — docs/history/i18n.md).
-/// Заполняется инсталлятором (или вручную). Отсутствие полей → дефолты (портативно, язык
-/// определяется по локали ОС — см. [`Paths::resolve`]).
+/// Installation defaults from the `defaults.json` file next to the binary:
+/// data storage mode (`mode`/`path`, flat — compatible with the old
+/// `location.json`) **and** the agent-scaffold language for new profiles
+/// (`default_language`, axis A — docs/history/i18n.md). Filled in by the
+/// installer (or by hand). Missing fields → defaults (portable, language
+/// detected from the OS locale — see [`Paths::resolve`]).
 #[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub struct Defaults {
-    /// Режим хранения (плоско в JSON: `mode`/`path` на верхнем уровне — байт-совместимо
-    /// с прежним `location.json`).
+    /// Storage mode (flat in JSON: `mode`/`path` at the top level — byte-compatible
+    /// with the previous `location.json`).
     #[serde(flatten, default)]
     pub location: DataLocation,
-    /// Язык служебного каркаса, на котором создаётся **первый** профиль (bootstrap) и
-    /// новые профили, **и** язык интерфейса при свежей установке. Не язык ответа модели.
-    /// `Some(..)` — задан инсталлятором явно (Windows); `None` (поле отсутствует —
-    /// напр. deb/rpm-пакет пишет только `{"mode":"system"}`, §4.3 installers.md) →
-    /// [`Paths::resolve`] определяет язык по локали ОС. См. docs/history/i18n.md.
+    /// The language the **first** profile (bootstrap) and new profiles are
+    /// created in, **and** the interface language on a fresh install. Not the
+    /// model's reply language. `Some(..)` — explicitly set by the installer
+    /// (Windows); `None` (the field is absent — e.g. a deb/rpm package writes
+    /// only `{"mode":"system"}`, installers.md §4.3) → [`Paths::resolve`]
+    /// detects the language from the OS locale. See docs/history/i18n.md.
     #[serde(default)]
     pub default_language: Option<Lang>,
 }
 
-/// Отбрасывает ведущий UTF-8 BOM (`EF BB BF`), если он есть. Инсталляторы и редакторы
-/// (Pascal-хелперы Inno, ряд Windows-редакторов) могут записать `defaults.json` с BOM —
-/// `serde_json::from_slice` на нём падает. Прецеденты отбрасывания в проекте:
-/// `rag_ingest::read_text`, импортёр LameLLaMA.
+/// Drops a leading UTF-8 BOM (`EF BB BF`), if present. Installers and editors
+/// (Inno's Pascal helpers, some Windows editors) may write `defaults.json`
+/// with a BOM — `serde_json::from_slice` fails on it. Precedents for dropping
+/// it in this project: `rag_ingest::read_text`, the LameLLaMA importer.
 fn strip_bom(bytes: &[u8]) -> &[u8] {
     bytes.strip_prefix(&[0xEF, 0xBB, 0xBF]).unwrap_or(bytes)
 }
 
 impl Defaults {
-    /// Читает установочные умолчания рядом с бинарником: сначала `defaults.json`, при
-    /// его отсутствии — устаревший `location.json` (только режим хранения; язык = `None`).
-    /// Нет обоих/пустой файл → дефолты. Повреждённый JSON — **ошибка** (а не молчаливый
-    /// откат), чтобы опечатка не увела на пустой набор данных не туда. Ведущий UTF-8 BOM
-    /// отбрасывается ([`strip_bom`]).
+    /// Reads installation defaults next to the binary: `defaults.json` first,
+    /// falling back to the legacy `location.json` (storage mode only; language
+    /// = `None`) if absent. Neither present/an empty file → defaults. A
+    /// corrupt JSON is an **error** (not a silent fallback), so a typo doesn't
+    /// quietly redirect to the wrong empty dataset. A leading UTF-8 BOM is
+    /// dropped ([`strip_bom`]).
     pub fn read(exe_dir: &Path) -> Result<Self> {
         let primary = exe_dir.join(DEFAULTS_MARKER);
         let marker = if primary.exists() {
@@ -108,8 +113,9 @@ impl Defaults {
         } else {
             exe_dir.join(LEGACY_LOCATION_MARKER)
         };
-        // Контексты на английском: `Defaults::read` вызывается из `Paths::resolve` до
-        // определения языка CLI (docs/history/i18n-cli.md §7 — граница «до знания языка»).
+        // English contexts: `Defaults::read` is called from `Paths::resolve`
+        // before the CLI language is known (docs/history/i18n-cli.md §7 — the
+        // "before the language is known" boundary).
         match std::fs::read(&marker) {
             Ok(bytes) => {
                 let bytes = strip_bom(&bytes);
@@ -126,30 +132,32 @@ impl Defaults {
     }
 }
 
-/// Набор путей к данным приложения, вычисленных от корневого каталога.
+/// A set of paths to application data, computed from the root directory.
 ///
-/// В продакшене корень — каталог исполняемого файла (портативный режим);
-/// в тестах используется временный каталог через [`Paths::with_root`]. Несёт также
-/// язык каркаса новых профилей (`default_language`) из `defaults.json`.
+/// In production the root is the executable's directory (portable mode); in
+/// tests a temp directory is used via [`Paths::with_root`]. Also carries the
+/// scaffold language of new profiles (`default_language`) from `defaults.json`.
 #[derive(Debug, Clone)]
 pub struct Paths {
     root: PathBuf,
     default_language: Lang,
-    /// Каталог исполняемого файла (на Linux — реальный путь: `current_exe` резолвит
-    /// `/proc/self/exe`, т.е. цель симлинка `/usr/bin/…` → `/usr/lib/<pkg>/…`). Нужен,
-    /// чтобы найти read-only ресурсы, положенные рядом с бинарником (словари, §4.2
-    /// installers.md), когда корень данных — не портативный (`system`/`path`). `None` в
-    /// тестах (`with_root`).
+    /// The executable's directory (on Linux — the real path: `current_exe`
+    /// resolves `/proc/self/exe`, i.e. the symlink target `/usr/bin/…` →
+    /// `/usr/lib/<pkg>/…`). Needed to find read-only resources placed next to
+    /// the binary (dictionaries, installers.md §4.2) when the data root isn't
+    /// portable (`system`/`path`). `None` in tests (`with_root`).
     exe_dir: Option<PathBuf>,
 }
 
 impl Paths {
-    /// Вычисляет корень данных и умолчания по файлу `defaults.json` рядом с бинарником
-    /// (fallback — устаревший `location.json`) **без создания каталогов** — для ранней
-    /// «peek»-фазы CLI, где нужно узнать язык/корень до разбора аргументов, но `--help`
-    /// не должен трогать диск (docs/history/i18n-cli.md §3.2). Язык каркаса/интерфейса:
-    /// явный из `defaults.json` (`Some`) или определённый по локали ОС (`None` — свежая
-    /// установка, §4.3 installers.md). Создание каталогов — отдельно [`Paths::ensure_dirs`].
+    /// Computes the data root and defaults from the `defaults.json` file next
+    /// to the binary (fallback — the legacy `location.json`) **without
+    /// creating directories** — for the CLI's early "peek" phase, where the
+    /// language/root must be known before parsing arguments, but `--help`
+    /// mustn't touch disk (docs/history/i18n-cli.md §3.2). Scaffold/interface
+    /// language: explicit from `defaults.json` (`Some`) or detected from the
+    /// OS locale (`None` — a fresh install, installers.md §4.3). Creating
+    /// directories is separate — [`Paths::ensure_dirs`].
     pub fn resolve() -> Result<Self> {
         let exe = std::env::current_exe().context("cannot resolve current executable path")?;
         let exe_dir = exe
@@ -167,20 +175,23 @@ impl Paths {
         Ok(paths)
     }
 
-    /// Создаёт каталоги данных (корень + каталог внешних локалей). Вызывается перед
-    /// работой с данными (не для `--help`/`--version`). Идемпотентно. Локализованный
-    /// контекст ошибки добавляет вызывающий (`main`) — здесь наружу идёт сырая io-ошибка.
+    /// Creates the data directories (root + the external-locales directory).
+    /// Called before working with data (not for `--help`/`--version`).
+    /// Idempotent. The localized error context is added by the caller
+    /// (`main`) — here a raw io error propagates outward.
     pub fn ensure_dirs(&self) -> Result<()> {
         std::fs::create_dir_all(&self.root)?;
-        // Каталог внешних локалей создаётся для обнаруживаемости (пустой каталог
-        // сигналит «клади файлы сюда»); ошибку создания не эскалируем — внешние
-        // локали опциональны, при их отсутствии работают вшитые бандлы.
+        // The external-locales directory is created for discoverability (an
+        // empty directory signals "put files here"); creation errors aren't
+        // escalated — external locales are optional, built-in bundles work
+        // without them.
         let _ = std::fs::create_dir_all(self.locales_dir());
         Ok(())
     }
 
-    /// Создаёт набор путей от произвольного корня (используется в тестах). Язык
-    /// каркаса новых профилей — дефолт (`ru`); каталог бинарника неизвестен (`None`).
+    /// Creates a path set from an arbitrary root (used in tests). The
+    /// scaffold language of new profiles is the default (`ru`); the binary's
+    /// directory is unknown (`None`).
     pub fn with_root(root: impl Into<PathBuf>) -> Self {
         Self {
             root: root.into(),
@@ -189,83 +200,87 @@ impl Paths {
         }
     }
 
-    /// Корневой каталог данных.
+    /// Root data directory.
     pub fn root(&self) -> &Path {
         &self.root
     }
 
-    /// Язык служебного каркаса новых профилей (из `defaults.json`, ось A). Bootstrap
-    /// первого профиля и создание профилей берут его. См. docs/history/i18n.md.
+    /// The agent-scaffold language for new profiles (from `defaults.json`,
+    /// axis A). Bootstrap of the first profile and profile creation take it.
+    /// See docs/history/i18n.md.
     pub fn default_language(&self) -> Lang {
         self.default_language
     }
 
-    /// Глобальная конфигурация (`settings.json`).
+    /// Global configuration (`settings.json`).
     pub fn settings_file(&self) -> PathBuf {
         self.root.join("settings.json")
     }
 
-    /// Список профилей (`profiles.json`).
+    /// Profile list (`profiles.json`).
     pub fn profiles_file(&self) -> PathBuf {
         self.root.join("profiles.json")
     }
 
-    /// Каталог с файлами чатов (`chats/`).
+    /// Directory with chat files (`chats/`).
     pub fn chats_dir(&self) -> PathBuf {
         self.root.join("chats")
     }
 
-    /// Файл конкретного чата (`chats/{id}.json`).
+    /// A specific chat's file (`chats/{id}.json`).
     pub fn chat_file(&self, chat_id: &str) -> PathBuf {
         self.chats_dir().join(format!("{chat_id}.json"))
     }
 
-    /// База данных заметок и RAG (`data.db`).
+    /// Notes and RAG database (`data.db`).
     pub fn data_db(&self) -> PathBuf {
         self.root.join("data.db")
     }
 
-    /// Каталог Hunspell-словарей (`dictionaries/`) в корне данных.
+    /// Hunspell dictionaries directory (`dictionaries/`) under the data root.
     pub fn dictionaries_dir(&self) -> PathBuf {
         self.root.join("dictionaries")
     }
 
-    /// Резервный каталог словарей в **портативной раскладке рядом с бинарником**
-    /// (`<exe_dir>/data/dictionaries`) — источник read-only ресурсов, положенных
-    /// инсталлятором/пакетом, когда корень данных не портативный (`system`/`path`) и
-    /// словарей в нём нет. В портативном режиме совпадает с [`dictionaries_dir`]
-    /// (fallback ничего не добавляет — дубли отсеиваются по имени). `None`, когда
-    /// каталог бинарника неизвестен (тесты). См. §4.2 / П1 docs/history/installers.md.
+    /// Fallback dictionaries directory in the **portable layout next to the
+    /// binary** (`<exe_dir>/data/dictionaries`) — a source of read-only
+    /// resources placed by the installer/package when the data root isn't
+    /// portable (`system`/`path`) and it has no dictionaries. In portable mode
+    /// coincides with [`dictionaries_dir`] (the fallback adds nothing — dupes
+    /// are filtered by name). `None` when the binary's directory is unknown
+    /// (tests). See installers.md §4.2 / P1.
     pub fn bundled_dictionaries_dir(&self) -> Option<PathBuf> {
         self.exe_dir
             .as_ref()
             .map(|d| d.join(PORTABLE_DATA_SUBDIR).join("dictionaries"))
     }
 
-    /// Каталог внешних локалей (`locales/`): `<code>.json` переопределяет вшитый бандл
-    /// того же языка или добавляет новый язык без пересборки (ось A/B, Ярус 3 —
-    /// docs/history/i18n-external-locales.md). Загружается один раз при старте.
+    /// External-locales directory (`locales/`): `<code>.json` overrides the
+    /// built-in bundle of the same language or adds a new language without
+    /// rebuilding (axis A/B, Tier 3 — docs/history/i18n-external-locales.md).
+    /// Loaded once at startup.
     pub fn locales_dir(&self) -> PathBuf {
         self.root.join("locales")
     }
 
-    /// Персональный словарь спелл-чекера (`personal_dictionary.txt`).
+    /// Spellcheck personal dictionary (`personal_dictionary.txt`).
     pub fn personal_dictionary(&self) -> PathBuf {
         self.root.join("personal_dictionary.txt")
     }
 
-    /// Каталог логов (`logs/`).
+    /// Log directory (`logs/`).
     pub fn log_dir(&self) -> PathBuf {
         self.root.join("logs")
     }
 
-    /// Каталог резервных копий (`backups/`).
+    /// Backups directory (`backups/`).
     pub fn backups_dir(&self) -> PathBuf {
         self.root.join("backups")
     }
 
-    /// Каталог песочницы Python (`sandbox/`): бинарь `wasmer`, `python.webc`,
-    /// `site-packages/`. Наполняется командой `mindfork sandbox setup` (Фаза 2).
+    /// Python sandbox directory (`sandbox/`): the `wasmer` binary,
+    /// `python.webc`, `site-packages/`. Populated by `mindfork sandbox setup`
+    /// (Phase 2).
     pub fn sandbox_dir(&self) -> PathBuf {
         self.root.join("sandbox")
     }
@@ -320,7 +335,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let loc = Defaults::read(dir.path()).unwrap().location;
         assert_eq!(loc, DataLocation::Portable);
-        // Портативный режим: корень = подкаталог `data/` рядом с бинарником.
+        // Portable mode: root = the `data/` subdirectory next to the binary.
         assert_eq!(
             loc.root_dir(dir.path()).unwrap(),
             dir.path().join(PORTABLE_DATA_SUBDIR)
@@ -360,7 +375,7 @@ mod tests {
         let loc = DataLocation::Path {
             path: "  custom/data/dir  ".into(),
         };
-        // Путь триммится; каталог бинарника игнорируется.
+        // The path is trimmed; the binary's directory is ignored.
         assert_eq!(
             loc.root_dir(Path::new("/exe")).unwrap(),
             PathBuf::from("custom/data/dir")
@@ -382,15 +397,15 @@ mod tests {
 
     #[test]
     fn system_mode_root_mentions_app() {
-        // Не утверждаем точный путь (зависит от ОС/пользователя), но он должен
-        // указывать на каталог приложения.
+        // We don't assert the exact path (OS/user-dependent), but it must
+        // point to the application's directory.
         let root = DataLocation::System.root_dir(Path::new("/exe")).unwrap();
         assert!(root.to_string_lossy().contains("mindfork-rs"));
     }
 
     #[test]
     fn defaults_reads_storage_and_language() {
-        // defaults.json несёт режим хранения (плоско) + язык каркаса.
+        // defaults.json carries the storage mode (flat) + the scaffold language.
         let dir = tempfile::tempdir().unwrap();
         std::fs::write(
             dir.path().join(DEFAULTS_MARKER),
@@ -409,7 +424,7 @@ mod tests {
 
     #[test]
     fn defaults_missing_has_no_explicit_language() {
-        // Нет файла → дефолты: портативно + язык не задан (определится по локали ОС).
+        // No file → defaults: portable + language unset (detected from the OS locale).
         let dir = tempfile::tempdir().unwrap();
         let d = Defaults::read(dir.path()).unwrap();
         assert_eq!(d, Defaults::default());
@@ -419,7 +434,7 @@ mod tests {
 
     #[test]
     fn defaults_without_language_field_is_none() {
-        // Пакет пишет только режим (§4.3 installers.md) → язык None → детект по локали.
+        // A package writes only the mode (installers.md §4.3) → language None → detected from the locale.
         let dir = tempfile::tempdir().unwrap();
         std::fs::write(dir.path().join(DEFAULTS_MARKER), r#"{"mode":"system"}"#).unwrap();
         let d = Defaults::read(dir.path()).unwrap();
@@ -429,7 +444,7 @@ mod tests {
 
     #[test]
     fn defaults_falls_back_to_legacy_location_marker() {
-        // Нет defaults.json → читается старый location.json (только режим; язык None).
+        // No defaults.json → the old location.json is read (mode only; language None).
         let dir = tempfile::tempdir().unwrap();
         std::fs::write(
             dir.path().join(LEGACY_LOCATION_MARKER),
@@ -461,7 +476,7 @@ mod tests {
 
     #[test]
     fn defaults_tolerates_utf8_bom() {
-        // Инсталлятор/редактор мог записать файл с BOM — не должен ронять запуск (П3).
+        // An installer/editor might write the file with a BOM — must not crash startup (P3).
         let dir = tempfile::tempdir().unwrap();
         let mut bytes = vec![0xEF, 0xBB, 0xBF];
         bytes.extend_from_slice(br#"{"mode":"system","default_language":"en"}"#);
@@ -485,7 +500,7 @@ mod tests {
 
     #[test]
     fn with_root_has_no_bundled_dictionaries() {
-        // Каталог бинарника неизвестен в тестовом конструкторе → fallback-словарей нет.
+        // The binary's directory is unknown in the test constructor → no fallback dictionaries.
         assert_eq!(Paths::with_root("r").bundled_dictionaries_dir(), None);
     }
 }

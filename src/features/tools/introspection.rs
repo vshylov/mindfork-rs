@@ -1,10 +1,10 @@
-//! Инструменты интроспекции: чтение/изменение семплинга и системного сообщения,
-//! время последнего user-сообщения. См. spec §9.3 (`get/set_sampling`,
+//! Introspection tools: reading/changing sampling and the system message,
+//! the time of the last user message. See spec §9.3 (`get/set_sampling`,
 //! `get/set_system_message`, `get_last_user_message_time`).
 //!
-//! Мутирующие (`set_*`) **не** трогают `Chat`, а возвращают [`ChatEffect`];
-//! применяет их оркестратор (spec §4.4.2). Изменения вступают в силу со
-//! следующего хода/построения запроса (spec §6.6).
+//! The mutating ones (`set_*`) **don't** touch `Chat` — they return a [`ChatEffect`];
+//! the orchestrator applies them (spec §4.4.2). Changes take effect starting with the
+//! next turn/request build (spec §6.6).
 
 use anyhow::Result;
 use chrono::Utc;
@@ -15,15 +15,15 @@ use crate::shared::config::CloudProvider;
 
 use super::{ChatEffect, Tool, ToolContext, ToolOutcome};
 
-/// Имя инструмента чтения семплинга.
+/// The name of the sampling-read tool.
 pub const GET_SAMPLING_ID: &str = "get_sampling";
-/// Имя инструмента изменения семплинга.
+/// The name of the sampling-change tool.
 pub const SET_SAMPLING_ID: &str = "set_sampling";
 
-/// `get_sampling` — возвращает действующий семплинг (JSON), ограниченный полями,
-/// доступными в текущем режиме движка (`provider`). См. [`supported_sampling_fields`].
+/// `get_sampling` — returns the effective sampling (JSON), limited to the fields
+/// available in the current engine mode (`provider`). See [`supported_sampling_fields`].
 pub struct GetSampling {
-    /// Облачный провайдер chat-движка (`None` — локальный/external: доступны все поля).
+    /// The chat engine's cloud provider (`None` — local/external: all fields available).
     provider: Option<CloudProvider>,
 }
 
@@ -42,7 +42,7 @@ impl Tool for GetSampling {
         crate::features::tools::meta::ToolGroup::Introspection
     }
     fn ui_label(&self) -> &'static str {
-        "показать семплинг"
+        "show sampling"
     }
     fn description(&self, loc: &crate::shared::i18n::Locale) -> String {
         format!(
@@ -55,17 +55,17 @@ impl Tool for GetSampling {
         empty_object()
     }
     async fn invoke(&self, ctx: &ToolContext, _args: serde_json::Value) -> Result<ToolOutcome> {
-        // Показываем только поля, доступные в текущем режиме (остальные движок
-        // всё равно не принял бы), чтобы модель не пыталась их менять.
+        // Show only the fields available in the current mode (the engine wouldn't
+        // accept the rest anyway), so the model doesn't try to change them.
         let filtered = filter_to_supported(&ctx.effective_sampling, self.provider)?;
         Ok(ToolOutcome::text(serde_json::to_string(&filtered)?))
     }
 }
 
-/// `set_sampling` — переопределяет семплинг чата (частично; со следующего хода).
-/// Доступные поля ограничены текущим режимом движка.
+/// `set_sampling` — overrides the chat's sampling (partially; starting with the next turn).
+/// Available fields are limited to the current engine mode.
 pub struct SetSampling {
-    /// Облачный провайдер chat-движка (`None` — локальный/external: доступны все поля).
+    /// The chat engine's cloud provider (`None` — local/external: all fields available).
     provider: Option<CloudProvider>,
 }
 
@@ -84,7 +84,7 @@ impl Tool for SetSampling {
         crate::features::tools::meta::ToolGroup::Introspection
     }
     fn ui_label(&self) -> &'static str {
-        "изменить семплинг"
+        "change sampling"
     }
     fn description(&self, loc: &crate::shared::i18n::Locale) -> String {
         format!(
@@ -94,7 +94,7 @@ impl Tool for SetSampling {
         )
     }
     fn parameters(&self, _loc: &crate::shared::i18n::Locale) -> serde_json::Value {
-        // Схема несёт только поля, принимаемые движком текущего режима.
+        // The schema carries only the fields accepted by the current mode's engine.
         let supported = supported_sampling_fields(self.provider);
         let mut props = serde_json::Map::new();
         for (name, schema) in field_schemas() {
@@ -106,8 +106,8 @@ impl Tool for SetSampling {
     }
     async fn invoke(&self, ctx: &ToolContext, args: serde_json::Value) -> Result<ToolOutcome> {
         let supported = supported_sampling_fields(self.provider);
-        // Отбрасываем поля, недоступные в текущем режиме (движок их не примет),
-        // и сообщаем об этом модели, а не молча применяем неподдержанное.
+        // Drop fields unavailable in the current mode (the engine wouldn't accept them),
+        // and tell the model about it, rather than silently applying the unsupported ones.
         let mut obj = match args {
             serde_json::Value::Object(map) => map,
             serde_json::Value::Null => serde_json::Map::new(),
@@ -126,7 +126,7 @@ impl Tool for SetSampling {
         dropped.sort();
         obj.retain(|k, _| supported.contains(&k.as_str()));
 
-        // Разбираем частичный конфиг (все поля Option, отсутствующие = None).
+        // Parse the partial config (all fields are Option, absent = None).
         let patch: SamplingConfig = serde_json::from_value(serde_json::Value::Object(obj))
             .map_err(|e| {
                 anyhow::anyhow!(
@@ -135,8 +135,8 @@ impl Tool for SetSampling {
                 )
             })?;
         let merged = merge_sampling(&ctx.effective_sampling, &patch);
-        // В результат кладём только поля, доступные в текущем режиме — иначе в ленту
-        // (и модели) уезжает полный конфиг с десятками `null`, сбивая с толку.
+        // The result only carries fields available in the current mode — otherwise the
+        // feed (and the model) would get a full config with dozens of `null`s, which is confusing.
         let json = serde_json::to_string(&filter_to_supported(&merged, self.provider)?)?;
         let mut result = ctx
             .loc
@@ -154,7 +154,7 @@ impl Tool for SetSampling {
     }
 }
 
-/// Подсказка модели о доступном наборе полей в текущем режиме (на языке `loc`).
+/// A hint to the model about the field set available in the current mode (in the language `loc`).
 fn scope_note(loc: &crate::shared::i18n::Locale, provider: Option<CloudProvider>) -> String {
     match provider {
         None => loc.t("tool.sampling.scope.all").to_string(),
@@ -165,7 +165,7 @@ fn scope_note(loc: &crate::shared::i18n::Locale, provider: Option<CloudProvider>
     }
 }
 
-/// Сериализует семплинг, оставляя только поля, доступные в текущем режиме.
+/// Serializes sampling, keeping only the fields available in the current mode.
 fn filter_to_supported(
     sampling: &SamplingConfig,
     provider: Option<CloudProvider>,
@@ -179,8 +179,8 @@ fn filter_to_supported(
     Ok(serde_json::Value::Object(map))
 }
 
-/// JSON-схемы значений всех настраиваемых полей семплинга (имя → схема). Порядок
-/// совпадает с [`crate::entities::sampling::SETTABLE_SAMPLING_FIELDS`].
+/// JSON schemas of the values of all settable sampling fields (name → schema). The order
+/// matches [`crate::entities::sampling::SETTABLE_SAMPLING_FIELDS`].
 fn field_schemas() -> Vec<(&'static str, serde_json::Value)> {
     use serde_json::json;
     let number = || json!({"type": "number"});
@@ -226,7 +226,7 @@ fn field_schemas() -> Vec<(&'static str, serde_json::Value)> {
     ]
 }
 
-/// `get_system_message` — возвращает текущее системное сообщение чата.
+/// `get_system_message` — returns the chat's current system message.
 pub struct GetSystemMessage;
 
 #[async_trait::async_trait]
@@ -238,7 +238,7 @@ impl Tool for GetSystemMessage {
         crate::features::tools::meta::ToolGroup::Introspection
     }
     fn ui_label(&self) -> &'static str {
-        "показать сис. сообщение"
+        "show sys. message"
     }
     fn description(&self, loc: &crate::shared::i18n::Locale) -> String {
         loc.t("tool.get_system_message.desc").into()
@@ -251,7 +251,7 @@ impl Tool for GetSystemMessage {
     }
 }
 
-/// `set_system_message` — меняет системное сообщение (со следующего построения запроса).
+/// `set_system_message` — changes the system message (starting with the next request build).
 pub struct SetSystemMessage;
 
 #[async_trait::async_trait]
@@ -263,7 +263,7 @@ impl Tool for SetSystemMessage {
         crate::features::tools::meta::ToolGroup::Introspection
     }
     fn ui_label(&self) -> &'static str {
-        "изменить сис. сообщение"
+        "change sys. message"
     }
     fn description(&self, loc: &crate::shared::i18n::Locale) -> String {
         loc.t("tool.set_system_message.desc").into()
@@ -288,7 +288,7 @@ impl Tool for SetSystemMessage {
     }
 }
 
-/// `get_last_user_message_time` — таймстемп последнего user-сообщения + прошедшее время.
+/// `get_last_user_message_time` — the last user message's timestamp + the elapsed time.
 pub struct GetLastUserMessageTime;
 
 #[async_trait::async_trait]
@@ -300,7 +300,7 @@ impl Tool for GetLastUserMessageTime {
         crate::features::tools::meta::ToolGroup::Introspection
     }
     fn ui_label(&self) -> &'static str {
-        "время посл. сообщения"
+        "last message time"
     }
     fn description(&self, loc: &crate::shared::i18n::Locale) -> String {
         loc.t("tool.get_last_user_message_time.desc").into()
@@ -330,7 +330,7 @@ impl Tool for GetLastUserMessageTime {
     }
 }
 
-/// Сливает частичный патч поверх базового семплинга (заданные поля побеждают).
+/// Merges a partial patch on top of the base sampling (set fields win).
 fn merge_sampling(base: &SamplingConfig, patch: &SamplingConfig) -> SamplingConfig {
     SamplingConfig {
         temperature: patch.temperature.or(base.temperature),
@@ -370,12 +370,12 @@ fn merge_sampling(base: &SamplingConfig, patch: &SamplingConfig) -> SamplingConf
     }
 }
 
-/// JSON Schema пустого объекта параметров (инструмент без аргументов).
+/// The JSON Schema of an empty parameters object (a tool with no arguments).
 fn empty_object() -> serde_json::Value {
     serde_json::json!({"type": "object", "properties": {}})
 }
 
-/// Грубое человекочитаемое представление длительности в секундах (на языке `loc`).
+/// A rough human-readable rendering of a duration in seconds (in the language `loc`).
 fn humanize(secs: i64, loc: &crate::shared::i18n::Locale) -> String {
     let (key, n) = if secs < 60 {
         ("time.dur.seconds", secs)
@@ -437,10 +437,10 @@ mod tests {
             .unwrap();
         match &out.effects[..] {
             [ChatEffect::SetSamplingOverride(s)] => {
-                assert_eq!(s.temperature, Some(0.9)); // переопределено
-                assert_eq!(s.max_tokens, Some(512)); // сохранено из базы
+                assert_eq!(s.temperature, Some(0.9)); // overridden
+                assert_eq!(s.max_tokens, Some(512)); // kept from the base
                 assert_eq!(s.reasoning_effort, Some(ReasoningEffort::High));
-                // Новые расширения llama.cpp тоже мёржатся.
+                // The new llama.cpp extensions merge too.
                 assert_eq!(s.min_p, Some(0.03));
                 assert_eq!(s.dry_multiplier, Some(0.8));
                 assert_eq!(s.dynatemp_range, Some(0.4));
@@ -450,7 +450,7 @@ mod tests {
                 );
                 assert_eq!(s.seed, Some(-1));
             }
-            other => panic!("ожидался SetSamplingOverride, got {other:?}"),
+            other => panic!("expected SetSamplingOverride, got {other:?}"),
         }
     }
 
@@ -464,7 +464,7 @@ mod tests {
             max_tokens: Some(256),
             ..Default::default()
         };
-        // Gemini (нативный): top_k доступен, а min_p (расширение llama.cpp) — нет.
+        // Gemini (native): top_k is available, but min_p (a llama.cpp extension) isn't.
         let out = GetSampling::new(Some(CloudProvider::Gemini))
             .invoke(&ctx, serde_json::json!({}))
             .await
@@ -475,7 +475,7 @@ mod tests {
         assert!(v.get("top_k").is_some());
         assert!(v.get("min_p").is_none());
 
-        // OpenAI: недоступна и temperature (GPT 5.5/5.6 её отвергают).
+        // OpenAI: temperature is also unavailable (GPT 5.5/5.6 rejects it).
         let out = GetSampling::new(Some(CloudProvider::OpenAi))
             .invoke(&ctx, serde_json::json!({}))
             .await
@@ -490,7 +490,7 @@ mod tests {
     async fn set_sampling_cloud_drops_unsupported_fields() {
         let (_d, _s, mut ctx) = ctx_with_storage(Uuid::new_v4());
         ctx.effective_sampling = SamplingConfig::default();
-        // Claude: доступен только max_tokens; temperature/top_k должны быть отброшены.
+        // Claude: only max_tokens is available; temperature/top_k must be dropped.
         let out = SetSampling::new(Some(CloudProvider::Claude))
             .invoke(
                 &ctx,
@@ -504,13 +504,13 @@ mod tests {
                 assert_eq!(s.temperature, None);
                 assert_eq!(s.top_k, None);
             }
-            other => panic!("ожидался SetSamplingOverride, got {other:?}"),
+            other => panic!("expected SetSamplingOverride, got {other:?}"),
         }
-        // Об отброшенных полях модель уведомляется.
+        // The model is notified about the dropped fields.
         assert!(out.result.contains("temperature"));
         assert!(out.result.contains("top_k"));
-        // Но в JSON результата нет полного дампа конфига с десятками `null`-полей —
-        // только доступные в режиме (для Claude это max_tokens + reasoning).
+        // But the result JSON doesn't carry a full config dump with dozens of `null`
+        // fields — only what's available in the mode (for Claude that's max_tokens + reasoning).
         assert!(!out.result.contains("dynatemp_range"));
         assert!(!out.result.contains("reasoning_budget"));
         assert!(out.result.contains("max_tokens"));
@@ -518,7 +518,7 @@ mod tests {
 
     #[test]
     fn set_sampling_schema_reflects_mode() {
-        // Локально — полная схема (все настраиваемые поля).
+        // Locally — the full schema (all settable fields).
         let local = SetSampling::new(None)
             .parameters(crate::shared::i18n::locale(crate::shared::i18n::Lang::Ru));
         let local_props = local["properties"].as_object().unwrap();
@@ -527,7 +527,7 @@ mod tests {
             crate::entities::sampling::SETTABLE_SAMPLING_FIELDS.len()
         );
         assert!(local_props.contains_key("top_k"));
-        // Claude — max_tokens + reasoning (thinking/reasoning_effort), но не расширения.
+        // Claude — max_tokens + reasoning (thinking/reasoning_effort), but not the extensions.
         let claude = SetSampling::new(Some(CloudProvider::Claude))
             .parameters(crate::shared::i18n::locale(crate::shared::i18n::Lang::Ru));
         let claude_props = claude["properties"].as_object().unwrap();

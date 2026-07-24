@@ -1,98 +1,104 @@
-# ADR 0008 — Хранение API-ключей: ввод в настройках + машинно-привязанное шифрование
+# ADR 0008 — API key storage: input in settings + machine-bound encryption
 
-**Статус:** принято (2026-07-20). Уточняет [ADR 0004](0004-engine-contract-multi-provider.md)
-(«Секреты не на диск» → «не на диск **открытым текстом**»). Исследование и развилки —
-[docs/research/api-key-storage.md](../research/api-key-storage.md) (Р1–Р6 подтверждены
-пользователем 2026-07-20).
+**Status:** accepted (2026-07-20). Refines [ADR 0004](0004-engine-contract-multi-provider.md)
+("secrets not on disk" → "not on disk **in plaintext**"). Research and decision points —
+[docs/research/api-key-storage.md](../research/api-key-storage.md) (D1–D6 confirmed by
+the user 2026-07-20).
 
-**Контекст.** ADR 0004 (Фаза 0 мульти-провайдера) решил, что облачный API-ключ
-читается из **переменной окружения**, а в `settings.json` хранится лишь её имя. Для
-целевого пользователя TUI-чата это оказалось барьером: «обычные пользователи слабо
-понимают, что такое переменные окружения». Требование — вводить ключ в окне настроек
-и хранить в конфигурационном файле, но безопасно, с сохранением **переносимости**
-конфига: ключи должны быть пер-машинными (ввёл на A → перенёс конфиг на B → там ввёл
-заново → вернулся на A → ключ читается из того же файла).
+**Context.** ADR 0004 (multi-provider Phase 0) decided that the cloud API key is read
+from an **environment variable**, with only its name stored in `settings.json`. For the
+target TUI-chat user this turned out to be a barrier: "regular users have a shaky grasp
+of what an environment variable is." The requirement is to enter the key in the settings
+screen and store it in the config file, but safely, while preserving config
+**portability**: keys must be per-machine (enter it on A → move the config to B → enter
+it again there → back to A → the key still reads from the same file).
 
-## Решение
+## Decision
 
-### 1. Ключ шифруется ключом машины и лежит в конфиге
+### 1. The key is encrypted with a machine key and lives in the config
 
-`AppConfig.api_keys: Vec<ApiKeyEntry>` — **список записей, по записи на компьютер**
-(`#[serde(default)]` + `skip_serializing_if` → additive, без миграции и bump'а схемы,
-политика [ADR 0006](0006-data-schema-versioning.md) Ф12). Запись несёт `label` (имя
-ПК + дата, только для человека), `scheme`, `check` и `keys: провайдер → шифротекст`.
+`AppConfig.api_keys: Vec<ApiKeyEntry>` — **a list of entries, one per computer**
+(`#[serde(default)]` + `skip_serializing_if` → additive, no migration or schema bump,
+[ADR 0006](0006-data-schema-versioning.md) F12 policy). An entry carries `label`
+(machine name + date, for humans only), `scheme`, `check`, and `keys: provider →
+ciphertext`.
 
-**«Своя» запись опознаётся расшифровкой пробы `check`**, а не хранением machine-id:
-идентификатор машины не светится в переносимом файле, а на Windows-пути он и не нужен.
-Чужие записи никогда не трогаются — они оживут на своих машинах; запись с **незнакомой
-схемой** читается, сохраняется и считается чужой, поэтому формат расширяем.
+**"Ours" is recognized by decrypting the `check` probe**, not by storing a machine-id:
+the machine identifier never shows up in a portable file, and on the Windows path it
+isn't needed at all. Foreign entries are never touched — they come back to life on their
+own machines; an entry with an **unfamiliar scheme** is read, kept, and treated as
+foreign, so the format stays extensible.
 
-Отклонённые варианты: **OS-кейчейн** (`keyring`) — секрет не в файле (буква запроса не
-выполняется) и отсутствует на headless Linux; **плейнтекст** — противоречит задаче;
-**мастер-пароль** — единственный, защищающий от локальной малвари, но спрашивать пароль
-при каждом запуске чат-приложения неприемлемо. Поле `scheme` оставляет кейчейн дешёвой
-добавкой на будущее.
+Rejected options: **OS keychain** (`keyring`) — the secret isn't in the file (fails the
+letter of the requirement) and is absent on headless Linux; **plaintext** — contradicts
+the goal; **master password** — the only option that protects against local malware, but
+prompting for a password on every chat-app launch is unacceptable. The `scheme` field
+leaves the keychain as a cheap future addition.
 
-### 2. Две схемы шифрования
+### 2. Two encryption schemes
 
-- **`dpapi`** (Windows): системные `CryptProtectData`/`CryptUnprotectData` — мастер-ключ
-  *пользователя* держит ОС; расшифровка другим пользователем или на другой машине
-  невозможна. `pOptionalEntropy` — константа приложения (не секрет, но отсекает
-  generic-«DPAPI-дамперы»). Стоимость: +1 фича уже имеющейся `windows-sys`.
-- **`machine-key-v1`** (Linux): HKDF-SHA256 над `/etc/machine-id` (systemd прямо
-  предписывает не использовать machine-id сырым — паттерн
-  `sd_id128_get_machine_app_specific`; фолбэк `/var/lib/dbus/machine-id`) +
-  ChaCha20-Poly1305 (AEAD, случайный nonce префиксом). Имя пользователя входит в `info`
-  → привязка per-user, как у DPAPI. Нет machine-id → схема недоступна, остаётся env-путь.
+- **`dpapi`** (Windows): the system's `CryptProtectData`/`CryptUnprotectData` — the OS
+  holds the *user's* master key; decryption by another user or on another machine is
+  impossible. `pOptionalEntropy` is an application constant (not a secret, but it cuts
+  off generic "DPAPI dumpers"). Cost: +1 feature on the `windows-sys` crate we already have.
+- **`machine-key-v1`** (Linux): HKDF-SHA256 over `/etc/machine-id` (systemd explicitly
+  advises against using the raw machine-id — the `sd_id128_get_machine_app_specific`
+  pattern; falls back to `/var/lib/dbus/machine-id`) + ChaCha20-Poly1305 (AEAD, random
+  nonce prefixed). The username goes into `info` → per-user binding, like DPAPI. No
+  machine-id → the scheme is unavailable, the env path remains.
 
-Шифротекст кодируется **hex** собственным кодеком (прецедент
-`features::sandbox_setup::hex_lower`) — зависимость base64 не нужна, разница в длине
-строки для конфига несущественна.
+The ciphertext is encoded as **hex** by our own codec (precedent:
+`features::sandbox_setup::hex_lower`) — a base64 dependency isn't needed, and the string
+length difference is irrelevant for a config file.
 
-### 3. Резолюция: сохранённый ключ → env-фолбэк
+### 3. Resolution: stored key → env fallback
 
-`resolve_api_key(stored, api_key_env)`: сохранённый ключ приоритетнее (введён явным
-действием в приложении; целевой пользователь env не видит), env остаётся для CI, power
-users и систем без machine-id. Ключи **провайдеро-центричны**: один ключ OpenAI
-обслуживает чат, имперсонацию и эмбеддинги (снимает прежнее «указать имя переменной
-трижды»). External-прокси остаётся env-only — произвольный URL к провайдеру не привязать.
+`resolve_api_key(stored, api_key_env)`: the stored key wins (entered by an explicit
+in-app action; the target user doesn't see env), env remains for CI, power users, and
+systems without a machine-id. Keys are **provider-centric**: one OpenAI key serves chat,
+impersonation, and embeddings (removes the former "state the variable name three times").
+The external proxy stays env-only — an arbitrary URL can't be pinned to a provider.
 
-Расшифровка живёт в `EngineManager` (`app/orchestrator/engines.rs`), супервайзер
-принимает уже расшифрованный `stored_key: Option<&str>` — слой запуска серверов не знает
-про формат хранения секретов, а его тесты не требуют шифрования.
+Decryption lives in `EngineManager` (`app/orchestrator/engines.rs`); the supervisor
+receives an already-decrypted `stored_key: Option<&str>` — the server-launch layer knows
+nothing about the secret-storage format, and its tests don't need encryption.
 
-### 4. Секрет не покидает свой путь
+### 4. The secret never leaves its own path
 
-Плейнтекст живёт только в пути ввода (`SettingsIntent::SetApiKey` → `AppCommand::SetApiKey`
-→ шифрование в оркестраторе) и в HTTP-клиенте. В снимок `AppEvent::Settings` ключи **не
-попадают вовсе**: `config.api_keys` очищается при эмите, UI получает лишь флаги
-`api_keys_present`. Обратно значение держит `handle_update_config` (round-trip защита,
-как у `last_active_chat` и TOFU-пинов MCP). Поле настроек показывает **статус**, а не
-секрет; редактор открывается пустым и маскированным (`InputBox::set_mask`), выделение из
-маскированного поля не отдаётся в буфер обмена.
+Plaintext lives only on the entry path (`SettingsIntent::SetApiKey` →
+`AppCommand::SetApiKey` → encryption in the orchestrator) and in the HTTP client. Keys
+**never enter** the `AppEvent::Settings` snapshot at all: `config.api_keys` is cleared on
+emit, the UI only gets `api_keys_present` flags. `handle_update_config` restores the
+value on the way back (round-trip protection, as with `last_active_chat` and MCP TOFU
+pins). The settings field shows a **status**, not the secret; the editor opens empty and
+masked (`InputBox::set_mask`), and selecting text out of a masked field doesn't reach the
+clipboard.
 
-## Модель угроз (честная граница)
+## Threat model (an honest boundary)
 
-Защищаем **файл**: перенос, копию, бэкап, облачную синхронизацию конфига — вне «своей»
-машины это бесполезный шифротекст; на Windows дополнительно от других пользователей
-машины. **Не защищаем** от кода, исполняющегося под тем же пользователем на той же
-машине: он вызовет тот же DPAPI / выведет тот же ключ. Это фундаментально для любой
-схемы «приложение расшифровывает само, без ввода пользователя» — так же устроены Chrome
-и Git Credential Manager. Прежний env-путь не безопаснее (переменную читает любой
-процесс пользователя, и она обычно лежит плейнтекстом в профиле шелла), поэтому решение
-не слабее статус-кво ни в одном измерении и строго сильнее для «файла в пути».
+We protect **the file**: transfer, copy, backup, cloud-syncing the config — outside
+"your own" machine it's a useless ciphertext; on Windows, additionally, from other users
+on the machine. **We do not protect** against code running as the same user on the same
+machine: it will call the same DPAPI / dump the same key. This is fundamental to any
+"the app decrypts on its own, no user input" scheme — Chrome and Git Credential Manager
+work the same way. The previous env path was no safer (any process owned by the user can
+read the variable, and it typically sits in plaintext in the shell profile), so this
+decision is no weaker than the status quo on any dimension and is strictly stronger for
+"the file on the wire."
 
-## Последствия
+## Consequences
 
-- **Плюс:** ключ вводится в приложении — барьер env для обычного пользователя снят;
-  конфиг остаётся переносимым, ключи пер-машинные (сценарий A/B/A работает без действий).
-- **Плюс:** один ключ на провайдера вместо трёх указаний имени переменной.
-- **Плюс:** формат расширяем (`scheme`), миграции не потребовалось.
-- **Минус:** платформенная развилка (DPAPI vs HKDF) и небольшой `unsafe` для winapi
-  (прецедент — Job Object песочницы, ADR 0005); Linux-путь проверяется CI, не разработкой
-  на Windows.
-- **Минус:** защита не распространяется на локальную малварь — задокументировано в
-  интерфейсе (описание поля), README, install.md и доке модуля, чтобы не создавать ложных
-  ожиданий.
-- **Задел:** OS-кейчейн как дополнительная `scheme`; ключи для external-прокси и env-карт
-  MCP-серверов тем же механизмом; UI-управление записями чужих машин («забыть компьютер»).
+- **Plus:** the key is entered in the app — the env barrier for regular users is gone;
+  the config stays portable, keys are per-machine (the A/B/A scenario works with no
+  extra action).
+- **Plus:** one key per provider instead of three variable-name mentions.
+- **Plus:** the format is extensible (`scheme`), no migration was needed.
+- **Minus:** a platform fork (DPAPI vs HKDF) and a small `unsafe` for winapi (precedent —
+  the sandbox Job Object, ADR 0005); the Linux path is checked by CI, not by development
+  on Windows.
+- **Minus:** the protection doesn't extend to local malware — documented in the UI
+  (field description), README, install.md, and the module doc, so it doesn't create
+  false expectations.
+- **Groundwork:** an OS keychain as an additional `scheme`; the same mechanism for
+  external-proxy keys and MCP server env maps; UI management of other machines' entries
+  ("forget this computer").

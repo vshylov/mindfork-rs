@@ -1,9 +1,9 @@
-//! [`EngineManager`] — жизненный цикл серверов инференса/эмбеддингов: владеет
-//! движками (`backend`/`imp_backend`/`embedder`), опорами на managed-процессы
-//! (`*_handle`, `kill_on_drop`), статусами готовности и каналами фонового probe.
-//! Выделен из оркестратора (Фаза 3): группирует ~11 полей и серверную логику в
-//! когезивную единицу, пара к трейту [`ServerSupervisor`]. Оркестратор остаётся
-//! единственным владельцем `Chat`; здесь — только серверы, без доменного состояния.
+//! [`EngineManager`] — the lifecycle of the inference/embedding servers: owns the
+//! engines (`backend`/`imp_backend`/`embedder`), handles to managed processes
+//! (`*_handle`, `kill_on_drop`), readiness statuses, and background-probe channels.
+//! Extracted from the orchestrator (Phase 3): groups ~11 fields and the server logic
+//! into a cohesive unit, a counterpart to the [`ServerSupervisor`] trait. The orchestrator
+//! remains the sole owner of `Chat`; here — only servers, no domain state.
 
 use std::sync::Arc;
 
@@ -19,56 +19,56 @@ use crate::shared::config::{
 use crate::shared::i18n::Locale;
 use crate::shared::secrets::ApiKeyEntry;
 
-/// Расшифровывает сохранённый ключ провайдера (запись **этой** машины). `None` —
-/// локальный режим (провайдера нет), ключ не сохранён или запись чужая → супервайзер
-/// возьмёт env-фолбэк. Резолв живёт здесь, чтобы супервайзер не знал про формат
-/// хранения секретов (`shared::secrets`). См. docs/research/api-key-storage.md.
+/// Decrypts the provider's stored key (**this** machine's entry). `None` —
+/// local mode (no provider), the key isn't stored, or the entry is a foreign one → the
+/// supervisor falls back to env. The resolution lives here so the supervisor doesn't need
+/// to know the secret-storage format (`shared::secrets`). See docs/research/api-key-storage.md.
 fn stored_key(api_keys: &[ApiKeyEntry], provider: Option<CloudProvider>) -> Option<String> {
     crate::shared::secrets::stored_key(api_keys, provider?.key())
 }
 
 pub(super) struct EngineManager {
-    /// Супервайзер серверов (для перезапуска при смене модели/сервера).
+    /// The server supervisor (for restarting on a model/server change).
     supervisor: Arc<dyn ServerSupervisor>,
-    /// Движок ассистента. `None` — external/не настроен.
+    /// The assistant's engine. `None` — external/not configured.
     pub(super) backend: Option<Arc<dyn EngineBackend>>,
-    /// Опора на managed chat-процесс (drop → kill).
+    /// A handle to the managed chat process (drop → kill).
     chat_handle: Option<ServerHandle>,
-    /// Опора на managed embedding-процесс.
+    /// A handle to the managed embedding process.
     embed_handle: Option<ServerHandle>,
-    /// Движок имперсонации для режимов managed/external (`None` в режиме `shared` —
-    /// тогда используется `backend` ассистента). См. spec §11.8.
+    /// The impersonation engine for managed/external modes (`None` in `shared` mode —
+    /// then the assistant's `backend` is used). See spec §11.8.
     imp_backend: Option<Arc<dyn EngineBackend>>,
-    /// Опора на managed-процесс сервера имперсонации.
+    /// A handle to the managed process of the impersonation server.
     imp_handle: Option<ServerHandle>,
-    /// Текущий статус chat-сервера. Генерация стартует только в `Ready`: запрос к
-    /// ещё загружающемуся (`Connecting`) managed-серверу вернул бы 503 («error
-    /// status»), а для перегенерации — ещё и снёс бы прежний ответ впустую.
+    /// The current chat-server status. Generation only starts in `Ready`: a request to
+    /// a still-loading (`Connecting`) managed server would return a 503 ("error
+    /// status"), and for regeneration it would also wipe out the previous reply for nothing.
     pub(super) server_status: ServerStatus,
-    /// Статус сервера имперсонации (для managed/external; в `shared` —
-    /// `NotConfigured`, чип в строке статуса скрыт).
+    /// The impersonation-server status (for managed/external; in `shared` —
+    /// `NotConfigured`, the chip in the status line is hidden).
     imp_status: ServerStatus,
-    /// Статус сервера эмбеддингов. Probe пока нет (RAG ленив) — двухзначен:
-    /// `Ready` (эмбеддер настроен) / `NotConfigured` (`UnavailableEmbedder`).
+    /// The embedding-server status. There's no probe yet (RAG is lazy) — a two-value status:
+    /// `Ready` (the embedder is configured) / `NotConfigured` (`UnavailableEmbedder`).
     embed_status: ServerStatus,
-    /// Канал статуса chat-сервера для фонового probe супервайзера.
+    /// The chat-server status channel for the supervisor's background probe.
     status_tx: UnboundedSender<ServerStatus>,
-    /// Канал статуса сервера имперсонации (фоновый probe).
+    /// The impersonation-server status channel (background probe).
     imp_status_tx: UnboundedSender<ServerStatus>,
-    /// Токен инвалидации фонового probe текущего chat-сервера: смена режима/модели
-    /// помечает прежний probe устаревшим, чтобы его поздний результат (напр. таймаут
-    /// промежуточного external при перещёлкивании managed→external→openai) не
-    /// перезаписал статус нового сервера.
+    /// The invalidation token for the current chat server's background probe: a mode/model
+    /// change marks the previous probe stale, so its late result (e.g. a timeout of an
+    /// intermediate external server while flipping through managed→external→openai) doesn't
+    /// overwrite the new server's status.
     chat_probe_cancel: Option<CancellationToken>,
-    /// Токен инвалидации фонового probe сервера имперсонации (аналогично).
+    /// The invalidation token for the impersonation server's background probe (analogous).
     imp_probe_cancel: Option<CancellationToken>,
-    /// Источник эмбеддингов для RAG (выделенный сервер — ADR 0002).
+    /// The embeddings source for RAG (a dedicated server — ADR 0002).
     pub(super) embedder: Arc<dyn Embedder>,
 }
 
 impl EngineManager {
-    /// Создаёт менеджер без поднятых серверов (статусы `NotConfigured`, эмбеддер —
-    /// [`UnavailableEmbedder`]). Серверы поднимаются последующими `apply_*`.
+    /// Creates a manager with no servers raised (statuses `NotConfigured`, the embedder —
+    /// [`UnavailableEmbedder`]). Servers are raised by the subsequent `apply_*` calls.
     pub(super) fn new(
         supervisor: Arc<dyn ServerSupervisor>,
         status_tx: UnboundedSender<ServerStatus>,
@@ -92,18 +92,18 @@ impl EngineManager {
         }
     }
 
-    /// (Пере)поднимает chat-сервер по настройкам: гасит прежний managed-процесс,
-    /// просит супервайзер настроить новый, сохраняет немедленный статус. Снимок
-    /// статусов для UI вызывающий берёт через [`Self::statuses`]. `api_keys` —
-    /// сохранённые ключи из конфига (см. [`stored_key`]).
+    /// (Re-)raises the chat server from settings: kills the previous managed process,
+    /// asks the supervisor to set up a new one, stores the immediate status. The caller
+    /// takes the status snapshot for the UI via [`Self::statuses`]. `api_keys` —
+    /// stored keys from the config (see [`stored_key`]).
     pub(super) fn apply_chat(
         &mut self,
         settings: &EngineSettings,
         api_keys: &[ApiKeyEntry],
         loc: &'static Locale,
     ) {
-        self.chat_handle = None; // drop старого managed-процесса (kill_on_drop)
-        // Инвалидируем probe прежнего сервера и заводим новый токен.
+        self.chat_handle = None; // drop the old managed process (kill_on_drop)
+        // Invalidate the previous server's probe and raise a new token.
         if let Some(tok) = self.chat_probe_cancel.take() {
             tok.cancel();
         }
@@ -122,7 +122,7 @@ impl EngineManager {
         self.server_status = setup.status;
     }
 
-    /// (Пере)поднимает embedding-сервер по настройкам.
+    /// (Re-)raises the embedding server from settings.
     pub(super) fn apply_embed(&mut self, settings: &EmbedSettings, api_keys: &[ApiKeyEntry]) {
         self.embed_handle = None;
         let key = stored_key(api_keys, settings.mode.cloud_provider());
@@ -132,16 +132,16 @@ impl EngineManager {
         self.embed_status = setup.status;
     }
 
-    /// (Пере)поднимает сервер имперсонации. В режиме `shared` отдельный сервер не
-    /// нужен — переиспользуется chat-сервер ассистента.
+    /// (Re-)raises the impersonation server. In `shared` mode a separate server isn't
+    /// needed — the assistant's chat server is reused.
     pub(super) fn apply_impersonation(
         &mut self,
         settings: &ImpersonationEngineSettings,
         api_keys: &[ApiKeyEntry],
         loc: &'static Locale,
     ) {
-        self.imp_handle = None; // drop прежнего managed-процесса (kill_on_drop)
-        // Инвалидируем probe прежнего сервера имперсонации (как у chat-сервера).
+        self.imp_handle = None; // drop the previous managed process (kill_on_drop)
+        // Invalidate the previous impersonation server's probe (as with the chat server).
         if let Some(tok) = self.imp_probe_cancel.take() {
             tok.cancel();
         }
@@ -168,18 +168,18 @@ impl EngineManager {
         }
     }
 
-    /// Обновляет статус chat-сервера (из фонового probe).
+    /// Updates the chat-server status (from the background probe).
     pub(super) fn set_chat_status(&mut self, status: ServerStatus) {
         self.server_status = status;
     }
 
-    /// Обновляет статус сервера имперсонации (из фонового probe).
+    /// Updates the impersonation-server status (from the background probe).
     pub(super) fn set_imp_status(&mut self, status: ServerStatus) {
         self.imp_status = status;
     }
 
-    /// Снимок статусов всех серверов для строки статуса (чат всегда, эмбеддинги/
-    /// имперсонация — чипами, скрытыми при `NotConfigured`). См. spec §11.1.
+    /// A snapshot of all server statuses for the status bar (chat always, embeddings/
+    /// impersonation — as chips hidden when `NotConfigured`). See spec §11.1.
     pub(super) fn statuses(&self) -> ServerStatuses {
         ServerStatuses {
             chat: self.server_status.clone(),
@@ -188,48 +188,53 @@ impl EngineManager {
         }
     }
 
-    /// Возвращает движок ассистента, если chat-сервер готов (`Ready`); иначе — `Err`
-    /// с понятным текстом (не настроен / ещё подключается / недоступен). Сам ничего
-    /// не эмитит — вызывающий решает, куда направить ошибку. См. spec §7.
-    pub(super) fn backend_if_ready(&self) -> Result<Arc<dyn EngineBackend>, String> {
+    /// Returns the assistant's engine if the chat server is ready (`Ready`); otherwise — `Err`
+    /// with a clear message (not configured / still connecting / unavailable), localized in
+    /// the interface language (`loc`, axis B — this is shown to the human, not the model).
+    /// Emits nothing itself — the caller decides where to route the error. See spec §7.
+    pub(super) fn backend_if_ready(
+        &self,
+        loc: &'static Locale,
+    ) -> Result<Arc<dyn EngineBackend>, String> {
         match &self.server_status {
             ServerStatus::Ready => self
                 .backend
                 .clone()
-                .ok_or_else(|| "LLM-сервер не настроен".to_string()),
-            ServerStatus::Connecting => {
-                Err("Сервер ещё подключается — дождитесь готовности и повторите".into())
+                .ok_or_else(|| loc.t("ui.err.server.not_configured").to_string()),
+            ServerStatus::Connecting => Err(loc.t("ui.err.server.connecting").to_string()),
+            ServerStatus::NotConfigured => Err(loc.t("ui.err.server.not_configured").to_string()),
+            ServerStatus::Disconnected(reason) => {
+                Err(loc.tf("ui.err.server.unavailable", &[("reason", reason)]))
             }
-            ServerStatus::NotConfigured => Err("LLM-сервер не настроен".into()),
-            ServerStatus::Disconnected(reason) => Err(format!("Сервер недоступен: {reason}")),
         }
     }
 
-    /// Возвращает движок имперсонации, если он готов; иначе — `Err` с понятным
-    /// текстом. В режиме `shared` используется chat-сервер ассистента.
+    /// Returns the impersonation engine if it's ready; otherwise — `Err` with a clear,
+    /// localized message (axis B). In `shared` mode the assistant's chat server is used.
     pub(super) fn impersonation_backend_if_ready(
         &self,
         mode: ImpersonationMode,
+        loc: &'static Locale,
     ) -> Result<Arc<dyn EngineBackend>, String> {
         if mode == ImpersonationMode::Shared {
-            return self.backend_if_ready();
+            return self.backend_if_ready(loc);
         }
         match &self.imp_status {
             ServerStatus::Ready => self
                 .imp_backend
                 .clone()
-                .ok_or_else(|| "Сервер имперсонации не настроен".to_string()),
-            ServerStatus::Connecting => {
-                Err("Сервер имперсонации ещё подключается — повторите позже".into())
+                .ok_or_else(|| loc.t("ui.err.server.imp_not_configured").to_string()),
+            ServerStatus::Connecting => Err(loc.t("ui.err.server.imp_connecting").to_string()),
+            ServerStatus::NotConfigured => {
+                Err(loc.t("ui.err.server.imp_not_configured").to_string())
             }
-            ServerStatus::NotConfigured => Err("Сервер имперсонации не настроен".into()),
             ServerStatus::Disconnected(reason) => {
-                Err(format!("Сервер имперсонации недоступен: {reason}"))
+                Err(loc.tf("ui.err.server.imp_unavailable", &[("reason", reason)]))
             }
         }
     }
 
-    /// Клон источника эмбеддингов для фоновых задач RAG / контекста инструментов.
+    /// A clone of the embeddings source for RAG background tasks / the tool context.
     pub(super) fn embedder(&self) -> Arc<dyn Embedder> {
         self.embedder.clone()
     }

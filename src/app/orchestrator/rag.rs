@@ -1,7 +1,7 @@
-//! Загрузка/удаление/просмотр/реиндексация базы знаний (RAG) командами
-//! `/rag add|remove|list|rebuild` (spec §9.3). Индексация и реиндексация —
-//! отменяемые фоновые задачи с прогрессом; удаление и список — быстрые операции
-//! БД на месте. Всё с изоляцией по `profile_id`.
+//! Load/delete/list/rebuild the knowledge base (RAG) via the
+//! `/rag add|remove|list|rebuild` commands (spec §9.3). Indexing and rebuilding are
+//! cancellable background tasks with progress; delete and list are fast in-place DB
+//! operations. Everything is isolated by `profile_id`.
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -17,30 +17,30 @@ use crate::shared::storage::Storage;
 
 use super::Orchestrator;
 
-/// Максимум чанков в одном запросе к эмбеддеру. Ограничивает размер каждого запроса
-/// и даёт прогресс по мере готовности чанков (баннер двигается *в ходе* эмбеддинга
-/// крупного файла). Файл с ≤16 чанками по-прежнему эмбеддится одним запросом (как
-/// раньше) — поведение для маленьких файлов не меняется.
+/// Max chunks in a single embedder request. Bounds each request's size and gives
+/// progress as chunks become ready (the banner moves *during* embedding of a large
+/// file). A file with ≤16 chunks is still embedded in one request (as before) —
+/// behavior for small files is unchanged.
 const EMBED_BATCH_CHUNKS: usize = 16;
 
 impl Orchestrator {
-    /// Профиль активного чата (RAG изолирован по `profile_id`, §9.5). `None` — нет
-    /// активного чата.
+    /// The active chat's profile (RAG is isolated by `profile_id`, §9.5). `None` —
+    /// no active chat.
     pub(super) fn active_profile_id(&self) -> Option<Uuid> {
         self.active_id
             .and_then(|id| self.chats.iter().find(|c| c.id == id))
             .map(|c| c.profile_id)
     }
 
-    /// Параметры чанкинга из текущих настроек (`config.rag`).
+    /// Chunking parameters from the current settings (`config.rag`).
     fn chunk_params(&self) -> ChunkParams {
         ChunkParams::from_settings(&self.config.rag)
     }
 
-    /// Запускает фоновую индексацию файла/директории в RAG активного профиля
-    /// (команда `/rag add`, spec §9.3). Сканирование, чтение, эмбеддинг и запись
-    /// идут в отдельной задаче; прогресс — событиями [`RagProgress`]. Предыдущая
-    /// незавершённая индексация отменяется (одна за раз).
+    /// Starts background indexing of a file/directory into the active profile's
+    /// RAG (the `/rag add` command, spec §9.3). Scanning, reading, embedding, and
+    /// writing run in a separate task; progress — via [`RagProgress`] events. A
+    /// previous unfinished indexing run is cancelled (one at a time).
     pub(super) fn handle_rag_add(&mut self, path: String, recursive: bool) {
         let path = path.trim().to_string();
         if path.is_empty() {
@@ -65,12 +65,12 @@ impl Orchestrator {
         });
     }
 
-    /// Удаляет из RAG активного профиля файл или директорию (со всем, что под ней)
-    /// по пути (команда `/rag remove`, spec §9.3). Операция быстрая (только БД, без
-    /// эмбеддинга), поэтому выполняется на месте. Если путь есть на диске — берём его
-    /// канонический ключ (как при добавлении); иначе сопоставляем по введённой строке
-    /// (БД сама нормализует разделители/регистр), что позволяет чистить записи уже
-    /// удалённых с диска файлов.
+    /// Removes a file or directory (and everything under it) from the active
+    /// profile's RAG by path (the `/rag remove` command, spec §9.3). A fast
+    /// operation (DB only, no embedding), so it runs in place. If the path exists
+    /// on disk — its canonical key is used (as at add time); otherwise it's
+    /// matched by the entered string (the DB itself normalizes separators/case),
+    /// which lets records of already-deleted files be cleaned up.
     pub(super) fn handle_rag_delete(&mut self, path: String) {
         let path = path.trim().to_string();
         if path.is_empty() {
@@ -96,8 +96,8 @@ impl Orchestrator {
         let _ = self.evt_tx.send(AppEvent::RagProgress(progress));
     }
 
-    /// Показывает источники базы знаний активного профиля (команда `/rag list`):
-    /// по каждому источнику — число чанков и дата. Быстрая операция БД на месте.
+    /// Shows the active profile's knowledge-base sources (the `/rag list`
+    /// command): per source — chunk count and date. A fast in-place DB operation.
     pub(super) fn handle_rag_list(&mut self) {
         let Some(profile_id) = self.active_profile_id() else {
             self.fail_rag(self.ui_locale().t("ui.err.rag_no_active_chat"));
@@ -113,11 +113,11 @@ impl Orchestrator {
         let _ = self.evt_tx.send(AppEvent::RagProgress(progress));
     }
 
-    /// Реиндексирует базу знаний активного профиля (команда `/rag rebuild`, spec
-    /// §9.3): перечанковывает и переэмбеддивает сохранённые исходники текущими
-    /// параметрами/embedding-моделью. Нужна после смены размера чанка/перекрытия или
-    /// embedding-модели (другая размерность). Идёт фоновой задачей; отменяет
-    /// предыдущую RAG-операцию (одна за раз).
+    /// Rebuilds the active profile's knowledge base (the `/rag rebuild` command,
+    /// spec §9.3): re-chunks and re-embeds the stored sources with the current
+    /// parameters/embedding model. Needed after changing the chunk size/overlap or
+    /// the embedding model (a different dimensionality). Runs as a background
+    /// task; cancels the previous RAG operation (one at a time).
     pub(super) fn handle_rag_rebuild(&mut self) {
         let Some(profile_id) = self.active_profile_id() else {
             self.fail_rag(self.ui_locale().t("ui.err.rag_no_active_chat"));
@@ -135,7 +135,8 @@ impl Orchestrator {
         });
     }
 
-    /// Отменяет предыдущую фоновую RAG-задачу (если шла) и заводит новый токен.
+    /// Cancels the previous background RAG task (if one was running) and starts a
+    /// new token.
     fn reset_rag_cancel(&mut self) -> CancellationToken {
         if let Some(token) = self.rag_cancel.take() {
             token.cancel();
@@ -145,7 +146,7 @@ impl Orchestrator {
         cancel
     }
 
-    /// Шлёт ошибку RAG-операции в UI (баннер/заметка).
+    /// Sends a RAG-operation error to the UI (banner/note).
     fn fail_rag(&self, msg: &str) {
         let _ = self
             .evt_tx
@@ -153,7 +154,7 @@ impl Orchestrator {
     }
 }
 
-/// Параметры фоновой задачи индексации файлов в RAG (`/rag add`).
+/// Parameters of the background RAG file-indexing task (`/rag add`).
 struct RagIngest {
     embedder: Arc<dyn Embedder>,
     storage: Arc<Storage>,
@@ -162,15 +163,16 @@ struct RagIngest {
     recursive: bool,
     params: ChunkParams,
     cancel: CancellationToken,
-    /// Язык интерфейса (ось B) — для сообщений о прогрессе/ошибках, видимых человеку.
+    /// The interface language (axis B) — for progress/error messages visible to the user.
     loc: &'static Locale,
     evt_tx: tokio::sync::mpsc::UnboundedSender<AppEvent>,
 }
 
-/// Запускает фоновую индексацию (spec §9.3): сканирует путь, проверяет доступность
-/// эмбеддера, затем по очереди читает/чанкует/эмбеддит/пишет каждый файл, эмитя
-/// [`RagProgress`]. Отменяемо по `cancel` (между файлами). Storage потокобезопасен
-/// (внутренний мьютекс), эмбеддинг асинхронен — задача не блокирует оркестратор.
+/// Starts background indexing (spec §9.3): scans the path, checks embedder
+/// availability, then reads/chunks/embeds/writes each file in turn, emitting
+/// [`RagProgress`]. Cancellable via `cancel` (between files). Storage is
+/// thread-safe (an internal mutex), embedding is async — the task doesn't block
+/// the orchestrator.
 fn spawn_rag_ingest(task: RagIngest) {
     let RagIngest {
         embedder,
@@ -189,7 +191,7 @@ fn spawn_rag_ingest(task: RagIngest) {
             let _ = evt_tx.send(AppEvent::RagProgress(p));
         };
 
-        // 1. Сканируем файлы (txt/md/html). Ошибка пути / пустой результат — понятный отказ.
+        // 1. Scan files (txt/md/html). A path error / empty result — a clear refusal.
         let files = match crate::features::rag_ingest::scan(&root, recursive) {
             Ok(files) => files,
             Err(err) => {
@@ -205,7 +207,7 @@ fn spawn_rag_ingest(task: RagIngest) {
             return;
         }
 
-        // 2. Предпроверка эмбеддера — быстрый понятный отказ, если RAG не настроен.
+        // 2. Embedder precheck — a fast, clear refusal if RAG isn't configured.
         if let Err(err) = embedder.embed(vec!["ping".into()]).await {
             send(RagProgress::Failed(loc.tf(
                 "ui.err.rag_embedder_unavailable",
@@ -224,7 +226,8 @@ fn spawn_rag_ingest(task: RagIngest) {
                 break;
             }
             let (name, dir) = display_parts(file);
-            // Файл начат (чанкинг ещё впереди) — chunks_total=0 (баннер как раньше).
+            // The file has just started (chunking is still ahead) — chunks_total=0
+            // (the banner as before).
             send(RagProgress::Indexing {
                 index: i + 1,
                 total,
@@ -233,8 +236,8 @@ fn spawn_rag_ingest(task: RagIngest) {
                 chunks_done: 0,
                 chunks_total: 0,
             });
-            // Прогресс по чанкам: клонируем имя/папку в замыкание (FnMut вызывается
-            // многократно, а `send` заимствует `evt_tx`).
+            // Chunk progress: clone the name/dir into the closure (FnMut is called
+            // repeatedly, and `send` borrows `evt_tx`).
             let progress = |done: usize, tot: usize| {
                 let _ = evt_tx.send(AppEvent::RagProgress(RagProgress::Indexing {
                     index: i + 1,
@@ -249,7 +252,7 @@ fn spawn_rag_ingest(task: RagIngest) {
                 Ok(n) => chunks_total += n,
                 Err(err) => {
                     errors += 1;
-                    tracing::warn!(file = %file.display(), error = %err, "RAG: не удалось проиндексировать файл");
+                    tracing::warn!(file = %file.display(), error = %err, "RAG: failed to index file");
                 }
             }
         }
@@ -263,22 +266,22 @@ fn spawn_rag_ingest(task: RagIngest) {
     });
 }
 
-/// Параметры фоновой задачи реиндексации (`/rag rebuild`).
+/// Parameters of the background rebuild task (`/rag rebuild`).
 struct RagRebuild {
     embedder: Arc<dyn Embedder>,
     storage: Arc<Storage>,
     profile_id: Uuid,
     params: ChunkParams,
     cancel: CancellationToken,
-    /// Язык интерфейса (ось B) — для сообщений о прогрессе/ошибках, видимых человеку.
+    /// The interface language (axis B) — for progress/error messages visible to the user.
     loc: &'static Locale,
     evt_tx: tokio::sync::mpsc::UnboundedSender<AppEvent>,
 }
 
-/// Запускает фоновую реиндексацию базы знаний профиля (spec §9.3). Собирает
-/// исходники (сохранённый текст, иначе — чтение файла по пути), при необходимости
-/// сбрасывает таблицу векторов (смена размерности embedding-модели), затем
-/// перечанковывает/переэмбеддивает каждый источник текущими параметрами.
+/// Starts a background rebuild of the profile's knowledge base (spec §9.3).
+/// Gathers sources (stored text, otherwise — reading the file by path), if needed
+/// resets the vectors table (an embedding-model dimensionality change), then
+/// re-chunks/re-embeds each source with the current parameters.
 fn spawn_rag_rebuild(task: RagRebuild) {
     let RagRebuild {
         embedder,
@@ -295,7 +298,7 @@ fn spawn_rag_rebuild(task: RagRebuild) {
             let _ = evt_tx.send(AppEvent::RagProgress(p));
         };
 
-        // 1. Собираем источники: что сейчас в базе + их сохранённый текст.
+        // 1. Gather sources: what's currently in the DB + their stored text.
         let infos = match storage.db().rag_list_sources(profile_id) {
             Ok(v) => v,
             Err(err) => {
@@ -319,8 +322,8 @@ fn spawn_rag_rebuild(task: RagRebuild) {
             }
         };
 
-        // 2. Резолвим содержимое каждого источника: сохранённый текст в приоритете,
-        //    иначе пробуем прочитать файл по пути (legacy-данные до хранения текста).
+        // 2. Resolve each source's content: stored text takes priority,
+        //    otherwise try reading the file by path (legacy data predating text storage).
         let mut sources: Vec<(String, String)> = Vec::new();
         let mut missing = 0usize;
         for info in &infos {
@@ -335,9 +338,9 @@ fn spawn_rag_rebuild(task: RagRebuild) {
             {
                 sources.push((info.source.clone(), content));
             } else {
-                // Исходник не сохранён и файла нет — этот источник восстановить нельзя.
+                // The source isn't stored and there's no file — this source can't be recovered.
                 missing += 1;
-                tracing::warn!(source = %info.source, "RAG rebuild: исходник недоступен, источник пропущен");
+                tracing::warn!(source = %info.source, "RAG rebuild: source unavailable, skipping it");
             }
         }
         if sources.is_empty() {
@@ -347,7 +350,7 @@ fn spawn_rag_rebuild(task: RagRebuild) {
             return;
         }
 
-        // 3. Предпроверка эмбеддера и определение новой размерности.
+        // 3. Embedder precheck and determining the new dimensionality.
         let new_dim = match embedder.embed(vec!["ping".into()]).await {
             Ok(v) => v.first().map(|e| e.len()).unwrap_or(0),
             Err(err) => {
@@ -363,9 +366,10 @@ fn spawn_rag_rebuild(task: RagRebuild) {
             return;
         }
 
-        // 4. Если размерность сменилась (другая embedding-модель), таблицу векторов
-        //    нужно пересоздать — но она общая на всю БД. Если у других профилей есть
-        //    документы, отказываем (не затираем чужие данные); иначе сбрасываем.
+        // 4. If the dimensionality changed (a different embedding model), the
+        //    vectors table needs to be recreated — but it's shared across the
+        //    whole DB. If other profiles have documents, refuse (don't overwrite
+        //    someone else's data); otherwise reset it.
         let current_dim = storage.db().rag_dimension().unwrap_or(None);
         let dim_changed = matches!(current_dim, Some(d) if d != new_dim);
         if dim_changed {
@@ -385,8 +389,9 @@ fn spawn_rag_rebuild(task: RagRebuild) {
             }
         }
 
-        // 5. Сносим прежние чанки профиля (исходники сохраняем); при смене размерности
-        //    дополнительно сбрасываем таблицу векторов (пересоздастся при первой вставке).
+        // 5. Drop the profile's previous chunks (sources are kept); on a
+        //    dimensionality change, additionally reset the vectors table (it's
+        //    recreated on the first insert).
         if let Err(err) = storage.db().rag_delete_all_for_profile(profile_id) {
             send(RagProgress::Failed(
                 loc.tf("ui.err.rag_clear_chunks", &[("err", &err.to_string())]),
@@ -411,7 +416,8 @@ fn spawn_rag_rebuild(task: RagRebuild) {
                 break;
             }
             let name = source_display(source);
-            // Источник начат (чанкинг впереди) — chunks_total=0 (баннер как раньше).
+            // The source has just started (chunking is ahead) — chunks_total=0
+            // (the banner as before).
             send(RagProgress::Indexing {
                 index: i + 1,
                 total,
@@ -420,7 +426,7 @@ fn spawn_rag_rebuild(task: RagRebuild) {
                 chunks_done: 0,
                 chunks_total: 0,
             });
-            // Прогресс по чанкам (см. spawn_rag_ingest): rebuild зовёт index_source напрямую.
+            // Chunk progress (see spawn_rag_ingest): rebuild calls index_source directly.
             let progress = |done: usize, tot: usize| {
                 let _ = evt_tx.send(AppEvent::RagProgress(RagProgress::Indexing {
                     index: i + 1,
@@ -439,7 +445,7 @@ fn spawn_rag_rebuild(task: RagRebuild) {
                 Ok(n) => chunks_total += n,
                 Err(err) => {
                     errors += 1;
-                    tracing::warn!(source = %source, error = %err, "RAG rebuild: не удалось переиндексировать источник");
+                    tracing::warn!(source = %source, error = %err, "RAG rebuild: failed to reindex source");
                 }
             }
         }
@@ -453,17 +459,17 @@ fn spawn_rag_rebuild(task: RagRebuild) {
     });
 }
 
-/// Читает исходник для индексации, извлекая простой текст по формату:
-/// - `.html`/`.htm` — читаемый текст (переиспользует `web::extract_readable`,
-///   отбрасывает nav/header/footer/aside/скрипты; RAG чанкует источник целиком,
-///   поэтому без усечения — `usize::MAX`);
-/// - `.pdf` — крейт `pdf-extract` (качество «лучшее усилие»);
+/// Reads a source for indexing, extracting plain text by format:
+/// - `.html`/`.htm` — readable text (reuses `web::extract_readable`, drops
+///   nav/header/footer/aside/scripts; RAG chunks the source whole, hence no
+///   truncation — `usize::MAX`);
+/// - `.pdf` — the `pdf-extract` crate (best-effort quality);
 /// - `.docx` — ZIP + `word/document.xml` (`features/doc_extract.rs`);
-/// - прочее (txt/md) — как есть (BOM снимает `read_text`).
+/// - everything else (txt/md) — as-is (BOM stripped by `read_text`).
 ///
-/// Бинарные форматы (pdf/docx) читаются сырыми байтами (`fs::read`), а не через
-/// `read_text` (тот декодирует как UTF-8). Извлечение может завершиться ошибкой с
-/// контекстом (вызывающий пропускает такой источник).
+/// Binary formats (pdf/docx) are read as raw bytes (`fs::read`), not via
+/// `read_text` (which decodes as UTF-8). Extraction can fail with
+/// context (the caller skips such a source).
 fn read_source_text(path: &std::path::Path) -> anyhow::Result<String> {
     use crate::features::{doc_extract, rag_ingest};
     if rag_ingest::is_html(path) {
@@ -481,8 +487,9 @@ fn read_source_text(path: &std::path::Path) -> anyhow::Result<String> {
     }
 }
 
-/// Индексирует один файл: читает текст, чанкует, эмбеддит и пишет документы в
-/// хранилище (изоляция по `profile_id`). Возвращает число записанных чанков.
+/// Indexes a single file: reads the text, chunks it, embeds it, and writes
+/// documents into storage (isolated by `profile_id`). Returns the number of
+/// chunks written.
 async fn index_file(
     embedder: &Arc<dyn Embedder>,
     storage: &Arc<Storage>,
@@ -493,8 +500,8 @@ async fn index_file(
     progress: impl FnMut(usize, usize),
 ) -> anyhow::Result<usize> {
     let content = read_source_text(path)?;
-    // Каноничный ключ источника + идемпотентность: при повторном добавлении того же
-    // файла заменяем его прежние чанки, а не плодим дубли (см. [`index_source`]).
+    // Canonical source key + idempotency: re-adding the same file replaces its
+    // previous chunks instead of duplicating them (see [`index_source`]).
     let source = crate::features::rag_ingest::canonical_source(path);
     index_source(
         embedder, storage, profile_id, &source, &content, params, loc, progress,
@@ -502,17 +509,18 @@ async fn index_file(
     .await
 }
 
-/// Чанкует/эмбеддит/пишет один источник как единое целое (заменяя его прежние
-/// чанки и сохранённый текст). Markdown (`*.md`) чанкуется семантически (по
-/// заголовкам), прочее — текстовым чанкером. Возвращает число записанных чанков.
-/// Общая логика файловой индексации (`/rag add`) и реиндексации (`/rag rebuild`).
+/// Chunks/embeds/writes a single source as one unit (replacing its previous
+/// chunks and stored text). Markdown (`*.md`) is chunked semantically (by
+/// headings), everything else — by the text chunker. Returns the number of
+/// chunks written. Shared logic for file indexing (`/rag add`) and rebuilding
+/// (`/rag rebuild`).
 ///
-/// Эмбеддинг идёт под-батчами по [`EMBED_BATCH_CHUNKS`]: после каждого батча
-/// вызывается `progress(chunks_done, chunks_total)`, так что баннер двигается *в
-/// ходе* эмбеддинга крупного файла. Файл с ≤16 чанками — по-прежнему один запрос.
-// Аргументы когезивны (зависимости индексации + колбэк прогресса) и передаются
-// позиционно из двух вызывающих; выделять пучок ради одного лишнего параметра —
-// лишний churn.
+/// Embedding runs in sub-batches of [`EMBED_BATCH_CHUNKS`]: after each batch
+/// `progress(chunks_done, chunks_total)` is called, so the banner moves *during*
+/// embedding of a large file. A file with ≤16 chunks — still a single request.
+// The arguments are cohesive (indexing dependencies + the progress callback) and
+// are passed positionally from two call sites; carving out a bundle just for one
+// extra parameter would be needless churn.
 #[allow(clippy::too_many_arguments)]
 async fn index_source(
     embedder: &Arc<dyn Embedder>,
@@ -529,8 +537,8 @@ async fn index_source(
     } else {
         crate::features::tools::rag::chunk_text(content, params)
     };
-    // Даже у пустого источника обновляем сохранённый текст и сносим прежние чанки —
-    // иначе устаревшие чанки остались бы в базе после реиндексации.
+    // Even for an empty source, update the stored text and drop the previous
+    // chunks — otherwise stale chunks would remain in the DB after a rebuild.
     storage.db().rag_delete_by_source(profile_id, source)?;
     storage
         .db()
@@ -541,8 +549,9 @@ async fn index_source(
     }
     let total = chunks.len();
     progress(0, total);
-    // Эмбеддим и пишем под-батчами: каждый запрос ограничен EMBED_BATCH_CHUNKS, и
-    // прогресс двигается по мере готовности батчей (у крупных файлов — плавно).
+    // Embed and write in sub-batches: each request is bounded by
+    // EMBED_BATCH_CHUNKS, and progress moves as batches become ready (smooth for
+    // large files).
     let mut done = 0usize;
     for batch in chunks.chunks(EMBED_BATCH_CHUNKS) {
         let embeddings = embedder.embed(batch.to_vec()).await?;
@@ -559,7 +568,7 @@ async fn index_source(
     Ok(total)
 }
 
-/// Источник — markdown (чанкуется по заголовкам)? Решаем по расширению `*.md`.
+/// Is the source markdown (chunked by headings)? Decided by the `*.md` extension.
 fn is_markdown_source(source: &str) -> bool {
     std::path::Path::new(source)
         .extension()
@@ -567,7 +576,7 @@ fn is_markdown_source(source: &str) -> bool {
         .is_some_and(|e| e.eq_ignore_ascii_case("md"))
 }
 
-/// Короткое имя источника для индикации прогресса (имя файла, иначе сам источник).
+/// A short source name for progress indication (the file name, else the source itself).
 fn source_display(source: &str) -> String {
     std::path::Path::new(source)
         .file_name()
@@ -575,7 +584,7 @@ fn source_display(source: &str) -> String {
         .unwrap_or_else(|| source.to_string())
 }
 
-/// Имя файла и его родительская папка (для индикации прогресса индексации).
+/// The file name and its parent directory (for indexing progress indication).
 fn display_parts(path: &std::path::Path) -> (String, String) {
     let name = path
         .file_name()
@@ -596,7 +605,7 @@ mod tests {
     fn read_source_text_extracts_html_and_passes_through_plain() {
         let dir = tempfile::tempdir().unwrap();
 
-        // HTML: boilerplate (nav/header/script) отбрасывается, извлекается абзац статьи.
+        // HTML: boilerplate (nav/header/script) is dropped, the article paragraph is extracted.
         let html = dir.path().join("page.html");
         std::fs::write(
             &html,
@@ -611,22 +620,22 @@ mod tests {
         let extracted = read_source_text(&html).unwrap();
         assert!(
             extracted.contains("Осмысленный абзац содержимого статьи"),
-            "извлечённый текст должен содержать абзац статьи: {extracted:?}"
+            "extracted text should contain the article paragraph: {extracted:?}"
         );
         assert!(
             !extracted.contains("навигационное меню"),
-            "nav не должен попадать в извлечённый текст: {extracted:?}"
+            "nav must not appear in the extracted text: {extracted:?}"
         );
         assert!(
             !extracted.contains("шапка страницы"),
-            "header не должен попадать в извлечённый текст: {extracted:?}"
+            "header must not appear in the extracted text: {extracted:?}"
         );
         assert!(
             !extracted.contains("скриптовый мусор"),
-            "script не должен попадать в извлечённый текст: {extracted:?}"
+            "script must not appear in the extracted text: {extracted:?}"
         );
 
-        // Не-HTML: содержимое возвращается дословно (BOM снимает read_text).
+        // Non-HTML: content is returned verbatim (BOM stripped by read_text).
         let txt = dir.path().join("note.txt");
         let body = "<p>это не HTML</p>\nобычный текст с угловыми скобками";
         std::fs::write(&txt, body).unwrap();
@@ -638,7 +647,7 @@ mod tests {
         use std::io::Write;
         let dir = tempfile::tempdir().unwrap();
 
-        // DOCX: собираем минимальный архив с word/document.xml и извлекаем текст абзаца.
+        // DOCX: build a minimal archive with word/document.xml and extract the paragraph text.
         let docx = dir.path().join("doc.docx");
         let xml = "<?xml version=\"1.0\"?>\
              <w:document xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\">\
@@ -651,21 +660,22 @@ mod tests {
         assert_eq!(
             read_source_text(&docx).unwrap(),
             "Абзац из DOCX-документа",
-            "DOCX должен маршрутизироваться через извлечение текста"
+            "DOCX should route through text extraction"
         );
 
-        // PDF: та же фикстура, что и в doc_extract — маршрутизируется через extract_pdf.
+        // PDF: the same fixture as in doc_extract — routed through extract_pdf.
         let pdf = dir.path().join("doc.pdf");
         std::fs::write(&pdf, include_bytes!("../../../tests/fixtures/hello.pdf")).unwrap();
         assert!(
             read_source_text(&pdf).unwrap().contains("Hello World"),
-            "PDF должен маршрутизироваться через извлечение текста"
+            "PDF should route through text extraction"
         );
     }
 
-    /// Файловое хранилище на tempdir + детерминированный эмбеддер для тестов
-    /// индексации. Guard каталога возвращается — держать его живым на время теста
-    /// (Storage хранит открытое соединение с файлом БД внутри каталога).
+    /// A file-backed storage on a tempdir + a deterministic embedder for
+    /// indexing tests. The directory guard is returned — keep it alive for the
+    /// test's duration (Storage holds an open connection to the DB file inside
+    /// the directory).
     fn test_deps() -> (tempfile::TempDir, Arc<Storage>, Arc<dyn Embedder>) {
         let dir = tempfile::tempdir().unwrap();
         let storage =
@@ -678,8 +688,8 @@ mod tests {
     async fn index_source_reports_chunk_progress_in_subbatches() {
         let (_dir, storage, embedder) = test_deps();
         let profile_id = Uuid::new_v4();
-        // Мелкий целевой размер → много чанков (> EMBED_BATCH_CHUNKS), чтобы эмбеддинг
-        // шёл несколькими под-батчами и прогресс двигался по ходу.
+        // A small target size → many chunks (> EMBED_BATCH_CHUNKS), so embedding
+        // runs in several sub-batches and progress moves along the way.
         let params = ChunkParams::from_settings(&crate::shared::config::RagSettings {
             chunk_target_chars: 60,
             chunk_overlap_chars: 10,
@@ -703,31 +713,31 @@ mod tests {
 
         assert!(
             n > EMBED_BATCH_CHUNKS,
-            "тест должен произвести > {EMBED_BATCH_CHUNKS} чанков, получено {n}"
+            "the test should produce > {EMBED_BATCH_CHUNKS} chunks, got {n}"
         );
-        // Первый тик — (0, N), последний — (N, N).
+        // The first tick — (0, N), the last — (N, N).
         assert_eq!(
             ticks.first(),
             Some(&(0, n)),
-            "первый тик — (0, N): {ticks:?}"
+            "the first tick — (0, N): {ticks:?}"
         );
         assert_eq!(
             ticks.last(),
             Some(&(n, n)),
-            "последний тик — (N, N): {ticks:?}"
+            "the last tick — (N, N): {ticks:?}"
         );
-        // `done` монотонно не убывает, `total` постоянен и равен возвращённому N.
+        // `done` is monotonically non-decreasing, `total` is constant and equals the returned N.
         for w in ticks.windows(2) {
-            assert!(w[1].0 >= w[0].0, "done не убывает: {ticks:?}");
-            assert_eq!(w[0].1, n, "total постоянен и равен N");
+            assert!(w[1].0 >= w[0].0, "done is non-decreasing: {ticks:?}");
+            assert_eq!(w[0].1, n, "total is constant and equals N");
         }
-        // Под-батчинг ничего не потерял: все N чанков записаны и находятся поиском
-        // (rag_search — тот же примитив БД, что и инструмент RagSearch).
+        // Sub-batching didn't lose anything: all N chunks are written and found by
+        // search (rag_search — the same DB primitive as the RagSearch tool).
         assert_eq!(storage.db().rag_count(profile_id).unwrap(), n);
         let mut q = embedder.embed(vec!["предложение".into()]).await.unwrap();
         let query = q.remove(0);
         let hits = storage.db().rag_search(profile_id, &query, 5).unwrap();
-        assert!(!hits.is_empty(), "поиск находит записанные чанки");
+        assert!(!hits.is_empty(), "search finds the written chunks");
     }
 
     #[tokio::test]

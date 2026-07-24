@@ -1,25 +1,27 @@
-//! Оркестратор: единственный владелец доменного состояния (профили/чаты,
-//! [`Storage`]) и автомат генерации. Принимает [`AppCommand`], исполняет
-//! генерацию (в отдельной задаче) и рассылает [`AppEvent`].
-//! См. spec §4.4 (однонаправленный поток, `generation_id`, автомат
-//! `Idle/Generating/Cancelling`) и §4.4.2 (оркестратор — единственный писатель).
+//! Orchestrator: the sole owner of domain state (profiles/chats, [`Storage`])
+//! and of the generation state machine. Accepts [`AppCommand`], runs
+//! generation (in a separate task), and dispatches [`AppEvent`].
+//! See spec §4.4 (unidirectional flow, `generation_id`, the
+//! `Idle/Generating/Cancelling` state machine) and §4.4.2 (the orchestrator is
+//! the sole writer).
 //!
-//! Модуль разбит по фичам (god-объект расслоён, владелец `Chat` остался один):
-//! - [`mod.rs`](self) — каркас: [`Orchestrator`], петля [`run`], диспетчер
-//!   [`Orchestrator::handle_command`], общие хелперы (эмиттеры, `chat_mut`);
-//! - [`engines`] — [`EngineManager`]: жизненный цикл серверов и готовность;
-//! - [`save_queue`] — [`SaveQueue`]: дебаунс отложенного сохранения чатов;
-//! - [`restart_queue`] — [`RestartQueue`]: дебаунс (пере)запуска серверов при
-//!   правках настроек движка;
-//! - [`generation`] — отправка/перегенерация/удаление обмена + задача agentic-loop;
-//! - [`chats`] — управление списком чатов и черновиком;
-//! - [`profiles`] — создание/правка/удаление профилей;
-//! - [`settings`] — конфиг и (пере)запуск серверов через супервайзер;
-//! - [`title`] — авто-название чата (фоновая задача);
-//! - [`impersonation`] — написание реплики «за пользователя» (фоновая задача);
-//! - [`rag`] — индексация/удаление файлов в базе знаний;
-//! - [`tts`] — озвучивание сообщений чата (команда `/tts`);
-//! - [`request`] — маппинг доменных сообщений в формат движка.
+//! The module is split by feature (the god object was broken up, `Chat`
+//! still has a single owner):
+//! - [`mod.rs`](self) — the skeleton: [`Orchestrator`], the [`run`] loop, the
+//!   [`Orchestrator::handle_command`] dispatcher, shared helpers (emitters, `chat_mut`);
+//! - [`engines`] — [`EngineManager`]: server lifecycle and readiness;
+//! - [`save_queue`] — [`SaveQueue`]: debounce for deferred chat saves;
+//! - [`restart_queue`] — [`RestartQueue`]: debounce for (re)launching servers
+//!   on engine-settings edits;
+//! - [`generation`] — send/regenerate/delete exchange + the agentic-loop task;
+//! - [`chats`] — managing the chat list and the draft;
+//! - [`profiles`] — creating/editing/deleting profiles;
+//! - [`settings`] — config and (re)launching servers via the supervisor;
+//! - [`title`] — auto-titling a chat (a background task);
+//! - [`impersonation`] — writing a message "on the user's behalf" (a background task);
+//! - [`rag`] — indexing/removing files in the knowledge base;
+//! - [`tts`] — speaking chat messages (the `/tts` command);
+//! - [`request`] — mapping domain messages to the engine's format.
 
 mod background;
 mod chats;
@@ -70,9 +72,10 @@ use self::restart_queue::RestartQueue;
 use self::save_queue::SaveQueue;
 use self::title::TitleResult;
 
-/// Дефолтный профиль на языке `lang` (bootstrap при пустом хранилище / защитный
-/// fallback). Имя и системное сообщение — из бандла служебного каркаса
-/// (`defaults.*`, ось A, docs/history/i18n.md); язык проставляется в профиль.
+/// Default profile in language `lang` (bootstrap on empty storage / a
+/// protective fallback). Name and system message — from the agent-scaffold
+/// bundle (`defaults.*`, axis A, docs/history/i18n.md); the language is set
+/// on the profile.
 fn default_profile(lang: crate::shared::i18n::Lang) -> Profile {
     let loc = crate::shared::i18n::locale(lang);
     let mut profile = Profile::new(
@@ -83,24 +86,26 @@ fn default_profile(lang: crate::shared::i18n::Lang) -> Profile {
     profile
 }
 
-/// Параметры запуска оркестратора. Серверы (chat/embedding) и реестр инструментов
-/// оркестратор настраивает сам из [`AppConfig`] через [`ServerSupervisor`] — это
-/// позволяет перезапускать их при правках настроек (spec §11.6).
+/// Orchestrator launch parameters. The orchestrator configures the servers
+/// (chat/embedding) and the tool registry itself from [`AppConfig`] via
+/// [`ServerSupervisor`] — this lets it restart them on settings edits (spec
+/// §11.6).
 pub struct OrchestratorDeps {
     pub cmd_rx: UnboundedReceiver<AppCommand>,
     pub evt_tx: UnboundedSender<AppEvent>,
     pub storage: Arc<Storage>,
-    /// Полная конфигурация приложения (оркестратор — её единственный писатель).
+    /// The full app configuration (the orchestrator is its sole writer).
     pub config: AppConfig,
-    /// Супервайзер серверов инференса/эмбеддингов (real или mock в тестах).
+    /// Supervisor for the inference/embedding servers (real or a mock in tests).
     pub supervisor: Arc<dyn ServerSupervisor>,
-    /// Язык служебного каркаса новых профилей (из `defaults.json`, ось A). В тестах —
-    /// `Lang::default()` (`ru`). См. docs/history/i18n.md, `shared::paths::Defaults`.
+    /// Agent-scaffold language for new profiles (from `defaults.json`, axis A).
+    /// In tests — `Lang::default()` (`ru`). See docs/history/i18n.md,
+    /// `shared::paths::Defaults`.
     pub default_language: crate::shared::i18n::Lang,
 }
 
-/// Главный цикл оркестратора. Завершается при закрытии канала команд или
-/// получении [`AppCommand::Quit`].
+/// The orchestrator's main loop. Ends when the command channel closes or
+/// [`AppCommand::Quit`] is received.
 pub async fn run(deps: OrchestratorDeps) {
     let OrchestratorDeps {
         mut cmd_rx,
@@ -112,23 +117,24 @@ pub async fn run(deps: OrchestratorDeps) {
     } = deps;
 
     let (done_tx, mut done_rx) = unbounded_channel::<GenResult>();
-    // Внутренний канал статуса сервера: фоновый probe супервайзера досылает в него
-    // готовность (Ready/Disconnected), петля транслирует в AppEvent::ServerStatus.
+    // Internal server-status channel: the supervisor's background probe posts
+    // readiness (Ready/Disconnected) here, the loop translates it into AppEvent::ServerStatus.
     let (status_tx, mut status_rx) = unbounded_channel::<ServerStatus>();
-    // Внутренний канал авто-названий: фоновая задача присылает сгенерированный
-    // заголовок (или ошибку), петля применяет его к чату.
+    // Internal auto-title channel: a background task sends the generated
+    // title (or an error), the loop applies it to the chat.
     let (title_tx, mut title_rx) = unbounded_channel::<TitleResult>();
-    // Внутренний канал статуса сервера имперсонации (фоновый probe).
+    // Internal status channel for the impersonation server (a background probe).
     let (imp_status_tx, mut imp_status_rx) = unbounded_channel::<ServerStatus>();
-    // Внутренний канал «имперсонация завершена» (фоновая задача → петля).
+    // Internal "impersonation finished" channel (background task → loop).
     let (imp_done_tx, mut imp_done_rx) = unbounded_channel::<(Uuid, FinishReason)>();
-    // Единый канал исхода «тихих» фоновых задач (авто-рефлексия/консолидация): задача
-    // шлёт `(вид, Ok/Err(причина))`, петля — одной веткой в `handle_bg_done`.
+    // A single outcome channel for "silent" background tasks (auto-reflection/
+    // consolidation): the task sends `(kind, Ok/Err(reason))`, the loop handles
+    // it in one branch via `handle_bg_done`.
     let (bg_done_tx, mut bg_done_rx) = unbounded_channel::<(BackgroundKind, Result<(), String>)>();
-    // Внутренний канал «озвучивание завершилось» (фоновая задача → петля): по
-    // поколению задачи петля отличает свой исход от устаревшего.
+    // Internal "speech finished" channel (background task → loop): the loop
+    // distinguishes its own outcome from a stale one by the task's generation.
     let (tts_done_tx, mut tts_done_rx) = unbounded_channel::<Uuid>();
-    // Внутренний канал событий MCP-серверов (фоновые задачи спавна/монитора).
+    // Internal channel for MCP-server events (spawn/monitor background tasks).
     let (mcp_evt_tx, mut mcp_evt_rx) = unbounded_channel::<McpEvent>();
     let registry = Arc::new(build_registry(&config, storage.json().sandbox_dir()));
     let mut orch = Orchestrator {
@@ -161,7 +167,7 @@ pub async fn run(deps: OrchestratorDeps) {
         default_language,
     };
 
-    // Поднимаем серверы по конфигу и эмитим стартовые события/настройки.
+    // Bring up the servers from config and emit the startup events/settings.
     orch.apply_chat_settings();
     orch.apply_impersonation_settings();
     orch.apply_embed_settings();
@@ -230,18 +236,21 @@ pub async fn run(deps: OrchestratorDeps) {
             _ = sleep_until_opt(restart_deadline) => orch.flush_restarts(),
         }
     }
-    // Отложенные рестарты на выходе намеренно НЕ применяются: серверы всё равно
-    // рвутся через Drop/kill_on_drop — поднимать процесс перед его дропом незачем.
+    // Deferred restarts on exit are deliberately NOT applied: servers get torn
+    // down via Drop/kill_on_drop anyway — no point bringing up a process right
+    // before it's dropped.
     orch.flush_saves();
 }
 
-/// Сколько подряд идущих неудач фоновой задачи (рефлексия/консолидация) должно
-/// накопиться, чтобы один раз показать ошибку в UI. Дальше — молчим до первого
-/// успеха (сброс счётчика). Наблюдаемость без спама. См. этап 5 доводки.
+/// How many consecutive failures of a background task (reflection/
+/// consolidation) must accumulate before showing an error in the UI once.
+/// After that — stays quiet until the first success (counter reset).
+/// Observability without spam. See the "refinements" stage 5.
 pub(super) const BACKGROUND_FAILURE_ALERT: u32 = 3;
 
-/// Строит реестр инструментов из конфигурации (`config.tools`). `sandbox_dir` —
-/// каталог песочницы Python (`data/sandbox/`, из [`Paths`]) для режима Wasmer.
+/// Builds the tool registry from the configuration (`config.tools`).
+/// `sandbox_dir` — the Python sandbox directory (`data/sandbox/`, from
+/// [`Paths`]) for Wasmer mode.
 fn build_registry(
     config: &AppConfig,
     sandbox_dir: std::path::PathBuf,
@@ -257,13 +266,13 @@ fn build_registry(
         subagent_timeout: Duration::from_secs(config.tools.subagent_timeout_secs),
         web_fetch_content: config.tools.web_fetch_content,
         fs_root: config.tools.fs_root.clone(),
-        // Режим chat-движка определяет доступные параметры семплинга в
-        // get_sampling/set_sampling (схема + фильтрация). См. ADR 0004.
+        // The chat-engine mode determines the sampling parameters available in
+        // get_sampling/set_sampling (schema + filtering). See ADR 0004.
         sampling_provider: config.engine.mode.cloud_provider(),
     })
 }
 
-/// Спит до `deadline`, либо «висит вечно», если дедлайна нет (очередь пуста).
+/// Sleeps until `deadline`, or "hangs forever" if there's no deadline (an empty queue).
 async fn sleep_until_opt(deadline: Option<Instant>) {
     match deadline {
         Some(d) => tokio::time::sleep_until(d).await,
@@ -273,69 +282,74 @@ async fn sleep_until_opt(deadline: Option<Instant>) {
 
 struct Orchestrator {
     evt_tx: UnboundedSender<AppEvent>,
-    /// Серверы инференса/эмбеддингов и их готовность (выделено в Фазе 3).
+    /// Inference/embedding servers and their readiness (extracted in Phase 3).
     engines: EngineManager,
-    /// MCP-серверы (плагины-инструменты) и их каталог/статусы (см. [`mcp`]).
+    /// MCP servers (plugin tools) and their catalog/statuses (see [`mcp`]).
     mcp: McpManager,
-    /// Токен отмены текущей имперсонации и её generation_id (`None` — не идёт).
+    /// Cancellation token for the current impersonation and its generation_id
+    /// (`None` — not running).
     imp_cancel: Option<tokio_util::sync::CancellationToken>,
     imp_gen: Option<Uuid>,
-    /// Канал «имперсонация завершена» (фоновая задача → петля).
+    /// "Impersonation finished" channel (background task → loop).
     imp_done_tx: UnboundedSender<(Uuid, FinishReason)>,
     storage: Arc<Storage>,
-    /// Полная конфигурация (оркестратор — единственный писатель в `settings.json`).
+    /// The full configuration (the orchestrator is the sole writer of `settings.json`).
     config: AppConfig,
-    /// Реестр инструментов (пересобирается при правках `config.tools`).
+    /// The tool registry (rebuilt on `config.tools` edits).
     registry: Arc<crate::features::tools::ToolRegistry>,
-    /// Канал результатов фоновой генерации авто-названий чатов.
+    /// Channel for results of background chat-auto-title generation.
     title_tx: UnboundedSender<TitleResult>,
     profiles: Vec<Profile>,
-    /// Видимые чаты, целиком в памяти (оркестратор — единственный писатель).
+    /// Visible chats, entirely in memory (the orchestrator is the sole writer).
     chats: Vec<Chat>,
     active_id: Option<Uuid>,
-    /// Автомат жизненного цикла генерации ответа ассистента (см. `gen_state`).
+    /// The lifecycle state machine for assistant-reply generation (see `gen_state`).
     gen_state: GenState,
     done_tx: UnboundedSender<GenResult>,
-    /// Токен отмены текущей фоновой индексации RAG (`/rag add`); `None` — не идёт.
-    /// Снимается/отменяется при новой индексации и при завершении работы.
+    /// Cancellation token for the current background RAG indexing (`/rag add`);
+    /// `None` — not running. Replaced/cancelled on new indexing and on shutdown.
     rag_cancel: Option<tokio_util::sync::CancellationToken>,
-    /// Токен отмены текущей озвучки (`/tts`) и её поколение (`None` — не идёт).
-    /// Точки остановки собраны в [`Orchestrator::stop_tts`] (см. [`tts`]).
+    /// Cancellation token for the current speech (`/tts`) and its generation
+    /// (`None` — not running). Stop points are collected in
+    /// [`Orchestrator::stop_tts`] (see [`tts`]).
     tts_cancel: Option<tokio_util::sync::CancellationToken>,
     tts_gen: Option<Uuid>,
-    /// Хэндл текущего аудио-устройства озвучки (общий с фоновой задачей через `Arc`;
-    /// `Playback` — `Send+Sync`). Оркестратор держит его ради `/tts pause`/`resume`,
-    /// применяемых мгновенно; `None` — озвучка не идёт. Дроп закрывает устройство.
+    /// Handle to the current speech audio device (shared with the background
+    /// task via `Arc`; `Playback` is `Send+Sync`). The orchestrator holds it
+    /// for `/tts pause`/`resume`, applied instantly; `None` — speech isn't
+    /// running. Dropping it closes the device.
     tts_playback: Option<std::sync::Arc<crate::shared::tts::playback::Playback>>,
-    /// Канал «озвучивание завершилось» (фоновая задача → петля).
+    /// "Speech finished" channel (background task → loop).
     tts_done_tx: UnboundedSender<Uuid>,
-    /// Реестр слотов «тихих» фоновых задач (авто-рефлексия/консолидация): по слоту на
-    /// [`BackgroundKind`] — флаг «идёт» (токен отмены) + серия неудач. Жизненный цикл —
-    /// в [`background`](self::background). Каденция рефлексии ведётся ватермарком
-    /// `Chat.reflected_upto` (переживает рестарт), а не полем здесь.
+    /// A registry of "silent" background-task slots (auto-reflection/
+    /// consolidation): one slot per [`BackgroundKind`] — a "running" flag
+    /// (cancellation token) + a failure streak. Lifecycle — in
+    /// [`background`](self::background). Reflection cadence is tracked by the
+    /// `Chat.reflected_upto` watermark (survives a restart), not by a field here.
     bg: HashMap<BackgroundKind, BgSlot>,
-    /// Единый канал исхода «тихих» фоновых задач (`(вид, Ok/Err(причина))` → петля).
+    /// A single outcome channel for "silent" background tasks (`(kind, Ok/Err(reason))` → loop).
     bg_done_tx: UnboundedSender<(BackgroundKind, Result<(), String>)>,
-    /// Счётчики ответов ассистента с прошлой авто-консолидации заметок (по чату).
-    /// Данные каденции консолидации (не жизненный цикл задачи — тот в `bg`).
+    /// Assistant-reply counters since the last auto-consolidation of notes (per chat).
+    /// Consolidation-cadence data (not task lifecycle — that's in `bg`).
     consolidate_counts: HashMap<Uuid, u32>,
-    /// Счётчики ответов ассистента с прошлой авто-консолидации «модели себя» (по чату).
-    /// Данные каденции «сна» модели себя (не жизненный цикл — тот в `bg`).
-    /// См. docs/history/self-model-consolidation.md (этап A1).
+    /// Assistant-reply counters since the last self-model auto-consolidation
+    /// ("sleep", per chat). Self-model-sleep cadence data (not lifecycle —
+    /// that's in `bg`). See docs/history/self-model-consolidation.md (stage A1).
     self_consolidate_counts: HashMap<Uuid, u32>,
-    /// Очередь отложенного сохранения чатов (дебаунс; выделено в Фазе 3).
+    /// Queue for deferred chat saving (debounce; extracted in Phase 3).
     saves: SaveQueue,
-    /// Очередь отложенного (пере)запуска серверов при правках настроек движка
-    /// (дебаунс: серия быстрых правок полей коалесится в один рестарт).
+    /// Queue for deferred (re)launch of servers on engine-settings edits
+    /// (debounce: a series of quick field edits coalesces into one restart).
     restarts: RestartQueue,
-    /// Язык служебного каркаса новых профилей (из `defaults.json`, ось A —
-    /// docs/history/i18n.md): bootstrap первого профиля и `CreateProfile` создаются на нём.
+    /// Agent-scaffold language for new profiles (from `defaults.json`, axis A —
+    /// docs/history/i18n.md): the first profile's bootstrap and `CreateProfile`
+    /// are created in it.
     default_language: crate::shared::i18n::Lang,
 }
 
 impl Orchestrator {
-    /// Загружает профили/чаты, гарантирует наличие хотя бы одного из каждого,
-    /// выбирает активный чат и шлёт стартовые события.
+    /// Loads profiles/chats, guarantees at least one of each exists, picks the
+    /// active chat, and sends the startup events.
     fn bootstrap(&mut self) -> anyhow::Result<()> {
         self.profiles = self
             .storage
@@ -344,19 +358,20 @@ impl Orchestrator {
             .into_iter()
             .filter(|p| !p.is_hidden)
             .collect();
-        // Сверяем инструменты профилей с текущим набором по умолчанию: новые
-        // инструменты приложения включаются в существующих профилях (выключенные
-        // пользователем — нет). См. spec §9.4 и `features::profiles::reconcile_tools`.
+        // Reconcile profile tools against the current default set: tools added
+        // to the application are enabled in existing profiles (ones the user
+        // disabled are not). See spec §9.4 and `features::profiles::reconcile_tools`.
         for profile in &mut self.profiles {
             if crate::features::profiles::reconcile_tools(profile) {
                 let _ = self.storage.json().upsert_profile(profile);
             }
         }
         if self.profiles.is_empty() {
-            // Первый профиль — на языке каркаса из defaults.json (инсталлятор
-            // заполняет его по выбору пользователя). См. docs/history/i18n.md.
+            // The first profile — in the scaffold language from defaults.json
+            // (filled in by the installer per the user's choice). See
+            // docs/history/i18n.md.
             let mut profile = default_profile(self.default_language);
-            // Включаем все базовые инструменты в дефолтном профиле.
+            // Enable all base tools in the default profile.
             crate::features::profiles::reconcile_tools(&mut profile);
             self.storage.json().upsert_profile(&profile)?;
             self.profiles.push(profile);
@@ -376,8 +391,8 @@ impl Orchestrator {
         }
         self.chats.sort_by_key(|c| std::cmp::Reverse(c.modified_at));
 
-        // Восстанавливаем последний открытый чат, если он ещё виден; иначе —
-        // самый недавно изменённый (прежнее поведение).
+        // Restore the last-open chat if it's still visible; otherwise — the
+        // most recently modified one (the previous behavior).
         let active = self
             .config
             .last_active_chat
@@ -391,7 +406,7 @@ impl Orchestrator {
         Ok(())
     }
 
-    /// Обрабатывает команду. Возвращает `true`, если нужно завершить цикл.
+    /// Handles a command. Returns `true` if the loop should end.
     fn handle_command(&mut self, cmd: AppCommand) -> bool {
         match cmd {
             AppCommand::Quit => {
@@ -452,15 +467,17 @@ impl Orchestrator {
         false
     }
 
-    /// Отдаёт снимок «модели себя» активного профиля для экрана просмотра (`F3`).
-    /// Чтение из БД на месте (быстро); `None` — нет активного чата или модель ещё
-    /// не создавалась. Ошибку чтения трактуем как «нет модели» (вид покажет пусто).
-    /// Снимок «модели себя» профиля для экрана `F3`: блоб модели + наблюдения,
-    /// реконструированные из self-заметок (нарратив переехал в заметки, Ярус 1).
-    /// Наблюдения кладутся в поле `narrative` снимка **только для отображения** — сам
-    /// снимок никогда не персистится (запись идёт через `self_model_update` над
-    /// реальной, пустой по нарративу моделью). `None`, если нет ни модели, ни
-    /// наблюдений. См. docs/history/narrative-as-notes.md.
+    /// Returns a snapshot of the active profile's "self-model" for the viewer
+    /// screen (`F3`). Reads the DB in place (fast); `None` — no active chat or
+    /// the model hasn't been created yet. A read error is treated as "no
+    /// model" (the view shows empty).
+    /// A profile's "self-model" snapshot for the `F3` screen: the model blob +
+    /// observations reconstructed from self-notes (the narrative moved into
+    /// notes, Tier 1). Observations go into the snapshot's `narrative` field
+    /// **for display only** — the snapshot itself is never persisted (writes
+    /// go through `self_model_update` against the real model, empty of
+    /// narrative). `None` if there's neither a model nor observations. See
+    /// docs/history/narrative-as-notes.md.
     fn self_model_view_snapshot(
         &self,
         pid: uuid::Uuid,
@@ -493,16 +510,18 @@ impl Orchestrator {
             .send(AppEvent::SelfModelView(Box::new(snapshot)));
     }
 
-    /// Применяет ручную правку «модели себя» активного профиля (UI-редактор `F3`):
-    /// загружает (или создаёт пустую), применяет правку, при изменении — сохраняет,
-    /// затем переэмитит обновлённый снимок (открытый экран обновится на месте).
+    /// Applies a manual edit to the active profile's "self-model" (the `F3`
+    /// UI editor): loads it (or creates an empty one), applies the edit,
+    /// saves if it changed, then re-emits the updated snapshot (an open
+    /// screen updates in place).
     fn handle_update_self_model(&self, edit: crate::entities::self_model::SelfModelEdit) {
         use crate::entities::self_model::SelfModelEdit;
         let Some(pid) = self.active_profile_id() else {
             return;
         };
-        // Наблюдения — self-заметки, поэтому их удаление/полная очистка идут по
-        // заметкам, а не по блобу модели (нарратив переехал в заметки, Ярус 1).
+        // Observations are self-notes, so deleting them / a full clear goes
+        // through notes, not through the model blob (the narrative moved into
+        // notes, Tier 1).
         match &edit {
             SelfModelEdit::DeleteInsight(id) => {
                 let _ = self.storage.db().note_delete(pid, *id);
@@ -513,7 +532,7 @@ impl Orchestrator {
                 return;
             }
             SelfModelEdit::Clear => {
-                // Полная очистка сносит и наблюдения-заметки (@self), и блоб (ниже).
+                // A full clear wipes both the observation notes (@self) and the blob (below).
                 for n in
                     crate::features::tools::notes::self_notes_recent(&self.storage, pid, usize::MAX)
                 {
@@ -522,10 +541,11 @@ impl Orchestrator {
             }
             _ => {}
         }
-        // Атомарная правка (под одним захватом мьютекса БД) — не даёт параллельной
-        // авто-рефлексии затереть ручную правку гонкой load-modify-save. Заодно
-        // сворачиваем старые закрытые цели (единообразно с инструментами): fold
-        // возвращает шрамы, которые пишем self-заметками после правки.
+        // An atomic edit (under a single DB-mutex acquisition) — prevents a
+        // concurrent auto-reflection from clobbering the manual edit via a
+        // load-modify-save race. Along the way, fold old closed goals
+        // (uniformly with the tools): fold returns scars, which we write as
+        // self-notes after the edit.
         let params =
             crate::entities::self_model::SelfModelParams::from_settings(&self.config.self_model);
         let loc = self.profile_locale(pid);
@@ -538,7 +558,7 @@ impl Orchestrator {
             }
             changed
         });
-        // Шрамы свёрнутых закрытых целей → self-заметки. Sync insert (вектор лениво).
+        // Scars from folded closed goals → self-notes. A sync insert (the vector, lazily).
         for scar in scars {
             let note = crate::entities::note::Note::new(
                 pid,
@@ -547,14 +567,14 @@ impl Orchestrator {
             );
             let _ = self.storage.db().note_insert(&note);
         }
-        // Переэмитим авторитетный снимок (модель + наблюдения из self-заметок).
+        // Re-emit the authoritative snapshot (the model + observations from self-notes).
         let snapshot = self.self_model_view_snapshot(pid);
         let _ = self
             .evt_tx
             .send(AppEvent::SelfModelView(Box::new(snapshot)));
     }
 
-    /// Эмитит полный снимок настроек (конфиг + полные профили) для экрана настроек.
+    /// Emits the full settings snapshot (config + full profiles) for the settings screen.
     fn emit_settings(&self) {
         let visible: Vec<Profile> = self
             .profiles
@@ -567,7 +587,7 @@ impl Orchestrator {
             .filter(|p| self.profile_has_data(p.id))
             .map(|p| p.id)
             .collect();
-        // Какие ключи сохранены на **этой** машине (для поля-статуса в настройках).
+        // Which keys are stored on **this** machine (for the status field in settings).
         let api_keys_present: Vec<CloudProvider> = [
             CloudProvider::OpenAi,
             CloudProvider::Gemini,
@@ -576,8 +596,9 @@ impl Orchestrator {
         .into_iter()
         .filter(|p| crate::shared::secrets::stored_key(&self.config.api_keys, p.key()).is_some())
         .collect();
-        // Секреты в UI не уезжают даже шифротекстом: снимок конфига идёт без них
-        // (обратно их держит `handle_update_config`). См. docs/research/api-key-storage.md.
+        // Secrets never leave the backend for the UI, not even as ciphertext:
+        // the config snapshot goes out without them (`handle_update_config`
+        // holds onto them separately). See docs/research/api-key-storage.md.
         let mut config = self.config.clone();
         config.api_keys.clear();
         let _ = self.evt_tx.send(AppEvent::Settings {
@@ -589,10 +610,12 @@ impl Orchestrator {
         });
     }
 
-    /// Есть ли у профиля данные, «привязывающие» его к текущему языку каркаса (ось A,
-    /// docs/history/i18n.md): видимые чаты, непустая «модель себя» или заметки (в т.ч.
-    /// наблюдения `@self`). RAG-документы намеренно не учитываются — язык файлов базы
-    /// знаний задаёт пользователь, не агент. Пока `false` — язык профиля редактируем.
+    /// Whether the profile has data "binding" it to the current scaffold
+    /// language (axis A, docs/history/i18n.md): visible chats, a non-empty
+    /// "self-model", or notes (including `@self` observations). RAG documents
+    /// are deliberately not counted — the knowledge base's file language is
+    /// set by the user, not the agent. While `false`, the profile's language
+    /// is editable.
     pub(super) fn profile_has_data(&self, profile_id: Uuid) -> bool {
         if self
             .chats
@@ -612,16 +635,17 @@ impl Orchestrator {
             .unwrap_or(false)
     }
 
-    // ---------- вспомогательное (общее для подмодулей) ----------
+    // ---------- helpers (shared across submodules) ----------
 
-    /// Локаль **интерфейса** (ось B, docs/i18n-ui.md) — для текстов ошибок/уведомлений
-    /// оркестратора, видимых человеку. Независима от языка агентов (ось A).
+    /// The **interface** locale (axis B, docs/i18n-ui.md) — for the
+    /// orchestrator's error/notice text shown to the human. Independent of
+    /// the agents' language (axis A).
     pub(super) fn ui_locale(&self) -> &'static crate::shared::i18n::Locale {
         crate::shared::i18n::locale(self.config.interface.language)
     }
 
-    /// Локаль служебного каркаса профиля (ось A, docs/history/i18n.md) по `profile_id`.
-    /// Неизвестный профиль → референсный язык (`Lang::default`).
+    /// A profile's agent-scaffold locale (axis A, docs/history/i18n.md) by
+    /// `profile_id`. An unknown profile → the reference language (`Lang::default`).
     pub(super) fn profile_locale(&self, profile_id: Uuid) -> &'static crate::shared::i18n::Locale {
         let lang = self
             .profiles
@@ -632,8 +656,9 @@ impl Orchestrator {
         crate::shared::i18n::locale(lang)
     }
 
-    /// Создаёт новый чат из профиля (по `id` или первого) с приветствием. Заголовок
-    /// «новый чат» — на языке служебного каркаса профиля (ось A).
+    /// Creates a new chat from a profile (by `id`, or the first one) with a
+    /// greeting. The "new chat" title — in the profile's agent-scaffold
+    /// language (axis A).
     fn new_chat_value(&self, profile_id: Option<Uuid>) -> Chat {
         let profile = profile_id
             .and_then(|id| self.profiles.iter().find(|p| p.id == id))
@@ -654,10 +679,10 @@ impl Orchestrator {
         self.chats.iter_mut().find(|c| c.id == id)
     }
 
-    /// Пересобирает реестр инструментов: стандартный набор из конфига + живые
-    /// обёртки инструментов MCP-серверов (динамические — берутся из [`McpManager`]).
-    /// Единственный путь пересборки: любой сайт (правка настроек, событие MCP)
-    /// обязан идти через него, иначе MCP-инструменты выпадут из реестра.
+    /// Rebuilds the tool registry: the standard set from config + live
+    /// wrappers for MCP-server tools (dynamic — taken from [`McpManager`]).
+    /// The single rebuild path: any call site (a settings edit, an MCP event)
+    /// must go through this, otherwise MCP tools would fall out of the registry.
     pub(super) fn rebuild_registry(&mut self) {
         let mut reg = build_registry(&self.config, self.storage.json().sandbox_dir());
         for tool in self.mcp.tools() {
@@ -666,8 +691,9 @@ impl Orchestrator {
         self.registry = Arc::new(reg);
     }
 
-    /// Собирает пучок разделяемых зависимостей инструментов для указанного
-    /// chat-движка (эмбеддер и хранилище — общие). См. docs/history/refactoring-solid.md §3.
+    /// Assembles the bundle of shared tool dependencies for the given
+    /// chat-engine (the embedder and storage are shared). See
+    /// docs/history/refactoring-solid.md §3.
     fn tool_deps(
         &self,
         backend: Arc<dyn crate::shared::api::EngineBackend>,
@@ -679,8 +705,8 @@ impl Orchestrator {
         }
     }
 
-    /// Разрешает фактический семплинг для чата: `Chat.sampling_override` →
-    /// `Profile.default_sampling` → глобальный (spec §8.3).
+    /// Resolves the actual sampling for a chat: `Chat.sampling_override` →
+    /// `Profile.default_sampling` → global (spec §8.3).
     fn effective_sampling(&self, chat_id: Uuid) -> SamplingConfig {
         let chat = self.chats.iter().find(|c| c.id == chat_id);
         let chat_override = chat.and_then(|c| c.sampling_override.as_ref());
@@ -694,7 +720,7 @@ impl Orchestrator {
         )
     }
 
-    /// Делает чат активным и шлёт его сообщения в UI.
+    /// Makes a chat active and sends its messages to the UI.
     fn activate(&mut self, id: Uuid) {
         let Some(chat) = self.chats.iter().find(|c| c.id == id) else {
             return;
@@ -709,18 +735,19 @@ impl Orchestrator {
         self.remember_active_chat(id);
     }
 
-    /// Запоминает последний открытый чат в `settings.json`, чтобы восстановить его
-    /// при следующем запуске. Пишет только при реальной смене активного чата —
-    /// `activate` зовётся и для перестроения ленты того же чата (перегенерация,
-    /// удаление обмена), где записывать настройки не нужно. Ошибку записи не
-    /// эскалируем (память — удобство, не критично).
+    /// Remembers the last-open chat in `settings.json` so it can be restored
+    /// on the next launch. Writes only on an actual switch of the active chat
+    /// — `activate` is also called to rebuild the same chat's feed
+    /// (regeneration, deleting an exchange), where saving settings isn't
+    /// needed. A write error isn't escalated (memory is a convenience, not
+    /// critical).
     fn remember_active_chat(&mut self, id: Uuid) {
         if self.config.last_active_chat == Some(id) {
             return;
         }
         self.config.last_active_chat = Some(id);
         if let Err(err) = self.storage.json().save_config(&self.config) {
-            tracing::warn!(error = %err, "не удалось запомнить последний открытый чат");
+            tracing::warn!(error = %err, "failed to remember the last-open chat");
         }
     }
 
@@ -736,26 +763,26 @@ impl Orchestrator {
         ));
     }
 
-    /// Эмитит снимок статусов всех серверов (чат/эмбеддинги/имперсонация) в строку
-    /// статуса. Зовётся при любом изменении любого из статусов (probe/смена настроек).
+    /// Emits a snapshot of all server statuses (chat/embeddings/impersonation)
+    /// into the status bar. Called on any change to any status (a probe/settings change).
     fn emit_server_status(&self) {
         let _ = self
             .evt_tx
             .send(AppEvent::ServerStatus(self.engines.statuses()));
     }
 
-    /// Помечает чат для отложенного сохранения (дебаунс).
+    /// Marks a chat for deferred saving (debounce).
     fn mark_dirty(&mut self, id: Uuid) {
         self.saves.mark(id);
     }
 
-    /// Сохраняет все грязные чаты на диск.
+    /// Saves all dirty chats to disk.
     fn flush_saves(&mut self) {
         for id in self.saves.take() {
             if let Some(chat) = self.chats.iter().find(|c| c.id == id)
                 && let Err(err) = self.storage.json().save_chat(chat)
             {
-                tracing::error!(chat = %id, error = %err, "не удалось сохранить чат");
+                tracing::error!(chat = %id, error = %err, "failed to save the chat");
             }
         }
     }

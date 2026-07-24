@@ -1,236 +1,276 @@
-# ADR 0004 — Контракт движка и мульти-провайдерный инференс (без крейт-сплита)
+# ADR 0004 — Engine contract and multi-provider inference (no crate split)
 
-**Статус:** принято (2026-06-26). Определяет границы `shared/api` перед добавлением
-облачных провайдеров инференса (Claude/Anthropic, OpenAI, Gemini). Развивает
-[ADR 0002](0002-embeddings-dedicated-server.md) (разделение `EngineBackend`/`Embedder`).
+**Status:** accepted (2026-06-26). Defines the boundaries of `shared/api`
+before adding cloud inference providers (Claude/Anthropic, OpenAI, Gemini).
+Builds on [ADR 0002](0002-embeddings-dedicated-server.md) (the
+`EngineBackend`/`Embedder` split).
 
-**Контекст:** появилась задача — инференс не только через локальный
-OpenAI-совместимый сервер (llama.cpp `llama-server`), но и через облачные API
-лидеров: **platform.claude.com** (Anthropic), **platform.openai.com** (OpenAI) и
-**aistudio.google.com** (Gemini). Нативная поддержка Gemini пока **не требуется** —
-Gemini берётся через его OpenAI-совместимый endpoint
-(`generativelanguage.googleapis.com/v1beta/openai/`), то есть тем же путём, что и
+**Context:** a new requirement appeared — inference not only via a local
+OpenAI-compatible server (llama.cpp `llama-server`), but also via the leading
+cloud APIs: **platform.claude.com** (Anthropic), **platform.openai.com**
+(OpenAI), and **aistudio.google.com** (Gemini). Native Gemini support is
+**not required yet** — Gemini is accessed via its OpenAI-compatible endpoint
+(`generativelanguage.googleapis.com/v1beta/openai/`), i.e. the same path as
 OpenAI.
 
-Анализ показал: ключевой шов — трейт `EngineBackend` (`shared/api/backend.rs`) —
-уже изолирует транспорт, и всё, что выше него (оркестратор, клиентский
-agentic-loop, инструменты, UI, трёхуровневый семплинг), **провайдеро-независимо**.
-Менять эти слои не нужно. Но сам слой `shared/api` неоднороден и протекает: в нём
-смешаны generic-контракт, llama.cpp-специфика клиента и управление дочерним
-процессом.
+Analysis showed: the key seam — the `EngineBackend` trait
+(`shared/api/backend.rs`) — already isolates the transport, and everything
+above it (orchestrator, client-side agentic loop, tools, UI, three-tier
+sampling) is **provider-independent**. These layers don't need to change. But
+the `shared/api` layer itself is uneven and leaky: it mixes the generic
+contract, llama.cpp-specific client details, and child-process management.
 
-Возник второй вопрос: не вынести ли движок в отдельные крейты ради изоляции.
+A second question arose: should the engine be split into separate crates for
+isolation.
 
-## Решение
+## Decision
 
-### 1. Крейты не плодим
+### 1. No new crates
 
-`mindfork-rs` остаётся **единым бинарным крейтом**. Крейт-сплит — это *упаковка*,
-а не изоляция; он окупается лишь при конкретном триггере (внешний потребитель,
-публикация библиотеки, время сборки, принудительная проверка границ компилятором),
-ни одного из которых сейчас нет. Сплит дал бы workspace, лишние `Cargo.toml`,
-раздувание `pub`-поверхности (то, что было `pub(crate)`, пришлось бы открыть —
-местами это *ослабляет* инкапсуляцию) и координацию версий — за почти нулевую
-отдачу. Границы FSD держатся дисциплиной модулей, как и прежде.
+`mindfork-rs` remains a **single binary crate**. A crate split is
+*packaging*, not isolation; it only pays off given a concrete trigger (an
+external consumer, publishing a library, build times, compiler-enforced
+boundary checks), none of which currently apply. A split would bring a
+workspace, extra `Cargo.toml` files, a bloated `pub` surface (what was
+`pub(crate)` would have to be opened up — in places this *weakens*
+encapsulation) and version coordination — for near-zero payoff. FSD
+boundaries are held by module discipline, as before.
 
-**Изоляция и крейт-сплит — разные задачи.** Делаем первое; второе остаётся дешёвой
-обратимой опцией на будущее: если правильно прочертить границы модулями и трейтом
-сейчас, выделение крейтов (когда/если появится триггер) станет почти механическим.
+**Isolation and crate splitting are different jobs.** We do the former; the
+latter remains a cheap, reversible future option: if the boundaries are drawn
+correctly now with modules and a trait, extracting crates later (when/if a
+trigger appears) becomes nearly mechanical.
 
-### 2. Изоляцию `shared/api` улучшаем — вместе с фичей, не отдельно
+### 2. Improve `shared/api` isolation — together with the feature, not separately
 
-Перед добавлением провайдеров `shared/api` переразлагается **по природе
-ответственности**, а не «всё в кучу». Целевая раскладка:
+Before adding providers, `shared/api` is reorganized **by the nature of
+responsibility**, not "everything in one pile". Target layout:
 
 ```
 shared/api/
-├─ contract/      трейты EngineBackend/Embedder + generic ChatRequest/ChatChunk/ApiMessage/ToolSchema
-├─ openai/        wire + client семейства OpenAI (сам OpenAI, Gemini-compat, llama.cpp llama-server)
-├─ anthropic/     AnthropicClient + его wire (/v1/messages)
-├─ managed/       server.rs — запуск дочернего llama-server (это НЕ «клиент»)
-└─ thoughts.rs    общий потоковый парсер «мыслей»
+├─ contract/      EngineBackend/Embedder traits + generic ChatRequest/ChatChunk/ApiMessage/ToolSchema
+├─ openai/        wire + client for the OpenAI family (OpenAI itself, Gemini-compat, llama.cpp llama-server)
+├─ anthropic/     AnthropicClient + its wire (/v1/messages)
+├─ managed/       server.rs — launching the child llama-server (this is NOT a "client")
+└─ thoughts.rs    shared streaming "thoughts" parser
 ```
 
-Это те же шаги, что нужны для мульти-провайдера, поэтому изоляция приходит
-**вместе с фичей**, а не как отдельный рефактор «ради красоты».
+These are the same steps needed for multi-provider support, so the isolation
+comes **together with the feature**, not as a separate "for tidiness"
+refactor.
 
-### 3. Развязываем семплинг от generic-контракта
+### 3. Decouple sampling from the generic contract
 
-Главная протечка: `ChatRequest` несёт `entities::sampling::SamplingConfig`, полный
-llama.cpp-расширений (`dynatemp_*`, `dry_*`, `top_n_sigma`, `mirostat`, `samplers`,
-…). Для OpenAI это прямой источник `400` (строгий сервер отвергает незнакомые поля),
-для Anthropic — мёртвый груз.
+The main leak: `ChatRequest` carries `entities::sampling::SamplingConfig`,
+full of llama.cpp extensions (`dynatemp_*`, `dry_*`, `top_n_sigma`,
+`mirostat`, `samplers`, …). For OpenAI this is a direct source of `400`
+(a strict server rejects unknown fields), for Anthropic — dead weight.
 
-Решение: **каждый клиент сам отвечает за свой wire** и фильтрует, что он умеет
-слать. Generic-контракт продолжает нести `SamplingConfig` как **намерение
-пользователя**, но клиент трактует его как «лучшее усилие»: OpenAI-клиент шлёт
-общеподдержанное (`temperature`/`top_p`/`top_k`/`max_tokens`/`seed`/penalties) и
-расширения только для llama.cpp-цели; Anthropic-клиент — лишь `temperature`/
-`top_p`/`top_k`, остальное игнорирует. Так UI и `set_sampling` не меняются, а
-несовместимость не доходит до сети. (Альтернатива — выделить «extension bag» для
-движко-специфичных полей — оставлена на потом, если фильтрации окажется мало.)
+Decision: **each client is responsible for its own wire** and filters what
+it knows how to send. The generic contract keeps carrying `SamplingConfig`
+as **user intent**, but the client treats it as "best effort": the OpenAI
+client sends the commonly-supported set (`temperature`/`top_p`/`top_k`/
+`max_tokens`/`seed`/penalties) and extensions only for a llama.cpp target;
+the Anthropic client — only `temperature`/`top_p`/`top_k`, the rest is
+ignored. This way the UI and `set_sampling` don't change, and
+incompatibility never reaches the network. (Alternative — carving out an
+"extension bag" for engine-specific fields — left for later, if filtering
+turns out not to be enough.)
 
-### 4. Сквозные пробелы, общие для всех облаков (Фаза 0)
+### 4. Cross-cutting gaps common to all clouds (Phase 0)
 
-Не зависят от выбора провайдера, делаются один раз:
+Independent of which provider is chosen, done once:
 
-- **Поле `model` в запросе.** Сейчас `wire.rs` его не шлёт (`llama-server` берёт
-  загруженную модель). Все облака требуют имя модели в теле — нужно протянуть
-  `model_name` из конфига в `ChatRequest`.
-- **Аутентификация.** `OpenAiClient` не умеет ключей. Добавляем API-ключ (Bearer
-  для OpenAI/Gemini-compat, `x-api-key` + `anthropic-version` для Anthropic).
-- **Секреты не на диск.** Ключ читается из **env-переменной**, не пишется в
-  `settings.json` (там он лёг бы открытым текстом). Конфиг хранит лишь *имя*
-  env-переменной / признак «ключ из окружения».
-- **Понятие провайдера.** `ServerMode { Managed | External }` дополняется облачным
-  вариантом (External + ключ + протокол), либо вводится поле `protocol`/`provider`
-  рядом с `url`. `probe()` по `/health` для облаков вернёт `404` → код уже трактует
-  это как «жив, готов» (`client.rs`), так что readiness-гейт срабатывает без правок.
+- **`model` field in the request.** Currently `wire.rs` doesn't send it
+  (`llama-server` uses the loaded model). All clouds require the model name
+  in the body — need to thread `model_name` from config into `ChatRequest`.
+- **Authentication.** `OpenAiClient` doesn't handle keys. Add an API key
+  (Bearer for OpenAI/Gemini-compat, `x-api-key` + `anthropic-version` for
+  Anthropic).
+- **Secrets not on disk.** The key is read from an **env variable**, not
+  written into `settings.json` (it would land there as plain text). Config
+  stores only the *name* of the env variable / a "key from environment" flag.
+- **Notion of provider.** `ServerMode { Managed | External }` is extended
+  with a cloud variant (External + key + protocol), or a `protocol`/
+  `provider` field is introduced alongside `url`. `probe()` against
+  `/health` for clouds will return `404` → the code already treats this as
+  "alive, ready" (`client.rs`), so the readiness gate works without changes.
 
-### 5. Эмбеддинги для RAG при облачном движке
+### 5. Embeddings for RAG under a cloud engine
 
-Трейт `Embedder` уже отделён ([ADR 0002](0002-embeddings-dedicated-server.md)),
-поэтому источник эмбеддингов выбирается независимо от chat-движка. Важно:
-**у Anthropic нет embeddings API** — при движке-Anthropic RAG использует отдельный
-эмбеддер (локальный `llama-server --embeddings`, OpenAI `/v1/embeddings` или
-`UnavailableEmbedder`). Механизм уже есть, доп. работы по архитектуре не требует.
+The `Embedder` trait is already separated ([ADR 0002](0002-embeddings-dedicated-server.md)),
+so the embedding source is chosen independently of the chat engine.
+Important: **Anthropic has no embeddings API** — with an Anthropic engine,
+RAG uses a separate embedder (local `llama-server --embeddings`, OpenAI
+`/v1/embeddings`, or `UnavailableEmbedder`). The mechanism already exists, no
+extra architectural work required.
 
-## План реализации
+## Implementation plan
 
-1. **Фаза 0 (фундамент):** поле `model` сквозь контракт; auth + ключ из env;
-   провайдер в конфиге; провайдеро-зависимая фильтрация семплинга; раскладка
-   `shared/api` по подмодулям (п. 2). Разблокирует OpenAI и Gemini-compat.
-2. **Фаза 1:** OpenAI + Gemini (через OpenAI-compat endpoint) — преимущественно
-   конфиг/UI-проводка и тесты (клиент уже говорит на Chat Completions).
-3. **Фаза 2:** `AnthropicClient` + `anthropic` wire как отдельная реализация
-   `EngineBackend` (`/v1/messages`: `tool_use`/`tool_result`-блоки, событийный SSE
-   `content_block_delta`/`thinking_delta`, `max_tokens` обязателен). Сверять модели/
-   поля через skill `claude-api`.
-4. **Нативный Gemini — вне объёма** (берётся через OpenAI-compat).
+1. **Phase 0 (foundation):** the `model` field across the contract; auth +
+   key from env; provider in config; provider-dependent sampling filtering;
+   reorganizing `shared/api` into submodules (item 2). Unblocks OpenAI and
+   Gemini-compat.
+2. **Phase 1:** OpenAI + Gemini (via the OpenAI-compat endpoint) — mostly
+   config/UI wiring and tests (the client already speaks Chat Completions).
+3. **Phase 2:** `AnthropicClient` + `anthropic` wire as a separate
+   `EngineBackend` implementation (`/v1/messages`: `tool_use`/`tool_result`
+   blocks, event-based SSE `content_block_delta`/`thinking_delta`,
+   `max_tokens` required). Cross-check models/fields via the `claude-api`
+   skill.
+4. **Native Gemini — out of scope** (accessed via OpenAI-compat).
 
-### Статус реализации
+### Implementation status
 
-- **Фаза 0** — сделана: поле `model` (инъектит бэкенд), Bearer-ключ из env, `WireDialect`
-  с провайдеро-зависимой фильтрацией, провайдер в конфиге, mode-driven UI.
-- **Фаза 1** — сделана вместе с Фазой 0: OpenAI и Gemini (OpenAI-compat) работают вживую.
-- **Фаза 2** — сделана: `AnthropicClient` + `anthropic`-wire в модуле
-  `shared/api/anthropic/` (реализация `EngineBackend`); `Claude` проведён через конфиг/
-  супервайзер/настройки.
-- **CoT (extended thinking) для Claude** — сделано поверх Фазы 2: `wire::build_request`
-  шлёт `thinking:{type:"adaptive", display:"summarized"}` (+ `output_config.effort`) при
-  включённом `thinking`; `budget_tokens`/`reasoning_budget` не шлём (модели 4.x их
-  отвергают). Парс `signature_delta` → `ChatChunk::ThoughtsSignature`. **При tool-use**
-  Anthropic требует возвращать thinking-блок с подписью в assistant-ходе того же хода —
-  agentic-loop крепит `ApiMessage.thinking` (текст+подпись) к ходу с вызовами,
-  `build_messages` ставит `AntBlock::Thinking` первым. Подпись только в памяти хода
-  (между ходами авто-отбрасывается сервером — не персистится). `supported_sampling_
-  fields(Claude)` расширен на `thinking`/`reasoning_effort`. Проверено живыми
-  `#[ignore]`-смоуками против Anthropic API (Phase A: «мысли»+подпись; Phase B:
-  round-trip подписи с tool-use без `400`). Известный задел — `redacted_thinking`.
-- **OpenAI Responses API — сделано** (2026-07-10, docs/research/openai-responses-client.md):
-  режим `openai` переведён с Chat Completions на Responses (`POST /v1/responses`) — новая
-  реализация `EngineBackend` (`shared/api/openai/responses/`, `ResponsesClient`). Даёт
-  резюме рассуждений (`reasoning.summary:"auto"` → `ChatChunk::Thoughts`), глубину
-  (`reasoning.effort`, `ReasoningEffort` расширен `Minimal`/`XHigh`), многословность
-  (`text.verbosity`, новое поле `SamplingConfig.verbosity`). Tool-use round-trip —
-  reasoning-элемент (`id`+`encrypted_content`) переотправляется перед своим
-  `function_call` (аналог подписи thinking Anthropic): `ThoughtsSignature(String)` →
-  `ThoughtsSignature(ThinkingRef{id,signature})`, `ThinkingBlock.id`. `store:false`,
-  `include:["reasoning.encrypted_content"]`, `strict:false`. Диалект `WireDialect::OpenAi`
-  удалён (Gemini остаётся на Chat Completions). `supported_sampling_fields(OpenAi)` =
-  `max_tokens`+reasoning+verbosity. «Прокси с ключом» (прежний `openai`+url-override)
-  закрыт `ExternalSettings.api_key_env`. Nativ Gemini через Responses — задел.
-- **Нативный Gemini — Фаза A сделана** (2026-07-10, docs/research/gemini-native-client.md):
-  режим `gemini` переведён с OpenAI-compat Chat Completions на **нативный
-  `generateContent`/`streamGenerateContent`** — новая реализация `EngineBackend`
-  (`shared/api/gemini/`, `GeminiClient`). Даёт резюме «мыслей»
-  (`thinkingConfig.includeThoughts` → `ChatChunk::Thoughts`), глубину рассуждений
-  (`thinkingLevel` у Gemini 3.x / `thinkingBudget` у 2.5, инференс по имени модели),
-  `thoughtsTokenCount`. `supported_sampling_fields(Gemini)` += `top_k`/`thinking`/
-  `reasoning_effort` (− `verbosity`). system → top-level `systemInstruction`, роли
-  `user`/`model`, результат инструмента → `functionResponse` в user, вызов →
-  `functionCall` (args-объект, без `call_id` — id синтезируется). Диалект `WireDialect`
-  **удалён целиком** (Gemini был последним потребителем; `OpenAiClient` шлёт сэмплинг как
-  есть). Эмбеддинги Gemini остаются на OpenAI-совместимом endpoint (`OpenAiClient`,
-  `…/v1beta/openai/embeddings`), как у Anthropic RAG.
-- **Нативный Gemini — Фаза B сделана** (2026-07-10): подписи мыслей `thoughtSignature`
-  **per-tool-call** (уникальное отличие от Anthropic/OpenAI, где подпись одна на ход) для
-  Gemini 3 при tool-use. `ApiToolCall`/`ToolCallDelta` (контракт) и `ToolCallRecord`
-  (домен, **персист** без миграции) получили `thought_signature`; accumulator копит её по
-  индексу, Gemini-клиент кладёт из `functionCall`-части, wire переотправляет соседом
-  `functionCall`, `generation.rs`/`record_to_api` персистят и протягивают на реплее
-  истории (иначе Gemini 3 `400`). Round-level `ThinkingRef` (Anthropic/OpenAI) не тронут.
-  Развилку «персист vs подпись-только-текущего-хода» подтвердить на живом ключе.
-- **Раскладка `shared/api` (§2) — выполнена** (после Фазы 2, ради симметрии с
-  `anthropic/`): `backend.rs` → `contract.rs` (провайдеро-агностичный контракт);
-  `client.rs`+`wire.rs` → `openai/` (с приватным `wire`, re-export `OpenAiClient`/
-  `WireDialect`); `server.rs` → `managed.rs`; `anthropic/` уже был. Публичная
-  поверхность не изменилась (re-export из `shared/api/mod.rs`); внешние ссылки
-  `shared::api::backend::*` → `::contract::*`. Перемещения через `git mv` (история
-  сохранена). Тесты/clippy/fmt зелёные.
+- **Phase 0** — done: the `model` field (injected by the backend), Bearer
+  key from env, `WireDialect` with provider-dependent filtering, provider in
+  config, mode-driven UI.
+- **Phase 1** — done together with Phase 0: OpenAI and Gemini (OpenAI-compat)
+  work live.
+- **Phase 2** — done: `AnthropicClient` + `anthropic` wire in the
+  `shared/api/anthropic/` module (an `EngineBackend` implementation);
+  `Claude` wired through config/supervisor/settings.
+- **CoT (extended thinking) for Claude** — done on top of Phase 2:
+  `wire::build_request` sends `thinking:{type:"adaptive", display:"summarized"}`
+  (+ `output_config.effort`) when `thinking` is enabled; `budget_tokens`/
+  `reasoning_budget` are not sent (4.x models reject them). Parsing
+  `signature_delta` → `ChatChunk::ThoughtsSignature`. **With tool-use**,
+  Anthropic requires returning the thinking block with its signature in the
+  assistant turn of the same round — the agentic loop attaches
+  `ApiMessage.thinking` (text+signature) to the turn with the calls,
+  `build_messages` puts `AntBlock::Thinking` first. The signature only lives
+  in the turn's memory (auto-discarded by the server between turns — not
+  persisted). `supported_sampling_fields(Claude)` extended with `thinking`/
+  `reasoning_effort`. Verified with live `#[ignore]` smokes against the
+  Anthropic API (Phase A: "thoughts"+signature; Phase B: signature round-trip
+  with tool-use without `400`). Known groundwork left — `redacted_thinking`.
+- **OpenAI Responses API — done** (2026-07-10, docs/research/openai-responses-client.md):
+  the `openai` mode was switched from Chat Completions to Responses
+  (`POST /v1/responses`) — a new `EngineBackend` implementation
+  (`shared/api/openai/responses/`, `ResponsesClient`). Gives reasoning
+  summaries (`reasoning.summary:"auto"` → `ChatChunk::Thoughts`), depth
+  (`reasoning.effort`, `ReasoningEffort` extended with `Minimal`/`XHigh`),
+  verbosity (`text.verbosity`, new field `SamplingConfig.verbosity`).
+  Tool-use round-trip — the reasoning element (`id`+`encrypted_content`) is
+  resent before its own `function_call` (analogous to Anthropic's thinking
+  signature): `ThoughtsSignature(String)` → `ThoughtsSignature(ThinkingRef{id,
+  signature})`, `ThinkingBlock.id`. `store:false`,
+  `include:["reasoning.encrypted_content"]`, `strict:false`. The
+  `WireDialect::OpenAi` dialect is removed (Gemini stays on Chat Completions).
+  `supported_sampling_fields(OpenAi)` = `max_tokens`+reasoning+verbosity.
+  The "proxy with a key" pattern (formerly `openai`+url-override) is closed
+  by `ExternalSettings.api_key_env`. Native Gemini via Responses — future
+  work.
+- **Native Gemini — Phase A done** (2026-07-10, docs/research/gemini-native-client.md):
+  the `gemini` mode was switched from OpenAI-compat Chat Completions to
+  **native `generateContent`/`streamGenerateContent`** — a new `EngineBackend`
+  implementation (`shared/api/gemini/`, `GeminiClient`). Gives "thoughts"
+  summaries (`thinkingConfig.includeThoughts` → `ChatChunk::Thoughts`),
+  reasoning depth (`thinkingLevel` for Gemini 3.x / `thinkingBudget` for 2.5,
+  inferred from the model name), `thoughtsTokenCount`.
+  `supported_sampling_fields(Gemini)` += `top_k`/`thinking`/
+  `reasoning_effort` (− `verbosity`). system → top-level
+  `systemInstruction`, `user`/`model` roles, a tool result →
+  `functionResponse` in a user turn, a call → `functionCall` (args as an
+  object, no `call_id` — the id is synthesized). The `WireDialect` dialect
+  is **removed entirely** (Gemini was its last consumer; `OpenAiClient`
+  sends sampling as-is). Gemini embeddings remain on the OpenAI-compatible
+  endpoint (`OpenAiClient`, `…/v1beta/openai/embeddings`), as with Anthropic
+  RAG.
+- **Native Gemini — Phase B done** (2026-07-10): `thoughtSignature` "thought
+  signatures" **per tool call** (a unique difference from Anthropic/OpenAI,
+  where the signature is one per turn) for Gemini 3 with tool-use.
+  `ApiToolCall`/`ToolCallDelta` (contract) and `ToolCallRecord` (domain,
+  **persisted**, without migration) gained `thought_signature`; the
+  accumulator collects it by index, the Gemini client takes it from the
+  `functionCall` part, wire resends it alongside `functionCall`,
+  `generation.rs`/`record_to_api` persist and thread it through on history
+  replay (otherwise Gemini 3 returns `400`). The round-level `ThinkingRef`
+  (Anthropic/OpenAI) is unaffected. The "persist vs. signature-only-for-the-
+  current-turn" fork is to be confirmed against a live key.
+- **`shared/api` layout (§2) — done** (after Phase 2, for symmetry with
+  `anthropic/`): `backend.rs` → `contract.rs` (provider-agnostic contract);
+  `client.rs`+`wire.rs` → `openai/` (with private `wire`, re-exporting
+  `OpenAiClient`/`WireDialect`); `server.rs` → `managed.rs`; `anthropic/` was
+  already there. The public surface is unchanged (re-exported from
+  `shared/api/mod.rs`); external references `shared::api::backend::*` →
+  `::contract::*`. Moves done via `git mv` (history preserved). Tests/clippy/
+  fmt green.
 
-## UX настроек (экран `screens/settings.rs`)
+## Settings UX (`screens/settings.rs`)
 
-В настройках уже три «движковых» конфига со своими селекторами режима: чат-движок
-ассистента и движок имперсонации (секция «Модель/сервер», подсекции Ассистент/
-Имперсонация) и эмбеддинги (секция «Инструменты»). Добавление облаков **не должно**
-плодить поля — наоборот, экран де-загромождается.
+Settings already has three "engine" configs each with its own mode selector:
+the assistant chat engine and the impersonation engine (section "Model/
+Server", subsections Assistant/Impersonation) and embeddings (section
+"Tools"). Adding clouds **must not** proliferate fields — quite the
+opposite, the screen becomes less cluttered.
 
-### Видимость полей по режиму (ключевой приём)
+### Field visibility by mode (key technique)
 
-Сейчас `model_fields` показывает **все** поля независимо от режима (в External видны
-бесполезные `Бинарник`/`-ngl`/`--jinja`/…). Переходим на **mode-driven visibility**:
-режим — всегда первое поле, ниже — только релевантные ему. Тогда облачный режим — это
-2–3 поля против 8 у managed, и каждый режим выглядит проще, хотя возможностей больше.
+Currently `model_fields` shows **all** fields regardless of mode (in
+External, useless `Binary`/`-ngl`/`--jinja`/… are visible). Switching to
+**mode-driven visibility**: mode is always the first field, below it — only
+fields relevant to it. Then a cloud mode is 2–3 fields against 8 for managed,
+and every mode looks simpler even though there are more capabilities overall.
 
-| Режим | Видимые поля |
+| Mode | Visible fields |
 |---|---|
-| Managed (локальный `llama-server`) | binary, model (`-m`), ngl, ctx, jinja, no_mmap, host, port |
-| External (свой OpenAI-URL) | url, model (опц.), api-ключ (имя env-переменной, опц. — для прокси/шлюза с авторизацией) |
-| OpenAI / Claude / Gemini (облако) | model, api-ключ (имя env-переменной), base URL (опц., переопределение) |
-| Shared (только имперсонация) | — (переиспользует движок ассистента) |
+| Managed (local `llama-server`) | binary, model (`-m`), ngl, ctx, jinja, no_mmap, host, port |
+| External (own OpenAI URL) | url, model (opt.), API key (env variable name, opt. — for a proxy/gateway with auth) |
+| OpenAI / Claude / Gemini (cloud) | model, API key (env variable name), base URL (opt., override) |
+| Shared (impersonation only) | — (reuses the assistant's engine) |
 
-### Таксономия режима — плоская
+### Mode taxonomy — flat
 
-`Mode` расширяется провайдерами как равноправными вариантами одного `←/→`-цикла:
-`Managed | External | OpenAI | Claude | Gemini` (у имперсонации добавляется `Shared`).
-Принято плоско (а не «Облако» + под-выбор провайдера): один селектор, нет
-вложенности, единый мысленный вопрос «откуда инференс». Минус — цикл из 5–6 пунктов —
-снимается mode-driven visibility (поля под каждый режим короткие) и подсказкой
-`field_description` под селектором.
+`Mode` is extended with providers as equal variants of one `←/→` cycle:
+`Managed | External | OpenAI | Claude | Gemini` (impersonation adds
+`Shared`). Chosen flat (rather than "Cloud" + a sub-choice of provider): one
+selector, no nesting, a single mental question "where does inference come
+from". The downside — a cycle of 5–6 items — is offset by mode-driven
+visibility (fields under each mode are short) and a `field_description` hint
+below the selector.
 
-### Секреты — имя env-переменной, не ключ
+### Secrets — env variable name, not the key
 
-Облачные режимы показывают поле «API-ключ» как **имя env-переменной** (напр.
-`ANTHROPIC_API_KEY`), а не сам секрет. В `settings.json` пишется только имя; ключ
-читается из окружения при старте/запросе (см. п. 4). Если переменная не задана —
-предупреждение под секцией (тот же механизм, что подсказки полей).
+Cloud modes show the "API key" field as the **name of an env variable**
+(e.g. `ANTHROPIC_API_KEY`), not the secret itself. Only the name is written
+to `settings.json`; the key is read from the environment at startup/request
+time (see item 4). If the variable isn't set — a warning appears under the
+section (the same mechanism as field hints).
 
-### Эмбеддинги и имперсонация
+### Embeddings and impersonation
 
-- **Эмбеддинги**: облачные есть только у OpenAI/Gemini (у Anthropic нет). Чтобы не
-  вводить отдельный «провайдер» для RAG, облачные эмбеддинги уложены в расширенный
-  External: `url + api-ключ(env) + model`. Новый селектор не добавляется.
-- **Имперсонация**: `Shared` работает с облаком без изменений (переиспускает движок
-  ассистента, доп. полей нет); прочие режимы — те же, что у ассистента.
+- **Embeddings**: cloud embeddings exist only for OpenAI/Gemini (Anthropic
+  has none). To avoid introducing a separate "provider" for RAG, cloud
+  embeddings are folded into an extended External: `url + API key(env) +
+  model`. No new selector is added.
+- **Impersonation**: `Shared` works with a cloud unchanged (reuses the
+  assistant's engine, no extra fields); other modes are the same as for the
+  assistant.
 
-### Форма конфига (Фаза 0)
+### Config shape (Phase 0)
 
-`EngineSettings`/`ImpersonationEngineSettings` получают поля под облако:
-`model_name: Option<String>`, `api_key_env: Option<String>`, опц. `base_url`-override;
-`ServerMode` дополняется облачными вариантами. Всё под `#[serde(default)]` — старые
-`settings.json` читаются без миграции (инвариант проекта).
+`EngineSettings`/`ImpersonationEngineSettings` gain fields for the cloud:
+`model_name: Option<String>`, `api_key_env: Option<String>`, an optional
+`base_url` override; `ServerMode` gains cloud variants. All under
+`#[serde(default)]` — old `settings.json` files are read without migration
+(project invariant).
 
-## Последствия
+## Consequences
 
-- **Плюс:** мульти-провайдер достигается добавлением реализаций трейта; слои выше
-  `EngineBackend` не трогаются. Изоляция `shared/api` улучшается естественно, под
-  фичу. Крейт-сплит остаётся дешёвой опцией.
-- **Плюс:** развязка семплинга устраняет класс ошибок `400` на строгих серверах.
-- **Минус:** generic `ChatRequest` по-прежнему формально знает про `SamplingConfig`
-  (полная развязка через extension bag отложена) — приемлемо, т.к. трактовка
-  «лучшее усилие» локализована в клиентах.
-- **Минус:** Anthropic требует отдельного wire-слоя (другой протокол) — это
-  осознанная средняя по объёму работа, изолированная за трейтом.
-- **Риск:** часть UI-полей семплинга бессмысленна для облачных моделей; их стоит
-  скрывать под выбранный провайдер либо молча не слать (решается в UI Фазы 1/2).
+- **Plus:** multi-provider support is achieved by adding trait
+  implementations; layers above `EngineBackend` are untouched. `shared/api`
+  isolation improves naturally, as part of the feature. Crate splitting
+  remains a cheap option.
+- **Plus:** decoupling sampling eliminates a class of `400` errors on strict
+  servers.
+- **Minus:** the generic `ChatRequest` still formally knows about
+  `SamplingConfig` (full decoupling via an extension bag is deferred) —
+  acceptable, since the "best effort" interpretation is localized to the
+  clients.
+- **Minus:** Anthropic requires a separate wire layer (a different protocol)
+  — this is a deliberate, medium-sized piece of work, isolated behind the
+  trait.
+- **Risk:** part of the sampling UI is meaningless for cloud models; it's
+  worth hiding it per selected provider or silently not sending it (resolved
+  in the UI in Phase 1/2).

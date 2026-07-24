@@ -1,4 +1,4 @@
-//! Тесты экрана чата (через handle_key/render). См. mod.rs.
+//! Tests for the chat screen (via handle_key/render). See mod.rs.
 
 use super::popups::HELP_KEYS;
 use super::*;
@@ -8,7 +8,7 @@ fn gen_id() -> Uuid {
     Uuid::new_v4()
 }
 
-/// Снимок статусов с готовым чат-сервером (эмбеддинги/имперсонация не настроены).
+/// A status snapshot with a ready chat server (embeddings/impersonation not configured).
 fn ready_statuses() -> ServerStatuses {
     ServerStatuses {
         chat: ServerStatus::Ready,
@@ -19,28 +19,28 @@ fn ready_statuses() -> ServerStatuses {
 
 #[test]
 fn chunk_after_midgen_note_goes_to_new_assistant_bubble() {
-    // Регрессия: пометка (AppEvent::Error о лимите раундов) посреди генерации
-    // делала `last` заметкой, и последующий стрим финального ответа дописывался в
-    // неё (простой текст, без markdown). Теперь чанк открывает новый пузырь.
+    // Regression: a note (AppEvent::Error about the round limit) mid-generation
+    // used to make `last` a note, and the subsequent stream of the final reply got
+    // appended into it (plain text, no markdown). Now a chunk opens a new bubble.
     let mut s = ChatScreen::new();
     let id = gen_id();
     s.push_user_message("собери отзывы".into());
     s.begin_generation(id);
-    // Ассистент вызвал инструмент (пузырь ассистента пуст по тексту)...
+    // The assistant called a tool (the assistant bubble is text-empty)...
     s.push_tool_call(id, "web_search".into(), "{}".into(), "результаты".into());
-    // ...достигнут лимит — в ленту уходит пометка.
+    // ...the limit is reached — a note goes into the feed.
     s.push_error("Достигнут лимит раундов инструментов (8) — свожу итог.");
-    // Форс-синтез стримит финальный ответ.
+    // The forced synthesis streams the final reply.
     s.push_chunk(id, "## Итог\n\n**Вывод**.");
     s.finish_generation(id, FinishReason::Stop);
 
-    // Заметка отдельным элементом; финальный текст — в пузыре ассистента (markdown),
-    // а не в заметке.
+    // The note is a separate element; the final text is in the assistant bubble (markdown),
+    // not in the note.
     let notes: Vec<_> = s.feed.iter().filter(|m| m.role == FeedRole::Note).collect();
-    assert_eq!(notes.len(), 1, "ровно одна заметка о лимите");
+    assert_eq!(notes.len(), 1, "expected exactly one note about the limit");
     assert!(
         !notes[0].text.contains("## Итог"),
-        "финальный текст не должен попасть в заметку: {:?}",
+        "the final text must not end up in the note: {:?}",
         notes[0].text
     );
     let last = s.feed.last().unwrap();
@@ -73,7 +73,7 @@ fn streaming_sequence_builds_feed() {
 fn live_stream_with_tool_matches_reload() {
     use crate::entities::message::{Message, ToolCallRecord};
 
-    // Live: текст раунда 1 → вызов инструмента → текст раунда 2 (финал).
+    // Live: round-1 text → a tool call → round-2 text (final).
     let mut s = ChatScreen::new();
     let id = gen_id();
     s.begin_generation(id);
@@ -92,7 +92,7 @@ fn live_stream_with_tool_matches_reload() {
     assert_eq!(live.tools.len(), 1);
     assert_eq!(live.tools[0].text_offset, "Ищу погоду.".len());
 
-    // Reload: те же раунды как доменные сообщения (assistant+tool / assistant).
+    // Reload: the same rounds as domain messages (assistant+tool / assistant).
     let mut r1 = Message::assistant("Ищу погоду.");
     r1.tool_calls = vec![ToolCallRecord {
         thought_signature: None,
@@ -110,7 +110,7 @@ fn live_stream_with_tool_matches_reload() {
     let r2 = Message::assistant("Сейчас ясно.");
     let reload = FeedMessage::from_messages(&[r1, tool_msg, r2]);
 
-    // Один слитый блок ассистента, тот же текст и то же смещение вызова.
+    // One merged assistant block, the same text and the same call offset.
     assert_eq!(reload.len(), 1);
     assert_eq!(reload[0].text, live.text);
     assert_eq!(reload[0].tools.len(), 1);
@@ -121,7 +121,7 @@ fn live_stream_with_tool_matches_reload() {
 fn live_followup_makes_two_bubbles_matching_reload() {
     use crate::entities::message::{Message, ToolCallRecord};
 
-    // Live: текст 1 → followup → текст 2.
+    // Live: text 1 → followup → text 2.
     let mut s = ChatScreen::new();
     let id = gen_id();
     s.begin_generation(id);
@@ -130,7 +130,7 @@ fn live_followup_makes_two_bubbles_matching_reload() {
     s.push_chunk(id, "Второе сообщение.");
     s.finish_generation(id, FinishReason::Stop);
 
-    // Два отдельных пузыря ассистента.
+    // Two separate assistant bubbles.
     let bubbles: Vec<&FeedMessage> = s
         .feed
         .iter()
@@ -140,7 +140,7 @@ fn live_followup_makes_two_bubbles_matching_reload() {
     assert_eq!(bubbles[0].text, "Первое сообщение.");
     assert_eq!(bubbles[1].text, "Второе сообщение.");
 
-    // Reload: A1 (с управляющим вызовом) → tool → A2 (new_bubble).
+    // Reload: A1 (with a control call) → tool → A2 (new_bubble).
     let mut a1 = Message::assistant("Первое сообщение.");
     a1.tool_calls = vec![ToolCallRecord {
         thought_signature: None,
@@ -165,7 +165,7 @@ fn live_followup_makes_two_bubbles_matching_reload() {
 
 #[test]
 fn live_rewrite_discards_partial_text() {
-    // Live: частичный неверный текст → rewrite → переписанный ответ.
+    // Live: partial incorrect text → rewrite → the rewritten reply.
     let mut s = ChatScreen::new();
     let id = gen_id();
     s.begin_generation(id);
@@ -175,7 +175,7 @@ fn live_rewrite_discards_partial_text() {
     s.push_chunk(id, "Правильный ответ.");
     s.finish_generation(id, FinishReason::Stop);
 
-    // Ровно один пузырь ассистента с переписанным текстом (частичный отброшен).
+    // Exactly one assistant bubble with the rewritten text (the partial one is discarded).
     let bubbles: Vec<&FeedMessage> = s
         .feed
         .iter()
@@ -210,8 +210,8 @@ fn cancelled_finish_adds_note() {
 fn activate_chat_rebuilds_feed_and_resets_gen() {
     let mut s = ChatScreen::new();
     let prev = gen_id();
-    s.begin_generation(prev); // как будто шла генерация
-    s.set_token_usage(prev, 42, Some(123), true, Some(7)); // счётчик токенов прежнего чата
+    s.begin_generation(prev); // as if a generation was running
+    s.set_token_usage(prev, 42, Some(123), true, Some(7)); // the previous chat's token counter
     let id = gen_id();
     let messages = vec![
         Message::new(MessageRole::System, "sys"),
@@ -222,18 +222,18 @@ fn activate_chat_rebuilds_feed_and_resets_gen() {
     assert_eq!(s.active_chat, Some(id));
     assert!(!s.generating);
     assert!(s.current_gen.is_none());
-    // счётчик токенов прежнего чата сброшен (иначе висел бы в статус-баре)
+    // the previous chat's token counter is cleared (otherwise it would linger in the status bar)
     assert_eq!(s.gen_tokens, 0);
     assert!(s.gen_context.is_none());
     assert!(!s.gen_context_exact);
-    // системное сообщение не попадает в ленту
+    // the system message doesn't land in the feed
     assert_eq!(s.feed.len(), 2);
 }
 
 #[test]
 fn feed_scroll_requests_clear_only_with_vs16_emoji() {
-    // Прокрутка ленты с чистым текстом не требует полной перерисовки (не мигает),
-    // а с VS16-эмодзи (`🗂️`) — требует (стирает «висячий» артефакт на conhost).
+    // Scrolling a feed with plain text doesn't require a full redraw (no flicker),
+    // while with a VS16 emoji (`🗂️`) it does (wipes a "hanging" artifact on conhost).
     let id = gen_id();
 
     let mut clean = ChatScreen::new();
@@ -241,9 +241,9 @@ fn feed_scroll_requests_clear_only_with_vs16_emoji() {
     clean.handle_key(KeyEvent::new(KeyCode::PageUp, KeyModifiers::NONE));
     assert!(
         !clean.take_feed_scrolled(),
-        "на чистом тексте полная перерисовка не нужна"
+        "plain text needs no full redraw"
     );
-    // флаг забран однократно
+    // the flag is taken exactly once
     assert!(!clean.take_feed_scrolled());
 
     let mut emoji = ChatScreen::new();
@@ -251,17 +251,17 @@ fn feed_scroll_requests_clear_only_with_vs16_emoji() {
     emoji.handle_key(KeyEvent::new(KeyCode::PageDown, KeyModifiers::NONE));
     assert!(
         emoji.take_feed_scrolled(),
-        "с VS16-эмодзи нужна полная перерисовка"
+        "a VS16 emoji needs a full redraw"
     );
-    // без новой прокрутки повторно не запрашиваем
+    // no repeated request without a new scroll
     assert!(!emoji.take_feed_scrolled());
 
-    // Петля забирает флаг обобщённым `take_full_redraw` — источник ленты входит в него
-    // (иначе фикс VS16-артефакта тихо отвалился бы при добавлении второго источника).
+    // The loop takes the flag via the generalized `take_full_redraw` — the feed source is
+    // included (otherwise the VS16-artifact fix would silently break when a second source is added).
     emoji.handle_key(KeyEvent::new(KeyCode::PageUp, KeyModifiers::NONE));
     assert!(
         emoji.take_full_redraw(),
-        "прокрутка ленты с VS16 входит в take_full_redraw"
+        "scrolling the feed with VS16 is part of take_full_redraw"
     );
     assert!(!emoji.take_full_redraw());
 }
@@ -275,7 +275,7 @@ fn enter_sends_when_idle_and_nonempty() {
     }
     let intent = s.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
     assert_eq!(intent, Some(ChatIntent::Send("привет".into())));
-    // поле очищено
+    // the field is cleared
     assert!(
         s.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE))
             .is_none()
@@ -289,7 +289,7 @@ fn shift_and_alt_enter_insert_newline_not_send() {
     for c in "ab".chars() {
         s.handle_key(KeyEvent::new(KeyCode::Char(c), KeyModifiers::NONE));
     }
-    // Shift+Enter — перенос строки, не отправка.
+    // Shift+Enter — a line break, not a send.
     assert_eq!(
         s.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::SHIFT)),
         None
@@ -297,7 +297,7 @@ fn shift_and_alt_enter_insert_newline_not_send() {
     for c in "cd".chars() {
         s.handle_key(KeyEvent::new(KeyCode::Char(c), KeyModifiers::NONE));
     }
-    // Alt+Enter — тот же перенос (запасной вариант для терминалов без kitty-протокола).
+    // Alt+Enter — the same break (a fallback for terminals with no kitty protocol).
     assert_eq!(
         s.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::ALT)),
         None
@@ -306,7 +306,7 @@ fn shift_and_alt_enter_insert_newline_not_send() {
         s.handle_key(KeyEvent::new(KeyCode::Char(c), KeyModifiers::NONE));
     }
     assert_eq!(s.input.text(), "ab\ncd\nef");
-    // Голый Enter по-прежнему отправляет весь многострочный ввод.
+    // A bare Enter still sends the whole multiline input.
     assert_eq!(
         s.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE)),
         Some(ChatIntent::Send("ab\ncd\nef".into()))
@@ -316,12 +316,12 @@ fn shift_and_alt_enter_insert_newline_not_send() {
 #[test]
 fn activate_chat_loads_draft_without_marking_dirty() {
     let mut s = ChatScreen::new();
-    // Активация чата с сохранённым черновиком загружает его в поле ввода…
+    // Activating a chat with a saved draft loads it into the input box...
     s.activate_chat(gen_id(), "Чат".into(), &[], "недописанный текст");
     assert_eq!(s.input.text(), "недописанный текст");
-    // …но не помечает черновик «грязным» (иначе тут же отправили бы его обратно).
+    // ...but doesn't mark the draft "dirty" (otherwise it would be sent right back).
     assert_eq!(s.take_dirty_draft(), None);
-    // Переключение на чат без черновика очищает поле ввода.
+    // Switching to a chat with no draft clears the input box.
     s.activate_chat(gen_id(), "Новый".into(), &[], "");
     assert!(s.input.is_empty());
     assert_eq!(s.take_dirty_draft(), None);
@@ -331,9 +331,9 @@ fn activate_chat_loads_draft_without_marking_dirty() {
 fn typing_marks_draft_dirty_and_take_returns_text_once() {
     let mut s = ChatScreen::new();
     type_str(&mut s, "черновик");
-    // Первый забор отдаёт набранный текст…
+    // The first take returns the typed text...
     assert_eq!(s.take_dirty_draft(), Some("черновик".into()));
-    // …повторный — None, пока ввод снова не изменится.
+    // ...a repeat — None, until the input changes again.
     assert_eq!(s.take_dirty_draft(), None);
 }
 
@@ -342,20 +342,20 @@ fn sending_clears_draft_to_empty() {
     let mut s = ChatScreen::new();
     s.set_server_status(ready_statuses());
     type_str(&mut s, "вопрос");
-    let _ = s.take_dirty_draft(); // забрали черновик при наборе
+    let _ = s.take_dirty_draft(); // took the draft while typing
     let intent = s.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
     assert_eq!(intent, Some(ChatIntent::Send("вопрос".into())));
-    // Отправка очистила поле — черновик стал пустым (UI отправит SetDraft("")).
+    // Sending cleared the field — the draft became empty (the UI will send SetDraft("")).
     assert_eq!(s.take_dirty_draft(), Some(String::new()));
 }
 
 #[test]
 fn restore_input_sets_when_empty_and_prepends_when_not() {
     let mut s = ChatScreen::new();
-    // Пустое поле — просто заполняется.
+    // An empty field is simply filled.
     s.restore_input("вопрос".into());
     assert_eq!(s.input.text(), "вопрос");
-    // Непустое — текст добавляется в начало, существующий ввод сохраняется.
+    // Non-empty — the text is prepended, the existing input is kept.
     s.input.clear();
     type_str(&mut s, "хвост");
     s.restore_input("голова ".into());
@@ -372,7 +372,7 @@ fn ctrl_u_emits_impersonate_with_input_seed() {
             seed: "начало".into()
         })
     );
-    // Во время генерации — подавляется.
+    // Suppressed during generation.
     s.begin_generation(gen_id());
     assert_eq!(
         s.handle_key(KeyEvent::new(KeyCode::Char('u'), KeyModifiers::CONTROL)),
@@ -383,14 +383,14 @@ fn ctrl_u_emits_impersonate_with_input_seed() {
 #[test]
 fn impersonation_stream_then_stop_commits_text_to_input() {
     let mut s = ChatScreen::new();
-    type_str(&mut s, "Я "); // затравка
+    type_str(&mut s, "Я "); // the seed
     let id = gen_id();
     s.begin_impersonation(id);
     assert!(s.is_impersonating());
     s.push_impersonation_chunk(id, "хочу узнать про Rust");
     s.finish_impersonation(id, FinishReason::Stop);
     assert!(!s.is_impersonating());
-    // Текст реплики (затравка + сгенерированное) — в поле ввода.
+    // The reply text (seed + generated) — in the input box.
     assert_eq!(s.input.text(), "Я хочу узнать про Rust");
 }
 
@@ -401,12 +401,12 @@ fn impersonation_cancel_keeps_seed_and_discards_generated() {
     let id = gen_id();
     s.begin_impersonation(id);
     s.push_impersonation_chunk(id, " дополнение");
-    // Esc во время имперсонации — намерение отмены.
+    // Esc during impersonation — the cancel intent.
     assert_eq!(
         s.handle_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE)),
         Some(ChatIntent::CancelImpersonation)
     );
-    // Отмена (Cancelled) отбрасывает сгенерированное — поле сохраняет затравку.
+    // Cancellation (Cancelled) discards the generated part — the field keeps the seed.
     s.finish_impersonation(id, FinishReason::Cancelled);
     assert!(!s.is_impersonating());
     assert_eq!(s.input.text(), "черновик");
@@ -414,8 +414,8 @@ fn impersonation_cancel_keeps_seed_and_discards_generated() {
 
 #[test]
 fn impersonation_timeout_keeps_partial_text() {
-    // Таймаут имперсонации приходит как `Length` (не `Cancelled`) — обрезанная
-    // реплика должна сохраниться в поле, а не исчезнуть.
+    // An impersonation timeout arrives as `Length` (not `Cancelled`) — the truncated
+    // reply must be kept in the field, not vanish.
     let mut s = ChatScreen::new();
     type_str(&mut s, "Я ");
     let id = gen_id();
@@ -430,12 +430,12 @@ fn impersonation_timeout_keeps_partial_text() {
 fn keys_ignored_during_impersonation_except_cancel_quit() {
     let mut s = ChatScreen::new();
     s.begin_impersonation(gen_id());
-    // Обычная клавиша не печатается в поле (поле скрыто).
+    // A regular key isn't typed into the field (the field is hidden).
     assert_eq!(
         s.handle_key(KeyEvent::new(KeyCode::Char('x'), KeyModifiers::NONE)),
         None
     );
-    // Ctrl+Q / F10 всё ещё выходят (выход переехал с Ctrl+C).
+    // Ctrl+Q / F10 still quit (quit moved off Ctrl+C).
     assert_eq!(
         s.handle_key(KeyEvent::new(KeyCode::Char('q'), KeyModifiers::CONTROL)),
         Some(ChatIntent::Quit)
@@ -485,7 +485,7 @@ fn ctrl_r_and_e_suppressed_while_generating() {
     );
 }
 
-/// Включает подтверждение `Ctrl+R`/`Ctrl+E` через снимок настроек.
+/// Turns on `Ctrl+R`/`Ctrl+E` confirmation via a settings snapshot.
 fn with_confirm() -> ChatScreen {
     let mut s = ChatScreen::new();
     let mut cfg = AppConfig::default();
@@ -497,13 +497,13 @@ fn with_confirm() -> ChatScreen {
 #[test]
 fn ctrl_r_with_confirm_opens_popup_then_enter_confirms() {
     let mut s = with_confirm();
-    // Первое нажатие не отдаёт намерение — открывает попап подтверждения.
+    // The first press doesn't yield an intent — it opens the confirmation popup.
     assert_eq!(
         s.handle_key(KeyEvent::new(KeyCode::Char('r'), KeyModifiers::CONTROL)),
         None
     );
     assert_eq!(s.confirm, Some(ConfirmAction::Regenerate));
-    // Enter подтверждает и закрывает попап.
+    // Enter confirms and closes the popup.
     assert_eq!(
         s.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE)),
         Some(ChatIntent::RegenerateLast)
@@ -519,7 +519,7 @@ fn ctrl_e_with_confirm_esc_cancels() {
         None
     );
     assert_eq!(s.confirm, Some(ConfirmAction::DeleteExchange));
-    // Esc отменяет — попап закрыт, намерения нет.
+    // Esc cancels — the popup closes, no intent.
     assert_eq!(
         s.handle_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE)),
         None
@@ -531,7 +531,7 @@ fn ctrl_e_with_confirm_esc_cancels() {
 fn confirm_popup_ignores_other_keys() {
     let mut s = with_confirm();
     s.handle_key(KeyEvent::new(KeyCode::Char('r'), KeyModifiers::CONTROL));
-    // Произвольная клавиша не закрывает попап и не печатается в поле ввода.
+    // An arbitrary key doesn't close the popup and isn't typed into the input box.
     assert_eq!(
         s.handle_key(KeyEvent::new(KeyCode::Char('x'), KeyModifiers::NONE)),
         None
@@ -554,7 +554,7 @@ fn ctrl_q_breaks_through_confirm_popup_to_quit() {
 
 #[test]
 fn ctrl_r_and_e_emit_directly_without_confirm() {
-    // По умолчанию (без снимка настроек) подтверждение выключено.
+    // By default (with no settings snapshot) confirmation is off.
     let mut s = ChatScreen::new();
     assert_eq!(
         s.handle_key(KeyEvent::new(KeyCode::Char('r'), KeyModifiers::CONTROL)),
@@ -566,12 +566,12 @@ fn ctrl_r_and_e_emit_directly_without_confirm() {
 #[test]
 fn esc_opens_chat_list_else_cancels_generation() {
     let mut s = ChatScreen::new();
-    // Без генерации Esc просит открыть экран списка чатов (его создаёт `app`).
+    // With no generation running, Esc asks to open the chat-list screen (`app` creates it).
     assert_eq!(
         s.handle_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE)),
         Some(ChatIntent::OpenChatList)
     );
-    // Во время генерации Esc сперва отменяет её.
+    // During generation, Esc first cancels it.
     s.begin_generation(gen_id());
     assert_eq!(
         s.handle_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE)),
@@ -590,7 +590,7 @@ fn ctrl_q_and_f10_quit_from_chat() {
         s.handle_key(KeyEvent::new(KeyCode::F(10), KeyModifiers::NONE)),
         Some(ChatIntent::Quit)
     );
-    // Ctrl+C без выделения — no-op (освобождён под копирование, не выход).
+    // Ctrl+C with no selection — a no-op (freed up for copying, not quitting).
     assert_eq!(
         s.handle_key(KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL)),
         None
@@ -602,19 +602,19 @@ fn ctrl_c_copies_selection_ctrl_x_cuts() {
     let mut s = ChatScreen::new();
     s.input.set_text("hello world");
     s.input
-        .on_key(KeyEvent::new(KeyCode::Home, KeyModifiers::CONTROL)); // курсор в начало
+        .on_key(KeyEvent::new(KeyCode::Home, KeyModifiers::CONTROL)); // cursor to the start
     for _ in 0..5 {
         s.input
-            .on_key(KeyEvent::new(KeyCode::Right, KeyModifiers::SHIFT)); // выделить "hello"
+            .on_key(KeyEvent::new(KeyCode::Right, KeyModifiers::SHIFT)); // select "hello"
     }
-    // Ctrl+C → намерение записать выделение в буфер; выделение снято, текст цел.
+    // Ctrl+C → an intent to write the selection to the clipboard; the selection clears, the text is intact.
     assert_eq!(
         s.handle_key(KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL)),
         Some(ChatIntent::CopyToClipboard("hello".into()))
     );
     assert!(!s.input.has_selection());
     assert_eq!(s.input.text(), "hello world");
-    // Выделяем следующие 5 символов (" worl") и вырезаем — текст укорачивается.
+    // Select the next 5 characters (" worl") and cut them — the text shrinks.
     for _ in 0..5 {
         s.input
             .on_key(KeyEvent::new(KeyCode::Right, KeyModifiers::SHIFT));
@@ -632,14 +632,17 @@ fn f1_opens_help_and_esc_closes() {
     assert!(s.help.is_none());
     s.handle_key(KeyEvent::new(KeyCode::F(1), KeyModifiers::NONE));
     assert!(s.help.is_some());
-    // Открывается на вкладке «Горячие клавиши».
+    // Opens on the "Hotkeys" tab.
     assert_eq!(s.help.as_ref().unwrap().tab, HelpTab::Hotkeys);
-    // Прочая клавиша не закрывает диалог (в нём вкладки/навигация) и не печатается.
+    // Any other key doesn't close the dialog (it has tabs/navigation) and isn't typed.
     let intent = s.handle_key(KeyEvent::new(KeyCode::Char('x'), KeyModifiers::NONE));
     assert_eq!(intent, None);
-    assert!(s.help.is_some(), "прочая клавиша не закрывает диалог");
-    assert!(s.input.is_empty(), "ввод не печатался при открытом диалоге");
-    // Esc закрывает.
+    assert!(s.help.is_some(), "another key must not close the dialog");
+    assert!(
+        s.input.is_empty(),
+        "input must not be typed while the dialog is open"
+    );
+    // Esc closes it.
     s.handle_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
     assert!(s.help.is_none());
 }
@@ -647,11 +650,11 @@ fn f1_opens_help_and_esc_closes() {
 #[test]
 fn question_mark_opens_help_only_when_input_empty() {
     let mut s = ChatScreen::new();
-    // Пустой ввод → `?` открывает диалог.
+    // Empty input → `?` opens the dialog.
     s.handle_key(KeyEvent::new(KeyCode::Char('?'), KeyModifiers::NONE));
     assert!(s.help.is_some());
-    s.handle_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE)); // закрыть
-    // Непустой ввод → `?` печатается, диалог не открывается.
+    s.handle_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE)); // close it
+    // Non-empty input → `?` is typed, the dialog doesn't open.
     type_str(&mut s, "abc");
     s.handle_key(KeyEvent::new(KeyCode::Char('?'), KeyModifiers::NONE));
     assert!(s.help.is_none());
@@ -662,27 +665,27 @@ fn question_mark_opens_help_only_when_input_empty() {
 fn help_navigation_scrolls_and_switches_tabs() {
     let mut s = ChatScreen::new();
     s.handle_key(KeyEvent::new(KeyCode::F(1), KeyModifiers::NONE));
-    // ↑↓/PgUp/PgDn прокручивают активную вкладку, не закрывая диалог.
+    // ↑↓/PgUp/PgDn scroll the active tab without closing the dialog.
     s.handle_key(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE));
     s.handle_key(KeyEvent::new(KeyCode::PageDown, KeyModifiers::NONE));
-    assert!(s.help.is_some(), "прокрутка не должна закрывать диалог");
+    assert!(s.help.is_some(), "scrolling must not close the dialog");
     assert_eq!(s.help.as_ref().unwrap().scroll, 1 + PAGE_SCROLL);
     s.handle_key(KeyEvent::new(KeyCode::Up, KeyModifiers::NONE));
     assert_eq!(s.help.as_ref().unwrap().scroll, PAGE_SCROLL);
     s.handle_key(KeyEvent::new(KeyCode::Home, KeyModifiers::NONE));
     assert_eq!(s.help.as_ref().unwrap().scroll, 0);
-    // Прокрутим и переключим вкладку → прокрутка сбрасывается (Tab — следующая,
-    // порядок About/Hotkeys/Commands/License/Components: следующая за Hotkeys — Commands).
+    // Scroll a bit and switch tabs → scroll resets (Tab — next tab,
+    // order About/Hotkeys/Commands/License/Components: the one after Hotkeys is Commands).
     s.handle_key(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE));
     s.handle_key(KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE));
     let h = s.help.as_ref().unwrap();
     assert_eq!(h.tab, HelpTab::Commands);
-    assert_eq!(h.scroll, 0, "смена вкладки сбрасывает прокрутку");
-    // ← возвращает на предыдущую вкладку.
+    assert_eq!(h.scroll, 0, "switching tabs resets scroll");
+    // ← goes back to the previous tab.
     s.handle_key(KeyEvent::new(KeyCode::Left, KeyModifiers::NONE));
     assert_eq!(s.help.as_ref().unwrap().tab, HelpTab::Hotkeys);
-    // Esc закрывает; повторное открытие — на той же вкладке (запоминается), с нулём
-    // прокрутки. Здесь вернулись на Hotkeys, значит и откроется на Hotkeys.
+    // Esc closes it; reopening — on the same tab (remembered), with scroll at
+    // zero. Here we came back to Hotkeys, so it reopens on Hotkeys.
     s.handle_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
     assert!(s.help.is_none());
     s.handle_key(KeyEvent::new(KeyCode::F(1), KeyModifiers::NONE));
@@ -690,19 +693,19 @@ fn help_navigation_scrolls_and_switches_tabs() {
     assert_eq!((h.tab, h.scroll), (HelpTab::Hotkeys, 0));
 }
 
-/// Диалог справки запоминает последнюю выбранную вкладку и открывается на ней.
+/// The help dialog remembers the last-selected tab and opens on it.
 #[test]
 fn help_remembers_last_tab() {
     let mut s = ChatScreen::new();
-    // Открываем (Hotkeys по умолчанию), переключаемся на «Компоненты», закрываем.
+    // Open it (Hotkeys by default), switch to "Components", close it.
     s.handle_key(KeyEvent::new(KeyCode::F(1), KeyModifiers::NONE));
-    // About ← Hotkeys ← ... : два `←` от Hotkeys → Components (по кругу: Hotkeys→About→Components).
+    // About ← Hotkeys ← ... : two `←` from Hotkeys → Components (wrapping: Hotkeys→About→Components).
     s.handle_key(KeyEvent::new(KeyCode::Left, KeyModifiers::NONE));
     s.handle_key(KeyEvent::new(KeyCode::Left, KeyModifiers::NONE));
     assert_eq!(s.help.as_ref().unwrap().tab, HelpTab::Components);
     s.handle_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
     assert!(s.help.is_none());
-    // Повторное открытие — снова на «Компонентах».
+    // Reopening — on "Components" again.
     s.handle_key(KeyEvent::new(KeyCode::F(1), KeyModifiers::NONE));
     assert_eq!(s.help.as_ref().unwrap().tab, HelpTab::Components);
 }
@@ -713,14 +716,14 @@ fn help_scroll_clamps_and_draws_scrollbar_on_short_terminal() {
     use ratatui::backend::TestBackend;
     let mut s = ChatScreen::new();
     s.handle_key(KeyEvent::new(KeyCode::F(1), KeyModifiers::NONE));
-    s.help.as_mut().unwrap().scroll = 10_000; // «перекручено» — рендер клампит
+    s.help.as_mut().unwrap().scroll = 10_000; // "over-scrolled" — the render clamps it
     let mut term = Terminal::new(TestBackend::new(90, 12)).unwrap();
     term.draw(|f| s.render(f)).unwrap();
-    // Список «Горячих клавиш» не помещается в невысокий диалог → прокрутка клампится
-    // к максимуму (заведомо меньше запрошенного) и рисуется бегунок скроллбара.
+    // The "Hotkeys" list doesn't fit in a short dialog → scroll clamps to
+    // the max (well below what was requested) and the scrollbar thumb is drawn.
     assert!(
         s.help.as_ref().unwrap().scroll < HELP_KEYS.len(),
-        "прокрутка клампится к максимуму"
+        "scroll clamps to the maximum"
     );
     let buf = term.backend().buffer();
     let mut thumb = false;
@@ -729,10 +732,7 @@ fn help_scroll_clamps_and_draws_scrollbar_on_short_terminal() {
             thumb |= buf[(x, y)].symbol() == "█";
         }
     }
-    assert!(
-        thumb,
-        "на коротком терминале у справки есть бегунок скроллбара"
-    );
+    assert!(thumb, "on a short terminal help has a scrollbar thumb");
 }
 
 #[test]
@@ -749,7 +749,7 @@ fn settings_event_updates_theme_palette() {
 #[test]
 fn ctrl_p_opens_settings_only_with_snapshot() {
     let mut s = ChatScreen::new();
-    // Без снимка настроек — Ctrl+P ничего не делает.
+    // Without a settings snapshot — Ctrl+P does nothing.
     assert_eq!(
         s.handle_key(KeyEvent::new(KeyCode::Char('p'), KeyModifiers::CONTROL)),
         None
@@ -769,8 +769,8 @@ fn ctrl_p_opens_settings_only_with_snapshot() {
 
 #[test]
 fn ctrl_shortcuts_work_under_cyrillic_layout() {
-    // При русской раскладке физические клавиши дают кириллицу: Ctrl+з (физ. P),
-    // Ctrl+й (физ. Q) — шорткаты обязаны срабатывать.
+    // Under a Cyrillic layout physical keys report Cyrillic characters: Ctrl+з (physical P),
+    // Ctrl+й (physical Q) — the shortcuts must still fire.
     let mut s = ChatScreen::new();
     s.set_settings(
         AppConfig::default(),
@@ -782,12 +782,12 @@ fn ctrl_shortcuts_work_under_cyrillic_layout() {
     assert_eq!(
         s.handle_key(KeyEvent::new(KeyCode::Char('з'), KeyModifiers::CONTROL)),
         Some(ChatIntent::OpenSettings),
-        "Ctrl+з (физ. P) открывает настройки"
+        "Ctrl+з (physical P) opens settings"
     );
     assert_eq!(
         s.handle_key(KeyEvent::new(KeyCode::Char('й'), KeyModifiers::CONTROL)),
         Some(ChatIntent::Quit),
-        "Ctrl+й (физ. Q) — выход"
+        "Ctrl+й (physical Q) — quit"
     );
 }
 
@@ -798,7 +798,7 @@ fn rename_chat_updates_title_bar_of_active_chat() {
     s.activate_chat(id, "Старое".into(), &[], "");
     s.rename_chat(id, "Новое".into());
     assert_eq!(s.title, "Новое");
-    // Чужой чат не трогает шапку активного.
+    // A foreign chat doesn't touch the active chat's header.
     s.rename_chat(gen_id(), "Постороннее".into());
     assert_eq!(s.title, "Новое");
 }
@@ -806,7 +806,7 @@ fn rename_chat_updates_title_bar_of_active_chat() {
 #[test]
 fn f5_copies_active_chat_in_main_window() {
     let mut s = ChatScreen::new();
-    // Без активного чата F5 — no-op.
+    // With no active chat, F5 — a no-op.
     assert_eq!(
         s.handle_key(KeyEvent::new(KeyCode::F(5), KeyModifiers::NONE)),
         None
@@ -821,8 +821,8 @@ fn f5_copies_active_chat_in_main_window() {
 
 #[test]
 fn late_list_op_results_fall_to_feed() {
-    // Когда экран списка закрыт, поздние результаты операций списка (копия/
-    // авто-название) `app` кладёт заметкой в ленту через push_note/push_error.
+    // When the list screen is closed, late results of list operations (copy/
+    // auto-title) `app` puts into the feed as a note via push_note/push_error.
     let mut s = ChatScreen::new();
     s.push_note("Переписка скопирована в буфер обмена");
     s.push_error("не удалось");
@@ -857,11 +857,14 @@ fn mouse_click_and_drag_in_input_build_selection() {
     use ratatui::crossterm::event::MouseButton;
     let mut s = ChatScreen::new();
     type_str(&mut s, "hello world");
-    // Рендерим, чтобы поле ввода запомнило свою область (last_area).
+    // Render so the input box remembers its area (last_area).
     let mut term = Terminal::new(TestBackend::new(50, 16)).unwrap();
     term.draw(|f| s.render(f)).unwrap();
-    let area = s.input.last_area_for_test().expect("поле отрисовано");
-    // Клик в начало поля — курсор туда, выделения ещё нет.
+    let area = s
+        .input
+        .last_area_for_test()
+        .expect("the field has been rendered");
+    // A click at the start of the field — the cursor goes there, no selection yet.
     s.handle_mouse(mouse_at(
         MouseEventKind::Down(MouseButton::Left),
         area.x,
@@ -869,7 +872,7 @@ fn mouse_click_and_drag_in_input_build_selection() {
     ));
     assert_eq!(s.input.cursor(), (0, 0));
     assert!(!s.input.has_selection());
-    // Драг вправо на 5 колонок растит выделение "hello".
+    // Dragging right by 5 columns grows the "hello" selection.
     s.handle_mouse(mouse_at(
         MouseEventKind::Drag(MouseButton::Left),
         area.x + 5,
@@ -888,9 +891,9 @@ fn mouse_click_outside_input_does_not_move_cursor() {
     type_str(&mut s, "hello");
     let mut term = Terminal::new(TestBackend::new(50, 16)).unwrap();
     term.draw(|f| s.render(f)).unwrap();
-    // Клик в ленту (верх экрана, вне поля ввода) — курсор поля не двигается.
+    // A click into the feed (top of the screen, outside the input box) — the field's cursor doesn't move.
     s.handle_mouse(mouse_at(MouseEventKind::Down(MouseButton::Left), 0, 0));
-    assert_eq!(s.input.cursor(), (0, 5)); // курсор остался в конце текста
+    assert_eq!(s.input.cursor(), (0, 5)); // the cursor stayed at the end of the text
     assert!(!s.input.has_selection());
 }
 
@@ -901,24 +904,24 @@ fn mouse_wheel_up_scrolls_feed_and_disables_follow() {
     s.handle_mouse(wheel(MouseEventKind::ScrollUp));
     assert!(
         !s.feed_view.is_following(),
-        "прокрутка вверх отключает следование за хвостом"
+        "scrolling up disables tail-following"
     );
 }
 
 #[test]
 fn ctrl_w_toggles_mouse_capture_intent() {
     let mut s = ChatScreen::new();
-    // По умолчанию захват выключен → первое нажатие включает (true).
+    // Capture is off by default → the first press turns it on (true).
     assert_eq!(
         s.handle_key(KeyEvent::new(KeyCode::Char('w'), KeyModifiers::CONTROL)),
         Some(ChatIntent::SetMouseCapture(true))
     );
-    // Второе — выключает (false).
+    // The second one — turns it off (false).
     assert_eq!(
         s.handle_key(KeyEvent::new(KeyCode::Char('w'), KeyModifiers::CONTROL)),
         Some(ChatIntent::SetMouseCapture(false))
     );
-    // Работает и при русской раскладке: Ctrl+ц (физ. W).
+    // Also works under a Cyrillic layout: Ctrl+ц (physical W).
     assert_eq!(
         s.handle_key(KeyEvent::new(KeyCode::Char('ц'), KeyModifiers::CONTROL)),
         Some(ChatIntent::SetMouseCapture(true))
@@ -932,7 +935,7 @@ fn mouse_wheel_ignored_while_overlay_open() {
     s.handle_mouse(wheel(MouseEventKind::ScrollUp));
     assert!(
         s.feed_view.is_following(),
-        "при открытой справке колесо не трогает ленту"
+        "with help open, the wheel doesn't touch the feed"
     );
 }
 
@@ -949,31 +952,31 @@ fn type_str(s: &mut ChatScreen, text: &str) {
 
 #[test]
 fn input_with_risky_glyph_requests_full_redraw() {
-    // Правка ЛЕВЕЕ VS16-эмодзи в поле ввода двигает его на место чужого символа:
-    // diff шлёт хвостовую половину, бэкенд печатает её без `MoveTo` и ряд едет
-    // вправо (ratatui#2651, механика — в `shared::ui`). Поэтому поле с таким глифом
-    // рисуется полной перерисовкой; на обычном тексте — нет.
+    // An edit LEFT of a VS16 emoji in the input box moves it onto a foreign symbol's spot:
+    // the diff sends the trailing half, the backend prints it with no `MoveTo` and the row drifts
+    // right (ratatui#2651, mechanics in `shared::ui`). So a field with such a glyph
+    // is drawn with a full redraw; with plain text — it isn't.
     let mut s = ChatScreen::new();
     type_str(&mut s, "hello");
-    assert!(
-        !s.take_full_redraw(),
-        "обычный текст полной перерисовки не требует"
-    );
+    assert!(!s.take_full_redraw(), "plain text needs no full redraw");
 
     type_str(&mut s, "\u{2764}\u{FE0F}");
-    assert!(s.take_full_redraw(), "поле с ❤️ требует полной перерисовки");
+    assert!(s.take_full_redraw(), "a field with ❤️ needs a full redraw");
 
-    // И последующие правки тоже — глиф всё ещё в поле.
+    // And subsequent edits do too — the glyph is still in the field.
     type_str(&mut s, "x");
-    assert!(s.take_full_redraw(), "правка при живом глифе — тоже");
+    assert!(
+        s.take_full_redraw(),
+        "an edit while the glyph is live — too"
+    );
 
-    // Очистка поля снимает требование.
+    // Clearing the field lifts the requirement.
     s.handle_key(KeyEvent::new(KeyCode::Char('k'), KeyModifiers::CONTROL));
     s.take_full_redraw();
     type_str(&mut s, "plain");
     assert!(
         !s.take_full_redraw(),
-        "после очистки обычный текст перерисовки не требует"
+        "after clearing, plain text needs no redraw"
     );
 }
 
@@ -981,10 +984,10 @@ fn input_with_risky_glyph_requests_full_redraw() {
 fn ctrl_g_opens_suggestions_for_misspelled_word() {
     let mut s = ChatScreen::new();
     s.set_spellchecker(mk_checker());
-    type_str(&mut s, "helo"); // курсор в конце слова с ошибкой
+    type_str(&mut s, "helo"); // cursor at the end of the misspelled word
     s.handle_key(KeyEvent::new(KeyCode::Char('g'), KeyModifiers::CONTROL));
     assert!(s.suggest.is_some());
-    // последний пункт — «добавить в словарь»
+    // the last item — "add to dictionary"
     let items = &s.suggest.as_ref().unwrap().items;
     assert_eq!(items.last(), Some(&SuggestItem::AddToDictionary));
 }
@@ -995,7 +998,7 @@ fn applying_suggestion_replaces_word() {
     s.set_spellchecker(mk_checker());
     type_str(&mut s, "helo");
     s.open_suggestions();
-    // первый пункт — подсказка «hello»; Enter применяет
+    // the first item — the "hello" suggestion; Enter applies it
     assert_eq!(
         s.suggest.as_ref().unwrap().items.first(),
         Some(&SuggestItem::Replace("hello".into()))
@@ -1012,13 +1015,13 @@ fn add_to_dictionary_clears_the_error() {
     type_str(&mut s, "helo");
     s.open_suggestions();
     let last = s.suggest.as_ref().unwrap().items.len() - 1;
-    // переходим на «добавить в словарь» и применяем
+    // navigate to "add to dictionary" and apply it
     for _ in 0..last {
         s.handle_key(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE));
     }
     s.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
     assert!(s.suggest.is_none());
-    // слово теперь в персональном словаре — больше не ошибка
+    // the word is now in the personal dictionary — no longer an error
     assert!(
         s.spell
             .as_ref()
@@ -1054,8 +1057,8 @@ fn render_with_suggestions_does_not_panic() {
 
 #[test]
 fn suggest_popup_selection_matches_other_lists() {
-    // Выделение в попапе орфографии — как в списке чатов, настройках и «модели
-    // себя»: мягкая подложка `keycap_bg` + зелёный рейл `▌`, а не инверсия строки.
+    // Selection in the spellcheck popup — like in the chat list, settings, and the "self-
+    // model" screen: a soft `keycap_bg` backdrop + a green `▌` rail, not a reversed line.
     use ratatui::Terminal;
     use ratatui::backend::TestBackend;
     use ratatui::style::Modifier;
@@ -1071,15 +1074,15 @@ fn suggest_popup_selection_matches_other_lists() {
     let rail = (0..buf.area.height)
         .flat_map(|y| (0..buf.area.width).map(move |x| (x, y)))
         .find(|&(x, y)| buf[(x, y)].symbol() == "▌")
-        .expect("у выделенной строки попапа должен быть рейл `▌`");
+        .expect("the popup's selected line must have a `▌` rail");
     let cell = &buf[rail];
-    assert_eq!(cell.style().fg, Some(palette.success), "рейл — зелёный");
+    assert_eq!(cell.style().fg, Some(palette.success), "the rail is green");
     assert_eq!(
         cell.style().bg,
         Some(palette.keycap_bg),
-        "выделение — подложка keycap_bg"
+        "the selection is a keycap_bg backdrop"
     );
-    // Инверсии в выделенной строке быть не должно (реверс свапал бы fg↔bg поспаново).
+    // The selected line must not be reversed (reverse video would swap fg↔bg per span).
     let (_, row) = rail;
     for x in 0..buf.area.width {
         assert!(
@@ -1087,7 +1090,7 @@ fn suggest_popup_selection_matches_other_lists() {
                 .style()
                 .add_modifier
                 .contains(Modifier::REVERSED),
-            "выделенная строка не должна инвертироваться"
+            "the selected line must not be reversed"
         );
     }
 }
@@ -1096,12 +1099,12 @@ fn suggest_popup_selection_matches_other_lists() {
 fn ctrl_b_opens_emoji_picker_and_enter_inserts_at_cursor() {
     let mut s = ChatScreen::new();
     type_str(&mut s, "ab");
-    // курсор между 'a' и 'b'
+    // cursor between 'a' and 'b'
     s.handle_key(KeyEvent::new(KeyCode::Left, KeyModifiers::NONE));
-    // Ctrl+B открывает попап (в т.ч. при русской раскладке: Ctrl+и → физ. B).
+    // Ctrl+B opens the popup (also under a Cyrillic layout: Ctrl+и → physical B).
     s.handle_key(KeyEvent::new(KeyCode::Char('и'), KeyModifiers::CONTROL));
     assert!(s.emoji.is_some());
-    // Enter вставляет первый эмодзи на месте курсора и закрывает попап.
+    // Enter inserts the first emoji at the cursor and closes the popup.
     let intent = s.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
     assert_eq!(intent, None);
     assert!(s.emoji.is_none());
@@ -1111,13 +1114,13 @@ fn ctrl_b_opens_emoji_picker_and_enter_inserts_at_cursor() {
 #[test]
 fn emoji_picker_remembers_last_selection() {
     let mut s = ChatScreen::new();
-    // Открываем, сдвигаем выделение и вставляем.
+    // Open it, shift the selection, and insert.
     s.handle_key(KeyEvent::new(KeyCode::Char('b'), KeyModifiers::CONTROL));
     s.handle_key(KeyEvent::new(KeyCode::Right, KeyModifiers::NONE));
     s.handle_key(KeyEvent::new(KeyCode::Right, KeyModifiers::NONE));
     s.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
     assert!(s.emoji.is_none());
-    // Повторное открытие восстанавливает прежнее выделение (индекс 2).
+    // Reopening restores the previous selection (index 2).
     s.handle_key(KeyEvent::new(KeyCode::Char('b'), KeyModifiers::CONTROL));
     assert_eq!(s.emoji.as_ref().unwrap().selected(), 2);
 }
@@ -1130,13 +1133,13 @@ fn esc_closes_emoji_picker_without_quitting() {
     let intent = s.handle_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
     assert_eq!(intent, None);
     assert!(s.emoji.is_none());
-    assert!(s.input.is_empty(), "при отмене эмодзи не вставлен");
+    assert!(s.input.is_empty(), "no emoji is inserted on cancel");
 }
 
 #[test]
 fn risky_glyph_detector_covers_emoji_classes_but_not_plain_text() {
     use super::feed::is_risky_glyph;
-    // Классы риска: VS16, ZWJ, тон кожи, supplementary-пиктограммы, BMP-эмодзи ширины 2.
+    // Risk classes: VS16, ZWJ, skin tone, supplementary-plane pictographs, width-2 BMP emoji.
     for c in [
         '\u{FE0F}',
         '\u{200D}',
@@ -1147,12 +1150,12 @@ fn risky_glyph_detector_covers_emoji_classes_but_not_plain_text() {
         '⭐',
         '✨',
     ] {
-        assert!(is_risky_glyph(c), "{c:?} должен считаться рискованным");
+        assert!(is_risky_glyph(c), "{c:?} must be considered risky");
     }
-    // Обычный текст, пунктуация, типографика и CJK — нет (иначе полная перерисовка
-    // гонялась бы на каждый чанк китайского/японского текста без всякой пользы).
+    // Plain text, punctuation, typography, and CJK — not risky (otherwise a full redraw
+    // would run for every chunk of Chinese/Japanese text for no benefit).
     for c in ['a', 'я', ' ', '·', '—', '→', '│', '█', '中', 'あ'] {
-        assert!(!is_risky_glyph(c), "{c:?} рискованным быть не должен");
+        assert!(!is_risky_glyph(c), "{c:?} must not be considered risky");
     }
 }
 
@@ -1161,14 +1164,14 @@ fn feed_content_change_requests_full_redraw_only_with_risky_glyphs() {
     use ratatui::Terminal;
     use ratatui::backend::TestBackend;
 
-    // Артефакты на legacy-терминалах появлялись при ИЗМЕНЕНИИ содержимого (стрим,
-    // добавленная заметка), а «чинила» их только прокрутка — она была единственным
-    // триггером полной перерисовки. Теперь триггером стало и изменение ленты.
+    // Artifacts on legacy terminals appeared on a content CHANGE (streaming,
+    // a note added), and only scrolling used to "fix" them — it was the sole
+    // trigger for a full redraw. Now a feed change is a trigger too.
     let draw = |s: &mut ChatScreen, term: &mut Terminal<TestBackend>| {
         term.draw(|f| s.render(f)).unwrap();
     };
 
-    // Чистый текст: стрим не требует полной перерисовки.
+    // Plain text: streaming doesn't require a full redraw.
     let mut plain = ChatScreen::new();
     let mut term = Terminal::new(TestBackend::new(60, 16)).unwrap();
     let id = gen_id();
@@ -1177,42 +1180,39 @@ fn feed_content_change_requests_full_redraw_only_with_risky_glyphs() {
     draw(&mut plain, &mut term);
     assert!(
         !plain.take_full_redraw(),
-        "на чистом тексте изменение ленты перерисовку не требует"
+        "with plain text a feed change needs no redraw"
     );
 
-    // Эмодзи в ленте: стрим требует.
+    // Emoji in the feed: streaming requires it.
     let mut emoji = ChatScreen::new();
     let id = gen_id();
     emoji.begin_generation(id);
     emoji.push_chunk(id, "смотри: 😀");
     assert!(
         emoji.take_full_redraw(),
-        "изменение ленты с эмодзи заказывает перерисовку — ДО отрисовки, чтобы          артефакт не мелькнул даже на кадр"
+        "a feed change with emoji requests a redraw — BEFORE rendering, so the artifact doesn't flash even for one frame"
     );
-    assert!(!emoji.take_full_redraw(), "флаг забирается однократно");
+    assert!(!emoji.take_full_redraw(), "the flag is taken exactly once");
 
-    // Повторная отрисовка без изменений — запрос не возобновляется (иначе петля
-    // перерисовывала бы экран целиком вечно).
+    // Redrawing again with no changes — the request isn't reissued (otherwise the loop
+    // would redraw the whole screen forever).
     draw(&mut emoji, &mut term);
     assert!(
         !emoji.take_full_redraw(),
-        "без изменения содержимого перерисовка не нужна"
+        "with no content change a redraw isn't needed"
     );
 
-    // Заметка в ленту (F5 «Переписка скопирована…») — тоже изменение содержимого.
+    // A note added to the feed (F5 "Conversation copied...") is also a content change.
     emoji.push_note("Переписка скопирована в буфер обмена");
     draw(&mut emoji, &mut term);
-    assert!(
-        emoji.take_full_redraw(),
-        "добавленная заметка заказывает перерисовку"
-    );
+    assert!(emoji.take_full_redraw(), "an added note requests a redraw");
 }
 
 #[test]
 fn every_feed_mutator_marks_content_change() {
-    // Гейт на подход «флаг ставят мутаторы»: забытый вызов `mark_feed_changed` вернул
-    // бы мелькающий артефакт на legacy-терминалах. Лента с самого начала содержит
-    // эмодзи, поэтому ЛЮБОЕ изменение обязано заказать полную перерисовку.
+    // A gate for the "mutators set the flag" approach: a forgotten `mark_feed_changed` call
+    // would bring back a flashing artifact on legacy terminals. The feed contains an
+    // emoji from the very start, so ANY change must request a full redraw.
     let mut s = ChatScreen::new();
     let id = gen_id();
 
@@ -1246,95 +1246,92 @@ fn every_feed_mutator_marks_content_change() {
     s.push_error("ошибка");
     assert!(s.take_full_redraw(), "push_error");
 
-    // Сворачивание «мыслей» (`Ctrl+T`) перекраивает все блоки — тоже изменение.
+    // Collapsing "thoughts" (`Ctrl+T`) recomputes all blocks — also a change.
     s.handle_key(KeyEvent::new(KeyCode::Char('t'), KeyModifiers::CONTROL));
-    assert!(s.take_full_redraw(), "Ctrl+T (сворачивание мыслей)");
+    assert!(s.take_full_redraw(), "Ctrl+T (collapsing thoughts)");
 }
 
 #[test]
 fn suggest_popup_actions_request_full_redraw() {
-    // Тот же класс, что у попапа эмодзи: пункт «➕ добавить в словарь» несёт широкий
-    // глиф. При ЗАКРЫТИИ попапа его хвостовую ячейку diff шлёт только у стилизованной
-    // строки, поэтому страхуемся полной перерисовкой; при сдвиге выделения она пользы
-    // не даёт (сентинел пропускает хвост широкого глифа, ratatui#2651).
+    // The same class as the emoji popup: the "➕ add to dictionary" item carries a wide
+    // glyph. On CLOSING the popup, the diff sends its trailing cell only for a styled
+    // line, so we take out insurance via a full redraw; on a selection shift it wouldn't
+    // help anyway (the sentinel skips a wide glyph's tail, ratatui#2651).
     let mut s = ChatScreen::new();
     s.set_spellchecker(mk_checker());
     type_str(&mut s, "helo");
     s.open_suggestions();
-    assert!(s.suggest.is_some(), "попап подсказок открылся");
-    s.take_full_redraw(); // сбросить флаг от набора текста
+    assert!(s.suggest.is_some(), "the suggestion popup opened");
+    s.take_full_redraw(); // reset the flag left over from typing
 
-    // Сдвиг выделения перерисовки НЕ требует: глиф остаётся широким, сентинел обязан
-    // пропускать его хвост (ratatui#2651) — подсветку снимает перепечатка глифа.
+    // A selection shift does NOT require a redraw: the glyph stays wide, the sentinel is
+    // required to skip its tail (ratatui#2651) — reprinting the glyph clears the highlight.
     s.handle_key(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE));
-    assert!(
-        !s.take_full_redraw(),
-        "сдвиг выделения перерисовку не требует"
-    );
+    assert!(!s.take_full_redraw(), "a selection shift needs no redraw");
 
-    // Клавиша, которая попап не меняет, перерисовку не просит.
+    // A key that doesn't change the popup doesn't request a redraw.
     s.handle_key(KeyEvent::new(KeyCode::Left, KeyModifiers::NONE));
-    assert!(
-        !s.take_full_redraw(),
-        "no-op клавиша перерисовку не требует"
-    );
+    assert!(!s.take_full_redraw(), "a no-op key needs no redraw");
 
-    // Закрытие отменой (`Esc`).
+    // Closing via cancel (`Esc`).
     s.handle_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
     assert!(s.suggest.is_none());
-    assert!(s.take_full_redraw(), "отмена закрывает попап → перерисовка");
+    assert!(
+        s.take_full_redraw(),
+        "cancelling closes the popup → a redraw"
+    );
 
-    // Закрытие применением подсказки (`Enter`).
+    // Closing by applying a suggestion (`Enter`).
     s.open_suggestions();
     s.take_full_redraw();
     s.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
     assert!(s.suggest.is_none());
     assert!(
         s.take_full_redraw(),
-        "применение закрывает попап → перерисовка"
+        "applying it closes the popup → a redraw"
     );
 }
 
 #[test]
 fn emoji_picker_actions_request_full_redraw() {
-    // Широкий глиф эмодзи оставляет на conhost «висячую» хвостовую половину, когда
-    // ИСЧЕЗАЕТ с экрана: хвосты нестилизованных глифов сетки diff не шлёт (канарейка
-    // на границу апстрим-фикса — в `widgets::emoji_picker`). Поэтому полную
-    // перерисовку просит закрытие попапа — но не сдвиг выделения, где глиф остаётся
-    // широким и сентинел его хвост пропускает (ratatui#2651).
+    // A wide emoji glyph leaves a "hanging" trailing half on conhost when it
+    // DISAPPEARS from the screen: the diff doesn't send trailing cells of unstyled grid
+    // glyphs (a canary pinning the boundary of the upstream fix — in `widgets::emoji_picker`).
+    // So a full redraw is requested by closing the popup — but not by a selection
+    // shift, where the glyph stays wide and the sentinel skips its tail (ratatui#2651).
     let mut s = ChatScreen::new();
-    assert!(!s.take_full_redraw(), "без попапа перерисовка не нужна");
+    assert!(
+        !s.take_full_redraw(),
+        "with no popup, a redraw isn't needed"
+    );
 
-    // Открытие само по себе перерисовки не требует — глиф ниоткуда не уходит.
+    // Opening it by itself doesn't require a redraw — the glyph doesn't leave anywhere.
     s.handle_key(KeyEvent::new(KeyCode::Char('b'), KeyModifiers::CONTROL));
-    assert!(
-        !s.take_full_redraw(),
-        "открытие попапа перерисовку не требует"
-    );
+    assert!(!s.take_full_redraw(), "opening the popup needs no redraw");
 
-    // Сдвиг выделения перерисовки НЕ требует: глиф остаётся широким, сентинел обязан
-    // пропускать его хвост (ratatui#2651) — подложку снимает перепечатка глифа.
+    // A selection shift does NOT require a redraw: the glyph stays wide, the sentinel is
+    // required to skip its tail (ratatui#2651) — reprinting the glyph clears the backdrop.
     s.handle_key(KeyEvent::new(KeyCode::Right, KeyModifiers::NONE));
-    assert!(
-        !s.take_full_redraw(),
-        "сдвиг выделения перерисовку не требует"
-    );
+    assert!(!s.take_full_redraw(), "a selection shift needs no redraw");
 
-    // Закрытие вставкой (`Enter`).
+    // Closing via insertion (`Enter`).
     s.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
     assert!(s.emoji.is_none());
     assert!(
         s.take_full_redraw(),
-        "вставка закрывает попап → перерисовка"
+        "inserting closes the popup → a redraw"
     );
-    assert!(!s.take_full_redraw(), "флаг забирается однократно");
+    assert!(!s.take_full_redraw(), "the flag is taken exactly once");
 
-    // Закрытие отменой (`Esc`).
+    // Closing via cancel (`Esc`).
     s.handle_key(KeyEvent::new(KeyCode::Char('b'), KeyModifiers::CONTROL));
     s.take_full_redraw();
     s.handle_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
     assert!(s.emoji.is_none());
-    assert!(s.take_full_redraw(), "отмена закрывает попап → перерисовка");
+    assert!(
+        s.take_full_redraw(),
+        "cancelling closes the popup → a redraw"
+    );
 }
 
 #[test]
@@ -1360,7 +1357,7 @@ fn rag_command_intercepted_on_enter() {
             recursive: true,
         })
     );
-    assert!(s.input.is_empty(), "поле очищено после команды");
+    assert!(s.input.is_empty(), "the field is cleared after the command");
 }
 
 #[test]
@@ -1369,7 +1366,7 @@ fn invalid_rag_command_shows_note_and_does_not_send() {
     s.set_server_status(ready_statuses());
     type_str(&mut s, "/rag");
     let intent = s.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
-    assert_eq!(intent, None, "ошибочная команда не отправляется");
+    assert_eq!(intent, None, "an invalid command isn't sent");
     assert!(s.feed.iter().any(|m| m.role == FeedRole::Note));
 }
 
@@ -1379,7 +1376,7 @@ fn rag_progress_banner_lifecycle() {
     assert!(!s.is_rag_active());
     s.set_rag_progress(RagProgress::Started { total: 3 });
     assert!(s.is_rag_active());
-    // Файл только начат (chunks_total=0) — суффикса чанков в баннере нет.
+    // The file has just started (chunks_total=0) — no chunk suffix in the banner.
     s.set_rag_progress(RagProgress::Indexing {
         index: 1,
         total: 3,
@@ -1391,10 +1388,10 @@ fn rag_progress_banner_lifecycle() {
     assert!(s.is_rag_active());
     assert!(
         !s.rag.as_ref().unwrap().text.contains("чанки"),
-        "без chunks_total суффикса чанков быть не должно: {:?}",
+        "with no chunks_total there must be no chunk suffix: {:?}",
         s.rag.as_ref().unwrap().text
     );
-    // Прогресс по чанкам (chunks_total>0) — баннер несёт счётчик чанков.
+    // Chunk progress (chunks_total>0) — the banner carries the chunk counter.
     s.set_rag_progress(RagProgress::Indexing {
         index: 1,
         total: 3,
@@ -1406,7 +1403,7 @@ fn rag_progress_banner_lifecycle() {
     let banner = s.rag.as_ref().unwrap().text.clone();
     assert!(
         banner.contains("16") && banner.contains("42"),
-        "баннер должен показывать чанки 16/42: {banner:?}"
+        "the banner must show chunks 16/42: {banner:?}"
     );
     s.set_rag_progress(RagProgress::Finished {
         files: 3,
@@ -1414,7 +1411,7 @@ fn rag_progress_banner_lifecycle() {
         errors: 0,
         cancelled: false,
     });
-    assert!(!s.is_rag_active(), "по завершении баннер гаснет");
+    assert!(!s.is_rag_active(), "the banner clears on completion");
     assert!(
         s.feed
             .iter()
@@ -1426,15 +1423,12 @@ fn rag_progress_banner_lifecycle() {
 fn command_input_is_not_spellchecked() {
     let mut s = ChatScreen::new();
     s.set_spellchecker(mk_checker());
-    // Обычный текст с ошибкой → проверяется (есть подчёркивания).
+    // Plain text with an error → checked (underlines are present).
     type_str(&mut s, "helo");
-    s.last_edit = None; // снять дебаунс, чтобы перепроверка прошла сразу
+    s.last_edit = None; // lift the debounce so the recheck runs immediately
     assert!(s.maybe_recheck_spelling());
-    assert!(
-        !s.input.misspelled_is_empty(),
-        "обычный текст проверяется орфографией"
-    );
-    // Делаем из строки команду — орфография снимается.
+    assert!(!s.input.misspelled_is_empty(), "plain text is spellchecked");
+    // Turn the line into a command — spellcheck is lifted.
     s.input.clear();
     type_str(&mut s, "/rag add helo");
     s.last_edit = None;
@@ -1442,7 +1436,7 @@ fn command_input_is_not_spellchecked() {
     assert!(s.maybe_recheck_spelling());
     assert!(
         s.input.misspelled_is_empty(),
-        "команда не проверяется орфографией"
+        "a command isn't spellchecked"
     );
 }
 
@@ -1469,7 +1463,7 @@ fn rag_removed_progress_pushes_note() {
             .iter()
             .any(|m| m.role == FeedRole::Note && m.text.contains("удалено фрагментов: 5"))
     );
-    // Ноль — понятная заметка «ничего не найдено».
+    // Zero — a clear "nothing found" note.
     s.set_rag_progress(RagProgress::Removed { chunks: 0 });
     assert!(
         s.feed
@@ -1499,14 +1493,14 @@ fn rag_list_and_rebuild_commands_intercepted_on_enter() {
 fn rag_listed_progress_pushes_note() {
     use crate::entities::rag::RagSourceInfo;
     let mut s = ChatScreen::new();
-    // Пустая база — понятная заметка.
+    // An empty knowledge base — a clear note.
     s.set_rag_progress(RagProgress::Listed { sources: vec![] });
     assert!(
         s.feed
             .iter()
             .any(|m| m.role == FeedRole::Note && m.text.contains("база знаний пуста"))
     );
-    // С источниками — счётчик чанков и имя источника.
+    // With sources — a chunk counter and the source name.
     s.set_rag_progress(RagProgress::Listed {
         sources: vec![RagSourceInfo {
             source: "spec.md".into(),
@@ -1546,8 +1540,8 @@ fn render_does_not_panic() {
     term.draw(|f| s.render(f)).unwrap();
 }
 
-/// Лockup в шапке справки рисуется, когда высота терминала позволяет показать и
-/// знак, и весь список клавиш; знак прижат влево по полю списка (docs/branding.md §5).
+/// The lockup in the help dialog's header is drawn when the terminal height allows both
+/// the mark and the full key list to fit; the mark is left-aligned to the list margin (docs/branding.md §5).
 #[test]
 fn help_shows_logo_when_terminal_is_tall() {
     use crate::widgets::logo::{LOCKUP_ROWS, LOGO_COLS};
@@ -1558,7 +1552,7 @@ fn help_shows_logo_when_terminal_is_tall() {
 
     let mut s = ChatScreen::new();
     s.handle_key(KeyEvent::new(KeyCode::F(1), KeyModifiers::NONE));
-    // Запас: рамка (2) + все клавиши + блок лockup'а (отбивки сверху и снизу).
+    // Margin: the border (2) + all the keys + the lockup block (top and bottom breathing room).
     let tall = HELP_KEYS.len() as u16 + 2 + LOCKUP_ROWS + 2;
     let mut term = Terminal::new(TestBackend::new(90, tall)).unwrap();
     term.draw(|f| s.render(f)).unwrap();
@@ -1573,38 +1567,38 @@ fn help_shows_logo_when_terminal_is_tall() {
             }
         }
     }
-    // Ствол глифа фирменного цвета есть в каждой его строке, плюс «fork» в слове.
+    // The glyph's brand-color stem is in every one of its rows, plus "fork" in the word.
     assert!(
         orange.len() > LOCKUP_ROWS as usize,
-        "фирменного цвета слишком мало — знак не нарисован (найдено {})",
+        "too little brand color — the mark isn't drawn (found {})",
         orange.len()
     );
-    // Левая рамка попапа: скруглённый угол (палитра по умолчанию — Auto). Панели
-    // самого чата рисуются во всю ширину, т.е. их углы — в колонке 0; попап
-    // центрирован и вставлен внутрь, поэтому его угол — самый правый из найденных.
+    // The popup's left border: a rounded corner (default palette — Auto). The chat's
+    // own panels are drawn full-width, i.e. their corners sit in column 0; the popup
+    // is centered and inset, so its corner is the rightmost one found.
     let corner = (buf.area.top()..buf.area.bottom())
         .flat_map(|y| (buf.area.left()..buf.area.right()).map(move |x| (x, y)))
         .filter(|&(x, y)| buf[(x, y)].symbol() == "╭")
         .max_by_key(|&(x, _)| x)
-        .expect("рамка попапа");
-    // Знак прижат влево: ствол глифа (колонки 4–5 его чернил) стоит ровно на поле
-    // списка клавиш — рамка + два пробела. При центрировании он уехал бы вправо.
+        .expect("the popup's border");
+    // The mark is left-aligned: the glyph's stem (columns 4-5 of its ink) sits exactly on the
+    // key list's margin — the border + two spaces. Centering would have shifted it right.
     let left = orange.iter().map(|(x, _)| *x).min().unwrap();
     assert_eq!(
         left,
         corner.0 + 1 + 2 + 4,
-        "ствол глифа не на левом поле списка клавиш"
+        "the glyph's stem is not on the key list's left margin"
     );
-    // «fork» вордмарка — справа от глифа, за его правым краем.
+    // The wordmark's "fork" — to the right of the glyph, past its right edge.
     let right = orange.iter().map(|(x, _)| *x).max().unwrap();
     assert!(
         right > corner.0 + 1 + 2 + LOGO_COLS,
-        "«fork» вордмарка не нарисован справа от глифа"
+        "the wordmark's \"fork\" is not drawn to the right of the glyph"
     );
 }
 
-/// На невысоком терминале логотип не рисуется вовсе — список клавиш не сдвигается
-/// и не требует лишней прокрутки (жёсткая деградация, docs/branding.md §5).
+/// On a short terminal the logo isn't drawn at all — the key list doesn't shift
+/// and doesn't need extra scrolling (a hard degradation, docs/branding.md §5).
 #[test]
 fn help_hides_logo_when_terminal_is_short() {
     use ratatui::Terminal;
@@ -1614,8 +1608,8 @@ fn help_hides_logo_when_terminal_is_short() {
 
     let mut s = ChatScreen::new();
     s.handle_key(KeyEvent::new(KeyCode::F(1), KeyModifiers::NONE));
-    // Диалог высотой 13 (внутри 11 рядов) не вмещает лockup с отбивками → он не
-    // рисуется, вкладки не сдвигаются вниз.
+    // A dialog height of 13 (11 rows inside) doesn't fit the lockup with breathing room → it
+    // isn't drawn, the tabs don't shift down.
     let mut term = Terminal::new(TestBackend::new(90, 13)).unwrap();
     term.draw(|f| s.render(f)).unwrap();
 
@@ -1623,13 +1617,13 @@ fn help_hides_logo_when_terminal_is_short() {
     for y in buf.area.top()..buf.area.bottom() {
         for x in buf.area.left()..buf.area.right() {
             let c = &buf[(x, y)];
-            assert_ne!(c.style().fg, Some(ORANGE), "логотип не должен рисоваться");
-            assert_ne!(c.style().bg, Some(ORANGE), "логотип не должен рисоваться");
+            assert_ne!(c.style().fg, Some(ORANGE), "the logo must not be drawn");
+            assert_ne!(c.style().bg, Some(ORANGE), "the logo must not be drawn");
         }
     }
 }
-/// Каждая вкладка диалога справки рисует своё характерное содержимое, а таб-стрип —
-/// все четыре вкладки.
+/// Every tab of the help dialog draws its own distinctive content, and the tab strip
+/// carries all four tabs.
 #[test]
 fn help_tabs_render_distinct_content() {
     use ratatui::Terminal;
@@ -1652,7 +1646,7 @@ fn help_tabs_render_distinct_content() {
         out
     };
 
-    // Таб-стрип на любой вкладке несёт все пять ярлыков.
+    // The tab strip carries all five labels on any tab.
     let about = text_for(HelpTab::About);
     for label in [
         "О программе",
@@ -1661,45 +1655,60 @@ fn help_tabs_render_distinct_content() {
         "Лицензия",
         "Компоненты",
     ] {
-        assert!(about.contains(label), "нет ярлыка вкладки «{label}»");
+        assert!(about.contains(label), "missing the \"{label}\" tab label");
     }
-    // «О программе»: бренд-имя, автор, версия, ссылки.
-    assert!(about.contains("Vladimir Shylov"), "нет автора");
-    assert!(about.contains(env!("CARGO_PKG_VERSION")), "нет версии");
-    assert!(about.contains("https://mindfork.io"), "нет ссылки на сайт");
+    // "About": the brand name, author, version, links.
+    assert!(about.contains("Vladimir Shylov"), "missing the author");
+    assert!(
+        about.contains(env!("CARGO_PKG_VERSION")),
+        "missing the version"
+    );
+    assert!(
+        about.contains("https://mindfork.io"),
+        "missing the site link"
+    );
     assert!(
         about.contains("https://crates.io/crates/mindfork"),
-        "нет ссылки на крейт"
+        "missing the crate link"
     );
 
-    // «Горячие клавиши»: подпись из HELP_KEYS, но НЕ команды (они на своей вкладке).
+    // "Hotkeys": a label from HELP_KEYS, but NOT commands (they're on their own tab).
     let hotkeys = text_for(HelpTab::Hotkeys);
     assert!(
         hotkeys.contains("отправить сообщение"),
-        "нет описания клавиши"
+        "missing a key description"
     );
     assert!(
         !hotkeys.contains("/rag add"),
-        "команды не должны быть на вкладке горячих клавиш"
+        "commands must not be on the hotkeys tab"
     );
 
-    // «Команды»: команды поля ввода.
+    // "Commands": input-box commands.
     let commands = text_for(HelpTab::Commands);
-    assert!(commands.contains("/rag add"), "нет команды /rag add");
-    assert!(commands.contains("/tts"), "нет команды /tts");
+    assert!(
+        commands.contains("/rag add"),
+        "missing the /rag add command"
+    );
+    assert!(commands.contains("/tts"), "missing the /tts command");
 
-    // «Лицензия»: текст MIT.
+    // "License": the MIT text.
     let license = text_for(HelpTab::License);
-    assert!(license.contains("MIT License"), "нет заголовка лицензии");
-    assert!(license.contains("WARRANTY"), "нет тела лицензии");
+    assert!(
+        license.contains("MIT License"),
+        "missing the license header"
+    );
+    assert!(license.contains("WARRANTY"), "missing the license body");
 
-    // «Компоненты»: имя, версия и лицензия (берём из начала списка — он длинный и
-    // прокручивается, дальние крейты за пределами экрана).
+    // "Components": name, version, and license (taken from the start of the list — it's
+    // long and scrolls, distant crates are off-screen).
     let components = text_for(HelpTab::Components);
-    assert!(components.contains("ansi-to-tui"), "нет компонента");
-    assert!(components.contains("8.0.1"), "нет версии компонента");
+    assert!(components.contains("ansi-to-tui"), "missing the component");
+    assert!(
+        components.contains("8.0.1"),
+        "missing the component version"
+    );
     assert!(
         components.contains("Zlib OR Apache-2.0 OR MIT"),
-        "нет лицензии компонента"
+        "missing the component license"
     );
 }

@@ -1,11 +1,11 @@
-//! Тесты оркестратора — RAG: индексация/удаление/список/реиндекс. Часть модуля [`super`]
-//! (фикстуры в mod.rs). См. docs/history/refactoring-god-objects.md, этап 3.
+//! Orchestrator tests — RAG: indexing/deletion/listing/rebuild. Part of the [`super`]
+//! module (fixtures in mod.rs). See docs/history/refactoring-god-objects.md, stage 3.
 
 use super::*;
 
 #[tokio::test]
 async fn rag_add_indexes_files_and_reports_progress() {
-    // Без chat-движка (RAG не зависит от него); эмбеддер даёт MockSupervisor.
+    // No chat engine (RAG doesn't depend on it); MockSupervisor supplies the embedder.
     let (_d, cmd_tx, mut evt_rx, handle) = spawn_orch(None);
     let root = _d.path().to_path_buf();
     let active = wait_for(&mut evt_rx, |e| matches!(e, AppEvent::ChatActivated { .. }))
@@ -16,7 +16,7 @@ async fn rag_add_indexes_files_and_reports_progress() {
         _ => unreachable!(),
     };
 
-    // Папка с двумя поддерживаемыми файлами и одним неподдерживаемым.
+    // A folder with two supported files and one unsupported one.
     let docs = root.join("docs");
     std::fs::create_dir_all(&docs).unwrap();
     std::fs::write(docs.join("a.txt"), "кошки любят рыбу").unwrap();
@@ -53,7 +53,7 @@ async fn rag_add_indexes_files_and_reports_progress() {
             cancelled,
         }) => {
             assert_eq!(files, 2);
-            assert_eq!(chunks, 2, "по одному чанку на файл");
+            assert_eq!(chunks, 2, "one chunk per file");
             assert_eq!(errors, 0);
             assert!(!cancelled);
         }
@@ -63,7 +63,7 @@ async fn rag_add_indexes_files_and_reports_progress() {
     cmd_tx.send(AppCommand::Quit).unwrap();
     handle.await.unwrap();
 
-    // Документы записаны под профилем активного чата (изоляция).
+    // Documents are written under the active chat's profile (isolation).
     let reopened = Storage::open(Paths::with_root(&root)).unwrap();
     let chat = reopened.json().load_chat(chat_id).unwrap().unwrap();
     assert_eq!(reopened.db().rag_count(chat.profile_id).unwrap(), 2);
@@ -86,7 +86,7 @@ async fn rag_add_is_idempotent_on_reindex() {
     std::fs::write(docs.join("a.txt"), "кошки любят рыбу").unwrap();
     std::fs::write(docs.join("b.md"), "собаки любят кости").unwrap();
 
-    // Дважды индексируем ту же папку.
+    // Index the same folder twice.
     for _ in 0..2 {
         cmd_tx
             .send(AppCommand::RagAdd {
@@ -109,7 +109,7 @@ async fn rag_add_is_idempotent_on_reindex() {
     assert_eq!(
         reopened.db().rag_count(chat.profile_id).unwrap(),
         2,
-        "повторное добавление заменяет, а не дублирует"
+        "a repeat add replaces rather than duplicates"
     );
 }
 
@@ -142,7 +142,7 @@ async fn rag_delete_removes_indexed_documents() {
     .await
     .unwrap();
 
-    // Удаляем всю папку — оба файла уходят из базы.
+    // Delete the whole folder — both files leave the base.
     cmd_tx
         .send(AppCommand::RagDelete {
             path: docs.display().to_string(),
@@ -198,7 +198,7 @@ async fn rag_list_reports_sources() {
     .unwrap();
     match listed {
         AppEvent::RagProgress(RagProgress::Listed { sources }) => {
-            assert_eq!(sources.len(), 2, "два источника в базе");
+            assert_eq!(sources.len(), 2, "two sources in the base");
             assert!(sources.iter().all(|s| s.chunks == 1));
         }
         _ => unreachable!(),
@@ -234,7 +234,7 @@ async fn rag_rebuild_reindexes_from_stored_content_without_file() {
     .await
     .unwrap();
 
-    // Удаляем файл с диска — реиндексация должна опереться на сохранённый исходник.
+    // Delete the file from disk — reindexing must rely on the stored source text.
     std::fs::remove_file(&file).unwrap();
 
     cmd_tx.send(AppCommand::RagRebuild).unwrap();
@@ -250,9 +250,9 @@ async fn rag_rebuild_reindexes_from_stored_content_without_file() {
             errors,
             cancelled,
         }) => {
-            assert_eq!(files, 1, "один источник реиндексирован");
+            assert_eq!(files, 1, "one source reindexed");
             assert_eq!(chunks, 1);
-            assert_eq!(errors, 0, "исходник взят из БД, а не с диска");
+            assert_eq!(errors, 0, "the source is taken from the DB, not from disk");
             assert!(!cancelled);
         }
         _ => unreachable!(),

@@ -1,31 +1,33 @@
-//! Markdown — LaTeX→unicode: нормализация разделителей + конвертер команд. Часть модуля [`super`]; разбито из монолита
-//! markdown.rs (см. docs/history/refactoring-god-objects.md, этап 6).
+//! Markdown — LaTeX→unicode: delimiter normalization + command converter.
+//! Part of module [`super`]; split out of the markdown.rs monolith (see
+//! docs/history/refactoring-god-objects.md, stage 6).
 
-/// Сентинелы для скобок, которые должны пережить финальный срез группировки:
-/// литеральные `\{`/`\}` **и** скобки нераспознанных brace-команд (`\binom{n}{k}`
-/// остаётся читаемым, а не склеивается в `\binomnk`).
+/// Sentinels for braces that must survive the final grouping strip: literal
+/// `\{`/`\}` **and** the braces of unrecognized brace-commands (`\binom{n}{k}`
+/// stays readable, instead of gluing into `\binomnk`).
 const LBRACE: char = '\u{1}';
 const RBRACE: char = '\u{2}';
 
-/// Потолок глубины рекурсии [`apply_brace_commands`] — защита стека от
-/// патологической вложенности (`\frac{\frac{…}}` на тысячи уровней). Глубже —
-/// содержимое группы копируется без дальнейшего разбора.
+/// Recursion-depth ceiling for [`apply_brace_commands`] — a stack guard
+/// against pathological nesting (`\frac{\frac{…}}` thousands of levels deep).
+/// Beyond it, group content is copied without further parsing.
 const MAX_BRACE_DEPTH: usize = 64;
 
-// ---------- нормализация разделителей формул ----------
+// ---------- formula-delimiter normalization ----------
 
-/// Приводит формы разделителей LaTeX к долларовым, понятным парсеру:
-/// `\(…\)`→`$…$`, `\[…\]`→`$$…$$`. Содержимое **код-спанов и блоков кода**
-/// (последовательности `` ` `` любой длины) копируется дословно — внутри кода
-/// `\(` не трогаем. Сами доллары далее снимает парсер (math-события).
+/// Converts LaTeX delimiter forms to the dollar forms the parser understands:
+/// `\(…\)`→`$…$`, `\[…\]`→`$$…$$`. The content of **code spans and code
+/// blocks** (backtick runs of any length) is copied verbatim — `\(` inside
+/// code is left alone. The parser itself strips the dollars further down
+/// (math events).
 pub fn normalize_delimiters(input: &str) -> String {
     let chars: Vec<char> = input.chars().collect();
     let n = chars.len();
     let mut out = String::with_capacity(input.len());
     let mut i = 0;
     while i < n {
-        // Код-спан/блок на бэктиках: содержимое копируем дословно (внутри кода `\(`
-        // не трогаем). Закрывающий ряд — той же длины.
+        // A backtick code span/block: copy the content verbatim (don't touch
+        // `\(` inside code). The closing run is the same length.
         if chars[i] == '`' {
             let fence = char_run(&chars, i, '`');
             let body_start = i + fence;
@@ -35,23 +37,26 @@ pub fn normalize_delimiters(input: &str) -> String {
                     i = close_end;
                 }
                 None if fence >= 3 => {
-                    // Незакрытый забор — норма при стриминге ` ``` `: до конца дословно
-                    // (внутри незавершённого блока нормализовать нельзя).
+                    // An unclosed fence is normal while streaming ` ``` `:
+                    // copy to the end verbatim (can't normalize inside an
+                    // unfinished block).
                     out.extend(&chars[i..]);
                     i = n;
                 }
                 None => {
-                    // Незакрытый короткий ряд (1–2) по CommonMark — литерал: копируем
-                    // сами бэктики и ПРОДОЛЖАЕМ нормализацию (иначе одинокий ` глушил бы
-                    // конверсию формул до конца сообщения).
+                    // An unclosed short run (1–2) is a literal per
+                    // CommonMark: copy the backticks themselves and CONTINUE
+                    // normalizing (otherwise a lone ` would silence formula
+                    // conversion to the end of the message).
                     out.extend(&chars[i..body_start]);
                     i = body_start;
                 }
             }
             continue;
         }
-        // Огороженный блок на тильдах (`~~~`): содержимое дословно. Ряд < 3 (напр.
-        // `~~зачёркивание~~`) забором не считается — тильды копируются обычным путём.
+        // A block fenced with tildes (`~~~`): content verbatim. A run < 3
+        // (e.g. `~~strikethrough~~`) doesn't count as a fence — tildes are
+        // copied the regular way.
         if chars[i] == '~' {
             let run = char_run(&chars, i, '~');
             if run >= 3 {
@@ -91,7 +96,7 @@ pub fn normalize_delimiters(input: &str) -> String {
     out
 }
 
-/// Длина ряда одинаковых символов `ch`, начинающегося с `start`.
+/// Length of a run of identical characters `ch` starting at `start`.
 pub(super) fn char_run(chars: &[char], start: usize, ch: char) -> usize {
     let mut k = start;
     while k < chars.len() && chars[k] == ch {
@@ -100,8 +105,8 @@ pub(super) fn char_run(chars: &[char], start: usize, ch: char) -> usize {
     k - start
 }
 
-/// Ищет закрывающий ряд `ch` ровно длины `len`, начиная с `from`.
-/// Возвращает индекс **за** закрывающим рядом.
+/// Looks for a closing run of `ch` of exactly length `len`, starting at
+/// `from`. Returns the index **past** the closing run.
 pub(super) fn find_char_run(chars: &[char], from: usize, len: usize, ch: char) -> Option<usize> {
     let mut j = from;
     while j < chars.len() {
@@ -118,9 +123,10 @@ pub(super) fn find_char_run(chars: &[char], from: usize, len: usize, ch: char) -
     None
 }
 
-/// Ищет закрывающий ряд тильд длины ≥ 3, начиная с `from` (заборы `~~~`
-/// закрываются рядом не короче открывающего, но для «пропустить код» достаточно
-/// найти любой ряд ≥ 3). Возвращает индекс **за** закрывающим рядом.
+/// Looks for a closing tilde run of length ≥ 3, starting at `from` (`~~~`
+/// fences close with a run no shorter than the opening one, but for "skip the
+/// code" it's enough to find any run ≥ 3). Returns the index **past** the
+/// closing run.
 pub(super) fn find_tilde_fence_close(chars: &[char], from: usize) -> Option<usize> {
     let mut j = from;
     while j < chars.len() {
@@ -137,7 +143,8 @@ pub(super) fn find_tilde_fence_close(chars: &[char], from: usize) -> Option<usiz
     None
 }
 
-/// Ищет с позиции `from` пару `(a, b)` подряд; возвращает индекс символа `a`.
+/// Looks for a pair `(a, b)` in a row starting at `from`; returns the index
+/// of character `a`.
 pub(super) fn find_pair(chars: &[char], from: usize, a: char, b: char) -> Option<usize> {
     let mut i = from;
     while i + 1 < chars.len() {
@@ -149,40 +156,43 @@ pub(super) fn find_pair(chars: &[char], from: usize, a: char, b: char) -> Option
     None
 }
 
-// ---------- содержимое формулы → unicode ----------
+// ---------- formula content → unicode ----------
 
-/// Режим формулы: влияет на разделитель строк `\\` (в display — перенос, в inline —
-/// «; »). Inline-вывод не должен содержать переводов строк (спан ratatui).
+/// Formula mode: affects the line separator `\\` (in display — a line break,
+/// in inline — "; "). Inline output must not contain line breaks (a ratatui
+/// span).
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum MathMode {
     Inline,
     Display,
 }
 
-/// Преобразует содержимое **строчной** формулы (`$…$`) в unicode-аппроксимацию:
-/// дроби `\frac{a}{b}`→`a/b`, корни `\sqrt{x}`→`√(x)`, текстовые обёртки
-/// (`\text{…}`/`\mathrm{…}`/…) → содержимое, команды (`\alpha`→α, `\leq`→≤, …),
-/// верхние/нижние индексы (`x^2`→x², `^{-1}`→⁻¹), скобки-группировки снимаются.
-/// Литеральные `\{`/`\}` сохраняются. Неизвестные команды остаются как есть.
-/// Окружения `\begin{…}…\end{…}` снимаются, `\\` → «; », `&` (выравнивание) убирается.
+/// Converts the content of an **inline** formula (`$…$`) into a unicode
+/// approximation: fractions `\frac{a}{b}`→`a/b`, roots `\sqrt{x}`→`√(x)`, text
+/// wrappers (`\text{…}`/`\mathrm{…}`/…) → their content, commands
+/// (`\alpha`→α, `\leq`→≤, …), super-/subscripts (`x^2`→x², `^{-1}`→⁻¹),
+/// grouping braces are stripped. Literal `\{`/`\}` are preserved. Unknown
+/// commands are left as-is. Environments `\begin{…}…\end{…}` are stripped,
+/// `\\` → "; ", `&` (alignment) is removed.
 pub fn latex_to_unicode(input: &str) -> String {
     latex_to_unicode_mode(input, MathMode::Inline)
 }
 
-/// Как [`latex_to_unicode`], но для **блочной** формулы (`$$…$$`): `\\` даёт реальный
-/// перенос строки, так что `\begin{aligned}…\end{aligned}` раскладывается построчно.
+/// Like [`latex_to_unicode`], but for a **block** formula (`$$…$$`): `\\`
+/// gives a real line break, so `\begin{aligned}…\end{aligned}` lays out row
+/// by row.
 pub fn latex_to_unicode_display(input: &str) -> String {
     latex_to_unicode_mode(input, MathMode::Display)
 }
 
 fn latex_to_unicode_mode(input: &str, mode: MathMode) -> String {
-    // Защищаем литеральные скобки от снятия группировки в конце.
+    // Protect literal braces from grouping strip at the end.
     let protected = input.replace("\\{", "\u{1}").replace("\\}", "\u{2}");
     let without_env = strip_environments(&protected, mode);
     let with_braces = apply_brace_commands(&without_env);
     let with_commands = replace_commands(&with_braces);
     let with_scripts = replace_scripts(&with_commands);
-    // Снимаем оставшиеся группирующие скобки и восстанавливаем литеральные.
+    // Strip the remaining grouping braces and restore the literal ones.
     let stripped: String = with_scripts
         .chars()
         .filter(|&c| c != '{' && c != '}')
@@ -192,9 +202,9 @@ fn latex_to_unicode_mode(input: &str, mode: MathMode) -> String {
             other => other,
         })
         .collect();
-    // В inline переводов строк быть не должно (спан ratatui) — схлопываем в пробел;
-    // в обоих режимах чистим пробелы построчно (снятие `&`/`\hline` оставляет двойные)
-    // и снимаем пустые крайние строки.
+    // In inline mode there must be no line breaks (a ratatui span) — collapse
+    // them into a space; in both modes clean up whitespace line by line
+    // (stripping `&`/`\hline` leaves doubles) and drop empty edge lines.
     let stripped = match mode {
         MathMode::Inline => stripped.replace('\n', " "),
         MathMode::Display => stripped,
@@ -208,8 +218,9 @@ fn latex_to_unicode_mode(input: &str, mode: MathMode) -> String {
         .to_string()
 }
 
-/// Схлопывает подряд идущие пробелы в один (в аппроксимации для чтения кратность
-/// пробела незначима; снятие выравнивания `&`/`\hline` иначе оставляет двойные).
+/// Collapses runs of spaces into one (for a readability approximation, space
+/// multiplicity doesn't matter; stripping alignment `&`/`\hline` otherwise
+/// leaves doubles).
 fn collapse_spaces(s: &str) -> String {
     let mut out = String::with_capacity(s.len());
     let mut prev_space = false;
@@ -227,10 +238,11 @@ fn collapse_spaces(s: &str) -> String {
     out
 }
 
-/// Снимает окружения `\begin{…}…\end{…}`, переводит `\\` в разделитель строк (по
-/// [`MathMode`]), убирает выравнивание `&` и служебные команды (`\hline`, `\label{…}`,
-/// `\notag`, …). Прочие команды (`\alpha`, `\frac`, …) копируются без изменений — их
-/// разбирают следующие проходы. Работает по уже «защищённой» строке (после `\{`→LBRACE).
+/// Strips environments `\begin{…}…\end{…}`, turns `\\` into a line separator
+/// (per [`MathMode`]), removes alignment `&` and service commands (`\hline`,
+/// `\label{…}`, `\notag`, …). Other commands (`\alpha`, `\frac`, …) are copied
+/// unchanged — later passes parse them. Works on an already-"protected"
+/// string (after `\{`→LBRACE).
 pub(super) fn strip_environments(input: &str, mode: MathMode) -> String {
     let chars: Vec<char> = input.chars().collect();
     let n = chars.len();
@@ -242,20 +254,21 @@ pub(super) fn strip_environments(input: &str, mode: MathMode) -> String {
     let mut i = 0;
     while i < n {
         let c = chars[i];
-        // Реальные переводы строк источника — не разрывы формулы (разрыв только `\\`).
+        // Real line breaks in the source are not formula breaks (only `\\`
+        // is a break).
         if c == '\n' || c == '\r' {
             out.push(' ');
             i += 1;
             continue;
         }
-        // Выравнивание таблиц/матриц — убираем.
+        // Table/matrix alignment — removed.
         if c == '&' {
             i += 1;
             continue;
         }
         if c == '\\' {
-            // `\\` (+ опциональный отступ `[6pt]`) — перенос строки; пробелы вокруг
-            // разделителя схлопываем.
+            // `\\` (+ an optional gap `[6pt]`) — a line break; collapse
+            // whitespace around the separator.
             if i + 1 < n && chars[i + 1] == '\\' {
                 i += 2;
                 if i < n
@@ -273,13 +286,13 @@ pub(super) fn strip_environments(input: &str, mode: MathMode) -> String {
                 out.push_str(sep);
                 continue;
             }
-            // `\&` — литеральный амперсанд (не выравнивание).
+            // `\&` — a literal ampersand (not alignment).
             if i + 1 < n && chars[i + 1] == '&' {
                 out.push('&');
                 i += 2;
                 continue;
             }
-            // Именованная команда.
+            // A named command.
             let start = i + 1;
             let mut j = start;
             while j < n && chars[j].is_ascii_alphabetic() {
@@ -288,7 +301,7 @@ pub(super) fn strip_environments(input: &str, mode: MathMode) -> String {
             let name: String = chars[start..j].iter().collect();
             match name.as_str() {
                 "begin" => {
-                    // `\begin{env}` (+ спецификация столбцов `{cc}` у array/tabular).
+                    // `\begin{env}` (+ a column spec `{cc}` for array/tabular).
                     let mut k = j;
                     let mut env = String::new();
                     if k < n
@@ -321,7 +334,7 @@ pub(super) fn strip_environments(input: &str, mode: MathMode) -> String {
                     i = j;
                 }
                 "label" | "cline" | "tag" | "ref" | "eqref" => {
-                    // снимаем вместе с группой-аргументом
+                    // strip along with the argument group
                     let mut k = j;
                     if k < n
                         && chars[k] == '{'
@@ -332,8 +345,8 @@ pub(super) fn strip_environments(input: &str, mode: MathMode) -> String {
                     i = k;
                 }
                 "" => {
-                    // `\` перед не-буквой (спец-символ `\,`, `\%`, …) — копируем пару,
-                    // её разберёт replace_commands.
+                    // `\` before a non-letter (a special symbol `\,`, `\%`,
+                    // …) — copy the pair, replace_commands will parse it.
                     out.push('\\');
                     if start < n {
                         out.push(chars[start]);
@@ -343,7 +356,7 @@ pub(super) fn strip_environments(input: &str, mode: MathMode) -> String {
                     }
                 }
                 _ => {
-                    // Прочая команда — копируем `\name` без изменений.
+                    // Some other command — copy `\name` unchanged.
                     out.push('\\');
                     out.push_str(&name);
                     i = j;
@@ -357,15 +370,15 @@ pub(super) fn strip_environments(input: &str, mode: MathMode) -> String {
     out
 }
 
-/// Раскрывает brace-команды: `\frac{a}{b}`→`a/b`, `\sqrt{a}`→`√(a)`,
-/// текстовые обёртки → содержимое. Содержимое групп обрабатывается рекурсивно
-/// (вложенные дроби/обёртки). Прочие `\name` копируются как есть (их разберёт
+/// Expands brace commands: `\frac{a}{b}`→`a/b`, `\sqrt{a}`→`√(a)`, text
+/// wrappers → their content. Group content is processed recursively (nested
+/// fractions/wrappers). Other `\name`s are copied as-is (parsed later by
 /// [`replace_commands`]).
 pub(super) fn apply_brace_commands(input: &str) -> String {
     apply_brace_commands_depth(input, 0)
 }
 
-/// Рекурсивно обрабатывает содержимое группы (с учётом потолка глубины).
+/// Recursively processes a group's content (respecting the depth ceiling).
 fn brace_recurse(s: &str, depth: usize) -> String {
     if depth >= MAX_BRACE_DEPTH {
         s.to_string()
@@ -392,8 +405,9 @@ fn apply_brace_commands_depth(input: &str, depth: usize) -> String {
         }
         let name: String = chars[start..j].iter().collect();
 
-        // `\sqrt` с опциональным индексом `\sqrt[3]{x}` → ∛(x). Проверяем до общего
-        // brace-разбора (индекс идёт между именем и группой).
+        // `\sqrt` with an optional index `\sqrt[3]{x}` → ∛(x). Checked before
+        // the general brace parsing (the index sits between the name and the
+        // group).
         if name == "sqrt" {
             let (root, after_opt) = read_optional(&chars, j);
             if after_opt < n
@@ -404,11 +418,11 @@ fn apply_brace_commands_depth(input: &str, depth: usize) -> String {
                 i = after_a;
                 continue;
             }
-            // иначе — «голый» \sqrt, разберётся ниже как обычная команда (→ √)
+            // otherwise — a "bare" \sqrt, parsed below as a regular command (→ √)
         }
 
         if !name.is_empty() && j < n && chars[j] == '{' {
-            // Дроби: `\frac`/`\dfrac`/`\tfrac`/`\cfrac{a}{b}` → a/b.
+            // Fractions: `\frac`/`\dfrac`/`\tfrac`/`\cfrac{a}{b}` → a/b.
             if is_frac_command(&name)
                 && let Some((a, after_a)) = read_group(&chars, j)
                 && after_a < n
@@ -421,7 +435,7 @@ fn apply_brace_commands_depth(input: &str, depth: usize) -> String {
                 i = after_b;
                 continue;
             }
-            // Биномиальный коэффициент `\binom{n}{k}` → C(n, k).
+            // Binomial coefficient `\binom{n}{k}` → C(n, k).
             if name == "binom"
                 && let Some((a, after_a)) = read_group(&chars, j)
                 && after_a < n
@@ -447,8 +461,9 @@ fn apply_brace_commands_depth(input: &str, depth: usize) -> String {
                 i = after_a;
                 continue;
             }
-            // Наложения `\overset{a}{b}`/`\underset`/`\stackrel` → базовый (второй)
-            // аргумент; аннотация опускается (как диакритика у акцентов).
+            // Overlays `\overset{a}{b}`/`\underset`/`\stackrel` → the base
+            // (second) argument; the annotation is dropped (like a diacritic
+            // on accents).
             if is_stack_command(&name)
                 && let Some((_a, after_a)) = read_group(&chars, j)
                 && after_a < n
@@ -459,8 +474,9 @@ fn apply_brace_commands_depth(input: &str, depth: usize) -> String {
                 i = after_b;
                 continue;
             }
-            // Начертания `\mathbb{R}`→ℝ, `\mathcal{L}`→ℒ, `\mathfrak{g}`: одиночная
-            // буква с BMP-аналогом → глиф; иначе — содержимое (как обёртка).
+            // Typefaces `\mathbb{R}`→ℝ, `\mathcal{L}`→ℒ, `\mathfrak{g}`: a
+            // single letter with a BMP counterpart → the glyph; otherwise —
+            // content (like a wrapper).
             if matches!(name.as_str(), "mathbb" | "mathcal" | "mathfrak")
                 && let Some((a, after_a)) = read_group(&chars, j)
             {
@@ -468,7 +484,7 @@ fn apply_brace_commands_depth(input: &str, depth: usize) -> String {
                 i = after_a;
                 continue;
             }
-            // Текстовые/шрифтовые обёртки и акценты → содержимое.
+            // Text/font wrappers and accents → content.
             if is_text_command(&name)
                 && let Some((a, after_a)) = read_group(&chars, j)
             {
@@ -476,9 +492,10 @@ fn apply_brace_commands_depth(input: &str, depth: usize) -> String {
                 i = after_a;
                 continue;
             }
-            // НЕИЗВЕСТНАЯ команда с группой: сохраняем `\name` и все её группы,
-            // **защищая скобки** (сентинелы) — иначе финальный срез склеил бы
-            // `\binom{n}{k}` в `\binomnk`. Содержимое групп обрабатывается рекурсивно.
+            // An UNKNOWN command with a group: keep `\name` and all its
+            // groups, **protecting the braces** (sentinels) — otherwise the
+            // final strip would glue `\binom{n}{k}` into `\binomnk`. Group
+            // content is processed recursively.
             out.push('\\');
             out.push_str(&name);
             let mut k = j;
@@ -495,26 +512,27 @@ fn apply_brace_commands_depth(input: &str, depth: usize) -> String {
             continue;
         }
 
-        // Команда без группы (или одиночный '\'): копируем '\', остальное подхватит
-        // replace_commands.
+        // A command with no group (or a lone '\'): copy '\', the rest is
+        // picked up by replace_commands.
         out.push('\\');
         i += 1;
     }
     out
 }
 
-/// Дроби, сводимые к `a/b`.
+/// Fractions reducible to `a/b`.
 fn is_frac_command(name: &str) -> bool {
     matches!(name, "frac" | "dfrac" | "tfrac" | "cfrac")
 }
 
-/// Команды-наложения, у которых берём базовый (второй) аргумент.
+/// Overlay commands whose base (second) argument we take.
 fn is_stack_command(name: &str) -> bool {
     matches!(name, "overset" | "underset" | "stackrel")
 }
 
-/// Читает опциональный аргумент `[…]` начиная с `from` (если он там есть).
-/// Возвращает (содержимое без скобок, индекс за `]`); если `[` нет — `(None, from)`.
+/// Reads an optional argument `[…]` starting at `from` (if present there).
+/// Returns (content without brackets, the index past `]`); if there's no `[`
+/// — `(None, from)`.
 fn read_optional(chars: &[char], from: usize) -> (Option<String>, usize) {
     if from < chars.len()
         && chars[from] == '['
@@ -526,9 +544,9 @@ fn read_optional(chars: &[char], from: usize) -> (Option<String>, usize) {
     (None, from)
 }
 
-/// Рендер корня по опциональному индексу: `None`/`2` → `√(x)`, `3` → `∛(x)`,
-/// `4` → `∜(x)`, иначе — префикс-superscript `ⁿ√(x)` (если индекс целиком мапится)
-/// либо фолбэк `√[n](x)`.
+/// Renders a root by its optional index: `None`/`2` → `√(x)`, `3` → `∛(x)`,
+/// `4` → `∜(x)`, otherwise a prefix superscript `ⁿ√(x)` (if the index maps
+/// fully) or the fallback `√[n](x)`.
 fn sqrt_render(root: Option<&str>, inner: &str) -> String {
     let prefix = match root {
         None | Some("2") => "√".to_string(),
@@ -545,9 +563,10 @@ fn sqrt_render(root: Option<&str>, inner: &str) -> String {
     format!("{prefix}({inner})")
 }
 
-/// `\mathbb{R}`→ℝ и родственные начертания: одиночная буква с BMP-аналогом → глиф,
-/// иначе содержимое обрабатывается как обычная текст-обёртка (`\mathbb{XY}`→`XY`).
-/// Supplementary-plane (`𝔸`…, строчные) не берём — терминалы поддерживают неровно.
+/// `\mathbb{R}`→ℝ and kin: a single letter with a BMP counterpart → the
+/// glyph, otherwise the content is treated as an ordinary text wrapper
+/// (`\mathbb{XY}`→`XY`). Supplementary-plane characters (`𝔸`…, lowercase)
+/// aren't used — terminals support them unevenly.
 fn blackboard_or_content(name: &str, content: &str, depth: usize) -> String {
     let chars: Vec<char> = content.chars().collect();
     if chars.len() == 1 {
@@ -564,7 +583,8 @@ fn blackboard_or_content(name: &str, content: &str, depth: usize) -> String {
     brace_recurse(content, depth)
 }
 
-/// Double-struck (blackboard bold) заглавные из блока Letterlike Symbols (BMP).
+/// Double-struck (blackboard bold) capitals from the Letterlike Symbols block
+/// (BMP).
 fn double_struck(c: char) -> Option<char> {
     Some(match c {
         'C' => 'ℂ',
@@ -578,7 +598,8 @@ fn double_struck(c: char) -> Option<char> {
     })
 }
 
-/// Script (каллиграфические) буквы из блока Letterlike Symbols (BMP, набор неполный).
+/// Script (calligraphic) letters from the Letterlike Symbols block (BMP, an
+/// incomplete set).
 fn script_letter(c: char) -> Option<char> {
     Some(match c {
         'B' => 'ℬ',
@@ -596,7 +617,8 @@ fn script_letter(c: char) -> Option<char> {
     })
 }
 
-/// Fraktur (готические) буквы из блока Letterlike Symbols (BMP, набор неполный).
+/// Fraktur (blackletter) letters from the Letterlike Symbols block (BMP, an
+/// incomplete set).
 fn fraktur_letter(c: char) -> Option<char> {
     Some(match c {
         'C' => 'ℭ',
@@ -608,8 +630,9 @@ fn fraktur_letter(c: char) -> Option<char> {
     })
 }
 
-/// Читает сбалансированную группу `{…}`, начиная с `open` (где `chars[open]=='{'`).
-/// Возвращает (содержимое без внешних скобок, индекс за `}`). `None` — нет пары.
+/// Reads a balanced group `{…}`, starting at `open` (where
+/// `chars[open]=='{'`). Returns (content without the outer braces, the index
+/// past `}`). `None` — no matching pair.
 pub(super) fn read_group(chars: &[char], open: usize) -> Option<(String, usize)> {
     let mut depth = 0usize;
     let mut buf = String::new();
@@ -636,7 +659,7 @@ pub(super) fn read_group(chars: &[char], open: usize) -> Option<(String, usize)>
     None
 }
 
-/// Текстовые/шрифтовые обёртки, у которых берём только содержимое.
+/// Text/font wrappers whose content only we take.
 pub(super) fn is_text_command(name: &str) -> bool {
     matches!(
         name,
@@ -661,7 +684,7 @@ pub(super) fn is_text_command(name: &str) -> bool {
             | "mathtt"
             | "operatorname"
             | "boldsymbol"
-            // акценты/обёртки: показываем содержимое (диакритику опускаем)
+            // accents/wrappers: show the content (diacritics are dropped)
             | "overline"
             | "underline"
             | "overbrace"
@@ -684,7 +707,7 @@ pub(super) fn is_text_command(name: &str) -> bool {
     )
 }
 
-/// Операторные имена (`\log`, `\sin`, `\lim`, …) — печатаются словом без `\`.
+/// Operator-name functions (`\log`, `\sin`, `\lim`, …) — printed as a word.
 pub(super) fn is_function_name(name: &str) -> bool {
     matches!(
         name,
@@ -724,31 +747,33 @@ pub(super) fn is_function_name(name: &str) -> bool {
     )
 }
 
-// ---------- команды `\name` ----------
+// ---------- `\name` commands ----------
 
-/// Заменяет `\name` на unicode по таблице (наибольшее совпадение по имени).
-/// `\\` → `\`; `\ ` (бэкслеш-пробел) → пробел; неизвестная команда не трогается.
+/// Replaces `\name` with unicode per the table (the longest name match).
+/// `\\` → `\`; `\ ` (backslash-space) → a space; an unknown command is left
+/// alone.
 pub(super) fn replace_commands(input: &str) -> String {
     let mut out = String::with_capacity(input.len());
     let bytes = input.as_bytes();
     let mut i = 0;
     while i < bytes.len() {
         if bytes[i] != b'\\' {
-            // безопасно: режем по границе ASCII-символа либо копируем UTF-8 как есть
+            // safe: cuts on an ASCII character boundary, or copies UTF-8 as-is
             let ch = input[i..].chars().next().unwrap();
             out.push(ch);
             i += ch.len_utf8();
             continue;
         }
-        // нашли '\'; читаем имя команды (ASCII-буквы)
+        // found '\'; read the command name (ASCII letters)
         let start = i + 1;
         let mut j = start;
         while j < bytes.len() && bytes[j].is_ascii_alphabetic() {
             j += 1;
         }
         if j == start {
-            // не буква после '\': spacing-команда (`\,` `\;` `\:` `\ `→пробел,
-            // `\!`→ничего), экранированный символ (`\\`, `\_`, …) или одиночный '\'.
+            // not a letter after '\': a spacing command (`\,` `\;` `\:`
+            // `\ `→space, `\!`→nothing), an escaped character (`\\`, `\_`,
+            // …), or a lone '\'.
             if start < bytes.len() {
                 let next = input[start..].chars().next().unwrap();
                 match next {
@@ -767,20 +792,22 @@ pub(super) fn replace_commands(input: &str) -> String {
         if let Some(sym) = command_symbol(name) {
             out.push_str(sym);
             i = j;
-            // `\left.` / `\right.` — «невидимый» делимитер-точка: модификатор снят
-            // (пустая строка), съедаем и точку, чтобы не осталась висячая «.».
+            // `\left.` / `\right.` — an "invisible" delimiter dot: the
+            // modifier is dropped (empty string), also eat the dot so no
+            // dangling "." remains.
             if (name == "left" || name == "right") && i < bytes.len() && bytes[i] == b'.' {
                 i += 1;
             }
-            // Пробел после команды НЕ съедаем (в отличие от настоящего LaTeX):
-            // это аппроксимация для чтения, и пользовательские пробелы — значимый
-            // визуальный разделитель (`\alpha + \beta` → «α + β», не «α+ β»).
+            // The space after a command is NOT consumed (unlike real LaTeX):
+            // this is a readability approximation, and the user's spaces are
+            // a meaningful visual separator (`\alpha + \beta` → "α + β", not
+            // "α+ β").
         } else if is_function_name(name) {
-            // Операторное имя (`\log`, `\sin`, `\lim`, …) — печатаем словом.
+            // An operator name (`\log`, `\sin`, `\lim`, …) — printed as a word.
             out.push_str(name);
             i = j;
         } else {
-            // неизвестная команда — оставляем как есть (вместе с '\')
+            // an unknown command — left as-is (with the '\')
             out.push('\\');
             out.push_str(name);
             i = j;
@@ -789,10 +816,10 @@ pub(super) fn replace_commands(input: &str) -> String {
     out
 }
 
-/// Таблица подстановок LaTeX-команд → unicode.
+/// LaTeX command → unicode substitution table.
 pub(super) fn command_symbol(name: &str) -> Option<&'static str> {
     let s = match name {
-        // строчные греческие
+        // lowercase Greek
         "alpha" => "α",
         "beta" => "β",
         "gamma" => "γ",
@@ -816,7 +843,7 @@ pub(super) fn command_symbol(name: &str) -> Option<&'static str> {
         "chi" => "χ",
         "psi" => "ψ",
         "omega" => "ω",
-        // прописные греческие
+        // uppercase Greek
         "Gamma" => "Γ",
         "Delta" => "Δ",
         "Theta" => "Θ",
@@ -827,7 +854,7 @@ pub(super) fn command_symbol(name: &str) -> Option<&'static str> {
         "Phi" => "Φ",
         "Psi" => "Ψ",
         "Omega" => "Ω",
-        // стрелки
+        // arrows
         "rightarrow" | "to" => "→",
         "leftarrow" | "gets" => "←",
         "leftrightarrow" => "↔",
@@ -840,7 +867,7 @@ pub(super) fn command_symbol(name: &str) -> Option<&'static str> {
         "uparrow" => "↑",
         "downarrow" => "↓",
         "mapsto" => "↦",
-        // операторы и отношения
+        // operators and relations
         "leq" | "le" => "≤",
         "geq" | "ge" => "≥",
         "neq" | "ne" => "≠",
@@ -903,7 +930,7 @@ pub(super) fn command_symbol(name: &str) -> Option<&'static str> {
         "cdots" => "⋯",
         "vdots" => "⋮",
         "ddots" => "⋱",
-        // делимитеры и разделители
+        // delimiters and separators
         "langle" => "⟨",
         "rangle" => "⟩",
         "lfloor" => "⌊",
@@ -914,7 +941,7 @@ pub(super) fn command_symbol(name: &str) -> Option<&'static str> {
         "parallel" | "Vert" => "‖",
         "setminus" | "smallsetminus" => "∖",
         "backslash" => "\\",
-        // отношения
+        // relations
         "cong" => "≅",
         "simeq" => "≃",
         "asymp" => "≍",
@@ -931,7 +958,7 @@ pub(super) fn command_symbol(name: &str) -> Option<&'static str> {
         "sqsubseteq" => "⊑",
         "sqsupseteq" => "⊒",
         "ni" | "owns" => "∋",
-        // стрелки (симметрия к уже имеющимся + частые)
+        // arrows (symmetric with the ones above + common ones)
         "Longleftarrow" => "⟸",
         "longleftrightarrow" => "⟷",
         "Longleftrightarrow" => "⟺",
@@ -943,13 +970,13 @@ pub(super) fn command_symbol(name: &str) -> Option<&'static str> {
         "searrow" => "↘",
         "nwarrow" => "↖",
         "swarrow" => "↙",
-        // греческие варианты
+        // Greek variants
         "vartheta" => "ϑ",
         "varsigma" => "ς",
         "varrho" => "ϱ",
         "varkappa" => "ϰ",
         "varpi" => "ϖ",
-        // операторы над множествами и большие операторы
+        // set operators and big operators
         "sqcap" => "⊓",
         "sqcup" => "⊔",
         "uplus" => "⊎",
@@ -961,7 +988,7 @@ pub(super) fn command_symbol(name: &str) -> Option<&'static str> {
         "odot" => "⊙",
         "ominus" => "⊖",
         "oslash" => "⊘",
-        // прочие символы
+        // other symbols
         "dagger" => "†",
         "ddagger" => "‡",
         "diamond" => "⋄",
@@ -970,11 +997,11 @@ pub(super) fn command_symbol(name: &str) -> Option<&'static str> {
         "triangleleft" => "◁",
         "triangleright" => "▷",
         "checkmark" => "✓",
-        // пробельные команды (читаемость): сводим к пробелу
+        // spacing commands (readability): reduce to a space
         "quad" => " ",
         "qquad" => "  ",
         "bmod" => "mod",
-        // модификаторы размера скобок — снимаем, скобку-делимитер оставляем
+        // bracket-size modifiers — stripped, the delimiter bracket stays
         "left" | "right" | "big" | "Big" | "bigg" | "Bigg" | "bigl" | "bigr" | "Bigl" | "Bigr"
         | "biggl" | "biggr" => "",
         _ => return None,
@@ -982,10 +1009,11 @@ pub(super) fn command_symbol(name: &str) -> Option<&'static str> {
     Some(s)
 }
 
-// ---------- верхние/нижние индексы ----------
+// ---------- super-/subscripts ----------
 
-/// Заменяет `^x`/`^{xyz}` и `_x`/`_{xyz}` на unicode-индексы, если все символы
-/// группы имеют unicode-аналог. Иначе оставляет конструкцию как есть.
+/// Replaces `^x`/`^{xyz}` and `_x`/`_{xyz}` with unicode indices, if every
+/// character of the group has a unicode counterpart. Otherwise leaves the
+/// construct as-is.
 pub(super) fn replace_scripts(input: &str) -> String {
     let mut out = String::with_capacity(input.len());
     let chars: Vec<char> = input.chars().collect();
@@ -1006,34 +1034,37 @@ pub(super) fn replace_scripts(input: &str) -> String {
     out
 }
 
-/// Пытается прочитать аргумент индекса после `^`/`_`: либо `{...}`, либо один
-/// символ. Возвращает (unicode-строка, сколько символов израсходовано) при успехе.
+/// Tries to read a script argument after `^`/`_`: either `{...}` or a single
+/// character. Returns (unicode string, how many characters were consumed) on
+/// success.
 pub(super) fn take_script(rest: &[char], sup: bool) -> Option<(String, usize)> {
     if rest.is_empty() {
         return None;
     }
     if rest[0] == '{' {
-        // ищем закрывающую '}'
+        // look for the closing '}'
         let close = rest.iter().position(|&c| c == '}')?;
         let inner = &rest[1..close];
         match map_script_chars(inner, sup) {
-            Some(mapped) => Some((mapped, close + 1)), // включая '{' и '}'
+            Some(mapped) => Some((mapped, close + 1)), // including '{' and '}'
             None => {
-                // Группа не мапится целиком — показываем как `^(…)`/`_(…)`, сохраняя
-                // группировку (иначе `x^{q+}` терял бы скобки → `x^q+`).
+                // The group doesn't map as a whole — show it as `^(…)`/`_(…)`,
+                // keeping the grouping (otherwise `x^{q+}` would lose its
+                // braces → `x^q+`).
                 let marker = if sup { '^' } else { '_' };
                 let inner_str: String = inner.iter().collect();
                 Some((format!("{marker}({inner_str})"), close + 1))
             }
         }
     } else {
-        // Одиночный символ без группы: не мапится — оставляем как есть (`x^q`→`x^q`).
+        // A single character with no group: doesn't map — leave as-is (`x^q`→`x^q`).
         let mapped = map_script_chars(&rest[0..1], sup)?;
         Some((mapped, 1))
     }
 }
 
-/// Маппит все символы в unicode-индексы; `None`, если хоть один не имеет аналога.
+/// Maps all characters to unicode indices; `None` if even one has no
+/// counterpart.
 pub(super) fn map_script_chars(chars: &[char], sup: bool) -> Option<String> {
     if chars.is_empty() {
         return None;
@@ -1063,7 +1094,7 @@ pub(super) fn superscript(c: char) -> Option<char> {
         '=' => '⁼',
         '(' => '⁽',
         ')' => '⁾',
-        // строчные латинские (нет 'q' в Unicode)
+        // lowercase Latin (no 'q' in Unicode)
         'a' => 'ᵃ',
         'b' => 'ᵇ',
         'c' => 'ᶜ',
@@ -1089,7 +1120,7 @@ pub(super) fn superscript(c: char) -> Option<char> {
         'x' => 'ˣ',
         'y' => 'ʸ',
         'z' => 'ᶻ',
-        // заглавные латинские (доступны не все)
+        // uppercase Latin (not all available)
         'A' => 'ᴬ',
         'B' => 'ᴮ',
         'D' => 'ᴰ',
@@ -1130,7 +1161,7 @@ pub(super) fn subscript(c: char) -> Option<char> {
         '=' => '₌',
         '(' => '₍',
         ')' => '₎',
-        // строчные латинские (Unicode покрывает лишь часть)
+        // lowercase Latin (Unicode covers only part of it)
         'a' => 'ₐ',
         'e' => 'ₑ',
         'h' => 'ₕ',
@@ -1167,7 +1198,7 @@ mod tests {
 
     #[test]
     fn command_preserves_following_whitespace() {
-        // пробелы пользователя сохраняются (аппроксимация для чтения)
+        // user spaces are preserved (a readability approximation)
         assert_eq!(latex_to_unicode(r"\pi r^2"), "π r²");
         assert_eq!(latex_to_unicode(r"\alpha+\beta"), "α+β");
     }
@@ -1179,8 +1210,8 @@ mod tests {
 
     #[test]
     fn escaped_backslash_and_brace() {
-        // \\ — теперь разделитель строк (в inline → «; »); литеральный бэкслеш пишется
-        // как \backslash (см. backslash_command_is_literal).
+        // \\ is now a line separator (in inline → "; "); a literal backslash
+        // is written as \backslash (see backslash_command_is_literal).
         assert_eq!(latex_to_unicode(r"a \\ b"), "a; b");
         assert_eq!(latex_to_unicode(r"\{x\}"), "{x}");
     }
@@ -1195,15 +1226,16 @@ mod tests {
 
     #[test]
     fn unmappable_script_keeps_group_as_parens() {
-        // 'q' нет в верхних индексах — одиночный символ без группы остаётся как есть;
-        // группа с несмапливаемым символом сохраняется как `^(…)` (не теряет скобки).
+        // 'q' has no superscript form — a single character with no group
+        // stays as-is; a group with an unmappable character is preserved as
+        // `^(…)` (doesn't lose its braces).
         assert_eq!(latex_to_unicode("x^q"), "x^q");
         assert_eq!(latex_to_unicode("x^{q+}"), "x^(q+)");
     }
 
     #[test]
     fn letter_scripts_map_to_unicode() {
-        // буквенные индексы (частые: x_i, a_n, x^T) теперь конвертируются
+        // letter indices (common: x_i, a_n, x^T) now convert
         assert_eq!(latex_to_unicode("x_i"), "xᵢ");
         assert_eq!(latex_to_unicode("a_n"), "aₙ");
         assert_eq!(latex_to_unicode("x^T"), "xᵀ");
@@ -1216,8 +1248,8 @@ mod tests {
         assert_eq!(latex_to_unicode(r"x \in \mathbb{R}"), "x ∈ ℝ");
         assert_eq!(latex_to_unicode(r"\mathbb{Z}"), "ℤ");
         assert_eq!(latex_to_unicode(r"\mathcal{L}"), "ℒ");
-        assert_eq!(latex_to_unicode(r"\mathfrak{g}"), "g"); // 'g' нет в наборе → содержимое
-        assert_eq!(latex_to_unicode(r"\mathbb{XY}"), "XY"); // не одна буква → содержимое
+        assert_eq!(latex_to_unicode(r"\mathfrak{g}"), "g"); // 'g' isn't in the set → content
+        assert_eq!(latex_to_unicode(r"\mathbb{XY}"), "XY"); // not a single letter → content
     }
 
     #[test]
@@ -1286,7 +1318,7 @@ mod tests {
 
     #[test]
     fn normalize_skips_code_spans() {
-        // внутри код-спана `\(` не трогаем
+        // inside a code span `\(` is left alone
         assert_eq!(normalize_delimiters(r"`\(x\)`"), r"`\(x\)`");
         assert_eq!(
             normalize_delimiters("```\n\\(x\\)\n```"),
@@ -1299,13 +1331,13 @@ mod tests {
         let collected = rendered_text(r"Формула: $x^2 + \alpha$");
         assert!(collected.contains("x²"));
         assert!(collected.contains('α'));
-        // доллары-разделители сняты парсером
+        // the delimiter dollars are stripped by the parser
         assert!(!collected.contains('$'));
     }
 
     #[test]
     fn render_leaves_bare_commands_outside_math() {
-        // вне $…$ команды не трогаем (выбранная семантика)
+        // outside $…$, commands are left alone (chosen semantics)
         let collected = rendered_text(r"стрелка \rightarrow без формулы");
         assert!(collected.contains(r"\rightarrow"));
     }
@@ -1319,8 +1351,9 @@ mod tests {
 
     #[test]
     fn unknown_brace_command_keeps_braces() {
-        // Нераспознанная команда с группой не склеивается с аргументом (регрессия:
-        // \boxed{x+1} → \boxedx+1). Содержимое внутри — конвертируется.
+        // An unrecognized command with a group doesn't glue to its argument
+        // (regression: \boxed{x+1} → \boxedx+1). The content inside is still
+        // converted.
         assert_eq!(latex_to_unicode(r"\boxed{x+1}"), r"\boxed{x+1}");
         assert_eq!(latex_to_unicode(r"\boxed{\alpha}"), r"\boxed{α}");
         assert_eq!(latex_to_unicode(r"\op{a}{b}"), r"\op{a}{b}");
@@ -1344,16 +1377,17 @@ mod tests {
         assert_eq!(latex_to_unicode(r"\sqrt[3]{x}"), "∛(x)");
         assert_eq!(latex_to_unicode(r"\sqrt[4]{y}"), "∜(y)");
         assert_eq!(latex_to_unicode(r"\sqrt[n]{x}"), "ⁿ√(x)");
-        // индекс без superscript-аналога ('q' нет) — фолбэк с квадратными скобками
+        // an index with no superscript counterpart ('q' isn't one) —
+        // fallback with square brackets
         assert_eq!(latex_to_unicode(r"\sqrt[q]{x}"), "√[q](x)");
-        // «голый» \sqrt без индекса по-прежнему работает
+        // a "bare" \sqrt with no index still works
         assert_eq!(latex_to_unicode(r"\sqrt{x}"), "√(x)");
     }
 
     #[test]
     fn left_right_dot_delimiter_eaten() {
         assert_eq!(latex_to_unicode(r"\left. x \right."), "x");
-        // модификатор снят, скобка-делимитер остаётся
+        // the modifier is stripped, the delimiter bracket stays
         assert_eq!(latex_to_unicode(r"\left( x \right)"), "( x )");
     }
 
@@ -1390,33 +1424,34 @@ mod tests {
 
     #[test]
     fn normalize_skips_tilde_fence() {
-        // внутри ~~~-забора `\(` не трогаем (порча кода)
+        // inside a ~~~ fence `\(` is left alone (avoids corrupting code)
         assert_eq!(
             normalize_delimiters("~~~\n\\(x\\)\n~~~"),
             "~~~\n\\(x\\)\n~~~"
         );
-        // ~~зачёркивание~~ (ряд < 3) забором не считается — формула после нормализуется
+        // ~~strikethrough~~ (a run < 3) doesn't count as a fence — the formula
+        // after it normalizes
         assert_eq!(normalize_delimiters(r"~~s~~ \(y\)"), r"~~s~~ $y$");
     }
 
     #[test]
     fn normalize_unclosed_short_backtick_continues() {
-        // одинокий ` (незакрытый короткий ряд) — литерал, формула после нормализуется
+        // a lone ` (an unclosed short run) is a literal, the formula after it normalizes
         assert_eq!(normalize_delimiters(r"a ` b \(x\)"), r"a ` b $x$");
-        // незакрытый забор ``` — до конца дословно (норма при стриминге)
+        // an unclosed fence ``` — verbatim to the end (normal while streaming)
         assert_eq!(normalize_delimiters("```\n\\(x\\)"), "```\n\\(x\\)");
     }
 
     #[test]
     fn deep_nesting_does_not_overflow_stack() {
-        // патологическая вложенность не роняет стек (потолок MAX_BRACE_DEPTH)
+        // pathological nesting doesn't crash the stack (the MAX_BRACE_DEPTH ceiling)
         let deep = "\\sqrt{".repeat(5000) + "x" + &"}".repeat(5000);
         let _ = latex_to_unicode(&deep);
     }
 
     #[test]
     fn display_environment_lays_out_rows() {
-        // \begin{aligned}…\end{aligned} с \\ и & — построчно, выравнивание убрано
+        // \begin{aligned}…\end{aligned} with \\ and & — row by row, alignment removed
         let r = latex_to_unicode_display(r"\begin{aligned} x &= y \\ z &= w \end{aligned}");
         assert_eq!(r, "x = y\nz = w");
     }
@@ -1436,7 +1471,7 @@ mod tests {
     #[test]
     fn inline_double_backslash_is_semicolon() {
         assert_eq!(latex_to_unicode(r"a \\ b"), "a; b");
-        // окружение в inline тоже раскладывается через «; »
+        // an environment in inline also lays out via "; "
         assert_eq!(
             latex_to_unicode(r"\begin{aligned} x &= 1 \\ y &= 2 \end{aligned}"),
             "x = 1; y = 2"
@@ -1445,7 +1480,7 @@ mod tests {
 
     #[test]
     fn environment_helpers_stripped() {
-        // \label{…}, \\[4pt], \hline, \notag, \& (литеральный)
+        // \label{…}, \\[4pt], \hline, \notag, \& (literal)
         assert_eq!(
             latex_to_unicode_display(r"a = b \label{eq:1} \\[4pt] c = d"),
             "a = b\nc = d"
@@ -1456,7 +1491,7 @@ mod tests {
 
     #[test]
     fn display_math_multiline_source_without_break() {
-        // реальные переводы строк источника (без \\) не рвут формулу
+        // real source line breaks (with no \\) don't break the formula
         assert_eq!(latex_to_unicode_display("x = y +\nz"), "x = y + z");
     }
 }

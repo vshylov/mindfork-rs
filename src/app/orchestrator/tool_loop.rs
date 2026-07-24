@@ -1,11 +1,11 @@
-//! Общий «тихий» agentic-loop фоновых задач (авто-рефлексия «модели себя» и
-//! авто-консолидация заметок). Обе задачи — мини agentic-loop без стриминга в UI:
-//! стрим → аккумулятор вызовов → исполнение разрешённых инструментов → следующий
-//! раунд; толерантны к `Thoughts`/`ThoughtsSignature`/`Usage` (игнор). Раньше это
-//! тело дублировалось в `reflection.rs` и `consolidation.rs` дословно (различались
-//! лишь лимиты и метка лога) — здесь оно одно. Основную петлю генерации сознательно
-//! **не** трогаем: у неё стриминг в UI, control-flow-инструменты, thinking-подписи
-//! Anthropic, usage, эффекты — её сложность не окупает общий сток сейчас.
+//! The shared "silent" agentic loop for background tasks (self-model auto-reflection
+//! and notes auto-consolidation). Both tasks are a mini agentic loop with no UI streaming:
+//! stream → a call accumulator → executing allowed tools → the next
+//! round; tolerant of `Thoughts`/`ThoughtsSignature`/`Usage` (ignored). This body used to
+//! be duplicated verbatim in `reflection.rs` and `consolidation.rs` (differing only in
+//! limits and the log label) — now it lives here once. The main generation loop is deliberately
+//! **not** touched: it has UI streaming, control-flow tools, Anthropic thinking
+//! signatures, usage, effects — its complexity doesn't pay for a shared sink right now.
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -24,10 +24,10 @@ use crate::shared::api::{
 use crate::shared::i18n::Locale;
 use crate::shared::storage::Storage;
 
-/// Async-надстройка дайджеста фоновой задачи (раздел A2): семантическое сравнение
-/// абзацев описания себя (`summary`) с наблюдениями (`@self`). Вычисляется **в
-/// задаче** до петли — эмбеддинг абзацев summary недоступен в синхронном хендлере
-/// оркестратора. См. docs/history/self-model-consolidation.md §A2.
+/// An async layer over the background task's digest (§A2): a semantic comparison of
+/// the self-description's (`summary`) paragraphs with observations (`@self`). Computed **in
+/// the task**, before the loop — embedding summary paragraphs isn't available in the orchestrator's
+/// synchronous handler. See docs/history/self-model-consolidation.md §A2.
 pub(super) struct SummarySemantics {
     pub embedder: Arc<dyn Embedder>,
     pub storage: Arc<Storage>,
@@ -35,45 +35,45 @@ pub(super) struct SummarySemantics {
     pub loc: &'static Locale,
 }
 
-/// Пора ли запускать периодическую фоновую задачу: фича включена (`every > 0`) и
-/// накоплено достаточно ответов. Чистая функция — тестируема. Общая для рефлексии и
-/// консолидации.
+/// Is it time to run the periodic background task: the feature is enabled (`every > 0`) and
+/// enough replies have accumulated. A pure function — testable. Shared by reflection and
+/// consolidation.
 pub(super) fn due(count: u32, every: usize) -> bool {
     every > 0 && (count as usize) >= every
 }
 
-/// Параметры запуска тихой фоновой задачи.
+/// Launch parameters for the silent background task.
 pub(super) struct SilentLoop {
     pub backend: Arc<dyn EngineBackend>,
     pub registry: Arc<ToolRegistry>,
     pub ctx: ToolContext,
     pub request: ChatRequest,
-    /// Разрешённые инструменты (защита от вызова чего-то вне набора задачи).
+    /// Allowed tools (a guard against calling something outside the task's set).
     pub allowed: Vec<ToolId>,
     pub cancel: CancellationToken,
-    /// Бэкстоп от зацикливания (число раундов).
+    /// A backstop against looping (the round count).
     pub max_rounds: u32,
-    /// Лимит времени на всю задачу.
+    /// The time limit for the whole task.
     pub timeout: Duration,
-    /// Метка для диагностических логов («авто-рефлексия»/«авто-консолидация»).
+    /// A label for diagnostic logs ("auto-reflection"/"auto-consolidation").
     pub label: &'static str,
-    /// Профиль (для логов).
+    /// The profile (for logs).
     pub profile_id: Uuid,
-    /// Вид задачи — уходит в `done_tx` вместе с исходом (петля разбирает одной веткой).
+    /// The task kind — goes into `done_tx` along with the outcome (the loop handles it in one branch).
     pub kind: BackgroundKind,
-    /// Единый канал исхода: `(вид, Ok(()))` при успехе, `(вид, Err(причина))` при
-    /// ошибке/таймауте.
+    /// A single outcome channel: `(kind, Ok(()))` on success, `(kind, Err(reason))` on
+    /// an error/timeout.
     pub done_tx: UnboundedSender<(BackgroundKind, Result<(), String>)>,
-    /// Опциональная async-надстройка дайджеста, вычисляемая в задаче ДО петли
-    /// (эмбеддинг абзацев summary недоступен в синхронном хендлере): результат
-    /// дописывается к первому user-сообщению запроса. См.
+    /// An optional async layer over the digest, computed in the task BEFORE the loop
+    /// (embedding summary paragraphs isn't available in the synchronous handler): the result
+    /// is appended to the request's first user message. See
     /// docs/history/self-model-consolidation.md §A2.
     pub summary_semantics: Option<SummarySemantics>,
 }
 
-/// Запускает тихую фоновую задачу: мини agentic-loop под таймаутом. По завершении
-/// шлёт исход в `done_tx` (снять флаг «идёт …» и вести наблюдаемость: серия неудач →
-/// одна ошибка в UI). Инструменты пишут напрямую в `Storage`; чат/лента не трогаются.
+/// Starts the silent background task: a mini agentic loop under a timeout. On completion
+/// sends the outcome into `done_tx` (clear the "running …" flag and provide observability: a run of
+/// failures → one UI error). Tools write directly into `Storage`; the chat/feed aren't touched.
 pub(super) fn spawn_silent_loop(spawn: SilentLoop) {
     let SilentLoop {
         backend,
@@ -92,9 +92,9 @@ pub(super) fn spawn_silent_loop(spawn: SilentLoop) {
     } = spawn;
 
     tokio::spawn(async move {
-        // A2: async-надстройка дайджеста (семантика summary↔наблюдения) — считаем ДО
-        // петли и дописываем к первому user-сообщению (эмбеддинг абзацев summary в
-        // синхронном хендлере недоступен). См. docs/history/self-model-consolidation.md §A2.
+        // A2: the async layer over the digest (summary↔observation semantics) — compute it BEFORE
+        // the loop and append to the first user message (embedding summary paragraphs in a
+        // synchronous handler isn't available). See docs/history/self-model-consolidation.md §A2.
         if let Some(ss) = &summary_semantics
             && let Some(section) = crate::features::tools::notes::summary_observation_overlaps(
                 &ss.storage,
@@ -120,21 +120,21 @@ pub(super) fn spawn_silent_loop(spawn: SilentLoop) {
         let outcome: Result<(), String> = match tokio::time::timeout(timeout, run).await {
             Ok(Ok(())) => Ok(()),
             Ok(Err(e)) => {
-                tracing::warn!(%profile_id, "{label}: ошибка: {e}");
+                tracing::warn!(%profile_id, "{label}: error: {e}");
                 Err(e.to_string())
             }
             Err(_) => {
                 cancel.cancel();
-                tracing::warn!(%profile_id, "{label}: превышен лимит времени");
-                Err("превышен лимит времени".to_string())
+                tracing::warn!(%profile_id, "{label}: time limit exceeded");
+                Err(ctx.loc.t("loop.time_limit_exceeded").to_string())
             }
         };
         let _ = done_tx.send((kind, outcome));
     });
 }
 
-/// Тело мини agentic-loop: раунды стрим→вызовы→исполнение до `max_rounds` или
-/// первого раунда без вызовов. Разрешает только инструменты из `allowed`.
+/// The mini agentic loop's body: rounds of stream→calls→execution up to `max_rounds` or
+/// the first round with no calls. Only allows tools from `allowed`.
 async fn run_rounds(
     backend: &Arc<dyn EngineBackend>,
     registry: &Arc<ToolRegistry>,
@@ -163,7 +163,7 @@ async fn run_rounds(
             }
         }
         let calls = acc.finish();
-        // Раунд без вызовов или достигнут лимит — задача окончена.
+        // A round with no calls, or the limit was reached — the task is done.
         if reason != FinishReason::ToolCalls || calls.is_empty() || round >= max_rounds {
             break;
         }
@@ -178,10 +178,13 @@ async fn run_rounds(
             let result = if allowed_has(&call.name) {
                 match registry.invoke(&call.name, ctx, args).await {
                     Ok(o) => o.result,
-                    Err(e) => format!("Ошибка инструмента {}: {e}", call.name),
+                    Err(e) => ctx.loc.tf(
+                        "loop.tool_error",
+                        &[("name", &call.name), ("err", &e.to_string())],
+                    ),
                 }
             } else {
-                format!("Инструмент {} недоступен.", call.name)
+                ctx.loc.tf("loop.tool_not_allowed", &[("name", &call.name)])
             };
             request.messages.push(ApiMessage::tool(&call.id, &result));
         }
@@ -195,10 +198,10 @@ mod tests {
 
     #[test]
     fn due_respects_threshold_and_disabled() {
-        assert!(!due(5, 0)); // выключено
+        assert!(!due(5, 0)); // disabled
         assert!(!due(1, 3));
         assert!(!due(2, 3));
-        assert!(due(3, 3)); // достигли порога
-        assert!(due(4, 3)); // и выше
+        assert!(due(3, 3)); // threshold reached
+        assert!(due(4, 3)); // and above
     }
 }

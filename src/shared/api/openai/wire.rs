@@ -1,32 +1,32 @@
-//! Serde-типы HTTP-протокола xinfer (`/v1/chat/completions`, `/v1/embeddings`)
-//! и сборка тела запроса. Точно соответствует docs/xinfer-contract.md §3, §6.
+//! Serde types for the xinfer HTTP protocol (`/v1/chat/completions`, `/v1/embeddings`)
+//! and building the request body. Matches docs/xinfer-contract.md §3, §6 exactly.
 //!
-//! Инвариант: поле `stop` НЕ отправляется (анти-самообрыв на тексте EOS —
-//! см. spec §7, docs/xinfer-contract.md §5).
+//! Invariant: the `stop` field is NOT sent (anti-self-cutoff on EOS text —
+//! see spec §7, docs/xinfer-contract.md §5).
 
 use serde::{Deserialize, Serialize};
 
 use crate::shared::api::contract::ChatRequest;
 
-// Единственный потребитель этого клиента — локальный/external llama.cpp `llama-server`
-// (managed/external). Облака ушли на свои протоколы: OpenAI → Responses
-// ([`ResponsesClient`](super::ResponsesClient)), Gemini → нативный
+// The only consumer of this client is the local/external llama.cpp `llama-server`
+// (managed/external). The clouds moved to their own protocols: OpenAI → Responses
+// ([`ResponsesClient`](super::ResponsesClient)), Gemini → native
 // [`GeminiClient`](crate::shared::api::gemini::GeminiClient), Claude → Anthropic
-// Messages. Поэтому диалекта/фильтрации сэмплинга больше нет — шлём всё заданное
-// (llama.cpp игнорирует незнакомое). См. ADR 0004.
+// Messages. So there's no longer a sampling dialect/filter — send everything set
+// (llama.cpp ignores unknown fields). See ADR 0004.
 
-// ---------- запрос чата ----------
+// ---------- chat request ----------
 
 #[derive(Debug, Serialize)]
 pub struct ChatCompletionRequest {
-    /// Имя модели. Обязательно для облака; для `llama-server` игнорируется (берётся
-    /// загруженная модель), поэтому шлётся только когда задано.
+    /// The model name. Mandatory for the cloud; for `llama-server` it's ignored (it takes the
+    /// loaded model), so it's sent only when set.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub model: Option<String>,
     pub messages: Vec<WireMessage>,
     pub stream: bool,
-    /// Опции стрима: просим сервер прислать финальный `usage` со счётчиком токенов
-    /// (`include_usage`). Шлём только при стриминге (см. [`StreamOptions`]).
+    /// Stream options: ask the server to send a final `usage` with the token counter
+    /// (`include_usage`). Sent only while streaming (see [`StreamOptions`]).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub stream_options: Option<StreamOptions>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -41,9 +41,9 @@ pub struct ChatCompletionRequest {
     pub top_k: Option<i64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub top_p: Option<f32>,
-    // Расширения llama.cpp `llama-server` (см. [`SamplingConfig`]); строгий
-    // сторонний OpenAI-сервер их игнорирует или отклоняет — поэтому шлём только
-    // когда заданы пользователем.
+    // llama.cpp `llama-server` extensions (see [`SamplingConfig`]); a strict
+    // third-party OpenAI server ignores or rejects them — so they're sent only
+    // when the user sets them.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub min_p: Option<f32>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -70,7 +70,7 @@ pub struct ChatCompletionRequest {
     pub dry_allowed_length: Option<i64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub dry_penalty_last_n: Option<i64>,
-    /// DRY-брейкеры (массив строк); шлём только непустой список.
+    /// DRY breakers (an array of strings); only a non-empty list is sent.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub dry_sequence_breakers: Option<Vec<String>>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -85,32 +85,32 @@ pub struct ChatCompletionRequest {
     pub mirostat_eta: Option<f32>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub seed: Option<i64>,
-    /// Порядок семплеров (массив имён); шлём только непустой список.
+    /// The sampler order (an array of names); only a non-empty list is sent.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub samplers: Option<Vec<String>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub thinking: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub reasoning_effort: Option<&'static str>,
-    /// Бюджет «мыслей» (llama.cpp): `0` выключает thinking. См. [`SamplingConfig`].
+    /// The "thoughts" budget (llama.cpp): `0` disables thinking. See [`SamplingConfig`].
     #[serde(skip_serializing_if = "Option::is_none")]
     pub reasoning_budget: Option<i64>,
-    /// Доп. переменные для Jinja chat-template (llama.cpp `chat_template_kwargs`).
-    /// Используем для `{"enable_thinking": false}` — разные шаблоны выключают
-    /// «мысли» по-разному (built-in форматы читают `reasoning_budget`, многие
-    /// Jinja-шаблоны — `enable_thinking`), поэтому шлём оба сигнала.
+    /// Extra variables for the Jinja chat template (llama.cpp `chat_template_kwargs`).
+    /// Used for `{"enable_thinking": false}` — different templates disable
+    /// "thoughts" differently (built-in formats read `reasoning_budget`, many
+    /// Jinja templates — `enable_thinking`), so both signals are sent.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub chat_template_kwargs: Option<serde_json::Value>,
-    /// Схемы инструментов (отсутствуют, если tool-calling не используется).
+    /// Tool schemas (absent if tool-calling isn't used).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub tools: Option<Vec<WireTool>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub tool_choice: Option<&'static str>,
 }
 
-/// Опции стрима OpenAI (`stream_options`). `include_usage=true` заставляет сервер
-/// прислать финальный чанк с блоком `usage` (счётчик токенов) — иначе в стриме его
-/// нет. llama.cpp `llama-server` это поддерживает.
+/// OpenAI stream options (`stream_options`). `include_usage=true` makes the server
+/// send a final chunk with a `usage` block (the token counter) — otherwise it isn't
+/// in the stream. llama.cpp `llama-server` supports this.
 #[derive(Debug, Serialize)]
 pub struct StreamOptions {
     pub include_usage: bool,
@@ -127,7 +127,7 @@ pub struct WireMessage {
     pub tool_calls: Option<Vec<WireToolCall>>,
 }
 
-/// OpenAI-обёртка схемы инструмента (`{type:"function", function:{...}}`).
+/// The OpenAI wrapper for a tool schema (`{type:"function", function:{...}}`).
 #[derive(Debug, Serialize)]
 pub struct WireTool {
     #[serde(rename = "type")]
@@ -142,7 +142,7 @@ pub struct WireFunction {
     pub parameters: serde_json::Value,
 }
 
-/// Вызов инструмента в assistant-сообщении истории.
+/// A tool call in a history assistant message.
 #[derive(Debug, Serialize)]
 pub struct WireToolCall {
     pub id: String,
@@ -157,10 +157,10 @@ pub struct WireFunctionCall {
     pub arguments: String,
 }
 
-/// Строит тело запроса чата из доменного [`ChatRequest`]. `model` подставляется в
-/// поле `model` (для external-прокси при желании; для llama-server можно `None` —
-/// сервер берёт загруженную модель). Шлётся всё заданное в сэмплинге (llama.cpp
-/// игнорирует незнакомое).
+/// Builds the chat request body from the domain [`ChatRequest`]. `model` is substituted into
+/// the `model` field (for an external proxy if desired; for llama-server `None` works —
+/// the server takes the loaded model). Everything set in sampling is sent (llama.cpp
+/// ignores what it doesn't know).
 pub fn build_chat_request(
     req: &ChatRequest,
     stream: bool,
@@ -195,7 +195,7 @@ pub fn build_chat_request(
         };
         messages.push(WireMessage {
             role: m.role.as_wire(),
-            // Для assistant с tool_calls контент может быть пустым.
+            // For an assistant with tool_calls, content can be empty.
             content: Some(m.content.clone()),
             tool_call_id: m.tool_call_id.clone(),
             tool_calls,
@@ -222,19 +222,19 @@ pub fn build_chat_request(
     let tool_choice = tools.as_ref().map(|_| "auto");
 
     let s = &req.sampling;
-    // Просьбу выключить «мысли» (reasoning_budget=0) дублируем через
-    // chat_template_kwargs.enable_thinking=false: built-in форматы llama.cpp читают
-    // reasoning_budget, а Jinja-шаблоны моделей — enable_thinking; шлём оба.
+    // The request to disable "thoughts" (reasoning_budget=0) is also sent via
+    // chat_template_kwargs.enable_thinking=false: llama.cpp's built-in formats read
+    // reasoning_budget, while models' Jinja templates read enable_thinking; send both.
     let chat_template_kwargs =
         (s.reasoning_budget == Some(0)).then(|| serde_json::json!({ "enable_thinking": false }));
-    // Списочные поля (DRY-брейкеры, порядок семплеров): пустой список не шлём —
-    // иначе сервер истолковал бы его как «нет брейкеров»/«отключить все семплеры».
+    // List fields (DRY breakers, sampler order): an empty list isn't sent —
+    // otherwise the server would interpret it as "no breakers"/"disable all samplers".
     let non_empty = |v: &Option<Vec<String>>| v.clone().filter(|x| !x.is_empty());
     ChatCompletionRequest {
         model: model.map(str::to_string),
         messages,
         stream,
-        // Счётчик токенов нужен только в стриминговом ходе генерации.
+        // The token counter is only needed during a streaming generation turn.
         stream_options: stream.then_some(StreamOptions {
             include_usage: true,
         }),
@@ -274,21 +274,21 @@ pub fn build_chat_request(
     }
 }
 
-// ---------- стриминговый ответ ----------
+// ---------- streaming response ----------
 
 #[derive(Debug, Deserialize)]
 pub struct ChatCompletionChunk {
     #[serde(default)]
     pub choices: Vec<ChatChoiceChunk>,
-    /// Счётчик токенов: присылается финальным чанком при
-    /// `stream_options.include_usage=true` (у такого чанка `choices` обычно пуст).
+    /// The token counter: sent as the final chunk when
+    /// `stream_options.include_usage=true` (such a chunk's `choices` is usually empty).
     #[serde(default)]
     pub usage: Option<Usage>,
 }
 
-/// Блок `usage` ответа сервера (счётчик токенов). `completion_tokens_details.
-/// reasoning_tokens` отдают OpenAI-compat/llama.cpp-серверы с reasoning-моделью
-/// (входит в `completion_tokens`); отсутствует → `0`.
+/// The `usage` block of the server response (the token counter). `completion_tokens_details.
+/// reasoning_tokens` is returned by OpenAI-compat/llama.cpp servers with a reasoning model
+/// (included in `completion_tokens`); absent → `0`.
 #[derive(Debug, Default, Deserialize)]
 pub struct Usage {
     #[serde(default)]
@@ -299,7 +299,7 @@ pub struct Usage {
     pub completion_tokens_details: CompletionTokensDetails,
 }
 
-/// Детализация токенов ответа Chat Completions (интересуют reasoning-токены).
+/// Token breakdown of the Chat Completions response (only reasoning tokens matter).
 #[derive(Debug, Default, Deserialize)]
 pub struct CompletionTokensDetails {
     #[serde(default)]
@@ -342,12 +342,12 @@ pub struct DeltaFunction {
     pub arguments: Option<String>,
 }
 
-// ---------- эмбеддинги ----------
+// ---------- embeddings ----------
 
 #[derive(Debug, Serialize)]
 pub struct EmbeddingRequest {
-    /// Имя embedding-модели. Обязательно для облака (OpenAI/Gemini); для
-    /// `llama-server` игнорируется — шлётся только когда задано.
+    /// The embedding model's name. Mandatory for the cloud (OpenAI/Gemini); for
+    /// `llama-server` it's ignored — sent only when set.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub model: Option<String>,
     pub input: Vec<String>,
@@ -383,9 +383,9 @@ mod tests {
         assert!(json.get("stop").is_none(), "stop must never be sent");
         assert!(json.get("temperature").is_none());
         assert_eq!(json["stream"], true);
-        // Стриминг → просим прислать usage (счётчик токенов).
+        // Streaming → ask for usage to be sent (the token counter).
         assert_eq!(json["stream_options"]["include_usage"], true);
-        // system должно идти первым сообщением
+        // system must go as the first message
         assert_eq!(json["messages"][0]["role"], "system");
         assert_eq!(json["messages"][1]["role"], "user");
         assert_eq!(json["messages"][1]["content"], "hi");
@@ -424,7 +424,7 @@ mod tests {
             tools: vec![],
         };
         let json = serde_json::to_value(build_chat_request(&req, false, None)).unwrap();
-        // f32→f64 расширение делает точное сравнение ненадёжным — сравниваем приближённо.
+        // f32→f64 widening makes exact comparison unreliable — compare approximately.
         let approx = |v: &serde_json::Value, want: f64| (v.as_f64().unwrap() - want).abs() < 1e-6;
         assert!(approx(&json["temperature"], 0.8));
         assert!(approx(&json["dynatemp_range"], 0.4));
@@ -448,19 +448,19 @@ mod tests {
         assert_eq!(json["thinking"], true);
         assert_eq!(json["reasoning_effort"], "high");
         assert_eq!(json["reasoning_budget"], 0);
-        // reasoning_budget=0 дублируется сигналом для Jinja-шаблонов.
+        // reasoning_budget=0 is also signaled for Jinja templates.
         assert_eq!(json["chat_template_kwargs"]["enable_thinking"], false);
         assert_eq!(json["stream"], false);
-        // Без стриминга usage не запрашиваем.
+        // Without streaming, usage isn't requested.
         assert!(json.get("stream_options").is_none());
-        // Незаданные расширения не сериализуются.
+        // Unset extensions aren't serialized.
         assert!(json.get("typical_p").is_none());
         assert!(json.get("mirostat").is_none());
     }
 
     #[test]
     fn list_fields_sent_as_arrays_and_empty_omitted() {
-        // Непустые списки → JSON-массивы.
+        // Non-empty lists → JSON arrays.
         let req = ChatRequest {
             system: None,
             messages: vec![ApiMessage::user("hi")],
@@ -477,7 +477,7 @@ mod tests {
         assert_eq!(json["samplers"][0], "penalties");
         assert_eq!(json["samplers"][1], "temperature");
 
-        // Пустые списки НЕ отправляются (иначе сервер счёл бы их «отключить всё»).
+        // Empty lists are NOT sent (otherwise the server would take them as "disable everything").
         let req_empty = ChatRequest {
             system: None,
             messages: vec![ApiMessage::user("hi")],
@@ -495,7 +495,7 @@ mod tests {
 
     #[test]
     fn model_is_sent_when_some_and_omitted_when_none() {
-        // Для external-прокси имя модели проставляется; для llama-server (None) — нет.
+        // For an external proxy, the model name is set; for llama-server (None) — it isn't.
         let req = ChatRequest {
             system: None,
             messages: vec![ApiMessage::user("hi")],
@@ -521,7 +521,7 @@ mod tests {
 
     #[test]
     fn parses_usage_chunk() {
-        // Финальный чанк include_usage: choices пуст, есть usage.
+        // The final include_usage chunk: choices is empty, usage is present.
         let raw = r#"{"choices":[],"usage":{"prompt_tokens":42,"completion_tokens":7,"total_tokens":49}}"#;
         let chunk: ChatCompletionChunk = serde_json::from_str(raw).unwrap();
         assert!(chunk.choices.is_empty());
@@ -606,7 +606,7 @@ mod tests {
         );
         assert_eq!(json["messages"][1]["role"], "tool");
         assert_eq!(json["messages"][1]["tool_call_id"], "c1");
-        // Запрос без tools не должен содержать tool_choice.
+        // A request without tools must not contain tool_choice.
         assert!(json.get("tool_choice").is_none());
     }
 }

@@ -1,12 +1,12 @@
-//! Тесты оркестратора — живые #[ignore] e2e-смоуки (Gemma/bge-m3 через MINDFORK_*_URL). Часть модуля [`super`]
-//! (фикстуры в mod.rs). См. docs/history/refactoring-god-objects.md, этап 3.
+//! Orchestrator tests — live #[ignore] e2e smokes (Gemma/bge-m3 via MINDFORK_*_URL). Part of the [`super`]
+//! module (fixtures in mod.rs). See docs/history/refactoring-god-objects.md, stage 3.
 
 use super::*;
 
-/// Ярус 1 i18n (docs/history/i18n.md, go/no-go): профиль с языком служебного каркаса `En` —
-/// авто-название англоязычной переписки английское, БЕЗ кириллицы. Свежий профиль
-/// (bootstrap-профиль залочен: у него уже есть дефолтный чат), ставим ему En, заводим
-/// чат, гоняем английский ход и авто-название. `#[ignore]`, вручную против живой модели.
+/// i18n Tier 1 (docs/history/i18n.md, go/no-go): a profile with agent-scaffold language `En` —
+/// the auto-title of an English conversation is English, with NO Cyrillic. A fresh profile
+/// (the bootstrap profile is locked: it already has a default chat), set it to En, create a
+/// chat, run an English turn and auto-titling. `#[ignore]`, manual against a live model.
 #[tokio::test]
 #[ignore = "requires a running OpenAI-compatible server (MINDFORK_ENGINE_URL)"]
 async fn i18n_en_profile_title_e2e_live() {
@@ -14,7 +14,7 @@ async fn i18n_en_profile_title_e2e_live() {
         eprintln!("skip: MINDFORK_ENGINE_URL not set");
         return;
     };
-    // Свежий профиль (у bootstrap-профиля есть дефолтный чат → его язык залочен).
+    // A fresh profile (the bootstrap profile has a default chat → its language is locked).
     cmd_tx
         .send(AppCommand::CreateProfile {
             name: "English".into(),
@@ -31,7 +31,7 @@ async fn i18n_en_profile_title_e2e_live() {
         AppEvent::ProfileList(v) => v.last().unwrap().id,
         _ => unreachable!(),
     };
-    // Язык каркаса En (профиль свежий, без данных → смена разрешена).
+    // Scaffold language En (a fresh profile with no data → the change is allowed).
     cmd_tx
         .send(AppCommand::UpdateProfile {
             id: pid,
@@ -41,7 +41,7 @@ async fn i18n_en_profile_title_e2e_live() {
             }),
         })
         .unwrap();
-    // Новый чат под этим профилем (станет активным).
+    // A new chat under this profile (will become active).
     cmd_tx
         .send(AppCommand::NewChat {
             profile_id: Some(pid),
@@ -54,11 +54,11 @@ async fn i18n_en_profile_title_e2e_live() {
         AppEvent::ChatActivated { id, .. } => id,
         _ => unreachable!(),
     };
-    // Английский ход.
+    // An English turn.
     let (reply, _) =
         run_turn_live(&cmd_tx, &mut evt_rx, "Tell me a fun fact about the Moon.").await;
     eprintln!("en reply: {:?}", reply.chars().take(80).collect::<String>());
-    // Авто-название по переписке (дайджест/системное сообщение — на языке каркаса).
+    // Auto-title from the conversation (digest/system message — in the scaffold language).
     cmd_tx.send(AppCommand::AutoRenameChat(chat_id)).unwrap();
     let renamed = wait_for(&mut evt_rx, |e| matches!(e, AppEvent::ChatRenamed { .. }))
         .await
@@ -73,17 +73,17 @@ async fn i18n_en_profile_title_e2e_live() {
     let has_cyr = title
         .chars()
         .any(|c| ('а'..='я').contains(&c) || ('А'..='Я').contains(&c));
-    assert!(!title.trim().is_empty(), "пустой заголовок");
+    assert!(!title.trim().is_empty(), "empty title");
     assert!(
         !has_cyr,
-        "заголовок англоязычной переписки содержит кириллицу: {title:?}"
+        "the English conversation's title contains Cyrillic: {title:?}"
     );
 }
 
-/// Живой смоук Яруса 2 i18n (docs/history/i18n.md, группа 2c): en-профиль + `current_time`.
-/// Результат инструмента должен нести английскую метку «Local time:» и не содержать
-/// кириллицы (утилитарные инструменты локализованы). Сети/песочницы не требует.
-/// Запуск:
+/// Live i18n Tier 2 smoke (docs/history/i18n.md, group 2c): an en profile + `current_time`.
+/// The tool result must carry the English label "Local time:" and contain no
+/// Cyrillic (utility tools are localized). Needs no network/sandbox.
+/// Run:
 /// `MINDFORK_ENGINE_URL=…/v1 cargo test utils_en_e2e_live -- --ignored --nocapture --test-threads=1`.
 #[tokio::test]
 #[ignore = "requires a running OpenAI-compatible server (MINDFORK_ENGINE_URL)"]
@@ -150,11 +150,11 @@ async fn utils_en_e2e_live() {
     }
 }
 
-/// Живой смоук Яруса 2 i18n (docs/history/i18n.md, группа 2b): en-профиль + RAG-инструменты.
-/// Модель добавляет факт (`rag_add`) и ищет его (`rag_search`); **результаты
-/// rag-инструментов должны быть на английском** (без кириллицы) — критерий 2b
-/// (результаты инструментов локализованы). Нужен реальный эмбеддер (`MINDFORK_EMBED_URL`).
-/// Запуск:
+/// Live i18n Tier 2 smoke (docs/history/i18n.md, group 2b): an en profile + RAG tools.
+/// The model adds a fact (`rag_add`) and searches for it (`rag_search`); **the
+/// rag-tool results must be in English** (no Cyrillic) — the 2b criterion
+/// (tool results are localized). Needs a real embedder (`MINDFORK_EMBED_URL`).
+/// Run:
 /// `MINDFORK_ENGINE_URL=…/v1 MINDFORK_EMBED_URL=…/v1 cargo test rag_en_e2e_live -- --ignored --nocapture --test-threads=1`.
 #[tokio::test]
 #[ignore = "requires a running OpenAI-compatible server (MINDFORK_ENGINE_URL)"]
@@ -221,7 +221,7 @@ async fn rag_en_e2e_live() {
         s.chars()
             .any(|c| ('а'..='я').contains(&c) || ('А'..='Я').contains(&c))
     };
-    // Результаты rag-инструментов — на английском (каркас переведён, Ярус 2 2b).
+    // The rag-tool results are in English (the scaffold is translated, Tier 2 2b).
     for (n, r) in &all {
         if n == "rag_add" || n == "rag_search" {
             assert!(!has_cyr(r), "rag tool {n} result has cyrillic: {r:?}");
@@ -231,7 +231,7 @@ async fn rag_en_e2e_live() {
         all.iter().any(|(n, _)| n == "rag_add"),
         "expected rag_add call"
     );
-    // Английские маркеры результатов (если инструмент отработал).
+    // English result markers (if the tool ran).
     assert!(
         all.iter()
             .any(|(n, r)| n == "rag_add" && r.contains("Chunks added")),
@@ -239,10 +239,10 @@ async fn rag_en_e2e_live() {
     );
 }
 
-/// End-to-end на живой модели: с включённым `send_followup_message` ассистент
-/// пишет **второе сообщение** отдельным пузырём. Проверяем и сигнал UI
-/// (`AssistantContinue`), и итоговую структуру чата (`Message.new_bubble`).
-/// Модель нестабильна — тест `#[ignore]`, гоняется вручную против Gemma/Qwen.
+/// End-to-end against a live model: with `send_followup_message` enabled the assistant
+/// writes a **second message** as a separate bubble. Checks both the UI signal
+/// (`AssistantContinue`) and the resulting chat structure (`Message.new_bubble`).
+/// The model is unstable — the test is `#[ignore]`, run manually against Gemma/Qwen.
 #[tokio::test]
 #[ignore = "requires a running OpenAI-compatible server (MINDFORK_ENGINE_URL)"]
 async fn followup_tool_e2e_live() {
@@ -294,14 +294,14 @@ async fn followup_tool_e2e_live() {
     }
     assert!(
         saw_continue && new_bubbles >= 1,
-        "ожидали второе сообщение отдельным пузырём (followup)"
+        "expected a second message as a separate bubble (followup)"
     );
 }
 
-/// End-to-end на живой модели: с включённым `rewrite_current_message` ассистент
-/// отбрасывает начатый ответ и пишет заново; отброшенное уходит в `Chat.deleted`.
-/// Проверяем сигнал UI (`AssistantRewrite`) и непустой архив удалённого.
-/// Модель нестабильна — тест `#[ignore]`, гоняется вручную.
+/// End-to-end against a live model: with `rewrite_current_message` enabled the assistant
+/// discards the reply it started and writes it anew; the discarded content goes into `Chat.deleted`.
+/// Checks the UI signal (`AssistantRewrite`) and a non-empty deleted archive.
+/// The model is unstable — the test is `#[ignore]`, run manually.
 #[tokio::test]
 #[ignore = "requires a running OpenAI-compatible server (MINDFORK_ENGINE_URL)"]
 async fn rewrite_tool_e2e_live() {
@@ -352,17 +352,17 @@ async fn rewrite_tool_e2e_live() {
     }
     assert!(
         saw_rewrite && !chat.deleted.is_empty(),
-        "ожидали отброшенный (переписанный) ответ в Chat.deleted"
+        "expected a discarded (rewritten) reply in Chat.deleted"
     );
 }
 
-/// End-to-end зонд SelfModel на живой модели (две сессии, один профиль):
-/// 1) сессия 1 — сообщаем факты о себе и просим зафиксировать в «модели себя»
-///    (ожидаем вызовы `update_self_model`/`update_user_model`, запись в БД);
-/// 2) сессия 2 (новый чат тем же профилем) — спрашиваем «что ты обо мне помнишь»;
-///    «модель себя» подмешана в системный промпт → ожидаем припоминание.
-/// Поведение модели нестабильно — тест `#[ignore]`, гоняется вручную; ассертим
-/// **механизм** (БД заполнена), а текст припоминания печатаем для оценки.
+/// End-to-end SelfModel probe against a live model (two sessions, one profile):
+/// 1) session 1 — tell it facts about the user and ask it to record them in the "self-model"
+///    (expect calls to `update_self_model`/`update_user_model`, a write to the DB);
+/// 2) session 2 (a new chat of the same profile) — ask "what do you remember about me";
+///    the "self-model" is mixed into the system prompt → expect recall.
+/// Model behavior is unstable — the test is `#[ignore]`, run manually; assert the
+/// **mechanism** (the DB is populated), and print the recalled text for evaluation.
 #[tokio::test]
 #[ignore = "requires a running OpenAI-compatible server (MINDFORK_ENGINE_URL)"]
 async fn self_model_e2e_live() {
@@ -374,7 +374,7 @@ async fn self_model_e2e_live() {
     let root = _d.path().to_path_buf();
     let pid = enable_all_tools(&cmd_tx, &mut evt_rx).await;
 
-    // --- Сессия 1: сообщаем факты и просим зафиксировать модель себя. ---
+    // --- Session 1: tell it facts and ask it to record the self-model. ---
     let (s1_text, s1_tools) = run_turn_live(
         &cmd_tx,
         &mut evt_rx,
@@ -385,7 +385,7 @@ async fn self_model_e2e_live() {
     .await;
     eprintln!("сессия 1: инструменты={s1_tools:?}\nтекст={s1_text:?}\n");
 
-    // --- Сессия 2: новый чат тем же профилем, проверяем припоминание. ---
+    // --- Session 2: a new chat of the same profile, check recall. ---
     cmd_tx
         .send(AppCommand::NewChat {
             profile_id: Some(pid),
@@ -402,27 +402,27 @@ async fn self_model_e2e_live() {
     cmd_tx.send(AppCommand::Quit).unwrap();
     handle.await.unwrap();
 
-    // Механизм: после сессии 1 модель себя профиля непуста и сохранена на диск.
+    // Mechanism: after session 1 the profile's self-model is non-empty and saved to disk.
     let reopened = Storage::open(Paths::with_root(&root)).unwrap();
     let model = reopened.db().self_model_get(pid).unwrap();
     eprintln!("self_model в БД: {model:#?}");
-    let model = model.expect("ожидали сохранённую модель себя после сессии 1");
+    let model = model.expect("expected a saved self-model after session 1");
     assert!(
         !model.is_empty(),
-        "ожидали непустую модель себя (модель должна была вызвать update_*)"
+        "expected a non-empty self-model (the model should have called update_*)"
     );
-    // Хотя бы один из мутаторов реально вызван.
+    // At least one of the mutators was actually called.
     assert!(
         s1_tools
             .iter()
             .any(|t| t == "update_self_model" || t == "update_user_model"),
-        "ожидали вызов update_self_model/update_user_model в сессии 1"
+        "expected an update_self_model/update_user_model call in session 1"
     );
 }
 
-/// End-to-end зонд наблюдений: просим модель зафиксировать наблюдение через
-/// `add_insight` — ожидаем self-заметку (@self) в БД (нарратив переехал в заметки,
-/// Ярус 1 «нарратив как заметки»). `#[ignore]`, вручную.
+/// End-to-end observation probe: ask the model to record an observation via
+/// `add_insight` — expect a self-note (@self) in the DB (the narrative moved into notes,
+/// Tier 1 "narrative as notes"). `#[ignore]`, manual.
 #[tokio::test]
 #[ignore = "requires a running OpenAI-compatible server (MINDFORK_ENGINE_URL)"]
 async fn self_model_insight_e2e_live() {
@@ -448,7 +448,7 @@ async fn self_model_insight_e2e_live() {
     cmd_tx.send(AppCommand::Quit).unwrap();
     handle.await.unwrap();
 
-    // Наблюдение — self-заметка (@self), а не запись в блобе модели.
+    // An observation is a self-note (@self), not an entry in the model's blob.
     let reopened = Storage::open(Paths::with_root(&root)).unwrap();
     let self_notes = reopened
         .db()
@@ -457,18 +457,18 @@ async fn self_model_insight_e2e_live() {
     eprintln!("self-заметки (наблюдения) в БД: {self_notes:#?}");
     assert!(
         !self_notes.is_empty(),
-        "ожидали хотя бы одну self-заметку (@self) — наблюдение от add_insight"
+        "expected at least one self-note (@self) — an observation from add_insight"
     );
     assert!(
         tools.iter().any(|t| t == "add_insight"),
-        "ожидали вызов add_insight"
+        "expected an add_insight call"
     );
 }
 
-/// End-to-end авто-рефлексии (Tier 3) на живой модели: `auto_reflect_every=1` →
-/// после первого же ответа ассистента в фоне запускается рефлексия, которая сама
-/// обновляет «модель себя». Рефлексия молчалива (нет UI-события) — ждём появления
-/// данных в БД опросом. `#[ignore]`, вручную.
+/// End-to-end auto-reflection (Tier 3) against a live model: `auto_reflect_every=1` →
+/// after the very first assistant reply, reflection kicks off in the background, and it itself
+/// updates the "self-model". Reflection is silent (no UI event) — poll the DB, waiting
+/// for data to appear. `#[ignore]`, manual.
 #[tokio::test]
 #[ignore = "requires a running OpenAI-compatible server (MINDFORK_ENGINE_URL)"]
 async fn auto_reflect_e2e_live() {
@@ -477,13 +477,13 @@ async fn auto_reflect_e2e_live() {
         return;
     };
     let mut config = AppConfig::default();
-    config.self_model.auto_reflect_every = 1; // рефлексия после каждого ответа
+    config.self_model.auto_reflect_every = 1; // reflection after every reply
     let (_d, cmd_tx, mut evt_rx, handle) = spawn_orch_cfg(Some(backend), config);
     let root = _d.path().to_path_buf();
     let pid = enable_all_tools(&cmd_tx, &mut evt_rx).await;
 
-    // Обычная отправка: сообщаем факты, ассистент отвечает (а затем фоновая
-    // рефлексия должна сама зафиксировать «модель себя»).
+    // A regular send: tell it facts, the assistant replies (and then background
+    // reflection is expected to record the "self-model" on its own).
     let (_t, _tools) = run_turn_live(
         &cmd_tx,
         &mut evt_rx,
@@ -492,8 +492,8 @@ async fn auto_reflect_e2e_live() {
     )
     .await;
 
-    // Ждём, пока фоновая рефлексия что-то запишет (опрос БД до ~60с): блоб модели
-    // (summary/цели/собеседник) ИЛИ наблюдение self-заметкой (@self, Ярус 1).
+    // Wait for background reflection to write something (poll the DB up to ~60s): the model's
+    // blob (summary/goals/interlocutor) OR an observation as a self-note (@self, Tier 1).
     use crate::features::tools::notes::SELF_NOTE_TAG;
     let mut model = None;
     let mut self_notes = Vec::new();
@@ -520,28 +520,28 @@ async fn auto_reflect_e2e_live() {
     let blob_nonempty = model.as_ref().map(|m| !m.is_empty()).unwrap_or(false);
     assert!(
         blob_nonempty || !self_notes.is_empty(),
-        "ожидали, что фоновая авто-рефлексия заполнит модель себя (блоб или наблюдение-заметку)"
+        "expected background auto-reflection to populate the self-model (a blob or an observation note)"
     );
 }
 
-/// End-to-end авто-консолидации «модели себя» (этап A1) на живой модели:
-/// `auto_consolidate_every=1` → после ответа, когда наблюдений (`@self`) ≥ 2, в фоне
-/// запускается «сон» модели себя, который сам сводит дубли наблюдений (`note_merge`/
-/// `note_supersede`) и/или сжимает раздутое описание. «Сон» молчалив (нет UI-события) —
-/// наблюдаем результат опросом БД. Ассертим **механизм** (наблюдения создаются); факт
-/// сведения дублей печатаем для go/no-go (поведение нестабильно). `#[ignore]`, вручную:
+/// End-to-end "self-model" auto-consolidation (stage A1) against a live model:
+/// `auto_consolidate_every=1` → after a reply, once observations (`@self`) reach ≥ 2, the
+/// self-model's "sleep" kicks off in the background, itself merging duplicate observations (`note_merge`/
+/// `note_supersede`) and/or compressing a bloated description. "Sleep" is silent (no UI event) —
+/// observe the result by polling the DB. Assert the **mechanism** (observations get created); the fact
+/// of duplicates being merged is printed for go/no-go (behavior is unstable). `#[ignore]`, manual:
 /// `MINDFORK_ENGINE_URL=…/v1 MINDFORK_EMBED_URL=…/v1 cargo test self_consolidation_e2e_live -- --ignored --nocapture --test-threads=1`.
 #[tokio::test]
 #[ignore = "requires a running OpenAI-compatible server (MINDFORK_ENGINE_URL)"]
 async fn self_consolidation_e2e_live() {
     use crate::features::tools::notes::SELF_NOTE_TAG;
     let mut config = AppConfig::default();
-    config.self_model.auto_consolidate_every = 1; // «сон» после каждого ответа
+    config.self_model.auto_consolidate_every = 1; // "sleep" after every reply
     let Some(backend) = live_backend() else {
         eprintln!("skip: MINDFORK_ENGINE_URL not set");
         return;
     };
-    // Собираем оркестратор с включённым «сном» + (по возможности) реальным эмбеддером.
+    // Assemble the orchestrator with "sleep" enabled + (if possible) a real embedder.
     let embedder = live_embedder();
     let dir = tempfile::tempdir().unwrap();
     let storage = Arc::new(Storage::open(Paths::with_root(dir.path())).unwrap());
@@ -562,7 +562,7 @@ async fn self_consolidation_e2e_live() {
     let root = dir.path().to_path_buf();
     let pid = enable_all_tools(&cmd_tx, &mut evt_rx).await;
 
-    // Два похожих наблюдения (кандидаты в дубли) — записываем, пока НЕ объединяя.
+    // Two similar observations (duplicate candidates) — record them, without merging yet.
     let (_t1, tools1) = run_turn_live(
         &cmd_tx,
         &mut evt_rx,
@@ -578,8 +578,8 @@ async fn self_consolidation_e2e_live() {
     .await;
     eprintln!("наблюдения: {tools1:?} + {tools2:?}");
 
-    // После второго ответа наблюдений ≥ 2 → фоновый «сон» модели себя должен запуститься
-    // и, возможно, свести дубли. Опрос БД до ~90с: считаем self-заметки.
+    // After the second reply, observations ≥ 2 → the self-model's background "sleep" should
+    // kick off and possibly merge duplicates. Poll the DB up to ~90s: count self-notes.
     let count_self = |root: &std::path::Path| -> usize {
         Storage::open(Paths::with_root(root))
             .unwrap()
@@ -588,7 +588,7 @@ async fn self_consolidation_e2e_live() {
             .unwrap()
             .len()
     };
-    // Дожидаемся ≥2 наблюдений (обе записи легли), затем следим, не сведёт ли их «сон».
+    // Wait for ≥2 observations (both entries have landed), then watch for "sleep" merging them.
     let mut before = 0usize;
     for _ in 0..180 {
         before = count_self(&root);
@@ -597,14 +597,14 @@ async fn self_consolidation_e2e_live() {
         }
         tokio::time::sleep(std::time::Duration::from_millis(500)).await;
     }
-    // Триггерим ещё один ход (на случай, если «сон» после turn2 не успел из-за каденции):
-    // каждый ответ инкрементирует счётчик, every=1 → «сон» пробуется снова.
+    // Trigger one more turn (in case "sleep" after turn2 missed due to cadence):
+    // every reply increments the counter, every=1 → "sleep" is attempted again.
     let _ = run_turn_live(&cmd_tx, &mut evt_rx, "Спасибо, коротко подтверди.").await;
     let mut after = before;
     for _ in 0..180 {
         after = count_self(&root);
         if after < before {
-            break; // дубли сведены «сном»
+            break; // duplicates merged by "sleep"
         }
         tokio::time::sleep(std::time::Duration::from_millis(500)).await;
     }
@@ -616,29 +616,29 @@ async fn self_consolidation_e2e_live() {
         "self-заметок: до={before}, после={after} (сведение дублей «сном»: {})",
         after < before
     );
-    // Механизм: наблюдения-заметки созданы (add_insight отработал).
+    // Mechanism: observation notes are created (add_insight ran).
     assert!(
         before >= 1,
-        "ожидали хотя бы одно наблюдение (@self) от add_insight"
+        "expected at least one observation (@self) from add_insight"
     );
     let _ = (tools1, tools2);
 }
 
-/// End-to-end зонд **ворот** (ядро гипотезы Яруса 1 «нарратив как заметки»): модель
-/// записывает наблюдение (`add_insight` → self-заметка @self), затем почти-дубль —
-/// ворота `add_insight` показывают похожее существующее наблюдение с подсказкой
-/// переписать его через `note_revise`/`note_supersede` вместо копии. Ассертим
-/// **механизм** (self-заметки создаются; ворота срабатывают детерминированно —
-/// эмбеддер в тестах `MockEmbedder`, наблюдение #1 уже есть); **решение** модели
-/// интегрировать печатаем для go/no-go (поведение нестабильно). Запуск (нужен
-/// живой сервер + возможно эмбеддер):
+/// End-to-end **gate** probe (the core of the Tier 1 "narrative as notes" hypothesis): the model
+/// records an observation (`add_insight` → a self-note @self), then a near-duplicate —
+/// the `add_insight` gate shows the similar existing observation with a hint to
+/// rewrite it via `note_revise`/`note_supersede` instead of a copy. Assert the
+/// **mechanism** (self-notes get created; the gate fires deterministically —
+/// the embedder in tests is `MockEmbedder`, observation #1 already exists); the model's
+/// **decision** to integrate is printed for go/no-go (behavior is unstable). Run (needs
+/// a live server + possibly an embedder):
 /// `MINDFORK_ENGINE_URL=…/v1 cargo test self_model_gate_e2e_live -- --ignored --nocapture --test-threads=1`.
 #[tokio::test]
 #[ignore = "requires a running OpenAI-compatible server (MINDFORK_ENGINE_URL)"]
 async fn self_model_gate_e2e_live() {
     use crate::features::tools::notes::SELF_NOTE_TAG;
-    // Реальный chat + эмбеддер (MINDFORK_ENGINE_URL / MINDFORK_EMBED_URL) — ворота
-    // работают на настоящих эмбеддингах (bge-m3 и т.п.), а не на MockEmbedder.
+    // A real chat + embedder (MINDFORK_ENGINE_URL / MINDFORK_EMBED_URL) — the gate
+    // works on real embeddings (bge-m3 etc.), not on MockEmbedder.
     let Some((_d, cmd_tx, mut evt_rx, handle)) = spawn_orch_live() else {
         eprintln!("skip: MINDFORK_ENGINE_URL not set");
         return;
@@ -646,7 +646,7 @@ async fn self_model_gate_e2e_live() {
     let root = _d.path().to_path_buf();
     let pid = enable_all_tools(&cmd_tx, &mut evt_rx).await;
 
-    // Сессия 1: записываем наблюдение → self-заметка #1.
+    // Session 1: record an observation → self-note #1.
     let (_t1, tools1) = run_turn_live(
         &cmd_tx,
         &mut evt_rx,
@@ -655,7 +655,7 @@ async fn self_model_gate_e2e_live() {
     .await;
     eprintln!("сессия 1: инструменты={tools1:?}");
 
-    // Сессия 2: почти-дубль — ворота add_insight должны показать наблюдение #1.
+    // Session 2: a near-duplicate — the add_insight gate should show observation #1.
     let (t2, calls2) = run_turn_capture(
         &cmd_tx,
         &mut evt_rx,
@@ -670,10 +670,10 @@ async fn self_model_gate_e2e_live() {
     cmd_tx.send(AppCommand::Quit).unwrap();
     handle.await.unwrap();
 
-    // Механизм: add_insight в сессии 1 создал self-заметку (@self).
+    // Mechanism: add_insight in session 1 created a self-note (@self).
     assert!(
         tools1.iter().any(|t| t == "add_insight"),
-        "сессия 1: ожидали вызов add_insight"
+        "session 1: expected an add_insight call"
     );
     let self_notes = Storage::open(Paths::with_root(&root))
         .unwrap()
@@ -690,26 +690,26 @@ async fn self_model_gate_e2e_live() {
     );
     assert!(
         !self_notes.is_empty(),
-        "ожидали self-заметки (@self) от add_insight"
+        "expected self-notes (@self) from add_insight"
     );
 
-    // Ворота: результат add_insight в сессии 2 показал похожее наблюдение?
+    // Gate: did the add_insight result in session 2 show the similar observation?
     let gate_fired = calls2
         .iter()
         .any(|(n, r)| n == "add_insight" && r.contains("Похожие наблюдения"));
-    // С тестовым MockEmbedder (MINDFORK_EMBED_URL не задан) ворота детерминированны:
-    // если модель вызвала add_insight, они ОБЯЗАНЫ сработать (наблюдение #1 уже есть).
-    // С реальным эмбеддером срабатывание зависит от его настройки (напр. llama-server
-    // нужен `--embeddings`), а при недоступности ворота мягко деградируют в пусто —
-    // поэтому там это лишь диагностика, не жёсткая проверка.
+    // With the test MockEmbedder (MINDFORK_EMBED_URL unset), the gate is deterministic:
+    // if the model called add_insight, it MUST fire (observation #1 already exists).
+    // With a real embedder, firing depends on its configuration (e.g. llama-server
+    // needs `--embeddings`), and on unavailability the gate gracefully degrades to empty —
+    // so there it is only diagnostic, not a hard check.
     let real_embedder = std::env::var("MINDFORK_EMBED_URL").is_ok();
     if !real_embedder && calls2.iter().any(|(n, _)| n == "add_insight") {
         assert!(
             gate_fired,
-            "ворота add_insight должны были показать похожее наблюдение (MockEmbedder, ядро гипотезы): {calls2:?}"
+            "the add_insight gate should have shown the similar observation (MockEmbedder, core of the hypothesis): {calls2:?}"
         );
     }
-    // Интеграция почти-дубля: перепись/замещение/слияние наблюдений.
+    // Integrating the near-duplicate: rewrite/replace/merge observations.
     let integrated = calls2
         .iter()
         .any(|(n, _)| n == "note_revise" || n == "note_supersede" || n == "note_merge");
@@ -717,21 +717,21 @@ async fn self_model_gate_e2e_live() {
         "ворота показали похожее: {gate_fired} (реальный эмбеддер: {real_embedder}); \
          модель интегрировала (note_revise/supersede/merge): {integrated}"
     );
-    // Модель должна была как-то тронуть наблюдения (иначе гипотеза не проверяется).
+    // The model must have touched the observations somehow (otherwise the hypothesis isn't tested).
     assert!(
         calls2.iter().any(|(n, _)| {
             n == "add_insight" || n == "note_revise" || n == "note_supersede" || n == "note_merge"
         }),
-        "сессия 2: ожидали add_insight/note_revise/note_supersede/note_merge"
+        "session 2: expected add_insight/note_revise/note_supersede/note_merge"
     );
 }
 
-/// Живой смоук Яруса 2 i18n (docs/history/i18n.md, группа 2a): en-зеркало
-/// [`self_model_gate_e2e_live`]. Профиль с языком каркаса `En` + все инструменты; ход
-/// на английском записывает наблюдение, почти-дубль поднимает ворота `add_insight` —
-/// **и текст ворот, и весь результат инструмента должны быть на английском** (ключевой
-/// критерий Яруса 2: результаты инструментов локализованы, без кириллицы). Реальный
-/// эмбеддер (`MINDFORK_EMBED_URL`) нужен, чтобы ворота сработали. Запуск:
+/// Live i18n Tier 2 smoke (docs/history/i18n.md, group 2a): the en mirror of
+/// [`self_model_gate_e2e_live`]. A profile with scaffold language `En` + all tools; a turn
+/// in English records an observation, a near-duplicate raises the `add_insight` gate —
+/// **both the gate text and the whole tool result must be in English** (the key
+/// Tier 2 criterion: tool results are localized, no Cyrillic). A real
+/// embedder (`MINDFORK_EMBED_URL`) is needed for the gate to fire. Run:
 /// `MINDFORK_ENGINE_URL=…/v1 MINDFORK_EMBED_URL=…/v1 cargo test self_model_gate_en_e2e_live -- --ignored --nocapture --test-threads=1`.
 #[tokio::test]
 #[ignore = "requires a running OpenAI-compatible server (MINDFORK_ENGINE_URL)"]
@@ -741,7 +741,7 @@ async fn self_model_gate_en_e2e_live() {
         eprintln!("skip: MINDFORK_ENGINE_URL not set");
         return;
     };
-    // Свежий профиль (bootstrap-профиль залочен на Ru) → ставим язык каркаса En.
+    // A fresh profile (the bootstrap profile is locked to Ru) → set scaffold language En.
     cmd_tx
         .send(AppCommand::CreateProfile {
             name: "English".into(),
@@ -777,7 +777,7 @@ async fn self_model_gate_en_e2e_live() {
         .await
         .unwrap();
 
-    // Ход 1: записываем наблюдение (add_insight → self-заметка).
+    // Turn 1: record an observation (add_insight → a self-note).
     let (_t1, tools1) = run_turn_live(
         &cmd_tx,
         &mut evt_rx,
@@ -786,7 +786,7 @@ async fn self_model_gate_en_e2e_live() {
     .await;
     eprintln!("turn 1 tools: {tools1:?}");
 
-    // Ход 2: почти-дубль — ворота add_insight показывают наблюдение #1 (по-английски).
+    // Turn 2: a near-duplicate — the add_insight gate shows observation #1 (in English).
     let (t2, calls2) = run_turn_capture(
         &cmd_tx,
         &mut evt_rx,
@@ -804,7 +804,7 @@ async fn self_model_gate_en_e2e_live() {
         tools1.iter().any(|t| t == "add_insight"),
         "turn 1: expected add_insight call"
     );
-    // Результаты инструментов не содержат кириллицы (каркас переведён, Ярус 2).
+    // Tool results contain no Cyrillic (the scaffold is translated, Tier 2).
     let has_cyr = |s: &str| {
         s.chars()
             .any(|c| ('а'..='я').contains(&c) || ('А'..='Я').contains(&c))
@@ -812,7 +812,7 @@ async fn self_model_gate_en_e2e_live() {
     for (n, r) in &calls2 {
         assert!(!has_cyr(r), "tool {n} result has cyrillic: {r:?}");
     }
-    // Ворота (реальный эмбеддер): текст — английский шаблон «Similar observations …».
+    // Gate (real embedder): text — the English template "Similar observations …".
     let gate_fired = calls2
         .iter()
         .any(|(n, r)| n == "add_insight" && r.contains("Similar observations"));
@@ -826,13 +826,13 @@ async fn self_model_gate_en_e2e_live() {
     }
 }
 
-/// End-to-end зонд **ворот размера summary** (этап 2, docs/summary-as-snapshot.md):
-/// в БД сеется раздутое описание себя (сверх ориентира по умолчанию 1000 симв.);
-/// модель видит подсказку сократить и в пассивной инъекции, и в `get_self_model`.
-/// Просим прочитать модель себя и сократить описание, вынеся событийное в наблюдения.
-/// Ассертим **механизм** (модель тронула модель себя: `update_self_model` и/или
-/// `add_insight`); фактическое сокращение печатаем для go/no-go (поведение нестабильно).
-/// `#[ignore]`, вручную:
+/// End-to-end probe of the **summary-size gate** (stage 2, docs/summary-as-snapshot.md):
+/// seed the DB with a bloated self-description (beyond the default target of 1000 chars);
+/// the model sees a hint to shrink it, both in the passive injection and in `get_self_model`.
+/// Ask it to read the self-model and shrink the description, moving event-like content into observations.
+/// Assert the **mechanism** (the model touched the self-model: `update_self_model` and/or
+/// `add_insight`); the actual shrinkage is printed for go/no-go (behavior is unstable).
+/// `#[ignore]`, manual:
 /// `MINDFORK_ENGINE_URL=…/v1 cargo test summary_gate_e2e_live -- --ignored --nocapture --test-threads=1`.
 #[tokio::test]
 #[ignore = "requires a running OpenAI-compatible server (MINDFORK_ENGINE_URL)"]
@@ -844,8 +844,8 @@ async fn summary_gate_e2e_live() {
     let root = _d.path().to_path_buf();
     let pid = enable_all_tools(&cmd_tx, &mut evt_rx).await;
 
-    // Сеем раздутое описание себя (сверх ориентира по умолчанию 1000 симв.).
-    let bloated = "Я ассистент, ценю честность и точность. ".repeat(40); // ~1600 симв.
+    // Seed a bloated self-description (beyond the default target of 1000 chars).
+    let bloated = "Я ассистент, ценю честность и точность. ".repeat(40); // ~1600 chars.
     let bloated_len = bloated.chars().count();
     {
         let storage = Storage::open(Paths::with_root(&root)).unwrap();
@@ -854,7 +854,7 @@ async fn summary_gate_e2e_live() {
         storage.db().self_model_upsert(&m).unwrap();
     }
 
-    // Ход: просим прочитать модель себя и сократить описание.
+    // Turn: ask it to read the self-model and shrink the description.
     let (t, calls) = run_turn_capture(
         &cmd_tx,
         &mut evt_rx,
@@ -868,18 +868,18 @@ async fn summary_gate_e2e_live() {
     cmd_tx.send(AppCommand::Quit).unwrap();
     handle.await.unwrap();
 
-    // Ворота: результат get_self_model показал подсказку (детерминированно — summary
-    // раздут сверх ориентира), если модель его вызвала.
+    // Gate: the get_self_model result showed the hint (deterministic — summary
+    // is bloated beyond the target), if the model called it.
     let gate_fired = calls
         .iter()
         .any(|(n, r)| n == "get_self_model" && r.contains("Описание себя разрослось"));
     if calls.iter().any(|(n, _)| n == "get_self_model") {
         assert!(
             gate_fired,
-            "get_self_model при раздутом описании должен нести подсказку сократить: {calls:?}"
+            "get_self_model with a bloated description should carry a hint to shrink it: {calls:?}"
         );
     }
-    // Итоговый размер описания в БД.
+    // Final description size in the DB.
     let stored = Storage::open(Paths::with_root(&root))
         .unwrap()
         .db()
@@ -895,21 +895,21 @@ async fn summary_gate_e2e_live() {
         "ворота показали подсказку: {gate_fired}; описание {bloated_len} → {final_len} \
          (сократилось: {shrank}); вынесено в наблюдения: {wrote_insight}"
     );
-    // Модель должна была как-то тронуть модель себя (иначе гипотеза не проверяется).
+    // The model must have touched the self-model somehow (otherwise the hypothesis isn't tested).
     assert!(
         calls
             .iter()
             .any(|(n, _)| n == "update_self_model" || n == "add_insight"),
-        "ожидали update_self_model/add_insight: {calls:?}"
+        "expected update_self_model/add_insight: {calls:?}"
     );
 }
 
-/// End-to-end зонд **графа над наблюдениями** (Ярус 2, шаг B): модель записывает два
-/// соотносящихся наблюдения, затем связывает их (`note_link`). Ассертим механизм
-/// (наблюдения-заметки создаются; модель осмотрела модель себя / связала); появление
-/// связи в графе печатаем для go/no-go (поведение нестабильно). Инъекция по
-/// релевантности проверена детерминированно (`injection_recent_surfaces_relevant_over_fresh`)
-/// + ручной мульти-сессионный прогон пользователя. `#[ignore]`, вручную:
+/// End-to-end probe of the **graph over observations** (Tier 2, step B): the model records two
+/// related observations, then links them (`note_link`). Assert the mechanism
+/// (observation notes get created; the model inspected the self-model / linked); the appearance
+/// of a link in the graph is printed for go/no-go (behavior is unstable). Relevance-based
+/// injection is checked deterministically (`injection_recent_surfaces_relevant_over_fresh`)
+/// + a manual multi-session user run. `#[ignore]`, manual:
 /// `MINDFORK_ENGINE_URL=…/v1 MINDFORK_EMBED_URL=…/v1 cargo test self_model_graph_e2e_live -- --ignored --nocapture --test-threads=1`.
 #[tokio::test]
 #[ignore = "requires a running OpenAI-compatible server (MINDFORK_ENGINE_URL)"]
@@ -922,7 +922,7 @@ async fn self_model_graph_e2e_live() {
     let root = _d.path().to_path_buf();
     let pid = enable_all_tools(&cmd_tx, &mut evt_rx).await;
 
-    // Два соотносящихся (противоречащих) наблюдения.
+    // Two related (contradicting) observations.
     let (_t1, tools1) = run_turn_live(
         &cmd_tx,
         &mut evt_rx,
@@ -937,7 +937,7 @@ async fn self_model_graph_e2e_live() {
     .await;
     eprintln!("наблюдения: {tools1:?} + {tools2:?}");
 
-    // Просим осмотреть модель себя и связать противоречащие наблюдения.
+    // Ask it to inspect the self-model and link the contradicting observations.
     let (t3, calls3) = run_turn_capture(
         &cmd_tx,
         &mut evt_rx,
@@ -962,30 +962,30 @@ async fn self_model_graph_e2e_live() {
         links.len()
     );
 
-    // Механизм: наблюдения-заметки созданы.
-    assert!(self_notes.len() >= 2, "ожидали ≥2 наблюдения-заметки");
+    // Mechanism: observation notes are created.
+    assert!(self_notes.len() >= 2, "expected ≥2 observation notes");
     let linked = calls3.iter().any(|(n, _)| n == "note_link");
     eprintln!(
         "модель вызвала note_link: {linked}; связей появилось: {}",
         links.len()
     );
-    // Модель должна была осмотреть себя и/или связать (иначе граф не проверен).
+    // The model must have inspected itself and/or linked (otherwise the graph isn't tested).
     assert!(
         calls3
             .iter()
             .any(|(n, _)| n == "get_self_model" || n == "note_link"),
-        "сессия 3: ожидали get_self_model/note_link"
+        "session 3: expected get_self_model/note_link"
     );
 }
 
-/// End-to-end зонд **обзора self-консолидации** (Ярус 3, отложенный из Яруса 2 B):
-/// модель записывает два похожих наблюдения, затем зовёт `reflect` — его результат
-/// теперь несёт блок «Обзор наблюдений для консолидации» (похожие пары / contradicts /
-/// без связей), под который модель сводит дубли (`note_merge`/`note_supersede`/
-/// `note_revise`). Ассертим **механизм** (≥1 наблюдение-заметка; при вызове `reflect`
-/// и ≥2 наблюдениях его результат содержит обзор — детерминированно, заголовок/счётчики
-/// строятся без векторов, не зависят от порога эмбеддера); фактическое сведение дублей
-/// печатаем для go/no-go (поведение нестабильно). `#[ignore]`, вручную:
+/// End-to-end probe of the **self-consolidation overview** (Tier 3, deferred from Tier 2 B):
+/// the model records two similar observations, then calls `reflect` — its result
+/// now carries a block "Overview of observations for consolidation" (similar pairs / contradicts /
+/// no links), under which the model merges duplicates (`note_merge`/`note_supersede`/
+/// `note_revise`). Assert the **mechanism** (≥1 observation note; when `reflect` is called
+/// with ≥2 observations, its result contains the overview — deterministic, the header/counts
+/// are built without vectors and don't depend on the embedder threshold); the actual merging of duplicates
+/// is printed for go/no-go (behavior is unstable). `#[ignore]`, manual:
 /// `MINDFORK_ENGINE_URL=…/v1 MINDFORK_EMBED_URL=…/v1 cargo test self_consolidation_overview_e2e_live -- --ignored --nocapture --test-threads=1`.
 #[tokio::test]
 #[ignore = "requires a running OpenAI-compatible server (MINDFORK_ENGINE_URL)"]
@@ -998,7 +998,7 @@ async fn self_consolidation_overview_e2e_live() {
     let root = _d.path().to_path_buf();
     let pid = enable_all_tools(&cmd_tx, &mut evt_rx).await;
 
-    // Два похожих наблюдения (кандидаты в дубли) — пока НЕ объединяем.
+    // Two similar observations (duplicate candidates) — do NOT merge them yet.
     let (_t1, tools1) = run_turn_live(
         &cmd_tx,
         &mut evt_rx,
@@ -1015,7 +1015,7 @@ async fn self_consolidation_overview_e2e_live() {
     .await;
     eprintln!("наблюдения: {tools1:?} + {tools2:?}");
 
-    // Просим отрефлексировать и свести дубли — reflect несёт обзор self-консолидации.
+    // Ask it to reflect and merge duplicates — reflect carries the self-consolidation overview.
     let (t3, calls3) = run_turn_capture(
         &cmd_tx,
         &mut evt_rx,
@@ -1041,49 +1041,49 @@ async fn self_consolidation_overview_e2e_live() {
             .map(|n| n.content.clone())
             .collect::<Vec<_>>()
     );
-    // Механизм: наблюдения-заметки созданы.
+    // Mechanism: observation notes are created.
     assert!(
         !self_notes.is_empty(),
-        "ожидали self-заметки (@self) от add_insight"
+        "expected self-notes (@self) from add_insight"
     );
 
-    // Обзор self-консолидации: если модель вызвала reflect и наблюдений ≥2, его
-    // результат ОБЯЗАН нести блок «Обзор наблюдений» (детерминированно — заголовок и
-    // счётчики строятся без векторов, порог эмбеддера влияет лишь на список похожих пар).
-    // Если модель свела дубли к одному ещё в сессии 2, наблюдений < 2 и обзора нет — ок.
+    // Self-consolidation overview: if the model called reflect and there are ≥2 observations, its
+    // result MUST carry the "Overview of observations" block (deterministic — the header and
+    // counts are built without vectors, the embedder threshold only affects the list of similar pairs).
+    // If the model already merged duplicates in session 2, observations < 2 and there's no overview — fine.
     if let Some((_, result)) = calls3.iter().find(|(n, _)| n == "reflect") {
         let has_overview = result.contains("Обзор наблюдений");
         eprintln!("reflect вернул обзор self-консолидации: {has_overview}");
         if self_notes.len() >= 2 {
             assert!(
                 has_overview,
-                "reflect при ≥2 наблюдениях должен нести обзор self-консолидации: {result}"
+                "reflect with ≥2 observations should carry the self-consolidation overview: {result}"
             );
         }
     }
-    // Сведение дублей — go/no-go (нестабильно): печатаем.
+    // Merging duplicates — go/no-go (unstable): print it.
     let consolidated = calls3
         .iter()
         .any(|(n, _)| n == "note_merge" || n == "note_supersede" || n == "note_revise");
     eprintln!("модель свела дубли (note_merge/supersede/revise): {consolidated}");
-    // Модель должна была отрефлексировать и/или тронуть наблюдения.
+    // The model must have reflected and/or touched the observations.
     assert!(
         calls3.iter().any(|(n, _)| {
             n == "reflect" || n == "note_merge" || n == "note_supersede" || n == "note_revise"
         }),
-        "сессия 3: ожидали reflect/note_merge/note_supersede/note_revise: {calls3:?}"
+        "session 3: expected reflect/note_merge/note_supersede/note_revise: {calls3:?}"
     );
 }
 
-/// End-to-end зонд **ворот родственных черт** `user_model` (Ярус 2, шаг C): модель
-/// добавляет черту собеседника (`update_user_model` с `add_traits`), затем близкую —
-/// ворота `add_traits` показывают родственную черту и просят решить (дубль/противоречие).
-/// Ассертим **механизм** (черта записана в `perceived_traits`; во второй сессии снова
-/// вызван `update_user_model`); срабатывание ворот и решение модели печатаем для
-/// go/no-go. **Порог ворот 0.72** (откалиброван на bge-m3, в отличие от беспороговых
-/// ворот `add_insight`), поэтому на реальном эмбеддере срабатывание зависит от близости
-/// сгенерированных моделью формулировок — здесь это диагностика, не жёсткая проверка.
-/// `#[ignore]`, вручную:
+/// End-to-end probe of the **related-traits gate** for `user_model` (Tier 2, step C): the model
+/// adds an interlocutor trait (`update_user_model` with `add_traits`), then a close one —
+/// the `add_traits` gate shows the related trait and asks it to decide (duplicate/contradiction).
+/// Assert the **mechanism** (the trait is recorded in `perceived_traits`; the second session
+/// again calls `update_user_model`); the gate firing and the model's decision are printed for
+/// go/no-go. **Gate threshold 0.72** (calibrated on bge-m3, unlike the threshold-free
+/// `add_insight` gate), so on a real embedder firing depends on how close the
+/// model-generated phrasings are — here this is diagnostic, not a hard check.
+/// `#[ignore]`, manual:
 /// `MINDFORK_ENGINE_URL=…/v1 MINDFORK_EMBED_URL=…/v1 cargo test trait_gate_e2e_live -- --ignored --nocapture --test-threads=1`.
 #[tokio::test]
 #[ignore = "requires a running OpenAI-compatible server (MINDFORK_ENGINE_URL)"]
@@ -1095,7 +1095,7 @@ async fn trait_gate_e2e_live() {
     let root = _d.path().to_path_buf();
     let pid = enable_all_tools(&cmd_tx, &mut evt_rx).await;
 
-    // Сессия 1: добавляем черту собеседника → user_model.perceived_traits.
+    // Session 1: add an interlocutor trait → user_model.perceived_traits.
     let (_t1, tools1) = run_turn_live(
         &cmd_tx,
         &mut evt_rx,
@@ -1105,7 +1105,7 @@ async fn trait_gate_e2e_live() {
     .await;
     eprintln!("сессия 1: инструменты={tools1:?}");
 
-    // Сессия 2: очень похожая черта — ворота add_traits должны предупредить о дубле.
+    // Session 2: a very similar trait — the add_traits gate should warn about a duplicate.
     let (t2, calls2) = run_turn_capture(
         &cmd_tx,
         &mut evt_rx,
@@ -1119,10 +1119,10 @@ async fn trait_gate_e2e_live() {
     cmd_tx.send(AppCommand::Quit).unwrap();
     handle.await.unwrap();
 
-    // Механизм: update_user_model в сессии 1 записал черту.
+    // Mechanism: update_user_model in session 1 recorded a trait.
     assert!(
         tools1.iter().any(|t| t == "update_user_model"),
-        "сессия 1: ожидали вызов update_user_model"
+        "session 1: expected an update_user_model call"
     );
     let stored = Storage::open(Paths::with_root(&root))
         .unwrap()
@@ -1136,35 +1136,35 @@ async fn trait_gate_e2e_live() {
     eprintln!("черты собеседника в БД: {traits:?}");
     assert!(
         !traits.is_empty(),
-        "ожидали ≥1 черту в user_model от update_user_model"
+        "expected ≥1 trait in user_model from update_user_model"
     );
 
-    // Ворота: результат update_user_model в сессии 2 показал родственную черту?
-    // (`remove_traits` — аргумент update_user_model, не отдельное имя инструмента,
-    // поэтому интеграцию читаем по итоговому состоянию БД, а не по имени вызова.)
+    // Gate: did the update_user_model result in session 2 show the related trait?
+    // (`remove_traits` is an argument of update_user_model, not a separate tool name,
+    // so integration is read from the final DB state, not the call name.)
     let gate_fired = calls2
         .iter()
         .any(|(n, r)| n == "update_user_model" && r.contains("Родственные черты"));
-    // Интеграция почти-дубля: модель свела перефразы к одной черте (не оставила обе).
+    // Integrating the near-duplicate: the model merged the paraphrases into one trait (didn't keep both).
     let integrated = traits.len() <= 1;
     eprintln!(
         "ворота предупредили о похожей черте: {gate_fired}; \
          модель свела к одной черте (не копит перефразы): {integrated}"
     );
 
-    // Модель должна была снова тронуть модель собеседника (иначе ворота не проверены).
+    // The model must have touched the interlocutor model again (otherwise the gate isn't tested).
     assert!(
         calls2.iter().any(|(n, _)| n == "update_user_model"),
-        "сессия 2: ожидали update_user_model"
+        "session 2: expected update_user_model"
     );
 }
 
-/// End-to-end зонд **кросс-органных связей** (Ярус 3, Путь 1): модель записывает факт
-/// «о собеседнике» (`note_save`) и наблюдение «о себе» (`add_insight`), затем связывает
-/// их (`note_link`) — ребро между органами памяти. Ассертим **механизм** (обе заметки
-/// созданы; модель осмотрела оба органа и/или связала); появление **кросс-органного
-/// ребра** (один конец `@self`, другой — пользовательская заметка) печатаем для
-/// go/no-go. `#[ignore]`, вручную:
+/// End-to-end probe of **cross-organ links** (Tier 3, Path 1): the model records a fact
+/// "about the interlocutor" (`note_save`) and an observation "about itself" (`add_insight`), then links
+/// them (`note_link`) — an edge between memory organs. Assert the **mechanism** (both notes
+/// get created; the model inspected both organs and/or linked); the appearance of a **cross-organ
+/// edge** (one end `@self`, the other a user note) is printed for
+/// go/no-go. `#[ignore]`, manual:
 /// `MINDFORK_ENGINE_URL=…/v1 MINDFORK_EMBED_URL=…/v1 cargo test cross_organ_link_e2e_live -- --ignored --nocapture --test-threads=1`.
 #[tokio::test]
 #[ignore = "requires a running OpenAI-compatible server (MINDFORK_ENGINE_URL)"]
@@ -1177,14 +1177,14 @@ async fn cross_organ_link_e2e_live() {
     let root = _d.path().to_path_buf();
     let pid = enable_all_tools(&cmd_tx, &mut evt_rx).await;
 
-    // Факт «о собеседнике» → пользовательская заметка.
+    // A fact "about the interlocutor" → a user note.
     let (_t1, tools1) = run_turn_live(
         &cmd_tx,
         &mut evt_rx,
         "Запиши заметку о собеседнике (note_save): пользователь ценит краткость в ответах.",
     )
     .await;
-    // Наблюдение «о себе» → self-заметка.
+    // An observation "about itself" → a self-note.
     let (_t2, tools2) = run_turn_live(
         &cmd_tx,
         &mut evt_rx,
@@ -1193,7 +1193,7 @@ async fn cross_organ_link_e2e_live() {
     .await;
     eprintln!("сохранение: {tools1:?} + {tools2:?}");
 
-    // Просим связать наблюдение «о себе» с фактом «о собеседнике» (кросс-органно).
+    // Ask it to link the observation "about itself" with the fact "about the interlocutor" (cross-organ).
     let (t3, calls3) = run_turn_capture(
         &cmd_tx,
         &mut evt_rx,
@@ -1213,7 +1213,7 @@ async fn cross_organ_link_e2e_live() {
         .note_list(pid, None, &[SELF_NOTE_TAG.to_string()], None)
         .unwrap();
     let links = reopened.db().note_links_all(pid).unwrap();
-    // Кросс-органное ребро: один конец @self, другой — пользовательская заметка.
+    // A cross-organ edge: one end @self, the other a user note.
     let cross = links
         .iter()
         .filter(|(f, t, _)| {
@@ -1240,33 +1240,33 @@ async fn cross_organ_link_e2e_live() {
         links.len()
     );
 
-    // Механизм: обе заметки созданы (наблюдение @self + пользовательская).
+    // Mechanism: both notes are created (an observation @self + a user note).
     assert!(
         !self_notes.is_empty(),
-        "ожидали self-заметку от add_insight"
+        "expected a self-note from add_insight"
     );
     let all = reopened.db().note_list(pid, None, &[], None).unwrap();
     assert!(
         all.iter().any(|n| !is_self_note(n)),
-        "ожидали пользовательскую заметку от note_save"
+        "expected a user note from note_save"
     );
     let linked = calls3.iter().any(|(n, _)| n == "note_link");
     eprintln!("модель вызвала note_link: {linked}; кросс-органных рёбер: {cross}");
-    // Модель должна была осмотреть органы и/или связать (иначе кросс-связь не проверена).
+    // The model must have inspected the organs and/or linked (otherwise the cross-link isn't tested).
     assert!(
         calls3
             .iter()
             .any(|(n, _)| n == "get_self_model" || n == "note_recall" || n == "note_link"),
-        "сессия 3: ожидали get_self_model/note_recall/note_link"
+        "session 3: expected get_self_model/note_recall/note_link"
     );
 }
 
-/// End-to-end зонд **смешения выдачи** (Ярус 3, Путь 2): при включённом тумблере
-/// `notes.recall_includes_self` наблюдения «о себе» (`@self`) входят в общий
-/// `note_recall` с пометкой `[о себе]`. Ассертим **механизм** (тумблер применён; модель
-/// вызвала `note_recall`); появление self-наблюдения с пометкой и **ответ модели**
-/// (не «загрязняет» ли — go/no-go по безопасности смешения) печатаем. `#[ignore]`,
-/// вручную: `MINDFORK_ENGINE_URL=…/v1 MINDFORK_EMBED_URL=…/v1 cargo test recall_includes_self_e2e_live -- --ignored --nocapture --test-threads=1`.
+/// End-to-end probe of **output mixing** (Tier 3, Path 2): with the toggle
+/// `notes.recall_includes_self` on, observations "about itself" (`@self`) are included in the general
+/// `note_recall` with an "about self" marker. Assert the **mechanism** (the toggle is applied; the model
+/// called `note_recall`); the appearance of a marked self-observation and the **model's reply**
+/// (does it "contaminate" — go/no-go on mixing safety) are printed. `#[ignore]`,
+/// manual: `MINDFORK_ENGINE_URL=…/v1 MINDFORK_EMBED_URL=…/v1 cargo test recall_includes_self_e2e_live -- --ignored --nocapture --test-threads=1`.
 #[tokio::test]
 #[ignore = "requires a running OpenAI-compatible server (MINDFORK_ENGINE_URL)"]
 async fn recall_includes_self_e2e_live() {
@@ -1275,8 +1275,8 @@ async fn recall_includes_self_e2e_live() {
         return;
     };
     let _pid = enable_all_tools(&cmd_tx, &mut evt_rx).await;
-    // Включаем смешение выдачи (Путь 2). MockSupervisor игнорирует настройки серверов,
-    // так что живой backend/embedder остаются; меняется лишь recall_includes_self.
+    // Enable output mixing (Path 2). MockSupervisor ignores server settings,
+    // so the live backend/embedder stay in place; only recall_includes_self changes.
     let config = AppConfig {
         notes: crate::shared::config::NotesSettings {
             recall_includes_self: true,
@@ -1294,7 +1294,7 @@ async fn recall_includes_self_e2e_live() {
     .await
     .unwrap();
 
-    // Факт «о собеседнике» + наблюдение «о себе».
+    // A fact "about the interlocutor" + an observation "about itself".
     run_turn_live(
         &cmd_tx,
         &mut evt_rx,
@@ -1308,8 +1308,8 @@ async fn recall_includes_self_e2e_live() {
     )
     .await;
 
-    // Поиск: при включённом тумблере note_recall должен вернуть и заметку, и наблюдение
-    // «о себе» (с пометкой [о себе]).
+    // Search: with the toggle on, note_recall should return both the note and the observation
+    // "about itself" (with an "about self" marker).
     let (t3, calls3) = run_turn_capture(
         &cmd_tx,
         &mut evt_rx,
@@ -1321,22 +1321,22 @@ async fn recall_includes_self_e2e_live() {
     cmd_tx.send(AppCommand::Quit).unwrap();
     handle.await.unwrap();
 
-    // Механизм: note_recall при включённом тумблере вернул self-наблюдение с пометкой.
+    // Mechanism: with the toggle on, note_recall returned the marked self-observation.
     let self_marked = calls3
         .iter()
         .any(|(n, r)| n == "note_recall" && r.contains("[о себе]"));
     eprintln!("note_recall показал наблюдение «о себе» с пометкой: {self_marked}");
     assert!(
         calls3.iter().any(|(n, _)| n == "note_recall"),
-        "ожидали вызов note_recall"
+        "expected a note_recall call"
     );
 }
 
-/// End-to-end зонд **связи заметок с RAG-источниками** (Ярус 3, Путь 3): модель
-/// добавляет документ в базу знаний, находит его (`rag_search`), записывает вывод
-/// заметкой (`note_save`) и связывает её с источником (`note_cite_source`). Ассертим
-/// **механизм** (источник в базе; модель искала/связывала); появление связи заметка↔
-/// источник в БД печатаем для go/no-go. `#[ignore]`, вручную:
+/// End-to-end probe of **linking notes with RAG sources** (Tier 3, Path 3): the model
+/// adds a document to the knowledge base, finds it (`rag_search`), records a conclusion
+/// as a note (`note_save`) and links it to the source (`note_cite_source`). Assert
+/// the **mechanism** (the source is in the base; the model searched/linked); the appearance of a note↔
+/// source link in the DB is printed for go/no-go. `#[ignore]`, manual:
 /// `MINDFORK_ENGINE_URL=…/v1 MINDFORK_EMBED_URL=…/v1 cargo test note_cite_source_e2e_live -- --ignored --nocapture --test-threads=1`.
 #[tokio::test]
 #[ignore = "requires a running OpenAI-compatible server (MINDFORK_ENGINE_URL)"]
@@ -1348,7 +1348,7 @@ async fn note_cite_source_e2e_live() {
     let root = _d.path().to_path_buf();
     let pid = enable_all_tools(&cmd_tx, &mut evt_rx).await;
 
-    // База знаний: добавляем документ под источником «факты».
+    // Knowledge base: add a document under a named source.
     let (_t1, tools1) = run_turn_live(
         &cmd_tx,
         &mut evt_rx,
@@ -1357,7 +1357,7 @@ async fn note_cite_source_e2e_live() {
     .await;
     eprintln!("rag_add: {tools1:?}");
 
-    // Модель ищет, записывает вывод и связывает его с источником.
+    // The model searches, records a conclusion, and links it to the source.
     let (t2, calls2) = run_turn_capture(
         &cmd_tx,
         &mut evt_rx,
@@ -1372,12 +1372,12 @@ async fn note_cite_source_e2e_live() {
     handle.await.unwrap();
 
     let reopened = Storage::open(Paths::with_root(&root)).unwrap();
-    // Механизм: источник «факты» в базе знаний.
+    // Mechanism: the source is in the knowledge base.
     assert!(
         reopened.db().rag_source_exists(pid, "факты").unwrap(),
-        "ожидали источник «факты» в базе знаний"
+        "expected the source to be in the knowledge base"
     );
-    // Связь заметка↔источник (обратный путь): заметки, ссылающиеся на «факты».
+    // Note↔source link (the reverse path): notes citing the source.
     let citing = reopened.db().notes_citing_source(pid, "факты").unwrap();
     let cited = calls2.iter().any(|(n, _)| n == "note_cite_source");
     eprintln!(
@@ -1385,20 +1385,20 @@ async fn note_cite_source_e2e_live() {
         citing.len(),
         citing.iter().map(|n| n.content.clone()).collect::<Vec<_>>()
     );
-    // Модель должна была искать и/или связать (иначе путь не проверен).
+    // The model must have searched and/or linked (otherwise the path isn't tested).
     assert!(
         calls2
             .iter()
             .any(|(n, _)| n == "rag_search" || n == "note_cite_source"),
-        "сессия 2: ожидали rag_search/note_cite_source"
+        "session 2: expected rag_search/note_cite_source"
     );
 }
 
-/// **Калибровочный** смоук порога A2 (`SUMMARY_OBS_SIMILARITY` в `overview.rs`): против
-/// РЕАЛЬНОГО эмбеддера (bge-m3 через `MINDFORK_EMBED_URL`) эмбеддит размеченные пары
-/// «абзац описания себя ↔ наблюдение» и **печатает** их косинусы, чтобы родитель выбрал
-/// порог по числам (как `TRAIT_SIMILARITY`). Жёсткого порога не ассертит — лишь что
-/// перефразы в среднем ближе несвязанных пар. `#[ignore]`, вручную:
+/// **Calibration** smoke for the A2 threshold (`SUMMARY_OBS_SIMILARITY` in `overview.rs`): against a
+/// REAL embedder (bge-m3 via `MINDFORK_EMBED_URL`) embeds labeled pairs
+/// "self-description paragraph ↔ observation" and **prints** their cosines, so the reader can pick
+/// a threshold from the numbers (like `TRAIT_SIMILARITY`). Doesn't assert a hard threshold — only that
+/// paraphrases are on average closer than unrelated pairs. `#[ignore]`, manual:
 /// `MINDFORK_EMBED_URL=…/v1 cargo test summary_obs_calibration_e2e_live -- --ignored --nocapture --test-threads=1`.
 #[tokio::test]
 #[ignore = "requires a running embedding server (MINDFORK_EMBED_URL)"]
@@ -1408,7 +1408,7 @@ async fn summary_obs_calibration_e2e_live() {
         eprintln!("skip: MINDFORK_EMBED_URL not set");
         return;
     };
-    // Перефразы одного и того же факта о себе (should-match).
+    // Paraphrases of the same self-fact (should-match).
     let should_match: &[(&str, &str)] = &[
         (
             "Я ценю ясность и краткость: предпочитаю давать сжатые, по существу ответы без воды.",
@@ -1423,7 +1423,7 @@ async fn summary_obs_calibration_e2e_live() {
             "Мне свойственно тщательно и до конца прорабатывать проблему, не бросая на полпути.",
         ),
     ];
-    // Абзац описания себя vs несвязанное наблюдение (should-NOT-match).
+    // A self-description paragraph vs an unrelated observation (should-NOT-match).
     let should_not: &[(&str, &str)] = &[
         (
             "Я ценю ясность и краткость в своих ответах, стремлюсь к сжатости изложения.",
@@ -1463,14 +1463,14 @@ async fn summary_obs_calibration_e2e_live() {
     eprintln!("среднее: совпадения={m:.2}  не-совпадения={n:.2}  (порог между ними)");
     assert!(
         m > n,
-        "перефразы должны быть в среднем ближе несвязанных пар: {m:.2} vs {n:.2}"
+        "paraphrases should be on average closer than unrelated pairs: {m:.2} vs {n:.2}"
     );
 }
 
-/// End-to-end зонд поведения A2: описание себя с абзацем, дублирующим (иными словами)
-/// хранимое наблюдение (`@self`); против РЕАЛЬНОГО эмбеддера
-/// `summary_observation_overlaps` возвращает `Some` и называет наблюдение. Печатает
-/// измеренный косинус (для калибровки). `#[ignore]`, вручную:
+/// End-to-end probe of A2 behavior: a self-description with a paragraph duplicating (in other words)
+/// a stored observation (`@self`); against a REAL embedder
+/// `summary_observation_overlaps` returns `Some` and names the observation. Prints
+/// the measured cosine (for calibration). `#[ignore]`, manual:
 /// `MINDFORK_EMBED_URL=…/v1 cargo test summary_obs_overlap_e2e_live -- --ignored --nocapture --test-threads=1`.
 #[tokio::test]
 #[ignore = "requires a running embedding server (MINDFORK_EMBED_URL)"]
@@ -1493,7 +1493,7 @@ async fn summary_obs_overlap_e2e_live() {
     model.summary = para.to_string();
     storage.db().self_model_upsert(&model).unwrap();
 
-    // Наблюдение (@self) с реальным эмбеддингом в БД.
+    // An observation (@self) with a real embedding in the DB.
     let obs = Note::new(profile, obs_text, vec![SELF_NOTE_TAG.to_string()]);
     storage.db().note_insert(&obs).unwrap();
     let ov = embedder
@@ -1508,7 +1508,7 @@ async fn summary_obs_overlap_e2e_live() {
         .note_vector_upsert(obs.id, profile, &ov)
         .unwrap();
 
-    // Измеренный косинус (диагностика для калибровки порога).
+    // The measured cosine (diagnostic for calibrating the threshold).
     let pv = embedder
         .embed(vec![para.to_string()])
         .await
@@ -1523,23 +1523,23 @@ async fn summary_obs_overlap_e2e_live() {
 
     let out = summary_observation_overlaps(&storage, embedder.as_ref(), profile, loc).await;
     eprintln!("секция summary↔наблюдения: {out:?}");
-    let out = out.expect("ожидали секцию совпадения summary↔наблюдение");
+    let out = out.expect("expected a summary↔observation overlap section");
     assert!(
         out.contains(&obs.id.to_string()),
-        "секция должна называть наблюдение (id): {out}"
+        "the section should name the observation (id): {out}"
     );
 }
 
-/// Живой e2e озвучивания (spec §11.9): команда `/tts` на чате с сообщениями идёт
-/// **через оркестратор** — отбор сообщений → речевой экстрактор → чанки → синтез у
-/// облачного провайдера → очередь воспроизведения. Проверяет всю цепочку и то, что
-/// задача корректно завершается (чип гаснет). Требует ключ **и звуковую карту**;
-/// само звучание — ручная проверка (тест слышит только тайминги).
+/// Live e2e for speech (spec §11.9): the `/tts` command on a chat with messages goes
+/// **through the orchestrator** — message selection → speech extractor → chunks → synthesis at
+/// the cloud provider → the playback queue. Checks the whole chain and that the
+/// task finishes correctly (the chip goes dark). Needs a key **and a sound card**;
+/// the actual sound — a manual check (the test only observes timings).
 ///
-/// Провайдер выбирается по заданной переменной: `MINDFORK_OPENAI_KEY` (по умолчанию)
-/// либо `MINDFORK_GEMINI_KEY`. Без них тихо пропускается.
+/// The provider is picked by which variable is set: `MINDFORK_OPENAI_KEY` (default)
+/// or `MINDFORK_GEMINI_KEY`. Silently skipped without either.
 #[tokio::test]
-#[ignore = "требует ключ облака (MINDFORK_OPENAI_KEY / MINDFORK_GEMINI_KEY) и звуковую карту"]
+#[ignore = "requires a cloud key (MINDFORK_OPENAI_KEY / MINDFORK_GEMINI_KEY) and a sound card"]
 async fn tts_speaks_chat_e2e_live() {
     use crate::features::tts_command::TtsScope;
     use crate::shared::config::TtsMode;
@@ -1556,7 +1556,7 @@ async fn tts_speaks_chat_e2e_live() {
         eprintln!("skip: ни MINDFORK_OPENAI_KEY, ни MINDFORK_GEMINI_KEY не заданы");
         return;
     }
-    // Роли озвучиваем — заодно проверяем префиксы на языке профиля.
+    // Speak roles too — this also checks prefixes in the profile's language.
     config.tts.speak_roles = true;
 
     let backend: Arc<dyn EngineBackend> = Arc::new(MockBackend::scripted(vec![
@@ -1574,13 +1574,13 @@ async fn tts_speaks_chat_e2e_live() {
         .unwrap();
     wait_for(&mut evt_rx, |e| matches!(e, AppEvent::Finished { .. })).await;
 
-    // Озвучиваем последний обмен (реплика пользователя + ответ ассистента).
+    // Speak the last exchange (the user's message + the assistant's reply).
     let started = std::time::Instant::now();
     cmd_tx.send(AppCommand::Tts(TtsScope::Recent(2))).unwrap();
     let on = wait_for(&mut evt_rx, |e| matches!(e, AppEvent::TtsActive(true))).await;
-    assert!(on.is_some(), "озвучивание должно стартовать");
+    assert!(on.is_some(), "speech should start");
 
-    // Ждём естественного завершения; ошибки синтеза/звука всплывут как Error.
+    // Wait for natural completion; synthesis/audio errors will surface as Error.
     let done = tokio::time::timeout(
         std::time::Duration::from_secs(120),
         wait_for(&mut evt_rx, |e| {
@@ -1588,13 +1588,13 @@ async fn tts_speaks_chat_e2e_live() {
         }),
     )
     .await
-    .expect("озвучивание должно завершиться за 120 с");
+    .expect("speech should finish within 120s");
     match done {
-        Some(AppEvent::Error(msg)) => panic!("озвучивание завершилось ошибкой: {msg}"),
+        Some(AppEvent::Error(msg)) => panic!("speech finished with an error: {msg}"),
         Some(AppEvent::TtsActive(false)) => {
             eprintln!("озвучено за {:?}", started.elapsed());
         }
-        other => panic!("неожиданный исход: {other:?}"),
+        other => panic!("unexpected outcome: {other:?}"),
     }
     cmd_tx.send(AppCommand::Quit).unwrap();
     let _ = handle.await;

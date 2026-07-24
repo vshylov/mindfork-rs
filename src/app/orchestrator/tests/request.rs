@@ -1,5 +1,5 @@
-//! Тесты оркестратора — маппинг доменных сообщений в формат движка. Часть модуля [`super`]
-//! (фикстуры в mod.rs). См. docs/history/refactoring-god-objects.md, этап 3.
+//! Orchestrator tests — mapping domain messages to the engine format. Part of the
+//! [`super`] module (fixtures in mod.rs). See docs/history/refactoring-god-objects.md, stage 3.
 
 use super::*;
 

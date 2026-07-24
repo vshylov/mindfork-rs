@@ -1,10 +1,11 @@
-//! Экран чата (FSD "page"): компоновка виджетов, роутинг фокуса, горячие
-//! клавиши и read-only-проекция состояния. См. spec §11.1, §11.7.
+//! The chat screen (FSD "page"): widget layout, focus routing, hotkeys, and a
+//! read-only projection of state. See spec §11.1, §11.7.
 //!
-//! Экран НЕ знает про `app`/каналы (FSD: зависимости только вниз). На нажатия
-//! он возвращает [`ChatIntent`] — намерение, которое `app` транслирует в
-//! `AppCommand`. События оркестратора `app` применяет, вызывая мутаторы экрана
-//! (`set_*`, `push_*`, …) — экрану не нужен тип `AppEvent`.
+//! The screen does NOT know about `app`/channels (FSD: dependencies only flow
+//! down). On a keypress it returns a [`ChatIntent`] — an intent that `app`
+//! translates into an `AppCommand`. `app` applies orchestrator events by
+//! calling the screen's mutators (`set_*`, `push_*`, …) — the screen doesn't
+//! need the `AppEvent` type.
 
 use std::time::{Duration, Instant};
 
@@ -38,17 +39,18 @@ use crate::widgets::message_feed::{FeedMessage, FeedRole, MessageFeed};
 use crate::widgets::profile_list::{ProfileListAction, ProfileListState};
 use crate::widgets::status_bar;
 
-/// Высота прокрутки ленты на одно нажатие PageUp/PageDown (строк).
+/// Feed scroll height per PageUp/PageDown press (rows).
 const PAGE_SCROLL: usize = 8;
 
-/// Высота прокрутки ленты на одну «зарубку» колеса мыши (строк).
+/// Feed scroll height per mouse-wheel "notch" (rows).
 const WHEEL_SCROLL: usize = 3;
 
-/// Задержка дебаунса спелл-чека: слово не флагуется, пока пользователь печатает.
+/// Spellcheck debounce delay: a word isn't flagged while the user is typing.
 const SPELL_DEBOUNCE: Duration = Duration::from_millis(300);
 
-/// Снимок настроек из события `Settings`: конфиг + полные профили + id профилей с
-/// заблокированным языком каркаса + снимок MCP-хоста (каталог + статусы серверов).
+/// A settings snapshot from the `Settings` event: config + full profiles + ids of
+/// profiles with a locked scaffold language + the MCP host snapshot (catalog +
+/// server statuses).
 pub type SettingsSnapshot = (
     AppConfig,
     Vec<Profile>,
@@ -57,82 +59,85 @@ pub type SettingsSnapshot = (
     Vec<crate::shared::config::CloudProvider>,
 );
 
-/// Намерение пользователя, которое исполняет `app` (транслирует в `AppCommand`).
+/// A user intent that `app` executes (translates into an `AppCommand`).
 #[derive(Debug, Clone, PartialEq)]
 pub enum ChatIntent {
     Quit,
     Send(String),
-    /// Перегенерировать последний ответ ассистента (`Ctrl+R`).
+    /// Regenerate the assistant's last reply (`Ctrl+R`).
     RegenerateLast,
-    /// Удалить последний обмен; текст пользователя вернётся в поле ввода (`Ctrl+E`).
+    /// Delete the last exchange; the user's text returns to the input box (`Ctrl+E`).
     DeleteLastExchange,
     Cancel,
-    /// Написать сообщение от имени пользователя (имперсонация, `Ctrl+U`). `seed` —
-    /// уже введённый текст (модель продолжит его). См. spec §11.8.
+    /// Write a message on the user's behalf (impersonation, `Ctrl+U`). `seed` —
+    /// text already typed (the model continues it). See spec §11.8.
     Impersonate {
         seed: String,
     },
-    /// Отменить текущую имперсонацию (`Esc` в предпросмотре).
+    /// Cancel the current impersonation (`Esc` in the preview).
     CancelImpersonation,
-    /// Создать чат из профиля (`None` — профиль по умолчанию). `Ctrl+N` в чате
-    /// (операции над конкретными чатами — переключение/клон/удаление/переименование
-    /// — идут через экран списка чатов, [`ChatListIntent`](crate::screens::chat_list::ChatListIntent)).
+    /// Create a chat from a profile (`None` — the default profile). `Ctrl+N` in
+    /// the chat (operations on specific chats — switch/clone/delete/rename —
+    /// go through the chat-list screen,
+    /// [`ChatListIntent`](crate::screens::chat_list::ChatListIntent)).
     NewChat {
         profile_id: Option<Uuid>,
     },
-    /// Скопировать всю переписку активного чата в буфер обмена (`F5`).
+    /// Copy the active chat's whole conversation to the clipboard (`F5`).
     CopyChat(Uuid),
-    /// Индексировать файл/директорию в RAG (команда `/rag add <path> [-r]`).
+    /// Index a file/directory into RAG (command `/rag add <path> [-r]`).
     RagAdd {
         path: String,
         recursive: bool,
     },
-    /// Удалить файл/директорию из RAG (команда `/rag remove <path>`).
+    /// Remove a file/directory from RAG (command `/rag remove <path>`).
     RagDelete {
         path: String,
     },
-    /// Показать источники базы знаний (команда `/rag list`).
+    /// Show the knowledge base's sources (command `/rag list`).
     RagList,
-    /// Реиндексировать базу знаний (команда `/rag rebuild`).
+    /// Reindex the knowledge base (command `/rag rebuild`).
     RagRebuild,
-    /// Озвучить сообщения чата (команда `/tts`, `/tts N`, `/tts all`). См. spec §11.9.
+    /// Speak the chat's messages (command `/tts`, `/tts N`, `/tts all`). See spec §11.9.
     Tts(crate::features::tts_command::TtsScope),
-    /// Остановить озвучивание (команда `/tts stop`).
+    /// Stop speech (command `/tts stop`).
     TtsStop,
-    /// Приостановить озвучивание (команда `/tts pause`).
+    /// Pause speech (command `/tts pause`).
     TtsPause,
-    /// Продолжить озвучивание (команда `/tts resume`).
+    /// Resume speech (command `/tts resume`).
     TtsResume,
-    /// Открыть экран настроек (`Ctrl+P`). `app` создаёт его из снимка настроек.
+    /// Open the settings screen (`Ctrl+P`). `app` builds it from the settings snapshot.
     OpenSettings,
-    /// Открыть экран списка чатов (`Esc`). `app` создаёт его из снимка списка.
+    /// Open the chat-list screen (`Esc`). `app` builds it from the list snapshot.
     OpenChatList,
-    /// Открыть экран просмотра «модели себя» (`F3`). `app` запрашивает снимок у
-    /// оркестратора (`RequestSelfModel`) и создаёт экран из события `SelfModelView`.
+    /// Open the "self-model" viewer screen (`F3`). `app` requests a snapshot from
+    /// the orchestrator (`RequestSelfModel`) and builds the screen from the
+    /// `SelfModelView` event.
     OpenSelfModel,
-    /// Включить/выключить захват мыши терминала для прокрутки колесом (`Ctrl+W`).
-    /// `true` — колесо прокручивает ленту (выделение текста — с Shift); `false` —
-    /// нативное выделение мышью. См. spec §11.3.
+    /// Toggle terminal mouse capture for wheel scrolling (`Ctrl+W`). `true` —
+    /// the wheel scrolls the feed (text selection — with Shift); `false` —
+    /// native mouse selection. See spec §11.3.
     SetMouseCapture(bool),
-    /// Записать текст в системный буфер обмена (`Ctrl+C` копировать / `Ctrl+X`
-    /// вырезать выделение поля ввода). Side-effect UI-слоя — `runtime` пишет через
-    /// `arboard` (не идёт в оркестратор: текст уже у UI). См. docs/history/input-selection-undo-mouse.md §B.
+    /// Write text to the system clipboard (`Ctrl+C` copy / `Ctrl+X` cut the
+    /// input box's selection). A UI-layer side effect — `runtime` writes via
+    /// `arboard` (doesn't go through the orchestrator: the text is already at
+    /// the UI). See docs/history/input-selection-undo-mouse.md §B.
     CopyToClipboard(String),
 }
 
-/// Необратимая операция, требующая подтверждения в модальном попапе (`Ctrl+R`/
-/// `Ctrl+E`, когда включена настройка `interface.confirm_destructive_keys`).
-/// См. spec §11.7.
+/// An irreversible operation that requires confirmation in a modal popup
+/// (`Ctrl+R`/`Ctrl+E`, when the setting `interface.confirm_destructive_keys` is
+/// on). See spec §11.7.
 #[derive(Debug, Clone, Copy, PartialEq)]
 enum ConfirmAction {
-    /// Перегенерировать последний ответ (`Ctrl+R`).
+    /// Regenerate the last reply (`Ctrl+R`).
     Regenerate,
-    /// Удалить последний обмен (`Ctrl+E`).
+    /// Delete the last exchange (`Ctrl+E`).
     DeleteExchange,
 }
 
 impl ConfirmAction {
-    /// Намерение, которое подтверждает эта операция.
+    /// The intent this operation confirms.
     fn intent(self) -> ChatIntent {
         match self {
             ConfirmAction::Regenerate => ChatIntent::RegenerateLast,
@@ -140,7 +145,7 @@ impl ConfirmAction {
         }
     }
 
-    /// Текст-вопрос попапа подтверждения (локализованный).
+    /// The confirmation popup's question text (localized).
     fn prompt(self, loc: &'static Locale) -> &'static str {
         match self {
             ConfirmAction::Regenerate => loc.t("ui.confirm.regenerate"),
@@ -149,32 +154,32 @@ impl ConfirmAction {
     }
 }
 
-/// Пункт попапа подсказок орфографии.
+/// An item of the spellcheck suggestions popup.
 #[derive(Debug, Clone, PartialEq)]
 enum SuggestItem {
-    /// Заменить слово на вариант.
+    /// Replace the word with a suggestion.
     Replace(String),
-    /// Добавить слово в персональный словарь.
+    /// Add the word to the personal dictionary.
     AddToDictionary,
 }
 
-/// Вкладка диалога справки/«О программе» (`F1`/`?`) в стиле KDE/Qt. См. spec §11.7.
+/// A tab of the help/"About" dialog (`F1`/`?`), KDE/Qt-style. See spec §11.7.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum HelpTab {
-    /// Имя/автор/версия и ссылки (сайт, репозиторий, крейт).
+    /// Name/author/version and links (site, repository, crate).
     About,
-    /// Список горячих клавиш.
+    /// The hotkey list.
     Hotkeys,
-    /// Команды поля ввода (`/rag …`, `/tts …`).
+    /// Input-box commands (`/rag …`, `/tts …`).
     Commands,
-    /// Текст лицензии приложения (MIT).
+    /// The application's license text (MIT).
     License,
-    /// Сторонние компоненты, их версии и лицензии.
+    /// Third-party components, their versions and licenses.
     Components,
 }
 
 impl HelpTab {
-    /// Вкладки в порядке показа (порядок таб-стрипа).
+    /// Tabs in display order (the tab strip's order).
     pub(super) const ALL: [HelpTab; 5] = [
         Self::About,
         Self::Hotkeys,
@@ -183,12 +188,12 @@ impl HelpTab {
         Self::Components,
     ];
 
-    /// Позиция вкладки в [`Self::ALL`].
+    /// The tab's position in [`Self::ALL`].
     fn index(self) -> usize {
         Self::ALL.iter().position(|&t| t == self).unwrap()
     }
 
-    /// Ключ локали имени вкладки (для таб-стрипа).
+    /// The locale key for the tab's name (for the tab strip).
     pub(super) fn label_key(self) -> &'static str {
         match self {
             Self::About => "ui.help.tab.about",
@@ -200,34 +205,34 @@ impl HelpTab {
     }
 }
 
-/// Вкладка, на которой диалог справки открывается по умолчанию (и до первого
-/// запоминания выбора): `F1`/`?` — привычная клавиша справки, и «Горячие клавиши» —
-/// самое востребованное содержимое; «О программе» — соседняя вкладка.
+/// The tab the help dialog opens on by default (and until a choice is first
+/// remembered): `F1`/`?` — the familiar help key, and "Hotkeys" is the most
+/// sought-after content; "About" is the neighboring tab.
 pub(super) const DEFAULT_HELP_TAB: HelpTab = HelpTab::Hotkeys;
 
-/// Состояние диалога справки: активная вкладка + прокрутка её содержимого
-/// (сбрасывается при смене вкладки). Открывается по `F1`/`?`. См. spec §11.7.
+/// The help dialog's state: the active tab + its content's scroll position
+/// (reset on tab switch). Opens on `F1`/`?`. See spec §11.7.
 pub(super) struct HelpState {
     pub(super) tab: HelpTab,
-    /// Первый видимый ряд содержимого активной вкладки (клампится в `render_help`).
+    /// The first visible row of the active tab's content (clamped in `render_help`).
     pub(super) scroll: usize,
 }
 
 impl HelpState {
-    /// Открыть на заданной вкладке (при повторном открытии — на последней выбранной,
+    /// Open on the given tab (on reopening — on the last-selected one,
     /// [`ChatScreen::help_last_tab`]).
     pub(super) fn open(tab: HelpTab) -> Self {
         Self { tab, scroll: 0 }
     }
 
-    /// Следующая вкладка (по кругу); прокрутка сбрасывается.
+    /// The next tab (wrapping); resets scroll.
     pub(super) fn next_tab(&mut self) {
         let n = HelpTab::ALL.len();
         self.tab = HelpTab::ALL[(self.tab.index() + 1) % n];
         self.scroll = 0;
     }
 
-    /// Предыдущая вкладка (по кругу); прокрутка сбрасывается.
+    /// The previous tab (wrapping); resets scroll.
     pub(super) fn prev_tab(&mut self) {
         let n = HelpTab::ALL.len();
         self.tab = HelpTab::ALL[(self.tab.index() + n - 1) % n];
@@ -235,7 +240,7 @@ impl HelpState {
     }
 }
 
-/// Попап подсказок орфографии для слова под курсором. См. spec §11.5.
+/// The spellcheck suggestions popup for the word under the cursor. See spec §11.5.
 struct SuggestPopup {
     word: String,
     row: usize,
@@ -245,124 +250,139 @@ struct SuggestPopup {
     selected: usize,
 }
 
-/// Состояние имперсонации (`Ctrl+U`): пока идёт написание реплики «за пользователя»,
-/// поле ввода скрыто и показывается потоковый предпросмотр. См. spec §11.8.
+/// Impersonation state (`Ctrl+U`): while a reply "on behalf of the user" is
+/// being written, the input box is hidden and a streaming preview is shown
+/// instead. See spec §11.8.
 struct ImpersonationState {
     generation_id: Uuid,
-    /// Накопленный текст реплики (начинается с уже введённого текста-затравки).
+    /// The reply's accumulated text (starts with whatever seed text was already
+    /// typed).
     text: String,
-    /// Счётчик тиков перерисовки для анимации спиннера.
+    /// A repaint-tick counter for the spinner animation.
     tick: usize,
-    /// Генерация завершена (спиннер гаснет до применения/сброса).
+    /// Generation has finished (the spinner stops until applied/reset).
     done: bool,
 }
 
-/// Баннер прогресса фоновой индексации RAG (`/rag add`). Живёт, пока идёт
-/// индексация; завершение/ошибка гасят баннер и оставляют заметку в ленте.
+/// The progress banner for background RAG indexing (`/rag add`). Lives while
+/// indexing is in progress; completion/error clear the banner and leave a note
+/// in the feed.
 struct RagBanner {
-    /// Текущий текст индикатора (без спиннера).
+    /// The indicator's current text (without the spinner).
     text: String,
-    /// Счётчик тиков перерисовки для анимации спиннера.
+    /// A repaint-tick counter for the spinner animation.
     tick: usize,
 }
 
-/// Экран чата: всё состояние UI и его отрисовка.
+/// The chat screen: all UI state and its rendering.
 pub struct ChatScreen {
     feed: Vec<FeedMessage>,
     feed_view: MessageFeed,
     active_chat: Option<Uuid>,
     title: String,
     chats: Vec<ChatSummary>,
-    /// Снимок профилей (для оверлея выбора при создании чата).
+    /// A profile snapshot (for the picker overlay when creating a chat).
     profiles: Vec<ProfileSummary>,
-    /// Открытый оверлей выбора профиля.
+    /// The open profile-picker overlay.
     profile_overlay: Option<ProfileListState>,
     input: InputBox,
-    /// Снимок статусов всех серверов (чат/эмбеддинги/имперсонация) для строки
-    /// статуса. См. spec §11.1.
+    /// A snapshot of every server's status (chat/embeddings/impersonation) for
+    /// the status bar. See spec §11.1.
     statuses: ServerStatuses,
     current_gen: Option<Uuid>,
     generating: bool,
-    /// Счётчик токенов ответа текущей/последней генерации (показывается в
-    /// статус-баре). Сбрасывается при старте новой генерации. См. spec §11.1.
+    /// The current/last generation's reply token counter (shown in the status
+    /// bar). Reset when a new generation starts. See spec §11.1.
     gen_tokens: u64,
-    /// Токенов в переписке (промпте) — оценка клиента до ответа сервера, затем
-    /// точное `usage.prompt_tokens`; `None`, пока неизвестно.
+    /// Tokens in the conversation (prompt) — a client-side estimate until the
+    /// server responds, then the exact `usage.prompt_tokens`; `None` while
+    /// unknown.
     gen_context: Option<u64>,
-    /// Точное ли значение `gen_context` (из `usage` сервера). `false` — оценка,
-    /// статус-бар помечает её `~`.
+    /// Whether `gen_context` is exact (from the server's `usage`). `false` — an
+    /// estimate, the status bar marks it with `~`.
     gen_context_exact: bool,
-    /// Reasoning-токены («мысли») текущей/последней генерации из `usage` (`0` — нет/
-    /// провайдер не разделяет). Статус-бар показывает их отдельно при `> 0`.
+    /// Reasoning tokens ("thoughts") of the current/last generation, from
+    /// `usage` (`0` — none / the provider doesn't separate them). The status bar
+    /// shows them separately when `> 0`.
     gen_reasoning: u32,
-    /// Спелл-чекер (загружается в фоне; `None`, пока не готов/нет словарей).
+    /// The spellchecker (loads in the background; `None` until ready / with no
+    /// dictionaries).
     spell: Option<SpellChecker>,
-    /// Текст ввода изменился — нужна перепроверка орфографии (с дебаунсом).
+    /// The input text changed — a spellcheck recheck is needed (debounced).
     spell_dirty: bool,
-    /// Черновик ввода изменился — нужно сохранить его в активном чате. Петля
-    /// забирает текст (`take_dirty_draft`) и шлёт `SetDraft`. См. spec §11.7.
+    /// The input draft changed — it needs saving to the active chat. The loop
+    /// picks up the text (`take_dirty_draft`) and sends `SetDraft`. See spec §11.7.
     draft_dirty: bool,
-    /// Момент последнего изменения ввода (для дебаунса).
+    /// The moment of the last input edit (for the debounce).
     last_edit: Option<Instant>,
-    /// Открытый попап подсказок орфографии.
+    /// The open spellcheck suggestions popup.
     suggest: Option<SuggestPopup>,
-    /// Открытый попап выбора эмодзи (`Ctrl+B`). См. spec §11.5.
+    /// The open emoji-picker popup (`Ctrl+B`). See spec §11.5.
     emoji: Option<EmojiPickerState>,
-    /// Открытый модальный попап подтверждения необратимой операции (`Ctrl+R`/
-    /// `Ctrl+E`); `None` — попап закрыт. См. spec §11.7.
+    /// The open modal confirmation popup for an irreversible operation
+    /// (`Ctrl+R`/`Ctrl+E`); `None` — the popup is closed. See spec §11.7.
     confirm: Option<ConfirmAction>,
-    /// Спрашивать ли подтверждение перед `Ctrl+R`/`Ctrl+E` (из
-    /// `interface.confirm_destructive_keys`; обновляется событием `Settings`).
+    /// Whether to ask for confirmation before `Ctrl+R`/`Ctrl+E` (from
+    /// `interface.confirm_destructive_keys`; updated by the `Settings` event).
     confirm_destructive: bool,
-    /// Индекс последнего выделения в попапе эмодзи — восстанавливается при следующем
-    /// открытии (попап «помнит» выбор).
+    /// The index of the last selection in the emoji popup — restored on the
+    /// next open (the popup "remembers" the choice).
     emoji_last: usize,
-    /// Есть ли в ленте глифы группы риска (эмодзи, чья отрисовка на legacy-
-    /// терминалах расходится с моделью). Кэш: пересчитывается при полной замене
-    /// ленты, иначе только накапливается. См. [`ChatScreen::mark_feed_changed`].
+    /// Whether the feed contains risk-group glyphs (emoji whose rendering on
+    /// legacy terminals diverges from the model). A cache: recomputed on a full
+    /// feed replacement, otherwise only accumulates. See
+    /// [`ChatScreen::mark_feed_changed`].
     feed_has_risky: bool,
-    /// Запрошена полная перерисовка терминала следующим кадром (петля `app/runtime`
-    /// забирает флаг через [`ChatScreen::take_full_redraw`]). Нужна там, где с экрана
-    /// исчезает **широкий** глиф (эмодзи): его хвостовую половину поячеечный diff
-    /// ratatui не перерисовывает, и на терминале остаётся артефакт. См. spec §11.5.
+    /// A full terminal redraw is requested for the next frame (the
+    /// `app/runtime` loop picks up the flag via
+    /// [`ChatScreen::take_full_redraw`]). Needed wherever a **wide** glyph
+    /// (emoji) disappears from the screen: ratatui's per-cell diff doesn't
+    /// repaint its trailing half, leaving an artifact on the terminal. See
+    /// spec §11.5.
     full_redraw: bool,
-    /// Последний снимок настроек (конфиг + полные профили + id профилей с
-    /// заблокированным языком каркаса + динамический MCP-каталог) — для открытия
-    /// экрана настроек по `Ctrl+P`. Заполняется событием `Settings`.
-    /// См. spec §11.6, docs/history/i18n.md.
+    /// The last settings snapshot (config + full profiles + ids of profiles
+    /// with a locked scaffold language + the dynamic MCP catalog) — for
+    /// opening the settings screen via `Ctrl+P`. Filled in by the `Settings`
+    /// event. See spec §11.6, docs/history/i18n.md.
     settings_snapshot: Option<SettingsSnapshot>,
-    /// Диалог справки/«О программе» (`F1`/`?`): вкладки + прокрутка активной
-    /// вкладки; `None` — закрыт. См. spec §11.7.
+    /// The help/"About" dialog (`F1`/`?`): tabs + the active tab's scroll
+    /// position; `None` — closed. See spec §11.7.
     help: Option<HelpState>,
-    /// Последняя открытая вкладка диалога справки — восстанавливается при повторном
-    /// открытии (попап «помнит» выбор, как эмодзи-пикер).
+    /// The last-opened tab of the help dialog — restored on reopening (the
+    /// popup "remembers" the choice, like the emoji picker).
     help_last_tab: HelpTab,
-    /// Активная палитра темы (из `config.interface.theme`). См. spec §11.6.
+    /// The active theme palette (from `config.interface.theme`). See spec §11.6.
     palette: Palette,
-    /// Локаль интерфейса (из `config.interface.language`, ось B — docs/i18n-ui.md).
-    /// `&'static` — вшитый бандл; обновляется вместе с палитрой в `set_settings`.
+    /// The interface locale (from `config.interface.language`, axis B —
+    /// docs/i18n-ui.md). `&'static` — a built-in bundle; updated together with
+    /// the palette in `set_settings`.
     loc: &'static Locale,
-    /// Включён ли захват мыши для прокрутки колесом (тумблер `Ctrl+W`). По
-    /// умолчанию выключен — работает нативное выделение текста мышью. См. spec §11.3.
+    /// Whether mouse capture for wheel scrolling is on (the `Ctrl+W` toggle).
+    /// Off by default — native mouse text selection works. See spec §11.3.
     mouse_scroll: bool,
-    /// Идёт ли фоновая авто-рефлексия «модели себя» (тихий индикатор в статус-баре).
+    /// Whether background self-model auto-reflection is running (a quiet
+    /// status-bar indicator).
     reflecting: bool,
-    /// Идёт ли фоновая авто-консолидация заметок («сон»; тихий индикатор).
+    /// Whether background note auto-consolidation ("sleep") is running (a
+    /// quiet indicator).
     consolidating: bool,
-    /// Идёт ли фоновая авто-консолидация «модели себя» («сон» модели себя; тихий
-    /// индикатор). См. docs/history/self-model-consolidation.md.
+    /// Whether background self-model auto-consolidation ("self-model sleep")
+    /// is running (a quiet indicator). See
+    /// docs/history/self-model-consolidation.md.
     self_consolidating: bool,
-    /// Идёт ли озвучивание (`/tts`) — тихий чип «♪ озвучка» в статус-баре.
+    /// Whether speech (`/tts`) is playing — a quiet "♪ speaking" chip in the
+    /// status bar.
     speaking: bool,
-    /// Индикатор фоновой индексации RAG (`/rag add`); `None` — индексация не идёт.
+    /// The background RAG-indexing indicator (`/rag add`); `None` — no
+    /// indexing in progress.
     rag: Option<RagBanner>,
-    /// Состояние имперсонации (`Ctrl+U`); `None` — не идёт. См. spec §11.8.
+    /// Impersonation state (`Ctrl+U`); `None` — not running. See spec §11.8.
     impersonation: Option<ImpersonationState>,
-    /// Был ли вызов инструмента после последнего текстового чанка стримящегося
-    /// ответа: первый текст следующего раунда отделяется пустой строкой (`\n\n`),
-    /// чтобы live-стрим совпадал с перезагрузкой (`FeedMessage::from_messages`).
+    /// Whether a tool was called after the last text chunk of the streaming
+    /// reply: the next round's first text is separated by a blank line
+    /// (`\n\n`), so the live stream matches a reload (`FeedMessage::from_messages`).
     pending_text_sep: bool,
-    /// То же для блока «мыслей» (разделитель `\n` между раундами).
+    /// The same for the "thoughts" block (a `\n` separator between rounds).
     pending_thoughts_sep: bool,
 }
 
@@ -422,10 +442,11 @@ impl ChatScreen {
         }
     }
 
-    /// Сохраняет снимок настроек (для открытия экрана настроек по `Ctrl+P`) и
-    /// обновляет палитру темы (вместе с режимом совместимости терминала) и
-    /// параметры отрисовки ленты (разделители строк таблиц). `mcp` — снимок
-    /// MCP-хоста (динамический каталог инструментов + статусы серверов).
+    /// Saves the settings snapshot (for opening the settings screen via
+    /// `Ctrl+P`) and updates the theme palette (together with the terminal
+    /// compatibility mode) and feed-rendering parameters (table row
+    /// separators). `mcp` — the MCP host snapshot (the dynamic tool catalog +
+    /// server statuses).
     pub fn set_settings(
         &mut self,
         config: AppConfig,
@@ -445,13 +466,14 @@ impl ChatScreen {
         self.settings_snapshot = Some((config, profiles, language_locked, mcp, api_keys_present));
     }
 
-    /// Снимок настроек для создания экрана настроек (`None`, пока не получен).
+    /// The settings snapshot for building the settings screen (`None` until received).
     pub fn settings_snapshot(&self) -> Option<SettingsSnapshot> {
         self.settings_snapshot.clone()
     }
 
-    /// Текущие настройки спелл-чека `(включён, выбранные словари)` из последнего
-    /// снимка настроек — для (пере)загрузки словарей в `app/runtime.rs`. См. spec §11.6.
+    /// The current spellcheck settings `(enabled, selected dictionaries)` from
+    /// the last settings snapshot — for (re)loading dictionaries in
+    /// `app/runtime.rs`. See spec §11.6.
     pub fn spell_config(&self) -> Option<(bool, &[String])> {
         self.settings_snapshot.as_ref().map(|(c, _, _, _, _)| {
             (
@@ -461,58 +483,61 @@ impl ChatScreen {
         })
     }
 
-    /// Устанавливает спелл-чекер (после фоновой загрузки словарей) и планирует
-    /// перепроверку текущего ввода.
+    /// Sets the spellchecker (after the background dictionary load) and
+    /// schedules a recheck of the current input.
     pub fn set_spellchecker(&mut self, checker: SpellChecker) {
         self.spell = Some(checker);
         self.spell_dirty = true;
-        self.last_edit = None; // перепроверить немедленно
+        self.last_edit = None; // recheck immediately
     }
 
-    /// Текущий спелл-чекер (или `None`, пока словари не загружены). Чекер живёт
-    /// здесь, в экране чата; `app` одалживает его экрану списка чатов для подсветки
-    /// ошибок в поле переименования (`F2`). См. spec §11.5.
+    /// The current spellchecker (or `None` until dictionaries are loaded). The
+    /// checker lives here, on the chat screen; `app` lends it to the chat-list
+    /// screen for error highlighting in the rename field (`F2`). See spec §11.5.
     pub fn spellchecker(&self) -> Option<&SpellChecker> {
         self.spell.as_ref()
     }
 
-    // ---------- проекция событий оркестратора (вызывается слоем `app`) ----------
+    // ---------- orchestrator event projection (called by the `app` layer) ----------
 
     pub fn set_server_status(&mut self, statuses: ServerStatuses) {
         self.statuses = statuses;
     }
 
-    /// Текущий снимок статусов серверов — чтобы `app` передал его открываемому
-    /// экрану настроек (чипы статусов в секции «Модель/сервер»). См. spec §11.6.
+    /// The current server-statuses snapshot — so `app` can pass it to the
+    /// settings screen it's opening (status chips in the "Model/server"
+    /// section). See spec §11.6.
     pub fn server_statuses(&self) -> ServerStatuses {
         self.statuses.clone()
     }
 
-    /// Ставит/снимает флаг активной авто-рефлексии (тихий индикатор в статус-баре).
-    /// Вид фоновой задачи различает `app` (маппинг `AppEvent::BackgroundTask`) — так
-    /// `screens` не зависит от контракта `app` (FSD).
+    /// Sets/clears the active-auto-reflection flag (a quiet status-bar
+    /// indicator). `app` distinguishes the kind of background task (mapping
+    /// `AppEvent::BackgroundTask`) — so `screens` doesn't depend on `app`'s
+    /// contract (FSD).
     pub fn set_reflecting(&mut self, active: bool) {
         self.reflecting = active;
     }
 
-    /// Ставит/снимает флаг активной авто-консолидации заметок («сон»).
+    /// Sets/clears the active note auto-consolidation flag ("sleep").
     pub fn set_consolidating(&mut self, active: bool) {
         self.consolidating = active;
     }
 
-    /// Ставит/снимает флаг активной авто-консолидации «модели себя» («сон» модели себя).
+    /// Sets/clears the active self-model auto-consolidation flag ("self-model sleep").
     pub fn set_self_consolidating(&mut self, active: bool) {
         self.self_consolidating = active;
     }
 
-    /// Ставит/снимает флаг идущего озвучивания (`/tts`) — чип в статус-баре.
+    /// Sets/clears the active-speech flag (`/tts`) — a status-bar chip.
     pub fn set_speaking(&mut self, active: bool) {
         self.speaking = active;
     }
 
-    /// Метка активных фоновых задач для статус-бара (`None` — ничего не идёт).
-    /// Собирается из меток активных задач (`·`-разделитель) — обобщается на любое их
-    /// число (рефлексия / сон заметок / сон модели себя могут идти параллельно).
+    /// A label of active background tasks for the status bar (`None` — nothing
+    /// is running). Assembled from the active tasks' labels (a `·` separator) —
+    /// generalizes to any number of them (reflection / note sleep / self-model
+    /// sleep can run in parallel).
     pub(super) fn background_hint(&self) -> Option<String> {
         let mut parts: Vec<&str> = Vec::new();
         if self.reflecting {
@@ -535,29 +560,32 @@ impl ChatScreen {
         self.profiles = profiles;
     }
 
-    /// Снимок списка чатов — для создания экрана списка по `Esc` (`OpenChatList`).
+    /// A snapshot of the chat list — for building the list screen via `Esc`
+    /// (`OpenChatList`).
     pub fn chat_summaries(&self) -> Vec<ChatSummary> {
         self.chats.clone()
     }
 
-    /// Активный чат (метка в экране списка; `None`, пока чат не выбран).
+    /// The active chat (the marker in the list screen; `None` until a chat is
+    /// selected).
     pub fn active_chat(&self) -> Option<Uuid> {
         self.active_chat
     }
 
-    /// Текущая палитра темы — для отрисовки экрана списка чатов.
+    /// The current theme palette — for rendering the chat-list screen.
     pub fn palette(&self) -> Palette {
         self.palette
     }
 
-    /// Текущая локаль интерфейса — для отрисовки overlay-экранов (список чатов /
-    /// модель себя) и broadcast при смене языка. См. docs/i18n-ui.md §3.3.
+    /// The current interface locale — for rendering overlay screens (chat list
+    /// / self-model) and broadcasting on a language change. See
+    /// docs/i18n-ui.md §3.3.
     pub fn loc(&self) -> &'static Locale {
         self.loc
     }
 }
 
-// ---------- подмодули (разбор god-object: docs/history/refactoring-god-objects.md, этап 2) ----------
+// ---------- submodules (god-object breakup: docs/history/refactoring-god-objects.md, stage 2) ----------
 
 mod feed;
 mod impersonation;

@@ -1,16 +1,17 @@
-//! Экран настроек — попап выбора Choice-поля и сброс поля к дефолту.
-//! Часть модуля [`super`]; разбито из settings.rs.
+//! Settings screen — the Choice-field picker popup and resetting a field to its default.
+//! Part of the [`super`] module; split out of settings.rs.
 
 use super::helpers::*;
 use super::spec::{Access, FieldSpec, field_spec};
 use super::*;
 
 impl SettingsScreen {
-    // ---------- попап выбора Choice-поля / сброс к дефолту ----------
+    // ---------- Choice-field picker popup / reset to default ----------
 
-    /// Список вариантов Choice-поля + индекс текущего (`None` — поле не Choice).
+    /// The Choice field's option list + the index of the current one (`None` — not a
+    /// Choice field).
     pub(super) fn choice_menu(&self, id: FieldId) -> Option<(Vec<String>, usize)> {
-        // Config Choice-поля (режимы/flash-attn/spec-type/тема) — из таблицы доступа.
+        // Config Choice fields (mode/flash-attn/spec-type/theme) — from the access table.
         if let Some(FieldSpec {
             access: Access::Choice { options, .. },
             ..
@@ -19,7 +20,7 @@ impl SettingsScreen {
             return Some(options(&self.config, self.loc()));
         }
         match id {
-            // Семплинг (Thinking/Reasoning/Verbosity) и выбор профиля — свои источники.
+            // Sampling (Thinking/Reasoning/Verbosity) and profile selection — their own sources.
             FieldId::S(
                 p @ (SamplingParam::Thinking | SamplingParam::Reasoning | SamplingParam::Verbosity),
             ) => Some(sampling_choice_menu(
@@ -38,8 +39,8 @@ impl SettingsScreen {
                 let opts: Vec<String> = self.profiles.iter().map(|p| p.name.clone()).collect();
                 (!opts.is_empty()).then_some((opts, self.profile_idx))
             }
-            // Язык каркаса профиля (ось A): варианты — все известные языки (вшитые +
-            // внешние из data/locales/).
+            // Profile scaffold language (axis A): options — all known languages (built-in +
+            // external from data/locales/).
             FieldId::PLanguage => {
                 let p = self.profiles.get(self.profile_idx)?;
                 let all = crate::shared::i18n::Lang::all();
@@ -63,8 +64,8 @@ impl SettingsScreen {
         }
     }
 
-    /// Применяет выбор варианта по индексу через существующий цикл (`cycle_field`):
-    /// делает столько шагов вперёд, сколько нужно от текущего до целевого.
+    /// Applies picking an option by index via the existing cycle (`cycle_field`):
+    /// steps forward as many times as needed from the current one to the target.
     pub(super) fn apply_choice(&mut self, id: FieldId, target: usize) -> Option<SettingsIntent> {
         let (opts, cur) = self.choice_menu(id)?;
         let n = opts.len();
@@ -107,16 +108,17 @@ impl SettingsScreen {
         }
     }
 
-    /// Поля текущей секции/подсекции, построенные из **дефолтного** конфига (для
-    /// маркера «изменено» и сброса). Профили — те же (у них нет config-дефолта).
+    /// Fields of the current section/subsection built from the **default** config
+    /// (for the "modified" marker and reset). Profiles are the same (they have no
+    /// config default).
     pub(super) fn default_fields(&self) -> Vec<FieldRow> {
         let mut tmp = SettingsScreen::new(
             AppConfig::default(),
             self.profiles.clone(),
             self.language_locked.clone(),
         );
-        // Снимок MCP копируем: иначе PTool-строки MCP-инструментов не нашли бы
-        // пары в дефолтном наборе полей.
+        // Copy the MCP snapshot: otherwise `PTool` rows for MCP tools wouldn't find
+        // a match in the default field set.
         tmp.mcp = self.mcp.clone();
         tmp.section_idx = self.section_idx;
         tmp.model_sub = self.model_sub;
@@ -126,14 +128,14 @@ impl SettingsScreen {
         tmp.fields()
     }
 
-    /// Сбрасывает config-поле к значению по умолчанию. Профильные поля и уже
-    /// дефолтные значения — no-op (без лишнего сохранения).
+    /// Resets a config field to its default value. Profile fields and values already
+    /// at the default — a no-op (no redundant save).
     pub(super) fn reset_field(&mut self, id: FieldId) -> Option<SettingsIntent> {
         if is_profile_field(id) {
             return None;
         }
-        // Поле секрета: «сброс» = удалить сохранённый ключ (пустое значение). Сравнение
-        // с дефолтом ниже не годится — значением строки служит статус, а не величина.
+        // Secret field: "reset" = delete the stored key (an empty value). The comparison
+        // against the default below doesn't apply — the row's value is a status, not the value.
         if let Some(provider) = self.api_key_field_provider(id) {
             return self
                 .api_key_present(Some(provider))
@@ -152,7 +154,7 @@ impl SettingsScreen {
             .into_iter()
             .find(|d| d.id == id)
             .map(|d| d.kind)?;
-        // Уже совпадает с дефолтом — ничего не делаем.
+        // Already matches the default — do nothing.
         if value_text(&cur_kind, self.loc()) == value_text(&default_kind, self.loc()) {
             return None;
         }
@@ -164,7 +166,7 @@ impl SettingsScreen {
                 self.apply_choice(id, idx)
             }
             FieldKind::Text(def) => {
-                // «—» — плейсхолдер пустого (Option::None); очищаем поле.
+                // "—" is the empty placeholder (`Option::None`); clear the field.
                 let text = if def == "—" { "" } else { &def };
                 self.apply_text(id, text)
             }

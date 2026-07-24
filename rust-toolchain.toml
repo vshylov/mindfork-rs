@@ -1,8 +1,8 @@
-# Пин тулчейна (release-engineering.md, Ф4). Причина: гейт
-# `cargo clippy --all-targets -- -D warnings` каждый новый stable ломал бы
-# внезапно новыми линтами. С пином обновление тулчейна — осознанный отдельный PR
-# («поднять до 1.NN», чинящий новые линты), как обновление любой зависимости.
-# Edition 2024 требует ≥ 1.85; пин совпадает с версией разработки.
+# Pinning the toolchain (release-engineering.md, F4). Reason: the gate
+# `cargo clippy --all-targets -- -D warnings` would suddenly break on every new stable
+# with new lints. With a pin, upgrading the toolchain is a deliberate separate PR
+# ("bump to 1.NN", fixing new lints), like upgrading any other dependency.
+# Edition 2024 requires ≥ 1.85; the pin matches the version used for development.
 [toolchain]
 channel = "1.96.0"
 components = ["rustfmt", "clippy"]

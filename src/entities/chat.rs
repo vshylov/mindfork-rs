@@ -1,5 +1,5 @@
-//! Чат: список сообщений, привязка к профилю, активное системное сообщение.
-//! См. spec §5.1.
+//! A chat: the message list, a profile binding, the active system message.
+//! See spec §5.1.
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
@@ -9,7 +9,7 @@ use crate::entities::message::Message;
 use crate::entities::profile::{CharacterNames, Profile};
 use crate::entities::sampling::SamplingConfig;
 
-/// Чат.
+/// A chat.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Chat {
     pub id: Uuid,
@@ -17,7 +17,7 @@ pub struct Chat {
     pub title: String,
     pub created_at: DateTime<Utc>,
     pub modified_at: DateTime<Utc>,
-    /// Активное системное сообщение чата (ассистент может менять его инструментом).
+    /// The chat's active system message (the assistant can change it via a tool).
     pub system_message: String,
     #[serde(default)]
     pub character_names: CharacterNames,
@@ -25,77 +25,81 @@ pub struct Chat {
     pub messages: Vec<Message>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub sampling_override: Option<SamplingConfig>,
-    /// Несохранённый черновик поля ввода (текст, который пользователь набрал, но
-    /// ещё не отправил). Хранится в файле чата и восстанавливается в поле ввода при
-    /// переключении на чат; у нового чата пустой. См. spec §11.7.
+    /// The unsaved input-box draft (text the user typed but hasn't sent yet).
+    /// Stored in the chat file and restored into the input box on switching to the
+    /// chat; empty for a new chat. See spec §11.7.
     #[serde(default)]
     pub draft: String,
-    /// Удалённые обмены (`Ctrl+E`/`Ctrl+R`). Хранятся в файле чата только ради
-    /// **ручного** восстановления (правкой JSON) в редких случаях, когда удалили
-    /// что-то важное; в UI не используются и автоматически не восстанавливаются.
-    /// См. spec §11.7.
+    /// Deleted exchanges (`Ctrl+E`/`Ctrl+R`). Stored in the chat file only for
+    /// **manual** recovery (editing JSON) in rare cases where something important
+    /// was deleted; not used by the UI and not restored automatically.
+    /// See spec §11.7.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub deleted: Vec<DeletedExchange>,
-    /// Индекс-водораздел фоновой авто-рефлексии: сколько первых сообщений `messages`
-    /// уже охвачено рефлексией. Дайджест строится только по «хвосту» `messages[wm..]`
-    /// — чтобы каждый цикл не перечитывал один и тот же ранний материал (иначе
-    /// плодятся дубли инсайтов). Живёт с чатом → переживает рестарт; усечение истории
-    /// (`Ctrl+R`/`Ctrl+E`) лечится клампом при чтении. `None`/старые файлы — с начала.
-    /// См. docs/history/refinements.md (этап 3).
+    /// The background auto-reflection watermark index: how many leading `messages`
+    /// have already been covered by reflection. The digest is built only from the
+    /// "tail" `messages[wm..]` — so each cycle doesn't re-read the same early
+    /// material (otherwise duplicate insights would pile up). Lives with the chat →
+    /// survives a restart; history truncation (`Ctrl+R`/`Ctrl+E`) is handled by
+    /// clamping on read. `None`/old files — from the start.
+    /// See docs/history/refinements.md (stage 3).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reflected_upto: Option<usize>,
-    /// Когда фоновая авто-рефлексия запускалась в последний раз (ориентир; на будущее
-    /// — фильтр поведенческих сигналов по окну). `None`/старые файлы — не запускалась.
+    /// When background auto-reflection last ran (a reference point; future work —
+    /// filtering behavioral signals by window). `None`/old files — never ran.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reflected_at: Option<DateTime<Utc>>,
-    /// Мягкое удаление.
+    /// Soft delete.
     #[serde(default)]
     pub is_hidden: bool,
 }
 
-/// Снимок удалённого обмена (`Ctrl+E`/`Ctrl+R`). Это **не** сообщение, а
-/// контейнер: удалённые сообщения + черновик поля ввода на момент удаления.
-/// Восстановления через UI нет — объект существует лишь для ручной правки JSON.
+/// A snapshot of a deleted exchange (`Ctrl+E`/`Ctrl+R`). This is **not** a message
+/// but a container: the deleted messages + the input-box draft at the time of
+/// deletion. There's no UI restore — the object exists only for manual JSON edits.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct DeletedExchange {
-    /// Момент удаления (для ориентира при ручном поиске нужной записи).
+    /// The moment of deletion (a reference point when manually searching for a
+    /// record).
     pub deleted_at: DateTime<Utc>,
-    /// Удалённые сообщения. Для `Ctrl+E` (удаление обмена) — сообщение
-    /// пользователя и ответ ассистента; для `Ctrl+R` (перегенерация) — ответ
-    /// ассистента (и связанные tool-сообщения раунда).
+    /// The deleted messages. For `Ctrl+E` (deleting an exchange) — the user
+    /// message and the assistant's reply; for `Ctrl+R` (regeneration) — the
+    /// assistant's reply (and the round's related tool messages).
     pub messages: Vec<Message>,
-    /// Содержимое поля ввода на момент удаления — до того, как туда вернулся текст
-    /// удалённого сообщения пользователя (`Ctrl+E`) или начался новый ход (`Ctrl+R`).
+    /// The input box's content at the time of deletion — before the deleted user
+    /// message's text was restored into it (`Ctrl+E`) or a new turn began (`Ctrl+R`).
     pub draft: String,
-    /// Что вызвало удаление — поведенческий сигнал собеседника (или самого агента).
-    /// Авто-рефлексия читает его как косвенное свидетельство («перегенерировал =
-    /// ответ, вероятно, не устроил»). `None` у старых записей (без миграции).
+    /// What triggered the deletion — a behavioral signal about the interlocutor (or
+    /// the agent itself). Auto-reflection reads it as indirect evidence ("regenerated
+    /// = the reply probably wasn't good enough"). `None` for old records (no migration).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cause: Option<DeletedCause>,
 }
 
-/// Причина удаления обмена — поведенческий сигнал для авто-рефлексии (§этап 4).
+/// The reason an exchange was deleted — a behavioral signal for auto-reflection (§stage 4).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum DeletedCause {
-    /// `Ctrl+E` — собеседник удалил обмен (ответ его не устроил / передумал спрашивать).
+    /// `Ctrl+E` — the interlocutor deleted the exchange (didn't like the reply /
+    /// changed their mind about asking).
     DeleteExchange,
-    /// `Ctrl+R` — собеседник перегенерировал ответ (ответ, вероятно, не устроил).
+    /// `Ctrl+R` — the interlocutor regenerated the reply (the reply probably wasn't
+    /// good enough).
     Regenerate,
-    /// `rewrite_current_message` — сам ассистент переписал свою реплику (сигнал о
-    /// собственном поведении, не приписывается собеседнику).
+    /// `rewrite_current_message` — the assistant itself rewrote its reply (a signal
+    /// about its own behavior, not attributed to the interlocutor).
     Rewrite,
 }
 
 impl Chat {
-    /// Создаёт чат, привязанный к профилю, копируя из него системное сообщение
-    /// и имена ролей (у чата своя копия — правки профиля их не меняют, spec §10).
-    /// Приветствие (`greeting`) добавляется вызывающей стороной как первое
-    /// сообщение ассистента (use-case, M4).
+    /// Creates a chat bound to a profile, copying its system message and role
+    /// names from it (the chat has its own copy — profile edits don't change
+    /// them, spec §10). The greeting (`greeting`) is added by the caller as the
+    /// first assistant message (a use-case, M4).
     ///
-    /// Семплинг профиля **не копируется** в `sampling_override`: разрешение
-    /// трёхуровневое во время запроса (`Chat → Profile → global`, spec §8.3),
-    /// поэтому `sampling_override` остаётся `None` до явного переопределения
-    /// пользователем или ассистентом (`set_sampling`, M5).
+    /// The profile's sampling **is not copied** into `sampling_override`:
+    /// resolution is three-tiered at request time (`Chat → Profile → global`,
+    /// spec §8.3), so `sampling_override` stays `None` until explicitly
+    /// overridden by the user or the assistant (`set_sampling`, M5).
     pub fn from_profile(profile: &Profile, title: impl Into<String>) -> Self {
         let now = Utc::now();
         Self {
@@ -116,16 +120,17 @@ impl Chat {
         }
     }
 
-    /// Добавляет сообщение и обновляет `modified_at`.
+    /// Appends a message and updates `modified_at`.
     pub fn push_message(&mut self, message: Message) {
         self.messages.push(message);
         self.modified_at = Utc::now();
     }
 
-    /// Записывает удалённый обмен (`Ctrl+E`/`Ctrl+R`) в коллекцию `deleted` ради
-    /// ручного восстановления. Пустой набор сообщений игнорируется. Новая запись
-    /// добавляется в **начало** коллекции (свежие удаления искать быстрее).
-    /// `modified_at` **не** трогаем здесь — его обновляют сами операции усечения.
+    /// Records a deleted exchange (`Ctrl+E`/`Ctrl+R`) into the `deleted` collection
+    /// for manual recovery. An empty message set is ignored. The new entry is
+    /// inserted at the **front** of the collection (recent deletions are faster to
+    /// find). `modified_at` is **not** touched here — the truncation operations
+    /// themselves update it.
     pub fn record_deleted(&mut self, messages: Vec<Message>, draft: String, cause: DeletedCause) {
         if messages.is_empty() {
             return;
@@ -141,7 +146,7 @@ impl Chat {
         );
     }
 
-    /// Краткая карточка чата (для списка/оверлея без копирования сообщений).
+    /// A short chat card (for the list/overlay, without copying messages).
     pub fn summary(&self) -> ChatSummary {
         ChatSummary {
             id: self.id,
@@ -153,9 +158,9 @@ impl Chat {
     }
 }
 
-/// Краткая карточка чата для списка/оверлея (без сообщений). См. spec §11.2.
-/// Это view-проекция домена, живёт в `entities`, чтобы её могли использовать и
-/// `app` (события), и `widgets` (рендер) — зависимость строго вниз.
+/// A short chat card for the list/overlay (no messages). See spec §11.2.
+/// A domain view-projection, lives in `entities` so it can be used by both `app`
+/// (events) and `widgets` (rendering) — dependency strictly downward.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ChatSummary {
     pub id: Uuid,
@@ -181,8 +186,8 @@ mod tests {
         assert_eq!(chat.profile_id, p.id);
         assert_eq!(chat.system_message, "Ты — Карлос.");
         assert_eq!(chat.character_names, p.character_names);
-        // Семплинг профиля НЕ копируется в override — разрешается трёхуровнево
-        // во время запроса (spec §8.3).
+        // The profile's sampling is NOT copied into the override — it's resolved
+        // three-tiered at request time (spec §8.3).
         assert_eq!(chat.sampling_override, None);
         assert!(chat.messages.is_empty());
     }
@@ -202,7 +207,7 @@ mod tests {
         let p = Profile::new("X", "s");
         let mut chat = Chat::from_profile(&p, "t");
         chat.record_deleted(vec![], "ignored".into(), DeletedCause::DeleteExchange);
-        assert!(chat.deleted.is_empty()); // пустой набор не записывается
+        assert!(chat.deleted.is_empty()); // an empty set isn't recorded
 
         chat.record_deleted(
             vec![Message::user("hi"), Message::assistant("hello")],
@@ -241,8 +246,8 @@ mod tests {
 
     #[test]
     fn deserializes_old_json_without_reflection_watermark() {
-        // Старый файл чата (до этапа 3) не имеет полей ватермарка рефлексии — читается
-        // без миграции, поля — дефолтные `None`. И не сериализуются, когда пусты.
+        // An old chat file (pre-stage-3) has no reflection watermark fields — reads
+        // without migration, the fields default to `None`. And aren't serialized when empty.
         let json = r#"{
             "id": "00000000-0000-0000-0000-000000000001",
             "profile_id": "00000000-0000-0000-0000-000000000002",
@@ -255,7 +260,7 @@ mod tests {
         let chat: Chat = serde_json::from_str(json).unwrap();
         assert_eq!(chat.reflected_upto, None);
         assert_eq!(chat.reflected_at, None);
-        // Пустые поля ватермарка не засоряют JSON (skip_serializing_if).
+        // Empty watermark fields don't clutter the JSON (skip_serializing_if).
         let out = serde_json::to_string(&chat).unwrap();
         assert!(!out.contains("reflected_upto"));
         assert!(!out.contains("reflected_at"));

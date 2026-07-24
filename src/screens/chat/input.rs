@@ -1,25 +1,28 @@
-//! Экран чата — обработка клавиш/мыши/вставки, черновик, орфография, команды. Часть модуля [`super`]; разбито из
-//! монолита chat.rs (см. docs/history/refactoring-god-objects.md, этап 2).
+//! Chat screen — key/mouse/paste handling, draft, spellcheck, commands. Part of
+//! the [`super`] module; split out of the chat.rs monolith (see
+//! docs/history/refactoring-god-objects.md, stage 2).
 
 use super::feed::feed_msg_has_risky_glyph;
 use super::*;
 
 impl ChatScreen {
-    // ---------- ввод ----------
+    // ---------- input ----------
 
-    /// Обрабатывает нажатие клавиши, возвращая намерение для `app` (или `None`,
-    /// если клавиша обработана внутри экрана: ввод, скролл, навигация оверлея).
+    /// Handles a key press, returning an intent for `app` (or `None` if the
+    /// key was handled inside the screen: input, scrolling, overlay
+    /// navigation).
     pub fn handle_key(&mut self, key: KeyEvent) -> Option<ChatIntent> {
         if key.kind != KeyEventKind::Press {
             return None;
         }
-        // Диалог справки/«О программе» (`F1`/`?`) перехватывает ввод: `Tab`/`←→`
-        // переключают вкладки, `↑↓`/`PgUp`/`PgDn`/`Home` прокручивают активную
-        // вкладку, `Esc` (и повторный `F1`/`?`) закрывают, `Ctrl+Q`/`F10` — выход.
-        // Прочие клавиши игнорируются (не закрывают — иначе навигация путалась бы).
-        // Кламп прокрутки — в `render_help`. См. spec §11.7.
+        // The help/"About" dialog (`F1`/`?`) intercepts input: `Tab`/`←→`
+        // switch tabs, `↑↓`/`PgUp`/`PgDn`/`Home` scroll the active tab, `Esc`
+        // (and a repeat `F1`/`?`) close it, `Ctrl+Q`/`F10` — quit. Other keys
+        // are ignored (they don't close it — otherwise navigation would get
+        // confusing). Scroll clamping — in `render_help`. See spec §11.7.
         if let Some(help) = &mut self.help {
-            // Выход пробивает диалог (раскладко-независимо), как в попапе подтверждения.
+            // Quit punches through the dialog (layout-independent), as in the
+            // confirmation popup.
             if key.code == KeyCode::F(10)
                 || (key.modifiers.contains(KeyModifiers::CONTROL)
                     && matches!(key.code, KeyCode::Char(c) if keys::physical_char(c) == 'q'))
@@ -36,7 +39,7 @@ impl ChatScreen {
                 KeyCode::PageDown => help.scroll = help.scroll.saturating_add(PAGE_SCROLL),
                 KeyCode::Home => help.scroll = 0,
                 KeyCode::Esc | KeyCode::F(1) | KeyCode::Char('?') => {
-                    // Запоминаем вкладку, чтобы восстановить при следующем открытии.
+                    // Remember the tab to restore it on the next open.
                     self.help_last_tab = help.tab;
                     self.help = None;
                 }
@@ -44,8 +47,9 @@ impl ChatScreen {
             }
             return None;
         }
-        // Во время имперсонации поле ввода скрыто (показан предпросмотр): реагируем
-        // только на отмену (`Esc`) и выход (`Ctrl+Q`/`F10`); прочие клавиши игнорируем.
+        // During impersonation the input box is hidden (a preview is shown
+        // instead): react only to cancel (`Esc`) and quit (`Ctrl+Q`/`F10`);
+        // ignore other keys.
         if self.impersonation.is_some() {
             if key.code == KeyCode::F(10) {
                 return Some(ChatIntent::Quit);
@@ -61,8 +65,9 @@ impl ChatScreen {
             }
             return None;
         }
-        // Модальный попап подтверждения (`Ctrl+R`/`Ctrl+E`): Enter — да, Esc — нет,
-        // прочие клавиши игнорируются (попап остаётся открытым). См. spec §11.7.
+        // The modal confirmation popup (`Ctrl+R`/`Ctrl+E`): Enter — yes, Esc
+        // — no, other keys are ignored (the popup stays open). See spec
+        // §11.7.
         if self.confirm.is_some() {
             return self.handle_confirm_key(key);
         }
@@ -77,18 +82,20 @@ impl ChatScreen {
         if self.profile_overlay.is_some() {
             return self.handle_profile_overlay_key(key);
         }
-        // Шорткаты с Ctrl матчим по «физической» латинской клавише — чтобы они
-        // срабатывали при любой раскладке (русская ЙЦУКЕН даёт `Ctrl+д` вместо
-        // `Ctrl+l`). См. shared::keys, spec §11.7.
+        // Ctrl shortcuts are matched by the "physical" Latin key — so they
+        // work under any layout (Russian JCUKEN gives `Ctrl+д` instead of
+        // `Ctrl+l`). See shared::keys, spec §11.7.
         if key.modifiers.contains(KeyModifiers::CONTROL)
             && let KeyCode::Char(c) = key.code
         {
             match keys::physical_char(c) {
-                // Выход переехал на Ctrl+Q/F10 (F10 — в матче кодов ниже); Ctrl+C
-                // освобождён под копирование. См. docs/history/input-selection-undo-mouse.md §B.
+                // Quit moved to Ctrl+Q/F10 (F10 — in the code match below);
+                // Ctrl+C was freed up for copying. See
+                // docs/history/input-selection-undo-mouse.md §B.
                 'q' => return Some(ChatIntent::Quit),
-                // Копировать выделение в буфер обмена (Ctrl+C). Запись — side-effect
-                // runtime (`AppCommand` не нужен, текст у UI). Без выделения — no-op.
+                // Copy the selection to the clipboard (Ctrl+C). Writing it is
+                // a runtime side effect (`AppCommand` isn't needed — the text
+                // is already in the UI). No-op without a selection.
                 'c' => {
                     if self.input.has_selection() {
                         let text = self.input.selected_text().unwrap_or_default();
@@ -97,7 +104,7 @@ impl ChatScreen {
                     }
                     return None;
                 }
-                // Вырезать выделение (Ctrl+X): копировать + удалить.
+                // Cut the selection (Ctrl+X): copy + delete.
                 'x' => {
                     if self.input.has_selection() {
                         let text = self.input.selected_text().unwrap_or_default();
@@ -107,7 +114,8 @@ impl ChatScreen {
                     }
                     return None;
                 }
-                // Экран настроек (Ctrl+P) — открывается, если снимок настроек получен.
+                // The settings screen (Ctrl+P) — opens once the settings
+                // snapshot has arrived.
                 'p' => {
                     return self
                         .settings_snapshot
@@ -115,37 +123,41 @@ impl ChatScreen {
                         .then_some(ChatIntent::OpenSettings);
                 }
                 'n' => return self.request_new_chat(),
-                // Перегенерация / удаление последнего обмена (только когда не идёт
-                // генерация). См. spec §11.7.
+                // Regenerate / delete the last exchange (only while not
+                // generating). See spec §11.7.
                 'r' => return self.trigger_destructive(ConfirmAction::Regenerate),
                 'e' => return self.trigger_destructive(ConfirmAction::DeleteExchange),
-                // Имперсонация: написать сообщение от лица пользователя (spec §11.8).
-                // `seed` — уже введённый текст (модель продолжит его).
+                // Impersonation: write a message on the user's behalf (spec
+                // §11.8). `seed` — the text already typed (the model
+                // continues it).
                 'u' => {
                     return (!self.generating).then(|| ChatIntent::Impersonate {
                         seed: self.input.text(),
                     });
                 }
-                // Подсказки орфографии для слова под курсором (spec §11.5).
+                // Spellcheck suggestions for the word under the cursor (spec
+                // §11.5).
                 'g' => {
                     self.open_suggestions();
                     return None;
                 }
-                // Попап выбора эмодзи (spec §11.5). Восстанавливаем прошлое выделение.
+                // The emoji picker popup (spec §11.5). Restore the previous
+                // selection.
                 'b' => {
                     self.emoji = Some(EmojiPickerState::with_selected(self.emoji_last));
                     return None;
                 }
-                // Сворачивание «мыслей» (spec §11.3).
+                // Collapsing "thoughts" (spec §11.3).
                 't' => {
                     self.feed_view.toggle_thoughts();
-                    // Сворачивание «мыслей» перекраивает все блоки ленты — то же
-                    // изменение содержимого, что стрим/заметка.
+                    // Collapsing "thoughts" reshapes all feed blocks — the
+                    // same kind of content change as streaming/a note.
                     self.mark_feed_changed();
                     return None;
                 }
-                // Тумблер прокрутки колесом ↔ выделения текста мышью (spec §11.3).
-                // `Ctrl+M` для этого непригоден: терминал отдаёт его как Enter.
+                // The toggle between wheel scrolling ↔ mouse text selection
+                // (spec §11.3). `Ctrl+M` doesn't work for this: the terminal
+                // reports it as Enter.
                 'w' => {
                     self.mouse_scroll = !self.mouse_scroll;
                     return Some(ChatIntent::SetMouseCapture(self.mouse_scroll));
@@ -154,11 +166,13 @@ impl ChatScreen {
             }
         }
         match (key.code, key.modifiers) {
-            // Выход — Ctrl+Q (выше) или F10 (второй вариант, если терминал перехватит
-            // Ctrl+Q; F10 часто открывает меню эмулятора в Linux-DE, но отключается).
+            // Quit — Ctrl+Q (above) or F10 (a second option in case the
+            // terminal intercepts Ctrl+Q; F10 often opens the emulator's menu
+            // in Linux DEs, but it's dismissible).
             (KeyCode::F(10), _) => Some(ChatIntent::Quit),
-            // Справка/«О программе»: F1 всегда; `?` — только при пустом вводе (иначе
-            // символ печатается). Открываем на последней выбранной вкладке. См. spec §11.7.
+            // Help/"About": F1 always works; `?` — only on empty input
+            // (otherwise the character gets typed). Opens on the
+            // last-selected tab. See spec §11.7.
             (KeyCode::F(1), _) => {
                 self.help = Some(HelpState::open(self.help_last_tab));
                 None
@@ -167,12 +181,13 @@ impl ChatScreen {
                 self.help = Some(HelpState::open(self.help_last_tab));
                 None
             }
-            // Просмотр «модели себя» активного профиля (read-only вид).
+            // View of the active profile's "self-model" (a read-only view).
             (KeyCode::F(3), _) => Some(ChatIntent::OpenSelfModel),
-            // Копирование переписки активного чата в буфер обмена (как F5 в списке
-            // чатов). Подтверждение/ошибка приходят заметкой в ленту (оверлея нет).
+            // Copy the active chat's conversation to the clipboard (like F5
+            // in the chat list). The confirmation/error arrives as a note in
+            // the feed (no overlay).
             (KeyCode::F(5), _) => self.active_chat.map(ChatIntent::CopyChat),
-            // Прокрутка ленты (spec §11.3).
+            // Feed scrolling (spec §11.3).
             (KeyCode::PageUp, _) => {
                 self.feed_view.scroll_up(PAGE_SCROLL);
                 None
@@ -181,9 +196,10 @@ impl ChatScreen {
                 self.feed_view.scroll_down(PAGE_SCROLL);
                 None
             }
-            // Esc открывает экран списка чатов (`app` создаёт его из снимка списка;
-            // `Esc` там закрывает экран — переключение «список ↔ чат»). Во время
-            // генерации Esc сперва отменяет её. Выход — `Ctrl+C`. См. spec §11.7.
+            // Esc opens the chat list screen (`app` builds it from the list
+            // snapshot; `Esc` there closes the screen — toggling
+            // "list ↔ chat"). During generation, Esc first cancels it. Quit
+            // — `Ctrl+C`. See spec §11.7.
             (KeyCode::Esc, _) => {
                 if self.generating {
                     Some(ChatIntent::Cancel)
@@ -191,10 +207,12 @@ impl ChatScreen {
                     Some(ChatIntent::OpenChatList)
                 }
             }
-            // Shift+Enter — перенос строки; Enter — отправка (spec §11.7). Alt+Enter —
-            // тот же перенос: запасной вариант для «голых» unix-терминалов без kitty-
-            // протокола, где Shift+Enter неотличим от Enter (оба шлют CR), а Alt+Enter
-            // приходит как Enter+ALT (meta-префикс ESC) и потому распознаётся. См. п.11.
+            // Shift+Enter — a line break; Enter — send (spec §11.7).
+            // Alt+Enter — the same line break: a fallback for "bare" unix
+            // terminals without the kitty keyboard protocol, where
+            // Shift+Enter is indistinguishable from Enter (both send CR),
+            // while Alt+Enter arrives as Enter+ALT (an ESC meta prefix) and
+            // so is recognized. See item 11.
             (KeyCode::Enter, m) if m.intersects(KeyModifiers::SHIFT | KeyModifiers::ALT) => {
                 self.input.insert_newline();
                 self.mark_input_changed();
@@ -205,9 +223,10 @@ impl ChatScreen {
                 if text.trim().is_empty() {
                     return None;
                 }
-                // Slash-команда RAG (`/rag add …`) — не отправляется как сообщение и
-                // работает независимо от генерации (фоновая индексация).
-                if let Some(parsed) = crate::features::rag_command::parse(&text) {
+                // A RAG slash command (`/rag add …`) — isn't sent as a
+                // message and works independently of generation (background
+                // indexing).
+                if let Some(parsed) = crate::features::rag_command::parse(&text, self.loc) {
                     use crate::features::rag_command::RagCommand;
                     self.input.clear();
                     self.mark_input_changed();
@@ -224,8 +243,9 @@ impl ChatScreen {
                         }
                     };
                 }
-                // Slash-команда озвучивания (`/tts …`) — тоже не сообщение и тоже
-                // работает во время генерации (озвучивается снимок). См. spec §11.9.
+                // A speech slash command (`/tts …`) — also not a message, and
+                // it also works during generation (a snapshot gets spoken).
+                // See spec §11.9.
                 if let Some(parsed) = crate::features::tts_command::parse(&text) {
                     use crate::features::tts_command::TtsCommand;
                     self.input.clear();
@@ -250,9 +270,9 @@ impl ChatScreen {
                 }
             }
             _ => {
-                // Помечаем ввод «грязным» только на реальной правке — голое движение
-                // курсора (`Moved`) не должно зря будить дебаунс орфографии и слать
-                // `SetDraft`. См. [`KeyOutcome`].
+                // Mark the input "dirty" only on an actual edit — a bare
+                // cursor move (`Moved`) shouldn't needlessly wake the
+                // spellcheck debounce or send `SetDraft`. See [`KeyOutcome`].
                 if self.input.on_key(key).edited() {
                     self.mark_input_changed();
                 }
@@ -261,11 +281,12 @@ impl ChatScreen {
         }
     }
 
-    /// Вставляет текст из буфера обмена в поле ввода (событие `Event::Paste` —
-    /// bracketed paste). Вставка идёт одним куском, переводы строк сохраняются как
-    /// текст (а НЕ трактуются как Enter/отправка). Работает только в основном виде:
-    /// при открытой справке/попапе/оверлее (их однострочные поля) — no-op. Вставка
-    /// не отправляет сообщение даже с переносами внутри. См. spec §11.5.
+    /// Inserts clipboard text into the input box (the `Event::Paste` event —
+    /// bracketed paste). The paste goes in as one chunk, line breaks are kept
+    /// as text (and are NOT treated as Enter/send). Works only in the main
+    /// view: with help/a popup/an overlay open (their single-line fields) —
+    /// a no-op. A paste never sends a message even with line breaks inside.
+    /// See spec §11.5.
     pub fn handle_paste(&mut self, text: &str) {
         if self.help.is_some()
             || self.suggest.is_some()
@@ -282,12 +303,13 @@ impl ChatScreen {
         self.mark_input_changed();
     }
 
-    /// Обрабатывает событие мыши (доходит только при захвате мыши `Ctrl+W`): колесо
-    /// прокручивает ленту чата; клик/драг левой кнопкой в поле ввода ставит курсор /
-    /// растит выделение (этап D плана). Работает только в основном виде — при открытом
-    /// оверлее/попапе/справке это no-op (прокрутка/правка курсора под ними были бы
-    /// неожиданны). Клик/драг вне области поля (в ленту) — no-op (выделение ленты —
-    /// отдельное направление). См. spec §11.3, §11.5.
+    /// Handles a mouse event (only arrives when mouse capture `Ctrl+W` is
+    /// on): the wheel scrolls the chat feed; a left-button click/drag in the
+    /// input box places the cursor / grows the selection (stage D of the
+    /// plan). Works only in the main view — with an overlay/popup/help open
+    /// this is a no-op (scrolling/cursor edits under them would be
+    /// unexpected). A click/drag outside the field's area (into the feed) —
+    /// a no-op (feed selection is a separate track). See spec §11.3, §11.5.
     pub fn handle_mouse(&mut self, mouse: MouseEvent) {
         if self.help.is_some()
             || self.suggest.is_some()
@@ -300,8 +322,9 @@ impl ChatScreen {
         match mouse.kind {
             MouseEventKind::ScrollUp => self.feed_view.scroll_up(WHEEL_SCROLL),
             MouseEventKind::ScrollDown => self.feed_view.scroll_down(WHEEL_SCROLL),
-            // Клик/драг в поле ввода — только когда поле видно (во время имперсонации
-            // на его месте предпросмотр, а `last_area` поля устарела).
+            // Click/drag in the input box — only when the field is visible
+            // (during impersonation a preview sits in its place, and the
+            // field's `last_area` is stale).
             MouseEventKind::Down(MouseButton::Left) if self.impersonation.is_none() => {
                 self.input.mouse_press(mouse.column, mouse.row);
             }
@@ -312,81 +335,93 @@ impl ChatScreen {
         }
     }
 
-    /// Забирает флаг «ленту только что прокрутили» и сообщает петле, нужна ли полная
-    /// перерисовка терминала (`terminal.clear()` — стирает «висячие» артефакты).
+    /// Takes the "the feed was just scrolled" flag and tells the loop
+    /// whether a full terminal redraw is needed (`terminal.clear()` — wipes
+    /// "hanging" artifacts).
     ///
-    /// Полную перерисовку (с кратким миганием от escape-очистки экрана) делаем
-    /// **только если** в ленте есть «съезжающие» на legacy-терминалах кластеры —
-    /// VS16-эмодзи (содержат селектор U+FE0F, напр. `🕸️`/`🗂️`): Command Prompt/
-    /// conhost рисует их физически шире модели ratatui, контент уезжает, и при
-    /// странично-скачковой прокрутке остаётся «висячий» символ. Чистый текст и
-    /// обычные широкие эмодзи артефактов не дают — там прокрутка не мигает.
-    /// См. [`crate::widgets::message_feed::MessageFeed::take_scrolled`].
+    /// A full redraw (with a brief flicker from the escape screen-clear) is
+    /// done **only if** the feed has clusters that "drift" on legacy
+    /// terminals — VS16 emoji (containing the U+FE0F selector, e.g.
+    /// `🕸️`/`🗂️`): Command Prompt/conhost draws them physically wider than
+    /// ratatui's model, content shifts, and a page-jump scroll leaves a
+    /// "hanging" character behind. Plain text and ordinary wide emoji
+    /// produce no artifacts — scrolling doesn't flicker there. See
+    /// [`crate::widgets::message_feed::MessageFeed::take_scrolled`].
     pub(super) fn take_feed_scrolled(&mut self) -> bool {
-        // Сбросить внутренний флаг нужно всегда, даже если перерисовка не потребуется.
+        // The internal flag must always be reset, even if a redraw isn't
+        // needed.
         if !self.feed_view.take_scrolled() {
             return false;
         }
         self.feed.iter().any(feed_msg_has_risky_glyph)
     }
 
-    /// Запрашивает полную перерисовку терминала следующим кадром.
+    /// Requests a full terminal redraw on the next frame.
     ///
-    /// Нужна там, где с экрана **исчезает широкий глиф** (эмодзи). Механика дефекта
-    /// (проверена на `Buffer::diff`): широкий эмодзи занимает две ячейки — саму
-    /// (`символ`) и **хвостовую**, которую ratatui сбрасывает в дефолт. Когда глиф
-    /// уходит, ячейка на его месте перерисовывается, а хвостовая — нет: в обоих
-    /// буферах она дефолтный пробел, diff считает её неизменной и пропускает.
-    /// conhost/Command Prompt вторую половину сам не очищает — и на экране остаётся
-    /// её кусок (заметен, если у ячейки был фон).
+    /// Needed wherever a **wide glyph** (emoji) disappears from the screen.
+    /// The mechanics of the defect (verified against `Buffer::diff`): a wide
+    /// emoji occupies two cells — its own (`symbol`) and a **trailing** one,
+    /// which ratatui resets to the default. When the glyph goes away, the
+    /// cell in its place is redrawn, but the trailing one isn't: in both
+    /// buffers it's the default space, the diff considers it unchanged and
+    /// skips it. conhost/Command Prompt doesn't clear the second half on its
+    /// own — a piece of it stays on screen (visible when the cell had a
+    /// background).
     ///
-    /// `ratatui-core` 0.1.2 (ratatui#2585) закрыл **часть** случая: хвост шлётся,
-    /// когда широкий глиф сменился более узким содержимым И нёс заметный на пустой
-    /// ячейке стиль (фон, `REVERSED`/`UNDERLINED`/`BLINK`/`CROSSED_OUT`). Остаются
-    /// непокрытыми нестилизованные глифы (сетка попапа эмодзи) — ради них запрос и
-    /// живёт.
+    /// `ratatui-core` 0.1.2 (ratatui#2585) closed **part** of the case: the
+    /// tail is now sent when a wide glyph is replaced by narrower content AND
+    /// carried a style visible on an empty cell (a background,
+    /// `REVERSED`/`UNDERLINED`/`BLINK`/`CROSSED_OUT`). Unstyled glyphs (the
+    /// emoji-popup grid) stay uncovered — the request exists for their sake.
     ///
-    /// **Не** нужна, когда глиф остаётся широким и лишь меняет стиль (сдвиг выделения):
-    /// сентинел полной перерисовки обязан пропускать хвост широкого глифа (иначе
-    /// бэкенд напечатает его без `MoveTo` и сдвинет ряд — ratatui#2651), так что
-    /// пользы там нет; подложку снимает перепечатка самого глифа обычным diff'ом.
+    /// **Not** needed when the glyph stays wide and only changes style (a
+    /// selection shift): the full-redraw sentinel must skip a wide glyph's
+    /// trailing cell (otherwise the backend would print it with no `MoveTo`
+    /// and shift the row — ratatui#2651), so there's no benefit there; the
+    /// backdrop is cleared by reprinting the glyph itself via the plain diff.
     pub(super) fn request_full_redraw(&mut self) {
         self.full_redraw = true;
     }
 
-    /// Забирает запрос на полную перерисовку терминала (петля `app/runtime` по нему
-    /// переписывает каждую ячейку — см. там же приём с буфером-сентинелом «\0»).
-    /// Источники запроса: прокрутка/изменение ленты с глифами группы риска
-    /// ([`Self::take_feed_scrolled`], [`super::ChatScreen::mark_feed_changed`]) и
-    /// закрытие попапов эмодзи/орфографии ([`Self::request_full_redraw`]).
+    /// Takes the request for a full terminal redraw (the `app/runtime` loop
+    /// rewrites every cell in response — see the sentinel-buffer "\0"
+    /// technique there too). Sources of the request: scrolling/a feed change
+    /// with risk-group glyphs ([`Self::take_feed_scrolled`],
+    /// [`super::ChatScreen::mark_feed_changed`]) and closing the
+    /// emoji/spellcheck popups ([`Self::request_full_redraw`]).
     pub fn take_full_redraw(&mut self) -> bool {
-        // Оба флага забираем безусловно (не через `||`): `take_feed_scrolled` обязан
-        // сбросить внутреннее состояние виджета ленты независимо от второго запроса.
+        // Both flags are taken unconditionally (not via `||`):
+        // `take_feed_scrolled` must reset the feed widget's internal state
+        // regardless of the second request.
         let scrolled = self.take_feed_scrolled();
         let requested = std::mem::take(&mut self.full_redraw);
         scrolled || requested
     }
 
-    /// Помечает ввод изменённым (запускает дебаунс перепроверки орфографии и
-    /// сохранение черновика в активном чате).
+    /// Marks the input as changed (starts the spellcheck-recheck debounce and
+    /// saves the draft in the active chat).
     pub(super) fn mark_input_changed(&mut self) {
         self.spell_dirty = true;
         self.draft_dirty = true;
         self.last_edit = Some(Instant::now());
-        // Тот же класс, что у ленты (`mark_feed_changed`): правка ЛЕВЕЕ VS16-эмодзи
-        // сдвигает его на место чужого символа, diff шлёт хвостовую половину, а
-        // бэкенд печатает её без `MoveTo` — ряд едет вправо (ratatui#2651). Ловится
-        // только когда за глифом сразу непробельный символ, поэтому в поле ввода
-        // встречается реже, чем в ленте, но механика та же. Проверяем потоково и
-        // лишь при наличии глифа группы риска — на обычном тексте no-op.
+        // The same class as in the feed (`mark_feed_changed`): an edit TO THE
+        // LEFT of a VS16 emoji shifts it onto a foreign character's cell,
+        // the diff sends the trailing half, and the backend prints it with
+        // no `MoveTo` — the row shifts right (ratatui#2651). It only
+        // triggers when a non-space character immediately follows the
+        // glyph, so it comes up less often in the input box than in the
+        // feed, but the mechanics are the same. Checked in a streaming pass
+        // and only when a risk-group glyph is present — a no-op on regular
+        // text.
         if self.input.any_char(super::feed::is_risky_glyph) {
             self.full_redraw = true;
         }
     }
 
-    /// Забирает изменённый черновик ввода для сохранения в активном чате (или
-    /// `None`, если с прошлого раза не менялся). Петля шлёт его командой `SetDraft`;
-    /// запись на диск в оркестраторе идёт с дебаунсом. См. spec §11.7.
+    /// Takes the changed input draft for saving in the active chat (or
+    /// `None` if it hasn't changed since last time). The loop sends it via
+    /// the `SetDraft` command; the orchestrator's disk write is debounced.
+    /// See spec §11.7.
     pub fn take_dirty_draft(&mut self) -> Option<String> {
         if !self.draft_dirty {
             return None;
@@ -395,10 +430,11 @@ impl ChatScreen {
         Some(self.input.text())
     }
 
-    /// Перепроверяет орфографию ввода, если истёк дебаунс. Возвращает `true`, если
-    /// подсветка ошибок была пересчитана (нужна перерисовка). Вызывается из петли
-    /// каждый тик (она и обеспечивает пробуждение по истечении дебаунса — рендер
-    /// сам по тикам уже не запускается). См. spec §11.5.
+    /// Rechecks the input's spelling once the debounce has elapsed. Returns
+    /// `true` if the error highlighting was recomputed (a redraw is needed).
+    /// Called from the loop every tick (which is also what wakes it once the
+    /// debounce elapses — rendering no longer runs on every tick by itself).
+    /// See spec §11.5.
     pub fn maybe_recheck_spelling(&mut self) -> bool {
         let Some(spell) = &self.spell else {
             return false;
@@ -406,8 +442,8 @@ impl ChatScreen {
         if !self.spell_dirty {
             return false;
         }
-        // Команды (`/rag …`) и пути файлов орфографией не проверяем — снимаем
-        // возможные подчёркивания (они подсвечиваются жёлтым целиком при рендере).
+        // Commands (`/rag …`) and file paths aren't spellchecked — clear any
+        // underlines (they're highlighted yellow as a whole when rendered).
         if self.input_is_command() {
             self.input.set_misspelled(Vec::new());
             self.spell_dirty = false;
@@ -416,7 +452,7 @@ impl ChatScreen {
         if let Some(t) = self.last_edit
             && t.elapsed() < SPELL_DEBOUNCE
         {
-            return false; // ещё печатает — не флагуем текущее слово
+            return false; // still typing — don't flag the current word
         }
         let ranges = self
             .input
@@ -429,23 +465,25 @@ impl ChatScreen {
         true
     }
 
-    /// Является ли текущий ввод командой (`/rag …`, `/tts …`). Такой текст подсвечивается
-    /// жёлтым и не проверяется орфографией. См. spec §11.5. Проверяется каждый кадр,
-    /// поэтому сперва — дешёвый предохранитель: команда всегда начинается с `/`
-    /// (первый непробельный символ), и лишь тогда парсим полный текст (аллокация
-    /// `text()` + разбор). Для обычного ввода (буквы, кириллица) `text()` не строится.
+    /// Whether the current input is a command (`/rag …`, `/tts …`). Such
+    /// text is highlighted yellow and isn't spellchecked. See spec §11.5.
+    /// Checked every frame, so first — a cheap guard: a command always
+    /// starts with `/` (the first non-whitespace character), and only then
+    /// do we parse the full text (an allocation via `text()` + parsing). For
+    /// regular input (letters, Cyrillic) `text()` is never built.
     pub(super) fn input_is_command(&self) -> bool {
         if self.input.first_non_whitespace() != Some('/') {
             return false;
         }
         let text = self.input.text();
-        crate::features::rag_command::parse(&text).is_some()
+        crate::features::rag_command::parse(&text, self.loc).is_some()
             || crate::features::tts_command::parse(&text).is_some()
     }
 
-    /// Запускает необратимую операцию (`Ctrl+R`/`Ctrl+E`): сразу отдаёт намерение,
-    /// либо — если включено подтверждение — открывает модальный попап. Во время
-    /// генерации обе операции игнорируются (как было). См. spec §11.7.
+    /// Triggers an irreversible operation (`Ctrl+R`/`Ctrl+E`): either returns
+    /// the intent right away, or — if confirmation is enabled — opens a
+    /// modal popup. During generation, both operations are ignored (as
+    /// before). See spec §11.7.
     pub(super) fn trigger_destructive(&mut self, action: ConfirmAction) -> Option<ChatIntent> {
         if self.generating {
             return None;
@@ -458,10 +496,10 @@ impl ChatScreen {
         }
     }
 
-    /// Запрашивает создание чата: при >1 профиле открывает оверлей выбора,
-    /// иначе сразу создаёт из единственного/дефолтного профиля (spec §10).
-    /// Публичный: `app` вызывает его, когда `Ctrl+N` нажат в экране списка чатов
-    /// (выбор профиля живёт здесь, в экране чата).
+    /// Requests creating a chat: with >1 profile, opens the picker overlay,
+    /// otherwise creates it right away from the sole/default profile (spec
+    /// §10). Public: `app` calls it when `Ctrl+N` is pressed in the chat
+    /// list screen (profile selection lives here, in the chat screen).
     pub fn request_new_chat(&mut self) -> Option<ChatIntent> {
         if self.profiles.len() > 1 {
             self.profile_overlay = Some(ProfileListState::new(self.profiles.clone()));

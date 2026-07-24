@@ -1,5 +1,5 @@
-//! Слой `shared` (FSD): мелкие переиспользуемые помощники отрисовки TUI,
-//! не зависящие от верхних слоёв.
+//! `shared` layer (FSD): small reusable TUI rendering helpers, independent of
+//! the upper layers.
 
 use ratatui::Frame;
 use ratatui::buffer::Buffer;
@@ -9,16 +9,17 @@ use ratatui::widgets::{Scrollbar, ScrollbarOrientation, ScrollbarState};
 
 use crate::shared::theme::Palette;
 
-/// Притеняет весь экран (модификатор `DIM` на все ячейки буфера), чтобы попап
-/// поверх не сливался с фоном. Вызывать **перед** `Clear`+рендером попапа:
-/// `Clear` затем сбрасывает ячейки попапа к дефолтному (не приглушённому) стилю,
-/// так что притеняется только фон, а сам попап остаётся ярким.
+/// Dims the whole screen (the `DIM` modifier on every buffer cell), so a popup
+/// drawn on top doesn't blend into the background. Call **before**
+/// `Clear`+rendering the popup: `Clear` then resets the popup's cells to the
+/// default (non-dimmed) style, so only the background gets dimmed, while the
+/// popup itself stays bright.
 ///
-/// Эффект `DIM` терминало-зависим (Windows Terminal поддерживает, conhost
-/// Windows 10 — нет), поэтому в режиме совместимости (`palette.compat`, spec
-/// §11.6) фон притеняется **цветом**: fg всех ячеек → `palette.muted` (плюс
-/// снимается `BOLD` — в 16-цветном маппинге он даёт «яркий» вариант и свёл бы
-/// притенение на нет).
+/// The `DIM` effect is terminal-dependent (Windows Terminal supports it,
+/// conhost Windows 10 doesn't), so in compatibility mode (`palette.compat`,
+/// spec §11.6) the background is dimmed **by color**: every cell's fg →
+/// `palette.muted` (plus `BOLD` is dropped — in a 16-color mapping it gives a
+/// "bright" variant and would cancel out the dimming).
 pub fn dim_background(frame: &mut Frame, palette: &Palette) {
     let area = frame.area();
     let compat = palette.compat;
@@ -37,30 +38,33 @@ pub fn dim_background(frame: &mut Frame, palette: &Palette) {
     }
 }
 
-/// Готовит буфер к **полной перерисовке** следующего кадра: делает каждую ячейку
-/// заведомо отличной от того, что нарисует кадр, чтобы поячеечный diff `ratatui`
-/// переписал экран целиком — включая пробелы в пустых местах — и стёр «висячие»
-/// артефакты терминала.
+/// Primes the buffer for a **full redraw** of the next frame: makes every cell
+/// provably different from whatever the frame will draw, so ratatui's
+/// per-cell diff rewrites the whole screen — including spaces in empty spots —
+/// and clears "hanging" terminal artifacts.
 ///
-/// Вызывается на буфере, который затем уходит в задний через `swap_buffers()`
-/// **без вывода на экран**: сам маркер на терминал не попадает, он лишь база для
-/// diff'а. Обычной очисткой (`terminal.clear()`) не пользуемся — она шлёт `ESC[2J`,
-/// и экран на миг гаснет (мигание).
+/// Called on a buffer that then moves into the back buffer via
+/// `swap_buffers()` **without a screen flush**: the marker itself never
+/// reaches the terminal, it's only a diff base. We don't use a plain clear
+/// (`terminal.clear()`) — it sends `ESC[2J`, and the screen blanks for a
+/// moment (flicker).
 ///
-/// **Почему пробел + `HIDDEN`, а не символ-заглушка.** Раньше маркером был символ
-/// `"\0"`, но это ломало ряды с VS16-эмодзи (`🗂️`, `❤️`): для такого кластера
-/// `ratatui` **дополнительно шлёт его хвостовую ячейку** (их обход терминалов, не
-/// очищающих вторую половину широкого глифа), причём **только если её символ
-/// изменился** — а `"\0"` менял его всегда. Бэкенд `crossterm` при этом ведёт
-/// позицию по номеру ячейки, без учёта ширины глифа (`x == last.x + 1` → без
-/// `MoveTo`), поэтому такой хвост печатался колонкой правее и сдвигал остаток ряда:
-/// у следующего широкого глифа затиралась правая половина (терминал гасил его
-/// целиком), рамка панели уезжала наружу.
+/// **Why a space + `HIDDEN`, not a placeholder character.** The marker used to
+/// be the character `"\0"`, but that broke rows with VS16 emoji (`🗂️`,
+/// `❤️`): for such a cluster `ratatui` **additionally sends its trailing
+/// cell** (a workaround for terminals that don't clear the second half of a
+/// wide glyph), but **only if its symbol changed** — and `"\0"` always changed
+/// it. The `crossterm` backend tracks position by cell number, without
+/// accounting for glyph width (`x == last.x + 1` → no `MoveTo`), so such a
+/// trailing cell printed one column to the right and shifted the rest of the
+/// row: the next wide glyph's right half got overwritten (the terminal wiped
+/// it out entirely), the panel border drifted outward.
 ///
-/// Пробел совпадает с содержимым хвостовой ячейки (её `ratatui` сбрасывает в
-/// дефолт), поэтому такие ячейки в diff не попадают — и сдвига не возникает. Всё
-/// остальное отличается модификатором [`SENTINEL_MODIFIER`], которого в интерфейсе
-/// не бывает (закреплено тестом), так что полнота перерисовки не страдает.
+/// A space matches the content of the trailing cell (`ratatui` resets it to
+/// default), so such cells don't land in the diff — and no shift occurs.
+/// Everything else differs by the [`SENTINEL_MODIFIER`] modifier, which never
+/// occurs in the interface (pinned by a test), so redraw completeness isn't
+/// compromised.
 pub fn prime_full_redraw(buf: &mut Buffer) {
     for cell in buf.content.iter_mut() {
         cell.set_symbol(" ");
@@ -68,24 +72,26 @@ pub fn prime_full_redraw(buf: &mut Buffer) {
     }
 }
 
-/// Модификатор-маркер для [`prime_full_redraw`]: в интерфейсе не используется
-/// (палитра и виджеты обходятся `DIM`/`BOLD`/`ITALIC`/`UNDERLINED`/`REVERSED`),
-/// поэтому ни одна ячейка реального кадра с ним не совпадёт.
+/// Marker modifier for [`prime_full_redraw`]: unused in the interface (the
+/// palette and widgets get by with `DIM`/`BOLD`/`ITALIC`/`UNDERLINED`/
+/// `REVERSED`), so no cell of a real frame will ever match it.
 const SENTINEL_MODIFIER: Modifier = Modifier::HIDDEN;
 
-/// Рисует вертикальный скроллбар в **правой колонке** `area`, когда содержимое
-/// не помещается по высоте (`total > viewport`); иначе — no-op (бар не рисуется,
-/// чтобы не шуметь на коротком содержимом). `total` — всего рядов содержимого,
-/// `viewport` — видимых, `position` — первый видимый ряд (само содержимое
-/// прокручивает вызывающий; бар — чистая индикация).
+/// Draws a vertical scrollbar in the **right column** of `area` when the
+/// content doesn't fit by height (`total > viewport`); otherwise — a no-op
+/// (the bar isn't drawn, so it doesn't clutter short content). `total` —
+/// total content rows, `viewport` — visible ones, `position` — the first
+/// visible row (the caller scrolls the content itself; the bar is a pure
+/// indicator).
 ///
-/// Панели с рамкой передают область с вертикальным отступом 1
-/// (`area.inner(Margin::new(0, 1))`): бар ложится **на правую линию рамки**, не
-/// трогая её углы и не отнимая ширину у содержимого. `focused` — в каком цвете
-/// нарисована рамка под баром (обычная/в фокусе): и трек, и бегунок рисуются
-/// этим цветом, так что скроллбар сливается с рамкой, отличаясь лишь заливкой
-/// `█` (бегунок) против тонкого `│` (трек). Бегунок следует за цветом рамки —
-/// смена палитры рамки автоматически перекрашивает и его.
+/// Panels with a border pass an area with a vertical margin of 1
+/// (`area.inner(Margin::new(0, 1))`): the bar lands **on the right border
+/// line**, without touching its corners and without taking width away from
+/// the content. `focused` — which color the border under the bar is drawn in
+/// (normal/focused): both the track and the thumb are drawn in that color, so
+/// the scrollbar blends with the border, differing only by the `█` fill
+/// (thumb) versus the thin `│` (track). The thumb follows the border's color
+/// — a border-palette change automatically recolors it too.
 pub fn render_scrollbar(
     frame: &mut Frame,
     area: Rect,
@@ -98,10 +104,11 @@ pub fn render_scrollbar(
     if total <= viewport || area.width == 0 || area.height == 0 {
         return;
     }
-    // `content_length` — число ПОЗИЦИЙ прокрутки (total − viewport + 1), а не
-    // рядов: ratatui кладёт низ бегунка в конец трека на позиции
-    // `content_length − 1`, т.е. ровно при полной прокрутке (total − viewport).
-    // С `content_length = total` бегунок не доходил бы до низа.
+    // `content_length` is the number of scroll POSITIONS (total − viewport +
+    // 1), not rows: ratatui places the thumb's bottom at the end of the track
+    // at position `content_length − 1`, i.e. exactly at full scroll (total −
+    // viewport). With `content_length = total` the thumb wouldn't reach the
+    // bottom.
     let mut state = ScrollbarState::new(total - viewport + 1)
         .position(position)
         .viewport_content_length(viewport);
@@ -121,7 +128,7 @@ mod tests {
     use ratatui::Terminal;
     use ratatui::backend::TestBackend;
 
-    /// Символы правой колонки буфера (там живёт скроллбар).
+    /// Symbols of the buffer's right column (the scrollbar lives there).
     fn right_column(term: &Terminal<TestBackend>) -> Vec<String> {
         let buf = term.backend().buffer();
         let area = buf.area;
@@ -134,21 +141,21 @@ mod tests {
     fn scrollbar_renders_thumb_only_on_overflow() {
         let palette = Palette::default();
         let mut term = Terminal::new(TestBackend::new(10, 6)).unwrap();
-        // Содержимое помещается (total <= viewport) → бар не рисуется.
+        // Content fits (total <= viewport) → the bar isn't drawn.
         term.draw(|f| render_scrollbar(f, f.area(), 6, 6, 0, false, &palette))
             .unwrap();
         assert!(right_column(&term).iter().all(|s| s != "█" && s != "│"));
-        // Переполнение → в правой колонке появляются бегунок и трек.
+        // Overflow → the thumb and track appear in the right column.
         term.draw(|f| render_scrollbar(f, f.area(), 24, 6, 0, false, &palette))
             .unwrap();
         let col = right_column(&term);
-        assert!(col.iter().any(|s| s == "█"), "нет бегунка: {col:?}");
-        assert!(col.iter().any(|s| s == "│"), "нет трека: {col:?}");
+        assert!(col.iter().any(|s| s == "█"), "no thumb: {col:?}");
+        assert!(col.iter().any(|s| s == "│"), "no track: {col:?}");
     }
 
     #[test]
     fn scrollbar_thumb_tracks_position() {
-        // В начале бегунок у верха, при полной прокрутке — у низа.
+        // At the start the thumb is at the top, at full scroll — at the bottom.
         let palette = Palette::default();
         let mut term = Terminal::new(TestBackend::new(4, 8)).unwrap();
         let thumb_rows = |term: &Terminal<TestBackend>| -> Vec<usize> {
@@ -162,22 +169,27 @@ mod tests {
         term.draw(|f| render_scrollbar(f, f.area(), 32, 8, 0, false, &palette))
             .unwrap();
         let top = thumb_rows(&term);
-        assert_eq!(top.first(), Some(&0), "в начале бегунок у верха: {top:?}");
-        // Полная прокрутка: position = total - viewport.
+        assert_eq!(
+            top.first(),
+            Some(&0),
+            "thumb should be at the top initially: {top:?}"
+        );
+        // Full scroll: position = total - viewport.
         term.draw(|f| render_scrollbar(f, f.area(), 32, 8, 24, false, &palette))
             .unwrap();
         let bottom = thumb_rows(&term);
         assert_eq!(
             bottom.last(),
             Some(&7),
-            "при полной прокрутке бегунок у низа: {bottom:?}"
+            "thumb should be at the bottom at full scroll: {bottom:?}"
         );
     }
 
     #[test]
     fn scrollbar_thumb_uses_border_color() {
-        // Бегунок рисуется цветом рамки (как трек), а не текстом. В Auto-палитре
-        // `border` (DarkGray) и `text` (Reset) различны, так что проверка значима.
+        // The thumb is drawn in the border color (like the track), not the
+        // text color. In the Auto palette `border` (DarkGray) and `text`
+        // (Reset) differ, so the check is meaningful.
         let palette = Palette::default();
         let mut term = Terminal::new(TestBackend::new(4, 8)).unwrap();
         term.draw(|f| render_scrollbar(f, f.area(), 32, 8, 0, false, &palette))
@@ -188,7 +200,11 @@ mod tests {
             .map(|y| &buf[(area.right() - 1, y)])
             .find(|c| c.symbol() == "█")
             .map(|c| c.fg);
-        assert_eq!(thumb_fg, Some(palette.border), "бегунок — цветом рамки");
+        assert_eq!(
+            thumb_fg,
+            Some(palette.border),
+            "thumb should be border-colored"
+        );
     }
 
     #[test]
@@ -204,8 +220,8 @@ mod tests {
 
     #[test]
     fn prime_full_redraw_repaints_all_but_wide_glyph_tails() {
-        // Гейт на устройство сентинела (регрессия «ряд съезжает вправо на VS16»).
-        // Кадр: VS16-эмодзи с текстом после него — как в ленте.
+        // A gate on the sentinel's design (regression: "row drifts right on VS16").
+        // Frame: a VS16 emoji with text after it — as in the feed.
         use ratatui::style::Style;
         use ratatui::text::{Line, Span};
         use ratatui::widgets::{Paragraph, Widget};
@@ -223,8 +239,9 @@ mod tests {
         prime_full_redraw(&mut sentinel);
         let updates = sentinel.diff(&frame);
 
-        // (1) Ни одно обновление не целится во вторую половину широкого глифа —
-        // иначе бэкенд напечатал бы его без `MoveTo` и сдвинул остаток ряда.
+        // (1) No update targets the second half of a wide glyph — otherwise
+        // the backend would print it with no `MoveTo` and shift the rest of
+        // the row.
         for &(x, y, _) in &updates {
             if x == 0 {
                 continue;
@@ -232,39 +249,43 @@ mod tests {
             let left = frame[(x - 1, y)].symbol();
             assert!(
                 left.width() < 2,
-                "обновление в ({x},{y}) целится во вторую половину глифа {left:?}"
+                "update at ({x},{y}) targets the second half of glyph {left:?}"
             );
         }
 
-        // (2) Перерисовано всё остальное: непокрытыми остаются ровно хвостовые
-        // половины широких глифов (их закрывает сам глиф) — дыр в перерисовке нет.
+        // (2) Everything else is repainted: the only uncovered cells are
+        // trailing halves of wide glyphs (the glyph itself covers them) — no
+        // gaps in the repaint.
         for y in area.top()..area.bottom() {
             for x in area.left()..area.right() {
                 if updates.iter().any(|&(ux, uy, _)| (ux, uy) == (x, y)) {
                     continue;
                 }
                 let is_tail = x > 0 && frame[(x - 1, y)].symbol().width() == 2;
-                assert!(is_tail, "ячейка ({x},{y}) не перерисована и не хвостовая");
+                assert!(is_tail, "cell ({x},{y}) is neither repainted nor a tail");
             }
         }
     }
 
     #[test]
     fn screen_switch_emits_vs16_tail_without_full_redraw() {
-        // Почему смена экрана обязана идти полной перерисовкой (`app/runtime`).
+        // Why a screen switch must go through a full redraw (`app/runtime`).
         //
-        // VS16-кластер (`❤️` = U+2764 U+FE0F) ratatui сопровождает хвостовой ячейкой,
-        // которую шлёт, КОГДА ЕЁ СИМВОЛ ИЗМЕНИЛСЯ. Внутри одного экрана правки ленты
-        // хвост не трогают (там был пробел — пробел и остался), а вот на возврате с
-        // другого экрана на его месте стоял чужой символ → хвост уходит в терминал.
-        // Бэкенд же ведёт позицию по номеру ячейки, без учёта ширины глифа
-        // (открытый ratatui#2651): после широкого глифа `MoveTo` не эмитится, и хвост
-        // печатается колонкой правее — остаток ряда едет вправо. Симптом: лишний
-        // пробел после `❤️` при возврате из списка чатов / `F3`, пропадающий по
-        // прокрутке (она заказывает ту же полную перерисовку).
+        // For a VS16 cluster (`❤️` = U+2764 U+FE0F) ratatui accompanies it with a
+        // trailing cell, sent WHEN ITS SYMBOL CHANGED. Within a single screen,
+        // feed edits don't touch the tail (there was a space — a space it
+        // stays), but on returning from another screen a foreign symbol sat in
+        // its place → the tail goes out to the terminal. The backend tracks
+        // position by cell number, without accounting for glyph width (open
+        // ratatui#2651): no `MoveTo` is emitted after a wide glyph, and the
+        // tail prints one column to the right — the rest of the row drifts
+        // right. Symptom: an extra space after `❤️` when returning from the
+        // chat list / `F3`, which disappears on scroll (it requests the same
+        // full redraw).
         //
-        // Сентинел делает символ хвоста пробелом, т.е. равным тому, что нарисует кадр,
-        // — хвост в diff не попадает и ряд не съезжает.
+        // The sentinel makes the tail's symbol a space, i.e. equal to what the
+        // frame will draw — the tail doesn't land in the diff and the row
+        // doesn't drift.
         use ratatui::style::Style;
         use ratatui::text::{Line, Span};
         use ratatui::widgets::{Paragraph, Widget};
@@ -278,9 +299,9 @@ mod tests {
         .render(area, &mut feed);
         let gx = (0..area.width)
             .find(|&x| feed[(x, 0)].symbol().contains('\u{FE0F}'))
-            .expect("VS16-глиф не найден в кадре");
+            .expect("VS16 glyph not found in the frame");
 
-        // Возврат с другого экрана: на месте хвоста стоял чужой символ.
+        // Returning from another screen: a foreign symbol sat in the tail's place.
         let mut other = Buffer::empty(area);
         Paragraph::new(Line::from("chat list content!!")).render(area, &mut other);
         assert!(
@@ -288,11 +309,11 @@ mod tests {
                 .diff(&feed)
                 .iter()
                 .any(|&(x, y, _)| (x, y) == (gx + 1, 0)),
-            "смена экрана шлёт хвост VS16 — без полной перерисовки ряд съедет"
+            "a screen switch sends the VS16 tail — without a full redraw the row will drift"
         );
 
-        // Правка внутри того же экрана хвост не шлёт (потому баг и был виден только
-        // на переключении, а не при обычной работе с лентой).
+        // An edit within the same screen doesn't send the tail (which is why the
+        // bug was only visible on switching, not during normal feed work).
         let mut same = feed.clone();
         same[(area.width - 1, 0)].set_symbol("Z");
         assert!(
@@ -300,10 +321,10 @@ mod tests {
                 .diff(&feed)
                 .iter()
                 .any(|&(x, y, _)| (x, y) == (gx + 1, 0)),
-            "правка внутри экрана хвост VS16 не трогает"
+            "an edit within the screen doesn't touch the VS16 tail"
         );
 
-        // Полная перерисовка: хвост не эмитится → сдвига нет.
+        // Full redraw: the tail isn't emitted → no shift.
         let mut sentinel = feed.clone();
         prime_full_redraw(&mut sentinel);
         assert!(
@@ -311,15 +332,16 @@ mod tests {
                 .diff(&feed)
                 .iter()
                 .any(|&(x, y, _)| (x, y) == (gx + 1, 0)),
-            "сентинел не должен слать хвост VS16 (иначе сам же сдвинет ряд)"
+            "the sentinel must not send the VS16 tail (otherwise it would shift the row itself)"
         );
     }
 
     #[test]
     fn sentinel_modifier_is_unused_by_ui() {
-        // Маркер обязан не встречаться в реальных кадрах, иначе совпавшая ячейка не
-        // попадёт в diff и останется непрокрашенной. Палитра обходится
-        // DIM/BOLD/ITALIC/UNDERLINED/REVERSED — проверяем, что маркер не из них.
+        // The marker must not occur in real frames, otherwise a matching cell
+        // wouldn't land in the diff and would stay unpainted. The palette gets
+        // by with DIM/BOLD/ITALIC/UNDERLINED/REVERSED — check the marker isn't
+        // one of them.
         for used in [
             Modifier::DIM,
             Modifier::BOLD,
@@ -329,7 +351,7 @@ mod tests {
         ] {
             assert!(
                 !SENTINEL_MODIFIER.intersects(used),
-                "маркер сентинела пересекается с используемым в UI {used:?}"
+                "sentinel marker intersects a modifier used in the UI {used:?}"
             );
         }
     }
@@ -337,13 +359,13 @@ mod tests {
     #[test]
     fn dim_background_uses_color_in_compat_mode() {
         let mut term = Terminal::new(TestBackend::new(4, 2)).unwrap();
-        // Обычный режим — модификатор DIM на ячейках.
+        // Normal mode — the DIM modifier on cells.
         term.draw(|f| {
             dim_background(f, &Palette::default());
             assert!(f.buffer_mut()[(0, 0)].modifier.contains(Modifier::DIM));
         })
         .unwrap();
-        // Режим совместимости — приглушённый цвет вместо DIM (conhost его не умеет).
+        // Compatibility mode — a muted color instead of DIM (conhost can't do it).
         let compat = Palette::default().with_compat(true);
         term.draw(|f| {
             dim_background(f, &compat);

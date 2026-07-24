@@ -1,15 +1,15 @@
-//! Тесты интеграции MCP-хоста в оркестратор: событие `Ready` даёт обёртки в
-//! реестре и динамический каталог в снимке `Settings`; крах сервера убирает
-//! инструменты. Протокол — в `shared/mcp.rs`, менеджер — в `orchestrator/mcp.rs`.
+//! Tests for MCP-host integration into the orchestrator: the `Ready` event puts wrappers
+//! into the registry and a dynamic catalog into the `Settings` snapshot; a server crash removes
+//! the tools. The protocol lives in `shared/mcp.rs`, the manager in `orchestrator/mcp.rs`.
 
 use super::*;
-// Тест-подмодуль `tests::mcp` затеняет сорс-модуль `orchestrator::mcp` — вверх
-// до оркестратора (паттерн tests/self_model.rs).
+// The test submodule `tests::mcp` shadows the source module `orchestrator::mcp` — go up
+// to the orchestrator (the tests/self_model.rs pattern).
 use super::super::mcp::McpEvent;
 use crate::shared::config::{McpServerConfig, McpSettings};
 use crate::shared::mcp::{McpConnection, McpToolInfo};
 
-/// Соединение поверх duplex (транспорт в этих тестах не дёргается).
+/// A connection over duplex (the transport isn't exercised in these tests).
 fn dummy_conn() -> Arc<McpConnection> {
     let (client_io, _server_io) = tokio::io::duplex(1024);
     let (r, w) = tokio::io::split(client_io);
@@ -21,8 +21,8 @@ fn mcp_config() -> McpSettings {
         enabled: true,
         servers: vec![McpServerConfig {
             id: "fs".into(),
-            // Несуществующий бинарь: реальная фоновая задача пришлёт Failed в
-            // канал менеджера (в тестах он отброшен) — события подаём вручную.
+            // A nonexistent binary: the real background task would send Failed into
+            // the manager's channel (it's dropped in tests) — events are fed in manually.
             command: "nonexistent-mcp-server-binary".into(),
             ..Default::default()
         }],
@@ -50,20 +50,23 @@ async fn mcp_ready_registers_tools_and_rides_settings_snapshot() {
     orch.apply_mcp_settings();
     assert!(
         orch.registry.get("mcp__fs__read_text_file").is_none(),
-        "до Ready обёртки в реестре нет"
+        "no wrapper should be in the registry before Ready"
     );
 
     orch.handle_mcp_event(ready_event(&orch));
 
-    // Обёртка в реестре (ход сможет её вызвать), стандартные инструменты целы.
+    // The wrapper is in the registry (a turn can call it), the standard tools are intact.
     assert!(orch.registry.get("mcp__fs__read_text_file").is_some());
     assert!(orch.registry.get("note_save").is_some());
-    // TOFU: первый подъём авто-пиннит каталог, пин персистится в settings.json.
+    // TOFU: the first bring-up auto-pins the catalog, the pin persists to settings.json.
     let pin = orch.config.mcp.servers[0].pinned_catalog.clone();
-    assert!(pin.is_some(), "пин не записан в конфиг");
+    assert!(pin.is_some(), "the pin wasn't written to the config");
     let saved = orch.storage.json().load_config().unwrap();
-    assert_eq!(saved.mcp.servers[0].pinned_catalog, pin, "пин не сохранён");
-    // Снимок Settings несёт динамический каталог и статус сервера.
+    assert_eq!(
+        saved.mcp.servers[0].pinned_catalog, pin,
+        "the pin wasn't saved"
+    );
+    // The Settings snapshot carries the dynamic catalog and the server status.
     let evt = wait_for(&mut evt_rx, |e| matches!(e, AppEvent::Settings { .. }))
         .await
         .unwrap();
@@ -72,7 +75,7 @@ async fn mcp_ready_registers_tools_and_rides_settings_snapshot() {
     };
     assert_eq!(mcp.tools.len(), 1);
     assert_eq!(mcp.tools[0].id, "mcp__fs__read_text_file");
-    assert!(!mcp.tools[0].enabled_by_default, "двойной opt-in");
+    assert!(!mcp.tools[0].enabled_by_default, "double opt-in");
     assert_eq!(mcp.tools[0].description.as_deref(), Some("Read a file"));
     assert_eq!(mcp.servers.len(), 1);
     assert_eq!(mcp.servers[0].tool_count, 1);
@@ -82,7 +85,7 @@ async fn mcp_ready_registers_tools_and_rides_settings_snapshot() {
 async fn changed_catalog_requires_confirmation_before_registering() {
     let (_dir, mut orch, mut evt_rx) = bare_orch_rx();
     let mut config = mcp_config();
-    // Пин «прежнего» каталога (другое описание) — Ready с изменившимся не пройдёт.
+    // Pin a "previous" catalog (a different description) — Ready with a changed one won't pass.
     config.servers[0].pinned_catalog =
         Some(crate::features::tools::mcp::catalog_hash(&[McpToolInfo {
             name: "read_text_file".into(),
@@ -93,7 +96,7 @@ async fn changed_catalog_requires_confirmation_before_registering() {
     orch.apply_mcp_settings();
     orch.handle_mcp_event(ready_event(&orch));
 
-    // Инструменты придержаны: в реестр не попали, снимок помечает pending.
+    // Tools are held back: they didn't make it into the registry, the snapshot marks pending.
     assert!(orch.registry.get("mcp__fs__read_text_file").is_none());
     let evt = wait_for(&mut evt_rx, |e| matches!(e, AppEvent::Settings { .. }))
         .await
@@ -104,45 +107,45 @@ async fn changed_catalog_requires_confirmation_before_registering() {
     assert!(mcp.servers[0].pending_catalog);
     assert!(mcp.tools.is_empty());
 
-    // Подтверждение (Enter в настройках → команда): инструменты в реестре,
-    // новый пин персистится.
+    // Confirmation (Enter in settings → a command): the tools are in the registry,
+    // the new pin persists.
     let old_pin = orch.config.mcp.servers[0].pinned_catalog.clone();
     orch.handle_confirm_mcp_catalog("fs".into());
     assert!(orch.registry.get("mcp__fs__read_text_file").is_some());
     let new_pin = orch.config.mcp.servers[0].pinned_catalog.clone();
-    assert_ne!(new_pin, old_pin, "пин обновлён на новый каталог");
+    assert_ne!(new_pin, old_pin, "the pin is updated to the new catalog");
     let saved = orch.storage.json().load_config().unwrap();
     assert_eq!(saved.mcp.servers[0].pinned_catalog, new_pin);
 }
 
 #[tokio::test]
 async fn update_config_inherits_mcp_pins_from_stale_ui_snapshot() {
-    // Снимок конфига из UI может не нести пины (устаревшая копия) — правка
-    // настроек не должна сбрасывать доверие и провоцировать рестарт серверов.
+    // A config snapshot from the UI may not carry pins (a stale copy) — editing
+    // settings must not reset trust or trigger a server restart.
     let (_dir, mut orch) = bare_orch();
     orch.config.mcp = mcp_config();
     orch.config.mcp.servers[0].pinned_catalog = Some("abc123".into());
     let mut ui_copy = orch.config.clone();
-    ui_copy.mcp.servers[0].pinned_catalog = None; // устаревший снимок без пина
+    ui_copy.mcp.servers[0].pinned_catalog = None; // a stale snapshot with no pin
     orch.handle_update_config(ui_copy);
     assert_eq!(
         orch.config.mcp.servers[0].pinned_catalog.as_deref(),
         Some("abc123"),
-        "пин унаследован по id сервера"
+        "the pin is inherited by server id"
     );
 }
 
-/// Живой e2e-смоук этапа 3a (docs/research/plugin-system.md §7): полный путь через
-/// оркестратор — конфиг с реальным `npx @modelcontextprotocol/server-filesystem`,
-/// профиль включает MCP-инструменты, живая модель читает файл его инструментом и
-/// использует содержимое в ответе. Требует `MINDFORK_ENGINE_URL` + `npx` в PATH.
+/// Live e2e smoke for stage 3a (docs/research/plugin-system.md §7): the full path through the
+/// orchestrator — a config with a real `npx @modelcontextprotocol/server-filesystem`,
+/// the profile enables MCP tools, a live model reads a file with its tool and
+/// uses the content in the reply. Requires `MINDFORK_ENGINE_URL` + `npx` on the PATH.
 #[tokio::test]
 #[ignore = "requires MINDFORK_ENGINE_URL + npx (real filesystem MCP server)"]
 async fn mcp_filesystem_e2e_live() {
     use crate::features::profiles::ProfileEdit;
     use crate::features::tools::default_tool_ids;
 
-    // Файл-секрет в каталоге, разрешённом файловому MCP-серверу.
+    // A secret file in a directory allowed for the filesystem MCP server.
     let files_dir = tempfile::tempdir().unwrap();
     std::fs::write(
         files_dir.path().join("secret_number.txt"),
@@ -151,7 +154,7 @@ async fn mcp_filesystem_e2e_live() {
     .unwrap();
     let allowed = files_dir.path().to_string_lossy().replace('\\', "/");
 
-    // npx на Windows — .cmd-шим: запуск через `cmd /c` (питфолл §4.6).
+    // npx on Windows is a .cmd shim: launch via `cmd /c` (the §4.6 pitfall).
     let (command, args): (String, Vec<String>) = if cfg!(windows) {
         (
             "cmd".into(),
@@ -190,9 +193,9 @@ async fn mcp_filesystem_e2e_live() {
         return;
     };
 
-    // ProfileList эмитится при bootstrap — забираем ДО ожидания MCP-каталога:
-    // `wait_for` дренирует все события по пути, и более раннее ProfileList
-    // было бы поглощено ожиданием более позднего Settings (тест бы завис).
+    // ProfileList is emitted during bootstrap — collect it BEFORE waiting for the MCP catalog:
+    // `wait_for` drains all events along the way, and the earlier ProfileList
+    // would be swallowed by waiting for the later Settings (the test would hang).
     let pl = wait_for(&mut evt_rx, |e| matches!(e, AppEvent::ProfileList(_)))
         .await
         .unwrap();
@@ -201,8 +204,8 @@ async fn mcp_filesystem_e2e_live() {
         _ => unreachable!(),
     };
 
-    // Ждём готовности сервера: снимок Settings с непустым MCP-каталогом
-    // (npx качает пакет при первом запуске — таймаут щедрый).
+    // Wait for server readiness: a Settings snapshot with a non-empty MCP catalog
+    // (npx downloads the package on the first run — the timeout is generous).
     let settings = tokio::time::timeout(
         std::time::Duration::from_secs(120),
         wait_for(
@@ -211,7 +214,7 @@ async fn mcp_filesystem_e2e_live() {
         ),
     )
     .await
-    .expect("MCP-сервер не поднялся за 120с")
+    .expect("the MCP server should come up within 120s")
     .unwrap();
     let AppEvent::Settings { mcp, .. } = settings else {
         unreachable!()
@@ -219,7 +222,7 @@ async fn mcp_filesystem_e2e_live() {
     eprintln!("MCP-инструментов в каталоге: {}", mcp.tools.len());
     assert!(mcp.tools.iter().all(|t| t.id.starts_with("mcp__fs__")));
 
-    // Профиль включает MCP-инструменты (двойной opt-in: мастер-гейт уже вкл).
+    // The profile enables MCP tools (double opt-in: the master gate is already on).
     let mut enabled = default_tool_ids();
     enabled.extend(mcp.tools.iter().map(|t| t.id.clone()));
     cmd_tx
@@ -232,7 +235,7 @@ async fn mcp_filesystem_e2e_live() {
         })
         .unwrap();
 
-    // Ход: модель должна прочитать файл MCP-инструментом и назвать число.
+    // Turn: the model should read the file with the MCP tool and name the number.
     let (out, tools) = run_turn_live(
         &cmd_tx,
         &mut evt_rx,
@@ -245,11 +248,11 @@ async fn mcp_filesystem_e2e_live() {
     eprintln!("вызовы: {tools:?}\nответ: {out}");
     assert!(
         tools.iter().any(|t| t.starts_with("mcp__fs__")),
-        "модель не вызвала MCP-инструмент: {tools:?}"
+        "the model didn't call the MCP tool: {tools:?}"
     );
     assert!(
         out.contains("7319"),
-        "ответ не использует результат MCP-инструмента: {out:?}"
+        "the reply doesn't use the MCP tool's result: {out:?}"
     );
     cmd_tx.send(AppCommand::Quit).unwrap();
 }
@@ -262,7 +265,7 @@ async fn mcp_exited_removes_tools_from_registry() {
     orch.handle_mcp_event(ready_event(&orch));
     assert!(orch.registry.get("mcp__fs__read_text_file").is_some());
 
-    // Крах процесса: соединение мертво — обёртка уходит из реестра немедленно.
+    // Process crash: the connection is dead — the wrapper leaves the registry immediately.
     let epoch = orch.mcp.epoch();
     orch.handle_mcp_event(McpEvent::Exited {
         epoch,

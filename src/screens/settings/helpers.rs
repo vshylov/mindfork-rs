@@ -1,56 +1,56 @@
-//! Экран настроек — свободные функции: построители строк полей, описания,
-//! раскладка/усечение, циклы enum-значений, парсеры значений. Часть модуля
-//! [super]; разбито из монолита settings.rs (см. docs/history/refactoring-god-objects.md).
+//! Settings screen — free functions: field-row builders, descriptions,
+//! layout/truncation, enum-value cycles, value parsers. Part of the
+//! [super] module; split out of the settings.rs monolith (see docs/history/refactoring-god-objects.md).
 
 use super::*;
-// ---------- свободные функции ----------
+// ---------- free functions ----------
 
-/// Входит ли параметр сэмплинга в подмножество, принимаемое облачным провайдером.
-/// Gemini (строгий OpenAI-диалект, `restrict_to_strict`): temperature/top_p/
-/// penalties/seed/max_tokens. OpenAI — то же **без `temperature`/`top_p`**: их
-/// принимало лишь семейство GPT 5.4, а GPT 5.5/5.6 отвергают. Anthropic (Claude):
-/// **только `max_tokens`** — новейшие
-/// модели 4.x «зафиксировали» сэмплинг и отвергают `temperature`/`top_p`/`top_k` как
-/// deprecated, поэтому их не шлём (см. `anthropic::wire`). Остальные — расширения
-/// llama.cpp и reasoning-поля — облако не принимает. См. ADR 0004.
+/// Whether a sampling parameter is in the subset accepted by a cloud provider.
+/// Gemini (strict OpenAI dialect, `restrict_to_strict`): temperature/top_p/
+/// penalties/seed/max_tokens. OpenAI — the same **without `temperature`/`top_p`**: only
+/// the GPT 5.4 family accepted them, and GPT 5.5/5.6 reject them. Anthropic (Claude):
+/// **only `max_tokens`** — the newest
+/// 4.x models "locked in" sampling and reject `temperature`/`top_p`/`top_k` as
+/// deprecated, so we don't send them (see `anthropic::wire`). The rest — llama.cpp
+/// extensions and reasoning fields — the cloud doesn't accept. See ADR 0004.
 pub(super) fn cloud_supported_param(provider: CloudProvider, p: SamplingParam) -> bool {
-    // Единый источник истины с инструментами get_sampling/set_sampling — набор
-    // полей, принимаемых движком провайдера (зеркало wire-диалекта).
+    // A single source of truth shared with the get_sampling/set_sampling tools — the set
+    // of fields the provider's engine accepts (mirrors the wire dialect).
     crate::entities::sampling::supported_sampling_fields(Some(provider)).contains(&p.field_name())
 }
 
-// ---------- i18n-ключи описаний полей (прикрепляются к строкам при построении,
-// см. `FieldRow::describe`) ----------
+// ---------- i18n keys for field descriptions (attached to rows at build time,
+// see `FieldRow::describe`) ----------
 //
-// Описания хранятся в бандлах `locales/*.json` (ось B, docs/i18n-ui.md). Здесь —
-// только ключи, общие для нескольких мест построения строк (единый источник ключа).
-// Специфичные для одного поля — инлайн-ключом у места постройки (catalog.rs /
-// managed_rows). Ngl/Jinja различаются у ассистента и имперсонации — их ключи несёт
-// `ManagedFieldIds`. Тексты резолвит `loc.t(...)` у места отрисовки.
+// Descriptions live in the `locales/*.json` bundles (axis B, docs/i18n-ui.md). Here —
+// only keys shared by several row-building sites (a single source for the key).
+// Ones specific to a single field — an inline key at the build site (catalog.rs /
+// managed_rows). Ngl/Jinja differ between the assistant and impersonation — their keys
+// are carried by `ManagedFieldIds`. Texts are resolved by `loc.t(...)` at the render site.
 
-/// Ключ: режим движка (ассистента/эмбеддингов).
+/// Key: engine mode (assistant/embeddings).
 pub(super) const DESC_MODE: &str = "ui.settings.desc.mode";
-/// Ключ: режим движка имперсонации (добавляет `shared`).
+/// Key: impersonation engine mode (adds `shared`).
 pub(super) const DESC_IMP_MODE: &str = "ui.settings.desc.imp_mode";
-/// Ключ: имя env-переменной с API-ключом (X/Ix/E).
+/// Key: the env-variable name holding the API key (X/Ix/E).
 pub(super) const DESC_API_KEY_ENV: &str = "ui.settings.desc.api_key_env";
-/// Описание поля «API-ключ» (сам секрет, хранится зашифрованным для этой машины).
+/// Description of the "API key" field (the secret itself, stored encrypted for this machine).
 pub(super) const DESC_API_KEY: &str = "ui.settings.desc.api_key";
-/// Ключ: имя облачной модели (X/Ix/E).
+/// Key: cloud model name (X/Ix/E).
 pub(super) const DESC_MODEL_NAME: &str = "ui.settings.desc.model_name";
-/// Ключ: имя env-переменной с ключом для external-сервера (опционально).
+/// Key: the env-variable name holding the external-server key (optional).
 pub(super) const DESC_EXT_API_KEY_ENV: &str = "ui.settings.desc.ext_api_key_env";
-/// Ключ: селектор подсекции (таб-стрип Модель/Семплинг/Профили).
+/// Key: the subsection selector (Model/Sampling/Profiles tab strip).
 pub(super) const DESC_SUBSECTION: &str = "ui.settings.desc.subsection";
-/// Ключ: язык служебного каркаса профиля (ось A).
+/// Key: the profile's scaffold language (axis A).
 pub(super) const DESC_PROFILE_LANGUAGE: &str = "ui.settings.desc.profile_language";
-/// Ключ: -ngl у движка ассистента (текст отличается от имперсонации).
+/// Key: `-ngl` for the assistant engine (text differs from impersonation).
 pub(super) const DESC_NGL_ASSISTANT: &str = "ui.settings.desc.ngl_assistant";
-/// Ключ: -ngl у движка имперсонации.
+/// Key: `-ngl` for the impersonation engine.
 pub(super) const DESC_NGL_IMP: &str = "ui.settings.desc.ngl_imp";
-/// Ключ: --jinja у движка ассистента.
+/// Key: `--jinja` for the assistant engine.
 pub(super) const DESC_JINJA_ASSISTANT: &str = "ui.settings.desc.jinja_assistant";
-/// Ключ: --jinja у движка имперсонации.
+/// Key: `--jinja` for the impersonation engine.
 pub(super) const DESC_JINJA_IMP: &str = "ui.settings.desc.jinja_imp";
 
 pub(super) fn row(id: FieldId, label: &str, kind: FieldKind) -> FieldRow {
@@ -65,8 +65,8 @@ pub(super) fn row(id: FieldId, label: &str, kind: FieldKind) -> FieldRow {
     }
 }
 
-/// Проставляет группу всем строкам батча — секции строятся как серии
-/// `grouped("Группа", vec![...])`, а заголовок группы UI ставит на переходе.
+/// Stamps a group onto every row of the batch — sections are built as a series of
+/// `grouped("Group", vec![...])`, and the UI puts the group header at the transition.
 pub(super) fn grouped(group: &'static str, mut rows: Vec<FieldRow>) -> Vec<FieldRow> {
     for r in &mut rows {
         r.group = group;
@@ -74,7 +74,7 @@ pub(super) fn grouped(group: &'static str, mut rows: Vec<FieldRow>) -> Vec<Field
     rows
 }
 
-/// Текстовая строка из `Option<String>` (пусто → «—»).
+/// A text row from `Option<String>` (empty → "—").
 pub(super) fn text_row(id: FieldId, label: &str, value: &Option<String>) -> FieldRow {
     row(
         id,
@@ -83,13 +83,13 @@ pub(super) fn text_row(id: FieldId, label: &str, value: &Option<String>) -> Fiel
     )
 }
 
-/// Строка из обязательного числового значения (рендерится как текст).
+/// A row from a required numeric value (rendered as text).
 pub(super) fn num_field<T: ToString>(id: FieldId, label: &str, value: T) -> FieldRow {
     row(id, label, FieldKind::Text(value.to_string()))
 }
 
-/// Идентификаторы полей managed-сервера для одного движка (ассистент/имперсонация).
-/// Группируем в структуру, чтобы [`managed_rows`] не разрастался списком аргументов.
+/// Field identifiers of the managed server for one engine (assistant/impersonation).
+/// Grouped into a struct so [`managed_rows`] doesn't grow into a list of arguments.
 #[derive(Clone, Copy)]
 pub(super) struct ManagedFieldIds {
     binary: FieldId,
@@ -106,13 +106,14 @@ pub(super) struct ManagedFieldIds {
     draft_n_min: FieldId,
     host: FieldId,
     port: FieldId,
-    /// Описания `-ngl`/`--jinja` — различаются у ассистента и имперсонации, поэтому
-    /// несутся здесь, а не инлайн в `managed_rows` (общей для обоих движков).
+    /// Descriptions of `-ngl`/`--jinja` — differ between the assistant and
+    /// impersonation, so they're carried here rather than inline in `managed_rows`
+    /// (shared by both engines).
     ngl_desc: &'static str,
     jinja_desc: &'static str,
 }
 
-/// Набор FieldId для модели/сервера ассистента.
+/// The set of FieldIds for the assistant's model/server.
 pub(super) const ASSISTANT_MANAGED_IDS: ManagedFieldIds = ManagedFieldIds {
     binary: FieldId::XBinary,
     model: FieldId::XModel,
@@ -132,7 +133,7 @@ pub(super) const ASSISTANT_MANAGED_IDS: ManagedFieldIds = ManagedFieldIds {
     jinja_desc: DESC_JINJA_ASSISTANT,
 };
 
-/// Набор FieldId для модели/сервера имперсонации.
+/// The set of FieldIds for impersonation's model/server.
 pub(super) const IMP_MANAGED_IDS: ManagedFieldIds = ManagedFieldIds {
     binary: FieldId::IxBinary,
     model: FieldId::IxModel,
@@ -152,9 +153,9 @@ pub(super) const IMP_MANAGED_IDS: ManagedFieldIds = ManagedFieldIds {
     jinja_desc: DESC_JINJA_IMP,
 };
 
-/// Поля managed-сервера `llama-server` (общие для движка ассистента/имперсонации),
-/// разложенные по смысловым группам: Сервер / Модель / Производительность /
-/// Спекулятивное декодирование.
+/// Fields of the managed `llama-server` (shared by the assistant/impersonation
+/// engines), laid out into semantic groups: Server / Model / Performance /
+/// Speculative decoding.
 pub(super) fn managed_rows(
     m: &ManagedSettings,
     ids: ManagedFieldIds,
@@ -208,8 +209,8 @@ pub(super) fn managed_rows(
         )
         .describe(loc.t("ui.settings.desc.spec_type")),
     ];
-    // Поля черновой модели показываем только для типов draft-* (им нужна модель);
-    // ngram-* и none их не используют — не загромождаем секцию.
+    // We show draft-model fields only for draft-* types (they need a model);
+    // ngram-* and none don't use them — don't clutter the section.
     if m.spec_type.needs_draft_model() {
         spec.push(
             text_row(
@@ -248,10 +249,10 @@ pub(super) fn managed_rows(
     rows
 }
 
-/// Поля облачного провайдера (модель/API-ключ/API-ключ-env/base URL). `cloud` —
-/// настройки активного провайдера (`None` маловероятен в облачном режиме — тогда
-/// пустые поля). `key_present` — сохранён ли ключ провайдера на этой машине
-/// (значение поля «API-ключ» — статус, не секрет).
+/// Cloud-provider fields (model/API key/API-key env/base URL). `cloud` —
+/// the active provider's settings (`None` is unlikely in cloud mode — then empty
+/// fields). `key_present` — whether the provider's key is stored on this machine
+/// (the "API key" field's value is a status, not a secret).
 pub(super) fn cloud_rows(
     cloud: Option<&CloudSettings>,
     model_name: FieldId,
@@ -277,9 +278,9 @@ pub(super) fn cloud_rows(
     ]
 }
 
-/// Поле ввода самого API-ключа (не имени env-переменной)? У таких полей особое
-/// поведение: пустая затравка, маскированный редактор, коммит отдельным намерением
-/// и `Del` как удаление ключа. См. [`SettingsScreen::api_key_field_provider`].
+/// An input field for the API key itself (not an env-variable name)? Such fields
+/// have special behavior: an empty seed, a masked editor, a commit as a separate
+/// intent, and `Del` as deleting the key. See [`SettingsScreen::api_key_field_provider`].
 pub(super) fn is_api_key_field(id: FieldId) -> bool {
     matches!(
         id,
@@ -287,10 +288,10 @@ pub(super) fn is_api_key_field(id: FieldId) -> bool {
     )
 }
 
-/// Строка поля «API-ключ»: значение — **статус**, а не секрет («настроен (этот
-/// компьютер)» / «не задан»; если машина не поддерживает шифрование — «недоступно»,
-/// остаётся env-путь). Правка открывает пустой маскированный редактор: сохранённый
-/// ключ показать нельзя, ввод = замена. См. docs/research/api-key-storage.md.
+/// The "API key" field row: the value is a **status**, not a secret ("configured (this
+/// computer)" / "not set"; if the machine doesn't support encryption — "unavailable",
+/// the env path remains). Editing opens an empty masked editor: a stored
+/// key can't be shown, entering it = replacing it. See docs/research/api-key-storage.md.
 pub(super) fn api_key_row(id: FieldId, present: bool, loc: &'static Locale) -> FieldRow {
     let (value, desc) = if !crate::shared::secrets::scheme_available() {
         (
@@ -310,8 +311,8 @@ pub(super) fn api_key_row(id: FieldId, present: bool, loc: &'static Locale) -> F
     .describe(desc)
 }
 
-/// Парсит редактируемое значение опционального числа: пусто → `None` (очистить),
-/// корректное → `Some`, нечисло → оставить прежнее значение (как у обязательных полей).
+/// Parses an editable optional-number value: empty → `None` (clear),
+/// valid → `Some`, non-numeric → keep the previous value (as with required fields).
 pub(super) fn parse_opt_num<T: std::str::FromStr + Copy>(
     text: &str,
     current: Option<T>,
@@ -323,7 +324,7 @@ pub(super) fn parse_opt_num<T: std::str::FromStr + Copy>(
     }
 }
 
-/// Числовая строка из `Option<T>` (None → «—»).
+/// A numeric row from `Option<T>` (None → "—").
 pub(super) fn num_row<T: ToString>(id: FieldId, label: &str, value: Option<T>) -> FieldRow {
     row(
         id,
@@ -336,8 +337,8 @@ pub(super) fn num_row<T: ToString>(id: FieldId, label: &str, value: Option<T>) -
     )
 }
 
-/// Строка поля семплинга по параметру: числовые — текст (`num_row`),
-/// `Thinking`/`Reasoning` — циклический выбор.
+/// A sampling-field row by parameter: numeric ones — text (`num_row`),
+/// `Thinking`/`Reasoning` — a cyclic choice.
 pub(super) fn sampling_row(
     id: FieldId,
     p: SamplingParam,
@@ -394,14 +395,14 @@ pub(super) fn sampling_row(
         ),
         Verbosity => row(id, label, FieldKind::Choice(verbosity_label(s.verbosity))),
     };
-    // Описание параметра — единый источник `SamplingParam::description` (одинаково для
-    // обеих подсекций Ассистент/Имперсонация).
+    // The parameter's description — a single source `SamplingParam::description` (the
+    // same for both the Assistant/Impersonation subsections).
     r.description = p.description(loc).map(String::from);
     r
 }
 
-/// Применяет текст редактора к числовому параметру семплинга. `Thinking`/`Reasoning`
-/// — Choice-поля (редактируются ←/→), текстом не правятся.
+/// Applies editor text to a numeric sampling parameter. `Thinking`/`Reasoning`
+/// — Choice fields (edited via ←/→), not editable as text.
 pub(super) fn apply_sampling_text(s: &mut SamplingConfig, p: SamplingParam, trimmed: &str) {
     use SamplingParam::*;
     match p {
@@ -436,25 +437,25 @@ pub(super) fn apply_sampling_text(s: &mut SamplingConfig, p: SamplingParam, trim
     }
 }
 
-/// Ширина подписи в терминальных колонках (кириллица/латиница = 1, CJK/эмодзи = 2).
+/// Label width in terminal columns (Cyrillic/Latin = 1, CJK/emoji = 2).
 pub(super) fn label_width(label: &str) -> usize {
     crate::shared::wrap::display_width(&label.chars().collect::<Vec<_>>())
 }
 
-/// Пол колонки значений: у секции из одних коротких подписей значения не
-/// прижимаются к самому левому краю (стабильный минимум между секциями).
+/// The value column's floor: a section made of only short labels doesn't push
+/// values all the way to the left edge (a stable minimum across sections).
 pub(super) const MIN_LABEL_COL: usize = 20;
-/// Потолок участия подписи в выравнивании: более длинная подпись не отгоняет
-/// колонку значений всей секции — её значение встаёт сразу после неё самой
-/// (локальное переполнение). Все текущие подписи укладываются в потолок
-/// (тест `all_labels_fit_alignment_cap`) — это страховка на будущее.
+/// A cap on a label's involvement in alignment: a longer label doesn't push away
+/// the whole section's value column — its value sits locally right after it
+/// (local overflow). All current labels fit within the cap
+/// (test `all_labels_fit_alignment_cap`) — a safety net for the future.
 pub(super) const LABEL_CAP: usize = 28;
 
-/// Единая колонка значений секции: самая длинная подпись среди видимых полей,
-/// с полом [`MIN_LABEL_COL`] и потолком [`LABEL_CAP`]. Одна колонка на секцию
-/// (а не на группу): значения всех групп стоят на общей вертикали — колонка на
-/// группу давала «пилу» из разных стопов от группы к группе. Селектор подсекции
-/// рисуется таб-стрипом, не строкой списка — из выравнивания исключён.
+/// The section's shared value column: the longest label among visible fields,
+/// with a floor [`MIN_LABEL_COL`] and a cap [`LABEL_CAP`]. One column per section
+/// (not per group): the values of all groups line up on a shared vertical — a per-group
+/// column "sawtoothed" with different stops from group to group. The subsection
+/// selector is drawn as a tab strip, not a list row — excluded from alignment.
 pub(super) fn section_label_col(fields: &[FieldRow]) -> usize {
     fields
         .iter()
@@ -466,8 +467,8 @@ pub(super) fn section_label_col(fields: &[FieldRow]) -> usize {
         .max(MIN_LABEL_COL)
 }
 
-/// Инлайн-подсказка для инструмента, выключенного глобальным гейтом («выкл.
-/// глобально: <выключатель>»). Показывается цветом предупреждения.
+/// An inline hint for a tool disabled by a global gate ("disabled globally:
+/// <switch>"). Shown in warning color.
 pub(super) fn gate_hint(gate: ToolGate, loc: &'static Locale) -> &'static str {
     loc.t(match gate {
         ToolGate::Web => "ui.settings.gate.web",
@@ -477,15 +478,16 @@ pub(super) fn gate_hint(gate: ToolGate, loc: &'static Locale) -> &'static str {
     })
 }
 
-/// Ширина спана в колонках терминала (для правого выравнивания чипа статуса).
+/// A span's width in terminal columns (for right-aligning the status chip).
 pub(super) fn span_width(s: &Span) -> usize {
     crate::shared::wrap::display_width(&s.content.chars().collect::<Vec<_>>())
 }
 
-/// Чип статуса сервера для секции «Модель/сервер»: глиф + метка (+ причина, если
-/// сервер недоступен/не настроен — на экране настроек её видеть важно). Глифы/цвета
-/// зеркалят строку статуса (`widgets::status_bar`): `●` готов, `◐` подключение,
-/// `✕` нет связи/не настроен. Ширина глифа — 1 колонка (WGL4/GlyphSet, компат-безопасно).
+/// The server-status chip for the "Model/server" section: a glyph + a label (+ a
+/// reason, if the server is unavailable/not configured — seeing it matters on the
+/// settings screen). Glyphs/colors mirror the status bar's row (`widgets::status_bar`):
+/// `●` ready, `◐` connecting, `✕` no connection/not configured. The glyph is 1 column
+/// wide (WGL4/GlyphSet, compat-safe).
 pub(super) fn server_status_chip(
     status: &ServerStatus,
     label: &str,
@@ -524,17 +526,17 @@ pub(super) fn server_status_chip(
     ]
 }
 
-/// Локализованные подписи вкладок секции «Модель» (порядок = [`ModelTab`]).
+/// Localized tab labels of the "Model" section (order = [`ModelTab`]).
 pub(super) fn model_tab_labels(loc: &'static Locale) -> Vec<&'static str> {
     MODEL_TAB_KEYS.iter().map(|&k| loc.t(k)).collect()
 }
 
-/// Локализованные подписи вкладок подсекции «Ассистент»/«Имперсонация».
+/// Localized tab labels of the "Assistant"/"Impersonation" subsection.
 pub(super) fn sub_tab_labels(loc: &'static Locale) -> Vec<&'static str> {
     SUB_TAB_KEYS.iter().map(|&k| loc.t(k)).collect()
 }
 
-/// Является ли поле селектором подсекции (рисуется таб-стрипом, а не строкой списка).
+/// Whether the field is a subsection selector (drawn as a tab strip, not a list row).
 pub(super) fn is_subsection(id: FieldId) -> bool {
     matches!(
         id,
@@ -542,7 +544,7 @@ pub(super) fn is_subsection(id: FieldId) -> bool {
     )
 }
 
-/// Отображаемое значение поля (для крошки поиска).
+/// The field's displayed value (for the search breadcrumb).
 pub(super) fn value_text(kind: &FieldKind, loc: &'static Locale) -> String {
     match kind {
         FieldKind::Toggle(on) => loc
@@ -557,9 +559,9 @@ pub(super) fn value_text(kind: &FieldKind, loc: &'static Locale) -> String {
     }
 }
 
-/// Добавляет поля секции/подсекции в индекс поиска (пропуская селектор подсекции).
-/// `sub_label` — подпись подсекции (в крошку и ловушку), чтобы одинаковые поля
-/// разных вкладок различались.
+/// Adds a section/subsection's fields to the search index (skipping the subsection
+/// selector). `sub_label` — the subsection's label (into the breadcrumb and the trap),
+/// so identical fields of different tabs are distinguishable.
 pub(super) fn collect_hits(
     out: &mut Vec<SearchHit>,
     section_idx: usize,
@@ -603,9 +605,9 @@ pub(super) fn collect_hits(
     }
 }
 
-/// Таб-стрип подсекции: `Ассистент │ Имперсонация │ Эмбеддинги`. Активная вкладка
-/// выделена (при фокусе на стрипе — подложкой, иначе — акцентным цветом), справа
-/// при фокусе — подсказка `←→`. Разделитель `│` и всё содержимое — WGL4-безопасны.
+/// The subsection tab strip: `Assistant │ Impersonation │ Embeddings`. The active tab
+/// is highlighted (a backdrop when the strip is focused, otherwise an accent color); on
+/// the right, when focused — the `←→` hint. The `│` separator and all content are WGL4-safe.
 pub(super) fn tab_strip_line(
     tabs: &[&str],
     active: usize,
@@ -634,9 +636,9 @@ pub(super) fn tab_strip_line(
     Line::from(spans)
 }
 
-/// Заголовок группы полей: `Группа ──── N/M ──` на всю ширину. Имя — приглушённо-
-/// жирным, продолжение — линией цветом рамки; `count = (вкл, всего)` показывает
-/// счётчик тумблеров группы. `─` входит в WGL4 → без компат-замены.
+/// A field-group header: `Group ──── N/M ──` spanning the full width. The name — muted
+/// bold, the continuation — a line in the border color; `count = (on, total)` shows the
+/// group's toggle counter. `─` is in WGL4 → no compat replacement needed.
 pub(super) fn header_line(
     name: &str,
     count: Option<(usize, usize)>,
@@ -652,7 +654,7 @@ pub(super) fn header_line(
     if let Some((on, total)) = count {
         let tag = format!("{on}/{total} ");
         used += label_width(&tag);
-        // Тонкий разделитель + счётчик приглушённым перед линией.
+        // A thin separator + a muted counter before the line.
         let dashes_lead = "── ";
         used += label_width(dashes_lead);
         spans.push(Span::styled(dashes_lead, Style::new().fg(palette.border)));
@@ -666,9 +668,9 @@ pub(super) fn header_line(
     Line::from(spans)
 }
 
-/// Строка поля: подпись + значение, окрашенное по типу (тумблер — зелёный/
-/// приглушённый, выбор — синий, прочерк/пусто — цвет рамки, текст — основной).
-/// Значение усекается по `value_w` с «…» (полностью его видно в нижней панели).
+/// A field row: label + value, colored by type (a toggle — green/
+/// muted, a choice — blue, a dash/empty — the border color, text — the base color).
+/// The value is truncated to `value_w` with "…" (fully visible in the bottom panel).
 pub(super) fn render_field_line(
     f: &FieldRow,
     label_col: usize,
@@ -679,8 +681,8 @@ pub(super) fn render_field_line(
 ) -> Line<'static> {
     let (value, value_style) = match &f.kind {
         FieldKind::Toggle(on) => {
-            // Гейт: включённый в профиле, но выключенный глобально инструмент —
-            // цветом предупреждения (он не действует), а не зелёным.
+            // Gate: a tool enabled in the profile but disabled globally — in
+            // warning color (it has no effect), not green.
             let color = if *on {
                 if f.warn {
                     palette.warning
@@ -707,14 +709,14 @@ pub(super) fn render_field_line(
         }
     };
     let (value, vw) = truncate_to_width(&value, value_w.max(1));
-    // Дополняем подпись пробелами до ширины колонки по реальной ширине в колонках
-    // (Rust `{:<N}` считает символы, а не колонки — для CJK/эмодзи это разъезжается).
+    // Pad the label with spaces up to the column width by real width in columns
+    // (Rust `{:<N}` counts characters, not columns — for CJK/emoji that drifts).
     let pad = label_col.saturating_sub(label_width(&f.label));
-    // Левая колонка (2 клетки), фиксом — поля выглядят отступленными под
-    // заголовком группы. У выбранного поля — зелёный рейл `▌` (как активная секция
-    // в меню слева); иначе маркер «изменено против дефолта» `•`, иначе пусто. Рейл
-    // на выбранной строке важнее маркера (поле и так в фокусе; отойдёшь — `•`
-    // вернётся), поэтому имеет приоритет.
+    // The left column (2 cells), fixed — fields look indented under the
+    // group header. The selected field gets a green rail `▌` (like the active section
+    // in the left menu); otherwise a "modified vs. default" marker `•`, otherwise
+    // empty. The rail on the selected row takes priority over the marker (the field
+    // is in focus anyway; step away and `•` returns).
     let marker = if selected {
         Span::styled("▌ ", Style::new().fg(palette.success))
     } else if modified {
@@ -728,7 +730,7 @@ pub(super) fn render_field_line(
         Span::raw(" ".repeat(pad + 1)),
         Span::styled(value, value_style),
     ];
-    // Инлайн-подсказка (описание инструмента) справа от значения — в остатке ширины.
+    // An inline hint (the tool's description) right of the value — in the remaining width.
     if let Some(hint) = f.hint {
         let remaining = value_w.saturating_sub(vw + 2);
         if remaining >= 2 {
@@ -745,8 +747,8 @@ pub(super) fn render_field_line(
     Line::from(spans)
 }
 
-/// Усечение строки до `max` колонок с добавлением «…» (WGL4-безопасный). Возвращает
-/// усечённую строку и её фактическую ширину в колонках.
+/// Truncates a string to `max` columns, adding "…" (WGL4-safe). Returns the
+/// truncated string and its actual width in columns.
 pub(super) fn truncate_to_width(s: &str, max: usize) -> (String, usize) {
     let chars: Vec<char> = s.chars().collect();
     let full = crate::shared::wrap::display_width(&chars);
@@ -756,7 +758,7 @@ pub(super) fn truncate_to_width(s: &str, max: usize) -> (String, usize) {
     if max == 0 {
         return (String::new(), 0);
     }
-    let budget = max.saturating_sub(1); // место под «…»
+    let budget = max.saturating_sub(1); // room for "…"
     let mut out = String::new();
     let mut w = 0;
     for i in 0..chars.len() {
@@ -781,7 +783,7 @@ pub(super) fn mode_label(m: ServerMode) -> String {
     }
 }
 
-/// Циклически меняет режим движка (5 значений, с учётом направления ←/→).
+/// Cyclically changes the engine mode (5 values, direction-aware ←/→).
 pub(super) fn cycle_mode(m: ServerMode, dir: i32) -> ServerMode {
     use ServerMode::*;
     let order = [Managed, External, OpenAi, Gemini, Claude];
@@ -801,7 +803,7 @@ pub(super) fn imp_mode_label(m: ImpersonationMode) -> String {
     }
 }
 
-/// Циклически меняет режим имперсонации (6 значений, с учётом направления).
+/// Cyclically changes the impersonation mode (6 values, direction-aware).
 pub(super) fn cycle_imp_mode(m: ImpersonationMode, dir: i32) -> ImpersonationMode {
     use ImpersonationMode::*;
     let order = [Shared, Managed, External, OpenAi, Gemini, Claude];
@@ -819,6 +821,14 @@ pub(super) fn theme_label(t: Theme, loc: &'static Locale) -> String {
     .to_string()
 }
 
+pub(super) fn python_mode_label(m: PythonMode, loc: &'static Locale) -> String {
+    loc.t(match m {
+        PythonMode::Wasmer => "ui.settings.choice.python_wasmer",
+        PythonMode::Local => "ui.settings.choice.python_local",
+    })
+    .to_string()
+}
+
 pub(super) fn cycle_theme(t: Theme) -> Theme {
     match t {
         Theme::Auto => Theme::Dark,
@@ -827,8 +837,8 @@ pub(super) fn cycle_theme(t: Theme) -> Theme {
     }
 }
 
-/// Циклический сдвиг языка интерфейса по всем известным языкам (вшитые + внешние,
-/// `Lang::all()`) с учётом направления `dir`.
+/// Cyclically shifts the interface language across all known languages (built-in +
+/// external, `Lang::all()`), direction-aware (`dir`).
 pub(super) fn cycle_lang(l: crate::shared::i18n::Lang, dir: i32) -> crate::shared::i18n::Lang {
     let all = crate::shared::i18n::Lang::all();
     let idx = all.iter().position(|&x| x == l).unwrap_or(0) as i32;
@@ -859,7 +869,7 @@ pub(super) fn reasoning_label(r: Option<ReasoningEffort>) -> String {
     }
 }
 
-/// Порядок вариантов `reasoning_effort` в цикле/меню (совпадает с [`REASONING_ORDER`]).
+/// The order of `reasoning_effort` options in the cycle/menu (matches [`REASONING_ORDER`]).
 pub(super) const REASONING_ORDER: [Option<ReasoningEffort>; 7] = [
     None,
     Some(ReasoningEffort::None),
@@ -882,7 +892,7 @@ pub(super) fn verbosity_label(v: Option<Verbosity>) -> String {
     }
 }
 
-/// Порядок вариантов `verbosity` в цикле/меню.
+/// The order of `verbosity` options in the cycle/menu.
 pub(super) const VERBOSITY_ORDER: [Option<Verbosity>; 4] = [
     None,
     Some(Verbosity::Low),
@@ -895,8 +905,8 @@ pub(super) fn cycle_verbosity(v: Option<Verbosity>) -> Option<Verbosity> {
     VERBOSITY_ORDER[(i + 1) % VERBOSITY_ORDER.len()]
 }
 
-/// Числовой вид поля для валидации (`None` — не числовое: текст/URL/списки/выбор).
-/// Config-поля — из таблицы доступа (`field_spec.num`); семплинг — по своему виду.
+/// A field's numeric kind for validation (`None` — not numeric: text/URL/lists/choice).
+/// Config fields — from the access table (`field_spec.num`); sampling — by its own kind.
 pub(super) fn field_num_kind(id: FieldId) -> Option<NumKind> {
     match id {
         FieldId::S(p) | FieldId::IS(p) => p.num_kind(),
@@ -904,10 +914,10 @@ pub(super) fn field_num_kind(id: FieldId) -> Option<NumKind> {
     }
 }
 
-/// i18n-ключ ошибки валидации поля (`None` — валидно). Пустой ввод допустим
-/// (очистка/сохранение прежнего); непустой в числовом поле обязан парситься. Проверка
-/// «мягкая» (i64/f64), точный тип и диапазон досматривает `apply_text`. Возвращает
-/// **ключ** — текст резолвит вызывающий (`loc.t`) в локали интерфейса.
+/// The field-validation-error i18n key (`None` — valid). Empty input is allowed
+/// (clear/keep the previous value); non-empty in a numeric field must parse. The check is
+/// "soft" (i64/f64); the exact type and range are checked further by `apply_text`. Returns
+/// the **key** — the caller resolves the text (`loc.t`) in the interface locale.
 pub(super) fn field_validation_error(id: FieldId, text: &str) -> Option<&'static str> {
     let t = text.trim();
     if t.is_empty() {
@@ -920,7 +930,7 @@ pub(super) fn field_validation_error(id: FieldId, text: &str) -> Option<&'static
     }
 }
 
-/// Порядок вариантов режима движка (для Choice-попапа; совпадает с `cycle_mode`).
+/// The order of engine-mode options (for the Choice popup; matches `cycle_mode`).
 pub(super) const SERVER_MODES: [ServerMode; 5] = [
     ServerMode::Managed,
     ServerMode::External,
@@ -929,7 +939,7 @@ pub(super) const SERVER_MODES: [ServerMode; 5] = [
     ServerMode::Claude,
 ];
 
-/// Порядок вариантов режима имперсонации (совпадает с `cycle_imp_mode`).
+/// The order of impersonation-mode options (matches `cycle_imp_mode`).
 pub(super) const IMP_MODES: [ImpersonationMode; 6] = [
     ImpersonationMode::Shared,
     ImpersonationMode::Managed,
@@ -939,10 +949,10 @@ pub(super) const IMP_MODES: [ImpersonationMode; 6] = [
     ImpersonationMode::Claude,
 ];
 
-/// Порядок тем (совпадает с `cycle_theme`).
+/// The order of themes (matches `cycle_theme`).
 pub(super) const THEMES: [Theme; 3] = [Theme::Auto, Theme::Dark, Theme::Light];
 
-/// Строит (подписи, индекс текущего) из массива вариантов и функции-подписи.
+/// Builds (labels, the current index) from an option array and a labeling function.
 pub(super) fn index_menu<T: Copy + PartialEq>(
     all: &[T],
     cur: T,
@@ -961,8 +971,8 @@ pub(super) fn spec_menu(cur: SpecType) -> (Vec<String>, usize) {
     index_menu(&SpecType::ALL, cur, |x| x.label().to_string())
 }
 
-/// Меню выбора для Choice-параметров семплинга (`Thinking`/`Reasoning`); порядок
-/// подписей совпадает с циклом `cycle_opt_bool`/`cycle_reasoning`.
+/// The option menu for Choice sampling parameters (`Thinking`/`Reasoning`); the label
+/// order matches the `cycle_opt_bool`/`cycle_reasoning` cycle.
 pub(super) fn sampling_choice_menu(
     s: &SamplingConfig,
     p: SamplingParam,
@@ -1007,7 +1017,8 @@ pub(super) fn sampling_choice_menu(
     }
 }
 
-/// Поле принадлежит профилю (у него нет config-дефолта → не участвует в `•`/сбросе).
+/// The field belongs to a profile (it has no config default → doesn't participate in
+/// the `•` marker/reset).
 pub(super) fn is_profile_field(id: FieldId) -> bool {
     matches!(
         id,
@@ -1030,8 +1041,8 @@ pub(super) fn parse_opt_f32(s: &str) -> Option<f32> {
     parse_opt(s)
 }
 
-/// Разбор текстового поля-списка строк (UI): разбивает по `sep`, обрезает
-/// пробелы у элементов, отбрасывает пустые; пустой ввод → `None`.
+/// Parses a text field into a list of strings (UI): splits on `sep`, trims
+/// whitespace from elements, drops empty ones; empty input → `None`.
 pub(super) fn parse_list(s: &str, sep: char) -> Option<Vec<String>> {
     let v: Vec<String> = s
         .split(sep)
@@ -1042,7 +1053,7 @@ pub(super) fn parse_list(s: &str, sep: char) -> Option<Vec<String>> {
     (!v.is_empty()).then_some(v)
 }
 
-/// Склейка списка строк для отображения через `sep`; `None`/пусто → «—».
+/// Joins a list of strings for display via `sep`; `None`/empty → "—".
 pub(super) fn join_list(v: Option<&[String]>, sep: char) -> String {
     match v {
         Some(items) if !items.is_empty() => items.join(&sep.to_string()),
@@ -1050,8 +1061,8 @@ pub(super) fn join_list(v: Option<&[String]>, sep: char) -> String {
     }
 }
 
-/// DRY-брейкеры: как [`parse_list`] по запятой, но с декодированием эскейпов
-/// `\n`/`\t`/`\r` (однострочный редактор не даёт ввести их буквально).
+/// DRY breakers: like [`parse_list`] on commas, but with decoding the `\n`/`\t`/`\r`
+/// escapes (a single-line editor can't take them literally).
 pub(super) fn parse_breakers(s: &str) -> Option<Vec<String>> {
     let v: Vec<String> = s
         .split(',')
@@ -1062,8 +1073,8 @@ pub(super) fn parse_breakers(s: &str) -> Option<Vec<String>> {
     (!v.is_empty()).then_some(v)
 }
 
-/// DRY-брейкеры для отображения: кодирует управляющие символы обратно в `\n`
-/// и т.п., склеивает через запятую; `None`/пусто → «—».
+/// DRY breakers for display: encodes control characters back into `\n`
+/// etc., joins with commas; `None`/empty → "—".
 pub(super) fn join_breakers(v: Option<&[String]>) -> String {
     match v {
         Some(items) if !items.is_empty() => items
@@ -1075,7 +1086,7 @@ pub(super) fn join_breakers(v: Option<&[String]>) -> String {
     }
 }
 
-/// Декодирует литералы `\n`/`\t`/`\r`/`\\` в реальные символы.
+/// Decodes `\n`/`\t`/`\r`/`\\` literals into real characters.
 pub(super) fn decode_escapes(s: &str) -> String {
     let mut out = String::with_capacity(s.len());
     let mut chars = s.chars();
@@ -1099,7 +1110,7 @@ pub(super) fn decode_escapes(s: &str) -> String {
     out
 }
 
-/// Кодирует управляющие символы в литералы `\n`/`\t`/`\r`/`\\` (обратно к [`decode_escapes`]).
+/// Encodes control characters into `\n`/`\t`/`\r`/`\\` literals (the inverse of [`decode_escapes`]).
 pub(super) fn encode_escapes(s: &str) -> String {
     let mut out = String::with_capacity(s.len());
     for c in s.chars() {
@@ -1114,15 +1125,15 @@ pub(super) fn encode_escapes(s: &str) -> String {
     out
 }
 
-/// Высота крупного попапа редактора системного сообщения: ~60% высоты экрана,
-/// но не меньше 8 строк и не выше самого экрана.
+/// The height of the large system-message editor popup: ~60% of the screen height,
+/// but no less than 8 rows and no taller than the screen itself.
 pub(super) fn multiline_popup_height(area: Rect) -> u16 {
     (area.height.saturating_mul(60) / 100)
         .max(8)
         .min(area.height)
 }
 
-/// Прямоугольник по центру `area`: `pct_x`% ширины (≥`min_w`), фикс. высота.
+/// A rectangle centered in `area`: `pct_x`% of the width (≥`min_w`), a fixed height.
 pub(super) fn centered_rect(pct_x: u16, min_w: u16, height: u16, area: Rect) -> Rect {
     let w = area.width.saturating_mul(pct_x) / 100;
     let [h] = Layout::horizontal([Constraint::Length(w.max(min_w).min(area.width))])
@@ -1134,7 +1145,7 @@ pub(super) fn centered_rect(pct_x: u16, min_w: u16, height: u16, area: Rect) -> 
     v
 }
 
-/// Прямоугольник по центру `area` с явными шириной/высотой (клампятся к `area`).
+/// A rectangle centered in `area` with explicit width/height (clamped to `area`).
 pub(super) fn centered_rect_wh(width: u16, height: u16, area: Rect) -> Rect {
     let [h] = Layout::horizontal([Constraint::Length(width.min(area.width))])
         .flex(Flex::Center)

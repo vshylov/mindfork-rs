@@ -1,165 +1,188 @@
-# Исследование: рендер Mermaid-диаграмм в ленте (ASCII/Unicode)
+# Research: rendering Mermaid diagrams in the feed (ASCII/Unicode)
 
-**Статус:** **реализовано (2026-07-16)** по плану §4 — после того как апстрим
-выпустил `mermaid-text` 0.56.1 с нашими фиксами многобайтовости
+**Status:** **implemented (2026-07-16)** per the §4 plan — after upstream
+shipped `mermaid-text` 0.56.1 with our multibyte fixes
 ([issue #29](https://github.com/leboiko/markdown-reader/issues/29) +
-[PR #30](https://github.com/leboiko/markdown-reader/pull/30); мейнтейнер по нашей
-«broader note» провёл полный аудит и закрыл ещё три места того же класса).
-Перепроверка зондом на 0.56.1: **0 паник** на корпусе из 31 кейса (было 1 + 3
-репро), порча подписей ушла (`│ Конец │` вместо `│ [Конец] │`, узлы целы);
-бюджет ширины остался мягкой подсказкой (14/28 переполнений) — закрыт нашим
-пост-чеком, как и планировалось. Ниже — история зонда 2026-07-14 (вердикт NO-GO
-на 0.56.0), приведшая к фиксу.
+[PR #30](https://github.com/leboiko/markdown-reader/pull/30); the maintainer,
+per our "broader note", ran a full audit and closed three more spots of the
+same class). Re-checked with the spike on 0.56.1: **0 panics** on a corpus of
+31 cases (previously 1 + 3 repros), the label corruption is gone
+(`│ End │` instead of `│ [End] │`, nodes intact); the width budget remains a
+soft hint (14/28 overflows) — closed by our own post-check, as planned. Below
+is the history of the 2026-07-14 spike (verdict NO-GO on 0.56.0) that led to
+the fix.
 
-Связанные документы: [ADR 0003](../decisions/0003-own-markdown-renderer.md) (свой
-markdown-рендерер — сюда встраивался бы рендер диаграмм), [spec §11.4](../../spec.md)
-(лента и markdown), [docs/roadmap.md](../roadmap.md).
+Related documents: [ADR 0003](../decisions/0003-own-markdown-renderer.md) (our
+own markdown renderer — this is where diagram rendering would plug in),
+[spec §11.4](../../spec.md) (the feed and markdown),
+[docs/roadmap.md](../roadmap.md).
 
 ---
 
-## 1. Задача
+## 1. Task
 
-Модели регулярно отвечают mermaid-диаграммами (` ```mermaid `-блок). Сейчас такой блок
-не ломается, но и не рендерится: `resolve_syntax("mermaid")`
-([shared/markdown/code.rs](../../src/shared/markdown/code.rs)) промахивается (в дефолтном
-наборе syntect нет mermaid), и блок печатается плоским текстом между заборчиками —
-пользователь видит **читаемый исходник**. То есть боли нет, есть упущенная возможность:
-показать диаграмму ASCII/Unicode-графикой, как это делает Cursor.
+Models regularly answer with mermaid diagrams (a ` ```mermaid ` block).
+Currently such a block isn't broken, but it isn't rendered either:
+`resolve_syntax("mermaid")` ([shared/markdown/code.rs](../../src/shared/markdown/code.rs))
+misses (syntect's default set has no mermaid), and the block is printed as
+plain text between the fences — the user sees the **readable source**. So
+there's no bug, just a missed opportunity: render the diagram as ASCII/Unicode
+graphics, like Cursor does.
 
-Ключевое опасение (сформулировано пользователем на входе): **диаграммы бывают очень
-разные, и далеко не все поместятся на экран**.
+Key concern (stated by the user going in): **diagrams vary a lot, and far not
+all of them will fit on screen**.
 
-## 2. Ландшафт (июль 2026)
+## 2. Landscape (July 2026)
 
-| Кандидат | Оценка |
+| Candidate | Assessment |
 |---|---|
-| **`mermaid-text`** 0.56.0 (MIT) | Профиль идеален: pure Rust, net-new всего 2 крейта (`mermaid-text` + `ascii-dag`; `chrono`/`unicode-width` уже в дереве). API ровно под нашу сигнатуру: `render_with_width(src, Some(w))`, `render_ascii_with_width` (под компат-режим/conhost), `detect::detect` (под whitelist), ошибки типизированы (`EmptyInput`/`UnsupportedDiagram`/`ParseError`). **Взят в спайк.** |
-| `merman` 0.8.0-alpha | «Headless Mermaid.js на Rust», parity-focused (3500+ SVG-бейслайнов), но alpha-комбайн (SVG/растр/FFI, `resvg`). Для строк в TUI-ленте — оверкилл. Отклонён. |
-| `mermaid-ascii` (Go) | Сайдкар-бинарь ради декора — против духа проекта (сайдкар `wasmer` оправдан изоляцией, ADR 0005, а не красотой). Отклонён. |
-| Свой рендерер | Sequence — тривиальный детерминированный лейаут (~600–800 строк). Но произвольный flowchart — это Sugiyama-лейаут с маршрутизацией рёбер: качественно иная сложность, чем всё, что проект писал сам (`calc`, CLI-парсер). Универсальный свой рендерер — **нет**. |
+| **`mermaid-text`** 0.56.0 (MIT) | The profile is ideal: pure Rust, only 2 net-new crates (`mermaid-text` + `ascii-dag`; `chrono`/`unicode-width` are already in the tree). The API matches our signature exactly: `render_with_width(src, Some(w))`, `render_ascii_with_width` (for compat mode/conhost), `detect::detect` (for a whitelist), typed errors (`EmptyInput`/`UnsupportedDiagram`/`ParseError`). **Taken into the spike.** |
+| `merman` 0.8.0-alpha | A "headless Mermaid.js in Rust", parity-focused (3500+ SVG baselines), but an alpha combine (SVG/raster/FFI, `resvg`). Overkill for lines in a TUI feed. Rejected. |
+| `mermaid-ascii` (Go) | A decorative sidecar binary — against the project's spirit (the `wasmer` sidecar is justified by isolation, ADR 0005, not by cosmetics). Rejected. |
+| A homegrown renderer | Sequence is a trivial deterministic layout (~600–800 lines). But an arbitrary flowchart is a Sugiyama layout with edge routing: a qualitatively different order of complexity than anything the project has written itself (`calc`, the CLI parser). A homegrown universal renderer — **no**. |
 
-## 3. Спайк-зонд `mermaid-text` 0.56.0 (2026-07-14)
+## 3. `mermaid-text` 0.56.0 spike (2026-07-14)
 
-Корпус: 14 синтетических кейсов (sequence как на скриншоте Cursor, кириллица, широкий
-flowchart, битый синтаксис, обрубок стрима, `style`/`classDef`, `subgraph`, эмодзи,
-pie/class/state) + **17 реальных mermaid-блоков из нашего же
-[docs/architecture.md](../architecture.md)** — то есть диаграммы, написанные LLM для этого
-проекта. Проверялись три go/no-go вопроса: паники, соблюдение бюджета ширины, качество.
+Corpus: 14 synthetic cases (a sequence diagram like the Cursor screenshot,
+Cyrillic, a wide flowchart, broken syntax, a truncated stream, `style`/
+`classDef`, `subgraph`, emoji, pie/class/state) + **17 real mermaid blocks
+from our own [docs/architecture.md](../architecture.md)** — i.e. diagrams an
+LLM wrote for this project. Three go/no-go questions were checked: panics,
+width-budget compliance, quality.
 
-### 3.1 Сводка
+### 3.1 Summary
 
-| Итог | Кейсов |
+| Outcome | Cases |
 |---|---|
-| **Паника** | 1 (реальная диаграмма из `architecture.md`) |
-| Ok, влезло в бюджет | 13 |
-| **Ok, бюджет ширины проигнорирован** | 14 |
-| Err (→ фолбэк на исходник, корректно) | 3 |
+| **Panic** | 1 (a real diagram from `architecture.md`) |
+| Ok, fit the budget | 13 |
+| **Ok, width budget ignored** | 14 |
+| Err (→ falls back to the source, correctly) | 3 |
 
-### 3.2 Блокер 1 — паника на sequence-диаграммах с кириллицей
+### 3.2 Blocker 1 — panic on sequence diagrams with Cyrillic
 
-`parser/common.rs::strip_keyword_prefix` режет `line[..keyword.len()]` по **байтовому**
-индексу **до** проверки совпадения и без проверки границы символа. Ключевые слова
-sequence-парсера имеют разную длину (`loop`=4, `actor`=5, `activate`=8, `deactivate`=10,
-`participant`=11), поэтому кириллическая строка почти наверняка попадает байтом внутрь
-многобайтового символа:
+`parser/common.rs::strip_keyword_prefix` slices `line[..keyword.len()]` by
+**byte** index **before** checking the match and without checking the char
+boundary. The sequence parser's keywords have different lengths
+(`loop`=4, `actor`=5, `activate`=8, `deactivate`=10, `participant`=11), so a
+Cyrillic line very likely lands the byte cut in the middle of a multibyte
+character:
 
-| источник | итог |
+| source | outcome |
 |---|---|
 | `participant Оркестратор` | **PANIC** |
 | `loop до готовности` | **PANIC** |
 | `alt если готов` / `else иначе` | **PANIC** |
-| `loop until ready` (латиница) | ok |
-| flowchart / stateDiagram с кириллицей | ok (паники нет) |
+| `loop until ready` (Latin) | ok |
+| flowchart / stateDiagram with Cyrillic | ok (no panic) |
 
-Роняет **реальную** диаграмму №14 из нашего `architecture.md` (sequenceDiagram
-авто-рефлексии, строка `loop до REFLECT_MAX_ROUNDS=6 раундов…`). Практическое следствие:
-сообщение модели с русской sequence-диаграммой **уронило бы приложение** — паника в
-UI-потоке рендера ленты, panic-hook восстановит терминал, процесс завершится. Это DoS
-содержимым. `catch_unwind` вокруг рендера не лечит — остаётся блокер 2.
+Crashes a **real** diagram — #14 from our `architecture.md` (the
+auto-reflection sequence diagram, the line
+`loop до REFLECT_MAX_ROUNDS=6 раундов…`). Practical consequence: a model's
+message with a Russian sequence diagram **would crash the application** — a
+panic in the feed's render UI thread, the panic hook restores the terminal,
+the process exits. This is a content DoS. Wrapping the render in
+`catch_unwind` doesn't fix it — blocker 2 remains.
 
-### 3.3 Блокер 2 — молчаливая порча подписей flowchart (хуже паники)
+### 3.3 Blocker 2 — silent corruption of flowchart labels (worse than a panic)
 
-`parser/flowchart.rs::try_consume_pipe_label` документирует char count, а возвращает
-**байтовый** offset; токенизатор при этом идёт по `Vec<char>` и двигает **символьный**
-курсор на это значение (`i += consumed`). Перебег равен `byte_len − char_len` подписи
-ребра — курсор съедает начало следующего узла. Ни ошибки, ни паники: приходит
-**правдоподобный, но неверный** результат. Единственное отличие входов — подпись ребра
-(узлы ASCII в обоих):
+`parser/flowchart.rs::try_consume_pipe_label` documents a char count but
+returns a **byte** offset; the tokenizer, meanwhile, walks a `Vec<char>` and
+advances the **char** cursor by that value (`i += consumed`). The overrun
+equals `byte_len − char_len` of the edge label — the cursor eats into the
+start of the next node. No error, no panic — a **plausible but wrong**
+result. The only difference between the inputs is the edge label (ASCII
+nodes in both):
 
 ```
 A[Start] -->|yes| B[End]   →  │ Start │──────▸│ End │     ✓
-A[Старт] -->|да|  B[Конец] →  │ Старт │──────▸│ [Конец] │ ✗  скобка утекла в подпись
+A[Старт] -->|да|  B[Конец] →  │ Старт │──────▸│ [Конец] │ ✗  a bracket leaked into the label
 ```
 
-На реальной диаграмме авторизации узел `D[Форма входа]` **потерялся целиком** (нарисован
-пустой `D`), а `C[Доступ разрешён]` получил скобки внутрь подписи. Это худший режим отказа —
-фолбэком не детектируется.
+On a real authorization diagram, the node `D[Форма входа]` **was lost
+entirely** (rendered as an empty `D`), while `C[Доступ разрешён]` got
+brackets baked into its label. This is the worst failure mode — the fallback
+can't detect it.
 
-Байтовая индексация **системна**, не одна строка: `as_bytes()[i]`/`s[..n]`/offset'ы из
-`find()` как char count — в 10+ файлах `src/parser/` (common, flowchart, state, class, er,
-gantt, git_graph, journey, pie, sankey, architecture). Это класс багов, а не один баг.
+The byte indexing is **systemic**, not a single line: `as_bytes()[i]`/
+`s[..n]`/offsets from `find()` treated as char counts — in 10+ files under
+`src/parser/` (common, flowchart, state, class, er, gantt, git_graph,
+journey, pie, sankey, architecture). This is a class of bugs, not one bug.
 
-### 3.4 Блокер 3 — бюджет ширины фактически не соблюдается
+### 3.4 Blocker 3 — the width budget isn't actually honored
 
-`render_with_width(src, Some(w))` превысил бюджет в **14 из 27** успешных рендеров:
-`classDiagram` из `architecture.md` → 203 колонки при бюджете 90; `erDiagram` → 169;
-`sequenceDiagram` → 185; даже sequence со скриншота Cursor при `Some(60)` даёт 69. Само по
-себе это не приговор — наш пост-чек ширины с фолбэком (см. §4) закрывает; но в сумме с
-пп. 3.2–3.3 — да.
+`render_with_width(src, Some(w))` exceeded the budget in **14 of 27**
+successful renders: `classDiagram` from `architecture.md` → 203 columns at a
+90-column budget; `erDiagram` → 169; `sequenceDiagram` → 185; even the
+sequence diagram from the Cursor screenshot gives 69 at `Some(60)`. On its
+own this isn't a dealbreaker — our width post-check with a fallback (see §4)
+handles it; but combined with §3.2–§3.3 it is.
 
-### 3.5 «ASCII-only гейт» как обходной путь — не работает
+### 3.5 An "ASCII-only gate" as a workaround — doesn't work
 
-Идея «рендерить, только если исходник чисто-ASCII» обходит и панику, и порчу (оба бага —
-про многобайтовость). Замер по реальному корпусу: **0 из 17** диаграмм в
-`docs/architecture.md` — чисто-ASCII (все с кириллицей). В этом проекте гейт не пропустил
-бы **ни одной** диаграммы. Обходного пути нет.
+The idea of "only render if the source is pure ASCII" would sidestep both the
+panic and the corruption (both bugs are about multibyte content). Measured
+against the real corpus: **0 of 17** diagrams in `docs/architecture.md` are
+pure ASCII (all have Cyrillic). In this project the gate wouldn't let
+**any** diagram through. There's no workaround here.
 
-### 3.6 Что при этом хорошо (почему стоит вернуться)
+### 3.6 What's already good (why it's worth coming back to)
 
-- Зависимости минимальные (§2), форма API ложится на `Writer` без натяжек.
-- **Латинские sequence-диаграммы рендерятся отлично** — ровно как на скриншоте Cursor.
-- Крейт молодой и активно развивается (0.56.0 от 12.07.2026), MIT, issues открыты,
-  мейнтейнер отзывчив. Оба фикса — однострочные (`str::get` вместо слайса;
-  `chars().count()` вместо байтового offset'а); в issue предложен PR.
+- Dependencies are minimal (§2), the API shape fits `Writer` without
+  friction.
+- **Latin sequence diagrams render beautifully** — exactly like the Cursor
+  screenshot.
+- The crate is young and actively developed (0.56.0 as of 2026-07-12), MIT,
+  issues are open, the maintainer is responsive. Both fixes are one-liners
+  (`str::get` instead of a slice; `chars().count()` instead of a byte
+  offset); a PR was proposed in the issue.
 
-## 4. План реализации (провалидирован спайком; к исполнению — после фикса апстрима)
+## 4. Implementation plan (validated by the spike; to be executed after the upstream fix)
 
-Ключевое проектное решение: **фолбэк вместо клипа**. Для таблиц
-([shared/markdown/table.rs](../../src/shared/markdown/table.rs)) при нехватке ширины
-делается горизонтальный клип с «…» — обрезанную таблицу читать можно. Диаграмму с
-оборванными стрелками — **нельзя**, поэтому правило бинарное: либо целая диаграмма, либо
-исходник как сейчас. Худший случай = текущее поведение, «каши» пользователь не получает
-никогда.
+Key design decision: **fallback instead of clipping**. For tables
+([shared/markdown/table.rs](../../src/shared/markdown/table.rs)), when width
+is insufficient we horizontally clip with "…" — a truncated table is still
+readable. A diagram with clipped-off arrows is **not**, so the rule is
+binary: either the whole diagram or the source, as now. Worst case = current
+behavior, the user never gets "mush".
 
-1. **Буферизация** ` ```mermaid `-блока в `Writer` (по образцу `TableBuilder`: копить
-   содержимое, не подсвечивать) — [shared/markdown/writer.rs](../../src/shared/markdown/writer.rs).
-2. **Whitelist** по `detect::detect`: `flowchart`/`graph` + `sequenceDiagram`.
-   `pie`/`gantt`/`mindmap`/`classDiagram` в ASCII почти всегда убоги → всегда исходник.
-3. **Пост-чек ширины**: `max_line_width ≤ self.width` (инвариант ленты — бюджет крейта
-   не соблюдается, §3.4).
-4. **Жёсткий фолбэк на исходник** при любом сбое: `Err` парсера, вне whitelist,
-   переполнение по ширине.
-5. **Компат-режим**: `render_ascii_with_width` при `palette.compat` (conhost/WGL4,
-   `GlyphSet`).
-6. **Стрим**: обрубок блока обычно не парсится → исходник; по дописывании заменится
-   (кэш ленты и так пересчитывает стримящееся сообщение на каждый чанк).
-7. Тумблер `interface.render_mermaid` (`#[serde(default)]`); с жёстким фолбэком можно
-   default-on.
+1. **Buffer** the ` ```mermaid ` block in `Writer` (modeled on `TableBuilder`:
+   accumulate content, don't highlight) —
+   [shared/markdown/writer.rs](../../src/shared/markdown/writer.rs).
+2. **Whitelist** by `detect::detect`: `flowchart`/`graph` +
+   `sequenceDiagram`. `pie`/`gantt`/`mindmap`/`classDiagram` are almost
+   always poor in ASCII → always the source.
+3. **Width post-check**: `max_line_width ≤ self.width` (the feed's invariant
+   — the crate's budget isn't honored, §3.4).
+4. **Hard fallback to the source** on any failure: parser `Err`, outside the
+   whitelist, width overflow.
+5. **Compat mode**: `render_ascii_with_width` when `palette.compat`
+   (conhost/WGL4, `GlyphSet`).
+6. **Streaming**: a truncated block usually doesn't parse → the source; once
+   it's finished it gets replaced (the feed cache already recomputes the
+   streaming message on every chunk).
+7. Toggle `interface.render_mermaid` (`#[serde(default)]`); with the hard
+   fallback it can be default-on.
 
-Объём: ~300 строк (буферизация + config/тумблер + тесты: golden-рендер, инвариант ширины,
-фолбэк на битом/широком вводе). Живой прогон не требуется (чистый рендер-модуль без движка).
+Scope: ~300 lines (buffering + config/toggle + tests: golden render, the
+width invariant, fallback on broken/wide input). No live run needed (a pure
+render module with no engine).
 
-## 5. Условия возврата
+## 5. Conditions for revisiting
 
-- Апстрим чинит многобайтовость ([issue #29](https://github.com/leboiko/markdown-reader/issues/29)) —
-  тогда перепроверить спайком (корпус воспроизводим, см. §6) и реализовать §4;
-- либо появляется другой pure-Rust кандидат, безопасный для UTF-8.
+- Upstream fixes the multibyte handling
+  ([issue #29](https://github.com/leboiko/markdown-reader/issues/29)) —
+  then re-check with the spike (the corpus is reproducible, see §6) and
+  implement §4;
+- or another pure-Rust candidate that's UTF-8 safe shows up.
 
-Пока ни того, ни другого — блок остаётся исходником (текущее поведение, оно корректно).
+For now, neither has happened — the block stays as the source (current
+behavior, and it's correct).
 
-## 6. Артефакты спайка
+## 6. Spike artifacts
 
-Спайк-крейт (вне репозитория, scratchpad сессии): прогон корпуса из 31 кейса + два
-минимальных репро (паника; порча подписей — латиница vs кириллица). Репро воспроизводимы
-из текста [issue #29](https://github.com/leboiko/markdown-reader/issues/29) — там оба
-приведены целиком, вместе с корнями и предложенными фиксами.
+The spike crate (outside the repo, session scratchpad): a run of the 31-case
+corpus + two minimal repros (panic; label corruption — Latin vs Cyrillic).
+The repros are reproducible from the text of
+[issue #29](https://github.com/leboiko/markdown-reader/issues/29) — both are
+given there in full, along with root causes and proposed fixes.

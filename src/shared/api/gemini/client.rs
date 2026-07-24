@@ -1,11 +1,11 @@
-//! HTTP-клиент к нативному Google Gemini API (`POST …:streamGenerateContent?alt=sse`),
-//! реализующий [`EngineBackend`]. Отдельный протокол от OpenAI-совместимого Chat
-//! Completions (`OpenAiClient` + Gemini-диалект, теперь заменён этим клиентом): резюме
-//! «мыслей» (`thinkingConfig.includeThoughts`), глубина (`thinkingLevel`/
-//! `thinkingBudget`), `thoughtsTokenCount`. См. ADR 0004, docs/research/gemini-native-client.md.
+//! An HTTP client to the native Google Gemini API (`POST …:streamGenerateContent?alt=sse`),
+//! implementing [`EngineBackend`]. A protocol separate from the OpenAI-compatible Chat
+//! Completions path (`OpenAiClient` + the Gemini dialect, now replaced by this client): "thought"
+//! summaries (`thinkingConfig.includeThoughts`), depth (`thinkingLevel`/
+//! `thinkingBudget`), `thoughtsTokenCount`. See ADR 0004, docs/research/gemini-native-client.md.
 //!
-//! Эмбеддингов этот клиент не даёт — RAG в режиме Gemini берёт отдельный источник
-//! (OpenAI-совместимый `…/v1beta/openai/embeddings`, см. супервайзер), как у Anthropic.
+//! This client gives no embeddings — RAG in Gemini mode takes a separate source
+//! (the OpenAI-compatible `…/v1beta/openai/embeddings`, see the supervisor), like Anthropic.
 
 use anyhow::{Context, Result};
 use async_stream::stream;
@@ -18,11 +18,11 @@ use crate::shared::api::contract::{
     ChatChunk, ChatRequest, ChatStream, EngineBackend, FinishReason, TokenUsage, ToolCallDelta,
 };
 
-/// Клиент к нативному Gemini API.
+/// A client to the native Gemini API.
 pub struct GeminiClient {
     http: reqwest::Client,
-    /// Базовый URL с суффиксом `/v1beta` (клиент добавляет
-    /// `/models/{model}:streamGenerateContent`), напр.
+    /// The base URL with a `/v1beta` suffix (the client appends
+    /// `/models/{model}:streamGenerateContent`), e.g.
     /// `https://generativelanguage.googleapis.com/v1beta`.
     base_url: String,
     api_key: String,
@@ -36,7 +36,7 @@ impl GeminiClient {
         model: impl Into<String>,
     ) -> Self {
         let base_url = base_url.into().trim_end_matches('/').to_string();
-        // Имя модели может прийти с префиксом `models/` — путь его уже несёт.
+        // The model name may arrive with a `models/` prefix — the path already carries it.
         let model = model
             .into()
             .trim_start_matches("models/")
@@ -51,10 +51,10 @@ impl GeminiClient {
     }
 }
 
-/// Строковый `finishReason` Gemini → доменная причина. Наличие вызовов инструментов
-/// (`saw_tool_call`) даёт `ToolCalls` даже при `STOP` (Gemini возвращает `STOP` с
-/// `functionCall`-частями). `MAX_TOKENS` → `Length`; прочее — `Stop`, чтобы не падать
-/// (блокирующие причины распознаёт [`is_block_reason`] отдельно и сюрфейсит заметкой).
+/// Gemini's string `finishReason` → the domain reason. The presence of tool calls
+/// (`saw_tool_call`) gives `ToolCalls` even on `STOP` (Gemini returns `STOP` with
+/// `functionCall` parts). `MAX_TOKENS` → `Length`; anything else — `Stop`, so as not to fail
+/// ([`is_block_reason`] recognizes blocking reasons separately and surfaces a note).
 fn map_finish(reason: &str, saw_tool_call: bool) -> FinishReason {
     match reason {
         "MAX_TOKENS" => FinishReason::Length,
@@ -63,9 +63,9 @@ fn map_finish(reason: &str, saw_tool_call: bool) -> FinishReason {
     }
 }
 
-/// «Блокирующая» причина завершения/отклонения: фильтр безопасности, рецитация,
-/// битый вызов и т.п. Такой ответ приходит пустым — без пояснения пользователь видел бы
-/// молчаливый пустой ход, поэтому сюрфейсим заметкой (см. [`block_note`]).
+/// A "blocking" finish/rejection reason: a safety filter, recitation,
+/// a malformed call, etc. Such a reply arrives empty — without an explanation the user would see
+/// a silently empty turn, so it's surfaced as a note (see [`block_note`]).
 fn is_block_reason(reason: &str) -> bool {
     matches!(
         reason,
@@ -80,10 +80,10 @@ fn is_block_reason(reason: &str) -> bool {
     )
 }
 
-/// Заметка пользователю о блокировке (уходит в ленту как текст ответа, чтобы пустой ход
-/// был объясним).
+/// A note to the user about the block (goes into the feed as reply text, so an empty turn
+/// is explainable).
 fn block_note(reason: &str) -> String {
-    format!("\n⚠ Gemini не выдал ответ (причина: {reason}).")
+    format!("\n⚠ Gemini did not produce a response (reason: {reason}).")
 }
 
 #[async_trait::async_trait]
@@ -103,24 +103,24 @@ impl EngineBackend for GeminiClient {
             .send()
             .await
             .with_context(|| format!("POST {url}"))?;
-        // Не глотаем тело ошибки (как прочие клиенты): Gemini кладёт причину в JSON
-        // (`{"error":{"message":...}}`) — логируем и пробрасываем в текст ошибки.
+        // Don't swallow the error body (like the other clients): Gemini puts the reason in JSON
+        // (`{"error":{"message":...}}`) — log it and surface it in the error text.
         let status = response.status();
         if !status.is_success() {
             let body = response.text().await.unwrap_or_default();
             let detail: String = body.trim().chars().take(500).collect();
             tracing::warn!(%status, body = %detail, "gemini returned an error status");
             if detail.is_empty() {
-                anyhow::bail!("движок (Gemini) вернул статус {status}");
+                anyhow::bail!("engine (Gemini) returned status {status}");
             }
-            anyhow::bail!("движок (Gemini) вернул статус {status}: {detail}");
+            anyhow::bail!("engine (Gemini) returned status {status}: {detail}");
         }
 
         let mut events = response.bytes_stream().eventsource();
 
         let s = stream! {
-            // Порядковый индекс вызова инструмента (у Gemini нет call_id — синтезируем
-            // стабильный id `"{name}-{index}"`, парность functionResponse — по нему).
+            // The ordinal index of the tool call (Gemini has no call_id — synthesize a
+            // stable id `"{name}-{index}"`; functionResponse matching goes by it).
             let mut tool_index = 0usize;
             let mut saw_tool_call = false;
             loop {
@@ -153,8 +153,8 @@ impl EngineBackend for GeminiClient {
                                         continue;
                                     }
                                 };
-                                // Промпт заблокирован фильтром (candidates пуст) —
-                                // объясняем заметкой, иначе выглядело бы как пустой STOP.
+                                // The prompt was blocked by the filter (candidates is empty) —
+                                // explain via a note, otherwise it would look like an empty STOP.
                                 if let Some(reason) = resp
                                     .prompt_feedback
                                     .and_then(|f| f.block_reason)
@@ -177,7 +177,7 @@ impl EngineBackend for GeminiClient {
                                                 id: Some(format!("{}-{}", fc.name, tool_index)),
                                                 name: Some(fc.name.clone()),
                                                 arguments: fc.args.to_string(),
-                                                // Подпись мысли (Gemini 3) — на functionCall-части.
+                                                // The thought signature (Gemini 3) — on the functionCall part.
                                                 thought_signature: part.thought_signature.clone(),
                                             });
                                             tool_index += 1;
@@ -201,8 +201,8 @@ impl EngineBackend for GeminiClient {
                                     });
                                 }
                                 if let Some(reason) = candidate.and_then(|c| c.finish_reason) {
-                                    // Блокирующая причина (SAFETY/RECITATION/…) — сюрфейсим
-                                    // заметкой, иначе пустой ход остался бы без пояснения.
+                                    // A blocking reason (SAFETY/RECITATION/…) — surfaced as
+                                    // a note, otherwise an empty turn would go unexplained.
                                     if is_block_reason(&reason) && !saw_tool_call {
                                         tracing::warn!(reason = %reason, "gemini stopped with a block reason");
                                         yield ChatChunk::Text(block_note(&reason));
@@ -246,13 +246,13 @@ mod tests {
         assert!(is_block_reason("MALFORMED_FUNCTION_CALL"));
         assert!(!is_block_reason("STOP"));
         assert!(!is_block_reason("MAX_TOKENS"));
-        // Заметка несёт причину.
+        // The note carries the reason.
         assert!(block_note("SAFETY").contains("SAFETY"));
     }
 }
 
-/// Ручной смоук против реального Gemini API. Помечен `#[ignore]` — не в CI.
-/// Запуск: `MINDFORK_GEMINI_KEY=… cargo test gemini -- --ignored --nocapture`.
+/// A manual smoke against the real Gemini API. Marked `#[ignore]` — not in CI.
+/// Run: `MINDFORK_GEMINI_KEY=… cargo test gemini -- --ignored --nocapture`.
 #[cfg(test)]
 mod ignored_smoke {
     use super::*;
@@ -307,8 +307,8 @@ mod ignored_smoke {
         ));
     }
 
-    /// Резюме рассуждений: с `thinking=true` приходят «мысли» (Thoughts) и ответ.
-    /// `max_tokens` щедрый — токены мыслей расходуют бюджет ответа.
+    /// Reasoning summary: with `thinking=true`, "thoughts" (Thoughts) and the reply arrive.
+    /// `max_tokens` is generous — thought tokens eat into the reply budget.
     #[tokio::test]
     #[ignore = "requires MINDFORK_GEMINI_KEY (live Gemini API)"]
     async fn thinking_streams_thoughts() {
@@ -346,7 +346,7 @@ mod ignored_smoke {
         );
     }
 
-    /// Один tool-раунд: модель вызывает инструмент (без переотправки подписи — Фаза B).
+    /// One tool round: the model calls the tool (without resending the signature — Phase B).
     #[tokio::test]
     #[ignore = "requires MINDFORK_GEMINI_KEY (live Gemini API)"]
     async fn single_tool_call() {
@@ -395,11 +395,11 @@ mod ignored_smoke {
         assert_eq!(calls[0].name, "get_weather");
     }
 
-    /// Фаза B: tool-use round-trip с переотправкой подписи мысли. На **Gemini 3**
-    /// (`MINDFORK_GEMINI_MODEL=gemini-3-*`) первый раунд даёт вызов + `thoughtSignature`;
-    /// второй переотправляет её на `functionCall` + результат — Gemini не должен вернуть
-    /// `400` («missing thought_signature»). На 2.5 подпись опциональна (раунд тоже
-    /// проходит). Проверяет: подпись пришла и переотправка не ломает раунд.
+    /// Phase B: a tool-use round-trip resending the thought signature. On **Gemini 3**
+    /// (`MINDFORK_GEMINI_MODEL=gemini-3-*`) the first round gives a call + `thoughtSignature`;
+    /// the second resends it on `functionCall` + the result — Gemini must not return
+    /// `400` ("missing thought_signature"). On 2.5 the signature is optional (the round also
+    /// goes through). Checks: the signature arrived and resending doesn't break the round.
     #[tokio::test]
     #[ignore = "requires MINDFORK_GEMINI_KEY (live Gemini API), Gemini 3 for signatures"]
     async fn tool_use_round_trips_signature() {
@@ -459,7 +459,7 @@ mod ignored_smoke {
             call.thought_signature.is_some()
         );
 
-        // Второй раунд: assistant(functionCall с подписью) + результат.
+        // Second round: assistant(functionCall with the signature) + the result.
         let round2 = ChatRequest {
             system: None,
             messages: vec![

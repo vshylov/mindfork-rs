@@ -1,195 +1,195 @@
-# План: консолидация «модели себя» (авто-«сон» + семантика summary + старение интересов)
+# Plan: "self-model" consolidation (auto-"sleep" + summary semantics + interest aging)
 
-> Статус: **A1, A2, A3-лёгкий — сделано; направление завершено** (A3-тяжёлый —
-> задел). Ветки `feat/self-model-auto-consolidate`, `feat/self-model-summary-semantics`,
-> `feat/self-model-interests-aging`; журнал — CLAUDE.md пост-M9; порог A2
-> `SUMMARY_OBS_SIMILARITY=0.62` откалиброван на живом bge-m3; A3-лёгкий — нудж в
-> `selfmodel.policy_core`. Направление продолжает
-> [summary-as-snapshot](summary-as-snapshot.md) («Вне объёма») и
-> [refinements](refinements.md); закрыло три задела roadmap раздела
-> «Память, модель себя, знания». **Архивировано** (направление завершено).
+> Status: **A1, A2, A3-light — done; the track is complete** (A3-heavy —
+> future work). Branches `feat/self-model-auto-consolidate`, `feat/self-model-summary-semantics`,
+> `feat/self-model-interests-aging`; log — CLAUDE.md post-M9; the A2 threshold
+> `SUMMARY_OBS_SIMILARITY=0.62` was calibrated against live bge-m3; A3-light — a nudge in
+> `selfmodel.policy_core`. This track continues
+> [summary-as-snapshot](summary-as-snapshot.md) ("Out of scope") and
+> [refinements](refinements.md); it closed three future-work items from the roadmap's
+> "Memory, self-model, knowledge" section. **Archived** (the track is complete).
 
-## Нерв задачи
+## The task's nerve
 
-У всех органов «модели себя» есть механика анти-раздувания **кроме периодической**:
-наблюдения (`@self`-заметки) консолидируются только через авто-рефлексию и
-интерактивный `reflect`; у `summary` есть ворота размера (`summary_fill_hint`), но
-никто их не отрабатывает вне хода; `current_interests` — «текущие», но ничто их не
-вымывает. Направление добавляет три вещи:
+Every organ of the "self-model" has anti-bloat mechanics **except the periodic
+one**: observations (`@self` notes) are consolidated only via auto-reflection and
+the interactive `reflect`; `summary` has a size gate (`summary_fill_hint`), but
+nothing acts on it outside a turn; `current_interests` are "current," but nothing
+washes them out. The track adds three things:
 
-1. **A1 — фоновый «сон» модели себя по таймеру** (зеркало
-   `notes.auto_consolidate_every`): периодически слить дубли наблюдений, заместить
-   устаревшее со «шрамом», **сжать раздутый `summary`**, связать противоречия — вне
-   зависимости от свежих ходов.
-2. **A2 — семантическое сравнение абзацев `summary` с наблюдениями** в обзоре
-   self-консолидации: «абзац описания похож на наблюдение X → вынеси/сшей».
-3. **A3 — старение `current_interests`**: убирать давно не подтверждаемые интересы.
+1. **A1 — background "sleep" for the self-model on a timer** (a mirror of
+   `notes.auto_consolidate_every`): periodically merge duplicate observations, replace
+   stale ones with a "scar," **shrink a bloated `summary`**, link contradictions — regardless
+   of recent turns.
+2. **A2 — semantic comparison of `summary` paragraphs with observations** in the
+   self-consolidation overview: "a description paragraph resembles observation X → extract/stitch."
+3. **A3 — aging of `current_interests`**: remove interests that haven't been confirmed in a while.
 
-## Что уже готово (опорные точки в коде)
+## What's already in place (anchors in the code)
 
-- **Каркас фоновых задач построен под это.** SOLID-этап 2
-  (`app/orchestrator/background.rs` — реестр слотов `BgSlot` по `BackgroundKind`;
-  `app/orchestrator/tool_loop.rs::spawn_silent_loop`) прямо готовил «задачу №3
-  семейства (авто-консолидация «модели себя» по таймеру)»: её добавление «больше не
-  трогает `run()`/`Quit`».
-- **Сиблинги для копирования:** `app/orchestrator/consolidation.rs` (заметки) и
-  `app/orchestrator/reflection.rs` (модель себя) — один в один жизненный цикл
-  (гейты → счётчик каденции → `build_*_overview` → `spawn_silent_loop` → `begin_bg`).
-- **Данные к «сну» уже собираются:** `features/tools/notes/overview.rs::
-  build_self_consolidation_overview` (похожие пары наблюдений / `contradicts` /
-  «без связей»). Сигнал раздутого summary — `entities/self_model.rs::
+- **The background-task scaffold was built for exactly this.** SOLID stage 2
+  (`app/orchestrator/background.rs` — the `BgSlot` slot registry by `BackgroundKind`;
+  `app/orchestrator/tool_loop.rs::spawn_silent_loop`) explicitly prepared for "family
+  task #3 (timed self-model auto-consolidation)": adding it "no longer
+  touches `run()`/`Quit`."
+- **Siblings to copy from:** `app/orchestrator/consolidation.rs` (notes) and
+  `app/orchestrator/reflection.rs` (self-model) — an identical lifecycle
+  (gates → cadence counter → `build_*_overview` → `spawn_silent_loop` → `begin_bg`).
+- **Data for the "sleep" is already collected:** `features/tools/notes/overview.rs::
+  build_self_consolidation_overview` (similar observation pairs / `contradicts` /
+  "no links"). The bloated-summary signal — `entities/self_model.rs::
   SelfModel::summary_fill_hint`.
-- **Обратная связь наблюдаемости:** `background.rs::handle_bg_done` уже при успехе
-  **рефлексии** эмитит `SelfModelChanged` (открытый `F3` обновляется) и ведёт серию
-  неудач (`BACKGROUND_FAILURE_ALERT`).
+- **Observability feedback:** `background.rs::handle_bg_done` already, on
+  **reflection**'s success, emits `SelfModelChanged` (an open `F3` refreshes) and tracks a run
+  of failures (`BACKGROUND_FAILURE_ALERT`).
 
-## Принципы (в духе проекта)
+## Principles (in the project's spirit)
 
-- **DB-only, без `ChatEffect`** — все инструменты модели себя/заметок пишут напрямую
-  через `ctx.storage`; инвариант «единственный владелец `Chat`» не затрагивается.
-- **Opt-in, по умолчанию выкл** — как `auto_reflect_every`/`auto_consolidate_every`
-  (фоновые вызовы стоят токенов).
-- **Мягкая деградация** — недоступен эмбеддер / сервер не готов → тихо пропускаем,
-  счётчик каденции не теряется (как в `reflection.rs`/`consolidation.rs`).
-- **Интеграция, а не потеря** — устаревшее сворачивается в «шрам»-наблюдение, не
-  удаляется молча (как `fold_closed_goals`, `note_supersede`).
-- **Гейты, а не жёсткие правила** — решение всегда за моделью; мы даём данные и нудж.
-- **Без миграций схемы** — новые поля конфига через `#[serde(default)]`.
+- **DB-only, no `ChatEffect`** — all self-model/notes tools write directly
+  through `ctx.storage`; the "sole owner of `Chat`" invariant is untouched.
+- **Opt-in, off by default** — like `auto_reflect_every`/`auto_consolidate_every`
+  (background calls cost tokens).
+- **Graceful degradation** — the embedder is unavailable / the server isn't ready →
+  quietly skip, the cadence counter isn't lost (as in `reflection.rs`/`consolidation.rs`).
+- **Integration, not loss** — stale content is folded into a "scar" observation, not
+  silently deleted (like `fold_closed_goals`, `note_supersede`).
+- **Gates, not hard rules** — the decision always stays with the model; we give data and a nudge.
+- **No schema migrations** — new config fields via `#[serde(default)]`.
 
 ---
 
-## Этап A1 — фоновая авто-консолидация «модели себя» ⭐ первым
+## Stage A1 — background auto-consolidation of the "self-model" ⭐ first
 
-### Шаг A1.1 — вариант `BackgroundKind` и статус-бар
+### Step A1.1 — a `BackgroundKind` variant and the status bar
 
 - `app/events.rs` — `enum BackgroundKind` += `SelfConsolidation`.
-- `app/runtime/dispatch.rs` — маппинг `SelfConsolidation → screen.set_self_consolidating(on)`.
-- `screens/chat/*` — поле-флаг + сеттер `set_self_consolidating` (зеркало
+- `app/runtime/dispatch.rs` — mapping `SelfConsolidation → screen.set_self_consolidating(on)`.
+- `screens/chat/*` — a flag field + a `set_self_consolidating` setter (mirroring
   `set_reflecting`/`set_consolidating`).
-- `widgets/status_bar.rs` — тихий muted-чип (например `✻ сон себя`; глиф шириной 1
-  колонка — компат-безопасно, как прочие фоновые чипы).
+- `widgets/status_bar.rs` — a quiet muted chip (e.g. `✻ self sleep`; a glyph 1
+  column wide — compat-safe, like the other background chips).
 
-### Шаг A1.2 — обработчик `maybe_auto_self_consolidate`
+### Step A1.2 — the `maybe_auto_self_consolidate` handler
 
-Новый модуль `app/orchestrator/self_consolidation.rs` — калька с `consolidation.rs`:
+A new module `app/orchestrator/self_consolidation.rs` — a copy of `consolidation.rs`:
 
-- **Конфиг-гейт:** `self_model.auto_consolidate_every == 0` → выход.
-- **Каденция:** счётчик `self_consolidate_counts: HashMap<chat_id, u32>` на
-  `Orchestrator` (как `consolidate_counts`); `tool_loop::due(count, every)`; сброс —
-  только при фактическом спавне (пропуск по гейту не теряет цикл).
-- **Гейты:** профиль включил инструменты модели себя (`GET_SELF_MODEL_ID`); есть что
-  консолидировать — наблюдений ≥ 2 **или** `summary` сверх `summary_target_chars`
-  (через `summary_fill_hint`); `bg_running(SelfConsolidation)` == false; сервер
+- **Config gate:** `self_model.auto_consolidate_every == 0` → exit.
+- **Cadence:** a counter `self_consolidate_counts: HashMap<chat_id, u32>` on
+  `Orchestrator` (like `consolidate_counts`); `tool_loop::due(count, every)`; reset —
+  only on an actual spawn (a gate skip doesn't lose the cycle).
+- **Gates:** the profile enabled self-model tools (`GET_SELF_MODEL_ID`); there's
+  something to consolidate — observations ≥ 2 **or** `summary` past
+  `summary_target_chars` (via `summary_fill_hint`); `bg_running(SelfConsolidation)` == false; the server is
   `Ready` (`engines.backend_if_ready`).
-- **Набор инструментов** (пересечение с профилем): `note_revise`/`note_supersede`/
-  `note_merge`/`note_link`/`note_neighbors` (над `@self`-наблюдениями) +
-  `update_self_model`/`update_user_model` (сжать summary / привести собеседника) +
-  `get_self_model` (полные id наблюдений). `note_recall` **не даём** — он скрывает
-  `@self`; полные id модель берёт из `get_self_model` (как рефлексия).
-- **Дайджест:** `build_self_consolidation_overview(...)` + строка `summary_fill_hint`
-  (если summary раздут). Пусто/нет сигнала → выход без сброса счётчика.
-- **Запрос:** системное сообщение `prompt.self_consolidate.system` (на базе
-  `self_model::policy_core(loc)` — единый источник правил, как
+- **Tool set** (intersected with the profile): `note_revise`/`note_supersede`/
+  `note_merge`/`note_link`/`note_neighbors` (over `@self` observations) +
+  `update_self_model`/`update_user_model` (shrink summary / update the interlocutor) +
+  `get_self_model` (full observation ids). `note_recall` is **withheld** — it hides
+  `@self`; the model gets full ids from `get_self_model` (as with reflection).
+- **Digest:** `build_self_consolidation_overview(...)` + a `summary_fill_hint` line
+  (if summary is bloated). Empty/no signal → exit without resetting the counter.
+- **Request:** the system message `prompt.self_consolidate.system` (built on
+  `self_model::policy_core(loc)` — a single source of rules, like
   `reflect_system_message`), `max_tokens ≈ 2048`, `temperature ≈ 0.3`,
   `spawn_silent_loop(SilentLoop { kind: SelfConsolidation, ... })` + `begin_bg`.
 
-### Шаг A1.3 — триггер и наблюдаемость
+### Step A1.3 — trigger and observability
 
-- `app/orchestrator/mod.rs::handle_done` — вызвать `maybe_auto_self_consolidate`
-  (рядом с `maybe_auto_reflect`/`maybe_auto_consolidate`); поле счётчика.
-- `background.rs::handle_bg_done` — расширить спец-случай: при успехе
-  `SelfConsolidation` тоже эмитить `SelfModelChanged` (меняет модель себя, как
-  рефлексия). Ключ ошибки `ui.err.bg_self_consolidation`.
+- `app/orchestrator/mod.rs::handle_done` — call `maybe_auto_self_consolidate`
+  (next to `maybe_auto_reflect`/`maybe_auto_consolidate`); a counter field.
+- `background.rs::handle_bg_done` — extend the special case: on
+  `SelfConsolidation`'s success also emit `SelfModelChanged` (it changes the self-model, like
+  reflection). Error key `ui.err.bg_self_consolidation`.
 
-### Шаг A1.4 — конфиг и UI
+### Step A1.4 — config and UI
 
 - `shared/config.rs` — `SelfModelSettings.auto_consolidate_every: usize`
-  (`#[serde(default)]`, дефолт 0) + константа `DEFAULT_*`.
-- `screens/settings/*` — поле в секции «Память», группа «Модель себя» (рядом с
-  «авто-рефлексия»), описание-подсказка + i18n-ключ.
-- `locales/{ru,en}.json` — `prompt.self_consolidate.system`, метка чипа, ошибка,
-  подпись поля/описание. i18n-гейты (key/placeholder parity, `no_cyrillic`,
-  key-в-коде) покрывают автоматически.
+  (`#[serde(default)]`, default 0) + a `DEFAULT_*` constant.
+- `screens/settings/*` — a field in the "Memory" section, "Self-model" group (next to
+  "auto-reflection"), a description hint + an i18n key.
+- `locales/{ru,en}.json` — `prompt.self_consolidate.system`, the chip label, the error,
+  the field label/description. i18n gates (key/placeholder parity, `no_cyrillic`,
+  key-in-code) cover this automatically.
 
-### Тесты A1
+### Tests A1
 
-- Юнит: `due`-каденция уже покрыта в `tool_loop`; гейт по summary_fill_hint.
-- Интеграционные (`orchestrator/tests/`): `handle_done` спавнит при пороге; гейты
-  держат при выключенной фиче / < 2 наблюдений и не раздутом summary / неготовом
-  сервере; счётчик не сброшен при пропуске; успех → `SelfModelChanged`.
-- Runtime: `SelfConsolidation` → чип + не открывает `F3`, а перезапрашивает снимок.
-- **Живой** `#[ignore]` (Gemma 4 31B + bge-m3): при `auto_consolidate_every=1` два
-  похожих наблюдения сводятся `note_merge`; раздутый summary (> target) сжимается
-  `update_self_model`. Критерий go/no-go как у прежних зондов.
+- Unit: `due`-cadence is already covered in `tool_loop`; a gate on summary_fill_hint.
+- Integration (`orchestrator/tests/`): `handle_done` spawns at the threshold; gates
+  hold when the feature is off / < 2 observations and summary isn't bloated / the
+  server isn't ready; the counter isn't reset on a skip; success → `SelfModelChanged`.
+- Runtime: `SelfConsolidation` → a chip + doesn't open `F3`, instead re-requests the snapshot.
+- **Live** `#[ignore]` (Gemma 4 31B + bge-m3): with `auto_consolidate_every=1`, two
+  similar observations are merged via `note_merge`; a bloated summary (> target) is shrunk via
+  `update_self_model`. GO/no-go criterion as with prior probes.
 
-### Развилка A1 (для пользователя)
+### Fork A1 (for the user)
 
-- **Отдельный `self_model.auto_consolidate_every`** (рекомендуется) — модель себя и
-  заметки уже разведены по гейтам/данным; свой тумблер точнее.
-- **Общий тумблер «сна памяти»** — переиспользовать `notes.auto_consolidate_every`.
-  Проще UI, но связывает два разных органа. Не рекомендуется.
+- **A separate `self_model.auto_consolidate_every`** (recommended) — the self-model and
+  notes are already kept apart by gates/data; a dedicated toggle is more precise.
+- **A shared "memory sleep" toggle** — reuse `notes.auto_consolidate_every`.
+  Simpler UI, but ties two different organs together. Not recommended.
 
 ---
 
-## Этап A2 — семантика «summary ↔ наблюдения» в обзоре
+## Stage A2 — "summary ↔ observations" semantics in the overview
 
-**Что.** `build_self_consolidation_overview`
-(`features/tools/notes/overview.rs`) сейчас сравнивает **наблюдения между собой**
-(попарный косинус) + `contradicts` + «без связей». Добавить раздел: сегментировать
-`summary` на абзацы, **эмбеддить их на лету** (у summary нет хранимых векторов — как
-ворота черт `self_model.rs::near_duplicate_traits`), сравнить с векторами
-`@self`-наблюдений (`notes_with_vectors`, фильтр `is_self_note`) и поднять пары
-«абзац summary ≈ наблюдение X» с подсказкой «вынеси/сшей».
+**What.** `build_self_consolidation_overview`
+(`features/tools/notes/overview.rs`) currently compares **observations against each other**
+(pairwise cosine) + `contradicts` + "no links." Add a section: segment
+`summary` into paragraphs, **embed them on the fly** (summary has no stored vectors — like
+the trait gate `self_model.rs::near_duplicate_traits`), compare against the vectors of
+`@self` observations (`notes_with_vectors`, filtered by `is_self_note`), and surface pairs
+"a summary paragraph ≈ observation X" with a hint to "extract/stitch."
 
-**Нюанс (важно).** Функция сейчас **чистое чтение БД** (эмбеддер не нужен). Новый
-раздел требует `Embedder`, поэтому он **опционален**: нет эмбеддера/нестыковка →
-раздел пропускается (мягкая деградация, как реранкинг RAG/web). Значит сигнатуру и
-вызовы (`reflect`, `reflection.rs`, а также `self_consolidation.rs` из A1) надо
-расширить эмбеддером; чистая часть остаётся, семантический раздел — надстройка.
+**Nuance (important).** The function is currently a **pure DB read** (no embedder needed). The new
+section needs an `Embedder`, so it's **optional**: no embedder / a mismatch →
+the section is skipped (graceful degradation, like RAG/web reranking). So the signature and
+callers (`reflect`, `reflection.rs`, and also `self_consolidation.rs` from A1) need to be
+extended with an embedder; the pure part stays, the semantic section is an add-on.
 
-**Файлы.** `overview.rs` (сегментация абзацев по пустым строкам + раздел),
+**Files.** `overview.rs` (segmenting paragraphs by blank lines + the section),
 `features/tools/self_model.rs` / `app/orchestrator/reflection.rs` /
-`app/orchestrator/self_consolidation.rs` (проброс эмбеддера), `locales`.
+`app/orchestrator/self_consolidation.rs` (threading the embedder through), `locales`.
 
-**Порог.** Откалибровать по живому bge-m3 (как `TRAIT_SIMILARITY=0.72`), не угадывать.
+**Threshold.** Calibrate against live bge-m3 (like `TRAIT_SIMILARITY=0.72`), don't guess.
 
-**Тесты.** На `MockEmbedder`: абзац, похожий на наблюдение, поднимается; непохожий —
-молчит; без эмбеддера — раздел отсутствует, паники нет.
-
----
-
-## Этап A3 — старение `current_interests`
-
-`current_interests` — плоский `Vec<String>` (`entities/self_model.rs::UserModel`),
-ничто их не вымывает. Две развилки:
-
-- **A3-лёгкий (рекомендуется).** Без изменения схемы: нудж «проверь, не устарели ли
-  интересы; давно не подтверждаемые — убери через `remove_interests`» в системное
-  сообщение A1/рефлексии и «протокол ведения» (`policy_core`). Согласуется с
-  философией проекта (интеграция силами модели) и прямой рекомендацией
-  [summary-as-snapshot](summary-as-snapshot.md) («лечится теми же
-  воротами/рефлексией»). Стоимость — тексты бандлов. Сделать в рамках A1.
-- **A3-тяжёлый (задел).** `current_interests: Vec<Interest { text, updated_at }>` —
-  настоящее старение по времени. Ломает плоский `Vec<String>` и трогает ~десяток
-  мест: `render_user_model`, `add_interests`/`remove_interests`, `apply_edit`
-  (`SetInterests`), `UserModel::render_for_impersonation`, ворота, serde-миграция
-  (`#[serde(default)]` + шаг). Оправдан, только если A3-лёгкий на живой модели
-  окажется недостаточным.
+**Tests.** On `MockEmbedder`: a paragraph similar to an observation is surfaced; a dissimilar one —
+stays silent; without an embedder — the section is absent, no panic.
 
 ---
 
-## Вне объёма (задел)
+## Stage A3 — aging of `current_interests`
 
-- **A3-тяжёлый** (структура интересов с временными метками) — если лёгкого мало.
-- **Старение перенести в vec0** — не связано; см. [notes-vec0](../notes-vec0.md).
-- **Consolidation модели собеседника отдельным органом** — сейчас `user_model`
-  ведётся merge-семантикой + шрамами; отдельного «сна» ему не заводим.
+`current_interests` — a flat `Vec<String>` (`entities/self_model.rs::UserModel`),
+nothing washes them out. Two forks:
 
-## Порядок и DoD
+- **A3-light (recommended).** No schema change: a nudge — "check whether
+  interests are stale; ones not confirmed in a while — remove via `remove_interests`" — in the
+  system message for A1/reflection and the "maintenance protocol" (`policy_core`). Consistent with
+  the project's philosophy (integration by the model itself) and the direct recommendation in
+  [summary-as-snapshot](summary-as-snapshot.md) ("treated by the same
+  gates/reflection"). Cost — bundle text. Do it as part of A1.
+- **A3-heavy (future work).** `current_interests: Vec<Interest { text, updated_at }>` —
+  real time-based aging. Breaks the flat `Vec<String>` and touches ~a dozen
+  spots: `render_user_model`, `add_interests`/`remove_interests`, `apply_edit`
+  (`SetInterests`), `UserModel::render_for_impersonation`, gates, a serde migration
+  (`#[serde(default)]` + a step). Justified only if A3-light on a live model
+  proves insufficient.
 
-1. **A1** (авто-«сон» + A3-лёгкий нудж в тех же промптах) — один PR, флагман.
-2. **A2** (семантика summary↔наблюдения) — следующий PR, поверх A1/рефлексии.
+---
 
-DoD этапа: `cargo fmt`/`clippy -D warnings`/`test` зелёные; живой смоук A1 — **go**;
-запись в CLAUDE.md (журнал пост-M9) + CHANGELOG (рубрика по эффекту); поля настроек и
-i18n-ключи на месте.
+## Out of scope (future work)
+
+- **A3-heavy** (an interest structure with timestamps) — if the light version proves insufficient.
+- **Moving aging into vec0** — unrelated; see [notes-vec0](../notes-vec0.md).
+- **Consolidation of the interlocutor model as a separate organ** — currently `user_model`
+  is managed via merge semantics + scars; we're not adding a separate "sleep" for it.
+
+## Order and DoD
+
+1. **A1** (auto-"sleep" + the A3-light nudge in the same prompts) — one PR, the flagship.
+2. **A2** (summary↔observation semantics) — the next PR, on top of A1/reflection.
+
+Stage DoD: `cargo fmt`/`clippy -D warnings`/`test` green; the A1 live smoke — **go**;
+an entry in CLAUDE.md (the post-M9 log) + CHANGELOG (the rubric matching the effect); settings fields and
+i18n keys in place.

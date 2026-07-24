@@ -1,13 +1,14 @@
-//! Экран чата — имперсонация (Ctrl+U): предпросмотр реплики за пользователя. Часть модуля [`super`]; разбито из
-//! монолита chat.rs (см. docs/history/refactoring-god-objects.md, этап 2).
+//! The chat screen — impersonation (Ctrl+U): a preview of a reply on the user's
+//! behalf. Part of the [`super`] module; split out of the chat.rs monolith (see
+//! docs/history/refactoring-god-objects.md, stage 2).
 
 use super::*;
 
 impl ChatScreen {
-    // ---------- имперсонация (Ctrl+U, spec §11.8) ----------
+    // ---------- impersonation (Ctrl+U, spec §11.8) ----------
 
-    /// Начинает имперсонацию: прячет поле ввода и показывает потоковый предпросмотр,
-    /// затравленный уже введённым текстом (модель продолжит его).
+    /// Starts impersonation: hides the input box and shows a streaming preview,
+    /// seeded with the text already typed (the model continues it).
     pub fn begin_impersonation(&mut self, generation_id: Uuid) {
         self.impersonation = Some(ImpersonationState {
             generation_id,
@@ -17,7 +18,7 @@ impl ChatScreen {
         });
     }
 
-    /// Дописывает дельту текста имперсонации в предпросмотр.
+    /// Appends an impersonation text delta to the preview.
     pub fn push_impersonation_chunk(&mut self, generation_id: Uuid, text: &str) {
         if let Some(imp) = &mut self.impersonation
             && imp.generation_id == generation_id
@@ -26,11 +27,12 @@ impl ChatScreen {
         }
     }
 
-    /// Завершает имперсонацию. Накопленный текст вставляется в поле ввода при любом
-    /// завершении, **кроме явной отмены пользователем** (`Cancelled` — `Esc`): тогда
-    /// поле сохраняет исходный текст-затравку. В частности, обрезанная по таймауту
-    /// (`Length`) или прерванная ошибкой потока (`Error`) реплика **не теряется** —
-    /// неполный текст полезнее пустого поля (пользователь допишет сам). См. spec §11.8.
+    /// Finishes impersonation. The accumulated text is inserted into the input
+    /// box on any completion **except an explicit user cancel** (`Cancelled` —
+    /// `Esc`): then the field keeps the original seed text. In particular, a
+    /// reply truncated by timeout (`Length`) or interrupted by a stream error
+    /// (`Error`) **isn't lost** — partial text is more useful than an empty
+    /// field (the user can finish it themselves). See spec §11.8.
     pub fn finish_impersonation(&mut self, generation_id: Uuid, reason: FinishReason) {
         match &self.impersonation {
             Some(imp) if imp.generation_id == generation_id => {}
@@ -38,13 +40,14 @@ impl ChatScreen {
         }
         let imp = self.impersonation.take().unwrap();
         if reason != FinishReason::Cancelled {
-            // set_text ставит курсор в конец вставленного текста.
+            // set_text places the cursor at the end of the inserted text.
             self.input.set_text(&imp.text);
             self.mark_input_changed();
         }
     }
 
-    /// Идёт ли имперсонация (петля перерисовывает кадры для анимации спиннера).
+    /// Whether impersonation is in progress (the loop repaints frames for the
+    /// spinner animation).
     pub fn is_impersonating(&self) -> bool {
         self.impersonation.is_some()
     }

@@ -1,9 +1,9 @@
-//! Слой движка инференса (`shared/api`). Провайдеро-агностичный контракт
-//! ([`EngineBackend`]/[`Embedder`] в [`contract`]) и его реализации, сгруппированные
-//! по семействам: [`openai`] (локальный/external `llama-server`, облако OpenAI через
-//! Responses), [`anthropic`] (Claude, Messages API), [`gemini`] (Gemini, нативный
-//! generateContent), [`managed`] (запуск дочернего `llama-server`).
-//! См. spec §6 и [ADR 0004](../../../docs/decisions/0004-engine-contract-multi-provider.md).
+//! Inference engine layer (`shared/api`). A provider-agnostic contract
+//! ([`EngineBackend`]/[`Embedder`] in [`contract`]) and its implementations, grouped
+//! by family: [`openai`] (local/external `llama-server`, OpenAI cloud via
+//! Responses), [`anthropic`] (Claude, Messages API), [`gemini`] (Gemini, native
+//! generateContent), [`managed`] (launching a child `llama-server`).
+//! See spec §6 and [ADR 0004](../../../docs/decisions/0004-engine-contract-multi-provider.md).
 
 pub mod anthropic;
 pub mod contract;

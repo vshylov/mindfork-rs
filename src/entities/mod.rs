@@ -1,4 +1,4 @@
-//! Слой `entities` (FSD): доменные типы без I/O. См. spec §4.2, §5.1.
+//! The `entities` layer (FSD): domain types with no I/O. See spec §4.2, §5.1.
 
 pub mod chat;
 pub mod message;

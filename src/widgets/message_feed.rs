@@ -1,11 +1,11 @@
-//! Лента сообщений: markdown-рендер тел (через [`crate::shared::markdown`]),
-//! сворачиваемый блок «мыслей» (CoT) и вертикальный скролл. См. spec §11.3–11.4.
+//! Message feed: markdown rendering of bodies (via [`crate::shared::markdown`]),
+//! a collapsible "thoughts" block (CoT), and vertical scrolling. See spec §11.3-11.4.
 //!
-//! «Мысли» сворачиваются глобальным переключателем (`show_thoughts`); tool-блоки
-//! (имя/аргументы/результат) показываются внутри сообщения ассистента (M5).
-//! Выделение отдельных сообщений/блоков — позже. Виджет хранит только состояние
-//! просмотра (скролл, «следовать за хвостом», показ мыслей); сами сообщения
-//! принадлежат UI-состоянию и передаются на отрисовку.
+//! "Thoughts" collapse via a global toggle (`show_thoughts`); tool blocks
+//! (name/arguments/result) show inside the assistant's message (M5).
+//! Per-message/per-block selection — later. The widget only holds view state
+//! (scroll, "follow the tail", thoughts display); the messages themselves
+//! belong to UI state and are passed in for rendering.
 
 use ratatui::Frame;
 use ratatui::layout::{Margin, Rect};
@@ -21,47 +21,47 @@ use crate::shared::theme::Palette;
 use crate::shared::ui::render_scrollbar;
 use crate::shared::wrap;
 
-/// Гуттер-рейл слева от каждой строки сообщения: цветная вертикальная черта +
-/// пробел (редизайн: «Role rails — цветные ▌ в гаттере»). Ширина — 2 колонки.
+/// Gutter rail to the left of every message line: a colored vertical bar +
+/// a space (redesign: "Role rails — colored ▌ in the gutter"). Width — 2 columns.
 const RAIL: &str = "▌ ";
 
-/// Роль элемента ленты (UI-проекция; системные сообщения не показываются).
+/// Role of a feed item (a UI projection; system messages aren't shown).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FeedRole {
     User,
     Assistant,
-    /// Служебная заметка (ошибки, «генерация отменена»).
+    /// A service note (errors, "generation cancelled").
     Note,
 }
 
-/// Tool-блок в ленте: имя инструмента, аргументы и результат. См. spec §11.3.
+/// A tool block in the feed: tool name, arguments, and result. See spec §11.3.
 ///
-/// `text_offset` — позиция вызова **в байтах** внутри `FeedMessage::text`: сколько
-/// текста ответа ассистента было сгенерировано ДО этого вызова. Так tool-блок
-/// рисуется ровно на месте вызова (между фрагментами текста), а не в «шапке».
+/// `text_offset` — the call's position **in bytes** within `FeedMessage::text`: how
+/// much of the assistant's reply text had been generated BEFORE this call. This way
+/// the tool block is drawn exactly at the call site (between text fragments), not in a "header".
 #[derive(Debug, Clone)]
 pub struct FeedToolCall {
     pub name: String,
     pub arguments: String,
     pub result: String,
-    /// Смещение (в байтах) в `FeedMessage::text`, после которого был сделан вызов.
+    /// Offset (in bytes) into `FeedMessage::text` after which the call was made.
     pub text_offset: usize,
 }
 
-/// Элемент ленты сообщений.
+/// An item of the message feed.
 #[derive(Debug, Clone)]
 pub struct FeedMessage {
     pub role: FeedRole,
     pub text: String,
     pub thoughts: String,
-    /// Вызовы инструментов этого сообщения ассистента (tool-блоки).
+    /// Tool calls of this assistant message (tool blocks).
     pub tools: Vec<FeedToolCall>,
-    /// Идёт ли стриминг этого сообщения (показываем «…» вместо пустого тела).
+    /// Whether this message is currently streaming (shows "…" instead of an empty body).
     pub streaming: bool,
 }
 
 impl FeedMessage {
-    /// Служебная заметка для ленты.
+    /// A service note for the feed.
     pub fn note(text: impl Into<String>) -> Self {
         Self {
             role: FeedRole::Note,
@@ -72,12 +72,12 @@ impl FeedMessage {
         }
     }
 
-    /// Проекция доменного сообщения (для перестроения ленты при активации чата).
-    /// Системные и tool-сообщения отбрасываются (`None`): tool-вызовы показываются
-    /// как блоки внутри сообщения ассистента (`tool_calls`), а не отдельно.
+    /// Projects a domain message (used to rebuild the feed on chat activation).
+    /// System and tool messages are dropped (`None`): tool calls are shown as
+    /// blocks inside the assistant's message (`tool_calls`), not separately.
     ///
-    /// Все вызовы инструментов раунда сделаны ПОСЛЕ его текста, поэтому их
-    /// `text_offset` = длина текста (вызовы рисуются под ним).
+    /// All of a round's tool calls happen AFTER its text, so their
+    /// `text_offset` = the text's length (calls are drawn below it).
     pub fn from_message(msg: &Message) -> Option<Self> {
         let role = match msg.role {
             MessageRole::User => FeedRole::User,
@@ -85,8 +85,8 @@ impl FeedMessage {
             MessageRole::Tool | MessageRole::System => return None,
         };
         let off = msg.text.len();
-        // Управляющие инструменты беседы (followup/rewrite) — служебные сигналы,
-        // не контент: их tool-блоки в ленте не показываем. См. spec §9.3.
+        // Conversation control tools (followup/rewrite) are control signals,
+        // not content: their tool blocks aren't shown in the feed. See spec §9.3.
         let tools = msg
             .tool_calls
             .iter()
@@ -107,21 +107,21 @@ impl FeedMessage {
         })
     }
 
-    /// Проекция списка доменных сообщений в ленту со **склейкой раундов**: подряд
-    /// идущие сообщения ассистента (раунды agentic-loop, между которыми в истории
-    /// лежат tool-сообщения — они отбрасываются) сливаются в один блок «Ассистент:».
-    /// Тексты раундов конкатенируются (через пустую строку), а `text_offset`
-    /// вызовов каждого раунда сдвигается на накопленную длину — так live-стрим и
-    /// перезагрузка из истории дают одинаковую инлайн-раскладку вызовов.
+    /// Projects a list of domain messages into the feed with **round stitching**:
+    /// consecutive assistant messages (agentic-loop rounds, with tool messages
+    /// dropped from between them in history) merge into one "Assistant:" block.
+    /// Round texts are concatenated (via a blank line), and each round's `text_offset`
+    /// for its calls shifts by the accumulated length — so a live stream and a
+    /// reload from history produce the same inline call layout.
     pub fn from_messages(messages: &[Message]) -> Vec<Self> {
         let mut out: Vec<Self> = Vec::new();
         for msg in messages {
             let Some(mut fm) = Self::from_message(msg) else {
                 continue;
             };
-            // Сливаем раунд ассистента с предыдущим блоком ассистента — кроме
-            // случая, когда сообщение помечено `new_bubble` (инструмент «написать
-            // ещё сообщение»): тогда оно начинает отдельный пузырь. См. spec §9.3.
+            // Merge the assistant round into the previous assistant block — except
+            // when the message is flagged `new_bubble` (the "write another message"
+            // tool): then it starts a separate bubble. See spec §9.3.
             if fm.role == FeedRole::Assistant
                 && !msg.new_bubble
                 && let Some(last) = out.last_mut()
@@ -152,42 +152,42 @@ impl FeedMessage {
     }
 }
 
-/// Состояние просмотра ленты (скролл, показ мыслей).
+/// Feed view state (scroll, thoughts display).
 pub struct MessageFeed {
-    /// Смещение прокрутки (в строках от начала).
+    /// Scroll offset (in lines from the start).
     scroll: usize,
-    /// Следовать за хвостом (автопрокрутка к низу при новом контенте).
+    /// Follow the tail (auto-scroll to bottom on new content).
     follow: bool,
-    /// Показывать развёрнутый блок «мыслей».
+    /// Show the expanded "thoughts" block.
     show_thoughts: bool,
-    /// Флаг «лента только что прокручена пользователем» — петля по нему делает
-    /// полную перерисовку терминала (как при ресайзе). Нужен из-за артефактов
-    /// некоторых терминалов (Command Prompt/conhost) на VS16-эмодзи (`🕸️`,
-    /// `🗂️`): они рисуют такой кластер физически шире модели ratatui, контент
-    /// «съезжает» по горизонтали, и при странично-скачковой прокрутке (PageUp/
-    /// PageDown) на месте уехавшего символа остаётся «висячая» буква в физической
-    /// ячейке, которую поячеечный diff ratatui больше не затрагивает. Полная
-    /// перерисовка (`terminal.clear`) гарантированно её стирает. См. spec §11.3.
+    /// Flag "the feed was just scrolled by the user" — the loop, on it, does a
+    /// full terminal repaint (like on resize). Needed because of artifacts in
+    /// some terminals (Command Prompt/conhost) on VS16 emoji (`🕸️`,
+    /// `🗂️`): they draw such a cluster physically wider than ratatui's model, content
+    /// "drifts" horizontally, and on paged scrolling (PageUp/
+    /// PageDown) a "hanging" letter is left in the physical cell where the
+    /// drifted character used to be — ratatui's per-cell diff no longer touches it. A full
+    /// repaint (`terminal.clear`) is guaranteed to erase it. See spec §11.3.
     scrolled: bool,
-    /// Горизонтальные разделители между строками Markdown-таблиц (настройка
-    /// `interface.table_row_separators`; экран чата прокидывает её из снимка
-    /// настроек через [`MessageFeed::set_table_row_separators`]).
+    /// Horizontal separators between rows of Markdown tables (setting
+    /// `interface.table_row_separators`; the chat screen threads it from the settings
+    /// snapshot via [`MessageFeed::set_table_row_separators`]).
     table_row_separators: bool,
-    /// Рендерить ```mermaid-блоки диаграммой (настройка `interface.render_mermaid`,
-    /// прокидывается через [`MessageFeed::set_render_mermaid`]). При сбое рендера
-    /// блок печатается исходником (жёсткий фолбэк, см. `shared::markdown::mermaid`).
+    /// Render ```mermaid blocks as a diagram (setting `interface.render_mermaid`,
+    /// threaded via [`MessageFeed::set_render_mermaid`]). On a render failure the
+    /// block is printed as source (hard fallback, see `shared::markdown::mermaid`).
     render_mermaid: bool,
-    /// Кэш отрендеренных строк по одному блоку на сообщение (см. [`CachedBlock`]).
-    /// Индекс = позиция сообщения. `build_lines` зовётся на каждый dirty-кадр
-    /// (стрим, прокрутка) и заново прогонял бы markdown+syntect по ВСЕЙ истории;
-    /// кэш пересчитывает лишь изменившиеся сообщения (сверка по фингерпринту).
+    /// Cache of rendered lines, one block per message (see [`CachedBlock`]).
+    /// Index = message position. `build_lines` is called on every dirty frame
+    /// (streaming, scrolling) and would re-run markdown+syntect over the WHOLE
+    /// history each time; the cache recomputes only the changed messages (checked by fingerprint).
     cache: Vec<CachedBlock>,
-    /// Ключ кэша: при смене ширины/палитры/показа мыслей кэш сбрасывается целиком.
+    /// Cache key: changing the width/palette/thoughts display resets the whole cache.
     cache_key: Option<CacheKey>,
 }
 
-/// Ключ валидности кэша ленты. Любое из полей влияет на раскладку всех блоков,
-/// поэтому его смена обнуляет кэш. `Palette` — `Copy + Eq` (ключ и в кэше syntect-тем).
+/// Feed cache validity key. Any of these fields affects the layout of every
+/// block, so changing it clears the cache. `Palette` — `Copy + Eq` (also the key in the syntect-theme cache).
 #[derive(PartialEq)]
 struct CacheKey {
     width: usize,
@@ -195,13 +195,13 @@ struct CacheKey {
     show_thoughts: bool,
     table_row_separators: bool,
     render_mermaid: bool,
-    /// Язык интерфейса (ось B): заголовки ролей/пилюля «мысли»/плейсхолдер зависят
-    /// от него — смена языка обнуляет кэш блоков ленты.
+    /// Interface language (axis B): role headers/the "thoughts" pill/the placeholder
+    /// depend on it — a language change clears the feed's block cache.
     lang: crate::shared::i18n::Lang,
 }
 
-/// Кэшированный вклад одного сообщения в ленту (уже перенесённые по ширине строки с
-/// рейлом + хвостовой разделитель) вместе с фингерпринтом исходного [`FeedMessage`].
+/// One message's cached contribution to the feed (already width-wrapped lines
+/// with a rail + a trailing separator) together with the source [`FeedMessage`]'s fingerprint.
 struct CachedBlock {
     fingerprint: u64,
     lines: Vec<Line<'static>>,
@@ -220,8 +220,8 @@ impl MessageFeed {
             follow: true,
             show_thoughts: false,
             scrolled: false,
-            // Зеркало дефолтов конфига (`InterfaceSettings::default`): до прихода
-            // первого снимка настроек лента рисует как дефолтный конфиг.
+            // Mirrors the config defaults (`InterfaceSettings::default`): before the
+            // first settings snapshot arrives, the feed renders as the default config.
             table_row_separators: false,
             render_mermaid: true,
             cache: Vec::new(),
@@ -229,60 +229,60 @@ impl MessageFeed {
         }
     }
 
-    /// Включает/выключает горизонтальные разделители строк Markdown-таблиц
-    /// (настройка `interface.table_row_separators`). Смена значения инвалидирует
-    /// кэш рендера через [`CacheKey`].
+    /// Toggles horizontal separators between rows of Markdown tables
+    /// (setting `interface.table_row_separators`). Changing the value invalidates
+    /// the render cache via [`CacheKey`].
     pub fn set_table_row_separators(&mut self, on: bool) {
         self.table_row_separators = on;
     }
 
-    /// Включает/выключает рендер ```mermaid-блоков диаграммой (настройка
-    /// `interface.render_mermaid`). Смена значения инвалидирует кэш через [`CacheKey`].
+    /// Toggles rendering ```mermaid blocks as a diagram (setting
+    /// `interface.render_mermaid`). Changing the value invalidates the cache via [`CacheKey`].
     pub fn set_render_mermaid(&mut self, on: bool) {
         self.render_mermaid = on;
     }
 
-    /// Забирает (и сбрасывает) флаг «прокручено пользователем». Петля `app/runtime`
-    /// при `true` делает `terminal.clear()` перед отрисовкой — стирает артефакты
-    /// «съехавших» VS16-эмодзи (см. поле [`MessageFeed::scrolled`]).
+    /// Takes (and resets) the "scrolled by user" flag. The `app/runtime` loop,
+    /// when `true`, does `terminal.clear()` before rendering — erases the artifacts
+    /// of "drifted" VS16 emoji (see the [`MessageFeed::scrolled`] field).
     pub fn take_scrolled(&mut self) -> bool {
         std::mem::take(&mut self.scrolled)
     }
 
-    /// Переключает показ блоков «мыслей».
+    /// Toggles showing "thoughts" blocks.
     pub fn toggle_thoughts(&mut self) {
         self.show_thoughts = !self.show_thoughts;
     }
 
-    /// Прокрутка вверх (отключает «следование за хвостом»).
+    /// Scroll up (turns off "follow the tail").
     pub fn scroll_up(&mut self, lines: usize) {
         self.scroll = self.scroll.saturating_sub(lines);
         self.follow = false;
         self.scrolled = true;
     }
 
-    /// Прокрутка вниз (у самого низа снова включает «следование»).
+    /// Scroll down (turns "follow" back on at the very bottom).
     pub fn scroll_down(&mut self, lines: usize) {
         self.scroll = self.scroll.saturating_add(lines);
         self.scrolled = true;
-        // Фактический кламп и повторное включение follow — в render (там известна высота).
+        // Actual clamping and re-enabling follow — in render (the height is known there).
     }
 
-    /// Сбрасывает прокрутку к низу (при смене чата/отправке).
+    /// Resets scroll to the bottom (on chat switch/send).
     pub fn scroll_to_bottom(&mut self) {
         self.follow = true;
     }
 
-    /// Тест-аксессор: следует ли лента за хвостом (прокрутка к низу).
+    /// Test accessor: whether the feed is following the tail (scrolled to bottom).
     #[cfg(test)]
     pub(crate) fn is_following(&self) -> bool {
         self.follow
     }
 
-    /// Рисует ленту. `messages` — текущее содержимое активного чата. `meta` —
-    /// правая подпись титула (напр. «gemma-4 · 16k ctx»; пусто — не показывать).
-    // Титул/мета/палитра/локаль — контекст отрисовки; собирать их в struct ради
-    // одного вызова из `chat/render.rs` не окупается.
+    /// Draws the feed. `messages` — the active chat's current content. `meta` —
+    /// the right-hand title caption (e.g. "gemma-4 · 16k ctx"; empty — don't show).
+    // Title/meta/palette/locale — render context; bundling them into a struct for
+    // the sake of one call from `chat/render.rs` isn't worth it.
     #[allow(clippy::too_many_arguments)]
     pub fn render(
         &mut self,
@@ -294,7 +294,7 @@ impl MessageFeed {
         palette: &Palette,
         loc: &'static Locale,
     ) {
-        // Скруглённая панель: слева титул с маркером ◆, справа — мета (модель/ctx).
+        // A rounded panel: title with a ◆ marker on the left, meta (model/ctx) on the right.
         let glyphs = palette.glyphs();
         let mut block = Block::default()
             .borders(Borders::ALL)
@@ -313,9 +313,9 @@ impl MessageFeed {
         let inner = block.inner(area);
         frame.render_widget(&block, area);
 
-        // Переносим строки по ширине ленты заранее: так число визуальных рядов
-        // совпадает с `lines.len()`, и математика скролла/«следования за хвостом»
-        // ниже остаётся row-based (см. shared::wrap, ADR 0001).
+        // Wrap lines to the feed's width ahead of time: this way the number of visual
+        // rows matches `lines.len()`, and the scroll/"follow the tail" math
+        // below stays row-based (see shared::wrap, ADR 0001).
         let view_w = inner.width.max(1) as usize;
         let lines: Vec<Line> = self
             .build_lines(messages, palette, view_w, loc)
@@ -329,7 +329,7 @@ impl MessageFeed {
         if self.follow {
             self.scroll = max_scroll;
         } else if self.scroll >= max_scroll {
-            // докрутили до низа — снова следуем за хвостом
+            // scrolled down to the bottom — follow the tail again
             self.scroll = max_scroll;
             self.follow = true;
         }
@@ -337,9 +337,9 @@ impl MessageFeed {
         let paragraph = Paragraph::new(Text::from(lines)).scroll((self.scroll as u16, 0));
         frame.render_widget(paragraph, inner);
 
-        // Скроллбар на правой рамке панели (углы не трогаем) — только когда
-        // лента не помещается по высоте. Ширину содержимого не отнимает; рамка
-        // ленты всегда не-фокусная (см. `border_style(false)` выше).
+        // Scrollbar on the panel's right border (corners untouched) — only when
+        // the feed doesn't fit vertically. Doesn't take width away from content; the
+        // feed's border is always non-focused (see `border_style(false)` above).
         render_scrollbar(
             frame,
             area.inner(Margin::new(0, 1)),
@@ -351,10 +351,10 @@ impl MessageFeed {
         );
     }
 
-    /// Собирает строки ленты: заголовки ролей, свёрнутые/развёрнутые «мысли»,
-    /// markdown-рендер тела, разделители. Каждая строка сообщения получает цветной
-    /// гуттер-рейл по роли (см. [`RAIL`]); содержимое строится в ширину `width - 2`,
-    /// затем переносится и к каждому визуальному ряду прикрепляется рейл.
+    /// Builds the feed's lines: role headers, collapsed/expanded "thoughts",
+    /// markdown-rendered body, separators. Every message line gets a colored
+    /// gutter rail by role (see [`RAIL`]); content is built at width `width - 2`,
+    /// then wrapped, and a rail is attached to each visual row.
     fn build_lines(
         &mut self,
         messages: &[FeedMessage],
@@ -363,13 +363,13 @@ impl MessageFeed {
         loc: &'static Locale,
     ) -> Vec<Line<'static>> {
         if messages.is_empty() {
-            // Плейсхолдер пустой ленты не кэшируем.
+            // We don't cache the empty-feed placeholder.
             return vec![Line::from(Span::styled(
                 loc.t("ui.feed.empty").to_string(),
                 palette.muted_style(),
             ))];
         }
-        // Сброс кэша при смене ширины/палитры/показа мыслей/языка (влияют на блоки).
+        // Reset the cache on a change to width/palette/thoughts display/language (affects blocks).
         let key = CacheKey {
             width,
             palette: *palette,
@@ -382,11 +382,11 @@ impl MessageFeed {
             self.cache.clear();
             self.cache_key = Some(key);
         }
-        // История усечена (Ctrl+E/regenerate) — отбрасываем хвост кэша.
+        // History truncated (Ctrl+E/regenerate) — drop the cache's tail.
         self.cache.truncate(messages.len());
 
-        // Базовые флаги markdown-рендера из настроек ленты; `soft_break_as_newline`
-        // остаётся per-role (его ставит push_body для сообщений пользователя).
+        // Base markdown-render flags from the feed's settings; `soft_break_as_newline`
+        // stays per-role (set by push_body for user messages).
         let opts = markdown::RenderOpts {
             table_row_separators: self.table_row_separators,
             render_mermaid: self.render_mermaid,
@@ -397,7 +397,7 @@ impl MessageFeed {
             let fp = message_fingerprint(item);
             let hit = self.cache.get(idx).is_some_and(|c| c.fingerprint == fp);
             if !hit {
-                // Стримящееся/изменённое сообщение — пересчитываем только его блок.
+                // A streaming/changed message — recompute only its block.
                 let block =
                     build_message_block(item, palette, width, self.show_thoughts, opts, loc);
                 let cb = CachedBlock {
@@ -416,11 +416,11 @@ impl MessageFeed {
     }
 }
 
-/// Собирает вклад одного сообщения в ленту: перенесённые по ширине строки с цветным
-/// рейлом роли + хвостовой разделитель (если тело не оканчивается пустой строкой).
-/// Чистая функция от (`item`, `palette`, `width`, `show_thoughts`, `opts`) —
-/// основа кэша. `opts` — базовые флаги markdown-рендера (таблицы/mermaid из
-/// настроек; `soft_break_as_newline` докидывает `push_body` для пользователя).
+/// Builds one message's contribution to the feed: width-wrapped lines with a colored
+/// role rail + a trailing separator (if the body doesn't already end on a blank line).
+/// A pure function of (`item`, `palette`, `width`, `show_thoughts`, `opts`) —
+/// the basis of the cache. `opts` — base markdown-render flags (tables/mermaid from
+/// settings; `soft_break_as_newline` is added on by `push_body` for the user).
 fn build_message_block(
     item: &FeedMessage,
     palette: &Palette,
@@ -429,14 +429,14 @@ fn build_message_block(
     opts: markdown::RenderOpts,
     loc: &'static Locale,
 ) -> Vec<Line<'static>> {
-    // Ширина содержимого под рейл (рейл = 2 колонки).
+    // Content width under the rail (rail = 2 columns).
     let inner = width.saturating_sub(RAIL.chars().count()).max(1);
     let rail = match item.role {
         FeedRole::User => palette.user,
         FeedRole::Assistant => palette.assistant,
         FeedRole::Note => palette.muted,
     };
-    // Тело сообщения собираем без рейла, в ширину `inner`.
+    // Build the message body without a rail, at width `inner`.
     let mut body: Vec<Line<'static>> = Vec::new();
     let glyphs = palette.glyphs();
     match item.role {
@@ -461,29 +461,29 @@ fn build_message_block(
         }
         FeedRole::Note => push_body(&mut body, item, palette, inner, opts),
     }
-    // Если тело уже заканчивается пустой строкой (рейловый отступ после tool-карточки),
-    // безрейловый межсообщенческий разделитель не добавляем — иначе двойной пропуск.
+    // If the body already ends on a blank line (a railed gap after a tool card),
+    // don't add the railless inter-message separator — otherwise a double gap.
     let body_ends_blank = body
         .last()
         .map(|l| l.spans.iter().all(|s| s.content.trim().is_empty()))
         .unwrap_or(false);
-    // Переносим по ширине содержимого и навешиваем рейл на каждый ряд.
+    // Wrap to the content width and attach a rail to every row.
     let mut out: Vec<Line<'static>> = Vec::new();
     for line in body {
         for wrapped in wrap::wrap_line(&line, inner) {
             out.push(prepend_rail(wrapped, rail));
         }
     }
-    // Разделитель между сообщениями — без рейла.
+    // Separator between messages — without a rail.
     if !body_ends_blank {
         out.push(Line::from(""));
     }
     out
 }
 
-/// Фингерпринт сообщения по всем полям, влияющим на рендер. Хеш O(len) против
-/// рендера O(len·markdown+syntect) — на порядки дешевле; стримящееся сообщение меняет
-/// `text` каждым чанком → фингерпринт не совпадает → пересчитывается только оно.
+/// A message's fingerprint over every field that affects rendering. A hash O(len) vs.
+/// a render O(len·markdown+syntect) — orders of magnitude cheaper; a streaming message
+/// changes `text` with every chunk → the fingerprint mismatches → only it gets recomputed.
 fn message_fingerprint(item: &FeedMessage) -> u64 {
     use std::hash::{Hash, Hasher};
     let mut h = std::collections::hash_map::DefaultHasher::new();
@@ -506,7 +506,7 @@ fn message_fingerprint(item: &FeedMessage) -> u64 {
     h.finish()
 }
 
-/// Строка-заголовок роли: иконка + название капсом, цветом «мягкого» варианта роли.
+/// A role-header line: icon + name in caps, colored with the role's "soft" variant.
 fn role_header(text: &str, color: Color) -> Line<'static> {
     Line::from(Span::styled(
         text.to_string(),
@@ -514,19 +514,19 @@ fn role_header(text: &str, color: Color) -> Line<'static> {
     ))
 }
 
-/// Прикрепляет цветной гуттер-рейл [`RAIL`] к строке (в начало), сохраняя стиль и
-/// выравнивание исходной строки.
+/// Prepends the colored gutter rail [`RAIL`] to a line, preserving the source line's
+/// style and alignment.
 ///
-/// Стиль уровня строки (`line.style`) **вплавляется в спаны содержимого**, а
-/// `out.style` сбрасывается в дефолт — иначе line-level модификаторы (напр. `DIM`
-/// у разделителей `───` и рамок таблиц, см. `shared::markdown`) затекали бы и на
-/// сам рейл (его спан задаёт только `fg`, не трогая модификаторы), и он выглядел бы
-/// другим цветом напротив таких строк.
+/// The line-level style (`line.style`) is **folded into the content spans**, and
+/// `out.style` is reset to default — otherwise line-level modifiers (e.g. `DIM`
+/// on `───` dividers and table borders, see `shared::markdown`) would leak onto
+/// the rail itself (its span only sets `fg`, not touching modifiers), making it
+/// look a different color next to such lines.
 fn prepend_rail(line: Line<'static>, rail: Color) -> Line<'static> {
     let mut spans = Vec::with_capacity(line.spans.len() + 1);
     spans.push(Span::styled(RAIL.to_string(), Style::new().fg(rail)));
-    // Финальный стиль спана = line.style.patch(span.style); складываем то же самое в
-    // сам спан, чтобы рейл не зависел от стиля строки.
+    // The span's final style = line.style.patch(span.style); we fold the same into
+    // the span itself, so the rail doesn't depend on the line's style.
     for span in line.spans {
         let merged = line.style.patch(span.style);
         spans.push(Span::styled(span.content, merged));
@@ -536,8 +536,8 @@ fn prepend_rail(line: Line<'static>, rail: Color) -> Line<'static> {
     out
 }
 
-/// Добавляет блок «мыслей»: свёрнутый — «пилюлей» с числом строк и клавишей,
-/// развёрнутый — содержимым на гуттере `│`.
+/// Adds the "thoughts" block: collapsed — a "pill" with a line count and a key hint,
+/// expanded — content on the `│` gutter.
 fn push_thoughts(
     lines: &mut Vec<Line<'static>>,
     thoughts: &str,
@@ -578,13 +578,13 @@ fn push_thoughts(
     }
 }
 
-/// Добавляет тело ответа ассистента с tool-блоками **на местах вызова**: фрагмент
-/// текста до вызова → tool-блок → следующий фрагмент и т.д. (см. spec §11.3).
-/// `text_offset` каждого вызова делит `item.text` на фрагменты markdown.
+/// Adds the assistant's reply body with tool blocks **at the call sites**: a text
+/// fragment before the call → tool block → the next fragment, etc. (see spec §11.3).
+/// Each call's `text_offset` splits `item.text` into markdown fragments.
 ///
-/// Tool-блоки отделяются от текста (и от соседних tool-блоков) пустой строкой
-/// сверху и снизу, чтобы не сливались с сообщением; идущие подряд вызовы делит
-/// ровно одна пустая строка (`ensure_blank_line` схлопывает соседние).
+/// Tool blocks are separated from text (and from neighboring tool blocks) by a blank
+/// line above and below, so they don't blend into the message; consecutive calls are
+/// separated by exactly one blank line (`ensure_blank_line` collapses adjacent ones).
 fn push_assistant_body(
     lines: &mut Vec<Line<'static>>,
     item: &FeedMessage,
@@ -600,17 +600,17 @@ fn push_assistant_body(
         if off > pos {
             push_markdown_fragment(lines, &text[pos..off], palette, width, opts);
         }
-        // Пустая строка перед вызовом (схлопывается, если предыдущая уже пуста —
-        // напр. между двумя подряд идущими вызовами).
+        // A blank line before the call (collapses if the previous one is already blank —
+        // e.g. between two consecutive calls).
         ensure_blank_line(lines);
         push_tool(lines, tool, palette, width, opts);
-        // Пустая (рейловая) строка ПОСЛЕ карточки — чтобы рейл продолжался под
-        // результатом независимо от того, идёт ли дальше текст/ещё вызов. Соседние
-        // `ensure_blank_line` схлопываются (перед следующим вызовом/текстом — no-op),
-        // а на конце сообщения этот отступ заменяет межсообщенческий разделитель
-        // (см. `build_lines`). Раньше отступ после последнего вызова давал лишь
-        // безрейловый разделитель, и рейл обрывался на результате — заметно у
-        // `python_exec`, чей результат часто и есть финал хода.
+        // A blank (railed) line AFTER the card — so the rail continues under
+        // the result regardless of whether text/another call follows. Adjacent
+        // `ensure_blank_line` calls collapse (a no-op before the next call/text),
+        // and at the end of a message this gap replaces the inter-message separator
+        // (see `build_lines`). Previously the gap after the last call only gave a
+        // railless separator, and the rail cut off at the result — noticeable for
+        // `python_exec`, whose result is often the round's finale.
         ensure_blank_line(lines);
         produced = true;
         pos = off;
@@ -618,15 +618,15 @@ fn push_assistant_body(
     if pos < text.len() && push_markdown_fragment(lines, &text[pos..], palette, width, opts) {
         produced = true;
     }
-    // Пустой стримящийся ответ (ещё ни текста, ни вызовов) — индикатор «…».
+    // An empty streaming reply (no text or calls yet) — an "…" indicator.
     if !produced && item.streaming {
         lines.push(Line::from("…").dim());
     }
 }
 
-/// Добавляет пустую строку-разделитель, если последняя строка ещё не пуста.
-/// Так соседние разделители (напр. «после вызова» + «перед следующим вызовом»)
-/// схлопываются в одну пустую строку. На пустом буфере — no-op (без ведущей пустой).
+/// Appends a blank separator line if the last line isn't already blank.
+/// This way adjacent separators (e.g. "after a call" + "before the next call")
+/// collapse into one blank line. A no-op on an empty buffer (no leading blank).
 fn ensure_blank_line(lines: &mut Vec<Line<'static>>) {
     let blank = lines
         .last()
@@ -637,7 +637,7 @@ fn ensure_blank_line(lines: &mut Vec<Line<'static>>) {
     }
 }
 
-/// Рендерит фрагмент текста как markdown (если он не пустой). Возвращает, выдал ли строки.
+/// Renders a text fragment as markdown (if not empty). Returns whether it produced any lines.
 fn push_markdown_fragment(
     lines: &mut Vec<Line<'static>>,
     fragment: &str,
@@ -653,10 +653,10 @@ fn push_markdown_fragment(
     true
 }
 
-/// Один tool-блок (карточка тул-колла): заголовок `⚒ имя(суффикс)` цветом
-/// инструмента, затем блоки аргументов и результата, подготовленные презентером
-/// [`present`] (подсвеченный код, консольный вывод, markdown-проза, плоский
-/// текст). Всё **переносится по ширине** (не обрезается). См. spec §11.3.
+/// A single tool block (a tool-call card): a header `⚒ name(suffix)` in the
+/// tool's color, then argument and result blocks prepared by the presenter
+/// [`present`] (highlighted code, console output, markdown prose, plain
+/// text). Everything **wraps by width** (not truncated). See spec §11.3.
 fn push_tool(
     lines: &mut Vec<Line<'static>>,
     tool: &FeedToolCall,
@@ -672,9 +672,9 @@ fn push_tool(
         Some(suffix) => format!("{}({suffix})", tool.name),
         None => tool.name.clone(),
     };
-    // Первый ряд с иконкой ⚒ (эмодзи-глиф шириной 2 — за ним два пробела, чтобы он
-    // не сливался с именем), продолжения выравниваем под имя. В режиме
-    // совместимости — ASCII-префикс той же роли (см. GlyphSet::tool_head).
+    // The first row carries the ⚒ icon (a width-2 emoji glyph — followed by two spaces so
+    // it doesn't merge with the name), continuations align under the name. In
+    // compatibility mode — an ASCII prefix of the same role (see GlyphSet::tool_head).
     let glyphs = palette.glyphs();
     push_wrapped(
         lines,
@@ -692,9 +692,9 @@ fn push_tool(
     }
 }
 
-/// Рисует один блок tool-карточки. `is_result` меняет ведущий гуттер: результат
-/// начинается с `└ ` (углом), аргумент — с `│ ` (вертикальной чертой, «вложен под
-/// заголовок»). Гуттер `│`/`└` — WGL4-безопасен и в режиме совместимости.
+/// Draws one block of a tool card. `is_result` changes the leading gutter: the result
+/// starts with `└ ` (a corner), an argument with `│ ` (a vertical bar, "nested under
+/// the header"). The `│`/`└` gutter is WGL4-safe under compatibility mode too.
 fn push_block(
     lines: &mut Vec<Line<'static>>,
     block: &ToolBlock,
@@ -726,9 +726,9 @@ fn push_block(
     }
 }
 
-/// Рисует консольный вывод `python_exec`: stdout (цветом текста), stderr (цветом
-/// ошибки) и код возврата (цветом предупреждения) отдельными секциями. Каждая
-/// секция — метка на гуттере `└ ` и содержимое на `│ `.
+/// Draws `python_exec`'s console output: stdout (text color), stderr (error
+/// color), and the exit code (warning color) as separate sections. Each
+/// section — a label on the `└ ` gutter and content on `│ `.
 fn push_console(
     lines: &mut Vec<Line<'static>>,
     console: &present::Console,
@@ -759,10 +759,10 @@ fn push_console(
     }
 }
 
-/// Кладёт готовые (уже стилизованные) строки под гуттер-префиксами, перенося
-/// каждую по ширине. `first`/`cont` — префиксы первого/последующих рядов. Стиль
-/// уровня строки вплавляется в спаны содержимого (как в [`prepend_rail`]), чтобы
-/// line-level модификаторы (напр. `DIM` рамок таблиц) не затекали на гуттер.
+/// Places ready (already styled) lines under gutter prefixes, wrapping
+/// each by width. `first`/`cont` — prefixes for the first/subsequent rows. The
+/// line-level style is folded into the content spans (as in [`prepend_rail`]), so
+/// line-level modifiers (e.g. `DIM` on table borders) don't leak onto the gutter.
 fn push_gutter_lines(
     lines: &mut Vec<Line<'static>>,
     src: Vec<Line<'static>>,
@@ -793,10 +793,10 @@ fn push_gutter_lines(
     }
 }
 
-/// Переносит `text` по визуальной ширине с гуттер-префиксами и кладёт в `lines`.
-/// `first` — префикс самого первого ряда блока, `cont` — всех последующих рядов
-/// (и продолжений переноса, и новых логических строк исходника). Каждая строка
-/// `text` переносится отдельно, сохраняя переводы строк.
+/// Wraps `text` by visual width with gutter prefixes and pushes into `lines`.
+/// `first` — the prefix for the block's very first row, `cont` — for all subsequent rows
+/// (both wrap continuations and new logical lines of the source). Each line of
+/// `text` is wrapped separately, preserving line breaks.
 fn push_wrapped(
     lines: &mut Vec<Line<'static>>,
     first: &str,
@@ -823,7 +823,7 @@ fn push_wrapped(
     }
 }
 
-/// Ближайшая (вниз) валидная граница символа для байтового смещения.
+/// The nearest (rounding down) valid char boundary for a byte offset.
 fn clamp_boundary(text: &str, mut off: usize) -> usize {
     while off < text.len() && !text.is_char_boundary(off) {
         off += 1;
@@ -831,7 +831,7 @@ fn clamp_boundary(text: &str, mut off: usize) -> usize {
     off.min(text.len())
 }
 
-/// Добавляет тело сообщения: markdown для user, dim-текст для заметок.
+/// Adds the message body: markdown for user, dim text for notes.
 fn push_body(
     lines: &mut Vec<Line<'static>>,
     item: &FeedMessage,
@@ -852,9 +852,9 @@ fn push_body(
             }
         }
         _ => {
-            // markdown → Text; переносим строки в общий буфер. Для сообщения
-            // пользователя одиночные переводы строки (Shift+Enter) сохраняем как
-            // реальные переносы (GFM-стиль), иначе текст слился бы в один абзац.
+            // markdown → Text; copy lines into the shared buffer. For a user
+            // message, single line breaks (Shift+Enter) are kept as real
+            // line breaks (GFM style), otherwise the text would merge into one paragraph.
             let opts = markdown::RenderOpts {
                 soft_break_as_newline: true,
                 ..opts
@@ -906,8 +906,8 @@ mod tests {
 
     #[test]
     fn role_headers_localized_for_all_langs() {
-        // Заголовки ролей ленты (ось B) следуют языку интерфейса: под `en` — «YOU»/
-        // «ASSISTANT», под `ru` — «ВЫ»/«АССИСТЕНТ» (без кириллицы в английском).
+        // The feed's role headers (axis B) follow the interface language: under `en` — "YOU"/
+        // "ASSISTANT", under `ru` — the Russian equivalents (no Cyrillic in English).
         for &lang in crate::shared::i18n::Lang::ALL {
             let loc = crate::shared::i18n::locale(lang);
             let mut feed = MessageFeed::new();
@@ -923,10 +923,10 @@ mod tests {
             assert!(
                 joined.contains(loc.t("ui.feed.role.user"))
                     && joined.contains(loc.t("ui.feed.role.assistant")),
-                "{lang:?}: заголовки ролей не из бандла"
+                "{lang:?}: role headers not from the bundle"
             );
         }
-        // Явно: en-заголовки латиницей.
+        // Explicitly: en headers in Latin script.
         let en = crate::shared::i18n::locale(crate::shared::i18n::Lang::En);
         assert_eq!(en.t("ui.feed.role.assistant"), "ASSISTANT");
         assert_eq!(en.t("ui.feed.role.user"), "YOU");
@@ -934,8 +934,8 @@ mod tests {
 
     #[test]
     fn compat_palette_renders_without_emoji() {
-        // Режим совместимости: заголовки ролей, свёрнутые «мысли» и tool-карточка
-        // рисуются безопасными глифами — эмодзи/редких символов в ленте нет.
+        // Compatibility mode: role headers, collapsed "thoughts", and the tool card
+        // are drawn with safe glyphs — no emoji/rare characters in the feed.
         let mut feed = MessageFeed::new();
         let mut m = msg(FeedRole::Assistant, "готово", "думал");
         m.tools.push(FeedToolCall {
@@ -954,18 +954,18 @@ mod tests {
         assert!(joined.contains("* АССИСТЕНТ") && joined.contains("> ВЫ"));
         assert!(
             joined.contains("# note_save"),
-            "ASCII tool-префикс: {joined}"
+            "ASCII tool prefix: {joined}"
         );
-        assert!(joined.contains("► мысли"), "компат-пилюля мыслей: {joined}");
+        assert!(joined.contains("► мысли"), "compat thoughts pill: {joined}");
         for banned in ['✦', '❯', '⚒', '▸'] {
-            assert!(!joined.contains(banned), "остался {banned}: {joined}");
+            assert!(!joined.contains(banned), "{banned} left behind: {joined}");
         }
     }
 
     #[test]
     fn python_tool_renders_highlighted_code_and_console() {
-        // python_exec: код аргумента — подсвеченным блоком (RGB-цвета), результат —
-        // консольной секцией stdout с содержимым.
+        // python_exec: the argument code — as a highlighted block (RGB colors), the result —
+        // as a stdout console section with content.
         let mut feed = MessageFeed::new();
         let mut m = msg(FeedRole::Assistant, "готово", "");
         m.tools.push(FeedToolCall {
@@ -980,23 +980,20 @@ mod tests {
             .iter()
             .flat_map(|l| l.spans.iter().map(|s| s.content.as_ref()))
             .collect();
-        // Заголовок без сырого JSON, код и консоль присутствуют.
+        // The header carries no raw JSON, code and console are present.
         assert!(joined.contains("python_exec"), "{joined}");
-        assert!(
-            !joined.contains("{\"code\""),
-            "сырой JSON не должен показываться"
-        );
-        assert!(joined.contains("print(42)"), "код: {joined}");
+        assert!(!joined.contains("{\"code\""), "raw JSON must not be shown");
+        assert!(joined.contains("print(42)"), "code: {joined}");
         assert!(
             joined.contains("stdout") && joined.contains("42"),
-            "консоль: {joined}"
+            "console: {joined}"
         );
-        // Подсветка проставила RGB-цвет хотя бы одному спану кода.
+        // Highlighting assigned an RGB color to at least one code span.
         let has_rgb = lines
             .iter()
             .flat_map(|l| l.spans.iter())
             .any(|s| s.content.contains("print") && matches!(s.style.fg, Some(Color::Rgb(..))));
-        assert!(has_rgb, "ожидался подсвеченный (RGB) спан кода");
+        assert!(has_rgb, "expected a highlighted (RGB) code span");
     }
 
     #[test]
@@ -1011,17 +1008,17 @@ mod tests {
             text_offset: 0,
         });
         let lines = feed.build_lines(&[m], &palette, 80, ru());
-        // Строка с текстом stderr окрашена цветом ошибки.
+        // The line with the stderr text is colored the error color.
         let err_line = lines
             .iter()
             .find(|l| l.spans.iter().any(|s| s.content.contains("Traceback here")));
-        let err_line = err_line.expect("строка stderr");
+        let err_line = err_line.expect("stderr line");
         assert!(
             err_line
                 .spans
                 .iter()
                 .any(|s| s.content.contains("Traceback") && s.style.fg == Some(palette.error)),
-            "stderr должен быть цветом ошибки"
+            "stderr must be the error color"
         );
         let joined: String = lines
             .iter()
@@ -1032,7 +1029,7 @@ mod tests {
 
     #[test]
     fn tool_call_renders_after_preceding_text_inline() {
-        // Текст до вызова → tool-блок → текст после вызова: проверяем порядок строк.
+        // Text before the call → tool block → text after the call: check the line order.
         let mut feed = MessageFeed::new();
         let mut m = msg(FeedRole::Assistant, "Ищу погоду.\n\nГотово: ясно.", "");
         let off = "Ищу погоду.".len();
@@ -1052,12 +1049,12 @@ mod tests {
         let idx_after = rows.iter().position(|r| r.contains("Готово")).unwrap();
         assert!(
             idx_before < idx_tool && idx_tool < idx_after,
-            "ожидался порядок: текст-до < вызов < текст-после, было {idx_before}/{idx_tool}/{idx_after}"
+            "expected order: text-before < call < text-after, got {idx_before}/{idx_tool}/{idx_after}"
         );
     }
 
-    /// Хелпер: рендер строк в список «есть ли в строке непустой контент» —
-    /// удобно искать пустые строки-разделители.
+    /// Helper: render lines into a list of "does the line have non-blank content" —
+    /// handy for finding blank separator lines.
     fn row_texts(lines: &[Line<'static>]) -> Vec<String> {
         lines
             .iter()
@@ -1065,14 +1062,14 @@ mod tests {
             .collect()
     }
 
-    /// Пустой ли визуальный ряд после снятия гуттер-рейла (`▌` + пробелы).
+    /// Whether a visual row is blank once the gutter rail (`▌` + spaces) is stripped.
     fn is_blank_row(r: &str) -> bool {
         r.trim_matches(|c| c == '▌' || c == ' ').is_empty()
     }
 
     #[test]
     fn tool_block_separated_from_text_by_blank_lines() {
-        // текст-до → вызов → текст-после: вокруг вызова должны быть пустые строки.
+        // text-before → call → text-after: there should be blank lines around the call.
         let mut feed = MessageFeed::new();
         let mut m = msg(FeedRole::Assistant, "доПОСЛЕ", "");
         m.tools.push(FeedToolCall {
@@ -1085,27 +1082,27 @@ mod tests {
         let i_before = rows.iter().position(|r| r.contains("до")).unwrap();
         let i_tool = rows.iter().position(|r| r.contains("note_save")).unwrap();
         let i_after = rows.iter().position(|r| r.contains("ПОСЛЕ")).unwrap();
-        // Между текстом-до и вызовом — ровно одна пустая строка (с рейлом-гуттером).
+        // Between text-before and the call — exactly one blank line (railed/guttered).
         assert!(rows[i_before + 1..i_tool].iter().all(|r| is_blank_row(r)));
         assert_eq!(
             i_tool - i_before,
             2,
-            "ожидалась одна пустая строка перед вызовом"
+            "expected one blank line before the call"
         );
-        // Между вызовом и текстом-после — ровно одна пустая строка.
+        // Between the call and text-after — exactly one blank line.
         assert_eq!(
             i_after - i_tool,
             2,
-            "ожидалась одна пустая строка после вызова"
+            "expected one blank line after the call"
         );
     }
 
     #[test]
     fn tool_last_in_message_keeps_railed_trailing_blank() {
-        // Вызов — последний элемент сообщения (результат = финал хода, типично для
-        // python_exec). После карточки должен идти РЕЙЛОВЫЙ отступ (рейл продолжается
-        // под результатом), а не безрейловый межсообщенческий разделитель, и ровно
-        // один (без двойного пропуска).
+        // The call is the message's last element (the result = the round's finale, typical for
+        // python_exec). A RAILED gap should follow the card (the rail continues
+        // under the result), not a railless inter-message separator, and exactly
+        // one (no double gap).
         let mut feed = MessageFeed::new();
         let mut m = msg(FeedRole::Assistant, "Считаю.", "");
         m.tools.push(FeedToolCall {
@@ -1118,14 +1115,14 @@ mod tests {
         let rows = row_texts(&feed.build_lines(&[m, next], &Palette::default(), 60, ru()));
         let i_result = rows.iter().position(|r| r.contains('1')).unwrap();
         let i_next = rows.iter().position(|r| r.contains("дальше")).unwrap();
-        // Между результатом и заголовком следующего сообщения — ровно одна пустая
-        // строка, и она с рейлом (не безрейловый разделитель `[]`).
+        // Between the result and the next message's header — exactly one blank
+        // line, and it carries a rail (not a railless separator `[]`).
         let between: Vec<&String> = rows[i_result + 1..i_next].iter().collect();
         let blanks = between.iter().filter(|r| is_blank_row(r)).count();
-        assert_eq!(blanks, 1, "ожидалась одна пустая строка: {between:?}");
+        assert_eq!(blanks, 1, "expected one blank line: {between:?}");
         assert!(
             rows[i_next - 1].contains('▌'),
-            "отступ после карточки должен нести рейл: {:?}",
+            "the gap after the card should carry a rail: {:?}",
             rows[i_next - 1]
         );
     }
@@ -1145,12 +1142,8 @@ mod tests {
         let rows = row_texts(&feed.build_lines(&[m], &Palette::default(), 80, ru()));
         let i1 = rows.iter().position(|r| r.contains("first_tool")).unwrap();
         let i2 = rows.iter().position(|r| r.contains("second_tool")).unwrap();
-        // Между двумя подряд идущими вызовами — ровно одна пустая строка.
-        assert_eq!(
-            i2 - i1,
-            2,
-            "между соседними вызовами должна быть одна пустая строка"
-        );
+        // Between two consecutive calls — exactly one blank line.
+        assert_eq!(i2 - i1, 2, "expected one blank line between adjacent calls");
         assert!(rows[i1 + 1..i2].iter().all(|r| is_blank_row(r)));
     }
 
@@ -1158,7 +1151,7 @@ mod tests {
     fn long_tool_result_wraps_not_truncated() {
         let mut feed = MessageFeed::new();
         let mut m = msg(FeedRole::Assistant, "ок", "");
-        let long = "слово ".repeat(40); // ~240 символов — заведомо шире узкой ленты
+        let long = "слово ".repeat(40); // ~240 characters — definitely wider than the narrow feed
         m.tools.push(FeedToolCall {
             name: "web_search".into(),
             arguments: String::new(),
@@ -1166,8 +1159,8 @@ mod tests {
             text_offset: 0,
         });
         let lines = feed.build_lines(&[m], &Palette::default(), 30, ru());
-        // Результат не обрезан (нет «…») и разложен на несколько рядов (рейл + гуттер
-        // `└`/отступ продолжения).
+        // The result isn't truncated (no "…") and is laid out across several rows (rail + gutter
+        // `└`/continuation indent).
         let gutter_rows = lines
             .iter()
             .filter(|l| {
@@ -1177,7 +1170,7 @@ mod tests {
             .count();
         assert!(
             gutter_rows > 1,
-            "длинный результат должен переноситься, рядов: {gutter_rows}"
+            "a long result should wrap, rows: {gutter_rows}"
         );
         let joined: String = lines
             .iter()
@@ -1185,7 +1178,7 @@ mod tests {
             .collect();
         assert!(
             !joined.contains('…'),
-            "результат не должен обрезаться многоточием"
+            "the result must not be truncated with an ellipsis"
         );
     }
 
@@ -1193,7 +1186,7 @@ mod tests {
     fn followup_starts_new_bubble_and_hides_control_tool() {
         use crate::entities::message::{Message, MessageRole, ToolCallRecord};
 
-        // A1 (с вызовом send_followup_message) → tool → A2 (new_bubble).
+        // A1 (with a send_followup_message call) → tool → A2 (new_bubble).
         let mut a1 = Message::assistant("Первое сообщение.");
         a1.tool_calls = vec![ToolCallRecord {
             thought_signature: None,
@@ -1212,21 +1205,21 @@ mod tests {
         a2.new_bubble = true;
 
         let feed = FeedMessage::from_messages(&[a1, tool_msg, a2]);
-        // Два отдельных пузыря ассистента (не склеены).
+        // Two separate assistant bubbles (not merged).
         assert_eq!(feed.len(), 2);
         assert_eq!(feed[0].text, "Первое сообщение.");
         assert_eq!(feed[1].text, "Второе сообщение.");
-        // Служебный вызов управляющего инструмента в ленте не показывается.
+        // A control tool's service call isn't shown in the feed.
         assert!(
             feed[0].tools.is_empty(),
-            "control-вызов не должен давать tool-блок"
+            "a control call should not produce a tool block"
         );
     }
 
     #[test]
     fn assistant_rounds_without_new_bubble_still_merge() {
         use crate::entities::message::{Message, MessageRole, ToolCallRecord};
-        // Обычный agentic-раунд (note_save) по-прежнему склеивается в один пузырь.
+        // A regular agentic round (note_save) still merges into one bubble.
         let mut a1 = Message::assistant("Ищу.");
         a1.tool_calls = vec![ToolCallRecord {
             thought_signature: None,
@@ -1242,8 +1235,8 @@ mod tests {
         };
         let a2 = Message::assistant("Готово.");
         let feed = FeedMessage::from_messages(&[a1, tool_msg, a2]);
-        assert_eq!(feed.len(), 1, "обычные раунды склеиваются");
-        assert_eq!(feed[0].tools.len(), 1, "обычный tool-блок виден");
+        assert_eq!(feed.len(), 1, "regular rounds merge");
+        assert_eq!(feed[0].tools.len(), 1, "a regular tool block is visible");
     }
 
     #[test]
@@ -1293,8 +1286,8 @@ mod tests {
 
     #[test]
     fn user_message_preserves_single_newlines() {
-        // Сообщение пользователя с Shift+Enter (одиночный \n) должно сохранять
-        // переносы строк, а не сливаться в один абзац (GFM-стиль).
+        // A user message with Shift+Enter (a single \n) should preserve
+        // line breaks, not merge into one paragraph (GFM style).
         let mut feed = MessageFeed::new();
         let lines = feed.build_lines(
             &[msg(FeedRole::User, "Привет!\nКак дела?", "")],
@@ -1307,21 +1300,21 @@ mod tests {
         let i_second = rows.iter().position(|r| r.contains("Как дела?")).unwrap();
         assert_ne!(
             i_first, i_second,
-            "две строки должны оказаться на разных визуальных рядах"
+            "the two lines should end up on different visual rows"
         );
-        // И ни одна строка не должна содержать обе фразы (не склеены в одну).
+        // And no line should contain both phrases (not merged into one).
         assert!(
             !rows
                 .iter()
                 .any(|r| r.contains("Привет!") && r.contains("Как дела?")),
-            "строки не должны сливаться в один ряд"
+            "lines must not merge into a single row"
         );
     }
 
     #[test]
     fn markdown_is_applied_to_body() {
         let mut feed = MessageFeed::new();
-        // LaTeX действует внутри $…$ (delimiter-scoped, см. shared::markdown)
+        // LaTeX applies inside $…$ (delimiter-scoped, see shared::markdown)
         let lines = feed.build_lines(
             &[msg(FeedRole::Assistant, "формула $x^2$", "")],
             &Palette::default(),
@@ -1337,8 +1330,8 @@ mod tests {
 
     #[test]
     fn rail_is_not_dimmed_next_to_table_borders() {
-        // Рейл слева должен иметь чистый цвет роли без line-level модификаторов
-        // (напр. DIM у рамок таблиц/разделителей), иначе он другого цвета напротив них.
+        // The left rail should have a clean role color with no line-level modifiers
+        // (e.g. DIM on table borders/dividers), otherwise it's a different color next to them.
         let mut feed = MessageFeed::new();
         let table = "| a | b |\n|---|---|\n| 1 | 2 |";
         let lines = feed.build_lines(
@@ -1348,13 +1341,13 @@ mod tests {
             ru(),
         );
         for line in &lines {
-            // Рейл — первый спан с символом «▌».
+            // The rail — the first span with the "▌" character.
             if let Some(rail) = line.spans.first()
                 && rail.content.starts_with('▌')
             {
                 assert!(
                     !rail.style.add_modifier.contains(Modifier::DIM),
-                    "рейл не должен наследовать DIM от строки таблицы/разделителя"
+                    "the rail must not inherit DIM from a table/divider line"
                 );
             }
         }
@@ -1362,9 +1355,9 @@ mod tests {
 
     #[test]
     fn table_row_separators_follow_setting_and_invalidate_cache() {
-        // По умолчанию (зеркало дефолта конфига) разделителей между строками нет —
-        // только под заголовком; включение настройки добавляет их, а смена значения
-        // сбрасывает кэш (сообщение/ширина/палитра те же — меняется только флаг).
+        // By default (mirroring the config default) there are no row separators —
+        // only under the header; enabling the setting adds them, and changing the value
+        // resets the cache (same message/width/palette — only the flag changes).
         let mut feed = MessageFeed::new();
         let palette = Palette::default();
         let table = "| a | b |\n|---|---|\n| 1 | 2 |\n| 3 | 4 |";
@@ -1375,21 +1368,21 @@ mod tests {
                 .count()
         };
         let off = feed.build_lines(&[msg(FeedRole::Assistant, table, "")], &palette, 80, ru());
-        assert_eq!(mids(&off), 1, "по умолчанию: только под заголовком");
+        assert_eq!(mids(&off), 1, "by default: only under the header");
         feed.set_table_row_separators(true);
         let on = feed.build_lines(&[msg(FeedRole::Assistant, table, "")], &palette, 80, ru());
         assert_eq!(
             mids(&on),
             2,
-            "включено: разделитель заголовка + один межстрочный (кэш сброшен по ключу)"
+            "enabled: header separator + one row separator (cache reset by key)"
         );
     }
 
     #[test]
     fn render_mermaid_follows_setting_and_invalidates_cache() {
-        // По умолчанию (зеркало дефолта конфига) mermaid-блок рендерится диаграммой;
-        // выключение настройки возвращает исходник, а смена значения сбрасывает кэш
-        // (сообщение/ширина/палитра те же — меняется только флаг).
+        // By default (mirroring the config default) a mermaid block renders as a diagram;
+        // turning the setting off reverts to the source, and changing the value resets the
+        // cache (same message/width/palette — only the flag changes).
         let mut feed = MessageFeed::new();
         let palette = Palette::default();
         let md = "```mermaid\nflowchart LR\n    A[Start] --> B[End]\n```";
@@ -1402,21 +1395,21 @@ mod tests {
         let on = feed.build_lines(&[msg(FeedRole::Assistant, md, "")], &palette, 90, ru());
         assert!(
             joined(&on).contains('┌') && !joined(&on).contains("```"),
-            "по умолчанию включено — диаграмма, не исходник"
+            "on by default — a diagram, not the source"
         );
         feed.set_render_mermaid(false);
         let off = feed.build_lines(&[msg(FeedRole::Assistant, md, "")], &palette, 90, ru());
         assert!(
             joined(&off).contains("```mermaid"),
-            "выключено — исходник (кэш сброшен по ключу)"
+            "disabled — source (cache reset by key)"
         );
     }
 
     #[test]
     fn streamed_mermaid_stays_source_until_fence_closes() {
-        // Симуляция стрима: пока закрывающий забор не доехал, блок показывается
-        // исходником (не мерцающим огрызком диаграммы); с приходом забора
-        // фингерпринт сообщения меняется, кэш пересчитывает блок → диаграмма.
+        // Simulating streaming: until the closing fence arrives, the block shows
+        // as source (not a flickering diagram stub); once the fence arrives,
+        // the message's fingerprint changes, the cache recomputes the block → a diagram.
         let mut feed = MessageFeed::new();
         let palette = Palette::default();
         let joined = |lines: &[Line<'static>]| -> String {
@@ -1425,20 +1418,20 @@ mod tests {
                 .flat_map(|l| l.spans.iter().map(|s| s.content.as_ref()))
                 .collect()
         };
-        // Чанк 1: незакрытый, но синтаксически валидный огрызок.
+        // Chunk 1: unclosed but syntactically valid stub.
         let partial = "```mermaid\nflowchart LR\n    A[Start] --> B[End]";
         let mid = feed.build_lines(&[msg(FeedRole::Assistant, partial, "")], &palette, 90, ru());
         assert!(
             joined(&mid).contains("```mermaid") && !joined(&mid).contains('┌'),
-            "во время стрима — исходник, не диаграмма: {}",
+            "during streaming — source, not a diagram: {}",
             joined(&mid)
         );
-        // Чанк 2: доехал закрывающий забор — то же сообщение, текст дописан.
+        // Chunk 2: the closing fence arrived — same message, text extended.
         let full = "```mermaid\nflowchart LR\n    A[Start] --> B[End]\n```";
         let done = feed.build_lines(&[msg(FeedRole::Assistant, full, "")], &palette, 90, ru());
         assert!(
             joined(&done).contains('┌') && !joined(&done).contains("```"),
-            "по дописывании забора — диаграмма: {}",
+            "once the fence completes — a diagram: {}",
             joined(&done)
         );
     }
@@ -1453,13 +1446,13 @@ mod tests {
 
     #[test]
     fn scroll_sets_take_once_flag() {
-        // Прокрутка (вверх/вниз) взводит флаг, `take_scrolled` забирает его один раз
-        // (петля по нему делает полную перерисовку — стирает артефакты VS16-эмодзи).
+        // Scrolling (up/down) raises the flag, `take_scrolled` takes it exactly once
+        // (the loop, on it, does a full repaint — erasing VS16-emoji artifacts).
         let mut feed = MessageFeed::new();
-        assert!(!feed.take_scrolled(), "до прокрутки флаг не взведён");
+        assert!(!feed.take_scrolled(), "flag not raised before scrolling");
         feed.scroll_up(3);
-        assert!(feed.take_scrolled(), "после прокрутки флаг взведён");
-        assert!(!feed.take_scrolled(), "флаг забирается однократно");
+        assert!(feed.take_scrolled(), "flag raised after scrolling");
+        assert!(!feed.take_scrolled(), "the flag is taken exactly once");
         feed.scroll_down(3);
         assert!(feed.take_scrolled());
     }
@@ -1493,7 +1486,7 @@ mod tests {
 
     #[test]
     fn scrollbar_appears_only_when_feed_overflows() {
-        // Бегунок «█» на правой рамке — только когда строк больше высоты ленты.
+        // The "█" thumb on the right border — only when there are more lines than the feed's height.
         let right_col = |term: &Terminal<TestBackend>| -> Vec<String> {
             let buf = term.backend().buffer();
             let area = buf.area;
@@ -1508,7 +1501,7 @@ mod tests {
             .unwrap();
         assert!(
             !right_col(&term).iter().any(|s| s == "█"),
-            "короткая лента — без бегунка"
+            "a short feed — no scrollbar thumb"
         );
         let many: Vec<FeedMessage> = (0..30)
             .map(|i| msg(FeedRole::User, &format!("строка {i}"), ""))
@@ -1517,11 +1510,11 @@ mod tests {
             .unwrap();
         assert!(
             right_col(&term).iter().any(|s| s == "█"),
-            "переполненная лента — с бегунком"
+            "an overflowing feed — with a scrollbar thumb"
         );
     }
 
-    /// Собирает содержимое всех спанов строки в кортеж (текст, fg) — для сравнения.
+    /// Collects a line's span content into a tuple (text, fg) — for comparison.
     fn line_sig(l: &Line<'static>) -> Vec<(String, Option<Color>)> {
         l.spans
             .iter()
@@ -1529,8 +1522,8 @@ mod tests {
             .collect()
     }
 
-    /// Тёплый кэш даёт построчно идентичный вывод свежему рендеру — по разным
-    /// сценариям, ширинам, палитрам и состоянию показа мыслей.
+    /// A warm cache gives line-for-line identical output to a fresh render — across
+    /// scenarios, widths, palettes, and thoughts-display state.
     #[test]
     fn cache_matches_fresh_render() {
         let tool_msg = {
@@ -1563,7 +1556,7 @@ mod tests {
                         if show {
                             warm.toggle_thoughts();
                         }
-                        // прогреваем кэш повторными вызовами
+                        // warm the cache with repeated calls
                         let _ = warm.build_lines(messages, &palette, width, ru());
                         let _ = warm.build_lines(messages, &palette, width, ru());
                         let warm_lines = warm.build_lines(messages, &palette, width, ru());
@@ -1576,15 +1569,15 @@ mod tests {
 
                         let w: Vec<_> = warm_lines.iter().map(line_sig).collect();
                         let f: Vec<_> = fresh_lines.iter().map(line_sig).collect();
-                        assert_eq!(w, f, "кэш разошёлся: width={width} show={show}");
+                        assert_eq!(w, f, "cache diverged: width={width} show={show}");
                     }
                 }
             }
         }
     }
 
-    /// Стриминг: на каждом шаге роста текста тёплый кэш совпадает со свежим рендером
-    /// (пересчитывается только хвостовое сообщение).
+    /// Streaming: at every step of text growth, a warm cache matches a fresh render
+    /// (only the tail message gets recomputed).
     #[test]
     fn cache_matches_fresh_during_streaming() {
         let mut warm = MessageFeed::new();
@@ -1601,11 +1594,11 @@ mod tests {
             let fresh_lines = fresh.build_lines(&messages, &palette, 60, ru());
             let w: Vec<_> = warm_lines.iter().map(line_sig).collect();
             let f: Vec<_> = fresh_lines.iter().map(line_sig).collect();
-            assert_eq!(w, f, "стрим-кэш разошёлся на end={end}");
+            assert_eq!(w, f, "stream cache diverged at end={end}");
         }
     }
 
-    /// Правка текста сообщения инвалидирует кэш (новый текст виден, старого нет).
+    /// Editing a message's text invalidates the cache (new text visible, old one gone).
     #[test]
     fn cache_invalidates_on_message_edit() {
         let mut feed = MessageFeed::new();
@@ -1630,11 +1623,11 @@ mod tests {
         );
         let j2 = join(&l2);
         assert!(j2.contains("другой текст"), "{j2}");
-        assert!(!j2.contains("первый вариант"), "устаревший кэш: {j2}");
+        assert!(!j2.contains("первый вариант"), "stale cache: {j2}");
     }
 
-    /// Усечение истории (Ctrl+E/regenerate): после укорачивания вывод тёплого кэша
-    /// совпадает со свежим (хвост кэша отброшен).
+    /// History truncation (Ctrl+E/regenerate): after shortening, a warm cache's output
+    /// matches a fresh one (the cache's tail is dropped).
     #[test]
     fn cache_handles_history_truncation() {
         let mut feed = MessageFeed::new();

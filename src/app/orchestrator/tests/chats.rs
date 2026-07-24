@@ -1,5 +1,5 @@
-//! Тесты оркестратора — список чатов, черновики, bootstrap, восстановление активного. Часть модуля [`super`]
-//! (фикстуры в mod.rs). См. docs/history/refactoring-god-objects.md, этап 3.
+//! Orchestrator tests — the chat list, drafts, bootstrap, restoring the active chat. Part of the [`super`]
+//! module (fixtures in mod.rs). See docs/history/refactoring-god-objects.md, stage 3.
 
 use super::*;
 
@@ -20,7 +20,7 @@ fn new_chat_value_uses_chosen_profile_with_greeting() {
     assert_eq!(chat.messages[0].role, MessageRole::Assistant);
     assert_eq!(chat.messages[0].text, "Здравствуйте!");
 
-    // None → первый профиль, без приветствия.
+    // None → the first profile, no greeting.
     let chat = orch.new_chat_value(None);
     assert_eq!(chat.profile_id, id1);
     assert!(chat.messages.is_empty());
@@ -31,7 +31,7 @@ fn copy_chat_emits_clipboard_text_or_error_when_empty() {
     let (_d, mut orch, mut rx) = bare_orch_rx();
     let profile = Profile::new("P", "sys");
 
-    // Чат с перепиской → событие CopyToClipboard с текстом ролей.
+    // A chat with a conversation → a CopyToClipboard event with role-labeled text.
     let mut chat = Chat::from_profile(&profile, "Чат");
     let id = chat.id;
     chat.push_message(Message::user("привет"));
@@ -43,10 +43,10 @@ fn copy_chat_emits_clipboard_text_or_error_when_empty() {
             assert!(text.contains("Пользователь:\nпривет"));
             assert!(text.contains("Ассистент:\nздравствуйте"));
         }
-        other => panic!("ожидался CopyToClipboard, получено {other:?}"),
+        other => panic!("expected CopyToClipboard, got {other:?}"),
     }
 
-    // Пустой чат (нет сообщений) → ошибка списка, не текст.
+    // An empty chat (no messages) → a list error, not text.
     let empty = Chat::from_profile(&profile, "Пустой");
     let empty_id = empty.id;
     orch.chats.push(empty);
@@ -69,11 +69,11 @@ fn set_draft_persists_to_active_chat_without_bumping_modified() {
     assert_eq!(c.draft, "недописанный текст");
     assert_eq!(
         c.modified_at, modified,
-        "правка черновика не поднимает чат в списке"
+        "editing a draft doesn't bump the chat up the list"
     );
-    assert!(orch.saves.is_dirty(id), "чат помечен для сохранения");
+    assert!(orch.saves.is_dirty(id), "the chat is flagged for saving");
 
-    // Повторная установка того же текста — без повторной пометки (no-op).
+    // Setting the same text again — no re-flagging (a no-op).
     orch.saves.take();
     orch.handle_set_draft("недописанный текст".into());
     assert!(!orch.saves.is_dirty(id));
@@ -96,11 +96,11 @@ async fn draft_persists_and_clears_on_send() {
         _ => unreachable!(),
     };
 
-    // Черновик сохраняется в файле чата.
+    // The draft is saved into the chat file.
     cmd_tx
         .send(AppCommand::SetDraft("недописанное".into()))
         .unwrap();
-    // Отправка очищает черновик.
+    // Sending clears the draft.
     cmd_tx
         .send(AppCommand::SendMessage("привет".into()))
         .unwrap();
@@ -113,7 +113,7 @@ async fn draft_persists_and_clears_on_send() {
 
     let reopened = Storage::open(Paths::with_root(&root)).unwrap();
     let chat = reopened.json().load_chat(chat_id).unwrap().unwrap();
-    assert_eq!(chat.draft, "", "после отправки черновик очищен");
+    assert_eq!(chat.draft, "", "the draft is cleared after sending");
 }
 
 #[tokio::test]
@@ -148,7 +148,7 @@ async fn bootstrap_emits_chat_list_and_active_chat() {
         .await
         .unwrap();
     if let AppEvent::ChatList(chats) = list {
-        assert_eq!(chats.len(), 1, "должен создаться один чат по умолчанию");
+        assert_eq!(chats.len(), 1, "one default chat should be created");
     }
     let active = wait_for(&mut evt_rx, |e| matches!(e, AppEvent::ChatActivated { .. }))
         .await
@@ -159,16 +159,16 @@ async fn bootstrap_emits_chat_list_and_active_chat() {
     handle.await.unwrap();
 }
 
-/// Последний открытый чат запоминается в настройках и восстанавливается при
-/// следующем запуске — даже если другой чат изменён позже (обычный fallback выбрал
-/// бы самый недавний).
+/// The last-opened chat is remembered in settings and restored on the
+/// next launch — even if another chat was modified later (a plain fallback would
+/// pick the most recent one).
 #[tokio::test]
 async fn remembers_and_restores_last_opened_chat() {
     let dir = tempfile::tempdir().unwrap();
     let root = dir.path().to_path_buf();
 
-    // Запуск 1: bootstrap создаёт дефолтный чат, добавляем второй (он становится
-    // активным и изменённым позже), затем переключаемся обратно на первый.
+    // Run 1: bootstrap creates the default chat, we add a second one (it becomes
+    // active and modified later), then switch back to the first.
     let first_id;
     {
         let storage = Arc::new(Storage::open(Paths::with_root(&root)).unwrap());
@@ -214,13 +214,13 @@ async fn remembers_and_restores_last_opened_chat() {
         handle.await.unwrap();
     }
 
-    // Настройки на диске помнят первый чат.
+    // The settings on disk remember the first chat.
     let persisted = Storage::open(Paths::with_root(&root)).unwrap();
     let config = persisted.json().load_config().unwrap();
     assert_eq!(config.last_active_chat, Some(first_id));
 
-    // Запуск 2 на тех же данных (конфиг загружается с диска, как в main.rs):
-    // восстанавливается именно первый чат.
+    // Run 2 on the same data (the config is loaded from disk, as in main.rs):
+    // exactly the first chat is restored.
     {
         let storage = Arc::new(Storage::open(Paths::with_root(&root)).unwrap());
         let (cmd_tx, cmd_rx) = unbounded_channel();
@@ -311,7 +311,7 @@ async fn delete_active_chat_creates_replacement() {
     };
 
     cmd_tx.send(AppCommand::DeleteChat(id)).unwrap();
-    // После удаления единственного чата создаётся новый и активируется.
+    // After deleting the only chat, a new one is created and activated.
     let active2 = wait_for(
         &mut evt_rx,
         |e| matches!(e, AppEvent::ChatActivated { id: nid, .. } if *nid != id),

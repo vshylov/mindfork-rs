@@ -1,10 +1,10 @@
-//! Инструменты доступа к локальным файлам (spec §9.3, §13.2): `fs_read`,
-//! `fs_write`, `fs_list`. Под глобальным выключателем `tools.fs_enabled` (по
-//! умолчанию выключены — инструмент может прочитать/перезаписать любой файл).
+//! Local file-access tools (spec §9.3, §13.2): `fs_read`,
+//! `fs_write`, `fs_list`. Under the global switch `tools.fs_enabled` (off
+//! by default — the tool can read/overwrite any file).
 //!
-//! Опциональная «песочница» `tools.fs_root`: если задана, все пути обязаны лежать
-//! внутри неё (защита от выхода через `..`/абсолютные пути). Если не задана —
-//! доступ ко всей файловой системе (под выключателем, как у Python).
+//! An optional "sandbox" `tools.fs_root`: if set, all paths must lie
+//! inside it (protection against escaping via `..`/absolute paths). If unset —
+//! access to the whole file system (under the switch, like Python).
 
 use std::path::{Path, PathBuf};
 
@@ -14,20 +14,20 @@ use crate::entities::profile::ToolId;
 
 use super::{Tool, ToolContext, ToolOutcome};
 
-/// Имена инструментов (гейтятся выключателем `tools.fs_enabled`).
+/// Tool names (gated by the `tools.fs_enabled` switch).
 pub const FS_READ_ID: &str = "fs_read";
 pub const FS_WRITE_ID: &str = "fs_write";
 pub const FS_LIST_ID: &str = "fs_list";
 
-/// Потолок размера читаемого/возвращаемого текста (символов) — защита контекста.
+/// Ceiling on the size of read/returned text (characters) — protects the context.
 const MAX_READ_CHARS: usize = 50_000;
-/// Потолок числа элементов в листинге каталога.
+/// Ceiling on the number of entries in a directory listing.
 const MAX_LIST_ENTRIES: usize = 500;
 
-/// Общая «песочница» файловых инструментов: опциональный корень-ограничитель.
+/// The shared "sandbox" for file tools: an optional restricting root.
 #[derive(Clone)]
 struct FsRoot {
-    /// Каноничный каталог-ограничитель (`None` → без ограничения).
+    /// The canonical restricting directory (`None` → no restriction).
     root: Option<PathBuf>,
 }
 
@@ -40,10 +40,10 @@ impl FsRoot {
         }
     }
 
-    /// Резолвит путь из аргумента и проверяет, что он внутри песочницы (если задана).
-    /// Для существующих путей сравнение идёт по каноничной форме; для ещё не
-    /// существующих (запись нового файла) канонизируется родительский каталог.
-    /// `loc` — язык каркаса для текстов ошибок.
+    /// Resolves the path from the argument and checks it's inside the sandbox (if set).
+    /// For existing paths, comparison uses the canonical form; for ones that don't
+    /// yet exist (writing a new file), the parent directory is canonicalized.
+    /// `loc` — the scaffold language for error texts.
     fn resolve(&self, raw: &str, loc: &crate::shared::i18n::Locale) -> Result<PathBuf> {
         let raw = raw.trim();
         if raw.is_empty() {
@@ -59,13 +59,13 @@ impl FsRoot {
                 &[("path", &root.display().to_string())],
             )
         })?;
-        // Абсолютный путь берётся как есть, относительный — от корня песочницы.
+        // An absolute path is taken as-is, a relative one — from the sandbox root.
         let candidate = if requested.is_absolute() {
             requested
         } else {
             root.join(&requested)
         };
-        // Каноничная форма самого пути (если существует) либо его родителя + имя.
+        // The canonical form of the path itself (if it exists), or its parent + name.
         let canonical = match candidate.canonicalize() {
             Ok(c) => c,
             Err(_) => {
@@ -94,7 +94,7 @@ impl FsRoot {
     }
 }
 
-/// Достаёт строковый аргумент `path`.
+/// Extracts the string argument `path`.
 fn arg_path(args: &serde_json::Value, loc: &crate::shared::i18n::Locale) -> Result<String> {
     args.get("path")
         .and_then(|v| v.as_str())
@@ -103,7 +103,7 @@ fn arg_path(args: &serde_json::Value, loc: &crate::shared::i18n::Locale) -> Resu
         .ok_or_else(|| anyhow::anyhow!(loc.t("tool.fs.err.path_field_empty").to_string()))
 }
 
-/// Усекает строку до `max` символов (по границе символа) с пометкой.
+/// Truncates a string to `max` characters (on a character boundary) with a marker.
 fn truncate_chars(s: &str, max: usize, loc: &crate::shared::i18n::Locale) -> String {
     if s.chars().count() <= max {
         return s.to_string();
@@ -115,7 +115,7 @@ fn truncate_chars(s: &str, max: usize, loc: &crate::shared::i18n::Locale) -> Str
     )
 }
 
-/// `fs_read` — читает текстовый файл и возвращает его содержимое.
+/// `fs_read` — reads a text file and returns its content.
 pub struct FsRead {
     fs: FsRoot,
 }
@@ -137,7 +137,7 @@ impl Tool for FsRead {
         crate::features::tools::meta::ToolGroup::Files
     }
     fn ui_label(&self) -> &'static str {
-        "прочитать файл"
+        "read file"
     }
     fn gate(&self) -> Option<crate::features::tools::meta::ToolGate> {
         Some(crate::features::tools::meta::ToolGate::Fs)
@@ -166,7 +166,7 @@ impl Tool for FsRead {
                 )));
             }
         };
-        // Читаем как UTF-8 (с заменой неверных байтов) — бинарные файлы читать нечем.
+        // Read as UTF-8 (replacing invalid bytes) — nothing to read binary files with.
         let text = String::from_utf8_lossy(&bytes);
         Ok(ToolOutcome::text(truncate_chars(
             &text,
@@ -176,7 +176,7 @@ impl Tool for FsRead {
     }
 }
 
-/// `fs_write` — записывает (или дописывает) текст в файл.
+/// `fs_write` — writes (or appends) text to a file.
 pub struct FsWrite {
     fs: FsRoot,
 }
@@ -198,7 +198,7 @@ impl Tool for FsWrite {
         crate::features::tools::meta::ToolGroup::Files
     }
     fn ui_label(&self) -> &'static str {
-        "записать файл"
+        "write file"
     }
     fn gate(&self) -> Option<crate::features::tools::meta::ToolGate> {
         Some(crate::features::tools::meta::ToolGate::Fs)
@@ -256,7 +256,7 @@ impl Tool for FsWrite {
     }
 }
 
-/// Дописывает в конец файла (создаёт, если нет).
+/// Appends to the end of a file (creates it if missing).
 async fn append_to(path: &Path, content: &str) -> std::io::Result<()> {
     use tokio::io::AsyncWriteExt;
     let mut file = tokio::fs::OpenOptions::new()
@@ -267,7 +267,7 @@ async fn append_to(path: &Path, content: &str) -> std::io::Result<()> {
     file.write_all(content.as_bytes()).await
 }
 
-/// `fs_list` — перечисляет содержимое каталога.
+/// `fs_list` — lists a directory's content.
 pub struct FsList {
     fs: FsRoot,
 }
@@ -289,7 +289,7 @@ impl Tool for FsList {
         crate::features::tools::meta::ToolGroup::Files
     }
     fn ui_label(&self) -> &'static str {
-        "список файлов"
+        "list files"
     }
     fn gate(&self) -> Option<crate::features::tools::meta::ToolGate> {
         Some(crate::features::tools::meta::ToolGate::Fs)
@@ -443,18 +443,18 @@ mod tests {
         std::fs::write(root.path().join("inside.txt"), "ok").unwrap();
         let fs_root = Some(root.path().to_string_lossy().to_string());
 
-        // Внутри песочницы — читается.
+        // Inside the sandbox — readable.
         let inside = FsRead::new(fs_root.clone())
             .invoke(&ctx, serde_json::json!({"path": "inside.txt"}))
             .await
             .unwrap();
         assert_eq!(inside.result, "ok");
 
-        // Выход через `..` — отклоняется (ошибка инструмента).
+        // Escaping via `..` — rejected (a tool error).
         let escape = FsRead::new(fs_root)
             .invoke(&ctx, serde_json::json!({"path": "../../etc/passwd"}))
             .await;
-        assert!(escape.is_err(), "выход из песочницы должен быть отклонён");
+        assert!(escape.is_err(), "escaping the sandbox must be rejected");
     }
 
     #[tokio::test]

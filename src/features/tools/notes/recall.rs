@@ -1,9 +1,10 @@
-//! Заметки — note_recall + семантический путь, связанные блоки, форматирование. Часть модуля [`super`]; разбито из монолита
-//! notes.rs (см. docs/history/refactoring-god-objects.md, этап 4).
+//! Notes — note_recall + the semantic path, related blocks, formatting. Part of
+//! the [`super`] module; split out of the notes.rs monolith (see
+//! docs/history/refactoring-god-objects.md, stage 4).
 
 use super::*;
 
-/// `note_recall` — ищет заметки профиля по тексту/тегам.
+/// `note_recall` — searches the profile's notes by text/tags.
 pub struct NoteRecall;
 
 #[async_trait::async_trait]
@@ -15,7 +16,7 @@ impl Tool for NoteRecall {
         crate::features::tools::meta::ToolGroup::Memory
     }
     fn ui_label(&self) -> &'static str {
-        "найти заметки"
+        "recall notes"
     }
     fn description(&self, loc: &crate::shared::i18n::Locale) -> String {
         loc.t("tool.note_recall.desc").into()
@@ -41,9 +42,10 @@ impl Tool for NoteRecall {
             .and_then(|v| v.as_u64())
             .map(|n| n as usize);
 
-        // Семантический путь: есть запрос и доступен эмбеддер. Иначе (нет запроса,
-        // эмбеддер недоступен или нет векторов у заметок) — откат на подстроку/теги.
-        // Оба пути исключают self-заметки (@self) из пользовательской выдачи.
+        // The semantic path: there's a query and the embedder is available.
+        // Otherwise (no query, the embedder is unavailable, or notes have no
+        // vectors) — fall back to substring/tags. Both paths exclude self-notes
+        // (@self) from user-facing output.
         let notes = match query {
             Some(q) => match semantic_recall(ctx, q, &tags, limit).await {
                 Some(n) => n,
@@ -53,13 +55,13 @@ impl Tool for NoteRecall {
         };
 
         let mut outcome = format_notes(&notes, ctx.loc);
-        // Spreading activation: подмешиваем связанные по графу заметки (Ярус 2),
-        // чтобы припоминание поднимало кластер, а не одиночные атомы.
+        // Spreading activation: mix in notes linked by the graph (Tier 2), so
+        // recall surfaces the cluster, not just isolated atoms.
         if let Some(block) = related_block(ctx, &notes) {
             outcome.result.push_str(&block);
         }
-        // Ссылки заметок на RAG-источники (Ярус 3, Путь 3): показываем, на что опирается
-        // заметка (связывание органов памяти).
+        // Notes' citations of RAG sources (Tier 3, Path 3): show what a note is
+        // based on (linking the memory organs).
         let ids: Vec<Uuid> = notes.iter().map(|n| n.id).collect();
         if let Some(block) = cited_sources_block(ctx, &ids) {
             outcome.result.push_str(&block);
@@ -68,14 +70,16 @@ impl Tool for NoteRecall {
     }
 }
 
-/// Подмешиваемый блок «Связанные заметки»: соседи топ-хитов по графу (обе стороны),
-/// без уже показанных и без замещённых. `None`, если связей нет. Чистое чтение БД.
+/// The mixed-in "Related notes" block: neighbors of the top hits via the graph
+/// (both directions), excluding ones already shown and superseded ones. `None` if
+/// there are no links. A pure DB read.
 ///
-/// **Кросс-органные связи (Ярус 3):** сосед-наблюдение «о себе» (`@self`), явно
-/// связанный моделью с пользовательской заметкой, **показывается** с пометкой
-/// `[о себе]`. Это НЕ реверс сокрытия Яруса 1: обычный поиск/spreading по-прежнему
-/// не тащит self-заметки — всплывает лишь **намеренно созданное** моделью ребро
-/// между органами. См. docs/history/narrative-as-notes.md (Ярус 3, кросс-органные связи).
+/// **Cross-organ links (Tier 3):** a neighbor "about self" observation (`@self`),
+/// explicitly linked by the model to a user note, **is shown** marked `[about
+/// self]`. This is NOT a reversal of Tier 1's hiding: regular search/spreading
+/// still doesn't pull in self-notes — only an edge **deliberately created** by
+/// the model between organs surfaces. See docs/history/narrative-as-notes.md
+/// (Tier 3, cross-organ links).
 pub(crate) fn related_block(ctx: &ToolContext, hits: &[Note]) -> Option<String> {
     let mut seen: std::collections::HashSet<Uuid> = hits.iter().map(|n| n.id).collect();
     let mut lines: Vec<String> = Vec::new();
@@ -90,8 +94,9 @@ pub(crate) fn related_block(ctx: &ToolContext, hits: &[Note]) -> Option<String> 
                 continue;
             }
             let arrow = if outgoing { "→" } else { "←" };
-            // Кросс-органный сосед (наблюдение «о себе») помечается — так модель видит
-            // связь заметки с наблюдением, не смешивая органы в общей выдаче.
+            // A cross-organ neighbor (an "about self" observation) is marked — so
+            // the model sees the note's link to the observation without mixing
+            // organs in the general output.
             let mark = if is_self_note(&note) {
                 format!("{} ", ctx.loc.t("notes.mark.self"))
             } else {
@@ -120,10 +125,10 @@ pub(crate) fn related_block(ctx: &ToolContext, hits: &[Note]) -> Option<String> 
     }
 }
 
-/// Блок «Ссылки на источники»: для показанных заметок (по id) перечисляет RAG-источники,
-/// на которые они ссылаются (Ярус 3, Путь 3 — связывание органов памяти). `None`, если
-/// ссылок нет. Чистое чтение БД. `pub(crate)` — используется и `note_recall`, и чтением
-/// «модели себя» (`self_model::render_self_read`).
+/// The "Source citations" block: for the shown notes (by id), lists the RAG
+/// sources they cite (Tier 3, Path 3 — linking the memory organs). `None` if there
+/// are no citations. A pure DB read. `pub(crate)` — used by both `note_recall` and
+/// the "self-model" read (`self_model::render_self_read`).
 pub(crate) fn cited_sources_block(ctx: &ToolContext, note_ids: &[Uuid]) -> Option<String> {
     let mut lines: Vec<String> = Vec::new();
     for id in note_ids {
@@ -150,10 +155,10 @@ pub(crate) fn cited_sources_block(ctx: &ToolContext, note_ids: &[Uuid]) -> Optio
     }
 }
 
-/// Substring/тег-выборка заметок для `note_recall`: читаем без лимита, **отбрасываем
-/// self-заметки** (кроме случая `ctx.recall_includes_self` — Ярус 3, Путь 2), затем
-/// усечение — иначе self-заметки заняли бы слоты лимита и вытеснили пользовательские
-/// из выдачи.
+/// Substring/tag selection of notes for `note_recall`: read with no limit,
+/// **drop self-notes** (except when `ctx.recall_includes_self` — Tier 3, Path 2),
+/// then truncate — otherwise self-notes would occupy limit slots and crowd user
+/// notes out of the output.
 pub(crate) fn list_user_notes(
     ctx: &ToolContext,
     query: Option<&str>,
@@ -173,18 +178,18 @@ pub(crate) fn list_user_notes(
     Ok(notes)
 }
 
-/// Семантический поиск заметок по эмбеддингу запроса. `None`, если эмбеддер
-/// недоступен (мягкая деградация — вызывающий откатится на подстроку) или выдача
-/// пуста (например, у заметок ещё нет векторов). Теги применяются фильтром поверх
-/// ранжирования.
+/// Semantic search of notes by the query's embedding. `None` if the embedder is
+/// unavailable (graceful degradation — the caller falls back to substring search)
+/// or the result is empty (e.g. notes don't have vectors yet). Tags are applied as
+/// a filter on top of the ranking.
 pub(crate) async fn semantic_recall(
     ctx: &ToolContext,
     query: &str,
     tags: &[String],
     limit: Option<usize>,
 ) -> Option<Vec<Note>> {
-    // Бэкфилл: дотянуть эмбеддинги заметок без векторов (старые/импортированные),
-    // иначе семантический поиск их не увидит.
+    // Backfill: pull in embeddings for notes with no vectors (old/imported),
+    // otherwise semantic search won't see them.
     ensure_note_vectors(&ctx.storage, ctx.embedder.as_ref(), ctx.profile_id).await;
     let emb = ctx
         .embedder
@@ -194,7 +199,7 @@ pub(crate) async fn semantic_recall(
         .into_iter()
         .next()?;
     let want = limit.unwrap_or(DEFAULT_RECALL);
-    // Берём запас кандидатов: их прорежают фильтр по тегам и исключение self-заметок.
+    // Take a candidate margin: the tag filter and self-note exclusion thin them out.
     let cand = want.max(30);
     let hits = ctx
         .storage
@@ -204,7 +209,7 @@ pub(crate) async fn semantic_recall(
     let mut notes: Vec<Note> = hits
         .into_iter()
         .map(|(n, _)| n)
-        // self-заметки исключаются, кроме `recall_includes_self` (Ярус 3, Путь 2).
+        // Self-notes are excluded, except with `recall_includes_self` (Tier 3, Path 2).
         .filter(|n| {
             (ctx.recall_includes_self || !is_self_note(n))
                 && (tags.is_empty() || tags.iter().all(|t| n.tags.contains(t)))
@@ -214,15 +219,17 @@ pub(crate) async fn semantic_recall(
     if notes.is_empty() { None } else { Some(notes) }
 }
 
-/// Форматирует список заметок в текстовый результат инструмента. Показывает **id**
-/// каждой заметки — чтобы модель могла ссылаться на неё в `note_link`/`note_revise`/
-/// `note_supersede` (в т.ч. кросс-органно: связать пользовательскую заметку с
-/// наблюдением «о себе», Ярус 3). Раньше id не выводился, и заметки из recall были
-/// неадресуемы, хотя описание `note_link` обещало «id из note_recall».
+/// Formats a list of notes into the tool's text result. Shows the **id** of every
+/// note — so the model can reference it in `note_link`/`note_revise`/
+/// `note_supersede` (including cross-organ: linking a user note to an "about
+/// self" observation, Tier 3). Previously the id wasn't printed, and notes from
+/// recall were unaddressable, even though `note_link`'s description promised
+/// "id from note_recall".
 ///
-/// Наблюдения «о себе» (`@self`, попадают в выдачу лишь при `recall_includes_self` —
-/// Ярус 3, Путь 2) помечаются префиксом `[о себе]`, а служебный тег `@self` из
-/// показа тегов убирается (пометка его заменяет).
+/// "About self" observations (`@self`, only reach the output with
+/// `recall_includes_self` — Tier 3, Path 2) are marked with the `[about self]`
+/// prefix, and the internal `@self` tag is dropped from the tag display (the
+/// marker replaces it).
 pub(crate) fn format_notes(notes: &[Note], loc: &crate::shared::i18n::Locale) -> ToolOutcome {
     if notes.is_empty() {
         return ToolOutcome::text(loc.t("tool.note_recall.result.empty"));
@@ -241,7 +248,7 @@ pub(crate) fn format_notes(notes: &[Note], loc: &crate::shared::i18n::Locale) ->
             String::new()
         };
         out.push_str(&format!("- (id={}) {mark}{}", n.id, n.content));
-        // Служебный тег @self скрываем — его роль играет пометка [о себе].
+        // Hide the internal @self tag — the [about self] marker plays its role.
         let tags: Vec<&str> = n
             .tags
             .iter()

@@ -1,30 +1,30 @@
-//! Потоковый разделитель «мыслей» (CoT). Выделяет блоки `<think>…</think>`
-//! из текста, приходящего чанками, корректно обрабатывая теги, разрезанные по
-//! границе чанка. См. spec §6.5 и docs/xinfer-contract.md §3.3.
+//! A streaming splitter for "thoughts" (CoT). Extracts `<think>…</think>` blocks
+//! from text arriving in chunks, correctly handling tags cut across a chunk
+//! boundary. See spec §6.5 and docs/xinfer-contract.md §3.3.
 //!
-//! Используется как запасной путь, когда сервер отдаёт reasoning инлайн в
-//! `content` (external-режим без `XINFER_STREAM_AS_REASONING_CONTENT`). При
-//! отсутствии тегов весь текст считается обычным.
+//! Used as a fallback path when the server returns reasoning inline in
+//! `content` (external mode without `XINFER_STREAM_AS_REASONING_CONTENT`). With
+//! no tags present, the whole text is treated as regular.
 
 const OPEN: &str = "<think>";
 const CLOSE: &str = "</think>";
 
-/// Фрагмент разобранного потока.
+/// A fragment of the parsed stream.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Piece {
-    /// Обычный текст ответа.
+    /// Regular reply text.
     Text(String),
-    /// Содержимое блока рассуждений.
+    /// Content of a reasoning block.
     Thoughts(String),
 }
 
-/// Инкрементальный разделитель. Состояние сохраняется между вызовами [`push`].
+/// An incremental splitter. State persists across [`push`] calls.
 ///
 /// [`push`]: ThoughtsParser::push
 #[derive(Debug, Default)]
 pub struct ThoughtsParser {
     in_think: bool,
-    /// Необработанный хвост, который может содержать частичный тег.
+    /// The unprocessed tail, which may contain a partial tag.
     buf: String,
 }
 
@@ -33,7 +33,7 @@ impl ThoughtsParser {
         Self::default()
     }
 
-    /// Скармливает очередной чанк, возвращает готовые фрагменты.
+    /// Feeds the next chunk, returns the fragments that are ready.
     pub fn push(&mut self, input: &str) -> Vec<Piece> {
         self.buf.push_str(input);
         let mut out = Vec::new();
@@ -53,7 +53,7 @@ impl ThoughtsParser {
                 continue;
             }
 
-            // Полного тега нет: придержать хвост, который может быть его началом.
+            // No full tag present: hold back a tail that might be the start of one.
             let hold = held_suffix_len(&self.buf, tag);
             let emit_to = self.buf.len() - hold;
             if emit_to > 0 {
@@ -65,8 +65,8 @@ impl ThoughtsParser {
         out
     }
 
-    /// Завершает разбор: остаток буфера эмитится как есть (частичный тег —
-    /// как обычный текст соответствующего режима).
+    /// Finishes parsing: the remaining buffer is emitted as-is (a partial tag —
+    /// as regular text of the corresponding mode).
     pub fn finish(&mut self) -> Vec<Piece> {
         if self.buf.is_empty() {
             return Vec::new();
@@ -81,9 +81,9 @@ impl ThoughtsParser {
     }
 }
 
-/// Длина наибольшего суффикса `s`, являющегося собственным префиксом `tag`
-/// (полное вхождение тега обрабатывается отдельно через `find`). Теги ASCII,
-/// поэтому сравнение по байтам безопасно для UTF-8 (совпавший хвост — ASCII).
+/// The length of the longest suffix of `s` that is a proper prefix of `tag`
+/// (a full tag occurrence is handled separately via `find`). Tags are ASCII,
+/// so a byte-wise comparison is safe for UTF-8 (the matched tail is ASCII).
 fn held_suffix_len(s: &str, tag: &str) -> usize {
     let max_k = (tag.len() - 1).min(s.len());
     let sb = s.as_bytes();
@@ -107,8 +107,8 @@ mod tests {
         Piece::Thoughts(s.to_string())
     }
 
-    /// Прогоняет последовательность чанков и собирает фрагменты, склеивая
-    /// соседние одного типа (парсер вправе дробить — потребитель конкатенирует).
+    /// Runs a sequence of chunks and collects the fragments, merging
+    /// adjacent ones of the same kind (the parser is allowed to split — the consumer concatenates).
     fn run(chunks: &[&str]) -> Vec<Piece> {
         let mut p = ThoughtsParser::new();
         let mut out = Vec::new();
@@ -157,7 +157,7 @@ mod tests {
             out.extend(p.push(&ch.to_string()));
         }
         out.extend(p.finish());
-        // Соседние одинаковые фрагменты могут идти отдельными кусками — склеим.
+        // Adjacent identical fragments may arrive as separate pieces — merge them.
         assert_eq!(merge(out), vec![text("p"), thoughts("q"), text("r")]);
     }
 

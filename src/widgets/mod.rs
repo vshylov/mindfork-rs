@@ -1,7 +1,7 @@
-//! Слой `widgets` (FSD): составные UI-блоки (chat_list, message_feed, input_box,
-//! status_bar, dialogs). См. spec §4.2, §11.
+//! `widgets` layer (FSD): composite UI blocks (chat_list, message_feed, input_box,
+//! status_bar, dialogs). See spec §4.2, §11.
 //!
-//! Наполняется на M3.
+//! Filled in starting M3.
 
 pub mod chat_list;
 pub mod emoji_picker;

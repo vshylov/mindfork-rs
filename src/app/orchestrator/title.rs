@@ -1,5 +1,5 @@
-//! Авто-название чата (spec §11.2): фоновая задача просит модель придумать
-//! короткий заголовок по переписке; результат применяется к чату в петле.
+//! Auto-title for a chat (spec §11.2): a background task asks the model to come up with
+//! a short title from the conversation; the result is applied to the chat in the loop.
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -15,36 +15,36 @@ use crate::shared::api::{ApiMessage, ChatChunk, ChatRequest, EngineBackend};
 
 use super::Orchestrator;
 
-/// Потолок токенов ответа при генерации авто-названия. Пытаемся выключить «мысли»
-/// (`reasoning_budget=0` + `chat_template_kwargs.enable_thinking=false`), но
-/// некоторые модели (вшитый в GGUF thinking, напр. Gemma `peg-gemma4`) их
-/// игнорируют и всё равно «рассуждают» сотни токенов перед ответом — поэтому
-/// бюджет щедрый, чтобы модель успела завершить «мысли» и выдать заголовок.
+/// The reply token ceiling for auto-title generation. We try to turn off "thoughts"
+/// (`reasoning_budget=0` + `chat_template_kwargs.enable_thinking=false`), but
+/// some models (thinking "baked into" the GGUF, e.g. Gemma `peg-gemma4`) ignore
+/// this and still "reason" for hundreds of tokens before the reply — hence a
+/// generous budget, so the model has time to finish "thinking" and produce the title.
 const TITLE_MAX_TOKENS: usize = 2048;
 
-/// Лимит времени на генерацию авто-названия чата (с запасом на «думающие» модели).
+/// The time limit for generating a chat's auto-title (with margin for "thinking" models).
 const TITLE_TIMEOUT: Duration = Duration::from_secs(60);
 
-/// Результат фоновой задачи авто-названия чата (внутренний канал).
+/// The result of the chat auto-title background task (an internal channel).
 pub(super) struct TitleResult {
     pub(super) chat_id: Uuid,
-    /// Сырой текст ответа модели (или сообщение об ошибке для показа в UI).
+    /// The model's raw reply text (or an error message to show in the UI).
     pub(super) text: Result<String, String>,
 }
 
 impl Orchestrator {
-    /// Авто-название чата (spec §11.2): модель читает переписку (или её начало и
-    /// конец, если она длинная) и придумывает короткий заголовок. Запрос идёт
-    /// фоновой задачей; результат прилетает в [`Orchestrator::handle_title_result`].
-    /// Чат-сервер должен быть готов (`Ready`) — иначе понятная ошибка.
+    /// A chat's auto-title (spec §11.2): the model reads the conversation (or its start
+    /// and end, if it's long) and comes up with a short title. The request runs as a
+    /// background task; the result arrives at [`Orchestrator::handle_title_result`].
+    /// The chat server must be ready (`Ready`) — otherwise a clear error.
     pub(super) fn handle_auto_rename(&mut self, id: Uuid) {
         let Some(chat) = self.chats.iter().find(|c| c.id == id) else {
             return;
         };
-        // Язык служебного каркаса — из профиля чата (ось A): дайджест и системное
-        // сообщение авто-названия локализуются им (заголовок всё равно просят «на
-        // языке переписки», см. `prompt.title.system`). Ошибки — для человека (ось B),
-        // остаются на русском.
+        // The agent-scaffold language — from the chat's profile (axis A): the digest and the
+        // system message for auto-title are localized with it (the title is still requested "in
+        // the conversation's language", see `prompt.title.system`). Errors — for the human,
+        // in the interface language (axis B, `self.ui_locale()`).
         let loc = self.profile_locale(chat.profile_id);
         let Some(digest) =
             crate::features::rename_chat::build_conversation_digest(&chat.messages, loc)
@@ -54,23 +54,23 @@ impl Orchestrator {
             ));
             return;
         };
-        let backend = match self.engines.backend_if_ready() {
+        let backend = match self.engines.backend_if_ready(self.ui_locale()) {
             Ok(backend) => backend,
             Err(msg) => {
-                // Авто-название — операция списка чатов: ошибку готовности сервера
-                // показываем в оверлее списка, а не в ленте чата (где её скрыл бы
-                // полноэкранный оверлей).
+                // Auto-title is a chat-list operation: we show the server-readiness
+                // error in the list overlay, not in the chat feed (where a full-screen overlay
+                // would hide it).
                 let _ = self.evt_tx.send(AppEvent::ChatListError(msg));
                 return;
             }
         };
-        // Свежий компактный семплинг (не наследуем override чата): короткий ответ,
-        // умеренная температура, reasoning выключен (заголовку «мысли» не нужны и
-        // только съедают бюджет токенов), без инструментов. Ключевое — `reasoning_
-        // budget=0`: для моделей со «вшитым» в шаблон thinking (Gemma `peg-gemma4`,
-        // Qwen) только он реально гасит «мысли»; поля `thinking`/`reasoning_effort`
-        // сервер для таких шаблонов игнорирует (иначе модель тратила весь бюджет на
-        // «мысли» и ответный текст приходил пустым).
+        // A fresh, compact sampling config (not inheriting the chat's override): a short reply,
+        // a moderate temperature, reasoning disabled (a title doesn't need "thoughts" and
+        // they just eat the token budget), no tools. What actually matters — `reasoning_
+        // budget=0`: for models with thinking "baked into" the template (Gemma `peg-gemma4`,
+        // Qwen) only this field actually suppresses "thoughts"; the server ignores the
+        // `thinking`/`reasoning_effort` fields for such templates (otherwise the model would spend its
+        // whole budget on "thoughts" and the reply text would come back empty).
         let sampling = SamplingConfig {
             max_tokens: Some(TITLE_MAX_TOKENS),
             temperature: Some(0.3),
@@ -94,8 +94,8 @@ impl Orchestrator {
         );
     }
 
-    /// Применяет результат фоновой генерации авто-названия: чистит/нормализует
-    /// заголовок и переименовывает чат (или показывает ошибку).
+    /// Applies the result of background auto-title generation: cleans up/normalizes
+    /// the title and renames the chat (or shows an error).
     pub(super) fn handle_title_result(&mut self, res: TitleResult) {
         match res.text {
             Ok(raw) => {
@@ -122,9 +122,9 @@ impl Orchestrator {
     }
 }
 
-/// Запускает фоновую задачу авто-названия чата: один независимый запрос к модели
-/// (без истории/инструментов), сбор текста, отправка результата в `title_tx`.
-/// Лимит времени — [`TITLE_TIMEOUT`].
+/// Starts the chat auto-title background task: one independent request to the model
+/// (with no history/tools), collecting the text, sending the result into `title_tx`.
+/// The time limit — [`TITLE_TIMEOUT`].
 fn spawn_title(
     backend: Arc<dyn EngineBackend>,
     request: ChatRequest,
@@ -141,9 +141,9 @@ fn spawn_title(
             while let Some(chunk) = stream.next().await {
                 match chunk {
                     ChatChunk::Text(t) => text.push_str(&t),
-                    // Копим «мысли» как запасной источник: если модель так и не
-                    // «завершила мысль» (выдала только reasoning), вытащим заголовок
-                    // из последней содержательной строки рассуждений.
+                    // Accumulate "thoughts" as a fallback source: if the model never
+                    // "finished thinking" (produced only reasoning), we'll pull the title
+                    // out of the last substantive line of the reasoning.
                     ChatChunk::Thoughts(t) => thoughts.push_str(&t),
                     ChatChunk::Finished(_) => break,
                     ChatChunk::ThoughtsSignature(_)
@@ -165,9 +165,9 @@ fn spawn_title(
     });
 }
 
-/// Выбирает сырой источник заголовка: основной ответ модели, а если он пуст
-/// (модель не «завершила мысль» в рамках бюджета) — последнюю содержательную
-/// строку рассуждений. Финальную нормализацию делает `clean_generated_title`.
+/// Picks the raw title source: the model's main reply, and if it's empty
+/// (the model didn't "finish thinking" within the budget) — the last substantive
+/// line of the reasoning. `clean_generated_title` does the final normalization.
 pub(super) fn salvage_title_source(text: String, thoughts: String) -> String {
     if !text.trim().is_empty() {
         return text;

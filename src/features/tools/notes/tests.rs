@@ -1,15 +1,15 @@
-//! Тесты заметок. См. mod.rs.
+//! Note tests. See mod.rs.
 
 use super::super::testkit::ctx_with_storage;
 use super::*;
 use uuid::Uuid;
 
-/// Референсная локаль (ru) — прямые вызовы обзоров в тестах пинят ru-бандл.
+/// The reference locale (ru) — direct overview calls in tests pin the ru bundle.
 fn ru() -> &'static crate::shared::i18n::Locale {
     crate::shared::i18n::locale(crate::shared::i18n::Lang::Ru)
 }
 
-/// Нет ли кириллицы в строке (прокси «переведено на en»).
+/// Is there no Cyrillic in the string (a proxy for "translated to en").
 fn no_cyrillic(s: &str) -> bool {
     !s.chars()
         .any(|c| ('а'..='я').contains(&c) || ('А'..='Я').contains(&c))
@@ -17,8 +17,8 @@ fn no_cyrillic(s: &str) -> bool {
 
 #[test]
 fn note_tool_descriptions_are_localized() {
-    // Каждый note-инструмент возвращает РАЗНЫЙ текст на ru/en (ловит забытый `_loc`),
-    // а en-описание — без кириллицы. §3.5 docs/history/i18n.md.
+    // Every note tool returns DIFFERENT text on ru/en (catches a forgotten
+    // `_loc`), and the en description has no Cyrillic. §3.5 docs/history/i18n.md.
     use crate::shared::i18n::{Lang, locale};
     let (ru, en) = (locale(Lang::Ru), locale(Lang::En));
     let pairs: Vec<(String, String)> = vec![
@@ -39,14 +39,14 @@ fn note_tool_descriptions_are_localized() {
         ),
     ];
     for (r, e) in pairs {
-        assert_ne!(r, e, "описание не локализовано (забыт loc?): {r}");
-        assert!(no_cyrillic(&e), "кириллица в en-описании: {e}");
+        assert_ne!(r, e, "description not localized (loc forgotten?): {r}");
+        assert!(no_cyrillic(&e), "Cyrillic in en description: {e}");
     }
 }
 
 #[tokio::test]
 async fn note_recall_result_localized_for_all_langs() {
-    // Пустая выдача и заголовок «найдено» рендерятся на каждом вшитом языке.
+    // The empty result and the "found" header render in every built-in language.
     use crate::shared::i18n::{Lang, locale};
     for &lang in Lang::ALL {
         let profile = Uuid::new_v4();
@@ -90,7 +90,7 @@ async fn save_then_recall_isolated_by_profile() {
         )
         .await
         .unwrap();
-    // Заметка действительно записана под этим профилем.
+    // The note was actually recorded under this profile.
     assert_eq!(
         storage
             .db()
@@ -106,9 +106,9 @@ async fn save_then_recall_isolated_by_profile() {
         .unwrap();
     assert!(out.result.contains("любит чай"));
 
-    // Чужой профиль не видит заметку.
+    // A different profile doesn't see the note.
     let (_d2, _s2, other) = ctx_with_storage(Uuid::new_v4());
-    // другой профиль — другое хранилище: проверяем изоляцию на уровне фильтра
+    // A different profile — different storage: checking isolation at the filter level
     let empty = NoteRecall
         .invoke(&other, serde_json::json!({}))
         .await
@@ -148,8 +148,8 @@ async fn save_rejects_empty_content() {
 
 #[tokio::test]
 async fn recall_excludes_self_notes() {
-    // Ярус 1 «нарратив как заметки»: self-заметки (@self) не всплывают в
-    // пользовательском note_recall — ни подстрочном, ни семантическом.
+    // Tier 1 "narrative as notes": self-notes (@self) don't surface in user-facing
+    // note_recall — neither the substring path nor the semantic one.
     let profile = Uuid::new_v4();
     let (_d, storage, ctx) = ctx_with_storage(profile);
     NoteSave
@@ -165,7 +165,7 @@ async fn recall_excludes_self_notes() {
         ))
         .unwrap();
 
-    // Подстрочный путь (без query).
+    // The substring path (no query).
     let out = NoteRecall
         .invoke(&ctx, serde_json::json!({}))
         .await
@@ -173,7 +173,7 @@ async fn recall_excludes_self_notes() {
     assert!(out.result.contains("любит чай"));
     assert!(!out.result.contains("сам люблю чай"));
 
-    // Семантический путь (есть query + эмбеддер).
+    // The semantic path (there's a query + an embedder).
     let out = NoteRecall
         .invoke(&ctx, serde_json::json!({"query": "чай"}))
         .await
@@ -184,9 +184,9 @@ async fn recall_excludes_self_notes() {
 
 #[tokio::test]
 async fn recall_includes_self_notes_when_enabled() {
-    // Ярус 3, Путь 2: при recall_includes_self self-заметки (@self) ВХОДЯТ в общий
-    // note_recall с пометкой [о себе] (обе ветки: подстрочная и семантическая);
-    // служебный тег @self в выводе скрыт.
+    // Tier 3, Path 2: with recall_includes_self, self-notes (@self) DO enter
+    // general note_recall marked [about self] (both branches: substring and
+    // semantic); the internal @self tag is hidden from the output.
     let profile = Uuid::new_v4();
     let (_d, storage, mut ctx) = ctx_with_storage(profile);
     ctx.recall_includes_self = true;
@@ -203,17 +203,17 @@ async fn recall_includes_self_notes_when_enabled() {
         ))
         .unwrap();
 
-    // Подстрочный путь (без query).
+    // The substring path (no query).
     let out = NoteRecall
         .invoke(&ctx, serde_json::json!({}))
         .await
         .unwrap();
     assert!(out.result.contains("любит чай"));
     assert!(out.result.contains("[о себе] сам люблю чай"));
-    // Служебный тег @self в показе тегов скрыт (его заменяет пометка).
+    // The internal @self tag is hidden from the tag display (the marker replaces it).
     assert!(!out.result.contains("@self"));
 
-    // Семантический путь (query + эмбеддер).
+    // The semantic path (query + embedder).
     let out = NoteRecall
         .invoke(&ctx, serde_json::json!({"query": "чай"}))
         .await
@@ -223,8 +223,8 @@ async fn recall_includes_self_notes_when_enabled() {
 
 #[tokio::test]
 async fn recall_shows_note_ids() {
-    // Ярус 3: note_recall выводит id заметок — иначе модель не сможет ссылаться на
-    // них в note_link/note_revise (в т.ч. кросс-органно).
+    // Tier 3: note_recall prints note ids — otherwise the model can't reference
+    // them in note_link/note_revise (including cross-organ).
     let profile = Uuid::new_v4();
     let (_d, storage, ctx) = ctx_with_storage(profile);
     NoteSave
@@ -241,8 +241,8 @@ async fn recall_shows_note_ids() {
 
 #[tokio::test]
 async fn note_cite_source_links_and_recall_shows_it() {
-    // Ярус 3, Путь 3: заметка ссылается на RAG-источник; note_recall показывает
-    // блок «Ссылки на источники».
+    // Tier 3, Path 3: a note cites a RAG source; note_recall shows the "Source
+    // citations" block.
     use crate::entities::rag::RagDocument;
     let profile = Uuid::new_v4();
     let (_d, storage, ctx) = ctx_with_storage(profile);
@@ -261,7 +261,7 @@ async fn note_cite_source_links_and_recall_shows_it() {
         .unwrap();
     let id = storage.db().note_list(profile, None, &[], None).unwrap()[0].id;
 
-    // Неизвестный источник — понятный отказ, ничего не создано.
+    // An unknown source — a clear refusal, nothing created.
     let out = NoteCiteSource
         .invoke(
             &ctx,
@@ -271,7 +271,7 @@ async fn note_cite_source_links_and_recall_shows_it() {
         .unwrap();
     assert!(out.result.contains("не найден в базе знаний"));
 
-    // Существующий источник — связь создана; повтор — уже существовала.
+    // An existing source — the link is created; a repeat — it already existed.
     let out = NoteCiteSource
         .invoke(
             &ctx,
@@ -289,7 +289,7 @@ async fn note_cite_source_links_and_recall_shows_it() {
         .unwrap();
     assert!(out.result.contains("уже существовала"));
 
-    // note_recall показывает ссылку на источник.
+    // note_recall shows the source citation.
     let out = NoteRecall
         .invoke(&ctx, serde_json::json!({}))
         .await
@@ -300,9 +300,9 @@ async fn note_cite_source_links_and_recall_shows_it() {
 
 #[tokio::test]
 async fn recall_surfaces_cross_organ_self_neighbor_marked() {
-    // Ярус 3 (кросс-органные связи): пользовательская заметка, ЯВНО связанная с
-    // наблюдением «о себе», показывает его в блоке «Связанные заметки» с пометкой
-    // [о себе] — но обычный поиск self-заметки по-прежнему не тащит.
+    // Tier 3 (cross-organ links): a user note EXPLICITLY linked to an "about
+    // self" observation shows it in the "Related notes" block marked [about
+    // self] — but regular search still doesn't pull in self-notes.
     let profile = Uuid::new_v4();
     let (_d, storage, ctx) = ctx_with_storage(profile);
     NoteSave
@@ -331,9 +331,9 @@ async fn recall_surfaces_cross_organ_self_neighbor_marked() {
         .invoke(&ctx, serde_json::json!({"query": "краткость"}))
         .await
         .unwrap();
-    // Первичная выдача — только пользовательская заметка (self скрыта из поиска).
+    // The primary output — only the user note (self is hidden from search).
     assert!(out.result.contains("пользователь любит краткость"));
-    // Но связанное наблюдение всплывает в блоке связей с пометкой [о себе].
+    // But the linked observation surfaces in the related-links block marked [about self].
     assert!(out.result.contains("Связанные заметки"));
     assert!(out.result.contains("[о себе]"));
     assert!(out.result.contains("я склонен к многословию"));
@@ -341,8 +341,8 @@ async fn recall_surfaces_cross_organ_self_neighbor_marked() {
 
 #[tokio::test]
 async fn self_related_block_surfaces_cross_organ_user_note_marked() {
-    // Ярус 3: чтение «модели себя» показывает пользовательскую заметку-соседа
-    // наблюдения с пометкой [заметка] (self↔user ребро).
+    // Tier 3: reading the "self-model" shows a user note that neighbors an
+    // observation, marked [note] (a self↔user edge).
     let profile = Uuid::new_v4();
     let (_d, storage, ctx) = ctx_with_storage(profile);
     storage
@@ -367,7 +367,7 @@ async fn self_related_block_surfaces_cross_organ_user_note_marked() {
         .note_link_insert(profile, self_id, user_id, "contradicts")
         .unwrap();
 
-    let block = self_related_block(&ctx, &[self_id]).expect("ожидали блок связей");
+    let block = self_related_block(&ctx, &[self_id]).expect("expected a links block");
     assert!(block.contains("[заметка]"));
     assert!(block.contains("пользователь любит краткость"));
     assert!(block.contains("contradicts"));
@@ -375,8 +375,8 @@ async fn self_related_block_surfaces_cross_organ_user_note_marked() {
 
 #[tokio::test]
 async fn save_gate_excludes_self_notes() {
-    // Ворота note_save не показывают семантически близкие self-заметки — обычная
-    // запись не должна натыкаться на наблюдения «модели себя».
+    // The note_save gate doesn't show semantically close self-notes — a regular
+    // save shouldn't run into "self-model" observations.
     let profile = Uuid::new_v4();
     let (_d, storage, ctx) = ctx_with_storage(profile);
     storage
@@ -391,7 +391,7 @@ async fn save_gate_excludes_self_notes() {
         .invoke(&ctx, serde_json::json!({"content": "aaab"}))
         .await
         .unwrap();
-    // Единственная близкая заметка — self → блок «Похожие заметки» не появляется.
+    // The only close note is self → the "Similar notes" block doesn't appear.
     assert!(!out.result.contains("Похожие заметки"));
     assert!(!out.result.contains("aaaa bbbb"));
 }
@@ -418,22 +418,22 @@ async fn consolidation_overview_excludes_self_notes() {
         .unwrap();
 
     let overview = build_consolidation_overview(&storage, profile, ru());
-    // Self-заметка не в счёте активных и не в списках обзора.
+    // The self-note isn't in the active count and isn't in the overview's lists.
     assert!(overview.contains("Активных заметок: 2"));
     assert!(!overview.contains("наблюдение о себе"));
 }
 
 #[tokio::test]
 async fn self_consolidation_overview_covers_self_only() {
-    // Ярус 3: обзор self-консолидации над наблюдениями (@self) — похожие пары,
-    // contradicts, без связей; пользовательские заметки исключены; None при < 2.
+    // Tier 3: the self-consolidation overview over observations (@self) — similar
+    // pairs, contradicts, no links; user notes are excluded; None when < 2.
     let profile = Uuid::new_v4();
     let (_d, storage, ctx) = ctx_with_storage(profile);
     assert!(build_self_consolidation_overview(&storage, profile, ru()).is_none());
     create_note(&ctx, "aaaa bbbb".into(), vec![SELF_NOTE_TAG.to_string()])
         .await
         .unwrap();
-    // 1 наблюдение → всё ещё None.
+    // 1 observation → still None.
     assert!(build_self_consolidation_overview(&storage, profile, ru()).is_none());
     create_note(&ctx, "aaab".into(), vec![SELF_NOTE_TAG.to_string()])
         .await
@@ -441,7 +441,7 @@ async fn self_consolidation_overview_covers_self_only() {
     create_note(&ctx, "wwww".into(), vec![SELF_NOTE_TAG.to_string()])
         .await
         .unwrap();
-    // Пользовательская заметка не должна попасть в обзор наблюдений.
+    // A user note shouldn't make it into the observation overview.
     NoteSave
         .invoke(
             &ctx,
@@ -452,13 +452,13 @@ async fn self_consolidation_overview_covers_self_only() {
 
     let ov = build_self_consolidation_overview(&storage, profile, ru()).unwrap();
     assert!(ov.contains("Обзор наблюдений"));
-    assert!(ov.contains("Наблюдений: 3")); // только @self
+    assert!(ov.contains("Наблюдений: 3")); // @self only
     assert!(!ov.contains("пользовательская"));
-    // Похожая пара среди наблюдений (aaaa bbbb ↔ aaab, cosine ≈ 0.89 ≥ 0.85).
+    // A similar pair among observations (aaaa bbbb ↔ aaab, cosine ≈ 0.89 ≥ 0.85).
     assert!(ov.contains("aaaa bbbb"));
     assert!(ov.contains("aaab"));
 
-    // Связь contradicts среди наблюдений — обзор её показывает.
+    // A contradicts link among observations — the overview shows it.
     let selves = storage
         .db()
         .note_list(profile, None, &[SELF_NOTE_TAG.to_string()], None)
@@ -473,22 +473,24 @@ async fn self_consolidation_overview_covers_self_only() {
 
 #[tokio::test]
 async fn summary_obs_overlap_surfaces_match_not_unrelated() {
-    // A2: абзац описания себя (summary), совпадающий с наблюдением, поднимается парой;
-    // несвязанный абзац/наблюдение — нет. Вектора наблюдений задаём вручную, чтобы тест
-    // был устойчив к порогу (совпадение cosine=1.0, не-совпадения=0.0).
+    // A2: a self-description (summary) paragraph matching an observation is
+    // surfaced as a pair; an unrelated paragraph/observation isn't. Observation
+    // vectors are set manually, so the test is robust to the threshold (a match =
+    // cosine 1.0, non-matches = 0.0).
     use crate::entities::self_model::SelfModel;
     let profile = Uuid::new_v4();
     let (_d, storage, ctx) = ctx_with_storage(profile);
 
-    // Абзацы summary (по пустой строке): P_match (все «a») + несвязанный P_unrel (все «b»);
-    // оба ≥ 40 символов. MockEmbedder — мешок символов, поэтому их эмбеддинги ортогональны.
+    // Summary paragraphs (by blank line): P_match (all "a") + unrelated P_unrel
+    // (all "b"); both ≥ 40 characters. MockEmbedder — a bag of characters, so
+    // their embeddings are orthogonal.
     let p_match = "a".repeat(50);
     let p_unrel = "b".repeat(50);
     let mut model = SelfModel::new(profile);
     model.summary = format!("{p_match}\n\n{p_unrel}");
     storage.db().self_model_upsert(&model).unwrap();
 
-    // Наблюдение, совпадающее с P_match: его вектор = эмбеддинг P_match (cosine = 1.0).
+    // The observation matching P_match: its vector = P_match's embedding (cosine = 1.0).
     let match_vec = ctx
         .embedder
         .embed(vec![p_match.clone()])
@@ -504,7 +506,7 @@ async fn summary_obs_overlap_surfaces_match_not_unrelated() {
         .note_vector_upsert(obs_match.id, profile, &match_vec)
         .unwrap();
 
-    // Несвязанное наблюдение: вектор на неиспользуемом измерении (cosine = 0 с обоими).
+    // An unrelated observation: a vector on an unused dimension (cosine = 0 with both).
     let mut other_vec = vec![0.0_f32; match_vec.len()];
     other_vec[5] = 1.0;
     let obs_other = Note::new(profile, "MARKER_OTHER", vec![SELF_NOTE_TAG.to_string()]);
@@ -516,26 +518,26 @@ async fn summary_obs_overlap_surfaces_match_not_unrelated() {
 
     let out = summary_observation_overlaps(&storage, ctx.embedder.as_ref(), profile, ru())
         .await
-        .expect("должна быть секция совпадения summary↔наблюдение");
-    assert!(out.contains("совпадающие с наблюдениями")); // заголовок раздела
+        .expect("expected a summary↔observation match section");
+    assert!(out.contains("совпадающие с наблюдениями")); // the section header
     assert!(out.contains("MARKER_MATCH"));
-    assert!(out.contains(&obs_match.id.to_string())); // полный id наблюдения
-    // Несвязанное наблюдение и несвязанный абзац не поднимаются.
+    assert!(out.contains(&obs_match.id.to_string())); // the observation's full id
+    // The unrelated observation and unrelated paragraph don't surface.
     assert!(!out.contains("MARKER_OTHER"));
     assert!(!out.contains(&"b".repeat(10)));
-    // Ровно одна пара (одна строка-элемент «\n- …» под заголовком).
+    // Exactly one pair (one "\n- …" item line under the header).
     assert_eq!(out.matches("\n- ").count(), 1);
 }
 
 #[tokio::test]
 async fn summary_obs_overlap_soft_degrades() {
-    // A2, мягкая деградация: нет наблюдений / пустой summary / эмбеддер с нестыковкой
-    // числа векторов → секции нет (None), паники нет.
+    // A2, graceful degradation: no observations / an empty summary / an embedder
+    // with a mismatched vector count → no section (None), no panic.
     use crate::entities::self_model::SelfModel;
     let profile = Uuid::new_v4();
     let (_d, storage, ctx) = ctx_with_storage(profile);
 
-    // Есть summary, но наблюдений нет → None.
+    // There's a summary, but no observations → None.
     let mut model = SelfModel::new(profile);
     model.summary = "a".repeat(50);
     storage.db().self_model_upsert(&model).unwrap();
@@ -545,7 +547,7 @@ async fn summary_obs_overlap_soft_degrades() {
             .is_none()
     );
 
-    // Добавляем наблюдение с вектором — теперь есть что сравнивать.
+    // Add an observation with a vector — now there's something to compare.
     let match_vec = ctx
         .embedder
         .embed(vec!["a".repeat(50)])
@@ -561,12 +563,12 @@ async fn summary_obs_overlap_soft_degrades() {
         .note_vector_upsert(obs.id, profile, &match_vec)
         .unwrap();
 
-    // Эмбеддер возвращает неверное число векторов → None (нестыковка).
+    // The embedder returns the wrong number of vectors → None (a mismatch).
     struct BadCountEmbedder;
     #[async_trait::async_trait]
     impl crate::shared::api::Embedder for BadCountEmbedder {
         async fn embed(&self, _texts: Vec<String>) -> anyhow::Result<Vec<Vec<f32>>> {
-            Ok(Vec::new()) // 0 векторов на любой вход — нестыковка
+            Ok(Vec::new()) // 0 vectors for any input — a mismatch
         }
     }
     assert!(
@@ -575,7 +577,7 @@ async fn summary_obs_overlap_soft_degrades() {
             .is_none()
     );
 
-    // Пустой summary → None (даже при наличии наблюдений и рабочего эмбеддера).
+    // An empty summary → None (even with observations present and a working embedder).
     let mut empty = SelfModel::new(profile);
     empty.summary = String::new();
     storage.db().self_model_upsert(&empty).unwrap();
@@ -592,7 +594,7 @@ fn migrate_self_narrative_moves_and_is_idempotent() {
     use chrono::{Duration, Utc};
     let profile = Uuid::new_v4();
     let (_d, storage, _ctx) = ctx_with_storage(profile);
-    // «Старая» модель с нарративом-блобом (как до Яруса 1).
+    // An "old" model with a narrative blob (as before Tier 1).
     let mut m = SelfModel::new(profile);
     let old = Utc::now() - Duration::days(3);
     m.narrative = vec![
@@ -611,7 +613,7 @@ fn migrate_self_narrative_moves_and_is_idempotent() {
 
     migrate_self_narrative(&storage, profile);
 
-    // Нарратив блоба очищен, наблюдения стали @self-заметками (created_at сохранён).
+    // The blob's narrative is cleared, observations became @self notes (created_at preserved).
     assert!(
         storage
             .db()
@@ -632,7 +634,7 @@ fn migrate_self_narrative_moves_and_is_idempotent() {
             .any(|n| n.content == "старое наблюдение" && n.created_at == old)
     );
 
-    // Повторный проход — no-op (нарратив пуст, дублей нет).
+    // A repeat pass — a no-op (the narrative is empty, no duplicates).
     migrate_self_narrative(&storage, profile);
     assert_eq!(
         storage
@@ -646,8 +648,8 @@ fn migrate_self_narrative_moves_and_is_idempotent() {
 
 #[tokio::test]
 async fn self_notes_relevant_ranks_and_filters() {
-    // Ярус 2: инъекция по релевантности — self_notes_relevant ранжирует
-    // self-заметки по близости к запросу и не отдаёт обычные заметки.
+    // Tier 2: relevance-based injection — self_notes_relevant ranks self-notes by
+    // closeness to the query and doesn't return regular notes.
     let profile = Uuid::new_v4();
     let (_d, storage, ctx) = ctx_with_storage(profile);
     create_note(
@@ -664,16 +666,16 @@ async fn self_notes_relevant_ranks_and_filters() {
     )
     .await
     .unwrap();
-    // Обычная заметка (не @self) — не должна попадать в выборку наблюдений.
+    // A regular note (not @self) — shouldn't make it into the observation selection.
     create_note(&ctx, "aaaa обычная".into(), vec![])
         .await
         .unwrap();
 
     let rel = self_notes_relevant(&storage, ctx.embedder.as_ref(), profile, "aaaa", 3).await;
     assert!(!rel.is_empty());
-    assert!(rel[0].content.contains("краткость")); // ближайшая к «aaaa»
-    assert!(rel.iter().all(|n| n.content != "aaaa обычная")); // только @self
-    // Пустой запрос → пусто (мягкая деградация к свежести у вызывающего).
+    assert!(rel[0].content.contains("краткость")); // closest to "aaaa"
+    assert!(rel.iter().all(|n| n.content != "aaaa обычная")); // @self only
+    // An empty query → empty (the caller's graceful degradation to recency).
     assert!(
         self_notes_relevant(&storage, ctx.embedder.as_ref(), profile, "  ", 3)
             .await
@@ -683,13 +685,13 @@ async fn self_notes_relevant_ranks_and_filters() {
 
 #[tokio::test]
 async fn save_surfaces_similar_notes_as_gate() {
-    // MockEmbedder(16) — мешок символов: тексты с общими буквами близки.
+    // MockEmbedder(16) — a bag of characters: texts sharing letters are close.
     let (_d, _s, ctx) = ctx_with_storage(Uuid::new_v4());
     NoteSave
         .invoke(&ctx, serde_json::json!({"content": "aaaa bbbb"}))
         .await
         .unwrap();
-    // Вторая заметка близка по символам → ворота должны показать первую.
+    // The second note is close by characters → the gate must show the first one.
     let out = NoteSave
         .invoke(&ctx, serde_json::json!({"content": "aaab"}))
         .await
@@ -709,8 +711,8 @@ async fn recall_semantic_finds_non_substring_match() {
         .invoke(&ctx, serde_json::json!({"content": "wwww"}))
         .await
         .unwrap();
-    // Запрос «aaab» не является подстрокой ни одной заметки, но семантически
-    // ближе к «aaaa» → семантический путь его находит.
+    // The query "aaab" isn't a substring of any note, but is semantically closer
+    // to "aaaa" → the semantic path finds it.
     let out = NoteRecall
         .invoke(&ctx, serde_json::json!({"query": "aaab", "limit": 1}))
         .await
@@ -723,7 +725,7 @@ async fn recall_semantic_finds_non_substring_match() {
 async fn save_gate_surfaces_legacy_note_without_vector() {
     let profile = Uuid::new_v4();
     let (_d, storage, ctx) = ctx_with_storage(profile);
-    // «Старая» заметка без вектора (вставлена напрямую — как до фичи/при импорте).
+    // An "old" note with no vector (inserted directly — as before the feature/on import).
     storage
         .db()
         .note_insert(&Note::new(profile, "aaaa bbbb", vec![]))
@@ -733,14 +735,14 @@ async fn save_gate_surfaces_legacy_note_without_vector() {
         1
     );
 
-    // Сохраняем похожую — ворота должны показать старую (бэкфилл в note_save).
+    // Save a similar one — the gate must show the old one (backfill in note_save).
     let out = NoteSave
         .invoke(&ctx, serde_json::json!({"content": "aaab"}))
         .await
         .unwrap();
     assert!(out.result.contains("Похожие заметки"));
     assert!(out.result.contains("aaaa bbbb"));
-    // Бэкфилл проиндексировал старую заметку.
+    // Backfill indexed the old note.
     assert_eq!(
         storage.db().notes_missing_vectors(profile).unwrap().len(),
         0
@@ -751,7 +753,7 @@ async fn save_gate_surfaces_legacy_note_without_vector() {
 async fn recall_backfills_legacy_notes_without_vectors() {
     let profile = Uuid::new_v4();
     let (_d, storage, ctx) = ctx_with_storage(profile);
-    // «Старые» заметки без векторов (вставлены напрямую — как до фичи/при импорте).
+    // "Old" notes with no vectors (inserted directly — as before the feature/on import).
     storage
         .db()
         .note_insert(&Note::new(profile, "aaaa", vec![]))
@@ -765,13 +767,13 @@ async fn recall_backfills_legacy_notes_without_vectors() {
         2
     );
 
-    // Семантический recall дотягивает вектора и находит не-подстрочное совпадение.
+    // Semantic recall pulls in vectors and finds a non-substring match.
     let out = NoteRecall
         .invoke(&ctx, serde_json::json!({"query": "aaab", "limit": 1}))
         .await
         .unwrap();
     assert!(out.result.contains("aaaa"));
-    // Бэкфилл выполнен — заметок без векторов больше нет.
+    // Backfill was performed — no more notes without vectors.
     assert_eq!(
         storage.db().notes_missing_vectors(profile).unwrap().len(),
         0
@@ -796,7 +798,7 @@ async fn revise_rewrites_in_place() {
         .await
         .unwrap();
     assert!(out.result.contains("переписана"));
-    // Содержимое заменено на месте (не добавлена новая заметка).
+    // Content is replaced in place (no new note added).
     let notes = storage.db().note_list(profile, None, &[], None).unwrap();
     assert_eq!(notes.len(), 1);
     assert_eq!(notes[0].content, "новое");
@@ -805,14 +807,14 @@ async fn revise_rewrites_in_place() {
 #[tokio::test]
 async fn revise_bad_and_missing_id() {
     let (_d, _s, ctx) = ctx_with_storage(Uuid::new_v4());
-    // Некорректный uuid → ошибка.
+    // An invalid uuid → an error.
     assert!(
         NoteRevise
             .invoke(&ctx, serde_json::json!({"id": "not-uuid", "content": "x"}))
             .await
             .is_err()
     );
-    // Корректный, но несуществующий → понятный текст, не паника.
+    // Valid but nonexistent → clear text, not a panic.
     let out = NoteRevise
         .invoke(
             &ctx,
@@ -823,7 +825,7 @@ async fn revise_bad_and_missing_id() {
     assert!(out.result.contains("не найдена"));
 }
 
-/// id заметки по содержимому (для тестов графа).
+/// A note's id by content (for graph tests).
 fn id_by_content(storage: &crate::shared::storage::Storage, profile: Uuid, content: &str) -> Uuid {
     storage
         .db()
@@ -859,7 +861,8 @@ async fn link_then_neighbors() {
             .unwrap();
     assert!(out.result.contains("Связь создана"));
 
-    // Повтор той же связи — честный ответ «уже существовала» (без дубля в графе).
+    // Repeating the same link — an honest "already existed" answer (no duplicate
+    // in the graph).
     let dup = NoteLink
             .invoke(
                 &ctx,
@@ -876,7 +879,7 @@ async fn link_then_neighbors() {
     assert!(nb.result.contains("бета"));
     assert!(nb.result.contains("refines"));
 
-    // Неизвестный тип связи и самосвязь → ошибки.
+    // An unknown relation type and a self-link → errors.
     assert!(
             NoteLink
                 .invoke(
@@ -924,7 +927,7 @@ async fn revise_warns_when_note_has_links() {
             .await
             .unwrap();
 
-    // Ревизия узла со связью предупреждает про note_supersede.
+    // Revising a node with a link warns about note_supersede.
     let out = NoteRevise
         .invoke(
             &ctx,
@@ -935,7 +938,7 @@ async fn revise_warns_when_note_has_links() {
     assert!(out.result.contains("переписана"));
     assert!(out.result.contains("note_supersede"));
 
-    // Узел без связей — без предупреждения.
+    // A node with no links — no warning.
     let out2 = NoteRevise
         .invoke(
             &ctx,
@@ -1004,7 +1007,7 @@ async fn merge_consolidates_sources() {
     assert_eq!(active.len(), 1);
     assert_eq!(active[0].content, "единая заметка");
 
-    // Меньше двух существующих → ошибка.
+    // Fewer than two existing ones → an error.
     assert!(
         NoteMerge
             .invoke(
@@ -1018,8 +1021,8 @@ async fn merge_consolidates_sources() {
 
 #[tokio::test]
 async fn supersede_preserves_tags() {
-    // Замещение self-заметки сохраняет тег @self — новая версия остаётся скрытой
-    // из пользовательского recall (иначе «выпала» бы в выдачу).
+    // Superseding a self-note preserves the @self tag — the new version stays
+    // hidden from user-facing recall (otherwise it would "fall out" into the output).
     let profile = Uuid::new_v4();
     let (_d, storage, ctx) = ctx_with_storage(profile);
     storage
@@ -1048,7 +1051,7 @@ async fn supersede_preserves_tags() {
         .unwrap();
     assert_eq!(self_notes.len(), 1);
     assert_eq!(self_notes[0].content, "версия 2");
-    // И не всплывает в обычном recall.
+    // And doesn't surface in regular recall.
     let out = NoteRecall
         .invoke(&ctx, serde_json::json!({}))
         .await
@@ -1107,7 +1110,8 @@ async fn recall_spreads_to_linked_notes() {
             .await
             .unwrap();
 
-    // Запрос близок к «aaaa»; «zzzz» не похож, но связан → попадёт в «Связанные».
+    // The query is close to "aaaa"; "zzzz" isn't similar, but is linked → makes
+    // it into "Related".
     let out = NoteRecall
         .invoke(&ctx, serde_json::json!({"query": "aaab", "limit": 1}))
         .await
@@ -1121,7 +1125,7 @@ async fn recall_spreads_to_linked_notes() {
 async fn consolidate_notes_reports_dups_and_dangling() {
     let profile = Uuid::new_v4();
     let (_d, _s, ctx) = ctx_with_storage(profile);
-    // Два почти-дубля (общие символы → высокий косинус на MockEmbedder).
+    // Two near-duplicates (shared characters → a high cosine on MockEmbedder).
     NoteSave
         .invoke(&ctx, serde_json::json!({"content": "aaaa bbbb"}))
         .await
@@ -1130,7 +1134,7 @@ async fn consolidate_notes_reports_dups_and_dangling() {
         .invoke(&ctx, serde_json::json!({"content": "aaaa bbbbb"}))
         .await
         .unwrap();
-    // Несвязанная непохожая заметка.
+    // An unrelated, dissimilar note.
     NoteSave
         .invoke(&ctx, serde_json::json!({"content": "zzzz"}))
         .await
@@ -1141,7 +1145,7 @@ async fn consolidate_notes_reports_dups_and_dangling() {
         .await
         .unwrap();
     assert!(out.result.contains("Обзор базы знаний"));
-    // Похожая пара найдена (хотя бы одна).
+    // A similar pair was found (at least one).
     assert!(out.result.contains("Похожие пары (возможные дубли"));
     assert!(out.result.contains("aaaa bbbb"));
     assert!(out.result.contains("без связей"));
@@ -1164,7 +1168,8 @@ async fn merge_transfers_links_to_new_note() {
         .invoke(&ctx, serde_json::json!({"content": "третья"}))
         .await
         .unwrap();
-    // id берём ДО слияния (после источники замещаются и из списка исчезают).
+    // Ids taken BEFORE merging (afterward the sources are superseded and vanish
+    // from the list).
     let s1 = id_by_content(&storage, profile, "часть один");
     let s2 = id_by_content(&storage, profile, "часть два");
     let other = id_by_content(&storage, profile, "третья");
@@ -1184,7 +1189,8 @@ async fn merge_transfers_links_to_new_note() {
         .await
         .unwrap();
 
-    // Связь источника перенесена на объединённую заметку: сосед «третьей» — «единая».
+    // The source's link is transferred onto the merged note: "third"'s neighbor
+    // is "merged".
     let nb = NoteNeighbors
         .invoke(&ctx, serde_json::json!({"id": other.to_string()}))
         .await

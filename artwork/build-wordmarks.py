@@ -1,25 +1,25 @@
 #!/usr/bin/env python3
-"""Генератор вордмарков mindfork: текст → кривые (self-contained SVG).
+"""Generator for mindfork wordmarks: text → outlines (a self-contained SVG).
 
-Зачем: SVG с `<text>` зависит от шрифта на машине зрителя. GitHub, чужой браузер
-и просмотрщики в Linux нужного моноширинного шрифта не имеют — начертание
-подменяется, и вордмарк выглядит сломанным. Поэтому глифы переводятся в `<path>`:
-файл становится самодостаточным и рендерится одинаково везде.
+Why: an SVG with `<text>` depends on a font present on the viewer's machine. GitHub, someone
+else's browser, and Linux viewers don't have the needed monospace font — the
+typeface gets substituted, and the wordmark looks broken. So the glyphs are converted to `<path>`:
+the file becomes self-contained and renders the same everywhere.
 
-Шрифт: **JetBrains Mono ExtraBold** (SIL Open Font License 1.1) — определён по
-эталону `wordmark-example.png` подгонкой метрик (см. `artwork/README.md §Шрифт`).
-OFL разрешает использование шрифта для создания артворка и распространение
-полученных кривых; сам файл шрифта в репозиторий не кладём — он нужен только для
-перегенерации.
+Font: **JetBrains Mono ExtraBold** (SIL Open Font License 1.1) — determined from the
+reference `wordmark-example.png` by fitting metrics (see `artwork/README.md §Font`).
+The OFL permits using the font to create artwork and distributing the
+resulting outlines; the font file itself isn't checked into the repo — it's only needed for
+regeneration.
 
-Геометрия лockup'а (пропорции иконки к тексту) измерена с эталона — константы
-`ASC_RATIO`/`GAP_RATIO`/`BASE_RATIO`/`TRACKING` ниже.
+The lockup's geometry (the icon-to-text proportions) was measured from the reference — the constants
+`ASC_RATIO`/`GAP_RATIO`/`BASE_RATIO`/`TRACKING` below.
 
-Запуск:
-    python artwork/build-wordmarks.py [--font <путь к JetBrainsMono-ExtraBold.ttf>]
+Run:
+    python artwork/build-wordmarks.py [--font <path to JetBrainsMono-ExtraBold.ttf>]
 
-Без `--font` шрифт ищется в стандартных местах (системные шрифты, бандлы IDE
-JetBrains). Перезаписывает `artwork/mindfork-wordmark*.svg`.
+Without `--font` the font is looked up in standard locations (system fonts, JetBrains
+IDE bundles). Overwrites `artwork/mindfork-wordmark*.svg`.
 """
 
 from __future__ import annotations
@@ -33,17 +33,17 @@ from fontTools.pens.svgPathPen import SVGPathPen
 from fontTools.pens.transformPen import TransformPen
 from fontTools.ttLib import TTFont
 
-# --- Палитра бренда (см. artwork/README.md) ---------------------------------
-ORANGE = "#c25a27"  # акцент: «fork» и ствол глифа
-GRAY = "#5c6370"  # ветви глифа
-PLATE = "#09090b"  # подложка иконки
-LIGHT_TEXT = "#e4e4e7"  # «mind» на тёмном
-DARK_TEXT = "#18181b"  # «mind» на светлом
-MUTED = "#71717a"  # тэглайн
+# --- Brand palette (see artwork/README.md) ---------------------------------
+ORANGE = "#c25a27"  # accent: "fork" and the glyph's stem
+GRAY = "#5c6370"  # the glyph's branches
+PLATE = "#09090b"  # the icon's backdrop
+LIGHT_TEXT = "#e4e4e7"  # "mind" on dark
+DARK_TEXT = "#18181b"  # "mind" on light
+MUTED = "#71717a"  # the tagline
 
-# --- Глиф иконки: 5 прямоугольников на сетке 16×16 ---------------------------
-# Единственный источник истины — mindfork-icon-transparent.svg; здесь дубль для
-# генерации. Тест widgets/logo.rs сверяет таблицу в коде с тем же SVG.
+# --- Icon glyph: 5 rectangles on a 16x16 grid ---------------------------
+# The single source of truth is mindfork-icon-transparent.svg; this is a duplicate for
+# generation. The widgets/logo.rs test cross-checks the table in the code against the same SVG.
 GLYPH = [
     (7, 2, 2, 12, ORANGE),
     (11, 2, 2, 5, GRAY),
@@ -52,19 +52,19 @@ GLYPH = [
     (5, 10, 2, 2, GRAY),
 ]
 
-# --- Геометрия лockup'а, измеренная с wordmark-example.png --------------------
-# Иконка в эталоне: 388×388 px; базовая линия текста, высота выносного элемента и
-# зазор пересчитаны в доли от размера иконки, поэтому масштабируются на любой S.
-ASC_RATIO = 0.5227  # высота выносного элемента ('d','f','k') / размер иконки
-GAP_RATIO = 0.3608  # зазор «правый край иконки → левый край чернил текста» / S
-BASE_RATIO = 0.7418  # базовая линия ниже верха иконки / S
-TRACKING = -35  # межбуквенный трекинг, единицы шрифта (≈ -0.035em)
+# --- Lockup geometry, measured from wordmark-example.png --------------------
+# The icon in the reference: 388x388 px; the text baseline, ascender height, and
+# gap are recomputed as fractions of the icon size, so they scale to any S.
+ASC_RATIO = 0.5227  # ascender height ('d','f','k') / icon size
+GAP_RATIO = 0.3608  # the gap "icon's right edge → text ink's left edge" / S
+BASE_RATIO = 0.7418  # baseline below the icon's top / S
+TRACKING = -35  # letter tracking, font units (~ -0.035em)
 
-ASCENDER = 730  # высота 'd'/'f'/'k' в единицах шрифта
+ASCENDER = 730  # the height of 'd'/'f'/'k' in font units
 UPM = 1000
-NAT_ADV = 600  # натуральный шаг моноширинного шрифта
-ADV = NAT_ADV + TRACKING  # фактический шаг с трекингом
-LSB_M = 38  # левый боковой отступ 'm' — начало чернил
+NAT_ADV = 600  # the monospace font's natural advance
+ADV = NAT_ADV + TRACKING  # the actual advance with tracking
+LSB_M = 38  # 'm''s left side bearing — where the ink starts
 
 FONT_CANDIDATES = [
     "C:/Windows/Fonts/JetBrainsMono-ExtraBold.ttf",
@@ -78,24 +78,24 @@ FONT_CANDIDATES = [
 def find_font(explicit: str | None) -> str:
     if explicit:
         if not os.path.isfile(explicit):
-            sys.exit(f"шрифт не найден: {explicit}")
+            sys.exit(f"font not found: {explicit}")
         return explicit
     for pat in FONT_CANDIDATES:
         for hit in sorted(glob.glob(pat), reverse=True):
             if os.path.isfile(hit):
                 return hit
     sys.exit(
-        "JetBrainsMono-ExtraBold.ttf не найден.\n"
-        "Скачать: https://github.com/JetBrains/JetBrainsMono/releases (OFL 1.1)\n"
-        "или указать путь: --font <путь>"
+        "JetBrainsMono-ExtraBold.ttf not found.\n"
+        "Download: https://github.com/JetBrains/JetBrainsMono/releases (OFL 1.1)\n"
+        "or pass a path: --font <path>"
     )
 
 
 def glyph_paths(font: TTFont, text: str, start_index: int = 0) -> str:
-    """Кривые подстроки одним `d`, в единицах шрифта, с учётом трекинга.
+    """The substring's outlines as one `d`, in font units, accounting for tracking.
 
-    `start_index` — позиция подстроки в целом слове (чтобы «fork» встал на свои
-    места, а не начинался с нуля).
+    `start_index` — the substring's position within the whole word (so "fork" lands in its
+    place, rather than starting from zero).
     """
     gs = font.getGlyphSet()
     cmap = font.getBestCmap()
@@ -107,13 +107,13 @@ def glyph_paths(font: TTFont, text: str, start_index: int = 0) -> str:
 
 
 def ink_width(text: str = "mindfork") -> float:
-    """Ширина чернил слова в единицах шрифта (для раскладки и viewBox)."""
-    # 'm'.xMin=38 … 'k'.xMax=580 (замерено по шрифту; см. artwork/README.md)
+    """The word's ink width in font units (for layout and the viewBox)."""
+    # 'm'.xMin=38 … 'k'.xMax=580 (measured against the font; see artwork/README.md)
     return (len(text) - 1) * ADV + 580 - LSB_M
 
 
 def icon(size: float, x: float, y: float, plate: bool, mono: bool) -> str:
-    """Иконка: опциональная скруглённая подложка + глиф на сетке 16×16."""
+    """The icon: an optional rounded backdrop + a glyph on a 16x16 grid."""
     s = size / 16.0
     out = [f'  <g shape-rendering="crispEdges" transform="translate({x:g},{y:g})">']
     if plate:
@@ -140,15 +140,15 @@ def wordmark_group(
     split: bool,
     text_fill: str,
 ) -> str:
-    """Текст «mindfork» кривыми.
+    """The word "mindfork" as outlines.
 
-    `split=True` — два пути: «mind» цветом `text_fill` и «fork» акцентом; иначе
-    одно слово в `currentColor` (одноцветный вариант). Кривые остаются в единицах
-    шрифта, а масштаб и переворот оси Y задаёт трансформация группы — так `d`
-    читаем и правится вручную.
+    `split=True` — two paths: "mind" in color `text_fill` and "fork" in the accent; otherwise
+    one word in `currentColor` (the single-color variant). The outlines stay in font
+    units, while the group's transform sets the scale and flips the Y axis — this way `d`
+    stays readable and editable by hand.
     """
     scale = size / UPM
-    # Перо в нуле даёт чернила от LSB_M — сдвигаем так, чтобы они легли на ink_x.
+    # A pen at zero gives ink starting at LSB_M — shift it so the ink lands on ink_x.
     tx = ink_x - LSB_M * scale
     out = [
         f'  <g transform="translate({tx:g},{baseline:g}) scale({scale:g},{-scale:g})">'
@@ -171,7 +171,7 @@ def svg(width: float, height: float, body: str, extra: str = "") -> str:
 
 
 def horizontal(font: TTFont, s: float, text_fill: str | None, mono: bool) -> str:
-    """Горизонтальный лockup: иконка слева, «mindfork» справа."""
+    """Horizontal lockup: the icon on the left, "mindfork" on the right."""
     size = ASC_RATIO * s / (ASCENDER / UPM)
     scale = size / UPM
     ink_x = s + GAP_RATIO * s
@@ -185,16 +185,16 @@ def horizontal(font: TTFont, s: float, text_fill: str | None, mono: bool) -> str
     return svg(round(w, 1), s, body, extra)
 
 
-# Вертикальный лockup: в отличие от горизонтального, эталона нет — пропорции
-# выведены. Ширина слова = 2× размера иконки (иначе моноширинное слово из 8 букв
-# уезжает в 3.2× и лockup становится нижне-тяжёлым); вертикальный зазор взят в той
-# же доле от высоты выносного элемента, что и горизонтальный (0.3608/0.5227).
+# Vertical lockup: unlike the horizontal one, there's no reference — the proportions
+# are derived. The word's width = 2x the icon size (otherwise the 8-letter monospace word
+# stretches to 3.2x and the lockup becomes bottom-heavy); the vertical gap is taken as the
+# same fraction of the ascender height as the horizontal one (0.3608/0.5227).
 STACK_TEXT_RATIO = 2.0
 GAP_PER_ASC = GAP_RATIO / ASC_RATIO
 
 
 def stacked(font: TTFont, s: float) -> str:
-    """Вертикальный лockup: иконка сверху, «mindfork» под ней по центру."""
+    """Vertical lockup: the icon on top, "mindfork" centered below it."""
     w_text = STACK_TEXT_RATIO * s
     size = w_text / ink_width() * UPM
     scale = size / UPM
@@ -205,12 +205,12 @@ def stacked(font: TTFont, s: float) -> str:
     body += "\n" + wordmark_group(
         font, size, (w - w_text) / 2, baseline, split=True, text_fill=LIGHT_TEXT
     )
-    # запас снизу под выносной вылет 'o'/'d' (-10 единиц), иначе их срежет viewBox
+    # bottom margin for the descender overhang of 'o'/'d' (-10 units), otherwise the viewBox would clip them
     return svg(round(w, 1), round(baseline + 10 * scale, 1), body)
 
 
 def tagline(font: TTFont, tag_font: TTFont, s: float, text: str) -> str:
-    """Горизонтальный лockup + тэглайн под словом, выключенный по его ширине."""
+    """Horizontal lockup + a tagline under the word, justified to its width."""
     size = ASC_RATIO * s / (ASCENDER / UPM)
     scale = size / UPM
     ink_x = s + GAP_RATIO * s
@@ -218,14 +218,14 @@ def tagline(font: TTFont, tag_font: TTFont, s: float, text: str) -> str:
     w_text = ink_width() * scale
     w = ink_x + w_text
 
-    # Тэглайн: подбираем кегль и трекинг так, чтобы строка выключилась ровно по
-    # ширине вордмарка (классический приём — тэглайн «под словом», край в край).
+    # Tagline: fit the size and tracking so the line justifies exactly to the
+    # wordmark's width (a classic technique — a tagline "under the word", edge to edge).
     gs = tag_font.getGlyphSet()
     cmap = tag_font.getBestCmap()
     n = len(text)
     tag_size = size * 0.26
     tsc = tag_size / UPM
-    # ширина = (n-1)*(600+track) + xMax_last - xMin_first, решаем относительно track
+    # width = (n-1)*(600+track) + xMax_last - xMin_first, solve for track
     first = cmap[ord(text[0])]
     last = cmap[ord(text[-1])]
     from fontTools.pens.boundsPen import BoundsPen
@@ -256,16 +256,16 @@ def tagline(font: TTFont, tag_font: TTFont, s: float, text: str) -> str:
 
 
 def main() -> None:
-    # Консоль Windows по умолчанию cp1252/cp866 — русский вывод её роняет.
+    # The Windows console defaults to cp1252/cp866 — Russian output crashes it.
     for stream in (sys.stdout, sys.stderr):
         try:
             stream.reconfigure(encoding="utf-8", errors="replace")
         except (AttributeError, OSError):
             pass
 
-    ap = argparse.ArgumentParser(description="Сборка вордмарков mindfork (текст → кривые)")
-    ap.add_argument("--font", help="путь к JetBrainsMono-ExtraBold.ttf")
-    ap.add_argument("--tag-font", help="путь к JetBrainsMono-Bold.ttf (тэглайн)")
+    ap = argparse.ArgumentParser(description="Build mindfork wordmarks (text → outlines)")
+    ap.add_argument("--font", help="path to JetBrainsMono-ExtraBold.ttf")
+    ap.add_argument("--tag-font", help="path to JetBrainsMono-Bold.ttf (tagline)")
     args = ap.parse_args()
 
     path = find_font(args.font)
@@ -273,8 +273,8 @@ def main() -> None:
     if not os.path.isfile(tag_path):
         tag_path = path
     font, tag_font = TTFont(path), TTFont(tag_path)
-    print(f"шрифт:   {path}")
-    print(f"тэглайн: {tag_path}")
+    print(f"font:    {path}")
+    print(f"tagline: {tag_path}")
 
     here = os.path.dirname(os.path.abspath(__file__))
     files = {
@@ -290,7 +290,7 @@ def main() -> None:
     for name, content in files.items():
         with open(os.path.join(here, name), "w", encoding="utf-8", newline="\n") as fh:
             fh.write(content)
-        print(f"  ✓ {name}  ({len(content)} байт)")
+        print(f"  ✓ {name}  ({len(content)} bytes)")
 
 
 if __name__ == "__main__":

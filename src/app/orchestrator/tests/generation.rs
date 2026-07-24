@@ -1,5 +1,5 @@
-//! Тесты оркестратора — генерация, agentic-loop, отмена, гейты готовности. Часть модуля [`super`]
-//! (фикстуры в mod.rs). См. docs/history/refactoring-god-objects.md, этап 3.
+//! Orchestrator tests — generation, the agentic loop, cancellation, readiness gates. Part of the [`super`]
+//! module (fixtures in mod.rs). See docs/history/refactoring-god-objects.md, stage 3.
 
 use super::*;
 
@@ -16,17 +16,17 @@ fn effective_sampling_resolves_three_tiers() {
     orch.profiles.push(profile);
     orch.chats.push(chat);
 
-    // override = None → берётся дефолт профиля.
+    // override = None → the profile's default is used.
     assert_eq!(orch.effective_sampling(chat_id).temperature, Some(0.5));
 
-    // override = Some → берётся он (приоритет чата).
+    // override = Some → it's used (the chat takes priority).
     orch.chats[0].sampling_override = Some(SamplingConfig {
         temperature: Some(0.9),
         ..Default::default()
     });
     assert_eq!(orch.effective_sampling(chat_id).temperature, Some(0.9));
 
-    // нет ни override, ни дефолта профиля → глобальный.
+    // Neither an override nor a profile default → the global one.
     orch.chats[0].sampling_override = None;
     orch.profiles[0].default_sampling = None;
     assert_eq!(orch.effective_sampling(chat_id).temperature, Some(0.1));
@@ -42,7 +42,7 @@ async fn send_streams_and_persists_assistant_message() {
     let (_d, cmd_tx, mut evt_rx, handle) = spawn_orch(Some(backend));
     let root = _d.path().to_path_buf();
 
-    // Ждём активации и узнаём id активного чата.
+    // Wait for activation and learn the active chat's id.
     let active = wait_for(&mut evt_rx, |e| matches!(e, AppEvent::ChatActivated { .. }))
         .await
         .unwrap();
@@ -58,7 +58,7 @@ async fn send_streams_and_persists_assistant_message() {
         .await
         .unwrap();
 
-    // Завершаем и проверяем, что чат сохранён с двумя сообщениями.
+    // Finish and check that the chat was saved with two messages.
     cmd_tx.send(AppCommand::Quit).unwrap();
     handle.await.unwrap();
 
@@ -76,8 +76,8 @@ async fn assistant_metadata_records_mode_model_and_filtered_sampling() {
     use crate::entities::sampling::SamplingConfig;
     use crate::shared::config::{CloudSettings, EngineSettings, ServerMode};
 
-    // Облачный режим (OpenAI) + имя модели; глобальный семплинг с top_k, который
-    // строгий облачный диалект не принимает → в снимок метаданных он попасть не должен.
+    // Cloud mode (OpenAI) + a model name; global sampling with top_k, which
+    // the strict cloud dialect doesn't accept → it must not land in the metadata snapshot.
     let config = AppConfig {
         engine: EngineSettings {
             mode: ServerMode::OpenAi,
@@ -124,11 +124,11 @@ async fn assistant_metadata_records_mode_model_and_filtered_sampling() {
     let meta = chat.messages[1]
         .metadata
         .as_ref()
-        .expect("снимок метаданных");
+        .expect("expected a metadata snapshot");
     assert_eq!(meta.mode, ServerMode::OpenAi);
     assert_eq!(meta.model.as_deref(), Some("gpt-test"));
-    // Доступные в режиме поля сохранены; недоступные top_k и temperature (её
-    // отвергают GPT 5.5/5.6) — обнулены.
+    // Fields available in the mode are kept; unavailable top_k and temperature (rejected
+    // by GPT 5.5/5.6) are cleared.
     assert_eq!(meta.sampling.max_tokens, Some(128));
     assert_eq!(meta.sampling.top_k, None);
     assert_eq!(meta.sampling.temperature, None);
@@ -137,7 +137,7 @@ async fn assistant_metadata_records_mode_model_and_filtered_sampling() {
 #[tokio::test]
 async fn emits_token_counter_during_generation() {
     use crate::shared::api::contract::TokenUsage;
-    // Две текстовые дельты (live-счёт = 2), затем точный usage от сервера (= 5).
+    // Two text deltas (the live count = 2), then exact usage from the server (= 5).
     let backend = Arc::new(MockBackend::scripted(vec![
         ChatChunk::Text("При".into()),
         ChatChunk::Text("вет".into()),
@@ -157,8 +157,8 @@ async fn emits_token_counter_during_generation() {
         .send(AppCommand::SendMessage("привет".into()))
         .unwrap();
 
-    // Сразу после старта — оценка переписки (промпта): context=Some, неточная,
-    // ответа ещё нет (completion=0).
+    // Right after the start — an estimate of the conversation (prompt): context=Some, inexact,
+    // no reply yet (completion=0).
     let est = wait_for(&mut evt_rx, |e| matches!(e, AppEvent::TokenUsage { .. }))
         .await
         .unwrap();
@@ -172,10 +172,10 @@ async fn emits_token_counter_during_generation() {
                 ..
             } if c > 0
         ),
-        "оценка переписки: {est:?}"
+        "conversation estimate: {est:?}"
     );
 
-    // Дельты ответа → счётчик ответа растёт, оценку переписки не трогают (None).
+    // Reply deltas → the reply counter grows, the conversation estimate is untouched (None).
     let first = wait_for(&mut evt_rx, |e| {
         matches!(e, AppEvent::TokenUsage { context: None, .. })
     })
@@ -190,10 +190,10 @@ async fn emits_token_counter_during_generation() {
                 ..
             }
         ),
-        "счётчик ответа: {first:?}"
+        "reply counter: {first:?}"
     );
 
-    // Точный счётчик из usage сервера приходит до завершения: completion=5, context=12.
+    // The exact count from the server's usage arrives before completion: completion=5, context=12.
     let exact = wait_for(&mut evt_rx, |e| {
         matches!(
             e,
@@ -215,7 +215,7 @@ async fn emits_token_counter_during_generation() {
                 ..
             }
         ),
-        "точный счётчик из usage: {exact:?}"
+        "exact count from usage: {exact:?}"
     );
 
     cmd_tx.send(AppCommand::Quit).unwrap();
@@ -224,7 +224,7 @@ async fn emits_token_counter_during_generation() {
 
 #[tokio::test]
 async fn regenerate_replaces_last_assistant_message() {
-    // Два разных ответа по очереди: исходный ход → «первый», перегенерация → «второй».
+    // Two different replies in turn: the original turn gives the first, regeneration gives the second.
     let backend = Arc::new(MockBackend::sequence(vec![
         vec![
             ChatChunk::Text("первый".into()),
@@ -251,7 +251,7 @@ async fn regenerate_replaces_last_assistant_message() {
     wait_for(&mut evt_rx, |e| matches!(e, AppEvent::Finished { .. }))
         .await
         .unwrap();
-    // ChatList после Finished — признак, что handle_done применил ответ (state Idle).
+    // ChatList after Finished — a sign that handle_done applied the reply (state Idle).
     wait_for(&mut evt_rx, |e| matches!(e, AppEvent::ChatList(_)))
         .await
         .unwrap();
@@ -267,7 +267,7 @@ async fn regenerate_replaces_last_assistant_message() {
     cmd_tx.send(AppCommand::Quit).unwrap();
     handle.await.unwrap();
 
-    // Старый ответ заменён новым; сообщение пользователя не дублируется.
+    // The old reply is replaced by the new one; the user's message isn't duplicated.
     let reopened = Storage::open(Paths::with_root(&root)).unwrap();
     let chat = reopened.json().load_chat(chat_id).unwrap().unwrap();
     assert_eq!(chat.messages.len(), 2, "{:?}", chat.messages);
@@ -312,12 +312,12 @@ async fn delete_last_exchange_restores_user_text() {
     cmd_tx.send(AppCommand::Quit).unwrap();
     handle.await.unwrap();
 
-    // Обмен удалён полностью (дефолтный чат без приветствия → пусто).
+    // The exchange is deleted entirely (a default chat with no greeting → empty).
     let reopened = Storage::open(Paths::with_root(&root)).unwrap();
     let chat = reopened.json().load_chat(chat_id).unwrap().unwrap();
     assert!(chat.messages.is_empty(), "{:?}", chat.messages);
-    // Удалённый обмен сохранён для ручного восстановления (сообщение пользователя +
-    // ответ ассистента), черновик ввода был пуст (spec §11.7).
+    // The deleted exchange is saved for manual recovery (the user's message +
+    // the assistant's reply); the input draft was empty (spec §11.7).
     assert_eq!(chat.deleted.len(), 1);
     let removed = &chat.deleted[0];
     assert_eq!(removed.messages.len(), 2);
@@ -329,8 +329,8 @@ async fn delete_last_exchange_restores_user_text() {
 
 #[tokio::test]
 async fn regenerate_without_user_message_is_noop() {
-    // Чат с приветствием-ассистентом, но без сообщения пользователя — нечего
-    // перегенерировать; команда не должна стартовать генерацию.
+    // A chat with an assistant greeting but no user message — there's nothing to
+    // regenerate; the command must not start generation.
     let backend = Arc::new(MockBackend::scripted(vec![ChatChunk::Finished(
         FinishReason::Stop,
     )])) as Arc<dyn EngineBackend>;
@@ -346,22 +346,22 @@ async fn regenerate_without_user_message_is_noop() {
     orch.active_id = Some(chat_id);
 
     orch.handle_regenerate();
-    // Состояние осталось Idle (генерация не запущена), история не тронута.
+    // State stayed Idle (generation wasn't started), history untouched.
     assert!(orch.gen_state.is_idle());
     assert_eq!(orch.chats[0].messages.len(), 1);
 }
 
 #[test]
 fn regenerate_on_not_ready_server_keeps_reply() {
-    // Сервер ещё подключается (managed грузит модель) — перегенерация не должна
-    // ни сносить прежний ответ, ни уходить запросом на не-готовый сервер (иначе
-    // 503 «engine returned an error status» и потеря ответа). Регресс-тест.
+    // The server is still connecting (managed is loading the model) — regeneration must
+    // neither wipe the previous reply nor go out as a request to a not-ready server (otherwise
+    // a 503 "engine returned an error status" and the reply is lost). Regression test.
     let backend = Arc::new(MockBackend::scripted(vec![ChatChunk::Finished(
         FinishReason::Stop,
     )])) as Arc<dyn EngineBackend>;
     let (_d, mut orch) = bare_orch();
     orch.engines.backend = Some(backend);
-    orch.engines.server_status = ServerStatus::Connecting; // ещё не готов
+    orch.engines.server_status = ServerStatus::Connecting; // not ready yet
     let profile = Profile::new("P", "sys");
     let mut chat = Chat::from_profile(&profile, "c");
     chat.push_message(Message::user("вопрос"));
@@ -373,20 +373,20 @@ fn regenerate_on_not_ready_server_keeps_reply() {
 
     orch.handle_regenerate();
 
-    // Ответ сохранён, генерация не стартовала (история не усечена).
+    // The reply is preserved, generation didn't start (history wasn't truncated).
     assert!(orch.gen_state.is_idle());
     assert_eq!(
         orch.chats[0].messages.len(),
         2,
-        "прежний ответ не должен быть снесён на не-готовом сервере"
+        "the previous reply must not be wiped on a not-ready server"
     );
     assert_eq!(orch.chats[0].messages[1].text, "старый ответ");
 }
 
 #[test]
 fn send_on_not_ready_server_restores_input() {
-    // Сервер ещё подключается — отправка отклоняется, но текст возвращается в
-    // поле ввода (RestoreInput), а в чат сообщение не добавляется.
+    // The server is still connecting — the send is rejected, but the text is returned to the
+    // input box (RestoreInput), and no message is added to the chat.
     let backend = Arc::new(MockBackend::scripted(vec![])) as Arc<dyn EngineBackend>;
     let (_d, mut orch, mut rx) = bare_orch_rx();
     orch.engines.backend = Some(backend);
@@ -401,8 +401,11 @@ fn send_on_not_ready_server_restores_input() {
     orch.handle_send("привет".into());
 
     assert!(orch.gen_state.is_idle());
-    assert!(orch.chats[0].messages.is_empty(), "сообщение не добавлено");
-    // Среди эмитнутых событий — ошибка и возврат текста в поле ввода.
+    assert!(
+        orch.chats[0].messages.is_empty(),
+        "no message should be added"
+    );
+    // Among the emitted events — an error and the text returning to the input box.
     let mut got_error = false;
     let mut restored = None;
     while let Ok(ev) = rx.try_recv() {
@@ -412,7 +415,7 @@ fn send_on_not_ready_server_restores_input() {
             _ => {}
         }
     }
-    assert!(got_error, "должна быть эмитнута ошибка о неготовности");
+    assert!(got_error, "an error about not-readiness should be emitted");
     assert_eq!(restored.as_deref(), Some("привет"));
 }
 
@@ -471,7 +474,7 @@ async fn cancel_stops_generation_and_saves_partial() {
 #[tokio::test]
 async fn agentic_loop_executes_tool_then_finalizes() {
     use crate::shared::api::contract::ToolCallDelta;
-    // Раунд 1: вызов note_save → раунд 2: финальный текст.
+    // Round 1: a call to note_save → round 2: the final text.
     let backend = Arc::new(MockBackend::sequence(vec![
         vec![
             ChatChunk::ToolCall(ToolCallDelta {
@@ -503,7 +506,7 @@ async fn agentic_loop_executes_tool_then_finalizes() {
         .send(AppCommand::SendMessage("запомни про чай".into()))
         .unwrap();
 
-    // Событие исполнения инструмента доходит до UI.
+    // The tool-execution event reaches the UI.
     let tool_ev = wait_for(&mut evt_rx, |e| matches!(e, AppEvent::ToolCall { .. }))
         .await
         .unwrap();
@@ -515,7 +518,7 @@ async fn agentic_loop_executes_tool_then_finalizes() {
     cmd_tx.send(AppCommand::Quit).unwrap();
     handle.await.unwrap();
 
-    // История: user → assistant(tool_calls) → tool → assistant(финал).
+    // History: user → assistant(tool_calls) → tool → assistant(final).
     let reopened = Storage::open(Paths::with_root(&root)).unwrap();
     let chat = reopened.json().load_chat(chat_id).unwrap().unwrap();
     assert_eq!(chat.messages.len(), 4, "{:?}", chat.messages);
@@ -526,7 +529,7 @@ async fn agentic_loop_executes_tool_then_finalizes() {
     assert_eq!(chat.messages[2].role, MessageRole::Tool);
     assert_eq!(chat.messages[3].text, "Запомнил.");
 
-    // Заметка действительно сохранена инструментом (изоляция по профилю).
+    // The note is actually saved by the tool (isolation by profile).
     let notes = reopened
         .db()
         .note_list(chat.profile_id, None, &[], None)
@@ -538,8 +541,8 @@ async fn agentic_loop_executes_tool_then_finalizes() {
 #[tokio::test]
 async fn disabled_tool_is_refused_by_loop() {
     use crate::shared::api::contract::ToolCallDelta;
-    // python_exec выключен глобально (spawn_orch: python_enabled = false) —
-    // даже если модель его вызовет, loop откажет, не исполняя.
+    // python_exec is disabled globally (spawn_orch: python_enabled = false) —
+    // even if the model calls it, the loop will refuse without executing it.
     let backend = Arc::new(MockBackend::sequence(vec![
         vec![
             ChatChunk::ToolCall(ToolCallDelta {
@@ -585,7 +588,7 @@ async fn disabled_tool_is_refused_by_loop() {
 #[tokio::test]
 async fn tool_round_limit_is_respected() {
     use crate::shared::api::contract::ToolCallDelta;
-    // Движок всегда просит инструмент — должен сработать лимит раундов.
+    // The engine always requests a tool — the round limit should kick in.
     let backend = Arc::new(MockBackend::scripted(vec![
         ChatChunk::ToolCall(ToolCallDelta {
             thought_signature: None,
@@ -609,7 +612,7 @@ async fn tool_round_limit_is_respected() {
         .send(AppCommand::SendMessage("зациклись".into()))
         .unwrap();
 
-    // Дойдём до Finished; лимит породит ошибку-пометку, но генерация завершится.
+    // Reach Finished; the limit produces an error marker, but generation completes.
     wait_for(&mut evt_rx, |e| matches!(e, AppEvent::Finished { .. }))
         .await
         .unwrap();
@@ -620,9 +623,9 @@ async fn tool_round_limit_is_respected() {
 #[tokio::test]
 async fn round_limit_forces_final_synthesis_without_tools() {
     use crate::shared::api::contract::ToolCallDelta;
-    // При лимите раундов модель не должна оставить пользователя без ответа: после
-    // исчерпания раундов делается финальный раунд БЕЗ инструментов, где модель
-    // сводит итог. Скрипты: раунд 1 и 2 — вызовы инструмента, 3-й (форс-синтез) — текст.
+    // With the round limit, the model must not leave the user with no reply: after
+    // exhausting the rounds a final round runs WITHOUT tools, where the model
+    // sums up. Scripts: rounds 1 and 2 — tool calls, round 3 (forced synthesis) — text.
     let toolcall = || {
         vec![
             ChatChunk::ToolCall(ToolCallDelta {
@@ -663,7 +666,7 @@ async fn round_limit_forces_final_synthesis_without_tools() {
     cmd_tx.send(AppCommand::Quit).unwrap();
     handle.await.unwrap();
 
-    // Последнее сообщение — финальный текст ассистента (свод), а не пустота.
+    // The last message — the assistant's final summary text, not emptiness.
     let reopened = Storage::open(Paths::with_root(&root)).unwrap();
     let chat = reopened
         .json()
@@ -680,7 +683,7 @@ async fn round_limit_forces_final_synthesis_without_tools() {
 #[tokio::test]
 async fn followup_tool_makes_two_assistant_messages() {
     use crate::shared::api::contract::ToolCallDelta;
-    // Раунд 1: текст + вызов send_followup_message → раунд 2: второе сообщение.
+    // Round 1: text + a call to send_followup_message → round 2: the second message.
     let backend = Arc::new(MockBackend::sequence(vec![
         vec![
             ChatChunk::Text("Первое сообщение.".into()),
@@ -706,7 +709,7 @@ async fn followup_tool_makes_two_assistant_messages() {
         .send(AppCommand::SendMessage("давай".into()))
         .unwrap();
 
-    // UI получает сигнал «начать новый пузырь».
+    // The UI receives the signal to start a new bubble.
     wait_for(&mut evt_rx, |e| {
         matches!(e, AppEvent::AssistantContinue { .. })
     })
@@ -718,7 +721,7 @@ async fn followup_tool_makes_two_assistant_messages() {
     cmd_tx.send(AppCommand::Quit).unwrap();
     handle.await.unwrap();
 
-    // История: user → assistant(followup tool_call) → tool → assistant(2-е, new_bubble).
+    // History: user → assistant(followup tool_call) → tool → assistant(2nd, new_bubble).
     let reopened = Storage::open(Paths::with_root(&root)).unwrap();
     let chat = reopened
         .json()
@@ -736,16 +739,16 @@ async fn followup_tool_makes_two_assistant_messages() {
     assert_eq!(chat.messages[3].text, "Второе сообщение.");
     assert!(
         chat.messages[3].new_bubble,
-        "второе сообщение — отдельным пузырём"
+        "the second message should be a separate bubble"
     );
-    // Управляющий инструмент ничего не отбрасывает.
+    // The control tool discards nothing.
     assert!(chat.deleted.is_empty());
 }
 
 #[tokio::test]
 async fn rewrite_tool_discards_partial_and_saves_it() {
     use crate::shared::api::contract::ToolCallDelta;
-    // Раунд 1: неверный текст + вызов rewrite_current_message → раунд 2: переписанный.
+    // Round 1: an incorrect text + a call to rewrite_current_message → round 2: the rewritten one.
     let backend = Arc::new(MockBackend::sequence(vec![
         vec![
             ChatChunk::Text("Неправильный ответ".into()),
@@ -771,7 +774,7 @@ async fn rewrite_tool_discards_partial_and_saves_it() {
         .send(AppCommand::SendMessage("вопрос".into()))
         .unwrap();
 
-    // UI получает сигнал «отбросить текущий пузырь».
+    // The UI receives the signal to discard the current bubble.
     wait_for(&mut evt_rx, |e| {
         matches!(e, AppEvent::AssistantRewrite { .. })
     })
@@ -783,7 +786,7 @@ async fn rewrite_tool_discards_partial_and_saves_it() {
     cmd_tx.send(AppCommand::Quit).unwrap();
     handle.await.unwrap();
 
-    // История: user → assistant(переписанный). Неверная версия — в архиве удалённого.
+    // History: user → assistant(rewritten). The incorrect version is in the deleted archive.
     let reopened = Storage::open(Paths::with_root(&root)).unwrap();
     let chat = reopened
         .json()
@@ -796,7 +799,7 @@ async fn rewrite_tool_discards_partial_and_saves_it() {
     assert_eq!(chat.messages[0].role, MessageRole::User);
     assert_eq!(chat.messages[1].role, MessageRole::Assistant);
     assert_eq!(chat.messages[1].text, "Правильный ответ.");
-    // Отброшенный (неверный) ответ + его tool-сообщение сохранены для восстановления.
+    // The discarded (incorrect) reply + its tool message are saved for recovery.
     assert_eq!(chat.deleted.len(), 1);
     let discarded = &chat.deleted[0].messages;
     assert_eq!(discarded[0].role, MessageRole::Assistant);

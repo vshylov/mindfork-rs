@@ -1,10 +1,10 @@
-//! Инструмент `call_subagent` (spec §9.3.2): получить **альтернативное мнение**.
+//! `call_subagent` tool (spec §9.3.2): get an **alternative opinion**.
 //!
-//! Основной агент сам задаёт саб-агенту системное сообщение и единственное
-//! пользовательское сообщение. Саб-агент — **независимый одно-ходовый** запрос к
-//! той же модели через `ctx.engine`: **без истории чата, без инструментов и без
-//! вложенности** (запрет рекурсии — саб-агенту не передаётся ни один инструмент,
-//! включая `call_subagent`). Подчиняется лимитам токенов и времени.
+//! The main agent sets the subagent's system message and single user message
+//! itself. The subagent is an **independent single-turn** request to the same
+//! model via `ctx.engine`: **no chat history, no tools, no nesting** (a
+//! recursion ban — the subagent isn't given any tool at all, including
+//! `call_subagent`). Subject to token and time limits.
 
 use std::time::Duration;
 
@@ -18,13 +18,13 @@ use crate::shared::api::{ApiMessage, ChatChunk, ChatRequest};
 
 use super::{Tool, ToolContext, ToolOutcome};
 
-/// Лимит токенов ответа саб-агента по умолчанию (защита от длинных/зацикленных).
+/// Default token limit for the subagent's reply (protection against long/looping ones).
 const DEFAULT_SUBAGENT_MAX_TOKENS: usize = 1024;
-/// Лимит времени на один вызов саб-агента по умолчанию.
+/// Default time limit for a single subagent call.
 const DEFAULT_SUBAGENT_TIMEOUT: Duration = Duration::from_secs(60);
 
-/// `call_subagent` — независимый одно-ходовый запрос для альтернативного мнения.
-/// Лимиты токенов/времени настраиваются (`config.tools`, spec §11.6).
+/// `call_subagent` — an independent single-turn request for an alternative opinion.
+/// Token/time limits are configurable (`config.tools`, spec §11.6).
 pub struct CallSubagent {
     max_tokens: usize,
     timeout: Duration,
@@ -40,7 +40,7 @@ impl Default for CallSubagent {
 }
 
 impl CallSubagent {
-    /// Создаёт инструмент с заданными лимитами токенов/времени.
+    /// Creates the tool with the given token/time limits.
     pub fn new(max_tokens: usize, timeout: Duration) -> Self {
         Self {
             max_tokens,
@@ -58,7 +58,7 @@ impl Tool for CallSubagent {
         crate::features::tools::meta::ToolGroup::Subagent
     }
     fn ui_label(&self) -> &'static str {
-        "запрос суб-агенту"
+        "subagent request"
     }
     fn description(&self, loc: &crate::shared::i18n::Locale) -> String {
         loc.t("tool.call_subagent.desc").into()
@@ -92,7 +92,7 @@ impl Tool for CallSubagent {
             .ok_or_else(|| anyhow::anyhow!(ctx.loc.t("tool.call_subagent.err.message_empty")))?
             .to_string();
 
-        // Лимит токенов поверх действующего семплинга; БЕЗ инструментов и истории.
+        // A token limit on top of the effective sampling; NO tools and no history.
         let sampling = SamplingConfig {
             max_tokens: Some(
                 ctx.effective_sampling
@@ -105,7 +105,7 @@ impl Tool for CallSubagent {
             system: (!system_message.is_empty()).then(|| system_message.clone()),
             messages: vec![ApiMessage::user(message)],
             sampling,
-            tools: Vec::new(), // запрет вложенности: никаких инструментов
+            tools: Vec::new(), // a nesting ban: no tools at all
         };
 
         let cancel = CancellationToken::new();
@@ -117,7 +117,7 @@ impl Tool for CallSubagent {
                 match chunk {
                     ChatChunk::Text(t) => text.push_str(&t),
                     ChatChunk::Finished(_) => break,
-                    // «Мысли», tool-дельты и счётчик токенов саб-агента игнорируем.
+                    // "Thoughts", tool deltas, and the subagent's token counter are ignored.
                     ChatChunk::Thoughts(_)
                     | ChatChunk::ThoughtsSignature(_)
                     | ChatChunk::ToolCall(_)
@@ -154,7 +154,7 @@ mod tests {
     use std::sync::{Arc, Mutex};
     use uuid::Uuid;
 
-    /// Движок, запоминающий последний запрос и отдающий фиксированный ответ.
+    /// An engine that remembers the last request and returns a fixed reply.
     struct CapturingBackend {
         last: Mutex<Option<ChatRequest>>,
         reply: String,
@@ -205,14 +205,11 @@ mod tests {
         assert_eq!(out.result, "альтернативное мнение");
         assert!(out.effects.is_empty());
 
-        // Запрос саб-агента: заданный system, единственное user-сообщение, без инструментов.
+        // The subagent's request: the given system, a single user message, no tools.
         let req = backend.last.lock().unwrap().take().unwrap();
         assert_eq!(req.system.as_deref(), Some("Ты — критик."));
         assert_eq!(req.messages.len(), 1);
-        assert!(
-            req.tools.is_empty(),
-            "саб-агенту нельзя передавать инструменты"
-        );
+        assert!(req.tools.is_empty(), "the subagent must not be given tools");
         assert!(req.sampling.max_tokens.unwrap() <= DEFAULT_SUBAGENT_MAX_TOKENS);
     }
 

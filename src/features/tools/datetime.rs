@@ -1,8 +1,8 @@
-//! Инструмент `current_time` (spec §9.3): текущие дата и время.
+//! `current_time` tool (spec §9.3): the current date and time.
 //!
-//! Модель не знает «сейчас» (её знания статичны), поэтому даёт текущий момент в
-//! локальной зоне и UTC. Опционально форматирует по строке `strftime`. Чистый
-//! инструмент без I/O — не гейтится выключателями.
+//! The model doesn't know "now" (its knowledge is static), so this gives the
+//! current moment in the local zone and UTC. Optionally formats via a
+//! `strftime` string. A pure I/O-free tool — not gated by any switches.
 
 use anyhow::Result;
 use chrono::{Local, Utc};
@@ -11,7 +11,7 @@ use crate::entities::profile::ToolId;
 
 use super::{Tool, ToolContext, ToolOutcome};
 
-/// `current_time` — возвращает текущие дату и время.
+/// `current_time` — returns the current date and time.
 pub struct CurrentTime;
 
 #[async_trait::async_trait]
@@ -23,7 +23,7 @@ impl Tool for CurrentTime {
         crate::features::tools::meta::ToolGroup::Utils
     }
     fn ui_label(&self) -> &'static str {
-        "текущее время"
+        "current time"
     }
     fn description(&self, loc: &crate::shared::i18n::Locale) -> String {
         loc.t("tool.current_time.desc").into()
@@ -50,9 +50,9 @@ impl Tool for CurrentTime {
     }
 }
 
-/// Формирует ответ: при заданном `format` — локальное время по нему, иначе —
-/// человекочитаемые локальное время и UTC (RFC 3339). Вынесено для тестируемости
-/// (инъекция момента времени). Тексты — на языке каркаса `loc`.
+/// Builds the response: with a given `format` — local time by it, otherwise —
+/// human-readable local time and UTC (RFC 3339). Factored out for testability
+/// (injecting the moment in time). Texts — in the scaffold language `loc`.
 fn render(
     local: chrono::DateTime<Local>,
     utc: chrono::DateTime<Utc>,
@@ -60,8 +60,8 @@ fn render(
     loc: &crate::shared::i18n::Locale,
 ) -> String {
     if let Some(fmt) = format.filter(|f| !f.trim().is_empty()) {
-        // `format` с неверной спецификацией паникует при материализации — ловим
-        // через отдельную попытку рендера в String.
+        // `format` with an invalid spec panics when materialized — caught via
+        // a separate attempt to render into a String.
         return match render_with_format(local, fmt) {
             Some(s) => s,
             None => loc.tf("tool.current_time.err.bad_format", &[("fmt", fmt)]),
@@ -75,12 +75,12 @@ fn render(
     )
 }
 
-/// Пытается отформатировать момент по строке `strftime`. `None`, если строка
-/// содержит неверную спецификацию (иначе `format()` паникует при выводе).
+/// Tries to format the moment via a `strftime` string. `None` if the string
+/// contains an invalid spec (otherwise `format()` panics on output).
 fn render_with_format(local: chrono::DateTime<Local>, fmt: &str) -> Option<String> {
     use std::fmt::Write;
     let mut out = String::new();
-    // `write!` с `DelayedFormat` возвращает Err на неверной спецификации, а не паникует.
+    // `write!` with `DelayedFormat` returns Err on an invalid spec, rather than panicking.
     write!(out, "{}", local.format(fmt)).ok()?;
     Some(out)
 }
@@ -92,7 +92,7 @@ mod tests {
     use chrono::TimeZone;
     use uuid::Uuid;
 
-    /// Референсная локаль (ru) для проверки текстов render.
+    /// Reference locale (ru) for checking render texts.
     fn ru() -> &'static crate::shared::i18n::Locale {
         crate::shared::i18n::locale(crate::shared::i18n::Lang::Ru)
     }
@@ -112,9 +112,9 @@ mod tests {
         let utc = Utc.with_ymd_and_hms(2026, 6, 23, 12, 30, 0).unwrap();
         let local = utc.with_timezone(&Local);
         let s = render(local, utc, Some("%Y-%m-%d"), ru());
-        // Локальная дата (зона теста неизвестна) — но год точно присутствует.
+        // Local date (the test's zone is unknown) — but the year is definitely present.
         assert!(s.contains("2026"), "got: {s}");
-        assert!(!s.contains("UTC"), "формат-режим не печатает UTC: {s}");
+        assert!(!s.contains("UTC"), "format mode doesn't print UTC: {s}");
     }
 
     #[test]

@@ -1,5 +1,5 @@
-//! Инструменты базы знаний (RAG): `rag_add`, `rag_search`. Чанкинг → эмбеддинг
-//! (выделенный сервер, ADR 0002) → запись/kNN в sqlite-vec, **изоляция по
+//! Knowledge-base (RAG) tools: `rag_add`, `rag_search`. Chunking → embedding
+//! (a dedicated server, ADR 0002) → write/kNN in sqlite-vec, **isolation by
 //! `profile_id`** (spec §9.3, §9.5).
 
 use anyhow::Result;
@@ -13,24 +13,25 @@ use crate::shared::config::{
 
 use super::{Tool, ToolContext, ToolOutcome};
 
-/// Минимальная длина дословного совпадения для склейки соседних чанков при
-/// извлечении (короче — вероятна случайность, а не заложенное перекрытие).
+/// Minimum length of a verbatim match to stitch adjacent chunks together on
+/// retrieval (shorter — likely coincidence, not the built-in overlap).
 const MIN_STITCH_OVERLAP: usize = 24;
-/// Топ-K по умолчанию для поиска.
+/// Default top-K for search.
 const DEFAULT_TOP_K: usize = 5;
 
-/// Параметры чанкинга (размеры в символах). Конфигурируемы через настройки
-/// (`config.rag`, см. spec §9.3): передаются в [`chunk_text`]/[`chunk_markdown`]
-/// вместо ранее захардкоженных констант. `Default` совпадает с прежними значениями.
+/// Chunking parameters (sizes in characters). Configurable via settings
+/// (`config.rag`, see spec §9.3): passed into [`chunk_text`]/[`chunk_markdown`]
+/// instead of the previously hardcoded constants. `Default` matches the former values.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ChunkParams {
-    /// Целевой («мягкий») размер чанка — юниты пакуются до него.
+    /// Target ("soft") chunk size — units are packed up to it.
     pub target: usize,
-    /// Перекрытие соседних чанков: хвост предыдущего повторяется в начале следующего.
-    /// Best practice RAG — запрос у границы чанка не теряет контекст (а при извлечении
-    /// дубль снимается склейкой, см. [`stitch_hits`]).
+    /// Overlap of adjacent chunks: the previous chunk's tail repeats at the start
+    /// of the next one. RAG best practice — a query near a chunk boundary doesn't
+    /// lose context (and duplication is removed on retrieval by stitching, see
+    /// [`stitch_hits`]).
     pub overlap: usize,
-    /// Жёсткий потолок неделимого прогона (очень длинное слово/строка без пунктуации).
+    /// Hard ceiling for an indivisible run (a very long word/line with no punctuation).
     pub max: usize,
 }
 
@@ -45,15 +46,16 @@ impl Default for ChunkParams {
 }
 
 impl ChunkParams {
-    /// Параметры из настроек RAG (`config.rag`). Невалидные значения (нулевой
-    /// целевой размер) подменяются дефолтом, чтобы чанкер не зациклился/не отдал пусто.
+    /// Parameters from RAG settings (`config.rag`). Invalid values (a zero target
+    /// size) are replaced with the default, so the chunker doesn't loop/return empty.
     pub fn from_settings(rag: &RagSettings) -> Self {
         let target = if rag.chunk_target_chars == 0 {
             DEFAULT_CHUNK_TARGET_CHARS
         } else {
             rag.chunk_target_chars
         };
-        // Потолок не может быть меньше цели — иначе целевая упаковка невозможна.
+        // The ceiling can't be smaller than the target — otherwise the target
+        // packing is impossible.
         let max = rag.chunk_max_chars.max(target);
         Self {
             target,
@@ -63,8 +65,8 @@ impl ChunkParams {
     }
 }
 
-/// `rag_add` — добавляет текст в базу знаний (чанкинг + эмбеддинг). Возвращает
-/// число записанных чанков.
+/// `rag_add` — adds text to the knowledge base (chunking + embedding). Returns the
+/// number of chunks written.
 pub struct RagAdd;
 
 #[async_trait::async_trait]
@@ -76,7 +78,7 @@ impl Tool for RagAdd {
         crate::features::tools::meta::ToolGroup::Memory
     }
     fn ui_label(&self) -> &'static str {
-        "добавить в базу знаний"
+        "add to knowledge base"
     }
     fn description(&self, loc: &crate::shared::i18n::Locale) -> String {
         loc.t("tool.rag_add.desc").into()
@@ -114,8 +116,8 @@ impl Tool for RagAdd {
             let doc = RagDocument::new(ctx.profile_id, &source, chunk, embedding);
             ctx.storage.db().rag_insert(&doc)?;
         }
-        // Сохраняем исходный текст для возможной реиндексации (`/rag rebuild`).
-        // Инструмент накапливает чанки источника — поэтому дописываем, не заменяем.
+        // Save the source text for possible reindexing (`/rag rebuild`). The tool
+        // accumulates the source's chunks — so we append, not replace.
         ctx.storage
             .db()
             .rag_source_append(ctx.profile_id, &source, text, chrono::Utc::now())?;
@@ -126,7 +128,7 @@ impl Tool for RagAdd {
     }
 }
 
-/// `rag_search` — семантический поиск по базе знаний профиля.
+/// `rag_search` — semantic search over the profile's knowledge base.
 pub struct RagSearch;
 
 #[async_trait::async_trait]
@@ -138,7 +140,7 @@ impl Tool for RagSearch {
         crate::features::tools::meta::ToolGroup::Memory
     }
     fn ui_label(&self) -> &'static str {
-        "поиск в базе знаний"
+        "search knowledge base"
     }
     fn description(&self, loc: &crate::shared::i18n::Locale) -> String {
         loc.t("tool.rag_search.desc").into()
@@ -173,10 +175,11 @@ impl Tool for RagSearch {
         if hits.is_empty() {
             return Ok(ToolOutcome::text(ctx.loc.t("tool.rag_search.result.empty")));
         }
-        // Склеиваем соседние чанки одного источника (по заложенному перекрытию):
-        // экономит контекст и не путает модель повтором (см. [`stitch_hits`]). Затем
-        // убираем почти-идентичные пассажи из РАЗНЫХ источников (повтор одного контента),
-        // чтобы не кормить модель дублем; порядок ранжирования сохраняется (см. [`dedup_passages`]).
+        // Stitch adjacent chunks of the same source (by the built-in overlap):
+        // saves context and doesn't confuse the model with a repeat (see
+        // [`stitch_hits`]). Then remove near-identical passages from DIFFERENT
+        // sources (a repeat of the same content), so the model isn't fed a
+        // duplicate; ranking order is preserved (see [`dedup_passages`]).
         let passages = dedup_passages(stitch_hits(hits));
         let mut out = format!(
             "{}\n",
@@ -188,9 +191,9 @@ impl Tool for RagSearch {
         for p in &passages {
             out.push_str(&format!("- [{}] {}\n", p.source, p.text));
         }
-        // Обратное направление (Ярус 3, Путь 3): заметки/наблюдения, ссылающиеся на
-        // найденные источники — «поиск через оба органа». self-наблюдения помечаем
-        // [о себе] (органы различимы). Дедуп заметок по id.
+        // The reverse direction (Tier 3, Path 3): notes/observations citing the
+        // found sources — "search through both organs". Self-observations are
+        // marked [about self] (the organs stay distinguishable). Dedup notes by id.
         let mut seen: std::collections::HashSet<uuid::Uuid> = std::collections::HashSet::new();
         let mut linked: Vec<String> = Vec::new();
         for p in &passages {
@@ -222,38 +225,38 @@ impl Tool for RagSearch {
     }
 }
 
-/// Длина строки в символах (а не байтах — корректно для кириллицы/Юникода).
+/// Length of a string in characters (not bytes — correct for Cyrillic/Unicode).
 fn clen(s: &str) -> usize {
     s.chars().count()
 }
 
-/// Нарезает произвольный текст на чанки с перекрытием по границам предложений/слов
-/// (best practice RAG). `pub(crate)` — переиспользуется фоновой индексацией файлов
-/// (`/rag add`) и инструментом `rag_add`. Для markdown есть [`chunk_markdown`].
+/// Cuts arbitrary text into chunks with overlap along sentence/word boundaries
+/// (RAG best practice). `pub(crate)` — reused by background file indexing
+/// (`/rag add`) and the `rag_add` tool. For markdown there's [`chunk_markdown`].
 ///
-/// Алгоритм: текст сегментируется на атомарные юниты (абзац целиком, если влезает
-/// в цель; иначе — предложения; слишком длинные предложения — окна по словам, а
-/// одиночное гигантское слово — по символам), затем юниты пакуются в чанки до
-/// `CHUNK_TARGET_CHARS`, и каждый следующий чанк начинается с хвоста предыдущего
-/// (перекрытие ≤ `CHUNK_OVERLAP_CHARS`). Мелкие соседние абзацы при этом
-/// группируются в один чанк (а не плодят крошечные строки-чанки).
+/// Algorithm: the text is segmented into atomic units (a whole paragraph if it
+/// fits the target; otherwise sentences; too-long sentences — word windows, and a
+/// single gigantic word — by character), then the units are packed into chunks up
+/// to `CHUNK_TARGET_CHARS`, and each next chunk starts with the tail of the
+/// previous one (overlap ≤ `CHUNK_OVERLAP_CHARS`). Small neighboring paragraphs are
+/// grouped into one chunk this way (rather than spawning tiny line-chunks).
 pub(crate) fn chunk_text(text: &str, params: ChunkParams) -> Vec<String> {
     let units = segment_units(text, params);
     pack_units(&units, params.target, params.overlap)
 }
 
-/// Семантический чанкинг markdown: режет по ATX-заголовкам (`#`..`######`),
-/// защищает огороженные блоки кода (``` и ~~~), а к каждому чанку секции
-/// добавляет её заголовок как смысловой якорь (заметно улучшает извлечение).
-/// Внутри секции — тот же упаковщик с перекрытием, что и в [`chunk_text`].
-/// Документ без заголовков обрабатывается как обычный текст.
+/// Semantic markdown chunking: cuts on ATX headings (`#`..`######`), protects
+/// fenced code blocks (``` and ~~~), and prepends each section chunk with its
+/// heading as a semantic anchor (noticeably improves retrieval). Inside a section —
+/// the same overlap packer as in [`chunk_text`]. A document with no headings is
+/// treated as regular text.
 pub(crate) fn chunk_markdown(text: &str, params: ChunkParams) -> Vec<String> {
     let sections = split_sections(text);
     let mut chunks = Vec::new();
     for (heading, body) in &sections {
         let units = segment_units(body, params);
         let packed = if units.is_empty() {
-            // Секция без тела — заголовок сам по себе как чанк (если он есть).
+            // A section with no body — the heading itself as a chunk (if present).
             vec![String::new()]
         } else {
             pack_units(&units, params.target, params.overlap)
@@ -271,13 +274,13 @@ pub(crate) fn chunk_markdown(text: &str, params: ChunkParams) -> Vec<String> {
         }
     }
     if chunks.is_empty() {
-        // Нет заголовков/пустой документ — обычный чанкинг.
+        // No headings / an empty document — regular chunking.
         return chunk_text(text, params);
     }
     chunks
 }
 
-/// Атомарные юниты для упаковки (см. [`chunk_text`]). Пустые отбрасываются.
+/// Atomic units for packing (see [`chunk_text`]). Empty ones are dropped.
 fn segment_units(text: &str, params: ChunkParams) -> Vec<String> {
     let mut units = Vec::new();
     for paragraph in text.split("\n\n") {
@@ -300,8 +303,9 @@ fn segment_units(text: &str, params: ChunkParams) -> Vec<String> {
     units
 }
 
-/// Делит абзац на предложения по завершающей пунктуации (`. ! ? …` и их
-/// CJK-аналоги), сохраняя её. Граница — пунктуация, за которой пробел/конец.
+/// Splits a paragraph into sentences by terminal punctuation (`. ! ? …` and their
+/// CJK equivalents), keeping it. A boundary is punctuation followed by a
+/// space/end.
 pub(crate) fn split_sentences(paragraph: &str) -> Vec<String> {
     let chars: Vec<char> = paragraph.chars().collect();
     let mut out = Vec::new();
@@ -336,8 +340,8 @@ pub(crate) fn split_sentences(paragraph: &str) -> Vec<String> {
     out
 }
 
-/// Дробит слишком длинную строку (без завершающей пунктуации) на окна по словам;
-/// одиночное слово длиннее потолка рвётся по символам (последнее средство).
+/// Splits a too-long line (with no terminal punctuation) into word windows; a
+/// single word longer than the ceiling is torn by character (a last resort).
 fn break_long(s: &str, max: usize) -> Vec<String> {
     let mut out = Vec::new();
     let mut cur = String::new();
@@ -375,8 +379,8 @@ fn break_long(s: &str, max: usize) -> Vec<String> {
     out
 }
 
-/// Упаковывает юниты в чанки до целевого размера, начиная каждый следующий с
-/// хвоста предыдущего (перекрытие ≤ `overlap` символов, по границам юнитов).
+/// Packs units into chunks up to the target size, starting each next one with the
+/// tail of the previous one (overlap ≤ `overlap` characters, on unit boundaries).
 fn pack_units(units: &[String], target: usize, overlap: usize) -> Vec<String> {
     let mut chunks = Vec::new();
     let mut cur: Vec<&str> = Vec::new();
@@ -386,8 +390,8 @@ fn pack_units(units: &[String], target: usize, overlap: usize) -> Vec<String> {
         let add = if cur.is_empty() { ulen } else { ulen + 1 };
         if !cur.is_empty() && cur_len + add > target {
             chunks.push(cur.join("\n"));
-            // Хвост для перекрытия: последние юниты в пределах `overlap` символов
-            // (минимум один — иначе цикл не двигался бы).
+            // The tail for overlap: the last units within `overlap` characters
+            // (at least one — otherwise the loop wouldn't advance).
             let mut tail: Vec<&str> = Vec::new();
             let mut tlen = 0usize;
             for &u in cur.iter().rev() {
@@ -418,8 +422,9 @@ fn pack_units(units: &[String], target: usize, overlap: usize) -> Vec<String> {
     chunks
 }
 
-/// Разбивает markdown на секции `(заголовок, тело)` по ATX-заголовкам, не трогая
-/// `#` внутри огороженных блоков кода. Преамбула до первого заголовка → `("", …)`.
+/// Splits markdown into `(heading, body)` sections by ATX headings, without
+/// touching `#` inside fenced code blocks. A preamble before the first heading →
+/// `("", …)`.
 fn split_sections(text: &str) -> Vec<(String, String)> {
     let mut sections: Vec<(String, String)> = Vec::new();
     let mut heading = String::new();
@@ -461,26 +466,27 @@ fn split_sections(text: &str) -> Vec<(String, String)> {
     sections
 }
 
-/// Это строка ATX-заголовка markdown (`#`..`######` + пробел)?
+/// Is this a markdown ATX-heading line (`#`..`######` + a space)?
 fn is_atx_heading(line: &str) -> bool {
     let hashes = line.chars().take_while(|&c| c == '#').count();
     (1..=6).contains(&hashes) && line.chars().nth(hashes) == Some(' ')
 }
 
-/// Связный фрагмент извлечения — один или несколько склеенных по перекрытию
-/// чанков одного источника (см. [`stitch_hits`]).
+/// A coherent extraction fragment — one or several chunks of the same source
+/// stitched together by overlap (see [`stitch_hits`]).
 pub(crate) struct StitchedPassage {
     pub source: String,
     pub text: String,
     pub distance: f32,
 }
 
-/// Склеивает соседние чанки одного источника, если конец одного дословно
-/// совпадает с началом другого (перекрытие, заложенное при чанкинге): объединяет
-/// в один связный фрагмент без дубля — экономит контекст и не путает модель
-/// повтором. Фрагменты упорядочены по лучшему (минимальному) расстоянию.
+/// Stitches adjacent chunks of the same source when the end of one verbatim-
+/// matches the start of another (the overlap built in at chunking time): merges
+/// them into one coherent fragment with no duplication — saves context and
+/// doesn't confuse the model with a repeat. Fragments are ordered by best
+/// (minimum) distance.
 pub(crate) fn stitch_hits(hits: Vec<RagHit>) -> Vec<StitchedPassage> {
-    // Группируем по источнику, сохраняя порядок первого появления.
+    // Group by source, preserving the order of first appearance.
     let mut by_source: Vec<(String, Vec<(String, f32)>)> = Vec::new();
     for h in hits {
         match by_source.iter_mut().find(|(s, _)| *s == h.source) {
@@ -490,7 +496,7 @@ pub(crate) fn stitch_hits(hits: Vec<RagHit>) -> Vec<StitchedPassage> {
     }
     let mut passages = Vec::new();
     for (source, mut items) in by_source {
-        // Итеративно склеиваем любые две части с реальным перекрытием.
+        // Iteratively stitch any two pieces with a real overlap.
         while let Some((i, j, text, dist)) = find_mergeable(&items) {
             let (hi, lo) = (i.max(j), i.min(j));
             items.remove(hi);
@@ -513,20 +519,20 @@ pub(crate) fn stitch_hits(hits: Vec<RagHit>) -> Vec<StitchedPassage> {
     passages
 }
 
-/// Убирает почти-идентичные пассажи (обычно один и тот же контент, проиндексированный
-/// из РАЗНЫХ источников): в порядке ранжирования (по возрастанию distance) оставляет
-/// пассаж, только если его нормализованный текст НЕ равен и НЕ содержится целиком в
-/// тексте уже оставленного пассажа. Так модель не получает повтор. Детерминированно,
-/// без эмбеддера/порога (dedup по тексту — hot path rag_search). Источнико-агностично
-/// (главный случай — кросс-источниковый дубль, но внутриисточниковый повтор тоже шум).
-/// См. docs/history/rag-sources-retrieval.md §B2b.
+/// Removes near-identical passages (usually the same content indexed from
+/// DIFFERENT sources): in ranking order (ascending distance), keeps a passage only
+/// if its normalized text is NEITHER equal to NOR wholly contained in the text of
+/// an already-kept passage. This way the model isn't fed a repeat. Deterministic,
+/// no embedder/threshold (dedup by text — rag_search is a hot path). Source-
+/// agnostic (the main case is a cross-source duplicate, but an intra-source repeat
+/// is noise too). See docs/history/rag-sources-retrieval.md §B2b.
 pub(crate) fn dedup_passages(passages: Vec<StitchedPassage>) -> Vec<StitchedPassage> {
     let mut kept: Vec<StitchedPassage> = Vec::with_capacity(passages.len());
     let mut kept_norms: Vec<String> = Vec::with_capacity(passages.len());
     for p in passages {
         let norm = normalize_passage(&p.text);
-        // Отбрасываем, если равен уже оставленному (выше по рангу) или целиком в него
-        // входит (текущий пассаж — избыточное подмножество более релевантного).
+        // Drop if equal to an already-kept (higher-ranked) one or wholly contained
+        // in it (the current passage is a redundant subset of a more relevant one).
         if kept_norms.iter().any(|k| k.contains(&norm)) {
             continue;
         }
@@ -536,8 +542,8 @@ pub(crate) fn dedup_passages(passages: Vec<StitchedPassage>) -> Vec<StitchedPass
     kept
 }
 
-/// Нормализует текст пассажа для сравнения: нижний регистр (Unicode-aware, работает
-/// и для кириллицы) + схлопывание любых пробельных прогонов в один пробел + трим.
+/// Normalizes passage text for comparison: lowercase (Unicode-aware, works for
+/// Cyrillic too) + collapsing any whitespace run into a single space + trim.
 fn normalize_passage(text: &str) -> String {
     text.to_lowercase()
         .split_whitespace()
@@ -545,8 +551,9 @@ fn normalize_passage(text: &str) -> String {
         .join(" ")
 }
 
-/// Ищет первую пару частей `(i, j)`, которые можно склеить (конец `i` совпадает с
-/// началом `j`); возвращает индексы, объединённый текст и лучшее расстояние.
+/// Finds the first pair of pieces `(i, j)` that can be stitched (the end of `i`
+/// matches the start of `j`); returns the indices, the merged text, and the best
+/// distance.
 fn find_mergeable(items: &[(String, f32)]) -> Option<(usize, usize, String, f32)> {
     for i in 0..items.len() {
         for j in 0..items.len() {
@@ -561,15 +568,16 @@ fn find_mergeable(items: &[(String, f32)]) -> Option<(usize, usize, String, f32)
     None
 }
 
-/// Если конец `a` дословно совпадает с началом `b` (≥ `MIN_STITCH_OVERLAP` симв.),
-/// возвращает `a` + хвост `b` без повтора. Учитывает повторный markdown-заголовок
-/// в начале `b` (тот же, что у `a`): снимает его перед сопоставлением и не дублирует.
+/// If the end of `a` verbatim-matches the start of `b` (≥ `MIN_STITCH_OVERLAP`
+/// chars), returns `a` + the tail of `b` with no repeat. Accounts for a repeated
+/// markdown heading at the start of `b` (the same as `a`'s): strips it before
+/// matching and doesn't duplicate it.
 fn merge_overlap(a: &str, b: &str) -> Option<String> {
     if let Some(k) = overlap_len(a, b) {
         let tail: String = b.chars().skip(k).collect();
         return Some(format!("{a}{tail}"));
     }
-    // `b` начинается с того же заголовка, что и `a` — сопоставляем тело.
+    // `b` starts with the same heading as `a` — match the bodies.
     if let (Some(ha), Some((hb, rest_b))) = (leading_heading(a), strip_leading_heading(b))
         && ha == hb
         && let Some(k) = overlap_len(a, &rest_b)
@@ -580,7 +588,7 @@ fn merge_overlap(a: &str, b: &str) -> Option<String> {
     None
 }
 
-/// Длина наибольшего суффикса `a`, равного префиксу `b` (≥ `MIN_STITCH_OVERLAP`).
+/// Length of the longest suffix of `a` that equals a prefix of `b` (≥ `MIN_STITCH_OVERLAP`).
 fn overlap_len(a: &str, b: &str) -> Option<usize> {
     let ac: Vec<char> = a.chars().collect();
     let bc: Vec<char> = b.chars().collect();
@@ -595,13 +603,13 @@ fn overlap_len(a: &str, b: &str) -> Option<usize> {
     None
 }
 
-/// Ведущая строка-заголовок ATX (если первая строка — заголовок).
+/// The leading ATX-heading line (if the first line is a heading).
 fn leading_heading(s: &str) -> Option<String> {
     let first = s.lines().next()?;
     is_atx_heading(first.trim_start()).then(|| first.trim_end().to_string())
 }
 
-/// Снимает ведущий ATX-заголовок: возвращает `(заголовок, остаток)`.
+/// Strips the leading ATX heading: returns `(heading, remainder)`.
 fn strip_leading_heading(s: &str) -> Option<(String, String)> {
     let mut lines = s.splitn(2, '\n');
     let first = lines.next()?;
@@ -621,7 +629,7 @@ mod tests {
     use super::*;
     use uuid::Uuid;
 
-    /// Нет ли кириллицы в строке (прокси «переведено на en»).
+    /// Is there no Cyrillic in the string (a proxy for "translated to en").
     fn no_cyr(s: &str) -> bool {
         !s.chars()
             .any(|c| ('а'..='я').contains(&c) || ('А'..='Я').contains(&c))
@@ -629,22 +637,22 @@ mod tests {
 
     #[test]
     fn rag_tool_descriptions_are_localized() {
-        // Описания rag-инструментов различны на ru/en (ловит забытый `_loc`), en без
-        // кириллицы. §3.5 docs/history/i18n.md.
+        // RAG tool descriptions differ on ru/en (catches a forgotten `_loc`), en
+        // has no Cyrillic. §3.5 docs/history/i18n.md.
         use crate::shared::i18n::{Lang, locale};
         let (ru, en) = (locale(Lang::Ru), locale(Lang::En));
         for (r, e) in [
             (RagAdd.description(ru), RagAdd.description(en)),
             (RagSearch.description(ru), RagSearch.description(en)),
         ] {
-            assert_ne!(r, e, "описание не локализовано: {r}");
-            assert!(no_cyr(&e), "кириллица в en-описании: {e}");
+            assert_ne!(r, e, "description not localized: {r}");
+            assert!(no_cyr(&e), "Cyrillic in en description: {e}");
         }
     }
 
     #[tokio::test]
     async fn rag_add_result_localized_for_all_langs() {
-        // Подтверждение «добавлено чанков» рендерится на каждом вшитом языке.
+        // "chunks added" confirmation renders in every built-in language.
         use crate::shared::i18n::{Lang, locale};
         for &lang in Lang::ALL {
             let (_d, _s, mut ctx) = ctx_with_storage(Uuid::new_v4());
@@ -664,7 +672,7 @@ mod tests {
 
     #[test]
     fn chunking_groups_small_paragraphs() {
-        // Мелкие соседние абзацы группируются в один чанк (а не плодят крошечные).
+        // Small neighboring paragraphs are grouped into one chunk (not spawning tiny ones).
         let chunks = chunk_text(
             "первый абзац\n\nвторой абзац\n\nтретий абзац",
             ChunkParams::default(),
@@ -676,30 +684,30 @@ mod tests {
 
     #[test]
     fn chunking_splits_long_paragraph_with_overlap() {
-        // Длинный абзац из предложений режется на несколько чанков с перекрытием.
+        // A long paragraph made of sentences is cut into several chunks with overlap.
         let sentence = "Это предложение средней длины для проверки чанкинга. ";
-        let text = sentence.repeat(60); // ~3000 символов
+        let text = sentence.repeat(60); // ~3000 characters
         let params = ChunkParams::default();
         let chunks = chunk_text(&text, params);
         assert!(
             chunks.len() >= 2,
-            "ожидаем несколько чанков: {}",
+            "expected several chunks: {}",
             chunks.len()
         );
-        // Каждый чанк в разумных пределах (потолок + перекрытие).
+        // Every chunk stays within reasonable bounds (ceiling + overlap).
         for c in &chunks {
             assert!(clen(c) <= params.max + params.overlap, "{}", clen(c));
         }
-        // Перекрытие: конец первого чанка дословно встречается в начале второго.
+        // Overlap: the end of the first chunk verbatim-occurs at the start of the second.
         assert!(
             overlap_len(&chunks[0], &chunks[1]).is_some(),
-            "ожидаем перекрытие между соседними чанками"
+            "expected an overlap between adjacent chunks"
         );
     }
 
     #[test]
     fn chunking_never_breaks_mid_word() {
-        // Очень длинное «слово» (без пробелов) рвётся, но обычные слова — целиком.
+        // A very long "word" (with no spaces) gets torn, but regular words stay whole.
         let text = format!("короткое начало {} конец", "ё".repeat(2500));
         let chunks = chunk_text(&text, ChunkParams::default());
         assert!(chunks.iter().any(|c| c.contains("короткое начало")));
@@ -708,7 +716,7 @@ mod tests {
 
     #[test]
     fn chunk_params_from_settings_respects_config() {
-        // Меньший целевой размер режет тот же текст на больше чанков.
+        // A smaller target size cuts the same text into more chunks.
         let text = "Это предложение средней длины для проверки чанкинга. ".repeat(20);
         let big = chunk_text(&text, ChunkParams::default());
         let small = chunk_text(
@@ -721,7 +729,7 @@ mod tests {
         );
         assert!(
             small.len() > big.len(),
-            "меньший target → больше чанков: small={} big={}",
+            "a smaller target → more chunks: small={} big={}",
             small.len(),
             big.len()
         );
@@ -729,7 +737,7 @@ mod tests {
 
     #[test]
     fn chunk_params_from_settings_sanitizes_invalid() {
-        // Нулевой target подменяется дефолтом; перекрытие не превышает target.
+        // A zero target is replaced with the default; overlap doesn't exceed target.
         let p = ChunkParams::from_settings(&RagSettings {
             chunk_target_chars: 0,
             chunk_overlap_chars: 9999,
@@ -737,7 +745,7 @@ mod tests {
         });
         assert_eq!(p.target, DEFAULT_CHUNK_TARGET_CHARS);
         assert!(p.overlap < p.target);
-        assert!(p.max >= p.target, "потолок не меньше цели");
+        assert!(p.max >= p.target, "ceiling not smaller than target");
     }
 
     #[test]
@@ -746,7 +754,7 @@ mod tests {
         let chunks = chunk_markdown(md, ChunkParams::default());
         assert!(chunks.iter().any(|c| c.starts_with("# Заголовок")));
         assert!(chunks.iter().any(|c| c.starts_with("## Подраздел")));
-        // Каждый чанк начинается со своего заголовка (смысловой якорь).
+        // Every chunk starts with its own heading (a semantic anchor).
         assert!(chunks.iter().all(|c| c.starts_with('#')));
     }
 
@@ -754,7 +762,7 @@ mod tests {
     fn markdown_ignores_hash_inside_code_fence() {
         let md = "# Реальный заголовок\n\n```python\n# это комментарий, не заголовок\nx = 1\n```";
         let sections = split_sections(md);
-        // Один заголовок-секция (комментарий в коде не стал заголовком).
+        // One heading-section (a comment inside the code didn't become a heading).
         assert_eq!(sections.len(), 1, "{sections:?}");
         assert_eq!(sections[0].0, "# Реальный заголовок");
         assert!(sections[0].1.contains("# это комментарий"));
@@ -768,16 +776,16 @@ mod tests {
             chunk_text: text.into(),
             distance: d,
         };
-        // Конец A дословно совпадает с началом B (≥ MIN_STITCH_OVERLAP символов).
+        // The end of A verbatim-matches the start of B (≥ MIN_STITCH_OVERLAP characters).
         let a = "альфа бета гамма дельта эпсилон дзета";
         let b = "гамма дельта эпсилон дзета эта тета йота";
         let merged = stitch_hits(vec![mk(a, 0.2), mk(b, 0.3)]);
-        assert_eq!(merged.len(), 1, "должны склеиться в один фрагмент");
+        assert_eq!(merged.len(), 1, "should stitch into one fragment");
         assert_eq!(
             merged[0].text,
             "альфа бета гамма дельта эпсилон дзета эта тета йота"
         );
-        assert_eq!(merged[0].distance, 0.2, "берётся лучшее расстояние");
+        assert_eq!(merged[0].distance, 0.2, "the best distance is taken");
     }
 
     #[test]
@@ -792,7 +800,7 @@ mod tests {
             mk("a.txt", "совершенно разный текст один"),
             mk("b.txt", "никак не связанный текст два"),
         ]);
-        assert_eq!(out.len(), 2, "разные источники не склеиваются");
+        assert_eq!(out.len(), 2, "different sources don't stitch");
     }
 
     fn passage(source: &str, text: &str, distance: f32) -> StitchedPassage {
@@ -809,10 +817,14 @@ mod tests {
             passage("a.txt", "столица франции — париж", 0.1),
             passage("b.txt", "столица франции — париж", 0.3),
         ]);
-        assert_eq!(out.len(), 1, "идентичный дубль из другого источника снят");
+        assert_eq!(
+            out.len(),
+            1,
+            "an identical duplicate from another source is removed"
+        );
         assert_eq!(
             out[0].source, "a.txt",
-            "остаётся более релевантный (меньший distance)"
+            "the more relevant one (smaller distance) remains"
         );
     }
 
@@ -825,7 +837,7 @@ mod tests {
         assert_eq!(
             out.len(),
             1,
-            "подмножество более релевантного пассажа снято"
+            "a subset of the more relevant passage is removed"
         );
         assert_eq!(out[0].source, "a.txt");
     }
@@ -836,7 +848,7 @@ mod tests {
             passage("a.txt", "первый совершенно уникальный текст", 0.1),
             passage("b.txt", "второй никак не связанный текст", 0.2),
         ]);
-        assert_eq!(out.len(), 2, "различные пассажи не трогаем");
+        assert_eq!(out.len(), 2, "distinct passages are left alone");
         assert_eq!(out[0].source, "a.txt");
         assert_eq!(out[1].source, "b.txt");
     }
@@ -847,23 +859,20 @@ mod tests {
             passage("a.txt", "Столица  Франции —\nПариж", 0.1),
             passage("b.txt", "столица франции — париж", 0.3),
         ]);
-        assert_eq!(
-            out.len(),
-            1,
-            "равны с точностью до регистра/пробелов → дедуп"
-        );
+        assert_eq!(out.len(), 1, "equal up to case/whitespace → dedup");
         assert_eq!(out[0].source, "a.txt");
     }
 
     #[test]
     fn dedup_keeps_lower_ranked_superset() {
-        // A (выше по рангу) содержится в B (ниже по рангу): отбрасываем только пассаж,
-        // входящий в РАНЕЕ оставленный, поэтому оба выживают (без потери информации).
+        // A (higher-ranked) is contained in B (lower-ranked): only a passage
+        // contained in an EARLIER-kept one is dropped, so both survive (no loss
+        // of information).
         let out = dedup_passages(vec![
             passage("a.txt", "париж", 0.1),
             passage("b.txt", "париж — столица франции и крупный город", 0.3),
         ]);
-        assert_eq!(out.len(), 2, "надмножество ниже по рангу не снимается");
+        assert_eq!(out.len(), 2, "a lower-ranked superset isn't removed");
         assert_eq!(out[0].source, "a.txt");
         assert_eq!(out[1].source, "b.txt");
     }
@@ -901,8 +910,8 @@ mod tests {
 
     #[tokio::test]
     async fn search_surfaces_notes_citing_matched_source() {
-        // Ярус 3, Путь 3 (обратное направление): rag_search показывает заметки,
-        // ссылающиеся на найденный источник — «поиск через оба органа».
+        // Tier 3, Path 3 (the reverse direction): rag_search shows notes citing the
+        // found source — "search through both organs".
         use crate::entities::note::Note;
         let profile = Uuid::new_v4();
         let (_d, storage, ctx) = ctx_with_storage(profile);
@@ -931,8 +940,8 @@ mod tests {
 
     #[tokio::test]
     async fn search_isolated_by_profile() {
-        // Документы профиля A не должны находиться при поиске профиля B
-        // (разные профили в одном хранилище).
+        // Profile A's documents shouldn't be found when profile B searches
+        // (different profiles in one storage).
         let dir = tempfile::tempdir().unwrap();
         let storage = std::sync::Arc::new(
             crate::shared::storage::Storage::open(crate::shared::paths::Paths::with_root(
@@ -947,8 +956,8 @@ mod tests {
 
         let a = Uuid::new_v4();
         let b = Uuid::new_v4();
-        // Общий пучок зависимостей: оба профиля делят одно хранилище (проверка
-        // изоляции по profile_id).
+        // A shared dependency bundle: both profiles share one storage (checking
+        // isolation by profile_id).
         let deps = crate::features::tools::ToolDeps {
             storage: storage.clone(),
             engine: engine.clone(),

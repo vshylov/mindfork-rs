@@ -1,35 +1,37 @@
-//! Метаданные приложения для диалога «О программе» (`F1`): автор, ссылки, текст
-//! лицензии и список сторонних компонентов с их лицензиями. Слой `shared` (FSD):
-//! данные язык-нейтральны (имена/URL/SPDX/юридический текст), поэтому не проходят
-//! через локали — их берёт напрямую экран чата (`screens/chat/popups.rs`).
+//! App metadata for the "About" dialog (`F1`): author, links, license text, and
+//! the list of third-party components with their licenses. `shared` layer (FSD):
+//! the data is language-neutral (names/URLs/SPDX/legal text), so it does not go
+//! through locales — the chat screen (`screens/chat/popups.rs`) reads it directly.
 //!
-//! Список [`COMPONENTS`] держится в синхроне с прямыми зависимостями `Cargo.toml`
-//! гейт-тестом [`tests::components_cover_direct_dependencies`] — как таблица глифа
-//! логотипа сверяется с SVG-ассетом (`widgets/logo.rs`). Лицензии выверены по
-//! `cargo metadata` (SPDX-идентификаторы крейтов).
+//! The [`COMPONENTS`] list is kept in sync with `Cargo.toml`'s direct
+//! dependencies by the gate test [`tests::components_cover_direct_dependencies`]
+//! — mirroring how the logo glyph table is checked against the SVG asset
+//! (`widgets/logo.rs`). Licenses are cross-checked against `cargo metadata`
+//! (crates' SPDX identifiers).
 
-/// Бренд-имя приложения (как в логотипе-вордмарке и на crates.io). Пакет/бинарь —
-/// `mindfork-rs` (`CARGO_PKG_NAME`), но пользователю показываем короткое «mindfork».
+/// App brand name (as in the wordmark logo and on crates.io). The package/binary
+/// is `mindfork-rs` (`CARGO_PKG_NAME`), but the user sees the short "mindfork".
 pub const APP_NAME: &str = "mindfork";
 
-/// Автор (совпадает с копирайтом в `LICENSE`).
+/// Author (matches the copyright in `LICENSE`).
 pub const AUTHOR: &str = "Vladimir Shylov";
-/// Сайт проекта (домен застолблён; сайта пока нет).
+/// Project site (the domain is reserved; the site does not exist yet).
 pub const SITE_URL: &str = "https://mindfork.io";
-/// Репозиторий (поле `repository` в `Cargo.toml`).
+/// Repository (the `repository` field in `Cargo.toml`).
 pub const REPO_URL: &str = "https://github.com/vshylov/mindfork-rs";
-/// Страница крейта (имя `mindfork` свободно на crates.io).
+/// Crate page (the name `mindfork` is free on crates.io).
 pub const CRATE_URL: &str = "https://crates.io/crates/mindfork";
 
-/// Текст лицензии приложения (MIT) — из файла `LICENSE` в корне репозитория.
-/// Юридический текст на английском, язык-нейтрален — не локализуется.
+/// App license text (MIT) — from the `LICENSE` file at the repository root.
+/// Legal text in English, language-neutral — not localized.
 pub const LICENSE_TEXT: &str = include_str!("../../LICENSE");
 
-/// Сторонние компоненты — **прямые** зависимости рантайма (`[dependencies]` +
-/// `[target.'cfg(windows)'.dependencies]`): `(имя, версия, лицензия-SPDX)`. Dev/
-/// build-зависимости (`tempfile`, `winresource`) не входят: они не в поставляемом
-/// приложении. Отсортировано по имени. Имена сверяются с `Cargo.toml`, версии — с
-/// `Cargo.lock` (гейт-тесты; версия = разрешённая для нашей прямой зависимости).
+/// Third-party components — **direct** runtime dependencies (`[dependencies]` +
+/// `[target.'cfg(windows)'.dependencies]`): `(name, version, SPDX license)`. Dev/
+/// build dependencies (`tempfile`, `winresource`) are excluded: they are not in
+/// the shipped app. Sorted by name. Names are cross-checked against
+/// `Cargo.toml`, versions against `Cargo.lock` (gate tests; version = the one
+/// resolved for our direct dependency).
 pub const COMPONENTS: &[(&str, &str, &str)] = &[
     ("ansi-to-tui", "8.0.1", "MIT"),
     ("anyhow", "1.0.103", "MIT OR Apache-2.0"),
@@ -83,12 +85,13 @@ mod tests {
     use super::*;
     use std::collections::BTreeSet;
 
-    /// Прямые зависимости рантайма из `Cargo.toml`: секции `[dependencies]` и
-    /// `[target.'cfg(windows)'.dependencies]`. Разбор построчный (в этом манифесте
-    /// каждая зависимость — одна строка), как парсер SVG в `widgets/logo.rs`.
+    /// Direct runtime dependencies from `Cargo.toml`: the `[dependencies]` and
+    /// `[target.'cfg(windows)'.dependencies]` sections. Line-based parsing (in
+    /// this manifest each dependency is one line), like the SVG parser in
+    /// `widgets/logo.rs`.
     fn cargo_runtime_deps() -> BTreeSet<String> {
         let path = concat!(env!("CARGO_MANIFEST_DIR"), "/Cargo.toml");
-        let toml = std::fs::read_to_string(path).expect("Cargo.toml на месте");
+        let toml = std::fs::read_to_string(path).expect("Cargo.toml is present");
         const WANTED: [&str; 2] = ["[dependencies]", "[target.'cfg(windows)'.dependencies]"];
         let mut section = "";
         let mut deps = BTreeSet::new();
@@ -115,11 +118,12 @@ mod tests {
         deps
     }
 
-    /// Все версии крейта из `Cargo.lock`: `name → {version, …}` (крейт может иметь
-    /// несколько версий — напр. `thiserror` 1/2, `windows-sys` транзитивно).
+    /// All versions of a crate from `Cargo.lock`: `name → {version, …}` (a crate
+    /// can have several versions — e.g. `thiserror` 1/2, `windows-sys`
+    /// transitively).
     fn cargo_lock_versions() -> std::collections::BTreeMap<String, BTreeSet<String>> {
         let path = concat!(env!("CARGO_MANIFEST_DIR"), "/Cargo.lock");
-        let lock = std::fs::read_to_string(path).expect("Cargo.lock на месте");
+        let lock = std::fs::read_to_string(path).expect("Cargo.lock is present");
         let mut map: std::collections::BTreeMap<String, BTreeSet<String>> = Default::default();
         let mut name: Option<String> = None;
         for line in lock.lines() {
@@ -138,9 +142,9 @@ mod tests {
         map
     }
 
-    /// Гейт: список компонентов не разошёлся с прямыми зависимостями манифеста.
-    /// Добавили/убрали зависимость — правьте [`COMPONENTS`] (и лицензию сверьте по
-    /// `cargo metadata`), иначе диалог «О программе» соврёт.
+    /// Gate: the component list has not drifted from the manifest's dependencies.
+    /// Added/removed a dependency — update [`COMPONENTS`] (and cross-check the
+    /// license via `cargo metadata`), otherwise the "About" dialog would lie.
     #[test]
     fn components_cover_direct_dependencies() {
         let manifest = cargo_runtime_deps();
@@ -149,45 +153,46 @@ mod tests {
         let extra: Vec<_> = listed.difference(&manifest).collect();
         assert!(
             missing.is_empty() && extra.is_empty(),
-            "COMPONENTS разошёлся с Cargo.toml — нет в списке: {missing:?}; лишние: {extra:?}"
+            "COMPONENTS has drifted from Cargo.toml — missing from the list: {missing:?}; extra: {extra:?}"
         );
     }
 
-    /// Гейт: версия каждого компонента присутствует в `Cargo.lock` (устойчиво к
-    /// дублям крейта: проверяем вхождение в набор версий). Бамп версии в `Cargo.lock`
-    /// уронит тест — обновите версию (и лицензию сверьте) в [`COMPONENTS`].
+    /// Gate: every component's version is present in `Cargo.lock` (robust to
+    /// crate duplicates: we check membership in the version set). A version bump
+    /// in `Cargo.lock` fails this test — update the version (and cross-check the
+    /// license) in [`COMPONENTS`].
     #[test]
     fn component_versions_match_cargo_lock() {
         let locked = cargo_lock_versions();
         for (name, version, _) in COMPONENTS {
             let versions = locked
                 .get(*name)
-                .unwrap_or_else(|| panic!("{name} нет в Cargo.lock"));
+                .unwrap_or_else(|| panic!("{name} is missing from Cargo.lock"));
             assert!(
                 versions.contains(*version),
-                "версия {name} {version} не найдена в Cargo.lock: {versions:?}"
+                "version {name} {version} not found in Cargo.lock: {versions:?}"
             );
         }
     }
 
-    /// Каждая запись несёт непустую лицензию/версию, а список отсортирован по имени
-    /// (детерминированный порядок в диалоге).
+    /// Every entry carries a non-empty license/version, and the list is sorted
+    /// by name (a deterministic order in the dialog).
     #[test]
     fn components_are_sorted_and_licensed() {
         for (name, version, license) in COMPONENTS {
-            assert!(!license.is_empty(), "у {name} нет лицензии");
-            assert!(!version.is_empty(), "у {name} нет версии");
+            assert!(!license.is_empty(), "{name} has no license");
+            assert!(!version.is_empty(), "{name} has no version");
         }
         let names: Vec<_> = COMPONENTS.iter().map(|(n, ..)| *n).collect();
         let mut sorted = names.clone();
         sorted.sort_unstable();
-        assert_eq!(names, sorted, "COMPONENTS не отсортирован по имени");
+        assert_eq!(names, sorted, "COMPONENTS is not sorted by name");
     }
 
-    /// Текст лицензии встроен и это MIT (а не пустой include).
+    /// The license text is embedded and it is MIT (not an empty include).
     #[test]
     fn license_text_is_embedded_mit() {
         assert!(LICENSE_TEXT.contains("MIT License"));
-        assert!(LICENSE_TEXT.contains(AUTHOR), "копирайт LICENSE ≠ автору");
+        assert!(LICENSE_TEXT.contains(AUTHOR), "LICENSE copyright ≠ AUTHOR");
     }
 }

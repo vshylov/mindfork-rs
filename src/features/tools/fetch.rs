@@ -1,11 +1,11 @@
-//! Инструмент `fetch_url` (spec §9.3): загрузить веб-страницу и саммаризировать её.
+//! `fetch_url` tool (spec §9.3): fetch a web page and summarize it.
 //!
-//! Под глобальным выключателем `tools.web_enabled` (сетевой доступ/приватность, как
-//! `web_search`). Шаги: загрузка страницы собственным `reqwest`-клиентом →
-//! извлечение читаемого текста (`web::extract_readable`, переиспользуем readability)
-//! → саммаризация через `ctx.engine` (независимый одно-ходовый запрос, как
-//! `call_subagent`). С `summarize=false` возвращается извлечённый текст без вызова
-//! модели (быстрый путь).
+//! Under the global switch `tools.web_enabled` (network access/privacy, like
+//! `web_search`). Steps: fetch the page via its own `reqwest` client →
+//! extract readable text (`web::extract_readable`, reusing readability)
+//! → summarize via `ctx.engine` (an independent single-turn request, like
+//! `call_subagent`). With `summarize=false`, the extracted text is returned
+//! without calling the model (the fast path).
 
 use std::time::Duration;
 
@@ -20,16 +20,16 @@ use crate::shared::api::{ApiMessage, ChatChunk, ChatRequest};
 use super::web::{ACCEPT_HTML, ACCEPT_LANGUAGE, USER_AGENT, extract_readable, truncate_chars};
 use super::{Tool, ToolContext, ToolOutcome};
 
-/// Таймаут загрузки страницы.
+/// Page-fetch timeout.
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(20);
-/// Потолок извлекаемого текста (символов): что уходит в саммаризацию/возврат.
+/// Ceiling on extracted text (characters): what goes into summarization/the return value.
 const MAX_CONTENT_CHARS: usize = 12_000;
-/// Лимит токенов ответа-саммари.
+/// Token limit for the summary reply.
 const SUMMARY_MAX_TOKENS: usize = 768;
-/// Таймаут саммаризации (вызов модели).
+/// Summarization timeout (a model call).
 const SUMMARY_TIMEOUT: Duration = Duration::from_secs(90);
 
-/// `fetch_url` — загрузить страницу и (по умолчанию) саммаризировать её.
+/// `fetch_url` — fetch a page and (by default) summarize it.
 pub struct FetchUrl {
     http: reqwest::Client,
 }
@@ -49,8 +49,8 @@ impl FetchUrl {
         Self { http }
     }
 
-    /// Загружает страницу и извлекает читаемый текст. Ошибка → понятное сообщение
-    /// (на языке каркаса `loc` — уходит модели в результате `fetch_url`).
+    /// Fetches the page and extracts readable text. An error → a clear message
+    /// (in the scaffold language `loc` — goes to the model in the `fetch_url` result).
     async fn fetch_text(&self, url: &str, loc: &crate::shared::i18n::Locale) -> Result<String> {
         let resp = self
             .http
@@ -68,7 +68,7 @@ impl FetchUrl {
                 &[("status", &status.to_string())]
             ));
         }
-        // Content-Type читаем ДО поглощения тела (`resp.text()` забирает resp).
+        // Read Content-Type BEFORE consuming the body (`resp.text()` takes resp).
         let content_type = resp
             .headers()
             .get(reqwest::header::CONTENT_TYPE)
@@ -84,12 +84,12 @@ impl FetchUrl {
     }
 }
 
-/// Выбирает текст для возврата из тела ответа. Не-HTML **текстовые** ответы
-/// (JSON/text/csv/JS — определяем по `Content-Type`, а при его отсутствии по
-/// JSON-форме тела) отдаём как есть (усечённо): это данные API, readability к ним
-/// неприменима (нет `<p>`/`<li>`) — именно из-за этого JSON Steam-API прежде давал
-/// «не удалось извлечь читаемый текст». HTML → извлечение читаемого текста.
-/// `None` — извлекать нечего (пусто). Чистая функция — тестируема без сети.
+/// Picks the text to return from the response body. Non-HTML **text** responses
+/// (JSON/text/csv/JS — detected by `Content-Type`, or by the body's JSON shape
+/// when it's absent) are returned as-is (truncated): this is API data, readability
+/// doesn't apply to it (no `<p>`/`<li>`) — this is exactly why the JSON Steam API used to
+/// give "failed to extract readable text". HTML → extract readable text.
+/// `None` — nothing to extract (empty). A pure function — testable without a network.
 fn body_to_text(content_type: &str, body: &str) -> Option<String> {
     let ct = content_type.to_ascii_lowercase();
     let is_html = ct.contains("html") || ct.contains("xml");
@@ -120,7 +120,7 @@ impl Tool for FetchUrl {
         crate::features::tools::meta::ToolGroup::ExternalWorld
     }
     fn ui_label(&self) -> &'static str {
-        "загрузить страницу"
+        "fetch page"
     }
     fn gate(&self) -> Option<crate::features::tools::meta::ToolGate> {
         Some(crate::features::tools::meta::ToolGate::Web)
@@ -185,8 +185,8 @@ impl Tool for FetchUrl {
 
         match summarize_text(ctx, url, focus, &text).await {
             Ok(summary) if !summary.trim().is_empty() => Ok(ToolOutcome::text(summary)),
-            // Саммаризация не удалась/пуста → отдаём извлечённый текст (мягкая
-            // деградация: модель всё равно получит контент страницы).
+            // Summarization failed/came back empty → return the extracted text (graceful
+            // degradation: the model still gets the page's content).
             _ => Ok(ToolOutcome::text(format!(
                 "{}\n{}",
                 ctx.loc
@@ -197,8 +197,8 @@ impl Tool for FetchUrl {
     }
 }
 
-/// Саммаризирует текст страницы независимым одно-ходовым запросом к модели
-/// (как `call_subagent`: без истории и инструментов, с лимитом токенов/времени).
+/// Summarizes the page text via an independent single-turn request to the model
+/// (like `call_subagent`: no history/tools, with a token/time limit).
 async fn summarize_text(
     ctx: &ToolContext,
     url: &str,
@@ -229,7 +229,7 @@ async fn summarize_text(
         system: Some(system),
         messages: vec![ApiMessage::user(task)],
         sampling,
-        tools: Vec::new(), // без инструментов (запрет вложенности)
+        tools: Vec::new(), // no tools (a nesting ban)
     };
 
     let cancel = CancellationToken::new();
@@ -268,7 +268,7 @@ mod tests {
     use std::sync::{Arc, Mutex};
     use uuid::Uuid;
 
-    /// Движок, запоминающий запрос и отдающий фиксированный ответ.
+    /// An engine that remembers the last request and returns a fixed reply.
     struct CapturingBackend {
         last: Mutex<Option<ChatRequest>>,
         reply: String,
@@ -300,8 +300,8 @@ mod tests {
 
     #[test]
     fn fetch_url_description_and_summary_system_localized() {
-        // Описание и системный промпт саммаризации локализованы (en≠ru, без
-        // кириллицы). §3.5 docs/history/i18n.md.
+        // The description and the summarization system prompt are localized (en≠ru,
+        // no Cyrillic). §3.5 docs/history/i18n.md.
         use crate::shared::i18n::{Lang, locale};
         let tool = FetchUrl::new();
         let (ru, en) = (locale(Lang::Ru), locale(Lang::En));
@@ -340,8 +340,8 @@ mod tests {
         );
     }
 
-    /// Саммаризация строит запрос без инструментов, с лимитом токенов, и включает
-    /// focus в задачу. Проверяет чистую функцию `summarize_text` напрямую.
+    /// Summarization builds a request with no tools, with a token limit, and includes
+    /// focus in the task. Checks the pure function `summarize_text` directly.
     #[tokio::test]
     async fn summarize_builds_single_turn_request_with_focus() {
         let backend = Arc::new(CapturingBackend {
@@ -362,20 +362,17 @@ mod tests {
         let req = backend.last.lock().unwrap().take().unwrap();
         assert!(req.system.is_some());
         assert_eq!(req.messages.len(), 1);
-        assert!(
-            req.tools.is_empty(),
-            "без инструментов (запрет вложенности)"
-        );
+        assert!(req.tools.is_empty(), "no tools (a nesting ban)");
         assert!(req.sampling.max_tokens.unwrap() <= SUMMARY_MAX_TOKENS);
-        // focus попал в задачу.
+        // focus made it into the task.
         let msg = format!("{:?}", req.messages[0]);
-        assert!(msg.contains("какова цена"), "focus в задаче: {msg}");
+        assert!(msg.contains("какова цена"), "focus in the task: {msg}");
     }
 
     #[test]
     fn json_body_returned_as_is_not_extracted() {
-        // JSON-ответ API (по Content-Type) отдаётся как есть — раньше readability
-        // возвращала пусто → «не удалось извлечь читаемый текст» (Steam appreviews).
+        // A JSON API response (by Content-Type) is returned as-is — readability used to
+        // return empty → "failed to extract readable text" (Steam appreviews).
         let body = r#"{"success":1,"query_summary":{"total_positive":200,"total_negative":30}}"#;
         let out = body_to_text("application/json; charset=utf-8", body).unwrap();
         assert!(out.contains("total_positive"), "got: {out}");
@@ -383,14 +380,14 @@ mod tests {
 
     #[test]
     fn json_shaped_body_returned_when_content_type_missing() {
-        // Нет Content-Type, но тело — JSON-форма (начинается с `{`) → отдаём как есть.
+        // No Content-Type, but the body has a JSON shape (starts with `{`) → return as-is.
         let out = body_to_text("", r#"  {"a":1}"#).unwrap();
         assert!(out.contains("\"a\":1"), "got: {out}");
     }
 
     #[test]
     fn html_without_readable_text_yields_none() {
-        // HTML без читаемого текста (только скрипты) → извлекать нечего.
+        // HTML with no readable text (only scripts) → nothing to extract.
         assert!(body_to_text("text/html", "<html><script>var x=1;</script></html>").is_none());
     }
 
@@ -405,7 +402,7 @@ mod tests {
         assert!(out.contains("читаемый абзац"), "got: {out}");
     }
 
-    /// Реальный сетевой смоук (вручную: `cargo test -- --ignored`).
+    /// A real network smoke (manual: `cargo test -- --ignored`).
     #[tokio::test]
     #[ignore = "requires network access"]
     async fn live_fetch_without_summarize() {

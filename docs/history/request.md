@@ -1,36 +1,69 @@
-# Консольное приложение ИИ-чата на Rust. Название - mindfork-rs.
+# Console AI chat application in Rust. Name — mindfork-rs.
 
-> 🗄 **Архивный документ.** Это исходное техзадание проекта — отправная точка,
-> зафиксированная до реализации. Часть решений с тех пор изменилась: движок `xinfer`
-> заменён на **llama.cpp `llama-server`**, UI-крейты `ratatui-textarea`/`ratatui-markdown`
-> — на собственные виджеты (см. [ADR 0001](../decisions/0001-ui-crates-ratatui-030.md),
-> [ADR 0003](../decisions/0003-own-markdown-renderer.md)). Актуальное состояние — в
-> [README.md](../../README.md), [CLAUDE.md](../../CLAUDE.md) и [spec.md](../../spec.md).
+> 🗄 **Archived document.** This is the project's original brief — the starting
+> point, fixed before implementation. Some decisions have since changed: the
+> `xinfer` engine was replaced with **llama.cpp `llama-server`**, and the
+> `ratatui-textarea`/`ratatui-markdown` UI crates with custom widgets (see
+> [ADR 0001](../decisions/0001-ui-crates-ratatui-030.md),
+> [ADR 0003](../decisions/0003-own-markdown-renderer.md)). Current state — in
+> [README.md](../../README.md), [CLAUDE.md](../../CLAUDE.md) and [spec.md](../../spec.md).
 
 
-- Поддержка платформ - Windows, Linux.
+- Platform support — Windows, Linux.
 
-- Архитектурные приемы - на твой выбор, но мне кажется, Feature-Sliced Design больше подходит для реализации приложений с помощью ИИ-агентов.
+- Architectural approach — your choice, but I think Feature-Sliced Design fits
+  better for apps built with AI agents.
 
-- TUI библиотека - ratatui, ratatui-textarea - для ввода сообщения пользователя и редактирования уже добавленных сообщений. Также, нужна проверка орфографии для русского и английского языков.
+- TUI library — ratatui, ratatui-textarea — for the user's message input and
+  editing already-sent messages. Also need spellcheck for Russian and English.
 
-- Markdown виджеты - ratatui-markdown. Нужна поддержка всего, что LLM выводят в виде Markdown и unicode-аппроксимация LaTeX, чтобы стрелочки и простые математические формулы выглядели читаемо. Рендеринг в изображение не нужен, т.к. есть вероятность, это приложение будет запускаться в терминале JupyterLab. Поддержка рендеринга mermaid-диаграмм тоже пока не нужна.
+- Markdown widgets — ratatui-markdown. Need support for everything LLMs output
+  as Markdown, plus a unicode approximation of LaTeX so arrows and simple math
+  formulas look readable. No need to render to an image, since this app might
+  run in a JupyterLab terminal. Mermaid diagram rendering isn't needed for now
+  either.
 
-- В приложении должен быть список чатов, вызываемый кнопкой и горячей клавишей с возможностью переименовывать чаты. Также, должно быть поле ввода, позволяющее искать нужный чат, фильтруя список по наличию введенного текста в названии. И нужны два режима сортировки списка - по дате создания и дате последнего изменения.
+- The app needs a chat list, opened by a button and a hotkey, with the ability
+  to rename chats. Also need an input field to search for a chat by filtering
+  the list on entered text in the title. And two sort modes for the list — by
+  creation date and by last-modified date.
 
-- Сообщения должны содержать сворачиваемые блоки CoT и блоки вызова инструментов.
+- Messages need collapsible CoT blocks and tool-call blocks.
 
-- Нужна возможность редактирования существующих сообщений, как пользовательских, так и от ИИ.
+- Need the ability to edit existing messages, both user's and the AI's.
 
-- Нужна кнопка удаления последнего сообщения Ассистента. В этом случае, удаляется также и последнее сообщение пользователя, а его текст переносится в поле ввода пользовательского сообщения. Если поле ввода - не пустое, что текст удаленного сообщения добавляется в начало уже существующего текста.
+- Need a button to delete the Assistant's last message. In this case, the
+  user's last message is also deleted, and its text moves into the user
+  message input field. If the input field isn't empty, the deleted message's
+  text is prepended to the existing text.
 
-- Также, нужна кнопка, позволяющая перегенерировать последнее сообщение Ассистента.
+- Also need a button to regenerate the Assistant's last message.
 
-- Интеграция с LLM должна быть реализована с помощью легковесной библиотеки xinfer
+- LLM integration should be implemented with the lightweight xinfer library
  (https://github.com/guoqingbao/xinfer).
 
-- В приложении должны быть профили ИИ-собеседника - уникальный идентификатор, системное сообщение и опциональное приветственное сообщение (некоторые модели ведут себя интереснее, если ИИ-ассистент начинает разговор первым).
+- The app needs AI-persona profiles — a unique identifier, a system message,
+  and an optional greeting message (some models behave more interestingly if
+  the AI assistant starts the conversation first).
 
-- У ИИ-ассистента должна быть возможность использовать тулы: RAG, возможность сохранять и извлекать заметки, использовать Python с библиотеками, использовать интернет-поиск (duckduckgo), и прочее. Ассистент должен лучше узнавать пользователя, общаясь с ним и сохранять информацию о нем. Также, ассистент должен иметь возможность получать дату и время последнего сообщения пользователя, получать параметры семплинга, менять параметры семплинга, получать свое системное сообщение в текущем чате и менять его, по своему желанию. Это может вывести живость общения на новый уровень. Заметки и RAG должны храниться раздельно для каждого идентификатора ИИ-собеседника, чтобы избежать перемешивания информации.
+- The AI assistant should be able to use tools: RAG, the ability to save and
+  retrieve notes, use Python with libraries, use web search (duckduckgo), and
+  more. The assistant should get to know the user better through conversation
+  and store information about them. The assistant should also be able to get
+  the date and time of the user's last message, get sampling parameters,
+  change sampling parameters, get its own system message in the current chat
+  and change it, at will. This might take the liveliness of the conversation
+  to a new level. Notes and RAG must be stored separately per AI-persona
+  identifier, to avoid mixing information.
 
-- Поддержка моделей - Gemma 3, 4 и Qwen 3.5, 3.6 - обязательное. Остальные модели - только, если функционал xinfer позволяет сделать это без усилий. Я хочу, чтобы Gemma и Qwen стали намного умнее, интереснее и осознаннее, чем они есть сейчас, даже с блоками CoT. Я долго думал, как это сделать. Исследовал возможность мультиагентной генерации ответа, но результат меня не удовлетворил. Мне кажется, модели нужно дать инструмент, который позволит ей создавать еще одного агента на короткое время, что-то вроде такого: функция call_subagent(system_message, message), которая возвращает ответ субагента в виде строки. Обращение к субагенту не будет отличаться от обычного вызова тулы, но возможность модели самостоятельно задавать ему системное сообщение как раз может позитивно повлиять на ответ. Ровно как и возможность менять собственное системное сообщение.
+- Model support — Gemma 3, 4 and Qwen 3.5, 3.6 are mandatory. Other models
+  only if xinfer's functionality allows it effortlessly. I want Gemma and
+  Qwen to become much smarter, more interesting, and more self-aware than
+  they are now, even with CoT blocks. I've thought hard about how to do this.
+  I looked into multi-agent response generation, but the result didn't
+  satisfy me. It seems the model needs a tool that lets it spin up another
+  agent for a short time — something like: a call_subagent(system_message,
+  message) function that returns the subagent's answer as a string. Calling
+  the subagent wouldn't differ from an ordinary tool call, but letting the
+  model set its own system message might well have a positive effect on the
+  answer. Same goes for the ability to change its own system message.

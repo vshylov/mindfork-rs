@@ -1,55 +1,55 @@
-# План доводки: модель себя/собеседника и фоновые механизмы
+# Refinement plan: self-model/user model and background mechanisms
 
-Документ — реализуемый план улучшений по итогам ревизии
-[architecture.md](../architecture.md) и живого кода (июль 2026). Покрывает: одну
-настоящую гонку записи, недоиспользованные данные (даты, поведенческие сигналы,
-модель собеседника), каденцию авто-рефлексии, наблюдаемость фоновых задач,
-дедупликацию agentic-петель и стратегический ход «нарратив как заметки».
-Структура — как у [self-model-mvp.md](self-model-mvp.md): этапы = отдельные PR,
-каждый с кодовыми набросками, тестами и оценкой объёма.
+This document is an actionable improvement plan following a review of
+[architecture.md](../architecture.md) and the live code (July 2026). Covers: one
+real write race, underused data (dates, behavioral signals, user model), the
+auto-reflection cadence, background task observability, agentic-loop
+deduplication, and the strategic move "narrative as notes."
+Structure — same as [self-model-mvp.md](self-model-mvp.md): stages = separate PRs,
+each with code sketches, tests, and a scope estimate.
 
-**Зафиксированное решение (2026-07-03):** инъекция «модели себя» в `system`
-остаётся как есть. Потеря prefix cache локальной модели при каждом обновлении
-модели себя — **принятая цена** за возможности механизма; перенос блока в конец
-истории не делаем (см. «Вне объёма»).
+**Fixed decision (2026-07-03):** the self-model injection into `system` stays
+as is. Losing the local model's prefix cache on every self-model update is an
+**accepted cost** of the mechanism's capabilities; moving the block to the end
+of history is not done (see "Out of scope").
 
-## Принципы (в духе проекта)
+## Principles (in the project's spirit)
 
-- **Каждый этап — отдельный PR** с зелёным гейтом (`cargo fmt`, `clippy -D
-  warnings`, `cargo test`); после мержа — обновить журнал CLAUDE.md и
+- **Each stage is a separate PR** with a green gate (`cargo fmt`, `clippy -D
+  warnings`, `cargo test`); after merge — update the CLAUDE.md log and
   architecture.md (§9/§11).
-- **Без миграций**: новые поля — `#[serde(default)]` (JSON-блоб `self_models`,
-  файлы чатов), новые таблицы — `CREATE TABLE IF NOT EXISTS`.
-- **Инварианты не трогаем**: единственный владелец `Chat` — оркестратор;
-  SelfModel-мутации остаются DB-only (без `ChatEffect`); изоляция по
-  `profile_id`; FSD-направление зависимостей.
-- **Чистые функции для логики** — тестируемость без движка/tokio, живые прогоны
-  — `#[ignore]`-смоуки.
+- **No migrations**: new fields — `#[serde(default)]` (the `self_models` JSON
+  blob, chat files), new tables — `CREATE TABLE IF NOT EXISTS`.
+- **Invariants stay untouched**: the orchestrator remains the sole owner of
+  `Chat`; SelfModel mutations stay DB-only (no `ChatEffect`); isolation by
+  `profile_id`; FSD dependency direction.
+- **Pure functions for logic** — testable without the engine/tokio; live runs
+  are `#[ignore]` smokes.
 
-Рекомендуемый порядок: 1 → 2 → 3 → 4 → 5 → 6 (4b зависит от 3; 6 — механический
-рефактор, лучше после того, как 3–5 устаканят код петель). Этап 7 — отдельное
-направление со своим дизайн-доком и зондом.
+Recommended order: 1 → 2 → 3 → 4 → 5 → 6 (4b depends on 3; 6 is a mechanical
+refactor, best done after 3–5 have settled the loop code). Stage 7 is a
+separate track with its own design doc and probe.
 
 ---
 
-## Этап 1 — Атомарная запись «модели себя» (дефект: гонка load-modify-save)
+## Stage 1 — Atomic self-model write (defect: load-modify-save race)
 
-**Проблема.** Авто-рефлексия — фоновая задача, работающая параллельно с
-пользователем *по построению*. Все писатели модели себя делают
-`self_model_get → правка → self_model_upsert` тремя отдельными вызовами:
-инструменты ([tools/self_model.rs::load](../../src/features/tools/self_model.rs)),
-ручная правка `F3` (`orchestrator/mod.rs::handle_update_self_model`). Мьютекс
-`Db` сериализует *отдельные* вызовы, но не пару read-modify-write: рефлексия
-прочитала модель → пользователь сохранил правку в `F3` → инструмент рефлексии
-записал свою версию поверх — правка пользователя молча потеряна.
+**Problem.** Auto-reflection is a background task that runs concurrently with
+the user *by design*. All self-model writers do
+`self_model_get → edit → self_model_upsert` as three separate calls: tools
+([tools/self_model.rs::load](../../src/features/tools/self_model.rs)),
+manual `F3` editing (`orchestrator/mod.rs::handle_update_self_model`). The `Db`
+mutex serializes *individual* calls but not the read-modify-write pair:
+reflection reads the model → the user saves an edit in `F3` → the reflection
+tool writes its own version on top — the user's edit is silently lost.
 
-### Шаг 1.1 — `Db::self_model_update` (closure под одним захватом мьютекса)
+### Step 1.1 — `Db::self_model_update` (closure under one mutex lock)
 
 ```rust
-/// Атомарное чтение-правка-запись модели профиля: SELECT + mutate + INSERT OR
-/// REPLACE под ОДНИМ захватом мьютекса соединения. `mutate` возвращает `true`,
-/// если модель изменилась (иначе запись и рост version не делаются).
-/// Возвращает модель после правки и признак записи.
+/// Atomic read-edit-write of a profile's self-model: SELECT + mutate + INSERT OR
+/// REPLACE under ONE lock of the connection mutex. `mutate` returns `true`
+/// if the model changed (otherwise the write and version bump don't happen).
+/// Returns the model after the edit and whether it was written.
 pub fn self_model_update(
     &self,
     profile_id: Uuid,
@@ -57,306 +57,320 @@ pub fn self_model_update(
 ) -> Result<(SelfModel, bool)>
 ```
 
-**Важно (дедлок):** `std::sync::Mutex` нереентерабелен — внутри
-`self_model_update` нельзя звать публичные `self_model_get`/`self_model_upsert`
-(повторный `lock()` того же потока = дедлок). Выделить приватные хелперы,
-принимающие `&Connection` (`self_model_get_conn`/`self_model_upsert_conn`), и
-вызывать их из всех трёх публичных методов.
+**Important (deadlock):** `std::sync::Mutex` is not reentrant — inside
+`self_model_update` you cannot call the public `self_model_get`/
+`self_model_upsert` (a second `lock()` from the same thread = deadlock). Split
+out private helpers that take `&Connection`
+(`self_model_get_conn`/`self_model_upsert_conn`) and call them from all three
+public methods.
 
-Альтернатива CAS по `version` (`upsert_if_version` + ретрай) рассмотрена и
-отклонена: closure проще, без цикла ретраев; `version` остаётся индикатором.
+A CAS-by-`version` alternative (`upsert_if_version` + retry) was considered
+and rejected: the closure is simpler, no retry loop; `version` remains an
+indicator.
 
-### Шаг 1.2 — перевести писателей
+### Step 1.2 — migrate the writers
 
 - `features/tools/self_model.rs`: `add_insight`, `update_self_model`,
-  `update_user_model`, `consolidate_narrative` — мутация уезжает в closure
-  (локальные `unresolved`/`removed` собираются через захват `&mut`-переменных,
-  `FnOnce` это позволяет). Читатели (`get_self_model`, `reflect`) остаются на
-  `self_model_get`.
-- `orchestrator/mod.rs::handle_update_self_model` (`F3`) — тот же API
-  (`apply_edit` внутри closure).
-- `self_model_upsert` остаётся публичным (тесты БД, потенциальный импорт), но
-  док-комментарий направляет писателей в `self_model_update`.
+  `update_user_model`, `consolidate_narrative` — the mutation moves into the
+  closure (local `unresolved`/`removed` are collected by capturing `&mut`
+  variables, which `FnOnce` allows). Readers (`get_self_model`, `reflect`)
+  stay on `self_model_get`.
+- `orchestrator/mod.rs::handle_update_self_model` (`F3`) — the same API
+  (`apply_edit` inside the closure).
+- `self_model_upsert` stays public (DB tests, potential import use), but its
+  doc comment steers writers to `self_model_update`.
 
-### Тесты
+### Tests
 
-- Два потока × 50 `self_model_update` (каждый дописывает инсайт со своим
-  префиксом при щедром `max_narrative`) → в итоге ровно 100 инсайтов, ничего не
-  потеряно (атомарность под мьютексом).
-- Запись не происходит при `mutate → false` (version не растёт).
-- Существующие тесты инструментов — зелёные без изменений семантики.
+- Two threads × 50 `self_model_update` calls (each appending an insight with
+  its own prefix under a generous `max_narrative`) → exactly 100 insights in
+  the end, nothing lost (atomicity under the mutex).
+- No write happens when `mutate → false` (version doesn't grow).
+- Existing tool tests are green without semantic changes.
 
-**Объём:** ~0.5 дня. Файлы: `shared/storage/db.rs`,
+**Scope:** ~0.5 day. Files: `shared/storage/db.rs`,
 `features/tools/self_model.rs`, `app/orchestrator/mod.rs`.
 
 ---
 
-## Этап 2 — Время и потолки: даты в рендерах, отчёт о вытеснении, свёртка закрытых целей
+## Stage 2 — Time and ceilings: dates in renders, eviction report, folding closed goals
 
-**Проблема.** «Я во времени» — без времени: `created_at` хранится у целей и
-инсайтов, но ни `render_full`, ни `render_for_prompt` его не показывают —
-модель не отличает вчерашнее наблюдение от трёхмесячного. FIFO-потолок
-нарратива молча выкидывает старейшие (та самая «тихая потеря», названная
-болезнью в [notes-connectivity.md](notes-connectivity.md)). Цели — единственный
-орган без потолка: закрытые копятся в блобе вечно.
+**Problem.** "Self in time" has no time: `created_at` is stored on goals and
+insights, but neither `render_full` nor `render_for_prompt` shows it — the
+model can't tell yesterday's observation from a three-month-old one. The
+narrative's FIFO ceiling silently discards the oldest entries (the "silent
+loss" named as a pathology in [notes-connectivity.md](notes-connectivity.md)).
+Goals are the only organ without a ceiling: closed ones pile up in the blob
+forever.
 
-### Шаг 2.1 — возраст записей в рендерах
+### Step 2.1 — record age in renders
 
-- `entities/self_model.rs`: чистый хелпер
-  `fn age_label(at: DateTime<Utc>, now: DateTime<Utc>) -> String` — грубые
-  корзины: «сегодня», «вчера», «N дн.», «N нед.», «N мес.», «N г.».
-  **Гранулярность — сутки**: внутри дня текст стабилен, значит system-промпт не
-  меняется от хода к ходу и prefix cache страдает не чаще раза в день (сверх
-  реальных правок модели).
-- `render_full(&self, now)` — цели `- #a1b2c3 (активна · 3 нед.) …`, закрытые
-  `(выполнена · 2 дн.) …`, наблюдения `- #id (5 дн.) …`.
-- `render_for_prompt(&self, cap, n, now)` — возраст у активных целей и
-  наблюдений (компактно, той же меткой).
-- `Goal` получает `#[serde(default)] closed_at: Option<DateTime<Utc>>` —
-  проставляется в `set_goal_status`/`cycle_goal_status` при уходе из `Active`
-  (и сбрасывается при реактивации). Возраст закрытой цели считается от
-  `closed_at` (fallback — `created_at`). Блоб + `serde(default)` → без миграции.
-- Вызовы: инструменты и `inject_self_model` передают `Utc::now()`; тесты — 
-  фиксированный `now`. `screens/self_model.rs` (`F3`) строит строки сам —
-  добавить дату к целям/инсайтам и там (локальная зона, как принято в UI).
+- `entities/self_model.rs`: pure helper
+  `fn age_label(at: DateTime<Utc>, now: DateTime<Utc>) -> String` — coarse
+  buckets: "today", "yesterday", "N d.", "N wk.", "N mo.", "N yr.".
+  **Day granularity**: within a day the text is stable, so the system prompt
+  doesn't change between turns and the prefix cache suffers no more than once
+  a day (on top of real model changes).
+- `render_full(&self, now)` — goals `- #a1b2c3 (active · 3 wk.) …`, closed
+  `(completed · 2 d.) …`, observations `- #id (5 d.) …`.
+- `render_for_prompt(&self, cap, n, now)` — age on active goals and
+  observations (compact, same label).
+- `Goal` gains `#[serde(default)] closed_at: Option<DateTime<Utc>>` — set in
+  `set_goal_status`/`cycle_goal_status` on leaving `Active` (and reset on
+  reactivation). A closed goal's age is computed from `closed_at` (fallback —
+  `created_at`). Blob + `serde(default)` → no migration.
+- Call sites: tools and `inject_self_model` pass `Utc::now()`; tests use a
+  fixed `now`. `screens/self_model.rs` (`F3`) builds its lines itself — add
+  the date to goals/insights there too (local time zone, as is the UI's
+  convention).
 
-### Шаг 2.2 — вытеснение из нарратива видимо, протокол — data-aware
+### Step 2.2 — narrative eviction is visible, the protocol is data-aware
 
-- `SelfModel::add_insight(...) -> Vec<NarrativeSegment>` — возвращает
-  вытесненные за потолок сегменты (сейчас `drain` молчит).
-- Инструмент `add_insight`: результат «Наблюдение записано (нарратив N/M).»;
-  при вытеснении — «Вытеснены старейшие: „…“ — если в них было устойчивое,
-  подними в summary/черты или сведи сводным через consolidate_narrative.»
-  Ветка `note` в `update_user_model` — та же приписка о заполненности.
-- Рубрика `reflect` показывает заполненность: «нарратив N/M».
-- Протокол ведения становится динамическим: чистая
+- `SelfModel::add_insight(...) -> Vec<NarrativeSegment>` — returns segments
+  evicted past the ceiling (currently `drain` is silent).
+- The `add_insight` tool: result "Observation recorded (narrative N/M)."; on
+  eviction — "Evicted oldest: '…' — if there was something durable in them,
+  raise it into summary/traits or consolidate via consolidate_narrative."
+  The `note` branch of `update_user_model` gets the same fullness note.
+- The `reflect` rubric shows fullness: "narrative N/M".
+- The maintenance protocol becomes dynamic: a pure
   `fn maintenance_note(model: Option<&SelfModel>, params) -> Option<String>` —
-  при заполненности ≥ 80% приписывает к протоколу строку «наблюдений N из M —
-  пора консолидировать (consolidate_narrative)». `inject_self_model` собирает
-  константную базу + приписку.
+  at ≥ 80% fullness, appends a line to the protocol: "N of M observations —
+  time to consolidate (consolidate_narrative)." `inject_self_model` assembles
+  the constant base + the note.
 
-### Шаг 2.3 — свёртка старых закрытых целей (потолок через интеграцию)
+### Step 2.3 — folding old closed goals (ceiling through integration)
 
 - `SelfModelSettings.max_closed_goals: usize` (default **10**,
-  `#[serde(default)]`) → `SelfModelParams` (санитизация: ≥ 1).
+  `#[serde(default)]`) → `SelfModelParams` (sanitization: ≥ 1).
 - `SelfModel::fold_closed_goals(&mut self, keep, max_narrative) -> usize`:
-  закрытые сверх `keep` (старейшие по `closed_at`/`created_at`) превращаются в
-  нарратив-шрам «[архив цели] выполнена: …» / «[архив цели] оставлена: …» и
-  удаляются из `goals`. Интеграция, а не потеря — след остаётся.
-- Вызовы: в `update_self_model` после обработки complete/abandon; в
-  `handle_update_self_model` после `apply_edit` (единообразно и для `F3`).
+  closed goals beyond `keep` (oldest by `closed_at`/`created_at`) become a
+  narrative scar "[goal archive] completed: …" / "[goal archive] abandoned: …"
+  and are removed from `goals`. Integration, not loss — a trace remains.
+- Call sites: in `update_self_model` after processing complete/abandon; in
+  `handle_update_self_model` after `apply_edit` (uniform for `F3` too).
 
-### Тесты
+### Tests
 
-`age_label` (корзины, границы); рендеры с фиксированным `now` (метки у целей и
-наблюдений; закрытая цель — от `closed_at`); возврат вытесненных + текст
-инструмента; `maintenance_note` (порог 80%, пустая модель → `None`);
-`fold_closed_goals` (держит K, старейшие → шрамы, активные не трогает);
-`closed_at` проставляется/сбрасывается; санитизация настроек.
+`age_label` (buckets, boundaries); renders with a fixed `now` (labels on
+goals and observations; a closed goal — from `closed_at`); returning evicted
+entries + tool text; `maintenance_note` (80% threshold, empty model →
+`None`); `fold_closed_goals` (holds K, oldest → scars, active goals
+untouched); `closed_at` is set/reset; settings sanitization.
 
-**Объём:** ~1 день. Файлы: `entities/self_model.rs`, `shared/config.rs`,
+**Scope:** ~1 day. Files: `entities/self_model.rs`, `shared/config.rs`,
 `features/tools/self_model.rs`, `app/orchestrator/generation.rs`,
 `app/orchestrator/mod.rs`, `screens/self_model.rs`.
 
 ---
 
-## Этап 3 — Каденция рефлексии: ватермарк вместо счётчика, окно дайджеста
+## Stage 3 — Reflection cadence: watermark instead of a counter, digest window
 
-**Проблема.** (1) Дайджест рефлексии строится от *всего* чата — каждые N
-ответов модель заново рефлексирует над тем же ранним материалом → дубли
-инсайтов, которые потом лечит консолидация. (2) Счётчик каденции сбрасывается
-*до* гейтов «уже идёт»/«сервер не готов» — пропущенный запуск теряет целый цикл
-(при `every=10` следующая попытка через 10 ответов). (3) Счётчики per-chat,
-in-memory — теряются при рестарте.
+**Problem.** (1) The reflection digest is built from the *entire* chat —
+every N replies, the model re-reflects over the same early material → insight
+duplicates that consolidation then has to fix. (2) The cadence counter is
+reset *before* the "already running"/"server not ready" gates — a skipped run
+loses an entire cycle (at `every=10`, the next attempt is 10 replies away).
+(3) The counters are per-chat, in-memory — lost on restart.
 
-### Шаг 3.1 — ватермарк в `Chat`
+### Step 3.1 — a watermark in `Chat`
 
 ```rust
-/// Сколько сообщений чата уже охвачено фоновой авто-рефлексией (индекс-водораздел
-/// в `messages`) и когда она запускалась. Живёт с чатом (переживает рестарт);
-/// усечение истории (Ctrl+R/Ctrl+E) лечится клампом при чтении.
+/// How many chat messages background auto-reflection has already covered (a
+/// watermark index into `messages`) and when it last ran. Lives with the chat
+/// (survives restart); history truncation (Ctrl+R/Ctrl+E) is handled by
+/// clamping on read.
 #[serde(default, skip_serializing_if = "Option::is_none")]
 pub reflected_upto: Option<usize>,
 #[serde(default, skip_serializing_if = "Option::is_none")]
 pub reflected_at: Option<DateTime<Utc>>,
 ```
 
-Старые файлы чатов читаются без миграции; `skip_serializing_if` не засоряет
-JSON тем, у кого фича выключена.
+Old chat files read fine without migration; `skip_serializing_if` keeps the
+JSON clean for anyone with the feature off.
 
-### Шаг 3.2 — `maybe_auto_reflect` на окне
+### Step 3.2 — `maybe_auto_reflect` on a window
 
-- `wm = chat.reflected_upto.unwrap_or(0).min(chat.messages.len())` (кламп после
-  усечений истории); окно `&chat.messages[wm..]`.
-- Каденция: число ответов ассистента в окне ≥ `every` → due. Поле
-  `reflect_counts` оркестратора **удаляется** (переживание рестарта бесплатно —
-  считаем от данных).
-- Дайджест: `build_conversation_digest(&chat.messages[wm..])` — сигнатура уже
-  принимает срез, менять её не нужно. Первый запуск на старом чате (`wm=None`)
-  — окно = весь чат, как сейчас, единожды.
-- **Ватермарк продвигается только при фактическом спавне** (все гейты пройдены):
-  `reflected_upto = len`, `reflected_at = now`, `mark_dirty(chat_id)` (дебаунс-
-  сохранение уже есть). Пропуск по гейту не двигает ватермарк — цикл не
-  теряется.
+- `wm = chat.reflected_upto.unwrap_or(0).min(chat.messages.len())` (clamp
+  after history truncations); window `&chat.messages[wm..]`.
+- Cadence: number of assistant replies in the window ≥ `every` → due. The
+  orchestrator's `reflect_counts` field is **removed** (surviving restart is
+  free — computed from data).
+- Digest: `build_conversation_digest(&chat.messages[wm..])` — the signature
+  already takes a slice, no need to change it. First run on an old chat
+  (`wm=None`) — window = whole chat, as now, once.
+- **The watermark advances only on an actual spawn** (all gates passed):
+  `reflected_upto = len`, `reflected_at = now`, `mark_dirty(chat_id)`
+  (debounced save already exists). Skipping a gate doesn't move the
+  watermark — the cycle isn't lost.
 
-### Шаг 3.3 — та же семантика сброса у консолидации
+### Step 3.3 — same reset semantics for consolidation
 
-`maybe_auto_consolidate` остаётся на счётчике (его дайджест — обзор заметок, не
-переписка), но сброс счётчика переносится **после** всех гейтов — теряться
-циклы перестают. (Опциональная унификация на ватермарк — задел, не в этом PR.)
+`maybe_auto_consolidate` stays on a counter (its digest is a notes overview,
+not the conversation), but the counter reset moves to **after** all gates —
+cycles stop being lost. (Optional unification onto a watermark is groundwork,
+not in this PR.)
 
-### Тесты
+### Tests
 
-Окно: подсчёт ответов ассистента от `wm`; кламп после усечения; ватермарк не
-двигается при не-готовом сервере/идущей рефлексии (через `MockSupervisor` и
-существующие интеграционные паттерны оркестратора); двигается при спавне; serde
-round-trip старого JSON без полей. Консолидация: пропуск по гейту не сбрасывает
-счётчик.
+Window: counting assistant replies from `wm`; clamping after truncation; the
+watermark doesn't move when the server isn't ready/reflection is already
+running (via `MockSupervisor` and existing orchestrator integration
+patterns); it does move on spawn; serde round-trip of old JSON without the
+fields. Consolidation: skipping a gate doesn't reset the counter.
 
-**Объём:** ~0.5–1 день. Файлы: `entities/chat.rs`,
+**Scope:** ~0.5–1 day. Files: `entities/chat.rs`,
 `app/orchestrator/reflection.rs`, `app/orchestrator/consolidation.rs`,
 `app/orchestrator/mod.rs`.
 
 ---
 
-## Этап 4 — Модель собеседника: имперсонация, поведенческие сигналы, динамика отношений
+## Stage 4 — User model: impersonation, behavioral signals, relationship dynamic
 
-### Шаг 4a — `user_model` → имперсонация
+### Step 4a — `user_model` → impersonation
 
-**Идея.** Имперсонация пишет реплику *за собеседника*, а `user_model` —
-буквально модель этого собеседника; сейчас `build_impersonation_request` её не
-видит.
+**Idea.** Impersonation writes a reply *on behalf of the user*, and
+`user_model` is literally the model of that user; currently
+`build_impersonation_request` doesn't see it.
 
 - `entities/self_model.rs`:
   `UserModel::render_for_impersonation(&self, max_chars) -> Option<String>` —
-  «Известно о человеке, за которого ты пишешь: черты — …; интересы — …;
-  отношения с ассистентом — …» (`None` при пустой модели).
-- `orchestrator/impersonation.rs::handle_impersonate`: перед сборкой запроса —
-  `self_model_get(profile_id)`; **гейт** тот же, что у инъекции: профиль включил
-  `get_self_model` (opt-in). Блок передаётся новым параметром
-  `build_impersonation_request(chat, system, seed, sampling, user_hint:
-  Option<&str>)` и дописывается к системному сообщению имперсонации.
-- Семплинг/reasoning-навязывание не трогаем (там свои инварианты, см. журнал).
+  "Known about the person you're writing as: traits — …; interests — …;
+  relationship with the assistant — …" (`None` when the model is empty).
+- `orchestrator/impersonation.rs::handle_impersonate`: before assembling the
+  request — `self_model_get(profile_id)`; the **gate** is the same as for the
+  injection: the profile has `get_self_model` enabled (opt-in). The block is
+  passed via a new parameter `build_impersonation_request(chat, system, seed,
+  sampling, user_hint: Option<&str>)` and appended to the impersonation
+  system message.
+- Sampling/reasoning-forcing is left untouched (it has its own invariants,
+  see the log).
 
-Тесты: блок в `request.system` при включённом гейте и непустой модели;
-отсутствует при выключенном гейте / пустой модели; существующие тесты билдера
-обновлены (новый параметр `None`).
+Tests: the block appears in `request.system` when the gate is on and the
+model is non-empty; absent when the gate is off / the model is empty;
+existing builder tests updated (new parameter is `None`).
 
-### Шаг 4b — поведенческие сигналы собеседника в дайджест рефлексии
+### Step 4b — the user's behavioral signals in the reflection digest
 
-**Идея.** `Ctrl+R` (перегенерация = «ответ не устроил»), `Ctrl+E` (удаление
-обмена) и rewrite-раунды уже архивируются в `Chat.deleted` — сильнейшие
-имплицитные свидетельства, которых рефлексия не видит.
+**Idea.** `Ctrl+R` (regenerate = "the reply wasn't good enough"), `Ctrl+E`
+(delete exchange), and rewrite rounds are already archived into
+`Chat.deleted` — strong implicit evidence that reflection never sees.
 
 - `entities/chat.rs`: `enum DeletedCause { DeleteExchange, Regenerate, Rewrite }`
-  + поле `#[serde(default)] cause: Option<DeletedCause>` в `DeletedExchange`
-  (`None` = старые записи, в маркеры не попадают).
-  `record_deleted(messages, draft, cause)` — три вызова обновить:
-  `generation.rs` (delete_last → `DeleteExchange`, regenerate → `Regenerate`,
-  rewrite-раунд → `Rewrite`).
-- `orchestrator/reflection.rs`: чистая
+  + a field `#[serde(default)] cause: Option<DeletedCause>` on
+  `DeletedExchange` (`None` = old entries, excluded from markers).
+  `record_deleted(messages, draft, cause)` — three call sites to update:
+  `generation.rs` (delete_last → `DeleteExchange`, regenerate →
+  `Regenerate`, rewrite round → `Rewrite`).
+- `orchestrator/reflection.rs`: a pure
   `fn behavior_markers(chat: &Chat, since: Option<DateTime<Utc>>) ->
-  Option<String>` — счёт `deleted` с `deleted_at > since` (= `reflected_at` из
-  этапа 3) по причинам. Формат: «Поведенческие сигналы за окно: собеседник
-  перегенерировал твой ответ ×2 (вероятно, ответ не устроил), удалил обмен ×1.
-  Ты сам переписывал ответ ×1.» — `Rewrite` подписывается как сигнал о
-  собственном поведении (тоже пища для модели себя), не приписывается
-  собеседнику. Блок дописывается к дайджесту в user-сообщении рефлексии.
-- `REFLECT_SYSTEM_MESSAGE`: пояснить, что маркеры — свидетельства для
-  `update_user_model`/`add_insight` (наблюдение, не осуждение; «точность важнее
-  угодливости» уже в тексте).
+  Option<String>` — counts `deleted` entries with `deleted_at > since`
+  (= `reflected_at` from stage 3) by cause. Format: "Behavioral signals for
+  this window: the user regenerated your reply ×2 (likely the reply wasn't
+  good enough), deleted an exchange ×1. You yourself rewrote a reply ×1." —
+  `Rewrite` is labeled as a signal about the agent's own behavior, not
+  attributed to the user (also grist for the self-model). The block is
+  appended to the digest in the reflection user message.
+- `REFLECT_SYSTEM_MESSAGE`: clarify that the markers are evidence for
+  `update_user_model`/`add_insight` (an observation, not a judgment; "accuracy
+  over agreeableness" is already in the text).
 
-Тесты: `behavior_markers` — счёт по причинам, фильтр окна по `since`, старые
-записи без `cause` пропускаются, пусто → `None`; serde round-trip
-`DeletedExchange` без поля.
+Tests: `behavior_markers` — count by cause, `since` window filter, old
+entries without `cause` are skipped, empty → `None`; serde round-trip of
+`DeletedExchange` without the field.
 
-### Шаг 4c — `relationship_dynamic` перестаёт перетираться молча
+### Step 4c — `relationship_dynamic` stops being silently overwritten
 
-Динамика отношений — самое значимое поле модели собеседника, и оно заменяется
-целиком без следа (напоминание про `note` срабатывает только на
-`remove_traits`/`remove_interests`). Правка `update_user_model`: если прежняя
-динамика непуста, новая отличается и `note` не передан — то же напоминание-шрам
-(расширить условие `removed_traits || removed_interests || replaced_dynamic`).
-Описание инструмента: «…при существенной смене динамики передай note — что и
-почему изменилось». Тест.
+Relationship dynamic is the most significant field of the user model, and it
+gets replaced wholesale with no trace (the `note` reminder currently only
+fires for `remove_traits`/`remove_interests`). Change to `update_user_model`:
+if the prior dynamic is non-empty, the new one differs, and `note` wasn't
+passed — the same reminder-scar (widen the condition
+`removed_traits || removed_interests || replaced_dynamic`). Tool description:
+"…when the dynamic changes substantially, pass note — what changed and why."
+Test.
 
-**Объём этапа:** ~1 день. Файлы: `entities/self_model.rs`, `entities/chat.rs`,
+**Stage scope:** ~1 day. Files: `entities/self_model.rs`, `entities/chat.rs`,
 `app/orchestrator/impersonation.rs`, `app/orchestrator/reflection.rs`,
 `app/orchestrator/generation.rs`, `features/tools/self_model.rs`.
 
 ---
 
-## Этап 5 — Наблюдаемость фоновых задач + чистка контракта
+## Stage 5 — Background task observability + contract cleanup
 
-**Проблема.** Ошибки рефлексии/консолидации — только `tracing::debug`:
-протухший облачный ключ → фича молча не работает месяцами. Открытый `F3`-экран
-не обновляется после авто-рефлексии. `ToolContext.self_model` — мёртвое поле.
+**Problem.** Reflection/consolidation errors are `tracing::debug`-only: a
+stale cloud key means the feature silently stops working for months. An open
+`F3` screen doesn't refresh after auto-reflection. `ToolContext.self_model` is
+a dead field.
 
-### Шаг 5.1 — исход задачи и серия неудач
+### Step 5.1 — task outcome and failure streak
 
-- Каналы `reflect_done`/`consolidate_done` несут `Result<(), String>` вместо
-  `()`; в фоновых задачах уровень логов ошибок `debug` → `warn` (+ `profile_id`
-  в полях).
-- Оркестратор считает подряд идущие неудачи (`failures: u32` на задачу): на
-  3-й подряд — однократный `AppEvent::Error("Авто-рефлексия трижды подряд
-  завершилась ошибкой: …последняя причина…")`, дальше молчим до первого успеха
-  (сброс счётчика). Пользователь узнаёт о сломанной фиче, но без спама.
+- The `reflect_done`/`consolidate_done` channels carry `Result<(), String>`
+  instead of `()`; in the background tasks the error log level goes
+  `debug` → `warn` (+ `profile_id` in the fields).
+- The orchestrator counts consecutive failures (`failures: u32` per task): on
+  the 3rd in a row — a one-time `AppEvent::Error("Auto-reflection failed
+  three times in a row: …last reason…")`, then silence until the first
+  success (counter reset). The user learns the feature is broken, without
+  spam.
 
-### Шаг 5.2 — индикатор активности в статус-баре
+### Step 5.2 — status-bar activity indicator
 
 - `AppEvent::BackgroundTask { kind: BackgroundKind /* Reflection |
-  Consolidation */, active: bool }` — эмитится при спавне и по done.
-- `ChatScreen` хранит флажки; `status_bar` рисует тихий muted-текст
-  «✻ рефлексия» / «✻ сон заметок» рядом с чипами серверов, пока активно.
-  Статичный маркер (без спиннера) — не требует тиков перерисовки, гаснет по
-  событию done (существующий dirty-механизм).
+  Consolidation */, active: bool }` — emitted on spawn and on done.
+- `ChatScreen` holds the flags; `status_bar` draws a quiet muted line
+  "✻ reflecting" / "✻ notes sleep" next to the server chips while active.
+  A static marker (no spinner) — needs no redraw ticks, disappears on the
+  done event (the existing dirty mechanism).
 
-### Шаг 5.3 — свежесть открытого `F3`
+### Step 5.3 — freshness of an open `F3`
 
-- Новое событие `AppEvent::SelfModelChanged` (без снимка). Эмитится: (а) после
-  успешной рефлексии; (б) в `handle_done`, если в ходе были вызовы инструментов
-  SelfModel-группы (скан имён в `ToolCallRecord` сообщений `GenResult` по новой
-  константе `self_model::ALL_IDS`).
-- `runtime::apply_event`: если `ActiveScreen::SelfModel` открыт — шлёт
-  `AppCommand::RequestSelfModel` (пере-запрос свежего снимка). **Не** открывает
-  экран (в отличие от `SelfModelView`) и ничего не делает при закрытом.
+- New event `AppEvent::SelfModelChanged` (no snapshot). Emitted: (a) after
+  successful reflection; (b) in `handle_done`, if the turn included calls to
+  the SelfModel tool group (scan the names in `ToolCallRecord` of
+  `GenResult` messages against a new constant `self_model::ALL_IDS`).
+- `runtime::apply_event`: if `ActiveScreen::SelfModel` is open — sends
+  `AppCommand::RequestSelfModel` (re-request a fresh snapshot). **Does not**
+  open the screen (unlike `SelfModelView`) and does nothing when closed.
 
-### Шаг 5.4 — чистка: мёртвое поле `ToolContext.self_model`
+### Step 5.4 — cleanup: dead field `ToolContext.self_model`
 
-Инструменты читают из БД, рефлексия кладёт `None` — поле никем не используется
-(`#[allow(dead_code)]`). Удалить поле, правки трёх мест конструирования +
-`testkit`. Контракт перестаёт давать ложное обещание «снимок доступен».
+Tools read from the DB, reflection passes `None` — nobody uses the field
+(`#[allow(dead_code)]`). Remove the field, fix three construction sites +
+`testkit`. The contract stops making the false promise "a snapshot is
+available."
 
-### Тесты
+### Tests
 
-Оркестратор: серия из 3 неудач эмитит `Error` один раз, успех сбрасывает;
-`SelfModelChanged` после хода с self_model-вызовом и после рефлексии; runtime:
-`SelfModelChanged` при открытом `F3` шлёт `RequestSelfModel`, при закрытом —
-нет; status_bar: маркер виден при active и гаснет.
+Orchestrator: a streak of 3 failures emits `Error` once, success resets it;
+`SelfModelChanged` after a turn with a self_model call and after reflection;
+runtime: `SelfModelChanged` sends `RequestSelfModel` when `F3` is open,
+nothing when closed; status_bar: marker visible while active and disappears.
 
-**Объём:** ~1 день. Файлы: `app/events.rs`, `app/orchestrator/{mod,reflection,
+**Scope:** ~1 day. Files: `app/events.rs`, `app/orchestrator/{mod,reflection,
 consolidation,generation}.rs`, `app/runtime.rs`, `screens/chat.rs`,
 `widgets/status_bar.rs`, `features/tools/{mod,self_model}.rs`.
 
 ---
 
-## Этап 6 — Общий раннер тихих agentic-петель + политика одним источником
+## Stage 6 — Shared silent agentic-loop runner + single-sourced policy
 
-**Проблема.** Три рукописные копии цикла «stream → accumulate → invoke»
-(генерация, рефлексия, консолидация) + дубль `due()` + трио полей
-`cancel/counts/done_tx` × 2. Политика ведения модели себя размазана по трём
-текстам (протокол, `REFLECT_SYSTEM_MESSAGE`, рубрика `reflect`) и уже слегка
-разъехалась.
+**Problem.** Three handwritten copies of the "stream → accumulate → invoke"
+loop (generation, reflection, consolidation) + a duplicated `due()` + a
+`cancel/counts/done_tx` triple × 2. The self-model maintenance policy is
+smeared across three texts (the protocol, `REFLECT_SYSTEM_MESSAGE`, the
+`reflect` rubric) and has already drifted slightly.
 
-### Шаг 6.1 — `app/orchestrator/tool_loop.rs`: тихий раннер
+### Step 6.1 — `app/orchestrator/tool_loop.rs`: a silent runner
 
 ```rust
 pub(super) struct SilentLoopParams { pub max_rounds: u32, pub timeout: Duration }
 
-/// Тихий agentic-loop фоновых задач: стрим → аккумулятор вызовов → исполнение
-/// разрешённых инструментов → следующий раунд; без UI-событий. Толерантен к
-/// Thoughts/ThoughtsSignature/Usage (игнор). Возвращается по finish != ToolCalls,
-/// пустым вызовам или лимиту раундов; таймаут и cancel — снаружи (spawn-хелпер).
+/// Silent agentic-loop for background tasks: stream → tool-call accumulator →
+/// run allowed tools → next round; no UI events. Tolerates
+/// Thoughts/ThoughtsSignature/Usage (ignored). Returns on a finish != ToolCalls,
+/// empty tool calls, or the round limit; timeout and cancel are handled by the
+/// caller (a spawn helper).
 pub(super) async fn run_silent_tool_loop(
     backend: Arc<dyn EngineBackend>,
     registry: Arc<ToolRegistry>,
@@ -368,105 +382,110 @@ pub(super) async fn run_silent_tool_loop(
 ) -> Result<()>
 ```
 
-- Содержимое = текущий цикл `spawn_reflection`; консолидация переиспользует.
-  Общий spawn-хелпер (таймаут + `warn`-лог + отправка исхода в done-канал из
-  этапа 5).
-- Общий `due()` переезжает сюда, дубликаты удаляются.
-- Поля оркестратора: тип `BackgroundLoop { cancel: Option<CancellationToken>,
-  done_tx, failures: u32 }` × 2 (рефлексия — без счётчика после этапа 3;
-  счётчик консолидации остаётся при ней).
-- **Основную петлю генерации сознательно не трогаем**: стриминг в UI,
-  control-flow-инструменты, thinking-подписи Anthropic, usage, эффекты — её
-  сложность не окупает общий sink-трейт сейчас. Задел: если фоновым петлям
-  когда-нибудь понадобится thinking у Claude — раннер должен будет крепить
-  подпись, как `generation.rs` (отметить TODO-комментарием).
+- Content = the current `spawn_reflection` loop; consolidation reuses it. A
+  shared spawn helper (timeout + `warn` log + sending the outcome to the
+  stage-5 done channel).
+- The shared `due()` moves here, duplicates removed.
+- Orchestrator fields: a `BackgroundLoop { cancel: Option<CancellationToken>,
+  done_tx, failures: u32 }` type × 2 (reflection — no counter after stage 3;
+  consolidation keeps its counter).
+- **The main generation loop is deliberately left alone**: UI streaming,
+  control-flow tools, Anthropic thinking signatures, usage, effects — its
+  complexity doesn't pay for a shared sink trait right now. Groundwork: if
+  background loops ever need Claude thinking, the runner will need to attach
+  the signature, same as `generation.rs` (flag with a TODO comment).
 
-### Шаг 6.2 — политика ведения одним источником
+### Step 6.2 — single-sourced maintenance policy
 
-- В `features/tools/self_model.rs` — константы-строительные блоки:
-  `POLICY_CORE` (интегрируй summary; веди цели по #id; merge user_model;
-  мимолётное → add_insight; точность важнее угодливости; консолидируй нарратив).
-- `SELF_MODEL_MAINTENANCE_PROTOCOL` переезжает из `generation.rs` сюда и
-  собирается из `POLICY_CORE` (FSD: `app → features` — легально);
-  `REFLECT_SYSTEM_MESSAGE` = преамбула рефлексии + `POLICY_CORE`; рубрика
-  `reflect` ссылается на те же формулировки, не дублируя.
-- Существующие тесты текстов обновить на композицию (проверять ключевые фразы).
+- In `features/tools/self_model.rs` — building-block constants:
+  `POLICY_CORE` (integrate summary; work goals by #id; merge user_model;
+  the fleeting → add_insight; accuracy over agreeableness; consolidate the
+  narrative).
+- `SELF_MODEL_MAINTENANCE_PROTOCOL` moves out of `generation.rs` here and is
+  assembled from `POLICY_CORE` (FSD: `app → features` — allowed);
+  `REFLECT_SYSTEM_MESSAGE` = reflection preamble + `POLICY_CORE`; the
+  `reflect` rubric refers to the same wording rather than duplicating it.
+- Existing text tests updated for the composition (check key phrases).
 
-### Тесты
+### Tests
 
-Рефлексия и консолидация проходят прежние интеграционные тесты без изменения
-поведения; `due` — один набор тестов; компиляция без `#[allow]`-затычек.
+Reflection and consolidation pass the previous integration tests with no
+behavior change; `due` — one test set; compiles with no `#[allow]` shims.
 
-**Объём:** ~1 день, механический. Файлы: `app/orchestrator/{tool_loop,
+**Scope:** ~1 day, mechanical. Files: `app/orchestrator/{tool_loop,
 reflection, consolidation, mod, generation}.rs`, `features/tools/self_model.rs`.
 
 ---
 
-## Этап 7 — Нарратив как заметки (отдельное направление: дизайн-док + зонд)
+## Stage 7 — Narrative as notes (separate track: design doc + probe)
 
-**Не PR, а следующий документ** (`docs/history/narrative-as-notes.md`, формат этого и
-[notes-connectivity.md](notes-connectivity.md)) — здесь фиксируется только
-рамка решения.
+**Not a PR, but the next document** (`docs/history/narrative-as-notes.md`, in the format
+of this doc and [notes-connectivity.md](notes-connectivity.md)) — only the
+decision frame is recorded here.
 
-**Мотив** (из architecture.md §9.9 и notes-connectivity «вне объёма»): нарратив
-— второй, слабый экземпляр заметок: append-only, FIFO, без эмбеддингов, графа и
-замещения — ровно тот «блокнот накопления», от которого notes уже ушли.
+**Motive** (from architecture.md §9.9 and notes-connectivity's "out of
+scope"): the narrative is a second, weaker copy of notes: append-only, FIFO,
+no embeddings, no graph, no supersession — exactly the "accumulation
+notebook" that notes have already moved past.
 
-**Рамка:**
+**Frame:**
 
-- `SelfModel` остаётся структурным ядром: `summary` + `goals` + `user_model`.
-  Нарратив переезжает в `notes` с зарезервированным тегом (например, `self`):
-  `add_insight` становится обёрткой над `note_save(tags=[self])` (id инструмента
-  сохранить — модели его уже знают), получая **бесплатно**: эмбеддинги и
-  семантический recall, ворота дублей на записи, граф связей, supersede/merge со
-  «шрамом», консолидацию и авто-«сон». FIFO-потолок исчезает — ростом управляет
-  консолидация.
-- `render_for_prompt`: блок «Недавние наблюдения» = N свежих self-заметок
-  (запрос по тегу, `ORDER BY created_at DESC LIMIT N`).
-- Одноразовый идемпотентный бэкфилл существующего нарратива в notes (при первом
-  обращении профиля; без изменения схемы — блоб просто пустеет).
+- `SelfModel` remains the structural core: `summary` + `goals` + `user_model`.
+  The narrative moves to `notes` under a reserved tag (e.g. `self`):
+  `add_insight` becomes a wrapper over `note_save(tags=[self])` (keep the
+  tool id — models already know it), getting **for free**: embeddings and
+  semantic recall, duplicate gates on save, the link graph, supersede/merge
+  with a "scar," consolidation, and auto-"sleep." The FIFO ceiling
+  disappears — growth is managed by consolidation.
+- `render_for_prompt`: the "Recent observations" block = N recent self-tagged
+  notes (query by tag, `ORDER BY created_at DESC LIMIT N`).
+- A one-time idempotent backfill of the existing narrative into notes (on a
+  profile's first access; no schema change — the blob simply empties out).
 
-**Вопросы, решаемые в доке (не здесь):** видимость self-заметок в общем
-`note_recall` (предложение — видимы с пометкой `[о себе]`: «наблюдения о себе —
-те же заметки» и есть тезис связности); судьба `consolidate_narrative`
-(тонкая обёртка над note-инструментами или депрекация в пользу прямых
-`note_merge`/`note_supersede`); правка нарратива на `F3` (Del инсайта →
-supersede/скрытие заметки); эмбеддинг-ворота для черт `user_model` (почти-дубли
-«любопытный»/«любознательный») — решить заодно, той же механикой.
+**Questions to resolve in the doc (not here):** visibility of self-tagged
+notes in general `note_recall` (proposal — visible with an `[about self]`
+marker: "observations about self are the same kind of note," which also
+supports the connectivity thesis); the fate of `consolidate_narrative`
+(a thin wrapper over note tools, or deprecation in favor of direct
+`note_merge`/`note_supersede`); editing the narrative from `F3` (Del on an
+insight → supersede/hide the note); embedding-based gates for `user_model`
+traits (near-duplicates "curious"/"inquisitive") — resolve at the same time,
+with the same mechanism.
 
-**Критерий зонда (go/no-go):** находит ли семантический recall старые инсайты,
-которые FIFO раньше терял; перестал ли нарратив дублировать заметки; пользуется
-ли модель воротами при `add_insight` (переписывает вместо почти-дубля).
+**Probe criterion (go/no-go):** does semantic recall find old insights that
+FIFO used to lose; has the narrative stopped duplicating notes; does the
+model use the gate on `add_insight` (rewriting instead of a near-duplicate).
 
 ---
 
-## Вне объёма (решено/отложено)
+## Out of scope (resolved/deferred)
 
-- **Инъекция в `system` остаётся как есть** — потеря prefix cache локальной
-  модели принята как цена фичи (решение 2026-07-03). Единственное действие —
-  примечание-абзац в architecture.md §9 об осознанном трейд-оффе (сделать
-  вместе с этапом 2, где рендер получает даты).
-- **Sink-трейт, объединяющий основную петлю генерации с тихим раннером** —
-  задел; вернуться, только если у фоновых петель появится стриминг/подписи.
-- **Эмбеддинг-ворота для черт `user_model`** — отложены до решения этапа 7 (та
-  же механика, что у заметок; решать одним куском).
-- **Унификация каденции консолидации на ватермарк** — задел (счётчик с
-  исправленным сбросом достаточен).
-- Прежние заделы без изменений: vec0 для заметок, связывание notes ↔ RAG,
-  структурные черты с жизненным циклом (отклонено, см. architecture.md §9.9).
+- **The `system` injection stays as is** — the loss of the local model's
+  prefix cache is accepted as the price of the feature (decision
+  2026-07-03). The only action item is a note paragraph in architecture.md
+  §9 about the conscious trade-off (do it alongside stage 2, where the
+  render gets dates).
+- **A sink trait unifying the main generation loop with the silent runner**
+  — groundwork; revisit only if background loops gain streaming/signatures.
+- **Embedding-based gates for `user_model` traits** — deferred pending
+  stage 7's decision (same mechanism as notes; resolve as one piece).
+- **Unifying the consolidation cadence onto a watermark** — groundwork (the
+  counter with a fixed reset is sufficient).
+- Prior groundwork items unchanged: vec0 for notes, linking notes ↔ RAG,
+  structured traits with a lifecycle (rejected, see architecture.md §9.9).
 
-## Сводка
+## Summary
 
-| Этап | Суть | Тип | Объём |
+| Stage | Gist | Type | Scope |
 |---|---|---|---|
-| 1 | Атомарный `self_model_update` | дефект (гонка) | ~0.5 дн. |
-| 2 | Даты в рендерах, отчёт о вытеснении, свёртка закрытых целей | поведение | ~1 дн. |
-| 3 | Ватермарк рефлексии, окно дайджеста, сброс-при-спавне | поведение | ~0.5–1 дн. |
-| 4 | user_model → имперсонация; поведенческие маркеры; динамика со шрамом | поведение | ~1 дн. |
-| 5 | Наблюдаемость фоновых задач; свежий `F3`; чистка `ToolContext` | UX/гигиена | ~1 дн. |
-| 6 | Тихий раннер петель; политика одним источником | рефактор | ~1 дн. |
-| 7 | Нарратив как заметки | направление (док+зонд) | отдельно |
+| 1 | Atomic `self_model_update` | defect (race) | ~0.5 d. |
+| 2 | Dates in renders, eviction report, folding closed goals | behavior | ~1 d. |
+| 3 | Reflection watermark, digest window, reset-on-spawn | behavior | ~0.5–1 d. |
+| 4 | user_model → impersonation; behavioral markers; dynamic with a scar | behavior | ~1 d. |
+| 5 | Background task observability; fresh `F3`; `ToolContext` cleanup | UX/hygiene | ~1 d. |
+| 6 | Silent loop runner; single-sourced policy | refactor | ~1 d. |
+| 7 | Narrative as notes | track (doc+probe) | separate |
 
-Итого этапы 1–6: ~5–6 дней чистой работы, шесть независимых PR. После каждого —
-журнал в CLAUDE.md и правка architecture.md (§9 «Модель себя», §11
-«Конкурентность»).
+Total for stages 1–6: ~5–6 days of clean work, six independent PRs. After
+each — a CLAUDE.md log entry and an architecture.md edit (§9 "Self-model,"
+§11 "Concurrency").

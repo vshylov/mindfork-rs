@@ -1,60 +1,60 @@
-//! Экран настроек — таблица доступа к значениям config-полей (`field_spec`). Один
-//! match по [`FieldId`] вместо прежних четырёх (`toggle_field`/`cycle_field`/
-//! `apply_text`/`field_num_kind`) — поле целиком (как читать/писать/циклить/валидировать
-//! значение) описано в одной строке. См. docs/history/refactoring-solid.md §5 (шаг 3.2).
+//! Settings screen — the access table for config-field values (`field_spec`). One
+//! match on [`FieldId`] instead of the previous four (`toggle_field`/`cycle_field`/
+//! `apply_text`/`field_num_kind`) — a field's whole story (how to read/write/cycle/validate
+//! the value) is described on one line. See docs/history/refactoring-solid.md §5 (step 3.2).
 //!
-//! **Границы охвата.** Только config-поля (над `AppConfig`). Вне таблицы (прежний путь
-//! в apply.rs): профильные (`PName`/`PSystem`/…, над `profiles[idx]`), параметры
-//! семплинга `S(p)`/`IS(p)` (свой дескриптор `SamplingParam`), селекторы подсекций и
-//! `PSelect` (навигация). Подпись/группа/описание/значение строки остаются в построителях
-//! каталога (catalog.rs) — таблица заведует только доступом к значению.
+//! **Scope boundary.** Only config fields (over `AppConfig`). Outside the table (the
+//! previous path in apply.rs): profile fields (`PName`/`PSystem`/…, over `profiles[idx]`),
+//! sampling parameters `S(p)`/`IS(p)` (their own `SamplingParam` descriptor), subsection
+//! selectors and `PSelect` (navigation). Label/group/description/value-row rendering stays
+//! in the catalog builders (catalog.rs) — this table only handles value access.
 
 use super::helpers::*;
 use super::*;
 
-/// Как читать/менять значение config-поля. `fn`-указатели (не замыкания) — `'static`,
-/// без капчуринга; маршрутизация по режиму (external vs cloud) живёт **внутри** сеттера
-/// (ему доступен весь `AppConfig`).
+/// How to read/change a config field's value. `fn` pointers (not closures) — `'static`,
+/// no capturing; routing by mode (external vs cloud) lives **inside** the setter
+/// (it has access to the whole `AppConfig`).
 pub(super) enum Access {
-    /// Тумблер: инвертирует значение на месте.
+    /// Toggle: flips the value in place.
     Toggle(fn(&mut AppConfig)),
-    /// Текст/число: парсит `trimmed` и присваивает (семантика парсинга — в самом сеттере).
+    /// Text/number: parses `trimmed` and assigns (parsing semantics live in the setter itself).
     Text(fn(&mut AppConfig, &str)),
-    /// Циклический выбор: шаг по направлению + список вариантов с индексом текущего.
-    /// `options` получает локаль — часть подписей (тема) локализуется.
+    /// Cyclic choice: a step by direction + the option list with the current index.
+    /// `options` receives the locale — some labels (theme) are localized.
     Choice {
         cycle: fn(&mut AppConfig, i32),
         options: fn(&AppConfig, &'static Locale) -> (Vec<String>, usize),
     },
 }
 
-/// Спецификация доступа к значению config-поля.
+/// The access spec for a config field's value.
 pub(super) struct FieldSpec {
     pub(super) access: Access,
-    /// Числовой вид для валидации редактора (`None` — текст/список/выбор).
+    /// Numeric kind for editor validation (`None` — text/list/choice).
     pub(super) num: Option<NumKind>,
 }
 
-/// Пусто → `None` (очистка `Option<String>`), иначе `Some(текст)`. Зеркало локального
-/// `opt` из прежнего `apply_text`.
+/// Empty → `None` (clears `Option<String>`), else `Some(text)`. Mirrors the local
+/// `opt` from the previous `apply_text`.
 fn opt(s: &str) -> Option<String> {
     (!s.is_empty()).then(|| s.to_string())
 }
 
-/// **Единственный** match по `FieldId` для доступа к значению config-поля. `None` —
-/// поле вне охвата (профильное/семплинг/навигация — прежний путь в apply.rs).
+/// **The single** match on `FieldId` for config-field value access. `None` —
+/// the field is out of scope (profile/sampling/navigation — the previous path in apply.rs).
 pub(super) fn field_spec(id: FieldId) -> Option<FieldSpec> {
     use FieldId::*;
     let spec = |access, num| FieldSpec { access, num };
     let toggle = |f: fn(&mut AppConfig)| spec(Access::Toggle(f), None);
-    // Текстовое строковое поле (без числовой валидации).
+    // A plain text string field (no numeric validation).
     let text = |f: fn(&mut AppConfig, &str)| spec(Access::Text(f), None);
-    // Целочисленное поле (валидируется как i64).
+    // An integer field (validated as i64).
     let int = |f: fn(&mut AppConfig, &str)| spec(Access::Text(f), Some(NumKind::Int));
     let choice = |cycle, options| spec(Access::Choice { cycle, options }, None);
 
     Some(match id {
-        // ---------- тумблеры ----------
+        // ---------- toggles ----------
         XJinja => toggle(|c| c.engine.managed.jinja = !c.engine.managed.jinja),
         XNoMmap => toggle(|c| c.engine.managed.no_mmap = !c.engine.managed.no_mmap),
         IxJinja => {
@@ -88,7 +88,7 @@ pub(super) fn field_spec(id: FieldId) -> Option<FieldSpec> {
         ICopyToolCalls => toggle(|c| c.copy.copy_tool_calls = !c.copy.copy_tool_calls),
         ICopyToolResults => toggle(|c| c.copy.copy_tool_results = !c.copy.copy_tool_results),
 
-        // ---------- циклические выборы ----------
+        // ---------- cyclic choices ----------
         XMode => choice(
             |c, dir| c.engine.mode = cycle_mode(c.engine.mode, dir),
             |c, _loc| index_menu(&SERVER_MODES, c.engine.mode, mode_label),
@@ -103,9 +103,9 @@ pub(super) fn field_spec(id: FieldId) -> Option<FieldSpec> {
         ),
         TPythonMode => choice(
             |c, dir| c.tools.python_mode = c.tools.python_mode.cycle(dir),
-            |c, _loc| {
+            |c, loc| {
                 index_menu(&PythonMode::ALL, c.tools.python_mode, |x| {
-                    x.label().to_string()
+                    python_mode_label(x, loc)
                 })
             },
         ),
@@ -131,13 +131,13 @@ pub(super) fn field_spec(id: FieldId) -> Option<FieldSpec> {
             },
             |c, _loc| spec_menu(c.impersonation_engine.managed.spec_type),
         ),
-        // Тема циклится в одну сторону — `dir` игнорируется (как в прежнем cycle_field).
+        // The theme cycles in one direction — `dir` is ignored (as in the previous cycle_field).
         ITheme => choice(
             |c, _dir| c.interface.theme = cycle_theme(c.interface.theme),
             |c, loc| index_menu(&THEMES, c.interface.theme, |t| theme_label(t, loc)),
         ),
-        // Язык интерфейса (ось B): каждый язык — в собственном названии (`Lang::label`),
-        // не переводится языком UI. Список — все известные (вшитые + внешние).
+        // Interface language (axis B): each language shown in its own name (`Lang::label`),
+        // not translated by the UI language. The list — all known ones (built-in + external).
         ILanguage => choice(
             |c, dir| c.interface.language = cycle_lang(c.interface.language, dir),
             |c, _loc| {
@@ -149,8 +149,8 @@ pub(super) fn field_spec(id: FieldId) -> Option<FieldSpec> {
             },
         ),
 
-        // ---------- текст: движок ассистента ----------
-        // URL/модель маршрутизируются по режиму (external → external.*, облако → cloud_mut()).
+        // ---------- text: the assistant engine ----------
+        // URL/model routed by mode (external → external.*, cloud → cloud_mut()).
         XUrl => text(|c, t| {
             if c.engine.mode == ServerMode::External {
                 c.engine.external.url = opt(t);
@@ -205,7 +205,7 @@ pub(super) fn field_spec(id: FieldId) -> Option<FieldSpec> {
             }
         }),
 
-        // ---------- текст: движок имперсонации ----------
+        // ---------- text: the impersonation engine ----------
         IxUrl => text(|c, t| {
             if c.impersonation_engine.mode == ImpersonationMode::External {
                 c.impersonation_engine.external.url = opt(t);
@@ -263,7 +263,7 @@ pub(super) fn field_spec(id: FieldId) -> Option<FieldSpec> {
             }
         }),
 
-        // ---------- текст: эмбеддинг-сервер ----------
+        // ---------- text: the embedding server ----------
         EUrl => text(|c, t| {
             if c.embed.mode == ServerMode::External {
                 c.embed.external.url = opt(t);
@@ -287,7 +287,7 @@ pub(super) fn field_spec(id: FieldId) -> Option<FieldSpec> {
         }),
         EBinary => text(|c, t| c.embed.managed.binary = opt(t)),
         EModel => text(|c, t| c.embed.managed.model_path = opt(t)),
-        // ── Озвучивание (TTS) ──────────────────────────────────────────────
+        // ── Speech (TTS) ──────────────────────────────────────────────
         TtsMode => choice(
             |c, dir| c.tts.mode = c.tts.mode.cycle(dir),
             |c, _loc| {
@@ -296,8 +296,8 @@ pub(super) fn field_spec(id: FieldId) -> Option<FieldSpec> {
                 })
             },
         ),
-        // Текстовые поля маршрутизируются по режиму: external — своя под-структура,
-        // облако — под-структура активного провайдера (как у движка).
+        // Text fields routed by mode: external — its own substructure,
+        // cloud — the active provider's substructure (as for the engine).
         TtsModelName => text(|c, t| {
             if c.tts.mode == crate::shared::config::TtsMode::External {
                 c.tts.external.model_name = opt(t);
@@ -359,7 +359,7 @@ pub(super) fn field_spec(id: FieldId) -> Option<FieldSpec> {
             }
         }),
 
-        // ---------- текст: инструменты / память / интерфейс ----------
+        // ---------- text: tools / memory / interface ----------
         MaxToolRounds => int(|c, t| {
             if let Ok(v) = t.parse() {
                 c.max_tool_rounds = v;
@@ -371,7 +371,7 @@ pub(super) fn field_spec(id: FieldId) -> Option<FieldSpec> {
                 c.tools.python_wasm_timeout_secs = v;
             }
         }),
-        // Лимит памяти: пусто/0/невалидно → без лимита (None), иначе Some(МБ).
+        // Memory limit: empty/0/invalid → no limit (None), else Some(MB).
         TPythonWasmMemory => int(|c, t| {
             c.tools.python_wasm_memory_mb = t.trim().parse::<u64>().ok().filter(|&m| m > 0);
         }),

@@ -1,344 +1,363 @@
-# Исследование: система плагинов (импортёры, инструменты, облачные интеграции)
+# Research: plugin system (importers, tools, cloud integrations)
 
-**Статус:** исследование завершено, направление реализовано (этапы 1–3 плана §7);
-принятые решения зафиксированы в
-[ADR 0007](../decisions/0007-plugins-mcp-host-import-format.md), поведение —
-spec §9.6. Развилки §8 приняты пользователем 2026-07-17; результаты зонда — §9.
-**Дата:** 2026-07-16. **Ветка:** `docs/plugins-research`.
-**Веб-факты** (версии крейтов, ревизии спецификаций, прецеденты) сверены по
-первоисточникам 2026-07-16 четырьмя параллельными разведками; ссылки — в §10.
+**Status:** research done, track implemented (stages 1–3 of the plan §7);
+decisions taken are recorded in
+[ADR 0007](../decisions/0007-plugins-mcp-host-import-format.md), behavior —
+spec §9.6. Forks §8 accepted by the user 2026-07-17; probe results — §9.
+**Date:** 2026-07-16. **Branch:** `docs/plugins-research`.
+**Web facts** (crate versions, spec revisions, precedents) checked against
+primary sources on 2026-07-16 by four parallel research passes; links in §10.
 
-## 1. Задача
+## 1. Task
 
-Запрос пользователя (2026-07-16): исследовать возможность **системы плагинов**.
-Названные цели, в порядке приоритета формулировки:
+User's request (2026-07-16): investigate the feasibility of a **plugin
+system**. Named goals, in order of priority as stated:
 
-1. **Импортёр LameLLaMA** — лучший кандидат на первый плагин: LameLLaMA —
-   непубличная программа, и знание о её форматах нежелательно держать в монолите
-   (`features/migration.rs` сегодня несёт wire-типы её `Settings.json`/`Conversations`).
-2. **Инструменты как плагины** — подключать пользовательские инструменты модели
-   без пересборки приложения.
-3. **Интеграции с облачными платформами** — подключаемые провайдеры инференса.
+1. **LameLLaMA importer** — the best candidate for the first plugin: LameLLaMA
+   is a non-public program, and knowledge of its formats shouldn't be kept in
+   the monolith (`features/migration.rs` today carries the wire types for its
+   `Settings.json`/`Conversations`).
+2. **Tools as plugins** — plug in user-supplied tools for the model without
+   rebuilding the application.
+3. **Cloud platform integrations** — pluggable inference providers.
 
-**Главный вывод исследования:** «система плагинов» — это не одна технология, а
-**три разные поверхности с разной природой**, и лучший дизайн для каждой — разный.
-Единый in-process plugin-API (dylib «как в больших программах») — худший из
-вариантов: у Rust нет стабильного ABI, а индустрия AI-приложений в 2025–2026 уже
-сошлась на других механизмах (MCP для инструментов, «любой OpenAI-совместимый
-endpoint» для провайдеров, документированный файл обмена для импортёров). Ниже —
-обоснование и конкретный план.
+**Main conclusion of the research:** a "plugin system" is not one technology
+but **three surfaces with different natures**, and the best design for each is
+different. A single in-process plugin API (dylib "like big programs do it") is
+the worst option: Rust has no stable ABI, and the AI-application industry in
+2025–2026 has already converged on other mechanisms (MCP for tools, "any
+OpenAI-compatible endpoint" for providers, a documented exchange file for
+importers). Below is the justification and a concrete plan.
 
-## 2. Три поверхности расширения (анализ кода)
+## 2. Three extension surfaces (code analysis)
 
-| Поверхность | Контракт сегодня | Природа | Что нужно «плагину» |
+| Surface | Contract today | Nature | What a "plugin" needs |
 |---|---|---|---|
-| Импортёры | `features/migration.rs::import_dir(dir, loc) -> ImportResult{profiles, chats, sampling, interface}` → upsert в `Storage` (CLI `import-lamellama`) | **разовая batch-операция** без TUI | прочитать чужой формат, отдать профили/чаты |
-| Инструменты | трейт `Tool` (`id`/`description(loc)`/`parameters(loc)` JSON-схема/`invoke(ctx) -> ToolOutcome{result, effects}`), реестр `ToolRegistry`, статический `CATALOG`, per-profile `enabled_tools` + `reconcile_tools`, гейты `effective_tool_ids`; вызывается клиентским agentic-loop между HTTP-раундами | **долгоживущий, вызывается в горячем цикле хода**; `ToolContext` несёт `Arc<Storage>`/`engine`/`embedder` — через границу процесса **не передаваемы** | принять JSON-аргументы, вернуть текст; своя схема и описание |
-| Движки | трейт `EngineBackend` (`chat_stream` — SSE-стриминг с отменой) + `Embedder`; 4 реализации (llama.cpp/OpenAI/Gemini/Anthropic); режим **external уже принимает любой OpenAI-совместимый сервер** (url + `api_key_env` + model) | **стриминговый, латентно-чувствительный**, сложный протокол (мысли/подписи/tool-calls) | говорить протокол инференса |
+| Importers | `features/migration.rs::import_dir(dir, loc) -> ImportResult{profiles, chats, sampling, interface}` → upsert into `Storage` (CLI `import-lamellama`) | **a one-off batch operation** with no TUI | read a foreign format, hand back profiles/chats |
+| Tools | `Tool` trait (`id`/`description(loc)`/`parameters(loc)` JSON schema/`invoke(ctx) -> ToolOutcome{result, effects}`), `ToolRegistry`, static `CATALOG`, per-profile `enabled_tools` + `reconcile_tools`, gates `effective_tool_ids`; called by the client-side agentic loop between HTTP rounds | **long-lived, called in the hot loop of a turn**; `ToolContext` carries `Arc<Storage>`/`engine`/`embedder` — **not passable** across a process boundary | accept JSON args, return text; own schema and description |
+| Engines | `EngineBackend` trait (`chat_stream` — SSE streaming with cancellation) + `Embedder`; 4 implementations (llama.cpp/OpenAI/Gemini/Anthropic); **external mode already accepts any OpenAI-compatible server** (url + `api_key_env` + model) | **streaming, latency-sensitive**, complex protocol (thoughts/signatures/tool-calls) | speak the inference protocol |
 
-Следствия:
+Consequences:
 
-- Плагин-инструмент **не получит** `ctx.storage`/`ctx.embedder` — и не должен:
-  память/RAG с изоляцией по профилю — внутреннее ядро. Плагины — это «внешние»
-  инструменты (API, файлы, устройства), самодостаточные по своим зависимостям.
-- Плагин-движок «за процессом» обязан говорить стриминговый протокол — то есть
-  быть HTTP-сервером. Такой протокол уже существует и стандартизован де-факто
-  (OpenAI-совместимый), и приложение его уже умеет (режим external).
-- Импортёру не нужен долгоживущий процесс вовсе: протокол = **файл**.
+- A plugin tool **won't get** `ctx.storage`/`ctx.embedder` — and shouldn't:
+  memory/RAG with per-profile isolation is core internal state. Plugins are
+  "external" tools (APIs, files, devices), self-sufficient with their own
+  dependencies.
+- A plugin engine "beyond the process" must speak the streaming protocol —
+  i.e. be an HTTP server. Such a protocol already exists and is a de-facto
+  standard (OpenAI-compatible), and the app already speaks it (external mode).
+- An importer doesn't need a long-lived process at all: the protocol is a
+  **file**.
 
-Прецеденты проекта прямо поддерживают out-of-process направление: managed
-`llama-server` (ADR 0004), сайдкар `wasmer` (ADR 0005 — embed в dll рассмотрен и
-**отклонён** в пользу подпроцесса), выделенный embedding-сервер (ADR 0002). Весь
-нужный инструментарий уже в дереве зависимостей: `tokio::process` + монитор-задачи
-с `exited`-токеном, `kill_on_drop`, Job Object (windows-sys уже используется),
-`serde_json`, `async-trait`.
+Project precedents directly support the out-of-process direction: managed
+`llama-server` (ADR 0004), the `wasmer` sidecar (ADR 0005 — embedding in a dll
+was considered and **rejected** in favor of a subprocess), a dedicated
+embedding server (ADR 0002). All the needed tooling is already in the
+dependency tree: `tokio::process` + monitor tasks with an `exited` token,
+`kill_on_drop`, Job Object (windows-sys already in use), `serde_json`,
+`async-trait`.
 
-## 3. Ландшафт механик плагинов (сверено по вебу, июль 2026)
+## 3. Landscape of plugin mechanisms (web-checked, July 2026)
 
-### 3.1 In-process dylib — ОТКЛОНЕНО
+### 3.1 In-process dylib — REJECTED
 
-- **Стабильного ABI у Rust нет и не предвидится в горизонте**: RFC crABI
-  (rfcs#3470) и RFC `#[export]` (rfcs#3435) открыты с 2023 и не приняты;
-  экспериментальная nightly-реализация `export_stable` (rust#134767, смержен
-  2025-05-05) не входит в project goals 2025H1/H2.
-- **`abi_stable` мёртв** — последний релиз 0.11.3 от 2023-10-12, ноль коммитов
-  почти 3 года, PR сообщества (включая C-unwind и фикс RUSTSEC-2024-0014)
-  не смержены. Живая альтернатива — `stabby` (ZettaScale, 72.1.8, июнь 2026), но
-  это single-vendor решение под нужды Zenoh (лицензия EPL-2.0 OR Apache-2.0).
-- **Отрицательный прецедент максимального калибра**: Bevy депрекировал (0.14) и
-  удалил (0.15) `bevy_dynamic_plugin` как **unsound** («likely unsound, or at the
-  very least so dangerous…», bevy#11969).
-- Практика для сторонних авторов требует **lockstep тулчейна** (тот же rustc +
-  флаги) либо замороженного C-ABI со всеми ограничениями (никаких String/Vec через
-  границу, паника = abort, аллокации не пересекают границу, dll не выгружать).
-  На Windows пользователи пересобирать плагины не будут.
-- Против и проектный прецедент: ADR 0005 отклонил in-process embed (dll) в пользу
-  сайдкара — по причинам изоляции сбоев и тяжести сборки.
+- **Rust has no stable ABI and none is on the horizon**: RFC crABI
+  (rfcs#3470) and RFC `#[export]` (rfcs#3435) have been open since 2023 and
+  aren't accepted; the experimental nightly implementation `export_stable`
+  (rust#134767, merged 2025-05-05) isn't in the 2025H1/H2 project goals.
+- **`abi_stable` is dead** — last release 0.11.3 from 2023-10-12, zero commits
+  for almost 3 years, community PRs (including C-unwind and the fix for
+  RUSTSEC-2024-0014) unmerged. The live alternative is `stabby` (ZettaScale,
+  72.1.8, June 2026), but that's a single-vendor solution for Zenoh's needs
+  (license EPL-2.0 OR Apache-2.0).
+- **A negative precedent of the highest caliber**: Bevy deprecated (0.14) and
+  removed (0.15) `bevy_dynamic_plugin` as **unsound** ("likely unsound, or at
+  the very least so dangerous…", bevy#11969).
+- Practice for third-party authors requires either **toolchain lockstep**
+  (same rustc + flags) or a frozen C-ABI with all its restrictions (no
+  String/Vec across the boundary, panic = abort, allocations don't cross the
+  boundary, don't unload the dll). Windows users won't rebuild plugins.
+- Also against: project precedent — ADR 0005 rejected in-process embedding
+  (dll) in favor of a sidecar, for failure-isolation and build-weight reasons.
 
-### 3.2 WASM in-process — не для наших поверхностей (задел)
+### 3.2 In-process WASM — not for our surfaces (groundwork)
 
-Состояние зрелое: wasmtime 46 (Tier 1 на Windows x64; component model, wasi-http,
-wasi-sockets — Tier 1; WASI 0.3 с async вышел 2026-06-11), у Rust нативный таргет
-`wasm32-wasip2` с 1.82; Zed — эталон плагинов на версионируемом WIT; Extism 1.30 —
-turnkey-обвязка (лимиты память/fuel/таймаут, HTTP через host-функцию с
-`allowed_hosts`). Но:
+The state is mature: wasmtime 46 (Tier 1 on Windows x64; component model,
+wasi-http, wasi-sockets — Tier 1; WASI 0.3 with async shipped 2026-06-11),
+Rust has a native `wasm32-wasip2` target since 1.82; Zed is the reference for
+plugins on a versioned WIT; Extism 1.30 is a turnkey wrapper (memory/fuel/
+timeout limits, HTTP via a host function with `allowed_hosts`). But:
 
-- **Вес рантайма**: Zellij в v0.44.0 (март 2026) ушёл с wasmtime на интерпретатор
-  `wasmi` ровно ради размера бинарника и отказа от compile+cache — JIT-рантайм
-  тяжёл для TUI. Нам пришлось бы вшить wasmtime/Extism в основной exe — против
-  духа проекта (ADR 0005: «в основном exe ноль Wasmer»).
-- **Ценность песочницы обнуляется задачей**: пользовательским инструментам нужны
-  сеть и произвольный I/O — значит, всё равно раздавать capability'и; изоляция
-  остаётся, но главный аргумент («безопасно исполнять чужой код») ослабевает,
-  а стоимость (свой SDK и toolchain для авторов плагинов, свой ABI поверх байтов)
-  остаётся.
-- Экосистемы готовых инструментов под наш собственный WASM-ABI не существует —
-  каждый инструмент пришлось бы писать специально под нас.
+- **Runtime weight**: Zellij, in v0.44.0 (March 2026), moved off wasmtime to
+  the `wasmi` interpreter specifically for binary size and to avoid
+  compile+cache — a JIT runtime is heavy for a TUI. We'd have to embed
+  wasmtime/Extism in the main exe — against the project's spirit (ADR 0005:
+  "zero Wasmer in the main exe").
+- **The sandbox value evaporates given the task**: user-supplied tools need
+  network and arbitrary I/O — meaning we'd still have to hand out
+  capabilities; isolation remains, but the main argument ("safely run
+  untrusted code") weakens, while the cost (a custom SDK and toolchain for
+  plugin authors, a custom ABI on top of bytes) remains.
+- No ecosystem of ready-made tools exists for our own custom WASM ABI — every
+  tool would have to be written specifically for us.
 
-Фиксируем как **задел**: если появится потребность исполнять *недоверенные*
-инструменты без установки процессов — Extism/wasmtime + WIT это решает; наш
-`wasmer`-сайдкар уже даёт прецедент провизии ассетов.
+Filed as **groundwork**: if the need arises to run *untrusted* tools without
+installing processes — Extism/wasmtime + WIT solves it; our `wasmer` sidecar
+already gives an asset-provisioning precedent.
 
-### 3.3 Встраиваемые скрипты (Rhai / mlua / Steel) — не берём
+### 3.3 Embedded scripting (Rhai / mlua / Steel) — not taken
 
-Живые (Rhai 1.25.1, mlua 0.12.0, Steel 0.8.2), но: инструментам нужны сеть/файлы —
-пришлось бы наращивать биндинги под всё; исполнение в нашем процессе без изоляции;
-Helix не может смержить Steel-плагины с 2023 (PR #8675 — до сих пор draft).
-Для «приватного кода вне монолита» скрипт годится, но impорт LameLLaMA решается
-проще (файл), а инструменты — стандартнее (MCP).
+Alive (Rhai 1.25.1, mlua 0.12.0, Steel 0.8.2), but: tools need network/files —
+we'd have to keep expanding bindings for everything; execution happens in our
+process with no isolation; Helix hasn't been able to merge Steel plugins since
+2023 (PR #8675 — still draft). For "private code outside the monolith" a
+script would work, but LameLLaMA import is solved more simply (a file), and
+tools more conventionally (MCP).
 
-### 3.4 Подпроцесс/сайдкар — ВЫБРАНО
+### 3.4 Subprocess/sidecar — CHOSEN
 
-Индустрия сходится именно здесь, и все паттерны задокументированы:
+The industry converges exactly here, and all the patterns are documented:
 
-- **MCP** (stdio, NDJSON JSON-RPC 2.0) — де-факто стандарт AI-инструментов
-  (Anthropic 2024-11; поддержан хостами Claude/OpenAI/Google, goose, Zed, oterm,
-  gptme…). Текущая ревизия спеки **2025-11-25**.
-- **LSP** (Content-Length-фрейминг) — старший брат; `rust-analyzer` вдобавок даёт
-  прецедент «подпроцесс ради ABI-изоляции» (proc-macro-srv).
-- **nushell** — плагины-подпроцессы с msgpack/json, регистрацией и idle-GC;
-  **HashiCorp go-plugin** — канон долгоживущего сайдкара с handshake и mTLS.
-- Windows-нюансы известны и решаемы: `CREATE_NO_WINDOW`; **запрет `.bat`/`.cmd`**
-  как команд плагинов (CVE-2024-24576 «BatBadBut» — Rust ≥1.77.2 сам отклоняет
-  неэкранируемые аргументы; `npx`-серверы на Windows документировать как
-  `cmd /c npx …` либо полный путь к `.cmd` не поддерживать); **Job Object** для
-  убийства дерева процессов (наш `windows-sys` уже умеет — песочница Python).
-- Готовый фреймворк «go-plugin для Rust» ровно один — **MCP через официальный SDK
-  `rmcp`** (2.2.0, июль 2026); вне MCP — «собери сам из tokio+serde_json», что
-  проект уже дважды делал (llama-server, wasmer).
+- **MCP** (stdio, NDJSON JSON-RPC 2.0) — the de-facto standard for AI tools
+  (Anthropic 2024-11; supported by Claude/OpenAI/Google, goose, Zed, oterm,
+  gptme, and other hosts). Current spec revision **2025-11-25**.
+- **LSP** (Content-Length framing) — the older sibling; `rust-analyzer` also
+  provides a precedent of "subprocess for ABI isolation" (proc-macro-srv).
+- **nushell** — subprocess plugins with msgpack/json, registration, and idle
+  GC; **HashiCorp go-plugin** — the canonical long-lived sidecar with
+  handshake and mTLS.
+- Windows nuances are known and solvable: `CREATE_NO_WINDOW`; **banning
+  `.bat`/`.cmd`** as plugin commands (CVE-2024-24576 "BatBadBut" — Rust
+  ≥1.77.2 itself rejects unescapable arguments; document `npx` servers on
+  Windows as `cmd /c npx …` or don't support a full path to a `.cmd`); **Job
+  Object** for killing a process tree (our `windows-sys` already does this —
+  the Python sandbox).
+- Exactly one ready-made "go-plugin for Rust" framework exists — **MCP via the
+  official SDK `rmcp`** (2.2.0, July 2026); outside MCP it's "build it
+  yourself from tokio+serde_json," which the project has already done twice
+  (llama-server, wasmer).
 
-## 4. Поверхность «инструменты»: MCP-хост (рекомендация)
+## 4. The "tools" surface: MCP host (recommendation)
 
-### 4.1 Почему MCP, а не свой протокол
+### 4.1 Why MCP, not our own protocol
 
-- **Экосистема**: тысячи готовых серверов (файлы, git, GitHub, базы, браузер, …) и
-  SDK для авторов на всех языках — свой протокол получил бы ноль готовых
-  инструментов. Отрицательный прецедент: `llm-functions` (aichat) — добротный
-  собственный формат, не распространившийся за пределы родного приложения.
-- **Терминальные чат-клиенты уже сделали это** (oterm, gptme, mcp-client-for-ollama)
-  — «MCP-клиент из конфиг-файла» стал конвенцией жанра; roadmap проекта уже
-  содержит задел «MCP-клиент — естественное расширение ToolRegistry».
-- Наш трейт `Tool` отображается на MCP-инструмент **без потерь**: `description` и
-  JSON-схема приходят от сервера, `invoke` → `tools/call`, результат-текст →
-  `ToolOutcome::text` (эффектов у внешних инструментов нет).
+- **Ecosystem**: thousands of ready-made servers (files, git, GitHub,
+  databases, browser, …) and author SDKs in every language — our own protocol
+  would launch with zero ready-made tools. Negative precedent: `llm-functions`
+  (aichat) — a decent custom format that never spread beyond its host app.
+- **Terminal chat clients have already done this** (oterm, gptme,
+  mcp-client-for-ollama) — "an MCP client from a config file" has become a
+  genre convention; the project's roadmap already carries the groundwork item
+  "MCP client — a natural extension of ToolRegistry."
+- Our `Tool` trait maps onto an MCP tool **without loss**: `description` and
+  the JSON schema come from the server, `invoke` → `tools/call`, text result →
+  `ToolOutcome::text` (external tools have no effects).
 
-### 4.2 Объём протокола (тесно и стабильно)
+### 4.2 Protocol scope (narrow and stable)
 
-Берём **tools-only, stdio-only** подмножество ревизии **2025-11-25** — оно
-wire-стабильно с 2024-11-05:
+We take the **tools-only, stdio-only** subset of revision **2025-11-25** — it's
+been wire-stable since 2024-11-05:
 
-- транспорт: подпроцесс, newline-delimited JSON-RPC 2.0, UTF-8, без вложенных
-  переводов строк; **stdout сервера — только протокол**, stderr — логи
-  (обязательно дренировать в наш `logs/`, иначе забьётся pipe);
-- `initialize` (шлём `protocolVersion: "2025-11-25"`, `capabilities: {}`,
-  `clientInfo`; принимаем встречную версию, которую умеем, иначе отключаемся) →
-  `notifications/initialized`;
-- `tools/list` (+ пагинация `cursor`/`nextCursor`), `tools/call`
-  (`isError: true` → текст ошибки модели, не протокольная ошибка);
-- `ping` (отвечаем пустым результатом), `notifications/cancelled` (шлём при
-  таймауте/отмене), `notifications/tools/list_changed` (перечитать каталог);
-- на неподдержанные **запросы** сервера (`sampling/createMessage`,
-  `elicitation/create`, `roots/list`) отвечаем `-32601` (иначе корректный сервер
-  повиснет в ожидании); неизвестные **нотификации** молча игнорируем;
-- shutdown: закрыть stdin → ограниченное ожидание → SIGTERM (unix) → kill;
-  на Windows — stdin-close → Job-Object/TerminateProcess.
+- transport: subprocess, newline-delimited JSON-RPC 2.0, UTF-8, no embedded
+  newlines; **server stdout is protocol only**, stderr is logs (must be
+  drained to our `logs/`, or the pipe fills up);
+- `initialize` (we send `protocolVersion: "2025-11-25"`, `capabilities: {}`,
+  `clientInfo`; accept whatever version they answer with, as we understand
+  it, otherwise disconnect) → `notifications/initialized`;
+- `tools/list` (+ pagination `cursor`/`nextCursor`), `tools/call`
+  (`isError: true` → error text to the model, not a protocol error);
+- `ping` (we answer with an empty result), `notifications/cancelled` (sent on
+  timeout/cancellation), `notifications/tools/list_changed` (re-read the
+  catalog);
+- for unsupported **requests** from the server (`sampling/createMessage`,
+  `elicitation/create`, `roots/list`) we answer `-32601` (otherwise a correct
+  server would hang waiting); unknown **notifications** are silently ignored;
+- shutdown: close stdin → bounded wait → SIGTERM (unix) → kill; on Windows —
+  stdin-close → Job-Object/TerminateProcess.
 
-**Не берём** (заделы): resources, prompts, sampling, roots, elicitation,
-HTTP-транспорт, structuredContent-валидацию. Ревизия 2026-07-28 (RC: stateless
-core, extensions) имеет stdio-совместимый путь и ≥12-месячные окна депрекации —
-ничего предстраивать не нужно; вкладываться в roots/sampling/logging не стоит
-(в RC депрекированы).
+**Not taken** (groundwork): resources, prompts, sampling, roots, elicitation,
+HTTP transport, structuredContent validation. Revision 2026-07-28 (RC:
+stateless core, extensions) has an stdio-compatible path and ≥12-month
+deprecation windows — nothing needs pre-building; investing in
+roots/sampling/logging isn't worth it (deprecated in the RC).
 
-### 4.3 Реализация клиента: свой микро-клиент vs `rmcp` (развилка Р2)
+### 4.3 Client implementation: our own micro-client vs `rmcp` (fork R2)
 
-| | Свой микро-клиент | `rmcp` 2.x |
+| | Our own micro-client | `rmcp` 2.x |
 |---|---|---|
-| Объём | ~6 видов сообщений; оценочно 600–900 строк с тестами | `default-features=false, features=["client","transport-child-process"]` |
-| Зависимости | **ноль новых** (tokio/serde_json/async-trait уже есть) | rmcp + rmcp-macros + process-wrap 9 + which 8 (+ хвост) |
-| Соответствие спеке | сами реализуем питфоллы §4.6 (список известен) | 2.2.0 проходит официальный conformance-suite |
-| Стабильность API | наша | churn реален: 1.8.0 → 2.0.0 → 2.1.0 → 2.2.0 за 3 недели (июнь–июль 2026), breaking в минорах |
-| i18n/логи | полный контроль (ошибки — в бандлы, ось B) | обёртки поверх английских ошибок |
-| Прецедент проекта | свой CLI-парсер (вместо clap), markdown, calc, i18n, SSE-парсеры трёх облаков | — |
+| Scope | ~6 message kinds; estimated 600–900 lines with tests | `default-features=false, features=["client","transport-child-process"]` |
+| Dependencies | **zero new ones** (tokio/serde_json/async-trait already present) | rmcp + rmcp-macros + process-wrap 9 + which 8 (+ transitive tail) |
+| Spec conformance | we implement the pitfalls of §4.6 ourselves (a known list) | 2.2.0 passes the official conformance suite |
+| API stability | our own | real churn: 1.8.0 → 2.0.0 → 2.1.0 → 2.2.0 in 3 weeks (June–July 2026), breaking changes in minor releases |
+| i18n/logging | full control (errors go into bundles, axis B) | wrappers over English errors |
+| Project precedent | our own CLI parser (instead of clap), markdown, calc, i18n, three cloud SSE parsers | — |
 
-**Рекомендация: свой микро-клиент.** Подмножество мало и wire-стабильно с
-2024-11-05, новых зависимостей ноль, тексты ошибок локализуемы, и это ровно тот
-случай, где проект исторически выбирает микро-реализацию. `rmcp` — запасной путь,
-если подмножество начнёт расти (HTTP-транспорт, sampling, tasks) — переход
-локализован за трейтом транспорта. Честная оговорка разведки: «genuine toss-up» —
-готовая конформность rmcp ценна; решение за пользователем.
+**Recommendation: our own micro-client.** The subset is small and has been
+wire-stable since 2024-11-05, zero new dependencies, error text is
+localizable, and this is exactly the case where the project has historically
+chosen a micro-implementation. `rmcp` is the fallback path if the subset
+starts growing (HTTP transport, sampling, tasks) — the switch is localized
+behind a transport trait. Honest research caveat: it's a "genuine toss-up" —
+rmcp's ready-made conformance is valuable; the decision is the user's.
 
-### 4.4 Интеграция в архитектуру
+### 4.4 Integration into the architecture
 
-**Конфиг** (`shared/config.rs`, всё `#[serde(default)]` — без миграции):
+**Config** (`shared/config.rs`, all `#[serde(default)]` — no migration):
 
 ```jsonc
 "mcp": {
-  "enabled": false,              // мастер-выключатель (по умолчанию ВЫКЛ, как python)
+  "enabled": false,              // master switch (OFF by default, like python)
   "servers": [{
-    "id": "github",              // slug [a-z0-9-]{1,32} — часть id инструментов
+    "id": "github",              // slug [a-z0-9-]{1,32} — part of the tool ids
     "command": "C:/tools/github-mcp.exe",
     "args": ["--stdio"],
-    // Переменная ребёнку → ИМЯ переменной-источника в окружении приложения
-    // (секрет не пишется в settings.json — прецедент api_key_env; см. Р8):
+    // env var for the child → NAME of the source variable in the app's environment
+    // (the secret isn't written to settings.json — precedent api_key_env; see R8):
     "env": { "GITHUB_TOKEN": "MINDFORK_GITHUB_PAT" },
     "enabled": true,
-    "tool_timeout_secs": 60,     // per-call; startup-таймаут отдельный (дефолт 30с)
-    "max_result_chars": 20000    // клип результата (прецедент Claude Code: cap 25k токенов)
+    "tool_timeout_secs": 60,     // per-call; startup timeout is separate (default 30s)
+    "max_result_chars": 20000    // result clip (precedent: Claude Code caps at 25k tokens)
   }]
 }
 ```
 
-**Жизненный цикл — `McpManager`** (зеркало `EngineManager`,
-`app/orchestrator/mcp.rs`): спавн включённых серверов на старте/при правке
-настроек (через `RestartQueue`-дебаунс, как движки); монитор-задача с
-`exited`-токеном (паттерн `managed.rs`); handshake + `tools/list` → **динамический
-каталог**; статус per-server (`Ready`/`Connecting`/`Disconnected(reason)`).
-Рестарт-бюджет как у VS Code LSP: N падений за окно → `Disconnected` до ручного
-вмешательства (без вечного рестарт-цикла).
+**Lifecycle — `McpManager`** (mirrors `EngineManager`,
+`app/orchestrator/mcp.rs`): spawns enabled servers on startup/settings change
+(via the `RestartQueue` debounce, like engines); a monitor task with an
+`exited` token (pattern from `managed.rs`); handshake + `tools/list` → a
+**dynamic catalog**; per-server status (`Ready`/`Connecting`/`Disconnected(reason)`).
+A restart budget like VS Code's LSP: N crashes within a window → `Disconnected`
+until manual intervention (no eternal restart loop).
 
-**Регистрация инструментов**: обёртка `McpTool` реализует `Tool`
-(`invoke` → `tools/call` с таймаутом; `description`/`parameters` — снимок из
-`tools/list`, **не локализуются** — граница i18n, как probe-ошибки движка);
-`group()` → новая `ToolGroup::Plugins`; `enabled_by_default() = false` (opt-in
-per profile, `reconcile_tools` не включает — автоматически, их нет в
-`default_tool_ids`). Реестр у оркестратора уже пересобирается на правки настроек —
-MCP-инструменты добавляются в него по готовности сервера (ещё одна причина
-пересборки), ход берёт актуальный снимок.
+**Tool registration**: a `McpTool` wrapper implements `Tool`
+(`invoke` → `tools/call` with a timeout; `description`/`parameters` — a
+snapshot from `tools/list`, **not localized** — an i18n boundary, like engine
+probe errors); `group()` → a new `ToolGroup::Plugins`;
+`enabled_by_default() = false` (opt-in per profile, `reconcile_tools` won't
+enable it automatically — it's not in `default_tool_ids`). The orchestrator's
+registry is already rebuilt on settings changes — MCP tools get added to it
+once the server is ready (another reason for the rebuild), and a turn picks
+up the current snapshot.
 
-**Именование**: `mcp__<server>__<tool>` (конвенция Claude Code; goose —
-`server__tool`). Спека (SEP-986) допускает `A-Za-z0-9_-.` до 128 символов —
-нормализуем под лимиты провайдеров function-имён: `.` → `_`, итог ≤ 64 символов
-(усечение + короткий hex-хвост от полного имени; точные лимиты провайдеров сверить
-при реализации — исторически `^[a-zA-Z0-9_-]{1,64}$` у OpenAI/Anthropic).
-Id хранится в `Profile.enabled_tools` как обычная строка — контракт профиля не
-меняется.
+**Naming**: `mcp__<server>__<tool>` (Claude Code convention; goose uses
+`server__tool`). The spec (SEP-986) allows `A-Za-z0-9_-.` up to 128
+characters — we normalize to provider function-name limits: `.` → `_`, result
+≤ 64 chars (truncate + a short hex tail derived from the full name; check the
+exact provider limits at implementation time — historically
+`^[a-zA-Z0-9_-]{1,64}$` for OpenAI/Anthropic). The id is stored in
+`Profile.enabled_tools` as a plain string — the profile contract doesn't
+change.
 
-**Точки интеграции, требующие внимания** (главные «ripples»):
+**Integration points that need attention** (the main "ripples"):
 
-1. **`CATALOG` статичен** (LazyLock от `standard_registry`) — динамические
-   инструменты в него не попадают. Тумблеры профиля (`tool_catalog()` в
-   `screens/settings`) и `effective_tool_ids` должны получить динамическую
-   добавку: снимок MCP-каталога едет в `AppEvent::Settings` (оркестратор его
-   знает), гейт — по префиксу `mcp__` + `config.mcp.enabled` (новая ветка в
-   `effective_tool_ids`, не `CATALOG`-lookup).
-2. **Гейт-тесты i18n не задеты**: `all_tool_descriptions_localized_to_en`
-   итерирует статический `CATALOG` — MCP-инструментов там нет по построению.
-3. **Отмена**: agentic-loop сейчас await'ит `registry.invoke` без `select!` с
-   generation-cancel — долгий `tools/call` заблокировал бы Esc. В Фазе MCP —
-   per-call таймаут обязателен; прокидывание `CancellationToken` в `ToolContext`
-   (и `select!` в петле) — маленький отдельный рефактор, полезный и родным
-   инструментам (`web_search` тоже не отменяем сегодня). Включить в объём.
-4. **Лента**: `present.rs` уже имеет generic-ветку (Markdown/Plain) — результаты
-   MCP-инструментов рендерятся ею без правок; не-текстовые блоки результата
-   (image/audio/resource) в Фазе 1 — текстовая пометка `[изображение …]`.
-5. **UI настроек**: секция «Плагины» (или группа в «Инструментах»): чипы статуса
-   серверов (паттерн `ServerStatuses`), тумблеры enable per-server, **просмотр
-   полного описания инструментов** (антидот tool-poisoning, §4.5). Добавление
-   сервера — правкой `settings.json` (Р6).
-6. **Контекст-бюджет — главное системное ограничение.** Схемы 5–6 серверов ≈ 15k+
-   токенов; хосты вводят капы (Cursor — 40 инструментов, VS Code — 128). Для наших
-   локальных 8–16k-контекстов спасает уже существующая механика: **per-profile
-   opt-in каждого инструмента** (включай 3 нужных, а не 40). Плюс потолок
-   инструментов на сервер (конфиг, дефолт ~25) с предупреждением. Deferred-схемы
-   («tool search», как в Claude Code) — задел.
+1. **`CATALOG` is static** (a `LazyLock` from `standard_registry`) — dynamic
+   tools don't land there. Profile toggles (`tool_catalog()` in
+   `screens/settings`) and `effective_tool_ids` need a dynamic addendum: an
+   MCP-catalog snapshot rides on `AppEvent::Settings` (the orchestrator knows
+   it), the gate is by the `mcp__` prefix + `config.mcp.enabled` (a new branch
+   in `effective_tool_ids`, not a `CATALOG` lookup).
+2. **i18n gate tests unaffected**: `all_tool_descriptions_localized_to_en`
+   iterates the static `CATALOG` — MCP tools aren't there by construction.
+3. **Cancellation**: the agentic loop currently `await`s `registry.invoke`
+   without `select!`-ing against generation cancellation; a slow `tools/call`
+   would block Esc. In the MCP phase, a per-call timeout is mandatory;
+   threading a `CancellationToken` through `ToolContext` (and `select!` in the
+   loop) is a small, separate refactor, also useful for our native tools
+   (`web_search` isn't cancellable today either). Include it in scope.
+4. **Feed**: `present.rs` already has a generic branch (Markdown/Plain) — MCP
+   tool results render through it with no changes; non-text result blocks
+   (image/audio/resource) get a text placeholder `[image …]` in Phase 1.
+5. **Settings UI**: a "Plugins" section (or a group inside "Tools"): server
+   status chips (the `ServerStatuses` pattern), per-server enable toggles,
+   **full tool description view** (tool-poisoning antidote, §4.5). Adding a
+   server — by editing `settings.json` (R6).
+6. **Context budget — the main systemic constraint.** Schemas from 5–6
+   servers ≈ 15k+ tokens; hosts introduce caps (Cursor — 40 tools, VS Code —
+   128). For our local 8–16k contexts, the existing mechanism already saves
+   us: **per-profile opt-in for each tool** (enable the 3 you need, not 40).
+   Plus a per-server tool cap (config, default ~25) with a warning.
+   Deferred schemas ("tool search," as in Claude Code) — groundwork.
 
-### 4.5 Безопасность (по официальным best practices + Invariant Labs)
+### 4.5 Security (per official best practices + Invariant Labs)
 
-Модель угроз: MCP-сервер = **произвольная программа с правами пользователя**
-(эквивалент установки софта; песочницы в Фазе 1 нет — как и у goose/Zed/Claude
-Code), плюс **tool poisoning** — инъекция инструкций через описания инструментов
-(OWASP MCP03:2025), rug-pull (описание меняется после одобрения), cross-server
-shadowing, отравление любых полей схемы и результатов.
+Threat model: an MCP server is an **arbitrary program running with the
+user's privileges** (equivalent to installing software; no sandbox in Phase
+1 — same as goose/Zed/Claude Code), plus **tool poisoning** — instruction
+injection through tool descriptions (OWASP MCP03:2025), rug-pull (the
+description changes after approval), cross-server shadowing, poisoning of any
+schema field or result.
 
-Митигации в объёме Фазы MCP:
+Mitigations within the MCP-phase scope:
 
-- мастер-выключатель `mcp.enabled=false` + серверы конфигурируются только
-  пользователем (полная команда видна в конфиге/UI); инструменты **выключены в
-  профилях по умолчанию** (двойной opt-in);
-- **TOFU-пиннинг**: hash (имя+описание+схема) каталога сервера при первом
-  одобрении; изменение → сервер помечается «каталог изменился, переподтвердите»
-  (rug-pull-детектор; Invariant Labs / mcp-scan рекомендация);
-- показ **полного** описания инструмента в UI настроек (не усечённого);
-- клип результата (`max_result_chars`) и таймауты (`tool_timeout_secs`) — вход в
-  промпт ограничен; stderr сервера — только в файловый лог;
-- запрет `.bat`/`.cmd` команд (BatBadBut), `CREATE_NO_WINDOW`, Job Object
-  (дерево процессов не переживает выход приложения);
-- annotations (`readOnlyHint`/`destructiveHint`) показываем в UI, но считаем
-  **недоверенными** (позиция спеки). Per-call подтверждение деструктивных вызовов
-  — сознательно НЕ в первой фазе (новая модальность посреди генерации; двойного
-  opt-in + TOFU достаточно для старта) — задел, вписывается в существующий попап
-  подтверждения (`ConfirmAction`).
+- a master switch `mcp.enabled=false` + servers are configured only by the
+  user (the full command is visible in config/UI); tools are **disabled in
+  profiles by default** (double opt-in);
+- **TOFU pinning**: a hash (name+description+schema) of a server's catalog at
+  first approval; a change → the server is flagged "catalog changed, please
+  re-confirm" (rug-pull detector; Invariant Labs / mcp-scan recommendation);
+- showing the **full** tool description in settings UI (not truncated);
+- clipping the result (`max_result_chars`) and timeouts (`tool_timeout_secs`)
+  — bounded prompt input; server stderr goes only into the file log;
+- banning `.bat`/`.cmd` commands (BatBadBut), `CREATE_NO_WINDOW`, Job Object
+  (the process tree doesn't outlive the app's exit);
+- annotations (`readOnlyHint`/`destructiveHint`) are shown in the UI but
+  treated as **untrusted** (the spec's own stance). Per-call confirmation for
+  destructive calls is deliberately NOT in the first phase (a new modality
+  mid-generation; double opt-in + TOFU is enough to start) — groundwork, fits
+  into the existing confirmation popup (`ConfirmAction`).
 
-Позиция согласуется со spec.md §13.1 («умеренные требования» к prompt injection) —
-но описания инструментов идут в системный промпт каждого хода, поэтому минимум
-(двойной opt-in, видимость описаний, TOFU) — обязателен.
+The stance agrees with spec.md §13.1 ("moderate requirements" for prompt
+injection) — but tool descriptions go into the system prompt every turn, so
+the minimum (double opt-in, description visibility, TOFU) is mandatory.
 
-### 4.6 Известные питфоллы реализации (чек-лист для Фазы)
+### 4.6 Known implementation pitfalls (checklist for the phase)
 
-Из полевого опыта хостов (issue-треки VS Code/Codex/Claude Code): серверы,
-пишущие мусор в stdout (баннеры/`print`) → **пропускать не-JSON строки с warn**,
-а не рвать соединение; недренированный stderr блокирует сервер; `npx`/`uvx` — это
-`.cmd`-шимы, на Windows без шелла — `ENOENT`; убийство только прямого потомка
-оставляет сирот (нужен Job Object/process group); часть серверов не выходит по
-stdin-close (эскалация до kill); id запросов уникальны и не-null, на нотификации
-не отвечать; `_meta`-ключи с префиксом `modelcontextprotocol/mcp` не изобретать;
-стартовая латентность серверов-«качалок» — отдельный startup-таймаут.
+From hosts' field experience (VS Code/Codex/Claude Code issue trackers):
+servers writing junk to stdout (banners/`print`) → **skip non-JSON lines with
+a warn**, don't tear down the connection; undrained stderr blocks the server;
+`npx`/`uvx` are `.cmd` shims, `ENOENT` on Windows without a shell; killing
+only the direct child leaves orphans (need a Job Object/process group); some
+servers don't exit on stdin-close (escalate to kill); request ids are unique
+and non-null, don't reply to notifications; don't invent `_meta` keys with the
+`modelcontextprotocol/mcp` prefix; startup latency of "heavy" servers needs
+its own startup timeout.
 
-### 4.7 Тестирование
+### 4.7 Testing
 
-Транспорт за мини-трейтом (`spawn` отделён от чтения/записи) → юнит-тесты
-хендшейка/фрейминга/питфоллов на `tokio::io::duplex` без процессов; функциональные
-— на крошечном тестовом сервере-скрипте (готовый бинарь в тестах, как
-короткоживущие процессы в тестах `managed.rs`); живой `#[ignore]`-смоук — против
-реального стороннего сервера (по env-переменной с командой), плюс e2e на живой
-модели (§7, зонд).
+Transport behind a mini-trait (`spawn` separated from read/write) → unit
+tests for handshake/framing/pitfalls on `tokio::io::duplex` without
+processes; functional ones — against a tiny test-server script (a ready-made
+binary in tests, like the short-lived processes in `managed.rs` tests); a
+live `#[ignore]` smoke — against a real third-party server (via an env
+variable with the command), plus an e2e against a live model (§7, the
+probe).
 
-## 5. Поверхность «импортёры»: нейтральный формат + внешние конвертеры (рекомендация)
+## 5. The "importers" surface: neutral format + external converters (recommendation)
 
-### 5.1 Почему не «плагин-процесс»
+### 5.1 Why not a "plugin process"
 
-Импорт — разовая batch-операция: протоколом служит **файл**. Ровно так устроены
-зрелые прецеденты: beancount 3.x вынес импортёры из ядра (beangulp: приватные
-конвертеры эмитят документированный ledger-текст), KeePass (документированные
-XML/CSV + Generic CSV Importer, конвертируют третьи стороны), Netscape bookmarks
-HTML (30 лет универсальной границы импорта). Обратный пример — ChatGPT
-`conversations.json`: недокументированное **дерево** узлов, которое каждый
-потребитель заново учится сплющивать. Вывод: формат обмена должен быть **плоским
-и документированным**.
+Import is a one-off batch operation: the protocol is a **file**. Exactly how
+the mature precedents are built: beancount 3.x moved importers out of the
+core (beangulp: private converters emit documented ledger text), KeePass
+(documented XML/CSV + Generic CSV Importer, converted by third parties),
+Netscape bookmarks HTML (30 years of a universal import boundary). Counter-
+example: ChatGPT's `conversations.json` — an undocumented **tree** of nodes
+that every consumer has to re-learn how to flatten. Conclusion: an exchange
+format must be **flat and documented**.
 
-### 5.2 Дизайн
+### 5.2 Design
 
-- **Документированный формат** `mindfork-import.json` (в `docs/import-format.md`):
+- **Documented format** `mindfork-import.json` (in `docs/import-format.md`):
 
 ```jsonc
 {
   "format": "mindfork-import", "version": 1,
   "profiles": [{
-    "key": "assistant-anna",          // стабильный внешний ключ (для UUIDv5-идемпотентности)
+    "key": "assistant-anna",          // stable external key (for UUIDv5 idempotency)
     "name": "Anna", "language": "ru",
     "system_message": "…", "greeting": null,
     "character_names": { "user": "…", "assistant": "…" },
-    "sampling": { "temperature": 0.8 }   // поддержанное подмножество; лишнее отбрасывается
+    "sampling": { "temperature": 0.8 }   // supported subset; unknown fields dropped
   }],
   "chats": [{
     "key": "conv-123", "profile_key": "assistant-anna",
@@ -347,157 +366,172 @@ HTML (30 лет универсальной границы импорта). Об�
     "messages": [{ "role": "user|assistant|system", "text": "…",
                     "thoughts": null, "timestamp": "…" }]
   }],
-  "settings": { "sampling": {…}, "interface": {…} }   // опционально
+  "settings": { "sampling": {…}, "interface": {…} }   // optional
 }
 ```
 
-- **Generic CLI**: `mindfork import <file.json>` — валидация (версия формата,
-  downgrade-guard как у схем данных), маппинг в доменные сущности,
-  **идемпотентность** через детерминированные UUIDv5 от `key` (в точности текущая
-  механика `PROFILE_NAMESPACE`), upsert в `Storage`. Санитизация — как у
-  `import-lamellama` (отбрасывание неподдержанного семплинга, BOM и т.п.).
-- **Приватный конвертер** `lamellama2mindfork` — отдельный **приватный**
-  репозиторий (язык любой; можно перенести готовые wire-типы из
-  `features/migration.rs` как есть): читает каталог LameLLaMA → эмитит
-  `mindfork-import.json`. Всё знание о непубличной программе покидает монолит.
-- Формат заодно открывает импорт **из чего угодно** (ChatGPT-экспорт, SillyTavern
-  JSONL, попытка №1) — конвертеры пишутся без участия монолита.
+- **Generic CLI**: `mindfork import <file.json>` — validation (format version,
+  a downgrade guard like the data-schema one), mapping into domain entities,
+  **idempotency** via deterministic UUIDv5 from `key` (exactly today's
+  `PROFILE_NAMESPACE` mechanism), upsert into `Storage`. Sanitization — as in
+  `import-lamellama` (dropping unsupported sampling, BOM, etc.).
+- **Private converter** `lamellama2mindfork` — a separate **private**
+  repository (any language; the ready-made wire types can be carried over
+  as-is from `features/migration.rs`): reads a LameLLaMA directory → emits
+  `mindfork-import.json`. All knowledge of the non-public program leaves the
+  monolith.
+- The format also opens up importing **from anything** (ChatGPT export,
+  SillyTavern JSONL, attempt #1) — converters are written without touching
+  the monolith.
 
-### 5.3 Альтернатива (отклонено): формат обмена = доменные `Profile`/`Chat` as-is
+### 5.3 Alternative (rejected): exchange format = domain `Profile`/`Chat` as-is
 
-За: сериализация уже есть, версии/миграции схем уже есть (ADR 0006). Против
-(решающее): внешний контракт зафиксировал бы **внутреннюю** схему целиком
-(`deleted`, `reflected_upto`, `tool_calls`, метаданные…) — каждый рефактор домена
-становился бы breaking-изменением для чужих конвертеров. Выделенный формат-v1 —
-маленький, стабильный, ничего лишнего не обещает.
+For: serialization already exists, schema versions/migrations already exist
+(ADR 0006). Against (decisive): an external contract would fix the
+**internal** schema wholesale (`deleted`, `reflected_upto`, `tool_calls`,
+metadata…) — every domain refactor would become a breaking change for
+third-party converters. A dedicated format-v1 is small, stable, and promises
+nothing extra.
 
-### 5.4 Судьба `import-lamellama` (развилка Р4)
+### 5.4 Fate of `import-lamellama` (fork R4)
 
-Рекомендация: **удалить** из монолита в той же фазе (CHANGELOG: рубрики Удалено +
-Добавлено `import`), команда `import-lamellama` подсказывает про конвертер.
-Альтернатива — оставить депрекированной на 1–2 релиза (двойной код-путь).
-Идемпотентность переживает переход: конвертер эмитит те же стабильные ключи
-(имена конфигураций / id разговоров), UUIDv5-неймспейс переезжает в спецификацию
-формата.
+Recommendation: **remove** it from the monolith in the same phase (CHANGELOG:
+Removed + Added `import` sections), the `import-lamellama` command points
+users to the converter. Alternative — keep it deprecated for 1–2 releases
+(dual code path). Idempotency survives the switch: the converter emits the
+same stable keys (config names / conversation ids), the UUIDv5 namespace
+moves into the format spec.
 
-## 6. Поверхность «облачные интеграции»: OpenAI-совместимый endpoint = plugin-API (рекомендация)
+## 6. The "cloud integrations" surface: OpenAI-compatible endpoint = plugin API (recommendation)
 
-- **Выносить `EngineBackend` за процесс = изобрести HTTP-сервер инференса.** Он
-  изобретён: OpenAI-совместимый протокол; наш режим **external уже есть**
-  (url + `api_key_env` + `model_name`) — это и есть точка подключения провайдеров.
-- Индустрия делает ровно так: aichat (`openai-compatible`-тип клиента), LibreChat
-  («custom endpoints»), Open WebUI Pipelines (плагин-граница — сам OpenAI-формат).
-  Мосты-мультипликаторы: **LiteLLM proxy** (self-hosted, ядро MIT, 100+
-  провайдеров за одним endpoint) и **OpenRouter** (hosted, 400+ моделей). Один
-  external-слот покрывает «любую экзотику» через них.
-- Провайдеры с собственным протоколом и уникальными возможностями (мысли, подписи
-  рассуждений, effort) добавляются **нативной реализацией трейта в монолите** —
-  как уже случилось с Responses/Gemini/Anthropic (ADR 0004). Это осознанно НЕ
-  плагины: качество интеграции (стриминг «мыслей», tool-use round-trip) требует
-  глубокого сцепления с контрактом.
-- Что сделать в рамках направления (малый объём): **документировать паттерн** в
-  install.md (рецепты LiteLLM/OpenRouter для external-режима). Опция сверх того
-  (развилка Р5): **managed-custom-command** — супервайзер умеет поднимать
-  *произвольную команду* как OpenAI-совместимый сайдкар (обобщение
-  `ManagedConfig`: command+args вместо llama-server-специфики; probe `/health`
-  уже толерантен к 404). Даёт «локальный прокси поднимается сам». Рекомендация:
-  отложить до реального спроса — external + вручную запущенный прокси покрывает
-  сценарий уже сегодня.
+- **Pulling `EngineBackend` out of the process = inventing an inference HTTP
+  server.** It's already invented: the OpenAI-compatible protocol; our
+  **external mode already exists** (url + `api_key_env` + `model_name`) — this
+  is exactly the provider plug-in point.
+- The industry does exactly this: aichat (`openai-compatible` client type),
+  LibreChat ("custom endpoints"), Open WebUI Pipelines (the plugin boundary
+  *is* the OpenAI format itself). Multiplexer bridges: **LiteLLM proxy**
+  (self-hosted, MIT core, 100+ providers behind one endpoint) and
+  **OpenRouter** (hosted, 400+ models). One external slot covers "any
+  exotic thing" through them.
+- Providers with their own protocol and unique capabilities (thoughts,
+  reasoning signatures, effort) get added via a **native trait implementation
+  in the monolith** — as already happened with Responses/Gemini/Anthropic
+  (ADR 0004). This deliberately isn't plugins: integration quality (streaming
+  "thoughts," tool-use round-trip) requires deep coupling with the contract.
+- What to do within this track (small scope): **document the pattern** in
+  install.md (LiteLLM/OpenRouter recipes for external mode). An option beyond
+  that (fork R5): **managed-custom-command** — the supervisor can spin up an
+  *arbitrary command* as an OpenAI-compatible sidecar (a generalization of
+  `ManagedConfig`: command+args instead of llama-server specifics; the
+  `/health` probe already tolerates 404). Gives "a local proxy starts
+  itself." Recommendation: defer until real demand appears — external + a
+  manually started proxy already covers the scenario today.
 
-## 7. Фазовый план
+## 7. Phased plan
 
-Направление «плагины», этапы = отдельные ветки/PR (AGENTS.md §1–2):
+Track "plugins," stages = separate branches/PRs (AGENTS.md §1–2):
 
-- **Этап 1 — `feat/generic-import`** (самостоятельная ценность, закрывает цель №1):
-  формат `mindfork-import.json` v1 + `docs/import-format.md`; CLI `mindfork import`
-  (свой парсер уже умеет подкоманды; i18n-тексты в бандлы); удаление
-  `import-lamellama` (по Р4) — знание о LameLLaMA уезжает в приватный конвертер
-  (пишется вне этого репозитория). Тесты: маппинг/идемпотентность/валидация/
-  golden-файл формата. Живой прогон движка не требуется (файловая операция);
-  ручная проверка на реальном экспорте (6 профилей / 226 чатов — прецедент M9).
-- **Этап 2 — `spike/mcp-client`** (зонд, go/no-go): мини-клиент stdio (initialize/
-  tools list/call/ping/shutdown) + временная регистрация инструментов одного
-  сервера; **критерий GO**: живая локальная модель (Gemma 4) корректно вызывает
-  MCP-инструмент (например, `filesystem`-сервер) и использует результат; схемы
-  1–2 серверов не разваливают 16k-контекст; Esc/таймаут не подвешивают ход.
-  NO-GO-путь: остаёмся на нативных инструментах, MCP в задел (зонд дешёвый).
-- **Этап 3 — `feat/mcp-host`** (после GO; **сделан**, один PR из двух частей):
-  3a — клиент/`McpManager`/конфиг/гейты/отмена-таймауты/тесты;
-  3b — UI (группа «Плагины (MCP)» в «Инструментах»: мастер-тумблер + статусы
-  серверов, тумблеры per-profile, полные описания в нижней панели,
-  TOFU-переподтверждение по Enter), i18n-хром, доки (spec §9.6, architecture §8,
-  README, install §4.2), CHANGELOG. Итог — ADR 0007 «Плагины: MCP-хост +
-  формат обмена импорта».
-- **Этап 4 (опц., по Р5)** — install.md рецепты LiteLLM/OpenRouter;
-  managed-custom-command, если подтверждён спрос.
-- **Заделы** (в roadmap): HTTP-транспорт MCP, resources/prompts, per-call
-  подтверждение деструктивных инструментов, deferred-схемы («tool search»),
-  UI-редактор серверов, WASM-песочница для недоверенных инструментов,
-  server `instructions` → системный промпт.
+- **Stage 1 — `feat/generic-import`** (stands on its own merit, closes goal
+  #1): format `mindfork-import.json` v1 + `docs/import-format.md`; CLI
+  `mindfork import` (our own parser already handles subcommands; i18n text
+  goes into bundles); removal of `import-lamellama` (per R4) — knowledge of
+  LameLLaMA moves into a private converter (written outside this
+  repository). Tests: mapping/idempotency/validation/format golden file. No
+  live engine run required (a file operation); manual verification against a
+  real export (6 profiles / 226 chats — M9 precedent).
+- **Stage 2 — `spike/mcp-client`** (probe, go/no-go): a mini stdio client
+  (initialize/tools list/call/ping/shutdown) + a temporary tool registration
+  for one server; **GO criterion**: a live local model (Gemma 4) correctly
+  calls an MCP tool (e.g. the `filesystem` server) and uses the result;
+  schemas from 1–2 servers don't blow up a 16k context; Esc/timeout don't
+  hang a turn. NO-GO path: stay on native tools, file MCP as groundwork (the
+  probe is cheap).
+- **Stage 3 — `feat/mcp-host`** (after GO; **done**, one PR in two parts):
+  3a — client/`McpManager`/config/gates/cancellation-timeouts/tests;
+  3b — UI (a "Plugins (MCP)" group under "Tools": master toggle + server
+  statuses, per-profile toggles, full descriptions in the bottom panel,
+  TOFU re-confirmation via Enter), i18n chrome, docs (spec §9.6,
+  architecture §8, README, install §4.2), CHANGELOG. Outcome — ADR 0007
+  "Plugins: MCP host + import exchange format."
+- **Stage 4 (optional, per R5)** — install.md recipes for LiteLLM/OpenRouter;
+  managed-custom-command, if demand is confirmed.
+- **Groundwork** (in the roadmap): MCP HTTP transport, resources/prompts,
+  per-call confirmation for destructive tools, deferred schemas ("tool
+  search"), a server UI editor, a WASM sandbox for untrusted tools, server
+  `instructions` → the system prompt.
 
-## 8. Развилки
+## 8. Forks
 
-> **Решение пользователя (2026-07-17): все развилки Р1–Р8 приняты по
-> рекомендациям.** Направление стартует с этапа 1 (`feat/generic-import`).
+> **User's decision (2026-07-17): all forks R1–R8 accepted per
+> recommendations.** The track starts with stage 1 (`feat/generic-import`).
 
-- **Р1. Механика инструментов-плагинов**: **MCP-хост stdio (рекомендация)** |
-  собственный JSON-RPC-протокол | in-process WASM (Extism). Рекомендация — MCP:
-  экосистема + конвенция жанра; свой протокол = ноль готовых инструментов.
-- **Р2. Реализация MCP-клиента**: **свой микро-клиент (рекомендация)** | `rmcp`
-  (`default-features=false`). См. таблицу §4.3; честно — близкий выбор.
-- **Р3. Формат обмена импорта**: **выделенный `mindfork-import.json` v1
-  (рекомендация)** | доменные сущности as-is (§5.3, отклонить).
-- **Р4. Судьба `import-lamellama`**: **удалить в этапе 1 (рекомендация)** |
-  депрекировать на 1–2 релиза. Приватный конвертер в любом случае живёт вне
-  этого репозитория.
-- **Р5. Облака**: **только документация паттерна external+LiteLLM/OpenRouter
-  (рекомендация)** | + managed-custom-command (сайдкар-прокси поднимает
-  супервайзер) | plugin-API движка (отклонить, §6).
-- **Р6. Конфигурирование MCP-серверов**: **секция в `settings.json`, правка
-  руками; в UI — статусы/тумблеры/просмотр описаний (рекомендация)** | отдельный
-  `mcp.json` (не перезаписывается приложением, но двойной источник) | полный
-  UI-редактор сразу (дорого, задел).
-- **Р7. Строгость безопасности Фазы MCP**: **мастер-гейт выкл-по-умолчанию +
-  двойной opt-in + TOFU-пиннинг каталога + клипы/таймауты (рекомендация)** |
-  минимум без TOFU | максимум с per-call подтверждением деструктивных (отложить
-  в задел — новая модальность посреди генерации).
-- **Р8. Секреты/окружение серверов**: **наследовать окружение приложения + карта
-  `env` с *именами* переменных-источников (прецедент `api_key_env`; сами секреты
-  не в `settings.json`) (рекомендация)** | чистое окружение с явным passthrough
-  (строже, но ломает PATH-зависимые серверы; честно: скрытие env от процесса,
-  исполняемого с правами пользователя, — театр безопасности: файлы он и так
-  прочитает).
+- **R1. Tool-plugin mechanism**: **MCP host over stdio (recommendation)** |
+  a custom JSON-RPC protocol | in-process WASM (Extism). Recommendation —
+  MCP: ecosystem + genre convention; a custom protocol = zero ready-made
+  tools.
+- **R2. MCP client implementation**: **our own micro-client
+  (recommendation)** | `rmcp` (`default-features=false`). See the table in
+  §4.3; honestly a close call.
+- **R3. Import exchange format**: **a dedicated `mindfork-import.json` v1
+  (recommendation)** | domain entities as-is (§5.3, rejected).
+- **R4. Fate of `import-lamellama`**: **remove in stage 1
+  (recommendation)** | deprecate for 1–2 releases. The private converter
+  lives outside this repository either way.
+- **R5. Clouds**: **document-only the external+LiteLLM/OpenRouter pattern
+  (recommendation)** | + managed-custom-command (the supervisor spins up a
+  sidecar proxy) | an engine plugin API (rejected, §6).
+- **R6. Configuring MCP servers**: **a section in `settings.json`, edited
+  by hand; in the UI — statuses/toggles/description viewing
+  (recommendation)** | a separate `mcp.json` (not overwritten by the app,
+  but a dual source) | a full UI editor right away (expensive, groundwork).
+- **R7. Security strictness for the MCP phase**: **off-by-default master
+  gate + double opt-in + catalog TOFU pinning + clips/timeouts
+  (recommendation)** | a minimum without TOFU | a maximum with per-call
+  confirmation for destructive calls (deferred to groundwork — a new
+  modality mid-generation).
+- **R8. Server secrets/environment**: **inherit the app's environment + an
+  `env` map with *names* of source variables (precedent `api_key_env`; the
+  secrets themselves aren't in `settings.json`) (recommendation)** | a clean
+  environment with explicit passthrough (stricter, but breaks PATH-dependent
+  servers; honestly: hiding env from a process running with the user's own
+  privileges is security theater — it can read the files anyway).
 
-## 9. Результаты зонда (этап 2, `spike/mcp-client`) — GO
+## 9. Probe results (stage 2, `spike/mcp-client`) — GO
 
-**Прогон 2026-07-17** (живая связка: Gemma 4 31B q4, external `llama-server`
-`--jinja` на 192.168.1.20:8000; реальный сторонний MCP-сервер
-`npx @modelcontextprotocol/server-filesystem`). Мини-клиент `shared/mcp.rs`
-(транспорт за `McpConnection::over` поверх `AsyncRead`/`AsyncWrite` — юнит-тесты
-протокола на `tokio::io::duplex` без процессов; `McpClient::spawn` — подпроцесс:
-`CREATE_NO_WINDOW`, дренаж stderr в лог, shutdown-лестница). Смоук
-`gemma_reads_file_via_mcp_filesystem_server` — ручной мини-agentic-loop
-(механика оркестратора: стрим → tool_calls → исполнение → следующий раунд):
+**Run of 2026-07-17** (live setup: Gemma 4 31B q4, external `llama-server`
+`--jinja` on 192.168.1.20:8000; a real third-party MCP server
+`npx @modelcontextprotocol/server-filesystem`). The mini-client `shared/mcp.rs`
+(transport behind `McpConnection::over` over `AsyncRead`/`AsyncWrite` — protocol
+unit tests on `tokio::io::duplex` without processes; `McpClient::spawn` — a
+subprocess: `CREATE_NO_WINDOW`, stderr drained to the log, a shutdown ladder).
+Smoke `gemma_reads_file_via_mcp_filesystem_server` — a manual mini agentic
+loop (mirrors the orchestrator's mechanics: stream → tool_calls → execution →
+next round):
 
-- сервер: `secure-filesystem-server 0.2.0`, **подтвердил протокол 2025-11-25**
-  (нашу же версию); `npx` на Windows — через `cmd /c` (питфолл §4.6 подтверждён);
-- **14 инструментов, схемы ≈ 7 КиБ** — 16k-контекст не разваливается (критерий 2);
-- **модель вызвала `read_text_file` с корректными JSON-аргументами первым же
-  раундом**, результат ушёл вторым раундом, финальный ответ использует данные из
-  файла (критерий 1); 2 раунда, ~10 с, штатный shutdown;
-- таймаут/отмена: `notifications/cancelled` при таймауте, ответ на `ping`,
-  `-32601` на неподдержанные запросы сервера, скип мусорных строк stdout —
-  покрыто юнит-тестами на фейк-сервере (5 шт., критерий 3).
+- server: `secure-filesystem-server 0.2.0`, **confirmed protocol 2025-11-25**
+  (our own version); `npx` on Windows — via `cmd /c` (pitfall §4.6 confirmed);
+- **14 tools, schemas ≈ 7 KiB** — the 16k context doesn't blow up
+  (criterion 2);
+- **the model called `read_text_file` with correct JSON arguments on the
+  very first round**, the result went out in the second round, the final
+  answer uses the data from the file (criterion 1); 2 rounds, ~10s, a clean
+  shutdown;
+- timeout/cancellation: `notifications/cancelled` on timeout, a `ping`
+  response, `-32601` for unsupported server requests, skipping junk stdout
+  lines — covered by unit tests against a fake server (5 of them,
+  criterion 3).
 
-**Вердикт: GO** — этап 3 (`feat/mcp-host`) разблокирован. Клиент зонда — основа
-этапа 3 (в зонде модуль под `#[cfg(test)]`, в бинарь не входит). Уточнения к
-плану этапа 3 по итогам зонда: встречная версия протокола принимается любая
-(tools-подмножество wire-стабильно, сервер 2025-11-25 отвечает нашей версией);
-`cmd /c npx` работает, но конфиг должен принимать и прямые exe-пути.
+**Verdict: GO** — stage 3 (`feat/mcp-host`) unblocked. The probe's client is
+the basis for stage 3 (in the probe it's a module under `#[cfg(test)]`, not
+compiled into the binary). Refinements for stage 3's plan from the probe's
+results: accept any counterpart protocol version (the tools subset is
+wire-stable, the 2025-11-25 server replies with our own version); `cmd /c
+npx` works, but config must also accept direct exe paths.
 
-## 10. Источники
+## 10. Sources
 
-MCP: [спека 2025-11-25](https://modelcontextprotocol.io/specification/2025-11-25/basic/transports)
+MCP: [spec 2025-11-25](https://modelcontextprotocol.io/specification/2025-11-25/basic/transports)
 (transports / [lifecycle](https://modelcontextprotocol.io/specification/2025-11-25/basic/lifecycle) /
 [tools](https://modelcontextprotocol.io/specification/2025-11-25/server/tools) /
 [security best practices](https://modelcontextprotocol.io/specification/2025-11-25/basic/security_best_practices) /
@@ -508,16 +542,16 @@ MCP: [спека 2025-11-25](https://modelcontextprotocol.io/specification/2025-
 [Invariant Labs: tool poisoning](https://invariantlabs.ai/blog/mcp-security-notification-tool-poisoning-attacks);
 [OWASP MCP Top 10 — MCP03](https://owasp.org/www-project-mcp-top-10/2025/MCP03-2025%E2%80%93Tool-Poisoning);
 [CyberArk: poison everywhere](https://www.cyberark.com/resources/threat-research-blog/poison-everywhere-no-output-from-your-mcp-server-is-safe).
-Хосты: [goose extensions design](https://block.github.io/goose/docs/goose-architecture/extensions-design/) /
-[конфиг](https://deepwiki.com/block/goose/5.3-extension-types-and-configuration);
+Hosts: [goose extensions design](https://block.github.io/goose/docs/goose-architecture/extensions-design/) /
+[config](https://deepwiki.com/block/goose/5.3-extension-types-and-configuration);
 [Zed context servers](https://zed.dev/docs/assistant/model-context-protocol);
 [oterm MCP](https://ggozad.github.io/oterm/mcp/);
 [Claude Code MCP](https://code.claude.com/docs/en/mcp);
-«слишком много инструментов»: [Cursor 40](https://forum.cursor.com/t/tools-limited-to-40-total/67976),
+"too many tools": [Cursor 40](https://forum.cursor.com/t/tools-limited-to-40-total/67976),
 [VS Code 128](https://github.com/microsoft/vscode/issues/290356),
-[15k токенов схем](https://demiliani.com/2025/09/04/model-context-protocol-and-the-too-many-tools-problem/).
-Механики: [libloading](https://crates.io/crates/libloading);
-[abi_stable (мёртв)](https://github.com/rodrimati1992/abi_stable_crates);
+[15k tokens of schemas](https://demiliani.com/2025/09/04/model-context-protocol-and-the-too-many-tools-problem/).
+Mechanics: [libloading](https://crates.io/crates/libloading);
+[abi_stable (dead)](https://github.com/rodrimati1992/abi_stable_crates);
 [stabby](https://github.com/ZettaScaleLabs/stabby);
 [RFC crABI #3470](https://github.com/rust-lang/rfcs/pull/3470) /
 [RFC #[export] #3435](https://github.com/rust-lang/rfcs/pull/3435) /
@@ -534,12 +568,12 @@ MCP: [спека 2025-11-25](https://modelcontextprotocol.io/specification/2025-
 [BatBadBut / Rust 1.77.2](https://blog.rust-lang.org/2024/04/09/cve-2024-24576.html);
 [CREATE_NO_WINDOW](https://learn.microsoft.com/en-us/windows/win32/procthread/process-creation-flags);
 [Job Objects](https://learn.microsoft.com/en-us/windows/win32/procthread/job-objects).
-Прецеденты: [llm-functions](https://github.com/sigoden/llm-functions);
+Precedents: [llm-functions](https://github.com/sigoden/llm-functions);
 [llm CLI plugin hooks](https://llm.datasette.io/en/stable/plugins/plugin-hooks.html);
 [LibreChat custom endpoints](https://www.librechat.ai/docs/quick_start/custom_endpoints);
 [Open WebUI Pipelines](https://docs.openwebui.com/features/extensibility/pipelines/);
 [LiteLLM](https://github.com/BerriAI/litellm); [OpenRouter](https://openrouter.ai/);
-[beangulp (импортёры beancount)](https://github.com/beancount/beangulp);
+[beangulp (beancount importers)](https://github.com/beancount/beangulp);
 [KeePass import/export](https://keepass.info/help/base/importexport.html);
-[спека character card v2](https://github.com/malfoyslastname/character-card-spec-v2);
-[разбор ChatGPT conversations.json](https://community.openai.com/t/decoding-exported-data-by-parsing-conversations-json-and-or-chat-html/403144).
+[character card v2 spec](https://github.com/malfoyslastname/character-card-spec-v2);
+[parsing ChatGPT conversations.json](https://community.openai.com/t/decoding-exported-data-by-parsing-conversations-json-and-or-chat-html/403144).

@@ -1,19 +1,19 @@
-//! Экспорт переписки чата в простой текст для копирования в буфер обмена.
-//! Чистая, тестируемая без UI логика (вызывается оркестратором). См. spec §11.2.
+//! Exports a chat conversation as plain text for copying to the clipboard.
+//! Pure logic, testable without the UI (called by the orchestrator). See spec §11.2.
 
 use crate::entities::message::{Message, MessageRole};
 use crate::shared::config::CopySettings;
 use crate::shared::i18n::Locale;
 
-/// Форматирует всю переписку чата в читаемый текст для буфера обмена: помечает
-/// роли (`Пользователь`/`Ассистент`), сохраняет многострочный текст, пропускает
-/// системные/инструментальные сообщения. Непустой `title` идёт заголовком.
+/// Formats a whole chat conversation into readable text for the clipboard: labels
+/// roles (`User`/`Assistant`), preserves multiline text, skips
+/// system/tool messages. A non-empty `title` becomes the header.
 ///
-/// По умолчанию (`CopySettings` все флаги `false`) копируется только текст сообщений.
-/// Опционально (`opts`) к блоку ассистента добавляются: «мысли» (CoT, перед текстом),
-/// параметры вызовов инструментов (имя + аргументы) и их результаты — берутся из
-/// `Message.tool_calls` (отдельные tool-сообщения по-прежнему пропускаются, чтобы не
-/// дублировать). Возвращает `None`, если содержательных блоков нет (копировать нечего).
+/// By default (`CopySettings` with all flags `false`) only the message text is copied.
+/// Optionally (`opts`) the assistant block also gets: "thoughts" (CoT, before the text),
+/// tool-call parameters (name + arguments), and their results — taken from
+/// `Message.tool_calls` (separate tool messages are still skipped, to avoid
+/// duplication). Returns `None` if there are no substantive blocks (nothing to copy).
 pub fn format_conversation(
     title: &str,
     messages: &[Message],
@@ -40,13 +40,13 @@ pub fn format_conversation(
                     blocks.push(block);
                 }
             }
-            // Системные и инструментальные сообщения в переписку не входят
-            // (результаты инструментов берутся из `tool_calls` ассистента).
+            // System and tool messages don't go into the conversation
+            // (tool results are taken from the assistant's `tool_calls`).
             MessageRole::System | MessageRole::Tool => continue,
         }
     }
 
-    // Только заголовок (или вовсе ничего) — содержательной переписки нет.
+    // Only the title (or nothing at all) — there's no substantive conversation.
     let has_messages = blocks.len() > usize::from(!title.is_empty());
     if !has_messages {
         return None;
@@ -54,8 +54,8 @@ pub fn format_conversation(
     Some(blocks.join("\n\n"))
 }
 
-/// Собирает блок одного сообщения ассистента: опциональные «мысли», текст и
-/// опциональные tool-блоки. `None`, если после фильтрации блок пуст.
+/// Builds the block for a single assistant message: optional "thoughts", text, and
+/// optional tool blocks. `None` if the block is empty after filtering.
 fn format_assistant(m: &Message, opts: &CopySettings, loc: &'static Locale) -> Option<String> {
     let mut parts: Vec<String> = Vec::new();
 
@@ -107,13 +107,13 @@ mod tests {
         crate::shared::i18n::locale(crate::shared::i18n::Lang::Ru)
     }
 
-    /// Копирование только текста (поведение по умолчанию).
+    /// Text-only copy (the default behavior).
     fn plain() -> CopySettings {
         CopySettings::default()
     }
 
-    /// Сообщение ассистента с «мыслями» и одним вызовом инструмента (имя/аргументы/
-    /// результат) — для проверки опциональных блоков.
+    /// An assistant message with "thoughts" and one tool call (name/arguments/
+    /// result) — for checking the optional blocks.
     fn assistant_with_tool() -> Message {
         let mut m = Message::assistant("ответ");
         m.thoughts = Some("я думаю".into());
@@ -158,7 +158,7 @@ mod tests {
 
     #[test]
     fn none_when_no_meaningful_messages() {
-        // Только системное/инструментальное/пустое — копировать нечего, даже с заголовком.
+        // Only system/tool/empty ones — nothing to copy, even with a title.
         let msgs = vec![
             Message::new(MessageRole::System, "sys"),
             Message::user("   "),
@@ -170,7 +170,7 @@ mod tests {
 
     #[test]
     fn plain_omits_thoughts_and_tools() {
-        // По умолчанию «мысли» и tool-блоки не копируются — только текст.
+        // By default "thoughts" and tool blocks aren't copied — only the text.
         let out = format_conversation("", &[assistant_with_tool()], &plain(), ru()).unwrap();
         assert_eq!(out, "Ассистент:\nответ");
     }
@@ -228,7 +228,7 @@ mod tests {
 
     #[test]
     fn assistant_with_only_tool_calls_is_included_when_enabled() {
-        // Пустой текст, но есть вызов инструмента и опция включена → блок не пропадает.
+        // Empty text, but there's a tool call and the option is enabled → the block isn't dropped.
         let mut m = Message::assistant("");
         m.tool_calls = vec![ToolCallRecord {
             thought_signature: None,
@@ -243,7 +243,7 @@ mod tests {
         };
         let out = format_conversation("", &[m], &opts, ru()).unwrap();
         assert_eq!(out, "Ассистент:\n[Инструмент: calculate]\nРезультат: 4");
-        // Но при выключенных опциях такое сообщение пропускается целиком.
+        // But with the options off, such a message is skipped entirely.
         let mut m2 = Message::assistant("");
         m2.tool_calls = vec![ToolCallRecord {
             thought_signature: None,

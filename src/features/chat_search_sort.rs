@@ -1,20 +1,20 @@
-//! Фильтрация и сортировка списка чатов (чистая логика, тестируется без UI).
-//! См. spec §11.2 (поиск по подстроке, две сортировки).
+//! Filters and sorts the chat list (pure logic, tested without the UI).
+//! See spec §11.2 (substring search, two sort orders).
 
 use crate::entities::chat::ChatSummary;
 
-/// Режим сортировки списка чатов.
+/// The chat-list sort mode.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum SortMode {
-    /// По дате создания (по убыванию).
+    /// By creation date (descending).
     Created,
-    /// По дате последнего изменения (по убыванию). Значение по умолчанию.
+    /// By last-modified date (descending). The default value.
     #[default]
     Modified,
 }
 
 impl SortMode {
-    /// Переключает режим (для горячей клавиши).
+    /// Toggles the mode (for the hotkey).
     pub fn toggled(self) -> Self {
         match self {
             SortMode::Created => SortMode::Modified,
@@ -23,8 +23,8 @@ impl SortMode {
     }
 }
 
-/// Фильтрует чаты по вхождению `query` в название (без учёта регистра) и
-/// сортирует по убыванию соответствующей даты. Пустой `query` ничего не фильтрует.
+/// Filters chats by whether `query` occurs in the title (case-insensitive) and
+/// sorts by the corresponding date, descending. An empty `query` filters nothing out.
 pub fn filter_and_sort(chats: &[ChatSummary], query: &str, sort: SortMode) -> Vec<ChatSummary> {
     let needle = query.trim().to_lowercase();
     let mut out: Vec<ChatSummary> = chats
@@ -69,7 +69,8 @@ mod tests {
     fn filter_is_case_insensitive_and_substring() {
         let chats = sample();
         let r = filter_and_sort(&chats, "alpha", SortMode::Created);
-        // "Альфа" не содержит латинского "alpha"; совпадёт только "alpha draft"
+        // The Cyrillic title does not contain the Latin "alpha"; only the
+        // "alpha draft" chat matches.
         assert_eq!(r.len(), 1);
         assert_eq!(r[0].title, "alpha draft");
 
