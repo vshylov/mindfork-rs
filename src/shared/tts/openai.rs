@@ -125,7 +125,7 @@ impl TtsEngine for OpenAiTts {
         }
         let resp = tokio::select! {
             biased;
-            _ = cancel.cancelled() => anyhow::bail!("озвучивание отменено"),
+            _ = cancel.cancelled() => anyhow::bail!("speech synthesis cancelled"),
             r = rb.send() => r.with_context(|| format!("POST {url}"))?,
         };
         if !resp.status().is_success() {
@@ -133,8 +133,8 @@ impl TtsEngine for OpenAiTts {
         }
         let bytes = tokio::select! {
             biased;
-            _ = cancel.cancelled() => anyhow::bail!("озвучивание отменено"),
-            b = resp.bytes() => b.context("чтение аудио-ответа TTS")?,
+            _ = cancel.cancelled() => anyhow::bail!("speech synthesis cancelled"),
+            b = resp.bytes() => b.context("reading TTS audio response")?,
         };
         Ok(if self.response_format == "pcm" {
             AudioClip::Pcm {

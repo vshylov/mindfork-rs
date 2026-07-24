@@ -68,7 +68,7 @@ static INTERN: LazyLock<Mutex<HashSet<&'static str>>> =
     LazyLock::new(|| Mutex::new(HashSet::new()));
 
 fn intern(code: &str) -> &'static str {
-    let mut set = INTERN.lock().expect("интернер кодов языков отравлен");
+    let mut set = INTERN.lock().expect("language-code interner poisoned");
     if let Some(s) = set.get(code) {
         return s;
     }
@@ -86,14 +86,12 @@ static WARNED_MISSING: LazyLock<Mutex<HashSet<(Lang, String)>>> =
 /// Called only for an actually-missing key (a rare path), the lock doesn't get in the
 /// way of the happy-path `t`.
 fn warn_missing_key_once(lang: Lang, key: &str) {
-    let mut warned = WARNED_MISSING
-        .lock()
-        .expect("набор предупреждений отравлен");
+    let mut warned = WARNED_MISSING.lock().expect("warned-keys set poisoned");
     if warned.insert((lang, key.to_string())) {
         tracing::warn!(
             lang = lang.code(),
             key,
-            "i18n: ключ отсутствует во всех бандлах цепочки — в вывод уйдёт сам ключ (слаг)"
+            "i18n: key missing from every bundle in the chain — the key itself (a slug) reaches the output"
         );
     }
 }
@@ -156,7 +154,7 @@ impl Lang {
         match self {
             Lang::Ru => include_str!("../../locales/ru.json"),
             Lang::En => include_str!("../../locales/en.json"),
-            Lang::Ext(_) => unreachable!("внешний язык не имеет вшитого источника"),
+            Lang::Ext(_) => unreachable!("an external language has no baked-in source"),
         }
     }
 }
@@ -299,7 +297,7 @@ impl Locale {
         // sends `{n}`). Compiled away in release.
         debug_assert!(
             unused.is_empty(),
-            "tf(\"{key}\"): аргументы не встретились в шаблоне: {unused:?} — плейсхолдер переименован?"
+            "tf(\"{key}\"): arguments not found in the template: {unused:?} — was a placeholder renamed?"
         );
         out
     }
@@ -390,7 +388,7 @@ fn is_valid_lang_code(code: &str) -> bool {
 /// built-in (wrapped in a panic) and external files (wrapped in a warning).
 fn json_to_map(src: &str) -> Result<HashMap<String, String>, String> {
     let raw: HashMap<String, serde_json::Value> =
-        serde_json::from_str(src).map_err(|e| format!("ошибка разбора JSON: {e}"))?;
+        serde_json::from_str(src).map_err(|e| format!("JSON parse error: {e}"))?;
     let mut map = HashMap::with_capacity(raw.len());
     for (k, v) in raw {
         let text = match v {
@@ -400,15 +398,13 @@ fn json_to_map(src: &str) -> Result<HashMap<String, String>, String> {
                 for x in &a {
                     match x.as_str() {
                         Some(s) => parts.push(s),
-                        None => return Err(format!("ключ {k}: элемент массива не строка")),
+                        None => return Err(format!("key {k}: array element is not a string")),
                     }
                 }
                 parts.join(" ")
             }
             other => {
-                return Err(format!(
-                    "ключ {k}: ожидалась строка или массив, получено {other}"
-                ));
+                return Err(format!("key {k}: expected a string or array, got {other}"));
             }
         };
         map.insert(k, text);
@@ -419,7 +415,7 @@ fn json_to_map(src: &str) -> Result<HashMap<String, String>, String> {
 /// A built-in bundle's map. Panics only on a broken built-in — covered by the
 /// completeness gate test, so unreachable at runtime.
 fn builtin_map(lang: Lang) -> HashMap<String, String> {
-    json_to_map(lang.bundle_src()).unwrap_or_else(|e| panic!("вшитый бандл {lang:?}: {e}"))
+    json_to_map(lang.bundle_src()).unwrap_or_else(|e| panic!("built-in bundle {lang:?}: {e}"))
 }
 
 /// A registry built only from built-in bundles — used when [`init`] wasn't called
@@ -476,7 +472,7 @@ fn overlay_external(maps: &mut HashMap<Lang, HashMap<String, String>>, dir: &Pat
         // with a letter): robust to random names (`EN.json`/`readme.json`), allows `pt-br`.
         if !is_valid_lang_code(stem) {
             warnings.push(format!(
-                "внешняя локаль {}: недопустимое имя (код языка — строчные латинские буквы/цифры/дефис, с буквы), пропуск",
+                "external locale {}: invalid name (a language code is lowercase Latin letters/digits/hyphens, starting with a letter), skipping",
                 path.display()
             ));
             continue;
@@ -485,7 +481,7 @@ fn overlay_external(maps: &mut HashMap<Lang, HashMap<String, String>>, dir: &Pat
             Ok(s) => s,
             Err(e) => {
                 warnings.push(format!(
-                    "внешняя локаль {}: чтение не удалось ({e}), пропуск",
+                    "external locale {}: read failed ({e}), skipping",
                     path.display()
                 ));
                 continue;
@@ -495,7 +491,7 @@ fn overlay_external(maps: &mut HashMap<Lang, HashMap<String, String>>, dir: &Pat
             Ok(m) => m,
             Err(e) => {
                 warnings.push(format!(
-                    "внешняя локаль {}: разбор не удался ({e}), пропуск",
+                    "external locale {}: parsing failed ({e}), skipping",
                     path.display()
                 ));
                 continue;
@@ -516,13 +512,13 @@ fn overlay_external(maps: &mut HashMap<Lang, HashMap<String, String>>, dir: &Pat
             tracing::info!(
                 lang = stem,
                 keys = count,
-                "внешняя локаль: добавлен новый язык (недостающие ключи — из референса ru)"
+                "external locale: added a new language (missing keys fall back to the ru reference)"
             );
         } else {
             tracing::info!(
                 lang = stem,
                 keys = count,
-                "внешняя локаль: переопределены ключи вшитого бандла"
+                "external locale: overrode keys of the built-in bundle"
             );
         }
     }
@@ -549,14 +545,14 @@ fn validate_external_map(
         }
         match ref_placeholders.get(k) {
             None => warnings.push(format!(
-                "внешняя локаль {} ключ {k}: нет в референсе (опечатка? ключ ничего не переопределяет)",
+                "external locale {} key {k}: not in the reference (a typo? the key overrides nothing)",
                 path.display()
             )),
             Some(want) => {
                 let got = placeholders(v);
                 if &got != want {
                     warnings.push(format!(
-                        "внешняя локаль {} ключ {k}: набор плейсхолдеров расходится с референсом (want {want:?}, got {got:?}) — сломает подстановку tf",
+                        "external locale {} key {k}: placeholder set diverges from the reference (want {want:?}, got {got:?}) — will break tf substitution",
                         path.display()
                     ));
                 }
@@ -608,7 +604,7 @@ pub fn locale(lang: Lang) -> &'static Locale {
     reg.get(&lang)
         .or_else(|| reg.get(&REFERENCE))
         .copied()
-        .expect("референсная локаль (ru) всегда присутствует в реестре")
+        .expect("the reference locale (ru) is always present in the registry")
 }
 
 /// Exactly this language's bundle **without** falling back to the reference: `None`
@@ -997,7 +993,7 @@ mod tests {
         let mut m = HashMap::new();
         m.insert("_fallback".to_string(), "en".to_string());
         let de = Locale::from_map(Lang::Ext("de"), m);
-        let key = "ui.feed.role.user"; // ru "ВЫ" ≠ en "YOU"
+        let key = "ui.feed.role.user"; // ru's and en's values for this key differ
         assert_eq!(de.t(key), locale(Lang::En).t(key));
         assert_ne!(de.t(key), locale(Lang::Ru).t(key));
     }

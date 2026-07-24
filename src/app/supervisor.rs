@@ -115,9 +115,9 @@ impl ServerSupervisor for LlamaSupervisor {
                 managed_chat_setup(managed_config(&settings.managed), cancel, status_tx, loc)
             }
             ServerMode::OpenAi | ServerMode::Gemini | ServerMode::Claude => {
-                let cloud = settings.cloud().expect("облачный режим");
+                let cloud = settings.cloud().expect("cloud mode");
                 cloud_chat_setup(
-                    settings.mode.cloud_provider().expect("облачный режим"),
+                    settings.mode.cloud_provider().expect("cloud mode"),
                     cloud.url.as_deref(),
                     stored_key,
                     cloud.api_key_env.as_deref(),
@@ -150,9 +150,9 @@ impl ServerSupervisor for LlamaSupervisor {
                 managed_chat_setup(managed_config(&settings.managed), cancel, status_tx, loc)
             }
             ImpersonationMode::OpenAi | ImpersonationMode::Gemini | ImpersonationMode::Claude => {
-                let cloud = settings.cloud().expect("облачный режим");
+                let cloud = settings.cloud().expect("cloud mode");
                 cloud_chat_setup(
-                    settings.mode.cloud_provider().expect("облачный режим"),
+                    settings.mode.cloud_provider().expect("cloud mode"),
                     cloud.url.as_deref(),
                     stored_key,
                     cloud.api_key_env.as_deref(),
@@ -219,7 +219,7 @@ impl ServerSupervisor for LlamaSupervisor {
                             status: ServerStatus::Ready,
                         },
                         Err(err) => {
-                            tracing::warn!(error = %err, "не удалось запустить embedding-сервер; RAG недоступен");
+                            tracing::warn!(error = %err, "failed to launch the embedding server; RAG unavailable");
                             unavailable_embed()
                         }
                     }
@@ -227,9 +227,9 @@ impl ServerSupervisor for LlamaSupervisor {
                 _ => unavailable_embed(),
             },
             ServerMode::OpenAi | ServerMode::Gemini => {
-                let cloud = settings.cloud().expect("облачный режим");
+                let cloud = settings.cloud().expect("cloud mode");
                 cloud_embed_setup(
-                    settings.mode.cloud_provider().expect("облачный режим"),
+                    settings.mode.cloud_provider().expect("cloud mode"),
                     cloud.url.as_deref(),
                     stored_key,
                     cloud.api_key_env.as_deref(),
@@ -238,7 +238,7 @@ impl ServerSupervisor for LlamaSupervisor {
             }
             // Anthropic has no embeddings API — RAG uses a separate embedder (ADR 0002).
             ServerMode::Claude => {
-                tracing::warn!("у Anthropic нет embeddings API; для RAG задайте другой эмбеддер");
+                tracing::warn!("Anthropic has no embeddings API; set a different embedder for RAG");
                 unavailable_embed()
             }
         }
@@ -437,7 +437,7 @@ fn cloud_embed_setup(
         model_name.filter(|m| !m.is_empty()),
         resolve_api_key(stored_key, api_key_env),
     ) else {
-        tracing::warn!("облачные эмбеддинги не настроены (модель/ключ); RAG недоступен");
+        tracing::warn!("cloud embeddings not configured (model/key); RAG unavailable");
         return unavailable_embed();
     };
     let base = url_override
@@ -884,7 +884,7 @@ mod tests {
             .embed(vec!["x".into()])
             .await
             .unwrap_err();
-        assert!(err.to_string().contains("не настроен"));
+        assert!(err.to_string().contains("not configured"));
     }
 
     #[tokio::test]
@@ -901,7 +901,7 @@ mod tests {
         };
         let setup = LlamaSupervisor.apply_embed(&s, None);
         let err = setup.embedder.embed(vec!["x".into()]).await.unwrap_err();
-        assert!(err.to_string().contains("не настроен"));
+        assert!(err.to_string().contains("not configured"));
     }
 
     #[tokio::test]
@@ -927,6 +927,6 @@ mod tests {
     async fn embed_unconfigured_is_unavailable() {
         let setup = LlamaSupervisor.apply_embed(&EmbedSettings::default(), None);
         let err = setup.embedder.embed(vec!["x".into()]).await.unwrap_err();
-        assert!(err.to_string().contains("не настроен"));
+        assert!(err.to_string().contains("not configured"));
     }
 }

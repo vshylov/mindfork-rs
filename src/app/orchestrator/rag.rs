@@ -252,7 +252,7 @@ fn spawn_rag_ingest(task: RagIngest) {
                 Ok(n) => chunks_total += n,
                 Err(err) => {
                     errors += 1;
-                    tracing::warn!(file = %file.display(), error = %err, "RAG: не удалось проиндексировать файл");
+                    tracing::warn!(file = %file.display(), error = %err, "RAG: failed to index file");
                 }
             }
         }
@@ -340,7 +340,7 @@ fn spawn_rag_rebuild(task: RagRebuild) {
             } else {
                 // The source isn't stored and there's no file — this source can't be recovered.
                 missing += 1;
-                tracing::warn!(source = %info.source, "RAG rebuild: исходник недоступен, источник пропущен");
+                tracing::warn!(source = %info.source, "RAG rebuild: source unavailable, skipping it");
             }
         }
         if sources.is_empty() {
@@ -445,7 +445,7 @@ fn spawn_rag_rebuild(task: RagRebuild) {
                 Ok(n) => chunks_total += n,
                 Err(err) => {
                     errors += 1;
-                    tracing::warn!(source = %source, error = %err, "RAG rebuild: не удалось переиндексировать источник");
+                    tracing::warn!(source = %source, error = %err, "RAG rebuild: failed to reindex source");
                 }
             }
         }

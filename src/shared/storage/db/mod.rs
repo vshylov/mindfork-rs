@@ -77,9 +77,7 @@ fn migrate(conn: &mut Connection) -> Result<()> {
 
     let from = read_user_version(conn)?;
     if from > DB_SCHEMA {
-        bail!(
-            "data.db из более новой версии приложения (схема {from}, поддерживается {DB_SCHEMA})"
-        );
+        bail!("data.db is from a newer app version (schema {from}, supported is {DB_SCHEMA})");
     }
     // An existing/fresh DB (user_version = 0) gets stamped with the baseline version.
     // This is not a data migration (the DDL is idempotent) — no pre-migration backup needed.

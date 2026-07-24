@@ -78,16 +78,16 @@ FONT_CANDIDATES = [
 def find_font(explicit: str | None) -> str:
     if explicit:
         if not os.path.isfile(explicit):
-            sys.exit(f"шрифт не найден: {explicit}")
+            sys.exit(f"font not found: {explicit}")
         return explicit
     for pat in FONT_CANDIDATES:
         for hit in sorted(glob.glob(pat), reverse=True):
             if os.path.isfile(hit):
                 return hit
     sys.exit(
-        "JetBrainsMono-ExtraBold.ttf не найден.\n"
-        "Скачать: https://github.com/JetBrains/JetBrainsMono/releases (OFL 1.1)\n"
-        "или указать путь: --font <путь>"
+        "JetBrainsMono-ExtraBold.ttf not found.\n"
+        "Download: https://github.com/JetBrains/JetBrainsMono/releases (OFL 1.1)\n"
+        "or pass a path: --font <path>"
     )
 
 
@@ -263,9 +263,9 @@ def main() -> None:
         except (AttributeError, OSError):
             pass
 
-    ap = argparse.ArgumentParser(description="Сборка вордмарков mindfork (текст → кривые)")
-    ap.add_argument("--font", help="путь к JetBrainsMono-ExtraBold.ttf")
-    ap.add_argument("--tag-font", help="путь к JetBrainsMono-Bold.ttf (тэглайн)")
+    ap = argparse.ArgumentParser(description="Build mindfork wordmarks (text → outlines)")
+    ap.add_argument("--font", help="path to JetBrainsMono-ExtraBold.ttf")
+    ap.add_argument("--tag-font", help="path to JetBrainsMono-Bold.ttf (tagline)")
     args = ap.parse_args()
 
     path = find_font(args.font)
@@ -273,8 +273,8 @@ def main() -> None:
     if not os.path.isfile(tag_path):
         tag_path = path
     font, tag_font = TTFont(path), TTFont(tag_path)
-    print(f"шрифт:   {path}")
-    print(f"тэглайн: {tag_path}")
+    print(f"font:    {path}")
+    print(f"tagline: {tag_path}")
 
     here = os.path.dirname(os.path.abspath(__file__))
     files = {
@@ -290,7 +290,7 @@ def main() -> None:
     for name, content in files.items():
         with open(os.path.join(here, name), "w", encoding="utf-8", newline="\n") as fh:
             fh.write(content)
-        print(f"  ✓ {name}  ({len(content)} байт)")
+        print(f"  ✓ {name}  ({len(content)} bytes)")
 
 
 if __name__ == "__main__":

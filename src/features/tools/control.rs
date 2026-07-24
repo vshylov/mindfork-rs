@@ -59,7 +59,7 @@ impl Tool for SendFollowupMessage {
         crate::features::tools::meta::ToolGroup::Conversation
     }
     fn ui_label(&self) -> &'static str {
-        "дописать сообщение"
+        "continue message"
     }
     fn enabled_by_default(&self) -> bool {
         false
@@ -94,7 +94,7 @@ impl Tool for RewriteCurrentMessage {
         crate::features::tools::meta::ToolGroup::Conversation
     }
     fn ui_label(&self) -> &'static str {
-        "переписать ответ"
+        "rewrite reply"
     }
     fn enabled_by_default(&self) -> bool {
         false

@@ -16,7 +16,7 @@ impl Tool for NoteSave {
         crate::features::tools::meta::ToolGroup::Memory
     }
     fn ui_label(&self) -> &'static str {
-        "сохранить заметку"
+        "save note"
     }
     fn description(&self, loc: &crate::shared::i18n::Locale) -> String {
         loc.t("tool.note_save.desc").into()

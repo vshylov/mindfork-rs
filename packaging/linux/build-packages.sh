@@ -6,9 +6,9 @@
 # Example: packaging/linux/build-packages.sh target/release/mindfork-rs 0.9.0 dist
 set -euo pipefail
 
-BIN="${1:?путь к бинарнику}"
-export VERSION="${2:?версия (напр. 0.9.0)}"
-OUT="${3:?каталог вывода}"
+BIN="${1:?path to the binary}"
+export VERSION="${2:?version (e.g. 0.9.0)}"
+OUT="${3:?output directory}"
 
 # The repo root (the script lives in packaging/linux/).
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
@@ -28,5 +28,5 @@ nfpm package --config packaging/nfpm.yaml --packager deb       --target "$OUT/$d
 nfpm package --config packaging/nfpm.yaml --packager rpm       --target "$OUT/$rpm"
 nfpm package --config packaging/nfpm.yaml --packager archlinux --target "$OUT/$arch"
 
-echo "Собрано в $OUT:"
+echo "Built in $OUT:"
 ls -l "$OUT"/*.deb "$OUT"/*.rpm "$OUT"/*.pkg.tar.zst

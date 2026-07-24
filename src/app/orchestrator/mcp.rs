@@ -548,7 +548,7 @@ impl super::Orchestrator {
         if let Some(cfg) = self.config.mcp.servers.iter_mut().find(|s| s.id == server) {
             cfg.pinned_catalog = Some(hash);
             if let Err(err) = self.storage.json().save_config(&self.config) {
-                tracing::warn!(%server, error = %err, "MCP: не удалось сохранить TOFU-пин");
+                tracing::warn!(%server, error = %err, "MCP: failed to persist the TOFU pin");
             }
         }
     }

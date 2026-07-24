@@ -193,7 +193,7 @@ impl Tool for GetSelfModel {
         crate::features::tools::meta::ToolGroup::SelfModel
     }
     fn ui_label(&self) -> &'static str {
-        "показать модель себя"
+        "show self-model"
     }
     fn enabled_by_default(&self) -> bool {
         false
@@ -224,7 +224,7 @@ impl Tool for Reflect {
         crate::features::tools::meta::ToolGroup::SelfModel
     }
     fn ui_label(&self) -> &'static str {
-        "саморефлексия"
+        "self-reflection"
     }
     fn enabled_by_default(&self) -> bool {
         false
@@ -289,7 +289,7 @@ impl Tool for AddInsight {
         crate::features::tools::meta::ToolGroup::SelfModel
     }
     fn ui_label(&self) -> &'static str {
-        "добавить наблюдение"
+        "add observation"
     }
     fn enabled_by_default(&self) -> bool {
         false
@@ -352,7 +352,7 @@ impl Tool for UpdateSelfModel {
         crate::features::tools::meta::ToolGroup::SelfModel
     }
     fn ui_label(&self) -> &'static str {
-        "обновить модель себя"
+        "update self-model"
     }
     fn enabled_by_default(&self) -> bool {
         false
@@ -405,7 +405,7 @@ impl Tool for UpdateSelfModel {
                     m.add_goal(g);
                     // add_goal ignores empty ones — record only what was actually added.
                     if m.goals.len() != before {
-                        let goal = m.goals.last().expect("только что добавлена");
+                        let goal = m.goals.last().expect("just added");
                         added_goals.push((goal.description.clone(), goal.id));
                         changed = true;
                     }
@@ -550,7 +550,7 @@ impl Tool for UpdateUserModel {
         crate::features::tools::meta::ToolGroup::SelfModel
     }
     fn ui_label(&self) -> &'static str {
-        "обновить собеседника"
+        "update user model"
     }
     fn enabled_by_default(&self) -> bool {
         false

@@ -154,7 +154,7 @@ impl Tool for PythonExec {
         crate::features::tools::meta::ToolGroup::ExternalWorld
     }
     fn ui_label(&self) -> &'static str {
-        "исполнить Python"
+        "run Python"
     }
     fn gate(&self) -> Option<crate::features::tools::meta::ToolGate> {
         Some(crate::features::tools::meta::ToolGate::Python)

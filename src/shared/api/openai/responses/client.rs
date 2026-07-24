@@ -67,9 +67,9 @@ impl EngineBackend for ResponsesClient {
             let detail: String = body.trim().chars().take(500).collect();
             tracing::warn!(%status, body = %detail, "openai responses returned an error status");
             if detail.is_empty() {
-                anyhow::bail!("движок (OpenAI Responses) вернул статус {status}");
+                anyhow::bail!("engine (OpenAI Responses) returned status {status}");
             }
-            anyhow::bail!("движок (OpenAI Responses) вернул статус {status}: {detail}");
+            anyhow::bail!("engine (OpenAI Responses) returned status {status}: {detail}");
         }
 
         let mut events = response.bytes_stream().eventsource();

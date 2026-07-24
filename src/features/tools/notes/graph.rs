@@ -16,7 +16,7 @@ impl Tool for NoteLink {
         crate::features::tools::meta::ToolGroup::Memory
     }
     fn ui_label(&self) -> &'static str {
-        "связать заметки"
+        "link notes"
     }
     fn description(&self, loc: &crate::shared::i18n::Locale) -> String {
         loc.t("tool.note_link.desc").into()
@@ -88,7 +88,7 @@ impl Tool for NoteNeighbors {
         crate::features::tools::meta::ToolGroup::Memory
     }
     fn ui_label(&self) -> &'static str {
-        "связи заметки"
+        "note links"
     }
     fn description(&self, loc: &crate::shared::i18n::Locale) -> String {
         loc.t("tool.note_neighbors.desc").into()

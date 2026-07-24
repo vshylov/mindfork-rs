@@ -42,7 +42,7 @@ impl Tool for GetSampling {
         crate::features::tools::meta::ToolGroup::Introspection
     }
     fn ui_label(&self) -> &'static str {
-        "показать семплинг"
+        "show sampling"
     }
     fn description(&self, loc: &crate::shared::i18n::Locale) -> String {
         format!(
@@ -84,7 +84,7 @@ impl Tool for SetSampling {
         crate::features::tools::meta::ToolGroup::Introspection
     }
     fn ui_label(&self) -> &'static str {
-        "изменить семплинг"
+        "change sampling"
     }
     fn description(&self, loc: &crate::shared::i18n::Locale) -> String {
         format!(
@@ -238,7 +238,7 @@ impl Tool for GetSystemMessage {
         crate::features::tools::meta::ToolGroup::Introspection
     }
     fn ui_label(&self) -> &'static str {
-        "показать сис. сообщение"
+        "show sys. message"
     }
     fn description(&self, loc: &crate::shared::i18n::Locale) -> String {
         loc.t("tool.get_system_message.desc").into()
@@ -263,7 +263,7 @@ impl Tool for SetSystemMessage {
         crate::features::tools::meta::ToolGroup::Introspection
     }
     fn ui_label(&self) -> &'static str {
-        "изменить сис. сообщение"
+        "change sys. message"
     }
     fn description(&self, loc: &crate::shared::i18n::Locale) -> String {
         loc.t("tool.set_system_message.desc").into()
@@ -300,7 +300,7 @@ impl Tool for GetLastUserMessageTime {
         crate::features::tools::meta::ToolGroup::Introspection
     }
     fn ui_label(&self) -> &'static str {
-        "время посл. сообщения"
+        "last message time"
     }
     fn description(&self, loc: &crate::shared::i18n::Locale) -> String {
         loc.t("tool.get_last_user_message_time.desc").into()

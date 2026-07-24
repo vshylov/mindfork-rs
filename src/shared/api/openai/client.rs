@@ -85,7 +85,7 @@ impl OpenAiClient {
             .await
             .with_context(|| format!("probing {url}"))?;
         if resp.status() == reqwest::StatusCode::SERVICE_UNAVAILABLE {
-            bail!("сервер ещё загружает модель (503)");
+            bail!("server is still loading the model (503)");
         }
         Ok(())
     }
@@ -112,9 +112,9 @@ impl EngineBackend for OpenAiClient {
             let detail: String = body.trim().chars().take(500).collect();
             tracing::warn!(%status, body = %detail, "engine returned an error status");
             if detail.is_empty() {
-                anyhow::bail!("движок вернул статус {status}");
+                anyhow::bail!("engine returned status {status}");
             }
-            anyhow::bail!("движок вернул статус {status}: {detail}");
+            anyhow::bail!("engine returned status {status}: {detail}");
         }
 
         let mut events = response.bytes_stream().eventsource();
@@ -227,9 +227,9 @@ impl Embedder for OpenAiClient {
             let detail: String = body.trim().chars().take(500).collect();
             tracing::warn!(%status, body = %detail, "embeddings request returned an error status");
             if detail.is_empty() {
-                anyhow::bail!("эмбеддер вернул статус {status}");
+                anyhow::bail!("embedder returned status {status}");
             }
-            anyhow::bail!("эмбеддер вернул статус {status}: {detail}");
+            anyhow::bail!("embedder returned status {status}: {detail}");
         }
         let resp: wire::EmbeddingResponse = response
             .json()

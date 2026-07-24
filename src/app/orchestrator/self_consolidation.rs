@@ -195,7 +195,7 @@ impl Orchestrator {
             cancel: cancel.clone(),
             max_rounds: SELF_CONSOLIDATE_MAX_ROUNDS,
             timeout: SELF_CONSOLIDATE_TIMEOUT,
-            label: "авто-консолидация себя",
+            label: "auto self-consolidation",
             profile_id,
             kind: BackgroundKind::SelfConsolidation,
             done_tx: self.bg_done_tx.clone(),

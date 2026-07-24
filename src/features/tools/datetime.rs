@@ -23,7 +23,7 @@ impl Tool for CurrentTime {
         crate::features::tools::meta::ToolGroup::Utils
     }
     fn ui_label(&self) -> &'static str {
-        "текущее время"
+        "current time"
     }
     fn description(&self, loc: &crate::shared::i18n::Locale) -> String {
         loc.t("tool.current_time.desc").into()

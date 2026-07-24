@@ -74,15 +74,15 @@ impl ToolGroup {
     /// Human-readable group header.
     pub fn title(&self) -> &'static str {
         match self {
-            ToolGroup::Introspection => "Интроспекция",
-            ToolGroup::Memory => "Память и знания",
-            ToolGroup::ExternalWorld => "Внешний мир",
-            ToolGroup::Files => "Файлы",
-            ToolGroup::Utils => "Утилиты",
-            ToolGroup::Subagent => "Субагент",
-            ToolGroup::Conversation => "Управление беседой",
-            ToolGroup::SelfModel => "Модель себя",
-            ToolGroup::Plugins => "Плагины (MCP)",
+            ToolGroup::Introspection => "Introspection",
+            ToolGroup::Memory => "Memory and knowledge",
+            ToolGroup::ExternalWorld => "External world",
+            ToolGroup::Files => "Files",
+            ToolGroup::Utils => "Utilities",
+            ToolGroup::Subagent => "Subagent",
+            ToolGroup::Conversation => "Conversation control",
+            ToolGroup::SelfModel => "Self-model",
+            ToolGroup::Plugins => "Plugins (MCP)",
         }
     }
 }

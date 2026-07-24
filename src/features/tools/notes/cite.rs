@@ -19,7 +19,7 @@ impl Tool for NoteCiteSource {
         crate::features::tools::meta::ToolGroup::Memory
     }
     fn ui_label(&self) -> &'static str {
-        "сослаться на источник"
+        "cite source"
     }
     fn description(&self, loc: &crate::shared::i18n::Locale) -> String {
         loc.t("tool.note_cite_source.desc").into()

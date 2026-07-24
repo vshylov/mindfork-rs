@@ -120,7 +120,7 @@ impl Tool for FetchUrl {
         crate::features::tools::meta::ToolGroup::ExternalWorld
     }
     fn ui_label(&self) -> &'static str {
-        "загрузить страницу"
+        "fetch page"
     }
     fn gate(&self) -> Option<crate::features::tools::meta::ToolGate> {
         Some(crate::features::tools::meta::ToolGate::Web)

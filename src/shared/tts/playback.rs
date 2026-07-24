@@ -39,8 +39,8 @@ impl Playback {
     /// Returns `Err` (rather than panicking) when there's no audio: a
     /// headless environment, CI, a missing/busy device. The caller shows this as a note.
     pub fn open() -> Result<Self> {
-        let mut sink = DeviceSinkBuilder::open_default_sink()
-            .context("не удалось открыть аудио-устройство")?;
+        let mut sink =
+            DeviceSinkBuilder::open_default_sink().context("failed to open the audio device")?;
         // Otherwise rodio writes to stderr on drop, and the TUI occupies it.
         sink.log_on_drop(false);
         let player = Player::connect_new(sink.mixer());
@@ -64,8 +64,8 @@ impl Playback {
                 if samples.is_empty() {
                     return Ok(());
                 }
-                let rate = NonZero::new(sample_rate).context("нулевая частота дискретизации")?;
-                let ch = NonZero::new(channels).context("нулевое число каналов")?;
+                let rate = NonZero::new(sample_rate).context("zero sample rate")?;
+                let ch = NonZero::new(channels).context("zero channel count")?;
                 self.player
                     .append(rodio::buffer::SamplesBuffer::new(ch, rate, samples));
             }
@@ -74,7 +74,7 @@ impl Playback {
                     return Ok(());
                 }
                 let decoder = rodio::Decoder::new(Cursor::new(bytes))
-                    .context("не удалось разобрать аудио от TTS-сервера")?;
+                    .context("failed to decode audio from the TTS server")?;
                 self.player.append(decoder);
             }
         }

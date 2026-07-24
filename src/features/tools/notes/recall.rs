@@ -16,7 +16,7 @@ impl Tool for NoteRecall {
         crate::features::tools::meta::ToolGroup::Memory
     }
     fn ui_label(&self) -> &'static str {
-        "найти заметки"
+        "recall notes"
     }
     fn description(&self, loc: &crate::shared::i18n::Locale) -> String {
         loc.t("tool.note_recall.desc").into()

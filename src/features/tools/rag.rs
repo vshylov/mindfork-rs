@@ -78,7 +78,7 @@ impl Tool for RagAdd {
         crate::features::tools::meta::ToolGroup::Memory
     }
     fn ui_label(&self) -> &'static str {
-        "добавить в базу знаний"
+        "add to knowledge base"
     }
     fn description(&self, loc: &crate::shared::i18n::Locale) -> String {
         loc.t("tool.rag_add.desc").into()
@@ -140,7 +140,7 @@ impl Tool for RagSearch {
         crate::features::tools::meta::ToolGroup::Memory
     }
     fn ui_label(&self) -> &'static str {
-        "поиск в базе знаний"
+        "search knowledge base"
     }
     fn description(&self, loc: &crate::shared::i18n::Locale) -> String {
         loc.t("tool.rag_search.desc").into()

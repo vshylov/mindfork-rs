@@ -199,7 +199,7 @@ fn rate_from_mime(mime: &str) -> u32 {
 /// would be "silence for no reason").
 fn clip_from_response(resp: GenerateResponse) -> Result<AudioClip> {
     if let Some(reason) = resp.prompt_feedback.and_then(|f| f.block_reason) {
-        anyhow::bail!("Gemini отклонил запрос озвучивания (причина: {reason})");
+        anyhow::bail!("Gemini rejected the speech-synthesis request (reason: {reason})");
     }
     let data = resp
         .candidates
@@ -208,11 +208,11 @@ fn clip_from_response(resp: GenerateResponse) -> Result<AudioClip> {
         .flat_map(|c| c.parts)
         .find_map(|p| p.inline_data);
     let Some(data) = data else {
-        anyhow::bail!("Gemini не вернул аудио");
+        anyhow::bail!("Gemini returned no audio");
     };
     let bytes = base64::engine::general_purpose::STANDARD
         .decode(data.data.trim())
-        .context("разбор base64 аудио от Gemini")?;
+        .context("decoding base64 audio from Gemini")?;
     Ok(AudioClip::Pcm {
         sample_rate: rate_from_mime(&data.mime_type),
         channels: 1,
@@ -234,7 +234,7 @@ impl TtsEngine for GeminiTts {
             .json(&self.body(text));
         let resp = tokio::select! {
             biased;
-            _ = cancel.cancelled() => anyhow::bail!("озвучивание отменено"),
+            _ = cancel.cancelled() => anyhow::bail!("speech synthesis cancelled"),
             r = rb.send() => r.with_context(|| format!("POST {url}"))?,
         };
         if !resp.status().is_success() {
@@ -242,8 +242,8 @@ impl TtsEngine for GeminiTts {
         }
         let parsed: GenerateResponse = tokio::select! {
             biased;
-            _ = cancel.cancelled() => anyhow::bail!("озвучивание отменено"),
-            j = resp.json() => j.context("разбор ответа Gemini TTS")?,
+            _ = cancel.cancelled() => anyhow::bail!("speech synthesis cancelled"),
+            j = resp.json() => j.context("decoding Gemini TTS response")?,
         };
         clip_from_response(parsed)
     }

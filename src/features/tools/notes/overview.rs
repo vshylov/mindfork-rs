@@ -315,7 +315,7 @@ impl Tool for ConsolidateNotes {
         crate::features::tools::meta::ToolGroup::Memory
     }
     fn ui_label(&self) -> &'static str {
-        "консолидация заметок"
+        "notes consolidation"
     }
     fn description(&self, loc: &crate::shared::i18n::Locale) -> String {
         loc.t("tool.consolidate_notes.desc").into()

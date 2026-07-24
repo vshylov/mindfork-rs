@@ -137,7 +137,7 @@ impl Tool for FsRead {
         crate::features::tools::meta::ToolGroup::Files
     }
     fn ui_label(&self) -> &'static str {
-        "прочитать файл"
+        "read file"
     }
     fn gate(&self) -> Option<crate::features::tools::meta::ToolGate> {
         Some(crate::features::tools::meta::ToolGate::Fs)
@@ -198,7 +198,7 @@ impl Tool for FsWrite {
         crate::features::tools::meta::ToolGroup::Files
     }
     fn ui_label(&self) -> &'static str {
-        "записать файл"
+        "write file"
     }
     fn gate(&self) -> Option<crate::features::tools::meta::ToolGate> {
         Some(crate::features::tools::meta::ToolGate::Fs)
@@ -289,7 +289,7 @@ impl Tool for FsList {
         crate::features::tools::meta::ToolGroup::Files
     }
     fn ui_label(&self) -> &'static str {
-        "список файлов"
+        "list files"
     }
     fn gate(&self) -> Option<crate::features::tools::meta::ToolGate> {
         Some(crate::features::tools::meta::ToolGate::Fs)

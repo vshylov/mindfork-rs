@@ -83,7 +83,7 @@ fn is_block_reason(reason: &str) -> bool {
 /// A note to the user about the block (goes into the feed as reply text, so an empty turn
 /// is explainable).
 fn block_note(reason: &str) -> String {
-    format!("\n⚠ Gemini не выдал ответ (причина: {reason}).")
+    format!("\n⚠ Gemini did not produce a response (reason: {reason}).")
 }
 
 #[async_trait::async_trait]
@@ -111,9 +111,9 @@ impl EngineBackend for GeminiClient {
             let detail: String = body.trim().chars().take(500).collect();
             tracing::warn!(%status, body = %detail, "gemini returned an error status");
             if detail.is_empty() {
-                anyhow::bail!("движок (Gemini) вернул статус {status}");
+                anyhow::bail!("engine (Gemini) returned status {status}");
             }
-            anyhow::bail!("движок (Gemini) вернул статус {status}: {detail}");
+            anyhow::bail!("engine (Gemini) returned status {status}: {detail}");
         }
 
         let mut events = response.bytes_stream().eventsource();

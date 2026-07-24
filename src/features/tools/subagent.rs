@@ -58,7 +58,7 @@ impl Tool for CallSubagent {
         crate::features::tools::meta::ToolGroup::Subagent
     }
     fn ui_label(&self) -> &'static str {
-        "запрос суб-агенту"
+        "subagent request"
     }
     fn description(&self, loc: &crate::shared::i18n::Locale) -> String {
         loc.t("tool.call_subagent.desc").into()

@@ -169,7 +169,7 @@ jobs:
             found { print }
           ' CHANGELOG.md > notes.md
           if [ ! -s notes.md ]; then
-            echo "Релиз ${TAG}." > notes.md
+            echo "Release ${TAG}." > notes.md
           fi
 
           echo "Artifacts:"; ls -l dist

@@ -25,7 +25,7 @@ impl Tool for Calculate {
         crate::features::tools::meta::ToolGroup::Utils
     }
     fn ui_label(&self) -> &'static str {
-        "калькулятор"
+        "calculator"
     }
     fn description(&self, loc: &crate::shared::i18n::Locale) -> String {
         loc.t("tool.calculate.desc").into()

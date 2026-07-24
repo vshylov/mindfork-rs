@@ -149,10 +149,10 @@ pub fn machine_label() -> String {
 pub enum SecretError {
     /// No scheme is available on this machine (Linux without machine-id) —
     /// storing keys is not supported, the env path remains.
-    #[error("на этой машине не поддерживается сохранение ключей (нет machine-id)")]
+    #[error("storing keys is not supported on this machine (no machine-id)")]
     Unavailable,
     /// Platform encryption failure (DPAPI/AEAD).
-    #[error("не удалось зашифровать секрет")]
+    #[error("failed to encrypt the secret")]
     Encrypt,
 }
 

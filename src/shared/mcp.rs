@@ -26,8 +26,8 @@
 //! management (a monitor task with `kill`/`exited` tokens — the
 //! `shared/api/managed.rs` pattern).
 //!
-//! The module's error texts are in Russian (a technical layer; UI statuses are
-//! localized by stage 3b).
+//! The module's error texts are plain English (a technical layer, not localized;
+//! UI statuses are localized by stage 3b).
 
 use std::collections::HashMap;
 use std::path::Path;
@@ -145,17 +145,17 @@ impl McpConnection {
             res = tokio::time::timeout(timeout, rx) => res,
             _ = cancelled => {
                 self.abandon_request(id, "cancelled").await;
-                bail!("MCP {method}: вызов отменён")
+                bail!("MCP {method}: call cancelled")
             }
         };
         match outcome {
             Ok(Ok(Ok(result))) => Ok(result),
             Ok(Ok(Err(rpc_err))) => bail!("MCP {method}: {rpc_err}"),
             // Channel closed: the reader task died (the server closed stdout / a broken stream).
-            Ok(Err(_)) => bail!("MCP {method}: соединение закрыто сервером"),
+            Ok(Err(_)) => bail!("MCP {method}: connection closed by the server"),
             Err(_) => {
                 self.abandon_request(id, "timeout").await;
-                bail!("MCP {method}: таймаут {}с", timeout.as_secs())
+                bail!("MCP {method}: timed out after {}s", timeout.as_secs())
             }
         }
     }
@@ -258,7 +258,7 @@ impl McpConnection {
                     if !text.is_empty() {
                         text.push('\n');
                     }
-                    text.push_str(&format!("[{other}-содержимое опущено]"));
+                    text.push_str(&format!("[{other} content omitted]"));
                 }
                 None => {}
             }
@@ -319,7 +319,7 @@ async fn read_loop(
                         Some(e) => Err(e
                             .get("message")
                             .and_then(Value::as_str)
-                            .unwrap_or("ошибка без описания")
+                            .unwrap_or("error with no description")
                             .to_string()),
                         None => Ok(msg.get("result").cloned().unwrap_or(Value::Null)),
                     };
@@ -408,8 +408,8 @@ impl McpClient {
     pub async fn spawn(program: &str, args: &[String], envs: &[(String, String)]) -> Result<Self> {
         if forbidden_batch_command(program) {
             bail!(
-                "команда MCP-сервера не может быть .bat/.cmd (BatBadBut, \
-                 CVE-2024-24576); используйте `cmd /c …` или прямой exe-путь"
+                "an MCP server command can't be .bat/.cmd (BatBadBut, \
+                 CVE-2024-24576); use `cmd /c …` or a direct exe path"
             );
         }
         let mut cmd = Command::new(program);
@@ -427,7 +427,7 @@ impl McpClient {
         }
         let mut child = cmd
             .spawn()
-            .with_context(|| format!("запуск MCP-сервера: {program}"))?;
+            .with_context(|| format!("launching MCP server: {program}"))?;
 
         // The process tree (`cmd /c npx` → node) goes into a kill-on-close Job
         // Object: the handle lives in the monitor task; closing it (a clean exit
@@ -828,7 +828,7 @@ mod tests {
             .await
             .unwrap_err()
             .to_string();
-        assert!(err.contains("таймаут"), "{err}");
+        assert!(err.contains("timed out"), "{err}");
         drop(conn); // close the stream → the fake returns what it received
         let received = fake.await.unwrap();
         assert!(
@@ -861,7 +861,7 @@ mod tests {
             .await
             .unwrap_err()
             .to_string();
-        assert!(err.contains("отменён"), "{err}");
+        assert!(err.contains("cancelled"), "{err}");
         drop(conn);
         let received = fake.await.unwrap();
         assert!(
@@ -887,11 +887,7 @@ mod tests {
             .await
             .unwrap();
         assert!(res.text.starts_with("hello"), "{}", res.text);
-        assert!(
-            res.text.contains("[image-содержимое опущено]"),
-            "{}",
-            res.text
-        );
+        assert!(res.text.contains("[image content omitted]"), "{}", res.text);
         assert!(!res.is_error);
     }
 

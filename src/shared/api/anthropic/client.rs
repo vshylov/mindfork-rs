@@ -79,9 +79,9 @@ impl EngineBackend for AnthropicClient {
             let detail: String = body.trim().chars().take(500).collect();
             tracing::warn!(%status, body = %detail, "anthropic returned an error status");
             if detail.is_empty() {
-                anyhow::bail!("движок (Anthropic) вернул статус {status}");
+                anyhow::bail!("engine (Anthropic) returned status {status}");
             }
-            anyhow::bail!("движок (Anthropic) вернул статус {status}: {detail}");
+            anyhow::bail!("engine (Anthropic) returned status {status}: {detail}");
         }
 
         let mut events = response.bytes_stream().eventsource();

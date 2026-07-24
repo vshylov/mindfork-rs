@@ -306,7 +306,7 @@ pub struct UnavailableEmbedder;
 #[async_trait::async_trait]
 impl Embedder for UnavailableEmbedder {
     async fn embed(&self, _texts: Vec<String>) -> Result<Vec<Vec<f32>>> {
-        anyhow::bail!("embedding-сервер не настроен — RAG недоступен")
+        anyhow::bail!("embedding server is not configured — RAG unavailable")
     }
 }
 

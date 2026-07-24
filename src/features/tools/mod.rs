@@ -491,7 +491,7 @@ impl ToolRegistry {
     ) -> Result<ToolOutcome> {
         match self.tools.get(id) {
             Some(tool) => tool.invoke(ctx, args).await,
-            None => anyhow::bail!("неизвестный инструмент: {id}"),
+            None => anyhow::bail!("unknown tool: {id}"),
         }
     }
 }
@@ -606,7 +606,7 @@ mod tests {
             meta::ToolGroup::Utils
         }
         fn ui_label(&self) -> &'static str {
-            "эхо"
+            "echo"
         }
     }
 

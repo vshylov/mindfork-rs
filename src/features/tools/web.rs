@@ -408,7 +408,7 @@ impl Tool for WebSearch {
         crate::features::tools::meta::ToolGroup::ExternalWorld
     }
     fn ui_label(&self) -> &'static str {
-        "поиск в интернете"
+        "web search"
     }
     fn gate(&self) -> Option<crate::features::tools::meta::ToolGate> {
         Some(crate::features::tools::meta::ToolGate::Web)

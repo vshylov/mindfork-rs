@@ -29,13 +29,13 @@ fn main() {
     }
 
     let Some(profile_dir) = profile_dir() else {
-        println!("cargo:warning=не удалось определить каталог сборки для словарей");
+        println!("cargo:warning=could not determine the build directory for dictionaries");
         return;
     };
     // The portable data root = `<profile>/data/` (see shared/paths.rs).
     let dst = profile_dir.join("data").join("dictionaries");
     if let Err(err) = copy_dir(&src, &dst) {
-        println!("cargo:warning=не удалось скопировать словари: {err}");
+        println!("cargo:warning=could not copy dictionaries: {err}");
     }
 }
 
@@ -60,7 +60,7 @@ fn embed_windows_icon() {
     let icon = PathBuf::from(env::var("CARGO_MANIFEST_DIR").unwrap()).join("artwork/mindfork.ico");
     if !icon.is_file() {
         println!(
-            "cargo:warning=иконка не найдена, .exe будет без неё: {}",
+            "cargo:warning=icon not found, .exe will ship without it: {}",
             icon.display()
         );
         return;
@@ -68,7 +68,7 @@ fn embed_windows_icon() {
     let mut res = winresource::WindowsResource::new();
     res.set_icon(icon.to_string_lossy().as_ref());
     if let Err(err) = res.compile() {
-        println!("cargo:warning=не удалось вшить иконку в .exe: {err}");
+        println!("cargo:warning=could not embed the icon into .exe: {err}");
     }
 }
 
@@ -83,8 +83,8 @@ fn embed_windows_icon() {
 
     if env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("windows") {
         println!(
-            "cargo:warning=кросс-сборка под Windows с не-Windows хоста: \
-             иконка в .exe не вшита (winresource доступен только на Windows-хосте)"
+            "cargo:warning=cross-compiling for Windows from a non-Windows host: \
+             icon not embedded in .exe (winresource is only available on a Windows host)"
         );
     }
 }

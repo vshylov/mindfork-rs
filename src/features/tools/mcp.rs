@@ -350,6 +350,6 @@ mod tests {
             tok.cancel();
         });
         let err = tool.invoke(&ctx, json!({})).await.unwrap_err().to_string();
-        assert!(err.contains("отменён"), "{err}");
+        assert!(err.contains("cancelled"), "{err}");
     }
 }

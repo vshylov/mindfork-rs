@@ -18,7 +18,7 @@ impl Tool for NoteRevise {
         crate::features::tools::meta::ToolGroup::Memory
     }
     fn ui_label(&self) -> &'static str {
-        "переписать заметку"
+        "revise note"
     }
     fn description(&self, loc: &crate::shared::i18n::Locale) -> String {
         loc.t("tool.note_revise.desc").into()
@@ -102,7 +102,7 @@ impl Tool for NoteSupersede {
         crate::features::tools::meta::ToolGroup::Memory
     }
     fn ui_label(&self) -> &'static str {
-        "заместить заметку"
+        "supersede note"
     }
     fn description(&self, loc: &crate::shared::i18n::Locale) -> String {
         loc.t("tool.note_supersede.desc").into()
@@ -169,7 +169,7 @@ impl Tool for NoteMerge {
         crate::features::tools::meta::ToolGroup::Memory
     }
     fn ui_label(&self) -> &'static str {
-        "слить заметки"
+        "merge notes"
     }
     fn description(&self, loc: &crate::shared::i18n::Locale) -> String {
         loc.t("tool.note_merge.desc").into()

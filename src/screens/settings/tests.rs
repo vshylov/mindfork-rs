@@ -973,9 +973,17 @@ fn profile_tools_are_grouped_with_descriptions() {
         .filter(|r| matches!(r.id, FieldId::PTool(_)))
         .collect();
     assert!(!tool_rows.is_empty());
+    // The catalog renders the *localized* group title and falls back to
+    // `ToolGroup::title()` only on a bundle miss, so resolve the expected set
+    // the same way rather than comparing against the English fallbacks.
+    let loc = s.loc();
+    let known: Vec<&str> = crate::features::tools::meta::ToolGroup::ALL
+        .iter()
+        .map(|g| loc.get(g.i18n_key()).unwrap_or(g.title()))
+        .collect();
     for r in &tool_rows {
         assert!(
-            crate::features::tools::meta::group_titles().contains(&r.group),
+            known.contains(&r.group),
             "a tool outside the known group set: {}",
             r.label
         );
