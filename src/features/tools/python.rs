@@ -418,12 +418,24 @@ mod tests {
         assert!(out.result.contains("hello sandbox"), "got: {}", out.result);
     }
 
-    /// The tool over a **provisioned** sandbox (`mindfork sandbox setup`):
-    /// the directory is given by env `MINDFORK_SANDBOX_DIR` (holding wasmer-dist/python.webc/
-    /// site-packages). `None` — the env isn't set, the smoke is skipped.
+    /// The provisioned sandbox directory (`mindfork sandbox setup`) from env
+    /// `MINDFORK_SANDBOX_DIR` (holding wasmer-dist/python.webc/site-packages).
+    /// **Announces the skip**: without it these smokes return early and still
+    /// report `ok`, which reads as a real run in the summary — every other
+    /// env-gated smoke prints a skip line, so these do too.
+    fn sandbox_dir_from_env() -> Option<String> {
+        let dir = std::env::var("MINDFORK_SANDBOX_DIR").ok();
+        if dir.is_none() {
+            eprintln!("skip: MINDFORK_SANDBOX_DIR not set");
+        }
+        dir
+    }
+
+    /// The tool over a **provisioned** sandbox. `None` — the env isn't set, the
+    /// smoke is skipped.
     fn provisioned(net: bool, timeout_secs: u64) -> Option<PythonExec> {
         use crate::shared::sandbox::WasmerSandbox;
-        let dir = std::env::var("MINDFORK_SANDBOX_DIR").ok()?;
+        let dir = sandbox_dir_from_env()?;
         Some(PythonExec::new(
             PythonMode::Wasmer,
             None,
@@ -546,7 +558,7 @@ mod tests {
     #[cfg(windows)]
     fn provisioned_capped(memory_mb: u64) -> Option<PythonExec> {
         use crate::shared::sandbox::WasmerSandbox;
-        let dir = std::env::var("MINDFORK_SANDBOX_DIR").ok()?;
+        let dir = sandbox_dir_from_env()?;
         Some(PythonExec::new(
             PythonMode::Wasmer,
             None,
