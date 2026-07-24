@@ -7648,9 +7648,12 @@ debounce was done as a separate PR, see below).
 - **Two run-the-smokes gotchas** (cost a false failure each, worth knowing): the
   `provisioned()`-gated Python sandbox smokes **silently no-op and still report
   `ok`** when `MINDFORK_SANDBOX_DIR` is unset (the helper returns `None` and the
-  test just returns) — set it, plus `MINDFORK_SANDBOX_WASMER`/`_PYTHON` for
-  `runs_real_python_in_sandbox`, which resolves against the default dir rather
-  than that env. And `mcp_filesystem_e2e_live` can exceed its 120s readiness
+  test just returns) — fixed, the helper now prints a skip line. Set the var,
+  plus `MINDFORK_SANDBOX_WASMER`/`_PYTHON` for `runs_real_python_in_sandbox`,
+  which resolves against the default dir rather than that env and **fails
+  rather than skipping** when the sidecar is missing — kept that way on
+  purpose (decision 2026-07-24): an absent sandbox that was meant to be
+  installed should be loud. And `mcp_filesystem_e2e_live` can exceed its 120s readiness
   timeout on the **first** `npx @modelcontextprotocol/server-filesystem` run
   (cold npm cache, the package downloads); it passes in ~13s once warm.
 

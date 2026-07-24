@@ -399,6 +399,11 @@ mod tests {
     /// Real execution in the sandbox (manual): requires an installed `wasmer`
     /// (env `MINDFORK_SANDBOX_WASMER` or a binary in `data/sandbox/`) and network for the
     /// first download of `python/python`. `cargo test -- --ignored`.
+    ///
+    /// Unlike the `provisioned()` smokes below, this **fails** instead of
+    /// skipping when the sidecar is missing — deliberate (2026-07-24): a
+    /// sandbox that is supposed to be installed should be loud when it isn't,
+    /// not quietly green. Don't "harmonize" it into a skip.
     #[tokio::test]
     #[ignore = "requires a bundled wasmer sidecar (MINDFORK_SANDBOX_WASMER)"]
     async fn runs_real_python_in_sandbox() {
