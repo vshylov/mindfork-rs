@@ -1,6 +1,6 @@
-//! Контракт движка инференса (`EngineBackend`) и его типы. Скрывает транспорт
-//! (HTTP к xinfer) за трейтом — тестируемость (mock/replay) и возможность
-//! сменить транспорт. См. spec §6.1 и docs/xinfer-contract.md §8.
+//! The inference engine contract (`EngineBackend`) and its types. Hides the transport
+//! (HTTP to xinfer) behind a trait — testability (mock/replay) and the ability
+//! to swap the transport. See spec §6.1 and docs/xinfer-contract.md §8.
 
 use std::pin::Pin;
 
@@ -10,11 +10,11 @@ use tokio_util::sync::CancellationToken;
 
 use crate::entities::sampling::SamplingConfig;
 
-/// Роль сообщения в запросе к модели.
+/// The role of a message in a request to the model.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ApiRole {
-    /// Системная роль. Системное сообщение передаётся через [`ChatRequest::system`],
-    /// поэтому как роль сообщения не конструируется — оставлена для полноты enum.
+    /// The system role. The system message is passed via [`ChatRequest::system`],
+    /// so it's never constructed as a message role — kept for the enum's completeness.
     #[allow(dead_code)]
     System,
     User,
@@ -33,65 +33,65 @@ impl ApiRole {
     }
 }
 
-/// Вызов инструмента ассистентом (в истории assistant-сообщения). См. spec §9.
+/// A tool call by the assistant (in the history of an assistant message). See spec §9.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct ApiToolCall {
     pub id: String,
     pub name: String,
-    /// Аргументы как JSON-строка (так их отдаёт/принимает сервер).
+    /// Arguments as a JSON string (that's how the server returns/accepts them).
     pub arguments: String,
-    /// Подпись мысли, привязанная к вызову (Gemini 3 `thoughtSignature`). Нужна для
-    /// переотправки при tool-use: Gemini 3 требует её на `functionCall`-частях (иначе
-    /// `400`). Прочие бэкенды — `None` (у Anthropic/OpenAI подпись одна на ход и едет
-    /// через [`ThinkingRef`]). См. docs/research/gemini-native-client.md §2.3.
+    /// The thought signature tied to the call (Gemini 3 `thoughtSignature`). Needed for
+    /// resending on tool-use: Gemini 3 requires it on `functionCall` parts (otherwise
+    /// `400`). Other backends — `None` (Anthropic/OpenAI have one signature per turn, carried
+    /// via [`ThinkingRef`]). See docs/research/gemini-native-client.md §2.3.
     pub thought_signature: Option<String>,
 }
 
-/// Блок рассуждений (extended thinking / reasoning item) для переотправки в истории.
-/// Нужен провайдерам, которые требуют вернуть рассуждение вместе с вызовом инструмента
-/// в том же ходе, иначе следующий запрос раунда вернёт `400`/деградирует:
-/// - **Anthropic**: thinking-блок с `signature` в assistant-ходе с `tool_use`
-///   (см. [`anthropic::wire`](super::anthropic));
-/// - **OpenAI Responses**: reasoning-элемент (`id` + `encrypted_content`) непосредственно
-///   перед своим `function_call` (см. [`openai::responses`](super::openai)).
+/// A reasoning block (extended thinking / reasoning item) for resending in history.
+/// Needed by providers that require the reasoning to be returned along with the tool call
+/// in the same turn, otherwise the round's next request returns `400`/degrades:
+/// - **Anthropic**: a thinking block with `signature` on an assistant turn with `tool_use`
+///   (see [`anthropic::wire`](super::anthropic));
+/// - **OpenAI Responses**: a reasoning item (`id` + `encrypted_content`) right before
+///   its own `function_call` (see [`openai::responses`](super::openai)).
 ///
-/// Прочие бэкенды (llama.cpp Chat Completions) поле игнорируют. Между ходами
-/// (перезагрузка/новый запрос) не нужен — оба провайдера требуют его только для самого
-/// свежего assistant-хода, поэтому в доменном `Message` не персистится. `text` — то,
-/// что прислал сервер (при `display:summarized` это резюме), переотправляется без
-/// изменений (Anthropic); `id` заполняет только OpenAI Responses (у Anthropic `None`).
+/// Other backends (llama.cpp Chat Completions) ignore the field. Not needed between turns
+/// (reload/new request) — both providers only require it for the most
+/// recent assistant turn, so it isn't persisted in the domain `Message`. `text` is what
+/// the server sent (with `display:summarized` this is a summary), resent unchanged
+/// (Anthropic); `id` is filled only by OpenAI Responses (Anthropic has `None`).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ThinkingBlock {
     pub text: String,
-    /// Подпись (Anthropic `signature`) или зашифрованное рассуждение
-    /// (OpenAI `encrypted_content`) — переотправляется без изменений.
+    /// The signature (Anthropic `signature`) or encrypted reasoning
+    /// (OpenAI `encrypted_content`) — resent unchanged.
     pub signature: String,
-    /// Идентификатор reasoning-элемента (OpenAI `rs_…`); у Anthropic `None`.
+    /// The reasoning item's id (OpenAI `rs_…`); `None` for Anthropic.
     pub id: Option<String>,
 }
 
-/// Ссылка на рассуждение из потока: идентификатор reasoning-элемента (OpenAI `rs_…`,
-/// у Anthropic `None`) и подпись/зашифрованное содержимое. Приходит чанком
-/// [`ChatChunk::ThoughtsSignature`], накапливается в ходе, затем крепится к
-/// assistant-сообщению как [`ThinkingBlock`].
+/// A reference to reasoning from the stream: the reasoning item's id (OpenAI `rs_…`,
+/// `None` for Anthropic) and the signature/encrypted content. Arrives as the chunk
+/// [`ChatChunk::ThoughtsSignature`], accumulates over the turn, then attaches to the
+/// assistant message as [`ThinkingBlock`].
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct ThinkingRef {
     pub id: Option<String>,
     pub signature: String,
 }
 
-/// Сообщение диалога, передаваемое модели.
+/// A conversation message passed to the model.
 #[derive(Debug, Clone)]
 pub struct ApiMessage {
     pub role: ApiRole,
     pub content: String,
-    /// Идентификатор tool-call (для роли `Tool`).
+    /// The tool-call id (for the `Tool` role).
     pub tool_call_id: Option<String>,
-    /// Вызовы инструментов (для роли `Assistant`, инициировавшей tool-call).
+    /// Tool calls (for the `Assistant` role that initiated a tool call).
     pub tool_calls: Vec<ApiToolCall>,
-    /// Блок рассуждений (Anthropic extended thinking) для переотправки в текущем
-    /// ходе agentic-loop. Ставится только на assistant-ход с `tool_use` (см.
-    /// [`ThinkingBlock`]); прочие бэкенды игнорируют. По умолчанию `None`.
+    /// A reasoning block (Anthropic extended thinking) for resending in the current
+    /// agentic-loop turn. Set only on an assistant turn with `tool_use` (see
+    /// [`ThinkingBlock`]); other backends ignore it. `None` by default.
     pub thinking: Option<ThinkingBlock>,
 }
 
@@ -116,7 +116,7 @@ impl ApiMessage {
         }
     }
 
-    /// Assistant-ход с вызовами инструментов (контент может быть пустым).
+    /// An assistant turn with tool calls (content can be empty).
     pub fn assistant_tool_calls(content: impl Into<String>, tool_calls: Vec<ApiToolCall>) -> Self {
         Self {
             role: ApiRole::Assistant,
@@ -127,8 +127,8 @@ impl ApiMessage {
         }
     }
 
-    /// Прикрепляет thinking-блок (Anthropic/OpenAI Responses) к сообщению
-    /// (builder-стиль).
+    /// Attaches a thinking block (Anthropic/OpenAI Responses) to the message
+    /// (builder-style).
     pub fn with_thinking(mut self, thinking: Option<ThinkingBlock>) -> Self {
         self.thinking = thinking;
         self
@@ -145,29 +145,29 @@ impl ApiMessage {
     }
 }
 
-/// OpenAI-схема инструмента, передаваемая серверу (он возвращает валидные
-/// `tool_calls`). Реализации инструментов (`features/tools`) её формируют.
+/// An OpenAI tool schema sent to the server (it returns valid
+/// `tool_calls`). Tool implementations (`features/tools`) build it.
 #[derive(Debug, Clone)]
 pub struct ToolSchema {
     pub name: String,
     pub description: String,
-    /// JSON Schema объекта параметров.
+    /// JSON Schema of the parameters object.
     pub parameters: serde_json::Value,
 }
 
-/// Запрос одного хода генерации.
+/// A request for one generation turn.
 #[derive(Debug, Clone)]
 pub struct ChatRequest {
-    /// Системное сообщение (подставляется первым). См. spec §6.2.
+    /// The system message (substituted first). See spec §6.2.
     pub system: Option<String>,
-    /// Диалог (user/assistant/tool).
+    /// The conversation (user/assistant/tool).
     pub messages: Vec<ApiMessage>,
     pub sampling: SamplingConfig,
-    /// Схемы доступных инструментов (пусто — без tool-calling). `tool_choice=auto`.
+    /// Schemas of the available tools (empty — no tool-calling). `tool_choice=auto`.
     pub tools: Vec<ToolSchema>,
 }
 
-/// Причина завершения генерации.
+/// The reason generation finished.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FinishReason {
     Stop,
@@ -178,7 +178,7 @@ pub enum FinishReason {
 }
 
 impl FinishReason {
-    /// Маппинг строкового `finish_reason` из ответа сервера.
+    /// Maps the string `finish_reason` from the server response.
     pub fn from_wire(s: &str) -> Self {
         match s {
             "stop" => FinishReason::Stop,
@@ -189,57 +189,57 @@ impl FinishReason {
     }
 }
 
-/// Счётчик токенов из ответа сервера (поле `usage`). Сервер присылает его
-/// финальным чанком стрима, если запрошено `stream_options.include_usage=true`
-/// (см. [`openai::wire`]). Поля могут быть нулевыми, если сервер их не отдал.
+/// The token counter from the server response (the `usage` field). The server sends it
+/// as the stream's final chunk when `stream_options.include_usage=true` is requested
+/// (see [`openai::wire`]). Fields may be zero if the server didn't return them.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct TokenUsage {
-    /// Токенов в промпте (размер контекста запроса).
+    /// Tokens in the prompt (the request's context size).
     pub prompt_tokens: u32,
-    /// Токенов в ответе (сгенерировано моделью).
+    /// Tokens in the reply (generated by the model).
     pub completion_tokens: u32,
-    /// Токенов рассуждения («мыслей»), уже входящих в `completion_tokens`. Отдают
-    /// reasoning-провайдеры (OpenAI Responses `output_tokens_details.reasoning_tokens`;
+    /// Reasoning ("thoughts") tokens, already included in `completion_tokens`. Returned by
+    /// reasoning providers (OpenAI Responses `output_tokens_details.reasoning_tokens`;
     /// OpenAI-compat/llama.cpp `completion_tokens_details.reasoning_tokens`). `0` —
-    /// провайдер не разделяет (Anthropic: «мысли» считаются в `completion_tokens`).
+    /// the provider doesn't separate them (Anthropic: "thoughts" are counted in `completion_tokens`).
     pub reasoning_tokens: u32,
 }
 
-/// Дельта вызова инструмента из стрима (накапливается по `index`). См. spec §6.3.
+/// A tool-call delta from the stream (accumulated by `index`). See spec §6.3.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct ToolCallDelta {
     pub index: usize,
-    /// Идентификатор вызова (обычно в первой дельте).
+    /// The call's id (usually in the first delta).
     pub id: Option<String>,
-    /// Имя функции (обычно в первой дельте).
+    /// The function name (usually in the first delta).
     pub name: Option<String>,
-    /// Дельта строки аргументов (склеивается).
+    /// A delta of the arguments string (concatenated).
     pub arguments: String,
-    /// Подпись мысли вызова (Gemini 3 `thoughtSignature`). Эмитит только Gemini-клиент
-    /// (у прочих `None`); накапливается в [`ApiToolCall::thought_signature`].
+    /// The call's thought signature (Gemini 3 `thoughtSignature`). Only the Gemini client
+    /// emits it (others give `None`); accumulates into [`ApiToolCall::thought_signature`].
     pub thought_signature: Option<String>,
 }
 
-/// Инкрементальный фрагмент ответа модели.
+/// An incremental fragment of the model's response.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ChatChunk {
-    /// Дельта основного текста.
+    /// A delta of the main text.
     Text(String),
-    /// Дельта «мыслей» (reasoning).
+    /// A delta of "thoughts" (reasoning).
     Thoughts(String),
-    /// Ссылка на рассуждение (Anthropic `signature_delta` / OpenAI reasoning-элемент).
-    /// Нужна, чтобы переотправить thinking-блок в assistant-ходе с вызовом инструмента
-    /// (см. [`ThinkingBlock`]). Бэкенды без extended thinking не эмитят.
+    /// A reference to reasoning (Anthropic `signature_delta` / an OpenAI reasoning item).
+    /// Needed to resend the thinking block on an assistant turn with a tool call
+    /// (see [`ThinkingBlock`]). Backends without extended thinking don't emit it.
     ThoughtsSignature(ThinkingRef),
-    /// Дельта вызова инструмента (сервер парсит `<tool_call>` сам).
+    /// A tool-call delta (the server parses `<tool_call>` itself).
     ToolCall(ToolCallDelta),
-    /// Счётчик токенов (`usage`) — обычно отдельным чанком перед завершением.
+    /// The token counter (`usage`) — usually a separate chunk before finishing.
     Usage(TokenUsage),
-    /// Завершение генерации.
+    /// Generation finished.
     Finished(FinishReason),
 }
 
-/// Накопитель вызовов инструментов из потоковых дельт (по `index`).
+/// An accumulator of tool calls from streaming deltas (by `index`).
 #[derive(Debug, Default)]
 pub struct ToolCallAccumulator {
     calls: Vec<ApiToolCall>,
@@ -261,7 +261,7 @@ impl ToolCallAccumulator {
         {
             call.name = name;
         }
-        // Подпись мысли (Gemini) приходит вместе с вызовом — сохраняем на нём.
+        // The thought signature (Gemini) arrives together with the call — store it on it.
         if let Some(sig) = delta.thought_signature
             && !sig.is_empty()
         {
@@ -270,7 +270,7 @@ impl ToolCallAccumulator {
         call.arguments.push_str(&delta.arguments);
     }
 
-    /// Возвращает собранные вызовы (отбрасывая безымянные «дыры»).
+    /// Returns the assembled calls (dropping nameless "gaps").
     pub fn finish(self) -> Vec<ApiToolCall> {
         self.calls
             .into_iter()
@@ -279,28 +279,28 @@ impl ToolCallAccumulator {
     }
 }
 
-/// Поток фрагментов ответа.
+/// A stream of reply fragments.
 pub type ChatStream = Pin<Box<dyn Stream<Item = ChatChunk> + Send>>;
 
-/// Движок инференса (chat). Реализации: HTTP-клиент к xinfer
-/// ([`super::openai::OpenAiClient`]) и mock для тестов.
+/// The inference engine (chat). Implementations: an HTTP client to xinfer
+/// ([`super::openai::OpenAiClient`]) and a mock for tests.
 #[async_trait::async_trait]
 pub trait EngineBackend: Send + Sync {
-    /// Стриминговый одноходовый запрос. Отмена — через `cancel`.
+    /// A streaming single-turn request. Cancellation — via `cancel`.
     async fn chat_stream(&self, req: ChatRequest, cancel: CancellationToken) -> Result<ChatStream>;
 }
 
-/// Источник эмбеддингов для RAG. По решению M5 — **выделенный** embedding-сервер
-/// (отдельный процесс/порт), поэтому он отделён от [`EngineBackend`] (chat).
-/// См. docs/decisions/0002-embeddings-dedicated-server.md.
+/// A source of embeddings for RAG. Per the M5 decision — a **dedicated** embedding server
+/// (a separate process/port), so it's split off from [`EngineBackend`] (chat).
+/// See docs/decisions/0002-embeddings-dedicated-server.md.
 #[async_trait::async_trait]
 pub trait Embedder: Send + Sync {
-    /// Возвращает эмбеддинги для каждого входного текста (в том же порядке).
+    /// Returns embeddings for each input text (in the same order).
     async fn embed(&self, texts: Vec<String>) -> Result<Vec<Vec<f32>>>;
 }
 
-/// Эмбеддер-заглушка: возвращает ошибку (embedding-сервер не настроен). RAG в
-/// этом режиме недоступен, но инструмент не «падает» — ошибка уходит модели.
+/// A stub embedder: returns an error (the embedding server isn't configured). RAG is
+/// unavailable in this mode, but the tool doesn't "crash" — the error goes to the model.
 pub struct UnavailableEmbedder;
 
 #[async_trait::async_trait]
@@ -357,7 +357,7 @@ mod tests {
 
     #[test]
     fn accumulator_carries_thought_signature() {
-        // Gemini кладёт подпись на дельту вызова — она оседает на собранном ApiToolCall.
+        // Gemini attaches the signature to the call delta — it lands on the assembled ApiToolCall.
         let mut acc = ToolCallAccumulator::default();
         acc.push(ToolCallDelta {
             index: 0,

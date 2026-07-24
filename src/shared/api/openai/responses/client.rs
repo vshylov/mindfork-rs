@@ -1,11 +1,11 @@
-//! HTTP-клиент к OpenAI Responses API (`POST /v1/responses`), реализующий
-//! [`EngineBackend`]. Отдельный протокол от Chat Completions
-//! ([`OpenAiClient`](super::super::OpenAiClient)) того же вендора: резюме рассуждений,
-//! `reasoning.effort`, `text.verbosity`, reasoning-элементы для tool-use. См. ADR 0004,
+//! An HTTP client to the OpenAI Responses API (`POST /v1/responses`), implementing
+//! [`EngineBackend`]. A protocol separate from Chat Completions
+//! ([`OpenAiClient`](super::super::OpenAiClient)), same vendor: reasoning summaries,
+//! `reasoning.effort`, `text.verbosity`, reasoning items for tool-use. See ADR 0004,
 //! docs/research/openai-responses-client.md.
 //!
-//! Эмбеддингов Responses не имеет — [`Embedder`](crate::shared::api::contract::Embedder)
-//! берёт отдельный источник (ADR 0002), как и у Anthropic.
+//! Responses has no embeddings — [`Embedder`](crate::shared::api::contract::Embedder)
+//! takes a separate source (ADR 0002), like Anthropic.
 
 use anyhow::{Context, Result};
 use async_stream::stream;
@@ -19,10 +19,10 @@ use crate::shared::api::contract::{
     ToolCallDelta,
 };
 
-/// Клиент к OpenAI Responses API.
+/// A client to the OpenAI Responses API.
 pub struct ResponsesClient {
     http: reqwest::Client,
-    /// Базовый URL с суффиксом `/v1` (клиент добавляет `/responses`), напр.
+    /// The base URL with a `/v1` suffix (the client appends `/responses`), e.g.
     /// `https://api.openai.com/v1`.
     base_url: String,
     api_key: String,
@@ -59,8 +59,8 @@ impl EngineBackend for ResponsesClient {
             .send()
             .await
             .with_context(|| format!("POST {url}"))?;
-        // Не глотаем тело ошибки (как прочие клиенты): OpenAI кладёт причину в JSON
-        // (`{"error":{"message":...}}`) — логируем и пробрасываем в текст ошибки.
+        // Don't swallow the error body (like the other clients): OpenAI puts the reason in JSON
+        // (`{"error":{"message":...}}`) — log it and surface it in the error text.
         let status = response.status();
         if !status.is_success() {
             let body = response.text().await.unwrap_or_default();
@@ -75,8 +75,8 @@ impl EngineBackend for ResponsesClient {
         let mut events = response.bytes_stream().eventsource();
 
         let s = stream! {
-            // Был ли хоть один вызов инструмента — Responses не шлёт finish_reason,
-            // причину выводим по факту появления function_call-элемента в потоке.
+            // Whether there was at least one tool call — Responses doesn't send finish_reason,
+            // the reason is inferred from a function_call item actually appearing in the stream.
             let mut saw_tool_call = false;
             loop {
                 tokio::select! {
@@ -131,8 +131,8 @@ impl EngineBackend for ResponsesClient {
                                             arguments: delta,
                                         });
                                     }
-                                    // Reasoning-элемент завершён — несёт encrypted_content
-                                    // (запросили через include). Копим для переотправки при tool-use.
+                                    // A reasoning item is done — carries encrypted_content
+                                    // (requested via include). Accumulated for resending on tool-use.
                                     Ok(RespEvent::OutputItemDone {
                                         item: RespItem::Reasoning { id, encrypted_content: Some(enc) },
                                         ..
@@ -159,7 +159,7 @@ impl EngineBackend for ResponsesClient {
                                         break;
                                     }
                                     Ok(RespEvent::Incomplete { response }) => {
-                                        // Обрыв по лимиту (max_output_tokens и т.п.).
+                                        // Cut off by a limit (max_output_tokens etc.).
                                         if let Some(u) = response.and_then(|r| r.usage) {
                                             yield ChatChunk::Usage(TokenUsage {
                                                 prompt_tokens: u.input_tokens,
@@ -181,8 +181,8 @@ impl EngineBackend for ResponsesClient {
                                         yield ChatChunk::Finished(FinishReason::Error);
                                         break;
                                     }
-                                    // Прочие события (created/in_progress/part.added/…) и
-                                    // added-reasoning (без encrypted) — игнорируем.
+                                    // Other events (created/in_progress/part.added/…) and
+                                    // added-reasoning (without encrypted) — ignored.
                                     Ok(_) => {}
                                     Err(err) => {
                                         tracing::warn!(error = %err, data = %event.data, "failed to parse responses SSE chunk");
@@ -199,8 +199,8 @@ impl EngineBackend for ResponsesClient {
     }
 }
 
-/// Ручной смоук против реального OpenAI Responses API. Помечен `#[ignore]` — не в CI.
-/// Запуск: `MINDFORK_OPENAI_KEY=sk-... cargo test responses -- --ignored --nocapture`.
+/// A manual smoke against the real OpenAI Responses API. Marked `#[ignore]` — not in CI.
+/// Run: `MINDFORK_OPENAI_KEY=sk-... cargo test responses -- --ignored --nocapture`.
 #[cfg(test)]
 mod ignored_smoke {
     use super::*;
@@ -254,9 +254,9 @@ mod ignored_smoke {
         ));
     }
 
-    /// Резюме рассуждений: с `thinking=true`+`verbosity` приходят «мысли» (Thoughts)
-    /// и финальный ответ. Требует reasoning-модель (gpt-5.x). `max_tokens` щедрый —
-    /// reasoning-токены расходуют бюджет ответа.
+    /// Reasoning summary: with `thinking=true`+`verbosity`, "thoughts" (Thoughts)
+    /// and the final reply arrive. Requires a reasoning model (gpt-5.x). `max_tokens` is generous —
+    /// reasoning tokens eat into the reply budget.
     #[tokio::test]
     #[ignore = "requires MINDFORK_OPENAI_KEY (live OpenAI Responses API)"]
     async fn reasoning_summary_streams_thoughts() {
@@ -289,16 +289,16 @@ mod ignored_smoke {
                 _ => {}
             }
         }
-        // На тривиальной задаче резюме может отсутствовать — проверяем хотя бы ответ.
+        // On a trivial task the summary might be absent — check at least the reply.
         assert!(
             !text.is_empty(),
             "expected final answer, thoughts={thoughts:?}"
         );
     }
 
-    /// Tool-use round-trip: первый раунд даёт вызов + reasoning-элемент (id+encrypted);
-    /// второй переотправляет reasoning-элемент перед его function_call и результат —
-    /// OpenAI не должен вернуть ошибку.
+    /// Tool-use round-trip: the first round gives a call + a reasoning item (id+encrypted);
+    /// the second resends the reasoning item before its function_call and the result —
+    /// OpenAI must not return an error.
     #[tokio::test]
     #[ignore = "requires MINDFORK_OPENAI_KEY (live OpenAI Responses API)"]
     async fn tool_use_round_trips_reasoning_item() {

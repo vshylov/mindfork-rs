@@ -1,11 +1,10 @@
-//! Контракт системы инструментов (`features/tools`): трейт [`Tool`], снимок
-//! [`ToolContext`], результат [`ToolOutcome`] с эффектами [`ChatEffect`] и
-//! реестр [`ToolRegistry`]. См. spec §9.2, §6.3.
+//! Contract for the tool system (`features/tools`): the [`Tool`] trait, the
+//! [`ToolContext`] snapshot, the [`ToolOutcome`] result with [`ChatEffect`] effects,
+//! and the [`ToolRegistry`] registry. See spec §9.2, §6.3.
 //!
-//! Инструменты **не** мутируют `Chat` напрямую: мутирующие возвращают `effects`,
-//! которые применяет оркестратор (единственный владелец `Chat`, spec §4.4.2).
-//! Инструменты памяти/знаний обязаны фильтровать по `ctx.profile_id` (изоляция,
-//! инвариант репозиториев, spec §9.5).
+//! Tools **don't** mutate `Chat` directly: mutating ones return `effects`, which the
+//! orchestrator applies (sole owner of `Chat`, spec §4.4.2). Memory/knowledge tools
+//! must filter by `ctx.profile_id` (isolation, a repository invariant, spec §9.5).
 
 pub mod calc;
 pub mod control;
@@ -42,50 +41,52 @@ use crate::shared::storage::Storage;
 
 pub use introspection::{GET_SAMPLING_ID, SET_SAMPLING_ID};
 
-/// Неизменяемый снимок состояния хода (без разделяемых локов). См. spec §9.2.
+/// Immutable snapshot of turn state (no shared locks). See spec §9.2.
 #[derive(Clone)]
 pub struct ToolContext {
     pub profile_id: Uuid,
-    /// Id текущего чата (часть снимка хода; доступен инструментам).
+    /// Id of the current chat (part of the turn snapshot; available to tools).
     #[allow(dead_code)]
     pub chat_id: Uuid,
-    /// Снимок `Chat.system_message` на начало хода.
+    /// Snapshot of `Chat.system_message` at the start of the turn.
     pub system_message: String,
-    /// Действующий семплинг (после приоритетов §8.3).
+    /// Effective sampling (after the priority resolution, §8.3).
     pub effective_sampling: SamplingConfig,
-    /// Время последнего user-сообщения (если есть).
+    /// Timestamp of the last user message (if any).
     pub last_user_message_at: Option<DateTime<Utc>>,
     pub storage: Arc<Storage>,
-    /// Chat-движок (для `call_subagent`, M6).
+    /// Chat engine (for `call_subagent`, M6).
     pub engine: Arc<dyn EngineBackend>,
-    /// Источник эмбеддингов (RAG); выделенный сервер — см. ADR 0002.
+    /// Embedding source (RAG); a dedicated server — see ADR 0002.
     pub embedder: Arc<dyn Embedder>,
-    /// Параметры чанкинга RAG из настроек (`config.rag`, spec §9.3).
+    /// RAG chunking parameters from settings (`config.rag`, spec §9.3).
     pub chunk_params: rag::ChunkParams,
-    /// Параметры рендера/хранения «модели себя» из настроек (`config.self_model`).
-    /// Снимок самой модели в контекст **не** кладётся: инструменты SelfModel
-    /// читают/пишут свежее состояние напрямую через `storage` (чтобы видеть правки
-    /// внутри хода), а инъекция модели в промпт — отдельным путём в оркестраторе.
+    /// Render/storage parameters for the "self-model" from settings
+    /// (`config.self_model`). A snapshot of the model itself is **not** put into the
+    /// context: SelfModel tools read/write fresh state directly through `storage`
+    /// (to see edits made within the turn), while injecting the model into the
+    /// prompt is a separate path in the orchestrator.
     pub self_model_params: SelfModelParams,
-    /// Показывать ли self-заметки (`@self`) в общем `note_recall` (Ярус 3, Путь 2).
-    /// Из `config.notes.recall_includes_self`; по умолчанию `false` (self скрыты).
+    /// Whether to show self-notes (`@self`) in the general `note_recall` (Tier 3,
+    /// Path 2). From `config.notes.recall_includes_self`; `false` by default (self
+    /// hidden).
     pub recall_includes_self: bool,
-    /// Язык **служебного каркаса** для этого хода (из `Profile.language`, ось A,
-    /// docs/history/i18n.md). Тексты, которые читает модель (каркас «модели себя», результаты
-    /// инструментов), локализуются им. `&'static` — вшитый бандл.
+    /// Language of the **agent scaffold** for this turn (from `Profile.language`,
+    /// axis A, docs/history/i18n.md). Text the model reads (the "self-model"
+    /// scaffold, tool results) is localized through it. `&'static` — a built-in
+    /// bundle.
     pub loc: &'static crate::shared::i18n::Locale,
-    /// Токен отмены хода (Esc пользователя / таймаут фоновой задачи): долгий
-    /// инструмент (MCP `tools/call`, сеть) обязан прерываться по нему, а не
-    /// блокировать отмену. Agentic-loop дополнительно оборачивает `invoke` в
-    /// `select!` с этим же токеном — страховка для инструментов, которые токен
-    /// не читают. См. docs/research/plugin-system.md §4.4 (п. «Отмена»).
+    /// Cancellation token for the turn (user Esc / background-task timeout): a
+    /// long-running tool (MCP `tools/call`, network) must break on it rather than
+    /// block cancellation. The agentic loop additionally wraps `invoke` in a
+    /// `select!` with the same token — a safety net for tools that don't read the
+    /// token. See docs/research/plugin-system.md §4.4 ("Cancellation").
     pub cancel: tokio_util::sync::CancellationToken,
 }
 
-/// Долгоживущие разделяемые зависимости инструментов (пучок `Arc`; меняется при
-/// рестарте серверов, не от хода к ходу). Собирается в один блок, чтобы новая
-/// зависимость не правила каждый сайт сборки [`ToolContext`]. См.
-/// docs/history/refactoring-solid.md §3.
+/// Long-lived shared tool dependencies (an `Arc` bundle; changes on server
+/// restart, not turn to turn). Gathered into one block so a new dependency doesn't
+/// touch every [`ToolContext`] build site. See docs/history/refactoring-solid.md §3.
 #[derive(Clone)]
 pub struct ToolDeps {
     pub storage: Arc<Storage>,
@@ -93,8 +94,8 @@ pub struct ToolDeps {
     pub embedder: Arc<dyn Embedder>,
 }
 
-/// Параметры инструментов из конфига (снимок на ход). Единственное место маппинга
-/// `AppConfig` → параметры инструментов — [`ToolParams::from_config`].
+/// Tool parameters from config (a per-turn snapshot). The single place that maps
+/// `AppConfig` → tool parameters — [`ToolParams::from_config`].
 #[derive(Clone)]
 pub struct ToolParams {
     pub chunk_params: rag::ChunkParams,
@@ -103,7 +104,7 @@ pub struct ToolParams {
 }
 
 impl ToolParams {
-    /// Снимает параметры инструментов из конфигурации приложения.
+    /// Snapshots tool parameters from the application configuration.
     pub fn from_config(cfg: &AppConfig) -> Self {
         Self {
             chunk_params: rag::ChunkParams::from_settings(&cfg.rag),
@@ -113,23 +114,24 @@ impl ToolParams {
     }
 }
 
-/// Снимок хода: что инструмент видит о текущем чате (идентичность + снимок `Chat`).
+/// Turn snapshot: what a tool sees about the current chat (identity + `Chat` snapshot).
 pub struct TurnInfo {
     pub profile_id: Uuid,
     pub chat_id: Uuid,
     pub system_message: String,
     pub effective_sampling: SamplingConfig,
     pub last_user_message_at: Option<DateTime<Utc>>,
-    /// Язык служебного каркаса хода (из `Profile.language`, ось A).
+    /// Language of the turn's agent scaffold (from `Profile.language`, axis A).
     pub lang: crate::shared::i18n::Lang,
-    /// Токен отмены хода (клон токена задачи генерации / фоновой петли).
+    /// Cancellation token for the turn (a clone of the generation task's /
+    /// background loop's token).
     pub cancel: tokio_util::sync::CancellationToken,
 }
 
 impl ToolContext {
-    /// Разворачивает строительные блоки в прежние плоские поля. Плоская форма
-    /// сохранена сознательно — код инструментов (`ctx.storage`, `ctx.chunk_params`,
-    /// …) не меняется. См. docs/history/refactoring-solid.md §3.
+    /// Unpacks the building blocks into the former flat fields. The flat shape is
+    /// kept deliberately — tool code (`ctx.storage`, `ctx.chunk_params`, …) doesn't
+    /// change. See docs/history/refactoring-solid.md §3.
     pub fn new(deps: ToolDeps, params: ToolParams, turn: TurnInfo) -> Self {
         Self {
             profile_id: turn.profile_id,
@@ -149,18 +151,18 @@ impl ToolContext {
     }
 }
 
-/// Эффект, изменяющий `Chat`; возвращается инструментом, применяется оркестратором.
+/// An effect that mutates `Chat`; returned by a tool, applied by the orchestrator.
 #[derive(Debug, Clone, PartialEq)]
 pub enum ChatEffect {
-    /// Заменить системное сообщение чата (действует со следующего построения запроса).
+    /// Replace the chat's system message (takes effect from the next request build).
     SetSystemMessage(String),
-    /// Заменить override семплинга чата (действует со следующего хода).
-    /// `Box`, т.к. `SamplingConfig` крупнее прочих вариантов (clippy
+    /// Replace the chat's sampling override (takes effect from the next turn).
+    /// `Box`, since `SamplingConfig` is larger than the other variants (clippy
     /// `large_enum_variant`).
     SetSamplingOverride(Box<SamplingConfig>),
 }
 
-/// Результат вызова инструмента: строка для модели + эффекты для оркестратора.
+/// Result of a tool call: text for the model + effects for the orchestrator.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ToolOutcome {
     pub result: String,
@@ -168,7 +170,7 @@ pub struct ToolOutcome {
 }
 
 impl ToolOutcome {
-    /// Результат без эффектов (чистый инструмент).
+    /// A result with no effects (a pure tool).
     pub fn text(result: impl Into<String>) -> Self {
         Self {
             result: result.into(),
@@ -176,7 +178,7 @@ impl ToolOutcome {
         }
     }
 
-    /// Результат с эффектами (мутирующий инструмент).
+    /// A result with effects (a mutating tool).
     pub fn with_effects(result: impl Into<String>, effects: Vec<ChatEffect>) -> Self {
         Self {
             result: result.into(),
@@ -185,22 +187,22 @@ impl ToolOutcome {
     }
 }
 
-/// Инструмент, исполняемый клиентским agentic-loop. См. spec §9.2.
+/// A tool executed by the client-side agentic loop. See spec §9.2.
 #[async_trait::async_trait]
 pub trait Tool: Send + Sync {
-    /// Уникальное имя (совпадает с именем функции в OpenAI-схеме).
+    /// Unique name (matches the function name in the OpenAI schema).
     fn id(&self) -> ToolId;
-    /// Человекочитаемое описание для модели **на языке служебного каркаса** `loc`
-    /// (ось A, docs/history/i18n.md). Инструменты, ещё не переведённые (Ярус 2 идёт по
-    /// группам), возвращают русский текст независимо от `loc`.
+    /// Human-readable description for the model **in the agent-scaffold language**
+    /// `loc` (axis A, docs/history/i18n.md). Tools not yet translated (Tier 2 rolls
+    /// out by group) return Russian text regardless of `loc`.
     fn description(&self, loc: &crate::shared::i18n::Locale) -> String;
-    /// JSON Schema объекта параметров (описания полей — на языке `loc`).
+    /// JSON Schema of the parameter object (field descriptions — in the language `loc`).
     fn parameters(&self, loc: &crate::shared::i18n::Locale) -> serde_json::Value;
-    /// Исполняет вызов. `args` — распарсенный JSON аргументов модели.
+    /// Executes the call. `args` — the model's parsed argument JSON.
     async fn invoke(&self, ctx: &ToolContext, args: serde_json::Value) -> Result<ToolOutcome>;
 
-    /// Схема для передачи серверу (по умолчанию из `id`/`description`/`parameters`)
-    /// на языке `loc`.
+    /// Schema to hand to the server (built from `id`/`description`/`parameters` by
+    /// default) in the language `loc`.
     fn schema(&self, loc: &crate::shared::i18n::Locale) -> ToolSchema {
         ToolSchema {
             name: self.id(),
@@ -209,53 +211,53 @@ pub trait Tool: Send + Sync {
         }
     }
 
-    /// Смысловая группа для тумблеров профиля (UI настроек).
+    /// Semantic group for profile toggles (settings UI).
     fn group(&self) -> meta::ToolGroup;
 
-    /// Короткий (2–4 слова) лейбл для тумблера профиля (в отличие от
-    /// LLM-ориентированного [`Tool::description`]).
+    /// Short (2-4 word) label for the profile toggle (unlike the LLM-oriented
+    /// [`Tool::description`]).
     fn ui_label(&self) -> &'static str;
 
-    /// Глобальный выключатель, гейтящий инструмент (`None` — негейтимый). См.
+    /// Global switch gating the tool (`None` — not gated). See
     /// [`effective_tool_ids`].
     fn gate(&self) -> Option<meta::ToolGate> {
         None
     }
 
-    /// Включён ли инструмент в профиле по умолчанию (`false` — опциональный,
-    /// включается вручную). См. [`default_tool_ids`]/[`all_tool_ids`].
+    /// Whether the tool is enabled in the profile by default (`false` — optional,
+    /// enabled manually). See [`default_tool_ids`]/[`all_tool_ids`].
     fn enabled_by_default(&self) -> bool {
         true
     }
 }
 
-/// Имя web-инструмента (гейтится глобальным выключателем `tools.web_enabled`).
+/// Name of the web tool (gated by the global switch `tools.web_enabled`).
 pub const WEB_SEARCH_ID: &str = "web_search";
-/// Имя инструмента загрузки URL (гейтится `tools.web_enabled` — сетевой доступ).
+/// Name of the URL-fetch tool (gated by `tools.web_enabled` — network access).
 pub const FETCH_URL_ID: &str = "fetch_url";
-/// Имя Python-инструмента (гейтится `tools.python_enabled`).
+/// Name of the Python tool (gated by `tools.python_enabled`).
 pub const PYTHON_EXEC_ID: &str = "python_exec";
 
-/// Снимок метаданных всех инструментов (единый источник — сами инструменты через
-/// трейт [`Tool`]). Метаданные (группа/лейбл/гейт/дефолт) не зависят от
-/// [`ToolConfig`], поэтому каталог строится один раз на дефолтном конфиге — это
-/// избавляет от пересборки реестра в горячем [`effective_tool_ids`] (зовётся на
-/// каждый раунд agentic-loop).
+/// Metadata snapshot of all tools (a single source — the tools themselves via the
+/// [`Tool`] trait). Metadata (group/label/gate/default) doesn't depend on
+/// [`ToolConfig`], so the catalog is built once on the default config — this avoids
+/// rebuilding the registry in the hot [`effective_tool_ids`] (called on every
+/// agentic-loop round).
 static CATALOG: LazyLock<Vec<meta::ToolInfo>> =
     LazyLock::new(|| standard_registry(&ToolConfig::default()).infos());
 
-/// Каталог метаданных всех известных инструментов (снимок [`CATALOG`]). Порядок —
-/// алфавитный по id (реестр — `BTreeMap`). Потребители используют id по значению
-/// (членство/итерация), не по позиции.
+/// Catalog of metadata for all known tools (a snapshot of [`CATALOG`]). Order —
+/// alphabetical by id (the registry is a `BTreeMap`). Consumers use the id by value
+/// (membership/iteration), not by position.
 pub fn tool_catalog() -> Vec<meta::ToolInfo> {
     CATALOG.clone()
 }
 
-/// Идентификаторы инструментов, включаемых в профиле по умолчанию (M5–M7).
-/// Внешние (`web_search`/`python_exec`) дополнительно гейтятся глобальными
-/// выключателями — см. [`effective_tool_ids`]. Управляющие инструменты беседы и
-/// «модель себя» опциональны (по умолчанию выкл, `Tool::enabled_by_default`), см.
-/// [`all_tool_ids`]. Выводится из [`CATALOG`] (единый источник — сами инструменты).
+/// Ids of tools enabled in a profile by default (M5-M7). External ones
+/// (`web_search`/`python_exec`) are additionally gated by global switches — see
+/// [`effective_tool_ids`]. Conversation-control tools and the "self-model" are
+/// optional (off by default, `Tool::enabled_by_default`), see [`all_tool_ids`].
+/// Derived from [`CATALOG`] (a single source — the tools themselves).
 pub fn default_tool_ids() -> Vec<ToolId> {
     CATALOG
         .iter()
@@ -264,28 +266,28 @@ pub fn default_tool_ids() -> Vec<ToolId> {
         .collect()
 }
 
-/// Полный каталог id инструментов для тумблеров профиля: дефолтные + опциональные
-/// (по умолчанию выключенные — управляющие инструменты беседы и «модель себя»). В
-/// отличие от [`default_tool_ids`], сюда входят опциональные — так пользователь
-/// видит их в настройках профиля и может включить, но `reconcile_tools` их **не**
-/// включает автоматически. Выводится из [`CATALOG`]. См. spec §9.3.
-// Каталог тумблеров профиля берёт метаданные через [`tool_catalog`]; этот
-// id-хелпер сейчас используют тесты (фикстуры/каталог) — оставлен как публичный API.
+/// Full catalog of tool ids for profile toggles: default + optional (off by
+/// default — conversation-control tools and the "self-model"). Unlike
+/// [`default_tool_ids`], this includes the optional ones — so the user sees them in
+/// profile settings and can enable them, but `reconcile_tools` does **not** enable
+/// them automatically. Derived from [`CATALOG`]. See spec §9.3.
+// The profile-toggle catalog pulls metadata via [`tool_catalog`]; this id helper is
+// currently used by tests (fixtures/catalog) — kept as public API.
 #[allow(dead_code)]
 pub fn all_tool_ids() -> Vec<ToolId> {
     CATALOG.iter().map(|i| i.id.clone()).collect()
 }
 
-/// Эффективный набор инструментов: `enabled` минус внешние, отключённые
-/// глобальными выключателями (spec §9.4). Порядок `enabled` сохраняется.
-/// `web_enabled` гейтит и `web_search`, и `fetch_url` (оба — сетевой доступ);
-/// `fs_enabled` — файловые `fs_read`/`fs_write`/`fs_list` (гейт берётся из метаданных
-/// инструмента, [`Tool::gate`]). Инструменты семплинга (`get_sampling`/`set_sampling`)
-/// отключаются, если в текущем режиме движка нет ни одного доступного параметра
-/// (`sampling_provider`, см. [`supported_sampling_fields`]) — это динамический гейт по
-/// провайдеру, поэтому обрабатывается отдельно от статических [`meta::ToolGate`].
-/// Инструменты MCP-серверов (id с префиксом `mcp__`) гейтятся `mcp_enabled` **по
-/// префиксу**: они динамические и в статическом [`CATALOG`] отсутствуют.
+/// Effective tool set: `enabled` minus external ones disabled by global switches
+/// (spec §9.4). `enabled`'s order is preserved. `web_enabled` gates both
+/// `web_search` and `fetch_url` (both — network access); `fs_enabled` — the file
+/// tools `fs_read`/`fs_write`/`fs_list` (the gate is taken from the tool's
+/// metadata, [`Tool::gate`]). Sampling tools (`get_sampling`/`set_sampling`) are
+/// disabled if the current engine mode has no available parameter at all
+/// (`sampling_provider`, see [`supported_sampling_fields`]) — that's a dynamic gate
+/// by provider, so it's handled separately from the static [`meta::ToolGate`].
+/// MCP-server tools (id with the `mcp__` prefix) are gated by `mcp_enabled` **by
+/// prefix**: they're dynamic and absent from the static [`CATALOG`].
 pub fn effective_tool_ids(
     enabled: &[ToolId],
     web_enabled: bool,
@@ -317,35 +319,35 @@ pub fn effective_tool_ids(
         .collect()
 }
 
-/// Параметры построения реестра инструментов из конфигурации (`config.tools`,
-/// spec §11.6). Позволяют пересобирать реестр при правках настроек (live).
+/// Parameters for building the tool registry from configuration (`config.tools`,
+/// spec §11.6). Let the registry be rebuilt on live settings edits.
 #[derive(Debug, Clone)]
 pub struct ToolConfig {
-    /// Режим исполнения `python_exec` (песочница Wasmer / локальный интерпретатор).
+    /// Execution mode for `python_exec` (Wasmer sandbox / local interpreter).
     pub python_mode: PythonMode,
-    /// Путь к интерпретатору Python для `python_exec` (`None` → системный, режим Local).
+    /// Path to the Python interpreter for `python_exec` (`None` → system, Local mode).
     pub python_path: Option<String>,
-    /// Разрешить сеть в песочнице Wasmer (`--net`).
+    /// Allow network in the Wasmer sandbox (`--net`).
     pub python_net: bool,
-    /// Таймаут исполнения в песочнице Wasmer.
+    /// Execution timeout in the Wasmer sandbox.
     pub python_wasm_timeout: Duration,
-    /// Жёсткий лимит памяти песочницы (МБ; `None` — без лимита). Только Windows.
+    /// Hard sandbox memory limit (MB; `None` — no limit). Windows only.
     pub python_wasm_memory_mb: Option<u64>,
-    /// Каталог песочницы (`data/sandbox/`) с бинарём `wasmer` и ассетами (`None` —
-    /// нет каталога, песочница только через env-override).
+    /// Sandbox directory (`data/sandbox/`) with the `wasmer` binary and assets
+    /// (`None` — no directory, sandbox only via the env override).
     pub sandbox_dir: Option<PathBuf>,
-    /// Лимит токенов ответа `call_subagent`.
+    /// Response token limit for `call_subagent`.
     pub subagent_max_tokens: usize,
-    /// Лимит времени на вызов `call_subagent`.
+    /// Time limit for a `call_subagent` call.
     pub subagent_timeout: Duration,
-    /// Значение по умолчанию для `web_search.fetch_content` (загрузка/реранк страниц,
-    /// `config.tools.web_fetch_content`). Аргумент вызова переопределяет.
+    /// Default for `web_search.fetch_content` (fetching/reranking pages,
+    /// `config.tools.web_fetch_content`). The call argument overrides it.
     pub web_fetch_content: bool,
-    /// Каталог-«песочница» для файловых инструментов (`None` → без ограничения).
+    /// "Sandbox" directory for file tools (`None` → no restriction).
     pub fs_root: Option<String>,
-    /// Облачный провайдер chat-движка (`None` — локальный/external). Определяет,
-    /// какие параметры семплинга видят/меняют `get_sampling`/`set_sampling` (схема и
-    /// фильтрация результата) — зеркало wire-диалекта. См. ADR 0004.
+    /// Cloud provider of the chat engine (`None` — local/external). Determines
+    /// which sampling parameters `get_sampling`/`set_sampling` see/change (schema
+    /// and result filtering) — a mirror of the wire dialect. See ADR 0004.
     pub sampling_provider: Option<CloudProvider>,
 }
 
@@ -371,8 +373,8 @@ impl Default for ToolConfig {
     }
 }
 
-/// Реестр со всеми инструментами (M5–M7) по параметрам [`ToolConfig`]. Глобальные
-/// выключатели применяются не здесь, а при отборе эффективного набора (см.
+/// Registry with all tools (M5-M7) per [`ToolConfig`] parameters. Global switches
+/// aren't applied here, but when selecting the effective set (see
 /// [`effective_tool_ids`]).
 pub fn standard_registry(cfg: &ToolConfig) -> ToolRegistry {
     let mut reg = ToolRegistry::new();
@@ -417,10 +419,10 @@ pub fn standard_registry(cfg: &ToolConfig) -> ToolRegistry {
     reg.register(Arc::new(fs::FsRead::new(cfg.fs_root.clone())));
     reg.register(Arc::new(fs::FsWrite::new(cfg.fs_root.clone())));
     reg.register(Arc::new(fs::FsList::new(cfg.fs_root.clone())));
-    // Управляющие инструменты беседы (опциональны, гейтятся набором профиля).
+    // Conversation-control tools (optional, gated by the profile's set).
     reg.register(Arc::new(control::SendFollowupMessage));
     reg.register(Arc::new(control::RewriteCurrentMessage));
-    // Инструменты «модели себя» (опциональны, DB-only, гейтятся набором профиля).
+    // "Self-model" tools (optional, DB-only, gated by the profile's set).
     reg.register(Arc::new(self_model::GetSelfModel));
     reg.register(Arc::new(self_model::Reflect));
     reg.register(Arc::new(self_model::UpdateSelfModel));
@@ -429,7 +431,7 @@ pub fn standard_registry(cfg: &ToolConfig) -> ToolRegistry {
     reg
 }
 
-/// Реестр инструментов: связывает имена с реализациями, отдаёт схемы движку.
+/// Tool registry: maps names to implementations, hands schemas to the engine.
 #[derive(Default)]
 pub struct ToolRegistry {
     tools: BTreeMap<ToolId, Arc<dyn Tool>>,
@@ -440,18 +442,18 @@ impl ToolRegistry {
         Self::default()
     }
 
-    /// Регистрирует инструмент (перезаписывает при совпадении id).
+    /// Registers a tool (overwrites on a matching id).
     pub fn register(&mut self, tool: Arc<dyn Tool>) {
         self.tools.insert(tool.id(), tool);
     }
 
-    /// Инструмент по имени (используется тестами реестра).
+    /// Tool by name (used by registry tests).
     #[allow(dead_code)]
     pub fn get(&self, id: &str) -> Option<&Arc<dyn Tool>> {
         self.tools.get(id)
     }
 
-    /// Снимок метаданных всех зарегистрированных инструментов (для каталога UI).
+    /// Metadata snapshot of all registered tools (for the UI catalog).
     pub fn infos(&self) -> Vec<meta::ToolInfo> {
         self.tools
             .values()
@@ -466,8 +468,8 @@ impl ToolRegistry {
             .collect()
     }
 
-    /// Схемы для подмножества включённых инструментов (профиль ∩ глобально), с
-    /// сохранением порядка `enabled`. Неизвестные имена игнорируются.
+    /// Schemas for a subset of enabled tools (profile ∩ global), preserving
+    /// `enabled`'s order. Unknown names are ignored.
     pub fn schemas_for(
         &self,
         enabled: &[ToolId],
@@ -480,7 +482,7 @@ impl ToolRegistry {
             .collect()
     }
 
-    /// Исполняет инструмент по имени. Ошибка, если инструмент неизвестен.
+    /// Executes a tool by name. Errors if the tool is unknown.
     pub async fn invoke(
         &self,
         id: &str,
@@ -496,14 +498,14 @@ impl ToolRegistry {
 
 #[cfg(test)]
 pub(crate) mod testkit {
-    //! Утилиты для тестов инструментов: построение [`ToolContext`] на временном
-    //! хранилище с mock-движком и детерминированным эмбеддером.
+    //! Utilities for tool tests: building a [`ToolContext`] over temp storage with a
+    //! mock engine and a deterministic embedder.
 
     use super::*;
     use crate::shared::api::mock::{MockBackend, MockEmbedder};
     use crate::shared::paths::Paths;
 
-    /// Дефолтные параметры инструментов для тестов.
+    /// Default tool parameters for tests.
     fn test_params() -> ToolParams {
         ToolParams {
             chunk_params: rag::ChunkParams::default(),
@@ -512,7 +514,7 @@ pub(crate) mod testkit {
         }
     }
 
-    /// Дефолтный снимок хода для тестов (профиль задан, чат — новый).
+    /// Default turn snapshot for tests (profile given, chat is new).
     fn test_turn(profile_id: Uuid) -> TurnInfo {
         TurnInfo {
             profile_id,
@@ -525,14 +527,14 @@ pub(crate) mod testkit {
         }
     }
 
-    /// Контекст инструмента поверх временного хранилища. Возвращает также
-    /// `TempDir` (держать живым) и `Arc<Storage>` (для проверок в тесте).
+    /// Context of a tool over temp storage. Also returns `TempDir` (keep alive)
+    /// and `Arc<Storage>` (for checks in the test).
     pub fn ctx_with_storage(profile_id: Uuid) -> (tempfile::TempDir, Arc<Storage>, ToolContext) {
         ctx_with_storage_lang(profile_id, crate::shared::i18n::Lang::Ru)
     }
 
-    /// Как [`ctx_with_storage`], но с явным языком каркаса (для проверки локализации
-    /// результатов инструментов — напр. `python_exec` на en-профиле).
+    /// Like [`ctx_with_storage`], but with an explicit scaffold language (for
+    /// checking tool-result localization — e.g. `python_exec` on an en profile).
     pub fn ctx_with_storage_lang(
         profile_id: Uuid,
         lang: crate::shared::i18n::Lang,
@@ -550,14 +552,14 @@ pub(crate) mod testkit {
         (dir, storage, ctx)
     }
 
-    /// Контекст инструмента поверх готового пучка зависимостей (тесты, где
-    /// несколько контекстов делят одно хранилище — напр. изоляция по профилю).
+    /// Context of a tool over a ready dependency bundle (tests where several
+    /// contexts share one storage — e.g. profile isolation).
     pub fn ctx_with_deps(profile_id: Uuid, deps: ToolDeps) -> ToolContext {
         ToolContext::new(deps, test_params(), test_turn(profile_id))
     }
 
-    /// Контекст инструмента с кастомными движком/эмбеддером (тесты web/subagent/
-    /// rag/fetch), поверх временного хранилища.
+    /// Context of a tool with a custom engine/embedder (web/subagent/rag/fetch
+    /// tests), over temp storage.
     pub fn ctx_with_backends(
         profile_id: Uuid,
         engine: Arc<dyn EngineBackend>,
@@ -635,11 +637,12 @@ mod tests {
     #[test]
     fn standard_registry_has_all_default_tools() {
         let reg = standard_registry(&ToolConfig::default());
-        // Реестр содержит весь каталог — и дефолтные, и опциональные управляющие.
+        // The registry contains the whole catalog — both default and optional
+        // control ones.
         for id in all_tool_ids() {
-            assert!(reg.get(&id).is_some(), "инструмент {id} не зарегистрирован");
+            assert!(reg.get(&id).is_some(), "tool {id} not registered");
         }
-        // Схемы для полного каталога покрывают все id.
+        // Schemas for the full catalog cover all ids.
         assert_eq!(
             reg.schemas_for(
                 &all_tool_ids(),
@@ -652,27 +655,28 @@ mod tests {
 
     #[test]
     fn all_tool_descriptions_localized_to_en() {
-        // Сильный гейт (§3.5 docs/history/i18n.md): описание КАЖДОГО инструмента на en не
-        // содержит кириллицы и отличается от ru — ловит забытый `_loc` в любой группе.
+        // Strong gate (§3.5 docs/history/i18n.md): every tool's en description
+        // contains no Cyrillic and differs from ru — catches a forgotten `_loc` in
+        // any group.
         use crate::shared::i18n::{Lang, locale};
         let reg = standard_registry(&ToolConfig::default());
         let (ru, en) = (locale(Lang::Ru), locale(Lang::En));
         for id in all_tool_ids() {
-            let t = reg.get(&id).expect("инструмент в реестре");
+            let t = reg.get(&id).expect("tool in registry");
             let d_en = t.description(en);
             assert!(
                 !d_en
                     .chars()
                     .any(|c| ('а'..='я').contains(&c) || ('А'..='Я').contains(&c)),
-                "{id}: кириллица в en-описании: {d_en}"
+                "{id}: Cyrillic in en description: {d_en}"
             );
-            assert_ne!(t.description(ru), d_en, "{id}: описание не локализовано");
+            assert_ne!(t.description(ru), d_en, "{id}: description not localized");
         }
     }
 
     #[test]
     fn note_revise_is_default_tool() {
-        // Ревизия заметки — центральна для интеграции, включена по умолчанию.
+        // Note revision is central to integration — enabled by default.
         assert!(
             default_tool_ids()
                 .iter()
@@ -682,7 +686,7 @@ mod tests {
 
     #[test]
     fn control_tools_optional_not_in_defaults() {
-        // Управляющие инструменты — в каталоге, но не среди дефолтных (выкл по умолч.).
+        // Control tools — in the catalog, but not among the defaults (off by default).
         assert!(
             !default_tool_ids()
                 .iter()
@@ -707,7 +711,7 @@ mod tests {
 
     #[test]
     fn self_model_tools_optional_not_in_defaults() {
-        // Инструменты «модели себя» — в каталоге, но не среди дефолтных.
+        // "Self-model" tools — in the catalog, but not among the defaults.
         for id in [
             self_model::GET_SELF_MODEL_ID,
             self_model::REFLECT_ID,
@@ -717,14 +721,14 @@ mod tests {
         ] {
             assert!(
                 !default_tool_ids().iter().any(|t| t == id),
-                "{id} в дефолтах"
+                "{id} in defaults"
             );
             assert!(
                 all_tool_ids().iter().any(|t| t == id),
-                "{id} нет в каталоге"
+                "{id} not in catalog"
             );
         }
-        // DB-only: проходят эффективный набор без глобальных гейтов.
+        // DB-only: pass the effective set with no global gates.
         let eff = effective_tool_ids(&all_tool_ids(), false, false, false, false, None);
         assert!(eff.iter().any(|t| t == self_model::GET_SELF_MODEL_ID));
         assert!(eff.iter().any(|t| t == self_model::UPDATE_SELF_MODEL_ID));
@@ -733,13 +737,13 @@ mod tests {
     #[test]
     fn effective_tool_ids_gates_external_tools() {
         let enabled = default_tool_ids();
-        // web on, python off, fs off → есть web_search/fetch_url, нет python/fs.
+        // web on, python off, fs off → web_search/fetch_url present, no python/fs.
         let eff = effective_tool_ids(&enabled, true, false, false, false, None);
         assert!(eff.iter().any(|t| t == WEB_SEARCH_ID));
         assert!(eff.iter().any(|t| t == FETCH_URL_ID));
         assert!(!eff.iter().any(|t| t == PYTHON_EXEC_ID));
         assert!(!eff.iter().any(|t| t == fs::FS_READ_ID));
-        // всё off → ни одного внешнего/файлового, но внутренние остаются.
+        // everything off → no external/file tools, but internal ones remain.
         let eff = effective_tool_ids(&enabled, false, false, false, false, None);
         assert!(!eff.iter().any(|t| t == WEB_SEARCH_ID || t == FETCH_URL_ID));
         assert!(
@@ -747,10 +751,10 @@ mod tests {
                 .any(|t| t == fs::FS_READ_ID || t == fs::FS_WRITE_ID || t == fs::FS_LIST_ID)
         );
         assert!(eff.iter().any(|t| t == "note_save"));
-        // безопасные инструменты доступны всегда.
+        // safe tools are always available.
         assert!(eff.iter().any(|t| t == "calculate"));
         assert!(eff.iter().any(|t| t == "current_time"));
-        // fs on → файловые инструменты появляются.
+        // fs on → file tools appear.
         let eff = effective_tool_ids(&enabled, false, false, true, false, None);
         assert!(eff.iter().any(|t| t == fs::FS_READ_ID));
         assert!(eff.iter().any(|t| t == fs::FS_WRITE_ID));
@@ -760,8 +764,8 @@ mod tests {
     #[test]
     fn effective_tool_ids_keeps_sampling_tools_when_params_available() {
         let enabled = default_tool_ids();
-        // Любой текущий режим имеет хотя бы один доступный параметр (max_tokens) —
-        // инструменты семплинга остаются доступны (локально и в облаке).
+        // Any current mode has at least one available parameter (max_tokens) —
+        // sampling tools stay available (locally and in the cloud).
         for provider in [
             None,
             Some(CloudProvider::OpenAi),
@@ -771,7 +775,7 @@ mod tests {
             let eff = effective_tool_ids(&enabled, false, false, false, false, provider);
             assert!(
                 eff.iter().any(|t| t == GET_SAMPLING_ID),
-                "get_sampling должен быть доступен для {provider:?}"
+                "get_sampling must be available for {provider:?}"
             );
             assert!(eff.iter().any(|t| t == SET_SAMPLING_ID));
         }
@@ -779,8 +783,8 @@ mod tests {
 
     #[test]
     fn effective_tool_ids_gates_mcp_tools_by_prefix() {
-        // Инструменты MCP (динамические, вне CATALOG) гейтятся мастер-выключателем
-        // по префиксу `mcp__`; внутренние инструменты от него не зависят.
+        // MCP tools (dynamic, outside CATALOG) are gated by the master switch by
+        // the `mcp__` prefix; internal tools don't depend on it.
         let enabled: Vec<ToolId> = vec!["note_save".into(), "mcp__fs__read_text_file".into()];
         let eff = effective_tool_ids(&enabled, false, false, false, false, None);
         assert!(!eff.iter().any(|t| t.starts_with(mcp::MCP_TOOL_PREFIX)));
@@ -793,7 +797,7 @@ mod tests {
     fn schemas_for_filters_and_orders() {
         let mut reg = ToolRegistry::new();
         reg.register(Arc::new(Echo));
-        // Только включённые имена попадают в схемы; неизвестные игнорируются.
+        // Only enabled names make it into the schemas; unknown ones are ignored.
         let schemas = reg.schemas_for(
             &["echo".into(), "missing".into()],
             crate::shared::i18n::locale(crate::shared::i18n::Lang::Ru),

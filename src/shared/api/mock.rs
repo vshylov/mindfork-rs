@@ -1,4 +1,4 @@
-//! Mock-реализация [`EngineBackend`] для тестов оркестратора (без сервера/сети).
+//! Mock implementation of [`EngineBackend`] for orchestrator tests (no server/network).
 
 use std::collections::VecDeque;
 use std::sync::Mutex;
@@ -8,20 +8,19 @@ use tokio_util::sync::CancellationToken;
 
 use super::contract::{ChatChunk, ChatRequest, ChatStream, Embedder, EngineBackend, FinishReason};
 
-/// Скриптованный движок: проигрывает заранее заданные фрагменты. Поддерживает
-/// **последовательность** скриптов по вызовам (для раундов agentic-loop).
+/// A scripted engine: plays back preset fragments. Supports a **sequence** of
+/// scripts across calls (for agentic-loop rounds).
 pub struct MockBackend {
-    /// Очередь скриптов: один на каждый вызов `chat_stream`.
+    /// A queue of scripts: one per `chat_stream` call.
     scripts: Mutex<VecDeque<Vec<ChatChunk>>>,
-    /// После проигрывания скрипта ждать отмены и завершить `Cancelled`
-    /// (имитация длинной генерации).
+    /// After playing the script, wait for cancellation and finish `Cancelled`
+    /// (simulates a long generation).
     wait_for_cancel: bool,
 }
 
 impl MockBackend {
-    /// Движок, проигрывающий фрагменты и завершающийся ими (`script` должен
-    /// содержать терминальный [`ChatChunk::Finished`]). Один и тот же скрипт на
-    /// каждый вызов.
+    /// An engine that plays back fragments and finishes with them (`script` must
+    /// contain a terminal [`ChatChunk::Finished`]). The same script on every call.
     pub fn scripted(script: Vec<ChatChunk>) -> Self {
         Self {
             scripts: Mutex::new(VecDeque::from([script])),
@@ -29,9 +28,9 @@ impl MockBackend {
         }
     }
 
-    /// Движок, отдающий разные скрипты по очереди (по одному на вызов
-    /// `chat_stream`) — для проверки раундов agentic-loop. После исчерпания
-    /// очереди отдаёт пустой ход (Finished Stop).
+    /// An engine that hands out different scripts in order (one per `chat_stream`
+    /// call) — for testing agentic-loop rounds. Once the queue is exhausted, gives an
+    /// empty turn (Finished Stop).
     pub fn sequence(scripts: Vec<Vec<ChatChunk>>) -> Self {
         Self {
             scripts: Mutex::new(VecDeque::from(scripts)),
@@ -39,7 +38,7 @@ impl MockBackend {
         }
     }
 
-    /// Движок, который проигрывает `prefix`, затем «висит» до отмены.
+    /// An engine that plays back `prefix`, then "hangs" until cancelled.
     pub fn cancellable(prefix: Vec<ChatChunk>) -> Self {
         Self {
             scripts: Mutex::new(VecDeque::from([prefix])),
@@ -55,8 +54,8 @@ impl EngineBackend for MockBackend {
         _req: ChatRequest,
         cancel: CancellationToken,
     ) -> Result<ChatStream> {
-        // Для scripted очередь не исчерпываем (повторяем последний скрипт);
-        // для sequence — берём следующий по порядку.
+        // For scripted, don't drain the queue (repeat the last script);
+        // for sequence — take the next one in order.
         let script = {
             let mut q = self.scripts.lock().unwrap();
             if q.len() > 1 {
@@ -83,8 +82,8 @@ impl EngineBackend for MockBackend {
     }
 }
 
-/// Детерминированный in-process эмбеддер для тестов: bag-of-chars в `dim`
-/// измерений с L2-нормализацией (близкие тексты дают близкие векторы).
+/// A deterministic in-process embedder for tests: bag-of-chars in `dim`
+/// dimensions with L2 normalization (similar texts give similar vectors).
 pub struct MockEmbedder {
     dim: usize,
 }

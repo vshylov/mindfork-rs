@@ -18,7 +18,6 @@ from __future__ import annotations
 import subprocess, re, sys, os, collections
 
 CYR = re.compile(r"[Ѐ-ӿ]")
-STRLIT = re.compile(r'"[^"]*[Ѐ-ӿ][^"]*"')
 TEST_MARKER = re.compile(r"#\[cfg\(test\)\]|mod tests|#\[test\]|#\[tokio::test")
 
 # Physical-key data (always kept): a modifier + a single Cyrillic letter (the
@@ -37,6 +36,9 @@ def strip_key_data(s: str) -> str:
 SKIP_EXT = (".png", ".ico", ".dic", ".aff")
 SKIP_FILES = {
     "locales/ru.json",
+    # The migration glossary is a RU -> EN mapping table: the Russian column is
+    # its content. Removed (or demoted to a terminology note) once this lands.
+    "tools/glossary-ru-en.md",
     # This doc is *about* Cyrillic Mermaid rendering: its repro inputs (table
     # rows and a fenced diagram) must stay Cyrillic to demonstrate a
     # byte-offset-vs-char-offset bug that ASCII would not trigger. Inline
@@ -68,14 +70,17 @@ def allowed_line(path: str, line: str, in_test: bool) -> bool:
         return True
     stripped = line.lstrip()
     if path.endswith(".rs"):
-        # Comments always translate; a Cyrillic *string literal* inside a test
-        # module is an assertion on the `ru` locale and stays.
+        # Comments always translate, wherever they sit.
         if stripped.startswith("//"):
             return False
         code = line.split("//", 1)[0]
-        if CYR.search(code) and STRLIT.search(code):
-            return in_test  # prod strings must be gone; test strings stay
-        return False
+        if not CYR.search(code):
+            return False  # Cyrillic only in a trailing comment -> translate
+        # Cyrillic in code position: inside tests that is fixture/assertion data
+        # and stays (Rust has no Cyrillic identifiers here). This deliberately
+        # covers multi-line string literals, whose opening quote sits on an
+        # earlier line. Outside tests it is a production string -> Phase 5.
+        return in_test
     if path.endswith(".desktop"):
         # Localized keys such as `Comment[ru]=...` are the ru UI translation.
         return bool(re.match(r"[A-Za-z]+\[ru\]\s*=", stripped))
@@ -102,7 +107,10 @@ def main() -> int:
             continue
         if not CYR.search(data):
             continue
-        in_test = False
+        # A dedicated test module (`foo/tests.rs`, or anything under `tests/`)
+        # is test code end to end: its `#[cfg(test)]` marker sits in the parent
+        # `mod.rs`, not in the file itself.
+        in_test = path.endswith("tests.rs") or "/tests/" in path
         ok_block = False
         hits: list[tuple[int, str]] = []
         for i, line in enumerate(data.split("\n"), 1):

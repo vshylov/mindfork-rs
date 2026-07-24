@@ -1,6 +1,6 @@
-//! Статус-бар: состояние сервера, индикатор генерации, счётчик токенов
-//! ответа/контекста, подсказки по клавишам. См. spec §11.1. Модель/профиль —
-//! позже.
+//! Status bar: server status, a generation indicator, a reply/context token
+//! counter, key hints. See spec §11.1. Model/profile —
+//! later.
 
 use ratatui::Frame;
 use ratatui::layout::Rect;
@@ -13,8 +13,8 @@ use crate::shared::server::{ServerStatus, ServerStatuses};
 use crate::shared::theme::Palette;
 use crate::shared::wrap;
 
-/// Ключи постоянных хоткеев статус-бара (после тумблера мыши `Ctrl+W`, чьё описание
-/// зависит от режима). «Клавиша» + ключ описания (локализуется в [`lines`]).
+/// Keys of the status bar's fixed hotkeys (after the mouse toggle `Ctrl+W`, whose
+/// description depends on the mode). "Key" + a description key (localized in [`lines`]).
 const HOTKEYS: [(&str, &str); 5] = [
     ("F1", "ui.status.hotkey.help"),
     ("Esc", "ui.status.hotkey.chats"),
@@ -23,37 +23,37 @@ const HOTKEYS: [(&str, &str); 5] = [
     ("Ctrl+Q", "ui.status.hotkey.quit"),
 ];
 
-/// Зазор между столбцами хоткеев и между пилюлей статуса и сеткой хоткеев.
+/// Gap between hotkey columns and between the status pill and the hotkey grid.
 const GAP: usize = 3;
 
-/// Снимок состояния для строки статуса — экран собирает его в одном месте
-/// ([`ChatScreen::status_model`](crate::screens::chat::ChatScreen)), поэтому новый
-/// индикатор добавляет поле, а не расширяет сигнатуры `render`/`height`.
-/// `tokens` — токенов ответа (live), `context` — токенов переписки (промпта; `None`
-/// — неизвестно), `context_exact` — точное ли это число из `usage` сервера (иначе
-/// оценка, помечается `~`). `mouse_scroll` — включён ли захват мыши для прокрутки
-/// колесом (иначе нативное выделение текста). `background` — тихий индикатор фоновой
-/// задачи (авто-рефлексия/консолидация; `None` — нет). См. spec §11.1, §11.3.
+/// A state snapshot for the status line — the screen assembles it in one place
+/// ([`ChatScreen::status_model`](crate::screens::chat::ChatScreen)), so a new
+/// indicator adds a field rather than extending the `render`/`height` signatures.
+/// `tokens` — reply tokens (live), `context` — conversation (prompt) tokens (`None`
+/// — unknown), `context_exact` — whether this is the exact number from the server's `usage`
+/// (otherwise an estimate, marked with `~`). `mouse_scroll` — whether mouse capture for
+/// wheel scrolling is on (otherwise native text selection). `background` — a quiet indicator of a
+/// background task (auto-reflection/consolidation; `None` — none). See spec §11.1, §11.3.
 pub struct StatusModel<'a> {
     pub statuses: &'a ServerStatuses,
     pub generating: bool,
     pub tokens: u64,
     pub context: Option<u64>,
     pub context_exact: bool,
-    /// Reasoning-токенов («мыслей») в ответе (входят в `tokens`); `0` — не показывать.
+    /// Reasoning tokens ("thoughts") in the reply (included in `tokens`); `0` — don't show.
     pub reasoning: u32,
     pub mouse_scroll: bool,
     pub background: Option<&'a str>,
-    /// Идёт озвучивание (`/tts`) — тихий чип «озвучка». См. spec §11.9.
+    /// Speech synthesis is running (`/tts`) — a quiet "speaking" chip. See spec §11.9.
     pub speaking: bool,
 }
 
-/// Глиф индикатора озвучивания (WGL4, ширина 1 колонка — сетка хоткеев не «съезжает»).
+/// The speaking-indicator glyph (WGL4, width 1 column — the hotkey grid doesn't "shift").
 const SPEAKING_GLYPH: char = '♪';
 
-/// Рисует статус-строку в `area`. Когда хоткеи не помещаются по ширине, они
-/// переносятся на следующие строки аккуратной сеткой (как в оверлее списка чатов);
-/// высоту под это отводит вызывающий через [`height`]. См. spec §11.1, §11.3.
+/// Draws the status line in `area`. When hotkeys don't fit by width, they
+/// wrap onto the next lines as a neat grid (like in the chat-list overlay);
+/// the caller reserves height for this via [`height`]. See spec §11.1, §11.3.
 pub fn render(
     frame: &mut Frame,
     area: Rect,
@@ -65,20 +65,20 @@ pub fn render(
     frame.render_widget(Paragraph::new(lines), area);
 }
 
-/// Сколько строк займёт статус-бар при ширине `width` — вызывающий отводит под него
-/// ровно эту высоту (минимум 1). Хоткеи переносятся, когда не помещаются.
+/// How many lines the status bar takes at width `width` — the caller reserves
+/// exactly this height (minimum 1). Hotkeys wrap when they don't fit.
 pub fn height(width: usize, model: &StatusModel, palette: &Palette, loc: &'static Locale) -> u16 {
     lines(width, model, palette, loc)
         .len()
         .clamp(1, u16::MAX as usize) as u16
 }
 
-/// Раскладывает хоткеи в аккуратную сетку, **прижатую к правому краю** `width` — та
-/// же логика переноса, что и в статус-баре экрана чата, но без пилюли статуса
-/// (`state = None`). Число столбцов — максимум влезающих в ширину (→ минимум строк);
-/// при переполнении хоткеи переносятся вниз, столбцы совпадают по вертикали, а
-/// неполная нижняя строка прижата вправо под столбцами выше. Возвращает пусто на
-/// пустом наборе. Используется экраном настроек (см. spec §11.1, §11.6).
+/// Lays hotkeys out in a neat grid, **right-aligned** to `width` — the same
+/// wrapping logic as the chat screen's status bar, but without the status pill
+/// (`state = None`). Column count — the max that fits the width (→ fewest rows);
+/// on overflow hotkeys wrap down, columns line up vertically, and an
+/// incomplete bottom row is right-aligned under the columns above. Returns empty for
+/// an empty set. Used by the settings screen (see spec §11.1, §11.6).
 pub fn hotkey_lines(
     width: usize,
     hotkeys: &[(&str, &str)],
@@ -87,7 +87,7 @@ pub fn hotkey_lines(
     if hotkeys.is_empty() {
         return Vec::new();
     }
-    // Ширина ячейки как в `lines`: «клавиша» (+2 на отступы) + пробел + описание.
+    // Cell width as in `lines`: "key" (+2 for padding) + a space + the description.
     let cell_w: Vec<usize> = hotkeys
         .iter()
         .map(|(key, desc)| str_w(key) + 2 + 1 + str_w(desc))
@@ -100,14 +100,14 @@ pub fn hotkey_lines(
     right_grid(hotkeys, &cell_w, cols, width, None, None, palette)
 }
 
-/// Собирает строки статус-бара. Слева на **верхней** строке — «состояние» (пилюля
-/// статуса, индикатор генерации, счётчик токенов), прижатое к левому краю. Справа —
-/// хоткеи (начиная с тумблера мыши `Ctrl+W`, чьё описание = текущий режим), выложенные
-/// аккуратной сеткой и **прижатые к правому краю**: когда всё влезает — одна строка
-/// (пилюля слева, хоткеи справа); когда нет — хоткеи переносятся ВНИЗ сеткой, столбцы
-/// которой совпадают по вертикали, а неполная (перенесённая) строка прижата вправо —
-/// её клавиши встают ровно под столбцами строки выше, не привлекая внимание к
-/// левой/средней части окна. Пилюля статуса делит верхнюю строку с сеткой. См.
+/// Builds the status bar's lines. On the left, on the **top** row — "state" (the status
+/// pill, generation indicator, token counter), left-aligned. On the right —
+/// hotkeys (starting with the mouse toggle `Ctrl+W`, whose description = the current mode), laid out
+/// as a neat grid and **right-aligned**: when everything fits — one line
+/// (pill on the left, hotkeys on the right); when it doesn't — hotkeys wrap DOWN into a grid
+/// whose columns line up vertically, and an incomplete (wrapped) row is right-aligned —
+/// its keys land exactly under the columns of the row above, not drawing attention to
+/// the left/middle part of the window. The status pill shares the top row with the grid. See
 /// spec §11.1, §11.3.
 fn lines(
     width: usize,
@@ -115,7 +115,7 @@ fn lines(
     palette: &Palette,
     loc: &'static Locale,
 ) -> Vec<Line<'static>> {
-    // Поля Copy (ссылки/скаляры) — разворачиваем в локальные, тело ниже не меняется.
+    // Copy fields (refs/scalars) — unpacked into locals, the body below is unchanged.
     let statuses = model.statuses;
     let generating = model.generating;
     let tokens = model.tokens;
@@ -128,10 +128,10 @@ fn lines(
     let sep = || Span::styled("  │  ", Style::new().fg(palette.border));
     let muted = palette.muted_style();
 
-    // --- «состояние»: чипы серверов + генерация + счётчик токенов ---
-    // Чат-сервер показывается всегда (с причиной обрыва — он блокирует генерацию);
-    // эмбеддинги и имперсонация — отдельными чипами и только когда настроены
-    // (`NotConfigured`, в т.ч. имперсонация в `shared`, → чип скрыт).
+    // --- "state": server chips + generation + token counter ---
+    // The chat server is always shown (with the disconnect reason — it blocks
+    // generation); embeddings and impersonation — separate chips, only when configured
+    // (`NotConfigured`, including impersonation in `shared`, → the chip is hidden).
     let mut state = chat_chip(&statuses.chat, palette, loc);
     for chip in [
         secondary_chip(loc.t("ui.status.chip.embed"), &statuses.embed, palette),
@@ -144,7 +144,7 @@ fn lines(
     .into_iter()
     .flatten()
     {
-        state.push(Span::raw("  ")); // зазор между чипами
+        state.push(Span::raw("  ")); // gap between chips
         state.extend(chip);
     }
 
@@ -159,9 +159,9 @@ fn lines(
             palette.accent_style(),
         ));
     }
-    // Суммарный счётчик токенов (переписка + ответ): ярко во время генерации (растёт
-    // live), приглушённо после (итог последнего хода). Помечается `~`, пока переписка
-    // (промпт) — клиентская оценка, т.е. до прихода точного числа из `usage` сервера.
+    // The combined token counter (conversation + reply): bright during generation (grows
+    // live), muted afterward (the last turn's final result). Marked with `~` while the
+    // conversation (prompt) is a client-side estimate, i.e. before the exact number arrives from the server's `usage`.
     if tokens > 0 || context.is_some() {
         state.push(sep());
         let total = context.unwrap_or(0) + tokens;
@@ -170,7 +170,7 @@ fn lines(
         } else {
             ""
         };
-        // Reasoning-токены («мысли») — отдельной пометкой, они входят в общий счёт.
+        // Reasoning tokens ("thoughts") — a separate annotation, they're included in the total.
         let reason = if reasoning > 0 {
             loc.tf("ui.status.reasoning", &[("n", &reasoning.to_string())])
         } else {
@@ -190,8 +190,8 @@ fn lines(
             state.push(Span::styled(label, muted));
         }
     }
-    // Тихий индикатор фоновой задачи (авто-рефлексия/консолидация) — приглушённо,
-    // глиф `✻` (компат — `*`) шириной 1 колонка (раскладка сетки не «съезжает»).
+    // A quiet indicator of a background task (auto-reflection/consolidation) — muted,
+    // the `✻` glyph (compat — `*`) width 1 column (the grid layout doesn't "shift").
     if let Some(hint) = background {
         state.push(sep());
         state.push(Span::styled(
@@ -199,9 +199,9 @@ fn lines(
             muted,
         ));
     }
-    // Тихий индикатор озвучивания — тем же приглушённым стилем. Нота `♪` (U+266A)
-    // входит в WGL4 и шириной 1 колонка, поэтому в компат-режиме не заменяется
-    // (как `▌`-рейлы ленты и `█` скроллбара). См. spec §11.9.
+    // A quiet speaking indicator — in the same muted style. The `♪` note (U+266A)
+    // is in WGL4 and width 1 column, so it isn't replaced in compat mode
+    // (like the feed's `▌` rails and the `█` scrollbar). See spec §11.9.
     if speaking {
         state.push(sep());
         state.push(Span::styled(
@@ -211,7 +211,7 @@ fn lines(
     }
     let state_w = spans_width(&state);
 
-    // Хоткеи: тумблер мыши `Ctrl+W` (описание = текущий режим) + постоянные.
+    // Hotkeys: the mouse toggle `Ctrl+W` (description = the current mode) + the fixed ones.
     let mouse_desc = if mouse_scroll {
         loc.t("ui.status.mouse.scroll")
     } else {
@@ -220,18 +220,18 @@ fn lines(
     let mut hotkeys: Vec<(&str, &str)> = vec![("Ctrl+W", mouse_desc)];
     hotkeys.extend(HOTKEYS.iter().map(|(key, k)| (*key, loc.t(k))));
     let n = hotkeys.len();
-    // В режиме «прокрутка» выделяем описание тумблера мыши (индекс 0) цветом
-    // `accent` — тем же, которым подсвечиваются заголовки markdown в ленте.
+    // In "scroll" mode, highlight the mouse toggle's description (index 0) with the
+    // `accent` color — the same one that highlights markdown headings in the feed.
     let accent_idx = mouse_scroll.then_some(0usize);
 
-    // Ширина каждой ячейки: «клавиша» (+2 на отступы) + пробел + описание.
+    // Each cell's width: "key" (+2 for padding) + a space + the description.
     let cell_w: Vec<usize> = hotkeys
         .iter()
         .map(|(key, desc)| str_w(key) + 2 + 1 + str_w(desc))
         .collect();
 
-    // Подбираем максимум столбцов (→ минимум строк), при которых пилюля статуса
-    // делит верхнюю строку с прижатой вправо сеткой (`state + GAP + блок ≤ ширины`).
+    // Pick the max number of columns (→ fewest rows) at which the status pill
+    // can share the top line with the right-aligned grid (`state + GAP + block ≤ width`).
     let mut cols = 0;
     for c in (1..=n).rev() {
         if state_w + GAP + grid_layout(&cell_w, c).2 <= width {
@@ -251,8 +251,8 @@ fn lines(
         );
     }
 
-    // Слишком узко даже под один столбец рядом с пилюлей — «состояние» отдельной
-    // верхней строкой, а хоткеи прижатой вправо сеткой под ним (без наложения).
+    // Too narrow even for one column next to the pill — "state" gets its own
+    // top line, and hotkeys go into a right-aligned grid below it (no overlap).
     cols = (1..=n)
         .rev()
         .find(|&c| grid_layout(&cell_w, c).2 <= width)
@@ -264,9 +264,9 @@ fn lines(
     out
 }
 
-/// Глиф и цвет статуса сервера для чипа строки статуса. Глифы шириной 1 колонка
-/// (без эмодзи) — раскладка строки от них не «съезжает». Готовность — `●` в обоих
-/// наборах (WGL4-безопасен); «подключение»/«нет связи» в компат-режиме — `○`/`×`.
+/// The glyph and color of a server's status for the status line's chip. Glyphs are width 1
+/// column (no emoji) — the line's layout doesn't "shift" because of them. Ready — `●` in both
+/// sets (WGL4-safe); "connecting"/"no connection" in compat mode — `○`/`×`.
 fn status_glyph(status: &ServerStatus, palette: &Palette) -> (&'static str, Color) {
     let glyphs = palette.glyphs();
     match status {
@@ -277,7 +277,7 @@ fn status_glyph(status: &ServerStatus, palette: &Palette) -> (&'static str, Colo
     }
 }
 
-/// Собирает чип: жирный глиф + метка (с ведущим пробелом), оба цвета статуса.
+/// Builds a chip: a bold glyph + a label (with a leading space), both in the status color.
 fn chip(glyph: &'static str, label: String, color: Color) -> Vec<Span<'static>> {
     vec![
         Span::styled(glyph, Style::new().fg(color).add_modifier(Modifier::BOLD)),
@@ -285,9 +285,9 @@ fn chip(glyph: &'static str, label: String, color: Color) -> Vec<Span<'static>> 
     ]
 }
 
-/// Чип чат-сервера — показывается всегда. Помимо глифа и метки несёт текст причины,
-/// когда сервер недоступен/не настроен: он блокирует генерацию, и пользователю
-/// нужно знать, почему (у вторичных серверов причина опущена ради компактности).
+/// The chat-server chip — always shown. Besides the glyph and label it carries the reason
+/// text when the server is unavailable/not configured: it blocks generation, and the
+/// user needs to know why (secondary servers omit the reason for compactness).
 fn chat_chip(status: &ServerStatus, palette: &Palette, loc: &'static Locale) -> Vec<Span<'static>> {
     let (glyph, color) = status_glyph(status, palette);
     let label = match status {
@@ -298,10 +298,10 @@ fn chat_chip(status: &ServerStatus, palette: &Palette, loc: &'static Locale) -> 
     chip(glyph, label, color)
 }
 
-/// Чип вторичного сервера (эмбеддинги/имперсонация): глиф + метка, цвет по статусу,
-/// без текста причины (компактно). `None`, когда сервер не настроен
-/// (`NotConfigured`) — чип скрыт, не захламляет строку (имперсонация в режиме
-/// `shared` тоже `NotConfigured`).
+/// A secondary server's chip (embeddings/impersonation): glyph + label, color by status,
+/// no reason text (compact). `None` when the server isn't configured
+/// (`NotConfigured`) — the chip is hidden, doesn't clutter the line (impersonation in
+/// `shared` mode is also `NotConfigured`).
 fn secondary_chip(
     label: &str,
     status: &ServerStatus,
@@ -314,17 +314,17 @@ fn secondary_chip(
     Some(chip(glyph, label.to_string(), color))
 }
 
-/// Раскладка хоткеев по сетке `cols` столбцов: ячейки заполняются по строкам
-/// слева-направо/сверху-вниз, но **неполная нижняя строка прижата вправо** (её ячейки
-/// занимают крайние правые столбцы, под полными строками). Возвращает карту
-/// `grid[row][col] = Some(индекс ячейки)`, ширины столбцов (максимум по ячейкам столбца)
-/// и общую ширину блока (сумма столбцов + зазоры). Так перенесённые клавиши встают
-/// ровно под столбцами строки выше (как в окне списка чатов), а не «плавающей» группой.
+/// Lays hotkeys out on a grid of `cols` columns: cells fill row-by-row,
+/// left-to-right/top-to-bottom, but **an incomplete bottom row is right-aligned** (its cells
+/// take the rightmost columns, under the full rows). Returns a map
+/// `grid[row][col] = Some(cell index)`, column widths (max over each column's cells)
+/// and the block's total width (the sum of columns + gaps). This way wrapped keys land
+/// exactly under the columns of the row above (as in the chat-list window), not as a "floating" group.
 fn grid_layout(cell_w: &[usize], cols: usize) -> (Vec<Vec<Option<usize>>>, Vec<usize>, usize) {
     let n = cell_w.len();
     let rows = n.div_ceil(cols);
-    let full = (rows - 1) * cols; // ячеек в полных строках
-    let empty_lead = cols - (n - full); // пустых столбцов в начале нижней строки
+    let full = (rows - 1) * cols; // cells in full rows
+    let empty_lead = cols - (n - full); // empty columns at the start of the bottom row
 
     let mut grid = vec![vec![None; cols]; rows];
     for i in 0..n {
@@ -348,9 +348,9 @@ fn grid_layout(cell_w: &[usize], cols: usize) -> (Vec<Vec<Option<usize>>>, Vec<u
     (grid, colw, block_w)
 }
 
-/// Рисует хоткеи сеткой, прижатой к правому краю `width` (столбцы выровнены по
-/// вертикали; неполная нижняя строка — под крайними правыми столбцами). Если задан
-/// `state`, пилюля статуса вставляется в левый край **верхней** строки.
+/// Draws hotkeys as a grid right-aligned to `width` (columns aligned
+/// vertically; an incomplete bottom row — under the rightmost columns). If
+/// `state` is given, the status pill is inserted at the left edge of the **top** row.
 fn right_grid(
     hotkeys: &[(&str, &str)],
     cell_w: &[usize],
@@ -366,8 +366,8 @@ fn right_grid(
     let mut out: Vec<Line<'static>> = Vec::new();
     for (r, row) in grid.iter().enumerate() {
         let mut spans: Vec<Span<'static>> = Vec::new();
-        // Левое поле: на верхней строке — пилюля статуса, остаток (и прочие строки) —
-        // пробелы (сетка прижата вправо).
+        // The left margin: on the top row — the status pill, the rest (and other rows) —
+        // spaces (the grid is right-aligned).
         if r == 0
             && let Some(state) = state.take()
         {
@@ -379,8 +379,8 @@ fn right_grid(
         } else if lead > 0 {
             spans.push(Span::raw(" ".repeat(lead)));
         }
-        // Столбцы: ячейка добивается до ширины столбца (+ зазор, кроме последнего),
-        // пустой столбец — целиком пробелами (так столбцы совпадают по вертикали).
+        // Columns: a cell is padded out to the column's width (+ a gap, except the last),
+        // an empty column — entirely spaces (this way columns line up vertically).
         for (c, cell) in row.iter().enumerate() {
             let gap = if c + 1 < cols { GAP } else { 0 };
             match cell {
@@ -404,12 +404,12 @@ fn right_grid(
     out
 }
 
-/// Видимая ширина строки в колонках терминала.
+/// The visible width of a string in terminal columns.
 fn str_w(s: &str) -> usize {
     wrap::display_width(&s.chars().collect::<Vec<_>>())
 }
 
-/// Суммарная видимая ширина набора спанов.
+/// Total visible width of a set of spans.
 fn spans_width(spans: &[Span<'_>]) -> usize {
     spans.iter().map(|s| str_w(&s.content)).sum()
 }
@@ -422,7 +422,7 @@ mod tests {
         crate::shared::i18n::locale(crate::shared::i18n::Lang::Ru)
     }
 
-    /// Снимок статусов: чат `chat`, эмбеддинги/имперсонация не настроены (чипы скрыты).
+    /// A status snapshot: chat `chat`, embeddings/impersonation not configured (chips hidden).
     fn only_chat(chat: ServerStatus) -> ServerStatuses {
         ServerStatuses {
             chat,
@@ -431,12 +431,12 @@ mod tests {
         }
     }
 
-    /// Снимок с готовым чат-сервером (вторичные не настроены).
+    /// A snapshot with a ready chat server (secondaries not configured).
     fn ready() -> ServerStatuses {
         only_chat(ServerStatus::Ready)
     }
 
-    /// Снимок статуса для тестов (background = `None`).
+    /// A status snapshot for tests (background = `None`).
     fn model<'a>(
         statuses: &'a ServerStatuses,
         generating: bool,
@@ -458,7 +458,7 @@ mod tests {
         }
     }
 
-    /// Весь текст статус-бара одной строкой (широкая ширина → одна строка).
+    /// The whole status-bar text as one string (wide width → one line).
     fn flat(
         statuses: &ServerStatuses,
         generating: bool,
@@ -497,9 +497,9 @@ mod tests {
 
     #[test]
     fn localized_for_all_langs() {
-        // Статус-бар (ось B) под каждым языком: чип чата и хоткей выхода — из бандла
-        // того же языка; en — латиница. Проверяем и отсутствие паники на разной
-        // ширине текста перевода.
+        // The status bar (axis B) under every language: the chat chip and the quit hotkey — from
+        // that language's bundle; en — Latin script. Also checks there's no panic on different
+        // widths of the translated text.
         let statuses = ready();
         let m = model(&statuses, false, 0, None, false, false);
         for &lang in crate::shared::i18n::Lang::ALL {
@@ -524,7 +524,7 @@ mod tests {
 
     #[test]
     fn secondary_chips_shown_only_when_configured() {
-        // Эмбеддинги и имперсонация настроены — оба чипа видны.
+        // Embeddings and impersonation configured — both chips are visible.
         let all = ServerStatuses {
             chat: ServerStatus::Ready,
             embed: ServerStatus::Ready,
@@ -535,7 +535,7 @@ mod tests {
             t.contains("чат") && t.contains("эмб") && t.contains("имп"),
             "{t}"
         );
-        // Имперсонация в `shared` / эмбеддинги выкл (NotConfigured) — чипы скрыты.
+        // Impersonation in `shared` / embeddings off (NotConfigured) — chips hidden.
         let t = text(&ready(), false);
         assert!(
             t.contains("чат") && !t.contains("эмб") && !t.contains("имп"),
@@ -545,8 +545,8 @@ mod tests {
 
     #[test]
     fn compat_palette_swaps_chip_and_activity_glyphs() {
-        // В режиме совместимости: «подключение» — `○`, обрыв — `×`, генерация — `»`,
-        // фоновая задача — `*`; готовность остаётся `●` (WGL4-безопасен).
+        // In compatibility mode: "connecting" — `○`, a disconnect — `×`, generation — `»`,
+        // a background task — `*`; readiness stays `●` (WGL4-safe).
         let compat = Palette::default().with_compat(true);
         let flat_compat = |statuses: &ServerStatuses, generating: bool| -> String {
             let m = StatusModel {
@@ -567,22 +567,25 @@ mod tests {
                 .collect()
         };
         let t = flat_compat(&only_chat(ServerStatus::Connecting), true);
-        assert!(t.contains("○ чат"), "компат-глиф подключения: {t}");
-        assert!(t.contains("» генерация"), "компат-глиф генерации: {t}");
-        assert!(t.contains("* рефлексия"), "компат-глиф фоновой задачи: {t}");
+        assert!(t.contains("○ чат"), "connecting compat glyph: {t}");
+        assert!(t.contains("» генерация"), "generation compat glyph: {t}");
+        assert!(
+            t.contains("* рефлексия"),
+            "background-task compat glyph: {t}"
+        );
         for banned in ['◐', '⟳', '✻'] {
-            assert!(!t.contains(banned), "остался {banned}: {t}");
+            assert!(!t.contains(banned), "{banned} left behind: {t}");
         }
         let t = flat_compat(&only_chat(ServerStatus::Disconnected("boom".into())), false);
-        assert!(t.contains("× чат"), "компат-глиф обрыва: {t}");
+        assert!(t.contains("× чат"), "disconnect compat glyph: {t}");
         let t = flat_compat(&ready(), false);
-        assert!(t.contains("● чат"), "готовность остаётся ●: {t}");
+        assert!(t.contains("● чат"), "readiness stays ●: {t}");
     }
 
     #[test]
     fn chip_color_reflects_status() {
         let palette = Palette::default();
-        // Цвет глифа (первый спан) по статусу: готов — success, обрыв — error.
+        // The glyph's color (first span) by status: ready — success, disconnect — error.
         let glyph_fg = |status: ServerStatus| {
             chat_chip(&status, &palette, ru())
                 .first()
@@ -622,26 +625,26 @@ mod tests {
                 .find(|s| s.content.contains(needle))
                 .and_then(|s| s.style.fg)
         };
-        // В режиме прокрутки выделено только значение «прокрутка» (цветом `accent`, как
-        // заголовки markdown), а подпись «мышь:» остаётся приглушённой — отдельные спаны.
+        // In scroll mode, only the mode value is highlighted (with the `accent` color, as
+        // markdown headings are), while the "mouse:" label stays muted — separate spans.
         assert_eq!(span_fg(true, "прокрутка"), Some(palette.accent));
         assert_eq!(span_fg(true, "мышь:"), Some(palette.muted));
-        // В режиме выделения — всё описание приглушённое.
+        // In selection mode — the whole description is muted.
         assert_eq!(span_fg(false, "мышь: выделение"), Some(palette.muted));
     }
 
     #[test]
     fn token_counter_shows_summed_total() {
         let line = |tokens, context, exact| flat(&ready(), true, tokens, context, exact, false);
-        // Нет токенов и нет контекста — счётчик скрыт.
+        // No tokens and no context — the counter is hidden.
         assert!(!line(0, None, false).contains("токены"));
-        // Только ответ (переписка неизвестна) — сумма = ответ, без `~`.
+        // Reply only (conversation unknown) — sum = reply, no `~`.
         assert!(line(42, None, false).contains("токены: 42"));
-        // Сумма переписки и ответа; пока переписка — оценка, помечается `~`.
+        // Sum of conversation and reply; while the conversation is an estimate, marked with `~`.
         assert!(line(42, Some(1000), false).contains("токены: ~1042"));
-        // Точное число из usage — без `~`.
+        // The exact number from usage — no `~`.
         assert!(line(42, Some(1000), true).contains("токены: 1042"));
-        // Видно сразу при старте: переписка есть, ответ ещё 0 → сумма = переписка.
+        // Visible right at the start: conversation present, reply still 0 → sum = conversation.
         assert!(line(0, Some(1000), false).contains("токены: ~1000"));
     }
 
@@ -666,9 +669,9 @@ mod tests {
                 .map(|s| s.content.as_ref())
                 .collect()
         };
-        // Reasoning-токены показываются отдельной пометкой (входят в общий счёт).
+        // Reasoning tokens are shown with a separate annotation (included in the total).
         assert!(with_reason(300).contains("токены: 1042 (рассужд. 300)"));
-        // Ноль reasoning-токенов — пометки нет.
+        // Zero reasoning tokens — no annotation.
         let none = with_reason(0);
         assert!(none.contains("токены: 1042"));
         assert!(!none.contains("рассужд"));
@@ -684,12 +687,12 @@ mod tests {
 
     #[test]
     fn hotkeys_wrap_to_grid_when_narrow() {
-        // Узкая ширина → хоткеи не помещаются и переносятся на следующие строки.
+        // Narrow width → hotkeys don't fit and wrap onto the next lines.
         let statuses = ready();
         let m = model(&statuses, false, 0, None, false, false);
         let h = height(40, &m, &Palette::default(), ru());
-        assert!(h > 1, "ожидался перенос хоткеев, высота = {h}");
-        // Все хоткеи присутствуют, несмотря на перенос (включая тумблер мыши).
+        assert!(h > 1, "expected hotkeys to wrap, height = {h}");
+        // All hotkeys are present despite wrapping (including the mouse toggle).
         let flat = flat(&ready(), false, 0, None, false, false);
         assert!(flat.contains("Ctrl+W") && flat.contains("мышь: выделение"));
         for (_, desc) in HOTKEYS {
@@ -697,7 +700,7 @@ mod tests {
         }
     }
 
-    /// Рендерит статус-бар на ширине `w` и возвращает строки буфера как текст.
+    /// Renders the status bar at width `w` and returns the buffer's rows as text.
     fn rows(w: u16) -> Vec<String> {
         use ratatui::Terminal;
         use ratatui::backend::TestBackend;
@@ -719,45 +722,51 @@ mod tests {
 
     #[test]
     fn chips_left_hotkeys_right_on_one_line() {
-        // Широко — одна строка: чип статуса прижат влево, хоткеи — вправо.
+        // Wide — one line: the status chip is left-aligned, hotkeys — right.
         let r = rows(160);
         assert_eq!(r.len(), 1);
         let line = &r[0];
-        assert!(line.trim_start().starts_with("●"), "чип слева: {line:?}");
+        assert!(
+            line.trim_start().starts_with("●"),
+            "chip on the left: {line:?}"
+        );
         assert!(
             line.trim_end().ends_with("выход"),
-            "последний хоткей прижат вправо: {line:?}"
+            "the last hotkey is right-aligned: {line:?}"
         );
-        // Между чипом и хоткеями — заметный зазор (они не слиплись).
-        assert!(line.contains("чат   "), "есть зазор после чипа: {line:?}");
+        // Between the chip and hotkeys — a visible gap (they aren't stuck together).
+        assert!(
+            line.contains("чат   "),
+            "there's a gap after the chip: {line:?}"
+        );
     }
 
     #[test]
     fn wrapped_grid_is_right_aligned_with_pill_on_top_line() {
-        // Узко — хоткеи переносятся аккуратной сеткой, прижатой вправо; чип статуса
-        // делит ВЕРХНЮЮ строку с сеткой, перенос — ровно под столбцом выше.
+        // Narrow — hotkeys wrap into a neat grid, right-aligned; the status chip
+        // shares the TOP row with the grid, the wrap lands exactly under the column above.
         let r = rows(100);
-        assert_eq!(r.len(), 2, "ожидался перенос на 2 строки: {r:?}");
-        // Чип статуса — на верхней строке слева.
+        assert_eq!(r.len(), 2, "expected a wrap to 2 lines: {r:?}");
+        // The status chip — on the top row, on the left.
         assert!(
             r[0].trim_start().starts_with("●"),
-            "чип сверху слева: {:?}",
+            "chip on top, on the left: {:?}",
             r[0]
         );
-        // Перенесённый хоткей — на нижней строке, прижат вправо (левая часть пустая).
+        // The wrapped hotkey — on the bottom row, right-aligned (the left part is empty).
         assert!(
             r[1].trim_start().starts_with("Ctrl+Q") && r[1].starts_with(" "),
-            "перенос прижат вправо, левая часть пустая: {:?}",
+            "the wrap is right-aligned, the left part is empty: {:?}",
             r[1]
         );
-        // Колонки совпадают по вертикали: `Ctrl+Q` (низ) ровно под `Ctrl+P` (верх).
-        // Сравниваем позицию в СИМВОЛАХ (кириллица многобайтна → байтовый offset не
-        // равен колонке; здесь все символы шириной 1, так что символ == колонка).
+        // Columns line up vertically: `Ctrl+Q` (bottom) exactly under `Ctrl+P` (top).
+        // Compare position in CHARACTERS (Cyrillic is multibyte → the byte offset isn't
+        // the column; here every character is width 1, so character == column).
         let char_col = |line: &str, pat: &str| line.find(pat).map(|b| line[..b].chars().count());
         assert_eq!(
             char_col(&r[1], "Ctrl+Q"),
             char_col(&r[0], "Ctrl+P"),
-            "перенос ровно под столбцом выше:\n{:?}\n{:?}",
+            "the wrap lands exactly under the column above:\n{:?}\n{:?}",
             r[0],
             r[1]
         );
@@ -773,14 +782,14 @@ mod tests {
             ("Esc", "назад"),
             ("Ctrl+C", "выход"),
         ];
-        // Широко — одна строка, прижата вправо (заканчивается описанием последней клавиши).
+        // Wide — one line, right-aligned (ends with the last key's description).
         let wide = hotkey_lines(200, items, &p);
         assert_eq!(wide.len(), 1);
         let flat: String = wide[0].spans.iter().map(|s| s.content.as_ref()).collect();
         assert!(flat.contains("Tab") && flat.trim_end().ends_with("выход"));
-        // Узко — переносится на несколько строк.
+        // Narrow — wraps onto several lines.
         assert!(hotkey_lines(24, items, &p).len() > 1);
-        // Пустой набор — без строк.
+        // An empty set — no lines.
         assert!(hotkey_lines(80, &[], &p).is_empty());
     }
 

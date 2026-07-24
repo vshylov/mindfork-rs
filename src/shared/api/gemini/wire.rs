@@ -1,19 +1,19 @@
-//! Serde-типы нативного протокола Google Gemini (`generateContent`/
-//! `streamGenerateContent`) и трансляция доменного [`ChatRequest`] в его формат.
-//! Отличия от OpenAI Chat Completions (см. ADR 0004, docs/research/gemini-native-client.md):
-//! - системное сообщение — top-level `systemInstruction:{parts:[{text}]}`;
-//! - история — `contents:[{role:"user"|"model", parts:[…]}]` (ролей `system`/`tool`
-//!   нет: system → top-level, результат инструмента → часть `functionResponse` в
-//!   `role:"user"`); соседние сообщения одной роли склеиваются;
-//! - вызов инструмента — часть `{functionCall:{name, args}}` (`args` — ОБЪЕКТ, не строка;
-//!   `id` у вызова отсутствует, парность `functionCall`↔`functionResponse` позиционная);
-//! - лимит токенов — `generationConfig.maxOutputTokens` (включает токены мыслей!);
-//! - reasoning — `generationConfig.thinkingConfig` (`thinkingLevel` для Gemini 3.x /
-//!   `thinkingBudget` для 2.5 + `includeThoughts` для видимого резюме «мыслей»).
+//! Serde types for the native Google Gemini protocol (`generateContent`/
+//! `streamGenerateContent`) and translating the domain [`ChatRequest`] into its format.
+//! Differences from OpenAI Chat Completions (see ADR 0004, docs/research/gemini-native-client.md):
+//! - the system message — top-level `systemInstruction:{parts:[{text}]}`;
+//! - history — `contents:[{role:"user"|"model", parts:[…]}]` (there are no
+//!   `system`/`tool` roles: system → top-level, a tool result → a `functionResponse` part in
+//!   `role:"user"`); adjacent messages of the same role are merged;
+//! - a tool call — a `{functionCall:{name, args}}` part (`args` is an OBJECT, not a string;
+//!   a call has no `id`, `functionCall`↔`functionResponse` matching is positional);
+//! - the token limit — `generationConfig.maxOutputTokens` (includes thought tokens!);
+//! - reasoning — `generationConfig.thinkingConfig` (`thinkingLevel` for Gemini 3.x /
+//!   `thinkingBudget` for 2.5 + `includeThoughts` for a visible "thoughts" summary).
 //!
-//! Подписи мыслей (`thoughtSignature`) — сосед `functionCall`-части; переотправляются
-//! на реплее истории (Gemini 3 иначе `400`), из [`ApiToolCall::thought_signature`](crate::shared::api::contract::ApiToolCall).
-//! Событийный SSE (`?alt=sse`): строки `data: {…}` с частичным `GenerateContentResponse`.
+//! Thought signatures (`thoughtSignature`) — a neighbor of the `functionCall` part; resent
+//! on a history replay (otherwise Gemini 3 gives `400`), from [`ApiToolCall::thought_signature`](crate::shared::api::contract::ApiToolCall).
+//! Event-based SSE (`?alt=sse`): `data: {…}` lines with a partial `GenerateContentResponse`.
 
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
@@ -21,12 +21,12 @@ use serde_json::{Map, Value, json};
 use crate::entities::sampling::ReasoningEffort;
 use crate::shared::api::contract::{ApiRole, ChatRequest};
 
-// ---------- запрос ----------
+// ---------- request ----------
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct GenRequest {
-    /// Системное сообщение (top-level, не в `contents`).
+    /// The system message (top-level, not in `contents`).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub system_instruction: Option<Value>,
     pub contents: Vec<Value>,
@@ -36,9 +36,9 @@ pub struct GenRequest {
     pub generation_config: Option<Value>,
 }
 
-/// Строит тело запроса `generateContent` из доменного [`ChatRequest`]. `model` нужен
-/// лишь для выбора формата thinking-конфига (`thinkingLevel` у Gemini 3.x vs
-/// `thinkingBudget` у 2.5) — в тело он не пишется (модель — в URL клиента).
+/// Builds the `generateContent` request body from the domain [`ChatRequest`]. `model` is only
+/// needed to pick the thinking-config format (`thinkingLevel` for Gemini 3.x vs
+/// `thinkingBudget` for 2.5) — it isn't written into the body (the model is in the client's URL).
 pub fn build_request(req: &ChatRequest, model: &str) -> GenRequest {
     let system_instruction = req
         .system
@@ -71,8 +71,8 @@ pub fn build_request(req: &ChatRequest, model: &str) -> GenRequest {
     }
 }
 
-/// Собирает `generationConfig` из семплинга (`skip` незаданных). `thinkingConfig`
-/// добавляется, когда reasoning востребован (см. [`thinking_config`]).
+/// Assembles `generationConfig` from sampling (`skip`s unset fields). `thinkingConfig`
+/// is added when reasoning is wanted (see [`thinking_config`]).
 fn generation_config(req: &ChatRequest, model: &str) -> Option<Value> {
     let s = &req.sampling;
     let mut cfg = Map::new();
@@ -103,21 +103,21 @@ fn generation_config(req: &ChatRequest, model: &str) -> Option<Value> {
     (!cfg.is_empty()).then_some(Value::Object(cfg))
 }
 
-/// `thinkingConfig` по семплингу и поколению модели. Gemini 3.x управляет глубиной
-/// через `thinkingLevel` (`minimal/low/medium/high`), Gemini 2.5 — через
-/// `thinkingBudget` (токены). `includeThoughts:true` включает видимое резюме «мыслей»
-/// (сырой CoT API не отдаёт). `reasoning_budget==0` (импперсонация/авто-название)
-/// глушит «мысли»: `thinkingBudget:0` (2.5 — выключить; 3.x — минимальный уровень,
-/// полностью выключить нельзя; у 3 Pro минимум `low` — «minimal» не поддержан).
-/// Возвращает `None`, когда reasoning не востребован
-/// (модель использует thinking по умолчанию). Инференс поколения по имени модели —
-/// см. docs/research/gemini-native-client.md §3, ловушка 1.
+/// `thinkingConfig` based on sampling and the model's generation. Gemini 3.x controls depth
+/// via `thinkingLevel` (`minimal/low/medium/high`), Gemini 2.5 — via
+/// `thinkingBudget` (tokens). `includeThoughts:true` enables a visible "thoughts" summary
+/// (the API doesn't return raw CoT). `reasoning_budget==0` (impersonation/auto-title)
+/// mutes "thoughts": `thinkingBudget:0` (2.5 — disable it; 3.x — the minimal level,
+/// can't be fully disabled; 3 Pro's minimum is `low` — "minimal" isn't supported).
+/// Returns `None` when reasoning isn't wanted
+/// (the model uses thinking by default). The generation is inferred from the model name —
+/// see docs/research/gemini-native-client.md §3, pitfall 1.
 fn thinking_config(req: &ChatRequest, model: &str) -> Option<Value> {
     let s = &req.sampling;
     let thinking_on = s.thinking == Some(true);
     let force_off = s.reasoning_budget == Some(0);
-    // Ничего не запрошено (thinking выкл, effort не задан, не глушим) — не шлём
-    // thinkingConfig: пусть модель решает сама.
+    // Nothing was requested (thinking off, effort unset, not muting) — don't send
+    // thinkingConfig: let the model decide for itself.
     if !thinking_on && s.reasoning_effort.is_none() && !force_off {
         return None;
     }
@@ -126,16 +126,16 @@ fn thinking_config(req: &ChatRequest, model: &str) -> Option<Value> {
     tc.insert("includeThoughts".into(), json!(include));
 
     if is_gemini_3(model) {
-        // 3.x: thinkingLevel. Полностью выключить нельзя — force_off → минимальный уровень.
+        // 3.x: thinkingLevel. Can't be fully disabled — force_off → the minimal level.
         let level = if force_off {
             Some("minimal")
         } else {
             s.reasoning_effort.and_then(effort_to_level)
         };
-        // Gemini 3 **Pro** не поддерживает `thinkingLevel:"minimal"` (вернёт `400`
-        // «Thinking level MINIMAL is not supported for this model») — минимум у него
-        // `low`. Кламп «minimal → low» для Pro (зеркало `is_gemini_25_pro`, где 0→128):
-        // касается и force_off (авто-название/импперсонация), и явного effort=Minimal.
+        // Gemini 3 **Pro** doesn't support `thinkingLevel:"minimal"` (returns `400`
+        // "Thinking level MINIMAL is not supported for this model") — its minimum is
+        // `low`. Clamp "minimal → low" for Pro (mirroring `is_gemini_25_pro`, where 0→128):
+        // applies both to force_off (auto-title/impersonation) and an explicit effort=Minimal.
         let level = level.map(|l| {
             if l == "minimal" && is_gemini_3_pro(model) {
                 "low"
@@ -143,55 +143,55 @@ fn thinking_config(req: &ChatRequest, model: &str) -> Option<Value> {
                 l
             }
         });
-        // effort не задан (level None) при thinking on — уровень не шлём (дефолт модели),
-        // остаётся includeThoughts.
+        // effort isn't set (level None) with thinking on — the level isn't sent (the model's default),
+        // includeThoughts remains.
         if let Some(level) = level {
             tc.insert("thinkingLevel".into(), json!(level));
         }
     } else {
-        // 2.5 и прочие: thinkingBudget (токены).
+        // 2.5 and others: thinkingBudget (tokens).
         let budget = if force_off {
-            // Gemini 2.5 Pro не умеет ВЫКЛЮЧАТЬ мысли (минимум 128) — `thinkingBudget:0`
-            // вернул бы `400`; шлём минимум. Flash/Flash-Lite: `0` выключает.
+            // Gemini 2.5 Pro can't DISABLE thoughts (minimum 128) — `thinkingBudget:0`
+            // would return `400`; send the minimum. Flash/Flash-Lite: `0` disables it.
             if is_gemini_25_pro(model) { 128 } else { 0 }
         } else {
-            s.reasoning_effort.map(effort_to_budget).unwrap_or(-1) // -1 = динамически
+            s.reasoning_effort.map(effort_to_budget).unwrap_or(-1) // -1 = dynamic
         };
         tc.insert("thinkingBudget".into(), json!(budget));
     }
     Some(Value::Object(tc))
 }
 
-/// Поколение Gemini 3.x (использует `thinkingLevel`). Грубый инференс по имени модели.
+/// The Gemini 3.x generation (uses `thinkingLevel`). A rough inference from the model name.
 fn is_gemini_3(model: &str) -> bool {
     model.contains("gemini-3")
 }
 
-/// Gemini 2.5 **Pro** — не умеет полностью выключать мысли (`thinkingBudget` минимум 128).
+/// Gemini 2.5 **Pro** — can't fully disable thoughts (`thinkingBudget` minimum 128).
 fn is_gemini_25_pro(model: &str) -> bool {
     model.contains("gemini-2.5-pro")
 }
 
-/// Gemini 3.x **Pro** — не поддерживает `thinkingLevel:"minimal"` (минимум `low`).
-/// Например `gemini-3-pro-preview`, `gemini-3.1-pro-preview`.
+/// Gemini 3.x **Pro** — doesn't support `thinkingLevel:"minimal"` (minimum `low`).
+/// E.g. `gemini-3-pro-preview`, `gemini-3.1-pro-preview`.
 fn is_gemini_3_pro(model: &str) -> bool {
     is_gemini_3(model) && model.contains("pro")
 }
 
-/// `reasoning_effort` → `thinkingLevel` (Gemini 3.x). `None` — уровень не шлём.
+/// `reasoning_effort` → `thinkingLevel` (Gemini 3.x). `None` — the level isn't sent.
 fn effort_to_level(e: ReasoningEffort) -> Option<&'static str> {
     match e {
         ReasoningEffort::None => None,
         ReasoningEffort::Minimal => Some("minimal"),
         ReasoningEffort::Low => Some("low"),
         ReasoningEffort::Medium => Some("medium"),
-        // xhigh у Gemini нет — приводим к ближайшему (high).
+        // Gemini has no xhigh — map it to the nearest one (high).
         ReasoningEffort::High | ReasoningEffort::XHigh => Some("high"),
     }
 }
 
-/// `reasoning_effort` → `thinkingBudget` (Gemini 2.5, токены; зеркало таблицы
-/// OpenAI-compat). `None` глушит (0).
+/// `reasoning_effort` → `thinkingBudget` (Gemini 2.5, tokens; mirrors the
+/// OpenAI-compat table). `None` mutes it (0).
 fn effort_to_budget(e: ReasoningEffort) -> i64 {
     match e {
         ReasoningEffort::None => 0,
@@ -201,10 +201,10 @@ fn effort_to_budget(e: ReasoningEffort) -> i64 {
     }
 }
 
-/// Транслирует историю в массив `contents`. Роли `user`/`model` (ассистент → `model`);
-/// результат инструмента → часть `functionResponse` в `role:"user"`; system
-/// пропускается (идёт top-level). Соседние сообщения одной роли склеиваются (Gemini
-/// требует чередования user/model, а agentic-loop даёт несколько `tool` подряд).
+/// Translates history into the `contents` array. Roles `user`/`model` (assistant → `model`);
+/// a tool result → a `functionResponse` part in `role:"user"`; system
+/// is skipped (goes top-level). Adjacent messages of the same role are merged (Gemini
+/// requires user/model alternation, while the agentic-loop gives several `tool` messages in a row).
 fn build_contents(req: &ChatRequest) -> Vec<Value> {
     let mut out: Vec<(&'static str, Vec<Value>)> = Vec::new();
     let mut push = |role: &'static str, parts: Vec<Value>| {
@@ -224,7 +224,7 @@ fn build_contents(req: &ChatRequest) -> Vec<Value> {
             ApiRole::Assistant => {
                 let mut parts = text_parts(&m.content);
                 for tc in &m.tool_calls {
-                    // args — JSON-строка; Gemini строго требует ОБЪЕКТ. Не-объект → `{}`.
+                    // args — a JSON string; Gemini strictly requires an OBJECT. A non-object → `{}`.
                     let args = serde_json::from_str::<Value>(&tc.arguments)
                         .ok()
                         .filter(Value::is_object)
@@ -232,8 +232,8 @@ fn build_contents(req: &ChatRequest) -> Vec<Value> {
                     let mut part = json!({
                         "functionCall": { "name": tc.name, "args": args }
                     });
-                    // Подпись мысли (Gemini 3) — сосед functionCall в той же части.
-                    // Без неё Gemini 3 отвергает исторический вызов (`400`). См. §2.3.
+                    // The thought signature (Gemini 3) — a neighbor of functionCall in the same part.
+                    // Without it Gemini 3 rejects the historical call (`400`). See §2.3.
                     if let Some(sig) = &tc.thought_signature
                         && let Some(obj) = part.as_object_mut()
                     {
@@ -243,10 +243,10 @@ fn build_contents(req: &ChatRequest) -> Vec<Value> {
                 }
                 push("model", parts);
             }
-            // Результат инструмента → functionResponse внутри user. У нас нет имени
-            // функции в tool-сообщении, зато есть `tool_call_id` = синтезированный
-            // клиентом `"{name}-{index}"` (см. client.rs) — имя восстанавливаем из него
-            // (Gemini сопоставляет по имени). `response` обязан быть объектом.
+            // A tool result → functionResponse inside a user. There's no function
+            // name in the tool message, but there's `tool_call_id` = the client-synthesized
+            // `"{name}-{index}"` (see client.rs) — the name is recovered from it
+            // (Gemini matches by name). `response` must be an object.
             ApiRole::Tool => {
                 let name = tool_name_from_id(m.tool_call_id.as_deref());
                 push(
@@ -274,9 +274,9 @@ fn text_parts(content: &str) -> Vec<Value> {
     }
 }
 
-/// Восстанавливает имя функции из синтезированного `tool_call_id` вида `"{name}-{index}"`
-/// (клиент так формирует id, т.к. у нативного Gemini вызовы без id). Отрезаем хвост
-/// `-<число>`; если формат иной — берём как есть.
+/// Recovers the function name from a synthesized `tool_call_id` of the shape `"{name}-{index}"`
+/// (the client forms the id this way, since native Gemini calls have no id). The
+/// `-<number>` tail is stripped; if the format differs — taken as-is.
 fn tool_name_from_id(id: Option<&str>) -> String {
     let Some(id) = id else {
         return String::new();
@@ -289,9 +289,9 @@ fn tool_name_from_id(id: Option<&str>) -> String {
     }
 }
 
-/// Санитизация JSON-схемы инструмента под OpenAPI-подмножество Gemini: снимаем ключи,
-/// которых Gemini не принимает на корне (`$schema`, `additionalProperties`). Фаза C
-/// уточнит по живым схемам (вложенные `additionalProperties`, форматы). См. §3, ловушка 4.
+/// Sanitizes a tool's JSON schema to Gemini's OpenAPI subset: strips keys
+/// Gemini doesn't accept at the root (`$schema`, `additionalProperties`). Phase C
+/// will refine this against live schemas (nested `additionalProperties`, formats). See §3, pitfall 4.
 fn sanitize_schema(schema: &Value) -> Value {
     match schema {
         Value::Object(map) => {
@@ -309,9 +309,9 @@ fn sanitize_schema(schema: &Value) -> Value {
     }
 }
 
-// ---------- стриминговый ответ ----------
+// ---------- streaming response ----------
 
-/// Частичный `GenerateContentResponse` (одна SSE-строка `data:`). Поля camelCase.
+/// A partial `GenerateContentResponse` (one SSE `data:` line). camelCase fields.
 #[derive(Debug, Default, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct GenResponse {
@@ -319,15 +319,15 @@ pub struct GenResponse {
     pub candidates: Vec<Candidate>,
     #[serde(default)]
     pub usage_metadata: Option<UsageMetadata>,
-    /// Обратная связь по промпту: заполняется, когда сам **запрос** заблокирован
-    /// фильтром (тогда `candidates` пуст) — иначе пустой ответ выглядел бы как обычный
-    /// `STOP` без объяснения. См. [`PromptFeedback`].
+    /// Prompt feedback: populated when the **request** itself is blocked
+    /// by the filter (then `candidates` is empty) — otherwise an empty reply would look like an ordinary
+    /// `STOP` with no explanation. See [`PromptFeedback`].
     #[serde(default)]
     pub prompt_feedback: Option<PromptFeedback>,
 }
 
-/// Обратная связь по промпту. `block_reason` (`SAFETY`/`OTHER`/…) присутствует, когда
-/// запрос отклонён фильтром безопасности до генерации.
+/// Prompt feedback. `block_reason` (`SAFETY`/`OTHER`/…) is present when the
+/// request was rejected by the safety filter before generation.
 #[derive(Debug, Default, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PromptFeedback {
@@ -350,8 +350,8 @@ pub struct Content {
     pub parts: Vec<Part>,
 }
 
-/// Часть содержимого. `thought:true` помечает текст резюме «мыслей»; `function_call`
-/// — вызов инструмента; `thought_signature` (Фаза B) — подпись на части.
+/// A content part. `thought:true` marks the "thoughts" summary text; `function_call`
+/// — a tool call; `thought_signature` (Phase B) — a signature on the part.
 #[derive(Debug, Default, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Part {
@@ -361,8 +361,8 @@ pub struct Part {
     pub thought: Option<bool>,
     #[serde(default)]
     pub function_call: Option<FunctionCall>,
-    /// Подпись мысли на части (Gemini 3 `thoughtSignature`). Клиент кладёт её на вызов
-    /// (`ToolCallDelta`→`ApiToolCall`) для переотправки при tool-use. См. §2.3.
+    /// A thought signature on the part (Gemini 3 `thoughtSignature`). The client attaches it to the call
+    /// (`ToolCallDelta`→`ApiToolCall`) for resending on tool-use. See §2.3.
     #[serde(default)]
     pub thought_signature: Option<String>,
 }
@@ -375,8 +375,8 @@ pub struct FunctionCall {
     pub args: Value,
 }
 
-/// Счётчик токенов (`usageMetadata`). `thoughtsTokenCount` — токены «мыслей» (входят
-/// в биллинг вывода), ложатся в [`TokenUsage::reasoning_tokens`](crate::shared::api::contract::TokenUsage).
+/// The token counter (`usageMetadata`). `thoughtsTokenCount` — "thoughts" tokens (counted
+/// toward output billing), land in [`TokenUsage::reasoning_tokens`](crate::shared::api::contract::TokenUsage).
 #[derive(Debug, Default, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct UsageMetadata {
@@ -423,10 +423,10 @@ mod tests {
         assert_eq!(json["generationConfig"]["seed"], -1);
         assert!(json["generationConfig"].get("temperature").is_some());
         assert!(json["generationConfig"].get("topP").is_some());
-        // Первый content — user с текстовой частью.
+        // The first content — a user with a text part.
         assert_eq!(json["contents"][0]["role"], "user");
         assert_eq!(json["contents"][0]["parts"][0]["text"], "привет");
-        // Без reasoning thinkingConfig не шлём.
+        // Without reasoning, thinkingConfig isn't sent.
         assert!(json["generationConfig"].get("thinkingConfig").is_none());
     }
 
@@ -456,7 +456,7 @@ mod tests {
 
     #[test]
     fn reasoning_budget_zero_forces_off() {
-        // reasoning_budget==0 (импперсонация/авто-название): 2.5 → thinkingBudget 0,
+        // reasoning_budget==0 (impersonation/auto-title): 2.5 → thinkingBudget 0,
         // includeThoughts false; 3.x → thinkingLevel minimal.
         let mut r = base_req(vec![ApiMessage::user("hi")]);
         r.sampling.thinking = Some(true);
@@ -469,12 +469,12 @@ mod tests {
         let tc3 = &j3["generationConfig"]["thinkingConfig"];
         assert_eq!(tc3["thinkingLevel"], "minimal");
         assert_eq!(tc3["includeThoughts"], false);
-        // 2.5 Pro не умеет выключать мысли (минимум 128) — force_off → 128, не 0.
+        // 2.5 Pro can't disable thoughts (minimum 128) — force_off → 128, not 0.
         let jpro = serde_json::to_value(build_request(&r, "gemini-2.5-pro")).unwrap();
         let tcpro = &jpro["generationConfig"]["thinkingConfig"];
         assert_eq!(tcpro["thinkingBudget"], 128);
         assert_eq!(tcpro["includeThoughts"], false);
-        // 3.x Pro не поддерживает "minimal" — force_off клампится к "low".
+        // 3.x Pro doesn't support "minimal" — force_off clamps to "low".
         let j3pro = serde_json::to_value(build_request(&r, "gemini-3.1-pro-preview")).unwrap();
         let tc3pro = &j3pro["generationConfig"]["thinkingConfig"];
         assert_eq!(tc3pro["thinkingLevel"], "low");
@@ -509,7 +509,7 @@ mod tests {
         let decl = &json["tools"][0]["functionDeclarations"][0];
         assert_eq!(decl["name"], "calc");
         assert_eq!(decl["parameters"]["type"], "object");
-        // $schema/additionalProperties вычищены (Gemini их не принимает).
+        // $schema/additionalProperties are stripped (Gemini doesn't accept them).
         assert!(decl["parameters"].get("$schema").is_none());
         assert!(decl["parameters"].get("additionalProperties").is_none());
         assert_eq!(decl["parameters"]["properties"]["x"]["type"], "number");
@@ -517,8 +517,8 @@ mod tests {
 
     #[test]
     fn tool_call_and_result_become_parts() {
-        // assistant(functionCall) → model-content с частью functionCall;
-        // tool → user-content с functionResponse (имя из id "calc-0").
+        // assistant(functionCall) → model content with a functionCall part;
+        // tool → user content with functionResponse (name from id "calc-0").
         let r = base_req(vec![
             ApiMessage::user("посчитай"),
             ApiMessage::assistant_tool_calls(
@@ -551,7 +551,7 @@ mod tests {
 
     #[test]
     fn function_call_emits_thought_signature_when_present() {
-        // Фаза B: подпись мысли (Gemini 3) переотправляется соседом functionCall.
+        // Phase B: the thought signature (Gemini 3) is resent as a neighbor of functionCall.
         let with_sig = base_req(vec![
             ApiMessage::user("посчитай"),
             ApiMessage::assistant_tool_calls(
@@ -569,7 +569,7 @@ mod tests {
         assert_eq!(part["functionCall"]["name"], "calc");
         assert_eq!(part["thoughtSignature"], "SIG-XYZ");
 
-        // Без подписи ключ не появляется.
+        // Without a signature, the key doesn't appear.
         let no_sig = base_req(vec![
             ApiMessage::user("посчитай"),
             ApiMessage::assistant_tool_calls(
@@ -607,7 +607,7 @@ mod tests {
             ApiMessage::tool("calc-1", "3"),
         ]);
         let json = serde_json::to_value(build_request(&r, "gemini-2.5-flash")).unwrap();
-        // Два functionResponse склеены в один user-content.
+        // Two functionResponses are merged into one user content.
         assert_eq!(json["contents"][2]["role"], "user");
         assert_eq!(
             json["contents"][2]["parts"][0]["functionResponse"]["name"],
@@ -638,7 +638,7 @@ mod tests {
             let args = &json["contents"][1]["parts"][0]["functionCall"]["args"];
             assert!(
                 args.is_object(),
-                "args должен быть объектом для {raw:?}, получили {args}"
+                "args must be an object for {raw:?}, got {args}"
             );
         }
     }

@@ -1,7 +1,7 @@
-//! HTTP-клиент к **OpenAI-совместимому** серверу (llama.cpp `llama-server`, vLLM,
-//! LM Studio, …), реализующий [`EngineBackend`]. Стриминг через SSE
-//! (`/v1/chat/completions`), эмбеддинги (`/v1/embeddings`). Протокол — OpenAI
-//! (исходно сверялся с docs/xinfer-contract.md; llama.cpp говорит на том же).
+//! An HTTP client to an **OpenAI-compatible** server (llama.cpp `llama-server`, vLLM,
+//! LM Studio, …), implementing [`EngineBackend`]. Streaming via SSE
+//! (`/v1/chat/completions`), embeddings (`/v1/embeddings`). The protocol is OpenAI
+//! (originally checked against docs/xinfer-contract.md; llama.cpp speaks the same).
 
 use anyhow::{Context, Result, bail};
 use async_stream::stream;
@@ -16,27 +16,27 @@ use crate::shared::api::contract::{
 };
 use crate::shared::api::thoughts::{Piece, ThoughtsParser};
 
-/// Клиент к OpenAI-совместимому серверу инференса (локальный/external `llama-server`,
-/// vLLM, LM Studio…; при желании — прокси с Bearer-ключом). Облака теперь используют
-/// свои протоколы (OpenAI → Responses, Gemini → нативный, Claude → Anthropic), поэтому
-/// диалекта тела больше нет — сэмплинг шлётся как есть (см. ADR 0004). Также источник
-/// эмбеддингов (`/v1/embeddings`) для локального/облачного RAG.
+/// A client to an OpenAI-compatible inference server (local/external `llama-server`,
+/// vLLM, LM Studio…; optionally a proxy with a Bearer key). Clouds now use
+/// their own protocols (OpenAI → Responses, Gemini → native, Claude → Anthropic), so
+/// there's no longer a body dialect — sampling is sent as-is (see ADR 0004). Also a source of
+/// embeddings (`/v1/embeddings`) for local/cloud RAG.
 pub struct OpenAiClient {
     http: reqwest::Client,
-    /// Базовый URL с суффиксом `/v1`, например `http://127.0.0.1:8000/v1`.
+    /// The base URL with a `/v1` suffix, e.g. `http://127.0.0.1:8000/v1`.
     base_url: String,
-    /// API-ключ для Bearer-аутентификации (прокси/облачные эмбеддинги). `None` — без
-    /// заголовка.
+    /// The API key for Bearer authentication (proxy/cloud embeddings). `None` — no
+    /// header.
     api_key: Option<String>,
-    /// Имя модели; подставляется в тело запроса, если задано (облачные эмбеддинги/
-    /// мульти-модельный прокси требуют, `llama-server` игнорирует). Доменный
-    /// [`ChatRequest`] модель не несёт — это свойство бэкенда.
+    /// The model name; substituted into the request body if set (cloud embeddings/
+    /// a multi-model proxy require it, `llama-server` ignores it). The domain
+    /// [`ChatRequest`] doesn't carry a model — it's a property of the backend.
     model: Option<String>,
 }
 
 impl OpenAiClient {
-    /// Клиент к локальному/external OpenAI-совместимому серверу: без ключа, без имени
-    /// модели (расширения llama.cpp шлются как есть).
+    /// A client to a local/external OpenAI-compatible server: no key, no model
+    /// name (llama.cpp extensions are sent as-is).
     pub fn new(base_url: impl Into<String>) -> Self {
         let base_url = base_url.into().trim_end_matches('/').to_string();
         Self {
@@ -47,20 +47,20 @@ impl OpenAiClient {
         }
     }
 
-    /// Устанавливает API-ключ (Bearer). Билдер-стиль.
+    /// Sets the API key (Bearer). Builder-style.
     pub fn with_api_key(mut self, key: Option<String>) -> Self {
         self.api_key = key.filter(|k| !k.is_empty());
         self
     }
 
-    /// Устанавливает имя модели (для облачных эмбеддингов/мульти-модельного сервера).
-    /// Билдер-стиль.
+    /// Sets the model name (for cloud embeddings/a multi-model server).
+    /// Builder-style.
     pub fn with_model(mut self, model: Option<String>) -> Self {
         self.model = model.filter(|m| !m.is_empty());
         self
     }
 
-    /// Добавляет Bearer-заголовок, если задан ключ.
+    /// Adds a Bearer header if a key is set.
     fn auth(&self, rb: reqwest::RequestBuilder) -> reqwest::RequestBuilder {
         match &self.api_key {
             Some(key) => rb.bearer_auth(key),
@@ -68,14 +68,14 @@ impl OpenAiClient {
         }
     }
 
-    /// Проверка **готовности** сервера к инференсу (не просто «порт открыт»).
+    /// Checks the server's **readiness** for inference (not just "the port is open").
     ///
-    /// llama.cpp биндит HTTP-порт сразу, но на время загрузки модели (~секунды для
-    /// крупных GGUF) отвечает `503 Loading model` на эндпоинты инференса. Поэтому
-    /// проверять только факт ответа нельзя — иначе статус «Ready» выставится раньше
-    /// готовности, и первый же запрос упадёт с 503 (см. §7). Пробуем `/health`
-    /// (в корне, вне `/v1`): `503` — ещё грузится (не готов), `200` — готов, `404`
-    /// (сервер без `/health`) — считаем «жив и не грузится» (готов).
+    /// llama.cpp binds the HTTP port right away, but while the model is loading (~seconds for
+    /// large GGUFs) it responds `503 Loading model` on inference endpoints. So
+    /// checking just for a response isn't enough — otherwise the `Ready` status would be set before
+    /// readiness, and the very first request would fail with 503 (see §7). We try `/health`
+    /// (at the root, outside `/v1`): `503` — still loading (not ready), `200` — ready, `404`
+    /// (a server without `/health`) — treated as "alive and not loading" (ready).
     pub async fn probe(&self) -> Result<()> {
         let url = health_url(&self.base_url);
         let resp = self
@@ -103,9 +103,9 @@ impl EngineBackend for OpenAiClient {
             .send()
             .await
             .with_context(|| format!("POST {url}"))?;
-        // Не глотаем тело ошибки: llama.cpp/OpenAI-серверы кладут причину в JSON
-        // (`{"error":{"message":...}}`); без неё «error status» бесполезен. Логируем
-        // в файл и пробрасываем в текст ошибки (обрезая длинные тела). См. §7.
+        // Don't swallow the error body: llama.cpp/OpenAI servers put the reason in JSON
+        // (`{"error":{"message":...}}`); without it "error status" is useless. Log it
+        // to a file and surface it in the error text (truncating long bodies). See §7.
         let status = response.status();
         if !status.is_success() {
             let body = response.text().await.unwrap_or_default();
@@ -120,7 +120,7 @@ impl EngineBackend for OpenAiClient {
         let mut events = response.bytes_stream().eventsource();
 
         let s = stream! {
-            // Разделитель «мыслей» на случай инлайнового <think> в content.
+            // A "thoughts" splitter in case of an inline <think> in content.
             let mut parser = ThoughtsParser::new();
             loop {
                 tokio::select! {
@@ -149,8 +149,8 @@ impl EngineBackend for OpenAiClient {
                                 }
                                 match serde_json::from_str::<wire::ChatCompletionChunk>(&event.data) {
                                     Ok(chunk) => {
-                                        // Счётчик токенов (include_usage) приходит отдельным
-                                        // чанком (с пустым choices) — отдаём до разбора choice.
+                                        // The token counter (include_usage) arrives as a separate
+                                        // chunk (with an empty choices) — emit it before parsing choice.
                                         if let Some(u) = chunk.usage {
                                             yield ChatChunk::Usage(TokenUsage {
                                                 prompt_tokens: u.prompt_tokens,
@@ -218,9 +218,9 @@ impl Embedder for OpenAiClient {
             .send()
             .await
             .with_context(|| format!("POST {url}"))?;
-        // Не глотаем тело ошибки (как и в chat_stream): llama-server кладёт причину в
-        // JSON (напр. «input is too large to process. increase the physical batch
-        // size» при слишком длинном чанке) — без неё «error status» бесполезен.
+        // Don't swallow the error body (like chat_stream): llama-server puts the reason in
+        // JSON (e.g. "input is too large to process. increase the physical batch
+        // size" for a too-long chunk) — without it "error status" is useless.
         let status = response.status();
         if !status.is_success() {
             let body = response.text().await.unwrap_or_default();
@@ -239,8 +239,8 @@ impl Embedder for OpenAiClient {
     }
 }
 
-/// URL эндпоинта готовности `/health` из базового URL. `/health` живёт в корне
-/// сервера (вне `/v1`), поэтому суффикс `/v1` отбрасывается.
+/// The URL of the `/health` readiness endpoint, from the base URL. `/health` lives at
+/// the server root (outside `/v1`), so the `/v1` suffix is stripped.
 fn health_url(base_url: &str) -> String {
     let trimmed = base_url.trim_end_matches('/');
     let root = trimmed.strip_suffix("/v1").unwrap_or(trimmed);
@@ -257,9 +257,9 @@ mod tests {
             health_url("http://127.0.0.1:8000/v1"),
             "http://127.0.0.1:8000/health"
         );
-        // Без /v1 — просто дописываем /health.
+        // No /v1 — just append /health.
         assert_eq!(health_url("http://host:9"), "http://host:9/health");
-        // Лишний слэш не задваивается.
+        // A stray slash isn't doubled.
         assert_eq!(health_url("http://host:9/v1/"), "http://host:9/health");
     }
 }
@@ -271,9 +271,9 @@ fn piece_to_chunk(piece: Piece) -> ChatChunk {
     }
 }
 
-/// Ручной смоук-набор против реального OpenAI-совместимого сервера (llama.cpp
-/// `llama-server` и т.п.). Помечен `#[ignore]` — не идёт в CI.
-/// Запуск: задать `MINDFORK_ENGINE_URL=http://127.0.0.1:8000/v1` и
+/// A manual smoke set against a real OpenAI-compatible server (llama.cpp
+/// `llama-server` etc.). Marked `#[ignore]` — doesn't run in CI.
+/// Run: set `MINDFORK_ENGINE_URL=http://127.0.0.1:8000/v1` and
 /// `cargo test -- --ignored`.
 #[cfg(test)]
 mod ignored_smoke {
@@ -332,10 +332,10 @@ mod ignored_smoke {
         ));
     }
 
-    /// Просит модель напечатать литеральный EOS-текст и затем сказать `DONE` —
-    /// генерация не должна оборваться (остановка по token-id на сервере, поле `stop`
-    /// не шлём; docs/xinfer-contract.md §5). `DONE` может прийти в тексте или в
-    /// «мыслях» (reasoning-модель), поэтому проверяем оба потока.
+    /// Asks the model to print the literal EOS text and then say `DONE` —
+    /// generation shouldn't cut off (stopped by token-id on the server, the `stop` field
+    /// isn't sent; docs/xinfer-contract.md §5). `DONE` may arrive in the text or in
+    /// "thoughts" (a reasoning model), so both streams are checked.
     async fn assert_no_self_terminate(client: &OpenAiClient, eos_text: &str) {
         let req = ChatRequest {
             system: None,
@@ -358,8 +358,8 @@ mod ignored_smoke {
         assert!(finish.is_some());
     }
 
-    /// Анти-самообрыв на тексте EOS — для обоих семейств: Qwen (`<|im_end|>`) и
-    /// Gemma (`<end_of_turn>`). См. spec §7, docs/xinfer-contract.md §5, §9.
+    /// Anti-self-cutoff on EOS text — for both families: Qwen (`<|im_end|>`) and
+    /// Gemma (`<end_of_turn>`). See spec §7, docs/xinfer-contract.md §5, §9.
     #[tokio::test]
     #[ignore = "requires a running OpenAI-compatible server (MINDFORK_ENGINE_URL)"]
     async fn does_not_self_terminate_on_eos_text() {
@@ -372,9 +372,9 @@ mod ignored_smoke {
         }
     }
 
-    /// Tool-calling: сервер получает схему инструмента, модель вызывает его —
-    /// `finish_reason="tool_calls"` и `delta.tool_calls` корректно собираются.
-    /// `max_tokens` щедрый: reasoning-модель «думает» перед вызовом.
+    /// Tool-calling: the server gets the tool schema, the model calls it —
+    /// `finish_reason="tool_calls"` and `delta.tool_calls` are assembled correctly.
+    /// `max_tokens` is generous: a reasoning model "thinks" before the call.
     #[tokio::test]
     #[ignore = "requires a running OpenAI-compatible server (MINDFORK_ENGINE_URL)"]
     async fn tool_call_is_emitted_and_parsed() {
@@ -427,9 +427,9 @@ mod ignored_smoke {
         );
     }
 
-    /// «Мысли» (CoT): reasoning-модель (или сервер с `--reasoning-format`) отдаёт
-    /// `reasoning_content` отдельным потоком — mindfork собирает их в `Thoughts`.
-    /// Требует thinking-модель; иначе `thoughts` будет пуст (мысли инлайнятся).
+    /// "Thoughts" (CoT): a reasoning model (or a server with `--reasoning-format`) returns
+    /// `reasoning_content` as a separate stream — mindfork collects it into `Thoughts`.
+    /// Requires a thinking model; otherwise `thoughts` will be empty (thoughts get inlined).
     #[tokio::test]
     #[ignore = "requires a running OpenAI-compatible server with a reasoning model"]
     async fn emits_thoughts_for_reasoning_model() {
@@ -458,20 +458,20 @@ mod ignored_smoke {
         );
     }
 
-    /// Расширения «для разнообразия»: динамическая температура, adaptive-p,
-    /// DRY-брейкеры и кастомный порядок семплеров — всё в теле одного запроса.
-    /// Цель — убедиться, что `llama-server` **принимает** эти поля (не отвечает
-    /// `400`/ошибкой) и генерирует. Ключи сверены по
+    /// Extensions "for variety": dynamic temperature, adaptive-p,
+    /// DRY breakers, and a custom sampler order — all in the body of one request.
+    /// The goal — confirm `llama-server` **accepts** these fields (doesn't respond
+    /// `400`/an error) and generates. The keys were checked against
     /// `tools/server/server-schema.cpp` (dynatemp_range/exponent, adaptive_target/
-    /// decay, dry_sequence_breakers — непустой, samplers — массив имён). Если бы
-    /// сервер отверг любое поле, `chat_stream` вернул бы ошибку статуса (клиент не
-    /// глотает тело ошибки) и тест упал бы на `.unwrap()`.
+    /// decay, dry_sequence_breakers — non-empty, samplers — an array of names). If the
+    /// server had rejected any field, `chat_stream` would have returned a status error (the client doesn't
+    /// swallow the error body) and the test would fail at `.unwrap()`.
     ///
-    /// Проверяем **объединённый** поток (`text` + `thoughts`): у reasoning-модели
-    /// (Gemma со «вшитым» thinking) ответ может целиком уйти в `reasoning_content`,
-    /// а `content` остаться пустым с `finish_reason="length"` — это нормально и к
-    /// принятию sampling-полей отношения не имеет (см. CLAUDE.md, ловушка
-    /// reasoning-бюджета). `max_tokens` щедрый, чтобы было видно генерацию.
+    /// We check the **combined** stream (`text` + `thoughts`): for a reasoning model
+    /// (Gemma with thinking "baked in") the reply may go entirely into `reasoning_content`,
+    /// with `content` staying empty and `finish_reason="length"` — that's normal and has
+    /// nothing to do with accepting the sampling fields (see CLAUDE.md, the
+    /// reasoning-budget trap). `max_tokens` is generous so generation is visible.
     #[tokio::test]
     #[ignore = "requires a running OpenAI-compatible server (MINDFORK_ENGINE_URL)"]
     async fn accepts_creative_sampling_extensions() {
@@ -486,16 +486,16 @@ mod ignored_smoke {
             )],
             sampling: SamplingConfig {
                 temperature: Some(1.0),
-                // Динамическая температура: ±0.5 вокруг temperature.
+                // Dynamic temperature: ±0.5 around temperature.
                 dynatemp_range: Some(0.5),
                 dynatemp_exponent: Some(1.0),
-                // adaptive-p: положительная цель включает семплер (≤1.0).
+                // adaptive-p: a positive target enables the sampler (≤1.0).
                 adaptive_target: Some(0.1),
                 adaptive_decay: Some(0.9),
-                // DRY с непустым списком брейкеров (пустой сервер отверг бы).
+                // DRY with a non-empty breaker list (the server would reject an empty one).
                 dry_multiplier: Some(0.8),
                 dry_sequence_breakers: Some(vec!["\n".into(), ":".into()]),
-                // Кастомный порядок семплеров (валидные имена из sampling.cpp).
+                // A custom sampler order (valid names from sampling.cpp).
                 samplers: Some(vec![
                     "penalties".into(),
                     "dry".into(),
@@ -511,7 +511,7 @@ mod ignored_smoke {
         };
         let (text, thoughts, finish) =
             collect(client.chat_stream(req, Default::default()).await.unwrap()).await;
-        // Reasoning-модель кладёт ответ в «мысли» — проверяем оба потока.
+        // A reasoning model puts the reply into "thoughts" — check both streams.
         let combined = format!("{thoughts}{text}");
         assert!(
             !combined.trim().is_empty(),
@@ -523,11 +523,11 @@ mod ignored_smoke {
         );
     }
 
-    /// Управляющие инструменты беседы (followup/rewrite, spec §9.3.3): живая модель
-    /// должна **вызвать** `send_followup_message` по инструкции — `finish_reason=
-    /// "tool_calls"` и имя разобрано. Это ключевой неизвестный фичи (поймёт ли
-    /// модель схему/описание). Схемы берём прямо из реализаций `Tool` (реальные
-    /// описания). `max_tokens` щедрый — Gemma может «подумать» перед вызовом.
+    /// Conversation control tools (followup/rewrite, spec §9.3.3): the live model
+    /// must **call** `send_followup_message` per the instruction — `finish_reason=
+    /// "tool_calls"` and the name is parsed. This is the feature's key unknown (will
+    /// the model understand the schema/description). Schemas are taken straight from the `Tool`
+    /// implementations (real descriptions). `max_tokens` is generous — Gemma may "think" before the call.
     #[tokio::test]
     #[ignore = "requires a running OpenAI-compatible server (MINDFORK_ENGINE_URL)"]
     async fn control_tools_are_callable() {
@@ -573,7 +573,7 @@ mod ignored_smoke {
         let calls = acc.finish();
         assert!(
             calls.iter().any(|c| c.name == "send_followup_message"),
-            "модель не вызвала send_followup_message: finish={finish:?} calls={calls:?}"
+            "the model did not call send_followup_message: finish={finish:?} calls={calls:?}"
         );
     }
 }

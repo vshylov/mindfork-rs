@@ -16,6 +16,12 @@ demoted to a CONTRIBUTING terminology note) once the migration lands.
 - Keep the em-dash "— " explanatory style where it reads naturally; a plain
   ": " or " —" is fine when it reads better in English.
 - Doc-comment first line stays a one-line summary (Rust convention).
+- **Comments are pure English — never quote a Russian literal inside a comment.**
+  Russian test fixtures stay in the code, but a comment about them must refer to
+  them structurally (the code shows the literal on the adjacent line):
+  `// Ctrl+← → start of word "три"` becomes `// Ctrl+← → start of the last word`;
+  `// between ж and и` becomes `// between the 3rd and 4th characters`. Keep the
+  factual content (indices, columns, expected behavior) intact.
 
 ## Domain nouns (the load-bearing ones — never vary)
 | RU | EN |

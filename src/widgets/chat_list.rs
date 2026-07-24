@@ -1,8 +1,8 @@
-//! Оверлей списка чатов: поиск-фильтр, две сортировки, переименование по месту,
-//! создание/клонирование/удаление. Открывается/закрывается по `Esc`. См. spec §11.2.
+//! The chat-list overlay: a search filter, two sort orders, in-place rename,
+//! create/clone/delete. Opens/closes via `Esc`. See spec §11.2.
 //!
-//! Виджет самодостаточен: хранит снимок списка и состояние ввода, на нажатия
-//! отвечает [`ChatListAction`] (его исполняет `app` — единственный писатель).
+//! The widget is self-contained: it holds the list snapshot and input state, and
+//! responds to key presses with [`ChatListAction`] (executed by `app` — the sole writer).
 
 use ratatui::Frame;
 use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
@@ -23,45 +23,45 @@ use crate::shared::ui::render_scrollbar;
 use crate::shared::wrap;
 use crate::widgets::input_box::{InputBox, RenderOpts};
 
-/// Шаг постраничного перемещения выделения по `PageUp`/`PageDown`. Фиксированный,
-/// так как фактическая высота списка известна только во время рендера.
+/// The paged-selection-move step for `PageUp`/`PageDown`. Fixed,
+/// since the actual list height is only known at render time.
 const PAGE_STEP: usize = 10;
 
-/// Действие, которое оверлей просит выполнить вышестоящий слой.
+/// An action the overlay asks the upper layer to perform.
 #[derive(Debug, Clone, PartialEq)]
 pub enum ChatListAction {
-    /// Ничего (нажатие обработано внутри оверлея).
+    /// Nothing (the press was handled inside the overlay).
     None,
-    /// Закрыть оверлей.
+    /// Close the overlay.
     Close,
-    /// Выйти из приложения (`Ctrl+Q`/`F10`).
+    /// Quit the app (`Ctrl+Q`/`F10`).
     Quit,
-    /// Сделать чат активным (и закрыть оверлей).
+    /// Make a chat active (and close the overlay).
     Switch(Uuid),
-    /// Создать новый чат.
+    /// Create a new chat.
     New,
-    /// Клонировать чат.
+    /// Clone a chat.
     Clone(Uuid),
-    /// Скопировать всю переписку чата в буфер обмена.
+    /// Copy the whole chat conversation to the clipboard.
     Copy(Uuid),
-    /// Мягко удалить чат.
+    /// Soft-delete a chat.
     Delete(Uuid),
-    /// Переименовать чат.
+    /// Rename a chat.
     Rename { id: Uuid, title: String },
-    /// Авто-название: модель читает переписку и придумывает заголовок.
+    /// Auto-title: the model reads the conversation and comes up with a title.
     AutoRename(Uuid),
 }
 
-/// Режим ввода внутри оверлея.
+/// The overlay's input mode.
 enum Mode {
-    /// Ввод в строку поиска.
+    /// Typing into the search line.
     Search,
-    /// Переименование выбранного чата по месту. Текст и курсор ведёт однострочный
-    /// [`InputBox`] (`set_single_line`) — отсюда «бесплатно» доступны спелл-чек,
-    /// пословная навигация/удаление (`Ctrl+←/→`, `Ctrl+Backspace/Delete`),
-    /// `Ctrl+Home/End`, очистка/возврат (`Ctrl+K`) и вставка из буфера. `InputBox`
-    /// крупный — боксируем (clippy::large_enum_variant). `spell_dirty` отмечает,
-    /// что подсветку ошибок нужно пересчитать (см. [`Self::recheck_rename_spelling`]).
+    /// Renaming the selected chat in place. Text and cursor are driven by a
+    /// single-line [`InputBox`] (`set_single_line`) — this gives spellcheck,
+    /// word-wise navigation/deletion (`Ctrl+←/→`, `Ctrl+Backspace/Delete`),
+    /// `Ctrl+Home/End`, clear/restore (`Ctrl+K`), and clipboard paste "for free". `InputBox`
+    /// is large — boxed (clippy::large_enum_variant). `spell_dirty` marks
+    /// that the error highlighting needs recomputing (see [`Self::recheck_rename_spelling`]).
     Rename {
         id: Uuid,
         input: Box<InputBox>,
@@ -69,25 +69,25 @@ enum Mode {
     },
 }
 
-/// Состояние оверлея списка чатов.
+/// State of the chat-list overlay.
 pub struct ChatListState {
-    /// Снимок всех видимых чатов (обновляется из `AppEvent::ChatList`).
+    /// A snapshot of all visible chats (updated from `AppEvent::ChatList`).
     all: Vec<ChatSummary>,
     query: String,
     sort: SortMode,
-    /// Индекс выделения в текущем отфильтрованном списке.
+    /// Selection index within the currently filtered list.
     selected: usize,
     mode: Mode,
-    /// Текущая ошибка операции (авто-название/удаление/клон) для отдельной области.
-    /// Сбрасывается при следующем нажатии клавиши.
+    /// The current operation error (auto-title/delete/clone) for the dedicated area.
+    /// Reset on the next key press.
     error: Option<String>,
-    /// Подтверждение операции (напр. «скопировано») для той же области, но как
-    /// успех. Сбрасывается при следующем нажатии клавиши. Взаимоисключимо с `error`.
+    /// Operation confirmation (e.g. "copied") for the same area, but as
+    /// success. Reset on the next key press. Mutually exclusive with `error`.
     notice: Option<String>,
 }
 
 impl ChatListState {
-    /// Открывает оверлей со снимком списка; выделение — на активном чате.
+    /// Opens the overlay with a list snapshot; selection — on the active chat.
     pub fn new(chats: Vec<ChatSummary>, active: Option<Uuid>) -> Self {
         let mut state = Self {
             all: chats,
@@ -107,11 +107,11 @@ impl ChatListState {
         state
     }
 
-    /// Обновляет снимок списка (после изменений набора чатов), сохраняя выделение
-    /// по возможности на том же чате. Если выделенный чат исчез (напр. был удалён),
-    /// выделение остаётся на **той же позиции** (следующий по списку чат, а при
-    /// удалении последнего — новый последний), а не прыгает на первый элемент —
-    /// как принято в списках.
+    /// Updates the list snapshot (after changes to the chat set), keeping selection
+    /// on the same chat where possible. If the selected chat disappeared (e.g. deleted),
+    /// selection stays at the **same position** (the next chat in the list, or a
+    /// new last one when the last was deleted), rather than jumping to the first item —
+    /// as is conventional for lists.
     pub fn set_chats(&mut self, chats: Vec<ChatSummary>) {
         let current = self.selected_id();
         let prev_index = self.selected;
@@ -123,12 +123,12 @@ impl ChatListState {
         self.clamp_selection();
     }
 
-    /// Текущий отфильтрованный/отсортированный список.
+    /// The current filtered/sorted list.
     fn visible(&self) -> Vec<ChatSummary> {
         filter_and_sort(&self.all, &self.query, self.sort)
     }
 
-    /// Id выделенного чата (если список не пуст).
+    /// The selected chat's id (if the list isn't empty).
     pub fn selected_id(&self) -> Option<Uuid> {
         self.visible().get(self.selected).map(|c| c.id)
     }
@@ -142,26 +142,26 @@ impl ChatListState {
         }
     }
 
-    /// Устанавливает текст ошибки для отдельной области оверлея. Сбрасывается
-    /// при следующем нажатии клавиши, так что не «висит» постоянно.
+    /// Sets the error text for the overlay's dedicated area. Reset
+    /// on the next key press, so it doesn't stay hanging around forever.
     pub fn set_error(&mut self, message: String) {
         self.error = Some(message);
         self.notice = None;
     }
 
-    /// Устанавливает подтверждение операции (успех) для той же области. Сбрасывается
-    /// при следующем нажатии клавиши.
+    /// Sets an operation confirmation (success) for the same area. Reset
+    /// on the next key press.
     pub fn set_notice(&mut self, message: String) {
         self.notice = Some(message);
         self.error = None;
     }
 
-    /// Обрабатывает нажатие клавиши, возвращая действие для исполнения.
+    /// Handles a key press, returning the action to perform.
     pub fn on_key(&mut self, key: KeyEvent) -> ChatListAction {
         if key.kind != KeyEventKind::Press {
             return ChatListAction::None;
         }
-        // Любое нажатие убирает показанные ранее ошибку/подтверждение (не «висят»).
+        // Any key press clears a previously shown error/confirmation (they don't linger).
         self.error = None;
         self.notice = None;
         match &mut self.mode {
@@ -172,20 +172,20 @@ impl ChatListState {
 
     fn on_key_search(&mut self, key: KeyEvent) -> ChatListAction {
         let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
-        // Ctrl-шорткаты матчим по «физической» латинской клавише — работают при
-        // любой раскладке (см. shared::keys). Любой другой Ctrl+символ глотаем,
-        // чтобы он не попал в строку поиска.
+        // Ctrl shortcuts are matched by "physical" Latin key — work under
+        // any layout (see shared::keys). Any other Ctrl+character is swallowed,
+        // so it doesn't end up in the search line.
         if ctrl && let KeyCode::Char(c) = key.code {
             return match keys::physical_char(c) {
-                // Выход работает и из списка чатов; переехал на Ctrl+Q/F10 (Ctrl+C
-                // освобождён). См. docs/history/input-selection-undo-mouse.md §B.
+                // Quitting works from the chat list too; moved to Ctrl+Q/F10 (Ctrl+C
+                // is freed up). See docs/history/input-selection-undo-mouse.md §B.
                 'q' => ChatListAction::Quit,
                 'n' => ChatListAction::New,
                 'd' => match self.selected_id() {
                     Some(id) => ChatListAction::Clone(id),
                     None => ChatListAction::None,
                 },
-                // Авто-название выделенного чата силами модели.
+                // Auto-title the selected chat, done by the model.
                 'r' => match self.selected_id() {
                     Some(id) => ChatListAction::AutoRename(id),
                     None => ChatListAction::None,
@@ -194,7 +194,7 @@ impl ChatListState {
             };
         }
         match key.code {
-            KeyCode::F(10) => ChatListAction::Quit, // второй вариант выхода
+            KeyCode::F(10) => ChatListAction::Quit, // a second way to quit
             KeyCode::Esc => ChatListAction::Close,
             KeyCode::Enter => match self.selected_id() {
                 Some(id) => ChatListAction::Switch(id),
@@ -211,8 +211,8 @@ impl ChatListState {
                 }
                 ChatListAction::None
             }
-            // Постраничное перемещение выделения: шаг на «страницу» (фиксированный,
-            // т.к. высота списка известна лишь при рендере).
+            // Paged selection movement: step by a "page" (fixed,
+            // since the list height is only known at render time).
             KeyCode::PageUp => {
                 self.selected = self.selected.saturating_sub(PAGE_STEP);
                 ChatListAction::None
@@ -224,7 +224,7 @@ impl ChatListState {
                 }
                 ChatListAction::None
             }
-            // Прыжок к первому/последнему чату.
+            // Jump to the first/last chat.
             KeyCode::Home => {
                 self.selected = 0;
                 ChatListAction::None
@@ -240,8 +240,8 @@ impl ChatListState {
             }
             KeyCode::F(2) => {
                 if let Some(chat) = self.visible().get(self.selected) {
-                    // Однострочный `InputBox` с текущим названием (курсор в конце).
-                    // `set_single_line` — до `set_text` (инвариант одной строки).
+                    // A single-line `InputBox` with the current title (cursor at the end).
+                    // `set_single_line` — before `set_text` (the single-line invariant).
                     let mut input = InputBox::new();
                     input.set_single_line(true);
                     input.set_text(&chat.title);
@@ -253,7 +253,7 @@ impl ChatListState {
                 }
                 ChatListAction::None
             }
-            // Копирование всей переписки выделенного чата в буфер обмена.
+            // Copy the whole conversation of the selected chat to the clipboard.
             KeyCode::F(5) => match self.selected_id() {
                 Some(id) => ChatListAction::Copy(id),
                 None => ChatListAction::None,
@@ -285,10 +285,10 @@ impl ChatListState {
         else {
             return ChatListAction::None;
         };
-        // Все Ctrl-комбинации поля (очистка `Ctrl+K`, пословная навигация `Ctrl+←/→`,
-        // удаление слова `Ctrl+Backspace/Delete`, `Ctrl+Home/End`, отмена/повтор
-        // `Ctrl+Z/Y`) обрабатывает сам `InputBox` в `on_key` (раскладко-независимо);
-        // незнакомые он глотает. `Ctrl+K` → `Edited` → пометим подсветку на пересчёт.
+        // All Ctrl combinations for the field (clear `Ctrl+K`, word-wise navigation `Ctrl+←/→`,
+        // word deletion `Ctrl+Backspace/Delete`, `Ctrl+Home/End`, undo/redo
+        // `Ctrl+Z/Y`) are handled by `InputBox` itself in `on_key` (layout-independent);
+        // it swallows unrecognized ones. `Ctrl+K` → `Edited` → flag the highlighting to recompute.
         match key.code {
             KeyCode::Esc => {
                 self.mode = Mode::Search;
@@ -304,9 +304,9 @@ impl ChatListState {
                 self.mode = Mode::Search;
                 action
             }
-            // Всё прочее (печать, навигация по словам/символам, удаление, `Home/End`)
-            // ведёт сам `InputBox`; на реальной правке помечаем подсветку ошибок на
-            // пересчёт (движение курсора его не требует). См. [`KeyOutcome`].
+            // Everything else (typing, word/character navigation, deletion, `Home/End`)
+            // is handled by `InputBox` itself; on an actual edit we flag the error
+            // highlighting for a recompute (cursor movement doesn't need it). See [`KeyOutcome`].
             _ => {
                 if input.on_key(key).edited() {
                     *spell_dirty = true;
@@ -316,9 +316,9 @@ impl ChatListState {
         }
     }
 
-    /// Вставляет текст из буфера обмена в поле переименования (если оно открыто).
-    /// Переводы строк схлопываются в пробел (`InputBox` однострочный). Вне режима
-    /// переименования — no-op (в строке поиска вставка не нужна).
+    /// Inserts clipboard text into the rename field (if it's open).
+    /// Line breaks collapse into a space (`InputBox` is single-line). Outside rename
+    /// mode — a no-op (paste isn't needed in the search line).
     pub fn handle_paste(&mut self, text: &str) {
         if let Mode::Rename {
             input, spell_dirty, ..
@@ -329,10 +329,10 @@ impl ChatListState {
         }
     }
 
-    /// Пересчитывает подсветку ошибок орфографии в поле переименования, если оно
-    /// открыто и помечено «грязным» (после правки/вставки). Возвращает `true`, если
-    /// подсветка была обновлена (нужна перерисовка). Чекер не владеется виджетом —
-    /// его одалживает `app` (владелец живёт в экране чата). См. spec §11.5.
+    /// Recomputes spellcheck highlighting in the rename field, if it's
+    /// open and flagged "dirty" (after an edit/paste). Returns `true` if the
+    /// highlighting was updated (a repaint is needed). The widget doesn't own the checker —
+    /// `app` lends it (the owner lives in the chat screen). See spec §11.5.
     pub fn recheck_rename_spelling(&mut self, spell: &SpellChecker) -> bool {
         let Mode::Rename {
             input, spell_dirty, ..
@@ -349,9 +349,9 @@ impl ChatListState {
         true
     }
 
-    /// Рисует окно списка чатов на весь экран (`area`). `active` — текущий
-    /// активный чат (метка). `&mut self` — поле переименования рисует [`InputBox`]
-    /// (ему нужен `&mut` для скролла/курсора). См. spec §11.2.
+    /// Draws the fullscreen chat-list window (`area`). `active` — the current
+    /// active chat (the marker). `&mut self` — the rename field draws an [`InputBox`]
+    /// (it needs `&mut` for scroll/cursor). See spec §11.2.
     pub fn render(
         &mut self,
         frame: &mut Frame,
@@ -362,15 +362,15 @@ impl ChatListState {
     ) {
         frame.render_widget(Clear, area);
 
-        // Снизу — строка статуса с «клавишами» (как на экране чата): аккуратная
-        // сетка хоткеев (число строк зависит от ширины). Считаем её заранее, чтобы
-        // отвести под неё ровно нужную высоту.
+        // At the bottom — a status line with "keycaps" (like on the chat screen): a neat
+        // hotkey grid (the row count depends on width). Compute it ahead of time to
+        // reserve exactly the height it needs.
         let status_lines = self.status_lines(palette, area.width as usize, loc);
         let status_h = (status_lines.len() as u16).max(1);
         let [main_area, status_area] =
             Layout::vertical([Constraint::Min(3), Constraint::Length(status_h)]).areas(area);
 
-        // Панель со списком: скруглённая рамка, титул слева, число диалогов справа.
+        // The list panel: a rounded border, title on the left, dialog count on the right.
         let count = self.all.len();
         let title = format!(
             "{} {}",
@@ -390,8 +390,8 @@ impl ChatListState {
         let inner = block.inner(main_area);
         frame.render_widget(block, main_area);
 
-        // Внутри панели: строка поиска (в рамке, 3 ряда), список и — при наличии —
-        // строка статуса операции (ошибка/подтверждение).
+        // Inside the panel: the search line (bordered, 3 rows), the list, and — if present —
+        // an operation-status line (error/confirmation).
         let mut constraints = vec![Constraint::Length(3), Constraint::Min(1)];
         if self.error.is_some() || self.notice.is_some() {
             constraints.push(Constraint::Length(1));
@@ -399,9 +399,9 @@ impl ChatListState {
         let chunks = Layout::vertical(constraints).split(inner);
         let (search_area, list_area) = (chunks[0], chunks[1]);
 
-        // --- строка поиска (в рамке, с клавишей `/` справа) ИЛИ поле
-        // переименования (однострочный `InputBox`: спелл-чек, пословная навигация,
-        // настоящий курсор, горизонтальный скролл) ---
+        // --- the search line (bordered, with a `/` keycap on the right) OR the
+        // rename field (a single-line `InputBox`: spellcheck, word-wise navigation,
+        // a real cursor, horizontal scroll) ---
         if let Mode::Rename { input, .. } = &mut self.mode {
             input.render(
                 frame,
@@ -413,7 +413,7 @@ impl ChatListState {
             self.render_search(frame, search_area, palette, loc);
         }
 
-        // --- список ---
+        // --- the list ---
         let visible = self.visible();
         let width = list_area.width as usize;
         let items: Vec<ListItem> = visible
@@ -423,8 +423,8 @@ impl ChatListState {
                 ListItem::new(self.item_line(c, i == self.selected, active, palette, width, loc))
             })
             .collect();
-        // Выделение — мягкая подложка (как тинт в макете), а не инверсия всей строки;
-        // зелёный рейл выделенной строки добавляется в `item_line`.
+        // Selection — a soft backdrop (like the tint in the mockup), not inverting the whole line;
+        // the selected row's green rail is added in `item_line`.
         let list = List::new(items).highlight_style(Style::new().bg(palette.keycap_bg));
         let mut list_state = ListState::default();
         if !visible.is_empty() {
@@ -432,9 +432,9 @@ impl ChatListState {
         }
         frame.render_stateful_widget(list, list_area, &mut list_state);
 
-        // Скроллбар на правой рамке панели «Чаты» — когда чатов больше видимой
-        // высоты списка. Бар занимает только ряды списка (строка поиска и статус
-        // не затрагиваются); позиция — фактический offset списка после рендера.
+        // The scrollbar on the "Chats" panel's right border — when there are more
+        // chats than the list's visible height. The bar occupies only the list's rows
+        // (the search line and status aren't touched); position — the list's actual offset after rendering.
         render_scrollbar(
             frame,
             Rect {
@@ -446,11 +446,11 @@ impl ChatListState {
             visible.len(),
             list_area.height as usize,
             list_state.offset(),
-            true, // рамка панели — в фокусном цвете (panel(_, true))
+            true, // the panel border — in the focused color (panel(_, true))
             palette,
         );
 
-        // --- область статуса операции: ошибка (красным) или подтверждение (успехом) ---
+        // --- the operation-status area: error (red) or confirmation (success) ---
         if let Some(err) = &self.error {
             let line = Line::from(vec![
                 Span::from(format!("{} ", palette.glyphs().warn)).fg(palette.error),
@@ -465,11 +465,11 @@ impl ChatListState {
             frame.render_widget(Paragraph::new(line), chunks[2]);
         }
 
-        // --- строка статуса (хоткеи, как на экране чата) ---
+        // --- the status line (hotkeys, like on the chat screen) ---
         frame.render_widget(Paragraph::new(status_lines), status_area);
     }
 
-    /// Рисует строку поиска в рамке; справа — «клавиша» `/` (приглашение фокуса).
+    /// Draws the bordered search line; on the right — the "/" keycap (a focus hint).
     fn render_search(
         &self,
         frame: &mut Frame,
@@ -485,7 +485,7 @@ impl ChatListState {
         let inner = block.inner(area);
         frame.render_widget(block, area);
 
-        // Поле и колонка под «клавишу» `/` справа.
+        // The field and the column for the "/" keycap on the right.
         let [field, cap] =
             Layout::horizontal([Constraint::Min(1), Constraint::Length(3)]).areas(inner);
 
@@ -504,9 +504,9 @@ impl ChatListState {
         frame.render_widget(Paragraph::new(Line::from(palette.keycap("/"))), cap);
     }
 
-    /// Строка чата: цветной рейл выделенной строки, точка (зелёная у активного чата),
-    /// заголовок слева и счётчик сообщений, прижатый к правому краю (`width` — ширина
-    /// области списка). Длинный заголовок усекается с многоточием.
+    /// A chat row: the selected row's colored rail, a dot (green for the active chat),
+    /// the title on the left, and the message count right-aligned (`width` — the width
+    /// of the list area). A long title is truncated with an ellipsis.
     fn item_line(
         &self,
         chat: &ChatSummary,
@@ -517,7 +517,7 @@ impl ChatListState {
         loc: &'static Locale,
     ) -> Line<'static> {
         let is_active = active == Some(chat.id);
-        // Рейл выделенной строки (2 колонки) + точка (2 колонки) = префикс.
+        // The selected row's rail (2 columns) + the dot (2 columns) = the prefix.
         let rail = if is_selected {
             Span::styled("▌ ", Style::new().fg(palette.success))
         } else {
@@ -539,9 +539,9 @@ impl ChatListState {
             &[("n", &chat.message_count.to_string())],
         );
         let count_w = display_width_str(&count);
-        const PREFIX_W: usize = 4; // рейл (2) + точка «● » (2)
-        const TRAIL: usize = 1; // правый отступ
-        // Доступная ширина под заголовок (минимальный зазор 1 перед счётчиком).
+        const PREFIX_W: usize = 4; // rail (2) + the "● " dot (2)
+        const TRAIL: usize = 1; // right-hand margin
+        // Available width for the title (a minimum 1-column gap before the counter).
         let max_title = width.saturating_sub(PREFIX_W + count_w + TRAIL + 1);
         let (title, title_w) = truncate_to_width(&chat.title, max_title);
         let gap = width
@@ -557,11 +557,11 @@ impl ChatListState {
         ])
     }
 
-    /// Строки статуса (хоткеи) внизу экрана — как на экране чата: «клавиши» на
-    /// приглушённом фоне + приглушённые описания, выровненные в аккуратную сетку
-    /// (столбцы совпадают по вертикали). Число строк подбирается под ширину `width`:
-    /// берём максимум столбцов, влезающих в ширину (минимум строк). В режиме
-    /// переименования — одна строка-подсказка.
+    /// Status (hotkey) lines at the bottom of the screen — like on the chat screen: "keycaps"
+    /// on a muted background + muted descriptions, laid out in a neat grid
+    /// (columns line up vertically). The number of rows is fitted to width `width`:
+    /// we take the max number of columns that fit the width (fewest rows). In
+    /// rename mode — a single hint line.
     fn status_lines(
         &self,
         palette: &Palette,
@@ -583,9 +583,9 @@ impl ChatListState {
             ])];
         }
 
-        // Пары «клавиша — описание — опасная ли» (порядок = чтение слева-направо,
-        // сверху-вниз). `Tab` несёт текущий режим сортировки. Сетку выкладывает
-        // общий хелпер `Palette::hotkey_grid` (тот же, что у статус-бара чата).
+        // Pairs "key — description — is it dangerous" (order = read left-to-right,
+        // top-to-bottom). `Tab` carries the current sort mode. The grid is laid out by
+        // the shared helper `Palette::hotkey_grid` (the same one the chat's status bar uses).
         let sort_desc = loc.tf("ui.chatlist.sort", &[("sort", sort_label(self.sort, loc))]);
         let items: [(&str, &str, bool); 11] = [
             ("↑↓ PgUp/Dn Home/End", loc.t("ui.chatlist.hk.select"), false),
@@ -604,12 +604,12 @@ impl ChatListState {
     }
 }
 
-/// Видимая ширина строки в колонках терминала.
+/// The visible width of a string in terminal columns.
 fn display_width_str(s: &str) -> usize {
     wrap::display_width(&s.chars().collect::<Vec<_>>())
 }
 
-/// Локализованная метка режима сортировки для индикатора (`Tab` в списке чатов).
+/// A localized sort-mode label for the indicator (`Tab` in the chat list).
 fn sort_label(sort: SortMode, loc: &'static Locale) -> &'static str {
     match sort {
         SortMode::Created => loc.t("ui.sort.created"),
@@ -617,8 +617,8 @@ fn sort_label(sort: SortMode, loc: &'static Locale) -> &'static str {
     }
 }
 
-/// Усекает строку до ширины `max` колонок, добавляя «…» при усечении. Возвращает
-/// усечённую строку и её фактическую ширину. При `max == 0` — пустая строка.
+/// Truncates a string to width `max` columns, adding "…" on truncation. Returns
+/// the truncated string and its actual width. At `max == 0` — an empty string.
 fn truncate_to_width(s: &str, max: usize) -> (String, usize) {
     let chars: Vec<char> = s.chars().collect();
     let full = wrap::display_width(&chars);
@@ -628,7 +628,7 @@ fn truncate_to_width(s: &str, max: usize) -> (String, usize) {
     if max == 0 {
         return (String::new(), 0);
     }
-    // Оставляем место под «…» (1 колонка).
+    // Leave room for "…" (1 column).
     let budget = max.saturating_sub(1);
     let mut out = String::new();
     let mut w = 0;
@@ -680,7 +680,7 @@ mod tests {
         for c in "Бет".chars() {
             assert_eq!(s.on_key(key(KeyCode::Char(c))), ChatListAction::None);
         }
-        // остался один чат — он же выделен
+        // one chat remains — and it's the selected one
         assert_eq!(s.selected_id(), Some(beta_id));
         assert_eq!(
             s.on_key(key(KeyCode::Enter)),
@@ -698,11 +698,11 @@ mod tests {
     fn ctrl_q_and_f10_quit() {
         let mut s = ChatListState::new(vec![chat("A")], None);
         assert_eq!(s.on_key(ctrl(KeyCode::Char('q'))), ChatListAction::Quit);
-        // И при кириллической раскладке (физ. Q = Ctrl+й).
+        // Also under a Cyrillic layout (physical Q = Ctrl+й).
         assert_eq!(s.on_key(ctrl(KeyCode::Char('й'))), ChatListAction::Quit);
-        // F10 — второй вариант выхода.
+        // F10 — a second way to quit.
         assert_eq!(s.on_key(key(KeyCode::F(10))), ChatListAction::Quit);
-        // Ctrl+C больше не выход (освобождён под копирование).
+        // Ctrl+C is no longer quit (freed up for copying).
         assert_ne!(s.on_key(ctrl(KeyCode::Char('c'))), ChatListAction::Quit);
     }
 
@@ -721,7 +721,7 @@ mod tests {
 
     #[test]
     fn ctrl_shortcuts_work_under_cyrillic_layout() {
-        // Русская раскладка: Ctrl+т (физ. N) — новый, Ctrl+в (физ. D) — копия.
+        // Russian layout: Ctrl+т (physical N) — new, Ctrl+в (physical D) — clone.
         let chats = vec![chat("A")];
         let id = chats[0].id;
         let mut s = ChatListState::new(chats, None);
@@ -730,7 +730,7 @@ mod tests {
             s.on_key(ctrl(KeyCode::Char('в'))),
             ChatListAction::Clone(id)
         );
-        // Текст поиска кириллицей по-прежнему набирается (без Ctrl).
+        // Cyrillic search text still gets typed (without Ctrl).
         s.on_key(key(KeyCode::Char('я')));
         assert_eq!(s.query, "я");
     }
@@ -748,12 +748,12 @@ mod tests {
         let mut s = ChatListState::new(vec![chat("A")], None);
         s.set_notice("скопировано".into());
         assert_eq!(s.notice.as_deref(), Some("скопировано"));
-        // Установка ошибки гасит подтверждение и наоборот (взаимоисключимы).
+        // Setting an error clears a confirmation and vice versa (mutually exclusive).
         s.set_error("боль".into());
         assert!(s.notice.is_none());
         s.set_notice("ок".into());
         assert!(s.error.is_none());
-        // Любое нажатие убирает подтверждение.
+        // Any key press clears the confirmation.
         s.on_key(key(KeyCode::Down));
         assert!(s.notice.is_none());
     }
@@ -767,7 +767,7 @@ mod tests {
             s.on_key(ctrl(KeyCode::Char('r'))),
             ChatListAction::AutoRename(id)
         );
-        // И при кириллической раскладке (физ. R = Ctrl+к).
+        // Also under a Cyrillic layout (physical R = Ctrl+к).
         assert_eq!(
             s.on_key(ctrl(KeyCode::Char('к'))),
             ChatListAction::AutoRename(id)
@@ -781,7 +781,7 @@ mod tests {
         let mut s = ChatListState::new(chats, None);
 
         assert_eq!(s.on_key(key(KeyCode::F(2))), ChatListAction::None);
-        // очищаем буфер и печатаем новое имя
+        // clear the buffer and type a new name
         for _ in 0.."Старое".chars().count() {
             s.on_key(key(KeyCode::Backspace));
         }
@@ -799,20 +799,20 @@ mod tests {
 
     #[test]
     fn rename_cursor_moves_and_edits_in_middle() {
-        // Курсор в режиме переименования двигается стрелками/Home/End, правка идёт
-        // в позицию курсора (а не только в конец).
+        // The cursor in rename mode moves via arrows/Home/End, edits go
+        // at the cursor's position (not only at the end).
         let chats = vec![chat("abc")];
         let id = chats[0].id;
         let mut s = ChatListState::new(chats, None);
-        s.on_key(key(KeyCode::F(2))); // буфер "abc", курсор в конце (3)
-        s.on_key(key(KeyCode::Home)); // курсор → 0
-        s.on_key(key(KeyCode::Char('X'))); // вставка в начало → "Xabc", курсор 1
-        s.on_key(key(KeyCode::End)); // курсор → 4 (конец)
-        s.on_key(key(KeyCode::Char('Y'))); // вставка в конец → "XabcY", курсор 5
-        s.on_key(key(KeyCode::Home)); // курсор → 0
-        s.on_key(key(KeyCode::Right)); // курсор 1
-        s.on_key(key(KeyCode::Right)); // курсор 2 (перед 'b')
-        s.on_key(key(KeyCode::Delete)); // удалить 'b' в середине → "XacY"
+        s.on_key(key(KeyCode::F(2))); // buffer "abc", cursor at the end (3)
+        s.on_key(key(KeyCode::Home)); // cursor → 0
+        s.on_key(key(KeyCode::Char('X'))); // insert at the start → "Xabc", cursor 1
+        s.on_key(key(KeyCode::End)); // cursor → 4 (end)
+        s.on_key(key(KeyCode::Char('Y'))); // insert at the end → "XabcY", cursor 5
+        s.on_key(key(KeyCode::Home)); // cursor → 0
+        s.on_key(key(KeyCode::Right)); // cursor 1
+        s.on_key(key(KeyCode::Right)); // cursor 2 (before 'b')
+        s.on_key(key(KeyCode::Delete)); // delete 'b' in the middle → "XacY"
         assert_eq!(
             s.on_key(key(KeyCode::Enter)),
             ChatListAction::Rename {
@@ -824,31 +824,31 @@ mod tests {
 
     #[test]
     fn rename_supports_input_box_word_navigation() {
-        // Поле переименования — однострочный `InputBox`, поэтому `Ctrl+Backspace`
-        // удаляет слово целиком (раньше посимвольный буфер этого не умел).
+        // The rename field is a single-line `InputBox`, so `Ctrl+Backspace`
+        // deletes the whole word (the old character-by-character buffer couldn't do this).
         let chats = vec![chat("один два")];
         let id = chats[0].id;
         let mut s = ChatListState::new(chats, None);
-        s.on_key(key(KeyCode::F(2))); // "один два", курсор в конце
-        s.on_key(ctrl(KeyCode::Backspace)); // удалить слово "два" → "один "
+        s.on_key(key(KeyCode::F(2))); // two-word title, cursor at the end
+        s.on_key(ctrl(KeyCode::Backspace)); // delete the last word, leaving a trailing space
         assert_eq!(
             s.on_key(key(KeyCode::Enter)),
             ChatListAction::Rename {
                 id,
-                title: "один".into() // хвостовой пробел снимает sanitize_title
+                title: "один".into() // sanitize_title strips the trailing space
             }
         );
     }
 
     #[test]
     fn rename_clear_with_ctrl_k_undo_with_ctrl_z() {
-        // `Ctrl+K` чистит поле, `Ctrl+Z` возвращает текст (общая модель отмены, §C).
+        // `Ctrl+K` clears the field, `Ctrl+Z` restores the text (the shared undo model, §C).
         let chats = vec![chat("Старое имя")];
         let id = chats[0].id;
         let mut s = ChatListState::new(chats, None);
         s.on_key(key(KeyCode::F(2)));
-        s.on_key(ctrl(KeyCode::Char('k'))); // удалить весь текст
-        s.on_key(ctrl(KeyCode::Char('z'))); // отмена — вернуть удалённое
+        s.on_key(ctrl(KeyCode::Char('k'))); // delete all the text
+        s.on_key(ctrl(KeyCode::Char('z'))); // undo — restore what was deleted
         assert_eq!(
             s.on_key(key(KeyCode::Enter)),
             ChatListAction::Rename {
@@ -866,22 +866,19 @@ mod tests {
         let spell = SpellChecker::new(vec![dict], HashSet::new(), None);
 
         let mut s = ChatListState::new(vec![chat("helo")], None);
-        s.on_key(key(KeyCode::F(2))); // входим в переименование, текст "helo"
-        // Пересчёт орфографии помечает "helo" как ошибку (диапазон непуст).
+        s.on_key(key(KeyCode::F(2))); // enter rename mode, text "helo"
+        // The spelling recompute flags "helo" as an error (a non-empty range).
         assert!(s.recheck_rename_spelling(&spell));
         match &s.mode {
             Mode::Rename {
                 input, spell_dirty, ..
             } => {
-                assert!(!*spell_dirty, "флаг сбрасывается после пересчёта");
-                assert!(
-                    !input.misspelled_is_empty(),
-                    "ошибка должна быть подчёркнута"
-                );
+                assert!(!*spell_dirty, "the flag is reset after a recompute");
+                assert!(!input.misspelled_is_empty(), "the error must be underlined");
             }
-            _ => panic!("ожидался режим переименования"),
+            _ => panic!("expected rename mode"),
         }
-        // Вне режима переименования пересчёт — no-op.
+        // Outside rename mode a recompute is a no-op.
         s.on_key(key(KeyCode::Esc));
         assert!(!s.recheck_rename_spelling(&spell));
     }
@@ -891,8 +888,8 @@ mod tests {
         let chats = vec![chat("a")];
         let id = chats[0].id;
         let mut s = ChatListState::new(chats, None);
-        s.on_key(key(KeyCode::F(2))); // "a", курсор в конце
-        s.handle_paste("bc"); // вставка из буфера обмена
+        s.on_key(key(KeyCode::F(2))); // "a", cursor at the end
+        s.handle_paste("bc"); // paste from the clipboard
         assert_eq!(
             s.on_key(key(KeyCode::Enter)),
             ChatListAction::Rename {
@@ -908,14 +905,14 @@ mod tests {
         let mut s = ChatListState::new(chats, None);
         s.on_key(key(KeyCode::F(2)));
         assert_eq!(s.on_key(key(KeyCode::Esc)), ChatListAction::None);
-        // вернулись в режим поиска: печать снова фильтрует
+        // back in search mode: typing filters again
         s.on_key(key(KeyCode::Char('x')));
-        assert_eq!(s.selected_id(), None); // 'x' не совпал ни с чем
+        assert_eq!(s.selected_id(), None); // 'x' matched nothing
     }
 
     #[test]
     fn page_up_down_move_selection_by_page() {
-        // 25 чатов; PageDown сдвигает на PAGE_STEP, не выходя за конец, PageUp — назад.
+        // 25 chats; PageDown moves by PAGE_STEP without going past the end, PageUp — backward.
         let chats: Vec<ChatSummary> = (0..25).map(|i| chat(&format!("чат {i}"))).collect();
         let mut s = ChatListState::new(chats, None);
         assert_eq!(s.selected, 0);
@@ -923,12 +920,12 @@ mod tests {
         assert_eq!(s.selected, PAGE_STEP);
         s.on_key(key(KeyCode::PageDown));
         assert_eq!(s.selected, 2 * PAGE_STEP);
-        // Третий PageDown упирается в последний элемент (24), а не уезжает за край.
+        // A third PageDown clamps to the last item (24), not overshooting the edge.
         s.on_key(key(KeyCode::PageDown));
         assert_eq!(s.selected, 24);
         s.on_key(key(KeyCode::PageUp));
         assert_eq!(s.selected, 24 - PAGE_STEP);
-        // PageUp из верхней части насыщается на 0 (без переполнения).
+        // PageUp from near the top saturates at 0 (no underflow).
         s.on_key(key(KeyCode::PageUp));
         s.on_key(key(KeyCode::PageUp));
         assert_eq!(s.selected, 0);
@@ -973,7 +970,7 @@ mod tests {
         let mut s = ChatListState::new(vec![chat("A")], None);
         s.set_error("боль".into());
         assert_eq!(s.error.as_deref(), Some("боль"));
-        // Любое нажатие убирает ошибку.
+        // Any key press clears the error.
         s.on_key(key(KeyCode::Down));
         assert!(s.error.is_none());
     }
@@ -995,23 +992,23 @@ mod tests {
     fn scrollbar_appears_only_when_list_overflows() {
         use ratatui::Terminal;
         use ratatui::backend::TestBackend;
-        // Бегунок «█» на правой рамке панели — только когда чатов больше высоты.
+        // The "█" thumb on the panel's right border — only when there are more chats than the height.
         let has_thumb = |term: &Terminal<TestBackend>| {
             let buf = term.backend().buffer();
-            let x = buf.area.right() - 1; // колонка рамки панели «Чаты»
+            let x = buf.area.right() - 1; // the border column of the "Chats" panel
             (buf.area.top()..buf.area.bottom()).any(|y| buf[(x, y)].symbol() == "█")
         };
-        // Ширина 72 — сетка хоткеев внизу в 2 колонки (не съедает высоту списка).
+        // Width 72 — the hotkey grid at the bottom is 2 columns (doesn't eat into the list's height).
         let mut term = Terminal::new(TestBackend::new(72, 24)).unwrap();
         let mut short = ChatListState::new(vec![chat("A"), chat("B")], None);
         term.draw(|f| short.render(f, f.area(), None, &Palette::default(), ru()))
             .unwrap();
-        assert!(!has_thumb(&term), "короткий список — без бегунка");
+        assert!(!has_thumb(&term), "a short list — no scrollbar thumb");
         let chats: Vec<ChatSummary> = (0..40).map(|i| chat(&format!("Чат {i}"))).collect();
         let mut long = ChatListState::new(chats, None);
         term.draw(|f| long.render(f, f.area(), None, &Palette::default(), ru()))
             .unwrap();
-        assert!(has_thumb(&term), "длинный список — с бегунком");
+        assert!(has_thumb(&term), "a long list — with a scrollbar thumb");
     }
 
     #[test]
@@ -1032,9 +1029,9 @@ mod tests {
         let chats = vec![chat("A"), chat("B"), chat("C")];
         let b_id = chats[1].id;
         let mut s = ChatListState::new(chats.clone(), None);
-        s.on_key(key(KeyCode::Down)); // выделить B (индекс 1 в порядке Modified ~ исходный)
+        s.on_key(key(KeyCode::Down)); // select B (index 1 in Modified order ~ the source order)
         let sel = s.selected_id();
-        // обновляем список тем же набором — выделение сохраняется на том же чате
+        // update the list with the same set — selection stays on the same chat
         s.set_chats(chats);
         assert_eq!(s.selected_id(), sel);
         let _ = b_id;
@@ -1042,17 +1039,17 @@ mod tests {
 
     #[test]
     fn deleting_selected_keeps_position_not_first() {
-        // Удаление выделенного чата (переэмит списка без него) оставляет выделение
-        // на той же позиции — под ним оказывается следующий по списку чат, а не
-        // происходит прыжок на первый элемент.
+        // Deleting the selected chat (a re-emit of the list without it) leaves selection
+        // at the same position — the next chat in the list ends up under it, rather
+        // than jumping to the first item.
         let chats = vec![chat("A"), chat("B"), chat("C")];
         let mut s = ChatListState::new(chats, None);
-        s.on_key(key(KeyCode::Down)); // выделение на позиции 1
+        s.on_key(key(KeyCode::Down)); // selection at position 1
         assert_eq!(s.selected, 1);
-        // Порядок берём из фактического `visible` (сортировка может отличаться от
-        // порядка ввода) — так тест не зависит от близких таймстампов.
+        // Take the order from the actual `visible` list (sorting may differ from
+        // insertion order) — so the test doesn't depend on close-together timestamps.
         let victim_id = s.selected_id().unwrap();
-        let next_id = s.visible()[2].id; // станет под позицией 1 после удаления
+        let next_id = s.visible()[2].id; // will end up under position 1 after deletion
 
         let remaining: Vec<ChatSummary> = s
             .visible()
@@ -1061,24 +1058,24 @@ mod tests {
             .collect();
         s.set_chats(remaining);
 
-        assert_eq!(s.selected, 1, "позиция выделения сохраняется");
+        assert_eq!(s.selected, 1, "the selection position is preserved");
         assert_eq!(
             s.selected_id(),
             Some(next_id),
-            "под выделением — бывший следующий чат, а не первый"
+            "under the selection — the former next chat, not the first one"
         );
     }
 
     #[test]
     fn deleting_last_selected_clamps_to_new_last() {
-        // Удаление выделенного последнего чата уводит выделение на новый последний
-        // (а не на первый).
+        // Deleting the selected last chat moves selection to the new last one
+        // (not to the first).
         let chats = vec![chat("A"), chat("B"), chat("C")];
         let mut s = ChatListState::new(chats, None);
-        s.on_key(key(KeyCode::End)); // выделение на последнем (позиция 2)
+        s.on_key(key(KeyCode::End)); // selection on the last one (position 2)
         assert_eq!(s.selected, 2);
         let victim_id = s.selected_id().unwrap();
-        let new_last_id = s.visible()[1].id; // станет новым последним
+        let new_last_id = s.visible()[1].id; // will become the new last one
 
         let remaining: Vec<ChatSummary> = s
             .visible()
@@ -1087,7 +1084,7 @@ mod tests {
             .collect();
         s.set_chats(remaining);
 
-        assert_eq!(s.selected, 1, "выделение прижато к новому последнему");
+        assert_eq!(s.selected, 1, "selection clamps to the new last one");
         assert_eq!(s.selected_id(), Some(new_last_id));
     }
 }

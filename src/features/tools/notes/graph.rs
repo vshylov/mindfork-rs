@@ -1,9 +1,10 @@
-//! Заметки — note_link / note_neighbors (типизированный граф связей). Часть модуля [`super`]; разбито из монолита
-//! notes.rs (см. docs/history/refactoring-god-objects.md, этап 4).
+//! Notes — note_link / note_neighbors (a typed link graph). Part of the [`super`]
+//! module; split out of the notes.rs monolith (see
+//! docs/history/refactoring-god-objects.md, stage 4).
 
 use super::*;
 
-/// `note_link` — связывает две заметки направленной типизированной связью.
+/// `note_link` — links two notes with a directed, typed relation.
 pub struct NoteLink;
 
 #[async_trait::async_trait]
@@ -75,7 +76,7 @@ impl Tool for NoteLink {
     }
 }
 
-/// `note_neighbors` — показывает связанные с заданной заметкой заметки.
+/// `note_neighbors` — shows notes linked to a given note.
 pub struct NoteNeighbors;
 
 #[async_trait::async_trait]

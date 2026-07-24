@@ -1,8 +1,8 @@
-//! Инструменты «модели себя» (SelfModel) — MVP-зонд: чтение, рефлексия и
-//! минимальное обновление представления агента о себе, целях и собеседнике.
-//! Данные пер-профильные, в SQLite (как заметки) — инструменты-мутаторы пишут
-//! **напрямую** через `ctx.storage` (не через `ChatEffect`). Изоляция по
-//! `ctx.profile_id`. См. [docs/history/self-model-mvp.md](../../../docs/history/self-model-mvp.md).
+//! "Self-model" (SelfModel) tools — the MVP probe: reading, reflecting on, and
+//! minimally updating the agent's representation of itself, its goals, and the
+//! interlocutor. Data is per-profile, in SQLite (like notes) — mutator tools write
+//! **directly** through `ctx.storage` (not via `ChatEffect`). Isolation by
+//! `ctx.profile_id`. See [docs/history/self-model-mvp.md](../../../docs/history/self-model-mvp.md).
 
 use anyhow::Result;
 use chrono::Utc;
@@ -19,10 +19,10 @@ pub const UPDATE_SELF_MODEL_ID: &str = "update_self_model";
 pub const UPDATE_USER_MODEL_ID: &str = "update_user_model";
 pub const ADD_INSIGHT_ID: &str = "add_insight";
 
-/// Все id инструментов группы «модели себя» (для детекции правок в ходе).
-/// `consolidate_narrative` удалён — наблюдения переехали в заметки (Ярус 1
-/// «нарратив как заметки»), их консолидируют note-инструменты (note_revise/
-/// note_supersede/note_merge). См. docs/history/narrative-as-notes.md.
+/// All ids of the "self-model" tool group (for detecting edits within a turn).
+/// `consolidate_narrative` was removed — observations moved into notes (Tier 1
+/// "narrative as notes"), consolidated by note tools (note_revise/note_supersede/
+/// note_merge). See docs/history/narrative-as-notes.md.
 pub const ALL_IDS: &[&str] = &[
     GET_SELF_MODEL_ID,
     REFLECT_ID,
@@ -31,25 +31,26 @@ pub const ALL_IDS: &[&str] = &[
     ADD_INSIGHT_ID,
 ];
 
-/// Относится ли инструмент к группе «модели себя» (для сигнала `SelfModelChanged`
-/// после хода, где модель что-то правила через свои инструменты).
+/// Is the tool part of the "self-model" group (for the `SelfModelChanged` signal
+/// after a turn where the model edited something through its tools).
 pub fn is_self_model_tool(name: &str) -> bool {
     ALL_IDS.contains(&name)
 }
 
-/// Канонические правила ведения «модели себя» на языке служебного каркаса (`loc`) —
-/// ключ `selfmodel.policy_core`. **Единственный источник** формулировок, из которого
-/// собираются протокол ведения ([`maintenance_protocol`]) и системное сообщение
-/// авто-рефлексии (`orchestrator::reflection`). Интерактивная рубрика `reflect` —
-/// намеренно не отсюда (иной жанр). Локализация — ось A, см. docs/history/i18n.md.
+/// Canonical "self-model" maintenance rules in the agent-scaffold language (`loc`)
+/// — key `selfmodel.policy_core`. **The single source** of the wording, from which
+/// the maintenance protocol ([`maintenance_protocol`]) and the auto-reflection
+/// system message (`orchestrator::reflection`) are assembled. The interactive
+/// `reflect` rubric — deliberately not from here (a different genre). Localization
+/// — axis A, see docs/history/i18n.md.
 pub fn policy_core(loc: &Locale) -> &str {
     loc.t("selfmodel.policy_core")
 }
 
-/// Нейтральный к персоне «протокол ведения модели» — [`policy_core`] в обрамлении «ты
-/// сам ведёшь эту модель». Подмешивается в системный промпт хода поверх любой персоны
-/// профиля (см. `orchestrator::generation::inject_self_model`), делая использование
-/// SelfModel-инструментов предсказуемым независимо от персоны.
+/// A persona-neutral "model maintenance protocol" — [`policy_core`] framed as "you
+/// manage this model yourself". Mixed into the turn's system prompt on top of any
+/// profile persona (see `orchestrator::generation::inject_self_model`), making use
+/// of SelfModel tools predictable regardless of persona.
 pub fn maintenance_protocol(loc: &Locale) -> String {
     loc.tf(
         "selfmodel.maintenance_wrapper",
@@ -57,9 +58,9 @@ pub fn maintenance_protocol(loc: &Locale) -> String {
     )
 }
 
-/// Загружает модель профиля из хранилища (или пустую, если ещё не создавалась).
-/// Читаем из БД, а не из снимка `ctx.self_model`, чтобы видеть правки, сделанные
-/// другими SelfModel-инструментами в этом же ходе.
+/// Loads the profile's model from storage (or an empty one, if it hasn't been
+/// created yet). Read from the DB, not from the `ctx.self_model` snapshot, to see
+/// edits made by other SelfModel tools within the same turn.
 fn load(ctx: &ToolContext) -> Result<SelfModel> {
     Ok(ctx
         .storage
@@ -68,9 +69,10 @@ fn load(ctx: &ToolContext) -> Result<SelfModel> {
         .unwrap_or_else(|| SelfModel::new(ctx.profile_id)))
 }
 
-/// Свежие наблюдения профиля (self-заметки) как сегменты нарратива — для полного
-/// чтения (`render_full`). Наблюдения переехали в заметки (`@self`), поэтому рендер
-/// «модели себя» получает их параметром. Новейшие первыми, до `max_narrative`.
+/// The profile's fresh observations (self-notes) as narrative segments — for a
+/// full read (`render_full`). Observations moved into notes (`@self`), so the
+/// "self-model" render gets them as a parameter. Newest first, up to
+/// `max_narrative`.
 fn recent_segments(ctx: &ToolContext) -> Vec<NarrativeSegment> {
     notes::self_notes_recent(
         &ctx.storage,
@@ -86,10 +88,10 @@ fn recent_segments(ctx: &ToolContext) -> Vec<NarrativeSegment> {
     .collect()
 }
 
-/// Полное чтение «модели себя» для инструментов (`get_self_model`/`reflect`/эхо):
-/// `render_full` + блок «Связанные наблюдения» (граф над наблюдениями, Ярус 2) + блок
-/// «Ссылки на источники» (наблюдение опирается на RAG-источник, Ярус 3, Путь 3).
-/// Наблюдения, их связи и ссылки — из заметок.
+/// Full "self-model" read for tools (`get_self_model`/`reflect`/echo):
+/// `render_full` + a "Related observations" block (the graph over observations,
+/// Tier 2) + a "Source citations" block (an observation citing a RAG source,
+/// Tier 3, Path 3). Observations, their links, and citations — from notes.
 fn render_self_read(ctx: &ToolContext, m: &SelfModel) -> String {
     let recent = recent_segments(ctx);
     let ids: Vec<uuid::Uuid> = recent.iter().map(|s| s.id).collect();
@@ -100,9 +102,9 @@ fn render_self_read(ctx: &ToolContext, m: &SelfModel) -> String {
     if let Some(block) = notes::cited_sources_block(ctx, &ids) {
         out.push_str(&block);
     }
-    // Мягкие ворота размера описания (этап 2): если summary разрослось — подсказка
-    // сократить. Видна в get_self_model/reflect и авто-рефлексии (та начинает с
-    // get_self_model). См. docs/summary-as-snapshot.md.
+    // Soft gate on description size (stage 2): if the summary has grown — a hint
+    // to shrink it. Visible in get_self_model/reflect and auto-reflection (which
+    // starts with get_self_model). See docs/summary-as-snapshot.md.
     if let Some(hint) = m.summary_fill_hint(ctx.self_model_params.summary_target_chars, ctx.loc) {
         out.push_str("\n\n");
         out.push_str(&hint);
@@ -110,7 +112,7 @@ fn render_self_read(ctx: &ToolContext, m: &SelfModel) -> String {
     out
 }
 
-/// Извлекает массив строк по ключу (пустой, если нет/не массив).
+/// Extracts a string array by key (empty if missing/not an array).
 fn str_array(args: &serde_json::Value, key: &str) -> Vec<String> {
     args.get(key)
         .and_then(|v| v.as_array())
@@ -123,25 +125,28 @@ fn str_array(args: &serde_json::Value, key: &str) -> Vec<String> {
         .unwrap_or_default()
 }
 
-/// Порог косинусной близости, при котором добавляемая черта считается **родственной**
-/// уже имеющейся (ворота `add_traits`). Откалиброван на живом bge-m3 (Шаг C): у него
-/// короткие черты сжаты в узкую полосу, и настоящие перефразы дают ~0.73–0.83
-/// («любит лаконичность» ↔ «ценит краткость» = 0.77, «скептичный» ↔ «критично» = 0.73),
-/// а не-родственные — ниже (кофе↔альпинизм = 0.69, программист↔готовка = 0.58). Порог
-/// 0.72 разделяет их. **Важно:** bge-m3 сближает по *измерению/теме*, не по направлению
-/// смысла, поэтому в полосу попадают и антонимы («любит краткость» ↔ «любит длинные
-/// объяснения» = 0.71) — но это фича ворот: родственную черту стоит показать, чтобы
-/// модель решила, **дубль это (слить) или противоречие (записать наблюдением)**. См.
-/// docs/history/narrative-as-notes.md (Ярус 2, Шаг C).
+/// Cosine-similarity threshold above which an added trait counts as **related** to
+/// an existing one (the `add_traits` gate). Calibrated on live bge-m3 (Step C): it
+/// compresses short traits into a narrow band, and real paraphrases score
+/// ~0.73-0.83 ("values brevity" ↔ "appreciates concise answers" = 0.77,
+/// "skeptical" ↔ "critical" = 0.73), while unrelated ones score lower (coffee↔hiking
+/// = 0.69, programmer↔cooking = 0.58). The 0.72 threshold separates them.
+/// **Important:** bge-m3 groups by *dimension/topic*, not by direction of meaning,
+/// so antonyms also fall into the band ("values brevity" ↔ "values long
+/// explanations" = 0.71) — but that's a feature of the gate: a related trait is
+/// worth surfacing so the model can decide **duplicate (merge) or contradiction
+/// (record as an observation)**. See docs/history/narrative-as-notes.md (Tier 2,
+/// Step C).
 const TRAIT_SIMILARITY: f32 = 0.72;
 
-/// Ворота родственных черт (Шаг C): для КАЖДОЙ реально добавленной черты ищет
-/// ближайшую среди ПРЕЖНИХ (существовавших до этой правки) выше порога
-/// [`TRAIT_SIMILARITY`]. Возвращает пары (добавленная, близкая существующая),
-/// новейшие первыми. Эмбеддит новые + прежние одним запросом; у черт нет хранимых
-/// векторов (плоский `Vec<String>`), поэтому считаем на лету. Пусто при недоступном
-/// эмбеддере или нестыковке числа векторов — **мягкая деградация**, прямое зеркало
-/// ворот `add_insight`/`note_save`. См. docs/history/narrative-as-notes.md (Ярус 2, Шаг C).
+/// The related-traits gate (Step C): for EVERY actually-added trait, looks for the
+/// closest one among the PRIOR ones (existing before this edit) above the
+/// [`TRAIT_SIMILARITY`] threshold. Returns pairs (added, close existing one),
+/// newest first. Embeds new + prior traits in one request; traits have no stored
+/// vectors (a flat `Vec<String>`), so we compute on the fly. Empty when the
+/// embedder is unavailable or the vector count doesn't match — **graceful
+/// degradation**, a direct mirror of the `add_insight`/`note_save` gates. See
+/// docs/history/narrative-as-notes.md (Tier 2, Step C).
 async fn near_duplicate_traits(
     ctx: &ToolContext,
     added: &[String],
@@ -150,7 +155,7 @@ async fn near_duplicate_traits(
     if added.is_empty() || existing_before.is_empty() {
         return Vec::new();
     }
-    // Один запрос: сначала добавленные, затем прежние — чтобы разбить по границе.
+    // One request: added ones first, then prior ones — to split by the boundary.
     let texts: Vec<String> = added.iter().chain(existing_before).cloned().collect();
     let Ok(vecs) = ctx.embedder.embed(texts).await else {
         return Vec::new();
@@ -161,7 +166,7 @@ async fn near_duplicate_traits(
     let (added_vecs, existing_vecs) = vecs.split_at(added.len());
     let mut out = Vec::new();
     for (i, a) in added.iter().enumerate() {
-        // Ближайшая прежняя черта выше порога (одна на добавленную — не шумим).
+        // Closest prior trait above the threshold (one per added trait — no noise).
         let mut best: Option<(f32, usize)> = None;
         for (j, _) in existing_before.iter().enumerate() {
             let s = notes::cosine(&added_vecs[i], &existing_vecs[j]);
@@ -176,7 +181,7 @@ async fn near_duplicate_traits(
     out
 }
 
-/// `get_self_model` — текущее состояние модели себя (чтение).
+/// `get_self_model` — current state of the self-model (read).
 pub struct GetSelfModel;
 
 #[async_trait::async_trait]
@@ -205,9 +210,9 @@ impl Tool for GetSelfModel {
     }
 }
 
-/// `reflect` — возвращает текущую модель и рубрику для размышления. Ничего не
-/// пишет: это «точка входа» рефлексии, после которой модель сама зовёт
-/// `update_self_model`/`update_user_model`, если есть что зафиксировать.
+/// `reflect` — returns the current model and a rubric for reflection. Writes
+/// nothing: this is the reflection "entry point", after which the model calls
+/// `update_self_model`/`update_user_model` on its own if there's something to record.
 pub struct Reflect;
 
 #[async_trait::async_trait]
@@ -232,14 +237,15 @@ impl Tool for Reflect {
     }
     async fn invoke(&self, ctx: &ToolContext, _args: serde_json::Value) -> Result<ToolOutcome> {
         let m = load(ctx)?;
-        // Обзор наблюдений для консолидации (похожие пары / contradicts / без связей) —
-        // конкретные данные под рубрику ниже. Пусто, если наблюдений < 2.
+        // Observation overview for consolidation (similar pairs / contradicts /
+        // without links) — concrete data under the rubric below. Empty if there
+        // are fewer than 2 observations.
         let mut overview =
             notes::build_self_consolidation_overview(&ctx.storage, ctx.profile_id, ctx.loc)
                 .unwrap_or_default();
-        // A2: семантическое совпадение абзацев описания себя (summary) с наблюдениями —
-        // эмбеддинг абзацев на лету (у summary нет хранимых векторов). См.
-        // docs/history/self-model-consolidation.md §A2.
+        // A2: semantic overlap between self-description (summary) paragraphs and
+        // observations — embedding paragraphs on the fly (summary has no stored
+        // vectors). See docs/history/self-model-consolidation.md §A2.
         if let Some(section) = notes::summary_observation_overlaps(
             &ctx.storage,
             ctx.embedder.as_ref(),
@@ -270,8 +276,8 @@ impl Tool for Reflect {
     }
 }
 
-/// `add_insight` — добавляет короткое наблюдение/инсайт в нарратив (включая
-/// замеченные противоречия — прозой, без отдельного типа). Пишет напрямую в БД.
+/// `add_insight` — adds a short observation/insight to the narrative (including
+/// noticed contradictions — in prose, no separate type). Writes directly to the DB.
 pub struct AddInsight;
 
 #[async_trait::async_trait]
@@ -310,17 +316,18 @@ impl Tool for AddInsight {
         if text.is_empty() {
             anyhow::bail!(ctx.loc.t("tool.add_insight.err.text_empty"));
         }
-        // Наблюдение — это self-заметка (@self): получает эмбеддинг, семантический
-        // поиск, граф и консолидацию наравне с обычными заметками, но скрыта из
-        // пользовательского recall. См. docs/history/narrative-as-notes.md.
+        // An observation is a self-note (@self): gets an embedding, semantic
+        // search, a graph, and consolidation on par with regular notes, but is
+        // hidden from user-facing recall. See docs/history/narrative-as-notes.md.
         let id =
             notes::create_note(ctx, text.clone(), vec![notes::SELF_NOTE_TAG.to_string()]).await?;
         let mut msg = ctx.loc.tf(
             "tool.add_insight.result.recorded",
             &[("id", &id.to_string())],
         );
-        // Ворота (ядро гипотезы Яруса 1): похожие существующие наблюдения — чтобы
-        // переписать почти-дубль через note_revise/note_supersede, а не плодить копию.
+        // The gate (Tier 1's core hypothesis): similar existing observations — to
+        // rewrite a near-duplicate via note_revise/note_supersede rather than
+        // spawning a copy.
         let similar = notes::self_note_similar(ctx, &text, id).await;
         if !similar.is_empty() {
             msg.push('\n');
@@ -333,7 +340,7 @@ impl Tool for AddInsight {
     }
 }
 
-/// `update_self_model` — правит описание себя и/или цели.
+/// `update_self_model` — edits the self-description and/or goals.
 pub struct UpdateSelfModel;
 
 #[async_trait::async_trait]
@@ -365,22 +372,23 @@ impl Tool for UpdateSelfModel {
         })
     }
     async fn invoke(&self, ctx: &ToolContext, args: serde_json::Value) -> Result<ToolOutcome> {
-        // Нерезолвленные ручки целей и шрамы свёрнутых закрытых целей собираются
-        // внутри атомарной правки (захват по `&mut`); запись модели — под одним
-        // захватом мьютекса, а шрамы → self-заметки уже после (внутри closure нет
-        // доступа к storage/async).
+        // Unresolved goal handles and scars from folded closed goals are collected
+        // inside the atomic edit (captured by `&mut`); writing the model happens
+        // under one mutex acquisition, while scars → self-notes happen afterward
+        // (the closure has no access to storage/async).
         let mut unresolved: Vec<String> = Vec::new();
         let mut scars: Vec<String> = Vec::new();
-        // Менялось ли описание себя — для строки размера в эхе (ворота размера, этап 2).
+        // Whether the self-description changed — for the size line in the echo
+        // (the size gate, stage 2).
         let mut summary_changed = false;
-        // Дельты правки для компактного эха (этап 4): что реально добавлено/закрыто —
-        // вместо полного render_full (тот остаётся у get_self_model). Цели называем
-        // #id — теми же ручками, по которым их потом закрывать.
+        // Edit deltas for a compact echo (stage 4): what was actually added/closed
+        // — instead of a full render_full (that stays with get_self_model). Goals
+        // are named by #id — the same handle used later to close them.
         let mut added_goals: Vec<(String, uuid::Uuid)> = Vec::new();
         let mut completed: Vec<uuid::Uuid> = Vec::new();
         let mut abandoned: Vec<uuid::Uuid> = Vec::new();
         let params = ctx.self_model_params;
-        let loc = ctx.loc; // &'static — копируем, чтобы не заимствовать ctx в closure
+        let loc = ctx.loc; // &'static — copy so the closure doesn't borrow ctx
         let (model, changed) =
             ctx.storage.db().self_model_update(ctx.profile_id, |m| {
                 let mut changed = false;
@@ -395,14 +403,15 @@ impl Tool for UpdateSelfModel {
                 for g in str_array(&args, "add_goals") {
                     let before = m.goals.len();
                     m.add_goal(g);
-                    // add_goal игнорирует пустые — фиксируем только реально добавленное.
+                    // add_goal ignores empty ones — record only what was actually added.
                     if m.goals.len() != before {
                         let goal = m.goals.last().expect("только что добавлена");
                         added_goals.push((goal.description.clone(), goal.id));
                         changed = true;
                     }
                 }
-                // Цели закрываются по #id/полному id — резолвим ручку среди целей модели.
+                // Goals are closed by #id/a full id — resolve the handle among the
+                // model's goals.
                 for h in str_array(&args, "complete_goals") {
                     match m.match_goal(&h) {
                         GoalMatch::One(id) => {
@@ -429,9 +438,10 @@ impl Tool for UpdateSelfModel {
                             .push(loc.tf("tool.update_self_model.ambiguous", &[("h", &h)])),
                     }
                 }
-                // Свёртка старых закрытых целей: fold возвращает шрамы (тексты) — их
-                // запишем self-заметками после атомарной правки (потолок закрытых целей:
-                // структура не растёт, «биография» сохраняется наблюдением).
+                // Folding old closed goals: fold returns scars (texts) — we'll
+                // write them as self-notes after the atomic edit (a cap on closed
+                // goals: the structure doesn't grow, the "biography" is preserved
+                // as an observation).
                 scars = m.fold_closed_goals(params.max_closed_goals, loc);
                 if !scars.is_empty() {
                     changed = true;
@@ -439,7 +449,7 @@ impl Tool for UpdateSelfModel {
                 changed
             })?;
 
-        // Шрамы свёрнутых закрытых целей → self-заметки (наблюдения). Best-effort.
+        // Scars from folded closed goals → self-notes (observations). Best-effort.
         for scar in &scars {
             let _ =
                 notes::create_note(ctx, scar.clone(), vec![notes::SELF_NOTE_TAG.to_string()]).await;
@@ -456,15 +466,17 @@ impl Tool for UpdateSelfModel {
             }
             return Ok(ToolOutcome::text(msg));
         }
-        // Дельта-эхо (этап 4): только изменённое, без полного render_full (полное чтение
-        // — у get_self_model). Экономит токены и не «заякоривает» модель на жанре эссе.
+        // Delta echo (stage 4): only what changed, without a full render_full (a
+        // full read — get_self_model's job). Saves tokens and doesn't "anchor" the
+        // model on the essay genre.
         use crate::entities::self_model::short_id;
         let mut msg = ctx
             .loc
             .t("tool.update_self_model.result.updated")
             .to_string();
-        // Обратная связь о размере описания (этап 2): всегда при правке summary, чтобы
-        // модель видела рост даже до превышения ориентира. См. docs/summary-as-snapshot.md.
+        // Feedback about description size (stage 2): always on a summary edit, so
+        // the model sees growth even before exceeding the target. See
+        // docs/summary-as-snapshot.md.
         if summary_changed {
             msg.push('\n');
             msg.push_str(&ctx.loc.tf(
@@ -526,7 +538,7 @@ impl Tool for UpdateSelfModel {
     }
 }
 
-/// `update_user_model` — правит представление о собеседнике.
+/// `update_user_model` — edits the representation of the interlocutor.
 pub struct UpdateUserModel;
 
 #[async_trait::async_trait]
@@ -560,24 +572,28 @@ impl Tool for UpdateUserModel {
         })
     }
     async fn invoke(&self, ctx: &ToolContext, args: serde_json::Value) -> Result<ToolOutcome> {
-        // Признаки удаления/наличия note собираем внутри атомарной правки (захват по
-        // `&mut`); запись — под одним захватом мьютекса (защита от гонки).
+        // Removal/note-presence flags are collected inside the atomic edit
+        // (captured by `&mut`); the write happens under one mutex acquisition
+        // (protection against a race).
         let mut removed_traits = false;
         let mut removed_interests = false;
         let mut replaced_dynamic = false;
         let mut has_note = false;
-        // Шрам ревизии (`note`) собираем внутри closure, но записываем **после** —
-        // как self-заметку (наблюдение), а не в блоб модели (async/storage вне closure).
+        // The revision scar (`note`) is collected inside the closure, but written
+        // **after** — as a self-note (observation), not into the model blob
+        // (async/storage are outside the closure).
         let mut note_scar: Option<String> = None;
-        // Ворота почти-дублей черт (Шаг C): нужен снимок черт ДО добавления —
-        // собираем внутри атомарной правки (захват по `&mut`), эмбеддинг — после.
+        // The near-duplicate-traits gate (Step C): needs a snapshot of the traits
+        // BEFORE adding — collected inside the atomic edit (captured by `&mut`),
+        // the embedding happens after.
         let requested_traits = str_array(&args, "add_traits");
         let mut existing_before_traits: Vec<String> = Vec::new();
         let (model, changed) = ctx.storage.db().self_model_update(ctx.profile_id, |m| {
             let mut changed = false;
 
-            // Списки — merge (add/remove с дедупом), а не замена: правка не обнуляет
-            // накопленное представление (частая беда «перетирания по настроению»).
+            // Lists — merge (add/remove with dedup), not replacement: an edit
+            // doesn't zero out the accumulated representation (a common
+            // "overwritten by mood" bug).
             existing_before_traits = m.user_model.perceived_traits.clone();
             changed |= m.user_model.add_traits(requested_traits.clone());
             removed_traits = m
@@ -594,16 +610,18 @@ impl Tool for UpdateUserModel {
             if let Some(s) = args.get("relationship_dynamic").and_then(|v| v.as_str()) {
                 let s = s.trim().to_string();
                 if m.user_model.relationship_dynamic != s {
-                    // Замена НЕПУСТОЙ динамики — существенный пересмотр (в отличие от
-                    // первичного заполнения); просим оставить след (шрам), как у черт.
+                    // Replacing a NON-EMPTY dynamic — a substantial revision
+                    // (unlike initial population); ask to leave a trace (a scar),
+                    // like traits.
                     replaced_dynamic = !m.user_model.relationship_dynamic.trim().is_empty();
                     m.user_model.relationship_dynamic = s;
                     changed = true;
                 }
             }
-            // Шрам ревизии: `note` (что и почему изменилось) сохраняем — уйдёт
-            // наблюдением-заметкой «о себе», так изменение мнения о собеседнике
-            // оставляет след (черты плоские — «биография» их изменений в наблюдениях).
+            // Revision scar: save `note` (what changed and why) — it goes out as
+            // an "about self" observation note, so a change of opinion about the
+            // interlocutor leaves a trace (traits are flat — the "biography" of
+            // their changes lives in observations).
             note_scar = args
                 .get("note")
                 .and_then(|v| v.as_str())
@@ -614,8 +632,9 @@ impl Tool for UpdateUserModel {
             changed
         })?;
 
-        // Шрам → self-заметка (наблюдение). Best-effort. `note` сам по себе изменением
-        // модели не считается (это отдельная заметка), но делает вызов результативным.
+        // Scar → self-note (observation). Best-effort. `note` by itself doesn't
+        // count as a model change (it's a separate note), but makes the call
+        // meaningful.
         if let Some(scar) = &note_scar {
             let _ =
                 notes::create_note(ctx, scar.clone(), vec![notes::SELF_NOTE_TAG.to_string()]).await;
@@ -624,9 +643,10 @@ impl Tool for UpdateUserModel {
         if !changed && !has_note {
             return Ok(ToolOutcome::text(ctx.loc.t("selfmodel.result.nothing")));
         }
-        // Реально добавленные черты (новые после дедупа, без внутрибатчевых повторов) —
-        // сравниваем их с прежними воротами почти-дублей (эмбеддинг только если есть
-        // что сравнивать; при недоступном эмбеддере — мягко пусто).
+        // Actually-added traits (new after dedup, no within-batch repeats) —
+        // compare them against the prior ones via the near-duplicate gate
+        // (embedding only if there's something to compare; softly empty if the
+        // embedder is unavailable).
         let mut added_traits: Vec<String> = Vec::new();
         for t in &requested_traits {
             let lc = t.to_lowercase();
@@ -640,9 +660,9 @@ impl Tool for UpdateUserModel {
         }
         let dup_pairs = near_duplicate_traits(ctx, &added_traits, &existing_before_traits).await;
 
-        // Дельта-эхо (этап 4): компактные итоговые списки модели собеседника вместо
-        // полного render_full (полное чтение — у get_self_model). Списки коротки по
-        // построению (merge с дедупом), поэтому показываем их целиком.
+        // Delta echo (stage 4): compact final lists of the interlocutor model
+        // instead of a full render_full (a full read — get_self_model's job). The
+        // lists are short by construction (merge with dedup), so we show them in full.
         let mut msg = ctx
             .loc
             .t("tool.update_user_model.result.updated")
@@ -669,7 +689,7 @@ impl Tool for UpdateUserModel {
                 &[("dyn", u.relationship_dynamic.trim())],
             ));
         }
-        // Подтверждение шрама ревизии (если передан note) — виден его текст.
+        // Confirmation of the revision scar (if `note` was passed) — its text is visible.
         if let Some(scar) = &note_scar {
             msg.push('\n');
             msg.push_str(
@@ -677,11 +697,12 @@ impl Tool for UpdateUserModel {
                     .tf("tool.update_user_model.scar_saved", &[("scar", scar)]),
             );
         }
-        // Ворота родственных черт (Шаг C): близкая по теме черта уже существует.
-        // bge-m3 сближает черты по измерению (перефразы И антонимы), поэтому просим
-        // модель РЕШИТЬ: это дубль (слить через remove_traits) или противоречие
-        // (записать наблюдением add_insight) — зеркало ворот add_insight, но над
-        // плоским списком черт (интеграция вместо накопления).
+        // The related-traits gate (Step C): a topically close trait already
+        // exists. bge-m3 groups traits by dimension (paraphrases AND antonyms), so
+        // we ask the model to DECIDE: is this a duplicate (merge via
+        // remove_traits) or a contradiction (record via add_insight) — a mirror
+        // of the add_insight gate, but over the flat trait list (integration
+        // instead of accumulation).
         if !dup_pairs.is_empty() {
             msg.push('\n');
             msg.push_str(ctx.loc.t("tool.update_user_model.gate.related"));
@@ -689,9 +710,11 @@ impl Tool for UpdateUserModel {
                 msg.push_str(&format!("\n- «{added}» ≈ «{existing}»"));
             }
         }
-        // Удаление черты/интереса или замена непустой динамики — пересмотр суждения.
-        // Причина не записана → напоминаем оставить след наблюдением (шрам), а не менять
-        // молча (смена динамики отношений — самый значимый пересмотр модели собеседника).
+        // Removing a trait/interest or replacing a non-empty dynamic — a revision
+        // of judgment. No reason recorded → remind to leave a trace as an
+        // observation (a scar) rather than changing it silently (a shift in
+        // relationship dynamic is the most significant revision of the
+        // interlocutor model).
         if (removed_traits || removed_interests || replaced_dynamic) && !has_note {
             msg.push('\n');
             msg.push_str(ctx.loc.t("tool.update_user_model.nudge_note"));
@@ -700,9 +723,10 @@ impl Tool for UpdateUserModel {
     }
 }
 
-// `consolidate_narrative` удалён: наблюдения переехали в заметки (Ярус 1), их
-// консолидируют note-инструменты (note_revise/note_supersede/note_merge) — они
-// сильнее (замещение со «шрамом», а не удаление по id). См. docs/history/narrative-as-notes.md.
+// `consolidate_narrative` was removed: observations moved into notes (Tier 1),
+// consolidated by note tools (note_revise/note_supersede/note_merge) — they're
+// stronger (replacement with a "scar" rather than deletion by id). See
+// docs/history/narrative-as-notes.md.
 
 #[cfg(test)]
 mod tests {
@@ -710,8 +734,8 @@ mod tests {
     use super::*;
     use uuid::Uuid;
 
-    /// Self-заметки (наблюдения) профиля — новейшие первыми. Наблюдения переехали в
-    /// заметки (@self), поэтому проверяем их там, а не в блобе модели.
+    /// The profile's self-notes (observations) — newest first. Observations moved
+    /// into notes (@self), so we check them there, not in the model blob.
     fn self_notes(
         storage: &crate::shared::storage::Storage,
         profile: Uuid,
@@ -724,8 +748,8 @@ mod tests {
 
     #[test]
     fn self_model_tool_descriptions_are_localized() {
-        // Каждый инструмент «модели себя» возвращает РАЗНЫЙ текст на ru/en (ловит
-        // забытый `_loc`), en — без кириллицы. §3.5 docs/history/i18n.md.
+        // Every "self-model" tool returns DIFFERENT text on ru/en (catches a
+        // forgotten `_loc`), en — no Cyrillic. §3.5 docs/history/i18n.md.
         use crate::shared::i18n::{Lang, locale};
         let (r, e) = (locale(Lang::Ru), locale(Lang::En));
         let no_cyr = |s: &str| {
@@ -746,14 +770,14 @@ mod tests {
             ),
         ];
         for (ru_d, en_d) in pairs {
-            assert_ne!(ru_d, en_d, "описание не локализовано: {ru_d}");
-            assert!(no_cyr(&en_d), "кириллица в en-описании: {en_d}");
+            assert_ne!(ru_d, en_d, "description not localized: {ru_d}");
+            assert!(no_cyr(&en_d), "Cyrillic in en description: {en_d}");
         }
     }
 
     #[tokio::test]
     async fn add_insight_result_localized_for_all_langs() {
-        // Подтверждение записи наблюдения рендерится на каждом вшитом языке.
+        // Confirmation of recording an observation renders in every built-in language.
         use crate::shared::i18n::{Lang, locale};
         for &lang in Lang::ALL {
             let (_d, _s, mut ctx) = ctx_with_storage(Uuid::new_v4());
@@ -762,7 +786,7 @@ mod tests {
                 .invoke(&ctx, serde_json::json!({"text": "hello observation"}))
                 .await
                 .unwrap();
-            // Результат начинается с локализованного шаблона «записано (id=…)».
+            // The result starts with the localized "recorded (id=…)" template.
             let prefix = locale(lang)
                 .t("tool.add_insight.result.recorded")
                 .split("{id}")
@@ -781,7 +805,7 @@ mod tests {
         assert!(!is_self_model_tool("web_search"));
     }
 
-    /// Референсная локаль (ru) — ассерты на русские подстроки пинят ru-бандл.
+    /// The reference locale (ru) — asserts on Russian substrings pin the ru bundle.
     fn ru() -> &'static Locale {
         crate::shared::i18n::locale(crate::shared::i18n::Lang::Ru)
     }
@@ -789,14 +813,15 @@ mod tests {
     #[test]
     fn maintenance_protocol_wraps_policy_core() {
         let p = maintenance_protocol(ru());
-        // Обрамление «ты сам ведёшь» + весь POLICY_CORE (с ключевой фразой против лести).
+        // The "you manage this yourself" wrapper + the whole POLICY_CORE (with the
+        // key anti-flattery phrase).
         assert!(p.contains("Ты сам ведёшь эту «модель себя»"));
         assert!(p.contains(policy_core(ru())));
         assert!(p.contains("угодливости"));
     }
 
-    /// Per-language (§3.5): протокол ведения оборачивает `policy_core` того же языка на
-    /// каждом вшитом языке; плейсхолдер `{core}` подставлен.
+    /// Per-language (§3.5): the maintenance protocol wraps `policy_core` of the
+    /// same language on every built-in language; the `{core}` placeholder is substituted.
     #[test]
     fn maintenance_protocol_localized_for_all_langs() {
         for &lang in crate::shared::i18n::Lang::ALL {
@@ -804,27 +829,31 @@ mod tests {
             let p = maintenance_protocol(l);
             assert!(
                 p.contains(policy_core(l)),
-                "{lang:?}: policy_core не встроен"
+                "{lang:?}: policy_core not embedded"
             );
-            assert!(!p.contains("{core}"), "{lang:?}: плейсхолдер не подставлен");
+            assert!(
+                !p.contains("{core}"),
+                "{lang:?}: placeholder not substituted"
+            );
         }
     }
 
     #[test]
     fn policy_core_routes_events_to_insights() {
-        // Этап 1 (summary — снимок, не летопись): жанровая граница проведена по оси
-        // «состояние → summary, событие-вывод → add_insight (даже устойчивое)».
+        // Stage 1 (summary — a snapshot, not a chronicle): the genre boundary runs
+        // along the axis "state → summary, event/conclusion → add_insight (even durable)".
         let core = policy_core(ru());
         assert!(core.contains("снимок"));
         assert!(core.contains("СОКРАЩАЙ"));
         assert!(core.contains("ДАЖЕ ЕСЛИ"));
-        // Явный шаг «прочти целиком перед правкой» (защита от правки с усечённого вида).
+        // The explicit "read it in full before editing" step (protection against
+        // editing from a truncated view).
         assert!(core.contains("прочти его целиком через get_self_model"));
     }
 
     #[test]
     fn policy_core_nudges_interest_aging() {
-        // A3-light: нудж на старение интересов через существующий remove_interests.
+        // A3-light: a nudge on interest aging via the existing remove_interests.
         let core = policy_core(ru());
         assert!(core.contains("remove_interests"));
         assert!(core.contains("устаревал"));
@@ -833,8 +862,8 @@ mod tests {
 
     #[test]
     fn update_self_model_description_routes_events_to_insights() {
-        // Описание инструмента направляет событийные выводы в add_insight, а summary
-        // держит компактным снимком.
+        // The tool description routes event-like conclusions into add_insight,
+        // while summary stays a compact snapshot.
         let d =
             UpdateSelfModel.description(crate::shared::i18n::locale(crate::shared::i18n::Lang::Ru));
         assert!(d.contains("снимок"));
@@ -866,12 +895,12 @@ mod tests {
             .unwrap();
         assert!(out.result.contains("обновлена"));
 
-        // Записано в хранилище под этим профилем.
+        // Recorded in storage under this profile.
         let stored = storage.db().self_model_get(profile).unwrap().unwrap();
         assert_eq!(stored.summary, "ценю ясность");
         assert_eq!(stored.active_goals().count(), 1);
 
-        // get_self_model отражает запись.
+        // get_self_model reflects the record.
         let got = GetSelfModel
             .invoke(&ctx, serde_json::json!({}))
             .await
@@ -882,7 +911,7 @@ mod tests {
 
     #[tokio::test]
     async fn update_summary_echo_shows_size() {
-        // Этап 2: эхо правки summary всегда несёт строку размера (обратная связь о росте).
+        // Stage 2: the summary-edit echo always carries a size line (feedback on growth).
         let (_d, _s, ctx) = ctx_with_storage(Uuid::new_v4());
         let out = UpdateSelfModel
             .invoke(&ctx, serde_json::json!({"summary": "ценю ясность"}))
@@ -890,7 +919,7 @@ mod tests {
             .unwrap();
         assert!(out.result.contains("Описание:"));
         assert!(out.result.contains("симв."));
-        // Правка без summary (только цель) — строки размера нет.
+        // An edit with no summary (goal only) — no size line.
         let out = UpdateSelfModel
             .invoke(&ctx, serde_json::json!({"add_goals": ["цель"]}))
             .await
@@ -900,8 +929,8 @@ mod tests {
 
     #[tokio::test]
     async fn update_self_model_echo_is_delta_not_full() {
-        // Этап 4: эхо правки несёт дельты (#id добавленной цели), но НЕ полный текст
-        // summary (полное чтение — только у get_self_model).
+        // Stage 4: the edit echo carries deltas (#id of the added goal), but NOT
+        // the full summary text (a full read — only get_self_model's job).
         let (_d, _s, ctx) = ctx_with_storage(Uuid::new_v4());
         let out = UpdateSelfModel
             .invoke(
@@ -916,14 +945,16 @@ mod tests {
         assert!(out.result.contains("Добавлены цели:"));
         assert!(out.result.contains("новая цель"));
         assert!(out.result.contains('#'));
-        assert!(out.result.contains("Описание:")); // строка размера (этап 2)
-        // Текст summary в эхо не попадает (нет «заякоривания» на жанре эссе).
+        assert!(out.result.contains("Описание:")); // the size line (stage 2)
+        // The summary text doesn't make it into the echo (no "anchoring" on the
+        // essay genre).
         assert!(!out.result.contains("УНИКАЛЬНЫЙ_МАРКЕР_ОПИСАНИЯ"));
     }
 
     #[tokio::test]
     async fn update_self_model_echo_shows_closed_goal_id() {
-        // Этап 4: закрытие цели отражается в эхе её #id (та же ручка, что и для закрытия).
+        // Stage 4: closing a goal is reflected in the echo by its #id (the same
+        // handle used to close it).
         let profile = Uuid::new_v4();
         let (_d, storage, ctx) = ctx_with_storage(profile);
         UpdateSelfModel
@@ -945,7 +976,7 @@ mod tests {
 
     #[tokio::test]
     async fn update_user_model_echo_shows_final_lists() {
-        // Этап 4: эхо показывает компактные итоговые списки, не полный render_full.
+        // Stage 4: the echo shows compact final lists, not a full render_full.
         let (_d, _s, ctx) = ctx_with_storage(Uuid::new_v4());
         let out = UpdateUserModel
             .invoke(
@@ -965,12 +996,13 @@ mod tests {
 
     #[tokio::test]
     async fn get_self_model_surfaces_summary_fill_hint_over_target() {
-        // Этап 2: раздутое описание (сверх ориентира) поднимает подсказку в чтении.
+        // Stage 2: a bloated description (over the target) raises a hint in the read.
         use crate::entities::self_model::SelfModelParams;
         use crate::shared::config::SelfModelSettings;
         let profile = Uuid::new_v4();
         let (_d, _s, mut ctx) = ctx_with_storage(profile);
-        // Ориентир 5 санитизируется до пола 200 — описание берём длиннее 200 символов.
+        // The target 5 is sanitized to the 200 floor — take a description longer
+        // than 200 characters.
         ctx.self_model_params = SelfModelParams::from_settings(&SelfModelSettings {
             summary_target_chars: 5,
             ..SelfModelSettings::default()
@@ -1028,14 +1060,14 @@ mod tests {
 
     #[tokio::test]
     async fn update_user_model_merges_not_overwrites() {
-        // Ключевой фикс: правка не перетирает прежнее (беда «по настроению»).
+        // The key fix: an edit doesn't overwrite the prior data ("overwritten by mood" bug).
         let profile = Uuid::new_v4();
         let (_d, storage, ctx) = ctx_with_storage(profile);
         UpdateUserModel
             .invoke(&ctx, serde_json::json!({"add_traits": ["добрый"]}))
             .await
             .unwrap();
-        // Вторая правка в другом «настроении» — добавляет, а не заменяет.
+        // A second edit in a different "mood" — adds, doesn't replace.
         UpdateUserModel
             .invoke(&ctx, serde_json::json!({"add_traits": ["прямолинейный"]}))
             .await
@@ -1048,7 +1080,7 @@ mod tests {
                 .perceived_traits
                 .contains(&"добрый".to_string())
         );
-        // remove_traits убирает точечно.
+        // remove_traits removes precisely.
         UpdateUserModel
             .invoke(&ctx, serde_json::json!({"remove_traits": ["добрый"]}))
             .await
@@ -1062,7 +1094,7 @@ mod tests {
 
     #[tokio::test]
     async fn complete_goal_by_short_id() {
-        // Модель ссылается на цель коротким #id из get_self_model.
+        // The model references a goal by the short #id from get_self_model.
         let profile = Uuid::new_v4();
         let (_d, storage, ctx) = ctx_with_storage(profile);
         UpdateSelfModel
@@ -1082,7 +1114,7 @@ mod tests {
         let stored = storage.db().self_model_get(profile).unwrap().unwrap();
         assert_eq!(stored.active_goals().count(), 0);
 
-        // Несуществующий #id — понятный отчёт, не паника.
+        // A nonexistent #id — a clear report, not a panic.
         let out = UpdateSelfModel
             .invoke(&ctx, serde_json::json!({"complete_goals": ["#zzzzzz"]}))
             .await
@@ -1098,7 +1130,7 @@ mod tests {
             .await
             .unwrap();
         assert!(out.result.contains("Нечего обновлять"));
-        // Ничего не записано.
+        // Nothing was recorded.
         assert!(
             storage
                 .db()
@@ -1113,17 +1145,17 @@ mod tests {
         let (_d, _s, ctx) = ctx_with_storage(Uuid::new_v4());
         let out = Reflect.invoke(&ctx, serde_json::json!({})).await.unwrap();
         assert!(out.result.contains("Вопросы для размышления"));
-        // Этап 1: рубрика спрашивает про разрастание описания себя.
+        // Stage 1: the rubric asks about the self-description's growth.
         assert!(out.result.contains("Не разрослось ли описание себя"));
         assert!(out.effects.is_empty());
-        // Без наблюдений (< 2) обзор self-консолидации не подмешивается.
+        // With no observations (< 2) the self-consolidation overview isn't mixed in.
         assert!(!out.result.contains("Обзор наблюдений"));
     }
 
     #[tokio::test]
     async fn reflect_includes_self_consolidation_overview() {
-        // Ярус 3: при ≥2 наблюдениях reflect подмешивает обзор self-консолидации
-        // (конкретные похожие пары / связи / без связей под рубрику).
+        // Tier 3: with ≥2 observations, reflect mixes in the self-consolidation
+        // overview (concrete similar pairs / links / no-links under the rubric).
         let profile = Uuid::new_v4();
         let (_d, _s, ctx) = ctx_with_storage(profile);
         AddInsight
@@ -1151,11 +1183,11 @@ mod tests {
             .await
             .unwrap();
         assert!(out.result.contains("Наблюдение записано"));
-        // Записано как self-заметка (@self), а не в блоб модели (его нет).
+        // Recorded as a self-note (@self), not in the model blob (there is none).
         assert_eq!(self_notes(&storage, profile).len(), 1);
         assert!(storage.db().self_model_get(profile).unwrap().is_none());
 
-        // get_self_model показывает наблюдение (собранное из заметок).
+        // get_self_model shows the observation (assembled from notes).
         let got = GetSelfModel
             .invoke(&ctx, serde_json::json!({}))
             .await
@@ -1163,7 +1195,7 @@ mod tests {
         assert!(got.result.contains("Наблюдения"));
         assert!(got.result.contains("напряжение"));
 
-        // Пустой text — ошибка, ничего не создано.
+        // Empty text — an error, nothing created.
         assert!(
             AddInsight
                 .invoke(&ctx, serde_json::json!({"text": "  "}))
@@ -1175,8 +1207,8 @@ mod tests {
 
     #[tokio::test]
     async fn add_insight_gate_surfaces_similar_observation() {
-        // Ядро гипотезы Яруса 1: почти-дубль наблюдения показывает ворота (похожую
-        // существующую self-заметку) с подсказкой переписать через note_revise.
+        // Tier 1's core hypothesis: a near-duplicate observation surfaces the gate
+        // (a similar existing self-note) with a hint to rewrite via note_revise.
         let profile = Uuid::new_v4();
         let (_d, _s, ctx) = ctx_with_storage(profile);
         AddInsight
@@ -1194,7 +1226,7 @@ mod tests {
 
     #[tokio::test]
     async fn get_self_model_surfaces_linked_observations() {
-        // Ярус 2: get_self_model показывает связи между наблюдениями (граф).
+        // Tier 2: get_self_model shows links between observations (the graph).
         let profile = Uuid::new_v4();
         let (_d, storage, ctx) = ctx_with_storage(profile);
         AddInsight
@@ -1224,18 +1256,18 @@ mod tests {
 
     #[tokio::test]
     async fn add_trait_gate_surfaces_near_duplicate() {
-        // Шаг C: добавление черты, родственной уже имеющейся, поднимает ворота
-        // (зеркало ворот add_insight). MockEmbedder(16) — мешок символов: «aaaa bbbb»
-        // ↔ «aaab» близки (cosine ≈ 0.89 > порога 0.72).
+        // Step C: adding a trait related to an existing one raises the gate
+        // (a mirror of the add_insight gate). MockEmbedder(16) — a bag of
+        // characters: "aaaa bbbb" ↔ "aaab" are close (cosine ≈ 0.89 > the 0.72 threshold).
         let profile = Uuid::new_v4();
         let (_d, _s, ctx) = ctx_with_storage(profile);
-        // Первая черта — прежних нет, ворота молчат.
+        // The first trait — no prior ones, the gate stays silent.
         let out = UpdateUserModel
             .invoke(&ctx, serde_json::json!({"add_traits": ["aaaa bbbb"]}))
             .await
             .unwrap();
         assert!(!out.result.contains("Родственные черты"));
-        // Вторая черта близка к первой → ворота показывают родственную черту.
+        // The second trait is close to the first → the gate shows the related trait.
         let out = UpdateUserModel
             .invoke(&ctx, serde_json::json!({"add_traits": ["aaab"]}))
             .await
@@ -1248,7 +1280,7 @@ mod tests {
 
     #[tokio::test]
     async fn add_trait_gate_silent_for_dissimilar() {
-        // Неродственная черта не поднимает ворота (ложных срабатываний нет).
+        // An unrelated trait doesn't raise the gate (no false positives).
         let profile = Uuid::new_v4();
         let (_d, storage, ctx) = ctx_with_storage(profile);
         UpdateUserModel
@@ -1260,14 +1292,14 @@ mod tests {
             .await
             .unwrap();
         assert!(!out.result.contains("Родственные черты"));
-        // Обе черты сохранены (ворота ничего не блокируют — только предупреждают).
+        // Both traits are kept (the gate blocks nothing — only warns).
         let stored = storage.db().self_model_get(profile).unwrap().unwrap();
         assert_eq!(stored.user_model.perceived_traits.len(), 2);
     }
 
     #[tokio::test]
     async fn removing_trait_with_note_leaves_scar_as_self_note() {
-        // Ревизия черты с note оставляет след — теперь self-заметкой (наблюдением).
+        // Trait revision with a note leaves a trace — now as a self-note (observation).
         let profile = Uuid::new_v4();
         let (_d, storage, ctx) = ctx_with_storage(profile);
         UpdateUserModel
@@ -1289,7 +1321,8 @@ mod tests {
             .await
             .unwrap();
         let stored = storage.db().self_model_get(profile).unwrap().unwrap();
-        // Черта заменена, а причина сохранена self-заметкой (не в блобе, не стёрта).
+        // The trait is replaced, and the reason is preserved as a self-note (not
+        // in the blob, not erased).
         assert_eq!(
             stored.user_model.perceived_traits,
             vec!["в команде раскрывается при доверии".to_string()]
@@ -1318,7 +1351,7 @@ mod tests {
     #[tokio::test]
     async fn replacing_nonempty_dynamic_without_note_nudges() {
         let (_d, _s, ctx) = ctx_with_storage(Uuid::new_v4());
-        // Первичное заполнение динамики — БЕЗ напоминания (это не пересмотр).
+        // Initial population of the dynamic — WITHOUT a reminder (not a revision).
         let out = UpdateUserModel
             .invoke(
                 &ctx,
@@ -1327,7 +1360,7 @@ mod tests {
             .await
             .unwrap();
         assert!(!out.result.contains("без пояснения"));
-        // Замена непустой динамики без note — напоминание про шрам.
+        // Replacing a non-empty dynamic without a note — a reminder about the scar.
         let out = UpdateUserModel
             .invoke(
                 &ctx,
@@ -1336,7 +1369,8 @@ mod tests {
             .await
             .unwrap();
         assert!(out.result.contains("без пояснения"));
-        // С note — напоминания нет, а причина уходит наблюдением (виден в эхо).
+        // With a note — no reminder, and the reason goes out as an observation
+        // (visible in the echo).
         let out = UpdateUserModel
             .invoke(
                 &ctx,
@@ -1357,7 +1391,7 @@ mod tests {
         use crate::shared::config::SelfModelSettings;
         let profile = Uuid::new_v4();
         let (_d, storage, mut ctx) = ctx_with_storage(profile);
-        // Держим не более 2 закрытых целей.
+        // Keep no more than 2 closed goals.
         ctx.self_model_params = SelfModelParams::from_settings(&SelfModelSettings {
             max_closed_goals: 2,
             ..SelfModelSettings::default()
@@ -1378,16 +1412,16 @@ mod tests {
             .iter()
             .map(|g| g.id.to_string())
             .collect();
-        // Закрываем все пять — свёртка оставит 2 самых свежих закрытых, 3 → в архив
-        // (теперь self-заметками, не в блобе).
+        // Close all five — folding will keep the 2 most-recently-closed, 3 → to
+        // the archive (now as self-notes, not in the blob).
         UpdateSelfModel
             .invoke(&ctx, serde_json::json!({"complete_goals": ids}))
             .await
             .unwrap();
         let stored = storage.db().self_model_get(profile).unwrap().unwrap();
-        assert_eq!(stored.goals.len(), 2); // потолок закрытых целей соблюдён
+        assert_eq!(stored.goals.len(), 2); // the closed-goal cap is respected
         assert!(stored.narrative.is_empty());
-        // Три свёрнутых цели — self-заметки «[архив цели]».
+        // Three folded goals — self-notes "[goal archive]".
         let archived = self_notes(&storage, profile)
             .into_iter()
             .filter(|n| n.content.starts_with("[архив цели]"))

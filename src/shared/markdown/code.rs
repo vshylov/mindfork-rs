@@ -1,23 +1,26 @@
-//! Markdown — подсветка блоков кода (syntect: синтаксис + тема из палитры). Часть модуля [`super`]; разбито из монолита
-//! markdown.rs (см. docs/history/refactoring-god-objects.md, этап 6).
+//! Markdown — code-block highlighting (syntect: syntax + theme from the
+//! palette). Part of module [`super`]; split out of the markdown.rs monolith
+//! (see docs/history/refactoring-god-objects.md, stage 6).
 
 use super::*;
 
-// ---------- writer: pulldown events → строки ----------
+// ---------- writer: pulldown events → lines ----------
 
 pub(super) static SYNTAX_SET: LazyLock<SyntaxSet> =
     LazyLock::new(SyntaxSet::load_defaults_newlines);
 
-/// Резолвит метку языка код-блока (` ```csharp `) в синтаксис syntect.
+/// Resolves a code block's language label (` ```csharp `) into a syntect
+/// syntax.
 ///
-/// `SyntaxSet::find_syntax_by_token` в дефолтном наборе Sublime сопоставляет метку
-/// либо расширению файла (`rs`, `cs`), либо **имени** синтаксиса регистронезависимо
-/// (`Rust`, `C#`). Поэтому `rust` находится по счастливому совпадению с именем
-/// `Rust`, а распространённые метки моделей вроде `csharp`/`c++`/`golang` не
-/// совпадают ни с именем (`C#`, `C++`, `Go`), ни с расширением — и код остаётся без
-/// подсветки. Таблица [`canonical_lang`] приводит такие алиасы к токену, который
-/// набор распознаёт; при промахе пробуем исходную метку (вдруг это уже валидное
-/// расширение/имя, которого нет в таблице).
+/// `SyntaxSet::find_syntax_by_token` in the default Sublime set matches a
+/// label either against a file extension (`rs`, `cs`) or against a syntax's
+/// **name**, case-insensitively (`Rust`, `C#`). So `rust` is found by a lucky
+/// match with the name `Rust`, while common model labels like
+/// `csharp`/`c++`/`golang` match neither the name (`C#`, `C++`, `Go`) nor the
+/// extension — and the code stays unhighlighted. The [`canonical_lang`] table
+/// maps such aliases to a token the set recognizes; on a miss we try the
+/// original label (maybe it's already a valid extension/name absent from the
+/// table).
 pub(super) fn resolve_syntax(lang: &str) -> Option<&'static SyntaxReference> {
     if lang.is_empty() {
         return None;
@@ -28,23 +31,24 @@ pub(super) fn resolve_syntax(lang: &str) -> Option<&'static SyntaxReference> {
         .or_else(|| SYNTAX_SET.find_syntax_by_token(lang))
 }
 
-/// Сводит алиас языка к токену (расширению/имени), понятному дефолтному набору
-/// syntect. Регистр метки игнорируется. Немаппированная метка возвращается как есть
-/// (её пробует распознать сам `find_syntax_by_token`).
+/// Reduces a language alias to a token (extension/name) the default syntect
+/// set understands. The label's case is ignored. An unmapped label is
+/// returned as-is (`find_syntax_by_token` itself tries to recognize it).
 ///
-/// Ключи — типичные метки, которыми Gemma/Qwen/Claude размечают код-блоки. **Все
-/// цели сверены с дефолтным бандлом** (`SyntaxSet::load_defaults_newlines`) — набор
-/// узкий (нет TypeScript/Kotlin/PowerShell/Dockerfile/TOML/Swift/…), поэтому мапить
-/// в несуществующий синтаксис бессмысленно. Уже резолвящиеся метки (`rust`,
-/// `python`, `go`, `js`, `java`, `ruby`, `php`, `sql`, `html`, `css`, `json`,
-/// `yaml`, `bash`, `c`, `c++`, `c#`/`cs`, …) в таблицу не вносим.
+/// Keys are typical labels Gemma/Qwen/Claude use to mark code blocks. **All
+/// targets are checked against the default bundle**
+/// (`SyntaxSet::load_defaults_newlines`) — the set is narrow (no TypeScript/
+/// Kotlin/PowerShell/Dockerfile/TOML/Swift/…), so mapping to a nonexistent
+/// syntax is pointless. Labels that already resolve (`rust`, `python`, `go`,
+/// `js`, `java`, `ruby`, `php`, `sql`, `html`, `css`, `json`, `yaml`, `bash`,
+/// `c`, `c++`, `c#`/`cs`, …) aren't listed here.
 pub(super) fn canonical_lang(lang: &str) -> &str {
     match lang.trim().to_ascii_lowercase().as_str() {
-        // --- прямые алиасы: цель есть в наборе, но метка с ней не совпадает ---
-        "csharp" | "cs-script" | "dotnet" => "cs", // имя "C#" ≠ "csharp"
-        "cpp" | "cplusplus" | "cxx" | "cc" => "c++", // имя "C++" ≠ "cpp"
-        "objc" | "objective-c" | "objectivec" | "obj-c" => "m", // имя "Objective-C"
-        "objcpp" | "objc++" | "objective-c++" => "mm", // имя "Objective-C++"
+        // --- direct aliases: the target is in the set, but the label doesn't match it ---
+        "csharp" | "cs-script" | "dotnet" => "cs", // the name "C#" ≠ "csharp"
+        "cpp" | "cplusplus" | "cxx" | "cc" => "c++", // the name "C++" ≠ "cpp"
+        "objc" | "objective-c" | "objectivec" | "obj-c" => "m", // the name "Objective-C"
+        "objcpp" | "objc++" | "objective-c++" => "mm", // the name "Objective-C++"
         "golang" => "go",
         "rustlang" => "rs",
         "python3" | "py3" | "python2" => "py",
@@ -52,23 +56,25 @@ pub(super) fn canonical_lang(lang: &str) -> &str {
         "shell" | "sh" | "zsh" | "console" | "shell-session" | "shellsession" => "bash",
         "yml" | "yaml-frontmatter" | "frontmatter" => "yaml",
         "rlang" => "r",
-        // --- приближения: языка нет в наборе, берём близкий по синтаксису ---
-        // Лучше частичная подсветка родственным грамматиком, чем серый текст.
-        "typescript" | "ts" | "tsx" | "mts" | "cts" | "jsx" => "js", // база JS
+        // --- approximations: the language isn't in the set, take a close relative ---
+        // Partial highlighting from a related grammar beats gray text.
+        "typescript" | "ts" | "tsx" | "mts" | "cts" | "jsx" => "js", // base JS
         "kotlin" | "kt" | "kts" => "java",
         other => {
-            // Немаппированную метку возвращаем как есть; заимствование из исходной
-            // строки, поэтому отдаём срез `lang`, а не временный lowercase-буфер.
+            // Return an unmapped label as-is; borrowed from the original
+            // string, so we return a slice of `lang`, not a temporary
+            // lowercase buffer.
             let _ = other;
             lang.trim()
         }
     }
 }
 
-/// Подсвечивает одну строку кода `line` (может нести хвостовой `\n`) в визуальные
-/// ряды. При ошибке syntect/`ansi-to-tui` деградирует в плоскую строку — **текст
-/// не теряется** (раньше путь `Writer::text` молча выбрасывал строку на ошибке
-/// `highlight_line`). Общий для `Writer::text` и [`super::highlight_code`].
+/// Highlights one line of code `line` (may carry a trailing `\n`) into visual
+/// rows. On a syntect/`ansi-to-tui` error, degrades to a flat line — **the
+/// text isn't lost** (previously `Writer::text` silently dropped the line on
+/// a `highlight_line` error). Shared by `Writer::text` and
+/// [`super::highlight_code`].
 pub(super) fn highlight_line_or_plain(
     hl: &mut HighlightLines<'static>,
     line: &str,
@@ -83,17 +89,18 @@ pub(super) fn highlight_line_or_plain(
     }
 }
 
-/// Строит syntect-тему подсветки кода из семантической [`Palette`], сопоставляя
-/// синтаксические scope'ы ролям темы: ключевые слова → `accent`, строки →
-/// `success`, числа/константы → `warning`, функции → `user`, типы → `assistant`,
-/// теги → `accent`. Текст «по умолчанию» и комментарии задаются абсолютным серым,
-/// светлым на тёмном фоне и тёмным на светлом (`palette.dark`) — так подсветка
-/// согласована с темой приложения, а не живёт «своей палитрой» (ADR 0003).
+/// Builds a syntect code-highlighting theme from the semantic [`Palette`],
+/// mapping syntax scopes to theme roles: keywords → `accent`, strings →
+/// `success`, numbers/constants → `warning`, functions → `user`, types →
+/// `assistant`, tags → `accent`. "Default" text and comments are set to an
+/// absolute gray, light on a dark background and dark on light
+/// (`palette.dark`) — so highlighting tracks the app's theme rather than
+/// living in its "own palette" (ADR 0003).
 ///
-/// Пайплайн рендера (`as_24_bit_terminal_escaped(.., false)`) переносит **только
-/// цвет переднего плана**, поэтому фон/жирность/курсив в теме не задаём.
+/// The render pipeline (`as_24_bit_terminal_escaped(.., false)`) only carries
+/// **foreground** color, so background/bold/italic aren't set in the theme.
 pub(super) fn build_code_theme(palette: &Palette) -> Theme {
-    // Серые, у которых нет адаптируемого ANSI-аналога — выбираем по светлоте фона.
+    // Grays with no adaptable ANSI counterpart — chosen by background lightness.
     let (default_fg, comment) = if palette.dark {
         (gray(212), gray(128))
     } else {
@@ -105,8 +112,8 @@ pub(super) fn build_code_theme(palette: &Palette) -> Theme {
         ..Default::default()
     };
 
-    // Список (scope-селектор → цвет роли). Самый специфичный селектор побеждает
-    // (syntect выбирает по «силе совпадения»), порядок в векторе не важен.
+    // A list (scope selector → role color). The most specific selector wins
+    // (syntect picks by "match strength"), the vector's order doesn't matter.
     let scopes = vec![
         scope_item("comment", comment),
         scope_item(
@@ -143,7 +150,7 @@ pub(super) fn build_code_theme(palette: &Palette) -> Theme {
     }
 }
 
-/// Непрозрачный оттенок серого `v` по всем каналам.
+/// An opaque shade of gray `v` across all channels.
 pub(super) fn gray(v: u8) -> SynColor {
     SynColor {
         r: v,
@@ -153,7 +160,7 @@ pub(super) fn gray(v: u8) -> SynColor {
     }
 }
 
-/// Один элемент темы: scope-селектор(ы) → цвет переднего плана.
+/// One theme item: scope selector(s) → foreground color.
 pub(super) fn scope_item(selector: &str, color: SynColor) -> ThemeItem {
     ThemeItem {
         scope: ScopeSelectors::from_str(selector).unwrap_or_default(),
@@ -165,10 +172,11 @@ pub(super) fn scope_item(selector: &str, color: SynColor) -> ThemeItem {
     }
 }
 
-/// Переводит цвет ratatui в RGB-цвет syntect. Именованные ANSI-цвета (у `Auto`/
-/// `Dark` палитра именованная, адаптируемая терминалом) приводятся к стандартным
-/// RGB (палитра Campbell — дефолт Windows Terminal): подсветка кода всё равно
-/// эмитит 24-битный цвет, так что иначе нельзя. `Rgb` копируется как есть.
+/// Converts a ratatui color into a syntect RGB color. Named ANSI colors
+/// (`Auto`/`Dark` use the named, terminal-adaptable palette) are converted to
+/// standard RGB (the Campbell palette — Windows Terminal's default): code
+/// highlighting emits a 24-bit color regardless, so there's no other way.
+/// `Rgb` is copied as-is.
 pub(super) fn to_syn(color: Color) -> SynColor {
     let (r, g, b) = match color {
         Color::Rgb(r, g, b) => (r, g, b),
@@ -199,9 +207,10 @@ mod tests {
     use super::*;
     use crate::shared::config::Theme;
 
-    /// Метки языков, которыми модели помечают код-блоки, должны резолвиться в
-    /// синтаксис — иначе блок остаётся без подсветки (был баг с ` ```csharp `:
-    /// токен не совпадал ни с именем `C#`, ни с расширением `cs`).
+    /// Language labels models tag code blocks with must resolve to a syntax —
+    /// otherwise the block stays unhighlighted (there was a bug with
+    /// ` ```csharp `: the token matched neither the name `C#` nor the
+    /// extension `cs`).
     #[test]
     fn language_aliases_resolve_to_syntax() {
         for (label, expect_name) in [
@@ -219,17 +228,17 @@ mod tests {
             ("nodejs", "JavaScript"),
             ("shell", "Bourne Again Shell (bash)"),
             ("yml", "YAML"),
-            // приближения: языка нет в наборе → близкий грамматик
+            // approximations: the language isn't in the set → a close grammar
             ("typescript", "JavaScript"),
             ("kotlin", "Java"),
         ] {
             let syntax = resolve_syntax(label)
-                .unwrap_or_else(|| panic!("метка {label:?} не резолвится в синтаксис"));
-            assert_eq!(syntax.name, expect_name, "метка {label:?}");
+                .unwrap_or_else(|| panic!("label {label:?} doesn't resolve to a syntax"));
+            assert_eq!(syntax.name, expect_name, "label {label:?}");
         }
     }
 
-    /// Пустая/неизвестная метка не паникует и не резолвится.
+    /// An empty/unknown label doesn't panic and doesn't resolve.
     #[test]
     fn empty_and_unknown_language_do_not_resolve() {
         assert!(resolve_syntax("").is_none());
@@ -238,45 +247,49 @@ mod tests {
 
     #[test]
     fn code_highlight_is_colored() {
-        // Подсветка проставляет цвета переднего плана (не голый текст).
+        // Highlighting sets foreground colors (not plain text).
         let colors = fg_colors(CODE_MD, &Palette::for_theme(Theme::Dark));
         assert!(
             colors.iter().any(|c| matches!(c, Color::Rgb(..))),
-            "ожидались RGB-цвета подсветки кода"
+            "expected RGB code-highlight colors"
         );
     }
 
     #[test]
     fn code_highlight_follows_theme() {
-        // Та же подсветка кода в тёмной и светлой теме даёт разные цвета —
-        // значит, подсветка согласована с темой, а не живёт «своей палитрой».
+        // The same code highlighting in the dark and light theme gives
+        // different colors — so highlighting tracks the theme, not living in
+        // its "own palette".
         let dark = fg_colors(CODE_MD, &Palette::for_theme(Theme::Dark));
         let light = fg_colors(CODE_MD, &Palette::for_theme(Theme::Light));
-        assert_ne!(dark, light, "подсветка кода не зависит от темы");
+        assert_ne!(dark, light, "code highlighting doesn't depend on the theme");
     }
 
     #[test]
     fn highlight_code_has_no_fences_and_is_colored() {
-        // Хелпер для tool-карточек: подсветка без ограждающих ```, с RGB-цветами.
+        // Helper for tool cards: highlighting with no enclosing ```, with RGB colors.
         let lines = highlight_code("fn main() {}", "rust", &Palette::for_theme(Theme::Dark));
         let joined: String = lines
             .iter()
             .flat_map(|l| l.spans.iter().map(|s| s.content.as_ref()))
             .collect();
-        assert!(joined.contains("fn main"), "содержимое кода: {joined}");
-        assert!(!joined.contains("```"), "не должно быть заборов: {joined}");
+        assert!(joined.contains("fn main"), "code content: {joined}");
+        assert!(
+            !joined.contains("```"),
+            "there should be no fences: {joined}"
+        );
         assert!(
             lines
                 .iter()
                 .flat_map(|l| l.spans.iter())
                 .any(|s| matches!(s.style.fg, Some(Color::Rgb(..)))),
-            "ожидалась RGB-подсветка"
+            "expected RGB highlighting"
         );
     }
 
     #[test]
     fn highlight_code_unknown_lang_falls_back_to_plain() {
-        // Нераспознанный язык → строки без подсветки (без паники, текст цел).
+        // An unrecognized language → unhighlighted lines (no panic, text intact).
         let lines = highlight_code("a\nb", "нет-такого-языка", &Palette::default());
         assert_eq!(lines.len(), 2);
         let joined: String = lines
@@ -286,9 +299,10 @@ mod tests {
         assert_eq!(joined, "ab");
     }
 
-    /// Неподсвеченный (без языка) fenced-блок: содержимое начинается на строке под
-    /// открывающим `​```​`, а не приклеивается к нему (регрессия: первая строка
-    /// дописывалась в строку заборчика, `i==0` + `needs_newline==false`).
+    /// An unhighlighted (no language) fenced block: the content starts on the
+    /// line under the opening `​```​`, not glued onto it (regression: the
+    /// first line used to get appended to the fence line, `i==0` +
+    /// `needs_newline==false`).
     #[test]
     fn plain_code_block_content_not_glued_to_fence() {
         let md = "```\nX_ij = 1, тест\nE = 2/(j-i+1)\n```";
@@ -297,11 +311,8 @@ mod tests {
             .iter()
             .map(|l| l.spans.iter().map(|s| s.content.as_ref()).collect())
             .collect();
-        // Открывающий заборчик — на своей строке, без содержимого.
-        assert_eq!(
-            lines[0], "```",
-            "содержимое приклеилось к заборчику: {lines:?}"
-        );
+        // The opening fence — on its own line, with no content.
+        assert_eq!(lines[0], "```", "content glued to the fence: {lines:?}");
         assert_eq!(lines[1], "X_ij = 1, тест");
         assert_eq!(lines[2], "E = 2/(j-i+1)");
         assert_eq!(lines[3], "```");

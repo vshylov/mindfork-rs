@@ -1,8 +1,8 @@
-//! Оверлей выбора профиля при создании чата (`Ctrl+N`). См. spec §10, §11.2.
+//! Profile-picker overlay when creating a chat (`Ctrl+N`). See spec §10, §11.2.
 //!
-//! Виджет самодостаточен: хранит снимок списка профилей и состояние выбора, на
-//! нажатия отвечает [`ProfileListAction`] (его исполняет `app`). Полноценная
-//! секция управления профилями (CRUD) — на M8; здесь только выбор.
+//! The widget is self-contained: it holds a snapshot of the profile list and the
+//! selection state, and answers key presses with [`ProfileListAction`] (executed
+//! by `app`). Full profile management (CRUD) is at M8; here it's just picking.
 
 use ratatui::Frame;
 use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyEventKind};
@@ -15,25 +15,25 @@ use uuid::Uuid;
 use crate::entities::profile::ProfileSummary;
 use crate::shared::theme::Palette;
 
-/// Действие, которое оверлей просит выполнить вышестоящий слой.
+/// Action the overlay asks the layer above to perform.
 #[derive(Debug, Clone, PartialEq)]
 pub enum ProfileListAction {
-    /// Нажатие обработано внутри оверлея.
+    /// The key press was handled inside the overlay.
     None,
-    /// Закрыть оверлей без выбора.
+    /// Close the overlay without a pick.
     Cancel,
-    /// Создать чат из выбранного профиля.
+    /// Create a chat from the picked profile.
     Pick(Uuid),
 }
 
-/// Состояние оверлея выбора профиля.
+/// State of the profile-picker overlay.
 pub struct ProfileListState {
     profiles: Vec<ProfileSummary>,
     selected: usize,
 }
 
 impl ProfileListState {
-    /// Открывает оверлей со снимком профилей (выделение — на первом).
+    /// Opens the overlay with a profile snapshot (selection starts on the first).
     pub fn new(profiles: Vec<ProfileSummary>) -> Self {
         Self {
             profiles,
@@ -41,12 +41,12 @@ impl ProfileListState {
         }
     }
 
-    /// Id выделенного профиля (если список не пуст).
+    /// Id of the selected profile (if the list isn't empty).
     pub fn selected_id(&self) -> Option<Uuid> {
         self.profiles.get(self.selected).map(|p| p.id)
     }
 
-    /// Обрабатывает нажатие клавиши, возвращая действие для исполнения.
+    /// Handles a key press, returning the action to execute.
     pub fn on_key(&mut self, key: KeyEvent) -> ProfileListAction {
         if key.kind != KeyEventKind::Press {
             return ProfileListAction::None;
@@ -71,7 +71,7 @@ impl ProfileListState {
         }
     }
 
-    /// Рисует оверлей по центру `area`.
+    /// Draws the overlay centered in `area`.
     pub fn render(
         &self,
         frame: &mut Frame,
@@ -117,7 +117,7 @@ impl ProfileListState {
     }
 }
 
-/// Прямоугольник по центру `area`: `pct_x` процентов ширины (≥`min_w`), фикс. высота.
+/// A rectangle centered in `area`: `pct_x` percent width (≥`min_w`), fixed height.
 fn centered_rect(pct_x: u16, min_w: u16, height: u16, area: Rect) -> Rect {
     let w = area.width.saturating_mul(pct_x) / 100;
     let [h_area] = Layout::horizontal([Constraint::Length(w.max(min_w).min(area.width))])
@@ -167,10 +167,10 @@ mod tests {
     #[test]
     fn navigation_clamps_at_bounds() {
         let mut s = ProfileListState::new(vec![profile("A"), profile("B")]);
-        s.on_key(key(KeyCode::Up)); // уже наверху — остаёмся
+        s.on_key(key(KeyCode::Up)); // already at the top — stays put
         assert_eq!(s.selected_id(), Some(s.profiles[0].id));
         s.on_key(key(KeyCode::Down));
-        s.on_key(key(KeyCode::Down)); // ниже последнего нельзя
+        s.on_key(key(KeyCode::Down)); // can't go past the last
         assert_eq!(s.selected_id(), Some(s.profiles[1].id));
     }
 

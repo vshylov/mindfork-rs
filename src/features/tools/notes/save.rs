@@ -1,9 +1,10 @@
-//! Заметки — note_save + запись заметки, ворота похожести, эмбеддинг. Часть модуля [`super`]; разбито из монолита
-//! notes.rs (см. docs/history/refactoring-god-objects.md, этап 4).
+//! Notes — note_save + writing a note, the similarity gate, embedding. Part of
+//! the [`super`] module; split out of the notes.rs monolith (see
+//! docs/history/refactoring-god-objects.md, stage 4).
 
 use super::*;
 
-/// `note_save` — сохраняет заметку профиля. Возвращает её id.
+/// `note_save` — saves a profile note. Returns its id.
 pub struct NoteSave;
 
 #[async_trait::async_trait]
@@ -48,10 +49,10 @@ impl Tool for NoteSave {
         let mut out = ctx
             .loc
             .tf("tool.note_save.result.saved", &[("id", &id.to_string())]);
-        // Эмбеддинг (best-effort) + ворота совместимости: показать семантически
-        // близкие существующие заметки, чтобы модель могла переписать дубль через
-        // note_revise вместо накопления почти-копии. Без эмбеддера — мягко пропускаем
-        // (как RAG-реранкинг), заметка всё равно сохранена.
+        // Embedding (best-effort) + a compatibility gate: show semantically close
+        // existing notes, so the model can rewrite a duplicate via note_revise
+        // instead of accumulating a near-copy. Without an embedder — softly skip
+        // (like RAG reranking), the note is saved either way.
         if let Ok(vecs) = ctx.embedder.embed(vec![note.content.clone()]).await
             && let Some(emb) = vecs.into_iter().next()
         {
@@ -59,8 +60,8 @@ impl Tool for NoteSave {
                 .storage
                 .db()
                 .note_vector_upsert(id, ctx.profile_id, &emb);
-            // Дотягиваем эмбеддинги «старых» заметок без векторов, чтобы они
-            // участвовали в воротах (и в последующем семантическом поиске).
+            // Pull in embeddings for "old" notes with no vectors, so they
+            // participate in the gate (and subsequent semantic search).
             ensure_note_vectors(&ctx.storage, ctx.embedder.as_ref(), ctx.profile_id).await;
             if let Ok(hits) = ctx
                 .storage
@@ -70,8 +71,8 @@ impl Tool for NoteSave {
                 let similar: Vec<Note> = hits
                     .into_iter()
                     .map(|(n, _)| n)
-                    // Исключаем только что созданную и self-заметки (@self) — обычная
-                    // запись не должна натыкаться на наблюдения «модели себя».
+                    // Exclude the just-created note and self-notes (@self) — a
+                    // regular save shouldn't run into "self-model" observations.
                     .filter(|n| n.id != id && !is_self_note(n))
                     .take(3)
                     .collect();
@@ -88,9 +89,9 @@ impl Tool for NoteSave {
     }
 }
 
-/// Создаёт заметку (insert + best-effort эмбеддинг) и возвращает её id. Используется
-/// `note_supersede`/`note_merge` для новой версии/объединённой заметки, а также
-/// инструментами «модели себя» для self-заметок (тег [`SELF_NOTE_TAG`]).
+/// Creates a note (insert + best-effort embedding) and returns its id. Used by
+/// `note_supersede`/`note_merge` for the new/merged version of a note, and by
+/// "self-model" tools for self-notes (tag [`SELF_NOTE_TAG`]).
 pub(crate) async fn create_note(
     ctx: &ToolContext,
     content: String,
@@ -110,10 +111,10 @@ pub(crate) async fn create_note(
     Ok(id)
 }
 
-/// Семантически близкие self-заметки к `content` — ворота инструмента `add_insight`:
-/// дотягивает вектора self-заметок (бэкфилл), эмбеддит запрос, ищет среди
-/// self-заметок, исключает `exclude`. Пусто при недоступном эмбеддере (мягкая
-/// деградация) — прямое зеркало ворот `note_save`, но над памятью «о себе».
+/// Semantically close self-notes to `content` — the `add_insight` tool's gate:
+/// pulls in self-note vectors (backfill), embeds the query, searches among
+/// self-notes, excludes `exclude`. Empty if the embedder is unavailable (graceful
+/// degradation) — a direct mirror of the `note_save` gate, but over "about self" memory.
 pub(crate) async fn self_note_similar(
     ctx: &ToolContext,
     content: &str,
@@ -140,12 +141,13 @@ pub(crate) async fn self_note_similar(
         .collect()
 }
 
-/// Дотягивает эмбеддинги заметок профиля, у которых их ещё нет (созданы до
-/// векторного поиска, импортированы или сохранены при недоступном тогда эмбеддере).
-/// Без этого семантический поиск/ворота их не видят. **Best-effort**: эмбеддер
-/// недоступен или батч не прошёл — просто выходим (поиск отработает по тому, что
-/// есть, плюс откат на подстроку). По сути один раз на профиль: после бэкфилла
-/// список «без векторов» пуст и вызов почти бесплатен (один SELECT).
+/// Pulls in embeddings for profile notes that don't have them yet (created before
+/// vector search existed, imported, or saved when the embedder was unavailable at
+/// the time). Without this, semantic search/gates don't see them. **Best-effort**:
+/// the embedder is unavailable or the batch failed — just return (search works off
+/// what's there, plus a fallback to substring). Effectively a one-time cost per
+/// profile: after backfilling, the "no vectors" list is empty and the call is
+/// nearly free (a single SELECT).
 pub(crate) async fn ensure_note_vectors(
     storage: &crate::shared::storage::Storage,
     embedder: &dyn crate::shared::api::Embedder,
@@ -158,7 +160,7 @@ pub(crate) async fn ensure_note_vectors(
     for chunk in missing.chunks(NOTE_BACKFILL_BATCH) {
         let texts: Vec<String> = chunk.iter().map(|(_, c)| c.clone()).collect();
         let Ok(vecs) = embedder.embed(texts).await else {
-            return; // эмбеддер недоступен — дальше смысла нет
+            return; // the embedder is unavailable — no point continuing
         };
         for ((id, _), emb) in chunk.iter().zip(vecs) {
             let _ = storage.db().note_vector_upsert(*id, profile_id, &emb);

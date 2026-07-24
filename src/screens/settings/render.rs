@@ -1,20 +1,20 @@
-//! Экран настроек — отрисовка: меню секций, таб-стрип подсекций, список полей,
-//! попап выбора и оверлей поиска. Часть модуля [super]; разбито из монолита
-//! settings.rs (см. docs/history/refactoring-god-objects.md).
+//! Settings screen — rendering: the section menu, the subsection tab strip, the field
+//! list, the Choice popup, and the search overlay. Part of the [super] module; split
+//! out of the settings.rs monolith (see docs/history/refactoring-god-objects.md).
 
 use super::helpers::*;
 use super::*;
 
 impl SettingsScreen {
-    // ---------- отрисовка ----------
+    // ---------- rendering ----------
 
-    /// Палитра по рабочей копии конфига: тема + режим совместимости терминала.
+    /// The palette from the working config copy: theme + terminal compatibility mode.
     pub(super) fn palette(&self) -> Palette {
         Palette::for_theme(self.config.interface.theme)
             .with_compat(self.config.interface.terminal_compat)
     }
 
-    /// Локаль интерфейса по рабочей копии конфига (ось B, docs/i18n-ui.md).
+    /// The interface locale from the working config copy (axis B, docs/i18n-ui.md).
     pub(super) fn loc(&self) -> &'static crate::shared::i18n::Locale {
         crate::shared::i18n::locale(self.config.interface.language)
     }
@@ -23,8 +23,8 @@ impl SettingsScreen {
         let area = frame.area();
         let palette = self.palette();
         let loc = self.loc();
-        // Контекстный футер: базовые хоткеи + специфичные для секции. В «Профилях» —
-        // создание/удаление профиля.
+        // Contextual footer: base hotkeys + section-specific ones. In "Profiles" —
+        // create/delete a profile.
         let mut hints: Vec<(&str, &str)> = vec![
             ("Tab", loc.t("ui.settings.hint.section")),
             ("↑↓", loc.t("ui.settings.hint.fields")),
@@ -42,8 +42,8 @@ impl SettingsScreen {
         }
         hints.push(("Esc", loc.t("ui.settings.hint.back")));
         hints.push(("Ctrl+Q", loc.t("ui.settings.hint.quit")));
-        // Строка хоткеев — под панелью (вне рамки), переносится сеткой по той же
-        // логике, что статус-бар экрана чата (прижата вправо). Высоту считаем заранее.
+        // The hotkey line — below the panel (outside the border), wraps as a grid using
+        // the same logic as the chat screen's status bar (right-aligned). Height computed up front.
         let hotkeys = status_bar::hotkey_lines(area.width as usize, &hints, &palette);
         let status_h = (hotkeys.len() as u16).max(1);
 
@@ -66,17 +66,17 @@ impl SettingsScreen {
         let [menu_area, fields_area] =
             Layout::horizontal([Constraint::Length(24), Constraint::Min(20)]).areas(inner);
 
-        // Счётчики секций привязаны к выбранным режимам (из индекса поиска) —
-        // сумма совпадает с числом полей в поиске.
+        // Section counters are tied to the selected modes (from the search index) —
+        // the sum matches the number of fields in search.
         let counts = self.section_counts();
         self.render_menu(frame, menu_area, &counts);
         self.render_fields(frame, fields_area);
 
-        // Редактор поверх — с реальным курсором (InputBox::render требует &mut).
+        // The editor on top — with a real cursor (`InputBox::render` requires `&mut`).
         if let Some(editor) = self.editor.as_mut() {
-            // Системное сообщение/приветствие — крупный многострочный попап с
-            // переносом; прочие поля — компактная однострочная полоса. При ошибке
-            // валидации титул несёт красное сообщение и редактор не закрывается.
+            // System message/greeting — a large multiline popup with
+            // wrapping; other fields — a compact single-line strip. On a validation
+            // error the title carries a red message and the editor doesn't close.
             let err = editor.error;
             let base_title = if editor.multiline {
                 loc.t("ui.editor.multiline_footer")
@@ -96,9 +96,9 @@ impl SettingsScreen {
             } else {
                 centered_rect(60, 30, 3, area)
             };
-            // Крупный многострочный попап (системное сообщение/приветствие)
-            // притеняет фон, чтобы не сливаться; компактные однострочные полосы —
-            // нет (правка на месте).
+            // A large multiline popup (system message/greeting)
+            // dims the background so it doesn't blend in; compact single-line strips —
+            // don't (an in-place edit).
             if editor.multiline {
                 dim_background(frame, &palette);
             }
@@ -108,22 +108,24 @@ impl SettingsScreen {
                 .render(frame, popup, RenderOpts::focused(&title), &palette);
         }
 
-        // Попап выбора Choice-поля — поверх (при поиске редактор/выбор закрыты).
+        // The Choice-field picker popup — on top (the editor/choice are closed while
+        // searching).
         if self.choice.is_some() {
             self.render_choice(frame, area, &palette);
         }
 
-        // Оверлей поиска по полям — поверх всего (редактор при поиске закрыт).
+        // The field-search overlay — on top of everything (the editor is closed while
+        // searching).
         if self.search.is_some() {
             self.render_search(frame, area, &palette);
         }
     }
 
-    /// Рисует попап выбора значения Choice-поля: список вариантов, текущий отмечен.
+    /// Draws the Choice-field picker popup: the option list, the current one marked.
     pub(super) fn render_choice(&self, frame: &mut Frame, area: Rect, palette: &Palette) {
         let st = self.choice.as_ref().unwrap();
-        // Высота = число вариантов + рамка, но не выше экрана; ширина по самой
-        // длинной подписи (с запасом), центрирован.
+        // Height = the number of options + a border, but no taller than the screen;
+        // width by the longest label (with margin), centered.
         let want_h = (st.options.len() as u16 + 2).min(area.height.max(3));
         let want_w = st
             .options
@@ -158,7 +160,7 @@ impl SettingsScreen {
         frame.render_stateful_widget(list, popup, &mut state);
     }
 
-    /// Рисует оверлей поиска: строка запроса + отфильтрованная выдача.
+    /// Draws the search overlay: the query line + the filtered results.
     pub(super) fn render_search(&mut self, frame: &mut Frame, area: Rect, palette: &Palette) {
         let loc = self.loc();
         let popup = centered_rect(72, 50, (area.height * 3 / 4).max(8), area);
@@ -168,7 +170,7 @@ impl SettingsScreen {
         let [input_area, list_area] =
             Layout::vertical([Constraint::Length(3), Constraint::Min(1)]).areas(popup);
 
-        // Снимок для списка (селект/выдача) до мутабельного заимствования input.
+        // A snapshot for the list (select/results) before mutably borrowing input.
         let (results, all_len, selected): (Vec<(String, String)>, usize, usize) = {
             let s = self.search.as_ref().unwrap();
             let rows = s
@@ -196,7 +198,7 @@ impl SettingsScreen {
             palette,
         );
 
-        // Список результатов: «крошка   значение» (значение приглушённо).
+        // The results list: "breadcrumb   value" (the value muted).
         let inner_w = list_area.width.saturating_sub(2) as usize;
         let items: Vec<ListItem> = if results.is_empty() {
             vec![ListItem::new(Line::styled(
@@ -235,7 +237,7 @@ impl SettingsScreen {
         }
         frame.render_stateful_widget(list, list_area, &mut state);
 
-        // Скроллбар на правой рамке панели, когда результатов больше видимой высоты.
+        // A scrollbar on the panel's right border, when there are more results than the visible height.
         if list_area.height > 2 {
             let bar = Rect {
                 x: list_area.x,
@@ -255,17 +257,17 @@ impl SettingsScreen {
         }
     }
 
-    /// Число редактируемых параметров секции (для счётчика в меню слева).
+    /// The number of editable parameters in a section (for the counter in the left menu).
     ///
-    /// Привязано к **текущему выбранному режиму** движка/провайдера каждого
-    /// сервера (managed/external/облако) и берётся из того же индекса, что и
-    /// поиск ([`Self::build_search_index`]) — поэтому сумма счётчиков секций
-    /// совпадает с числом полей в поиске. Перечисляются поля всех подсекций
-    /// (таб-стрипов) для их текущих режимов; селектор подсекции — навигационный
-    /// таб, не параметр, — в счёт не входит (`collect_hits` его пропускает).
+    /// Tied to the **currently selected mode** of each server's engine/provider
+    /// (managed/external/cloud), and taken from the same index as search
+    /// ([`Self::build_search_index`]) — so the sum of section counters matches the
+    /// number of fields in search. Fields of all subsections (tab strips) are
+    /// enumerated for their current modes; the subsection selector — a navigation
+    /// tab, not a parameter — doesn't count (`collect_hits` skips it).
     ///
-    /// Только для тестов — рендер использует [`Self::section_counts`] (один
-    /// проход по индексу для всех секций).
+    /// Test-only — rendering uses [`Self::section_counts`] (one pass over the index
+    /// for all sections).
     #[cfg(test)]
     pub(super) fn section_field_count(&self, s: Section) -> usize {
         let target = SECTIONS.iter().position(|&x| x == s).unwrap_or(0);
@@ -275,10 +277,10 @@ impl SettingsScreen {
             .count()
     }
 
-    /// Счётчики параметров всех секций в порядке [`SECTIONS`], привязанные к
-    /// выбранным режимам. Выводятся из индекса поиска ([`Self::build_search_index`])
-    /// одним проходом — так сумма счётчиков секций тождественно равна числу полей
-    /// в поиске (тот же источник истины).
+    /// Parameter counters for all sections in [`SECTIONS`] order, tied to the
+    /// selected modes. Derived from the search index ([`Self::build_search_index`])
+    /// in one pass — so the sum of section counters is identically equal to the
+    /// number of fields in search (the same source of truth).
     pub(super) fn section_counts(&self) -> Vec<usize> {
         let mut counts = vec![0usize; SECTIONS.len()];
         for h in self.build_search_index() {
@@ -293,11 +295,11 @@ impl SettingsScreen {
         let palette = self.palette();
         let loc = self.loc();
         let focused = self.focus == Focus::Menu;
-        // Ширина под содержимое строки меню (минус правая рамка) — для правого
-        // выравнивания счётчика полей.
+        // Width for the menu row's content (minus the right border) — for right-aligning
+        // the field counter.
         let inner_w = area.width.saturating_sub(1) as usize;
-        // Активная секция помечается цветным рейлом и насыщенным заголовком вне
-        // зависимости от фокуса; выбор клавиатурой подсвечивает List highlight.
+        // The active section is marked by a colored rail and a bold title regardless
+        // of focus; keyboard selection is highlighted by List's highlight.
         let items: Vec<ListItem> = SECTIONS
             .iter()
             .enumerate()
@@ -313,7 +315,7 @@ impl SettingsScreen {
                 } else {
                     Span::styled(s.title(loc), palette.muted_style())
                 };
-                // Счётчик полей секции, прижатый к правому краю меню.
+                // The section's field counter, right-aligned in the menu.
                 let count = counts.get(i).copied().unwrap_or(0).to_string();
                 let used = 2 + label_width(s.title(loc)) + count.chars().count();
                 let pad = inner_w.saturating_sub(used).max(1);
@@ -340,11 +342,11 @@ impl SettingsScreen {
                 },
                 palette.muted_style(),
             ));
-        // Выделение — мягкая подложка (как в списке чатов), а не инверсия всей
-        // строки: реверс свапал бы fg↔bg у каждого спана по отдельности, из-за чего
-        // зелёный рейл `▌` расползался на ~1.5 колонки (глиф — левый полублок), а
-        // разные спаны получали разный фон (рейл/заголовок/счётчик — свой). Единый
-        // `keycap_bg` + зелёный рейл поверх него читаются чисто.
+        // Selection — a soft backdrop (as in the chat list), not inverting the whole
+        // row: reverse video would swap fg↔bg per span independently, which would smear
+        // the green rail `▌` over ~1.5 columns (the glyph is a left half-block), and
+        // different spans would get different backgrounds (rail/title/counter each their
+        // own). A uniform `keycap_bg` + a green rail on top reads cleanly.
         let hl = if focused {
             Style::new().bg(palette.keycap_bg)
         } else {
@@ -356,8 +358,8 @@ impl SettingsScreen {
         frame.render_stateful_widget(list, area, &mut state);
     }
 
-    /// Чип статуса сервера активной подсекции секции «Модель» (ассистент → чат,
-    /// имперсонация → имперсонация, эмбеддинги → эмбеддинги).
+    /// The server-status chip for the "Model" section's active subsection (assistant →
+    /// chat, impersonation → impersonation, embeddings → embeddings).
     pub(super) fn model_server_chip(&self, palette: &Palette) -> Vec<Span<'static>> {
         let loc = self.loc();
         let (status, label) = match self.model_sub {
@@ -367,15 +369,15 @@ impl SettingsScreen {
                 loc.t("ui.settings.chip.impersonation"),
             ),
             ModelTab::Embeddings => (&self.statuses.embed, loc.t("ui.settings.chip.embeddings")),
-            // У озвучивания нет сервера/пробы: клиенты stateless, строятся на вызов
-            // (docs/research/tts.md §8) — чип показывать нечему.
+            // Speech has no server/probe: clients are stateless, built per call
+            // (docs/research/tts.md §8) — there's nothing for a chip to show.
             ModelTab::Tts => return Vec::new(),
         };
         server_status_chip(status, label, loc, palette)
     }
 
-    /// Таб-стрип подсекции для текущей секции: (подписи вкладок, активная).
-    /// `None` — секция без подсекций.
+    /// The subsection tab strip for the current section: (tab labels, active one).
+    /// `None` — a section with no subsections.
     pub(super) fn subsection_tabs(&self) -> Option<(Vec<&'static str>, usize)> {
         let loc = self.loc();
         match self.section() {
@@ -392,14 +394,14 @@ impl SettingsScreen {
         let focused_field = focused.then(|| fields.get(self.field_idx)).flatten();
         let palette = self.palette();
 
-        // Селектор подсекции (если есть в текущем наборе полей) рисуется не строкой
-        // списка, а таб-стрипом над ним. Его позиция нужна для «фокуса на вкладках».
+        // The subsection selector (if present in the current field set) is drawn not as
+        // a list row but as a tab strip above it. Its position is needed for "focus on tabs".
         let sub_pos = fields.iter().position(|f| is_subsection(f.id));
         let tabs = sub_pos.and(self.subsection_tabs());
         let loc = self.loc();
 
-        // Шапка: титул секции (всегда) + таб-стрип (если есть подсекции). Нижняя
-        // панель (значение+описание) резервируется всегда при наличии полей.
+        // Header: the section title (always) + a tab strip (if there are subsections).
+        // The bottom panel (value+description) is always reserved when there are fields.
         let desc_h: u16 = if fields.is_empty() { 0 } else { 4 };
         let head_h: u16 = 1 + if tabs.is_some() { 1 } else { 0 };
         let [head_area, list_area, desc_area] = Layout::vertical([
@@ -419,8 +421,8 @@ impl SettingsScreen {
                 Style::new().fg(palette.text).bold(),
             ),
         ];
-        // Секция «Модель/сервер»: чип статуса сервера активной подсекции справа —
-        // правишь движок и видишь эффект (подключение → готов), не выходя в чат.
+        // The "Model/server" section: the active subsection's server-status chip on the
+        // right — edit the engine and see the effect (connecting → ready) without leaving to chat.
         if self.section() == Section::Model {
             let chip = self.model_server_chip(&palette);
             let used_left: usize = title_spans.iter().map(|s| span_width(s)).sum();
@@ -438,12 +440,12 @@ impl SettingsScreen {
         }
         frame.render_widget(Paragraph::new(head_lines), head_area);
 
-        // Единая колонка значений на ВСЮ секцию (`section_label_col`): значения и
-        // инлайн-подсказки всех групп стоят на одной вертикали (колонка на группу
-        // «пилила» — у каждой группы был свой стоп). Сверхдлинная подпись
-        // (> LABEL_CAP) колонку не отгоняет — её значение локально встаёт сразу
-        // после подписи. Здесь же считаем тумблеры группы (вкл/всего) для счётчика
-        // в заголовке.
+        // A single value column across the WHOLE section (`section_label_col`): values
+        // and inline hints of all groups line up on one vertical (a per-group column
+        // "sawtoothed" — each group had its own stop). An overlong label
+        // (> LABEL_CAP) doesn't push the column — its value sits locally right
+        // after the label. This is also where we count the group's toggles (on/total) for
+        // the header counter.
         let label_col = section_label_col(&fields);
         let mut group_toggles: HashMap<&str, (usize, usize)> = HashMap::new();
         for f in &fields {
@@ -459,13 +461,13 @@ impl SettingsScreen {
             }
         }
 
-        // Поля из дефолтного конфига — для маркера «изменено» (строим один раз).
+        // Fields from the default config — for the "modified" marker (built once).
         let default_fields = self.default_fields();
 
-        // Строим элементы: заголовок группы вставляется на переходе к новой
-        // непустой группе; `select` — позиция выбранного поля среди элементов (с
-        // учётом заголовков) для подсветки/скролла. Селектор подсекции пропускаем
-        // (он — таб-стрип): когда курсор на нём, список без выделения.
+        // Build the elements: a group header is inserted at the transition to a new
+        // non-empty group; `select` — the selected field's position among the elements
+        // (headers included) for highlight/scroll. We skip the subsection selector
+        // (it's a tab strip): while the cursor is on it, the list has no highlight.
         let inner_w = list_area.width as usize;
         let mut items: Vec<ListItem> = Vec::with_capacity(fields.len() + 8);
         let mut select: Option<usize> = None;
@@ -475,8 +477,8 @@ impl SettingsScreen {
                 continue;
             }
             if !f.group.is_empty() && prev_group != Some(f.group) {
-                // Счётчик «вкл/всего» — только для групп с ≥2 тумблерами (там он
-                // информативен; для одиночного тумблера дублировал бы видимый [x]).
+                // The "on/total" counter — only for groups with ≥2 toggles (there it's
+                // informative; for a single toggle it would duplicate the visible [x]).
                 let count = group_toggles
                     .get(f.group)
                     .copied()
@@ -494,9 +496,9 @@ impl SettingsScreen {
                 .find(|d| d.id == f.id)
                 .map(|d| value_text(&d.kind, loc) != value_text(&f.kind, loc))
                 .unwrap_or(false);
-            // Ширина под значение: минус маркер(2)+подпись+отступ и правый зазор.
-            // Подпись длиннее колонки (> LABEL_CAP) сдвигает значение вправо —
-            // считаем остаток от её реального конца, чтобы усечение «…» не врало.
+            // Width for the value: minus the marker(2)+label+indent and the right margin.
+            // A label longer than the column (> LABEL_CAP) shifts the value right —
+            // we compute the remainder from its real end, so "…" truncation doesn't lie.
             let start = label_col.max(label_width(&f.label));
             let value_w = inner_w.saturating_sub(start + 4);
             items.push(ListItem::new(render_field_line(
@@ -510,8 +512,8 @@ impl SettingsScreen {
         }
         let total = items.len();
 
-        // Выделение — мягкая подложка (как в меню секций и списке чатов), а не
-        // инверсия всей строки; зелёный рейл выбранной строки добавлен в
+        // Selection — a soft backdrop (as in the section menu and the chat list), not
+        // inverting the whole row; the selected row's green rail is added in
         // `render_field_line`.
         let hl = if focused {
             Style::new().bg(palette.keycap_bg)
@@ -527,11 +529,12 @@ impl SettingsScreen {
         }
         frame.render_stateful_widget(list, list_area, &mut state);
 
-        // Скроллбар, когда элементов больше видимой высоты. Рисуем поверх правой
-        // рамки экрана настроек: `fields_area` доходит ровно до неё (inner панели),
-        // поэтому колонка `list_area.right()` — это линия рамки. Титул/таб-стрип
-        // теперь в отдельной шапке (не в списке) → бар на всю высоту `list_area`.
-        // Длина содержимого — ПОЛНОЕ число элементов (заголовки групп тоже строки).
+        // A scrollbar when there are more elements than the visible height. Drawn over
+        // the settings screen's right border: `fields_area` reaches exactly to it (the
+        // panel's inner area), so the `list_area.right()` column IS the border line.
+        // The title/tab strip now live in a separate header (not in the list) → the bar
+        // spans the full height of `list_area`. Content length — the FULL element count
+        // (group headers are rows too).
         if list_area.height > 0 {
             let bar = Rect {
                 width: list_area.width + 1,
@@ -543,26 +546,26 @@ impl SettingsScreen {
                 total,
                 list_area.height as usize,
                 state.offset(),
-                true, // рамка экрана настроек рисуется в фокусном цвете
+                true, // the settings screen's border is drawn in the focus color
                 &palette,
             );
         }
 
-        // Нижняя панель: полное значение выбранного текстового поля (пути целиком,
-        // в списке они усечены «…») + описание-подсказка.
+        // The bottom panel: the full value of the selected text field (whole paths,
+        // truncated with "…" in the list) + a description hint.
         if desc_h > 0 {
             let mut lines: Vec<Line<'static>> = Vec::new();
             if let Some(f) = focused_field {
                 if let FieldKind::Text(v) = &f.kind {
                     let shown = v.trim();
-                    // Полное значение показываем только для «длинных» полей (пути, URL,
-                    // системное сообщение) — в списке они усекаются «…». Короткие
-                    // значения (числа, host) в списке видны целиком, дублировать незачем.
+                    // Show the full value only for "long" fields (paths, URLs, the
+                    // system message) — in the list they're truncated with "…". Short
+                    // values (numbers, host) are already fully visible in the list, no need to duplicate.
                     let long =
                         crate::shared::wrap::display_width(&shown.chars().collect::<Vec<_>>()) > 32;
                     if !shown.is_empty() && shown != "—" && long {
-                        // Ограничиваем превью (многострочное системное сообщение
-                        // может быть огромным) — панель всё равно клипует по высоте.
+                        // Cap the preview (a multiline system message
+                        // can be huge) — the panel clips by height anyway.
                         let preview: String = shown.chars().take(400).collect();
                         lines.push(Line::styled(preview, Style::new().fg(palette.text)));
                     }
@@ -570,8 +573,8 @@ impl SettingsScreen {
                 if let Some(text) = f.description.clone() {
                     lines.push(Line::styled(text, palette.muted_style()));
                 }
-                // Выключенный глобально инструмент — развёрнутое пояснение (цветом
-                // предупреждения), чтобы честный гейт был понятен, а не только «⊘».
+                // A globally-disabled tool — an expanded explanation (in warning
+                // color), so the honest gate is understandable, not just "⊘".
                 if f.warn {
                     lines.push(Line::styled(
                         loc.t("ui.settings.ui.gate_warn"),

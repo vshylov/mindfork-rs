@@ -1,9 +1,9 @@
-//! HTTP-клиент к Anthropic Messages API (`platform.claude.com`), реализующий
-//! [`EngineBackend`]. Отдельный протокол от OpenAI (`/v1/messages`, заголовки
-//! `x-api-key` + `anthropic-version`, событийный SSE). См. ADR 0004, Фаза 2.
+//! An HTTP client to the Anthropic Messages API (`platform.claude.com`), implementing
+//! [`EngineBackend`]. A protocol separate from OpenAI (`/v1/messages`, headers
+//! `x-api-key` + `anthropic-version`, event-based SSE). See ADR 0004, Phase 2.
 //!
-//! Эмбеддингов у Anthropic нет — [`Embedder`](super::super::contract::Embedder) тут
-//! не реализуется (RAG берёт отдельный эмбеддер, ADR 0002).
+//! Anthropic has no embeddings — [`Embedder`](super::super::contract::Embedder) isn't
+//! implemented here (RAG uses a separate embedder, ADR 0002).
 
 use anyhow::{Context, Result};
 use async_stream::stream;
@@ -17,13 +17,13 @@ use crate::shared::api::contract::{
     ToolCallDelta,
 };
 
-/// Версия Anthropic API (обязательный заголовок `anthropic-version`).
+/// The Anthropic API version (the mandatory `anthropic-version` header).
 const ANTHROPIC_VERSION: &str = "2023-06-01";
 
-/// Клиент к Anthropic Messages API.
+/// A client to the Anthropic Messages API.
 pub struct AnthropicClient {
     http: reqwest::Client,
-    /// Базовый URL без суффикса (клиент добавляет `/v1/messages`), напр.
+    /// The base URL with no suffix (the client appends `/v1/messages`), e.g.
     /// `https://api.anthropic.com`.
     base_url: String,
     api_key: String,
@@ -46,7 +46,7 @@ impl AnthropicClient {
     }
 }
 
-/// Маппинг `stop_reason` Anthropic в доменный [`FinishReason`].
+/// Maps Anthropic's `stop_reason` to the domain [`FinishReason`].
 fn map_stop_reason(s: &str) -> FinishReason {
     match s {
         "end_turn" | "stop_sequence" => FinishReason::Stop,
@@ -71,8 +71,8 @@ impl EngineBackend for AnthropicClient {
             .send()
             .await
             .with_context(|| format!("POST {url}"))?;
-        // Не глотаем тело ошибки (как OpenAiClient): Anthropic кладёт причину в JSON
-        // (`{"error":{"message":...}}`) — логируем и пробрасываем в текст ошибки.
+        // Don't swallow the error body (like OpenAiClient): Anthropic puts the reason in JSON
+        // (`{"error":{"message":...}}`) — log it and surface it in the error text.
         let status = response.status();
         if !status.is_success() {
             let body = response.text().await.unwrap_or_default();
@@ -87,7 +87,7 @@ impl EngineBackend for AnthropicClient {
         let mut events = response.bytes_stream().eventsource();
 
         let s = stream! {
-            // input_tokens приходят в message_start, output_tokens — в message_delta.
+            // input_tokens arrive in message_start, output_tokens — in message_delta.
             let mut input_tokens = 0u32;
             loop {
                 tokio::select! {
@@ -154,8 +154,8 @@ impl EngineBackend for AnthropicClient {
                                         yield ChatChunk::Usage(TokenUsage {
                                             prompt_tokens: input_tokens,
                                             completion_tokens: completion,
-                                            // Anthropic не разделяет reasoning-токены — «мысли»
-                                            // уже учтены в output_tokens.
+                                            // Anthropic doesn't separate reasoning tokens — "thoughts"
+                                            // are already counted in output_tokens.
                                             reasoning_tokens: 0,
                                         });
                                         let reason = delta
@@ -196,8 +196,8 @@ mod tests {
     }
 }
 
-/// Ручной смоук против реального Anthropic API. Помечен `#[ignore]` — не идёт в CI.
-/// Запуск: `MINDFORK_ANTHROPIC_KEY=sk-ant-... cargo test anthropic -- --ignored`.
+/// A manual smoke against the real Anthropic API. Marked `#[ignore]` — doesn't run in CI.
+/// Run: `MINDFORK_ANTHROPIC_KEY=sk-ant-... cargo test anthropic -- --ignored`.
 #[cfg(test)]
 mod ignored_smoke {
     use super::*;
@@ -251,7 +251,7 @@ mod ignored_smoke {
         ));
     }
 
-    /// Phase A: с включённым thinking приходят и «мысли», и их подпись.
+    /// Phase A: with thinking enabled, both "thoughts" and their signature arrive.
     #[tokio::test]
     #[ignore = "requires MINDFORK_ANTHROPIC_KEY (live Anthropic API)"]
     async fn extended_thinking_streams_thoughts_and_signature() {
@@ -284,15 +284,15 @@ mod ignored_smoke {
                 _ => {}
             }
         }
-        // display:summarized → непустые «мысли»; подпись присутствует.
+        // display:summarized → non-empty "thoughts"; the signature is present.
         assert!(!thoughts.is_empty(), "expected summarized thoughts");
         assert!(!signature.is_empty(), "expected thinking signature");
         assert!(!text.is_empty(), "expected final answer");
     }
 
-    /// Phase B: thinking + tool-use. Первый раунд даёт «мысли»+подпись+вызов; второй
-    /// запрос переотправляет thinking-блок (с подписью) в assistant-ходе с tool_use и
-    /// результат инструмента — Anthropic не должен вернуть 400 (что и проверяет подпись).
+    /// Phase B: thinking + tool-use. The first round gives "thoughts"+a signature+a call; the second
+    /// request resends the thinking block (with the signature) on an assistant turn with tool_use and
+    /// the tool result — Anthropic must not return 400 (which is exactly what checks the signature).
     #[tokio::test]
     #[ignore = "requires MINDFORK_ANTHROPIC_KEY (live Anthropic API)"]
     async fn thinking_with_tool_use_round_trips_signature() {
@@ -312,14 +312,14 @@ mod ignored_smoke {
         let sampling = SamplingConfig {
             max_tokens: Some(2048),
             thinking: Some(true),
-            // Высокое усилие: подталкиваем модель действительно подумать перед
-            // вызовом (иначе на тривиальном запросе adaptive thinking может
-            // пропустить рассуждение — и подписи не будет).
+            // High effort: nudge the model to actually think before the
+            // call (otherwise on a trivial request adaptive thinking might
+            // skip the reasoning — and there'd be no signature).
             reasoning_effort: Some(crate::entities::sampling::ReasoningEffort::High),
             ..Default::default()
         };
-        // Промпт с явным шагом рассуждения (выбор города) — чтобы модель
-        // сгенерировала thinking-блок с подписью до вызова инструмента.
+        // A prompt with an explicit reasoning step (picking a city) — so the model
+        // generates a thinking block with a signature before calling the tool.
         let prompt = "Two candidate cities: Paris and Berlin. Reason briefly about \
              which one is the capital of France, then call the get_weather tool for \
              that city.";
@@ -359,7 +359,7 @@ mod ignored_smoke {
         assert!(!signature.is_empty(), "expected a thinking signature");
         let call = &calls[0];
 
-        // Второй раунд: assistant(thinking+подпись, tool_use) → tool_result.
+        // Second round: assistant(thinking+signature, tool_use) → tool_result.
         let round2 = ChatRequest {
             system: None,
             messages: vec![
@@ -399,8 +399,8 @@ mod ignored_smoke {
                 _ => {}
             }
         }
-        // Если бы подпись не переотправилась/была невалидна — Anthropic вернул бы 400
-        // и chat_stream выдал бы Finished(Error) с пустым текстом.
+        // If the signature hadn't been resent/were invalid, Anthropic would return 400
+        // and chat_stream would yield Finished(Error) with empty text.
         assert!(
             matches!(finish, Some(FinishReason::Stop | FinishReason::Length)),
             "second round must succeed (signature round-trip), got {finish:?}"

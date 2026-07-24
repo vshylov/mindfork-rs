@@ -1,37 +1,39 @@
-//! Markdown — раскладка и отрисовка таблиц (TableBuilder + render_table). Часть модуля [`super`]; разбито из монолита
-//! markdown.rs (см. docs/history/refactoring-god-objects.md, этап 6).
+//! Markdown — table layout and rendering (TableBuilder + render_table). Part
+//! of module [`super`]; split out of the markdown.rs monolith (see
+//! docs/history/refactoring-god-objects.md, stage 6).
 
 use super::*;
 
-/// Накопитель ячеек таблицы между событиями `Table…`.
+/// Cell accumulator between `Table…` events.
 pub(super) struct TableBuilder {
-    /// Выравнивание по столбцам (из разметки `:---:`).
+    /// Column alignment (from `:---:` markup).
     pub(super) alignments: Vec<Alignment>,
-    /// Ячейки заголовка.
+    /// Header cells.
     pub(super) head: Vec<Vec<Span<'static>>>,
-    /// Строки тела (каждая — вектор ячеек-спанов).
+    /// Body rows (each — a vector of cell-spans).
     pub(super) rows: Vec<Vec<Vec<Span<'static>>>>,
-    /// Текущая собираемая строка.
+    /// The row currently being collected.
     pub(super) current_row: Vec<Vec<Span<'static>>>,
-    /// Текущая собираемая ячейка (между `Start/End(TableCell)`).
+    /// The cell currently being collected (between `Start/End(TableCell)`).
     pub(super) current_cell: Option<Vec<Span<'static>>>,
 }
 
-// ---------- раскладка таблиц ----------
+// ---------- table layout ----------
 
-/// Минимальная «читаемая» ширина столбца (колонок).
+/// Minimum "readable" column width (columns).
 pub(super) const MIN_COL: usize = 5;
-/// Верхняя граница минимума: длинное слово допускаем разрывать, не раздувая min.
+/// Upper bound on the minimum: a long word is allowed to break rather than
+/// inflating min.
 pub(super) const MAX_MIN: usize = 12;
 
-/// Рендерит таблицу в строки ленты. Ширина столбцов подбирается под `width`
-/// (см. [`fit_columns`]); содержимое ячеек переносится по словам. Если столбцам
-/// не хватает даже читаемого минимума — таблица рисуется в естественной ширине и
-/// **обрезается** по правому краю панели (горизонтальный клип).
+/// Renders a table into feed lines. Column widths are fit to `width` (see
+/// [`fit_columns`]); cell content wraps by word. If even the readable minimum
+/// doesn't fit the columns, the table is drawn at its natural width and
+/// **clipped** on the right edge of the panel (horizontal clipping).
 ///
-/// `row_separators` — рисовать горизонтальный разделитель (`├─┼─┤`) **между**
-/// строками тела («сеточный» вид, [`RenderOpts::table_row_separators`]); после
-/// последней строки разделителя нет (низ таблицы закрывает `└─┴─┘`).
+/// `row_separators` — draw a horizontal separator (`├─┼─┤`) **between** body
+/// rows (a "grid" look, [`RenderOpts::table_row_separators`]); no separator
+/// after the last row (the table's bottom already closes with `└─┴─┘`).
 pub(super) fn render_table(
     tb: &TableBuilder,
     width: usize,
@@ -50,7 +52,7 @@ pub(super) fn render_table(
         .map(|j| tb.alignments.get(j).copied().unwrap_or(Alignment::None))
         .collect();
 
-    // Натуральная и минимальная ширина по столбцам.
+    // Natural and minimum width per column.
     let mut desired = vec![0usize; ncols];
     let mut minw = vec![0usize; ncols];
     let mut visit = |cell: &[Span<'static>], j: usize| {
@@ -67,13 +69,13 @@ pub(super) fn render_table(
             visit(cell, j);
         }
     }
-    // Пустой столбец всё равно получает читаемый минимум.
+    // An empty column still gets a readable minimum.
     for j in 0..ncols {
         minw[j] = minw[j].max(MIN_COL.min(desired[j].max(1)));
     }
 
-    // Доступная ширина под содержимое = ширина минус рамки/паддинги:
-    // `│` слева + на столбец (паддинг-пробел + содержимое + паддинг-пробел + `│`).
+    // Width available for content = width minus borders/padding: `│` on the
+    // left + per column (padding space + content + padding space + `│`).
     let chrome = 3 * ncols + 1;
     let avail = width.saturating_sub(chrome).max(ncols);
     let (widths, clip) = match fit_columns(&desired, &minw, avail) {
@@ -100,9 +102,10 @@ pub(super) fn render_table(
     out
 }
 
-/// Подбирает ширины столбцов «водоналивом»: при нехватке места узкие столбцы
-/// получают свою натуральную ширину, остаток равномерно делится между широкими
-/// (с полом `minw`). `None` — даже минимумы не вмещаются (нужен клип).
+/// Fits column widths via "water-fill": when space is short, narrow columns
+/// keep their natural width, the remainder splits evenly among the wide ones
+/// (with a floor of `minw`). `None` — even the minimums don't fit (needs
+/// clipping).
 pub(super) fn fit_columns(desired: &[usize], minw: &[usize], avail: usize) -> Option<Vec<usize>> {
     let total_desired: usize = desired.iter().sum();
     if total_desired <= avail {
@@ -131,14 +134,14 @@ pub(super) fn fit_columns(desired: &[usize], minw: &[usize], avail: usize) -> Op
     Some(w)
 }
 
-/// Ширина ячейки в колонках (сумма ширин спанов).
+/// Cell width in columns (sum of span widths).
 pub(super) fn cell_width(cell: &[Span<'static>]) -> usize {
     cell.iter()
         .map(|s| wrap::display_width(&s.content.chars().collect::<Vec<_>>()))
         .sum()
 }
 
-/// Ширина самого длинного «слова» (непробельной последовательности) в ячейке.
+/// Width of the longest "word" (non-whitespace run) in a cell.
 pub(super) fn longest_word(cell: &[Span<'static>]) -> usize {
     let text: String = cell.iter().map(|s| s.content.as_ref()).collect();
     text.split_whitespace()
@@ -147,7 +150,7 @@ pub(super) fn longest_word(cell: &[Span<'static>]) -> usize {
         .unwrap_or(0)
 }
 
-/// Вид горизонтальной границы таблицы.
+/// Kind of table horizontal border.
 #[derive(Clone, Copy)]
 pub(super) enum Border {
     Top,
@@ -155,7 +158,7 @@ pub(super) enum Border {
     Bottom,
 }
 
-/// Строит строку-границу по ширинам столбцов.
+/// Builds a border line from column widths.
 pub(super) fn border_line(widths: &[usize], kind: Border) -> Line<'static> {
     let (left, junction, right) = match kind {
         Border::Top => ('┌', '┬', '┐'),
@@ -177,8 +180,8 @@ pub(super) fn border_line(widths: &[usize], kind: Border) -> Line<'static> {
     Line::from(s).add_modifier(Modifier::DIM)
 }
 
-/// Рендерит строку таблицы (с переносом ячеек по ширинам столбцов) в визуальные
-/// ряды. Заголовок — жирным.
+/// Renders a table row (wrapping cells by column widths) into visual rows.
+/// The header — bold.
 pub(super) fn render_row(
     cells: &[Vec<Span<'static>>],
     widths: &[usize],
@@ -187,7 +190,7 @@ pub(super) fn render_row(
     header: bool,
 ) -> Vec<Line<'static>> {
     let ncols = widths.len();
-    // Переносим каждую ячейку по её ширине → ряды спанов.
+    // Wrap each cell by its width → rows of spans.
     let wrapped: Vec<Vec<Line<'static>>> = (0..ncols)
         .map(|j| {
             let empty: Vec<Span<'static>> = Vec::new();
@@ -228,12 +231,13 @@ pub(super) fn render_row(
     rows
 }
 
-/// Убирает хвостовые пробелы из визуального ряда ячейки. `wrap::wrap_ranges`
-/// «проливает» пробел на границе слова за край ряда (в обычной ленте он невидим),
-/// но в таблице эти пробелы учитываются в [`pad_cell`] и раздувают строку **шире
-/// столбца** — тогда повторный перенос ленты (`message_feed`) разрывает рамку.
-/// Внутри ячейки хвостовые пробелы незначимы (паддинг добавляется заново), поэтому
-/// их безопасно срезать, гарантируя ряд ≤ `widths[j]`.
+/// Strips trailing spaces from a cell's visual row. `wrap::wrap_ranges`
+/// "spills" a word-boundary space past the row's edge (invisible in the
+/// regular feed), but in a table these spaces are counted by [`pad_cell`] and
+/// inflate the line **wider than the column** — then the feed's re-wrap
+/// (`message_feed`) breaks the border. Trailing spaces inside a cell carry no
+/// meaning (padding is re-added anyway), so it's safe to trim them,
+/// guaranteeing a row ≤ `widths[j]`.
 pub(super) fn trim_row_trailing_ws(line: Line<'static>) -> Line<'static> {
     let mut spans = line.spans;
     while let Some(last) = spans.last() {
@@ -255,7 +259,7 @@ pub(super) fn trim_row_trailing_ws(line: Line<'static>) -> Line<'static> {
     out
 }
 
-/// Дополняет ряд ячейки пробелами до ширины `width` с учётом выравнивания.
+/// Pads a cell row with spaces to `width`, respecting alignment.
 pub(super) fn pad_cell(line: &Line<'static>, width: usize, align: Alignment) -> Vec<Span<'static>> {
     let content: usize = line
         .spans
@@ -279,7 +283,7 @@ pub(super) fn pad_cell(line: &Line<'static>, width: usize, align: Alignment) -> 
     spans
 }
 
-/// Обрезает строку по `width` колонкам (клип широкой таблицы), добавляя «…».
+/// Clips a line to `width` columns (a wide table's clip), adding "…".
 pub(super) fn clip_line(line: &mut Line<'static>, width: usize) {
     let total: usize = line
         .spans
@@ -289,7 +293,7 @@ pub(super) fn clip_line(line: &mut Line<'static>, width: usize) {
     if total <= width {
         return;
     }
-    let budget = width.saturating_sub(1); // место под «…»
+    let budget = width.saturating_sub(1); // room for "…"
     let mut acc = 0usize;
     let mut new_spans: Vec<Span<'static>> = Vec::new();
     for span in &line.spans {
@@ -300,7 +304,7 @@ pub(super) fn clip_line(line: &mut Line<'static>, width: usize) {
             new_spans.push(span.clone());
             continue;
         }
-        // частично влезает — режем по символам
+        // partially fits — cut by characters
         let mut buf = String::new();
         for i in 0..chars.len() {
             let cw = wrap::width_at(&chars, i);
@@ -326,16 +330,16 @@ mod tests {
 
     #[test]
     fn table_wraps_cell_content() {
-        // длинная ячейка переносится в несколько рядов, не вылезая за ширину
+        // a long cell wraps into several rows without exceeding the width
         let long = "\
 | A | Особенности |
 | :--- | :--- |
 | x | Самая высокая скорость на практике сортировки |";
         let w = 40;
         assert!(max_line_width(long, w) <= w);
-        // несколько строк тела → перенос произошёл
+        // several body lines → the wrap happened
         let lines = render(long, w, &Palette::default()).lines.len();
-        assert!(lines >= 6, "ожидался перенос ячейки в несколько рядов");
+        assert!(lines >= 6, "expected the cell to wrap into several rows");
     }
 
     #[test]
@@ -349,16 +353,17 @@ mod tests {
 
     #[test]
     fn table_fits_panel_width() {
-        // при достаточной ширине таблица не превышает её
+        // given enough width, the table doesn't exceed it
         for w in [40usize, 60, 80, 120] {
             let max = max_line_width(TABLE_MD, w);
-            assert!(max <= w, "ширина {max} превысила панель {w}");
+            assert!(max <= w, "width {max} exceeded the panel {w}");
         }
     }
 
-    /// Таблица с переносом ячеек (как на скриншоте) не должна превышать ширину
-    /// **ни при каком** размере панели — иначе повторный перенос в `message_feed`
-    /// разорвал бы рамку. Регрессия на «пролитый» пробел на границе слова.
+    /// A table with wrapping cells (as in the screenshot) must never exceed
+    /// the width, **at any** panel size — otherwise the feed's re-wrap
+    /// (`message_feed`) would break the border. A regression on a "spilled"
+    /// space at a word boundary.
     #[test]
     fn wrapping_table_never_exceeds_any_width() {
         const WIDE: &str = "\
@@ -368,24 +373,24 @@ mod tests {
 | Ваша идея (Recurrent ACT) | Итерации в скрытом пространстве (latent space) | Сложность в обучении (нужны новые методы градиентного спуска). |";
         for w in 30usize..=140 {
             let max = max_line_width(WIDE, w);
-            assert!(max <= w, "при ширине {w} строка таблицы вышла на {max}");
+            assert!(max <= w, "at width {w} the table row grew to {max}");
         }
     }
 
     #[test]
     fn wide_table_is_clipped_to_width() {
-        // узкая панель: таблица обрезается, но не вылезает за край
+        // a narrow panel: the table is clipped, but doesn't exceed the edge
         let narrow = 24;
         let max = max_line_width(TABLE_MD, narrow);
         assert!(
             max <= narrow,
-            "ширина {max} превысила узкую панель {narrow}"
+            "width {max} exceeded the narrow panel {narrow}"
         );
         let collected = rendered_text_w(TABLE_MD, narrow);
-        assert!(collected.contains('…'), "ожидался маркер обрезки");
+        assert!(collected.contains('…'), "expected a clip marker");
     }
 
-    /// Рендер с флагом разделителей строк, склеенный в текст (как `rendered_text_w`).
+    /// Render with the row-separators flag, joined into text (like `rendered_text_w`).
     fn rendered_with_separators(input: &str, width: usize) -> String {
         let opts = RenderOpts {
             table_row_separators: true,
@@ -404,39 +409,39 @@ mod tests {
             .join("\n")
     }
 
-    /// Число строк-разделителей `├…┤` в склеенном рендере.
+    /// Number of `├…┤` separator lines in the joined render.
     fn mid_border_count(text: &str) -> usize {
         text.lines().filter(|l| l.starts_with('├')).count()
     }
 
-    /// По умолчанию (без флага) — прежний компактный вид: единственный `├…┤`
-    /// под заголовком, между строками тела разделителей нет.
+    /// By default (flag off) — the previous compact look: a single `├…┤`
+    /// under the header, no separators between body rows.
     #[test]
     fn row_separators_off_by_default() {
         let collected = rendered_text(TABLE_MD);
         assert_eq!(
             mid_border_count(&collected),
             1,
-            "ожидался только разделитель под заголовком:\n{collected}"
+            "expected only the header separator:\n{collected}"
         );
     }
 
-    /// С флагом `table_row_separators` между строками тела появляются `├…┤`
-    /// (у TABLE_MD две строки → один разделитель между ними + один под
-    /// заголовком), а после последней строки — по-прежнему низ `└…┘`.
+    /// With the `table_row_separators` flag, `├…┤` appears between body rows
+    /// (TABLE_MD has two rows → one separator between them + one under the
+    /// header), and after the last row — still the bottom `└…┘`.
     #[test]
     fn row_separators_drawn_between_body_rows() {
         let collected = rendered_with_separators(TABLE_MD, 80);
         assert_eq!(
             mid_border_count(&collected),
             2,
-            "ожидались разделитель заголовка + один межстрочный:\n{collected}"
+            "expected the header separator + one inter-row one:\n{collected}"
         );
         assert!(
             collected.lines().last().unwrap().starts_with('└'),
-            "после последней строки должен идти низ таблицы, не разделитель"
+            "the last row should be followed by the table's bottom, not a separator"
         );
-        // Разделитель стоит между содержимым строк, а не подряд с низом.
+        // The separator sits between row content, not right next to the bottom.
         let quick = collected.lines().position(|l| l.contains("QuickSort"));
         let merge = collected.lines().position(|l| l.contains("MergeSort"));
         let mid = collected
@@ -448,20 +453,21 @@ mod tests {
         let (quick, merge, mid) = (quick.unwrap(), merge.unwrap(), mid.unwrap());
         assert!(
             quick < mid && mid < merge,
-            "межстрочный разделитель должен стоять между строками таблицы"
+            "the inter-row separator should sit between the table's rows"
         );
     }
 
-    /// Таблица с одной строкой тела: межстрочному разделителю неоткуда взяться —
-    /// вид совпадает с выключенным флагом.
+    /// A table with a single body row: there's nowhere for an inter-row
+    /// separator to come from — the look matches the flag disabled.
     #[test]
     fn row_separators_noop_for_single_row_table() {
         let single = "| A | B |\n| :--- | :--- |\n| x | y |";
         assert_eq!(mid_border_count(&rendered_with_separators(single, 80)), 1);
     }
 
-    /// Разделители не ломают инвариант ширины: и при подгонке колонок, и на узкой
-    /// панели (клип с «…») строки таблицы остаются ≤ ширины панели.
+    /// Separators don't break the width invariant: both when fitting columns
+    /// and on a narrow panel (a clip with "…"), table rows stay ≤ the panel
+    /// width.
     #[test]
     fn row_separators_respect_panel_width() {
         let opts = RenderOpts {
@@ -481,7 +487,7 @@ mod tests {
                 })
                 .max()
                 .unwrap_or(0);
-            assert!(max <= w, "при ширине {w} строка вышла на {max}");
+            assert!(max <= w, "at width {w} the row grew to {max}");
         }
     }
 }

@@ -1,31 +1,35 @@
-//! Речевой экстрактор markdown → простой текст для синтеза речи (TTS).
-//! Правила — таблица docs/research/tts.md §5 (источник истины).
+//! Speech extractor: markdown → plain text for speech synthesis (TTS).
+//! Rules — the table in docs/research/tts.md §5 (source of truth).
 //!
-//! Это **второй потребитель** тех же событий `pulldown-cmark`, что и [`Writer`]
-//! (ADR 0003): рендер ленты рисует, экстрактор — озвучивает. Общий у них только
-//! парсер и чистые хелперы LaTeX ([`latex_to_unicode`], [`normalize_delimiters`]);
-//! `Writer` не трогаем — свой walker проще и не тянет стили/ширину/палитру.
+//! This is a **second consumer** of the same `pulldown-cmark` events as
+//! [`Writer`] (ADR 0003): the feed render draws, the extractor speaks aloud.
+//! They only share the parser and the pure LaTeX helpers
+//! ([`latex_to_unicode`], [`normalize_delimiters`]); `Writer` is left alone —
+//! its own walker is simpler and doesn't drag in styles/width/palette.
 //!
-//! Что делает экстрактор (см. §5):
-//! - блоки кода (в т.ч. ` ```mermaid `), таблицы и блочные формулы `$$…$$`
-//!   **пропускаются** с короткой голосовой пометкой на языке профиля (ось A i18n);
-//! - inline-математика конвертируется в unicode, inline-код читается текстом;
-//! - у ссылки читается только текст, голый URL/автолинк заменяется «ссылка: домен»;
-//! - у изображения читается alt (иначе пометка);
-//! - заголовки/списки/цитаты читаются текстом, на границах ставится точка/перенос
-//!   строки — чтобы движок сделал паузу.
+//! What the extractor does (see §5):
+//! - code blocks (incl. ` ```mermaid `), tables, and block formulas `$$…$$`
+//!   are **skipped** with a short voice note in the profile's language (i18n
+//!   axis A);
+//! - inline math converts to unicode, inline code is read as text;
+//! - for a link only the text is read, a bare URL/autolink becomes "link:
+//!   domain";
+//! - for an image the alt text is read (otherwise a note);
+//! - headings/lists/quotes are read as text, boundaries get a period/line
+//!   break — so the engine pauses.
 //!
-//! Функция чистая (без движка/аудио) — покрыта golden-тестами.
+//! The function is pure (no engine/audio) — covered by golden tests.
 
 use super::*;
 use crate::shared::i18n::Locale;
 
-/// Извлекает из markdown текст, пригодный для озвучивания.
+/// Extracts text suitable for speech synthesis from markdown.
 ///
-/// `loc` — локаль **языка профиля** (ось A): голосовые пометки о пропущенных
-/// блоках — это часть речевого контента, а не UI-хром.
+/// `loc` — the **profile-language** locale (axis A): voice notes about
+/// skipped blocks are part of the speech content, not UI chrome.
 ///
-/// Пустой/пробельный вход даёт пустую строку (вызывающему нечего синтезировать).
+/// An empty/whitespace-only input gives an empty string (nothing for the
+/// caller to synthesize).
 pub fn speakable_text(markdown: &str, loc: &'static Locale) -> String {
     let normalized = normalize_delimiters(markdown);
     let mut opts = Options::empty();
@@ -40,18 +44,18 @@ pub fn speakable_text(markdown: &str, loc: &'static Locale) -> String {
     speaker.finish()
 }
 
-/// Накопитель речевых «блоков»: каждый блок — законченная фраза, блоки
-/// разделяются переводом строки (пауза у любого движка).
+/// Accumulator of speech "blocks": each block is a complete phrase, blocks
+/// are separated by a line break (a pause on any engine).
 struct Speaker {
     loc: &'static Locale,
     blocks: Vec<String>,
-    /// Текущий (незавершённый) блок.
+    /// The current (unfinished) block.
     cur: String,
-    /// Идёт пропуск блока кода (содержимое не озвучивается).
+    /// A code block is being skipped (content isn't spoken).
     skip_code: bool,
-    /// Идёт пропуск таблицы (ячейки не озвучиваются).
+    /// A table is being skipped (cells aren't spoken).
     skip_table: bool,
-    /// Сбор alt-текста изображения (внутри `![…](…)`).
+    /// Collecting an image's alt text (inside `![…](…)`).
     image_alt: Option<String>,
 }
 
@@ -68,7 +72,7 @@ impl Speaker {
     }
 
     fn handle(&mut self, event: Event<'_>) {
-        // В пропускаемом блоке ждём только его конца — содержимое не озвучивается.
+        // Inside a block being skipped, wait only for its end — content isn't spoken.
         if self.skip_code {
             if matches!(event, Event::End(TagEnd::CodeBlock)) {
                 self.skip_code = false;
@@ -85,12 +89,12 @@ impl Speaker {
             Event::Start(tag) => self.start(tag),
             Event::End(tag) => self.end(tag),
             Event::Text(text) => self.text(&text),
-            // Инлайн-код читается обычным текстом (короткие идентификаторы в речи
-            // полезны), URL-подстановка к нему не применяется.
+            // Inline code is read as regular text (short identifiers are
+            // useful in speech), URL substitution doesn't apply to it.
             Event::Code(code) => self.push(&code),
             Event::InlineMath(content) => {
                 if looks_like_price_fragment(&content) {
-                    // Ложное срабатывание math на диапазоне цен «$5-$10» — читаем как есть.
+                    // A false math match on a price range "$5-$10" — read as-is.
                     let literal = format!("${content}$");
                     self.push(&literal);
                 } else {
@@ -98,13 +102,13 @@ impl Speaker {
                     self.push(&converted);
                 }
             }
-            // Блочная формула не читается (озвучивать «\begin{aligned}» бессмысленно).
+            // A block formula isn't read (speaking "\begin{aligned}" is pointless).
             Event::DisplayMath(_) => self.note("speak.skip.formula"),
             Event::SoftBreak => self.push(" "),
             Event::HardBreak => self.flush(),
             Event::InlineHtml(html) | Event::Html(html) if is_br(&html) => self.flush(),
             Event::Rule => self.flush(),
-            // Прочий HTML, сноски, маркеры задач — молча пропускаем.
+            // Other HTML, footnotes, task markers — silently skipped.
             _ => {}
         }
     }
@@ -116,8 +120,9 @@ impl Speaker {
                     CodeBlockKind::Fenced(ref lang) => lang.as_ref(),
                     CodeBlockKind::Indented => "",
                 };
-                // ` ```mermaid ` — обычный код-блок с инфо-строкой; отдельного детекта
-                // не нужно, только своя пометка (диаграмма, а не код).
+                // ` ```mermaid ` is a regular code block with an info string;
+                // no separate detection is needed, just its own note (a
+                // diagram, not code).
                 let lang = info.split([',', ' ', '\t']).next().unwrap_or("");
                 let key = if lang.eq_ignore_ascii_case("mermaid") {
                     "speak.skip.mermaid"
@@ -131,15 +136,15 @@ impl Speaker {
                 self.note("speak.skip.table");
                 self.skip_table = true;
             }
-            // Начало изображения: alt придёт событиями `Text`, перехватываем их.
+            // Start of an image: the alt text arrives via `Text` events, intercept them.
             Tag::Image { .. } => self.image_alt = Some(String::new()),
-            // Границы блоков — пауза (точка/перенос строки).
+            // Block boundaries — a pause (period/line break).
             Tag::Paragraph
             | Tag::Heading { .. }
             | Tag::BlockQuote(_)
             | Tag::List(_)
             | Tag::Item => self.flush(),
-            // Ссылка: URL не читаем, текст ссылки придёт событиями `Text`.
+            // A link: the URL isn't read, the link text arrives via `Text` events.
             _ => {}
         }
     }
@@ -169,8 +174,8 @@ impl Speaker {
             alt.push_str(text);
             return;
         }
-        // Голый URL и автолинк (`<https://…>`, текст которого — сам URL) читаются
-        // как «ссылка: домен».
+        // A bare URL and an autolink (`<https://…>`, whose text is the URL
+        // itself) are read as "link: domain".
         let spoken = rewrite_urls(text, self.loc);
         self.push(&spoken);
     }
@@ -179,8 +184,9 @@ impl Speaker {
         self.cur.push_str(text);
     }
 
-    /// Закрывает текущий блок: схлопывает пробелы и добивает точкой (пауза),
-    /// если фраза не заканчивается знаком препинания. Пустой блок отбрасывается.
+    /// Closes the current block: collapses whitespace and appends a period
+    /// (a pause) if the phrase doesn't already end in punctuation. An empty
+    /// block is dropped.
     fn flush(&mut self) {
         let collapsed = collapse_ws(&self.cur);
         self.cur.clear();
@@ -195,7 +201,7 @@ impl Speaker {
         });
     }
 
-    /// Голосовая пометка о пропущенном блоке — отдельным блоком (пауза с обеих сторон).
+    /// A voice note about a skipped block — its own block (a pause on both sides).
     fn note(&mut self, key: &str) {
         self.flush();
         let note = self.loc.t(key).to_string();
@@ -209,19 +215,20 @@ impl Speaker {
     }
 }
 
-/// Схлопывает любые пробельные последовательности в один пробел и подрезает края.
+/// Collapses any whitespace run into a single space and trims the edges.
 fn collapse_ws(s: &str) -> String {
     s.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
-/// Заменяет голые http(s)-URL на «ссылка: домен», сохраняя окружающие пробелы
-/// (текст приходит кусками, обрезать края нельзя — склеились бы слова).
+/// Replaces bare http(s) URLs with "link: domain", preserving surrounding
+/// whitespace (text arrives in chunks, edges can't be trimmed — words would
+/// glue together).
 fn rewrite_urls(text: &str, loc: &Locale) -> String {
     if !text.contains("://") {
         return text.to_string();
     }
     let mut out = String::with_capacity(text.len());
-    // `split_inclusive` сохраняет хвостовой пробельный символ каждого куска.
+    // `split_inclusive` keeps each chunk's trailing whitespace character.
     for piece in text.split_inclusive(char::is_whitespace) {
         let core = piece.trim_end();
         out.push_str(&rewrite_token(core, loc));
@@ -230,7 +237,7 @@ fn rewrite_urls(text: &str, loc: &Locale) -> String {
     out
 }
 
-/// Заменяет один токен, если он — http(s)-URL (обрамляющая пунктуация сохраняется).
+/// Replaces a single token if it's an http(s) URL (surrounding punctuation is preserved).
 fn rewrite_token(token: &str, loc: &Locale) -> String {
     const LEAD: [char; 4] = ['(', '[', '«', '"'];
     const TRAIL: [char; 9] = [')', ']', '»', '"', '.', ',', ';', '!', '?'];
@@ -247,7 +254,7 @@ fn rewrite_token(token: &str, loc: &Locale) -> String {
     format!("{lead}{spoken}{trail}")
 }
 
-/// Домен URL: без схемы, пути, порта и префикса `www.`.
+/// A URL's domain: without the scheme, path, port, or `www.` prefix.
 fn domain_of(url: &str) -> String {
     let rest = url.split_once("://").map_or(url, |(_, r)| r);
     let host = rest
@@ -271,8 +278,8 @@ mod tests {
         speakable_text(md, ru())
     }
 
-    /// Golden: характерный ответ LLM — проза + код + mermaid + таблица + формулы +
-    /// ссылки + список + заголовок. Проверяем ВЕСЬ вывод целиком.
+    /// Golden: a representative LLM reply — prose + code + mermaid + a table
+    /// + formulas + links + a list + a heading. Checks the WHOLE output at once.
     #[test]
     fn golden_typical_llm_answer() {
         let md = "\
@@ -313,18 +320,19 @@ $$E = mc^2$$
         assert_eq!(got, expected);
     }
 
-    /// Пер-локальный гейт: тот же текст на английском не содержит кириллицы и
-    /// отличается от русского (ловит забытую локализацию пометок).
+    /// Per-locale gate: the same text in English contains no Cyrillic and
+    /// differs from the Russian version (catches a forgotten localization of
+    /// the notes).
     #[test]
     fn english_output_has_no_cyrillic() {
         let md = "Text.\n\n```rust\nfn main() {}\n```\n\n| A |\n| - |\n| 1 |\n\n$$x$$\n\n![](i.png)\n\nhttps://example.com";
         let en = speakable_text(md, locale(Lang::En));
         let ru_out = speak(md);
-        assert_ne!(en, ru_out, "пометки не локализованы");
+        assert_ne!(en, ru_out, "the notes aren't localized");
         assert!(
             !en.chars()
                 .any(|c| matches!(c, 'а'..='я' | 'А'..='Я' | 'ё' | 'Ё')),
-            "кириллица в английском выводе: {en}"
+            "Cyrillic in the English output: {en}"
         );
         assert!(en.contains("(code block skipped)"), "{en}");
         assert!(en.contains("(table skipped)"), "{en}");
@@ -339,32 +347,32 @@ $$E = mc^2$$
         assert_eq!(speak("   \n\n\t "), "");
     }
 
-    /// Сообщение из одного код-блока — только пометка (озвучивать нечего).
+    /// A message made of a single code block — only the note (nothing to speak).
     #[test]
     fn only_code_block_gives_note() {
         assert_eq!(
             speak("```python\nprint('hi')\n```"),
             "(блок кода пропущен)."
         );
-        // Блок с отступом (indented) — тоже код.
+        // An indented block — also code.
         assert_eq!(speak("    let x = 1;"), "(блок кода пропущен).");
     }
 
-    /// Незакрытый забор (обрыв стрима) — содержимое всё равно не читается.
+    /// An unclosed fence (a stream cutoff) — the content still isn't read.
     #[test]
     fn unclosed_fence_is_skipped() {
         let got = speak("Начало.\n\n```rust\nfn main() {\n");
         assert_eq!(got, "Начало.\n(блок кода пропущен).");
     }
 
-    /// Вложенные списки: каждый пункт — своя фраза, маркеры не озвучиваются.
+    /// Nested lists: each item — its own phrase, markers aren't spoken.
     #[test]
     fn nested_lists_speak_item_by_item() {
         let got = speak("- один\n  - вложенный\n- два");
         assert_eq!(got, "один.\nвложенный.\nдва.");
     }
 
-    /// Автолинк `<url>` и голый URL читаются доменом; `www.` отбрасывается.
+    /// An autolink `<url>` and a bare URL are read as the domain; `www.` is dropped.
     #[test]
     fn autolink_and_bare_url_read_as_domain() {
         assert_eq!(
@@ -377,7 +385,7 @@ $$E = mc^2$$
         );
     }
 
-    /// У ссылки читается только текст, URL опускается.
+    /// A link's text is read, the URL is dropped.
     #[test]
     fn link_reads_text_without_url() {
         assert_eq!(
@@ -386,14 +394,14 @@ $$E = mc^2$$
         );
     }
 
-    /// Изображение: alt читается, без alt — пометка.
+    /// An image: alt is read, no alt — a note.
     #[test]
     fn image_reads_alt_or_note() {
         assert_eq!(speak("![схема сети](i.png)"), "схема сети.");
         assert_eq!(speak("![](i.png)"), "(изображение).");
     }
 
-    /// Inline-код внутри предложения читается текстом и не рвёт фразу.
+    /// Inline code within a sentence is read as text and doesn't break the phrase.
     #[test]
     fn inline_code_stays_in_sentence() {
         assert_eq!(
@@ -402,7 +410,7 @@ $$E = mc^2$$
         );
     }
 
-    /// Заголовки и цитаты — отдельными фразами с паузой.
+    /// Headings and quotes — separate phrases with a pause.
     #[test]
     fn headings_and_quotes_are_separate_phrases() {
         assert_eq!(
@@ -411,21 +419,21 @@ $$E = mc^2$$
         );
     }
 
-    /// Inline-математика конвертируется, диапазон цен не съедается math-расширением.
+    /// Inline math converts, a price range isn't swallowed by the math extension.
     #[test]
     fn inline_math_and_price_range() {
         assert_eq!(speak("формула $x^2$ тут"), "формула x² тут.");
         assert_eq!(speak("товар $5-$10 сегодня"), "товар $5-$10 сегодня.");
     }
 
-    /// Эмодзи остаются как есть (движки читают названием или игнорируют).
+    /// Emoji pass through as-is (engines read them by name or ignore them).
     #[test]
     fn emoji_pass_through() {
         assert_eq!(speak("готово 🎉"), "готово 🎉.");
     }
 
-    /// Многострочный абзац (мягкие переносы) склеивается в одну фразу без
-    /// висячих пробелов и двойных пропусков.
+    /// A multiline paragraph (soft breaks) collapses into one phrase with no
+    /// dangling spaces or double gaps.
     #[test]
     fn soft_breaks_collapse_to_single_spaces() {
         assert_eq!(
@@ -434,7 +442,7 @@ $$E = mc^2$$
         );
     }
 
-    /// Домен вычисляется без схемы/пути/порта.
+    /// The domain is computed without the scheme/path/port.
     #[test]
     fn domain_extraction() {
         assert_eq!(domain_of("https://example.com/a?b=1#c"), "example.com");

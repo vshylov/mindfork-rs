@@ -1,4 +1,4 @@
-//! Тесты экрана настроек (через handle_key/render). См. mod.rs.
+//! Settings-screen tests (via handle_key/render). See mod.rs.
 
 use super::helpers::*;
 use super::*;
@@ -18,8 +18,8 @@ fn ctrl(c: char) -> KeyEvent {
     KeyEvent::new(KeyCode::Char(c), KeyModifiers::CONTROL)
 }
 
-/// Переходит на нужную секцию через Tab (устойчиво к порядку секций).
-/// После вызова фокус в меню (Tab сбрасывает его), поля не фокусированы.
+/// Moves to the target section via Tab (robust to section order).
+/// After the call, focus is in the menu (Tab resets it), no field is focused.
 fn goto_section(s: &mut SettingsScreen, sec: Section) {
     for _ in 0..SECTIONS.len() {
         if s.section() == sec {
@@ -27,13 +27,13 @@ fn goto_section(s: &mut SettingsScreen, sec: Section) {
         }
         s.handle_key(key(KeyCode::Tab));
     }
-    assert_eq!(s.section(), sec, "секция {sec:?} не найдена");
+    assert_eq!(s.section(), sec, "section {sec:?} not found");
 }
 
-/// Описание поля по id: строит поля всех секций/подсекций экрана и ищет строку.
-/// Описание живёт на `FieldRow` (прикрепляется при построении — см. этап 3.1), а не
-/// в отдельном match; поэтому оно есть только у **видимых** строк (draft-поля нужно
-/// сделать видимыми, задав spec_type=draft-*).
+/// A field's description by id: builds the fields of all sections/subsections of the
+/// screen and looks up the row. The description lives on `FieldRow` (attached at build
+/// time — see stage 3.1), not in a separate match; so it exists only on **visible**
+/// rows (draft fields need to be made visible by setting spec_type=draft-*).
 fn field_desc(s: &SettingsScreen, id: FieldId) -> Option<String> {
     let mut rows = Vec::new();
     for mt in [
@@ -56,17 +56,17 @@ fn field_desc(s: &SettingsScreen, id: FieldId) -> Option<String> {
         .and_then(|r| r.description)
 }
 
-/// Фокусирует поля и доходит вниз до поля `id` (устойчиво к группам/порядку).
-/// Предполагает, что фокус в меню (как сразу после [`goto_section`]).
+/// Focuses the fields and steps down to field `id` (robust to groups/order).
+/// Assumes focus is in the menu (as right after [`goto_section`]).
 fn goto_field(s: &mut SettingsScreen, id: FieldId) {
-    s.handle_key(key(KeyCode::Enter)); // фокус на поля
+    s.handle_key(key(KeyCode::Enter)); // focus on the fields
     for _ in 0..300 {
         if s.fields().get(s.field_idx).map(|f| f.id) == Some(id) {
             return;
         }
         s.handle_key(key(KeyCode::Down));
     }
-    panic!("поле {id:?} не найдено в секции {:?}", s.section());
+    panic!("field {id:?} not found in section {:?}", s.section());
 }
 
 #[test]
@@ -80,14 +80,14 @@ fn interface_language_field_cycles_and_relocalizes() {
     use crate::shared::i18n::Lang;
     let mut s = screen();
     assert_eq!(s.config.interface.language, Lang::Ru);
-    // Поле «Язык интерфейса» присутствует и имеет описание.
+    // The "Interface language" field is present and has a description.
     assert!(field_desc(&s, FieldId::ILanguage).is_some());
-    // Циклическая правка (←→) меняет язык интерфейса.
+    // A cyclic edit (←→) changes the interface language.
     goto_section(&mut s, Section::Interface);
     goto_field(&mut s, FieldId::ILanguage);
     s.handle_key(key(KeyCode::Right));
     assert_eq!(s.config.interface.language, Lang::En);
-    // Экран настроек перерисовывается в новом языке: секция «Интерфейс» → «Interface».
+    // The settings screen re-renders in the new language: the section title switches to English.
     assert_eq!(s.loc().t("ui.settings.section.interface"), "Interface");
 }
 
@@ -99,7 +99,7 @@ fn ctrl_q_and_f10_quit() {
         s.handle_key(key(KeyCode::F(10))),
         Some(SettingsIntent::Quit)
     );
-    // И при открытом редакторе поля — тоже выход (Ctrl+Q поверх редактора).
+    // Even with a field editor open — still quit (Ctrl+Q on top of the editor).
     s.editor = Some(Editor {
         field: FieldId::XBinary,
         input: InputBox::new(),
@@ -122,19 +122,19 @@ fn tab_cycles_sections() {
 #[test]
 fn toggle_web_emits_save_with_flipped_value() {
     let mut s = screen();
-    // Переходим в Инструменты, на тумблер web-поиска.
+    // Go to Tools, to the web-search toggle.
     goto_section(&mut s, Section::Tools);
     goto_field(&mut s, FieldId::TWeb);
     let intent = s.handle_key(key(KeyCode::Char(' ')));
     match intent {
         Some(SettingsIntent::SaveConfig(c)) => assert!(!c.tools.web_enabled),
-        other => panic!("ожидался SaveConfig, получено {other:?}"),
+        other => panic!("expected SaveConfig, got {other:?}"),
     }
 }
 
 #[test]
 fn python_group_visibility_follows_mode() {
-    // По умолчанию — режим Wasmer: видны «сеть» и «таймаут песочницы», путь скрыт.
+    // By default — Wasmer mode: "network" and "sandbox timeout" are visible, the path is hidden.
     let mut s = screen();
     goto_section(&mut s, Section::Tools);
     let ids: Vec<FieldId> = s.fields().iter().map(|f| f.id).collect();
@@ -145,7 +145,7 @@ fn python_group_visibility_follows_mode() {
     assert!(ids.contains(&FieldId::TPythonWasmMemory));
     assert!(!ids.contains(&FieldId::TPythonPath));
 
-    // Режим Local: виден путь к интерпретатору, поля песочницы скрыты.
+    // Local mode: the interpreter path is visible, sandbox fields are hidden.
     let mut cfg = AppConfig::default();
     cfg.tools.python_mode = PythonMode::Local;
     let mut p = Profile::new("Базовый", "Ты — ассистент.");
@@ -165,13 +165,13 @@ fn python_mode_cycles_and_emits_save() {
     let mut s = screen();
     goto_section(&mut s, Section::Tools);
     goto_field(&mut s, FieldId::TPythonMode);
-    // Правый цикл на 2-вариантном режиме переводит Wasmer → Local.
+    // A right cycle on the 2-option mode switches Wasmer → Local.
     let intent = s.handle_key(key(KeyCode::Right));
     match intent {
         Some(SettingsIntent::SaveConfig(c)) => {
             assert_eq!(c.tools.python_mode, PythonMode::Local)
         }
-        other => panic!("ожидался SaveConfig, получено {other:?}"),
+        other => panic!("expected SaveConfig, got {other:?}"),
     }
 }
 
@@ -198,18 +198,18 @@ fn model_section_shows_active_subsection_server_chip() {
         embed: ServerStatus::Connecting,
         impersonation: ServerStatus::NotConfigured,
     });
-    // Ассистент → чип чат-сервера («готов»).
+    // Assistant → the chat-server chip ("ready").
     let t = render_text(&mut s);
-    assert!(t.contains("чат: готов"), "чип чат-сервера: {t}");
-    // Переключение подсекции меняет чип на сервер эмбеддингов («подключение»).
+    assert!(t.contains("чат: готов"), "chat-server chip: {t}");
+    // Switching the subsection changes the chip to the embeddings server ("connecting").
     s.model_sub = ModelTab::Embeddings;
     let t = render_text(&mut s);
     assert!(
         t.contains("эмбеддинги: подключение"),
-        "чип эмбеддингов: {t}"
+        "embeddings chip: {t}"
     );
-    assert!(!t.contains("чат: готов"), "чужой чип не показывается");
-    // Другие секции чип не рисуют.
+    assert!(!t.contains("чат: готов"), "the other chip isn't shown");
+    // Other sections don't draw a chip.
     goto_section(&mut s, Section::Interface);
     let t = render_text(&mut s);
     assert!(!t.contains("готов") && !t.contains("подключение"));
@@ -218,15 +218,15 @@ fn model_section_shows_active_subsection_server_chip() {
 #[test]
 fn interface_has_terminal_compat_toggle() {
     let mut s = screen();
-    // Поле есть в секции «Интерфейс», сразу после темы.
+    // The field is in the "Interface" section, right after the theme.
     let rows = s.interface_fields();
     assert!(rows.iter().any(|r| r.id == FieldId::ICompat));
-    // Переключение сохраняет конфиг с поднятым флагом…
+    // Toggling it saves the config with the flag raised…
     match s.toggle_field(FieldId::ICompat) {
         Some(SettingsIntent::SaveConfig(c)) => assert!(c.interface.terminal_compat),
-        other => panic!("ожидался SaveConfig, получено {other:?}"),
+        other => panic!("expected SaveConfig, got {other:?}"),
     }
-    // …и палитра рабочей копии тут же переходит на компат-набор глифов.
+    // …and the working-copy palette immediately switches to the compat glyph set.
     assert!(s.palette().compat);
     assert!(field_desc(&s, FieldId::ICompat).is_some());
 }
@@ -234,13 +234,13 @@ fn interface_has_terminal_compat_toggle() {
 #[test]
 fn interface_has_table_separators_toggle() {
     let mut s = screen();
-    // Поле есть в секции «Интерфейс» (группа «Оформление»).
+    // The field is in the "Interface" section (the "Appearance" group).
     let rows = s.interface_fields();
     assert!(rows.iter().any(|r| r.id == FieldId::ITableSeparators));
-    // По умолчанию выключено; переключение сохраняет конфиг с поднятым флагом.
+    // Off by default; toggling it saves the config with the flag raised.
     match s.toggle_field(FieldId::ITableSeparators) {
         Some(SettingsIntent::SaveConfig(c)) => assert!(c.interface.table_row_separators),
-        other => panic!("ожидался SaveConfig, получено {other:?}"),
+        other => panic!("expected SaveConfig, got {other:?}"),
     }
     assert!(field_desc(&s, FieldId::ITableSeparators).is_some());
 }
@@ -248,13 +248,13 @@ fn interface_has_table_separators_toggle() {
 #[test]
 fn interface_has_mermaid_toggle() {
     let mut s = screen();
-    // Поле есть в секции «Интерфейс» (группа «Оформление»).
+    // The field is in the "Interface" section (the "Appearance" group).
     let rows = s.interface_fields();
     assert!(rows.iter().any(|r| r.id == FieldId::IMermaid));
-    // По умолчанию включено; переключение сохраняет конфиг со снятым флагом.
+    // On by default; toggling it saves the config with the flag cleared.
     match s.toggle_field(FieldId::IMermaid) {
         Some(SettingsIntent::SaveConfig(c)) => assert!(!c.interface.render_mermaid),
-        other => panic!("ожидался SaveConfig, получено {other:?}"),
+        other => panic!("expected SaveConfig, got {other:?}"),
     }
     assert!(field_desc(&s, FieldId::IMermaid).is_some());
 }
@@ -262,63 +262,63 @@ fn interface_has_mermaid_toggle() {
 #[test]
 fn cycle_mode_changes_server_mode() {
     let mut s = screen();
-    s.handle_key(key(KeyCode::Enter)); // фокус на поля (ModelSub)
-    s.handle_key(key(KeyCode::Down)); // XMode (режим, Choice)
+    s.handle_key(key(KeyCode::Enter)); // focus on the fields (ModelSub)
+    s.handle_key(key(KeyCode::Down)); // XMode (mode, Choice)
     let intent = s.handle_key(key(KeyCode::Right));
     match intent {
         Some(SettingsIntent::SaveConfig(c)) => assert_eq!(c.engine.mode, ServerMode::External),
-        other => panic!("ожидался SaveConfig, получено {other:?}"),
+        other => panic!("expected SaveConfig, got {other:?}"),
     }
 }
 
 #[test]
 fn model_subsection_switches_to_impersonation_fields() {
     let mut s = screen();
-    s.handle_key(key(KeyCode::Enter)); // фокус на поля (ModelSub — таб-стрип)
-    // → переключает подсекцию на «Имперсонация» (без сохранения).
+    s.handle_key(key(KeyCode::Enter)); // focus on the fields (ModelSub — tab strip)
+    // → switches the subsection to "Impersonation" (no save).
     assert_eq!(s.handle_key(key(KeyCode::Right)), None);
     assert_eq!(s.model_sub, ModelTab::Impersonation);
-    // Первое поле подсекции — режим имперсонации (3 значения).
+    // The subsection's first field — the impersonation mode (3 values).
     s.handle_key(key(KeyCode::Down)); // IxMode
-    // Цикл shared → managed.
+    // A shared → managed cycle.
     let intent = s.handle_key(key(KeyCode::Right));
     match intent {
         Some(SettingsIntent::SaveConfig(c)) => {
             assert_eq!(c.impersonation_engine.mode, ImpersonationMode::Managed)
         }
-        other => panic!("ожидался SaveConfig, получено {other:?}"),
+        other => panic!("expected SaveConfig, got {other:?}"),
     }
 }
 
 #[test]
 fn model_subsection_third_tab_is_embeddings() {
-    // Модель имеет третью вкладку «Эмбеддинги» (сервер переехал из «Инструментов»);
-    // цикл вкладок вправо: Ассистент → Имперсонация → Эмбеддинги.
+    // Model has a third tab "Embeddings" (the server moved from "Tools");
+    // cycling tabs right: Assistant → Impersonation → Embeddings.
     let mut s = screen();
-    s.handle_key(key(KeyCode::Enter)); // ModelSub (таб-стрип)
-    s.handle_key(key(KeyCode::Right)); // → Имперсонация
-    s.handle_key(key(KeyCode::Right)); // → Эмбеддинги
+    s.handle_key(key(KeyCode::Enter)); // ModelSub (tab strip)
+    s.handle_key(key(KeyCode::Right)); // → Impersonation
+    s.handle_key(key(KeyCode::Right)); // → Embeddings
     assert_eq!(s.model_sub, ModelTab::Embeddings);
     let ids: Vec<FieldId> = s.fields().iter().map(|f| f.id).collect();
     assert!(ids.contains(&FieldId::EMode));
     assert!(ids.contains(&FieldId::EBinary));
-    // В «Инструментах» эмбеддингов больше нет.
+    // Embeddings are no longer in "Tools".
     goto_section(&mut s, Section::Tools);
     assert!(!s.fields().iter().any(|f| f.id == FieldId::EMode));
 }
 
 #[test]
 fn model_subsection_fourth_tab_is_tts_with_mode_driven_fields() {
-    // Четвёртая вкладка секции «Модель» — «Озвучивание» (spec §11.9): облачный
-    // режим показывает модель/голос/указания/ключ, external — URL вместо ключа.
+    // The fourth tab of the "Model" section — "Speech" (spec §11.9): cloud
+    // mode shows model/voice/instructions/key, external — a URL instead of a key.
     let mut s = screen();
-    s.handle_key(key(KeyCode::Enter)); // ModelSub (таб-стрип)
+    s.handle_key(key(KeyCode::Enter)); // ModelSub (tab strip)
     for _ in 0..3 {
         s.handle_key(key(KeyCode::Right));
     }
     assert_eq!(s.model_sub, ModelTab::Tts);
     let ids: Vec<FieldId> = s.fields().iter().map(|f| f.id).collect();
-    // Облако (дефолт — OpenAI): модель/голос/указания/ключ + поведение.
+    // Cloud (default — OpenAI): model/voice/instructions/key + behavior.
     assert!(ids.contains(&FieldId::TtsMode));
     assert!(ids.contains(&FieldId::TtsModelName));
     assert!(ids.contains(&FieldId::TtsVoice));
@@ -328,26 +328,26 @@ fn model_subsection_fourth_tab_is_tts_with_mode_driven_fields() {
     assert!(ids.contains(&FieldId::TtsStopOnSwitch));
     assert!(ids.contains(&FieldId::TtsStopOnGeneration));
 
-    // Переключаем режим на external: появляется URL, исчезают ключ и указания
-    // (их поддерживает только облако OpenAI).
+    // Switch the mode to external: a URL appears, the key and instructions disappear
+    // (only the OpenAI cloud supports them).
     s.config.tts.mode = crate::shared::config::TtsMode::External;
     let ids: Vec<FieldId> = s.fields().iter().map(|f| f.id).collect();
     assert!(ids.contains(&FieldId::TtsUrl));
     assert!(
         !ids.contains(&FieldId::TtsApiKey),
-        "у external ключа-статуса нет"
+        "external has no status key"
     );
     assert!(
         !ids.contains(&FieldId::TtsInstructions),
-        "instructions — только облако OpenAI"
+        "instructions — only the OpenAI cloud"
     );
 }
 
 #[test]
 fn tts_toggles_and_mode_are_saved() {
-    // Тумблеры поведения и цикл режима правят конфиг и отдают намерение сохранения.
-    // Вкладку ставим полем (`goto_field` ожидает фокус в меню, а прогон таб-стрипа
-    // клавишами оставил бы его на полях).
+    // Behavior toggles and the mode cycle edit the config and yield a save intent.
+    // We set the tab as a field (`goto_field` expects focus in the menu, and running the
+    // tab strip via keys would leave it on the fields).
     let mut s = screen();
     goto_section(&mut s, Section::Model);
     s.model_sub = ModelTab::Tts;
@@ -356,7 +356,7 @@ fn tts_toggles_and_mode_are_saved() {
     assert_eq!(
         s.config.tts.mode,
         crate::shared::config::TtsMode::Gemini,
-        "цикл режима идёт по TtsMode::ALL"
+        "the mode cycle follows TtsMode::ALL"
     );
 
     let mut s = screen();
@@ -367,34 +367,34 @@ fn tts_toggles_and_mode_are_saved() {
     assert!(matches!(intent, Some(SettingsIntent::SaveConfig(_))));
     assert!(
         s.config.tts.speak_roles,
-        "тумблер «Озвучивать роли» включился"
+        "the \"Speak roles\" toggle turned on"
     );
-    // Описание у полей озвучивания есть (нижняя панель + ловушка поиска).
+    // Speech fields have descriptions (the bottom panel + the search trap).
     assert!(field_desc(&s, FieldId::TtsMode).is_some());
     assert!(field_desc(&s, FieldId::TtsSpeakRoles).is_some());
 }
 
 #[test]
 fn section_counts_sum_matches_search_index() {
-    // Счётчики параметров секций привязаны к выбранным режимам и выводятся из
-    // того же индекса, что и поиск: сумма счётчиков секций тождественно равна
-    // числу полей в поиске (инвариант, о котором просил пользователь). Проверяем
-    // при разных сочетаниях режимов движка/провайдера.
+    // Section parameter counters are tied to the selected modes and derived from
+    // the same index as search: the sum of section counters is identically equal to
+    // the number of fields in search (an invariant the user asked for). We check
+    // this across different combinations of engine/provider modes.
     let mut s = screen();
     for &m in SERVER_MODES.iter() {
         s.config.engine.mode = m;
         s.config.embed.mode = m;
         let total: usize = s.section_counts().iter().sum();
         let search_total = s.build_search_index().len();
-        assert_eq!(total, search_total, "режим {m:?}");
+        assert_eq!(total, search_total, "mode {m:?}");
     }
 }
 
 #[test]
 fn section_count_tracks_selected_mode() {
-    // В отличие от прежнего union-подхода счётчик отражает текущий режим: у
-    // managed llama-server полей заметно больше, чем у облачного провайдера (тот
-    // показывает лишь модель/ключ/base URL — ADR 0004).
+    // Unlike the previous union approach, the counter reflects the current mode: a
+    // managed llama-server has noticeably more fields than a cloud provider (which
+    // shows only model/key/base URL — ADR 0004).
     let mut s = screen();
     s.config.engine.mode = ServerMode::Managed;
     s.config.impersonation_engine.mode = ImpersonationMode::Shared;
@@ -404,11 +404,11 @@ fn section_count_tracks_selected_mode() {
     let cloud = s.section_field_count(Section::Model);
     assert!(
         cloud < managed,
-        "облако должно показывать меньше полей: managed={managed} cloud={cloud}"
+        "cloud must show fewer fields: managed={managed} cloud={cloud}"
     );
 
-    // Счётчик секции «Модель» совпадает с числом её полей в индексе поиска
-    // (сумма трёх вкладок для их текущих режимов, без селекторов подсекций).
+    // The "Model" section's counter matches the number of its fields in the search
+    // index (the sum of three tabs for their current modes, without subsection selectors).
     let model_from_search = s
         .build_search_index()
         .iter()
@@ -419,14 +419,14 @@ fn section_count_tracks_selected_mode() {
 
 #[test]
 fn section_field_count_excludes_subsection_selector() {
-    // Селектор подсекции (таб-стрип) — навигационный элемент, не параметр, — в
-    // счётчик не входит. Семплинг в локальном режиме (дефолт) показывает все
-    // параметры каждой подсекции без строки-селектора.
+    // The subsection selector (tab strip) — a navigation element, not a parameter —
+    // doesn't count. Sampling in local mode (default) shows all
+    // parameters of each subsection with no selector row.
     let s = screen();
     assert_eq!(
         s.section_field_count(Section::Sampling),
         Subsection::ALL.len() * SAMPLING_PARAMS.len(),
-        "селектор подсекции попал в счёт семплинга"
+        "the subsection selector leaked into the sampling count"
     );
 }
 
@@ -434,13 +434,13 @@ fn section_field_count_excludes_subsection_selector() {
 fn impersonation_profile_subsection_has_no_tools() {
     let mut s = screen();
     goto_section(&mut s, Section::Profiles);
-    goto_field(&mut s, FieldId::ProfileSub); // таб-стрип подсекции (поле 0)
-    s.handle_key(key(KeyCode::Right)); // → Имперсонация
+    goto_field(&mut s, FieldId::ProfileSub); // the subsection tab strip (field 0)
+    s.handle_key(key(KeyCode::Right)); // → Impersonation
     assert_eq!(s.profile_sub, Subsection::Impersonation);
     let fields = s.fields();
     assert!(
         !fields.iter().any(|f| matches!(f.id, FieldId::PTool(_))),
-        "в подсекции имперсонации нет тумблеров инструментов"
+        "the impersonation subsection has no tool toggles"
     );
     assert!(fields.iter().any(|f| f.id == FieldId::PImpSystem));
 }
@@ -448,8 +448,8 @@ fn impersonation_profile_subsection_has_no_tools() {
 #[test]
 fn editing_model_commits_text() {
     let mut s = screen();
-    goto_field(&mut s, FieldId::XModel); // GGUF-модель (группа «Модель»)
-    s.handle_key(key(KeyCode::Enter)); // открыть редактор XModel
+    goto_field(&mut s, FieldId::XModel); // the GGUF model (the "Model" group)
+    s.handle_key(key(KeyCode::Enter)); // open the XModel editor
     assert!(s.editor.is_some());
     for c in "gemma.gguf".chars() {
         s.handle_key(key(KeyCode::Char(c)));
@@ -459,7 +459,7 @@ fn editing_model_commits_text() {
         Some(SettingsIntent::SaveConfig(c)) => {
             assert_eq!(c.engine.managed.model_path.as_deref(), Some("gemma.gguf"))
         }
-        other => panic!("ожидался SaveConfig, получено {other:?}"),
+        other => panic!("expected SaveConfig, got {other:?}"),
     }
     assert!(s.editor.is_none());
 }
@@ -469,13 +469,13 @@ fn editor_esc_discards() {
     let mut s = screen();
     s.handle_key(key(KeyCode::Enter)); // ModelSub
     s.handle_key(key(KeyCode::Down)); // XMode
-    s.handle_key(key(KeyCode::Down)); // XBinary (managed-режим)
-    s.handle_key(key(KeyCode::Enter)); // редактор XBinary
+    s.handle_key(key(KeyCode::Down)); // XBinary (managed mode)
+    s.handle_key(key(KeyCode::Enter)); // the XBinary editor
     s.handle_key(key(KeyCode::Char('x')));
     let intent = s.handle_key(key(KeyCode::Esc));
     assert_eq!(intent, None);
     assert!(s.editor.is_none());
-    // значение не изменилось
+    // the value didn't change
     assert!(s.config.engine.managed.binary.is_none());
 }
 
@@ -495,23 +495,23 @@ fn create_and_delete_profile_in_profiles_section() {
 fn toggling_profile_tool_emits_save_profile() {
     let mut s = screen();
     goto_section(&mut s, Section::Profiles);
-    // Каталог упорядочен по id (не по дефолт-списку), поэтому берём индекс первого
-    // РЕАЛЬНО включённого в профиле инструмента — его тумблер должен выключиться.
+    // The catalog is ordered by id (not the default list), so take the index of the
+    // first tool ACTUALLY enabled in the profile — its toggle must turn off.
     let catalog = crate::features::tools::tool_catalog();
     let enabled = s.profiles[0].enabled_tools.clone();
     let idx = catalog
         .iter()
         .position(|i| enabled.contains(&i.id))
-        .expect("в профиле есть включённый инструмент из каталога");
+        .expect("the profile has an enabled tool from the catalog");
     goto_field(&mut s, FieldId::PTool(idx));
     let before = s.profiles[0].enabled_tools.len();
     let intent = s.handle_key(key(KeyCode::Char(' ')));
     match intent {
         Some(SettingsIntent::SaveProfile { edit, .. }) => {
             let tools = edit.enabled_tools.unwrap();
-            assert_eq!(tools.len(), before - 1, "включённый инструмент выключился");
+            assert_eq!(tools.len(), before - 1, "the enabled tool turned off");
         }
-        other => panic!("ожидался SaveProfile, получено {other:?}"),
+        other => panic!("expected SaveProfile, got {other:?}"),
     }
 }
 
@@ -529,7 +529,7 @@ fn profile_select_cycles() {
         vec![],
     );
     goto_section(&mut s, Section::Profiles);
-    goto_field(&mut s, FieldId::PSelect); // селектор профиля (после таб-стрипа)
+    goto_field(&mut s, FieldId::PSelect); // the profile selector (after the tab strip)
     assert_eq!(s.profile_idx, 0);
     s.handle_key(key(KeyCode::Right));
     assert_eq!(s.profile_idx, 1);
@@ -537,7 +537,7 @@ fn profile_select_cycles() {
 
 #[test]
 fn samplers_list_round_trip() {
-    // Порядок семплеров: разбор по «;», склейка обратно, пустой → None.
+    // Sampler order: split on ";", joined back, empty → None.
     let v = parse_list("penalties;dry; temperature ", ';').unwrap();
     assert_eq!(v, vec!["penalties", "dry", "temperature"]);
     assert_eq!(join_list(Some(&v), ';'), "penalties;dry;temperature");
@@ -548,7 +548,7 @@ fn samplers_list_round_trip() {
 
 #[test]
 fn dry_breakers_decode_and_encode_escapes() {
-    // Эскейпы \n \t декодируются при вводе и кодируются обратно при показе.
+    // Escapes \n \t are decoded on input and encoded back on display.
     let v = parse_breakers(r#"\n, :, ", *"#).unwrap();
     assert_eq!(v, vec!["\n", ":", "\"", "*"]);
     assert_eq!(join_breakers(Some(&v)), r#"\n,:,",*"#);
@@ -561,44 +561,44 @@ fn system_message_editor_is_multiline_and_keeps_newlines() {
     let mut s = screen();
     goto_section(&mut s, Section::Profiles);
     goto_field(&mut s, FieldId::PSystem);
-    s.handle_key(key(KeyCode::Enter)); // открыть редактор
-    let editor = s.editor.as_ref().expect("редактор открыт");
+    s.handle_key(key(KeyCode::Enter)); // open the editor
+    let editor = s.editor.as_ref().expect("the editor is open");
     assert!(
         editor.multiline,
-        "системное сообщение редактируется многострочно"
+        "the system message is edited as multiline"
     );
-    // Shift+Enter вставляет перевод строки, а не коммитит.
+    // Shift+Enter inserts a line break, not a commit.
     s.handle_key(key(KeyCode::Char('A')));
     s.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::SHIFT));
     s.handle_key(key(KeyCode::Char('B')));
-    assert!(s.editor.is_some(), "Shift+Enter не закрывает редактор");
-    let intent = s.handle_key(key(KeyCode::Enter)); // коммит
+    assert!(s.editor.is_some(), "Shift+Enter doesn't close the editor");
+    let intent = s.handle_key(key(KeyCode::Enter)); // commit
     match intent {
         Some(SettingsIntent::SaveProfile { edit, .. }) => {
             assert_eq!(edit.system_message.unwrap(), "Ты — ассистент.A\nB");
         }
-        other => panic!("ожидался SaveProfile, получено {other:?}"),
+        other => panic!("expected SaveProfile, got {other:?}"),
     }
 }
 
 #[test]
 fn alt_enter_also_inserts_newline_in_multiline_editor() {
-    // Запасной перенос строки для терминалов без kitty-протокола (Shift+Enter там
-    // неотличим от Enter). См. п.11 аудита InputBox.
+    // A fallback line break for terminals without the kitty protocol (Shift+Enter
+    // is indistinguishable from Enter there). See item 11 of the InputBox audit.
     let mut s = screen();
     goto_section(&mut s, Section::Profiles);
     goto_field(&mut s, FieldId::PSystem);
-    s.handle_key(key(KeyCode::Enter)); // открыть редактор (многострочный)
+    s.handle_key(key(KeyCode::Enter)); // open the editor (multiline)
     s.handle_key(key(KeyCode::Char('A')));
     s.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::ALT));
     s.handle_key(key(KeyCode::Char('B')));
-    assert!(s.editor.is_some(), "Alt+Enter не закрывает редактор");
-    let intent = s.handle_key(key(KeyCode::Enter)); // коммит
+    assert!(s.editor.is_some(), "Alt+Enter doesn't close the editor");
+    let intent = s.handle_key(key(KeyCode::Enter)); // commit
     match intent {
         Some(SettingsIntent::SaveProfile { edit, .. }) => {
             assert_eq!(edit.system_message.unwrap(), "Ты — ассистент.A\nB");
         }
-        other => panic!("ожидался SaveProfile, получено {other:?}"),
+        other => panic!("expected SaveProfile, got {other:?}"),
     }
 }
 
@@ -607,20 +607,20 @@ fn ctrl_k_clears_and_ctrl_z_restores_multiline_editor() {
     let mut s = screen();
     goto_section(&mut s, Section::Profiles);
     goto_field(&mut s, FieldId::PSystem);
-    s.handle_key(key(KeyCode::Enter)); // открыть редактор (многострочный)
+    s.handle_key(key(KeyCode::Enter)); // open the editor (multiline)
     s.handle_key(key(KeyCode::Char('A')));
     s.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::SHIFT));
     s.handle_key(key(KeyCode::Char('B')));
     let ctrl_k = KeyEvent::new(KeyCode::Char('k'), KeyModifiers::CONTROL);
     let ctrl_z = KeyEvent::new(KeyCode::Char('z'), KeyModifiers::CONTROL);
-    s.handle_key(ctrl_k); // очистка
+    s.handle_key(ctrl_k); // clear
     assert_eq!(s.editor.as_ref().unwrap().input.text(), "");
-    s.handle_key(ctrl_z); // возврат удалённого (общая модель отмены, §C)
+    s.handle_key(ctrl_z); // restore what was deleted (the shared undo model, §C)
     assert_eq!(
         s.editor.as_ref().unwrap().input.text(),
         "Ты — ассистент.A\nB"
     );
-    assert!(s.editor.is_some(), "Ctrl+K/Ctrl+Z не закрывают редактор");
+    assert!(s.editor.is_some(), "Ctrl+K/Ctrl+Z don't close the editor");
 }
 
 #[test]
@@ -628,49 +628,52 @@ fn greeting_editor_is_multiline_and_keeps_newlines() {
     let mut s = screen();
     goto_section(&mut s, Section::Profiles);
     goto_field(&mut s, FieldId::PGreeting);
-    s.handle_key(key(KeyCode::Enter)); // открыть редактор
-    let editor = s.editor.as_ref().expect("редактор открыт");
-    assert!(editor.multiline, "приветствие редактируется многострочно");
-    // Shift+Enter вставляет перевод строки, а не коммитит.
+    s.handle_key(key(KeyCode::Enter)); // open the editor
+    let editor = s.editor.as_ref().expect("the editor is open");
+    assert!(editor.multiline, "the greeting is edited as multiline");
+    // Shift+Enter inserts a line break, not a commit.
     s.handle_key(key(KeyCode::Char('A')));
     s.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::SHIFT));
     s.handle_key(key(KeyCode::Char('B')));
-    assert!(s.editor.is_some(), "Shift+Enter не закрывает редактор");
-    let intent = s.handle_key(key(KeyCode::Enter)); // коммит
+    assert!(s.editor.is_some(), "Shift+Enter doesn't close the editor");
+    let intent = s.handle_key(key(KeyCode::Enter)); // commit
     match intent {
         Some(SettingsIntent::SaveProfile { edit, .. }) => {
             assert_eq!(edit.greeting.unwrap().as_deref(), Some("A\nB"));
         }
-        other => panic!("ожидался SaveProfile, получено {other:?}"),
+        other => panic!("expected SaveProfile, got {other:?}"),
     }
 }
 
 #[test]
 fn other_fields_edit_single_line() {
     let mut s = screen();
-    s.handle_key(key(KeyCode::Enter)); // поля (ModelSub)
+    s.handle_key(key(KeyCode::Enter)); // fields (ModelSub)
     s.handle_key(key(KeyCode::Down)); // XMode
-    s.handle_key(key(KeyCode::Down)); // XBinary (текст, managed-режим)
-    s.handle_key(key(KeyCode::Enter)); // редактор
-    let editor = s.editor.as_ref().expect("редактор открыт");
-    assert!(!editor.multiline, "обычное поле редактируется однострочно");
+    s.handle_key(key(KeyCode::Down)); // XBinary (text, managed mode)
+    s.handle_key(key(KeyCode::Enter)); // the editor
+    let editor = s.editor.as_ref().expect("the editor is open");
+    assert!(
+        !editor.multiline,
+        "a regular field is edited as single-line"
+    );
 }
 
 #[test]
 fn cloud_mode_reveals_model_and_key_fields() {
-    // Переключение режима ассистента на облако (openai) показывает поля
-    // «Модель» и «API-ключ (env)» и скрывает параметры llama-server.
+    // Switching the assistant's mode to cloud (openai) shows the
+    // "Model" and "API key (env)" fields and hides llama-server parameters.
     let mut s = screen();
-    s.handle_key(key(KeyCode::Enter)); // поля (ModelSub)
+    s.handle_key(key(KeyCode::Enter)); // fields (ModelSub)
     s.handle_key(key(KeyCode::Down)); // XMode
-    // managed → external → openai (cycle вправо дважды).
+    // managed → external → openai (cycle right twice).
     s.handle_key(key(KeyCode::Right));
     s.handle_key(key(KeyCode::Right));
     assert_eq!(s.config.engine.mode, ServerMode::OpenAi);
     let ids: Vec<FieldId> = s.fields().iter().map(|f| f.id).collect();
     assert!(ids.contains(&FieldId::XModelName));
     assert!(ids.contains(&FieldId::XApiKeyEnv));
-    // Параметры локального сервера в облачном режиме скрыты.
+    // The local server's parameters are hidden in cloud mode.
     assert!(!ids.contains(&FieldId::XNgl));
     assert!(!ids.contains(&FieldId::XBinary));
 }
@@ -703,8 +706,8 @@ fn hotkeys_render_below_panel_and_wrap_when_narrow() {
             })
             .collect()
     };
-    // Строки хоткеев (вне рамки, прижаты вправо) начинаются с пробела в колонке 0,
-    // тогда как строки панели несут символ рамки. Считаем хвостовые строки-хоткеи.
+    // Hotkey rows (outside the border, right-aligned) start with a space at column 0,
+    // whereas panel rows carry the border character. Count the trailing hotkey rows.
     let status_rows = |lines: &[String]| -> usize {
         lines
             .iter()
@@ -712,26 +715,26 @@ fn hotkeys_render_below_panel_and_wrap_when_narrow() {
             .take_while(|l| l.starts_with(' '))
             .count()
     };
-    // Широко — хоткеи умещаются в одну строку под панелью, прижаты вправо
-    // (заканчиваются на «выход»); строка над ними — нижняя рамка панели (не пробел).
+    // Wide — hotkeys fit on one row below the panel, right-aligned
+    // (ending in "quit"); the row above them is the panel's bottom border (not a space).
     let wide = rows(120, 24);
-    assert_eq!(status_rows(&wide), 1, "широко — одна строка хоткеев");
+    assert_eq!(status_rows(&wide), 1, "wide — one hotkey row");
     let last = wide.last().unwrap();
     assert!(last.contains("Tab") && last.contains("выход"));
     assert!(
         last.trim_end().ends_with("выход"),
-        "прижаты вправо: {last:?}"
+        "right-aligned: {last:?}"
     );
     assert!(
         !wide[wide.len() - 2].starts_with(' '),
-        "над хоткеями — нижняя рамка панели: {:?}",
+        "above the hotkeys — the panel's bottom border: {:?}",
         wide[wide.len() - 2]
     );
-    // Узко — хоткеи переносятся на несколько строк (высота статус-области > 1).
+    // Narrow — hotkeys wrap onto several rows (the status area's height > 1).
     let narrow = rows(46, 24);
     assert!(
         status_rows(&narrow) > 1,
-        "ожидался перенос хоткеев: {}",
+        "expected hotkeys to wrap: {}",
         status_rows(&narrow)
     );
 }
@@ -744,22 +747,22 @@ fn render_with_editor_does_not_panic() {
     s.handle_key(key(KeyCode::Enter));
     s.handle_key(key(KeyCode::Down));
     s.handle_key(key(KeyCode::Down));
-    s.handle_key(key(KeyCode::Enter)); // редактор
+    s.handle_key(key(KeyCode::Enter)); // the editor
     let mut term = Terminal::new(TestBackend::new(80, 24)).unwrap();
     term.draw(|f| s.render(f)).unwrap();
 }
 
 #[test]
 fn flag_fields_have_descriptions() {
-    // Черновые поля видны только при spec_type=draft-* — включаем, чтобы проверить их описание.
+    // Draft fields are visible only for spec_type=draft-* — turn it on to check their description.
     let mut s = screen();
     s.config.engine.managed.spec_type = SpecType::DraftMtp;
-    // -ngl, --jinja и --no-mmap снабжены человекопонятной подсказкой; обычное поле — нет.
+    // -ngl, --jinja, and --no-mmap carry a human-readable hint; a regular field doesn't.
     assert!(field_desc(&s, FieldId::XNgl).is_some());
     assert!(field_desc(&s, FieldId::XJinja).is_some());
     assert!(field_desc(&s, FieldId::XNoMmap).is_some());
     assert!(field_desc(&s, FieldId::XPort).is_none());
-    // Новые поля FlashAttention/спекулятивного декодирования тоже описаны.
+    // The new FlashAttention/speculative-decoding fields are also described.
     assert!(field_desc(&s, FieldId::XFlashAttn).is_some());
     assert!(field_desc(&s, FieldId::XSpecType).is_some());
     assert!(field_desc(&s, FieldId::XDraftModel).is_some());
@@ -767,8 +770,8 @@ fn flag_fields_have_descriptions() {
 
 #[test]
 fn managed_mode_shows_flash_attn_and_spec_type() {
-    // В managed-режиме (дефолт) видны FlashAttention и --spec-type; черновые
-    // поля скрыты, пока тип не draft-*.
+    // In managed mode (default), FlashAttention and --spec-type are visible; draft
+    // fields are hidden until the type is draft-*.
     let s = screen();
     let ids: Vec<FieldId> = s.fields().iter().map(|f| f.id).collect();
     assert!(ids.contains(&FieldId::XFlashAttn));
@@ -779,11 +782,11 @@ fn managed_mode_shows_flash_attn_and_spec_type() {
 #[test]
 fn cycling_spec_type_to_draft_reveals_draft_fields() {
     let mut s = screen();
-    s.handle_key(key(KeyCode::Enter)); // фокус на поля (XMode)
+    s.handle_key(key(KeyCode::Enter)); // focus on the fields (XMode)
     while s.fields().get(s.field_idx).map(|f| f.id) != Some(FieldId::XSpecType) {
         s.handle_key(key(KeyCode::Down));
     }
-    // none → draft-simple → draft-eagle3 → draft-mtp (три шага вправо).
+    // none → draft-simple → draft-eagle3 → draft-mtp (three steps right).
     s.handle_key(key(KeyCode::Right));
     s.handle_key(key(KeyCode::Right));
     s.handle_key(key(KeyCode::Right));
@@ -796,7 +799,7 @@ fn cycling_spec_type_to_draft_reveals_draft_fields() {
 #[test]
 fn cycling_flash_attn_changes_value_and_saves() {
     let mut s = screen();
-    s.handle_key(key(KeyCode::Enter)); // фокус на поля (XMode)
+    s.handle_key(key(KeyCode::Enter)); // focus on the fields (XMode)
     while s.fields().get(s.field_idx).map(|f| f.id) != Some(FieldId::XFlashAttn) {
         s.handle_key(key(KeyCode::Down));
     }
@@ -811,8 +814,8 @@ fn render_with_focused_description_does_not_panic() {
     use ratatui::Terminal;
     use ratatui::backend::TestBackend;
     let mut s = screen();
-    s.handle_key(key(KeyCode::Enter)); // фокус на поля (XMode)
-    // Дойти до тумблера --no-mmap (есть описание-подсказка внизу).
+    s.handle_key(key(KeyCode::Enter)); // focus on the fields (XMode)
+    // Step down to the --no-mmap toggle (has a description hint below).
     while s.fields().get(s.field_idx).map(|f| f.id) != Some(FieldId::XNoMmap) {
         s.handle_key(key(KeyCode::Down));
     }
@@ -826,21 +829,21 @@ fn render_with_focused_description_does_not_panic() {
 fn fields_scrollbar_appears_only_on_overflow() {
     use ratatui::Terminal;
     use ratatui::backend::TestBackend;
-    // Бегунок «█» на правой рамке экрана — только когда полей больше высоты.
+    // The "█" thumb on the screen's right border — only when there are more fields than the height.
     let has_thumb = |term: &Terminal<TestBackend>| {
         let buf = term.backend().buffer();
-        let x = buf.area.right() - 1; // колонка рамки панели настроек
+        let x = buf.area.right() - 1; // the settings-panel border column
         (buf.area.top()..buf.area.bottom()).any(|y| buf[(x, y)].symbol() == "█")
     };
     let mut s = screen();
-    goto_section(&mut s, Section::Sampling); // полей+заголовков заведомо больше высоты
+    goto_section(&mut s, Section::Sampling); // fields+headers definitely exceed the height
     let mut term = Terminal::new(TestBackend::new(80, 14)).unwrap();
     term.draw(|f| s.render(f)).unwrap();
-    assert!(has_thumb(&term), "переполненная секция — с бегунком");
-    // В высоком окне все поля видны — бегунка нет.
+    assert!(has_thumb(&term), "an overflowing section — has the thumb");
+    // In a tall window all fields are visible — no thumb.
     let mut term = Terminal::new(TestBackend::new(80, 50)).unwrap();
     term.draw(|f| s.render(f)).unwrap();
-    assert!(!has_thumb(&term), "все поля видны — без бегунка");
+    assert!(!has_thumb(&term), "all fields visible — no thumb");
 }
 
 #[test]
@@ -848,16 +851,16 @@ fn editing_new_sampling_field_commits() {
     let mut s = screen();
     goto_section(&mut s, Section::Sampling);
     goto_field(&mut s, FieldId::S(SamplingParam::MinP));
-    s.handle_key(key(KeyCode::Enter)); // открыть редактор min_p
+    s.handle_key(key(KeyCode::Enter)); // open the min_p editor
     for c in "0.03".chars() {
         s.handle_key(key(KeyCode::Char(c)));
     }
-    let intent = s.handle_key(key(KeyCode::Enter)); // коммит
+    let intent = s.handle_key(key(KeyCode::Enter)); // commit
     match intent {
         Some(SettingsIntent::SaveConfig(c)) => {
             assert_eq!(c.default_sampling.min_p, Some(0.03))
         }
-        other => panic!("ожидался SaveConfig, получено {other:?}"),
+        other => panic!("expected SaveConfig, got {other:?}"),
     }
 }
 
@@ -867,11 +870,11 @@ fn cloud_hides_unsupported_sampling_params() {
     goto_section(&mut s, Section::Sampling);
     let has =
         |s: &SettingsScreen, p: SamplingParam| s.fields().iter().any(|f| f.id == FieldId::S(p));
-    // Локально (managed по умолчанию) — видны все параметры.
+    // Locally (managed by default) — all parameters are visible.
     assert!(has(&s, SamplingParam::TopK));
     assert!(has(&s, SamplingParam::Thinking));
-    // Облако (Gemini, нативный): расширения llama.cpp (min_p) скрыты, а базовые +
-    // top_k + reasoning — видны.
+    // Cloud (Gemini, native): llama.cpp extensions (min_p) are hidden, while base +
+    // top_k + reasoning are visible.
     s.config.engine.mode = ServerMode::Gemini;
     assert!(!has(&s, SamplingParam::MinP));
     assert!(has(&s, SamplingParam::TopK));
@@ -880,8 +883,8 @@ fn cloud_hides_unsupported_sampling_params() {
     assert!(has(&s, SamplingParam::Temp));
     assert!(has(&s, SamplingParam::TopP));
     assert!(has(&s, SamplingParam::MaxTokens));
-    // OpenAI (Responses): нет temperature/top_p/penalties/seed; есть reasoning и
-    // verbosity (Responses-специфика).
+    // OpenAI (Responses): no temperature/top_p/penalties/seed; has reasoning and
+    // verbosity (Responses-specific).
     s.config.engine.mode = ServerMode::OpenAi;
     assert!(!has(&s, SamplingParam::Temp));
     assert!(!has(&s, SamplingParam::TopP));
@@ -890,10 +893,10 @@ fn cloud_hides_unsupported_sampling_params() {
     assert!(has(&s, SamplingParam::Thinking));
     assert!(has(&s, SamplingParam::Reasoning));
     assert!(has(&s, SamplingParam::Verbosity));
-    // Verbosity — только у OpenAI: для Gemini/Claude скрыт.
+    // Verbosity — only for OpenAI: hidden for Gemini/Claude.
     s.config.engine.mode = ServerMode::Gemini;
     assert!(!has(&s, SamplingParam::Verbosity));
-    // Claude 4.x «зафиксировал» сэмплинг: виден только max_tokens.
+    // Claude 4.x "locked in" sampling: only max_tokens is visible.
     s.config.engine.mode = ServerMode::Claude;
     assert!(!has(&s, SamplingParam::Temp));
     assert!(!has(&s, SamplingParam::TopP));
@@ -904,15 +907,15 @@ fn cloud_hides_unsupported_sampling_params() {
 #[test]
 fn impersonation_shared_inherits_assistant_cloud_filter() {
     let mut s = screen();
-    // Ассистент в облаке, имперсонация в shared → её сэмплинг фильтруется как облако.
+    // The assistant is in cloud, impersonation is shared → its sampling is filtered as cloud.
     s.config.engine.mode = ServerMode::OpenAi;
     assert_eq!(
         s.config.impersonation_engine.mode,
         ImpersonationMode::Shared
     );
     goto_section(&mut s, Section::Sampling);
-    s.handle_key(key(KeyCode::Enter)); // фокус (SamplingSub)
-    s.handle_key(key(KeyCode::Right)); // → подсекция Имперсонация
+    s.handle_key(key(KeyCode::Enter)); // focus (SamplingSub)
+    s.handle_key(key(KeyCode::Right)); // → the Impersonation subsection
     assert_eq!(s.sampling_sub, Subsection::Impersonation);
     let has_topk = s
         .fields()
@@ -920,9 +923,9 @@ fn impersonation_shared_inherits_assistant_cloud_filter() {
         .any(|f| f.id == FieldId::IS(SamplingParam::TopK));
     assert!(
         !has_topk,
-        "облако ассистента фильтрует и shared-имперсонацию"
+        "the assistant's cloud filters shared impersonation too"
     );
-    // Локальная имперсонация (managed) показывает все параметры, даже если ассистент в облаке.
+    // A local impersonation engine (managed) shows all parameters, even if the assistant is in the cloud.
     s.config.impersonation_engine.mode = ImpersonationMode::Managed;
     let has_topk = s
         .fields()
@@ -936,7 +939,7 @@ fn subsection_renders_as_tab_strip_not_list_row() {
     use ratatui::Terminal;
     use ratatui::backend::TestBackend;
     let mut s = screen();
-    s.handle_key(key(KeyCode::Enter)); // фокус на поля (Модель)
+    s.handle_key(key(KeyCode::Enter)); // focus on the fields (Model)
     let mut term = Terminal::new(TestBackend::new(90, 24)).unwrap();
     term.draw(|f| s.render(f)).unwrap();
     let buf = term.backend().buffer();
@@ -948,20 +951,20 @@ fn subsection_renders_as_tab_strip_not_list_row() {
         })
         .collect::<Vec<_>>()
         .join("\n");
-    // Все три вкладки подсекции модели видны как таб-стрип.
+    // All three tabs of the model subsection are visible as a tab strip.
     assert!(text.contains("Ассистент"));
     assert!(text.contains("Эмбеддинги"));
-    // Псевдо-поле «Подсекция» больше не рисуется строкой списка.
+    // The pseudo-field "Subsection" is no longer drawn as a list row.
     assert!(
         !text.contains("Подсекция"),
-        "селектор подсекции должен быть таб-стрипом, а не строкой списка"
+        "the subsection selector should be a tab strip, not a list row"
     );
 }
 
 #[test]
 fn profile_tools_are_grouped_with_descriptions() {
-    // Каждый тумблер инструмента размечен смысловой группой (из meta) и несёт
-    // короткое инлайн-описание. Группы — из известного набора (`group_titles`).
+    // Every tool toggle is marked with a semantic group (from meta) and carries a
+    // short inline description. Groups — from the known set (`group_titles`).
     let mut s = screen();
     goto_section(&mut s, Section::Profiles);
     let fields = s.profile_fields();
@@ -973,18 +976,18 @@ fn profile_tools_are_grouped_with_descriptions() {
     for r in &tool_rows {
         assert!(
             crate::features::tools::meta::group_titles().contains(&r.group),
-            "инструмент вне известной группы: {}",
+            "a tool outside the known group set: {}",
             r.label
         );
-        assert!(r.hint.is_some(), "нет инлайн-описания у {}", r.label);
+        assert!(r.hint.is_some(), "no inline description for {}", r.label);
     }
-    // Инструменты одной группы идут подряд (заголовок не повторяется).
+    // Tools of one group run consecutively (the header isn't repeated).
     let groups: Vec<&str> = tool_rows.iter().map(|r| r.group).collect();
     let mut seen = std::collections::HashSet::new();
     let mut prev = "";
     for g in groups {
         if g != prev {
-            assert!(seen.insert(g), "группа {g} не непрерывна");
+            assert!(seen.insert(g), "group {g} isn't contiguous");
             prev = g;
         }
     }
@@ -992,8 +995,8 @@ fn profile_tools_are_grouped_with_descriptions() {
 
 #[test]
 fn globally_disabled_tool_is_marked_gated() {
-    // python выключен глобально, но включён в профиле → строка помечена гейтом
-    // (warn + подсказка «выкл. глобально»); web включён → обычное описание.
+    // python is disabled globally but enabled in the profile → the row is marked gated
+    // (warn + a "disabled globally" hint); web is enabled → a regular description.
     let mut s = screen();
     s.config.tools.python_enabled = false;
     s.config.tools.web_enabled = true;
@@ -1007,19 +1010,19 @@ fn globally_disabled_tool_is_marked_gated() {
     };
     let find = |id: FieldId| fields.iter().find(|r| r.id == id).unwrap();
     let py = find(FieldId::PTool(idx_of("python_exec")));
-    assert!(py.warn, "выключенный глобально python_exec — гейт");
+    assert!(py.warn, "python_exec disabled globally — gated");
     assert!(py.hint.unwrap().contains("глобально"));
     let web = find(FieldId::PTool(idx_of("web_search")));
-    assert!(!web.warn, "web включён глобально — не гейт");
+    assert!(!web.warn, "web enabled globally — not gated");
     assert_eq!(web.hint, Some("поиск в интернете"));
 }
 
 #[test]
 fn mcp_tools_extend_profile_toggles_with_honest_gate() {
     use crate::features::tools::meta::{ToolGate, ToolGroup, ToolInfo};
-    // Динамический каталог MCP (снимок из Settings) дописывается к статическому:
-    // тумблер в группе «Плагины (MCP)», включённый при выключенном мастер-гейте —
-    // помечен честным гейтом; переключение пишет id в профиль.
+    // The dynamic MCP catalog (a snapshot from Settings) is appended to the static one:
+    // a toggle in the "Plugins (MCP)" group, enabled while the master gate is off —
+    // is marked with an honest gate; toggling writes the id into the profile.
     let mut s = screen();
     s.config.mcp.enabled = false;
     s.profiles[0]
@@ -1045,10 +1048,10 @@ fn mcp_tools_extend_profile_toggles_with_honest_gate() {
         .unwrap();
     let row = fields.iter().find(|r| r.id == FieldId::PTool(idx)).unwrap();
     assert!(matches!(row.kind, FieldKind::Toggle(true)));
-    assert!(row.warn, "MCP выключен глобально — честный гейт");
+    assert!(row.warn, "MCP disabled globally — an honest gate");
     assert!(row.hint.unwrap().contains("MCP"));
-    // Мастер-гейт включён → обычная подсказка (имя инструмента) + ПОЛНОЕ
-    // описание сервера в нижней панели (антидот tool-poisoning, spec §9.6).
+    // The master gate is on → a regular hint (the tool's name) + the FULL
+    // server description in the bottom panel (a tool-poisoning antidote, spec §9.6).
     s.config.mcp.enabled = true;
     let fields = s.profile_fields();
     let row = fields.iter().find(|r| r.id == FieldId::PTool(idx)).unwrap();
@@ -1058,7 +1061,7 @@ fn mcp_tools_extend_profile_toggles_with_honest_gate() {
         row.description.as_deref(),
         Some("Read the complete contents of a file")
     );
-    // Переключение тумблера убирает id из профиля (и обратно).
+    // Toggling it removes the id from the profile (and back).
     s.toggle_profile_tool(idx).unwrap();
     assert!(
         !s.profiles[0]
@@ -1079,8 +1082,8 @@ fn mcp_tools_extend_profile_toggles_with_honest_gate() {
 fn mcp_server_rows_show_status_and_confirm_changed_catalog() {
     use crate::features::tools::mcp::{McpServerSnapshot, McpSnapshot};
     use crate::shared::server::ServerStatus;
-    // Строки серверов в группе «Плагины (MCP)»: готовый показывает число
-    // инструментов; сервер с изменившимся каталогом — warn + Enter подтверждает.
+    // Server rows in the "Plugins (MCP)" group: a ready one shows the tool
+    // count; a server with a changed catalog — warn + Enter confirms.
     let mut s = screen();
     s.config.mcp.enabled = true;
     s.set_mcp(McpSnapshot {
@@ -1112,15 +1115,15 @@ fn mcp_server_rows_show_status_and_confirm_changed_catalog() {
         .iter()
         .find(|r| r.id == FieldId::TMcpServer(1))
         .unwrap();
-    assert!(gh.warn, "изменившийся каталог — предупреждение");
+    assert!(gh.warn, "a changed catalog — a warning");
     assert!(gh.hint.unwrap().contains("Enter"));
-    // Enter на готовом сервере — no-op; на изменившемся — намерение подтвердить.
+    // Enter on a ready server — a no-op; on a changed one — the confirm intent.
     assert!(s.confirm_mcp_catalog(0).is_none());
     assert_eq!(
         s.confirm_mcp_catalog(1),
         Some(SettingsIntent::ConfirmMcpCatalog("github".into()))
     );
-    // Enter через handle_key доходит до подтверждения.
+    // Enter via handle_key reaches confirmation.
     goto_field(&mut s, FieldId::TMcpServer(1));
     assert_eq!(
         s.handle_key(key(KeyCode::Enter)),
@@ -1130,35 +1133,35 @@ fn mcp_server_rows_show_status_and_confirm_changed_catalog() {
 
 #[test]
 fn mcp_master_toggle_lives_in_tools_section() {
-    // Тумблер «MCP-серверы» в секции «Инструменты»: переключение пишет конфиг.
+    // The "MCP servers" toggle in the "Tools" section: toggling it saves the config.
     let mut s = screen();
     assert!(!s.config.mcp.enabled);
     goto_section(&mut s, Section::Tools);
     goto_field(&mut s, FieldId::TMcpEnabled);
     s.handle_key(key(KeyCode::Char(' ')));
-    assert!(s.config.mcp.enabled, "Space включает мастер-гейт MCP");
+    assert!(s.config.mcp.enabled, "Space enables the MCP master gate");
     assert!(field_desc(&s, FieldId::TMcpEnabled).is_some());
 }
 
 #[test]
 fn group_header_shows_toggle_count() {
-    // Заголовок группы с ≥2 тумблерами несёт счётчик «вкл/всего»; одиночный — нет.
+    // A group header with ≥2 toggles carries an "on/total" counter; a single one doesn't.
     let palette = Palette::default();
     let line = header_line("Веб-поиск", Some((1, 2)), 60, &palette);
     let text: String = line.spans.iter().map(|s| s.content.as_ref()).collect();
-    assert!(text.contains("1/2"), "нет счётчика: {text:?}");
+    assert!(text.contains("1/2"), "no counter: {text:?}");
     let plain = header_line("Сервер", None, 60, &palette);
     let ptext: String = plain.spans.iter().map(|s| s.content.as_ref()).collect();
     assert!(
         !ptext.contains('/'),
-        "у группы без счётчика его быть не должно"
+        "a group with no counter shouldn't have one"
     );
 }
 
 #[test]
 fn group_headers_same_length_with_and_without_count() {
-    // Заголовки групп со счётчиком и без него доходят до одной колонки —
-    // раньше счётчик давал линию на 1 символ короче (spurious +1).
+    // Group headers with and without a counter reach the same column —
+    // previously the counter made the line 1 character shorter (spurious +1).
     let palette = Palette::default();
     let line_width = |line: Line<'static>| -> usize {
         line.spans
@@ -1171,22 +1174,22 @@ fn group_headers_same_length_with_and_without_count() {
         let plain = line_width(header_line("Персона", None, w, &palette));
         assert_eq!(
             counted, plain,
-            "ширина {w}: со счётчиком {counted} ≠ без {plain}"
+            "width {w}: with the counter {counted} ≠ without {plain}"
         );
     }
 }
 
 #[test]
 fn choice_popup_opens_and_applies_selection() {
-    // Enter на Choice-поле открывает попап списка; ↓ + Enter применяет выбор.
+    // Enter on a Choice field opens the option-list popup; ↓ + Enter applies the choice.
     let mut s = screen();
     goto_field(&mut s, FieldId::XSpecType);
     s.handle_key(key(KeyCode::Enter));
-    assert!(s.choice.is_some(), "Enter на Choice открывает попап");
+    assert!(s.choice.is_some(), "Enter on Choice opens the popup");
     assert_eq!(s.config.engine.managed.spec_type, SpecType::None);
     s.handle_key(key(KeyCode::Down)); // none → draft-simple
     let intent = s.handle_key(key(KeyCode::Enter));
-    assert!(s.choice.is_none(), "Enter применяет и закрывает попап");
+    assert!(s.choice.is_none(), "Enter applies and closes the popup");
     assert_eq!(s.config.engine.managed.spec_type, SpecType::DraftSimple);
     assert!(matches!(intent, Some(SettingsIntent::SaveConfig(_))));
 }
@@ -1203,25 +1206,25 @@ fn choice_popup_esc_cancels() {
     assert_eq!(
         s.config.engine.mode,
         ServerMode::Managed,
-        "Esc не меняет значение"
+        "Esc doesn't change the value"
     );
 }
 
 #[test]
 fn invalid_number_keeps_editor_open() {
-    // Нечисло в числовом поле оставляет редактор открытым с ошибкой; правка сбрасывает.
+    // A non-number in a numeric field leaves the editor open with an error; an edit clears it.
     let mut s = screen();
     goto_field(&mut s, FieldId::XNgl);
-    s.handle_key(key(KeyCode::Enter)); // редактор
+    s.handle_key(key(KeyCode::Enter)); // the editor
     for c in "abc".chars() {
         s.handle_key(key(KeyCode::Char(c)));
     }
-    let intent = s.handle_key(key(KeyCode::Enter)); // валидация: не закрывать
+    let intent = s.handle_key(key(KeyCode::Enter)); // validation: don't close
     assert_eq!(intent, None);
-    assert!(s.editor.is_some(), "невалидный ввод не закрывает редактор");
+    assert!(s.editor.is_some(), "invalid input doesn't close the editor");
     assert!(s.editor.as_ref().unwrap().error.is_some());
-    // Правка сбрасывает ошибку и валидное значение коммитится.
-    s.handle_key(ctrl('k')); // очистить
+    // An edit clears the error and a valid value commits.
+    s.handle_key(ctrl('k')); // clear
     for c in "42".chars() {
         s.handle_key(key(KeyCode::Char(c)));
     }
@@ -1229,7 +1232,7 @@ fn invalid_number_keeps_editor_open() {
     assert!(s.editor.is_none());
     match intent {
         Some(SettingsIntent::SaveConfig(c)) => assert_eq!(c.engine.managed.gpu_layers, 42),
-        other => panic!("ожидался SaveConfig, получено {other:?}"),
+        other => panic!("expected SaveConfig, got {other:?}"),
     }
 }
 
@@ -1237,10 +1240,10 @@ fn invalid_number_keeps_editor_open() {
 fn field_validation_error_classifies_numbers() {
     assert!(field_validation_error(FieldId::XNgl, "abc").is_some());
     assert!(field_validation_error(FieldId::XNgl, "12").is_none());
-    assert!(field_validation_error(FieldId::XNgl, "").is_none()); // пусто допустимо
+    assert!(field_validation_error(FieldId::XNgl, "").is_none()); // empty is valid
     assert!(field_validation_error(FieldId::S(SamplingParam::Temp), "x").is_some());
     assert!(field_validation_error(FieldId::S(SamplingParam::Temp), "0.7").is_none());
-    // Текстовые/списочные поля не валидируются как числа.
+    // Text/list fields aren't validated as numbers.
     assert!(field_validation_error(FieldId::XBinary, "любой текст").is_none());
     assert!(field_validation_error(FieldId::S(SamplingParam::Samplers), "top_k;top_p").is_none());
 }
@@ -1248,7 +1251,7 @@ fn field_validation_error_classifies_numbers() {
 #[test]
 fn del_resets_field_to_default() {
     let mut s = screen();
-    s.config.engine.managed.gpu_layers = 40; // не дефолт
+    s.config.engine.managed.gpu_layers = 40; // not the default
     let default_ngl = AppConfig::default().engine.managed.gpu_layers;
     goto_field(&mut s, FieldId::XNgl);
     let intent = s.handle_key(key(KeyCode::Delete));
@@ -1256,13 +1259,13 @@ fn del_resets_field_to_default() {
         Some(SettingsIntent::SaveConfig(c)) => {
             assert_eq!(c.engine.managed.gpu_layers, default_ngl)
         }
-        other => panic!("ожидался SaveConfig, получено {other:?}"),
+        other => panic!("expected SaveConfig, got {other:?}"),
     }
 }
 
 #[test]
 fn del_on_default_field_is_noop() {
-    // Поле уже в дефолте → Del ничего не делает; профильные поля Del не трогает.
+    // The field is already at the default → Del does nothing; Del doesn't touch profile fields.
     let mut s = screen();
     goto_field(&mut s, FieldId::XNgl);
     assert_eq!(s.handle_key(key(KeyCode::Delete)), None);
@@ -1281,24 +1284,27 @@ fn modified_field_shows_marker() {
             .map(|(x, y)| buf[(x, y)].symbol().to_string())
             .collect()
     };
-    // Дефолтный конфиг — маркеров нет.
+    // The default config — no markers.
     let mut s = screen();
     s.handle_key(key(KeyCode::Enter));
-    assert!(!render_text(&mut s).contains('•'), "в дефолте маркеров нет");
-    // Изменённое поле — маркер появляется.
+    assert!(
+        !render_text(&mut s).contains('•'),
+        "no markers at the default"
+    );
+    // A modified field — the marker appears.
     s.config.engine.managed.gpu_layers = 40;
     assert!(
         render_text(&mut s).contains('•'),
-        "изменённое поле помечено •"
+        "a modified field is marked with •"
     );
 }
 
 #[test]
 fn search_filters_and_jumps_to_field() {
     let mut s = screen();
-    // `/` открывает поиск; ввод фильтрует по уникальному слову.
+    // `/` opens search; typing filters by a unique word.
     s.handle_key(key(KeyCode::Char('/')));
-    assert!(s.search.is_some(), "`/` открывает оверлей поиска");
+    assert!(s.search.is_some(), "`/` opens the search overlay");
     for c in "приветствие".chars() {
         s.handle_key(key(KeyCode::Char(c)));
     }
@@ -1309,10 +1315,10 @@ fn search_filters_and_jumps_to_field() {
             st.results
                 .iter()
                 .all(|&i| st.all[i].haystack.contains("приветствие")),
-            "все результаты содержат запрос"
+            "all results contain the query"
         );
     }
-    // Enter — прыжок к полю (секция/фокус/индекс), оверлей закрыт.
+    // Enter — jump to the field (section/focus/index), the overlay closes.
     s.handle_key(key(KeyCode::Enter));
     assert!(s.search.is_none());
     assert_eq!(s.section(), Section::Profiles);
@@ -1325,19 +1331,16 @@ fn search_filters_and_jumps_to_field() {
 
 #[test]
 fn search_opens_on_cyrillic_slash_key() {
-    // При русской раскладке физическая клавиша `/` отдаёт `.` — поиск всё равно
-    // должен открыться.
+    // Under a Russian layout the physical `/` key sends `.` — search still
+    // must open.
     let mut s = screen();
     s.handle_key(key(KeyCode::Char('.')));
-    assert!(
-        s.search.is_some(),
-        "`.` (русская раскладка) открывает поиск"
-    );
+    assert!(s.search.is_some(), "`.` (Russian layout) opens search");
 }
 
 #[test]
 fn search_jump_switches_subsection() {
-    // Прыжок в поле неактивной подсекции переключает её (Модель → Эмбеддинги).
+    // Jumping into a field of an inactive subsection switches it (Model → Embeddings).
     let mut s = screen();
     assert_eq!(s.model_sub, ModelTab::Assistant);
     s.handle_key(key(KeyCode::Char('/')));
@@ -1367,31 +1370,31 @@ fn search_esc_cancels_without_jump() {
     assert_eq!(
         (s.section_idx, s.field_idx),
         before,
-        "Esc не двигает навигацию"
+        "Esc doesn't move navigation"
     );
 }
 
 #[test]
 fn search_index_covers_all_subsections() {
-    // Индекс поиска содержит поля всех подсекций (напр. и managed-сервер, и
-    // облачная модель ассистента доступны через поиск при текущем режиме).
+    // The search index contains fields of all subsections (e.g. both the managed
+    // server and the assistant's cloud model are reachable via search under the current mode).
     let s = screen();
     let idx = s.build_search_index();
     assert!(
         idx.len() > 100,
-        "индекс охватывает все секции: {}",
+        "the index covers all sections: {}",
         idx.len()
     );
-    // Поле имперсонации-модели индексируется, хотя активна подсекция ассистента.
+    // The impersonation-model field is indexed even though the assistant subsection is active.
     assert!(
         idx.iter().any(|h| h.crumb.contains("Имперсонация")),
-        "в индексе есть поля подсекции имперсонации"
+        "the index has impersonation-subsection fields"
     );
 }
 
 #[test]
 fn memory_section_gathers_rag_notes_self_model() {
-    // Секция «Память» собрала поля, ранее размазанные по «Инструментам».
+    // The "Memory" section gathered fields previously smeared across "Tools".
     let mut s = screen();
     goto_section(&mut s, Section::Memory);
     let ids: Vec<FieldId> = s.fields().iter().map(|f| f.id).collect();
@@ -1401,26 +1404,26 @@ fn memory_section_gathers_rag_notes_self_model() {
         FieldId::SmMaxNarrative,
         FieldId::SmProtocol,
     ] {
-        assert!(ids.contains(&id), "в «Памяти» нет {id:?}");
+        assert!(ids.contains(&id), "\"Memory\" is missing {id:?}");
     }
-    // А в «Инструментах» их больше нет — там только гейты/параметры.
+    // And "Tools" no longer has them — only gates/parameters live there.
     goto_section(&mut s, Section::Tools);
     let tool_ids: Vec<FieldId> = s.fields().iter().map(|f| f.id).collect();
     assert!(!tool_ids.contains(&FieldId::RagTarget));
     assert!(!tool_ids.contains(&FieldId::SmMaxNarrative));
-    // max_tool_rounds переехал из бывшего «Инференса» в «Инструменты».
+    // max_tool_rounds moved from the former "Inference" into "Tools".
     assert!(tool_ids.contains(&FieldId::MaxToolRounds));
 }
 
 #[test]
 fn fields_carry_group_headers() {
-    // Поля секции размечены смысловыми группами (заголовки групп в UI).
+    // The section's fields are marked with semantic groups (group headers in the UI).
     let s = screen();
     let groups: Vec<&str> = s.model_fields().iter().map(|f| f.group).collect();
-    // Подсекция/режим — вне группы; параметры сервера — в группе «Сервер».
+    // The subsection/mode — outside a group; server parameters — in the "Server" group.
     assert!(groups.iter().any(|g| g.is_empty()));
     assert!(groups.contains(&"Сервер"));
-    // Семплинг: параметры сгруппированы по смыслу.
+    // Sampling: parameters are grouped by meaning.
     let sg: Vec<&str> = s.sampling_fields().iter().map(|f| f.group).collect();
     assert!(sg.contains(&"Основные"));
     assert!(sg.contains(&"Рассуждения"));
@@ -1428,7 +1431,7 @@ fn fields_carry_group_headers() {
 
 #[test]
 fn long_value_is_truncated_with_ellipsis() {
-    // Очень длинное значение усекается с «…» под ширину колонки.
+    // A very long value is truncated with "…" to the column width.
     let palette = Palette::default();
     let f = FieldRow {
         id: FieldId::XModel,
@@ -1443,7 +1446,7 @@ fn long_value_is_truncated_with_ellipsis() {
     let rendered: String = line.spans.iter().map(|sp| sp.content.as_ref()).collect();
     assert!(
         rendered.contains('…'),
-        "длинное значение усечено: {rendered:?}"
+        "the long value is truncated: {rendered:?}"
     );
 }
 
@@ -1459,17 +1462,17 @@ fn selected_field_shows_green_rail() {
         description: None,
         warn: false,
     };
-    // Выбранное поле — зелёный рейл `▌` в левой колонке (как активная секция меню).
+    // The selected field — a green rail `▌` in the left column (as the active menu section).
     let sel = render_field_line(&f, 20, 24, false, true, &palette);
     assert_eq!(sel.spans[0].content.as_ref(), "▌ ");
     assert_eq!(sel.spans[0].style.fg, Some(palette.success));
-    // Невыбранное изменённое — маркер «•».
+    // Unselected, modified — the "•" marker.
     let modf = render_field_line(&f, 20, 24, true, false, &palette);
     assert_eq!(modf.spans[0].content.as_ref(), "• ");
-    // Невыбранное немодифицированное — пусто.
+    // Unselected, unmodified — empty.
     let plain = render_field_line(&f, 20, 24, false, false, &palette);
     assert_eq!(plain.spans[0].content.as_ref(), "  ");
-    // У выбранного изменённого поля рейл приоритетнее маркера «•».
+    // A selected, modified field's rail takes priority over the "•" marker.
     let both = render_field_line(&f, 20, 24, true, true, &palette);
     assert_eq!(both.spans[0].content.as_ref(), "▌ ");
 }
@@ -1477,16 +1480,16 @@ fn selected_field_shows_green_rail() {
 #[test]
 fn section_label_col_has_floor_cap_and_skips_subsection() {
     let text = |s: &str| FieldKind::Text(s.into());
-    // Одни короткие подписи → пол MIN_LABEL_COL.
+    // Only short labels → the floor MIN_LABEL_COL.
     let short = vec![row(FieldId::PName, "Имя", text("x"))];
     assert_eq!(section_label_col(&short), MIN_LABEL_COL);
-    // Самая длинная подпись в пределах потолка задаёт колонку всей секции.
+    // The longest label within the cap sets the whole section's column.
     let medium = vec![
         row(FieldId::PName, "Имя", text("x")),
         row(FieldId::PGreeting, "Подпись средней длины!", text("y")),
     ];
     assert_eq!(section_label_col(&medium), 22);
-    // Сверхдлинная подпись (> LABEL_CAP) колонку не отгоняет…
+    // An overlong label (> LABEL_CAP) doesn't push the column…
     let mut with_outlier = medium;
     with_outlier.push(row(
         FieldId::PSystem,
@@ -1494,7 +1497,7 @@ fn section_label_col_has_floor_cap_and_skips_subsection() {
         text("z"),
     ));
     assert_eq!(section_label_col(&with_outlier), 22);
-    // …а селектор подсекции (таб-стрип, не строка списка) исключён вовсе.
+    // …and the subsection selector (a tab strip, not a list row) is excluded entirely.
     let with_sub = vec![
         row(FieldId::PName, "Имя", text("x")),
         row(FieldId::ModelSub, &"б".repeat(25), text("s")),
@@ -1504,12 +1507,12 @@ fn section_label_col_has_floor_cap_and_skips_subsection() {
 
 #[test]
 fn all_labels_fit_alignment_cap() {
-    // Все подписи всех секций/подсекций укладываются в потолок выравнивания —
-    // значения каждой секции стоят на одной вертикали, без локальных
-    // переполнений. Новому длинному имени — сократить подпись, перенеся
-    // контекст в заголовок группы (как «Копирование переписки (F5)»).
+    // All labels of all sections/subsections fit within the alignment cap —
+    // each section's values line up on one vertical, with no local
+    // overflows. For a new long name — shorten the label, moving the
+    // context into the group header (like "Copy conversation (F5)").
     let mut cfg = AppConfig::default();
-    // Черновые поля спекулятивного декодирования видны только для draft-типов.
+    // Speculative-decoding draft fields are visible only for draft-* types.
     cfg.engine.managed.spec_type = SpecType::DraftMtp;
     let mut p = Profile::new("Базовый", "Ты — ассистент.");
     p.enabled_tools = default_tool_ids();
@@ -1530,8 +1533,8 @@ fn all_labels_fit_alignment_cap() {
         for f in fields {
             assert!(
                 label_width(&f.label) <= LABEL_CAP,
-                "подпись «{}» ({section}) шире LABEL_CAP={LABEL_CAP} — сократите \
-                     её или перенесите контекст в заголовок группы",
+                "label \"{}\" ({section}) is wider than LABEL_CAP={LABEL_CAP} — shorten \
+                     it or move the context into the group header",
                 f.label
             );
         }
@@ -1542,8 +1545,8 @@ fn all_labels_fit_alignment_cap() {
 fn value_column_is_shared_across_groups() {
     use ratatui::Terminal;
     use ratatui::backend::TestBackend;
-    // Значения разных групп секции стоят на одной вертикали (единая колонка
-    // на секцию; колонка на группу давала «пилу» между группами).
+    // Values of different section groups line up on one vertical (a single column
+    // per section; a per-group column "sawtoothed" between groups).
     let mut s = screen();
     goto_section(&mut s, Section::Tools);
     let mut term = Terminal::new(TestBackend::new(100, 30)).unwrap();
@@ -1556,12 +1559,12 @@ fn value_column_is_shared_across_groups() {
                 .collect()
         })
         .collect();
-    // Ячейка первого непробельного символа после подписи (= начало значения).
+    // The cell of the first non-space character after the label (= the value's start).
     let value_cell = |label: &str| -> usize {
         let line = lines
             .iter()
             .find(|l| l.contains(label))
-            .unwrap_or_else(|| panic!("нет строки с подписью {label:?}"));
+            .unwrap_or_else(|| panic!("no row with the label {label:?}"));
         let chars: Vec<char> = line.chars().collect();
         let needle: Vec<char> = label.chars().collect();
         let start = (0..=chars.len() - needle.len())
@@ -1570,42 +1573,42 @@ fn value_column_is_shared_across_groups() {
         let after = start + needle.len();
         after + chars[after..].iter().take_while(|c| **c == ' ').count()
     };
-    // Три поля из трёх разных групп («Агентный цикл»/«Веб-поиск»/«Файлы»).
+    // Three fields from three different groups ("Agentic loop"/"Web search"/"Files").
     let a = value_cell("Лимит раундов инструментов");
     let b = value_cell("Web-поиск");
     let c = value_cell("Доступ к файлам");
     assert_eq!(
         a, b,
-        "значения групп «Агентный цикл» и «Веб-поиск» в одной колонке"
+        "the \"Agentic loop\" and \"Web search\" group values are in one column"
     );
-    assert_eq!(b, c, "значения группы «Файлы» в той же колонке");
+    assert_eq!(b, c, "the \"Files\" group values are in the same column");
 }
 
 #[test]
 fn sampling_extensions_have_descriptions() {
-    // Каждый параметр семплинга снабжён подсказкой в обеих подсекциях —
-    // и расширения llama.cpp, и базовые OpenAI-поля.
+    // Every sampling parameter has a hint in both subsections —
+    // both llama.cpp extensions and base OpenAI fields.
     let s = screen();
     for &p in SAMPLING_PARAMS {
         assert!(
             field_desc(&s, FieldId::S(p)).is_some(),
-            "нет подсказки для {p:?} (Ассистент)",
+            "no hint for {p:?} (Assistant)",
         );
         assert!(
             field_desc(&s, FieldId::IS(p)).is_some(),
-            "нет подсказки для {p:?} (Имперсонация)",
+            "no hint for {p:?} (Impersonation)",
         );
     }
 }
 
-/// Поле «API-ключ» есть только в облачных режимах и показывает **статус**, а не
-/// секрет; сохранённый ключ отражается значением «настроен».
+/// The "API key" field exists only in cloud modes and shows a **status**, not a
+/// secret; a stored key is reflected as the value "configured".
 #[test]
 fn api_key_field_shows_status_in_cloud_modes_only() {
     let mut s = screen();
     goto_section(&mut s, Section::Model);
     let has_key_field = |s: &SettingsScreen| s.fields().iter().any(|f| f.id == FieldId::XApiKey);
-    // Локальный managed — поля ключа нет (облачного провайдера не существует).
+    // A local managed engine — no key field (no cloud provider exists).
     assert!(!has_key_field(&s));
 
     s.config.engine.mode = ServerMode::OpenAi;
@@ -1618,34 +1621,34 @@ fn api_key_field_shows_status_in_cloud_modes_only() {
             .unwrap()
     };
     let unset = value(&s);
-    // Ключ этого провайдера сохранён на машине → статус меняется.
+    // This provider's key is stored on the machine → the status changes.
     s.set_api_keys_present(vec![CloudProvider::OpenAi]);
     let set = value(&s);
-    assert_ne!(unset, set, "статус поля не отражает наличие ключа");
-    // Ключ другого провайдера на статус OpenAI не влияет.
+    assert_ne!(
+        unset, set,
+        "the field's status doesn't reflect the key's presence"
+    );
+    // Another provider's key doesn't affect OpenAI's status.
     s.set_api_keys_present(vec![CloudProvider::Claude]);
     assert_eq!(value(&s), unset);
-    // Сам секрет в значении поля не появляется ни при каком статусе.
+    // The secret itself never appears in the field's value under any status.
     assert!(!set.contains("sk-"));
 }
 
-/// Правка поля ключа открывает **пустой** маскированный редактор (сохранённый ключ
-/// показать нельзя), а коммит уходит отдельным намерением — не в конфиг экрана.
+/// Editing the key field opens an **empty** masked editor (a stored key
+/// can't be shown), and the commit goes as a separate intent — not into the screen's config.
 #[test]
 fn api_key_editor_is_masked_empty_and_commits_intent() {
     let mut s = screen();
     s.config.engine.mode = ServerMode::Claude;
-    s.set_api_keys_present(vec![CloudProvider::Claude]); // ключ уже сохранён
+    s.set_api_keys_present(vec![CloudProvider::Claude]); // the key is already stored
     goto_section(&mut s, Section::Model);
     goto_field(&mut s, FieldId::XApiKey);
 
     s.handle_key(key(KeyCode::Enter));
-    let editor = s.editor.as_ref().expect("редактор поля ключа открыт");
-    assert_eq!(editor.input.text(), "", "затравка должна быть пустой");
-    assert!(
-        editor.input.is_masked(),
-        "поле секрета должно быть маскировано"
-    );
+    let editor = s.editor.as_ref().expect("the key field's editor is open");
+    assert_eq!(editor.input.text(), "", "the seed must be empty");
+    assert!(editor.input.is_masked(), "the secret field must be masked");
 
     for c in "sk-ant-123".chars() {
         s.handle_key(key(KeyCode::Char(c)));
@@ -1658,23 +1661,23 @@ fn api_key_editor_is_masked_empty_and_commits_intent() {
             key: "sk-ant-123".into()
         })
     );
-    // Секрет не осел в рабочей копии конфига.
+    // The secret didn't leak into the config working copy.
     let json = serde_json::to_string(&s.config).unwrap();
     assert!(
         !json.contains("sk-ant-123"),
-        "ключ утёк в конфиг экрана: {json}"
+        "the key leaked into the screen's config: {json}"
     );
 }
 
-/// `Del` на поле ключа удаляет сохранённый ключ (пустое значение намерения);
-/// если ключа нет — no-op (нечего удалять).
+/// `Del` on the key field deletes the stored key (an empty intent value);
+/// if there's no key — a no-op (nothing to delete).
 #[test]
 fn del_on_api_key_field_removes_stored_key() {
     let mut s = screen();
     s.config.engine.mode = ServerMode::Gemini;
     goto_section(&mut s, Section::Model);
     goto_field(&mut s, FieldId::XApiKey);
-    // Ключа нет — сброс ничего не делает.
+    // No key — the reset does nothing.
     assert_eq!(s.handle_key(key(KeyCode::Delete)), None);
 
     s.set_api_keys_present(vec![CloudProvider::Gemini]);
@@ -1687,8 +1690,8 @@ fn del_on_api_key_field_removes_stored_key() {
     );
 }
 
-/// Поле ключа есть у всех трёх слотов и адресует провайдера **своего** движка:
-/// ключ общий для чата/имперсонации/эмбеддингов одного провайдера.
+/// The key field exists for all three slots and addresses **its own** engine's
+/// provider: the key is shared across chat/impersonation/embeddings of one provider.
 #[test]
 fn api_key_field_targets_provider_of_its_slot() {
     let mut s = screen();

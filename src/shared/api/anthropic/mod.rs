@@ -1,6 +1,6 @@
-//! Бэкенд инференса Anthropic (Claude) — отдельный протокол Messages API
-//! (`/v1/messages`). Реализует [`EngineBackend`](super::contract::EngineBackend)
-//! через [`AnthropicClient`]. См. ADR 0004, Фаза 2.
+//! Anthropic (Claude) inference backend — a separate Messages API protocol
+//! (`/v1/messages`). Implements [`EngineBackend`](super::contract::EngineBackend)
+//! via [`AnthropicClient`]. See ADR 0004, Phase 2.
 
 pub mod client;
 mod wire;

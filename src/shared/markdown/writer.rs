@@ -1,62 +1,68 @@
-//! Markdown — walker событий pulldown-cmark → строки (Writer). Часть модуля [`super`]; разбито из монолита
-//! markdown.rs (см. docs/history/refactoring-god-objects.md, этап 6).
+//! Markdown — pulldown-cmark event walker → lines (Writer). Part of module
+//! [`super`]; split out of the markdown.rs monolith (see
+//! docs/history/refactoring-god-objects.md, stage 6).
 
 use super::*;
 
-/// Накопитель строк: разворачивает поток событий pulldown-cmark в `Vec<Line>`.
+/// Line accumulator: unrolls the pulldown-cmark event stream into `Vec<Line>`.
 pub(super) struct Writer {
     palette: Palette,
-    /// Ширина панели в колонках (раскладка таблиц).
+    /// Panel width in columns (table layout).
     width: usize,
     pub(super) lines: Vec<Line<'static>>,
-    /// Стек инлайн-стилей (вершина — текущий).
+    /// Inline-style stack (top — current).
     inline_styles: Vec<Style>,
-    /// Префиксы строк (для цитат: `>`), применяются в [`Writer::push_line`].
+    /// Line prefixes (for quotes: `>`), applied in [`Writer::push_line`].
     line_prefixes: Vec<Span<'static>>,
-    /// Стек стилей строк (цитаты/блок кода).
+    /// Line-style stack (quotes/code block).
     line_styles: Vec<Style>,
-    /// Стек индексов списков (`None` — маркированный, `Some` — нумерованный).
+    /// List-index stack (`None` — bulleted, `Some` — numbered).
     list_indices: Vec<Option<u64>>,
-    /// Накопленный URL ссылки (добавляется при закрытии тега).
+    /// Accumulated link URL (appended when the tag closes).
     link: Option<String>,
-    /// Накопленный URL изображения (отдельно от `link` — картинка бывает в ссылке).
+    /// Accumulated image URL (separate from `link` — an image can sit inside
+    /// a link).
     image: Option<String>,
-    /// Подсветчик активного блока кода.
+    /// Highlighter for the active code block.
     code_highlighter: Option<HighlightLines<'static>>,
-    /// Активный сбор таблицы (вне таблицы — `None`).
+    /// Active table collection (`None` outside a table).
     table: Option<TableBuilder>,
-    /// Нужен ли пустой разделитель перед следующим блоком.
+    /// Whether a blank separator is needed before the next block.
     needs_newline: bool,
-    /// Только что открыт элемент списка (строка маркера `1. `/`- ` уже добавлена),
-    /// и первый абзац этого элемента должен продолжаться **на строке маркера**, а не
-    /// на новой строке. В «рыхлых» (loose) списках pulldown-cmark оборачивает
-    /// содержимое элемента в `Paragraph`; без этого флага номер оставался бы на одной
-    /// строке, а текст уезжал на следующую. Сбрасывается в начале любого `Start(tag)`
-    /// и на `End(Item)` — иначе в **тугом** (tight) списке, где обёртки `Paragraph`
-    /// нет, флаг некому потребить и он «утекал» на следующий блок.
+    /// A list item was just opened (the marker line `1. `/`- ` is already
+    /// added), and this item's first paragraph should continue **on the
+    /// marker's line**, not start a new one. In "loose" lists pulldown-cmark
+    /// wraps the item's content in a `Paragraph`; without this flag the
+    /// number would stay on one line and the text would slide to the next.
+    /// Reset at the start of any `Start(tag)` and at `End(Item)` — otherwise
+    /// in a **tight** list, which has no `Paragraph` wrapper, nothing would
+    /// consume the flag and it would "leak" onto the next block.
     item_marker_open: bool,
-    /// Трактовать «мягкий» перенос (одиночный `\n`) как реальный перенос строки
-    /// (GFM-стиль). Для сообщений пользователя — `true`. См. [`RenderOpts`].
+    /// Treat a "soft" break (a single `\n`) as a real line break (GFM style).
+    /// For user messages — `true`. See [`RenderOpts`].
     pub(super) soft_break_as_newline: bool,
-    /// Горизонтальные разделители между строками тела таблиц. См. [`RenderOpts`].
+    /// Horizontal separators between table body rows. See [`RenderOpts`].
     pub(super) table_row_separators: bool,
-    /// Рендерить ```mermaid-блоки диаграммой. См. [`RenderOpts`] и подмодуль
-    /// [`super::mermaid`].
+    /// Render ```mermaid blocks as a diagram. See [`RenderOpts`] and the
+    /// [`super::mermaid`] submodule.
     pub(super) render_mermaid: bool,
-    /// Активный сбор ```mermaid-блока: `(инфо-строка забора, исходник)`.
-    /// Пока `Some`, события `Text` копятся сюда (по образцу [`TableBuilder`]), а
-    /// решение «диаграмма или фолбэк-исходник» принимает [`Writer::end_codeblock`].
-    /// Инфо-строка хранится целиком (` ```mermaid title=x `) — фолбэк печатает её
-    /// в заборе байт-в-байт, как прежний путь.
+    /// Active collection of a ```mermaid block: `(fence info string, source)`.
+    /// While `Some`, `Text` events accumulate here (modeled on
+    /// [`TableBuilder`]), and [`Writer::end_codeblock`] decides "diagram or
+    /// fallback source". The info string is stored whole
+    /// (` ```mermaid title=x `) — the fallback prints it into the fence
+    /// byte-for-byte, like the old path.
     mermaid: Option<(String, String)>,
-    /// Закрыт ли забор код-блока, который сейчас открывается (выставляется в
-    /// [`Writer::run`] перед каждым `Start(CodeBlock)` по исходнику, см.
-    /// [`fenced_block_is_closed`]). Нужен только mermaid-пути: pulldown-cmark
-    /// закрывает незакрытый забор в конце документа сам, поэтому недописанный
-    /// стримом блок по событиям неотличим от полного — а рендерить диаграмму из
-    /// огрызка нельзя (мерцание «частичная диаграмма ↔ исходник» по мере прихода
-    /// чанков). Незакрытый блок идёт путём исходника; когда закрывающий забор
-    /// доедет, кэш ленты пересчитает сообщение и подменит исходник диаграммой.
+    /// Whether the fence of the code block currently being opened is closed
+    /// (set in [`Writer::run`] before every `Start(CodeBlock)`, from the
+    /// source, see [`fenced_block_is_closed`]). Needed only by the mermaid
+    /// path: pulldown-cmark itself closes an unclosed fence at the end of the
+    /// document, so a stream-truncated block is indistinguishable from a
+    /// complete one by events alone — and a diagram can't be rendered from a
+    /// stub (flicker "partial diagram ↔ source" as chunks arrive). An
+    /// unclosed block goes the source path; once the closing fence arrives,
+    /// the feed's cache recomputes the message and swaps the source for the
+    /// diagram.
     codeblock_closed: bool,
 }
 
@@ -84,10 +90,11 @@ impl Writer {
         }
     }
 
-    /// Прогоняет поток событий с байтовыми диапазонами (`Parser::into_offset_iter`
-    /// над `src`). Диапазоны нужны единственной проверке — закрыт ли забор
-    /// открываемого код-блока (у `Start(Tag)` диапазон покрывает элемент целиком);
-    /// сама проверка делается только при включённом рендере mermaid.
+    /// Runs the event stream with byte ranges (`Parser::into_offset_iter`
+    /// over `src`). The ranges are needed by only one check — is the fence of
+    /// the code block being opened closed (a `Start(Tag)` range covers the
+    /// whole element); the check itself only runs with mermaid rendering
+    /// enabled.
     pub(super) fn run<'a, I: Iterator<Item = (Event<'a>, std::ops::Range<usize>)>>(
         &mut self,
         src: &str,
@@ -107,18 +114,20 @@ impl Writer {
             Event::End(tag) => self.end_tag(tag),
             Event::Text(text) => self.text(text),
             Event::Code(code) => self.code(code),
-            // Одиночный перевод строки: в ленте пользователя сохраняем как реальный
-            // перенос (как HardBreak), иначе — стандартный мягкий перенос (пробел).
-            // В ячейке таблицы всегда пробел (раскладку строк делает таблица).
+            // A single line break: in the user's feed keep it as a real break
+            // (like HardBreak), otherwise — the standard soft break (a
+            // space). In a table cell it's always a space (the table does
+            // its own row layout).
             Event::SoftBreak if self.soft_break_as_newline && !self.in_table_cell() => {
                 self.push_line(Line::default())
             }
             Event::SoftBreak => self.push_span(Span::raw(" ")),
-            // В ячейке перенос строки не делаем — продолжаем пробелом.
+            // No line break inside a cell — continue with a space.
             Event::HardBreak if self.in_table_cell() => self.push_span(Span::raw(" ")),
             Event::HardBreak => self.push_line(Line::default()),
-            // `<br>` (частый в ячейках таблиц у моделей) — как HardBreak; прочий
-            // inline/block HTML игнорируем (текст между тегами приходит как `Text`).
+            // `<br>` (frequent in models' table cells) — like HardBreak; other
+            // inline/block HTML is ignored (text between tags arrives as
+            // `Text`).
             Event::InlineHtml(html) | Event::Html(html) if is_br(&html) => {
                 if self.in_table_cell() {
                     self.push_span(Span::raw(" "));
@@ -131,23 +140,25 @@ impl Writer {
             Event::InlineMath(content) => {
                 let style = self.current_style();
                 if looks_like_price_fragment(&content) {
-                    // Ложное срабатывание math на диапазоне цен «$5-$10»: pulldown
-                    // отдаёт content="5-". Печатаем литералом с долларами, а не как
-                    // формулу (иначе доллары исчезли бы, «5-10» рвалось на «5-» и «10»).
+                    // A false math match on a price range "$5-$10": pulldown
+                    // hands us content="5-". Print it literally with dollar
+                    // signs, not as a formula (otherwise the dollars would
+                    // vanish and "5-10" would be torn into "5-" and "10").
                     self.push_span(Span::styled(format!("${content}$"), style));
                 } else {
                     self.push_span(Span::styled(latex_to_unicode(&content), style));
                 }
             }
             Event::DisplayMath(content) => self.display_math(&content),
-            // HTML, сноски — игнорируем.
+            // HTML, footnotes — ignored.
             _ => {}
         }
     }
 
     pub(super) fn start_tag(&mut self, tag: Tag<'_>) {
-        // Любой блочный `Start` «закрывает» ожидание содержимого элемента списка;
-        // значение сохраняем для первого абзаца (он продолжает строку маркера).
+        // Any block `Start` "closes" the wait for a list item's content;
+        // save the value for the first paragraph (it continues the marker's
+        // line).
         let marker_open = std::mem::take(&mut self.item_marker_open);
         match tag {
             Tag::Paragraph => self.start_paragraph(marker_open),
@@ -164,8 +175,9 @@ impl Writer {
                 dest_url,
                 ..
             } => {
-                // Автолинк (`<url>`) и email печатают URL как текст сами — суффикс
-                // ` (url)` дал бы дубль. Для них ссылку не запоминаем.
+                // An autolink (`<url>`) and email print the URL as text
+                // themselves — a ` (url)` suffix would duplicate it. Don't
+                // remember the link for them.
                 if !matches!(link_type, LinkType::Autolink | LinkType::Email) {
                     self.link = Some(dest_url.into_string());
                 }
@@ -203,9 +215,10 @@ impl Writer {
             }
             TagEnd::Link => self.end_link(),
             TagEnd::Image => self.end_image(),
-            // Сброс «маркер открыт»: в ТУГОМ списке содержимое элемента — инлайн без
-            // обёртки `Paragraph`, поэтому флаг некому потребить, и он «утекал» на
-            // следующий блок (склеивая его с строкой маркера и глотая пустую строку).
+            // Reset "marker open": in a TIGHT list, an item's content is
+            // inline with no `Paragraph` wrapper, so nothing consumes the
+            // flag, and it would "leak" onto the next block (gluing it to
+            // the marker line and swallowing a blank line).
             TagEnd::Item => self.item_marker_open = false,
             TagEnd::TableCell => {
                 if let Some(tb) = &mut self.table {
@@ -230,8 +243,9 @@ impl Writer {
     }
 
     pub(super) fn start_paragraph(&mut self, marker_open: bool) {
-        // Первый абзац «рыхлого» элемента списка продолжается на строке маркера
-        // (`1. `/`- `), а не начинает новую — иначе номер отрывается от текста.
+        // The first paragraph of a "loose" list item continues on the marker
+        // line (`1. `/`- `) rather than starting a new one — otherwise the
+        // number would separate from the text.
         if marker_open {
             self.needs_newline = false;
             return;
@@ -298,7 +312,7 @@ impl Writer {
             self.push_span(span);
         }
         self.needs_newline = false;
-        // Первый абзац этого элемента должен продолжиться на строке маркера.
+        // This item's first paragraph should continue on the marker's line.
         self.item_marker_open = true;
     }
 
@@ -322,9 +336,10 @@ impl Writer {
         if self.needs_newline {
             self.push_line(Line::default());
         }
-        // Тянем линию на ширину панели (self.width — уже внутренняя ширина под рейл),
-        // чтобы `---` не выглядел обрубком рядом с полноширинными таблицами. Линия
-        // ≤ ширины → повторный перенос в `message_feed` — no-op.
+        // Stretch the line to the panel width (self.width — already the
+        // inner width under the rail), so `---` doesn't look like a stub
+        // next to full-width tables. Line ≤ width → the re-wrap in
+        // `message_feed` is a no-op.
         let rule = "─".repeat(self.width.max(3));
         self.push_line(Line::from(rule).add_modifier(Modifier::DIM));
         self.needs_newline = true;
@@ -338,16 +353,18 @@ impl Writer {
             CodeBlockKind::Fenced(ref lang) => lang.as_ref(),
             CodeBlockKind::Indented => "",
         };
-        // Инфо-строка может нести не только язык: ` ```rust,no_run `, ` ```py title=x `.
-        // Синтаксис резолвим по первому токену, а в заборчик печатаем метку целиком.
+        // The info string can carry more than the language: ` ```rust,no_run `,
+        // ` ```py title=x `. Resolve the syntax from the first token, but
+        // print the whole label into the fence.
         let lang = info.split([',', ' ', '\t']).next().unwrap_or("");
-        // ```mermaid-блок при включённом рендере диаграмм НЕ печатается сразу:
-        // содержимое копится в буфер (как ячейки таблицы в TableBuilder), а забор/
-        // подсветка не трогаются — решение «диаграмма или исходник» принимает
-        // end_codeblock, когда виден весь блок. Блок с незакрытым забором
-        // (стримящийся хвост ответа) в буфер НЕ берётся — идёт обычным путём
-        // исходника, пока сервер не допишет закрывающий забор (иначе частичная
-        // диаграмма мерцала бы). См. super::mermaid и spec §11.4.
+        // A ```mermaid block, when diagram rendering is enabled, is NOT
+        // printed right away: content accumulates in a buffer (like table
+        // cells in TableBuilder), and the fence/highlighting are left alone —
+        // end_codeblock decides "diagram or source" once the whole block is
+        // visible. A block with an unclosed fence (a streaming tail of the
+        // reply) is NOT taken into the buffer — it goes the regular source
+        // path until the server finishes the closing fence (otherwise a
+        // partial diagram would flicker). See super::mermaid and spec §11.4.
         if self.render_mermaid
             && self.codeblock_closed
             && lang.eq_ignore_ascii_case("mermaid")
@@ -363,18 +380,19 @@ impl Writer {
             self.line_styles.push(code_style());
         }
         self.push_line(Line::from(format!("```{info}")).add_modifier(Modifier::DIM));
-        // Содержимое блока должно начаться на новой строке под открывающим `​```​`, а
-        // не приклеиться к нему. В неподсвеченном пути (`text`) первая строка иначе
-        // допишется в строку заборчика (`i==0`, `needs_newline==false`); подсвеченный
-        // путь этот флаг игнорирует (кладёт строки сам).
+        // The block's content must start on a new line under the opening
+        // `​```​`, not glue onto it. In the unhighlighted path (`text`) the
+        // first line would otherwise append to the fence line (`i==0`,
+        // `needs_newline==false`); the highlighted path ignores this flag
+        // (lays out lines itself).
         self.needs_newline = true;
     }
 
     pub(super) fn end_codeblock(&mut self) {
-        // Буферизованный ```mermaid-блок: пробуем диаграмму, при любом отказе
-        // (тип вне whitelist / парсер / ширина) — исходник код-блоком, как при
-        // выключенном рендере. Забор/подсветка этого пути не открывались, поэтому
-        // обычное закрытие ниже не выполняется.
+        // A buffered ```mermaid block: try the diagram, on any failure (type
+        // outside the whitelist / the parser / width) — the source as a code
+        // block, as with rendering disabled. The fence/highlighting of this
+        // path were never opened, so the regular closing below doesn't run.
         if let Some((info, src)) = self.mermaid.take() {
             match render_mermaid_block(&src, self.width, &self.palette) {
                 Some(lines) => {
@@ -394,10 +412,11 @@ impl Writer {
         }
     }
 
-    /// Печатает исходник код-блока в прежнем «неподсвеченном» виде (реверс-стиль,
-    /// DIM-заборы с инфо-строкой) — фолбэк ```mermaid-блока. Вид байт-в-байт
-    /// повторяет старый путь `start_codeblock`(без синтаксиса)+`text`+`end_codeblock`,
-    /// см. golden-тест `mermaid_fallback_matches_disabled_render`.
+    /// Prints a code block's source in the previous "unhighlighted" look
+    /// (reversed style, DIM fences with the info string) — the ```mermaid
+    /// block's fallback. The look repeats the old path byte-for-byte
+    /// (`start_codeblock` with no syntax + `text` + `end_codeblock`), see the
+    /// golden test `mermaid_fallback_matches_disabled_render`.
     fn emit_fenced_source(&mut self, info: &str, src: &str) {
         self.line_styles.push(code_style());
         self.push_line(Line::from(format!("```{info}")).add_modifier(Modifier::DIM));
@@ -410,15 +429,17 @@ impl Writer {
     }
 
     pub(super) fn text(&mut self, text: CowStr<'_>) {
-        // Сбор ```mermaid-блока: копим исходник как есть (с переводами строк —
-        // устойчиво к любому дроблению текста на события парсером).
+        // Collecting a ```mermaid block: accumulate the source as-is (with
+        // line breaks — resilient to the parser splitting the text into
+        // events however it likes).
         if let Some((_, buf)) = &mut self.mermaid {
             buf.push_str(&text);
             return;
         }
         if let Some(highlighter) = &mut self.code_highlighter {
-            // На ошибку syntect/ansi строку не выбрасываем, а показываем плоской
-            // (`highlight_line_or_plain`) — иначе строка кода молча пропадала бы.
+            // On a syntect/ansi error, don't drop the line — show it flat
+            // (`highlight_line_or_plain`) — otherwise a line of code would
+            // silently disappear.
             let mut rendered: Vec<Line<'static>> = Vec::new();
             for line in LinesWithEndings::from(&text) {
                 rendered.extend(highlight_line_or_plain(highlighter, line));
@@ -428,8 +449,9 @@ impl Writer {
             return;
         }
         let style = self.current_style();
-        // В ячейке таблицы переносов нет — кладём как один спан (переносы строк
-        // схлопываем в пробел; реальный перенос по ширине делает раскладка).
+        // No line breaks inside a table cell — put it as one span (line
+        // breaks collapse into a space; the layout does the real width-based
+        // wrapping).
         if self.in_table_cell() {
             self.push_span(Span::styled(text.replace('\n', " "), style));
             return;
@@ -453,12 +475,13 @@ impl Writer {
         ));
     }
 
-    /// Блочная формула `$$…$$`: каждая строка преобразованного содержимого — на
-    /// своей строке ленты. Первую строку кладём **в текущую (пустую) строку** абзаца
-    /// через `push_span` — иначе между прозой и формулой оставался бы двойной пропуск
-    /// (`start_paragraph` уже открыл пустую строку, а прежний код клал контент новой).
-    /// В ячейке таблицы формула остаётся **в ячейке** (строки склеиваем `«; »`),
-    /// иначе `push_line` увёл бы её строки в ленту над таблицей.
+    /// Block formula `$$…$$`: each line of the converted content — on its own
+    /// feed line. The first line is put **into the current (empty) paragraph
+    /// line** via `push_span` — otherwise there would be a double gap between
+    /// the prose and the formula (`start_paragraph` already opened an empty
+    /// line, and the old code put content on a new one). In a table cell the
+    /// formula stays **in the cell** (lines are joined with "; "), otherwise
+    /// `push_line` would send its lines into the feed above the table.
     pub(super) fn display_math(&mut self, content: &str) {
         let converted = latex_to_unicode_display(content);
         if self.in_table_cell() {
@@ -487,9 +510,10 @@ impl Writer {
         }
     }
 
-    /// Закрытие изображения `![alt](url)`: alt-текст уже напечатан событиями `Text`,
-    /// дописываем URL в скобках (как у ссылки). Отдельное поле `image` — картинка
-    /// бывает вложена в ссылку, `self.link` перезатирать нельзя.
+    /// Closing an image `![alt](url)`: the alt text has already been printed
+    /// by `Text` events, append the URL in parens (like a link). A separate
+    /// `image` field — an image can be nested in a link, `self.link` must
+    /// not be overwritten.
     pub(super) fn end_image(&mut self) {
         if let Some(url) = self.image.take() {
             self.push_span(Span::from(" ("));
@@ -521,7 +545,7 @@ impl Writer {
         self.needs_newline = true;
     }
 
-    /// Идёт ли сейчас сбор содержимого ячейки таблицы.
+    /// Is a table cell's content currently being collected.
     pub(super) fn in_table_cell(&self) -> bool {
         self.table
             .as_ref()
@@ -540,7 +564,7 @@ impl Writer {
     pub(super) fn push_line(&mut self, line: Line<'static>) {
         let style = self.line_styles.last().copied().unwrap_or_default();
         let mut line = line.patch_style(style);
-        // Префиксы строк (цитаты) — в начало, в обратном порядке стека.
+        // Line prefixes (quotes) go at the front, in reverse stack order.
         for prefix in self.line_prefixes.iter().rev().cloned() {
             line.spans.insert(0, prefix);
         }
@@ -548,7 +572,7 @@ impl Writer {
     }
 
     pub(super) fn push_span(&mut self, span: Span<'static>) {
-        // Внутри ячейки таблицы спаны накапливаются в ячейку, а не в ленту.
+        // Inside a table cell, spans accumulate into the cell, not the feed.
         if let Some(tb) = &mut self.table
             && let Some(cell) = &mut tb.current_cell
         {
@@ -563,45 +587,50 @@ impl Writer {
     }
 }
 
-/// Закрыт ли fenced-код-блок в исходнике. `range` — байтовый диапазон **всего**
-/// блока из `OffsetIter` pulldown-cmark (у `Start(CodeBlock)` диапазон покрывает
-/// элемент целиком). CommonMark дотягивает незакрытый забор до конца документа,
-/// поэтому по событиям парсера обрыв стрима неотличим от полного блока — смотрим
-/// в исходник: у закрытого последняя строка диапазона — закрывающий забор (та же
-/// литера, не короче открывающего), у оборванного — строка содержимого.
+/// Whether a fenced code block is closed in the source. `range` — the byte
+/// range of the **whole** block from pulldown-cmark's `OffsetIter` (a
+/// `Start(CodeBlock)`'s range covers the whole element). CommonMark stretches
+/// an unclosed fence to the end of the document, so a stream cutoff is
+/// indistinguishable from a complete block by parser events alone — look at
+/// the source instead: for a closed block, the range's last line is the
+/// closing fence (the same character, no shorter than the opener); for a
+/// truncated one, it's a content line.
 ///
-/// Проверка нарочно простая (точность CommonMark не нужна): блок, за которым в
-/// документе есть ещё текст, закрыт по построению; ложное «закрыт» на экзотике
-/// (контентная строка, неотличимая от забора) лишь приведёт к попытке рендера,
-/// которая упадёт парсером диаграммы → штатный фолбэк на исходник.
+/// The check is deliberately simple (CommonMark precision isn't needed): a
+/// block followed by more text in the document is closed by construction; a
+/// false "closed" on an edge case (a content line indistinguishable from a
+/// fence) only leads to an attempted render, which fails in the diagram
+/// parser → the standard fallback to the source.
 pub(super) fn fenced_block_is_closed(src: &str, range: &std::ops::Range<usize>) -> bool {
     if range.end < src.len() {
-        return true; // за блоком есть текст — забор закрыт (обрыв тянулся бы до конца)
+        return true; // there's text after the block — the fence is closed (a cutoff would stretch to the end)
     }
     let block = &src[range.clone()];
     let mut lines = block.lines();
     let Some(open) = lines.next() else {
         return false;
     };
-    // Префикс контейнера (цитата `> `) и отступ забора (≤3 пробелов) не мешают.
+    // A container prefix (a `> ` quote) and fence indent (≤3 spaces) don't
+    // interfere.
     let open = open.trim_start_matches(['>', ' ', '\t']);
     let Some(fence @ ('`' | '~')) = open.chars().next() else {
-        return true; // indented-блок без забора — «закрывать» нечего
+        return true; // an indented block with no fence — nothing to "close"
     };
     let open_len = open.chars().take_while(|&c| c == fence).count();
     let Some(last) = lines.last() else {
-        return false; // одна строка — только открывающий забор
+        return false; // one line — only the opening fence
     };
     let last = last.trim_start_matches(['>', ' ', '\t']);
     let close_len = last.chars().take_while(|&c| c == fence).count();
-    // Литеры забора — ASCII, срез по счётчику символов безопасен.
+    // Fence characters are ASCII — a slice by character count is safe.
     close_len >= open_len && last[close_len..].trim().is_empty()
 }
 
-/// Эвристика «это диапазон/дробь цен, а не формула»: `$5-$10` парсер math отдаёт
-/// как `InlineMath("5-")`. Содержимое из одних цифр/точек/запятых/пробелов/дефисов/
-/// слэшей И оканчивающееся на разделитель (`-`/`–`/`/`) — сигнатура диапазона цен;
-/// законное число оканчивается цифрой, а формула содержит math-символы.
+/// Heuristic for "this is a price range/fraction, not a formula": the math
+/// parser hands `$5-$10` to us as `InlineMath("5-")`. Content made only of
+/// digits/dots/commas/spaces/dashes/slashes AND ending in a separator
+/// (`-`/`–`/`/`) is a price-range signature; a legitimate number ends in a
+/// digit, while a formula contains math symbols.
 pub(super) fn looks_like_price_fragment(content: &str) -> bool {
     let t = content.trim();
     if t.is_empty() {
@@ -612,7 +641,7 @@ pub(super) fn looks_like_price_fragment(content: &str) -> bool {
         && t.ends_with(['-', '–', '/'])
 }
 
-/// Распознаёт тег переноса строки `<br>` в его формах (регистр игнорируется).
+/// Recognizes the line-break tag `<br>` in its forms (case-insensitive).
 pub(super) fn is_br(html: &str) -> bool {
     matches!(
         html.trim().to_ascii_lowercase().as_str(),
@@ -652,32 +681,34 @@ mod tests {
         assert!(collected.contains("> цитата"));
     }
 
-    /// «Рыхлый» (loose) нумерованный список — элементы разделены пустой строкой,
-    /// поэтому pulldown-cmark оборачивает содержимое в `Paragraph`. Номер и текст
-    /// должны остаться на **одной** строке (`1. текст`), а не разъехаться (регрессия:
-    /// `start_paragraph` безусловно добавлял новую строку после маркера).
+    /// A "loose" ordered list — items separated by a blank line, so
+    /// pulldown-cmark wraps the content in a `Paragraph`. The number and the
+    /// text must stay on **one** line (`1. text`), not split apart
+    /// (regression: `start_paragraph` unconditionally added a new line after
+    /// the marker).
     #[test]
     fn loose_ordered_list_keeps_number_with_text() {
         let md = "1. **Первый.** Текст первого пункта.\n\n\
                   2. **Второй.** Текст второго пункта.\n\n\
                   3. **Третий.** Текст третьего пункта.";
         let collected = rendered_text(md);
-        // Номер приклеен к своему тексту на одной строке ленты.
+        // The number is glued to its text on one feed line.
         assert!(
             collected.contains("1. Первый."),
-            "номер оторвался от текста:\n{collected}"
+            "the number separated from the text:\n{collected}"
         );
         assert!(collected.contains("2. Второй."));
         assert!(collected.contains("3. Третий."));
-        // Пустой строки между маркером и его текстом быть не должно.
+        // There should be no blank line between the marker and its text.
         assert!(
             !collected.contains("1. \n"),
-            "после маркера образовался перенос:\n{collected}"
+            "a line break appeared after the marker:\n{collected}"
         );
     }
 
-    /// Многоабзацный элемент «рыхлого» списка: первый абзац — на строке маркера,
-    /// последующие — на своих строках (маркер не дублируется).
+    /// A multi-paragraph item of a "loose" list: the first paragraph — on the
+    /// marker line, subsequent ones — on their own lines (the marker isn't
+    /// duplicated).
     #[test]
     fn loose_list_item_second_paragraph_on_own_line() {
         let md = "1. Первый абзац.\n\n   Второй абзац того же пункта.\n\n2. Другой пункт.";
@@ -687,7 +718,7 @@ mod tests {
         assert!(collected.contains("2. Другой пункт."));
     }
 
-    /// Строки рендера как вектор строк (для проверки раскладки по рядам).
+    /// Render lines as a vector of strings (to check row layout).
     fn rows(input: &str, width: usize) -> Vec<String> {
         render(input, width, &Palette::default())
             .lines
@@ -696,9 +727,9 @@ mod tests {
             .collect()
     }
 
-    /// Между прозой и блочной формулой `$$…$$` — ровно одна пустая строка (регрессия:
-    /// было две — `start_paragraph` открывал пустую строку, а `display_math` клал
-    /// контент новой, оставляя ту пустой).
+    /// Exactly one blank line between prose and a block formula `$$…$$`
+    /// (regression: there were two — `start_paragraph` opened a blank line,
+    /// and `display_math` put content on a new one, leaving that one blank).
     #[test]
     fn display_math_single_blank_line_before() {
         let lines = rows("текст\n\n$$E=mc^2$$\n\nконец", 80);
@@ -707,21 +738,22 @@ mod tests {
         assert_eq!(
             math_idx - text_idx,
             2,
-            "ожидалась одна пустая строка между прозой и формулой:\n{lines:?}"
+            "expected one blank line between prose and the formula:\n{lines:?}"
         );
         assert!(lines[text_idx + 1].trim().is_empty());
     }
 
-    /// Блочная формула внутри цитаты сохраняет префикс `> `.
+    /// A block formula inside a quote keeps the `> ` prefix.
     #[test]
     fn display_math_in_blockquote_keeps_prefix() {
         let lines = rows("> $$x+1$$", 80);
         let math = lines.iter().find(|l| l.contains("x+1")).unwrap();
-        assert!(math.starts_with("> "), "префикс цитаты потерян: {math:?}");
+        assert!(math.starts_with("> "), "quote prefix lost: {math:?}");
     }
 
-    /// Формула `$$…$$` в ячейке таблицы остаётся **в ячейке**, не утекая строкой над
-    /// таблицей (регрессия: `display_math` звал `push_line` без учёта `in_table_cell`).
+    /// A `$$…$$` formula inside a table cell stays **in the cell**, not
+    /// leaking as a line above the table (regression: `display_math` called
+    /// `push_line` without checking `in_table_cell`).
     #[test]
     fn display_math_in_table_cell_stays_in_cell() {
         let md = "| A | B |\n| :--- | :--- |\n| $$x+1$$ | y |";
@@ -729,28 +761,28 @@ mod tests {
         let first = lines
             .iter()
             .find(|l| !l.trim().is_empty())
-            .expect("пустой рендер");
+            .expect("empty render");
         assert!(
             first.contains('┌'),
-            "первая строка должна быть верхней рамкой таблицы, а не формулой: {first:?}"
+            "the first line should be the table's top border, not the formula: {first:?}"
         );
         let joined = lines.join("\n");
-        assert!(joined.contains("x+1"), "формула потеряна: {joined}");
+        assert!(joined.contains("x+1"), "formula lost: {joined}");
     }
 
-    /// Автолинк `<url>` печатает URL один раз (регрессия: `end_link` дописывал
-    /// ` (url)` поверх текста-URL → «url (url)»).
+    /// An autolink `<url>` prints the URL once (regression: `end_link`
+    /// appended ` (url)` on top of the URL text → "url (url)").
     #[test]
     fn autolink_url_not_duplicated() {
         let collected = rendered_text("см. <https://example.com> тут");
         assert_eq!(
             collected.matches("example.com").count(),
             1,
-            "URL автолинка продублирован: {collected}"
+            "autolink URL duplicated: {collected}"
         );
     }
 
-    /// Обычная ссылка `[t](u)` по-прежнему печатает URL в скобках.
+    /// A regular link `[t](u)` still prints the URL in parens.
     #[test]
     fn inline_link_keeps_url_suffix() {
         let collected = rendered_text("[текст](https://example.com)");
@@ -760,7 +792,7 @@ mod tests {
         );
     }
 
-    /// `<br>` в абзаце — перенос строки.
+    /// `<br>` in a paragraph — a line break.
     #[test]
     fn br_tag_breaks_line_in_paragraph() {
         let lines = rows("a<br>b", 80);
@@ -768,19 +800,20 @@ mod tests {
         assert!(lines.iter().any(|l| l.trim() == "b"), "{lines:?}");
     }
 
-    /// `<br>` в ячейке таблицы — пробел (переносов в ячейке нет).
+    /// `<br>` inside a table cell — a space (no line breaks in a cell).
     #[test]
     fn br_tag_in_table_cell_becomes_space() {
         let md = "| A | B |\n| :--- | :--- |\n| x<br>y | z |";
         let joined = rendered_text_w(md, 60);
         assert!(
             joined.contains("x y"),
-            "<br> в ячейке должен стать пробелом: {joined}"
+            "<br> in a cell should become a space: {joined}"
         );
     }
 
-    /// Метка языка с инфо-строкой (` ```rust,no_run `) резолвится по первому токену —
-    /// блок подсвечивается (регрессия: вся инфо-строка не совпадала с синтаксисом).
+    /// A language label with an info-string tail (` ```rust,no_run `) resolves
+    /// by the first token — the block is highlighted (regression: the whole
+    /// info string didn't match the syntax).
     #[test]
     fn code_block_info_string_resolves_language() {
         use crate::shared::config::Theme;
@@ -790,11 +823,11 @@ mod tests {
         );
         assert!(
             colors.iter().any(|c| matches!(c, Color::Rgb(..))),
-            "ожидалась подсветка по языку из инфо-строки"
+            "expected highlighting by the language from the info string"
         );
     }
 
-    /// Горизонтальная линия `---` тянется на ширину панели (не обрубок `───`).
+    /// A horizontal rule `---` stretches to the panel width (not a stub `───`).
     #[test]
     fn rule_spans_panel_width() {
         let w = 40;
@@ -803,20 +836,21 @@ mod tests {
             .lines
             .iter()
             .find(|l| l.spans.iter().any(|s| s.content.contains('─')))
-            .expect("нет линии-разделителя");
+            .expect("no separator line");
         let width: usize = rule
             .spans
             .iter()
             .map(|s| wrap::display_width(&s.content.chars().collect::<Vec<_>>()))
             .sum();
-        assert_eq!(width, w, "линия должна занимать ширину панели");
+        assert_eq!(width, w, "the line should span the panel width");
     }
 
-    /// Тугой (tight) элемент списка не «утекает» на следующий блок: после
-    /// `3. Название` с пустой строкой идущий следом абзац не приклеивается к строке
-    /// маркера, а пустая строка сохраняется (регрессия: `item_marker_open` в тугом
-    /// списке не потреблялся — контент элемента инлайновый, без обёртки `Paragraph`).
-    /// Сцена — трек-лист альбома: `3. Трек` + теги Suno на следующих строках.
+    /// A tight list item doesn't "leak" onto the next block: after
+    /// `3. Title` with a blank line, the following paragraph doesn't glue
+    /// to the marker line, and the blank line is preserved (regression:
+    /// `item_marker_open` in a tight list was never consumed — the item's
+    /// content is inline, with no `Paragraph` wrapper). Scene — an album
+    /// tracklist: `3. Track` + Suno tags on the following lines.
     #[test]
     fn tight_list_item_does_not_bleed_into_next_block() {
         let md = "3. Взгляд из ниоткуда\n\n[Intro - Ambient]\nЯ — тишина.";
@@ -824,28 +858,28 @@ mod tests {
         let marker = lines
             .iter()
             .find(|l| l.contains("3. Взгляд из ниоткуда"))
-            .expect("нет строки маркера");
+            .expect("no marker line");
         assert!(
             !marker.contains("[Intro"),
-            "следующий блок приклеился к строке маркера: {marker:?}"
+            "the next block glued onto the marker line: {marker:?}"
         );
         let marker_idx = lines.iter().position(|l| l.contains("3. Взгляд")).unwrap();
         let intro_idx = lines.iter().position(|l| l.contains("[Intro")).unwrap();
         assert!(
             intro_idx > marker_idx,
-            "теги не на отдельной строке: {lines:?}"
+            "the tags aren't on their own line: {lines:?}"
         );
-        // между маркером и тегами — сохранённая пустая строка
+        // between the marker and the tags — the preserved blank line
         assert!(
             lines[marker_idx + 1..intro_idx]
                 .iter()
                 .any(|l| l.trim().is_empty()),
-            "потеряна пустая строка после названия трека: {lines:?}"
+            "lost the blank line after the track title: {lines:?}"
         );
     }
 
-    /// Обычный тугой список (несколько пунктов) не сломан: каждый пункт — на своей
-    /// строке, следующий не приклеивается к предыдущему.
+    /// An ordinary tight list (several items) isn't broken: each item — on
+    /// its own line, the next one doesn't glue onto the previous one.
     #[test]
     fn tight_list_items_stay_on_separate_lines() {
         let lines = rows("- один\n- два\n- три", 80);
@@ -854,15 +888,15 @@ mod tests {
         assert!(lines.iter().any(|l| l.trim() == "- три"), "{lines:?}");
     }
 
-    /// Изображение печатает alt-текст и URL в скобках (как ссылка).
+    /// An image prints the alt text and the URL in parens (like a link).
     #[test]
     fn image_prints_alt_and_url() {
         let collected = rendered_text("![схема](http://x/i.png)");
         assert!(collected.contains("схема (http://x/i.png)"), "{collected}");
     }
 
-    /// Диапазон/дробь цен `$5-$10` не съедается math-расширением (доллары остаются,
-    /// «5-10» не рвётся).
+    /// A price range/fraction `$5-$10` isn't swallowed by the math extension
+    /// (dollars remain, "5-10" isn't torn apart).
     #[test]
     fn price_range_not_treated_as_math() {
         let c = rendered_text("товар $5-$10 или $5/$7");
@@ -870,7 +904,7 @@ mod tests {
         assert!(c.contains("$5/$7"), "{c}");
     }
 
-    /// Рендер с включённым флагом mermaid (остальные флаги дефолтные).
+    /// Render with the mermaid flag on (other flags default).
     fn render_mermaid_on(input: &str, width: usize) -> Text<'static> {
         render_with(
             input,
@@ -883,8 +917,9 @@ mod tests {
         )
     }
 
-    /// Валидный mermaid-блок при включённом рендере — диаграмма вместо исходника:
-    /// box-drawing рамки есть, заборов ``` и сырых `-->` нет.
+    /// A valid mermaid block with rendering enabled — a diagram instead of
+    /// the source: box-drawing frames are present, no fences ``` or raw
+    /// `-->` remain.
     #[test]
     fn mermaid_block_renders_diagram_when_enabled() {
         let md = "до\n\n```mermaid\nsequenceDiagram\n    participant A\n    participant B\n    A->>B: hi\n```\n\nпосле";
@@ -900,34 +935,38 @@ mod tests {
             })
             .collect::<Vec<_>>()
             .join("\n");
-        assert!(joined.contains('┌'), "нет рамок диаграммы:\n{joined}");
+        assert!(joined.contains('┌'), "no diagram frames:\n{joined}");
         assert!(
             !joined.contains("```"),
-            "забор не должен печататься:\n{joined}"
+            "the fence should not be printed:\n{joined}"
         );
-        assert!(!joined.contains("->>"), "исходник утёк в ленту:\n{joined}");
+        assert!(
+            !joined.contains("->>"),
+            "source leaked into the feed:\n{joined}"
+        );
         assert!(
             joined.contains("до") && joined.contains("после"),
             "{joined}"
         );
     }
 
-    /// Golden-фолбэк: при любом отказе (мусор / тип вне whitelist / не влезло по
-    /// ширине) вывод с включённым флагом **побайтно равен** выводу с выключенным —
-    /// строки И стили (Line: PartialEq). Гарантия «худший случай = прежнее поведение».
+    /// Golden fallback: on any failure (garbage / a type outside the
+    /// whitelist / doesn't fit the width) the output with the flag enabled
+    /// **exactly matches** the output with it disabled — lines AND styles
+    /// (Line: PartialEq). The guarantee "worst case = previous behavior".
     #[test]
     fn mermaid_fallback_matches_disabled_render() {
         let cases = [
-            // мусор в блоке (LLM недописал/сломал синтаксис)
+            // garbage in the block (the LLM left the syntax unfinished/broken)
             ("```mermaid\nпросто текст без диаграммы\n```", 90),
-            // тип вне whitelist (pie)
+            // a type outside the whitelist (pie)
             ("```mermaid\npie title X\n    \"A\" : 1\n```", 90),
-            // валидная, но не влезает в узкую панель
+            // valid, but doesn't fit a narrow panel
             (
                 "```mermaid\nsequenceDiagram\n    participant Client\n    participant Server\n    Client->>Server: GET /api/data\n```",
                 20,
             ),
-            // инфо-строка с хвостом после языка сохраняется в заборе фолбэка
+            // an info string with a tail after the language is preserved in the fallback's fence
             ("```mermaid title=x\nне диаграмма\n```", 90),
         ];
         for (md, w) in cases {
@@ -935,12 +974,13 @@ mod tests {
             let off = render(md, w, &Palette::default());
             assert_eq!(
                 on.lines, off.lines,
-                "фолбэк разошёлся с прежним видом (w={w}):\n{md}"
+                "fallback diverged from the previous look (w={w}):\n{md}"
             );
         }
     }
 
-    /// Выключенный флаг (Default) — прежнее поведение: исходник код-блоком.
+    /// The flag off (Default) — the previous behavior: the source as a code
+    /// block.
     #[test]
     fn mermaid_flag_off_keeps_source() {
         let md = "```mermaid\nsequenceDiagram\n    A->>B: hi\n```";
@@ -949,25 +989,26 @@ mod tests {
         assert!(joined.contains("A->>B: hi"), "{joined}");
     }
 
-    /// Стрим: блок с незакрытым забором (сервер ещё дописывает диаграмму)
-    /// печатается исходником **байт-в-байт как при выключенном рендере** — без
-    /// мерцания «частичная диаграмма ↔ исходник» по мере прихода чанков.
-    /// Регрессия: pulldown-cmark дотягивает незакрытый забор до конца документа,
-    /// и синтаксически валидный огрызок (первый кейс) рендерился диаграммой.
+    /// Streaming: a block with an unclosed fence (the server is still
+    /// finishing the diagram) prints as the source **byte-for-byte as with
+    /// rendering disabled** — no "partial diagram ↔ source" flicker as
+    /// chunks arrive. Regression: pulldown-cmark stretches an unclosed fence
+    /// to the end of the document, and a syntactically valid stub (the first
+    /// case) used to render as a diagram.
     #[test]
     fn mermaid_unclosed_fence_streams_as_source() {
         let cases = [
-            // валидный огрызок: без проверки закрытости отрендерился бы диаграммой
+            // a valid stub: without the closure check it would render as a diagram
             "текст\n\n```mermaid\nflowchart LR\n    A[Старт] --> B[Конец]",
-            // то же с хвостовым переводом строки
+            // the same with a trailing line break
             "```mermaid\nsequenceDiagram\n    A->>B: hi\n",
-            // обрыв на полуслове
+            // cut off mid-word
             "```mermaid\nsequenceDiagram\n    participant Ser",
-            // только открывающий забор
+            // only the opening fence
             "```mermaid",
-            // тильда-забор
+            // a tilde fence
             "~~~mermaid\nflowchart LR\n    A --> B",
-            // закрывающий короче открывающего — блок НЕ закрыт
+            // the closing fence is shorter than the opening one — the block is NOT closed
             "````mermaid\nflowchart LR\n    A --> B\n```",
         ];
         for md in cases {
@@ -975,14 +1016,15 @@ mod tests {
             let off = render(md, 90, &Palette::default());
             assert_eq!(
                 on.lines, off.lines,
-                "незакрытый блок должен идти исходником:\n{md}"
+                "an unclosed block should go the source path:\n{md}"
             );
         }
     }
 
-    /// Закрывающий забор доехал — блок рендерится диаграммой, даже когда после
-    /// него сообщение продолжает стримиться (закрытость — свойство блока, не
-    /// конца сообщения). Тильда-забор равноправен.
+    /// The closing fence has arrived — the block renders as a diagram, even
+    /// when the message keeps streaming after it (closure is a property of
+    /// the block, not of the end of the message). A tilde fence is treated
+    /// equally.
     #[test]
     fn mermaid_closed_fence_renders_even_while_tail_streams() {
         for md in [
@@ -998,14 +1040,17 @@ mod tests {
             assert!(joined.contains("Старт"), "{joined}");
             assert!(
                 !joined.contains("```") && !joined.contains("~~~"),
-                "забор не должен печататься: {joined}"
+                "the fence should not be printed: {joined}"
             );
-            assert!(!joined.contains("-->"), "исходник утёк в ленту: {joined}");
+            assert!(
+                !joined.contains("-->"),
+                "source leaked into the feed: {joined}"
+            );
         }
     }
 
-    /// Кириллический flowchart рендерится диаграммой (регрессия апстрима 0.56.0 —
-    /// паника/порча подписей на многобайтовом вводе; наш фикс #29/#30).
+    /// A Cyrillic flowchart renders as a diagram (upstream regression in
+    /// 0.56.0 — a panic/corrupted labels on multibyte input; our fix #29/#30).
     #[test]
     fn mermaid_cyrillic_flowchart_renders() {
         let md = "```mermaid\nflowchart LR\n    A[Старт] -->|да| B[Конец]\n```";
@@ -1016,17 +1061,17 @@ mod tests {
             .flat_map(|l| l.spans.iter().map(|s| s.content.as_ref()))
             .collect();
         assert!(joined.contains("Конец"), "{joined}");
-        assert!(!joined.contains("[Конец]"), "порча подписи: {joined}");
+        assert!(!joined.contains("[Конец]"), "label corrupted: {joined}");
     }
 
-    /// Настоящая математика по-прежнему конвертируется (доллары сняты).
+    /// Real math still converts (dollar signs stripped).
     #[test]
     fn real_math_still_converts() {
         let c = rendered_text(r"значения $3.14$, $2+2$ и $x^2$");
         assert!(c.contains("3.14"), "{c}");
         assert!(
             !c.contains("$3.14$"),
-            "доллары не сняты у настоящей формулы: {c}"
+            "dollars not stripped from a real formula: {c}"
         );
         assert!(c.contains("x²"), "{c}");
     }

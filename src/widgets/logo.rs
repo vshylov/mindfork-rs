@@ -1,39 +1,39 @@
-//! Логотип mindfork ячейками терминала (см. docs/branding.md §5).
+//! The mindfork logo drawn in terminal cells (see docs/branding.md §5).
 //!
-//! Иконка бренда — пиксель-арт на сетке 16×16 из пяти прямоугольников, поэтому её
-//! можно нарисовать **нативно**, без растровых картинок: одна ячейка терминала несёт
-//! **два вертикальных пикселя** через половинные блоки `▀`/`▄`/`█`. Рисуется
-//! прозрачный вариант (без подложки) — глиф ложится на фон терминала и одинаково
-//! уместен в тёмной и светлой теме.
+//! The brand icon is pixel art on a 16×16 grid made of five rectangles, so it
+//! can be drawn **natively**, with no raster images: one terminal cell carries
+//! **two vertical pixels** via half-block glyphs `▀`/`▄`/`█`. The
+//! transparent variant is drawn (no backdrop) — the glyph sits on the terminal's background and is
+//! equally at home in the dark and light theme.
 //!
-//! Рядом с глифом рисуется **вордмарк** — слово `mindfork` собственным пиксельным
-//! шрифтом (SVG-вордмарк для терминала непригоден: там текст переведён в кривые).
-//! Вместе они образуют **горизонтальный лockup** — ту же композицию, что
-//! `artwork/mindfork-wordmark.svg`: слово вдвое ниже глифа, его базовая линия — на
-//! строку выше низа глифа.
+//! Next to the glyph is drawn the **wordmark** — the word `mindfork` in its own pixel
+//! font (the SVG wordmark doesn't work for the terminal: its text has been converted to curves).
+//! Together they form a **horizontal lockup** — the same composition as
+//! `artwork/mindfork-wordmark.svg`: the word is half the glyph's height, its baseline sits one
+//! row above the glyph's bottom.
 //!
-//! **Цвета — фирменные, не из палитры**: логотип не перекрашивается темой (решение
-//! Р3 в docs/branding.md — `accent` интерфейса означает «активность», перекраска
-//! сломала бы семантику). Единственное исключение — `mind` в вордмарке: в бренде это
-//! «текст на тёмном»/«текст на светлом» (раздельные варианты `-dark`/`-light`), т.е.
-//! цвет фона, поэтому здесь он берётся из палитры (`text`) — так один лockup работает
-//! в обеих темах. Глифы `▀`/`▄`/`█` входят в WGL4, поэтому режим совместимости со
-//! старым терминалом (conhost) отдельной замены не требует — как `█` скроллбара и
-//! `▌` рейлов ролей.
+//! **Colors are the fixed brand ones, not from the palette**: the logo isn't retinted by the
+//! theme (decision R3 in docs/branding.md — the interface's `accent` means "activity",
+//! retinting would break that semantics). The one exception — `mind` in the wordmark: in the brand this is
+//! "text on dark"/"text on light" (separate `-dark`/`-light` variants), i.e.
+//! a color derived from the background, so here it's taken from the palette (`text`) — this way one lockup works
+//! in both themes. The `▀`/`▄`/`█` glyphs are in WGL4, so the older-terminal
+//! compatibility mode (conhost) needs no separate substitution — like the `█` scrollbar and
+//! `▌` role rails.
 //!
-//! Единственный источник истины геометрии глифа —
-//! `artwork/mindfork-icon-transparent.svg`; тест `glyph_matches_artwork_svg` сверяет
-//! таблицу ниже с ним, чтобы код и ассет не разъехались молча.
+//! The single source of truth for the glyph's geometry is
+//! `artwork/mindfork-icon-transparent.svg`; the test `glyph_matches_artwork_svg` checks
+//! the table below against it, so the code and the asset don't silently drift apart.
 
 use ratatui::style::{Color, Style};
 use ratatui::text::{Line, Span};
 
-/// Акцент бренда — ствол глифа (`#c25a27`).
+/// The brand accent — the glyph's stem (`#c25a27`).
 const ORANGE: Color = Color::Rgb(0xc2, 0x5a, 0x27);
-/// Ветви глифа (`#5c6370`).
+/// The glyph's branches (`#5c6370`).
 const GRAY: Color = Color::Rgb(0x5c, 0x63, 0x70);
 
-/// Прямоугольники глифа на сетке 16×16: `(x, y, w, h, цвет)`.
+/// The glyph's rectangles on a 16×16 grid: `(x, y, w, h, color)`.
 const GLYPH: [(u8, u8, u8, u8, Color); 5] = [
     (7, 2, 2, 12, ORANGE),
     (11, 2, 2, 5, GRAY),
@@ -42,36 +42,36 @@ const GLYPH: [(u8, u8, u8, u8, Color); 5] = [
     (5, 10, 2, 2, GRAY),
 ];
 
-/// Границы чернил на сетке (`x` 3…13, `y` 2…14) — рисуем только их, без пустых полей.
+/// The ink bounds on the grid (`x` 3…13, `y` 2…14) — we draw only these, no empty margins.
 const INK_X: (u8, u8) = (3, 13);
 const INK_Y: (u8, u8) = (2, 14);
 
-/// Ширина логотипа в колонках терминала.
+/// The logo's width in terminal columns.
 pub const LOGO_COLS: u16 = (INK_X.1 - INK_X.0) as u16;
-/// Высота логотипа в строках: два пикселя на строку.
+/// The logo's height in rows: two pixels per row.
 pub const LOGO_ROWS: u16 = (INK_Y.1 - INK_Y.0) as u16 / 2;
 
-/// Пиксельный шрифт вордмарка: по строке на пиксельный ряд глифа (`#` — чернила).
+/// The wordmark's pixel font: one row per pixel row of the glyph (`#` — ink).
 ///
-/// Начертание повторяет вордмарк бренда (JetBrains Mono ExtraBold): строчные буквы,
-/// выносные у `d`/`f`/`k` и **штрихи в 2 пикселя** — той же толщины, что бары
-/// глифа-иконки (в её сетке они тоже по 2 единицы). Штрих в 1 пиксель дал бы светлое
-/// начертание, спорящее с чанковым глифом, а буква с 2-пиксельным стволом (`i`)
-/// смотрелась бы среди них вдвое жирнее.
+/// The lettering follows the brand wordmark (JetBrains Mono ExtraBold): lowercase letters,
+/// ascenders/descenders on `d`/`f`/`k`, and **2-pixel strokes** — the same weight as the
+/// icon glyph's bars (its grid also uses 2-unit bars). A 1-pixel stroke would give a light
+/// weight clashing with the chunky glyph, while a letter with a 2-pixel stem (`i`)
+/// would look twice as heavy among them.
 ///
-/// Высота — **8 пикселей = 4 строки терминала**: бренд задаёт выносной элемент как
-/// `0.5227 × S`, где `S` — размер иконки (16), т.е. ≈ 8 пикселей (а не половину
-/// 12-пиксельных чернил глифа). Это же даёт x-высоту в 6 пикселей, куда 2-пиксельные
-/// штрихи и просвет между ними укладываются ровно.
+/// Height — **8 pixels = 4 terminal rows**: the brand defines the ascender/descender height as
+/// `0.5227 × S`, where `S` is the icon size (16), i.e. ≈ 8 pixels (not half the
+/// glyph's 12-pixel ink). This also gives an x-height of 6 pixels, into which the 2-pixel
+/// strokes and the gap between them fit exactly.
 ///
-/// Отдельный компромисс — `f`. Между её крючком (на выносной высоте) и перекладиной
-/// (на x-высоте) в пиксельном бюджете остаётся 0 рядов, поэтому 2-пиксельный крючок
-/// слипался с перекладиной в сплошной блок. Крючок сделан в **1 пиксель**: он
-/// попадает в верхнюю половину ячейки (`▀`), нижняя остаётся пустой — просвет виден,
-/// а перекладина стоит на x-высоте, в одну строку с верхними барами `n`/`o`/`r`.
+/// A separate compromise — `f`. Between its hook (at ascender height) and the crossbar
+/// (at x-height) there are 0 rows left in the pixel budget, so a 2-pixel hook
+/// used to merge with the crossbar into a solid block. The hook is made **1 pixel**: it
+/// lands in the cell's top half (`▀`), the bottom stays empty — a gap shows,
+/// and the crossbar sits at x-height, on the same row as the top bars of `n`/`o`/`r`.
 ///
-/// Пиксельный шрифт нужен собственный: в SVG-вордмарке текст переведён в кривые
-/// (docs/branding.md §2), растеризовать их в терминале нечем.
+/// A dedicated pixel font is needed: in the SVG wordmark the text has been converted to curves
+/// (docs/branding.md §2), there's nothing to rasterize them with in the terminal.
 #[rustfmt::skip]
 const WORDMARK: [(char, [&str; WORDMARK_PX_ROWS]); 8] = [
     ('m', ["........", "........", "########", "########", "##.##.##", "##.##.##", "##.##.##", "##.##.##"]),
@@ -84,36 +84,36 @@ const WORDMARK: [(char, [&str; WORDMARK_PX_ROWS]); 8] = [
     ('k', ["##....",   "##....",   "##.###",   "##.###",   "####..",   "####..",   "##.###",   "##.###"  ]),
 ];
 
-/// Высота вордмарка в пикселях (чётная — половинные блоки ложатся ровно в строки).
+/// The wordmark's height in pixels (even — half-block glyphs land evenly into rows).
 const WORDMARK_PX_ROWS: usize = 8;
-/// Разрядка между буквами, в колонках.
+/// Letter spacing, in columns.
 const WORDMARK_TRACKING: u16 = 1;
-/// Сколько первых букв — «mind» (цвет текста); остальные — «fork» (акцент).
+/// How many leading letters are "mind" (text color); the rest — "fork" (accent).
 const MIND_LETTERS: usize = 4;
 
-/// Высота вордмарка в строках терминала.
+/// The wordmark's height in terminal rows.
 pub const WORDMARK_ROWS: u16 = WORDMARK_PX_ROWS as u16 / 2;
-/// Ширина вордмарка в колонках терминала.
+/// The wordmark's width in terminal columns.
 pub const WORDMARK_COLS: u16 = wordmark_cols();
 
-/// Зазор «глиф → слово» в колонках (пропорция бренда: 0.36 × размер иконки за
-/// вычетом пустого поля справа от чернил, docs/branding.md §5).
+/// The "glyph → word" gap in columns (the brand's proportion: 0.36 × the icon size
+/// minus the empty margin to the right of the ink, docs/branding.md §5).
 const LOCKUP_GAP: u16 = 3;
-/// Строка лockup'а, с которой начинается слово: его базовая линия оказывается на
-/// строку выше низа глифа (бренд — `0.7418 × S` от верха иконки), так же, как в
-/// SVG-лockup'е.
+/// The lockup row where the word starts: its baseline ends up one
+/// row above the glyph's bottom (the brand — `0.7418 × S` from the icon's top), the same as in
+/// the SVG lockup.
 const WORDMARK_TOP_ROW: u16 = 1;
 
-/// Ширина горизонтального лockup'а (глиф + зазор + слово) в колонках.
+/// The horizontal lockup's width (glyph + gap + word) in columns.
 pub const LOCKUP_COLS: u16 = LOGO_COLS + LOCKUP_GAP + WORDMARK_COLS;
-/// Высота лockup'а в строках: слово ниже глифа, поэтому её задаёт глиф.
+/// The lockup's height in rows: the word is shorter than the glyph, so the glyph sets it.
 pub const LOCKUP_ROWS: u16 = LOGO_ROWS;
 
-// Слово обязано умещаться по высоте глифа — иначе `lockup_lines` молча обрезала бы
-// его нижние строки. Правка `WORDMARK_TOP_ROW`/шрифта роняет сборку, а не картинку.
+// The word must fit within the glyph's height — otherwise `lockup_lines` would silently clip
+// its bottom rows. Editing `WORDMARK_TOP_ROW`/the font fails the build, not the picture.
 const _: () = assert!(WORDMARK_TOP_ROW + WORDMARK_ROWS <= LOCKUP_ROWS);
 
-/// Суммарная ширина слова: глифы плюс разрядка между ними.
+/// The word's total width: glyphs plus the spacing between them.
 const fn wordmark_cols() -> u16 {
     let mut total = 0;
     let mut i = 0;
@@ -127,7 +127,7 @@ const fn wordmark_cols() -> u16 {
     total
 }
 
-/// Цвет пикселя `(x, y)` сетки, если он закрашен.
+/// The color of grid pixel `(x, y)`, if it's filled in.
 fn pixel(x: u8, y: u8) -> Option<Color> {
     GLYPH
         .iter()
@@ -135,11 +135,11 @@ fn pixel(x: u8, y: u8) -> Option<Color> {
         .map(|(_, _, _, _, color)| *color)
 }
 
-/// Логотип строками для вставки в любой виджет: `LOGO_ROWS` строк по `LOGO_COLS` ячеек.
+/// The logo as lines for insertion into any widget: `LOGO_ROWS` rows of `LOGO_COLS` cells.
 ///
-/// Пара вертикальных пикселей кодируется одной ячейкой: обе половины одного цвета —
-/// `█`; разные — `▀` (верхняя в `fg`, нижняя в `bg`); одна половина — `▀`/`▄` без
-/// фона (так логотип не тащит за собой прямоугольник подложки).
+/// A pair of vertical pixels is encoded as one cell: both halves the same color —
+/// `█`; different — `▀` (the top in `fg`, the bottom in `bg`); one half — `▀`/`▄` with no
+/// background (this way the logo doesn't drag a backdrop rectangle along with it).
 pub fn logo_lines() -> Vec<Line<'static>> {
     (0..LOGO_ROWS)
         .map(|row| {
@@ -158,10 +158,10 @@ pub fn logo_lines() -> Vec<Line<'static>> {
         .collect()
 }
 
-/// Колонки слова: цвет и столбик из `WORDMARK_PX_ROWS` пикселей на каждую.
+/// The word's columns: a color and a `WORDMARK_PX_ROWS`-pixel column for each.
 ///
-/// Буквы разделены пустой колонкой (разрядка), поэтому цвет — свойство колонки:
-/// «mind» рисуется цветом `mind`, «fork» — фирменным акцентом.
+/// Letters are separated by an empty column (letter spacing), so color is a column property:
+/// "mind" is drawn with the `mind` color, "fork" — with the fixed brand accent.
 fn wordmark_columns(mind: Color) -> Vec<(Color, [bool; WORDMARK_PX_ROWS])> {
     let mut cols = Vec::with_capacity(WORDMARK_COLS as usize);
     for (i, (_, rows)) in WORDMARK.iter().enumerate() {
@@ -180,11 +180,11 @@ fn wordmark_columns(mind: Color) -> Vec<(Color, [bool; WORDMARK_PX_ROWS])> {
     cols
 }
 
-/// Слово `mindfork` строками: `WORDMARK_ROWS` строк по `WORDMARK_COLS` ячеек.
+/// The word `mindfork` as lines: `WORDMARK_ROWS` rows of `WORDMARK_COLS` cells.
 ///
-/// `mind` берёт переданный цвет (в вызывающем — `palette.text`), `fork` — фирменный
-/// акцент; кодирование пары пикселей то же, что у глифа. Фон не выставляется —
-/// подложки у слова нет.
+/// `mind` takes the passed-in color (in the caller — `palette.text`), `fork` — the fixed brand
+/// accent; the pixel-pair encoding is the same as the glyph's. No background is set —
+/// the word has no backdrop.
 pub fn wordmark_lines(mind: Color) -> Vec<Line<'static>> {
     let cols = wordmark_columns(mind);
     (0..WORDMARK_ROWS)
@@ -204,10 +204,10 @@ pub fn wordmark_lines(mind: Color) -> Vec<Line<'static>> {
         .collect()
 }
 
-/// Горизонтальный лockup «глиф + слово» — `LOCKUP_ROWS` строк.
+/// The horizontal "glyph + word" lockup — `LOCKUP_ROWS` rows.
 ///
-/// Слово ниже глифа, поэтому строки лockup'а вне его диапазона несут только глиф
-/// (хвостовыми пробелами не добиваем — строки рисуются с выравниванием влево).
+/// The word is shorter than the glyph, so lockup rows outside its range carry only the glyph
+/// (we don't pad with trailing spaces — rows are drawn left-aligned).
 pub fn lockup_lines(mind: Color) -> Vec<Line<'static>> {
     let word = wordmark_lines(mind);
     logo_lines()
@@ -231,11 +231,11 @@ pub fn lockup_lines(mind: Color) -> Vec<Line<'static>> {
 mod tests {
     use super::*;
 
-    /// Разбирает `<rect …/>` из SVG-иконки: `(x, y, w, h, fill)`.
+    /// Parses `<rect …/>` from the SVG icon: `(x, y, w, h, fill)`.
     fn parse_rects(svg: &str) -> Vec<(u8, u8, u8, u8, String)> {
         fn attr(tag: &str, name: &str) -> String {
             let key = format!("{name}=\"");
-            let start = tag.find(&key).expect("атрибут") + key.len();
+            let start = tag.find(&key).expect("attribute") + key.len();
             tag[start..].split('"').next().unwrap().to_string()
         }
         svg.split("<rect")
@@ -256,19 +256,19 @@ mod tests {
     fn hex(color: Color) -> String {
         match color {
             Color::Rgb(r, g, b) => format!("#{r:02x}{g:02x}{b:02x}"),
-            other => panic!("ожидался Rgb, получено {other:?}"),
+            other => panic!("expected Rgb, got {other:?}"),
         }
     }
 
-    /// Гейт против расхождения кода и ассета: таблица `GLYPH` обязана совпадать с
-    /// `artwork/mindfork-icon-transparent.svg` — единственным источником геометрии.
+    /// A gate against code/asset drift: the `GLYPH` table must match
+    /// `artwork/mindfork-icon-transparent.svg` — the single source of geometry.
     #[test]
     fn glyph_matches_artwork_svg() {
         let path = concat!(
             env!("CARGO_MANIFEST_DIR"),
             "/artwork/mindfork-icon-transparent.svg"
         );
-        let svg = std::fs::read_to_string(path).expect("иконка на месте");
+        let svg = std::fs::read_to_string(path).expect("the icon is in place");
         let from_svg = parse_rects(&svg);
         let from_code: Vec<_> = GLYPH
             .iter()
@@ -276,20 +276,23 @@ mod tests {
             .collect();
         assert_eq!(
             from_svg, from_code,
-            "GLYPH разошёлся с artwork/mindfork-icon-transparent.svg — \
-             обновите таблицу или ассет"
+            "GLYPH diverged from artwork/mindfork-icon-transparent.svg — \
+             update the table or the asset"
         );
     }
 
-    /// Сетка 16×16 и границы чернил в SVG те же, что заложены в константах.
+    /// The 16×16 grid and ink bounds in the SVG match what's baked into the constants.
     #[test]
     fn ink_bounds_match_svg_viewbox() {
         let path = concat!(
             env!("CARGO_MANIFEST_DIR"),
             "/artwork/mindfork-icon-transparent.svg"
         );
-        let svg = std::fs::read_to_string(path).expect("иконка на месте");
-        assert!(svg.contains("viewBox=\"0 0 16 16\""), "сетка не 16×16");
+        let svg = std::fs::read_to_string(path).expect("the icon is in place");
+        assert!(
+            svg.contains("viewBox=\"0 0 16 16\""),
+            "the grid isn't 16×16"
+        );
         let rects = parse_rects(&svg);
         let (min_x, max_x) = (
             rects.iter().map(|r| r.0).min().unwrap(),
@@ -301,7 +304,7 @@ mod tests {
         );
         assert_eq!((min_x, max_x), INK_X);
         assert_eq!((min_y, max_y), INK_Y);
-        // Высота чернил чётная — иначе половинные блоки не лягут ровно в строки.
+        // The ink height is even — otherwise half-block glyphs won't land evenly into rows.
         assert_eq!((max_y - min_y) % 2, 0);
     }
 
@@ -313,14 +316,14 @@ mod tests {
         assert_eq!(LOGO_COLS, 10);
         for line in &lines {
             assert_eq!(line.spans.len(), LOGO_COLS as usize);
-            // Каждая ячейка — ровно одна колонка.
+            // Each cell — exactly one column.
             for span in &line.spans {
                 assert_eq!(span.content.chars().count(), 1);
             }
         }
     }
 
-    /// Ствол (оранжевый) идёт сплошняком через все строки — глиф не «рассыпался».
+    /// The (orange) stem runs solid through every row — the glyph hasn't "fallen apart".
     #[test]
     fn orange_trunk_present_in_every_row() {
         for (i, line) in logo_lines().iter().enumerate() {
@@ -328,11 +331,11 @@ mod tests {
                 .spans
                 .iter()
                 .any(|s| s.style.fg == Some(ORANGE) || s.style.bg == Some(ORANGE));
-            assert!(has_orange, "в строке {i} нет ствола");
+            assert!(has_orange, "row {i} has no stem");
         }
     }
 
-    /// Используются только WGL4-безопасные глифы (режим совместимости с conhost).
+    /// Only WGL4-safe glyphs are used (conhost compatibility mode).
     #[test]
     fn uses_only_wgl4_block_glyphs() {
         for line in logo_lines().into_iter().chain(lockup_lines(Color::White)) {
@@ -340,34 +343,37 @@ mod tests {
                 let ch = span.content.chars().next().unwrap();
                 assert!(
                     matches!(ch, '█' | '▀' | '▄' | ' '),
-                    "неожиданный глиф {ch:?}"
+                    "unexpected glyph {ch:?}"
                 );
             }
         }
     }
 
-    /// Шрифт вордмарка целостен: слово то самое, у каждой буквы прямоугольная
-    /// матрица и есть хоть один пиксель (иначе буква «пропала» бы молча).
+    /// The wordmark font is intact: the word is correct, every letter has a rectangular
+    /// matrix and at least one pixel (otherwise a letter would "disappear" silently).
     #[test]
     fn wordmark_font_is_well_formed() {
         let word: String = WORDMARK.iter().map(|(c, _)| *c).collect();
         assert_eq!(word, "mindfork");
         for (ch, rows) in WORDMARK {
             let w = rows[0].len();
-            assert!(w > 0, "буква {ch:?} нулевой ширины");
+            assert!(w > 0, "letter {ch:?} has zero width");
             for row in rows {
-                assert_eq!(row.len(), w, "у буквы {ch:?} строки разной ширины");
+                assert_eq!(row.len(), w, "letter {ch:?} has rows of differing width");
                 assert!(
                     row.bytes().all(|b| b == b'#' || b == b'.' || b == b' '),
-                    "у буквы {ch:?} посторонний символ в матрице"
+                    "letter {ch:?} has a stray character in its matrix"
                 );
             }
-            assert!(rows.iter().any(|r| r.contains('#')), "буква {ch:?} пустая");
+            assert!(
+                rows.iter().any(|r| r.contains('#')),
+                "letter {ch:?} is empty"
+            );
         }
     }
 
-    /// Слово рисуется в объявленный размер, а `mind`/`fork` — разными цветами
-    /// («mind» темозависим, «fork» — фирменный акцент).
+    /// The word draws at its declared size, and `mind`/`fork` — in different colors
+    /// ("mind" is theme-dependent, "fork" — the fixed brand accent).
     #[test]
     fn wordmark_has_expected_size_and_split() {
         const MIND: Color = Color::Rgb(0xe4, 0xe4, 0xe7);
@@ -377,35 +383,35 @@ mod tests {
         for line in &lines {
             assert_eq!(line.spans.len(), WORDMARK_COLS as usize);
         }
-        // Ширина слова = сумма букв + разрядка между ними.
+        // The word's width = the sum of letters + the spacing between them.
         let letters: u16 = WORDMARK.iter().map(|(_, r)| r[0].len() as u16).sum();
         assert_eq!(
             WORDMARK_COLS,
             letters + WORDMARK_TRACKING * (WORDMARK.len() as u16 - 1)
         );
-        // «fork» начинается там, где кончается «mind» с его разрядкой.
+        // "fork" starts right where "mind" ends, including its trailing spacing.
         let mind_cols: usize = WORDMARK
             .iter()
             .take(MIND_LETTERS)
             .map(|(_, r)| r[0].len() + WORDMARK_TRACKING as usize)
             .sum();
-        let row = &lines[1]; // строка x-высоты: чернила есть у всех букв
+        let row = &lines[1]; // the x-height row: every letter has ink there
         assert!(
             row.spans[..mind_cols]
                 .iter()
                 .all(|s| s.style.fg != Some(ORANGE)),
-            "«mind» не должен быть акцентным"
+            "\"mind\" must not be the accent color"
         );
         assert!(
             row.spans[mind_cols..]
                 .iter()
                 .any(|s| s.style.fg == Some(ORANGE)),
-            "«fork» рисуется фирменным акцентом"
+            "\"fork\" is drawn with the fixed brand accent"
         );
     }
 
-    /// Лockup — это глиф слева и слово справа: первые `LOGO_COLS` колонок совпадают
-    /// с самостоятельным глифом байт-в-байт, слово не наезжает на него.
+    /// A lockup is the glyph on the left and the word on the right: the first `LOGO_COLS`
+    /// columns match a standalone glyph byte-for-byte, the word doesn't overlap it.
     #[test]
     fn lockup_places_wordmark_right_of_glyph() {
         let logo = logo_lines();
@@ -415,7 +421,7 @@ mod tests {
             assert_eq!(
                 with_word.spans[..LOGO_COLS as usize],
                 glyph.spans[..],
-                "строка {row}: глиф изменился"
+                "row {row}: the glyph changed"
             );
             let width: usize = with_word
                 .spans
@@ -427,7 +433,7 @@ mod tests {
             assert_eq!(
                 has_word,
                 width > LOGO_COLS as usize,
-                "строка {row}: слово там, где его не ждали (или наоборот)"
+                "row {row}: the word is where it wasn't expected (or vice versa)"
             );
         }
         assert_eq!(LOCKUP_COLS, LOGO_COLS + LOCKUP_GAP + WORDMARK_COLS);

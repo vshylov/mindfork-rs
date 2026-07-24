@@ -1,10 +1,12 @@
-//! Заметки — note_revise / note_supersede / note_merge (правка/замещение/слияние). Часть модуля [`super`]; разбито из монолита
-//! notes.rs (см. docs/history/refactoring-god-objects.md, этап 4).
+//! Notes — note_revise / note_supersede / note_merge (edit/replace/merge). Part of
+//! the [`super`] module; split out of the notes.rs monolith (see
+//! docs/history/refactoring-god-objects.md, stage 4).
 
 use super::*;
 
-/// `note_revise` — переписывает существующую заметку на месте (ревизия). Ядро
-/// интеграции: новое замещает старое, а не копится рядом почти-дублем.
+/// `note_revise` — rewrites an existing note in place (a revision). The core of
+/// integration: the new content replaces the old rather than piling up as a
+/// near-duplicate.
 pub struct NoteRevise;
 
 #[async_trait::async_trait]
@@ -59,7 +61,7 @@ impl Tool for NoteRevise {
                     .tf("notes.result.not_found", &[("id", &uuid.to_string())]),
             ));
         }
-        // Переэмбеддинг (best-effort): семантический поиск должен видеть новое содержимое.
+        // Re-embedding (best-effort): semantic search must see the new content.
         if let Ok(vecs) = ctx.embedder.embed(vec![content.clone()]).await
             && let Some(emb) = vecs.into_iter().next()
         {
@@ -71,10 +73,10 @@ impl Tool for NoteRevise {
         let mut msg = ctx
             .loc
             .tf("tool.note_revise.result.done", &[("id", &uuid.to_string())]);
-        // Предупреждение целостности графа: правка на месте не трогает связи, но если
-        // изменился СМЫСЛ, входящие рёбра (напр. contradicts) могут стать неверными —
-        // для смысловой переработки честнее note_supersede (сохранит замещённую
-        // версию, к которой относились связи).
+        // Graph-integrity warning: an in-place edit doesn't touch links, but if the
+        // MEANING changed, incoming edges (e.g. contradicts) may become wrong — for
+        // a semantic rewrite, note_supersede is more honest (it preserves the
+        // superseded version the links refer to).
         if let Ok(links) = ctx.storage.db().note_link_count(ctx.profile_id, uuid)
             && links > 0
         {
@@ -88,7 +90,7 @@ impl Tool for NoteRevise {
     }
 }
 
-/// `note_supersede` — замещает заметку новой версией («шрам» сохраняется).
+/// `note_supersede` — replaces a note with a new version (the "scar" is preserved).
 pub struct NoteSupersede;
 
 #[async_trait::async_trait]
@@ -132,8 +134,9 @@ impl Tool for NoteSupersede {
                     .tf("notes.result.not_found", &[("id", &old_id.to_string())]),
             ));
         }
-        // Новая версия наследует теги замещаемой (в т.ч. @self — иначе self-заметка
-        // при замещении «выпала» бы в пользовательскую выдачу).
+        // The new version inherits the superseded note's tags (including @self —
+        // otherwise a self-note would "fall out" into user-facing output on
+        // replacement).
         let tags = ctx
             .storage
             .db()
@@ -154,7 +157,7 @@ impl Tool for NoteSupersede {
     }
 }
 
-/// `note_merge` — сводит несколько заметок в одну (исходные замещаются).
+/// `note_merge` — folds several notes into one (the originals are superseded).
 pub struct NoteMerge;
 
 #[async_trait::async_trait]
@@ -209,8 +212,8 @@ impl Tool for NoteMerge {
         if active.len() < 2 {
             anyhow::bail!(ctx.loc.t("tool.note_merge.err.min_two"));
         }
-        // Объединённая заметка наследует union тегов исходных (в т.ч. @self —
-        // слияние self-заметок остаётся self-заметкой, скрытой из recall).
+        // The merged note inherits the union of the sources' tags (including @self
+        // — merging self-notes stays a self-note, hidden from recall).
         let mut tags: Vec<String> = Vec::new();
         for old in &active {
             if let Ok(Some(n)) = ctx.storage.db().note_get(ctx.profile_id, *old) {
@@ -226,7 +229,7 @@ impl Tool for NoteMerge {
             ctx.storage
                 .db()
                 .note_supersede_mark(ctx.profile_id, *old, new_id)?;
-            // Связи исходных заметок переносим на объединённую — граф не осиротеет.
+            // Move the sources' links onto the merged note — the graph doesn't get orphaned.
             ctx.storage
                 .db()
                 .note_links_retarget(ctx.profile_id, *old, new_id)?;

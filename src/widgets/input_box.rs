@@ -1,10 +1,10 @@
-//! Собственный многострочный редактор ввода (см. ADR 0001: `tui-textarea`
-//! несовместим с ratatui 0.30, а свой виджет даёт контроль над `Shift+Enter`,
-//! скроллом и — позже — подсветкой ошибок спелл-чека). См. spec §11.5.
+//! An own multiline input editor (see ADR 0001: `tui-textarea` is incompatible
+//! with ratatui 0.30, and an own widget gives control over `Shift+Enter`,
+//! scrolling, and — later — spellcheck-error highlighting). See spec §11.5.
 //!
-//! Хранит строки как `Vec<Vec<char>>`: индекс курсора — это индекс символа,
-//! без забот о границах UTF-8. Политику «`Enter` отправляет / `Shift+Enter`
-//! переносит» решает вызывающий слой; виджет занимается только редактированием.
+//! Stores lines as `Vec<Vec<char>>`: the cursor index is a character index, no
+//! worrying about UTF-8 boundaries. The calling layer decides the policy
+//! "`Enter` sends / `Shift+Enter` breaks the line"; the widget only edits.
 
 use ratatui::Frame;
 use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
@@ -18,25 +18,25 @@ use crate::shared::theme::Palette;
 use crate::shared::ui::render_scrollbar;
 use crate::shared::wrap;
 
-/// Ширина колонки приглашения `❯ ` (в колонках) перед текстом ввода.
+/// Width of the `❯ ` prompt column (in columns) before the input text.
 const PROMPT_W: u16 = 2;
 
-/// Один визуальный ряд: `(логическая строка, начало, конец)` в индексах символов
-/// строки (с учётом переноса по ширине). См. [`InputBox::visual_rows`].
+/// One visual row: `(logical line, start, end)` in the line's character indices
+/// (accounting for width-based wrapping). See [`InputBox::visual_rows`].
 type VisualRow = (usize, usize, usize);
 
-/// Кэш визуальных рядов: `(ширина, ревизия содержимого, ряды)`. См.
+/// Cache of visual rows: `(width, content revision, rows)`. See
 /// [`InputBox::rows_cache`].
 type RowCache = Option<(usize, u64, Vec<VisualRow>)>;
 
-/// Потолок глубины стека отмены (единиц). Самые старые вытесняются.
+/// Ceiling on the undo-stack depth (units). The oldest ones get evicted.
 const UNDO_CAP: usize = 200;
 
-/// Символ маскированного режима (ввод секрета). Ширина — 1 колонка (WGL4-безопасен,
-/// в режиме совместимости со старым терминалом отдельной замены не требует).
+/// Masked-mode character (a secret input). Width — 1 column (WGL4-safe, needs no
+/// separate substitution in old-terminal compatibility mode).
 const MASK_CHAR: char = '•';
 
-/// Снимок содержимого для отмены/повтора: строки + позиция курсора. См.
+/// A content snapshot for undo/redo: lines + cursor position. See
 /// [`InputBox::record_undo`], docs/history/input-selection-undo-mouse.md §C.
 #[derive(Clone)]
 struct Snapshot {
@@ -45,90 +45,93 @@ struct Snapshot {
     col: usize,
 }
 
-/// Класс правки для коалесинга отмены: подряд идущие правки одного класса (кроме
-/// `Structural`) сливаются в одну единицу отмены; смена класса, навигация или
-/// структурная правка начинают новую. См. [`InputBox::record_undo`].
+/// Edit class for undo coalescing: consecutive edits of the same class (except
+/// `Structural`) merge into one undo unit; a class change, navigation, or a
+/// structural edit starts a new one. See [`InputBox::record_undo`].
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum EditKind {
-    /// Набор символов (коалесится; разрыв на пробеле — word-granular отмена).
+    /// Typing characters (coalesces; a break on whitespace — word-granular undo).
     Insert,
-    /// Удаление (`Backspace`/`Delete`/слово) — коалесится.
+    /// Deletion (`Backspace`/`Delete`/word) — coalesces.
     Delete,
-    /// Структурная правка (перевод строки, вставка, замена диапазона/выделения,
-    /// очистка `Ctrl+K`) — всегда отдельная единица отмены.
+    /// A structural edit (a line break, insertion, replacing a range/selection,
+    /// `Ctrl+K` clearing) — always its own undo unit.
     Structural,
 }
 
-/// Многострочное поле ввода с курсором.
+/// A multiline input field with a cursor.
 pub struct InputBox {
-    /// Логические строки (символы). Всегда непусто (минимум одна строка).
+    /// Logical lines (characters). Always non-empty (at least one line).
     lines: Vec<Vec<char>>,
-    /// Строка курсора.
+    /// Cursor row.
     row: usize,
-    /// Столбец курсора (индекс символа в строке; может равняться длине строки).
+    /// Cursor column (a character index into the row; may equal the row's length).
     col: usize,
-    /// Первая видимая строка (вертикальный скролл).
+    /// First visible row (vertical scroll).
     scroll: usize,
-    /// Однострочный режим: значение не переносится по словам, а **скроллится
-    /// горизонтально**; `↑/↓` и перевод строки отключены; `Home/End` — к началу/
-    /// концу логической строки. Для редактируемых полей настроек, где значение
-    /// логически одна строка (URL, путь, число). По умолчанию выключен —
-    /// чат-ввод многострочный. См. spec §11.6.
+    /// Single-line mode: the value doesn't word-wrap, it **scrolls
+    /// horizontally**; `↑/↓` and line breaks are disabled; `Home/End` — to the
+    /// start/end of the logical line. For editable settings fields where the
+    /// value is logically one line (a URL, a path, a number). Off by default —
+    /// chat input stays multiline. See spec §11.6.
     single_line: bool,
-    /// Маскированный режим (ввод секрета: API-ключ): каждый символ рисуется как
-    /// [`MASK_CHAR`], а [`Self::selected_text`] не отдаёт содержимое наружу.
-    /// Включение переводит поле в однострочный режим (секрет — одна строка) и
-    /// гарантирует, что маска не обойдётся многострочным путём отрисовки.
-    /// Спелл-чек к такому полю не применяется (звёздочки — не слова).
-    /// См. [`Self::set_mask`], spec §11.6.
+    /// Masked mode (a secret input: an API key): every character renders as
+    /// [`MASK_CHAR`], and [`Self::selected_text`] doesn't hand the content out.
+    /// Enabling it switches the field to single-line mode (a secret is one line)
+    /// and guarantees the mask can't be bypassed via the multiline render path.
+    /// Spellcheck doesn't apply to such a field (asterisks aren't words).
+    /// See [`Self::set_mask`], spec §11.6.
     mask: bool,
-    /// Горизонтальный скролл в колонках (только однострочный режим): первая видимая
-    /// колонка. Держит курсор в видимой области по аналогии с вертикальным `scroll`.
+    /// Horizontal scroll in columns (single-line mode only): the first visible
+    /// column. Keeps the cursor in the visible area, mirroring vertical `scroll`.
     hscroll: usize,
-    /// Ширина внутренней области последней отрисовки (в колонках). Нужна навигации
-    /// `↑/↓`, чтобы ходить по **визуальным** рядам перенесённой строки, а не по
-    /// логическим строкам (перенос считается только при рендере). `0` — рендера ещё
-    /// не было: тогда `↑/↓` падают на логический переход. См. [`Self::move_up`].
+    /// Width of the inner area from the last render (in columns). Needed by
+    /// `↑/↓` navigation to walk **visual** rows of a wrapped line, not logical
+    /// lines (wrapping is only computed at render time). `0` — no render yet:
+    /// then `↑/↓` fall back to a logical transition. See [`Self::move_up`].
     last_width: usize,
-    /// «Целевая» визуальная колонка серии `↑/↓` (в колонках). Запоминается при первом
-    /// вертикальном переходе и держится, пока курсор не сдвинут иначе — тогда серия
-    /// `↑/↓` через короткие ряды сохраняет исходную колонку (как в больших редакторах).
-    /// Любое горизонтальное движение/правка сбрасывает в `None`. См. [`Self::move_up`].
+    /// The "goal" visual column of an `↑/↓` run (in columns). Remembered on the
+    /// first vertical move and held while the cursor isn't moved otherwise — so a
+    /// run of `↑/↓` through short rows keeps the original column (as in large
+    /// editors). Any horizontal move/edit resets it to `None`. See [`Self::move_up`].
     goal_col: Option<usize>,
-    /// Диапазоны слов с ошибками орфографии по логическим строкам (индекс строки
-    /// → отсортированные непересекающиеся `[start, end)` в символах). Заполняет
-    /// экран из спелл-чекера; виджет лишь подчёркивает. См. spec §11.5.
+    /// Spelling-error word ranges by logical line (line index → sorted
+    /// non-overlapping `[start, end)` in characters). Filled by the screen from
+    /// the spellchecker; the widget only underlines. See spec §11.5.
     misspelled: Vec<Vec<(usize, usize)>>,
-    /// Стек отмены: снимки содержимого **до** правки (с коалесингом по классу правки,
-    /// см. [`Self::record_undo`]). `Ctrl+Z` восстанавливает верхний. Потолок [`UNDO_CAP`].
+    /// Undo stack: content snapshots **before** the edit (coalesced by edit class,
+    /// see [`Self::record_undo`]). `Ctrl+Z` restores the top one. Ceiling [`UNDO_CAP`].
     undo: Vec<Snapshot>,
-    /// Стек повтора: снимки, снятые с `undo` при отмене; чистится любой новой правкой.
-    /// `Ctrl+Y` восстанавливает верхний.
+    /// Redo stack: snapshots popped from `undo` on an undo; cleared by any new
+    /// edit. `Ctrl+Y` restores the top one.
     redo: Vec<Snapshot>,
-    /// Класс последней правки — для коалесинга единиц отмены. Сбрасывается навигацией/
-    /// выделением/отменой (тогда следующая правка начинает новую единицу). См.
+    /// The last edit's class — for coalescing undo units. Reset by navigation/
+    /// selection/undo (then the next edit starts a new unit). See
     /// [`Self::record_undo`].
     last_edit_kind: Option<EditKind>,
-    /// Счётчик ревизии содержимого: инкрементируется при любой правке `lines`
-    /// ([`Self::touch`]). Вместе с шириной — ключ кэша визуальных рядов: если ревизия
-    /// и ширина не изменились, перенос не пересчитывается.
+    /// Content-revision counter: incremented on any edit to `lines`
+    /// ([`Self::touch`]). Together with the width — the visual-row cache key: if
+    /// the revision and width haven't changed, wrapping isn't recomputed.
     revision: u64,
-    /// Кэш визуальных рядов `(ширина, ревизия, ряды)`. Перенос (`visual_rows`, O(n)
-    /// по символам) за кадр нужен 2–3 раза (высота через [`Self::content_rows`], сам
-    /// [`Self::render`], навигация `↑/↓`), а меняется лишь при правке или смене ширины.
-    /// Инвалидируется по `(width, revision)`. См. [`Self::rows_cached`].
+    /// Cache of visual rows `(width, revision, rows)`. Wrapping (`visual_rows`,
+    /// O(n) over characters) is needed 2-3 times per frame (height via
+    /// [`Self::content_rows`], [`Self::render`] itself, `↑/↓` navigation), but
+    /// only changes on an edit or a width change. Invalidated by
+    /// `(width, revision)`. See [`Self::rows_cached`].
     rows_cache: RowCache,
-    /// Якорь выделения `(строка, столбец)` в индексах символов. `Some` — есть активное
-    /// выделение `[anchor, cursor]` (нормализуется при использовании: начало = меньшая
-    /// из позиций в лексикографическом порядке `(строка, столбец)`). `None` — выделения
-    /// нет; курсор — существующие `(row, col)`. Движение с `Shift` ставит якорь и
-    /// растит выделение, обычное движение — снимает; любая правка содержимого снимает
-    /// (через [`Self::touch`]). См. [`Self::selection_span`], docs/history/input-selection-undo-mouse.md.
+    /// Selection anchor `(row, column)` in character indices. `Some` — an active
+    /// selection `[anchor, cursor]` exists (normalized on use: the start = the
+    /// smaller position in lexicographic `(row, column)` order). `None` — no
+    /// selection; the cursor is the existing `(row, col)`. Moving with `Shift`
+    /// sets the anchor and grows the selection, a plain move clears it; any
+    /// content edit clears it (via [`Self::touch`]). See [`Self::selection_span`],
+    /// docs/history/input-selection-undo-mouse.md.
     anchor: Option<(usize, usize)>,
-    /// Внутренняя область текста последней отрисовки (после рамки и колонки `❯`).
-    /// Нужна маппингу клика мыши (экранные координаты → позиция в тексте): клик/драг
-    /// левой кнопкой ставит курсор / растит выделение (при захвате мыши `Ctrl+W`).
-    /// `None` до первого рендера. См. [`Self::place_cursor_at`], этап D плана.
+    /// The text's inner area from the last render (after the border and the `❯`
+    /// column). Needed by mouse-click mapping (screen coordinates → a text
+    /// position): a left click/drag places the cursor / grows the selection
+    /// (with mouse capture `Ctrl+W`). `None` before the first render. See
+    /// [`Self::place_cursor_at`], track stage D.
     last_area: Option<Rect>,
 }
 
@@ -138,45 +141,47 @@ impl Default for InputBox {
     }
 }
 
-/// Итог обработки клавиши полем ввода ([`InputBox::on_key`]): различает **правку
-/// содержимого** и одно лишь **движение курсора/скролла**. Вызывающий по нему решает,
-/// помечать ли ввод «грязным» (сохранение черновика + перепроверка орфографии).
-/// Раньше `on_key` возвращал `bool` («обработана/нет»), и любое движение курсора зря
-/// поднимало дебаунс орфографии и слало `SetDraft` на диск. См. spec §11.5.
+/// Outcome of the input box handling a key press ([`InputBox::on_key`]):
+/// distinguishes **editing content** from a mere **cursor/scroll move**. The
+/// caller uses it to decide whether to mark the input "dirty" (saving the
+/// draft and rechecking spellcheck). Previously `on_key` returned a `bool`
+/// ("handled or not"), and any cursor move needlessly raised the spellcheck
+/// debounce and sent `SetDraft` to disk. See spec §11.5.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum KeyOutcome {
-    /// Содержимое изменено.
+    /// Content changed.
     Edited,
-    /// Курсор/скролл сдвинут, содержимое не менялось.
+    /// Cursor/scroll moved, content unchanged.
     Moved,
-    /// Клавиша не обработана (вызывающий трактует её дальше).
+    /// The key wasn't handled (the caller decides what to do with it).
     Ignored,
 }
 
 impl KeyOutcome {
-    /// Клавиша обработана виджетом (вызывающий не трактует её дальше). Пока нужен
-    /// только тестам — продакшн-вызовы ветвятся по [`Self::edited`]; оставлен как
-    /// парный к нему элемент публичного API виджета.
+    /// The key was handled by the widget (the caller doesn't process it
+    /// further). Currently only tests need this — production call sites branch
+    /// on [`Self::edited`]; kept as its counterpart in the widget's public API.
     #[allow(dead_code)]
     pub fn handled(self) -> bool {
         !matches!(self, KeyOutcome::Ignored)
     }
 
-    /// Правка изменила содержимое (нужны пометка «грязного» ввода / перепроверка
-    /// орфографии); движение курсора и необработанная клавиша — нет.
+    /// The edit changed content (needs a "dirty input" mark / a spellcheck
+    /// recheck); a cursor move and an unhandled key don't.
     pub fn edited(self) -> bool {
         matches!(self, KeyOutcome::Edited)
     }
 }
 
-/// Параметры отрисовки поля ввода — бандл вместо шести позиционных аргументов
-/// (прецедент — `StatusModel`, SOLID-этап 4a). `title` — заголовок рамки; `focused`
-/// ставит курсор и (при пустом поле) прячет плейсхолдер; `command` красит весь текст
-/// цветом `warning` и глушит подчёркивания орфографии (ввод распознан как команда
-/// `/rag …`); `placeholder` — серый текст пустого **не** сфокусированного поля.
-/// Раньше плейсхолдер был зашит («введите сообщение…») прямо в generic-виджет —
-/// семантически чужой для полей настроек/переименования/поиска (их спасало лишь то,
-/// что они всегда `focused`, и плейсхолдер не рисовался). См. п.12 аудита, spec §11.5.
+/// Input-box render parameters — a bundle instead of six positional arguments
+/// (a precedent — `StatusModel`, SOLID stage 4a). `title` — the border's title;
+/// `focused` places the cursor and (on an empty field) hides the placeholder;
+/// `command` colors the whole text `warning` and mutes spellcheck underlines
+/// (the input is recognized as a `/rag …` command); `placeholder` — gray text on
+/// an empty, **un**focused field. The placeholder used to be hardcoded ("type a
+/// message…") straight into the generic widget — semantically foreign for
+/// settings/rename/search fields (they were only saved by always being
+/// `focused`, so the placeholder never rendered). See audit item 12, spec §11.5.
 pub struct RenderOpts<'a> {
     pub title: &'a str,
     pub focused: bool,
@@ -185,9 +190,10 @@ pub struct RenderOpts<'a> {
 }
 
 impl<'a> RenderOpts<'a> {
-    /// Сфокусированное поле без плейсхолдера и командной подсветки — типовой случай
-    /// модальных полей (переименование чата, редактор настроек/«модели себя», поиск):
-    /// они всегда `focused`, команд не распознают, а плейсхолдер им семантически чужой.
+    /// A focused field with no placeholder or command highlighting — the typical
+    /// case for modal fields (chat rename, the settings/"self-model" editor,
+    /// search): they're always `focused`, don't recognize commands, and a
+    /// placeholder is semantically foreign to them.
     pub fn focused(title: &'a str) -> Self {
         Self {
             title,
@@ -221,12 +227,13 @@ impl InputBox {
         }
     }
 
-    /// Включает однострочный режим (горизонтальный скролл вместо переноса; `↑/↓` и
-    /// перевод строки отключены). Обычно вызывается **до** [`Self::set_text`], но
-    /// инвариант «одна логическая строка» держится и при включении на уже
-    /// многострочном содержимом: строки схлопываются в одну через пробел, курсор
-    /// клампится. Иначе [`Self::render_single_line`] взял бы `lines[0]`, а `col` мог
-    /// указывать за её длину — паника на срезе. См. поле [`Self::single_line`].
+    /// Enables single-line mode (horizontal scroll instead of wrapping; `↑/↓` and
+    /// a line break are disabled). Usually called **before** [`Self::set_text`],
+    /// but the "one logical line" invariant holds even when enabling it on
+    /// already-multiline content: the lines collapse into one via a space, the
+    /// cursor is clamped. Otherwise [`Self::render_single_line`] would take
+    /// `lines[0]`, and `col` could point past its length — a panic on the slice.
+    /// See field [`Self::single_line`].
     pub fn set_single_line(&mut self, on: bool) {
         self.single_line = on;
         if on && self.lines.len() > 1 {
@@ -247,11 +254,11 @@ impl InputBox {
         }
     }
 
-    /// Включает маскированный режим (ввод секрета: API-ключ в настройках): символы
-    /// рисуются как `•`, [`Self::selected_text`] пуст (секрет не утекает копированием).
-    /// Заодно включает однострочный режим — иначе многострочный путь отрисовки показал
-    /// бы содержимое открытым. Правка/навигация/вставка работают как обычно.
-    /// См. поле [`Self::mask`], spec §11.6.
+    /// Enables masked mode (a secret input: an API key in settings): characters
+    /// render as `•`, [`Self::selected_text`] is empty (a secret can't leak via
+    /// copying). Also enables single-line mode — otherwise the multiline render
+    /// path would show the content in the open. Editing/navigation/paste work as
+    /// usual. See field [`Self::mask`], spec §11.6.
     pub fn set_mask(&mut self, on: bool) {
         self.mask = on;
         if on {
@@ -259,14 +266,14 @@ impl InputBox {
         }
     }
 
-    /// Маскирован ли ввод (режим секрета). Потребители — тесты (проверка, что поле
-    /// ключа открылось маскированным); в продакшн-путях маска только выставляется.
+    /// Is the input masked (secret mode). Consumers — tests (checking the key
+    /// field opened masked); in production paths the mask is only ever set.
     #[allow(dead_code)]
     pub fn is_masked(&self) -> bool {
         self.mask
     }
 
-    /// Текст поля (строки через `\n`).
+    /// The field's text (lines joined by `\n`).
     pub fn text(&self) -> String {
         self.lines
             .iter()
@@ -275,15 +282,16 @@ impl InputBox {
             .join("\n")
     }
 
-    /// Пусто ли поле (одна пустая строка).
+    /// Is the field empty (one empty line).
     pub fn is_empty(&self) -> bool {
         self.lines.len() == 1 && self.lines[0].is_empty()
     }
 
-    /// Первый непробельный символ значения (по логическим строкам), если есть. Дешёвая
-    /// проверка «похоже на команду» без аллокации всего текста: вызывающий слой сперва
-    /// смотрит на `Some('/')` и лишь тогда парсит полный [`Self::text`]. Останавливается
-    /// на первом непробельном символе. См. `ChatScreen::input_is_command`.
+    /// The value's first non-whitespace character (over logical lines), if any.
+    /// A cheap "looks like a command" check with no allocation of the whole
+    /// text: the calling layer first looks for `Some('/')` and only then parses
+    /// the full [`Self::text`]. Stops at the first non-whitespace character. See
+    /// `ChatScreen::input_is_command`.
     pub fn first_non_whitespace(&self) -> Option<char> {
         self.lines
             .iter()
@@ -292,37 +300,40 @@ impl InputBox {
             .find(|c| !c.is_whitespace())
     }
 
-    /// Есть ли в поле символ, удовлетворяющий предикату. Потоково, без сборки
-    /// `text()` — зовётся на каждую правку (см. `ChatScreen::mark_input_changed`).
-    /// Предикат передаёт вызывающий, поэтому виджет не знает про верхние слои (FSD).
+    /// Does the field have a character matching the predicate. Streaming, no
+    /// `text()` build — called on every edit (see
+    /// `ChatScreen::mark_input_changed`). The caller passes the predicate, so
+    /// the widget doesn't know about upper layers (FSD).
     pub fn any_char(&self, pred: impl Fn(char) -> bool) -> bool {
         self.lines.iter().flat_map(|l| l.iter()).copied().any(pred)
     }
 
-    /// Число логических строк. Высоту поля теперь считает [`Self::visual_line_count`]
-    /// (учитывает перенос); метод оставлен как естественный аккомпанемент и для тестов.
+    /// Number of logical lines. Field height is now computed by
+    /// [`Self::visual_line_count`] (accounts for wrapping); the method is kept
+    /// as a natural companion and for tests.
     #[allow(dead_code)]
     pub fn line_count(&self) -> usize {
         self.lines.len()
     }
 
-    /// Число визуальных рядов при ширине `width` (с учётом переноса). Производный
-    /// путь высоты поля теперь использует [`Self::content_rows`] (он сам вычитает
-    /// рамку и колонку приглашения); метод оставлен для тестов как тонкая обёртка
-    /// над [`Self::visual_rows`].
+    /// Number of visual rows at width `width` (accounting for wrapping). The
+    /// production field-height path now uses [`Self::content_rows`] (it
+    /// subtracts the border and prompt column itself); the method is kept for
+    /// tests as a thin wrapper over [`Self::visual_rows`].
     #[cfg(test)]
     pub fn visual_line_count(&self, width: usize) -> usize {
         self.visual_rows(width).len()
     }
 
-    /// Число визуальных рядов содержимого при отрисовке в область **внешней** ширины
-    /// `area_width` (вместе с рамкой). Вычитает рамку (2) и колонку приглашения
-    /// ([`PROMPT_W`]) — ровно ту же ширину текста, что использует [`Self::render`].
-    /// Слой выше считает высоту поля по этому методу, чтобы она совпадала с реальным
-    /// переносом: иначе расчёт высоты по «ширине минус рамка» завышал бы доступную
-    /// ширину на [`PROMPT_W`] и поле не росло бы на один-два символа за границей
-    /// переноса (курсор прижимался к краю, см. spec §11.5). В однострочном режиме
-    /// перенос отключён — всегда один ряд.
+    /// Number of visual content rows when rendering into an area of **outer**
+    /// width `area_width` (including the border). Subtracts the border (2) and
+    /// the prompt column ([`PROMPT_W`]) — the exact same text width
+    /// [`Self::render`] uses. The layer above computes the field's height via
+    /// this method so it matches the real wrapping: otherwise computing height
+    /// from "width minus border" would overstate the available width by
+    /// [`PROMPT_W`], and the field wouldn't grow by one-two characters past the
+    /// wrap boundary (the cursor would pin to the edge, see spec §11.5). In
+    /// single-line mode wrapping is off — always one row.
     pub fn content_rows(&mut self, area_width: u16) -> usize {
         if self.single_line {
             return 1;
@@ -331,9 +342,10 @@ impl InputBox {
         self.rows_cached(text_w).len()
     }
 
-    /// Очищает поле **программно** (отправка сообщения, сброс). В отличие от
-    /// [`Self::clear_undoable`] — **чистит историю отмены** (после отправки/загрузки
-    /// чужого текста `Ctrl+Z` не должен воскрешать прежний контекст).
+    /// Clears the field **programmatically** (sending a message, a reset).
+    /// Unlike [`Self::clear_undoable`] — **clears the undo history** (after
+    /// sending/loading someone else's text, `Ctrl+Z` shouldn't resurrect the
+    /// previous context).
     pub fn clear(&mut self) {
         self.lines = vec![Vec::new()];
         self.row = 0;
@@ -348,15 +360,16 @@ impl InputBox {
         self.touch();
     }
 
-    /// Хоткей «удалить весь текст ввода» (`Ctrl+K`, spec §11.5). Записывает снимок в
-    /// историю отмены и очищает содержимое, **не** трогая историю — так `Ctrl+Z`
-    /// возвращает текст (общая модель отмены; прежняя toggle-семантика удалена, см.
-    /// docs/history/input-selection-undo-mouse.md §C). Пустое поле — no-op.
+    /// Hotkey "delete all input text" (`Ctrl+K`, spec §11.5). Records a snapshot
+    /// into the undo history and clears the content, **without** touching the
+    /// history — so `Ctrl+Z` brings the text back (a shared undo model; the
+    /// previous toggle semantics were removed, see
+    /// docs/history/input-selection-undo-mouse.md §C). An empty field — a no-op.
     pub fn clear_undoable(&mut self) {
         if self.is_empty() {
             return;
         }
-        self.record_undo(EditKind::Structural); // снимок непустого содержимого
+        self.record_undo(EditKind::Structural); // a snapshot of non-empty content
         self.lines = vec![Vec::new()];
         self.row = 0;
         self.col = 0;
@@ -364,31 +377,32 @@ impl InputBox {
         self.hscroll = 0;
         self.goal_col = None;
         self.misspelled.clear();
-        self.touch(); // ревизия + снятие выделения (историю НЕ чистим)
+        self.touch(); // revision + clear selection (does NOT clear history)
     }
 
-    /// Текст по логическим строкам (для спелл-чека построчно).
+    /// Text by logical lines (for line-by-line spellcheck).
     pub fn line_strings(&self) -> Vec<String> {
         self.lines.iter().map(|l| l.iter().collect()).collect()
     }
 
-    /// Позиция курсора `(строка, столбец)` в индексах символов.
+    /// Cursor position `(row, column)` in character indices.
     pub fn cursor(&self) -> (usize, usize) {
         (self.row, self.col)
     }
 
-    /// Устанавливает диапазоны ошибок орфографии (по строкам). См. [`Self::misspelled`].
+    /// Sets the spelling-error ranges (by line). See [`Self::misspelled`].
     pub fn set_misspelled(&mut self, ranges: Vec<Vec<(usize, usize)>>) {
         self.misspelled = ranges;
     }
 
-    /// Синхронизирует диапазоны ошибок строки `row` с правкой её содержимого: в
-    /// позиции `at` удалено `removed` и вставлено `inserted` символов. Диапазоны
-    /// целиком слева от правки не трогаются; целиком справа — сдвигаются на дельту;
-    /// пересекающие изменённый участок — сбрасываются (слово изменилось — пусть
-    /// перепроверка его переоценит). Так подчёркивания держатся на месте между
-    /// дебаунс-перепроверками, не «съезжая» на соседние слова (иначе стилем ошибки
-    /// подсвечивался бы уже другой текст). См. spec §11.5.
+    /// Syncs line `row`'s error ranges with an edit to its content: `removed`
+    /// characters were deleted and `inserted` were inserted at position `at`.
+    /// Ranges wholly to the left of the edit aren't touched; wholly to the right
+    /// — shift by the delta; ones intersecting the changed span — are reset (the
+    /// word changed — let the recheck re-evaluate it). This keeps underlines in
+    /// place between debounced rechecks, not "drifting" onto neighboring words
+    /// (otherwise the error style would highlight different text). See spec
+    /// §11.5.
     fn edit_misspelled(&mut self, row: usize, at: usize, removed: usize, inserted: usize) {
         let Some(ranges) = self.misspelled.get_mut(row) else {
             return;
@@ -397,43 +411,44 @@ impl InputBox {
         let delta = inserted as isize - removed as isize;
         ranges.retain_mut(|(s, e)| {
             if *e <= at {
-                true // целиком слева — без изменений
+                true // wholly to the left — unchanged
             } else if *s >= end {
-                *s = (*s as isize + delta).max(0) as usize; // целиком справа — сдвиг
+                *s = (*s as isize + delta).max(0) as usize; // wholly to the right — shift
                 *e = (*e as isize + delta).max(0) as usize;
                 *e > *s
             } else {
-                false // пересекает правку — сбросить
+                false // intersects the edit — reset
             }
         });
     }
 
-    /// Нет ли отмеченных ошибок орфографии (для тестов вышестоящего слоя).
+    /// Are there no flagged spelling errors (for the layer above's tests).
     #[cfg(test)]
     pub fn misspelled_is_empty(&self) -> bool {
         self.misspelled.iter().all(|r| r.is_empty())
     }
 
-    /// Диапазоны ошибок орфографии строки `row` (для тестов синхронизации правок).
+    /// Spelling-error ranges of line `row` (for edit-sync tests).
     #[cfg(test)]
     fn misspelled_ranges_for_test(&self, row: usize) -> Vec<(usize, usize)> {
         self.misspelled.get(row).cloned().unwrap_or_default()
     }
 
-    /// Текущий горизонтальный скролл (в колонках) — для теста выравнивания по границе
-    /// символа в однострочном режиме.
+    /// Current horizontal scroll (in columns) — for the character-boundary
+    /// alignment test in single-line mode.
     #[cfg(test)]
     fn hscroll_for_test(&self) -> usize {
         self.hscroll
     }
 
-    /// Заменяет диапазон символов `[start, end)` в строке `row` на `replacement`
-    /// и ставит курсор за вставленным текстом (для применения подсказки).
+    /// Replaces the character range `[start, end)` in line `row` with
+    /// `replacement` and places the cursor after the inserted text (for
+    /// applying a suggestion).
     pub fn replace_range(&mut self, row: usize, start: usize, end: usize, replacement: &str) {
         if row >= self.lines.len() {
             return;
         }
-        self.record_undo(EditKind::Structural); // до мутации (замена — отдельная единица)
+        self.record_undo(EditKind::Structural); // before the mutation (a replace is its own unit)
         let line = &mut self.lines[row];
         let end = end.min(line.len());
         let start = start.min(end);
@@ -447,10 +462,11 @@ impl InputBox {
         self.touch();
     }
 
-    /// Заполняет поле текстом, ставит курсор в конец (для правки по месту, M3+).
+    /// Fills the field with text, places the cursor at the end (for in-place
+    /// editing, M3+).
     pub fn set_text(&mut self, text: &str) {
-        // В однострочном режиме сохраняем инвариант «одна логическая строка»:
-        // переводы строк схлопываем в пробел.
+        // In single-line mode we keep the "one logical line" invariant: line
+        // breaks collapse into a space.
         let owned;
         let text = if self.single_line && text.contains('\n') {
             owned = text.replace('\n', " ");
@@ -468,28 +484,29 @@ impl InputBox {
         self.scroll = 0;
         self.hscroll = 0;
         self.goal_col = None;
-        // Программная замена текста (загрузка черновика чужого чата, restore_input) —
-        // чистим историю отмены: `Ctrl+Z` не должен воскрешать чужой контекст.
+        // A programmatic text replacement (loading someone else's chat draft,
+        // restore_input) — clears the undo history: `Ctrl+Z` shouldn't resurrect
+        // someone else's context.
         self.undo.clear();
         self.redo.clear();
         self.last_edit_kind = None;
-        // Старые диапазоны ошибок относились к прежнему тексту — сбрасываем (иначе до
-        // ближайшей перепроверки подчёркивания рисовались бы на новом содержимом).
+        // The old error ranges referred to the previous text — reset (otherwise
+        // underlines would be drawn on the new content until the next recheck).
         self.misspelled.clear();
         self.touch();
     }
 
-    // ---------- редактирование ----------
+    // ---------- editing ----------
 
     pub fn insert_char(&mut self, c: char) {
         self.record_undo(EditKind::Insert);
-        self.remove_selection(); // ввод поверх выделения заменяет его (undo уже записан)
+        self.remove_selection(); // typing over a selection replaces it (undo already recorded)
         self.lines[self.row].insert(self.col, c);
         self.edit_misspelled(self.row, self.col, 0, 1);
         self.col += 1;
         self.goal_col = None;
         self.touch();
-        // Пробел завершает единицу отмены (word-granular): следующий набор — новая единица.
+        // A space ends the undo unit (word-granular): the next run of typing is a new unit.
         if c.is_whitespace() {
             self.last_edit_kind = None;
         }
@@ -497,14 +514,14 @@ impl InputBox {
 
     pub fn insert_newline(&mut self) {
         if self.single_line {
-            return; // в однострочном режиме перевод строки запрещён
+            return; // a line break is forbidden in single-line mode
         }
         self.record_undo(EditKind::Structural);
-        self.remove_selection(); // перевод строки поверх выделения заменяет его
+        self.remove_selection(); // a line break over a selection replaces it
         let tail = self.lines[self.row].split_off(self.col);
         self.lines.insert(self.row + 1, tail);
-        // Синхронизируем подчёркивания: текущую строку сбрасываем (её хвост уехал на
-        // новую), для новой строки вставляем пустой набор диапазонов.
+        // Sync underlines: reset the current line (its tail moved to the new
+        // one), insert an empty range set for the new line.
         if self.row < self.misspelled.len() {
             self.misspelled[self.row].clear();
             self.misspelled.insert(self.row + 1, Vec::new());
@@ -515,17 +532,17 @@ impl InputBox {
         self.touch();
     }
 
-    /// Вставляет произвольный текст в позицию курсора (вставка из буфера обмена).
-    /// Переводы строк (`\n`) разбивают текущую логическую строку на новые; `\r`
-    /// нормализуются (`\r\n`/`\r` → `\n`), `\t` разворачивается в пробелы. Курсор
-    /// встаёт в конец вставленного. Один проход без посимвольной петли — поэтому
-    /// большая вставка не тормозит (см. bracketed paste, spec §11.5).
+    /// Inserts arbitrary text at the cursor position (a clipboard paste). Line
+    /// breaks (`\n`) split the current logical line into new ones; `\r` is
+    /// normalized (`\r\n`/`\r` → `\n`), `\t` expands into spaces. The cursor
+    /// lands at the end of what was inserted. One pass, no per-character loop —
+    /// so a large paste doesn't lag (see bracketed paste, spec §11.5).
     pub fn insert_str(&mut self, text: &str) {
         self.record_undo(EditKind::Structural);
-        self.remove_selection(); // вставка поверх выделения заменяет его
-        // Хвост текущей строки после курсора — приклеим к последней вставленной.
+        self.remove_selection(); // pasting over a selection replaces it
+        // The current line's tail after the cursor — glue it to the last inserted line.
         let tail: Vec<char> = self.lines[self.row].split_off(self.col);
-        // В однострочном режиме переводы строк превращаем в пробелы (одна строка).
+        // In single-line mode turn line breaks into spaces (one line).
         let normalized = normalize_paste(text);
         let normalized = if self.single_line {
             normalized.replace('\n', " ")
@@ -537,7 +554,7 @@ impl InputBox {
             if first {
                 first = false;
             } else {
-                // Новый перевод строки: заводим следующую логическую строку.
+                // A new line break: start the next logical line.
                 self.row += 1;
                 self.lines.insert(self.row, Vec::new());
             }
@@ -546,33 +563,33 @@ impl InputBox {
         self.col = self.lines[self.row].len();
         self.lines[self.row].extend(tail);
         self.goal_col = None;
-        // Вставка (буфер обмена) меняет строки произвольно; проще сбросить все
-        // подчёркивания — перепроверка (её всегда запускает `mark_input_changed`
-        // после вставки) их перестроит. См. spec §11.5.
+        // A paste (clipboard) changes lines arbitrarily; simpler to reset all
+        // underlines — a recheck (always triggered by `mark_input_changed` after
+        // a paste) rebuilds them. See spec §11.5.
         self.misspelled.clear();
         self.touch();
     }
 
     pub fn backspace(&mut self) {
-        // Нечего удалять (пустой префикс без выделения) — не пишем единицу отмены.
+        // Nothing to delete (an empty prefix, no selection) — don't record an undo unit.
         if !self.has_selection() && self.col == 0 && self.row == 0 {
             return;
         }
         self.record_undo(EditKind::Delete);
         if self.remove_selection() {
-            return; // при выделении Backspace удаляет его целиком
+            return; // with a selection, Backspace deletes it whole
         }
         self.goal_col = None;
         if self.col > 0 {
-            // Удаляем кластер целиком (`❤️`/`👍🏽` — несколько скаляров), а не один
-            // скаляр — иначе остаётся осиротевший вариатор/модификатор. См. spec §11.5.
+            // Delete the whole cluster (`❤️`/`👍🏽` — several scalars), not one
+            // scalar — otherwise an orphaned selector/modifier remains. See spec §11.5.
             let start = wrap::prev_boundary(&self.lines[self.row], self.col);
             self.lines[self.row].drain(start..self.col);
             self.edit_misspelled(self.row, start, self.col - start, 0);
             self.col = start;
             self.touch();
         } else if self.row > 0 {
-            // склейка с предыдущей строкой
+            // join with the previous line
             let current = self.lines.remove(self.row);
             self.join_misspelled_into_prev(self.row);
             self.row -= 1;
@@ -583,7 +600,7 @@ impl InputBox {
     }
 
     pub fn delete(&mut self) {
-        // Нечего удалять (курсор в самом конце без выделения) — не пишем единицу отмены.
+        // Nothing to delete (cursor at the very end, no selection) — don't record an undo unit.
         if !self.has_selection()
             && self.col >= self.lines[self.row].len()
             && self.row + 1 >= self.lines.len()
@@ -592,11 +609,11 @@ impl InputBox {
         }
         self.record_undo(EditKind::Delete);
         if self.remove_selection() {
-            return; // при выделении Delete удаляет его целиком
+            return; // with a selection, Delete deletes it whole
         }
         self.goal_col = None;
         if self.col < self.lines[self.row].len() {
-            // Удаляем кластер целиком (зеркально `backspace`), а не один скаляр.
+            // Delete the whole cluster (mirrors `backspace`), not one scalar.
             let end = wrap::next_boundary(&self.lines[self.row], self.col);
             self.lines[self.row].drain(self.col..end);
             self.edit_misspelled(self.row, self.col, end - self.col, 0);
@@ -609,11 +626,12 @@ impl InputBox {
         }
     }
 
-    /// Синхронизирует подчёркивания при склейке строк: строка `removed` уходит в
-    /// предыдущую. Диапазоны обеих строк относятся к прежним координатам, поэтому
-    /// проще сбросить их у остающейся строки (её содержимое меняется) и убрать запись
-    /// уехавшей — перепроверка перестроит. `removed` — индекс строки, которую убрали
-    /// из [`Self::lines`]; предыдущая строка — `removed - 1`.
+    /// Syncs underlines when lines are joined: line `removed` moves into the
+    /// previous one. Both lines' ranges refer to the old coordinates, so it's
+    /// simpler to reset the remaining line's ranges (its content changes) and
+    /// drop the record of the one that moved — a recheck rebuilds them.
+    /// `removed` — the index of the line removed from [`Self::lines`]; the
+    /// previous line is `removed - 1`.
     fn join_misspelled_into_prev(&mut self, removed: usize) {
         if removed < self.misspelled.len() {
             self.misspelled.remove(removed);
@@ -625,17 +643,18 @@ impl InputBox {
         }
     }
 
-    // ---------- выделение ----------
+    // ---------- selection ----------
 
-    /// Есть ли непустое выделение (якорь стоит и не совпал с курсором). Нужен
-    /// консьюмерам для копирования/вырезания (docs/history/input-selection-undo-mouse.md §B).
+    /// Is there a non-empty selection (the anchor is set and doesn't coincide
+    /// with the cursor). Needed by consumers for copy/cut
+    /// (docs/history/input-selection-undo-mouse.md §B).
     pub fn has_selection(&self) -> bool {
         matches!(self.anchor, Some(a) if a != (self.row, self.col))
     }
 
-    /// Нормализованный диапазон выделения `(начало, конец)` в лексикографическом
-    /// порядке `(строка, столбец)`. `None`, если выделения нет (якорь снят или совпал
-    /// с курсором).
+    /// The normalized selection range `(start, end)` in lexicographic
+    /// `(row, column)` order. `None` if there's no selection (the anchor is
+    /// unset or coincides with the cursor).
     fn selection_span(&self) -> Option<((usize, usize), (usize, usize))> {
         let a = self.anchor?;
         let c = (self.row, self.col);
@@ -645,12 +664,12 @@ impl InputBox {
         Some(if a <= c { (a, c) } else { (c, a) })
     }
 
-    /// Текст выделения (строки через `\n`), либо `None`. Для копирования/вырезания
-    /// (консьюмеры, docs/history/input-selection-undo-mouse.md §B).
+    /// The selection's text (lines joined by `\n`), or `None`. For copy/cut
+    /// (consumers, docs/history/input-selection-undo-mouse.md §B).
     ///
-    /// В маскированном режиме (ввод секрета) всегда `None`: содержимое не должно
-    /// утекать копированием в буфер обмена. Удаление выделения при этом работает —
-    /// оно идёт через `remove_selection`, а не через этот метод.
+    /// In masked mode (a secret input) always `None`: the content mustn't leak
+    /// via copying to the clipboard. Deleting a selection still works — it goes
+    /// through `remove_selection`, not through this method.
     pub fn selected_text(&self) -> Option<String> {
         if self.mask {
             return None;
@@ -671,22 +690,23 @@ impl InputBox {
         Some(out)
     }
 
-    /// Ставит якорь в текущий курсор, если его ещё нет (перед `Shift`-навигацией —
-    /// начало выделения). Уже поставленный якорь не сдвигает (выделение растёт от него).
+    /// Sets the anchor to the current cursor if it isn't already set (before
+    /// `Shift`-navigation — the start of a selection). An already-set anchor
+    /// doesn't move (the selection grows from it).
     fn set_anchor_if_none(&mut self) {
         if self.anchor.is_none() {
             self.anchor = Some((self.row, self.col));
         }
     }
 
-    /// Снимает выделение (обычная навигация без `Shift`; консьюмеры — после
-    /// копирования по `Ctrl+C`).
+    /// Clears the selection (a plain move with no `Shift`; consumers — after
+    /// copying via `Ctrl+C`).
     pub fn clear_selection(&mut self) {
         self.anchor = None;
     }
 
-    /// Выделяет весь текст (`Ctrl+A`): якорь — начало, курсор — конец. Сбрасывает
-    /// коалесинг отмены (правка после выделения — новая единица).
+    /// Selects all text (`Ctrl+A`): anchor — the start, cursor — the end.
+    /// Resets undo coalescing (an edit after a selection is a new unit).
     fn select_all(&mut self) {
         self.anchor = Some((0, 0));
         self.row = self.lines.len() - 1;
@@ -695,10 +715,11 @@ impl InputBox {
         self.last_edit_kind = None;
     }
 
-    /// Удаляет выделение как **самостоятельное** действие (`Ctrl+X` вырезать): пишет
-    /// снимок в историю отмены, затем удаляет. Возвращает, было ли что удалять.
-    /// Внутренние мутаторы (`insert_char`/`backspace`/…) удаляют выделение через
-    /// [`Self::remove_selection`] (без записи — они уже записали свой снимок).
+    /// Deletes the selection as a **standalone** action (`Ctrl+X` cut): records
+    /// a snapshot into the undo history, then deletes. Returns whether there
+    /// was anything to delete. Internal mutators (`insert_char`/`backspace`/…)
+    /// delete the selection via [`Self::remove_selection`] (with no recording —
+    /// they already recorded their own snapshot).
     pub fn delete_selection(&mut self) -> bool {
         if !self.has_selection() {
             return false;
@@ -707,16 +728,17 @@ impl InputBox {
         self.remove_selection()
     }
 
-    /// Удаляет выделенный текст, ставит курсор в его начало, снимает выделение.
-    /// Возвращает, было ли что удалять. Многострочное выделение склеивает строки;
-    /// подчёркивания орфографии синхронизируются (как при удалении/склейке, п.5).
-    /// **Не пишет** снимок отмены — это делает вызывающий (см. [`Self::delete_selection`]).
+    /// Deletes the selected text, places the cursor at its start, clears the
+    /// selection. Returns whether there was anything to delete. A multiline
+    /// selection joins lines; spelling underlines are synced (as on
+    /// deletion/joining, item 5). **Doesn't record** an undo snapshot — the
+    /// caller does that (see [`Self::delete_selection`]).
     fn remove_selection(&mut self) -> bool {
         let Some(((sr, sc), (er, ec))) = self.selection_span() else {
             return false;
         };
-        // Синхронизация `misspelled`: одна строка — сдвиг/сброс диапазонов; несколько —
-        // убрать записи промежуточных/последней строк и сбросить запись первой.
+        // Syncing `misspelled`: one line — shift/reset ranges; several — drop
+        // the records of the middle/last lines and reset the first one's record.
         if sr == er {
             self.edit_misspelled(sr, sc, ec - sc, 0);
         } else {
@@ -729,7 +751,7 @@ impl InputBox {
                 m.clear();
             }
         }
-        // Склейка: `lines[sr][..sc]` + `lines[er][ec..]`, промежуточные строки убрать.
+        // Join: `lines[sr][..sc]` + `lines[er][ec..]`, drop the middle lines.
         let tail: Vec<char> = self.lines[er][ec..].to_vec();
         self.lines[sr].truncate(sc);
         self.lines[sr].extend(tail);
@@ -737,20 +759,22 @@ impl InputBox {
         self.row = sr;
         self.col = sc;
         self.goal_col = None;
-        self.touch(); // снимает anchor + инвалидирует кэш
+        self.touch(); // clears anchor + invalidates the cache
         true
     }
 
-    // ---------- мышь ----------
+    // ---------- mouse ----------
 
-    /// Ставит курсор по экранным координатам клика мыши `(mx, my)` (при захвате мыши
-    /// `Ctrl+W`). Возвращает, попал ли клик во внутреннюю область текста последней
-    /// отрисовки ([`Self::last_area`]). Курсор снапится к границе графемного кластера
-    /// (клик по широкому/эмодзи-глифу не садит его в середину, п.1); клик ниже
-    /// последнего ряда → конец текста, правее конца ряда → конец ряда. До первого
-    /// рендера (`last_area == None`) или клик вне области — no-op (`false`). Выделения
-    /// не трогает — им управляют [`Self::mouse_press`]/[`Self::mouse_drag`]. Сбрасывает
-    /// коалесинг отмены (как навигация). См. этап D плана.
+    /// Places the cursor at the mouse click's screen coordinates `(mx, my)`
+    /// (with mouse capture `Ctrl+W`). Returns whether the click landed inside
+    /// the text's inner area from the last render ([`Self::last_area`]). The
+    /// cursor snaps to a grapheme-cluster boundary (a click on a wide/emoji
+    /// glyph doesn't place it in the middle, item 1); a click below the last row
+    /// → the end of the text, past the row's end → the end of the row. Before
+    /// the first render (`last_area == None`) or a click outside the area — a
+    /// no-op (`false`). Doesn't touch the selection — that's managed by
+    /// [`Self::mouse_press`]/[`Self::mouse_drag`]. Resets undo coalescing (like
+    /// navigation). See track stage D.
     fn place_cursor_at(&mut self, mx: u16, my: u16) -> bool {
         let Some(area) = self.last_area else {
             return false;
@@ -759,10 +783,10 @@ impl InputBox {
             return false;
         }
         self.goal_col = None;
-        self.last_edit_kind = None; // клик рвёт коалесинг отмены (как навигация)
+        self.last_edit_kind = None; // a click breaks undo coalescing (like navigation)
         let vcol = (mx - area.x) as usize;
         if self.single_line {
-            // Однострочный: колонка от левого края + горизонтальный скролл, снап к границе.
+            // Single-line: the column from the left edge + horizontal scroll, snap to boundary.
             let line = &self.lines[0];
             let col = col_at_width(line, self.hscroll + vcol).min(line.len());
             self.col = wrap::snap_boundary(line, col);
@@ -771,22 +795,23 @@ impl InputBox {
         let vrow = (my - area.y) as usize + self.scroll;
         let vrows = self.rows_cached(self.last_width).to_vec();
         if vrow >= vrows.len() {
-            // Ниже последнего ряда → конец текста.
+            // Below the last row → the end of the text.
             self.row = self.lines.len() - 1;
             self.col = self.lines[self.row].len();
             return true;
         }
         let (li, start, end) = vrows[vrow];
-        // Внутри ряда: логический столбец по накопленной ширине; правее конца ряда
-        // `col_for_visual` даёт конец ряда (с откатом на мягком переносе) + снап.
+        // Inside the row: the logical column by cumulative width; past the row's
+        // end `col_for_visual` gives the row's end (rolling back on a soft wrap) + a snap.
         self.col = col_for_visual(&self.lines[li], start, end, vcol, is_soft(&vrows, vrow));
         self.row = li;
         true
     }
 
-    /// Ставит курсор по нажатию левой кнопки мыши и **начинает** выделение от этой
-    /// точки (пустое — курсор перемещён, видимого выделения ещё нет; драг растит его).
-    /// Возвращает, попал ли клик в область текста. См. [`Self::place_cursor_at`].
+    /// Places the cursor on a left mouse button press and **starts** a
+    /// selection from that point (empty — the cursor moved, no visible
+    /// selection yet; dragging grows it). Returns whether the click landed in
+    /// the text area. See [`Self::place_cursor_at`].
     pub fn mouse_press(&mut self, mx: u16, my: u16) -> bool {
         if self.place_cursor_at(mx, my) {
             self.anchor = Some((self.row, self.col));
@@ -796,22 +821,23 @@ impl InputBox {
         }
     }
 
-    /// Двигает курсор по драгу мыши, **сохраняя** якорь — выделение растёт от точки
-    /// нажатия до текущей. Возвращает, попал ли драг в область текста.
+    /// Moves the cursor by a mouse drag, **keeping** the anchor — the selection
+    /// grows from the press point to the current one. Returns whether the drag
+    /// landed in the text area.
     pub fn mouse_drag(&mut self, mx: u16, my: u16) -> bool {
         self.place_cursor_at(mx, my)
     }
 
-    /// Внутренняя область текста последней отрисовки (для тестов проводки мыши —
-    /// вычислить экранные координаты клика по полю).
+    /// The text's inner area from the last render (for mouse-handling tests —
+    /// computing a click's screen coordinates against the field).
     #[cfg(test)]
     pub(crate) fn last_area_for_test(&self) -> Option<Rect> {
         self.last_area
     }
 
-    // ---------- отмена / повтор ----------
+    // ---------- undo / redo ----------
 
-    /// Снимок текущего содержимого (строки + курсор) для истории отмены.
+    /// A snapshot of the current content (lines + cursor) for the undo history.
     fn snapshot(&self) -> Snapshot {
         Snapshot {
             lines: self.lines.clone(),
@@ -820,11 +846,12 @@ impl InputBox {
         }
     }
 
-    /// Запоминает снимок **до** правки для отмены (вызывается в начале мутатора).
-    /// Коалесинг: подряд идущие правки одного класса (кроме `Structural`) сливаются в
-    /// одну единицу — снимок толкается лишь при смене класса / после навигации/выделения
-    /// (там `last_edit_kind` сброшен) / для `Structural`. Любая правка чистит стек
-    /// повтора. Потолок [`UNDO_CAP`] — старейшие вытесняются. См. §C плана.
+    /// Records a snapshot **before** the edit for undo (called at the start of
+    /// a mutator). Coalescing: consecutive edits of the same class (except
+    /// `Structural`) merge into one unit — a snapshot is only pushed on a class
+    /// change / after navigation/selection (where `last_edit_kind` was reset) /
+    /// for `Structural`. Any edit clears the redo stack. Ceiling [`UNDO_CAP`] —
+    /// the oldest get evicted. See plan §C.
     fn record_undo(&mut self, kind: EditKind) {
         let coalesce = self.last_edit_kind == Some(kind) && kind != EditKind::Structural;
         if !coalesce {
@@ -837,8 +864,9 @@ impl InputBox {
         self.last_edit_kind = Some(kind);
     }
 
-    /// Восстанавливает содержимое из снимка (общее для отмены/повтора): строки+курсор,
-    /// снятие выделения/подсветки, инвалидация кэша. Историю отмены не трогает.
+    /// Restores content from a snapshot (shared by undo/redo): lines+cursor,
+    /// clearing the selection/highlighting, invalidating the cache. Doesn't
+    /// touch the undo history.
     fn restore(&mut self, snap: Snapshot) {
         self.lines = snap.lines;
         self.row = snap.row;
@@ -848,10 +876,10 @@ impl InputBox {
         self.goal_col = None;
         self.misspelled.clear();
         self.last_edit_kind = None;
-        self.touch(); // ревизия + снятие anchor
+        self.touch(); // revision + clearing the anchor
     }
 
-    /// Отменяет последнюю единицу правки (`Ctrl+Z`). Возвращает, была ли отмена.
+    /// Undoes the last edit unit (`Ctrl+Z`). Returns whether an undo happened.
     pub fn undo(&mut self) -> bool {
         let Some(prev) = self.undo.pop() else {
             return false;
@@ -861,7 +889,7 @@ impl InputBox {
         true
     }
 
-    /// Повторяет отменённую правку (`Ctrl+Y`). Возвращает, был ли повтор.
+    /// Redoes an undone edit (`Ctrl+Y`). Returns whether a redo happened.
     pub fn redo(&mut self) -> bool {
         let Some(next) = self.redo.pop() else {
             return false;
@@ -871,8 +899,9 @@ impl InputBox {
         true
     }
 
-    /// Диапазон выделения на визуальном ряду `[start, end)` логической строки `li` в
-    /// **row-local** координатах (для подсветки фона в рендере), либо `None`.
+    /// The selection range on visual row `[start, end)` of logical line `li` in
+    /// **row-local** coordinates (for background highlighting at render time),
+    /// or `None`.
     fn row_selection(&self, li: usize, start: usize, end: usize) -> Option<(usize, usize)> {
         let ((sr, sc), (er, ec)) = self.selection_span()?;
         if li < sr || li > er {
@@ -883,12 +912,12 @@ impl InputBox {
         (s < e).then(|| (s - start, e - start))
     }
 
-    // ---------- движение курсора ----------
+    // ---------- cursor movement ----------
 
     fn move_left(&mut self) {
         self.goal_col = None;
         if self.col > 0 {
-            // По графемному кластеру, а не по скаляру (см. `backspace`/spec §11.5).
+            // By grapheme cluster, not by scalar (see `backspace`/spec §11.5).
             self.col = wrap::prev_boundary(&self.lines[self.row], self.col);
         } else if self.row > 0 {
             self.row -= 1;
@@ -906,9 +935,10 @@ impl InputBox {
         }
     }
 
-    /// Влево на одно слово (`Ctrl+Left`): пропускает пробелы слева, затем символы
-    /// слова — курсор встаёт в начало слова. В начале логической строки переходит
-    /// в конец предыдущей (одно нажатие = одна граница, как в больших редакторах).
+    /// Left by one word (`Ctrl+Left`): skips whitespace to the left, then the
+    /// word's characters — the cursor lands at the word's start. At the start
+    /// of a logical line, moves to the end of the previous one (one press = one
+    /// boundary, as in large editors).
     fn move_word_left(&mut self) {
         self.goal_col = None;
         if self.col == 0 {
@@ -921,9 +951,9 @@ impl InputBox {
         self.col = self.word_left_col();
     }
 
-    /// Вправо на одно слово (`Ctrl+Right`): пропускает пробелы справа, затем символы
-    /// слова — курсор встаёт за концом слова. В конце логической строки переходит в
-    /// начало следующей.
+    /// Right by one word (`Ctrl+Right`): skips whitespace to the right, then the
+    /// word's characters — the cursor lands past the word's end. At the end of
+    /// a logical line, moves to the start of the next one.
     fn move_word_right(&mut self) {
         self.goal_col = None;
         if self.col >= self.lines[self.row].len() {
@@ -936,16 +966,17 @@ impl InputBox {
         self.col = self.word_right_col();
     }
 
-    /// Граница слова слева от курсора **в пределах текущей строки** (для пословного
-    /// движения и удаления): пропускает пробелы, затем символы слова. См.
-    /// [`Self::move_word_left`].
+    /// Word boundary to the left of the cursor **within the current line** (for
+    /// word-wise movement and deletion): skips whitespace, then the word's
+    /// characters. See [`Self::move_word_left`].
     ///
-    /// «Слово» здесь — по классу **пробел/не-пробел** (пунктуация — часть слова), это
-    /// **осознанно расходится** с сегментацией спелл-чека (`features/spellcheck/segment.rs`,
-    /// где пунктуация — отдельный класс, чтобы не тащить её в проверяемое слово).
-    /// Пословная навигация/удаление живут по правилам редактора, орфография — по своим;
-    /// сводить их не нужно (у больших редакторов пунктуация тоже отдельный класс — это
-    /// известное упрощение, не баг). См. п.14 аудита InputBox.
+    /// A "word" here is by the **whitespace/non-whitespace** class (punctuation
+    /// is part of the word) — this **deliberately diverges** from spellcheck
+    /// segmentation (`features/spellcheck/segment.rs`, where punctuation is a
+    /// separate class so it doesn't get dragged into the checked word). Word-wise
+    /// navigation/deletion live by editor rules, spelling by its own; no need to
+    /// reconcile them (large editors also treat punctuation as a separate class
+    /// — a known simplification, not a bug). See InputBox audit item 14.
     fn word_left_col(&self) -> usize {
         let line = &self.lines[self.row];
         let mut i = self.col;
@@ -958,8 +989,8 @@ impl InputBox {
         i
     }
 
-    /// Граница слова справа от курсора **в пределах текущей строки** (зеркально
-    /// [`Self::word_left_col`]).
+    /// Word boundary to the right of the cursor **within the current line**
+    /// (mirrors [`Self::word_left_col`]).
     fn word_right_col(&self) -> usize {
         let line = &self.lines[self.row];
         let mut i = self.col;
@@ -972,16 +1003,16 @@ impl InputBox {
         i
     }
 
-    /// Удаляет слово слева от курсора (`Ctrl+Backspace`). В начале строки склеивает
-    /// со строкой выше (как обычный `Backspace`).
+    /// Deletes the word to the left of the cursor (`Ctrl+Backspace`). At the
+    /// start of a line, joins with the line above (like a plain `Backspace`).
     fn delete_word_left(&mut self) {
         self.record_undo(EditKind::Delete);
         if self.remove_selection() {
-            return; // при выделении Ctrl+Backspace удаляет его целиком
+            return; // with a selection, Ctrl+Backspace deletes it whole
         }
         self.goal_col = None;
         if self.col == 0 {
-            self.backspace(); // record_undo(Delete) коалесится — доп. снимка нет
+            self.backspace(); // record_undo(Delete) coalesces — no extra snapshot
             return;
         }
         let start = self.word_left_col();
@@ -991,16 +1022,16 @@ impl InputBox {
         self.touch();
     }
 
-    /// Удаляет слово справа от курсора (`Ctrl+Delete`). В конце строки склеивает со
-    /// строкой ниже (как обычный `Delete`).
+    /// Deletes the word to the right of the cursor (`Ctrl+Delete`). At the end
+    /// of a line, joins with the line below (like a plain `Delete`).
     fn delete_word_right(&mut self) {
         self.record_undo(EditKind::Delete);
         if self.remove_selection() {
-            return; // при выделении Ctrl+Delete удаляет его целиком
+            return; // with a selection, Ctrl+Delete deletes it whole
         }
         self.goal_col = None;
         if self.col >= self.lines[self.row].len() {
-            self.delete(); // record_undo(Delete) коалесится — доп. снимка нет
+            self.delete(); // record_undo(Delete) coalesces — no extra snapshot
             return;
         }
         let end = self.word_right_col();
@@ -1009,26 +1040,27 @@ impl InputBox {
         self.touch();
     }
 
-    /// В самое начало текста (`Ctrl+Home`).
+    /// To the very start of the text (`Ctrl+Home`).
     fn move_doc_start(&mut self) {
         self.goal_col = None;
         self.row = 0;
         self.col = 0;
     }
 
-    /// В самый конец текста (`Ctrl+End`).
+    /// To the very end of the text (`Ctrl+End`).
     fn move_doc_end(&mut self) {
         self.goal_col = None;
         self.row = self.lines.len() - 1;
         self.col = self.lines[self.row].len();
     }
 
-    /// Вверх по **визуальному** ряду: если логическая строка перенесена, `↑` идёт на
-    /// предыдущий визуальный ряд той же строки, сохраняя колонку. Использует ширину
-    /// последней отрисовки; до первого рендера (`last_width == 0`) — логический переход.
+    /// Up by **visual** row: if the logical line is wrapped, `↑` goes to the
+    /// previous visual row of the same line, keeping the column. Uses the width
+    /// from the last render; before the first render (`last_width == 0`) — a
+    /// logical transition.
     fn move_up(&mut self) {
         if self.single_line {
-            return; // однострочное поле — `↑` не двигает курсор
+            return; // a single-line field — `↑` doesn't move the cursor
         }
         if self.last_width == 0 {
             self.goal_col = None;
@@ -1037,10 +1069,10 @@ impl InputBox {
         }
         let vrows = self.rows_cached(self.last_width).to_vec();
         let (vrow, vcol) = self.cursor_visual(&vrows);
-        // Первый шаг серии запоминает колонку; дальше держим её (goal-column).
+        // The first step of a run remembers the column; afterward we hold it (goal-column).
         let goal = *self.goal_col.get_or_insert(vcol);
         if vrow == 0 {
-            return; // уже верхний визуальный ряд (goal сохранён для обратного ↓)
+            return; // already the top visual row (goal is kept for the reverse ↓)
         }
         let (li, start, end) = vrows[vrow - 1];
         let col = col_for_visual(&self.lines[li], start, end, goal, is_soft(&vrows, vrow - 1));
@@ -1048,10 +1080,10 @@ impl InputBox {
         self.col = col;
     }
 
-    /// Вниз по **визуальному** ряду (зеркально [`Self::move_up`]).
+    /// Down by **visual** row (mirrors [`Self::move_up`]).
     fn move_down(&mut self) {
         if self.single_line {
-            return; // однострочное поле — `↓` не двигает курсор
+            return; // a single-line field — `↓` doesn't move the cursor
         }
         if self.last_width == 0 {
             self.goal_col = None;
@@ -1062,7 +1094,7 @@ impl InputBox {
         let (vrow, vcol) = self.cursor_visual(&vrows);
         let goal = *self.goal_col.get_or_insert(vcol);
         if vrow + 1 >= vrows.len() {
-            return; // уже нижний визуальный ряд
+            return; // already the bottom visual row
         }
         let (li, start, end) = vrows[vrow + 1];
         let col = col_for_visual(&self.lines[li], start, end, goal, is_soft(&vrows, vrow + 1));
@@ -1070,12 +1102,12 @@ impl InputBox {
         self.col = col;
     }
 
-    /// `Home` — в начало текущего **визуального** ряда (не всей логической строки).
-    /// До первого рендера — в начало логической строки.
+    /// `Home` — to the start of the current **visual** row (not the whole
+    /// logical line). Before the first render — to the start of the logical line.
     fn move_home(&mut self) {
         self.goal_col = None;
         if self.single_line {
-            self.col = 0; // однострочное поле — к началу значения
+            self.col = 0; // a single-line field — to the start of the value
             return;
         }
         if self.last_width == 0 {
@@ -1087,13 +1119,14 @@ impl InputBox {
         self.col = vrows[vrow].1;
     }
 
-    /// `End` — в конец текущего **визуального** ряда. На мягком переносе встаёт на
-    /// последнюю позицию этого ряда (не уезжает в начало следующего, см. `is_soft`).
-    /// До первого рендера — в конец логической строки.
+    /// `End` — to the end of the current **visual** row. On a soft wrap, lands
+    /// on the row's last position (doesn't slide into the start of the next
+    /// one, see `is_soft`). Before the first render — to the end of the logical
+    /// line.
     fn move_end(&mut self) {
         self.goal_col = None;
         if self.single_line {
-            self.col = self.lines[self.row].len(); // однострочное поле — к концу значения
+            self.col = self.lines[self.row].len(); // a single-line field — to the end of the value
             return;
         }
         if self.last_width == 0 {
@@ -1112,8 +1145,8 @@ impl InputBox {
         );
     }
 
-    /// Логический переход вверх/вниз (фолбэк до первого рендера, когда ширина и,
-    /// значит, перенос ещё неизвестны).
+    /// A logical up/down transition (a fallback before the first render, when
+    /// the width and hence the wrapping aren't known yet).
     fn move_up_logical(&mut self) {
         if self.row > 0 {
             self.row -= 1;
@@ -1128,30 +1161,32 @@ impl InputBox {
         }
     }
 
-    /// Обрабатывает клавишу редактирования. Возвращает [`KeyOutcome`]: `Edited`
-    /// (содержимое изменено), `Moved` (сдвинут курсор/выделение) или `Ignored` (клавиша
-    /// не обработана — вызывающий трактует её дальше). `Enter` НЕ обрабатывается
-    /// (политику отправки/переноса задаёт вызывающий слой). Различие `Edited`/`Moved`
-    /// нужно вызывающему, чтобы не помечать ввод «грязным» на голой навигации.
+    /// Handles an editing key press. Returns [`KeyOutcome`]: `Edited` (content
+    /// changed), `Moved` (cursor/selection shifted) or `Ignored` (the key wasn't
+    /// handled — the caller decides what to do with it). `Enter` is NOT handled
+    /// (the calling layer sets the send/break-line policy). The `Edited`/`Moved`
+    /// distinction is needed by the caller so bare navigation doesn't mark the
+    /// input "dirty".
     ///
-    /// **Выделение** (etape A, docs/history/input-selection-undo-mouse.md): `Shift`+навигация
-    /// растит выделение (ставит якорь), обычная навигация — снимает; `Ctrl+A` выделяет
-    /// всё; правка при активном выделении сперва удаляет его (ввод/`Backspace`/`Delete`
-    /// поверх выделения заменяют/удаляют его целиком). Копирование/вырезание —
-    /// side-effect вызывающего слоя (§B плана), виджет отдаёт [`Self::selected_text`].
+    /// **Selection** (stage A, docs/history/input-selection-undo-mouse.md):
+    /// `Shift`+navigation grows the selection (sets the anchor), plain
+    /// navigation — clears it; `Ctrl+A` selects everything; an edit with an
+    /// active selection first deletes it (typing/`Backspace`/`Delete` over a
+    /// selection replace/delete it whole). Copy/cut are a side effect of the
+    /// calling layer (plan §B), the widget hands out [`Self::selected_text`].
     pub fn on_key(&mut self, key: KeyEvent) -> KeyOutcome {
         if key.kind != KeyEventKind::Press {
             return KeyOutcome::Ignored;
         }
-        // Ctrl усиливает навигацию/удаление до уровня слова / всего текста
-        // (`Ctrl+←/→` — по словам, `Ctrl+Backspace/Delete` — удалить слово,
-        // `Ctrl+Home/End` — в начало/конец текста). См. spec §11.5.
+        // Ctrl upgrades navigation/deletion to word/whole-text level
+        // (`Ctrl+←/→` — by word, `Ctrl+Backspace/Delete` — delete a word,
+        // `Ctrl+Home/End` — to the start/end of the text). See spec §11.5.
         let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
         let shift = key.modifiers.contains(KeyModifiers::SHIFT);
 
-        // Ctrl-шорткаты редактора: выделить всё / отмена / повтор / очистка
-        // (раскладко-независимо через `physical_char`). Отмена/повтор возвращают
-        // `Edited`, только если реально что-то изменили (иначе `Moved` — no-op).
+        // Editor Ctrl shortcuts: select all / undo / redo / clear
+        // (layout-independent via `physical_char`). Undo/redo return `Edited`
+        // only if something actually changed (otherwise `Moved` — a no-op).
         if ctrl && let KeyCode::Char(c) = key.code {
             match keys::physical_char(c) {
                 'a' => {
@@ -1180,9 +1215,9 @@ impl InputBox {
             }
         }
 
-        // Навигация (в т.ч. `Ctrl`+слово / `Ctrl`+начало/конец): с `Shift` растим
-        // выделение (ставим якорь до движения), без — снимаем. Любая навигация/
-        // выделение завершает коалесинг отмены (правка после — новая единица).
+        // Navigation (incl. `Ctrl`+word / `Ctrl`+start/end): with `Shift` we grow
+        // the selection (set the anchor before moving), without — clear it. Any
+        // navigation/selection ends undo coalescing (a following edit is a new unit).
         if let Some(mv) = navigation(key.code, ctrl) {
             if shift {
                 self.set_anchor_if_none();
@@ -1194,8 +1229,9 @@ impl InputBox {
             return KeyOutcome::Moved;
         }
 
-        // Правка: замену/удаление выделения делают сами мутаторы (в начале —
-        // `delete_selection`), поэтому вставка/`Shift+Enter`/эмодзи тоже её уважают.
+        // Editing: replacing/deleting a selection is done by the mutators
+        // themselves (at the start — `delete_selection`), so paste/`Shift+Enter`/
+        // emoji respect it too.
         match key.code {
             KeyCode::Backspace if ctrl => {
                 self.delete_word_left();
@@ -1205,8 +1241,8 @@ impl InputBox {
                 self.delete_word_right();
                 KeyOutcome::Edited
             }
-            // Обычный ввод символа: Ctrl+символ не печатаем (это шорткат вышестоящего
-            // слоя), иначе в поле попал бы управляющий символ.
+            // Plain character input: don't type Ctrl+character (that's a shortcut
+            // for the layer above), otherwise a control character would land in the field.
             KeyCode::Char(c) if !ctrl => {
                 self.insert_char(c);
                 KeyOutcome::Edited
@@ -1223,11 +1259,12 @@ impl InputBox {
         }
     }
 
-    /// Рисует поле в `area` с рамкой и заголовком. Параметры — в [`RenderOpts`]
-    /// (заголовок, фокус, командная подсветка, плейсхолдер); палитра — отдельно (как
-    /// у `StatusModel`). При `focused` ставит курсор. При `command` весь текст
-    /// подсвечивается цветом `warning` (это команда вроде `/rag …`), а подчёркивания
-    /// орфографии не рисуются. См. spec §11.5.
+    /// Draws the field in `area` with a border and title. Parameters — in
+    /// [`RenderOpts`] (title, focus, command highlighting, placeholder); the
+    /// palette — separately (as with `StatusModel`). Places the cursor when
+    /// `focused`. When `command`, the whole text is highlighted `warning`
+    /// colored (it's a command like `/rag …`), and spelling underlines aren't
+    /// drawn. See spec §11.5.
     pub fn render(&mut self, frame: &mut Frame, area: Rect, opts: RenderOpts, palette: &Palette) {
         let RenderOpts {
             title,
@@ -1243,7 +1280,7 @@ impl InputBox {
         let full_inner = block.inner(area);
         frame.render_widget(&block, area);
 
-        // Колонка приглашения `❯` слева; текст рисуется правее.
+        // The `❯` prompt column on the left; text is drawn to its right.
         let prompt_style = if focused {
             Style::new().fg(palette.assistant)
         } else {
@@ -1262,17 +1299,17 @@ impl InputBox {
                 prompt_area,
             );
         }
-        // Внутренняя область под текст — без колонки приглашения.
+        // Inner text area — without the prompt column.
         let inner = Rect {
             x: full_inner.x + PROMPT_W,
             width: full_inner.width.saturating_sub(PROMPT_W),
             ..full_inner
         };
-        // Запоминаем для маппинга клика мыши (экран → позиция в тексте).
+        // Remember it for mouse-click mapping (screen → a text position).
         self.last_area = Some(inner);
 
-        // Маска идёт однострочным путём всегда — он единственный, где она применяется
-        // (страховка на случай, если поле включили маской при `single_line == false`).
+        // The mask always goes through the single-line path — it's the only one
+        // where it applies (a safety net in case the field was masked while `single_line == false`).
         if self.single_line || self.mask {
             self.render_single_line(frame, inner, focused, command, placeholder, palette);
             return;
@@ -1280,19 +1317,20 @@ impl InputBox {
 
         let view_w = inner.width.max(1) as usize;
         let visible_rows = inner.height.max(1) as usize;
-        // Запоминаем ширину для навигации `↑/↓` по визуальным рядам (см. `move_up`).
+        // Remember the width for `↑/↓` navigation over visual rows (see `move_up`).
         self.last_width = view_w;
 
-        // Визуальные ряды с учётом переноса; позиция курсора — через тот же перенос
-        // (единый источник истины, иначе курсор разъедется с текстом). Берём копию
-        // кэша: дальше мутируем `self` (scroll/курсор), поэтому заимствование держать
-        // нельзя, а memcpy готового результата дешевле повторного O(n)-переноса.
+        // Visual rows accounting for wrapping; the cursor position uses the same
+        // wrapping (a single source of truth, otherwise the cursor would diverge
+        // from the text). Take a copy of the cache: we go on to mutate `self`
+        // (scroll/cursor), so the borrow can't be held, and a memcpy of the
+        // ready result is cheaper than a repeated O(n) wrap.
         let vrows = self.rows_cached(view_w).to_vec();
         let (cursor_row, cursor_col) = self.cursor_visual(&vrows);
         self.adjust_scroll(cursor_row, vrows.len(), visible_rows);
 
-        // В режиме команды весь текст красим в `warning` и не подчёркиваем ошибки;
-        // выделение (фон) показываем в любом режиме.
+        // In command mode the whole text is colored `warning` and errors aren't
+        // underlined; the selection (background) is shown in any mode.
         let base_fg = command.then_some(palette.warning);
         let lines: Vec<Line> = vrows
             .iter()
@@ -1319,9 +1357,9 @@ impl InputBox {
         };
         frame.render_widget(Paragraph::new(text), inner);
 
-        // Скроллбар на правой рамке — когда визуальных рядов больше, чем видно
-        // (поле выросло до потолка высоты и прокручивается). Цвет трека — как у
-        // рамки поля (она зависит от фокуса).
+        // A scrollbar on the right border — when there are more visual rows than
+        // fit (the field grew to its height ceiling and scrolls). Track color —
+        // same as the field's border (which depends on focus).
         render_scrollbar(
             frame,
             area.inner(Margin::new(0, 1)),
@@ -1335,16 +1373,17 @@ impl InputBox {
         if focused {
             let cursor_y = inner.y + (cursor_row.saturating_sub(self.scroll)) as u16;
             let cursor_x = inner.x + cursor_col as u16;
-            // не выходим за пределы внутренней области
+            // don't go past the inner area's bounds
             let x = cursor_x.min(inner.x + inner.width.saturating_sub(1));
             let y = cursor_y.min(inner.y + inner.height.saturating_sub(1));
             frame.set_cursor_position((x, y));
         }
     }
 
-    /// Рисует значение в однострочном режиме: без переноса, с горизонтальным
-    /// скроллом — курсор всегда виден, длинное значение «уезжает» влево, а не
-    /// заворачивается на невидимый ряд. `inner` — внутренняя область (уже без рамки).
+    /// Draws the value in single-line mode: no wrapping, with horizontal
+    /// scroll — the cursor is always visible, a long value "slides" left rather
+    /// than wrapping onto an invisible row. `inner` — the inner area (already
+    /// without the border).
     fn render_single_line(
         &mut self,
         frame: &mut Frame,
@@ -1356,10 +1395,11 @@ impl InputBox {
     ) {
         let view_w = inner.width.max(1) as usize;
         self.last_width = view_w;
-        // Маска подменяет символы **до** всех расчётов ширины: у `•` ширина 1, поэтому
-        // курсор и горизонтальный скролл считаются по тому, что реально видно (иначе
-        // широкий глиф в секрете — эмодзи из буфера — сдвинул бы курсор). Длина в
-        // символах совпадает с оригиналом, так что `col`/выделение остаются валидны.
+        // The mask substitutes characters **before** any width calculations:
+        // `•` has width 1, so the cursor and horizontal scroll are computed
+        // against what's actually visible (otherwise a wide glyph in a secret —
+        // an emoji from the clipboard — would offset the cursor). The character
+        // count matches the original, so `col`/selection remain valid.
         let masked: Vec<char>;
         let line: &[char] = if self.mask {
             masked = vec![MASK_CHAR; self.lines[0].len()];
@@ -1369,18 +1409,19 @@ impl InputBox {
         };
         let cursor_vw = wrap::display_width(&line[..self.col]);
 
-        // Горизонтальный скролл держит курсор в видимой области.
+        // Horizontal scroll keeps the cursor in the visible area.
         if cursor_vw < self.hscroll {
             self.hscroll = cursor_vw;
         } else if cursor_vw >= self.hscroll + view_w {
             self.hscroll = cursor_vw + 1 - view_w;
         }
-        // Выравниваем левый край скролла по границе символа. Без этого при широком
-        // глифе (CJK/эмодзи) слева срез мог начаться «в середине» символа, а `hscroll`
-        // (в колонках) не совпадал бы с реальной шириной скрытого префикса — курсор
-        // рисовался бы на колонку правее фактической позиции. `col_at_width` округляет
-        // старт вверх до границы, а `hscroll` приводим к ширине этого префикса
-        // (гарантированно `≤ cursor_vw` → курсор остаётся видимым, см. spec §11.6).
+        // Align the scroll's left edge to a character boundary. Without this, a
+        // wide glyph (CJK/emoji) on the left could make the slice start "in the
+        // middle" of a character, and `hscroll` (in columns) wouldn't match the
+        // real width of the hidden prefix — the cursor would be drawn a column
+        // to the right of its actual position. `col_at_width` rounds the start
+        // up to a boundary, and we bring `hscroll` to that prefix's width
+        // (guaranteed `≤ cursor_vw` → the cursor stays visible, see spec §11.6).
         let start = col_at_width(line, self.hscroll);
         self.hscroll = wrap::display_width(&line[..start]);
         let mut end = start;
@@ -1419,20 +1460,22 @@ impl InputBox {
         }
     }
 
-    /// Помечает содержимое изменённым — инвалидирует кэш визуальных рядов (следующий
-    /// [`Self::rows_cached`] увидит несовпадение ревизии) и **снимает выделение**
-    /// (после правки якорь указывал бы на устаревшие координаты). Зовётся всеми
-    /// мутаторами `lines`; навигация его НЕ зовёт (она сама ведёт `anchor`).
-    /// [`Self::delete_selection`] снимает `anchor` до `touch` — двойной сброс безвреден.
+    /// Marks the content as changed — invalidates the visual-row cache (the
+    /// next [`Self::rows_cached`] will see a revision mismatch) and **clears
+    /// the selection** (after an edit the anchor would point to stale
+    /// coordinates). Called by all `lines` mutators; navigation does NOT call
+    /// it (it manages `anchor` itself). [`Self::delete_selection`] clears
+    /// `anchor` before `touch` — a double reset is harmless.
     fn touch(&mut self) {
         self.revision = self.revision.wrapping_add(1);
         self.anchor = None;
     }
 
-    /// Визуальные ряды с кэшем по `(ширина, ревизия)` (см. [`Self::rows_cache`]).
-    /// Пересчитывает перенос только при смене ширины или содержимого; иначе отдаёт
-    /// заимствование в кэш. Потребители, которые дальше мутируют `self`, берут копию
-    /// (`.to_vec()` — дешёвый memcpy результата против O(n)-переноса).
+    /// Visual rows with a cache by `(width, revision)` (see
+    /// [`Self::rows_cache`]). Recomputes wrapping only on a width or content
+    /// change; otherwise hands out a borrow into the cache. Consumers that go
+    /// on to mutate `self` take a copy (`.to_vec()` — a cheap memcpy of the
+    /// result vs. an O(n) wrap).
     fn rows_cached(&mut self, width: usize) -> &[VisualRow] {
         let fresh =
             matches!(&self.rows_cache, Some((w, r, _)) if *w == width && *r == self.revision);
@@ -1440,13 +1483,13 @@ impl InputBox {
             let rows = self.visual_rows(width);
             self.rows_cache = Some((width, self.revision, rows));
         }
-        // Кэш только что заполнен/проверен — unwrap безопасен.
+        // The cache was just filled/checked — unwrap is safe.
         &self.rows_cache.as_ref().unwrap().2
     }
 
-    /// Визуальные ряды: для каждого — `(логическая строка, начало, конец)` в
-    /// индексах символов этой строки (с учётом переноса по ширине `width`). Чистый
-    /// пересчёт; кэшированный путь — [`Self::rows_cached`].
+    /// Visual rows: for each — `(logical line, start, end)` in that line's
+    /// character indices (accounting for wrapping at width `width`). A plain
+    /// recompute; the cached path is [`Self::rows_cached`].
     fn visual_rows(&self, width: usize) -> Vec<VisualRow> {
         let mut rows = Vec::new();
         for (li, chars) in self.lines.iter().enumerate() {
@@ -1457,11 +1500,11 @@ impl InputBox {
         rows
     }
 
-    /// Позиция курсора в визуальных координатах `(индекс ряда, столбец-колонки)`.
-    /// На мягком переносе (курсор в конце ряда, но не в конце логической строки)
-    /// курсор уходит на начало следующего ряда.
+    /// Cursor position in visual coordinates `(row index, column)`. On a soft
+    /// wrap (cursor at the end of a row, but not at the end of the logical
+    /// line) the cursor moves to the start of the next row.
     fn cursor_visual(&self, vrows: &[VisualRow]) -> (usize, usize) {
-        let mut last: Option<(usize, usize)> = None; // (индекс ряда, начало)
+        let mut last: Option<(usize, usize)> = None; // (row index, start)
         for (idx, &(li, start, end)) in vrows.iter().enumerate() {
             if li != self.row {
                 continue;
@@ -1472,7 +1515,7 @@ impl InputBox {
                 return (idx, col);
             }
         }
-        // курсор в самом конце логической строки — последний её ряд
+        // the cursor is at the very end of the logical line — its last row
         match last {
             Some((idx, start)) => (
                 idx,
@@ -1482,14 +1525,14 @@ impl InputBox {
         }
     }
 
-    /// Держит курсор в видимой области (вертикальный скролл по визуальным рядам).
+    /// Keeps the cursor in the visible area (vertical scroll over visual rows).
     fn adjust_scroll(&mut self, cursor_row: usize, total: usize, visible_rows: usize) {
         if cursor_row < self.scroll {
             self.scroll = cursor_row;
         } else if visible_rows > 0 && cursor_row >= self.scroll + visible_rows {
             self.scroll = cursor_row + 1 - visible_rows;
         }
-        // не оставляем пустоту снизу, если рядов стало меньше (удаление/перенос)
+        // don't leave empty space at the bottom if there are now fewer rows (deletion/rewrap)
         let max_scroll = total.saturating_sub(visible_rows);
         if self.scroll > max_scroll {
             self.scroll = max_scroll;
@@ -1497,11 +1540,11 @@ impl InputBox {
     }
 }
 
-/// Метод движения курсора для клавиши навигации (или `None`, если клавиша — не
-/// навигация). Выделено таблицей, чтобы логику выделения (`Shift` → якорь, обычное →
-/// снять) применить единообразно ко всем направлениям без дублирования веток. `Ctrl`
-/// усиливает `←/→` до слова, `Home/End` — до границ текста; `Ctrl+↑/↓` не задан
-/// (падает в `None` → `Ignored`, как раньше).
+/// The cursor-movement method for a navigation key (or `None` if the key isn't
+/// navigation). Factored into a table so selection logic (`Shift` → anchor,
+/// plain → clear) applies uniformly to every direction with no duplicated
+/// branches. `Ctrl` upgrades `←/→` to word level, `Home/End` — to text
+/// boundaries; `Ctrl+↑/↓` isn't defined (falls into `None` → `Ignored`, as before).
 fn navigation(code: KeyCode, ctrl: bool) -> Option<fn(&mut InputBox)> {
     Some(match (code, ctrl) {
         (KeyCode::Left, true) => InputBox::move_word_left,
@@ -1518,18 +1561,19 @@ fn navigation(code: KeyCode, ctrl: bool) -> Option<fn(&mut InputBox)> {
     })
 }
 
-/// Нормализует текст из буфера обмена перед вставкой: `\r\n`/`\r` → `\n`
-/// (единый перевод строки), `\t` → пробелы. Прочие управляющие символы оставляем
-/// как есть (терминал/рендер их отфильтруют).
+/// Normalizes clipboard text before pasting: `\r\n`/`\r` → `\n` (a single
+/// line-break form), `\t` → spaces. Other control characters are left as is
+/// (the terminal/render will filter them).
 fn normalize_paste(text: &str) -> String {
     text.replace("\r\n", "\n")
         .replace('\r', "\n")
         .replace('\t', "    ")
 }
 
-/// Индекс символа, на котором накопленная ширина строки достигает `target` колонок
-/// (для горизонтального скролла однострочного поля). Значения `target` приходят из
-/// префиксных ширин — границы символов совпадают, дробления широкого символа нет.
+/// Character index at which the line's cumulative width reaches `target`
+/// columns (for the single-line field's horizontal scroll). `target` values
+/// come from prefix widths — character boundaries match, no splitting a wide
+/// character.
 fn col_at_width(line: &[char], target: usize) -> usize {
     let mut w = 0;
     let mut i = 0;
@@ -1540,20 +1584,21 @@ fn col_at_width(line: &[char], target: usize) -> usize {
     i
 }
 
-/// Визуальный ряд `idx` — мягкий перенос (не последний ряд своей логической строки),
-/// т.е. следующий ряд принадлежит той же строке. Тогда позиция курсора `== end`
-/// рисуется в начале следующего ряда — навигация это учитывает.
+/// Visual row `idx` is a soft wrap (not the last row of its logical line),
+/// i.e. the next row belongs to the same line. Then cursor position `== end`
+/// is drawn at the start of the next row — navigation accounts for this.
 fn is_soft(vrows: &[VisualRow], idx: usize) -> bool {
     idx + 1 < vrows.len() && vrows[idx + 1].0 == vrows[idx].0
 }
 
-/// Логический столбец на ряду `[start, end)`, ближайший к целевой визуальной колонке
-/// `target_vw` (в колонках) — для перехода `↑/↓` с сохранением колонки. На мягком
-/// переносе не отдаём `end` (иначе курсор «уедет» в начало следующего ряда) —
-/// откатываемся на символ назад, оставаясь на этом ряду. Результат снапится к границе
-/// графемного кластера, чтобы курсор не садился между базой и вариатором эмодзи
-/// (`❤️` = `❤`+U+FE0F): иначе последующий `insert`/`backspace` разорвал бы кластер
-/// (осиротевший селектор). См. spec §11.5.
+/// Logical column on row `[start, end)` closest to the target visual column
+/// `target_vw` (in columns) — for an `↑/↓` transition that preserves the
+/// column. On a soft wrap we don't hand out `end` (otherwise the cursor would
+/// "slide" into the start of the next row) — we roll back one character,
+/// staying on this row. The result snaps to a grapheme-cluster boundary so the
+/// cursor doesn't land between an emoji base and its variation selector
+/// (`❤️` = `❤`+U+FE0F): otherwise a following `insert`/`backspace` would split
+/// the cluster (an orphaned selector). See spec §11.5.
 fn col_for_visual(line: &[char], start: usize, end: usize, target_vw: usize, soft: bool) -> usize {
     let mut w = 0;
     let mut col = start;
@@ -1568,13 +1613,14 @@ fn col_for_visual(line: &[char], start: usize, end: usize, target_vw: usize, sof
     if soft && col == end && end > start {
         col -= 1;
     }
-    // Снап вниз к границе кластера. Всегда `≥ start` (start — граница ряда), поэтому
-    // курсор не покидает этот визуальный ряд.
+    // Snap down to a cluster boundary. Always `≥ start` (start is a row
+    // boundary), so the cursor doesn't leave this visual row.
     wrap::snap_boundary(line, col)
 }
 
-/// Пересекает диапазоны ошибок `[s, e)` логической строки с визуальным рядом
-/// `[start, end)` и сдвигает в координаты ряда (для подчёркивания в [`styled_line`]).
+/// Intersects a logical line's error ranges `[s, e)` with a visual row
+/// `[start, end)` and shifts into the row's coordinates (for underlining in
+/// [`styled_line`]).
 fn clip_ranges(ranges: &[(usize, usize)], start: usize, end: usize) -> Vec<(usize, usize)> {
     ranges
         .iter()
@@ -1586,11 +1632,12 @@ fn clip_ranges(ranges: &[(usize, usize)], start: usize, end: usize) -> Vec<(usiz
         .collect()
 }
 
-/// Строит строку, компонуя три оформления по символам: подчёркивание ошибок
-/// орфографии (`misspelled`, `UNDERLINED` + цвет ошибки), фон выделения (`selection`,
-/// `keycap_bg`) и базовый цвет команды (`base_fg`, весь текст). Диапазоны — row-local
-/// `[start, end)` в символах; выделение и ошибки могут пересекаться (складываются:
-/// подчёркнуто И на фоне). Быстрый путь — когда оформлять нечего.
+/// Builds a line, composing three per-character styles: spelling-error
+/// underlines (`misspelled`, `UNDERLINED` + the error color), a selection
+/// background (`selection`, `keycap_bg`), and a base command color (`base_fg`,
+/// the whole text). Ranges are row-local `[start, end)` in characters;
+/// selection and errors can overlap (they stack: underlined AND on a
+/// background). A fast path — when there's nothing to style.
 fn styled_line(
     chars: &[char],
     misspelled: Option<&[(usize, usize)]>,
@@ -1619,7 +1666,7 @@ fn styled_line(
             *st = st.bg(palette.keycap_bg);
         }
     }
-    // Склеиваем соседние символы с одинаковым стилем в спаны.
+    // Merge adjacent characters with the same style into spans.
     let mut spans: Vec<Span<'static>> = Vec::new();
     let mut i = 0;
     while i < n {
@@ -1681,7 +1728,7 @@ mod tests {
         let mut ib = InputBox::new();
         type_str(&mut ib, "abcd");
         ib.move_left();
-        ib.move_left(); // курсор между b и c
+        ib.move_left(); // cursor between b and c
         ib.insert_newline();
         assert_eq!(ib.text(), "ab\ncd");
         assert_eq!(ib.line_count(), 2);
@@ -1693,7 +1740,7 @@ mod tests {
         type_str(&mut ib, "ab");
         ib.insert_newline();
         type_str(&mut ib, "cd");
-        // курсор в начале второй строки? нет — в конце "cd". Идём в начало строки.
+        // cursor at the start of the second line? no — at the end of "cd". Go to the start of the line.
         ib.col = 0;
         ib.backspace();
         assert_eq!(ib.text(), "abcd");
@@ -1705,7 +1752,7 @@ mod tests {
         let mut ib = InputBox::new();
         ib.set_text("ab\ncd");
         ib.row = 0;
-        ib.col = 2; // конец первой строки
+        ib.col = 2; // end of the first line
         ib.delete();
         assert_eq!(ib.text(), "abcd");
     }
@@ -1714,10 +1761,10 @@ mod tests {
     fn unicode_cursor_is_char_based() {
         let mut ib = InputBox::new();
         type_str(&mut ib, "ёжик");
-        ib.backspace(); // удалить 'к'
+        ib.backspace(); // delete 'к'
         assert_eq!(ib.text(), "ёжи");
         ib.move_left();
-        ib.insert_char('!'); // курсор был на позиции 2 → между ж и и
+        ib.insert_char('!'); // cursor was at position 2 → between the 3rd and 4th characters
         assert_eq!(ib.text(), "ёж!и");
     }
 
@@ -1726,12 +1773,12 @@ mod tests {
         let mut ib = InputBox::new();
         ib.set_text("aXd");
         ib.row = 0;
-        ib.col = 1; // курсор между 'a' и 'X'
+        ib.col = 1; // cursor between 'a' and 'X'
         ib.insert_str("b\nc");
-        // 'a' + вставка("b\nc") + хвост("Xd")
+        // 'a' + insert("b\nc") + tail("Xd")
         assert_eq!(ib.text(), "ab\ncXd");
         assert_eq!(ib.line_count(), 2);
-        // курсор в конце вставленного, перед хвостом "Xd"
+        // cursor at the end of the inserted text, before the tail "Xd"
         assert_eq!(ib.cursor(), (1, 1));
     }
 
@@ -1747,7 +1794,7 @@ mod tests {
     fn insert_str_single_line_keeps_one_row() {
         let mut ib = InputBox::new();
         type_str(&mut ib, "ab");
-        ib.insert_str("XY"); // курсор в конце
+        ib.insert_str("XY"); // cursor at the end
         assert_eq!(ib.text(), "abXY");
         assert_eq!(ib.line_count(), 1);
         assert_eq!(ib.cursor(), (0, 4));
@@ -1770,24 +1817,24 @@ mod tests {
         assert_eq!(ib.line_count(), 1);
     }
 
-    // ---------- этап C: отмена/повтор ----------
+    // ---------- stage C: undo/redo ----------
 
     #[test]
     fn undo_typing_run_is_one_unit_then_redo() {
-        // Набор без пробелов — одна единица отмены; Ctrl+Z → пусто, Ctrl+Y → назад.
+        // A run of typing with no spaces — one undo unit; Ctrl+Z → empty, Ctrl+Y → back.
         let mut ib = InputBox::new();
         type_str(&mut ib, "hello");
         assert!(ib.undo());
         assert!(ib.is_empty());
         assert!(ib.redo());
         assert_eq!(ib.text(), "hello");
-        // повтор исчерпан
+        // redo exhausted
         assert!(!ib.redo());
     }
 
     #[test]
     fn undo_breaks_on_whitespace_word_granular() {
-        // Пробел завершает единицу: "ab cd" отменяется по словам ("ab " ← "").
+        // A space ends the unit: "ab cd" undoes word by word ("ab " ← "").
         let mut ib = InputBox::new();
         type_str(&mut ib, "ab cd");
         assert!(ib.undo());
@@ -1798,24 +1845,24 @@ mod tests {
 
     #[test]
     fn navigation_breaks_undo_coalescing() {
-        // Набор, стрелка, ещё набор → две единицы отмены (разрыв по навигации).
+        // Typing, an arrow, more typing → two undo units (a break on navigation).
         let mut ib = InputBox::new();
         type_str(&mut ib, "abc");
-        ib.on_key(k(KeyCode::Left)); // навигация сбрасывает коалесинг
-        ib.insert_char('X'); // курсор был перед 'c' → "abXc"
+        ib.on_key(k(KeyCode::Left)); // navigation resets coalescing
+        ib.insert_char('X'); // cursor was before 'c' → "abXc"
         assert_eq!(ib.text(), "abXc");
         assert!(ib.undo());
-        assert_eq!(ib.text(), "abc"); // отменён только 'X'
+        assert_eq!(ib.text(), "abc"); // only 'X' was undone
     }
 
     #[test]
     fn insert_str_is_separate_undo_unit() {
         let mut ib = InputBox::new();
         type_str(&mut ib, "ab");
-        ib.insert_str("XY"); // вставка — отдельная (Structural) единица
+        ib.insert_str("XY"); // a paste — its own (Structural) unit
         assert_eq!(ib.text(), "abXY");
         assert!(ib.undo());
-        assert_eq!(ib.text(), "ab"); // отменена только вставка
+        assert_eq!(ib.text(), "ab"); // only the paste was undone
     }
 
     #[test]
@@ -1823,14 +1870,14 @@ mod tests {
         let mut ib = InputBox::new();
         type_str(&mut ib, "abc");
         ib.undo(); // "" , redo has "abc"
-        ib.insert_char('z'); // новая правка чистит redo
+        ib.insert_char('z'); // a new edit clears redo
         assert!(!ib.redo());
         assert_eq!(ib.text(), "z");
     }
 
     #[test]
     fn set_text_clears_undo_history() {
-        // Программная замена (загрузка чужого черновика) — Ctrl+Z не воскрешает.
+        // A programmatic replacement (loading someone else's draft) — Ctrl+Z doesn't resurrect it.
         let mut ib = InputBox::new();
         type_str(&mut ib, "user text");
         ib.set_text("другой чат");
@@ -1844,14 +1891,14 @@ mod tests {
         type_str(&mut ib, "привет\nмир");
         assert_eq!(ib.on_key(ctrl(KeyCode::Char('k'))), KeyOutcome::Edited);
         assert!(ib.is_empty());
-        // Ctrl+Z возвращает удалённое (общая модель отмены, не toggle).
+        // Ctrl+Z brings back what was deleted (a shared undo model, not a toggle).
         assert_eq!(ib.on_key(ctrl(KeyCode::Char('z'))), KeyOutcome::Edited);
         assert_eq!(ib.text(), "привет\nмир");
     }
 
     #[test]
     fn undo_redo_noop_returns_moved() {
-        // Пустые стеки — Ctrl+Z/Ctrl+Y ничего не меняют (Moved, не Edited).
+        // Empty stacks — Ctrl+Z/Ctrl+Y change nothing (Moved, not Edited).
         let mut ib = InputBox::new();
         assert_eq!(ib.on_key(ctrl(KeyCode::Char('z'))), KeyOutcome::Moved);
         assert_eq!(ib.on_key(ctrl(KeyCode::Char('y'))), KeyOutcome::Moved);
@@ -1859,10 +1906,10 @@ mod tests {
 
     #[test]
     fn undo_cap_evicts_oldest() {
-        // Больше UNDO_CAP единиц — старейшие вытесняются (не паникует, стек ограничен).
+        // More than UNDO_CAP units — the oldest get evicted (no panic, the stack is bounded).
         let mut ib = InputBox::new();
         for _ in 0..(UNDO_CAP + 20) {
-            // Каждая вставка — Structural → отдельная единица.
+            // Every insert is Structural → its own unit.
             ib.insert_str("x");
         }
         assert_eq!(ib.undo.len(), UNDO_CAP);
@@ -1870,11 +1917,11 @@ mod tests {
 
     #[test]
     fn undo_restores_selection_replacement() {
-        // Ввод поверх выделения — одна единица: Ctrl+Z возвращает исходный текст.
+        // Typing over a selection — one unit: Ctrl+Z brings back the original text.
         let mut ib = InputBox::new();
         ib.set_text("hello");
-        ib.on_key(ctrl(KeyCode::Char('a'))); // выделить всё
-        ib.insert_char('Z'); // заменить выделение
+        ib.on_key(ctrl(KeyCode::Char('a'))); // select all
+        ib.insert_char('Z'); // replace the selection
         assert_eq!(ib.text(), "Z");
         assert!(ib.undo());
         assert_eq!(ib.text(), "hello");
@@ -1894,7 +1941,7 @@ mod tests {
         let mut ib = InputBox::new();
         ib.set_text("abc\nde");
         assert_eq!(ib.line_strings(), vec!["abc".to_string(), "de".to_string()]);
-        assert_eq!(ib.cursor(), (1, 2)); // курсор в конце последней строки
+        assert_eq!(ib.cursor(), (1, 2)); // cursor at the end of the last line
     }
 
     #[test]
@@ -1957,7 +2004,7 @@ mod tests {
         use ratatui::backend::TestBackend;
         let mut ib = InputBox::new();
         ib.set_text("/rag add d:\\dir -r");
-        // даже при наличии «ошибок» в режиме команды подчёркивания не рисуются
+        // even with "errors" present, underlines aren't drawn in command mode
         ib.set_misspelled(vec![vec![(0, 4)]]);
         let mut term = Terminal::new(TestBackend::new(24, 3)).unwrap();
         term.draw(|f| {
@@ -1976,23 +2023,24 @@ mod tests {
 
     #[test]
     fn content_rows_matches_render_text_width() {
-        // `content_rows(area_width)` должен считать перенос по ТОЙ ЖЕ ширине текста,
-        // что и `render` (минус рамка 2 и колонка приглашения PROMPT_W), иначе высота
-        // поля расходится с реальным переносом (поле не растёт на 1–2 символа за
-        // границей). Внешняя ширина 14 → ширина текста = 14 − 2 − PROMPT_W = 10.
+        // `content_rows(area_width)` must count wrapping against the SAME text
+        // width as `render` (minus the border 2 and the prompt column
+        // PROMPT_W), otherwise field height diverges from actual wrapping (the
+        // field doesn't grow by 1-2 characters past the boundary). Outer width
+        // 14 → text width = 14 − 2 − PROMPT_W = 10.
         let area_width: u16 = 14;
         let text_w = (area_width - 2 - PROMPT_W) as usize; // 10
         let mut ib = InputBox::new();
-        // Слово ровно на один символ длиннее ширины текста → render переносит на 2 ряда.
+        // A word exactly one character longer than the text width → render wraps to 2 rows.
         let word = "a".repeat(text_w + 1);
         type_str(&mut ib, &word);
-        // Рендерим во внешнюю область этой ширины — last_width станет = реальной ширине.
+        // Render into an outer area of this width — last_width becomes the real width.
         render_at(&mut ib, area_width - 2 - PROMPT_W);
         let rendered_rows = ib.visual_rows(ib.last_width).len();
         assert_eq!(ib.content_rows(area_width), rendered_rows);
         assert!(
             ib.content_rows(area_width) > 1,
-            "поле должно вырасти до двух рядов на символе за границей переноса"
+            "the field should grow to two rows on the character past the wrap boundary"
         );
     }
 
@@ -2007,7 +2055,7 @@ mod tests {
     #[test]
     fn long_line_counts_as_multiple_visual_rows() {
         let mut ib = InputBox::new();
-        // одна логическая строка длиннее ширины → несколько визуальных рядов
+        // one logical line longer than the width → several visual rows
         type_str(&mut ib, "один два три четыре");
         assert_eq!(ib.line_count(), 1);
         assert!(ib.visual_line_count(8) > 1);
@@ -2017,21 +2065,21 @@ mod tests {
     fn cursor_moves_and_deletes_by_grapheme_cluster() {
         let mut ib = InputBox::new();
         ib.insert_str("a❤\u{FE0F}👍🏽");
-        // a(1) + ❤️(2 скаляра) + 👍🏽(2 скаляра) = 5 символов, курсор в конце
+        // a(1) + ❤️(2 scalars) + 👍🏽(2 scalars) = 5 characters, cursor at the end
         assert_eq!(ib.cursor(), (0, 5));
-        // ← один раз проходит весь кластер 👍🏽 (на 2 скаляра назад)
+        // ← once passes the whole 👍🏽 cluster (2 scalars back)
         ib.move_left();
         assert_eq!(ib.cursor(), (0, 3));
-        // ещё один ← проходит весь ❤️ (тоже 2 скаляра), без остановки в середине
+        // one more ← passes the whole ❤️ (also 2 scalars), no stopping in the middle
         ib.move_left();
         assert_eq!(ib.cursor(), (0, 1));
         ib.move_left();
         assert_eq!(ib.cursor(), (0, 0));
-        // Backspace с конца удаляет кластер целиком (не оставляет осиротевший скаляр)
+        // Backspace from the end deletes the whole cluster (no orphaned scalar left)
         ib.move_doc_end();
-        ib.backspace(); // удаляет 👍🏽 целиком
+        ib.backspace(); // deletes 👍🏽 whole
         assert_eq!(ib.text(), "a❤\u{FE0F}");
-        ib.backspace(); // удаляет ❤️ целиком
+        ib.backspace(); // deletes ❤️ whole
         assert_eq!(ib.text(), "a");
     }
 
@@ -2040,9 +2088,9 @@ mod tests {
         let mut ib = InputBox::new();
         ib.insert_str("❤\u{FE0F}👍🏽b");
         ib.move_doc_start();
-        ib.delete(); // удаляет ❤️ целиком, не оставляя U+FE0F
+        ib.delete(); // deletes ❤️ whole, no U+FE0F left over
         assert_eq!(ib.text(), "👍🏽b");
-        ib.delete(); // удаляет 👍🏽 целиком
+        ib.delete(); // deletes 👍🏽 whole
         assert_eq!(ib.text(), "b");
         ib.delete();
         assert_eq!(ib.text(), "");
@@ -2051,14 +2099,15 @@ mod tests {
 
     #[test]
     fn cursor_visual_accounts_for_emoji_cluster_width() {
-        // ❤️ (❤ + U+FE0F) терминал рисует шириной 2 → курсор за кластером в колонке 2,
-        // а не 1 (иначе он «садился» в середину эмодзи, см. spec §11.5).
+        // The terminal draws ❤️ (❤ + U+FE0F) at width 2 → the cursor after the
+        // cluster is at column 2, not 1 (otherwise it would "land" in the
+        // middle of the emoji, see spec §11.5).
         let mut ib = InputBox::new();
         ib.insert_str("❤\u{FE0F}");
         let vrows = ib.visual_rows(40);
         let (row, col) = ib.cursor_visual(&vrows);
         assert_eq!((row, col), (0, 2));
-        // Следующий символ продолжает с колонки 2 — текст после эмодзи не сдвинут.
+        // The next character continues from column 2 — text after the emoji isn't shifted.
         ib.insert_char('a');
         let vrows = ib.visual_rows(40);
         assert_eq!(ib.cursor_visual(&vrows), (0, 3));
@@ -2067,9 +2116,9 @@ mod tests {
     #[test]
     fn cursor_maps_onto_wrapped_row() {
         let mut ib = InputBox::new();
-        type_str(&mut ib, "один два три"); // курсор в конце (col=12)
+        type_str(&mut ib, "один два три"); // cursor at the end (col=12)
         let vrows = ib.visual_rows(8);
-        // "один два" | "три" → курсор на втором ряду, столбец 3 ("три")
+        // wraps into two rows; cursor on the second row, column 3 (the last word)
         let (row, col) = ib.cursor_visual(&vrows);
         assert_eq!((row, col), (1, 3));
     }
@@ -2078,7 +2127,7 @@ mod tests {
     fn cursor_at_soft_break_moves_to_next_row_start() {
         let mut ib = InputBox::new();
         ib.set_text("один два три");
-        // курсор сразу после "один два " (индекс 9) — начало слова "три"
+        // cursor right after the first two words plus a trailing space (index 9) — the start of the last word
         ib.row = 0;
         ib.col = 9;
         let vrows = ib.visual_rows(8);
@@ -2086,9 +2135,9 @@ mod tests {
         assert_eq!((row, col), (1, 0));
     }
 
-    /// Рендерит поле во внутреннюю ширину `inner_w` (рамка добавляет 2 колонки,
-    /// колонка приглашения `❯` — ещё `PROMPT_W`), чтобы выставить `last_width` для
-    /// навигации `↑/↓` по визуальным рядам.
+    /// Renders the field into inner width `inner_w` (the border adds 2
+    /// columns, the `❯` prompt column — another `PROMPT_W`) to set `last_width`
+    /// for `↑/↓` navigation over visual rows.
     fn render_at(ib: &mut InputBox, inner_w: u16) {
         use ratatui::Terminal;
         use ratatui::backend::TestBackend;
@@ -2104,8 +2153,9 @@ mod tests {
         .unwrap();
     }
 
-    /// Маска: на экране только `•`, самого секрета в буфере нет; выделение не
-    /// отдаётся наружу (копирование секрета запрещено), а правка/удаление работают.
+    /// Mask: only `•` is on screen, the actual secret isn't in the buffer;
+    /// selection isn't handed out (copying a secret is forbidden), and
+    /// editing/deletion still work.
     #[test]
     fn mask_hides_content_on_screen_and_from_clipboard() {
         use ratatui::Terminal;
@@ -2114,7 +2164,10 @@ mod tests {
         let mut ib = InputBox::new();
         ib.set_mask(true);
         assert!(ib.is_masked());
-        assert!(ib.single_line, "маска переводит поле в однострочный режим");
+        assert!(
+            ib.single_line,
+            "the mask switches the field to single-line mode"
+        );
         ib.set_text("sk-secret");
 
         let mut term = Terminal::new(TestBackend::new(30, 3)).unwrap();
@@ -2136,58 +2189,59 @@ mod tests {
             .collect();
         assert!(
             !screen.contains("sk-secret"),
-            "секрет виден на экране: {screen}"
+            "the secret is visible on screen: {screen}"
         );
         assert_eq!(
             screen.matches(MASK_CHAR).count(),
             "sk-secret".chars().count(),
-            "каждый символ секрета должен быть замаскирован"
+            "every secret character must be masked"
         );
 
-        // Выделение всего поля не отдаёт содержимое (Ctrl+C консьюмера получит None).
+        // Selecting the whole field doesn't hand out content (the consumer's Ctrl+C gets None).
         ib.select_all();
         assert!(ib.has_selection());
         assert_eq!(ib.selected_text(), None);
-        // Но удалить выделенное можно — правка не ломается.
+        // But the selection can still be deleted — editing isn't broken.
         ib.backspace();
         assert_eq!(ib.text(), "");
     }
 
-    /// Маскированное поле считает ширину по `•` (1 колонка), поэтому широкий глиф в
-    /// секрете (эмодзи из буфера) не сдвигает курсор относительно видимого текста.
+    /// A masked field computes width from `•` (1 column), so a wide glyph in
+    /// the secret (an emoji from the clipboard) doesn't offset the cursor
+    /// relative to the visible text.
     #[test]
     fn mask_keeps_cursor_aligned_with_wide_glyphs() {
         let mut ib = InputBox::new();
         ib.set_mask(true);
         ib.set_text("aXb");
-        ib.insert_str("😀"); // ширина 2 в оригинале, 1 под маской
+        ib.insert_str("😀"); // width 2 in the original, 1 under the mask
         render_at(&mut ib, 20);
         assert_eq!(ib.text().chars().count(), 4);
-        assert_eq!(ib.hscroll, 0, "короткое значение не должно скроллиться");
+        assert_eq!(ib.hscroll, 0, "a short value shouldn't scroll");
     }
 
     #[test]
     fn col_for_visual_clamps_off_soft_break() {
         let line: Vec<char> = "abcd".chars().collect();
-        // На мягком переносе целевая колонка за концом ряда откатывается на символ
-        // назад (иначе курсор уехал бы в начало следующего ряда).
+        // On a soft wrap a target column past the row's end rolls back one
+        // character (otherwise the cursor would slide into the start of the next row).
         assert_eq!(col_for_visual(&line, 0, 4, 10, true), 3);
-        // На жёстком конце логической строки клампа нет.
+        // At the hard end of a logical line there's no clamping.
         assert_eq!(col_for_visual(&line, 0, 4, 10, false), 4);
-        // Колонка внутри ряда — обычный поиск по ширине.
+        // A column inside the row — a plain search by width.
         assert_eq!(col_for_visual(&line, 0, 4, 2, true), 2);
     }
 
     #[test]
     fn arrow_up_moves_within_wrapped_line() {
         let mut ib = InputBox::new();
-        // одна логическая строка, переносится на два ряда: "один два " | "три"
-        ib.set_text("один два три"); // курсор в конце (row=0, col=12)
+        // one logical line, wraps into two rows: the first two words | the last word
+        ib.set_text("один два три"); // cursor at the end (row=0, col=12)
         render_at(&mut ib, 8);
-        // ↑ переводит на предыдущий визуальный ряд той же строки (не уходит выше)
+        // ↑ moves to the previous visual row of the same line (doesn't go above it)
         assert!(ib.on_key(k(KeyCode::Up)).handled());
-        assert_eq!(ib.cursor(), (0, 3)); // "оди|н два три" — колонка 3 сохранена
-        // ещё одно ↑ на верхнем визуальном ряду — без движения
+        assert_eq!(ib.cursor(), (0, 3)); // column 3 preserved, inside the first word
+        // one more ↑ on the top visual row — no movement
         assert!(ib.on_key(k(KeyCode::Up)).handled());
         assert_eq!(ib.cursor(), (0, 3));
     }
@@ -2198,11 +2252,11 @@ mod tests {
         ib.set_text("один два три");
         render_at(&mut ib, 8);
         ib.row = 0;
-        ib.col = 3; // верхний визуальный ряд, колонка 3
+        ib.col = 3; // top visual row, column 3
         assert!(ib.on_key(k(KeyCode::Down)).handled());
-        // на нижний ряд "три" с сохранением колонки → конец строки (3 символа)
+        // to the bottom row (the last word) keeping the column → end of the line (3 characters)
         assert_eq!(ib.cursor(), (0, 12));
-        // ещё одно ↓ на нижнем визуальном ряду — без движения
+        // one more ↓ on the bottom visual row — no movement
         assert!(ib.on_key(k(KeyCode::Down)).handled());
         assert_eq!(ib.cursor(), (0, 12));
     }
@@ -2210,29 +2264,29 @@ mod tests {
     #[test]
     fn arrow_up_down_cross_logical_lines_when_not_wrapped() {
         let mut ib = InputBox::new();
-        ib.set_text("abc\ndef"); // две короткие логические строки, без переноса
+        ib.set_text("abc\ndef"); // two short logical lines, no wrapping
         render_at(&mut ib, 20);
         ib.row = 1;
         ib.col = 2;
         assert!(ib.on_key(k(KeyCode::Up)).handled());
-        assert_eq!(ib.cursor(), (0, 2)); // перешли на предыдущую логическую строку
+        assert_eq!(ib.cursor(), (0, 2)); // moved to the previous logical line
         assert!(ib.on_key(k(KeyCode::Down)).handled());
         assert_eq!(ib.cursor(), (1, 2));
     }
 
     #[test]
     fn goal_column_preserved_through_short_row() {
-        // Серия ↓ через короткую строку держит исходную колонку (goal-column).
+        // A run of ↓ through a short line keeps the original column (goal-column).
         let mut ib = InputBox::new();
         ib.set_text("abcdef\nx\nabcdef");
-        render_at(&mut ib, 20); // широко — без переноса, по логическим строкам
+        render_at(&mut ib, 20); // wide — no wrapping, by logical lines
         ib.row = 0;
-        ib.col = 5; // колонка 5 на первой строке
-        ib.goal_col = None; // прямое присвоение col выше не сбрасывает goal
+        ib.col = 5; // column 5 on the first line
+        ib.goal_col = None; // a direct col assignment above doesn't reset goal
         assert!(ib.on_key(k(KeyCode::Down)).handled());
-        assert_eq!(ib.cursor(), (1, 1)); // "x" короче — курсор прижат к концу
+        assert_eq!(ib.cursor(), (1, 1)); // "x" is shorter — cursor pinned to the end
         assert!(ib.on_key(k(KeyCode::Down)).handled());
-        assert_eq!(ib.cursor(), (2, 5)); // колонка 5 восстановлена, не осталась 1
+        assert_eq!(ib.cursor(), (2, 5)); // column 5 restored, didn't stay at 1
     }
 
     #[test]
@@ -2244,35 +2298,35 @@ mod tests {
         ib.col = 5;
         ib.goal_col = None;
         assert!(ib.on_key(k(KeyCode::Down)).handled()); // (1,1), goal=5
-        assert!(ib.on_key(k(KeyCode::Left)).handled()); // горизонтальное движение сбрасывает goal
+        assert!(ib.on_key(k(KeyCode::Left)).handled()); // a horizontal move resets goal
         assert!(ib.on_key(k(KeyCode::Down)).handled());
-        // без goal колонка берётся из текущей (0) → начало третьей строки
+        // with no goal, the column comes from the current one (0) → start of the third line
         assert_eq!(ib.cursor(), (2, 0));
     }
 
     #[test]
     fn home_end_act_on_visual_row() {
         let mut ib = InputBox::new();
-        ib.set_text("один два три"); // ширина 8: "один два " | "три"
+        ib.set_text("один два три"); // width 8: "один два " | "три"
         render_at(&mut ib, 8);
-        // курсор в середине нижнего визуального ряда "три"
+        // cursor in the middle of the bottom visual row (the last word)
         ib.row = 0;
         ib.col = 10;
         assert!(ib.on_key(k(KeyCode::Home)).handled());
-        assert_eq!(ib.cursor(), (0, 9)); // начало ряда "три", а не всей строки
+        assert_eq!(ib.cursor(), (0, 9)); // start of the bottom row, not the whole line
         assert!(ib.on_key(k(KeyCode::End)).handled());
-        assert_eq!(ib.cursor(), (0, 12)); // конец ряда "три" = конец строки
-        // на верхнем ряду End встаёт на последнюю позицию ряда (мягкий перенос)
+        assert_eq!(ib.cursor(), (0, 12)); // end of the bottom row = end of the line
+        // on the top row, End lands on the row's last position (soft wrap)
         ib.col = 2;
         assert!(ib.on_key(k(KeyCode::End)).handled());
-        assert_eq!(ib.cursor(), (0, 8)); // конец "один два", не уезжает в начало "три"
+        assert_eq!(ib.cursor(), (0, 8)); // end of the first two words, doesn't slide into the start of the last one
         assert!(ib.on_key(k(KeyCode::Home)).handled());
-        assert_eq!(ib.cursor(), (0, 0)); // начало верхнего ряда
+        assert_eq!(ib.cursor(), (0, 0)); // start of the top row
     }
 
     #[test]
     fn arrow_up_falls_back_to_logical_before_render() {
-        // до первого рендера ширина неизвестна (last_width == 0) → логический переход
+        // before the first render the width is unknown (last_width == 0) → a logical transition
         let mut ib = InputBox::new();
         ib.set_text("abc\ndef");
         ib.row = 1;
@@ -2285,12 +2339,12 @@ mod tests {
     fn single_line_disables_newline_and_collapses_paste() {
         let mut ib = InputBox::new();
         ib.set_single_line(true);
-        ib.set_text("ab\ncd"); // перевод строки схлопывается в пробел
+        ib.set_text("ab\ncd"); // a line break collapses into a space
         assert_eq!(ib.text(), "ab cd");
         assert_eq!(ib.line_count(), 1);
         ib.insert_newline(); // no-op
         assert_eq!(ib.line_count(), 1);
-        ib.insert_str("x\ny"); // вставка тоже одной строкой
+        ib.insert_str("x\ny"); // a paste also lands as one line
         assert_eq!(ib.line_count(), 1);
         assert!(ib.text().contains("x y"));
     }
@@ -2312,12 +2366,12 @@ mod tests {
         let mut ib = InputBox::new();
         ib.set_single_line(true);
         ib.set_text("a long value");
-        render_at(&mut ib, 4); // узкое поле — значение длиннее ширины
+        render_at(&mut ib, 4); // a narrow field — the value is longer than the width
         ib.col = 5;
         assert!(ib.on_key(k(KeyCode::Home)).handled());
         assert_eq!(ib.cursor(), (0, 0));
         assert!(ib.on_key(k(KeyCode::End)).handled());
-        assert_eq!(ib.cursor(), (0, 12)); // конец всего значения, не визуального ряда
+        assert_eq!(ib.cursor(), (0, 12)); // end of the whole value, not the visual row
     }
 
     #[test]
@@ -2344,26 +2398,26 @@ mod tests {
         let line: Vec<char> = "abcdef".chars().collect();
         assert_eq!(col_at_width(&line, 0), 0);
         assert_eq!(col_at_width(&line, 3), 3);
-        assert_eq!(col_at_width(&line, 100), 6); // за концом — вся строка
+        assert_eq!(col_at_width(&line, 100), 6); // past the end — the whole line
     }
 
     #[test]
     fn ctrl_left_right_move_by_word() {
         let mut ib = InputBox::new();
-        ib.set_text("один два три"); // курсор в конце (col=12)
-        // Ctrl+← → начало слова "три"
+        ib.set_text("один два три"); // cursor at the end (col=12)
+        // Ctrl+← → start of the last word
         assert!(ib.on_key(ctrl(KeyCode::Left)).handled());
         assert_eq!(ib.cursor(), (0, 9));
-        // ещё раз → начало "два"
+        // again → start of the middle word
         assert!(ib.on_key(ctrl(KeyCode::Left)).handled());
         assert_eq!(ib.cursor(), (0, 5));
-        // ещё раз → начало "один"
+        // again → start of the first word
         assert!(ib.on_key(ctrl(KeyCode::Left)).handled());
         assert_eq!(ib.cursor(), (0, 0));
-        // Ctrl+→ → за концом "один"
+        // Ctrl+→ → past the end of the first word
         assert!(ib.on_key(ctrl(KeyCode::Right)).handled());
         assert_eq!(ib.cursor(), (0, 4));
-        // ещё раз → за концом "два"
+        // again → past the end of the middle word
         assert!(ib.on_key(ctrl(KeyCode::Right)).handled());
         assert_eq!(ib.cursor(), (0, 8));
     }
@@ -2373,11 +2427,11 @@ mod tests {
         let mut ib = InputBox::new();
         ib.set_text("ab\ncd");
         ib.row = 1;
-        ib.col = 0; // начало второй строки
-        // Ctrl+← на границе строки → конец предыдущей
+        ib.col = 0; // start of the second line
+        // Ctrl+← at the line boundary → end of the previous one
         assert!(ib.on_key(ctrl(KeyCode::Left)).handled());
         assert_eq!(ib.cursor(), (0, 2));
-        // Ctrl+→ из конца первой строки → начало следующей
+        // Ctrl+→ from the end of the first line → start of the next one
         assert!(ib.on_key(ctrl(KeyCode::Right)).handled());
         assert_eq!(ib.cursor(), (1, 0));
     }
@@ -2385,11 +2439,11 @@ mod tests {
     #[test]
     fn ctrl_backspace_deletes_word_left() {
         let mut ib = InputBox::new();
-        ib.set_text("один два три"); // курсор в конце
+        ib.set_text("один два три"); // cursor at the end
         assert!(ib.on_key(ctrl(KeyCode::Backspace)).handled());
         assert_eq!(ib.text(), "один два ");
         assert_eq!(ib.cursor(), (0, 9));
-        // в начале строки склеивает со строкой выше (как обычный Backspace)
+        // at the start of a line, joins with the line above (like a plain Backspace)
         ib.set_text("ab\ncd");
         ib.row = 1;
         ib.col = 0;
@@ -2403,7 +2457,7 @@ mod tests {
         ib.set_text("один два три");
         ib.col = 0;
         assert!(ib.on_key(ctrl(KeyCode::Delete)).handled());
-        assert_eq!(ib.text(), " два три"); // удалено слово "один", пробел остался
+        assert_eq!(ib.text(), " два три"); // the word "один" was deleted, the space stayed
         assert_eq!(ib.cursor(), (0, 0));
     }
 
@@ -2421,8 +2475,9 @@ mod tests {
 
     #[test]
     fn ctrl_char_is_not_inserted() {
-        // Ctrl+символ — шорткат вышестоящего слоя, в поле не печатается. Берём `j`
-        // (нейтральный; `a` теперь «выделить всё», прочие Ctrl-буквы не обработаны).
+        // Ctrl+character — a shortcut for the layer above, doesn't type into
+        // the field. We take `j` (neutral; `a` is now "select all", other
+        // Ctrl-letters are unhandled).
         let mut ib = InputBox::new();
         assert!(!ib.on_key(ctrl(KeyCode::Char('j'))).handled());
         assert!(ib.is_empty());
@@ -2447,63 +2502,70 @@ mod tests {
         .unwrap();
     }
 
-    // ---------- п.1: снап курсора к границе кластера ----------
+    // ---------- item 1: snapping the cursor to a cluster boundary ----------
 
     #[test]
     fn col_for_visual_snaps_off_emoji_cluster() {
-        // "❤️abc" = ❤(U+2764) + U+FE0F + a + b + c. Целевая колонка 1 попадает между
-        // базой и селектором → снап к началу кластера (0), а не в его середину (иначе
-        // insert/backspace разорвали бы ❤️). Колонка 2 — сразу за кластером (граница).
+        // "❤️abc" = ❤(U+2764) + U+FE0F + a + b + c. Target column 1 falls
+        // between the base and the selector → snap to the cluster's start (0),
+        // not into its middle (otherwise insert/backspace would split ❤️).
+        // Column 2 — right after the cluster (a boundary).
         let line: Vec<char> = "❤\u{FE0F}abc".chars().collect();
         assert_eq!(col_for_visual(&line, 0, line.len(), 1, false), 0);
         assert_eq!(col_for_visual(&line, 0, line.len(), 2, false), 2);
-        // Мягкий перенос: конец ряда на VS16-кластере не оставляет курсор в середине.
-        // ряд "❤️" [0,2): target за концом, soft → откат, затем снап к границе (0).
+        // A soft wrap: the row's end on a VS16 cluster doesn't leave the cursor
+        // in the middle. Row "❤️" [0,2): target past the end, soft → roll back,
+        // then snap to the boundary (0).
         assert_eq!(col_for_visual(&line, 0, 2, 10, true), 0);
     }
 
     #[test]
     fn arrow_up_lands_on_cluster_boundary() {
-        // Верхний ряд начинается с ❤️; ↓ затем ↑ с goal-колонкой 1 (середина ❤️) не
-        // сажает курсор между базой и селектором.
+        // The top row starts with ❤️; ↓ then ↑ with goal column 1 (middle of ❤️)
+        // doesn't place the cursor between the base and the selector.
         let mut ib = InputBox::new();
         ib.set_text("❤\u{FE0F}xy\nz");
         render_at(&mut ib, 20);
         ib.row = 1;
-        ib.col = 1; // визуальная колонка 1 на нижней строке "z"
+        ib.col = 1; // visual column 1 on the bottom line "z"
         ib.goal_col = None;
         assert!(ib.on_key(k(KeyCode::Up)).handled());
-        // на верхней строке колонка-цель 1 попадает в ❤️ → курсор снапится к 0 или 2,
-        // но НЕ встаёт между скалярами (индекс 1 = между ❤ и U+FE0F)
-        assert_ne!(ib.cursor(), (0, 1), "курсор сел в середину кластера ❤️");
+        // on the top line the target column 1 falls into ❤️ → the cursor snaps
+        // to 0 or 2, but does NOT land between the scalars (index 1 = between ❤ and U+FE0F)
+        assert_ne!(
+            ib.cursor(),
+            (0, 1),
+            "the cursor landed in the middle of the ❤️ cluster"
+        );
     }
 
-    // ---------- п.3: жёсткий инвариант однострочного режима ----------
+    // ---------- item 3: a hard invariant of single-line mode ----------
 
     #[test]
     fn single_line_after_multiline_content_merges_without_panic() {
         let mut ib = InputBox::new();
-        ib.set_text("first\nsecond\nthird"); // многострочно, курсор в конце
-        ib.set_single_line(true); // включаем ПОСЛЕ set_text — инвариант должен устоять
+        ib.set_text("first\nsecond\nthird"); // multiline, cursor at the end
+        ib.set_single_line(true); // enabled AFTER set_text — the invariant must hold
         assert_eq!(ib.line_count(), 1);
         assert_eq!(ib.text(), "first second third");
         assert_eq!(ib.cursor().0, 0);
-        // рендер однострочного не паникует (col не за границей lines[0])
+        // rendering single-line doesn't panic (col isn't past lines[0]'s bound)
         render_at(&mut ib, 8);
     }
 
-    // ---------- п.4: выравнивание hscroll по границе символа ----------
+    // ---------- item 4: aligning hscroll to a character boundary ----------
 
     #[test]
     fn single_line_hscroll_aligns_to_char_boundary() {
-        // "世aBcd": ведущий CJK-глиф шириной 2. Курсор после "世a" (визуальная колонка
-        // 3), узкое поле (view_w=3) → скролл. Без выравнивания hscroll оказался бы «в
-        // середине» 世 (значение вне множества префиксных ширин) и курсор рисовался бы
-        // на колонку правее. См. spec §11.6.
+        // "世aBcd": a leading CJK glyph of width 2. Cursor after "世a" (visual
+        // column 3), a narrow field (view_w=3) → scrolling. Without alignment,
+        // hscroll would land "in the middle" of 世 (a value outside the set of
+        // prefix widths) and the cursor would be drawn a column to the right.
+        // See spec §11.6.
         let mut ib = InputBox::new();
         ib.set_single_line(true);
         ib.set_text("世aBcd");
-        ib.col = 2; // после "世a"
+        ib.col = 2; // after "世a"
         render_at(&mut ib, 3);
         let line: Vec<char> = "世aBcd".chars().collect();
         let boundary_widths: Vec<usize> = (0..=line.len())
@@ -2511,21 +2573,21 @@ mod tests {
             .collect();
         assert!(
             boundary_widths.contains(&ib.hscroll_for_test()),
-            "hscroll={} не совпал ни с одной префиксной шириной (не на границе символа)",
+            "hscroll={} didn't match any prefix width (not on a character boundary)",
             ib.hscroll_for_test()
         );
     }
 
-    // ---------- п.5: синхронизация подчёркиваний орфографии с правкой ----------
+    // ---------- item 5: syncing spelling underlines with edits ----------
 
     #[test]
     fn misspelled_shifts_on_insert_before_word() {
         let mut ib = InputBox::new();
         ib.set_text("foo bar");
-        ib.set_misspelled(vec![vec![(4, 7)]]); // помечено "bar"
+        ib.set_misspelled(vec![vec![(4, 7)]]); // "bar" is flagged
         ib.row = 0;
         ib.col = 0;
-        ib.insert_char('X'); // "Xfoo bar" — "bar" сдвинулось на [5,8)
+        ib.insert_char('X'); // "Xfoo bar" — "bar" shifted to [5,8)
         assert_eq!(ib.misspelled_ranges_for_test(0), vec![(5, 8)]);
     }
 
@@ -2535,8 +2597,8 @@ mod tests {
         ib.set_text("foo bar");
         ib.set_misspelled(vec![vec![(4, 7)]]);
         ib.row = 0;
-        ib.col = 5; // внутри "bar"
-        ib.insert_char('X'); // правка внутри слова — диапазон сбрасывается
+        ib.col = 5; // inside "bar"
+        ib.insert_char('X'); // an edit inside the word — the range is reset
         assert!(ib.misspelled_ranges_for_test(0).is_empty());
     }
 
@@ -2544,10 +2606,10 @@ mod tests {
     fn misspelled_shifts_left_on_delete_after_word() {
         let mut ib = InputBox::new();
         ib.set_text("X foo");
-        ib.set_misspelled(vec![vec![(2, 5)]]); // помечено "foo"
+        ib.set_misspelled(vec![vec![(2, 5)]]); // "foo" is flagged
         ib.row = 0;
         ib.col = 0;
-        ib.delete(); // удалили 'X' в начале → "foo" теперь [1,4)? нет: " foo" [1,4)
+        ib.delete(); // deleted 'X' at the start → "foo" is now [1,4)? no: " foo" [1,4)
         assert_eq!(ib.misspelled_ranges_for_test(0), vec![(1, 4)]);
     }
 
@@ -2557,11 +2619,11 @@ mod tests {
         ib.set_text("foo bar");
         ib.set_misspelled(vec![vec![(0, 3), (4, 7)]]);
         ib.row = 0;
-        ib.col = 3; // после "foo"
-        ib.insert_newline(); // "foo" | " bar": текущая сброшена, новая пустая
+        ib.col = 3; // after "foo"
+        ib.insert_newline(); // "foo" | " bar": the current one is reset, the new one is empty
         assert!(ib.misspelled_ranges_for_test(0).is_empty());
         assert!(ib.misspelled_ranges_for_test(1).is_empty());
-        // склейка обратно — согласованность сохраняется, без паники
+        // joining back — consistency is preserved, no panic
         ib.row = 1;
         ib.col = 0;
         ib.backspace();
@@ -2573,15 +2635,15 @@ mod tests {
         let mut ib = InputBox::new();
         ib.set_text("helo");
         ib.set_misspelled(vec![vec![(0, 4)]]);
-        ib.set_text("совсем другой текст"); // старые диапазоны прежнего текста сброшены
+        ib.set_text("совсем другой текст"); // the old ranges of the previous text are reset
         assert!(ib.misspelled_ranges_for_test(0).is_empty());
-        // вставка тоже сбрасывает подчёркивания (перепроверка их перестроит)
+        // a paste also resets underlines (a recheck rebuilds them)
         ib.set_misspelled(vec![vec![(0, 6)]]);
         ib.insert_str("abc");
         assert!(ib.misspelled_is_empty());
     }
 
-    // ---------- п.6: on_key различает правку и движение ----------
+    // ---------- item 6: on_key distinguishes an edit from a move ----------
 
     #[test]
     fn on_key_distinguishes_edit_move_ignore() {
@@ -2592,29 +2654,29 @@ mod tests {
         assert_eq!(ib.on_key(k(KeyCode::Enter)), KeyOutcome::Ignored);
         assert_eq!(ib.on_key(ctrl(KeyCode::Left)), KeyOutcome::Moved);
         assert_eq!(ib.on_key(ctrl(KeyCode::Backspace)), KeyOutcome::Edited);
-        // хелперы edited()/handled()
+        // the edited()/handled() helpers
         assert!(KeyOutcome::Edited.edited());
         assert!(!KeyOutcome::Moved.edited());
         assert!(KeyOutcome::Moved.handled());
         assert!(!KeyOutcome::Ignored.handled());
     }
 
-    // ---------- п.7: кэш визуальных рядов + дешёвый предохранитель ----------
+    // ---------- item 7: visual-row cache + a cheap guard ----------
 
     #[test]
     fn row_cache_invalidates_on_every_mutator() {
-        // После правки кэш визуальных рядов обязан совпасть со свежим пересчётом —
-        // иначе где-то забыт `touch()` (кэш вернул бы устаревший перенос, разъехавшись
-        // с реальным содержимым: неверные курсор/скролл).
+        // After an edit, the visual-row cache must match a fresh recompute —
+        // otherwise a `touch()` was forgotten somewhere (the cache would return
+        // stale wrapping, diverging from the real content: a wrong cursor/scroll).
         fn check(setup: &str, mutate: impl FnOnce(&mut InputBox)) {
             const W: usize = 6;
             let mut ib = InputBox::new();
             ib.set_text(setup);
-            let _ = ib.rows_cached(W); // заполняем кэш ДО правки
+            let _ = ib.rows_cached(W); // fill the cache BEFORE the edit
             mutate(&mut ib);
             let cached = ib.rows_cached(W).to_vec();
             let fresh = ib.visual_rows(W);
-            assert_eq!(cached, fresh, "кэш визуальных рядов не инвалидировался");
+            assert_eq!(cached, fresh, "the visual-row cache wasn't invalidated");
         }
         check("abc", |ib| {
             ib.col = 3;
@@ -2628,7 +2690,7 @@ mod tests {
         check("ab\ncd", |ib| {
             ib.row = 1;
             ib.col = 0;
-            ib.backspace(); // склейка строк
+            ib.backspace(); // joining lines
         });
         check("abc", |ib| {
             ib.col = 0;
@@ -2637,7 +2699,7 @@ mod tests {
         check("ab\ncd", |ib| {
             ib.row = 0;
             ib.col = 2;
-            ib.delete(); // склейка строк
+            ib.delete(); // joining lines
         });
         check("abc def", |ib| {
             ib.col = 7;
@@ -2658,8 +2720,8 @@ mod tests {
 
     #[test]
     fn navigation_preserves_revision_but_edit_bumps_it() {
-        // Инвариант оптимизации: движение курсора не инвалидирует кэш (ревизия не
-        // растёт), а правка — растит (кэш пересчитается).
+        // Optimization invariant: a cursor move doesn't invalidate the cache
+        // (the revision doesn't grow), an edit does (the cache gets recomputed).
         let mut ib = InputBox::new();
         ib.set_text("hello world");
         render_at(&mut ib, 20);
@@ -2667,26 +2729,26 @@ mod tests {
         assert!(ib.on_key(k(KeyCode::Left)).handled());
         assert!(ib.on_key(k(KeyCode::Home)).handled());
         assert!(ib.on_key(ctrl(KeyCode::Right)).handled());
-        assert_eq!(ib.revision, r0, "навигация не должна инвалидировать кэш");
+        assert_eq!(ib.revision, r0, "navigation shouldn't invalidate the cache");
         assert!(ib.on_key(k(KeyCode::Char('!'))).handled());
-        assert!(ib.revision > r0, "правка должна инвалидировать кэш");
+        assert!(ib.revision > r0, "an edit should invalidate the cache");
     }
 
     #[test]
     fn first_non_whitespace_finds_leading_glyph() {
         let mut ib = InputBox::new();
-        assert_eq!(ib.first_non_whitespace(), None); // пусто
+        assert_eq!(ib.first_non_whitespace(), None); // empty
         ib.set_text("  /rag add x");
         assert_eq!(ib.first_non_whitespace(), Some('/'));
         ib.set_text("привет");
         assert_eq!(ib.first_non_whitespace(), Some('п'));
-        ib.set_text("\n\n  x"); // ведущие пустые строки/пробелы
+        ib.set_text("\n\n  x"); // leading empty lines/whitespace
         assert_eq!(ib.first_non_whitespace(), Some('x'));
-        ib.set_text("   "); // только пробелы
+        ib.set_text("   "); // whitespace only
         assert_eq!(ib.first_non_whitespace(), None);
     }
 
-    // ---------- этап A: выделение ----------
+    // ---------- stage A: selection ----------
 
     #[test]
     fn shift_arrow_extends_selection_plain_arrow_collapses() {
@@ -2694,12 +2756,12 @@ mod tests {
         ib.set_text("hello");
         ib.col = 0;
         assert!(!ib.has_selection());
-        // Shift+Right ×2 → выделено "he"
+        // Shift+Right ×2 → "he" is selected
         ib.on_key(shift(KeyCode::Right));
         ib.on_key(shift(KeyCode::Right));
         assert!(ib.has_selection());
         assert_eq!(ib.selected_text().as_deref(), Some("he"));
-        // обычный Right снимает выделение
+        // a plain Right clears the selection
         ib.on_key(k(KeyCode::Right));
         assert!(!ib.has_selection());
         assert_eq!(ib.selected_text(), None);
@@ -2720,7 +2782,7 @@ mod tests {
         let mut ib = InputBox::new();
         ib.set_text("one two");
         ib.col = 0;
-        ib.on_key(ctrl_shift(KeyCode::Right)); // до конца "one"
+        ib.on_key(ctrl_shift(KeyCode::Right)); // to the end of "one"
         assert_eq!(ib.selected_text().as_deref(), Some("one"));
     }
 
@@ -2728,7 +2790,7 @@ mod tests {
     fn typing_replaces_selection() {
         let mut ib = InputBox::new();
         ib.set_text("hello");
-        ib.on_key(ctrl(KeyCode::Char('a'))); // выделить всё
+        ib.on_key(ctrl(KeyCode::Char('a'))); // select all
         assert_eq!(ib.on_key(k(KeyCode::Char('X'))), KeyOutcome::Edited);
         assert_eq!(ib.text(), "X");
         assert!(!ib.has_selection());
@@ -2740,7 +2802,7 @@ mod tests {
         ib.set_text("abcdef");
         ib.col = 1;
         for _ in 0..3 {
-            ib.on_key(shift(KeyCode::Right)); // выделено "bcd"
+            ib.on_key(shift(KeyCode::Right)); // "bcd" is selected
         }
         assert_eq!(ib.selected_text().as_deref(), Some("bcd"));
         ib.on_key(k(KeyCode::Backspace));
@@ -2753,7 +2815,7 @@ mod tests {
         let mut ib = InputBox::new();
         ib.set_text("abc\ndef\nghi");
         ib.set_misspelled(vec![vec![(0, 3)], vec![(0, 3)], vec![(0, 3)]]);
-        // выделение (0,1)..(2,2): "bc\ndef\ngh"
+        // selection (0,1)..(2,2): "bc\ndef\ngh"
         ib.anchor = Some((0, 1));
         ib.row = 2;
         ib.col = 2;
@@ -2762,7 +2824,7 @@ mod tests {
         assert_eq!(ib.text(), "ai"); // "a" + "i"
         assert_eq!(ib.cursor(), (0, 1));
         assert_eq!(ib.line_count(), 1);
-        // подчёркивания синхронизированы: одна строка, первая сброшена
+        // underlines are synced: one line, the first is reset
         assert!(ib.misspelled_ranges_for_test(0).is_empty());
     }
 
@@ -2776,11 +2838,14 @@ mod tests {
         assert_eq!(ib.on_key(shift(KeyCode::Right)), KeyOutcome::Moved);
         assert_eq!(
             ib.revision, r0,
-            "расширение выделения не бампит ревизию (кэш цел)"
+            "extending the selection doesn't bump the revision (the cache stays intact)"
         );
         assert!(ib.has_selection());
         assert_eq!(ib.on_key(k(KeyCode::Char('Z'))), KeyOutcome::Edited);
-        assert!(ib.revision > r0, "правка поверх выделения инвалидирует кэш");
+        assert!(
+            ib.revision > r0,
+            "an edit over a selection invalidates the cache"
+        );
     }
 
     #[test]
@@ -2789,7 +2854,7 @@ mod tests {
         use ratatui::backend::TestBackend;
         let mut ib = InputBox::new();
         ib.set_text("hello");
-        ib.on_key(ctrl(KeyCode::Char('a'))); // выделить всё
+        ib.on_key(ctrl(KeyCode::Char('a'))); // select all
         let pal = Palette::default();
         let mut term = Terminal::new(TestBackend::new(20, 3)).unwrap();
         term.draw(|f| ib.render(f, f.area(), RenderOpts::focused("ввод"), &pal))
@@ -2799,13 +2864,17 @@ mod tests {
         let has_sel_bg = (area.left()..area.right()).any(|x| {
             (area.top()..area.bottom()).any(|y| buf[(x, y)].style().bg == Some(pal.keycap_bg))
         });
-        assert!(has_sel_bg, "выделение не отрисовано фоном keycap_bg");
+        assert!(
+            has_sel_bg,
+            "the selection isn't drawn with a keycap_bg background"
+        );
     }
 
     #[test]
     fn paste_replaces_selection() {
-        // Вставка (мимо `on_key`) тоже заменяет выделение — удаление вынесено в сам
-        // мутатор `insert_str`, поэтому paste/`Shift+Enter`/эмодзи уважают выделение.
+        // A paste (bypassing `on_key`) also replaces the selection — deletion is
+        // pushed into the `insert_str` mutator itself, so paste/`Shift+Enter`/
+        // emoji respect the selection.
         let mut ib = InputBox::new();
         ib.set_text("hello");
         ib.on_key(ctrl(KeyCode::Char('a')));
@@ -2815,24 +2884,24 @@ mod tests {
         assert!(!ib.has_selection());
     }
 
-    // ---------- этап D: мышь (клик → курсор, драг → выделение) ----------
+    // ---------- stage D: mouse (click → cursor, drag → selection) ----------
 
-    // `render_at(ib, inner_w)` рисует во внутреннюю ширину `inner_w`: рамка добавляет
-    // рамку (1 слева) + колонку приглашения `❯` (PROMPT_W), поэтому область текста
-    // начинается в экранном `x = 1 + PROMPT_W = 3`, `y = 1`. Экранные координаты
-    // клика по визуальной ячейке `(vrow, vcol)` — `(3 + vcol, 1 + vrow)`.
-    const TX: u16 = 1 + PROMPT_W; // левый край области текста при render_at
-    const TY: u16 = 1; // верхний край области текста
+    // `render_at(ib, inner_w)` renders into inner width `inner_w`: the border
+    // adds a border (1 on the left) + the `❯` prompt column (PROMPT_W), so the
+    // text area starts at screen `x = 1 + PROMPT_W = 3`, `y = 1`. Screen
+    // coordinates for a click on visual cell `(vrow, vcol)` — `(3 + vcol, 1 + vrow)`.
+    const TX: u16 = 1 + PROMPT_W; // the text area's left edge under render_at
+    const TY: u16 = 1; // the text area's top edge
 
     #[test]
     fn place_cursor_at_maps_click_to_position() {
         let mut ib = InputBox::new();
-        ib.set_text("hello world"); // одна логическая строка
-        render_at(&mut ib, 20); // широко — без переноса
-        // клик в середину строки → курсор туда
+        ib.set_text("hello world"); // one logical line
+        render_at(&mut ib, 20); // wide — no wrapping
+        // a click in the middle of the line → the cursor goes there
         assert!(ib.place_cursor_at(TX + 3, TY));
         assert_eq!(ib.cursor(), (0, 3));
-        // клик правее конца текста (в пределах области) → конец ряда
+        // a click past the end of the text (within the area) → the row's end
         assert!(ib.place_cursor_at(TX + 15, TY));
         assert_eq!(ib.cursor(), (0, 11));
     }
@@ -2842,20 +2911,25 @@ mod tests {
         let mut ib = InputBox::new();
         ib.set_text("abc\ndef");
         render_at(&mut ib, 20);
-        // клик ниже последнего ряда (но в пределах высоты области) → конец текста
+        // a click below the last row (but within the area's height) → the end of the text
         assert!(ib.place_cursor_at(TX, TY + 5));
         assert_eq!(ib.cursor(), (1, 3));
     }
 
     #[test]
     fn place_cursor_snaps_to_cluster_boundary() {
-        // Клик в середину VS16-кластера ❤️ (❤ + U+FE0F, ширина 2) снапится к границе
-        // (0), а не садится между базой и селектором (иначе insert/backspace порвал бы).
+        // A click in the middle of the VS16 cluster ❤️ (❤ + U+FE0F, width 2)
+        // snaps to the boundary (0), not landing between the base and the
+        // selector (otherwise insert/backspace would split it).
         let mut ib = InputBox::new();
         ib.set_text("❤\u{FE0F}abc");
         render_at(&mut ib, 20);
-        assert!(ib.place_cursor_at(TX + 1, TY)); // визуальная колонка 1 = середина ❤️
-        assert_ne!(ib.cursor(), (0, 1), "курсор сел в середину кластера ❤️");
+        assert!(ib.place_cursor_at(TX + 1, TY)); // visual column 1 = the middle of ❤️
+        assert_ne!(
+            ib.cursor(),
+            (0, 1),
+            "the cursor landed in the middle of the ❤️ cluster"
+        );
         assert_eq!(ib.cursor(), (0, 0));
     }
 
@@ -2866,14 +2940,14 @@ mod tests {
         render_at(&mut ib, 20);
         ib.row = 0;
         ib.col = 2;
-        // клик левее области текста (в колонке приглашения/рамке) — не двигает курсор
+        // a click to the left of the text area (in the prompt column/border) — doesn't move the cursor
         assert!(!ib.place_cursor_at(0, TY));
         assert_eq!(ib.cursor(), (0, 2));
     }
 
     #[test]
     fn place_cursor_before_render_is_noop() {
-        // До первого рендера last_area == None → клик игнорируется.
+        // Before the first render last_area == None → the click is ignored.
         let mut ib = InputBox::new();
         ib.set_text("hello");
         assert!(!ib.place_cursor_at(3, 1));
@@ -2884,11 +2958,11 @@ mod tests {
         let mut ib = InputBox::new();
         ib.set_text("hello world");
         render_at(&mut ib, 20);
-        // нажатие в колонке 0 — курсор туда, выделения ещё нет (пустое)
+        // a press at column 0 — the cursor goes there, no selection yet (empty)
         assert!(ib.mouse_press(TX, TY));
         assert_eq!(ib.cursor(), (0, 0));
         assert!(!ib.has_selection());
-        // драг до колонки 5 растит выделение "hello"
+        // a drag to column 5 grows the selection "hello"
         assert!(ib.mouse_drag(TX + 5, TY));
         assert_eq!(ib.cursor(), (0, 5));
         assert!(ib.has_selection());
@@ -2902,7 +2976,7 @@ mod tests {
         render_at(&mut ib, 20);
         assert!(ib.mouse_press(TX + 3, TY));
         assert_eq!(ib.cursor(), (0, 3));
-        assert!(!ib.has_selection()); // клик без драга — курсор перемещён, выделения нет
+        assert!(!ib.has_selection()); // a click with no drag — cursor moved, no selection
     }
 
     #[test]
@@ -2912,21 +2986,21 @@ mod tests {
         render_at(&mut ib, 20);
         ib.row = 0;
         ib.col = 4;
-        assert!(!ib.mouse_press(0, TY)); // вне области текста
+        assert!(!ib.mouse_press(0, TY)); // outside the text area
         assert_eq!(ib.cursor(), (0, 4));
         assert!(!ib.has_selection());
     }
 
     #[test]
     fn mouse_drag_selects_across_wrapped_rows() {
-        // Драг через мягкий перенос выделяет по логическим координатам.
+        // A drag through a soft wrap selects by logical coordinates.
         let mut ib = InputBox::new();
-        ib.set_text("один два три"); // ширина 8: "один два " | "три"
+        ib.set_text("один два три"); // width 8: "один два " | "три"
         render_at(&mut ib, 8);
-        assert!(ib.mouse_press(TX, TY)); // начало верхнего ряда (0,0)
+        assert!(ib.mouse_press(TX, TY)); // start of the top row (0,0)
         assert_eq!(ib.cursor(), (0, 0));
-        assert!(ib.mouse_drag(TX + 1, TY + 1)); // нижний ряд "три", колонка 1
-        assert_eq!(ib.cursor(), (0, 10)); // "три" начинается на индексе 9 → +1 = 10
+        assert!(ib.mouse_drag(TX + 1, TY + 1)); // bottom row (the last word), column 1
+        assert_eq!(ib.cursor(), (0, 10)); // the last word starts at index 9 → +1 = 10
         assert_eq!(ib.selected_text().as_deref(), Some("один два т"));
     }
 
@@ -2934,7 +3008,7 @@ mod tests {
     fn scrollbar_appears_only_when_input_scrolls() {
         use ratatui::Terminal;
         use ratatui::backend::TestBackend;
-        // Бегунок «█» на правой рамке — только когда рядов больше видимой высоты.
+        // The "█" thumb on the right border — only when there are more rows than the visible height.
         let right_col = |term: &Terminal<TestBackend>| -> Vec<String> {
             let buf = term.backend().buffer();
             let area = buf.area;
@@ -2943,7 +3017,7 @@ mod tests {
                 .collect()
         };
         let mut ib = InputBox::new();
-        ib.set_text("a\nb"); // 2 ряда во внутренней высоте 2 — помещается
+        ib.set_text("a\nb"); // 2 rows in an inner height of 2 — fits
         let mut term = Terminal::new(TestBackend::new(20, 4)).unwrap();
         term.draw(|f| {
             ib.render(
@@ -2956,9 +3030,9 @@ mod tests {
         .unwrap();
         assert!(
             !right_col(&term).iter().any(|s| s == "█"),
-            "помещающийся текст — без бегунка"
+            "text that fits — no thumb"
         );
-        ib.set_text("1\n2\n3\n4\n5\n6"); // 6 рядов, видно 2 — прокрутка
+        ib.set_text("1\n2\n3\n4\n5\n6"); // 6 rows, 2 visible — scrolling
         term.draw(|f| {
             ib.render(
                 f,
@@ -2970,7 +3044,7 @@ mod tests {
         .unwrap();
         assert!(
             right_col(&term).iter().any(|s| s == "█"),
-            "прокручиваемое поле — с бегунком"
+            "a scrollable field — with a thumb"
         );
     }
 
@@ -2978,8 +3052,9 @@ mod tests {
     fn placeholder_is_configurable_on_unfocused_empty_field() {
         use ratatui::Terminal;
         use ratatui::backend::TestBackend;
-        // Плейсхолдер рисуется у пустого НЕ сфокусированного поля и берётся из
-        // `RenderOpts` (раньше был зашит «введите сообщение…» в generic-виджет, п.12).
+        // The placeholder is drawn on an empty, NOT focused field and comes
+        // from `RenderOpts` (previously "type a message…" was hardcoded into
+        // the generic widget, item 12).
         let render_ph = |ph: &str| -> String {
             let mut ib = InputBox::new();
             let mut term = Terminal::new(TestBackend::new(30, 3)).unwrap();
@@ -3009,7 +3084,7 @@ mod tests {
                 .join("")
         };
         assert!(render_ph("введите сообщение…").contains("введите сообщение"));
-        // Другой текст — тоже отображается (не зашит): подтверждает конфигурируемость.
+        // Different text — also shows up (not hardcoded): confirms configurability.
         assert!(render_ph("свой плейсхолдер").contains("свой плейсхолдер"));
     }
 }
