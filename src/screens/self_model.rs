@@ -291,11 +291,7 @@ impl SelfModelScreen {
             return self.handle_editor_key(key);
         }
         let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
-        let phys = if let KeyCode::Char(c) = key.code {
-            keys::physical_char(c)
-        } else {
-            '\0'
-        };
+        let phys = keys::hotkey_char(&key).unwrap_or('\0');
         // Clear confirmation: a repeated Ctrl+K confirms; any other key cancels.
         if self.confirm_clear {
             self.confirm_clear = false;

@@ -47,7 +47,7 @@ impl ChatScreen {
         // Ctrl+Q/F10 punch through the popup to quit (layout-independent). See spec §11.7.
         if key.code == KeyCode::F(10)
             || (key.modifiers.contains(KeyModifiers::CONTROL)
-                && matches!(key.code, KeyCode::Char(c) if keys::physical_char(c) == 'q'))
+                && keys::hotkey_char(&key) == Some('q'))
         {
             self.confirm = None;
             return Some(ChatIntent::Quit);

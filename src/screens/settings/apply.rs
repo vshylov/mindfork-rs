@@ -20,7 +20,7 @@ impl SettingsScreen {
         // (freed up), see docs/history/input-selection-undo-mouse.md §B.
         if key.code == KeyCode::F(10)
             || (key.modifiers.contains(KeyModifiers::CONTROL)
-                && matches!(key.code, KeyCode::Char(c) if keys::physical_char(c) == 'q'))
+                && keys::hotkey_char(&key) == Some('q'))
         {
             return Some(SettingsIntent::Quit);
         }
@@ -50,9 +50,9 @@ impl SettingsScreen {
         // "physical" Latin key — shortcuts work under any layout (see shared::keys).
         if key.modifiers.contains(KeyModifiers::CONTROL)
             && self.section() == Section::Profiles
-            && let KeyCode::Char(c) = key.code
+            && let Some(physical) = keys::hotkey_char(&key)
         {
-            match keys::physical_char(c) {
+            match physical {
                 'n' => {
                     return Some(SettingsIntent::CreateProfile {
                         name: self.loc().t("ui.settings.new_profile_name").into(),

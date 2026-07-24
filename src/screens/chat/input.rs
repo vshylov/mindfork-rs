@@ -25,7 +25,7 @@ impl ChatScreen {
             // confirmation popup.
             if key.code == KeyCode::F(10)
                 || (key.modifiers.contains(KeyModifiers::CONTROL)
-                    && matches!(key.code, KeyCode::Char(c) if keys::physical_char(c) == 'q'))
+                    && keys::hotkey_char(&key) == Some('q'))
             {
                 self.help = None;
                 return Some(ChatIntent::Quit);
@@ -54,9 +54,7 @@ impl ChatScreen {
             if key.code == KeyCode::F(10) {
                 return Some(ChatIntent::Quit);
             }
-            if key.modifiers.contains(KeyModifiers::CONTROL)
-                && let KeyCode::Char(c) = key.code
-                && keys::physical_char(c) == 'q'
+            if key.modifiers.contains(KeyModifiers::CONTROL) && keys::hotkey_char(&key) == Some('q')
             {
                 return Some(ChatIntent::Quit);
             }
@@ -86,9 +84,9 @@ impl ChatScreen {
         // work under any layout (Russian JCUKEN gives `Ctrl+д` instead of
         // `Ctrl+l`). See shared::keys, spec §11.7.
         if key.modifiers.contains(KeyModifiers::CONTROL)
-            && let KeyCode::Char(c) = key.code
+            && let Some(physical) = keys::hotkey_char(&key)
         {
-            match keys::physical_char(c) {
+            match physical {
                 // Quit moved to Ctrl+Q/F10 (F10 — in the code match below);
                 // Ctrl+C was freed up for copying. See
                 // docs/history/input-selection-undo-mouse.md §B.

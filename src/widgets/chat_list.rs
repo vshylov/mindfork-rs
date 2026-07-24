@@ -175,8 +175,8 @@ impl ChatListState {
         // Ctrl shortcuts are matched by "physical" Latin key — work under
         // any layout (see shared::keys). Any other Ctrl+character is swallowed,
         // so it doesn't end up in the search line.
-        if ctrl && let KeyCode::Char(c) = key.code {
-            return match keys::physical_char(c) {
+        if ctrl && let Some(physical) = keys::hotkey_char(&key) {
+            return match physical {
                 // Quitting works from the chat list too; moved to Ctrl+Q/F10 (Ctrl+C
                 // is freed up). See docs/history/input-selection-undo-mouse.md §B.
                 'q' => ChatListAction::Quit,

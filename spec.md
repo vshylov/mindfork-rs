@@ -1039,9 +1039,18 @@ package `mindfork-rs`); the same text is set as the **terminal window's title**
 at startup (`SetTitle`, Windows).
 
 Ctrl-shortcuts are layout-independent: a character is normalized to the "physical"
-Latin key (`shared/keys.rs`, a JCUKEN lookup table for the Russian layout), so
-`Ctrl+Q` (quit) works even under an active Cyrillic layout (where the physical Q
-key delivers a Cyrillic `Ctrl` combo).
+Latin key (`shared/keys.rs::hotkey_char`), so `Ctrl+Q` (quit) works even under an
+active Cyrillic layout (where the physical Q key delivers a Cyrillic `Ctrl` combo).
+On **Windows** the physical key is resolved through the keyboard layout itself
+(`VkKeyScanExW` → `MapVirtualKeyExW` → scan code → the letter at that position on
+QWERTY) — the exact inverse of the lookup the terminal layer used to produce the
+character, so **any installed layout** works (Greek, Hebrew, Georgian, Bulgarian
+BDS/phonetic, …) without per-language data. A static JCUKEN table stays as the
+fallback: on unix (where a terminal application cannot query the layout) and on
+Windows when the active layout is undeterminable (conhost). ASCII characters are
+never remapped by position — on Latin layouts (AZERTY/QWERTZ/Dvorak) a shortcut
+belongs to the key *labeled* with that letter. Details and the platform matrix —
+[docs/research/layout-independent-hotkeys.md](docs/research/layout-independent-hotkeys.md).
 
 **Selection/copy/undo/quit** (see [docs/history/input-selection-undo-mouse.md](docs/history/input-selection-undo-mouse.md)).
 Selection and **undo/redo** live inside the `InputBox` widget itself — available in every

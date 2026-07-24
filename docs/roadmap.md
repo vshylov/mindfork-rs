@@ -186,6 +186,15 @@ tracks are done (see "Recently closed" below and `docs/history/`). One
 - **Custom keyboard layout** — there's already a field for this under
   "Interface" (marked as groundwork since M9), but actual custom-binding
   application isn't done.
+- **Layout-independent hotkeys on unix beyond Cyrillic** — the kitty keyboard
+  protocol carries the answer (the *base layout key* of the "report alternate
+  keys" enhancement), but crossterm 0.29 parses only the shifted alternate and
+  drops it ([crossterm-rs/crossterm#968](https://github.com/crossterm-rs/crossterm/issues/968)).
+  Plan: contribute the parsing/API upstream, then push the flag and prefer
+  `base_layout_code` — `shared/keys.rs` already has the tier slot for it, no
+  call site changes. On Windows this is already solved for every layout
+  (stage 1); terminals of the VTE family need nothing. See
+  [docs/research/layout-independent-hotkeys.md](research/layout-independent-hotkeys.md).
 - **Applying a theme from a color configuration** — a user palette layered
   over auto/dark/light.
 
