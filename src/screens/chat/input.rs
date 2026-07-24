@@ -226,7 +226,7 @@ impl ChatScreen {
                 // A RAG slash command (`/rag add …`) — isn't sent as a
                 // message and works independently of generation (background
                 // indexing).
-                if let Some(parsed) = crate::features::rag_command::parse(&text) {
+                if let Some(parsed) = crate::features::rag_command::parse(&text, self.loc) {
                     use crate::features::rag_command::RagCommand;
                     self.input.clear();
                     self.mark_input_changed();
@@ -476,7 +476,7 @@ impl ChatScreen {
             return false;
         }
         let text = self.input.text();
-        crate::features::rag_command::parse(&text).is_some()
+        crate::features::rag_command::parse(&text, self.loc).is_some()
             || crate::features::tts_command::parse(&text).is_some()
     }
 

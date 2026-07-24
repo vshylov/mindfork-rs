@@ -643,25 +643,27 @@ impl UserModel {
 
     /// A compact hint for impersonation (`Ctrl+U`): the agent writes a reply **on
     /// behalf of** the person, and `UserModel` is a model of that person, so mixing
-    /// it into the impersonation system prompt makes the voice more accurate.
+    /// it into the impersonation system prompt makes the voice more accurate. This
+    /// is a prompt fragment (text the *model* reads) — localized via `loc` in the
+    /// agent-scaffold language (axis A), like [`render_user_model`] above.
     /// `None` if the model is empty; the result is truncated to `max_chars` characters.
-    pub fn render_for_impersonation(&self, max_chars: usize) -> Option<String> {
+    pub fn render_for_impersonation(&self, max_chars: usize, loc: &Locale) -> Option<String> {
         if self.is_empty() {
             return None;
         }
-        let mut out = String::from("Известное о человеке, за которого ты пишешь:");
+        let mut out = loc.t("selfmodel.render.impersonation.intro").to_string();
         if !self.perceived_traits.is_empty() {
-            out.push_str(" черты — ");
+            out.push_str(loc.t("selfmodel.render.impersonation.traits"));
             out.push_str(&self.perceived_traits.join(", "));
             out.push(';');
         }
         if !self.current_interests.is_empty() {
-            out.push_str(" интересы — ");
+            out.push_str(loc.t("selfmodel.render.impersonation.interests"));
             out.push_str(&self.current_interests.join(", "));
             out.push(';');
         }
         if !self.relationship_dynamic.trim().is_empty() {
-            out.push_str(" отношения с собеседником — ");
+            out.push_str(loc.t("selfmodel.render.impersonation.relationship"));
             out.push_str(self.relationship_dynamic.trim());
         }
         Some(truncate_chars(out.trim_end_matches([';', ' ']), max_chars))
@@ -1111,17 +1113,43 @@ mod tests {
     #[test]
     fn user_model_render_for_impersonation() {
         // Empty → None.
-        assert!(UserModel::default().render_for_impersonation(500).is_none());
+        assert!(
+            UserModel::default()
+                .render_for_impersonation(500, loc())
+                .is_none()
+        );
         let u = UserModel {
             perceived_traits: vec!["скептик".into(), "любопытный".into()],
             current_interests: vec!["Rust".into()],
             relationship_dynamic: "доверительные, на равных".into(),
         };
-        let r = u.render_for_impersonation(500).unwrap();
+        let r = u.render_for_impersonation(500, loc()).unwrap();
         assert!(r.contains("за которого ты пишешь"));
         assert!(r.contains("черты — скептик, любопытный"));
         assert!(r.contains("интересы — Rust"));
         assert!(r.contains("отношения с собеседником — доверительные, на равных"));
+    }
+
+    /// Per-locale coverage (docs/history/i18n.md §3.5): rendering under EVERY built-in
+    /// language, no unsubstituted `{…}`, and no Cyrillic leaking into `en`.
+    #[test]
+    fn render_for_impersonation_localized_for_all_langs() {
+        let u = UserModel {
+            perceived_traits: vec!["skeptic".into()],
+            current_interests: vec!["Rust".into()],
+            relationship_dynamic: "trusting, as equals".into(),
+        };
+        for &lang in crate::shared::i18n::Lang::ALL {
+            let l = crate::shared::i18n::locale(lang);
+            let r = u.render_for_impersonation(500, l).unwrap();
+            assert!(!r.contains('{') && !r.contains('}'), "{lang:?}: {r}");
+            if lang == crate::shared::i18n::Lang::En {
+                assert!(
+                    !r.chars().any(|c| ('\u{0400}'..='\u{04FF}').contains(&c)),
+                    "Cyrillic leaked into en: {r}"
+                );
+            }
+        }
     }
 
     /// Per-language coverage (§3.5 docs/history/i18n.md): rendering under EVERY

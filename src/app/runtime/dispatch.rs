@@ -167,14 +167,15 @@ pub(super) fn deliver_clipboard(
     text: &str,
 ) {
     let result = write_clipboard(clipboard, text);
+    let loc = screen.loc();
     match active {
         ActiveScreen::ChatList(list) => match result {
-            Ok(()) => list.set_notice("Переписка скопирована в буфер обмена".into()),
-            Err(err) => list.set_error(format!("Не удалось скопировать в буфер обмена: {err}")),
+            Ok(()) => list.set_notice(loc.t("ui.chat.copied").into()),
+            Err(err) => list.set_error(loc.tf("ui.err.copy_failed", &[("err", &err)])),
         },
         _ => match result {
-            Ok(()) => screen.push_note("Переписка скопирована в буфер обмена"),
-            Err(err) => screen.push_error(&format!("Не удалось скопировать в буфер обмена: {err}")),
+            Ok(()) => screen.push_note(loc.t("ui.chat.copied")),
+            Err(err) => screen.push_error(&loc.tf("ui.err.copy_failed", &[("err", &err)])),
         },
     }
 }

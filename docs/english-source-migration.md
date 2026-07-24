@@ -83,6 +83,51 @@ to `tools/glossary-ru-en.md`, and these rules:
 > still parses (no stray edits) by a mental diff; the harness runs `cargo build`
 > and `python tools/cyrillic_scan.py` per batch.
 
+## Status / handoff
+
+Branch `chore/english-source`. Every commit was verified with `cargo fmt
+--check`, `cargo clippy --all-targets -- -D warnings`, and the full test suite
+(1264 passing). Cyrillic baseline went **30,890 -> 36** lines.
+
+Done: Phase 0 (tooling/glossary/samples), Wave 1 (living docs), Wave 2
+(CLAUDE.md), Wave 3 (archive docs), Wave 4 (all code comments), Phase 5a
+(non-user-facing strings inline). Phase 5b (routing the last ~36 user-facing
+strings into the locale bundles) was the final translation step.
+
+### Remaining: Phases 6-7
+1. **Verify the convention flips** are in place (they were applied during the
+   waves, not as a separate step): `CLAUDE.md` "Comments and docs — in English",
+   the same rule plus the commit-message-language rule in `AGENTS.md`, and the
+   Conventions paragraph in `README.md`.
+2. **Roadmap**: mark §"English source (prep for open source)" done and move this
+   design doc to `docs/history/`.
+3. **CHANGELOG**: add an entry under `[Unreleased]` (user-visible effect: none
+   functionally, but `CharacterNames::default()` now seeds new profiles with
+   English names, and several previously-unlocalized user-facing strings gained
+   locale keys).
+4. **Migration tooling**: `tools/glossary-ru-en.md` was always meant to be
+   removed or demoted to a CONTRIBUTING terminology note once this lands.
+   `tools/cyrillic_scan.py` is worth **keeping** and wiring into CI — it stops
+   Russian creeping back into comments/docs now that the convention is English.
+5. **Acceptance**: scanner clean + full gate green + a diff self-review.
+
+### Things a resuming session should know
+- The scanner needed four corrections, all false-positive sources rather than
+  real work: multi-line test fixtures; `tests.rs` files whose `#[cfg(test)]`
+  marker lives in the parent `mod.rs`; `//` inside string literals (a
+  protocol-relative URL in a fixture); and its own Cyrillic ranges. Roughly 3.2k
+  of the original count was never translation debt.
+- Deliberately kept Cyrillic: `locales/ru.json`, Hunspell dictionaries, in-test
+  fixtures and `ru`-locale assertions, the `.desktop` `[ru]` keys and `.iss`
+  `ru.` messages, `keys.rs` JCUKEN char data, and a few `cyrillic-ok`-marked
+  endonyms. `docs/research/mermaid-ascii-rendering.md` is skipped wholesale
+  because its repro inputs must be multibyte to demonstrate the bug.
+- Pre-existing defects surfaced and fixed along the way: 32 `spec.md` anchors
+  broken by heading translation, tool-call artifacts committed into two history
+  docs, and `present.rs` matching a Russian prefix to detect a failed tool
+  result. An unlocalized thoughts-label and console exit-code line in
+  `message_feed.rs` were routed into bundles.
+
 ## Process
 Branch `chore/english-source` off clean `main` (working tree was clean — no
 conflict with in-flight work). Commits carry the model-attribution trailer per

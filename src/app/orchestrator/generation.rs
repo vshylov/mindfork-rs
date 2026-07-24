@@ -50,9 +50,9 @@ impl Orchestrator {
             return;
         }
         let Some(active_id) = self.active_id else {
-            let _ = self
-                .evt_tx
-                .send(AppEvent::Error("Нет активного чата".into()));
+            let _ = self.evt_tx.send(AppEvent::Error(
+                self.ui_locale().t("ui.err.no_active_chat").into(),
+            ));
             return;
         };
         let Some(backend) = self.ready_backend() else {
@@ -167,7 +167,7 @@ impl Orchestrator {
     /// operations (auto-title) the error must go into the overlay — there
     /// [`EngineManager::backend_if_ready`](super::engines::EngineManager) is used directly.
     pub(super) fn ready_backend(&self) -> Option<Arc<dyn EngineBackend>> {
-        match self.engines.backend_if_ready() {
+        match self.engines.backend_if_ready(self.ui_locale()) {
             Ok(backend) => Some(backend),
             Err(msg) => {
                 let _ = self.evt_tx.send(AppEvent::Error(msg));
@@ -506,8 +506,9 @@ fn spawn_generation(spawn: GenSpawn) {
                     // at all, even though enough data had accumulated over the
                     // previous rounds. Tools are removed from the request, so the
                     // model must answer with text (the stream goes into the feed).
-                    let _ = evt_tx.send(AppEvent::Error(format!(
-                        "Достигнут лимит раундов инструментов ({max_rounds}) — свожу итог из собранного."
+                    let _ = evt_tx.send(AppEvent::Error(ctx.loc.tf(
+                        "loop.round_limit_reached",
+                        &[("max_rounds", &max_rounds.to_string())],
                     )));
                     request.tools.clear();
                     // The final round's token counter is emitted by `stream_round` itself

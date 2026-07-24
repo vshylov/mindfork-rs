@@ -103,9 +103,9 @@ pub(super) fn field_spec(id: FieldId) -> Option<FieldSpec> {
         ),
         TPythonMode => choice(
             |c, dir| c.tools.python_mode = c.tools.python_mode.cycle(dir),
-            |c, _loc| {
+            |c, loc| {
                 index_menu(&PythonMode::ALL, c.tools.python_mode, |x| {
-                    x.label().to_string()
+                    python_mode_label(x, loc)
                 })
             },
         ),

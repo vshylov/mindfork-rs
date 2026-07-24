@@ -189,42 +189,47 @@ impl EngineManager {
     }
 
     /// Returns the assistant's engine if the chat server is ready (`Ready`); otherwise — `Err`
-    /// with a clear message (not configured / still connecting / unavailable). Emits nothing
-    /// itself — the caller decides where to route the error. See spec §7.
-    pub(super) fn backend_if_ready(&self) -> Result<Arc<dyn EngineBackend>, String> {
+    /// with a clear message (not configured / still connecting / unavailable), localized in
+    /// the interface language (`loc`, axis B — this is shown to the human, not the model).
+    /// Emits nothing itself — the caller decides where to route the error. See spec §7.
+    pub(super) fn backend_if_ready(
+        &self,
+        loc: &'static Locale,
+    ) -> Result<Arc<dyn EngineBackend>, String> {
         match &self.server_status {
             ServerStatus::Ready => self
                 .backend
                 .clone()
-                .ok_or_else(|| "LLM-сервер не настроен".to_string()),
-            ServerStatus::Connecting => {
-                Err("Сервер ещё подключается — дождитесь готовности и повторите".into())
+                .ok_or_else(|| loc.t("ui.err.server.not_configured").to_string()),
+            ServerStatus::Connecting => Err(loc.t("ui.err.server.connecting").to_string()),
+            ServerStatus::NotConfigured => Err(loc.t("ui.err.server.not_configured").to_string()),
+            ServerStatus::Disconnected(reason) => {
+                Err(loc.tf("ui.err.server.unavailable", &[("reason", reason)]))
             }
-            ServerStatus::NotConfigured => Err("LLM-сервер не настроен".into()),
-            ServerStatus::Disconnected(reason) => Err(format!("Сервер недоступен: {reason}")),
         }
     }
 
-    /// Returns the impersonation engine if it's ready; otherwise — `Err` with a clear
-    /// message. In `shared` mode the assistant's chat server is used.
+    /// Returns the impersonation engine if it's ready; otherwise — `Err` with a clear,
+    /// localized message (axis B). In `shared` mode the assistant's chat server is used.
     pub(super) fn impersonation_backend_if_ready(
         &self,
         mode: ImpersonationMode,
+        loc: &'static Locale,
     ) -> Result<Arc<dyn EngineBackend>, String> {
         if mode == ImpersonationMode::Shared {
-            return self.backend_if_ready();
+            return self.backend_if_ready(loc);
         }
         match &self.imp_status {
             ServerStatus::Ready => self
                 .imp_backend
                 .clone()
-                .ok_or_else(|| "Сервер имперсонации не настроен".to_string()),
-            ServerStatus::Connecting => {
-                Err("Сервер имперсонации ещё подключается — повторите позже".into())
+                .ok_or_else(|| loc.t("ui.err.server.imp_not_configured").to_string()),
+            ServerStatus::Connecting => Err(loc.t("ui.err.server.imp_connecting").to_string()),
+            ServerStatus::NotConfigured => {
+                Err(loc.t("ui.err.server.imp_not_configured").to_string())
             }
-            ServerStatus::NotConfigured => Err("Сервер имперсонации не настроен".into()),
             ServerStatus::Disconnected(reason) => {
-                Err(format!("Сервер имперсонации недоступен: {reason}"))
+                Err(loc.tf("ui.err.server.imp_unavailable", &[("reason", reason)]))
             }
         }
     }

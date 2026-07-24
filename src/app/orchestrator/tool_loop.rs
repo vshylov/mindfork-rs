@@ -120,13 +120,13 @@ pub(super) fn spawn_silent_loop(spawn: SilentLoop) {
         let outcome: Result<(), String> = match tokio::time::timeout(timeout, run).await {
             Ok(Ok(())) => Ok(()),
             Ok(Err(e)) => {
-                tracing::warn!(%profile_id, "{label}: ошибка: {e}");
+                tracing::warn!(%profile_id, "{label}: error: {e}");
                 Err(e.to_string())
             }
             Err(_) => {
                 cancel.cancel();
-                tracing::warn!(%profile_id, "{label}: превышен лимит времени");
-                Err("превышен лимит времени".to_string())
+                tracing::warn!(%profile_id, "{label}: time limit exceeded");
+                Err(ctx.loc.t("loop.time_limit_exceeded").to_string())
             }
         };
         let _ = done_tx.send((kind, outcome));
@@ -178,10 +178,13 @@ async fn run_rounds(
             let result = if allowed_has(&call.name) {
                 match registry.invoke(&call.name, ctx, args).await {
                     Ok(o) => o.result,
-                    Err(e) => format!("Ошибка инструмента {}: {e}", call.name),
+                    Err(e) => ctx.loc.tf(
+                        "loop.tool_error",
+                        &[("name", &call.name), ("err", &e.to_string())],
+                    ),
                 }
             } else {
-                format!("Инструмент {} недоступен.", call.name)
+                ctx.loc.tf("loop.tool_not_allowed", &[("name", &call.name)])
             };
             request.messages.push(ApiMessage::tool(&call.id, &result));
         }

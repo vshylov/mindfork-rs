@@ -44,7 +44,7 @@ impl Orchestrator {
         };
         let backend = match self
             .engines
-            .impersonation_backend_if_ready(self.config.impersonation_engine.mode)
+            .impersonation_backend_if_ready(self.config.impersonation_engine.mode, self.ui_locale())
         {
             Ok(backend) => backend,
             Err(msg) => {
@@ -82,7 +82,7 @@ impl Orchestrator {
                     &self.config.self_model,
                 )
                 .prompt_cap;
-                m.user_model.render_for_impersonation(cap)
+                m.user_model.render_for_impersonation(cap, loc)
             });
         let request = build_impersonation_request(
             chat,

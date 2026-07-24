@@ -221,7 +221,7 @@ impl Orchestrator {
             return;
         }
         // Is the server ready? Otherwise skip without shifting the watermark (retry later).
-        let Ok(backend) = self.engines.backend_if_ready() else {
+        let Ok(backend) = self.engines.backend_if_ready(self.ui_locale()) else {
             return;
         };
 

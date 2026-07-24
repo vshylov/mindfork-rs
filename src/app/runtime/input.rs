@@ -192,8 +192,8 @@ pub(super) fn process_input_batch(
                     // a failure (headless Linux with no X11) — a note in the feed.
                     Some(AnyIntent::Chat(ChatIntent::CopyToClipboard(text))) => {
                         if let Err(e) = write_clipboard(clipboard, &text) {
-                            screen
-                                .push_error(&format!("Не удалось скопировать в буфер обмена: {e}"));
+                            let loc = screen.loc();
+                            screen.push_error(&loc.tf("ui.err.copy_failed", &[("err", &e)]));
                         }
                     }
                     Some(intent) => {

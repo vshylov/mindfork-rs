@@ -141,7 +141,7 @@ impl Orchestrator {
         }
 
         // Is the server ready? Otherwise silently skip (the counter isn't reset).
-        let Ok(backend) = self.engines.backend_if_ready() else {
+        let Ok(backend) = self.engines.backend_if_ready(self.ui_locale()) else {
             return;
         };
         // All gates passed — reset the counter and spawn.

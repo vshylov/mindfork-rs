@@ -26,10 +26,10 @@ pub struct InstanceGuard {
 pub enum InstanceError {
     /// The application is already running as another instance — not a
     /// failure, but a launch refusal.
-    #[error("приложение уже запущено")]
+    #[error("application is already running")]
     AlreadyRunning,
     /// Failed to initialize the lock (a system error from the crate).
-    #[error("не удалось инициализировать блокировку единственного экземпляра: {0}")]
+    #[error("failed to initialize the single-instance lock: {0}")]
     Init(String),
 }
 

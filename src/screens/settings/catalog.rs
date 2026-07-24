@@ -537,7 +537,7 @@ impl SettingsScreen {
                 row(
                     FieldId::TPythonMode,
                     loc.t("ui.settings.field.python_mode"),
-                    FieldKind::Choice(t.python_mode.label().to_string()),
+                    FieldKind::Choice(python_mode_label(t.python_mode, loc)),
                 )
                 .describe(loc.t("ui.settings.desc.python_mode")),
                 row(

@@ -20,9 +20,9 @@ pub struct CharacterNames {
 impl Default for CharacterNames {
     fn default() -> Self {
         Self {
-            user: "Вы".to_string(),
-            assistant: "Ассистент".to_string(),
-            system: "Система".to_string(),
+            user: "You".to_string(),
+            assistant: "Assistant".to_string(),
+            system: "System".to_string(),
         }
     }
 }

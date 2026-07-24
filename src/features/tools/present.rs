@@ -146,8 +146,16 @@ fn present_result(name: &str, args: Option<&Value>, result: &str) -> Vec<ToolBlo
             None => vec![ToolBlock::Plain(result.to_string())],
         },
         // The `fs_read` result is a file's content: highlight it by the path's extension
-        // (except for error messages).
-        "fs_read" if !result.starts_with("Не удалось") => {
+        // (except for error messages). The tool's output is localized per profile
+        // (axis A, `tool.fs_read.result.read_failed`), so recognizing a failure by a
+        // hardcoded Russian prefix broke for non-Russian profiles (a real
+        // pre-existing bug) — `fs_read_failure_prefixes` checks it across every
+        // known built-in/external locale, mirroring `exit_labels()` (below).
+        "fs_read"
+            if !fs_read_failure_prefixes()
+                .iter()
+                .any(|p| result.starts_with(p)) =>
+        {
             let lang = ext_lang(args.and_then(|v| v.get("path")));
             vec![ToolBlock::Code {
                 lang,
@@ -167,6 +175,24 @@ fn exit_labels() -> Vec<&'static str> {
     crate::shared::i18n::Lang::all()
         .iter()
         .map(|&l| crate::shared::i18n::locale(l).t("python.console.exit"))
+        .collect()
+}
+
+/// The fixed prefix of `fs_read`'s localized failure message
+/// (`tool.fs_read.result.read_failed`, e.g. "Could not read {path}: {err}") across all
+/// known locales (built-in + external) — up to the first `{path}` placeholder. The
+/// tool's result is localized per profile (axis A), so recognizing a failure by a single
+/// hardcoded (Russian) prefix broke for non-Russian profiles; this mirrors
+/// `exit_labels()` above.
+fn fs_read_failure_prefixes() -> Vec<&'static str> {
+    crate::shared::i18n::Lang::all()
+        .iter()
+        .filter_map(|&l| {
+            crate::shared::i18n::locale(l)
+                .t("tool.fs_read.result.read_failed")
+                .split('{')
+                .next()
+        })
         .collect()
 }
 
@@ -386,6 +412,19 @@ mod tests {
             r#"{"path":"a.py"}"#,
             "Не удалось прочитать a.py: нет",
         );
+        assert!(matches!(p.result.as_slice(), [ToolBlock::Plain(_)]));
+    }
+
+    #[test]
+    fn fs_read_error_stays_plain_for_localized_prefix() {
+        // The tool's output is localized per profile (axis A) — the failure prefix
+        // must be recognized in any language, not just ru (here en).
+        let en = crate::shared::i18n::locale(crate::shared::i18n::Lang::En);
+        let msg = en.tf(
+            "tool.fs_read.result.read_failed",
+            &[("path", "a.py"), ("err", "not found")],
+        );
+        let p = present("fs_read", r#"{"path":"a.py"}"#, &msg);
         assert!(matches!(p.result.as_slice(), [ToolBlock::Plain(_)]));
     }
 

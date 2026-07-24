@@ -821,6 +821,14 @@ pub(super) fn theme_label(t: Theme, loc: &'static Locale) -> String {
     .to_string()
 }
 
+pub(super) fn python_mode_label(m: PythonMode, loc: &'static Locale) -> String {
+    loc.t(match m {
+        PythonMode::Wasmer => "ui.settings.choice.python_wasmer",
+        PythonMode::Local => "ui.settings.choice.python_local",
+    })
+    .to_string()
+}
+
 pub(super) fn cycle_theme(t: Theme) -> Theme {
     match t {
         Theme::Auto => Theme::Dark,

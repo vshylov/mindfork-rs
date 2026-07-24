@@ -563,14 +563,6 @@ impl PythonMode {
     /// All variants in UI-cycle order (for the Choice popup and the cycle).
     pub const ALL: [PythonMode; 2] = [PythonMode::Wasmer, PythonMode::Local];
 
-    /// UI label (Choice field).
-    pub fn label(self) -> &'static str {
-        match self {
-            PythonMode::Wasmer => "Wasmer-песочница",
-            PythonMode::Local => "локальный интерпретатор",
-        }
-    }
-
     /// Cyclic iteration honoring direction (`dir` = +1/-1).
     pub fn cycle(self, dir: i32) -> Self {
         let idx = Self::ALL.iter().position(|x| *x == self).unwrap_or(0) as i32;
@@ -578,6 +570,10 @@ impl PythonMode {
         Self::ALL[(((idx + dir) % n + n) % n) as usize]
     }
 }
+
+// UI label — `screens::settings::helpers::python_mode_label` (interface language,
+// axis B; mirrors `theme_label` for `Theme` — kept next to the other settings-screen
+// label helpers rather than on the type itself).
 
 /// Global "master switches" for external tools (security/privacy,
 /// spec §9.4, §13.2). Effective set = `Profile.enabled_tools ∩ globally enabled`.

@@ -43,8 +43,8 @@ impl Orchestrator {
         };
         // The agent-scaffold language — from the chat's profile (axis A): the digest and the
         // system message for auto-title are localized with it (the title is still requested "in
-        // the conversation's language", see `prompt.title.system`). Errors — for the human (axis B),
-        // stay in Russian.
+        // the conversation's language", see `prompt.title.system`). Errors — for the human,
+        // in the interface language (axis B, `self.ui_locale()`).
         let loc = self.profile_locale(chat.profile_id);
         let Some(digest) =
             crate::features::rename_chat::build_conversation_digest(&chat.messages, loc)
@@ -54,7 +54,7 @@ impl Orchestrator {
             ));
             return;
         };
-        let backend = match self.engines.backend_if_ready() {
+        let backend = match self.engines.backend_if_ready(self.ui_locale()) {
             Ok(backend) => backend,
             Err(msg) => {
                 // Auto-title is a chat-list operation: we show the server-readiness
