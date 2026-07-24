@@ -1,110 +1,116 @@
-# План: vec0 для заметок и наблюдений (перф, условно)
+# Plan: vec0 for notes and observations (perf, conditional)
 
-> Статус: **ОТЛОЖЕНО** (решение пользователя, после того как направления A и B
-> раздела «Память» завершены). Причина — преждевременная оптимизация: brute-force
-> косинус дёшев до тысяч заметок (единицы мс на `note_recall`), vec0 ускорил бы
-> **только query-путь** (не O(n²)-консолидацию, см. §Ключевые нюансы), а реализация
-> тянет схему-миграцию ради стабильного integer-rowid (заметки на `TEXT` uuid-PK).
-> Вернуться **по факту роста числа заметок до тысяч**. План ниже готов к реализации;
-> документ остаётся в `docs/` (не архивирован — направление не завершено).
+> Status: **DEFERRED** (user's decision, after tracks A and B of the "Memory"
+> section are done). Reason — premature optimization: brute-force cosine is
+> cheap up to thousands of notes (single-digit ms on `note_recall`), vec0 would
+> speed up **only the query path** (not the O(n²) consolidation, see
+> §Key nuances), and the implementation requires a schema migration for a
+> stable integer rowid (notes use a `TEXT` uuid PK).
+> Revisit **once the note count actually grows into the thousands**. The plan
+> below is implementation-ready; the document stays in `docs/` (not archived —
+> the track isn't done).
 
-## Нерв задачи
+## Task nerve
 
-Эмбеддинги **заметок** (и наблюдений `@self`) хранятся JSON-текстом, косинус —
-brute-force в Rust:
+**Note** embeddings (and `@self` observations) are stored as JSON text, cosine
+is brute-force in Rust:
 
 - `shared/storage/db/notes.rs`: `note_vectors(note_id PK, profile_id, embedding TEXT)`;
-  `note_search_semantic` перебирает все векторы профиля и считает `cosine` в Rust;
-  `notes_with_vectors` отдаёт все пары для попарной консолидации.
-- **RAG** для сравнения уже на `vec0`: `shared/storage/db/rag.rs` —
-  `rag_vectors` (виртуальная таблица `vec0`, partition key `profile_id`, kNN через
-  `MATCH ... AND k = ?`), размерность фиксируется глобально (`meta.rag_dim`).
+  `note_search_semantic` scans all vectors for the profile and computes `cosine`
+  in Rust; `notes_with_vectors` returns all pairs for pairwise consolidation.
+- **RAG** for comparison already uses `vec0`: `shared/storage/db/rag.rs` —
+  `rag_vectors` (a `vec0` virtual table, partition key `profile_id`, kNN via
+  `MATCH ... AND k = ?`), dimensionality fixed globally (`meta.rag_dim`).
 
-Для десятков–сотен заметок brute-force **дёшев** — roadmap прямо: делать «при
-кратном росте». Это перф-оптимизация, не пользовательская фича.
+For dozens–hundreds of notes brute-force is **cheap** — roadmap says outright:
+do it "on a multiple-fold growth." This is a perf optimization, not a
+user-facing feature.
 
-## Ключевые нюансы (обязательно учесть в реализации)
+## Key nuances (must account for in the implementation)
 
-1. **vec0 помогает только query-пути.** Ускоряется `note_search_semantic`
-   (`note_recall`) и `self_notes_relevant` (релевантная инъекция наблюдений в промпт)
-   — это kNN «запрос → топ-k». **Попарный дедуп** в обзорах консолидации
-   (`notes_with_vectors`, O(n²) по всем парам в `overview.rs`) — **не kNN-запрос**,
-   vec0 его дёшево не заменяет. Это главный довод «зачем и когда»: при росте числа
-   заметок сначала болит recall-латентность, не консолидация. Попарный путь можно
-   переформулировать как per-note kNN, но это отдельное решение.
-2. **Размерность vec0 — на таблицу.** Нужна **отдельная** `note_vectors_vec` со своим
-   ключом размерности (`meta.note_dim`), не общая с RAG. Тот же bge-m3 → та же
-   размерность, но таблицы раздельны (заметки/RAG независимы; смена embed-модели у
-   одного не должна ронять другой).
-3. **Миграция существующих JSON-векторов → vec0** — реальная миграция данных
-   ([ADR 0006](decisions/0006-data-schema-versioning.md)): либо `DB_STEP` (читает
-   `note_vectors`, размерность из первого JSON-вектора, наполняет `note_vectors_vec`),
-   либо ленивый бэкфилл при первом обращении. **Рекомендуется гибрид:** сохранить
-   `note_vectors` (JSON) как durable-хранилище + параллельный `vec0`-индекс для
-   query-пути; попарный путь (`notes_with_vectors`) остаётся на JSON. Так миграция
-   аддитивна и обратима, а не «переписать всё».
-4. **Изоляция и синхронность.** `note_vectors_vec` — partition key `profile_id` (как
-   RAG). `note_vector_upsert`/`note_delete` пишут/чистят **обе** таблицы синхронно.
+1. **vec0 only helps the query path.** It speeds up `note_search_semantic`
+   (`note_recall`) and `self_notes_relevant` (relevant-observation injection into
+   the prompt) — this is kNN "query → top-k". **Pairwise dedup** in consolidation
+   overviews (`notes_with_vectors`, O(n²) over all pairs in `overview.rs`) —
+   **is not a kNN query**, vec0 doesn't cheaply replace it. This is the main
+   "why and when" argument: as the note count grows, recall latency hurts
+   first, not consolidation. The pairwise path could be reformulated as
+   per-note kNN, but that's a separate decision.
+2. **vec0 dimensionality is per-table.** Needs a **separate** `note_vectors_vec`
+   with its own dimensionality key (`meta.note_dim`), not shared with RAG. Same
+   bge-m3 → same dimensionality, but tables stay separate (notes/RAG are
+   independent; changing one's embed model shouldn't break the other).
+3. **Migrating existing JSON vectors → vec0** — a real data migration
+   ([ADR 0006](decisions/0006-data-schema-versioning.md)): either a `DB_STEP`
+   (reads `note_vectors`, dimensionality from the first JSON vector, populates
+   `note_vectors_vec`), or a lazy backfill on first access. **A hybrid is
+   recommended:** keep `note_vectors` (JSON) as durable storage + a parallel
+   `vec0` index for the query path; the pairwise path (`notes_with_vectors`)
+   stays on JSON. This makes the migration additive and reversible, not a
+   "rewrite everything."
+4. **Isolation and sync.** `note_vectors_vec` — partition key `profile_id` (like
+   RAG). `note_vector_upsert`/`note_delete` write/clear **both** tables in sync.
 
-## Принципы (в духе проекта)
+## Principles (in the project's spirit)
 
-- **Аддитивно и без риска для существующих данных** — durable JSON остаётся, vec0 —
-  надстройка; бэкфилл идемпотентен.
-- **Изоляция по `profile_id`** — обязательный partition key/`WHERE` (инвариант).
-- **Мягкая деградация** — при отсутствии vec0-индекса (до бэкфилла) query-путь
-  падает обратно на brute-force JSON.
+- **Additive, no risk to existing data** — durable JSON stays, vec0 is an
+  add-on; the backfill is idempotent.
+- **Isolation by `profile_id`** — a mandatory partition key/`WHERE` (invariant).
+- **Graceful degradation** — without a vec0 index (before backfill), the query
+  path falls back to brute-force JSON.
 
 ---
 
-## Эскиз реализации
+## Implementation sketch
 
-### Шаг 1 — схема
+### Step 1 — schema
 
-- `db/mod.rs` — `ensure_note_vec_table(conn, dim)` (аналог `ensure_vec_table`),
-  ключ `meta.note_dim`; `CREATE VIRTUAL TABLE note_vectors_vec USING vec0(profile_id
-  TEXT partition key, embedding float[dim])`. Ленивое создание при первой вставке.
+- `db/mod.rs` — `ensure_note_vec_table(conn, dim)` (mirrors `ensure_vec_table`),
+  key `meta.note_dim`; `CREATE VIRTUAL TABLE note_vectors_vec USING vec0(profile_id
+  TEXT partition key, embedding float[dim])`. Lazily created on first insert.
 
-### Шаг 2 — писатели
+### Step 2 — writers
 
-- `note_vector_upsert` — писать и в JSON `note_vectors` (durable), и в
-  `note_vectors_vec` (по rowid заметки/собственному rowid).
-- `note_delete` — чистить обе таблицы.
+- `note_vector_upsert` — write both to JSON `note_vectors` (durable) and to
+  `note_vectors_vec` (by the note's rowid/its own rowid).
+- `note_delete` — clear both tables.
 
-### Шаг 3 — query-путь
+### Step 3 — query path
 
-- `note_search_semantic` — если vec0-индекс есть и размерность совпадает, идти kNN
-  через `MATCH ... AND k = ?` (как `rag_search`); иначе — прежний brute-force JSON
-  (мягкая деградация до бэкфилла).
-- `self_notes_relevant` (`notes/self_notes.rs`) — тем же путём.
+- `note_search_semantic` — if a vec0 index exists and dimensionality matches, go
+  through kNN via `MATCH ... AND k = ?` (like `rag_search`); otherwise — the
+  previous brute-force JSON path (graceful degradation before backfill).
+- `self_notes_relevant` (`notes/self_notes.rs`) — same path.
 
-### Шаг 4 — бэкфилл
+### Step 4 — backfill
 
-- Ленивый: при первом query-обращении наполнить `note_vectors_vec` из JSON
-  `note_vectors` (размерность — из первого вектора). Либо `DB_STEP` (ADR 0006) с
-  golden-фикстурой.
+- Lazy: on first query access, populate `note_vectors_vec` from JSON
+  `note_vectors` (dimensionality — from the first vector). Or a `DB_STEP`
+  (ADR 0006) with a golden fixture.
 
-### Шаг 5 — попарный путь (оставить как есть)
+### Step 5 — pairwise path (leave as is)
 
-- `notes_with_vectors` / обзоры консолидации (`overview.rs`) — **не трогаем**:
-  O(n²) попарный дедуп не выигрывает от kNN. Задокументировать, что vec0 — про recall,
-  не про консолидацию.
+- `notes_with_vectors` / consolidation overviews (`overview.rs`) — **don't
+  touch**: O(n²) pairwise dedup doesn't benefit from kNN. Document that vec0 is
+  about recall, not consolidation.
 
-## Тесты
+## Tests
 
-- kNN по заметкам изолирован по профилю (зеркало `rag_knn_respects_profile_isolation`).
-- Бэкфилл наполняет vec0 из JSON и идемпотентен.
-- Смена embed-модели заметок (другая размерность) — сброс/пересоздание, не затрагивает
-  RAG-векторы (и наоборот).
-- Деградация: без vec0-индекса `note_search_semantic` работает через JSON.
+- kNN over notes is isolated by profile (mirrors `rag_knn_respects_profile_isolation`).
+- Backfill populates vec0 from JSON and is idempotent.
+- Changing the notes' embed model (different dimensionality) — reset/recreate,
+  doesn't affect RAG vectors (and vice versa).
+- Degradation: without a vec0 index, `note_search_semantic` works through JSON.
 
-## Вне объёма (задел)
+## Out of scope (groundwork)
 
-- **Перевод попарной консолидации на per-note kNN** — отдельное решение, если O(n²)
-  реально станет узким местом.
-- **Общая vec0-таблица для заметок и RAG** — сознательно НЕ делаем (связало бы
-  размерности/жизненные циклы двух органов).
+- **Porting pairwise consolidation to per-note kNN** — a separate decision, if
+  the O(n²) actually becomes a bottleneck.
+- **A shared vec0 table for notes and RAG** — deliberately NOT doing this
+  (would couple the dimensionality/lifecycle of two organs).
 
-## Когда делать
+## When to do it
 
-**Последним** среди направлений памяти либо по факту роста числа заметок до
-тысяч. До этого brute-force дёшев; преждевременная оптимизация не оправдана.
+**Last** among the memory tracks, or once the note count actually grows into
+the thousands. Before that, brute-force is cheap; premature optimization isn't
+warranted.

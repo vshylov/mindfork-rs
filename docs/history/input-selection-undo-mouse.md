@@ -1,544 +1,608 @@
-# Дизайн-план: выделение текста, undo/redo, мышь в поле ввода (InputBox, п.8–10)
+# Design plan: text selection, undo/redo, mouse in the input box (InputBox, items 8-10)
 
-> **Статус:** этапы **A** (выделение), **B** (буфер обмена + перенос выхода
-> `Ctrl+C`→`Ctrl+Q`/`F10`), **C** (undo/redo) и **D** (мышь: клик → курсор,
-> драг → выделение) — **все сделаны** (см. журнал CLAUDE.md). Направление завершено.
-> **Контекст:** по итогам аудита `widgets/input_box.rs` (собственный multiline-ввод,
-> [ADR 0001](decisions/0001-ui-crates-ratatui-030.md)). Пункты 1–7 аудита сделаны
-> (см. журнал CLAUDE.md «доводка InputBox» + «кэш переноса»). Здесь — три
-> оставшихся крупных пробела против «больших редакторов»:
-> **8** выделение текста (+ копирование/вырезание), **9** undo/redo,
-> **10** мышь в поле (клик → курсор, драг → выделение).
-> **Метод:** четыре этапа — **A** выделение → **B** буфер обмена → **C** undo/redo →
-> **D** мышь. Каждый самодостаточен и тестируем. Порядок: A предшествует B и D
-> (они опираются на модель выделения); C независим (может идти в любой момент).
+> **Status:** stages **A** (selection), **B** (clipboard + moving quit
+> `Ctrl+C`→`Ctrl+Q`/`F10`), **C** (undo/redo), and **D** (mouse: click → cursor,
+> drag → selection) — **all done** (see the CLAUDE.md changelog). The track is complete.
+> **Context:** follows the `widgets/input_box.rs` audit (custom multiline input,
+> [ADR 0001](decisions/0001-ui-crates-ratatui-030.md)). Audit items 1-7 are done
+> (see the CLAUDE.md changelog, "InputBox refinements" + "wrap cache"). Here are the
+> three remaining major gaps versus "big editors":
+> **8** text selection (+ copy/cut), **9** undo/redo,
+> **10** mouse in the field (click → cursor, drag → selection).
+> **Method:** four stages — **A** selection → **B** clipboard → **C** undo/redo →
+> **D** mouse. Each is self-contained and testable. Order: A precedes B and D
+> (they build on the selection model); C is independent (can land at any point).
 
-Сквозной DoD — §8. Сознательно не делаем — §9. Развилки, требующие решения **до**
-реализации, — §2 (главная — раскладка клавиш копирования).
-
----
-
-## 1. Мотивация, границы, где живёт логика
-
-`InputBox` используется в **пяти** местах (все — потребители одного виджета):
-поле ввода чата (`screens/chat`), переименование чата (`widgets/chat_list`, `F2`,
-однострочный), редактор поля настроек (`screens/settings`, однострочный + крупный
-многострочный для системного сообщения), редактор «модели себя» (`screens/self_model`,
-`F3`) и строка поиска настроек (`screens/settings/search`, `/`).
-
-**Принцип размещения логики:**
-
-- **Выделение и undo/redo — состояние и операции самого виджета** (`InputBox`).
-  Тогда все пять потребителей получают их бесплатно через уже общий вход
-  `InputBox::on_key` (см. п.6 аудита — `on_key` уже видит полный `KeyEvent`, включая
-  `Shift`/`Ctrl`). Ни один потребитель не дублирует логику курсора/выделения.
-- **Буфер обмена — side-effect UI-слоя**, виджет его не касается (FSD:
-  `widgets → features → shared`, не `app`). Как и запись переписки по `F5`
-  (`AppEvent::CopyToClipboard` → `runtime::deliver_clipboard` → `arboard`) и тумблер
-  мыши (`ChatIntent::SetMouseCapture` → `execute!` в `dispatch`), копирование
-  выделения проводит **runtime по намерению экрана**. Виджет лишь отдаёт
-  `selected_text()` и умеет `delete_selection()`.
-
-**Инварианты, которые нельзя нарушить:**
-
-- **FSD**: `screens`/`widgets` не импортируют `app`; экран отдаёт `ChatIntent`,
-  side-effect исполняет `runtime` (architecture.md §2).
-- **Кэш переноса (п.7)**: выделение **не меняет геометрию** рядов — `rows_cache`
-  при движении/расширении выделения не инвалидируется (ключ — `(width, revision)`,
-  а `revision` бампит только правка `lines`). Значит выделение **не зовёт**
-  `touch()`. Замена/удаление выделения — правка → `touch()` как обычно.
-- **`KeyOutcome` (п.6)**: расширение выделения (`Shift`+навигация) — `Moved`
-  (не будит дебаунс орфографии / `SetDraft`). Ввод/удаление поверх выделения —
-  `Edited`. Перерисовку при изменении выделения обеспечивает петля `runtime`
-  (`dirty` на любое терминальное событие — architecture.md §4), не `KeyOutcome`.
-- **Синхронизация подчёркиваний орфографии (п.5)**: удаление многострочного
-  выделения — структурная правка (склейка строк) → сбрасываем `misspelled`
-  затронутых строк (как в `join_misspelled_into_prev`), длину `Vec` синхронизируем.
+Cross-cutting DoD — §8. Deliberately out of scope — §9. Decision points requiring
+a call **before** implementation — §2 (the main one — copy-key layout).
 
 ---
 
-## 2. Развилки — нужны решения до реализации
+## 1. Motivation, scope, where the logic lives
 
-Помечено **[Р]** = требует ответа пользователя; в скобках — рекомендация.
+`InputBox` is used in **five** places (all consumers of one widget):
+the chat input box (`screens/chat`), chat rename (`widgets/chat_list`, `F2`,
+single-line), the settings field editor (`screens/settings`, single-line + a large
+multiline editor for the system message), the self-model editor (`screens/self_model`,
+`F3`), and the settings search bar (`screens/settings/search`, `/`).
 
-### [Р] Fork 1 — клавиши расширения выделения (рекомендация: стандартная схема)
+**Logic placement principle:**
 
-| Действие | Клавиши |
+- **Selection and undo/redo are state and operations of the widget itself**
+  (`InputBox`). Then all five consumers get them for free through the already
+  shared entry point `InputBox::on_key` (see audit item 6 — `on_key` already sees
+  the full `KeyEvent`, including `Shift`/`Ctrl`). No consumer duplicates
+  cursor/selection logic.
+- **Clipboard is a UI-layer side-effect**, the widget doesn't touch it (FSD:
+  `widgets → features → shared`, not `app`). Like writing the transcript via
+  `F5` (`AppEvent::CopyToClipboard` → `runtime::deliver_clipboard` → `arboard`) and
+  the mouse toggle (`ChatIntent::SetMouseCapture` → `execute!` in `dispatch`),
+  copying a selection is driven **by the screen's intent, executed by runtime**.
+  The widget only exposes `selected_text()` and can `delete_selection()`.
+
+**Invariants that must not break:**
+
+- **FSD**: `screens`/`widgets` don't import `app`; the screen returns `ChatIntent`,
+  runtime executes the side-effect (architecture.md §2).
+- **Wrap cache (item 7)**: selection **doesn't change row geometry** — `rows_cache`
+  isn't invalidated when the selection moves/grows (the key is `(width, revision)`,
+  and `revision` bumps only on a `lines` edit). So selection **doesn't call**
+  `touch()`. Replacing/deleting a selection is an edit → `touch()` as usual.
+- **`KeyOutcome` (item 6)**: extending selection (`Shift`+navigation) is `Moved`
+  (doesn't wake spellcheck debounce / `SetDraft`). Typing/deleting over a selection
+  is `Edited`. The `runtime` loop provides redraw on any selection change
+  (`dirty` on any terminal event — architecture.md §4), not `KeyOutcome`.
+- **Spellcheck underline sync (item 5)**: deleting a multiline selection is a
+  structural edit (line merge) → reset `misspelled` for the affected lines (as in
+  `join_misspelled_into_prev`), sync the `Vec` length.
+
+---
+
+## 2. Decision points — need a call before implementation
+
+Marked **[R]** = requires the user's answer; recommendation in parens.
+
+### [R] Fork 1 — selection-extension keys (recommendation: standard scheme)
+
+| Action | Keys |
 |---|---|
-| Расширить на символ/визуальный ряд | `Shift`+`←/→/↑/↓` |
-| Расширить до начала/конца ряда | `Shift`+`Home/End` |
-| Расширить по словам | `Ctrl`+`Shift`+`←/→` |
-| Расширить до начала/конца текста | `Ctrl`+`Shift`+`Home/End` |
-| Выделить всё | `Ctrl`+`A` |
+| Extend by character/visual row | `Shift`+`←/→/↑/↓` |
+| Extend to start/end of row | `Shift`+`Home/End` |
+| Extend by word | `Ctrl`+`Shift`+`←/→` |
+| Extend to start/end of text | `Ctrl`+`Shift`+`Home/End` |
+| Select all | `Ctrl`+`A` |
 
-Стрелки/`Home`/`End` раскладко-независимы; `Ctrl+A` нормализуется через
-`shared/keys::physical_char` (как прочие Ctrl-шорткаты). **Оговорка legacy-терминалов:**
-на «голом» unix-терминале без kitty keyboard protocol `Shift`+стрелка может приходить
-неотличимо от стрелки (модификатор не сообщается) — там выделение с клавиатуры просто
-не расширяется (мягкая деградация; мышь, этап D, продолжает работать). Тот же класс
-ограничения, что у `Shift+Enter` (см. п.11 аудита, задел). Windows Terminal/conhost
-модификаторы к стрелкам сообщают.
+Arrows/`Home`/`End` are layout-independent; `Ctrl+A` is normalized via
+`shared/keys::physical_char` (like other Ctrl shortcuts). **Legacy-terminal
+caveat:** on a "bare" unix terminal without the kitty keyboard protocol,
+`Shift`+arrow may arrive indistinguishable from a plain arrow (the modifier
+isn't reported) — there, keyboard selection just doesn't extend (graceful
+degradation; the mouse, stage D, keeps working). Same class of limitation as
+`Shift+Enter` (see audit item 11, groundwork). Windows Terminal/conhost report
+modifiers on arrows.
 
-### Fork 2 — клавиши копирования/вырезания (РЕШЕНО: Ctrl+C/Ctrl+X, выход → Ctrl+Q/F10)
+### Fork 2 — copy/cut keys (RESOLVED: Ctrl+C/Ctrl+X, quit → Ctrl+Q/F10)
 
-**Решение (пользователь, 2026-07-11):** `Ctrl+C` = **копировать** (всегда, а не
-контекстно), `Ctrl+X` = **вырезать**. Освобождённый прежний выход (`Ctrl+C`)
-**переезжает на `Ctrl+Q` + `F10`** (две альтернативы — если одну проглотит терминал,
-работает другая). В **статус-баре** снизу показываем `Ctrl+Q выход`; в **оверлее
-помощи** (`F1`/`?`) — оба (`Ctrl+Q` / `F10`).
+**Decision (user, 2026-07-11):** `Ctrl+C` = **copy** (always, not
+contextual), `Ctrl+X` = **cut**. The freed-up former quit (`Ctrl+C`)
+**moves to `Ctrl+Q` + `F10`** (two alternatives — if a terminal swallows one,
+the other works). The **status bar** at the bottom shows `Ctrl+Q quit`; the
+**help overlay** (`F1`/`?`) shows both (`Ctrl+Q` / `F10`).
 
-Это шире поля ввода — перенос выхода правит **все четыре экрана** (чат, список
-чатов, настройки, модель себя), где `Ctrl+C → *Intent::Quit`. Оформлено отдельным
-предваряющим шагом **B.0** (§5.0).
+This is wider than the input box — moving quit touches **all four screens**
+(chat, chat list, settings, self-model), where `Ctrl+C → *Intent::Quit`.
+Handled as a separate preceding step **B.0** (§5.0).
 
-**Оговорки по совместимости (запрошено):**
+**Compatibility caveats (as requested):**
 
-- **`Ctrl+Q`.** Исторически это XON (возобновление) программного управления потоком
-  XON/XOFF (`Ctrl+S`/`Ctrl+Q`). Приложение работает в **raw-mode** (crossterm
-  `enable_raw_mode` снимает `IXON` в termios), поэтому драйвер терминала `Ctrl+Q`
-  **не перехватывает** — он доходит до приложения на Linux и Windows. Остаточные
-  риски (редкие): мультиплексор (`tmux`/`screen`) со своим flow-control/биндингом на
-  свой префикс, эмулятор, переоткрывший flow-control, или DE-шорткат на `Ctrl+Q`
-  (большинство эмуляторов вешают выход на `Ctrl+Shift+Q`, так что `Ctrl+Q` без Shift
-  обычно свободен). Windows Terminal `Ctrl+Q` по умолчанию не занимает. Именно на эти
-  редкие случаи и держим **`F10`** как второй выход.
-- **`F10`.** Во многих Linux-DE открывает меню эмулятора терминала (GNOME Terminal/
-  xterm), но почти везде отключается в настройках терминала. Взаимно страхует
-  `Ctrl+Q` (если `F10` перехвачен — работает `Ctrl+Q`).
-- Обе клавиши сейчас **свободны** во всех экранах (Ctrl-разбор ловит `c/p/n/r/e/u/k/
-  g/b/t/w`, F-клавиши — `F1/F2/F3/F5`; ни `q`, ни `F10` не заняты).
+- **`Ctrl+Q`.** Historically this is XON (resume) for XON/XOFF software flow
+  control (`Ctrl+S`/`Ctrl+Q`). The app runs in **raw mode** (crossterm
+  `enable_raw_mode` clears `IXON` in termios), so the terminal driver
+  **doesn't intercept** `Ctrl+Q` — it reaches the app on both Linux and
+  Windows. Residual (rare) risks: a multiplexer (`tmux`/`screen`) with its own
+  flow control/binding on its own prefix, an emulator that re-enables flow
+  control, or a DE shortcut on `Ctrl+Q` (most emulators bind quit to
+  `Ctrl+Shift+Q`, so plain `Ctrl+Q` is usually free). Windows Terminal doesn't
+  claim `Ctrl+Q` by default. Exactly for these rare cases we also keep **`F10`**
+  as a second quit key.
+- **`F10`.** On many Linux DEs it opens the terminal emulator's menu
+  (GNOME Terminal/xterm), but is disabled in terminal settings almost
+  everywhere. It's a mutual backstop for `Ctrl+Q` (if `F10` is intercepted,
+  `Ctrl+Q` still works).
+- Both keys are currently **free** on all screens (Ctrl parsing captures
+  `c/p/n/r/e/u/k/g/b/t/w`, F-keys — `F1/F2/F3/F5`; neither `q` nor `F10` is
+  taken).
 
-Вставка уже работает (bracketed paste / коалесинг). В **однострочных** потребителях
-(переименование/поиск/поля настроек) `Ctrl+C` и так не был выходом — там он
-единообразно становится «копировать».
+Paste already works (bracketed paste / coalescing). In **single-line**
+consumers (rename/search/settings fields) `Ctrl+C` wasn't quit anyway — there
+it uniformly becomes "copy".
 
-### [Р] Fork 3 — клавиши undo/redo (рекомендация: `Ctrl+Z` / `Ctrl+Y`)
+### [R] Fork 3 — undo/redo keys (recommendation: `Ctrl+Z` / `Ctrl+Y`)
 
-`Ctrl+Z` (undo) и `Ctrl+Y` (redo) — обе свободны во всех экранах, раскладко-независимы
-через `physical_char`. Альтернатива redo — `Ctrl+Shift+Z` (маковская привычка), но
-`Ctrl+Y` проще и не конфликтует. **Оговорка:** `Ctrl+Z` на unix-терминале — обычно
-SIGTSTP (приостановка), но приложение в raw-mode + без job-control сигналов его
-получает как key-событие (crossterm), так что перехватываем. Проверить на живом
-unix-терминале (задел, не блокирует Windows).
+`Ctrl+Z` (undo) and `Ctrl+Y` (redo) — both free on all screens, layout-independent
+via `physical_char`. Redo alternative — `Ctrl+Shift+Z` (Mac habit), but
+`Ctrl+Y` is simpler and doesn't conflict. **Caveat:** `Ctrl+Z` on a unix
+terminal is normally SIGTSTP (suspend), but the app is in raw mode + without
+job-control signals it arrives as a key event (crossterm), so we intercept it.
+Verify on a live unix terminal (groundwork, doesn't block Windows).
 
-### Fork 4 — гранулярность undo (решение: снимки + коалесинг)
+### Fork 4 — undo granularity (decision: snapshots + coalescing)
 
-Модель — **стек снимков** `(lines, cursor)` (не операционные записи — проще и заведомо
-корректно; поле ввода короткое, память не проблема). **Коалесинг**: подряд идущие
-однотипные правки сливаются в одну единицу отмены. Новый снимок проталкивается перед
-правкой, если сменился «класс» правки или прошёл разрыв:
+The model — a **stack of snapshots** `(lines, cursor)` (not operation records —
+simpler and provably correct; the input box is short, memory isn't a concern).
+**Coalescing**: consecutive same-type edits merge into one undo unit. A new
+snapshot is pushed before the edit if the edit "class" changed or a break
+occurred:
 
-- разрыв по типу: вставка символов ↔ удаление ↔ структурная (перевод строки/склейка/
-  вставка из буфера/замена выделения);
-- разрыв по позиции: курсор прыгнул не туда, где кончилась прошлая правка;
-- принудительный снимок: `insert_newline`, `insert_str` (вставка), замена выделения,
-  `set_text`/`clear` (потребители, напр. загрузка черновика — **не** должны попадать
-  в undo пользователя: см. §6.3).
+- break by type: inserting characters ↔ deleting ↔ structural (newline/merge/
+  paste/replace-selection);
+- break by position: the cursor jumped away from where the last edit ended;
+- forced snapshot: `insert_newline`, `insert_str` (paste), replacing a
+  selection, `set_text`/`clear` (consumers, e.g. loading a draft — **must
+  not** enter the user's undo: see §6.3).
 
-Потолок глубины (напр. `UNDO_CAP = 200` единиц) — сбрасываем самые старые. `Ctrl+K`
-(«очистить/вернуть», буфер `cleared`) становится **частным случаем** общего undo
-(§6.4).
+Depth cap (e.g. `UNDO_CAP = 200` units) — evict the oldest. `Ctrl+K`
+("clear/restore", the `cleared` buffer) becomes a **special case** of the
+general undo (§6.4).
 
-### Fork 5 — мышь требует захвата (`Ctrl+W`), решение зафиксировано дизайном
+### Fork 5 — mouse requires capture (`Ctrl+W`), decision fixed by design
 
-Мышь в поле работает **только при включённом захвате мыши** (тумблер `Ctrl+W`,
-`mouse_scroll`) — иначе crossterm событий мыши не получает (нативное выделение
-терминала). Это уже принятая в проекте развилка (см. пост-M9 «прокрутка колесом»):
-захват вкл → колесо/клик идут приложению, нативное выделение — с зажатым `Shift`;
-захват выкл → нативное выделение мышью, приложение мышь не видит. Клик-в-поле и
-драг-выделение — **новые потребители того же захвата**, без нового тумблера.
+Mouse in the field only works **while mouse capture is on** (the `Ctrl+W`
+toggle, `mouse_scroll`) — otherwise crossterm doesn't get mouse events (native
+terminal selection). This is an already-accepted project decision (see
+post-M9 "wheel scroll"): capture on → wheel/click go to the app, native
+selection is available with `Shift` held; capture off → native mouse
+selection, the app doesn't see the mouse. Click-in-field and drag-to-select
+are **new consumers of the same capture**, no new toggle.
 
-### [Р] Fork 6 — охват буфера обмена (рекомендация: чат-first)
+### [R] Fork 6 — clipboard scope (recommendation: chat-first)
 
-Выделение/undo — сразу во всех пяти потребителях (виджет-уровень). **Копирование/
-вырезание в буфер** — сначала только **поле ввода чата** (основной сценарий; там уже
-есть проводка side-effect'ов). Переименование чата / поля настроек / редактор модели
-себя получают выделение + удаление/замену, а clipboard-копирование — заделом (их
-консьюмеры допроводят `Ctrl+C/X` позже одинаковым паттерном). Альтернатива — сразу
-все пять (больше проводки, но единообразие). Рекомендация — **чат-first**.
+Selection/undo — right away in all five consumers (widget level). **Copy/
+cut to clipboard** — starting with only the **chat input box** (the main use
+case; the side-effect plumbing is already there). Chat rename / settings
+fields / self-model editor get selection + delete/replace, and clipboard
+copy is groundwork (their consumers wire `Ctrl+C/X` later with the same
+pattern). Alternative — all five at once (more plumbing, but uniform).
+Recommendation — **chat-first**.
 
 ---
 
-## 3. Модель выделения (виджет `InputBox`)
+## 3. Selection model (`InputBox` widget)
 
-Новое поле:
+New field:
 
 ```rust
-/// Якорь выделения (строка, столбец) в индексах символов. `Some` — есть активное
-/// выделение [anchor, cursor] (нормализуется при использовании: начало = меньшая из
-/// двух позиций). `None` — выделения нет. Курсор — существующие (row, col).
+/// Selection anchor (row, column) in character indices. `Some` — there's an
+/// active selection [anchor, cursor] (normalized on use: start = the smaller
+/// of the two positions). `None` — no selection. Cursor — existing (row, col).
 anchor: Option<(usize, usize)>,
 ```
 
-Методы:
+Methods:
 
-- `has_selection() -> bool` — `anchor` есть и не совпадает с курсором.
-- `selection_span() -> Option<((usize,usize),(usize,usize))>` — нормализованные
-  `(start, end)` (start ≤ end по (row, col)).
-- `selected_text() -> Option<String>` — текст выделения (для копирования).
-- `set_anchor_if_none()` — перед `Shift`-навигацией: если `anchor == None`,
-  ставит `anchor = (row, col)` (текущий курсор). Навигация дальше двигает курсор.
-- `clear_selection()` — `anchor = None` (при обычной навигации/правке без замены).
-- `delete_selection() -> bool` — удаляет `[start, end)`, ставит курсор в `start`,
-  `anchor = None`, `touch()`, синхронизирует `misspelled` (см. §4.3). Возвращает,
-  было ли что удалять.
+- `has_selection() -> bool` — `anchor` is set and doesn't equal the cursor.
+- `selection_span() -> Option<((usize,usize),(usize,usize))>` — normalized
+  `(start, end)` (start ≤ end by (row, col)).
+- `selected_text() -> Option<String>` — selection text (for copying).
+- `set_anchor_if_none()` — before `Shift`-navigation: if `anchor == None`,
+  set `anchor = (row, col)` (current cursor). Navigation then moves the
+  cursor.
+- `clear_selection()` — `anchor = None` (on plain navigation/edit without
+  replacement).
+- `delete_selection() -> bool` — deletes `[start, end)`, puts the cursor at
+  `start`, `anchor = None`, `touch()`, syncs `misspelled` (see §4.3). Returns
+  whether there was anything to delete.
 
-**Взаимодействие с существующим:**
+**Interaction with existing code:**
 
-- Обычная навигация (`move_left/right/up/down/home/end/word_*/doc_*`) — вызывает
-  `clear_selection()` в начале (курсор без Shift схлопывает выделение). `Shift`-версии
-  — `set_anchor_if_none()` вместо `clear_selection()`, затем то же движение.
-- Правка (`insert_char/insert_str/insert_newline/backspace/delete/delete_word_*`) —
-  в начале: если `has_selection()`, сперва `delete_selection()`, затем действие
-  (для `backspace`/`delete` с выделением — удаление выделения **и есть** действие,
-  без досимвольного удаления). `replace_range` (подсказка орфографии) выделение
-  игнорирует/снимает.
-- `set_text/clear` — `anchor = None` (сброс, как прочее состояние).
+- Plain navigation (`move_left/right/up/down/home/end/word_*/doc_*`) calls
+  `clear_selection()` first (cursor without Shift collapses the selection).
+  `Shift` variants call `set_anchor_if_none()` instead of `clear_selection()`,
+  then the same movement.
+- Editing (`insert_char/insert_str/insert_newline/backspace/delete/
+  delete_word_*`) — at the start: if `has_selection()`, first
+  `delete_selection()`, then the action (for `backspace`/`delete` with a
+  selection — deleting the selection **is** the action, no extra
+  character deletion). `replace_range` (spellcheck suggestion) ignores/
+  clears the selection.
+- `set_text/clear` — `anchor = None` (reset, like other state).
 
-**Кэш и `KeyOutcome`:** движение/расширение выделения не трогает `lines` → **не**
-зовёт `touch()` (кэш переноса цел). `delete_selection` меняет `lines` → `touch()`.
-`Shift`-навигация → `KeyOutcome::Moved`; правка поверх выделения → `Edited`.
-
----
-
-## 4. Этап A — выделение (виджет)
-
-Ветка `feat/input-selection`. Только `widgets/input_box.rs` (+ `shared/theme.rs`
-для цвета подсветки) + тесты.
-
-### 4.1 Обработка клавиш (`on_key`)
-
-Расширить `on_key`:
-
-- `Shift`+`←/→/↑/↓/Home/End`, `Ctrl+Shift`+`←/→/Home/End`: `set_anchor_if_none()` →
-  соответствующее движение курсора → `Moved`. (Сейчас `Shift` у стрелок игнорируется
-  — ветки `KeyCode::Left =>` и т.п. ловят их без учёта модификатора; добавляем ветки
-  с `SHIFT` **до** них.)
-- `Ctrl+A` (физ. `a`): `anchor = (0,0)`, курсор в конец текста → `Moved`. (Сейчас
-  `Ctrl+A` → `Ignored`; добавляем ветку в Ctrl-разбор `on_key`.)
-- Обычные стрелки/Home/End (без Shift): в начале `clear_selection()` (уже вызывают
-  `move_*`, добавляем сброс) → `Moved`.
-- Правка с активным выделением: `delete_selection()` перед вставкой символа/переводом;
-  `backspace`/`delete` при выделении = `delete_selection()` (и всё) → `Edited`.
-
-`Ctrl+A` через `physical_char` работает при кириллице и во всех потребителях (их
-Ctrl-разбор пропускает незнакомые буквы в `on_key`, см. п.6 аудита).
-
-### 4.2 Рендер подсветки выделения
-
-В `render`/`render_single_line`: для каждого визуального ряда вычислить пересечение
-выделения `[start, end)` с диапазоном ряда (в row-local координатах, как `misspelled`
-через `clip_ranges`) и покрасить **фон** этих спанов. Компонуется с подчёркиванием
-орфографии и командной подсветкой:
-
-- `styled_line(chars, misspelled_ranges, selection_range, palette)` — новый параметр
-  `selection_range: Option<(usize,usize)>`; выделенные символы получают
-  `Style::bg(palette.selection_bg)` поверх (не вместо) `fg`/подчёркивания. Порядок
-  спанов — разбить по объединению границ выделения и ошибок.
-- Командная подсветка (`command=true`, весь текст `warning`): выделение всё равно
-  красит фон (пользователь может выделить команду) — сохраняем `fg=warning` + bg.
-
-**Цвет** — новое поле `Palette::selection_bg` (`shared/theme.rs`): в тёмной/светлой/
-auto — приглушённая подложка (можно переиспользовать `keycap_bg` как в выделенной
-строке списка чатов, если отдельный оттенок не нужен; решить при реализации). Компат-
-режим (`GlyphSet`): фон-цвет работает и там (это цвет, не глиф).
-
-### 4.3 Синхронизация `misspelled` при `delete_selection`
-
-Выделение может охватывать несколько логических строк. Удаление их склеивает
-(как `backspace` на границе строк). Правило (переиспользуем подход п.5):
-
-- одна строка (`start.0 == end.0`): `edit_misspelled(row, start.1, end.1-start.1, 0)`
-  (сдвиг/сброс диапазонов, как обычное удаление);
-- несколько строк: удаляем записи `misspelled` строк `[start.0+1 ..= end.0]`, сбрасываем
-  запись строки `start.0` (её содержимое меняется) — длина `Vec` синхронизируется с
-  `lines`. Перепроверка (дебаунс) перестроит.
-
-### 4.4 Тесты этапа A (чистые, без терминала)
-
-- `Shift+Right` ставит якорь и расширяет; повторный — растит; обычный `Right` схлопывает.
-- `Ctrl+A` выделяет всё; `selected_text()` == весь текст.
-- ввод символа поверх выделения заменяет его (`delete_selection` + `insert_char`).
-- `Backspace`/`Delete` при выделении удаляют выделение целиком (не один символ).
-- многострочное выделение: `selected_text()` через `\n`; `delete_selection` склеивает
-  строки и синхронизирует `misspelled` (нет паники, длины совпадают).
-- рендер с выделением не паникует; выделенные ячейки буфера несут `bg` (TestBackend).
-- `Shift`-навигация → `KeyOutcome::Moved`, ввод поверх → `Edited`; `revision` не растёт
-  на расширении выделения, растёт на замене (кэш из п.7 цел).
+**Cache and `KeyOutcome`:** moving/extending the selection doesn't touch
+`lines` → **doesn't** call `touch()` (the wrap cache stays intact).
+`delete_selection` changes `lines` → `touch()`. `Shift`-navigation →
+`KeyOutcome::Moved`; editing over a selection → `Edited`.
 
 ---
 
-## 5. Этап B — копирование/вырезание в буфер (чат-first)
+## 4. Stage A — selection (widget)
 
-Ветка `feat/input-clipboard`. Опирается на A. `screens/chat` + `app/runtime` +
-контракт `ChatIntent`.
+Branch `feat/input-selection`. Only `widgets/input_box.rs` (+ `shared/theme.rs`
+for the highlight color) + tests.
 
-### 5.0 Перенос выхода на `Ctrl+Q`/`F10`, освобождение `Ctrl+C`
+### 4.1 Key handling (`on_key`)
 
-Предваряющий шаг (Fork 2). Прежний выход — `Ctrl+C` → `*Intent::Quit` — во **всех
-четырёх** экранах. Правки:
+Extend `on_key`:
 
-- `screens/chat/input.rs`: заменить в Ctrl-разборе ветку физ. `c` → `Quit` на:
-  физ. `q` → `ChatIntent::Quit`; добавить `KeyCode::F(10)` → `Quit` в матч по коду.
-  (Освободившийся `Ctrl+C` заберёт копирование, §5.2.)
-- `widgets/chat_list.rs` (`ChatListState::on_key`): физ. `c` → `Quit` заменить на
-  физ. `q`; добавить `F10` → `ChatListAction::Quit`. (Строка поиска/переименование —
-  свой разбор; `Ctrl+C` там пойдёт под копирование, если есть выделение.)
-- `screens/settings/apply.rs`, `screens/self_model.rs`: аналогично — `Ctrl+C`→`Quit`
-  меняем на `Ctrl+Q` + `F10`.
-- **Статус-бар** (`widgets/status_bar.rs`): хоткей-подсказка `Ctrl+C выход` →
-  `Ctrl+Q выход` (одна клавиша в узкой строке).
-- **Оверлей помощи** (`screens/chat/popups.rs::HELP_KEYS` и help-строки прочих
-  экранов): показать **оба** — `Ctrl+Q` / `F10 — выход`.
-- Раскладко-независимость: `q` через `physical_char` (как прочие Ctrl-буквы); `F10`
-  раскладки не зависит.
+- `Shift`+`←/→/↑/↓/Home/End`, `Ctrl+Shift`+`←/→/Home/End`:
+  `set_anchor_if_none()` → the corresponding cursor move → `Moved`. (Currently
+  `Shift` on arrows is ignored — the `KeyCode::Left =>` branches etc. catch
+  them regardless of modifier; add branches with `SHIFT` **before** those.)
+- `Ctrl+A` (phys. `a`): `anchor = (0,0)`, cursor to text end → `Moved`.
+  (Currently `Ctrl+A` → `Ignored`; add a branch in the `on_key` Ctrl parsing.)
+- Plain arrows/Home/End (no Shift): call `clear_selection()` first (already
+  calling `move_*`, add the reset) → `Moved`.
+- Editing with an active selection: `delete_selection()` before inserting a
+  character/newline; `backspace`/`delete` with a selection =
+  `delete_selection()` (and that's it) → `Edited`.
 
-Клавиши `q`/`F10` предварительно свободны во всех экранах (проверено: Ctrl-разбор не
-ловит `q`, F-клавиши заняты только `F1/F2/F3/F5`).
+`Ctrl+A` via `physical_char` works with a Cyrillic layout too, and in all
+consumers (their Ctrl parsing in `on_key` passes through unknown letters, see
+audit item 6).
 
-### 5.1 Контракт и проводка side-effect
+### 4.2 Rendering the selection highlight
 
-Новое намерение (по образцу `SetMouseCapture` — исполняется в `runtime`, не идёт в
-оркестратор; данные у UI):
+In `render`/`render_single_line`: for each visual row, compute the
+intersection of the selection `[start, end)` with the row's range (in
+row-local coordinates, like `misspelled` via `clip_ranges`) and color the
+**background** of those spans. Composes with spellcheck underline and command
+highlighting:
+
+- `styled_line(chars, misspelled_ranges, selection_range, palette)` — new
+  parameter `selection_range: Option<(usize,usize)>`; selected characters get
+  `Style::bg(palette.selection_bg)` on top of (not instead of) `fg`/underline.
+  Span order — split by the union of selection and error boundaries.
+- Command highlighting (`command=true`, whole text `warning`): selection
+  still colors the background (the user can select the command) — keep
+  `fg=warning` + bg.
+
+**Color** — new field `Palette::selection_bg` (`shared/theme.rs`): in
+dark/light/auto, a muted overlay (can reuse `keycap_bg`, like the selected
+chat-list row, if a separate shade isn't needed; decide at implementation
+time). Compat mode (`GlyphSet`): the background color works there too (it's a
+color, not a glyph).
+
+### 4.3 Syncing `misspelled` on `delete_selection`
+
+A selection can span several logical lines. Deleting it merges them (like
+`backspace` at a line boundary). Rule (reuse the item-5 approach):
+
+- single line (`start.0 == end.0`): `edit_misspelled(row, start.1, end.1-start.1, 0)`
+  (shift/reset ranges, like a plain deletion);
+- multiple lines: remove `misspelled` entries for lines `[start.0+1 ..=
+  end.0]`, reset the entry for line `start.0` (its content changes) — sync
+  the `Vec` length with `lines`. The recheck (debounce) will rebuild it.
+
+### 4.4 Stage A tests (pure, no terminal)
+
+- `Shift+Right` sets the anchor and extends; repeat grows it; plain `Right`
+  collapses.
+- `Ctrl+A` selects all; `selected_text()` == the whole text.
+- typing a character over a selection replaces it (`delete_selection` +
+  `insert_char`).
+- `Backspace`/`Delete` with a selection delete the whole selection (not one
+  character).
+- multiline selection: `selected_text()` via `\n`; `delete_selection` merges
+  the lines and syncs `misspelled` (no panic, lengths match).
+- rendering with a selection doesn't panic; selected buffer cells carry `bg`
+  (TestBackend).
+- `Shift`-navigation → `KeyOutcome::Moved`, typing over it → `Edited`;
+  `revision` doesn't grow when extending a selection, grows on replacement
+  (the item-7 cache stays intact).
+
+---
+
+## 5. Stage B — copy/cut to clipboard (chat-first)
+
+Branch `feat/input-clipboard`. Builds on A. `screens/chat` + `app/runtime` +
+the `ChatIntent` contract.
+
+### 5.0 Moving quit to `Ctrl+Q`/`F10`, freeing up `Ctrl+C`
+
+Preceding step (Fork 2). The former quit — `Ctrl+C` → `*Intent::Quit` — on
+**all four** screens. Changes:
+
+- `screens/chat/input.rs`: in the Ctrl parsing, replace the phys. `c` →
+  `Quit` branch with: phys. `q` → `ChatIntent::Quit`; add `KeyCode::F(10)` →
+  `Quit` in the code match. (The freed `Ctrl+C` picks up copying, §5.2.)
+- `widgets/chat_list.rs` (`ChatListState::on_key`): replace phys. `c` →
+  `Quit` with phys. `q`; add `F10` → `ChatListAction::Quit`. (The search bar/
+  rename field have their own parsing; `Ctrl+C` there will go to copying if
+  there's a selection.)
+- `screens/settings/apply.rs`, `screens/self_model.rs`: same — change
+  `Ctrl+C`→`Quit` to `Ctrl+Q` + `F10`.
+- **Status bar** (`widgets/status_bar.rs`): the hotkey hint `Ctrl+C quit` →
+  `Ctrl+Q quit` (one key in the narrow bar).
+- **Help overlay** (`screens/chat/popups.rs::HELP_KEYS` and the other
+  screens' help lines): show **both** — `Ctrl+Q` / `F10 — quit`.
+- Layout independence: `q` via `physical_char` (like other Ctrl letters);
+  `F10` is layout-independent.
+
+Keys `q`/`F10` are free on all screens beforehand (verified: Ctrl parsing
+doesn't catch `q`, F-keys are taken only by `F1/F2/F3/F5`).
+
+### 5.1 Contract and side-effect plumbing
+
+New intent (modeled on `SetMouseCapture` — executed in `runtime`, not passed
+to the orchestrator; the data is already at the UI):
 
 ```rust
 // screens/chat/mod.rs, enum ChatIntent
-CopyToClipboard(String),  // записать текст в системный буфер (side-effect runtime)
+CopyToClipboard(String),  // write text to the system clipboard (runtime side-effect)
 ```
 
-Проводка — как `SetMouseCapture`, но нужен слот `arboard`. `dispatch` его сейчас не
-получает; варианты:
+Plumbing — like `SetMouseCapture`, but needs the `arboard` slot. `dispatch`
+currently doesn't get it; options:
 
-- **Рекомендуется:** обработать `ChatIntent::CopyToClipboard` **в
-  `process_input_batch`** (у него уже есть `&mut clipboard`) — до/вместо `dispatch_any`,
-  вызвав `write_clipboard(clipboard, &text)` и, при ошибке, `screen.push_error(...)`.
-  Успех молчалив (без заметки в ленту — копирование в редакторе не должно шуметь; при
-  желании — короткая `push_note`, решить при реализации).
-- Альтернатива: протянуть `&mut Option<arboard::Clipboard>` в `dispatch`/`dispatch_any`
-  (шире сигнатуры). Менее локально.
+- **Recommended:** handle `ChatIntent::CopyToClipboard` **in
+  `process_input_batch`** (it already has `&mut clipboard`) — before/instead
+  of `dispatch_any`, calling `write_clipboard(clipboard, &text)` and, on
+  error, `screen.push_error(...)`. Success is silent (no feed note — copying
+  in the editor shouldn't be noisy; a short `push_note` is possible if
+  desired, decide at implementation time).
+- Alternative: pass `&mut Option<arboard::Clipboard>` into
+  `dispatch`/`dispatch_any` (wider signature). Less local.
 
-Cut = скопировать выделение + `delete_selection()`. Экран формирует
-`CopyToClipboard(selected)` **и** зовёт `self.input.delete_selection()` +
+Cut = copy the selection + `delete_selection()`. The screen builds
+`CopyToClipboard(selected)` **and** calls `self.input.delete_selection()` +
 `mark_input_changed()`.
 
-### 5.2 Клавиши (Fork 2 — решено: `Ctrl+C` копировать, `Ctrl+X` вырезать)
+### 5.2 Keys (Fork 2 — resolved: `Ctrl+C` copy, `Ctrl+X` cut)
 
-В `screens/chat/input.rs::handle_key`, Ctrl-разбор (после переноса выхода, §5.0
-`Ctrl+C` свободен):
+In `screens/chat/input.rs::handle_key`, Ctrl parsing (after moving quit, §5.0
+frees `Ctrl+C`):
 
-- физ. `c`: если `self.input.has_selection()` → вернуть
-  `ChatIntent::CopyToClipboard(self.input.selected_text().unwrap())` и снять выделение
-  (`clear_selection`); без выделения — no-op (не выход — он на `Ctrl+Q`/`F10`).
-- физ. `x`: выделение есть → то же намерение копирования + `delete_selection()`
-  + `mark_input_changed()`; без выделения — no-op.
+- phys. `c`: if `self.input.has_selection()` → return
+  `ChatIntent::CopyToClipboard(self.input.selected_text().unwrap())` and
+  clear the selection (`clear_selection`); without a selection — no-op (not
+  quit — that's `Ctrl+Q`/`F10`).
+- phys. `x`: with a selection → the same copy intent + `delete_selection()`
+  + `mark_input_changed()`; without a selection — no-op.
 
-В однострочных потребителях (`chat_list` rename, `settings` editor/search,
-`self_model` editor) — **задел** (Fork 6): их `handle_key` допроводит `Ctrl+C/X` тем же
-паттерном. На первом шаге там работают выделение и `delete_selection` (правкой), но
-не clipboard-копирование.
+In single-line consumers (`chat_list` rename, `settings` editor/search,
+`self_model` editor) — **groundwork** (Fork 6): their `handle_key` will wire
+`Ctrl+C/X` with the same pattern later. In the first pass, selection and
+`delete_selection` (via editing) already work there, but not clipboard
+copying.
 
-### 5.3 Тесты этапа B
+### 5.3 Stage B tests
 
-- `chat/input`: с выделением `Ctrl+C` → намерение `CopyToClipboard(<выделенное>)`,
-  выделение снято; без выделения → `Quit`.
-- `Ctrl+X` с выделением → намерение копирования + текст поля укоротился на выделение.
-- `runtime`: `process_input_batch`/dispatch с `CopyToClipboard` вызывает
-  `write_clipboard` (через мок-слот; ошибка → `push_error`, без паники).
+- `chat/input`: with a selection, `Ctrl+C` → intent
+  `CopyToClipboard(<selected>)`, selection cleared; without a selection →
+  `Quit`.
+- `Ctrl+X` with a selection → copy intent + the field text shortened by the
+  selection.
+- `runtime`: `process_input_batch`/dispatch with `CopyToClipboard` calls
+  `write_clipboard` (via a mock slot; error → `push_error`, no panic).
 
 ---
 
-## 6. Этап C — undo/redo (виджет)
+## 6. Stage C — undo/redo (widget)
 
-Ветка `feat/input-undo`. Только `widgets/input_box.rs` + тесты. Независим от A/B/D.
+Branch `feat/input-undo`. Only `widgets/input_box.rs` + tests. Independent of
+A/B/D.
 
-### 6.1 Состояние
+### 6.1 State
 
 ```rust
-/// Стек отмены: снимки (lines, cursor) ДО правки. Коалесинг — новый снимок толкается
-/// лишь при смене класса правки / прыжке позиции (см. §6.2). Потолок UNDO_CAP.
+/// Undo stack: snapshots (lines, cursor) BEFORE an edit. Coalescing — a new
+/// snapshot is only pushed when the edit class changes / the position jumps
+/// (see §6.2). Cap is UNDO_CAP.
 undo: Vec<Snapshot>,
-/// Стек повтора: снимки, снятые с `undo` при отмене; чистится любой новой правкой.
+/// Redo stack: snapshots popped from `undo` on undo; cleared by any new edit.
 redo: Vec<Snapshot>,
-/// Класс последней правки и позиция её конца — для коалесинга.
+/// Class of the last edit and the position of its end — for coalescing.
 last_edit_kind: Option<EditKind>,
 ```
 
 `Snapshot { lines: Vec<Vec<char>>, row: usize, col: usize }`.
 `EditKind { Insert, Delete, Structural }`.
 
-### 6.2 Коалесинг
+### 6.2 Coalescing
 
-Перед мутацией — `record_undo(kind)`: если `last_edit_kind` совпадает с `kind`, правка
-продолжает прежнюю позицию, и `kind != Structural` — снимок **не** толкаем (сливаем).
-Иначе — `undo.push(snapshot_before)`, `redo.clear()`, обрезаем до `UNDO_CAP`. После
-мутации — `last_edit_kind = Some(kind)`, запоминаем позицию конца.
+Before a mutation — `record_undo(kind)`: if `last_edit_kind` matches `kind`,
+the edit continues the previous position, and `kind != Structural` — the
+snapshot is **not** pushed (it merges). Otherwise —
+`undo.push(snapshot_before)`, `redo.clear()`, trim to `UNDO_CAP`. After the
+mutation — `last_edit_kind = Some(kind)`, remember the end position.
 
-- `insert_char` → `Insert`; серия набора = одна единица, разрыв на пробеле/переводе
-  строки (по вкусу — можно рвать по словам, начав со «слитно», решить при реализации).
+- `insert_char` → `Insert`; a typing run = one unit, break on a space/newline
+  (a matter of taste — could break by word instead, starting with "merged",
+  decide at implementation time).
 - `backspace`/`delete`/`delete_word_*` → `Delete`.
-- `insert_newline`/`insert_str`/замена выделения → `Structural` (всегда отдельная
-  единица).
+- `insert_newline`/`insert_str`/replacing a selection → `Structural` (always
+  its own unit).
 
 ### 6.3 `undo()` / `redo()`
 
-- `undo()`: если `undo` непуст — `redo.push(current_snapshot)`, восстановить
-  `undo.pop()` (lines+cursor), `anchor=None`, `touch()`, `misspelled.clear()`
-  (перепроверка перестроит), `last_edit_kind=None`.
-- `redo()`: зеркально.
-- **Границы потребителей:** `set_text`/`clear`, вызванные **программно** (загрузка
-  черновика при переключении чата, `restore_input`, применение подсказки) — **не**
-  должны попадать в пользовательский undo и **должны** чистить историю (чужой контекст).
-  Решение: `set_text`/`clear` делают `undo.clear(); redo.clear(); last_edit_kind=None`.
-  Пользовательские правки после этого копят свою историю.
+- `undo()`: if `undo` is non-empty — `redo.push(current_snapshot)`, restore
+  `undo.pop()` (lines+cursor), `anchor=None`, `touch()`,
+  `misspelled.clear()` (the recheck will rebuild it),
+  `last_edit_kind=None`.
+- `redo()`: mirror image.
+- **Consumer boundaries:** `set_text`/`clear`, called **programmatically**
+  (loading a draft on chat switch, `restore_input`, applying a suggestion) —
+  **must not** enter the user's undo and **must** clear the history (foreign
+  context). Decision: `set_text`/`clear` do
+  `undo.clear(); redo.clear(); last_edit_kind=None`. User edits after that
+  build their own history.
 
-### 6.4 `Ctrl+K` → частный случай общего undo (РЕШЕНО: заменить)
+### 6.4 `Ctrl+K` → a special case of general undo (RESOLVED: replace)
 
-**Решение (пользователь, 2026-07-11):** заменить `cleared`/toggle общим undo — одна
-модель отмены. `Ctrl+K` при непустом поле = `record_undo(Structural)` + очистка
-содержимого (**не** истории — толкает снимок в `undo`, стек не чистит); тогда
-`Ctrl+Z` возвращает текст. Поле `cleared` и toggle-семантика `Ctrl+K` (повторное
-нажатие возвращало) **удаляются**. **Поведенческая смена** — отметить в spec §11.5 и
-журнале (§10): повторный `Ctrl+K` больше не восстанавливает; возврат — `Ctrl+Z`.
-Тест `clear_or_restore_*` заменяются на `Ctrl+K`→`Ctrl+Z`.
+**Decision (user, 2026-07-11):** replace `cleared`/toggle with general undo —
+one model of undoing. `Ctrl+K` with a non-empty field =
+`record_undo(Structural)` + clear the content (**not** the history — it
+pushes a snapshot onto `undo`, doesn't clear the stack); then `Ctrl+Z`
+restores the text. The `cleared` field and `Ctrl+K` toggle semantics
+(pressing again used to restore) are **removed**. **Behavior change** — note
+in spec §11.5 and the changelog (§10): pressing `Ctrl+K` again no longer
+restores; restoring is `Ctrl+Z`. The `clear_or_restore_*` tests get replaced
+with `Ctrl+K`→`Ctrl+Z`.
 
-### 6.5 Тесты этапа C
+### 6.5 Stage C tests
 
-- набор текста → `undo` возвращает к пустому одной единицей (коалесинг);
-- набор «abc», пауза-разрыв (структурная правка), ещё набор → два undo-шага;
-- `insert_str` (вставка) — отдельная единица отмены;
-- `redo` после `undo`; новая правка чистит `redo`;
-- `set_text` (программно) чистит историю — `undo` после него не воскрешает прежний
-  пользовательский текст;
-- `UNDO_CAP` — старые единицы вытесняются;
-- `Ctrl+K` → `Ctrl+Z` возвращает очищенный текст.
+- typing text → `undo` returns to empty in one unit (coalescing);
+- typing "abc", a pause-break (structural edit), more typing → two undo
+  steps;
+- `insert_str` (paste) — a separate undo unit;
+- `redo` after `undo`; a new edit clears `redo`;
+- `set_text` (programmatic) clears the history — `undo` after it doesn't
+  revive the previous user text;
+- `UNDO_CAP` — old units get evicted;
+- `Ctrl+K` → `Ctrl+Z` restores the cleared text.
 
 ---
 
-## 7. Этап D — мышь в поле (клик → курсор, драг → выделение) — сделано
+## 7. Stage D — mouse in the field (click → cursor, drag → selection) — done
 
-Ветка `feat/input-mouse`. Опирается на A (драг ставит выделение). `widgets/input_box.rs`
-+ `screens/chat`. **Реализовано:** поле `InputBox.last_area` (область текста последней
-отрисовки), приватный `place_cursor_at(mx,my)` (инверсия раскладки переноса + снап к
-кластеру), публичные `mouse_press`/`mouse_drag` (начать/растить выделение);
-`ChatScreen::handle_mouse` роутит `Down/Drag(Left)` в них (при захвате `Ctrl+W`, не во
-время имперсонации). Клик/драг не бампят ревизию кэша и не будят дебаунс орфографии.
+Branch `feat/input-mouse`. Builds on A (drag sets the selection).
+`widgets/input_box.rs` + `screens/chat`. **Implemented:** field
+`InputBox.last_area` (text area of the last render), private
+`place_cursor_at(mx,my)` (inverts the wrap layout + snaps to a cluster
+boundary), public `mouse_press`/`mouse_drag` (start/grow a selection);
+`ChatScreen::handle_mouse` routes `Down/Drag(Left)` into them (with `Ctrl+W`
+capture on, not during impersonation). Click/drag don't bump the wrap-cache
+revision and don't wake the spellcheck debounce.
 
-### 7.1 Запоминание области рендера
+### 7.1 Remembering the render area
 
-Виджет знает `last_width`, но для маппинга клика нужна и **позиция**. Добавить:
+The widget knows `last_width`, but mapping a click also needs the
+**position**. Add:
 
 ```rust
-/// Внутренняя область текста последней отрисовки (после рамки и колонки `❯`).
-/// Нужна маппингу клика мыши (экран → позиция в тексте). `None` до первого рендера.
+/// Inner text area of the last render (past the border and the `❯` column).
+/// Needed for mapping a mouse click (screen → text position). `None` before
+/// the first render.
 last_area: Option<Rect>,
 ```
 
-Ставится в `render`/`render_single_line` (`inner`). Прецедент — `last_width`.
+Set in `render`/`render_single_line` (`inner`). Precedent — `last_width`.
 
-### 7.2 Маппинг клика → (row, col)
+### 7.2 Mapping a click → (row, col)
 
-`fn place_cursor_at(&mut self, mx: u16, my: u16) -> bool` — если `(mx,my)` внутри
-`last_area`, перевести в позицию текста и поставить курсор; вернуть попал ли:
+`fn place_cursor_at(&mut self, mx: u16, my: u16) -> bool` — if `(mx,my)` is
+inside `last_area`, convert it to a text position and place the cursor;
+return whether it hit:
 
 - **multiline:** `vrow = (my - area.y) as usize + self.scroll`;
-  `vcol = (mx - area.x) as usize`. Взять `rows_cached(last_width)` (кэш из п.7!),
-  найти ряд `vrow` → `(li, start, end)`, внутри него — индекс символа, чья
-  накопленная ширина ≥ `vcol` (как `col_for_visual`, со снапом к границе кластера
-  из п.1). Клик ниже последнего ряда → конец текста; правее конца ряда → конец ряда.
-- **single_line:** `col` от `hscroll + (mx - area.x)` через `col_at_width` (+ снап).
+  `vcol = (mx - area.x) as usize`. Take `rows_cached(last_width)` (the item-7
+  cache!), find row `vrow` → `(li, start, end)`, within it — the character
+  index whose cumulative width ≥ `vcol` (like `col_for_visual`, with a snap
+  to a cluster boundary from item 1). Click below the last row → end of
+  text; right of the row's end → end of the row.
+- **single_line:** `col` from `hscroll + (mx - area.x)` via `col_at_width`
+  (+ snap).
 
-Это **инверсия** `cursor_visual`; вынести в хелпер `position_at_visual(vrow, vcol)`.
+This is the **inverse** of `cursor_visual`; extract into a helper
+`position_at_visual(vrow, vcol)`.
 
-### 7.3 Обработка событий мыши
+### 7.3 Handling mouse events
 
-`ChatScreen::handle_mouse` уже получает `MouseEvent` (при захвате `Ctrl+W`). Добавить:
+`ChatScreen::handle_mouse` already receives `MouseEvent` (with `Ctrl+W`
+capture on). Add:
 
-- `Down(Left)` в области поля: `place_cursor_at` + начать выделение
-  (`anchor = cursor`, затем `clear`/`set` — фактически `anchor = Some(pos)`,
-  `cursor = pos`, пустое выделение).
-- `Drag(Left)`: `place_cursor_at` (курсор двигается, `anchor` сохраняется) → выделение
-  растёт.
-- `Up(Left)`: финализация (ничего особого; пустое выделение = просто установка курсора).
-- Колесо (`ScrollUp/Down`) — как сейчас (лента). Клик **вне** поля (в ленту) — сейчас
-  no-op; оставить (выделение ленты — отдельное большое направление, «Отложено за
-  пределы M3»).
-- Двойной клик → выделить слово (`word_left_col`/`word_right_col`) — **nice-to-have,
-  задел** (crossterm двойной клик не даёт напрямую — нужен свой детектор по времени;
-  время в петле есть, но усложняет — отложить).
+- `Down(Left)` inside the field area: `place_cursor_at` + start a selection
+  (`anchor = cursor`, then `clear`/`set` — effectively `anchor =
+  Some(pos)`, `cursor = pos`, an empty selection).
+- `Drag(Left)`: `place_cursor_at` (the cursor moves, `anchor` is kept) → the
+  selection grows.
+- `Up(Left)`: finalize (nothing special; an empty selection is just placing
+  the cursor).
+- Wheel (`ScrollUp/Down`) — as now (the feed). Click **outside** the field
+  (in the feed) — currently no-op; keep it (feed selection is a separate
+  large track, "deferred beyond M3").
+- Double click → select word (`word_left_col`/`word_right_col`) —
+  **nice-to-have, groundwork** (crossterm doesn't give a double click
+  directly — needs its own time-based detector; the loop has the time, but
+  it adds complexity — deferred).
 
-Во время имперсонации/оверлеев — `handle_mouse` уже no-op (guard есть).
+During impersonation/overlays — `handle_mouse` is already a no-op (there's a
+guard).
 
-### 7.4 Тесты этапа D
+### 7.4 Stage D tests
 
-- `place_cursor_at` (чистый, через заданный `last_area` + `rows_cached`): клик в
-  середину строки ставит курсор туда; клик правее конца — конец ряда; ниже — конец
-  текста; клик на широком/эмодзи-глифе снапится к границе кластера (п.1).
-- `handle_mouse`: `Down`+`Drag` строят выделение от точки до точки (`selected_text`
-  соответствует); клик без драга — пустое выделение (курсор перемещён).
-- клик вне `last_area` — курсор не двигается (возврат `false`).
-
----
-
-## 8. Сквозной DoD (каждый этап)
-
-- `cargo fmt` / `cargo clippy --all-targets -- -D warnings` / `cargo test` — зелёные.
-- Новые тесты по спискам этапов; существующие не сломаны (кроме осознанных смен §10).
-- FSD цел: `widgets`/`screens` не импортируют `app`; clipboard-side-effect — в
-  `runtime` по намерению.
-- Кэш переноса (п.7) не регрессирует: выделение/курсор не бампят `revision`
-  (тест `navigation_preserves_revision_but_edit_bumps_it` расширить на Shift-навигацию).
-- Живой прогон не требуется (TUI-виджет, покрыт юнит-тестами на `TestBackend`);
-  ручная проверка драга/двойного клика — на настоящем терминале при финализации.
+- `place_cursor_at` (pure, via a given `last_area` + `rows_cached`): a click
+  in the middle of a line places the cursor there; a click right of the end
+  → end of row; below → end of text; a click on a wide/emoji glyph snaps to
+  the cluster boundary (item 1).
+- `handle_mouse`: `Down`+`Drag` build a selection from point to point
+  (`selected_text` matches); a click without a drag → an empty selection
+  (cursor moved).
+- a click outside `last_area` — the cursor doesn't move (returns `false`).
 
 ---
 
-## 9. Сознательно не делаем (задел)
+## 8. Cross-cutting DoD (each stage)
 
-- **Выделение/копирование ленты** сообщений — отдельное крупное направление
-  («Отложено за пределы M3»); при захвате мыши клики в ленту пока no-op.
-- **Двойной/тройной клик** (слово/строка) — нужен свой детектор по времени; отложено.
-- **Прямоугольное (block) выделение**, множественные курсоры — вне объёма.
-- **Clipboard-копирование в не-чатовых потребителях** (переименование/настройки/модель
-  себя) — задел Fork 6 (выделение и удаление там работают с этапа A; `Ctrl+C/X` —
-  позже одинаковым паттерном).
-- **`Shift`/`Ctrl+Z` на «голом» unix-терминале** без kitty keyboard protocol — мягкая
-  деградация (модификаторы к стрелкам могут не приходить; `Ctrl+Z` может уйти в
-  SIGTSTP). Windows — основной таргет. **Сделано (п.11 аудита):** на unix `runtime`
-  включает kitty keyboard protocol (`DISAMBIGUATE_ESCAPE_CODES`) при поддержке
-  терминалом → `Shift+Enter`/`Shift`+стрелки распознаются; для терминалов без протокола
-  `Alt+Enter` — запасной перенос строки во всех многострочных полях.
-- **Скролл ленты при драге к краю поля** (autoscroll) — вне объёма.
+- `cargo fmt` / `cargo clippy --all-targets -- -D warnings` / `cargo test` —
+  green.
+- New tests per the stage lists; existing ones stay intact (except the
+  deliberate changes in §10).
+- FSD intact: `widgets`/`screens` don't import `app`; the clipboard
+  side-effect lives in `runtime`, driven by intent.
+- Wrap cache (item 7) doesn't regress: selection/cursor don't bump
+  `revision` (extend the
+  `navigation_preserves_revision_but_edit_bumps_it` test to Shift
+  navigation).
+- No live run needed (TUI widget, covered by unit tests on `TestBackend`);
+  manually verify drag/double-click on a real terminal at finalization.
 
 ---
 
-## 10. Влияние на инварианты и документацию
+## 9. Deliberately out of scope (groundwork)
 
-- **spec §11.5** (ввод/редактирование): дополнить таблицу клавиш выделением
-  (`Shift`+навигация, `Ctrl+A`), копированием/вырезанием (`Ctrl+C`/`Ctrl+X`), undo/redo
-  (`Ctrl+Z`/`Ctrl+Y`), мышью (клик/драг при захвате). **Поведенческие смены:**
-  (а) выход `Ctrl+C` → **`Ctrl+Q`/`F10`** (`Ctrl+C` теперь копирует); (б) `Ctrl+K`
-  больше не toggle-restore — очищает, возврат `Ctrl+Z`.
-- **spec §11.3** (мышь): клик/драг в поле ввода — новые потребители захвата `Ctrl+W`.
-- **spec §11.7** (клавиши/выход) и **README** (таблицы клавиш): выход `Ctrl+Q`/`F10`
-  вместо `Ctrl+C` — обновить везде, где перечислен выход.
-- **Оверлей помощи `F1`/`?`** (`HELP_KEYS` + help-строки списка/настроек/модели себя):
-  добавить выделение/копирование/undo/мышь; выход показать как `Ctrl+Q` / `F10`.
-- **Статус-бар** (`widgets/status_bar.rs`): подсказка выхода `Ctrl+C` → `Ctrl+Q`.
-- **architecture.md §4** (dirty): выделение перерисовывается по терминальному событию
-  (уже так); §9 — упомянуть модель выделения/undo в виджете.
-- **CLAUDE.md**: журнальные записи по каждому этапу (как для п.1–7); перенос выхода
-  (`Ctrl+Q`/`F10`) с оговоркой по совместимости `Ctrl+Q`/`F10` (§2 Fork 2).
-- **Контракт `ChatIntent`**: `+CopyToClipboard(String)` (side-effect runtime, не
-  оркестратор) — документировать рядом с `SetMouseCapture`.
+- **Feed message selection/copy** — a separate large track ("deferred
+  beyond M3"); with mouse capture on, clicks in the feed stay no-op.
+- **Double/triple click** (word/line) — needs its own time-based detector;
+  deferred.
+- **Rectangular (block) selection**, multiple cursors — out of scope.
+- **Clipboard copy in non-chat consumers** (rename/settings/self-model) —
+  Fork 6 groundwork (selection and deletion work there from stage A;
+  `Ctrl+C/X` later with the same pattern).
+- **`Shift`/`Ctrl+Z` on a "bare" unix terminal** without the kitty keyboard
+  protocol — graceful degradation (modifiers on arrows may not arrive;
+  `Ctrl+Z` may go to SIGTSTP). Windows is the main target. **Done (audit
+  item 11):** on unix `runtime` enables the kitty keyboard protocol
+  (`DISAMBIGUATE_ESCAPE_CODES`) when the terminal supports it →
+  `Shift+Enter`/`Shift`+arrows are recognized; for terminals without the
+  protocol, `Alt+Enter` is a fallback newline in all multiline fields.
+- **Feed autoscroll while dragging to the field's edge** — out of scope.
 
 ---
 
-## 11. Порядок и оценка
+## 10. Impact on invariants and documentation
 
-Рекомендованный порядок веток: **A → B → D** (B и D опираются на модель выделения A;
-между собой независимы) и **C** в любой момент (независим). Каждый этап — отдельный
-PR с тестами, как п.1–7. Наибольший риск — рендер подсветки выделения (композиция со
-стилями орфографии/команды, этап A.2), маппинг клика с широкими глифами/скроллом
-(этап D.2) и перенос выхода B.0 (координированная правка четырёх экранов + статус-бар/
-справка); все покрываются юнит-тестами на `TestBackend`. Развилки §2 закрыты
-(Fork 2/4/5/6.4 — решены; Fork 1/3/6 — разумные дефолты); блокеров до старта нет.
+- **spec §11.5** (input/editing): extend the key table with selection
+  (`Shift`+navigation, `Ctrl+A`), copy/cut (`Ctrl+C`/`Ctrl+X`), undo/redo
+  (`Ctrl+Z`/`Ctrl+Y`), mouse (click/drag with capture on). **Behavior
+  changes:** (a) quit `Ctrl+C` → **`Ctrl+Q`/`F10`** (`Ctrl+C` now copies);
+  (b) `Ctrl+K` is no longer toggle-restore — it clears, restore is
+  `Ctrl+Z`.
+- **spec §11.3** (mouse): click/drag in the input box — new consumers of
+  `Ctrl+W` capture.
+- **spec §11.7** (keys/quit) and **README** (key tables): quit `Ctrl+Q`/
+  `F10` instead of `Ctrl+C` — update everywhere quit is listed.
+- **Help overlay `F1`/`?`** (`HELP_KEYS` + the list/settings/self-model help
+  lines): add selection/copy/undo/mouse; show quit as `Ctrl+Q` / `F10`.
+- **Status bar** (`widgets/status_bar.rs`): quit hint `Ctrl+C` → `Ctrl+Q`.
+- **architecture.md §4** (dirty): selection redraws on a terminal event
+  (already the case); §9 — mention the selection/undo model in the widget.
+- **CLAUDE.md**: changelog entries per stage (like items 1-7); note the
+  quit relocation (`Ctrl+Q`/`F10`) with the `Ctrl+Q`/`F10` compatibility
+  caveat (§2 Fork 2).
+- **`ChatIntent` contract**: `+CopyToClipboard(String)` (runtime
+  side-effect, not the orchestrator) — document next to
+  `SetMouseCapture`.
+
+---
+
+## 11. Order and estimate
+
+Recommended branch order: **A → B → D** (B and D build on the A selection
+model; independent of each other) and **C** at any point (independent). Each
+stage is a separate PR with tests, like items 1-7. The biggest risk is the
+selection-highlight rendering (composing with spellcheck/command styles,
+stage A.2), mapping clicks with wide glyphs/scroll (stage D.2), and moving
+quit in B.0 (a coordinated change across four screens + status bar/help); all
+covered by unit tests on `TestBackend`. §2 decision points are resolved
+(Fork 2/4/5/6.4 — resolved; Fork 1/3/6 — reasonable defaults); no blockers
+before starting.

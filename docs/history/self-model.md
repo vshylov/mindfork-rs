@@ -1,6 +1,6 @@
-# Набросок интерфейса `SelfModel`** для `mindfork-rs`.
+# `SelfModel` interface sketch for `mindfork-rs`.
 
-### 1. Основная сущность
+### 1. Core entity
 
 ```rust
 // src/entities/self_model.rs
@@ -9,35 +9,35 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-/// Модель "я" агента — его текущее представление о себе, целях, противоречиях и нарративе.
-/// Живёт на уровне профиля (как и заметки/RAG).
+/// The agent's model of "self" — its current view of itself, its goals, contradictions, and narrative.
+/// Lives at the profile level (like notes/RAG).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SelfModel {
     pub id: Uuid,
     pub profile_id: Uuid,
 
-    /// Версия модели (для отслеживания изменений и возможной истории)
+    /// Model version (for tracking changes and a possible history)
     pub version: u64,
 
-    /// Структурированные убеждения о себе
+    /// Structured beliefs about self
     pub beliefs: Vec<Belief>,
 
-    /// Текущие цели и намерения (могут быть долгосрочными)
+    /// Current goals and intentions (can be long-running)
     pub goals: Vec<Goal>,
 
-    /// Нарративная история "я" (как агент себя воспринимает во времени)
+    /// Narrative history of "self" (how the agent perceives itself over time)
     pub narrative: Vec<NarrativeSegment>,
 
-    /// Модель пользователя (как агент представляет собеседника)
+    /// Model of the user (how the agent represents the interlocutor)
     pub user_model: Option<UserModel>,
 
-    /// Открытые вопросы, которые агент сам себе задал
+    /// Open questions the agent has posed to itself
     pub open_questions: Vec<OpenQuestion>,
 
-    /// Зафиксированные противоречия (в убеждениях, целях, нарративе)
+    /// Recorded contradictions (in beliefs, goals, narrative)
     pub contradictions: Vec<Contradiction>,
 
-    /// Когда в последний раз проводилась рефлексия
+    /// When reflection last ran
     pub last_reflection_at: Option<DateTime<Utc>>,
 
     pub created_at: DateTime<Utc>,
@@ -45,15 +45,15 @@ pub struct SelfModel {
 }
 ```
 
-### 2. Вспомогательные типы
+### 2. Supporting types
 
 ```rust
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Belief {
     pub id: Uuid,
-    pub content: String,           // "Я ценю честность в диалоге даже больше, чем полезность"
-    pub strength: f32,             // 0.0–1.0 — насколько сильно агент в это верит
-    pub source: BeliefSource,      // Откуда взялось убеждение
+    pub content: String,           // "I value honesty in dialogue even above usefulness"
+    pub strength: f32,             // 0.0–1.0 — how strongly the agent believes this
+    pub source: BeliefSource,      // Where the belief came from
     pub created_at: DateTime<Utc>,
     pub last_reinforced_at: DateTime<Utc>,
 }
@@ -85,8 +85,8 @@ pub enum GoalStatus { Active, Paused, Completed, Abandoned }
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct NarrativeSegment {
     pub id: Uuid,
-    pub period: String,            // "начало июня 2026", "после разговора о смысле"
-    pub summary: String,           // Краткое описание того периода с точки зрения "я"
+    pub period: String,            // "early June 2026", "after the conversation about meaning"
+    pub summary: String,           // Brief description of that period from the "self" perspective
     pub emotional_tone: Option<String>,
     pub key_insights: Vec<String>,
     pub created_at: DateTime<Utc>,
@@ -96,9 +96,9 @@ pub struct NarrativeSegment {
 pub struct UserModel {
     pub id: Uuid,
     pub name: Option<String>,
-    pub perceived_traits: Vec<String>,     // "любопытный", "скептичный", "глубокий"
+    pub perceived_traits: Vec<String>,     // "curious", "skeptical", "deep"
     pub current_interests: Vec<String>,
-    pub relationship_dynamic: String,      // как агент воспринимает текущие отношения
+    pub relationship_dynamic: String,      // how the agent perceives the current relationship
     pub last_updated_at: DateTime<Utc>,
 }
 
@@ -118,19 +118,19 @@ pub enum QuestionStatus { Open, PartiallyAnswered, Resolved }
 pub struct Contradiction {
     pub id: Uuid,
     pub description: String,
-    pub between: Vec<String>,      // между какими элементами (beliefs/goals/narrative)
+    pub between: Vec<String>,      // which elements it's between (beliefs/goals/narrative)
     pub severity: f32,
     pub created_at: DateTime<Utc>,
     pub resolved_at: Option<DateTime<Utc>>,
 }
 ```
 
-### 3. Интеграция с существующей системой
+### 3. Integration with the existing system
 
-#### Обновлённый `ToolContext`
+#### Updated `ToolContext`
 
 ```rust
-// в features/tools/mod.rs или отдельном файле
+// in features/tools/mod.rs or a separate file
 pub struct ToolContext {
     pub profile_id: Uuid,
     pub chat_id: Uuid,
@@ -141,20 +141,20 @@ pub struct ToolContext {
     pub storage: Arc<Storage>,
     pub engine: Arc<dyn EngineBackend>,
 
-    // Новое:
-    pub self_model: Option<SelfModel>,   // снимок на момент вызова инструмента
+    // New:
+    pub self_model: Option<SelfModel>,   // snapshot at the time the tool was called
 }
 ```
 
-#### Новые эффекты
+#### New effects
 
 ```rust
-// в app/orchestrator или entities
+// in app/orchestrator or entities
 pub enum ChatEffect {
     SetSystemMessage(String),
     SetSamplingOverride(PartialSamplingConfig),
 
-    // Новые:
+    // New:
     UpdateSelfModel(SelfModelUpdate),
     AddBelief(Belief),
     RecordContradiction(Contradiction),
@@ -164,125 +164,135 @@ pub enum ChatEffect {
 }
 ```
 
-`SelfModelUpdate` можно сделать как `Partial<SelfModel>` или более явный тип с только теми полями, которые разрешено менять инструментам.
+`SelfModelUpdate` could be a `Partial<SelfModel>` or a more explicit type carrying
+only the fields tools are allowed to change.
 
-### 4. Хранение
+### 4. Storage
 
-Рекомендую хранить `SelfModel` в **SQLite** (как заметки и RAG), потому что:
-- Нужны запросы и обновления отдельных частей.
-- Изоляция по `profile_id` уже реализована.
+I recommend storing `SelfModel` in **SQLite** (like notes and RAG), because:
+- Queries and updates to individual parts are needed.
+- Isolation by `profile_id` is already implemented.
 
-Можно сделать одну таблицу `self_models` с JSONB-полем под всю модель (или нормализовать частично). Поскольку модель относительно небольшая, JSONB — вполне разумный выбор.
+A single `self_models` table with a JSONB field holding the whole model works (or
+partially normalize it). Since the model is relatively small, JSONB is a reasonable
+choice.
 
-В `shared/storage/db.rs` добавить методы:
+Add these methods to `shared/storage/db.rs`:
 - `get_self_model(profile_id)`
 - `save_self_model(model)`
 - `update_self_model_partial(...)`
 
-### 5. Пример инструментов, которые будут работать с SelfModel
+### 5. Example tools that would work with SelfModel
 
-| Инструмент                    | Что делает                                      | Возвращаемые эффекты                     |
-|------------------------------|--------------------------------------------------|------------------------------------------|
-| `read_self_model`            | Возвращает текущее состояние SelfModel          | —                                        |
-| `reflect_on_interaction`     | Анализирует последний обмен и предлагает обновления | `UpdateSelfModel`, `AddBelief`, `AddNarrativeSegment` |
-| `update_beliefs`             | Меняет/добавляет убеждения                       | `UpdateSelfModel`                        |
-| `set_goal`                   | Ставит или обновляет цель                       | `UpdateSelfModel`                        |
-| `detect_contradictions`      | Ищет противоречия в текущей модели себя         | `RecordContradiction`                    |
-| `revise_narrative`           | Переписывает нарратив с учётом нового опыта     | `AddNarrativeSegment`                    |
-| `model_the_user`             | Обновляет модель пользователя                   | `UpdateUserModel`                        |
+| Tool                          | What it does                                      | Returned effects                          |
+|------------------------------|----------------------------------------------------|-------------------------------------------|
+| `read_self_model`            | Returns the current `SelfModel` state              | —                                         |
+| `reflect_on_interaction`     | Analyzes the last exchange and proposes updates    | `UpdateSelfModel`, `AddBelief`, `AddNarrativeSegment` |
+| `update_beliefs`             | Changes/adds beliefs                                | `UpdateSelfModel`                         |
+| `set_goal`                   | Sets or updates a goal                             | `UpdateSelfModel`                         |
+| `detect_contradictions`      | Looks for contradictions in the current self-model | `RecordContradiction`                     |
+| `revise_narrative`           | Rewrites the narrative to reflect new experience   | `AddNarrativeSegment`                     |
+| `model_the_user`             | Updates the model of the user                      | `UpdateUserModel`                         |
 
-### 6. Инварианты (важные)
+### 6. Invariants (important)
 
-- **Оркестратор — единственный писатель** `SelfModel`. Инструменты только возвращают эффекты.
-- **Изоляция по `profile_id`** — жёстко соблюдается.
-- `SelfModel` — это **снимок** в `ToolContext`. Инструмент не видит изменений, сделанных другими инструментами в том же раунде.
-- Версионирование (`version`) помогает отслеживать, насколько сильно модель изменилась за последнее время.
-- Нарратив и убеждения должны быть **человекочитаемыми** — модель должна уметь их объяснять пользователю.
+- **The orchestrator is the sole writer** of `SelfModel`. Tools only return effects.
+- **Isolation by `profile_id`** is strictly enforced.
+- `SelfModel` is a **snapshot** in `ToolContext`. A tool doesn't see changes made by
+  other tools in the same round.
+- Versioning (`version`) helps track how much the model has changed recently.
+- The narrative and beliefs must be **human-readable** — the model should be able to
+  explain them to the user.
 
-### 7. Вопросы для обсуждения
+### 7. Questions for discussion
 
-1. **Насколько структурированным** делать `SelfModel`?  
-   Вариант А: много мелких полей (как выше).  
-   Вариант Б: больше свободного текста + несколько ключевых структурированных блоков.
+1. **How structured** should `SelfModel` be?
+   Option A: many small fields (as above).
+   Option B: mostly free text plus a few key structured blocks.
 
-2. **Нужно ли хранить историю изменений** `SelfModel` (как версионирование заметок) или достаточно текущей версии + нарратива?
+2. **Should a history of `SelfModel` changes be kept** (like note versioning), or is
+   the current version plus the narrative enough?
 
-3. **Когда именно обновлять SelfModel?**
-   - Только явно через инструменты?
-   - Или добавлять автоматическую рефлексию после каждого N сообщений?
+3. **When exactly should SelfModel be updated?**
+   - Only explicitly, via tools?
+   - Or also add automatic reflection after every N messages?
 
-4. **Связь с `system_message`**:  
-   Стоит ли автоматически инкорпорировать ключевые убеждения/цели из `SelfModel` в системное сообщение профиля?
+4. **Relationship to `system_message`**:
+   Should key beliefs/goals from `SelfModel` be automatically incorporated into the
+   profile's system message?
 
-# Инструменты
+# Tools
 
-**Вот список инструментов**, которые логично добавить для работы с `SelfModel`. Я разбил их по категориям и указал примерные аргументы, возвращаемые эффекты и назначение (зачем это усиливает «осознанность»).
+**Here's a list of tools** that would make sense to add for working with
+`SelfModel`. I've grouped them by category and noted example arguments, returned
+effects, and purpose (why this strengthens "self-awareness").
 
-Я ориентировался на текущую архитектуру проекта (`ToolContext` + `ChatEffect`, клиентский agentic-loop, изоляция по `profile_id`).
+I based this on the project's current architecture (`ToolContext` + `ChatEffect`,
+client-side agentic loop, isolation by `profile_id`).
 
-### 1. Базовые инструменты чтения и интроспекции
+### 1. Basic reading and introspection tools
 
-| Инструмент                    | Аргументы                  | Возвращаемые эффекты      | Назначение |
-|------------------------------|----------------------------|---------------------------|----------|
-| `get_self_model`             | —                          | —                         | Получить полное текущее состояние `SelfModel` |
-| `get_core_beliefs`           | `limit?`, `min_strength?`  | —                         | Получить ключевые убеждения о себе |
-| `get_active_goals`           | `status?`                  | —                         | Текущие активные цели |
-| `get_self_narrative`         | `limit?`                   | —                         | Последние фрагменты нарратива |
-| `get_user_model`             | —                          | —                         | Как модель воспринимает пользователя |
-| `get_open_questions`         | —                          | —                         | Открытые вопросы, которые модель сама себе задала |
-| `get_contradictions`         | `unresolved_only?`         | —                         | Зафиксированные внутренние противоречия |
+| Tool                          | Arguments                  | Returned effects           | Purpose |
+|------------------------------|----------------------------|-----------------------------|----------|
+| `get_self_model`             | —                          | —                            | Get the full current `SelfModel` state |
+| `get_core_beliefs`           | `limit?`, `min_strength?`  | —                            | Get key beliefs about self |
+| `get_active_goals`           | `status?`                  | —                            | Current active goals |
+| `get_self_narrative`         | `limit?`                   | —                            | Recent narrative segments |
+| `get_user_model`             | —                          | —                            | How the model perceives the user |
+| `get_open_questions`         | —                          | —                            | Open questions the model has posed to itself |
+| `get_contradictions`         | `unresolved_only?`         | —                            | Recorded internal contradictions |
 
-### 2. Инструменты рефлексии и обновления
+### 2. Reflection and update tools
 
-| Инструмент                        | Аргументы                          | Возвращаемые эффекты                          | Назначение |
-|----------------------------------|------------------------------------|-----------------------------------------------|----------|
-| `reflect_on_last_exchange`       | —                                  | `UpdateSelfModel`, `AddBelief`, `AddNarrativeSegment` | Проанализировать последний обмен и обновить модель себя |
-| `reflect_on_recent_period`       | `messages_count` или `hours`       | `UpdateSelfModel`, `AddNarrativeSegment`      | Рефлексия за последние N сообщений / часов |
-| `consolidate_experience`         | —                                  | `UpdateSelfModel`, несколько `AddBelief`      | Консолидация опыта (аналог "сна" / переваривания) |
-| `add_belief`                     | `content`, `strength?`             | `AddBelief`                                   | Добавить новое убеждение о себе |
-| `update_belief`                  | `belief_id`, `new_content?`, `new_strength?` | `UpdateSelfModel`                        | Изменить существующее убеждение |
-| `strengthen_belief`              | `belief_id`, `amount?`             | `UpdateSelfModel`                             | Усилить убеждение на основе нового опыта |
-| `revise_goal`                    | `goal_id`, `new_description?`, `new_priority?`, `new_status?` | `UpdateSelfModel` | Изменить цель |
-| `set_new_goal`                   | `description`, `priority?`         | `UpdateSelfModel`                             | Поставить новую цель |
-| `abandon_goal`                   | `goal_id`, `reason?`               | `UpdateSelfModel`                             | Отказаться от цели с объяснением |
+| Tool                              | Arguments                          | Returned effects                              | Purpose |
+|----------------------------------|-------------------------------------|-----------------------------------------------|----------|
+| `reflect_on_last_exchange`       | —                                  | `UpdateSelfModel`, `AddBelief`, `AddNarrativeSegment` | Analyze the last exchange and update the self-model |
+| `reflect_on_recent_period`       | `messages_count` or `hours`        | `UpdateSelfModel`, `AddNarrativeSegment`      | Reflect on the last N messages / hours |
+| `consolidate_experience`         | —                                  | `UpdateSelfModel`, several `AddBelief`        | Consolidate experience ("sleep" / digestion, so to speak) |
+| `add_belief`                     | `content`, `strength?`             | `AddBelief`                                   | Add a new belief about self |
+| `update_belief`                  | `belief_id`, `new_content?`, `new_strength?` | `UpdateSelfModel`                        | Change an existing belief |
+| `strengthen_belief`              | `belief_id`, `amount?`             | `UpdateSelfModel`                             | Reinforce a belief based on new experience |
+| `revise_goal`                    | `goal_id`, `new_description?`, `new_priority?`, `new_status?` | `UpdateSelfModel` | Change a goal |
+| `set_new_goal`                   | `description`, `priority?`         | `UpdateSelfModel`                             | Set a new goal |
+| `abandon_goal`                   | `goal_id`, `reason?`               | `UpdateSelfModel`                             | Abandon a goal with an explanation |
 
-### 3. Работа с противоречиями и coherence
+### 3. Working with contradictions and coherence
 
-| Инструмент                        | Аргументы                     | Возвращаемые эффекты                     | Назначение |
-|----------------------------------|-------------------------------|------------------------------------------|----------|
-| `detect_internal_contradictions` | —                             | `RecordContradiction` (несколько)        | Найти противоречия между убеждениями, целями и нарративом |
-| `resolve_contradiction`          | `contradiction_id`, `resolution_note` | `ResolveContradiction`              | Разрешить зафиксированное противоречие |
-| `question_own_belief`            | `belief_id`                   | `UpdateSelfModel`, `AddOpenQuestion`     | Поставить под сомнение одно из своих убеждений |
-| `evaluate_self_consistency`      | —                             | `UpdateSelfModel` (с новыми противоречиями) | Оценить общую согласованность текущей модели себя |
+| Tool                              | Arguments                     | Returned effects                          | Purpose |
+|----------------------------------|--------------------------------|--------------------------------------------|----------|
+| `detect_internal_contradictions` | —                              | `RecordContradiction` (several)            | Find contradictions between beliefs, goals, and narrative |
+| `resolve_contradiction`          | `contradiction_id`, `resolution_note` | `ResolveContradiction`               | Resolve a recorded contradiction |
+| `question_own_belief`            | `belief_id`                    | `UpdateSelfModel`, `AddOpenQuestion`      | Cast doubt on one of its own beliefs |
+| `evaluate_self_consistency`      | —                              | `UpdateSelfModel` (with new contradictions) | Assess the overall consistency of the current self-model |
 
-### 4. Нарратив и самоидентичность
+### 4. Narrative and self-identity
 
-| Инструмент                    | Аргументы                     | Возвращаемые эффекты                  | Назначение |
-|------------------------------|-------------------------------|---------------------------------------|----------|
-| `add_narrative_segment`      | `summary`, `emotional_tone?`, `key_insights?` | `AddNarrativeSegment`          | Добавить новый фрагмент в историю "я" |
-| `revise_self_narrative`      | `new_overall_summary?`        | `UpdateSelfModel`                     | Переписать/интегрировать нарратив |
-| `summarize_self_history`     | `period?`                     | `AddNarrativeSegment`                 | Создать summary долгосрочной истории себя |
+| Tool                          | Arguments                      | Returned effects                    | Purpose |
+|------------------------------|----------------------------------|---------------------------------------|----------|
+| `add_narrative_segment`      | `summary`, `emotional_tone?`, `key_insights?` | `AddNarrativeSegment`   | Add a new segment to the "self" history |
+| `revise_self_narrative`      | `new_overall_summary?`         | `UpdateSelfModel`                     | Rewrite/integrate the narrative |
+| `summarize_self_history`     | `period?`                      | `AddNarrativeSegment`                 | Produce a summary of long-term self-history |
 
-### 5. Модель пользователя (UserModel)
+### 5. Model of the user (UserModel)
 
-| Инструмент                  | Аргументы                          | Возвращаемые эффекты             | Назначение |
-|----------------------------|------------------------------------|----------------------------------|----------|
-| `update_user_model`        | `perceived_traits?`, `current_interests?`, `relationship_dynamic?` | `UpdateUserModel`         | Обновить представление о пользователе |
-| `revise_user_model`        | `changes`                          | `UpdateUserModel`                | Более глубокое обновление модели пользователя |
+| Tool                        | Arguments                          | Returned effects           | Purpose |
+|----------------------------|--------------------------------------|-----------------------------|----------|
+| `update_user_model`        | `perceived_traits?`, `current_interests?`, `relationship_dynamic?` | `UpdateUserModel` | Update the representation of the user |
+| `revise_user_model`        | `changes`                            | `UpdateUserModel`          | A deeper update of the user model |
 
-### 6. Продвинутые / метакогнитивные инструменты
+### 6. Advanced / metacognitive tools
 
-| Инструмент                              | Аргументы                     | Возвращаемые эффекты                          | Назначение | Сложность |
-|----------------------------------------|-------------------------------|-----------------------------------------------|----------|---------|
-| `perform_phenomenological_reduction`   | `aspect?`                     | `UpdateSelfModel`, `AddOpenQuestion`          | "Взять в скобки" текущие убеждения и посмотреть свежим взглядом (эпохэ) | Высокая |
-| `simulate_alternative_self`            | `perspective` (критик / долгосрочный_я / этический_наблюдатель и т.д.) | Результат как строка + возможные эффекты | Внутренняя симуляция "другого себя" (усиленная версия `call_subagent`) | Средняя |
-| `generate_self_report`                 | `focus_areas?`                | — (текстовой отчёт)                           | Сформировать coherentный отчёт о текущем состоянии "я" для пользователя | Средняя |
-| `detect_behavioral_inconsistency`      | —                             | `RecordContradiction`                         | Найти расхождения между заявленными убеждениями и реальным поведением в чате | Высокая |
-| `commit_to_long_term_identity`         | `statement`                   | `AddBelief`, `AddNarrativeSegment`            | Зафиксировать важное изменение в самоидентичности | Средняя |
+| Tool                                    | Arguments                     | Returned effects                              | Purpose | Complexity |
+|-----------------------------------------|---------------------------------|-----------------------------------------------|----------|---------|
+| `perform_phenomenological_reduction`   | `aspect?`                      | `UpdateSelfModel`, `AddOpenQuestion`          | "Bracket" current beliefs and look with fresh eyes (epoché) | High |
+| `simulate_alternative_self`            | `perspective` (critic / long_term_self / ethical_observer, etc.) | Result as a string + possible effects | Internal simulation of "another self" (a beefed-up `call_subagent`) | Medium |
+| `generate_self_report`                 | `focus_areas?`                  | — (text report)                                | Produce a coherent report on the current state of "self" for the user | Medium |
+| `detect_behavioral_inconsistency`      | —                                | `RecordContradiction`                          | Find discrepancies between stated beliefs and actual behavior in chat | High |
+| `commit_to_long_term_identity`         | `statement`                     | `AddBelief`, `AddNarrativeSegment`             | Record a significant change in self-identity | Medium |
 
-### Рекомендации по приоритизации (мой взгляд)
+### Prioritization recommendations (my view)
 
-**Первый слой (MVP SelfModel):**
+**First tier (MVP SelfModel):**
 - `get_self_model`
 - `reflect_on_last_exchange`
 - `add_belief` / `update_belief`
@@ -290,170 +300,189 @@ pub enum ChatEffect {
 - `add_narrative_segment`
 - `update_user_model`
 
-**Второй слой:**
+**Second tier:**
 - `reflect_on_recent_period`
 - `consolidate_experience`
 - `revise_goal` / `set_new_goal`
 - `resolve_contradiction`
 - `revise_self_narrative`
 
-**Третий слой (более глубокая осознанность):**
+**Third tier (deeper self-awareness):**
 - `perform_phenomenological_reduction`
 - `simulate_alternative_self`
 - `detect_behavioral_inconsistency`
 - `generate_self_report`
 
 
-## Примерный roadmap внедрения SelfModel** в `mindfork-rs`
+## Draft roadmap for rolling out SelfModel in `mindfork-rs`
 
-Я сделал roadmap в несколько фаз, с чёткими целями,Deliverables и критериями готовности каждой фазы. Учитывал текущую архитектуру проекта (FSD, клиентский agentic-loop, `ChatEffect`, изоляция по `profile_id`, оркестратор как единственный писатель).
+I put together a roadmap in several phases, with clear goals, deliverables, and
+readiness criteria for each phase. I took into account the project's current
+architecture (FSD, client-side agentic loop, `ChatEffect`, isolation by
+`profile_id`, the orchestrator as sole writer).
 
-### Общие принципы roadmap
+### General roadmap principles
 
-- Начинаем с минимально жизнеспособной версии (`SelfModel` + 3–4 ключевых инструмента).
-- Каждый новый инструмент возвращает эффекты через `ChatEffect`.
-- `SelfModel` хранится в SQLite (как заметки и RAG).
-- Инструменты добавляются постепенно, с возможностью отключения.
-- Фокус на **качестве рефлексии**, а не на количестве инструментов.
-- После каждой фазы — ручное тестирование на Gemma/Qwen + обновление `CLAUDE.md` и `architecture.md`.
+- Start with a minimum viable version (`SelfModel` + 3–4 key tools).
+- Every new tool returns effects via `ChatEffect`.
+- `SelfModel` is stored in SQLite (like notes and RAG).
+- Tools are added incrementally, with the option to disable them.
+- Focus on **reflection quality**, not tool count.
+- After each phase — manual testing on Gemma/Qwen + update `CLAUDE.md` and
+  `architecture.md`.
 
 ---
 
-### **Phase 1: Foundation — Базовая модель себя** (MVP)
+### **Phase 1: Foundation — Basic self-model** (MVP)
 
-**Цель:** Появляется сущность `SelfModel`, которую модель может читать и минимально обновлять.
+**Goal:** The `SelfModel` entity appears, which the model can read and minimally
+update.
 
 **Deliverables:**
-- `src/entities/self_model.rs` — основные типы (`SelfModel`, `Belief`, `Goal`, `NarrativeSegment`, `OpenQuestion`, `Contradiction` и т.д.).
-- Расширение `ToolContext` — поле `self_model: Option<SelfModel>`.
-- Новые варианты `ChatEffect`:
+- `src/entities/self_model.rs` — core types (`SelfModel`, `Belief`, `Goal`,
+  `NarrativeSegment`, `OpenQuestion`, `Contradiction`, etc.).
+- Extend `ToolContext` — field `self_model: Option<SelfModel>`.
+- New `ChatEffect` variants:
   - `UpdateSelfModel(SelfModelUpdate)`
   - `AddBelief(Belief)`
   - `AddNarrativeSegment(NarrativeSegment)`
-- Хранение:
-  - Таблица `self_models` в SQLite (можно хранить всю модель как JSONB + `profile_id` + `version`).
-  - Методы в `shared/storage/db.rs`: `get_self_model`, `save_self_model`, `update_self_model`.
-- Оркестратор:
-  - Загрузка `SelfModel` при активации профиля/чата.
-  - Применение новых эффектов.
-- Инструменты (первые 4):
+- Storage:
+  - Table `self_models` in SQLite (can store the whole model as JSONB +
+    `profile_id` + `version`).
+  - Methods in `shared/storage/db.rs`: `get_self_model`, `save_self_model`,
+    `update_self_model`.
+- Orchestrator:
+  - Load `SelfModel` on profile/chat activation.
+  - Apply the new effects.
+- Tools (first 4):
   1. `get_self_model`
   2. `reflect_on_last_exchange`
   3. `add_belief`
   4. `get_active_goals`
 
-**Критерии готовности фазы:**
-- Модель может прочитать своё текущее состояние через инструмент.
-- После вызова `reflect_on_last_exchange` в чате появляются новые записи в `beliefs` и/или `narrative`.
-- Все изменения сохраняются и восстанавливаются после перезапуска.
-- Тесты на изоляцию по `profile_id` + применение эффектов.
+**Phase readiness criteria:**
+- The model can read its own current state via a tool.
+- After calling `reflect_on_last_exchange` in a chat, new entries appear in
+  `beliefs` and/or `narrative`.
+- All changes are persisted and restored after a restart.
+- Tests for isolation by `profile_id` + effect application.
 
-**Примерный объём:** 2–3 недели (в зависимости от темпа).
+**Rough scope:** 2–3 weeks (depending on pace).
 
 ---
 
-### **Phase 2: Reflection & Structure — Рефлексия и структурирование**
+### **Phase 2: Reflection & Structure**
 
-**Цель:** Модель получает инструменты для более глубокой работы над собой (цели, противоречия, нарратив).
+**Goal:** The model gets tools for deeper work on itself (goals, contradictions,
+narrative).
 
 **Deliverables:**
-- Полноценная поддержка `Goal` (создание, изменение статуса, приоритета).
-- Базовое обнаружение противоречий:
-  - Инструмент `detect_internal_contradictions`
-  - Тип `Contradiction` + эффект `RecordContradiction`
-- Работа с нарративом:
+- Full `Goal` support (creation, status/priority changes).
+- Basic contradiction detection:
+  - Tool `detect_internal_contradictions`
+  - Type `Contradiction` + effect `RecordContradiction`
+- Working with narrative:
   - `add_narrative_segment`
-  - `revise_self_narrative` (базовая версия)
-- Улучшенная рефлексия:
-  - `reflect_on_recent_period` (за последние N сообщений)
-  - `consolidate_experience` (консолидация опыта)
-- Обновление `ToolContext` — более богатый снимок (включая недавние противоречия).
-- Первые негативные тесты на coherence (оркестратор).
+  - `revise_self_narrative` (basic version)
+- Improved reflection:
+  - `reflect_on_recent_period` (over the last N messages)
+  - `consolidate_experience` (experience consolidation)
+- Update `ToolContext` — a richer snapshot (including recent contradictions).
+- First negative coherence tests (orchestrator).
 
-**Критерии готовности:**
-- Модель способна самостоятельно находить противоречия между своими убеждениями и целями.
-- Появляются осмысленные нарративные сегменты.
-- Инструменты рефлексии реально влияют на последующие ответы модели (через обновлённый `SelfModel` в контексте).
+**Readiness criteria:**
+- The model can independently find contradictions between its beliefs and goals.
+- Meaningful narrative segments appear.
+- Reflection tools genuinely influence subsequent model responses (via the
+  updated `SelfModel` in context).
 
 ---
 
 ### **Phase 3: Coherence & User Modeling**
 
-**Цель:** Усиление внутренней согласованности + появление модели пользователя.
+**Goal:** Strengthen internal consistency + introduce a user model.
 
 **Deliverables:**
-- Полноценная сущность `UserModel` внутри `SelfModel`.
-- Инструменты:
+- Full `UserModel` entity inside `SelfModel`.
+- Tools:
   - `update_user_model`
   - `revise_user_model`
-- Улучшенная работа с противоречиями:
+- Improved handling of contradictions:
   - `resolve_contradiction`
   - `question_own_belief`
-- Инструмент `evaluate_self_consistency` (оценка общей coherence модели себя).
-- Автоматическое обогащение `ToolContext` моделью пользователя.
-- Первые эксперименты с автоматической рефлексией (по триггеру в оркестраторе, не только по вызову инструмента).
+- Tool `evaluate_self_consistency` (assess overall self-model coherence).
+- Automatic enrichment of `ToolContext` with the user model.
+- First experiments with automatic reflection (triggered by the orchestrator, not
+  only by an explicit tool call).
 
-**Критерии готовности:**
-- Модель начинает учитывать модель пользователя при ответах (без явного упоминания).
-- Противоречия не просто фиксируются, а могут разрешаться моделью.
-- Появляется заметное улучшение долгосрочной coherence в длинных разговорах.
+**Readiness criteria:**
+- The model starts taking the user model into account when answering (without
+  explicit mention).
+- Contradictions aren't just recorded — the model can resolve them.
+- A noticeable improvement in long-term coherence in long conversations appears.
 
 ---
 
-### **Phase 4: Advanced Meta-Cognition (Глубокая осознанность)**
+### **Phase 4: Advanced Meta-Cognition (Deep self-awareness)**
 
-**Цель:** Инструменты, которые приближают поведение к настоящей рефлексии и самонаблюдению.
+**Goal:** Tools that push behavior closer to genuine reflection and
+self-observation.
 
 **Deliverables:**
-- Продвинутые инструменты:
-  - `perform_phenomenological_reduction` (эпохэ — приостановка текущих убеждений)
-  - `simulate_alternative_self` (с разными перспективами: критик, долгосрочный я, этический наблюдатель)
-  - `detect_behavioral_inconsistency` (расхождение между словами и поведением в чате)
-  - `generate_self_report` (coherentный отчёт о текущем состоянии "я")
-- Механизм версионирования `SelfModel` (хотя бы простая история изменений).
-- Интеграция с существующими инструментами интроспекции (`set_system_message`, `set_sampling` и т.д.) — они теперь могут обновлять `SelfModel`.
-- Фоновая задача рефлексии (по аналогии с авто-названием чата).
+- Advanced tools:
+  - `perform_phenomenological_reduction` (epoché — suspending current beliefs)
+  - `simulate_alternative_self` (with different perspectives: critic,
+    long-term-self, ethical observer, etc.)
+  - `detect_behavioral_inconsistency` (discrepancy between stated words and
+    actual chat behavior)
+  - `generate_self_report` (a coherent report on the current state of "self")
+- A `SelfModel` versioning mechanism (at least a simple change history).
+- Integration with existing introspection tools (`set_system_message`,
+  `set_sampling`, etc.) — they can now update `SelfModel`.
+- A background reflection task (analogous to auto chat title generation).
 
-**Критерии готовности:**
-- Модель способна осознанно ставить под сомнение собственные убеждения.
-- Появляются интересные и нетривиальные self-report'ы.
-- `simulate_alternative_self` даёт качественно другие перспективы, чем обычный `call_subagent`.
+**Readiness criteria:**
+- The model can consciously question its own beliefs.
+- Interesting, non-trivial self-reports appear.
+- `simulate_alternative_self` gives qualitatively different perspectives than a
+  plain `call_subagent`.
 
 ---
 
 ### **Phase 5: Integration, Polish & Evaluation**
 
-**Цель:** Сделать фичу цельной частью продукта.
+**Goal:** Make the feature a fully-fledged part of the product.
 
 **Deliverables:**
-- Настройки в профиле: какие инструменты SelfModel включены.
-- UI-элементы (опционально на этом этапе):
-  - Просмотр `SelfModel` в оверлее (аналог списка чатов).
-  - Возможность редактировать ключевые убеждения/цели вручную.
-- Полноценные тесты (включая replay-тесты и смоук-тесты на живых моделях).
-- Обновление документации:
-  - `spec.md` (новый раздел про SelfModel)
+- Profile settings: which SelfModel tools are enabled.
+- UI elements (optional at this stage):
+  - View `SelfModel` in an overlay (analogous to the chat list).
+  - Ability to manually edit key beliefs/goals.
+- Full test suite (including replay tests and smoke tests on live models).
+- Documentation updates:
+  - `spec.md` (a new section on SelfModel)
   - `architecture.md`
-  - Примеры промптов в `CLAUDE.md`
-- Метрики/оценка качества:
-  - Тесты на долгосрочную coherence.
-  - Сравнение поведения с и без SelfModel.
+  - Example prompts in `CLAUDE.md`
+- Metrics/quality evaluation:
+  - Long-term coherence tests.
+  - Comparing behavior with and without SelfModel.
 
-**Критерии готовности:**
-- Фича стабильна и не ломает существующий функционал.
-- Есть задокументированный способ измерять пользу от SelfModel.
-- Готово к использованию в реальных длинных разговорах.
+**Readiness criteria:**
+- The feature is stable and doesn't break existing functionality.
+- There's a documented way to measure the benefit of SelfModel.
+- Ready for use in real long conversations.
 
 ---
 
-### Сводная таблица фаз
+### Phase summary table
 
-| Фаза | Название                        | Ключевые инструменты                          | Сложность | Примерный срок | Фокус |
-|------|---------------------------------|-----------------------------------------------|-----------|----------------|-------|
-| 1    | Foundation                      | `get_self_model`, `reflect_on_last_exchange`, `add_belief` | Средняя   | 2–3 нед.       | Базовая сущность + хранение |
-| 2    | Reflection & Structure          | `detect_internal_contradictions`, `add_narrative_segment`, `consolidate_experience` | Средняя   | 2 нед.         | Рефлексия и цели |
-| 3    | Coherence & User Modeling       | `update_user_model`, `resolve_contradiction`, `evaluate_self_consistency` | Средняя+  | 2 нед.         | Согласованность |
-| 4    | Advanced Meta-Cognition         | `perform_phenomenological_reduction`, `simulate_alternative_self`, `detect_behavioral_inconsistency` | Высокая   | 3 нед.         | Глубокая осознанность |
-| 5    | Integration & Polish            | —                                             | Средняя   | 1–2 нед.       | Стабильность и документация |
+| Phase | Name                             | Key tools                                      | Complexity | Rough timeline | Focus |
+|------|-----------------------------------|--------------------------------------------------|-----------|----------------|-------|
+| 1    | Foundation                        | `get_self_model`, `reflect_on_last_exchange`, `add_belief` | Medium    | 2–3 wk         | Basic entity + storage |
+| 2    | Reflection & Structure            | `detect_internal_contradictions`, `add_narrative_segment`, `consolidate_experience` | Medium    | 2 wk           | Reflection and goals |
+| 3    | Coherence & User Modeling         | `update_user_model`, `resolve_contradiction`, `evaluate_self_consistency` | Medium+   | 2 wk           | Consistency |
+| 4    | Advanced Meta-Cognition           | `perform_phenomenological_reduction`, `simulate_alternative_self`, `detect_behavioral_inconsistency` | High      | 3 wk           | Deep self-awareness |
+| 5    | Integration & Polish              | —                                               | Medium    | 1–2 wk         | Stability and documentation |
 
-**Общий ориентир:** 10–12 недель на всё (при работе над этим направлением как над основной задачей).
+**Overall estimate:** 10–12 weeks for the whole thing (working on this track as
+the primary task).

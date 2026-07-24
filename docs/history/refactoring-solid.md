@@ -1,90 +1,90 @@
-# План рефакторинга: точечные SOLID-улучшения (2026-07)
+# Refactoring plan: targeted SOLID improvements (2026-07)
 
-Дизайн-план направления. Статус: **этапы 1, 2, 4 сделаны** (PR #125, в `main`);
-**этап 3 сделан** — шаги 3.1/3.2/3.3 (ветка `refactor/settings-field-descriptors`).
-Направление завершено.
+Design plan for this track. Status: **stages 1, 2, 4 done** (PR #125, in `main`);
+**stage 3 done** — steps 3.1/3.2/3.3 (branch `refactor/settings-field-descriptors`).
+Track finished.
 
-Происхождение — оценка соблюдения SOLID по всей кодовой базе (2026-07-08):
-архитектура здорова (транспорт за трейтами, FSD, единые источники истины,
-god-object'ы разобраны — [refactoring-god-objects.md](refactoring-god-objects.md)),
-остаточный долг **точечный** и сосредоточен на четырёх осях, по которым проект
-активно растёт. План — четыре независимых этапа, каждый = отдельный PR.
+Origin — a SOLID-compliance assessment across the whole codebase (2026-07-08):
+architecture is healthy (transport behind traits, FSD, single sources of truth,
+god objects broken up — [refactoring-god-objects.md](refactoring-god-objects.md)),
+remaining debt is **targeted** and concentrated on four axes the project is
+actively growing along. Plan — four independent stages, each its own PR.
 
-Базовая линия: **808 юнит-тестов зелёные, 26 `#[ignore]`-смоуков** (main,
+Baseline: **808 unit tests green, 26 `#[ignore]` smokes** (main,
 2026-07-08).
 
-## 1. Контекст и диагноз
+## 1. Context and diagnosis
 
-| # | Ось | Принцип | Симптом | Очаг |
+| # | Axis | Principle | Symptom | Hot spot |
 |---|-----|---------|---------|------|
-| 1 | Сборка `ToolContext` | ISP, shotgun surgery | 11 полей литералом в **8 местах**; новое поле = правка всех (прожито в этапе 5.4 доводки модели себя) | `features/tools/mod.rs:43` + 3 продакшн- и 5 тест-сайтов |
-| 2 | Фоновые задачи оркестратора | SRP, OCP по растущей оси | триплет полей + канал + ветка `select!` + обработчик **на каждую** задачу; roadmap уже содержит следующую (авто-консолидация модели себя) | `app/orchestrator/mod.rs` (поля, `run()`, `Quit`), `reflection.rs`, `consolidation.rs` |
-| 3 | Поля экрана настроек | SRP, OCP | аспекты одного поля размазаны по **5 match-сайтам** в 4 файлах (~80 вариантов `FieldId`, 311 использований) | `screens/settings/{mod,catalog,apply,helpers,choice}.rs` |
-| 4 | Мелкие точечные | ISP, SRP | 10-аргументные сигнатуры статус-бара; поимённые перечисления экранов в runtime; 4 копипаст-блока диспетчеризации intent'ов | `widgets/status_bar.rs`, `app/runtime/{dispatch,input,mod}.rs`, `screens/chat/mod.rs` |
+| 1 | Assembling `ToolContext` | ISP, shotgun surgery | 11 fields as a literal in **8 places**; a new field means editing all of them (lived through in self-model refinement stage 5.4) | `features/tools/mod.rs:43` + 3 production and 5 test sites |
+| 2 | Orchestrator background tasks | SRP, OCP along a growing axis | a trio of fields + a channel + a `select!` branch + a handler **per task**; the roadmap already lists the next one (self-model auto-consolidation) | `app/orchestrator/mod.rs` (fields, `run()`, `Quit`), `reflection.rs`, `consolidation.rs` |
+| 3 | Settings screen fields | SRP, OCP | aspects of one field are smeared across **5 match sites** in 4 files (~80 `FieldId` variants, 311 usages) | `screens/settings/{mod,catalog,apply,helpers,choice}.rs` |
+| 4 | Small targeted items | ISP, SRP | 10-argument status-bar signatures; named screen enumerations in runtime; 4 copy-pasted intent-dispatch blocks | `widgets/status_bar.rs`, `app/runtime/{dispatch,input,mod}.rs`, `screens/chat/mod.rs` |
 
-Диагноз без излишеств: **системной перестройки не требуется**. Замкнутые enum +
-exhaustive match — идиоматичный для Rust выбор (компилятор проводит по всем
-местам правки), поэтому часть «нарушений OCP» — осознанная цена, а не долг.
-Лечим только оси, где ripple реально мешает при каждом расширении.
+Diagnosis without overreach: **no systemic rework is needed**. Closed enums +
+exhaustive match are the idiomatic Rust choice (the compiler walks you through
+every edit site), so part of the "OCP violation" is a deliberate cost, not
+debt. Only treat axes where ripple actually gets in the way on every
+extension.
 
-## 2. Метод и правила (общие для всех этапов)
+## 2. Method and rules (shared across all stages)
 
-Тот же плейбук, что у разбора god-object'ов
-([refactoring-god-objects.md §2](refactoring-god-objects.md)); дополнения — под
-характер этих этапов (здесь не перенос кода, а **введение малых типов/хелперов
-без изменения поведения**):
+Same playbook as the god-object breakup
+([refactoring-god-objects.md §2](refactoring-god-objects.md)); additions to
+suit these stages (here it's not moving code but **introducing small types/
+helpers without changing behavior**):
 
-1. **Поведение не меняется.** Ни новых фич, ни изменения текстов сообщений/
-   событий/логов (тексты ошибок фоновых задач — байт-в-байт: на них смотрят
-   тесты и журнал). Диффы читаются как «поля сгруппированы / сайты сведены к
-   хелперу».
-2. **Инварианты целы**: единственный владелец `Chat` — оркестратор; FSD
-   (`screens`/`widgets` не знают `app`); никаких новых каналов, кроме явно
-   заявленной замены двух каналов одним (этап 2).
-3. **Гейты на каждый PR**: `cargo fmt`, `cargo clippy --all-targets -- -D
-   warnings`, `cargo test` — зелёные; число тестов **не уменьшилось** (808+).
-   Имена существующих тест-функций не меняются; правятся только конструкции
-   внутри (например, сборка `ToolContext` через новый конструктор).
-4. **Один этап — один PR**, ветка от `main`. Этапы независимы (кроме 3.2 после
-   3.1) — порядок можно менять.
-5. **Доки**: architecture.md (затронутые §) + журнальная запись CLAUDE.md на
-   каждом этапе; по завершении направления — отметка здесь.
+1. **Behavior doesn't change.** No new features, no changes to message/event/
+   log text (background-task error text is byte-for-byte: tests and the log
+   depend on it). Diffs read as "fields grouped / sites collapsed into a
+   helper."
+2. **Invariants hold**: the orchestrator remains the sole owner of `Chat`; FSD
+   (`screens`/`widgets` don't know about `app`); no new channels except the
+   explicitly stated merge of two channels into one (stage 2).
+3. **Gates on every PR**: `cargo fmt`, `cargo clippy --all-targets -- -D
+   warnings`, `cargo test` — green; test count **hasn't dropped** (808+).
+   Existing test function names don't change; only what's inside them is
+   edited (e.g. building `ToolContext` via the new constructor).
+4. **One stage — one PR**, branch from `main`. Stages are independent (except
+   3.2 after 3.1) — order can be reshuffled.
+5. **Docs**: architecture.md (touched §§) + a CLAUDE.md log entry per stage;
+   once the track is finished — a note here.
 
 ---
 
-## 3. Этап 1 — `ToolContext`: пучки зависимостей + конструктор (ISP / ripple)
+## 3. Stage 1 — `ToolContext`: dependency bundles + constructor (ISP / ripple)
 
-**Цель:** новое поле контекста инструментов правит **один файл**, а не 8;
-у сайтов сборки исчезает 11-строчный литерал.
+**Goal:** a new tool-context field touches **one file**, not 8; the
+11-line literal at each assembly site disappears.
 
-### Текущее состояние
+### Current state
 
-`ToolContext` — 11 плоских полей ([tools/mod.rs:43-69](../src/features/tools/mod.rs)):
-идентичность хода (`profile_id`, `chat_id`), снимок чата (`system_message`,
-`effective_sampling`, `last_user_message_at`), разделяемые зависимости
-(`storage`, `engine`, `embedder`) и конфиг-параметры (`chunk_params`,
-`self_model_params`, `recall_includes_self`). Собирается **сырым литералом**:
+`ToolContext` — 11 flat fields ([tools/mod.rs:43-69](../src/features/tools/mod.rs)):
+turn identity (`profile_id`, `chat_id`), a chat snapshot (`system_message`,
+`effective_sampling`, `last_user_message_at`), shared dependencies
+(`storage`, `engine`, `embedder`), and config parameters (`chunk_params`,
+`self_model_params`, `recall_includes_self`). Assembled as a **raw literal**:
 
-- продакшн: [generation.rs:231](../src/app/orchestrator/generation.rs),
+- production: [generation.rs:231](../src/app/orchestrator/generation.rs),
   [reflection.rs:238](../src/app/orchestrator/reflection.rs),
   [consolidation.rs:125](../src/app/orchestrator/consolidation.rs);
-- тесты: `tools/mod.rs:390` (testkit), `web.rs:952`, `subagent.rs:181`,
+- tests: `tools/mod.rs:390` (testkit), `web.rs:952`, `subagent.rs:181`,
   `rag.rs:789`, `fetch.rs:261`.
 
-Конфиг-параметры — растущая часть (три штуки добавлены тремя разными фичами);
-каждая новая правила все 8 сайтов. ISP-послабление (у `calculate`/`current_time`
-есть `storage`/`engine`, которые им не нужны) — **не лечим**: сегрегация
-контекста по группам инструментов не окупится.
+Config parameters are the growing part (three added by three different
+features); every new one edits all 8 sites. The ISP slack (`calculate`/
+`current_time` get `storage`/`engine` they don't need) — **not fixed**:
+segregating the context by tool group isn't worth it.
 
-### Целевое состояние
+### Target state
 
-Три строительных блока + конструктор; **плоские публичные поля `ToolContext`
-сохраняются** → код инструментов (`ctx.storage`, `ctx.chunk_params`, …) не
-тронут вообще:
+Three building blocks + a constructor; **`ToolContext`'s flat public fields
+stay** → tool code (`ctx.storage`, `ctx.chunk_params`, …) is untouched:
 
 ```rust
-/// Долгоживущие разделяемые зависимости (пучок Arc; меняется при рестарте
-/// серверов, не от хода к ходу).
+/// Long-lived shared dependencies (an Arc bundle; changes on server restart,
+/// not turn to turn).
 #[derive(Clone)]
 pub struct ToolDeps {
     pub storage: Arc<Storage>,
@@ -92,7 +92,7 @@ pub struct ToolDeps {
     pub embedder: Arc<dyn Embedder>,
 }
 
-/// Параметры инструментов из конфига (снимок на ход).
+/// Tool parameters from config (a per-turn snapshot).
 #[derive(Clone)]
 pub struct ToolParams {
     pub chunk_params: rag::ChunkParams,
@@ -100,10 +100,10 @@ pub struct ToolParams {
     pub recall_includes_self: bool,
 }
 impl ToolParams {
-    pub fn from_config(cfg: &AppConfig) -> Self { … } // единственное место маппинга
+    pub fn from_config(cfg: &AppConfig) -> Self { … } // the one place that maps config
 }
 
-/// Снимок хода (что видит инструмент о текущем чате).
+/// Turn snapshot (what a tool sees about the current chat).
 pub struct TurnInfo {
     pub profile_id: Uuid,
     pub chat_id: Uuid,
@@ -113,233 +113,247 @@ pub struct TurnInfo {
 }
 
 impl ToolContext {
-    /// Разворачивает блоки в прежние плоские поля.
+    /// Unpacks the bundles into the old flat fields.
     pub fn new(deps: ToolDeps, params: ToolParams, turn: TurnInfo) -> Self { … }
 }
 ```
 
-FSD чист: `features/tools` уже импортирует `shared::config` (`ToolConfig`
-ссылается на `DEFAULT_SUBAGENT_*`), так что `ToolParams::from_config(&AppConfig)`
-законен.
+FSD stays clean: `features/tools` already imports `shared::config` (`ToolConfig`
+references `DEFAULT_SUBAGENT_*`), so `ToolParams::from_config(&AppConfig)` is
+legal.
 
-### Шаги
+### Steps
 
-1. `tools/mod.rs`: добавить `ToolDeps`/`ToolParams`/`TurnInfo` +
-   `ToolContext::new` (поля структуры не меняются).
-2. Оркестратор: хелпер `fn tool_deps(&self, backend: Arc<dyn EngineBackend>) ->
-   ToolDeps` (в `orchestrator/mod.rs`, рядом с прочими общими хелперами);
-   три продакшн-сайта переводятся на
+1. `tools/mod.rs`: add `ToolDeps`/`ToolParams`/`TurnInfo` +
+   `ToolContext::new` (struct fields don't change).
+2. Orchestrator: a helper `fn tool_deps(&self, backend: Arc<dyn EngineBackend>) ->
+   ToolDeps` (in `orchestrator/mod.rs`, next to the other shared helpers);
+   the three production sites switch to
    `ToolContext::new(self.tool_deps(…), ToolParams::from_config(&self.config), TurnInfo { … })`.
-3. testkit: `ctx_with_storage` строит через `new`; добавить
-   `ctx_with_backends(profile_id, engine, embedder)` для четырёх сайтов с
-   кастомным движком/эмбеддером (web/subagent/rag/fetch) — их литералы уходят.
-4. Проверка ripple: «примерочная» правка (добавить фиктивное поле в `ToolParams`,
-   убедиться, что компилятор требует правку только `tools/mod.rs`) — до коммита
-   откатывается.
+3. testkit: `ctx_with_storage` builds via `new`; add
+   `ctx_with_backends(profile_id, engine, embedder)` for the four sites with a
+   custom engine/embedder (web/subagent/rag/fetch) — their literals go away.
+4. Ripple check: a "trial" edit (add a dummy field to `ToolParams`, confirm
+   the compiler only demands an edit to `tools/mod.rs`) — reverted before
+   commit.
 
-### Что НЕ делаем
+### What we do NOT do
 
-- Не вкладываем пучки в `ToolContext` полями (`ctx.deps.storage`) — тронуло бы
-  все ~15 файлов инструментов ради нулевой функциональной выгоды.
-- Не трогаем `#[allow(dead_code)] chat_id` и семантику снимка.
-- Не вводим трейт-сегрегацию контекста по группам инструментов.
+- Don't nest bundles as `ToolContext` fields (`ctx.deps.storage`) — would
+  touch all ~15 tool files for zero functional gain.
+- Don't touch `#[allow(dead_code)] chat_id` or the snapshot semantics.
+- Don't introduce trait segregation of the context by tool group.
 
-**Риски:** минимальные (конструктор + замена литералов). **Объём:** ~0.5 сессии.
+**Risks:** minimal (constructor + swapping literals). **Effort:** ~0.5 session.
 
-**DoD:** 808+ тестов зелёные; `rg "ToolContext \{" src` находит **только**
-`ToolContext::new` (единственный литерал в конструкторе); файлы инструментов
-(кроме тестовых конструкций) не изменены.
+**DoD:** 808+ tests green; `rg "ToolContext \{" src` finds **only**
+`ToolContext::new` (the single literal in the constructor); tool files
+(besides test constructions) unchanged.
 
-**Статус: сделано** (ветка `refactor/tool-context-bundles`). `ToolDeps`/
-`ToolParams`/`TurnInfo` + `ToolContext::new` в `tools/mod.rs`; хелпер
-`Orchestrator::tool_deps`; три продакшн-сайта (generation/reflection/consolidation)
-переведены на `new` (у reflection/consolidation параметры — `ToolParams::from_config`;
-generation держит `ToolParams::from_config`, а `self_model_params` считает отдельно —
-он ещё уходит в `GenSpawn` для инъекции). testkit получил `ctx_with_backends`
-(кастомные движок/эмбеддер) и `ctx_with_deps` (общий пучок для теста изоляции rag);
-литералы в web/subagent/rag/fetch сведены к ним. Ripple-проверка: добавление поля в
-`ToolContext` требует правки **только** `ToolContext::new`. **808 тестов зелёные**,
-26 `#[ignore]`, clippy `-D warnings`/fmt чисты.
+**Status: done** (branch `refactor/tool-context-bundles`). `ToolDeps`/
+`ToolParams`/`TurnInfo` + `ToolContext::new` in `tools/mod.rs`; a helper
+`Orchestrator::tool_deps`; three production sites (generation/reflection/
+consolidation) switched to `new` (reflection/consolidation get parameters via
+`ToolParams::from_config`; generation also holds `ToolParams::from_config`,
+but `self_model_params` is computed separately — it still flows into
+`GenSpawn` for injection). testkit gained `ctx_with_backends` (custom
+engine/embedder) and `ctx_with_deps` (a shared bundle for the rag isolation
+test); literals in web/subagent/rag/fetch collapsed onto them. Ripple check:
+adding a field to `ToolContext` requires editing **only**
+`ToolContext::new`. **808 tests green**, 26 `#[ignore]`, clippy `-D warnings`/
+fmt clean.
 
 ---
 
-## 4. Этап 2 — фоновые задачи: единый done-канал + реестр слотов (SRP / OCP)
+## 4. Stage 2 — background tasks: a single done channel + slot registry (SRP / OCP)
 
-**Цель:** добавление тихой фоновой задачи №3 (в roadmap уже заявлена
-авто-консолидация модели себя по таймеру — architecture.md §9.9) не трогает
-каркас `run()`, ветку `Quit` и не плодит поля/каналы/обработчики.
+**Goal:** adding a third silent background task (the roadmap already names
+self-model auto-consolidation on a timer — architecture.md §9.9) doesn't
+touch the `run()` skeleton, the `Quit` branch, or spawn more fields/channels/
+handlers.
 
-### Текущее состояние
+### Current state
 
-Семейство «тихих» фоновых задач (мини agentic-loop без UI: рефлексия +
-консолидация, общий раннер `tool_loop::spawn_silent_loop`) обслуживается
-**копипастой жизненного цикла**:
+The family of "silent" background tasks (a UI-less mini agentic loop:
+reflection + consolidation, sharing the `tool_loop::spawn_silent_loop`
+runner) is served by **lifecycle copy-paste**:
 
-- поля `Orchestrator` ([mod.rs:232-280](../src/app/orchestrator/mod.rs)):
+- `Orchestrator` fields ([mod.rs:232-280](../src/app/orchestrator/mod.rs)):
   `reflect_cancel`/`reflect_done_tx`/`reflect_failures` +
-  `consolidate_cancel`/`consolidate_done_tx`/`consolidate_failures` (6 шт.);
-- два канала (`reflect_done`, `consolidate_done`) и две ветки `select!` в
-  `run()` ([mod.rs:186-195](../src/app/orchestrator/mod.rs));
-- ветка `Quit` вручную перечисляет все токены отмены
+  `consolidate_cancel`/`consolidate_done_tx`/`consolidate_failures` (6 total);
+- two channels (`reflect_done`, `consolidate_done`) and two `select!`
+  branches in `run()` ([mod.rs:186-195](../src/app/orchestrator/mod.rs));
+- the `Quit` branch manually enumerates every cancellation token
   ([mod.rs:341-357](../src/app/orchestrator/mod.rs));
-- почти идентичные обработчики `handle_reflect_done`
-  ([reflection.rs:290-310](../src/app/orchestrator/reflection.rs)) и
+- near-identical handlers `handle_reflect_done`
+  ([reflection.rs:290-310](../src/app/orchestrator/reflection.rs)) and
   `handle_consolidate_done`
   ([consolidation.rs:175-192](../src/app/orchestrator/consolidation.rs)):
-  снять cancel → погасить индикатор → при `Ok` сброс серии (+у рефлексии
-  `SelfModelChanged`) → при `Err` серия и одна ошибка на пороге
-  `BACKGROUND_FAILURE_ALERT`.
+  drop the cancel token → clear the indicator → on `Ok` reset the failure
+  streak (+`SelfModelChanged` for reflection) → on `Err` bump the streak and
+  fire one error at the `BACKGROUND_FAILURE_ALERT` threshold.
 
-Этап 6 доводки модели себя отклонил «полевую группировку» как косметику — тогда
-задач было две и ripple не рос. Триггер пересмотра, зафиксированный в оценке:
-**третья задача семейства** (уже в roadmap). Этот этап — подготовка каркаса;
-саму новую задачу **не добавляем** (рефактор не смешивается с фичей).
+Self-model refinement stage 6 rejected "field grouping" as cosmetic — back
+then there were only two tasks and ripple wasn't growing. The reassessment
+trigger, fixed in the write-up: **a third task in the family** (already on
+the roadmap). This stage is prep work for the framework — the new task
+itself is **not** added (the refactor doesn't mix with the feature).
 
-### Целевое состояние
+### Target state
 
-Ключ реестра — существующий `BackgroundKind` (`app/events.rs:197`, никакого
-нового enum'а). Новый модуль `app/orchestrator/background.rs` (~80 строк):
+The registry key is the existing `BackgroundKind` (`app/events.rs:197`, no
+new enum). A new module `app/orchestrator/background.rs` (~80 lines):
 
 ```rust
-/// Слот тихой фоновой задачи: токен активного запуска + серия неудач.
-/// Серия живёт дольше запуска (переживает завершения) — потому слот, не задача.
+/// A silent background-task slot: the active run's token + a failure streak.
+/// The streak outlives a single run (survives completions) — hence a slot,
+/// not a task.
 #[derive(Default)]
 pub(super) struct BgSlot {
-    cancel: Option<CancellationToken>, // Some — задача идёт (одна за раз)
+    cancel: Option<CancellationToken>, // Some — a run is in progress (one at a time)
     failures: u32,
 }
 
 impl Orchestrator {
     pub(super) fn bg_running(&self, kind: BackgroundKind) -> bool { … }
-    /// Фиксирует запуск: слот.cancel = Some + BackgroundTask{active:true}.
+    /// Records a start: slot.cancel = Some + BackgroundTask{active:true}.
     pub(super) fn begin_bg(&mut self, kind: BackgroundKind, cancel: CancellationToken) { … }
-    /// Общий обработчик исхода (бывшие handle_reflect_done/handle_consolidate_done).
+    /// Shared outcome handler (former handle_reflect_done/handle_consolidate_done).
     pub(super) fn handle_bg_done(&mut self, kind: BackgroundKind, result: Result<(), String>) { … }
-    pub(super) fn cancel_all_bg(&self) { … } // для ветки Quit
+    pub(super) fn cancel_all_bg(&self) { … } // for the Quit branch
 }
 
 fn kind_label(kind: BackgroundKind) -> &'static str {
-    // "Авто-рефлексия" / "Авто-консолидация" — тексты ошибок собираются
-    // из label БАЙТ-В-БАЙТ с текущими (на них смотрят тесты).
+    // "Auto-reflection" / "Auto-consolidation" — error text is assembled
+    // from label BYTE-FOR-BYTE with the current strings (tests depend on it).
 }
 ```
 
-- Поля `Orchestrator`: 6 → 2 (`bg: HashMap<BackgroundKind, BgSlot>` +
+- `Orchestrator` fields: 6 → 2 (`bg: HashMap<BackgroundKind, BgSlot>` +
   `bg_done_tx: UnboundedSender<(BackgroundKind, Result<(), String>)>`).
-- `run()`: два канала и две ветки `select!` → один канал и одна ветка
-  (`orch.handle_bg_done(kind, res)`).
-- `SilentLoop` получает поле `kind: BackgroundKind`; `done_tx` шлёт
+- `run()`: two channels and two `select!` branches → one channel and one
+  branch (`orch.handle_bg_done(kind, res)`).
+- `SilentLoop` gains a `kind: BackgroundKind` field; `done_tx` sends
   `(kind, outcome)` ([tool_loop.rs:49](../src/app/orchestrator/tool_loop.rs)).
-- Kind-специфика — **в одном месте** (`handle_bg_done`): `Reflection` при `Ok`
-  дополнительно шлёт `SelfModelChanged`; `Consolidation` — нет (текущее
-  поведение, см. коммент в consolidation.rs:173).
-- Гейты «уже идёт» в `maybe_auto_reflect`/`maybe_auto_consolidate` →
-  `self.bg_running(kind)`; спавн-хвосты (установка cancel + индикатор) →
-  `self.begin_bg(kind, cancel)`.
-- `Quit`: перечисление reflect/consolidate токенов → `cancel_all_bg()`
-  (gen/rag/imp остаются как есть).
+- Kind-specific logic lives **in one place** (`handle_bg_done`): `Reflection`
+  on `Ok` additionally sends `SelfModelChanged`; `Consolidation` does not
+  (current behavior, see the comment at consolidation.rs:173).
+- The "already running" gates in `maybe_auto_reflect`/`maybe_auto_consolidate`
+  → `self.bg_running(kind)`; spawn tails (setting the cancel token +
+  indicator) → `self.begin_bg(kind, cancel)`.
+- `Quit`: the reflect/consolidate token enumeration → `cancel_all_bg()`
+  (gen/rag/imp stay as they are).
 
-### Что НЕ делаем (границы семейства)
+### What we do NOT do (family boundaries)
 
-- **Имперсонация** — не в семействе: свой протокол done-канала
-  (`(Uuid, FinishReason)`), стриминг в UI, `imp_gen`. Не трогаем.
-- **RAG-индексация** — не в семействе: done-канала нет (прогресс идёт
-  `AppEvent::RagProgress` напрямую), только `rag_cancel`. Не трогаем.
-- **Авто-название** (`title_tx`) — свой результат с id чата. Не трогаем.
-- `consolidate_counts` (каденция по чату) — данные каденции, не жизненный цикл
-  задачи; остаётся полем как есть (рефлексия ведёт каденцию ватермарком в
-  `Chat` — унифицировать их **нельзя** без изменения поведения).
+- **Impersonation** — not in the family: its own done-channel protocol
+  (`(Uuid, FinishReason)`), streams to the UI, `imp_gen`. Not touched.
+- **RAG indexing** — not in the family: no done channel (progress goes
+  through `AppEvent::RagProgress` directly), only `rag_cancel`. Not touched.
+- **Auto-naming** (`title_tx`) — its own result carrying a chat id. Not
+  touched.
+- `consolidate_counts` (per-chat cadence) — cadence data, not task
+  lifecycle; stays a field as is (reflection tracks cadence via a
+  watermark on `Chat` — the two **cannot** be unified without a behavior
+  change).
 
-**Риски:** средние — задет каркас `run()`; смягчение: тексты
-ошибок/событий байт-в-байт, поведение проверяют существующие интеграционные
-тесты (серия из 3 неудач → одна ошибка; успех сбрасывает и шлёт
-`SelfModelChanged`; ватермарк двигается только при спавне). Фикстуры
-`bare_orch*` в `tests/mod.rs` конструируют `Orchestrator` литералом — правка
-полей в **одном** месте. **Объём:** ~1 сессия.
+**Risks:** medium — touches the `run()` skeleton; mitigation: error/event
+text stays byte-for-byte, behavior is checked by existing integration tests
+(a streak of 3 failures → one error; success resets it and sends
+`SelfModelChanged`; the watermark only moves on spawn). The `bare_orch*`
+fixtures in `tests/mod.rs` build `Orchestrator` as a literal — field edits
+happen in **one** place. **Effort:** ~1 session.
 
-**DoD:** 808+ тестов зелёные без переименований; поля `reflect_*`/
-`consolidate_cancel|_done_tx|_failures` удалены; в `run()` одна bg-ветка;
-`rg "BACKGROUND_FAILURE_ALERT" src` — единственный потребитель
+**DoD:** 808+ tests green with no renames; the `reflect_*`/
+`consolidate_cancel|_done_tx|_failures` fields are gone; `run()` has one bg
+branch; `rg "BACKGROUND_FAILURE_ALERT" src` shows a single consumer —
 `handle_bg_done`.
 
-**Статус: сделано** (ветка `refactor/bg-task-slots`). Новый модуль
-`orchestrator/background.rs`: `BgSlot { cancel, failures }` + методы `bg_running`/
-`begin_bg`/`handle_bg_done`/`cancel_all_bg` (+ `#[cfg(test)] bg_failures`) +
-`kind_label` (тексты ошибок байт-в-байт). Поля оркестратора 6 → 2
-(`bg: HashMap<BackgroundKind, BgSlot>` + `bg_done_tx`); `consolidate_counts`
-оставлен (данные каденции). `run()`: два канала/ветки → один `bg_done` + одна ветка;
-`Quit` → `cancel_all_bg`. `SilentLoop` получил `kind`, `done_tx` шлёт `(kind, исход)`.
-`BackgroundKind` получил `Hash`. Тесты переведены на новый API без переименований.
-**808 тестов зелёные**, clippy/fmt чисты.
+**Status: done** (branch `refactor/bg-task-slots`). New module
+`orchestrator/background.rs`: `BgSlot { cancel, failures }` + methods
+`bg_running`/`begin_bg`/`handle_bg_done`/`cancel_all_bg` (+
+`#[cfg(test)] bg_failures`) + `kind_label` (error text byte-for-byte).
+Orchestrator fields 6 → 2 (`bg: HashMap<BackgroundKind, BgSlot>` +
+`bg_done_tx`); `consolidate_counts` kept (cadence data). `run()`: two
+channels/branches → one `bg_done` + one branch; `Quit` → `cancel_all_bg`.
+`SilentLoop` gained `kind`, `done_tx` sends `(kind, outcome)`.
+`BackgroundKind` gained `Hash`. Tests switched to the new API with no
+renames. **808 tests green**, clippy/fmt clean.
 
 ---
 
-## 5. Этап 3 — настройки: дескрипторы полей (SRP / OCP; поэтапно)
+## 5. Stage 3 — settings: field descriptors (SRP / OCP; staged)
 
-Крупнейший shotgun-surgery узел: добавление одного поля настроек сегодня правит
-до **пяти match-сайтов в четырёх файлах** — строка каталога
-([catalog.rs](../src/screens/settings/catalog.rs)), `apply_text` (~50 арм,
-[apply.rs:415-633](../src/screens/settings/apply.rs)) или
-`toggle_field`/`cycle_field` (apply.rs:256-387), `field_description` (~40 арм,
-[helpers.rs:21-208](../src/screens/settings/helpers.rs)), валидация
-(`field_num_kind`), плюс дефолт для `Del`-сброса и маркера `•` через
+The biggest shotgun-surgery node: adding one settings field today touches up
+to **five match sites in four files** — the catalog row
+([catalog.rs](../src/screens/settings/catalog.rs)), `apply_text` (~50 arms,
+[apply.rs:415-633](../src/screens/settings/apply.rs)) or
+`toggle_field`/`cycle_field` (apply.rs:256-387), `field_description` (~40
+arms, [helpers.rs:21-208](../src/screens/settings/helpers.rs)), validation
+(`field_num_kind`), plus a default for `Del` reset and the `•` marker via
 `default_fields`.
 
-План god-object'ов (§4) сознательно отложил дескрипторную таблицу с критерием
-возврата: «если после сплита catalog.rs+apply.rs продолжат расти быстрее
-прочих». Журнал это подтверждает (поток PR в настройки не иссяк) — этап
-исполняет отложенную опцию, **но по шагам с отдельной ценностью**, чтобы можно
-было остановиться после любого.
+The god-object plan (§4) deliberately deferred the descriptor table with a
+return trigger: "if `catalog.rs`+`apply.rs` keep growing faster than the
+rest after the split." The log confirms this (the flow of settings PRs
+hasn't stopped) — this stage exercises the deferred option, **but in steps
+with their own standalone value**, so it's possible to stop after any of
+them.
 
-Важный прецедент в этом же экране: **семплинг уже устроен дескрипторно** —
-`SamplingParam` несёт `label`/`field_name`/`num_kind`/`group`/`description`
-([settings/mod.rs:247-427](../src/screens/settings/mod.rs)), значения ходят через
-единые `sampling_row`/`apply_sampling_text` (helpers.rs). 28 параметров ×
-2 подсекции обслуживаются одной таблицей — паттерн в кодовой базе доказан.
+An important precedent on this very screen: **sampling is already built
+descriptor-style** — `SamplingParam` carries `label`/`field_name`/
+`num_kind`/`group`/`description`
+([settings/mod.rs:247-427](../src/screens/settings/mod.rs)), values flow
+through shared `sampling_row`/`apply_sampling_text` (helpers.rs). 28
+parameters × 2 subsections are served by one table — the pattern is proven
+in the codebase.
 
-### Шаг 3.1 — описание поля переезжает в `FieldRow` (дёшево, самоценно)
+### Step 3.1 — field description moves into `FieldRow` (cheap, standalone value)
 
-- `FieldRow` получает `description: Option<&'static str>` + builder-метод
+- `FieldRow` gains `description: Option<&'static str>` + a builder method
   `fn describe(self, d: &'static str) -> FieldRow`.
-- Тексты из `field_description` переезжают к местам постройки строк:
-  секционные — в catalog.rs, общие для пар Ассистент/Имперсонация — в
-  `managed_rows`/`cloud_rows` (helpers.rs), где **одна** строка описания
-  автоматически накрывает оба `FieldId` пары (сейчас это дублируется армами
-  `XNoMmap | IxNoMmap => …`); семплинг — `sampling_row` подставляет
-  `p.description()` (источник не трогаем).
-- Потребители: нижняя панель ([render.rs](../src/screens/settings/render.rs)) и
-  ловушка поиска ([search.rs](../src/screens/settings/search.rs)) читают
-  `row.description` вместо вызова `field_description(id)`; сам 190-строчный
-  match удаляется.
-- Тесты, зовущие `field_description` напрямую, переводятся на чтение строки
-  каталога (имена тестов не меняются).
+- Text from `field_description` moves to where each row is built: section
+  ones — into catalog.rs; shared between the Assistant/Impersonation pair —
+  into `managed_rows`/`cloud_rows` (helpers.rs), where **one** description
+  string automatically covers both `FieldId`s of the pair (currently
+  duplicated across arms like `XNoMmap | IxNoMmap => …`); sampling —
+  `sampling_row` supplies `p.description()` (source untouched).
+- Consumers: the bottom panel ([render.rs](../src/screens/settings/render.rs))
+  and the search index ([search.rs](../src/screens/settings/search.rs)) read
+  `row.description` instead of calling `field_description(id)`; the
+  190-line match is removed.
+- Tests calling `field_description` directly switch to reading the catalog
+  row's string (test names unchanged).
 
-**Итог шага:** подпись + группа + описание поля живут в **одном** месте.
-Риск низкий. Объём ~0.5 сессии.
+**Step outcome:** label + group + description of a field live in **one**
+place. Low risk. Effort ~0.5 session.
 
-**Статус: сделано** (ветка `refactor/settings-field-descriptors`). `FieldRow` получил
-`description: Option<&'static str>` + builder `describe(d)`. Тексты `field_description`
-(190-строчный match) переехали к местам постройки: секционные (Инструменты/Память/
-Интерфейс) — инлайн-литералы в catalog.rs; общие для нескольких мест (режим/имя модели/
-API-ключ-env/подсекция) — `const DESC_*` в helpers.rs; `-ngl`/`--jinja` (различаются у
-ассистента/имперсонации) — в `ManagedFieldIds`; прочие managed (no-mmap/flash-attn/
-spec-*) — инлайн в `managed_rows`; семплинг — `sampling_row` ставит `p.description()`.
-Потребители (нижняя панель render.rs, ловушка поиска `collect_hits`) читают
-`row.description`; сам match удалён. Нюанс: описания теперь есть только у **видимых**
-строк (draft-поля — при spec_type=draft-*); тесты `field_description(id)` переведены на
-хелпер `field_desc(&screen, id)` (строит поля секций и ищет строку). **808 тестов
-зелёные**, clippy/fmt чисты.
+**Status: done** (branch `refactor/settings-field-descriptors`). `FieldRow`
+gained `description: Option<&'static str>` + the builder `describe(d)`.
+`field_description` text (the 190-line match) moved to where each row is
+built: section-specific (Tools/Memory/Interface) — inline literals in
+catalog.rs; shared across multiple places (mode/model name/API key env/
+subsection) — `const DESC_*` in helpers.rs; `-ngl`/`--jinja` (differ
+between assistant/impersonation) — in `ManagedFieldIds`; other managed
+fields (no-mmap/flash-attn/spec-*) — inline in `managed_rows`; sampling —
+`sampling_row` supplies `p.description()`. Consumers (the bottom panel in
+render.rs, the search index `collect_hits`) read `row.description`; the
+match was removed. Note: descriptions now only exist for **visible** rows
+(draft fields — only when spec_type=draft-*); tests for
+`field_description(id)` were switched to the `field_desc(&screen, id)`
+helper (builds section fields and finds the string). **808 tests green**,
+clippy/fmt clean.
 
-### Шаг 3.2 — доступ к значению через спецификацию поля (ядро)
+### Step 3.2 — value access via a field spec table (core)
 
-Свернуть оставшиеся четыре match-сайта (**toggle/cycle/apply_text/валидация** +
-производные `reset_field`/маркер `•`) в **одну таблицу** — честная формулировка:
-пять match'ей по `FieldId` → один.
+Collapse the remaining four match sites (**toggle/cycle/apply_text/
+validation** + the derived `reset_field`/`•` marker) into **one table** —
+honest framing: five `FieldId` matches → one.
 
 ```rust
-/// Доступ к значению config-поля. fn-указатели (не замыкания) — 'static, без
-/// капчуринга; маршрутизация по режиму (external vs cloud_mut) живёт ВНУТРИ
-/// сеттера — ему доступен весь AppConfig.
+/// Access to a config field's value. fn pointers (not closures) — 'static, no
+/// capturing; mode routing (external vs cloud_mut) lives INSIDE the setter —
+/// it has access to the whole AppConfig.
 enum Access {
     Toggle { get: fn(&AppConfig) -> bool,   set: fn(&mut AppConfig, bool) },
     Text   { get: fn(&AppConfig) -> String, set: fn(&mut AppConfig, &str) },
@@ -350,96 +364,100 @@ enum Access {
 struct FieldSpec {
     label: &'static str,
     description: Option<&'static str>,
-    num: Option<NumKind>, // валидация редактора
+    num: Option<NumKind>, // editor validation
     access: Access,
 }
 
-/// ЕДИНСТВЕННЫЙ match по FieldId (таблица). Возвращает None для полей вне
-/// охвата (профильные, селекторы подсекций, семплинг — см. границы).
+/// The ONE match by FieldId (the table). Returns None for fields outside
+/// scope (profile fields, subsection selectors, sampling — see boundaries).
 fn field_spec(id: FieldId) -> Option<FieldSpec> { … }
 ```
 
-Потребители после шага:
+Consumers after this step:
 
-- `toggle_field`/`cycle_field`/`apply_text` → «если есть spec — применить через
-  `access` и `save_config()`; иначе прежний путь» (профили/семплинг/навигация);
+- `toggle_field`/`cycle_field`/`apply_text` → "if a spec exists, apply via
+  `access` and `save_config()`; else the old path" (profiles/sampling/
+  navigation);
 - `field_validation_error` → `spec.num`;
-- `reset_field` → `set(cfg, get(&AppConfig::default()))` — текущая связка
-  «`default_fields` + повтор навигации» упрощается;
-- маркер `•` «изменено» → `get(cfg) != get(&default)`;
-- построители каталога → `spec_row(&self.config, id)` (label/описание/значение
-  из spec), порядок и **mode-driven видимость остаются императивными** в
-  catalog.rs — это осознанная логика показа, не свойство поля;
-- попап Choice ([choice.rs](../src/screens/settings/choice.rs)) → `options` из
-  spec (шаг 3.3, можно отделить).
+- `reset_field` → `set(cfg, get(&AppConfig::default()))` — the current
+  "`default_fields` + repeated navigation" combo simplifies;
+- the `•` "modified" marker → `get(cfg) != get(&default)`;
+- catalog builders → `spec_row(&self.config, id)` (label/description/value
+  from the spec), order and **mode-driven visibility stay imperative** in
+  catalog.rs — that's deliberate display logic, not a field property;
+- the Choice popup ([choice.rs](../src/screens/settings/choice.rs)) →
+  `options` from the spec (step 3.3, can be split off).
 
-**Границы охвата (важно для механичности):**
+**Scope boundaries (important for staying mechanical):**
 
-- **Только config-поля.** Вне охвата: профильные (`PName`/`PSystem`/
-  `PGreeting`/`PImpSystem`/`PSelect`/`PTool(idx)` — работают над
-  `profiles[profile_idx]`, а не `AppConfig`; их 6 видов, прежний путь
-  остаётся), селекторы подсекций (`ModelSub`/`SamplingSub`/`ProfileSub` —
-  навигация), `IDicts` при желании — в охвате (сеттер парсит список).
-- **Семплинг не трогаем**: `S(p)`/`IS(p)` уже дескрипторны через
-  `SamplingParam`; заворачивать таблицу в таблицу — лишняя косвенность.
-- Пары Ассистент/Имперсонация (`X*`/`Ix*`) — отдельные спеки с общими
-  const-текстами (fn-указатели не капчурят «какой движок», поэтому по спеке на
-  FieldId; описания уже общие после 3.1).
+- **Config fields only.** Out of scope: profile fields (`PName`/`PSystem`/
+  `PGreeting`/`PImpSystem`/`PSelect`/`PTool(idx)` — operate over
+  `profiles[profile_idx]`, not `AppConfig`; 6 kinds, old path stays),
+  subsection selectors (`ModelSub`/`SamplingSub`/`ProfileSub` — navigation),
+  `IDicts` — in scope if desired (the setter parses a list).
+- **Sampling untouched**: `S(p)`/`IS(p)` are already descriptor-based via
+  `SamplingParam`; wrapping a table in a table would be redundant
+  indirection.
+- The Assistant/Impersonation pairs (`X*`/`Ix*`) — separate specs with
+  shared `const` text (fn pointers can't capture "which engine," so it's
+  one spec per FieldId; descriptions are already shared after 3.1).
 
-**Порядок внедрения** — семействами, каждое — зелёный коммит: (a) Интерфейс +
-Инструменты + Память (простые прямые поля — обкатка паттерна); (b) движки
-X*/Ix*/E* (маршрутизация external/cloud внутри сеттеров); (c) `reset_field`/`•`
-на `get`-сравнение; (d) 3.3 — options Choice-полей.
+**Rollout order** — by family, each a green commit: (a) Interface + Tools +
+Memory (simple direct fields — dry-run of the pattern); (b) engines
+X*/Ix*/E* (external/cloud routing inside setters); (c) `reset_field`/`•`
+to a `get` comparison; (d) 3.3 — Choice-field options.
 
-**Компромисс, фиксируем осознанно:** уходит exhaustive-проверка компилятором
-пяти match'ей («забыть поле» теперь = «забыть строку в одной таблице» — ровно
-тот же риск, что сегодня «забыть строку каталога»). Взамен — поле целиком
-читается в одном месте. Сеть безопасности — существующие ~134 settings-теста
-(tests.rs, 1244 строки) + гейт `all_labels_fit_alignment_cap`.
+**Trade-off, accepted deliberately:** loses the compiler's exhaustiveness
+check across five matches ("forgetting a field" now equals "forgetting a
+row in one table" — the exact same risk as "forgetting a catalog row"
+today). In exchange — a field is read in one place. Safety net — the
+existing ~134 settings tests (tests.rs, 1244 lines) + the
+`all_labels_fit_alignment_cap` gate.
 
-**Критерий отката/остановки:** если после шага (a) таблица читается хуже
-прежних match'ей или диффы тестов разрастаются — остановиться на 3.1 (он
-самоценен) и зафиксировать решение здесь.
+**Rollback/stop criterion:** if after step (a) the table reads worse than
+the old matches, or the test diffs balloon — stop at 3.1 (it stands on its
+own) and record the decision here.
 
-**Риски:** средне-высокие (самый тяжёлый узел UI, 5118 строк); митигируется
-пошаговостью и тестами. **Объём:** 3.1 — ~0.5 сессии; 3.2 — 1–2 сессии;
+**Risks:** medium-high (the heaviest UI node, 5118 lines); mitigated by
+staging and tests. **Effort:** 3.1 — ~0.5 session; 3.2 — 1–2 sessions;
 3.3 — ~0.5.
 
-**DoD (полный этап):** `field_description`/`toggle_field`-config-армы/
-`cycle_field`-config-армы/config-ветки `apply_text` удалены; по `FieldId`
-остаются **два** структурных match'а (таблица `field_spec` + построители
-каталога) вместо шести; 808+ тестов зелёные.
+**DoD (full stage):** `field_description`/`toggle_field` config arms/
+`cycle_field` config arms/config branches of `apply_text` removed; only
+**two** structural matches remain by `FieldId` (the `field_spec` table +
+catalog builders) instead of six; 808+ tests green.
 
-**Статус: сделано** (ветка `refactor/settings-field-descriptors`). 3.2/3.3:
-новый модуль `screens/settings/spec.rs` — `enum Access { Toggle(fn(&mut AppConfig)) |
+**Status: done** (branch `refactor/settings-field-descriptors`). 3.2/3.3: a
+new module `screens/settings/spec.rs` — `enum Access { Toggle(fn(&mut AppConfig)) |
 Text(fn(&mut AppConfig,&str)) | Choice { cycle, options } }` + `FieldSpec { access, num }`
-+ единственный `field_spec(id) -> Option<FieldSpec>` по config-полям (fn-указатели,
-маршрутизация external/cloud — внутри сеттеров). Потребители сведены к таблице:
-`toggle_field`/`cycle_field`/`apply_text` (config-армы) → `field_spec`; `field_num_kind`
-→ `field_spec.num`; `choice_menu` (config Choice) → `field_spec.options` (это и есть 3.3).
-Вне таблицы (прежний путь): семплинг `S(p)`/`IS(p)`, профильные поля, селекторы
-подсекций/`PSelect` — навигация. **Шаг (c) (reset/маркер `•` на `get`-сравнение) не
-делался**: `reset_field`/маркер уже работают обобщённо через `default_fields()`
-(нет per-field арм) — collapse-цели там нет. Построители каталога (label/значение/
-описание) не тронуты. **808 тестов зелёные**, clippy/fmt чисты. **Направление
-(этапы 1–4) завершено.**
++ a single `field_spec(id) -> Option<FieldSpec>` over config fields (fn
+pointers, external/cloud routing inside the setters). Consumers collapsed
+onto the table: `toggle_field`/`cycle_field`/`apply_text` (config arms) →
+`field_spec`; `field_num_kind` → `field_spec.num`; `choice_menu` (config
+Choice) → `field_spec.options` (this is step 3.3). Outside the table (old
+path): sampling `S(p)`/`IS(p)`, profile fields, subsection selectors/
+`PSelect` — navigation. **Step (c) (reset/`•` marker on a `get` comparison)
+was NOT done**: `reset_field`/the marker already work generically through
+`default_fields()` (no per-field arm) — there was no collapse target there.
+Catalog builders (label/value/description) untouched. **808 tests green**,
+clippy/fmt clean. **Track (stages 1–4) finished.**
 
 ---
 
-## 6. Этап 4 — мелкие точечные улучшения (ISP / SRP)
+## 6. Stage 4 — small targeted improvements (ISP / SRP)
 
-Четыре независимых мини-правки; 4a+4b — один PR, 4c/4d — опционально.
+Four independent mini-fixes; 4a+4b — one PR, 4c/4d — optional.
 
-### 4a. View-model статус-бара
+### 4a. Status-bar view model
 
-`status_bar::render`/`height` несут по **10 аргументов**
+`status_bar::render`/`height` carry **10 arguments**
 (`#[allow(clippy::too_many_arguments)]`,
-[status_bar.rs:36-89](../src/widgets/status_bar.rs)); каждый новый индикатор
-(последними были `background`-чипы рефлексии/консолидации) расширяет обе
-сигнатуры и все вызовы.
+[status_bar.rs:36-89](../src/widgets/status_bar.rs)); every new indicator
+(the last were the reflection/consolidation `background` chips) extends both
+signatures and every call site.
 
 ```rust
-/// Снимок состояния для строки статуса (экран собирает в одном месте).
+/// State snapshot for the status line (the screen assembles it in one place).
 pub struct StatusModel<'a> {
     pub statuses: &'a ServerStatuses,
     pub generating: bool,
@@ -453,117 +471,129 @@ pub fn render(frame: &mut Frame, area: Rect, model: &StatusModel, palette: &Pale
 pub fn height(width: usize, model: &StatusModel, palette: &Palette) -> u16
 ```
 
-`ChatScreen` собирает модель одним приватным хелпером (`status_model()` в
-`chat/render.rs`) — новый индикатор = поле + заполнение + отрисовка, без churn
-сигнатур. Оба `#[allow(too_many_arguments)]` снимаются. Тесты status_bar
-переводятся на литерал модели (механика). Объём: ~0.3 сессии.
+`ChatScreen` assembles the model with one private helper (`status_model()`
+in `chat/render.rs`) — a new indicator = a field + filling it in + rendering,
+no signature churn. Both `#[allow(too_many_arguments)]` are removed.
+status_bar tests switch to a model literal (mechanical). Effort: ~0.3
+session.
 
-### 4b. Каноничные broadcast-хелперы `ActiveScreen` + единый диспетчер intent'ов
+### 4b. Canonical `ActiveScreen` broadcast helpers + a single intent dispatcher
 
-Сейчас добавление экрана правит 6–8 разрозненных мест; сводим перечисления
-экранов к **одному каноничному месту** — методам на самом `ActiveScreen`
-(`app/runtime/mod.rs`, рядом с enum):
+Right now adding a screen touches 6–8 scattered places; we collapse the
+screen enumerations to **one canonical place** — methods on `ActiveScreen`
+itself (`app/runtime/mod.rs`, next to the enum):
 
-- `ActiveScreen::set_palette(&mut self, palette: Palette)` — сворачивает
-  поимённый палитровый блок [dispatch.rs:62-77](../src/app/runtime/dispatch.rs)
-  (арм `Settings` сохраняет свой `refresh` — у него семантика шире палитры);
-- `ActiveScreen::handle_paste(&mut self, chat: &mut ChatScreen, text: &str)` —
-  сворачивает роутинг вставки [input.rs:166-175](../src/app/runtime/input.rs);
-- локальный `enum AnyIntent { Chat(..), List(..), Settings(..), SelfModel(..) }`
-  + одна `dispatch_any(intent, cmd_tx, screen, active) -> bool` — вместо
-  «снять 4 Option + 4 почти одинаковых if-блока»
-  ([input.rs:180-209](../src/app/runtime/input.rs); текущая форма — обход
-  конфликта заимствований, `dispatch_any` решает его одним владением);
-- сюда же 4d: вынос side-effect'а буфера обмена из `apply_event`
-  ([dispatch.rs:43-58](../src/app/runtime/dispatch.rs)) в приватный хелпер
-  `deliver_clipboard(screen, active, clipboard, text)` — `apply_event` перестаёт
-  знать про `arboard`.
+- `ActiveScreen::set_palette(&mut self, palette: Palette)` — folds the
+  named palette block
+  [dispatch.rs:62-77](../src/app/runtime/dispatch.rs) (the `Settings` arm
+  keeps its own `refresh` — its semantics are broader than palette);
+- `ActiveScreen::handle_paste(&mut self, chat: &mut ChatScreen, text: &str)`
+  — folds the paste routing [input.rs:166-175](../src/app/runtime/input.rs);
+- a local `enum AnyIntent { Chat(..), List(..), Settings(..), SelfModel(..) }`
+  + one `dispatch_any(intent, cmd_tx, screen, active) -> bool` — replacing
+  "pull 4 Options + 4 near-identical if blocks"
+  ([input.rs:180-209](../src/app/runtime/input.rs); the current shape is a
+  workaround for a borrow conflict, `dispatch_any` resolves it with single
+  ownership);
+- and, folded into the same PR, 4d: moving the clipboard side effect out of
+  `apply_event`
+  ([dispatch.rs:43-58](../src/app/runtime/dispatch.rs)) into a private
+  helper `deliver_clipboard(screen, active, clipboard, text)` — `apply_event`
+  no longer knows about `arboard`.
 
-`match` по экранам не исчезает (это и не цель — enum-диспетчеризация здесь
-идиоматична), но новый экран добавляет ветки в **предсказуемых каноничных
-местах** одного модуля. Объём: ~0.4 сессии.
+The `match` over screens doesn't disappear (that's not the goal — enum
+dispatch is idiomatic here), but a new screen adds branches in
+**predictable canonical places** within one module. Effort: ~0.4 session.
 
-### 4c. (Опционально) группировка полей `ChatScreen`
+### 4c. (Optional) grouping `ChatScreen` fields
 
-~40 полей ([chat/mod.rs:174-249](../src/screens/chat/mod.rs)) — реализация
-разбита по подмодулям, состояние единое. По прецеденту Фазы 3 оркестратора
-(`EngineManager`/`SaveQueue`) сгруппировать две когезивные тройки:
+~40 fields ([chat/mod.rs:174-249](../src/screens/chat/mod.rs)) — the
+implementation is already split across submodules, but the state is one
+struct. Following the orchestrator Phase 3 precedent
+(`EngineManager`/`SaveQueue`), group two cohesive trios:
 
-- `TokenCounters { tokens, context, context_exact }` (поля `gen_*`);
-- `SpellState { checker, dirty, last_edit }` (поля `spell`/`spell_dirty`/
-  `last_edit`; `draft_dirty` — не сюда, это черновик).
+- `TokenCounters { tokens, context, context_exact }` (the `gen_*` fields);
+- `SpellState { checker, dirty, last_edit }` (the `spell`/`spell_dirty`/
+  `last_edit` fields; `draft_dirty` is not included, it's about the draft).
 
-Попапы **не** группируем и modal-enum **не** вводим — уже отложено планом
-god-object'ов §4 как поведенческая правка. Ценность 4c — читаемость; делать,
-только если попутно правится `chat/` (не отдельным PR ради него самого).
+Popups are **not** grouped and a modal enum is **not** introduced — already
+deferred by the god-object plan §4 as a behavioral change. 4c's value is
+readability; do it only if `chat/` is being touched anyway (not as a
+standalone PR just for this).
 
-**Риски этапа 4:** низкие (механика + тесты как сеть). **Объём:** 4a+4b(+4d) —
-~0.5–1 сессия одним PR; 4c — ~0.5 попутно.
+**Stage 4 risks:** low (mechanics + tests as a safety net). **Effort:**
+4a+4b(+4d) — ~0.5–1 session in one PR; 4c — ~0.5 alongside other work.
 
-**DoD:** сигнатуры статус-бара ≤4 параметров без `allow`; в `dispatch.rs`/
-`input.rs` нет поимённых перечислений экранов вне методов `ActiveScreen`/
-`dispatch_any`; 808+ тестов зелёные.
+**DoD:** status-bar signatures ≤4 parameters, no `allow`; `dispatch.rs`/
+`input.rs` have no named screen enumerations outside `ActiveScreen` methods/
+`dispatch_any`; 808+ tests green.
 
-**Статус: 4a/4b/4d сделаны** (ветка `refactor/status-bar-runtime`). 4a:
-`StatusModel<'a>` (снимок из `ChatScreen::status_model`), `render`/`height` — 4/3
-параметра без `too_many_arguments`. 4b: `ActiveScreen::set_palette`/`handle_paste`
-(broadcast палитры/маршрутизация вставки), `AnyIntent` + `dispatch_any` (единое
-владение вместо 4 `Option`). 4d: `deliver_clipboard` (`apply_event` не знает про
-`arboard`). Per-событийный `match` в `apply_event` осознанно оставлен. **4c
-(группировка полей `ChatScreen`) — не делал** (по плану — только попутно при правке
-`chat/`, отдельным PR ради себя не стоит). 808 тестов зелёные, clippy/fmt чисты.
+**Status: 4a/4b/4d done** (branch `refactor/status-bar-runtime`). 4a:
+`StatusModel<'a>` (a snapshot from `ChatScreen::status_model`), `render`/
+`height` — 4/3 parameters, no `too_many_arguments`. 4b:
+`ActiveScreen::set_palette`/`handle_paste` (palette broadcast/paste
+routing), `AnyIntent` + `dispatch_any` (single ownership instead of 4
+`Option`s). 4d: `deliver_clipboard` (`apply_event` doesn't know about
+`arboard`). The per-event `match` in `apply_event` was deliberately left
+as is. **4c (grouping `ChatScreen` fields) — not done** (per the plan —
+only alongside `chat/` edits, not worth a standalone PR). 808 tests
+green, clippy/fmt clean.
 
 ---
 
-## 7. Что сознательно НЕ делаем (границы направления)
+## 7. What we deliberately do NOT do (track boundaries)
 
-Зафиксировано оценкой 2026-07-08 — это компромиссы, а не долг:
+Fixed by the 2026-07-08 assessment — these are trade-offs, not debt:
 
-- **`Storage` за трейтом / репозитории-абстракции** — конкретный `Arc<Storage>`
-  осознан: тесты быстрые (`:memory:`), второй реализации не предвидится, трейт
-  на ~47 методов был бы header-interface. Шов на будущее уже есть (`db/` разбит
-  по доменам).
-- **`trait Screen`/`trait Widget`** — enum-диспетчеризация экранов идиоматична
-  и прозрачна; трейт размыл бы разные снимки/интенты экранов.
-- **Слияние `ChatIntent` ↔ `AppCommand`** — дублирование 1:1 есть цена
-  FSD-инварианта «screens не знают app», слияние сломало бы слоистость.
-- **`ProviderProfile`-таблица** (централизация capability-знания провайдеров) —
-  ось уже обслужена `supported_sampling_fields`/`WireDialect`/`cloud()`;
-  таблица окупится только при провайдере №4+.
-- **Extension bag для семплинга** — отложен ADR 0004, статус не меняем.
-- **Вливание петли генерации в `tool_loop`** — решено «нет» (этап 6 доводки):
-  стриминг/control-flow/thinking-подписи не окупают общий сток.
-- **Modal-enum попапов `ChatScreen`** — отложено планом god-object'ов §4
-  (поведенческая правка).
-- **Крейт-сплит** — отклонён ADR 0004.
+- **`Storage` behind a trait / repository abstractions** — a concrete
+  `Arc<Storage>` is deliberate: tests are fast (`:memory:`), no second
+  implementation is anticipated, a trait over ~47 methods would be a header
+  interface. The future seam already exists (`db/` split by domain).
+- **`trait Screen`/`trait Widget`** — enum dispatch of screens is idiomatic
+  and transparent; a trait would blur the differing per-screen
+  snapshots/intents.
+- **Merging `ChatIntent` ↔ `AppCommand`** — the 1:1 duplication is the price
+  of the "screens don't know about app" FSD invariant; merging would break
+  the layering.
+- **A `ProviderProfile` table** (centralizing provider capability knowledge)
+  — that axis is already served by `supported_sampling_fields`/
+  `WireDialect`/`cloud()`; a table only pays off at provider #4+.
+- **An extension bag for sampling** — deferred by ADR 0004, status unchanged.
+- **Folding the generation loop into `tool_loop`** — decided "no" (self-model
+  refinement stage 6): streaming/control-flow/thinking signatures don't pay
+  for a shared sink.
+- **A modal enum for `ChatScreen` popups** — deferred by the god-object plan
+  §4 (a behavioral change).
+- **Crate split** — rejected by ADR 0004.
 
-## 8. Порядок, независимость, оценка усилий
+## 8. Order, independence, effort estimate
 
-Этапы независимы (3.2 — после 3.1). Рекомендуемый порядок — по value/cost:
+Stages are independent (3.2 comes after 3.1). Recommended order — by
+value/cost:
 
-| Порядок | Этап | Объём | Риск |
+| Order | Stage | Effort | Risk |
 |---|------|-------|------|
-| 1 | Этап 1 — `ToolContext` | ~0.5 сессии | низкий |
-| 2 | Этап 4a+4b(+4d) — статус-бар + runtime | ~0.5–1 | низкий |
-| 3 | Этап 2 — фоновые задачи | ~1 | средний |
-| 4 | Этап 3.1 — описания в `FieldRow` | ~0.5 | низкий |
-| 5 | Этап 3.2 (+3.3) — спецификации полей | 1–2 | средне-высокий |
-| — | Этап 4c — группировка `ChatScreen` | ~0.5 | низкий (попутно) |
+| 1 | Stage 1 — `ToolContext` | ~0.5 session | low |
+| 2 | Stage 4a+4b(+4d) — status bar + runtime | ~0.5–1 | low |
+| 3 | Stage 2 — background tasks | ~1 | medium |
+| 4 | Stage 3.1 — descriptions in `FieldRow` | ~0.5 | low |
+| 5 | Stage 3.2 (+3.3) — field specs | 1–2 | medium-high |
+| — | Stage 4c — grouping `ChatScreen` | ~0.5 | low (alongside other work) |
 
-После этапов 1–2 и 4 стоит сделать паузу и замер: если поток правок в
-настройки продолжается — идти в 3.2; если иссяк — остановиться на 3.1.
+After stages 1–2 and 4, pause and reassess: if the flow of settings edits
+continues — proceed to 3.2; if it has tapered off — stop at 3.1.
 
-## 9. Definition of Done (всего направления)
+## 9. Definition of Done (whole track)
 
-- Новое поле `ToolContext` правит один файл; новая тихая фоновая задача не
-  трогает `run()`/`Quit`/обработчик исходов; новое config-поле настроек
-  описывается в ≤2 местах (таблица + построитель секции); новый индикатор
-  статус-бара не меняет сигнатур.
-- Поведение не изменилось: тексты событий/ошибок/логов байт-в-байт; число
-  тестов не уменьшилось (808+), имена тест-функций сохранены;
-  `#[ignore]`-смоуки не тронуты.
-- `cargo fmt` / `cargo clippy --all-targets -- -D warnings` чисты после
-  каждого этапа.
-- architecture.md (§3 карта модулей, §8 инструменты, §11 конкурентность — по
-  затронутому) и CLAUDE.md (журнал) обновлены на каждом этапе; статус этапов
-  отмечен в этом документе.
+- A new `ToolContext` field touches one file; a new silent background task
+  doesn't touch `run()`/`Quit`/the outcome handler; a new config settings
+  field is described in ≤2 places (the table + the section builder); a new
+  status-bar indicator doesn't change signatures.
+- Behavior unchanged: event/error/log text byte-for-byte; test count hasn't
+  dropped (808+), test function names preserved; `#[ignore]` smokes
+  untouched.
+- `cargo fmt` / `cargo clippy --all-targets -- -D warnings` clean after
+  every stage.
+- architecture.md (§3 module map, §8 tools, §11 concurrency — as touched)
+  and CLAUDE.md (log) updated at every stage; stage status marked in this
+  document.

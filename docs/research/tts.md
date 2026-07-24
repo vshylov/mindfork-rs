@@ -1,447 +1,474 @@
-# Исследование: озвучивание сообщений чата (TTS)
+# Research: chat message speech synthesis (TTS)
 
-**Статус:** направление **откатано** (реверт `15dc2d0`/`839df19`/`6fd8529` — сняты
-PR #197 «исследование», #198 `feat/tts-core`, #199 `feat/tts-sidecar`). Код и
-ADR 0009 из репозитория удалены; этот документ восстановлен из `19ead9f` и
-дополнен **§13 «Ревизия после реверта»** — там разбор причин провала, новые
-кандидаты (разведка июля 2026) и **итоги живого спайка** (§13.7).
+**Status:** track **rolled back** (revert `15dc2d0`/`839df19`/`6fd8529` — removed
+PR #197 "research", #198 `feat/tts-core`, #199 `feat/tts-sidecar`). Code and
+ADR 0009 removed from the repo; this document was restored from `19ead9f` and
+extended with **§13 "Post-revert revision"** — it covers the failure analysis, new
+candidates (July 2026 recon), and **live spike results** (§13.7).
 
-**Итог спайка (2026-07-22/23):** проверены три локальных движка на живом железе.
-Qwen3-TTS и Supertonic 3 — **NO-GO** по звучанию русского (неверные ударения,
-китайский акцент/дрейф); vosk-tts — GO с оговорками (единственный локальный, кто
-решает ударения по контексту, Apache-2.0, дрейфа нет; минусы — 22 кГц, свой
-русский фронтенд для поставки без Python, промах на омографах). Итоги — §13.7.
+**Spike outcome (2026-07-22/23):** three local engines tested on live hardware.
+Qwen3-TTS and Supertonic 3 — **NO-GO** on Russian sound quality (wrong stress,
+Chinese accent/drift); vosk-tts — GO with caveats (the only local engine that
+resolves stress from context, Apache-2.0, no drift; downsides — 22 kHz, needs its
+own Russian frontend for a Python-free build, misses homographs). Results — §13.7.
 
-**РЕШЕНИЕ (2026-07-23): основной движок — OpenAI TTS** (`gpt-4o-mini-tts`, §13.9).
-Облачная оценка показала: OpenAI звучит отлично (ударения — 1 ошибка на абзац,
-лучше всех локальных; англицизмы нативно — транслитерация не нужна; дрейфа нет).
-Ключевой продуктовый довод: это **не сторонний сервис** — ключ OpenAI уже
-хранится (ADR 0008), новой регистрации пользователю не нужно; ElevenLabs/Azure её
-потребовали бы и потому отклонены. **Объём этапа: OpenAI + Gemini + external**
-(без локального сайдкара). Локальный vosk — **задел** для offline/не-OpenAI
-аудитории (§13.8). Развилка §13.8 **закрыта** в пользу OpenAI.
+**DECISION (2026-07-23): primary engine — OpenAI TTS** (`gpt-4o-mini-tts`, §13.9).
+The cloud evaluation showed OpenAI sounds excellent (stress — 1 error per
+paragraph, better than all local engines; English loanwords native — no
+transliteration needed; no drift). Key product argument: it's **not a new
+vendor** — the OpenAI key is already stored (ADR 0008), so the user doesn't need
+a new signup; ElevenLabs/Azure would require one and were therefore rejected.
+**Stage scope: OpenAI + Gemini + external** (no local sidecar). Local vosk is
+**groundwork** for an offline/non-OpenAI audience (§13.8). The §13.8 fork is
+**closed** in favor of OpenAI.
 
-**Этап `feat/tts` реализован (2026-07-23), итог — [ADR 0009](../decisions/0009-tts-speech-synthesis.md):**
-OpenAI + Gemini + external восстановлены из отревертнутого этапа 1 (`git show 19ead9f`),
-дефолт голоса — `onyx`, плюс `/tts pause`/`resume` и разные голоса ролей (`/tts all`);
-локальный managed-сайдкар не входит (задел). 1258 юнит-тестов зелёные, 58 `#[ignore]`;
-живой смоук OpenAI + интерактивный TUI-прогон пользователя — GO.
+**Stage `feat/tts` implemented (2026-07-23), outcome — [ADR 0009](../decisions/0009-tts-speech-synthesis.md):**
+OpenAI + Gemini + external restored from the reverted stage 1 (`git show 19ead9f`),
+default voice — `onyx`, plus `/tts pause`/`resume` and per-role voices (`/tts all`);
+a local managed sidecar is not included (groundwork). 1258 unit tests green, 58 `#[ignore]`;
+a live OpenAI smoke test + an interactive TUI run by the user — GO.
 
-**Почему откатили:** ни один из реализованных движков не дал приемлемого
-качества на реальном тексте (подробный разбор — §13.1):
+**Why it was rolled back:** none of the implemented engines delivered acceptable
+quality on real text (detailed analysis — §13.1):
 
-- **OpenAI** — выбран мужской голос, читало механическим монотонным женским;
-- **piper** (managed-сайдкар, этап 2) — низкое качество: «читает обычный
-  человек, без поставленной речи»;
-- **Gemini** — качество хорошее, но Markdown-текст превращался в
-  «Франкенштейна» (каждая фраза другим голосом и интонацией), плюс регулярные
-  отказы «сервер перегружен».
+- **OpenAI** — a male voice was selected, but it read in a mechanical monotone
+  female voice;
+- **piper** (managed sidecar, stage 2) — low quality: "reads like an ordinary
+  person, no trained delivery";
+- **Gemini** — good quality, but Markdown text turned into a "Frankenstein"
+  (every phrase in a different voice and intonation), plus recurring "server
+  overloaded" failures.
 
-Развилки Р1–Р9 (§10) были приняты пользователем 2026-07-21 — они остаются
-валидными по **поведению** (команда, фильтрация Markdown, точки остановки,
-UI-посадка); пересмотра требует только **выбор движка** (Р2) и, как следствие,
-приоритет режимов (Р1). Данные §3–§9 о протоколах, воспроизведении и
-Markdown-экстракции проверены и переиспользуемы как есть.
+Forks Р1–Р9 (§10) were accepted by the user on 2026-07-21 — they remain valid on
+**behavior** (the command, Markdown filtering, stop points, UI placement); only the
+**engine choice** (Р2) and, as a consequence, mode priority (Р1) need revisiting.
+The data in §3–§9 on protocols, playback, and Markdown extraction is verified and
+reusable as-is.
 
-Данные о движках/API проверены веб-исследованием по первоисточникам (июль 2026;
-три параллельных обзора: локальные движки, облачные API, воспроизведение аудио в
-Rust) и дополнены второй разведкой (§13).
+Engine/API data was verified via web research against primary sources (July 2026;
+three parallel surveys: local engines, cloud APIs, audio playback in Rust) and
+supplemented by a second recon pass (§13).
 
-## 1. Задача (постановка пользователя, 2026-07-21)
+## 1. Task (user's framing, 2026-07-21)
 
-1. Озвучивание текста сообщений чата; возможны ли **локальные и облачные** модели.
-2. **Пропуск части Markdown** при озвучке — код, диаграммы и т.п.
-3. Управление — **командой в поле ввода**:
-   - по умолчанию озвучивается **последнее сообщение**;
-   - можно указать, **сколько последних сообщений** (пользователя и модели) озвучить;
-   - опция озвучить **всю переписку** чата.
+1. Read chat message text aloud; are **local and cloud** models both feasible.
+2. **Skip parts of Markdown** during readout — code, diagrams, etc.
+3. Control — via a **command in the input box**:
+   - by default read the **last message**;
+   - allow specifying **how many recent messages** (user's and the model's) to read;
+   - an option to read the chat's **entire conversation**.
 
-**Ответ коротко:** всё реализуемо. Облачно — у OpenAI (`/v1/audio/speech`) и Gemini
-(наш же нативный `generateContent` с `responseModalities:["AUDIO"]`), оба с русским
-языком, ключи уже хранятся (ADR 0008). Локально — «external»-режим покрывает любой
-OpenAI-совместимый TTS-сервер, а managed-сайдкар — локальный движок без сервера
-(выбор движка — §4, пересмотр — §13). Пропуск кода/диаграмм — естественная работа
-для нашего же markdown-пайплайна на `pulldown-cmark` (ADR 0003): «речевой»
-экстрактор — ещё один walker по тем же событиям. Команда `/tts [N|all|stop]`
-ложится в готовую колею `/rag`.
+**Short answer:** all feasible. Cloud — OpenAI (`/v1/audio/speech`) and Gemini
+(our own native `generateContent` with `responseModalities:["AUDIO"]`), both with
+Russian, keys already stored (ADR 0008). Locally — the "external" mode covers any
+OpenAI-compatible TTS server, and a managed sidecar is a local engine without a
+server (engine choice — §4, revisited — §13). Skipping code/diagrams is natural
+work for our own markdown pipeline built on `pulldown-cmark` (ADR 0003): the
+"speech" extractor is just another walker over the same events. The command
+`/tts [N|all|stop]` fits into the existing `/rag` groove.
 
-## 2. Текущее состояние (инвентаризация кодовой базы)
+## 2. Current state (codebase inventory)
 
-Аудио-подсистемы в проекте нет (единственный «мультимедийный» side-effect — буфер
-обмена `arboard`). Всё остальное для фичи уже есть:
+There's no audio subsystem in the project yet (the only "multimedia" side effect
+is the `arboard` clipboard). Everything else for the feature already exists:
 
-- **Команды в поле ввода** — прецедент `/rag` (`features/rag_command.rs`): чистый
-  парсер → `ChatIntent` → `AppCommand` → фоновая задача с `CancellationToken`
-  (`reset_rag_cancel`: новая команда отменяет прежнюю) и прогресс-событиями.
-  Жёлтая подсветка команд (`ChatScreen::input_is_command`) расширяется одной строкой.
-- **Снимок переписки** — прецедент `F5`-копирования (`chats.rs::handle_copy_chat`):
-  оркестратор — единственный владелец `Chat` — собирает сообщения и отдаёт чистому
-  форматтеру (`chat_export::format_conversation`); роли «Пользователь/Ассистент»
-  уже в бандлах (`ui.export.*`), фильтрация system/tool-сообщений уже написана.
-- **Markdown-пайплайн свой** (`shared/markdown/`, ADR 0003): события
-  `pulldown-cmark`, LaTeX-хелперы `normalize_delimiters`/`latex_to_unicode`
-  переиспользуемы напрямую; mermaid-блоки — обычные code block с info `mermaid`.
-- **Чанкинг по предложениям** уже есть — `features/tools/rag.rs::split_sentences`
-  (приватный; сделать `pub(crate)`).
-- **Облачные ключи провайдеро-центричны** (ADR 0008): `AppConfig.api_keys`
-  индексируется `CloudProvider::key()` — уже введённый ключ OpenAI/Gemini
-  автоматически доступен и TTS-клиенту, ничего вводить заново не нужно.
-- **Мульти-режимный конфиг** — образец `EmbedSettings` (третий «серверный слот»):
-  `mode: ServerMode` + под-структуры на режим, `#[serde(default)]` без миграций;
-  UI — mode-driven visibility полей + таб-стрип подсекций в секции «Модель».
-- **Сайдкары** — обкатанные паттерны: managed-процесс (`shared/api/managed.rs`,
-  монитор kill/exited), сайдкар с провизией ассетов по lock-списку URL+sha256
-  (`mindfork sandbox setup`, ADR 0005) — готовый шаблон для `mindfork tts setup`.
-- **i18n**: тексты статусов/ошибок — ось B (`ui.tts.*`); **голосовые пометки**
-  («блок кода пропущен») — это контент на языке сообщения → ось A, язык профиля
-  (`Profile.language`), как тексты инструментов.
-- **CI/пакеты**: ubuntu-джобы `ci.yml`/`release.yml`/`packaging.yml` без
-  аудио-заголовков; в `nfpm.yaml` у deb зависимость только `libc6` — воспроизведение
-  добавит build-dep `libasound2-dev` и runtime-dep `libasound2`/`alsa-lib` (§6).
+- **Input-box commands** — precedent `/rag` (`features/rag_command.rs`): a pure
+  parser → `ChatIntent` → `AppCommand` → a background task with a
+  `CancellationToken` (`reset_rag_cancel`: a new command cancels the previous one)
+  and progress events. Yellow command highlighting (`ChatScreen::input_is_command`)
+  extends with one line.
+- **Conversation snapshot** — precedent `F5` copy (`chats.rs::handle_copy_chat`):
+  the orchestrator — sole owner of `Chat` — collects messages and hands them to a
+  pure formatter (`chat_export::format_conversation`); "User/Assistant" role labels
+  are already in the bundles (`ui.export.*`), system/tool message filtering is
+  already written.
+- **Our own markdown pipeline** (`shared/markdown/`, ADR 0003): `pulldown-cmark`
+  events, LaTeX helpers `normalize_delimiters`/`latex_to_unicode` are directly
+  reusable; mermaid blocks are ordinary code blocks with info string `mermaid`.
+- **Sentence chunking** already exists — `features/tools/rag.rs::split_sentences`
+  (private; make it `pub(crate)`).
+- **Cloud keys are provider-centric** (ADR 0008): `AppConfig.api_keys` is indexed
+  by `CloudProvider::key()` — an OpenAI/Gemini key already entered is automatically
+  available to the TTS client too, nothing needs re-entering.
+- **Multi-mode config** — modeled on `EmbedSettings` (a third "server slot"):
+  `mode: ServerMode` + per-mode sub-structs, `#[serde(default)]` without
+  migrations; UI — mode-driven field visibility + a tab strip of subsections in
+  the "Model" section.
+- **Sidecars** — battle-tested patterns: a managed process
+  (`shared/api/managed.rs`, kill/exited monitor), a sidecar with asset
+  provisioning via a lock list of URL+sha256 (`mindfork sandbox setup`, ADR 0005) —
+  a ready-made template for `mindfork tts setup`.
+- **i18n**: status/error text — axis B (`ui.tts.*`); **voice notices**
+  ("code block skipped") are content in the message's language → axis A, the
+  profile's language (`Profile.language`), like tool text.
+- **CI/packages**: the ubuntu jobs in `ci.yml`/`release.yml`/`packaging.yml` have
+  no audio headers; `nfpm.yaml`'s deb dependency is only `libc6` — playback will
+  add build-dep `libasound2-dev` and runtime-dep `libasound2`/`alsa-lib` (§6).
 
-## 3. Облачный TTS (данные проверены по официальным докам, июль 2026)
+## 3. Cloud TTS (data verified against official docs, July 2026)
 
 ### 3.1 OpenAI — `POST /v1/audio/speech`
 
-Отдельный эндпоинт рядом с Responses (Bearer-ключ тот же; **верификация
-организации не требуется** — в отличие от reasoning summaries).
+A separate endpoint next to Responses (same Bearer key; **org verification is
+not required** — unlike reasoning summaries).
 
-- **Модели:** `gpt-4o-mini-tts` (актуальный снапшот `…-2025-12-15`) — основная;
-  `tts-1`/`tts-1-hd` — легаси (без `instructions` и SSE). Новее в классе
-  dedicated-TTS ничего нет (новые аудио-модели OpenAI — realtime-семейство,
-  другой протокол).
-- **Запрос:** `model` + `input` (**≤ 4096 символов**; у `gpt-4o-mini-tts` ещё
-  потолок 2000 input-токенов) + `voice` (13 имён; рекомендованы `marin`/`cedar`) +
-  `instructions` (тон/эмоции/язык — «говори по-русски без акцента») +
-  `response_format` (`mp3`|`opus`|`aac`|`flac`|`wav`|`pcm`; `pcm` = **24 кГц
-  s16le mono без заголовка**) + `speed` 0.25–4.0 (**известный дефект:
-  `gpt-4o-mini-tts` его игнорирует** — скорость просят в `instructions`) +
-  `stream_format` (`audio` — chunked-тело | `sse` — base64-дельты).
-- **Русский:** поддержан (языки «по списку Whisper»); качество неровное, лёгкий
-  акцент возможен, `instructions` помогает.
-  **Итог живого прогона (§13.1): непригодно** — монотонная читка, голос не
-  соответствует выбранному.
-- **Цены:** `gpt-4o-mini-tts` — $0.60/1M текстовых вход + $12/1M аудио-выход
-  (≈ $0.015/мин); `tts-1` — $15/1M символов, `tts-1-hd` — $30/1M символов.
+- **Models:** `gpt-4o-mini-tts` (current snapshot `…-2025-12-15`) — primary;
+  `tts-1`/`tts-1-hd` — legacy (no `instructions` or SSE). Nothing newer exists in
+  the dedicated-TTS class (OpenAI's newer audio models are the realtime family, a
+  different protocol).
+- **Request:** `model` + `input` (**≤ 4096 chars**; `gpt-4o-mini-tts` also caps
+  at 2000 input tokens) + `voice` (13 names; `marin`/`cedar` recommended) +
+  `instructions` (tone/emotion/language — "speak Russian without an accent") +
+  `response_format` (`mp3`|`opus`|`aac`|`flac`|`wav`|`pcm`; `pcm` = **24 kHz
+  s16le mono, no header**) + `speed` 0.25–4.0 (**known defect:
+  `gpt-4o-mini-tts` ignores it** — ask for speed via `instructions`) +
+  `stream_format` (`audio` — chunked body | `sse` — base64 deltas).
+- **Russian:** supported (languages "per the Whisper list"); quality is uneven, a
+  slight accent is possible, `instructions` helps.
+  **Live-run outcome (§13.1): unusable** — monotone reading, voice didn't match
+  the one selected.
+- **Pricing:** `gpt-4o-mini-tts` — $0.60/1M text input + $12/1M audio output
+  (≈ $0.015/min); `tts-1` — $15/1M characters, `tts-1-hd` — $30/1M characters.
 
-### 3.2 Gemini — TTS через наш же нативный `generateContent`
+### 3.2 Gemini — TTS via our own native `generateContent`
 
-Ключевая удача: TTS у Gemini живёт **в том же протоколе**, на котором уже сидит
-`GeminiClient` (`x-goog-api-key`, тот же шаблон URL) — новый транспорт не нужен.
-(`generateContent` помечен «Legacy» в пользу нового Interactions API, но полностью
-работает, включая новейшую TTS-модель.)
+Key win: Gemini's TTS lives **on the same protocol** `GeminiClient` already uses
+(`x-goog-api-key`, same URL template) — no new transport needed.
+(`generateContent` is marked "Legacy" in favor of the new Interactions API, but
+it's fully functional, including for the newest TTS model.)
 
-- **Модели:** `gemini-3.1-flash-tts-preview` (новая), `gemini-2.5-flash-preview-tts`,
-  `gemini-2.5-pro-preview-tts` — **все preview**, GA-модели TTS нет.
-- **Запрос:** обычный `generateContent` c
-  `generationConfig.responseModalities:["AUDIO"]` и
-  `speechConfig.voiceConfig.prebuiltVoiceConfig.voiceName` (30 голосов: Kore, Puck,
-  Charon, …). Стиль — естественным языком в самом промпте. Есть мульти-спикер
-  (`multiSpeakerVoiceConfig`, голос на спикера) — интересный задел для озвучки
-  диалога «Пользователь/Ассистент» разными голосами.
-- **Ответ:** `inlineData.data` — base64 **сырого PCM 24 кГц 16-bit mono** (WAV-
-  заголовка нет; `mimeType` вида `audio/L16;codec=pcm;rate=24000` — частоту парсить
-  из него, не хардкодить). `streamGenerateContent` для TTS — **только с 3.1+**.
-- **Найдено живым прогоном (этап 1):** текст обязан быть оформлен как **директива
-  чтения** (`Say cheerfully: …` / `Read this text aloud verbatim: …`). На «голой»
-  короткой реплике модель считает её заданием и отвечает `400 Model tried to
-  generate text, but it should only be used for TTS`. Поэтому клиент подставляет
-  нейтральную директиву, когда «Указания» пусты.
-- **Русский:** поддержан (код `ru`), язык определяется автоматически по тексту.
-  **Итог живого прогона (§13.1): качество хорошее, но голос/интонация гуляют
-  между чанками + `503`-перегрузки** — как основной режим непригодно.
-- **Цены:** 3.1-flash — $1/1M вход + $20/1M аудио-выход; 2.5-flash — $0.50 + $10;
-  у flash-моделей есть **бесплатный тир**. Контекст TTS — 32k токенов.
+- **Models:** `gemini-3.1-flash-tts-preview` (new), `gemini-2.5-flash-preview-tts`,
+  `gemini-2.5-pro-preview-tts` — **all preview**, no GA TTS model exists.
+- **Request:** an ordinary `generateContent` with
+  `generationConfig.responseModalities:["AUDIO"]` and
+  `speechConfig.voiceConfig.prebuiltVoiceConfig.voiceName` (30 voices: Kore, Puck,
+  Charon, …). Style is set in natural language right in the prompt. There's
+  multi-speaker support (`multiSpeakerVoiceConfig`, a voice per speaker) —
+  interesting groundwork for reading a "User/Assistant" dialogue in different
+  voices.
+- **Response:** `inlineData.data` — base64 **raw PCM 24 kHz 16-bit mono** (no
+  WAV header; `mimeType` looks like `audio/L16;codec=pcm;rate=24000` — parse the
+  rate from it, don't hardcode it). `streamGenerateContent` for TTS — **3.1+
+  only**.
+- **Found via live run (stage 1):** the text must be phrased as a **reading
+  directive** (`Say cheerfully: …` / `Read this text aloud verbatim: …`). On a
+  "bare" short line the model treats it as a task and responds with `400 Model
+  tried to generate text, but it should only be used for TTS`. So the client
+  substitutes a neutral directive when "Instructions" is empty.
+- **Russian:** supported (code `ru`), the language is auto-detected from the
+  text. **Live-run outcome (§13.1): good quality, but voice/intonation drift
+  between chunks + `503` overload errors** — unusable as the primary mode.
+- **Pricing:** 3.1-flash — $1/1M input + $20/1M audio output; 2.5-flash — $0.50 +
+  $10; the flash models have a **free tier**. TTS context — 32k tokens.
 
-### 3.3 Anthropic — TTS нет (подтверждено)
+### 3.3 Anthropic — no TTS (confirmed)
 
-Полный перечень поверхности API (Messages, Batches, Token Counting, Models + Files/
-Skills/Agents/Sessions beta) не содержит speech/audio. Следствие для дизайна:
-**TTS-провайдер конфигурируется независимо от chat-движка** (свой слот-«движок», как
-эмбеддинги, ADR 0002) — пользователь Claude озвучивает через OpenAI/Gemini/локальный.
+The full API surface listing (Messages, Batches, Token Counting, Models + Files/
+Skills/Agents/Sessions beta) contains no speech/audio. Design consequence: **the
+TTS provider is configured independently of the chat engine** (its own "engine"
+slot, like embeddings, ADR 0002) — a Claude user speaks output via
+OpenAI/Gemini/local.
 
-### 3.4 Локальные OpenAI-совместимые TTS-серверы (для режима `external`)
+### 3.4 Local OpenAI-compatible TTS servers (for `external` mode)
 
-Экосистема серверов, реализующих `POST /v1/audio/speech`, зрелая — один
-external-режим покрывает всех:
+The ecosystem of servers implementing `POST /v1/audio/speech` is mature — one
+`external` mode covers all of them:
 
-| Сервер | Жив (07.2026) | Windows | Русский | Примечание |
+| Server | Alive (07.2026) | Windows | Russian | Notes |
 |---|---|---|---|---|
-| Kokoro-FastAPI | ✅ v0.6.0 | ✅ нативно | ❌ | образцовая совместимость, стриминг |
-| speaches | ✅ | ⚠️ Docker | ✅ piper ru_RU ×4 | экс-faster-whisper-server |
-| LocalAI | ✅ v4.7.1 | ❌ Docker/WSL | ✅ piper/XTTS | `wav` без ffmpeg |
-| AllTalk v2 | ⚠️ | ✅ инсталлятор | ✅ XTTS | `model` игнорирует |
-| chatterbox-tts-api | ✅ | ⚠️ Docker | ✅ (23 языка) | нестандартные доп. параметры |
-| openedai-speech | ❌ архив 01.2026 | — | — | сам отсылает к speaches/Kokoro |
-| openai-edge-tts | ✅ | ✅ | ✅ | прокси онлайн-Edge — серая зона |
-| **qwentts.cpp `tts-server`** | ✅ | ✅ (`buildcuda.cmd`) | ✅ Qwen3-TTS | **см. §13.2 — главный кандидат** |
+| Kokoro-FastAPI | ✅ v0.6.0 | ✅ native | ❌ | textbook compatibility, streaming |
+| speaches | ✅ | ⚠️ Docker | ✅ piper ru_RU ×4 | ex-faster-whisper-server |
+| LocalAI | ✅ v4.7.1 | ❌ Docker/WSL | ✅ piper/XTTS | `wav` without ffmpeg |
+| AllTalk v2 | ⚠️ | ✅ installer | ✅ XTTS | ignores `model` |
+| chatterbox-tts-api | ✅ | ⚠️ Docker | ✅ (23 languages) | nonstandard extra params |
+| openedai-speech | ❌ archived 01.2026 | — | — | itself points to speaches/Kokoro |
+| openai-edge-tts | ✅ | ✅ | ✅ | proxies the online Edge service — gray area |
+| **qwentts.cpp `tts-server`** | ✅ | ✅ (`buildcuda.cmd`) | ✅ Qwen3-TTS | **see §13.2 — main candidate** |
 
-**Общий знаменатель параметров** (что external-режим должен уметь слать): `model` +
-`input` + `voice` + `response_format` + `speed`; `voice` — **свободное текстовое
-поле** (у каждого сервера свои имена), `model` многими игнорируется, `speed` не
-везде есть → слать только заданное (наш паттерн `skip_serializing_if`). Самый
-переносимый формат ответа — **`wav`** (единственный у части серверов, дефолт
-LocalAI); стриминг-база — chunked-тело. Параметра «язык» нет ни у кого — язык
-задаётся голосом/моделью или автоопределением. Azure OpenAI покрывается external
-при **полном URL-override** (у него query `?api-version=…`); ElevenLabs/Google
-Cloud TTS OpenAI-несовместимы (закрываются сторонними прокси типа LiteLLM →
-тот же external).
+**Common parameter denominator** (what `external` mode must be able to send):
+`model` + `input` + `voice` + `response_format` + `speed`; `voice` is a **free-text
+field** (each server has its own names), `model` is ignored by many, `speed` isn't
+always present → send only what's set (our `skip_serializing_if` pattern). The
+most portable response format is **`wav`** (the only one some servers support,
+LocalAI's default); streaming rests on a chunked body. Nobody has a "language"
+parameter — the language is set via the voice/model or by auto-detection. Azure
+OpenAI is covered by `external` with a **full URL override** (it has a
+`?api-version=…` query); ElevenLabs/Google Cloud TTS are OpenAI-incompatible
+(covered by third-party proxies like LiteLLM → the same `external`).
 
-## 4. Локальный TTS сайдкаром (без сервера)
+## 4. Local TTS as a sidecar (no server)
 
-> **Раздел исторический.** Отражает состояние на 2026-07-21 и обосновывает выбор
-> piper, который **не оправдался** по качеству. Актуальный выбор движка — §13.
+> **Historical section.** Reflects the state as of 2026-07-21 and justifies the
+> choice of piper, which **didn't pan out** on quality. The current engine choice
+> is §13.
 
-**Отрицательный результат, важный для проекта:** у `llama-server` **нет**
-TTS-эндпоинта (`/v1/audio/speech` отсутствует на июль 2026) — переиспользовать уже
-запущенный движок чата нельзя. Пример `llama-tts` (OuteTTS) — узкий CLI-эксперимент:
-русский появился только в OuteTTS-1.0 (Apache-2.0), но её поддержка в llama.cpp —
-незавершённый Draft-PR (#12794), рабочий путь — python-библиотека. Отвергнуто с
-формулировкой «вернуться, если в `llama-server` появится audio/speech».
-(Перепроверено 07.2026 — §13.4: PR по-прежнему draft, последний содержательный
-комментарий 19.05.2025. Путь мёртв.)
+**A negative result important for the project:** `llama-server` has **no** TTS
+endpoint (`/v1/audio/speech` is absent as of July 2026) — the already-running chat
+engine cannot be reused. The `llama-tts` example (OuteTTS) is a narrow CLI
+experiment: Russian only appeared in OuteTTS-1.0 (Apache-2.0), but its llama.cpp
+support is an unfinished Draft PR (#12794); the working path is the Python
+library. Rejected with the note "revisit if `llama-server` gains audio/speech."
+(Re-checked 07.2026 — §13.4: the PR is still draft, last substantive comment
+2025-05-19. This path is dead.)
 
-Ландшафт по критериям «русский+английский, CPU, Windows+Linux, permissive»:
+The landscape by "Russian+English, CPU, Windows+Linux, permissive" criteria:
 
-- **sherpa-onnx (k2-fsa, Apache-2.0)** — рекомендуемый рантайм. Прекомпилированные
-  CLI-дистрибутивы (`sherpa-onnx-offline-tts`; релиз v1.13.4 от 07.07.2026:
-  ~19 МБ win-x64 / ~28 МБ linux-x64), поддерживает семейства VITS/Piper, Matcha,
-  Kokoro, KittenTTS, Supertonic, ZipVoice; **piper-голоса конвертированы в его
-  model zoo** — русские `vits-piper-ru_RU-{dmitri,irina,ruslan}-medium`
-  подтверждены (denis — не подтверждён в zoo, конвертируется их же скриптом).
-  Есть и **официальный Rust-крейт `sherpa-onnx` 1.13.4** — in-process без сайдкара
-  вовсе (статическая линковка C++-библиотеки; build-script скачивает prebuilt-архив
-  при сборке — для воспроизводимости пиновать через `SHERPA_ONNX_LIB_DIR`), даёт
-  покадровый стриминг-callback и снимает загрузку модели на каждый вызов.
-  **⚠️ Лицензионная мина, вскрытая позже — §13.3: сборка статически тянет
-  espeak-ng (GPL-3.0).**
-- **Piper**: у живого преемника **piper1-gpl** (v1.5.0, 17.07.2026) — **GPL-3.0 и
-  только pip-дистрибуция** (тянет Python-окружение — против духа «бинарь рядом»,
-  хотя «GPL отдельным процессом, скачанным setup-командой» формально допустим);
-  **старый MIT-бинарь 2023.11.14-2** (~22–26 МБ) работает и имеет идеальный
-  сайдкар-протокол (stdin→WAV, `--output-raw` — поток PCM 16-bit mono 22050 Гц по
-  мере генерации, `--json-input` — долгоживущий цикл), но апстрим заархивирован
-  (10.2025) — багфиксов не будет.
-- **Голоса ru_RU** (piper-семейство, medium, 22.05 кГц, ~63 МБ ONNX на голос):
-  **denis/dmitri — CC0** ✅, irina — «License: Unknown» ⚠️, **ruslan —
-  CC BY-NC-SA** ❌ (некоммерческая — в permissive-набор не берём). Английских
-  голосов — десятки.
-- **Латиница в русском голосе** — известный дефект piper/espeak-фронтенда:
-  английские вставки в русском тексте читаются с сильным акцентом/искажением
-  (для чата с англицизмами и именами API это заметно). Смягчение на нашей
-  стороне — **маршрутизация по алфавиту**: резать текст на кириллические/латинские
-  прогоны и синтезировать двумя голосами (ru+en) — задел этапа 2.
-- **Silero TTS** — лучший русский в классе (ударения, SSML), но **CC BY-NC-SA**
-  (MIT только у базовых `v5_cis_base`) и только PyTorch JIT (вне Python — libtorch
-  на сотни МБ). «NC-ловушка» — не берём, зафиксировать явно.
-- **Supertonic 3** — тёмная лошадка 2026: MIT-код + OpenRAIL-M-веса (коммерческое
-  разрешено, но с use-restrictions — не классический permissive), чистый ONNX
-  ~99M, **31 язык включая русский**, официальный Rust-пример, RTF 0.3 даже на
-  e-ридере. Качество русского не отслушано; в sherpa-onnx пока упакована v2 без
-  ru. Кандидат «отслушать в начале этапа 2». **Обновление 07.2026: в sherpa-onnx
-  v1.13.2 (13.05.2026) добавлен Supertonic 3 с русским — см. §13.2.**
-- **Отпали**: Kokoro (нет русского), XTTS-v2 (веса CPML — некоммерческие; Coqui
-  закрылась, лицензию купить не у кого), Fish Speech/OpenAudio (research-лицензия),
-  F5-TTS-ru (NC-веса), Chatterbox (MIT и русский есть, но python+torch 0.5B — не
-  CPU-сайдкар), Orpheus/KittenTTS/MeloTTS/Dia/Pocket TTS (нет русского), vosk-tts
-  (Apache-2.0 и русский, но ru-only и python-дистрибуция), RHVoice (до-нейронное
-  качество, голоса NC).
+- **sherpa-onnx (k2-fsa, Apache-2.0)** — the recommended runtime. Precompiled
+  CLI distributions (`sherpa-onnx-offline-tts`; release v1.13.4 from 07.07.2026:
+  ~19 MB win-x64 / ~28 MB linux-x64), supports the VITS/Piper, Matcha, Kokoro,
+  KittenTTS, Supertonic, and ZipVoice families; **piper voices are converted into
+  its model zoo** — Russian `vits-piper-ru_RU-{dmitri,irina,ruslan}-medium` are
+  confirmed (denis isn't confirmed in the zoo, convertible with their own
+  script). There's also an **official Rust crate `sherpa-onnx` 1.13.4** —
+  in-process, no sidecar at all (statically linked C++ library; the build script
+  downloads a prebuilt archive at build time — pin via `SHERPA_ONNX_LIB_DIR` for
+  reproducibility), gives a per-frame streaming callback and removes the
+  per-call model-load cost.
+  **⚠️ A licensing landmine, uncovered later — §13.3: the build statically pulls
+  in espeak-ng (GPL-3.0).**
+- **Piper**: the live successor **piper1-gpl** (v1.5.0, 17.07.2026) is
+  **GPL-3.0 and pip-only distribution** (pulls in a Python environment — against
+  the "binary next to the exe" spirit, though "GPL as a separate process,
+  downloaded by a setup command" is formally allowed); the **old MIT binary
+  2023.11.14-2** (~22–26 MB) works and has an ideal sidecar protocol (stdin→WAV,
+  `--output-raw` — streams PCM 16-bit mono 22050 Hz as it generates,
+  `--json-input` — long-lived loop), but upstream is archived (10.2025) — no
+  bugfixes coming.
+- **ru_RU voices** (piper family, medium, 22.05 kHz, ~63 MB ONNX per voice):
+  **denis/dmitri — CC0** ✅, irina — "License: Unknown" ⚠️, **ruslan —
+  CC BY-NC-SA** ❌ (non-commercial — not going into the permissive set). Dozens
+  of English voices.
+- **Latin script in a Russian voice** — a known piper/espeak-frontend defect:
+  English insertions in Russian text read with a strong accent/distortion
+  (noticeable for a chat full of loanwords and API names). Our-side mitigation
+  — **alphabet-based routing**: cut the text into Cyrillic/Latin runs and
+  synthesize with two voices (ru+en) — groundwork for stage 2.
+- **Silero TTS** — the best Russian in its class (stress, SSML), but
+  **CC BY-NC-SA** (MIT only for the base `v5_cis_base`) and PyTorch JIT only
+  (outside Python — libtorch runs to hundreds of MB). An "NC trap" — not taking
+  it, flagged explicitly.
+- **Supertonic 3** — a 2026 dark horse: MIT code + OpenRAIL-M weights
+  (commercial use allowed, but with use restrictions — not classic permissive),
+  pure ONNX ~99M, **31 languages including Russian**, an official Rust example,
+  RTF 0.3 even on an e-reader. Russian quality unheard; sherpa-onnx currently
+  packages v2 without ru. A candidate to "listen to at the start of stage 2."
+  **Update 07.2026: sherpa-onnx v1.13.2 (13.05.2026) added Supertonic 3 with
+  Russian — see §13.2.**
+- **Dropped**: Kokoro (no Russian), XTTS-v2 (CPML weights — non-commercial;
+  Coqui shut down, no one to buy a license from), Fish Speech/OpenAudio
+  (research license), F5-TTS-ru (NC weights), Chatterbox (MIT and Russian
+  exist, but Python+torch 0.5B — not a CPU sidecar),
+  Orpheus/KittenTTS/MeloTTS/Dia/Pocket TTS (no Russian), vosk-tts (Apache-2.0
+  and Russian, but ru-only and Python distribution), RHVoice (pre-neural
+  quality, NC voices).
 
-**Находка спайка этапа 2 (2026-07-21), закрывшая подвариант (а):**
-`sherpa-onnx-offline-tts` принимает текст **только позиционным аргументом**, а его
-узкий `main()` заставляет Windows-CRT конвертировать argv из UTF-16 в ANSI-кодовую
-страницу (на машине разработки `1252`) — **вся кириллица становится `?`, на выходе
-тишина** (проверено из bash и PowerShell; внешний манифест с
-`activeCodePage=UTF-8` игнорируется, опции «текст из файла/stdin» у CLI нет).
-Поэтому взят **подвариант (в)** — MIT-бинарь `piper`: текст идёт **через stdin**
-(UTF-8 байтами), сырой PCM — в stdout (`--output_raw`). Нюанс: piper требует
-**оригинальные** голоса с HuggingFace — переэкспортированные ONNX из model zoo
-sherpa роняют его (`STATUS_STACK_BUFFER_OVERRUN`). Замеры спайка (Windows, CPU,
-2 потока): загрузка модели ≈0.8 с, синтез RTF 0.05 (piper-голоса, 22.05 кГц) и
-0.19 (Supertonic 3, 44.1 кГц).
+**A stage-2 spike finding (2026-07-21) that killed sub-option (a):**
+`sherpa-onnx-offline-tts` accepts text **only as a positional argument**, and its
+narrow `main()` forces the Windows CRT to convert argv from UTF-16 to the ANSI
+code page (`1252` on the dev machine) — **all Cyrillic becomes `?`, silence comes
+out** (verified from both bash and PowerShell; an external manifest with
+`activeCodePage=UTF-8` is ignored, and the CLI has no "text from file/stdin"
+option). So **sub-option (в)** was taken — the MIT `piper` binary: text goes
+**via stdin** (UTF-8 bytes), raw PCM comes out on stdout (`--output_raw`). A
+nuance: piper requires the **original** voices from HuggingFace — re-exported
+ONNX from sherpa's model zoo crashes it (`STATUS_STACK_BUFFER_OVERRUN`). Spike
+measurements (Windows, CPU, 2 threads): model load ≈0.8 s, synthesis RTF 0.05
+(piper voices, 22.05 kHz) and 0.19 (Supertonic 3, 44.1 kHz).
 
-> **Важно:** дефект argv — свойство **CLI-обёртки**, а не библиотеки. При
-> использовании Rust-крейта `sherpa-onnx` (in-process, `&str` — нативный UTF-8)
-> проблема не возникает вовсе. Это самостоятельный аргумент против CLI-сайдкара.
+> **Important:** the argv defect is a property of the **CLI wrapper**, not the
+> library. Using the Rust crate `sherpa-onnx` (in-process, `&str` — native UTF-8)
+> the problem doesn't occur at all. This is a standalone argument against a CLI
+> sidecar.
 
-**Посадка (этап 2, была реализована и откатана)**: провизия по паттерну ADR 0005 —
-`mindfork tts setup` скачивает бинарь + голоса (ru CC0 + en) в `data/tts/` по
-lock-списку URL+sha256. Издержка сайдкара — загрузка модели на каждый спавн
-(63 МБ ONNX, ~0.8 с): смягчена укрупнением чанков (`max_input_chars` = 2000);
-долгоживущий протокол `--json-input` — задел. **Качество piper оказалось
-неприемлемым (§13.1) — этап откатан.**
+**Landing (stage 2, was implemented and rolled back)**: provisioning modeled on
+ADR 0005 — `mindfork tts setup` downloads the binary + voices (ru CC0 + en) into
+`data/tts/` from a lock list of URL+sha256. The sidecar overhead — loading the
+model on every spawn (63 MB ONNX, ~0.8 s) — was mitigated by coarser chunking
+(`max_input_chars` = 2000); the long-lived `--json-input` protocol is groundwork.
+**piper's quality turned out to be unacceptable (§13.1) — the stage was rolled
+back.**
 
-## 5. Извлечение «речевого» текста из Markdown
+## 5. Extracting "speakable" text from Markdown
 
-Ответ на вопрос «возможно ли пропускать код и диаграммы» — да, и у нас для этого
-идеальная позиция: рендерер ленты уже свой (ADR 0003), поэтому «речевой» экстрактор
-— это второй потребитель тех же событий `pulldown-cmark`, живущий рядом
-(`shared/markdown/speak.rs`): `speakable_text(markdown, loc) -> String`.
+The answer to "can code and diagrams be skipped" is yes, and we're in an ideal
+spot for it: the feed renderer is already ours (ADR 0003), so the "speech"
+extractor is a second consumer of the same `pulldown-cmark` events, living
+alongside it (`shared/markdown/speak.rs`): `speakable_text(markdown, loc) -> String`.
 
-**Раздел не затронут ревизией §13** — экстракция от движка не зависит и остаётся
-в силе целиком. Отдельно отметим: жалоба «Markdown превращался во Франкенштейна»
-относится **не** к экстракции (она отработала), а к авторегрессионной природе
-Gemini — см. §13.1.
+**This section is untouched by the §13 revision** — extraction doesn't depend on
+the engine and remains valid in full. Note separately: the "Markdown turned into
+a Frankenstein" complaint relates **not** to extraction (it worked fine) but to
+Gemini's autoregressive nature — see §13.1.
 
-Предлагаемые правила (Р4):
+Proposed rules (Р4):
 
-| Элемент | Поведение при озвучке |
+| Element | Read-aloud behavior |
 |---|---|
-| Блок кода (fenced/indented) | **пропуск** + короткая голосовая пометка «(блок кода пропущен)» |
-| ` ```mermaid ` | **пропуск** + пометка «(диаграмма пропущена)» (это code block с info `mermaid` — отдельного детекта не нужно) |
-| Таблица | **пропуск** + пометка «(таблица пропущена)» (чтение по ячейкам — мучение; «читать построчно» — задел) |
-| Display math (`$$…$$`) | **пропуск** + пометка «(формула пропущена)» |
-| Inline math (`$…$`) | конвертация имеющимся `latex_to_unicode` (короткое `x²` читается терпимо; лучше, чем дыра в предложении) |
-| `inline code` | читается как обычный текст (короткие идентификаторы в речи полезны) |
-| Ссылка `[текст](url)` | читается **текст**, URL опускается |
-| Голый URL / autolink | заменяется доменом («ссылка: example.com») |
-| Изображение | alt-текст, если есть; иначе пометка |
-| Заголовки, списки, цитаты | читаются текстом; на границах — точка/перенос (пауза для TTS) |
-| **«Мысли» (CoT)** | **не озвучиваются** (отдельное поле `Message.thoughts`, в текст не входит) |
-| **Tool-вызовы/результаты** | **не озвучиваются** (role Tool и `tool_calls` пропускаются, как в `F5`-экспорте по умолчанию) |
-| Эмодзи | остаются как есть (движки читают названием или игнорируют; фильтр — задел) |
+| Code block (fenced/indented) | **skip** + a short voice notice "(code block skipped)" |
+| ` ```mermaid ` | **skip** + notice "(diagram skipped)" (it's a code block with info string `mermaid` — no separate detection needed) |
+| Table | **skip** + notice "(table skipped)" (reading cell by cell is torture; "read row by row" is groundwork) |
+| Display math (`$$…$$`) | **skip** + notice "(formula skipped)" |
+| Inline math (`$…$`) | converted via the existing `latex_to_unicode` (a short `x²` reads tolerably; better than a hole in the sentence) |
+| `inline code` | read as plain text (short identifiers are useful in speech) |
+| Link `[text](url)` | reads **the text**, URL omitted |
+| Bare URL / autolink | replaced with the domain ("link: example.com") |
+| Image | alt text if present; otherwise a notice |
+| Headings, lists, blockquotes | read as text; a period/break at boundaries (a pause for TTS) |
+| **Thoughts (CoT)** | **not read aloud** (a separate `Message.thoughts` field, not part of the text) |
+| **Tool calls/results** | **not read aloud** (the Tool role and `tool_calls` are skipped, as in the `F5` export by default) |
+| Emoji | left as-is (engines either read the name or ignore it; a filter is groundwork) |
 
-Голосовые пометки — из бандлов локалей на **языке профиля** (ось A: пометка — часть
-речевого контента, а не UI-хром; прецедент — тексты инструментов). Экстрактор —
-чистая функция, тестируется golden-тестами без движка.
+Voice notices come from the locale bundles in the **profile's language** (axis A:
+a notice is part of the speech content, not UI chrome; precedent — tool text).
+The extractor is a pure function, tested with golden tests without the engine.
 
-## 6. Воспроизведение аудио (данные проверены, июль 2026)
+## 6. Audio playback (data verified, July 2026)
 
-**Раздел не затронут ревизией §13** — выбор плеера от выбора движка не зависит.
+**This section is untouched by the §13 revision** — the player choice doesn't
+depend on the engine choice.
 
-**Рекомендация: `rodio` 0.22 в процессе приложения** (`default-features = false`,
-`features = ["playback", "wav", "mp3"]`) — единственный кандидат, у которого нужная
-семантика есть «из коробки»:
+**Recommendation: `rodio` 0.22 in-process** (`default-features = false`,
+`features = ["playback", "wav", "mp3"]`) — the only candidate that has the
+needed semantics "out of the box":
 
-- **Очередь**: `Player::append()` играет источники последовательно — конвейер
-  «синтезируем чанк N+1, пока играет N» получается штатно; при опустошении очереди
-  — тишина до следующего чанка (для TTS идеально). **Отмена мгновенная**:
-  `Player::clear()`/`stop()`, есть `skip_one()`.
-- **API 0.21/0.22 переломан** (материалы старше 2025 устарели): `OutputStream` →
-  `MixerDeviceSink`, `Sink` → `Player`, вход — `DeviceSinkBuilder::open_default_sink()`.
-  С cpal 0.17 хэндл и плеер **`Send+Sync`** — выделенный аудио-поток больше не
-  обязателен, хэндл может жить полем задачи/оркестратора.
-- **Headless/CI**: `open_default_sink()` возвращает `Result` — **ошибка, не паника**
-  → мягкая деградация «звук недоступен» (паттерн `UnavailableEmbedder`).
-- **Форматы**: WAV/MP3 декодирует Symphonia (чистый Rust); сырой PCM (OpenAI `pcm`,
-  Gemini L16) — `SamplesBuffer` без декодера вовсе (s16le → f32).
-- **Две TUI-ловушки**: `log_on_drop(false)` обязателен (иначе rodio печатает в
-  stderr поверх TUI); на Linux сама libasound шумит в stderr при энумерации
-  устройств (cpal#384) — глушить `snd_lib_error_set_handler`'ом или открывать sink
-  до входа в alt-screen.
-- **Цена**: единственная новая **системная** C-зависимость проекта — ALSA на Linux
-  (сборка: `libasound2-dev` в apt-шаги ci/release/packaging; рантайм: `libasound2`
-  (deb) / `alsa-lib` (rpm/arch) в `nfpm.yaml`; Windows — чистый windows-rs, ничего
-  не нужно). PipeWire/PulseAudio-системы работают через штатный `pipewire-alsa`.
-  Плюс `deny.toml`: **добавить MPL-2.0** (Symphonia; слабый file-level copyleft,
-  без модификации файлов обязательств нет). Надбавка к бинарю ≈ 1 МБ.
-- **Альтернативы отклонены**: kira/awedio/tinyaudio — очередь+отмену пришлось бы
-  строить самим или экосистемный риск; **сайдкар-плееры не годятся** — на Windows
-  нет пригодного встроенного CLI-плеера (PowerShell `SoundPlayer` — WAV-only со
-  спавном процесса на чанк), отмена и стыки хуже по построению.
+- **Queue**: `Player::append()` plays sources sequentially — the pipeline of
+  "synthesizing chunk N+1 while N plays" comes for free; when the queue empties
+  — silence until the next chunk (ideal for TTS). **Cancellation is instant**:
+  `Player::clear()`/`stop()`, and there's `skip_one()`.
+- **API 0.21/0.22 broken compatibility** (materials older than 2025 are stale):
+  `OutputStream` → `MixerDeviceSink`, `Sink` → `Player`, entry point —
+  `DeviceSinkBuilder::open_default_sink()`. With cpal 0.17 the handle and player
+  are **`Send+Sync`** — a dedicated audio thread is no longer required, the
+  handle can live as a field of a task/orchestrator.
+- **Headless/CI**: `open_default_sink()` returns `Result` — **an error, not a
+  panic** → graceful degradation to "audio unavailable" (the `UnavailableEmbedder`
+  pattern).
+- **Formats**: Symphonia decodes WAV/MP3 (pure Rust); raw PCM (OpenAI `pcm`,
+  Gemini L16) needs no decoder at all — `SamplesBuffer` (s16le → f32).
+- **Two TUI traps**: `log_on_drop(false)` is mandatory (otherwise rodio prints
+  to stderr over the TUI); on Linux, libasound itself is noisy on stderr while
+  enumerating devices (cpal#384) — silence it with `snd_lib_error_set_handler`
+  or open the sink before entering the alt screen.
+- **Cost**: the only new **system** C dependency in the project — ALSA on Linux
+  (build: `libasound2-dev` in the ci/release/packaging apt steps; runtime:
+  `libasound2` (deb) / `alsa-lib` (rpm/arch) in `nfpm.yaml`; Windows — pure
+  windows-rs, nothing needed). PipeWire/PulseAudio systems work through the
+  standard `pipewire-alsa`. Plus `deny.toml`: **add MPL-2.0** (Symphonia; weak
+  file-level copyleft, no obligations without modifying the files). Adds
+  ≈ 1 MB to the binary.
+- **Alternatives rejected**: kira/awedio/tinyaudio — queue+cancellation would
+  have to be built by hand, or carry ecosystem risk; **sidecar players don't
+  work** — Windows has no suitable built-in CLI player (PowerShell
+  `SoundPlayer` is WAV-only, spawning a process per chunk), cancellation and
+  chunk stitching would be worse by construction.
 
-**Платформенный TTS ОС** («без моделей вообще») — оценён, в MVP не рекомендован
-(Р9): на Windows WinRT-голоса legacy-качества («Microsoft Irina», natural-голоса
-приложениям закрыты), корректный путь — прямой `Windows.Media.SpeechSynthesis` с
-синтезом **в WAV-буфер** → наша же очередь (крейт `tts`-rs не отдаёт PCM — свой
-аудио-путь мимо очереди и отмены); на Linux speech-dispatcher = espeak-ng
-(роботизированный) и не везде предустановлен. Крейт `msedge-tts` (онлайн-сервис
-Edge) — неофициальный, история блокировок 403/токен-ротаций — как дефолт нельзя.
+**Platform OS TTS** ("no models at all") — evaluated, not recommended for the MVP
+(Р9): on Windows, WinRT voices are legacy quality ("Microsoft Irina", natural
+voices are closed off to apps), the correct path is a direct
+`Windows.Media.SpeechSynthesis` call synthesizing **into a WAV buffer** → our own
+queue (the `tts`-rs crate doesn't return PCM — its own audio path bypasses the
+queue and cancellation); on Linux, speech-dispatcher = espeak-ng (robotic) and
+isn't preinstalled everywhere. The `msedge-tts` crate (the online Edge service)
+is unofficial, with a history of 403 blocks/token rotations — can't be the default.
 
-## 7. Команда `/tts` и UX
+## 7. The `/tts` command and UX
 
-Синтаксис (зеркало `/rag`, регистронезависимо; парсер — `features/tts_command.rs`):
+Syntax (mirrors `/rag`, case-insensitive; parser — `features/tts_command.rs`):
 
 ```
-/tts            озвучить последнее сообщение
-/tts N          озвучить последние N сообщений (пользователя и модели)
-/tts all        озвучить всю переписку чата
-/tts stop       остановить воспроизведение
+/tts            read the last message aloud
+/tts N          read the last N messages aloud (user's and the model's)
+/tts all        read the chat's entire conversation aloud
+/tts stop       stop playback
 ```
 
-- **Что считается сообщением** = user/assistant с непустым текстом (system/tool
-  пропускаются — те же правила, что в `F5`-экспорте). Порядок — хронологический.
-- **Голосовые префиксы ролей** («Пользователь.» / «Ассистент.», на языке профиля)
-  доступны **во всех трёх вариантах**, включая одиночное `/tts` (решение
-  пользователя, Р6) — это тумблер настроек «Озвучивать роли», а не поведение,
-  зашитое под `N > 1`.
-- Новая команда `/tts` **прерывает** текущее воспроизведение и начинает новое;
-  `/tts stop` останавливает вручную.
-- **Автоматические остановки** (Р8, решение пользователя):
-  - *по настройке* — при **переключении чата** (по умолчанию **прерывать**) и при
-    **начале генерации** (по умолчанию **не прерывать**): две независимые настройки;
-  - *безусловно* — при **удалении обмена** (`Ctrl+E`), **перегенерации** (`Ctrl+R`)
-    и **удалении чата**: озвучиваемый текст перестал существовать, продолжать нечего.
-- Команда работает и во время генерации (как `/rag`): озвучивается **снимок** на
-  момент команды.
-- **Индикатор**: тихий чип в статус-баре «♪ озвучка» на время синтеза/воспроизведения
-  (глиф `♪` U+266A входит в WGL4 — компат-режим без замены; при желании — `*`).
-  Ошибки (движок не настроен, нет аудио-устройства, HTTP-ошибка) — заметкой в ленту.
-- Ошибка синтаксиса → подсказка в ленту (как у `/rag`); команда подсвечивается
-  жёлтым (`input_is_command` + `tts_command::parse`); `/tts` — в оверлей помощи
-  (`F1`) и README/spec.
+- **What counts as a message** = user/assistant with non-empty text (system/tool
+  are skipped — the same rules as in the `F5` export). Order — chronological.
+- **Voice role prefixes** ("User." / "Assistant.", in the profile's language) are
+  available **in all three variants**, including a bare `/tts` (user's decision,
+  Р6) — it's a settings toggle "Speak roles," not behavior hardwired to `N > 1`.
+- A new `/tts` command **interrupts** the current playback and starts a new one;
+  `/tts stop` stops it manually.
+- **Automatic stops** (Р8, user's decision):
+  - *configurable* — on **chat switch** (default: **interrupt**) and on
+    **generation start** (default: **don't interrupt**): two independent settings;
+  - *unconditional* — on **deleting an exchange** (`Ctrl+E`), **regeneration**
+    (`Ctrl+R`), and **deleting the chat**: the text being spoken no longer
+    exists, nothing to continue.
+- The command also works while generation is running (like `/rag`): a
+  **snapshot** taken at command time is read aloud.
+- **Indicator**: a quiet status-bar chip "♪ speaking" for the duration of
+  synthesis/playback (glyph `♪` U+266A is in WGL4 — no substitute needed in
+  compat mode; `*` if desired). Errors (engine not configured, no audio
+  device, HTTP error) — as a note in the feed.
+- A syntax error → a hint in the feed (like `/rag`); the command is highlighted
+  yellow (`input_is_command` + `tts_command::parse`); `/tts` — in the help
+  overlay (`F1`) and README/spec.
 
-## 8. Архитектура реализации (эскиз)
+## 8. Implementation architecture (sketch)
 
-Таксономия режимов — зеркало движков (плоский селектор, ADR 0004):
+Mode taxonomy — mirrors the engines (a flat selector, ADR 0004):
 
 ```
 TtsSettings {
-    mode:     TtsMode { Managed | External | OpenAi | Gemini },   // managed — сайдкар, §4/§13
-    managed:  TtsManagedSettings { …пути движка/голоса… },
+    mode:     TtsMode { Managed | External | OpenAi | Gemini },   // managed — sidecar, §4/§13
+    managed:  TtsManagedSettings { …engine paths/voices… },
     external: TtsExternalSettings { url, model_name, voice, api_key_env },
     openai:   TtsOpenAiSettings  { model = "gpt-4o-mini-tts", voice = "marin", instructions },
     gemini:   TtsGeminiSettings  { model = "gemini-2.5-flash-preview-tts", voice = "Kore" },
-    speed:    f32,   // где поддержано; OpenAI-4o-mini — через instructions
+    speed:    f32,   // where supported; OpenAI 4o-mini — via instructions
 
-    // поведение (Р6/Р8, решения пользователя)
-    speak_roles:              bool,  // префиксы ролей — во всех трёх вариантах команды
-    stop_on_chat_switch:      bool,  // по умолчанию true
-    stop_on_generation_start: bool,  // по умолчанию false
+    // behavior (Р6/Р8, user's decisions)
+    speak_roles:              bool,  // role prefixes — in all three command variants
+    stop_on_chat_switch:      bool,  // true by default
+    stop_on_generation_start: bool,  // false by default
 }
 ```
 
-Дефолт `speak_roles` — **выключен** (решение пользователя 2026-07-21): самый частый
-сценарий (`/tts` на последний ответ) префикса не требует, а включение одним тумблером
-сразу покрывает все три варианта команды.
+`speak_roles` default is **off** (user's decision 2026-07-21): the most common
+scenario (`/tts` on the last reply) doesn't need a prefix, and one toggle
+covers all three command variants at once.
 
-Безусловные остановки (удаление обмена / перегенерация / удаление чата) —
-**инвариант, а не настройка**: озвучиваемого текста больше нет.
+Unconditional stops (delete exchange / regenerate / delete chat) are an
+**invariant, not a setting**: the text being spoken no longer exists.
 
-- Всё `#[serde(default)]` — без миграций. Ключи облаков — **общие** записи
-  `api_keys` по `CloudProvider::key()` (ADR 0008): ничего нового не вводится.
-  Не настроено → `/tts` отвечает понятной ошибкой с подсказкой открыть настройки.
-- **FSD-раскладка**: `features/tts_command.rs` (парсер); `shared/markdown/speak.rs`
-  (речевой экстрактор); `shared/tts/` — `mod.rs` (трейт
+- Everything `#[serde(default)]` — no migrations. Cloud keys are **shared**
+  `api_keys` entries keyed by `CloudProvider::key()` (ADR 0008): nothing new to
+  enter. Not configured → `/tts` returns a clear error suggesting opening
+  settings.
+- **FSD layout**: `features/tts_command.rs` (parser); `shared/markdown/speak.rs`
+  (speech extractor); `shared/tts/` — `mod.rs` (trait
   `TtsEngine { synthesize(text, cancel) -> AudioClip }`, `AudioClip { format, bytes }`),
-  `openai.rs` (один клиент на облако OpenAI **и** external — разные base_url/ключ),
-  `gemini.rs` (нативный generateContent+AUDIO), `playback.rs` (плеер: ленивый
-  `MixerDeviceSink` + `Player`-очередь + отмена), `sidecar.rs` (локальный движок).
-  Клиенты stateless (reqwest уже есть) — строятся на вызов из снимка конфига,
-  менеджер-слот не нужен (появится у сайдкара, если тот захочет жить долго).
-- **Оркестрация** (`app/orchestrator/tts.rs`, зеркало `rag.rs`): `AppCommand::Tts
-  { scope }`/`TtsStop`; `handle_tts` — гейтов генерации **нет** (читаем снимок);
-  `tts_cancel: CancellationToken` (новая команда отменяет прежнюю; `Quit` отменяет);
-  `spawn_tts` (фоновая задача): сообщения → `speakable_text` → чанки по
-  предложениям (`split_sentences`, группировка до ~1–2k символов, потолок OpenAI
-  4096) → конвейер «синтез чанка i+1 во время проигрывания i» → `AppEvent::Tts
-  { active }` для чипа.
-- **Точки остановки** — один приватный хелпер `stop_tts()` (взводит токен), вызовы:
-  `handle_switch` (если `stop_on_chat_switch`), `start_generation` (если
-  `stop_on_generation_start`), и **безусловно** — `handle_regenerate`,
-  `handle_delete_last`, `handle_delete_chat`. Так поведение задаётся в одном месте,
-  а не размазано по обработчикам (прецедент — `reset_rag_cancel`).
-- **Форматы по режимам**: OpenAI — просим `pcm` (24 кГц s16le → `SamplesBuffer`,
-  без декодера); Gemini — и так отдаёт PCM (частоту парсить из `mimeType`);
-  external — просим `wav` (самый переносимый) → `Decoder`. Стриминг внутри одного
-  чанка (SSE/chunked) в MVP не нужен — конвейер по предложениям уже даёт быстрый
-  первый звук; SSE — задел.
-- **Тесты**: чистые (парсер команды, golden речевого экстрактора, чанкинг, выбор
-  сообщений/префиксы ролей), wire-формы запросов клиентов; `#[ignore]`-смоуки:
-  OpenAI (`MINDFORK_OPENAI_KEY`), Gemini (`MINDFORK_GEMINI_KEY`), external
-  (`MINDFORK_TTS_URL` на локальном сервере). Воспроизведение в CI — только
-  «headless открывается с ошибкой, не паникой»; сам звук — ручная проверка
-  (живой прогон по AGENTS.md §3).
+  `openai.rs` (one client for both cloud OpenAI **and** external — different
+  base_url/key), `gemini.rs` (native generateContent+AUDIO), `playback.rs` (the
+  player: a lazy `MixerDeviceSink` + `Player` queue + cancellation),
+  `sidecar.rs` (the local engine). Clients are stateless (reqwest is already a
+  dependency) — built per call from a config snapshot, no manager slot needed
+  (one would appear for the sidecar, if it needs to stay alive long-lived).
+- **Orchestration** (`app/orchestrator/tts.rs`, mirrors `rag.rs`):
+  `AppCommand::Tts { scope }`/`TtsStop`; `handle_tts` — **no** generation
+  gates (we read a snapshot); `tts_cancel: CancellationToken` (a new command
+  cancels the previous one; `Quit` cancels too); `spawn_tts` (a background
+  task): messages → `speakable_text` → chunks by sentence (`split_sentences`,
+  grouped up to ~1–2k characters, capped at OpenAI's 4096) → a pipeline
+  "synthesize chunk i+1 while i plays" → `AppEvent::Tts { active }` for the
+  chip.
+- **Stop points** — one private helper `stop_tts()` (trips the token), called
+  from: `handle_switch` (if `stop_on_chat_switch`), `start_generation` (if
+  `stop_on_generation_start`), and **unconditionally** — `handle_regenerate`,
+  `handle_delete_last`, `handle_delete_chat`. This way behavior is defined in
+  one place, not scattered across handlers (precedent — `reset_rag_cancel`).
+- **Formats per mode**: OpenAI — request `pcm` (24 kHz s16le → `SamplesBuffer`,
+  no decoder); Gemini — already returns PCM (parse the rate from `mimeType`);
+  external — request `wav` (the most portable) → `Decoder`. Streaming within a
+  single chunk (SSE/chunked) isn't needed for the MVP — the sentence pipeline
+  already delivers a fast first sound; SSE is groundwork.
+- **Tests**: pure (command parser, speech-extractor golden tests, chunking,
+  message selection/role prefixes), client request wire shapes; `#[ignore]`
+  smokes: OpenAI (`MINDFORK_OPENAI_KEY`), Gemini (`MINDFORK_GEMINI_KEY`),
+  external (`MINDFORK_TTS_URL` against a local server). CI playback coverage —
+  only "headless opens with an error, not a panic"; the actual sound is a
+  manual check (a live run per AGENTS.md §3).
 
 ## 9. Настройки в UI
 

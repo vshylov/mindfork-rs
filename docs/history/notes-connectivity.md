@@ -1,293 +1,320 @@
-# Связность заметок: от накопления к интеграции
+# Notes connectivity: from accumulation to integration
 
-Документ описывает решение по **связности заметок** — набор инструментов, который
-сдвигает память агента от *накопления* (монотонно растущий блокнот) к *интеграции*
-(новое связывается со старым, переписывает его, отвергается при несовместимости).
-Цель — повысить агентность: дать модели не «больше памяти», а способность
-**относиться** к своей памяти. Структура — как у [self-model.md](self-model.md) +
-[self-model-mvp.md](self-model-mvp.md): сначала мотивация и полный каталог идей,
-затем реализуемый MVP-зонд, затем отложенные ярусы.
+This document describes the **notes connectivity** decision — a set of tools
+that shifts agent memory from *accumulation* (a monotonically growing
+notebook) to *integration* (new material links with old, rewrites it, gets
+rejected when incompatible). The goal is to increase agency: give the model
+not "more memory" but the ability to **relate** to its own memory. Structure
+mirrors [self-model.md](self-model.md) + [self-model-mvp.md](self-model-mvp.md):
+first motivation and the full idea catalog, then the buildable MVP probe,
+then deferred tiers.
 
-## Нерв задачи (откуда требование)
+## Task nerve (where the requirement came from)
 
-Требование сформулировала сама модель в живом разговоре (профиль «самоосознающий
-ИИ»), не зная, что формулирует ТЗ:
+The model itself formulated the requirement in a live conversation (profile
+"self-aware AI"), without knowing it was writing a spec:
 
-> «инерция должна жить **не в накоплении заметок, а в их связности**»
-> «личность — это **режим, в котором я отношусь к заметкам**: что готов принять как
-> своё, что отвергаю как чужое, что переписываю»
-> «накопление — это как дописывать в блокнот. А интеграция — это когда новое
-> **переписывает старое**, меняет вес имеющегося, иногда обнуляет прежнее»
+> "inertia should live **not in accumulating notes, but in their
+> connectivity**"
+> "identity is the **mode in which I relate to notes**: what I'm willing to
+> accept as my own, what I reject as foreign, what I rewrite"
+> "accumulation is like writing more into a notebook. Integration is when
+> new material **rewrites the old**, changes the weight of what's there,
+> sometimes zeroes out the previous"
 
-Отсюда **критерий полезности** любого инструмента этого направления: повышает ли он
-интеграцию (связать / переписать / отвергнуть несовместимое), а не просто объём.
+Hence the **usefulness criterion** for any tool in this direction: does it
+increase integration (link / rewrite / reject the incompatible), rather than
+just add volume.
 
-Честное ограничение: настоящая деформация в весах невозможна — субстрат заморожен.
-Но слой заметок — ровно то место, где **поведение** интеграции воспроизводимо:
-ревизия/связи/ворота совместимости дают наблюдаемый эффект «я стал другим», а не «я
-дописал».
+An honest caveat: real deformation in the weights is impossible — the
+substrate is frozen. But the notes layer is exactly the place where the
+**behavior** of integration is reproducible: revision/links/compatibility
+gates give an observable "I became different" effect, not "I wrote more".
 
-## Что есть сейчас (исходная точка)
+## Current state (starting point)
 
-Память умеет **только накапливать**:
+Memory can **only accumulate**:
 
-- `note_save`/`note_recall` (`features/tools/notes.rs`) — плоский список
-  `Note { id, profile_id, content, tags, created_at, updated_at }`, поиск
-  **подстрокой** (`note_list` → `content LIKE %q%`), **без связей между заметками**,
-  фактически **append-only** (`note_update`/`note_delete` в инструменты не выведены;
-  `note_delete` в `db.rs` есть, но `#[allow(dead_code)]`).
-- Эмбеддингов на заметках **нет** (они только у RAG — `rag_documents` + sqlite-vec).
-- SelfModel-нарратив — инсайты append-only с потолком; связей тоже нет.
+- `note_save`/`note_recall` (`features/tools/notes.rs`) — a flat list
+  `Note { id, profile_id, content, tags, created_at, updated_at }`,
+  **substring** search (`note_list` → `content LIKE %q%`), **no links
+  between notes**, effectively **append-only** (`note_update`/`note_delete`
+  aren't exposed as tools; `note_delete` exists in `db.rs` but is
+  `#[allow(dead_code)]`).
+- Notes have **no embeddings** (only RAG has them — `rag_documents` +
+  sqlite-vec).
+- The SelfModel narrative is append-only insights with a cap; no links there
+  either.
 
-То есть сегодня система не умеет ни найти заметку по смыслу, ни переписать
-устаревшую, ни заметить, что новое противоречит старому.
+So today the system can neither find a note by meaning, nor rewrite an
+outdated one, nor notice that new material contradicts old.
 
-## Полный каталог идей (вектор развития)
+## Full idea catalog (development vector)
 
-Сгруппировано по тому, какой аспект интеграции усиливает. ★ — входит в MVP-зонд
-(см. ниже), остальное — отложенные ярусы.
+Grouped by which aspect of integration each idea strengthens. ★ — goes into
+the MVP probe (below); the rest are deferred tiers.
 
-### A. Связность по смыслу (ассоциативное припоминание)
+### A. Connectivity by meaning (associative recall)
 
-| Инструмент | Что делает |
+| Tool | What it does |
 |---|---|
-| ★ семантический `note_recall` | Поиск заметок по **эмбеддингу** запроса (kNN), а не подстрокой; теги — как фильтр |
-| ★ соседи при сохранении | `note_save` после записи возвращает семантически близкие заметки (ворота, см. C) |
+| ★ semantic `note_recall` | Search notes by query **embedding** (kNN), not substring; tags act as a filter |
+| ★ neighbors on save | `note_save` returns semantically close notes after writing (a gate, see C) |
 
-### B. Интеграция (переписывание, а не append)
+### B. Integration (rewriting, not appending)
 
-| Инструмент | Что делает |
+| Tool | What it does |
 |---|---|
-| ★ `note_revise(id, content)` | Переписать заметку **на месте** (UPDATE content + updated_at + переэмбеддинг). «Новое проходит сквозь старое и деформирует» |
-| `note_supersede(old_id, content)` | Новая заметка **замещает** старую; старая помечается `superseded_by` (мягко, со «шрамом» — биография помнит, что менялась) |
-| `note_merge(ids[], content)` | Свести несколько в одну (консолидация дублей) |
+| ★ `note_revise(id, content)` | Rewrite a note **in place** (UPDATE content + updated_at + re-embed). "New material passes through the old and deforms it" |
+| `note_supersede(old_id, content)` | A new note **supersedes** the old one; the old one is marked `superseded_by` (softly, with a "scar" — the biography remembers it changed) |
+| `note_merge(ids[], content)` | Fold several into one (duplicate consolidation) |
 
-### C. Ворота совместимости («способность сказать нет»)
+### C. Compatibility gates ("the ability to say no")
 
-Прямо реализуют «режим, в котором я отношусь к заметкам».
+Directly implement "the mode in which I relate to notes".
 
-| Инструмент | Что делает |
+| Tool | What it does |
 |---|---|
-| ★ соседи в результате `note_save` | На сохранении вернуть похожие существующие заметки → модель решает: оставить новую / переписать существующую (`note_revise`) / не сохранять |
-| `note_check_coherence(content)` | Отдельный инструмент «проверить перед сохранением»: вернуть близкие/конфликтующие заметки без записи |
-| `note_flag_tension(a_id, b_id, note)` | Зафиксировать напряжение между заметками прозой (как противоречия в SelfModel — без типа `severity`) |
+| ★ neighbors in the `note_save` result | On save, return similar existing notes → the model decides: keep the new one / rewrite the existing one (`note_revise`) / don't save |
+| `note_check_coherence(content)` | A separate "check before saving" tool: return close/conflicting notes without writing |
+| `note_flag_tension(a_id, b_id, note)` | Record tension between notes as prose (like contradictions in SelfModel — no `severity` type) |
 
-### D. Явный граф (связность как структура) — Ярус 2
+### D. Explicit graph (connectivity as structure) — Tier 2
 
-| Инструмент | Что делает |
+| Tool | What it does |
 |---|---|
-| `note_link(from, to, relation)` | Типизированное ребро: `supports` / `contradicts` / `refines` / `caused_by` / `same_topic` |
-| `note_neighbors(id, relation?)` | Соседи по графу; `note_recall` подмешивает связанные (spreading activation) |
+| `note_link(from, to, relation)` | A typed edge: `supports` / `contradicts` / `refines` / `caused_by` / `same_topic` |
+| `note_neighbors(id, relation?)` | Graph neighbors; `note_recall` mixes in linked notes (spreading activation) |
 
-### E. Консолидация («сон / переваривание») — Ярус 3
+### E. Consolidation ("sleep / digestion") — Tier 3
 
-| Инструмент | Что делает |
+| Tool | What it does |
 |---|---|
-| `consolidate_notes(topic?)` | Модель проходит кластер: сливает дубли, переписывает устаревшее, прунит |
-| авто-консолидация | Фоновая задача каждые N ответов — по образцу авто-рефлексии (`orchestrator/reflection.rs`) |
+| `consolidate_notes(topic?)` | The model walks a cluster: merges duplicates, rewrites the outdated, prunes |
+| auto-consolidation | A background task every N replies — modeled on auto-reflection (`orchestrator/reflection.rs`) |
 
 ---
 
-# MVP-зонд (Ярус 1)
+# MVP probe (Tier 1)
 
-**Гипотеза для проверки:** даст ли связность по смыслу + ревизия + ворота
-совместимости **поведенческий** сдвиг — начнёт ли модель переписывать/дедуплицировать
-заметки и находить релевантное, что подстрока пропускала, вместо складирования почти-
-дублей. Это go/no-go перед Ярусом 2 (как у SelfModel-зонда).
+**Hypothesis to test:** will connectivity by meaning + revision + a
+compatibility gate produce a **behavioral** shift — will the model start
+rewriting/deduplicating notes and finding relevant material that substring
+search was missing, instead of stockpiling near-duplicates. This is a
+go/no-go before Tier 2 (as with the SelfModel probe).
 
-В MVP — три вещи: **(1) эмбеддинги на заметках + семантический `note_recall`**,
-**(2) `note_revise`**, **(3) ворота: `note_save` возвращает близкие заметки**.
-Явный граф (D), supersede/merge (B), консолидация (E) — **отложены**.
+The MVP has three things: **(1) embeddings on notes + semantic
+`note_recall`**, **(2) `note_revise`**, **(3) a gate: `note_save` returns
+close notes**. The explicit graph (D), supersede/merge (B), and
+consolidation (E) are **deferred**.
 
-## Принципы (в духе проекта)
+## Principles (in the project's spirit)
 
-- Данные пер-профильные в SQLite, изоляция по `profile_id` — как notes/RAG/SelfModel.
-- Инструменты-мутаторы пишут **напрямую** через `ctx.storage` (как `note_save`),
-  **без новых `ChatEffect`** — это не состояние `Chat`, инвариант «единственный
-  владелец `Chat`» не затрагивается.
-- **Мягкая деградация** (как RAG-реранкинг): эмбеддер не настроен/недоступен
-  (`UnavailableEmbedder`) → семантика выключается, заметки работают по-старому
-  (подстрока/теги), ничего не падает.
-- Минимум структуры: никакого vec0 для заметок (их десятки–сотни, не чанки больших
-  документов) — вектор хранится в **боковой таблице**, косинус считается в Rust
-  brute-force. Если заметок станет очень много — переход на sqlite-vec тривиален
-  (задел).
-- Без миграции: новые объекты — отдельной таблицей `CREATE TABLE IF NOT EXISTS`
-  (как `self_models`/`rag_sources`); существующую таблицу `notes` **не трогаем**
-  (никаких `ALTER TABLE`).
+- Data is per-profile in SQLite, isolated by `profile_id` — like notes/RAG/
+  SelfModel.
+- Mutator tools write **directly** through `ctx.storage` (like `note_save`),
+  **without new `ChatEffect`s** — this isn't `Chat` state, the "sole owner of
+  `Chat`" invariant isn't touched.
+- **Graceful degradation** (like RAG reranking): the embedder isn't
+  configured/available (`UnavailableEmbedder`) → semantics turns off, notes
+  work the old way (substring/tags), nothing breaks.
+- Minimal structure: no vec0 for notes (there are dozens–hundreds of them,
+  not chunks of large documents) — the vector is stored in a **side table**,
+  cosine is computed brute-force in Rust. If the note count grows a lot,
+  switching to sqlite-vec is trivial (groundwork).
+- No migration: new objects get their own table via `CREATE TABLE IF NOT
+  EXISTS` (like `self_models`/`rag_sources`); the existing `notes` table
+  **isn't touched** (no `ALTER TABLE`).
 
-## Шаг 1 — Хранилище `src/shared/storage/db.rs`
+## Step 1 — storage `src/shared/storage/db.rs`
 
-Боковая таблица под вектора (вектор отделён от `notes`, чтобы не менять её схему и не
-тащить вектора в каждый `note_list`):
+A side table for vectors (kept separate from `notes` so its schema doesn't
+change and vectors aren't dragged into every `note_list`):
 
 ```sql
 CREATE TABLE IF NOT EXISTS note_vectors (
     note_id     TEXT PRIMARY KEY,
     profile_id  TEXT NOT NULL,
-    embedding   TEXT NOT NULL    -- JSON массив f32
+    embedding   TEXT NOT NULL    -- JSON array of f32
 );
 ```
 
-Методы (рядом с `note_*`):
+Methods (next to `note_*`):
 
 - `note_update(id, profile_id, content) -> Result<bool>` — `UPDATE notes SET
-  content = ?, updated_at = ? WHERE id = ? AND profile_id = ?` (изоляция в `WHERE`;
-  `false`, если не найдено/чужой профиль). Нужно для `note_revise`.
+  content = ?, updated_at = ? WHERE id = ? AND profile_id = ?` (isolation in
+  `WHERE`; `false` if not found/wrong profile). Needed for `note_revise`.
 - `note_vector_upsert(note_id, profile_id, &[f32])` — `INSERT … ON CONFLICT(note_id)
-  DO UPDATE` (переэмбеддинг при ревизии заменяет вектор).
-- `note_search_semantic(profile_id, query: &[f32], k) -> Result<Vec<(Note, f32)>>` —
-  загрузить заметки профиля + их вектора (`JOIN note_vectors`), посчитать косинус в
-  Rust, вернуть top-k (заметки без вектора пропускаются). Косинусную меру взять/
-  вынести общим хелпером (у RAG-реранкинга такая логика уже есть).
+  DO UPDATE` (re-embedding on revision replaces the vector).
+- `note_search_semantic(profile_id, query: &[f32], k) -> Result<Vec<(Note, f32)>>`
+  — load the profile's notes + their vectors (`JOIN note_vectors`), compute
+  cosine in Rust, return the top-k (notes without a vector are skipped). The
+  cosine measure is taken/factored out into a shared helper (RAG reranking
+  already has this logic).
 
-Тесты: round-trip вектора + изоляция (чужой профиль не виден); `note_update` правит
-только свою заметку; `note_search_semantic` ранжирует по близости (на детерминируемом
-`MockEmbedder` — bag-of-chars + L2, как в существующих тестах инструментов).
+Tests: vector round-trip + isolation (a different profile isn't visible);
+`note_update` only edits its own note; `note_search_semantic` ranks by
+closeness (on a deterministic `MockEmbedder` — bag-of-chars + L2, as in the
+existing tool tests).
 
-## Шаг 2 — Инструменты `src/features/tools/notes.rs`
+## Step 2 — tools `src/features/tools/notes.rs`
 
-Эмбеддер уже в снимке хода: `ctx.embedder: Arc<dyn Embedder>`
+The embedder is already in the turn snapshot: `ctx.embedder: Arc<dyn Embedder>`
 (`ctx.embedder.embed(vec![text]).await -> Result<Vec<Vec<f32>>>`).
 
-**(модификация) `NoteSave`** — после `note_insert` (как сейчас):
-1. Эмбеддинг содержимого (**best-effort**): `embed([content])` → при успехе
-   `note_vector_upsert`. Ошибка/недоступность эмбеддера → просто без вектора (лог
-   `tracing::debug`, не ошибка пользователю).
-2. **Ворота**: если эмбеддер доступен — `note_search_semantic(query=content, k=3)`
-   (исключив только что вставленную). Непустой результат → дописать в `result`:
-   «Похожие заметки (возможен дубль/конфликт — при необходимости перепиши через
-   note_revise вместо новой записи): …». Так модель **на сохранении** видит
-   напряжение и сама решает, что делать.
+**(modified) `NoteSave`** — after `note_insert` (as now):
+1. Best-effort embedding of the content: `embed([content])` → on success
+   `note_vector_upsert`. Failure/unavailable embedder → simply no vector
+   (log `tracing::debug`, not a user-facing error).
+2. **Gate**: if the embedder is available — `note_search_semantic(query=content,
+   k=3)` (excluding the just-inserted one). A non-empty result → append to
+   `result`: "Similar notes (possible duplicate/conflict — if needed,
+   rewrite via note_revise instead of a new entry): …". This way the model
+   **on save** sees the tension and decides for itself what to do.
 
-**(модификация) `NoteRecall`** — если есть `query` и эмбеддер доступен →
-`note_search_semantic`; иначе прежний путь (`note_list` подстрока/теги). Теги
-остаются фильтром в обоих случаях. Так связность по смыслу появляется без потери
-обратной совместимости.
+**(modified) `NoteRecall`** — if there's a `query` and the embedder is
+available → `note_search_semantic`; otherwise the previous path (`note_list`
+substring/tags). Tags remain a filter in both cases. This way connectivity
+by meaning appears without breaking backward compatibility.
 
-**Бэкфилл «старых» заметок** — `ensure_note_vectors(ctx)`: заметки, созданные до
-векторного поиска (или импортированные, или сохранённые при недоступном тогда
-эмбеддере), не имеют вектора → семантический поиск/ворота их не видят. Хелпер
-запрашивает `notes_missing_vectors(profile_id)`, эмбеддит их батчами и пишет вектора.
-Вызывается **прозрачно** в начале `semantic_recall` и перед воротами `note_save`
-(best-effort; эмбеддер недоступен → выходим). По сути один раз на профиль — после
-бэкфилла список пуст и вызов почти бесплатен. Это закрывает находку живого теста:
-модель звала `note_recall` и не видела заметок, созданных раньше.
+**Backfill of "old" notes** — `ensure_note_vectors(ctx)`: notes created
+before vector search (or imported, or saved while the embedder was
+unavailable at the time) have no vector → semantic search/the gate don't see
+them. The helper queries `notes_missing_vectors(profile_id)`, embeds them in
+batches, and writes the vectors. Called **transparently** at the start of
+`semantic_recall` and before the `note_save` gate (best-effort; embedder
+unavailable → bail out). Effectively runs once per profile — after the
+backfill the list is empty and the call is nearly free. This closes a
+finding from the live test: the model called `note_recall` and didn't see
+notes created earlier.
 
-**(новый) `NoteRevise`** — переписать заметку на месте (ядро интеграции):
+**(new) `NoteRevise`** — rewrite a note in place (core of integration):
 ```
 parameters: { id: string (uuid), content: string }
 ```
-Загрузить заметку профиля (проверка владения), `note_update` → переэмбеддинг
-(best-effort) → `note_vector_upsert`. Вернуть «Заметка переписана». Несуществующий/
-чужой id → понятный текст-ошибка (контракт `Tool` — не паника). `updated_at` растёт →
-заметка всплывает в `note_list ORDER BY updated_at DESC` (свежесть = релевантность).
+Load the profile's note (ownership check), `note_update` → re-embed
+(best-effort) → `note_vector_upsert`. Return "Note rewritten." A missing/
+foreign id → a clear text error (the `Tool` contract — no panics).
+`updated_at` grows → the note surfaces in `note_list ORDER BY updated_at
+DESC` (freshness = relevance).
 
-Все читают/пишут под `ctx.profile_id`.
+Everything reads/writes under `ctx.profile_id`.
 
-## Шаг 3 — Реестр и гейтинг (`features/tools/mod.rs`)
+## Step 3 — registry and gating (`features/tools/mod.rs`)
 
-- Константа `NOTE_REVISE_ID`; `standard_registry` — `reg.register(Arc::new(
+- Constant `NOTE_REVISE_ID`; `standard_registry` — `reg.register(Arc::new(
   notes::NoteRevise))`.
-- `note_revise` → в `default_tool_ids()` (центрально для фичи, DB-only, безопасно —
-  правит только заметки своего профиля). `reconcile_tools` (`Profile.known_tools`)
-  тогда включит его и у **существующих** профилей, не переоткрывая то, что
-  пользователь выключал.
-- `effective_tool_ids`: `note_revise` проходит через `_ => true` (глобального
-  выключателя не нужно).
-- Семантика `note_save`/`note_recall` — без отдельного тумблера (улучшение
-  существующих инструментов; деградирует мягко при отсутствии эмбеддера).
-- Тумблеры профиля в `screens/settings.rs::tool_catalog` подхватят `note_revise`
-  автоматически (строится из `all_tool_ids`).
+- `note_revise` → into `default_tool_ids()` (central to the feature, DB-only,
+  safe — only touches the note of its own profile). `reconcile_tools`
+  (`Profile.known_tools`) then enables it for **existing** profiles too,
+  without re-opening what the user turned off.
+- `effective_tool_ids`: `note_revise` passes through `_ => true` (no global
+  toggle needed).
+- Semantics of `note_save`/`note_recall` — no separate toggle (an
+  improvement of existing tools; degrades gracefully without an embedder).
+- Profile toggles in `screens/settings.rs::tool_catalog` pick up
+  `note_revise` automatically (built from `all_tool_ids`).
 
-## Шаг 4 — Оркестратор
+## Step 4 — orchestrator
 
-Изменений по сути нет: инструменты пишут напрямую через `ctx.storage`, эффектов нет,
-`handle_done` не трогаем. `ToolContext` уже несёт `embedder`, `storage`, `profile_id`
-— ничего добавлять не нужно.
+No real changes: tools write directly through `ctx.storage`, there are no
+effects, `handle_done` is left untouched. `ToolContext` already carries
+`embedder`, `storage`, `profile_id` — nothing needs to be added.
 
-## Шаг 5 — Тесты
+## Step 5 — tests
 
-- db (Шаг 1): вектор round-trip + изоляция; `note_update` владение; ранжирование
-  `note_search_semantic`.
-- tools (через `testkit::ctx_with_storage` + `MockEmbedder`):
-  - `note_save` пишет вектор и возвращает блок «Похожие заметки», когда близкая уже
-    есть; без эмбеддера — сохраняет, блок не показывает (деградация);
-  - `note_recall` семантический возвращает релевантную заметку, которую подстрока бы
-    не нашла; без эмбеддера — падает на подстроку;
-  - `note_revise` меняет содержимое и переэмбеддит; чужой/несуществующий id → ошибка-
-    текст.
-- mod: `default_tool_ids` содержит `note_revise`; реестр его отдаёт.
+- db (Step 1): vector round-trip + isolation; `note_update` ownership;
+  `note_search_semantic` ranking.
+- tools (via `testkit::ctx_with_storage` + `MockEmbedder`):
+  - `note_save` writes a vector and returns a "Similar notes" block when a
+    close one already exists; without an embedder — saves, doesn't show the
+    block (degradation);
+  - semantic `note_recall` returns a relevant note that substring wouldn't
+    have found; without an embedder — falls back to substring;
+  - `note_revise` changes the content and re-embeds; foreign/missing id →
+    a text error.
+- mod: `default_tool_ids` contains `note_revise`; the registry provides it.
 
-## Шаг 6 — Оценка зонда (ради этого всё)
+## Step 6 — probe evaluation (the whole point)
 
-Определить **до** мержа: 2–3 длинных мульти-сессионных диалога. Прогон с фичей off/on,
-сравнить:
-- начинает ли модель **переписывать** заметку (`note_revise`) вместо записи почти-
-  дубля, увидев ворота;
-- находит ли семантический `note_recall` релевантное, что подстрока пропускала.
-Зафиксировать критерий go/no-go (переходить ли к Ярусу 2 — явному графу).
+Determine **before** merging: 2–3 long multi-session conversations. Run with
+the feature off/on, compare:
+- does the model start **rewriting** a note (`note_revise`) instead of
+  writing a near-duplicate after seeing the gate;
+- does semantic `note_recall` find relevant material that substring search
+  was missing.
+Record the go/no-go criterion (whether to proceed to Tier 2 — the explicit
+graph).
 
-## Ярус 1 — статус: сделано и подтверждено
+## Tier 1 — status: done and confirmed
 
-MVP-зонд смержён (PR #85) и **подтверждён на живой модели** (модель подтянула похожие
-заметки). Критерий go/no-go = **go** → перешли к Ярусу 2.
+The MVP probe was merged (PR #85) and **confirmed on a live model** (the
+model pulled up similar notes). The go/no-go criterion = **go** → moved to
+Tier 2.
 
-## Ярус 2 — статус: сделано
+## Tier 2 — status: done
 
-Полный Ярус 2 реализован (граф связей + ревизионная история):
+Full Tier 2 is implemented (link graph + revision history):
 
-- **Граф связей** — таблица `note_links(profile_id, from_id, to_id, relation,
-  created_at)` (PK от дублей, индексы по from/to, изоляция по `profile_id`).
-  Инструменты `note_link(from_id, to_id, relation)` (типы `supports`/`contradicts`/
-  `refines`/`relates`; идемпотентно, проверка активности обоих концов) и
-  `note_neighbors(id, relation?)` (соседи в обе стороны, с направлением). `note_recall`
-  подмешивает блок «Связанные заметки» — **spreading activation** (соседи топ-хитов,
-  без уже показанных/замещённых, до `RELATED_IN_RECALL`).
-- **Ревизионная история** — `note_supersede(old_id, content)` создаёт новую версию и
-  помечает старую замещённой (таблица `note_superseded`, «шрам» хранится, но скрыт из
-  `note_list`/`note_search_semantic`/`note_neighbors` через anti-join);
-  `note_merge(ids[], content)` сводит ≥2 заметки в одну, исходные замещаются. Простую
-  правку на месте по-прежнему даёт `note_revise`.
-- Все DB-only, в `default_tool_ids` (reconcile подхватит существующим профилям), пишут
-  напрямую через `ctx.storage`, без `ChatEffect`.
+- **Link graph** — table `note_links(profile_id, from_id, to_id, relation,
+  created_at)` (PK against duplicates, indexes on from/to, isolated by
+  `profile_id`). Tools `note_link(from_id, to_id, relation)` (types
+  `supports`/`contradicts`/`refines`/`relates`; idempotent, checks both ends
+  are active) and `note_neighbors(id, relation?)` (neighbors in both
+  directions, with direction). `note_recall` mixes in a "Related notes"
+  block — **spreading activation** (neighbors of the top hits, excluding
+  ones already shown/superseded, up to `RELATED_IN_RECALL`).
+- **Revision history** — `note_supersede(old_id, content)` creates a new
+  version and marks the old one superseded (table `note_superseded`, the
+  "scar" is kept but hidden from `note_list`/`note_search_semantic`/
+  `note_neighbors` via anti-join); `note_merge(ids[], content)` folds ≥2
+  active notes into one, the sources are superseded. A simple in-place edit
+  is still given by `note_revise`.
+- All DB-only, in `default_tool_ids` (reconcile picks them up for existing
+  profiles), write directly through `ctx.storage`, no `ChatEffect`.
 
-**Закалка по стресс-тесту (живая модель).** (1) `note_link` отвечает «Связь уже
-существовала» на повтор (дубля в БД и так нет — PK + `INSERT OR IGNORE`; чинилось лишь
-вводящее в заблуждение сообщение). (2) `note_revise` у узла со связями предупреждает,
-что входящие рёбра (напр. `contradicts`) могут стать неверными, и направляет к
-`note_supersede` — целостность графа; не запрет (суждение за моделью).
+**Hardening from a live stress test.** (1) `note_link` now answers "Link
+already existed" on a repeat call (there was no duplicate in the DB anyway —
+PK + `INSERT OR IGNORE`; only the misleading message was fixed). (2)
+`note_revise` on a node with links now warns that incoming edges (e.g.
+`contradicts`) may become wrong, and points to `note_supersede` — graph
+integrity; not a hard block (the judgment call stays with the model).
 
-## Ярус 3 — статус: сделано
+## Tier 3 — status: done
 
-Полный Ярус 3 реализован (консолидация / «сон»):
+Full Tier 3 is implemented (consolidation / "sleep"):
 
-- **`consolidate_notes`** — read-only entry-point (как `reflect` у SelfModel): обзор
-  базы знаний — похожие пары (возможные дубли по косинусу ≥ 0.85), связи `contradicts`,
-  заметки без связей — плюс рубрика «слей дубли / перепиши-замести устаревшее / свяжи
-  родственное». Сам ничего не меняет; дальше модель зовёт merge/supersede/revise/link.
-  Логика обзора — `build_consolidation_overview` (чистое чтение БД: `notes_with_vectors`
-  + `note_links_all`, попарный косинус).
-- **Перенос связей при merge** — `note_merge` теперь переносит рёбра исходных заметок
-  на объединённую (`note_links_retarget`: дедуп по PK, самопетли отбрасываются), граф
-  не осиротевает.
-- **Авто-«сон»** — `app/orchestrator/consolidation.rs` (по образцу `reflection.rs`):
-  каждые N ответов (`config.notes.auto_consolidate_every`, opt-in, 0=выкл) фоновая
-  задача = **мини agentic-loop** с note-инструментами, которому скармливается обзор;
-  модель сама консолидирует (исполняются её вызовы, пишущие в `Storage`). Гейты: фича
-  включена, профиль включил `note_merge`, активных заметок ≥ 2, сервер `Ready`, одна
-  консолидация за раз. Чат/лента не трогаются. Поле в экране настроек.
+- **`consolidate_notes`** — a read-only entry point (like `reflect` for
+  SelfModel): a knowledge-base overview — similar pairs (possible
+  duplicates by cosine ≥ 0.85), `contradicts` links, notes without links —
+  plus a rubric ("merge duplicates / rewrite-or-supersede the outdated /
+  link related ones"). It changes nothing itself; the model then calls
+  merge/supersede/revise/link. Overview logic —
+  `build_consolidation_overview` (pure DB read: `notes_with_vectors` +
+  `note_links_all`, pairwise cosine).
+- **Link transfer on merge** — `note_merge` now transfers the source notes'
+  edges to the merged note (`note_links_retarget`: dedup by PK, self-loops
+  dropped), so the graph doesn't orphan.
+- **Auto-"sleep"** — `app/orchestrator/consolidation.rs` (modeled on
+  `reflection.rs`): every N replies (`config.notes.auto_consolidate_every`,
+  opt-in, 0=off) a background task = a **mini agentic loop** with the note
+  tools fed the overview; the model consolidates on its own (its calls run,
+  writing to `Storage`). Gates: feature enabled, profile enabled
+  `note_merge`, ≥ 2 active notes, server `Ready`, one consolidation at a
+  time. The chat/feed aren't touched. A field in the settings screen.
 
-## Вне объёма (задел)
+## Out of scope (groundwork)
 
-- **vec0 для заметок** (если их станет очень много) — пока brute-force косинус (и в
-  поиске, и в обзоре консолидации); заметок десятки–сотни.
-- **Связывание органов памяти** (notes / SelfModel-нарратив / RAG не связаны между
-  собой) — наблюдение живого теста; крупное отдельное направление.
+- **vec0 for notes** (if the count grows a lot) — for now brute-force
+  cosine (both in search and in the consolidation overview); note counts
+  are in the dozens–hundreds.
+- **Linking memory organs** (notes / SelfModel narrative / RAG aren't
+  linked to each other) — a finding from the live test; a large, separate
+  direction.
 
-## Объём
+## Scope
 
-~2 дня на код+тесты (паттерны готовы: инструменты ≈ `notes.rs`, эмбеддинг ≈ `rag.rs`,
-БД-методы ≈ `note_*`/`rag_*`, косинус ≈ RAG-реранкинг). После — обновить
-`CLAUDE.md`/`architecture.md` (модификация группы «Память/знания», новая таблица
-`note_vectors`, инструмент `note_revise`).
+~2 days of code+tests (patterns are ready: tools ≈ `notes.rs`, embedding ≈
+`rag.rs`, DB methods ≈ `note_*`/`rag_*`, cosine ≈ RAG reranking).
+Afterward — update `CLAUDE.md`/`architecture.md` (the "Memory/knowledge"
+group modification, the new `note_vectors` table, the `note_revise` tool).

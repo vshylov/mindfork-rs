@@ -1,108 +1,109 @@
-# План рефакторинга: разбор god-object'ов (2026-07)
+# Refactoring plan: breaking up god objects (2026-07)
 
-Дизайн-план направления. Статус: **завершён** (этапы 1–7 сделаны). Кандидат на
-переезд в `docs/history/` (как refinements.md и др.).
+Design plan for this track. Status: **done** (stages 1–7 done). Candidate for
+moving to `docs/history/` (like refinements.md and others).
 
-**Прогресс:** все семь этапов сделаны и сведены в одну ветку `refactor/god-object-split`
-(изначально каждый — отдельная ветка от `main`). Итоговая таблица и детали — в §6;
-полный журнал по каждому этапу — в [CLAUDE.md](../CLAUDE.md).
+**Progress:** all seven stages done and merged into one branch `refactor/god-object-split`
+(originally each was a separate branch from `main`). Summary table and details — §6;
+full per-stage log — in [CLAUDE.md](../CLAUDE.md).
 
-## 1. Контекст и диагноз
+## 1. Context and diagnosis
 
-Архитектура в целом здорова: слои FSD соблюдены (`screens`/`widgets` не знают про
-`app`), инвариант «единственный владелец `Chat`» цел, оркестратор уже расслоён
-(Фазы 1–3: каталог `orchestrator/` + `EngineManager`/`SaveQueue`/`RestartQueue`/
-`GenState`). Долг сконцентрирован не в архитектуре, а в **гранулярности файлов**:
-несколько модулей выросли в файлы-монолиты с impl-блоками по 800–2000 строк,
-куда каждая новая фича дописывает «ещё один метод». Это уже даёт классические
-симптомы god-object: любая правка идёт через один файл, ревью-диффы тонут,
-навигация по 4–5k строк медленная.
+Architecture overall is healthy: FSD layers are respected (`screens`/`widgets` don't
+know about `app`), the "sole owner of `Chat`" invariant holds, the orchestrator is
+already stratified (Phases 1–3: `orchestrator/` directory + `EngineManager`/
+`SaveQueue`/`RestartQueue`/`GenState`). The debt is concentrated not in architecture
+but in **file granularity**: several modules have grown into monolith files with
+800–2000-line impl blocks, where every new feature adds "one more method." This
+already produces classic god-object symptoms: any change goes through one file,
+review diffs drown, navigating 4–5k lines is slow.
 
-Замер (2026-07-07, `main`, всего строк / из них код до `mod tests`):
+Measurement (2026-07-07, `main`, total lines / of which code before `mod tests`):
 
-| Файл | Всего | Код | Тесты | Симптом |
+| File | Total | Code | Tests | Symptom |
 |---|---:|---:|---:|---|
-| `screens/settings.rs` | 4727 | ~3790 | ~940 | один `impl SettingsScreen` ≈ 2040 строк + 1100 строк свободных хелперов; 6+ ответственностей |
-| `app/orchestrator/tests.rs` | 3207 | — | 3207 | тест-монолит: ~150 тестов всех фич оркестратора в одном файле |
-| `screens/chat.rs` | 2445 | ~1585 | ~860 | `impl ChatScreen` ≈ 1110 строк; экран + 4 попапа + имперсонация + RAG-баннер + орфография |
-| `features/tools/notes.rs` | 2114 | ~1230 | ~880 | 9 инструментов + подсистема self-заметок + обзоры консолидации + утилиты |
-| `shared/markdown.rs` | 1863 | ~1600 | ~265 | три независимые подсистемы: walker/Writer, таблицы, LaTeX-конвертер |
-| `shared/storage/db.rs` | 1537 | ~1075 | ~460 | один `impl Db` ≈ 820 строк, ~45 методов, 4 домена (notes/граф/self_model/RAG) |
-| `widgets/input_box.rs` | 1496 | ~940 | ~560 | один целостный виджет, но impl ≈ 770 строк |
-| `app/runtime.rs` | 1050 | ~860 | ~190 | петля + батчинг вставки + буфер обмена + 4 dispatch-функции |
+| `screens/settings.rs` | 4727 | ~3790 | ~940 | one `impl SettingsScreen` ≈ 2040 lines + 1100 lines of free helpers; 6+ responsibilities |
+| `app/orchestrator/tests.rs` | 3207 | — | 3207 | test monolith: ~150 tests for every orchestrator feature in one file |
+| `screens/chat.rs` | 2445 | ~1585 | ~860 | `impl ChatScreen` ≈ 1110 lines; screen + 4 popups + impersonation + RAG banner + spellcheck |
+| `features/tools/notes.rs` | 2114 | ~1230 | ~880 | 9 tools + self-note subsystem + consolidation overviews + utilities |
+| `shared/markdown.rs` | 1863 | ~1600 | ~265 | three independent subsystems: walker/Writer, tables, LaTeX converter |
+| `shared/storage/db.rs` | 1537 | ~1075 | ~460 | one `impl Db` ≈ 820 lines, ~45 methods, 4 domains (notes/graph/self_model/RAG) |
+| `widgets/input_box.rs` | 1496 | ~940 | ~560 | one cohesive widget, but impl ≈ 770 lines |
+| `app/runtime.rs` | 1050 | ~860 | ~190 | loop + paste batching + clipboard + 4 dispatch functions |
 
-Горячесть подтверждается журналом: три последних PR (#117–#119) — все в
-`screens/settings.rs`; направления памяти (notes/self-model) постоянно правят
-`notes.rs` и `db.rs`.
+The hot-spot claim is backed by the log: the last three PRs (#117–#119) were all
+in `screens/settings.rs`; the memory tracks (notes/self-model) constantly touch
+`notes.rs` and `db.rs`.
 
-**Не god-object'ы** (не трогаем): `Orchestrator` (уже расслоён, 16 полей),
-`shared/config.rs` (плоские типы данных — много, но без логики),
-`entities/self_model.rs` и `features/tools/self_model.rs` (на границе, под
-наблюдением), `widgets/message_feed.rs`/`chat_list.rs`, `features/tools/web.rs`
-(< ~700 строк кода).
+**Not god objects** (leaving alone): `Orchestrator` (already stratified, 16
+fields), `shared/config.rs` (flat data types — many, but no logic),
+`entities/self_model.rs` and `features/tools/self_model.rs` (borderline, under
+watch), `widgets/message_feed.rs`/`chat_list.rs`, `features/tools/web.rs`
+(< ~700 lines of code).
 
-## 2. Метод: проверенный плейбук оркестратора
+## 2. Method: the proven orchestrator playbook
 
-Разбор `app/orchestrator.rs` (≈1.8k кода + 1.5k тестов → каталог из 15 файлов)
-уже проведён в этом репозитории и дал рабочие правила. Все этапы ниже — **тот же
-чисто механический перенос**, без изменения типов, полей, каналов и поведения:
+Breaking up `app/orchestrator.rs` (≈1.8k code + 1.5k tests → a directory of 15
+files) has already been done in this repo and yielded working rules. Every stage
+below is **the same purely mechanical move**, with no change to types, fields,
+channels, or behavior:
 
-1. **Файл → каталог-модуль.** `foo.rs` → `foo/mod.rs` + подфайлы. Публичный путь
-   модуля не меняется (`crate::screens::settings::SettingsScreen` остаётся);
-   наружу — re-export'ы из `mod.rs`.
-2. **Struct и контракт остаются в `mod.rs`.** Методы переезжают отдельными
-   `impl X`-блоками в файлы по ответственностям (Rust позволяет много impl-блоков
-   одного типа в разных файлах модуля).
-3. **Видимость.** Приватные поля struct'а из `mod.rs` видны дочерним модулям
-   (правило видимости Rust: потомки видят приватное предка) — менять поля на
-   `pub` не нужно. Методы, зовущиеся из другого файла, — `pub(super)` точечно.
-4. **Импорты точечные**, без `use super::*` вне тестов (иначе висячие импорты
-   под `-D warnings`).
-5. **Тесты.** Где тесты по-доменные (notes, db, markdown) — распределяются в
-   `mod tests` своих подфайлов (конвенция «тесты рядом с кодом»); где тестируется
-   экран целиком через `handle_key`/`render` (settings, chat) — единый
-   `tests.rs`-подмодуль (прецедент оркестратора). Общие фикстуры — `#[cfg(test)]
-   mod testkit` в `mod.rs`. Имена тест-функций не меняются (на них ссылается
-   журнал CLAUDE.md).
-6. **Гейты на каждый PR**: `cargo fmt`, `cargo clippy --all-targets -- -D
-   warnings`, `cargo test` — зелёные; число тестов не уменьшилось (сейчас 794).
-7. **Один этап — один PR**, сплит не смешивается с функциональными правками.
-   Коммит переноса отдельно от мелких правок видимости — дифф читается как
-   перемещение.
-8. **Доки**: обновить карту модулей architecture.md §3 + журнальную запись
-   CLAUDE.md (конвенция каждого PR).
+1. **File → directory module.** `foo.rs` → `foo/mod.rs` + subfiles. The module's
+   public path doesn't change (`crate::screens::settings::SettingsScreen` stays
+   put); outward-facing — re-exports from `mod.rs`.
+2. **The struct and contract stay in `mod.rs`.** Methods move into separate
+   `impl X` blocks in files grouped by responsibility (Rust allows many impl
+   blocks for one type across different files of a module).
+3. **Visibility.** Private struct fields from `mod.rs` are visible to child
+   modules (Rust visibility rule: descendants see the ancestor's private items) —
+   no need to make fields `pub`. Methods called from another file get `pub(super)`
+   pointwise.
+4. **Imports are pointwise**, no `use super::*` outside tests (otherwise dangling
+   imports under `-D warnings`).
+5. **Tests.** Where tests are domain-scoped (notes, db, markdown) — distribute
+   into `mod tests` of their subfiles (the "tests live next to the code"
+   convention); where an entire screen is tested through `handle_key`/`render`
+   (settings, chat) — a single `tests.rs` submodule (orchestrator precedent).
+   Shared fixtures go in `#[cfg(test)] mod testkit` in `mod.rs`. Test function
+   names don't change (the CLAUDE.md log references them).
+6. **Gates on every PR**: `cargo fmt`, `cargo clippy --all-targets -- -D
+   warnings`, `cargo test` — green; test count hasn't dropped (794 at the time).
+7. **One stage — one PR**, the split isn't mixed with functional changes. The
+   move commit is separate from small visibility fixes — the diff reads as a
+   pure move.
+8. **Docs**: update the module map in architecture.md §3 + a CLAUDE.md log entry
+   (per-PR convention).
 
-Ориентиры-пороги («жёлтая зона», вход в план при нарушении + ожидаемом churn):
-**~1000 строк кода** на файл, **~500 строк** на impl-блок.
+Thresholds ("yellow zone", entry into the plan when violated + expected churn):
+**~1000 lines of code** per file, **~500 lines** per impl block.
 
-## 3. Этапы
+## 3. Stages
 
-Каждый этап независим; порядок — по (размер × горячесть), но его можно менять.
-Оценка усилий: 0.5–1 сессия на этап, settings — 1–2.
+Each stage is independent; order is by (size × heat), but it can be reordered.
+Effort estimate: 0.5–1 session per stage, settings — 1–2.
 
-### Этап 1 — `screens/settings.rs` → `screens/settings/` (приоритет 1)
+### Stage 1 — `screens/settings.rs` → `screens/settings/` (priority 1)
 
-Самый большой файл репозитория и самый горячий (редизайн в 6 этапов + три
-последних PR). Ответственности уже хорошо расслаиваются по границам существующих
-методов:
+The largest file in the repo and the hottest (6-stage redesign + the last three
+PRs). Responsibilities already split cleanly along existing method boundaries:
 
 ```
 screens/settings/
 ├─ mod.rs           SettingsIntent, Section/Subsection/ModelTab/Focus, struct
-│                   SettingsScreen, new/refresh/set_server_statuses, верхний
-│                   handle_key-диспетчер, move_section, palette()        (~350)
-├─ catalog.rs       «модель формы»: FieldId, FieldKind/FieldRow, NumKind,
-│                   SamplingParam + SAMPLING_PARAMS, каталоги секций
+│                   SettingsScreen, new/refresh/set_server_statuses, top-level
+│                   handle_key dispatcher, move_section, palette()          (~350)
+├─ catalog.rs       the "form model": FieldId, FieldKind/FieldRow, NumKind,
+│                   SamplingParam + SAMPLING_PARAMS, section catalogs
 │                   (model_fields_for/sampling_fields_for/tool_fields/
 │                   memory_fields/interface_fields/profile_fields_for),
 │                   row/grouped/text_row/num_row/sampling_row, managed_rows/
-│                   cloud_rows + ManagedFieldIds, label-функции, tool_catalog,
+│                   cloud_rows + ManagedFieldIds, label functions, tool_catalog,
 │                   is_subsection/is_profile_field                       (~950)
-├─ descriptions.rs  field_description (≈190 строк), gate_hint            (~230)
-├─ apply.rs         мутации: toggle_field/toggle_profile_tool/cycle_field/
+├─ descriptions.rs  field_description (≈190 lines), gate_hint            (~230)
+├─ apply.rs         mutations: toggle_field/toggle_profile_tool/cycle_field/
 │                   cycle_sampling_field/apply_text/apply_profile_text/
 │                   apply_sampling_text/save_config/save_profile,
-│                   reset_field/default_fields, валидация (field_num_kind/
+│                   reset_field/default_fields, validation (field_num_kind/
 │                   field_validation_error), cycle_* (mode/imp/theme/opt_bool/
 │                   reasoning), gate_disabled/sampling_cloud_provider,
 │                   parse_opt*/parse_list/parse_breakers/decode/encode   (~750)
@@ -119,27 +120,28 @@ screens/settings/
 │                   render_field_line/server_status_chip/value_text,
 │                   section_label_col/label_width/truncate_to_width/
 │                   span_width/centered_rect*                            (~800)
-└─ tests.rs         все тесты экрана (через handle_key/render)           (~940)
+└─ tests.rs         all screen tests (through handle_key/render)         (~940)
 ```
 
-Внешняя поверхность минимальна: снаружи модуль импортирует только
-`app/runtime.rs` (`SettingsIntent`, `SettingsScreen`) — re-export в `mod.rs`.
+External surface is minimal: only `app/runtime.rs` imports from the module
+outside (`SettingsIntent`, `SettingsScreen`) — re-exported from `mod.rs`.
 
-Нюанс: `catalog.rs`/`apply.rs`/`render.rs` связаны через `FieldId` — это
-нормально (id — общий словарь формы). Резать `FieldId` по секциям **не** нужно.
+Note: `catalog.rs`/`apply.rs`/`render.rs` are linked through `FieldId` — that's
+fine (id is a shared vocabulary of the form). Splitting `FieldId` by section is
+**not** needed.
 
-### Этап 2 — `screens/chat.rs` → `screens/chat/` (приоритет 1)
+### Stage 2 — `screens/chat.rs` → `screens/chat/` (priority 1)
 
-`ChatScreen` — второй по горячести: каждая UI-фича проходит через него.
-Состояния попапов уже вынесены в структуры (`SuggestPopup`,
-`ImpersonationState`, `RagBanner`) — осталось разложить методы:
+`ChatScreen` — the second hottest: every UI feature goes through it. Popup
+states are already extracted into structs (`SuggestPopup`, `ImpersonationState`,
+`RagBanner`) — only splitting methods remains:
 
 ```
 screens/chat/
-├─ mod.rs            ChatIntent, struct ChatScreen, new + сеттеры/геттеры
-│                    снимков (set_settings/set_server_status/set_chat_list/
-│                    set_profile_list/spellchecker/background-флаги)     (~330)
-├─ feed.rs           проекция AppEvent в ленту: activate_chat/rename_chat/
+├─ mod.rs            ChatIntent, struct ChatScreen, new + snapshot setters/
+│                    getters (set_settings/set_server_status/set_chat_list/
+│                    set_profile_list/spellchecker/background flags)     (~330)
+├─ feed.rs           projecting AppEvent into the feed: activate_chat/rename_chat/
 │                    push_user_message/begin_generation/push_chunk/
 │                    push_thoughts/push_tool_call/continue_assistant/
 │                    rewrite_assistant/set_token_usage/finish_generation/
@@ -157,43 +159,43 @@ screens/chat/
 │                    handle_confirm_key, handle_emoji_key,
 │                    render_help/render_suggest/render_confirm           (~380)
 ├─ render.rs         render, model_meta, visual_line_count, centered_rect (~220)
-└─ tests.rs          все тесты экрана                                    (~860)
+└─ tests.rs          all screen tests                                    (~860)
 ```
 
-Нюанс: `handle_key` — маршрутизатор модальностей (справка → confirm → подсказки
-→ эмодзи → оверлей профиля → обычный ввод). При сплите **порядок веток не
-менять** — он и есть контракт модальности.
+Note: `handle_key` is a modality router (help → confirm → suggestions →
+emoji → profile overlay → normal input). During the split **do not reorder
+branches** — the order is the modality contract.
 
-### Этап 3 — `app/orchestrator/tests.rs` → `app/orchestrator/tests/` (дёшево, риск ~0)
+### Stage 3 — `app/orchestrator/tests.rs` → `app/orchestrator/tests/` (cheap, ~0 risk)
 
-3.2k строк, ~150 тестов всех фич в одном файле — замедляет каждую правку
-оркестратора. Разложить зеркально сорс-модулям:
+3.2k lines, ~150 tests for every feature in one file — slows down every
+orchestrator change. Split mirroring the source modules:
 
 ```
 app/orchestrator/tests/
-├─ mod.rs            общие фикстуры (testkit: spawn_orch, окружение,
-│                    MockSupervisor-обвязка) + mod-объявления
+├─ mod.rs            shared fixtures (testkit: spawn_orch, environment,
+│                    MockSupervisor wiring) + mod declarations
 ├─ generation.rs · chats.rs · profiles.rs · settings.rs · title.rs
 ├─ impersonation.rs · rag.rs · reflection.rs · consolidation.rs · self_model.rs
-└─ live.rs           все #[ignore] e2e_live-смоуки (их запускают пачкой)
+└─ live.rs           all #[ignore] e2e_live smokes (run as a batch)
 ```
 
-Путь модуля не меняется (`mod tests;` в `orchestrator/mod.rs` уже есть).
-Чистый cut-paste; единственная работа — растащить общие хелперы в `mod.rs`.
+The module path doesn't change (`mod tests;` in `orchestrator/mod.rs` already
+exists). Pure cut-paste; the only work is pulling shared helpers into `mod.rs`.
 
-### Этап 4 — `features/tools/notes.rs` → `features/tools/notes/` (приоритет 2)
+### Stage 4 — `features/tools/notes.rs` → `features/tools/notes/` (priority 2)
 
-Самый горячий из features (направления памяти продолжатся: vec0-задел,
-нуджи цитирования). Сейчас в одном файле: 9 инструментов, подсистема
-self-заметок, обзоры консолидации, чистые утилиты.
+The hottest of the `features` files (memory tracks will keep going: vec0
+groundwork, citation nudges). Currently in one file: 9 tools, the self-note
+subsystem, consolidation overviews, pure utilities.
 
 ```
 features/tools/notes/
-├─ mod.rs            ID-константы, пороги (CONSOLIDATE_SIMILARITY и др.),
+├─ mod.rs            ID constants, thresholds (CONSOLIDATE_SIMILARITY etc.),
 │                    SELF_NOTE_TAG, is_self_note, parse_id/parse_tags/clip,
-│                    pub-use всех инструментов и pub(crate)-хелперов
-├─ save.rs           NoteSave, create_note, ворота похожести, ensure_note_vectors
-├─ recall.rs         NoteRecall, list_user_notes, семантический путь,
+│                    pub-use of all tools and pub(crate) helpers
+├─ save.rs           NoteSave, create_note, similarity gate, ensure_note_vectors
+├─ recall.rs         NoteRecall, list_user_notes, semantic path,
 │                    related_block, cited_sources_block, format_notes
 ├─ edit.rs           NoteRevise, NoteSupersede, NoteMerge
 ├─ graph.rs          NoteLink, NoteNeighbors
@@ -202,24 +204,24 @@ features/tools/notes/
 │                    build_self_consolidation_overview
 ├─ self_notes.rs     self_notes_recent/self_notes_relevant/self_related_block/
 │                    migrate_self_narrative, cosine
-└─ (тесты — в mod tests соответствующих подфайлов; общие фикстуры-ctx —
-    #[cfg(test)] testkit в mod.rs)
+└─ (tests — in mod tests of the corresponding subfiles; shared ctx fixtures —
+    #[cfg(test)] testkit in mod.rs)
 ```
 
-Внешняя поверхность широкая (оркестратор, `self_model.rs`, `rag.rs`,
-`tools/mod.rs`, `meta.rs` зовут `notes::*` — константы, `is_self_note`,
-`create_note`, `self_notes_*`, обзоры) — всё сохраняется re-export'ами из
-`mod.rs`, внешние `use` не трогаются.
+External surface is wide (orchestrator, `self_model.rs`, `rag.rs`,
+`tools/mod.rs`, `meta.rs` all call `notes::*` — constants, `is_self_note`,
+`create_note`, `self_notes_*`, overviews) — all preserved via re-exports from
+`mod.rs`, external `use` sites untouched.
 
-### Этап 5 — `shared/storage/db.rs` → `shared/storage/db/` (приоритет 2)
+### Stage 5 — `shared/storage/db.rs` → `shared/storage/db/` (priority 2)
 
-Один `impl Db` на ~45 методов и 4 домена. Разрез по доменам данных:
+One `impl Db` with ~45 methods across 4 domains. Split by data domain:
 
 ```
 shared/storage/db/
 ├─ mod.rs            struct Db, open/open_in_memory/from_conn,
-│                    register_sqlite_vec, migrate() (схема), ensure_vec_table/
-│                    vec_dim, общие хелперы (row_to_note/parse_uuid/parse_dt/
+│                    register_sqlite_vec, migrate() (schema), ensure_vec_table/
+│                    vec_dim, shared helpers (row_to_note/parse_uuid/parse_dt/
 │                    cosine/norm_path)
 ├─ notes.rs          note_insert/list/get/update/delete/is_active +
 │                    note_vector_upsert/note_search_semantic/
@@ -227,165 +229,171 @@ shared/storage/db/
 ├─ graph.rs          note_link_insert/count/neighbors/links_all/links_retarget,
 │                    note_supersede_mark, note_cite_source_insert/
 │                    note_cited_sources/notes_citing_source
-├─ self_model.rs     self_model_get/upsert/update + *_conn-хелперы
+├─ self_model.rs     self_model_get/upsert/update + *_conn helpers
 └─ rag.rs            rag_insert/search/count/delete_*/source_*/stored_sources/
 │                    list_sources/dimension/other_profiles_have_docs/
 │                    reset_vectors + delete_matching/delete_sources_matching +
 │                    rag_source_exists
 ```
 
-Схему (`migrate()`) оставить одним куском в `mod.rs` — по ней видно всю БД
-сразу. Тесты распределить по доменным подфайлам.
+Keep the schema (`migrate()`) as one piece in `mod.rs` — the entire DB is
+visible at a glance from it. Split tests across domain subfiles.
 
-### Этап 6 — `shared/markdown.rs` → `shared/markdown/` (приоритет 3)
+### Stage 6 — `shared/markdown.rs` → `shared/markdown/` (priority 3)
 
-Холодный сейчас, но швы идеальные — три независимые подсистемы:
+Cold right now, but the seams are ideal — three independent subsystems:
 
 ```
 shared/markdown/
-├─ mod.rs      render/render_with + стили (heading/code/link/blockquote)
-├─ writer.rs   Writer (walker по событиям pulldown-cmark), heading_number
+├─ mod.rs      render/render_with + styles (heading/code/link/blockquote)
+├─ writer.rs   Writer (walker over pulldown-cmark events), heading_number
 ├─ code.rs     syntect: resolve_syntax/canonical_lang/code_theme/
 │              build_code_theme/gray/scope_item/to_syn
 ├─ table.rs    TableBuilder, render_table/fit_columns/border_line/render_row/
 │              pad_cell/clip_line, MIN_COL/MAX_MIN
-└─ latex.rs    normalize_delimiters + latex_to_unicode + таблицы команд
-               (~570 строк — самый большой изолируемый кусок)
+└─ latex.rs    normalize_delimiters + latex_to_unicode + command tables
+               (~570 lines — the largest isolable chunk)
 ```
 
-### Этап 7 — `app/runtime.rs` → `app/runtime/` (приоритет 3)
+### Stage 7 — `app/runtime.rs` → `app/runtime/` (priority 3)
 
-Ещё не критично (~860 кода), но швы чёткие и файл растёт с каждым экраном:
+Not critical yet (~860 code), but the seams are clean and the file grows with
+every screen:
 
 ```
 app/runtime/
 ├─ mod.rs        run/run_loop, ActiveScreen, SpellLoader, TICK
 ├─ input.rs      PASTE_BURST/PASTE_GAP, collect_press/paste_char, Chunk/
 │                chunk_batch/process_input_batch, reconcile_paste/
-│                paste_projection_matches (вся Windows-вставка)
-├─ clipboard.rs  read_clipboard_text/write_clipboard (arboard-слот)
+│                paste_projection_matches (all Windows paste handling)
+├─ clipboard.rs  read_clipboard_text/write_clipboard (arboard slot)
 └─ dispatch.rs   apply_event + dispatch/dispatch_chat_list/dispatch_settings/
                  dispatch_self_model (Intent → AppCommand)
 ```
 
-### Этап 8 (опционально, по мере роста)
+### Stage 8 (optional, as it grows)
 
-- **`widgets/input_box.rs`** — целостный виджет; резать только если продолжит
-  расти: `input_box/{mod,edit,nav,render}.rs` (правки текста / визуальная
-  навигация / отрисовка).
-- **`shared/config.rs`** — плоские типы; при росте — `config/{engine,tools,
-  memory,interface}.rs` с re-export'ами.
-- **Наблюдательный список** (пересмотреть при следующем замере):
-  `entities/self_model.rs` (~720 кода), `features/tools/self_model.rs` (~655),
+- **`widgets/input_box.rs`** — a cohesive widget; split only if it keeps
+  growing: `input_box/{mod,edit,nav,render}.rs` (text edits / visual
+  navigation / rendering).
+- **`shared/config.rs`** — flat types; on growth — `config/{engine,tools,
+  memory,interface}.rs` with re-exports.
+- **Watch list** (revisit at the next measurement):
+  `entities/self_model.rs` (~720 code), `features/tools/self_model.rs` (~655),
   `features/tools/web.rs` (~620), `app/orchestrator/generation.rs` (~700),
   `widgets/message_feed.rs`, `widgets/chat_list.rs`, `screens/self_model.rs`.
 
-## 4. Что сознательно НЕ делаем (и почему)
+## 4. What we deliberately do NOT do (and why)
 
-- **Крейт-сплит** — отклонён ещё в ADR 0004 для `shared/api`; та же логика для
-  остального: один бинарный крейт, границы — модулями.
-- **Декларативная таблица дескрипторов полей настроек** (свернуть пять
-  match-сайтов по `FieldId` — каталог/apply/toggle/описания/валидация — в одну
-  таблицу с геттерами/сеттерами-замыканиями). Причина роста settings.rs — O(полей)
-  в пяти местах, и таблица бы это вылечила, **но**: это переписывание с реальным
-  риском регрессий, а текущий match-подход прост и проверяется компилятором на
-  полноту. Вернуться, только если после сплита `catalog.rs`+`apply.rs` продолжат
-  расти быстрее прочих.
-- **Modal-enum для попапов `ChatScreen`** (`enum Modal { Help | Confirm | … }`
-  вместо независимых `Option`-полей) — сделал бы инвариант «одна модалка за раз»
-  верным по построению, но это поведенческая правка, не механический перенос.
-  Рассмотреть отдельным PR **после** этапа 2, если при сплите вскроются
-  двусмысленности приоритета модальностей.
-- **Вливание основной петли генерации в `tool_loop`** — уже решено «нет»
-  (этап 6 доводки модели себя): стриминг/control-flow/thinking-подписи не
-  окупают общий сток.
-- **Дальнейшее дробление `Orchestrator`** — уже расслоён (Фазы 1–3), 16 полей,
-  инвариант владения `Chat` цел. Не трогаем.
+- **Crate split** — rejected already in ADR 0004 for `shared/api`; same logic
+  applies elsewhere: one binary crate, boundaries drawn by modules.
+- **Declarative descriptor table for settings fields** (collapsing five
+  `FieldId` match sites — catalog/apply/toggle/descriptions/validation — into
+  one table of getters/setters-as-closures). The reason settings.rs keeps
+  growing is O(fields) across five places, and a table would cure that,
+  **but**: it's a rewrite with real regression risk, and the current match
+  approach is simple and compiler-checked for exhaustiveness. Revisit only if
+  `catalog.rs`+`apply.rs` keep growing faster than the rest after the split.
+- **Modal enum for `ChatScreen` popups** (`enum Modal { Help | Confirm | … }`
+  instead of independent `Option` fields) — would make the "one modal at a
+  time" invariant true by construction, but that's a behavioral change, not a
+  mechanical move. Consider it as a separate PR **after** stage 2, if the
+  split reveals modality-priority ambiguities.
+- **Folding the main generation loop into `tool_loop`** — already decided
+  "no" (self-model refinement stage 6): streaming/control-flow/thinking
+  signatures don't pay for a shared sink.
+- **Further splitting `Orchestrator`** — already stratified (Phases 1–3), 16
+  fields, the `Chat`-ownership invariant holds. Leave alone.
 
-## 5. Definition of Done (всего направления)
+## 5. Definition of Done (whole track)
 
-- Ни одного файла > ~1600 строк всего; в затронутых модулях ≤ ~1000 строк кода
-  на файл и ≤ ~500 строк на impl-блок.
-- Публичные пути модулей не изменились (внешние `use` без правок, кроме
-  свободных функций, ставших методами-соседями, — таких быть не должно).
-- 794+ юнит-тестов зелёные после каждого этапа, число не уменьшилось;
-  `#[ignore]`-смоуки не тронуты.
-- `cargo fmt` / `cargo clippy --all-targets -- -D warnings` чисты.
-- architecture.md §3 (карта модулей) и CLAUDE.md (журнал) обновлены на каждом
-  этапе.
+- No file over ~1600 lines total; in touched modules ≤ ~1000 lines of code
+  per file and ≤ ~500 lines per impl block.
+- Public module paths unchanged (external `use` unmodified, except free
+  functions that became sibling methods — there should be none of those).
+- 794+ unit tests green after every stage, count hasn't dropped;
+  `#[ignore]` smokes untouched.
+- `cargo fmt` / `cargo clippy --all-targets -- -D warnings` clean.
+- architecture.md §3 (module map) and CLAUDE.md (log) updated at every stage.
 
-## 6. Выполнено
+## 6. Done
 
-### Этап 1 — `screens/settings.rs` → `screens/settings/` (сделано)
+### Stage 1 — `screens/settings.rs` → `screens/settings/` (done)
 
-Монолит 4966 строк разбит на 8 файлов чисто механическим переносом (byte-exact
-слайсы по диапазонам строк — нулевой риск транскрипции; поведение/типы/поля/
-контракт `SettingsIntent` не менялись). Итог (строк): `mod.rs` 650 (типы форм +
-enum'ы секций + `struct SettingsScreen` + декларации подмодулей), `catalog.rs`
-565 (конструктор + построители полей секций/подсекций + гейты), `apply.rs` 675
-(обработка клавиш + редактор + тумблеры/циклы + сохранение), `render.rs` 530
-(отрисовка), `helpers.rs` 1130 (свободные функции — построители строк, описания,
-парсеры, циклы enum-значений), `choice.rs` 150, `search.rs` 155, `tests.rs` 1175.
-Прежний `impl SettingsScreen` (~2040 строк) разложен на 4 impl-блока по файлам
-(≤ ~660 строк каждый).
+The 4966-line monolith split into 8 files by a purely mechanical move
+(byte-exact slices by line range — zero transcription risk; behavior/types/
+fields/the `SettingsIntent` contract unchanged). Result (lines): `mod.rs` 650
+(form types + section enums + `struct SettingsScreen` + submodule
+declarations), `catalog.rs` 565 (constructor + section/subsection field
+builders + gates), `apply.rs` 675 (key handling + editor + toggles/cycles +
+saving), `render.rs` 530 (rendering), `helpers.rs` 1130 (free functions — row
+builders, descriptions, parsers, enum-value cycles), `choice.rs` 150,
+`search.rs` 155, `tests.rs` 1175. The former `impl SettingsScreen` (~2040
+lines) split into 4 impl blocks across files (≤ ~660 lines each).
 
-Ключевые правила видимости (закрепляют плейбук §2 для UI-экранов):
-- Подмодули берут элементы `mod.rs` через `use super::*;` — glob подтягивает и
-  приватные `use`-импорты родителя (ratatui/uuid/crate::…), поэтому внешние
-  импорты в подмодулях не дублируются и в `mod.rs` не «висят» (все «использованы»
-  транзитивно → ноль warning'ов).
-- Свободные функции `helpers.rs` помечены `pub(super)` (иначе не видны
-  сиблингам); потребители делают `use super::helpers::*;`.
-- Приватные методы `impl SettingsScreen`, вызываемые из другого файла, помечены
-  `pub(super)` (метод-приватность в Rust — по модулю определения).
+Key visibility rules (cementing the §2 playbook for UI screens):
+- Submodules pull `mod.rs` items via `use super::*;` — the glob also pulls in
+  the parent's private `use` imports (ratatui/uuid/crate::…), so submodules
+  don't duplicate external imports and `mod.rs` doesn't get "dangling" ones
+  (everything is "used" transitively → zero warnings).
+- Free functions in `helpers.rs` are marked `pub(super)` (otherwise not
+  visible to siblings); consumers do `use super::helpers::*;`.
+- Private `impl SettingsScreen` methods called from another file are marked
+  `pub(super)` (method privacy in Rust is scoped by the defining module).
 
-**Отклонения от проекта §3:** `descriptions.rs` и `editor.rs` не выделялись —
-`field_description`/`gate_hint` остались в `helpers.rs`, а редактор поля
-(`handle_editor_key`/`field_seed`) — в `apply.rs` (тесно связан с обработкой
-клавиш). `helpers.rs` оставлен единым модулем свободных функций (1130 строк, но
-это независимые чистые функции, не запутанный impl-блок) — дальнейшее дробление
-по ответственностям (catalog/apply/render/descriptions) отложено как
-низкоприоритетное. Гейты зелёные: **805 тестов** (0 упавших, 26 `#[ignore]`),
-clippy `-D warnings` чист, `cargo fmt --check` чист.
+**Deviations from §3 of the plan:** `descriptions.rs` and `editor.rs` weren't
+split out — `field_description`/`gate_hint` stayed in `helpers.rs`, and the
+field editor (`handle_editor_key`/`field_seed`) — in `apply.rs` (tightly
+coupled to key handling). `helpers.rs` was left a single module of free
+functions (1130 lines, but these are independent pure functions, not a
+tangled impl block) — further splitting by responsibility (catalog/apply/
+render/descriptions) is deferred as low priority. Gates green: **805 tests**
+(0 failed, 26 `#[ignore]`), clippy `-D warnings` clean, `cargo fmt --check`
+clean.
 
-### Этапы 2–7 (сделаны)
+### Stages 2–7 (done)
 
-Все остальные этапы выполнены тем же плейбуком (§2). Полный разбор каждого — в
-журнале [CLAUDE.md](../CLAUDE.md) (записи «Рефакторинг god-object'ов — этап N»);
-здесь — сводка «было → крупнейший файл после» и что легло куда.
+All remaining stages were done with the same playbook (§2). The full
+per-stage breakdown is in the [CLAUDE.md](../CLAUDE.md) log ("God-object
+refactor — stage N" entries); here — a "before → largest file after" summary
+and where things landed.
 
-| Этап | Файл | Было | Крупнейший после | Ключевой файл-раскладка |
+| Stage | File | Before | Largest after | Key layout |
 |---|---|---:|---:|---|
 | 1 | `screens/settings.rs` | 4966 | 1175 (tests) | mod/catalog/apply/render/choice/search/helpers/tests |
 | 2 | `screens/chat.rs` | 2616 | 1034 (tests) | mod/feed/input/popups/impersonation/rag/render/tests |
-| 3 | `app/orchestrator/tests.rs` | 3506 | 959 (live) | mod (фикстуры) + по фиче + live.rs |
+| 3 | `app/orchestrator/tests.rs` | 3506 | 959 (live) | mod (fixtures) + per feature + live.rs |
 | 4 | `features/tools/notes.rs` | 2242 | 1005 (tests) | mod/save/recall/edit/graph/cite/overview/self_notes |
-| 5 | `shared/storage/db.rs` | 1665 | 591 (tests) | mod (схема) + notes/graph/self_model/rag |
+| 5 | `shared/storage/db.rs` | 1665 | 591 (tests) | mod (schema) + notes/graph/self_model/rag |
 | 6 | `shared/markdown.rs` | 1995 | 578 (latex) | mod/writer/code/table/latex/tests |
 | 7 | `app/runtime.rs` | 1099 | 334 (dispatch) | mod/input/dispatch/clipboard/tests |
 
-Уточнения плейбука, выведенные по ходу (закреплены как правила §2):
+Playbook refinements found along the way (locked in as §2 rules):
 
-- **Реэкспорт по нужде.** Внешняя поверхность подмодулей (напр. `notes::*` — ~30
-  символов из оркестратора/`self_model`/`rag`/`meta`) сохраняется реэкспортом
-  `pub(crate) use <submod>::*` из `mod.rs`. Для **чисто внутренней** проводки
-  (markdown, runtime) реэкспорт **приватный** `use self::{…::*}` — `pub(crate) use`
-  здесь ловит clippy «glob import doesn't reexport anything with visibility
-  pub(crate)», т.к. элементы `pub(super)`, а не `pub`.
-- **Inherent-методы реэкспортов не требуют** (этап 5, `db.method()` через фасад
-  `Storage`) — резолвятся по типу независимо от файла; собралось с первого раза.
-- **Коллизия имён подмодулей** (этап 3): тест-подмодуль `tests::generation`
-  затеняет сорс-модуль `orchestrator::generation` — ссылки переписаны на
-  `super::super::generation::`.
-- **cfg-гейтинг сохраняется байт-в-байт** (этап 7); `clipboard.rs` использует лишь
-  `arboard::`+прелюдию → его `use super::*` удалён (иначе unused-import на Linux, где
-  `read_clipboard_text` под `#[cfg(windows)]` отсутствует).
-- **clippy `-D warnings` — страховочная сеть**: поймал orphaned doc-comment (этап 4,
-  прозаический `///`, заканчивающийся `;`, ложно принятый парсером за границу) и
-  кросс-платформенный unused-import (этап 7) — оба `cargo build` пропускал.
+- **Re-export only when needed.** The external surface of a submodule (e.g.
+  `notes::*` — ~30 symbols from the orchestrator/`self_model`/`rag`/`meta`) is
+  preserved with a re-export `pub(crate) use <submod>::*` from `mod.rs`. For
+  **purely internal** wiring (markdown, runtime) the re-export is **private**
+  `use self::{…::*}` — `pub(crate) use` triggers clippy's "glob import
+  doesn't reexport anything with visibility pub(crate)" here, since items are
+  `pub(super)`, not `pub`.
+- **Inherent methods need no re-exports** (stage 5, `db.method()` via the
+  `Storage` facade) — they resolve by type regardless of file; compiled on the
+  first try.
+- **Submodule name collision** (stage 3): the test submodule
+  `tests::generation` shadows the source module `orchestrator::generation` —
+  references were rewritten to `super::super::generation::`.
+- **cfg gating carries over byte-for-byte** (stage 7); `clipboard.rs` only
+  uses `arboard::`+the prelude → its `use super::*` was removed (otherwise an
+  unused-import on Linux, where `read_clipboard_text` under
+  `#[cfg(windows)]` is absent).
+- **clippy `-D warnings` as the safety net**: caught an orphaned doc comment
+  (stage 4, a prose `///` ending in `;`, mistakenly parsed as an item boundary)
+  and a cross-platform unused import (stage 7) — both slipped past `cargo
+  build`.
 
-**Итог направления:** крупнейший исходный файл упал с 4966 до ≤1175 строк; ни одного
-`impl`-блока > ~660 строк; публичные пути модулей не изменились (внешние `use` не
-тронуты); **805 юнит-тестов** зелёные после каждого этапа (число неизменно — чистый
-перенос), 26 `#[ignore]`-смоуков не тронуты; `cargo clippy --all-targets -- -D
-warnings` и `cargo fmt --check` чисты. DoD (§5) выполнен.
+**Track outcome:** the largest source file dropped from 4966 to ≤1175 lines;
+no impl block > ~660 lines; public module paths unchanged (external `use`
+untouched); **805 unit tests** green after every stage (count unchanged —
+pure move), 26 `#[ignore]` smokes untouched; `cargo clippy --all-targets -- -D
+warnings` and `cargo fmt --check` clean. DoD (§5) met.

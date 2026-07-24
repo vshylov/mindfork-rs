@@ -1,106 +1,115 @@
-# План: summary «модели себя» — снимок, не летопись (анти-раздувание)
+# Plan: self-model summary as a snapshot, not a chronicle (anti-bloat)
 
-> **Статус: реализовано** (этапы 1–4, ветка `feat/summary-as-snapshot`). Живой прогон
-> `summary_gate_e2e_live` и связанных SelfModel-смоуков — GO на Gemma 4 31B + bge-m3.
-> Исторический документ, не источник истины. Итог — в CLAUDE.md (журнал пост-M9) и
+> **Status: implemented** (stages 1–4, branch `feat/summary-as-snapshot`). The live
+> run `summary_gate_e2e_live` and related SelfModel smokes were GO on Gemma 4 31B + bge-m3.
+> Historical document, not a source of truth. Outcome — in CLAUDE.md (post-M9 log) and
 > [architecture.md §9](../architecture.md).
 
-Реализуемый план по итогам анализа 2026-07-05. Наблюдение пользователя: «модель
-себя склонна разрастаться и заполняться немного хаотизированной информацией».
-Живой профиль это подтверждает: `summary` ≈ 4.5–5k символов плотного эссе при
-дефолтном потолке инъекции `prompt_cap = 1200`, причём один и тот же инсайт
-(«устойчивый перекос») вписан в описание **дважды** — интеграция-через-LLM без
-ворот дублирует сама себя.
+An actionable plan from a 2026-07-05 analysis. User observation: "the
+self-model tends to bloat and fill up with somewhat chaotic information."
+A live profile confirms this: `summary` ≈ 4.5–5k characters of dense essay
+against a default injection ceiling of `prompt_cap = 1200`, and the same
+insight ("consistent skew") is written into the description **twice** —
+LLM-driven integration without gates duplicates itself.
 
-Структура — как у [refinements.md](refinements.md): этапы = отдельные PR,
-каждый с кодовыми набросками, тестами и оценкой объёма. Философия — та же, что у
+Structure — as in [refinements.md](refinements.md): stages = separate PRs,
+each with code sketches, tests, and a scope estimate. Same philosophy as
 [notes-connectivity](notes-connectivity.md) / [narrative-as-notes](narrative-as-notes.md):
-**интеграция вместо накопления**, **ворота, а не запреты** (суждение остаётся за
-моделью), «текущий снимок + биография-шрам».
+**integration instead of accumulation**, **gates, not bans** (judgment stays
+with the model), "current snapshot + biography-as-scar."
 
-## Диагноз
+## Diagnosis
 
-Механика анти-раздувания построена у всех органов «модели себя», **кроме
-`summary`** — и именно туда всё стекает:
+Anti-bloat machinery has been built for every organ of the self-model
+**except `summary`** — and that's exactly where everything piles up:
 
-| Орган | Защита от раздувания/дрейфа |
+| Organ | Bloat/drift protection |
 |---|---|
-| наблюдения (@self-заметки) | ворота похожих (`self_note_similar`), `note_revise`/`note_supersede`, граф, обзор self-консолидации |
-| цели | жизненный цикл по `#id` + потолок закрытых (`fold_closed_goals` → шрамы) |
-| черты/интересы | merge (add_/remove_) + семантические ворота 0.72 + шрам-`note` |
-| **summary** | **ничего: ни ориентира, ни ворот, ни консолидации, ни обратной связи о размере** |
+| observations (@self notes) | near-duplicate gate (`self_note_similar`), `note_revise`/`note_supersede`, graph, self-consolidation overview |
+| goals | lifecycle by `#id` + closed-goal ceiling (`fold_closed_goals` → scars) |
+| traits/interests | merge (add_/remove_) + semantic gate 0.72 + scar-`note` |
+| **summary** | **nothing: no target, no gate, no consolidation, no size feedback** |
 
-Пять корневых причин (по коду):
+Five root causes (from the code):
 
-1. **Маршрутизация в `POLICY_CORE` направляет событийные выводы в summary.**
-   Правило делит материал по оси «устойчивое → `update_self_model`, мимолётное →
-   `add_insight`» ([self_model.rs:46](../../src/features/tools/self_model.rs)). Но
-   философский инсайт («разрешил вопрос X», «понял границу Y») как раз *устойчив* —
-   и по букве правила законно интегрируется в описание. Правильная ось другая:
-   **текущее состояние** (кто я, ценности, стиль — в summary) vs **событие-вывод**
-   (что и когда понял — в наблюдения, *даже если это устойчиво*). Наблюдения при
-   этом ничего не теряют: они всплывают в инъекции по релевантности (Ярус 2),
-   связываются и консолидируются.
-2. **Интеграция без ворот дублирует сама себя.** `update_self_model.summary` —
-   replace-целиком с инструкцией «интегрируй прежнее с новым»; на практике это
-   «старый текст + новый абзац», монотонный рост. Почти-дубль внутри summary никто
-   не ловит (для наблюдений его поймали бы ворота).
-3. **Раздувание молча ломает инъекцию.** `render_for_prompt` собирает блок в
-   порядке summary → цели → собеседник → наблюдения и усекает **целиком** одним
-   `truncate_chars` в конце ([self_model.rs:471](../../src/entities/self_model.rs)).
-   При summary > `prompt_cap` в системный промпт попадают только первые ~1200
-   символов эссе (обрыв на полуслове), а активные цели, модель собеседника и
-   наблюдения не попадают **вообще** — вся машинерия релевантной инъекции Яруса 2
-   отрабатывает впустую.
-4. **Обновление с усечённого вида — риск потери хвоста.** summary заменяется
-   целиком; если модель «интегрирует», опираясь на усечённую инъекцию, а не на
-   предварительный `get_self_model`, хвост теряется или дописывается по памяти
-   (дрейф). Протокол не требует явно «сначала прочти целиком».
-5. **Эхо подкрепляет рост.** После каждой правки `update_self_model`/
-   `update_user_model` возвращают полный `render_full`
-   ([self_model.rs:396](../../src/features/tools/self_model.rs)) — при раздутом
-   summary это тысячи токенов на каждый вызов, и модель каждый раз «заякоривается»
-   на жанре эссе.
+1. **`POLICY_CORE` routes event-like conclusions into summary.** The rule
+   splits material on a "durable → `update_self_model`, fleeting →
+   `add_insight`" axis ([self_model.rs:46](../../src/features/tools/self_model.rs)).
+   But a philosophical insight ("resolved question X," "understood boundary
+   Y") is precisely *durable* — and legitimately gets integrated into the
+   description under the letter of the rule. The correct axis is different:
+   **current state** (who I am, values, working style — in summary) vs.
+   **event-conclusion** (what and when I understood — into observations,
+   *even if it's durable*). Observations lose nothing by this: they surface
+   in the injection by relevance (Tier 2), get linked, and get consolidated.
+2. **Integration without gates duplicates itself.** `update_self_model.summary`
+   is a wholesale replace with the instruction "integrate the prior with the
+   new"; in practice that's "old text + new paragraph," monotonic growth. No
+   one catches a near-duplicate inside summary (for observations, the gate
+   would catch it).
+3. **Bloat silently breaks the injection.** `render_for_prompt` assembles the
+   block in the order summary → goals → user → observations and truncates
+   **the whole thing** with one final `truncate_chars`
+   ([self_model.rs:471](../../src/entities/self_model.rs)).
+   When summary > `prompt_cap`, the system prompt gets only the first ~1200
+   characters of the essay (cut off mid-word), and active goals, the user
+   model, and observations don't make it in **at all** — all of Tier 2's
+   relevant-injection machinery runs for nothing.
+4. **Updating from a truncated view risks losing the tail.** summary is
+   replaced wholesale; if the model "integrates" based on the truncated
+   injection rather than a prior `get_self_model`, the tail is lost or
+   rewritten from memory (drift). The protocol doesn't explicitly require
+   "read the whole thing first."
+5. **The echo reinforces growth.** After every edit, `update_self_model`/
+   `update_user_model` return the full `render_full`
+   ([self_model.rs:396](../../src/features/tools/self_model.rs)) — with a
+   bloated summary that's thousands of tokens on every call, and the model
+   "anchors" on the essay genre each time.
 
-## Рамка (что НЕ делаем — решения уже зафиксированы)
+## Frame (what we're NOT doing — decisions already fixed)
 
-- **Жёсткое усечение данных** — нет. Только мягкие ворота/подсказки; суждение за
-  моделью (философия ворот `note_save`/`add_insight`/черт).
-- **Структурирование summary полями** — нет (структурные черты с жизненным циклом
-  уже отклонены, architecture.md §9.9; форма summary остаётся свободным текстом,
-  дисциплинируем *жанр*, не схему).
-- **Перенос инъекции из `system`** — нет (трейд-офф prefix cache принят
-  2026-07-03, refinements.md).
-- **Миграций нет**: модель — JSON-блоб + `#[serde(default)]`; новое поле настроек —
-  через контейнерный `#[serde(default)]` (как остальные поля секции).
+- **Hard truncation of data** — no. Only soft gates/hints; judgment stays
+  with the model (the philosophy of the `note_save`/`add_insight`/traits
+  gates).
+- **Structuring summary into fields** — no (structured traits with a
+  lifecycle were already rejected, architecture.md §9.9; summary's form
+  stays free text, we discipline the *genre*, not the schema).
+- **Moving the injection out of `system`** — no (the prefix-cache trade-off
+  was accepted 2026-07-03, refinements.md).
+- **No migrations**: the model is a JSON blob + `#[serde(default)]`; a new
+  settings field goes through the container's `#[serde(default)]` (like the
+  section's other fields).
 
-## Принципы (в духе проекта)
+## Principles (in the project's spirit)
 
-- **Каждый этап — отдельный PR** с зелёным гейтом (`cargo fmt`,
-  `clippy --all-targets -- -D warnings`, `cargo test`); после мержа — обновить
-  журнал CLAUDE.md и architecture.md §9.
-- **Инварианты не трогаем**: единственный владелец `Chat` — оркестратор;
-  SelfModel-мутации DB-only (без `ChatEffect`); изоляция по `profile_id`; FSD.
-- **Чистые функции для логики** — тестируемость без движка/tokio; живая проверка —
-  `#[ignore]`-смоук (по образцу GO-смоуков narrative-as-notes).
+- **Each stage is a separate PR** with a green gate (`cargo fmt`,
+  `clippy --all-targets -- -D warnings`, `cargo test`); after merge — update
+  the CLAUDE.md log and architecture.md §9.
+- **Invariants stay untouched**: the orchestrator remains the sole owner of
+  `Chat`; SelfModel mutations are DB-only (no `ChatEffect`); isolation by
+  `profile_id`; FSD.
+- **Pure functions for logic** — testable without the engine/tokio; live
+  verification is an `#[ignore]` smoke (modeled on the narrative-as-notes GO
+  smokes).
 
-Рекомендуемый порядок: 1 → 2 → 3 → 4. Этап 3 независим от 1–2 (можно раньше);
-этап 4 опирается на строку размера из этапа 2.
+Recommended order: 1 → 2 → 3 → 4. Stage 3 is independent of 1–2 (can go
+earlier); stage 4 relies on the size line from stage 2.
 
 ---
 
-## Этап 1 — Жанровая граница: «summary — снимок, события — в наблюдения» (только тексты)
+## Stage 1 — Genre boundary: "summary is a snapshot, events go into observations" (text only)
 
-**Проблема.** П.1 диагноза: `POLICY_CORE` маршрутизирует по оси
-устойчивое/мимолётное; событийным выводам, даже устойчивым, место в наблюдениях.
-Нигде не сказано «держи summary кратким» и «перед правкой прочти целиком».
+**Problem.** Diagnosis item 1: `POLICY_CORE` routes by a durable/fleeting
+axis; event-like conclusions, even durable ones, belong in observations.
+Nowhere does it say "keep summary short" or "read the whole thing before
+editing."
 
-### Шаг 1.1 — переписать `POLICY_CORE`
+### Step 1.1 — rewrite `POLICY_CORE`
 
-Текст остаётся связной прозой (он вклеивается в середину предложений в
-`maintenance_protocol()` и `reflect_system_message()`), ориентир размера —
-качественный («держи кратким»); числовой появится в этапе 2 как data-aware
-приписка (в `const` его не вшить). Набросок:
+The text stays connected prose (it gets spliced into the middle of sentences
+in `maintenance_protocol()` and `reflect_system_message()`); the size target
+is qualitative ("keep it short"); the numeric one arrives in stage 2 as a
+data-aware note (can't embed it into a `const`). Sketch:
 
 ```rust
 pub const POLICY_CORE: &str = "Куда что писать. summary (update_self_model) — \
@@ -120,42 +129,49 @@ pub const POLICY_CORE: &str = "Куда что писать. summary (update_sel
      что польстит.";
 ```
 
-Оба потребителя (`maintenance_protocol()`, `reflect_system_message()`) обновляются
-автоматически — правил в двух местах по-прежнему нет (этап 6 доводки цел).
+*(Note: this is the actual, live Russian text of the `POLICY_CORE` constant,
+delivered in the profile's agent-scaffold language — axis A — and is not
+translated; see the CLAUDE.md log entry for its English gist.)*
 
-### Шаг 1.2 — описания инструментов и рубрика
+Both consumers (`maintenance_protocol()`, `reflect_system_message()`) update
+automatically — the rules still don't live in two places (stage 6 of the
+refinement plan stays intact).
 
-- `UpdateSelfModel::description()`: «summary — компактный снимок (кто ты, что
-  ценишь, как работаешь); интегрируй и сокращай, а не только дописывай;
-  событийные выводы — в add_insight, не сюда».
-- `AddInsight::description()`: дополнить — «сюда же устойчивые событийные выводы
-  (что и когда понял): наблюдение всплывает по релевантности и не раздувает
-  описание себя».
-- Рубрика `Reflect` (интерактивная, намеренно не из `POLICY_CORE`): новый вопрос
-  «Не разрослось ли описание себя? Событийное из него — в наблюдения
-  (add_insight), в summary оставь суть».
+### Step 1.2 — tool descriptions and the rubric
 
-### Тесты
+- `UpdateSelfModel::description()`: "summary is a compact snapshot (who you
+  are, what you value, how you work); integrate and shorten rather than just
+  append; event-like conclusions go into add_insight, not here."
+- `AddInsight::description()`: add — "durable event-like conclusions (what
+  and when you understood) go here too: the observation surfaces by
+  relevance and doesn't bloat the self description."
+- The `Reflect` rubric (interactive, deliberately not sourced from
+  `POLICY_CORE`): a new question — "Has the self description grown too
+  large? Move event-like content out of it into observations (add_insight),
+  keep the gist in summary."
 
-- Обновить строковые ассерты: `maintenance_protocol_wraps_policy_core`,
-  `reflect_system_message_composes_from_policy_core` (ключевая фраза про
-  «угодливость» сохраняется — ассерты остаются зелёными по смыслу).
-- Новые ассерты на маркеры жанра: «снимок», «сокращай», «даже если они устойчивы»
-  в `POLICY_CORE`; «add_insight» в описании `update_self_model`; новый вопрос в
-  выводе `reflect`.
+### Tests
 
-**Объём:** ~0.25 дня. Файлы: `features/tools/self_model.rs` (+ его тесты),
-`app/orchestrator/reflection.rs` (только тесты).
+- Update string assertions: `maintenance_protocol_wraps_policy_core`,
+  `reflect_system_message_composes_from_policy_core` (the key phrase about
+  "agreeableness" is preserved — the assertions stay green in spirit).
+- New assertions on genre markers: "snapshot," "shorten," "even if durable"
+  in `POLICY_CORE`; "add_insight" in `update_self_model`'s description; the
+  new question in `reflect`'s output.
+
+**Scope:** ~0.25 day. Files: `features/tools/self_model.rs` (+ its tests),
+`app/orchestrator/reflection.rs` (tests only).
 
 ---
 
-## Этап 2 — Мягкие ворота размера summary
+## Stage 2 — Soft gates on summary size
 
-**Проблема.** П.2/П.5 диагноза: ни модель, ни пользователь не видят, что описание
-разрослось. Нужна обратная связь — по образцу уже сработавших паттернов
-(напоминание про `note`, ворота черт, бывший `narrative_fill_hint`).
+**Problem.** Diagnosis items 2/5: neither the model nor the user can see that
+the description has grown too large. Needs feedback — modeled on patterns
+that already worked (the `note` reminder, the trait gate, the former
+`narrative_fill_hint`).
 
-### Шаг 2.1 — конфиг и параметры
+### Step 2.1 — config and params
 
 ```rust
 // shared/config.rs

@@ -35,7 +35,13 @@ def strip_key_data(s: str) -> str:
 
 # Whole files that legitimately keep Cyrillic and are skipped entirely.
 SKIP_EXT = (".png", ".ico", ".dic", ".aff")
-SKIP_FILES = {"locales/ru.json"}
+SKIP_FILES = {
+    "locales/ru.json",
+    # Its Mermaid repro inputs must stay Cyrillic: they demonstrate a
+    # byte-offset-vs-char-offset parsing bug that only manifests on multibyte
+    # text. ASCII examples would not trigger it. Prose in the file is English.
+    "docs/research/mermaid-ascii-rendering.md",
+}
 SKIP_PREFIX = ("dictionaries/", "docs/ui-design/")  # design mocks/uploads, not prose
 
 
