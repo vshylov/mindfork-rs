@@ -1,202 +1,207 @@
-# Мультиязычность оси B — язык интерфейса (UI-хром)
+# Axis B multilingualism — interface language (UI chrome)
 
-> **Статус: РЕАЛИЗОВАНО ПОЛНОСТЬЮ** (ветка `feat/i18n-ui`, 2026-07-13). Весь UI-хром
-> локализован (`ui.*`-ключи в `locales/{ru,en}.json`), настройка
-> `config.interface.language` + поле «Язык интерфейса» в настройках, проводка
-> `&'static Locale` зеркалит `Palette`. **Задел закрыт** (§7): метки инструментов
-> (`ui.tool.label.*`/`ui.tool.group.*`, резолв в слое настроек через `Locale::get`) и
-> отображаемые reasons супервайзера (`ui.err.server.*`, проброс `loc` в трейт
-> `ServerSupervisor`) локализованы. Остались лишь технические probe-ошибки движка
-> (`shared/api/managed.rs` — слой провайдера, не UI). Итог и решения — в журнале
-> CLAUDE.md («ось B» + «закрытие задела»).
+> **Status: FULLY IMPLEMENTED** (branch `feat/i18n-ui`, 2026-07-13). All UI chrome is
+> localized (`ui.*` keys in `locales/{ru,en}.json`), the setting
+> `config.interface.language` + an "Interface language" field in settings, wiring a
+> `&'static Locale` mirrors `Palette`. **The groundwork item is closed** (§7): tool
+> labels (`ui.tool.label.*`/`ui.tool.group.*`, resolved in the settings layer via
+> `Locale::get`) and displayed supervisor reasons (`ui.err.server.*`, threading `loc`
+> into the `ServerSupervisor` trait) are localized. Only technical engine probe errors
+> remain (`shared/api/managed.rs` — a provider layer, not UI). Outcome and decisions —
+> in the CLAUDE.md journal ("axis B" + "closing the groundwork item").
 >
-> Ниже — исходный дизайн-план (развилки подтверждены 2026-07-13).
-> Направление продолжает [docs/history/i18n.md](i18n.md): ось A (язык **агента** — промпты и
-> инструменты) завершена (Ярусы 1–2, все 35 инструментов). Ось B — язык **интерфейса**
-> (тексты, которые читает *человек*): статус-бар, экран настроек, справка, список
-> чатов, заголовки ролей ленты, экран «модели себя», баннеры, ошибки в UI, экспорт
-> переписки (`F5`). Механизм — тот же `shared/i18n` (ключи `ui.*`), но **новая
-> глобальная настройка** `config.interface.language`, **независимая** от языка агентов
-> (docs/history/i18n.md §3.2: русский UI + англоязычные агенты — законная комбинация).
+> Below — the original design plan (decision points confirmed 2026-07-13).
+> Continues [docs/history/i18n.md](i18n.md): axis A (**agent** language — prompts and
+> tools) is complete (Tiers 1–2, all 35 tools). Axis B — **interface** language
+> (text the *human* reads): the status bar, settings screen, help, chat list, feed
+> role headers, the "self-model" screen, banners, UI errors, conversation export
+> (`F5`). Mechanism — the same `shared/i18n` (`ui.*` keys), but a **new global
+> setting** `config.interface.language`, **independent** of the agent language
+> (docs/history/i18n.md §3.2: a Russian UI + English-speaking agents is a legitimate
+> combination).
 
-## 1. Мотивация и рамка
+## 1. Motivation and scope
 
-Ось A локализовала тексты для модели. Но **весь UI-хром по-прежнему русский**:
-подписи полей настроек, статус-бар, справка `F1`, заголовки ролей ленты
-(«✦ АССИСТЕНТ»/«❯ ВЫ»), баннеры RAG, тексты ошибок оркестратора. Пользователю с
-англоязычной установкой нужен английский интерфейс — при этом язык агентов от языка
-UI **независим** (docs/history/i18n.md §3.2, решение 2026-07-12): один глобальный язык
-интерфейса, никакого наследования между осями.
+Axis A localized text for the model. But **all UI chrome is still Russian**: settings
+field labels, the status bar, `F1` help, feed role headers ("✦ ASSISTANT"/"❯ YOU" in
+their previous Russian form), RAG banners, orchestrator error text. A user with an
+English-language install needs an English interface — while the agent language stays
+**independent** of the UI language (docs/history/i18n.md §3.2, decision 2026-07-12):
+one global interface language, no inheritance between axes.
 
-**Пересечение осей — одно место** (docs/history/i18n.md §1): результаты инструментов и
-рендер «модели себя» видит и человек (tool-карточки в ленте, экран `F3`). Принцип
-уже действует: эти тексты следуют **языку агента** (ось A, сделано). Ось B трогает
-только **хром вокруг них** — заголовки ролей, пилюлю «мысли», подписи секций `F3`,
-статус-бар, — а не сами данные модели.
+**The axes intersect in one place** (docs/history/i18n.md §1): tool results and the
+"self-model" render are seen by the human too (tool cards in the feed, the `F3`
+screen). The principle already in force: this text follows the **agent** language
+(axis A, done). Axis B only touches the **chrome around it** — role headers, the
+"thoughts" pill, `F3` section labels, the status bar — not the model's own data.
 
-## 2. Развилки (подтверждены пользователем 2026-07-13)
+## 2. Decision points (confirmed by the user 2026-07-13)
 
-1. **Заголовки ролей ленты** («АССИСТЕНТ»/«ВЫ», захардкожены в `message_feed.rs`,
-   `CharacterNames` профиля лента не использует). Варианты: (a) `ui.*`-ключи (язык
-   UI); (b) из `CharacterNames` профиля. **Решение: (a)** — заголовки суть UI-хром,
-   следуют языку интерфейса. Единообразно с остальным UI; не смешивает оси
-   (`CharacterNames` — данные на языке агента).
+1. **Feed role headers** ("ASSISTANT"/"YOU", hardcoded in `message_feed.rs`, the feed
+   doesn't use the profile's `CharacterNames`). Options: (a) `ui.*` keys (UI
+   language); (b) from the profile's `CharacterNames`. **Decision: (a)** — headers are
+   UI chrome, they follow the interface language. Consistent with the rest of the UI;
+   doesn't mix axes (`CharacterNames` — data in the agent's language).
 
-2. **Множественное число в английском** («1 line» vs «2 lines»). Варианты: (a)
-   число-нейтральные формулировки + простой `tf()`; (b) мини-плюрал (2 формы).
-   **Решение: (a)** — формат «tokens: N», «found: N chats», «N str.» без
-   грамматического мн. числа. Согласуется с текущими русскими формулировками
-   («токены: N»), не требует расширения механизма. Честная плюрализация — задел (при
-   необходимости пересмотреть fluent, docs/history/i18n.md §7).
+2. **English plurals** ("1 line" vs "2 lines"). Options: (a) number-neutral wording +
+   plain `tf()`; (b) a mini-pluralization (2 forms). **Decision: (a)** — a format like
+   "tokens: N", "found: N chats", "N str." without grammatical plural. Consistent with
+   the current Russian wording ("tokens: N"), needs no mechanism extension. Honest
+   pluralization — future work (revisit `fluent` if needed, docs/history/i18n.md §7).
 
-3. **Язык UI по умолчанию** (первый запуск / старый `settings.json` без поля).
-   Варианты: (a) из `defaults.json` (`default_language`); (b) всегда `Ru`.
-   **Решение: (a)** — установочный `default_language` (тот же, что у первого профиля,
-   docs/history/i18n.md §3.2) задаёт и язык UI при свежей установке. Инсталлятор ставит оба
-   сразу; дальше UI-язык редактируется и от языка профилей независим. Старый
-   `settings.json` (поле отсутствует) → `Ru` через serde-default (корректно —
-   существующие пользователи видели русский UI).
+3. **Default UI language** (first launch / an old `settings.json` without the field).
+   Options: (a) from `defaults.json` (`default_language`); (b) always `Ru`. **Decision:
+   (a)** — the installer's `default_language` (the same one used for the first profile,
+   docs/history/i18n.md §3.2) also sets the UI language on a fresh install. The
+   installer sets both at once; afterward the UI language is editable and independent
+   of the profile language. An old `settings.json` (field absent) → `Ru` via the serde
+   default (correct — existing users already saw a Russian UI).
 
-4. **Объём направления.** Варианты: (a) ярусами по областям; (b) одним PR.
-   **Решение: (b)** — вся ось B за один PR. Чистый UI (тесты на `TestBackend`, живой
-   модели не требуется), крупный, но самодостаточный diff. Внутри — упорядоченные
-   шаги (§5), но одна ветка/один PR.
+4. **Track scope.** Options: (a) tiered by area; (b) one PR. **Decision: (b)** — all of
+   axis B in one PR. Pure UI (tests on `TestBackend`, no live model needed), a large
+   but self-contained diff. Internally — ordered steps (§5), but one branch/one PR.
 
-## 3. Архитектура
+## 3. Architecture
 
-### 3.1 Механизм — переиспользуем `shared/i18n`
+### 3.1 Mechanism — reuse `shared/i18n`
 
-Ключи `ui.*` в тех же бандлах `locales/{ru,en}.json`. Тип `Locale`/`t`/`tf`,
-`Lang`, gate-тесты (key/placeholder parity, `en_bundle_has_no_cyrillic`) — без
-изменений. Плюрализация не вводится (развилка 2 → число-нейтральные формулировки).
+`ui.*` keys in the same `locales/{ru,en}.json` bundles. The `Locale`/`t`/`tf` type,
+`Lang`, the gate tests (key/placeholder parity, `en_bundle_has_no_cyrillic`) — no
+changes. No pluralization introduced (decision point 2 → number-neutral wording).
 
-### 3.2 Новая настройка `config.interface.language: Lang`
+### 3.2 New setting `config.interface.language: Lang`
 
-- Поле `InterfaceSettings.language: Lang` (`#[serde(default)]` → старый
-  `settings.json` = `Ru`). **Конкретное значение**, не `Option` — потребители
-  (экраны/виджеты) читают его напрямую, как `theme`.
-- **Переиспользуем `i18n::Lang`, не заводим `UiLanguage`**: UI-язык — это буквально
-  «из какого бандла читать `ui.*`-ключи», а бандл — тот же файл `locales/{ru,en}.json`.
-  Отдельный enum потребовал бы маппинг `UiLanguage → Lang` без пользы. Путаница осей
-  снимается **именованием поля** (`interface.language` — язык UI; `Profile.language` —
-  язык агента), а не разделением типа. Резолв обеих осей — через одну `locale(lang)`.
-- **Дефолт из `defaults.json`** (развилка 3): при **свежей установке** (нет
-  `settings.json`) `main.rs` ставит `config.interface.language = paths.default_language()`
-  до передачи в оркестратор. Определение свежести — `paths.settings_file().exists()`
-  до `load_config`. Существующий `settings.json` без поля → `Ru` (не трогаем —
-  пользователь видел русский UI). Идемпотентно: `default_language` из `defaults.json`
-  стабилен между запусками, поэтому даже без немедленного персиста язык UI
-  восстанавливается тем же.
-- **Независимость от языка агентов**: `interface.language` управляет **только**
-  UI-хромом; `Profile.language` (ось A) — каркасом агента. Пересечений нет
+- Field `InterfaceSettings.language: Lang` (`#[serde(default)]` → an old
+  `settings.json` = `Ru`). **A concrete value**, not `Option` — consumers
+  (screens/widgets) read it directly, like `theme`.
+- **Reuse `i18n::Lang`, no new `UiLanguage`**: the UI language is literally "which
+  bundle to read `ui.*` keys from", and the bundle is the same
+  `locales/{ru,en}.json` file. A separate enum would need a `UiLanguage → Lang`
+  mapping with no payoff. Axis confusion is resolved by **naming the field**
+  (`interface.language` — UI language; `Profile.language` — agent language), not by
+  splitting the type. Both axes resolve through one `locale(lang)`.
+- **Default from `defaults.json`** (decision point 3): on a **fresh install** (no
+  `settings.json`), `main.rs` sets `config.interface.language = paths.default_language()`
+  before handing it to the orchestrator. Freshness is determined by
+  `paths.settings_file().exists()` before `load_config`. An existing `settings.json`
+  without the field → `Ru` (untouched — the user already saw a Russian UI).
+  Idempotent: `default_language` from `defaults.json` is stable across launches, so
+  even without an immediate persist the UI language is restored to the same value.
+- **Independence from the agent language**: `interface.language` governs **only** UI
+  chrome; `Profile.language` (axis A) governs the agent's scaffold. No overlap
   (docs/history/i18n.md §3.2).
-- Редактируется в секции «Интерфейс» экрана настроек (Choice-поле «Язык интерфейса»
-  из `Lang::ALL`, метки `Lang::label()`), применяется на лету (как тема).
+- Editable in the "Interface" section of the settings screen (a Choice field
+  "Interface language" from `Lang::ALL`, labels via `Lang::label()`), applies live
+  (like the theme).
 
-### 3.3 Проводка UI-локали (зеркалит `Palette`)
+### 3.3 Wiring the UI locale (mirrors `Palette`)
 
-`Palette` уже доходит до всех экранов/виджетов; ось B идёт **тем же путём**. Локаль
-`&'static Locale` (дешёвая ссылка) хранится/передаётся рядом с палитрой.
+`Palette` already reaches every screen/widget; axis B travels the **same path**. The
+locale `&'static Locale` (a cheap reference) is stored/passed alongside the palette.
 
-| Потребитель | Как получает UI-локаль |
+| Consumer | How it gets the UI locale |
 |---|---|
-| Экраны (`ChatScreen`/`SettingsScreen`/`ChatListScreen`/`SelfModelScreen`) | поле `loc: &'static Locale`, устанавливается в `set_settings`/`refresh` из `locale(config.interface.language)` (рядом с пересчётом `palette`) |
-| Виджеты (`status_bar`/`chat_list`/`message_feed`/`emoji_picker`/`profile_list`/`impersonation_preview`) | параметром render (рядом с `palette`), либо из экрана-владельца |
-| broadcast открытым overlay-экранам | `ActiveScreen::set_palette` расширяется до `set_ui_context(palette, loc)` (или второй метод `set_locale`) — событие `Settings` уже несёт `config` |
-| `chat_export.rs` (`F5`) | оркестратор (владелец `Chat`) резолвит `locale(config.interface.language)` и передаёт в `format_conversation` |
-| Ошибки/заметки оркестратора в UI (`AppEvent::Error`, баннеры, уведомления) | оркестратор строит их через `locale(config.interface.language)` |
+| Screens (`ChatScreen`/`SettingsScreen`/`ChatListScreen`/`SelfModelScreen`) | a `loc: &'static Locale` field, set in `set_settings`/`refresh` from `locale(config.interface.language)` (alongside recomputing `palette`) |
+| Widgets (`status_bar`/`chat_list`/`message_feed`/`emoji_picker`/`profile_list`/`impersonation_preview`) | as a render parameter (alongside `palette`), or from the owning screen |
+| Broadcast to open overlay screens | `ActiveScreen::set_palette` extended to `set_ui_context(palette, loc)` (or a second method `set_locale`) — the `Settings` event already carries `config` |
+| `chat_export.rs` (`F5`) | the orchestrator (the owner of `Chat`) resolves `locale(config.interface.language)` and passes it to `format_conversation` |
+| Orchestrator errors/notices in the UI (`AppEvent::Error`, banners, notices) | the orchestrator builds them via `locale(config.interface.language)` |
 
-**Тонкость**: сегодня `set_palette` broadcast (`runtime`) пересчитывает палитру из
-`config.interface.{theme,compat}`. UI-локаль добавляется в тот же broadcast — либо
-`set_palette` → `set_ui_ctx(palette, loc)`, либо параллельный `set_locale(loc)`.
-Экран настроек обновляется через `refresh` (шире палитры) — там UI-локаль тоже
-пересчитывается из свежего config.
+**A nuance**: today the `set_palette` broadcast (`runtime`) recomputes the palette from
+`config.interface.{theme,compat}`. The UI locale joins the same broadcast — either
+`set_palette` → `set_ui_ctx(palette, loc)`, or a parallel `set_locale(loc)`. The
+settings screen updates via `refresh` (broader than the palette) — the UI locale is
+recomputed there from the fresh config too.
 
-### 3.4 Что НЕ локализуется (осознанно, ось B)
+### 3.4 What is NOT localized (deliberately, axis B)
 
-- **Данные модели** (заметки, «модель себя», tool-результаты) — ось A, следуют
-  языку агента (пересечение §1).
-- **id инструментов, ключи конфига, имена команд `/rag …`** — не UI-текст.
-- **Логи** (`tracing`) и **комментарии/доки** — конвенция «на русском» (CLAUDE.md).
-- **`CharacterNames` профиля** («Вы/Ассистент/Система») — данные профиля (ось A);
-  заголовки ленты берутся из `ui.*` (развилка 1), а не из них.
+- **Model data** (notes, "self-model", tool results) — axis A, follow the agent
+  language (the intersection in §1).
+- **Tool ids, config keys, `/rag …` command names** — not UI text.
+- **Logs** (`tracing`) and **comments/docs** — the "Russian" convention (CLAUDE.md).
+- **The profile's `CharacterNames`** ("You/Assistant/System") — profile data (axis A);
+  feed headers come from `ui.*` (decision point 1), not from these.
 
-## 4. Инвентаризация UI-строк (области и оценка)
+## 4. UI-string inventory (areas and estimate)
 
-Уточнено сплошным grep-обходом (2026-07-13, без тест-модулей и `tracing`/`expect`):
-**~365 живых UI-литералов** (§2.2 в docs/history/i18n.md давал ~600–800, но считал тесты).
+Refined by an exhaustive grep pass (2026-07-13, excluding test modules and
+`tracing`/`expect`): **~365 live UI literals** (i18n.md §2.2 estimated ~600–800, but
+that count included tests).
 
-| Область | Файлы | ~кол-во | Характер / подводные камни |
+| Area | Files | ~count | Nature / pitfalls |
 |---|---|---|---|
-| Экран настроек | `screens/settings/{mod,catalog,helpers,render}.rs` | ~200 | секции (6) + группы (~17) + метки полей (~60) + длинные описания (`describe`/`DESC_*`/`SamplingParam::description`, ~50) + футер-хоткеи + Choice-метки (тема/язык/режимы) + `format!`-статусы чипов. `choice/search/apply.rs` — без UI-литералов (логика). **Выравнивание колонки значений по ширине подписи** — en иной длины: гейт `all_labels_fit_alignment_cap`/`section_label_col`/`LABEL_CAP` прогнать на en |
-| Статус-бар | `widgets/status_bar.rs` | ~14 | `HOTKEYS` (5), чипы «чат/эмб/имп» + `{why}`, «токены:/(рассужд.)», «{busy} генерация…», «мышь: прокрутка/выделение». **Сетка хоткеев раскладывается по видимой ширине** — проверить en |
-| Список чатов | `widgets/chat_list.rs` | ~16 | «Чаты», «{n} диалог(ов)», «Переименование», плейсхолдер поиска, «{n} сообщ.», «сортировка:», хоткеи (10) |
-| Попапы/справка | `screens/chat/popups.rs` (`HELP_KEYS` ~30, футеры/confirm), `widgets/{emoji_picker,profile_list,impersonation_preview}.rs` (по 2) | ~46 | таблица клавиш — **не ломать комбинации/команды внутри описаний** («/rag add <путь> [-r]», «возврат — Ctrl+Z») |
-| Заголовки ролей ленты | `widgets/message_feed.rs` | ~6 | «ВЫ»/«АССИСТЕНТ» (развилка 1 → `ui.*`), пилюля «мысли»/«· N стр. ·», пустое состояние. `model_meta` («· Nk ctx») — ASCII; tool-карточки — ось A (не трогаем) |
-| Экран «модели себя» | `screens/self_model.rs` | ~12 | «О себе:»/«Собеседник»/«Черты:»/… (хром), «＋ добавить цель», хоткеи, confirm-очистка. Статусы целей — глифами (не текст); **данные модели — ось A** |
-| Баннеры/уведомления чата | `screens/chat/{rag,mod,render,feed}.rs` | ~20 | RAG-баннеры (`format!` с числами), confirm перегенерации/удаления, плейсхолдер ввода, футер ввода, «(генерация отменена)», `background_hint` («рефлексия · сон») |
-| Экспорт переписки | `features/chat_export.rs` | ~6 | «Пользователь:»/«Ассистент:»/«[Мысли]»/«[Инструмент:]»/«Аргументы:»/«Результат:» (`F5`, plain-text) |
-| Ошибки/уведомления в UI | `app/orchestrator/{rag,profiles,title,chats,impersonation,engines,background,mod}.rs`, `supervisor.rs`, `app/runtime/{input,dispatch}.rs` | ~45 | `AppEvent::Error`/`push_note`/`set_notice`/`RagProgress::Failed`/`ServerStatus::Disconnected` — видимы человеку. Вложенный `{err}`/`{reason}` из anyhow/системы **не переводится** — переводим только обёртку |
+| Settings screen | `screens/settings/{mod,catalog,helpers,render}.rs` | ~200 | sections (6) + groups (~17) + field labels (~60) + long descriptions (`describe`/`DESC_*`/`SamplingParam::description`, ~50) + footer hotkeys + Choice labels (theme/language/modes) + `format!`-built chip statuses. `choice/search/apply.rs` — no UI literals (logic). **Value-column alignment by label width** — en is a different length: run the gate `all_labels_fit_alignment_cap`/`section_label_col`/`LABEL_CAP` against en |
+| Status bar | `widgets/status_bar.rs` | ~14 | `HOTKEYS` (5), "chat/emb/imp" chips + `{why}`, "tokens:/(reasoning)", "{busy} generating…", "mouse: scroll/select". **The hotkey grid lays out by visible width** — check en |
+| Chat list | `widgets/chat_list.rs` | ~16 | "Chats", "{n} dialog(s)", "Rename", the search placeholder, "{n} msg", "sort:", hotkeys (10) |
+| Popups/help | `screens/chat/popups.rs` (`HELP_KEYS` ~30, footers/confirm), `widgets/{emoji_picker,profile_list,impersonation_preview}.rs` (2 each) | ~46 | the hotkey table — **don't break combos/commands inside descriptions** ("/rag add <path> [-r]", "undo — Ctrl+Z") |
+| Feed role headers | `widgets/message_feed.rs` | ~6 | "YOU"/"ASSISTANT" (decision point 1 → `ui.*`), the "thinking"/"· N para. ·" pill, the empty state. `model_meta` ("· Nk ctx") — ASCII; tool cards — axis A (untouched) |
+| "Self-model" screen | `screens/self_model.rs` | ~12 | "About me:"/"Interlocutor"/"Traits:"/… (chrome), "add goal", hotkeys, the clear confirmation. Goal statuses are glyphs (not text); **the model's data is axis A** |
+| Chat notices/banners | `screens/chat/{rag,mod,render,feed}.rs` | ~20 | RAG banners (`format!` with numbers), regenerate/delete confirmation, the input placeholder, the input footer, "(generation cancelled)", `background_hint` ("reflection · notes sleep") |
+| Conversation export | `features/chat_export.rs` | ~6 | "User:"/"Assistant:"/"[Thoughts]"/"[Tool:]"/"Arguments:"/"Result:" (`F5`, plain text) |
+| UI errors/notices | `app/orchestrator/{rag,profiles,title,chats,impersonation,engines,background,mod}.rs`, `supervisor.rs`, `app/runtime/{input,dispatch}.rs` | ~45 | `AppEvent::Error`/`push_note`/`set_notice`/`RagProgress::Failed`/`ServerStatus::Disconnected` — visible to the human. A nested `{err}`/`{reason}` from anyhow/the system is **not translated** — only the wrapper is translated |
 
-**Пограничные тексты (ось A, НЕ ось B):** `tool_loop.rs`/`generation.rs` «Ошибка
-инструмента {name}», «Инструмент недоступен», «Достигнут лимит раундов…» уходят в
-ленту как tool/assistant-текст и **видны модели** → уже локализованы ось A (ключи
-`loop.*`, Ярус 2c). «код возврата:» в python-карточке (`message_feed.rs:727`) —
-парная метке `python.console.exit` (ось A, Ярус 2c); лента её только отображает.
+**Border-case text (axis A, NOT axis B):** `tool_loop.rs`/`generation.rs` "Tool error
+{name}", "Tool unavailable", "Round limit reached…" go out into the feed as tool/
+assistant text and are **seen by the model** → already localized under axis A (`loop.*`
+keys, Tier 2c). "exit code:" in the python card (`message_feed.rs:727`) — pairs with
+the `python.console.exit` label (axis A, Tier 2c); the feed only displays it.
 
-## 5. План работ (один PR, упорядоченные шаги)
+## 5. Work plan (one PR, ordered steps)
 
-1. **Инфраструктура**: `InterfaceSettings.language: Lang` + дефолт из `defaults.json`
-   в `main.rs` + Choice-поле «Язык интерфейса» в секции «Интерфейс» настроек.
-   Проводка `&'static Locale` в экраны/виджеты (поле + `set_*`, broadcast в
-   `runtime`). Ключи `ui.*` в бандлы по мере перевода областей.
-2. **Виджеты**: статус-бар, лента (заголовки ролей + пилюля + tool-хром), список
-   чатов, попапы/справка, emoji/profile/impersonation.
-3. **Экраны**: настройки (самая большая область — подписи/группы/секции/Choice/
-   футер/поиск; проверить выравнивание на en), «модель себя», баннеры/уведомления
-   чата.
-4. **Оркестратор/фичи**: `chat_export`, тексты ошибок/заметок в UI.
-5. **Тесты** (по ходу, `TestBackend`): per-locale структурные (рендер под каждым
-   `Lang::ALL` — ключевые экраны без паники, заголовки из бандла того же языка);
-   гейты key/placeholder parity + `en_bundle_has_no_cyrillic` покрывают полноту
-   `ui.*`; смысловые пины ключевых фраз (docs/history/i18n.md §3.5); проверка выравнивания
-   настроек на en. Существующие ru-ассерты → референсная `ru()`-локаль.
+1. **Infrastructure**: `InterfaceSettings.language: Lang` + a default from
+   `defaults.json` in `main.rs` + a Choice field "Interface language" in the
+   "Interface" section of settings. Wiring `&'static Locale` into screens/widgets
+   (a field + `set_*`, a `runtime` broadcast). `ui.*` keys in the bundles as areas are
+   translated.
+2. **Widgets**: the status bar, the feed (role headers + the pill + tool chrome), the
+   chat list, popups/help, emoji/profile/impersonation.
+3. **Screens**: settings (the largest area — labels/groups/sections/Choice/footer/
+   search; check alignment in en), "self-model", chat notices/banners.
+4. **Orchestrator/features**: `chat_export`, UI error/notice text.
+5. **Tests** (along the way, `TestBackend`): per-locale structural (rendering under
+   every `Lang::ALL` — key screens with no panic, headers from that language's
+   bundle); gates key/placeholder parity + `en_bundle_has_no_cyrillic` cover the
+   completeness of `ui.*`; substantive pins of key phrases (docs/history/i18n.md
+   §3.5); a settings-alignment check in en. Existing ru assertions → the reference
+   `ru()` locale.
 
-## 6. Риски
+## 6. Risks
 
-1. **Ширины/выравнивание** зависят от длины перевода: сетка хоткеев статус-бара,
-   колонка значений настроек (`section_label_col`/`LABEL_CAP`), усечение подписей.
-   Смягчение — per-locale render-тесты + гейт `all_labels_fit_alignment_cap` на en.
-2. **Churn тестов**: сотни UI-ассертов на русские подстроки → ключи бандла + цикл по
-   локалям (docs/history/i18n.md §3.5). Механический, но объёмный; ru-бандл извлекается
-   дословно (поведение ru-UI не меняется).
-3. **Компат-режим** (`terminal_compat`): глифы уже отделены (`GlyphSet`) от текста —
-   локализация текста и подмена глифов ортогональны; проверить, что en-подписи в
-   компат-наборе тоже влезают.
-4. **`defaults.json`-дефолт**: свежесть определяется наличием `settings.json` —
-   единственная нетривиальная логика, локализована в `main.rs`.
+1. **Widths/alignment** depend on translation length: the status bar's hotkey grid,
+   the settings value column (`section_label_col`/`LABEL_CAP`), label truncation.
+   Mitigation — per-locale render tests + the `all_labels_fit_alignment_cap` gate in
+   en.
+2. **Test churn**: hundreds of UI assertions on Russian substrings → bundle keys + a
+   loop over locales (docs/history/i18n.md §3.5). Mechanical but voluminous; the ru
+   bundle is extracted verbatim (ru-UI behavior doesn't change).
+3. **Compat mode** (`terminal_compat`): glyphs are already separated (`GlyphSet`) from
+   text — text localization and glyph substitution are orthogonal; check that en
+   labels also fit in the compat set.
+4. **`defaults.json` default**: freshness is determined by the presence of
+   `settings.json` — the only nontrivial logic, localized in `main.rs`.
 
-## 7. Вне объёма / задел
+## 7. Out of scope / future work
 
-Плюрализация/грамматика (развилка 2 → число-нейтрально), RTL, кастом-раскладка
-клавиш, внешние `data/locales` (Ярус 3 оси A), перевод документации/логов.
+Pluralization/grammar (decision point 2 → number-neutral), RTL, custom keyboard
+layouts, external `data/locales` (axis A Tier 3), translating documentation/logs.
 
-**Задел ЗАКРЫТ** (тем же PR, см. журнал CLAUDE.md «ось B — закрытие задела»):
-- **Метки инструментов в тумблерах профиля** — локализованы резолвом в слое настроек:
-  `Locale::get(&'static self, key)` (динамический ключ → `&'static str`),
-  `ToolGroup::i18n_key()` (стабильный ASCII-ключ, `title()` — русский fallback),
-  бандл `ui.tool.label.*` (32) + `ui.tool.group.*` (8). Гейт-тест
+**The groundwork item is CLOSED** (same PR, see the CLAUDE.md journal "axis B —
+closing the groundwork item"):
+- **Tool labels in profile toggles** — localized by resolving in the settings layer:
+  `Locale::get(&'static self, key)` (a dynamic key → `&'static str`),
+  `ToolGroup::i18n_key()` (a stable ASCII key, `title()` — a Russian fallback), the
+  bundle `ui.tool.label.*` (32) + `ui.tool.group.*` (8). Gate test
   `ui_label_and_group_keys_exist_in_all_bundles`.
-- **Reasons `ServerStatus::Disconnected(...)`** — проброс `loc` в трейт
+- **`ServerStatus::Disconnected(...)` reasons** — threaded `loc` into the trait
   `ServerSupervisor::apply_chat`/`apply_impersonation` → `cloud_chat_setup`;
-  `resolve_api_key` → структурная `ApiKeyError`; бандл `ui.err.server.*` (3).
+  `resolve_api_key` → a structured `ApiKeyError`; bundle `ui.err.server.*` (3).
 
-**Осталось (реально вне объёма):** технические probe-ошибки движка
-(`shared/api/managed.rs`: битый GGUF, ранний выход процесса) — слой провайдера, не
-имеет и не должен иметь `config.interface.language`; это скорее логоподобные
-техсообщения. Ярус 3 оси A (внешние `data/locales`).
+**Remaining (genuinely out of scope):** technical engine probe errors
+(`shared/api/managed.rs`: a corrupt GGUF, an early process exit) — a provider layer,
+doesn't and shouldn't have `config.interface.language`; more like log-style technical
+messages. Axis A Tier 3 (external `data/locales`).
 
-## 8. Живой прогон
+## 8. Live run
 
-**Не требуется** (AGENTS.md §3): чистый UI, тесты на `TestBackend`. Ручная проверка
-(взгляд на en-интерфейс на реальном терминале) — финальный необязательный шаг.
+**Not needed** (AGENTS.md §3): pure UI, tests on `TestBackend`. A manual check (a
+look at the en interface on a real terminal) — a final, optional step.

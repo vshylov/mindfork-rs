@@ -39,9 +39,9 @@ quality on real text (detailed analysis — §13.1):
   (every phrase in a different voice and intonation), plus recurring "server
   overloaded" failures.
 
-Forks Р1–Р9 (§10) were accepted by the user on 2026-07-21 — they remain valid on
+Forks R1–R9 (§10) were accepted by the user on 2026-07-21 — they remain valid on
 **behavior** (the command, Markdown filtering, stop points, UI placement); only the
-**engine choice** (Р2) and, as a consequence, mode priority (Р1) need revisiting.
+**engine choice** (R2) and, as a consequence, mode priority (R1) need revisiting.
 The data in §3–§9 on protocols, playback, and Markdown extraction is verified and
 reusable as-is.
 
@@ -268,7 +268,7 @@ narrow `main()` forces the Windows CRT to convert argv from UTF-16 to the ANSI
 code page (`1252` on the dev machine) — **all Cyrillic becomes `?`, silence comes
 out** (verified from both bash and PowerShell; an external manifest with
 `activeCodePage=UTF-8` is ignored, and the CLI has no "text from file/stdin"
-option). So **sub-option (в)** was taken — the MIT `piper` binary: text goes
+option). So **sub-option (c)** was taken — the MIT `piper` binary: text goes
 **via stdin** (UTF-8 bytes), raw PCM comes out on stdout (`--output_raw`). A
 nuance: piper requires the **original** voices from HuggingFace — re-exported
 ONNX from sherpa's model zoo crashes it (`STATUS_STACK_BUFFER_OVERRUN`). Spike
@@ -300,7 +300,7 @@ the engine and remains valid in full. Note separately: the "Markdown turned into
 a Frankenstein" complaint relates **not** to extraction (it worked fine) but to
 Gemini's autoregressive nature — see §13.1.
 
-Proposed rules (Р4):
+Proposed rules (R4):
 
 | Element | Read-aloud behavior |
 |---|---|
@@ -363,7 +363,7 @@ needed semantics "out of the box":
   chunk stitching would be worse by construction.
 
 **Platform OS TTS** ("no models at all") — evaluated, not recommended for the MVP
-(Р9): on Windows, WinRT voices are legacy quality ("Microsoft Irina", natural
+(R9): on Windows, WinRT voices are legacy quality ("Microsoft Irina", natural
 voices are closed off to apps), the correct path is a direct
 `Windows.Media.SpeechSynthesis` call synthesizing **into a WAV buffer** → our own
 queue (the `tts`-rs crate doesn't return PCM — its own audio path bypasses the
@@ -386,10 +386,10 @@ Syntax (mirrors `/rag`, case-insensitive; parser — `features/tts_command.rs`):
   are skipped — the same rules as in the `F5` export). Order — chronological.
 - **Voice role prefixes** ("User." / "Assistant.", in the profile's language) are
   available **in all three variants**, including a bare `/tts` (user's decision,
-  Р6) — it's a settings toggle "Speak roles," not behavior hardwired to `N > 1`.
+  R6) — it's a settings toggle "Speak roles," not behavior hardwired to `N > 1`.
 - A new `/tts` command **interrupts** the current playback and starts a new one;
   `/tts stop` stops it manually.
-- **Automatic stops** (Р8, user's decision):
+- **Automatic stops** (R8, user's decision):
   - *configurable* — on **chat switch** (default: **interrupt**) and on
     **generation start** (default: **don't interrupt**): two independent settings;
   - *unconditional* — on **deleting an exchange** (`Ctrl+E`), **regeneration**
@@ -418,7 +418,7 @@ TtsSettings {
     gemini:   TtsGeminiSettings  { model = "gemini-2.5-flash-preview-tts", voice = "Kore" },
     speed:    f32,   // where supported; OpenAI 4o-mini — via instructions
 
-    // behavior (Р6/Р8, user's decisions)
+    // behavior (R6/R8, user's decisions)
     speak_roles:              bool,  // role prefixes — in all three command variants
     stop_on_chat_switch:      bool,  // true by default
     stop_on_generation_start: bool,  // false by default
@@ -470,491 +470,552 @@ Unconditional stops (delete exchange / regenerate / delete chat) are an
   only "headless opens with an error, not a panic"; the actual sound is a
   manual check (a live run per AGENTS.md §3).
 
-## 9. Настройки в UI
+## 9. Settings in the UI
 
-Решение (Р7): **отдельная вкладка «Озвучивание»** — четвёртая в таб-стрипе секции
-«Модель» (Ассистент · Имперсонация · Эмбеддинги · Озвучивание): TTS это ещё один
-«серверный слот» с теми же mode-driven полями. Состав:
+Decision (R7): **a separate "Speech" tab** — the fourth in the tab strip of the
+"Model" section (Assistant · Impersonation · Embeddings · Speech): TTS is another
+"server slot" with the same mode-driven fields. Composition:
 
-- группа **«Движок»** — селектор режима, модель, голос, скорость; у external — URL;
-  ключ — общее поле-статус провайдера (ADR 0008, вводить заново не нужно);
-- группа **«Поведение»** — тумблеры «Озвучивать роли» (Р6), «Прерывать при
-  переключении чата» (вкл), «Прерывать при начале генерации» (выкл) (Р8).
+- an **"Engine"** group — mode selector, model, voice, speed; for external — URL;
+  key — the shared provider-status field (ADR 0008, no need to re-enter);
+- a **"Behavior"** group — toggles "Speak roles" (R6), "Interrupt on chat
+  switch" (on), "Interrupt on generation start" (off) (R8).
 
-Отвергнутая альтернатива — группа в «Интерфейсе»: поля движковые, а не
-оформительские, и вкладка даёт им mode-driven visibility «бесплатно».
+Rejected alternative — a group in "Interface": the fields are engine fields, not
+appearance ones, and the tab gives them mode-driven visibility "for free."
 
-## 10. Решения (приняты пользователем 2026-07-21)
+## 10. Decisions (accepted by the user 2026-07-21)
 
-Р4 и Р7 подтверждены явно; Р5, Р6 и Р8 приняты **с поправками пользователя**
-(отражены в §7–§9); остальные — по рекомендациям. **Р1 и Р2 требуют пересмотра
-после реверта — см. §13.**
+R4 and R7 were confirmed explicitly; R5, R6, and R8 were accepted **with the
+user's amendments** (reflected in §7–§9); the rest — per the recommendations.
+**R1 and R2 need revisiting after the revert — see §13.**
 
-- **Р1. Объём MVP (этап 1)** — *по рекомендации*: команда `/tts` + экстрактор +
-  плеер + режимы **OpenAi / Gemini / External**. Локальный сайдкар (managed) —
-  этапом 2. **Пересмотр (§13.5): порядок меняется — локальный движок становится
-  первичным, облака отходят на роль опциональных.**
-- **Р2. Локальный движок сайдкара** — *было*: **sherpa-onnx** (Apache-2.0) +
-  piper-голоса `ru_RU-dmitri` (CC0). Подварианты: (а) CLI-сайдкар
-  `sherpa-onnx-offline-tts`; (б) официальный Rust-крейт in-process; (в) piper
-  MIT-бинарь 2023. Итог спайка: (а) непригоден для кириллицы на Windows
-  (ANSI-argv, §4) → взят (в). **Пересмотр (§13.2): (в) провалился по качеству;
-  новые кандидаты — Qwen3-TTS через `qwentts.cpp` и Supertonic 3.**
-- **Р3. Воспроизведение** — *по рекомендации*: `rodio` в процессе (§6). Принятая
-  цена: системная C-зависимость ALSA на Linux + MPL-2.0 (Symphonia) в `deny.toml`.
-  **В силе.**
-- **Р4. Фильтрация Markdown** — *подтверждено*: таблица §5. **В силе.**
-- **Р5. Синтаксис команды** — *поправка пользователя*: `/tts`, `/tts N`,
-  `/tts all`, `/tts stop` (§7). **В силе.**
-- **Р6. Роли** — *поправка пользователя*: тумблер «Озвучивать роли», действует во
-  всех трёх вариантах команды. **В силе.**
-- **Р7. Настройки в UI** — *подтверждено*: вкладка «Озвучивание» в секции
-  «Модель» (§9). **В силе.**
-- **Р8. Прерывание воспроизведения** — *поправка пользователя*: две независимые
-  настройки + безусловные остановки. **В силе.**
-- **Р9. Режим «ОС-TTS без моделей»** — *по рекомендации*: **не в объёме**.
-  **В силе.**
+- **R1. MVP scope (stage 1)** — *per the recommendation*: the `/tts` command +
+  extractor + player + modes **OpenAi / Gemini / External**. A local sidecar
+  (managed) — as stage 2. **Revised (§13.5): the order changes — the local
+  engine becomes primary, clouds move to an optional role.**
+- **R2. The sidecar's local engine** — *was*: **sherpa-onnx** (Apache-2.0) +
+  piper voices `ru_RU-dmitri` (CC0). Sub-options: (a) a CLI sidecar
+  `sherpa-onnx-offline-tts`; (b) the official Rust crate in-process; (c) the
+  piper MIT binary 2023. Spike outcome: (a) unsuitable for Cyrillic on
+  Windows (ANSI argv, §4) → (c) was taken. **Revised (§13.2): (c) failed on
+  quality; new candidates — Qwen3-TTS via `qwentts.cpp` and Supertonic 3.**
+- **R3. Playback** — *per the recommendation*: `rodio` in-process (§6). The
+  accepted cost: a system C dependency ALSA on Linux + MPL-2.0 (Symphonia) in
+  `deny.toml`. **Still in effect.**
+- **R4. Markdown filtering** — *confirmed*: the table in §5. **Still in
+  effect.**
+- **R5. Command syntax** — *user's amendment*: `/tts`, `/tts N`, `/tts all`,
+  `/tts stop` (§7). **Still in effect.**
+- **R6. Roles** — *user's amendment*: a "Speak roles" toggle, applies in all
+  three command variants. **Still in effect.**
+- **R7. Settings in the UI** — *confirmed*: the "Speech" tab in the "Model"
+  section (§9). **Still in effect.**
+- **R8. Interrupting playback** — *user's amendment*: two independent
+  settings + unconditional stops. **Still in effect.**
+- **R9. An "OS TTS with no models" mode** — *per the recommendation*: **out of
+  scope**. **Still in effect.**
 
-## 11. План этапов (история)
+## 11. Stage plan (history)
 
-1. **Этап 1 `feat/tts-core`** — был сделан, **откатан** (`839df19`): конфиг +
-   вкладка «Озвучивание», команда `/tts`, речевой экстрактор с пометками, плеер
-   rodio, клиенты OpenAi/Gemini/External, точки остановки, чип статуса, i18n,
-   CI/packaging-правки (ALSA, deny.toml), смоуки.
-2. **Этап 2 `feat/tts-sidecar`** — был сделан, **откатан** (`6fd8529`):
-   managed-режим на бинаре `piper` + `mindfork tts setup` + голоса ru/en.
-3. **ADR 0009** — был написан, **удалён** вместе с реализацией.
-4. **Новый план** — §13.5.
+1. **Stage 1 `feat/tts-core`** — was done, **rolled back** (`839df19`): config
+   + the "Speech" tab, the `/tts` command, the speech extractor with notices,
+   the `rodio` player, OpenAi/Gemini/External clients, stop points, the status
+   chip, i18n, CI/packaging tweaks (ALSA, deny.toml), smokes.
+2. **Stage 2 `feat/tts-sidecar`** — was done, **rolled back** (`6fd8529`): a
+   managed mode on the `piper` binary + `mindfork tts setup` + ru/en voices.
+3. **ADR 0009** — was written, **removed** along with the implementation.
+4. **New plan** — §13.5.
 
-Инфраструктурная часть (экстрактор, команда, плеер, точки остановки, UI-вкладка)
-провал не затронул — она отработала как задумано; переписывать её при повторном
-заходе не нужно, можно поднять из отревертнутых коммитов (`git show 19ead9f`).
+The infrastructure part (extractor, command, player, stop points, the UI tab)
+wasn't affected by the failure — it worked as intended; no need to rewrite it
+on a repeat pass, it can be restored from the reverted commits
+(`git show 19ead9f`).
 
-## 12. Ключевые источники (первая волна, 07.2026)
+## 12. Key sources (first wave, 07.2026)
 
-- OpenAI: справка `createSpeech` и гайд Text-to-speech (developers.openai.com) —
-  параметры/лимиты/цены/`stream_format`; страница модели `gpt-4o-mini-tts`.
-- Gemini: «Speech generation» (ai.google.dev, актуальная и legacy-страницы) —
-  формы `generateContent`, голоса, языки, цены, стриминг с 3.1.
-- Anthropic: обзор API (platform.claude.com/docs/en/api/overview) — поверхность без
-  speech/audio.
-- Локальные серверы: репозитории Kokoro-FastAPI, speaches (+HF-реестр piper-голосов
-  ru_RU), LocalAI, AllTalk v2 (wiki OpenAI-эндпоинта), chatterbox-tts-api,
-  openedai-speech (архив).
-- Локальные движки: sherpa-onnx (релизы v1.13.4 + model zoo + официальный крейт
-  docs.rs/sherpa-onnx); piper (rhasspy/piper — архив, релиз 2023.11.14-2;
-  OHF-Voice/piper1-gpl v1.5.0 — GPL, pip-only); HF `rhasspy/piper-voices`
-  (MODEL_CARD голосов ru_RU — лицензии данных: denis/dmitri CC0, irina Unknown,
-  ruslan CC BY-NC-SA); silero-models (LICENSE CC BY-NC-SA; MIT только v5_cis_base);
-  Supertonic (supertone-inc/supertonic + HF Supertone/supertonic-3, OpenRAIL-M);
-  llama.cpp `tools/tts` + Draft-PR #12794 (OuteTTS-1.0); HF OuteAI/OuteTTS-1.0-0.6B.
-- Воспроизведение: rodio 0.22 (docs.rs/CHANGELOG/UPGRADE), cpal (README/CHANGELOG —
-  Send-стримы 0.17, windows-rs на WASAPI, ALSA-требования), Symphonia (MPL-2.0),
-  cpal#384 (шум ALSA в stderr); tts-rs, NaturalVoiceSAPIAdapter, msedge-tts /
-  edge-tts#290/#458 (история блокировок).
+- OpenAI: the `createSpeech` reference and the Text-to-speech guide
+  (developers.openai.com) — parameters/limits/pricing/`stream_format`; the
+  `gpt-4o-mini-tts` model page.
+- Gemini: "Speech generation" (ai.google.dev, current and legacy pages) —
+  `generateContent` shapes, voices, languages, pricing, streaming from 3.1.
+- Anthropic: the API overview (platform.claude.com/docs/en/api/overview) — a
+  surface with no speech/audio.
+- Local servers: the Kokoro-FastAPI, speaches (+ the HF piper-voices ru_RU
+  registry), LocalAI, AllTalk v2 (the OpenAI-endpoint wiki), chatterbox-tts-api,
+  openedai-speech (archived) repositories.
+- Local engines: sherpa-onnx (releases v1.13.4 + the model zoo + the official
+  crate docs.rs/sherpa-onnx); piper (rhasspy/piper — archived, release
+  2023.11.14-2; OHF-Voice/piper1-gpl v1.5.0 — GPL, pip-only); HF
+  `rhasspy/piper-voices` (the MODEL_CARD for ru_RU voices — data licenses:
+  denis/dmitri CC0, irina Unknown, ruslan CC BY-NC-SA); silero-models (LICENSE
+  CC BY-NC-SA; MIT only for v5_cis_base); Supertonic
+  (supertone-inc/supertonic + HF Supertone/supertonic-3, OpenRAIL-M);
+  llama.cpp `tools/tts` + Draft PR #12794 (OuteTTS-1.0); HF
+  OuteAI/OuteTTS-1.0-0.6B.
+- Playback: rodio 0.22 (docs.rs/CHANGELOG/UPGRADE), cpal (README/CHANGELOG —
+  Send streams 0.17, windows-rs on WASAPI, ALSA requirements), Symphonia
+  (MPL-2.0), cpal#384 (ALSA noise on stderr); tts-rs, NaturalVoiceSAPIAdapter,
+  msedge-tts / edge-tts#290/#458 (a history of blocks).
 
 ---
 
-## 13. Ревизия после реверта (разведка 2026-07-22)
+## 13. Post-revert revision (recon 2026-07-22)
 
-Вторая волна исследования — три параллельных веб-обзора (ландшафт локальных
-движков; качество русского; рантаймы для Rust) + личная перепроверка ключевых
-лицензий по карточкам HF и репозиториям. Ограничения, заданные пользователем на
-входе: **GPU допустим** (RTX 4090), поставка — **только бинарь + модель, без
-Python-окружения**, **русский и английский одинаково важны**.
+A second wave of research — three parallel web surveys (the local-engine
+landscape; Russian quality; Rust runtimes) + a personal recheck of the key
+licenses against HF cards and repositories. Constraints set by the user going
+in: **GPU is allowed** (RTX 4090), delivery — **binary + model only, no
+Python environment**, **Russian and English equally important**.
 
-### 13.1 Диагноз: почему провалились все три движка
+### 13.1 Diagnosis: why all three engines failed
 
-Это важнее списка кандидатов — оно объясняет, что именно искать.
+This matters more than the candidate list — it explains exactly what to look
+for.
 
-- **Gemini — «Франкенштейн».** Причина **не в Markdown** (экстрактор §5 отработал)
-  и не в нарезке. Gemini TTS — **авторегрессионный LLM**: он порождает речь
-  токенами и на каждом чанке заново «выбирает» тембр и интонацию. Дрейф между
-  чанками — структурное свойство класса, а не дефект интеграции. Плюс `503`
-  на preview-моделях (GA-версии TTS у Gemini нет).
-- **piper — «читает обычный человек».** Корень — **акустическая модель и данные**,
-  а не отсутствие ударений:
-  - работа Balalaika (arXiv 2507.13563) обучила VITS на лучшем русском датасете:
-    общий MOS **3.618**, но **Intonation MOS 2.532** — плоская интонация присуща
-    классу; добавление пунктуации и ударений улучшило метрики, но «gaps were
-    modest»;
-  - оценка Н. Шмырева (alphacephei, 14 движков): «you can deal with plain
-    intonation but artifacts are really annoying» — плоскость признана свойством;
-  - голос `irina` — файнтюн с английского `lessac` примерно на **1 часе** данных
-    RHVoice;
-  - маркер ударения в piper для русского **сломан**
-    ([rhasspy/piper#684](https://github.com/rhasspy/piper/issues/684), репозиторий
-    заархивирован 06.10.2025).
+- **Gemini — a "Frankenstein."** The cause **isn't Markdown** (the extractor
+  in §5 worked fine) and isn't chunking. Gemini TTS is an **autoregressive
+  LLM**: it generates speech token by token and re-"picks" timbre and
+  intonation on every chunk. Drift between chunks is a structural property
+  of the class, not an integration defect. Plus `503` errors on preview
+  models (Gemini has no GA TTS version).
+- **piper — "reads like an ordinary person."** The root cause is the
+  **acoustic model and data**, not missing stress marks:
+  - the Balalaika paper (arXiv 2507.13563) trained VITS on the best Russian
+    dataset: overall MOS **3.618**, but **Intonation MOS 2.532** — flat
+    intonation is inherent to the class; adding punctuation and stress marks
+    improved the metrics, but "gaps were modest";
+  - N. Shmyrev's evaluation (alphacephei, 14 engines): "you can deal with
+    plain intonation but artifacts are really annoying" — flatness is
+    acknowledged as a property;
+  - the `irina` voice is a fine-tune from the English `lessac` on roughly
+    **1 hour** of RHVoice data;
+  - piper's Russian stress marker is **broken**
+    ([rhasspy/piper#684](https://github.com/rhasspy/piper/issues/684), the
+    repository was archived on 2025-10-06).
 
-  **Следствие:** прикручивание расстановщика ударений (RUAccent) к piper убрало бы
-  ошибки в омографах, но **не** сделало бы речь дикторской. Этап был бы потрачен зря.
-- **OpenAI** — известный дефект `gpt-4o-mini-tts`; со стороны клиента не лечится.
+  **Consequence:** bolting a stress-placement tool (RUAccent) onto piper
+  would remove homograph errors, but would **not** make the speech sound
+  professionally delivered. The stage would have been wasted.
+- **OpenAI** — a known `gpt-4o-mini-tts` defect; not fixable client-side.
 
-**Критерий выбора, вытекающий отсюда:** движок должен быть (а) обучен на живой
-речи, а не на начитке, и при этом (б) **детерминирован** либо жёстко привязан к
-фиксированному тембру — иначе выразительность покупается ценой возврата «дрейфа».
+**The selection criterion this implies:** the engine must be (a) trained on
+natural speech, not read-aloud narration, and at the same time
+(b) **deterministic** or hard-pinned to a fixed timbre — otherwise
+expressiveness is bought at the price of "drift" coming back.
 
-### 13.2 Два кандидата (лицензии проверены лично по первоисточникам)
+### 13.2 Two candidates (licenses personally verified against primary sources)
 
 | | **Qwen3-TTS** | **Supertonic 3** |
 |---|---|---|
-| Код | Apache-2.0 ([QwenLM/Qwen3-TTS](https://github.com/QwenLM/Qwen3-TTS)) | MIT («This project's sample code is released under the MIT License») |
-| **Веса** | **Apache-2.0** ✅ (карточка [Qwen3-TTS-12Hz-1.7B-Base](https://huggingface.co/Qwen/Qwen3-TTS-12Hz-1.7B-Base), релиз 22.01.2026) | **OpenRAIL-M** ⚠️ — коммерция и редистрибуция разрешены, но с use-restrictions, которые надо пробрасывать конечному пользователю |
-| Русский | ✅ 1 из 10 языков; **WER 3.212 против 3.878 у ElevenLabs** и 4.281 у MiniMax (техотчёт, Table 6) | ✅ 1 из 31 языка; WER 3.99 (Minimax-MLS-test) |
-| Класс | LLM-TTS, 1.7B (есть 0.6B) | не-LLM, **~99M**, чистый ONNX |
-| Рантайм без Python | ✅ [qwentts.cpp](https://github.com/ServeurpersoCom/qwentts.cpp) — **MIT**, GGML, CPU/CUDA/Vulkan/Metal, `buildcuda.cmd`/`buildvulkan.cmd`, **`tts-server` с `/v1/audio/speech`**; также [чистый C](https://github.com/gabriele-mastrapasqua/qwen3-tts) и [Rust на candle](https://github.com/TrevorS/qwen3-tts-rs) (оба MIT) | ✅ нативный Rust в апстриме (`rust/`, на `ort` 2.0-rc), 4 ONNX-файла + `voice.bin`; либо крейт `sherpa-onnx` (с оговоркой §13.3) |
-| Скорость | RTF 0.35 на RTX 5050; 0.5–0.7 на CPU для 0.6B (int4/int8, M1) | RTF ≈0.3 **на электронной книге**; ~6.1× realtime против 2.0× у Kokoro-82M |
-| **G2P / espeak-ng** | не нужен | **не нужен** — работает с сырым символьным текстом (arXiv 2503.23108), G2P-модуль отсутствует архитектурно |
-| Стабильность голоса | 9 фиксированных тембров CustomVoice **без reference-аудио** (дрейфа тембра от zero-shot нет), `--seed`/низкая `temperature`; но LLM → **просодия между вызовами может слегка гулять** | **детерминирован по построению** — иммунен к классу отказа Gemini |
-| Ударения/омографы | ❌ обучен без разметки ударений ([discussion #185](https://github.com/QwenLM/Qwen3-TTS/discussions/185), ответа мейнтейнеров нет) | ❌ явного фронтенда ударений тоже нет |
+| Code | Apache-2.0 ([QwenLM/Qwen3-TTS](https://github.com/QwenLM/Qwen3-TTS)) | MIT ("This project's sample code is released under the MIT License") |
+| **Weights** | **Apache-2.0** ✅ (the [Qwen3-TTS-12Hz-1.7B-Base](https://huggingface.co/Qwen/Qwen3-TTS-12Hz-1.7B-Base) card, released 2026-01-22) | **OpenRAIL-M** ⚠️ — commercial use and redistribution allowed, but with use restrictions that must be passed through to the end user |
+| Russian | ✅ 1 of 10 languages; **WER 3.212 vs. 3.878 for ElevenLabs** and 4.281 for MiniMax (tech report, Table 6) | ✅ 1 of 31 languages; WER 3.99 (Minimax-MLS-test) |
+| Class | LLM-TTS, 1.7B (a 0.6B variant exists) | non-LLM, **~99M**, pure ONNX |
+| Runtime without Python | ✅ [qwentts.cpp](https://github.com/ServeurpersoCom/qwentts.cpp) — **MIT**, GGML, CPU/CUDA/Vulkan/Metal, `buildcuda.cmd`/`buildvulkan.cmd`, **`tts-server` with `/v1/audio/speech`**; also [pure C](https://github.com/gabriele-mastrapasqua/qwen3-tts) and [Rust on candle](https://github.com/TrevorS/qwen3-tts-rs) (both MIT) | ✅ native Rust upstream (`rust/`, on `ort` 2.0-rc), 4 ONNX files + `voice.bin`; or the `sherpa-onnx` crate (with the caveat in §13.3) |
+| Speed | RTF 0.35 on RTX 5050; 0.5–0.7 on CPU for 0.6B (int4/int8, M1) | RTF ≈0.3 **on an e-reader**; ~6.1× realtime vs. 2.0× for Kokoro-82M |
+| **G2P / espeak-ng** | not needed | **not needed** — works on raw character text (arXiv 2503.23108), the G2P module is architecturally absent |
+| Voice stability | 9 fixed CustomVoice timbres **with no reference audio** (no timbre drift from zero-shot), `--seed`/low `temperature`; but LLM → **prosody may wander slightly across calls** | **deterministic by construction** — immune to Gemini's failure class |
+| Stress/homographs | ❌ trained with no stress annotation ([discussion #185](https://github.com/QwenLM/Qwen3-TTS/discussions/185), no maintainer reply) | ❌ no explicit stress frontend either |
 
-**Оговорка по метрике WER:** отличный WER и проблема омографов не противоречат друг
-другу — WER считается через ASR-транскрипцию, а распознавание к ударению почти
-нечувствительно («за́мок» и «замо́к» дают одну строку). Цифра эту проблему **не
-видит**.
+**A caveat on the WER metric:** an excellent WER and the homograph problem aren't
+contradictory — WER is computed via ASR transcription, and speech recognition is nearly
+insensitive to stress (the two stress variants of a Russian homograph transcribe to the
+same line). The number simply **doesn't see** this problem.
 
-**Оговорка по тембрам Qwen:** 9 пресетов CustomVoice — это zh/en/ja/ko
-(ryan, aiden, vivian, serena, uncle_fu, dylan, eric, ono_anna, sohee). Русского
-пресета нет; читать по-русски они по идее должны (тембр и язык развязаны), но это
-**подлежит проверке ушами**, а не вере на слово. Русско-английский код-свитчинг
-официально измерен только на паре zh-en.
+**A caveat on Qwen's timbres:** the 9 CustomVoice presets are zh/en/ja/ko
+(ryan, aiden, vivian, serena, uncle_fu, dylan, eric, ono_anna, sohee). There's no Russian
+preset; they should in principle read Russian (timbre and language are decoupled), but this
+**needs verifying by ear**, not taking on faith. Russian-English code-switching has been
+officially measured only for the zh-en pair.
 
-### 13.3 Лицензионная мина: espeak-ng внутри sherpa-onnx
+### 13.3 A licensing landmine: espeak-ng inside sherpa-onnx
 
-Важный для MIT-проекта результат, вскрытый второй волной и **не учтённый** в §4:
+A finding important for an MIT project, uncovered by the second wave and **not
+accounted for** in §4:
 
-- `CMakeLists.txt` sherpa-onnx: при `SHERPA_ONNX_ENABLE_TTS` (**ON по умолчанию**)
-  подключается `espeak-ng-for-piper`; в статических сборках присутствует
-  `libespeak-ng.a`. Prebuilt-архивы, которые качает build-script Rust-крейта,
-  почти наверняка его содержат.
-- espeak-ng — **GPL-3.0**; просьба о смене на LGPL
-  ([espeak-ng#2131](https://github.com/espeak-ng/espeak-ng/issues/2131)) закрыта
-  как «not planned».
-- Сам k2-fsa это признал: [sherpa-onnx#3731](https://github.com/k2-fsa/sherpa-onnx/issues/3731)
-  (08.07.2026) — «incompatible with the Apache-2.0 license of sherpa-onnx»,
-  удаление запланировано в **2.0.0** (breaking).
+- sherpa-onnx's `CMakeLists.txt`: with `SHERPA_ONNX_ENABLE_TTS` (**ON by
+  default**), `espeak-ng-for-piper` is pulled in; static builds contain
+  `libespeak-ng.a`. The prebuilt archives downloaded by the Rust crate's
+  build script almost certainly contain it.
+- espeak-ng is **GPL-3.0**; a request to switch to LGPL
+  ([espeak-ng#2131](https://github.com/espeak-ng/espeak-ng/issues/2131)) was
+  closed as "not planned."
+- k2-fsa itself acknowledged this:
+  [sherpa-onnx#3731](https://github.com/k2-fsa/sherpa-onnx/issues/3731)
+  (2026-07-08) — "incompatible with the Apache-2.0 license of sherpa-onnx",
+  removal is planned for **2.0.0** (a breaking change).
 
-Последствия по способам использования: статическая линковка в наш `.exe` → бинарь
-как единое произведение попадает под GPL-3.0; сайдкар-процесс → «на расстоянии
-вытянутой руки», претензий нет (**именно поэтому прежний piper-сайдкар был чист**).
-**Оба кандидата §13.2 espeak не требуют вовсе — вопрос не возникает.**
+Consequences by usage mode: static linking into our `.exe` → the binary as a
+combined work falls under GPL-3.0; a sidecar process → "arm's length," no
+claim arises (**exactly why the previous piper sidecar was clean**). **Neither
+candidate in §13.2 needs espeak at all — the question doesn't arise.**
 
-Отдельно: пермиссивного русского G2P в 2026 фактически не существует
-(`piper-plus-g2p` — MIT, но без русского; gruut/OpenPhonemizer — Python либо только
-английский). Единственный чистый выход — модель, которой G2P не нужен.
+Separately: a permissive Russian G2P effectively doesn't exist in 2026
+(`piper-plus-g2p` — MIT, but no Russian; gruut/OpenPhonemizer — Python or
+English only). The only clean way out is a model that doesn't need G2P.
 
-### 13.4 Что перепроверено и осталось отрицательным
+### 13.4 What was rechecked and stayed negative
 
-- **llama.cpp / GGUF** — путь по-прежнему мёртв: PR #12794 (OuteTTS 1.0) в статусе
-  **draft**, последний содержательный комментарий 19.05.2025; `/v1/audio/speech` в
-  `llama-server` нет (то, что добавили в #13714 — audio **input**, ASR-сторона).
-- **ESpeech-TTS-1** (лучший русский по отзывам Habr, обучен на подкастах →
-  «дикторская» подача, встроен RUAccent) — **дисквалифицирован дважды**: только
-  PyTorch (нарушает «без Python») и **недоказанное происхождение весов** — построен
-  на F5-TTS, у которого предобученные веса **CC-BY-NC** («due to the training data
-  Emilia»); заявленный Apache-2.0 может быть юридически несостоятелен, публичного
-  заявления «trained from scratch» нет.
-- **Silero** — MIT только у `v5_cis_base`/`_nostress` (без авто-ударений); все
-  удобные `v5_*_ru` и именные голоса — **CC-BY-NC**. Плюс `.pt/.jit` → PyTorch.
-- **F5-TTS_RUSSIAN** (Misha24-10) — качество отличное, веса **CC-BY-NC-4.0**.
-- **Fun-CosyVoice3-0.5B** — Apache-2.0, русский хорош, но дисклеймер «for academic
-  purposes only» противоречит тегу, и **12.25 с на CPU**; Python.
-- **Higgs Audio v2** — веса под Boson Community License (порог MAU, обязательная
-  атрибуция), на русском «сильный акцент».
-- **VibeVoice** — MIT, но «research purpose only» и только EN/ZH.
-- **Chatterbox Multilingual** — MIT + русский есть, но качество русского слабое
-  («проблемы с ударениями и интонацией») и это PyTorch 0.5B.
-- **vosk-tts** — самая чистая лицензия обзора (Apache-2.0 код и веса, ONNX), но по
-  звучанию класс piper, то есть исходная претензия сохраняется; C/Rust-биндингов нет.
-- **TTS Arena для русского бесполезна** — арена оценивает только английский; любые
-  «топ open TTS 2026» (Step Audio EditX, Voxtral, Kokoro, Maya1) к русскому
-  отношения не имеют. Voxtral вдобавок CC-BY-NC и без русского.
+- **llama.cpp / GGUF** — this path is still dead: PR #12794 (OuteTTS 1.0) is
+  still **draft**, the last substantive comment 2025-05-19; `llama-server` has
+  no `/v1/audio/speech` (what was added in #13714 is audio **input**, the ASR
+  side).
+- **ESpeech-TTS-1** (the best Russian per Habr reviews, trained on podcasts →
+  a "professional-narrator" delivery, RUAccent built in) — **disqualified
+  twice**: Python-only (violates "no Python") and **unproven weight
+  provenance** — built on F5-TTS, whose pretrained weights are **CC-BY-NC**
+  ("due to the training data Emilia"); the claimed Apache-2.0 may be legally
+  unsound, there's no public statement of "trained from scratch."
+- **Silero** — MIT only for `v5_cis_base`/`_nostress` (no auto-stress); all
+  the convenient `v5_*_ru` and named voices are **CC-BY-NC**. Plus
+  `.pt/.jit` → PyTorch.
+- **F5-TTS_RUSSIAN** (Misha24-10) — quality excellent, weights are
+  **CC-BY-NC-4.0**.
+- **Fun-CosyVoice3-0.5B** — Apache-2.0, Russian is good, but the "for
+  academic purposes only" disclaimer contradicts the tag, and **12.25 s on
+  CPU**; Python.
+- **Higgs Audio v2** — weights under the Boson Community License (an MAU
+  threshold, mandatory attribution), "a strong accent" in Russian.
+- **VibeVoice** — MIT, but "research purpose only" and EN/ZH only.
+- **Chatterbox Multilingual** — MIT + Russian is present, but Russian
+  quality is weak ("stress and intonation problems") and it's PyTorch 0.5B.
+- **vosk-tts** — the cleanest license in the survey (Apache-2.0 code and
+  weights, ONNX), but its sound is in the piper class, i.e. the original
+  complaint stands; no C/Rust bindings.
+- **TTS Arena is useless for Russian** — the arena only evaluates English;
+  any "top open TTS 2026" list (Step Audio EditX, Voxtral, Kokoro, Maya1) is
+  irrelevant to Russian. Voxtral is also CC-BY-NC and has no Russian.
 
-### 13.5 Рекомендация и новый план
+### 13.5 Recommendation and new plan
 
-> **Устарело спайком (2026-07-22/23) — см. §13.7.** Рекомендация ниже отражает
-> состояние *до* прослушивания. Итог: Qwen3-TTS и Supertonic 3 — **NO-GO** по
-> звучанию русского, единственный прошедший планку — **vosk-tts** (§13.7). Оставлено
-> как история хода мысли.
+> **Superseded by the spike (2026-07-22/23) — see §13.7.** The recommendation
+> below reflects the state *before* listening. Outcome: Qwen3-TTS and
+> Supertonic 3 — **NO-GO** on Russian sound quality, the only one clearing
+> the bar — **vosk-tts** (§13.7). Left in as a record of the thought
+> process.
 
-**Первичный кандидат — Qwen3-TTS через сайдкар `qwentts.cpp`.** Три причины:
+**Primary candidate — Qwen3-TTS via the `qwentts.cpp` sidecar.** Three
+reasons:
 
-1. Лицензии чисты с обеих сторон (Apache-2.0 веса + MIT порт) — в отличие от
-   Supertonic (OpenRAIL-M) и ESpeech (недоказанная чистота).
-2. Единственный кандидат с объективным преимуществом по русскому над коммерческими
-   движками (WER лучше ElevenLabs).
-3. **Архитектурный бонус:** `tts-server` отдаёт **OpenAI-совместимый
-   `/v1/audio/speech`** — то есть проверяется уже написанным (и отревертнутым)
-   `external`-клиентом, **без единой новой строки** в движковом слое. Спайк = поднять
-   сайдкар и ткнуть в него существующим кодом.
+1. Licenses are clean on both sides (Apache-2.0 weights + MIT port) —
+   unlike Supertonic (OpenRAIL-M) and ESpeech (unproven cleanliness).
+2. The only candidate with an objective Russian-quality edge over
+   commercial engines (WER better than ElevenLabs).
+3. **An architectural bonus:** `tts-server` exposes an **OpenAI-compatible
+   `/v1/audio/speech`** — i.e. it's verified by the already-written (and
+   reverted) `external` client, **without a single new line** in the engine
+   layer. The spike = spin up the sidecar and point the existing code at it.
 
-**Вторичный — Supertonic 3**: иммунен к дрейфу по построению, в 17 раз меньше, без
-GPL и без G2P, есть Rust в апстриме. Против: OpenRAIL-M (не классический
-permissive) и непроверенная просодия русского. Годится и как CPU-фолбэк рядом с
-GPU-Qwen (мягкая деградация в духе проекта).
+**Secondary — Supertonic 3**: immune to drift by construction, 17× smaller,
+no GPL and no G2P, has Rust in the upstream. Against: OpenRAIL-M (not
+classic permissive) and unverified Russian prosody. Also fits as a CPU
+fallback next to GPU-side Qwen (graceful degradation in the project's
+spirit).
 
-**Что не решает ни один:** ударения и омографы. RUAccent (MIT, точность 0.96 на
-омографах, COLING 2025) — **только Python**, в посадку «бинарь + модель» не лезет.
-На старте — словарь омографов либо принять как есть.
+**What neither one solves:** stress and homographs. RUAccent (MIT, 0.96
+accuracy on homographs, COLING 2025) is **Python-only**, doesn't fit the
+"binary + model" deployment. At the start — a homograph dictionary, or
+accept it as-is.
 
-**План — сначала спайк, потом код** (прошлый заход умер именно потому, что качество
-проверяли *после* реализации двух этапов):
+**Plan — spike first, code later** (the previous pass died precisely
+because quality was checked *after* implementing two stages):
 
-1. **Спайк, без правок в `src/`**: собрать `qwentts.cpp` с CUDA под Windows,
-   поднять `tts-server`, скачать `Qwen3-TTS-12Hz-CustomVoice`. Прогнать три куска:
-   чистый русский абзац; русский с английскими терминами; **20–30 предложений
-   подряд одним тембром с фиксированным seed** — послушать, гуляет ли просодия
-   между чанками (главный критерий: на нём умер Gemini). Тем же способом прогнать
-   [демо Supertonic 3](https://supertonic3.github.io/) и сравнить.
-2. **GO/NO-GO по звучанию** — и только потом план этапа.
-3. При GO — поднять инфраструктуру этапа 1 из отревертнутых коммитов (экстрактор,
-   команда, плеер, точки остановки, вкладка настроек: `git show 19ead9f`), режим
-   `external` на локальный `tts-server`; managed-сайдкар с провизией по lock-списку
-   (паттерн ADR 0005) — следующим шагом.
-4. **Пересмотр Р1**: локальный движок становится первичным режимом, облака — только
-   опциональными (после трёх провалов доверять им как основному пути нельзя).
+1. **A spike, no edits to `src/`**: build `qwentts.cpp` with CUDA on
+   Windows, bring up `tts-server`, download `Qwen3-TTS-12Hz-CustomVoice`.
+   Run three pieces: a clean Russian paragraph; Russian with English terms;
+   **20–30 sentences in a row in one timbre with a fixed seed** — listen for
+   whether prosody drifts between chunks (the key criterion: this is what
+   killed Gemini). Run the
+   [Supertonic 3 demo](https://supertonic3.github.io/) the same way and
+   compare.
+2. **GO/NO-GO on sound quality** — only then the stage plan.
+3. On GO — restore stage 1's infrastructure from the reverted commits
+   (extractor, command, player, stop points, the settings tab:
+   `git show 19ead9f`), the `external` mode pointed at the local
+   `tts-server`; a managed sidecar with provisioning via a lock list (the
+   ADR 0005 pattern) — as the next step.
+4. **Revising R1**: the local engine becomes the primary mode, clouds
+   become optional only (after three failures they can't be trusted as the
+   primary path).
 
-### 13.6 Источники (вторая волна)
+### 13.6 Sources (second wave)
 
 - Qwen3-TTS: [QwenLM/Qwen3-TTS](https://github.com/QwenLM/Qwen3-TTS) ·
   [HF Qwen3-TTS-12Hz-1.7B-Base](https://huggingface.co/Qwen/Qwen3-TTS-12Hz-1.7B-Base) ·
   [arXiv 2601.15621](https://arxiv.org/html/2601.15621v1) ·
-  [discussion #185 (ударения)](https://github.com/QwenLM/Qwen3-TTS/discussions/185)
-- Порты: [ServeurpersoCom/qwentts.cpp](https://github.com/ServeurpersoCom/qwentts.cpp) ·
+  [discussion #185 (stress)](https://github.com/QwenLM/Qwen3-TTS/discussions/185)
+- Ports: [ServeurpersoCom/qwentts.cpp](https://github.com/ServeurpersoCom/qwentts.cpp) ·
   [gabriele-mastrapasqua/qwen3-tts](https://github.com/gabriele-mastrapasqua/qwen3-tts) ·
   [TrevorS/qwen3-tts-rs](https://github.com/TrevorS/qwen3-tts-rs)
 - Supertonic: [supertone-inc/supertonic](https://github.com/supertone-inc/supertonic) ·
   [HF Supertone/supertonic-3](https://huggingface.co/Supertone/supertonic-3) ·
   [arXiv 2503.23108](https://arxiv.org/abs/2503.23108) ·
   [sherpa-onnx: SupertonicTTS](https://k2-fsa.github.io/sherpa/onnx/tts/supertonic.html)
-- Лицензионная мина: [sherpa-onnx#3731](https://github.com/k2-fsa/sherpa-onnx/issues/3731) ·
+- Licensing landmine: [sherpa-onnx#3731](https://github.com/k2-fsa/sherpa-onnx/issues/3731) ·
   [espeak-ng#2131](https://github.com/espeak-ng/espeak-ng/issues/2131) ·
   [sherpa-onnx#849 (stdin/text-file)](https://github.com/k2-fsa/sherpa-onnx/issues/849)
-- Качество русского: [Habr: обзор Open Source TTS (03.02.2026)](https://habr.com/ru/companies/raft/articles/991844/) ·
-  [Habr: можно ли заменить диктора](https://habr.com/ru/companies/raft/articles/1031560/) ·
+- Russian quality: [Habr: an Open Source TTS survey (2026-02-03)](https://habr.com/ru/companies/raft/articles/991844/) ·
+  [Habr: can it replace a narrator](https://habr.com/ru/companies/raft/articles/1031560/) ·
   [alphacephei: Evaluation of Russian TTS](https://alphacephei.com/nsh/2024/07/12/russian-tts.html) ·
   [Balalaika, arXiv 2507.13563](https://arxiv.org/html/2507.13563v1) ·
   [rhasspy/piper#684](https://github.com/rhasspy/piper/issues/684)
-- Отклонённые: [F5-TTS (веса CC-BY-NC)](https://github.com/SWivid/F5-TTS) ·
+- Rejected: [F5-TTS (weights CC-BY-NC)](https://github.com/SWivid/F5-TTS) ·
   [ESpeech-TTS-1_RL-V2](https://huggingface.co/ESpeech/ESpeech-TTS-1_RL-V2) ·
   [silero-models](https://github.com/snakers4/silero-models) ·
   [Fun-CosyVoice3-0.5B](https://huggingface.co/FunAudioLLM/Fun-CosyVoice3-0.5B-2512) ·
   [llama.cpp PR #12794](https://github.com/ggml-org/llama.cpp/pull/12794)
-- Ударения: [RUAccent (MIT)](https://github.com/Den4ikAI/ruaccent) ·
+- Stress: [RUAccent (MIT)](https://github.com/Den4ikAI/ruaccent) ·
   [COLING 2025](https://aclanthology.org/2025.coling-main.444/)
-- Рантаймы: [crates.io/sherpa-onnx](https://crates.io/crates/sherpa-onnx) ·
+- Runtimes: [crates.io/sherpa-onnx](https://crates.io/crates/sherpa-onnx) ·
   [pykeio/ort](https://github.com/pykeio/ort) ·
   [mush42/sonata](https://github.com/mush42/sonata) ·
   [lucasjinreal/Kokoros](https://github.com/lucasjinreal/Kokoros)
 
-> **Оговорка о достоверности.** Лицензии проверены по карточкам HF и файлам
-> LICENSE в репозиториях (не по блогам), ключевые — перепроверены лично. Но
-> HF-тег `apache-2.0` — это метаданные, а не подписанный документ; для Qwen риск
-> минимален (Alibaba последовательно выпускает Qwen под Apache-2.0), для ESpeech —
-> наоборот. Данные о Qwen3-TTS и его портах относятся к январю–июлю 2026; они
-> проверены веб-запросами к первоисточникам, но **живьём не запускались** —
-> отсюда обязательный спайк §13.5.
+> **A reliability caveat.** Licenses were checked against HF cards and
+> LICENSE files in the repositories (not blogs), the key ones — personally
+> rechecked. But the HF `apache-2.0` tag is metadata, not a signed document;
+> for Qwen the risk is minimal (Alibaba consistently ships Qwen under
+> Apache-2.0), for ESpeech — the opposite. Data on Qwen3-TTS and its ports
+> covers January–July 2026; it was verified via web queries against primary
+> sources, but **not run live** — hence the mandatory spike in §13.5.
 
-### 13.7 Итоги спайка (2026-07-22/23): живой прогон трёх движков
+### 13.7 Spike results (2026-07-22/23): a live run of three engines
 
-Спайк проведён **вне репозитория** (`C:\tts-spike`, ни строки в `src/`), на реальном
-железе (Windows 11, RTX 4090, CUDA 12.4). Проверены три локальных кандидата, каждый —
-на одних и тех же текстах: чистый русский абзац (с омографами `за́мок/замо́к`,
-`до́рог/дорога́`), русский с англицизмами (`llama-server`, `Q4_K_M`, `bge-m3`, `503`),
-длинный текст ~30 предложений (одним вызовом **и** отдельными запросами по
-предложению — прямой тест дрейфа, на котором умер Gemini). Качество оценивал
-пользователь на слух; дрейф — объективно по разбросу F0/спектрального центроида с
-контролем на односессионном синтезе.
+The spike was run **outside the repository** (`C:\tts-spike`, not a single line
+in `src/`), on real hardware (Windows 11, RTX 4090, CUDA 12.4). Three local
+candidates were tested, each on the same texts: a clean Russian paragraph
+(with the homographs `за́мок`/`замо́к`, `до́рог`/`дорога́` — words whose meaning <!-- cyrillic-ok -->
+changes with stress placement), Russian with English loanwords
+(`llama-server`, `Q4_K_M`, `bge-m3`, `503`), a long ~30-sentence text (one
+call **and** separate per-sentence requests — a direct drift test, the one
+that killed Gemini). Quality was judged by ear by the user; drift —
+objectively, by the spread of F0/spectral centroid, with a control on
+single-session synthesis.
 
-**Ключевой методический результат — дрейф измерим.** CV основной частоты (F0) на
-непрерывном синтезе против склейки отдельных запросов того же текста тем же
-голосом/seed:
+**A key methodological result — drift is measurable.** The coefficient of
+variation of the fundamental frequency (F0) on continuous synthesis vs.
+splicing together separate requests for the same text with the same
+voice/seed:
 
-| движок | CV F0 одним вызовом | CV F0 по предложению | вывод |
+| engine | CV F0, single call | CV F0, per sentence | conclusion |
 |---|---|---|---|
-| Qwen3-TTS | 6.7% | **13.1%** (удвоение) | дрейф реален, слышен как «франкенштейн» |
-| Supertonic 3 | 6.7% | **6.1%** (не растёт) | дрейфа нет |
-| vosk-tts | 5.9% | **6.3%** (не растёт) | дрейфа нет |
+| Qwen3-TTS | 6.7% | **13.1%** (doubles) | drift is real, audible as a "Frankenstein" |
+| Supertonic 3 | 6.7% | **6.1%** (doesn't grow) | no drift |
+| vosk-tts | 5.9% | **6.3%** (doesn't grow) | no drift |
 
-**Qwen3-TTS — NO-GO.** Собран `qwentts.cpp` (грабли сборки: VS-генератор CMake требует
-MSBuild-CUDA-интеграции, которой в BuildTools нет → Ninja; длинные имена
-CUDA-объектников → короткий путь). Производительность отличная: RTF **0.113–0.120** на
-GPU, первый фрейм 49 мс; русский подтверждён в `language_names` GGUF;
-OpenAI-совместимый `/v1/audio/speech` работает (наш `external`-клиент подключился бы
-без правок). Но по звучанию русского провал по **четырём** осям: (1) неверные ударения
-даже в неомографах (`подстрОке`, `дорОгая` — контекста достаточно, модель просто не
-знает); (2) сильный **китайский акцент** на англицизмах (модель китайская, латиница
-через мандаринскую фонетику); (3) почанковый синтез — тот же «франкенштейн», что у
-Gemini (подтверждено и приборами, и слухом); (4) немотивированная эмоциональность
-(свойство авторегрессионного LLM-TTS). Апстрим-веса Apache-2.0, порт MIT — лицензия
-была бы идеальна, но качество непригодно.
+**Qwen3-TTS — NO-GO.** `qwentts.cpp` was built (build gotchas: CMake's VS
+generator needs MSBuild-CUDA integration, which BuildTools lacks → Ninja;
+long CUDA object-file names → a short path). Performance is excellent: RTF
+**0.113–0.120** on GPU, first frame 49 ms; Russian is confirmed in the
+GGUF's `language_names`; the OpenAI-compatible `/v1/audio/speech` works (our
+`external` client would connect with no changes). But on Russian sound
+quality it fails on **four** axes: (1) wrong stress even on non-homographs
+(context is enough for a human, the model simply doesn't know); (2) a strong
+**Chinese accent** on English loanwords (the model is Chinese, Latin script
+is rendered through Mandarin phonetics); (3) per-chunk synthesis — the same
+"Frankenstein" as Gemini's (confirmed both by instruments and by ear);
+(4) unmotivated emotionality (a property of autoregressive LLM-TTS). The
+upstream weights are Apache-2.0, the port MIT — the license would have been
+ideal, but the quality is unusable.
 
-**Supertonic 3 — NO-GO для русского.** Нативный Rust + `ort`, сборка 37 с, **без Python
-и без espeak** (G2P не нужен архитектурно — подтверждено составом зависимостей). RTF
-0.155 **на CPU** (GPU не понадобился), 44.1 кГц. **Дрейфа нет** (лучший показатель),
-недетерминизм ограничен тонкой текстурой: одинаковый вход даёт файл **того же размера
-до байта** (длительности/темп детерминированы duration-предиктором) — механизма
-«переизобрести интонацию на чанке» нет по построению. Пользователь: непрерывный и
-почанковый синтез звучат **однородно** («склейки ощущаются, но звучание однородное»),
-подача заметно живее piper. **Но ударения не чинятся.** Проверено: метка ударения
-U+0301 — известный токен модели (id 146, не заглушка), доходит и влияет (изменяет
-синтез, замерено по размеру файла) — однако (а) собственная точность модели по
-ударениям очень низкая, размечать нужно **почти всё**; (б) сплошная разметка звучит
-неестественно («эффект Suno» — знакомый пользователю); (в) часть слов метку
-**игнорирует** (`сто́ит` во всех позициях читается неверно). Итог: управляемого пути к
-верным ударениям нет. Лицензия весов — **OpenRAIL-M** (не классический permissive),
-что тоже было бы шагом вниз. Отдельная **переносимая находка**: транслитерация
-англицизмов кириллицей (`llama-server`→«ла́ма-се́рвер`, `Q4_K_M`→«ку четы́ре ка эм»)
-**убирает акцент начисто** на любом движке, а без сплошных меток — и механичность.
+**Supertonic 3 — NO-GO for Russian.** Native Rust + `ort`, a 37 s build,
+**no Python and no espeak** (G2P isn't needed architecturally — confirmed by
+the dependency list). RTF 0.155 **on CPU** (GPU wasn't needed), 44.1 kHz.
+**No drift** (the best result); non-determinism is limited to fine texture:
+identical input gives a file of the exact **same size, byte for byte**
+(durations/tempo are set by the duration predictor) — the "reinvent
+intonation per chunk" mechanism doesn't exist by construction. The user:
+continuous and per-chunk synthesis sound **uniform** ("the seams are
+noticeable, but the sound is uniform"), the delivery is noticeably livelier
+than piper's. **But stress isn't fixed.** Verified: the stress mark U+0301
+is a known model token (id 146, not a no-op), it reaches through and has an
+effect (changes the synthesis, measured by file size) — however (a) the
+model's own stress accuracy is very low, **almost everything** needs
+marking; (b) marking everything sounds unnatural (the "Suno effect" —
+familiar to the user); (c) some words **ignore** the mark (`сто́ит` reads <!-- cyrillic-ok -->
+wrong in every position). Bottom line: there's no controllable path to
+correct stress. The weights' license is **OpenRAIL-M** (not classic
+permissive), which would also be a step down. A separate **portable
+finding**: transliterating English loanwords into Cyrillic (e.g.
+`llama-server` → a Cyrillic phonetic spelling) **removes the accent
+entirely** on any engine, and — without full-text stress marking — the
+robotic-sounding delivery too.
 
-**vosk-tts — GO (с оговорками).** `vosk-model-tts-ru-0.9-multi` (746 МБ), ONNX через
-`onnxruntime`, **без torch в рантайме**. Единственный кандидат, берущий **обе**
-проблемы, убившие прошлые попытки:
+**vosk-tts — GO (with caveats).** `vosk-model-tts-ru-0.9-multi` (746 MB),
+ONNX via `onnxruntime`, **no torch at runtime**. The only candidate that
+handles **both** problems that killed the previous attempts:
 
-- **ударения решает сам, по контексту** — в пайплайне BERT-эмбеддинги
-  (`g2p_multistream`), поэтому тексты подавались **без единой метки**. Промах только на
-  настоящих омографах (`за́мок на двери`, `в слове до́рог`, `сто́ит` — держит дефолт
-  «стО́ит» независимо от контекста). Это меньшинство и лечится точечным словарём —
-  большой прогресс против Qwen/Supertonic, где ошибки были повсеместны;
-- **роботичность настраиваема** — решающий тест. Дефолт механичен, но параметр
-  `duration_noise_level` (вариация длительностей) + замедление темпа заметно оживляют.
-  Пользователь принял конфиг `slow-exp` (`noise_level=1.0`, `duration_noise_level=1.3`,
-  `speech_rate=0.9`) как «наилучший на вкус»; на полном контенте (1-ru, длинный текст)
-  звучит **приемлемо**;
-- **дрейфа нет** (CV F0 5.9%/6.3%);
-- **лицензия чистейшая** — **Apache-2.0 и код, и веса** (единственный такой из трёх).
+- **resolves stress itself, from context** — BERT embeddings in the
+  pipeline (`g2p_multistream`), so the texts were fed **with no stress
+  marks at all**. It only misses on genuine homographs (`за́мок на двери`, <!-- cyrillic-ok -->
+  `в слове до́рог`, `сто́ит` — it keeps the default stress regardless of <!-- cyrillic-ok -->
+  context). This is a minority and is fixable with a targeted dictionary —
+  a big improvement over Qwen/Supertonic, where errors were pervasive;
+- **robotic-ness is tunable** — the decisive test. The default is
+  mechanical, but the parameter `duration_noise_level` (duration variation)
+  + slowing the tempo noticeably livens it up. The user accepted the
+  `slow-exp` config (`noise_level=1.0`, `duration_noise_level=1.3`,
+  `speech_rate=0.9`) as "the best to taste"; on the full-length content
+  (1-ru, the long text) it sounds **acceptable**;
+- **no drift** (CV F0 5.9%/6.3%);
+- **the cleanest license** — **Apache-2.0 for both code and weights** (the
+  only one of the three like that).
 
-Оговорки vosk: **22050 Гц** (глуше 44.1 кГц Supertonic); RTF 0.26–0.75 на CPU
-(медленнее, но для конвейера годно); **латиница не поддерживается вовсе**
-(`KeyError: 'a'`) — транслитерация обязательна, не опциональна; фронтенд падает на
-ёлочках `«»`/тире и на pre-composed `ё` — нужен санитайзер + NFD-нормализация;
-транслитерированные англицизмы звучат «плоховато, но лучше двух предыдущих движков».
+vosk's caveats: **22050 Hz** (duller than Supertonic's 44.1 kHz); RTF
+0.26–0.75 on CPU (slower, but good enough for a pipeline); **Latin script
+isn't supported at all** (`KeyError: 'a'`) — transliteration is mandatory,
+not optional; the frontend chokes on guillemets `«»`/dashes and on
+pre-composed `ё` — needs a sanitizer + NFD normalization; transliterated
+English loanwords sound "not great, but better than the previous two
+engines."
 
-**Свод по полю (все шесть проверенных движков):**
+**Field summary (all six engines tested):**
 
-| движок | ударения | естественность | звук | дрейф | лицензия весов | вердикт |
+| engine | stress | naturalness | sound | drift | weights license | verdict |
 |---|---|---|---|---|---|---|
-| OpenAI gpt-4o-mini-tts | — | монотонно | — | — | облако | ✗ (реверт) |
-| Gemini TTS | — | хорошо | хорошо | **франкенштейн** + `503` | облако | ✗ (реверт) |
-| piper | плохо | **плоско** | 22 кГц | — | смешанная | ✗ (реверт) |
-| Qwen3-TTS | плохо | эмоц. дрейф | 24 кГц + кит. акцент | **удвоение CV** | Apache-2.0 ✅ | ✗ NO-GO |
-| Supertonic 3 | **очень плохо** | **хорошо** | 44 кГц ✅ | нет ✅ | OpenRAIL-M ⚠️ | ✗ NO-GO (ru) |
-| **vosk-tts** | **хорошо** (промах на омографах) | механично→**настраиваемо** | 22 кГц | нет ✅ | **Apache-2.0** ✅ | **✓ GO** |
+| OpenAI gpt-4o-mini-tts | — | monotone | — | — | cloud | ✗ (reverted) |
+| Gemini TTS | — | good | good | **Frankenstein** + `503` | cloud | ✗ (reverted) |
+| piper | poor | **flat** | 22 kHz | — | mixed | ✗ (reverted) |
+| Qwen3-TTS | poor | emotional drift | 24 kHz + Chinese accent | **CV doubles** | Apache-2.0 ✅ | ✗ NO-GO |
+| Supertonic 3 | **very poor** | **good** | 44 kHz ✅ | no ✅ | OpenRAIL-M ⚠️ | ✗ NO-GO (ru) |
+| **vosk-tts** | **good** (misses on homographs) | mechanical→**tunable** | 22 kHz | no ✅ | **Apache-2.0** ✅ | **✓ GO** |
 
-### 13.8 Стратегическая развилка и высокоуровневый план
+### 13.8 Strategic decision point and high-level plan
 
-> **Развилка закрыта (2026-07-23) в пользу OpenAI TTS** — см. §13.9. Текст ниже
-> оставлен как формулировка развилки и высокоуровневый план **vosk на случай
-> задела** (offline/не-OpenAI аудитория).
+> **The decision point is closed (2026-07-23) in favor of OpenAI TTS** — see
+> §13.9. The text below is left as the statement of the decision point and
+> the high-level **vosk** plan **for future groundwork** (offline/non-OpenAI
+> audience).
 
-По итогам спайка **главная развилка сместилась** — с «какой локальный движок» на
-«локальный **или** облачный/внешний вообще»:
+Following the spike, **the main decision point shifted** — from "which local
+engine" to "local **or** cloud/external at all":
 
-- **Локальный (vosk-tts).** Плюсы: бесплатно, приватно, offline, лицензия
-  Apache-2.0, дрейфа нет, ударения решает движок. Минусы: **высокая сложность
-  интеграции** (см. план ниже) — для поставки «без Python» нужен свой русский фронтенд;
-  22 кГц; омографы всё же промахиваются. Пользователь прямо отметил: «слишком много
-  сложностей».
-- **Облачный / внешний платный.** Резон пользователя: облачные LLM уже оплачиваются, а
-  TTS едва ли дороже (данные §3 это подтверждают: OpenAI ≈ $0.015/мин, у Gemini flash
-  есть бесплатный тир — на фоне токенов Opus это копейки). **Но:** «облако» повторно
-  открывает вопрос качества, на котором умер первый заход — Gemini давал франкенштейн,
-  OpenAI монотонен. То есть «пойти в облако» ≠ автоматическое решение: нужен облачный
-  движок, который **и звучит хорошо, и не дрейфует**. Это отдельная короткая оценка
-  (аналог этого спайка, но для облаков — ElevenLabs-класс, Azure, новые голоса OpenAI),
-  которую стоит провести **до** выбора, а не после. `external`-режim уже покрывает любой
-  OpenAI-совместимый сервер (в т.ч. премиум-облака через прокси, §3.4).
+- **Local (vosk-tts).** Pros: free, private, offline, Apache-2.0 license, no
+  drift, the engine resolves stress. Cons: **high integration complexity**
+  (see the plan below) — a "no Python" delivery needs a custom Russian
+  frontend; 22 kHz; homographs still get missed. The user noted directly:
+  "too much complexity."
+- **Cloud / paid external.** The user's reasoning: cloud LLMs are already
+  paid for, and TTS is hardly more expensive (§3's data confirms this:
+  OpenAI ≈ $0.015/min, Gemini flash has a free tier — against Opus token
+  costs it's pocket change). **But:** "cloud" reopens the quality question
+  that killed the first pass — Gemini produced a Frankenstein, OpenAI was
+  monotone. So "going to the cloud" ≠ an automatic solution: a cloud engine
+  is needed that **both sounds good and doesn't drift**. That's a separate
+  short evaluation (an analogue of this spike, but for clouds — the
+  ElevenLabs class, Azure, OpenAI's newer voices) that should be done
+  **before** choosing, not after. `external` mode already covers any
+  OpenAI-compatible server (including premium clouds via a proxy, §3.4).
 
-**Развилка не закрыта — решает пользователь.** Ниже — высокоуровневый план **на случай
-выбора vosk** (если победит облако, применяется куда более тонкая ветка: поднять
-отревертнутые `external`/`OpenAi`/`Gemini`-клиенты из `git show 19ead9f` + выбрать
-провайдера по короткой оценке качества).
+**The decision point isn't closed — the user decides.** Below is a
+high-level plan **for the case vosk is chosen** (if the cloud wins, a much
+thinner branch applies: restore the reverted `external`/`OpenAi`/`Gemini`
+clients from `git show 19ead9f` + pick a provider from the short quality
+evaluation).
 
-**Высокоуровневый план интеграции vosk-tts** (детали — при старте направления):
+**High-level plan for integrating vosk-tts** (details — when the track
+starts):
 
-1. **Инфраструктура из отревертнутых коммитов** (`git show 19ead9f`): речевой
-   экстрактор `pulldown-cmark` (§5), команда `/tts`/`N`/`all`/`stop` (§7), плеер `rodio`
-   (§6), точки остановки, вкладка «Озвучивание» (§9). Провал их не касался —
-   переписывать не нужно, только поднять.
-2. **Русский фронтенд на Rust** (главная и самая дорогая часть, аналог отдельной
-   подсистемы): BERT-разметка ударений (`tokenizers` — родной Rust-крейт + ONNX-BERT
-   через `ort`), g2p, санитайзер пунктуации (`«»`/тире/`ё`→NFD), **обязательная
-   транслитерация латиницы кириллицей** (таблица правил; находка §13.7 — работает на
-   любом движке). Риск — точно воспроизвести их `g2p_multistream`; словарь ударений
-   RUAccent (MIT) переиспользуем как **данные**.
-3. **Акустика через `ort`**: 4–5 ONNX-графов vosk + BERT-эмбеддинги на вход;
-   дефолтные параметры синтеза — `slow-exp` (`duration_noise_level=1.3`,
-   `speech_rate=0.9`); частота 22050 Гц.
-4. **Провизия `mindfork tts setup`** по lock-списку sha256 (паттерн ADR 0005): модель
-   vosk (746 МБ) + BERT + словари в `data/tts/`.
-5. **Рантайм-развилка отложена** (решение пользователя «пока не решать»): порт
-   фронтенда in-process (чистейше, но риск точности g2p) **против** Python-сайдкара в
-   wasmer/WASIX (нулевой риск g2p — их же код, но `onnxruntime` под WASIX — большой
-   вопрос). Разобрать отдельным зондом-разведкой перед реализацией.
-6. **Омографы** остаются нерешёнными точечно (`сто́ит` и пр.): либо мириться, либо
-   маленький словарь контекстных правил поверх фронтенда — задел.
+1. **Infrastructure from the reverted commits** (`git show 19ead9f`): the
+   speech extractor over `pulldown-cmark` (§5), the `/tts`/`N`/`all`/`stop`
+   command (§7), the `rodio` player (§6), stop points, the "Speech" tab
+   (§9). The failure didn't touch them — no need to rewrite, only restore.
+2. **A Russian frontend in Rust** (the main and most expensive part,
+   roughly a separate subsystem): BERT-based stress marking (`tokenizers` —
+   a native Rust crate + an ONNX BERT via `ort`), g2p, a punctuation
+   sanitizer (`«»`/dashes/`ё`→NFD), **mandatory transliteration of Latin
+   script into Cyrillic** (a rule table; a §13.7 finding — works on any
+   engine). Risk — reproducing their `g2p_multistream` exactly; reuse the
+   RUAccent (MIT) stress dictionary as **data**.
+3. **Acoustics via `ort`**: vosk's 4–5 ONNX graphs + BERT embeddings as
+   input; default synthesis parameters — `slow-exp`
+   (`duration_noise_level=1.3`, `speech_rate=0.9`); sample rate 22050 Hz.
+4. **`mindfork tts setup` provisioning** via an sha256 lock list (the
+   ADR 0005 pattern): the vosk model (746 MB) + BERT + dictionaries into
+   `data/tts/`.
+5. **A runtime decision point is deferred** (the user's decision: "not
+   deciding yet"): an in-process frontend port (cleanest, but a
+   g2p-accuracy risk) **vs.** a Python sidecar in wasmer/WASIX (zero g2p
+   risk — their own code, but `onnxruntime` under WASIX is a big question
+   mark). Investigate with a separate research spike before implementation.
+6. **Homographs** stay unresolved in specific spots (`сто́ит` etc.): either <!-- cyrillic-ok -->
+   live with it, or a small dictionary of contextual rules on top of the
+   frontend — future work.
 
-**Открытые заделы независимо от выбора:** переносимая транслитерация англицизмов
-(снижает акцент на **любом** локальном движке — задел для локальной ветки); короткая
-оценка качества премиум-облаков (ElevenLabs/Azure/новые OpenAI-голоса) на тех же
-текстах — **проведена, §13.9**.
+**Open groundwork regardless of the choice:** portable transliteration of
+English loanwords (reduces the accent on **any** local engine — future work
+for the local branch); the short quality evaluation of premium clouds
+(ElevenLabs/Azure/OpenAI's newer voices) on the same texts — **done,
+§13.9**.
 
-### 13.9 Облачная оценка (2026-07-23) — итог: OpenAI GO
+### 13.9 Cloud evaluation (2026-07-23) — outcome: OpenAI GO
 
-Прогон облачных TTS на тех же четырёх текстах, что локальный спайк (вне репозитория,
-ключи из env, не из чата). Пользователь просил ElevenLabs / Azure / OpenAI; **доступны
-были ключи только OpenAI и Gemini** (ElevenLabs/Azure — нет). Скрипты для ElevenLabs
-(`eleven_multilingual_v2`) и Azure (`ru-RU-DmitryNeural`, SSML) написаны и готовы к
-запуску (`C:\tts-spike\cloud-*.py`), но **не потребовались** — см. решение ниже.
+A run of cloud TTS on the same four texts as the local spike (outside the
+repository, keys from env, not from chat). The user asked for
+ElevenLabs / Azure / OpenAI; **only OpenAI and Gemini keys were available**
+(ElevenLabs/Azure — none). Scripts for ElevenLabs (`eleven_multilingual_v2`)
+and Azure (`ru-RU-DmitryNeural`, SSML) were written and ready to run
+(`C:\tts-spike\cloud-*.py`), but **weren't needed** — see the decision
+below.
 
-**OpenAI `gpt-4o-mini-tts` — GO.** Голос `onyx` + инструкция «natural clear Russian,
-calm male voice». Вердикт пользователя:
+**OpenAI `gpt-4o-mini-tts` — GO.** Voice `onyx` + the instruction "natural
+clear Russian, calm male voice." The user's verdict:
 
-- **ударения** — 1 ошибка на весь абзац (`за́мок на двери` — истинный омограф,
-  разрешимый только знанием мира). Это **лучше всех локальных**, включая vosk;
-- **англицизмы** — «идеально»: латиница читается **нативно**, транслитерация не нужна
-  (снимает целый пласт работы, обязательный для локального пути);
-- **дрейф** — нет: CV F0 **2.7%** одним запросом / 3.2% по предложению (лучший
-  показатель среди всех проверенных, локальных и облачных). F0 медиана 94 Гц —
-  уверенно мужской (жалоба реверта «мужской читался женским» не воспроизвелась).
+- **stress** — 1 error for the whole paragraph (a genuine homograph,
+  resolvable only by world knowledge). This is **better than every local
+  engine**, including vosk;
+- **English loanwords** — "perfect": Latin script is read **natively**, no
+  transliteration needed (removes a whole layer of work that's mandatory
+  for the local path);
+- **drift** — none: CV F0 **2.7%** with a single request / 3.2% per
+  sentence (the best result among everything tested, local and cloud).
+  Median F0 94 Hz — confidently male (the revert's complaint "the male
+  voice read as female" didn't reproduce).
 
-**Почему OpenAI провалился при реверте, а теперь нет.** Первый заход дал «монотонный
-женский» на выбранном мужском голосе — это была **ошибка конфигурации** (голос/модель/
-отсутствие `instructions`), а не предел OpenAI. С `gpt-4o-mini-tts` + `onyx` +
-инструкцией на русский результат отличный. Урок: движок был отвергнут по симптому
-неверной настройки.
+**Why OpenAI failed at the revert but not now.** The first pass gave
+"monotone female" on the selected male voice — that was a **configuration
+error** (voice/model/missing `instructions`), not an OpenAI ceiling. With
+`gpt-4o-mini-tts` + `onyx` + a Russian instruction the result is excellent.
+Lesson: the engine was rejected for a symptom of misconfiguration.
 
-**Диагноз «выросших пауз» (единственное замечание пользователя к chunked).** Тот же
-длинный текст: одним запросом **129.9 с**, по предложению — **154.6 с**. Разница 25 с
-— это накопленные паузы от **нарезки** (30 самостоятельных синтезов дают ритм
-«стоп-старт»), а не свойство OpenAI. Обрезка хвостовой тишины **не помогает** (проверено
-— дело не в тишине, а в пофразовой финальной интонации). **Правильное решение —
-не нарезать:** лимит запроса **4096 символов**, типичное сообщение (тест 1720) уходит
-**одним запросом** → непрерывная просодия, пауз-артефакта нет. Нарезка (по абзацам, не
-по предложениям) — только для редких сообщений > 4096 символов. Это отличает облачную
-интеграцию от локальной, где пофразовый конвейер был нужен ради быстрого первого звука.
+**Diagnosis of "grown pauses" (the user's only complaint about chunked
+mode).** The same long text: **129.9 s** in a single request, **154.6 s**
+per sentence. The 25 s difference is accumulated pauses from **chunking**
+(30 independent syntheses give a "stop-start" rhythm), not an OpenAI
+property. Trimming trailing silence **doesn't help** (checked — the issue
+isn't silence but per-sentence final intonation). **The right fix is not to
+chunk:** the request limit is **4096 characters**, a typical message (the
+1720-character test) goes out **as a single request** → continuous
+prosody, no pause artifact. Chunking (by paragraph, not by sentence) — only
+for rare messages > 4096 characters. This distinguishes the cloud
+integration from the local one, where a per-sentence pipeline was needed
+for a fast first sound.
 
-**ElevenLabs / Azure — не проверялись, отклонены по продуктовому доводу** (решение
-пользователя): «пользователи программы не захотят регистрироваться в стороннем сервисе
-ради одной озвучки». OpenAI этого недостатка лишён — у пользователя облачного чата ключ
-уже есть (ADR 0008). ElevenLabs (вероятно лучший по звучанию, но ~$0.06–0.30/мин и своя
-регистрация) и Azure (сильный русский, нужен ключ + регион) остаются **заделом**, если
-понадобится премиум-качество; `external`-режим их покрывает (в т.ч. через прокси, §3.4).
+**ElevenLabs / Azure — not tested, rejected on a product argument** (the
+user's decision): "users of the app won't want to sign up for a
+third-party service just for speech." OpenAI has no such drawback — a
+cloud-chat user already has a key (ADR 0008). ElevenLabs (probably the best
+sound, but ~$0.06–0.30/min and its own signup) and Azure (strong Russian,
+needs a key + region) remain **future work** if premium quality is ever
+needed; `external` mode covers them (including via a proxy, §3.4).
 
-**Свод облачной ветки:**
+**Cloud-branch summary:**
 
-| движок | ударения | англицизмы | дрейф | новый vendor для юзера | вердикт |
+| engine | stress | English loanwords | drift | new vendor for the user | verdict |
 |---|---|---|---|---|---|
-| **OpenAI gpt-4o-mini-tts** | **1 ошибка/абзац** | **нативно** ✅ | нет (CV 2.7%) | **нет** (ключ есть) | **✓ GO — основной** |
-| Gemini TTS | — | — | франкенштейн (§13.1) | нет (ключ есть) | опция (в объёме этапа) |
-| ElevenLabs | — | — | — | да | задел |
-| Azure Neural | — | — | — | да | задел |
+| **OpenAI gpt-4o-mini-tts** | **1 error/paragraph** | **native** ✅ | no (CV 2.7%) | **no** (key already there) | **✓ GO — primary** |
+| Gemini TTS | — | — | Frankenstein (§13.1) | no (key already there) | optional (in the stage's scope) |
+| ElevenLabs | — | — | — | yes | future work |
+| Azure Neural | — | — | — | yes | future work |
 
-**Итоговое решение (2026-07-23).** Основной режим — **OpenAI TTS**. Объём этапа —
-**OpenAI + Gemini + external** (Gemini включён как опция для тех, у кого его ключ, при
-всех его минусах; external — свой сервер/премиум-облако через прокси). **Локальный
-сайдкар в этап не входит** (vosk — задел, §13.8). Пересмотр Р1 (§13.5) отменён: облака
-не «опциональны», а **основной путь**; локальный — задел. Реализация ложится на
-отревертнутую инфраструктуру (`git show 19ead9f`): экстрактор, команда `/tts`, плеер
-`rodio`, клиенты OpenAi/Gemini/External уже написаны — поднять и допилить one-shot для
-сообщений < 4096 символов.
+**Final decision (2026-07-23).** The primary mode — **OpenAI TTS**. Stage
+scope — **OpenAI + Gemini + external** (Gemini included as an option for
+those who have its key, despite all its downsides; external — one's own
+server/a premium cloud via a proxy). **A local sidecar isn't in the stage**
+(vosk — groundwork, §13.8). The R1 revision (§13.5) is cancelled: clouds
+are not "optional" but the **primary path**; local — groundwork. The
+implementation rests on the reverted infrastructure (`git show 19ead9f`):
+the extractor, the `/tts` command, the `rodio` player, the
+OpenAi/Gemini/External clients are already written — restore and finish it
+as one-shot for messages < 4096 characters.

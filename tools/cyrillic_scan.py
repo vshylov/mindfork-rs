@@ -37,11 +37,21 @@ def strip_key_data(s: str) -> str:
 SKIP_EXT = (".png", ".ico", ".dic", ".aff")
 SKIP_FILES = {
     "locales/ru.json",
-    # Its Mermaid repro inputs must stay Cyrillic: they demonstrate a
-    # byte-offset-vs-char-offset parsing bug that only manifests on multibyte
-    # text. ASCII examples would not trigger it. Prose in the file is English.
+    # This doc is *about* Cyrillic Mermaid rendering: its repro inputs (table
+    # rows and a fenced diagram) must stay Cyrillic to demonstrate a
+    # byte-offset-vs-char-offset bug that ASCII would not trigger. Inline
+    # markers cannot be used there without breaking the table/code fence.
     "docs/research/mermaid-ascii-rendering.md",
 }
+
+# Opt-in markers for content that must stay Cyrillic because the text *is* the
+# subject (e.g. a parsing-bug repro that only triggers on multibyte input, or
+# Russian homographs used to evaluate speech stress). Markers are HTML comments,
+# so they are invisible in rendered Markdown and keep the intent next to the
+# content instead of hidden in this script.
+OK_LINE = "cyrillic-ok"           # same-line marker
+OK_START = "cyrillic-ok:start"    # begin an allowed block
+OK_END = "cyrillic-ok:end"        # end an allowed block
 SKIP_PREFIX = ("dictionaries/", "docs/ui-design/")  # design mocks/uploads, not prose
 
 
@@ -93,11 +103,18 @@ def main() -> int:
         if not CYR.search(data):
             continue
         in_test = False
+        ok_block = False
         hits: list[tuple[int, str]] = []
         for i, line in enumerate(data.split("\n"), 1):
             if path.endswith(".rs") and TEST_MARKER.search(line):
                 in_test = True
+            if OK_START in line:
+                ok_block = True
+            elif OK_END in line:
+                ok_block = False
             if not CYR.search(line):
+                continue
+            if ok_block or OK_LINE in line:
                 continue
             if allowed_line(path, line, in_test):
                 continue
