@@ -340,11 +340,6 @@ const HELP_PAD: &str = "  ";
 fn about_lines(palette: &Palette, loc: &'static Locale) -> Vec<Line<'static>> {
     let rows: [(&str, String, Color); 5] = [
         (
-            loc.t("ui.about.author"),
-            credits::AUTHOR.to_string(),
-            palette.text,
-        ),
-        (
             loc.t("ui.about.version"),
             env!("CARGO_PKG_VERSION").to_string(),
             palette.text,
@@ -363,6 +358,11 @@ fn about_lines(palette: &Palette, loc: &'static Locale) -> Vec<Line<'static>> {
             loc.t("ui.about.repo"),
             credits::REPO_URL.to_string(),
             palette.accent,
+        ),
+        (
+            loc.t("ui.about.author"),
+            credits::AUTHOR.to_string(),
+            palette.text,
         ),
     ];
     // Label column width (with the colon), so values line up.
