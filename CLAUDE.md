@@ -123,7 +123,7 @@ Env for selecting the backend: `MINDFORK_ENGINE_URL` (external, any OpenAI serve
 `MINDFORK_LLAMA_BIN` (+ `MINDFORK_MODEL` GGUF, `MINDFORK_NGL`, `MINDFORK_CTX`,
 `MINDFORK_PORT`) for a managed `llama-server`.
 
-## Status (as of 2026-07-24, version 0.9.2)
+## Status (as of 2026-07-24, version 0.9.3)
 The entire **M0–M9** plan is done, plus extensive post-M9 work (on `main`). **1267 unit
 tests green, 58 `#[ignore]` smokes** (the largest count — log below; the current
 track is the **English source-language migration** (all docs/comments/internal
