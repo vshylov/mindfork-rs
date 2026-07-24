@@ -1,12 +1,13 @@
-//! Экран чата — баннер прогресса индексации RAG. Часть модуля [`super`]; разбито из
-//! монолита chat.rs (см. docs/history/refactoring-god-objects.md, этап 2).
+//! The chat screen — the RAG indexing progress banner. Part of the [`super`]
+//! module; split out of the chat.rs monolith (see
+//! docs/history/refactoring-god-objects.md, stage 2).
 
 use super::*;
 
 impl ChatScreen {
-    /// Обновляет индикатор фоновой индексации RAG (`/rag add`). Старт/прогресс
-    /// показывают баннер со спиннером; завершение/ошибка гасят его и оставляют
-    /// итоговую заметку в ленте. См. spec §9.3.
+    /// Updates the background RAG-indexing indicator (`/rag add`). Start/progress
+    /// show a banner with a spinner; completion/error clear it and leave a
+    /// summary note in the feed. See spec §9.3.
     pub fn set_rag_progress(&mut self, progress: RagProgress) {
         match progress {
             RagProgress::Started { total } => {
@@ -39,8 +40,9 @@ impl ChatScreen {
                         ("total", &total.to_string()),
                     ],
                 );
-                // Прогресс по чанкам показываем, только когда файл уже чанкован
-                // (chunks_total>0). Иначе (файл только начат) — вид как раньше.
+                // We show chunk progress only once the file has been chunked
+                // (chunks_total>0). Otherwise (the file has just started) — the
+                // previous look.
                 if chunks_total > 0 {
                     text.push_str(&self.loc.tf(
                         "ui.rag.chunks",
@@ -104,8 +106,8 @@ impl ChatScreen {
         }
     }
 
-    /// Идёт ли фоновая индексация RAG (петля перерисовывает кадры для анимации
-    /// спиннера, пока это `true`).
+    /// Whether background RAG indexing is in progress (the loop repaints frames
+    /// for the spinner animation while this is `true`).
     pub fn is_rag_active(&self) -> bool {
         self.rag.is_some()
     }

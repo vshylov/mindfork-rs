@@ -1,10 +1,10 @@
-//! Супервайзер серверов инференса/эмбеддингов для оркестратора: (пере)запуск
-//! managed-процесса или подключение к external по настройкам [`EngineSettings`]/
-//! [`EmbedSettings`]. Спрятан за трейтом [`ServerSupervisor`] ради mock в тестах —
-//! смена модели в настройках перезапускает сервер (spec §11.6, DoD M8).
+//! The inference/embeddings server supervisor for the orchestrator: (re)launches a
+//! managed process or connects to an external one per [`EngineSettings`]/
+//! [`EmbedSettings`] settings. Hidden behind the [`ServerSupervisor`] trait for a mock
+//! in tests — changing the model in settings restarts the server (spec §11.6, DoD M8).
 //!
-//! Живёт в `app`: это композиционный клей, знающий и про `shared/config`
-//! (настройки), и про `shared/api` (движок/запуск процесса) — оба ниже по FSD.
+//! Lives in `app`: it's composition glue that knows both about `shared/config`
+//! (settings) and about `shared/api` (the engine/process launch) — both lower in FSD.
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -23,42 +23,45 @@ use crate::shared::config::{
 use crate::shared::i18n::Locale;
 use crate::shared::server::ServerStatus;
 
-/// Щедрый таймаут готовности managed-сервера: загрузка модели может занять минуты.
+/// A generous readiness timeout for the managed server: loading the model can take
+/// minutes.
 const MANAGED_READY_TIMEOUT: Duration = Duration::from_secs(600);
-/// Короткий таймаут готовности external-сервера (он уже должен быть поднят).
+/// A short readiness timeout for the external server (it should already be up).
 const EXTERNAL_READY_TIMEOUT: Duration = Duration::from_secs(15);
 
-/// Результат настройки chat-сервера: движок, опора на процесс (managed) и статус.
+/// The result of setting up the chat server: the engine, a handle to the process
+/// (managed), and status.
 pub struct ChatSetup {
     pub backend: Option<Arc<dyn EngineBackend>>,
-    /// Владелец дочернего процесса (managed). `None` — external/не настроен.
+    /// The owner of the child process (managed). `None` — external/not configured.
     pub handle: Option<ServerHandle>,
     pub status: ServerStatus,
 }
 
-/// Результат настройки embedding-сервера: источник эмбеддингов, опора на процесс
-/// и статус. Probe эмбеддингов пока нет (RAG ленив), поэтому статус двухзначный:
-/// `Ready` — эмбеддер настроен, `NotConfigured` — `UnavailableEmbedder` (чип скрыт).
+/// The result of setting up the embedding server: the embeddings source, a handle to
+/// the process, and status. There's no embeddings probe yet (RAG is lazy), so the
+/// status is binary: `Ready` — the embedder is configured, `NotConfigured` —
+/// `UnavailableEmbedder` (the chip is hidden).
 pub struct EmbedSetup {
     pub embedder: Arc<dyn Embedder>,
     pub handle: Option<ServerHandle>,
     pub status: ServerStatus,
 }
 
-/// (Пере)подключение/запуск серверов по настройкам. За трейтом — ради mock-теста
-/// перезапуска при смене модели.
+/// (Re)connect/launch servers per settings. Behind a trait — for a mock test of the
+/// restart on model change.
 ///
-/// `stored_key` у всех методов — уже расшифрованный сохранённый API-ключ активного
-/// облачного провайдера (`AppConfig::api_keys`, см. `shared::secrets`); резолвом
-/// владеет [`super::orchestrator`], супервайзер про формат хранения не знает.
-/// `None` — ключ не сохранён на этой машине, тогда работает env-фолбэк
-/// (`api_key_env`). См. docs/research/api-key-storage.md.
+/// `stored_key` on every method is the already-decrypted saved API key of the active
+/// cloud provider (`AppConfig::api_keys`, see `shared::secrets`); the resolution is
+/// owned by [`super::orchestrator`], the supervisor knows nothing about the storage
+/// format. `None` — the key isn't saved on this machine, then the env fallback
+/// (`api_key_env`) applies. See docs/research/api-key-storage.md.
 pub trait ServerSupervisor: Send + Sync {
-    /// (Пере)подключается к chat-серверу. Возвращает движок и статус немедленно
-    /// (`Connecting`/`NotConfigured`/`Disconnected`), а готовность managed/external
-    /// досылает в `status_tx` фоновым probe. `cancel` помечает probe устаревшим: при
-    /// быстрой смене режима (managed→external→openai) поздний результат прежнего probe
-    /// не должен перезаписать статус нового сервера.
+    /// (Re)connects to the chat server. Returns the engine and status immediately
+    /// (`Connecting`/`NotConfigured`/`Disconnected`), while managed/external readiness
+    /// is sent to `status_tx` by a background probe. `cancel` marks the probe as stale:
+    /// on a quick mode switch (managed→external→openai), a late result from the
+    /// previous probe shouldn't overwrite the new server's status.
     fn apply_chat(
         &self,
         settings: &EngineSettings,
@@ -68,14 +71,15 @@ pub trait ServerSupervisor: Send + Sync {
         loc: &'static Locale,
     ) -> ChatSetup;
 
-    /// (Пере)подключается к embedding-серверу (RAG ленив — без probe).
+    /// (Re)connects to the embedding server (RAG is lazy — no probe).
     fn apply_embed(&self, settings: &EmbedSettings, stored_key: Option<&str>) -> EmbedSetup;
 
-    /// (Пере)подключается/запускает сервер имперсонации для режимов `managed`/
-    /// `external`. Для `shared` НЕ вызывается оркестратором (он переиспользует
-    /// chat-сервер ассистента); если всё же вызван — `NotConfigured`. См. spec §11.8.
-    /// `cancel` — как у [`Self::apply_chat`] (инвалидация устаревшего probe). `loc` —
-    /// язык интерфейса для отображаемых причин недоступности (облачные режимы).
+    /// (Re)connects to/launches the impersonation server for the `managed`/
+    /// `external` modes. For `shared` it is NOT called by the orchestrator (it reuses
+    /// the assistant's chat server); if it is called anyway — `NotConfigured`. See
+    /// spec §11.8. `cancel` — like on [`Self::apply_chat`] (invalidating a stale
+    /// probe). `loc` — the interface language for displayed unavailability reasons
+    /// (cloud modes).
     fn apply_impersonation(
         &self,
         settings: &ImpersonationEngineSettings,
@@ -86,8 +90,8 @@ pub trait ServerSupervisor: Send + Sync {
     ) -> ChatSetup;
 }
 
-/// Боевой супервайзер: external — по URL (любой OpenAI-сервер), managed —
-/// дочерний процесс `llama-server` (llama.cpp).
+/// The production supervisor: external — by URL (any OpenAI server), managed —
+/// a child `llama-server` process (llama.cpp).
 pub struct LlamaSupervisor;
 
 impl ServerSupervisor for LlamaSupervisor {
@@ -133,7 +137,7 @@ impl ServerSupervisor for LlamaSupervisor {
         loc: &'static Locale,
     ) -> ChatSetup {
         match settings.mode {
-            // `shared` обслуживается оркестратором (chat-сервер ассистента).
+            // `shared` is served by the orchestrator (the assistant's chat server).
             ImpersonationMode::Shared => not_configured(),
             ImpersonationMode::External => external_chat_setup(
                 settings.external.url.as_deref(),
@@ -185,12 +189,12 @@ impl ServerSupervisor for LlamaSupervisor {
                         model_path: m.model_path.clone(),
                         gpu_layers: m.gpu_layers,
                         context_size: crate::shared::config::DEFAULT_CONTEXT_SIZE,
-                        jinja: false, // embedding-серверу chat-template не нужен
+                        jinja: false, // the embedding server doesn't need a chat template
                         reasoning_format: None,
                         embeddings: true,
                         no_mmap: false,
-                        // Спекулятивное декодирование/FlashAttention для эмбеддинг-
-                        // сервера не применимы (он не генерирует токены).
+                        // Speculative decoding/FlashAttention aren't applicable to the
+                        // embedding server (it doesn't generate tokens).
                         flash_attn: None,
                         spec_type: None,
                         draft_model: None,
@@ -201,9 +205,10 @@ impl ServerSupervisor for LlamaSupervisor {
                         port: m.port,
                         extra_args: vec![],
                     };
-                    // Эмбеддинг-сервер не имеет UI-локали (у `apply_embed` нет `loc`) и
-                    // его ошибка идёт лишь в лог (RAG недоступен, не в статус-чип) —
-                    // передаём референсную локаль (ru), текст остаётся логовым.
+                    // The embedding server has no UI locale (`apply_embed` has no
+                    // `loc`) and its error goes only into the log (RAG unavailable,
+                    // not a status chip) — we pass the reference locale (ru), the text
+                    // stays log-only.
                     match ServerHandle::launch(
                         &cfg,
                         crate::shared::i18n::locale(crate::shared::i18n::Lang::default()),
@@ -231,7 +236,7 @@ impl ServerSupervisor for LlamaSupervisor {
                     cloud.model_name.as_deref(),
                 )
             }
-            // У Anthropic нет embeddings API — RAG берёт отдельный эмбеддер (ADR 0002).
+            // Anthropic has no embeddings API — RAG uses a separate embedder (ADR 0002).
             ServerMode::Claude => {
                 tracing::warn!("у Anthropic нет embeddings API; для RAG задайте другой эмбеддер");
                 unavailable_embed()
@@ -240,13 +245,13 @@ impl ServerSupervisor for LlamaSupervisor {
     }
 }
 
-/// External chat-setup: подключение по URL (любой OpenAI-совместимый сервер), фоновый
-/// probe. Опциональный `api_key_env` — имя env-переменной с Bearer-ключом (для
-/// OpenAI-совместимого прокси/шлюза с авторизацией); отсутствие/нерезолвимость ключа
-/// не ошибка (локальный `llama-server` ключа не требует). Сохранённые ключи
-/// (`shared::secrets`) — только для облачных провайдеров: у external произвольный
-/// URL, привязать его к провайдеру нельзя, поэтому здесь остаётся env-путь
-/// (docs/research/api-key-storage.md, развилка Р4).
+/// External chat setup: connect by URL (any OpenAI-compatible server), a background
+/// probe. Optional `api_key_env` — the name of an env variable holding a Bearer key
+/// (for an OpenAI-compatible authenticated proxy/gateway); a missing/unresolvable key
+/// is not an error (a local `llama-server` needs no key). Saved keys
+/// (`shared::secrets`) apply only to cloud providers: external has an arbitrary
+/// URL that can't be bound to a provider, so the env path stays here
+/// (docs/research/api-key-storage.md, decision point R4).
 fn external_chat_setup(
     url: Option<&str>,
     api_key_env: Option<&str>,
@@ -276,8 +281,8 @@ fn external_chat_setup(
     }
 }
 
-/// Managed chat-setup: запуск дочернего `llama-server`, фоновый probe (с учётом
-/// раннего выхода процесса). Пустой бинарник → `NotConfigured`.
+/// Managed chat setup: launch a child `llama-server`, a background probe (accounting
+/// for an early process exit). An empty binary → `NotConfigured`.
 fn managed_chat_setup(
     cfg: ManagedConfig,
     cancel: CancellationToken,
@@ -312,8 +317,8 @@ fn managed_chat_setup(
     }
 }
 
-/// Строит [`ManagedConfig`] (`llama-server`) из managed-под-секции движка (общий
-/// для chat-сервера ассистента и сервера имперсонации).
+/// Builds a [`ManagedConfig`] (`llama-server`) from the engine's managed subsection
+/// (shared by the assistant's chat server and the impersonation server).
 fn managed_config(s: &ManagedSettings) -> ManagedConfig {
     ManagedConfig {
         binary: s.binary.clone().unwrap_or_default().into(),
@@ -336,24 +341,26 @@ fn managed_config(s: &ManagedSettings) -> ManagedConfig {
     }
 }
 
-/// Структурированная ошибка резолва API-ключа (без локали — вызывающий локализует
-/// сам, см. [`cloud_chat_setup`]). `NoName` — ключ не сохранён и имя env-переменной
-/// не задано; `Missing` несёт имя переменной, отсутствующей в окружении.
+/// A structured API-key resolution error (no locale — the caller localizes it
+/// itself, see [`cloud_chat_setup`]). `NoName` — the key isn't saved and the name of
+/// the env variable isn't set; `Missing` carries the name of a variable missing from
+/// the environment.
 #[derive(Debug)]
 pub(super) enum ApiKeyError {
     NoName,
     Missing(String),
 }
 
-/// Резолвит API-ключ. Порядок (docs/research/api-key-storage.md §5, развилка Р3):
+/// Resolves the API key. Order (docs/research/api-key-storage.md §5, decision
+/// point R3):
 ///
-/// 1. **сохранённый ключ этой машины** (`stored`, уже расшифрован вызывающим) —
-///    он введён явным действием в настройках, целевой пользователь env не видит;
-/// 2. фолбэк — env-переменная по имени `api_key_env` (CI, power users, системы
-///    без machine-id).
+/// 1. **the saved key of this machine** (`stored`, already decrypted by the caller) —
+///    it was entered by an explicit action in settings, the target user never sees env;
+/// 2. fallback — the env variable named `api_key_env` (CI, power users, systems
+///    without a machine-id).
 ///
-/// Сам секрет по-прежнему не лежит на диске открытым текстом: сохранённый ключ
-/// зашифрован машинным ключом (`shared::secrets`), в конфиге — шифротекст.
+/// The secret itself still doesn't sit on disk in plaintext: the saved key is
+/// encrypted with the machine key (`shared::secrets`), the config holds ciphertext.
 fn resolve_api_key(stored: Option<&str>, api_key_env: Option<&str>) -> Result<String, ApiKeyError> {
     if let Some(key) = stored.filter(|k| !k.is_empty()) {
         return Ok(key.to_string());
@@ -364,11 +371,12 @@ fn resolve_api_key(stored: Option<&str>, api_key_env: Option<&str>) -> Result<St
     std::env::var(var).map_err(|_| ApiKeyError::Missing(var.to_string()))
 }
 
-/// Строит облачный chat-backend (OpenAI/Gemini-compat): базовый URL провайдера (с
-/// возможным override через `url`), Bearer-ключ из env, имя модели, строгий
-/// OpenAI-диалект. Облако не «загружает модель» — статус сразу `Ready` (без probe).
-/// Если модель не указана или ключ недоступен — `Disconnected` с понятным текстом
-/// (чтобы не ловить `400` уже в ходе запроса). См. ADR 0004.
+/// Builds a cloud chat backend (OpenAI/Gemini-compat): the provider's base URL (with
+/// a possible override via `url`), a Bearer key from env, the model name, a strict
+/// OpenAI dialect. The cloud doesn't "load a model" — the status is immediately
+/// `Ready` (no probe). If the model isn't specified or the key is unavailable —
+/// `Disconnected` with a clear message (so as not to hit a `400` already mid-request).
+/// See ADR 0004.
 fn cloud_chat_setup(
     provider: CloudProvider,
     url_override: Option<&str>,
@@ -394,14 +402,15 @@ fn cloud_chat_setup(
             return disconnected(loc.tf("ui.err.server.env_missing", &[("var", &var)]));
         }
     };
-    // Чат-URL — нативный путь провайдера (у Gemini `…/v1beta`, не compat-эмбеддинги).
+    // The chat URL is the provider's native path (Gemini's `…/v1beta`, not
+    // compat-embeddings).
     let base = url_override
         .filter(|u| !u.is_empty())
         .unwrap_or_else(|| provider.chat_base_url());
-    // Бэкенд по протоколу провайдера: OpenAI Responses API (`ResponsesClient` — резюме
-    // рассуждений, reasoning.effort, verbosity), Gemini через нативный generateContent
-    // (`GeminiClient` — резюме «мыслей», thinkingLevel/thinkingBudget) либо Anthropic
-    // Messages API (Claude).
+    // The backend by the provider's protocol: OpenAI Responses API
+    // (`ResponsesClient` — reasoning summaries, reasoning.effort, verbosity), Gemini
+    // via native generateContent (`GeminiClient` — "thoughts" summaries,
+    // thinkingLevel/thinkingBudget), or the Anthropic Messages API (Claude).
     let backend: Arc<dyn EngineBackend> = match provider {
         CloudProvider::OpenAi => Arc::new(ResponsesClient::new(base, key, model.to_string())),
         CloudProvider::Gemini => Arc::new(GeminiClient::new(base, key, model.to_string())),
@@ -414,9 +423,9 @@ fn cloud_chat_setup(
     }
 }
 
-/// Строит облачный embedding-backend (OpenAI/Gemini). При неполной конфигурации
-/// (нет модели или ключа) — `UnavailableEmbedder` (RAG отдаёт понятную ошибку, не
-/// падает), как и для прочих несконфигурированных эмбеддеров.
+/// Builds a cloud embedding backend (OpenAI/Gemini). On an incomplete configuration
+/// (no model or key) — `UnavailableEmbedder` (RAG returns a clear error, doesn't
+/// crash), same as for other unconfigured embedders.
 fn cloud_embed_setup(
     provider: CloudProvider,
     url_override: Option<&str>,
@@ -460,10 +469,10 @@ fn unavailable_embed() -> EmbedSetup {
     }
 }
 
-/// Фоновый probe готовности: по завершении шлёт `Ready`/`Disconnected`. Если probe
-/// помечен устаревшим (`cancel`) — прерывается, не отправляя статус: иначе поздний
-/// результат прежнего сервера (напр. таймаут промежуточного external при
-/// перещёлкивании режимов) перезаписал бы статус нового сервера.
+/// A background readiness probe: sends `Ready`/`Disconnected` on completion. If the
+/// probe is marked stale (`cancel`) — it aborts without sending a status: otherwise a
+/// late result from the previous server (e.g. a timeout of an intermediate external
+/// while flipping between modes) would overwrite the new server's status.
 fn spawn_probe(
     client: Arc<OpenAiClient>,
     timeout: Duration,
@@ -481,7 +490,7 @@ fn spawn_probe(
                 Err(err) => ServerStatus::Disconnected(err.to_string()),
             },
         };
-        // Пока probe завершался, его могли успеть инвалидировать сменой режима.
+        // While the probe was finishing, it may have been invalidated by a mode switch.
         if cancel.is_cancelled() {
             return;
         }
@@ -489,23 +498,24 @@ fn spawn_probe(
     });
 }
 
-/// Mock-супервайзер для тестов оркестратора: отдаёт заданный chat-backend и
-/// детерминированный эмбеддер, считает вызовы `apply_chat` (проверка перезапуска
-/// при смене модели, DoD M8). Без реальных процессов.
+/// A mock supervisor for orchestrator tests: hands back a given chat backend and a
+/// deterministic embedder, counts `apply_chat` calls (checking a restart on model
+/// change, DoD M8). No real processes.
 #[cfg(test)]
 pub struct MockSupervisor {
     backend: Option<Arc<dyn EngineBackend>>,
     chat_calls: std::sync::atomic::AtomicUsize,
     embed_dim: usize,
-    /// Опциональный **реальный** эмбеддер (живые смоуки — bge-m3 из MINDFORK_EMBED_URL
-    /// и т.п.); `None` → детерминированный `MockEmbedder`.
+    /// An optional **real** embedder (live smokes — bge-m3 from MINDFORK_EMBED_URL
+    /// and so on); `None` → a deterministic `MockEmbedder`.
     embedder: Option<Arc<dyn Embedder>>,
 }
 
 #[cfg(test)]
 impl MockSupervisor {
-    /// Супервайзер, возвращающий `backend` для chat (in-process mock готов сразу —
-    /// статус `Ready` синхронно, без фонового probe, чтобы тесты не зависели от гонки).
+    /// A supervisor returning `backend` for chat (the in-process mock is ready right
+    /// away — status `Ready` synchronously, no background probe, so tests don't
+    /// depend on a race).
     pub fn with_backend(backend: Option<Arc<dyn EngineBackend>>) -> Self {
         Self {
             backend,
@@ -515,8 +525,8 @@ impl MockSupervisor {
         }
     }
 
-    /// Как [`Self::with_backend`], но с заданным **реальным** эмбеддером (живые смоуки
-    /// над настоящим сервером эмбеддингов). `None` → тестовый `MockEmbedder`.
+    /// Like [`Self::with_backend`], but with a given **real** embedder (live smokes
+    /// against a real embedding server). `None` → the test `MockEmbedder`.
     pub fn with_backend_and_embedder(
         backend: Option<Arc<dyn EngineBackend>>,
         embedder: Option<Arc<dyn Embedder>>,
@@ -529,7 +539,7 @@ impl MockSupervisor {
         }
     }
 
-    /// Сколько раз вызывали `apply_chat` (≥2 после перезапуска по смене модели).
+    /// How many times `apply_chat` was called (≥2 after a restart on model change).
     pub fn chat_call_count(&self) -> usize {
         self.chat_calls.load(std::sync::atomic::Ordering::SeqCst)
     }
@@ -548,9 +558,10 @@ impl ServerSupervisor for MockSupervisor {
         self.chat_calls
             .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         let backend = self.backend.clone();
-        // Mock-движок готов мгновенно: отдаём `Ready` как немедленный статус (а не
-        // `Connecting` + async-probe), иначе оркестратор мог бы обработать команду
-        // генерации раньше события готовности и отклонить её (гонка в тестах).
+        // The mock engine is ready instantly: we hand back `Ready` as the immediate
+        // status (rather than `Connecting` + an async probe), otherwise the
+        // orchestrator could handle a generation command before the readiness event
+        // and reject it (a race in tests).
         let status = if backend.is_some() {
             ServerStatus::Ready
         } else {
@@ -571,8 +582,8 @@ impl ServerSupervisor for MockSupervisor {
         _status_tx: UnboundedSender<ServerStatus>,
         _loc: &'static Locale,
     ) -> ChatSetup {
-        // Mock отдаёт тот же backend готовым сразу (как apply_chat) — для тестов
-        // managed/external режимов имперсонации.
+        // The mock hands back the same backend, ready right away (like apply_chat) —
+        // for tests of the managed/external impersonation modes.
         let backend = self.backend.clone();
         let status = if backend.is_some() {
             ServerStatus::Ready
@@ -603,8 +614,8 @@ mod tests {
     use super::*;
     use tokio::sync::mpsc::unbounded_channel;
 
-    /// Референсная (русская) локаль для отображаемых причин недоступности: ассерты на
-    /// русские подстроки завязаны на ru-байт-в-байт.
+    /// The reference (Russian) locale for displayed unavailability reasons:
+    /// assertions on Russian substrings are pinned byte-for-byte.
     fn ru() -> &'static Locale {
         crate::shared::i18n::locale(crate::shared::i18n::Lang::Ru)
     }
@@ -637,17 +648,18 @@ mod tests {
 
     #[tokio::test]
     async fn superseded_probe_sends_no_status() {
-        // probe, помеченный устаревшим (смена режима managed→external→openai), не
-        // должен слать статус: иначе поздний таймаут прежнего external перезаписал бы
-        // `Ready` нового облачного сервера, и облако «не работало» до перезапуска.
+        // A probe marked stale (mode switch managed→external→openai) shouldn't send a
+        // status: otherwise a late timeout of the previous external would overwrite
+        // `Ready` of the new cloud server, and the cloud "wouldn't work" until a
+        // restart.
         let (tx, mut rx) = unbounded_channel();
         let cancel = CancellationToken::new();
-        cancel.cancel(); // probe устарел ещё до старта фоновой задачи
+        cancel.cancel(); // the probe is already stale before the background task starts
         let setup = external_chat_setup(Some("http://127.0.0.1:9/v1"), None, cancel, tx, ru());
-        assert_eq!(setup.status, ServerStatus::Connecting); // немедленный статус как обычно
-        // Даём фоновой задаче шанс выполниться; устаревший probe ничего не присылает.
+        assert_eq!(setup.status, ServerStatus::Connecting); // the immediate status as usual
+        // Give the background task a chance to run; a stale probe sends nothing.
         tokio::time::sleep(Duration::from_millis(50)).await;
-        assert!(rx.try_recv().is_err(), "устаревший probe прислал статус");
+        assert!(rx.try_recv().is_err(), "a stale probe sent a status");
     }
 
     #[tokio::test]
@@ -688,9 +700,9 @@ mod tests {
 
     #[tokio::test]
     async fn managed_with_missing_model_is_disconnected() {
-        // Бинарник есть (spawn бы прошёл), но файл модели отсутствует: раньше это
-        // вешало UI в «подключение…» до таймаута; теперь — сразу `Disconnected`
-        // с понятным сообщением.
+        // The binary is present (spawn would succeed), but the model file is
+        // missing: previously this hung the UI at "connecting…" until the
+        // timeout; now — an immediate `Disconnected` with a clear message.
         let (tx, _rx) = unbounded_channel();
         let s = EngineSettings {
             mode: ServerMode::Managed,
@@ -705,13 +717,13 @@ mod tests {
         assert!(setup.backend.is_none());
         match setup.status {
             ServerStatus::Disconnected(msg) => assert!(msg.contains("файл модели"), "{msg}"),
-            other => panic!("ожидался Disconnected, получили {other:?}"),
+            other => panic!("expected Disconnected, got {other:?}"),
         }
     }
 
     #[test]
     fn resolve_api_key_reads_env_and_reports_missing() {
-        // PATH задана в любой ОС — гарантированный положительный случай без мутации env.
+        // PATH is set on every OS — a guaranteed positive case with no env mutation.
         assert!(resolve_api_key(None, Some("PATH")).is_ok());
         assert!(matches!(
             resolve_api_key(None, None),
@@ -719,30 +731,30 @@ mod tests {
         ));
         match resolve_api_key(None, Some("MINDFORK_DEFINITELY_UNSET_VAR_42")) {
             Err(ApiKeyError::Missing(var)) => assert_eq!(var, "MINDFORK_DEFINITELY_UNSET_VAR_42"),
-            _ => panic!("ожидался ApiKeyError::Missing"),
+            _ => panic!("expected ApiKeyError::Missing"),
         }
     }
 
-    /// Сохранённый ключ приоритетнее env (развилка Р3) и работает сам по себе —
-    /// без имени env-переменной, чего целевой пользователь не задаёт вовсе.
+    /// A saved key takes priority over env (decision point R3) and works on its own —
+    /// without the name of an env variable, which the target user never sets at all.
     #[test]
     fn stored_key_wins_over_env_and_works_without_it() {
-        // Есть и сохранённый, и env → берём сохранённый.
+        // Both a saved key and env exist → we take the saved one.
         assert_eq!(
             resolve_api_key(Some("sk-stored"), Some("PATH")).unwrap(),
             "sk-stored"
         );
-        // Только сохранённый (env-переменная не задана вовсе) → он и используется.
+        // Only the saved one (the env variable isn't set at all) → it's used.
         assert_eq!(
             resolve_api_key(Some("sk-stored"), None).unwrap(),
             "sk-stored"
         );
-        // Отсутствующая env-переменная не мешает сохранённому ключу.
+        // A missing env variable doesn't get in the way of the saved key.
         assert_eq!(
             resolve_api_key(Some("sk-stored"), Some("MINDFORK_DEFINITELY_UNSET_VAR_42")).unwrap(),
             "sk-stored"
         );
-        // Пустой сохранённый ключ равнозначен отсутствию → фолбэк на env.
+        // An empty saved key is equivalent to absence → fallback to env.
         assert!(resolve_api_key(Some(""), Some("PATH")).is_ok());
         assert!(matches!(
             resolve_api_key(Some(""), None),
@@ -750,8 +762,8 @@ mod tests {
         ));
     }
 
-    /// Облачный режим поднимается на одном сохранённом ключе — без `api_key_env`
-    /// (главный сценарий фичи: пользователь ввёл ключ в настройках).
+    /// A cloud mode comes up on a single saved key — without `api_key_env`
+    /// (the feature's main scenario: the user entered a key in settings).
     #[tokio::test]
     async fn cloud_chat_with_stored_key_and_no_env_is_ready() {
         let (tx, _rx) = unbounded_channel();
@@ -759,7 +771,7 @@ mod tests {
             mode: ServerMode::OpenAi,
             openai: crate::shared::config::CloudSettings {
                 model_name: Some("gpt-5.5".into()),
-                api_key_env: None, // имя env-переменной не задано вовсе
+                api_key_env: None, // the env-variable name isn't set at all
                 ..Default::default()
             },
             ..Default::default()
@@ -786,7 +798,7 @@ mod tests {
             .status
         {
             ServerStatus::Disconnected(m) => assert!(m.contains("модел"), "{m}"),
-            other => panic!("ожидался Disconnected, получили {other:?}"),
+            other => panic!("expected Disconnected, got {other:?}"),
         }
     }
 
@@ -809,13 +821,14 @@ mod tests {
             ServerStatus::Disconnected(m) => {
                 assert!(m.contains("MINDFORK_DEFINITELY_UNSET_VAR_42"), "{m}")
             }
-            other => panic!("ожидался Disconnected, получили {other:?}"),
+            other => panic!("expected Disconnected, got {other:?}"),
         }
     }
 
     #[tokio::test]
     async fn cloud_chat_with_model_and_key_is_ready() {
-        // Используем PATH как «ключ»: важно лишь, что env-переменная резолвится.
+        // We use PATH as the "key": all that matters is that the env variable
+        // resolves.
         let (tx, _rx) = unbounded_channel();
         let s = EngineSettings {
             mode: ServerMode::Gemini,
@@ -828,14 +841,14 @@ mod tests {
         };
         let setup = LlamaSupervisor.apply_chat(&s, None, CancellationToken::new(), tx, ru());
         assert!(setup.backend.is_some());
-        assert!(setup.handle.is_none(), "облако без дочернего процесса");
+        assert!(setup.handle.is_none(), "the cloud has no child process");
         assert_eq!(setup.status, ServerStatus::Ready);
     }
 
     #[tokio::test]
     async fn cloud_chat_claude_with_model_and_key_is_ready() {
-        // Claude использует отдельный протокол (AnthropicClient), но контракт настройки
-        // тот же: модель + ключ из env → Ready, без дочернего процесса.
+        // Claude uses a separate protocol (AnthropicClient), but the setup contract is
+        // the same: model + key from env → Ready, with no child process.
         let (tx, _rx) = unbounded_channel();
         let s = EngineSettings {
             mode: ServerMode::Claude,
@@ -854,7 +867,8 @@ mod tests {
 
     #[tokio::test]
     async fn claude_embed_is_unavailable() {
-        // У Anthropic нет embeddings — RAG недоступен (как прочие unavailable).
+        // Anthropic has no embeddings — RAG is unavailable (like other unavailable
+        // cases).
         let s = EmbedSettings {
             mode: ServerMode::Claude,
             claude: crate::shared::config::CloudSettings {
@@ -875,7 +889,8 @@ mod tests {
 
     #[tokio::test]
     async fn cloud_embed_unconfigured_is_unavailable() {
-        // Облачные эмбеддинги без модели → RAG недоступен (как прочие unavailable).
+        // Cloud embeddings without a model → RAG unavailable (like other unavailable
+        // cases).
         let s = EmbedSettings {
             mode: ServerMode::OpenAi,
             openai: crate::shared::config::CloudSettings {
@@ -901,9 +916,9 @@ mod tests {
         };
         let setup = LlamaSupervisor.apply_embed(&s, None);
         assert!(setup.handle.is_none());
-        // Источник эмбеддингов сконфигурирован (не UnavailableEmbedder).
-        // Проверяем косвенно: embed на «мёртвый» URL вернёт ошибку соединения,
-        // а UnavailableEmbedder — фиксированное «не настроен».
+        // The embeddings source is configured (not UnavailableEmbedder).
+        // Checked indirectly: embed against a "dead" URL returns a connection error,
+        // while UnavailableEmbedder would return its fixed unavailability message.
         let err = setup.embedder.embed(vec!["x".into()]).await.unwrap_err();
         assert!(!err.to_string().contains("не настроен"), "{err}");
     }

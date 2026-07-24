@@ -1,41 +1,42 @@
-//! Управляющие инструменты беседы: «написать ещё сообщение»
-//! ([`SendFollowupMessage`]) и «переписать сообщение» ([`RewriteCurrentMessage`]).
-//! См. spec §9.3.
+//! Conversation control tools: "write another message"
+//! ([`SendFollowupMessage`]) and "rewrite the message" ([`RewriteCurrentMessage`]).
+//! See spec §9.3.
 //!
-//! В отличие от обычных инструментов (возвращают текстовый результат и не
-//! трогают структуру беседы), эти — **управляющие** (control-flow): их
-//! распознаёт сам agentic-loop оркестратора (`app/orchestrator/generation.rs`),
-//! а не `Tool::invoke`. Реализации `Tool` нужны лишь для схемы/описания/
-//! регистрации/гейтинга; `invoke` возвращает то же «разрешение», что синтезирует
-//! петля (на случай прямого вызова — но в норме петля перехватывает их по имени).
+//! Unlike regular tools (which return a text result and don't touch the
+//! conversation's structure), these are **control-flow**: the orchestrator's
+//! agentic loop itself recognizes them (`app/orchestrator/generation.rs`),
+//! not `Tool::invoke`. The `Tool` implementations only exist for the schema/
+//! description/registration/gating; `invoke` returns the same "permission"
+//! text that the loop synthesizes (in case of a direct call — normally the
+//! loop intercepts them by name).
 //!
-//! Оба инструмента **опциональны** и по умолчанию выключены: их нет в
-//! [`super::default_tool_ids`], только в [`super::all_tool_ids`] (каталог тумблеров
-//! профиля). Пользователь включает их в настройках профиля.
+//! Both tools are **optional** and off by default: they're absent from
+//! [`super::default_tool_ids`], only in [`super::all_tool_ids`] (the profile
+//! toggle catalog). The user enables them in the profile's settings.
 
 use anyhow::Result;
 
 use super::{Tool, ToolContext, ToolOutcome};
 use crate::entities::profile::ToolId;
 
-/// Имя инструмента «написать ещё сообщение».
+/// The name of the "write another message" tool.
 pub const SEND_FOLLOWUP_ID: &str = "send_followup_message";
-/// Имя инструмента «переписать своё сообщение».
+/// The name of the "rewrite my own message" tool.
 ///
-/// Имя — `rewrite_current_message` (а не `..._last_message`): модель якорится на
-/// имя функции, и «last» она трактовала как «последнее сообщение в истории»
-/// (реплику пользователя или свой прошлый ответ) — отсюда отказы и трактовка
-/// «газлайтинг». «current» однозначно указывает на сообщение, которое ассистент
-/// пишет **в текущем ходе**.
+/// The name is `rewrite_current_message` (not `..._last_message`): the model
+/// anchors on the function name, and it read "last" as "the last message in
+/// history" (the user's turn or its own previous reply) — hence refusals and a
+/// "gaslighting" reading. "current" unambiguously points to the message the
+/// assistant is writing **in the current turn**.
 pub const REWRITE_CURRENT_ID: &str = "rewrite_current_message";
 
-/// Является ли инструмент управляющим (перехватывается agentic-loop'ом).
+/// Whether the tool is a control tool (intercepted by the agentic loop).
 pub fn is_control_tool(name: &str) -> bool {
     name == SEND_FOLLOWUP_ID || name == REWRITE_CURRENT_ID
 }
 
-/// Текст «разрешения», который петля кладёт как результат вызова управляющего
-/// инструмента (его видит модель в истории следующего раунда). На языке каркаса `loc`.
+/// The "permission" text the loop places as the result of a control-tool call
+/// (seen by the model in the next round's history). In the scaffold language `loc`.
 pub fn control_permission_text(name: &str, loc: &crate::shared::i18n::Locale) -> String {
     match name {
         SEND_FOLLOWUP_ID => loc.t("control.permission.followup").to_string(),
@@ -44,9 +45,9 @@ pub fn control_permission_text(name: &str, loc: &crate::shared::i18n::Locale) ->
     }
 }
 
-/// «Написать ещё сообщение»: ассистент может дописать текущее сообщение до конца,
-/// затем продолжить второй репликой (показывается отдельным пузырём сразу за
-/// первым). См. spec §9.3.
+/// "Write another message": the assistant can finish the current message,
+/// then continue with a second reply (shown as a separate bubble right after
+/// the first). See spec §9.3.
 pub struct SendFollowupMessage;
 
 #[async_trait::async_trait]
@@ -77,10 +78,11 @@ impl Tool for SendFollowupMessage {
     }
 }
 
-/// «Переписать своё текущее сообщение»: если по ходу написания ассистент понял,
-/// что ответ неверный, он вызывает этот инструмент — текущее сообщение сразу
-/// обрывается, а ассистент пишет его заново. Прежняя версия скрывается и не
-/// участвует в дальнейшем инференсе. См. spec §9.3.
+/// "Rewrite my current message": if partway through writing the assistant
+/// realizes the answer is wrong, it calls this tool — the current message is
+/// discarded right away, and the assistant writes it from scratch. The
+/// previous version is hidden and doesn't take part in further inference.
+/// See spec §9.3.
 pub struct RewriteCurrentMessage;
 
 #[async_trait::async_trait]

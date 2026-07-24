@@ -1,10 +1,11 @@
-//! Хранилище (SQLite) — заметки: вставка/список/правка/удаление + эмбеддинги/семантика. Часть модуля [`super`]; разбито из
-//! монолита db.rs (см. docs/history/refactoring-god-objects.md, этап 5).
+//! Storage (SQLite) — notes: insert/list/edit/delete + embeddings/semantics. Part
+//! of the [`super`] module; split out of the db.rs monolith (see
+//! docs/history/refactoring-god-objects.md, stage 5).
 
 use super::*;
 
 impl Db {
-    // ---------- заметки ----------
+    // ---------- notes ----------
 
     pub fn note_insert(&self, note: &Note) -> Result<()> {
         let conn = self.conn.lock().unwrap();
@@ -23,8 +24,8 @@ impl Db {
         Ok(())
     }
 
-    /// Заметки профиля: опционально фильтр по подстроке содержимого и тегам,
-    /// сортировка по `updated_at` убыв., опциональный лимит. Изоляция по профилю.
+    /// A profile's notes: an optional content-substring filter and tag filter,
+    /// sorted by `updated_at` desc, an optional limit. Isolation by profile.
     pub fn note_list(
         &self,
         profile_id: Uuid,
@@ -33,8 +34,8 @@ impl Db {
         limit: Option<usize>,
     ) -> Result<Vec<Note>> {
         let conn = self.conn.lock().unwrap();
-        // Замещённые (superseded) заметки скрыты из активной выдачи (хранятся ради
-        // «шрама»/трассировки) — anti-join по note_superseded.
+        // Superseded notes are hidden from active output (kept for the "scar"/
+        // trace) — anti-join against note_superseded.
         let mut sql = String::from(
             "SELECT n.id, n.profile_id, n.content, n.tags, n.created_at, n.updated_at
              FROM notes n
@@ -66,18 +67,19 @@ impl Db {
         Ok(notes)
     }
 
-    /// Жёсткое удаление заметки профиля по id (вместе с её вектором). Используется
-    /// удалением наблюдения из экрана `F3` (наблюдения — self-заметки). Изоляция по
-    /// `profile_id` в `WHERE`. Возвращает, была ли удалена заметка.
+    /// Hard-deletes a profile's note by id (along with its vector). Used by
+    /// deleting an observation from the `F3` screen (observations are self-notes).
+    /// Isolation by `profile_id` in `WHERE`. Returns whether the note was deleted.
     pub fn note_delete(&self, profile_id: Uuid, id: Uuid) -> Result<bool> {
         let conn = self.conn.lock().unwrap();
-        // Вектор удаляем безусловно (боковая таблица; чужой профиль сюда не попадёт,
-        // т.к. note_id уникален и проверка профиля — на самой заметке ниже).
+        // The vector is deleted unconditionally (a side table; a foreign profile
+        // cannot land here, since note_id is unique and the profile check is on
+        // the note itself below).
         conn.execute(
             "DELETE FROM note_vectors WHERE note_id = ?1",
             params![id.to_string()],
         )?;
-        // Ссылки на RAG-источники этой заметки тоже снимаем (Ярус 3, Путь 3).
+        // Also drop this note's links to RAG sources (Tier 3, Path 3).
         conn.execute(
             "DELETE FROM note_rag_links WHERE profile_id = ?1 AND note_id = ?2",
             params![profile_id.to_string(), id.to_string()],
@@ -89,8 +91,8 @@ impl Db {
         Ok(n > 0)
     }
 
-    /// Переписывает содержимое заметки на месте (ревизия), обновляя `updated_at`.
-    /// Изоляция по `profile_id` в `WHERE`. `false`, если заметка не найдена/чужая.
+    /// Rewrites a note's content in place (a revision), bumping `updated_at`.
+    /// Isolation by `profile_id` in `WHERE`. `false` if the note is not found/foreign.
     pub fn note_update(&self, id: Uuid, profile_id: Uuid, content: &str) -> Result<bool> {
         let conn = self.conn.lock().unwrap();
         let n = conn.execute(
@@ -105,9 +107,9 @@ impl Db {
         Ok(n > 0)
     }
 
-    /// Сохраняет/заменяет эмбеддинг заметки (для семантического поиска). Вектор —
-    /// JSON-массив f32 в боковой таблице (намеренно НЕ vec0: заметок немного,
-    /// косинус считаем в Rust — см. [`Self::note_search_semantic`]).
+    /// Saves/replaces a note's embedding (for semantic search). The vector is a
+    /// JSON array of f32 in a side table (deliberately NOT vec0: there are only a
+    /// few notes, cosine is computed in Rust — see [`Self::note_search_semantic`]).
     pub fn note_vector_upsert(
         &self,
         note_id: Uuid,
@@ -129,10 +131,10 @@ impl Db {
         Ok(())
     }
 
-    /// Семантический поиск заметок профиля по косинусной близости к `query`.
-    /// Brute-force в Rust (заметок десятки–сотни); заметки без эмбеддинга
-    /// пропускаются. Возвращает до `k` пар (заметка, близость) по убыванию.
-    /// Изоляция — `WHERE n.profile_id = ?`.
+    /// Semantic search of a profile's notes by cosine similarity to `query`.
+    /// Brute-force in Rust (notes number in the tens–hundreds); notes without an
+    /// embedding are skipped. Returns up to `k` pairs (note, similarity) in
+    /// descending order. Isolation — `WHERE n.profile_id = ?`.
     pub fn note_search_semantic(
         &self,
         profile_id: Uuid,
@@ -166,9 +168,9 @@ impl Db {
         Ok(scored)
     }
 
-    /// Заметки профиля, у которых ещё нет эмбеддинга (для бэкфилла «старых» заметок,
-    /// созданных до векторного поиска, импортированных или сохранённых при
-    /// недоступном тогда эмбеддере). Возвращает пары (id, содержимое).
+    /// A profile's notes that still have no embedding (for backfilling "old"
+    /// notes created before vector search, imported, or saved while the embedder
+    /// was unavailable at the time). Returns pairs (id, content).
     pub fn notes_missing_vectors(&self, profile_id: Uuid) -> Result<Vec<(Uuid, String)>> {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare(
@@ -185,9 +187,10 @@ impl Db {
         Ok(rows)
     }
 
-    /// Заметка по id в рамках профиля (включая замещённую) — для чтения тегов при
-    /// замещении/слиянии: новая версия наследует теги исходной (в т.ч. `@self`, чтобы
-    /// self-заметка не «выпала» в пользовательскую выдачу). `None` — не найдена/чужая.
+    /// A note by id within a profile (including a superseded one) — for reading
+    /// tags on supersession/merging: the new version inherits the source's tags
+    /// (including `@self`, so a self-note doesn't "fall out" into user-facing
+    /// output). `None` — not found/foreign.
     pub fn note_get(&self, profile_id: Uuid, id: Uuid) -> Result<Option<Note>> {
         let conn = self.conn.lock().unwrap();
         let note = conn
@@ -201,9 +204,9 @@ impl Db {
         Ok(note)
     }
 
-    // ---------- граф связей и «шрамы» (Ярус 2) ----------
+    // ---------- link graph and "scars" (Tier 2) ----------
 
-    /// Заметка существует у профиля и не замещена (для проверки концов связи).
+    /// A profile's note exists and is not superseded (for checking a link's ends).
     pub fn note_is_active(&self, profile_id: Uuid, id: Uuid) -> Result<bool> {
         let conn = self.conn.lock().unwrap();
         let found: Option<i64> = conn
@@ -218,8 +221,8 @@ impl Db {
         Ok(found.is_some())
     }
 
-    /// Активные заметки профиля с их эмбеддингами (для консолидации: поиск дублей
-    /// попарным косинусом). Замещённые исключены.
+    /// A profile's active notes with their embeddings (for consolidation: finding
+    /// duplicates via pairwise cosine). Superseded ones are excluded.
     pub fn notes_with_vectors(&self, profile_id: Uuid) -> Result<Vec<(Note, Vec<f32>)>> {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare(
@@ -262,7 +265,7 @@ mod tests {
         let a_notes = db.note_list(a, None, &[], None).unwrap();
         assert_eq!(a_notes.len(), 1);
         assert_eq!(a_notes[0].content, "secret of A");
-        // Профиль B не виден из A.
+        // Profile B is not visible from A.
         assert!(a_notes.iter().all(|n| n.profile_id == a));
     }
 
@@ -274,12 +277,12 @@ mod tests {
         let note = Note::new(a, "v1", vec![]);
         let id = note.id;
         db.note_insert(&note).unwrap();
-        // Чужой профиль переписать не может.
+        // A foreign profile cannot overwrite it.
         assert!(!db.note_update(id, b, "hacked").unwrap());
-        // Свой — может.
+        // Its own profile can.
         assert!(db.note_update(id, a, "v2").unwrap());
         assert_eq!(db.note_list(a, None, &[], None).unwrap()[0].content, "v2");
-        // Несуществующая заметка.
+        // A nonexistent note.
         assert!(!db.note_update(Uuid::new_v4(), a, "x").unwrap());
     }
 
@@ -295,17 +298,17 @@ mod tests {
         db.note_insert(&n2).unwrap();
         db.note_vector_upsert(id1, a, &[1.0, 0.0, 0.0]).unwrap();
         db.note_vector_upsert(id2, a, &[0.0, 1.0, 0.0]).unwrap();
-        // Заметка другого профиля с близким вектором — не должна попасть в выдачу a.
+        // Another profile's note with a close vector must not leak into a's output.
         let nb = Note::new(b, "other", vec![]);
         db.note_insert(&nb).unwrap();
         db.note_vector_upsert(nb.id, b, &[1.0, 0.0, 0.0]).unwrap();
 
         let hits = db.note_search_semantic(a, &[0.9, 0.1, 0.0], 5).unwrap();
-        assert_eq!(hits.len(), 2); // только профиль a
-        assert_eq!(hits[0].0.id, id1); // ближе к [1,0,0]
+        assert_eq!(hits.len(), 2); // profile a only
+        assert_eq!(hits[0].0.id, id1); // closer to [1,0,0]
         assert!(hits[0].1 > hits[1].1);
 
-        // k ограничивает выдачу.
+        // k limits the output.
         let top1 = db.note_search_semantic(a, &[0.9, 0.1, 0.0], 1).unwrap();
         assert_eq!(top1.len(), 1);
         assert_eq!(top1[0].0.id, id1);
@@ -333,7 +336,7 @@ mod tests {
         let id = n.id;
         db.note_insert(&n).unwrap();
         db.note_vector_upsert(id, a, &[1.0, 0.0]).unwrap();
-        db.note_vector_upsert(id, a, &[0.0, 1.0]).unwrap(); // замена
+        db.note_vector_upsert(id, a, &[0.0, 1.0]).unwrap(); // replacement
         let hits = db.note_search_semantic(a, &[0.0, 1.0], 5).unwrap();
         assert_eq!(hits.len(), 1);
         assert!((hits[0].1 - 1.0).abs() < 1e-6);
@@ -349,7 +352,7 @@ mod tests {
         db.note_insert(&n2).unwrap();
         db.note_vector_upsert(n1.id, a, &[1.0, 0.0]).unwrap();
         db.note_vector_upsert(n2.id, a, &[0.0, 1.0]).unwrap();
-        // Замещённая исключается из выдачи.
+        // A superseded one is excluded from the output.
         let r = Note::new(a, "r", vec![]);
         db.note_insert(&r).unwrap();
         db.note_supersede_mark(a, n2.id, r.id).unwrap();
@@ -369,13 +372,14 @@ mod tests {
         let id = n.id;
         db.note_insert(&n).unwrap();
         db.note_vector_upsert(id, p, &[1.0, 0.0]).unwrap();
-        // Чужой профиль не удаляет.
+        // A foreign profile does not delete it.
         assert!(!db.note_delete(other, id).unwrap());
         assert_eq!(db.note_list(p, None, &[], None).unwrap().len(), 1);
-        // Свой — удаляет заметку (и её вектор).
+        // Its own profile deletes the note (and its vector).
         assert!(db.note_delete(p, id).unwrap());
         assert!(db.note_list(p, None, &[], None).unwrap().is_empty());
-        // Заметки без вектора нет (обе таблицы пусты) — вектор снят вместе с заметкой.
+        // No note lacking a vector (both tables are empty) — the vector was
+        // removed along with the note.
         assert!(db.notes_missing_vectors(p).unwrap().is_empty());
     }
 

@@ -1,16 +1,18 @@
-//! Озвучивание сообщений чата (команда `/tts [N|all|stop]`, spec §11.9).
+//! Chat message speech (`/tts [N|all|stop]` command, spec §11.9).
 //!
-//! Устроено по образцу [`super::rag`]: команда → снимок данных у оркестратора
-//! (он единственный владелец `Chat`) → отменяемая фоновая задача. Задача идёт
-//! **конвейером**: пока играет чанк N, синтезируется N+1 — первый звук приходит
-//! быстро, а вперёд синтезируется не больше одного чанка (не платим за то, что
-//! пользователь оборвёт). Чат при этом не мутируется, генерация не гейтится:
-//! озвучивается **снимок** переписки на момент команды.
+//! Modeled on [`super::rag`]: command → a data snapshot from the orchestrator
+//! (the sole owner of `Chat`) → a cancellable background task. The task runs as
+//! a **pipeline**: while chunk N plays, N+1 is being synthesized — the first
+//! sound arrives fast, and no more than one chunk is synthesized ahead (we
+//! don't pay for what the user might cut off). The chat isn't mutated,
+//! generation isn't gated: a **snapshot** of the conversation at command time
+//! is spoken.
 //!
-//! Точки остановки собраны в один хелпер [`Orchestrator::stop_tts`] (прецедент —
-//! `reset_rag_cancel`): две по настройке (переключение чата, начало генерации) и
-//! три **безусловные** — удаление обмена, перегенерация, удаление чата: текста,
-//! который озвучивается, больше не существует. См. docs/research/tts.md §7, §8.
+//! Stop points are collected into one helper [`Orchestrator::stop_tts`]
+//! (precedent — `reset_rag_cancel`): two by setting (switching chats, starting
+//! generation) and three **unconditional** — deleting an exchange,
+//! regeneration, deleting a chat: the text being spoken no longer exists. See
+//! docs/research/tts.md §7, §8.
 
 use std::time::Duration;
 
@@ -25,25 +27,26 @@ use crate::shared::tts::{TtsEngine, TtsSetupError, engines_from_config, playback
 
 use super::Orchestrator;
 
-/// Сколько чанков держать в очереди воспроизведения (играющий + один готовый).
-/// Больше — платим за синтез, который может не понадобиться; меньше — рискуем
-/// паузой между чанками.
+/// How many chunks to keep in the playback queue (the one playing + one
+/// ready). More — pay for synthesis that might not be needed; less — risk a
+/// pause between chunks.
 const QUEUE_AHEAD: usize = 2;
 
-/// Пауза опроса очереди воспроизведения (у `rodio` нет асинхронного уведомления
-/// «очередь опустела», а `sleep_until_end` блокирующий).
+/// Playback-queue poll interval (`rodio` has no async "queue is empty"
+/// notification, and `sleep_until_end` is blocking).
 const POLL_INTERVAL: Duration = Duration::from_millis(80);
 
-/// Пауза после опустошения очереди — прежде чем закрыть устройство (дроп
-/// [`Playback`]). Очередь пустеет, когда источник исчерпан **миксером**; звуковая
-/// карта в этот момент ещё доигрывает свой буфер, и без паузы хвост последнего
-/// чанка обрывался бы. Величина с запасом к замеренной разнице (~30 мс).
+/// Pause after the queue drains — before closing the device (dropping
+/// [`Playback`]). The queue reports empty once the source is exhausted by the
+/// **mixer**; the sound card is still playing out its buffer at that point, and
+/// without this pause the last chunk's tail would get cut off. The value has
+/// margin over the measured gap (~30 ms).
 const DRAIN_TAIL: Duration = Duration::from_millis(300);
 
 impl Orchestrator {
-    /// Озвучивает сообщения активного чата (команда `/tts`, `/tts N`, `/tts all`).
+    /// Speaks the active chat's messages (`/tts`, `/tts N`, `/tts all` commands).
     pub(super) fn handle_tts(&mut self, scope: TtsScope) {
-        // Новая команда всегда прерывает прежнее воспроизведение.
+        // A new command always interrupts the previous playback.
         self.stop_tts();
         let Some(chat) = self
             .active_id
@@ -52,8 +55,9 @@ impl Orchestrator {
             self.fail_tts(self.ui_locale().t("ui.err.tts_no_active_chat"));
             return;
         };
-        // Пометки и префиксы ролей — речевой контент, поэтому на языке **профиля**
-        // (ось A, docs/history/i18n.md), а не интерфейса.
+        // Markers and role prefixes are speech content, so they're in the
+        // **profile's** language (axis A, docs/history/i18n.md), not the
+        // interface's.
         let speech_loc = self.profile_locale(chat.profile_id);
         let chunks = match build_utterances(
             &chat.messages,
@@ -68,16 +72,17 @@ impl Orchestrator {
             }
         };
 
-        // Клиент строим из снимка настроек: сохранённый ключ провайдера общий с
-        // чатом (ADR 0008) — вводить его заново не нужно.
+        // Build the client from a settings snapshot: the stored provider key is
+        // shared with chat (ADR 0008) — no need to enter it again.
         let stored = self
             .config
             .tts
             .mode
             .cloud_provider()
             .and_then(|p| crate::shared::secrets::stored_key(&self.config.api_keys, p.key()));
-        // Два движка: ассистента и (опц.) пользователя — если задан отдельный
-        // «Голос пользователя» (spec §11.9). Оба одного провайдера → лимит общий.
+        // Two engines: the assistant's and (opt.) the user's — when a separate
+        // "User voice" is set (spec §11.9). Both use the same provider → a shared
+        // limit.
         let (engine, user_engine) = match engines_from_config(&self.config.tts, stored) {
             Ok(pair) => pair,
             Err(err) => {
@@ -91,10 +96,10 @@ impl Orchestrator {
             return;
         }
 
-        // Устройство открываем здесь (а не в задаче), чтобы разделить `Arc<Playback>`
-        // с оркестратором ради мгновенных `/tts pause`/`resume`. Открытие всё ещё
-        // **ленивое** — по команде `/tts`, а не на старте приложения (cpal#384). Нет
-        // звука → понятная заметка, задача не спавнится.
+        // We open the device here (not in the task) to share `Arc<Playback>` with
+        // the orchestrator for instant `/tts pause`/`resume`. Opening is still
+        // **lazy** — on the `/tts` command, not at app startup (cpal#384). No
+        // audio → a clear note, the task isn't spawned.
         let playback = match Playback::open() {
             Ok(p) => std::sync::Arc::new(p),
             Err(err) => {
@@ -126,42 +131,44 @@ impl Orchestrator {
         });
     }
 
-    /// Приостанавливает текущее воспроизведение (`/tts pause`), сохраняя очередь.
-    /// No-op, если озвучка не идёт. Возобновляется через [`Self::handle_tts_resume`].
+    /// Pauses the current playback (`/tts pause`), keeping the queue. No-op if
+    /// nothing is speaking. Resumed via [`Self::handle_tts_resume`].
     pub(super) fn handle_tts_pause(&mut self) {
         if let Some(pb) = &self.tts_playback {
             pb.pause();
         }
     }
 
-    /// Продолжает приостановленное воспроизведение (`/tts resume`). No-op, если
-    /// озвучка не идёт или уже играет.
+    /// Continues paused playback (`/tts resume`). No-op if nothing is speaking
+    /// or it's already playing.
     pub(super) fn handle_tts_resume(&mut self) {
         if let Some(pb) = &self.tts_playback {
             pb.resume();
         }
     }
 
-    /// Останавливает озвучивание (команда `/tts stop` и все точки остановки).
-    /// Идемпотентно: если ничего не играет — no-op.
+    /// Stops speech (the `/tts stop` command and every stop point).
+    /// Idempotent: a no-op if nothing is playing.
     pub(super) fn stop_tts(&mut self) {
         if let Some(token) = self.tts_cancel.take() {
             token.cancel();
         }
-        // Отпускаем хэндл устройства (задача держит свой `Arc` до завершения). Заодно
-        // снимаем паузу: иначе приостановленная задача не дренилась бы после отмены.
+        // Release the device handle (the task holds its own `Arc` until it
+        // finishes). Also lift the pause: otherwise a paused task would never
+        // drain after cancellation.
         if let Some(pb) = self.tts_playback.take() {
             pb.resume();
         }
-        // Гасим чип сразу и забываем поколение: поздний `done` уже отменённой
-        // задачи будет отброшен (иначе он погасил бы чип новой озвучки).
+        // Clear the chip right away and forget the generation: a late `done`
+        // from an already-cancelled task will be discarded (otherwise it would
+        // clear the chip of a new speech run).
         if self.tts_gen.take().is_some() {
             let _ = self.evt_tx.send(AppEvent::TtsActive(false));
         }
     }
 
-    /// Фоновая задача озвучивания завершилась сама (доиграла/ошибка). Гасим чип,
-    /// только если это текущая задача.
+    /// The background speech task finished on its own (played out / errored).
+    /// Clears the chip only if this is the current task.
     pub(super) fn handle_tts_done(&mut self, task_id: Uuid) {
         if self.tts_gen == Some(task_id) {
             self.tts_gen = None;
@@ -171,13 +178,13 @@ impl Orchestrator {
         }
     }
 
-    /// Сообщает об ошибке озвучивания заметкой в ленту (язык интерфейса, ось B).
+    /// Reports a speech error as a feed note (interface language, axis B).
     fn fail_tts(&self, msg: &str) {
         let _ = self.evt_tx.send(AppEvent::Error(msg.to_string()));
     }
 }
 
-/// Ключ бандла для структурной ошибки настройки озвучивания.
+/// Bundle key for a structured speech-setup error.
 fn setup_error_key(err: TtsSetupError) -> &'static str {
     match err {
         TtsSetupError::Model => "ui.err.tts_no_model",
@@ -186,11 +193,13 @@ fn setup_error_key(err: TtsSetupError) -> &'static str {
     }
 }
 
-/// Отбирает сообщения по объёму команды и превращает их в реплики для синтеза.
+/// Selects messages by the command's scope and turns them into utterances for
+/// synthesis.
 ///
-/// Что считается сообщением: `user`/`assistant` с непустым текстом (system/tool
-/// пропускаются — те же правила, что в `F5`-экспорте). Порядок хронологический.
-/// `None` — озвучивать нечего (пустой чат / только служебные сообщения).
+/// What counts as a message: `user`/`assistant` with non-empty text (system/
+/// tool are skipped — the same rules as in the `F5` export). Order is
+/// chronological. `None` — nothing to speak (an empty chat / only service
+/// messages).
 pub(super) fn build_utterances(
     messages: &[Message],
     scope: TtsScope,
@@ -208,13 +217,13 @@ pub(super) fn build_utterances(
         TtsScope::All => spoken.len(),
     };
     let start = spoken.len().saturating_sub(take);
-    // Роль сохраняется вместе с текстом: по ней многоголосая озвучка (`/tts all`)
-    // выбирает голос пользователя/ассистента (spec §11.9).
+    // The role travels with the text: multi-voice speech (`/tts all`) picks the
+    // user's/assistant's voice by it.
     let out: Vec<(MessageRole, String)> = spoken[start..]
         .iter()
         .filter_map(|m| {
-            // «Мысли» (CoT) и tool-блоки не озвучиваются никогда: первые лежат в
-            // отдельном поле `Message.thoughts`, вторых нет в `text`.
+            // Thoughts (CoT) and tool blocks are never spoken: the former live in
+            // a separate `Message.thoughts` field, the latter aren't in `text`.
             let text = crate::shared::markdown::speakable_text(&m.text, loc);
             if text.is_empty() {
                 return None;
@@ -234,10 +243,10 @@ pub(super) fn build_utterances(
     (!out.is_empty()).then_some(out)
 }
 
-/// Режет реплики на чанки не длиннее `max_chars` символов — по границам
-/// предложений (переиспользуем чанкер RAG), чтобы стык чанков не приходился на
-/// середину фразы. Реплики не склеиваются между собой: граница сообщения — это
-/// и естественная пауза, и точка отмены.
+/// Cuts utterances into chunks no longer than `max_chars` characters — on
+/// sentence boundaries (reusing RAG's chunker), so a chunk seam never falls
+/// mid-phrase. Utterances aren't stitched together: a message boundary is both
+/// a natural pause and a cancellation point.
 pub(super) fn chunk_utterances(
     utterances: &[(MessageRole, String)],
     max_chars: usize,
@@ -252,14 +261,14 @@ pub(super) fn chunk_utterances(
             }
             let mut chunks = Vec::new();
             pack_sentences(block, max, &mut chunks);
-            // Все чанки блока наследуют роль исходного сообщения.
+            // All of the block's chunks inherit the source message's role.
             out.extend(chunks.into_iter().map(|c| (*role, c)));
         }
     }
     out
 }
 
-/// Упаковывает предложения блока в чанки до `max` символов.
+/// Packs a block's sentences into chunks up to `max` characters.
 fn pack_sentences(block: &str, max: usize, out: &mut Vec<String>) {
     let mut cur = String::new();
     for sentence in crate::features::tools::rag::split_sentences(block) {
@@ -283,8 +292,9 @@ fn pack_sentences(block: &str, max: usize, out: &mut Vec<String>) {
     }
 }
 
-/// Режет по символам предложение, которое само длиннее лимита (редкий случай —
-/// текст без пунктуации). Граница слова предпочтительнее середины слова.
+/// Cuts by character a sentence that's itself longer than the limit (a rare
+/// case — text with no punctuation). A word boundary is preferred over the
+/// middle of a word.
 fn split_long(sentence: &str, max: usize) -> Vec<String> {
     if sentence.chars().count() <= max {
         return vec![sentence.to_string()];
@@ -294,7 +304,8 @@ fn split_long(sentence: &str, max: usize) -> Vec<String> {
     for word in sentence.split_whitespace() {
         let wlen = word.chars().count();
         if wlen > max {
-            // Слово длиннее лимита — режем посимвольно (иначе чанк не влезет).
+            // A word longer than the limit — cut it by character (otherwise the
+            // chunk wouldn't fit).
             if !cur.is_empty() {
                 out.push(std::mem::take(&mut cur));
             }
@@ -319,30 +330,33 @@ fn split_long(sentence: &str, max: usize) -> Vec<String> {
     out
 }
 
-/// Параметры фоновой задачи озвучивания.
+/// Parameters of the background speech task.
 struct TtsTask {
-    /// Движок голоса ассистента (и всех реплик, если отдельный голос пользователя
-    /// не задан).
+    /// The assistant's voice engine (and every utterance's, if a separate user
+    /// voice isn't set).
     engine: Box<dyn TtsEngine>,
-    /// Движок голоса пользователя (`Some` — только при заданном «Голосе пользователя»).
+    /// The user's voice engine (`Some` only when a "User voice" is set).
     user_engine: Option<Box<dyn TtsEngine>>,
-    /// Чанки с ролью-источником — по ней выбирается движок.
+    /// Chunks with their source role — used to pick the engine.
     chunks: Vec<(MessageRole, String)>,
     cancel: CancellationToken,
-    /// Поколение задачи — по нему оркестратор отличает свой `done` от устаревшего.
+    /// The task's generation — the orchestrator uses it to tell its own `done`
+    /// apart from a stale one.
     task_id: Uuid,
-    /// Аудио-устройство, открытое обработчиком и разделяемое с оркестратором
-    /// (`Arc`, ради `/tts pause`/`resume`). При завершении задачи её `Arc` дропается.
+    /// The audio device, opened by the handler and shared with the orchestrator
+    /// (`Arc`, for `/tts pause`/`resume`). Its `Arc` is dropped when the task
+    /// finishes.
     playback: std::sync::Arc<Playback>,
-    /// Язык интерфейса (ось B) — тексты ошибок для человека.
+    /// The interface language (axis B) — human-facing error text.
     loc: &'static Locale,
     evt_tx: tokio::sync::mpsc::UnboundedSender<AppEvent>,
     done_tx: tokio::sync::mpsc::UnboundedSender<Uuid>,
 }
 
-/// Запускает фоновую озвучку: синтезирует чанки в переданную очередь
-/// воспроизведения, придерживая синтез, пока очередь заполнена. Устройство уже
-/// открыто обработчиком (`Playback::open` — по команде `/tts`, разделяется `Arc`).
+/// Starts the background speech run: synthesizes chunks into the given
+/// playback queue, holding back synthesis while the queue is full. The device
+/// is already opened by the handler (`Playback::open` — on the `/tts` command,
+/// shared via `Arc`).
 fn spawn_tts(task: TtsTask) {
     let TtsTask {
         engine,
@@ -365,15 +379,15 @@ fn spawn_tts(task: TtsTask) {
             if cancel.is_cancelled() {
                 break;
             }
-            // Конвейер: не синтезируем вперёд больше, чем нужно очереди.
+            // Pipeline: don't synthesize further ahead than the queue needs.
             while playback.queued() >= QUEUE_AHEAD && !cancel.is_cancelled() {
                 tokio::time::sleep(POLL_INTERVAL).await;
             }
             if cancel.is_cancelled() {
                 break;
             }
-            // Реплики пользователя — своим голосом, если он задан; иначе (и для
-            // ассистента) — основной движок.
+            // User utterances get their own voice, when set; otherwise (and for
+            // the assistant) — the main engine.
             let active: &dyn TtsEngine = match role {
                 MessageRole::User => user_engine.as_deref().unwrap_or(engine.as_ref()),
                 _ => engine.as_ref(),
@@ -385,10 +399,10 @@ fn spawn_tts(task: TtsTask) {
                         break;
                     }
                 }
-                // Пустой клип — просто нечего играть (не ошибка).
+                // An empty clip — simply nothing to play (not an error).
                 Ok(_) => {}
                 Err(err) => {
-                    // Отмена — не ошибка: пользователь сам остановил.
+                    // Cancellation isn't an error: the user stopped it themselves.
                     if !cancel.is_cancelled() {
                         fail(loc.tf("ui.err.tts_synth", &[("err", &err.to_string())]));
                     }
@@ -397,18 +411,19 @@ fn spawn_tts(task: TtsTask) {
             }
         }
 
-        // Дожидаемся, пока очередь доиграет (или отмены).
+        // Wait for the queue to finish playing (or for cancellation).
         while !playback.is_drained() && !cancel.is_cancelled() {
             tokio::time::sleep(POLL_INTERVAL).await;
         }
         if cancel.is_cancelled() {
             playback.stop();
         } else {
-            // Очередь сообщает «пусто», когда источник **исчерпан миксером**, а не
-            // когда звуковая карта доиграла свой буфер (замерено смоуком: клип 400 мс
-            // отдаёт `is_drained` через ~370 мс). Дроп `Playback` закрывает
-            // устройство, поэтому без этой паузы у последнего чанка срезался бы
-            // хвост в несколько десятков миллисекунд.
+            // The queue reports "empty" when the source is **exhausted by the
+            // mixer**, not when the sound card has finished playing out its
+            // buffer (measured by a smoke test: a 400 ms clip reports
+            // `is_drained` after ~370 ms). Dropping `Playback` closes the device,
+            // so without this pause the last chunk's tail would be cut off by a
+            // few dozen milliseconds.
             tokio::time::sleep(DRAIN_TAIL).await;
         }
         let _ = done_tx.send(task_id);

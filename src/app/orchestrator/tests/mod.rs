@@ -1,5 +1,5 @@
-//! Тесты оркестратора (без UI и реальной модели): автомат генерации, гонки,
-//! agentic-loop, приоритеты семплинга, операции списка/профилей/RAG.
+//! Orchestrator tests (no UI, no real model): the generation state machine, races,
+//! the agentic loop, sampling priorities, list/profile/RAG operations.
 
 use super::engines::EngineManager;
 use super::impersonation::{build_impersonation_request, swap_role_message};
@@ -22,7 +22,7 @@ fn test_embedder() -> Arc<dyn Embedder> {
     Arc::new(MockEmbedder::new(16))
 }
 
-/// Поднимает оркестратор на временном хранилище. Возвращает каналы и handle.
+/// Spins up the orchestrator on a temp storage. Returns the channels and a handle.
 fn spawn_orch(
     backend: Option<Arc<dyn EngineBackend>>,
 ) -> (
@@ -34,7 +34,7 @@ fn spawn_orch(
     spawn_orch_cfg(backend, AppConfig::default())
 }
 
-/// Как [`spawn_orch`], но с заданной конфигурацией (max_tool_rounds и т.п.).
+/// Like [`spawn_orch`], but with a given config (max_tool_rounds, etc.).
 fn spawn_orch_cfg(
     backend: Option<Arc<dyn EngineBackend>>,
     config: AppConfig,
@@ -60,7 +60,7 @@ fn spawn_orch_cfg(
     (dir, cmd_tx, evt_rx, handle)
 }
 
-/// Дренирует события до первого, удовлетворяющего предикату (или закрытия).
+/// Drains events until the first one matching the predicate (or the channel closes).
 async fn wait_for<F: Fn(&AppEvent) -> bool>(
     rx: &mut UnboundedReceiver<AppEvent>,
     pred: F,
@@ -73,14 +73,14 @@ async fn wait_for<F: Fn(&AppEvent) -> bool>(
     None
 }
 
-/// Собирает «голый» оркестратор для юнит-тестов чистых методов (без петли),
-/// отбрасывая поток событий.
+/// Assembles a "bare" orchestrator for unit-testing pure methods (no loop),
+/// discarding the event stream.
 fn bare_orch() -> (tempfile::TempDir, Orchestrator) {
     let (dir, orch, _rx) = bare_orch_rx();
     (dir, orch)
 }
 
-/// Как [`bare_orch`], но возвращает и приёмник событий (для проверки эмиссии).
+/// Like [`bare_orch`], but also returns the event receiver (to check emission).
 fn bare_orch_rx() -> (tempfile::TempDir, Orchestrator, UnboundedReceiver<AppEvent>) {
     let dir = tempfile::tempdir().unwrap();
     let storage = Arc::new(Storage::open(Paths::with_root(dir.path())).unwrap());
@@ -98,8 +98,8 @@ fn bare_orch_rx() -> (tempfile::TempDir, Orchestrator, UnboundedReceiver<AppEven
         ..Default::default()
     };
     let registry = Arc::new(build_registry(&config, storage.json().sandbox_dir()));
-    // Менеджер серверов: сразу «готов» с тестовым эмбеддером (как было у голого
-    // оркестратора). chat-движок тесты при необходимости проставляют сами.
+    // The server manager: immediately "ready" with a test embedder (as the bare
+    // orchestrator used to be). Tests set the chat engine themselves when needed.
     let mut engines = EngineManager::new(
         Arc::new(MockSupervisor::with_backend(None)),
         status_tx,
@@ -139,8 +139,8 @@ fn bare_orch_rx() -> (tempfile::TempDir, Orchestrator, UnboundedReceiver<AppEven
     (dir, orch, evt_rx)
 }
 
-/// Включает в профиле весь каталог инструментов (в т.ч. управляющие followup/
-/// rewrite) — для тестов управляющих инструментов. Возвращает id профиля.
+/// Enables the whole tool catalog on the profile (including the control followup/
+/// rewrite tools) — for control-tool tests. Returns the profile's id.
 async fn enable_all_tools(
     cmd_tx: &UnboundedSender<AppCommand>,
     evt_rx: &mut UnboundedReceiver<AppEvent>,
@@ -165,22 +165,22 @@ async fn enable_all_tools(
     pid
 }
 
-/// Реальный chat-движок из `MINDFORK_ENGINE_URL` (для end-to-end смоуков на живой
-/// модели). `None` — переменная не задана (тест пропускается).
+/// The real chat engine from `MINDFORK_ENGINE_URL` (for end-to-end smokes against a live
+/// model). `None` — the variable isn't set (the test is skipped).
 fn live_backend() -> Option<Arc<dyn EngineBackend>> {
     let url = std::env::var("MINDFORK_ENGINE_URL").ok()?;
     Some(Arc::new(crate::shared::api::OpenAiClient::new(url)) as Arc<dyn EngineBackend>)
 }
 
-/// Реальный эмбеддер из `MINDFORK_EMBED_URL` (для живых смоуков — bge-m3 и т.п.);
-/// `None`, если не задан → живой смоук берёт тестовый `MockEmbedder`.
+/// The real embedder from `MINDFORK_EMBED_URL` (for live smokes — bge-m3 etc.);
+/// `None` when unset → the live smoke falls back to the test `MockEmbedder`.
 fn live_embedder() -> Option<Arc<dyn Embedder>> {
     let url = std::env::var("MINDFORK_EMBED_URL").ok()?;
     Some(Arc::new(crate::shared::api::OpenAiClient::new(url)) as Arc<dyn Embedder>)
 }
 
-/// Кортеж поднятого оркестратора (как у [`spawn_orch`]): каталог данных, канал
-/// команд, приёмник событий, handle петли.
+/// The tuple of a spun-up orchestrator (like [`spawn_orch`]): the data directory,
+/// the command channel, the event receiver, the loop's handle.
 type OrchHandle = (
     tempfile::TempDir,
     UnboundedSender<AppCommand>,
@@ -188,15 +188,15 @@ type OrchHandle = (
     tokio::task::JoinHandle<()>,
 );
 
-/// Поднимает оркестратор для живого смоука: chat из `MINDFORK_ENGINE_URL`, эмбеддер
-/// из `MINDFORK_EMBED_URL` (реальный сервер; иначе детерминированный `MockEmbedder`).
-/// `None`, если `MINDFORK_ENGINE_URL` не задан (смоук пропускается).
+/// Spins up the orchestrator for a live smoke: chat from `MINDFORK_ENGINE_URL`, an
+/// embedder from `MINDFORK_EMBED_URL` (a real server; otherwise a deterministic `MockEmbedder`).
+/// `None` when `MINDFORK_ENGINE_URL` is unset (the smoke is skipped).
 fn spawn_orch_live() -> Option<OrchHandle> {
     spawn_orch_live_cfg(AppConfig::default())
 }
 
-/// Как [`spawn_orch_live`], но с явной конфигурацией (напр. включённый MCP-хост
-/// с реальным сервером для e2e-смоука).
+/// Like [`spawn_orch_live`], but with an explicit config (e.g. an MCP host enabled
+/// with a real server for an e2e smoke).
 fn spawn_orch_live_cfg(config: AppConfig) -> Option<OrchHandle> {
     let backend = live_backend()?;
     let embedder = live_embedder();
@@ -219,8 +219,8 @@ fn spawn_orch_live_cfg(config: AppConfig) -> Option<OrchHandle> {
     Some((dir, cmd_tx, evt_rx, handle))
 }
 
-/// Дренирует события до `Finished` (или закрытия), помечая, встретилось ли
-/// `pred`-событие по пути. Для end-to-end смоуков управляющих инструментов.
+/// Drains events until `Finished` (or the channel closes), flagging whether a
+/// `pred`-matching event occurred along the way. For control-tool end-to-end smokes.
 async fn drain_until_finished<F: Fn(&AppEvent) -> bool>(
     rx: &mut UnboundedReceiver<AppEvent>,
     pred: F,
@@ -237,8 +237,8 @@ async fn drain_until_finished<F: Fn(&AppEvent) -> bool>(
     saw
 }
 
-/// Прогоняет один ход: шлёт сообщение, дренирует события до `Finished`, собирая
-/// текст ответа и имена вызванных инструментов. Для live-смоуков.
+/// Runs one turn: sends a message, drains events until `Finished`, collecting
+/// the reply text and the names of called tools. For live smokes.
 #[cfg(test)]
 async fn run_turn_live(
     cmd_tx: &UnboundedSender<AppCommand>,
@@ -259,8 +259,8 @@ async fn run_turn_live(
     (out, tools)
 }
 
-/// Как [`run_turn_live`], но собирает пары (имя инструмента, результат) — чтобы
-/// проверить текст результата (напр. срабатывание ворот `add_insight`).
+/// Like [`run_turn_live`], but collects pairs (tool name, result) — to check the
+/// result text (e.g. the `add_insight` gate firing).
 async fn run_turn_capture(
     cmd_tx: &UnboundedSender<AppCommand>,
     evt_rx: &mut UnboundedReceiver<AppEvent>,
@@ -280,7 +280,7 @@ async fn run_turn_capture(
     (out, calls)
 }
 
-/// Готовит голый оркестратор с профилем + активным чатом (для F3-правок).
+/// Prepares a bare orchestrator with a profile + an active chat (for F3 edits).
 fn orch_with_active_profile() -> (tempfile::TempDir, Orchestrator, Uuid) {
     let (dir, mut orch) = bare_orch();
     let profile = Profile::new("P", "sys");
@@ -293,8 +293,8 @@ fn orch_with_active_profile() -> (tempfile::TempDir, Orchestrator, Uuid) {
     (dir, orch, pid)
 }
 
-/// Готовит оркестратор с чатом (user+assistant) и профилем, включившим модель себя;
-/// `auto_reflect_every=1`. Возвращает `(dir, orch, chat_id)`.
+/// Prepares an orchestrator with a chat (user+assistant) and a profile that enabled the
+/// self-model; `auto_reflect_every=1`. Returns `(dir, orch, chat_id)`.
 fn orch_ready_for_reflection() -> (tempfile::TempDir, Orchestrator, Uuid) {
     use crate::features::tools::self_model::GET_SELF_MODEL_ID;
     let (dir, mut orch) = bare_orch();
@@ -311,10 +311,10 @@ fn orch_ready_for_reflection() -> (tempfile::TempDir, Orchestrator, Uuid) {
     (dir, orch, chat_id)
 }
 
-/// Готовит оркестратор с чатом (user+assistant), профилем с включённой моделью себя и
-/// двумя наблюдениями-заметками (`@self`) в БД (сигнал «есть что консолидировать»);
-/// `auto_consolidate_every=1`. Возвращает `(dir, orch, chat_id)`.
-/// См. docs/history/self-model-consolidation.md (этап A1).
+/// Prepares an orchestrator with a chat (user+assistant), a profile with the self-model
+/// enabled, and two `@self` observation-notes in the DB (the signal "there's something
+/// to consolidate"); `auto_consolidate_every=1`. Returns `(dir, orch, chat_id)`.
+/// See docs/history/self-model-consolidation.md (stage A1).
 fn orch_ready_for_self_consolidation() -> (tempfile::TempDir, Orchestrator, Uuid) {
     use crate::entities::note::Note;
     use crate::features::tools::notes::SELF_NOTE_TAG;
@@ -332,7 +332,7 @@ fn orch_ready_for_self_consolidation() -> (tempfile::TempDir, Orchestrator, Uuid
     chat.push_message(Message::user("привет"));
     chat.push_message(Message::assistant("здравствуй"));
     let chat_id = chat.id;
-    // Два наблюдения-заметки (@self) — обзор self-консолидации непуст (наблюдений ≥ 2).
+    // Two observation-notes (@self) — the self-consolidation overview is non-empty (observations ≥ 2).
     for text in ["я ценю краткость", "пользователь любит лаконичность"]
     {
         let note = Note::new(pid, text, vec![SELF_NOTE_TAG.to_string()]);
@@ -344,7 +344,7 @@ fn orch_ready_for_self_consolidation() -> (tempfile::TempDir, Orchestrator, Uuid
     (dir, orch, chat_id)
 }
 
-// ---------- подмодули тестов (разбор god-object: docs/history/refactoring-god-objects.md, этап 3) ----------
+// ---------- test submodules (god-object breakup: docs/history/refactoring-god-objects.md, stage 3) ----------
 
 mod chats;
 mod generation;

@@ -1,8 +1,8 @@
-//! Слой `features` (FSD): пользовательские сценарии (send_message, regenerate,
+//! The `features` layer (FSD): user scenarios (send_message, regenerate,
 //! delete_last, edit_message, chat_search_sort, spellcheck, tools, …).
-//! См. spec §4.2.
+//! See spec §4.2.
 //!
-//! Наполняется на M3+. Логика фич — чистые, тестируемые без UI функции.
+//! Filled in starting at M3. Feature logic — pure functions, testable without a UI.
 
 pub mod backup;
 pub mod chat_export;

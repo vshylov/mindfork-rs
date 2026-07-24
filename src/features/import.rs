@@ -1,14 +1,14 @@
-//! Импорт данных из нейтрального формата **mindfork-import** (spec §12.2):
-//! профили и чаты, эмитированные внешним конвертером. Спецификация формата —
-//! [docs/import-format.md]; выбор паттерна «внешний конвертер → документированный
-//! файл → импорт» — исследование plugin-system (docs/research). Одноразовый,
-//! **идемпотентный** (детерминированные UUIDv5 от стабильных ключей `key`),
-//! исходный файл только читается.
+//! Importing data from the neutral **mindfork-import** format (spec §12.2):
+//! profiles and chats emitted by an external converter. The format spec is
+//! [docs/import-format.md]; the choice of the "external converter →
+//! documented file → import" pattern comes from the plugin-system research
+//! (docs/research). One-shot, **idempotent** (deterministic UUIDv5 from
+//! stable `key`s), the source file is only ever read.
 //!
-//! Строгость к структуре (неверный `format`, дубликаты ключей, ссылка на
-//! отсутствующий профиль, неизвестная роль → понятная ошибка), терпимость к
-//! расширению (неизвестные поля игнорируются — совместимая эволюция без bump'а
-//! версии, зеркало политики `#[serde(default)]` у собственных схем).
+//! Strict about structure (a wrong `format`, duplicate keys, a reference to a
+//! missing profile, an unknown role → a clear error), tolerant of extension
+//! (unknown fields are ignored — compatible evolution with no version bump, a
+//! mirror of the `#[serde(default)]` policy of our own schemas).
 
 use std::collections::{HashMap, HashSet};
 use std::fs;
@@ -27,33 +27,33 @@ use crate::features::tools::default_tool_ids;
 use crate::shared::config::Theme;
 use crate::shared::i18n::{Lang, Locale};
 
-/// Максимальная поддерживаемая версия формата (см. docs/import-format.md).
+/// Maximum supported format version (see docs/import-format.md).
 pub const FORMAT_VERSION: u32 = 1;
-/// Обязательное значение поля `format`.
+/// The required value of the `format` field.
 const FORMAT_NAME: &str = "mindfork-import";
 
-/// Пространство имён UUIDv5 для id профилей: `UUIDv5(NS, key)`. ASCII
-/// `mindfork import` + тег `0001`. Фиксировано — повторный импорт даёт те же id
-/// (идемпотентность); константы задокументированы в docs/import-format.md.
+/// UUIDv5 namespace for profile ids: `UUIDv5(NS, key)`. ASCII
+/// `mindfork import` + tag `0001`. Fixed — a repeat import gives the same ids
+/// (idempotency); the constants are documented in docs/import-format.md.
 const PROFILE_NAMESPACE: Uuid = Uuid::from_u128(0x6d69_6e64_666f_726b_696d_706f_7274_0001_u128);
-/// Пространство имён UUIDv5 для id чатов (тег `0002`). Отдельное от профилей —
-/// одинаковый `key` профиля и чата не сталкивается в один UUID.
+/// UUIDv5 namespace for chat ids (tag `0002`). Separate from profiles — a
+/// matching `key` for a profile and a chat doesn't collide into one UUID.
 const CHAT_NAMESPACE: Uuid = Uuid::from_u128(0x6d69_6e64_666f_726b_696d_706f_7274_0002_u128);
 
-/// Результат импорта: профили, чаты и (опционально) глобальные настройки
-/// источника (семплинг/интерфейс) для применения к `AppConfig`.
+/// Import result: profiles, chats, and (optionally) the source's global
+/// settings (sampling/interface) to apply to `AppConfig`.
 #[derive(Debug, Default)]
 pub struct ImportResult {
     pub profiles: Vec<Profile>,
     pub chats: Vec<Chat>,
-    /// Глобальный семплинг источника (неизвестные поля отброшены при разборе).
+    /// The source's global sampling (unknown fields are dropped during parsing).
     pub sampling: Option<SamplingConfig>,
-    /// Настройки интерфейса источника; каждое поле опционально — применяется
-    /// только заданное (частичный перенос не затирает настройки пользователя).
+    /// The source's interface settings; every field is optional — only what's
+    /// set is applied (a partial transfer doesn't overwrite the user's settings).
     pub interface: Option<ImportedInterface>,
 }
 
-/// Перенесённые настройки интерфейса (все поля опциональны).
+/// Transferred interface settings (all fields optional).
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct ImportedInterface {
     pub spellcheck_enabled: Option<bool>,

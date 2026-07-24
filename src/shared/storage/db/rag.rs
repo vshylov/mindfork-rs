@@ -1,14 +1,15 @@
-//! Хранилище (SQLite) — RAG: документы/поиск/источники/размерность + удаление по пути. Часть модуля [`super`]; разбито из
-//! монолита db.rs (см. docs/history/refactoring-god-objects.md, этап 5).
+//! Storage (SQLite) — RAG: documents/search/sources/dimensionality + delete by
+//! path. Part of the [`super`] module; split out of the db.rs monolith (see
+//! docs/history/refactoring-god-objects.md, stage 5).
 
 use super::*;
 
 impl Db {
-    // ---------- связи заметок с RAG-источниками (Ярус 3, Путь 3) ----------
+    // ---------- linking notes to RAG sources (Tier 3, Path 3) ----------
 
-    /// Есть ли у профиля RAG-источник с таким именем (в чанках или сохранённых
-    /// исходниках). Для валидации `note_cite_source` — ссылаться можно лишь на
-    /// реально существующий источник. Изоляция по `profile_id`.
+    /// Whether a profile has a RAG source with this name (in chunks or stored
+    /// sources). For validating `note_cite_source` — citing is only allowed for a
+    /// source that actually exists. Isolation by `profile_id`.
     pub fn rag_source_exists(&self, profile_id: Uuid, source: &str) -> Result<bool> {
         let conn = self.conn.lock().unwrap();
         let found: Option<i64> = conn
@@ -52,11 +53,12 @@ impl Db {
         Ok(())
     }
 
-    /// kNN-поиск по базе знаний профиля (изоляция по `profile_id` через partition key).
+    /// kNN search over a profile's knowledge base (isolation by `profile_id` via
+    /// a partition key).
     pub fn rag_search(&self, profile_id: Uuid, query: &[f32], k: usize) -> Result<Vec<RagHit>> {
         let conn = self.conn.lock().unwrap();
         if vec_dim(&conn)?.is_none() {
-            return Ok(Vec::new()); // ещё ничего не индексировали
+            return Ok(Vec::new()); // nothing indexed yet
         }
         let mut stmt = conn.prepare(
             "SELECT d.id, d.source, d.chunk_text, v.distance
@@ -85,7 +87,8 @@ impl Db {
         Ok(hits)
     }
 
-    /// Число RAG-документов профиля (репозиторная операция; UI-потребитель — позже).
+    /// Number of a profile's RAG documents (a repository operation; a UI
+    /// consumer — later).
     #[allow(dead_code)]
     pub fn rag_count(&self, profile_id: Uuid) -> Result<usize> {
         let conn = self.conn.lock().unwrap();
@@ -97,17 +100,18 @@ impl Db {
         Ok(n as usize)
     }
 
-    /// Удаляет все документы (чанки) с точным совпадением `source` у профиля.
-    /// Возвращает число удалённых. Используется идемпотентной переиндексацией файла
-    /// (`/rag add` — заменяем прежние чанки источника, а не плодим дубликаты).
+    /// Deletes all documents (chunks) with an exact `source` match for a profile.
+    /// Returns the number deleted. Used by idempotent file reindexing (`/rag
+    /// add` — replaces the source's previous chunks instead of duplicating them).
     pub fn rag_delete_by_source(&self, profile_id: Uuid, source: &str) -> Result<usize> {
         let conn = self.conn.lock().unwrap();
         delete_matching(&conn, profile_id, |s| s == source)
     }
 
-    /// Удаляет документы по пути: сам путь (файл) и всё, что под ним (директория).
-    /// Сравнение устойчиво к разделителям (`/` ↔ `\`) и регистру (Windows) и **не
-    /// требует наличия файла на диске** (`/rag remove`). Возвращает число удалённых.
+    /// Deletes documents by path: the path itself (a file) and everything under
+    /// it (a directory). Comparison is robust to separators (`/` ↔ `\`) and case
+    /// (Windows) and **does not require the file to exist on disk** (`/rag
+    /// remove`). Returns the number deleted.
     pub fn rag_delete_under(&self, profile_id: Uuid, path: &str) -> Result<usize> {
         let needle = norm_path(path);
         let prefix = format!("{needle}/");
@@ -117,14 +121,14 @@ impl Db {
         };
         let conn = self.conn.lock().unwrap();
         let removed = delete_matching(&conn, profile_id, pred)?;
-        // Снимаем и сохранённые исходники (для `/rag rebuild`) по тому же предикату.
+        // Also drop stored sources (for `/rag rebuild`) via the same predicate.
         delete_sources_matching(&conn, profile_id, pred)?;
         Ok(removed)
     }
 
-    /// Сохраняет (или заменяет) исходный текст индексированного источника — нужен
-    /// для реиндексации (`/rag rebuild`) без обращения к файлу на диске. Изоляция
-    /// по `profile_id`.
+    /// Saves (or replaces) an indexed source's raw text — needed for reindexing
+    /// (`/rag rebuild`) without reading the file from disk. Isolation by
+    /// `profile_id`.
     pub fn rag_source_upsert(
         &self,
         profile_id: Uuid,
@@ -148,10 +152,10 @@ impl Db {
         Ok(())
     }
 
-    /// Дописывает текст к сохранённому исходнику (или создаёт его). Используется
-    /// инструментом `rag_add`, который **накапливает** чанки одного источника (в
-    /// отличие от файловой индексации, заменяющей источник) — чтобы реиндексация
-    /// получила весь добавленный текст, а не только последний фрагмент.
+    /// Appends text to a stored source (or creates it). Used by the `rag_add`
+    /// tool, which **accumulates** chunks of a single source (unlike file
+    /// indexing, which replaces the source) — so that reindexing gets all the
+    /// added text, not just the last fragment.
     pub fn rag_source_append(
         &self,
         profile_id: Uuid,
@@ -176,7 +180,7 @@ impl Db {
         Ok(())
     }
 
-    /// Сохранённые исходники профиля (для реиндексации). Изоляция по `profile_id`.
+    /// A profile's stored sources (for reindexing). Isolation by `profile_id`.
     pub fn rag_stored_sources(&self, profile_id: Uuid) -> Result<Vec<RagStoredSource>> {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare(
@@ -193,8 +197,8 @@ impl Db {
         Ok(rows)
     }
 
-    /// Сводка по источникам профиля (`/rag list`): для каждого источника число
-    /// чанков и дата самого раннего чанка. Сортировка — по источнику. Изоляция по
+    /// Summary of a profile's sources (`/rag list`): for each source, the chunk
+    /// count and the date of the earliest chunk. Sorted by source. Isolation by
     /// `profile_id`.
     pub fn rag_list_sources(&self, profile_id: Uuid) -> Result<Vec<RagSourceInfo>> {
         let conn = self.conn.lock().unwrap();
@@ -215,17 +219,18 @@ impl Db {
         Ok(rows)
     }
 
-    /// Текущая размерность векторов RAG (общая на всю БД; `None` — ещё ничего не
-    /// индексировали). Используется реиндексацией для распознавания смены модели.
+    /// Current RAG vector dimensionality (shared across the whole DB; `None` —
+    /// nothing indexed yet). Used by reindexing to detect a model change.
     pub fn rag_dimension(&self) -> Result<Option<usize>> {
         let conn = self.conn.lock().unwrap();
         vec_dim(&conn)
     }
 
-    /// Есть ли у **других** профилей (кроме `profile_id`) проиндексированные
-    /// документы. Размерность векторов в sqlite-vec одна на всю БД, поэтому смена
-    /// embedding-модели (другая размерность) затрагивает всех — этот признак
-    /// позволяет реиндексации отказать, не затирая чужие данные.
+    /// Whether **other** profiles (besides `profile_id`) have indexed documents.
+    /// The vector dimensionality in sqlite-vec is one for the whole DB, so
+    /// changing the embedding model (a different dimensionality) affects
+    /// everyone — this flag lets reindexing refuse rather than overwrite someone
+    /// else's data.
     pub fn rag_other_profiles_have_docs(&self, profile_id: Uuid) -> Result<bool> {
         let conn = self.conn.lock().unwrap();
         let n: i64 = conn.query_row(
@@ -236,10 +241,10 @@ impl Db {
         Ok(n > 0)
     }
 
-    /// Сбрасывает таблицу векторов целиком (drop + забыть размерность): нужно при
-    /// смене embedding-модели с другой размерностью. Документы (`rag_documents`)
-    /// **не** трогает — вызывающий сам удаляет/переиндексирует. Безопасно вызывать,
-    /// даже если таблицы ещё нет.
+    /// Drops the vector table entirely (drop + forget the dimensionality): needed
+    /// when switching to an embedding model with a different dimensionality.
+    /// Does **not** touch documents (`rag_documents`) — the caller deletes/
+    /// reindexes them itself. Safe to call even if the table doesn't exist yet.
     pub fn rag_reset_vectors(&self) -> Result<()> {
         let conn = self.conn.lock().unwrap();
         conn.execute("DROP TABLE IF EXISTS rag_vectors", [])?;
@@ -247,8 +252,9 @@ impl Db {
         Ok(())
     }
 
-    /// Удаляет все чанки (и векторы) профиля; исходники (`rag_sources`) сохраняет —
-    /// они нужны для последующей реиндексации. Возвращает число удалённых чанков.
+    /// Deletes all of a profile's chunks (and vectors); keeps sources
+    /// (`rag_sources`) — needed for subsequent reindexing. Returns the number of
+    /// chunks deleted.
     pub fn rag_delete_all_for_profile(&self, profile_id: Uuid) -> Result<usize> {
         let conn = self.conn.lock().unwrap();
         delete_matching(&conn, profile_id, |_| true)
@@ -274,8 +280,8 @@ fn delete_sources_matching(
     Ok(())
 }
 
-/// Удаляет документы профиля, чьи `source` проходят предикат (вместе с их
-/// векторами в `vec0`). Возвращает число удалённых документов.
+/// Deletes a profile's documents whose `source` passes the predicate (along with
+/// their vectors in `vec0`). Returns the number of documents deleted.
 fn delete_matching(
     conn: &Connection,
     profile_id: Uuid,
@@ -297,7 +303,8 @@ fn delete_matching(
     if victims.is_empty() {
         return Ok(0);
     }
-    // Таблица векторов есть только после первой вставки; вне неё удалять нечего.
+    // The vector table only exists after the first insert; there's nothing to
+    // delete without it.
     let has_vectors = vec_dim(conn)?.is_some();
     for rowid in &victims {
         if has_vectors {
@@ -308,8 +315,8 @@ fn delete_matching(
     Ok(victims.len())
 }
 
-/// Нормализует путь для устойчивого сравнения: разделители к `/`, без хвостового
-/// слэша, на Windows — нижний регистр (NTFS регистронезависим).
+/// Normalizes a path for robust comparison: separators to `/`, no trailing
+/// slash, lowercase on Windows (NTFS is case-insensitive).
 fn norm_path(p: &str) -> String {
     let unified = p.replace('\\', "/");
     let trimmed = unified.trim_end_matches('/');
@@ -333,7 +340,8 @@ mod tests {
         let db = db();
         let a = Uuid::new_v4();
         let b = Uuid::new_v4();
-        // Профиль B имеет вектор, идентичный запросу — он не должен «утечь» в поиск A.
+        // Profile B has a vector identical to the query — it must not "leak"
+        // into A's search.
         db.rag_insert(&RagDocument::new(b, "b", "B doc", vec![1.0, 0.0, 0.0, 0.0]))
             .unwrap();
         db.rag_insert(&RagDocument::new(
@@ -377,10 +385,10 @@ mod tests {
         db.rag_insert(&RagDocument::new(p, "/data/b.txt", "c3", vec![1.0, 1.0]))
             .unwrap();
 
-        // Удаляются оба чанка источника a.txt, b.txt остаётся.
+        // Both of a.txt's chunks are deleted, b.txt remains.
         assert_eq!(db.rag_delete_by_source(p, "/data/a.txt").unwrap(), 2);
         assert_eq!(db.rag_count(p).unwrap(), 1);
-        // Поиск тоже больше их не находит (векторы удалены).
+        // Search no longer finds them either (vectors deleted).
         let hits = db.rag_search(p, &[1.0, 0.0], 5).unwrap();
         assert!(hits.iter().all(|h| h.source == "/data/b.txt"));
     }
@@ -396,16 +404,17 @@ mod tests {
             .unwrap();
         db.rag_insert(&RagDocument::new(p, "/other/c.txt", "c", vec![1.0, 1.0]))
             .unwrap();
-        // Чужой профиль с тем же путём не должен затрагиваться (изоляция).
+        // A foreign profile with the same path must not be affected (isolation).
         db.rag_insert(&RagDocument::new(other, "/data/a.txt", "x", vec![1.0, 0.0]))
             .unwrap();
 
-        // Удаление директории сносит файл и вложенные, но не «/other» и не чужой профиль.
+        // Deleting the directory removes the file and nested ones, but not
+        // "/other" and not the foreign profile.
         assert_eq!(db.rag_delete_under(p, "/data").unwrap(), 2);
         assert_eq!(db.rag_count(p).unwrap(), 1);
         assert_eq!(db.rag_count(other).unwrap(), 1);
 
-        // Префикс не цепляет соседнюю директорию с общим началом имени.
+        // The prefix does not catch a neighboring directory sharing the name's start.
         db.rag_insert(&RagDocument::new(p, "/x/file.txt", "f", vec![1.0, 0.0]))
             .unwrap();
         db.rag_insert(&RagDocument::new(
@@ -424,7 +433,8 @@ mod tests {
         let p = Uuid::new_v4();
         db.rag_insert(&RagDocument::new(p, "/data/a.txt", "a", vec![1.0, 0.0]))
             .unwrap();
-        // Обратные слэши и хвостовой слэш в запросе матчат сохранённый «/»-источник.
+        // Backslashes and a trailing slash in the query match the stored
+        // "/"-source.
         assert_eq!(db.rag_delete_under(p, "\\data\\").unwrap(), 1);
     }
 
@@ -438,7 +448,7 @@ mod tests {
             .unwrap();
         db.rag_insert(&RagDocument::new(p, "/data/b.md", "c3", vec![1.0, 1.0]))
             .unwrap();
-        // Чужой профиль не попадает в выдачу.
+        // A foreign profile does not appear in the output.
         db.rag_insert(&RagDocument::new(
             Uuid::new_v4(),
             "/o.txt",
@@ -463,14 +473,14 @@ mod tests {
             .unwrap();
         db.rag_insert(&RagDocument::new(p, "/data/a.txt", "чанк", vec![1.0, 0.0]))
             .unwrap();
-        // Повторный upsert заменяет содержимое, а не плодит дубликат.
+        // A repeat upsert replaces the content instead of creating a duplicate.
         db.rag_source_upsert(p, "/data/a.txt", "новый текст", Utc::now())
             .unwrap();
         let stored = db.rag_stored_sources(p).unwrap();
         assert_eq!(stored.len(), 1);
         assert_eq!(stored[0].content, "новый текст");
 
-        // Удаление под путём снимает и чанки, и сохранённый исходник.
+        // Deleting under the path removes both the chunks and the stored source.
         assert_eq!(db.rag_delete_under(p, "/data").unwrap(), 1);
         assert!(db.rag_stored_sources(p).unwrap().is_empty());
     }
@@ -479,18 +489,19 @@ mod tests {
     fn rag_rebuild_dimension_change_flow() {
         let db = db();
         let p = Uuid::new_v4();
-        // Индексировано в размерности 2.
+        // Indexed at dimensionality 2.
         db.rag_insert(&RagDocument::new(p, "a", "c", vec![1.0, 0.0]))
             .unwrap();
         assert_eq!(db.rag_dimension().unwrap(), Some(2));
         assert!(!db.rag_other_profiles_have_docs(p).unwrap());
 
-        // Реиндексация в размерность 3 невозможна без сброса (mismatch).
+        // Reindexing to dimensionality 3 is impossible without a reset (mismatch).
         assert!(
             db.rag_insert(&RagDocument::new(p, "a", "c", vec![0.0, 1.0, 0.0]))
                 .is_err()
         );
-        // Сбрасываем векторы и чистим документы профиля, затем индексируем в новой размерности.
+        // Reset the vectors and clear the profile's documents, then index at the
+        // new dimensionality.
         db.rag_delete_all_for_profile(p).unwrap();
         db.rag_reset_vectors().unwrap();
         assert_eq!(db.rag_dimension().unwrap(), None);

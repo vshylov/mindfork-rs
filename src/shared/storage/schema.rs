@@ -1,75 +1,78 @@
-//! Версии схем сохраняемых данных и **чистый каркас JSON-миграций**.
+//! Schema versions of saved data and a **pure JSON-migration framework**.
 //!
-//! Единственный дом констант версий схем (пер-артефакт: настройки/профили/чаты/БД —
-//! меняются с разной скоростью, один глобальный номер заставлял бы «мигрировать»
-//! нетронутые файлы). Здесь — только Value-уровневая логика (определение версии,
-//! прогон шагов); файловый I/O, бэкап и control-parse в типизированные структуры —
-//! в [`crate::features::data_migration`] (оркестрация; `shared` не может зависеть от
-//! `features`, а pre-migration бэкап живёт в `features::backup`). См.
-//! [docs/history/release-engineering.md](../../../docs/history/release-engineering.md) §3.4 и ADR 0006.
+//! The single home for the schema-version constants (per artifact: settings/profiles/
+//! chats/DB change at different rates, one global number would force "migrating"
+//! untouched files). Only Value-level logic lives here (version detection, running
+//! steps); file I/O, backups, and control-parsing into typed structs live in
+//! [`crate::features::data_migration`] (orchestration; `shared` cannot depend on
+//! `features`, and the pre-migration backup lives in `features::backup`). See
+//! [docs/history/release-engineering.md](../../../docs/history/release-engineering.md) §3.4 and ADR 0006.
 //!
-//! **Политика bump'а** (release-engineering.md Ф12): additive-изменение (новое поле с
-//! `#[serde(default)]`, новая таблица/колонка с дефолтом) — **без bump**, как раньше;
-//! breaking (переименование/перенос/смена семантики/удаление поля) — bump константы +
-//! шаг миграции + golden-фикстура старого формата + пункт в CHANGELOG (рубрика «Данные»).
+//! **Bump policy** (release-engineering.md F12): an additive change (a new field with
+//! `#[serde(default)]`, a new table/column with a default) — **no bump**, as before;
+//! a breaking one (renaming/moving/changing semantics/removing a field) — bump the
+//! constant + a migration step + a golden fixture of the old format + a CHANGELOG
+//! entry (the "Data" rubric).
 
 use std::cmp::Ordering;
 
 use anyhow::{Context, Result};
 use serde_json::Value;
 
-/// Версия схемы `settings.json`. Совпадает с [`crate::shared::config::SCHEMA_VERSION`]
-/// (дефолт поля `AppConfig.schema_version`) — инвариант проверяется тестом.
+/// Schema version of `settings.json`. Matches [`crate::shared::config::SCHEMA_VERSION`]
+/// (the default of the `AppConfig.schema_version` field) — the invariant is checked by
+/// a test.
 pub const SETTINGS_SCHEMA: u32 = 1;
-/// Версия схемы `profiles.json`.
+/// Schema version of `profiles.json`.
 pub const PROFILES_SCHEMA: u32 = 1;
-/// Версия схемы файла чата `chats/<id>.json`.
+/// Schema version of a chat file `chats/<id>.json`.
 pub const CHAT_SCHEMA: u32 = 1;
-/// Версия схемы SQLite (`PRAGMA user_version`). Раннер миграций БД — в
-/// [`crate::shared::storage::db`] (baseline 0→1 + шаги в транзакциях).
+/// SQLite schema version (`PRAGMA user_version`). The DB migration runner is in
+/// [`crate::shared::storage::db`] (baseline 0→1 + steps in transactions).
 pub const DB_SCHEMA: u32 = 1;
 
-/// Шаг миграции JSON: чистая трансформация «версия `< to` → `to`».
+/// A JSON migration step: a pure transformation "version `< to` → `to`".
 pub struct Step {
-    /// Целевая версия, к которой приводит шаг.
+    /// The target version this step produces.
     pub to: u32,
-    /// Краткое описание для лога миграции (не пользовательский текст). Потребитель —
-    /// авторинг первой реальной миграции (сейчас шагов нет).
+    /// A short description for the migration log (not user-facing text). Consumer —
+    /// authoring the first real migration (there are no steps yet).
     #[allow(dead_code)]
     pub summary: &'static str,
-    /// Трансформация значения. Должна быть чистой (без I/O).
+    /// The value transformation. Must be pure (no I/O).
     pub apply: fn(Value) -> Result<Value>,
 }
 
-/// Описание версионируемого JSON-артефакта: как определить версию значения и цепочка
-/// шагов к текущей. Формат сегодня не меняется (все схемы = 1, `steps` пусты) —
-/// каркас «в бою» на пустых миграциях; первая реальная миграция добавит шаг + фикстуру.
+/// Description of a versioned JSON artifact: how to detect a value's version and the
+/// chain of steps to the current one. The format doesn't change today (all schemas = 1,
+/// `steps` are empty) — the framework is "in production" on empty migrations; the first
+/// real migration will add a step + a fixture.
 pub struct JsonArtifact {
-    /// Имя для лога/ошибок (`"settings.json"`).
+    /// Name for logging/errors (`"settings.json"`).
     pub name: &'static str,
-    /// Текущая (целевая) версия схемы.
+    /// The current (target) schema version.
     pub current: u32,
-    /// Определяет версию значения структурно (существующие файлы не переписываются:
-    /// «нет поля версии → 1»).
+    /// Detects a value's version structurally (existing files aren't rewritten:
+    /// "no version field → 1").
     pub detect: fn(&Value) -> u32,
-    /// Шаги `1→2→…→current`, по возрастанию `to`.
+    /// Steps `1→2→…→current`, in ascending order of `to`.
     pub steps: &'static [Step],
 }
 
-/// Вердикт по версии значения относительно текущей схемы артефакта.
+/// Verdict on a value's version relative to the artifact's current schema.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Assessment {
-    /// Версия совпадает с текущей — миграция не нужна.
+    /// The version matches the current one — no migration needed.
     UpToDate,
-    /// Версия старше — нужен прогон шагов `from → current`.
+    /// The version is older — steps `from → current` need to run.
     Migrate { from: u32 },
-    /// Версия **новее** приложения (данные из более новой версии mindfork) — миграция
-    /// невозможна; вызывающий отказывает в запуске (release-engineering.md Ф10).
+    /// The version is **newer** than the app (data from a newer mindfork version) —
+    /// migration is impossible; the caller refuses to start (release-engineering.md F10).
     Downgrade { from: u32 },
 }
 
 impl JsonArtifact {
-    /// Определяет версию значения и сравнивает с текущей.
+    /// Detects a value's version and compares it to the current one.
     pub fn assess(&self, v: &Value) -> Assessment {
         let from = (self.detect)(v);
         match from.cmp(&self.current) {
@@ -79,24 +82,24 @@ impl JsonArtifact {
         }
     }
 
-    /// Прогоняет шаги `from → current`. Результат ещё не провалидирован типизированным
-    /// парсом — это делает оркестратор (control-parse перед записью).
+    /// Runs the steps `from → current`. The result is not yet validated by a typed
+    /// parse — the orchestrator does that (control-parse before writing).
     pub fn apply_steps(&self, mut v: Value, from: u32) -> Result<Value> {
         for step in self.steps.iter().filter(|s| s.to > from) {
             v = (step.apply)(v)
-                .with_context(|| format!("шаг миграции {} → v{}", self.name, step.to))?;
+                .with_context(|| format!("migration step {} → v{}", self.name, step.to))?;
         }
         Ok(v)
     }
 }
 
-/// Версия `settings.json` — по полю `schema_version` (отсутствует → 1).
+/// `settings.json` version — by the `schema_version` field (absent → 1).
 fn detect_settings(v: &Value) -> u32 {
     v.get("schema_version").and_then(Value::as_u64).unwrap_or(1) as u32
 }
 
-/// Версия `profiles.json` — исторически это голый массив (→ 1); форма-конверт с полем
-/// `schema_version` появится при первом breaking-изменении.
+/// `profiles.json` version — historically a bare array (→ 1); an envelope shape with a
+/// `schema_version` field will appear at the first breaking change.
 fn detect_profiles(v: &Value) -> u32 {
     if v.is_array() {
         1
@@ -105,13 +108,13 @@ fn detect_profiles(v: &Value) -> u32 {
     }
 }
 
-/// Версия файла чата — по полю `v` (отсутствует → 1). Поле **не** пишется, пока
-/// схема = 1 (ноль churn в существующих файлах).
+/// Chat-file version — by the `v` field (absent → 1). The field is **not** written
+/// while the schema stays at 1 (zero churn in existing files).
 fn detect_chat(v: &Value) -> u32 {
     v.get("v").and_then(Value::as_u64).unwrap_or(1) as u32
 }
 
-/// Реестр артефактов (реальный, все `current = 1`, `steps` пусты).
+/// The registry of artifacts (real, all `current = 1`, `steps` empty).
 pub fn settings_artifact() -> JsonArtifact {
     JsonArtifact {
         name: "settings.json",
@@ -146,7 +149,7 @@ mod tests {
 
     #[test]
     fn schema_constants_match_config_default() {
-        // Инвариант: дефолт поля `AppConfig.schema_version` и current настроек — заодно.
+        // Invariant: the default of `AppConfig.schema_version` and settings' current stay in sync.
         assert_eq!(SETTINGS_SCHEMA, crate::shared::config::SCHEMA_VERSION);
     }
 
@@ -154,14 +157,14 @@ mod tests {
     fn detect_uses_field_or_defaults_to_one() {
         assert_eq!(detect_settings(&json!({"schema_version": 3})), 3);
         assert_eq!(detect_settings(&json!({})), 1);
-        assert_eq!(detect_profiles(&json!([])), 1); // голый массив = v1
+        assert_eq!(detect_profiles(&json!([])), 1); // a bare array = v1
         assert_eq!(detect_profiles(&json!({"schema_version": 2})), 2);
         assert_eq!(detect_chat(&json!({"v": 5})), 5);
         assert_eq!(detect_chat(&json!({"title": "x"})), 1);
     }
 
-    // Синтетический артефакт «current = 2» со ступенью 1→2 — проверяет движок отдельно
-    // от реального реестра (где все схемы = 1 и шагов нет).
+    // A synthetic "current = 2" artifact with a 1→2 step — checks the engine separately
+    // from the real registry (where all schemas = 1 and there are no steps).
     fn to_v2(mut v: Value) -> Result<Value> {
         v["schema_version"] = json!(2);
         Ok(v)
@@ -205,8 +208,8 @@ mod tests {
             .apply_steps(json!({"schema_version": 1, "x": 7}), 1)
             .unwrap();
         assert_eq!(out["schema_version"], json!(2));
-        assert_eq!(out["x"], json!(7), "прочие поля сохранены");
-        // from == current → шаги не выполняются (значение неизменно).
+        assert_eq!(out["x"], json!(7), "other fields are preserved");
+        // from == current → no steps run (the value stays unchanged).
         let noop = a.apply_steps(json!({"schema_version": 2}), 2).unwrap();
         assert_eq!(noop["schema_version"], json!(2));
     }
@@ -214,7 +217,7 @@ mod tests {
     #[test]
     fn apply_step_error_propagates() {
         fn boom(_v: Value) -> Result<Value> {
-            anyhow::bail!("сломано")
+            anyhow::bail!("broken")
         }
         const STEPS: &[Step] = &[Step {
             to: 2,
@@ -234,7 +237,7 @@ mod tests {
     fn real_registry_is_all_current_v1() {
         for a in [settings_artifact(), profiles_artifact(), chat_artifact()] {
             assert_eq!(a.current, 1);
-            assert!(a.steps.is_empty(), "{}: шагов пока нет", a.name);
+            assert!(a.steps.is_empty(), "{}: no steps yet", a.name);
         }
     }
 }

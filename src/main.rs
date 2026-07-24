@@ -1,7 +1,7 @@
-//! mindfork-rs — консольное (TUI) приложение ИИ-чата.
-//! Точка входа: «peek»-фаза (язык/корень до разбора аргументов) → разбор CLI →
-//! single-instance → логирование → tokio-рантайм → оркестратор → TUI.
-//! См. spec §4.2, §4.4, plan M1 и docs/history/i18n-cli.md (весь текст CLI — в бандлах локалей).
+//! mindfork-rs — a console (TUI) AI chat application.
+//! Entry point: the "peek" phase (language/root before parsing arguments) → CLI
+//! parsing → single-instance → logging → tokio runtime → orchestrator → TUI.
+//! See spec §4.2, §4.4, plan M1, and docs/history/i18n-cli.md (all CLI text is in locale bundles).
 
 mod app;
 mod entities;
@@ -29,41 +29,42 @@ use crate::shared::storage::{JsonStore, Storage};
 use crate::shared::{instance, logging, paths::Paths};
 
 fn main() -> ExitCode {
-    // «Peek»-фаза: определить корень данных и язык CLI **до** разбора аргументов и без
-    // создания каталогов (`--help`/`--version` не должны трогать диск — docs/history/i18n-cli.md
-    // §3.2). Язык нужен раньше всего, чтобы даже справка и ошибки разбора были на нём.
+    // The "peek" phase: determine the data root and CLI language **before** parsing
+    // arguments and without creating directories (`--help`/`--version` shouldn't touch
+    // disk — docs/history/i18n-cli.md §3.2). The language is needed first of all, so even
+    // help and parse errors come out in it.
     let (paths, lang) = match Paths::resolve() {
         Ok(paths) => {
             let settings_lang = try_settings_language(&paths.settings_file());
             let lang = cli_lang(settings_lang, paths.default_language());
             (paths, lang)
         }
-        // Сбой resolve (реалистично — только битый `defaults.json`): язык неизвестен →
-        // полная неопределённость → печать на английском (решение пользователя).
+        // A resolve failure (realistically — only a corrupt `defaults.json`): the language
+        // is unknown → total uncertainty → print in English (user's decision).
         Err(err) => {
             print_error(Lang::En, &err);
             return ExitCode::FAILURE;
         }
     };
 
-    // Внешние локали (`data/locales/*.json`) сканируются до разбора, чтобы `--help`
-    // уважал их override/новые языки. `init` идёт до `logging::init`, поэтому
-    // предупреждения о битых файлах возвращаются и логируются позже (в `real_main`);
-    // на путях раннего выхода (`--help`) молча отбрасываются.
+    // External locales (`data/locales/*.json`) are scanned before parsing, so `--help`
+    // respects their overrides/new languages. `init` runs before `logging::init`, so
+    // warnings about corrupt files are returned and logged later (in `real_main`);
+    // on early-exit paths (`--help`) they're silently dropped.
     let locale_warnings = i18n::init(&paths.locales_dir());
     let loc = i18n::locale(lang);
 
     let args: Vec<String> = std::env::args().skip(1).collect();
     let command = match cli::parse(&args, loc) {
         Ok(cmd) => cmd,
-        // `Err` — уже готовое к печати локализованное сообщение (§ features/cli).
+        // `Err` — an already print-ready localized message (§ features/cli).
         Err(msg) => {
             eprintln!("{msg}");
             return ExitCode::from(2);
         }
     };
 
-    // Быстрый путь без побочных эффектов: справка/версия не создают каталогов и логов.
+    // A fast path with no side effects: help/version create no directories or logs.
     match command {
         CliCommand::Help { topic } => {
             println!("{}", cli::render_help(topic, loc));
@@ -91,9 +92,9 @@ fn main() -> ExitCode {
     }
 }
 
-/// Стороне-эффектные команды: создаёт каталоги, поднимает логи, диспетчеризует.
-/// Ошибки печатаются вызывающим (`main`) через [`print_error`] — единый локализованный
-/// префикс + однострочная цепочка причин (`{:#}`), без английского `Error:`/`Caused by:`.
+/// Side-effectful commands: creates directories, brings up logging, dispatches.
+/// Errors are printed by the caller (`main`) via [`print_error`] — a single localized
+/// prefix + a single-line chain of causes (`{:#}`), no English `Error:`/`Caused by:`.
 fn real_main(
     command: CliCommand,
     paths: &Paths,
@@ -108,7 +109,7 @@ fn real_main(
     })?;
     let _logging =
         logging::init(paths, loc).with_context(|| loc.t("cli.ctx.init_logging").to_string())?;
-    // Предупреждения о внешних локалях (собраны до установки лог-подписчика).
+    // Warnings about external locales (collected before the log subscriber is set up).
     for w in locale_warnings {
         tracing::warn!("{w}");
     }
@@ -142,10 +143,10 @@ fn real_main(
     }
 }
 
-/// Запуск основного TUI (команда без подкоманды).
+/// Launches the main TUI (a command with no subcommand).
 fn run_tui(paths: &Paths, loc: &Locale) -> anyhow::Result<ExitCode> {
-    // Единственный экземпляр на машину/сеанс: второй запуск завершается с понятным
-    // сообщением ещё до старта рантайма/TUI. См. spec §1.4.
+    // Single instance per machine/session: a second launch exits with a clear
+    // message before the runtime/TUI even starts. See spec §1.4.
     let _instance = match instance::acquire() {
         Ok(guard) => guard,
         Err(instance::InstanceError::AlreadyRunning) => {
@@ -153,7 +154,7 @@ fn run_tui(paths: &Paths, loc: &Locale) -> anyhow::Result<ExitCode> {
             tracing::warn!("отказ запуска: другой экземпляр приложения уже работает");
             return Ok(ExitCode::SUCCESS);
         }
-        // Структурная ошибка → локализуем здесь (Display варианта — не для пользователя).
+        // A structured error → localized here (the variant's Display isn't user-facing).
         Err(instance::InstanceError::Init(e)) => {
             return Err(anyhow!(
                 "{}",
@@ -167,9 +168,9 @@ fn run_tui(paths: &Paths, loc: &Locale) -> anyhow::Result<ExitCode> {
         "mindfork-rs starting"
     );
 
-    // Миграция схем данных при старте (до открытия хранилища): downgrade-guard,
-    // упрочнение битых файлов, pre-migration бэкап при непустом плане. Ошибка —
-    // уже локализованное сообщение (features/data_migration). См. release-engineering.md §3.4.
+    // Data schema migration at startup (before opening storage): downgrade guard,
+    // hardening against corrupt files, a pre-migration backup when the plan is non-empty.
+    // The error is an already-localized message (features/data_migration). See release-engineering.md §3.4.
     features::data_migration::run(paths, loc)?;
 
     let runtime = tokio::runtime::Builder::new_multi_thread()
@@ -177,8 +178,8 @@ fn run_tui(paths: &Paths, loc: &Locale) -> anyhow::Result<ExitCode> {
         .build()
         .with_context(|| loc.t("cli.ctx.build_runtime").to_string())?;
 
-    // Хранилище (JSON + SQLite) рядом с бинарником. Единственный писатель —
-    // оркестратор (spec §4.4.2). Arc — нужен инструментам в ToolContext.
+    // Storage (JSON + SQLite) next to the binary. The sole writer is the
+    // orchestrator (spec §4.4.2). Arc — needed by tools in ToolContext.
     let storage = Arc::new(
         Storage::open(paths.clone()).with_context(|| loc.t("cli.ctx.open_storage").to_string())?,
     );
@@ -186,9 +187,9 @@ fn run_tui(paths: &Paths, loc: &Locale) -> anyhow::Result<ExitCode> {
     let (cmd_tx, cmd_rx) = unbounded_channel::<AppCommand>();
     let (evt_tx, evt_rx) = unbounded_channel::<AppEvent>();
 
-    // Конфиг из settings.json + посев переменными окружения (dev-workflow contract §9).
-    // Свежая установка (нет settings.json) → язык интерфейса из defaults.json (ось B,
-    // docs/i18n-ui.md §3.2); старый settings.json без поля → Ru через serde-default.
+    // Config from settings.json + seeding via environment variables (dev-workflow contract §9).
+    // A fresh install (no settings.json) → interface language from defaults.json (axis B,
+    // docs/i18n-ui.md §3.2); an old settings.json without the field → Ru via serde-default.
     let fresh_config = !paths.settings_file().exists();
     let mut config = storage.json().load_config().unwrap_or_default();
     if fresh_config {
@@ -202,22 +203,23 @@ fn run_tui(paths: &Paths, loc: &Locale) -> anyhow::Result<ExitCode> {
         storage,
         config,
         supervisor: Arc::new(LlamaSupervisor),
-        // Язык каркаса новых профилей — из defaults.json (ось A, docs/history/i18n.md).
+        // New profiles' scaffold language — from defaults.json (axis A, docs/history/i18n.md).
         default_language: paths.default_language(),
     }));
 
-    // Словари спелл-чека грузит сам `runtime` в фоне по настройкам интерфейса
-    // (вкл/выкл + выбор словарей) и перегружает при их изменении. Резервный каталог
-    // (рядом с бинарником) нужен, когда данные не портативны (`system`/`path`): словари
-    // положены инсталлятором/пакетом рядом с бинарём, а не в корень данных (П1).
+    // Spellcheck dictionaries are loaded by `runtime` itself in the background per the
+    // interface settings (on/off + dictionary selection) and reloaded when they change.
+    // The fallback directory (next to the binary) is needed when data isn't portable
+    // (`system`/`path`): the installer/package places dictionaries next to the binary,
+    // not in the data root (P1).
     let dict_dir = paths.dictionaries_dir();
     let bundled_dict_dir = paths.bundled_dictionaries_dir();
     let personal = paths.personal_dictionary();
 
     let result = app::runtime::run(cmd_tx.clone(), evt_rx, dict_dir, bundled_dict_dir, personal);
 
-    // Останавливаем оркестратор; managed-серверы он гасит сам (kill_on_drop при
-    // завершении его задачи). Даём фоновым задачам завершиться.
+    // Stop the orchestrator; it tears down managed servers itself (kill_on_drop when
+    // its task ends). Give background tasks a chance to finish.
     let _ = cmd_tx.send(AppCommand::Quit);
     runtime.shutdown_timeout(Duration::from_secs(2));
 
@@ -228,38 +230,39 @@ fn run_tui(paths: &Paths, loc: &Locale) -> anyhow::Result<ExitCode> {
     result.map(|()| ExitCode::SUCCESS)
 }
 
-/// Язык интерфейса CLI: явный из `settings.json` (сильнейший сигнал), иначе —
-/// разрешённый язык умолчаний (`default_language` из `defaults.json`, а при его
-/// отсутствии — определённый по локали ОС в [`Paths::resolve`]). Свежий бинарь без
-/// конфигурации печатает на языке системы (по-английски, если локаль не `ru`).
+/// CLI interface language: explicit from `settings.json` (the strongest signal),
+/// otherwise the resolved default language (`default_language` from `defaults.json`,
+/// or, absent that, the one detected from the OS locale in [`Paths::resolve`]). A fresh
+/// binary with no configuration prints in the system's language (English if the locale
+/// isn't `ru`).
 fn cli_lang(settings_language: Option<Lang>, default_language: Lang) -> Lang {
     settings_language.unwrap_or(default_language)
 }
 
-/// Язык интерфейса из `settings.json`, если файл существует и парсится. `None` при
-/// отсутствии/повреждении (та же терпимость, что `load_config().unwrap_or_default()`,
-/// но отличает «файла нет» от «есть» — нужно для выбора языка CLI).
+/// The interface language from `settings.json`, if the file exists and parses. `None`
+/// when it's missing/corrupt (the same leniency as `load_config().unwrap_or_default()`,
+/// but distinguishes "no file" from "there is one" — needed for choosing the CLI language).
 fn try_settings_language(settings_file: &Path) -> Option<Lang> {
     let bytes = std::fs::read(settings_file).ok()?;
     let cfg: AppConfig = serde_json::from_slice(&bytes).ok()?;
     Some(cfg.interface.language)
 }
 
-/// Печатает ошибку на заданном языке: `{локализованный префикс}: {цепочка причин}`
-/// одной строкой (`{:#}`) — вместо английского `Error:`/`Caused by:` от std/anyhow.
+/// Prints an error in the given language: `{localized prefix}: {chain of causes}`
+/// on a single line (`{:#}`) — instead of the English `Error:`/`Caused by:` from std/anyhow.
 fn print_error(lang: Lang, err: &anyhow::Error) {
     eprintln!("{}", cli_error_line(i18n::locale(lang), err));
 }
 
-/// Строка ошибки CLI (тестируемо, без запуска бинарника).
+/// The CLI error line (testable, without running the binary).
 fn cli_error_line(loc: &Locale, err: &anyhow::Error) -> String {
     format!("{}: {err:#}", loc.t("cli.err.prefix"))
 }
 
-/// Захватывает блокировку единственного экземпляра для CLI-операции над данными
-/// (бэкап/восстановление/песочница). Если приложение запущено — отказ (защита
-/// целостности `data.db` от гонки с работающим оркестратором). `action` — уже
-/// локализованное название действия (подставляется в сообщение).
+/// Acquires the single-instance lock for a CLI operation over the data
+/// (backup/restore/sandbox). If the app is running — a refusal (protects
+/// `data.db`'s integrity from a race with the running orchestrator). `action` — an
+/// already-localized action name (substituted into the message).
 fn acquire_cli_guard(loc: &Locale, action: &str) -> anyhow::Result<instance::InstanceGuard> {
     match instance::acquire() {
         Ok(guard) => Ok(guard),
@@ -273,7 +276,7 @@ fn acquire_cli_guard(loc: &Locale, action: &str) -> anyhow::Result<instance::Ins
     }
 }
 
-/// Песочница файловых инструментов из конфига (для включения/очистки при бэкапе).
+/// The file-tools sandbox from the config (for inclusion/cleanup during backup).
 fn config_fs_root(paths: &Paths) -> Option<PathBuf> {
     JsonStore::new(paths.clone())
         .load_config()
@@ -283,7 +286,7 @@ fn config_fs_root(paths: &Paths) -> Option<PathBuf> {
         .map(PathBuf::from)
 }
 
-/// CLI: создание резервной копии. Вывод — в stdout (TUI не запущен).
+/// CLI: creating a backup. Output goes to stdout (the TUI isn't running).
 fn run_backup(
     paths: &Paths,
     output: Option<PathBuf>,
@@ -304,15 +307,15 @@ fn run_backup(
     Ok(())
 }
 
-/// CLI: восстановление из резервной копии (транзакционно, с pre-restore копией и
-/// откатом при сбое). Вывод — в stdout/stderr (TUI не запущен).
+/// CLI: restoring from a backup (transactionally, with a pre-restore copy and a
+/// rollback on failure). Output goes to stdout/stderr (the TUI isn't running).
 fn run_restore(paths: &Paths, archive: &Path, loc: &Locale) -> anyhow::Result<()> {
     let _instance = acquire_cli_guard(loc, loc.t("cli.guard.action.restore"))?;
     let fs_root = config_fs_root(paths);
 
-    // Предупреждение, если копия сделана более новой версией приложения: данные целы, но
-    // текущая версия может отказаться их открыть (downgrade-guard, ADR 0006). Ошибку
-    // чтения манифеста глотаем — старый бэкап без манифеста это нормально.
+    // Warn if the backup was made by a newer version of the app: the data is intact, but
+    // the current version might refuse to open it (downgrade guard, ADR 0006). We swallow
+    // a manifest-read error — an old backup with no manifest is normal.
     if let Ok(Some(m)) = backup::read_manifest(archive)
         && m.is_newer_than_current()
     {
@@ -322,7 +325,7 @@ fn run_restore(paths: &Paths, archive: &Path, loc: &Locale) -> anyhow::Result<()
         );
     }
 
-    // Err только до разрушительных действий (нет файла / повреждён / небезопасен).
+    // Err only before any destructive action (missing file / corrupt / unsafe).
     let outcome = backup::restore_backup(paths, archive, fs_root.as_deref(), loc)?;
 
     match outcome {
@@ -407,8 +410,8 @@ fn run_restore(paths: &Paths, archive: &Path, loc: &Locale) -> anyhow::Result<()
     }
 }
 
-/// CLI: установка/обновление песочницы Python (скачивание wasmer + python.webc +
-/// пакетов в `data/sandbox/`). Требует собственный tokio-рантайм (сетевой async).
+/// CLI: installing/updating the Python sandbox (downloading wasmer + python.webc +
+/// packages into `data/sandbox/`). Needs its own tokio runtime (network async).
 fn run_sandbox_setup(paths: &Paths, force: bool, loc: &Locale) -> anyhow::Result<()> {
     // Гард единственного экземпляра: не переустанавливаем песочницу, пока приложение
     // работает (могло бы читать заменяемый бинарь/ассеты во время индексации/запуска).

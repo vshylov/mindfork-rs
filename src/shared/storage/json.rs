@@ -1,6 +1,6 @@
-//! JSON-хранилище: конфиг (`settings.json`), профили (`profiles.json`),
-//! чаты (`chats/{id}.json`). Атомарная запись (write-temp + rename) с бэкапом.
-//! См. spec §5.2.
+//! JSON storage: config (`settings.json`), profiles (`profiles.json`),
+//! chats (`chats/{id}.json`). Atomic write (write-temp + rename) with a backup.
+//! See spec §5.2.
 
 use std::fs;
 use std::path::Path;
@@ -13,7 +13,7 @@ use crate::entities::profile::Profile;
 use crate::shared::config::AppConfig;
 use crate::shared::paths::Paths;
 
-/// Файловое JSON-хранилище конфигурации, профилей и чатов.
+/// File-based JSON storage of config, profiles, and chats.
 pub struct JsonStore {
     paths: Paths,
 }
@@ -23,15 +23,15 @@ impl JsonStore {
         Self { paths }
     }
 
-    /// Каталог песочницы Python (`sandbox/`) — для реестра инструментов
-    /// (`python_exec`, режим Wasmer). См. [`Paths::sandbox_dir`].
+    /// Python sandbox directory (`sandbox/`) — for the tool registry
+    /// (`python_exec`, Wasmer mode). See [`Paths::sandbox_dir`].
     pub fn sandbox_dir(&self) -> std::path::PathBuf {
         self.paths.sandbox_dir()
     }
 
-    // ---------- конфигурация ----------
+    // ---------- config ----------
 
-    /// Загружает конфиг; если файла нет — возвращает дефолтный.
+    /// Loads the config; returns the default if the file is missing.
     pub fn load_config(&self) -> Result<AppConfig> {
         Ok(read_json(&self.paths.settings_file())?.unwrap_or_default())
     }
@@ -40,9 +40,9 @@ impl JsonStore {
         write_json(&self.paths.settings_file(), config)
     }
 
-    // ---------- профили (один файл со списком) ----------
+    // ---------- profiles (one file holding the list) ----------
 
-    /// Все профили (включая скрытые).
+    /// All profiles (including hidden ones).
     pub fn load_profiles(&self) -> Result<Vec<Profile>> {
         Ok(read_json(&self.paths.profiles_file())?.unwrap_or_default())
     }
@@ -51,7 +51,7 @@ impl JsonStore {
         write_json(&self.paths.profiles_file(), &profiles)
     }
 
-    /// Добавляет или заменяет профиль по `id`.
+    /// Adds or replaces a profile by `id`.
     pub fn upsert_profile(&self, profile: &Profile) -> Result<()> {
         let mut profiles = self.load_profiles()?;
         match profiles.iter_mut().find(|p| p.id == profile.id) {
@@ -61,7 +61,7 @@ impl JsonStore {
         self.save_profiles(&profiles)
     }
 
-    /// Помечает профиль скрытым. Возвращает `true`, если профиль найден.
+    /// Marks a profile hidden. Returns `true` if the profile was found.
     pub fn hide_profile(&self, id: Uuid) -> Result<bool> {
         let mut profiles = self.load_profiles()?;
         let Some(p) = profiles.iter_mut().find(|p| p.id == id) else {
@@ -72,7 +72,7 @@ impl JsonStore {
         Ok(true)
     }
 
-    // ---------- чаты (по файлу на чат) ----------
+    // ---------- chats (one file per chat) ----------
 
     pub fn save_chat(&self, chat: &Chat) -> Result<()> {
         write_json(&self.paths.chat_file(&chat.id.to_string()), chat)
@@ -82,7 +82,7 @@ impl JsonStore {
         read_json(&self.paths.chat_file(&id.to_string()))
     }
 
-    /// Все чаты (включая скрытые), отсортированных порядка не гарантирует.
+    /// All chats (including hidden ones); does not guarantee any sort order.
     pub fn load_chats(&self) -> Result<Vec<Chat>> {
         let dir = self.paths.chats_dir();
         if !dir.exists() {
@@ -94,9 +94,10 @@ impl JsonStore {
             if path.extension().and_then(|e| e.to_str()) != Some("json") {
                 continue;
             }
-            // Повреждённый файл чата пропускаем с предупреждением, а не валим весь запуск
-            // (release-engineering.md Ф11): один битый JSON не должен блокировать
-            // приложение и не должен молча теряться — файл остаётся на диске для ремонта.
+            // A corrupt chat file is skipped with a warning instead of failing the
+            // whole startup (release-engineering.md F11): one broken JSON file must
+            // not block the app and must not be silently lost — the file stays on
+            // disk for manual repair.
             match read_json::<Chat>(&path) {
                 Ok(Some(chat)) => chats.push(chat),
                 Ok(None) => {}
@@ -109,7 +110,7 @@ impl JsonStore {
         Ok(chats)
     }
 
-    /// Помечает чат скрытым. Возвращает `true`, если чат найден.
+    /// Marks a chat hidden. Returns `true` if the chat was found.
     pub fn hide_chat(&self, id: Uuid) -> Result<bool> {
         let Some(mut chat) = self.load_chat(id)? else {
             return Ok(false);
@@ -119,7 +120,7 @@ impl JsonStore {
         Ok(true)
     }
 
-    /// Скрывает все чаты профиля (каскад при скрытии профиля). Возвращает число.
+    /// Hides all chats of a profile (a cascade when hiding the profile). Returns the count.
     pub fn hide_chats_of_profile(&self, profile_id: Uuid) -> Result<usize> {
         let mut count = 0;
         for mut chat in self.load_chats()? {
@@ -133,9 +134,9 @@ impl JsonStore {
     }
 }
 
-/// Читает и десериализует JSON-файл; `None`, если файла нет. `pub(crate)` — миграции
-/// (`features::data_migration`) читают файлы как `serde_json::Value` для определения
-/// версии, отличая «нет файла» (`Ok(None)`) от «повреждён» (`Err`).
+/// Reads and deserializes a JSON file; `None` if the file is missing. `pub(crate)` —
+/// migrations (`features::data_migration`) read files as `serde_json::Value` to detect
+/// the version, distinguishing "no file" (`Ok(None)`) from "corrupt" (`Err`).
 pub(crate) fn read_json<T: serde::de::DeserializeOwned>(path: &Path) -> Result<Option<T>> {
     match fs::read(path) {
         Ok(bytes) => {
@@ -148,9 +149,9 @@ pub(crate) fn read_json<T: serde::de::DeserializeOwned>(path: &Path) -> Result<O
     }
 }
 
-/// Атомарно записывает значение в JSON: бэкап существующего → temp → rename.
-/// `pub(crate)` — миграции пишут мигрированное `serde_json::Value` тем же атомарным
-/// путём (с `.bak` прежней версии).
+/// Atomically writes a value to JSON: backing up the existing file → temp → rename.
+/// `pub(crate)` — migrations write the migrated `serde_json::Value` through the same
+/// atomic path (with a `.bak` of the previous version).
 pub(crate) fn write_json<T: serde::Serialize>(path: &Path, value: &T) -> Result<()> {
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent).with_context(|| format!("creating dir {}", parent.display()))?;
@@ -162,7 +163,7 @@ pub(crate) fn write_json<T: serde::Serialize>(path: &Path, value: &T) -> Result<
     let data = serde_json::to_vec_pretty(value).context("serializing to JSON")?;
     let tmp = path.with_extension("tmp");
     fs::write(&tmp, &data).with_context(|| format!("writing {}", tmp.display()))?;
-    // std::fs::rename заменяет существующий файл и на Windows, и на Unix.
+    // std::fs::rename replaces an existing file on both Windows and Unix.
     fs::rename(&tmp, path).with_context(|| format!("renaming into {}", path.display()))?;
     Ok(())
 }
@@ -259,15 +260,15 @@ mod tests {
         let p = Profile::new("X", "s");
         let mut chat = Chat::from_profile(&p, "Чат");
         s.save_chat(&chat).unwrap();
-        // Повторное сохранение создаёт .bak с прежней версией (spec §12.3).
+        // Saving again creates a .bak with the previous version (spec §12.3).
         chat.push_message(Message::user("привет"));
         s.save_chat(&chat).unwrap();
         let bak = s
             .paths
             .chat_file(&chat.id.to_string())
             .with_extension("bak");
-        assert!(bak.exists(), "ожидался бэкап файла чата");
-        // Бэкап содержит прежнюю (пустую) версию, а не текущую.
+        assert!(bak.exists(), "expected a chat file backup");
+        // The backup holds the previous (empty) version, not the current one.
         let backed: Chat = serde_json::from_slice(&fs::read(&bak).unwrap()).unwrap();
         assert!(backed.messages.is_empty());
     }

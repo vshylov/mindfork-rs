@@ -1,7 +1,7 @@
-//! [`SaveQueue`] — дебаунс-очередь отложенного сохранения чатов на диск. Выделена
-//! из оркестратора (Фаза 3): держит множество «грязных» чатов и дедлайн записи.
-//! Сама запись остаётся у оркестратора (владельца `Chat` и `Storage`) — очередь
-//! лишь учитывает, что и когда сбрасывать.
+//! [`SaveQueue`] — a debounce queue for deferred saving of chats to disk. Extracted
+//! from the orchestrator (Phase 3): holds the set of "dirty" chats and the write
+//! deadline. The actual write stays with the orchestrator (the owner of `Chat`
+//! and `Storage`) — the queue just tracks what and when to flush.
 
 use std::collections::HashSet;
 use std::time::Duration;
@@ -9,41 +9,41 @@ use std::time::Duration;
 use tokio::time::Instant;
 use uuid::Uuid;
 
-/// Дебаунс сохранения изменённых чатов на диск.
+/// Debounce for saving changed chats to disk.
 const SAVE_DEBOUNCE: Duration = Duration::from_millis(800);
 
 #[derive(Default)]
 pub(super) struct SaveQueue {
-    /// Чаты, ожидающие записи на диск.
+    /// Chats waiting to be written to disk.
     dirty: HashSet<Uuid>,
-    /// Момент, когда нужно сбросить очередь (продлевается каждой пометкой).
+    /// The moment the queue should be flushed (extended by every mark).
     deadline: Option<Instant>,
 }
 
 impl SaveQueue {
-    /// Помечает чат для отложенного сохранения и продлевает дедлайн (дебаунс).
+    /// Marks a chat for deferred saving and extends the deadline (debounce).
     pub(super) fn mark(&mut self, id: Uuid) {
         self.dirty.insert(id);
         self.deadline = Some(Instant::now() + SAVE_DEBOUNCE);
     }
 
-    /// Убирает чат из очереди (например, при его удалении — сохранять нечего).
+    /// Removes a chat from the queue (e.g. on deletion — nothing left to save).
     pub(super) fn forget(&mut self, id: Uuid) {
         self.dirty.remove(&id);
     }
 
-    /// Текущий дедлайн сброса (для `select!`-таймера петли). `None` — очередь пуста.
+    /// The current flush deadline (for the loop's `select!` timer). `None` — the queue is empty.
     pub(super) fn deadline(&self) -> Option<Instant> {
         self.deadline
     }
 
-    /// Забирает все ожидающие id и сбрасывает дедлайн (для записи на диск).
+    /// Takes all pending ids and resets the deadline (for writing to disk).
     pub(super) fn take(&mut self) -> Vec<Uuid> {
         self.deadline = None;
         self.dirty.drain().collect()
     }
 
-    /// Стоит ли чат в очереди (используется тестами).
+    /// Whether a chat is queued (used by tests).
     #[cfg(test)]
     pub(super) fn is_dirty(&self, id: Uuid) -> bool {
         self.dirty.contains(&id)

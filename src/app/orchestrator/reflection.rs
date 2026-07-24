@@ -1,11 +1,12 @@
-//! Авто-рефлексия «модели себя» (Tier 3): каждые N ответов ассистента в чате
-//! фоновая задача просит модель пересмотреть недавний разговор и **самой**
-//! обновить свою «модель себя» (через инструменты SelfModel). В отличие от
-//! авто-названия (одноходовый запрос без инструментов) это **мини agentic-loop**:
-//! модель вызывает `update_self_model`/`update_user_model`/`add_insight`, петля их
-//! исполняет (инструменты пишут напрямую в `Storage`). Чат не мутируется, в UI
-//! ничего не стримится — рефлексия молчалива и опциональна (`config.self_model.
-//! auto_reflect_every`, по умолчанию выкл). См. docs/history/self-model-mvp.md.
+//! Self-model auto-reflection (Tier 3): every N assistant replies in a chat a
+//! background task asks the model to review the recent conversation and
+//! **itself** update its self-model (via the SelfModel tools). Unlike
+//! auto-titling (a single-turn request with no tools) this is a **mini
+//! agentic loop**: the model calls `update_self_model`/`update_user_model`/
+//! `add_insight`, and the loop executes them (the tools write directly into
+//! `Storage`). The chat isn't mutated, nothing is streamed to the UI —
+//! reflection is silent and opt-in (`config.self_model.auto_reflect_every`,
+//! off by default). See docs/history/self-model-mvp.md.
 
 use std::time::Duration;
 
@@ -25,24 +26,24 @@ use super::Orchestrator;
 use super::request::last_user_message_at;
 use super::tool_loop;
 
-/// Потолок токенов ответа на раунд рефлексии (с запасом на «мысли» перед вызовом).
+/// Reply-token ceiling per reflection round (with headroom for "thoughts" before the call).
 const REFLECT_MAX_TOKENS: usize = 2048;
-/// Лимит раундов мини agentic-loop рефлексии (бэкстоп от зацикливания).
+/// Round limit for reflection's mini agentic loop (a backstop against looping).
 const REFLECT_MAX_ROUNDS: u32 = 6;
-/// Лимит времени на всю рефлексию.
+/// Time limit for the whole reflection run.
 const REFLECT_TIMEOUT: Duration = Duration::from_secs(120);
 
-/// Инструменты, доступные рефлексии (пересекается с набором профиля). `reflect`
-/// (рубрика) не нужен — авто-режим уже «рефлексирует». Наблюдения переехали в
-/// заметки (Ярус 1), поэтому вместо удалённого `consolidate_narrative` рефлексии даны
-/// note-инструменты для консолидации наблюдений-заметок: переписать почти-дубль
-/// (`note_revise`), заместить со «шрамом» (`note_supersede`) или слить (`note_merge`).
-/// Граф над наблюдениями (Ярус 2): `note_link`/`note_neighbors` — связать
-/// противоречащие/уточняющие наблюдения (id из `get_self_model`). **Кросс-органные
-/// связи (Ярус 3):** дан `note_recall` — он отдаёт id пользовательских заметок «о
-/// собеседнике» (self-заметки по-прежнему скрывает), чтобы рефлексия могла связать
-/// наблюдение «о себе» с фактом «о собеседнике» (`note_link` self↔user).
-/// См. docs/history/narrative-as-notes.md.
+/// Tools available to reflection (intersected with the profile's set). `reflect`
+/// (the rubric) isn't needed — the auto mode is already "reflecting". Observations
+/// moved into notes (Tier 1), so instead of the removed `consolidate_narrative`,
+/// reflection is given note tools for consolidating observation-notes: rewrite a
+/// near-duplicate (`note_revise`), replace it with a "scar" (`note_supersede`), or
+/// merge (`note_merge`). A graph over observations (Tier 2): `note_link`/
+/// `note_neighbors` — link contradicting/refining observations (an id from
+/// `get_self_model`). **Cross-organ links (Tier 3):** `note_recall` is given — it
+/// returns ids of user-facing notes "about the interlocutor" (still hiding self-notes),
+/// so reflection can link an observation "about self" with a fact "about the
+/// interlocutor" (`note_link` self↔user). See docs/history/narrative-as-notes.md.
 const REFLECT_TOOL_IDS: &[&str] = &[
     self_model::GET_SELF_MODEL_ID,
     self_model::UPDATE_SELF_MODEL_ID,
@@ -56,9 +57,9 @@ const REFLECT_TOOL_IDS: &[&str] = &[
     notes::NOTE_NEIGHBORS_ID,
 ];
 
-/// Системное сообщение фоновой саморефлексии: обрамление + единый `POLICY_CORE`
-/// (этап 6 — те же правила, что у протокола ведения). Строится в рантайме, поскольку
-/// склеивает `const`-фрагмент с константой правил.
+/// System message for background self-reflection: framing + the shared `POLICY_CORE`
+/// (stage 6 — the same rules as the maintenance protocol). Built at runtime because it
+/// splices a `const` fragment together with the rules constant.
 fn reflect_system_message(loc: &crate::shared::i18n::Locale) -> String {
     loc.tf(
         "prompt.reflect.system",
@@ -66,10 +67,11 @@ fn reflect_system_message(loc: &crate::shared::i18n::Locale) -> String {
     )
 }
 
-/// Начало окна рефлексии (кламп ватермарка к длине истории — устойчиво к усечению
-/// `Ctrl+R`/`Ctrl+E`) и число ответов ассистента в этом окне. Каденция считается по
-/// окну `messages[wm..]`, а не по всей истории — чтобы каждый цикл не перечитывал уже
-/// отрефлексированный материал. Чистая функция — тестируема.
+/// The start of the reflection window (clamping the watermark to the history length —
+/// resilient to `Ctrl+R`/`Ctrl+E` truncation) and the number of assistant replies in
+/// that window. Cadence is counted over the window `messages[wm..]`, not the whole
+/// history — so each cycle doesn't re-read material already reflected on. A pure
+/// function — testable.
 pub(super) fn reflect_window(messages: &[Message], reflected_upto: Option<usize>) -> (usize, u32) {
     let wm = reflected_upto.unwrap_or(0).min(messages.len());
     let count = messages[wm..]
@@ -79,11 +81,12 @@ pub(super) fn reflect_window(messages: &[Message], reflected_upto: Option<usize>
     (wm, count)
 }
 
-/// Сводка поведенческих сигналов за окно рефлексии (удаления с `deleted_at > since`):
-/// сколько раз собеседник перегенерировал/удалил ответ (косвенные свидетельства «ответ
-/// не устроил») и сколько раз сам ассистент переписывал реплику. `None`, если сигналов
-/// нет. Даёт рефлексии реальное поведение вместо одних самоописаний. Записи без причины
-/// (старые) не считаются. Чистая функция — тестируема.
+/// A summary of behavioral signals over the reflection window (deletions with
+/// `deleted_at > since`): how many times the interlocutor regenerated/deleted a reply
+/// (indirect evidence the "reply didn't land") and how many times the assistant itself
+/// rewrote a reply. `None` if there are no signals. Gives reflection real behavior
+/// instead of just self-descriptions. Entries with no cause (old ones) aren't counted.
+/// A pure function — testable.
 pub(super) fn behavior_markers(
     chat: &Chat,
     since: Option<DateTime<Utc>>,
@@ -94,7 +97,7 @@ pub(super) fn behavior_markers(
         if let Some(s) = since
             && d.deleted_at <= s
         {
-            continue; // до прошлой рефлексии — уже учтено
+            continue; // before the last reflection — already accounted for
         }
         match d.cause {
             Some(DeletedCause::Regenerate) => regen += 1,
@@ -106,8 +109,8 @@ pub(super) fn behavior_markers(
     if regen == 0 && del == 0 && rewrite == 0 {
         return None;
     }
-    // Сигналы собеседника (перегенерация/удаление) отделяем от собственного поведения
-    // (переписывание) — их нельзя приписывать собеседнику.
+    // Interlocutor signals (regeneration/deletion) are kept separate from the agent's
+    // own behavior (rewriting) — the latter can't be attributed to the interlocutor.
     let mut about_user: Vec<String> = Vec::new();
     if regen > 0 {
         about_user.push(loc.tf("reflect.behavior.regen", &[("n", &regen.to_string())]));
@@ -131,25 +134,26 @@ pub(super) fn behavior_markers(
 }
 
 impl Orchestrator {
-    /// Вызывается после успешной генерации (`handle_done`): считает ответы ассистента
-    /// **в окне с прошлой рефлексии** и при достижении порога запускает фоновую
-    /// рефлексию. Тихо ничего не делает, если фича выключена, профиль не включил
-    /// инструменты модели себя, рефлексия уже идёт, сервер не готов или переписки в
-    /// окне недостаточно. Ватермарк (`Chat.reflected_upto`) сдвигается **только при
-    /// фактическом спавне** — пропуск по гейту не теряет накопленный цикл.
+    /// Called after successful generation (`handle_done`): counts assistant replies
+    /// **in the window since the last reflection** and, once the threshold is reached,
+    /// starts a background reflection run. A silent no-op if the feature is off, the
+    /// profile hasn't enabled the self-model tools, reflection is already running, the
+    /// server isn't ready, or there isn't enough conversation in the window. The
+    /// watermark (`Chat.reflected_upto`) shifts **only on an actual spawn** — a gate
+    /// skip doesn't lose the accumulated cycle.
     pub(super) fn maybe_auto_reflect(&mut self, chat_id: uuid::Uuid) {
         let every = self.config.self_model.auto_reflect_every;
         if every == 0 {
             return;
         }
 
-        // Снимок данных чата/профиля (борроу освобождается до правок полей self).
+        // Snapshot of chat/profile data (the borrow is released before editing self's fields).
         let profile_id;
-        let lang; // язык служебного каркаса профиля (ось A)
+        let lang; // the profile's agent-scaffold language (axis A)
         let system_message;
         let last_user;
         let mut digest;
-        let watermark; // длина истории на момент охвата — фиксируем при спавне
+        let watermark; // history length at the moment of coverage — fixed at spawn time
         let allowed: Vec<ToolId>;
         {
             let Some(chat) = self.chats.iter().find(|c| c.id == chat_id) else {
@@ -160,7 +164,7 @@ impl Orchestrator {
                 return;
             };
             lang = profile.language;
-            // Гейт: профиль включает инструменты модели себя (как и инъекция в промпт).
+            // Gate: the profile has the self-model tools enabled (same gate as prompt injection).
             if !profile
                 .enabled_tools
                 .iter()
@@ -168,8 +172,8 @@ impl Orchestrator {
             {
                 return;
             }
-            // Каденция по окну: ответы ассистента с прошлой рефлексии. Не накопилось —
-            // выходим, ватермарк не трогаем.
+            // Window-based cadence: assistant replies since the last reflection. Not
+            // enough accumulated yet — bail out, watermark untouched.
             let (wm, count) = reflect_window(&chat.messages, chat.reflected_upto);
             if !tool_loop::due(count, every) {
                 return;
@@ -182,16 +186,17 @@ impl Orchestrator {
             system_message = chat.system_message.clone();
             last_user = last_user_message_at(chat);
             let loc = crate::shared::i18n::locale(lang);
-            // Дайджест — только по окну (не по всей истории): иначе каждый цикл
-            // перечитывал бы уже отрефлексированное и плодил дубли инсайтов.
+            // The digest is over the window only (not the whole history): otherwise
+            // every cycle would re-read what's already been reflected on and produce
+            // duplicate insights.
             let Some(d) =
                 crate::features::rename_chat::build_conversation_digest(&chat.messages[wm..], loc)
             else {
-                return; // переписки в окне недостаточно — ватермарк не трогаем
+                return; // not enough conversation in the window — watermark untouched
             };
-            // Поведенческие сигналы за окно (перегенерации/удаления с прошлой
-            // рефлексии) — пища для модели собеседника. `since` = прежний `reflected_at`
-            // (ещё не перезаписан спавном ниже).
+            // Behavioral signals over the window (regenerations/deletions since the last
+            // reflection) — food for the interlocutor model. `since` = the previous
+            // `reflected_at` (not yet overwritten by the spawn below).
             digest = match behavior_markers(chat, chat.reflected_at, loc) {
                 Some(markers) => format!("{d}\n\n{markers}"),
                 None => d,
@@ -199,10 +204,10 @@ impl Orchestrator {
             watermark = chat.messages.len();
         }
 
-        // Обзор наблюдений для консолидации (похожие пары / contradicts / без связей) —
-        // конкретные данные к рефлексии над памятью «о себе» (обзор self-консолидации,
-        // отложенный в Ярусе 2; включён после подтверждения пользы связывания в Ярусе 3).
-        // Пусто, если наблюдений < 2.
+        // An overview of observations for consolidation (similar pairs / contradicts /
+        // unlinked) — concrete data for reflecting on memory "about self" (the
+        // self-consolidation overview, deferred in Tier 2; enabled after confirming the
+        // value of linking in Tier 3). Empty if observations < 2.
         if let Some(overview) = notes::build_self_consolidation_overview(
             &self.storage,
             profile_id,
@@ -211,24 +216,24 @@ impl Orchestrator {
             digest = format!("{digest}\n\n{overview}");
         }
 
-        // Уже идёт рефлексия? Пропускаем без сдвига ватермарка (повторим на след. ходу).
+        // Is reflection already running? Skip without shifting the watermark (retry next turn).
         if self.bg_running(BackgroundKind::Reflection) {
             return;
         }
-        // Сервер готов? Иначе пропускаем без сдвига ватермарка (повторим позже).
+        // Is the server ready? Otherwise skip without shifting the watermark (retry later).
         let Ok(backend) = self.engines.backend_if_ready() else {
             return;
         };
 
-        // Все гейты пройдены — фиксируем ватермарк (окно охвачено) и сохраняем чат.
-        // `modified_at` не трогаем: рефлексия не должна поднимать чат в списке.
+        // All gates passed — fix the watermark (the window is covered) and save the chat.
+        // `modified_at` is untouched: reflection shouldn't bump the chat up the list.
         if let Some(chat) = self.chats.iter_mut().find(|c| c.id == chat_id) {
             chat.reflected_upto = Some(watermark);
             chat.reflected_at = Some(Utc::now());
         }
         self.mark_dirty(chat_id);
 
-        // Токен отмены — до контекста: его клон едет в `ToolContext.cancel`.
+        // Cancellation token — before the context: its clone goes into `ToolContext.cancel`.
         let cancel = CancellationToken::new();
         let ctx = ToolContext::new(
             self.tool_deps(backend.clone()),
@@ -257,7 +262,7 @@ impl Orchestrator {
                 .schemas_for(&allowed, crate::shared::i18n::locale(lang)),
         };
 
-        // Спавним задачу и фиксируем слот (флаг «идёт» + тихий индикатор в статус-баре).
+        // Spawn the task and take the slot (the "running" flag + a quiet status-bar indicator).
         tool_loop::spawn_silent_loop(tool_loop::SilentLoop {
             backend,
             registry: self.registry.clone(),
@@ -267,12 +272,12 @@ impl Orchestrator {
             cancel: cancel.clone(),
             max_rounds: REFLECT_MAX_ROUNDS,
             timeout: REFLECT_TIMEOUT,
-            label: "авто-рефлексия",
+            label: "auto-reflection",
             profile_id,
             kind: BackgroundKind::Reflection,
             done_tx: self.bg_done_tx.clone(),
-            // A2: семантика summary↔наблюдения (эмбеддинг абзацев summary на лету в
-            // задаче). См. docs/history/self-model-consolidation.md §A2.
+            // A2: summary↔observation semantics (embedding summary paragraphs on the fly
+            // inside the task). See docs/history/self-model-consolidation.md §A2.
             summary_semantics: Some(tool_loop::SummarySemantics {
                 embedder: self.engines.embedder(),
                 storage: self.storage.clone(),
@@ -290,7 +295,7 @@ mod tests {
         Chat, DeletedCause, Message, behavior_markers, reflect_system_message, reflect_window,
     };
 
-    /// Референсная локаль (ru) для ассертов на русские подстроки (пинят ru-бандл).
+    /// The reference locale (ru) for asserting on Russian substrings (pins the ru bundle).
     fn ru() -> &'static crate::shared::i18n::Locale {
         crate::shared::i18n::locale(crate::shared::i18n::Lang::Ru)
     }
@@ -298,19 +303,20 @@ mod tests {
     #[test]
     fn reflect_system_message_composes_from_policy_core() {
         let msg = reflect_system_message(ru());
-        // Собрано из единого POLICY_CORE (те же правила, что у протокола ведения).
+        // Assembled from the shared POLICY_CORE (the same rules as the maintenance protocol).
         assert!(msg.contains(crate::features::tools::self_model::policy_core(ru())));
-        // Плюс рефлексия-специфичное обрамление.
+        // Plus reflection-specific framing.
         assert!(msg.contains("get_self_model"));
         assert!(msg.contains("Поведенческие сигналы"));
         assert!(msg.contains("только вызывай инструменты"));
-        // Ярус 2: рефлексии предложено связывать наблюдения (граф).
+        // Tier 2: reflection is nudged to link observations (the graph).
         assert!(msg.contains("note_link"));
     }
 
-    /// Per-language (§3.5 docs/history/i18n.md): системное сообщение рефлексии собирается на
-    /// КАЖДОМ вшитом языке, встраивает `policy_core` того же языка, плейсхолдер
-    /// `{core}` подставлен (без остатка), и несёт tool-имена (стабильны, не переводятся).
+    /// Per-language (§3.5 docs/history/i18n.md): the reflection system message is
+    /// assembled for EVERY built-in language, embeds `policy_core` of that same
+    /// language, the `{core}` placeholder is substituted (no leftover), and it carries
+    /// tool names (stable, not translated).
     #[test]
     fn reflect_system_message_localized_for_all_langs() {
         for &lang in crate::shared::i18n::Lang::ALL {
@@ -318,11 +324,11 @@ mod tests {
             let msg = reflect_system_message(l);
             assert!(
                 msg.contains(crate::features::tools::self_model::policy_core(l)),
-                "{lang:?}: policy_core не встроен"
+                "{lang:?}: policy_core not embedded"
             );
             assert!(
                 !msg.contains("{core}"),
-                "{lang:?}: плейсхолдер не подставлен"
+                "{lang:?}: placeholder not substituted"
             );
             assert!(
                 msg.contains("get_self_model") && msg.contains("note_link"),

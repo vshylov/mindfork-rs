@@ -1,13 +1,13 @@
-//! Тесты оркестратора — авто-консолидация «модели себя» («сон» модели себя, этап A1):
-//! каденция/гейты, оповещение об исходе. Часть модуля [`super`] (фикстуры в mod.rs).
-//! См. docs/history/self-model-consolidation.md (этап A1).
+//! Orchestrator tests — self-model auto-consolidation (self-model "sleep", stage A1):
+//! cadence/gates, outcome alerting. Part of the [`super`] module (fixtures in mod.rs).
+//! See docs/history/self-model-consolidation.md (stage A1).
 
 use super::*;
 
 #[tokio::test]
 async fn self_consolidation_spawns_when_threshold_reached() {
     let (_d, mut orch, chat_id) = orch_ready_for_self_consolidation();
-    // Готовый движок — «сон» реально спавнится (пустой скрипт → задача завершится).
+    // A ready engine — "sleep" actually spawns (an empty script → the task finishes).
     orch.engines.backend = Some(Arc::new(MockBackend::scripted(vec![ChatChunk::Finished(
         FinishReason::Stop,
     )])) as Arc<dyn EngineBackend>);
@@ -15,17 +15,17 @@ async fn self_consolidation_spawns_when_threshold_reached() {
     orch.maybe_auto_self_consolidate(chat_id);
 
     assert!(orch.bg_running(BackgroundKind::SelfConsolidation));
-    // Счётчик каденции сброшен при фактическом спавне.
+    // The cadence counter is reset on an actual spawn.
     assert_eq!(orch.self_consolidate_counts.get(&chat_id), Some(&0));
 }
 
 #[tokio::test]
 async fn self_consolidation_keeps_counter_when_server_not_ready() {
     let (_d, mut orch, chat_id) = orch_ready_for_self_consolidation();
-    // Движок не задан → backend_if_ready вернёт Err → пропуск БЕЗ сброса счётчика.
+    // No engine set → backend_if_ready returns Err → a skip WITHOUT resetting the counter.
     orch.maybe_auto_self_consolidate(chat_id);
     assert!(!orch.bg_running(BackgroundKind::SelfConsolidation));
-    // Цикл не потерян: счётчик инкрементирован, но не сброшен.
+    // The cycle isn't lost: the counter is incremented but not reset.
     assert_eq!(orch.self_consolidate_counts.get(&chat_id), Some(&1));
 }
 

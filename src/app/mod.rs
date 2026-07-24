@@ -1,5 +1,5 @@
-//! Слой `app` (FSD): композиция приложения — петля TUI, оркестрация, события.
-//! См. spec §4.2, §4.4.
+//! The `app` layer (FSD): application composition — the TUI loop, orchestration, events.
+//! See spec §4.2, §4.4.
 
 pub mod events;
 pub mod gen_state;

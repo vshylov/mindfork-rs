@@ -1,5 +1,5 @@
-//! Управление списком чатов: создание, переключение, переименование,
-//! клонирование, копирование переписки, удаление и сохранение черновика.
+//! Managing the chat list: creation, switching, renaming, cloning,
+//! copying the conversation, deletion, and saving the draft.
 
 use uuid::Uuid;
 
@@ -8,9 +8,9 @@ use crate::app::events::AppEvent;
 use super::Orchestrator;
 
 impl Orchestrator {
-    /// Сохраняет черновик поля ввода в активном чате (несохранённый текст). Запись
-    /// на диск идёт с дебаунсом (`mark_dirty`); `modified_at` НЕ трогаем — правка
-    /// черновика не должна поднимать чат в списке. См. spec §11.7.
+    /// Saves the input-box draft on the active chat (unsaved text). The write to
+    /// disk is debounced (`mark_dirty`); `modified_at` is NOT touched — editing a
+    /// draft shouldn't bump the chat up the list. See spec §11.7.
     pub(super) fn handle_set_draft(&mut self, text: String) {
         let Some(active_id) = self.active_id else {
             return;
@@ -43,13 +43,13 @@ impl Orchestrator {
         if self.active_id == Some(id) {
             return;
         }
-        // Озвучивание прерываем по настройке (по умолчанию — да: слушать чужой
-        // чат неожиданно). См. spec §11.9.
+        // Speech is stopped per the setting (on by default — otherwise you'd
+        // suddenly be listening to a different chat). See spec §11.9.
         if self.config.tts.stop_on_chat_switch {
             self.stop_tts();
         }
-        // Если идёт генерация — отменяем её (частичный ответ сохранится для
-        // исходного чата по приходу GenResult).
+        // If generation is running — cancel it (the partial reply is saved for
+        // the original chat when the GenResult arrives).
         if let Some(token) = self.gen_state.request_cancel() {
             token.cancel();
         }
@@ -96,9 +96,9 @@ impl Orchestrator {
         self.activate(new_id);
     }
 
-    /// Копирование всей переписки чата в буфер обмена (spec §11.2): оркестратор
-    /// (владелец `Chat`) формирует текст и эмитит `CopyToClipboard` — запись в буфер
-    /// и подтверждение делает UI-слой (`runtime`). Пустой чат → понятная ошибка.
+    /// Copies the whole chat conversation to the clipboard (spec §11.2): the orchestrator
+    /// (the owner of `Chat`) builds the text and emits `CopyToClipboard` — writing to the
+    /// clipboard and the confirmation are done by the UI layer (`runtime`). An empty chat → a clear error.
     pub(super) fn handle_copy_chat(&mut self, id: Uuid) {
         let Some(chat) = self.chats.iter().find(|c| c.id == id) else {
             return;
@@ -121,7 +121,7 @@ impl Orchestrator {
     }
 
     pub(super) fn handle_delete(&mut self, id: Uuid) {
-        // Безусловно (не настройка): озвучиваемого чата сейчас не станет.
+        // Unconditional (not a setting): the chat being spoken is about to disappear.
         if self.active_id == Some(id) {
             self.stop_tts();
         }
@@ -139,7 +139,7 @@ impl Orchestrator {
         self.chats.retain(|c| c.id != id);
         self.saves.forget(id);
 
-        // Если удалили активный — выбираем другой (или создаём новый).
+        // If the active one was deleted — pick another (or create a new one).
         if self.active_id == Some(id) {
             self.active_id = None;
             if let Some(next) = self.chats.first().map(|c| c.id) {

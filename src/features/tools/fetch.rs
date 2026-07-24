@@ -1,11 +1,11 @@
-//! Инструмент `fetch_url` (spec §9.3): загрузить веб-страницу и саммаризировать её.
+//! `fetch_url` tool (spec §9.3): fetch a web page and summarize it.
 //!
-//! Под глобальным выключателем `tools.web_enabled` (сетевой доступ/приватность, как
-//! `web_search`). Шаги: загрузка страницы собственным `reqwest`-клиентом →
-//! извлечение читаемого текста (`web::extract_readable`, переиспользуем readability)
-//! → саммаризация через `ctx.engine` (независимый одно-ходовый запрос, как
-//! `call_subagent`). С `summarize=false` возвращается извлечённый текст без вызова
-//! модели (быстрый путь).
+//! Under the global switch `tools.web_enabled` (network access/privacy, like
+//! `web_search`). Steps: fetch the page via its own `reqwest` client →
+//! extract readable text (`web::extract_readable`, reusing readability)
+//! → summarize via `ctx.engine` (an independent single-turn request, like
+//! `call_subagent`). With `summarize=false`, the extracted text is returned
+//! without calling the model (the fast path).
 
 use std::time::Duration;
 

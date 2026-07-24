@@ -1,5 +1,5 @@
-//! Контракт обмена UI ↔ оркестратор: команды и события.
-//! Однонаправленный поток данных, см. spec §4.4.
+//! UI ↔ orchestrator exchange contract: commands and events.
+//! Unidirectional data flow, see spec §4.4.
 
 use uuid::Uuid;
 
@@ -12,142 +12,154 @@ use crate::shared::api::FinishReason;
 use crate::shared::config::AppConfig;
 pub use crate::shared::server::{ServerStatus, ServerStatuses};
 
-/// Команда от UI к оркестратору.
+/// Command from UI to orchestrator.
 #[derive(Debug, Clone)]
 pub enum AppCommand {
-    /// Отправить сообщение пользователя в активный чат и начать генерацию.
+    /// Send the user's message to the active chat and start generation.
     SendMessage(String),
-    /// Сохранить черновик поля ввода в активном чате (несохранённый текст). UI шлёт
-    /// при изменении ввода; оркестратор пишет в файл чата с дебаунсом. См. spec §11.7.
+    /// Save the input box draft in the active chat (unsaved text). UI sends this
+    /// on every input change; the orchestrator writes it to the chat file with a debounce.
+    /// See spec §11.7.
     SetDraft(String),
-    /// Перегенерировать последний ответ ассистента: удалить всё после последнего
-    /// сообщения пользователя и запустить генерацию заново из того же запроса.
+    /// Regenerate the last assistant reply: delete everything after the last
+    /// user message and restart generation from the same request.
     RegenerateLast,
-    /// Удалить последний обмен (ответ ассистента вместе с вызвавшим его сообщением
-    /// пользователя); текст пользователя возвращается в поле ввода (`RestoreInput`).
+    /// Delete the last exchange (the assistant's reply together with the user
+    /// message that triggered it); the user's text is restored into the input box
+    /// (`RestoreInput`).
     DeleteLastExchange,
-    /// Отменить текущую генерацию.
+    /// Cancel the current generation.
     Cancel,
-    /// Написать сообщение от имени пользователя (имперсонация, `Ctrl+U`). `seed` —
-    /// уже введённый в поле текст (модель продолжит его; пусто — пишет с нуля).
-    /// Результат стримится событиями `Impersonation*`. См. spec §11.8.
+    /// Write a message on the user's behalf (impersonation, `Ctrl+U`). `seed` —
+    /// text already typed into the field (the model continues it; empty — writes from scratch).
+    /// The result streams via `Impersonation*` events. See spec §11.8.
     Impersonate { seed: String },
-    /// Отменить текущую имперсонацию.
+    /// Cancel the current impersonation.
     CancelImpersonation,
-    /// Создать новый чат из профиля (по `id`; `None` — профиль по умолчанию).
+    /// Create a new chat from a profile (by `id`; `None` — the default profile).
     NewChat { profile_id: Option<Uuid> },
-    /// Сделать чат активным (загрузить его в ленту).
+    /// Make a chat active (load it into the feed).
     SwitchChat(Uuid),
-    /// Переименовать чат.
+    /// Rename a chat.
     RenameChat { id: Uuid, title: String },
-    /// Авто-название чата: модель читает переписку (или её часть) и придумывает
-    /// заголовок. Запрос идёт фоновой задачей; результат — событие `ChatRenamed`.
+    /// Auto-title a chat: the model reads the conversation (or part of it) and comes up
+    /// with a title. The request runs as a background task; the result is a `ChatRenamed`
+    /// event.
     AutoRenameChat(Uuid),
-    /// Клонировать чат (копия сообщений и настроек).
+    /// Clone a chat (a copy of the messages and settings).
     CloneChat(Uuid),
-    /// Скопировать всю переписку чата в буфер обмена. Оркестратор формирует текст
-    /// (он владеет `Chat`) и эмитит `CopyToClipboard`; запись в буфер — в UI-слое.
+    /// Copy the whole chat conversation to the clipboard. The orchestrator builds the
+    /// text (it owns `Chat`) and emits `CopyToClipboard`; writing to the clipboard is a
+    /// UI-layer concern.
     CopyChat(Uuid),
-    /// Мягко удалить чат.
+    /// Soft-delete a chat.
     DeleteChat(Uuid),
-    /// Создать новый профиль (UI-секция — M8; команда нужна для операций/тестов).
+    /// Create a new profile (the UI section is M8; the command is needed for
+    /// operations/tests).
     CreateProfile {
         name: String,
         system_message: String,
     },
-    /// Мягко удалить профиль с каскадом на его чаты (notes/RAG исключаются).
+    /// Soft-delete a profile with a cascade onto its chats (notes/RAG are excluded).
     DeleteProfile(Uuid),
-    /// Заменить конфигурацию целиком (экран настроек). Оркестратор сохраняет её,
-    /// перезапускает сервер/реестр при необходимости и переэмитит. См. spec §11.6.
-    /// `Box` — `AppConfig` крупный, не раздуваем enum.
+    /// Replace the whole config (settings screen). The orchestrator saves it,
+    /// restarts the server/registry if needed, and re-emits it. See spec §11.6.
+    /// `Box` — `AppConfig` is large, don't bloat the enum.
     UpdateConfig(Box<AppConfig>),
-    /// Применить правки профиля (экран настроек). `Box` — `ProfileEdit` несёт
-    /// крупные поля (системное сообщение).
+    /// Apply profile edits (settings screen). `Box` — `ProfileEdit` carries
+    /// large fields (the system message).
     UpdateProfile { id: Uuid, edit: Box<ProfileEdit> },
-    /// Индексировать файл или директорию в базу знаний (RAG) активного профиля
-    /// (команда `/rag add <path> [-r]`). Выполняется фоновой задачей; прогресс
-    /// приходит событиями `RagProgress`. См. spec §9.3.
+    /// Index a file or directory into the active profile's knowledge base (RAG)
+    /// (the `/rag add <path> [-r]` command). Runs as a background task; progress
+    /// arrives via `RagProgress` events. See spec §9.3.
     RagAdd { path: String, recursive: bool },
-    /// Удалить из базы знаний файл или директорию (со всем, что под ней) активного
-    /// профиля (команда `/rag remove <path>`). Результат — событие `RagProgress`.
+    /// Remove a file or directory (and everything under it) from the active
+    /// profile's knowledge base (the `/rag remove <path>` command). The result is a
+    /// `RagProgress` event.
     RagDelete { path: String },
-    /// Показать источники базы знаний активного профиля (команда `/rag list`).
-    /// Результат — событие `RagProgress::Listed`.
+    /// Show the active profile's knowledge-base sources (the `/rag list` command).
+    /// The result is a `RagProgress::Listed` event.
     RagList,
-    /// Реиндексировать базу знаний активного профиля (команда `/rag rebuild`):
-    /// перечанковать и переэмбеддить сохранённые исходники. Выполняется фоновой
-    /// задачей; прогресс — событиями `RagProgress`. См. spec §9.3.
+    /// Reindex the active profile's knowledge base (the `/rag rebuild` command):
+    /// re-chunk and re-embed the stored sources. Runs as a background task;
+    /// progress — via `RagProgress` events. See spec §9.3.
     RagRebuild,
-    /// Озвучить сообщения активного чата (команда `/tts [N|all]`). Оркестратор
-    /// (владелец `Chat`) берёт **снимок** переписки на момент команды и запускает
-    /// фоновую задачу синтеза/воспроизведения. Новая команда прерывает текущее
-    /// воспроизведение. См. spec §11.9, docs/research/tts.md §7.
+    /// Speak the active chat's messages (the `/tts [N|all]` command). The orchestrator
+    /// (the owner of `Chat`) takes a **snapshot** of the conversation at command time and
+    /// starts a background synthesis/playback task. A new command interrupts the current
+    /// playback. See spec §11.9, docs/research/tts.md §7.
     Tts(crate::features::tts_command::TtsScope),
-    /// Остановить озвучивание и сбросить очередь (команда `/tts stop`).
+    /// Stop speech playback and clear the queue (the `/tts stop` command).
     TtsStop,
-    /// Приостановить озвучивание, сохранив очередь (команда `/tts pause`).
+    /// Pause playback, keeping the queue (the `/tts pause` command).
     TtsPause,
-    /// Продолжить приостановленное озвучивание (команда `/tts resume`).
+    /// Resume paused playback (the `/tts resume` command).
     TtsResume,
-    /// Запросить снимок «модели себя» активного профиля (для экрана просмотра, `F3`).
-    /// Оркестратор (владелец `Storage`) отвечает событием `SelfModelView`.
+    /// Request a snapshot of the active profile's "self-model" (for the viewer screen,
+    /// `F3`). The orchestrator (the owner of `Storage`) responds with a `SelfModelView`
+    /// event.
     RequestSelfModel,
-    /// Применить ручную правку «модели себя» активного профиля (UI-редактор `F3`).
-    /// Оркестратор применяет, сохраняет и переэмитит обновлённый `SelfModelView`.
+    /// Apply a manual edit to the active profile's "self-model" (the `F3` UI editor).
+    /// The orchestrator applies it, saves, and re-emits the updated `SelfModelView`.
     UpdateSelfModel(crate::entities::self_model::SelfModelEdit),
-    /// Подтвердить изменившийся каталог инструментов MCP-сервера (TOFU-
-    /// переподтверждение из настроек): зарегистрировать придержанные инструменты
-    /// и персистнуть новый пин. Аргумент — id сервера. См. spec §9.6.
+    /// Confirm a changed tool catalog for an MCP server (TOFU
+    /// reconfirmation from settings): register the held-back tools
+    /// and persist the new pin. The argument is the server id. See spec §9.6.
     ConfirmMcpCatalog(String),
-    /// Сохранить API-ключ облачного провайдера (введён в настройках). Оркестратор
-    /// шифрует его машинным ключом и кладёт в `config.api_keys` — плейнтекст живёт
-    /// только в этом пути и в HTTP-клиенте, на диск открытым текстом не попадает.
-    /// Пустой `key` — удалить сохранённый ключ этого провайдера. См.
+    /// Save a cloud provider's API key (entered in settings). The orchestrator
+    /// encrypts it with the machine key and puts it into `config.api_keys` — plaintext
+    /// lives only along this path and in the HTTP client, it never reaches disk in
+    /// plaintext. An empty `key` — delete the saved key for this provider. See
     /// `shared::secrets`, docs/research/api-key-storage.md.
-    // Конструируется экраном настроек (поле «API-ключ», этап 2 направления);
-    // обработчик и персист — уже здесь и покрыты тестами оркестратора.
+    // Built by the settings screen (the "API key" field, stage 2 of the track);
+    // the handler and persistence are already here and covered by orchestrator tests.
     #[allow(dead_code)]
     SetApiKey {
         provider: crate::shared::config::CloudProvider,
         key: String,
     },
-    /// Завершить работу (оркестратор останавливается).
+    /// Shut down (the orchestrator stops).
     Quit,
 }
 
-/// Событие от оркестратора к UI. UI обновляет read-only-проекцию только так.
+/// Event from the orchestrator to UI. This is the only way UI updates its read-only
+/// projection.
 #[derive(Debug, Clone)]
 pub enum AppEvent {
-    /// Изменился статус какого-либо из серверов — снимок всех (чат/эмбеддинги/
-    /// имперсонация).
+    /// The status of one of the servers changed — a snapshot of all of them (chat/
+    /// embeddings/impersonation).
     ServerStatus(ServerStatuses),
-    /// Полный список видимых чатов (для оверлея). Шлётся при изменениях набора.
+    /// The full list of visible chats (for the overlay). Sent whenever the set changes.
     ChatList(Vec<ChatSummary>),
-    /// Заголовок чата изменился (ручное/авто-переименование). UI обновляет шапку
-    /// ленты активного чата без перестроения (`ChatList` обновляет список).
+    /// A chat's title changed (manual/auto rename). UI updates the active chat's
+    /// feed header without a rebuild (`ChatList` updates the list).
     ChatRenamed { id: Uuid, title: String },
-    /// Ошибка операции над списком чатов (авто-название/удаление/клон). Показывается
-    /// в отдельной области оверлея списка (а не в ленте чата), если он открыт.
+    /// An error from a chat-list operation (auto-title/delete/clone). Shown in
+    /// the list overlay's dedicated status area (not the chat feed), if it's open.
     ChatListError(String),
-    /// Записать текст в буфер обмена (side-effect UI-слоя). Оркестратор сформировал
-    /// переписку чата; runtime пишет в буфер и шлёт подтверждение/ошибку в оверлей.
+    /// Write text to the clipboard (a UI-layer side effect). The orchestrator built
+    /// the chat conversation text; runtime writes it to the clipboard and sends a
+    /// confirmation/error to the overlay.
     CopyToClipboard(String),
-    /// Полный список видимых профилей (для оверлея выбора при создании чата).
+    /// The full list of visible profiles (for the selection overlay when creating a
+    /// chat).
     ProfileList(Vec<ProfileSummary>),
-    /// Полный снимок настроек для экрана настроек (конфиг + полные профили).
-    /// Шлётся при старте и после любой правки конфига/профилей. См. spec §11.6.
-    /// `language_locked` — id профилей, у которых язык каркаса (ось A, docs/history/i18n.md)
-    /// уже нельзя менять: появились данные (чаты / «модель себя» / заметки). Считает
-    /// оркестратор (у экрана нет доступа к чатам/БД).
-    /// `mcp` — снимок MCP-хоста (динамический каталог инструментов для тумблеров
-    /// профиля + статусы серверов для строк в секции «Инструменты»); в статический
-    /// `tool_catalog()` MCP-инструменты не входят. Пуст, пока серверы не
-    /// поднялись/выключены.
-    /// `api_keys_present` — провайдеры, чей API-ключ сохранён **на этой машине**
-    /// (поле-статус «настроен» в облачных подсекциях). Сами ключи в снимок не
-    /// попадают: `config.api_keys` очищается при эмите — UI не таскает секреты даже
-    /// шифротекстом, а обратно их восстанавливает оркестратор (`handle_update_config`).
-    /// См. `shared::secrets`, docs/research/api-key-storage.md.
+    /// A full settings snapshot for the settings screen (config + full profiles).
+    /// Sent on startup and after any config/profile edit. See spec §11.6.
+    /// `language_locked` — ids of profiles whose scaffold language (axis A,
+    /// docs/history/i18n.md) can no longer be changed: data has appeared (chats /
+    /// "self-model" / notes). Computed by the orchestrator (the screen has no access to
+    /// chats/the DB).
+    /// `mcp` — a snapshot of the MCP host (a dynamic tool catalog for profile
+    /// toggles + server statuses for rows in the "Tools" section); MCP tools are not
+    /// part of the static `tool_catalog()`. Empty while the servers haven't
+    /// come up / are disabled.
+    /// `api_keys_present` — providers whose API key is saved **on this machine**
+    /// (the "configured" status field in the cloud subsections). The keys themselves
+    /// aren't included in the snapshot: `config.api_keys` is cleared on emit — UI
+    /// doesn't carry secrets even as ciphertext, and the orchestrator restores them on
+    /// the way back (`handle_update_config`). See `shared::secrets`,
+    /// docs/research/api-key-storage.md.
     Settings {
         config: Box<AppConfig>,
         profiles: Vec<Profile>,
@@ -155,32 +167,33 @@ pub enum AppEvent {
         mcp: crate::features::tools::mcp::McpSnapshot,
         api_keys_present: Vec<crate::shared::config::CloudProvider>,
     },
-    /// Активный чат сменился — UI перестраивает ленту из его сообщений и загружает
-    /// сохранённый черновик в поле ввода (`draft`; пустой у нового чата).
+    /// The active chat changed — UI rebuilds the feed from its messages and loads
+    /// the saved draft into the input box (`draft`; empty for a new chat).
     ChatActivated {
         id: Uuid,
         title: String,
         messages: Vec<Message>,
         draft: String,
     },
-    /// Сообщение пользователя принято (эхо для ленты).
+    /// The user's message was accepted (an echo for the feed).
     UserMessage(String),
-    /// Вернуть текст в поле ввода (после удаления последнего обмена). Непустой
-    /// существующий ввод не затирается — текст добавляется в его начало (UI).
+    /// Restore text into the input box (after deleting the last exchange). A non-empty
+    /// existing input isn't overwritten — the text is prepended to it (UI).
     RestoreInput(String),
-    /// Началась генерация ответа ассистента.
+    /// The assistant's reply generation has started.
     GenerationStarted { generation_id: Uuid },
-    /// Дельта основного текста ответа.
+    /// A delta of the reply's main text.
     Chunk { generation_id: Uuid, text: String },
-    /// Дельта «мыслей» (CoT).
+    /// A delta of "thoughts" (CoT).
     Thoughts { generation_id: Uuid, text: String },
-    /// Счётчик токенов текущей генерации (live). `completion` — сгенерировано
-    /// токенов ответа (накопительно по раундам agentic-loop); `context` — токенов
-    /// в промпте (вся переписка); `None` оставляет прежнее значение нетронутым.
-    /// `context_exact` — точное ли это число из `usage` сервера (иначе клиентская
-    /// оценка, UI помечает `~`). `reasoning` — токенов «мыслей» (входят в `completion`);
-    /// `None` оставляет прежнее нетронутым (известно только из `usage`, не из потока).
-    /// UI показывает «переписка + ответ» в статус-баре, см. spec §11.1.
+    /// The current generation's live token counter. `completion` — reply tokens
+    /// generated so far (accumulated across agentic-loop rounds); `context` — tokens
+    /// in the prompt (the whole conversation); `None` leaves the previous value
+    /// untouched. `context_exact` — whether this number is exact, from the server's
+    /// `usage` (otherwise a client-side estimate, UI marks it with `~`). `reasoning` —
+    /// "thoughts" tokens (included in `completion`); `None` leaves the previous value
+    /// untouched (known only from `usage`, not from the stream).
+    /// UI shows "conversation + reply" in the status bar, see spec §11.1.
     TokenUsage {
         generation_id: Uuid,
         completion: u64,
@@ -188,67 +201,72 @@ pub enum AppEvent {
         context_exact: bool,
         reasoning: Option<u32>,
     },
-    /// Инструмент вызван и исполнен (для tool-блока в ленте). См. spec §6.3, §11.3.
+    /// A tool was called and executed (for the tool block in the feed). See spec §6.3,
+    /// §11.3.
     ToolCall {
         generation_id: Uuid,
         name: String,
         arguments: String,
         result: String,
     },
-    /// Ассистент решил написать **ещё одно** сообщение (инструмент
-    /// `send_followup_message`): UI завершает текущий пузырь и начинает новый,
-    /// в который пойдёт текст следующего раунда. См. spec §9.3.
+    /// The assistant decided to write **another** message (the tool
+    /// `send_followup_message`): UI finishes the current bubble and starts a new one,
+    /// which will receive the next round's text. See spec §9.3.
     AssistantContinue { generation_id: Uuid },
-    /// Ассистент решил **переписать** текущее сообщение (инструмент
-    /// `rewrite_current_message`): UI отбрасывает уже накопленный текст текущего
-    /// пузыря; в него пойдёт переписанный ответ. См. spec §9.3.
+    /// The assistant decided to **rewrite** the current message (the tool
+    /// `rewrite_current_message`): UI discards the already-accumulated text of the
+    /// current bubble; the rewritten reply will go into it. See spec §9.3.
     AssistantRewrite { generation_id: Uuid },
-    /// Генерация завершена.
+    /// Generation finished.
     Finished {
         generation_id: Uuid,
         reason: FinishReason,
     },
-    /// Имперсонация началась: UI прячет поле ввода и показывает потоковый предпросмотр
-    /// реплики (заполняется уже введённым текстом). См. spec §11.8.
+    /// Impersonation started: UI hides the input box and shows a streaming preview
+    /// of the reply (pre-filled with the already-typed text). See spec §11.8.
     ImpersonationStarted { generation_id: Uuid },
-    /// Дельта текста имперсонируемой реплики (в предпросмотр).
+    /// A text delta of the impersonated reply (into the preview).
     ImpersonationChunk { generation_id: Uuid, text: String },
-    /// Имперсонация завершена. При `Stop`/`Length` UI вставляет накопленный текст в
-    /// поле ввода; при `Cancelled`/`Error` — отбрасывает (поле ввода не меняется).
+    /// Impersonation finished. On `Stop`/`Length` UI inserts the accumulated text into
+    /// the input box; on `Cancelled`/`Error` — discards it (the input box is unchanged).
     ImpersonationFinished {
         generation_id: Uuid,
         reason: FinishReason,
     },
-    /// Прогресс фоновой индексации файлов в RAG (команда `/rag add`). См. spec §9.3.
+    /// Progress of background file indexing into RAG (the `/rag add` command). See
+    /// spec §9.3.
     RagProgress(RagProgress),
-    /// Снимок «модели себя» активного профиля (ответ на `RequestSelfModel`) для
-    /// экрана просмотра (`F3`). `None` — модель ещё не создавалась. `Box` — крупный
-    /// тип, не раздуваем enum. См. docs/history/self-model-mvp.md.
+    /// A snapshot of the active profile's "self-model" (a reply to `RequestSelfModel`)
+    /// for the viewer screen (`F3`). `None` — the model hasn't been created yet. `Box` —
+    /// a large type, don't bloat the enum. See docs/history/self-model-mvp.md.
     SelfModelView(Box<Option<crate::entities::self_model::SelfModel>>),
-    /// «Модель себя» изменилась (фоновой рефлексией или инструментами хода) — сигнал
-    /// **без снимка**. Если экран `F3` открыт, UI перезапрашивает свежий снимок
-    /// (`RequestSelfModel`); при закрытом экране игнорируется. См. этап 5 доводки.
+    /// The "self-model" changed (via background reflection or turn tools) — a signal
+    /// **with no snapshot**. If the `F3` screen is open, UI re-requests a fresh snapshot
+    /// (`RequestSelfModel`); ignored when the screen is closed. See stage 5 of the
+    /// refinements.
     SelfModelChanged,
-    /// Идёт ли озвучивание (синтез/воспроизведение) — для тихого чипа «♪ озвучка»
-    /// в статус-баре. `true` при старте задачи, `false` при её завершении/отмене.
-    /// См. spec §11.9.
+    /// Whether speech (synthesis/playback) is active — for the quiet "♪ speaking" chip
+    /// in the status bar. `true` when the task starts, `false` on its completion/
+    /// cancellation. See spec §11.9.
     TtsActive(bool),
-    /// Активность фоновой задачи (авто-рефлексия/консолидация) для тихого индикатора
-    /// в статус-баре: `active=true` при старте, `false` при завершении. См. этап 5.
+    /// Background task activity (auto-reflection/consolidation) for the quiet indicator
+    /// in the status bar: `active=true` at the start, `false` on completion. See stage 5.
     BackgroundTask { kind: BackgroundKind, active: bool },
-    /// Ошибка (для показа в UI).
+    /// An error (for showing in UI).
     Error(String),
 }
 
-/// Вид фоновой задачи для индикатора в статус-баре (`AppEvent::BackgroundTask`).
-/// `Hash` — используется ключом реестра слотов фоновых задач (`orchestrator::background`).
+/// The kind of background task for the status-bar indicator
+/// (`AppEvent::BackgroundTask`). `Hash` — used as the key of the background-task slot
+/// registry (`orchestrator::background`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum BackgroundKind {
-    /// Авто-рефлексия «модели себя».
+    /// Auto-reflection of the "self-model".
     Reflection,
-    /// Авто-консолидация заметок («сон»).
+    /// Auto-consolidation of notes ("sleep").
     Consolidation,
-    /// Авто-консолидация «модели себя» («сон» модели себя): слить дубли наблюдений,
-    /// сжать раздутое описание, связать противоречия. См. docs/history/self-model-consolidation.md.
+    /// Auto-consolidation of the "self-model" (self-model "sleep"): merge duplicate
+    /// observations, compress a bloated description, link contradictions. See
+    /// docs/history/self-model-consolidation.md.
     SelfConsolidation,
 }

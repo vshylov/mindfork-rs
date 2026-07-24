@@ -1,12 +1,12 @@
-//! Тесты оркестратора — профили: создание/удаление/каскад. Часть модуля [`super`]
-//! (фикстуры в mod.rs). См. docs/history/refactoring-god-objects.md, этап 3.
+//! Orchestrator tests — profiles: create/delete/cascade. Part of the [`super`]
+//! module (fixtures in mod.rs). See docs/history/refactoring-god-objects.md, stage 3.
 
 use super::*;
 
 #[tokio::test]
 async fn create_profile_appears_in_profile_list() {
     let (_d, cmd_tx, mut evt_rx, handle) = spawn_orch(None);
-    // Бутстрап создаёт один профиль по умолчанию.
+    // Bootstrap creates one default profile.
     wait_for(
         &mut evt_rx,
         |e| matches!(e, AppEvent::ProfileList(p) if p.len() == 1),
@@ -27,7 +27,7 @@ async fn create_profile_appears_in_profile_list() {
     .await
     .unwrap();
     if let AppEvent::ProfileList(profiles) = list {
-        assert!(profiles.iter().any(|p| p.name == "Второй")); // имя нормализовано
+        assert!(profiles.iter().any(|p| p.name == "Второй")); // the name is normalized
     }
 
     drop(cmd_tx);
@@ -41,7 +41,7 @@ async fn delete_profile_cascades_to_its_chats() {
         .await
         .unwrap();
 
-    // Создаём второй профиль и узнаём его id.
+    // Create a second profile and learn its id.
     cmd_tx
         .send(AppCommand::CreateProfile {
             name: "Второй".into(),
@@ -59,7 +59,7 @@ async fn delete_profile_cascades_to_its_chats() {
         _ => unreachable!(),
     };
 
-    // Создаём чат из второго профиля → всего два чата.
+    // Create a chat from the second profile → two chats in total.
     cmd_tx
         .send(AppCommand::NewChat {
             profile_id: Some(second_id),
@@ -72,7 +72,7 @@ async fn delete_profile_cascades_to_its_chats() {
     .await
     .unwrap();
 
-    // Удаляем второй профиль: его чат каскадно скрывается → остаётся один.
+    // Delete the second profile: its chat cascades to hidden → one remains.
     cmd_tx.send(AppCommand::DeleteProfile(second_id)).unwrap();
     wait_for(
         &mut evt_rx,

@@ -1,10 +1,10 @@
-//! Инструмент `calculate` (spec §9.3): вычисление математического выражения.
+//! `calculate` tool (spec §9.3): evaluating a math expression.
 //!
-//! Собственный рекурсивно-нисходящий вычислитель (без внешних крейтов): арифметика
-//! `+ - * / %`, степень `^` (правоассоциативная), унарный минус, скобки,
-//! константы (`pi`, `e`, `tau`) и функции (`sqrt`, `sin`, `log`, `min`, `max`, …).
-//! Чистая функция [`eval`] полностью тестируема. Инструмент **не** требует I/O и не
-//! гейтится выключателями (безопасен).
+//! Its own recursive-descent evaluator (no external crates): arithmetic
+//! `+ - * / %`, exponentiation `^` (right-associative), unary minus, parens,
+//! constants (`pi`, `e`, `tau`), and functions (`sqrt`, `sin`, `log`, `min`, `max`, …).
+//! The pure function [`eval`] is fully testable. The tool needs **no** I/O and isn't
+//! gated by any switches (safe).
 
 use anyhow::Result;
 
@@ -13,7 +13,7 @@ use crate::shared::i18n::Locale;
 
 use super::{Tool, ToolContext, ToolOutcome};
 
-/// `calculate` — вычисляет арифметическое/математическое выражение.
+/// `calculate` — evaluates an arithmetic/math expression.
 pub struct Calculate;
 
 #[async_trait::async_trait]
@@ -62,7 +62,7 @@ impl Tool for Calculate {
     }
 }
 
-/// Форматирует результат: целые — без дробной части, иначе с обрезкой хвостовых нулей.
+/// Formats the result: integers — with no fractional part, otherwise trailing zeros are trimmed.
 fn format_number(v: f64, loc: &crate::shared::i18n::Locale) -> String {
     if v.is_nan() {
         return loc.t("calc.number.nan").to_string();
@@ -73,13 +73,13 @@ fn format_number(v: f64, loc: &crate::shared::i18n::Locale) -> String {
     if v == v.trunc() && v.abs() < 1e15 {
         return format!("{}", v as i64);
     }
-    // До 12 значащих знаков, без хвостовых нулей.
+    // Up to 12 significant digits, no trailing zeros.
     let s = format!("{v:.12}");
     let trimmed = s.trim_end_matches('0').trim_end_matches('.');
     trimmed.to_string()
 }
 
-// ------------------------- Лексер -------------------------
+// ------------------------- Lexer -------------------------
 
 #[derive(Debug, Clone, PartialEq)]
 enum Token {
@@ -96,7 +96,7 @@ enum Token {
     Comma,
 }
 
-/// Разбивает строку на токены. Ошибка на неизвестном символе. `loc` — язык ошибок.
+/// Splits a string into tokens. Errors on an unknown character. `loc` — the error language.
 fn tokenize(input: &str, loc: &Locale) -> Result<Vec<Token>> {
     let chars: Vec<char> = input.chars().collect();
     let mut tokens = Vec::new();
@@ -146,7 +146,7 @@ fn tokenize(input: &str, loc: &Locale) -> Result<Vec<Token>> {
                 while i < chars.len() && (chars[i].is_ascii_digit() || chars[i] == '.') {
                     i += 1;
                 }
-                // Экспоненциальная запись: 1e3, 2.5E-4.
+                // Exponential notation: 1e3, 2.5E-4.
                 if i < chars.len() && (chars[i] == 'e' || chars[i] == 'E') {
                     i += 1;
                     if i < chars.len() && (chars[i] == '+' || chars[i] == '-') {
@@ -176,7 +176,7 @@ fn tokenize(input: &str, loc: &Locale) -> Result<Vec<Token>> {
     Ok(tokens)
 }
 
-// ------------------------- Парсер/вычислитель -------------------------
+// ------------------------- Parser/evaluator -------------------------
 
 struct Parser<'a> {
     tokens: Vec<Token>,
@@ -240,7 +240,7 @@ impl Parser<'_> {
         Ok(value)
     }
 
-    /// factor := unary ('^' factor)?   (степень правоассоциативна)
+    /// factor := unary ('^' factor)?   (exponentiation is right-associative)
     fn factor(&mut self) -> Result<f64> {
         let base = self.unary()?;
         if let Some(Token::Caret) = self.peek() {
@@ -276,7 +276,7 @@ impl Parser<'_> {
                 Ok(v)
             }
             Some(Token::Ident(name)) => {
-                // Функция, если за идентификатором идёт «(».
+                // A function if the identifier is followed by "(".
                 if let Some(Token::LParen) = self.peek() {
                     self.next();
                     let mut args = vec![self.expr()?];
@@ -313,7 +313,7 @@ impl Parser<'_> {
     }
 }
 
-/// Значение именованной константы.
+/// The value of a named constant.
 fn constant(name: &str, loc: &Locale) -> Result<f64> {
     match name {
         "pi" => Ok(std::f64::consts::PI),
@@ -323,7 +323,7 @@ fn constant(name: &str, loc: &Locale) -> Result<f64> {
     }
 }
 
-/// Применяет функцию к аргументам (проверяя арность). `loc` — язык ошибок.
+/// Applies a function to its arguments (checking arity). `loc` — the error language.
 fn apply_function(name: &str, args: &[f64], loc: &Locale) -> Result<f64> {
     let one = |a: &[f64]| -> Result<f64> {
         if a.len() != 1 {
@@ -350,7 +350,7 @@ fn apply_function(name: &str, args: &[f64], loc: &Locale) -> Result<f64> {
         "exp" => one(args)?.exp(),
         "ln" => one(args)?.ln(),
         "log2" => one(args)?.log2(),
-        // log(x) — десятичный; log(x, base) — по основанию.
+        // log(x) — base 10; log(x, base) — to a given base.
         "log" | "log10" => {
             if args.len() == 2 {
                 args[0].log(args[1])
@@ -394,7 +394,7 @@ fn apply_function(name: &str, args: &[f64], loc: &Locale) -> Result<f64> {
     })
 }
 
-/// Вычисляет выражение в `f64`. Тексты ошибок — на языке каркаса `loc`.
+/// Evaluates the expression as `f64`. Error texts — in the scaffold language `loc`.
 pub fn eval(input: &str, loc: &Locale) -> Result<f64> {
     let tokens = tokenize(input, loc)?;
     if tokens.is_empty() {
@@ -418,12 +418,12 @@ mod tests {
     use super::*;
     use uuid::Uuid;
 
-    /// Референсная локаль (ru) для чистых вычислений в тестах.
+    /// Reference locale (ru) for pure evaluations in tests.
     fn ru() -> &'static Locale {
         crate::shared::i18n::locale(crate::shared::i18n::Lang::Ru)
     }
-    /// Тонкие обёртки: тесты зовут `eval`/`format_number` без явной локали (шэдоуят
-    /// одноимённые функции модуля через `super::`). Пинят ru-бандл.
+    /// Thin wrappers: tests call `eval`/`format_number` with no explicit locale (shadowing
+    /// the module's same-named functions via `super::`). Pin the ru bundle.
     fn eval(s: &str) -> Result<f64> {
         super::eval(s, ru())
     }
@@ -447,7 +447,7 @@ mod tests {
 
     #[test]
     fn power_is_right_associative() {
-        // 2^3^2 = 2^(3^2) = 2^9 = 512, а не (2^3)^2 = 64.
+        // 2^3^2 = 2^(3^2) = 2^9 = 512, not (2^3)^2 = 64.
         assert!(approx(eval("2^3^2").unwrap(), 512.0));
         assert!(approx(eval("2^10").unwrap(), 1024.0));
     }
@@ -477,9 +477,9 @@ mod tests {
         assert!(eval("2 ) (").is_err());
         assert!(eval("foobar(2)").is_err());
         assert!(eval("nope").is_err());
-        assert!(eval("sqrt(1, 2)").is_err()); // неверная арность
-        assert!(eval("@").is_err()); // неизвестный символ
-        assert!(eval("2 3").is_err()); // лишние токены
+        assert!(eval("sqrt(1, 2)").is_err()); // wrong arity
+        assert!(eval("@").is_err()); // unknown character
+        assert!(eval("2 3").is_err()); // extra tokens
     }
 
     #[test]

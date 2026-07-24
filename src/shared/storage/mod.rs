@@ -1,6 +1,6 @@
-//! Слой хранения (`shared/storage`): JSON (конфиг/чаты/профили) + SQLite
-//! (заметки/RAG). Фасад [`Storage`] объединяет оба и координирует каскадное
-//! мягкое удаление. См. spec §5.2, §4.4.2.
+//! Storage layer (`shared/storage`): JSON (config/chats/profiles) + SQLite
+//! (notes/RAG). The [`Storage`] facade combines both and coordinates cascade
+//! soft delete. See spec §5.2, §4.4.2.
 
 pub mod db;
 pub mod json;
@@ -14,33 +14,34 @@ use crate::shared::paths::Paths;
 pub use db::Db;
 pub use json::JsonStore;
 
-/// Единый фасад хранилища. Единственный писатель — оркестратор (spec §4.4).
+/// The single storage facade. The sole writer is the orchestrator (spec §4.4).
 pub struct Storage {
     json: JsonStore,
     db: Db,
 }
 
 impl Storage {
-    /// Открывает хранилище по путям приложения.
+    /// Opens storage at the app's paths.
     pub fn open(paths: Paths) -> Result<Self> {
         let db = Db::open(&paths.data_db())?;
         let json = JsonStore::new(paths);
         Ok(Self { json, db })
     }
 
-    /// JSON-репозиторий (конфиг/профили/чаты).
+    /// JSON repository (config/profiles/chats).
     pub fn json(&self) -> &JsonStore {
         &self.json
     }
 
-    /// SQLite-репозиторий (заметки/RAG).
+    /// SQLite repository (notes/RAG).
     pub fn db(&self) -> &Db {
         &self.db
     }
 
-    /// Мягкое удаление профиля с каскадом на его чаты. Заметки/RAG физически
-    /// не удаляются — они исключаются из выдачи, т.к. профиль скрыт
-    /// (фильтрация по видимым профилям — на стороне выборок). См. spec §12.3.
+    /// Soft-deletes a profile with a cascade to its chats. Notes/RAG are not
+    /// physically deleted — they're excluded from results because the profile
+    /// is hidden (filtering by visible profiles happens at the query side).
+    /// See spec §12.3.
     pub fn hide_profile_cascade(&self, profile_id: Uuid) -> Result<bool> {
         let found = self.json.hide_profile(profile_id)?;
         if found {
@@ -83,7 +84,7 @@ mod tests {
             .rag_insert(&RagDocument::new(a, "a", "док A", vec![1.0, 0.0]))
             .unwrap();
 
-        // Чат профиля A видит только данные A — ничего из B не «утекает».
+        // A chat of profile A sees only A's data — nothing from B "leaks in".
         let a_notes = storage.db().note_list(a, None, &[], None).unwrap();
         assert_eq!(a_notes.len(), 1);
         assert!(a_notes.iter().all(|n| n.profile_id == a));

@@ -1,96 +1,104 @@
-//! Машинно-привязанное хранение секретов (API-ключей облачных провайдеров).
+//! Machine-bound storage for secrets (cloud-provider API keys).
 //!
-//! Ключ, введённый в настройках, шифруется **ключом этой машины** и кладётся в
-//! `settings.json` (см. [`crate::shared::config::AppConfig::api_keys`]). Конфиг
-//! остаётся переносимым: на другой машине запись не расшифруется — ключ вводится
-//! заново и добавляется **своей** записью; при возврате на первую машину её запись
-//! по-прежнему читается. См. docs/research/api-key-storage.md.
+//! A key entered in settings is encrypted with **this machine's key** and put
+//! into `settings.json` (see [`crate::shared::config::AppConfig::api_keys`]). The
+//! config stays portable: on another machine the entry does not decrypt — the key
+//! is entered again and added as **its own** entry; going back to the first
+//! machine, its entry is still readable. See docs/research/api-key-storage.md.
 //!
-//! Схемы шифрования (поле `scheme` записи, свободная строка — незнакомая схема не
-//! валит чтение конфига, запись просто «не наша»):
+//! Encryption schemes (the entry's `scheme` field, a free-form string — an
+//! unfamiliar scheme does not break config reading, the entry is simply "not
+//! ours"):
 //!
-//! * **`dpapi`** (Windows) — системный `CryptProtectData`/`CryptUnprotectData`:
-//!   мастер-ключом *пользователя*, которым управляет ОС. Расшифровка на другой
-//!   машине или другим пользователем невозможна. `pOptionalEntropy` — константа
-//!   приложения ([`ENTROPY`]): не секрет, но отсекает generic-«DPAPI-дамперы».
-//! * **`machine-key-v1`** (Linux) — ключ выводится из `/etc/machine-id` через
-//!   HKDF-SHA256 (паттерн `sd_id128_get_machine_app_specific` — systemd прямо
-//!   предписывает не использовать machine-id сырым), шифрование —
-//!   ChaCha20-Poly1305 (AEAD, случайный nonce префиксом к шифротексту). Имя
-//!   пользователя входит в `info` → привязка per-user, как у DPAPI.
+//! * **`dpapi`** (Windows) — the system `CryptProtectData`/`CryptUnprotectData`:
+//!   a *user* master key managed by the OS. Decryption on another machine or by
+//!   another user is impossible. `pOptionalEntropy` is an app constant
+//!   ([`ENTROPY`]): not a secret, but it filters out generic "DPAPI dumper" tools.
+//! * **`machine-key-v1`** (Linux) — the key is derived from `/etc/machine-id` via
+//!   HKDF-SHA256 (the `sd_id128_get_machine_app_specific` pattern — systemd
+//!   explicitly instructs against using the raw machine-id), encryption is
+//!   ChaCha20-Poly1305 (AEAD, a random nonce prefixed to the ciphertext). The
+//!   username goes into `info` → per-user binding, like DPAPI.
 //!
-//! **Модель угроз** (docs/research/api-key-storage.md §3): защищаем **файл** —
-//! копию/перенос/бэкап конфига (вне «своей» машины это бесполезный шифротекст).
-//! От вредоносного кода, исполняющегося под тем же пользователем на той же машине,
-//! не защищает — он вызовет тот же DPAPI/выведет тот же ключ. Это фундаментально
-//! для любой схемы «приложение расшифровывает само, без ввода пользователя» (так же
-//! устроены Chrome, Git Credential Manager). Прежний путь (env-переменная) не
-//! безопаснее: её читает любой процесс пользователя.
+//! **Threat model** (docs/research/api-key-storage.md §3): we protect the
+//! **file** — a copy/move/backup of the config (outside its "own" machine it is a
+//! useless ciphertext). It does not protect against malicious code running under
+//! the same user on the same machine — it would call the same DPAPI / derive the
+//! same key. This is fundamental for any scheme where "the app decrypts on its
+//! own, with no user input" (Chrome and Git Credential Manager work the same
+//! way). The previous path (an env variable) was no safer: any process of the
+//! user can read it.
 
 use serde::{Deserialize, Serialize};
 
-/// Схема Windows DPAPI (значение поля `scheme`).
-// Вне Windows схема недоступна (запись с ней — «не наша»), поэтому константа там
-// в коде не встречается: гасим dead_code, чтобы гейт `-D warnings` был зелёным на обеих ОС.
+/// The Windows DPAPI scheme (the value of the `scheme` field).
+// Off Windows the scheme is unavailable (an entry with it is "not ours"), so the
+// constant does not show up in code there: silence dead_code so the `-D warnings`
+// gate stays green on both OSes.
 #[cfg_attr(not(windows), allow(dead_code))]
 pub const SCHEME_DPAPI: &str = "dpapi";
-/// Схема Linux: HKDF(machine-id) + ChaCha20-Poly1305.
+/// The Linux scheme: HKDF(machine-id) + ChaCha20-Poly1305.
 pub const SCHEME_MACHINE_KEY_V1: &str = "machine-key-v1";
 
-/// Плейнтекст пробы `check`: шифруется вместе с ключами, по успеху её расшифровки
-/// запись опознаётся как «наша» (явного machine-id в переносимом конфиге не храним).
+/// Plaintext of the `check` probe: encrypted alongside the keys; decrypting it
+/// successfully identifies an entry as "ours" (we do not store an explicit
+/// machine-id in the portable config).
 const CHECK_PLAINTEXT: &str = "mindfork-rs api-key check v1";
 
-/// Дополнительная энтропия DPAPI / соль HKDF — константа приложения (не секрет).
+/// Additional DPAPI entropy / HKDF salt — an app constant (not a secret).
 const ENTROPY: &[u8] = b"mindfork-rs/api-keys/v1";
 
-/// Строка `info` HKDF (домен ключа; к ней добавляется имя пользователя).
+/// The HKDF `info` string (the key domain; the username is appended to it).
 const HKDF_INFO: &[u8] = b"mindfork-rs api-key v1 user=";
 
-/// Одна запись сохранённых API-ключей — **на одну машину**. Записи чужих машин
-/// лежат рядом и не трогаются (они «оживут» на своих машинах): конфиг переносим,
-/// ключи пер-машинные.
+/// One entry of stored API keys — **for one machine**. Entries of other machines
+/// sit alongside and are left untouched (they will "come alive" on their own
+/// machines): the config is portable, the keys are per-machine.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct ApiKeyEntry {
-    /// Человекочитаемая метка (имя компьютера + дата) — только для показа/диагностики,
-    /// в логике не участвует.
+    /// Human-readable label (computer name + date) — for display/diagnostics
+    /// only, takes no part in the logic.
     pub label: String,
-    /// Схема шифрования: [`SCHEME_DPAPI`] | [`SCHEME_MACHINE_KEY_V1`]. Свободная
-    /// строка — запись с незнакомой (будущей) схемой читается и сохраняется как есть.
+    /// Encryption scheme: [`SCHEME_DPAPI`] | [`SCHEME_MACHINE_KEY_V1`]. A
+    /// free-form string — an entry with an unfamiliar (future) scheme is read
+    /// and saved as is.
     pub scheme: String,
-    /// Шифротекст [`CHECK_PLAINTEXT`] — проба «наша ли запись» ([`is_ours`]).
+    /// Ciphertext of [`CHECK_PLAINTEXT`] — the "is this entry ours" probe
+    /// ([`is_ours`]).
     pub check: String,
-    /// Шифротексты ключей по провайдеру (`openai`/`gemini`/`claude`).
+    /// Ciphertexts of the keys by provider (`openai`/`gemini`/`claude`).
     pub keys: std::collections::BTreeMap<String, String>,
 }
 
-/// Доступна ли на этой машине схема шифрования секретов (иначе сохранённые ключи
-/// не поддерживаются — остаётся env-путь). На Windows — всегда; на Linux зависит от
-/// наличия machine-id.
-// Потребители: тесты (пропуск на системах без machine-id) и экран настроек этапа 2
-// (поле «API-ключ» скрывается/поясняется, когда сохранение недоступно).
+/// Whether a secret-encryption scheme is available on this machine (otherwise
+/// stored keys are not supported — the env path remains). On Windows — always;
+/// on Linux depends on machine-id being present.
+// Consumers: tests (skip on systems without machine-id) and the stage-2 settings
+// screen (the "API key" field is hidden/explained when storage is unavailable).
 #[allow(dead_code)]
 pub fn scheme_available() -> bool {
     local_scheme().is_some()
 }
 
-/// Опознаёт «нашу» запись — расшифровкой пробы `check` (DPAPI вернул успех /
-/// AEAD-аутентификация сошлась). Записи других машин и других схем — `false`.
+/// Identifies "our" entry — by decrypting the `check` probe (DPAPI returned
+/// success / AEAD authentication matched). Entries of other machines and other
+/// schemes — `false`.
 pub fn is_ours(entry: &ApiKeyEntry) -> bool {
     decrypt(&entry.scheme, &entry.check).as_deref() == Some(CHECK_PLAINTEXT)
 }
 
-/// Расшифрованный ключ провайдера из «нашей» записи; `None` — записи нет, она чужая
-/// или ключ этого провайдера в ней не задан.
+/// The decrypted provider key from "our" entry; `None` — there is no entry, it
+/// belongs to another machine, or this provider's key is not set in it.
 pub fn stored_key(entries: &[ApiKeyEntry], provider_key: &str) -> Option<String> {
     let entry = entries.iter().find(|e| is_ours(e))?;
     decrypt(&entry.scheme, entry.keys.get(provider_key)?)
 }
 
-/// Кладёт ключ провайдера в запись **этой** машины (создаёт её при отсутствии).
-/// Пустой `key` — удаляет ключ; опустевшая запись убирается целиком. Чужие записи
-/// не трогаются. `Err` — схема на этой машине недоступна или сбой шифрования.
+/// Puts the provider's key into **this** machine's entry (creates it if absent).
+/// An empty `key` removes the key; an emptied entry is removed entirely. Other
+/// machines' entries are left untouched. `Err` — the scheme is unavailable on
+/// this machine, or encryption failed.
 pub fn put_key(
     entries: &mut Vec<ApiKeyEntry>,
     provider_key: &str,
@@ -123,8 +131,9 @@ pub fn put_key(
     Ok(())
 }
 
-/// Имя компьютера для метки записи (диагностика: чья это запись). Только для
-/// показа — в логике опознания записи не участвует (см. [`is_ours`]). Фолбэк — `?`.
+/// Computer name for the entry's label (diagnostics: whose entry this is). For
+/// display only — takes no part in identifying the entry (see [`is_ours`]).
+/// Fallback — `?`.
 pub fn machine_label() -> String {
     std::env::var("COMPUTERNAME")
         .ok()
@@ -135,19 +144,19 @@ pub fn machine_label() -> String {
         .unwrap_or_else(|| "?".into())
 }
 
-/// Ошибка работы с сохранёнными секретами.
+/// Error working with stored secrets.
 #[derive(Debug, thiserror::Error)]
 pub enum SecretError {
-    /// На этой машине нет доступной схемы (Linux без machine-id) — сохранение
-    /// ключей не поддерживается, остаётся env-путь.
+    /// No scheme is available on this machine (Linux without machine-id) —
+    /// storing keys is not supported, the env path remains.
     #[error("на этой машине не поддерживается сохранение ключей (нет machine-id)")]
     Unavailable,
-    /// Сбой платформенного шифрования (DPAPI/AEAD).
+    /// Platform encryption failure (DPAPI/AEAD).
     #[error("не удалось зашифровать секрет")]
     Encrypt,
 }
 
-/// Схема шифрования этой машины (`None` — недоступна).
+/// This machine's encryption scheme (`None` — unavailable).
 fn local_scheme() -> Option<&'static str> {
     #[cfg(windows)]
     {
@@ -159,7 +168,7 @@ fn local_scheme() -> Option<&'static str> {
     }
 }
 
-/// Шифрует секрет указанной схемой → hex-строка для JSON.
+/// Encrypts a secret with the given scheme → a hex string for JSON.
 fn encrypt(scheme: &str, plaintext: &str) -> Result<String, SecretError> {
     let bytes = match scheme {
         #[cfg(windows)]
@@ -173,8 +182,9 @@ fn encrypt(scheme: &str, plaintext: &str) -> Result<String, SecretError> {
     Ok(hex_encode(&bytes))
 }
 
-/// Расшифровывает hex-строку указанной схемой. `None` — чужая машина, незнакомая
-/// схема, порча данных (все случаи равнозначны: «прочитать нельзя»).
+/// Decrypts a hex string with the given scheme. `None` — a foreign machine, an
+/// unfamiliar scheme, or data corruption (all cases equivalent: "cannot be
+/// read").
 fn decrypt(scheme: &str, hex: &str) -> Option<String> {
     let bytes = hex_decode(hex)?;
     let plain = match scheme {
@@ -186,25 +196,25 @@ fn decrypt(scheme: &str, hex: &str) -> Option<String> {
     String::from_utf8(plain).ok()
 }
 
-// ── Схема `machine-key-v1`: HKDF(machine-id) + ChaCha20-Poly1305 ────────────────
+// ── The `machine-key-v1` scheme: HKDF(machine-id) + ChaCha20-Poly1305 ──────────
 
-/// Длина nonce ChaCha20-Poly1305 (префикс шифротекста).
+/// ChaCha20-Poly1305 nonce length (ciphertext prefix).
 const NONCE_LEN: usize = 12;
 
-/// Выводит 32-байтовый ключ из входного материала (machine-id) и имени пользователя.
-/// Чистая функция — тестируется на любой ОС инъекцией `ikm`.
+/// Derives a 32-byte key from the input keying material (machine-id) and the
+/// username. A pure function — testable on any OS by injecting `ikm`.
 fn derive_key(ikm: &[u8], user: &str) -> [u8; 32] {
     let mut info = HKDF_INFO.to_vec();
     info.extend_from_slice(user.as_bytes());
     let mut okm = [0u8; 32];
-    // `expand` в 32 байта (= размер выхода SHA-256) не может превысить лимит HKDF.
+    // `expand` into 32 bytes (= the SHA-256 output size) cannot exceed the HKDF limit.
     hkdf::Hkdf::<sha2::Sha256>::new(Some(ENTROPY), ikm)
         .expand(&info, &mut okm)
         .expect("HKDF: 32 байта всегда допустимы");
     okm
 }
 
-/// Шифрует `plaintext`: результат = `nonce || ciphertext+tag`. Чистая функция.
+/// Encrypts `plaintext`: the result = `nonce || ciphertext+tag`. A pure function.
 fn encrypt_with_key(key: &[u8; 32], plaintext: &[u8]) -> Option<Vec<u8>> {
     use chacha20poly1305::aead::{Aead, OsRng};
     use chacha20poly1305::{AeadCore, ChaCha20Poly1305, KeyInit};
@@ -216,8 +226,8 @@ fn encrypt_with_key(key: &[u8; 32], plaintext: &[u8]) -> Option<Vec<u8>> {
     Some(out)
 }
 
-/// Расшифровывает `nonce || ciphertext+tag`. `None` — чужой ключ (AEAD не
-/// аутентифицировался), порча или слишком короткий вход. Чистая функция.
+/// Decrypts `nonce || ciphertext+tag`. `None` — a foreign key (AEAD did not
+/// authenticate), corruption, or too-short input. A pure function.
 fn decrypt_with_key(key: &[u8; 32], data: &[u8]) -> Option<Vec<u8>> {
     use chacha20poly1305::aead::Aead;
     use chacha20poly1305::{ChaCha20Poly1305, KeyInit};
@@ -231,15 +241,15 @@ fn decrypt_with_key(key: &[u8; 32], data: &[u8]) -> Option<Vec<u8>> {
         .ok()
 }
 
-/// Ключ этой машины для схемы `machine-key-v1` (`None` — нет machine-id).
+/// This machine's key for the `machine-key-v1` scheme (`None` — no machine-id).
 fn machine_key() -> Option<[u8; 32]> {
     Some(derive_key(&machine_ikm()?, &current_user()))
 }
 
-/// Входной материал ключа: идентификатор экземпляра ОС. Основной источник —
-/// `/etc/machine-id` (systemd), фолбэк — `/var/lib/dbus/machine-id`. `None` —
-/// не-systemd система без обоих (схема недоступна, остаётся env-путь).
-/// На Windows не используется (там DPAPI).
+/// Key input material: the OS instance identifier. Primary source —
+/// `/etc/machine-id` (systemd), fallback — `/var/lib/dbus/machine-id`. `None` —
+/// a non-systemd system without either (the scheme is unavailable, the env path
+/// remains). Not used on Windows (DPAPI is used there).
 fn machine_ikm() -> Option<Vec<u8>> {
     for path in ["/etc/machine-id", "/var/lib/dbus/machine-id"] {
         if let Ok(s) = std::fs::read_to_string(path) {
@@ -252,15 +262,15 @@ fn machine_ikm() -> Option<Vec<u8>> {
     None
 }
 
-/// Имя текущего пользователя (компонент `info` HKDF → привязка per-user). Пустое
-/// имя допустимо — привязка тогда только к машине.
+/// The current username (the HKDF `info` component → per-user binding). An
+/// empty name is acceptable — the binding is then to the machine only.
 fn current_user() -> String {
     std::env::var("USER")
         .or_else(|_| std::env::var("USERNAME"))
         .unwrap_or_default()
 }
 
-// ── Схема `dpapi` (Windows) ────────────────────────────────────────────────────
+// ── The `dpapi` scheme (Windows) ────────────────────────────────────────────────
 
 #[cfg(windows)]
 mod dpapi {
@@ -270,19 +280,21 @@ mod dpapi {
         CRYPT_INTEGER_BLOB, CryptProtectData, CryptUnprotectData,
     };
 
-    /// Шифрует данные DPAPI (ключом пользователя; управляет ОС). `None` — сбой winapi.
+    /// Encrypts data with DPAPI (a user key managed by the OS). `None` — a
+    /// winapi failure.
     pub(super) fn protect(data: &[u8]) -> Option<Vec<u8>> {
         crypt(data, true)
     }
 
-    /// Расшифровывает данные DPAPI. `None` — другая машина/пользователь, порча,
-    /// иная энтропия (все случаи равнозначны: «прочитать нельзя»).
+    /// Decrypts DPAPI data. `None` — a different machine/user, corruption, or
+    /// different entropy (all cases equivalent: "cannot be read").
     pub(super) fn unprotect(data: &[u8]) -> Option<Vec<u8>> {
         crypt(data, false)
     }
 
-    /// Общая обёртка: оба вызова DPAPI имеют одинаковую форму (blob in → blob out,
-    /// выходной буфер выделяет ОС и его нужно освободить `LocalFree`).
+    /// Shared wrapper: both DPAPI calls have the same shape (blob in → blob
+    /// out, the OS allocates the output buffer and it must be freed with
+    /// `LocalFree`).
     fn crypt(data: &[u8], protect: bool) -> Option<Vec<u8>> {
         let input = blob(data);
         let entropy = blob(ENTROPY);
@@ -290,9 +302,9 @@ mod dpapi {
             cbData: 0,
             pbData: std::ptr::null_mut(),
         };
-        // SAFETY: `input`/`entropy` указывают на живые срезы на всё время вызова;
-        // прочие указатели — нулевые (описание/reserved/prompt не используем);
-        // `out` заполняет ОС, освобождаем `LocalFree` строго один раз ниже.
+        // SAFETY: `input`/`entropy` point to live slices for the whole call;
+        // the other pointers are null (we do not use description/reserved/prompt);
+        // `out` is filled by the OS, we free it with `LocalFree` exactly once below.
         let ok = unsafe {
             if protect {
                 CryptProtectData(
@@ -319,14 +331,14 @@ mod dpapi {
         if ok == 0 || out.pbData.is_null() {
             return None;
         }
-        // SAFETY: при успехе ОС гарантирует валидный буфер длиной `cbData`.
+        // SAFETY: on success the OS guarantees a valid buffer of length `cbData`.
         let bytes = unsafe { std::slice::from_raw_parts(out.pbData, out.cbData as usize).to_vec() };
-        // SAFETY: `pbData` выделен ОС именно под `LocalFree`; больше не используется.
+        // SAFETY: `pbData` was allocated by the OS specifically for `LocalFree`; not used afterward.
         unsafe { LocalFree(out.pbData as *mut core::ffi::c_void) };
         Some(bytes)
     }
 
-    /// Оборачивает срез в DPAPI-blob (структура «длина + указатель»).
+    /// Wraps a slice into a DPAPI blob (a "length + pointer" structure).
     fn blob(data: &[u8]) -> CRYPT_INTEGER_BLOB {
         CRYPT_INTEGER_BLOB {
             cbData: data.len() as u32,
@@ -335,9 +347,10 @@ mod dpapi {
     }
 }
 
-// ── hex-кодек (шифротекст в JSON) ──────────────────────────────────────────────
-// Своя реализация вместо крейта base64 — прецедент `features::sandbox_setup::hex_lower`;
-// разница в размере строки для конфига несущественна, зависимость не нужна.
+// ── hex codec (ciphertext in JSON) ───────────────────────────────────────────────
+// A hand-rolled implementation instead of the base64 crate — a precedent is
+// `features::sandbox_setup::hex_lower`; the string-size difference is negligible
+// for a config, no dependency needed.
 
 fn hex_encode(bytes: &[u8]) -> String {
     let mut s = String::with_capacity(bytes.len() * 2);
@@ -371,15 +384,15 @@ mod tests {
         let data = vec![0u8, 1, 15, 16, 200, 255];
         assert_eq!(hex_decode(&hex_encode(&data)).unwrap(), data);
         assert_eq!(hex_encode(&[0xab, 0x0f]), "ab0f");
-        assert!(hex_decode("abc").is_none()); // нечётная длина
-        assert!(hex_decode("zz").is_none()); // не hex
+        assert!(hex_decode("abc").is_none()); // odd length
+        assert!(hex_decode("zz").is_none()); // not hex
     }
 
     #[test]
     fn aead_round_trip_with_derived_key() {
         let key = derive_key(b"machine-id-abc", "user1");
         let enc = encrypt_with_key(&key, b"sk-secret-value").unwrap();
-        assert_ne!(&enc[NONCE_LEN..], b"sk-secret-value"); // не плейнтекст
+        assert_ne!(&enc[NONCE_LEN..], b"sk-secret-value"); // not plaintext
         assert_eq!(decrypt_with_key(&key, &enc).unwrap(), b"sk-secret-value");
     }
 
@@ -389,14 +402,14 @@ mod tests {
         let theirs = derive_key(b"machine-B", "user1");
         let other_user = derive_key(b"machine-A", "user2");
         let enc = encrypt_with_key(&mine, b"secret").unwrap();
-        // Другая машина и другой пользователь той же машины прочитать не могут.
+        // A different machine and a different user on the same machine cannot read it.
         assert!(decrypt_with_key(&theirs, &enc).is_none());
         assert!(decrypt_with_key(&other_user, &enc).is_none());
-        // Порча шифротекста ловится аутентификацией AEAD.
+        // Ciphertext corruption is caught by AEAD authentication.
         let mut bad = enc.clone();
         *bad.last_mut().unwrap() ^= 0xff;
         assert!(decrypt_with_key(&mine, &bad).is_none());
-        // Слишком короткий вход (нет даже nonce) — не паника, а `None`.
+        // Too-short input (not even a nonce) — not a panic, but `None`.
         assert!(decrypt_with_key(&mine, &[0u8; NONCE_LEN]).is_none());
     }
 
@@ -407,7 +420,7 @@ mod tests {
         let b = encrypt_with_key(&key, b"same").unwrap();
         assert_ne!(
             a, b,
-            "одинаковый плейнтекст не должен давать одинаковый шифротекст"
+            "identical plaintext must not produce identical ciphertext"
         );
     }
 
@@ -418,33 +431,34 @@ mod tests {
         assert_ne!(derive_key(b"m", "u"), derive_key(b"n", "u"));
     }
 
-    /// Полный цикл поверх записи конфига — на платформенной схеме этой машины
-    /// (Windows: DPAPI; Linux: machine-id, если он есть — иначе тест пропускается).
+    /// Full round trip over a config entry — on this machine's platform scheme
+    /// (Windows: DPAPI; Linux: machine-id if present — otherwise the test is
+    /// skipped).
     #[test]
     fn entry_round_trip_on_local_scheme() {
         if !scheme_available() {
-            return; // не-systemd Linux без machine-id: сохранение ключей не поддержано
+            return; // non-systemd Linux without machine-id: key storage is not supported
         }
         let mut entries: Vec<ApiKeyEntry> = vec![];
         put_key(&mut entries, "openai", "sk-test-123", || "test".into()).unwrap();
         assert_eq!(entries.len(), 1);
         assert!(is_ours(&entries[0]));
-        // Секрет не лежит открытым текстом.
+        // The secret is not stored in plaintext.
         let json = serde_json::to_string(&entries).unwrap();
         assert!(
             !json.contains("sk-test-123"),
-            "плейнтекст утёк в сериализацию: {json}"
+            "plaintext leaked into serialization: {json}"
         );
         assert_eq!(
             stored_key(&entries, "openai").as_deref(),
             Some("sk-test-123")
         );
         assert_eq!(stored_key(&entries, "claude"), None);
-        // Второй провайдер кладётся в ту же запись.
+        // A second provider goes into the same entry.
         put_key(&mut entries, "claude", "sk-ant-9", || "test".into()).unwrap();
         assert_eq!(entries.len(), 1);
         assert_eq!(stored_key(&entries, "claude").as_deref(), Some("sk-ant-9"));
-        // Пустой ключ удаляет провайдера; опустевшая запись исчезает.
+        // An empty key removes the provider; an emptied entry disappears.
         put_key(&mut entries, "openai", "", || "test".into()).unwrap();
         assert_eq!(stored_key(&entries, "openai"), None);
         assert_eq!(entries.len(), 1);
@@ -452,8 +466,9 @@ mod tests {
         assert!(entries.is_empty());
     }
 
-    /// Запись чужой машины (нерасшифровываемая) и запись с незнакомой схемой не
-    /// опознаются как наши, ключей не отдают и **не трогаются** при правке.
+    /// An entry from a foreign machine (undecryptable) and an entry with an
+    /// unfamiliar scheme are not recognized as ours, do not yield keys, and are
+    /// **left untouched** when editing.
     #[test]
     fn foreign_entries_are_ignored_and_preserved() {
         if !scheme_available() {
@@ -462,12 +477,12 @@ mod tests {
         let foreign = ApiKeyEntry {
             label: "other-pc".into(),
             scheme: SCHEME_MACHINE_KEY_V1.into(),
-            check: hex_encode(&[7u8; 40]), // чужой шифротекст
+            check: hex_encode(&[7u8; 40]), // a foreign ciphertext
             keys: std::collections::BTreeMap::from([("openai".into(), hex_encode(&[9u8; 40]))]),
         };
         let future = ApiKeyEntry {
             label: "future-pc".into(),
-            scheme: "keychain-v9".into(), // схема, которой мы не знаем
+            scheme: "keychain-v9".into(), // a scheme we do not know
             check: "00".into(),
             keys: std::collections::BTreeMap::from([("openai".into(), "00".into())]),
         };
@@ -479,10 +494,13 @@ mod tests {
         assert_eq!(
             entries.len(),
             3,
-            "наша запись добавляется, чужие не заменяются"
+            "our entry is added, foreign ones are not replaced"
         );
-        assert_eq!(entries[0], foreign, "чужая запись не тронута");
-        assert_eq!(entries[1], future, "запись незнакомой схемы не тронута");
+        assert_eq!(entries[0], foreign, "the foreign entry is untouched");
+        assert_eq!(
+            entries[1], future,
+            "the entry with an unfamiliar scheme is untouched"
+        );
         assert_eq!(stored_key(&entries, "openai").as_deref(), Some("sk-mine"));
     }
 }
