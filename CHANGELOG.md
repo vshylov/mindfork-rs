@@ -23,6 +23,26 @@ Detailed engineering history lives in the [CLAUDE.md](CLAUDE.md) log.
   versions and licenses). Switching tabs — `Tab`/`←→`, scrolling — `↑↓`/`PgUp`/`PgDn`,
   closing — `Esc`; the last open tab is remembered. The window and dialog title is
   `mindfork v<version>`.
+- **The project's source language is now English** — all documentation, code
+  comments and internal diagnostics were translated from Russian, in
+  preparation for going open source. This is not an i18n rollback: user-facing
+  text stays localizable, and Russian remains a fully supported interface and
+  agent language.
+- **New profiles get English default character names** ("You"/"Assistant"/
+  "System") instead of Russian ones. Existing profiles keep their stored names
+  (no migration), and the names stay editable in the profile settings.
+
+### Fixed
+
+- **Several user-facing strings ignored the selected language** and always
+  appeared in Russian: server connection errors, `/rag` command errors and the
+  usage hint, the "conversation copied" confirmation, agentic-loop notices
+  (tool disabled, time limit, round limit), the interlocutor description used
+  for impersonation, and the Python-mode labels in the settings. All of them
+  now follow the interface or agent language, as appropriate.
+- **A failed `fs_read` was rendered as a highlighted code block** in the feed
+  for profiles in any language other than Russian — the failure was detected by
+  matching Russian text.
 
 ## [0.9.2] — 2026-07-23
 

@@ -1,4 +1,4 @@
-# CI: lints (fmt + clippy) on Linux + tests on Linux and Windows.
+# CI: lints (source language + fmt + clippy) on Linux + tests on Linux and Windows.
 # The toolchain comes from rust-toolchain.toml (a pin, release-engineering.md F4).
 # #[ignore] smokes (engine/network/live model) without env variables are silently skipped —
 # CI needs no network or a live server. See docs/release-engineering.md §3.3.
@@ -19,10 +19,16 @@ env:
 
 jobs:
   lint:
-    name: Lints (fmt + clippy)
+    name: Lints (source language + fmt + clippy)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
+      # The source language is English (CLAUDE.md/AGENTS.md §Conventions); this
+      # guard fails on Cyrillic outside its allowlist (the `ru` locale bundle,
+      # dictionaries, in-test fixtures, intentional `[ru]`/`ru.` localization).
+      # Runs before the Rust setup — it needs neither the toolchain nor ALSA.
+      - name: Source language (no untranslated Russian)
+        run: python3 tools/cyrillic_scan.py
       - name: Install the toolchain (from rust-toolchain.toml)
         run: rustup show
       - uses: Swatinem/rust-cache@v2

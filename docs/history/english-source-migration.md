@@ -4,8 +4,8 @@ Migrate the project's *development* language (comments, doc-comments, all
 documentation, non-user-facing strings) from Russian to English, as a focused
 effort on branch `chore/english-source`. This is **not** an i18n rollback:
 user-facing text stays localizable through axes A/B (Russian UI/agent remains a
-supported locale). Roadmap: `docs/roadmap.md` §"English source (prep for open
-source)".
+supported locale). Came from the roadmap direction "English source (prep for
+open source)", now closed (`docs/roadmap.md` §"Recently closed").
 
 ## Scope
 Translate:
@@ -34,8 +34,11 @@ in-test assertion strings that check `ru` output, intentional `[ru]` desktop /
 ## Tooling
 - `tools/cyrillic_scan.py` — worklist + acceptance gate. Reports every
   non-allowlisted Cyrillic line; exits non-zero while any remain. Baseline at
-  start: ~31,047 lines / 239 files. Post-flip it can become a CI lint.
-- `tools/glossary-ru-en.md` — canonical term table; **every translator uses it**.
+  start: ~31,047 lines / 239 files. Post-flip it became a CI lint (a step in
+  the `lint` job of `.github/workflows/ci.yml`).
+- `glossary-ru-en.md` — canonical term table; **every translator used it**.
+  Lived at `tools/glossary-ru-en.md` during the migration; archived next to
+  this doc.
 
 ## Phases (one commit each, on `chore/english-source`)
 0. **Tooling + glossary + 2 validation samples**, then pause for glossary review.
@@ -61,10 +64,10 @@ consistency.
 
 ## Subagent instruction template (Phases 1–5)
 Each translation subagent is given: the target file path(s), the absolute path
-to `tools/glossary-ru-en.md`, and these rules:
+to the glossary (then at `tools/glossary-ru-en.md`), and these rules:
 
 > Translate the Russian **comments and prose** in the listed file(s) to English,
-> in place, editing only what is Russian. Follow `tools/glossary-ru-en.md`
+> in place, editing only what is Russian. Follow the glossary
 > exactly for terminology.
 > - Translate: `//`/`///`/`//!` comments (including in test code), Markdown
 >   prose, and — per routing below — string literals.
@@ -83,35 +86,36 @@ to `tools/glossary-ru-en.md`, and these rules:
 > still parses (no stray edits) by a mental diff; the harness runs `cargo build`
 > and `python tools/cyrillic_scan.py` per batch.
 
-## Status / handoff
+## Status — done
 
 Branch `chore/english-source`. Every commit was verified with `cargo fmt
 --check`, `cargo clippy --all-targets -- -D warnings`, and the full test suite
-(1264 passing). Cyrillic baseline went **30,890 -> 36** lines.
+(1267 passing, 58 `#[ignore]`). Cyrillic went **30,890 -> 0** non-allowlisted
+lines; `python tools/cyrillic_scan.py` exits 0.
 
-Done: Phase 0 (tooling/glossary/samples), Wave 1 (living docs), Wave 2
-(CLAUDE.md), Wave 3 (archive docs), Wave 4 (all code comments), Phase 5a
-(non-user-facing strings inline). Phase 5b (routing the last ~36 user-facing
-strings into the locale bundles) was the final translation step.
+All phases landed: Phase 0 (tooling/glossary/samples), Wave 1 (living docs),
+Wave 2 (CLAUDE.md), Wave 3 (archive docs), Wave 4 (all code comments), Phase 5a
+(non-user-facing strings inline), Phase 5b (the last ~36 user-facing strings
+routed into the locale bundles), Phase 6 (convention flip) and Phase 7
+(acceptance).
 
-### Remaining: Phases 6-7
-1. **Verify the convention flips** are in place (they were applied during the
-   waves, not as a separate step): `CLAUDE.md` "Comments and docs — in English",
-   the same rule plus the commit-message-language rule in `AGENTS.md`, and the
-   Conventions paragraph in `README.md`.
-2. **Roadmap**: mark §"English source (prep for open source)" done and move this
-   design doc to `docs/history/`.
-3. **CHANGELOG**: add an entry under `[Unreleased]` (user-visible effect: none
-   functionally, but `CharacterNames::default()` now seeds new profiles with
-   English names, and several previously-unlocalized user-facing strings gained
-   locale keys).
-4. **Migration tooling**: `tools/glossary-ru-en.md` was always meant to be
-   removed or demoted to a CONTRIBUTING terminology note once this lands.
-   `tools/cyrillic_scan.py` is worth **keeping** and wiring into CI — it stops
-   Russian creeping back into comments/docs now that the convention is English.
-5. **Acceptance**: scanner clean + full gate green + a diff self-review.
+### How Phases 6-7 resolved
+- **Convention flips** were applied during the waves rather than as a separate
+  step, and verified at the end: `CLAUDE.md` §Conventions and `AGENTS.md` §3
+  both say "Comments and docs — in English", `AGENTS.md` §5 requires English
+  commit messages, and the README Conventions paragraph matches.
+- **Roadmap**: §"English source (prep for open source)" moved into "Recently
+  closed"; this design doc and the glossary moved to `docs/history/`.
+- **CHANGELOG**: an `[Unreleased]` entry covers the two user-visible effects —
+  `CharacterNames::default()` seeding new profiles with English names, and the
+  previously unlocalized strings that gained locale keys.
+- **Migration tooling**: `tools/cyrillic_scan.py` **stays** and is wired into
+  CI (a step in the `lint` job) — it is what stops Russian creeping back into
+  comments and docs now that the convention is English. The glossary was
+  archived rather than deleted: it stays useful as a terminology reference for
+  writing English docs/comments, and keeps this doc's references live.
 
-### Things a resuming session should know
+### Notes worth keeping
 - The scanner needed four corrections, all false-positive sources rather than
   real work: multi-line test fixtures; `tests.rs` files whose `#[cfg(test)]`
   marker lives in the parent `mod.rs`; `//` inside string literals (a

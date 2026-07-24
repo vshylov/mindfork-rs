@@ -57,8 +57,9 @@ SKIP_EXT = (".png", ".ico", ".dic", ".aff")
 SKIP_FILES = {
     "locales/ru.json",
     # The migration glossary is a RU -> EN mapping table: the Russian column is
-    # its content. Removed (or demoted to a terminology note) once this lands.
-    "tools/glossary-ru-en.md",
+    # its content. Archived with the migration design doc; kept as the term
+    # reference for anyone writing English docs/comments after the switch.
+    "docs/history/glossary-ru-en.md",
     # This detector necessarily spells out Cyrillic Unicode ranges.
     "tools/cyrillic_scan.py",
     # This doc is *about* Cyrillic Mermaid rendering: its repro inputs (table

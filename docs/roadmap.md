@@ -189,29 +189,15 @@ tracks are done (see "Recently closed" below and `docs/history/`). One
 - **Applying a theme from a color configuration** — a user palette layered
   over auto/dark/light.
 
-## English source (prep for open source)
-The project is preparing to go open, so the source language of code and
-documentation is moving from Russian to English. This is **not** a reversal
-of i18n: user-facing strings remain localizable via axes A/B (Russian
-UI/agent included) — only the *development* language is switching to
-English. Order (from most valuable for an outside reader to routine):
-1. **Documentation** — `docs/` (spec, architecture, ADR, roadmap, install,
-   research), README, CHANGELOG, AGENTS.md, CLAUDE.md. The key artifact for a
-   new contributor.
-2. **In-code comments and docs** — incrementally, as modules get touched (not
-   as one giant commit — that would be a noisy diff and conflict with ongoing
-   work).
-3. **Flip the convention** — replace the rule "comments and docs — in
-   Russian" in CLAUDE.md/AGENTS.md with the English one; after that all new
-   code/docs are written in English.
-Separate tracks (not open-source blockers): test naming, commit messages,
-branch names — already mostly English/neutral.
-
 ---
 
 ## Recently closed
 A compact summary (details — in [CLAUDE.md](../CLAUDE.md) and
 [docs/history/](history/)):
+- **English source** (prep for open source: all docs, comments and
+  non-user-facing strings moved RU -> EN; the convention flipped and guarded in
+  CI by `tools/cyrillic_scan.py`) —
+  [english-source-migration.md](history/english-source-migration.md).
 - **API keys in settings** (entry in the settings window, machine-bound
   encryption in the config, per-machine entries) —
   [ADR 0008](decisions/0008-api-key-storage.md), research

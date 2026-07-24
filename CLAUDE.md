@@ -123,10 +123,13 @@ Env for selecting the backend: `MINDFORK_ENGINE_URL` (external, any OpenAI serve
 `MINDFORK_LLAMA_BIN` (+ `MINDFORK_MODEL` GGUF, `MINDFORK_NGL`, `MINDFORK_CTX`,
 `MINDFORK_PORT`) for a managed `llama-server`.
 
-## Status (as of 2026-07-23, version 0.9.2)
-The entire **M0–M9** plan is done, plus extensive post-M9 work (on `main`). **1264 unit
+## Status (as of 2026-07-24, version 0.9.2)
+The entire **M0–M9** plan is done, plus extensive post-M9 work (on `main`). **1267 unit
 tests green, 58 `#[ignore]` smokes** (the largest count — log below; the current
-track is **chat message speech (TTS)** (the `/tts` command, OpenAI/
+track is the **English source-language migration** (all docs/comments/internal
+strings RU -> EN, the convention flipped and guarded in CI by
+`tools/cyrillic_scan.py`; user-facing text stays localizable, `ru` remains a
+supported locale) — **done**; before that — **chat message speech (TTS)** (the `/tts` command, OpenAI/
 Gemini/external engines, a Markdown speech extractor, the `rodio` player; research
 [docs/research/tts.md](docs/research/tts.md), decision 2026-07-23 — the primary engine
 is OpenAI `gpt-4o-mini-tts`/`onyx`) — **done** (no local sidecar — future work);
@@ -7568,6 +7571,68 @@ debounce was done as a separate PR, see below).
 - **Groundwork**: clickable links (OSC 8 hyperlinks — terminal-dependent), generating the
   component list (versions/licenses) from `cargo metadata` in build.rs (currently a
   curated list + gates against Cargo.toml/Cargo.lock).
+
+### Post-M9: English source-language migration (done)
+- **The project's development language moved RU -> EN** (design doc
+  [docs/history/english-source-migration.md](docs/history/english-source-migration.md),
+  branch `chore/english-source`): all documentation, every comment and
+  doc-comment in 176 `.rs` files, and the non-Rust tail (packaging, workflows,
+  `Cargo.toml`, `build.rs`, artwork) are now English. **Not an i18n rollback** —
+  user-facing text stays localizable through axes A/B, and `ru` remains a fully
+  supported locale. Prep for going open source (roadmap direction, now closed).
+- **Sequencing** (one commit per phase, gate green at each): Phase 0 tooling +
+  glossary + validation samples -> Wave 1 living docs -> Wave 2 CLAUDE.md (7k-line
+  journal, split/translate/reassemble) -> Wave 3 archive docs -> Wave 4 code
+  comments (~11.4k lines, subagents batched by directory cluster) -> Phase 5a
+  non-user-facing strings inline -> Phase 5b user-facing gaps into the bundles ->
+  Phases 6-7 convention flip + acceptance. Large files were split at heading
+  boundaries into disjoint chunks so parallel subagents could not conflict; the
+  glossary held terminology consistent across chunks.
+- **`tools/cyrillic_scan.py` — the worklist, the acceptance gate, and now a CI
+  lint** (a step in the `lint` job of `ci.yml`, before the Rust setup — it needs
+  neither the toolchain nor ALSA). It reports every non-allowlisted Cyrillic line
+  and exits non-zero while any remain: **30,890 -> 0**. The allowlist is
+  deliberate, not laziness — `locales/ru.json`, Hunspell dictionaries, in-test
+  fixtures and `ru`-locale assertions, `.desktop` `[ru]` keys and `.iss` `ru.`
+  installer messages, `keys.rs` JCUKEN char data, and `cyrillic-ok`-marked
+  endonyms all stay Cyrillic by design. `docs/research/mermaid-ascii-rendering.md`
+  is skipped wholesale: its repro inputs must be multibyte to demonstrate the
+  byte-offset bug it documents. The scanner needed four corrections along the way,
+  all false-positive sources rather than real work (multi-line test fixtures;
+  `tests.rs` files whose `#[cfg(test)]` marker lives in the parent `mod.rs`; `//`
+  inside string literals; its own Cyrillic ranges) — roughly 3.2k of the original
+  count was never translation debt.
+- **Phase 5b — the last 36 strings were i18n gaps, not translation debt**: they
+  were user-facing text that had never been localized at all. Each got a key in
+  both bundles (`ru` keeps the original verbatim), resolved on the correct axis —
+  axis A (profile/agent locale via `ctx.loc`): `loop.*`,
+  `selfmodel.render.impersonation.*`; axis B (interface locale via
+  `ui_locale()`/`screen.loc()`): `ui.err.server.*`, `ui.rag.*`, `ui.chat.copied`,
+  `ui.err.copy_failed`, `ui.settings.choice.python_*`. Reaching a locale changed a
+  few signatures (`backend_if_ready`/`impersonation_backend_if_ready`,
+  `rag_command::parse`/`extract_path`, `UserModel::render_for_impersonation`), and
+  `PythonMode::label` moved from `shared/config.rs` to `screens/settings/helpers.rs`
+  (mirroring `theme_label`) so the config layer no longer owns UI text.
+- **Two behavior changes** (both in CHANGELOG): `CharacterNames::default()` now
+  seeds **new** profiles with "You"/"Assistant"/"System" — editable seed data, not
+  chrome, so existing profiles keep their stored values and no migration is
+  needed; and the previously unlocalized strings above now follow the selected
+  language instead of always showing Russian.
+- **Pre-existing defects surfaced and fixed along the way**: `present.rs` detected
+  a failed `fs_read` by matching a hardcoded Russian failure prefix, so an
+  English-profile failure was mis-rendered as a highlighted code block (now
+  resolved across all locales via `fs_read_failure_prefixes()`, mirroring
+  `exit_labels()`); 32 `spec.md` anchors broken by heading translation; tool-call
+  artifacts committed into two history docs; an unlocalized thoughts label and
+  console exit-code line in `message_feed.rs`.
+- **Convention flipped** (`CLAUDE.md` §Conventions, `AGENTS.md` §3 and §5,
+  README): comments, docs **and commit messages** are English from here on, with
+  the scanner guarding it in CI. The design doc and the RU->EN glossary were
+  archived to `docs/history/` (the glossary kept as a terminology reference rather
+  than deleted). **1267 unit tests green**, 58 `#[ignore]`, clippy
+  `-D warnings`/fmt/i18n gates clean — the test count is unchanged by translation
+  itself; the +3 over the previous entry come from the per-locale tests added in
+  Phase 5b. No live run needed (no engine/memory/protocol behavior touched).
 
 ### Deferred beyond M3
 - **Per-message collapse/selection** and tool blocks in the feed — currently "thoughts"
