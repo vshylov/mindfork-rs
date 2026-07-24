@@ -7632,7 +7632,27 @@ debounce was done as a separate PR, see below).
   than deleted). **1267 unit tests green**, 58 `#[ignore]`, clippy
   `-D warnings`/fmt/i18n gates clean — the test count is unchanged by translation
   itself; the +3 over the previous entry come from the per-locale tests added in
-  Phase 5b. No live run needed (no engine/memory/protocol behavior touched).
+  Phase 5b.
+- **Live regression run — GO** (Gemma 4 31B q4_0 + bge-m3, external
+  `llama-server`, `--jinja`): **44 of the 58 `#[ignore]` smokes executed, all
+  green** — 20 orchestrator e2e (memory/self-model/notes/RAG/graph/cross-organ
+  links/`en`-profile i18n), the 6 base engine smokes (streaming, EOS
+  anti-self-cutoff, tool calling, "thoughts", sampling extensions, control
+  tools), MCP (client-level + orchestrator e2e), the Python sandbox
+  (numpy/pandas/requests/memory cap/timeout/`en` localization), web search,
+  fetch, local Python, and tone playback. The remaining 14 skip without cloud
+  credentials (Anthropic/Gemini/OpenAI Responses/TTS endpoints). Nothing in the
+  engine, memory, or tool paths regressed — expected, since translation touched
+  comments and string *content*, but worth confirming after Phase 5b changed
+  tool descriptions and a few signatures.
+- **Two run-the-smokes gotchas** (cost a false failure each, worth knowing): the
+  `provisioned()`-gated Python sandbox smokes **silently no-op and still report
+  `ok`** when `MINDFORK_SANDBOX_DIR` is unset (the helper returns `None` and the
+  test just returns) — set it, plus `MINDFORK_SANDBOX_WASMER`/`_PYTHON` for
+  `runs_real_python_in_sandbox`, which resolves against the default dir rather
+  than that env. And `mcp_filesystem_e2e_live` can exceed its 120s readiness
+  timeout on the **first** `npx @modelcontextprotocol/server-filesystem` run
+  (cold npm cache, the package downloads); it passes in ~13s once warm.
 
 ### Deferred beyond M3
 - **Per-message collapse/selection** and tool blocks in the feed — currently "thoughts"
