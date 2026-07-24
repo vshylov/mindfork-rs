@@ -1,4 +1,4 @@
-//! Профиль ИИ-собеседника и связанные типы. См. spec §5.1, §10.
+//! The AI interlocutor's profile and related types. See spec §5.1, §10.
 
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
@@ -6,10 +6,10 @@ use uuid::Uuid;
 use crate::entities::sampling::SamplingConfig;
 use crate::shared::i18n::Lang;
 
-/// Идентификатор инструмента (на M5 может стать перечислением).
+/// A tool id (may become an enum at M5).
 pub type ToolId = String;
 
-/// Отображаемые имена ролей.
+/// Displayed role names.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct CharacterNames {
     pub user: String,
@@ -27,48 +27,48 @@ impl Default for CharacterNames {
     }
 }
 
-/// Профиль ИИ-собеседника: системное сообщение, имена, инструменты, дефолты.
+/// The AI interlocutor's profile: system message, names, tools, defaults.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Profile {
     pub id: Uuid,
     pub name: String,
     pub default_system_message: String,
-    /// Язык **служебного каркаса** агента (промпты фоновых задач, каркас «модели
-    /// себя», результаты инструментов — тексты, которые читает *модель*; ось A,
-    /// см. docs/history/i18n.md). НЕ управляет языком ответа модели (это территория
-    /// `default_system_message`) и НЕ связан с языком интерфейса (ось B). Выбирается
-    /// при создании профиля и **фиксируется**, как только у профиля появляются данные
-    /// (чаты / «модель себя» / заметки) — чтобы вся память профиля была на одном
-    /// языке. Старые `profiles.json` читаются как `Ru` (их данные русские).
+    /// The agent's **scaffold** language (background-task prompts, the
+    /// "self-model" scaffold, tool results — text that the *model* reads; axis A,
+    /// see docs/history/i18n.md). Does NOT govern the model's reply language (that's
+    /// `default_system_message`'s territory) and is NOT tied to the interface
+    /// language (axis B). Chosen at profile creation and **locked** once the profile
+    /// has data (chats / "self-model" / notes) — so the whole profile's memory stays
+    /// in one language. Old `profiles.json` files read as `Ru` (their data is Russian).
     #[serde(default)]
     pub language: Lang,
-    /// Системное сообщение для режима имперсонации: описывает персону пользователя,
-    /// от лица которого модель пишет реплику (`Ctrl+U`). Пусто — используется
-    /// общий дефолт. Инструментов в этом режиме нет. См. spec §11.8.
+    /// The system message for impersonation mode: describes the user persona the
+    /// model writes a reply on behalf of (`Ctrl+U`). Empty — the shared default is
+    /// used. No tools in this mode. See spec §11.8.
     #[serde(default)]
     pub impersonation_system_message: String,
     #[serde(default)]
     pub character_names: CharacterNames,
-    /// Приветственное сообщение ассистента (первое сообщение в новом чате).
+    /// The assistant's greeting message (the first message in a new chat).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub greeting: Option<String>,
     #[serde(default)]
     pub enabled_tools: Vec<ToolId>,
-    /// Инструменты, которые профилю уже «предлагались» (реестр известных). Нужен,
-    /// чтобы при добавлении в приложение новых инструментов их можно было включить
-    /// в существующих профилях, **не** переоткрывая те, что пользователь осознанно
-    /// выключил. Сверка — [`crate::features::profiles::reconcile_tools`]. См. spec §9.4.
+    /// Tools already "offered" to the profile (the known-tools registry). Needed so
+    /// that when new tools are added to the application, they can be enabled for
+    /// existing profiles **without** re-enabling ones the user deliberately turned
+    /// off. Reconciliation — [`crate::features::profiles::reconcile_tools`]. See spec §9.4.
     #[serde(default)]
     pub known_tools: Vec<ToolId>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub default_sampling: Option<SamplingConfig>,
-    /// Мягкое удаление.
+    /// Soft delete.
     #[serde(default)]
     pub is_hidden: bool,
 }
 
 impl Profile {
-    /// Новый профиль с системным сообщением и значениями по умолчанию.
+    /// A new profile with the system message and default values.
     pub fn new(name: impl Into<String>, system_message: impl Into<String>) -> Self {
         Self {
             id: Uuid::new_v4(),
@@ -85,8 +85,8 @@ impl Profile {
         }
     }
 
-    /// Краткая карточка профиля (для оверлея выбора без копирования системного
-    /// сообщения и набора инструментов).
+    /// A short profile card (for the picker overlay, without copying the system
+    /// message or the tool set).
     pub fn summary(&self) -> ProfileSummary {
         ProfileSummary {
             id: self.id,
@@ -95,9 +95,9 @@ impl Profile {
     }
 }
 
-/// Краткая карточка профиля для оверлея выбора при создании чата. См. spec §11.2.
-/// View-проекция домена в `entities`, чтобы её могли использовать и `app`
-/// (события), и `widgets` (рендер) — зависимость строго вниз.
+/// A short profile card for the picker overlay at chat creation. See spec §11.2.
+/// A domain view-projection living in `entities` so it can be used by both `app`
+/// (events) and `widgets` (rendering) — dependency strictly downward.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ProfileSummary {
     pub id: Uuid,

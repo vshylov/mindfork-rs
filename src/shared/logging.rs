@@ -1,8 +1,8 @@
-//! Логирование в файл (stdout занят TUI). См. spec §2.2 и plan M0.
+//! Logging to a file (stdout is taken by the TUI). See spec §2.2 and plan M0.
 //!
-//! Логи пишутся в `logs/mindfork.log` рядом с бинарником, с суточной ротацией.
-//! Уровень настраивается переменной окружения `MINDFORK_LOG`
-//! (формат `tracing_subscriber::EnvFilter`, например `mindfork_rs=debug`).
+//! Logs are written to `logs/mindfork.log` next to the binary, with daily
+//! rotation. The level is set via the `MINDFORK_LOG` env variable (format:
+//! `tracing_subscriber::EnvFilter`, e.g. `mindfork_rs=debug`).
 
 use anyhow::{Context, Result};
 use tracing_appender::non_blocking::WorkerGuard;
@@ -11,15 +11,15 @@ use tracing_subscriber::EnvFilter;
 use crate::shared::i18n::Locale;
 use crate::shared::paths::Paths;
 
-/// Держатель фонового потока записи логов.
+/// Holder of the background log-writing thread.
 ///
-/// Должен жить весь срок работы процесса, иначе хвост логов может потеряться.
+/// Must live for the process's whole run, otherwise the log tail may be lost.
 pub struct LogGuard {
     _worker: WorkerGuard,
 }
 
-/// Инициализирует подсистему логирования. `loc` — язык интерфейса для
-/// пользовательского текста ошибки (создание каталога логов).
+/// Initializes the logging subsystem. `loc` — the interface language for
+/// user-facing error text (creating the log directory).
 pub fn init(paths: &Paths, loc: &Locale) -> Result<LogGuard> {
     std::fs::create_dir_all(paths.log_dir()).with_context(|| {
         loc.tf(

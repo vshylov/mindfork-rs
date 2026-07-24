@@ -1,31 +1,33 @@
-//! Статус соединения с сервером инференса. Лежит в `shared`, т.к. нужен и
-//! оркестратору (`app`), и статус-бару (`widgets`) — зависимость строго вниз.
+//! Inference-server connection status. Lives in `shared` because it's needed
+//! by both the orchestrator (`app`) and the status bar (`widgets`) —
+//! dependency strictly downward.
 
-/// Статус соединения с сервером инференса.
+/// Inference-server connection status.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ServerStatus {
-    /// Сервер не настроен (нет URL/бинарника).
+    /// The server isn't configured (no URL/binary).
     NotConfigured,
-    /// Идёт подключение/запуск.
+    /// Connecting/starting up.
     Connecting,
-    /// Готов к работе.
+    /// Ready to work.
     Ready,
-    /// Недоступен (с описанием причины).
+    /// Unavailable (with a reason).
     Disconnected(String),
 }
 
-/// Снимок статусов всех серверов инференса для строки статуса. Чат-сервер
-/// показывается всегда (с причиной обрыва, т.к. он блокирует генерацию);
-/// эмбеддинги и имперсонация — отдельными чипами и **только когда настроены**
-/// (`NotConfigured`, в т.ч. имперсонация в режиме `shared`, → чип скрыт, не
-/// захламляет строку). Эмитится оркестратором при любом изменении любого из
-/// статусов. См. spec §11.1.
+/// A snapshot of every inference server's status, for the status bar. The
+/// chat server is always shown (with the disconnect reason, since it blocks
+/// generation); embeddings and impersonation get their own chips and are
+/// shown **only when configured** (`NotConfigured`, including impersonation
+/// in `shared` mode, → the chip is hidden, doesn't clutter the line). Emitted
+/// by the orchestrator on any change to any of the statuses. See spec §11.1.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ServerStatuses {
-    /// Основной (чат) сервер ассистента — показывается всегда.
+    /// The assistant's primary (chat) server — always shown.
     pub chat: ServerStatus,
-    /// Сервер эмбеддингов (RAG). `NotConfigured` → чип скрыт.
+    /// The embedding server (RAG). `NotConfigured` → the chip is hidden.
     pub embed: ServerStatus,
-    /// Сервер имперсонации. `NotConfigured` (в т.ч. режим `shared`) → чип скрыт.
+    /// The impersonation server. `NotConfigured` (including `shared` mode) →
+    /// the chip is hidden.
     pub impersonation: ServerStatus,
 }

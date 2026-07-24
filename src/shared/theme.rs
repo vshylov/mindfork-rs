@@ -1,21 +1,22 @@
-//! Палитра тем оформления TUI (spec §11.6). Семантические цветовые роли,
-//! разрешаемые из [`Theme`]. Виджеты берут цвета из палитры, а не хардкодят
-//! `.cyan()`/`.green()`/… — это даёт читаемость на светлом/тёмном фоне.
+//! TUI theme palette (spec §11.6). Semantic color roles resolved from
+//! [`Theme`]. Widgets take colors from the palette instead of hardcoding
+//! `.cyan()`/`.green()`/… — this gives readability on a light/dark background.
 //!
-//! Палитра и хелперы реализуют редизайн TUI (`docs/redesign/`): спокойные рамки
-//! со скруглёнными бордерами, цветные рейлы ролей сообщений, статус-«пилюли» и
-//! тихая строка хоткеев с «клавишными» лейблами. Точные оттенки тёмной темы —
-//! из дизайн-макета (oklch → sRGB); `Auto` использует именованные ANSI-цвета,
-//! подстраивающиеся под тему терминала, `Light` — затемнённые варианты.
+//! The palette and helpers implement the TUI redesign (`docs/redesign/`): calm
+//! rounded borders, colored message-role rails, status "pills", and a quiet
+//! hotkey line with "keycap" labels. Exact dark-theme shades come from the
+//! design mockup (oklch → sRGB); `Auto` uses named ANSI colors that adapt to
+//! the terminal's theme, `Light` uses darkened variants.
 //!
-//! Атрибуты-модификаторы (`dim`/`bold`/`reversed`/`underlined`) тема-независимы
-//! (адаптируются терминалом) и остаются в виджетах как есть — палитра задаёт
-//! только сами цвета.
+//! Modifier attributes (`dim`/`bold`/`reversed`/`underlined`) are
+//! theme-independent (the terminal adapts them) and are left in widgets as-is —
+//! the palette sets only the colors themselves.
 //!
-//! Помимо цветов палитра несёт **набор глифов** ([`GlyphSet`], метод
-//! [`Palette::glyphs`]): в режиме совместимости со старыми терминалами
-//! (`config.interface.terminal_compat`, spec §11.6) декоративные эмодзи и редкие
-//! символы Юникода заменяются на безопасные, а скруглённые рамки — на прямые.
+//! Besides colors, the palette carries a **glyph set** ([`GlyphSet`], method
+//! [`Palette::glyphs`]): in compatibility mode for old terminals
+//! (`config.interface.terminal_compat`, spec §11.6) decorative emoji and rare
+//! Unicode characters are replaced with safe ones, and rounded borders with
+//! straight ones.
 
 use ratatui::style::{Color, Style};
 use ratatui::text::{Line, Span};
@@ -24,76 +25,76 @@ use ratatui::widgets::{Block, BorderType, Borders};
 use crate::shared::config::Theme;
 use crate::shared::wrap;
 
-/// Набор глифов интерфейса. [`UNICODE_GLYPHS`] — вид редизайна (эмодзи и
-/// декоративные символы, требуют современный терминал/шрифт с фолбэком:
-/// Windows Terminal и т.п.); [`COMPAT_GLYPHS`] — режим совместимости со старыми
-/// эмуляторами (conhost Windows 10 и др.), где эмодзи и редкие глифы рисуются
-/// квадратами-«тофу».
+/// Interface glyph set. [`UNICODE_GLYPHS`] — the redesign look (emoji and
+/// decorative characters, requires a modern terminal/font with fallback:
+/// Windows Terminal etc.); [`COMPAT_GLYPHS`] — compatibility mode for old
+/// emulators (conhost Windows 10 and others), where emoji and rare glyphs
+/// render as "tofu" boxes.
 ///
-/// Ориентир совместимого набора — **WGL4** (базовый репертуар шрифтов Windows:
-/// Consolas/Lucida Console его покрывают) плюс ASCII: поэтому здесь допустимы
-/// `●`/`○`/`►`/`▼`/`♦`/`√`/`×`/`≡`/`»`, а также box-drawing (`─│└┼`), блоки
-/// (`▌█░`) и стрелки (`←↑↓→`) — они остаются и в других местах UI (рейлы,
-/// таблицы markdown, скроллбар) без замены. Вне набора — эмодзи (`⚒`, `✻`, `➕`),
-/// «редкие» символы (`✦❯▸▾◆▤⌨⚙⌕▏✕⚠✓✗⟳`), Брайль-спиннер (`⠋⠙…`) и
-/// арк-сегменты скруглённых рамок (`╭╮╰╯`).
+/// The compat set's target is **WGL4** (the base repertoire of Windows fonts:
+/// Consolas/Lucida Console cover it) plus ASCII: hence `●`/`○`/`►`/`▼`/`♦`/`√`/
+/// `×`/`≡`/`»` are allowed here, along with box-drawing (`─│└┼`), blocks
+/// (`▌█░`), and arrows (`←↑↓→`) — these stay unreplaced elsewhere in the UI too
+/// (rails, markdown tables, the scrollbar). Outside the set — emoji (`⚒`, `✻`,
+/// `➕`), "rare" characters (`✦❯▸▾◆▤⌨⚙⌕▏✕⚠✓✗⟳`), the Braille spinner (`⠋⠙…`), and
+/// rounded-border arc segments (`╭╮╰╯`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct GlyphSet {
-    /// Тип рамки панелей: скруглённая / прямая (арк-сегменты `╭╮╰╯` есть не во
-    /// всех консольных шрифтах).
+    /// Panel border type: rounded / straight (arc segments `╭╮╰╯` aren't in
+    /// every console font).
     pub border: BorderType,
-    /// Иконка ассистента («✦») — заголовок реплики, титулы панелей.
+    /// Assistant icon ("✦") — reply header, panel titles.
     pub assistant_icon: &'static str,
-    /// Иконка пользователя («❯») — заголовок реплики.
+    /// User icon ("❯") — reply header.
     pub user_icon: &'static str,
-    /// Колонка приглашения поля ввода («❯ »; ширина 2 колонки в обоих наборах,
-    /// см. `input_box::PROMPT_W`).
+    /// Input-box prompt column ("❯ "; 2 columns wide in both sets, see
+    /// `input_box::PROMPT_W`).
     pub prompt: &'static str,
-    /// Префикс первого ряда tool-карточки («⚒  »: эмодзи рисуется шириной 2,
-    /// поэтому за ним два пробела — см. `message_feed::push_tool`).
+    /// First-row prefix of a tool card ("⚒  ": the emoji renders 2 columns
+    /// wide, hence two spaces after it — see `message_feed::push_tool`).
     pub tool_head: &'static str,
-    /// Отступ продолжений tool-карточки — той же **счётной** ширины, что
-    /// [`Self::tool_head`] (выравнивание переносов).
+    /// Indent for tool-card continuations — the same **counted** width as
+    /// [`Self::tool_head`] (aligning wraps).
     pub tool_cont: &'static str,
-    /// Маркер свёрнутого блока («▸») — пилюля «мыслей», титул «Секции».
+    /// Collapsed-block marker ("▸") — the "thoughts" pill, the "Sections" title.
     pub collapsed: &'static str,
-    /// Маркер развёрнутого блока («▾») — блок «мыслей».
+    /// Expanded-block marker ("▾") — the "thoughts" block.
     pub expanded: &'static str,
-    /// Маркер титула панели/секции («◆») — лента чата, секция настроек.
+    /// Panel/section title marker ("◆") — the chat feed, the settings section.
     pub title_marker: &'static str,
-    /// Иконка панели списка чатов («▤»).
+    /// Chat-list panel icon ("▤").
     pub chats_icon: &'static str,
-    /// Иконка панели настроек («⚙  », ширина-2-эмодзи → два пробела).
+    /// Settings panel icon ("⚙  ", width-2 emoji → two spaces).
     pub settings_icon: &'static str,
-    /// Иконка попапа помощи по клавишам («⌨  », ширина-2-эмодзи → два пробела).
+    /// Hotkey help popup icon ("⌨  ", width-2 emoji → two spaces).
     pub help_icon: &'static str,
-    /// Подтверждение/успех («✓»).
+    /// Confirmation/success ("✓").
     pub ok: &'static str,
-    /// Отказ/брошенная цель («✗»).
+    /// Refusal/abandoned goal ("✗").
     pub failed: &'static str,
-    /// Предупреждение/ошибка («⚠»).
+    /// Warning/error ("⚠").
     pub warn: &'static str,
-    /// Статус «подключение…» в чипе сервера («◐»; готовность — `●`, он в WGL4
-    /// и не заменяется).
+    /// "Connecting…" status in the server chip ("◐"; readiness is `●`, which
+    /// is in WGL4 and isn't replaced).
     pub status_connecting: &'static str,
-    /// Статус «нет связи/не настроен» в чипе сервера («✕»).
+    /// "No connection/not configured" status in the server chip ("✕").
     pub status_off: &'static str,
-    /// Индикатор активной генерации в статус-баре («⟳»).
+    /// Active-generation indicator in the status bar ("⟳").
     pub busy: &'static str,
-    /// Индикатор фоновой задачи в статус-баре («✻»); ширина 1 колонка — от неё
-    /// зависит раскладка сетки хоткеев.
+    /// Background-task indicator in the status bar ("✻"); 1 column wide — the
+    /// hotkey grid layout depends on it.
     pub background: &'static str,
-    /// Иконка строки поиска («⌕»).
+    /// Search-line icon ("⌕").
     pub search: &'static str,
-    /// Псевдокурсор строки поиска («▏»).
+    /// Search-line pseudo-cursor ("▏").
     pub caret: &'static str,
-    /// Пункт «добавить в словарь» в подсказках орфографии («➕»).
+    /// "Add to dictionary" item in spelling suggestions ("➕").
     pub add: &'static str,
-    /// Кадры спиннера фоновых операций (RAG-индексация, имперсонация).
+    /// Spinner frames for background operations (RAG indexing, impersonation).
     pub spinner: &'static [char],
 }
 
-/// Глифы редизайна (по умолчанию): эмодзи и декоративные символы Юникода.
+/// Redesign glyphs (default): emoji and decorative Unicode characters.
 pub static UNICODE_GLYPHS: GlyphSet = GlyphSet {
     border: BorderType::Rounded,
     assistant_icon: "✦",
@@ -120,7 +121,7 @@ pub static UNICODE_GLYPHS: GlyphSet = GlyphSet {
     spinner: &['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'],
 };
 
-/// Глифы режима совместимости: только WGL4/ASCII (см. док-коммент [`GlyphSet`]).
+/// Compatibility-mode glyphs: WGL4/ASCII only (see [`GlyphSet`]'s doc comment).
 pub static COMPAT_GLYPHS: GlyphSet = GlyphSet {
     border: BorderType::Plain,
     assistant_icon: "*",
@@ -147,62 +148,65 @@ pub static COMPAT_GLYPHS: GlyphSet = GlyphSet {
     spinner: &['|', '/', '-', '\\'],
 };
 
-/// Семантические цвета интерфейса. `Copy` — дёшево передавать в render по значению.
-/// `Hash` — палитра служит ключом кэша (напр. построенной syntect-темы подсветки
-/// кода в `shared/markdown.rs`).
+/// Semantic interface colors. `Copy` — cheap to pass into render by value.
+/// `Hash` — the palette serves as a cache key (e.g. the built syntect
+/// code-highlighting theme in `shared/markdown.rs`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct Palette {
-    /// Рейл/акцент реплики пользователя (синий).
+    /// Rail/accent of a user message (blue).
     pub user: Color,
-    /// Рейл/акцент реплики ассистента (зелёный).
+    /// Rail/accent of an assistant message (green).
     pub assistant: Color,
-    /// Tool-блоки (имя/аргументы инструмента; янтарный).
+    /// Tool blocks (tool name/arguments; amber).
     pub tool: Color,
-    /// Успех/готовность (статус «готов», маркер активного чата).
+    /// Success/readiness (the "ready" status, the active-chat marker).
     pub success: Color,
-    /// Предупреждение (подключение/не настроено, индикатор правки).
+    /// Warning (connecting/not configured, the editing indicator).
     pub warning: Color,
-    /// Ошибка (нет связи, орфографическая ошибка).
+    /// Error (no connection, a spellcheck error).
     pub error: Color,
-    /// Акцент (индикатор генерации/токенов).
+    /// Accent (the generation/token indicator).
     pub accent: Color,
-    /// «Мягкий» (светлее/менее насыщенный) вариант цвета пользователя — для
-    /// текста-заголовка реплики (рейл — насыщенный `user`).
+    /// "Soft" (lighter/less saturated) variant of the user color — for the
+    /// reply-header text (the rail stays the saturated `user`).
     pub user_soft: Color,
-    /// «Мягкий» вариант цвета ассистента (текст заголовка реплики).
+    /// "Soft" variant of the assistant color (reply-header text).
     pub assistant_soft: Color,
-    /// «Мягкий» вариант цвета инструмента (имя в карточке tool-колла).
+    /// "Soft" variant of the tool color (name in a tool-call card).
     pub tool_soft: Color,
-    /// Основной цвет текста.
+    /// Primary text color.
     pub text: Color,
-    /// Приглушённый текст (вторичные подписи, описания хоткеев).
+    /// Muted text (secondary captions, hotkey descriptions).
     pub muted: Color,
-    /// Цвет обычной рамки панели.
+    /// Color of a regular panel border.
     pub border: Color,
-    /// Цвет рамки сфокусированной панели (ввод, активный список).
+    /// Border color of a focused panel (input, the active list).
     pub border_focus: Color,
-    /// Текст «клавиши» в строке хоткеев.
+    /// "Keycap" text in the hotkey line.
     pub keycap_fg: Color,
-    /// Фон «клавиши» в строке хоткеев.
+    /// "Keycap" background in the hotkey line.
     pub keycap_bg: Color,
-    /// Текст «опасной» клавиши (напр. `Del` удаления) на фоне `keycap_bg`. Отдельно
-    /// от `error`: «клавиша» приглушённая и тёмная, поэтому красный для неё берётся
-    /// **ярче** обычного `error`, чтобы читаться и не сливаться с тёмным фоном пилюли.
+    /// Text of a "dangerous" key (e.g. `Del` for delete) on the `keycap_bg`
+    /// background. Separate from `error`: the "keycap" is muted and dark, so
+    /// its red is taken **brighter** than regular `error`, to stay readable and
+    /// not blend into the pill's dark background.
     pub keycap_danger: Color,
-    /// Тёмный ли фон темы. Нужно там, где цвет приходится задавать абсолютным RGB
-    /// (нет именованного ANSI, адаптируемого терминалом) — напр. серый «по умолчанию»
-    /// и цвет комментариев в подсветке кода: на тёмном фоне светлый, на светлом —
-    /// тёмный. `Auto` считаем тёмным (типичный терминал тёмный; так было до тем).
+    /// Whether the theme's background is dark. Needed wherever a color must be
+    /// given as absolute RGB (no named ANSI that adapts to the terminal) — e.g.
+    /// "default" gray and the comment color in code highlighting: light on a
+    /// dark background, dark on a light one. `Auto` counts as dark (a typical
+    /// terminal is dark; that's how it was before themes).
     pub dark: bool,
-    /// Режим совместимости со старым терминалом (`config.interface.terminal_compat`):
-    /// глифы берутся из [`COMPAT_GLYPHS`] (см. [`Palette::glyphs`]), а затемнение
-    /// фона попапов идёт цветом вместо `DIM` (`shared/ui.rs::dim_background`).
-    /// Не цвет, но живёт в палитре (как `dark`): она уже протянута во все render.
+    /// Old-terminal compatibility mode (`config.interface.terminal_compat`):
+    /// glyphs come from [`COMPAT_GLYPHS`] (see [`Palette::glyphs`]), and popup
+    /// background dimming goes by color instead of `DIM`
+    /// (`shared/ui.rs::dim_background`). Not a color, but lives in the palette
+    /// (like `dark`): it is already threaded through every render.
     pub compat: bool,
 }
 
 impl Palette {
-    /// Палитра для выбранной темы.
+    /// Palette for the selected theme.
     pub fn for_theme(theme: Theme) -> Self {
         match theme {
             Theme::Auto => Self::auto(),
@@ -211,9 +215,10 @@ impl Palette {
         }
     }
 
-    /// «Авто» — именованные ANSI-цвета: их оттенки задаёт сам терминал, поэтому
-    /// палитра подстраивается под тему терминала (поведение до редизайна).
-    /// Структурные цвета (рамки/приглушённый/клавиши) — нейтральные ANSI-серые.
+    /// "Auto" — named ANSI colors: their shades are set by the terminal
+    /// itself, so the palette adapts to the terminal's theme (the pre-redesign
+    /// behavior). Structural colors (borders/muted/keycaps) are neutral ANSI
+    /// grays.
     fn auto() -> Self {
         Self {
             user: Color::Cyan,
@@ -230,10 +235,11 @@ impl Palette {
             muted: Color::DarkGray,
             border: Color::DarkGray,
             border_focus: Color::Gray,
-            // «Клавиши» — тихие тёмные пилюли (приглушённый текст на фоне чуть выше
-            // типичного тёмного фона терминала), чтобы не перетягивать внимание.
-            // Named ANSI не имеет шага темнее `DarkGray`, поэтому здесь абсолютный RGB
-            // (Auto и так считаем тёмной темой — флаг `dark: true`).
+            // "Keycaps" — quiet dark pills (muted text on a background a touch
+            // lighter than a typical dark terminal background), so as not to
+            // draw attention. Named ANSI has no step darker than `DarkGray`,
+            // hence absolute RGB here (Auto is already counted as a dark theme
+            // — the `dark: true` flag).
             keycap_fg: Color::Rgb(138, 144, 152),
             keycap_bg: Color::Rgb(36, 39, 45),
             keycap_danger: Color::Rgb(226, 110, 98),
@@ -242,8 +248,8 @@ impl Palette {
         }
     }
 
-    /// Тёмная тема — точные оттенки дизайн-макета (oklch → sRGB). Спокойная,
-    /// «терминальная»: глубокий фон у терминала, мягкие рамки, насыщенные рейлы.
+    /// Dark theme — exact shades from the design mockup (oklch → sRGB). Calm,
+    /// "terminal": a deep background, soft borders, saturated rails.
     fn dark() -> Self {
         Self {
             user: Color::Rgb(121, 169, 219),           // blue
@@ -252,23 +258,23 @@ impl Palette {
             success: Color::Rgb(111, 192, 130),        // green
             warning: Color::Rgb(220, 175, 97),         // amber
             error: Color::Rgb(223, 105, 92),           // red
-            accent: Color::Rgb(220, 175, 97),          // amber (генерация/токены)
+            accent: Color::Rgb(220, 175, 97),          // amber (generation/tokens)
             user_soft: Color::Rgb(144, 188, 233),      // blueSoft
             assistant_soft: Color::Rgb(164, 209, 172), // greenSoft
             tool_soft: Color::Rgb(230, 201, 154),      // amberSoft
             text: Color::Rgb(201, 204, 210),           // #c9ccd2
             muted: Color::Rgb(126, 132, 139),          // #7e848b
-            border: Color::Rgb(54, 58, 66),            // чуть ярче макетного #24272e для видимости
-            border_focus: Color::Rgb(110, 117, 128),   // #6e7580 (фокус)
-            keycap_fg: Color::Rgb(132, 138, 146),      // тише прежнего #9aa0a7
-            keycap_bg: Color::Rgb(33, 36, 42),         // темнее прежнего #2a2d34
-            keycap_danger: Color::Rgb(232, 116, 104),  // ярче error для читаемости на пилюле
+            border: Color::Rgb(54, 58, 66), // a bit brighter than the mockup's #24272e for visibility
+            border_focus: Color::Rgb(110, 117, 128), // #6e7580 (focus)
+            keycap_fg: Color::Rgb(132, 138, 146), // quieter than the previous #9aa0a7
+            keycap_bg: Color::Rgb(33, 36, 42), // darker than the previous #2a2d34
+            keycap_danger: Color::Rgb(232, 116, 104), // brighter than error for readability on the pill
             dark: true,
             compat: false,
         }
     }
 
-    /// Светлая тема — затемнённые цвета (жёлтый/яркие на белом нечитаемы).
+    /// Light theme — darkened colors (yellow/bright ones are unreadable on white).
     fn light() -> Self {
         Self {
             user: Color::Blue,
@@ -285,7 +291,7 @@ impl Palette {
             muted: Color::Rgb(110, 116, 124),
             border: Color::Rgb(190, 193, 198),
             border_focus: Color::Rgb(120, 124, 130),
-            keycap_fg: Color::Rgb(74, 78, 84), // мягче чёрного — «клавиши» не кричат
+            keycap_fg: Color::Rgb(74, 78, 84), // softer than black — "keycaps" don't shout
             keycap_bg: Color::Rgb(222, 224, 228),
             keycap_danger: Color::Rgb(178, 34, 34),
             dark: false,
@@ -293,15 +299,15 @@ impl Palette {
         }
     }
 
-    /// Та же палитра с выставленным режимом совместимости (builder-стиль; удобно
-    /// на месте: `Palette::for_theme(t).with_compat(flag)`).
+    /// The same palette with the compatibility mode flag set (builder style;
+    /// handy inline: `Palette::for_theme(t).with_compat(flag)`).
     pub fn with_compat(mut self, compat: bool) -> Self {
         self.compat = compat;
         self
     }
 
-    /// Активный набор глифов: юникодный по умолчанию, безопасный — в режиме
-    /// совместимости со старым терминалом. См. [`GlyphSet`].
+    /// The active glyph set: unicode by default, safe in old-terminal
+    /// compatibility mode. See [`GlyphSet`].
     pub fn glyphs(&self) -> &'static GlyphSet {
         if self.compat {
             &COMPAT_GLYPHS
@@ -310,19 +316,19 @@ impl Palette {
         }
     }
 
-    // ---- Удобные конструкторы стилей (foreground по роли) ----
+    // ---- Convenient style constructors (foreground by role) ----
     pub fn success_style(&self) -> Style {
         Style::new().fg(self.success)
     }
     pub fn accent_style(&self) -> Style {
         Style::new().fg(self.accent)
     }
-    /// Стиль приглушённого текста (вторичные подписи/описания).
+    /// Style for muted text (secondary captions/descriptions).
     pub fn muted_style(&self) -> Style {
         Style::new().fg(self.muted)
     }
 
-    /// Стиль рамки панели (`focused` → выделенная рамка).
+    /// Panel border style (`focused` → the highlighted border).
     pub fn border_style(&self, focused: bool) -> Style {
         Style::new().fg(if focused {
             self.border_focus
@@ -331,9 +337,10 @@ impl Palette {
         })
     }
 
-    /// Скруглённая панель (`Block`) с титулом и опциональным фокусом — единый
-    /// «фрейм» редизайна. Титул рисуется на верхней линии, рамка — цветом палитры;
-    /// в режиме совместимости рамка прямая (см. [`GlyphSet::border`]).
+    /// A rounded panel (`Block`) with a title and optional focus — the
+    /// redesign's unified "frame". The title is drawn on the top line, the
+    /// border in palette color; in compatibility mode the border is straight
+    /// (see [`GlyphSet::border`]).
     pub fn panel(&self, title: impl Into<String>, focused: bool) -> Block<'static> {
         Block::default()
             .borders(Borders::ALL)
@@ -345,7 +352,8 @@ impl Palette {
             ))
     }
 
-    /// «Клавиша» хоткея — лейбл на приглушённом фоне (как пилюля в макете).
+    /// A hotkey "keycap" — a label on a muted background (like a pill in the
+    /// mockup).
     pub fn keycap(&self, label: impl Into<String>) -> Span<'static> {
         Span::styled(
             format!(" {} ", label.into()),
@@ -353,8 +361,8 @@ impl Palette {
         )
     }
 
-    /// Подсказка-хоткей: «клавиша» + приглушённое описание. Возвращает спаны для
-    /// вставки в строку (с ведущим пробелом-отступом перед клавишей).
+    /// A hotkey hint: "keycap" + a muted description. Returns spans to insert
+    /// into a line (with a leading indent space before the keycap).
     pub fn hint(&self, key: &str, desc: &str) -> Vec<Span<'static>> {
         vec![
             self.keycap(key),
@@ -362,12 +370,13 @@ impl Palette {
         ]
     }
 
-    /// Как `hint`, но **значение после двоеточия** выделено цветом `color`, а подпись
-    /// (само двоеточие включительно) остаётся приглушённой — для подсветки значения
-    /// активного режима (напр. «прокрутка» в «мышь: прокрутка» цветом `accent`, как
-    /// заголовки markdown в ленте). Разбиение по `:`, а не по пробелу, корректно для
-    /// многословных значений (важно при будущей локализации). Без двоеточия — всё
-    /// описание выделяется целиком.
+    /// Like `hint`, but the **value after the colon** is highlighted in
+    /// `color`, while the label (the colon itself included) stays muted — for
+    /// highlighting the value of the active mode (e.g. "scroll" in "mouse:
+    /// scroll" in `accent` color, like markdown headings in the feed). Splits
+    /// on `:`, not on a space, which is correct for multi-word values
+    /// (important for future localization). With no colon — the whole
+    /// description is highlighted.
     pub fn hint_highlight_value(&self, key: &str, desc: &str, color: Color) -> Vec<Span<'static>> {
         let mut spans = vec![self.keycap(key)];
         match desc.split_once(':') {
@@ -383,25 +392,25 @@ impl Palette {
         spans
     }
 
-    /// Раскладывает подсказки-хоткеи в аккуратную сетку под ширину `width`:
-    /// «клавиша» + приглушённое описание, столбцы совпадают по вертикали. Число
-    /// столбцов подбирается максимальным из влезающих в ширину (→ минимум строк);
-    /// при переполнении одной строки хоткеи переносятся на следующие. `danger`
-    /// помечает «опасную» клавишу (напр. удаление) красным. Используется в
-    /// статус-баре экрана чата и в оверлее списка чатов — для одинакового вида.
+    /// Lays out hotkey hints into a neat grid within `width`: "keycap" +
+    /// muted description, columns line up vertically. The number of columns
+    /// is picked as the max that fits the width (→ fewest rows); overflowing
+    /// one row wraps hotkeys onto the next. `danger` marks a "dangerous" key
+    /// (e.g. delete) in red. Used in the chat screen's status bar and in the
+    /// chat-list overlay — for a matching look.
     pub fn hotkey_grid(&self, items: &[(&str, &str, bool)], width: usize) -> Vec<Line<'static>> {
         let n = items.len();
         if n == 0 {
             return Vec::new();
         }
-        // Ширина ячейки = «клавиша» (символы + 2 на отступы) + пробел + описание.
+        // Cell width = "keycap" (characters + 2 for padding) + space + description.
         let cell_w: Vec<usize> = items
             .iter()
             .map(|(key, desc, _)| keycap_width(key) + 1 + str_width(desc))
             .collect();
-        const GAP: usize = 3; // зазор между столбцами
+        const GAP: usize = 3; // gap between columns
 
-        // Ширины столбцов при `cols` колонках (row-major раскладка).
+        // Column widths for `cols` columns (row-major layout).
         let col_widths = |cols: usize| -> Vec<usize> {
             let mut w = vec![0usize; cols];
             for (i, cw) in cell_w.iter().enumerate() {
@@ -409,7 +418,7 @@ impl Palette {
             }
             w
         };
-        // Подбираем максимум столбцов, влезающих в ширину (→ минимум строк).
+        // Pick the max number of columns that fits the width (→ fewest rows).
         let mut cols = 1;
         for c in (1..=n).rev() {
             let total: usize = col_widths(c).iter().sum::<usize>() + GAP * c.saturating_sub(1);
@@ -420,8 +429,8 @@ impl Palette {
         }
         let widths = col_widths(cols);
 
-        // Раскладываем по строкам; каждую ячейку добиваем до ширины столбца, чтобы
-        // столбцы совпадали по вертикали.
+        // Lay out into rows; pad each cell out to the column width, so columns
+        // line up vertically.
         let mut lines: Vec<Line<'static>> = Vec::new();
         for row in items.chunks(cols) {
             let mut spans: Vec<Span<'static>> = Vec::new();
@@ -448,13 +457,13 @@ impl Palette {
     }
 }
 
-/// Видимая ширина строки в колонках терминала.
+/// Visible width of a line in terminal columns.
 fn str_width(s: &str) -> usize {
     wrap::display_width(&s.chars().collect::<Vec<_>>())
 }
 
-/// Ширина «клавиши» в колонках: символы лейбла + 2 (отступы вокруг, как в
-/// [`Palette::keycap`], который форматирует `" {label} "`).
+/// Width of a "keycap" in columns: label characters + 2 (surrounding padding,
+/// as in [`Palette::keycap`], which formats `" {label} "`).
 fn keycap_width(label: &str) -> usize {
     str_width(label) + 2
 }
@@ -490,8 +499,8 @@ mod tests {
 
     #[test]
     fn dark_flag_follows_theme() {
-        // Auto и Dark считаем тёмными, Light — светлой (для абсолютных RGB-цветов
-        // подсветки кода, у которых нет адаптируемого ANSI-аналога).
+        // Auto and Dark count as dark, Light as light (for absolute RGB colors
+        // in code highlighting, which have no adaptable ANSI equivalent).
         assert!(Palette::for_theme(Theme::Auto).dark);
         assert!(Palette::for_theme(Theme::Dark).dark);
         assert!(!Palette::for_theme(Theme::Light).dark);
@@ -509,8 +518,8 @@ mod tests {
 
     #[test]
     fn glyphs_follow_compat_flag() {
-        // По умолчанию — юникодный набор и скруглённые рамки; в режиме
-        // совместимости — безопасный набор и прямые рамки.
+        // By default — the unicode set and rounded borders; in compatibility
+        // mode — the safe set and straight borders.
         let p = Palette::default();
         assert!(!p.compat);
         assert_eq!(p.glyphs(), &UNICODE_GLYPHS);
@@ -522,8 +531,9 @@ mod tests {
 
     #[test]
     fn compat_glyphs_avoid_rare_symbols() {
-        // В компат-набор не должны просочиться заменяемые эмодзи/редкие символы
-        // (они и есть причина режима: старый терминал рисует их «тофу»).
+        // No replaced emoji/rare characters should leak into the compat set
+        // (they are exactly the reason for the mode: an old terminal draws
+        // them as "tofu").
         let banned: Vec<char> = "✦❯⚒▸▾◆▤⚙⌨✓✗⚠◐✕⟳✻⌕▏➕".chars().collect();
         let g = &COMPAT_GLYPHS;
         let all = [
@@ -553,22 +563,23 @@ mod tests {
             for ch in s.chars() {
                 assert!(
                     !banned.contains(&ch),
-                    "редкий символ в компат-наборе: {ch:?}"
+                    "rare character in compat set: {ch:?}"
                 );
             }
         }
-        // Спиннер — чистый ASCII (Брайль-кадры старые консоли не рисуют).
+        // The spinner is pure ASCII (old consoles don't render Braille frames).
         assert!(g.spinner.iter().all(|c| c.is_ascii()), "{:?}", g.spinner);
     }
 
     #[test]
     fn tool_head_and_cont_widths_match_in_both_sets() {
-        // Продолжения tool-карточки выравниваются под первый ряд — счётные ширины
-        // префиксов должны совпадать в обоих наборах (см. message_feed::push_tool).
+        // Tool-card continuations align under the first row — the counted
+        // widths of the prefixes must match in both sets (see
+        // message_feed::push_tool).
         for g in [&UNICODE_GLYPHS, &COMPAT_GLYPHS] {
             assert_eq!(str_width(g.tool_head), str_width(g.tool_cont));
         }
-        // Колонка приглашения ввода — всегда 2 колонки (input_box::PROMPT_W).
+        // The input prompt column is always 2 columns (input_box::PROMPT_W).
         assert_eq!(str_width(UNICODE_GLYPHS.prompt), 2);
         assert_eq!(str_width(COMPAT_GLYPHS.prompt), 2);
     }

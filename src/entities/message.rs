@@ -1,4 +1,4 @@
-//! Сообщение чата и связанные типы. См. spec §5.1.
+//! A chat message and related types. See spec §5.1.
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
@@ -7,7 +7,7 @@ use uuid::Uuid;
 use crate::entities::sampling::SamplingConfig;
 use crate::shared::config::ServerMode;
 
-/// Роль сообщения в чате.
+/// The message's role in the chat.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum MessageRole {
@@ -17,7 +17,7 @@ pub enum MessageRole {
     Tool,
 }
 
-/// Запись о вызове инструмента (для сворачиваемых tool-блоков в UI). См. spec §5.1.
+/// A tool-call record (for collapsible tool blocks in the UI). See spec §5.1.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ToolCallRecord {
     pub id: String,
@@ -25,59 +25,59 @@ pub struct ToolCallRecord {
     pub arguments: serde_json::Value,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub result: Option<String>,
-    /// Подпись мысли (Gemini 3 `thoughtSignature`), привязанная к этому вызову.
-    /// Персистится ради реплея истории: Gemini 3 требует подпись на исторических
-    /// `functionCall` (иначе `400`). Прочие провайдеры — `None` (у Anthropic/OpenAI
-    /// подпись одна на ход и не персистится). См. docs/research/gemini-native-client.md §2.3.
+    /// A thought signature (Gemini 3 `thoughtSignature`) tied to this call.
+    /// Persisted for history replay: Gemini 3 requires the signature on historical
+    /// `functionCall`s (otherwise `400`). Other providers — `None` (Anthropic/OpenAI
+    /// have one signature per turn, not persisted). See docs/research/gemini-native-client.md §2.3.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub thought_signature: Option<String>,
 }
 
-/// Снимок параметров генерации, фактически применённых к сообщению.
+/// A snapshot of the generation parameters actually applied to the message.
 ///
-/// `sampling` содержит **только** поля, доступные в режиме движка на момент
-/// генерации (см. [`SamplingConfig::retain_supported`]) — прочие поля движок бы
-/// не принял, поэтому в снимок «что применилось» они не попадают. `mode` — режим
-/// движка (managed/external/openai/gemini/claude), `model` — имя модели.
+/// `sampling` holds **only** the fields available in the engine mode at generation
+/// time (see [`SamplingConfig::retain_supported`]) — other fields the engine
+/// wouldn't have accepted, so they don't make it into the "what was applied"
+/// snapshot. `mode` — the engine mode (managed/external/openai/gemini/claude),
+/// `model` — the model name.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct MessageMetadata {
     pub sampling: SamplingConfig,
-    /// Режим движка, которым сгенерировано сообщение. `#[serde(default)]` → старые
-    /// сообщения без поля читаются как `Managed`.
+    /// The engine mode the message was generated with. `#[serde(default)]` → old
+    /// messages without the field read as `Managed`.
     #[serde(default)]
     pub mode: ServerMode,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub model: Option<String>,
 }
 
-/// Сообщение чата.
+/// A chat message.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Message {
     pub id: Uuid,
     pub role: MessageRole,
     pub text: String,
-    /// Блок рассуждений (CoT).
+    /// The reasoning (CoT) block.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub thoughts: Option<String>,
-    /// Вызовы инструментов в этом сообщении.
+    /// Tool calls in this message.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub tool_calls: Vec<ToolCallRecord>,
     pub timestamp: DateTime<Utc>,
     #[serde(default = "default_true")]
     pub is_markdown: bool,
-    /// Сообщение ассистента начинает **новый пузырь** в ленте (не склеивается с
-    /// предыдущим блоком ассистента). Ставится управляющим инструментом
-    /// «написать ещё сообщение» (`send_followup_message`) для второго и далее
-    /// сообщений. По умолчанию `false` — обычная склейка раундов agentic-loop.
-    /// См. spec §9.3.
+    /// The assistant message starts a **new bubble** in the feed (not merged with
+    /// the previous assistant block). Set by the control tool "write another
+    /// message" (`send_followup_message`) for the second and later messages.
+    /// `false` by default — the normal agentic-loop round merging. See spec §9.3.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub new_bubble: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub metadata: Option<MessageMetadata>,
-    /// Для роли `Tool`: идентификатор tool-call.
+    /// For the `Tool` role: the tool-call id.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tool_call_id: Option<String>,
-    /// Для роли `Tool`: имя инструмента.
+    /// For the `Tool` role: the tool name.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tool_name: Option<String>,
 }
@@ -87,7 +87,7 @@ fn default_true() -> bool {
 }
 
 impl Message {
-    /// Создаёт сообщение с новым `id` и текущим временем.
+    /// Creates a message with a new `id` and the current time.
     pub fn new(role: MessageRole, text: impl Into<String>) -> Self {
         Self {
             id: Uuid::new_v4(),
@@ -133,7 +133,7 @@ mod tests {
 
     #[test]
     fn defaults_applied_on_minimal_json() {
-        // Без is_markdown/tool_calls — должны примениться дефолты.
+        // No is_markdown/tool_calls — the defaults should apply.
         let raw = format!(
             r#"{{"id":"{}","role":"user","text":"hi","timestamp":"2026-06-14T00:00:00Z"}}"#,
             Uuid::nil()
@@ -146,11 +146,11 @@ mod tests {
 
     #[test]
     fn tool_call_thought_signature_defaults_and_roundtrips() {
-        // Старая запись без поля читается как None (без миграции).
+        // An old record with no field reads as None (no migration).
         let raw = r#"{"id":"c1","name":"calc","arguments":{}}"#;
         let rec: ToolCallRecord = serde_json::from_str(raw).unwrap();
         assert!(rec.thought_signature.is_none());
-        // С подписью — round-trip; пустое поле не сериализуется.
+        // With a signature — round-trip; an empty field isn't serialized.
         let with_sig = ToolCallRecord {
             id: "c1".into(),
             name: "calc".into(),
@@ -162,7 +162,7 @@ mod tests {
         assert!(json.contains("thought_signature"));
         let back: ToolCallRecord = serde_json::from_str(&json).unwrap();
         assert_eq!(back.thought_signature.as_deref(), Some("SIG"));
-        // Без подписи — ключ отсутствует (skip_serializing_if).
+        // Without a signature — the key is absent (skip_serializing_if).
         let no_sig = ToolCallRecord {
             id: "c1".into(),
             name: "calc".into(),

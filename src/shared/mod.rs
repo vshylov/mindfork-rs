@@ -1,5 +1,5 @@
-//! Слой `shared` (FSD): инфраструктура и утилиты, не зависящие от верхних слоёв.
-//! См. spec §4.2.
+//! `shared` layer (FSD): infrastructure and utilities, independent of the
+//! upper layers. See spec §4.2.
 
 pub mod api;
 pub mod config;

@@ -1,11 +1,11 @@
-//! Заметка ассистента (память о пользователе/контексте). Изолируется по
-//! профилю. См. spec §5.1, §9.3, §10.3.
+//! An assistant note (memory about the user/context). Isolated per profile.
+//! See spec §5.1, §9.3, §10.3.
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-/// Заметка, принадлежащая профилю.
+/// A note belonging to a profile.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Note {
     pub id: Uuid,
