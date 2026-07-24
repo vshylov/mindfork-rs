@@ -4,7 +4,8 @@ Migrate the project's *development* language (comments, doc-comments, all
 documentation, non-user-facing strings) from Russian to English, as a focused
 effort on branch `chore/english-source`. This is **not** an i18n rollback:
 user-facing text stays localizable through axes A/B (Russian UI/agent remains a
-supported locale). Roadmap: `docs/roadmap.md` §"Английский исходник".
+supported locale). Roadmap: `docs/roadmap.md` §"English source (prep for open
+source)".
 
 ## Scope
 Translate:

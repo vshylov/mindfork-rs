@@ -131,7 +131,7 @@ fn embed_windows_icon() {
     let mut res = winresource::WindowsResource::new();
     res.set_icon(".../artwork/mindfork.ico");
     if let Err(err) = res.compile() {
-        println!("cargo:warning=не удалось вшить иконку в .exe: {err}");
+        println!("cargo:warning=could not embed the icon into .exe: {err}");
     }
 }
 

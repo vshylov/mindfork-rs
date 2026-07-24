@@ -138,7 +138,7 @@ impl Lang {
     /// language with no `ui.lang.name` would show ru's name.
     pub fn label(self) -> &'static str {
         let fallback = match self {
-            Lang::Ru => "Русский",
+            Lang::Ru => "Русский", // the language's own endonym; cyrillic-ok
             Lang::En => "English",
             Lang::Ext(code) => code,
         };

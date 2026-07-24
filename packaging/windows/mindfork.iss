@@ -114,7 +114,7 @@ begin
   LangPage := CreateInputOptionPage(wpSelectDir,
     CustomMessage('AppLangCaption'), CustomMessage('AppLangSub'),
     CustomMessage('AppLangPrompt'), True, False);
-  LangPage.Add('Русский');
+  LangPage.Add('Русский'); // the Russian option's own label; cyrillic-ok
   LangPage.Add('English');
   if ActiveLanguage = 'ru' then
     LangPage.SelectedValueIndex := 0

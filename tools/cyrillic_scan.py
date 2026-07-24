@@ -59,6 +59,8 @@ SKIP_FILES = {
     # The migration glossary is a RU -> EN mapping table: the Russian column is
     # its content. Removed (or demoted to a terminology note) once this lands.
     "tools/glossary-ru-en.md",
+    # This detector necessarily spells out Cyrillic Unicode ranges.
+    "tools/cyrillic_scan.py",
     # This doc is *about* Cyrillic Mermaid rendering: its repro inputs (table
     # rows and a fenced diagram) must stay Cyrillic to demonstrate a
     # byte-offset-vs-char-offset bug that ASCII would not trigger. Inline
