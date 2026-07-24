@@ -1,34 +1,34 @@
-//! Инструмент `web_search` (spec §9.3.1): поиск в интернете собственным
-//! `reqwest`-клиентом + парсинг HTML-выдачи (`scraper`). Под глобальным
-//! выключателем `tools.web_enabled` (приватность, §9.4).
+//! `web_search` tool (spec §9.3.1): internet search via its own
+//! `reqwest` client + parsing the HTML results page (`scraper`). Under the global
+//! switch `tools.web_enabled` (privacy, §9.4).
 //!
-//! **Несколько независимых провайдеров с фоллбэком** (см. [`PROVIDERS`]). По
-//! порядку: DuckDuckGo lite (`POST q=`, простейшая разметка, ADR-решение M7) →
-//! DuckDuckGo html (иная разметка) → **Mojeek** → **Ecosia** (`GET ?q=`, у каждого
-//! своя инфраструктура и разметка). Первый, кто вернул непустую выдачу, выигрывает.
+//! **Several independent providers with fallback** (see [`PROVIDERS`]). In
+//! order: DuckDuckGo lite (`POST q=`, the simplest markup, an ADR decision from M7) →
+//! DuckDuckGo html (different markup) → **Mojeek** → **Ecosia** (`GET ?q=`, each with
+//! its own infrastructure and markup). The first one to return a non-empty result set wins.
 //!
-//! **Анти-бот троттлинг.** При нескольких быстрых запросах подряд (что бывает в
-//! agentic-loop на сложной/длинной задаче) поисковики режут трафик по IP:
-//! DuckDuckGo отдаёт `HTTP 202` со страницей-вызовом («anomaly»), Mojeek/прочие —
-//! `403`/`429`, а не результаты. Раньше `202` считался «успехом» (`error_for_status`
-//! пропускает 2xx) → парсилась пустая страница → модель видела «Поиск не дал
-//! результатов» (хотя запрос корректен), а `403` всплывал как фатальная ошибка
-//! «провайдер недоступен». Теперь троттлинг распознаётся ([`is_throttled`]) и при
-//! нём сразу пробуется следующий провайдер (троттл липкий per-IP — ретраи его лишь
-//! углубляют; разные провайдеры режут независимо, поэтому почти всегда отвечает
-//! кто-то один). Если **все** недоступны/троттлят — возвращается явная ошибка (а не
-//! «нет результатов»), чтобы модель повторила запрос позже, а не сообщила, что
-//! ничего не нашла.
+//! **Anti-bot throttling.** With several quick requests in a row (which happens in the
+//! agentic loop on a complex/long task), search engines cut traffic by IP:
+//! DuckDuckGo returns `HTTP 202` with a challenge page ("anomaly"), Mojeek/others —
+//! `403`/`429`, not results. Previously `202` was treated as "success" (`error_for_status`
+//! lets 2xx through) → an empty page got parsed → the model saw "the search returned no
+//! results" (even though the query was valid), and a `403` surfaced as a fatal
+//! "provider unavailable" error. Now throttling is detected ([`is_throttled`]) and on it
+//! the next provider is tried right away (throttling is sticky per-IP — retries only
+//! deepen it; different providers throttle independently, so almost always someone
+//! answers). If **all** are unavailable/throttled — an explicit error is returned (not
+//! "no results"), so the model retries the request later instead of reporting that it
+//! found nothing.
 //!
-//! **Извлечение контента + реранкинг** (spec §9.3.1, по умолчанию включены,
-//! отключаются аргументом `fetch_content`). После получения выдачи страницы
-//! результатов загружаются и из них извлекается читаемый текст ([`extract_readable`]
-//! на `scraper`: содержимое `<article>`/`<main>`/абзацев, без script/nav-мусора) —
-//! «лучшее усилие»: ошибка загрузки одной страницы не валит поиск. Затем результаты
-//! **переупорядочиваются эмбеддингами** (через `ctx.embedder`, ADR 0002): запрос и
-//! контент каждого результата эмбеддятся, сортировка по убыванию косинусной близости
-//! ([`rerank_order`]). Эмбеддер не настроен/недоступен (RAG выключен) → реранкинг
-//! пропускается, остаётся порядок провайдера (мягкая деградация, как у RAG).
+//! **Content extraction + reranking** (spec §9.3.1, on by default,
+//! disabled via the `fetch_content` argument). After the results page arrives, results
+//! are fetched and readable text is extracted from them ([`extract_readable`] via
+//! `scraper`: the content of `<article>`/`<main>`/paragraphs, without script/nav clutter) —
+//! "best effort": one page's fetch failure doesn't fail the whole search. Then results
+//! are **reordered via embeddings** (through `ctx.embedder`, ADR 0002): the query and
+//! each result's content are embedded, sorted by decreasing cosine similarity
+//! ([`rerank_order`]). The embedder isn't configured/is unavailable (RAG is off) → reranking
+//! is skipped, the provider order remains (graceful degradation, like RAG's).
 
 use std::cmp::Ordering;
 use std::time::Duration;
@@ -42,62 +42,62 @@ use crate::shared::api::Embedder;
 
 use super::{Tool, ToolContext, ToolOutcome};
 
-/// UA, чтобы поисковики отдавали нормальную разметку (а не «лёгкую»/пустую).
-/// `pub(crate)` — переиспользуется `fetch_url` (см. `tools/fetch.rs`).
+/// A UA so search engines return regular markup (not "lite"/empty).
+/// `pub(crate)` — reused by `fetch_url` (see `tools/fetch.rs`).
 pub(crate) const USER_AGENT: &str = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) \
      Chrome/124.0 Safari/537.36";
-/// `Accept` для загрузки страниц контента (как у браузера).
+/// `Accept` for fetching content pages (like a browser's).
 pub(crate) const ACCEPT_HTML: &str =
     "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8";
-/// `Accept-Language` для загрузки страниц контента.
+/// `Accept-Language` for fetching content pages.
 pub(crate) const ACCEPT_LANGUAGE: &str = "en-US,en;q=0.9,ru;q=0.8";
-/// Результатов по умолчанию.
+/// Default number of results.
 const DEFAULT_MAX_RESULTS: usize = 5;
-/// Жёсткий потолок результатов.
+/// Hard ceiling on the number of results.
 const MAX_RESULTS_CAP: usize = 10;
-/// Таймаут одного HTTP-запроса к поисковику.
+/// Timeout for one HTTP request to a search provider.
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(15);
-/// Потолок извлекаемого читаемого текста одной страницы (символы). Ограничивает
-/// раздувание контекста и размер эмбеддинг-запроса.
+/// Ceiling on the extracted readable text of one page (characters). Limits
+/// context bloat and the size of the embedding request.
 const MAX_CONTENT_CHARS: usize = 1500;
-/// Минимальная длина фрагмента (абзаца) при извлечении: короче — вероятно
-/// навигация/меню/кнопки, а не контент.
+/// Minimum fragment (paragraph) length on extraction: shorter is likely
+/// navigation/menu/buttons, not content.
 const MIN_FRAGMENT_CHARS: usize = 40;
-/// Сколько символов контента результата идёт в эмбеддинг при реранкинге (хватает
-/// репрезентативного начала; не раздувает запрос к эмбеддеру).
+/// How many characters of a result's content go into the embedding during reranking
+/// (enough for a representative start; doesn't bloat the embedder request).
 const RERANK_EMBED_CHARS: usize = 800;
 
-/// HTTP-метод запроса к поисковику.
+/// HTTP method for the request to the search provider.
 #[derive(Debug, Clone, Copy, PartialEq)]
 enum Method {
-    /// `q` в теле формы (DuckDuckGo).
+    /// `q` in the form body (DuckDuckGo).
     PostForm,
-    /// `q` в query-строке (Mojeek).
+    /// `q` in the query string (Mojeek).
     GetQuery,
 }
 
-/// Описание поискового провайдера: эндпоинт, метод и CSS-селекторы выдачи.
+/// A search provider's description: endpoint, method, and the results' CSS selectors.
 struct Provider {
-    /// Имя для логов/ошибок.
+    /// The name for logs/errors.
     name: &'static str,
     url: &'static str,
     method: Method,
-    /// Селектор ссылки-результата (откуда берётся `href`).
+    /// The result-link selector (where `href` comes from).
     link_sel: &'static str,
-    /// Селектор заголовка (его текст). У DDG/Mojeek совпадает с `link_sel` (заголовок
-    /// и ссылка — один тег `<a>`); у Ecosia заголовок лежит отдельно от ссылки.
+    /// The title selector (its text). For DDG/Mojeek it matches `link_sel` (the title
+    /// and the link are one `<a>` tag); for Ecosia the title sits apart from the link.
     title_sel: &'static str,
-    /// Селектор сниппета. Списки ссылок/заголовков/сниппетов выравниваются по
-    /// индексу (i-й результат = i-я ссылка + i-й заголовок + i-й сниппет).
+    /// The snippet selector. Lists of links/titles/snippets are aligned by
+    /// index (result i = link i + title i + snippet i).
     snippet_sel: &'static str,
 }
 
-/// Провайдеры в порядке предпочтения, каждый со своей разметкой и (важно)
-/// инфраструктурой. DuckDuckGo (два варианта разметки) — основной; далее
-/// независимые **Mojeek** и **Ecosia**. Анти-бот троттлинг у каждого свой и
-/// кратковременный (per-IP); он липкий, ретраить один и тот же провайдер
-/// бессмысленно — поэтому при троттлинге сразу уходим к следующему. Несколько
-/// независимых провайдеров → при недоступности одного почти всегда отвечает другой.
+/// Providers in order of preference, each with its own markup and (importantly)
+/// infrastructure. DuckDuckGo (two markup variants) is primary; then the
+/// independent **Mojeek** and **Ecosia**. Each has its own anti-bot throttling, and
+/// it's short-lived (per-IP); it's sticky, retrying the same provider is
+/// pointless — hence a throttle moves straight to the next one. Several
+/// independent providers → when one is unavailable, another almost always answers.
 const PROVIDERS: &[Provider] = &[
     Provider {
         name: "DuckDuckGo lite",
@@ -127,27 +127,27 @@ const PROVIDERS: &[Provider] = &[
         name: "Ecosia",
         url: "https://www.ecosia.org/search",
         method: Method::GetQuery,
-        // Стабильные семантические `data-test-id` (а не хешированные css-классы).
+        // Stable semantic `data-test-id`s (not hashed css classes).
         link_sel: r#"a[data-test-id="result-link"]"#,
         title_sel: r#"[data-test-id="result-title"]"#,
         snippet_sel: r#"[data-test-id="web-result-description"]"#,
     },
 ];
 
-/// Один результат поиска.
+/// One search result.
 #[derive(Debug, Clone, PartialEq)]
 pub struct SearchResult {
     pub title: String,
     pub url: String,
     pub snippet: String,
-    /// Извлечённый читаемый текст страницы (пусто, если не загружали/не вышло).
+    /// The page's extracted readable text (empty if not fetched/it didn't work out).
     pub content: String,
 }
 
-/// `web_search` — поиск в интернете (DuckDuckGo → Mojeek → Ecosia, см. [`PROVIDERS`]).
+/// `web_search` — internet search (DuckDuckGo → Mojeek → Ecosia, see [`PROVIDERS`]).
 pub struct WebSearch {
     http: reqwest::Client,
-    /// Значение по умолчанию для аргумента `fetch_content` (из `config.tools`).
+    /// The default value for the `fetch_content` argument (from `config.tools`).
     fetch_content_default: bool,
 }
 
@@ -159,7 +159,7 @@ impl Default for WebSearch {
 
 impl WebSearch {
     pub fn new(fetch_content_default: bool) -> Self {
-        // Таймаут на запрос: иначе зависший ответ DDG держал бы весь ход.
+        // A request timeout: otherwise a hung DDG response would hold up the whole turn.
         let http = reqwest::Client::builder()
             .timeout(REQUEST_TIMEOUT)
             .build()
@@ -170,9 +170,9 @@ impl WebSearch {
         }
     }
 
-    /// Один HTTP-запрос к провайдеру: `Ok(Some(html))` — нормальная страница;
-    /// `Ok(None)` — анти-бот троттлинг (202/anomaly/403/429); `Err` — сеть/прочий HTTP.
-    /// `loc` — язык каркаса для текстов ошибок (уходят модели при полном отказе).
+    /// One HTTP request to a provider: `Ok(Some(html))` — a normal page;
+    /// `Ok(None)` — anti-bot throttling (202/anomaly/403/429); `Err` — network/other HTTP.
+    /// `loc` — the scaffold language for error texts (goes to the model on total failure).
     async fn fetch(
         &self,
         provider: &Provider,
@@ -211,15 +211,15 @@ impl WebSearch {
         Ok(Some(body))
     }
 
-    /// Загружает страницу результата и извлекает читаемый текст. `None` при любой
-    /// ошибке/не-HTML — извлечение «лучшее усилие», поиск не должен падать из-за
-    /// одной недоступной страницы.
+    /// Fetches a result page and extracts readable text. `None` on any
+    /// error/non-HTML — extraction is "best effort", the search shouldn't fail because of
+    /// one unavailable page.
     async fn fetch_content(&self, url: &str) -> Option<String> {
         let resp = match self
             .http
             .get(url)
-            // Браузероподобные заголовки: часть сайтов отдаёт пустую/блок-страницу
-            // на «голый» запрос без Accept/Accept-Language.
+            // Browser-like headers: some sites return an empty/block page
+            // on a "bare" request with no Accept/Accept-Language.
             .header(reqwest::header::USER_AGENT, USER_AGENT)
             .header(reqwest::header::ACCEPT, ACCEPT_HTML)
             .header(reqwest::header::ACCEPT_LANGUAGE, ACCEPT_LANGUAGE)
@@ -228,16 +228,16 @@ impl WebSearch {
         {
             Ok(r) => r,
             Err(err) => {
-                tracing::debug!(url, error = %err, "web-поиск: страница не загрузилась");
+                tracing::debug!(url, error = %err, "web search: the page failed to load");
                 return None;
             }
         };
         if !resp.status().is_success() {
-            tracing::debug!(url, status = %resp.status(), "web-поиск: страница вернула не-2xx");
+            tracing::debug!(url, status = %resp.status(), "web search: the page returned a non-2xx status");
             return None;
         }
-        // Берём только HTML (PDF/изображения/прочее извлекать нечем). Заголовок
-        // может отсутствовать — тогда пробуем как HTML.
+        // Only take HTML (there's nothing to extract PDF/images/other with). The header
+        // may be absent — then try as HTML.
         let is_html = resp
             .headers()
             .get(reqwest::header::CONTENT_TYPE)
@@ -250,13 +250,13 @@ impl WebSearch {
         let body = resp.text().await.ok()?;
         let text = extract_readable(&body, MAX_CONTENT_CHARS);
         if text.is_empty() {
-            tracing::debug!(url, "web-поиск: из страницы не извлечён читаемый текст");
+            tracing::debug!(url, "web search: no readable text extracted from the page");
         }
         (!text.is_empty()).then_some(text)
     }
 
-    /// Параллельно загружает страницы результатов и проставляет извлечённый текст в
-    /// `content`. Каждая загрузка независима и отказоустойчива (см. [`Self::fetch_content`]).
+    /// Fetches result pages in parallel and sets the extracted text into
+    /// `content`. Each fetch is independent and fault-tolerant (see [`Self::fetch_content`]).
     async fn enrich_with_content(&self, results: &mut [SearchResult]) {
         let contents =
             futures_util::future::join_all(results.iter().map(|r| self.fetch_content(&r.url)))
@@ -269,26 +269,26 @@ impl WebSearch {
     }
 }
 
-/// Переупорядочивает результаты по убыванию близости их контента к запросу
-/// (реранкинг эмбеддингами, spec §9.3.1). Эмбеддер недоступен/вернул нестыкующееся
-/// число векторов → результаты не трогаем (мягкая деградация). `query` и контент
-/// каждого результата эмбеддятся одним запросом.
+/// Reorders results by decreasing similarity of their content to the query
+/// (reranking via embeddings, spec §9.3.1). The embedder is unavailable/returned a
+/// mismatched vector count → results are left untouched (graceful degradation). `query` and
+/// each result's content are embedded in one request.
 async fn rerank_by_embeddings(
     embedder: &dyn Embedder,
     query: &str,
     results: &mut Vec<SearchResult>,
 ) {
     if results.len() < 2 {
-        return; // нечего переупорядочивать
+        return; // nothing to reorder
     }
     let mut texts: Vec<String> = Vec::with_capacity(results.len() + 1);
     texts.push(query.to_string());
     texts.extend(results.iter().map(rerank_text));
     let vecs = match embedder.embed(texts).await {
         Ok(v) if v.len() == results.len() + 1 => v,
-        Ok(_) => return, // несоответствие — не рискуем перемешать
+        Ok(_) => return, // a mismatch — don't risk shuffling
         Err(err) => {
-            tracing::debug!(error = %err, "web-поиск: реранкинг недоступен, порядок провайдера");
+            tracing::debug!(error = %err, "web search: reranking unavailable, keeping the provider order");
             return;
         }
     };
@@ -297,8 +297,8 @@ async fn rerank_by_embeddings(
     *results = order.into_iter().map(|i| results[i].clone()).collect();
 }
 
-/// Текст результата для эмбеддинга при реранкинге: контент (если извлечён) с
-/// заголовком/сниппетом в качестве контекста; контент усечён до [`RERANK_EMBED_CHARS`].
+/// A result's text for embedding during reranking: content (if extracted) with the
+/// title/snippet as context; content is truncated to [`RERANK_EMBED_CHARS`].
 fn rerank_text(r: &SearchResult) -> String {
     let body = if r.content.is_empty() {
         r.snippet.clone()
@@ -308,16 +308,16 @@ fn rerank_text(r: &SearchResult) -> String {
     format!("{}\n{}", r.title, body).trim().to_string()
 }
 
-/// Порядок индексов `doc_vecs` по убыванию косинусной близости к `query_vec`.
+/// The order of `doc_vecs` indices by decreasing cosine similarity to `query_vec`.
 fn rerank_order(query_vec: &[f32], doc_vecs: &[Vec<f32>]) -> Vec<usize> {
     let sims: Vec<f32> = doc_vecs.iter().map(|v| cosine(query_vec, v)).collect();
     let mut order: Vec<usize> = (0..doc_vecs.len()).collect();
-    // Стабильная сортировка: при равной близости сохраняется порядок провайдера.
+    // A stable sort: with equal similarity the provider order is preserved.
     order.sort_by(|&a, &b| sims[b].partial_cmp(&sims[a]).unwrap_or(Ordering::Equal));
     order
 }
 
-/// Косинусная близость двух векторов (0.0 при несовпадении длин/нулевой норме).
+/// Cosine similarity of two vectors (0.0 on a length mismatch/zero norm).
 fn cosine(a: &[f32], b: &[f32]) -> f32 {
     if a.len() != b.len() || a.is_empty() {
         return 0.0;
@@ -336,14 +336,14 @@ fn cosine(a: &[f32], b: &[f32]) -> f32 {
     dot / (na.sqrt() * nb.sqrt())
 }
 
-/// Извлекает читаемый текст HTML-страницы (упрощённый readability): берёт абзацы и
-/// списки из `<article>`/`<main>` (если есть), иначе — из всего документа; короткие
-/// фрагменты и всё внутри навигации/шапки/подвала/сайдбара ([`in_boilerplate`])
-/// отбрасываются (иначе на сайтах без семантической разметки в контент попадает
-/// мега-меню). script/style не попадают (их текст не внутри `<p>`/`<li>`). Результат
-/// усечён до `max_chars` символов.
+/// Extracts an HTML page's readable text (a simplified readability): takes paragraphs and
+/// lists from `<article>`/`<main>` (if present), otherwise — from the whole document; short
+/// fragments and everything inside nav/header/footer/sidebar ([`in_boilerplate`])
+/// are dropped (otherwise on sites without semantic markup a mega-menu ends up in
+/// the content). script/style don't get in (their text isn't inside `<p>`/`<li>`). The result
+/// is truncated to `max_chars` characters.
 ///
-/// `pub(crate)` — переиспользуется `fetch_url` (см. `tools/fetch.rs`).
+/// `pub(crate)` — reused by `fetch_url` (see `tools/fetch.rs`).
 pub(crate) fn extract_readable(html: &str, max_chars: usize) -> String {
     let doc = Html::parse_document(html);
     let scope_sel = Selector::parse("article, main").unwrap();
@@ -357,7 +357,7 @@ pub(crate) fn extract_readable(html: &str, max_chars: usize) -> String {
         (t.chars().count() >= MIN_FRAGMENT_CHARS).then_some(t)
     };
 
-    // Предпочитаем основное содержимое (article/main) — меньше навигационного шума.
+    // Prefer the main content (article/main) — less navigational noise.
     let mut parts: Vec<String> = doc
         .select(&scope_sel)
         .flat_map(|root| root.select(&para_sel).filter_map(take).collect::<Vec<_>>())
@@ -379,8 +379,8 @@ pub(crate) fn extract_readable(html: &str, max_chars: usize) -> String {
     truncate_chars(&out, max_chars)
 }
 
-/// `true`, если элемент лежит внутри навигации/шапки/подвала/сайдбара — это
-/// boilerplate (меню/ссылки), а не основной контент.
+/// `true` if the element sits inside nav/header/footer/sidebar — this is
+/// boilerplate (a menu/links), not the main content.
 fn in_boilerplate(el: scraper::ElementRef) -> bool {
     el.ancestors().any(|n| {
         n.value()
@@ -390,8 +390,8 @@ fn in_boilerplate(el: scraper::ElementRef) -> bool {
     })
 }
 
-/// Усекает строку до `max` символов (по границе символа, не байта).
-/// `pub(crate)` — переиспользуется `fetch_url` (см. `tools/fetch.rs`).
+/// Truncates a string to `max` characters (on a character boundary, not a byte one).
+/// `pub(crate)` — reused by `fetch_url` (see `tools/fetch.rs`).
 pub(crate) fn truncate_chars(s: &str, max: usize) -> String {
     if s.chars().count() <= max {
         return s.to_string();
@@ -446,11 +446,11 @@ impl Tool for WebSearch {
             .and_then(|v| v.as_bool())
             .unwrap_or(self.fetch_content_default);
 
-        // Перебираем провайдеров по порядку: первый, кто отдал непустую выдачу,
-        // выигрывает. При троттлинге сразу уходим к следующему (ретраить липкий
-        // per-IP троттл бессмысленно). `got_clean_page` — хоть один провайдер
-        // вернул нормальную (не вызов-)страницу: тогда пустота — настоящее «нет
-        // результатов», а не троттлинг.
+        // Go through providers in order: the first one to return a non-empty result set
+        // wins. On throttling, move to the next one right away (retrying a sticky
+        // per-IP throttle is pointless). `got_clean_page` — at least one provider
+        // returned a normal (non-challenge) page: then emptiness is a genuine "no
+        // results", not throttling.
         let mut got_clean_page = false;
         let mut last_err: Option<anyhow::Error> = None;
         let mut results = Vec::new();
@@ -473,11 +473,11 @@ impl Tool for WebSearch {
                 Ok(None) => {
                     tracing::debug!(
                         provider = provider.name,
-                        "web-поиск: троттлинг, пробуем следующего провайдера"
+                        "web search: throttled, trying the next provider"
                     );
                 }
                 Err(err) => {
-                    tracing::warn!(provider = provider.name, error = %err, "web-поиск: ошибка провайдера");
+                    tracing::warn!(provider = provider.name, error = %err, "web search: provider error");
                     last_err = Some(err);
                 }
             }
@@ -485,14 +485,14 @@ impl Tool for WebSearch {
 
         if results.is_empty() {
             if got_clean_page {
-                // Нормальная страница без результатов — это действительно пусто.
+                // A normal page with no results — that's genuinely empty.
                 return Ok(ToolOutcome::text(
                     ctx.loc.t("tool.web_search.result.no_results"),
                 ));
             }
-            // Ни один провайдер не отдал нормальную страницу: троттлинг и/или
-            // сетевые ошибки. Возвращаем ошибку (а не «нет результатов»), чтобы
-            // модель повторила запрос позже, а не сообщила, что ничего не нашла.
+            // No provider returned a normal page: throttling and/or
+            // network errors. Return an error (not "no results"), so the
+            // model retries the request later instead of reporting it found nothing.
             if let Some(err) = last_err {
                 return Err(
                     err.context(ctx.loc.t("tool.web_search.err.all_unavailable").to_string())
@@ -500,9 +500,9 @@ impl Tool for WebSearch {
             }
             anyhow::bail!(ctx.loc.t("tool.web_search.err.throttled"));
         }
-        // Извлечение контента + реранкинг (если не отключено аргументом).
-        // Загрузка страниц и эмбеддинги — «лучшее усилие»: при сбое остаётся
-        // обычная выдача (заголовки/сниппеты, порядок провайдера).
+        // Content extraction + reranking (unless disabled by the argument).
+        // Fetching pages and embedding are "best effort": on failure the
+        // regular result set remains (titles/snippets, provider order).
         if fetch_content {
             self.enrich_with_content(&mut results).await;
             rerank_by_embeddings(ctx.embedder.as_ref(), query, &mut results).await;
@@ -532,10 +532,10 @@ impl Tool for WebSearch {
     }
 }
 
-/// Признак анти-бот троттлинга/блокировки провайдера: `HTTP 202` (DDG
-/// страница-вызов), `403`/`429` (Mojeek/прочие при перегрузе по IP) либо маркер
-/// `anomaly` в теле DDG. Нормальная выдача `anomaly` не содержит. Такие ответы
-/// кратковременны — это не «нет результатов» и не фатальная ошибка.
+/// A sign of anti-bot throttling/blocking by the provider: `HTTP 202` (a DDG
+/// challenge page), `403`/`429` (Mojeek/others under IP overload), or an
+/// `anomaly` marker in DDG's body. A normal result set doesn't contain `anomaly`. Such responses
+/// are short-lived — this is neither "no results" nor a fatal error.
 fn is_throttled(status: StatusCode, body: &str) -> bool {
     matches!(
         status,
@@ -543,10 +543,10 @@ fn is_throttled(status: StatusCode, body: &str) -> bool {
     ) || body.contains("anomaly")
 }
 
-/// Парсит выдачу провайдера: списки ссылок (`link_q` → `href`), заголовков
-/// (`title_q` → текст) и сниппетов (`snippet_q` → текст) выравниваются по индексу.
-/// У DDG/Mojeek `link_q == title_q` (один тег `<a>`); у Ecosia — разные теги.
-/// Реальный URL извлекается из редиректа `uddg=...` (DDG) либо берётся как есть.
+/// Parses a provider's result set: lists of links (`link_q` → `href`), titles
+/// (`title_q` → text), and snippets (`snippet_q` → text) are aligned by index.
+/// For DDG/Mojeek `link_q == title_q` (one `<a>` tag); for Ecosia — different tags.
+/// The real URL is extracted from the `uddg=...` redirect (DDG) or taken as-is.
 fn parse_results(
     html: &str,
     link_q: &str,
@@ -592,8 +592,8 @@ fn parse_results(
     results
 }
 
-/// Достаёт настоящий URL из ссылки DDG: декодирует параметр `uddg`, либо
-/// нормализует протокол-относительный `//host/...`.
+/// Extracts the real URL from a DDG link: decodes the `uddg` parameter, or
+/// normalizes a protocol-relative `//host/...`.
 fn extract_real_url(href: &str) -> String {
     if let Some(pos) = href.find("uddg=") {
         let rest = &href[pos + 5..];
@@ -606,7 +606,7 @@ fn extract_real_url(href: &str) -> String {
     href.to_string()
 }
 
-/// Минимальное percent-декодирование значения query-параметра (`%XX`, `+`→пробел).
+/// Minimal percent-decoding of a query-parameter value (`%XX`, `+`→space).
 fn percent_decode(s: &str) -> String {
     let bytes = s.as_bytes();
     let mut out: Vec<u8> = Vec::with_capacity(bytes.len());
@@ -637,7 +637,7 @@ fn percent_decode(s: &str) -> String {
     String::from_utf8_lossy(&out).into_owned()
 }
 
-/// Схлопывает пробелы/переводы строк в один пробел и обрезает края.
+/// Collapses spaces/line breaks into a single space and trims the edges.
 fn collapse_ws(s: &str) -> String {
     s.split_whitespace().collect::<Vec<_>>().join(" ")
 }
@@ -648,8 +648,8 @@ mod tests {
 
     #[test]
     fn web_search_description_is_localized() {
-        // Описание web_search различно на ru/en (ловит забытый `_loc`), en без
-        // кириллицы. §3.5 docs/history/i18n.md.
+        // The web_search description differs between ru/en (catches a forgotten
+        // `_loc`), en has no Cyrillic. §3.5 docs/history/i18n.md.
         use crate::shared::i18n::{Lang, locale};
         let tool = WebSearch::new(true);
         let (ru, en) = (locale(Lang::Ru), locale(Lang::En));
@@ -658,7 +658,7 @@ mod tests {
         assert!(
             !e.chars()
                 .any(|c| ('а'..='я').contains(&c) || ('А'..='Я').contains(&c)),
-            "кириллица в en-описании: {e}"
+            "Cyrillic in the en description: {e}"
         );
     }
 
@@ -675,7 +675,7 @@ mod tests {
         </table></body></html>
     "#;
 
-    /// Фикстура html-эндпоинта DDG (разметка `result__a` / `result__snippet`).
+    /// A fixture of DDG's html endpoint (`result__a` / `result__snippet` markup).
     const FIXTURE_HTML: &str = r#"
         <html><body>
         <div class="result">
@@ -685,7 +685,7 @@ mod tests {
         </body></html>
     "#;
 
-    /// Фикстура Mojeek (прямые ссылки `a.title`, сниппет `p.s`).
+    /// A Mojeek fixture (direct links `a.title`, snippet `p.s`).
     const FIXTURE_MOJEEK: &str = r#"
         <html><body><ul class="results-standard">
         <li><h2><a class="title" title="https://example.io/m" href="https://example.io/m">Пример M</a></h2>
@@ -693,7 +693,7 @@ mod tests {
         </ul></body></html>
     "#;
 
-    /// Фикстура Ecosia: заголовок и ссылка — РАЗНЫЕ теги (по `data-test-id`).
+    /// An Ecosia fixture: the title and the link are DIFFERENT tags (by `data-test-id`).
     const FIXTURE_ECOSIA: &str = r#"
         <html><body>
         <div class="result">
@@ -704,7 +704,7 @@ mod tests {
         </body></html>
     "#;
 
-    /// Селекторы DDG-lite (link == title, как в [`PROVIDERS`]).
+    /// DDG-lite selectors (link == title, as in [`PROVIDERS`]).
     const LITE: (&str, &str) = ("a.result-link", "td.result-snippet");
 
     #[test]
@@ -713,13 +713,13 @@ mod tests {
         assert_eq!(results.len(), 2);
         assert_eq!(results[0].title, "Пример A");
         assert_eq!(results[0].url, "https://example.com/a");
-        assert_eq!(results[0].snippet, "Сниппет про A"); // схлопнуты пробелы
+        assert_eq!(results[0].snippet, "Сниппет про A"); // whitespace collapsed
         assert_eq!(results[1].url, "https://example.org/b");
     }
 
     #[test]
     fn parses_html_endpoint_layout() {
-        // Запасная разметка html-эндпоинта DDG тоже распознаётся.
+        // The fallback markup of DDG's html endpoint is recognized too.
         let results = parse_results(
             FIXTURE_HTML,
             "a.result__a",
@@ -735,7 +735,7 @@ mod tests {
 
     #[test]
     fn parses_mojeek_layout() {
-        // Запасной провайдер Mojeek (прямые ссылки, иная разметка).
+        // The fallback provider Mojeek (direct links, different markup).
         let results = parse_results(FIXTURE_MOJEEK, "a.title", "a.title", "p.s", 5);
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].title, "Пример M");
@@ -745,7 +745,7 @@ mod tests {
 
     #[test]
     fn parses_ecosia_layout_separate_title_and_link() {
-        // У Ecosia заголовок и ссылка — разные теги; парсер выравнивает по индексу.
+        // For Ecosia the title and the link are different tags; the parser aligns by index.
         let eco = PROVIDERS.iter().find(|p| p.name == "Ecosia").unwrap();
         let results = parse_results(
             FIXTURE_ECOSIA,
@@ -762,7 +762,7 @@ mod tests {
 
     #[test]
     fn provider_selectors_match_fixtures() {
-        // Селекторы из PROVIDERS совпадают с тем, что парсят фикстуры.
+        // Selectors from PROVIDERS match what the fixtures are parsed with.
         let lite = &PROVIDERS[0];
         assert_eq!((lite.link_sel, lite.snippet_sel), LITE);
         assert!(
@@ -788,20 +788,20 @@ mod tests {
 
     #[test]
     fn detects_throttling() {
-        // HTTP 202 — анти-бот троттлинг DDG (страница-вызов), даже без маркера.
+        // HTTP 202 — DDG anti-bot throttling (a challenge page), even with no marker.
         assert!(is_throttled(
             StatusCode::ACCEPTED,
             "<html>что угодно</html>"
         ));
-        // 403/429 — троттлинг/блокировка по IP (Mojeek и прочие).
+        // 403/429 — throttling/blocking by IP (Mojeek and others).
         assert!(is_throttled(StatusCode::FORBIDDEN, ""));
         assert!(is_throttled(StatusCode::TOO_MANY_REQUESTS, ""));
-        // Маркер anomaly в теле — тоже троттлинг.
+        // An anomaly marker in the body — also throttling.
         assert!(is_throttled(
             StatusCode::OK,
             "...If this error persists... anomaly ..."
         ));
-        // Нормальная выдача (200, без маркера) — не троттлинг.
+        // A normal result set (200, no marker) — not throttling.
         assert!(!is_throttled(StatusCode::OK, FIXTURE));
     }
 
@@ -838,7 +838,7 @@ mod tests {
         let text = extract_readable(PAGE_HTML, 1000);
         assert!(text.contains("первый содержательный абзац"));
         assert!(text.contains("Второй содержательный абзац"));
-        // Скрипты/стили и короткие фрагменты (nav/«Короткий.») отброшены.
+        // Scripts/styles and short fragments (nav/the one-word paragraph) are dropped.
         assert!(!text.contains("var a"));
         assert!(!text.contains("color:red"));
         assert!(!text.contains("Короткий."));
@@ -846,8 +846,8 @@ mod tests {
 
     #[test]
     fn extract_readable_skips_boilerplate() {
-        // Длинный абзац внутри <nav> (нет <main>) — это меню, не контент: отброшен,
-        // а абзац вне навигации — взят.
+        // A long paragraph inside <nav> (no <main>) is a menu, not content: dropped,
+        // while a paragraph outside navigation is taken.
         let html = r#"<html><body>
             <nav><p>Перейти к разделам сайта, услуги, цены, контакты, поддержка и помощь.</p></nav>
             <div><p>Это настоящий содержательный абзац статьи достаточной длины.</p></div>
@@ -878,7 +878,7 @@ mod tests {
     fn cosine_basic() {
         assert!((cosine(&[1.0, 0.0], &[1.0, 0.0]) - 1.0).abs() < 1e-6);
         assert!(cosine(&[1.0, 0.0], &[0.0, 1.0]).abs() < 1e-6);
-        // Несовпадение длин / нулевой вектор → 0.0.
+        // A length mismatch / a zero vector → 0.0.
         assert_eq!(cosine(&[1.0], &[1.0, 0.0]), 0.0);
         assert_eq!(cosine(&[0.0, 0.0], &[1.0, 0.0]), 0.0);
     }
@@ -887,9 +887,9 @@ mod tests {
     fn rerank_order_sorts_by_similarity() {
         let query = vec![1.0, 0.0];
         let docs = vec![
-            vec![0.0, 1.0], // ортогонален — наименее похож
-            vec![1.0, 0.0], // совпадает — наиболее похож
-            vec![0.7, 0.7], // средне
+            vec![0.0, 1.0], // orthogonal — least similar
+            vec![1.0, 0.0], // identical — most similar
+            vec![0.7, 0.7], // in between
         ];
         let order = rerank_order(&query, &docs);
         assert_eq!(order, vec![1, 2, 0]);
@@ -897,7 +897,7 @@ mod tests {
 
     #[test]
     fn rerank_order_is_stable_on_ties() {
-        // При равной близости сохраняется исходный порядок (стабильная сортировка).
+        // With equal similarity the original order is preserved (a stable sort).
         let query = vec![1.0, 0.0];
         let docs = vec![vec![1.0, 0.0], vec![1.0, 0.0], vec![1.0, 0.0]];
         assert_eq!(rerank_order(&query, &docs), vec![0, 1, 2]);
@@ -915,7 +915,7 @@ mod tests {
         assert!(t.contains("Заголовок"));
         assert!(t.contains("извлечённый контент"));
         assert!(!t.contains("сниппет"));
-        // Без контента — берётся сниппет.
+        // With no content — the snippet is taken.
         let r2 = SearchResult {
             content: String::new(),
             ..r
@@ -942,7 +942,7 @@ mod tests {
             },
         ];
         rerank_by_embeddings(&embedder, "rust язык программирования", &mut results).await;
-        // Релевантный запросу результат поднялся наверх.
+        // The result relevant to the query rose to the top.
         assert_eq!(results[0].url, "https://e/rust");
     }
 
@@ -964,12 +964,12 @@ mod tests {
             },
         ];
         rerank_by_embeddings(&UnavailableEmbedder, "запрос", &mut results).await;
-        // Эмбеддер недоступен → порядок не изменился.
+        // The embedder is unavailable → the order didn't change.
         assert_eq!(results[0].url, "https://e/a");
         assert_eq!(results[1].url, "https://e/b");
     }
 
-    /// Реальный сетевой смоук (вручную: `cargo test -- --ignored`).
+    /// A real network smoke (manual: `cargo test -- --ignored`).
     #[tokio::test]
     #[ignore = "requires network access to search providers"]
     async fn live_search_returns_results() {

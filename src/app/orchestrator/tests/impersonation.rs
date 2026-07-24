@@ -1,5 +1,5 @@
-//! Тесты оркестратора — имперсонация (построение запроса + поток). Часть модуля [`super`]
-//! (фикстуры в mod.rs). См. docs/history/refactoring-god-objects.md, этап 3.
+//! Orchestrator tests — impersonation (request building + streaming). Part of the [`super`]
+//! module (fixtures in mod.rs). See docs/history/refactoring-god-objects.md, stage 3.
 
 use super::*;
 
@@ -22,7 +22,7 @@ fn impersonation_request_swaps_roles_and_sets_system() {
 
     assert_eq!(req.system.as_deref(), Some("Ты — пользователь"));
     assert!(req.tools.is_empty());
-    // Роли поменялись местами: assistant↔user.
+    // Roles are swapped: assistant↔user.
     assert_eq!(req.messages.len(), 3);
     assert_eq!(
         req.messages[0].role,
@@ -42,17 +42,17 @@ fn impersonation_request_swaps_roles_and_sets_system() {
 
 #[test]
 fn impersonation_request_disables_reasoning() {
-    // Имперсонация отбрасывает «мысли», поэтому запрос обязан гасить reasoning —
-    // иначе модели со «вшитым» thinking (Gemma/Qwen) тратят весь бюджет на
-    // reasoning_content, а ответный текст приходит пустым (предпросмотр пуст).
+    // Impersonation discards "thoughts", so the request must suppress reasoning —
+    // otherwise models with thinking "baked into" the template (Gemma/Qwen) spend their whole
+    // budget on reasoning_content, and the reply text comes back empty (an empty preview).
     let profile = Profile::new("P", "sys");
     let chat = Chat::from_profile(&profile, "c");
     let req = build_impersonation_request(
         &chat,
         "Ты — пользователь".into(),
         "",
-        // Пользователь оставил «мысли» включёнными в семплинге имперсонации —
-        // запрос всё равно должен их выключить.
+        // The user left "thoughts" enabled in the impersonation sampling —
+        // the request must still turn them off.
         SamplingConfig {
             thinking: Some(true),
             ..Default::default()
@@ -82,7 +82,10 @@ fn impersonation_request_with_seed_adds_continuation_hint() {
     );
     let system = req.system.unwrap();
     assert!(system.contains("Ты — пользователь"));
-    assert!(system.contains("Мне нужно"), "затравка попала в инструкцию");
+    assert!(
+        system.contains("Мне нужно"),
+        "the seed made it into the instruction"
+    );
 }
 
 #[test]
@@ -99,7 +102,7 @@ fn impersonation_request_includes_user_hint() {
     );
     let system = req.system.unwrap();
     assert!(system.contains("Ты — пользователь"));
-    // Модель собеседника подмешана в системный промпт имперсонации.
+    // The interlocutor model is mixed into the impersonation system prompt.
     assert!(system.contains("черты — скептик"));
 }
 
@@ -112,7 +115,7 @@ fn swap_role_skips_system_tool_and_empty() {
 
 #[tokio::test]
 async fn impersonate_streams_into_preview_and_finishes() {
-    // Первый запрос (отправка) → «ответ»; второй (имперсонация) → реплика.
+    // The first request (send) → a reply; the second (impersonation) → a message.
     let backend = Arc::new(MockBackend::sequence(vec![
         vec![
             ChatChunk::Text("ответ".into()),
@@ -128,7 +131,7 @@ async fn impersonate_streams_into_preview_and_finishes() {
         .await
         .unwrap();
 
-    // Нужна хотя бы одна реплика в истории.
+    // Need at least one message in the history.
     cmd_tx
         .send(AppCommand::SendMessage("привет".into()))
         .unwrap();
@@ -141,20 +144,20 @@ async fn impersonate_streams_into_preview_and_finishes() {
             seed: String::new(),
         })
         .unwrap();
-    // Старт имперсонации.
+    // Impersonation starts.
     wait_for(&mut evt_rx, |e| {
         matches!(e, AppEvent::ImpersonationStarted { .. })
     })
     .await
     .unwrap();
-    // Текст реплики приходит дельтами.
+    // The message text arrives in deltas.
     let chunk = wait_for(&mut evt_rx, |e| {
         matches!(e, AppEvent::ImpersonationChunk { .. })
     })
     .await
     .unwrap();
     assert!(matches!(chunk, AppEvent::ImpersonationChunk { text, .. } if text == "моя реплика"));
-    // Завершение со Stop.
+    // Finishes with Stop.
     let fin = wait_for(&mut evt_rx, |e| {
         matches!(e, AppEvent::ImpersonationFinished { .. })
     })

@@ -1,11 +1,11 @@
-//! Реестр слотов «тихих» фоновых задач (авто-рефлексия «модели себя» и
-//! авто-консолидация заметок). Обе задачи — мини agentic-loop без UI (общий раннер
-//! [`tool_loop::spawn_silent_loop`](super::tool_loop)); их жизненный цикл (флаг
-//! «идёт», серия неудач, гашение индикатора, оповещение об ошибке) раньше
-//! дублировался полями и обработчиками на каждую задачу. Здесь он один — ключ
-//! реестра — существующий [`BackgroundKind`]. Добавление задачи №3 (авто-консолидация
-//! «модели себя», roadmap — architecture.md §9.9) не трогает каркас `run()`/`Quit`.
-//! См. docs/history/refactoring-solid.md §4.
+//! A slot registry for "silent" background tasks (self-model auto-reflection and
+//! notes auto-consolidation). Both tasks are a mini agentic loop with no UI (the shared runner
+//! [`tool_loop::spawn_silent_loop`](super::tool_loop)); their lifecycle (the "running"
+//! flag, a failure streak, clearing the indicator, an error alert) used to be
+//! duplicated as fields and handlers per task. Here it's one — the registry key
+//! is the existing [`BackgroundKind`]. Adding task #3 (self-model auto-consolidation,
+//! roadmap — architecture.md §9.9) doesn't touch the `run()`/`Quit` scaffolding.
+//! See docs/history/refactoring-solid.md §4.
 
 use tokio_util::sync::CancellationToken;
 
@@ -14,25 +14,25 @@ use crate::shared::i18n::Locale;
 
 use super::Orchestrator;
 
-/// Слот тихой фоновой задачи: токен активного запуска + серия неудач. Серия живёт
-/// дольше запуска (переживает завершения) — потому слот, а не отдельная задача.
+/// A silent background task's slot: the active-run token + a failure streak. The streak
+/// outlives a single run (it survives completions) — hence a slot, not a separate task.
 #[derive(Default)]
 pub(super) struct BgSlot {
-    /// `Some` — задача идёт (одна за раз); токен отмены (для ветки `Quit`).
+    /// `Some` — the task is running (one at a time); the cancellation token (for the `Quit` branch).
     cancel: Option<CancellationToken>,
-    /// Число подряд идущих неудач; на пороге [`BACKGROUND_FAILURE_ALERT`](super::BACKGROUND_FAILURE_ALERT)
-    /// один раз показываем ошибку в UI, дальше молчим до первого успеха.
+    /// The count of consecutive failures; at the [`BACKGROUND_FAILURE_ALERT`](super::BACKGROUND_FAILURE_ALERT)
+    /// threshold we show a UI error once, then stay quiet until the first success.
     failures: u32,
 }
 
 impl Orchestrator {
-    /// Идёт ли фоновая задача этого вида (гейт «одна за раз»).
+    /// Is a background task of this kind running (the "one at a time" gate).
     pub(super) fn bg_running(&self, kind: BackgroundKind) -> bool {
         self.bg.get(&kind).is_some_and(|s| s.cancel.is_some())
     }
 
-    /// Фиксирует запуск: слот помечается активным (`cancel = Some`) и в статус-бар
-    /// уходит тихий индикатор «идёт …». Зовётся спавн-хвостами
+    /// Records a run: the slot is marked active (`cancel = Some`) and a quiet
+    /// "running …" indicator goes into the status bar. Called by the spawn tails of
     /// `maybe_auto_reflect`/`maybe_auto_consolidate`.
     pub(super) fn begin_bg(&mut self, kind: BackgroundKind, cancel: CancellationToken) {
         self.bg.entry(kind).or_default().cancel = Some(cancel);
@@ -41,16 +41,16 @@ impl Orchestrator {
             .send(AppEvent::BackgroundTask { kind, active: true });
     }
 
-    /// Общий обработчик исхода фоновой задачи (бывшие `handle_reflect_done`/
-    /// `handle_consolidate_done`): снимает флаг «идёт», гасит индикатор, ведёт серию
-    /// неудач (на пороге — одна ошибка в UI, наблюдаемость без спама). При успехе
-    /// **рефлексии** или **консолидации «модели себя»** дополнительно шлёт
-    /// `SelfModelChanged` (открытый экран `F3` перезапросит свежий снимок);
-    /// консолидация *заметок* — нет (меняет заметки, не «модель себя»). Инструменты
-    /// задачи уже записали изменения в `Storage`; чат/ленту это не трогает.
+    /// The shared background-task outcome handler (formerly `handle_reflect_done`/
+    /// `handle_consolidate_done`): clears the "running" flag, clears the indicator, tracks the
+    /// failure streak (at the threshold — one UI error, observability without spam). On success of
+    /// **reflection** or **self-model consolidation**, additionally sends
+    /// `SelfModelChanged` (an open `F3` screen re-requests a fresh snapshot);
+    /// *notes* consolidation doesn't (it changes notes, not the "self-model"). The task's
+    /// tools have already written the changes into `Storage`; this doesn't touch the chat/feed.
     pub(super) fn handle_bg_done(&mut self, kind: BackgroundKind, result: Result<(), String>) {
-        // Мутируем слот и вычисляем, нужна ли ошибка-оповещение, ДО отправки событий
-        // (заём `self.bg` не пересекается с `self.evt_tx` при отправке ниже).
+        // Mutate the slot and compute whether an error alert is needed BEFORE sending events
+        // (the borrow of `self.bg` doesn't overlap `self.evt_tx` in the send below).
         let alert = {
             let slot = self.bg.entry(kind).or_default();
             slot.cancel = None;
@@ -86,7 +86,7 @@ impl Orchestrator {
         }
     }
 
-    /// Отменяет все идущие фоновые задачи семейства (ветка `Quit`).
+    /// Cancels every running task in the family (the `Quit` branch).
     pub(super) fn cancel_all_bg(&self) {
         for slot in self.bg.values() {
             if let Some(token) = &slot.cancel {
@@ -95,15 +95,15 @@ impl Orchestrator {
         }
     }
 
-    /// Число подряд идущих неудач задачи (для тестов оповещения об ошибке).
+    /// The task's consecutive-failure count (for error-alert tests).
     #[cfg(test)]
     pub(super) fn bg_failures(&self, kind: BackgroundKind) -> u32 {
         self.bg.get(&kind).map_or(0, |s| s.failures)
     }
 }
 
-/// Человекочитаемая метка вида задачи (язык интерфейса, ось B) — из неё собираются
-/// тексты ошибок (**байт-в-байт** с прежними русскими формулировками).
+/// A human-readable label for the task kind (the interface language, axis B) — error
+/// texts are assembled from it (**byte-for-byte** with the previous Russian wording).
 fn kind_label(loc: &'static Locale, kind: BackgroundKind) -> &'static str {
     loc.t(match kind {
         BackgroundKind::Reflection => "ui.err.bg_reflection",

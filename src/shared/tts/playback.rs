@@ -1,18 +1,18 @@
-//! Воспроизведение синтезированной речи через `rodio` **в процессе приложения**.
+//! Playing synthesized speech via `rodio` **inside the application process**.
 //!
-//! Почему в процессе, а не сайдкар-плеером: нужна очередь источников с мгновенной
-//! отменой, а на Windows пригодного встроенного CLI-плеера нет (см.
-//! docs/research/tts.md §6). `Player::append` играет источники последовательно —
-//! отсюда бесплатно получается конвейер «синтезируем чанк N+1, пока играет N», а
-//! при опустошении очереди наступает тишина до следующего чанка.
+//! Why in-process rather than a sidecar player: an instantly cancellable
+//! source queue is needed, and Windows has no suitable built-in CLI player
+//! (see docs/research/tts.md §6). `Player::append` plays sources
+//! sequentially — this gives us, for free, a pipeline of "synthesizing chunk
+//! N+1 while N plays", with silence until the next chunk once the queue drains.
 //!
-//! Две TUI-ловушки, обе учтены здесь:
-//! 1. `log_on_drop(false)` — иначе rodio печатает в stderr **поверх TUI**;
-//! 2. на Linux сама libasound шумит в stderr при энумерации устройств (cpal#384) —
-//!    поэтому устройство открывается **лениво**, только по первой команде `/tts`
-//!    (а не на старте приложения), и ошибка открытия — это `Err`, а не паника
-//!    (headless/CI/машина без звуковой карты → мягкая деградация, как у
-//!    `UnavailableEmbedder`, ADR 0002).
+//! Two TUI pitfalls, both accounted for here:
+//! 1. `log_on_drop(false)` — otherwise rodio prints to stderr **over the TUI**;
+//! 2. on Linux libasound itself is noisy on stderr while enumerating devices
+//!    (cpal#384) — so the device is opened **lazily**, only on the first
+//!    `/tts` command (not at app startup), and an open failure is an `Err`,
+//!    not a panic (headless/CI/a machine with no sound card → graceful
+//!    degradation, like `UnavailableEmbedder`, ADR 0002).
 
 use std::io::Cursor;
 use std::num::NonZero;
@@ -22,26 +22,26 @@ use rodio::{DeviceSinkBuilder, MixerDeviceSink, Player};
 
 use super::AudioClip;
 
-/// Открытое аудио-устройство с очередью воспроизведения.
+/// An open audio device with a playback queue.
 ///
-/// Хэндл и плеер `Send + Sync` (cpal 0.17), поэтому живут прямо в фоновой
-/// tokio-задаче озвучивания — выделенный аудио-поток не нужен. При дропе
-/// устройство закрывается, очередь пропадает вместе с задачей.
+/// The handle and the player are `Send + Sync` (cpal 0.17), so they live
+/// right inside the speech background tokio task — no dedicated audio thread
+/// is needed. On drop the device closes, the queue vanishes along with the task.
 pub struct Playback {
-    /// Держим устройство живым: при его дропе звук прекращается.
+    /// Keeps the device alive: dropping it stops the sound.
     _sink: MixerDeviceSink,
     player: Player,
 }
 
 impl Playback {
-    /// Открывает устройство по умолчанию и заводит очередь.
+    /// Opens the default device and sets up the queue.
     ///
-    /// Возвращает `Err` (а не паникует), если звука нет: headless-окружение, CI,
-    /// отсутствующее/занятое устройство. Вызывающий показывает это заметкой.
+    /// Returns `Err` (rather than panicking) when there's no audio: a
+    /// headless environment, CI, a missing/busy device. The caller shows this as a note.
     pub fn open() -> Result<Self> {
         let mut sink = DeviceSinkBuilder::open_default_sink()
             .context("не удалось открыть аудио-устройство")?;
-        // Иначе rodio при дропе пишет в stderr, а его занимает TUI.
+        // Otherwise rodio writes to stderr on drop, and the TUI occupies it.
         sink.log_on_drop(false);
         let player = Player::connect_new(sink.mixer());
         Ok(Self {
@@ -50,7 +50,8 @@ impl Playback {
         })
     }
 
-    /// Ставит клип в конец очереди. Играть он начнёт, когда доиграют предыдущие.
+    /// Puts a clip at the end of the queue. It starts playing once the
+    /// previous ones finish.
     pub fn enqueue(&self, clip: AudioClip) -> Result<()> {
         match clip {
             AudioClip::Pcm {
@@ -58,7 +59,7 @@ impl Playback {
                 channels,
                 bytes,
             } => {
-                // Сырой PCM идёт мимо декодера: s16le → f32 и прямо в буфер.
+                // Raw PCM bypasses the decoder: s16le → f32 and straight into the buffer.
                 let samples = pcm_s16le_to_f32(&bytes);
                 if samples.is_empty() {
                     return Ok(());
@@ -80,39 +81,40 @@ impl Playback {
         Ok(())
     }
 
-    /// Сколько клипов ещё в очереди (включая играющий). По нему конвейер
-    /// придерживает синтез следующего чанка, чтобы не синтезировать всё вперёд.
+    /// How many clips are still queued (including the one playing). The
+    /// pipeline uses this to hold back synthesizing the next chunk, so it
+    /// doesn't synthesize everything ahead of time.
     pub fn queued(&self) -> usize {
         self.player.len()
     }
 
-    /// Всё ли проиграно (очередь пуста).
+    /// Whether everything has played (the queue is empty).
     pub fn is_drained(&self) -> bool {
         self.player.empty()
     }
 
-    /// Немедленно останавливает воспроизведение и очищает очередь.
+    /// Immediately stops playback and clears the queue.
     pub fn stop(&self) {
         self.player.clear();
     }
 
-    /// Приостанавливает воспроизведение, **сохраняя очередь** (в отличие от
-    /// [`stop`](Self::stop)). Звуковая карта перестаёт потреблять сэмплы; синтез
-    /// вперёд сам придерживается (очередь не дренится), а фоновая задача не
-    /// завершается (`is_drained` остаётся `false`). Идемпотентно.
+    /// Pauses playback, **keeping the queue** (unlike
+    /// [`stop`](Self::stop)). The sound card stops consuming samples;
+    /// synthesizing ahead holds itself back (the queue doesn't drain), and
+    /// the background task doesn't finish (`is_drained` stays `false`). Idempotent.
     pub fn pause(&self) {
         self.player.pause();
     }
 
-    /// Продолжает воспроизведение после [`pause`](Self::pause). Идемпотентно
-    /// (возобновление играющего плеера — no-op).
+    /// Resumes playback after [`pause`](Self::pause). Idempotent (resuming
+    /// an already-playing player is a no-op).
     pub fn resume(&self) {
         self.player.play();
     }
 }
 
-/// Знаковый 16-битный little-endian PCM → сэмплы `f32` в диапазоне −1.0…1.0
-/// (внутреннее представление rodio). Нечётный хвостовой байт отбрасывается.
+/// Signed 16-bit little-endian PCM → `f32` samples in the range −1.0…1.0
+/// (rodio's internal representation). An odd trailing byte is dropped.
 fn pcm_s16le_to_f32(bytes: &[u8]) -> Vec<f32> {
     bytes
         .chunks_exact(2)
@@ -126,7 +128,7 @@ mod tests {
 
     #[test]
     fn pcm_conversion_scales_and_drops_odd_tail() {
-        // 0 → 0.0; i16::MIN → −1.0; 16384 → 0.5. Нечётный хвост отбрасывается.
+        // 0 → 0.0; i16::MIN → −1.0; 16384 → 0.5. The odd tail is dropped.
         let bytes = [0x00, 0x00, 0x00, 0x80, 0x00, 0x40, 0x7f];
         let samples = pcm_s16le_to_f32(&bytes);
         assert_eq!(samples, vec![0.0, -1.0, 0.5]);
@@ -134,14 +136,14 @@ mod tests {
         assert!(pcm_s16le_to_f32(&[0x01]).is_empty());
     }
 
-    /// Живой смоук воспроизведения (нужна звуковая карта): синтезируем тон 440 Гц
-    /// в том же формате, что отдают облака (PCM s16le 24 кГц mono), ставим в
-    /// очередь и ждём, пока доиграет. Проверяет самый рискованный стык — PCM→rodio
-    /// (частота, знаковость, конверсия в f32) и то, что очередь реально
-    /// опустошается **в реальном времени**, а не мгновенно. Звучание (тон должен
-    /// быть слышен ~0.4 с) — ручная проверка.
+    /// A live playback smoke (needs a sound card): synthesize a 440 Hz tone
+    /// in the same format the clouds send (PCM s16le 24 kHz mono), queue it,
+    /// and wait for it to finish. Checks the riskiest seam — PCM→rodio
+    /// (sample rate, signedness, conversion to f32) — and that the queue
+    /// actually drains **in real time**, not instantly. The sound (the tone
+    /// should be audible for ~0.4s) — a manual check.
     #[test]
-    #[ignore = "требует звуковую карту (слышен короткий тон)"]
+    #[ignore = "requires a sound card (a short tone is audible)"]
     fn plays_generated_tone_live() {
         let rate = 24_000u32;
         let secs = 0.4f32;
@@ -153,7 +155,7 @@ mod tests {
             bytes.extend_from_slice(&((amp * i16::MAX as f32) as i16).to_le_bytes());
         }
 
-        let playback = Playback::open().expect("нужна звуковая карта");
+        let playback = Playback::open().expect("a sound card is required");
         let started = std::time::Instant::now();
         playback
             .enqueue(AudioClip::Pcm {
@@ -161,40 +163,38 @@ mod tests {
                 channels: 1,
                 bytes,
             })
-            .expect("PCM должен приниматься очередью");
-        assert_eq!(playback.queued(), 1, "клип встал в очередь");
+            .expect("PCM should be accepted by the queue");
+        assert_eq!(playback.queued(), 1, "the clip is queued");
         while !playback.is_drained() && started.elapsed() < std::time::Duration::from_secs(5) {
             std::thread::sleep(std::time::Duration::from_millis(20));
         }
         let elapsed = started.elapsed();
-        assert!(
-            playback.is_drained(),
-            "очередь должна опустеть: {elapsed:?}"
-        );
-        // Проигрывание идёт в реальном времени: не мгновенно и не бесконечно.
+        assert!(playback.is_drained(), "the queue should drain: {elapsed:?}");
+        // Playback runs in real time: neither instant nor endless.
         assert!(
             elapsed >= std::time::Duration::from_millis(300),
-            "клип проигран слишком быстро ({elapsed:?}) — вероятно, ушёл в никуда"
+            "the clip played too fast ({elapsed:?}) — it likely went nowhere"
         );
-        eprintln!("тон 440 Гц проигран за {elapsed:?} (ожидалось ~{secs} с)");
+        eprintln!("440 Hz tone played in {elapsed:?} (expected ~{secs}s)");
     }
 
-    /// В CI/headless звука нет — важно, что открытие устройства возвращает
-    /// **ошибку, а не панику** (мягкая деградация). На машине со звуком
-    /// устройство открывается и очередь стартует пустой; оба исхода допустимы.
+    /// There's no audio in CI/headless — it's important that opening the
+    /// device returns an **error, not a panic** (graceful degradation). On a
+    /// machine with sound the device opens and the queue starts empty; both
+    /// outcomes are acceptable.
     #[test]
     fn open_degrades_gracefully_without_audio_device() {
         match Playback::open() {
             Ok(p) => {
-                assert!(p.is_drained(), "новая очередь пуста");
+                assert!(p.is_drained(), "a fresh queue is empty");
                 assert_eq!(p.queued(), 0);
-                // Пустой клип не ставится в очередь и не роняет плеер.
+                // An empty clip isn't queued and doesn't crash the player.
                 p.enqueue(AudioClip::Encoded(Vec::new())).unwrap();
                 p.stop();
             }
             Err(err) => {
                 let msg = err.to_string();
-                assert!(!msg.is_empty(), "ошибка должна быть объяснимой");
+                assert!(!msg.is_empty(), "the error should be explainable");
             }
         }
     }

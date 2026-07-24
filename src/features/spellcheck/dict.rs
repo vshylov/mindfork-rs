@@ -1,10 +1,10 @@
-//! Загрузка Hunspell-словарей (`spellbook`) из каталога `dictionaries/` и
-//! персонального словаря. См. spec §11.5.
+//! Loads Hunspell dictionaries (`spellbook`) from the `dictionaries/` directory and
+//! the personal dictionary. See spec §11.5.
 //!
-//! Каталог сканируется на пары `*.aff` + `*.dic` с общим именем (`en_US.aff` +
-//! `en_US.dic`). Каждая успешно загруженная пара — отдельный словарь; битые
-//! пропускаются с записью в лог (спелл-чек деградирует, не падает). Загрузка
-//! тяжёлая (парсинг `.dic`) — вызывается в фоновом потоке (см. `main.rs`).
+//! The directory is scanned for `*.aff` + `*.dic` pairs sharing a name (`en_US.aff` +
+//! `en_US.dic`). Each successfully loaded pair is a separate dictionary; corrupt ones
+//! are skipped with a log entry (spellcheck degrades, doesn't crash). Loading is
+//! heavy (parsing `.dic`) — called from a background thread (see `main.rs`).
 
 use std::collections::HashSet;
 use std::fs;
@@ -14,21 +14,21 @@ use spellbook::Dictionary;
 
 use super::check::SpellChecker;
 
-/// Загружает словари и персональный словарь из `personal_path` согласно настройкам
-/// интерфейса (spec §11.6):
-/// - `enabled = false` → словари не грузятся (вернётся отключённый чекер);
-/// - `selected` непуст → грузятся только пары с базовым именем из списка
-///   (`en_US`/`ru_RU`/…); пустой `selected` → все найденные.
+/// Loads dictionaries and the personal dictionary from `personal_path` per the interface
+/// settings (spec §11.6):
+/// - `enabled = false` → dictionaries aren't loaded (a disabled checker is returned);
+/// - a non-empty `selected` → only pairs with a base name from the list are loaded
+///   (`en_US`/`ru_RU`/…); an empty `selected` → all found ones.
 ///
-/// Словари ищутся сперва в `dict_dir` (корень данных), затем в `bundled_dir` —
-/// портативной раскладке рядом с бинарником, куда инсталлятор/пакет кладёт словари при
-/// не-портативном режиме хранения (П1, §4.2 installers.md). Пара, чьё базовое имя уже
-/// загружено из `dict_dir`, из `bundled_dir` **не** перегружается (пользовательский
-/// словарь того же имени выигрывает). В портативном режиме `bundled_dir` совпадает с
-/// `dict_dir` — второй проход ничего не добавляет (все имена уже загружены).
+/// Dictionaries are looked up first in `dict_dir` (the data root), then in `bundled_dir` —
+/// the portable layout next to the binary, where the installer/package puts dictionaries in
+/// non-portable storage mode (P1, §4.2 installers.md). A pair whose base name is already
+/// loaded from `dict_dir` is **not** reloaded from `bundled_dir` (a user
+/// dictionary of the same name wins). In portable mode `bundled_dir` matches
+/// `dict_dir` — the second pass adds nothing (all names are already loaded).
 ///
-/// Отсутствие каталога/файлов — не ошибка (отключённый чекер). Загрузка тяжёлая
-/// (парсинг `.dic`) — вызывается в фоновом потоке (см. `app/runtime.rs`).
+/// A missing directory/files is not an error (a disabled checker). Loading is heavy
+/// (parsing `.dic`) — called from a background thread (see `app/runtime.rs`).
 pub fn load(
     dict_dir: &Path,
     bundled_dir: Option<&Path>,
@@ -38,10 +38,10 @@ pub fn load(
 ) -> SpellChecker {
     let mut dicts = Vec::new();
     if !enabled {
-        tracing::info!("спелл-чек выключен в настройках — словари не загружаются");
+        tracing::info!("spellcheck disabled in settings — dictionaries aren't loaded");
     } else {
-        // Уже загруженные базовые имена — чтобы `bundled_dir` не дублировал словарь,
-        // взятый из `dict_dir` (и не перегружал один и тот же в портативном режиме).
+        // Already-loaded base names — so `bundled_dir` doesn't duplicate a dictionary
+        // taken from `dict_dir` (and doesn't reload the same one in portable mode).
         let mut loaded = HashSet::new();
         load_dir(dict_dir, selected, &mut loaded, &mut dicts);
         if let Some(bundled) = bundled_dir
@@ -55,8 +55,8 @@ pub fn load(
     SpellChecker::new(dicts, personal, Some(personal_path.to_path_buf()))
 }
 
-/// Загружает пары `*.aff`/`*.dic` из одного каталога, пропуская базовые имена, уже
-/// присутствующие в `loaded` (и добавляя загруженные туда же). Фильтрует по `selected`.
+/// Loads `*.aff`/`*.dic` pairs from one directory, skipping base names already
+/// present in `loaded` (and adding loaded ones to it). Filters by `selected`.
 fn load_dir(
     dir: &Path,
     selected: &[String],
@@ -70,12 +70,12 @@ fn load_dir(
                 if aff.extension().and_then(|e| e.to_str()) != Some("aff") {
                     continue;
                 }
-                // Фильтр по выбранным словарям (по базовому имени файла).
+                // Filter by the selected dictionaries (by the file's base name).
                 let stem = aff.file_stem().and_then(|s| s.to_str()).unwrap_or_default();
                 if !selected.is_empty() && !selected.iter().any(|s| s == stem) {
                     continue;
                 }
-                // Имя уже загружено (из приоритетного каталога) — не перегружаем.
+                // The name is already loaded (from a higher-priority directory) — don't reload it.
                 if loaded.contains(stem) {
                     continue;
                 }
@@ -85,34 +85,35 @@ fn load_dir(
                 }
                 match load_pair(&aff, &dic) {
                     Ok(dict) => {
-                        tracing::info!(dict = %aff.display(), "словарь загружен");
+                        tracing::info!(dict = %aff.display(), "dictionary loaded");
                         loaded.insert(stem.to_string());
                         dicts.push(dict);
                     }
                     Err(err) => {
-                        tracing::warn!(dict = %aff.display(), error = %err, "словарь пропущен");
+                        tracing::warn!(dict = %aff.display(), error = %err, "dictionary skipped");
                     }
                 }
             }
         }
         Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
-            tracing::info!(dir = %dir.display(), "каталог словарей отсутствует");
+            tracing::info!(dir = %dir.display(), "dictionary directory is missing");
         }
         Err(err) => {
-            tracing::warn!(dir = %dir.display(), error = %err, "не удалось прочитать каталог словарей");
+            tracing::warn!(dir = %dir.display(), error = %err, "failed to read the dictionary directory");
         }
     }
 }
 
-/// Загружает одну пару `.aff`/`.dic`.
+/// Loads a single `.aff`/`.dic` pair.
 fn load_pair(aff: &Path, dic: &Path) -> anyhow::Result<Dictionary> {
     let aff_text = fs::read_to_string(aff)?;
     let dic_text = fs::read_to_string(dic)?;
-    Dictionary::new(&aff_text, &dic_text).map_err(|e| anyhow::anyhow!("разбор словаря: {e}"))
+    Dictionary::new(&aff_text, &dic_text)
+        .map_err(|e| anyhow::anyhow!("dictionary parse error: {e}"))
 }
 
-/// Читает персональный словарь (по слову на строку; пустые и `#`-комментарии
-/// игнорируются). Отсутствие файла — пустой набор.
+/// Reads the personal dictionary (one word per line; empty lines and `#`
+/// comments are ignored). A missing file — an empty set.
 pub fn load_personal(path: &Path) -> HashSet<String> {
     let mut set = HashSet::new();
     if let Ok(text) = fs::read_to_string(path) {
@@ -126,7 +127,7 @@ pub fn load_personal(path: &Path) -> HashSet<String> {
     set
 }
 
-/// Дописывает слово в файл персонального словаря (создаёт при необходимости).
+/// Appends a word to the personal dictionary file (creating it if needed).
 pub fn append_personal(path: &Path, word: &str) -> std::io::Result<()> {
     use std::io::Write;
     if let Some(parent) = path.parent() {
@@ -143,7 +144,7 @@ pub fn append_personal(path: &Path, word: &str) -> std::io::Result<()> {
 mod tests {
     use super::*;
 
-    /// Крошечный английский словарь для тестов (формат Hunspell).
+    /// A tiny English dictionary for tests (Hunspell format).
     const AFF: &str = "SET UTF-8\n";
     const DIC: &str = "3\nhello\nworld\ncat\n";
 
@@ -176,7 +177,7 @@ mod tests {
     #[test]
     fn aff_without_dic_is_skipped() {
         let dir = tempfile::tempdir().unwrap();
-        write(dir.path(), "en.aff", AFF); // нет en.dic
+        write(dir.path(), "en.aff", AFF); // no en.dic
         let checker = load_all(dir.path());
         assert!(!checker.is_enabled());
     }
@@ -186,7 +187,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         write(dir.path(), "en.aff", AFF);
         write(dir.path(), "en.dic", DIC);
-        // enabled = false → словари не грузятся, чекер выключен.
+        // enabled = false → dictionaries aren't loaded, the checker is off.
         let checker = load(
             dir.path(),
             None,
@@ -204,7 +205,7 @@ mod tests {
         write(dir.path(), "en_US.dic", DIC);
         write(dir.path(), "ru_RU.aff", AFF);
         write(dir.path(), "ru_RU.dic", "1\nпривет\n");
-        // Выбран только en_US → ru_RU не загружается.
+        // Only en_US is selected → ru_RU isn't loaded.
         let checker = load(
             dir.path(),
             None,
@@ -212,14 +213,14 @@ mod tests {
             true,
             &["en_US".to_string()],
         );
-        assert!(checker.check_word("hello")); // из en_US
-        assert!(!checker.check_word("привет")); // ru_RU не загружен
+        assert!(checker.check_word("hello")); // from en_US
+        assert!(!checker.check_word("привет")); // ru_RU isn't loaded
     }
 
     #[test]
     fn bundled_dir_supplies_missing_dictionaries() {
-        // Корень данных (system-режим) пуст, словари лежат рядом с бинарником — берём
-        // их из bundled-каталога (П1).
+        // The data root (system mode) is empty, dictionaries sit next to the binary — take
+        // them from the bundled directory (P1).
         let data = tempfile::tempdir().unwrap();
         let bundled = tempfile::tempdir().unwrap();
         write(bundled.path(), "en.aff", AFF);
@@ -237,12 +238,12 @@ mod tests {
 
     #[test]
     fn data_dir_dictionary_wins_over_bundled() {
-        // Одноимённый словарь есть и в корне данных, и рядом с бинарником — берётся из
-        // корня данных (пользовательский приоритетнее вшитого); дубля нет.
+        // A same-named dictionary exists both in the data root and next to the binary — the
+        // data-root one is used (a user dictionary outranks a bundled one); no duplicate.
         let data = tempfile::tempdir().unwrap();
         let bundled = tempfile::tempdir().unwrap();
         write(data.path(), "en.aff", AFF);
-        write(data.path(), "en.dic", "1\nhello\n"); // только hello
+        write(data.path(), "en.dic", "1\nhello\n"); // only hello
         write(bundled.path(), "en.aff", AFF);
         write(bundled.path(), "en.dic", DIC); // hello/world/cat
         let checker = load(
@@ -253,7 +254,7 @@ mod tests {
             &[],
         );
         assert!(checker.check_word("hello"));
-        // "world" есть только в bundled-версии — раз выиграл словарь корня, его нет.
+        // "world" only exists in the bundled version — since the root's dictionary won, it's absent.
         assert!(!checker.check_word("world"));
     }
 

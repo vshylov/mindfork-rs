@@ -1,7 +1,7 @@
-//! Клиент озвучивания по протоколу OpenAI `POST /v1/audio/speech`. Обслуживает
-//! **два** режима: облако OpenAI и любой сторонний OpenAI-совместимый TTS-сервер
-//! (Kokoro-FastAPI, speaches, LocalAI, …) — различаются base URL, ключом и
-//! запрашиваемым форматом ответа. См. docs/research/tts.md §3.1, §3.4.
+//! The speech client for the OpenAI `POST /v1/audio/speech` protocol. Serves
+//! **two** modes: the OpenAI cloud and any third-party OpenAI-compatible TTS
+//! server (Kokoro-FastAPI, speaches, LocalAI, …) — they differ in base URL, key,
+//! and the requested response format. See docs/research/tts.md §3.1, §3.4.
 
 use anyhow::{Context, Result};
 use serde::Serialize;
@@ -9,35 +9,36 @@ use tokio_util::sync::CancellationToken;
 
 use super::{AudioClip, TtsEngine, error_body};
 
-/// Потолок длины `input` у OpenAI (символов) — жёсткий лимит API.
+/// The ceiling on `input` length for OpenAI (characters) — a hard API limit.
 const OPENAI_MAX_INPUT_CHARS: usize = 4096;
-/// Консервативный потолок для стороннего сервера: лимиты у всех свои и обычно не
-/// документированы, а короткий чанк ещё и быстрее даёт первый звук.
+/// A conservative ceiling for a third-party server: every one has its own
+/// limits, usually undocumented, and a short chunk also gives the first sound sooner.
 const EXTERNAL_MAX_INPUT_CHARS: usize = 2000;
 
-/// Частота дискретизации сырого PCM у OpenAI (`response_format:"pcm"`): 24 кГц,
-/// s16le, mono — задокументировано, в ответе не сообщается.
+/// The sample rate of raw PCM from OpenAI (`response_format:"pcm"`): 24 kHz,
+/// s16le, mono — documented, not reported in the response.
 const OPENAI_PCM_RATE: u32 = 24_000;
 
-/// Клиент `/v1/audio/speech`.
+/// A `/v1/audio/speech` client.
 pub struct OpenAiTts {
     http: reqwest::Client,
-    /// Базовый URL с суффиксом `/v1`.
+    /// The base URL with the `/v1` suffix.
     base_url: String,
     api_key: Option<String>,
     model: Option<String>,
     voice: Option<String>,
-    /// Указания по тону/языку/скорости (только облако OpenAI).
+    /// Instructions on tone/language/speed (OpenAI cloud only).
     instructions: Option<String>,
     speed: f32,
-    /// Запрашиваемый формат ответа: `pcm` у облака (мимо декодера) / `wav` у
-    /// стороннего сервера (самый переносимый — у части серверов единственный).
+    /// The requested response format: `pcm` for the cloud (bypassing a
+    /// decoder) / `wav` for a third-party server (the most portable — the
+    /// only one some servers support).
     response_format: &'static str,
     max_input_chars: usize,
 }
 
 impl OpenAiTts {
-    /// Облако OpenAI: ключ обязателен, просим сырой PCM.
+    /// The OpenAI cloud: a key is required, we ask for raw PCM.
     pub fn cloud(
         base_url: String,
         api_key: String,
@@ -59,8 +60,9 @@ impl OpenAiTts {
         }
     }
 
-    /// Сторонний OpenAI-совместимый сервер: всё, кроме URL, опционально; просим
-    /// `wav`. `instructions` не шлём — их поддерживает только облако OpenAI.
+    /// A third-party OpenAI-compatible server: everything but the URL is
+    /// optional; we ask for `wav`. We don't send `instructions` — only the
+    /// OpenAI cloud supports it.
     pub fn external(
         base_url: String,
         api_key: Option<String>,
@@ -81,8 +83,9 @@ impl OpenAiTts {
         }
     }
 
-    /// Тело запроса. Незаданное не отправляется (`skip_serializing_if`): у сторонних
-    /// серверов набор поддержанных полей разный, лишнее поле может быть отвергнуто.
+    /// The request body. An unset value isn't sent (`skip_serializing_if`):
+    /// third-party servers support different field sets, and an extra field
+    /// might be rejected.
     fn body<'a>(&'a self, text: &'a str) -> SpeechRequest<'a> {
         SpeechRequest {
             model: self.model.as_deref(),
@@ -90,9 +93,9 @@ impl OpenAiTts {
             voice: self.voice.as_deref(),
             instructions: self.instructions.as_deref(),
             response_format: self.response_format,
-            // Скорость шлём только когда она отличается от обычной. У
-            // `gpt-4o-mini-tts` поле де-факто игнорируется (известный дефект) —
-            // там скорость просят словами в `instructions`.
+            // We only send speed when it differs from normal. For
+            // `gpt-4o-mini-tts` the field is effectively ignored (a known
+            // defect) — there speed is requested via words in `instructions`.
             speed: (self.speed != 1.0).then_some(self.speed),
         }
     }
@@ -173,8 +176,8 @@ mod tests {
         assert_eq!(v["voice"], "marin");
         assert_eq!(v["response_format"], "pcm");
         assert_eq!(v["instructions"], "говори по-русски, спокойно");
-        // Обычная скорость не отправляется вовсе.
-        assert!(v.get("speed").is_none(), "speed=1.0 не шлём: {v}");
+        // A normal speed isn't sent at all.
+        assert!(v.get("speed").is_none(), "speed=1.0 isn't sent: {v}");
         assert_eq!(e.max_input_chars(), OPENAI_MAX_INPUT_CHARS);
     }
 
@@ -184,25 +187,25 @@ mod tests {
         let v = json_of(&e, "текст");
         assert_eq!(v["response_format"], "wav");
         assert_eq!(v["speed"], 1.25);
-        // Незаданные поля не отправляются: у сторонних серверов свои наборы.
-        assert!(v.get("model").is_none(), "model не шлём: {v}");
-        assert!(v.get("voice").is_none(), "voice не шлём: {v}");
+        // Unset fields aren't sent: third-party servers have their own field sets.
+        assert!(v.get("model").is_none(), "model isn't sent: {v}");
+        assert!(v.get("voice").is_none(), "voice isn't sent: {v}");
         assert!(
             v.get("instructions").is_none(),
-            "instructions — только облако OpenAI: {v}"
+            "instructions — OpenAI cloud only: {v}"
         );
-        // Хвостовой слэш URL снят (иначе получилось бы `//audio/speech`).
+        // The URL's trailing slash is stripped (otherwise it would end up `//audio/speech`).
         assert_eq!(e.base_url, "http://127.0.0.1:8880/v1");
         assert_eq!(e.max_input_chars(), EXTERNAL_MAX_INPUT_CHARS);
     }
 
-    /// Живой смоук облака OpenAI: синтез короткой фразы (без воспроизведения).
-    /// Требует `MINDFORK_OPENAI_KEY`; без неё тихо пропускается.
+    /// A live OpenAI-cloud smoke: synthesizing a short phrase (no playback).
+    /// Requires `MINDFORK_OPENAI_KEY`; silently skipped without it.
     #[tokio::test]
-    #[ignore = "требует ключ OpenAI (MINDFORK_OPENAI_KEY)"]
+    #[ignore = "requires an OpenAI key (MINDFORK_OPENAI_KEY)"]
     async fn openai_synthesizes_russian_speech_live() {
         let Ok(key) = std::env::var("MINDFORK_OPENAI_KEY") else {
-            eprintln!("MINDFORK_OPENAI_KEY не задан — смоук пропущен");
+            eprintln!("MINDFORK_OPENAI_KEY not set — smoke skipped");
             return;
         };
         let e = OpenAiTts::cloud(
@@ -220,7 +223,7 @@ mod tests {
                 &CancellationToken::new(),
             )
             .await
-            .expect("синтез должен пройти");
+            .expect("synthesis should succeed");
         match clip {
             AudioClip::Pcm {
                 sample_rate,
@@ -229,25 +232,25 @@ mod tests {
             } => {
                 assert_eq!(sample_rate, OPENAI_PCM_RATE);
                 assert_eq!(channels, 1);
-                eprintln!("получено PCM: {} байт", bytes.len());
-                assert!(bytes.len() > 10_000, "клип подозрительно короткий");
+                eprintln!("received PCM: {} bytes", bytes.len());
+                assert!(bytes.len() > 10_000, "the clip is suspiciously short");
             }
             AudioClip::Encoded(bytes) => {
                 panic!(
-                    "облако OpenAI должно отдавать сырой PCM, получен контейнер ({} байт)",
+                    "the OpenAI cloud should return raw PCM, got a container ({} bytes)",
                     bytes.len()
                 )
             }
         }
     }
 
-    /// Живой смоук стороннего OpenAI-совместимого сервера (Kokoro-FastAPI, speaches,
-    /// LocalAI…). Требует `MINDFORK_TTS_URL` (например `http://127.0.0.1:8880/v1`).
+    /// A live smoke of a third-party OpenAI-compatible server (Kokoro-FastAPI,
+    /// speaches, LocalAI…). Requires `MINDFORK_TTS_URL` (e.g. `http://127.0.0.1:8880/v1`).
     #[tokio::test]
-    #[ignore = "требует локальный TTS-сервер (MINDFORK_TTS_URL)"]
+    #[ignore = "requires a local TTS server (MINDFORK_TTS_URL)"]
     async fn external_server_synthesizes_live() {
         let Ok(url) = std::env::var("MINDFORK_TTS_URL") else {
-            eprintln!("MINDFORK_TTS_URL не задан — смоук пропущен");
+            eprintln!("MINDFORK_TTS_URL not set — smoke skipped");
             return;
         };
         let e = OpenAiTts::external(
@@ -260,14 +263,14 @@ mod tests {
         let clip = e
             .synthesize("Проверка озвучивания.", &CancellationToken::new())
             .await
-            .expect("синтез должен пройти");
+            .expect("synthesis should succeed");
         match clip {
             AudioClip::Encoded(bytes) => {
-                eprintln!("получено wav: {} байт", bytes.len());
-                assert!(bytes.len() > 1000, "клип подозрительно короткий");
+                eprintln!("received wav: {} bytes", bytes.len());
+                assert!(bytes.len() > 1000, "the clip is suspiciously short");
             }
             AudioClip::Pcm { bytes, .. } => panic!(
-                "сторонний сервер должен отдавать контейнер, получен сырой PCM ({} байт)",
+                "the third-party server should return a container, got raw PCM ({} bytes)",
                 bytes.len()
             ),
         }

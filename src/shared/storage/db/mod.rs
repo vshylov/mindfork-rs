@@ -121,8 +121,9 @@ fn read_user_version(conn: &Connection) -> Result<u32> {
 }
 
 fn set_user_version(conn: &Connection, v: u32) -> Result<()> {
-    // `PRAGMA user_version = N` не принимает связанный параметр — форматируем (v: u32,
-    // инъекция невозможна). Внутри транзакции изменение атомарно с ней.
+    // `PRAGMA user_version = N` doesn't accept a bound parameter — we format
+    // it in (v: u32, injection is impossible). Inside a transaction the
+    // change is atomic with it.
     conn.execute_batch(&format!("PRAGMA user_version = {v};"))?;
     Ok(())
 }
@@ -322,7 +323,7 @@ mod migrate_tests {
         let db = Db::open_in_memory().unwrap();
         let conn = db.conn.lock().unwrap();
         assert_eq!(read_user_version(&conn).unwrap(), DB_SCHEMA);
-        // Схема применена (одна из таблиц baseline есть).
+        // The schema was applied (one of the baseline tables exists).
         assert!(table_exists(&conn, "notes"));
     }
 
@@ -349,7 +350,7 @@ mod migrate_tests {
 
     #[test]
     fn no_pending_step_migration_at_v1() {
-        // Реестр DB_STEPS пуст — реальных миграций (кроме baseline) нет.
+        // The DB_STEPS registry is empty — there are no real migrations (besides baseline).
         assert!(!needs_step_migration(0));
         assert!(!needs_step_migration(1));
     }
@@ -362,13 +363,13 @@ mod migrate_tests {
         }
         fn bad(c: &Connection) -> Result<()> {
             c.execute_batch("CREATE TABLE t_bad(x)")?;
-            bail!("умышленный сбой шага");
+            bail!("deliberate step failure");
         }
 
         let mut conn = Connection::open_in_memory().unwrap();
         set_user_version(&conn, 1).unwrap();
 
-        // Успешный шаг: таблица создана, версия = 2.
+        // A successful step: the table is created, version = 2.
         apply_db_steps(
             &mut conn,
             &[DbStep {
@@ -382,7 +383,7 @@ mod migrate_tests {
         assert_eq!(read_user_version(&conn).unwrap(), 2);
         assert!(table_exists(&conn, "t_ok"));
 
-        // Падающий шаг: полный откат — таблицы нет, версия прежняя.
+        // A failing step: a full rollback — no table, the version is unchanged.
         let res = apply_db_steps(
             &mut conn,
             &[DbStep {

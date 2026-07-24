@@ -1,14 +1,15 @@
-//! Сайдкар-песочница Python на **Wasmer/WASIX**. Отдельный процесс `wasmer`
-//! (бандленный рядом с приложением, в `data/sandbox/`), исполняющий код в
-//! WASM-изоляции: у гостя нет доступа к хост-ФС (видит только смонтированное), сеть —
-//! по явному флагу `--net`. Прерывание — kill процесса (чисто и быстро, проверено
-//! в Фазе 0). См. [docs/research/python-wasmer-sandbox.md](../../docs/research/python-wasmer-sandbox.md)
-//! (решение §9.7: сайдкар `wasmer` за этим контрактом, а не embed V8 в dll).
+//! Python sidecar sandbox on **Wasmer/WASIX**. A separate `wasmer` process
+//! (bundled next to the application, in `data/sandbox/`) that runs the code in
+//! WASM isolation: the guest has no access to the host FS (it only sees what's
+//! mounted), network — via the explicit `--net` flag. Interruption — killing the
+//! process (clean and fast, verified in Phase 0). See
+//! [docs/research/python-wasmer-sandbox.md](../../docs/research/python-wasmer-sandbox.md)
+//! (decision §9.7: a `wasmer` sidecar behind this contract, rather than embedding V8 in a dll).
 //!
-//! Слой `shared` (FSD): контракт [`SandboxRunner`] за трейтом (mock в тестах —
-//! паттерн `EngineBackend`); реальная реализация [`WasmerSandbox`] строит команду и
-//! запускает бинарь. Инструмент `python_exec` (`features/tools/python.rs`)
-//! использует этот контракт.
+//! The `shared` layer (FSD): the [`SandboxRunner`] contract behind a trait (mock in
+//! tests — the `EngineBackend` pattern); the real implementation [`WasmerSandbox`]
+//! builds the command and launches the binary. The `python_exec` tool
+//! (`features/tools/python.rs`) uses this contract.
 
 use std::ffi::{OsStr, OsString};
 use std::path::{Path, PathBuf};
@@ -22,29 +23,29 @@ use uuid::Uuid;
 
 use crate::shared::i18n::Locale;
 
-/// Имя бинаря `wasmer` в каталоге песочницы (по платформе).
+/// The `wasmer` binary's name in the sandbox directory (per platform).
 const WASMER_BIN: &str = if cfg!(windows) {
     "wasmer.exe"
 } else {
     "wasmer"
 };
-/// Пакет CPython по умолчанию, если локального `python.webc` нет (скачивается
-/// `wasmer` из реестра при первом запуске; Фаза 2 кладёт его в `data/sandbox/`).
+/// The default CPython package if there's no local `python.webc` (`wasmer`
+/// downloads it from the registry on first launch; Phase 2 puts it into `data/sandbox/`).
 const DEFAULT_PYTHON_PKG: &str = "python/python";
-/// Гостевая точка монтирования рабочего каталога (со скриптом задачи).
+/// The guest mount point of the working directory (holding the task script).
 const GUEST_WORK: &str = "/w";
-/// Гостевая точка монтирования `site-packages` (предустановленные пакеты).
+/// The guest mount point of `site-packages` (preinstalled packages).
 const GUEST_SITE: &str = "/sp";
-/// Переменная окружения: путь/имя бинаря `wasmer` (override поиска).
+/// Environment variable: the path/name of the `wasmer` binary (a lookup override).
 const ENV_WASMER: &str = "MINDFORK_SANDBOX_WASMER";
-/// Переменная окружения: путь к `python.webc` или ссылка на пакет (override).
+/// Environment variable: the path to `python.webc` or a package reference (an override).
 const ENV_PYTHON: &str = "MINDFORK_SANDBOX_PYTHON";
 
-/// Шим, подмешиваемый перед пользовательским кодом: глушит неподдержанные в
-/// WASIX опции сокета. Без него `http.client`/`urllib`/`requests` падают — WASIX не
-/// реализует `setsockopt(TCP_NODELAY)` и бросает `EINVAL`, а http-клиенты его всегда
-/// ставят (находка Фазы 0, §9.3). Обёрнуто в функцию, чтобы не сорить именами в
-/// глобальном пространстве пользовательского кода.
+/// A shim mixed in ahead of the user's code: mutes socket options unsupported
+/// under WASIX. Without it `http.client`/`urllib`/`requests` fail — WASIX doesn't
+/// implement `setsockopt(TCP_NODELAY)` and throws `EINVAL`, and HTTP clients always
+/// set it (a Phase 0 finding, §9.3). Wrapped in a function so as not to clutter
+/// the user code's global namespace with names.
 const SETSOCKOPT_SHIM: &str = "\
 def _mf_patch_socket():
     import socket
@@ -58,41 +59,43 @@ def _mf_patch_socket():
 _mf_patch_socket()
 ";
 
-/// Сырой результат исполнения кода в песочнице (форматирование — на стороне
-/// инструмента, чтобы совпадать с локальным режимом).
+/// The raw result of running code in the sandbox (formatting is the tool's
+/// job, so it matches the local mode).
 #[derive(Debug, Clone, PartialEq)]
 pub struct SandboxOutput {
     pub stdout: String,
     pub stderr: String,
-    /// Код возврата процесса (`None` — не завершился нормально/убит).
+    /// The process's exit code (`None` — didn't exit normally / was killed).
     pub exit_code: Option<i32>,
-    /// Исполнение прервано по таймауту (процесс убит).
+    /// Execution was interrupted by a timeout (the process was killed).
     pub timed_out: bool,
 }
 
-/// Готовность песочницы к запуску (дёшево, без запуска процесса).
+/// The sandbox's readiness to launch (cheap, without starting a process).
 #[derive(Debug, Clone, PartialEq)]
 pub enum SandboxAvailability {
-    /// Бинарь `wasmer` найден — можно запускать.
+    /// The `wasmer` binary was found — ready to launch.
     Ready,
-    /// Не установлена/не найдена — человекочитаемая причина (уходит модели).
+    /// Not installed/not found — a human-readable reason (goes to the model).
     Missing(String),
 }
 
-/// Запуск кода в изолированной песочнице. За трейтом — ради mock в тестах
-/// (`features/tools/python.rs`) и заменяемости реализации.
+/// Running code in an isolated sandbox. Behind a trait — for a mock in tests
+/// (`features/tools/python.rs`) and swappable implementations.
 #[async_trait::async_trait]
 pub trait SandboxRunner: Send + Sync {
-    /// Проверка готовности (наличие бинаря `wasmer`). Без запуска процесса. `loc` —
-    /// язык причины недоступности (её показывает вызывающий: `python_exec` — на языке
-    /// профиля, ось A; warmup провизии — на языке интерфейса).
+    /// A readiness check (whether the `wasmer` binary is present). Without
+    /// starting a process. `loc` — the language of the unavailability reason
+    /// (shown by the caller: `python_exec` — the profile's language, axis A;
+    /// provisioning's warmup — the interface language).
     fn availability(&self, loc: &Locale) -> SandboxAvailability;
 
-    /// Исполнить `code` (Python) в песочнице с сетью `net` и таймаутом `timeout`.
-    /// По таймауту процесс убивается, возвращается `timed_out = true`. Ошибка —
-    /// только на уровне запуска процесса (не на ненулевом коде возврата гостя). `loc` —
-    /// язык текста ошибки (её встраивает вызывающий: `python_exec` — язык профиля,
-    /// warmup — язык интерфейса).
+    /// Runs `code` (Python) in the sandbox with network access `net` and a
+    /// `timeout`. On timeout the process is killed and `timed_out = true` is
+    /// returned. An error occurs only at the process-launch level (not on a
+    /// nonzero guest exit code). `loc` — the language of the error text
+    /// (embedded by the caller: `python_exec` — the profile's language,
+    /// warmup — the interface language).
     async fn run(
         &self,
         code: &str,
@@ -102,23 +105,24 @@ pub trait SandboxRunner: Send + Sync {
     ) -> Result<SandboxOutput>;
 }
 
-/// Реальная песочница: драйвит бандленный `wasmer` как дочерний процесс.
+/// The real sandbox: drives the bundled `wasmer` as a child process.
 pub struct WasmerSandbox {
-    /// Каталог песочницы (`data/sandbox/`): `wasmer[.exe]`, `python.webc`,
-    /// `site-packages/`. `None` — только через env-override (тесты/дефолт).
+    /// The sandbox directory (`data/sandbox/`): `wasmer[.exe]`, `python.webc`,
+    /// `site-packages/`. `None` — only through an env-override (tests/default).
     dir: Option<PathBuf>,
-    /// Гейт «одна задача за раз» (одно разрешение). Защита от утечки процессов/
-    /// потоков и предсказуемая нагрузка: параллельный вызов сразу отклоняется.
-    /// В штатном agentic-loop вызовы и так последовательны — это защита в глубину.
+    /// The "one task at a time" gate (a single permit). Protection against
+    /// process/thread leaks and predictable load: a concurrent call is
+    /// rejected immediately. In the normal agentic loop, calls are already
+    /// sequential anyway — this is defense in depth.
     gate: Arc<Semaphore>,
-    /// Жёсткий лимит памяти процесса (МБ; `None` — без лимита). Применяется только
-    /// на Windows (Job Object). См. [`WasmerSandbox::with_memory_limit`].
+    /// A hard process memory limit (MB; `None` — no limit). Applied only on
+    /// Windows (a Job Object). See [`WasmerSandbox::with_memory_limit`].
     memory_mb: Option<u64>,
 }
 
 impl WasmerSandbox {
-    /// Создаёт песочницу с каталогом ассетов (`data/sandbox/`; `None` — без него,
-    /// тогда бинарь берётся только из env-override).
+    /// Creates a sandbox with the assets directory (`data/sandbox/`; `None` —
+    /// without it, then the binary is taken only from an env-override).
     pub fn new(dir: Option<PathBuf>) -> Self {
         Self {
             dir,
@@ -127,17 +131,18 @@ impl WasmerSandbox {
         }
     }
 
-    /// Задаёт жёсткий лимит памяти (МБ; `Some(0)`/`None` — без лимита). Только
-    /// Windows: процесс `wasmer` помещается в Job Object с
-    /// `JOB_OBJECT_LIMIT_PROCESS_MEMORY`; превышение убивает процесс (защита хоста
-    /// от OOM). На Unix поле игнорируется (rlimit ненадёжен с V8 — резервирует
-    /// большое виртуальное пространство). См. ADR 0005.
+    /// Sets a hard memory limit (MB; `Some(0)`/`None` — no limit). Windows
+    /// only: the `wasmer` process is placed into a Job Object with
+    /// `JOB_OBJECT_LIMIT_PROCESS_MEMORY`; exceeding it kills the process
+    /// (protects the host from OOM). On Unix the field is ignored (`rlimit`
+    /// is unreliable with V8 — it reserves a large virtual address space).
+    /// See ADR 0005.
     pub fn with_memory_limit(mut self, mb: Option<u64>) -> Self {
         self.memory_mb = mb.filter(|&m| m > 0);
         self
     }
 
-    /// Путь/имя бинаря `wasmer`: env-override → каталог песочницы ([`locate_wasmer`]).
+    /// The `wasmer` binary's path/name: an env-override → the sandbox directory ([`locate_wasmer`]).
     fn resolve_wasmer(&self) -> Option<OsString> {
         if let Some(o) = env_override(ENV_WASMER) {
             return Some(o);
@@ -148,7 +153,7 @@ impl WasmerSandbox {
             .map(PathBuf::into_os_string)
     }
 
-    /// Источник CPython: env-override → `<dir>/python.webc` → пакет реестра.
+    /// The CPython source: an env-override → `<dir>/python.webc` → a registry package.
     fn resolve_python(&self) -> OsString {
         if let Some(o) = env_override(ENV_PYTHON) {
             return o;
@@ -162,7 +167,7 @@ impl WasmerSandbox {
         OsString::from(DEFAULT_PYTHON_PKG)
     }
 
-    /// Каталог `site-packages` для монтирования (если существует).
+    /// The `site-packages` directory to mount (if it exists).
     fn site_packages(&self) -> Option<PathBuf> {
         let dir = self.dir.as_ref()?;
         let sp = dir.join("site-packages");
@@ -186,7 +191,7 @@ impl SandboxRunner for WasmerSandbox {
         timeout: Duration,
         loc: &Locale,
     ) -> Result<SandboxOutput> {
-        // Гейт «одна задача»: параллельный запуск сразу отклоняется (до спавна).
+        // The "one task" gate: a concurrent launch is rejected right away (before spawning).
         let _permit = self
             .gate
             .try_acquire()
@@ -196,14 +201,14 @@ impl SandboxRunner for WasmerSandbox {
             .ok_or_else(|| anyhow::anyhow!("{}", loc.t("sandbox.err.not_found")))?;
         let python = self.resolve_python();
 
-        // Скрипт задачи в уникальном временном каталоге (авто-очистка через Drop).
+        // The task script in a unique temp directory (auto-cleanup via Drop).
         let job = JobDir::create().with_context(|| loc.t("sandbox.err.job_dir").to_string())?;
         let script = job.path.join("job.py");
         tokio::fs::write(&script, build_wrapper(code))
             .await
             .with_context(|| loc.t("sandbox.err.write_script").to_string())?;
 
-        // Монтируем рабочий каталог и (если есть) site-packages; PYTHONPATH на гостя.
+        // Mount the working directory and (if present) site-packages; PYTHONPATH for the guest.
         let mut mounts: Vec<(PathBuf, &str)> = vec![(job.path.clone(), GUEST_WORK)];
         let mut envs: Vec<(&str, String)> = vec![
             ("PYTHONIOENCODING", "utf-8".into()),
@@ -221,13 +226,14 @@ impl SandboxRunner for WasmerSandbox {
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
-            // Python исполняется ВНУТРИ процесса wasmer (V8 in-process, не дочерний
-            // процесс), поэтому kill самого wasmer останавливает и код. На таймауте/
-            // отмене future дропается → процесс убивается.
+            // Python runs INSIDE the wasmer process (in-process V8, not a
+            // child process), so killing wasmer itself also stops the code.
+            // On a timeout/cancellation the future is dropped → the process is killed.
             .kill_on_drop(true);
-        // Кэш скомпилированных модулей — под каталогом песочницы (самодостаточно,
-        // не в ~/.wasmer): первый запуск компилирует python.wasm (секунды), дальше
-        // тёплый старт из кэша. См. docs/research/python-wasmer-sandbox.md §2.3.
+        // The cache of compiled modules lives under the sandbox directory
+        // (self-contained, not in ~/.wasmer): the first launch compiles
+        // python.wasm (seconds), after that a warm start from the cache.
+        // See docs/research/python-wasmer-sandbox.md §2.3.
         if let Some(dir) = &self.dir {
             cmd.env("WASMER_CACHE_DIR", dir.join("cache"));
         }
@@ -236,8 +242,8 @@ impl SandboxRunner for WasmerSandbox {
             .spawn()
             .with_context(|| loc.tf("sandbox.err.spawn", &[("path", &wasmer.to_string_lossy())]))?;
 
-        // Жёсткий лимит памяти (Windows Job Object) — сразу после спавна, до того как
-        // V8 закоммитит существенную память. «Лучшее усилие»: сбой лишь логируется.
+        // A hard memory limit (Windows Job Object) — right after spawning,
+        // before V8 commits significant memory. "Best effort": a failure is only logged.
         if let Some(mb) = self.memory_mb {
             apply_memory_limit(&child, mb);
         }
@@ -260,10 +266,10 @@ impl SandboxRunner for WasmerSandbox {
     }
 }
 
-/// Ищет бинарь `wasmer` в каталоге песочницы (чистая, тестируемая). Порядок:
-/// прямое размещение `<dir>/wasmer[.exe]` (ручная установка) → распаковка setup'ом
-/// `<dir>/wasmer-dist/bin/wasmer[.exe]`. Используется и рантаймом ([`WasmerSandbox`]),
-/// и провизией (`features::sandbox_setup`) — единый источник истины о раскладке.
+/// Looks for the `wasmer` binary in the sandbox directory (pure, testable). Order:
+/// a direct placement `<dir>/wasmer[.exe]` (a manual install) → the setup's unpack
+/// `<dir>/wasmer-dist/bin/wasmer[.exe]`. Used both by the runtime ([`WasmerSandbox`])
+/// and by provisioning (`features::sandbox_setup`) — a single source of truth about the layout.
 pub fn locate_wasmer(dir: &Path) -> Option<PathBuf> {
     let direct = dir.join(WASMER_BIN);
     if direct.is_file() {
@@ -273,16 +279,17 @@ pub fn locate_wasmer(dir: &Path) -> Option<PathBuf> {
     dist.is_file().then_some(dist)
 }
 
-/// Непустое значение env-переменной как `OsString` (override пути/имени).
+/// A non-empty env variable value as an `OsString` (a path/name override).
 fn env_override(key: &str) -> Option<OsString> {
     std::env::var_os(key).filter(|v| !v.is_empty())
 }
 
-/// Применяет жёсткий лимит памяти к процессу `wasmer` (Windows Job Object). При
-/// превышении процесс убивается — защита хоста от OOM. «Лучшее усилие»: сбой winapi
-/// лишь логируется. Проверено вживую (§9.6 исследования): лимит держится и после
-/// закрытия хэндла job'а (job живёт, пока процесс — его член), поэтому HANDLE не
-/// удерживается через `await` (важно для `Send`-фьючи).
+/// Applies a hard memory limit to the `wasmer` process (a Windows Job Object).
+/// Exceeding it kills the process — protects the host from OOM. "Best
+/// effort": a winapi failure is only logged. Verified live (research §9.6):
+/// the limit holds even after the job handle is closed (the job lives as
+/// long as the process is a member), so the HANDLE isn't held across
+/// `await` (important for the future to stay `Send`).
 #[cfg(windows)]
 fn apply_memory_limit(child: &tokio::process::Child, mb: u64) {
     use windows_sys::Win32::Foundation::{CloseHandle, HANDLE};
@@ -293,15 +300,15 @@ fn apply_memory_limit(child: &tokio::process::Child, mb: u64) {
     };
 
     let Some(raw) = child.raw_handle() else {
-        tracing::warn!("песочница: нет хэндла процесса — лимит памяти не применён");
+        tracing::warn!("sandbox: no process handle — memory limit not applied");
         return;
     };
-    // SAFETY: `raw` — валидный хэндл только что запущенного процесса; job создаётся и
-    // закрывается в пределах этого блока, поля структуры инициализированы нулями.
+    // SAFETY: `raw` is a valid handle of the just-spawned process; the job is
+    // created and closed within this block, the struct's fields are zero-initialized.
     unsafe {
         let job: HANDLE = CreateJobObjectW(std::ptr::null(), std::ptr::null());
         if job.is_null() {
-            tracing::warn!("песочница: CreateJobObjectW не удался");
+            tracing::warn!("sandbox: CreateJobObjectW failed");
             return;
         }
         let mut info: JOBOBJECT_EXTENDED_LIMIT_INFORMATION = std::mem::zeroed();
@@ -314,36 +321,37 @@ fn apply_memory_limit(child: &tokio::process::Child, mb: u64) {
             std::mem::size_of::<JOBOBJECT_EXTENDED_LIMIT_INFORMATION>() as u32,
         );
         if ok == 0 {
-            tracing::warn!("песочница: SetInformationJobObject не удался");
+            tracing::warn!("sandbox: SetInformationJobObject failed");
             CloseHandle(job);
             return;
         }
         if AssignProcessToJobObject(job, raw as HANDLE) == 0 {
-            tracing::warn!("песочница: AssignProcessToJobObject не удался");
+            tracing::warn!("sandbox: AssignProcessToJobObject failed");
         }
-        // Хэндл можно закрыть сразу: лимит остаётся, пока процесс — член job'а.
+        // The handle can be closed right away: the limit holds as long as
+        // the process is a member of the job.
         CloseHandle(job);
     }
 }
 
-/// На не-Windows жёсткий лимит памяти не применяется: `rlimit`/`RLIMIT_AS`
-/// ненадёжен с бэкендом V8 (он резервирует большое виртуальное адресное
-/// пространство, из-за чего низкий лимит ломает сам старт). Полагаемся на таймаут
-/// и wasm32 (~4 ГБ). См. ADR 0005.
+/// A hard memory limit isn't applied on non-Windows: `rlimit`/`RLIMIT_AS` is
+/// unreliable with the V8 backend (it reserves a large virtual address
+/// space, so a low limit breaks the very startup). We rely on the timeout
+/// and wasm32 (~4 GB). See ADR 0005.
 #[cfg(not(windows))]
 fn apply_memory_limit(_child: &tokio::process::Child, _mb: u64) {
-    tracing::debug!("песочница: лимит памяти поддержан только на Windows — пропуск");
+    tracing::debug!("sandbox: memory limit is supported only on Windows — skipping");
 }
 
-/// Оборачивает пользовательский код шимом `setsockopt` (чистая, тестируемая).
+/// Wraps the user's code with the `setsockopt` shim (pure, testable).
 pub fn build_wrapper(code: &str) -> String {
     format!("{SETSOCKOPT_SHIM}\n{code}")
 }
 
-/// Собирает аргументы командной строки `wasmer` (чистая, тестируемая). Форма:
+/// Builds the `wasmer` command-line arguments (pure, testable). Shape:
 /// `run --v8 [--net] (--volume HOST:GUEST)* (--env K=V)* <python> -- <script>`.
-/// Порядок и хост:гость-монтирование проверены живьём в Фазе 0 (в т.ч. с
-/// Windows-путём, где двоеточие драйва `C:` не ломает разбор `--volume`).
+/// The order and the host:guest mounting were verified live in Phase 0 (incl.
+/// with a Windows path, where the drive colon `C:` doesn't break `--volume` parsing).
 fn build_args(
     python: &OsStr,
     mounts: &[(PathBuf, &str)],
@@ -372,8 +380,8 @@ fn build_args(
     a
 }
 
-/// Временный каталог для скрипта задачи (авто-очистка при `Drop`). Живёт в системном
-/// tmp; уникален по UUID — без зависимости `tempfile` в рантайме.
+/// A temp directory for the task script (auto-cleanup on `Drop`). Lives in the
+/// system tmp; unique by UUID — no `tempfile` dependency at runtime.
 struct JobDir {
     path: PathBuf,
 }
@@ -392,18 +400,18 @@ impl Drop for JobDir {
     }
 }
 
-/// Мок песочницы для тестов инструмента `python_exec`.
+/// A sandbox mock for `python_exec` tool tests.
 #[cfg(test)]
 pub struct MockSandbox {
     availability: SandboxAvailability,
     output: SandboxOutput,
-    /// Записи вызовов `run`: (код, признак сети).
+    /// Records of `run` calls: (code, the network flag).
     pub calls: std::sync::Mutex<Vec<(String, bool)>>,
 }
 
 #[cfg(test)]
 impl MockSandbox {
-    /// Готовая песочница, возвращающая заданный вывод.
+    /// A ready sandbox that returns the given output.
     pub fn ready(output: SandboxOutput) -> Self {
         Self {
             availability: SandboxAvailability::Ready,
@@ -412,7 +420,7 @@ impl MockSandbox {
         }
     }
 
-    /// Недоступная песочница с причиной.
+    /// An unavailable sandbox with a reason.
     pub fn missing(reason: &str) -> Self {
         Self {
             availability: SandboxAvailability::Missing(reason.into()),
@@ -451,7 +459,7 @@ mod tests {
     use super::*;
     use crate::shared::i18n::{Lang, locale};
 
-    /// Референсная локаль для тестов (ru байт-в-байт — прежние ассерты подстрок целы).
+    /// The reference locale for tests (ru byte-for-byte — the previous substring asserts stay intact).
     fn ru() -> &'static Locale {
         locale(Lang::Ru)
     }
@@ -461,7 +469,7 @@ mod tests {
         let w = build_wrapper("print(1)");
         assert!(w.contains("_mf_patch_socket"));
         assert!(w.contains("setsockopt"));
-        // Пользовательский код идёт после шима.
+        // The user's code comes after the shim.
         assert!(w.trim_end().ends_with("print(1)"));
     }
 
@@ -484,7 +492,7 @@ mod tests {
         assert!(s.iter().any(|x| x.ends_with(":/w")));
         assert!(s.iter().any(|x| x == "--env"));
         assert!(s.iter().any(|x| x == "PYTHONUTF8=1"));
-        // python-источник, затем разделитель, затем скрипт — в самом конце.
+        // The python source, then the separator, then the script — right at the end.
         assert_eq!(s[s.len() - 3], "python/python");
         assert_eq!(s[s.len() - 2], "--");
         assert_eq!(s[s.len() - 1], "/w/job.py");
@@ -521,12 +529,12 @@ mod tests {
     fn locate_wasmer_finds_direct_and_dist() {
         let dir = tempfile::tempdir().unwrap();
         assert!(locate_wasmer(dir.path()).is_none());
-        // Распаковка setup'ом: <dir>/wasmer-dist/bin/wasmer[.exe].
+        // The setup's unpack: <dir>/wasmer-dist/bin/wasmer[.exe].
         let bin_dir = dir.path().join("wasmer-dist").join("bin");
         std::fs::create_dir_all(&bin_dir).unwrap();
         std::fs::write(bin_dir.join(WASMER_BIN), b"stub").unwrap();
         assert!(locate_wasmer(dir.path()).unwrap().ends_with(WASMER_BIN));
-        // Прямое размещение имеет приоритет.
+        // A direct placement takes priority.
         std::fs::write(dir.path().join(WASMER_BIN), b"stub").unwrap();
         let found = locate_wasmer(dir.path()).unwrap();
         assert_eq!(found, dir.path().join(WASMER_BIN));
@@ -534,9 +542,9 @@ mod tests {
 
     #[test]
     fn availability_missing_without_binary() {
-        // Каталог без бинаря → Missing (при отсутствии env-override в окружении CI).
+        // A directory with no binary → Missing (given no env-override in the CI environment).
         if env_override(ENV_WASMER).is_some() {
-            return; // окружение задаёт override — тест неинформативен
+            return; // the environment sets an override — the test is uninformative
         }
         let dir = tempfile::tempdir().unwrap();
         let sb = WasmerSandbox::new(Some(dir.path().to_path_buf()));
@@ -561,9 +569,9 @@ mod tests {
     async fn gate_rejects_second_concurrent_task() {
         let dir = tempfile::tempdir().unwrap();
         let sb = WasmerSandbox::new(Some(dir.path().to_path_buf()));
-        // Держим единственное разрешение — эмулируем «уже идёт задача».
+        // Hold the sole permit — emulate "a task is already running".
         let _held = sb.gate.try_acquire().unwrap();
-        // Второй запуск отклоняется мгновенно (до resolve_wasmer/спавна процесса).
+        // The second launch is rejected instantly (before resolve_wasmer/spawning a process).
         let err = sb
             .run("print(1)", false, Duration::from_secs(5), ru())
             .await
@@ -573,7 +581,7 @@ mod tests {
 
     #[tokio::test]
     async fn busy_error_is_localized() {
-        // Регрессия против забытого `loc`: причина «занята» на языке локали.
+        // A regression against a forgotten `loc`: the "busy" reason in the locale's language.
         let dir = tempfile::tempdir().unwrap();
         let sb = WasmerSandbox::new(Some(dir.path().to_path_buf()));
         let _held = sb.gate.try_acquire().unwrap();
@@ -588,12 +596,12 @@ mod tests {
 
     #[tokio::test]
     async fn gate_permit_released_after_run() {
-        // После завершения run (тут — ошибкой «нет бинаря») разрешение возвращается,
-        // и следующий вызов снова доходит до логики (а не упирается в гейт).
+        // After `run` finishes (here — with a "no binary" error), the permit
+        // is returned, and the next call again reaches the logic (rather than hitting the gate).
         let dir = tempfile::tempdir().unwrap();
         let sb = WasmerSandbox::new(Some(dir.path().to_path_buf()));
         if env_override(ENV_WASMER).is_some() {
-            return; // окружение задаёт бинарь — этот тест про отсутствие бинаря
+            return; // the environment sets a binary — this test is about a missing binary
         }
         let e1 = sb
             .run("print(1)", false, Duration::from_secs(5), ru())

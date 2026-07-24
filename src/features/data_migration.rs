@@ -1,20 +1,20 @@
-//! Оркестрация миграций сохраняемых данных при старте приложения.
+//! Orchestrates migrations of saved data at application startup.
 //!
-//! Чистый Value-уровневый каркас (константы версий, определение версии, прогон шагов) —
-//! в [`crate::shared::storage::schema`]; здесь — файловый I/O, гейты (downgrade / битый
-//! файл), pre-migration бэкап и control-parse в типизированные структуры. Живёт в
-//! `features` (не в `shared`), потому что pre-migration бэкап — это `features::backup`,
-//! а `shared` не может зависеть от `features` (FSD). См.
-//! [docs/history/release-engineering.md](../../docs/history/release-engineering.md) §3.4 и ADR 0006.
+//! The pure Value-level framework (version constants, version detection, running the steps) —
+//! lives in [`crate::shared::storage::schema`]; here — file I/O, gates (downgrade / a corrupt
+//! file), the pre-migration backup, and control-parsing into typed structures. Lives in
+//! `features` (not `shared`), because the pre-migration backup is `features::backup`,
+//! and `shared` can't depend on `features` (FSD). See
+//! [docs/history/release-engineering.md](../../docs/history/release-engineering.md) §3.4 and ADR 0006.
 //!
-//! Поток (release-engineering.md Ф9–Ф11): прочитать каждый файл как `Value` → определить
-//! версию → `> current` — **отказ запуска** (данные новее приложения, Ф10); битый
-//! `settings.json`/`profiles.json` — **отказ** (Ф11), битый `chats/<id>.json` — пропуск
-//! с `warn`; `< current` — в план. План непуст → **один** бэкап перед любой записью
-//! (не удался → миграция не начинается) → прогон шагов + control-parse + атомарная запись.
+//! Flow (release-engineering.md F9-F11): read each file as `Value` → detect the
+//! version → `> current` — **refuse to start** (data newer than the app, F10); a corrupt
+//! `settings.json`/`profiles.json` — **refuse** (F11), a corrupt `chats/<id>.json` — skip
+//! with a `warn`; `< current` — into the plan. A non-empty plan → **one** backup before any write
+//! (a failure → the migration doesn't start) → run the steps + control-parse + an atomic write.
 //!
-//! Сегодня все схемы = 1, поэтому план всегда пуст: `run` фактически лишь валидирует
-//! (гейты downgrade/битости), а движок миграций покрыт тестами на синтетическом артефакте.
+//! Today all schemas = 1, so the plan is always empty: `run` effectively only validates
+//! (the downgrade/corruption gates), while the migration engine is covered by tests on a synthetic artifact.
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -31,8 +31,8 @@ use crate::shared::paths::Paths;
 use crate::shared::storage::schema::{self, Assessment, JsonArtifact};
 use crate::shared::storage::{db, json};
 
-/// Мигрирует данные приложения при старте (реальный реестр схем). Вызывается из
-/// `main.rs` перед открытием хранилища (TUI и CLI `import`).
+/// Migrates the application's data at startup (the real schema registry). Called from
+/// `main.rs` before opening storage (the TUI and the CLI `import`).
 pub fn run(paths: &Paths, loc: &Locale) -> Result<()> {
     run_with(
         paths,
@@ -43,7 +43,7 @@ pub fn run(paths: &Paths, loc: &Locale) -> Result<()> {
     )
 }
 
-/// Какой типизированной структурой валидировать мигрированное значение перед записью.
+/// Which typed structure to validate a migrated value with before writing.
 #[derive(Debug, Clone, Copy)]
 enum Kind {
     Settings,
@@ -51,7 +51,7 @@ enum Kind {
     Chat,
 }
 
-/// Файл, требующий миграции (`from → art.current`).
+/// A file requiring migration (`from → art.current`).
 struct Planned {
     path: PathBuf,
     kind: Kind,
@@ -59,8 +59,8 @@ struct Planned {
     value: Value,
 }
 
-/// Ядро с внедрёнными артефактами (DI для тестов: синтетический артефакт с реальным
-/// шагом проверяет бэкап+запись независимо от реального реестра, где все схемы = 1).
+/// The core with injected artifacts (DI for tests: a synthetic artifact with a real
+/// step checks backup+write independently of the real registry, where every schema = 1).
 fn run_with(
     paths: &Paths,
     loc: &Locale,
@@ -109,16 +109,16 @@ fn run_with(
                     ))
                 }
             },
-            // Битый файл чата не валит запуск и не теряется — остаётся на диске (Ф11).
+            // A corrupt chat file doesn't crash startup and isn't lost — stays on disk (F11).
             Err(err) => tracing::warn!(file = %path.display(), error = %err,
-                "миграция: пропущен повреждённый файл чата"),
+                "migration: skipped a corrupt chat file"),
         }
     }
 
-    // Координация с SQLite: downgrade-guard + учёт в общем pre-migrate моменте. Саму
-    // миграцию БД (baseline/шаги) выполняет позже `Db::open`; здесь лишь заглядываем в
-    // `user_version`, чтобы ОДИН бэкап покрыл и JSON, и БД (ADR 0006). БД в этот момент
-    // ещё не открыта (quiescent) → бэкап-архив её файлов согласован без SQLite backup API.
+    // Coordination with SQLite: a downgrade guard + factoring into the shared pre-migrate
+    // moment. The actual DB migration (baseline/steps) is run later by `Db::open`; here we
+    // only peek at `user_version` so ONE backup covers both the JSON and the DB (ADR 0006). The
+    // DB isn't open yet at this point (quiescent) → the backup archive of its files is consistent, no SQLite backup API needed.
     let db_uv = db::peek_user_version(&paths.data_db())?;
     if db_uv > schema::DB_SCHEMA {
         bail!(downgrade_msg(loc, "data.db", db_uv, schema::DB_SCHEMA));
@@ -126,13 +126,13 @@ fn run_with(
     let db_needs_migration = db::needs_step_migration(db_uv);
 
     if plan.is_empty() && !db_needs_migration {
-        tracing::debug!("миграция данных не требуется");
+        tracing::debug!("no data migration needed");
         return Ok(());
     }
 
-    // Один бэкап перед любой записью. fs_root песочницы не включаем (конфиг может сам
-    // требовать миграции — читать его для fs_root преждевременно; критичные данные
-    // settings/profiles/chats/db бэкап и так захватывает). Сбой → миграция отменяется.
+    // One backup before any write. The sandbox's fs_root isn't included (the config may itself
+    // need migrating — reading it for fs_root would be premature; the critical
+    // settings/profiles/chats/db data is already captured by the backup). A failure → the migration is cancelled.
     let backup_path = backup::default_backup_path(paths, "pre-migrate");
     backup::create_backup(paths, Some(backup_path.clone()), 9, None, loc).map_err(|e| {
         anyhow!(
@@ -141,7 +141,7 @@ fn run_with(
         )
     })?;
     tracing::info!(backup = %backup_path.display(), files = plan.len(),
-        "создан бэкап перед миграцией данных");
+        "created a backup before migrating data");
 
     for item in &plan {
         let art = match item.kind {
@@ -150,10 +150,10 @@ fn run_with(
             Kind::Chat => chat,
         };
         let migrated = art.apply_steps(item.value.clone(), item.from)?;
-        // Control-parse: миграция, после которой файл не парсится, — ошибка; файл не
-        // перезаписываем (запись идёт только после успешной валидации).
+        // Control-parse: a migration after which the file doesn't parse is an error; the file
+        // isn't overwritten (writing happens only after successful validation).
         control_parse(item.kind, &migrated).map_err(|e| {
-            tracing::error!(file = %item.path.display(), error = %e, "миграция дала непарсимый результат");
+            tracing::error!(file = %item.path.display(), error = %e, "migration produced an unparsable result");
             anyhow!(
                 "{}",
                 loc.tf(
@@ -164,14 +164,14 @@ fn run_with(
         })?;
         json::write_json(&item.path, &migrated)?;
         tracing::info!(file = %item.path.display(), from = item.from, to = art.current,
-            "мигрирован файл данных");
+            "migrated a data file");
     }
 
     Ok(())
 }
 
-/// Оценивает один файл: `Ok(None)` — нет файла или актуален; `Ok(Some)` — в план;
-/// `Err` — битый (по ключу `corrupt_key`) или downgrade (данные новее приложения).
+/// Assesses one file: `Ok(None)` — no file, or already current; `Ok(Some)` — into the plan;
+/// `Err` — corrupt (via the `corrupt_key`) or a downgrade (data newer than the app).
 fn assess_file(
     path: &Path,
     art: &JsonArtifact,
@@ -200,7 +200,7 @@ fn assess_file(
     }
 }
 
-/// Локализованное сообщение об отказе: данные созданы более новой версией приложения.
+/// A localized refusal message: the data was created by a newer app version.
 fn downgrade_msg(loc: &Locale, file: &str, found: u32, current: u32) -> String {
     loc.tf(
         "migrate.err.downgrade",
@@ -212,7 +212,7 @@ fn downgrade_msg(loc: &Locale, file: &str, found: u32, current: u32) -> String {
     )
 }
 
-/// Валидирует мигрированное значение типизированным парсом (без записи).
+/// Validates a migrated value via typed parsing (without writing).
 fn control_parse(kind: Kind, v: &Value) -> Result<()> {
     match kind {
         Kind::Settings => {
@@ -228,7 +228,7 @@ fn control_parse(kind: Kind, v: &Value) -> Result<()> {
     Ok(())
 }
 
-/// Все `chats/*.json` (отсортированы для детерминизма). Нет каталога → пусто.
+/// All `chats/*.json` (sorted for determinism). No directory → empty.
 fn chat_files(paths: &Paths) -> Result<Vec<PathBuf>> {
     let dir = paths.chats_dir();
     if !dir.exists() {
@@ -284,7 +284,7 @@ mod tests {
 
         run(&paths, ru()).unwrap();
 
-        // Ни одного pre-migrate бэкапа: план был пуст.
+        // No pre-migrate backup at all: the plan was empty.
         let backups = paths.backups_dir();
         let has_backup = backups.exists()
             && fs::read_dir(&backups).unwrap().any(|e| {
@@ -295,7 +295,7 @@ mod tests {
             });
         assert!(
             !has_backup,
-            "бэкап не должен создаваться без плана миграции"
+            "a backup shouldn't be created with an empty migration plan"
         );
     }
 
@@ -303,7 +303,7 @@ mod tests {
     fn run_refuses_downgrade() {
         let dir = tempfile::tempdir().unwrap();
         let paths = Paths::with_root(dir.path());
-        // settings.json из «более новой» версии приложения (схема 999).
+        // settings.json from a "newer" app version (schema 999).
         let mut v: Value = serde_json::from_str(&valid_settings_json()).unwrap();
         v["schema_version"] = json!(999);
         let raw = serde_json::to_string(&v).unwrap();
@@ -311,7 +311,7 @@ mod tests {
 
         let err = run(&paths, ru()).unwrap_err().to_string();
         assert!(err.contains("более новой"), "{err}");
-        // Данные не тронуты.
+        // The data is untouched.
         assert_eq!(fs::read_to_string(paths.settings_file()).unwrap(), raw);
     }
 
@@ -319,7 +319,7 @@ mod tests {
     fn run_refuses_corrupt_settings() {
         let dir = tempfile::tempdir().unwrap();
         let paths = Paths::with_root(dir.path());
-        write(&paths.settings_file(), "{ это не валидный json");
+        write(&paths.settings_file(), "{ this is not valid json");
         let err = run(&paths, ru()).unwrap_err().to_string();
         assert!(
             err.contains("настроек") && err.contains("повреждён"),
@@ -331,7 +331,7 @@ mod tests {
     fn run_refuses_db_downgrade() {
         let dir = tempfile::tempdir().unwrap();
         let paths = Paths::with_root(dir.path());
-        // data.db из «более новой» версии приложения (user_version = 999).
+        // data.db from a "newer" app version (user_version = 999).
         {
             let conn = rusqlite::Connection::open(paths.data_db()).unwrap();
             conn.execute_batch("PRAGMA user_version = 999;").unwrap();
@@ -347,18 +347,18 @@ mod tests {
         write(&paths.settings_file(), &valid_settings_json());
         write(
             &paths.chat_file("22222222-2222-2222-2222-222222222222"),
-            "{ битый",
+            "{ corrupt",
         );
         write(
             &paths.chat_file("33333333-3333-3333-3333-333333333333"),
             &valid_chat_json(),
         );
-        // Битый чат пропущен с warn, запуск не падает, миграции нет.
+        // A corrupt chat is skipped with a warn, startup doesn't fail, no migration happens.
         run(&paths, ru()).unwrap();
     }
 
-    // Синтетический артефакт настроек «current = 2» со ступенью 1→2: проверяет полный
-    // путь бэкап+запись+control-parse на реальном I/O (реальный реестр — всё v1).
+    // A synthetic settings artifact at "current = 2" with a 1→2 step: checks the full
+    // backup+write+control-parse path on real I/O (the real registry is all v1).
     fn to_v2(mut v: Value) -> Result<Value> {
         v["schema_version"] = json!(2);
         Ok(v)
@@ -373,7 +373,7 @@ mod tests {
     fn run_with_migrates_file_and_creates_backup() {
         let dir = tempfile::tempdir().unwrap();
         let paths = Paths::with_root(dir.path());
-        // v1 settings (валидный AppConfig, schema_version=1).
+        // v1 settings (a valid AppConfig, schema_version=1).
         write(&paths.settings_file(), &valid_settings_json());
 
         let synth_settings = JsonArtifact {
@@ -391,18 +391,18 @@ mod tests {
         )
         .unwrap();
 
-        // Файл мигрирован до v2 и остаётся валидным AppConfig.
+        // The file was migrated to v2 and remains a valid AppConfig.
         let after: Value =
             serde_json::from_str(&fs::read_to_string(paths.settings_file()).unwrap()).unwrap();
         assert_eq!(after["schema_version"], json!(2));
         assert!(serde_json::from_value::<AppConfig>(after).is_ok());
-        // Создан ровно pre-migrate бэкап.
+        // Exactly one pre-migrate backup was created.
         let backup_made = fs::read_dir(paths.backups_dir()).unwrap().any(|e| {
             e.unwrap()
                 .file_name()
                 .to_string_lossy()
                 .contains("pre-migrate")
         });
-        assert!(backup_made, "ожидался pre-migrate бэкап");
+        assert!(backup_made, "expected a pre-migrate backup");
     }
 }

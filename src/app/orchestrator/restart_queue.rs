@@ -1,55 +1,55 @@
-//! [`RestartQueue`] — дебаунс-очередь отложенного (пере)запуска серверов
-//! инференса/эмбеддингов при правках настроек движка (зеркало `SaveQueue`).
-//! Экран настроек применяет правку при коммите каждого поля, поэтому серия
-//! «бинарник → модель → -ngl» без дебаунса давала бы три тяжёлых рестарта
-//! managed `llama-server` подряд. Конфиг при этом сохраняется и переэмитится
-//! в UI сразу (см. `Orchestrator::handle_update_config`) — откладывается только
-//! дорогой рестарт процесса; сам он остаётся у оркестратора
-//! (`Orchestrator::flush_restarts`), очередь лишь учитывает, какие серверы и
-//! когда перезапускать. Стартовый подъём серверов (до петли `run`) очередь не
-//! проходит — он немедленный.
+//! [`RestartQueue`] — a debounce queue for deferred (re)launch of the inference/
+//! embedding servers on engine-settings edits (a mirror of `SaveQueue`).
+//! The settings screen applies an edit on every field's commit, so a series
+//! like "binary → model → -ngl" without a debounce would produce three heavy
+//! managed `llama-server` restarts back to back. The config itself is saved and re-emitted
+//! to the UI right away (see `Orchestrator::handle_update_config`) — only the
+//! expensive process restart is deferred; it itself stays with the orchestrator
+//! (`Orchestrator::flush_restarts`), the queue just tracks which servers to
+//! restart and when. The initial server bring-up (before the `run` loop) doesn't
+//! go through the queue — it's immediate.
 
 use std::time::Duration;
 
 use tokio::time::Instant;
 
-/// Пауза тишины после последней правки настроек движка до (пере)запуска.
+/// The quiet pause after the last engine-settings edit, before a (re)launch.
 const RESTART_DEBOUNCE: Duration = Duration::from_millis(1200);
 
 #[derive(Default)]
 pub(super) struct RestartQueue {
-    /// Ожидает ли (пере)запуска chat-сервер (`config.engine`).
+    /// Is the chat server (`config.engine`) awaiting a (re)launch.
     chat: bool,
-    /// Ожидает ли (пере)запуска embedding-сервер (`config.embed`).
+    /// Is the embedding server (`config.embed`) awaiting a (re)launch.
     embed: bool,
-    /// Ожидает ли (пере)запуска сервер имперсонации (`config.impersonation_engine`).
+    /// Is the impersonation server (`config.impersonation_engine`) awaiting a (re)launch.
     impersonation: bool,
-    /// Ожидают ли (пере)поднятия MCP-серверы (`config.mcp`).
+    /// Are the MCP servers (`config.mcp`) awaiting a (re)raise.
     mcp: bool,
-    /// Момент срабатывания (продлевается каждой пометкой — дебаунс от последней).
+    /// The trigger moment (extended by every mark — a debounce from the latest one).
     deadline: Option<Instant>,
 }
 
 impl RestartQueue {
-    /// Помечает chat-сервер для отложенного (пере)запуска и продлевает дедлайн.
+    /// Flags the chat server for a deferred (re)launch and extends the deadline.
     pub(super) fn mark_chat(&mut self) {
         self.chat = true;
         self.bump();
     }
 
-    /// Помечает embedding-сервер для отложенного (пере)запуска и продлевает дедлайн.
+    /// Flags the embedding server for a deferred (re)launch and extends the deadline.
     pub(super) fn mark_embed(&mut self) {
         self.embed = true;
         self.bump();
     }
 
-    /// Помечает сервер имперсонации для отложенного (пере)запуска и продлевает дедлайн.
+    /// Flags the impersonation server for a deferred (re)launch and extends the deadline.
     pub(super) fn mark_impersonation(&mut self) {
         self.impersonation = true;
         self.bump();
     }
 
-    /// Помечает MCP-серверы для отложенного (пере)поднятия и продлевает дедлайн.
+    /// Flags the MCP servers for a deferred (re)raise and extends the deadline.
     pub(super) fn mark_mcp(&mut self) {
         self.mcp = true;
         self.bump();
@@ -59,12 +59,12 @@ impl RestartQueue {
         self.deadline = Some(Instant::now() + RESTART_DEBOUNCE);
     }
 
-    /// Текущий дедлайн (для `select!`-таймера петли). `None` — очередь пуста.
+    /// The current deadline (for the loop's `select!` timer). `None` — the queue is empty.
     pub(super) fn deadline(&self) -> Option<Instant> {
         self.deadline
     }
 
-    /// Забирает флаги `(chat, embed, impersonation, mcp)` и сбрасывает очередь.
+    /// Takes the `(chat, embed, impersonation, mcp)` flags and resets the queue.
     pub(super) fn take(&mut self) -> (bool, bool, bool, bool) {
         self.deadline = None;
         let out = (self.chat, self.embed, self.impersonation, self.mcp);
@@ -80,28 +80,28 @@ impl RestartQueue {
 mod tests {
     use super::*;
 
-    /// Повторные пометки коалесируются: `take` отдаёт каждый сервер по одному
-    /// разу, не помеченные не трогаются, дедлайн сбрасывается.
+    /// Repeated marks coalesce: `take` hands out each server exactly once,
+    /// unmarked ones are left alone, the deadline is reset.
     #[tokio::test]
     async fn marks_coalesce_and_take_resets() {
         let mut q = RestartQueue::default();
-        assert!(q.deadline().is_none(), "пустая очередь — без дедлайна");
+        assert!(q.deadline().is_none(), "an empty queue has no deadline");
         q.mark_chat();
         q.mark_chat();
         q.mark_impersonation();
         q.mark_mcp();
         assert!(q.deadline().is_some());
         assert_eq!(q.take(), (true, false, true, true));
-        assert!(q.deadline().is_none(), "take сбрасывает дедлайн");
+        assert!(q.deadline().is_none(), "take resets the deadline");
         assert_eq!(
             q.take(),
             (false, false, false, false),
-            "повторный take пуст"
+            "a repeated take is empty"
         );
     }
 
-    /// Каждая пометка продлевает дедлайн — рестарт идёт от последней правки,
-    /// а не от первой (иначе длинная серия правок словила бы рестарт посередине).
+    /// Every mark extends the deadline — the restart happens from the latest edit,
+    /// not the first (otherwise a long series of edits would catch a restart in the middle).
     #[tokio::test(start_paused = true)]
     async fn each_mark_extends_deadline() {
         let mut q = RestartQueue::default();
@@ -110,7 +110,11 @@ mod tests {
         tokio::time::advance(Duration::from_millis(500)).await;
         q.mark_embed();
         let d2 = q.deadline().unwrap();
-        assert_eq!(d2 - d1, Duration::from_millis(500), "дедлайн продлён");
+        assert_eq!(
+            d2 - d1,
+            Duration::from_millis(500),
+            "the deadline is extended"
+        );
         assert_eq!(q.take(), (true, true, false, false));
     }
 }

@@ -1,7 +1,7 @@
-# CI: линты (fmt + clippy) на Linux + тесты на Linux и Windows.
-# Тулчейн берётся из rust-toolchain.toml (пин, release-engineering.md Ф4).
-# #[ignore]-смоуки (движок/сеть/живая модель) без env-переменных тихо пропускаются —
-# сети и живого сервера CI не требует. См. docs/release-engineering.md §3.3.
+# CI: lints (fmt + clippy) on Linux + tests on Linux and Windows.
+# The toolchain comes from rust-toolchain.toml (a pin, release-engineering.md F4).
+# #[ignore] smokes (engine/network/live model) without env variables are silently skipped —
+# CI needs no network or a live server. See docs/release-engineering.md §3.3.
 name: CI
 
 on:
@@ -9,7 +9,7 @@ on:
   push:
     branches: [main]
 
-# Отменяем предыдущие прогоны того же ref (экономия минут раннера).
+# Cancel previous runs on the same ref (saves runner minutes).
 concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
@@ -19,22 +19,22 @@ env:
 
 jobs:
   lint:
-    name: Линты (fmt + clippy)
+    name: Lints (fmt + clippy)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
-      - name: Установить тулчейн (из rust-toolchain.toml)
+      - name: Install the toolchain (from rust-toolchain.toml)
         run: rustup show
       - uses: Swatinem/rust-cache@v2
-      - name: Системные зависимости (ALSA — воспроизведение речи /tts)
+      - name: System dependencies (ALSA — speech playback /tts)
         run: sudo apt-get update && sudo apt-get install -y libasound2-dev
-      - name: Форматирование
+      - name: Formatting
         run: cargo fmt --check
-      - name: Clippy (все цели, warnings = ошибки)
+      - name: Clippy (all targets, warnings = errors)
         run: cargo clippy --all-targets -- -D warnings
 
   test:
-    name: Тесты (${{ matrix.os }})
+    name: Tests (${{ matrix.os }})
     strategy:
       fail-fast: false
       matrix:
@@ -42,12 +42,12 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v5
-      - name: Установить тулчейн (из rust-toolchain.toml)
+      - name: Install the toolchain (from rust-toolchain.toml)
         run: rustup show
       - uses: Swatinem/rust-cache@v2
-      # ALSA нужна только Linux-сборке (rodio/cpal); на Windows — чистый windows-rs.
-      - name: Системные зависимости (ALSA — воспроизведение речи /tts)
+      # ALSA is only needed for the Linux build (rodio/cpal); on Windows — pure windows-rs.
+      - name: System dependencies (ALSA — speech playback /tts)
         if: runner.os == 'Linux'
         run: sudo apt-get update && sudo apt-get install -y libasound2-dev
-      - name: Тесты
+      - name: Tests
         run: cargo test

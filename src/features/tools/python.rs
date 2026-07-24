@@ -1,14 +1,14 @@
-//! Инструмент `python_exec` (spec §9.3, §13.2): исполнение Python в одном из двух
-//! режимов ([`PythonMode`]):
+//! `python_exec` tool (spec §9.3, §13.2): executes Python in one of two
+//! modes ([`PythonMode`]):
 //!
-//! - **Wasmer** (по умолчанию) — изолированная песочница WASIX за сайдкаром `wasmer`
-//!   (`shared::sandbox`): нет доступа к хост-ФС, сеть по флагу, предустановленные
-//!   пакеты. См. docs/research/python-wasmer-sandbox.md.
-//! - **Local** — прежнее поведение: системный интерпретатор отдельным процессом с
-//!   таймаутом. Без OS-песочницы (код исполняется на машине пользователя).
+//! - **Wasmer** (default) — an isolated WASIX sandbox behind the `wasmer` sidecar
+//!   (`shared::sandbox`): no access to the host filesystem, network via a flag, preinstalled
+//!   packages. See docs/research/python-wasmer-sandbox.md.
+//! - **Local** — the previous behavior: the system interpreter as a separate process with
+//!   a timeout. No OS sandbox (the code runs on the user's machine).
 //!
-//! Мастер-выключатель `tools.python_enabled` гейтит инструмент целиком (по умолчанию
-//! выключен). Id инструмента (`python_exec`) от режима не зависит.
+//! The master switch `tools.python_enabled` gates the tool as a whole (off
+//! by default). The tool's id (`python_exec`) doesn't depend on the mode.
 
 use std::process::Stdio;
 use std::sync::Arc;
@@ -22,22 +22,22 @@ use crate::shared::sandbox::{SandboxAvailability, SandboxRunner};
 
 use super::{Tool, ToolContext, ToolOutcome};
 
-/// Таймаут исполнения в локальном режиме.
+/// Execution timeout in local mode.
 const LOCAL_TIMEOUT: Duration = Duration::from_secs(10);
-/// Максимальный размер захваченного вывода (символов) — защита от лавины.
+/// Maximum size of captured output (characters) — protection against a flood.
 const MAX_OUTPUT_CHARS: usize = 8000;
 
-/// `python_exec` — исполняет переданный код Python и возвращает stdout/stderr.
+/// `python_exec` — executes the given Python code and returns stdout/stderr.
 pub struct PythonExec {
-    /// Режим исполнения (песочница/локально).
+    /// The execution mode (sandbox/local).
     mode: PythonMode,
-    /// Путь к интерпретатору (Local; `None` → системный `python3`/`python`).
+    /// The interpreter path (Local; `None` → the system `python3`/`python`).
     python_path: Option<String>,
-    /// Реализация песочницы (Wasmer).
+    /// The sandbox implementation (Wasmer).
     sandbox: Arc<dyn SandboxRunner>,
-    /// Разрешить сеть в песочнице (Wasmer).
+    /// Allow network access in the sandbox (Wasmer).
     net: bool,
-    /// Таймаут исполнения в песочнице (Wasmer).
+    /// Execution timeout in the sandbox (Wasmer).
     wasm_timeout: Duration,
 }
 
@@ -58,7 +58,7 @@ impl PythonExec {
         }
     }
 
-    /// Имя/путь интерпретатора с разумным дефолтом по платформе (Local).
+    /// The interpreter's name/path with a sensible platform default (Local).
     fn interpreter(&self) -> String {
         self.python_path.clone().unwrap_or_else(|| {
             if cfg!(windows) {
@@ -69,20 +69,20 @@ impl PythonExec {
         })
     }
 
-    /// Локальный режим: системный интерпретатор отдельным процессом. Возвращает уже
-    /// отформатированный текст результата (успех/ошибка/таймаут) на языке `loc`.
+    /// Local mode: the system interpreter as a separate process. Returns an already-
+    /// formatted result text (success/error/timeout) in the language `loc`.
     async fn run_local(&self, code: &str, loc: &crate::shared::i18n::Locale) -> String {
-        // Аргумент передаётся напрямую (без шелла) — нет проблем с экранированием.
+        // The argument is passed directly (no shell) — no escaping issues.
         let mut cmd = tokio::process::Command::new(self.interpreter());
         cmd.arg("-c")
             .arg(code)
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
-            // Вывод идёт в pipe, а не в консоль, поэтому Python на Windows выбирает
-            // кодировку по локали (часто cp1252) и падает на кириллице в `print`
-            // (`UnicodeEncodeError`). Мы читаем вывод как UTF-8, поэтому и Python
-            // просим писать UTF-8. См. CLAUDE.md (M7).
+            // Output goes into a pipe, not the console, so Python on Windows picks
+            // an encoding by locale (often cp1252) and fails on Cyrillic in `print`
+            // (`UnicodeEncodeError`). We read the output as UTF-8, so we
+            // also ask Python to write UTF-8. See CLAUDE.md (M7).
             .env("PYTHONIOENCODING", "utf-8")
             .env("PYTHONUTF8", "1")
             .kill_on_drop(true);
@@ -97,7 +97,7 @@ impl PythonExec {
             }
         };
 
-        // На таймауте future дропается → процесс убивается (kill_on_drop).
+        // On a timeout the future is dropped → the process is killed (kill_on_drop).
         match tokio::time::timeout(LOCAL_TIMEOUT, child.wait_with_output()).await {
             Ok(Ok(out)) => format_output_parts(
                 &String::from_utf8_lossy(&out.stdout),
@@ -114,8 +114,8 @@ impl PythonExec {
         }
     }
 
-    /// Режим песочницы Wasmer. Возвращает уже отформатированный текст результата на
-    /// языке `loc`.
+    /// Wasmer sandbox mode. Returns an already-formatted result text in
+    /// the language `loc`.
     async fn run_wasmer(&self, code: &str, loc: &crate::shared::i18n::Locale) -> String {
         match self.sandbox.availability(loc) {
             SandboxAvailability::Missing(why) => {
@@ -195,11 +195,11 @@ impl Tool for PythonExec {
     }
 }
 
-/// Форматирует результат исполнения (stdout/stderr/код возврата) — единый вид для
-/// обоих режимов, чтобы презентер ленты (`present::parse_console`) распознавал
-/// консоль по меткам. Метки `stdout:`/`stderr:` — универсальные (не переводятся);
-/// метку кода возврата (`python.console.exit`) и служебные строки локализуем по `loc`,
-/// а `parse_console` распознаёт метку кода по всем локалям.
+/// Formats the execution result (stdout/stderr/exit code) — a shared shape for
+/// both modes, so the feed's presenter (`present::parse_console`) recognizes the
+/// console by its labels. The `stdout:`/`stderr:` labels are universal (not translated);
+/// the exit-code label (`python.console.exit`) and service strings are localized via `loc`,
+/// and `parse_console` recognizes the code label across all locales.
 fn format_output_parts(
     stdout: &str,
     stderr: &str,
@@ -234,7 +234,7 @@ fn format_output_parts(
     }
 }
 
-/// Обрезает строку до `max` символов с пометкой об усечении (на языке `loc`).
+/// Truncates a string to `max` characters with a truncation note (in the language `loc`).
 fn truncate(s: &str, max: usize, loc: &crate::shared::i18n::Locale) -> String {
     if s.chars().count() <= max {
         s.to_string()
@@ -252,18 +252,18 @@ mod tests {
     use crate::shared::sandbox::{MockSandbox, SandboxOutput};
     use uuid::Uuid;
 
-    /// Нет ли кириллицы в строке (утечка русского на en-профиле).
+    /// Whether the string has no Cyrillic (Russian leaking on an en profile).
     fn no_cyrillic(s: &str) -> bool {
         !s.chars()
             .any(|c| ('а'..='я').contains(&c) || ('А'..='Я').contains(&c) || c == 'ё' || c == 'Ё')
     }
 
-    /// Референсная локаль (ru) для прямых вызовов форматирования вывода.
+    /// Reference locale (ru) for direct calls to output formatting.
     fn ru() -> &'static crate::shared::i18n::Locale {
         crate::shared::i18n::locale(crate::shared::i18n::Lang::Ru)
     }
 
-    /// Инструмент в локальном режиме с заданным путём интерпретатора.
+    /// The tool in local mode with a given interpreter path.
     fn local(python_path: Option<String>) -> PythonExec {
         PythonExec::new(
             PythonMode::Local,
@@ -274,7 +274,7 @@ mod tests {
         )
     }
 
-    /// Инструмент в режиме песочницы с заданным mock-раннером.
+    /// The tool in sandbox mode with a given mock runner.
     fn wasmer(sandbox: Arc<dyn SandboxRunner>, net: bool) -> PythonExec {
         PythonExec::new(
             PythonMode::Wasmer,
@@ -341,10 +341,10 @@ mod tests {
             .await
             .unwrap();
         assert!(out.result.contains("stdout:\n42"));
-        // Раннер вызван ровно раз, с флагом сети.
+        // The runner is called exactly once, with the net flag.
         let calls = sb.calls.lock().unwrap();
         assert_eq!(calls.len(), 1);
-        assert!(calls[0].1, "net-флаг должен пробрасываться в раннер");
+        assert!(calls[0].1, "the net flag must be forwarded to the runner");
         assert!(calls[0].0.contains("print(6*7)"));
     }
 
@@ -396,9 +396,9 @@ mod tests {
         );
     }
 
-    /// Реальное исполнение в песочнице (вручную): требует установленного `wasmer`
-    /// (env `MINDFORK_SANDBOX_WASMER` или бинарь в `data/sandbox/`) и сети для
-    /// первого скачивания `python/python`. `cargo test -- --ignored`.
+    /// Real execution in the sandbox (manual): requires an installed `wasmer`
+    /// (env `MINDFORK_SANDBOX_WASMER` or a binary in `data/sandbox/`) and network for the
+    /// first download of `python/python`. `cargo test -- --ignored`.
     #[tokio::test]
     #[ignore = "requires a bundled wasmer sidecar (MINDFORK_SANDBOX_WASMER)"]
     async fn runs_real_python_in_sandbox() {
@@ -418,9 +418,9 @@ mod tests {
         assert!(out.result.contains("hello sandbox"), "got: {}", out.result);
     }
 
-    /// Инструмент над **провизионированной** песочницей (`mindfork sandbox setup`):
-    /// каталог задаётся env `MINDFORK_SANDBOX_DIR` (в нём wasmer-dist/python.webc/
-    /// site-packages). `None` — env не задан, смоук пропускается.
+    /// The tool over a **provisioned** sandbox (`mindfork sandbox setup`):
+    /// the directory is given by env `MINDFORK_SANDBOX_DIR` (holding wasmer-dist/python.webc/
+    /// site-packages). `None` — the env isn't set, the smoke is skipped.
     fn provisioned(net: bool, timeout_secs: u64) -> Option<PythonExec> {
         use crate::shared::sandbox::WasmerSandbox;
         let dir = std::env::var("MINDFORK_SANDBOX_DIR").ok()?;
@@ -433,7 +433,7 @@ mod tests {
         ))
     }
 
-    /// numpy (нативные `.so` через динлинковку WASIX) в провизионированной песочнице.
+    /// numpy (native `.so` via WASIX dynamic linking) in a provisioned sandbox.
     #[tokio::test]
     #[ignore = "requires a provisioned sandbox (MINDFORK_SANDBOX_DIR)"]
     async fn numpy_in_sandbox() {
@@ -451,7 +451,7 @@ mod tests {
         assert!(out.result.contains("sum 45"), "got: {}", out.result);
     }
 
-    /// pandas (нативное wasix-колесо + чистые зависимости) в провизионированной песочнице.
+    /// pandas (a native wasix wheel + pure dependencies) in a provisioned sandbox.
     #[tokio::test]
     #[ignore = "requires a provisioned sandbox (MINDFORK_SANDBOX_DIR)"]
     async fn pandas_in_sandbox() {
@@ -470,7 +470,7 @@ mod tests {
         assert!(out.result.contains("total 21"), "got: {}", out.result);
     }
 
-    /// requests по HTTPS при включённой сети.
+    /// requests over HTTPS with network access enabled.
     #[tokio::test]
     #[ignore = "requires a provisioned sandbox + network (MINDFORK_SANDBOX_DIR)"]
     async fn requests_in_sandbox_with_net() {
@@ -487,7 +487,7 @@ mod tests {
         assert!(out.result.contains("status 200"), "got: {}", out.result);
     }
 
-    /// Без сети запрос должен провалиться (сокетов в песочнице нет) — не 200.
+    /// With no network access the request must fail (no sockets in the sandbox) — not 200.
     #[tokio::test]
     #[ignore = "requires a provisioned sandbox (MINDFORK_SANDBOX_DIR)"]
     async fn requests_blocked_without_net() {
@@ -508,7 +508,7 @@ mod tests {
         assert!(!out.result.contains("status 200"), "got: {}", out.result);
     }
 
-    /// Кириллица в `print` не должна падать (гость WASIX — UTF-8).
+    /// Cyrillic in `print` must not fail (the WASIX guest is UTF-8).
     #[tokio::test]
     #[ignore = "requires a provisioned sandbox (MINDFORK_SANDBOX_DIR)"]
     async fn cyrillic_print_in_sandbox() {
@@ -523,7 +523,7 @@ mod tests {
         assert!(out.result.contains("Привет, мир"), "got: {}", out.result);
     }
 
-    /// Бесконечный цикл прерывается по таймауту (kill процесса wasmer).
+    /// An infinite loop is interrupted by the timeout (killing the wasmer process).
     #[tokio::test]
     #[ignore = "requires a provisioned sandbox (MINDFORK_SANDBOX_DIR)"]
     async fn timeout_kills_sandbox() {
@@ -542,7 +542,7 @@ mod tests {
         );
     }
 
-    /// Инструмент над провизионированной песочницей с лимитом памяти (Windows).
+    /// The tool over a provisioned sandbox with a memory limit (Windows).
     #[cfg(windows)]
     fn provisioned_capped(memory_mb: u64) -> Option<PythonExec> {
         use crate::shared::sandbox::WasmerSandbox;
@@ -559,8 +559,8 @@ mod tests {
         ))
     }
 
-    /// Лимит памяти (Windows Job Object) не даёт рантайм-скрипту выесть память хоста:
-    /// большой allocation под низким лимитом не проходит (процесс убит).
+    /// A memory limit (Windows Job Object) keeps a runaway script from eating the host's
+    /// memory: a large allocation under a low limit fails (the process is killed).
     #[cfg(windows)]
     #[tokio::test]
     #[ignore = "requires a provisioned sandbox (MINDFORK_SANDBOX_DIR)"]
@@ -569,8 +569,8 @@ mod tests {
             return;
         };
         let (_d, _s, ctx) = ctx_with_storage(Uuid::new_v4());
-        // Выделение 3 ГБ под лимитом 1 ГБ обязано провалиться — либо graceful
-        // MemoryError, либо фатальный крах V8, либо ненулевой код возврата.
+        // A 3 GB allocation under a 1 GB limit must fail — either a graceful
+        // MemoryError, a fatal V8 crash, or a non-zero exit code.
         let code = "b = bytearray(3 * 1024 * 1024 * 1024)\nprint(len(b))";
         let out = tool
             .invoke(&ctx, serde_json::json!({ "code": code }))
@@ -579,13 +579,13 @@ mod tests {
         let r = &out.result;
         assert!(
             r.contains("MemoryError") || r.contains("Fatal") || r.contains("код возврата"),
-            "ожидался отказ выделения под лимитом, got: {r}"
+            "expected the allocation to fail under the limit, got: {r}"
         );
-        // И 3 ГиБ точно не выделены (число байт в stdout не появилось).
+        // And 3 GiB definitely weren't allocated (the byte count didn't show up in stdout).
         assert!(!r.contains("3221225472"), "got: {r}");
     }
 
-    /// Разумный лимит (2 ГБ) не мешает лёгкой работе.
+    /// A reasonable limit (2 GB) doesn't get in the way of light work.
     #[cfg(windows)]
     #[tokio::test]
     #[ignore = "requires a provisioned sandbox (MINDFORK_SANDBOX_DIR)"]
@@ -601,14 +601,14 @@ mod tests {
         assert!(out.result.contains("499500"), "got: {}", out.result);
     }
 
-    /// На en-профиле недоступность песочницы объясняется **по-английски** (ось A):
-    /// обёртка `python_exec` + вложенная причина из `sandbox.rs` — обе английские, без
-    /// утечки русского. Не-ignored (реального `wasmer` не требует — путь Missing).
+    /// On an en profile, sandbox unavailability is explained **in English** (axis A):
+    /// the `python_exec` wrapper + the nested reason from `sandbox.rs` — both English, with no
+    /// Russian leaking. Not `#[ignore]` (doesn't need a real `wasmer` — the Missing path).
     #[tokio::test]
     async fn en_sandbox_missing_is_localized() {
         use crate::shared::sandbox::WasmerSandbox;
         if std::env::var_os("MINDFORK_SANDBOX_WASMER").is_some() {
-            return; // окружение задаёт бинарь — путь Missing не воспроизведётся
+            return; // the environment supplies a binary — the Missing path won't reproduce
         }
         let empty = tempfile::tempdir().unwrap();
         let tool = PythonExec::new(
@@ -629,8 +629,8 @@ mod tests {
         assert!(no_cyrillic(r), "cyrillic leaked on en-profile: {r}");
     }
 
-    /// На en-профиле вывод и **метка кода возврата** — английские (ось A). Реальная
-    /// песочница (провизионированная): `print` + ненулевой `sys.exit`.
+    /// On an en profile, the output and the **exit-code label** are English (axis A). A real
+    /// (provisioned) sandbox: `print` + a non-zero `sys.exit`.
     #[tokio::test]
     #[ignore = "requires a provisioned sandbox (MINDFORK_SANDBOX_DIR)"]
     async fn en_sandbox_output_and_exit_label_localized() {
@@ -645,11 +645,11 @@ mod tests {
             .unwrap();
         let r = &out.result;
         assert!(r.contains("hello"), "{r}");
-        assert!(r.contains("exit code:"), "en-метка кода возврата: {r}");
+        assert!(r.contains("exit code:"), "the en exit-code label: {r}");
         assert!(no_cyrillic(r), "cyrillic leaked on en-profile: {r}");
     }
 
-    /// На en-профиле сообщение таймаута — английское (ось A). Реальная песочница.
+    /// On an en profile the timeout message is English (axis A). A real sandbox.
     #[tokio::test]
     #[ignore = "requires a provisioned sandbox (MINDFORK_SANDBOX_DIR)"]
     async fn en_sandbox_timeout_localized() {
@@ -666,7 +666,7 @@ mod tests {
         assert!(no_cyrillic(r), "cyrillic leaked on en-profile: {r}");
     }
 
-    /// Реальное локальное исполнение (вручную, если установлен Python).
+    /// Real local execution (manual, if Python is installed).
     #[tokio::test]
     #[ignore = "requires a Python interpreter on PATH"]
     async fn runs_real_python_local() {
@@ -678,7 +678,7 @@ mod tests {
         assert!(out.result.contains("hello"), "got: {}", out.result);
     }
 
-    /// Кириллица в `print` не должна падать с `UnicodeEncodeError` (Windows cp1252).
+    /// Cyrillic in `print` must not fail with `UnicodeEncodeError` (Windows cp1252).
     #[tokio::test]
     #[ignore = "requires a Python interpreter on PATH"]
     async fn prints_cyrillic_without_encoding_error() {

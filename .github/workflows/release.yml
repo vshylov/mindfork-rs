@@ -1,8 +1,8 @@
-# Релиз: по тегу `vX.Y.Z` собирает бинарники (Windows + Linux glibc 2.35),
-# упаковывает архивы + sha256sums.txt и публикует GitHub Release с нотами из
-# соответствующего раздела CHANGELOG.md. См. docs/release-engineering.md §3.5.
+# Release: on a `vX.Y.Z` tag, builds binaries (Windows + Linux glibc 2.35),
+# packs archives + sha256sums.txt, and publishes a GitHub Release with notes from
+# the corresponding CHANGELOG.md section. See docs/release-engineering.md §3.5.
 #
-# Тег ставит пользователь после мержа релизного PR (bump версии + CHANGELOG).
+# The tag is applied by the user after merging the release PR (a version bump + CHANGELOG).
 name: Release
 
 on:
@@ -13,15 +13,15 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
-  # Сборка бинарника на каждой платформе; упаковка централизована в job release
-  # (на Linux есть и tar, и zip — избегаем различий шелла Windows).
+  # Builds the binary on each platform; packaging is centralized in the release job
+  # (on Linux both tar and zip are available — avoiding Windows shell differences).
   build:
-    name: Сборка (${{ matrix.artifact }})
+    name: Build (${{ matrix.artifact }})
     strategy:
       fail-fast: true
       matrix:
         include:
-          - os: ubuntu-22.04       # старая glibc 2.35 — бинарь работает на большинстве дистрибутивов
+          - os: ubuntu-22.04       # old glibc 2.35 — the binary works on most distributions
             bin: mindfork-rs
             artifact: linux
           - os: windows-latest
@@ -30,43 +30,43 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v5
-      - name: Установить тулчейн (из rust-toolchain.toml)
+      - name: Install the toolchain (from rust-toolchain.toml)
         run: rustup show
       - uses: Swatinem/rust-cache@v2
-      # ALSA нужна только Linux-сборке (rodio/cpal — воспроизведение речи /tts).
-      - name: Системные зависимости (ALSA)
+      # ALSA is only needed by the Linux build (rodio/cpal — speech playback /tts).
+      - name: System dependencies (ALSA)
         if: runner.os == 'Linux'
         run: sudo apt-get update && sudo apt-get install -y libasound2-dev
-      - name: Сборка релиза
+      - name: Release build
         run: cargo build --release --locked
-      - name: Выгрузить бинарник
+      - name: Upload the binary
         uses: actions/upload-artifact@v5
         with:
           name: bin-${{ matrix.artifact }}
           path: target/release/${{ matrix.bin }}
           if-no-files-found: error
 
-  # Linux-пакеты из уже собранного бинарника (bin-linux) через nfpm.
+  # Linux packages from the already-built binary (bin-linux) via nfpm.
   linux-packages:
-    name: Linux-пакеты (deb/rpm/archlinux)
+    name: Linux packages (deb/rpm/archlinux)
     needs: build
     runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v5
-      - name: Скачать бинарник Linux
+      - name: Download the Linux binary
         uses: actions/download-artifact@v5
         with:
           name: bin-linux
           path: bin
-      - name: Установить nfpm
+      - name: Install nfpm
         run: |
           echo 'deb [trusted=yes] https://repo.goreleaser.com/apt/ /' \
             | sudo tee /etc/apt/sources.list.d/goreleaser.list
           sudo apt-get update
           sudo apt-get install -y nfpm
-      - name: Собрать пакеты
+      - name: Build packages
         run: |
-          VERSION="${GITHUB_REF_NAME#v}"   # напр. v0.9.0 → 0.9.0
+          VERSION="${GITHUB_REF_NAME#v}"   # e.g. v0.9.0 → 0.9.0
           chmod +x bin/mindfork-rs
           bash packaging/linux/build-packages.sh bin/mindfork-rs "$VERSION" dist
       - uses: actions/upload-artifact@v5
@@ -78,21 +78,21 @@ jobs:
             dist/*.pkg.tar.zst
           if-no-files-found: error
 
-  # Windows-инсталлятор (Inno Setup) из уже собранного бинарника (bin-windows).
+  # The Windows installer (Inno Setup) from the already-built binary (bin-windows).
   windows-installer:
-    name: Windows-инсталлятор (Inno Setup)
+    name: Windows installer (Inno Setup)
     needs: build
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v5
-      - name: Скачать бинарник Windows
+      - name: Download the Windows binary
         uses: actions/download-artifact@v5
         with:
           name: bin-windows
           path: bin
-      - name: Установить Inno Setup
+      - name: Install Inno Setup
         run: choco install innosetup --no-progress -y
-      - name: Скомпилировать инсталлятор
+      - name: Compile the installer
         shell: pwsh
         run: |
           $ver = "${env:GITHUB_REF_NAME}" -replace '^v', ''   # v0.9.0 → 0.9.0
@@ -101,7 +101,7 @@ jobs:
             $iscc = Get-ChildItem "C:\Program Files*\Inno Setup*\ISCC.exe" -ErrorAction SilentlyContinue |
                     Select-Object -First 1 -ExpandProperty FullName
           }
-          if (-not $iscc) { throw "ISCC.exe не найден" }
+          if (-not $iscc) { throw "ISCC.exe not found" }
           & $iscc "/DAppVersion=$ver" "/DBinDir=$PWD\bin" packaging\windows\mindfork.iss
       - uses: actions/upload-artifact@v5
         with:
@@ -110,30 +110,30 @@ jobs:
           if-no-files-found: error
 
   release:
-    name: Публикация релиза
+    name: Publish the release
     needs: [build, linux-packages, windows-installer]
     runs-on: ubuntu-22.04
     permissions:
-      contents: write        # нужно gh release create
+      contents: write        # needed for gh release create
     steps:
       - uses: actions/checkout@v5
-      - name: Скачать бинарники
+      - name: Download the binaries
         uses: actions/download-artifact@v5
         with:
           path: artifacts
-      - name: Собрать архивы + sha256 + ноты
+      - name: Build archives + sha256 + notes
         run: |
           set -euo pipefail
-          TAG="${GITHUB_REF_NAME}"        # напр. v0.9.0
+          TAG="${GITHUB_REF_NAME}"        # e.g. v0.9.0
           VERSION="${TAG#v}"
           mkdir -p dist
 
-          # Общий набор доков в каждый архив.
+          # A shared doc set for every archive.
           DOCS=(README.md CHANGELOG.md LICENSE docs/install.md)
 
-          # Словари спелл-чека кладём в data/dictionaries/ — портативную раскладку,
-          # которую приложение читает рядом с бинарником (data/ рядом с exe → spell-чек
-          # из коробки). См. build.rs / shared/paths.rs.
+          # Put spellcheck dictionaries into data/dictionaries/ — the portable layout
+          # the app reads next to the binary (data/ next to the exe → spellcheck
+          # out of the box). See build.rs / shared/paths.rs.
           stage_data() {
             mkdir -p "$1/data/dictionaries"
             cp dictionaries/*.aff dictionaries/*.dic "$1/data/dictionaries/"
@@ -154,15 +154,15 @@ jobs:
           stage_data stage-win
           (cd stage-win && zip -qr "../dist/mindfork-rs-${TAG}-x86_64-windows.zip" .)
 
-          # Linux-пакеты (deb/rpm/archlinux) и Windows-инсталлятор, собранные
-          # отдельными job'ами.
+          # Linux packages (deb/rpm/archlinux) and the Windows installer, built by
+          # separate jobs.
           cp artifacts/linux-packages/* dist/
           cp artifacts/windows-installer/* dist/
 
-          # Контрольные суммы (по всем артефактам: архивы + пакеты + инсталлятор).
+          # Checksums (over all artifacts: archives + packages + the installer).
           (cd dist && sha256sum ./* > sha256sums.txt)
 
-          # Ноты релиза = раздел CHANGELOG для этой версии (без заголовка).
+          # The release notes = the CHANGELOG section for this version (no heading).
           awk -v ver="$VERSION" '
             $0 ~ "^## \\[" ver "\\]" { found=1; next }
             found && /^## \[/ { exit }
@@ -172,8 +172,8 @@ jobs:
             echo "Релиз ${TAG}." > notes.md
           fi
 
-          echo "Артефакты:"; ls -l dist
-      - name: Создать GitHub Release
+          echo "Artifacts:"; ls -l dist
+      - name: Create the GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |

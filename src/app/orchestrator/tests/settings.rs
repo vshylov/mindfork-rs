@@ -1,5 +1,5 @@
-//! Тесты оркестратора — настройки: снимок, апдейты, дебаунс рестарта. Часть модуля [`super`]
-//! (фикстуры в mod.rs). См. docs/history/refactoring-god-objects.md, этап 3.
+//! Orchestrator tests — settings: the snapshot, updates, the restart debounce. Part of the [`super`]
+//! module (fixtures in mod.rs). See docs/history/refactoring-god-objects.md, stage 3.
 
 use super::*;
 
@@ -16,7 +16,7 @@ async fn bootstrap_emits_settings_snapshot() {
     } = ev
     {
         assert_eq!(config.schema_version, AppConfig::default().schema_version);
-        assert_eq!(profiles.len(), 1, "дефолтный профиль в снимке");
+        assert_eq!(profiles.len(), 1, "the default profile is in the snapshot");
     }
     drop(cmd_tx);
     handle.await.unwrap();
@@ -47,7 +47,7 @@ async fn update_config_persists_and_reemits_settings() {
     cmd_tx.send(AppCommand::Quit).unwrap();
     handle.await.unwrap();
 
-    // Конфиг сохранён на диск.
+    // The config is saved to disk.
     let reopened = Storage::open(Paths::with_root(&root)).unwrap();
     assert_eq!(reopened.json().load_config().unwrap().max_tool_rounds, 3);
 }
@@ -83,11 +83,11 @@ async fn update_profile_persists_edit() {
     handle.await.unwrap();
 }
 
-/// Смена модели перезапускает chat-сервер (spec §11.6 DoD), но с дебаунсом:
-/// серия быстрых правок полей движка коалесится в **один** рестарт после паузы
-/// тишины (`RestartQueue`), а конфиг сохраняется/переэмитится сразу.
-/// `start_paused` — виртуальное время tokio: дедлайн дебаунса доматывается
-/// мгновенно и детерминированно, когда обе правки уже обработаны.
+/// A model change restarts the chat server (spec §11.6 DoD), but with a debounce:
+/// a series of quick engine-field edits coalesces into **one** restart after a silence
+/// pause (`RestartQueue`), while the config is saved/re-emitted right away.
+/// `start_paused` — tokio's virtual time: the debounce deadline is fast-forwarded
+/// instantly and deterministically once both edits have already been processed.
 #[tokio::test(start_paused = true)]
 async fn model_change_restarts_chat_server_debounced() {
     let backend = Arc::new(MockBackend::scripted(vec![ChatChunk::Finished(
@@ -109,11 +109,11 @@ async fn model_change_restarts_chat_server_debounced() {
     wait_for(&mut evt_rx, |e| matches!(e, AppEvent::Settings { .. }))
         .await
         .unwrap();
-    // Бутстрап поднял сервер один раз (стартовый путь — немедленный, без дебаунса).
+    // Bootstrap brought the server up once (the startup path is immediate, no debounce).
     assert_eq!(sup.chat_call_count(), 1);
 
-    // Две правки движка подряд (смена модели, затем -ngl) — как серия коммитов
-    // полей на экране настроек. Обе уходят до истечения дебаунса.
+    // Two engine edits in a row (a model change, then -ngl) — like a series of field
+    // commits on the settings screen. Both go out before the debounce expires.
     let engine1 = crate::shared::config::EngineSettings {
         managed: crate::shared::config::ManagedSettings {
             model_path: Some("other.gguf".into()),
@@ -135,7 +135,7 @@ async fn model_change_restarts_chat_server_debounced() {
             ..Default::default()
         })))
         .unwrap();
-    // Конфиг переэмичен сразу (обе правки), рестарта ещё не было.
+    // The config is re-emitted right away (both edits), no restart yet.
     wait_for(
         &mut evt_rx,
         |e| matches!(e, AppEvent::Settings { config, .. } if config.engine.managed.gpu_layers == 10),
@@ -145,31 +145,31 @@ async fn model_change_restarts_chat_server_debounced() {
     assert_eq!(
         sup.chat_call_count(),
         1,
-        "рестарт отложен дебаунсом, конфиг применён сразу"
+        "the restart is deferred by the debounce, the config is applied right away"
     );
 
-    // По истечении паузы тишины — ровно один рестарт с итоговыми значениями
-    // (флаш эмитит снимок статусов — ждём его как маркер).
+    // After the silence pause expires — exactly one restart with the final values
+    // (the flush emits a status snapshot — wait for it as a marker).
     wait_for(&mut evt_rx, |e| matches!(e, AppEvent::ServerStatus(_)))
         .await
         .unwrap();
     assert_eq!(
         sup.chat_call_count(),
         2,
-        "две правки движка → один отложенный перезапуск сервера"
+        "two engine edits → one deferred server restart"
     );
 
     cmd_tx.send(AppCommand::Quit).unwrap();
     handle.await.unwrap();
 }
 
-/// Ключ, введённый в настройках, сохраняется **зашифрованным**: в `settings.json`
-/// нет плейнтекста, но приложение читает его обратно (запись этой машины).
-/// Главный инвариант безопасности фичи — см. docs/research/api-key-storage.md.
+/// A key entered in settings is saved **encrypted**: `settings.json`
+/// has no plaintext, but the application reads it back (this machine's entry).
+/// The feature's main safety invariant — see docs/research/api-key-storage.md.
 #[tokio::test]
 async fn set_api_key_persists_encrypted_and_reads_back() {
     if !crate::shared::secrets::scheme_available() {
-        return; // не-systemd Linux без machine-id: сохранение ключей не поддержано
+        return; // non-systemd Linux without machine-id: saving keys isn't supported
     }
     let (_d, cmd_tx, mut evt_rx, handle) = spawn_orch(None);
     let root = _d.path().to_path_buf();
@@ -192,14 +192,14 @@ async fn set_api_key_persists_encrypted_and_reads_back() {
     cmd_tx.send(AppCommand::Quit).unwrap();
     handle.await.unwrap();
 
-    // На диске — шифротекст, не секрет.
+    // On disk — ciphertext, not the secret.
     let raw = std::fs::read_to_string(root.join("settings.json")).unwrap();
     assert!(
         !raw.contains("sk-super-secret-42"),
-        "плейнтекст ключа утёк в settings.json"
+        "the key's plaintext leaked into settings.json"
     );
-    assert!(raw.contains("api_keys"), "запись ключей не сохранена");
-    // Приложение читает ключ обратно (эта же машина).
+    assert!(raw.contains("api_keys"), "the key entry wasn't saved");
+    // The application reads the key back (this same machine).
     let reopened = Storage::open(Paths::with_root(&root)).unwrap();
     let cfg = reopened.json().load_config().unwrap();
     assert_eq!(
@@ -208,8 +208,8 @@ async fn set_api_key_persists_encrypted_and_reads_back() {
     );
 }
 
-/// Правка любой настройки не стирает сохранённые ключи: снимок конфига из UI их
-/// не несёт, оркестратор восстанавливает своё значение (как `last_active_chat`).
+/// Editing any setting doesn't erase saved keys: the config snapshot from the UI doesn't
+/// carry them, and the orchestrator restores its own value (like `last_active_chat`).
 #[tokio::test]
 async fn update_config_preserves_stored_api_keys() {
     if !crate::shared::secrets::scheme_available() {
@@ -233,7 +233,7 @@ async fn update_config_preserves_stored_api_keys() {
     .await
     .unwrap();
 
-    // Снимок из UI (ключей не несёт вовсе) — как коммит любого поля настроек.
+    // A snapshot from the UI (carries no keys at all) — like a commit of any settings field.
     cmd_tx
         .send(AppCommand::UpdateConfig(Box::new(AppConfig {
             max_tool_rounds: 5,
@@ -255,11 +255,11 @@ async fn update_config_preserves_stored_api_keys() {
     assert_eq!(
         crate::shared::secrets::stored_key(&cfg.api_keys, CloudProvider::Claude.key()).as_deref(),
         Some("sk-ant-keep-me"),
-        "правка настроек стёрла сохранённый ключ"
+        "editing settings erased the saved key"
     );
 }
 
-/// Пустой ключ удаляет сохранённое значение (в UI — очистка поля).
+/// An empty key removes the saved value (in the UI — clearing the field).
 #[tokio::test]
 async fn set_empty_api_key_removes_stored_entry() {
     if !crate::shared::secrets::scheme_available() {
@@ -280,7 +280,7 @@ async fn set_empty_api_key_removes_stored_entry() {
     })
     .await
     .unwrap();
-    // Пустой ключ — удаление: флаг «настроен» гаснет.
+    // An empty key means removal: the "configured" flag goes dark.
     cmd_tx
         .send(AppCommand::SetApiKey {
             provider: CloudProvider::Gemini,
@@ -297,8 +297,8 @@ async fn set_empty_api_key_removes_stored_entry() {
     handle.await.unwrap();
 }
 
-/// Снимок настроек для UI не несёт ключей (даже шифротекстом) — только флаги
-/// «настроен на этой машине». См. docs/research/api-key-storage.md §5.
+/// The settings snapshot for the UI carries no keys (not even as ciphertext) — only flags
+/// "configured on this machine". See docs/research/api-key-storage.md §5.
 #[tokio::test]
 async fn settings_snapshot_carries_flags_not_secrets() {
     if !crate::shared::secrets::scheme_available() {
@@ -330,7 +330,7 @@ async fn settings_snapshot_carries_flags_not_secrets() {
         assert_eq!(api_keys_present, vec![CloudProvider::OpenAi]);
         assert!(
             config.api_keys.is_empty(),
-            "снимок для UI не должен нести записи ключей"
+            "the UI snapshot must not carry key entries"
         );
     }
     cmd_tx.send(AppCommand::Quit).unwrap();

@@ -139,7 +139,7 @@ fn real_main(
             Ok(ExitCode::SUCCESS)
         }
         CliCommand::Run => run_tui(paths, loc),
-        CliCommand::Help { .. } | CliCommand::Version => unreachable!("обработаны в main"),
+        CliCommand::Help { .. } | CliCommand::Version => unreachable!("handled in main"),
     }
 }
 
@@ -151,7 +151,7 @@ fn run_tui(paths: &Paths, loc: &Locale) -> anyhow::Result<ExitCode> {
         Ok(guard) => guard,
         Err(instance::InstanceError::AlreadyRunning) => {
             eprintln!("{}", loc.t("cli.instance.already_running"));
-            tracing::warn!("отказ запуска: другой экземпляр приложения уже работает");
+            tracing::warn!("startup refused: another instance of the app is already running");
             return Ok(ExitCode::SUCCESS);
         }
         // A structured error → localized here (the variant's Display isn't user-facing).
@@ -413,8 +413,8 @@ fn run_restore(paths: &Paths, archive: &Path, loc: &Locale) -> anyhow::Result<()
 /// CLI: installing/updating the Python sandbox (downloading wasmer + python.webc +
 /// packages into `data/sandbox/`). Needs its own tokio runtime (network async).
 fn run_sandbox_setup(paths: &Paths, force: bool, loc: &Locale) -> anyhow::Result<()> {
-    // Гард единственного экземпляра: не переустанавливаем песочницу, пока приложение
-    // работает (могло бы читать заменяемый бинарь/ассеты во время индексации/запуска).
+    // Single-instance guard: don't reinstall the sandbox while the app is
+    // running (it could read the binary/assets being replaced during indexing/startup).
     let _instance = acquire_cli_guard(loc, loc.t("cli.guard.action.sandbox"))?;
     let dir = paths.sandbox_dir();
     let runtime = tokio::runtime::Builder::new_multi_thread()
@@ -430,8 +430,8 @@ fn run_sandbox_setup(paths: &Paths, force: bool, loc: &Locale) -> anyhow::Result
     Ok(())
 }
 
-/// CLI: экспорт бандла локали в файл-шаблон. `i18n::init` уже вызван в `main` (реестр
-/// с внешними готов). Вывод — в stdout (TUI не запущен).
+/// CLI: exports a locale bundle to a template file. `i18n::init` was already called in `main` (the
+/// registry with external ones is ready). Output — to stdout (the TUI isn't running).
 fn run_locales_export(code: &str, output: &Path, loc: &Locale) -> anyhow::Result<()> {
     if output.exists() {
         bail!(
@@ -468,12 +468,12 @@ fn run_locales_export(code: &str, output: &Path, loc: &Locale) -> anyhow::Result
     Ok(())
 }
 
-/// Одноразовый импорт из файла формата mindfork-import (spec §12.2,
-/// docs/import-format.md). Идемпотентно (детерминированные id), исходный файл
-/// только читается. Вывод — в stdout (TUI не запущен), не в лог.
+/// A one-shot import from a mindfork-import format file (spec §12.2,
+/// docs/import-format.md). Idempotent (deterministic ids), the source file
+/// is only ever read. Output — to stdout (the TUI isn't running), not to the log.
 fn run_import(paths: &Paths, file: &Path, loc: &Locale) -> anyhow::Result<()> {
-    // Существующие данные могут требовать миграции (или быть из более новой версии) —
-    // мигрируем перед открытием хранилища, как при обычном старте (release-engineering.md §3.4).
+    // Existing data may need migrating (or be from a newer version) — we
+    // migrate before opening storage, as on a regular startup (release-engineering.md §3.4).
     features::data_migration::run(paths, loc)?;
     let storage =
         Storage::open(paths.clone()).with_context(|| loc.t("cli.ctx.open_storage").to_string())?;
@@ -487,8 +487,8 @@ fn run_import(paths: &Paths, file: &Path, loc: &Locale) -> anyhow::Result<()> {
         storage.json().save_chat(chat)?;
     }
 
-    // Переносим глобальные настройки источника (только заданные поля — частичный
-    // перенос не затирает настройки пользователя).
+    // Carry over the source's global settings (only fields that are set — a partial
+    // transfer doesn't overwrite the user's settings).
     let mut config = storage.json().load_config().unwrap_or_default();
     if let Some(sampling) = result.sampling {
         config.default_sampling = sampling;
@@ -519,14 +519,14 @@ fn run_import(paths: &Paths, file: &Path, loc: &Locale) -> anyhow::Result<()> {
     Ok(())
 }
 
-/// Посев конфигурации переменными окружения (dev/смоук-workflow). Env имеет
-/// приоритет над `settings.json`, чтобы быстрый запуск против сервера не требовал
-/// правки файла. Затрагивает только chat/embedding-серверы:
-/// - `MINDFORK_ENGINE_URL` — external chat-сервер (любой OpenAI-совместимый);
+/// Seeds the config from environment variables (dev/smoke workflow). Env takes
+/// priority over `settings.json`, so a quick launch against a server doesn't require
+/// editing the file. Affects only the chat/embedding servers:
+/// - `MINDFORK_ENGINE_URL` — an external chat server (any OpenAI-compatible one);
 /// - `MINDFORK_LLAMA_BIN` (+ `MINDFORK_MODEL` GGUF, `MINDFORK_NGL`, `MINDFORK_CTX`,
-///   `MINDFORK_PORT`) — managed `llama-server`;
+///   `MINDFORK_PORT`) — a managed `llama-server`;
 /// - `MINDFORK_EMBED_URL` / `MINDFORK_EMBED_BIN` (+ `MINDFORK_EMBED_MODEL`,
-///   `MINDFORK_EMBED_PORT`) — embedding-сервер.
+///   `MINDFORK_EMBED_PORT`) — the embedding server.
 fn apply_env_overrides(config: &mut AppConfig) {
     if let Ok(url) = std::env::var("MINDFORK_ENGINE_URL") {
         config.engine.mode = ServerMode::External;
@@ -581,11 +581,11 @@ mod tests {
 
     #[test]
     fn cli_lang_prefers_settings_then_resolved_default() {
-        // Явный язык из settings.json — сильнейший сигнал (перекрывает умолчание).
+        // An explicit language from settings.json — the strongest signal (overrides the default).
         assert_eq!(cli_lang(Some(Lang::Ru), Lang::En), Lang::Ru);
         assert_eq!(cli_lang(Some(Lang::En), Lang::Ru), Lang::En);
-        // Нет settings → разрешённый язык умолчаний (явный из defaults.json ИЛИ
-        // определённый по локали ОС в Paths::resolve — сюда приходит уже готовым).
+        // No settings → the resolved default language (explicit from defaults.json OR
+        // detected from the OS locale in Paths::resolve — arrives here already resolved).
         assert_eq!(cli_lang(None, Lang::Ru), Lang::Ru);
         assert_eq!(cli_lang(None, Lang::En), Lang::En);
     }
@@ -594,11 +594,11 @@ mod tests {
     fn cli_error_line_is_localized_single_line() {
         let err = anyhow!("outer").context("wrapper");
         let en = cli_error_line(i18n::locale(Lang::En), &err);
-        // Локализованный префикс + однострочная цепочка причин (нет многострочного Debug).
+        // A localized prefix + a single-line cause chain (no multiline Debug).
         assert!(en.starts_with("Error: "), "{en}");
         assert!(en.contains("wrapper") && en.contains("outer"), "{en}");
         assert!(!en.contains('\n'), "{en}");
-        // Русский префикс на ru-локали.
+        // A Russian prefix in the ru locale.
         let ru = cli_error_line(i18n::locale(Lang::Ru), &err);
         assert!(ru.starts_with("Ошибка: "), "{ru}");
     }

@@ -108,7 +108,7 @@ impl ChatScreen {
                 if let Some(spell) = &mut self.spell
                     && let Err(err) = spell.add_to_personal(&popup.word)
                 {
-                    tracing::warn!(error = %err, "не удалось дописать персональный словарь");
+                    tracing::warn!(error = %err, "failed to append to the personal dictionary");
                 }
             }
             None => {}

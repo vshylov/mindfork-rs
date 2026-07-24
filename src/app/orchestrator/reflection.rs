@@ -339,8 +339,8 @@ mod tests {
 
     #[test]
     fn reflect_tools_include_graph() {
-        // Ярус 2: авто-рефлексии даны note_link/note_neighbors (граф над наблюдениями).
-        // Ярус 3: + note_recall (id пользовательских заметок для кросс-органных связей).
+        // Tier 2: auto-reflection is given note_link/note_neighbors (a graph over observations).
+        // Tier 3: + note_recall (ids of user notes for cross-organ links).
         use super::{REFLECT_TOOL_IDS, notes};
         assert!(REFLECT_TOOL_IDS.contains(&notes::NOTE_LINK_ID));
         assert!(REFLECT_TOOL_IDS.contains(&notes::NOTE_NEIGHBORS_ID));
@@ -349,12 +349,12 @@ mod tests {
 
     #[test]
     fn reflect_message_nudges_cross_organ_linking() {
-        // Ярус 3: рефлексии предложено связывать наблюдение «о себе» с фактом «о
-        // собеседнике» (кросс-органное ребро через note_recall + note_link).
+        // Tier 3: reflection is nudged to link an observation "about self" with a fact "about
+        // the interlocutor" (a cross-organ edge via note_recall + note_link).
         let msg = super::reflect_system_message(ru());
         assert!(msg.contains("note_recall"));
         assert!(msg.contains("о собеседнике"));
-        // Обзор self-консолидации: рефлексии указано использовать его блок.
+        // The self-consolidation overview: reflection is told to use its block.
         assert!(msg.contains("Обзор наблюдений для консолидации"));
     }
 
@@ -377,23 +377,23 @@ mod tests {
             mk(base - Duration::hours(1), DeletedCause::Regenerate),
             mk(base - Duration::hours(2), DeletedCause::Regenerate),
             mk(base - Duration::hours(3), DeletedCause::DeleteExchange),
-            mk(base - Duration::days(5), DeletedCause::Rewrite), // до since
+            mk(base - Duration::days(5), DeletedCause::Rewrite), // before since
             DeletedExchange {
                 deleted_at: base - Duration::hours(1),
                 messages: vec![Message::user("x")],
                 draft: String::new(),
-                cause: None, // старая запись без причины — не считается
+                cause: None, // an old entry with no cause — not counted
             },
         ];
-        // since = 4 ч назад → последние 3 (2 regen + 1 delete); rewrite (5 дн.) отсечён.
+        // since = 4h ago → the last 3 (2 regen + 1 delete); rewrite (5d) is cut off.
         let out = behavior_markers(&chat, Some(base - Duration::hours(4)), ru()).unwrap();
         assert!(out.contains("перегенерировал твой ответ ×2"));
         assert!(out.contains("удалил обмен ×1"));
         assert!(!out.contains("переписывал"));
-        // since=None → учитываем всё, собственное поведение (rewrite) — отдельной фразой.
+        // since=None → count everything, the agent's own behavior (rewrite) — a separate phrase.
         let all = behavior_markers(&chat, None, ru()).unwrap();
         assert!(all.contains("Ты сам переписывал свой ответ ×1"));
-        // Нет сигналов → None.
+        // No signals → None.
         let empty = Chat::from_profile(&p, "t2");
         assert!(behavior_markers(&empty, None, ru()).is_none());
     }
@@ -405,22 +405,22 @@ mod tests {
             Message::assistant("a1"),
             Message::user("u2"),
             Message::assistant("a2"),
-            Message::assistant(""), // пустой ответ не считается
+            Message::assistant(""), // an empty reply doesn't count
             Message::user("u3"),
             Message::assistant("a3"),
         ];
-        // Без ватермарка — считаем все непустые ответы ассистента (a1,a2,a3).
+        // With no watermark — count all non-empty assistant replies (a1,a2,a3).
         assert_eq!(reflect_window(&msgs, None), (0, 3));
-        // Ватермарк после a2 (индекс 4): в окне только a3.
+        // Watermark after a2 (index 4): only a3 is in the window.
         assert_eq!(reflect_window(&msgs, Some(4)), (4, 1));
-        // Ватермарк в конце — окно пусто.
+        // Watermark at the end — the window is empty.
         assert_eq!(reflect_window(&msgs, Some(msgs.len())), (7, 0));
     }
 
     #[test]
     fn reflect_window_clamps_past_watermark_after_truncation() {
-        // История усечена (Ctrl+R/Ctrl+E) — ватермарк больше длины: кламп к len,
-        // окно пусто, паники нет.
+        // The history is truncated (Ctrl+R/Ctrl+E) — the watermark exceeds the length: clamp to len,
+        // the window is empty, no panic.
         let msgs = vec![Message::user("u1"), Message::assistant("a1")];
         assert_eq!(reflect_window(&msgs, Some(99)), (2, 0));
     }

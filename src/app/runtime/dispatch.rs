@@ -1,11 +1,11 @@
-//! Runtime — применение AppEvent к экрану + трансляция Intent → AppCommand. Часть модуля [`super`]; разбито из монолита
-//! runtime.rs (см. docs/history/refactoring-god-objects.md, этап 7).
+//! Runtime — applies AppEvent to the screen + translates Intent → AppCommand. Part of the [`super`] module, split out of the
+//! runtime.rs monolith (see docs/history/refactoring-god-objects.md, stage 7).
 
 use super::*;
 
-/// Применяет событие оркестратора к экрану чата (read-only-проекция). Снимок
-/// настроек при открытом экране настроек дополнительно обновляет его рабочую
-/// копию (отражает создание/удаление профилей).
+/// Applies an orchestrator event to the chat screen (a read-only projection).
+/// A settings snapshot, when the settings screen is open, additionally
+/// refreshes its working copy (reflects profile creation/deletion).
 pub(super) fn apply_event(
     screen: &mut ChatScreen,
     active: &mut ActiveScreen,
@@ -14,16 +14,16 @@ pub(super) fn apply_event(
     event: AppEvent,
 ) {
     match event {
-        // Статус серверов — в чат (строка статуса) и, если открыт, в экран настроек
-        // (чипы в секции «Модель/сервер»: подключение → готов видно на месте).
+        // Server statuses — into the chat (the status line) and, if open, into the
+        // settings screen (chips in the "Model/server" section: connecting → ready is visible in place).
         AppEvent::ServerStatus(status) => {
             if let ActiveScreen::Settings(settings) = active {
                 settings.set_server_statuses(status.clone());
             }
             screen.set_server_status(status);
         }
-        // Снимок списка применяем к чату всегда (для следующего открытия/`Ctrl+N`),
-        // а при открытом экране списка — ещё и к нему (живое обновление).
+        // The list snapshot is applied to the chat always (for the next open/`Ctrl+N`),
+        // and when the list screen is open — to it too (a live update).
         AppEvent::ChatList(chats) => {
             if let ActiveScreen::ChatList(list) = active {
                 list.set_chats(chats.clone());
@@ -31,15 +31,15 @@ pub(super) fn apply_event(
             screen.set_chat_list(chats);
         }
         AppEvent::ChatRenamed { id, title } => screen.rename_chat(id, title),
-        // Ошибка операции списка: в его область статуса, если экран открыт; иначе
-        // (поздний ответ авто-названия при закрытом списке) — заметкой в ленту.
+        // A list-operation error: into its status area, if the screen is open; otherwise
+        // (a late auto-title reply after the list is closed) — as a note in the feed.
         AppEvent::ChatListError(message) => match active {
             ActiveScreen::ChatList(list) => list.set_error(message),
             _ => screen.push_error(&message),
         },
-        // Запись в буфер обмена — side-effect UI-слоя; сама запись и маршрутизация
-        // подтверждения/ошибки вынесены в `deliver_clipboard` (`apply_event` не знает
-        // про `arboard`).
+        // Writing to the clipboard is a UI-layer side effect; the write itself and
+        // routing the confirmation/error are factored into `deliver_clipboard`
+        // (`apply_event` doesn't know about `arboard`).
         AppEvent::CopyToClipboard(text) => deliver_clipboard(screen, active, clipboard, &text),
         AppEvent::ProfileList(profiles) => screen.set_profile_list(profiles),
         AppEvent::Settings {
@@ -55,8 +55,8 @@ pub(super) fn apply_event(
                     settings.set_mcp(mcp.clone());
                     settings.set_api_keys_present(api_keys_present.clone());
                 }
-                // Тема/режим совместимости/язык UI могли смениться — обновим палитру
-                // и локаль открытых overlay-экранов (список/модель себя) одним broadcast.
+                // The theme/compatibility mode/UI language may have changed — refresh the
+                // palette and locale of open overlay screens (list/self-model) in one broadcast.
                 other => other.set_theme(
                     Palette::for_theme(config.interface.theme)
                         .with_compat(config.interface.terminal_compat),
@@ -73,13 +73,13 @@ pub(super) fn apply_event(
         } => {
             if let ActiveScreen::ChatList(list) = active {
                 if list.take_pending_new_chat() {
-                    // Пришла активация только что созданного чата (`Ctrl+N` в
-                    // списке) — закрываем список и показываем новый чат. Так
-                    // переход прежний→новый атомарен, без промежуточного мигания.
+                    // Activation of a just-created chat arrived (`Ctrl+N` in
+                    // the list) — close the list and show the new chat. This makes
+                    // the old→new transition atomic, with no intermediate flash.
                     *active = ActiveScreen::Chat;
                 } else {
-                    // Удаление активного чата при открытом списке меняет активный —
-                    // обновим его метку в списке.
+                    // Deleting the active chat while the list is open changes the active one —
+                    // refresh its marker in the list.
                     list.set_active(Some(id));
                 }
             }
@@ -127,8 +127,8 @@ pub(super) fn apply_event(
             reason,
         } => screen.finish_impersonation(generation_id, reason),
         AppEvent::RagProgress(progress) => screen.set_rag_progress(progress),
-        // Ответ на запрос/правку модели себя (`F3`): открываем экран либо обновляем
-        // уже открытый на месте (сохраняя выделение — важно при правках).
+        // A reply to a self-model request/edit (`F3`): open the screen or refresh
+        // the already-open one in place (keeping the selection — important during edits).
         AppEvent::SelfModelView(model) => match active {
             ActiveScreen::SelfModel(view) => view.set_model(*model),
             _ => {
@@ -139,8 +139,8 @@ pub(super) fn apply_event(
                 )))
             }
         },
-        // «Модель себя» изменилась фоном/инструментами — обновляем ТОЛЬКО открытый
-        // экран `F3` (перезапрос свежего снимка); при закрытом — игнор.
+        // The "self-model" changed in the background/via tools — refresh ONLY the open
+        // `F3` screen (re-request a fresh snapshot); ignored when closed.
         AppEvent::SelfModelChanged => {
             if matches!(active, ActiveScreen::SelfModel(_)) {
                 let _ = cmd_tx.send(AppCommand::RequestSelfModel);
@@ -156,10 +156,10 @@ pub(super) fn apply_event(
     }
 }
 
-/// Пишет переписку в буфер обмена и направляет подтверждение/ошибку в статус
-/// экрана списка чатов (его открывали для копирования) либо, если он закрыт, —
-/// заметкой в ленту. Инкапсулирует единственное обращение к `arboard`
-/// ([`write_clipboard`]), чтобы `apply_event` не знал про буфер обмена.
+/// Writes the conversation to the clipboard and routes the confirmation/error
+/// into the chat-list screen's status (if it was opened for copying), or, if it's
+/// closed, as a note in the feed. Encapsulates the single call to `arboard`
+/// ([`write_clipboard`]) so `apply_event` doesn't need to know about the clipboard.
 pub(super) fn deliver_clipboard(
     screen: &mut ChatScreen,
     active: &mut ActiveScreen,
@@ -179,9 +179,9 @@ pub(super) fn deliver_clipboard(
     }
 }
 
-/// Намерение любого из экранов — единый тип, чтобы снятое из активного экрана
-/// намерение можно было диспетчеризовать одним владением (без 4 параллельных
-/// `Option` и 4 почти одинаковых `if`-блоков, конфликтовавших по заимствованиям).
+/// An intent from any of the screens — a unified type, so an intent taken off the
+/// active screen can be dispatched through a single ownership (instead of 4 parallel
+/// `Option`s and 4 nearly identical `if` blocks that conflicted over borrows).
 pub(super) enum AnyIntent {
     Chat(ChatIntent),
     List(ChatListIntent),
@@ -189,8 +189,8 @@ pub(super) enum AnyIntent {
     SelfModel(SelfModelIntent),
 }
 
-/// Диспетчеризует намерение активного экрана в соответствующий транслятор.
-/// Возвращает `true`, если запрошен выход.
+/// Dispatches the active screen's intent to the corresponding translator.
+/// Returns `true` if quitting was requested.
 pub(super) fn dispatch_any(
     intent: AnyIntent,
     cmd_tx: &UnboundedSender<AppCommand>,
@@ -205,8 +205,8 @@ pub(super) fn dispatch_any(
     }
 }
 
-/// Транслирует намерение чата в команду оркестратору (или открывает экран
-/// настроек/списка чатов). Возвращает `true` для [`ChatIntent::Quit`].
+/// Translates a chat intent into an orchestrator command (or opens the settings/
+/// chat-list screen). Returns `true` for [`ChatIntent::Quit`].
 pub(super) fn dispatch(
     intent: ChatIntent,
     cmd_tx: &UnboundedSender<AppCommand>,
@@ -236,19 +236,19 @@ pub(super) fn dispatch(
                 screen.settings_snapshot()
             {
                 let mut settings = SettingsScreen::new(config, profiles, language_locked);
-                // Начальный снимок статусов серверов (чипы в секции «Модель/сервер»);
-                // дальше их обновляет `apply_event` из события `ServerStatus`.
+                // The initial server-status snapshot (chips in the "Model/server" section);
+                // afterward `apply_event` updates them from the `ServerStatus` event.
                 settings.set_server_statuses(screen.server_statuses());
-                // Снимок MCP-хоста (каталог инструментов + статусы серверов);
-                // дальше его обновляет `apply_event` из события `Settings`.
+                // The MCP-host snapshot (the tool catalog + server statuses);
+                // afterward `apply_event` updates it from the `Settings` event.
                 settings.set_mcp(mcp);
-                // Какие ключи сохранены на этой машине (поле-статус «API-ключ»).
+                // Which keys are stored on this machine (the "API key" status field).
                 settings.set_api_keys_present(api_keys);
                 *active = ActiveScreen::Settings(Box::new(settings));
             }
             return false;
         }
-        // Список чатов открывается из снимка, который чат держит актуальным.
+        // The chat list opens from a snapshot the chat keeps up to date.
         ChatIntent::OpenChatList => {
             *active = ActiveScreen::ChatList(Box::new(ChatListScreen::new(
                 screen.chat_summaries(),
@@ -258,16 +258,16 @@ pub(super) fn dispatch(
             )));
             return false;
         }
-        // Просмотр модели себя: данными владеет оркестратор — запрашиваем снимок,
-        // экран откроется по событию `SelfModelView` (см. `apply_event`).
+        // Viewing the self-model: the orchestrator owns the data — request a snapshot,
+        // the screen opens on the `SelfModelView` event (see `apply_event`).
         ChatIntent::OpenSelfModel => {
             let _ = cmd_tx.send(AppCommand::RequestSelfModel);
             return false;
         }
-        // Тумблер прокрутки колесом: включаем/выключаем захват мыши терминала.
-        // Это чисто терминальный side-effect (FSD: экран про терминал не знает,
-        // только сообщает желаемое состояние). При включённом захвате выделение
-        // текста доступно с зажатым Shift.
+        // The wheel-scroll toggle: enable/disable terminal mouse capture.
+        // This is a purely terminal side effect (FSD: the screen doesn't know about
+        // the terminal, it just reports the desired state). With capture on, text
+        // selection is available with Shift held.
         ChatIntent::SetMouseCapture(on) => {
             let _ = if on {
                 execute!(stdout(), EnableMouseCapture)
@@ -276,16 +276,16 @@ pub(super) fn dispatch(
             };
             return false;
         }
-        // Копирование в буфер обмена перехватывается раньше — в `process_input_batch`
-        // (там есть слот `arboard`, а здесь `screen` иммутабелен). Сюда не доходит.
+        // Copying to the clipboard is intercepted earlier — in `process_input_batch`
+        // (which has the `arboard` slot, whereas `screen` here is immutable). It never reaches here.
         ChatIntent::CopyToClipboard(_) => return false,
     };
     let _ = cmd_tx.send(command);
     false
 }
 
-/// Транслирует намерение экрана списка чатов в команду (или управление экранами).
-/// Возвращает `true` для [`ChatListIntent::Quit`] (петля завершается).
+/// Translates a chat-list-screen intent into a command (or screen management).
+/// Returns `true` for [`ChatListIntent::Quit`] (the loop ends).
 pub(super) fn dispatch_chat_list(
     intent: ChatListIntent,
     cmd_tx: &UnboundedSender<AppCommand>,
@@ -293,7 +293,7 @@ pub(super) fn dispatch_chat_list(
     active: &mut ActiveScreen,
 ) -> bool {
     let command = match intent {
-        // Закрытие/переход к чату возвращает базовый экран.
+        // Closing/switching to a chat returns to the base screen.
         ChatListIntent::Close => {
             *active = ActiveScreen::Chat;
             return false;
@@ -303,22 +303,22 @@ pub(super) fn dispatch_chat_list(
             *active = ActiveScreen::Chat;
             AppCommand::SwitchChat(id)
         }
-        // Создание чата запускает поток нового чата на экране чата (там живёт
-        // выбор профиля — оверлей при >1 профиле).
+        // Creating a chat starts the new-chat flow on the chat screen (that's where
+        // profile selection lives — an overlay when there's >1 profile).
         ChatListIntent::NewChat => {
             match screen.request_new_chat() {
-                // Один профиль: чат создаёт оркестратор (round-trip). Список
-                // ОСТАВЛЯЕМ открытым до прихода `ChatActivated` нового чата —
-                // иначе на время round-trip мигнул бы прежний активный чат. По
-                // приходу активации `apply_event` переключит на новый чат.
+                // A single profile: the orchestrator creates the chat (round-trip). The list
+                // is KEPT open until the new chat's `ChatActivated` arrives —
+                // otherwise the previous active chat would flash for the duration of the round-trip. Once
+                // the activation arrives, `apply_event` switches to the new chat.
                 Some(ChatIntent::NewChat { profile_id }) => {
                     if let ActiveScreen::ChatList(list) = active {
                         list.set_pending_new_chat();
                     }
                     let _ = cmd_tx.send(AppCommand::NewChat { profile_id });
                 }
-                // >1 профиля: `request_new_chat` открыл оверлей выбора профиля в
-                // экране чата — показываем чат, чтобы оверлей был виден.
+                // >1 profile: `request_new_chat` opened the profile-picker overlay on
+                // the chat screen — show the chat so the overlay is visible.
                 _ => *active = ActiveScreen::Chat,
             }
             return false;
@@ -327,9 +327,9 @@ pub(super) fn dispatch_chat_list(
             *active = ActiveScreen::Chat;
             AppCommand::CloneChat(id)
         }
-        // Копирование/удаление/переименование/авто-название не закрывают список:
-        // подтверждение/ошибка прилетят в его область статуса, обновлённый набор —
-        // событием `ChatList`.
+        // Copy/delete/rename/auto-title don't close the list:
+        // the confirmation/error arrives in its status area, the updated set —
+        // via the `ChatList` event.
         ChatListIntent::Copy(id) => AppCommand::CopyChat(id),
         ChatListIntent::Delete(id) => AppCommand::DeleteChat(id),
         ChatListIntent::Rename { id, title } => AppCommand::RenameChat { id, title },
@@ -339,8 +339,8 @@ pub(super) fn dispatch_chat_list(
     false
 }
 
-/// Транслирует намерение экрана настроек в команду (или закрывает его).
-/// Возвращает `true` для [`SettingsIntent::Quit`] (петля завершается).
+/// Translates a settings-screen intent into a command (or closes it).
+/// Returns `true` for [`SettingsIntent::Quit`] (the loop ends).
 pub(super) fn dispatch_settings(
     intent: SettingsIntent,
     cmd_tx: &UnboundedSender<AppCommand>,
@@ -369,8 +369,8 @@ pub(super) fn dispatch_settings(
     false
 }
 
-/// Транслирует намерение экрана просмотра модели себя: закрытие возвращает к чату,
-/// `Quit` завершает петлю (`true`). Команд оркестратору не шлёт (read-only).
+/// Translates a self-model-viewer-screen intent: closing returns to the chat,
+/// `Quit` ends the loop (`true`). Sends no orchestrator commands (read-only).
 pub(super) fn dispatch_self_model(
     intent: SelfModelIntent,
     cmd_tx: &UnboundedSender<AppCommand>,
@@ -382,8 +382,8 @@ pub(super) fn dispatch_self_model(
             false
         }
         SelfModelIntent::Quit => true,
-        // Правка: команда оркестратору; экран остаётся открытым и обновится по
-        // ответному `SelfModelView` (см. `apply_event`).
+        // An edit: a command to the orchestrator; the screen stays open and refreshes on
+        // the reply `SelfModelView` (see `apply_event`).
         SelfModelIntent::Edit(edit) => {
             let _ = cmd_tx.send(AppCommand::UpdateSelfModel(edit));
             false

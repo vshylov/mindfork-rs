@@ -210,7 +210,7 @@ fn derive_key(ikm: &[u8], user: &str) -> [u8; 32] {
     // `expand` into 32 bytes (= the SHA-256 output size) cannot exceed the HKDF limit.
     hkdf::Hkdf::<sha2::Sha256>::new(Some(ENTROPY), ikm)
         .expand(&info, &mut okm)
-        .expect("HKDF: 32 байта всегда допустимы");
+        .expect("HKDF: 32 bytes is always a valid length");
     okm
 }
 

@@ -1,11 +1,11 @@
-//! Авто-консолидация заметок («сон», Ярус 3): каждые N ответов ассистента в чате
-//! фоновая задача просит модель пересмотреть базу знаний и **самой** её
-//! консолидировать — слить дубли, переписать/заместить устаревшее, связать
-//! родственное. Как и авто-рефлексия, это **мини agentic-loop**: модель вызывает
-//! note-инструменты, петля их исполняет (пишут напрямую в `Storage`). Чат не
-//! мутируется, в UI ничего не стримится — консолидация молчалива и опциональна
-//! (`config.notes.auto_consolidate_every`, по умолчанию выкл).
-//! См. docs/history/notes-connectivity.md (Ярус 3).
+//! Notes auto-consolidation ("sleep", Tier 3): every N assistant replies in a chat,
+//! a background task asks the model to review the knowledge base and consolidate
+//! it **itself** — merge duplicates, revise/replace stale entries, link
+//! related ones. Like auto-reflection, this is a **mini agentic loop**: the model calls
+//! note tools, the loop executes them (they write directly into `Storage`). The chat isn't
+//! mutated, nothing streams to the UI — consolidation is silent and opt-in
+//! (`config.notes.auto_consolidate_every`, off by default).
+//! See docs/history/notes-connectivity.md (Tier 3).
 
 use std::time::Duration;
 
@@ -21,14 +21,14 @@ use super::Orchestrator;
 use super::request::last_user_message_at;
 use super::tool_loop;
 
-/// Потолок токенов ответа на раунд консолидации (с запасом на «мысли» перед вызовом).
+/// The token ceiling for a consolidation round's reply (with margin for "thoughts" before the call).
 const CONSOLIDATE_MAX_TOKENS: usize = 2048;
-/// Лимит раундов мини agentic-loop консолидации (бэкстоп от зацикливания).
+/// The round limit for the consolidation mini agentic loop (a backstop against looping).
 const CONSOLIDATE_MAX_ROUNDS: u32 = 8;
-/// Лимит времени на всю консолидацию.
+/// The time limit for the whole consolidation.
 const CONSOLIDATE_TIMEOUT: Duration = Duration::from_secs(180);
 
-/// Инструменты, доступные консолидации (пересекаются с набором профиля).
+/// Tools available to consolidation (intersected with the profile's set).
 const CONSOLIDATE_TOOL_IDS: &[&str] = &[
     "note_recall",
     notes::NOTE_REVISE_ID,
@@ -39,10 +39,10 @@ const CONSOLIDATE_TOOL_IDS: &[&str] = &[
 ];
 
 impl Orchestrator {
-    /// Вызывается после успешной генерации (`handle_done`): считает ответы ассистента
-    /// и при достижении порога запускает фоновую консолидацию. Тихо ничего не делает,
-    /// если фича выключена, профиль не включил инструменты заметок, консолидация уже
-    /// идёт, активных заметок меньше двух или сервер не готов.
+    /// Called after a successful generation (`handle_done`): counts assistant replies
+    /// and, once the threshold is reached, starts background consolidation. Silently does nothing
+    /// if the feature is disabled, the profile hasn't enabled note tools, consolidation is
+    /// already running, there are fewer than two active notes, or the server isn't ready.
     pub(super) fn maybe_auto_consolidate(&mut self, chat_id: uuid::Uuid) {
         let every = self.config.notes.auto_consolidate_every;
         if every == 0 {
@@ -50,7 +50,7 @@ impl Orchestrator {
         }
 
         let profile_id;
-        let lang; // язык служебного каркаса профиля (ось A)
+        let lang; // the profile's agent-scaffold language (axis A)
         let system_message;
         let last_user;
         let allowed: Vec<ToolId>;
@@ -63,7 +63,7 @@ impl Orchestrator {
                 return;
             };
             lang = profile.language;
-            // Гейт: профиль включает консолидацию (note_merge — ядро операции).
+            // Gate: the profile enables consolidation (note_merge is the core operation).
             if !profile
                 .enabled_tools
                 .iter()
@@ -80,9 +80,9 @@ impl Orchestrator {
             last_user = last_user_message_at(chat);
         }
 
-        // Счётчик ответов с прошлой консолидации: инкремент; если порог не достигнут —
-        // выходим (счётчик копится дальше). Сброс — только при фактическом спавне
-        // (ниже), чтобы пропуск по гейту не терял накопленный цикл.
+        // The reply counter since the last consolidation: increment; if the threshold isn't reached —
+        // exit (the counter keeps accumulating). Reset — only on an actual spawn
+        // (below), so a gate skip doesn't lose the accumulated cycle.
         {
             let count = self.consolidate_counts.entry(chat_id).or_insert(0);
             *count += 1;
@@ -91,10 +91,10 @@ impl Orchestrator {
             }
         }
         if self.bg_running(BackgroundKind::Consolidation) {
-            return; // уже идёт — пропускаем без сброса (повторим на след. ходу)
+            return; // already running — skip without a reset (we'll retry next turn)
         }
-        // Нечего консолидировать, если пользовательских заметок меньше двух (self-заметки
-        // не в счёт — консолидация над ними не работает). Счётчик не сброшен — повторим.
+        // Nothing to consolidate if there are fewer than two user notes (self-notes
+        // don't count — consolidation doesn't operate on them). The counter isn't reset — retry.
         let active_user = self
             .storage
             .db()
@@ -106,11 +106,11 @@ impl Orchestrator {
         if active_user < 2 {
             return;
         }
-        // Сервер готов? Иначе тихо пропускаем (счётчик не сброшен).
+        // Is the server ready? Otherwise silently skip (the counter isn't reset).
         let Ok(backend) = self.engines.backend_if_ready() else {
             return;
         };
-        // Все гейты пройдены — сбрасываем счётчик и запускаем.
+        // All gates passed — reset the counter and spawn.
         self.consolidate_counts.insert(chat_id, 0);
         let overview = notes::build_consolidation_overview(
             &self.storage,
@@ -118,7 +118,7 @@ impl Orchestrator {
             crate::shared::i18n::locale(lang),
         );
 
-        // Токен отмены — до контекста: его клон едет в `ToolContext.cancel`.
+        // The cancellation token — before the context: its clone goes into `ToolContext.cancel`.
         let cancel = CancellationToken::new();
         let ctx = ToolContext::new(
             self.tool_deps(backend.clone()),
@@ -151,7 +151,7 @@ impl Orchestrator {
                 .schemas_for(&allowed, crate::shared::i18n::locale(lang)),
         };
 
-        // Спавним задачу и фиксируем слот (флаг «идёт» + тихий индикатор в статус-баре).
+        // Spawn the task and set the slot (the "running" flag + a quiet status-bar indicator).
         tool_loop::spawn_silent_loop(tool_loop::SilentLoop {
             backend,
             registry: self.registry.clone(),
@@ -165,8 +165,8 @@ impl Orchestrator {
             profile_id,
             kind: BackgroundKind::Consolidation,
             done_tx: self.bg_done_tx.clone(),
-            // Консолидация заметок — про пользовательские заметки, не про summary модели
-            // себя; семантика summary↔наблюдения к ней неприменима.
+            // Notes consolidation is about user notes, not the self-model's summary;
+            // summary↔observation semantics don't apply to it.
             summary_semantics: None,
         });
         self.begin_bg(BackgroundKind::Consolidation, cancel);

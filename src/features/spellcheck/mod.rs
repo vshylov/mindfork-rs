@@ -1,10 +1,10 @@
-//! Спелл-чек (features/spellcheck): Hunspell-словари (`spellbook`), сегментация
-//! и персональный словарь. Слово корректно, если принято хотя бы одним активным
-//! словарём. См. spec §11.5.
+//! Spellcheck (features/spellcheck): Hunspell dictionaries (`spellbook`), segmentation,
+//! and a personal dictionary. A word is correct if accepted by at least one active
+//! dictionary. See spec §11.5.
 //!
-//! - [`segment`] — разбиение строки на слова (учёт апострофов/дефисов, ru/en).
-//! - [`dict`] — загрузка словарей из `dictionaries/` и персонального словаря.
-//! - [`check`] — [`SpellChecker`]: проверка, подсказки, добавление в словарь.
+//! - [`segment`] — splitting a string into words (accounting for apostrophes/hyphens, ru/en).
+//! - [`dict`] — loading dictionaries from `dictionaries/` and the personal dictionary.
+//! - [`check`] — [`SpellChecker`]: checking, suggestions, adding to the dictionary.
 
 pub mod check;
 pub mod dict;

@@ -448,17 +448,17 @@ mod tests {
         ]
     }
 
-    /// Тексты реплик без ролей — для проверок, где роль не важна.
+    /// Utterance texts with no roles — for checks where the role doesn't matter.
     fn texts(v: Vec<(MessageRole, String)>) -> Vec<String> {
         v.into_iter().map(|(_, s)| s).collect()
     }
 
-    /// Реплика ассистента для входа чанкера (роль там не важна, но нужна типу).
+    /// An assistant utterance for the chunker's input (the role doesn't matter there, but the type needs it).
     fn asst(s: &str) -> (MessageRole, String) {
         (MessageRole::Assistant, s.to_string())
     }
 
-    /// Тексты чанков без ролей.
+    /// Chunk texts with no roles.
     fn chunk_texts(chunks: &[(MessageRole, String)]) -> Vec<String> {
         chunks.iter().map(|(_, s)| s.clone()).collect()
     }
@@ -476,12 +476,12 @@ mod tests {
     fn recent_scope_takes_tail_in_chronological_order() {
         let out = build_utterances(&chat_messages(), TtsScope::Recent(3), false, ru()).unwrap();
         assert_eq!(out.len(), 3);
-        // Порядок хронологический, и роли сохранены (для многоголосой озвучки).
+        // The order is chronological, and roles are preserved (for multi-voice speech).
         assert_eq!(out[0].0, MessageRole::Assistant);
-        assert!(out[0].1.contains("первый ответ"), "порядок: {out:?}");
+        assert!(out[0].1.contains("первый ответ"), "order: {out:?}");
         assert_eq!(out[1].0, MessageRole::User);
         assert!(out[2].1.contains("второй ответ"));
-        // Запрос больше, чем есть, отдаёт всё (кламп, а не ошибка).
+        // Requesting more than there is hands out everything (a clamp, not an error).
         let all = build_utterances(&chat_messages(), TtsScope::Recent(99), false, ru()).unwrap();
         assert_eq!(all.len(), 4);
     }
@@ -501,9 +501,9 @@ mod tests {
             Message::assistant("настоящий ответ"),
         ];
         let out = build_utterances(&messages, TtsScope::All, false, ru()).unwrap();
-        assert_eq!(out.len(), 1, "озвучиваются только user/assistant: {out:?}");
+        assert_eq!(out.len(), 1, "only user/assistant get spoken: {out:?}");
         assert!(out[0].1.contains("настоящий ответ"));
-        // Совсем нечего озвучивать — None (вызывающий покажет понятную ошибку).
+        // Nothing at all to speak — None (the caller shows a clear error).
         assert!(build_utterances(&[], TtsScope::All, false, ru()).is_none());
         assert!(
             build_utterances(
@@ -518,11 +518,11 @@ mod tests {
 
     #[test]
     fn role_prefixes_apply_to_every_scope_including_single() {
-        // Тумблер «Озвучивать роли» действует и при одиночном `/tts` (решение Р6).
+        // The "Speak roles" toggle applies to a single `/tts` too (decision point R6).
         let one = texts(build_utterances(&chat_messages(), TtsScope::Last, true, ru()).unwrap());
         assert!(
             one[0].starts_with(ru().t("speak.role.assistant")),
-            "префикс роли и у одного сообщения: {one:?}"
+            "the role prefix appears on a single message too: {one:?}"
         );
         let many =
             texts(build_utterances(&chat_messages(), TtsScope::Recent(2), true, ru()).unwrap());
@@ -532,8 +532,8 @@ mod tests {
 
     #[test]
     fn message_whose_text_is_all_skippable_is_dropped() {
-        // Сообщение из одного код-блока даёт только пометку — она озвучивается,
-        // а вот пустой результат экстрактора сообщение бы отбросил.
+        // A message consisting of a single code block yields only a marker — it gets
+        // spoken, whereas an empty extractor result would drop the message.
         let messages = vec![Message::assistant("```rust\nfn main() {}\n```")];
         let out = build_utterances(&messages, TtsScope::All, false, ru()).unwrap();
         assert_eq!(out.len(), 1);
@@ -542,14 +542,14 @@ mod tests {
 
     #[test]
     fn chunk_inherits_role_of_source_message() {
-        // Роль реплики передаётся всем её чанкам — по ней выбирается голос.
+        // An utterance's role carries over to all its chunks — the voice is picked by it.
         let src = vec![
             (MessageRole::User, "Раз. Два.".to_string()),
             (MessageRole::Assistant, "Три. Четыре.".to_string()),
         ];
         let chunks = chunk_utterances(&src, 6);
         assert!(chunks.iter().all(|(_, c)| c.chars().count() <= 6));
-        // Первые чанки — пользователя, последние — ассистента.
+        // The first chunks — the user's, the last — the assistant's.
         assert_eq!(chunks.first().unwrap().0, MessageRole::User);
         assert_eq!(chunks.last().unwrap().0, MessageRole::Assistant);
     }
@@ -561,15 +561,15 @@ mod tests {
         let ch = chunk_texts(&chunks);
         assert!(
             ch.iter().all(|c| c.chars().count() <= 25),
-            "лимит соблюдён: {ch:?}"
+            "the limit is respected: {ch:?}"
         );
-        // Границы — по предложениям (пунктуация сохранена в конце чанка).
+        // Boundaries — on sentences (punctuation is preserved at the end of a chunk).
         assert!(
             ch.iter()
                 .all(|c| c.ends_with('.') || c.ends_with('!') || c.ends_with('?')),
-            "чанк заканчивается концом предложения: {ch:?}"
+            "a chunk ends at a sentence boundary: {ch:?}"
         );
-        // Ничего не потеряно.
+        // Nothing lost.
         assert_eq!(ch.join(" ").replace("  ", " "), text);
     }
 
@@ -581,8 +581,8 @@ mod tests {
 
     #[test]
     fn utterances_are_not_merged_across_messages() {
-        // Граница сообщения — естественная пауза и точка отмены: не склеиваем даже
-        // короткие реплики.
+        // A message boundary is a natural pause and a cancellation point: we don't stitch
+        // together even short utterances.
         let chunks = chunk_utterances(&[asst("Раз."), asst("Два.")], 4096);
         assert_eq!(
             chunk_texts(&chunks),
@@ -597,7 +597,7 @@ mod tests {
         let ch = chunk_texts(&chunks);
         assert!(ch.iter().all(|c| c.chars().count() <= 20), "{ch:?}");
         assert!(ch.len() > 1);
-        // Одно слово длиннее лимита режется посимвольно, а не теряется.
+        // A single word longer than the limit is cut by character, not lost.
         let giant = "я".repeat(50);
         let chunks = chunk_utterances(&[asst(&giant)], 20);
         let ch = chunk_texts(&chunks);
@@ -613,7 +613,7 @@ mod tests {
             TtsSetupError::Url,
         ] {
             let key = setup_error_key(err);
-            assert!(ru().has_key(key), "ключ {key} должен быть в бандле");
+            assert!(ru().has_key(key), "key {key} must be in the bundle");
         }
     }
 }

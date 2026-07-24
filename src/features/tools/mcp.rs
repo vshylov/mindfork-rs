@@ -1,15 +1,15 @@
-//! Обёртка [`McpTool`] — инструмент MCP-сервера за трейтом [`Tool`]
-//! (docs/research/plugin-system.md §4.4, этап 3). Описание и JSON-схема — снимок
-//! из `tools/list` сервера (**не локализуются** — граница i18n, как probe-ошибки
-//! движка); `invoke` → `tools/call` с per-call таймаутом и отменой (`ctx.cancel`);
-//! результат клипуется (`max_result_chars`) — ограничение входа в промпт.
+//! The [`McpTool`] wrapper — an MCP server's tool behind the [`Tool`] trait
+//! (docs/research/plugin-system.md §4.4, part 3). The description and JSON schema are a
+//! snapshot from the server's `tools/list` (**not localized** — an i18n boundary, like
+//! engine probe errors); `invoke` → `tools/call` with a per-call timeout and cancellation
+//! (`ctx.cancel`); the result is clipped (`max_result_chars`) — a limit on prompt input.
 //!
-//! Id инструмента — `mcp__<server>__<tool>` (конвенция Claude Code), нормализован
-//! под лимиты провайдеров function-имён ([`mcp_tool_id`]): `[A-Za-z0-9_-]`,
-//! ≤ 64 символов (усечение + hex-хвост от полного имени против коллизий).
-//! `enabled_by_default = false` — двойной opt-in (мастер-гейт `config.mcp.enabled`
-//! и тумблер в профиле); в статический `CATALOG` эти инструменты не входят
-//! (динамический каталог едет снимком в `AppEvent::Settings`).
+//! The tool's id is `mcp__<server>__<tool>` (the Claude Code convention), normalized
+//! against providers' function-name limits ([`mcp_tool_id`]): `[A-Za-z0-9_-]`,
+//! ≤ 64 characters (truncation + a hex tail from the full name against collisions).
+//! `enabled_by_default = false` — double opt-in (the master gate `config.mcp.enabled`
+//! and a profile toggle); these tools aren't in the static `CATALOG`
+//! (the dynamic catalog rides as a snapshot in `AppEvent::Settings`).
 
 use std::collections::HashSet;
 use std::hash::{DefaultHasher, Hash, Hasher};
@@ -25,33 +25,33 @@ use crate::shared::i18n::Locale;
 use crate::shared::mcp::{McpConnection, McpToolInfo};
 use crate::shared::server::ServerStatus;
 
-/// Снимок MCP-хоста для UI (едет в `AppEvent::Settings`): динамический каталог
-/// инструментов (тумблеры профиля) + статусы серверов (строки в секции
-/// «Инструменты»). FSD: живёт в `features` — `screens` не импортирует `app`.
+/// The MCP host's snapshot for the UI (rides in `AppEvent::Settings`): the dynamic
+/// catalog of tools (profile toggles) + server statuses (rows in the "Tools"
+/// section). FSD: lives in `features` — `screens` doesn't import `app`.
 #[derive(Debug, Clone, Default)]
 pub struct McpSnapshot {
-    /// Метаданные инструментов всех готовых серверов (с полными описаниями).
+    /// Tool metadata for all ready servers (with full descriptions).
     pub tools: Vec<meta::ToolInfo>,
-    /// Статусы серверов (по id).
+    /// Server statuses (by id).
     pub servers: Vec<McpServerSnapshot>,
 }
 
-/// Снимок одного MCP-сервера для UI.
+/// A snapshot of one MCP server for the UI.
 #[derive(Debug, Clone)]
 pub struct McpServerSnapshot {
     pub id: String,
     pub status: ServerStatus,
-    /// Число зарегистрированных инструментов (0 — сервер не готов).
+    /// The number of registered tools (0 — the server isn't ready).
     pub tool_count: usize,
-    /// Каталог сервера изменился против TOFU-пина — инструменты не
-    /// зарегистрированы, ждём подтверждения пользователя (Enter в настройках).
+    /// The server's catalog has changed against the TOFU pin — the tools aren't
+    /// registered, waiting for the user's confirmation (Enter in settings).
     pub pending_catalog: bool,
 }
 
-/// TOFU-хэш каталога инструментов сервера: sha256 по отсортированным
-/// (имя, описание, JSON-схема) — любое изменение любого поля (rug-pull, tool
-/// poisoning через описания/схемы) меняет хэш. Детерминизм: инструменты
-/// сортируются по имени, ключи JSON-объектов у `serde_json` упорядочены (BTreeMap).
+/// The TOFU hash of a server's tool catalog: sha256 over sorted
+/// (name, description, JSON schema) — any change to any field (a rug-pull, tool
+/// poisoning via descriptions/schemas) changes the hash. Determinism: tools
+/// are sorted by name, `serde_json`'s JSON-object keys are ordered (BTreeMap).
 pub fn catalog_hash(tools: &[McpToolInfo]) -> String {
     let mut sorted: Vec<&McpToolInfo> = tools.iter().collect();
     sorted.sort_by(|a, b| a.name.cmp(&b.name));
@@ -72,19 +72,19 @@ pub fn catalog_hash(tools: &[McpToolInfo]) -> String {
     out
 }
 
-/// Префикс id инструментов MCP-серверов. По нему [`super::effective_tool_ids`]
-/// гейтит их мастер-выключателем `config.mcp.enabled` (инструменты динамические —
-/// в статическом `CATALOG` их нет, lookup гейта невозможен).
+/// The id prefix of MCP-server tools. [`super::effective_tool_ids`] uses it to
+/// gate them via the master switch `config.mcp.enabled` (the tools are dynamic —
+/// they're absent from the static `CATALOG`, so a gate lookup there is impossible).
 pub const MCP_TOOL_PREFIX: &str = "mcp__";
 
-/// Потолок длины имени function-инструмента у провайдеров (исторически
-/// `^[a-zA-Z0-9_-]{1,64}$` у OpenAI/Anthropic).
+/// The ceiling on providers' function-tool name length (historically
+/// `^[a-zA-Z0-9_-]{1,64}$` for OpenAI/Anthropic).
 const MAX_TOOL_ID: usize = 64;
 
-/// Полный id инструмента MCP-сервера: `mcp__<server>__<tool>`, санитизированный
-/// под лимиты провайдеров: символы вне `[A-Za-z0-9_-]` → `_`; длиннее 64 —
-/// усечение + `_`-разделитель + 8 hex от хеша **полного** имени (коллизии
-/// длинных имён не склеиваются). Чистая функция — тестируема.
+/// The full id of an MCP-server tool: `mcp__<server>__<tool>`, sanitized
+/// against provider limits: characters outside `[A-Za-z0-9_-]` → `_`; longer than 64 —
+/// truncation + a `_` separator + 8 hex characters from a hash of the **full** name (long
+/// names' collisions don't merge). A pure function — testable.
 pub fn mcp_tool_id(server: &str, tool: &str) -> ToolId {
     let raw = format!("{MCP_TOOL_PREFIX}{server}__{tool}");
     let sanitized: String = raw
@@ -107,10 +107,10 @@ pub fn mcp_tool_id(server: &str, tool: &str) -> ToolId {
     format!("{}{}", &sanitized[..keep], suffix)
 }
 
-/// Интернирует строку в `&'static str` (дедуп через глобальный набор).
-/// Нужен для `Tool::ui_label`/`ToolInfo.label` (`&'static str`): лейблы MCP —
-/// динамические имена инструментов; их конечное число, утечка ограничена
-/// (прецедент — интернирование кодов языков в `shared/i18n`).
+/// Interns a string into `&'static str` (dedup via a global set).
+/// Needed for `Tool::ui_label`/`ToolInfo.label` (`&'static str`): MCP labels are
+/// dynamic tool names; there's a finite number of them, so the leak is bounded
+/// (a precedent — interning language codes in `shared/i18n`).
 fn intern(s: &str) -> &'static str {
     static POOL: OnceLock<Mutex<HashSet<&'static str>>> = OnceLock::new();
     let pool = POOL.get_or_init(|| Mutex::new(HashSet::new()));
@@ -123,28 +123,28 @@ fn intern(s: &str) -> &'static str {
     leaked
 }
 
-/// Инструмент MCP-сервера за трейтом [`Tool`]. Держит разделяемый транспорт
-/// соединения ([`McpConnection`]) — жизненный цикл процесса сервера у
+/// An MCP-server tool behind the [`Tool`] trait. Holds the shared connection
+/// transport ([`McpConnection`]) — the server process's lifecycle belongs to
 /// `McpManager` (`app/orchestrator/mcp.rs`).
 pub struct McpTool {
     id: ToolId,
-    /// Имя инструмента на сервере (оригинальное, без префикса/санитизации).
+    /// The tool's name on the server (the original, without the prefix/sanitization).
     remote_name: String,
-    /// Снимок описания из `tools/list` (не локализуется — текст сервера).
+    /// A description snapshot from `tools/list` (not localized — the server's text).
     description: String,
-    /// Снимок JSON-схемы аргументов (`inputSchema`).
+    /// A snapshot of the arguments' JSON schema (`inputSchema`).
     input_schema: serde_json::Value,
-    /// Короткий лейбл для тумблера профиля (интернированное имя инструмента).
+    /// A short label for the profile toggle (the tool's interned name).
     label: &'static str,
     conn: Arc<McpConnection>,
-    /// Per-call таймаут (`tool_timeout_secs` сервера).
+    /// The per-call timeout (the server's `tool_timeout_secs`).
     timeout: Duration,
-    /// Клип результата в символах (`max_result_chars` сервера).
+    /// The result clip in characters (the server's `max_result_chars`).
     max_result_chars: usize,
 }
 
 impl McpTool {
-    /// Обёртка над инструментом `info` сервера `server_id` на соединении `conn`.
+    /// A wrapper over tool `info` of server `server_id` on connection `conn`.
     pub fn new(
         server_id: &str,
         info: &McpToolInfo,
@@ -165,8 +165,8 @@ impl McpTool {
     }
 }
 
-/// Клипует текст до `max` символов (по символам, не байтам — кириллица), с
-/// пометкой об усечении на языке каркаса профиля (ось A).
+/// Clips text to `max` characters (by character, not byte — Cyrillic), with
+/// a truncation note in the profile's scaffold language (axis A).
 fn clip_result(text: &str, max: usize, loc: &Locale) -> String {
     if text.chars().count() <= max {
         return text.to_string();
@@ -182,7 +182,7 @@ impl Tool for McpTool {
     }
 
     fn description(&self, _loc: &Locale) -> String {
-        // Текст сервера — граница i18n (см. docs/history/i18n.md §2.3).
+        // The server's text — an i18n boundary (see docs/history/i18n.md §2.3).
         self.description.clone()
     }
 
@@ -195,9 +195,9 @@ impl Tool for McpTool {
             .conn
             .call_tool(&self.remote_name, args, self.timeout, Some(&ctx.cancel))
             .await?;
-        // `isError:true` — ошибка исполнения на сервере: текст отдаётся модели как
-        // результат (не протокольная ошибка, spec tools §error handling). Пустой
-        // текст ошибки подменяем пометкой — модель должна понять, что вызов не удался.
+        // `isError:true` — an execution error on the server: the text is given to the model
+        // as the result (not a protocol error, spec tools §error handling). An empty
+        // error text is replaced with a marker — the model must understand the call failed.
         let text = if result.is_error && result.text.is_empty() {
             ctx.loc.t("tool.mcp.error_empty").to_string()
         } else {
@@ -223,7 +223,7 @@ impl Tool for McpTool {
     }
 
     fn enabled_by_default(&self) -> bool {
-        // Двойной opt-in (развилка Р7): включается вручную в профиле.
+        // Double opt-in (decision point R7): enabled manually in the profile.
         false
     }
 }
@@ -243,7 +243,7 @@ mod tests {
             mcp_tool_id("fs", "read_text_file"),
             "mcp__fs__read_text_file"
         );
-        // Точки/прочие символы (спека допускает `.`) → `_`.
+        // Dots/other characters (the spec allows `.`) → `_`.
         assert_eq!(mcp_tool_id("srv", "a.b/c d"), "mcp__srv__a_b_c_d");
     }
 
@@ -252,7 +252,7 @@ mod tests {
         let long = "x".repeat(100);
         let id1 = mcp_tool_id("server-with-long-id", &long);
         assert_eq!(id1.len(), 64);
-        // Детерминированность и различимость: другое полное имя → другой хвост.
+        // Determinism and distinguishability: a different full name → a different tail.
         let id2 = mcp_tool_id("server-with-long-id", &format!("{long}y"));
         assert_eq!(id1, mcp_tool_id("server-with-long-id", &long));
         assert_ne!(id1, id2);
@@ -278,8 +278,8 @@ mod tests {
         assert!(std::ptr::eq(a, b));
     }
 
-    /// Фейковый MCP-сервер поверх duplex, отвечающий на tools/call заданным
-    /// содержимым; возвращает соединение клиента.
+    /// A fake MCP server over a duplex, replying to tools/call with the given
+    /// content; returns the client's connection.
     fn conn_with_call_reply(reply_text: String) -> Arc<McpConnection> {
         let (client_io, server_io) = tokio::io::duplex(64 * 1024);
         let (client_r, client_w) = tokio::io::split(client_io);
@@ -312,7 +312,7 @@ mod tests {
 
     #[tokio::test]
     async fn invoke_calls_server_and_clips_result() {
-        let conn = conn_with_call_reply("0123456789".repeat(10)); // 100 симв.
+        let conn = conn_with_call_reply("0123456789".repeat(10)); // 100 chars
         let info = McpToolInfo {
             name: "echo".into(),
             description: "Echo test tool".into(),
@@ -333,7 +333,7 @@ mod tests {
 
     #[tokio::test]
     async fn invoke_is_cancellable_via_ctx_cancel() {
-        // Сервер молчит → отмена ctx.cancel прерывает вызов (Esc не блокируется).
+        // The server stays silent → cancelling ctx.cancel interrupts the call (Esc isn't blocked).
         let (client_io, _server_io_keepalive) = tokio::io::duplex(64 * 1024);
         let (client_r, client_w) = tokio::io::split(client_io);
         let conn = Arc::new(McpConnection::over(client_r, client_w));

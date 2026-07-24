@@ -1,13 +1,14 @@
-//! Провизия ассетов песочницы Python (`mindfork sandbox setup`, Фаза 2 —
+//! Provisioning of Python-sandbox assets (`mindfork sandbox setup`, Phase 2 —
 //! [docs/research/python-wasmer-sandbox.md](../../docs/research/python-wasmer-sandbox.md)).
-//! Скачивает в `data/sandbox/`: бинарь `wasmer` (платформенный tar.gz с GitHub),
-//! `python.webc` (через сам `wasmer`), колёса пакетов (numpy с wasix-индекса,
-//! requests-стек с PyPI) — всё по **lock-списку с точными URL + sha256** (устойчиво
-//! к «latest»). Провизия идемпотентна; сетевой слой тонкий, логика — чистая/тестируемая.
+//! Downloads into `data/sandbox/`: the `wasmer` binary (a platform tar.gz from GitHub),
+//! `python.webc` (via `wasmer` itself), package wheels (numpy from the wasix index,
+//! the requests stack from PyPI) — all via a **lock list with exact URL + sha256** (resilient
+//! to "latest"). Provisioning is idempotent; the network layer is thin, the logic is
+//! pure/testable.
 //!
-//! Слой `features`: без TUI (команда CLI печатает прогресс в stdout). Расположение
-//! бинаря после распаковки совпадает с тем, что ищет `shared::sandbox` (общий
-//! резолвер [`crate::shared::sandbox::locate_wasmer`]).
+//! `features` layer: no TUI (the CLI command prints progress to stdout). The binary's
+//! layout after unpacking matches what `shared::sandbox` looks for (the shared
+//! resolver [`crate::shared::sandbox::locate_wasmer`]).
 
 use std::io::{Cursor, Read};
 use std::path::{Path, PathBuf};
@@ -21,15 +22,15 @@ use tokio::io::AsyncWriteExt;
 use crate::shared::i18n::Locale;
 use crate::shared::sandbox::{SandboxRunner, WasmerSandbox, locate_wasmer};
 
-/// Версия `wasmer`, к которой привязан lock-список (GitHub release tag `v<...>`).
+/// The `wasmer` version the lock list is pinned to (GitHub release tag `v<...>`).
 pub const WASMER_VERSION: &str = "7.2.0";
-/// Пакет CPython в реестре Wasmer (скачивается в `python.webc`).
+/// The CPython package in the Wasmer registry (downloaded into `python.webc`).
 const PYTHON_PACKAGE: &str = "python/python";
-/// User-Agent для скачиваний (GitHub/PyPI иногда отвергают пустой UA).
+/// User-Agent for downloads (GitHub/PyPI sometimes reject an empty UA).
 const USER_AGENT: &str = "mindfork-rs-sandbox-setup";
 
-/// Платформенный архив `wasmer` с GitHub (tar.gz). `os`/`arch` — из
-/// [`std::env::consts`]. Распаковывается целиком в `<dir>/wasmer-dist/`.
+/// A platform `wasmer` archive from GitHub (tar.gz). `os`/`arch` — from
+/// [`std::env::consts`]. Unpacked whole into `<dir>/wasmer-dist/`.
 struct PlatformArchive {
     os: &'static str,
     arch: &'static str,
@@ -37,7 +38,7 @@ struct PlatformArchive {
     sha256: &'static str,
 }
 
-/// Lock-список архивов `wasmer` v7.2.0 (sha256 — из GitHub release assets `digest`).
+/// Lock list of `wasmer` v7.2.0 archives (sha256 — from GitHub release assets `digest`).
 const ARCHIVES: &[PlatformArchive] = &[
     PlatformArchive {
         os: "windows",
@@ -65,25 +66,25 @@ const ARCHIVES: &[PlatformArchive] = &[
     },
 ];
 
-/// Колесо Python-пакета (`.whl` = zip). `dir` — имя каталога пакета в `site-packages`
-/// (для идемпотентности: есть каталог → колесо уже распаковано).
+/// A Python-package wheel (`.whl` = zip). `dir` — the package's directory name in `site-packages`
+/// (for idempotency: a directory exists → the wheel is already unpacked).
 struct Wheel {
     dir: &'static str,
     url: &'static str,
     sha256: &'static str,
 }
 
-/// Lock-список колёс. **numpy**/**pandas** — нативные wasix-колёса с
-/// `pythonindex.wasix.org`; их чистые зависимости (dateutil/six/pytz/tzdata) и
-/// **requests-стек** (requests/urllib3/certifi/idna/charset_normalizer) — чистый
-/// Python с PyPI (`py3-none-any`). Версии закреплены; sha256 — из индекса/PyPI.
+/// Lock list of wheels. **numpy**/**pandas** — native wasix wheels from
+/// `pythonindex.wasix.org`; their pure dependencies (dateutil/six/pytz/tzdata) and the
+/// **requests stack** (requests/urllib3/certifi/idna/charset_normalizer) — pure
+/// Python from PyPI (`py3-none-any`). Versions are pinned; sha256 — from the index/PyPI.
 const WHEELS: &[Wheel] = &[
     Wheel {
         dir: "numpy",
         url: "https://pythonindex.wasix.org/packages/numpy-2.3.2-cp313-cp313-wasix_wasm32.whl",
         sha256: "f2abcba47de3063e00fd960b17058bf14954fb3485e58153ba6925447d28af55",
     },
-    // pandas (нативное wasix-колесо) + его чистые зависимости.
+    // pandas (a native wasix wheel) + its pure dependencies.
     Wheel {
         dir: "pandas",
         url: "https://pythonindex.wasix.org/packages/pandas-2.3.2-cp313-cp313-wasix_wasm32.whl",
@@ -136,15 +137,15 @@ const WHEELS: &[Wheel] = &[
     },
 ];
 
-/// Параметры провизии.
+/// Provisioning options.
 #[derive(Debug, Clone, Default)]
 pub struct SetupOptions {
-    /// Перекачать/переустановить всё, даже если уже на месте.
+    /// Re-download/reinstall everything, even if already present.
     pub force: bool,
 }
 
-/// Провизия всей песочницы в каталог `dir` (`data/sandbox/`). `progress` — колбэк
-/// строк для stdout. Идемпотентно: уже установленное пропускается (кроме `force`).
+/// Provisions the whole sandbox into the `dir` directory (`data/sandbox/`). `progress` — a
+/// string callback for stdout. Idempotent: already-installed assets are skipped (unless `force`).
 pub async fn setup(
     dir: &Path,
     opts: &SetupOptions,
@@ -168,16 +169,16 @@ pub async fn setup(
     Ok(())
 }
 
-/// Прогрев кэша компиляции: один прогон компилирует `python.wasm` (+ нативные `.so`
-/// numpy/pandas) в `<dir>/cache`, чтобы **первый реальный вызов** инструмента был
-/// тёплым — без многосекундной компиляции на глазах у пользователя (заменяет «баннер
-/// первого запуска»). «Лучшее усилие»: сбой прогрева не проваливает установку. Идёт
-/// через реальный [`WasmerSandbox`], так что кэш и пути совпадают с рантаймом.
+/// Warms the compilation cache: one run compiles `python.wasm` (+ the native `.so`
+/// for numpy/pandas) into `<dir>/cache`, so the **first real tool call** is
+/// warm — no multi-second compilation in front of the user (replaces the "first-run
+/// banner"). "Best effort": a warmup failure doesn't fail the install. Runs
+/// through a real [`WasmerSandbox`], so the cache and paths match the runtime.
 async fn warmup(dir: &Path, loc: &Locale, progress: &mut impl FnMut(&str)) {
     progress(loc.t("sandbox.setup.warmup.start"));
     let sb = WasmerSandbox::new(Some(dir.to_path_buf()));
-    // `import pandas` тянет и интерпретатор, и нативные модули numpy/pandas (самый
-    // тяжёлый путь компиляции); даже при сбое импорта интерпретатор уже в кэше.
+    // `import pandas` pulls in both the interpreter and the native numpy/pandas modules (the
+    // heaviest compilation path); even if the import fails, the interpreter is already cached.
     match sb
         .run("import pandas", false, Duration::from_secs(300), loc)
         .await
@@ -188,12 +189,12 @@ async fn warmup(dir: &Path, loc: &Locale, progress: &mut impl FnMut(&str)) {
     }
 }
 
-/// Архив `wasmer` для платформы `(os, arch)` (чистая, тестируемая).
+/// The `wasmer` archive for platform `(os, arch)` (pure, testable).
 fn archive_for(os: &str, arch: &str) -> Option<&'static PlatformArchive> {
     ARCHIVES.iter().find(|a| a.os == os && a.arch == arch)
 }
 
-/// Гарантирует наличие бинаря `wasmer` в `dir`; возвращает путь к нему.
+/// Ensures the `wasmer` binary is present in `dir`; returns its path.
 async fn ensure_wasmer(
     client: &reqwest::Client,
     dir: &Path,
@@ -236,7 +237,7 @@ async fn ensure_wasmer(
 
     let dist = dir.join("wasmer-dist");
     progress(loc.t("sandbox.setup.wasmer.extracting"));
-    // Чистая переустановка каталога распаковки (устойчиво к прерванной прошлой).
+    // A clean reinstall of the unpack directory (resilient to a previous interrupted one).
     let _ = std::fs::remove_dir_all(&dist);
     extract_targz(&archive_path, &dist, loc)
         .with_context(|| loc.t("sandbox.setup.wasmer.extract_ctx").to_string())?;
@@ -253,7 +254,7 @@ async fn ensure_wasmer(
     })
 }
 
-/// Гарантирует наличие `python.webc` (скачивается самим `wasmer` из реестра).
+/// Ensures `python.webc` is present (downloaded by `wasmer` itself from the registry).
 async fn ensure_python_webc(
     dir: &Path,
     wasmer: &Path,
@@ -267,7 +268,7 @@ async fn ensure_python_webc(
         return Ok(());
     }
     progress(&loc.tf("sandbox.setup.webc.downloading", &[("pkg", PYTHON_PACKAGE)]));
-    // Дом/кэш wasmer — под каталогом песочницы (самодостаточно, не в ~/.wasmer).
+    // wasmer's home/cache — under the sandbox directory (self-contained, not in ~/.wasmer).
     let home = dir.join("wasmer-home");
     std::fs::create_dir_all(&home).ok();
     let out = tokio::process::Command::new(wasmer)
@@ -303,7 +304,7 @@ async fn ensure_python_webc(
     Ok(())
 }
 
-/// Гарантирует распаковку всех колёс в `site-packages/`.
+/// Ensures all wheels are unpacked into `site-packages/`.
 async fn ensure_wheels(
     client: &reqwest::Client,
     dir: &Path,
@@ -328,7 +329,7 @@ async fn ensure_wheels(
     Ok(())
 }
 
-/// HTTP-клиент с User-Agent (rustls, как в остальном проекте).
+/// An HTTP client with a User-Agent (rustls, as elsewhere in the project).
 fn http_client(loc: &Locale) -> Result<reqwest::Client> {
     reqwest::Client::builder()
         .user_agent(USER_AGENT)
@@ -336,8 +337,8 @@ fn http_client(loc: &Locale) -> Result<reqwest::Client> {
         .with_context(|| loc.t("sandbox.setup.http_client").to_string())
 }
 
-/// Скачивает `url` в файл `dest` потоком (крупные архивы не буферим в память),
-/// считая sha256 на лету; сверяет с `expected`.
+/// Streams `url` into the file `dest` (large archives aren't buffered in memory),
+/// hashing sha256 on the fly; verifies it against `expected`.
 async fn download_to_file(
     client: &reqwest::Client,
     url: &str,
@@ -363,7 +364,7 @@ async fn download_to_file(
     let mut hasher = Sha256::new();
     let mut stream = resp.bytes_stream();
     let mut done: u64 = 0;
-    let mut next_report: u64 = 32 * 1024 * 1024; // отчёт каждые ~32 МБ
+    let mut next_report: u64 = 32 * 1024 * 1024; // report every ~32 MB
     while let Some(chunk) = stream.next().await {
         let chunk = chunk.with_context(|| loc.t("sandbox.setup.read_stream").to_string())?;
         hasher.update(&chunk);
@@ -394,7 +395,7 @@ async fn download_to_file(
     verify_sha256(&hasher.finalize(), expected, url, loc)
 }
 
-/// Скачивает `url` целиком в память (небольшие колёса), сверяет sha256.
+/// Downloads `url` entirely into memory (small wheels), verifies sha256.
 async fn download_bytes(
     client: &reqwest::Client,
     url: &str,
@@ -417,7 +418,7 @@ async fn download_bytes(
     Ok(bytes.to_vec())
 }
 
-/// Сверяет хэш (сырые байты дайджеста) с ожидаемым hex; ошибка — с указанием URL.
+/// Verifies the hash (raw digest bytes) against the expected hex; the error names the URL.
 fn verify_sha256(digest: &[u8], expected: &str, url: &str, loc: &Locale) -> Result<()> {
     let got = hex_lower(digest);
     if got.eq_ignore_ascii_case(expected) {
@@ -433,7 +434,7 @@ fn verify_sha256(digest: &[u8], expected: &str, url: &str, loc: &Locale) -> Resu
     }
 }
 
-/// Байты → строка hex (нижний регистр), без крейта `hex`.
+/// Bytes → a hex string (lowercase), without the `hex` crate.
 fn hex_lower(bytes: &[u8]) -> String {
     use std::fmt::Write;
     let mut s = String::with_capacity(bytes.len() * 2);
@@ -443,7 +444,7 @@ fn hex_lower(bytes: &[u8]) -> String {
     s
 }
 
-/// Распаковывает tar.gz-архив в каталог `dest`.
+/// Unpacks a tar.gz archive into the `dest` directory.
 fn extract_targz(archive: &Path, dest: &Path, loc: &Locale) -> Result<()> {
     let file = std::fs::File::open(archive).with_context(|| {
         loc.tf(
@@ -463,8 +464,8 @@ fn extract_targz(archive: &Path, dest: &Path, loc: &Locale) -> Result<()> {
     Ok(())
 }
 
-/// Распаковывает колесо (zip) в каталог `site` (защита от zip-slip через
-/// `enclosed_name`, как в `features::backup`).
+/// Unpacks a wheel (zip) into the `site` directory (zip-slip protection via
+/// `enclosed_name`, as in `features::backup`).
 fn unpack_wheel(bytes: &[u8], site: &Path, loc: &Locale) -> Result<()> {
     let mut zip = zip::ZipArchive::new(Cursor::new(bytes))
         .with_context(|| loc.t("sandbox.setup.open_wheel").to_string())?;
@@ -496,7 +497,7 @@ mod tests {
     use super::*;
     use crate::shared::i18n::{Lang, locale};
 
-    /// Референсная локаль для тестов (тексты ошибок не проверяются — ru байт-в-байт).
+    /// The reference locale for tests (error texts aren't checked here — ru byte-for-byte).
     fn ru() -> &'static Locale {
         locale(Lang::Ru)
     }
@@ -507,7 +508,7 @@ mod tests {
         assert!(archive_for("linux", "x86_64").is_some());
         assert!(archive_for("linux", "aarch64").is_some());
         assert!(archive_for("macos", "aarch64").is_some());
-        // Неизвестная платформа — нет автоскачивания.
+        // An unknown platform — no auto-download.
         assert!(archive_for("plan9", "x86_64").is_none());
         assert!(archive_for("windows", "riscv64").is_none());
     }
@@ -528,7 +529,7 @@ mod tests {
 
     #[test]
     fn sha_mismatch_error_is_localized() {
-        // Регрессия против забытого `loc`: en-сообщение без кириллицы, ru — русское.
+        // A regression against a forgotten `loc`: an en message with no Cyrillic, ru — Russian.
         let digest = Sha256::digest(b"hello");
         let en = verify_sha256(&digest, "deadbeef", "u", locale(Lang::En))
             .unwrap_err()
@@ -547,9 +548,9 @@ mod tests {
         for expected in [
             "numpy", "pandas", "dateutil", "pytz", "requests", "urllib3", "certifi", "idna",
         ] {
-            assert!(dirs.contains(&expected), "нет колеса {expected}");
+            assert!(dirs.contains(&expected), "missing wheel {expected}");
         }
-        // Все URL — https, все sha256 — 64 hex-символа.
+        // All URLs — https, all sha256 — 64 hex characters.
         for w in WHEELS {
             assert!(w.url.starts_with("https://"), "{}", w.url);
             assert_eq!(w.sha256.len(), 64, "{}", w.dir);
@@ -558,7 +559,7 @@ mod tests {
 
     #[test]
     fn unpack_wheel_extracts_into_site_packages() {
-        // Крафт-zip как «колесо»: файл пакета + dist-info.
+        // A crafted zip as a "wheel": a package file + dist-info.
         let mut buf = Vec::new();
         {
             let mut w = zip::ZipWriter::new(Cursor::new(&mut buf));
@@ -578,7 +579,7 @@ mod tests {
 
     #[test]
     fn extract_targz_roundtrip() {
-        // Собираем маленький tar.gz с файлом bin/wasmer и распаковываем.
+        // Build a small tar.gz with a bin/wasmer file and unpack it.
         let mut gz = Vec::new();
         {
             let enc = flate2::write::GzEncoder::new(&mut gz, flate2::Compression::default());

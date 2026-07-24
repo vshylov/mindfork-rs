@@ -32,6 +32,26 @@ _KEY_LIT = re.compile(r"['`][Ѐ-ӿ]['`]")
 def strip_key_data(s: str) -> str:
     return _KEY_LIT.sub("", _KEY_MOD.sub("", s))
 
+
+def code_part(line: str) -> str:
+    """The line up to a real `//` comment, ignoring `//` inside string literals.
+
+    Splitting naively on the first `//` misreads protocol-relative URLs in test
+    fixtures (`href="//example.com/..."`) as a comment start, which would flag
+    the fixture text that follows.
+    """
+    in_str = esc = False
+    for i, c in enumerate(line):
+        if esc:
+            esc = False
+        elif c == "\\":
+            esc = True
+        elif c == '"':
+            in_str = not in_str
+        elif not in_str and c == "/" and line[i + 1 : i + 2] == "/":
+            return line[:i]
+    return line
+
 # Whole files that legitimately keep Cyrillic and are skipped entirely.
 SKIP_EXT = (".png", ".ico", ".dic", ".aff")
 SKIP_FILES = {
@@ -73,7 +93,7 @@ def allowed_line(path: str, line: str, in_test: bool) -> bool:
         # Comments always translate, wherever they sit.
         if stripped.startswith("//"):
             return False
-        code = line.split("//", 1)[0]
+        code = code_part(line)
         if not CYR.search(code):
             return False  # Cyrillic only in a trailing comment -> translate
         # Cyrillic in code position: inside tests that is fixture/assertion data

@@ -8,74 +8,74 @@ repository = "https://github.com/vshylov/mindfork-rs"
 [dependencies]
 ansi-to-tui = "8.0.1"
 anyhow = "1.0.103"
-# Буфер обмена (Windows + Linux). `default-features = false` отключает image-data
-# (тянет крейт `image`): нам нужен только текст. См. копирование переписки чата.
+# Clipboard (Windows + Linux). `default-features = false` disables image data
+# (which pulls in the `image` crate): we only need text. See copying the chat conversation.
 arboard = { version = "3.4.1", default-features = false }
 async-stream = "0.3.6"
 async-trait = "0.1.89"
-# Декодирование аудио из ответов TTS-провайдеров (Gemini отдаёт PCM в base64
-# внутри `inlineData.data`). Уже в графе транзитивно; версия пришпилена к той, что
-# в Cargo.lock, чтобы не плодить дубль (прецедент — quick-xml). См. shared/tts.
+# Decoding audio from TTS-provider responses (Gemini returns PCM as base64
+# inside `inlineData.data`). Already in the graph transitively; the version is pinned to the one
+# in Cargo.lock, so as not to spawn a duplicate (precedent — quick-xml). See shared/tts.
 base64 = "0.22.1"
 bytemuck = "1.25.0"
-# AEAD-шифрование сохранённых API-ключей на Linux (схема `machine-key-v1`: ключ
-# выводится из /etc/machine-id через HKDF). RustCrypto, чистый Rust. На Windows
-# та же задача решается системным DPAPI (windows-sys ниже). См. shared/secrets.rs,
+# AEAD encryption of stored API keys on Linux (the `machine-key-v1` scheme: the key
+# is derived from /etc/machine-id via HKDF). RustCrypto, pure Rust. On Windows
+# the same task is solved by the system's DPAPI (windows-sys below). See shared/secrets.rs,
 # docs/research/api-key-storage.md.
 chacha20poly1305 = "0.10.1"
 chrono = { version = "0.4.45", features = ["serde"] }
 crossterm = "0.29.0"
-# Стандартные ОС-папки для непортабельного режима хранения данных
-# (Windows %APPDATA%\mindfork-rs, Linux ~/.local/share/mindfork-rs). См. shared/paths.rs.
+# Standard OS folders for non-portable data-storage mode
+# (Windows %APPDATA%\mindfork-rs, Linux ~/.local/share/mindfork-rs). See shared/paths.rs.
 directories = "6.0.0"
 eventsource-stream = "0.2.3"
-# Распаковка архива `wasmer` (tar.gz) в `mindfork sandbox setup` (Фаза 2 песочницы
-# Python). flate2 — чистый Rust (miniz_oxide, без C-зависимостей), tar — чистый Rust.
+# Unpacking the `wasmer` archive (tar.gz) in `mindfork sandbox setup` (Phase 2 of the Python
+# sandbox). flate2 — pure Rust (miniz_oxide, no C dependencies), tar — pure Rust.
 flate2 = "1.0"
 futures-util = "0.3.32"
-# Вывод ключа шифрования API-ключей из machine-id (HKDF-SHA256; `sha2` уже есть).
-# Паттерн предписан документацией systemd — machine-id не используется сырым.
+# Deriving the API-key encryption key from machine-id (HKDF-SHA256; `sha2` is already present).
+# The pattern is prescribed by systemd's documentation — machine-id isn't used raw.
 hkdf = "0.12.4"
-# Рендер ```mermaid-блоков ленты в Unicode/ASCII-графику (flowchart/sequence,
-# whitelist + жёсткий фолбэк на исходник). Чистый Rust (net-new только ascii-dag);
-# ≥0.56.1 обязательно — 0.56.0 паниковал/портил подписи на кириллице (наш апстрим-фикс,
-# leboiko/markdown-reader#29/#30). 0.57.0 закрыл наш feature request #32 (max_width как
-# жёсткий бюджет: RenderOptions::max_width_strict + Error::TooWide) — мы его НЕ используем,
-# наш пост-чек по display_width точнее (см. mermaid.rs). См. docs/research/mermaid-ascii-rendering.md.
+# Rendering ```mermaid blocks in the feed as Unicode/ASCII graphics (flowchart/sequence,
+# a whitelist + a hard fallback to the source). Pure Rust (only ascii-dag is net-new);
+# ≥0.56.1 is mandatory — 0.56.0 panicked/corrupted labels on Cyrillic (our upstream fix,
+# leboiko/markdown-reader#29/#30). 0.57.0 closed our feature request #32 (max_width as a
+# hard budget: RenderOptions::max_width_strict + Error::TooWide) — we do NOT use it,
+# our post-check via display_width is more accurate (see mermaid.rs). See docs/research/mermaid-ascii-rendering.md.
 mermaid-text = "0.57.0"
-# Извлечение текста из PDF для индексации в RAG (`/rag add`, этап B1b). Чистый Rust
-# (lopdf + парсеры шрифтов/CFF/CMap, без C-зависимостей); качество извлечения
-# «лучшее усилие» — сканированный/картиночный PDF даёт пустой текст, это допустимо.
-# См. features/doc_extract.rs, docs/rag-sources-retrieval.md §B1b.
+# Extracting text from PDFs for indexing into RAG (`/rag add`, stage B1b). Pure Rust
+# (lopdf + font/CFF/CMap parsers, no C dependencies); extraction quality is
+# "best effort" — a scanned/image-only PDF yields empty text, which is acceptable.
+# See features/doc_extract.rs, docs/rag-sources-retrieval.md §B1b.
 pdf-extract = "0.12.0"
 pulldown-cmark = { version = "0.13.4", default-features = false }
-# Разбор `word/document.xml` внутри DOCX для индексации в RAG (`/rag add`, этап B1b).
-# Уже в графе транзитивно (через syntect → plist); версия пришпилена к той, что в
-# Cargo.lock, чтобы не плодить дубль. См. features/doc_extract.rs.
+# Parsing `word/document.xml` inside a DOCX for indexing into RAG (`/rag add`, stage B1b).
+# Already in the graph transitively (via syntect → plist); the version is pinned to the one in
+# Cargo.lock, so as not to spawn a duplicate. See features/doc_extract.rs.
 quick-xml = "0.39.4"
 ratatui = "0.30.1"
-# Воспроизведение синтезированной речи (`/tts`) в процессе приложения: очередь
-# источников (`Player::append`) даёт конвейер «синтез чанка N+1 во время
-# проигрывания N» и мгновенную отмену. `default-features = false` — только нужные
-# декодеры (сырой PCM облаков идёт мимо декодера, `SamplesBuffer`). Единственная
-# новая системная зависимость — ALSA на Linux (`libasound2-dev` при сборке).
-# См. docs/research/tts.md §6.
+# Playing synthesized speech (`/tts`) within the application process: a source
+# queue (`Player::append`) gives a "synthesize chunk N+1 while chunk N
+# plays" pipeline and instant cancellation. `default-features = false` — only the needed
+# decoders (cloud providers' raw PCM bypasses the decoder via `SamplesBuffer`). The only
+# new system dependency — ALSA on Linux (`libasound2-dev` at build time).
+# See docs/research/tts.md §6.
 rodio = { version = "0.22.0", default-features = false, features = ["playback", "wav", "mp3"] }
 reqwest = { version = "0.13.4", default-features = false, features = ["json", "stream", "rustls", "form"] }
 rusqlite = { version = "0.40.1", features = ["bundled"] }
 scraper = "0.27.0"
 serde = { version = "1.0.228", features = ["derive"] }
 serde_json = "1.0.150"
-# Проверка целостности (sha256) скачанных ассетов песочницы (Фаза 2). Чистый Rust.
+# Integrity check (sha256) of downloaded sandbox assets (Phase 2). Pure Rust.
 sha2 = "0.10"
 single-instance = "0.3.3"
 spellbook = "0.4.2"
 sqlite-vec = "0.1.9"
-# Определение языка по локали ОС при свежей установке (нет defaults.json/settings.json).
-# Кросс-платформенный (Windows/Linux), чистый Rust. См. shared/i18n::detect_os_language.
+# Detecting the language from the OS locale on a fresh install (no defaults.json/settings.json).
+# Cross-platform (Windows/Linux), pure Rust. See shared/i18n::detect_os_language.
 sys-locale = "0.3"
 syntect = "5.3.0"
-# Распаковка tar-архива `wasmer` (см. flate2 выше). Чистый Rust.
+# Unpacking the `wasmer` tar archive (see flate2 above). Pure Rust.
 tar = "0.4"
 thiserror = "2.0.18"
 tokio = { version = "1.52.3", features = ["rt-multi-thread", "macros", "sync", "process", "time", "io-util", "rt"] }
@@ -87,18 +87,18 @@ tui-scrollview = "0.6.5"
 unicode-segmentation = "1.13.3"
 unicode-width = "0.2.2"
 uuid = { version = "1.23.3", features = ["v4", "v5", "serde"] }
-# Резервное копирование/восстановление пользовательских данных (zip-архив с
-# настраиваемой степенью сжатия deflate). default-features=false отключает bzip2/zstd
-# (нативные C-зависимости) — нужен только deflate + store. См. features/backup.rs.
+# Backup/restore of user data (a zip archive with a
+# configurable deflate compression level). default-features=false disables bzip2/zstd
+# (native C dependencies) — only deflate + store are needed. See features/backup.rs.
 zip = { version = "2.2.2", default-features = false, features = ["deflate"] }
 
-# Windows-специфика:
-# * `Win32_System_JobObjects` — OS-level лимит памяти песочницы Python через Job
-#   Object (`JOB_OBJECT_LIMIT_PROCESS_MEMORY`), защита хоста от OOM при рантайм-
-#   скрипте. Только Windows: на Unix rlimit ненадёжен с бэкендом V8 (он резервирует
-#   большое виртуальное адресное пространство). См. ADR 0005 / features/tools/python.rs.
+# Windows specifics:
+# * `Win32_System_JobObjects` — an OS-level memory limit for the Python sandbox via a Job
+#   Object (`JOB_OBJECT_LIMIT_PROCESS_MEMORY`), protecting the host from OOM during a runtime
+#   script. Windows only: on Unix, rlimit is unreliable with the V8 backend (it reserves a
+#   large virtual address space). See ADR 0005 / features/tools/python.rs.
 # * `Win32_Security_Cryptography` — DPAPI (`CryptProtectData`/`CryptUnprotectData`)
-#   для машинно-привязанного шифрования сохранённых API-ключей. См. shared/secrets.rs,
+#   for machine-bound encryption of stored API keys. See shared/secrets.rs,
 #   docs/research/api-key-storage.md.
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.61", features = ["Win32_System_JobObjects", "Win32_Foundation", "Win32_Security", "Win32_Security_Cryptography"] }
@@ -108,14 +108,14 @@ winresource = "0.1.31"
 
 [dev-dependencies]
 tempfile = "3.27.0"
-# `test-util` включает паузу/перемотку виртуального времени tokio в тестах
-# (`start_paused`) — детерминированные тесты дебаунса рестарта серверов без
-# реального ожидания. Только для тест-сборок (feature unification dev-deps).
+# `test-util` enables pausing/fast-forwarding tokio's virtual time in tests
+# (`start_paused`) — deterministic tests of the server-restart debounce without
+# real waiting. Test builds only (feature unification dev-deps).
 tokio = { version = "1.52.3", features = ["test-util"] }
 
-# Релизный профиль (Windows + Linux): оптимизация размера/скорости.
-# panic=unwind сохранён намеренно — нужны drop-guard/panic-hook для восстановления
-# терминала при панике (ratatui::init ставит hook; M0).
+# The release profile (Windows + Linux): size/speed optimization.
+# panic=unwind is kept deliberately — drop guards/a panic hook are needed to restore
+# the terminal on a panic (ratatui::init installs the hook; M0).
 [profile.release]
 opt-level = 3
 lto = true

@@ -1,35 +1,35 @@
-# Конфигурация cargo-deny (advisory-аудит зависимостей). Прогон — workflow `audit.yml`
-# (еженедельно + вручную, не на PR → merge не блокирует). См. release-engineering.md Ф6.
-# Allow-список лицензий выверен прогоном `cargo deny check licenses` на текущем графе.
+# cargo-deny configuration (a dependency advisory audit). Run by the `audit.yml` workflow
+# (weekly + manually, not on a PR → doesn't block merges). See release-engineering.md F6.
+# The license allowlist was verified by running `cargo deny check licenses` against the current graph.
 
 [advisories]
-# База RustSec: уязвимости/unmaintained → ошибка (сигнал разобраться), yanked → warn.
+# The RustSec database: vulnerabilities/unmaintained → an error (a signal to look into it), yanked → warn.
 yanked = "warn"
-# Известные транзитивные advisory без доступного фикса — все приходят из `syntect`
-# (подсветка кода): он парсит **свои вшитые** синтаксисы/темы, не ввод пользователя,
-# поэтому DoS-риск для нас не реализуется. Снять, когда syntect обновит эти зависимости
-# (или при замене syntect). Аудит остаётся зелёным на известном наборе и краснеет на НОВЫХ.
+# Known transitive advisories with no available fix — all come from `syntect`
+# (code highlighting): it parses **its own built-in** syntaxes/themes, not user input,
+# so the DoS risk doesn't materialize for us. Remove once syntect updates these dependencies
+# (or syntect is replaced). The audit stays green on the known set and turns red on NEW ones.
 ignore = [
     "RUSTSEC-2024-0320", # yaml-rust unmaintained (syntect)
     "RUSTSEC-2025-0141", # bincode unmaintained (syntect)
-    # quick-xml DoS-advisory. Крейт в графе через syntect (свои вшитые темы/синтаксисы,
-    # не ввод) И напрямую — разбор `word/document.xml` при индексации DOCX (`/rag add`,
-    # doc_extract.rs). Риск неактуален: приложение — локальный однопользовательский
-    # инструмент, DOCX добавляет сам пользователь из своих файлов; худший случай —
-    # замедленная индексация специально скрафченного пользователем же документа
-    # (best-effort, сбой одного файла лишь пропускается). Снять при обновлении quick-xml.
-    "RUSTSEC-2026-0194", # quick-xml quadratic-time на дублирующихся атрибутах
+    # A quick-xml DoS advisory. The crate is in the graph via syntect (its own built-in
+    # themes/syntaxes, not input) AND directly — parsing `word/document.xml` when indexing a DOCX (`/rag add`,
+    # doc_extract.rs). The risk doesn't apply: the app is a local single-user
+    # tool, DOCX files are added by the user themselves from their own files; the worst case is
+    # slowed-down indexing of a document the same user deliberately crafted
+    # (best effort, one file's failure is simply skipped). Remove when quick-xml is updated.
+    "RUSTSEC-2026-0194", # quick-xml quadratic-time on duplicate attributes
     "RUSTSEC-2026-0195", # quick-xml unbounded namespace-alloc DoS
-    # ttf-parser объявлен автором unmaintained (RUSTSEC-2026-0192, безопасного апгрейда
-    # нет). Это advisory о заброшенности, не уязвимость (не RCE/порча памяти). Приходит
-    # транзитивно из pdf-extract → lopdf (чтение шрифтов при извлечении текста из PDF,
-    # `/rag add`); используется на локальных файлах самого пользователя (best-effort).
-    # Снять при переходе pdf-extract/lopdf на поддерживаемый парсер шрифтов (skrifa).
+    # ttf-parser is declared unmaintained by its author (RUSTSEC-2026-0192, no safe upgrade
+    # available). This is an advisory about abandonment, not a vulnerability (not RCE/memory
+    # corruption). Comes in transitively via pdf-extract → lopdf (reading fonts when extracting text from a PDF,
+    # `/rag add`); used on the user's own local files (best effort).
+    # Remove once pdf-extract/lopdf moves to a maintained font parser (skrifa).
     "RUSTSEC-2026-0192", # ttf-parser unmaintained (pdf-extract → lopdf)
 ]
 
 [licenses]
-# Разрешённые SPDX-лицензии зависимостей. Всё вне списка → ошибка аудита.
+# Allowed SPDX licenses for dependencies. Anything outside the list → an audit error.
 allow = [
     "MIT",
     "Apache-2.0",
@@ -48,11 +48,11 @@ allow = [
 confidence-threshold = 0.8
 
 [bans]
-# Дубли версий одного крейта — предупреждение, не ошибка (норма для большого графа).
+# Duplicate versions of the same crate — a warning, not an error (normal for a large graph).
 multiple-versions = "warn"
 wildcards = "allow"
 
 [sources]
-# Все зависимости — из crates.io; сторонние реестры/git — ошибка.
+# All dependencies — from crates.io; third-party registries/git — an error.
 unknown-registry = "deny"
 unknown-git = "deny"

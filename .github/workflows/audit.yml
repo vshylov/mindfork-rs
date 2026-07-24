@@ -1,12 +1,12 @@
-# Аудит зависимостей (cargo-deny): уязвимости (advisories), лицензии, дубли версий,
-# источники. Запускается по расписанию (еженедельно) и вручную — НЕ на pull_request,
-# поэтому merge не блокирует (advisory-режим, release-engineering.md Ф6). Конфигурация —
-# deny.toml в корне репозитория.
+# Dependency audit (cargo-deny): vulnerabilities (advisories), licenses, duplicate versions,
+# sources. Runs on a schedule (weekly) and manually — NOT on pull_request,
+# so it doesn't block merges (advisory mode, release-engineering.md F6). Configuration —
+# deny.toml at the repo root.
 name: Audit
 
 on:
   schedule:
-    - cron: "0 6 * * 1" # понедельник 06:00 UTC
+    - cron: "0 6 * * 1" # Monday 06:00 UTC
   workflow_dispatch: {}
 
 env:

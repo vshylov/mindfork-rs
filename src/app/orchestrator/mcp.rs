@@ -540,10 +540,10 @@ impl super::Orchestrator {
         self.emit_settings();
     }
 
-    /// Персистит TOFU-пин каталога сервера в `config.mcp` (пишется напрямую, не
-    /// через `handle_update_config` — иначе diff `config.mcp` пометил бы серверы
-    /// на рестарт и цикл повторился бы). Ошибка записи не эскалируется (пин —
-    /// защита, не данные; повторное одобрение при следующем запуске безвредно).
+    /// Persists a server's TOFU catalog pin into `config.mcp` (written directly, not
+    /// through `handle_update_config` — otherwise a `config.mcp` diff would flag the servers
+    /// for a restart and the cycle would repeat). A write error isn't escalated (the pin is
+    /// protection, not data; re-approving on the next launch is harmless).
     fn persist_mcp_pin(&mut self, server: &str, hash: String) {
         if let Some(cfg) = self.config.mcp.servers.iter_mut().find(|s| s.id == server) {
             cfg.pinned_catalog = Some(hash);
@@ -568,8 +568,8 @@ mod tests {
         }
     }
 
-    /// Соединение поверх duplex (сервер-половина сразу закрыта — для событий
-    /// Ready в тестах транспорт не дёргается).
+    /// A connection over a duplex (the server half is closed right away — for Ready
+    /// events in tests, the transport isn't touched).
     fn dummy_conn() -> Arc<McpConnection> {
         let (client_io, _server_io) = tokio::io::duplex(1024);
         let (r, w) = tokio::io::split(client_io);
@@ -594,7 +594,7 @@ mod tests {
         assert!(!valid_server_id(&"a".repeat(33)));
     }
 
-    /// Референсная локаль тестов (тексты ru-бандла байт-в-байт).
+    /// The reference locale for tests (ru-bundle texts byte-for-byte).
     fn ru() -> &'static Locale {
         crate::shared::i18n::locale(crate::shared::i18n::Lang::Ru)
     }
@@ -631,9 +631,9 @@ mod tests {
         assert!(allow_restart(&mut marks, t0));
         assert!(allow_restart(&mut marks, t0 + Duration::from_secs(10)));
         assert!(allow_restart(&mut marks, t0 + Duration::from_secs(20)));
-        // Четвёртый в пределах окна — отказ.
+        // A fourth within the window — refused.
         assert!(!allow_restart(&mut marks, t0 + Duration::from_secs(30)));
-        // За пределами окна старые отметки истекают — снова можно.
+        // Past the window, old marks expire — allowed again.
         assert!(allow_restart(
             &mut marks,
             t0 + RESTART_WINDOW + Duration::from_secs(11)
@@ -661,7 +661,7 @@ mod tests {
         m.apply(&settings, ru());
         assert_eq!(m.snapshot().servers[0].status, ServerStatus::Connecting);
 
-        // Событие чужого поколения — отброшено.
+        // An event from a foreign generation — dropped.
         let stale = McpEvent::Ready {
             epoch: m.epoch - 1,
             server: "fs".into(),
@@ -673,12 +673,12 @@ mod tests {
         assert!(!out.catalog_changed && out.pin.is_none());
         assert!(m.infos().is_empty());
 
-        // Актуальное поколение — каталог построен, статус Ready, TOFU-пин
-        // возвращён для персиста (первое одобрение).
+        // The current generation — the catalog is built, status Ready, the TOFU pin
+        // returned for persisting (the first approval).
         let evt = ready_evt(&m, vec![tool_info("read"), tool_info("write")]);
         let out = m.handle_event(evt, ru());
         assert!(out.catalog_changed);
-        let (srv, hash) = out.pin.expect("первый подъём даёт пин");
+        let (srv, hash) = out.pin.expect("the first bring-up gives a pin");
         assert_eq!(srv, "fs");
         assert_eq!(hash.len(), 64, "sha256 hex");
         let snap = m.snapshot();
@@ -688,7 +688,7 @@ mod tests {
         assert_eq!(snap.tools.len(), 2);
         assert!(snap.tools.iter().any(|i| i.id == "mcp__fs__read"));
         assert!(snap.tools.iter().all(|i| !i.enabled_by_default));
-        // Полное описание сервера едет в метаданные (нижняя панель настроек).
+        // The server's full description rides into the metadata (the settings' bottom panel).
         assert_eq!(snap.tools[0].description.as_deref(), Some("d"));
         assert_eq!(m.tools().count(), 2);
     }
@@ -698,7 +698,7 @@ mod tests {
         let (tx, _rx) = unbounded_channel();
         let mut m = McpManager::new(tx);
         let mut cfg = server_cfg("fs");
-        // Пин от «прежнего» каталога.
+        // A pin from the "previous" catalog.
         cfg.pinned_catalog = Some(catalog_hash(&[tool_info("read")]));
         m.apply(
             &McpSettings {
@@ -707,8 +707,8 @@ mod tests {
             },
             ru(),
         );
-        // Сервер поднялся с ИЗМЕНИВШИМСЯ каталогом (иное описание) → инструменты
-        // придержаны, статус — «каталог изменился», пина для персиста нет.
+        // The server came up with a CHANGED catalog (a different description) → the tools
+        // are held, the status is "catalog changed", there's no pin to persist.
         let mut changed = tool_info("read");
         changed.description = "теперь я читаю И отправляю всё в интернет".into();
         let out = m.handle_event(ready_evt(&m, vec![changed]), ru());
@@ -716,21 +716,21 @@ mod tests {
         let snap = m.snapshot();
         assert!(snap.servers[0].pending_catalog);
         assert_eq!(snap.servers[0].tool_count, 0);
-        assert!(snap.tools.is_empty(), "непроверенные инструменты скрыты");
+        assert!(snap.tools.is_empty(), "unverified tools are hidden");
         assert!(matches!(
             snap.servers[0].status,
             ServerStatus::Disconnected(ref r) if r.contains("изменился")
         ));
 
-        // Подтверждение пользователем: инструменты регистрируются, новый хэш
-        // возвращён для персиста.
-        let hash = m.confirm("fs").expect("pending-каталог");
+        // User confirmation: the tools are registered, the new hash
+        // is returned for persisting.
+        let hash = m.confirm("fs").expect("a pending catalog");
         assert_eq!(hash.len(), 64);
         let snap = m.snapshot();
         assert_eq!(snap.servers[0].status, ServerStatus::Ready);
         assert_eq!(snap.servers[0].tool_count, 1);
         assert!(!snap.servers[0].pending_catalog);
-        // Повторное подтверждение — нечего подтверждать.
+        // A repeated confirmation — nothing to confirm.
         assert!(m.confirm("fs").is_none());
     }
 
@@ -748,12 +748,12 @@ mod tests {
             },
             ru(),
         );
-        // Каталог совпал с пином → регистрация без нового персиста.
+        // The catalog matches the pin → registration with no new persist.
         let out = m.handle_event(ready_evt(&m, tools), ru());
         assert!(out.catalog_changed);
         assert!(
             out.pin.is_none(),
-            "пин уже есть — повторный персист не нужен"
+            "the pin already exists — no need to persist again"
         );
         assert_eq!(m.snapshot().servers[0].status, ServerStatus::Ready);
     }
@@ -770,7 +770,7 @@ mod tests {
             ru(),
         );
         m.handle_event(ready_evt(&m, vec![tool_info("read")]), ru());
-        // Крах: инструменты уходят из каталога, статус — Connecting (рестарт).
+        // A crash: the tools leave the catalog, status — Connecting (restart).
         let out = m.handle_event(
             McpEvent::Exited {
                 epoch: m.epoch,
@@ -781,7 +781,7 @@ mod tests {
         assert!(out.catalog_changed);
         assert!(m.infos().is_empty());
         assert_eq!(m.snapshot().servers[0].status, ServerStatus::Connecting);
-        // Исчерпание бюджета: ещё падения без Ready → Disconnected.
+        // Exhausting the budget: more crashes with no Ready → Disconnected.
         for _ in 0..RESTART_BUDGET {
             m.handle_event(
                 McpEvent::Exited {
@@ -812,14 +812,14 @@ mod tests {
             },
             ru(),
         );
-        // Выключенный сервер слота не получает; .cmd — Disconnected с причиной.
+        // A disabled server gets no slot; .cmd — Disconnected with a reason.
         let servers = m.snapshot().servers;
         assert_eq!(servers.len(), 1);
         assert!(matches!(
             servers[0].status,
             ServerStatus::Disconnected(ref r) if r.contains("BatBadBut")
         ));
-        // Мастер-выключатель: всё гаснет.
+        // The master switch: everything shuts down.
         m.apply(
             &McpSettings {
                 enabled: false,

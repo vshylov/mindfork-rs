@@ -1,12 +1,12 @@
-//! Экран списка чатов (FSD "page"): полноэкранный список с поиском, сортировкой,
-//! переименованием по месту, созданием/клонированием/копированием/удалением.
-//! Открывается из чата по `Esc`, закрывается `Esc`. См. spec §11.2.
+//! Chat-list screen (FSD "page"): a full-screen list with search, sorting,
+//! in-place renaming, create/clone/copy/delete.
+//! Opened from the chat via `Esc`, closed via `Esc`. See spec §11.2.
 //!
-//! Тонкая обёртка над виджетом [`ChatListState`]: хранит контекст отрисовки
-//! (активный чат — для метки, палитру темы) и переводит [`ChatListAction`] виджета
-//! в [`ChatListIntent`] — намерение, которое `app` транслирует в `AppCommand` или
-//! в управление экранами. Экран про `app`/каналы не знает (FSD, зависимости вниз) —
-//! как `ChatScreen`/`SettingsScreen`.
+//! A thin wrapper over the [`ChatListState`] widget: holds the render context
+//! (the active chat — for the marker, the theme palette) and translates the widget's
+//! [`ChatListAction`] into a [`ChatListIntent`] — an intent that `app` translates into an
+//! `AppCommand` or into screen management. The screen doesn't know about `app`/channels
+//! (FSD, dependencies flow downward) — like `ChatScreen`/`SettingsScreen`.
 
 use ratatui::Frame;
 use ratatui::crossterm::event::KeyEvent;
@@ -18,47 +18,47 @@ use crate::shared::i18n::Locale;
 use crate::shared::theme::Palette;
 use crate::widgets::chat_list::{ChatListAction, ChatListState};
 
-/// Намерение экрана списка чатов (транслируется `app`). Параллель к
+/// Intent from the chat-list screen (translated by `app`). A counterpart to
 /// [`ChatIntent`](crate::screens::chat::ChatIntent)/`SettingsIntent`.
 #[derive(Debug, Clone, PartialEq)]
 pub enum ChatListIntent {
-    /// Закрыть список, вернуться к чату (`Esc`).
+    /// Close the list, return to the chat (`Esc`).
     Close,
-    /// Выйти из приложения (`Ctrl+Q`/`F10`).
+    /// Quit the application (`Ctrl+Q`/`F10`).
     Quit,
-    /// Сделать чат активным и вернуться к чату (`Enter`).
+    /// Make a chat active and return to it (`Enter`).
     Switch(Uuid),
-    /// Создать новый чат (выбор профиля делегируется экрану чата) (`Ctrl+N`).
+    /// Create a new chat (profile selection is delegated to the chat screen) (`Ctrl+N`).
     NewChat,
-    /// Клонировать чат и вернуться к чату (`Ctrl+D`).
+    /// Clone a chat and return to it (`Ctrl+D`).
     Clone(Uuid),
-    /// Скопировать переписку чата в буфер обмена (список остаётся открытым) (`F5`).
+    /// Copy a chat's conversation to the clipboard (the list stays open) (`F5`).
     Copy(Uuid),
-    /// Мягко удалить чат (список остаётся открытым) (`Del`).
+    /// Soft-delete a chat (the list stays open) (`Del`).
     Delete(Uuid),
-    /// Переименовать чат (список остаётся открытым) (`F2`).
+    /// Rename a chat (the list stays open) (`F2`).
     Rename { id: Uuid, title: String },
-    /// Авто-название чата силами модели (список остаётся открытым) (`Ctrl+R`).
+    /// Auto-title a chat via the model (the list stays open) (`Ctrl+R`).
     AutoRename(Uuid),
 }
 
-/// Экран списка чатов: состояние виджета + контекст отрисовки.
+/// Chat-list screen: widget state + render context.
 pub struct ChatListScreen {
     state: ChatListState,
-    /// Активный чат (метка `●` в списке). Обновляется при `ChatActivated`.
+    /// Active chat (the `●` marker in the list). Updated on `ChatActivated`.
     active: Option<Uuid>,
-    /// Палитра темы для отрисовки (обновляется при `Settings`).
+    /// Theme palette for rendering (updated on `Settings`).
     palette: Palette,
-    /// Локаль интерфейса (обновляется при `Settings`). См. docs/i18n-ui.md.
+    /// Interface locale (updated on `Settings`). See docs/i18n-ui.md.
     loc: &'static Locale,
-    /// Ждём активации только что созданного чата (`Ctrl+N`): список остаётся на
-    /// экране до прихода его `ChatActivated`, чтобы не мигнуть прежним чатом
-    /// перед новым. Гасится в `take_pending_new_chat`. См. spec §11.2.
+    /// Waiting for the just-created chat's activation (`Ctrl+N`): the list stays on
+    /// screen until its `ChatActivated` arrives, so as not to flash the previous chat
+    /// before the new one. Cleared in `take_pending_new_chat`. See spec §11.2.
     pending_new_chat: bool,
 }
 
 impl ChatListScreen {
-    /// Открывает экран со снимком списка; выделение — на активном чате.
+    /// Opens the screen with a snapshot of the list; the selection is on the active chat.
     pub fn new(
         chats: Vec<ChatSummary>,
         active: Option<Uuid>,
@@ -74,52 +74,52 @@ impl ChatListScreen {
         }
     }
 
-    /// Помечает: создан новый чат, ждём его `ChatActivated`, чтобы переключиться
-    /// на него атомарно (не показав прежний чат). См. `dispatch_chat_list`.
+    /// Marks that a new chat was created, waiting for its `ChatActivated`, so we can
+    /// switch to it atomically (without showing the previous chat). See `dispatch_chat_list`.
     pub fn set_pending_new_chat(&mut self) {
         self.pending_new_chat = true;
     }
 
-    /// Забирает флаг ожидания нового чата (сбрасывая его). `true` — пришедшая
-    /// активация относится к только что созданному чату, список пора закрыть.
+    /// Takes the "waiting for a new chat" flag (resetting it). `true` means the
+    /// activation that just arrived belongs to the just-created chat — time to close the list.
     pub fn take_pending_new_chat(&mut self) -> bool {
         std::mem::take(&mut self.pending_new_chat)
     }
 
-    /// Обновляет снимок списка (после изменения набора чатов) — событие
-    /// `AppEvent::ChatList`. Сохраняет выделение на том же чате по возможности.
+    /// Updates the list snapshot (after the chat set changes) — the
+    /// `AppEvent::ChatList` event. Keeps the selection on the same chat where possible.
     pub fn set_chats(&mut self, chats: Vec<ChatSummary>) {
         self.state.set_chats(chats);
     }
 
-    /// Обновляет метку активного чата (событие `AppEvent::ChatActivated`, напр.
-    /// после удаления активного чата при открытом списке).
+    /// Updates the active-chat marker (the `AppEvent::ChatActivated` event, e.g.
+    /// after deleting the active chat while the list is open).
     pub fn set_active(&mut self, active: Option<Uuid>) {
         self.active = active;
     }
 
-    /// Обновляет палитру темы (событие `AppEvent::Settings`).
+    /// Updates the theme palette (the `AppEvent::Settings` event).
     pub fn set_palette(&mut self, palette: Palette) {
         self.palette = palette;
     }
 
-    /// Обновляет локаль интерфейса (событие `AppEvent::Settings`).
+    /// Updates the interface locale (the `AppEvent::Settings` event).
     pub fn set_loc(&mut self, loc: &'static Locale) {
         self.loc = loc;
     }
 
-    /// Показывает ошибку операции списка в его области статуса (гаснет по нажатию).
+    /// Shows a list-operation error in its status area (fades on keypress).
     pub fn set_error(&mut self, message: String) {
         self.state.set_error(message);
     }
 
-    /// Показывает подтверждение операции (успех) в его области статуса.
+    /// Shows an operation confirmation (success) in its status area.
     pub fn set_notice(&mut self, message: String) {
         self.state.set_notice(message);
     }
 
-    /// Обрабатывает нажатие клавиши, возвращая намерение для `app` (или `None`,
-    /// если клавиша обработана внутри: навигация, ввод поиска/переименования).
+    /// Handles a keypress, returning an intent for `app` (or `None` if the
+    /// key was handled internally: navigation, search/rename input).
     pub fn handle_key(&mut self, key: KeyEvent) -> Option<ChatListIntent> {
         match self.state.on_key(key) {
             ChatListAction::None => None,
@@ -135,21 +135,21 @@ impl ChatListScreen {
         }
     }
 
-    /// Вставляет текст из буфера обмена в поле переименования (если открыто).
-    /// Вне режима переименования — no-op. См. spec §11.5.
+    /// Inserts clipboard text into the rename field (if open).
+    /// Outside rename mode — a no-op. See spec §11.5.
     pub fn handle_paste(&mut self, text: &str) {
         self.state.handle_paste(text);
     }
 
-    /// Перепроверяет орфографию в поле переименования (если открыто и изменилось).
-    /// Возвращает `true`, если подсветка обновлена (нужна перерисовка). Чекер
-    /// одалживается из экрана чата — владельца (`app` сводит это в петле).
+    /// Rechecks spelling in the rename field (if open and changed).
+    /// Returns `true` if the highlighting was updated (a redraw is needed). The checker
+    /// is lent from the chat screen — its owner (`app` reconciles this in the loop).
     pub fn recheck_spelling(&mut self, spell: &SpellChecker) -> bool {
         self.state.recheck_rename_spelling(spell)
     }
 
-    /// Рисует список во весь экран. `&mut self` — поле переименования рисует
-    /// [`InputBox`](crate::widgets::input_box::InputBox), которому нужен `&mut`.
+    /// Draws the list full-screen. `&mut self` — the rename field draws
+    /// an [`InputBox`](crate::widgets::input_box::InputBox), which needs `&mut`.
     pub fn render(&mut self, frame: &mut Frame) {
         self.state
             .render(frame, frame.area(), self.active, &self.palette, self.loc);
@@ -231,7 +231,7 @@ mod tests {
             Palette::default(),
             ru(),
         );
-        // Печать символа в строку поиска — обработана внутри (нет намерения).
+        // Typing a character into the search field is handled internally (no intent).
         assert_eq!(s.handle_key(key(KeyCode::Char('Б'))), None);
     }
 
@@ -240,7 +240,7 @@ mod tests {
         let mut s = ChatListScreen::new(vec![chat("A")], None, Palette::default(), ru());
         assert!(!s.take_pending_new_chat());
         s.set_pending_new_chat();
-        // Забирается ровно один раз (сбрасывается) — вторая активация закрыть не должна.
+        // Taken exactly once (resets) — a second activation shouldn't close it.
         assert!(s.take_pending_new_chat());
         assert!(!s.take_pending_new_chat());
     }

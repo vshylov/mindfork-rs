@@ -304,7 +304,7 @@ async fn read_loop(
             Err(_) => {
                 // Pitfall §4.6: servers print banners/logs to stdout — skip the
                 // line without tearing down the connection.
-                tracing::warn!(line = %clip_line(&line), "MCP: не-JSON строка в stdout, пропущена");
+                tracing::warn!(line = %clip_line(&line), "MCP: non-JSON line on stdout, skipped");
                 continue;
             }
         };
@@ -518,15 +518,16 @@ impl McpClient {
     /// its own and then kills it. Returns once the process has actually exited.
     pub async fn shutdown(self) {
         let exited = self.exited.clone();
-        drop(self); // Drop: kill.cancel() + дроп Arc соединения (stdin закрыт)
+        drop(self); // Drop: kill.cancel() + drop the connection Arc (stdin closes)
         exited.cancelled().await;
     }
 }
 
-/// Монитор-задача процесса сервера: ждёт его завершения (взводит `exited`) или
-/// сигнала `kill` (grace-период на самостоятельный выход после закрытия stdin →
-/// `start_kill`). Владеет [`Child`] и Job-хэндлом ([`JobGuard`]) — `kill_on_drop`
-/// и kill-on-close добивают процесс/дерево даже при сбросе задачи рантаймом.
+/// The server process's monitor task: waits for it to exit (arms `exited`) or
+/// for the `kill` signal (a grace period for a self-initiated exit after
+/// closing stdin → `start_kill`). Owns [`Child`] and the Job handle
+/// ([`JobGuard`]) — `kill_on_drop` and kill-on-close finish off the
+/// process/tree even if the runtime drops the task.
 fn spawn_monitor(
     mut child: Child,
     job: JobGuard,
@@ -534,21 +535,22 @@ fn spawn_monitor(
     exited: CancellationToken,
 ) {
     tokio::spawn(async move {
-        // Job-хэндл живёт до конца задачи: его закрытие (уже после завершения
-        // ребёнка) добьёт kill-on-close'ом всё дерево процессов (Windows; на
-        // прочих ОС — пустышка). Привязка вместо `drop(job)` в конце — на unix
-        // у пустышки нет Drop, и явный drop ловил бы clippy::drop_non_drop.
+        // The Job handle lives until the end of the task: its closure (after
+        // the child has already exited) finishes off the whole process tree
+        // via kill-on-close (Windows; a no-op stub on other OSes). Binding it
+        // instead of `drop(job)` at the end — on unix the stub has no Drop,
+        // and an explicit drop would trip clippy::drop_non_drop.
         let _job = job;
         tokio::select! {
             status = child.wait() => {
                 match status {
-                    Ok(s) => tracing::warn!(status = ?s, "MCP-сервер завершился сам"),
-                    Err(e) => tracing::warn!(error = %e, "ошибка ожидания MCP-сервера"),
+                    Ok(s) => tracing::warn!(status = ?s, "MCP server exited on its own"),
+                    Err(e) => tracing::warn!(error = %e, "error waiting for the MCP server"),
                 }
             }
             _ = kill.cancelled() => {
-                // stdin закрывается дропом соединения (может отставать от kill на
-                // мгновение) — grace-период на штатный выход, затем kill.
+                // stdin closes when the connection drops (may lag `kill` by an
+                // instant) — a grace period for a clean exit, then kill.
                 if tokio::time::timeout(SHUTDOWN_GRACE, child.wait()).await.is_err() {
                     let _ = child.start_kill();
                     let _ = child.wait().await;
@@ -559,10 +561,11 @@ fn spawn_monitor(
     });
 }
 
-/// Опора Job Object'а kill-on-close (Windows): пока хэндл открыт — дерево живёт;
-/// закрытие хэндла (штатное в мониторе или крах приложения) убивает всё дерево
-/// процессов сервера (включая внуков `cmd /c npx` → `node`). На прочих ОС — no-op.
-/// Поле держится только ради `Drop` (закрытие хэндла) — не читается.
+/// The backing handle of the kill-on-close Job Object (Windows): while the
+/// handle is open, the tree lives; closing the handle (a clean exit in the
+/// monitor, or an app crash) kills the whole server process tree (including
+/// grandchildren, `cmd /c npx` → `node`). A no-op on other OSes.
+/// The field is held only for `Drop` (closing the handle) — never read.
 struct JobGuard(
     #[cfg(windows)]
     #[allow(dead_code)]
@@ -571,21 +574,22 @@ struct JobGuard(
 
 #[cfg(windows)]
 struct JobHandle(windows_sys::Win32::Foundation::HANDLE);
-// SAFETY: HANDLE Job Object'а — просто опора ядра; передача между потоками безопасна.
+// SAFETY: a Job Object HANDLE is just a kernel handle; sending it across threads is safe.
 #[cfg(windows)]
 unsafe impl Send for JobHandle {}
 
 #[cfg(windows)]
 impl Drop for JobHandle {
     fn drop(&mut self) {
-        // SAFETY: хэндл создан нами в `assign` и ещё не закрывался.
+        // SAFETY: the handle was created by us in `assign` and hasn't been closed yet.
         unsafe { windows_sys::Win32::Foundation::CloseHandle(self.0) };
     }
 }
 
 impl JobGuard {
-    /// Помещает процесс в Job Object c `KILL_ON_JOB_CLOSE`. «Лучшее усилие»:
-    /// сбой лишь логируется (сервер работает без job'а — как на unix).
+    /// Places the process into a Job Object with `KILL_ON_JOB_CLOSE`. "Best
+    /// effort": a failure is only logged (the server keeps working without a
+    /// job — as on unix).
     #[cfg(windows)]
     fn assign(child: &Child) -> Self {
         use windows_sys::Win32::System::JobObjects::{
@@ -594,15 +598,15 @@ impl JobGuard {
             SetInformationJobObject,
         };
         let Some(raw) = child.raw_handle() else {
-            tracing::warn!("MCP: нет хэндла процесса — Job Object не назначен");
+            tracing::warn!("MCP: no process handle — Job Object not assigned");
             return Self(None);
         };
-        // SAFETY: `raw` — валидный хэндл только что запущенного процесса; структура
-        // инициализирована нулями; job закрывается через JobHandle::drop.
+        // SAFETY: `raw` is a valid handle of the just-spawned process; the
+        // struct is zero-initialized; the job closes via JobHandle::drop.
         unsafe {
             let job = CreateJobObjectW(std::ptr::null(), std::ptr::null());
             if job.is_null() {
-                tracing::warn!("MCP: CreateJobObjectW не удался");
+                tracing::warn!("MCP: CreateJobObjectW failed");
                 return Self(None);
             }
             let mut info: JOBOBJECT_EXTENDED_LIMIT_INFORMATION = std::mem::zeroed();
@@ -614,7 +618,7 @@ impl JobGuard {
                 std::mem::size_of::<JOBOBJECT_EXTENDED_LIMIT_INFORMATION>() as u32,
             );
             if ok == 0 || AssignProcessToJobObject(job, raw as _) == 0 {
-                tracing::warn!("MCP: не удалось назначить Job Object kill-on-close");
+                tracing::warn!("MCP: failed to assign the kill-on-close Job Object");
                 windows_sys::Win32::Foundation::CloseHandle(job);
                 return Self(None);
             }
@@ -633,8 +637,9 @@ mod tests {
     use super::*;
     use tokio::io::{AsyncBufReadExt, BufReader};
 
-    /// Скриптованный фейк-сервер поверх duplex: на каждый запрос — замыкание.
-    /// Возвращает соединение клиента + JoinHandle фейка (для ассертов внутри).
+    /// A scripted fake server over duplex: a closure decides the reply to
+    /// each request. Returns the client's connection + the fake's
+    /// JoinHandle (for assertions inside it).
     fn fake_server<F>(script: F) -> (McpConnection, tokio::task::JoinHandle<Vec<Value>>)
     where
         F: Fn(&Value) -> Option<Value> + Send + 'static,
@@ -665,7 +670,7 @@ mod tests {
         (McpConnection::over(client_r, client_w), handle)
     }
 
-    /// Стандартный скрипт: initialize/tools/list/tools/call.
+    /// The standard script: initialize/tools/list/tools/call.
     fn scripted(msg: &Value) -> Option<Value> {
         let id = msg.get("id")?.clone();
         match msg["method"].as_str()? {
@@ -675,7 +680,7 @@ mod tests {
                 "serverInfo": { "name": "fake", "version": "0.1" }
             }})),
             "tools/list" => {
-                // Две страницы: пагинация по nextCursor.
+                // Two pages: pagination via nextCursor.
                 let params = msg.get("params").cloned().unwrap_or(json!({}));
                 if params.get("cursor").is_none() {
                     Some(json!({ "jsonrpc": "2.0", "id": id, "result": {
@@ -719,10 +724,10 @@ mod tests {
     async fn handshake_lists_and_calls_over_duplex() {
         let (conn, _fake) = fake_server(scripted);
         let init = handshake(&conn).await;
-        // Встречная версия сервера (иная, чем наша) принимается.
+        // The counterpart's version (different from ours) is accepted.
         assert_eq!(init["protocolVersion"], "2025-06-18");
 
-        // Пагинация: две страницы склеены.
+        // Pagination: two pages are stitched together.
         let p1 = conn
             .request("tools/list", json!({}), Duration::from_secs(2))
             .await
@@ -738,8 +743,8 @@ mod tests {
             .unwrap();
         assert!(p2.get("nextCursor").is_none());
 
-        // Вызов: текст склеен, image → плейсхолдер добавит уровень клиента
-        // (здесь — сырой результат).
+        // A call: text is concatenated, image → the client level adds the
+        // placeholder (here — the raw result).
         let call = conn
             .request(
                 "tools/call",
@@ -753,7 +758,7 @@ mod tests {
 
     #[tokio::test]
     async fn garbage_line_then_valid_response() {
-        // Прямой duplex: сервер печатает баннер, затем валидный ответ.
+        // A direct duplex: the server prints a banner, then a valid reply.
         let (client_io, server_io) = tokio::io::duplex(64 * 1024);
         let (client_r, client_w) = tokio::io::split(client_io);
         let (server_r, mut server_w) = tokio::io::split(server_io);
@@ -784,7 +789,7 @@ mod tests {
 
     #[tokio::test]
     async fn answers_ping_and_rejects_unknown_server_requests() {
-        // Сервер шлёт нам ping и sampling-запрос; проверяем ответы клиентской стороны.
+        // The server sends us a ping and a sampling request; check the client side's replies.
         let (client_io, server_io) = tokio::io::duplex(64 * 1024);
         let (client_r, client_w) = tokio::io::split(client_io);
         let (server_r, mut server_w) = tokio::io::split(server_io);
@@ -800,7 +805,7 @@ mod tests {
         let mut lines = BufReader::new(server_r).lines();
         let pong: Value = serde_json::from_str(&lines.next_line().await.unwrap().unwrap()).unwrap();
         assert_eq!(pong["id"], 100);
-        assert!(pong.get("result").is_some(), "ping → пустой результат");
+        assert!(pong.get("result").is_some(), "ping → empty result");
         let mnf: Value = serde_json::from_str(&lines.next_line().await.unwrap().unwrap()).unwrap();
         assert_eq!(mnf["id"], 101);
         assert_eq!(mnf["error"]["code"], -32601);
@@ -808,7 +813,7 @@ mod tests {
 
     #[tokio::test]
     async fn timeout_sends_cancelled_notification() {
-        // Фейк молчит на tools/call → клиент таймаутится и шлёт cancelled.
+        // The fake stays silent on tools/call → the client times out and sends cancelled.
         let (conn, fake) = fake_server(|msg| {
             let id = msg.get("id")?.clone();
             (msg["method"].as_str()? != "tools/call")
@@ -824,21 +829,22 @@ mod tests {
             .unwrap_err()
             .to_string();
         assert!(err.contains("таймаут"), "{err}");
-        drop(conn); // закрыть поток → фейк вернёт полученное
+        drop(conn); // close the stream → the fake returns what it received
         let received = fake.await.unwrap();
         assert!(
             received
                 .iter()
                 .any(|m| m["method"] == "notifications/cancelled"
                     && m["params"]["reason"] == "timeout"),
-            "нет notifications/cancelled: {received:?}"
+            "no notifications/cancelled: {received:?}"
         );
     }
 
     #[tokio::test]
     async fn cancel_sends_cancelled_notification() {
-        // Фейк молчит на tools/call → отмена токеном прерывает вызов и шлёт
-        // notifications/cancelled с reason=cancelled (Esc пользователя).
+        // The fake stays silent on tools/call → cancelling via the token
+        // interrupts the call and sends notifications/cancelled with
+        // reason=cancelled (the user's Esc).
         let (conn, fake) = fake_server(|msg| {
             let id = msg.get("id")?.clone();
             (msg["method"].as_str()? != "tools/call")
@@ -863,13 +869,13 @@ mod tests {
                 .iter()
                 .any(|m| m["method"] == "notifications/cancelled"
                     && m["params"]["reason"] == "cancelled"),
-            "нет notifications/cancelled: {received:?}"
+            "no notifications/cancelled: {received:?}"
         );
     }
 
     #[tokio::test]
     async fn call_tool_joins_text_and_placeholders_non_text() {
-        // call_tool на соединении: текстовые блоки склеены, image → плейсхолдер.
+        // call_tool on a connection: text blocks are concatenated, image → a placeholder.
         let (conn, _fake) = fake_server(scripted);
         let res = conn
             .call_tool(
@@ -891,8 +897,9 @@ mod tests {
 
     #[test]
     fn batch_commands_are_forbidden() {
-        // BatBadBut (CVE-2024-24576): .bat/.cmd как команда сервера запрещены,
-        // включая пути и регистр; `cmd` (шелл для npx) и exe — разрешены.
+        // BatBadBut (CVE-2024-24576): .bat/.cmd as a server command are
+        // forbidden, including with a path and any letter case; `cmd` (the
+        // shell for npx) and exe are allowed.
         assert!(forbidden_batch_command("evil.bat"));
         assert!(forbidden_batch_command("C:/tools/npx.CMD"));
         assert!(forbidden_batch_command(r"C:\tools\run.Bat"));
@@ -904,7 +911,7 @@ mod tests {
     #[tokio::test]
     async fn spawn_rejects_batch_command() {
         let err = match McpClient::spawn("server.cmd", &[], &[]).await {
-            Ok(_) => panic!(".cmd-команда должна быть отклонена"),
+            Ok(_) => panic!(".cmd command should have been rejected"),
             Err(e) => e.to_string(),
         };
         assert!(err.contains("BatBadBut"), "{err}");
@@ -930,11 +937,11 @@ mod tests {
     }
 }
 
-/// Живой смоук зонда (go/no-go, docs/research/plugin-system.md §7 этап 2):
-/// реальный сторонний MCP-сервер (`npx @modelcontextprotocol/server-filesystem`)
-/// плюс живая модель (`MINDFORK_ENGINE_URL`). Ручной мини-agentic-loop повторяет
-/// механику оркестратора (стрим → tool_calls → исполнение → следующий раунд);
-/// требует `npx` в PATH (Windows: запускается как `cmd /c npx …` — питфолл §4.6).
+/// The probe's live smoke (go/no-go, docs/research/plugin-system.md §7 stage 2):
+/// a real third-party MCP server (`npx @modelcontextprotocol/server-filesystem`)
+/// plus a live model (`MINDFORK_ENGINE_URL`). A manual mini agentic-loop mirrors
+/// the orchestrator's mechanics (stream → tool_calls → execution → the next round);
+/// requires `npx` on PATH (Windows: spawned as `cmd /c npx …` — pitfall §4.6).
 #[cfg(test)]
 mod ignored_smoke {
     use super::*;
@@ -947,7 +954,7 @@ mod ignored_smoke {
     use futures_util::StreamExt;
 
     async fn spawn_filesystem_server(allowed_dir: &str) -> Result<McpClient> {
-        // npx на Windows — .cmd-шим: без шелла спавн даёт ENOENT (§4.6).
+        // npx on Windows is a .cmd shim: spawning without a shell gives ENOENT (§4.6).
         let (program, args): (&str, Vec<String>) = if cfg!(windows) {
             (
                 "cmd",
@@ -972,9 +979,9 @@ mod ignored_smoke {
         McpClient::spawn(program, &args, &[]).await
     }
 
-    /// Критерий GO: модель сама вызывает MCP-инструмент чтения файла и использует
-    /// его результат в ответе; вызовы/результаты ходят через наш клиент; ход
-    /// завершается штатно, сервер гасится shutdown-лестницей.
+    /// GO criterion: the model calls the file-reading MCP tool on its own and
+    /// uses its result in the reply; calls/results go through our client; the
+    /// turn ends cleanly, the server shuts down via the shutdown ladder.
     #[tokio::test]
     #[ignore = "requires MINDFORK_ENGINE_URL + npx (real filesystem MCP server)"]
     async fn gemma_reads_file_via_mcp_filesystem_server() {
@@ -984,7 +991,7 @@ mod ignored_smoke {
         };
         let engine = OpenAiClient::new(url);
 
-        // Секрет в файле внутри разрешённого каталога.
+        // A secret in a file inside the allowed directory.
         let dir = tempfile::tempdir().unwrap();
         std::fs::write(
             dir.path().join("secret_number.txt"),
@@ -996,7 +1003,7 @@ mod ignored_smoke {
         let client = match spawn_filesystem_server(&allowed).await {
             Ok(c) => c,
             Err(e) => {
-                eprintln!("skip: не удалось запустить npx MCP-сервер: {e:#}");
+                eprintln!("skip: failed to launch the npx MCP server: {e:#}");
                 return;
             }
         };
@@ -1005,9 +1012,9 @@ mod ignored_smoke {
             client.server_info, client.protocol_version
         );
 
-        // Каталог инструментов → OpenAI-схемы (как сделает этап 3).
+        // The tool catalog → OpenAI schemas (as stage 3 will do).
         let tools = client.list_tools().await.unwrap();
-        assert!(!tools.is_empty(), "у filesystem-сервера есть инструменты");
+        assert!(!tools.is_empty(), "the filesystem server has tools");
         let schemas: Vec<ToolSchema> = tools
             .iter()
             .map(|t| ToolSchema {
@@ -1021,12 +1028,12 @@ mod ignored_smoke {
             .map(|s| s.name.len() + s.description.len() + s.parameters.to_string().len())
             .sum();
         eprintln!(
-            "инструментов: {}, схемы ≈ {} КиБ (бюджет 16k-контекста)",
+            "tools: {}, schemas ≈ {} KiB (16k-context budget)",
             schemas.len(),
             schema_bytes / 1024
         );
 
-        // Ручной agentic-loop (механика orchestrator/generation.rs, вручную).
+        // A manual agentic loop (orchestrator/generation.rs's mechanics, by hand).
         let mut messages = vec![ApiMessage::user(format!(
             "Прочитай файл {allowed}/secret_number.txt с помощью инструмента и скажи, \
              какое секретное число в нём записано."
@@ -1034,7 +1041,7 @@ mod ignored_smoke {
         let mut rounds = 0;
         let final_text = loop {
             rounds += 1;
-            assert!(rounds <= 8, "модель зациклилась на вызовах инструментов");
+            assert!(rounds <= 8, "the model got stuck looping on tool calls");
             let req = ChatRequest {
                 system: Some(
                     "Ты — ассистент с инструментами файловой системы. Пользуйся ими.".into(),
@@ -1068,19 +1075,15 @@ mod ignored_smoke {
                     for call in calls {
                         let args: Value =
                             serde_json::from_str(&call.arguments).unwrap_or(json!({}));
-                        eprintln!("→ модель вызывает {}({})", call.name, call.arguments);
+                        eprintln!("→ model calls {}({})", call.name, call.arguments);
                         let result = client
                             .conn()
                             .call_tool(&call.name, args, Duration::from_secs(30), None)
                             .await
                             .unwrap();
                         eprintln!(
-                            "← результат ({}): {}",
-                            if result.is_error {
-                                "ошибка"
-                            } else {
-                                "ок"
-                            },
+                            "← result ({}): {}",
+                            if result.is_error { "error" } else { "ok" },
                             &result.text[..result.text.len().min(120)]
                         );
                         messages.push(ApiMessage::tool(call.id, result.text));
@@ -1089,12 +1092,15 @@ mod ignored_smoke {
                 _ => break text,
             }
         };
-        eprintln!("раундов: {rounds}; финальный ответ: {final_text}");
+        eprintln!("rounds: {rounds}; final answer: {final_text}");
         assert!(
             final_text.contains("7319"),
-            "модель не использовала результат MCP-инструмента: {final_text:?}"
+            "the model didn't use the MCP tool's result: {final_text:?}"
         );
-        assert!(rounds >= 2, "инструмент не вызывался (ответ без раундов)");
+        assert!(
+            rounds >= 2,
+            "the tool wasn't called (an answer with no rounds)"
+        );
         client.shutdown().await;
     }
 }

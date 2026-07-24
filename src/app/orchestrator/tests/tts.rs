@@ -1,12 +1,12 @@
-//! Тесты озвучивания (`/tts`, spec §11.9): понятные отказы при ненастроенном
-//! движке и точки остановки воспроизведения (по настройке и безусловные).
+//! Speech tests (`/tts`, spec §11.9): clear refusals with an unconfigured
+//! engine, and playback stop points (settings-driven and unconditional).
 
 use super::*;
 use crate::features::tts_command::TtsScope;
 use crate::shared::config::TtsMode;
 
-/// Ставит «идёт озвучивание» без реальной задачи: токен + поколение — ровно то
-/// состояние, которое проверяют точки остановки.
+/// Sets "speech is in progress" without a real task: a token + a generation id — exactly the
+/// state the stop points check.
 fn mark_speaking(orch: &mut Orchestrator) -> tokio_util::sync::CancellationToken {
     let token = tokio_util::sync::CancellationToken::new();
     orch.tts_cancel = Some(token.clone());
@@ -16,8 +16,8 @@ fn mark_speaking(orch: &mut Orchestrator) -> tokio_util::sync::CancellationToken
 
 #[tokio::test]
 async fn tts_without_api_key_reports_setup_error() {
-    // Дефолтный режим — облако OpenAI с осмысленной моделью, но без ключа: команда
-    // должна ответить понятной подсказкой, а не молчать.
+    // The default mode is the OpenAI cloud with a sensible model but no key: the command
+    // should respond with a clear hint, not stay silent.
     let backend: Arc<dyn EngineBackend> = Arc::new(MockBackend::scripted(vec![
         ChatChunk::Text("ответ ассистента".into()),
         ChatChunk::Finished(crate::shared::api::FinishReason::Stop),
@@ -31,14 +31,14 @@ async fn tts_without_api_key_reports_setup_error() {
 
     let err = wait_for(&mut rx, |e| matches!(e, AppEvent::Error(_)))
         .await
-        .expect("ожидали сообщение об ошибке");
+        .expect("expected an error message");
     let AppEvent::Error(msg) = err else {
         unreachable!()
     };
     let expected = crate::shared::i18n::locale(crate::shared::i18n::Lang::default())
         .t("ui.err.tts_no_api_key");
-    assert_eq!(msg, expected, "ключа нет → подсказка открыть настройки");
-    // Чип озвучивания не зажигался (задача не стартовала).
+    assert_eq!(msg, expected, "no key → a hint to open settings");
+    // The speech chip never lit up (the task never started).
     tx.send(AppCommand::Quit).unwrap();
     let _ = handle.await;
 }
@@ -51,7 +51,7 @@ async fn tts_in_empty_chat_reports_nothing_to_speak() {
 
     let err = wait_for(&mut rx, |e| matches!(e, AppEvent::Error(_)))
         .await
-        .expect("ожидали сообщение об ошибке");
+        .expect("expected an error message");
     let AppEvent::Error(msg) = err else {
         unreachable!()
     };
@@ -66,7 +66,7 @@ async fn tts_in_empty_chat_reports_nothing_to_speak() {
 
 #[test]
 fn chat_switch_stops_speaking_only_when_enabled() {
-    // Настройка «прерывать при переключении чата» включена по умолчанию.
+    // The "stop on chat switch" setting is on by default.
     let (_dir, mut orch, mut rx) = bare_orch_rx();
     orch.bootstrap().unwrap();
     let first = orch.chats[0].id;
@@ -77,28 +77,28 @@ fn chat_switch_stops_speaking_only_when_enabled() {
 
     let token = mark_speaking(&mut orch);
     orch.handle_switch(first);
-    assert!(token.is_cancelled(), "переключение чата прерывает озвучку");
+    assert!(token.is_cancelled(), "switching chats stops speech");
     assert!(orch.tts_gen.is_none());
     assert!(
         std::iter::from_fn(|| rx.try_recv().ok()).any(|e| matches!(e, AppEvent::TtsActive(false))),
-        "чип озвучки гаснет сразу"
+        "the speech chip goes dark right away"
     );
 
-    // Выключенная настройка — озвучка переживает переключение.
+    // With the setting disabled — speech survives the switch.
     orch.config.tts.stop_on_chat_switch = false;
     let token = mark_speaking(&mut orch);
     orch.handle_switch(second);
     assert!(
         !token.is_cancelled(),
-        "с выключенной настройкой не прерываем"
+        "with the setting disabled we don't stop it"
     );
     assert!(orch.tts_gen.is_some());
 }
 
 #[test]
 fn deleting_active_chat_stops_speaking_unconditionally() {
-    // Удаление чата — безусловная остановка (озвучиваемого текста больше нет),
-    // настройки на неё не влияют.
+    // Deleting a chat is an unconditional stop (the spoken text no longer exists),
+    // settings don't affect it.
     let (_dir, mut orch, _rx) = bare_orch_rx();
     orch.bootstrap().unwrap();
     orch.handle_new_chat(None);
@@ -107,41 +107,41 @@ fn deleting_active_chat_stops_speaking_unconditionally() {
 
     let token = mark_speaking(&mut orch);
     orch.handle_delete(active);
-    assert!(token.is_cancelled(), "удаление чата прерывает озвучку");
+    assert!(token.is_cancelled(), "deleting the chat stops speech");
     assert!(orch.tts_gen.is_none());
 }
 
 #[test]
 fn stop_command_is_idempotent() {
     let (_dir, mut orch, mut rx) = bare_orch_rx();
-    // Ничего не играет — команда не эмитит лишних событий.
+    // Nothing is playing — the command emits no extra events.
     orch.stop_tts();
-    assert!(rx.try_recv().is_err(), "no-op не шлёт событий");
+    assert!(rx.try_recv().is_err(), "a no-op sends no events");
 
     let token = mark_speaking(&mut orch);
     orch.stop_tts();
     assert!(token.is_cancelled());
     assert!(matches!(rx.try_recv(), Ok(AppEvent::TtsActive(false))));
     orch.stop_tts();
-    assert!(rx.try_recv().is_err(), "повторная остановка — тоже no-op");
+    assert!(rx.try_recv().is_err(), "a repeat stop is also a no-op");
 }
 
 #[test]
 fn pause_resume_without_active_playback_are_safe_noops() {
-    // Звука в CI нет, поэтому `tts_playback` не заводится — проверяем, что команды
-    // pause/resume при отсутствии активной озвучки не паникуют и не шлют событий.
+    // There's no audio in CI, so `tts_playback` never comes up — check that the
+    // pause/resume commands don't panic and don't send events when nothing is speaking.
     let (_dir, mut orch, mut rx) = bare_orch_rx();
     orch.handle_tts_pause();
     orch.handle_tts_resume();
     assert!(orch.tts_playback.is_none());
-    assert!(rx.try_recv().is_err(), "no-op не шлёт событий");
+    assert!(rx.try_recv().is_err(), "a no-op sends no events");
 
-    // Пометка «идёт» без реального устройства: pause/resume всё равно безопасны
-    // (хэндла нет), а `stop_tts` снимает паузу и гасит чип.
+    // Mark "in progress" with no real device: pause/resume are still safe
+    // (no handle), and `stop_tts` clears the pause and douses the chip.
     let token = mark_speaking(&mut orch);
     orch.handle_tts_pause();
     orch.handle_tts_resume();
-    assert!(!token.is_cancelled(), "pause/resume не отменяют задачу");
+    assert!(!token.is_cancelled(), "pause/resume don't cancel the task");
     orch.stop_tts();
     assert!(token.is_cancelled());
     assert!(matches!(rx.try_recv(), Ok(AppEvent::TtsActive(false))));
@@ -149,8 +149,8 @@ fn pause_resume_without_active_playback_are_safe_noops() {
 
 #[test]
 fn late_done_of_cancelled_task_does_not_hide_new_indicator() {
-    // Гонка «остановили старую → запустили новую»: поздний `done` устаревшей задачи
-    // не должен гасить чип текущей.
+    // The "stopped the old one → started a new one" race: a late `done` from the stale task
+    // must not douse the current one's chip.
     let (_dir, mut orch, mut rx) = bare_orch_rx();
     let _ = mark_speaking(&mut orch);
     let stale = orch.tts_gen.unwrap();
@@ -159,8 +159,8 @@ fn late_done_of_cancelled_task_does_not_hide_new_indicator() {
     while rx.try_recv().is_ok() {}
 
     orch.handle_tts_done(stale);
-    assert!(orch.tts_gen.is_some(), "текущая озвучка не тронута");
-    assert!(rx.try_recv().is_err(), "события гашения чипа нет");
+    assert!(orch.tts_gen.is_some(), "the current speech is untouched");
+    assert!(rx.try_recv().is_err(), "no chip-douse event");
 
     let current = orch.tts_gen.unwrap();
     orch.handle_tts_done(current);
@@ -172,8 +172,8 @@ fn late_done_of_cancelled_task_does_not_hide_new_indicator() {
 fn external_mode_without_url_reports_setup_error() {
     let (_dir, mut orch, mut rx) = bare_orch_rx();
     orch.bootstrap().unwrap();
-    // Кладём сообщение прямо в чат: гейт готовности сервера здесь не при чём —
-    // проверяем именно отказ настройки озвучивания.
+    // Put the message directly into the chat: the server-readiness gate is irrelevant here —
+    // what's checked is specifically the speech-configuration refusal.
     let active = orch.active_id.unwrap();
     orch.chat_mut(active)
         .unwrap()
@@ -192,6 +192,6 @@ fn external_mode_without_url_reports_setup_error() {
             crate::shared::i18n::locale(crate::shared::i18n::Lang::default())
                 .t("ui.err.tts_no_url")
         ),
-        "external без URL — понятная подсказка"
+        "external without a URL — a clear hint"
     );
 }

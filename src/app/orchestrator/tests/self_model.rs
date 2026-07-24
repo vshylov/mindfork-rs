@@ -1,5 +1,5 @@
-//! Тесты оркестратора — модель себя: инъекция, F3-правки, сигналы. Часть модуля [`super`]
-//! (фикстуры в mod.rs). См. docs/history/refactoring-god-objects.md, этап 3.
+//! Orchestrator tests — the self-model: injection, F3 edits, signals. Part of the [`super`]
+//! module (fixtures in mod.rs). See docs/history/refactoring-god-objects.md, stage 3.
 
 use super::*;
 
@@ -18,7 +18,7 @@ fn inject_self_model_respects_flag_and_emptiness() {
         created_at: now,
     };
 
-    // Выключено → система не меняется (протокол тоже не подмешивается).
+    // Off → the system message doesn't change (the protocol isn't mixed in either).
     assert_eq!(
         inject_self_model(
             Some("S".into()),
@@ -32,7 +32,7 @@ fn inject_self_model_respects_flag_and_emptiness() {
         ),
         Some("S".into())
     );
-    // Включено, протокол выкл, непустая модель → блок дописывается, протокола нет.
+    // On, protocol off, a non-empty model → the block is appended, no protocol.
     let out = inject_self_model(
         Some("S".into()),
         Some(&m),
@@ -47,7 +47,7 @@ fn inject_self_model_respects_flag_and_emptiness() {
     assert!(out.starts_with("S\n\n"));
     assert!(out.contains("ценю ясность"));
     assert!(!out.contains("угодливости"));
-    // Включено, протокол выкл, модели нет, наблюдений нет → без изменений.
+    // On, protocol off, no model, no observations → no change.
     assert_eq!(
         inject_self_model(
             Some("S".into()),
@@ -61,7 +61,7 @@ fn inject_self_model_respects_flag_and_emptiness() {
         ),
         Some("S".into())
     );
-    // Модели нет, но есть наблюдения (self-заметки) → инъекция всё равно происходит.
+    // No model, but there are observations (self-notes) → injection still happens.
     let obs = [seg("заметил склонность к краткости")];
     let only_obs = inject_self_model(
         None,
@@ -76,7 +76,7 @@ fn inject_self_model_respects_flag_and_emptiness() {
     .unwrap();
     assert!(only_obs.contains("Недавние наблюдения:"));
     assert!(only_obs.contains("склонность к краткости"));
-    // Пустая модель + пустые наблюдения, system=None → нечего подмешивать → None.
+    // An empty model + empty observations, system=None → nothing to mix in → None.
     let empty = SelfModel::new(Uuid::new_v4());
     assert_eq!(
         inject_self_model(
@@ -91,7 +91,7 @@ fn inject_self_model_respects_flag_and_emptiness() {
         ),
         None
     );
-    // Пустой system + непустая модель (протокол выкл) → блок становится системой.
+    // Empty system + a non-empty model (protocol off) → the block becomes the system message.
     let only = inject_self_model(
         None,
         Some(&m),
@@ -105,7 +105,7 @@ fn inject_self_model_respects_flag_and_emptiness() {
     .unwrap();
     assert!(only.contains("О себе: ценю ясность"));
 
-    // Протокол вкл + пустая модель → протокол всё равно подмешивается (bootstrap).
+    // Protocol on + an empty model → the protocol is mixed in anyway (bootstrap).
     let boot = inject_self_model(
         Some("S".into()),
         Some(&empty),
@@ -119,7 +119,7 @@ fn inject_self_model_respects_flag_and_emptiness() {
     .unwrap();
     assert!(boot.starts_with("S\n\n"));
     assert!(boot.contains("угодливости"));
-    // Протокол вкл + непустая модель → и рендер, и протокол.
+    // Protocol on + a non-empty model → both the render and the protocol.
     let both = inject_self_model(
         None,
         Some(&m),
@@ -137,14 +137,14 @@ fn inject_self_model_respects_flag_and_emptiness() {
 
 #[test]
 fn inject_self_model_appends_summary_hint_when_bloated() {
-    // Этап 2: при включённом протоколе и раздутом описании (сверх ориентира) в
-    // инъекцию дописывается data-aware подсказка сократить; при выключенном протоколе
-    // подсказки нет даже при раздутом описании.
+    // Stage 2: with the protocol enabled and a bloated description (beyond the target), a
+    // data-aware hint to shrink it is appended to the injection; with the protocol disabled,
+    // there's no hint even with a bloated description.
     use super::super::generation::inject_self_model;
     use crate::entities::self_model::{SelfModel, SelfModelParams};
     use crate::shared::config::SelfModelSettings;
 
-    // Ориентир 5 санитизируется до пола 200 — описание берём длиннее 200 символов.
+    // A target of 5 is sanitized up to the floor of 200 — the description is taken longer than 200 chars.
     let params = SelfModelParams::from_settings(&SelfModelSettings {
         summary_target_chars: 5,
         ..SelfModelSettings::default()
@@ -153,7 +153,7 @@ fn inject_self_model_appends_summary_hint_when_bloated() {
     m.summary = "я".repeat(250);
     let now = chrono::Utc::now();
 
-    // Протокол вкл → подсказка присутствует.
+    // Protocol on → the hint is present.
     let with = inject_self_model(
         None,
         Some(&m),
@@ -166,7 +166,7 @@ fn inject_self_model_appends_summary_hint_when_bloated() {
     )
     .unwrap();
     assert!(with.contains("Описание себя разрослось"));
-    // Протокол выкл → протокола и подсказки нет (только рендер модели).
+    // Protocol off → no protocol and no hint (only the model's render).
     let without = inject_self_model(
         None,
         Some(&m),
@@ -192,18 +192,18 @@ fn blend_self_notes_prioritizes_relevant_and_guarantees_freshest() {
     let relevant = vec![r1.clone(), r2.clone()];
     let fresh = vec![f0.clone(), f1.clone()];
 
-    // n=3: 2 релевантных + гарантированное самое свежее (f1 не влезает).
+    // n=3: 2 relevant + the guaranteed freshest one (f1 doesn't fit).
     let out = blend_self_notes(relevant.clone(), &fresh, 3);
     let ids: Vec<_> = out.iter().map(|n| n.id).collect();
     assert_eq!(out.len(), 3);
     assert!(ids.contains(&r1.id) && ids.contains(&r2.id));
     assert!(
         ids.contains(&f0.id),
-        "самое свежее наблюдение гарантированно включено"
+        "the freshest observation must be guaranteed to be included"
     );
     assert!(!ids.contains(&f1.id));
 
-    // n=2 при 2 релевантных: последнюю релевантную теснит самое свежее.
+    // n=2 with 2 relevant: the last relevant one is crowded out by the freshest.
     let out = blend_self_notes(relevant, &fresh, 2);
     let ids: Vec<_> = out.iter().map(|n| n.id).collect();
     assert_eq!(out.len(), 2);
@@ -211,15 +211,15 @@ fn blend_self_notes_prioritizes_relevant_and_guarantees_freshest() {
     assert!(ids.contains(&f0.id));
     assert!(!ids.contains(&r2.id));
 
-    // Дедуп: если самое свежее уже среди релевантных — не дублируется.
+    // Dedup: if the freshest is already among the relevant ones — it isn't duplicated.
     let out = blend_self_notes(vec![f0.clone(), r1.clone()], &fresh, 3);
     assert_eq!(out.iter().filter(|n| n.id == f0.id).count(), 1);
 }
 
 #[tokio::test]
 async fn injection_recent_surfaces_relevant_over_fresh() {
-    // Ярус 2: инъекция по релевантности поднимает СТАРОЕ, но релевантное запросу
-    // наблюдение — то, что чистая свежесть потеряла бы.
+    // Tier 2: relevance-based injection surfaces an OLD but request-relevant
+    // observation — one that pure recency would have lost.
     use super::super::generation::injection_recent;
     use crate::entities::note::Note;
     use crate::entities::self_model::SelfModelParams;
@@ -231,8 +231,8 @@ async fn injection_recent_surfaces_relevant_over_fresh() {
     let embedder = MockEmbedder::new(16);
     let profile = Uuid::new_v4();
 
-    // X — старое (10 дней назад), тема «xxxx». Затем 4 свежих Y (тема «yyyy»),
-    // вытесняющих X из свежести (narrative_in_prompt=3).
+    // X is old (10 days ago), topic "xxxx". Then 4 fresh Y's (topic "yyyy"),
+    // crowding X out of recency (narrative_in_prompt=3).
     let now = Utc::now();
     let mut seeds: Vec<(String, chrono::DateTime<Utc>)> =
         vec![("xxxx старое наблюдение".into(), now - Duration::days(10))];
@@ -263,16 +263,16 @@ async fn injection_recent_surfaces_relevant_over_fresh() {
     }
     let params = SelfModelParams::default();
 
-    // Запрос про «xxxx» → старое релевантное наблюдение поднято (хоть не свежайшее).
+    // A query about "xxxx" → the old relevant observation is surfaced (though not the freshest).
     let recent = injection_recent(&storage, &embedder, profile, true, "xxxx", &params).await;
     assert!(
         recent.iter().any(|s| s.text.contains("xxxx старое")),
-        "релевантное старое наблюдение должно быть поднято: {recent:?}"
+        "the relevant old observation should be surfaced: {recent:?}"
     );
-    // Запрос про «yyyy» → нерелевантное старое X не поднимается.
+    // A query about "yyyy" → the irrelevant old X isn't surfaced.
     let recent = injection_recent(&storage, &embedder, profile, true, "yyyy", &params).await;
     assert!(!recent.iter().any(|s| s.text.contains("xxxx")));
-    // Инъекция выключена → пусто.
+    // Injection disabled → empty.
     assert!(
         injection_recent(&storage, &embedder, profile, false, "xxxx", &params)
             .await
@@ -289,20 +289,20 @@ async fn update_self_model_persists_and_reemits() {
         .await
         .unwrap();
 
-    // Правка из UI-редактора (без модели — оркестратор создаёт её на месте).
+    // An edit from the UI editor (no model yet — the orchestrator creates it on the spot).
     cmd_tx
         .send(AppCommand::UpdateSelfModel(SelfModelEdit::SetSummary(
             "ценю ясность".into(),
         )))
         .unwrap();
 
-    // Переэмит снимка отражает правку.
+    // Re-emitting the snapshot reflects the edit.
     let ev = wait_for(&mut evt_rx, |e| matches!(e, AppEvent::SelfModelView(_)))
         .await
         .unwrap();
     match ev {
         AppEvent::SelfModelView(m) => {
-            assert_eq!(m.expect("ожидали модель").summary, "ценю ясность");
+            assert_eq!(m.expect("expected a model").summary, "ценю ясность");
         }
         _ => unreachable!(),
     }
@@ -310,7 +310,7 @@ async fn update_self_model_persists_and_reemits() {
     cmd_tx.send(AppCommand::Quit).unwrap();
     handle.await.unwrap();
 
-    // Персистентность: запись видна после перезапуска.
+    // Persistence: the write is visible after a restart.
     let reopened = Storage::open(Paths::with_root(&root)).unwrap();
     let pid = reopened.json().load_profiles().unwrap()[0].id;
     let stored = reopened.db().self_model_get(pid).unwrap().unwrap();
@@ -322,12 +322,12 @@ fn f3_delete_insight_removes_self_note() {
     use crate::entities::self_model::SelfModelEdit;
     use crate::features::tools::notes::SELF_NOTE_TAG;
     let (_d, orch, pid) = orch_with_active_profile();
-    // Наблюдение — self-заметка (@self).
+    // An observation is a self-note (@self).
     let note = crate::entities::note::Note::new(pid, "наблюдение", vec![SELF_NOTE_TAG.to_string()]);
     let nid = note.id;
     orch.storage.db().note_insert(&note).unwrap();
 
-    // F3 «удалить наблюдение» → удаление self-заметки (не правка блоба).
+    // F3 "delete observation" → deleting the self-note (not editing the blob).
     orch.handle_update_self_model(SelfModelEdit::DeleteInsight(nid));
     assert!(
         orch.storage
@@ -343,7 +343,7 @@ fn f3_clear_removes_self_notes_and_blob() {
     use crate::entities::self_model::SelfModelEdit;
     use crate::features::tools::notes::SELF_NOTE_TAG;
     let (_d, orch, pid) = orch_with_active_profile();
-    // Наблюдение-заметка + непустой блоб модели.
+    // An observation note + a non-empty model blob.
     orch.storage
         .db()
         .note_insert(&crate::entities::note::Note::new(
@@ -361,7 +361,7 @@ fn f3_clear_removes_self_notes_and_blob() {
         .unwrap();
 
     orch.handle_update_self_model(SelfModelEdit::Clear);
-    // Self-заметки снесены, блоб очищен.
+    // Self-notes are wiped, the blob is cleared.
     assert!(
         orch.storage
             .db()
@@ -388,7 +388,7 @@ async fn handle_done_signals_self_model_changed_on_self_model_tool_call() {
     orch.gen_state
         .begin(gen_id, tokio_util::sync::CancellationToken::new());
 
-    // Ответ ассистента с вызовом self-model-инструмента → SelfModelChanged.
+    // An assistant reply with a self-model tool call → SelfModelChanged.
     let mut msg = Message::assistant("готово");
     msg.tool_calls = vec![ToolCallRecord {
         thought_signature: None,

@@ -1,12 +1,12 @@
-//! Сегментация строки на слова для спелл-чека. См. spec §11.5.
+//! Segments a string into words for spellchecking. See spec §11.5.
 //!
-//! Используем собственный посимвольный сканер «буквенных пробегов» вместо полной
-//! UAX#29-сегментации: для проверки орфографии нужны именно последовательности
-//! букв (ru/en), а соединители (апостроф `'`/`’`, дефис `-`/`‑`) учитываются
-//! только ВНУТРИ слова (`don't`, `well-known` — один токен; `слово-` — без
-//! хвостового дефиса). Индексы — по символам (совпадают с моделью `InputBox`).
+//! We use our own character-by-character "letter run" scanner instead of full
+//! UAX#29 segmentation: spellchecking specifically needs sequences of
+//! letters (ru/en), and connectors (an apostrophe `'`/`’`, a hyphen `-`/`‑`) count
+//! only INSIDE a word (`don't`, `well-known` — one token; a trailing hyphen on a
+//! word is dropped). Indices are by character (matching the `InputBox` model).
 
-/// Слово в строке: диапазон по индексам символов `[start, end)` и его текст.
+/// A word in a string: a range of character indices `[start, end)` and its text.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Word {
     pub start: usize,
@@ -14,12 +14,12 @@ pub struct Word {
     pub text: String,
 }
 
-/// Является ли символ внутрисловным соединителем (учитывается между буквами).
+/// Is the character an in-word connector (counted between letters)?
 fn is_connector(c: char) -> bool {
     matches!(c, '\'' | '\u{2019}' | '-' | '\u{2010}')
 }
 
-/// Разбивает строку на слова (буквенные пробеги с внутренними соединителями).
+/// Splits a string into words (letter runs with internal connectors).
 pub fn words(line: &str) -> Vec<Word> {
     let chars: Vec<char> = line.chars().collect();
     let mut out = Vec::new();
@@ -81,7 +81,7 @@ mod tests {
 
     #[test]
     fn ranges_are_char_indices() {
-        // "ёж и" → "ёж" [0,2), "и" [3,4)
+        // Two Cyrillic words: the first spans chars [0,2), the second [3,4).
         let w = words("ёж и");
         assert_eq!(w.len(), 2);
         assert_eq!((w[0].start, w[0].end), (0, 2));

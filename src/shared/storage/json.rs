@@ -103,7 +103,7 @@ impl JsonStore {
                 Ok(None) => {}
                 Err(err) => {
                     tracing::warn!(file = %path.display(), error = %err,
-                        "пропущен повреждённый файл чата");
+                        "skipped a corrupted chat file");
                 }
             }
         }

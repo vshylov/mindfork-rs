@@ -32,7 +32,7 @@ async fn self_consolidation_keeps_counter_when_server_not_ready() {
 #[tokio::test]
 async fn self_consolidation_gated_when_feature_off() {
     let (_d, mut orch, chat_id) = orch_ready_for_self_consolidation();
-    orch.config.self_model.auto_consolidate_every = 0; // выключено
+    orch.config.self_model.auto_consolidate_every = 0; // disabled
     orch.engines.backend = Some(Arc::new(MockBackend::scripted(vec![ChatChunk::Finished(
         FinishReason::Stop,
     )])) as Arc<dyn EngineBackend>);
@@ -40,14 +40,14 @@ async fn self_consolidation_gated_when_feature_off() {
     orch.maybe_auto_self_consolidate(chat_id);
 
     assert!(!orch.bg_running(BackgroundKind::SelfConsolidation));
-    // Вышли до инкремента — счётчика нет.
+    // Exited before the increment — no counter.
     assert_eq!(orch.self_consolidate_counts.get(&chat_id), None);
 }
 
 #[tokio::test]
 async fn self_consolidation_gated_when_nothing_to_consolidate() {
     use crate::features::tools::self_model::GET_SELF_MODEL_ID;
-    // Профиль включил модель себя, но наблюдений < 2 и summary не раздут → нет спавна.
+    // The profile enabled the self-model, but observations < 2 and summary isn't bloated → no spawn.
     let (_dir, mut orch) = bare_orch();
     orch.config.self_model.auto_consolidate_every = 1;
     let mut profile = Profile::new("P", "sys");
@@ -66,13 +66,13 @@ async fn self_consolidation_gated_when_nothing_to_consolidate() {
     orch.maybe_auto_self_consolidate(chat_id);
 
     assert!(!orch.bg_running(BackgroundKind::SelfConsolidation));
-    // Счётчик инкрементирован (порог достигнут), но не сброшен — цикл не потерян.
+    // The counter is incremented (the threshold is reached), but not reset — the cycle isn't lost.
     assert_eq!(orch.self_consolidate_counts.get(&chat_id), Some(&1));
 }
 
 #[tokio::test]
 async fn self_consolidation_success_emits_self_model_changed() {
-    // Успех «сна» модели себя обновляет открытый экран F3 (как рефлексия): SelfModelChanged.
+    // A successful self-model "sleep" updates the open F3 screen (like reflection): SelfModelChanged.
     let (_d, mut orch, mut rx) = bare_orch_rx();
     orch.handle_bg_done(BackgroundKind::SelfConsolidation, Ok(()));
     let mut changed = false;

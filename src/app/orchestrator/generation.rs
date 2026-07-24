@@ -510,8 +510,8 @@ fn spawn_generation(spawn: GenSpawn) {
                         "Достигнут лимит раундов инструментов ({max_rounds}) — свожу итог из собранного."
                     )));
                     request.tools.clear();
-                    // Счётчик токенов финального раунда `stream_round` эмитит сам
-                    // (от `base = total_*`); дальше `break`, накапливать не нужно.
+                    // The final round's token counter is emitted by `stream_round` itself
+                    // (from `base = total_*`); after that we `break`, no need to accumulate.
                     let final_out = stream_round(
                         &backend,
                         request.clone(),
@@ -857,11 +857,11 @@ pub(super) fn blend_self_notes(
     out
 }
 
-/// Собирает наблюдения (self-заметки) для инъекции в системный промпт (Ярус 2):
-/// **релевантные** последней реплике + гарантия свежайшего наблюдения, с откатом на
-/// чистую свежесть при недоступном эмбеддере/пустом запросе. Пусто, если инъекция
-/// выключена. Async (эмбеддинг запроса) — потому и вынесено из sync-обработчика в
-/// задачу генерации. Тестируется поверх temp-хранилища + `MockEmbedder`.
+/// Gathers observations (self-notes) for injection into the system prompt (Tier 2):
+/// **relevant** to the latest reply + a guaranteed freshest observation, with a fallback to
+/// plain recency when the embedder is unavailable/the query is empty. Empty if injection is
+/// disabled. Async (embedding the query) — that's why it's factored out of the sync handler into
+/// the generation task. Tested over a temp store + `MockEmbedder`.
 pub(super) async fn injection_recent(
     storage: &crate::shared::storage::Storage,
     embedder: &dyn crate::shared::api::Embedder,
@@ -876,7 +876,7 @@ pub(super) async fn injection_recent(
     use crate::features::tools::notes;
     let n = params.narrative_in_prompt;
     let fresh = notes::self_notes_recent(storage, profile_id, params.max_narrative);
-    // Релевантные последней реплике наблюдения; пусто → откат на свежесть.
+    // Observations relevant to the latest reply; empty → fall back to recency.
     let relevant = notes::self_notes_relevant(storage, embedder, profile_id, last_user, n).await;
     let picked = if relevant.is_empty() {
         fresh
@@ -893,13 +893,13 @@ pub(super) async fn injection_recent(
         .collect()
 }
 
-/// Подмешивает «модель себя» в системный промпт хода (SelfModel MVP, см.
-/// docs/history/self-model-mvp.md): компактный рендер текущей модели (если непуста) плюс,
-/// при `maintenance_protocol`, нейтральный к персоне протокол ведения. Возвращает
-/// прежний `system` без изменений, если инъекция выключена (профиль не включил
-/// `get_self_model`) либо подмешивать нечего (пустая модель и протокол выключен).
-/// Протокол подмешивается даже при пустой модели — чтобы модель начала её вести.
-/// Чистая функция — тестируема без движка.
+/// Mixes the "self-model" into the turn's system prompt (SelfModel MVP, see
+/// docs/history/self-model-mvp.md): a compact render of the current model (if non-empty) plus,
+/// when `maintenance_protocol` is on, a persona-neutral maintenance protocol. Returns
+/// the previous `system` unchanged if injection is disabled (the profile hasn't enabled
+/// `get_self_model`) or there's nothing to mix in (an empty model and the protocol is off).
+/// The protocol is mixed in even for an empty model — to get the model to start maintaining it.
+/// A pure function — testable with no engine.
 #[allow(clippy::too_many_arguments)]
 pub(super) fn inject_self_model(
     system: Option<String>,
@@ -914,9 +914,9 @@ pub(super) fn inject_self_model(
     if !enabled {
         return system;
     }
-    // Наблюдения (self-заметки) могут существовать без блоба модели — тогда рендерим
-    // пустую модель с наблюдениями. `render_for_prompt` вернёт None, если пусто и
-    // структурно, и по наблюдениям.
+    // Observations (self-notes) can exist without the model blob — then we render
+    // an empty model with observations. `render_for_prompt` returns None only if it's empty
+    // both structurally and in observations.
     let empty;
     let m = match model {
         Some(m) => m,
@@ -932,26 +932,26 @@ pub(super) fn inject_self_model(
         recent,
         loc,
     );
-    // Собираем подмешиваемые части: рендер модели (если есть) + протокол (если включён).
+    // Gather the parts to mix in: the model render (if any) + the protocol (if enabled).
     let mut parts: Vec<String> = Vec::new();
     if let Some(b) = block {
         parts.push(b);
     }
     if maintenance_protocol {
-        // Протокол ведения собирается из единого POLICY_CORE (этап 6) — те же
-        // правила, что у фоновой авто-рефлексии.
+        // The maintenance protocol is assembled from the shared POLICY_CORE (stage 6) — the same
+        // rules as the background auto-reflection.
         parts.push(crate::features::tools::self_model::maintenance_protocol(
             loc,
         ));
-        // Data-aware приписка: если описание себя разрослось сверх ориентира —
-        // конкретная подсказка сократить (статичный протокол становится предметным,
-        // когда summary действительно раздут). См. docs/summary-as-snapshot.md (этап 2).
+        // A data-aware note: if the self-description has grown past its target —
+        // a concrete hint to shorten it (the static protocol becomes specific once
+        // the summary is actually bloated). See docs/summary-as-snapshot.md (stage 2).
         if let Some(hint) = m.summary_fill_hint(params.summary_target_chars, loc) {
             parts.push(format!("({hint})"));
         }
     }
     if parts.is_empty() {
-        return system; // подмешивать нечего
+        return system; // nothing to mix in
     }
     let inject = parts.join("\n\n");
     Some(match system {
@@ -960,7 +960,7 @@ pub(super) fn inject_self_model(
     })
 }
 
-/// Доменное tool-сообщение (роль `Tool`) с привязкой к вызову.
+/// A domain tool message (role `Tool`) tied to the call.
 fn tool_message(call: &ApiToolCall, result: String) -> Message {
     let mut m = Message::new(MessageRole::Tool, result);
     m.tool_call_id = Some(call.id.clone());
@@ -968,9 +968,9 @@ fn tool_message(call: &ApiToolCall, result: String) -> Message {
     m
 }
 
-/// Финальное assistant-сообщение хода (если есть текст/мысли) со снимком
-/// метаданных: режим движка, имя модели и семплинг, **урезанный до полей,
-/// доступных в этом режиме** (движок недоступное поле не принял бы — spec §8.3).
+/// The turn's final assistant message (if there's text/thoughts) with a metadata
+/// snapshot: the engine mode, model name, and sampling, **pared down to the fields
+/// available in that mode** (the engine wouldn't accept an unavailable field — spec §8.3).
 fn finalize_message(
     out: &RoundOutput,
     ctx: &ToolContext,

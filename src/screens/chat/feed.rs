@@ -1,23 +1,23 @@
-//! Экран чата — проекция AppEvent в ленту (сообщения, генерация, tool-блоки, токены). Часть модуля [`super`]; разбито из
-//! монолита chat.rs (см. docs/history/refactoring-god-objects.md, этап 2).
+//! Chat screen — projecting AppEvent into the feed (messages, generation, tool blocks, tokens). Part of the [`super`] module; split out of the
+//! chat.rs monolith (see docs/history/refactoring-god-objects.md, stage 2).
 
 use super::*;
 
 impl ChatScreen {
-    /// Помечает, что содержимое ленты изменилось (стрим, новое сообщение, заметка,
-    /// правка): если в ленте есть глифы группы риска, следующий кадр рисуем **полной
-    /// перерисовкой** — иначе на legacy-терминалах остаются артефакты от изменившихся
-    /// строк с эмодзи. См. [`is_risky_glyph`], [`crate::shared::ui::prime_full_redraw`].
+    /// Marks that the feed content changed (streaming, a new message, a note,
+    /// an edit): if the feed contains risk-group glyphs, the next frame is drawn as a **full
+    /// redraw** — otherwise legacy terminals leave artifacts from changed
+    /// emoji lines. See [`is_risky_glyph`], [`crate::shared::ui::prime_full_redraw`].
     ///
-    /// Вызывается **мутаторами**, а не по факту рендера: артефакт нельзя показывать
-    /// даже на кадр. Определение «есть риск» по факту отрисовки опаздывало бы на кадр
-    /// (промах кэша виден только там), и артефакт успевал мелькнуть — спрятать это за
-    /// синхронизированный вывод нельзя, conhost режим 2026 игнорирует.
+    /// Called by **mutators**, not by render fact: the artifact must not be shown even
+    /// for a single frame. Detecting "there's a risk" from a render fact would lag a frame
+    /// behind (a cache miss is only visible there), and the artifact would flash —
+    /// hiding this behind synchronized output isn't possible, conhost ignores mode 2026.
     ///
-    /// Флаг риска кэшируется и **только накапливается**: правки всегда затрагивают
-    /// последний блок, поэтому проверяем его, а полную пересборку ленты
-    /// ([`Self::activate_chat`]) пересчитывает с нуля. Пере-оценка в большую сторону
-    /// безопасна — лишняя перерисовка не видна, пропущенная оставляет артефакт.
+    /// The risk flag is cached and **only accumulates**: edits always affect the
+    /// last block, so we only check it, while a full feed rebuild
+    /// ([`Self::activate_chat`]) recomputes it from scratch. Over-estimating is
+    /// safe — an extra redraw isn't visible, a missed one leaves an artifact.
     pub(super) fn mark_feed_changed(&mut self) {
         if !self.feed_has_risky
             && let Some(last) = self.feed.last()
@@ -29,9 +29,9 @@ impl ChatScreen {
         }
     }
 
-    /// Обновляет заголовок чата в проекции (после ручного/авто-переименования).
-    /// Меняет заголовок в шапке ленты, если это активный чат. Список и оверлей
-    /// дополнительно обновляются событием `ChatList` (`set_chat_list`).
+    /// Updates the chat title in the projection (after a manual/auto rename).
+    /// Changes the title in the feed header if this is the active chat. The list and the
+    /// overlay are additionally updated by the `ChatList` event (`set_chat_list`).
     pub fn rename_chat(&mut self, id: Uuid, title: String) {
         if self.active_chat == Some(id) {
             self.title = title.clone();
@@ -42,37 +42,37 @@ impl ChatScreen {
     }
 
     pub fn activate_chat(&mut self, id: Uuid, title: String, messages: &[Message], draft: &str) {
-        // Смена чата сбрасывает состояние генерации: «осиротевшие» чанки прежней
-        // генерации не должны попадать в ленту нового чата.
+        // Switching chats resets the generation state: "orphaned" chunks of the
+        // previous generation must not land in the new chat's feed.
         self.active_chat = Some(id);
         self.title = title;
         self.current_gen = None;
         self.generating = false;
-        // Счётчик токенов относится к прежнему чату — гасим его, чтобы он не висел
-        // в строке статуса после переключения (статус-бар скрывает счётчик при
+        // The token counter belongs to the previous chat — clear it so it doesn't linger
+        // in the status line after switching (the status bar hides the counter when
         // `tokens == 0 && context == None`).
         self.gen_tokens = 0;
         self.gen_context = None;
         self.gen_context_exact = false;
         self.gen_reasoning = 0;
-        // Склейка раундов agentic-loop в один блок «Ассистент:» с инлайн tool-блоками.
+        // Stitch agentic-loop rounds into one "Assistant:" block with inline tool blocks.
         self.feed = FeedMessage::from_messages(messages);
-        // Лента заменена целиком — пересчитываем «есть риск» с нуля (дальше флаг
-        // только накапливается по последнему блоку).
+        // The feed was replaced wholesale — recompute "is there a risk" from scratch (from
+        // here on the flag only accumulates based on the last block).
         self.feed_has_risky = self.feed.iter().any(feed_msg_has_risky_glyph);
         self.mark_feed_changed();
         self.feed_view.scroll_to_bottom();
-        // Загружаем сохранённый черновик чата в поле ввода (пустой у нового чата).
-        // НЕ помечаем `draft_dirty` — иначе тут же отправили бы его обратно тем же
-        // `SetDraft`; перепроверку орфографии запускаем напрямую.
+        // Load the chat's saved draft into the input box (empty for a new chat).
+        // Do NOT mark `draft_dirty` — otherwise we'd immediately send it back via the same
+        // `SetDraft`; trigger the spellcheck recheck directly instead.
         self.input.set_text(draft);
         self.spell_dirty = true;
         self.last_edit = None;
     }
 
-    /// Возвращает текст в поле ввода после удаления последнего обмена. Если поле
-    /// непустое — текст добавляется в его начало (существующий ввод не теряется).
-    /// См. spec §11.7.
+    /// Returns the text for the input box after deleting the last exchange. If the field
+    /// isn't empty, the text is prepended to its start (existing input isn't lost).
+    /// See spec §11.7.
     pub fn restore_input(&mut self, text: String) {
         let existing = self.input.text();
         let combined = if existing.is_empty() {
@@ -116,7 +116,7 @@ impl ChatScreen {
         self.feed_view.scroll_to_bottom();
     }
 
-    /// Добавляет tool-блок к текущему сообщению ассистента (live во время хода).
+    /// Appends a tool block to the current assistant message (live, during the turn).
     pub fn push_tool_call(
         &mut self,
         generation_id: Uuid,
@@ -127,8 +127,8 @@ impl ChatScreen {
         if self.current_gen == Some(generation_id)
             && let Some(last) = self.feed.last_mut()
         {
-            // Вызов сделан после уже накопленного текста ответа — фиксируем позицию,
-            // чтобы tool-блок встал на месте вызова, а не в «шапке».
+            // The call happened after response text had already accumulated — record the
+            // position, so the tool block lands at the call site, not in the "header".
             let text_offset = last.text.len();
             last.tools.push(crate::widgets::message_feed::FeedToolCall {
                 name,
@@ -136,7 +136,7 @@ impl ChatScreen {
                 result,
                 text_offset,
             });
-            // Текст/мысли следующего раунда отделяем разделителем (как при перезагрузке).
+            // Separate the next round's text/thoughts with a separator (matching a reload).
             self.pending_text_sep = true;
             self.pending_thoughts_sep = true;
             self.mark_feed_changed();
@@ -144,11 +144,11 @@ impl ChatScreen {
         }
     }
 
-    /// Ассистент написал сообщение и продолжает вторым (инструмент
-    /// `send_followup_message`): завершаем текущий пузырь и добавляем новый
-    /// стримящийся пузырь ассистента — в него пойдёт текст следующего раунда.
-    /// Так live-лента совпадает с перезагрузкой (`from_messages` не склеивает
-    /// сообщение с `new_bubble`). См. spec §9.3.
+    /// The assistant wrote a message and is continuing with a second one (the
+    /// `send_followup_message` tool): finish the current bubble and add a new
+    /// streaming assistant bubble — the next round's text will go into it.
+    /// This way the live feed matches a reload (`from_messages` doesn't merge a
+    /// message with `new_bubble`). See spec §9.3.
     pub fn continue_assistant(&mut self, generation_id: Uuid) {
         if self.current_gen != Some(generation_id) {
             return;
@@ -169,9 +169,9 @@ impl ChatScreen {
         self.feed_view.scroll_to_bottom();
     }
 
-    /// Ассистент решил переписать текущее сообщение (инструмент
-    /// `rewrite_current_message`): отбрасываем уже накопленный текст/мысли/вызовы
-    /// текущего пузыря — переписанный ответ пойдёт в него же. См. spec §9.3.
+    /// The assistant decided to rewrite the current message (the
+    /// `rewrite_current_message` tool): discard the current bubble's already-accumulated
+    /// text/thoughts/calls — the rewritten reply will go into the same bubble. See spec §9.3.
     pub fn rewrite_assistant(&mut self, generation_id: Uuid) {
         if self.current_gen != Some(generation_id) {
             return;
@@ -188,11 +188,11 @@ impl ChatScreen {
         self.feed_view.scroll_to_bottom();
     }
 
-    /// Гарантирует, что `last` — стримящийся пузырь ассистента (цель для чанков).
-    /// Если посреди генерации в ленту вклинилась заметка (напр. `AppEvent::Error`
-    /// о достижении лимита раундов перед финальным синтезом), `last` оказывается
-    /// заметкой — тогда открываем новый пузырь ассистента, иначе стрим уходил бы в
-    /// заметку и рендерился простым текстом без markdown.
+    /// Guarantees that `last` is a streaming assistant bubble (the target for chunks).
+    /// If a note slipped into the feed mid-generation (e.g. an `AppEvent::Error`
+    /// about hitting the round limit before the final synthesis), `last` ends up being
+    /// a note — in that case open a new assistant bubble, otherwise the stream would go
+    /// into the note and render as plain text with no markdown.
     fn ensure_streaming_bubble(&mut self) {
         let ok = matches!(
             self.feed.last(),
@@ -215,8 +215,8 @@ impl ChatScreen {
         }
         self.ensure_streaming_bubble();
         if let Some(last) = self.feed.last_mut() {
-            // Первый текст раунда после вызова инструмента — с пустой строкой-
-            // разделителем (совпадение с `FeedMessage::from_messages`).
+            // The round's first text after a tool call gets an empty-line
+            // separator (matching `FeedMessage::from_messages`).
             if self.pending_text_sep {
                 self.pending_text_sep = false;
                 if !last.text.is_empty() {
@@ -245,9 +245,9 @@ impl ChatScreen {
         self.mark_feed_changed();
     }
 
-    /// Обновляет счётчик токенов текущей генерации (live). Игнорирует устаревшие
-    /// события (по `generation_id`). Контекст (переписку) обновляет только когда он
-    /// задан (`Some`), запоминая, точное это число или оценка.
+    /// Updates the token counter of the current generation (live). Ignores stale
+    /// events (by `generation_id`). Updates the context (the conversation) only when it's
+    /// set (`Some`), remembering whether it's an exact number or an estimate.
     pub fn set_token_usage(
         &mut self,
         generation_id: Uuid,
@@ -262,7 +262,7 @@ impl ChatScreen {
                 self.gen_context = Some(c);
                 self.gen_context_exact = context_exact;
             }
-            // Reasoning-токены известны только из `usage` (Some) — иначе не трогаем.
+            // Reasoning tokens are only known from `usage` (Some) — otherwise leave them be.
             if let Some(r) = reasoning {
                 self.gen_reasoning = r;
             }
@@ -288,8 +288,8 @@ impl ChatScreen {
         self.push_note(&format!("{warn} {message}"));
     }
 
-    /// Добавляет нейтральную заметку в ленту (напр. подтверждение операции списка
-    /// чатов, когда экран списка уже закрыт — поздний ответ авто-названия/копии).
+    /// Appends a neutral note to the feed (e.g. a confirmation of a chat-list
+    /// operation once the list screen is already closed — a late auto-title/copy reply).
     pub fn push_note(&mut self, text: &str) {
         self.feed.push(FeedMessage::note(text));
         self.mark_feed_changed();
@@ -297,20 +297,20 @@ impl ChatScreen {
     }
 }
 
-/// Символ, чья отрисовка на legacy-терминалах (conhost/Command Prompt) расходится с
-/// моделью `ratatui` настолько, что после изменения содержимого остаются «висячие»
-/// артефакты — половинки широких глифов, куски подложки, съехавшие ряды.
+/// A character whose rendering on legacy terminals (conhost/Command Prompt) diverges
+/// from `ratatui`'s model enough that changing the content leaves "hanging"
+/// artifacts — halves of wide glyphs, pieces of the backdrop, drifted rows.
 ///
-/// Классы риска (все — про эмодзи, а не про CJK: иероглифы шириной 2 терминалы
-/// рисуют согласованно, и гонять из-за них полную перерисовку незачем):
-/// - **VS16** (U+FE0F) — `🗂️`: `ratatui` шлёт хвостовую ячейку такого кластера
-///   отдельно, см. [`crate::shared::ui::prime_full_redraw`];
-/// - **ZWJ** (U+200D) — `👨‍👩‍👧`: составной кластер, ширина модели и терминала расходятся
-///   сильнее всего (осознанная граница, см. доку `shared/wrap.rs`);
-/// - **модификаторы тона кожи** (U+1F3FB..=U+1F3FF) — `👍🏽`;
-/// - **пиктограммы supplementary-плоскости** (≥ U+1F000) — `😀`, `🔥`;
-/// - **эмодзи-символы BMP шириной 2** (`✅`, `⭐`, `✨`) — обычные стрелки/типографика
-///   из тех же блоков шириной 1 сюда не попадают.
+/// Risk classes (all about emoji, not CJK: terminals render width-2 ideographs
+/// consistently, so there's no point triggering a full redraw over them):
+/// - **VS16** (U+FE0F) — `🗂️`: `ratatui` sends this cluster's trailing cell
+///   separately, see [`crate::shared::ui::prime_full_redraw`];
+/// - **ZWJ** (U+200D) — `👨‍👩‍👧`: a composite cluster, the model's and the terminal's widths
+///   diverge the most (a deliberate boundary, see the `shared/wrap.rs` doc);
+/// - **skin-tone modifiers** (U+1F3FB..=U+1F3FF) — `👍🏽`;
+/// - **supplementary-plane pictographs** (≥ U+1F000) — `😀`, `🔥`;
+/// - **width-2 BMP emoji symbols** (`✅`, `⭐`, `✨`) — ordinary arrows/typography
+///   from the same width-1 blocks don't fall into this.
 pub(super) fn is_risky_glyph(c: char) -> bool {
     use crate::shared::wrap::char_width;
     matches!(c, '\u{FE0F}' | '\u{200D}')
@@ -319,9 +319,9 @@ pub(super) fn is_risky_glyph(c: char) -> bool {
         || (('\u{2190}'..='\u{2BFF}').contains(&c) && char_width(c) == 2)
 }
 
-/// Есть ли в элементе ленты глиф из группы риска (в тексте, «мыслях» или
-/// аргументах/результате вызова инструмента) — тогда изменение содержимого и
-/// прокрутка требуют полной перерисовки. См. [`is_risky_glyph`].
+/// Whether a feed item contains a risk-group glyph (in the text, "thoughts", or
+/// tool-call arguments/result) — in that case a content change or
+/// scroll requires a full redraw. See [`is_risky_glyph`].
 pub(super) fn feed_msg_has_risky_glyph(m: &FeedMessage) -> bool {
     let has = |s: &str| s.chars().any(is_risky_glyph);
     has(&m.text) || has(&m.thoughts) || m.tools.iter().any(|t| has(&t.arguments) || has(&t.result))

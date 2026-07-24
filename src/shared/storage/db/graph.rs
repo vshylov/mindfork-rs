@@ -1,12 +1,13 @@
-//! Хранилище (SQLite) — граф связей заметок + замещение + цитирование источников. Часть модуля [`super`]; разбито из
-//! монолита db.rs (см. docs/history/refactoring-god-objects.md, этап 5).
+//! Storage (SQLite) — the notes link graph + supersession + source citation. Part of the [`super`] module; split out
+//! of the db.rs monolith (see docs/history/refactoring-god-objects.md, stage 5).
 
 use super::*;
 
 impl Db {
-    /// Создаёт направленную связь between двумя заметками (идемпотентно по PK).
-    /// Изоляция по `profile_id`. Возвращает `true`, если связь действительно создана
-    /// (`false` — такая связь уже была, `INSERT OR IGNORE` ничего не вставил).
+    /// Creates a directed link between two notes (idempotent via PK).
+    /// Isolated by `profile_id`. Returns `true` if the link was actually
+    /// created (`false` — such a link already existed, `INSERT OR IGNORE`
+    /// inserted nothing).
     pub fn note_link_insert(
         &self,
         profile_id: Uuid,
@@ -29,8 +30,8 @@ impl Db {
         Ok(n > 0)
     }
 
-    /// Число связей, в которых участвует заметка (в любую сторону). Для предупреждения
-    /// при ревизии смыслонесущего узла (его рёбра могут стать неверными).
+    /// The number of links the note participates in (in either direction).
+    /// For warning when revising a load-bearing node (its edges may become wrong).
     pub fn note_link_count(&self, profile_id: Uuid, id: Uuid) -> Result<usize> {
         let conn = self.conn.lock().unwrap();
         let n: i64 = conn.query_row(
@@ -42,8 +43,9 @@ impl Db {
         Ok(n as usize)
     }
 
-    /// Соседи заметки по графу (в обе стороны), исключая замещённые. Опциональный
-    /// фильтр по типу связи. Возвращает (заметка, тип связи, исходящая ли связь).
+    /// The note's graph neighbors (in both directions), excluding superseded
+    /// ones. An optional filter by link type. Returns (note, link type,
+    /// whether the link is outgoing).
     pub fn note_neighbors(
         &self,
         profile_id: Uuid,
@@ -86,8 +88,8 @@ impl Db {
         Ok(rows)
     }
 
-    /// Помечает заметку замещённой другой (скрывается из активной выдачи, хранится
-    /// ради «шрама»/трассировки). Идемпотентно (перезапись записи о замещении).
+    /// Marks a note as superseded by another (it's hidden from active output,
+    /// kept for the "scar"/trail). Idempotent (overwrites the supersession record).
     pub fn note_supersede_mark(&self, profile_id: Uuid, old_id: Uuid, new_id: Uuid) -> Result<()> {
         let conn = self.conn.lock().unwrap();
         conn.execute(
@@ -106,9 +108,9 @@ impl Db {
         Ok(())
     }
 
-    /// Связывает заметку с RAG-источником (по имени источника — стабильно к
-    /// переиндексации, в отличие от id чанков). Идемпотентно по PK. Возвращает
-    /// `true`, если связь действительно создана. Изоляция по `profile_id`.
+    /// Links a note to a RAG source (by the source's name — stable across
+    /// reindexing, unlike chunk ids). Idempotent via PK. Returns `true` if
+    /// the link was actually created. Isolated by `profile_id`.
     pub fn note_cite_source_insert(
         &self,
         profile_id: Uuid,
@@ -129,8 +131,8 @@ impl Db {
         Ok(n > 0)
     }
 
-    /// RAG-источники, на которые ссылается заметка (для показа при припоминании).
-    /// Изоляция по `profile_id`.
+    /// The RAG sources a note cites (for display on recall).
+    /// Isolated by `profile_id`.
     pub fn note_cited_sources(&self, profile_id: Uuid, note_id: Uuid) -> Result<Vec<String>> {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare(
@@ -143,9 +145,9 @@ impl Db {
         Ok(rows.filter_map(|r| r.ok()).collect())
     }
 
-    /// Активные (не замещённые) заметки профиля, ссылающиеся на данный RAG-источник —
-    /// обратное направление (поиск заметок через RAG, «оба органа»). Изоляция по
-    /// `profile_id`.
+    /// The profile's active (not superseded) notes that cite this RAG source —
+    /// the reverse direction (finding notes via RAG, "both organs"). Isolated
+    /// by `profile_id`.
     pub fn notes_citing_source(&self, profile_id: Uuid, source: &str) -> Result<Vec<Note>> {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare(
@@ -160,7 +162,7 @@ impl Db {
         Ok(rows.filter_map(|r| r.ok()).collect())
     }
 
-    /// Все связи профиля `(from, to, relation)` — для обзора консолидации.
+    /// All of the profile's links `(from, to, relation)` — for the consolidation overview.
     pub fn note_links_all(&self, profile_id: Uuid) -> Result<Vec<(Uuid, Uuid, String)>> {
         let conn = self.conn.lock().unwrap();
         let mut stmt =
@@ -177,8 +179,8 @@ impl Db {
         Ok(rows)
     }
 
-    /// Переносит связи замещённой заметки на новую (при merge): рёбра, где участвует
-    /// `old_id`, перенаправляются на `new_id`; самопетли и дубли отбрасываются.
+    /// Retargets a superseded note's links onto the new one (on merge): edges
+    /// involving `old_id` are redirected to `new_id`; self-loops and duplicates are dropped.
     pub fn note_links_retarget(&self, profile_id: Uuid, old_id: Uuid, new_id: Uuid) -> Result<()> {
         let conn = self.conn.lock().unwrap();
         let edges: Vec<(String, String, String)> = {
@@ -197,7 +199,7 @@ impl Db {
         };
         let (old_s, new_s) = (old_id.to_string(), new_id.to_string());
         for (from, to, rel) in edges {
-            // Удаляем старое ребро, затем вставляем перенацеленное (OR IGNORE от дублей).
+            // Delete the old edge, then insert the retargeted one (OR IGNORE against duplicates).
             conn.execute(
                 "DELETE FROM note_links WHERE profile_id=?1 AND from_id=?2 AND to_id=?3 AND relation=?4",
                 params![profile_id.to_string(), from, to, rel],
@@ -205,7 +207,7 @@ impl Db {
             let nf = if from == old_s { &new_s } else { &from };
             let nt = if to == old_s { &new_s } else { &to };
             if nf == nt {
-                continue; // самопетля после переноса — отбрасываем
+                continue; // a self-loop after retargeting — drop it
             }
             conn.execute(
                 "INSERT OR IGNORE INTO note_links(profile_id, from_id, to_id, relation, created_at)
@@ -237,7 +239,7 @@ mod tests {
         db.note_vector_upsert(new.id, a, &[1.0, 0.0]).unwrap();
         db.note_supersede_mark(a, old.id, new.id).unwrap();
 
-        // Замещённая скрыта и из списка, и из семантики, и из is_active.
+        // A superseded note is hidden from the list, from semantics, and from is_active.
         let list = db.note_list(a, None, &[], None).unwrap();
         assert_eq!(list.len(), 1);
         assert_eq!(list[0].id, new.id);
@@ -260,11 +262,11 @@ mod tests {
         db.note_insert(&n3).unwrap();
         assert!(db.note_link_insert(a, n1.id, n2.id, "refines").unwrap());
         assert!(db.note_link_insert(a, n3.id, n1.id, "contradicts").unwrap());
-        // Повтор той же связи не создаётся (false) — дубля в таблице нет.
+        // Repeating the same link doesn't create it (false) — no duplicate in the table.
         assert!(!db.note_link_insert(a, n1.id, n2.id, "refines").unwrap());
 
         let nb = db.note_neighbors(a, n1.id, None).unwrap();
-        assert_eq!(nb.len(), 2); // исходящая на n2 + входящая от n3 (дубль не учтён)
+        assert_eq!(nb.len(), 2); // outgoing to n2 + incoming from n3 (the duplicate doesn't count)
         assert!(
             nb.iter()
                 .any(|(n, r, out)| n.id == n2.id && r == "refines" && *out)
@@ -274,12 +276,12 @@ mod tests {
                 .any(|(n, r, out)| n.id == n3.id && r == "contradicts" && !*out)
         );
 
-        // Фильтр по типу связи.
+        // A filter by link type.
         let only = db.note_neighbors(a, n1.id, Some("refines")).unwrap();
         assert_eq!(only.len(), 1);
         assert_eq!(only[0].0.id, n2.id);
 
-        // Замещённый сосед исчезает из выдачи.
+        // A superseded neighbor disappears from the output.
         let repl = Note::new(a, "n2b", vec![]);
         db.note_insert(&repl).unwrap();
         db.note_supersede_mark(a, n2.id, repl.id).unwrap();
@@ -298,7 +300,7 @@ mod tests {
         for n in [&s1, &s2, &x, &merged] {
             db.note_insert(n).unwrap();
         }
-        // s1→x и s2→x (после переноса станут дублем); s1→s2 (станет самопетлёй).
+        // s1→x and s2→x (become duplicates after retargeting); s1→s2 (becomes a self-loop).
         db.note_link_insert(a, s1.id, x.id, "contradicts").unwrap();
         db.note_link_insert(a, s2.id, x.id, "contradicts").unwrap();
         db.note_link_insert(a, s1.id, s2.id, "relates").unwrap();
@@ -307,7 +309,7 @@ mod tests {
         db.note_links_retarget(a, s2.id, merged.id).unwrap();
 
         let all = db.note_links_all(a).unwrap();
-        assert_eq!(all.len(), 1); // дубль схлопнут, самопетля отброшена
+        assert_eq!(all.len(), 1); // the duplicate collapsed, the self-loop was dropped
         assert_eq!(all[0].0, merged.id);
         assert_eq!(all[0].1, x.id);
         assert_eq!(all[0].2, "contradicts");
@@ -325,21 +327,21 @@ mod tests {
         let nid = note.id;
         db.note_insert(&note).unwrap();
 
-        // Существование источника (изоляция по профилю).
+        // The source's existence (isolated by profile).
         assert!(db.rag_source_exists(p, "/kb/spec.md").unwrap());
         assert!(!db.rag_source_exists(p, "/kb/missing.md").unwrap());
         assert!(!db.rag_source_exists(other, "/kb/spec.md").unwrap());
 
-        // Связь идемпотентна.
+        // The link is idempotent.
         assert!(db.note_cite_source_insert(p, nid, "/kb/spec.md").unwrap());
         assert!(!db.note_cite_source_insert(p, nid, "/kb/spec.md").unwrap());
 
-        // Прямое направление: источники заметки.
+        // The forward direction: the note's sources.
         assert_eq!(
             db.note_cited_sources(p, nid).unwrap(),
             vec!["/kb/spec.md".to_string()]
         );
-        // Обратное направление: заметки источника (+ изоляция).
+        // The reverse direction: the source's notes (+ isolation).
         let citing = db.notes_citing_source(p, "/kb/spec.md").unwrap();
         assert_eq!(citing.len(), 1);
         assert_eq!(citing[0].id, nid);
@@ -349,7 +351,7 @@ mod tests {
                 .is_empty()
         );
 
-        // Удаление заметки снимает её ссылки на источники.
+        // Deleting a note removes its source citations.
         db.note_delete(p, nid).unwrap();
         assert!(db.notes_citing_source(p, "/kb/spec.md").unwrap().is_empty());
     }
@@ -365,7 +367,7 @@ mod tests {
         let nid = n.id;
         db.note_insert(&n).unwrap();
         db.note_cite_source_insert(p, nid, "/kb/a.md").unwrap();
-        // Замещённая заметка не всплывает в обратном пути.
+        // A superseded note doesn't surface in the reverse path.
         let new = Note::new(p, "новое", vec![]);
         let new_id = new.id;
         db.note_insert(&new).unwrap();

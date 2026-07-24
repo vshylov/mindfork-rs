@@ -1,31 +1,31 @@
-//! Разбор slash-команд RAG в поле ввода (`/rag add <путь> [-r]`). Чистая,
-//! тестируемая логика: экран чата вызывает её при отправке; распознанная команда
-//! превращается в намерение, а нераспознанная строка уходит обычным сообщением.
-//! См. spec §9.3 (RAG).
+//! Parses RAG slash-commands in the input box (`/rag add <path> [-r]`). Pure,
+//! testable logic: the chat screen calls it on send; a recognized command
+//! turns into an intent, while an unrecognized string goes out as a regular message.
+//! See spec §9.3 (RAG).
 
-/// Распознанная команда RAG.
+/// A recognized RAG command.
 #[derive(Debug, Clone, PartialEq)]
 pub enum RagCommand {
-    /// Индексировать файл или директорию в базу знаний.
+    /// Index a file or directory into the knowledge base.
     Add { path: String, recursive: bool },
-    /// Удалить из базы файл или директорию (со всем, что под ней).
+    /// Remove a file or directory (and everything under it) from the base.
     Delete { path: String },
-    /// Показать источники в базе знаний активного профиля (счётчик чанков, дата).
+    /// Show the active profile's knowledge-base sources (chunk count, date).
     List,
-    /// Реиндексировать базу знаний активного профиля (после смены размера чанка/
-    /// перекрытия или embedding-модели).
+    /// Reindex the active profile's knowledge base (after changing the chunk size/
+    /// overlap or the embedding model).
     Rebuild,
 }
 
-/// Краткая подсказка по синтаксису (показывается при ошибке разбора).
+/// A short syntax hint (shown on a parse error).
 pub const USAGE: &str = "использование: /rag add|remove <путь> [-r] · /rag list · /rag rebuild";
 
-/// Пытается разобрать строку ввода как команду RAG.
+/// Tries to parse an input string as a RAG command.
 ///
-/// - `None` — строка не является командой RAG (начинается не с `/rag`): её следует
-///   отправить как обычное сообщение.
-/// - `Some(Ok(cmd))` — корректная команда.
-/// - `Some(Err(msg))` — это команда RAG, но с ошибкой синтаксиса (подсказка `msg`).
+/// - `None` — the string isn't a RAG command (doesn't start with `/rag`): it should
+///   be sent as a regular message.
+/// - `Some(Ok(cmd))` — a correct command.
+/// - `Some(Err(msg))` — this is a RAG command, but with a syntax error (a hint in `msg`).
 pub fn parse(input: &str) -> Option<Result<RagCommand, String>> {
     let mut tokens = input.split_whitespace();
     let first = tokens.next()?;
@@ -44,10 +44,10 @@ pub fn parse(input: &str) -> Option<Result<RagCommand, String>> {
         };
         Some(Ok(RagCommand::Add { path, recursive }))
     } else if sub.eq_ignore_ascii_case("remove") {
-        // Подкоманда удаления — только `remove` (слово `delete` намеренно не
-        // поддерживается: пользователи опасались, что оно сотрёт сам файл на диске).
-        // Для удаления `-r` не нужен (директория сносится со всем содержимым), но
-        // принимаем и игнорируем его, чтобы синтаксис был симметричен `add`.
+        // The delete subcommand is only `remove` (the word `delete` is deliberately
+        // not supported: users worried it would delete the file itself on disk).
+        // Deletion doesn't need `-r` (a directory is removed with all its contents), but
+        // we accept and ignore it so the syntax stays symmetric with `add`.
         let (path, _recursive) = match extract_path(&rest) {
             Ok(parts) => parts,
             Err(msg) => return Some(Err(msg)),
@@ -62,8 +62,8 @@ pub fn parse(input: &str) -> Option<Result<RagCommand, String>> {
     }
 }
 
-/// Извлекает путь и флаг рекурсии из токенов после подкоманды. Путь может содержать
-/// пробелы (собираем не-флаговые токены), снимаем обрамляющие кавычки.
+/// Extracts the path and the recursion flag from the tokens after the subcommand. The path may contain
+/// spaces (we gather non-flag tokens), strip surrounding quotes.
 fn extract_path(tokens: &[&str]) -> Result<(String, bool), String> {
     let mut recursive = false;
     let mut path_parts: Vec<&str> = Vec::new();
@@ -94,8 +94,8 @@ mod tests {
 
     #[test]
     fn non_rag_input_is_none() {
-        assert_eq!(parse("обычное сообщение"), None);
-        assert_eq!(parse("/help что-то"), None);
+        assert_eq!(parse("regular message"), None);
+        assert_eq!(parse("/help something"), None);
         assert_eq!(parse(""), None);
     }
 
@@ -140,13 +140,13 @@ mod tests {
             del("d:\\dir\\file.txt")
         );
         assert_eq!(parse("/rag remove d:\\dir"), del("d:\\dir"));
-        // `-r` для remove принимается и игнорируется (директория и так рекурсивна).
+        // `-r` for remove is accepted and ignored (a directory is recursive anyway).
         assert_eq!(parse("/rag remove d:\\dir -r"), del("d:\\dir"));
     }
 
     #[test]
     fn delete_is_not_a_command() {
-        // Слово `delete` намеренно не поддерживается — это неизвестная подкоманда.
+        // The word `delete` is deliberately not supported — it's an unknown subcommand.
         assert!(matches!(
             parse("/rag delete d:\\dir\\file.txt"),
             Some(Err(_))
@@ -158,8 +158,8 @@ mod tests {
         assert_eq!(parse("/rag list"), Some(Ok(RagCommand::List)));
         assert_eq!(parse("/RAG List"), Some(Ok(RagCommand::List)));
         assert_eq!(parse("/rag rebuild"), Some(Ok(RagCommand::Rebuild)));
-        // Лишние токены после list/rebuild игнорируются (пути им не нужны).
-        assert_eq!(parse("/rag list всё"), Some(Ok(RagCommand::List)));
+        // Extra tokens after list/rebuild are ignored (they don't need paths).
+        assert_eq!(parse("/rag list everything"), Some(Ok(RagCommand::List)));
     }
 
     #[test]

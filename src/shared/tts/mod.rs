@@ -183,7 +183,7 @@ pub(crate) async fn error_body(what: &str, resp: reqwest::Response) -> anyhow::E
     let status = resp.status();
     let body = resp.text().await.unwrap_or_default();
     let detail: String = body.trim().chars().take(500).collect();
-    tracing::warn!(%status, body = %detail, "{what} вернул статус ошибки");
+    tracing::warn!(%status, body = %detail, "{what} returned an error status");
     if detail.is_empty() {
         anyhow::anyhow!("{what}: статус {status}")
     } else {

@@ -1,15 +1,15 @@
-# nfpm-конфиг для Linux-пакетов: один файл → deb + rpm + archlinux (.pkg.tar.zst)
-# через `nfpm package --packager deb|rpm|archlinux`. Раскладка — §4.2
+# An nfpm config for Linux packages: one file → deb + rpm + archlinux (.pkg.tar.zst)
+# via `nfpm package --packager deb|rpm|archlinux`. Layout — §4.2
 # docs/history/installers.md.
 #
-# Ключевое: реальный бинарь кладётся НЕ в /usr/bin (туда нельзя класть соседние
-# данные — FHS/Debian Policy), а в /usr/lib/mindfork-rs/ рядом с defaults.json и
-# словарями; из /usr/bin туда ведёт симлинк. `std::env::current_exe()` на Linux
-# резолвит симлинк в реальный путь (/proc/self/exe), поэтому приложение находит
-# соседние ресурсы — правок кода не требуется. Словари при mode=system в каталоге
-# данных отсутствуют → берутся из /usr/lib/mindfork-rs/data/dictionaries (fallback П1).
+# Key point: the real binary is placed NOT in /usr/bin (you can't put adjacent
+# data there — FHS/Debian Policy), but in /usr/lib/mindfork-rs/ next to defaults.json and
+# the dictionaries; a symlink leads there from /usr/bin. `std::env::current_exe()` on Linux
+# resolves the symlink to the real path (/proc/self/exe), so the app finds its
+# neighboring resources — no code changes needed. With mode=system, dictionaries are
+# absent from the data directory → they're taken from /usr/lib/mindfork-rs/data/dictionaries (fallback P1).
 #
-# Версию и путь к бинарнику подставляет packaging/linux/build-packages.sh через env.
+# The version and the binary path are substituted by packaging/linux/build-packages.sh via env.
 name: mindfork-rs
 arch: amd64
 platform: linux
@@ -26,22 +26,22 @@ description: |
   Local models (Gemma/Qwen via llama.cpp) and cloud providers (OpenAI,
   Gemini, Anthropic). Notes/RAG memory, client-side tools, multi-language UI.
 
-# Зависимости заданы вручную — nfpm их не вычисляет. Стек: rustls (без OpenSSL) +
-# bundled SQLite + x11rb (буфер обмена) → из системного остаётся glibc и ALSA
-# (libasound — воспроизведение речи `/tts`; на PipeWire/PulseAudio работает через
-# штатный pipewire-alsa). Без звука приложение не падает: команда `/tts` покажет
-# «звук недоступен» (docs/research/tts.md §6).
+# Dependencies are set by hand — nfpm doesn't compute them. Stack: rustls (no OpenSSL) +
+# bundled SQLite + x11rb (clipboard) → from the system, only glibc and ALSA remain
+# (libasound — speech playback `/tts`; on PipeWire/PulseAudio it works via the
+# standard pipewire-alsa). The app doesn't crash without audio: the `/tts` command will show
+# "audio unavailable" (docs/research/tts.md §6).
 overrides:
   deb:
     depends:
       - libc6 (>= 2.35)
-      # Альтернатива обязательна, а не косметика: после time_t64-перехода
-      # (Ubuntu 24.04+/Debian trixie) настоящая ALSA называется `libasound2t64`, а
-      # старое имя `libasound2` осталось лишь **виртуальным** — и apt удовлетворяет
-      # его OSS-шимом `liboss4-salsa-asound2`, в котором нет части символов
-      # (`snd_device_name_get_hint`), т.е. приложение падает при запуске. Поймано
-      # контейнерным смоуком packaging.yml на ubuntu:24.04. Первая альтернатива
-      # предпочитается, на старых системах (bookworm) остаётся вторая.
+      # The alternative is required, not cosmetic: after the time_t64 transition
+      # (Ubuntu 24.04+/Debian trixie) the real ALSA is named `libasound2t64`, while
+      # the old name `libasound2` remains only **virtual** — and apt satisfies it with
+      # the OSS shim `liboss4-salsa-asound2`, which lacks some symbols
+      # (`snd_device_name_get_hint`), i.e. the app crashes at startup. Caught by
+      # packaging.yml's container smoke on ubuntu:24.04. The first alternative
+      # is preferred, on older systems (bookworm) the second one remains.
       - libasound2t64 | libasound2
   rpm:
     depends:
@@ -49,25 +49,25 @@ overrides:
   archlinux:
     depends:
       - alsa-lib
-  # glibc в rpm/archlinux — часть базовой системы, явно не указываем.
+  # glibc in rpm/archlinux is part of the base system, not specified explicitly.
 
 contents:
-  # Реальный бинарь (сайдкар в /usr/lib/<pkg>/, не в /usr/bin).
+  # The real binary (a sidecar in /usr/lib/<pkg>/, not in /usr/bin).
   - src: ./dist/stage/mindfork-rs
     dst: /usr/lib/mindfork-rs/mindfork-rs
     file_info:
       mode: 0755
 
-  # Вендорское умолчание установки: данные — в стандартной ОС-папке пользователя
-  # (~/.local/share/mindfork-rs). config|noreplace → правка пользователя переживёт
-  # апгрейд (deb-conffile / rpm %config(noreplace) / pacman backup).
+  # The vendor's install default: data goes into the standard OS user folder
+  # (~/.local/share/mindfork-rs). config|noreplace → a user's edit survives an
+  # upgrade (deb-conffile / rpm %config(noreplace) / pacman backup).
   - src: ./packaging/linux/defaults.json
     dst: /usr/lib/mindfork-rs/defaults.json
     type: "config|noreplace"
     file_info:
       mode: 0644
 
-  # Словари спелл-чека (портативная раскладка рядом с бинарём — резерв П1).
+  # Spellcheck dictionaries (a portable layout next to the binary — the P1 fallback).
   - src: ./dictionaries/*.aff
     dst: /usr/lib/mindfork-rs/data/dictionaries/
     file_info:
@@ -77,22 +77,22 @@ contents:
     file_info:
       mode: 0644
 
-  # Пользовательская точка входа: симлинк из PATH на реальный бинарь.
+  # The user-facing entry point: a symlink from PATH to the real binary.
   - src: /usr/lib/mindfork-rs/mindfork-rs
     dst: /usr/bin/mindfork-rs
     type: symlink
 
-  # Запись в меню приложений. Terminal=true обязателен — приложение TUI
-  # (см. docs/branding.md §4.2). Exec ссылается на симлинк в PATH.
+  # The application-menu entry. Terminal=true is mandatory — the app is a TUI
+  # (see docs/branding.md §4.2). Exec refers to the symlink on PATH.
   - src: ./packaging/linux/mindfork-rs.desktop
     dst: /usr/share/applications/mindfork-rs.desktop
     file_info:
       mode: 0644
 
-  # Иконки темы hicolor. Имя файла обязано совпадать с ключом Icon= в .desktop
-  # (mindfork-rs), поэтому исходники переименовываются при установке.
-  # Скриптлеты обновления кэша не добавляем: и Debian (триггер update-icon-caches),
-  # и Fedora (file trigger на /usr/share/icons/hicolor) делают это сами.
+  # hicolor theme icons. The file name must match the Icon= key in the .desktop
+  # (mindfork-rs), so the source files are renamed on install.
+  # We don't add cache-refresh scriptlets: both Debian (the update-icon-caches
+  # trigger) and Fedora (a file trigger on /usr/share/icons/hicolor) do it themselves.
   - src: ./artwork/mindfork-icon-16.png
     dst: /usr/share/icons/hicolor/16x16/apps/mindfork-rs.png
     file_info:
@@ -117,13 +117,13 @@ contents:
     dst: /usr/share/icons/hicolor/256x256/apps/mindfork-rs.png
     file_info:
       mode: 0644
-  # Векторный вариант — с подложкой, как у растровых (единый вид в меню).
+  # The vector variant — with a backdrop, like the raster ones (a consistent look in the menu).
   - src: ./artwork/mindfork-icon.svg
     dst: /usr/share/icons/hicolor/scalable/apps/mindfork-rs.svg
     file_info:
       mode: 0644
 
-  # Документация.
+  # Documentation.
   - src: ./README.md
     dst: /usr/share/doc/mindfork-rs/README.md
   - src: ./CHANGELOG.md

@@ -1,12 +1,12 @@
-//! Экран «модели себя» (FSD "page"): просмотр и **ручная правка** представления
-//! агента о себе для активного профиля — описание, цели, модель собеседника и
-//! нарратив инсайтов. Открывается из чата по `F3`, закрывается `Esc`.
+//! "Self-model" screen (FSD "page"): viewing and **manually editing** the
+//! agent's representation of itself for the active profile — the description, goals, the
+//! interlocutor model, and the insight narrative. Opened from chat via `F3`, closed via `Esc`.
 //!
-//! Данные приходят снимком от оркестратора (он владеет `Storage`) событием
-//! `AppEvent::SelfModelView`. Правки экран отдаёт намерением `SelfModelIntent::Edit`
-//! (→ `AppCommand::UpdateSelfModel`); оркестратор применяет, сохраняет и переэмитит
-//! обновлённый снимок (экран обновляется на месте). Сам экран про `app`/`Storage`
-//! не знает (FSD). См. docs/history/self-model-mvp.md.
+//! Data arrives as a snapshot from the orchestrator (it owns `Storage`) via the
+//! `AppEvent::SelfModelView` event. The screen hands edits off as the `SelfModelIntent::Edit`
+//! intent (→ `AppCommand::UpdateSelfModel`); the orchestrator applies, saves, and re-emits the
+//! updated snapshot (the screen updates in place). The screen itself doesn't know about
+//! `app`/`Storage` (FSD). See docs/history/self-model-mvp.md.
 
 use ratatui::Frame;
 use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
@@ -24,19 +24,19 @@ use crate::shared::ui::dim_background;
 use crate::shared::wrap::wrap_line;
 use crate::widgets::input_box::{InputBox, RenderOpts};
 
-/// Намерение экрана «модели себя» (транслируется `app`). Параллель к
+/// Intent from the "self-model" screen (translated by `app`). A counterpart to
 /// [`ChatListIntent`](crate::screens::chat_list::ChatListIntent).
 #[derive(Debug, Clone, PartialEq)]
 pub enum SelfModelIntent {
-    /// Закрыть вид, вернуться к чату (`Esc`).
+    /// Close the view, return to the chat (`Esc`).
     Close,
-    /// Выйти из приложения (`Ctrl+Q`/`F10`).
+    /// Quit the application (`Ctrl+Q`/`F10`).
     Quit,
-    /// Применить ручную правку (оркестратор сохранит и переэмитит снимок).
+    /// Apply a manual edit (the orchestrator will save and re-emit the snapshot).
     Edit(SelfModelEdit),
 }
 
-/// На что указывает выбранная строка (для действий правки).
+/// What the selected row points to (for edit actions).
 #[derive(Debug, Clone, Copy, PartialEq)]
 enum RowAction {
     Summary,
@@ -46,12 +46,12 @@ enum RowAction {
     Interests,
     Relationship,
     Insight(Uuid),
-    /// Декоративная строка (пустой разделитель или заголовок секции) — на ней
-    /// нельзя стоять курсором; навигация её пропускает.
+    /// A decorative row (an empty separator or a section header) — the cursor
+    /// can't land on it; navigation skips it.
     Decoration,
 }
 
-/// Что именно редактируется в открытом текстовом редакторе.
+/// What exactly is being edited in the open text editor.
 #[derive(Debug, Clone, Copy, PartialEq)]
 enum EditKind {
     Summary,
@@ -62,31 +62,31 @@ enum EditKind {
     Relationship,
 }
 
-/// Активный текстовый редактор поля (попап). Везде многострочный
-/// (`Shift+Enter` — перенос строки, `Enter` — коммит): модели пишут длинный текст.
+/// The active field text editor (a popup). Always multiline
+/// (`Shift+Enter` — a line break, `Enter` — commit): models write long text.
 struct Editor {
     kind: EditKind,
     input: InputBox,
 }
 
-/// Экран «модели себя»: снимок модели + состояние навигации/правки.
+/// The "self-model" screen: a model snapshot + navigation/edit state.
 pub struct SelfModelScreen {
     model: Option<SelfModel>,
     palette: Palette,
-    /// Локаль интерфейса (обновляется при `Settings`). См. docs/i18n-ui.md.
+    /// Interface locale (updated on `Settings`). See docs/i18n-ui.md.
     loc: &'static Locale,
     selected: usize,
-    /// Первый видимый визуальный ряд (для прокрутки длинного списка). Держится
-    /// между кадрами; пересчитывается в [`Self::render`] так, чтобы выбранная строка
-    /// оставалась видимой (а если не влезает целиком — был виден её верх).
+    /// The first visible visual row (for scrolling a long list). Persists
+    /// across frames; recomputed in [`Self::render`] so the selected row
+    /// stays visible (and if it doesn't fit entirely, its top is visible).
     scroll: usize,
     editor: Option<Editor>,
-    /// Подтверждение очистки всей модели (`Ctrl+K` дважды).
+    /// Confirmation for clearing the whole model (`Ctrl+K` twice).
     confirm_clear: bool,
 }
 
 impl SelfModelScreen {
-    /// Открывает экран со снимком модели.
+    /// Opens the screen with a model snapshot.
     pub fn new(model: Option<SelfModel>, palette: Palette, loc: &'static Locale) -> Self {
         Self {
             model,
@@ -99,29 +99,29 @@ impl SelfModelScreen {
         }
     }
 
-    /// Обновляет снимок модели (после правки/рефлексии — событие `SelfModelView`),
-    /// сохраняя выделение по возможности и закрывая подтверждение очистки.
+    /// Updates the model snapshot (after an edit/reflection — the `SelfModelView` event),
+    /// keeping the selection where possible and closing the clear confirmation.
     pub fn set_model(&mut self, model: Option<SelfModel>) {
         self.model = model;
         self.confirm_clear = false;
         let max = self.rows().len().saturating_sub(1);
         self.selected = self.selected.min(max);
-        // Снимок мог сдвинуть/убрать строки — увести курсор с декорации, если попал.
+        // The snapshot may have shifted/removed rows — move the cursor off a decoration if it landed there.
         self.move_selection(0);
     }
 
-    /// Обновляет палитру темы (событие `AppEvent::Settings`).
+    /// Updates the theme palette (the `AppEvent::Settings` event).
     pub fn set_palette(&mut self, palette: Palette) {
         self.palette = palette;
     }
 
-    /// Обновляет локаль интерфейса (событие `AppEvent::Settings`).
+    /// Updates the interface locale (the `AppEvent::Settings` event).
     pub fn set_loc(&mut self, loc: &'static Locale) {
         self.loc = loc;
     }
 
-    /// Строит навигируемые строки (вид + цель действия). Базовые поля присутствуют
-    /// всегда (правка возможна и на пустой модели); цели и инсайты — по наличию.
+    /// Builds navigable rows (a view + an action target). The base fields are always
+    /// present (editing is possible even on an empty model); goals and insights — if present.
     fn rows(&self) -> Vec<(Line<'static>, RowAction)> {
         let p = &self.palette;
         let empty = SelfModel::new(Uuid::nil());
@@ -129,8 +129,8 @@ impl SelfModelScreen {
         let label = |s: &str| Span::styled(s.to_string(), p.accent_style());
         let dim = |s: String| Span::styled(s, p.muted_style());
         let mut rows: Vec<(Line<'static>, RowAction)> = Vec::new();
-        // Декоративные строки-разделители: пустая строка и заголовок секции
-        // (жирным акцентом). На них курсор не встаёт — лишь визуально делят секции.
+        // Decorative separator rows: a blank line and a section header
+        // (bold accent). The cursor never lands on them — they only visually divide sections.
         let spacer = || (Line::from(String::new()), RowAction::Decoration);
         let header = |s: &str| {
             (
@@ -143,7 +143,7 @@ impl SelfModelScreen {
         };
 
         let loc = self.loc;
-        // Описание себя.
+        // The self-description.
         let summary = if m.summary.trim().is_empty() {
             dim("—".into())
         } else {
@@ -154,11 +154,11 @@ impl SelfModelScreen {
             RowAction::Summary,
         ));
 
-        // Цели (с маркером статуса) + строка добавления. Дата — в локальной зоне:
-        // для активной — создание, для закрытой — момент закрытия (`closed_at`).
+        // Goals (with a status marker) + an "add" row. The date is in the local zone:
+        // creation for an active one, the closing moment (`closed_at`) for a closed one.
         for g in &m.goals {
-            // Активная — `●` (WGL4-безопасен, без замены); закрытые — из набора
-            // глифов палитры (компат: `√`/`×`).
+            // Active — `●` (WGL4-safe, no replacement needed); closed — from the
+            // palette's glyph set (compat: `√`/`×`).
             let glyphs = p.glyphs();
             let (marker, style) = match g.status {
                 GoalStatus::Active => ("● ".to_string(), p.success_style()),
@@ -188,7 +188,7 @@ impl SelfModelScreen {
             RowAction::AddGoal,
         ));
 
-        // Модель собеседника — отделена пустой строкой и заголовком от секции «о себе».
+        // The interlocutor model — separated from the "about self" section by a blank line and a header.
         rows.push(spacer());
         rows.push(header(loc.t("ui.self_model.interlocutor")));
         let u = &m.user_model;
@@ -223,8 +223,8 @@ impl SelfModelScreen {
             RowAction::Relationship,
         ));
 
-        // Нарратив (новые сверху) — удаление по `Del`. Тоже за разделителем и
-        // заголовком, чтобы наблюдения не сливались с моделью собеседника.
+        // The narrative (newest on top) — deletable via `Del`. Also behind a separator and
+        // a header, so observations don't blend into the interlocutor model.
         if !m.narrative.is_empty() {
             rows.push(spacer());
             rows.push(header(&loc.tf(
@@ -233,9 +233,9 @@ impl SelfModelScreen {
             )));
         }
         for seg in m.narrative.iter().rev() {
-            // Дата — в локальной зоне: `created_at` хранится в UTC, и без перевода
-            // наблюдение, добавленное после локальной полуночи, показывало бы
-            // вчерашний день (в зонах впереди UTC ещё идут «вчерашние» сутки).
+            // The date is in the local zone: `created_at` is stored in UTC, and without
+            // conversion an observation added after local midnight would show
+            // yesterday's date (in zones ahead of UTC "yesterday" is still going on).
             let date = seg
                 .created_at
                 .with_timezone(&chrono::Local)
@@ -252,12 +252,12 @@ impl SelfModelScreen {
         rows
     }
 
-    /// Действие выбранной строки (или `None`, если индекс вне диапазона).
+    /// The selected row's action (or `None` if the index is out of range).
     fn selected_action(&self) -> Option<RowAction> {
         self.rows().get(self.selected).map(|(_, a)| *a)
     }
 
-    /// Индексы строк, на которых может стоять курсор (всё, кроме декораций).
+    /// Indices of rows the cursor can land on (everything except decorations).
     fn selectable_indices(&self) -> Vec<usize> {
         self.rows()
             .iter()
@@ -267,9 +267,9 @@ impl SelfModelScreen {
             .collect()
     }
 
-    /// Сдвигает выделение на `delta` позиций среди выбираемых строк (декорации
-    /// пропускаются). `isize::MIN`/`MAX` — в начало/конец. Если текущая строка —
-    /// декорация (после смены модели), стартуем от ближайшей выбираемой.
+    /// Shifts the selection by `delta` positions among selectable rows (decorations
+    /// are skipped). `isize::MIN`/`MAX` — to the start/end. If the current row is a
+    /// decoration (after a model change), start from the nearest selectable one.
     fn move_selection(&mut self, delta: isize) {
         let sel = self.selectable_indices();
         if sel.is_empty() {
@@ -285,7 +285,7 @@ impl SelfModelScreen {
         self.selected = sel[new];
     }
 
-    /// Обрабатывает нажатие клавиши, возвращая намерение для `app`.
+    /// Handles a keypress, returning an intent for `app`.
     pub fn handle_key(&mut self, key: KeyEvent) -> Option<SelfModelIntent> {
         if self.editor.is_some() {
             return self.handle_editor_key(key);
@@ -296,7 +296,7 @@ impl SelfModelScreen {
         } else {
             '\0'
         };
-        // Подтверждение очистки: повторный Ctrl+K — да; любая другая клавиша — отмена.
+        // Clear confirmation: a repeated Ctrl+K confirms; any other key cancels.
         if self.confirm_clear {
             self.confirm_clear = false;
             if ctrl && phys == 'k' {
@@ -304,7 +304,7 @@ impl SelfModelScreen {
             }
             return None;
         }
-        // Выход переехал на Ctrl+Q/F10 (Ctrl+C освобождён). См. docs/history/input-selection-undo-mouse.md §B.
+        // Quit moved to Ctrl+Q/F10 (Ctrl+C is freed up). See docs/history/input-selection-undo-mouse.md §B.
         if ctrl && phys == 'q' {
             return Some(SelfModelIntent::Quit);
         }
@@ -313,7 +313,7 @@ impl SelfModelScreen {
             return None;
         }
         match key.code {
-            KeyCode::F(10) => return Some(SelfModelIntent::Quit), // второй вариант выхода
+            KeyCode::F(10) => return Some(SelfModelIntent::Quit), // a second way to quit
             KeyCode::Esc => return Some(SelfModelIntent::Close),
             KeyCode::Up => self.move_selection(-1),
             KeyCode::Down => self.move_selection(1),
@@ -341,7 +341,7 @@ impl SelfModelScreen {
         None
     }
 
-    /// Открывает редактор для выбранной строки (или ничего — для инсайта).
+    /// Opens the editor for the selected row (or does nothing — for an insight).
     fn begin_edit(&mut self) -> Option<SelfModelIntent> {
         let action = self.selected_action()?;
         let m = self
@@ -369,10 +369,10 @@ impl SelfModelScreen {
                 EditKind::Relationship,
                 m.user_model.relationship_dynamic.clone(),
             ),
-            RowAction::Insight(_) => return None, // инсайты не правим, только удаляем
-            RowAction::Decoration => return None, // разделитель/заголовок — не редактируется
+            RowAction::Insight(_) => return None, // insights aren't edited, only deleted
+            RowAction::Decoration => return None, // a separator/header isn't editable
         };
-        // Поле многострочное (по умолчанию `InputBox` уже такой) — текст переносится.
+        // The field is multiline (`InputBox` already defaults to that) — text wraps.
         let mut input = InputBox::new();
         input.set_text(&seed);
         self.editor = Some(Editor { kind, input });
@@ -386,8 +386,8 @@ impl SelfModelScreen {
                 self.editor = None;
                 None
             }
-            // Shift+Enter (или Alt+Enter — запасной перенос для терминалов без
-            // kitty-протокола, см. п.11) — перевод строки; Enter — коммит.
+            // Shift+Enter (or Alt+Enter — a fallback line break for terminals with no
+            // kitty protocol, see item 11) — a line break; Enter — commit.
             (KeyCode::Enter, m) if m.intersects(KeyModifiers::SHIFT | KeyModifiers::ALT) => {
                 editor.input.insert_newline();
                 None
@@ -396,8 +396,8 @@ impl SelfModelScreen {
                 let editor = self.editor.take().unwrap();
                 commit_edit(editor.kind, editor.input.text())
             }
-            // Ctrl+K (очистка поля, возврат — `Ctrl+Z`) и прочие Ctrl-комбинации поля
-            // обрабатывает сам `InputBox` в `on_key` (раскладко-независимо).
+            // Ctrl+K (clear the field, undo — `Ctrl+Z`) and the field's other Ctrl
+            // combinations are handled by `InputBox` itself in `on_key` (layout-independent).
             _ => {
                 editor.input.on_key(key);
                 None
@@ -405,18 +405,18 @@ impl SelfModelScreen {
         }
     }
 
-    /// Вставка из буфера обмена — в активный редактор поля (иначе no-op).
+    /// Clipboard paste — into the active field editor (otherwise a no-op).
     pub fn handle_paste(&mut self, text: &str) {
         if let Some(editor) = self.editor.as_mut() {
             editor.input.insert_str(text);
         }
     }
 
-    /// Строка хоткеев экрана (пары «клавиша — описание — опасная ли»). Раскладывается
-    /// в сетку общим хелпером [`Palette::hotkey_grid`] — та же логика переноса, что в
-    /// оверлее списка чатов (слева-направо, столбцы совпадают по вертикали).
-    /// Пары «клавиша — ключ описания — опасная ли»; описания резолвятся через локаль
-    /// в [`Self::render`].
+    /// The screen's hotkey line (pairs "key — description — is it dangerous"). Laid out
+    /// into a grid via the shared helper [`Palette::hotkey_grid`] — the same wrap logic as in
+    /// the chat-list overlay (left-to-right, columns line up vertically).
+    /// Pairs "key — description key — is it dangerous"; descriptions are resolved through the locale
+    /// in [`Self::render`].
     const HOTKEYS: [(&'static str, &'static str, bool); 5] = [
         ("Enter", "ui.self_model.hk.edit", false),
         ("Space", "ui.self_model.hk.goal_status", false),
@@ -425,16 +425,16 @@ impl SelfModelScreen {
         ("Esc", "ui.self_model.hk.close", false),
     ];
 
-    /// Рисует экран во весь экран: список полей + строка хоткеев (под панелью, вне
-    /// рамки); редактор — попапом.
+    /// Draws the screen full-screen: the field list + a hotkey line (below the
+    /// panel, outside the border); the editor — as a popup.
     pub fn render(&mut self, frame: &mut Frame) {
         let area = frame.area();
         let palette = self.palette;
 
-        // Строка хоткеев — под панелью (вне рамки), переносится сеткой как в оверлее
-        // списка чатов. При подтверждении очистки на её месте — предупреждение (1 ряд).
-        // Высоту считаем заранее, чтобы отвести под неё ровно нужное число рядов.
-        // Локализуем описания хоткеев (клавиши и «опасность» — как в const).
+        // The hotkey line — below the panel (outside the border), wraps as a grid like in the
+        // chat-list overlay. During the clear confirmation, a warning takes its place (1 row).
+        // Compute the height ahead of time, so exactly the right number of rows is reserved for it.
+        // Localize the hotkey descriptions (keys and "danger" — as in the const).
         let loc = self.loc;
         let hk_items: [(&str, &str, bool); 5] = [
             (
@@ -483,22 +483,22 @@ impl SelfModelScreen {
         let inner = block.inner(panel_area);
         frame.render_widget(block, panel_area);
 
-        // Перенос по словам: длинные значения (модели пишут много текста) не влезают
-        // в одну строку. Каждая логическая строка списка заворачивается на несколько
-        // визуальных рядов; затем рисуем визуальные ряды вручную (а не виджетом
-        // `List`). Причина: `List` целиком ПРОПУСКАЕТ многострочный элемент, который не
-        // вмещается в остаток высоты по высоте (его `get_items_bounds` прерывается на
-        // `height + item.height() > max_height`), оставляя пустоту — длинный пункт
-        // внизу выглядит как «конец списка». Ручной рендер обрезает хвостовой пункт по
-        // высоте области, показывая его верхнюю часть. Ширина содержимого = область
-        // минус колонка маркера выделения `▌ ` (2 колонки).
+        // Word wrap: long values (models write a lot of text) don't fit
+        // on one line. Every logical list line is wrapped into several
+        // visual rows; the visual rows are then drawn manually (rather than via the
+        // `List` widget). Reason: `List` entirely SKIPS a multiline item that doesn't
+        // fit height-wise in the remaining area (its `get_items_bounds` cuts off at
+        // `height + item.height() > max_height`), leaving an empty spot — a long trailing item
+        // reads as "the end of the list". Manual rendering clips a trailing item at the
+        // area's height, showing its top portion. Content width = the area
+        // minus the selection-marker column `▌ ` (2 columns).
         let list_area = inner;
         let content_width = (list_area.width as usize).saturating_sub(2).max(1);
         let rows = self.rows();
         let sel = self.selected.min(rows.len().saturating_sub(1));
 
-        // Разворачиваем каждую логическую строку в визуальные ряды, помня для каждого
-        // ряда индекс его логической строки и где начинается выбранная строка.
+        // Expand each logical line into visual rows, tracking for every
+        // row the index of its logical line and where the selected row starts.
         let mut visual: Vec<(usize, Line<'static>)> = Vec::new();
         let mut sel_start = 0usize;
         let mut sel_height = 1usize;
@@ -509,7 +509,7 @@ impl SelfModelScreen {
             }
             let mut wrapped = wrap_line(line, content_width);
             if wrapped.is_empty() {
-                wrapped.push(Line::from(String::new())); // пустой разделитель
+                wrapped.push(Line::from(String::new())); // an empty separator
             }
             if ri == sel {
                 sel_height = wrapped.len();
@@ -522,8 +522,8 @@ impl SelfModelScreen {
         let view_h = list_area.height as usize;
         self.scroll = adjust_scroll(self.scroll, sel_start, sel_height, view_h);
 
-        // Рисуем видимые визуальные ряды. У выбранной строки — подложка на всю ширину
-        // ряда (база `Paragraph` красит всю область) и маркер `▌`, у прочих — отступ.
+        // Draw the visible visual rows. The selected row gets a backdrop across the whole
+        // row width (the base `Paragraph` colors the whole area) and a `▌` marker; others get an indent.
         for (offset, (ri, line)) in visual.iter().enumerate().skip(self.scroll).take(view_h) {
             let y = list_area.y + (offset - self.scroll) as u16;
             let row = Rect {
@@ -547,8 +547,8 @@ impl SelfModelScreen {
             frame.render_widget(para, row);
         }
 
-        // Нижняя область (под панелью, вне рамки): подтверждение очистки или сетка
-        // хоткеев (рассчитана выше).
+        // The bottom area (below the panel, outside the border): the clear confirmation or the
+        // hotkey grid (computed above).
         if self.confirm_clear {
             let warn = Style::new().fg(palette.warning);
             frame.render_widget(
@@ -559,7 +559,7 @@ impl SelfModelScreen {
             frame.render_widget(Paragraph::new(hotkeys), status_area);
         }
 
-        // Редактор поверх — с реальным курсором. Везде многострочный (перенос текста).
+        // The editor drawn on top — with a real cursor. Always multiline (text wraps).
         if let Some(editor) = self.editor.as_mut() {
             let popup = centered_rect(80, 50, area);
             let title = loc.t("ui.editor.multiline_footer");
@@ -572,7 +572,7 @@ impl SelfModelScreen {
     }
 }
 
-/// Формирует намерение правки из коммита редактора (или `None`, если правка пуста).
+/// Builds an edit intent from the editor's commit (or `None` if the edit is empty).
 fn commit_edit(kind: EditKind, text: String) -> Option<SelfModelIntent> {
     let edit = match kind {
         EditKind::Summary => SelfModelEdit::SetSummary(text),
@@ -590,9 +590,9 @@ fn commit_edit(kind: EditKind, text: String) -> Option<SelfModelIntent> {
     Some(SelfModelIntent::Edit(edit))
 }
 
-/// Список → вектор непустых обрезанных элементов. Разделители — запятая **и**
-/// перевод строки (поле многострочное: элементы можно вводить как через запятую,
-/// так и по одному на строку).
+/// A list → a vector of non-empty trimmed items. Separators are a comma **and**
+/// a line break (the field is multiline: items can be entered either comma-separated
+/// or one per line).
 fn parse_list(s: &str) -> Vec<String> {
     s.split([',', '\n'])
         .map(|x| x.trim().to_string())
@@ -600,14 +600,14 @@ fn parse_list(s: &str) -> Vec<String> {
         .collect()
 }
 
-/// Пересчитывает прокрутку так, чтобы выбранная строка (визуальные ряды
-/// `[sel_start, sel_start + sel_height)`) была видна в окне высотой `view_h`:
-/// - если строка выше окна — поднимаем верх окна к её началу;
-/// - если её низ за окном — опускаем окно к её низу;
-/// - но если строка целиком не вмещается (выше окна) — прижимаем к её **верху**
-///   (видна верхняя часть длинного пункта, а не низ).
+/// Recomputes scroll so the selected row (visual rows
+/// `[sel_start, sel_start + sel_height)`) is visible in a window of height `view_h`:
+/// - if the row is above the window — raise the window's top to its start;
+/// - if its bottom is past the window — lower the window to its bottom;
+/// - but if the row doesn't fit entirely (taller than the window) — pin it to its **top**
+///   (the top of the long item is visible, not the bottom).
 ///
-/// Иначе прокрутка не меняется.
+/// Otherwise scroll is unchanged.
 fn adjust_scroll(scroll: usize, sel_start: usize, sel_height: usize, view_h: usize) -> usize {
     if view_h == 0 {
         return scroll;
@@ -626,7 +626,7 @@ fn adjust_scroll(scroll: usize, sel_start: usize, sel_height: usize, view_h: usi
     }
 }
 
-/// Центрированный прямоугольник в процентах ширины/высоты.
+/// A centered rectangle by width/height percentage.
 fn centered_rect(pct_x: u16, pct_y: u16, area: Rect) -> Rect {
     let w = area.width * pct_x / 100;
     let h = area.height * pct_y / 100;
@@ -652,9 +652,9 @@ mod tests {
         KeyEvent::new(code, KeyModifiers::NONE)
     }
 
-    /// Добавляет наблюдение в снимок для тестов. Наблюдения переехали в заметки, а
-    /// снимок `F3` несёт их реконструированными в поле `narrative` (оркестратор
-    /// заполняет из self-заметок), поэтому в тестах кладём прямо в поле.
+    /// Adds an observation to the snapshot for tests. Observations moved into notes, and
+    /// the `F3` snapshot carries them reconstructed in the `narrative` field (the orchestrator
+    /// fills it from self-notes), so tests put them straight into the field.
     fn push_insight(m: &mut SelfModel, text: &str) {
         m.narrative
             .push(crate::entities::self_model::NarrativeSegment {
@@ -693,40 +693,40 @@ mod tests {
     #[test]
     fn enter_on_summary_opens_editor_and_commits() {
         let mut s = SelfModelScreen::new(Some(model()), Palette::default(), ru());
-        // Первая строка — описание себя.
+        // The first row is the self-description.
         assert_eq!(s.handle_key(key(KeyCode::Enter)), None);
         assert!(s.editor.is_some());
-        // Печать и коммит → намерение правки summary.
+        // Typing and committing → a summary-edit intent.
         s.handle_key(key(KeyCode::Char('!')));
         let intent = s.handle_key(key(KeyCode::Enter)).unwrap();
         match intent {
             SelfModelIntent::Edit(SelfModelEdit::SetSummary(t)) => assert!(t.contains('!')),
-            other => panic!("ожидали SetSummary, получили {other:?}"),
+            other => panic!("expected SetSummary, got {other:?}"),
         }
         assert!(s.editor.is_none());
     }
 
     #[test]
     fn alt_enter_inserts_newline_in_editor() {
-        // Запасной перенос строки для терминалов без kitty-протокола (Shift+Enter там
-        // неотличим от Enter). См. п.11 аудита InputBox.
+        // A fallback line break for terminals with no kitty protocol (there Shift+Enter is
+        // indistinguishable from Enter). See item 11 of the InputBox audit.
         let mut s = SelfModelScreen::new(Some(model()), Palette::default(), ru());
-        s.handle_key(key(KeyCode::Enter)); // открыть редактор описания себя
+        s.handle_key(key(KeyCode::Enter)); // open the self-description editor
         s.handle_key(key(KeyCode::Char('A')));
         s.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::ALT));
         s.handle_key(key(KeyCode::Char('B')));
-        assert!(s.editor.is_some(), "Alt+Enter не закрывает редактор");
+        assert!(s.editor.is_some(), "Alt+Enter must not close the editor");
         let intent = s.handle_key(key(KeyCode::Enter)).unwrap();
         match intent {
             SelfModelIntent::Edit(SelfModelEdit::SetSummary(t)) => assert!(t.contains("A\nB")),
-            other => panic!("ожидали SetSummary, получили {other:?}"),
+            other => panic!("expected SetSummary, got {other:?}"),
         }
     }
 
     #[test]
     fn space_cycles_goal_delete_removes() {
         let mut s = SelfModelScreen::new(Some(model()), Palette::default(), ru());
-        s.handle_key(key(KeyCode::Down)); // на цель
+        s.handle_key(key(KeyCode::Down)); // onto the goal
         assert!(matches!(s.selected_action(), Some(RowAction::Goal(_))));
         let cycle = s.handle_key(key(KeyCode::Char(' '))).unwrap();
         assert!(matches!(
@@ -743,16 +743,16 @@ mod tests {
     #[test]
     fn add_goal_commits_and_empty_is_noop() {
         let mut s = SelfModelScreen::new(None, Palette::default(), ru());
-        // Строки пустой модели: [Summary, AddGoal, ·spacer·, ·Собеседник·, Traits,
-        // Interests, Relationship] — декорации курсор пропускает.
+        // Rows of the empty model: [Summary, AddGoal, ·spacer·, ·Interlocutor·, Traits,
+        // Interests, Relationship] — the cursor skips decorations.
         s.selected = 1; // AddGoal
         assert!(matches!(s.selected_action(), Some(RowAction::AddGoal)));
         s.handle_key(key(KeyCode::Enter));
         assert!(s.editor.is_some());
-        // Пустой коммит → no-op.
+        // An empty commit → a no-op.
         assert_eq!(s.handle_key(key(KeyCode::Enter)), None);
 
-        s.handle_key(key(KeyCode::Enter)); // снова открыть
+        s.handle_key(key(KeyCode::Enter)); // open it again
         s.handle_key(key(KeyCode::Char('ц')));
         let intent = s.handle_key(key(KeyCode::Enter)).unwrap();
         assert!(matches!(
@@ -769,7 +769,7 @@ mod tests {
             None
         );
         assert!(s.confirm_clear);
-        // Повторный Ctrl+K подтверждает.
+        // A repeated Ctrl+K confirms.
         let intent = s
             .handle_key(KeyEvent::new(KeyCode::Char('k'), KeyModifiers::CONTROL))
             .unwrap();
@@ -782,7 +782,7 @@ mod tests {
         let mut s = SelfModelScreen::new(Some(model()), Palette::default(), ru());
         s.handle_key(KeyEvent::new(KeyCode::Char('k'), KeyModifiers::CONTROL));
         assert!(s.confirm_clear);
-        assert_eq!(s.handle_key(key(KeyCode::Down)), None); // отмена
+        assert_eq!(s.handle_key(key(KeyCode::Down)), None); // cancel
         assert!(!s.confirm_clear);
     }
 
@@ -793,27 +793,27 @@ mod tests {
             SelfModelIntent::Edit(SelfModelEdit::SetTraits(v)) => {
                 assert_eq!(v, vec!["a".to_string(), "b".into(), "c".into()]);
             }
-            other => panic!("ожидали SetTraits, получили {other:?}"),
+            other => panic!("expected SetTraits, got {other:?}"),
         }
     }
 
     #[test]
     fn list_edit_splits_on_newlines_too() {
-        // Многострочное поле: элементы можно вводить по одному на строку.
+        // A multiline field: items can be entered one per line.
         let intent = commit_edit(EditKind::Interests, "Rust\nратату\n, TUI".into()).unwrap();
         match intent {
             SelfModelIntent::Edit(SelfModelEdit::SetInterests(v)) => {
                 assert_eq!(v, vec!["Rust".to_string(), "ратату".into(), "TUI".into()]);
             }
-            other => panic!("ожидали SetInterests, получили {other:?}"),
+            other => panic!("expected SetInterests, got {other:?}"),
         }
     }
 
     #[test]
     fn navigation_skips_decoration_rows() {
-        // Модель с целью и инсайтом: между AddGoal и Traits — spacer+header,
-        // между Relationship и инсайтом — ещё spacer+header. Курсор по `Down`
-        // должен перескакивать декорации и не вставать на них.
+        // A model with a goal and an insight: between AddGoal and Traits — spacer+header,
+        // between Relationship and the insight — another spacer+header. `Down`
+        // navigation must skip decorations and never land on them.
         let mut s = SelfModelScreen::new(Some(model()), Palette::default(), ru());
         let mut seen = Vec::new();
         loop {
@@ -821,14 +821,14 @@ mod tests {
             let before = s.selected;
             s.handle_key(key(KeyCode::Down));
             if s.selected == before {
-                break; // достигли конца
+                break; // reached the end
             }
         }
         assert!(
             !seen.iter().any(|a| matches!(a, RowAction::Decoration)),
-            "курсор не должен стоять на декорациях: {seen:?}"
+            "the cursor must not land on decorations: {seen:?}"
         );
-        // Прошли все выбираемые строки сверху донизу.
+        // Passed through all selectable rows from top to bottom.
         assert!(matches!(seen.first(), Some(RowAction::Summary)));
         assert!(matches!(seen.last(), Some(RowAction::Insight(_))));
     }
@@ -844,9 +844,9 @@ mod tests {
 
     #[test]
     fn hotkeys_render_below_panel_and_wrap_when_narrow() {
-        // Строка хоткеев — под панелью (вне рамки): её ряды начинаются с пробела в
-        // колонке 0 (левая рамка панели — символ рамки, поэтому её ряды не начинаются
-        // с пробела). Считаем хвостовые ряды-хоткеи.
+        // The hotkey line — below the panel (outside the border): its rows start with a space in
+        // column 0 (the panel's left border is a border character, so its rows don't start
+        // with a space). Count the trailing hotkey rows.
         let rows = |w: u16, h: u16| -> Vec<String> {
             let mut s = SelfModelScreen::new(Some(model()), Palette::default(), ru());
             let mut term = Terminal::new(TestBackend::new(w, h)).unwrap();
@@ -867,23 +867,23 @@ mod tests {
                 .take_while(|l| l.starts_with(' '))
                 .count()
         };
-        // Широко — одна строка хоткеев под панелью; над ней — нижняя рамка панели.
+        // Wide — one hotkey line below the panel; above it — the panel's bottom border.
         let wide = rows(120, 24);
         assert_eq!(status_rows(&wide), 1);
         assert!(wide.last().unwrap().contains("Enter"));
         assert!(
             !wide[wide.len() - 2].starts_with(' '),
-            "над хоткеями — нижняя рамка панели: {:?}",
+            "above the hotkeys — the panel's bottom border: {:?}",
             wide[wide.len() - 2]
         );
-        // Узко — хоткеи переносятся сеткой на несколько строк.
+        // Narrow — the hotkeys wrap as a grid onto several lines.
         let narrow = rows(30, 24);
         assert!(status_rows(&narrow) > 1);
     }
 
     #[test]
     fn confirm_clear_shows_prompt_in_status_area() {
-        // Подтверждение очистки занимает нижнюю область (вне рамки) одной строкой.
+        // The clear confirmation occupies the bottom area (outside the border) as one line.
         let mut s = SelfModelScreen::new(Some(model()), Palette::default(), ru());
         s.handle_key(KeyEvent::new(KeyCode::Char('k'), KeyModifiers::CONTROL));
         assert!(s.confirm_clear);
@@ -898,31 +898,31 @@ mod tests {
 
     #[test]
     fn adjust_scroll_keeps_selection_visible_and_pins_top_of_tall_item() {
-        // Выбранная строка целиком в окне — прокрутка не меняется.
+        // The selected row fits entirely in the window — scroll is unchanged.
         assert_eq!(adjust_scroll(0, 0, 1, 10), 0);
-        // Строка выше окна — поднимаем верх окна к её началу.
+        // The row is above the window — raise the window's top to its start.
         assert_eq!(adjust_scroll(5, 2, 1, 10), 2);
-        // Низ строки за окном (строка ниже окна) — опускаем окно к её низу.
+        // The row's bottom is past the window (the row is below the window) — lower the window to its bottom.
         assert_eq!(adjust_scroll(0, 9, 1, 5), 5); // sel_end=10, 10-5=5
-        // Длинный пункт, не влезающий по высоте: прижимаем к его ВЕРХУ.
+        // A long item that doesn't fit height-wise: pin it to its TOP.
         assert_eq!(adjust_scroll(0, 8, 20, 5), 8);
-        // Нулевая высота окна — без изменений.
+        // Zero window height — no change.
         assert_eq!(adjust_scroll(3, 0, 1, 0), 3);
     }
 
     #[test]
     fn render_long_trailing_item_in_short_area_does_not_panic() {
-        // Длинный последний инсайт в маленьком окне: ранее `List` пропускал бы такой
-        // пункт целиком; теперь рисуется его верхняя часть. Проверяем отсутствие
-        // паники при переносе на много рядов в тесной высоте.
+        // A long trailing insight in a small window: previously `List` would have skipped such
+        // an item entirely; now its top portion is drawn. Verify there's no
+        // panic when wrapping onto many rows in a tight height.
         let mut m = SelfModel::new(Uuid::new_v4());
         m.summary = "описание".into();
         push_insight(&mut m, &"очень длинное наблюдение ".repeat(40));
         let mut s = SelfModelScreen::new(Some(m), Palette::default(), ru());
         let mut term = Terminal::new(TestBackend::new(40, 8)).unwrap();
         term.draw(|f| s.render(f)).unwrap();
-        // Перейдём в самый низ (на длинный инсайт) и перерисуем — прокрутка должна
-        // показать его верх без паники.
+        // Move all the way to the bottom (onto the long insight) and redraw — scroll should
+        // show its top with no panic.
         s.handle_key(key(KeyCode::End));
         term.draw(|f| s.render(f)).unwrap();
     }
