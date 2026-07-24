@@ -6,9 +6,9 @@
 > [CLAUDE.md](../../CLAUDE.md) and [spec.md](../../spec.md).
 
 A step-by-step implementation plan derived from [spec.md](../../spec.md).
-Organized into stages **M0–M9** (see [spec §15](../../spec.md#15-этапы-реализации-и-критерии-готовности)).
+Organized into stages **M0–M9** (see [spec §15](../../spec.md#15-what-is-dropped-not-carried-over)).
 Each stage: goal → tasks (naming the FSD-structure modules/files from
-[§4.2](../../spec.md#42-слои-сверху-вниз-зависимости-направлены-только-вниз)) →
+[§4.2](../../spec.md#42-layers-top-to-bottom-dependencies-point-only-downward)) →
 tests → done criteria (DoD).
 
 The plan is optimized for **iterative development by AI agents**: tasks are
@@ -39,7 +39,7 @@ reached through traits.
 
 ### The "engine behind a trait" principle
 Everything that depends on `xinfer`/HTTP sits behind `EngineBackend`
-([§6.1](../../spec.md#61-слой-движка-sharedapi)). This gives mock/replay in
+([§6.1](../../spec.md#61-the-engine-layer-sharedapi)). This gives mock/replay in
 tests and room to swap the transport later. **No layer above `shared/api`
 knows about HTTP/`xinfer` directly.**
 
@@ -50,7 +50,7 @@ knows about HTTP/`xinfer` directly.**
 
 ### Research tasks (R)
 Marked `[R]` — require checking the current API of the libraries involved
-(see [spec §16.2](../../spec.md#162-открытые-вопросы-уточняются-при-реализации)).
+(see [spec §16.2](../../spec.md#162-open-questions-to-be-settled-during-implementation)).
 The outcome of an `[R]` is recorded as a short ADR comment in the code or in
 `docs/decisions/`.
 
@@ -67,7 +67,7 @@ FSD structure and infrastructure are laid down.
    `thiserror`, `tracing`, `tracing-subscriber`, `tracing-appender`, `serde`,
    `serde_json`, `uuid`, `chrono`. `[R]` Pin versions via `cargo add`.
 2. **FSD skeleton.** Create the module tree from
-   [§4.2](../../spec.md#42-слои-сверху-вниз-зависимости-направлены-только-вниз):
+   [§4.2](../../spec.md#42-layers-top-to-bottom-dependencies-point-only-downward):
    `app/`, `screens/`, `widgets/`, `features/`, `entities/`, `shared/` with
    `mod.rs` stubs. Set up visibility (`pub(crate)` by default).
 3. **`shared/paths.rs`.** Data-directory resolution **next to the binary**
@@ -117,30 +117,30 @@ cancellation work.
    extended types) vs `reqwest` + our own types. Add `futures`/
    `tokio-stream`, `tokio-util` (CancellationToken).
 3. **`shared/api/mod.rs` — trait `EngineBackend`**
-   ([§6.1](../../spec.md#61-слой-движка-sharedapi)): `chat_stream`, `embed`
+   ([§6.1](../../spec.md#61-the-engine-layer-sharedapi)): `chat_stream`, `embed`
    (the latter a stub until M5). Types `ChatRequest`, `ChatChunk`,
    `SamplingParams`, `ToolSchema`, `FinishReason`.
 4. **`shared/api/xinfer_client.rs`** — HTTP implementation of
    `EngineBackend`: request body construction (`messages`, empty `tools`,
    sampling), SSE stream → `ChatChunk::{Text,Thoughts,ToolCallDelta,Finished}`.
-   No string `stop` ([§7](../../spec.md#7-обработка-eos-и-стоп-токенов)).
+   No string `stop` ([§7](../../spec.md#7-eos-and-stop-token-handling)).
 5. **`shared/api/server.rs` — server supervisor**
-   ([§3.4](../../spec.md#34-управление-жизненным-циклом-сервера)): managed
+   ([§3.4](../../spec.md#34-managing-the-server-lifecycle)): managed
    launch of a child `xinfer` process, readiness polling, clean shutdown on
    exit (drop/SIGTERM/kill on Windows), parsing stdout/stderr into progress
    events. External mode (URL only).
 6. **"Thoughts" parser (`shared/api/thoughts.rs`)**
-   ([§6.5](../../spec.md#65-разбор-мыслей-cot)): from the reasoning field or
+   ([§6.5](../../spec.md#65-parsing-thoughts-cot)): from the reasoning field or
    from `<think>…</think>` in the main stream; correct tag stitching across a
    chunk boundary.
 7. **Sampling mapping (`entities/sampling.rs` + `shared/api`)**:
    `SamplingConfig` → request fields; dropping unsupported ones
-   ([§8](../../spec.md#8-параметры-семплинга)).
+   ([§8](../../spec.md#8-sampling-parameters)).
 8. **Minimal orchestrator (`app/orchestrator.rs`)**: one tokio task, an
    `AppCommand` queue (`SendMessage`, `Cancel`), calling `chat_stream`,
    emitting `AppEvent` (`GenerationStarted/Chunk/Thoughts/Finished/Cancelled`),
    `CancellationToken`. `Idle/Generating/Cancelling` state machine and
-   `generation_id` ([§4.4](../../spec.md#44-потоки-выполнения-и-состояние-ui--бэкенд)).
+   `generation_id` ([§4.4](../../spec.md#44-execution-flows-and-ui-backend-state)).
 9. **tokio↔TUI bridge (`app/runtime.rs`)**: `mpsc` for commands
    (UI→orchestrator) and events (orchestrator→UI); non-blocking event drain
    in the render loop.
@@ -174,7 +174,7 @@ cancellation work.
 soft delete.
 
 ### Tasks
-1. **`entities/`** ([§5.1](../../spec.md#51-основные-сущности-entities)):
+1. **`entities/`** ([§5.1](../../spec.md#51-core-entities-entities)):
    `MessageRole`, `Message`, `ToolCallRecord`, `Chat`, `Profile`,
    `CharacterNames`, `Note`, `RagDocument`, `SamplingConfig`,
    `MessageMetadata`, `ToolId`. All `serde`. A `schema_version` field in the
@@ -182,14 +182,14 @@ soft delete.
 2. **`shared/storage/json.rs`**: repositories `ChatRepository`,
    `ProfileRepository`, `ConfigRepository`. Read/write `chats/{id}.json`,
    `profiles.json`, `settings.json`. **Atomic write** (write-temp + rename) +
-   a chat-file backup ([§5.2](../../spec.md#52-хранение-данных)).
+   a chat-file backup ([§5.2](../../spec.md#52-data-storage)).
 3. **`shared/storage/db.rs`**: SQLite init (`rusqlite`), schema migrations,
    wiring up `sqlite-vec`. `notes`, `rag_documents` tables + the virtual
    vector table. `[R]` Check building/linking `sqlite-vec` on Windows and
    Linux.
 4. **`NoteRepository`, `RagRepository` repositories**: CRUD with a
    **mandatory `profile_id` filter**
-   ([§9.5](../../spec.md#95-изоляция-по-профилю)). kNN search (sqlite-vec).
+   ([§9.5](../../spec.md#95-per-profile-isolation)). kNN search (sqlite-vec).
    Embeddings are written, but generated later (M5) — for now they accept a
    ready-made vector.
 5. **Soft delete**: `is_hidden` on chats/profiles; a "hide profile → hide its
@@ -228,26 +228,26 @@ markdown/thoughts/tool blocks, `tui-textarea` input, spellcheck.
    up an ADR.
 2. **`widgets/message_feed.rs`**: feed rendering, scrolling,
    message/block selection. **Collapsible blocks** for "thoughts" and
-   tool-calls ([§11.3](../../spec.md#113-лента-сообщений)). Per-message
+   tool-calls ([§11.3](../../spec.md#113-the-message-feed)). Per-message
    Markdown mode.
 3. **`shared/markdown.rs`**: render markdown to `ratatui::Text` +
    **unicode approximation of LaTeX** (a substitution table: Greek letters,
    arrows, operators, sub/superscripts)
-   ([§11.4](../../spec.md#114-markdown-cot-и-tool-блоки-latex)).
+   ([§11.4](../../spec.md#114-markdown-cot-and-tool-blocks-latex)).
 4. **`widgets/input_box.rs`**: `tui-textarea` (multiline), `Shift+Enter` —
    line break, `Enter`/`Ctrl+Enter` — send (configurable).
 5. **`widgets/chat_list.rs`** (overlay)
-   ([§11.2](../../spec.md#112-список-чатов-оверлей)): opened by `Ctrl+L` and
+   ([§11.2](../../spec.md#112-the-chat-list-an-overlay)): opened by `Ctrl+L` and
    a button; **search filter** by title; **two sort modes** (created/
    modified) with a toggle; **rename** (`F2`); create (with profile choice —
    a profile stub until M4), clone, delete; virtualization.
 6. **`widgets/status_bar.rs`**: model, tokens/context, profile, server
    state.
 7. **`screens/chat.rs`**: widget layout, focus routing, hotkey handling
-   ([§11.7](../../spec.md#117-горячие-клавиши-предварительно)).
+   ([§11.7](../../spec.md#117-keybindings-preliminary)).
 8. **`features/chat_search_sort.rs`, `features/rename_chat.rs`**:
    filter/sort/rename logic (pure functions, testable without UI).
-9. **`features/spellcheck/`** ([§11.5](../../spec.md#115-ввод-и-редактирование-спелл-чек)):
+9. **`features/spellcheck/`** ([§11.5](../../spec.md#115-input-and-editing-spellcheck)):
    - `dict.rs`: load `spellbook` Hunspell dictionaries from `dictionaries/`
      (en_US, en_GB, ru_RU) in the background; multiple active dictionaries
      (correct if accepted by at least one); a personal dictionary.
@@ -286,7 +286,7 @@ markdown/thoughts/tool blocks, `tui-textarea` input, spellcheck.
 1. **Profile `features/`**: create/edit/soft-delete `Profile`; CRUD logic
    (the UI section is M8 — here it's the model and the operations).
 2. **Creating a chat from a profile**
-   ([§10](../../spec.md#10-профили-ии-собеседника)): copy
+   ([§10](../../spec.md#10-ai-companion-profiles)): copy
    `default_system_message → Chat.system_message`, `character_names`,
    `greeting` (as the assistant's first message), `default_sampling`.
 3. **Profile choice on `Ctrl+N`** (a selection overlay).
@@ -294,7 +294,7 @@ markdown/thoughts/tool blocks, `tui-textarea` input, spellcheck.
 5. **Wiring up isolation**: `profile_id` is threaded through every
    notes/RAG call (preparing `ToolContext` for M5).
 6. **Sampling priorities**
-   ([§8.3](../../spec.md#83-уровни-переопределения)):
+   ([§8.3](../../spec.md#83-override-levels)):
    `Chat.sampling_override → Profile.default_sampling → global`; a snapshot
    of what applied goes into `Message.metadata`.
 
@@ -320,11 +320,11 @@ markdown/thoughts/tool blocks, `tui-textarea` input, spellcheck.
 
 ### Tasks
 1. **Contract (`features/tools/mod.rs`)**
-   ([§9.2](../../spec.md#92-контракт-инструмента)): trait `Tool`,
+   ([§9.2](../../spec.md#92-the-tool-contract)): trait `Tool`,
    `ToolContext` (a snapshot), `ToolOutcome { result, effects }`,
    `ChatEffect`, `ToolRegistry`.
 2. **Client-side agentic loop in the orchestrator**
-   ([§6.3](../../spec.md#63-клиентский-agentic-loop)): handling
+   ([§6.3](../../spec.md#63-client-side-agentic-loop)): handling
    `finish_reason = ToolCalls`, accumulating `tool_calls` from the stream,
    invoking tools, appending assistant(tool_calls)+tool messages to history,
    applying `effects`, looping up to `max_tool_rounds` (8). Tool-call
@@ -335,7 +335,7 @@ markdown/thoughts/tool blocks, `tui-textarea` input, spellcheck.
 4. **Passing tool schemas** in `ChatRequest.tools` (only ones enabled in the
    profile ∩ enabled globally).
 5. **On-demand embeddings**
-   ([§16.1 #4](../../spec.md#161-принятые-решения)): `EngineBackend::embed` —
+   ([§16.1 #4](../../spec.md#161-accepted-decisions)): `EngineBackend::embed` —
    `[R]` bring up a secondary `xinfer` embedding server on a separate port,
    use it, stop it; choose model/dimensionality. Fallback — a lightweight
    in-process embedder. Write up an ADR.
@@ -347,7 +347,7 @@ markdown/thoughts/tool blocks, `tui-textarea` input, spellcheck.
      `set_sampling` (→ `effect`), `get_system_message`, `set_system_message`
      (→ `effect`), `get_last_user_message_time`.
 7. **Showing tool blocks** in the feed (name/args/result, collapsible) —
-   wired to `ToolCallRecord` ([§5.1](../../spec.md#51-основные-сущности-entities)).
+   wired to `ToolCallRecord` ([§5.1](../../spec.md#51-core-entities-entities)).
 
 ### Tests
 - Each tool against a mock `Storage`/mock engine: correct result; mutating
@@ -399,18 +399,18 @@ switches.
 
 ### Tasks
 1. **`features/tools/web.rs`**
-   ([§9.3.1](../../spec.md#931-web-инструмент-собственная-реализация)):
+   ([§9.3.1](../../spec.md#931-the-web-tool-our-own-implementation)):
    `web_search` — a query to **DuckDuckGo** (`reqwest`), parsing results
    (`scraper`), `[R]` pick an endpoint (HTML/lite/Instant Answer);
    readable-content extraction from pages (a readability crate/`scraper`);
    optional reranking via `engine.embed`. A global switch.
 2. **`features/tools/python.rs`**
-   ([§13.2](../../spec.md#132-исполнение-python)): a Python subprocess (the
+   ([§13.2](../../spec.md#132-python-execution)): a Python subprocess (the
    interpreter path from settings), stdout/stderr capture, **a timeout**, an
    output-size cap. **Off by default on Windows** (no OS sandbox) + a
    warning. On Linux — a timeout + a separate process.
 3. **Global tool switches**
-   ([§9.4](../../spec.md#94-включение-инструментов)): the effective set =
+   ([§9.4](../../spec.md#94-enabling-tools)): the effective set =
    `enabled_tools ∩ globally enabled`.
 
 ### Tests
@@ -439,7 +439,7 @@ live edit application (`UpdateConfig`/`UpdateProfile`). Theme and custom key
 bindings — fields are saved, actual application lands in M9.
 
 ### Tasks
-1. **`screens/settings.rs`** ([§11.6](../../spec.md#116-экран-настроек)):
+1. **`screens/settings.rs`** ([§11.6](../../spec.md#116-the-settings-screen)):
    navigation by section (a side menu/tabs), entered via `Ctrl+P`.
 2. **Model/server section**: mode (managed/external), path to `xinfer`,
    model source (`--m/--w/--f`), quantization/format, devices (`--d`), port;
@@ -493,7 +493,7 @@ Gemma 4 → the working path is external `llama-server` (OpenAI protocol,
    self-truncation on `<end_of_turn>`/`<eos>`), tool-calling, parsing
    "thoughts". Run the same scenario set used for Qwen.
 2. **Themes (`shared/theme.rs`)**: light/dark/auto; applied across widgets.
-3. **Migration** ([§12.2](../../spec.md#122-миграция-данных)): an importer
+3. **Migration** ([§12.2](../../spec.md#122-schema-versioning-and-migration)): an importer
    from `lamellama-rs` (if such data exists) and optionally from LameLLaMA
    (.NET): profiles (a new id), chats, sampling (dropping unsupported
    fields), the spellcheck config; impersonation/the KV cache aren't
@@ -503,7 +503,7 @@ Gemma 4 → the working path is external `llama-server` (OpenAI protocol,
    error handling in the UI.
 6. **Release build**: build profiles for Windows and Linux; install/
    `xinfer`-path documentation
-   ([§16.2](../../spec.md#162-открытые-вопросы)).
+   ([§16.2](../../spec.md#162-open-questions-to-be-settled-during-implementation)).
 7. **Run every `[ignore]` test** against Gemma and Qwen; a prefix-caching
    smoke (a second turn is faster).
 
@@ -517,7 +517,7 @@ Gemma 4 → the working path is external `llama-server` (OpenAI protocol,
 - Chat and tools work on Gemma the same as on Qwen; old data imports;
   release builds for Windows and Linux.
 - The end-to-end quality bar is met
-  ([§15.1](../../spec.md#151-сквозные-критерии-качества)).
+  ([§15.1](../../spec.md#151-cross-cutting-quality-criteria)).
 
 ---
 

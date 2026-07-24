@@ -115,7 +115,7 @@ pub fn locale(lang) -> &'static Locale // registry lookup → fallback REFERENCE
 
 ### 2.5 Language label in the UI
 
-`Lang::label()`: `Ru→"Русский"`, `En→"English"` (as now — the built-ins stay
+`Lang::label()`: `Ru` → the Russian endonym, `En` → `"English"` (as now — the built-ins stay
 untouched), `Ext(code) → locale(self).get("ui.lang.name").unwrap_or(code)` — a
 new language names itself via the reserved key `ui.lang.name` (otherwise its
 code is shown).
