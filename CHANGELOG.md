@@ -13,6 +13,17 @@ Detailed engineering history lives in the [CLAUDE.md](CLAUDE.md) log.
 
 ## [Unreleased]
 
+### Fixed
+
+- **Ctrl shortcuts now work under any keyboard layout on Windows** — previously
+  only the standard Russian one was handled (via a built-in table), so under a
+  Greek, Hebrew, Georgian, Bulgarian, Armenian, … layout `Ctrl+Q`, `Ctrl+P` and
+  the rest simply did nothing. The physical key is now resolved through the
+  layout itself, which also covers the Russian letters sitting on punctuation
+  keys (which the table never had) and non-standard variants such as Russian
+  Typewriter. On Linux, Cyrillic works as before, plus whatever the terminal
+  itself handles (the GNOME Terminal family copes with every layout on its own).
+
 ## [0.9.3] — 2026-07-24
 
 ### Changed

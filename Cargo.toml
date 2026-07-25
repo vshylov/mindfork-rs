@@ -100,8 +100,13 @@ zip = { version = "2.2.2", default-features = false, features = ["deflate"] }
 # * `Win32_Security_Cryptography` — DPAPI (`CryptProtectData`/`CryptUnprotectData`)
 #   for machine-bound encryption of stored API keys. See shared/secrets.rs,
 #   docs/research/api-key-storage.md.
+# * `Win32_UI_Input_KeyboardAndMouse` + `Win32_UI_WindowsAndMessaging` — resolving a
+#   character back to its physical key through the active/installed keyboard layouts
+#   (`VkKeyScanExW`/`MapVirtualKeyExW`), so `Ctrl+<letter>` shortcuts work under any
+#   layout without a per-language table. See shared/keys.rs,
+#   docs/research/layout-independent-hotkeys.md.
 [target.'cfg(windows)'.dependencies]
-windows-sys = { version = "0.61", features = ["Win32_System_JobObjects", "Win32_Foundation", "Win32_Security", "Win32_Security_Cryptography"] }
+windows-sys = { version = "0.61", features = ["Win32_System_JobObjects", "Win32_Foundation", "Win32_Security", "Win32_Security_Cryptography", "Win32_UI_Input_KeyboardAndMouse", "Win32_UI_WindowsAndMessaging"] }
 
 [target.'cfg(windows)'.build-dependencies]
 winresource = "0.1.31"

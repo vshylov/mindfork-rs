@@ -330,7 +330,8 @@ src/
    │                       Locale/t/tf, built-in locales/{ru,en}.json + external
    │                       data/locales/*.json (init/registry, docs/history/i18n-external-locales.md)
    ├─ theme.rs             Palette (user/assistant/tool/… roles), auto/dark/light
-   ├─ keys.rs              layout-independent Ctrl shortcuts (Cyrillic JCUKEN→Latin)
+   ├─ keys.rs              layout-independent Ctrl shortcuts (`hotkey_char`: Windows
+   │                       keyboard-layout resolution → JCUKEN table → pass-through)
    ├─ server.rs            ServerStatus (server status for the UI)
    ├─ tts/                 speech synthesis (TTS): `TtsEngine` + `AudioClip` contract,
    │                       `openai` client (`/audio/speech`, also used for external) and
@@ -1638,9 +1639,20 @@ Decisions recorded in ADRs:
   segmenter + a personal dictionary; a word is correct if accepted by at
   least one active dictionary; dictionaries are loaded in the background per
   interface settings.
-- **Layout independence** (`shared/keys.rs`): a Ctrl character is normalized
-  to a "physical" Latin key (a Cyrillic JCUKEN lookup table), so shortcuts
-  work under a Cyrillic layout too.
+- **Layout independence** (`shared/keys.rs::hotkey_char`): a Ctrl character is
+  normalized to a "physical" Latin key, so shortcuts work under a non-Latin
+  layout too. Tiers, first hit wins: (1) **Windows** — resolution through the
+  **active layout** (`VkKeyScanExW` → `MapVirtualKeyExW` → scan code → the
+  QWERTY letter at that position), the exact inverse of the `ToUnicodeEx`
+  lookup crossterm used to produce the character, hence *any* installed layout
+  with no per-language data; (2) a static **JCUKEN** table (unix, and Windows
+  under conhost where the foreground window's layout can't be queried);
+  (3) Windows — any other installed layout, for characters outside the table;
+  (4) pass-through. ASCII is never remapped by position (label semantics on
+  AZERTY/QWERTZ/Dvorak). On unix the equivalent of tier 1 is the kitty
+  protocol's *base layout key*, which crossterm 0.29 doesn't expose
+  (crossterm-rs/crossterm#968) — the tier slot is reserved. See
+  [docs/research/layout-independent-hotkeys.md](research/layout-independent-hotkeys.md).
 
 ---
 

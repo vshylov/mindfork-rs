@@ -186,6 +186,22 @@ tracks are done (see "Recently closed" below and `docs/history/`). One
 - **Custom keyboard layout** — there's already a field for this under
   "Interface" (marked as groundwork since M9), but actual custom-binding
   application isn't done.
+- **Layout-independent hotkeys on unix beyond Cyrillic** — **blocked on an
+  upstream release.** The kitty keyboard protocol carries the answer (the *base
+  layout key* of the "report alternate keys" enhancement), but crossterm 0.29
+  parses only the shifted alternate and drops it
+  ([#968](https://github.com/crossterm-rs/crossterm/issues/968)). The parsing +
+  API patch is written, verified on Linux and submitted as
+  [crossterm#1074](https://github.com/crossterm-rs/crossterm/pull/1074); an
+  end-to-end spike through our resolver is validated. Remaining once it ships on
+  crates.io: bump, push `REPORT_ALTERNATE_KEYS` alongside
+  `DISAMBIGUATE_ESCAPE_CODES` in `app/runtime/mod.rs`, add the tier-0 branch in
+  `shared/keys.rs` (**after** the ASCII short-circuit — see the AZERTY case in
+  the research doc) — no call site changes. Note that crossterm merges PRs
+  regularly but last released in April 2025, so this may sit for a while. On
+  Windows every layout already works (stage 1); VTE-family terminals need
+  nothing. See
+  [docs/research/layout-independent-hotkeys.md](research/layout-independent-hotkeys.md).
 - **Applying a theme from a color configuration** — a user palette layered
   over auto/dark/light.
 

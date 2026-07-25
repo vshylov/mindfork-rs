@@ -74,7 +74,8 @@ Architecture — **Feature-Sliced Design (FSD)**.
 - **Feed scrolling** with the mouse wheel or `PageUp`/`PageDown`. Mouse capture is a
   **toggle** (`Ctrl+W`): off by default (native mouse text selection works), turns on
   for wheel scrolling (selection then needs `Shift`).
-- **Layout-independent** Ctrl shortcuts (work with a Cyrillic keyboard layout too).
+- **Layout-independent** Ctrl shortcuts — on Windows they work under any installed
+  keyboard layout (Cyrillic, Greek, Hebrew, …); elsewhere, under Cyrillic.
 
 **AI companion profiles**
 - Unique id, system message, an optional **greeting** (the model starts the
@@ -389,7 +390,10 @@ directory → spellcheck is simply off (doesn't crash). The dictionaries themsel
 | `/tts` · `/tts N` · `/tts all` | read the last message aloud / the last N / the whole conversation |
 | `/tts stop` · `pause` · `resume` | stop / pause / resume reading aloud |
 
-Ctrl shortcuts are layout-independent (work with a Russian keyboard layout too).
+Ctrl shortcuts are layout-independent: on Windows they are resolved through the
+keyboard layout itself, so any installed layout works (Cyrillic, Greek, Hebrew, …);
+on Linux — under Cyrillic, plus whatever the terminal itself falls back to (the VTE
+family — GNOME Terminal & co. — handles every layout on its own).
 
 > **The mouse wheel and text selection share one terminal mechanism** (mouse
 > reporting), so capture is a toggle (`Ctrl+W`). Off (default): the mouse selects

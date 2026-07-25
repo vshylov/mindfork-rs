@@ -1187,8 +1187,8 @@ impl InputBox {
         // Editor Ctrl shortcuts: select all / undo / redo / clear
         // (layout-independent via `physical_char`). Undo/redo return `Edited`
         // only if something actually changed (otherwise `Moved` — a no-op).
-        if ctrl && let KeyCode::Char(c) = key.code {
-            match keys::physical_char(c) {
+        if ctrl && let Some(physical) = keys::hotkey_char(&key) {
+            match physical {
                 'a' => {
                     self.select_all();
                     return KeyOutcome::Moved;
