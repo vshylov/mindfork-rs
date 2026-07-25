@@ -230,6 +230,58 @@ kitty-protocol support in Windows Terminal (whenever it ships) changes nothing
 for us there; B is the Windows mechanism, C is the unix mechanism. They meet in
 the same `shared/keys.rs` entry point.
 
+#### C.1 Upstream patch — written and verified (2026-07-24)
+
+The crossterm side is implemented on
+[`vshylov/crossterm:feat/base-layout-key`](https://github.com/vshylov/crossterm/tree/feat/base-layout-key)
+(+137/−15 across `src/event.rs`, `src/event/sys/unix/parse.rs`, `CHANGELOG.md`):
+
+- the `CSI u` parser reads **both** alternates positionally. The existing code
+  read the shifted one *only when SHIFT was held*, so the base layout key was
+  unreachable — and with an empty shifted field (`CSI 1076::108;5u`, which the
+  protocol allows) the iterator would have handed out the wrong slot;
+- the base layout key is exposed as `KeyEvent::base_layout_code: Option<KeyCode>`,
+  matching the existing enhancement-gated `kind`/`state` fields, plus a
+  `with_base_layout_code` builder;
+- the field deliberately takes **no part in `PartialEq`/`Hash`**. It is metadata
+  about the same key press, and including it would silently break the ubiquitous
+  `event == KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL)` comparison
+  for every application the moment the enhancement is enabled — which would make
+  the feature unusable. crossterm's manual `PartialEq`/`Hash` destructure
+  `KeyEvent` exhaustively, so this is an explicit `base_layout_code: _`.
+  (Derived `PartialOrd`/`Ord` do include it, inconsistently with `Eq` — but they
+  already disagree via `normalize_case`, so that pre-existing wart was left
+  alone rather than widening the diff.)
+
+Verified natively on Ubuntu 24.04 (WSL, matching `ubuntu-latest`): `cargo fmt
+--check`, `cargo clippy --all-features -- -D clippy::all` and `cargo test
+--all-features` — **119 tests pass**, including the two new ones. Decisive
+detail: **all pre-existing tests pass unchanged**, which is what makes the
+"equality is untouched" claim concrete rather than asserted.
+
+#### C.2 The ordering finding — tier 0 goes *after* the ASCII short-circuit
+
+An end-to-end spike (our tree with `[patch.crates-io] crossterm = { path = … }`
+plus the tier-0 branch, run on Linux) caught a design error that reading alone
+would not have:
+
+> the base layout key must **not** be honoured for an ASCII character.
+
+On AZERTY the key labelled `A` sits at the US `Q` position, so the terminal
+reports `Char('a')` with a base layout key of `q`. Taking the base layout key
+unconditionally would turn `Ctrl+A` (select all) into `Ctrl+Q` (**quit**) for
+every AZERTY user. The same ASCII rule that protects Latin layouts in tier B
+(§5) therefore protects tier 0 as well — it belongs immediately after the
+short-circuit, not before it.
+
+Spike result on Linux, with the patched crossterm: Greek `λ`, Hebrew `ק` and
+Cyrillic `д` all resolve through the reported base layout key (`l`, `e`, `l`) —
+scripts the static table has never covered — while AZERTY's `a`/`q` correctly
+stays `a`, and the table still answers when the enhancement is off. Our full
+suite: 1271 passed, clippy `-D warnings` clean. The spike is intentionally not
+committed (it cannot build without the patched crossterm); this section is its
+durable form.
+
 ### D. Rejected approaches
 
 - **xkbcommon reverse lookup on unix**: a PTY application cannot reliably know
@@ -251,11 +303,16 @@ the same `shared/keys.rs` entry point.
 ```text
 hotkey_char(&KeyEvent) -> Option<char>   // the one call sites use; None = not a Char key
   0. ASCII short-circuit (label semantics on Latin layouts, no OS calls)
-  1. (windows) VkKeyScanExW pipeline against the ACTIVE layout       — tier B
-  2. (everywhere) static JCUKEN table                                — tier A
-  3. (windows) VkKeyScanExW pipeline against INSTALLED layouts       — tier B
-  4. pass-through lowercase (current behavior)
+  1. (unix, pending upstream) event.base_layout_code                 — tier C
+  2. (windows) VkKeyScanExW pipeline against the ACTIVE layout       — tier B
+  3. (everywhere) static JCUKEN table                                — tier A
+  4. (windows) VkKeyScanExW pipeline against INSTALLED layouts       — tier B
+  5. pass-through lowercase (current behavior)
 ```
+
+The ASCII short-circuit outranks **every** resolution tier, including the
+terminal-reported base layout key — see §4 C.2 for the AZERTY case that makes
+this load-bearing rather than cosmetic.
 
 **Why the table sits between the two Windows tiers** (a deviation from the
 first sketch, which put all of tier B ahead of tier A): the active layout is
@@ -330,10 +387,14 @@ contribution lands (interim: tier A deltas per R3).
    tier B covers Ukrainian/Belarusian already, and on unix the deltas would
    only serve kitty-protocol terminals until stage 3 lands — not worth new
    hand-maintained data with its variant-ambiguity risk (§4A).
-3. **Stage 3 — crossterm upstream** (`spike` + PR): parse + expose
-   base-layout key per #968; after release — bump, push
-   `REPORT_ALTERNATE_KEYS`, prefer `base_layout_code`. Timing depends on
-   upstream cadence; tracked in [docs/roadmap.md](../roadmap.md).
+3. **Stage 3 — crossterm upstream** — patch **written and verified** (§4 C.1),
+   spike **validated end to end** (§4 C.2); submission pending. After the
+   upstream release: bump, push `REPORT_ALTERNATE_KEYS` alongside
+   `DISAMBIGUATE_ESCAPE_CODES` in `app/runtime/mod.rs`, and add the tier-0
+   branch exactly as the spike had it. Timing depends on upstream cadence:
+   crossterm merges PRs regularly, but **the last crates.io release was 0.29 in
+   April 2025** — over a year before this was written — so the release, not the
+   review, is the long pole. Tracked in [docs/roadmap.md](../roadmap.md).
 
 ## 8. Decision points
 
