@@ -79,8 +79,9 @@ pub fn reconcile_tools(profile: &mut Profile) -> bool {
 pub struct ProfileEdit {
     pub name: Option<String>,
     pub system_message: Option<String>,
-    /// The impersonation mode's system message (see [`Profile::impersonation_system_message`]).
-    pub impersonation_system_message: Option<String>,
+    /// The impersonation profile this profile's chats use (`Some(None)` — unlink,
+    /// falling back to the default text). See [`Profile::impersonation_profile_id`].
+    pub impersonation_profile_id: Option<Option<uuid::Uuid>>,
     /// `Some(None)` — clear the greeting; `Some(Some(..))` — set it.
     pub greeting: Option<Option<String>>,
     pub character_names: Option<CharacterNames>,
@@ -111,8 +112,8 @@ pub fn apply_edit(profile: &mut Profile, edit: ProfileEdit) -> bool {
     if let Some(system) = edit.system_message {
         profile.default_system_message = system;
     }
-    if let Some(system) = edit.impersonation_system_message {
-        profile.impersonation_system_message = system;
+    if let Some(imp) = edit.impersonation_profile_id {
+        profile.impersonation_profile_id = imp;
     }
     if let Some(greeting) = edit.greeting {
         profile.greeting = greeting.filter(|g| !g.is_empty());

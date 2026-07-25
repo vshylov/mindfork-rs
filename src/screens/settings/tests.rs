@@ -430,19 +430,130 @@ fn section_field_count_excludes_subsection_selector() {
     );
 }
 
-#[test]
-fn impersonation_profile_subsection_has_no_tools() {
-    let mut s = screen();
-    goto_section(&mut s, Section::Profiles);
-    goto_field(&mut s, FieldId::ProfileSub); // the subsection tab strip (field 0)
+/// Switches the "Profiles" section to the "Impersonation" subsection.
+fn goto_impersonation_sub(s: &mut SettingsScreen) {
+    goto_section(s, Section::Profiles);
+    goto_field(s, FieldId::ProfileSub); // the subsection tab strip (field 0)
     s.handle_key(key(KeyCode::Right)); // → Impersonation
     assert_eq!(s.profile_sub, Subsection::Impersonation);
+}
+
+#[test]
+fn impersonation_profile_subsection_edits_its_own_list_without_tools() {
+    let mut s = screen();
+    s.config.impersonation_profiles = vec![crate::shared::config::ImpersonationProfile::new(
+        "Юзер",
+        "Ты — Владимир.",
+    )];
+    goto_impersonation_sub(&mut s);
     let fields = s.fields();
     assert!(
         !fields.iter().any(|f| matches!(f.id, FieldId::PTool(_))),
         "the impersonation subsection has no tool toggles"
     );
-    assert!(fields.iter().any(|f| f.id == FieldId::PImpSystem));
+    // Its own selector/name/system message — not the assistant profile's.
+    assert!(fields.iter().any(|f| f.id == FieldId::IpSelect));
+    assert!(fields.iter().any(|f| f.id == FieldId::IpName));
+    assert!(fields.iter().any(|f| f.id == FieldId::IpSystem));
+    assert!(
+        !fields
+            .iter()
+            .any(|f| matches!(f.id, FieldId::PSelect | FieldId::PName)),
+        "the assistant profile selector/name don't belong on the impersonation tab"
+    );
+}
+
+#[test]
+fn impersonation_profile_create_edit_delete() {
+    let mut s = screen();
+    goto_impersonation_sub(&mut s);
+    // An empty list — only the selector placeholder; Ctrl+N creates the first entry.
+    assert!(s.fields().iter().all(|f| f.id != FieldId::IpName));
+    assert!(matches!(
+        s.handle_key(ctrl('n')),
+        Some(SettingsIntent::SaveConfig(_))
+    ));
+    assert_eq!(s.config.impersonation_profiles.len(), 1);
+    assert_eq!(s.imp_profile_idx, 0);
+
+    // Editing the name and system message goes into the config working copy.
+    goto_field(&mut s, FieldId::IpName);
+    s.handle_key(key(KeyCode::Enter));
+    s.handle_key(ctrl('k')); // the editor is seeded with the current name
+    for c in "Владимир".chars() {
+        s.handle_key(key(KeyCode::Char(c)));
+    }
+    assert!(matches!(
+        s.handle_key(key(KeyCode::Enter)),
+        Some(SettingsIntent::SaveConfig(_))
+    ));
+    assert_eq!(s.config.impersonation_profiles[0].name, "Владимир");
+
+    s.handle_key(key(KeyCode::Left)); // back to the menu (goto_field starts from there)
+    goto_field(&mut s, FieldId::IpSystem);
+    s.handle_key(key(KeyCode::Enter));
+    for c in "Ты — я.".chars() {
+        s.handle_key(key(KeyCode::Char(c)));
+    }
+    s.handle_key(key(KeyCode::Enter));
+    assert_eq!(s.config.impersonation_profiles[0].system_message, "Ты — я.");
+
+    // Ctrl+D removes it; the list is empty again.
+    assert!(matches!(
+        s.handle_key(ctrl('d')),
+        Some(SettingsIntent::SaveConfig(_))
+    ));
+    assert!(s.config.impersonation_profiles.is_empty());
+}
+
+#[test]
+fn assistant_profile_references_impersonation_profile() {
+    let mut s = screen();
+    let ip = crate::shared::config::ImpersonationProfile::new("Юзер", "Ты — Владимир.");
+    let ip_id = ip.id;
+    s.config.impersonation_profiles = vec![ip];
+    goto_section(&mut s, Section::Profiles);
+    goto_field(&mut s, FieldId::PImpProfile);
+    // "Not set" by default — the shared default text applies.
+    assert_eq!(
+        s.fields()
+            .iter()
+            .find(|f| f.id == FieldId::PImpProfile)
+            .map(|f| value_text(&f.kind, s.loc())),
+        Some("(не задан)".to_string())
+    );
+    // → picks the only impersonation profile and saves the profile edit.
+    let intent = s.handle_key(key(KeyCode::Right));
+    assert!(matches!(intent, Some(SettingsIntent::SaveProfile { .. })));
+    assert_eq!(s.profiles[0].impersonation_profile_id, Some(ip_id));
+    // → again wraps back to "not set" (the list has a single entry + the empty option).
+    s.handle_key(key(KeyCode::Right));
+    assert_eq!(s.profiles[0].impersonation_profile_id, None);
+}
+
+#[test]
+fn new_profile_is_selected_after_the_settings_reemit() {
+    let mut s = screen();
+    goto_section(&mut s, Section::Profiles);
+    assert_eq!(s.profile_idx, 0);
+    // Ctrl+N only asks: the orchestrator owns the list.
+    assert!(matches!(
+        s.handle_key(ctrl('n')),
+        Some(SettingsIntent::CreateProfile { .. })
+    ));
+    // The re-emitted snapshot carries the new profile — it must become the selected one.
+    let mut profiles = s.profiles.clone();
+    let created = Profile::new("Новый профиль", "");
+    let created_id = created.id;
+    profiles.push(created);
+    s.refresh(s.config.clone(), profiles, Vec::new());
+    assert_eq!(s.profiles[s.profile_idx].id, created_id);
+
+    // One-shot: an unrelated later re-emit doesn't move the selection.
+    let mut profiles = s.profiles.clone();
+    profiles.push(Profile::new("Ещё один", ""));
+    s.refresh(s.config.clone(), profiles, Vec::new());
+    assert_eq!(s.profiles[s.profile_idx].id, created_id);
 }
 
 #[test]
@@ -1719,4 +1830,36 @@ fn api_key_field_targets_provider_of_its_slot() {
         Some(CloudProvider::Gemini)
     );
     assert_eq!(s.api_key_field_provider(FieldId::XUrl), None);
+}
+
+/// User data (a profile, an impersonation persona) has no "default value", so it must
+/// never get the `•` "modified" marker — comparing it against a default config would
+/// flag a chosen persona simply because the default config has no personas at all.
+#[test]
+fn profile_and_persona_rows_are_never_marked_modified() {
+    use ratatui::{Terminal, backend::TestBackend};
+    let mut s = screen();
+    s.config.impersonation_profiles = vec![crate::shared::config::ImpersonationProfile::new(
+        "Владимир",
+        "Ты — Владимир.",
+    )];
+    s.profiles[0].impersonation_profile_id = Some(s.config.impersonation_profiles[0].id);
+    goto_section(&mut s, Section::Profiles);
+    s.handle_key(key(KeyCode::Enter));
+
+    let marked = |s: &mut SettingsScreen| {
+        let mut term = Terminal::new(TestBackend::new(96, 26)).unwrap();
+        term.draw(|f| s.render(f)).unwrap();
+        let buf = term.backend().buffer().clone();
+        (0..26).any(|y| (0..96).any(|x| buf[(x, y)].symbol() == "•"))
+    };
+    assert!(
+        !marked(&mut s),
+        "the assistant subsection marked user data as modified"
+    );
+    goto_impersonation_sub(&mut s);
+    assert!(
+        !marked(&mut s),
+        "the impersonation subsection marked user data as modified"
+    );
 }

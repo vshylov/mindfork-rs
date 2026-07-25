@@ -123,10 +123,13 @@ Env for selecting the backend: `MINDFORK_ENGINE_URL` (external, any OpenAI serve
 `MINDFORK_LLAMA_BIN` (+ `MINDFORK_MODEL` GGUF, `MINDFORK_NGL`, `MINDFORK_CTX`,
 `MINDFORK_PORT`) for a managed `llama-server`.
 
-## Status (as of 2026-07-24, version 0.9.3)
-The entire **M0–M9** plan is done, plus extensive post-M9 work (on `main`). **1273 unit
+## Status (as of 2026-07-25, version 0.9.3)
+The entire **M0–M9** plan is done, plus extensive post-M9 work (on `main`). **1281 unit
 tests green, 58 `#[ignore]` smokes** (the largest count — log below; the current
-track is **universal layout-independent hotkeys** (stage 1: on Windows the physical
+track is **impersonation profiles** (the user personas for `Ctrl+U` became a list of
+their own with a name and system message each, referenced from the assistant profile;
+plus a fix: a profile created with `Ctrl+N` in settings is now selectable right away) —
+**done**; before that — **universal layout-independent hotkeys** (stage 1: on Windows the physical
 key is resolved through the keyboard layout itself — every installed layout works,
 not just Russian; research
 [docs/research/layout-independent-hotkeys.md](docs/research/layout-independent-hotkeys.md),
@@ -7808,6 +7811,79 @@ debounce was done as a separate PR, see below).
   in the roadmap: crossterm merges PRs regularly, but **the last crates.io
   release was 0.29 in April 2025** — the release, not the review, is the long
   pole. No unit-test count change in this repo (docs only).
+
+### Post-M9: impersonation profiles + a newly created profile is selectable (done)
+- Two defects in the settings "Profiles" section, reported by the user; branch
+  `feat/impersonation-profiles`. Forks confirmed by the user 2026-07-25 (per the
+  recommendations): the impersonation persona is bound **through the assistant
+  profile**, and the legacy field is **migrated automatically**.
+- **(1) `Ctrl+N` created a profile you couldn't then select.**
+  `handle_create_profile` emitted only `AppEvent::ProfileList` — which the **chat**
+  screen consumes; the settings screen keeps its own copy of the list from the
+  `Settings` snapshot, so a new profile stayed invisible there (not selectable, let
+  alone editable) until a restart. `handle_create_profile`/`handle_delete_profile` now
+  also `emit_settings()` — `SettingsScreen::refresh`'s doc comment ("after create/delete
+  of a profile") had described this contract all along; only the emit was missing.
+  Auto-selection: the orchestrator owns the list, so the screen can't know the new id —
+  `Ctrl+N` raises a one-shot `pending_profile_select`, and `refresh` selects whichever
+  profile isn't in the previous snapshot (comparison by id, not "the last one" — robust
+  to ordering). One-shot by construction: the flag is cleared whatever the snapshot
+  brings, so a later unrelated re-emit can't hijack the selection.
+- **(2) The "Impersonation" subsection edited the assistant's profile.** It showed the
+  assistant profile selector and name (both section-level, shared with the "Assistant"
+  subsection) and, under them, a single system message — an asymmetry inherited from
+  storing the impersonation prompt as `Profile.impersonation_system_message`. Now the
+  two subsections edit **different lists**: "Assistant" — the AI-interlocutor profiles,
+  "Impersonation" — the user personas, each with its own name and system message
+  (`IpSelect`/`IpName`/`IpSystem`); `Ctrl+N`/`Ctrl+D` act on whichever list the active
+  subsection shows. The assistant profile ties them together with a new
+  "Impersonation profile" field (`PImpProfile` → `Profile.impersonation_profile_id`),
+  so "who the assistant is" and "who I am in this conversation" travel together and
+  several assistant profiles can share one persona.
+- **Storage — `AppConfig.impersonation_profiles`, not `profiles.json`** (a deliberate
+  departure from "profiles live in profiles.json"): impersonation is already configured
+  globally in `settings.json` (`impersonation_engine`, `impersonation_sampling`), and
+  `profiles.json` is a bare array with no room for a second list. The payoff is large —
+  the settings screen edits the list through the ordinary config-save path, so
+  **no new `AppCommand`/`AppEvent`/`SettingsIntent`, no storage artifact, no schema
+  registration**, and creating a persona needs no orchestrator round-trip (hence no
+  auto-select problem for that list). The cost is a cross-file reference: a dangling id
+  is legal and reads as "not set" → the shared default text (so deleting a persona
+  doesn't have to rewrite every referencing profile). Both fields are additive
+  (`#[serde(default)]` + skip-if-empty) → **no schema bump** (ADR 0006 F12).
+- **Migration** (`Orchestrator::migrate_impersonation_profiles`, called from
+  `bootstrap`): every profile still carrying a non-empty legacy message and no
+  reference gets a persona "«name» (impersonation)" created and linked. Idempotent (a
+  profile with a reference is skipped) → safe across upgrade/downgrade cycles; the
+  config is written **before** the profile links (a link persisted without its target
+  would dangle), and on failure the next launch simply retries. The legacy field is
+  **kept** on disk — nothing reads it for prompt building any more.
+- **Resolution** was pulled out of `handle_impersonate` into a pure
+  `Orchestrator::impersonation_system(profile, loc)` — reference → persona → non-empty
+  message, with every miss (no reference / dangling id / blank message) falling back to
+  `prompt.impersonation.default`. That made it unit-testable without a streaming
+  backend.
+- **Ripple**: `ProfileEdit.impersonation_system_message` → `impersonation_profile_id`
+  (`Some(None)` unlinks); `FieldId::PImpSystem` removed, `PImpProfile`/`IpSelect`/
+  `IpName`/`IpSystem` added (registered in `is_profile_field` — user data has no
+  "config default", so no `•` marker and no `Del`-reset); `choice_menu` gained the
+  persona lists (`PImpProfile`'s option 0 is "not set"); the import format is
+  unaffected (v1 never carried impersonation). Along the way a latent bug was fixed:
+  the "no profiles" branch of `profile_fields_for` used to return a lone row **without**
+  the subsection tab strip, stranding the user in the section.
+- **Tests**: settings (the impersonation subsection edits its own list and has no
+  assistant selector/name/tools; create → edit name+message → delete; the assistant's
+  reference cycles "not set" ↔ persona; a new profile is selected on the re-emit and the
+  flag is one-shot); orchestrator (create/delete re-emit `Settings`; the legacy
+  migration links and is idempotent across two launches; resolution covers reference/
+  dangling/blank); config (additive default + round-trip); render (user data never gets
+  the `•` "modified" marker — a false positive found by dumping the rendered section:
+  a chosen persona was flagged only because the *default* config has no personas at
+  all; `is_profile_field` now gates the marker as its doc comment always claimed).
+  **1281 unit tests green** (+8), 58 `#[ignore]`, clippy `-D warnings`/fmt/i18n gates/`cyrillic_scan` clean.
+  **A live run isn't required** — no engine/memory/tool path is touched: the
+  impersonation *request* is unchanged, only where its system message is read from
+  (covered by unit tests); the rest is settings UI.
 
 ### Deferred beyond M3
 - **Per-message collapse/selection** and tool blocks in the feed — currently "thoughts"

@@ -541,10 +541,17 @@ enum FieldId {
     PLanguage,
     PSystem,
     PGreeting,
-    /// The profile's system message for impersonation.
-    PImpSystem,
+    /// The impersonation profile the assistant profile's chats use (a reference by
+    /// id; the first option — "no reference", the shared default text). See spec §11.8.
+    PImpProfile,
     /// A profile tool toggle by index in the catalog.
     PTool(usize),
+    // Impersonation profiles (the "Impersonation" subsection of "Profiles"; the list
+    // lives in `AppConfig.impersonation_profiles`).
+    /// The impersonation profile selector.
+    IpSelect,
+    IpName,
+    IpSystem,
 }
 
 /// How a field is edited (for rendering and key handling).
@@ -648,6 +655,13 @@ pub struct SettingsScreen {
     focus: Focus,
     /// The selected profile in the "Profiles" section.
     profile_idx: usize,
+    /// The selected impersonation profile in the "Impersonation" subsection of
+    /// "Profiles" (an index into `config.impersonation_profiles`).
+    imp_profile_idx: usize,
+    /// A profile creation (`Ctrl+N`) is in flight: the orchestrator owns the profile
+    /// list, so the new profile only arrives with the next `Settings` snapshot —
+    /// [`SettingsScreen::refresh`] then selects whichever profile is new. One-shot.
+    pending_profile_select: bool,
     /// The active subsections. Model — three tabs (Assistant/Impersonation/Embeddings);
     /// Sampling/Profiles — two (Assistant/Impersonation).
     model_sub: ModelTab,

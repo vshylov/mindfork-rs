@@ -39,6 +39,31 @@ impl SettingsScreen {
                 let opts: Vec<String> = self.profiles.iter().map(|p| p.name.clone()).collect();
                 (!opts.is_empty()).then_some((opts, self.profile_idx))
             }
+            FieldId::IpSelect => {
+                let opts: Vec<String> = self
+                    .config
+                    .impersonation_profiles
+                    .iter()
+                    .map(|ip| ip.name.clone())
+                    .collect();
+                (!opts.is_empty()).then_some((opts, self.imp_profile_idx))
+            }
+            // The reference to an impersonation profile: "not set" first, then the profiles.
+            FieldId::PImpProfile => {
+                let cur = self.imp_profile_choice_index()?;
+                let mut opts = vec![
+                    self.loc()
+                        .t("ui.settings.value.imp_profile_none")
+                        .to_string(),
+                ];
+                opts.extend(
+                    self.config
+                        .impersonation_profiles
+                        .iter()
+                        .map(|ip| ip.name.clone()),
+                );
+                Some((opts, cur))
+            }
             // Profile scaffold language (axis A): options — all known languages (built-in +
             // external from data/locales/).
             FieldId::PLanguage => {

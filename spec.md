@@ -1107,8 +1107,10 @@ the chat screen; the intent (`RegenerateLast`/`DeleteLastExchange`) is only issu
 box. The request-building algorithm:
 
 - the chat's system message (the assistant's persona) is replaced with the
-  profile's **impersonation system message** (`Profile.impersonation_system_message`;
-  empty → a shared default);
+  **impersonation profile's** system message — the user persona the chat's assistant
+  profile points at (`Profile.impersonation_profile_id` →
+  `AppConfig.impersonation_profiles`); no reference, a dangling id (the persona was
+  deleted), or an empty message → a shared default;
 - in the history, **user ↔ assistant roles are swapped**, and system/tool messages and
   empty ones are dropped (there are no tools in this mode);
 - sampling comes from the "Impersonation" subsection (`AppConfig.impersonation_sampling`),
@@ -1129,9 +1131,24 @@ cancellation the box keeps its original text. If the input box wasn't empty, its
 **seed** — the model is asked to continue what's there (outputting only the continuation), and
 the preview shows the seed + the generated continuation.
 
+**Impersonation profiles** (the user personas) are a list of their own —
+`AppConfig.impersonation_profiles` (`{id, name, system_message}`), stored in
+`settings.json` next to the rest of the globally-configured impersonation
+(`impersonation_engine`, `impersonation_sampling`) rather than in `profiles.json`.
+An assistant profile references one by id, so "who the assistant is" and "who I am
+in this conversation" travel together; several assistant profiles may share one
+persona. Deleting a persona doesn't touch the referencing profiles — a dangling
+reference simply reads as "not set". The legacy per-profile field
+`Profile.impersonation_system_message` is migrated once at startup into a named
+persona ("«profile name» (impersonation)") and linked; the field itself stays on
+disk (nothing reads it any more).
+
 **Settings** (§11.6): the "Model/server", "Sampling", and "Profiles" sections get
-an "Assistant"/"Impersonation" subsection selector. In the profile's impersonation
-subsection there's only the system message (no tools).
+an "Assistant"/"Impersonation" subsection selector. The two "Profiles" subsections
+edit **different lists**: "Assistant" — the AI-interlocutor profiles (plus the
+"Impersonation profile" field choosing the persona), "Impersonation" — the personas
+themselves (selector, name, system message; no tools). `Ctrl+N`/`Ctrl+D` create/delete
+in whichever list the active subsection shows.
 
 ---
 

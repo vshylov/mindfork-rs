@@ -174,3 +174,33 @@ async fn impersonate_streams_into_preview_and_finishes() {
     cmd_tx.send(AppCommand::Quit).unwrap();
     handle.await.unwrap();
 }
+
+/// The user persona is resolved through the assistant profile's reference into
+/// `config.impersonation_profiles`; every miss falls back to the default text.
+#[test]
+fn impersonation_system_resolves_through_the_profile_reference() {
+    let (_d, mut orch) = bare_orch();
+    let loc = crate::shared::i18n::locale(crate::shared::i18n::Lang::Ru);
+    let default_text = loc.t("prompt.impersonation.default");
+
+    let imp = crate::shared::config::ImpersonationProfile::new("Юзер", "Ты — Владимир.");
+    let imp_id = imp.id;
+    orch.config.impersonation_profiles = vec![imp];
+
+    let mut profile = Profile::new("P", "sys");
+    // No reference — the default.
+    assert_eq!(orch.impersonation_system(Some(&profile), loc), default_text);
+    // A reference — the persona's message.
+    profile.impersonation_profile_id = Some(imp_id);
+    assert_eq!(
+        orch.impersonation_system(Some(&profile), loc),
+        "Ты — Владимир."
+    );
+    // A dangling reference (the persona was deleted) — the default, not an empty prompt.
+    profile.impersonation_profile_id = Some(uuid::Uuid::new_v4());
+    assert_eq!(orch.impersonation_system(Some(&profile), loc), default_text);
+    // A blank persona message — also the default.
+    profile.impersonation_profile_id = Some(imp_id);
+    orch.config.impersonation_profiles[0].system_message = "   ".into();
+    assert_eq!(orch.impersonation_system(Some(&profile), loc), default_text);
+}

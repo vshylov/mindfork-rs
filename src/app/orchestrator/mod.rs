@@ -366,6 +366,7 @@ impl Orchestrator {
                 let _ = self.storage.json().upsert_profile(profile);
             }
         }
+        self.migrate_impersonation_profiles();
         if self.profiles.is_empty() {
             // The first profile — in the scaffold language from defaults.json
             // (filled in by the installer per the user's choice). See
