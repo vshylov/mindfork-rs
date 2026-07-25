@@ -7748,6 +7748,67 @@ debounce was done as a separate PR, see below).
   fell through to pass-through. A full interactive TUI check under a switched
   layout needs a real terminal — left to the user.
 
+### Post-M9: universal layout-independent hotkeys — stage 3, upstream crossterm (submitted)
+- **Stage 3** of the track (research
+  [docs/research/layout-independent-hotkeys.md](docs/research/layout-independent-hotkeys.md) §4 C,
+  fork R2): the unix half of layout independence isn't ours to write — the kitty
+  keyboard protocol already carries the **base layout key** ("the key
+  corresponding to the physical key in the standard PC-101 key layout"), but
+  crossterm 0.29 parses only the shifted alternate and drops it
+  ([#968](https://github.com/crossterm-rs/crossterm/issues/968), open since Feb
+  2025, **zero comments**, no competing PR). So the work was an upstream
+  contribution — precedent: mermaid-text #29/#30 → 0.56.1.
+- **Patch** (submitted as
+  [crossterm#1074](https://github.com/crossterm-rs/crossterm/pull/1074),
+  +137/−15): the `CSI u` parser reads **both** alternates positionally — which
+  also fixes a latent bug, since any alternate may be empty
+  (`CSI 1076::108;5u`) and the old `codepoints.next()`, reached only under
+  SHIFT, would then hand out the wrong slot; the base layout key is exposed as
+  `KeyEvent::base_layout_code: Option<KeyCode>` (mirroring the existing
+  enhancement-gated `kind`/`state` fields) plus a `with_base_layout_code`
+  builder.
+- **The one design decision**: the field takes **no part in
+  `PartialEq`/`Hash`**. It describes the same key press rather than identifying
+  it, and including it would silently break the ubiquitous
+  `event == KeyEvent::new(KeyCode::Char('c'), CONTROL)` comparison for every
+  application the moment it enables `REPORT_ALTERNATE_KEYS` — making the feature
+  unusable. crossterm's manual impls destructure `KeyEvent` exhaustively, so
+  this is an explicit `base_layout_code: _`. (Derived `PartialOrd`/`Ord` do
+  include it, inconsistent with `Eq` — but they already disagree via
+  `normalize_case`; pre-existing wart left alone, offered to the maintainers.)
+- **Verification without a local unix toolchain**: no WSL at first, so the patch
+  was checked by `cargo check --target x86_64-unknown-linux-gnu` locally +
+  a throwaway workflow in our own repo (GitHub blocks Actions on forks until
+  enabled by hand) that clones the patched fork and runs its suite on ubuntu.
+  A local "just un-cfg the unix parser on Windows" attempt was **abandoned** —
+  it cascaded into un-gating `InternalEvent` variants and then broke exhaustive
+  matches in the Windows code, i.e. each hack lowered the fidelity of what was
+  being tested. After the user installed WSL (**Ubuntu 24.04**, chosen to match
+  `ubuntu-latest` in both CIs), everything was re-run natively: **119 crossterm
+  tests green**, fmt/clippy clean, and — the load-bearing detail — **all
+  pre-existing tests passed unchanged**, which is what makes "equality is
+  untouched" concrete rather than asserted.
+- **End-to-end spike caught a design error** (§4 C.2): our tree with
+  `[patch.crates-io] crossterm = { path = … }` + the tier-0 branch, run on
+  Linux. The base layout key must **not** be honoured for an ASCII character —
+  on AZERTY the key labelled `A` sits at the US `Q` position, so it arrives as
+  `Char('a')` with base layout key `q`, and taking it unconditionally would turn
+  `Ctrl+A` (select all) into `Ctrl+Q` (**quit**) for every AZERTY user. Tier 0
+  therefore belongs **after** the ASCII short-circuit — the same rule that
+  protects Latin layouts in the Windows tier. Spike results: Greek `λ`, Hebrew
+  `ק`, Cyrillic `д` resolve through the protocol to `l`/`e`/`l`; AZERTY `a`/`q`
+  stays `a`; without the enhancement the table still answers. Our full suite on
+  Linux: **1271 passed** (the delta from 1273 on Windows is exactly the
+  `#[cfg(windows)]` tests), clippy `-D warnings` clean. The spike is
+  deliberately **not committed** (it cannot build without the patched
+  crossterm) — the research doc is its durable form.
+- **Our side stays put until an upstream release** (bump → push
+  `REPORT_ALTERNATE_KEYS` → add the tier-0 branch; no call-site changes thanks
+  to the `KeyEvent`-shaped `hotkey_char` from stage 1). Timing caveat recorded
+  in the roadmap: crossterm merges PRs regularly, but **the last crates.io
+  release was 0.29 in April 2025** — the release, not the review, is the long
+  pole. No unit-test count change in this repo (docs only).
+
 ### Deferred beyond M3
 - **Per-message collapse/selection** and tool blocks in the feed — currently "thoughts"
   collapse globally (`Ctrl+T`); per-message selection and tool blocks — for M5.

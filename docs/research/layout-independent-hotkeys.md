@@ -6,8 +6,10 @@ recommendations, 2026-07-24**. **Stage 1 (Windows resolver) — done**
 ladder, resolution through the active/installed layouts, call-site sweep.
 Stage 2 (static deltas) is deliberately **not** done — the Windows tier removed
 the need, and the unix gap is closed by stage 3 rather than by more tables.
-Stage 3 (crossterm upstream, tier C) — a separate track, recorded in
-[docs/roadmap.md](../roadmap.md).
+**Stage 3 (crossterm upstream, tier C)** — the patch is written, verified on
+Linux and **submitted** as
+[crossterm#1074](https://github.com/crossterm-rs/crossterm/pull/1074); our side
+waits for an upstream release (§7). Tracked in [docs/roadmap.md](../roadmap.md).
 
 **Implementation deviations from this document** (deliberate, recorded here):
 the static table is not merely a "fallback tier" but is **ordered ahead of the
@@ -232,9 +234,10 @@ the same `shared/keys.rs` entry point.
 
 #### C.1 Upstream patch — written and verified (2026-07-24)
 
-The crossterm side is implemented on
-[`vshylov/crossterm:feat/base-layout-key`](https://github.com/vshylov/crossterm/tree/feat/base-layout-key)
-(+137/−15 across `src/event.rs`, `src/event/sys/unix/parse.rs`, `CHANGELOG.md`):
+The crossterm side is implemented and **submitted upstream** as
+[crossterm-rs/crossterm#1074](https://github.com/crossterm-rs/crossterm/pull/1074)
+(+137/−15 across `src/event.rs`, `src/event/sys/unix/parse.rs`, `CHANGELOG.md`;
+branch [`vshylov/crossterm:feat/base-layout-key`](https://github.com/vshylov/crossterm/tree/feat/base-layout-key)):
 
 - the `CSI u` parser reads **both** alternates positionally. The existing code
   read the shifted one *only when SHIFT was held*, so the base layout key was
@@ -387,8 +390,9 @@ contribution lands (interim: tier A deltas per R3).
    tier B covers Ukrainian/Belarusian already, and on unix the deltas would
    only serve kitty-protocol terminals until stage 3 lands — not worth new
    hand-maintained data with its variant-ambiguity risk (§4A).
-3. **Stage 3 — crossterm upstream** — patch **written and verified** (§4 C.1),
-   spike **validated end to end** (§4 C.2); submission pending. After the
+3. **Stage 3 — crossterm upstream** — patch **written, verified** (§4 C.1) and
+   **submitted** ([crossterm#1074](https://github.com/crossterm-rs/crossterm/pull/1074),
+   2026-07-24), spike **validated end to end** (§4 C.2). After the
    upstream release: bump, push `REPORT_ALTERNATE_KEYS` alongside
    `DISAMBIGUATE_ESCAPE_CODES` in `app/runtime/mod.rs`, and add the tier-0
    branch exactly as the spike had it. Timing depends on upstream cadence:
