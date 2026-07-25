@@ -20,6 +20,8 @@ impl SettingsScreen {
             field_idx: 0,
             focus: Focus::Menu,
             profile_idx: 0,
+            imp_profile_idx: 0,
+            pending_profile_select: false,
             model_sub: ModelTab::Assistant,
             sampling_sub: Subsection::Assistant,
             profile_sub: Subsection::Assistant,
@@ -51,11 +53,36 @@ impl SettingsScreen {
         profiles: Vec<Profile>,
         language_locked: Vec<uuid::Uuid>,
     ) {
+        // A profile we asked to create arrives with this snapshot — select it, so it's
+        // editable right away (the orchestrator owns the list; the screen can only
+        // recognise the new entry by comparing ids). One-shot: the flag is cleared
+        // whatever the snapshot brings, so a later unrelated re-emit can't hijack the
+        // selection.
+        let new_idx = std::mem::take(&mut self.pending_profile_select)
+            .then(|| {
+                profiles
+                    .iter()
+                    .position(|p| !self.profiles.iter().any(|old| old.id == p.id))
+            })
+            .flatten();
         self.config = config;
         self.profiles = profiles;
         self.language_locked = language_locked;
+        if let Some(idx) = new_idx {
+            self.profile_idx = idx;
+        }
         if !self.profiles.is_empty() && self.profile_idx >= self.profiles.len() {
             self.profile_idx = self.profiles.len() - 1;
+        }
+        self.clamp_imp_profile_idx();
+    }
+
+    /// Keeps the impersonation-profile selection inside the list (it can shrink from a
+    /// deletion here or a config re-emit).
+    pub(super) fn clamp_imp_profile_idx(&mut self) {
+        let len = self.config.impersonation_profiles.len();
+        if len > 0 && self.imp_profile_idx >= len {
+            self.imp_profile_idx = len - 1;
         }
     }
 
@@ -831,17 +858,15 @@ impl SettingsScreen {
     }
 
     /// The "Profiles" section's fields for a given subsection (for enumeration during search).
+    ///
+    /// The two subsections edit **different lists**: "Assistant" — the AI-interlocutor
+    /// profiles (`profiles.json`), "Impersonation" — the user personas
+    /// (`config.impersonation_profiles`); each has its own selector, name, and system
+    /// message. The assistant profile ties the two together with the
+    /// [`FieldId::PImpProfile`] reference. See spec §11.8.
     pub(super) fn profile_fields_for(&self, profile_sub: Subsection) -> Vec<FieldRow> {
         let loc = self.loc();
-        let Some(p) = self.profiles.get(self.profile_idx) else {
-            return vec![row(
-                FieldId::PSelect,
-                loc.t("ui.settings.field.profile"),
-                FieldKind::Choice(loc.t("ui.settings.value.no_profiles").to_string()),
-            )];
-        };
-        // ProfileSub — the subsection selector (tab strip, field 0, not drawn as a
-        // list row); profile selection and the name — section-level (shared by both subsections).
+        // ProfileSub — the subsection selector (tab strip, field 0, not drawn as a list row).
         let mut rows = vec![
             row(
                 FieldId::ProfileSub,
@@ -849,6 +874,20 @@ impl SettingsScreen {
                 FieldKind::Choice(profile_sub.label(loc)),
             )
             .describe(loc.t(DESC_SUBSECTION)),
+        ];
+        if profile_sub == Subsection::Impersonation {
+            rows.extend(self.impersonation_profile_fields());
+            return rows;
+        }
+        let Some(p) = self.profiles.get(self.profile_idx) else {
+            rows.push(row(
+                FieldId::PSelect,
+                loc.t("ui.settings.field.profile"),
+                FieldKind::Choice(loc.t("ui.settings.value.no_profiles").to_string()),
+            ));
+            return rows;
+        };
+        rows.extend([
             row(
                 FieldId::PSelect,
                 loc.t("ui.settings.field.profile"),
@@ -859,7 +898,7 @@ impl SettingsScreen {
                 loc.t("ui.settings.field.name"),
                 FieldKind::Text(p.name.clone()),
             ),
-        ];
+        ]);
         match profile_sub {
             Subsection::Assistant => {
                 // Scaffold language (axis A): Choice; locked once the profile has
@@ -889,6 +928,12 @@ impl SettingsScreen {
                             loc.t("ui.settings.field.greeting"),
                             FieldKind::Text(p.greeting.clone().unwrap_or_default()),
                         ),
+                        row(
+                            FieldId::PImpProfile,
+                            loc.t("ui.settings.field.imp_profile"),
+                            FieldKind::Choice(self.imp_profile_label(p, loc)),
+                        )
+                        .describe(loc.t("ui.settings.desc.imp_profile")),
                     ],
                 ));
                 // Tool toggles: laid out by semantic group
@@ -921,19 +966,67 @@ impl SettingsScreen {
                     rows.push(r);
                 }
             }
-            // Impersonation has no tools (spec §11.8) — only the system message.
-            Subsection::Impersonation => {
-                rows.extend(grouped(
-                    loc.t("ui.settings.group.persona"),
-                    vec![row(
-                        FieldId::PImpSystem,
-                        loc.t("ui.settings.field.system_message"),
-                        FieldKind::Text(p.impersonation_system_message.clone()),
-                    )],
-                ));
-            }
+            // Handled above (a different list entirely) — kept exhaustive.
+            Subsection::Impersonation => {}
         }
         rows
+    }
+
+    /// The "Impersonation" subsection's fields: the user-persona list
+    /// (`config.impersonation_profiles`) — selector, name, system message. No tools
+    /// (spec §11.8). An empty list shows only the selector's placeholder; `Ctrl+N`
+    /// creates the first entry.
+    fn impersonation_profile_fields(&self) -> Vec<FieldRow> {
+        let loc = self.loc();
+        let Some(ip) = self.config.impersonation_profiles.get(self.imp_profile_idx) else {
+            return vec![
+                row(
+                    FieldId::IpSelect,
+                    loc.t("ui.settings.field.profile"),
+                    FieldKind::Choice(loc.t("ui.settings.value.no_profiles").to_string()),
+                )
+                .describe(loc.t("ui.settings.desc.imp_profile_select")),
+            ];
+        };
+        let mut rows = vec![
+            row(
+                FieldId::IpSelect,
+                loc.t("ui.settings.field.profile"),
+                FieldKind::Choice(ip.name.clone()),
+            )
+            .describe(loc.t("ui.settings.desc.imp_profile_select")),
+            row(
+                FieldId::IpName,
+                loc.t("ui.settings.field.name"),
+                FieldKind::Text(ip.name.clone()),
+            ),
+        ];
+        rows.extend(grouped(
+            loc.t("ui.settings.group.persona"),
+            vec![
+                row(
+                    FieldId::IpSystem,
+                    loc.t("ui.settings.field.system_message"),
+                    FieldKind::Text(ip.system_message.clone()),
+                )
+                .describe(loc.t("ui.settings.desc.imp_system_message")),
+            ],
+        ));
+        rows
+    }
+
+    /// The label of the impersonation profile an assistant profile references
+    /// (a dangling id reads as "not set" — the shared default text applies).
+    pub(super) fn imp_profile_label(&self, p: &Profile, loc: &'static Locale) -> String {
+        p.impersonation_profile_id
+            .and_then(|id| {
+                self.config
+                    .impersonation_profiles
+                    .iter()
+                    .find(|ip| ip.id == id)
+            })
+            .map(|ip| ip.name.clone())
+            .unwrap_or_else(|| loc.t("ui.settings.value.imp_profile_none").to_string())
     }
 
     /// Whether the tool's global gate is off (then the tool is unavailable to the

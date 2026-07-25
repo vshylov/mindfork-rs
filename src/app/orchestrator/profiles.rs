@@ -4,10 +4,59 @@ use uuid::Uuid;
 
 use crate::app::events::AppEvent;
 use crate::features::profiles::ProfileEdit;
+use crate::shared::config::ImpersonationProfile;
 
 use super::Orchestrator;
 
 impl Orchestrator {
+    /// One-time migration of the legacy `Profile.impersonation_system_message` into a
+    /// named impersonation profile (spec §11.8): for every profile that still carries a
+    /// non-empty message and no reference, an impersonation profile "«name»
+    /// (impersonation)" is created in `config.impersonation_profiles` and linked.
+    ///
+    /// Idempotent: a profile with a reference is skipped, so a repeat run (or an app
+    /// downgrade/upgrade) doesn't duplicate anything. The legacy field itself is kept
+    /// on disk — nothing reads it for prompt building any more.
+    pub(super) fn migrate_impersonation_profiles(&mut self) {
+        let loc = self.ui_locale();
+        let mut created = Vec::new();
+        let mut linked = Vec::new();
+        for profile in &mut self.profiles {
+            let legacy = profile.impersonation_system_message.trim();
+            if legacy.is_empty() || profile.impersonation_profile_id.is_some() {
+                continue;
+            }
+            let imp = ImpersonationProfile::new(
+                loc.tf(
+                    "ui.settings.imp_profile_migrated_name",
+                    &[("name", &profile.name)],
+                ),
+                legacy,
+            );
+            profile.impersonation_profile_id = Some(imp.id);
+            created.push(imp);
+            linked.push(profile.clone());
+        }
+        if created.is_empty() {
+            return;
+        }
+        let count = created.len();
+        self.config.impersonation_profiles.extend(created);
+        // The config first: a reference persisted without its target would dangle.
+        // On failure the in-memory state stays consistent and the next launch retries.
+        if let Err(err) = self.storage.json().save_config(&self.config) {
+            tracing::warn!(error = %err, "failed to save migrated impersonation profiles");
+            return;
+        }
+        for profile in &linked {
+            if let Err(err) = self.storage.json().upsert_profile(profile) {
+                tracing::warn!(error = %err, profile = %profile.id,
+                    "failed to link the migrated impersonation profile");
+            }
+        }
+        tracing::info!(count, "migrated legacy impersonation system messages");
+    }
+
     /// Creates a new profile (validates the name), saves it, and refreshes the list.
     pub(super) fn handle_create_profile(&mut self, name: String, system_message: String) {
         let Some(mut profile) = crate::features::profiles::create(&name, system_message) else {
@@ -28,6 +77,11 @@ impl Orchestrator {
         }
         self.profiles.push(profile);
         self.emit_profile_list();
+        // The settings screen keeps its own copy of the profile list (from the
+        // `Settings` snapshot), so without this re-emit a freshly created profile
+        // would be invisible there until a restart — impossible to select, let alone
+        // edit. The screen also auto-selects the newly appeared profile.
+        self.emit_settings();
     }
 
     /// Soft-deletes a profile with a cascade: its chats are hidden, and notes/RAG
@@ -64,6 +118,9 @@ impl Orchestrator {
             self.saves.forget(*cid);
         }
         self.emit_profile_list();
+        // Same as in `handle_create_profile`: refresh the settings screen's copy,
+        // otherwise it would keep showing (and editing) a deleted profile.
+        self.emit_settings();
 
         // If the active chat belonged to the deleted profile — switch away.
         let active_removed = self.active_id.is_some_and(|a| removed.contains(&a));

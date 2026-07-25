@@ -52,19 +52,29 @@ impl SettingsScreen {
             && self.section() == Section::Profiles
             && let Some(physical) = keys::hotkey_char(&key)
         {
-            match physical {
-                'n' => {
+            // The subsection decides *which* list is edited: "Assistant" — the
+            // AI-interlocutor profiles (owned by the orchestrator → an intent),
+            // "Impersonation" — the user personas in `config.impersonation_profiles`
+            // (a plain config edit). See spec §11.8.
+            let imp = self.profile_sub == Subsection::Impersonation;
+            match (physical, imp) {
+                ('n', false) => {
+                    // The orchestrator owns the profile list: the new profile arrives
+                    // with the next `Settings` snapshot, and `refresh` selects it.
+                    self.pending_profile_select = true;
                     return Some(SettingsIntent::CreateProfile {
                         name: self.loc().t("ui.settings.new_profile_name").into(),
                         system_message: String::new(),
                     });
                 }
-                'd' => {
+                ('d', false) => {
                     return self
                         .profiles
                         .get(self.profile_idx)
                         .map(|p| SettingsIntent::DeleteProfile(p.id));
                 }
+                ('n', true) => return Some(self.create_impersonation_profile()),
+                ('d', true) => return self.delete_impersonation_profile(),
                 _ => {}
             }
         }
@@ -166,7 +176,7 @@ impl SettingsScreen {
                         // scroll, no wrap onto an invisible row). See spec §11.6.
                         let multiline = matches!(
                             f.id,
-                            FieldId::PSystem | FieldId::PGreeting | FieldId::PImpSystem
+                            FieldId::PSystem | FieldId::PGreeting | FieldId::IpSystem
                         );
                         let mut input = InputBox::new();
                         input.set_single_line(!multiline);
@@ -341,6 +351,27 @@ impl SettingsScreen {
                 }
                 None
             }
+            // Impersonation-profile selection — navigation, no save.
+            FieldId::IpSelect => {
+                let n = self.config.impersonation_profiles.len() as i32;
+                if n > 0 {
+                    self.imp_profile_idx =
+                        (((self.imp_profile_idx as i32 + dir) % n + n) % n) as usize;
+                }
+                None
+            }
+            // The assistant profile's reference to an impersonation profile: option 0 —
+            // "not set" (the shared default text), then the profiles themselves.
+            FieldId::PImpProfile => {
+                let n = self.config.impersonation_profiles.len() as i32 + 1;
+                let cur = self.imp_profile_choice_index()? as i32;
+                let next = (((cur + dir) % n + n) % n) as usize;
+                let id = (next > 0).then(|| self.config.impersonation_profiles[next - 1].id);
+                self.profiles
+                    .get_mut(self.profile_idx)?
+                    .impersonation_profile_id = id;
+                Some(self.save_profile())
+            }
             // Profile scaffold language (axis A): cycles over built-in languages; locked
             // if the profile has data (a safety net on top of the orchestrator gate).
             // See docs/history/i18n.md.
@@ -405,8 +436,20 @@ impl SettingsScreen {
                 apply_sampling_text(&mut self.config.impersonation_sampling, p, trimmed)
             }
             // Profile fields — over `profiles[idx]`, not over `AppConfig`.
-            FieldId::PName | FieldId::PSystem | FieldId::PGreeting | FieldId::PImpSystem => {
+            FieldId::PName | FieldId::PSystem | FieldId::PGreeting => {
                 return self.apply_profile_text(id, trimmed);
+            }
+            // Impersonation-profile fields — over `config.impersonation_profiles`.
+            FieldId::IpName | FieldId::IpSystem => {
+                let ip = self
+                    .config
+                    .impersonation_profiles
+                    .get_mut(self.imp_profile_idx)?;
+                match id {
+                    FieldId::IpName if trimmed.is_empty() => return None, // no empty names
+                    FieldId::IpName => ip.name = trimmed.to_string(),
+                    _ => ip.system_message = trimmed.to_string(),
+                }
             }
             // Config fields — via the access table (the setter itself parses and routes
             // by external/cloud mode; see spec.rs).
@@ -434,13 +477,58 @@ impl SettingsScreen {
                 p.name = text.to_string();
             }
             FieldId::PSystem => p.default_system_message = text.to_string(),
-            FieldId::PImpSystem => p.impersonation_system_message = text.to_string(),
             FieldId::PGreeting => {
                 p.greeting = (!text.is_empty()).then(|| text.to_string());
             }
             _ => return None,
         }
         Some(self.save_profile())
+    }
+
+    /// The index of the current [`FieldId::PImpProfile`] option: `0` — "not set"
+    /// (including a dangling reference), otherwise the profile's position + 1.
+    pub(super) fn imp_profile_choice_index(&self) -> Option<usize> {
+        let p = self.profiles.get(self.profile_idx)?;
+        Some(
+            p.impersonation_profile_id
+                .and_then(|id| {
+                    self.config
+                        .impersonation_profiles
+                        .iter()
+                        .position(|ip| ip.id == id)
+                })
+                .map_or(0, |i| i + 1),
+        )
+    }
+
+    /// `Ctrl+N` in the "Impersonation" subsection: appends a persona to
+    /// `config.impersonation_profiles` and selects it. Unlike assistant profiles, the
+    /// list lives in the config — the screen edits its own working copy directly, so
+    /// no round-trip through the orchestrator is needed to see the new entry.
+    pub(super) fn create_impersonation_profile(&mut self) -> SettingsIntent {
+        let name = self.loc().t("ui.settings.new_profile_name");
+        self.config
+            .impersonation_profiles
+            .push(crate::shared::config::ImpersonationProfile::new(
+                name,
+                String::new(),
+            ));
+        self.imp_profile_idx = self.config.impersonation_profiles.len() - 1;
+        self.save_config()
+    }
+
+    /// `Ctrl+D` in the "Impersonation" subsection: removes the selected persona.
+    /// Assistant profiles referencing it are left alone — a dangling reference reads
+    /// as "not set" and falls back to the shared default text (spec §11.8).
+    pub(super) fn delete_impersonation_profile(&mut self) -> Option<SettingsIntent> {
+        if self.imp_profile_idx >= self.config.impersonation_profiles.len() {
+            return None;
+        }
+        self.config
+            .impersonation_profiles
+            .remove(self.imp_profile_idx);
+        self.imp_profile_idx = self.imp_profile_idx.saturating_sub(1);
+        Some(self.save_config())
     }
 
     /// The intent to save the current working configuration.
@@ -456,7 +544,7 @@ impl SettingsScreen {
             edit: Box::new(ProfileEdit {
                 name: Some(p.name.clone()),
                 system_message: Some(p.default_system_message.clone()),
-                impersonation_system_message: Some(p.impersonation_system_message.clone()),
+                impersonation_profile_id: Some(p.impersonation_profile_id),
                 greeting: Some(p.greeting.clone()),
                 character_names: Some(p.character_names.clone()),
                 default_sampling: Some(p.default_sampling.clone()),

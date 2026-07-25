@@ -257,6 +257,7 @@ fn map_profile(p: &ImProfile) -> Profile {
             .map(Lang::from_code)
             .unwrap_or_default(),
         // Impersonation isn't carried over by format v1 — the shared default.
+        impersonation_profile_id: None,
         impersonation_system_message: String::new(),
         character_names: map_characters(p.character_names.as_ref()),
         greeting: p.greeting.clone().filter(|g| !g.is_empty()),

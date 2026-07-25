@@ -1027,9 +1027,14 @@ pub(super) fn is_profile_field(id: FieldId) -> bool {
             | FieldId::PLanguage
             | FieldId::PSystem
             | FieldId::PGreeting
-            | FieldId::PImpSystem
+            | FieldId::PImpProfile
             | FieldId::PTool(_)
             | FieldId::ProfileSub
+            // The impersonation-profile list lives in the config, but it's user data
+            // (no meaningful "default value") — same treatment as profile fields.
+            | FieldId::IpSelect
+            | FieldId::IpName
+            | FieldId::IpSystem
     )
 }
 

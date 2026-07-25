@@ -42,9 +42,18 @@ pub struct Profile {
     /// in one language. Old `profiles.json` files read as `Ru` (their data is Russian).
     #[serde(default)]
     pub language: Lang,
-    /// The system message for impersonation mode: describes the user persona the
-    /// model writes a reply on behalf of (`Ctrl+U`). Empty — the shared default is
-    /// used. No tools in this mode. See spec §11.8.
+    /// The impersonation profile (the user persona the model writes a reply on behalf
+    /// of, `Ctrl+U`) used by this profile's chats. `None`/a dangling id — the shared
+    /// default text. The profiles themselves live in
+    /// [`AppConfig.impersonation_profiles`](crate::shared::config::AppConfig). See spec §11.8.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub impersonation_profile_id: Option<Uuid>,
+    /// **Legacy** (superseded by [`Self::impersonation_profile_id`]): the impersonation
+    /// system message stored on the assistant profile itself. On startup a non-empty
+    /// value is migrated once into a named impersonation profile
+    /// (`Orchestrator::migrate_impersonation_profiles`); the field is kept so the
+    /// migration is idempotent across app versions and no data is lost on a downgrade.
+    /// Nothing reads it for prompt building any more.
     #[serde(default)]
     pub impersonation_system_message: String,
     #[serde(default)]
@@ -75,6 +84,7 @@ impl Profile {
             name: name.into(),
             default_system_message: system_message.into(),
             language: Lang::default(),
+            impersonation_profile_id: None,
             impersonation_system_message: String::new(),
             character_names: CharacterNames::default(),
             greeting: None,

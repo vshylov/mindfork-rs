@@ -1102,6 +1102,35 @@ pub struct CopySettings {
     pub copy_tool_results: bool,
 }
 
+/// An impersonation profile — the **user** persona the model writes a reply on
+/// behalf of (`Ctrl+U`, spec §11.8): its own name and system message. Assistant
+/// profiles reference one by id ([`crate::entities::profile::Profile::impersonation_profile_id`]);
+/// an unset/dangling reference falls back to the shared default text.
+///
+/// Lives in `settings.json` (not `profiles.json`) — impersonation is configured
+/// globally, next to its engine (`impersonation_engine`) and sampling
+/// (`impersonation_sampling`); the list is edited on the settings screen through
+/// the usual config-save path, with no separate storage artifact.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ImpersonationProfile {
+    pub id: uuid::Uuid,
+    pub name: String,
+    /// The system message describing the user persona. Empty → the shared default.
+    #[serde(default)]
+    pub system_message: String,
+}
+
+impl ImpersonationProfile {
+    /// A new impersonation profile with a fresh id.
+    pub fn new(name: impl Into<String>, system_message: impl Into<String>) -> Self {
+        Self {
+            id: uuid::Uuid::new_v4(),
+            name: name.into(),
+            system_message: system_message.into(),
+        }
+    }
+}
+
 /// Global application configuration.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
@@ -1115,6 +1144,11 @@ pub struct AppConfig {
     pub engine: EngineSettings,
     /// Impersonation-server settings (shared/managed/external). See spec §11.8.
     pub impersonation_engine: ImpersonationEngineSettings,
+    /// Impersonation profiles (the user personas) — each with its own name and
+    /// system message; an assistant profile picks one by id. Empty → every
+    /// impersonation uses the shared default text. See spec §11.8.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub impersonation_profiles: Vec<ImpersonationProfile>,
     /// Dedicated embedding-server settings (RAG, ADR 0002).
     pub embed: EmbedSettings,
     /// Round limit for the client-side agentic loop (spec §6.3).
@@ -1167,6 +1201,7 @@ impl Default for AppConfig {
             },
             engine: EngineSettings::default(),
             impersonation_engine: ImpersonationEngineSettings::default(),
+            impersonation_profiles: Vec::new(),
             embed: EmbedSettings::default(),
             max_tool_rounds: 8,
             tools: ToolSettings::default(),
@@ -1401,6 +1436,26 @@ mod tests {
         };
         let json = serde_json::to_string_pretty(&c).unwrap();
         let back: AppConfig = serde_json::from_str(&json).unwrap();
+        assert_eq!(c, back);
+    }
+
+    #[test]
+    fn impersonation_profiles_default_empty_and_roundtrip() {
+        // Additive (`#[serde(default)]` + skip-if-empty): an old settings.json without
+        // the field reads fine, and an empty list doesn't clutter the JSON.
+        let old: AppConfig = serde_json::from_str(r#"{"max_tool_rounds":4}"#).unwrap();
+        assert!(old.impersonation_profiles.is_empty());
+        assert!(
+            !serde_json::to_string(&old)
+                .unwrap()
+                .contains("impersonation_profiles")
+        );
+
+        let c = AppConfig {
+            impersonation_profiles: vec![ImpersonationProfile::new("Юзер", "Ты — Владимир.")],
+            ..Default::default()
+        };
+        let back: AppConfig = serde_json::from_str(&serde_json::to_string(&c).unwrap()).unwrap();
         assert_eq!(c, back);
     }
 

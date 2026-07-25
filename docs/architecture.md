@@ -194,7 +194,9 @@ src/
 │  │  └─ render.rs          screen rendering
 │  ├─ chat_list.rs          ChatListScreen: full-screen chat list (Esc), → ChatListIntent
 │  └─ settings/             SettingsScreen: sections (Model/Sampling/Tools/Memory/
-│     │                     Profiles/Interface) with field groups, Assistant/Impersonation subsections.
+│     │                     Profiles/Interface) with field groups, Assistant/Impersonation subsections
+│     │                     ("Profiles": the two subsections edit different lists — assistant
+│     │                     profiles vs. impersonation personas, spec §11.8).
 │     │                     God object broken up (docs/history/refactoring-god-objects.md, stage 1):
 │     ├─ mod.rs             SettingsIntent, section/subsection enums, field types
 │     │                     (FieldId/FieldRow/Editor/…), struct SettingsScreen
@@ -758,6 +760,7 @@ erDiagram
     PROFILE ||--o{ CHAT : "profile_id"
     PROFILE ||--o{ NOTE : "profile_id (isolation)"
     PROFILE ||--o{ RAG_DOCUMENT : "profile_id (isolation)"
+    PROFILE }o--o| IMPERSONATION_PROFILE : "impersonation_profile_id"
     CHAT ||--o{ MESSAGE : "messages[]"
     MESSAGE ||--o{ TOOL_CALL_RECORD : "tool_calls[]"
 
@@ -766,7 +769,7 @@ erDiagram
         string name
         Lang language
         string default_system_message
-        string impersonation_system_message
+        Option_Uuid impersonation_profile_id
         Option_SamplingConfig default_sampling
         Vec_ToolId enabled_tools
         bool is_hidden
@@ -790,7 +793,20 @@ erDiagram
     NOTE { Uuid id }
     RAG_DOCUMENT { Uuid id }
     TOOL_CALL_RECORD { string id }
+    IMPERSONATION_PROFILE {
+        Uuid id
+        string name
+        string system_message
+    }
 ```
+
+`IMPERSONATION_PROFILE` (the user persona for `Ctrl+U`, spec §11.8) is the one
+domain list that lives **outside** `profiles.json` — in `AppConfig.
+impersonation_profiles` (`settings.json`), next to the rest of the globally
+configured impersonation (engine + sampling). Consequences: the settings screen
+edits it through the ordinary config-save path (no dedicated commands/events, no
+storage artifact), and the reference from `Profile` crosses files — a dangling id
+is legal and reads as "not set" (falling back to the shared default text).
 
 ### Two-tier storage (`shared/storage`)
 

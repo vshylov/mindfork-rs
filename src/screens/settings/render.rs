@@ -491,11 +491,16 @@ impl SettingsScreen {
             if focused && i == self.field_idx {
                 select = Some(items.len());
             }
-            let modified = default_fields
-                .iter()
-                .find(|d| d.id == f.id)
-                .map(|d| value_text(&d.kind, loc) != value_text(&f.kind, loc))
-                .unwrap_or(false);
+            // User data (profiles and impersonation personas) has no "default value"
+            // to deviate from — comparing it against a default config would mark, say,
+            // a chosen impersonation persona as "modified" simply because the default
+            // config has no personas at all.
+            let modified = !is_profile_field(f.id)
+                && default_fields
+                    .iter()
+                    .find(|d| d.id == f.id)
+                    .map(|d| value_text(&d.kind, loc) != value_text(&f.kind, loc))
+                    .unwrap_or(false);
             // Width for the value: minus the marker(2)+label+indent and the right margin.
             // A label longer than the column (> LABEL_CAP) shifts the value right —
             // we compute the remainder from its real end, so "…" truncation doesn't lie.

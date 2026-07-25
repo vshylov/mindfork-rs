@@ -27,6 +27,28 @@ use super::Orchestrator;
 const IMPERSONATION_TIMEOUT: Duration = Duration::from_secs(600);
 
 impl Orchestrator {
+    /// The impersonation system message for a chat's profile: the user persona from the
+    /// impersonation profile the assistant profile points at (spec §11.8). No reference,
+    /// a dangling id (the persona was deleted), or an empty message → the shared default
+    /// text, so impersonation always has something to work from.
+    pub(super) fn impersonation_system(
+        &self,
+        profile: Option<&crate::entities::profile::Profile>,
+        loc: &'static crate::shared::i18n::Locale,
+    ) -> String {
+        profile
+            .and_then(|p| p.impersonation_profile_id)
+            .and_then(|id| {
+                self.config
+                    .impersonation_profiles
+                    .iter()
+                    .find(|ip| ip.id == id)
+            })
+            .map(|ip| ip.system_message.trim().to_string())
+            .filter(|s| !s.is_empty())
+            .unwrap_or_else(|| loc.t("prompt.impersonation.default").to_string())
+    }
+
     /// Writes a message on behalf of the user (impersonation, `Ctrl+U`, spec §11.8):
     /// the assistant's system message is replaced with the profile's impersonation one, and
     /// the user/assistant roles in history are swapped — the model continues the
@@ -57,10 +79,7 @@ impl Orchestrator {
         };
         let loc = self.profile_locale(chat.profile_id);
         let profile = self.profiles.iter().find(|p| p.id == chat.profile_id);
-        let imp_system = profile
-            .map(|p| p.impersonation_system_message.trim().to_string())
-            .filter(|s| !s.is_empty())
-            .unwrap_or_else(|| loc.t("prompt.impersonation.default").to_string());
+        let imp_system = self.impersonation_system(profile, loc);
         // The interlocutor model is mixed into the impersonation prompt (the agent writes ON BEHALF
         // OF the human) — but only if the profile enabled the self-model (the same opt-in gate
         // as passive injection into a regular turn).

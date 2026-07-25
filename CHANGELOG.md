@@ -13,8 +13,24 @@ Detailed engineering history lives in the [CLAUDE.md](CLAUDE.md) log.
 
 ## [Unreleased]
 
+### Added
+
+- **Impersonation profiles** — the user personas the model writes a message as
+  (`Ctrl+U`) are now a list of their own, each with its own name and system
+  message, instead of a single text field buried on the assistant profile. The
+  "Impersonation" subsection of the settings "Profiles" section now edits exactly
+  that list (`Ctrl+N` — create, `Ctrl+D` — delete), and an assistant profile picks
+  which persona its chats use via the new "Impersonation profile" field. Several
+  assistant profiles can share one persona; not choosing one keeps the previous
+  behaviour (a shared default text).
+
 ### Fixed
 
+- **A newly created profile is now selectable right away.** `Ctrl+N` in the
+  settings "Profiles" section created the profile, but the settings screen never
+  learned about it — it couldn't be selected or edited until the app was
+  restarted. The new profile is now delivered to the screen and selected
+  automatically; deleting a profile likewise refreshes the list immediately.
 - **Ctrl shortcuts now work under any keyboard layout on Windows** — previously
   only the standard Russian one was handled (via a built-in table), so under a
   Greek, Hebrew, Georgian, Bulgarian, Armenian, … layout `Ctrl+Q`, `Ctrl+P` and
@@ -23,6 +39,15 @@ Detailed engineering history lives in the [CLAUDE.md](CLAUDE.md) log.
   keys (which the table never had) and non-standard variants such as Russian
   Typewriter. On Linux, Cyrillic works as before, plus whatever the terminal
   itself handles (the GNOME Terminal family copes with every layout on its own).
+
+### Data
+
+- The legacy impersonation system message stored on an assistant profile
+  (`Profile.impersonation_system_message`) is migrated once at startup into a named
+  impersonation profile ("«profile name» (impersonation)") and linked back. The
+  migration is idempotent and the old field is left on disk untouched, so nothing is
+  lost and a downgrade still finds its data. No schema-version bump (the new fields
+  are additive).
 
 ## [0.9.3] — 2026-07-24
 
