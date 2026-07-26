@@ -159,6 +159,16 @@ tracks are done (see "Recently closed" below and `docs/history/`). One
   public launch — SignPath/Certum/Azure Artifact Signing, §5 of the doc);
   winget manifest (portable-zip until signing); AUR `mindfork-rs-bin`; MSI
   for GPO/Intune on demand.
+- **Publishing to crates.io as `mindfork`** — the short name is **still free**
+  (checked 2026-07-26; the registry API 404s on it), and the "About" dialog
+  (`F1`) already lists `crates.io/crates/mindfork` as the future home. Two ways
+  to take it: rename the package outright — which also renames the binary and
+  ripples into the installer, the nfpm layout, the `.desktop` `Exec=`, the
+  `/usr/bin` symlink, the docs and CI artifact names — or keep the binary name
+  and set `name = "mindfork"` + `[[bin]] name = "mindfork-rs"`, which claims the
+  crate name with a far smaller blast radius. Until it is actually published,
+  the URL stays informational: a `crates.io` version badge in the README or a
+  `cargo install mindfork` line in `install.md` would be visibly broken.
 - **Auto-update** — self-update, musl-static and arm64 builds, an "a new
   version is available" notice in the TUI. Groundwork from the finished
   "release engineering" track
