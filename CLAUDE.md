@@ -8077,6 +8077,48 @@ debounce was done as a separate PR, see below).
 - Branch protection could not be consulted (403: unavailable for private repos on
   Free), so there are no required status checks to strand.
 
+### Post-M9: skipping the test job for docs-only pull requests (done)
+- The follow-up left open above (stacked on `ci/reduce-actions-minutes`). This
+  repo's PRs are frequently near-pure documentation — the CLAUDE.md journal alone
+  makes that the norm — and each one paid the full **20 billable minutes**
+  (PR #212, a docs/packaging change, is the example). A new `changes` job
+  classifies the PR's files and the `test` job gains
+  `if: needs.changes.outputs.docs_only != 'true'`. `lint` is deliberately
+  **untouched and always runs**: `cyrillic_scan` is a guard on the docs
+  themselves, so skipping it exactly when only docs change would remove the gate
+  where it matters most.
+- **The allowlist is the whole design, and it is narrow**: `docs/**` plus
+  top-level `*.md`. It is an allowlist rather than a denylist, so anything new or
+  unrecognized falls through to running the tests. Files that *look* like docs
+  but are read by the build or a gate test — established by grepping
+  `include_str!`/`include_bytes!`/`CARGO_MANIFEST_DIR`, not by assumption — and
+  therefore must never be in it: **`LICENSE`** (`include_str!` in
+  `shared/credits.rs`, asserted by a test), **`artwork/*.svg`** (parsed by the
+  `widgets/logo.rs` "code ≡ asset" gate), **`locales/*.json`** (`include_str!` +
+  the i18n parity gates), **`Cargo.toml`/`Cargo.lock`** (the credits gates), plus
+  `tools/`, `packaging/`, `dictionaries/`, `tests/fixtures/` and `.github/`
+  itself. Note `.github/pull_request_template.md` is a `.md` that correctly does
+  **not** match (the pattern anchors a top-level name, no slash).
+- **Fail-safe by construction**: `docs_only=true` requires a `pull_request`
+  event **and** a successful API call **and** the returned file count matching
+  the PR's `changed_files` **and** every path inside the allowlist. Any other
+  outcome runs the tests. The count check exists because the files endpoint
+  truncates on very large PRs, and a partial page could otherwise hide a source
+  file and look docs-only. The gate is `!= 'true'`, not `== 'false'`, so a
+  failed or skipped `changes` job still runs the tests.
+- **Verified by executing the script**, not by reading it: the `run:` block was
+  extracted from the YAML and run against a stubbed `gh` for six scenarios —
+  docs-only → skip; code present → run; **truncated listing** → run; empty list
+  → run; API failure → run; non-PR event → run. The path pattern was separately
+  checked against PR #212's real file list and against each trap above.
+- **Cost**: the `changes` job bills 1 minute per PR run (GitHub's per-job
+  minimum) and saves 20 on a docs-only PR. Kept as its own job rather than an
+  output of `lint` on purpose — reusing `lint` would serialize `test` behind it
+  and couple a lint failure to the test gate.
+- Applies to `pull_request` only. On `push` the trimmed Linux-only run from the
+  previous commit is already just 4 minutes, and the `before`-SHA edge cases
+  (branch creation, force push) would add real risk for very little gain.
+
 ### Deferred beyond M3
 - **Per-message collapse/selection** and tool blocks in the feed — currently "thoughts"
   collapse globally (`Ctrl+T`); per-message selection and tool blocks — for M5.

@@ -21,6 +21,57 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
+  # Decides whether the expensive `test` job can be skipped. Only ever says
+  # "docs only" for a pull request; every other event runs the tests.
+  #
+  # The allowlist is deliberately narrow — an *allowlist*, so anything new or
+  # unrecognized falls through to running the tests. Files that look like docs
+  # but are read by the build or by a gate test, and therefore must NOT be in
+  # it: LICENSE (include_str! in shared/credits.rs), artwork/*.svg (parsed by
+  # the widgets/logo.rs gate), locales/*.json (include_str! + the i18n gates),
+  # Cargo.toml / Cargo.lock (the credits gates), tools/, packaging/,
+  # dictionaries/, tests/fixtures/ and .github/ itself.
+  changes:
+    name: Changed paths
+    runs-on: ubuntu-latest
+    outputs:
+      docs_only: ${{ steps.check.outputs.docs_only }}
+    steps:
+      - name: Classify the changed files
+        id: check
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR: ${{ github.event.number }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -uo pipefail
+          # Fail-safe helper: any doubt at all -> run the tests.
+          run_tests() { echo "docs_only=false" >> "$GITHUB_OUTPUT"; exit 0; }
+
+          [ "${{ github.event_name }}" = "pull_request" ] || run_tests
+
+          files=$(gh api --paginate "repos/$REPO/pulls/$PR/files" --jq '.[].filename') || run_tests
+          [ -n "$files" ] || run_tests
+
+          # Guard against a truncated listing: the API caps the file list, and a
+          # partial page could hide a source file and wrongly look docs-only.
+          expected=$(gh api "repos/$REPO/pulls/$PR" --jq '.changed_files') || run_tests
+          actual=$(printf '%s\n' "$files" | wc -l)
+          [ "$expected" = "$actual" ] || run_tests
+
+          echo "Changed files ($actual):"
+          printf '  %s\n' $files
+
+          # docs/** and top-level *.md only. `grep -v` finds anything outside
+          # the allowlist; a hit means real code changed.
+          if printf '%s\n' "$files" | grep -qvE '^(docs/|[^/]+\.md$)'; then
+            echo "-> source changes present, running the tests"
+            echo "docs_only=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "-> documentation only, skipping the tests"
+            echo "docs_only=true" >> "$GITHUB_OUTPUT"
+          fi
+
   lint:
     name: Lints (source language + fmt + clippy)
     runs-on: ubuntu-latest
@@ -44,6 +95,10 @@ jobs:
 
   test:
     name: Tests (${{ matrix.os }})
+    needs: changes
+    # `!= 'true'` and not `== 'false'`: a missing or empty output (a failed or
+    # skipped `changes` job) must still run the tests.
+    if: needs.changes.outputs.docs_only != 'true'
     strategy:
       fail-fast: false
       matrix:
