@@ -541,6 +541,11 @@ enum FieldId {
     PLanguage,
     PSystem,
     PGreeting,
+    /// What the feed and the `F5` export call the user in this profile's chats
+    /// (`character_names.user`). Empty — the localized default (`YOU`). See spec §5.1.
+    PUserName,
+    /// The same for the assistant (`character_names.assistant`).
+    PAssistantName,
     /// The impersonation profile the assistant profile's chats use (a reference by
     /// id; the first option — "no reference", the shared default text). See spec §11.8.
     PImpProfile,

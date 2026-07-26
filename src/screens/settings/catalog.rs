@@ -929,6 +929,18 @@ impl SettingsScreen {
                             FieldKind::Text(p.greeting.clone().unwrap_or_default()),
                         ),
                         row(
+                            FieldId::PUserName,
+                            loc.t("ui.settings.field.user_name"),
+                            FieldKind::Text(p.character_names.user.clone()),
+                        )
+                        .describe(loc.t("ui.settings.desc.user_name")),
+                        row(
+                            FieldId::PAssistantName,
+                            loc.t("ui.settings.field.assistant_name"),
+                            FieldKind::Text(p.character_names.assistant.clone()),
+                        )
+                        .describe(loc.t("ui.settings.desc.assistant_name")),
+                        row(
                             FieldId::PImpProfile,
                             loc.t("ui.settings.field.imp_profile"),
                             FieldKind::Choice(self.imp_profile_label(p, loc)),

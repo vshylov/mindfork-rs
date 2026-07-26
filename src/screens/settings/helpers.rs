@@ -1027,6 +1027,8 @@ pub(super) fn is_profile_field(id: FieldId) -> bool {
             | FieldId::PLanguage
             | FieldId::PSystem
             | FieldId::PGreeting
+            | FieldId::PUserName
+            | FieldId::PAssistantName
             | FieldId::PImpProfile
             | FieldId::PTool(_)
             | FieldId::ProfileSub

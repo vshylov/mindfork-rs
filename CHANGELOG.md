@@ -15,6 +15,14 @@ Detailed engineering history lives in the [CLAUDE.md](CLAUDE.md) log.
 
 ### Added
 
+- **Custom names for the user and the assistant** — two new fields in the
+  settings "Profiles" section ("Persona" group). When set, the name replaces the
+  role headers in the chat feed (in caps: `GAIA` instead of `YOU`) and the labels
+  when copying the conversation with `F5` (`Gaia:` instead of `User:`). Both are
+  empty by default, which keeps the usual labels in the interface language; the
+  names apply to the profile's existing chats immediately, so they can be changed
+  at any time.
+
 - **Impersonation profiles** — the user personas the model writes a message as
   (`Ctrl+U`) are now a list of their own, each with its own name and system
   message, instead of a single text field buried on the assistant profile. The
@@ -42,6 +50,11 @@ Detailed engineering history lives in the [CLAUDE.md](CLAUDE.md) log.
 
 ### Data
 
+- Role names (`Profile.character_names`) used to be seeded with placeholder values
+  that nothing ever displayed. Now that they are shown, those seeds are cleared once
+  at startup, so the feed and the `F5` export keep using the interface language's
+  labels; a name you chose yourself is left alone. New profiles start with the fields
+  empty. No schema-version bump.
 - The legacy impersonation system message stored on an assistant profile
   (`Profile.impersonation_system_message`) is migrated once at startup into a named
   impersonation profile ("«profile name» (impersonation)") and linked back. The

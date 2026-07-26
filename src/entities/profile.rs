@@ -9,22 +9,37 @@ use crate::shared::i18n::Lang;
 /// A tool id (may become an enum at M5).
 pub type ToolId = String;
 
-/// Displayed role names.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+/// Displayed role names: what the chat feed and the `F5` conversation export call
+/// the interlocutors. **Empty = not set** — the surface then falls back to its own
+/// localized default (`YOU`/`ASSISTANT` in the feed, `User:`/`Assistant:` in the
+/// export), so the names follow the interface language until the user overrides
+/// them. See spec §5.1, §11.3.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct CharacterNames {
     pub user: String,
     pub assistant: String,
+    /// Not displayed anywhere yet (system messages don't appear in the feed or the
+    /// export); kept for the import format's completeness and future use.
     pub system: String,
 }
 
-impl Default for CharacterNames {
-    fn default() -> Self {
-        Self {
-            user: "You".to_string(),
-            assistant: "Assistant".to_string(),
-            system: "System".to_string(),
-        }
+impl CharacterNames {
+    /// The user's display name, or `None` when not set (the surface falls back to
+    /// its localized default).
+    pub fn user_name(&self) -> Option<&str> {
+        non_empty(&self.user)
     }
+
+    /// The assistant's display name, or `None` when not set.
+    pub fn assistant_name(&self) -> Option<&str> {
+        non_empty(&self.assistant)
+    }
+}
+
+/// A trimmed non-empty view of a name field (`""`/whitespace — "not set").
+fn non_empty(s: &str) -> Option<&str> {
+    let s = s.trim();
+    (!s.is_empty()).then_some(s)
 }
 
 /// The AI interlocutor's profile: system message, names, tools, defaults.
@@ -56,6 +71,11 @@ pub struct Profile {
     /// Nothing reads it for prompt building any more.
     #[serde(default)]
     pub impersonation_system_message: String,
+    /// Role names shown in this profile's chats (feed headers, `F5` export).
+    /// **The source of truth for display** — resolved at render time, so editing
+    /// them applies to existing chats too (unlike [`crate::entities::chat::Chat`]'s
+    /// own copy, which is created-at-the-time state). Empty fields fall back to the
+    /// interface language's defaults. See spec §5.1, §11.3.
     #[serde(default)]
     pub character_names: CharacterNames,
     /// The assistant's greeting message (the first message in a new chat).
@@ -136,5 +156,26 @@ mod tests {
         assert_eq!(p.character_names, CharacterNames::default());
         assert!(!p.is_hidden);
         assert!(p.enabled_tools.is_empty());
+    }
+
+    /// Role names start out unset — the feed/export then use the interface
+    /// language's labels rather than a hardcoded name.
+    #[test]
+    fn character_names_default_to_unset() {
+        let names = CharacterNames::default();
+        assert_eq!(names.user_name(), None);
+        assert_eq!(names.assistant_name(), None);
+        assert_eq!(Profile::new("X", "s").character_names, names);
+    }
+
+    #[test]
+    fn character_names_trim_and_treat_blank_as_unset() {
+        let names = CharacterNames {
+            user: "  Гайя  ".into(),
+            assistant: "   ".into(),
+            system: String::new(),
+        };
+        assert_eq!(names.user_name(), Some("Гайя"));
+        assert_eq!(names.assistant_name(), None);
     }
 }

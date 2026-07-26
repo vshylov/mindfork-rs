@@ -58,7 +58,7 @@ use crate::app::gen_state::GenState;
 use crate::app::supervisor::ServerSupervisor;
 use crate::entities::chat::{Chat, ChatSummary};
 use crate::entities::message::Message;
-use crate::entities::profile::Profile;
+use crate::entities::profile::{CharacterNames, Profile};
 use crate::entities::sampling::SamplingConfig;
 use crate::shared::api::FinishReason;
 use crate::shared::config::{AppConfig, CloudProvider};
@@ -362,7 +362,12 @@ impl Orchestrator {
         // to the application are enabled in existing profiles (ones the user
         // disabled are not). See spec §9.4 and `features::profiles::reconcile_tools`.
         for profile in &mut self.profiles {
-            if crate::features::profiles::reconcile_tools(profile) {
+            let mut changed = crate::features::profiles::reconcile_tools(profile);
+            // Role names became user-visible (feed headers, F5 export): drop the
+            // legacy seed values so the labels follow the interface language until
+            // the user sets their own. See spec §5.1.
+            changed |= crate::features::profiles::clear_seed_character_names(profile);
+            if changed {
                 let _ = self.storage.json().upsert_profile(profile);
             }
         }
@@ -733,7 +738,32 @@ impl Orchestrator {
             messages: chat.messages.clone(),
             draft: chat.draft.clone(),
         });
+        self.emit_character_names();
         self.remember_active_chat(id);
+    }
+
+    /// Sends the feed the role names of the active chat's profile (spec §5.1).
+    /// Called on activation and after a profile edit — so renaming in settings
+    /// applies to the open chat right away (the names are resolved from the profile,
+    /// not from the chat's creation-time copy).
+    pub(super) fn emit_character_names(&self) {
+        let names = self
+            .active_id
+            .and_then(|id| self.chats.iter().find(|c| c.id == id))
+            .and_then(|chat| self.profiles.iter().find(|p| p.id == chat.profile_id))
+            .map(|p| p.character_names.clone())
+            .unwrap_or_default();
+        let _ = self.evt_tx.send(AppEvent::CharacterNames(names));
+    }
+
+    /// The active chat's profile role names (for the `F5` export). Default (empty
+    /// = the localized labels) when there's no active chat or the profile is gone.
+    pub(super) fn active_character_names(&self, chat: &Chat) -> CharacterNames {
+        self.profiles
+            .iter()
+            .find(|p| p.id == chat.profile_id)
+            .map(|p| p.character_names.clone())
+            .unwrap_or_default()
     }
 
     /// Remembers the last-open chat in `settings.json` so it can be restored

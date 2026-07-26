@@ -73,6 +73,38 @@ pub fn reconcile_tools(profile: &mut Profile) -> bool {
     changed
 }
 
+/// Seed values `CharacterNames::default()` used to carry before role names became
+/// user-visible — the Russian set and the English one it was migrated to
+/// (`b83ae37`). They were never displayed anywhere, so they're pure leftovers.
+const SEED_CHARACTER_NAMES: [(&str, &str, &str); 2] = [
+    ("Вы", "Ассистент", "Система"), // the pre-migration seed: data, not prose; cyrillic-ok
+    ("You", "Assistant", "System"),
+];
+
+/// Clears role names that still hold a legacy seed value (see
+/// [`SEED_CHARACTER_NAMES`]), so the feed and the `F5` export fall back to the
+/// **interface language's** labels instead of showing a stale English seed. A
+/// user-typed name is kept (the field had no UI until now, so the only sources of
+/// non-seed values are imports and hand edits). Returns `true` if the profile
+/// changed (a save is needed). Idempotent: on a second run there's nothing to clear.
+pub fn clear_seed_character_names(profile: &mut Profile) -> bool {
+    let names = &mut profile.character_names;
+    let mut changed = false;
+    for (user, assistant, system) in SEED_CHARACTER_NAMES {
+        for (field, seed) in [
+            (&mut names.user, user),
+            (&mut names.assistant, assistant),
+            (&mut names.system, system),
+        ] {
+            if field == seed {
+                field.clear();
+                changed = true;
+            }
+        }
+    }
+    changed
+}
+
 /// A set of profile edits (any field — optional). Applied to an existing
 /// profile; doesn't affect already-created chats (they hold their own copies, spec §10).
 #[derive(Debug, Clone, Default, PartialEq)]
@@ -158,6 +190,32 @@ mod tests {
         let p = create("  Карлос ", "Ты — Карлос.").unwrap();
         assert_eq!(p.name, "Карлос");
         assert_eq!(p.default_system_message, "Ты — Карлос.");
+    }
+
+    /// Legacy seed names (both the Russian set and the English one it was migrated
+    /// to) are cleared, so the labels follow the interface language; a name the user
+    /// actually chose survives. Idempotent — a second run changes nothing.
+    #[test]
+    fn clear_seed_character_names_drops_only_seeds() {
+        let mut p = Profile::new("X", "sys");
+        p.character_names = CharacterNames {
+            user: "Вы".into(),
+            assistant: "Assistant".into(),
+            system: "Система".into(),
+        };
+        assert!(clear_seed_character_names(&mut p));
+        assert_eq!(p.character_names, CharacterNames::default());
+        assert!(!clear_seed_character_names(&mut p));
+
+        let mut custom = Profile::new("X", "sys");
+        custom.character_names = CharacterNames {
+            user: "Гайя".into(),
+            assistant: "Анна".into(),
+            system: String::new(),
+        };
+        let before = custom.character_names.clone();
+        assert!(!clear_seed_character_names(&mut custom));
+        assert_eq!(custom.character_names, before);
     }
 
     #[test]

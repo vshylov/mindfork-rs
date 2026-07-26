@@ -22,7 +22,7 @@ use uuid::Uuid;
 
 use crate::entities::chat::ChatSummary;
 use crate::entities::message::Message;
-use crate::entities::profile::{Profile, ProfileSummary};
+use crate::entities::profile::{CharacterNames, Profile, ProfileSummary};
 use crate::features::rag_ingest::RagProgress;
 use crate::features::spellcheck::SpellChecker;
 use crate::shared::api::FinishReason;
@@ -464,6 +464,13 @@ impl ChatScreen {
         self.feed_view
             .set_render_mermaid(config.interface.render_mermaid);
         self.settings_snapshot = Some((config, profiles, language_locked, mcp, api_keys_present));
+    }
+
+    /// Sets the role names shown in the feed — the active chat's profile
+    /// `character_names` (`AppEvent::CharacterNames`). An empty field keeps the
+    /// localized header. See spec §11.3.
+    pub fn set_character_names(&mut self, names: CharacterNames) {
+        self.feed_view.set_role_names(names);
     }
 
     /// The settings snapshot for building the settings screen (`None` until received).

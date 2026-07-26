@@ -54,6 +54,31 @@ fn copy_chat_emits_clipboard_text_or_error_when_empty() {
     assert!(matches!(rx.try_recv().unwrap(), AppEvent::ChatListError(_)));
 }
 
+/// `F5` labels the roles with the chat profile's custom names (spec §5.1) — resolved
+/// from the profile, so a rename applies to old chats too.
+#[test]
+fn copy_chat_labels_roles_with_profile_names() {
+    let (_d, mut orch, mut rx) = bare_orch_rx();
+    let mut profile = Profile::new("P", "sys");
+    profile.character_names.user = "Гайя".into();
+    profile.character_names.assistant = "Анна".into();
+    let mut chat = Chat::from_profile(&profile, "Чат");
+    let id = chat.id;
+    chat.push_message(Message::user("привет"));
+    chat.push_message(Message::assistant("здравствуйте"));
+    orch.profiles.push(profile);
+    orch.chats.push(chat);
+
+    orch.handle_copy_chat(id);
+    match rx.try_recv().unwrap() {
+        AppEvent::CopyToClipboard(text) => {
+            assert!(text.contains("Гайя:\nпривет"), "{text}");
+            assert!(text.contains("Анна:\nздравствуйте"), "{text}");
+        }
+        other => panic!("expected CopyToClipboard, got {other:?}"),
+    }
+}
+
 #[test]
 fn set_draft_persists_to_active_chat_without_bumping_modified() {
     let (_d, mut orch, _rx) = bare_orch_rx();

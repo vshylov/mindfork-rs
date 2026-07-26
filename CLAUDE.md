@@ -123,10 +123,13 @@ Env for selecting the backend: `MINDFORK_ENGINE_URL` (external, any OpenAI serve
 `MINDFORK_LLAMA_BIN` (+ `MINDFORK_MODEL` GGUF, `MINDFORK_NGL`, `MINDFORK_CTX`,
 `MINDFORK_PORT`) for a managed `llama-server`.
 
-## Status (as of 2026-07-25, version 0.9.3)
-The entire **M0–M9** plan is done, plus extensive post-M9 work (on `main`). **1281 unit
+## Status (as of 2026-07-26, version 0.9.3)
+The entire **M0–M9** plan is done, plus extensive post-M9 work (on `main`). **1294 unit
 tests green, 58 `#[ignore]` smokes** (the largest count — log below; the current
-track is **impersonation profiles** (the user personas for `Ctrl+U` became a list of
+track is **custom role names** (the user/assistant names are editable in profile
+settings and replace the localized `YOU`/`ASSISTANT` headers in the feed and the
+`User:`/`Assistant:` labels in the `F5` export) — **done**; before that — **impersonation profiles** (the user
+personas for `Ctrl+U` became a list of
 their own with a name and system message each, referenced from the assistant profile;
 plus a fix: a profile created with `Ctrl+N` in settings is now selectable right away) —
 **done**; before that — **universal layout-independent hotkeys** (stage 1: on Windows the physical
@@ -7811,6 +7814,56 @@ debounce was done as a separate PR, see below).
   in the roadmap: crossterm merges PRs regularly, but **the last crates.io
   release was 0.29 in April 2025** — the release, not the review, is the long
   pole. No unit-test count change in this repo (docs only).
+
+### Post-M9: custom user/assistant names in profile settings (done)
+- **The role names shown to the user became editable** (branch `feat/custom-role-names`,
+  user's request): two fields in the settings "Profiles" section (the "Persona"
+  group) — "User name" / "Assistant name". A set name replaces the feed's role
+  header (**uppercased** to match the header style: `GAIA` instead of `YOU`) and the
+  label in the `F5` conversation export (`Gaia:` instead of `User:`). Both are
+  **empty by default**: empty = "not set", and each surface falls back to the
+  interface language's own label, so the chat follows axis B until the user
+  overrides it. Whitespace-only counts as unset (the field isn't a way to blank the
+  label out).
+- **The type already existed and was dead** — `CharacterNames {user, assistant,
+  system}` has been on `Profile` (and copied onto `Chat`) since M2, but nothing ever
+  displayed it. The work was wiring it to the two surfaces, not adding a field.
+- **Key decision — the profile is the source of truth, resolved at render time**
+  (a deliberate exception to spec §10 "editing a profile doesn't affect existing
+  chats"): the copy semantics exists so the assistant can change a chat's
+  `system_message` per chat, but a *display* name the user just typed in settings has
+  to show up in the chat they're looking at. So the feed and the export read
+  `Profile.character_names`; `Chat.character_names` stays (import format + a possible
+  future per-chat override) but is documented as not used for display.
+- **Plumbing**: a new `AppEvent::CharacterNames` — the orchestrator (which owns both
+  chats and profiles) resolves the active chat's profile and pushes the names; emitted
+  from `activate()` (switch/create/bootstrap) and from `handle_update_profile` (so a
+  rename lands on the open chat immediately). `ChatSummary` carries no `profile_id`,
+  so the screen can't resolve this itself — hence a push, not a pull. The names ride
+  the feed's **render-cache key** (`CacheKey`), otherwise a rename wouldn't repaint
+  the already-cached header lines.
+- **A one-time cleanup of legacy seeds** (`features/profiles::clear_seed_character_names`,
+  called from the same `bootstrap` loop as `reconcile_tools`): `CharacterNames::default()`
+  used to seed a Russian placeholder triple, migrated to `You`/`Assistant`/`System` by
+  the english-source migration (`b83ae37`). Those were never displayed, so with the
+  fields now live a Russian-interface user would suddenly get Latin `YOU`/`ASSISTANT`.
+  Fields still holding a seed value are cleared (per-field, both sets); a name that
+  came from an import/hand edit survives. Idempotent, additive — **no schema bump**
+  (ADR 0006 F12).
+- **Not included** (deliberate, out of the requested scope): `character_names.system`
+  gets no field (system messages appear in neither surface); TTS role prefixes
+  (`speak.role.*`, axis A — the *model's* language) keep their localized text.
+- **Tests**: entity (empty default, trimming, blank = unset); export (custom labels,
+  one-sided naming, blank fallback); feed (headers replaced and uppercased, cache
+  invalidated on rename); settings (the fields commit into `character_names`, an
+  empty value is a valid edit, grouped with Persona + described); orchestrator (names
+  follow the profile and are re-sent after an edit; `F5` labels; bootstrap clears
+  seeds but keeps a chosen name); runtime (the event reaches the feed even with
+  another screen on top). **1294 unit tests green** (+13), 58 `#[ignore]`, clippy
+  `-D warnings`/fmt/i18n gates/`cyrillic_scan` clean.
+- **A live run isn't required** — no engine/memory/tool path is touched: this is UI
+  rendering, a pure export formatter, and a profile-field edit, all covered by
+  `TestBackend`/unit tests.
 
 ### Post-M9: impersonation profiles + a newly created profile is selectable (done)
 - Two defects in the settings "Profiles" section, reported by the user; branch

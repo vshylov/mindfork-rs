@@ -225,3 +225,101 @@ async fn cannot_delete_last_profile() {
     drop(cmd_tx);
     handle.await.unwrap();
 }
+
+/// Role names shown in the feed are resolved from the **profile** (spec §5.1), so
+/// they arrive on chat activation and are re-sent after a profile edit — a rename
+/// in settings applies to the already-open chat.
+#[test]
+fn character_names_come_from_the_profile_and_refresh_on_edit() {
+    let (_d, mut orch, mut rx) = bare_orch_rx();
+    let mut profile = Profile::new("P", "sys");
+    profile.character_names.user = "Гайя".into();
+    let pid = profile.id;
+    let chat = Chat::from_profile(&profile, "Чат");
+    let id = chat.id;
+    orch.profiles.push(profile);
+    orch.chats.push(chat);
+
+    orch.activate(id);
+    let names = take_character_names(&mut rx).expect("names sent on activation");
+    assert_eq!(names.user, "Гайя");
+    assert_eq!(names.assistant, "", "an unset name stays unset");
+
+    orch.handle_update_profile(
+        pid,
+        ProfileEdit {
+            character_names: Some(crate::entities::profile::CharacterNames {
+                user: "Гайя".into(),
+                assistant: "Анна".into(),
+                system: String::new(),
+            }),
+            ..Default::default()
+        },
+    );
+    let names = take_character_names(&mut rx).expect("names re-sent after the edit");
+    assert_eq!(names.assistant, "Анна");
+}
+
+/// The last `CharacterNames` event in the queue (the handlers also emit list/settings
+/// events, so we filter rather than take the head).
+fn take_character_names(
+    rx: &mut UnboundedReceiver<AppEvent>,
+) -> Option<crate::entities::profile::CharacterNames> {
+    let mut found = None;
+    while let Ok(ev) = rx.try_recv() {
+        if let AppEvent::CharacterNames(names) = ev {
+            found = Some(names);
+        }
+    }
+    found
+}
+
+/// Bootstrap clears the legacy seed role names (never displayed before this
+/// feature), so the feed/export fall back to the interface language's labels.
+#[tokio::test]
+async fn bootstrap_clears_legacy_seed_character_names() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().to_path_buf();
+    let storage = Arc::new(Storage::open(Paths::with_root(&root)).unwrap());
+
+    let mut seeded = Profile::new("Старый", "sys");
+    seeded.character_names = crate::entities::profile::CharacterNames {
+        user: "Вы".into(),
+        assistant: "Assistant".into(),
+        system: "Система".into(),
+    };
+    let mut custom = Profile::new("Свой", "sys");
+    custom.character_names.assistant = "Анна".into();
+    let (seeded_id, custom_id) = (seeded.id, custom.id);
+    storage.json().upsert_profile(&seeded).unwrap();
+    storage.json().upsert_profile(&custom).unwrap();
+
+    let (cmd_tx, cmd_rx) = unbounded_channel();
+    let (evt_tx, mut evt_rx) = unbounded_channel();
+    let handle = tokio::spawn(run(OrchestratorDeps {
+        cmd_rx,
+        evt_tx,
+        storage: storage.clone(),
+        config: AppConfig::default(),
+        supervisor: Arc::new(MockSupervisor::with_backend(None)),
+        default_language: crate::shared::i18n::Lang::default(),
+    }));
+    wait_for(&mut evt_rx, |e| matches!(e, AppEvent::ChatActivated { .. }))
+        .await
+        .unwrap();
+    drop(cmd_tx);
+    handle.await.unwrap();
+
+    let stored = storage.json().load_profiles().unwrap();
+    let seeded = stored.iter().find(|p| p.id == seeded_id).unwrap();
+    assert_eq!(
+        seeded.character_names,
+        crate::entities::profile::CharacterNames::default(),
+        "seed names are cleared"
+    );
+    let custom = stored.iter().find(|p| p.id == custom_id).unwrap();
+    assert_eq!(
+        custom.character_names.assistant, "Анна",
+        "a chosen name stays"
+    );
+}

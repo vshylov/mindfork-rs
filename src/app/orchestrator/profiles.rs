@@ -177,5 +177,8 @@ impl Orchestrator {
         }
         self.emit_profile_list();
         self.emit_settings();
+        // Role names live on the profile and are resolved at render time — refresh
+        // the feed's copy so a rename applies to the open chat immediately (spec §11.3).
+        self.emit_character_names();
     }
 }

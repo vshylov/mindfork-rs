@@ -436,7 +436,11 @@ impl SettingsScreen {
                 apply_sampling_text(&mut self.config.impersonation_sampling, p, trimmed)
             }
             // Profile fields — over `profiles[idx]`, not over `AppConfig`.
-            FieldId::PName | FieldId::PSystem | FieldId::PGreeting => {
+            FieldId::PName
+            | FieldId::PSystem
+            | FieldId::PGreeting
+            | FieldId::PUserName
+            | FieldId::PAssistantName => {
                 return self.apply_profile_text(id, trimmed);
             }
             // Impersonation-profile fields — over `config.impersonation_profiles`.
@@ -480,6 +484,10 @@ impl SettingsScreen {
             FieldId::PGreeting => {
                 p.greeting = (!text.is_empty()).then(|| text.to_string());
             }
+            // Role names: empty is a legitimate value — "not set", the feed and the
+            // export fall back to their localized labels (spec §5.1).
+            FieldId::PUserName => p.character_names.user = text.to_string(),
+            FieldId::PAssistantName => p.character_names.assistant = text.to_string(),
             _ => return None,
         }
         Some(self.save_profile())

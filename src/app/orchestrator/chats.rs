@@ -103,10 +103,14 @@ impl Orchestrator {
         let Some(chat) = self.chats.iter().find(|c| c.id == id) else {
             return;
         };
+        // Role labels come from the chat's profile (spec §5.1): a custom name replaces
+        // the localized "User:"/"Assistant:".
+        let names = self.active_character_names(chat);
         match crate::features::chat_export::format_conversation(
             &chat.title,
             &chat.messages,
             &self.config.copy,
+            &names,
             self.ui_locale(),
         ) {
             Some(text) => {
