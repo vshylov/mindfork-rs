@@ -72,14 +72,38 @@ impl Attachment {
     }
 
     /// A card for the UI (no text — the feed/status bar must not carry hundreds
-    /// of KB through the event channel).
-    pub fn info(&self) -> AttachmentInfo {
+    /// of KB through the event channel). `prompt_tokens` is computed here because
+    /// only the caller (the orchestrator) knows the budget settings.
+    pub fn info(&self, excerpt_tokens: usize) -> AttachmentInfo {
         AttachmentInfo {
             name: self.name.clone(),
             bytes: self.bytes,
             est_tokens: self.est_tokens,
+            prompt_tokens: self.prompt_tokens(excerpt_tokens),
             mode: self.mode,
         }
+    }
+
+    /// What this attachment actually costs in **every** request: the whole text
+    /// when inline, only the excerpt when by reference. Reporting a by-reference
+    /// file as free would be a lie — its excerpt is re-sent every turn.
+    pub fn prompt_tokens(&self, excerpt_tokens: usize) -> usize {
+        match self.mode {
+            AttachMode::Inline => self.est_tokens,
+            AttachMode::ByReference => estimate_text(self.excerpt(excerpt_tokens)) as usize,
+        }
+    }
+
+    /// How many pages of `page_tokens` the text splits into (at least 1) — the
+    /// range `attachment_read` accepts.
+    pub fn page_count(&self, page_tokens: usize) -> usize {
+        paginate(&self.text, page_tokens).len()
+    }
+
+    /// Page `n` (1-based) of the text, or `None` when out of range.
+    pub fn page(&self, page_tokens: usize, n: usize) -> Option<&str> {
+        let pages = paginate(&self.text, page_tokens);
+        n.checked_sub(1).and_then(|i| pages.get(i)).copied()
     }
 
     /// Does the user's `/file remove <target>` refer to this attachment? Matches
@@ -104,32 +128,75 @@ impl Attachment {
 pub struct AttachmentInfo {
     pub name: String,
     pub bytes: usize,
+    /// Estimated tokens of the whole file.
     pub est_tokens: usize,
+    /// What it costs per request (see [`Attachment::prompt_tokens`]).
+    pub prompt_tokens: usize,
     pub mode: AttachMode,
 }
 
-/// The leading `max_tokens` (estimated) of `text` — see [`Attachment::excerpt`].
-/// A free function so it can be tested without building an attachment.
-pub fn excerpt(text: &str, max_tokens: usize) -> &str {
-    // The estimate is "UTF-8 bytes / 4" (`shared::tokens`), so the budget in
-    // bytes is the inverse.
-    let max_bytes = max_tokens.saturating_mul(4);
-    if text.len() <= max_bytes {
-        return text;
+/// Splits text into pages of `page_tokens` (estimated) for `attachment_read`.
+/// Cuts on a **line** boundary where possible (a page that starts mid-sentence
+/// is hard to read), falling back to a whitespace and then a character boundary.
+/// Never splits a character. Empty text yields one empty page, so page counts
+/// are always ≥1 and `page 1` always exists.
+pub fn paginate(text: &str, page_tokens: usize) -> Vec<&str> {
+    let budget = byte_budget(page_tokens);
+    let mut pages = Vec::new();
+    let mut rest = text;
+    while rest.len() > budget {
+        let cut = cut_point(rest, budget);
+        pages.push(&rest[..cut]);
+        rest = &rest[cut..];
     }
-    // Floor to a character boundary, then to the last whitespace inside the
-    // budget (if there is one) — a tidy cut rather than a broken word.
-    let mut end = max_bytes;
+    pages.push(rest);
+    pages
+}
+
+/// The leading `max_tokens` (estimated) of `text` — see [`Attachment::excerpt`].
+/// A free function so it can be tested without building an attachment. Shares
+/// [`cut_point`] with [`paginate`], so an excerpt and a first page break at the
+/// same place.
+pub fn excerpt(text: &str, max_tokens: usize) -> &str {
+    &text[..cut_point(text, byte_budget(max_tokens))]
+}
+
+/// The estimate is "UTF-8 bytes / 4" (`shared::tokens`), so a token budget
+/// converts to bytes by multiplying. At least one token, so a cut always advances.
+fn byte_budget(tokens: usize) -> usize {
+    tokens.max(1).saturating_mul(4)
+}
+
+/// Where to cut `text` so the head fits `budget` bytes: on a **line** boundary
+/// where possible (a fragment that starts mid-sentence is hard to read), else on
+/// a whitespace, else on a character boundary. Never splits a character. The
+/// separator ends the **current** fragment (the cut is *after* it) — cutting
+/// before would push it to the head of the next one and shave a word off this
+/// one. A boundary inside the first quarter is ignored: it would waste most of
+/// the budget. Returns `text.len()` when the whole text fits.
+fn cut_point(text: &str, budget: usize) -> usize {
+    if text.len() <= budget {
+        return text.len();
+    }
+    // Floor to a character boundary first — everything below indexes bytes.
+    let mut end = budget;
     while end > 0 && !text.is_char_boundary(end) {
         end -= 1;
     }
     let head = &text[..end];
-    match head.rfind(char::is_whitespace) {
-        // Guard against a degenerate cut: don't throw away most of the budget
-        // just to land on whitespace.
-        Some(i) if i * 2 > end => &head[..i],
-        _ => head,
-    }
+    let floor = end / 4;
+    let after = |i: usize, c: char| i + c.len_utf8();
+    head.rfind('\n')
+        .map(|i| after(i, '\n'))
+        .filter(|&c| c > floor)
+        .or_else(|| {
+            head.char_indices()
+                .rev()
+                .find(|(_, c)| c.is_whitespace())
+                .map(|(i, c)| after(i, c))
+                .filter(|&c| c > floor)
+        })
+        .unwrap_or(end)
 }
 
 /// A compact human-readable file size (`840 B`, `12.3 KB`, `1.4 MB`) — shown to
@@ -148,14 +215,26 @@ pub fn format_bytes(bytes: usize) -> String {
     }
 }
 
-/// Total estimated tokens of the attachments rendered **inline** (the standing
-/// cost paid on every request in the chat). By-reference ones contribute only
-/// their excerpt, which the caller accounts for separately.
+/// Total estimated tokens of the attachments rendered **inline** — the figure
+/// the **budget** is measured against (`max_total_tokens` governs how much full
+/// text a chat may carry; by-reference excerpts are bounded and small, so they
+/// don't consume that budget). For what the user is shown, use
+/// [`prompt_tokens`].
 pub fn inline_tokens(attachments: &[Attachment]) -> usize {
     attachments
         .iter()
         .filter(|a| a.mode == AttachMode::Inline)
         .map(|a| a.est_tokens)
+        .sum()
+}
+
+/// What the whole attachment set actually costs in **every** request — inline
+/// texts in full plus by-reference excerpts. This is the number to **show**:
+/// reporting a by-reference file as free would be a lie.
+pub fn prompt_tokens(attachments: &[Attachment], excerpt_tokens: usize) -> usize {
+    attachments
+        .iter()
+        .map(|a| a.prompt_tokens(excerpt_tokens))
         .sum()
 }
 
@@ -201,11 +280,17 @@ mod tests {
         let long = "aaaa bbbb cccc dddd";
         let cut = excerpt(long, 2);
         assert!(long.starts_with(cut), "the excerpt is a prefix: {cut:?}");
-        assert!(
-            !cut.ends_with(' '),
-            "trailing whitespace is trimmed off the cut"
-        );
         assert!(cut.len() <= 8, "the excerpt fits the byte budget: {cut:?}");
+        // The cut lands on a word boundary and **keeps** the separator: the
+        // shared `cut_point` ends a fragment with it, so pagination doesn't push
+        // it onto the next page. Harmless for an excerpt — a newline follows it
+        // in the prompt anyway.
+        assert!(
+            cut.ends_with(char::is_whitespace),
+            "cut on a word boundary: {cut:?}"
+        );
+        // Page 1 breaks in exactly the same place — both go through `cut_point`.
+        assert_eq!(cut, paginate(long, 2)[0]);
     }
 
     #[test]
@@ -226,6 +311,53 @@ mod tests {
             att("c.txt", "abcd", AttachMode::Inline), // 1
         ];
         assert_eq!(inline_tokens(&list), 3);
+    }
+
+    #[test]
+    fn pagination_covers_the_text_exactly_and_prefers_line_breaks() {
+        let text = "строка один\nстрока два\nстрока три\nстрока четыре\nстрока пять\n";
+        let pages = paginate(text, 5); // ≈20 bytes per page
+        assert!(pages.len() > 1, "the text must split: {pages:?}");
+        // Lossless: concatenating the pages reproduces the source byte for byte.
+        assert_eq!(pages.concat(), text);
+        // Most cuts land right after a line break.
+        assert!(
+            pages[..pages.len() - 1]
+                .iter()
+                .all(|p| p.ends_with('\n') || p.ends_with(' ')),
+            "pages should end on a line/word boundary: {pages:?}"
+        );
+    }
+
+    #[test]
+    fn short_and_empty_text_is_a_single_page() {
+        assert_eq!(paginate("short", 100), vec!["short"]);
+        assert_eq!(paginate("", 100), vec![""]);
+        let a = att("a.txt", "", AttachMode::ByReference);
+        assert_eq!(a.page_count(100), 1, "page 1 always exists");
+        assert_eq!(a.page(100, 1), Some(""));
+        assert_eq!(a.page(100, 0), None, "pages are 1-based");
+        assert_eq!(a.page(100, 2), None);
+    }
+
+    #[test]
+    fn pagination_never_splits_a_character() {
+        // Cyrillic (2 bytes/char) with an odd byte budget — a naive slice would panic.
+        let text = "абвгдеёжзийклмнопрстуфхцч".repeat(4);
+        let pages = paginate(&text, 3); // 12 bytes — not a multiple of the char size
+        assert_eq!(pages.concat(), text);
+        assert!(pages.iter().all(|p| p.chars().count() * 2 == p.len()));
+    }
+
+    #[test]
+    fn prompt_cost_counts_the_excerpt_for_by_reference_not_the_whole_file() {
+        let big = "слово ".repeat(2000); // ~3000 tokens
+        let inline = att("a.txt", &big, AttachMode::Inline);
+        let by_ref = att("b.txt", &big, AttachMode::ByReference);
+        assert_eq!(inline.prompt_tokens(50), inline.est_tokens);
+        let cost = by_ref.prompt_tokens(50);
+        assert!(cost <= 50, "a by-reference file costs its excerpt: {cost}");
+        assert!(cost > 0, "and it is NOT free: {cost}");
     }
 
     #[test]

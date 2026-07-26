@@ -6,6 +6,7 @@
 //! orchestrator applies (sole owner of `Chat`, spec §4.4.2). Memory/knowledge tools
 //! must filter by `ctx.profile_id` (isolation, a repository invariant, spec §9.5).
 
+pub mod attachment;
 pub mod calc;
 pub mod control;
 pub mod datetime;
@@ -76,6 +77,13 @@ pub struct ToolContext {
     /// scaffold, tool results) is localized through it. `&'static` — a built-in
     /// bundle.
     pub loc: &'static crate::shared::i18n::Locale,
+    /// Files attached to the chat (`/file attach`) — a turn snapshot, like
+    /// `system_message`. `Arc` because [`ToolContext`] is `Clone` and an
+    /// attachment's text can be hundreds of KB. Read by `attachment_read`; empty
+    /// for background tasks (they have no chat). See spec §9.7.
+    pub attachments: std::sync::Arc<[crate::entities::attachment::Attachment]>,
+    /// Page size for `attachment_read`, in estimated tokens (`config.attachments`).
+    pub attachment_page_tokens: usize,
     /// Cancellation token for the turn (user Esc / background-task timeout): a
     /// long-running tool (MCP `tools/call`, network) must break on it rather than
     /// block cancellation. The agentic loop additionally wraps `invoke` in a
@@ -101,6 +109,8 @@ pub struct ToolParams {
     pub chunk_params: rag::ChunkParams,
     pub self_model_params: SelfModelParams,
     pub recall_includes_self: bool,
+    /// Page size for `attachment_read` (`config.attachments.page_tokens`).
+    pub attachment_page_tokens: usize,
 }
 
 impl ToolParams {
@@ -110,6 +120,7 @@ impl ToolParams {
             chunk_params: rag::ChunkParams::from_settings(&cfg.rag),
             self_model_params: SelfModelParams::from_settings(&cfg.self_model),
             recall_includes_self: cfg.notes.recall_includes_self,
+            attachment_page_tokens: cfg.attachments.page_tokens,
         }
     }
 }
@@ -121,6 +132,8 @@ pub struct TurnInfo {
     pub system_message: String,
     pub effective_sampling: SamplingConfig,
     pub last_user_message_at: Option<DateTime<Utc>>,
+    /// Files attached to the chat (a `Chat` snapshot; empty for background tasks).
+    pub attachments: std::sync::Arc<[crate::entities::attachment::Attachment]>,
     /// Language of the turn's agent scaffold (from `Profile.language`, axis A).
     pub lang: crate::shared::i18n::Lang,
     /// Cancellation token for the turn (a clone of the generation task's /
@@ -139,6 +152,8 @@ impl ToolContext {
             system_message: turn.system_message,
             effective_sampling: turn.effective_sampling,
             last_user_message_at: turn.last_user_message_at,
+            attachments: turn.attachments,
+            attachment_page_tokens: params.attachment_page_tokens,
             storage: deps.storage,
             engine: deps.engine,
             embedder: deps.embedder,
@@ -419,6 +434,9 @@ pub fn standard_registry(cfg: &ToolConfig) -> ToolRegistry {
     reg.register(Arc::new(fs::FsRead::new(cfg.fs_root.clone())));
     reg.register(Arc::new(fs::FsWrite::new(cfg.fs_root.clone())));
     reg.register(Arc::new(fs::FsList::new(cfg.fs_root.clone())));
+    // Reading files the user attached to the chat (`/file attach`). Not gated:
+    // unlike fs_read it can only reach what the user explicitly attached.
+    reg.register(Arc::new(attachment::AttachmentRead));
     // Conversation-control tools (optional, gated by the profile's set).
     reg.register(Arc::new(control::SendFollowupMessage));
     reg.register(Arc::new(control::RewriteCurrentMessage));
@@ -511,6 +529,7 @@ pub(crate) mod testkit {
             chunk_params: rag::ChunkParams::default(),
             self_model_params: SelfModelParams::default(),
             recall_includes_self: false,
+            attachment_page_tokens: crate::shared::config::DEFAULT_ATTACH_PAGE_TOKENS,
         }
     }
 
@@ -522,6 +541,8 @@ pub(crate) mod testkit {
             system_message: "системное сообщение".into(),
             effective_sampling: SamplingConfig::default(),
             last_user_message_at: None,
+            // No attachments by default; tests that need them set `ctx.attachments`.
+            attachments: std::sync::Arc::from(Vec::new()),
             lang: crate::shared::i18n::Lang::Ru,
             cancel: tokio_util::sync::CancellationToken::new(),
         }

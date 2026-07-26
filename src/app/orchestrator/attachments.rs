@@ -12,7 +12,7 @@
 use uuid::Uuid;
 
 use crate::app::events::AppEvent;
-use crate::entities::attachment::{AttachMode, Attachment, inline_tokens};
+use crate::entities::attachment::{AttachMode, Attachment, inline_tokens, prompt_tokens};
 use crate::features::file_command::{FileProgress, resolve_target};
 
 use super::Orchestrator;
@@ -89,9 +89,11 @@ impl Orchestrator {
             AttachMode::ByReference
         };
         let attachment = Attachment::new(file.name, file.source, file.text, file.bytes, mode);
-        let info = attachment.info();
+        let info = attachment.info(cfg.excerpt_tokens);
         chat.attachments.push(attachment);
-        let total = inline_tokens(&chat.attachments);
+        // What the chat's attachments now cost per request — inline text in full
+        // plus by-reference excerpts (which are NOT free, see `prompt_tokens`).
+        let total = prompt_tokens(&chat.attachments, cfg.excerpt_tokens);
 
         self.mark_dirty(res.chat_id);
         self.emit_file_progress(FileProgress::Attached {
@@ -132,7 +134,8 @@ impl Orchestrator {
             self.fail_file(self.ui_locale().t("ui.err.file_no_active_chat"));
             return;
         };
-        let items = chat.attachments.iter().map(|a| a.info()).collect();
+        let excerpt = self.config.attachments.excerpt_tokens;
+        let items = chat.attachments.iter().map(|a| a.info(excerpt)).collect();
         self.emit_file_progress(FileProgress::Listed { items });
     }
 
@@ -140,10 +143,11 @@ impl Orchestrator {
     /// Emitted on chat activation and after every attach/remove — the same
     /// pattern as `CharacterNames`.
     pub(super) fn emit_attachments(&self) {
+        let excerpt = self.config.attachments.excerpt_tokens;
         let items = self
             .active_id
             .and_then(|id| self.chats.iter().find(|c| c.id == id))
-            .map(|c| c.attachments.iter().map(|a| a.info()).collect())
+            .map(|c| c.attachments.iter().map(|a| a.info(excerpt)).collect())
             .unwrap_or_default();
         let _ = self.evt_tx.send(AppEvent::Attachments(items));
     }

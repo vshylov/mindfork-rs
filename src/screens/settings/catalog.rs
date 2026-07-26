@@ -711,6 +711,12 @@ impl SettingsScreen {
                     FieldKind::Text(self.config.attachments.excerpt_tokens.to_string()),
                 )
                 .describe(loc.t("ui.settings.desc.attach_excerpt")),
+                row(
+                    FieldId::AttachPage,
+                    loc.t("ui.settings.field.attach_page"),
+                    FieldKind::Text(self.config.attachments.page_tokens.to_string()),
+                )
+                .describe(loc.t("ui.settings.desc.attach_page")),
             ],
         ));
         rows.extend(grouped(

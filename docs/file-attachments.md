@@ -5,11 +5,14 @@ design plan per [AGENTS.md §1](../AGENTS.md): stages, scope, and forks. Forks
 **F1–F10 were confirmed by the user on 2026-07-27**, as was **F11** (a separate
 chat-scoped index) on the same day; **F12–F14** follow the recommendations below.
 
-**Status: stage 1 done** (`feat/file-attachments`) — entity, commands, extraction,
-the pinned block, modes/budgets and UI. **Live run — GO** (Gemma 4 31B q4_0): the
-baseline chat didn't know the invented build code, the chat with the file attached
-answered it exactly; all 22 orchestrator live e2e smokes stayed green. Stages 2–3
-(`attachment_read`, the chat-scoped semantic index) are next.
+**Status: stages 1–2 done.** Stage 1 (`feat/file-attachments`) — entity, commands,
+extraction, the pinned block, modes/budgets, UI; **live GO** (the baseline chat
+didn't know the invented build code, the chat with the file attached answered it
+exactly). Stage 2 (`feat/attachment-read`) — `attachment_read(name, page)`,
+prompted by a live in-app run where a 1.6 MB file went by reference and the model,
+having no reader, flailed into `fs_read`/`web_search`; **live GO** (the model
+walked five pages and found the answer planted on the last one). Stage 3 (the
+chat-scoped semantic index) is next.
 
 Related: spec [§6.2](../spec.md) (building the request), [§6.6](../spec.md) (KV
 cache and prefix caching), [§9.3](../spec.md) (tool roster / RAG),
@@ -355,7 +358,7 @@ binary that fails to decode is refused with a clear message.
 | # | Fork | Options | Recommendation |
 |---|---|---|---|
 | F11 | Where attachment vectors live | (a) own chat-scoped index + `attachment_search`; (b) `rag_documents` + `chat_id` column; (c) source-prefix post-filter | **(a)** — §4.5 |
-| F12 | `attachment_read` addressing | (a) pages of `page_tokens`; (b) character offset/limit | **(a)** — enumerable ⇒ the model can know it read everything |
+| F12 | `attachment_read` addressing | (a) pages of `page_tokens`; (b) character offset/limit | **(a)** — enumerable ⇒ the model can know it read everything. **Adopted in stage 2**; confirmed live (the model walked five pages to a late answer) |
 | F13 | Are inline files indexed too? | (a) no; (b) yes | **(a)** — they're already fully in the prompt |
 | F14 | Force-index flag `/file attach --index` | (a) not needed (mode is automatic); (b) keep it as an override | **(a)** for now |
 

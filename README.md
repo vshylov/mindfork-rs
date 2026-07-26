@@ -124,9 +124,12 @@ Architecture — **Feature-Sliced Design (FSD)**.
   search-matched fragments. Attachable: any text file (source code, configs,
   logs), plus `.html`/`.pdf`/`.docx`. The content is snapshotted when attached, so
   the conversation stays coherent even if the file later changes. A file above the
-  budget isn't refused — it is attached "by reference" (name, size and the
-  beginning). Budgets live in settings ("Memory" → "Attachments"); the status bar
-  shows a `§ files: N (~tokens)` chip, since attachments cost tokens every turn.
+  budget isn't refused — it is attached "by reference": the prompt gets its name,
+  size and beginning, and the model reads the rest **page by page** on demand
+  (`attachment_read`), so even a multi-megabyte file can be worked through without
+  flooding the context. Budgets live in settings ("Memory" → "Attachments"); the
+  status bar shows a `§ files: N (~tokens)` chip with what the attachments
+  actually cost per message.
 - **Loading files into RAG from the input box:** `/rag add <path> [-r]` commands
   (indexes a file or directory, recursively with the flag; currently `*.txt`/`*.md`)
   and `/rag remove <path>` (removes a file/directory from the store). Indexing runs

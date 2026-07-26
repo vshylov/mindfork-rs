@@ -265,6 +265,10 @@ impl Orchestrator {
                 system_message: chat.system_message.clone(),
                 effective_sampling: sampling,
                 last_user_message_at: last_user_message_at(chat),
+                // The turn's attachment snapshot — what `attachment_read` sees
+                // (spec §9.7). `Arc` — the context is cloned per call and the
+                // texts can be large.
+                attachments: std::sync::Arc::from(chat.attachments.clone()),
                 lang: profile_lang,
                 cancel: cancel.clone(),
             };

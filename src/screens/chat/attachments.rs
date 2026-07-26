@@ -3,7 +3,7 @@
 //! See docs/file-attachments.md.
 
 use super::*;
-use crate::entities::attachment::{AttachMode, format_bytes};
+use crate::entities::attachment::format_bytes;
 use crate::features::file_command::{FileProgress, mode_label};
 
 impl ChatScreen {
@@ -50,19 +50,16 @@ impl ChatScreen {
         if self.attachments.is_empty() {
             return None;
         }
-        // Only inline attachments carry their whole text; a by-reference one
-        // contributes just its excerpt, so counting it in full would overstate.
-        let inline: usize = self
-            .attachments
-            .iter()
-            .filter(|a| a.mode == AttachMode::Inline)
-            .map(|a| a.est_tokens)
-            .sum();
+        // The real standing cost: inline text in full plus by-reference
+        // excerpts. Counting a by-reference file at full weight would overstate
+        // wildly (a 418k-token file costs ~300); counting it as zero would
+        // claim it is free, which it isn't.
+        let cost: usize = self.attachments.iter().map(|a| a.prompt_tokens).sum();
         Some(self.loc.tf(
             "ui.file.chip",
             &[
                 ("n", &self.attachments.len().to_string()),
-                ("tokens", &format_tokens(inline)),
+                ("tokens", &format_tokens(cost)),
             ],
         ))
     }
@@ -88,16 +85,12 @@ pub(super) fn format_attachments(items: &[AttachmentInfo], loc: &'static Locale)
     if items.is_empty() {
         return loc.t("ui.file.list_empty").to_string();
     }
-    let inline: usize = items
-        .iter()
-        .filter(|a| a.mode == AttachMode::Inline)
-        .map(|a| a.est_tokens)
-        .sum();
+    let cost: usize = items.iter().map(|a| a.prompt_tokens).sum();
     let mut out = loc.tf(
         "ui.file.list_header",
         &[
             ("n", &items.len().to_string()),
-            ("total", &format_tokens(inline)),
+            ("total", &format_tokens(cost)),
         ],
     );
     for (i, a) in items.iter().enumerate() {

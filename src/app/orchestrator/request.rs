@@ -104,7 +104,11 @@ pub(super) fn inject_attachments(
         let open = "<".repeat(width);
         let close = ">".repeat(width);
         let size = format_bytes(a.bytes);
-        let (head, body) = match a.mode {
+        // A by-reference entry must state **how to read the rest**: without that
+        // the model improvises with the wrong tools (observed on a live run —
+        // fs_read into the sandbox, then web_search) and ends up asking the user
+        // for the impossible. See docs/file-attachments.md §4.4.
+        let (head, body, tail) = match a.mode {
             AttachMode::Inline => (
                 loc.tf(
                     "prompt.attachments.begin_full",
@@ -116,30 +120,44 @@ pub(super) fn inject_attachments(
                     ],
                 ),
                 a.text.as_str(),
-            ),
-            AttachMode::ByReference => (
                 loc.tf(
-                    "prompt.attachments.begin_excerpt",
-                    &[
-                        ("open", &open),
-                        ("name", &a.name),
-                        ("size", &size),
-                        ("tokens", &a.est_tokens.to_string()),
-                        ("close", &close),
-                    ],
+                    "prompt.attachments.end",
+                    &[("open", &open), ("name", &a.name), ("close", &close)],
                 ),
-                a.excerpt(cfg.excerpt_tokens),
             ),
+            AttachMode::ByReference => {
+                let pages = a.page_count(cfg.page_tokens).to_string();
+                (
+                    loc.tf(
+                        "prompt.attachments.begin_excerpt",
+                        &[
+                            ("open", &open),
+                            ("name", &a.name),
+                            ("size", &size),
+                            ("tokens", &a.est_tokens.to_string()),
+                            ("pages", &pages),
+                            ("close", &close),
+                        ],
+                    ),
+                    a.excerpt(cfg.excerpt_tokens),
+                    loc.tf(
+                        "prompt.attachments.end_excerpt",
+                        &[
+                            ("open", &open),
+                            ("name", &a.name),
+                            ("pages", &pages),
+                            ("close", &close),
+                        ],
+                    ),
+                )
+            }
         };
         block.push_str("\n\n");
         block.push_str(&head);
         block.push('\n');
         block.push_str(body);
         block.push('\n');
-        block.push_str(&loc.tf(
-            "prompt.attachments.end",
-            &[("open", &open), ("name", &a.name), ("close", &close)],
-        ));
+        block.push_str(&tail);
     }
     Some(match system {
         Some(s) if !s.is_empty() => format!("{s}\n\n{block}"),
