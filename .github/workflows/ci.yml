@@ -96,9 +96,17 @@ jobs:
   test:
     name: Tests (${{ matrix.os }})
     needs: changes
-    # `!= 'true'` and not `== 'false'`: a missing or empty output (a failed or
-    # skipped `changes` job) must still run the tests.
-    if: needs.changes.outputs.docs_only != 'true'
+    # Two independent guards, because they cover different failures:
+    #   * `!= 'true'` (not `== 'false'`) covers the *value* — a missing or empty
+    #     output must still run the tests.
+    #   * `!cancelled()` covers the *job*. A failed `needs` dependency skips the
+    #     dependent job outright, whatever `if` says, so without this a broken
+    #     `changes` job silently skips the test gate. Not hypothetical: that is
+    #     exactly what happened in run 30217314709, where `changes` could not
+    #     start and `Tests` came out "skipped".
+    # `!cancelled()` rather than `always()`: cancelling the workflow must still
+    # cancel this job.
+    if: ${{ !cancelled() && needs.changes.outputs.docs_only != 'true' }}
     strategy:
       fail-fast: false
       matrix:
