@@ -129,8 +129,8 @@ tests green, 60 `#[ignore]` smokes** (the largest count — log below; the curre
 track is **chat file attachments** (`/file attach|remove|list`: the file's text is
 injected into the request's `system` on every turn — chat-scoped, no embedder, delivered
 in full; a file over the budget switches to "by reference" instead of being refused;
-plan [docs/file-attachments.md](docs/file-attachments.md)) — **stage 1 done, awaiting a
-live run**; before that — the **`mindfork.io` site URL in project metadata** (the registered domain now
+plan [docs/file-attachments.md](docs/file-attachments.md)) — **stage 1 done, live
+run GO**; before that — the **`mindfork.io` site URL in project metadata** (the registered domain now
 also serves as the project homepage in the Windows installer, the Linux packages,
 `Cargo.toml`, the README, `install.md` and the release-notes footer; every actionable
 link stays on GitHub while the site is not up) — **done**, released as **0.9.4**;
@@ -8220,13 +8220,19 @@ debounce was done as a separate PR, see below).
   messages, an invalid one leaves a note, the chip counts only inline weight,
   `/file` first in the help popup). **1330 unit tests green** (+36), **60
   `#[ignore]`** (+1), clippy `-D warnings`/fmt/`cyrillic_scan`/i18n gates clean.
-- **Live run — pending**: this touches the engine request path, so per AGENTS.md
-  §3 the `#[ignore]` smoke `file_attachment_e2e_live` must run against a live
-  stack (no server was reachable at implementation time). Its shape: a **baseline**
-  chat (no attachment → the model can't know an invented build code) and a second
-  chat with the file attached (→ it answers with the code). The mirror half —
-  that `/file remove` takes the text back out — is deterministic and covered by a
-  unit test, so it needs no model.
+- **Live run — GO** (Gemma 4 31B q4_0 + bge-m3, external `llama-server`,
+  `--jinja`): `file_attachment_e2e_live` — the **baseline** chat (nothing
+  attached) answered "couldn't find any information regarding an internal build
+  code", while the chat with the file attached answered exactly `ZARYA-7719`;
+  the attachment came back `Inline`, 139 B / ~35 tokens. So the block reaches the
+  model through the real wire path and is actually used. The mirror half — that
+  `/file remove` takes the text back out of the request — is deterministic and
+  covered by a unit test with a capturing backend, so it needs no model.
+- **Regression — clean**: all **22** orchestrator live e2e smokes green (598 s) —
+  memory/self-model/notes/RAG/graph/cross-organ links/control tools/i18n/TTS.
+  Worth running in full here because `build_request` sits on **every** generation
+  path and its signature changed. Client-level smokes (`OpenAiClient`) were not
+  re-run — that layer is untouched.
 
 ### Deferred beyond M3
 - **Per-message collapse/selection** and tool blocks in the feed — currently "thoughts"
