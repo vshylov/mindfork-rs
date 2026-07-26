@@ -8041,6 +8041,42 @@ debounce was done as a separate PR, see below).
   from `release.yml` produced the section correctly. **The release notes were
   never broken.**
 
+### Post-M9: cutting GitHub Actions minutes (done)
+- **Trigger**: the `v0.9.4` release run was refused by GitHub with *"The job was
+  not started because recent account payments have failed or your spending limit
+  needs to be increased"* — the 2000 included minutes of the Free plan ran out.
+  Diagnosis note: the run showed up as `cancelled`, but the real cause was one
+  matrix job failing at **scheduling** (no steps, 1 s) with `fail-fast: true`
+  cancelling the rest; the reason is only visible in the job's **annotation**,
+  not in the run/job status. `gh run rerun` is futile while the block is in
+  place (attempts 2–4 all failed identically).
+- **Where the minutes went** (measured, not estimated — GitHub rounds each job
+  up to a whole minute and bills `windows-latest` at **2x**): CI on a PR =
+  ubuntu 105 s + windows 467 s + lints 69 s → **20 billable min**; CI on the
+  push to `main` = the same thing again → **20 min**; Packaging on `main` →
+  **9 min**. The Windows test job alone is 16 of the 20.
+- **The redundancy**: GitHub runs `pull_request` against the **merge result**
+  (`refs/pull/N/merge`), so the push-to-`main` run re-tests code that has
+  already passed on that exact tree — visible as a pair in the run list on every
+  single merge.
+- **Fix** (two workflow edits, no Rust): (1) `ci.yml` — the `test` matrix is now
+  an expression, both OSes on `pull_request` and **Linux only** on `push`
+  (`github.event_name == 'push' && fromJSON(...) || fromJSON(...)`); (2)
+  `packaging.yml` — the `push: [main]` trigger removed entirely (`workflow_dispatch`
+  kept). Per merge: CI 40 → 24 min, Packaging 18 → 9 min, ≈ **43 % less**.
+- **Why `main` keeps a Linux CI run** rather than dropping the trigger outright:
+  the README CI badge tracks the default branch and would go stale without one,
+  and a Linux run still catches a semantic conflict between two separately-green
+  PRs. It costs 4 min against the 16 saved by dropping Windows there.
+- **Not done** (offered as follow-up): skipping the `test` job for docs-only
+  changes. It is the biggest remaining win for this repo (the CLAUDE.md journal
+  makes many PRs almost entirely `.md`, and PR #212 burned 20 min on one), but
+  job-level path filtering needs either a third-party action or a hand-rolled
+  `git diff` gate, and a wrong verdict silently skips the test gate. The `lint`
+  job must keep running regardless — `cyrillic_scan` guards the docs themselves.
+- Branch protection could not be consulted (403: unavailable for private repos on
+  Free), so there are no required status checks to strand.
+
 ### Deferred beyond M3
 - **Per-message collapse/selection** and tool blocks in the feed — currently "thoughts"
   collapse globally (`Ctrl+T`); per-message selection and tool blocks — for M5.

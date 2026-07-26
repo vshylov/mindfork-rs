@@ -2,6 +2,9 @@
 # The toolchain comes from rust-toolchain.toml (a pin, release-engineering.md F4).
 # #[ignore] smokes (engine/network/live model) without env variables are silently skipped —
 # CI needs no network or a live server. See docs/release-engineering.md §3.3.
+#
+# Runner minutes: the full matrix runs on pull requests (the real gate); the
+# push-to-main run is trimmed to Linux — see the comment on the matrix below.
 name: CI
 
 on:
@@ -44,7 +47,16 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, windows-latest]
+        # Both OSes on a pull request; on `main` — Linux only. GitHub runs
+        # `pull_request` against the *merge result* (`refs/pull/N/merge`), so the
+        # push-to-main run re-tests code that has already passed, and
+        # `windows-latest` bills at 2x (~16 of the 20 billable minutes per run).
+        # The Linux run is kept on `main` so the README badge stays live and a
+        # semantic conflict between two separately-green PRs is still caught.
+        os: >-
+          ${{ github.event_name == 'push'
+              && fromJSON('["ubuntu-latest"]')
+              || fromJSON('["ubuntu-latest","windows-latest"]') }}
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v5
