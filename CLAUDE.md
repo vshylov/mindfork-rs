@@ -8104,8 +8104,16 @@ debounce was done as a separate PR, see below).
   the PR's `changed_files` **and** every path inside the allowlist. Any other
   outcome runs the tests. The count check exists because the files endpoint
   truncates on very large PRs, and a partial page could otherwise hide a source
-  file and look docs-only. The gate is `!= 'true'`, not `== 'false'`, so a
-  failed or skipped `changes` job still runs the tests.
+  file and look docs-only. The gate is `!= 'true'`, not `== 'false'`, so an
+  empty output still runs the tests.
+- **Corrected right after merging**: that value guard was *not* sufficient on its
+  own. A failed `needs` dependency skips the dependent job **regardless of
+  `if`**, so an infrastructure failure in `changes` silently skipped the test
+  gate — observed for real in run 30217314709, where the billing block stopped
+  `changes` from starting and `Tests` came out "skipped". Fixed by adding
+  `!cancelled()` to the condition (`always()` would be wrong — cancelling the
+  workflow must still cancel the job). Lesson: in a `needs` + `if` gate, the
+  value and the upstream job's *status* are two separate failure modes.
 - **Verified by executing the script**, not by reading it: the `run:` block was
   extracted from the YAML and run against a stubbed `gh` for six scenarios —
   docs-only → skip; code present → run; **truncated listing** → run; empty list
