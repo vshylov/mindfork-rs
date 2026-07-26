@@ -344,7 +344,7 @@
   "tool.fs.err.outside_sandbox": "path is outside the allowed directory ({root}). Access is limited to the sandbox.",
 
   "tool.python_exec.desc.local": "Run Python code and return stdout/stderr (local interpreter). There is a timeout and an output limit.",
-  "tool.python_exec.desc.wasmer": "Run Python code in an isolated sandbox (no access to the machine's files; {net}). When the sandbox is installed, scientific packages (numpy, pandas, requests, etc.) are available. There is a timeout and an output limit.",
+  "tool.python_exec.desc.wasmer": "Run Python code in an isolated sandbox (no access to the machine's files; {net}). When the sandbox is installed, preinstalled packages (numpy, pandas, requests, beautifulsoup4, etc.) are available. There is a timeout and an output limit.",
   "tool.python_exec.net.on": "network access available",
   "tool.python_exec.net.off": "no network access",
   "tool.python_exec.err.code_empty": "expected a non-empty field code",

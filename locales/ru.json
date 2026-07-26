@@ -345,7 +345,7 @@
   "tool.fs.err.outside_sandbox": "путь вне разрешённого каталога ({root}). Доступ ограничен песочницей.",
 
   "tool.python_exec.desc.local": "Исполнить код Python и вернуть stdout/stderr (локальный интерпретатор). Есть таймаут и лимит вывода.",
-  "tool.python_exec.desc.wasmer": "Исполнить код Python в изолированной песочнице (нет доступа к файлам машины; {net}). При установленной песочнице доступны научные пакеты (numpy, pandas, requests и т.п.). Есть таймаут и лимит вывода.",
+  "tool.python_exec.desc.wasmer": "Исполнить код Python в изолированной песочнице (нет доступа к файлам машины; {net}). При установленной песочнице доступны предустановленные пакеты (numpy, pandas, requests, beautifulsoup4 и т.п.). Есть таймаут и лимит вывода.",
   "tool.python_exec.net.on": "есть доступ в сеть",
   "tool.python_exec.net.off": "без доступа в сеть",
   "tool.python_exec.err.code_empty": "ожидается непустое поле code",

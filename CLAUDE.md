@@ -125,8 +125,10 @@ Env for selecting the backend: `MINDFORK_ENGINE_URL` (external, any OpenAI serve
 
 ## Status (as of 2026-07-26, version 0.9.3)
 The entire **M0–M9** plan is done, plus extensive post-M9 work (on `main`). **1294 unit
-tests green, 58 `#[ignore]` smokes** (the largest count — log below; the current
-track is **custom role names** (the user/assistant names are editable in profile
+tests green, 59 `#[ignore]` smokes** (the largest count — log below; the current
+track is **beautifulsoup4 in the Python sandbox** (`sandbox setup` also installs
+BeautifulSoup + soupsieve/typing_extensions — HTML parsing next to `requests`) —
+**done**; before that — **custom role names** (the user/assistant names are editable in profile
 settings and replace the localized `YOU`/`ASSISTANT` headers in the feed and the
 `User:`/`Assistant:` labels in the `F5` export) — **done**; before that — **impersonation profiles** (the user
 personas for `Ctrl+U` became a list of
@@ -7937,6 +7939,49 @@ debounce was done as a separate PR, see below).
   **A live run isn't required** — no engine/memory/tool path is touched: the
   impersonation *request* is unchanged, only where its system message is read from
   (covered by unit tests); the rest is settings UI.
+
+### Post-M9: Python sandbox — beautifulsoup4 in the starter set (done)
+- **beautifulsoup4 added to the `sandbox setup` lock list** (branch
+  `feat/sandbox-beautifulsoup`, user's request; the same mechanical change as the
+  earlier pandas addition, ADR 0005 §4 — no architectural decision, so no design
+  doc). HTML parsing is the natural companion to the already-present `requests`:
+  fetch a page → parse it, without the model having to hand-roll regex over markup.
+- **Three pure-Python wheels from PyPI** (`py3-none-any`, exact URL + sha256, as
+  everything else in the lock list): `beautifulsoup4 4.15.0` + its runtime
+  dependencies `soupsieve 2.9.1` (CSS selectors — `soup.select`) and
+  `typing_extensions 4.16.0`. Nothing native → no wasix index involved, and
+  **`warmup` was deliberately not touched** (it exists to compile native `.so`
+  files; pure Python has nothing to compile — unlike the pandas addition, which
+  switched warmup to `import pandas`).
+- **The `dir` field is the name in `site-packages`, not the distribution name** —
+  verified by actually listing the wheels rather than assuming: `bs4`,
+  `soupsieve`, and `typing_extensions.py` (a single module file, like the
+  existing `six.py` entry). Getting this wrong would silently break idempotency
+  (the directory check would never hit, so every `setup` run would re-download).
+  The sha256 of all three was verified against a real download.
+- **The tool description** (`tool.python_exec.desc.wasmer`, ru+en) now names
+  beautifulsoup4 — this is what the model reads, so an unlisted package is a
+  package it won't reach for; "scientific packages" was also reworded to
+  "preinstalled packages" (bs4 isn't scientific).
+- **Tests**: the `lockfile_wheels_*` gate extended with `bs4`/`soupsieve`/
+  `typing_extensions.py`; a live `#[ignore]` smoke `beautifulsoup_in_sandbox`
+  (parses HTML offline — no network needed — and calls `soup.select`, which
+  exercises soupsieve, the dependency most likely to be missing). **1294 unit
+  tests green** (count unchanged — the new test is `#[ignore]`), **59
+  `#[ignore]`** (+1), clippy `-D warnings`/fmt/i18n gates/`cyrillic_scan` clean.
+- **Live run — GO** (real `wasmer` 7.2.0 + the provisioned dev sandbox):
+  `sandbox setup` skipped everything already installed and downloaded/unpacked
+  exactly the three new wheels (idempotency intact), warmup passed; the new smoke
+  printed `bs4 4.15.0` / parsed text / one CSS-selector match. **No regression**:
+  all 14 `python::tests` sandbox smokes green (numpy/pandas/requests with and
+  without network/timeout/memory cap/en localization) — adding
+  `typing_extensions` to a shared `site-packages` didn't shadow anything.
+  (`runs_real_python_in_sandbox` needs `MINDFORK_SANDBOX_WASMER`/`_PYTHON` on top
+  of `MINDFORK_SANDBOX_DIR` — a known, deliberate quirk, see the english-source
+  migration entry.)
+- **Setup download grew by ~190 KB.** Deliberately **not** added: `lxml` (needs a
+  native wasix wheel — not in the index), `html5lib` (an extra parser on top of
+  the stdlib `html.parser` bs4 already uses).
 
 ### Deferred beyond M3
 - **Per-message collapse/selection** and tool blocks in the feed — currently "thoughts"
