@@ -15,7 +15,7 @@ pub const APP_NAME: &str = "mindfork";
 
 /// Author (matches the copyright in `LICENSE`).
 pub const AUTHOR: &str = "Vladimir Shylov";
-/// Project site (the domain is reserved; the site does not exist yet).
+/// Project site (the domain is registered; the site is not built yet).
 pub const SITE_URL: &str = "https://mindfork.io";
 /// Repository (the `repository` field in `Cargo.toml`).
 pub const REPO_URL: &str = "https://github.com/vshylov/mindfork-rs";

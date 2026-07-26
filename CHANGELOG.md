@@ -13,6 +13,8 @@ Detailed engineering history lives in the [CLAUDE.md](CLAUDE.md) log.
 
 ## [Unreleased]
 
+## [0.9.4] — 2026-07-26
+
 ### Added
 
 - **beautifulsoup4 in the Python sandbox** — `mindfork-rs sandbox setup` now also
@@ -37,6 +39,16 @@ Detailed engineering history lives in the [CLAUDE.md](CLAUDE.md) log.
   which persona its chats use via the new "Impersonation profile" field. Several
   assistant profiles can share one persona; not choosing one keeps the previous
   behaviour (a shared default text).
+
+### Changed
+
+- **The project site `mindfork.io`** is now carried by the package metadata as
+  well: the Windows installer shows it as the publisher link in "Apps &
+  features" (support and updates there now point at GitHub issues and releases
+  respectively), and the Linux packages use it for `Homepage:`/`URL:`. Every
+  GitHub Release page also gains a footer linking the site and the install guide
+  as of that release. The site itself is not up yet — the repository stays the
+  live destination for issues and downloads.
 
 ### Fixed
 
@@ -362,7 +374,8 @@ history is in the CLAUDE.md log).
   (notes/RAG/self-model, sqlite-vec, per-profile isolation). Schema format is
   v1; schema versioning and migrations are formalized in later releases.
 
-[Unreleased]: https://github.com/vshylov/mindfork-rs/compare/v0.9.3...HEAD
+[Unreleased]: https://github.com/vshylov/mindfork-rs/compare/v0.9.4...HEAD
+[0.9.4]: https://github.com/vshylov/mindfork-rs/compare/v0.9.3...v0.9.4
 [0.9.3]: https://github.com/vshylov/mindfork-rs/compare/v0.9.2...v0.9.3
 [0.9.2]: https://github.com/vshylov/mindfork-rs/compare/v0.9.1...v0.9.2
 [0.9.1]: https://github.com/vshylov/mindfork-rs/compare/v0.9.0...v0.9.1

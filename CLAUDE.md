@@ -123,10 +123,14 @@ Env for selecting the backend: `MINDFORK_ENGINE_URL` (external, any OpenAI serve
 `MINDFORK_LLAMA_BIN` (+ `MINDFORK_MODEL` GGUF, `MINDFORK_NGL`, `MINDFORK_CTX`,
 `MINDFORK_PORT`) for a managed `llama-server`.
 
-## Status (as of 2026-07-26, version 0.9.3)
+## Status (as of 2026-07-26, version 0.9.4)
 The entire **M0–M9** plan is done, plus extensive post-M9 work (on `main`). **1294 unit
 tests green, 59 `#[ignore]` smokes** (the largest count — log below; the current
-track is **beautifulsoup4 in the Python sandbox** (`sandbox setup` also installs
+track is the **`mindfork.io` site URL in project metadata** (the registered domain now
+also serves as the project homepage in the Windows installer, the Linux packages,
+`Cargo.toml`, the README, `install.md` and the release-notes footer; every actionable
+link stays on GitHub while the site is not up) — **done**, released as **0.9.4**;
+before that — **beautifulsoup4 in the Python sandbox** (`sandbox setup` also installs
 BeautifulSoup + soupsieve/typing_extensions — HTML parsing next to `requests`) —
 **done**; before that — **custom role names** (the user/assistant names are editable in profile
 settings and replace the localized `YOU`/`ASSISTANT` headers in the feed and the
@@ -7982,6 +7986,60 @@ debounce was done as a separate PR, see below).
 - **Setup download grew by ~190 KB.** Deliberately **not** added: `lxml` (needs a
   native wasix wheel — not in the index), `html5lib` (an extra parser on top of
   the stdlib `html.parser` bs4 already uses).
+
+### Post-M9: the mindfork.io site URL in project metadata (done)
+- **The domain `mindfork.io` was registered** (2026-07-26) for a future project
+  site. It was already in the `F1` "About" dialog (`credits::SITE_URL`); this
+  change carries it into the places that have a genuine **"project homepage"**
+  slot, where the repository URL had been standing in. Branch
+  `chore/release-0.9.4` (started as `chore/site-url`).
+- **Where it went**: the Windows installer's `AppPublisherURL`
+  (`packaging/windows/mindfork.iss` — surfaces in "Apps & features"); nfpm's
+  `homepage` (→ deb `Homepage:` / rpm `URL:` / pacman `url`); the standard
+  `homepage` field in `Cargo.toml` (was absent entirely); a README badge in the
+  brand accent `#c25a27`; a header line in `docs/install.md` (that file ships
+  inside the packages and the Windows install directory); and a footer on every
+  GitHub Release page (`release.yml`).
+- **Every actionable link deliberately stayed on GitHub** — the site does not
+  exist yet, so a dead link must never be the only way to get help or a
+  download. The installer's other two ARP links were **split** for exactly this
+  reason: `AppSupportURL` → `/issues`, and a new `AppUpdatesURL` → `/releases`
+  (both previously pointed at the bare repo root).
+- **An audit of the repo URL found nothing else to convert**: all remaining
+  occurrences are legitimately GitHub-specific (CHANGELOG `/compare/` links, the
+  CI badge, the Releases download link, `Cargo.toml`'s `repository`,
+  `credits::REPO_URL`, and — in a research doc — a *different* repo, the
+  crossterm fork). The one homepage slot left is **outside the codebase**:
+  GitHub's own repo "Website" field (`gh repo edit --homepage`), which is the
+  user's to set.
+- **The crate URL was deliberately NOT added anywhere user-facing.** The name
+  `mindfork` is still free (verified against the registry API — 404), but the
+  package is `mindfork-rs`, so claiming it is a packaging decision, not a URL
+  edit: either a full rename (which renames the binary and ripples into the
+  installer, nfpm layout, `.desktop` `Exec=`, the `/usr/bin` symlink, docs and
+  CI artifact names) or `name = "mindfork"` + `[[bin]] name = "mindfork-rs"`.
+  Until it is published, a crates.io version badge or a `cargo install mindfork`
+  line would render **broken**; recorded as a roadmap item instead.
+- **Release-notes footer** (`release.yml`): the body was just the CHANGELOG
+  section; it now ends with the site + the install guide **pinned to the tag**
+  (so instructions travel with the release they describe). Appended after the
+  empty-notes fallback, so it is present on both paths; the repo URL is built
+  from `GITHUB_SERVER_URL`/`GITHUB_REPOSITORY` rather than hardcoded. The step
+  also `cat`s the composed notes into the job log.
+- **Verification**: the `.iss` was **compiled** with real `ISCC.exe` 6.7.3 (an
+  unknown directive is a compile error — that is the meaningful check for
+  `AppUpdatesURL`); the release step was simulated against the real
+  `CHANGELOG.md` on both the normal and the fallback path. **Gate green**: 1294
+  unit tests, 59 `#[ignore]`, clippy/fmt/`cyrillic_scan` clean. No live engine
+  run needed (metadata/docs only; the sole Rust change is a doc comment).
+- **A false alarm worth recording**: the first simulation appeared to show the
+  CHANGELOG extraction failing and falling back to a bare `Release vX.Y.Z.`
+  — a would-be significant pre-existing bug. It was an artifact of the
+  reproduction: a quoted heredoc collapsed `\\[` to `\[`, turning the awk regex
+  into a character class. `od -c` against the real file showed the workflow has
+  the correct double backslash, and re-running with bytes extracted verbatim
+  from `release.yml` produced the section correctly. **The release notes were
+  never broken.**
 
 ### Deferred beyond M3
 - **Per-message collapse/selection** and tool blocks in the feed — currently "thoughts"

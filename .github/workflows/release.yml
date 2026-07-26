@@ -172,7 +172,15 @@ jobs:
             echo "Release ${TAG}." > notes.md
           fi
 
+          # A footer on every release page (appended after the fallback above, so
+          # it is present either way). The install guide is pinned to this tag —
+          # the instructions travel with the release they describe, unlike a link
+          # to main.
+          printf '\n---\n\n[mindfork.io](https://mindfork.io) · [Install guide](%s/blob/%s/docs/install.md)\n' \
+            "${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}" "$TAG" >> notes.md
+
           echo "Artifacts:"; ls -l dist
+          echo "Notes:"; cat notes.md
       - name: Create the GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}
