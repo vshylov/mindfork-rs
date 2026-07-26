@@ -14,11 +14,11 @@ on:
       - "Cargo.toml"
       - "Cargo.lock"
       - "dictionaries/**"
-  push:
-    branches: [main]
-    paths:
-      - "packaging/**"
-      - ".github/workflows/packaging.yml"
+  # Deliberately no `push: [main]` trigger: the pull_request run validates the
+  # merge result for exactly these paths, so a main run would repeat ~9 billable
+  # minutes (it builds packages, three container smokes and compiles the .iss on
+  # a 2x-billed Windows runner). The real gate for a release is release.yml,
+  # which builds the packages for real; `workflow_dispatch` covers a manual check.
   workflow_dispatch:
 
 concurrency:
